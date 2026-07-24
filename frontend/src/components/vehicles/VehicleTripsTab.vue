@@ -661,7 +661,7 @@ async function downloadDocx(trip: Trip) {
     const a = document.createElement('a')
     a.href = url
     const dateStr = trip.date?.replaceAll('-', '') ?? 'date'
-    a.download = `trip_${trip.id}_${dateStr}.docx`
+    a.download = `Поездка_${dateStr}_${trip.id}.docx`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)

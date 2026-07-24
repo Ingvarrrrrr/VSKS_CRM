@@ -870,8 +870,12 @@ async function exportToExcel() {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   const cd = res.headers.get('Content-Disposition') || ''
-  const match = cd.match(/filename=([^;]+)/)
-  a.href = url; a.download = match ? match[1] : 'feo_export.xlsx'; a.click()
+  const star = cd.match(/filename\*\s*=\s*UTF-8''([^;\n]+)/i)
+  const plain = cd.match(/filename\s*=\s*(?:"([^"]+)"|([^;\n]+))/i)
+  let name = 'ФЭО_выгрузка.xlsx'
+  if (star) name = decodeURIComponent(star[1].trim())
+  else if (plain) name = (plain[1] ?? plain[2] ?? name).trim()
+  a.href = url; a.download = name; a.click()
   URL.revokeObjectURL(url)
 }
 
@@ -883,7 +887,7 @@ async function downloadFeoTemplate() {
   if (!res.ok) { showSnack('Ошибка загрузки шаблона', 'error'); return }
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
-  const a = document.createElement('a'); a.href = url; a.download = 'feo_categories_template.xlsx'; a.click()
+  const a = document.createElement('a'); a.href = url; a.download = 'Шаблон_импорта_направлений_ФЭО.xlsx'; a.click()
   URL.revokeObjectURL(url)
 }
 

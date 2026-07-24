@@ -13,6 +13,7 @@ OCR helpers (_ocr_pdf_to_rows, _legacy_extract_tables, _legacy_detect_best_table
 the product-catalog upsert helper (_upsert_product_to_catalog) live in this module.
 """
 import logging
+from urllib.parse import quote as _url_quote
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func
@@ -572,7 +573,7 @@ async def items_import_template(_=Depends(require_tab('purchases'))):
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=items_template.xlsx"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_url_quote('Шаблон_импорта_позиций_закупки.xlsx', safe='-_.~')}"},
     )
 
 
@@ -2257,7 +2258,7 @@ async def download_feo_template(_=Depends(require_tab('purchases'))):
     return StreamingResponse(
         buffer,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=feo_import_template.xlsx"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_url_quote('Шаблон_импорта_закупок_формат_ФЭО.xlsx', safe='-_.~')}"},
     )
 
 

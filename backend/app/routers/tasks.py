@@ -1,5 +1,6 @@
 import io
 import logging
+from urllib.parse import quote as _url_quote
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, or_, func
@@ -607,7 +608,7 @@ async def download_tasks_import_template(
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=tasks_import_template.xlsx"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_url_quote('Шаблон_импорта_задач.xlsx', safe='-_.~')}"},
     )
 
 

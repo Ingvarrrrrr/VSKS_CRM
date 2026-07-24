@@ -1,4 +1,5 @@
 import os
+import re
 from io import BytesIO
 from datetime import date
 from urllib.parse import quote
@@ -20,6 +21,20 @@ from typing import Optional
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_subject(text: str, max_len: int = 50) -> str:
+    """Очищает произвольный текст для использования в имени файла.
+
+    Убирает символы \\ / : * ? " < > | и переносы строк,
+    схлопывает пробелы в «_», обрезает до max_len символов.
+    """
+    if not text:
+        return ""
+    cleaned = re.sub(r'[\\/:*?"<>|\r\n]+', "", text)
+    cleaned = re.sub(r'\s+', "_", cleaned.strip())
+    return cleaned[:max_len]
+
 
 # Phase 26-V: падежные склонения для шаблонов СЗ.
 # pymorphy3 — для общих слов (должность), petrovich — для ФИО.
@@ -274,42 +289,42 @@ def _insert_receipts_table_if_marker(
     return True
 
 DOC_TYPES = {
-    "service_note_delivery": ("service_note_delivery.docx", "SZ_Vydacha"),
-    "service_note_payment":  ("service_note_payment.docx",  "SZ_Oplata"),
+    "service_note_delivery": ("service_note_delivery.docx", "Служебная_записка_выдача"),
+    "service_note_payment":  ("service_note_payment.docx",  "Служебная_записка_оплата"),
     # Phase 19.05: dedicated SZ for procurement (distinct from generic service_note)
-    "service_note_procurement": ("service_note_procurement.docx", "SZ_Zakupka"),
+    "service_note_procurement": ("service_note_procurement.docx", "Служебная_записка_закупка"),
     # Phase 19.07: СЗ на аванс
-    "service_note_advance":  ("service_note_advance.docx",  "SZ_Avans"),
+    "service_note_advance":  ("service_note_advance.docx",  "Служебная_записка_аванс"),
     # Legacy — kept for backwards compat with existing uploaded subsidy overrides.
-    "contract_tz":           ("contract_tz.docx",           "Contract_TZ"),
+    "contract_tz":           ("contract_tz.docx",           "Договор_с_ТЗ"),
     # tech_spec falls back to contract_tz.docx — separation kept for future
     # when a dedicated tech_spec template is uploaded, but both resolve to
     # the same file today so there is no confusing "empty ТЗ slot" in UI.
-    "tech_spec":             ("contract_tz.docx",           "Tech_Spec"),
+    "tech_spec":             ("contract_tz.docx",           "Техническое_задание"),
     # Phase 19.05: split ТЗ into request-of-prices and contract-appendix variants.
     # Default template file is a copy of contract_tz.docx; admins upload
     # per-subsidy overrides via SubsidiesView.
-    "tech_spec_request":     ("tech_spec_request.docx",     "TZ_Zapros_Cen"),
-    "tech_spec_contract":    ("tech_spec_contract.docx",    "TZ_Dogovor"),
-    "contract":              ("contract.docx",              "Contract"),
+    "tech_spec_request":     ("tech_spec_request.docx",     "ТЗ_запрос_цен"),
+    "tech_spec_contract":    ("tech_spec_contract.docx",    "ТЗ_к_договору"),
+    "contract":              ("contract.docx",              "Договор"),
     # Phase 23.1: contract_services / contract_goods merged into universal contract.docx
     # (removed — subject_kind auto-detected from purchase_items.product.item_kind)
-    "approval_sheet":        ("approval_sheet.docx",        "Approval_Sheet"),
-    "order_purchase":        ("order_purchase.docx",        "Prikaz_zakupki"),
+    "approval_sheet":        ("approval_sheet.docx",        "Лист_согласования"),
+    "order_purchase":        ("order_purchase.docx",        "Приказ_о_закупке"),
     # Phase 28: typed contract forms per-subsidy
-    "contract_services_large":      ("contract_services_large.docx",      "Contract_Services_Large"),
-    "contract_services_small":      ("contract_services_small.docx",      "Contract_Services_Small"),
-    "contract_services_food":       ("contract_services_food.docx",       "Contract_Services_Food"),
-    "contract_goods_single":        ("contract_goods_single.docx",        "Contract_Goods_Single"),
-    "contract_gph_individual":      ("contract_gph_individual.docx",      "Contract_GPH_Individual"),
-    "contract_gph_individual_rid":  ("contract_gph_individual_rid.docx",  "Contract_GPH_Individual_RID"),
-    "contract_repair_vehicle":      ("contract_repair_vehicle.docx",      "Contract_Repair_Vehicle"),
-    "contract_repair_framework":    ("contract_repair_framework.docx",    "Contract_Repair_Framework"),
+    "contract_services_large":      ("contract_services_large.docx",      "Договор_услуги_крупный"),
+    "contract_services_small":      ("contract_services_small.docx",      "Договор_услуги_малый"),
+    "contract_services_food":       ("contract_services_food.docx",       "Договор_услуги_питание"),
+    "contract_goods_single":        ("contract_goods_single.docx",        "Договор_поставка_единственный"),
+    "contract_gph_individual":      ("contract_gph_individual.docx",      "Договор_ГПХ_физлицо"),
+    "contract_gph_individual_rid":  ("contract_gph_individual_rid.docx",  "Договор_ГПХ_физлицо_РИД"),
+    "contract_repair_vehicle":      ("contract_repair_vehicle.docx",      "Договор_ремонт_ТС"),
+    "contract_repair_framework":    ("contract_repair_framework.docx",    "Договор_ремонт_рамочный"),
     # Fabrikant ЭТП package — four template types for запрос цен на Фабрикант
-    "fabrikant_instruction":        ("fabrikant_instruction.docx",        "Fabrikant_Instrukcia"),
-    "fabrikant_application_form":   ("fabrikant_application_form.docx",   "Fabrikant_Forma_Zayavki"),
-    "fabrikant_documentation":      ("fabrikant_documentation.docx",      "Fabrikant_Dokumentacia"),
-    "fabrikant_contract_project":   ("fabrikant_contract_project.docx",   "Fabrikant_Proekt_Dogovora"),
+    "fabrikant_instruction":        ("fabrikant_instruction.docx",        "Фабрикант_инструкция"),
+    "fabrikant_application_form":   ("fabrikant_application_form.docx",   "Фабрикант_форма_заявки"),
+    "fabrikant_documentation":      ("fabrikant_documentation.docx",      "Фабрикант_документация"),
+    "fabrikant_contract_project":   ("fabrikant_contract_project.docx",   "Фабрикант_проект_договора"),
 }
 
 # Phase 19.05: fallback map — if a dedicated template file is missing,
@@ -2149,12 +2164,16 @@ async def generate_document(
                 merged_buf.seek(0)
                 buf = merged_buf
                 # Update filename to reflect merge
-                filename_base = f"{filename_base}_i_{secondary_base}"
+                filename_base = f"{filename_base}_и_{secondary_base}"
         except Exception as merge_err:
             import traceback
             print(f"Doc merge error ({doc_type} + {merge}): {merge_err}\n{traceback.format_exc()}")
 
-    safe_name = f"{filename_base}_{p.registry_number or pid}.docx".replace("/", "-").replace(" ", "_")
+    _subj = _sanitize_subject(getattr(p, "subject", "") or "")
+    if _subj:
+        safe_name = f"{filename_base}_{_subj}_{p.registry_number or pid}.docx".replace("/", "-").replace(" ", "_")
+    else:
+        safe_name = f"{filename_base}_{p.registry_number or pid}.docx".replace("/", "-").replace(" ", "_")
     encoded_name = quote(safe_name, safe="-_.~")
     resp_headers: dict = {"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}"}
     # phase31-02: surface non-silent fallback via response headers
@@ -2579,7 +2598,7 @@ async def render_fabrikant_package_files(
 
     # ── Which templates to render ─────────────────────────────────────────────
     # tech_spec_request with fallback to contract_tz
-    _tz_file, _tz_base = DOC_TYPES.get("tech_spec_request", ("tech_spec_request.docx", "TZ_Zapros_Cen"))
+    _tz_file, _tz_base = DOC_TYPES.get("tech_spec_request", ("tech_spec_request.docx", "ТЗ_запрос_цен"))
     _tz_path = os.path.join(TEMPLATES_DIR, _tz_file)
     if p.subsidy_id:
         _sub_tz = os.path.join(SUBSIDY_TEMPLATES_DIR, "subsidies", str(p.subsidy_id), "tech_spec_request.docx")
@@ -2818,9 +2837,9 @@ async def download_kp_xlsx(
     wb.save(buf)
     buf.seek(0)
 
-    fname = f"KP_items_{p.purchase_number or pid}.xlsx"
+    fname = f"Сравнение_КП_закупка_{p.purchase_number or pid}.xlsx"
     from urllib.parse import quote as _quote
-    encoded = _quote(fname, safe="")
+    encoded = _quote(fname, safe="-_.~")
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -3129,7 +3148,7 @@ async def download_template_guide(
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": "attachment; filename*=UTF-8''Template_Guide.docx"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('Инструкция_по_шаблонам.docx', safe='-_.~')}"},
     )
 
 

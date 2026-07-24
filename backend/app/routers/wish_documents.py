@@ -17,6 +17,7 @@ Endpoint: GET /api/wishes/{wish_id}/documents/service_note
 import os
 from io import BytesIO
 from datetime import date
+import re as _re
 from urllib.parse import quote
 from typing import Optional
 
@@ -391,7 +392,13 @@ async def generate_wish_service_note(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка генерации документа: {e}")
 
-    safe_name = f"SZ_Wish_{w.id}.docx"
+    _wish_title = (w.title or "").strip()
+    _wish_title = _re.sub(r'[\\/:*?"<>|\r\n]+', "", _wish_title)
+    _wish_title = _re.sub(r'\s+', "_", _wish_title)[:50]
+    if _wish_title:
+        safe_name = f"Служебная_записка_{_wish_title}.docx"
+    else:
+        safe_name = f"Служебная_записка_заявка_{w.id}.docx"
     encoded = quote(safe_name, safe="-_.~")
     return StreamingResponse(
         buf,

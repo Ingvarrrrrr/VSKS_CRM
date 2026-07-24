@@ -245,6 +245,26 @@
               {{ formatCurrency(totals.budget - totals.planned) }}
             </span>
           </div>
+          <div class="summary-sep" />
+          <div class="summary-item summary-item--link" @click="router.push('/orders?status=work_in_progress')">
+            <span class="summary-label">Ведётся работа</span>
+            <span class="summary-value" style="color:#6366F1">{{ formatCurrency(totals.work) }}</span>
+          </div>
+          <div class="summary-sep" />
+          <div class="summary-item summary-item--link" @click="router.push('/contracts')">
+            <span class="summary-label">Заключено договоров</span>
+            <span class="summary-value" style="color:#0284C7">{{ formatCurrency(totals.contracts) }}</span>
+          </div>
+          <div class="summary-sep" />
+          <div class="summary-item summary-item--link" @click="router.push('/orders?status=delivered')">
+            <span class="summary-label">Поставлено</span>
+            <span class="summary-value" style="color:#14B8A6">{{ formatCurrency(totals.delivered) }}</span>
+          </div>
+          <div class="summary-sep" />
+          <div class="summary-item">
+            <span class="summary-label">Поставлено не оплачено</span>
+            <span class="summary-value" style="color:#EF4444">{{ formatCurrency(totals.delivered_unpaid) }}</span>
+          </div>
         </div>
 
         <!-- ── Detail panel ── -->
@@ -257,27 +277,114 @@
 
           <!-- KPI mini-cards for selected subsidy -->
           <div class="detail-kpis">
-            <div class="dkpi dkpi-budget" title="Живой расчёт по дереву ФЭО: ручное финансирование категорий, без него — факт, иначе план. Совпадает с ИТОГО дерева ниже">
-              <div class="dkpi-label">Бюджет (ФЭО)</div>
-              <div class="dkpi-val">{{ formatCurrency(selectedBudget) }}</div>
-              <div
-                v-if="selectedSubsidy.budget && Math.abs(selectedSubsidy.budget - selectedBudget) > 0.005"
-                class="dkpi-sub text-medium-emphasis"
-                title="Ручное поле «Бюджет» из формы субсидии — справочно"
-              >поле бюджета: {{ formatCurrency(selectedSubsidy.budget) }}</div>
-            </div>
-            <div class="dkpi dkpi-planned" title="Плановая сумма дерева ФЭО: ручные позиции (импорт/создание в ФЭО) + заявки в план-графике. Совпадает с ИТОГО колонки «Плановая сумма (все)»">
-              <div class="dkpi-label">Запланировано</div>
-              <div class="dkpi-val">{{ formatCurrency(selectedPlannedTotal) }}</div>
-            </div>
-            <div class="dkpi dkpi-paid">
-              <div class="dkpi-label">Оплачено</div>
-              <div class="dkpi-val">{{ formatCurrency(selectedSubsidy.paid) }}</div>
-            </div>
-            <div class="dkpi dkpi-free" :class="selectedBudget - selectedPlannedTotal < 0 ? 'dkpi-over' : ''">
-              <div class="dkpi-label">{{ selectedBudget - selectedPlannedTotal < 0 ? 'Превышение' : 'Свободно' }}</div>
-              <div class="dkpi-val">{{ formatCurrency(Math.abs(selectedBudget - selectedPlannedTotal)) }}</div>
-            </div>
+            <!-- 1. Бюджет (ФЭО) -->
+            <v-tooltip location="bottom" :disabled="true">
+              <template #activator="{ props: tip }">
+                <div v-bind="tip" class="kpi-card kpi-budget" title="Живой расчёт по дереву ФЭО: ручное финансирование категорий, без него — факт, иначе план. Совпадает с ИТОГО дерева ниже">
+                  <div class="kpi-icon-box"><v-icon icon="mdi-wallet" size="26" /></div>
+                  <div class="kpi-body">
+                    <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_budget) }}</div>
+                    <div class="kpi-label">Бюджет (ФЭО)</div>
+                  </div>
+                </div>
+              </template>
+            </v-tooltip>
+            <!-- 2. Запланировано -->
+            <v-tooltip location="bottom" :disabled="true">
+              <template #activator="{ props: tip }">
+                <div v-bind="tip" class="kpi-card kpi-plan_schedule" title="Плановая сумма дерева ФЭО: ручные позиции (импорт/создание в ФЭО) + заявки в план-графике">
+                  <div class="kpi-icon-box"><v-icon icon="mdi-calendar-clock" size="26" /></div>
+                  <div class="kpi-body">
+                    <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_plan_schedule) }}</div>
+                    <div class="kpi-label">Запланировано</div>
+                  </div>
+                </div>
+              </template>
+            </v-tooltip>
+            <!-- 3. Ведётся работа -->
+            <v-tooltip location="bottom" text="включает заказанные, поставленные и оплаченные">
+              <template #activator="{ props: tip }">
+                <div v-bind="tip" class="kpi-card kpi-work">
+                  <div class="kpi-icon-box"><v-icon icon="mdi-progress-wrench" size="26" /></div>
+                  <div class="kpi-body">
+                    <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_work) }}</div>
+                    <div class="kpi-label">Ведётся работа</div>
+                  </div>
+                </div>
+              </template>
+            </v-tooltip>
+            <!-- 4. Заказано -->
+            <v-tooltip location="bottom" text="включает поставленные и оплаченные">
+              <template #activator="{ props: tip }">
+                <div v-bind="tip" class="kpi-card kpi-ordered">
+                  <div class="kpi-icon-box"><v-icon icon="mdi-cart-check" size="26" /></div>
+                  <div class="kpi-body">
+                    <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_ordered) }}</div>
+                    <div class="kpi-label">Заказано</div>
+                  </div>
+                </div>
+              </template>
+            </v-tooltip>
+            <!-- 5. Заключено договоров -->
+            <v-tooltip location="bottom" text="суммарная стоимость заключённых договоров">
+              <template #activator="{ props: tip }">
+                <div v-bind="tip" class="kpi-card kpi-contracts">
+                  <div class="kpi-icon-box"><v-icon icon="mdi-file-sign" size="26" /></div>
+                  <div class="kpi-body">
+                    <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_contracts) }}</div>
+                    <div class="kpi-label">Заключено договоров</div>
+                  </div>
+                </div>
+              </template>
+            </v-tooltip>
+            <!-- 6. Поставлено -->
+            <v-tooltip location="bottom" text="включает оплаченные">
+              <template #activator="{ props: tip }">
+                <div v-bind="tip" class="kpi-card kpi-delivered">
+                  <div class="kpi-icon-box"><v-icon icon="mdi-truck-check" size="26" /></div>
+                  <div class="kpi-body">
+                    <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_delivered) }}</div>
+                    <div class="kpi-label">Поставлено</div>
+                  </div>
+                </div>
+              </template>
+            </v-tooltip>
+            <!-- 7. Поставлено, не оплачено -->
+            <v-tooltip location="bottom" text="поставлено, но оплата ещё не прошла">
+              <template #activator="{ props: tip }">
+                <div v-bind="tip" class="kpi-card kpi-delivered_unpaid">
+                  <div class="kpi-icon-box"><v-icon icon="mdi-truck-alert" size="26" /></div>
+                  <div class="kpi-body">
+                    <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_delivered_unpaid) }}</div>
+                    <div class="kpi-label">Поставлено, не оплачено</div>
+                  </div>
+                </div>
+              </template>
+            </v-tooltip>
+            <!-- 8. Оплачено -->
+            <v-tooltip location="bottom" :disabled="true">
+              <template #activator="{ props: tip }">
+                <div v-bind="tip" class="kpi-card kpi-paid">
+                  <div class="kpi-icon-box"><v-icon icon="mdi-cash-check" size="26" /></div>
+                  <div class="kpi-body">
+                    <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_paid) }}</div>
+                    <div class="kpi-label">Оплачено</div>
+                  </div>
+                </div>
+              </template>
+            </v-tooltip>
+            <!-- 9. Свободно -->
+            <v-tooltip location="bottom" :disabled="true">
+              <template #activator="{ props: tip }">
+                <div v-bind="tip" class="kpi-card kpi-free" :class="selectedBudget - selectedPlannedTotal < 0 ? 'kpi-over' : ''">
+                  <div class="kpi-icon-box"><v-icon icon="mdi-cash-lock-open" size="26" /></div>
+                  <div class="kpi-body">
+                    <div class="kpi-value">{{ formatCurrencyRound(Math.abs(kpiSubAnim_free)) }}</div>
+                    <div class="kpi-label">{{ selectedBudget - selectedPlannedTotal < 0 ? 'Превышение' : 'Свободно' }}</div>
+                  </div>
+                </div>
+              </template>
+            </v-tooltip>
           </div>
           <!-- Контрагент -->
           <div v-if="selectedSubsidy.contractor_name" class="detail-contractor mt-2 mb-3">
@@ -3375,6 +3482,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, reactive, nextTick } from 'vue'
+import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
@@ -3426,6 +3534,11 @@ interface SubsidyRow {
   planned_amount?: number | null
   budget_discrepancy?: number | null
   require_planned_dates?: boolean
+  // Phase 32: dashboard KPI fields
+  work: number
+  contracts: number
+  delivered: number
+  delivered_unpaid: number
 }
 
 interface FeoCategory {
@@ -4760,11 +4873,15 @@ const selectedPlannedTotal = computed(() => {
 })
 
 const totals = computed(() => ({
-  budget:        filteredSubsidies.value.reduce((s, x) => s + (x.feo_budget_total || x.budget || 0), 0),
-  planned:       filteredSubsidies.value.reduce((s, x) => s + x.planned,        0),
-  ordered:       filteredSubsidies.value.reduce((s, x) => s + x.ordered,        0),
-  contracted:    filteredSubsidies.value.reduce((s, x) => s + (x.contracted || 0), 0),
-  paid:          filteredSubsidies.value.reduce((s, x) => s + x.paid,           0),
+  budget:           filteredSubsidies.value.reduce((s, x) => s + (x.feo_budget_total || x.budget || 0), 0),
+  planned:          filteredSubsidies.value.reduce((s, x) => s + x.planned,            0),
+  ordered:          filteredSubsidies.value.reduce((s, x) => s + x.ordered,            0),
+  contracted:       filteredSubsidies.value.reduce((s, x) => s + (x.contracted || 0),  0),
+  paid:             filteredSubsidies.value.reduce((s, x) => s + x.paid,               0),
+  work:             filteredSubsidies.value.reduce((s, x) => s + x.work,               0),
+  contracts:        filteredSubsidies.value.reduce((s, x) => s + x.contracts,          0),
+  delivered:        filteredSubsidies.value.reduce((s, x) => s + x.delivered,          0),
+  delivered_unpaid: filteredSubsidies.value.reduce((s, x) => s + x.delivered_unpaid,   0),
 }))
 
 // ── FEO tree ──────────────────────────────────────
@@ -4824,6 +4941,27 @@ const totalFeoDiff = computed(() =>
 )
 
 const totalFeoPurchased = computed(() => feoTree.value.reduce((a, r) => a + feoPurchasedFor(r), 0))
+
+// ── Animated KPI targets for the detail panel (9 cards) ──────────────
+const kpiSubTarget_budget            = computed(() => selectedBudget.value)
+const kpiSubTarget_plan_schedule     = computed(() => selectedPlannedTotal.value)
+const kpiSubTarget_work              = computed(() => selectedSubsidy.value?.work              ?? 0)
+const kpiSubTarget_ordered           = computed(() => selectedSubsidy.value?.ordered           ?? 0)
+const kpiSubTarget_contracts         = computed(() => selectedSubsidy.value?.contracts         ?? 0)
+const kpiSubTarget_delivered         = computed(() => selectedSubsidy.value?.delivered         ?? 0)
+const kpiSubTarget_delivered_unpaid  = computed(() => selectedSubsidy.value?.delivered_unpaid  ?? 0)
+const kpiSubTarget_paid              = computed(() => selectedSubsidy.value?.paid              ?? 0)
+const kpiSubTarget_free              = computed(() => selectedBudget.value - selectedPlannedTotal.value)
+
+const kpiSubAnim_budget            = useAnimatedNumber(kpiSubTarget_budget,           800)
+const kpiSubAnim_plan_schedule     = useAnimatedNumber(kpiSubTarget_plan_schedule,    800)
+const kpiSubAnim_work              = useAnimatedNumber(kpiSubTarget_work,             800)
+const kpiSubAnim_ordered           = useAnimatedNumber(kpiSubTarget_ordered,          800)
+const kpiSubAnim_contracts         = useAnimatedNumber(kpiSubTarget_contracts,        800)
+const kpiSubAnim_delivered         = useAnimatedNumber(kpiSubTarget_delivered,        800)
+const kpiSubAnim_delivered_unpaid  = useAnimatedNumber(kpiSubTarget_delivered_unpaid, 800)
+const kpiSubAnim_paid              = useAnimatedNumber(kpiSubTarget_paid,             800)
+const kpiSubAnim_free              = useAnimatedNumber(kpiSubTarget_free,             800)
 
 // Финансирование ФЭО: ТОЛЬКО ручное значение (решение 14.07 — без авто-суммирования из детей)
 function feoBudgetFor(node: FeoNode): number {
@@ -5279,6 +5417,11 @@ async function loadAll() {
       remaining: s.remaining ?? null,
       planned_amount: s.planned_amount ?? null,
       budget_discrepancy: s.budget_discrepancy ?? null,
+      // Phase 32: dashboard KPI fields
+      work: s.total_work ?? 0,
+      contracts: s.total_contracts ?? 0,
+      delivered: s.total_delivered ?? 0,
+      delivered_unpaid: s.total_delivered_unpaid ?? 0,
     }))
     const years = [...new Set(allSubsidies.value.map((s: SubsidyRow) => s.year))].sort((a, b) => b - a)
     if (years.length) selectedYear.value = years[0]  // always reset to most recent year
@@ -5348,7 +5491,7 @@ async function downloadFeoTemplate() {
   if (!res.ok) { showSnack('Ошибка загрузки шаблона', 'error'); return }
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
-  const a = document.createElement('a'); a.href = url; a.download = 'feo_categories_template.xlsx'; a.click()
+  const a = document.createElement('a'); a.href = url; a.download = 'Шаблон_импорта_направлений_ФЭО.xlsx'; a.click()
   URL.revokeObjectURL(url)
 }
 
@@ -5863,7 +6006,7 @@ async function addSubsidy() {
       method: 'POST',
       body: JSON.stringify({ name: form.value.name, year: form.value.year, budget: form.value.budget, description: form.value.description || null, contractor_id: form.value.contractor_id, agreement_text: form.value.agreement_text || null, basis_doc_number: form.value.basis_doc_number || null, basis_doc_date: form.value.basis_doc_date || null })
     })
-    allSubsidies.value.push({ ...res, planned: 0, paid: 0, contracted: 0, plan_schedule: 0, ordered: 0 })
+    allSubsidies.value.push({ ...res, planned: 0, paid: 0, contracted: 0, plan_schedule: 0, ordered: 0, work: 0, contracts: 0, delivered: 0, delivered_unpaid: 0 })
     showAddDialog.value = false
     form.value = { name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null, agreement_text: '', basis_doc_number: '', basis_doc_date: '' }
     showSnack('Субсидия добавлена')
@@ -6267,6 +6410,32 @@ async function onTemplateFileSelected(event: Event) {
   }
 }
 
+const DOC_TYPE_RU: Record<string, string> = {
+  service_note_delivery: 'Служебная_записка_выдача',
+  service_note_payment: 'Служебная_записка_оплата',
+  service_note_procurement: 'Служебная_записка_закупка',
+  service_note_advance: 'Служебная_записка_аванс',
+  contract_tz: 'Договор_с_ТЗ',
+  tech_spec: 'Техническое_задание',
+  tech_spec_request: 'ТЗ_запрос_цен',
+  tech_spec_contract: 'ТЗ_к_договору',
+  contract: 'Договор',
+  approval_sheet: 'Лист_согласования',
+  order_purchase: 'Приказ_о_закупке',
+  contract_services_large: 'Договор_услуги_крупный',
+  contract_services_small: 'Договор_услуги_малый',
+  contract_services_food: 'Договор_услуги_питание',
+  contract_goods_single: 'Договор_поставка_единственный',
+  contract_gph_individual: 'Договор_ГПХ_физлицо',
+  contract_gph_individual_rid: 'Договор_ГПХ_физлицо_РИД',
+  contract_repair_vehicle: 'Договор_ремонт_ТС',
+  contract_repair_framework: 'Договор_ремонт_рамочный',
+  fabrikant_instruction: 'Фабрикант_инструкция',
+  fabrikant_application_form: 'Фабрикант_форма_заявки',
+  fabrikant_documentation: 'Фабрикант_документация',
+  fabrikant_contract_project: 'Фабрикант_проект_договора',
+}
+
 async function downloadSubsidyTemplate(docType: string) {
   if (!templateSubsidy.value) return
   const token = localStorage.getItem('auth_token')
@@ -6278,7 +6447,8 @@ async function downloadSubsidyTemplate(docType: string) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `template_${docType}_subsidy_${templateSubsidy.value.id}.docx`
+  const ruName = DOC_TYPE_RU[docType] || docType
+  a.download = `Шаблон_${ruName}_субсидия_${templateSubsidy.value.id}.docx`
   a.click()
   URL.revokeObjectURL(url)
 }
@@ -6304,7 +6474,7 @@ async function downloadMarkupGuide() {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = 'template_guide.docx'
+  a.download = 'Инструкция_по_шаблонам.docx'
   a.click()
   URL.revokeObjectURL(url)
 }
@@ -6324,6 +6494,11 @@ function formatCurrency(v: number | string) {
   // API отдаёт Decimal строками — без Number() toLocaleString вернёт строку как есть, без пробелов-разрядов
   const n = Number(v) || 0
   return n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽'
+}
+
+function formatCurrencyRound(v: number | string) {
+  const n = typeof v === 'string' ? parseFloat(v) : v
+  return (n || 0).toLocaleString('ru-RU', { maximumFractionDigits: 0 }) + ' ₽'
 }
 
 function cardDelta(s: SubsidyRow): number {
@@ -6676,24 +6851,127 @@ onMounted(() => {
 /* Detail KPI mini-cards */
 .detail-kpis {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-auto-rows: 1fr;
   gap: 12px;
   margin-bottom: 20px;
 }
-.dkpi {
-  border-radius: 10px; padding: 14px 16px;
-  border: 1px solid var(--crm-border);
-  border-top: 3px solid #CBD5E1;
+.detail-kpis .kpi-card {
+  min-height: 110px;
+  height: 100%;
 }
-.dkpi-budget    { border-top-color: #3B82F6; }
-.dkpi-planned   { border-top-color: #F59E0B; }
-.dkpi-paid      { border-top-color: #22C55E; }
-.dkpi-free      { border-top-color: #8B5CF6; }
-.dkpi-over      { border-top-color: #EF4444; }
 
-.dkpi-label { font-size: 11px; color: var(--crm-text-faint); margin-bottom: 4px; }
-.dkpi-val   { font-size: 16px; font-weight: 700; color: var(--crm-text); }
-.dkpi-sub   { font-size: 10px; margin-top: 2px; white-space: nowrap; }
+/* ── KPI Cards (copied from DashboardView) ── */
+.kpi-card {
+  border-radius: 12px;
+  padding: 18px 20px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  cursor: default;
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1),
+              box-shadow 0.25s cubic-bezier(0.22, 1, 0.36, 1),
+              border-color 0.25s ease;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--crm-border);
+  background: var(--crm-surface);
+  box-shadow: 0 1px 4px var(--crm-shadow);
+}
+.kpi-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 28px var(--crm-shadow-hover);
+  border-color: var(--crm-border-strong);
+}
+.kpi-card:active {
+  transform: translateY(-1px) scale(0.985);
+  transition-duration: 0.1s;
+}
+.kpi-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity 0.35s ease;
+  z-index: -1;
+}
+.kpi-card:hover::before { opacity: 1; }
+.kpi-budget::before            { box-shadow: 0 0 30px rgba(59,130,246,0.15); }
+.kpi-plan_schedule::before     { box-shadow: 0 0 30px rgba(245,158,11,0.15); }
+.kpi-work::before              { box-shadow: 0 0 30px rgba(99,102,241,0.15); }
+.kpi-ordered::before           { box-shadow: 0 0 30px rgba(59,130,246,0.15); }
+.kpi-contracts::before         { box-shadow: 0 0 30px rgba(2,132,199,0.15); }
+.kpi-delivered::before         { box-shadow: 0 0 30px rgba(20,184,166,0.15); }
+.kpi-delivered_unpaid::before  { box-shadow: 0 0 30px rgba(239,68,68,0.15); }
+.kpi-paid::before              { box-shadow: 0 0 30px rgba(34,197,94,0.15); }
+.kpi-free::before              { box-shadow: 0 0 30px rgba(148,163,184,0.15); }
+
+.kpi-icon-box {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.kpi-card:hover .kpi-icon-box { transform: scale(1.12) rotate(-3deg); }
+
+.kpi-budget .kpi-icon-box            { background: rgba(59,130,246,0.12);  color: #3B82F6; }
+.kpi-plan_schedule .kpi-icon-box     { background: rgba(245,158,11,0.12);  color: #F59E0B; }
+.kpi-work .kpi-icon-box              { background: rgba(99,102,241,0.12);  color: #6366F1; }
+.kpi-ordered .kpi-icon-box           { background: rgba(59,130,246,0.12);  color: #3B82F6; }
+.kpi-contracts .kpi-icon-box         { background: rgba(2,132,199,0.12);   color: #0284C7; }
+.kpi-delivered .kpi-icon-box         { background: rgba(20,184,166,0.12);  color: #14B8A6; }
+.kpi-delivered_unpaid .kpi-icon-box  { background: rgba(239,68,68,0.12);   color: #EF4444; }
+.kpi-paid .kpi-icon-box              { background: rgba(34,197,94,0.12);   color: #22C55E; }
+.kpi-free .kpi-icon-box              { background: rgba(148,163,184,0.12); color: #94A3B8; }
+
+.kpi-budget           { border-top: 3px solid #3B82F6; }
+.kpi-plan_schedule    { border-top: 3px solid #F59E0B; }
+.kpi-work             { border-top: 3px solid #6366F1; }
+.kpi-ordered          { border-top: 3px solid #3B82F6; }
+.kpi-contracts        { border-top: 3px solid #0284C7; }
+.kpi-delivered        { border-top: 3px solid #14B8A6; }
+.kpi-delivered_unpaid { border-top: 3px solid #EF4444; }
+.kpi-paid             { border-top: 3px solid #22C55E; }
+.kpi-free             { border-top: 3px solid #94A3B8; }
+.kpi-card.kpi-over { border-top-color: #EF4444; }
+.kpi-over .kpi-icon-box { background: rgba(239,68,68,0.12); color: #EF4444; }
+
+.kpi-body  { flex: 1; min-width: 0; }
+.kpi-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--crm-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kpi-label {
+  font-size: 12px;
+  color: var(--crm-text-muted);
+  margin-top: 2px;
+}
+@media (max-width: 599px) {
+  .kpi-card {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 12px;
+  }
+  .kpi-icon-box {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+  }
+  .kpi-icon-box :deep(.v-icon) { font-size: 18px !important; }
+  .kpi-body  { width: 100%; }
+  .kpi-value { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .kpi-label { font-size: 10px; line-height: 1.2; white-space: normal; margin-top: 1px; }
+}
 
 /* FEO section */
 .detail-feo-header {

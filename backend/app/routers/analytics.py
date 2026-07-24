@@ -1,3 +1,4 @@
+from urllib.parse import quote as _url_quote
 from fastapi import APIRouter, Depends, HTTPException, Body, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.jwt import get_current_user
@@ -132,7 +133,7 @@ async def post_export_xlsx(
     return Response(
         content=data,
         media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+        headers={'Content-Disposition': f"attachment; filename*=UTF-8''{_url_quote(filename, safe='-_.~')}"},
     )
 
 
@@ -190,5 +191,5 @@ async def post_export_pdf(
     return Response(
         content=data,
         media_type='application/pdf',
-        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+        headers={'Content-Disposition': f"attachment; filename*=UTF-8''{_url_quote(filename, safe='-_.~')}"},
     )

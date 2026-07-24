@@ -1083,7 +1083,7 @@ async function downloadDocx() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `waybill_${form.value.number || form.value.id}.docx`
+    a.download = `Путевой_лист_${form.value.number || form.value.id}.docx`
     a.click()
     URL.revokeObjectURL(url)
   } catch (e) {

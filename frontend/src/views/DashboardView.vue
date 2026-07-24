@@ -137,7 +137,7 @@
             <v-icon icon="mdi-drag" size="16" /> KPI
           </div>
           <v-row v-if="loading" class="kpi-row" style="margin:0">
-            <v-col cols="6" sm="4" lg="3" xl="auto" style="flex:1" v-for="n in 7" :key="'skel-'+n">
+            <v-col cols="6" sm="4" lg="3" xl="auto" style="flex:1" v-for="n in 9" :key="'skel-'+n">
               <v-skeleton-loader type="card" height="100" class="rounded-lg" />
             </v-col>
           </v-row>
@@ -145,7 +145,7 @@
             <v-col cols="6" sm="4" lg="3" xl="auto" style="flex:1" v-for="card in kpiCards" :key="card.key">
               <v-tooltip :text="card.tooltip ?? undefined" location="bottom" :disabled="!card.tooltip">
                 <template #activator="{ props: tip }">
-                  <div v-bind="tip" class="kpi-card" :class="'kpi-' + card.key" @click="handleKpiClick(card.key)">
+                  <div v-bind="tip" class="kpi-card" :class="['kpi-' + card.key, { 'kpi-over': card.over }]" @click="handleKpiClick(card.key)">
                     <div class="kpi-icon-box">
                       <v-icon :icon="card.icon" size="26" />
                     </div>
@@ -319,7 +319,7 @@
       </GridItem>
 
       <!-- ── Monthly Contracts ── -->
-      <GridItem v-if="monthlyContractsRemaining.length > 0" v-bind="effectiveLayout.find(l => l.i === 'monthly')" key="monthly">
+      <GridItem v-if="!mobile || monthlyContractsRemaining.length > 0" v-bind="effectiveLayout.find(l => l.i === 'monthly')" key="monthly">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="16" /> Ежемесячные договоры
@@ -328,30 +328,36 @@
             <div class="chart-card-header">
               <v-icon icon="mdi-calendar-refresh" size="18" color="#6366F1" class="mr-2" />
               <span class="chart-card-title">Ежемесячные договоры — остаток к заказу</span>
-              <span class="ml-auto font-weight-bold" style="color:#6366F1">{{ formatCurrencyShort(totalMonthlyRemaining) }}</span>
+              <span v-if="monthlyContractsRemaining.length > 0" class="ml-auto font-weight-bold" style="color:#6366F1">{{ formatCurrencyShort(totalMonthlyRemaining) }}</span>
             </div>
-            <div
-              v-for="c in monthlyContractsRemaining" :key="c.id"
-              class="pipeline-row"
-            >
-              <div class="pipeline-label">
-                <span class="pipeline-dot" style="background:#6366F1" />
-                {{ c.name }}
+            <template v-if="monthlyContractsRemaining.length > 0">
+              <div
+                v-for="c in monthlyContractsRemaining" :key="c.id"
+                class="pipeline-row"
+              >
+                <div class="pipeline-label">
+                  <span class="pipeline-dot" style="background:#6366F1" />
+                  {{ c.name }}
+                </div>
+                <div class="pipeline-bar-track">
+                  <div class="pipeline-bar-fill" :style="{ width: c.elapsedPct + '%', background: '#6366F1' }" />
+                </div>
+                <div class="pipeline-meta">
+                  <span class="pipeline-amount">{{ formatCurrencyShort(c.remaining) }} ост.</span>
+                  <span class="pipeline-pct" :style="{ color: chartMuted }">{{ c.elapsedPct }}%</span>
+                </div>
               </div>
-              <div class="pipeline-bar-track">
-                <div class="pipeline-bar-fill" :style="{ width: c.elapsedPct + '%', background: '#6366F1' }" />
-              </div>
-              <div class="pipeline-meta">
-                <span class="pipeline-amount">{{ formatCurrencyShort(c.remaining) }} ост.</span>
-                <span class="pipeline-pct" :style="{ color: chartMuted }">{{ c.elapsedPct }}%</span>
-              </div>
+            </template>
+            <div v-else class="chart-empty">
+              <v-icon icon="mdi-calendar-refresh" size="48" color="grey-lighten-2" />
+              <div class="text-caption text-medium-emphasis mt-2">Нет ежемесячных договоров</div>
             </div>
           </div>
         </div>
       </GridItem>
 
       <!-- ── Goods/Services Breakdown ── -->
-      <GridItem v-if="pipelineByType.some(s => s.total > 0)" v-bind="effectiveLayout.find(l => l.i === 'breakdown')" key="breakdown">
+      <GridItem v-if="!mobile || pipelineByType.some(s => s.total > 0)" v-bind="effectiveLayout.find(l => l.i === 'breakdown')" key="breakdown">
         <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
           <div v-if="isEditing" class="widget-drag-handle">
             <v-icon icon="mdi-drag" size="16" /> Товары / Услуги
@@ -361,34 +367,40 @@
               <v-icon icon="mdi-chart-box" size="18" color="#8B5CF6" class="mr-2" />
               <span class="chart-card-title">Структура закупок — Товары / Услуги</span>
             </div>
-            <div class="pipeline-row">
-              <div class="pipeline-label"><span class="pipeline-dot" style="background:#9CA3AF" />Бюджет</div>
-              <div class="pipeline-bar-track" style="margin-bottom:3px">
-                <div class="pipeline-bar-fill" style="width:100%; background:#F59E0B; opacity:0.35" />
-              </div>
-              <div class="pipeline-meta">{{ formatCurrencyShort(totalBudget) }}</div>
-            </div>
-            <div v-for="stage in pipelineByType" :key="stage.status" class="pipeline-row">
-              <div class="pipeline-label">
-                <span class="pipeline-dot" :style="{ background: stage.color }" />
-                {{ stage.label }}
-              </div>
-              <div style="flex:1; min-width:0">
+            <template v-if="pipelineByType.some(s => s.total > 0)">
+              <div class="pipeline-row">
+                <div class="pipeline-label"><span class="pipeline-dot" style="background:#9CA3AF" />Бюджет</div>
                 <div class="pipeline-bar-track" style="margin-bottom:3px">
-                  <div class="pipeline-bar-fill" :style="{ width: Math.min(stage.goodsPct, 100) + '%', background: '#F59E0B' }" />
+                  <div class="pipeline-bar-fill" style="width:100%; background:#F59E0B; opacity:0.35" />
                 </div>
-                <div class="pipeline-bar-track">
-                  <div class="pipeline-bar-fill" :style="{ width: Math.min(stage.servicesPct, 100) + '%', background: '#3B82F6' }" />
+                <div class="pipeline-meta">{{ formatCurrencyShort(totalBudget) }}</div>
+              </div>
+              <div v-for="stage in pipelineByType" :key="stage.status" class="pipeline-row">
+                <div class="pipeline-label">
+                  <span class="pipeline-dot" :style="{ background: stage.color }" />
+                  {{ stage.label }}
+                </div>
+                <div style="flex:1; min-width:0">
+                  <div class="pipeline-bar-track" style="margin-bottom:3px">
+                    <div class="pipeline-bar-fill" :style="{ width: Math.min(stage.goodsPct, 100) + '%', background: '#F59E0B' }" />
+                  </div>
+                  <div class="pipeline-bar-track">
+                    <div class="pipeline-bar-fill" :style="{ width: Math.min(stage.servicesPct, 100) + '%', background: '#3B82F6' }" />
+                  </div>
+                </div>
+                <div class="pipeline-meta" style="flex-direction:column; align-items:flex-end; gap:2px">
+                  <span style="color:#F59E0B; font-size:11px">{{ formatCurrencyShort(stage.goods) }}</span>
+                  <span style="color:#3B82F6; font-size:11px">{{ formatCurrencyShort(stage.services) }}</span>
                 </div>
               </div>
-              <div class="pipeline-meta" style="flex-direction:column; align-items:flex-end; gap:2px">
-                <span style="color:#F59E0B; font-size:11px">{{ formatCurrencyShort(stage.goods) }}</span>
-                <span style="color:#3B82F6; font-size:11px">{{ formatCurrencyShort(stage.services) }}</span>
+              <div class="d-flex gap-4 mt-2" style="font-size:11px; color:var(--crm-text-muted)">
+                <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#F59E0B;margin-right:4px"></span>Товары</span>
+                <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#3B82F6;margin-right:4px"></span>Услуги / Работы</span>
               </div>
-            </div>
-            <div class="d-flex gap-4 mt-2" style="font-size:11px; color:var(--crm-text-muted)">
-              <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#F59E0B;margin-right:4px"></span>Товары</span>
-              <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#3B82F6;margin-right:4px"></span>Услуги / Работы</span>
+            </template>
+            <div v-else class="chart-empty">
+              <v-icon icon="mdi-chart-box" size="48" color="grey-lighten-2" />
+              <div class="text-caption text-medium-emphasis mt-2">Нет данных о закупках</div>
             </div>
           </div>
         </div>
@@ -1002,6 +1014,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 import { useRouter, useRoute } from 'vue-router'
 import { useTheme, useDisplay } from 'vuetify'
 import BudgetDrillDownDialog from '@/components/BudgetDrillDownDialog.vue'
@@ -1075,17 +1088,6 @@ const activeTab = ref((route.query.tab as string) || 'summary')
 watch(activeTab, (tab) => router.replace({ query: { ...route.query, tab } }))
 
 // ── Data ──────────────────────────────────────────
-interface SubsidyRow {
-  id: number; name: string; shortName: string; description: string; year: number
-  budget: number; contracted: number; paid: number; planned: number
-  plan_schedule: number; ordered: number
-  total_feo_planned: number  // 12-01
-  // Phase 31-05: canonical budget fields
-  remaining?: number | null
-  planned_amount?: number | null
-  budget_discrepancy?: number | null
-}
-
 interface WidgetMetric {
   amount: number
   count: number
@@ -1100,6 +1102,18 @@ interface WidgetsData {
   delivered_unpaid: WidgetMetric
   paid: WidgetMetric
   contracts: WidgetMetric
+}
+
+interface SubsidyRow {
+  id: number; name: string; shortName: string; description: string; year: number
+  budget: number; contracted: number; paid: number; planned: number
+  plan_schedule: number; ordered: number
+  total_feo_planned: number  // 12-01
+  // Phase 31-05: canonical budget fields
+  remaining?: number | null
+  planned_amount?: number | null
+  budget_discrepancy?: number | null
+  widget?: WidgetsData | null
 }
 
 const allSubsidies    = ref<SubsidyRow[]>([])
@@ -1173,87 +1187,159 @@ const totalFeoPlanned   = computed(() => filteredSubsidies.value.reduce((s: numb
 const totalRemaining    = computed(() => totalBudget.value - totalPaid.value)
 const totalUsagePct   = computed(() => pct(totalPaid.value, totalBudget.value))
 
-// (animated KPI values removed — KPI now uses widgetsData directly)
-
 const overrunSubsidies = computed(() =>
   filteredSubsidies.value.filter(s => s.planned > s.budget || s.contracted > s.budget)
 )
 
+// ── Effective widgets: global or summed over selected subsidies ───
+const effectiveWidgets = computed((): WidgetsData | null => {
+  if (selectedSubsidyIds.value.length === 0) return widgetsData.value
+  const keys = ['plan_schedule', 'work', 'ordered', 'delivered', 'delivered_unpaid', 'paid', 'contracts'] as const
+  const zero = (): WidgetMetric => ({ amount: 0, count: 0, monthly_payments_total: 0 })
+  const acc: WidgetsData = {
+    plan_schedule: zero(), work: zero(), ordered: zero(),
+    delivered: zero(), delivered_unpaid: zero(), paid: zero(), contracts: zero(),
+  }
+  for (const row of filteredSubsidies.value) {
+    if (!row.widget) continue
+    for (const key of keys) {
+      acc[key].amount += row.widget[key].amount ?? 0
+      acc[key].count  += row.widget[key].count  ?? 0
+      if (key === 'ordered') {
+        acc.ordered.monthly_payments_total =
+          (acc.ordered.monthly_payments_total ?? 0) + (row.widget.ordered.monthly_payments_total ?? 0)
+      }
+    }
+  }
+  return acc
+})
+
+// ── Animated KPI targets (mirrors kpiCards amount logic) ─────────────
+const kpiTarget_budget           = computed(() => totalBudget.value)
+const kpiTarget_plan_schedule    = computed(() => effectiveWidgets.value?.plan_schedule.amount    ?? totalPlanSchedule.value)
+const kpiTarget_work             = computed(() => effectiveWidgets.value?.work.amount             ?? 0)
+const kpiTarget_ordered          = computed(() => effectiveWidgets.value?.ordered.amount          ?? totalOrdered.value)
+const kpiTarget_contracts        = computed(() => effectiveWidgets.value?.contracts.amount        ?? 0)
+const kpiTarget_delivered        = computed(() => effectiveWidgets.value?.delivered.amount        ?? 0)
+const kpiTarget_delivered_unpaid = computed(() => effectiveWidgets.value?.delivered_unpaid.amount ?? 0)
+const kpiTarget_paid             = computed(() => effectiveWidgets.value?.paid.amount             ?? totalPaid.value)
+const kpiTarget_free             = computed(() => totalBudget.value - totalPlanSchedule.value)
+
+const kpiAnim_budget           = useAnimatedNumber(kpiTarget_budget,           800)
+const kpiAnim_plan_schedule    = useAnimatedNumber(kpiTarget_plan_schedule,    800)
+const kpiAnim_work             = useAnimatedNumber(kpiTarget_work,             800)
+const kpiAnim_ordered          = useAnimatedNumber(kpiTarget_ordered,          800)
+const kpiAnim_contracts        = useAnimatedNumber(kpiTarget_contracts,        800)
+const kpiAnim_delivered        = useAnimatedNumber(kpiTarget_delivered,        800)
+const kpiAnim_delivered_unpaid = useAnimatedNumber(kpiTarget_delivered_unpaid, 800)
+const kpiAnim_paid             = useAnimatedNumber(kpiTarget_paid,             800)
+const kpiAnim_free             = useAnimatedNumber(kpiTarget_free,             800)
+
 // ── KPI Cards (widgets — накопительная логика) ────
 const kpiCards = computed(() => {
-  const w = widgetsData.value
+  const w = effectiveWidgets.value
+  const freeRaw = totalBudget.value - totalPlanSchedule.value
   return [
+    {
+      key: 'budget',
+      label: 'Бюджет',
+      icon: 'mdi-wallet',
+      amount: kpiAnim_budget.value,
+      count: 0,
+      countLabel: '',
+      tooltip: 'суммарный бюджет по дереву ФЭО выбранных субсидий',
+      monthly: null,
+      over: undefined as boolean | undefined,
+    },
     {
       key: 'plan_schedule',
       label: 'План-График',
       icon: 'mdi-calendar-clock',
-      amount: w?.plan_schedule.amount ?? totalPlanSchedule.value,
+      amount: kpiAnim_plan_schedule.value,
       count: w?.plan_schedule.count ?? 0,
       countLabel: 'закупок',
       tooltip: 'включает все последующие этапы',
       monthly: null,
+      over: undefined as boolean | undefined,
     },
     {
       key: 'work',
       label: 'Ведётся работа',
       icon: 'mdi-progress-wrench',
-      amount: w?.work.amount ?? 0,
+      amount: kpiAnim_work.value,
       count: w?.work.count ?? 0,
       countLabel: 'закупок',
       tooltip: 'включает заказанные, поставленные и оплаченные',
       monthly: null,
+      over: undefined as boolean | undefined,
     },
     {
       key: 'ordered',
       label: 'Заказано',
       icon: 'mdi-cart-check',
-      amount: w?.ordered.amount ?? totalOrdered.value,
+      amount: kpiAnim_ordered.value,
       count: w?.ordered.count ?? 0,
       countLabel: 'закупок',
       tooltip: 'включает поставленные и оплаченные',
       monthly: (w?.ordered.monthly_payments_total ?? 0) > 0
         ? w!.ordered.monthly_payments_total!
         : null,
+      over: undefined as boolean | undefined,
     },
     {
       key: 'contracts',
       label: 'Заключено договоров',
       icon: 'mdi-file-sign',
-      amount: w?.contracts.amount ?? 0,
+      amount: kpiAnim_contracts.value,
       count: w?.contracts.count ?? 0,
       countLabel: 'договоров',
       tooltip: 'суммарная стоимость заключённых договоров',
       monthly: null,
+      over: undefined as boolean | undefined,
     },
     {
       key: 'delivered',
       label: 'Поставлено',
       icon: 'mdi-truck-check',
-      amount: w?.delivered.amount ?? 0,
+      amount: kpiAnim_delivered.value,
       count: w?.delivered.count ?? 0,
       countLabel: 'закупок',
       tooltip: 'включает оплаченные',
       monthly: null,
+      over: undefined as boolean | undefined,
     },
     {
       key: 'delivered_unpaid',
       label: 'Поставлено, не оплачено',
       icon: 'mdi-truck-alert',
-      amount: w?.delivered_unpaid.amount ?? 0,
+      amount: kpiAnim_delivered_unpaid.value,
       count: w?.delivered_unpaid.count ?? 0,
       countLabel: 'закупок',
       tooltip: 'поставлено, но оплата ещё не прошла',
       monthly: null,
+      over: undefined as boolean | undefined,
     },
     {
       key: 'paid',
       label: 'Оплачено',
       icon: 'mdi-cash-check',
-      amount: w?.paid.amount ?? totalPaid.value,
+      amount: kpiAnim_paid.value,
       count: w?.paid.count ?? 0,
       countLabel: 'закупок',
       tooltip: null,
       monthly: null,
+      over: undefined as boolean | undefined,
+    },
+    {
+      key: 'free',
+      label: freeRaw < 0 ? 'Превышение' : 'Свободно',
+      icon: 'mdi-cash-lock-open',
+      amount: Math.abs(kpiAnim_free.value),
+      count: 0,
+      countLabel: '',
+      tooltip: 'бюджет минус запланировано',
+      monthly: null,
+      over: freeRaw < 0,
     },
   ]
 })
@@ -1747,6 +1833,7 @@ async function loadAll() {
       remaining: s.remaining ?? null,
       planned_amount: s.planned_amount ?? null,
       budget_discrepancy: s.budget_discrepancy ?? null,
+      widget: s.widget ?? null,
     }))
 
     statusCounts.value = chartsData.status_counts
@@ -1778,13 +1865,15 @@ function openBreakdown(metric = 'budget') {
 }
 
 function handleKpiClick(key: string) {
-  if (key === 'plan_schedule')    router.push('/orders?status=plan_schedule')
+  if (key === 'budget')            router.push('/subsidies')
+  else if (key === 'plan_schedule')    router.push('/orders?status=plan_schedule')
   else if (key === 'work')         router.push('/orders?status=work_in_progress')
   else if (key === 'ordered')      router.push('/orders?status=contracted')
   else if (key === 'contracts')    router.push('/contracts')
   else if (key === 'delivered')    router.push('/orders?status=delivered')
   else if (key === 'delivered_unpaid') router.push('/orders?status=delivered')
   else if (key === 'paid')         router.push('/orders?status=paid')
+  else if (key === 'free')         router.push('/subsidies')
   else openBreakdown(key)
 }
 
@@ -2090,7 +2179,7 @@ async function exportFinplanXlsx() {
   const blob = await res.blob()
   const link = document.createElement('a')
   link.href = URL.createObjectURL(blob)
-  link.download = `finplan_${finplanGranularity.value}_${new Date().toISOString().slice(0, 10)}.xlsx`
+  link.download = `Финплан_${finplanGranularity.value}_${new Date().toISOString().slice(0, 10)}.xlsx`
   link.click()
   URL.revokeObjectURL(link.href)
 }
@@ -2104,7 +2193,7 @@ async function exportFinplanDrilldownXlsx() {
   const blob = await res.blob()
   const link = document.createElement('a')
   link.href = URL.createObjectURL(blob)
-  link.download = `finplan_${finplanDrilldown.value.period}_${finplanDrilldown.value.category}.xlsx`
+  link.download = `Финплан_${finplanDrilldown.value.period}_${finplanDrilldown.value.category}.xlsx`
   link.click()
   URL.revokeObjectURL(link.href)
 }
@@ -2290,7 +2379,13 @@ onMounted(() => {
 /* ── KPI Cards ── */
 .kpi-row { margin-bottom: 4px; }
 
+/* Equal height: все колонки растягиваются на полную высоту строки */
+.kpi-row .v-col { display: flex; }
+
 .kpi-card {
+  width: 100%;
+  min-height: 110px;
+  height: 100%;
   border-radius: 12px;
   padding: 18px 20px;
   display: flex;
@@ -2337,6 +2432,7 @@ onMounted(() => {
 .kpi-delivered::before         { box-shadow: 0 0 30px rgba(20,184,166,0.15); }
 .kpi-delivered_unpaid::before  { box-shadow: 0 0 30px rgba(239,68,68,0.15); }
 .kpi-paid::before              { box-shadow: 0 0 30px rgba(34,197,94,0.15); }
+.kpi-free::before              { box-shadow: 0 0 30px rgba(148,163,184,0.15); }
 
 .kpi-icon-box {
   width: 48px;
@@ -2361,6 +2457,7 @@ onMounted(() => {
 .kpi-delivered_unpaid .kpi-icon-box   { background: rgba(239,68,68,0.12); color: #EF4444; }
 .kpi-contracted .kpi-icon-box         { background: var(--crm-kpi-bg-sky); color: #0284C7; }
 .kpi-paid .kpi-icon-box               { background: var(--crm-kpi-bg-green); color: #22C55E; }
+.kpi-free .kpi-icon-box               { background: rgba(148,163,184,0.12); color: #94A3B8; }
 
 .kpi-budget           { border-top: 3px solid #3B82F6; }
 .kpi-plan_schedule    { border-top: 3px solid #F59E0B; }
@@ -2371,6 +2468,9 @@ onMounted(() => {
 .kpi-delivered_unpaid { border-top: 3px solid #EF4444; }
 .kpi-contracted       { border-top: 3px solid #0284C7; }
 .kpi-paid             { border-top: 3px solid #22C55E; }
+.kpi-free             { border-top: 3px solid #94A3B8; }
+.kpi-card.kpi-over    { border-top-color: #EF4444; }
+.kpi-over .kpi-icon-box { background: rgba(239,68,68,0.12); color: #EF4444; }
 
 .kpi-body { flex: 1; min-width: 0; }
 .kpi-value {
@@ -2730,6 +2830,8 @@ onMounted(() => {
 .kpi-row .v-col:nth-child(5) .kpi-card { animation: card-entrance 0.4s cubic-bezier(0.22, 1, 0.36, 1) 0.25s both; }
 .kpi-row .v-col:nth-child(6) .kpi-card { animation: card-entrance 0.4s cubic-bezier(0.22, 1, 0.36, 1) 0.30s both; }
 .kpi-row .v-col:nth-child(7) .kpi-card { animation: card-entrance 0.4s cubic-bezier(0.22, 1, 0.36, 1) 0.35s both; }
+.kpi-row .v-col:nth-child(8) .kpi-card { animation: card-entrance 0.4s cubic-bezier(0.22, 1, 0.36, 1) 0.40s both; }
+.kpi-row .v-col:nth-child(9) .kpi-card { animation: card-entrance 0.4s cubic-bezier(0.22, 1, 0.36, 1) 0.45s both; }
 
 /* Charts entrance */
 .chart-row .v-col:nth-child(1) .chart-card { animation: card-entrance 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.3s both; }
@@ -2742,6 +2844,10 @@ onMounted(() => {
   border-radius: 12px;
   overflow: hidden;
   transition: box-shadow 0.2s ease;
+}
+/* KPI-виджет: при нехватке высоты (старый сохранённый layout) — скролл, не обрезание */
+.grid-widget:has(.kpi-row) {
+  overflow-y: auto;
 }
 .grid-widget--editing {
   box-shadow: 0 0 0 2px rgba(245,158,11,0.4);

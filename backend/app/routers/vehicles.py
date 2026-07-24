@@ -13,6 +13,7 @@ Endpoints:
 
 Registration in __init__.py done in separate commit after Wave 1 (per plan constraint).
 """
+from urllib.parse import quote as _url_quote
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -399,7 +400,7 @@ async def export_excel(
     return StreamingResponse(
         buf,
         media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        headers={'Content-Disposition': 'attachment; filename="vehicles.xlsx"'},
+        headers={'Content-Disposition': f"attachment; filename*=UTF-8''{_url_quote('Транспорт.xlsx', safe='-_.~')}"},
     )
 
 

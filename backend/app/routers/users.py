@@ -1,5 +1,6 @@
 from io import BytesIO
 from datetime import date as _date_type
+from urllib.parse import quote as _url_quote
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
@@ -1362,7 +1363,7 @@ async def users_import_template(_=Depends(require_action('user.manage'))):
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=users_template.xlsx"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_url_quote('Шаблон_импорта_сотрудников.xlsx', safe='-_.~')}"},
     )
 
 

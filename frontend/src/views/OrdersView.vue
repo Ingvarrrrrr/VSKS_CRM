@@ -2257,7 +2257,7 @@ const downloadTemplate = async () => {
   const url = importDialog.format === 'feo'
     ? '/api/purchases/import/feo-format/template'
     : '/api/purchases/import/template'
-  const filename = importDialog.format === 'feo' ? 'feo_import_template.xlsx' : 'import_template.xlsx'
+  const filename = importDialog.format === 'feo' ? 'Шаблон_импорта_закупок_формат_ФЭО.xlsx' : 'Шаблон_импорта_закупок.xlsx'
   const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
   if (!response.ok) return
   const blob = await response.blob()
@@ -2533,7 +2533,7 @@ async function doExport() {
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `zakupki_${new Date().toISOString().slice(0, 10)}.xlsx`
+    a.download = `Закупки_${new Date().toISOString().slice(0, 10)}.xlsx`
     document.body.appendChild(a)
     a.click()
     window.URL.revokeObjectURL(url)

@@ -25,6 +25,7 @@ import logging
 from datetime import date, datetime
 from io import BytesIO
 from typing import Optional
+from urllib.parse import quote as _url_quote
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -616,11 +617,12 @@ async def render_trip(
     trip.status = "rendered"
     await db.commit()
 
-    filename = f"trip_{trip_id}_{trip.date.isoformat()}.docx"
+    _trip_date_str = trip.date.isoformat() if trip.date else str(trip_id)
+    filename = f"Поездка_{_trip_date_str}_{trip_id}.docx"
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_url_quote(filename, safe='-_.~')}"},
     )
 
 
@@ -666,11 +668,11 @@ async def download_waybill_docx(
             "error_class": e.__class__.__name__,
         })
 
-    filename = f"waybill_{waybill.number or waybill.id}.docx"
+    filename = f"Путевой_лист_{waybill.number or waybill.id}.docx"
     return StreamingResponse(
         BytesIO(bytes_data),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_url_quote(filename, safe='-_.~')}"},
     )
 
 
@@ -718,11 +720,11 @@ async def download_waybill_xlsx(
             "error_class": e.__class__.__name__,
         })
 
-    filename = f"waybill_{waybill.number or waybill.id}_vsks.xlsx"
+    filename = f"Путевой_лист_{waybill.number or waybill.id}_ВСКС.xlsx"
     return StreamingResponse(
         BytesIO(bytes_data),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_url_quote(filename, safe='-_.~')}"},
     )
 
 

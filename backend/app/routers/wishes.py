@@ -1,3 +1,4 @@
+import re as _re
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy import select, delete, func, or_, and_
 from datetime import date
@@ -1608,9 +1609,12 @@ async def export_wish_xlsx(
     ws.auto_filter.ref = f"A1:{get_column_letter(ncols)}{last_row}"
     ws.freeze_panes = "A2"
     buf = io.BytesIO(); wb.save(buf); buf.seek(0)
-    fname = f"zayavka_{wish.id}.xlsx"
+    _wish_title_raw = (wish.title or "").strip()
+    _wish_title_clean = _re.sub(r'[\\/:*?"<>|\r\n]+', "", _wish_title_raw)
+    _wish_title_clean = _re.sub(r'\s+', "_", _wish_title_clean)[:50]
+    fname = f"Заявка_{_wish_title_clean}_{wish.id}.xlsx" if _wish_title_clean else f"Заявка_{wish.id}.xlsx"
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname, safe='-_.~')}"},
     )

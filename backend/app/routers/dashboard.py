@@ -271,6 +271,25 @@ async def dashboard_charts(
                     else_=None
                 )
             ), 0).label("w_paid"),
+            # Per-subsidy basket counts/amounts for per-subsidy widget
+            func.coalesce(func.sum(
+                case((Purchase.status == "plan_schedule", Purchase.planned_total_price), else_=None)
+            ), 0).label("sp_amt"),
+            func.coalesce(func.count(
+                case((Purchase.status == "plan_schedule", Purchase.id), else_=None)
+            ), 0).label("sp_cnt"),
+            func.coalesce(func.count(
+                case((Purchase.status == "work_in_progress", Purchase.id), else_=None)
+            ), 0).label("sw_cnt"),
+            func.coalesce(func.count(
+                case((Purchase.status.in_(["contracted", "ordered"]), Purchase.id), else_=None)
+            ), 0).label("so_cnt"),
+            func.coalesce(func.count(
+                case((Purchase.status == "delivered", Purchase.id), else_=None)
+            ), 0).label("sd_cnt"),
+            func.coalesce(func.count(
+                case((Purchase.status == "paid", Purchase.id), else_=None)
+            ), 0).label("spd_cnt"),
         )
         .select_from(Subsidy)
         .outerjoin(Purchase, Purchase.subsidy_id == Subsidy.id)
@@ -398,6 +417,30 @@ async def dashboard_charts(
     contracts_amt = sum(contracts_map.values())
     contracts_cnt = sum(contracts_cnt_map.values())
 
+    # Накопительный SUM(planned_monthly) по active-договорам, регруппированный по subsidy_id
+    mp_q = (
+        select(
+            Contract.subsidy_id,
+            func.coalesce(func.sum(Contract.planned_monthly), 0).label("amt"),
+        )
+        .where(Contract.status == "active")
+        .where(Contract.planned_monthly.isnot(None))
+        .group_by(Contract.subsidy_id)
+    )
+    if use_sids:
+        if visible_subsidy_ids is not None:
+            mp_q = mp_q.where(Contract.subsidy_id.in_(visible_subsidy_ids))
+    elif org_ids is not None:
+        mp_q = mp_q.where(Contract.subsidy_id.in_(
+            select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
+        ))
+    mp_map: dict = {}
+    for r in (await db.execute(mp_q)).all():
+        mp_map[r.subsidy_id] = mp_map.get(r.subsidy_id, 0.0) + float(r.amt)
+    # Глобальный итог — сумма по регруппированным строкам (бит-в-бит эквивалентно прежнему скаляру,
+    # включая договоры с subsidy_id IS NULL — они попадают в mp_map под ключом None)
+    monthly_payments_total = float(sum(mp_map.values()))
+
     subsidy_stats = []
     for row in subsidy_rows:
         calc = budgets.get(row.id, 0.0)
@@ -445,6 +488,32 @@ async def dashboard_charts(
             "total_contracts": contracts_map.get(row.id, 0.0),
             "total_delivered": float(row.w_delivered) + float(row.w_paid),
             "total_delivered_unpaid": float(row.w_delivered),
+            # Per-subsidy widget basket (зеркало формул глобального widgets dict)
+            "widget": {
+                "plan_schedule": {
+                    "amount": float(row.sp_amt) + float(row.total_plan_schedule) + float(row.w_ordered) + float(row.w_delivered) + float(row.w_paid),
+                    "count": int(row.sp_cnt) + int(row.sw_cnt) + int(row.so_cnt) + int(row.sd_cnt) + int(row.spd_cnt),
+                },
+                "work": {
+                    "amount": float(row.total_plan_schedule) + float(row.w_ordered) + float(row.w_delivered) + float(row.w_paid),
+                    "count": int(row.sw_cnt) + int(row.so_cnt) + int(row.sd_cnt) + int(row.spd_cnt),
+                },
+                "ordered": {
+                    "amount": float(row.w_ordered) + float(row.w_delivered) + float(row.w_paid),
+                    "count": int(row.so_cnt) + int(row.sd_cnt) + int(row.spd_cnt),
+                    "monthly_payments_total": mp_map.get(row.id, 0.0),
+                },
+                "delivered": {
+                    "amount": float(row.w_delivered) + float(row.w_paid),
+                    "count": int(row.sd_cnt) + int(row.spd_cnt),
+                },
+                "delivered_unpaid": {"amount": float(row.w_delivered), "count": int(row.sd_cnt)},
+                "paid": {"amount": float(row.w_paid), "count": int(row.spd_cnt)},
+                "contracts": {
+                    "amount": contracts_map.get(row.id, 0.0),
+                    "count": contracts_cnt_map.get(row.id, 0),
+                },
+            },
         })
 
     # ── Накопительные виджеты закупок ────────────────────────────────────────
@@ -513,21 +582,6 @@ async def dashboard_charts(
     so_amt  = float(basket_row.so_amt);  so_cnt  = int(basket_row.so_cnt)
     sd_amt  = float(basket_row.sd_amt);  sd_cnt  = int(basket_row.sd_cnt)
     spd_amt = float(basket_row.spd_amt); spd_cnt = int(basket_row.spd_cnt)
-
-    # Накопительный SUM(planned_monthly) по active-договорам для виджета «Заказано»
-    mp_q = (
-        select(func.coalesce(func.sum(Contract.planned_monthly), 0))
-        .where(Contract.status == "active")
-        .where(Contract.planned_monthly.isnot(None))
-    )
-    if use_sids:
-        if visible_subsidy_ids is not None:
-            mp_q = mp_q.where(Contract.subsidy_id.in_(visible_subsidy_ids))
-    elif org_ids is not None:
-        mp_q = mp_q.where(Contract.subsidy_id.in_(
-            select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
-        ))
-    monthly_payments_total = float((await db.execute(mp_q)).scalar() or 0)
 
     # ── Собираем виджеты ─────────────────────────────────────────────────────
     widgets = {
@@ -1236,11 +1290,11 @@ async def export_financial_plan_xlsx(
     buf.seek(0)
 
     from urllib.parse import quote
-    filename = f"finplan_{granularity}_{dt.now().strftime('%Y-%m-%d')}.xlsx"
+    filename = f"Финплан_{granularity}_{dt.now().strftime('%Y-%m-%d')}.xlsx"
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename, safe='-_.~')}"},
     )
 
 
@@ -1354,10 +1408,10 @@ async def export_financial_plan_details_xlsx(
     buf.seek(0)
 
     from urllib.parse import quote
-    filename = f"finplan_{period}_{category}.xlsx"
+    filename = f"Финплан_{period}_{category}.xlsx"
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename, safe='-_.~')}"},
     )
 

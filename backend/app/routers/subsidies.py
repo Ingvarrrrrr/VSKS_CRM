@@ -2711,7 +2711,7 @@ async def export_plan_graph_excel(
     buf.seek(0)
 
     safe_name = sub.name.replace(" ", "_").replace("/", "_")[:40]
-    filename = f"plan_graph_{safe_name}_{sub.year}.xlsx"
+    filename = f"План_график_{safe_name}_{sub.year}.xlsx"
 
     return StreamingResponse(
         buf,
@@ -2777,7 +2777,7 @@ async def export_plan_graph_version_excel(
 
     date_part = (eff_date or (ver.created_at.strftime("%Y-%m-%d") if ver.created_at else "nodate"))
     safe_name = sub.name.replace(" ", "_").replace("/", "_")[:30]
-    filename = f"subsidy-{subsidy_id}_v{ver.version_number}_{date_part}.xlsx"
+    filename = f"Субсидия_{subsidy_id}_план_v{ver.version_number}_{date_part}.xlsx"
 
     return StreamingResponse(
         buf,
@@ -3224,7 +3224,7 @@ async def compare_plan_graph_versions_excel(
     wb.save(buf)
     buf.seek(0)
 
-    filename = f"subsidy-{subsidy_id}_compare_v{ver1.version_number}_vs_v{ver2.version_number}.xlsx"
+    filename = f"Субсидия_{subsidy_id}_сравнение_v{ver1.version_number}_и_v{ver2.version_number}.xlsx"
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -3577,7 +3577,7 @@ async def export_plan_graph_versions_multi_excel(
     wb.save(buf)
     buf.seek(0)
 
-    filename = f"subsidy-{subsidy_id}_feo-editions.xlsx"
+    filename = f"Субсидия_{subsidy_id}_ФЭО_редакции.xlsx"
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -3668,7 +3668,7 @@ async def export_plan_graph_docx(
     buf.seek(0)
 
     safe_name = sub.name.replace(" ", "_").replace("/", "_")[:40]
-    filename = f"plan_graph_{safe_name}_{sub.year}.docx"
+    filename = f"План_график_{safe_name}_{sub.year}.docx"
 
     return StreamingResponse(
         buf,

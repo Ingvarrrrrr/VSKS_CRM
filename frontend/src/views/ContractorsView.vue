@@ -871,7 +871,7 @@ async function downloadTemplate() {
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
-  a.href = url; a.download = 'contractors_template.xlsx'; a.click()
+  a.href = url; a.download = 'Шаблон_импорта_контрагентов.xlsx'; a.click()
   URL.revokeObjectURL(url)
 }
 

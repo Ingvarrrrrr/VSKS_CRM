@@ -3190,7 +3190,8 @@ async function downloadServiceNote(wish: Wish) {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `service_note_wish_${wish.id}.docx`
+    const _sanitized = (wish.title || '').replace(/[\\/:*?"<>|\r\n]+/g, '').replace(/\s+/g, '_').slice(0, 50)
+    a.download = _sanitized ? `Служебная_записка_${_sanitized}.docx` : `Служебная_записка_заявка_${wish.id}.docx`
     document.body.appendChild(a)
     a.click()
     a.remove()
@@ -3214,7 +3215,9 @@ async function downloadWishExcel(wish: Wish, withPhotos: boolean = true) {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `zayavka_${wish.id}${withPhotos ? '' : '_bez_foto'}.xlsx`
+    const _wishTitle = (wish.title || '').replace(/[\\/:*?"<>|\r\n]+/g, '').replace(/\s+/g, '_').slice(0, 50)
+    const _suffix = withPhotos ? '' : '_без_фото'
+    a.download = _wishTitle ? `Заявка_${_wishTitle}_${wish.id}${_suffix}.xlsx` : `Заявка_${wish.id}${_suffix}.xlsx`
     document.body.appendChild(a)
     a.click()
     a.remove()

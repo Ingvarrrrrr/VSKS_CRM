@@ -2576,7 +2576,7 @@ async function downloadUserTemplate() {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = 'users_template.xlsx'
+  a.download = 'Шаблон_импорта_сотрудников.xlsx'
   a.click()
   URL.revokeObjectURL(url)
 }
@@ -2882,7 +2882,7 @@ async function downloadDeptTemplate() {
   const res = await fetch('/api/departments/import/template', { headers: { Authorization: `Bearer ${token}` } })
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
-  const a = document.createElement('a'); a.href = url; a.download = 'departments_template.xlsx'; a.click()
+  const a = document.createElement('a'); a.href = url; a.download = 'Шаблон_импорта_отделов.xlsx'; a.click()
   URL.revokeObjectURL(url)
 }
 

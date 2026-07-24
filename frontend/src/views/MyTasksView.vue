@@ -574,7 +574,7 @@ function triggerTasksImport() {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     }).then(r => r.blob()).then(blob => {
       a.href = URL.createObjectURL(blob)
-      a.download = 'tasks_import_template.xlsx'
+      a.download = 'Шаблон_импорта_задач.xlsx'
       document.body.appendChild(a)
       a.click()
       a.remove()

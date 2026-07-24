@@ -1,5 +1,6 @@
 from io import BytesIO
 from typing import List, Optional
+from urllib.parse import quote as _url_quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
@@ -728,7 +729,7 @@ async def dept_import_template(_=Depends(require_tab('staff'))):
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=departments_template.xlsx"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_url_quote('Шаблон_импорта_отделов.xlsx', safe='-_.~')}"},
     )
 
 

@@ -8146,7 +8146,7 @@ async function downloadKpXlsx() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `KP_items_${purchaseId.value}.xlsx`
+    a.download = `Сравнение_КП_закупка_${purchaseId.value}.xlsx`
     a.click()
     URL.revokeObjectURL(url)
   } catch {

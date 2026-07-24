@@ -1485,7 +1485,7 @@ async function downloadTemplate() {
   if (!res.ok) { showSnack('Ошибка загрузки шаблона', 'error'); return }
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
-  const a = document.createElement('a'); a.href = url; a.download = 'products_template.xlsx'; a.click()
+  const a = document.createElement('a'); a.href = url; a.download = 'Шаблон_импорта_товаров.xlsx'; a.click()
   URL.revokeObjectURL(url)
 }
 

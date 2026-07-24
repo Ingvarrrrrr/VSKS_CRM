@@ -775,7 +775,7 @@ async def download_feo_template():
     buf = BytesIO(); wb.save(buf); buf.seek(0)
     return StreamingResponse(buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=feo_categories_template.xlsx"})
+        headers={"Content-Disposition": _content_disposition("Шаблон_импорта_направлений_ФЭО.xlsx")})
 
 
 @router.post("/import-preview")
@@ -1553,7 +1553,7 @@ async def export_feo_to_excel(
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": _content_disposition(f"feo_{safe_name}.xlsx")},
+        headers={"Content-Disposition": _content_disposition(f"ФЭО_{safe_name}.xlsx")},
     )
 
 

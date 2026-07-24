@@ -499,11 +499,7 @@
                 hint="К какому мероприятию относится закупка" persistent-hint
               />
             </v-col>
-            <!-- Нужна к дате — единая точка ввода, убрана из вкладок «Основание» -->
-            <v-col cols="12" md="3">
-              <v-text-field v-model="form.delivery_date" label="Нужна к дате" hint="Необязательно" persistent-hint variant="outlined"
-                density="compact" type="date" />
-            </v-col>
+            <!-- delivery_date перенесена в блок «Сроки и даты» ниже -->
           </v-row>
           <!-- Тип договора: определяет предельную сумму (Разовый/Рамочный) -->
           <v-row v-if="isSectionVisible('contract_type')" class="mt-2">
@@ -1107,25 +1103,7 @@
               <v-text-field v-model="form.agreement_number" label="№ доп.соглашения" variant="outlined"
                 density="compact" placeholder="При наличии" />
             </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field v-model="form.agreement_date" label="Дата доп.соглашения" variant="outlined"
-                density="compact" type="date" />
-            </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field v-model="form.order_date" label="Дата заказа" variant="outlined"
-                density="compact" type="date" />
-            </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field v-model="form.contract_end_date" label="Срок действия договора" variant="outlined"
-                density="compact" type="date"
-                :readonly="isFramework && !!selectedFrameworkContract?.end_date"
-                :bg-color="isFramework && selectedFrameworkContract?.end_date ? 'grey-lighten-4' : undefined"
-                hint="Дата окончания действия договора" persistent-hint />
-            </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field v-model="form.procurement_planned_date" label="Планируемая дата закупки"
-                variant="outlined" density="compact" type="date" />
-            </v-col>
+            <!-- agreement_date, order_date, contract_end_date, procurement_planned_date перенесены в «Сроки и даты» -->
             <v-col cols="12" md="5">
               <v-combobox v-model="form.delivery_address" :items="deliveryAddressSuggestions"
                 :label="addressLabel" variant="outlined" density="compact" clearable hide-no-data no-filter
@@ -1176,10 +1154,7 @@
               <v-text-field v-model="form.contract_date" label="Дата счёта" variant="outlined"
                 density="compact" type="date" />
             </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field v-model="form.procurement_planned_date" label="Планируемая дата закупки"
-                variant="outlined" density="compact" type="date" />
-            </v-col>
+            <!-- procurement_planned_date перенесена в «Сроки и даты» -->
             <v-col cols="12" md="6">
               <v-combobox v-model="form.delivery_address" :items="deliveryAddressSuggestions"
                 :label="addressLabel" variant="outlined" density="compact" clearable hide-no-data no-filter
@@ -1207,14 +1182,7 @@
               <v-text-field v-model="form.contract_date" label="Дата счёт-договора" variant="outlined"
                 density="compact" type="date" />
             </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field v-model="form.contract_end_date" label="Срок действия" variant="outlined"
-                density="compact" type="date" hint="Дата окончания действия" persistent-hint />
-            </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field v-model="form.procurement_planned_date" label="Планируемая дата закупки"
-                variant="outlined" density="compact" type="date" />
-            </v-col>
+            <!-- contract_end_date и procurement_planned_date перенесены в «Сроки и даты» -->
             <v-col cols="12" md="5">
               <v-combobox v-model="form.delivery_address" :items="deliveryAddressSuggestions"
                 :label="addressLabel" variant="outlined" density="compact" clearable hide-no-data no-filter
@@ -1433,17 +1401,29 @@
                 label="Тип срока оказания услуг" variant="outlined" density="compact" clearable
               />
             </v-col>
-            <v-col v-if="form.service_period_type === 'period'" cols="12" md="2">
-              <v-text-field v-model="form.service_start_date" label="Начало периода"
-                variant="outlined" density="compact" type="date" />
-            </v-col>
-            <v-col v-if="form.service_period_type === 'period'" cols="12" md="2">
-              <v-text-field v-model="form.service_end_date" label="Конец периода"
-                variant="outlined" density="compact" type="date" />
-            </v-col>
-            <v-col v-if="form.service_period_type === 'date'" cols="12" md="3">
-              <v-text-field v-model="form.service_start_date" label="Дата оказания услуг"
-                variant="outlined" density="compact" type="date" />
+            <!-- Даты редактируются только в блоке «Сроки и даты» ниже -->
+            <v-col cols="12" md="5">
+              <div class="d-flex align-center gap-2 mt-1">
+                <v-icon size="16" color="blue-grey-lighten-2">mdi-calendar-range</v-icon>
+                <span class="text-body-2 text-medium-emphasis">
+                  <template v-if="form.service_period_type === 'period'">
+                    Период:
+                    <strong>{{ form.service_start_date || '—' }}</strong>
+                    &nbsp;—&nbsp;
+                    <strong>{{ form.service_end_date || '—' }}</strong>
+                  </template>
+                  <template v-else-if="form.service_period_type === 'date'">
+                    Дата оказания услуг:
+                    <strong>{{ form.service_start_date || '—' }}</strong>
+                  </template>
+                  <template v-else>Тип срока не выбран</template>
+                </span>
+                <v-btn
+                  size="x-small" variant="text" color="primary" class="ml-1"
+                  @click="document.getElementById('section-dates')?.scrollIntoView({ behavior: 'smooth', block: 'start' })"
+                >Изменить ↓</v-btn>
+              </div>
+              <div class="text-caption text-medium-emphasis">Изменить даты — в блоке «Сроки и даты»</div>
             </v-col>
             <v-col cols="12" md="3">
               <v-checkbox
@@ -1544,16 +1524,6 @@
           </v-row>
           <v-row>
             <v-col cols="12">
-              <v-text-field
-                v-model="form.submission_deadline"
-                label="Дата и время завершения приёма заявок"
-                variant="outlined" density="compact"
-                type="datetime-local"
-                hint="Подставляется в шаблоны как {{submission_deadline_datetime}}"
-                persistent-hint
-              />
-            </v-col>
-            <v-col cols="12">
               <div id="pub-target-address" style="position:relative">
                 <div v-if="pointerTarget === 'address'" class="pub-pointer"><span class="mdi mdi-arrow-down-bold" /></div>
                 <div :class="pointerTarget === 'address' ? 'pub-glow' : ''">
@@ -1596,9 +1566,88 @@
               </div>
             </v-col>
           </v-row>
+          <!-- Новые поля: скорее всего понадобится, предоплата перенесена в «Сроки и даты», подпись этапа -->
+          <v-row class="mt-2">
+            <v-col cols="12" md="4">
+              <v-checkbox
+                v-model="form.is_likely_needed"
+                label="Скорее всего понадобится"
+                density="compact" hide-details
+              />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-checkbox
+                v-model="form.is_prepayment"
+                label="Предоплата"
+                density="compact" hide-details
+              />
+            </v-col>
+            <v-col v-if="form.is_prepayment" cols="12" md="4">
+              <!-- дата предоплаты перенесена в блок «Сроки и даты» -->
+            </v-col>
+          </v-row>
+          <v-row>
+            <v-col cols="12" md="6">
+              <v-text-field
+                v-model="form.stage_label"
+                label="Подпись этапа"
+                variant="outlined" density="compact"
+                hint="Например: Февраль 2026"
+                persistent-hint
+              />
+            </v-col>
+          </v-row>
+        </v-card-text>
+      </v-card>
+
+      <!-- 4б. Сроки и даты закупки — единый блок -->
+      <v-card id="section-dates" variant="outlined" class="mb-4">
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex align-center">
+          <v-icon start color="blue-grey">mdi-calendar-clock</v-icon>
+          Сроки и даты
+        </v-card-title>
+        <v-card-text>
+
+          <!-- Планирование -->
+          <div class="text-caption text-medium-emphasis font-weight-medium text-uppercase mb-2">Планирование</div>
+          <v-row>
+            <v-col cols="12" md="3">
+              <v-text-field
+                v-model="form.procurement_planned_date"
+                label="Планируемая дата закупки"
+                variant="outlined" density="compact" type="date"
+                hint="Когда планируем провести закупку — используется в план-графике"
+                persistent-hint
+              />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field
+                v-model="form.delivery_date"
+                label="Нужна к дате"
+                variant="outlined" density="compact" type="date"
+                hint="Срок, к которому товар/услуга должны быть получены"
+                persistent-hint
+              />
+            </v-col>
+            <v-col cols="12" md="6">
+              <v-text-field
+                v-model="form.submission_deadline"
+                label="Приём заявок до"
+                variant="outlined" density="compact"
+                type="datetime-local"
+                hint="Дедлайн подачи предложений поставщиками (уходит на Фабрикант как {{submission_deadline_datetime}})"
+                persistent-hint
+              />
+            </v-col>
+          </v-row>
+
+          <v-divider class="my-3" />
+
+          <!-- Исполнение -->
+          <div class="text-caption text-medium-emphasis font-weight-medium text-uppercase mb-2">Исполнение</div>
           <v-row>
             <v-col cols="12">
-              <div class="text-body-2 mb-1">Срок оказания услуг (для шаблонов)</div>
+              <div class="text-body-2 mb-1">Срок оказания услуг</div>
               <v-radio-group
                 v-model="form.service_term_mode"
                 inline density="compact" hide-details class="mt-0"
@@ -1608,21 +1657,24 @@
                 <v-radio label="В течение N дней" value="duration" />
                 <v-radio label="До даты" value="deadline" />
               </v-radio-group>
+              <div class="text-caption text-medium-emphasis mt-1">Как считается срок исполнения: период, длительность или конкретная дата</div>
             </v-col>
           </v-row>
           <v-row v-if="form.service_term_mode === 'range'">
             <v-col cols="12" md="3">
               <v-text-field
                 v-model="form.service_start_date"
-                label="Начало" type="date"
+                label="Начало периода" type="date"
                 variant="outlined" density="compact"
+                hint="Дата начала оказания услуг/поставки" persistent-hint
               />
             </v-col>
             <v-col cols="12" md="3">
               <v-text-field
                 v-model="form.service_end_date"
-                label="Конец" type="date"
+                label="Конец периода" type="date"
                 variant="outlined" density="compact"
+                hint="Дата завершения оказания услуг/поставки" persistent-hint
               />
             </v-col>
           </v-row>
@@ -1632,6 +1684,7 @@
                 v-model.number="form.service_term_days"
                 label="Количество дней" type="number" min="1"
                 variant="outlined" density="compact"
+                hint="Срок исполнения в днях от даты подписания" persistent-hint
               />
             </v-col>
             <v-col cols="12" md="3">
@@ -1649,6 +1702,7 @@
                 v-model="form.service_deadline_date"
                 label="До какой даты" type="date"
                 variant="outlined" density="compact"
+                hint="Услуга/поставка должна быть исполнена не позднее этой даты" persistent-hint
               />
             </v-col>
             <v-col cols="12" md="4" class="d-flex align-center gap-2">
@@ -1685,41 +1739,47 @@
             </v-col>
           </v-row>
 
-          <!-- Новые поля: скорее всего понадобится, предоплата, подпись этапа -->
-          <v-row class="mt-2">
-            <v-col cols="12" md="4">
-              <v-checkbox
-                v-model="form.is_likely_needed"
-                label="Скорее всего понадобится"
-                density="compact" hide-details
+          <v-divider class="my-3" />
+
+          <!-- Договор и оплата -->
+          <div class="text-caption text-medium-emphasis font-weight-medium text-uppercase mb-2">Договор и оплата</div>
+          <v-row>
+            <v-col cols="12" md="3">
+              <v-text-field
+                v-model="form.contract_end_date"
+                label="Срок действия договора"
+                variant="outlined" density="compact" type="date"
+                :readonly="isFramework && !!selectedFrameworkContract?.end_date"
+                :bg-color="isFramework && selectedFrameworkContract?.end_date ? 'grey-lighten-4' : undefined"
+                hint="До какой даты действует договор" persistent-hint
               />
             </v-col>
-            <v-col cols="12" md="4">
-              <v-checkbox
-                v-model="form.is_prepayment"
-                label="Предоплата"
-                density="compact" hide-details
+            <v-col cols="12" md="3">
+              <v-text-field
+                v-model="form.agreement_date"
+                label="Дата доп.соглашения"
+                variant="outlined" density="compact" type="date"
+                hint="Дата подписания дополнительного соглашения (при наличии)" persistent-hint
               />
             </v-col>
-            <v-col v-if="form.is_prepayment" cols="12" md="4">
+            <v-col cols="12" md="3">
+              <v-text-field
+                v-model="form.order_date"
+                label="Дата заказа"
+                variant="outlined" density="compact" type="date"
+                hint="Когда сделан заказ поставщику" persistent-hint
+              />
+            </v-col>
+            <v-col v-if="form.is_prepayment" cols="12" md="3">
               <v-text-field
                 v-model="form.prepayment_date"
                 label="Дата предоплаты" type="date"
                 variant="outlined" density="compact"
+                hint="Когда возникло обязательство по предоплате" persistent-hint
               />
             </v-col>
           </v-row>
-          <v-row>
-            <v-col cols="12" md="6">
-              <v-text-field
-                v-model="form.stage_label"
-                label="Подпись этапа"
-                variant="outlined" density="compact"
-                hint="Например: Февраль 2026"
-                persistent-hint
-              />
-            </v-col>
-          </v-row>
+
         </v-card-text>
       </v-card>
 

@@ -90,14 +90,27 @@ ALL_EXPORT_COLUMNS = {
     "vat_applicable":         {"label": "НДС применяется",       "group": "НДС"},
     "vat_rate":               {"label": "Ставка НДС",            "group": "НДС"},
     "vat_exemption_article":  {"label": "Статья НК РФ",          "group": "НДС"},
+    "vat_mode":               {"label": "Режим НДС",             "group": "НДС"},
     "etp_url":                {"label": "Ссылка ЭТП",            "group": "Закупка"},
+    "region":                 {"label": "Регион поставки",        "group": "Позиция"},
+    "delivery_location":      {"label": "Место доставки/услуг",  "group": "Позиция"},
+    "delivery_address":       {"label": "Адрес доставки",        "group": "Позиция"},
+    "final_unit_price":       {"label": "Факт. цена за ед.",     "group": "Цены"},
+    "final_total_amount":     {"label": "Факт. сумма",           "group": "Цены"},
+    "contract_end_date":      {"label": "Срок действия договора","group": "Договор"},
+    "submission_deadline":    {"label": "Окончание приёма заявок","group": "Договор"},
+    "commitment_quarter":     {"label": "Квартал обязательств",  "group": "Оплата"},
+    "planned_payment_month":  {"label": "План. месяц платежа",   "group": "Оплата"},
+    "payment_month":          {"label": "Месяц платежа",         "group": "Оплата"},
+    "stage_label":            {"label": "Этап (подпись)",        "group": "Идентификация"},
+    "substatus":              {"label": "Подстатус",             "group": "Идентификация"},
 }
 
 DEFAULT_EXPORT_COLUMNS = [
     "purchase_number", "registry_number", "item_name", "item_type", "unit", "quantity",
-    "nmck", "contract_price", "economy", "purchase_method",
-    "contract_number", "contract_date", "contractor", "contractor_inn",
-    "execution_term", "country_origin",
+    "region", "nmck", "planned_total_price", "contract_price", "final_total_amount", "economy",
+    "purchase_method", "contract_number", "contract_date", "contract_end_date",
+    "contractor", "contractor_inn", "execution_term", "country_origin",
     "acceptance_doc_name", "acceptance_doc_number", "acceptance_doc_date", "acceptance_doc_amount",
     "payment_doc_number", "payment_doc_date", "payment_amount", "payment_federal", "payment_purpose",
     "status",
@@ -214,6 +227,16 @@ _DD_UNIT = [             # free-text suggestions only
     ("л",     None), ("м",    None), ("м²",   None),  ("м³",   None),
     ("уп.",   None), ("набор",None), ("усл.", None),
 ]
+_DD_QUARTER = [          # квартал принятия обязательств (1-4)
+    ("1", None),
+    ("2", None),
+    ("3", None),
+    ("4", None),
+]
+_DD_VAT_MODE = [         # режим НДС
+    ("Одинаковый",          "uniform"),
+    ("Для каждого товара",  "per_item"),
+]
 
 
 def _get_cell_value(key: str, p: Purchase, ctx: dict):
@@ -260,7 +283,35 @@ def _get_cell_value(key: str, p: Purchase, ctx: dict):
     if key == "vat_applicable":          return "Да" if p.vat_applicable else ""
     if key == "vat_rate":                return p.vat_rate if p.vat_rate is not None else ""
     if key == "vat_exemption_article":   return p.vat_exemption_article or ""
+    if key == "vat_mode":
+        _vat_mode_labels = {"uniform": "Одинаковый", "per_item": "Для каждого товара"}
+        return _vat_mode_labels.get(p.vat_mode or "uniform", p.vat_mode or "")
     if key == "etp_url":                 return p.etp_url or ""
+    if key == "region":                  return p.region or ""
+    if key == "delivery_location":       return p.delivery_location or ""
+    if key == "delivery_address":        return p.delivery_address or ""
+    if key == "final_unit_price":        return float(p.final_unit_price) if p.final_unit_price else ""
+    if key == "final_total_amount":      return float(p.final_total_amount) if p.final_total_amount else ""
+    if key == "contract_end_date":       return str(p.contract_end_date) if p.contract_end_date else ""
+    if key == "submission_deadline":
+        if p.submission_deadline:
+            try:
+                return str(p.submission_deadline.date()) if hasattr(p.submission_deadline, 'date') else str(p.submission_deadline)
+            except Exception:
+                return str(p.submission_deadline)
+        return ""
+    if key == "commitment_quarter":      return p.commitment_quarter if p.commitment_quarter is not None else ""
+    if key == "planned_payment_month":   return str(p.planned_payment_month) if p.planned_payment_month else ""
+    if key == "payment_month":
+        if p.payment_doc_date:
+            try:
+                d = p.payment_doc_date
+                return f"{d.month:02d}.{d.year}"
+            except Exception:
+                return ""
+        return ""
+    if key == "stage_label":             return p.stage_label or ""
+    if key == "substatus":               return _SUBSTATUS_LABELS.get(p.substatus or "", p.substatus or "")
     return ""
 
 
@@ -1089,6 +1140,139 @@ _COL_SPEC: list[dict] = [
             "Это справочное поле, не влияет на сохранение закупки."
         ),
     },
+    {
+        "header":   "Регион",
+        "required": False,
+        "width":    22,
+        "fmt":      "Москва / Московская область",
+        "effect":   "Регион проведения закупки / оказания услуг (region)",
+        "if_empty": "Регион не указывается",
+        "comment":  (
+            "Субъект РФ или регион, в котором проводится закупка или оказывается услуга.\n"
+            "Отображается в карточке закупки. Одно из 89 субъектов РФ или свободный текст.\n"
+            "Если не заполнено — регион останется пустым."
+        ),
+    },
+    {
+        "header":   "Место оказания услуг / доставки",
+        "required": False,
+        "width":    30,
+        "fmt":      "г. Москва, ул. Ленина, 1",
+        "effect":   "Место оказания услуг или пункт доставки (delivery_location)",
+        "if_empty": "Место оказания услуг не указывается",
+        "comment":  (
+            "Адрес или описание места, где оказывается услуга или доставляется товар.\n"
+            "Используется в документах (договор, ТЗ) в разделе «Место оказания услуг».\n"
+            "Если не заполнено — место доставки/услуг останется пустым."
+        ),
+    },
+    {
+        "header":   "Адрес доставки",
+        "required": False,
+        "width":    30,
+        "fmt":      "197022, г. Санкт-Петербург, пр. Большой, 5",
+        "effect":   "Почтовый адрес доставки (delivery_address)",
+        "if_empty": "Адрес доставки не указывается",
+        "comment":  (
+            "Точный почтовый адрес доставки товара. Используется при формировании товарной накладной.\n"
+            "Отображается в карточке закупки в блоке доставки.\n"
+            "Если не заполнено — адрес доставки останется пустым."
+        ),
+    },
+    {
+        "header":   "Экономия по результатам конкурентных закупок",
+        "required": False,
+        "width":    32,
+        "fmt":      "15000",
+        "effect":   "Сумма экономии по результатам конкурентных процедур (economy)",
+        "if_empty": "Экономия не фиксируется",
+        "comment":  (
+            "Сумма экономии в рублях, полученная по результатам конкурентной процедуры.\n"
+            "Рассчитывается как разница НМЦК и цены договора; можно указать вручную.\n"
+            "Если не заполнено — экономия не будет указана."
+        ),
+    },
+    {
+        "header":   "Срок действия договора",
+        "required": False,
+        "width":    22,
+        "fmt":      "31.12.2026",
+        "effect":   "Дата окончания срока действия договора (contract_end_date)",
+        "if_empty": "Срок действия договора не указывается",
+        "comment":  (
+            "Дата окончания срока действия договора в формате ДД.ММ.ГГГГ.\n"
+            "Отображается в карточке закупки в блоке «Договор и оплата».\n"
+            "Если не заполнено — срок действия договора не будет указан."
+        ),
+    },
+    {
+        "header":   "Квартал принятия обязательств",
+        "required": False,
+        "width":    22,
+        "fmt":      "1 / 2 / 3 / 4",
+        "effect":   "Квартал, в котором принимаются финансовые обязательства (commitment_quarter)",
+        "if_empty": "Квартал обязательств не указывается",
+        "comment":  (
+            "Квартал принятия финансовых обязательств по договору (1, 2, 3 или 4).\n"
+            "Используется для планирования финансирования по кварталам.\n"
+            "Если не заполнено — квартал обязательств не будет указан."
+        ),
+        "_dd": "_DD_QUARTER",
+    },
+    {
+        "header":   "Планируемый месяц платежа",
+        "required": False,
+        "width":    22,
+        "fmt":      "01.04.2026",
+        "effect":   "Планируемая дата (месяц) платежа по договору (planned_payment_month)",
+        "if_empty": "Планируемый месяц платежа не указывается",
+        "comment":  (
+            "Планируемая дата платежа — укажите первое число нужного месяца (ДД.ММ.ГГГГ).\n"
+            "Используется для планирования кассового разрыва и графика платежей.\n"
+            "Если не заполнено — планируемый месяц платежа не будет задан."
+        ),
+    },
+    {
+        "header":   "Дата окончания приёма заявок",
+        "required": False,
+        "width":    26,
+        "fmt":      "20.03.2026",
+        "effect":   "Дата окончания приёма заявок от участников (submission_deadline)",
+        "if_empty": "Срок приёма заявок не указывается",
+        "comment":  (
+            "Дата окончания приёма заявок от участников конкурентной процедуры (ДД.ММ.ГГГГ).\n"
+            "Отображается в карточке закупки и используется при публикации на ЭТП.\n"
+            "Если не заполнено — срок приёма заявок не будет указан."
+        ),
+    },
+    {
+        "header":   "Режим НДС",
+        "required": False,
+        "width":    24,
+        "fmt":      "Одинаковый / Для каждого товара",
+        "effect":   "Режим применения НДС к позициям (vat_mode)",
+        "if_empty": "Используется режим «Одинаковый» по умолчанию",
+        "comment":  (
+            "Режим применения НДС: «Одинаковый» — одна ставка для всех позиций; "
+            "«Для каждого товара» — ставка задаётся per-позиционно.\n"
+            "Влияет на формирование документов со спецификацией.\n"
+            "Если не заполнено — применяется режим «Одинаковый»."
+        ),
+        "_dd": "_DD_VAT_MODE",
+    },
+    {
+        "header":   "Подпись этапа",
+        "required": False,
+        "width":    20,
+        "fmt":      "Февраль 2026",
+        "effect":   "Текстовая подпись этапа (stage_label) — отображается в карточке",
+        "if_empty": "Подпись этапа не указывается",
+        "comment":  (
+            "Произвольная текстовая подпись текущего этапа, например «Февраль 2026» или «1-й транш».\n"
+            "Отображается рядом со статусом в карточке закупки.\n"
+            "Если не заполнено — подпись этапа будет пустой."
+        ),
+    },
 ]
 
 # Derived tuples for backward-compatible access
@@ -1155,6 +1339,16 @@ _TEMPLATE_EXAMPLE_ROW = [
     "Товар",                                # Тип позиции (Товар/Услуга)
     "Договор",                              # Основание для оплаты
     "2026",                                 # Год
+    "Москва",                               # Регион
+    "",                                     # Место оказания услуг / доставки
+    "",                                     # Адрес доставки
+    "10000",                                # Экономия по результатам конкурентных закупок
+    "31.12.2026",                           # Срок действия договора
+    "2",                                    # Квартал принятия обязательств
+    "01.04.2026",                           # Планируемый месяц платежа
+    "10.03.2026",                           # Дата окончания приёма заявок
+    "Одинаковый",                           # Режим НДС
+    "Март 2026",                            # Подпись этапа
 ]
 
 # Example row 2: закупка 21, разовый — услуга, «Ведётся работа» с подстатусом, без НДС
@@ -1210,12 +1404,124 @@ _TEMPLATE_EXAMPLE_ROW_2 = [
     "Услуга",                               # Тип позиции (Товар/Услуга)
     "Счёт",                                 # Основание для оплаты
     "2026",                                 # Год
+    "Санкт-Петербург",                      # Регион
+    "г. Санкт-Петербург, пр. Большой, 5",  # Место оказания услуг / доставки
+    "",                                     # Адрес доставки
+    "",                                     # Экономия по результатам конкурентных закупок
+    "31.08.2026",                           # Срок действия договора
+    "3",                                    # Квартал принятия обязательств
+    "01.08.2026",                           # Планируемый месяц платежа
+    "",                                     # Дата окончания приёма заявок
+    "Одинаковый",                           # Режим НДС
+    "",                                     # Подпись этапа
 ]
 
 
+def _fix_comment_anchors(xlsx_bytes: bytes) -> bytes:
+    """
+    Пост-обработка xlsx: фиксирует VML-якоря комментариев openpyxl (все комментарии
+    вылетают в одно место из-за статичного margin-left/margin-top в ShapeWriter).
+
+    openpyxl пишет комментарии в xl/drawings/commentsDrawingN.vml (не vmlDrawingN.vml).
+    Ищем ВСЕ .vml-файлы под xl/drawings/ и патчим каждый.
+    """
+    import zipfile
+    import io
+
+    in_buf = io.BytesIO(xlsx_bytes)
+    out_buf = io.BytesIO()
+
+    try:
+        with zipfile.ZipFile(in_buf, 'r') as zin:
+            with zipfile.ZipFile(out_buf, 'w', compression=zipfile.ZIP_DEFLATED) as zout:
+                for item in zin.infolist():
+                    fname = item.filename  # ZipInfo.filename (не .name)
+                    data = zin.read(fname)
+                    # Патчим ЛЮБОЙ .vml под xl/drawings/ (commentsDrawingN.vml и vmlDrawingN.vml)
+                    if fname.startswith('xl/drawings/') and fname.endswith('.vml'):
+                        try:
+                            data = _patch_vml_anchors(data)
+                        except Exception:
+                            pass  # если что-то пошло не так — оставляем как есть
+                    zout.writestr(item, data)
+    except Exception:
+        return xlsx_bytes  # при любой ошибке возвращаем оригинал
+
+    return out_buf.getvalue()
+
+
+def _patch_vml_anchors(vml_bytes: bytes) -> bytes:
+    """
+    Перезаписывает margin-left/margin-top в style каждого Note-шейпа VML.
+
+    openpyxl использует namespace-префиксы ns0/ns1/ns2 (не v:/x:), поэтому
+    ищем шейпы и ClientData через regex, устойчивый к любому префиксу.
+
+    Позиционирование:
+      margin-left(pt) = сумма ширин колонок [0..Column-1] * 5.25pt + 5pt отступ
+      margin-top(pt)  = 32pt (под ячейкой заголовка Row=0)
+
+    Ширины колонок берём из _COL_SPEC[j]["width"] (Excel-единицы символов × 5.25pt/ед).
+    """
+    import re
+
+    vml_str = vml_bytes.decode('utf-8', errors='replace')
+
+    # Предвычисляем накопленные отступы по колонкам (0-based)
+    # _COL_SPEC[j]["width"] в символах Excel; 1 символ ≈ 7px ≈ 5.25pt
+    col_widths_pt = [s["width"] * 5.25 for s in _COL_SPEC]
+    # cumulative[j] = сумма ширин колонок 0..j-1 (отступ слева до начала колонки j)
+    cumulative = [0.0]
+    for w in col_widths_pt:
+        cumulative.append(cumulative[-1] + w)
+
+    # Regex для одного шейпа (ns-агностик): захватываем весь тег
+    # Шейпы не вложены, DOTALL нужен — используем нежадный поиск
+    shape_pat = re.compile(r'(<\w+:shape\b[^>]*>.*?</\w+:shape>)', re.DOTALL)
+
+    def fix_shape(m):
+        shape_text = m.group(1)
+
+        # Только шейпы с ObjectType="Note"
+        if 'ObjectType="Note"' not in shape_text:
+            return shape_text
+
+        # Читаем Column и Row из ClientData (ns-агностик)
+        col_m = re.search(r'<[^>]+:Column>(\d+)</[^>]+:Column>', shape_text)
+        row_m = re.search(r'<[^>]+:Row>(\d+)</[^>]+:Row>', shape_text)
+
+        col_idx = int(col_m.group(1)) if col_m else 0
+        row_idx = int(row_m.group(1)) if row_m else 0
+
+        # Вычисляем margin-left: сумма ширин колонок до col_idx + 5pt отступ
+        if col_idx < len(cumulative):
+            ml_pt = cumulative[col_idx] + 5.0
+        else:
+            ml_pt = cumulative[-1] + 5.0
+
+        # margin-top: комментарии на строке заголовка (Row=0) → 32pt ниже верха строки
+        mt_pt = 32.0 + row_idx * 20.0
+
+        new_ml = f"margin-left:{ml_pt:.2f}pt"
+        new_mt = f"margin-top:{mt_pt:.2f}pt"
+
+        # Заменяем margin-left:...pt и margin-top:...pt внутри style этого шейпа
+        shape_text = re.sub(r'margin-left:[0-9.]+pt', new_ml, shape_text, count=1)
+        shape_text = re.sub(r'margin-top:[0-9.]+pt', new_mt, shape_text, count=1)
+
+        return shape_text
+
+    new_vml = shape_pat.sub(fix_shape, vml_str)
+    return new_vml.encode('utf-8')
+
+
 @router.get("/import/template")
-async def download_import_template():
-    """Скачать шаблон Excel для импорта закупок (лист «Закупки» + «Справочники» + «Справочник колонок»)."""
+async def download_import_template(
+    subsidy_id: Optional[int] = Query(None, description="ID субсидии для каскадных ФЭО-списков"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Скачать шаблон Excel для импорта закупок (лист «Закупки» + «Справочники» + «Справочник колонок»).
+    При subsidy_id — добавляет дерево ФЭО субсидии с выпадающими списками на листе «Закупки»."""
     if Workbook is None:
         raise HTTPException(500, "openpyxl не установлен")
 
@@ -1243,6 +1549,8 @@ async def download_import_template():
         "_DD_ITEM_TYPE":       ("dd_item_type",       "Тип позиции",              _DD_ITEM_TYPE),
         "_DD_PAYMENT_BASIS":   ("dd_payment_basis",   "Основание для оплаты",     _DD_PAYMENT_BASIS),
         "_DD_UNIT":            ("dd_unit",            "Ед. изм.",                 _DD_UNIT),
+        "_DD_QUARTER":         ("dd_quarter",         "Квартал обязательств",     _DD_QUARTER),
+        "_DD_VAT_MODE":        ("dd_vat_mode",        "Режим НДС",                _DD_VAT_MODE),
     }
 
     # Добавляем лист «Справочники» как второй (будет Sheet2)
@@ -1402,11 +1710,202 @@ async def download_import_template():
     ref_ws.row_dimensions[1].height = 28
     ref_ws.freeze_panes = "A2"
 
+    # =========================================================================
+    # Каскадные ФЭО-списки (только при subsidy_id)
+    # =========================================================================
+    # Реализован настоящий INDIRECT-каскад через скрытые хелпер-колонки:
+    #   Ур.1 = feo_roots (корни субсидии)
+    #   Ур.2 = INDIRECT("feo_" & helper1)  — дети выбранного Ур.1
+    #   Ур.3 = INDIRECT("feo_" & helper2)  — дети выбранного Ур.2
+    #   Ур.4 = INDIRECT("feo_" & helper3)  — дети выбранного Ур.3
+    #   Ур.5 = INDIRECT("feo_" & helper4)  — дети выбранного Ур.4
+    # Хелпер L для строки r: =IFERROR(INDEX(lvlL_ids, MATCH(<ФЭО-ячейка L>, lvlL_names, 0)), "")
+    # Примечание: при дублях имён внутри уровня MATCH возьмёт первое совпадение (допустимое ограничение).
+    if subsidy_id is not None and DataValidation is not None and DefinedName is not None:
+        try:
+            feo_q = select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id).order_by(
+                FeoCategory.level, FeoCategory.sort_order.is_(None), FeoCategory.sort_order, FeoCategory.id
+            )
+            feo_all_cats = (await db.execute(feo_q)).scalars().all()
+
+            if feo_all_cats:
+                # Найти корневые узлы (parent_id is None или родитель другой субсидии)
+                cat_ids = {c.id for c in feo_all_cats}
+                roots = [c for c in feo_all_cats if c.parent_id is None or c.parent_id not in cat_ids]
+                root_names = [c.name for c in roots]
+
+                # Строим карту детей: parent_id → [children]
+                children_map: dict[int, list] = {}
+                for cat in feo_all_cats:
+                    if cat.parent_id is not None and cat.parent_id in cat_ids:
+                        children_map.setdefault(cat.parent_id, []).append(cat)
+
+                # Находим последнюю занятую колонку «Справочники»
+                feo_ref_start_col = len(_DD_REGISTRY) + 1
+
+                # ---------------------------------------------------------------
+                # 1. Колонка корней (Ур.1) + defined name feo_roots
+                # ---------------------------------------------------------------
+                feo_root_col = feo_ref_start_col
+                feo_root_col_letter = wb_ref_ws.cell(1, feo_root_col).column_letter
+                wb_ref_ws.cell(2, feo_root_col, "ФЭО Ур.1 (корни)").font = ref_hdr_font
+                wb_ref_ws.cell(2, feo_root_col).fill = ref_hdr_fill
+                for ri, name in enumerate(root_names, 1):
+                    wb_ref_ws.cell(2 + ri, feo_root_col, name).alignment = ref_val_align
+                feo_root_last = 2 + len(root_names) + max(len(root_names), 5)
+                feo_root_attr = f"'Справочники'!${feo_root_col_letter}$3:${feo_root_col_letter}${feo_root_last}"
+                wb.defined_names["feo_roots"] = DefinedName("feo_roots", attr_text=feo_root_attr)
+                wb_ref_ws.column_dimensions[feo_root_col_letter].width = 36
+
+                # ---------------------------------------------------------------
+                # 2. Для каждого узла с детьми — отдельная колонка + defined name feo_<id>
+                # ---------------------------------------------------------------
+                feo_node_next_col = feo_ref_start_col + 1  # следующая свободная колонка
+                for parent_cat in feo_all_cats:
+                    kids = children_map.get(parent_cat.id)
+                    if not kids:
+                        continue
+                    kid_names = [k.name for k in kids]
+                    nc = feo_node_next_col
+                    nc_letter = wb_ref_ws.cell(1, nc).column_letter
+                    hdr_label_node = f"ФЭО дети {parent_cat.id}"
+                    wb_ref_ws.cell(2, nc, hdr_label_node).font = ref_hdr_font
+                    wb_ref_ws.cell(2, nc).fill = ref_hdr_fill
+                    for ki, kname in enumerate(kid_names, 1):
+                        wb_ref_ws.cell(2 + ki, nc, kname).alignment = ref_val_align
+                    node_last = 2 + len(kid_names) + max(len(kid_names), 3)
+                    node_attr = f"'Справочники'!${nc_letter}$3:${nc_letter}${node_last}"
+                    dn_node = f"feo_{parent_cat.id}"
+                    wb.defined_names[dn_node] = DefinedName(dn_node, attr_text=node_attr)
+                    wb_ref_ws.column_dimensions[nc_letter].width = 32
+                    feo_node_next_col += 1
+
+                # ---------------------------------------------------------------
+                # 3. Для каждого уровня 1..4: колонки имён + id (lvlL_names, lvlL_ids)
+                #    Нужны для хелперов INDEX/MATCH: по имени выбранной ячейки → id узла
+                # ---------------------------------------------------------------
+                lvl_cols: dict[int, dict] = {}  # level → {names_col, ids_col, names_letter, ids_letter}
+                for lvl in range(1, 5):
+                    cats_at_lvl = [c for c in feo_all_cats if c.level == lvl]
+                    if not cats_at_lvl:
+                        continue
+                    names_col = feo_node_next_col
+                    ids_col   = feo_node_next_col + 1
+                    names_letter = wb_ref_ws.cell(1, names_col).column_letter
+                    ids_letter   = wb_ref_ws.cell(1, ids_col).column_letter
+
+                    wb_ref_ws.cell(2, names_col, f"Ур.{lvl} имена (служ.)").font = ref_hdr_font
+                    wb_ref_ws.cell(2, names_col).fill = ref_hdr_fill
+                    wb_ref_ws.cell(2, ids_col, f"Ур.{lvl} id (служ.)").font = ref_hdr_font
+                    wb_ref_ws.cell(2, ids_col).fill = ref_hdr_fill
+
+                    for ri, cat in enumerate(cats_at_lvl, 1):
+                        wb_ref_ws.cell(2 + ri, names_col, cat.name).alignment = ref_val_align
+                        wb_ref_ws.cell(2 + ri, ids_col, cat.id).alignment = ref_val_align
+
+                    lvl_last = 2 + len(cats_at_lvl) + max(len(cats_at_lvl), 3)
+                    names_attr = f"'Справочники'!${names_letter}$3:${names_letter}${lvl_last}"
+                    ids_attr   = f"'Справочники'!${ids_letter}$3:${ids_letter}${lvl_last}"
+                    wb.defined_names[f"lvl{lvl}_names"] = DefinedName(f"lvl{lvl}_names", attr_text=names_attr)
+                    wb.defined_names[f"lvl{lvl}_ids"]   = DefinedName(f"lvl{lvl}_ids",   attr_text=ids_attr)
+
+                    wb_ref_ws.column_dimensions[names_letter].width = 30
+                    wb_ref_ws.column_dimensions[ids_letter].width = 10
+
+                    lvl_cols[lvl] = {
+                        "names_col": names_col, "ids_col": ids_col,
+                        "names_letter": names_letter, "ids_letter": ids_letter,
+                        "lvl_last": lvl_last,
+                    }
+                    feo_node_next_col += 2
+
+                # ---------------------------------------------------------------
+                # 4. Скрытые хелпер-колонки на листе «Закупки» (col 70+)
+                #    helperL → id выбранного узла уровня L в этой строке
+                # ---------------------------------------------------------------
+                # Находим колонки ФЭО Ур.1..5 на листе «Закупки»
+                feo_headers_map: dict[int, str] = {}  # level → col_letter
+                for feo_col_i, spec in enumerate(_COL_SPEC, 1):
+                    hdr = spec["header"]
+                    if hdr in ("ФЭО Ур.1", "ФЭО Ур.2", "ФЭО Ур.3", "ФЭО Ур.4", "ФЭО Ур.5"):
+                        lvl_num = int(hdr[-1])
+                        feo_headers_map[lvl_num] = ws.cell(1, feo_col_i).column_letter
+
+                # Хелпер-колонки начинаем с col=70 (заведомо за _COL_SPEC)
+                helper_start_col = 70
+                helper_cols: dict[int, str] = {}  # level → col_letter of helper
+
+                for lvl in range(1, 5):
+                    if lvl not in lvl_cols or lvl not in feo_headers_map:
+                        continue
+                    h_col = helper_start_col + (lvl - 1)
+                    from openpyxl.utils import get_column_letter
+                    h_letter = get_column_letter(h_col)
+                    helper_cols[lvl] = h_letter
+
+                    feo_letter = feo_headers_map[lvl]
+                    names_dn = f"lvl{lvl}_names"
+                    ids_dn   = f"lvl{lvl}_ids"
+
+                    # Формулы для строк 2..1000
+                    for r in range(2, 1001):
+                        formula = (
+                            f"=IFERROR(INDEX({ids_dn},"
+                            f"MATCH({feo_letter}{r},{names_dn},0)),\"\")"
+                        )
+                        ws.cell(r, h_col, formula)
+
+                    # Скрываем хелпер-колонку
+                    ws.column_dimensions[h_letter].hidden = True
+
+                # ---------------------------------------------------------------
+                # 5. DataValidation на листе «Закупки»
+                # ---------------------------------------------------------------
+                feo_headers_list = ["ФЭО Ур.1", "ФЭО Ур.2", "ФЭО Ур.3", "ФЭО Ур.4", "ФЭО Ур.5"]
+                for feo_col_i, spec in enumerate(_COL_SPEC, 1):
+                    if spec["header"] not in feo_headers_list:
+                        continue
+                    level_num = int(spec["header"][-1])
+                    col_letter = ws.cell(1, feo_col_i).column_letter
+
+                    if level_num == 1:
+                        dn_formula = "=feo_roots"
+                    else:
+                        prev_lvl = level_num - 1
+                        h_letter = helper_cols.get(prev_lvl)
+                        if h_letter:
+                            # Относительная ссылка на хелпер (без фиксации строки)
+                            # Excel применит её построчно в диапазоне sqref
+                            dn_formula = f'=INDIRECT("feo_"&${h_letter}2)'
+                        else:
+                            # Нет хелпера (нет узлов на предыдущем уровне) — fallback
+                            dn_formula = "=feo_roots"
+
+                    feo_dv = DataValidation(
+                        type="list",
+                        formula1=dn_formula,
+                        allow_blank=True,
+                        showErrorMessage=False,
+                        showInputMessage=False,
+                    )
+                    feo_dv.prompt      = f"Выберите категорию ФЭО уровня {level_num}"
+                    feo_dv.promptTitle = spec["header"]
+                    feo_dv.sqref       = f"{col_letter}2:{col_letter}1000"
+                    ws.add_data_validation(feo_dv)
+
+        except Exception:
+            pass  # если что-то пошло не так с ФЭО — возвращаем шаблон без каскада
+
+    # Сохраняем в BytesIO и применяем фикс VML-якорей
     buffer = BytesIO()
     wb.save(buffer)
-    buffer.seek(0)
+    xlsx_bytes = buffer.getvalue()
+    xlsx_bytes = _fix_comment_anchors(xlsx_bytes)
+
+    result_buf = BytesIO(xlsx_bytes)
+    result_buf.seek(0)
     return StreamingResponse(
-        buffer,
+        result_buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('Шаблон_импорта_закупок.xlsx', safe='-_.~')}"}
     )
@@ -1541,6 +2040,20 @@ _COLUMN_MAP: Dict[str, str] = {
     "ежемесячный платеж":           "is_monthly_payment",
     "процедура этп":                "etp_url",
     "№ п/п":                        "purchase_number",
+    # --- New extended columns (plan §3) ---
+    "регион":                                               "region",
+    "место оказания услуг / доставки":                      "delivery_location",
+    "место оказания услуг":                                 "delivery_location",
+    "место доставки":                                       "delivery_location",
+    "адрес доставки":                                       "delivery_address",
+    "экономия по результатам конкурентных закупок":         "economy",
+    "экономия":                                             "economy",
+    "срок действия договора":                               "contract_end_date",
+    "квартал принятия обязательств":                        "commitment_quarter",
+    "планируемый месяц платежа":                            "planned_payment_month",
+    "дата окончания приёма заявок":                         "submission_deadline",
+    "режим ндс":                                            "vat_mode",
+    "подпись этапа":                                        "stage_label",
 }
 
 # «Платежи» sheet column map
@@ -1604,9 +2117,13 @@ _CONTRACT_TYPE_MAP = {
 
 _ITEM_TYPE_MAP = {
     # Русские лейблы из выпадающего списка
-    "товар":  "товар",
-    "услуга": "услуга",
-    "работа": "работа",
+    "товар":    "товар",
+    "услуга":   "услуга",
+    "работа":   "работа",
+    # Множественное число (из файла пользователя «Товары», «Услуги»)
+    "товары":   "товар",
+    "услуги":   "услуга",
+    "работы":   "работа",
 }
 
 _PAYMENT_BASIS_MAP = {
@@ -1694,39 +2211,92 @@ def _build_feo_index(feo_rows: List[FeoCategory], sid: int) -> Dict[int, FeoCate
     return {f.id: f for f in feo_rows if f.subsidy_id == sid}
 
 
-def _resolve_feo_levels(
+import re as _re
+
+def _norm_feo(s: str) -> str:
+    """Нормализовать имя ФЭО для матчинга: срезать ведущий числовой префикс, lower+strip."""
+    if not s:
+        return ""
+    # Срезаем «1. », «2.1 », «3) », «1.2.3. » и т.п.
+    s2 = _re.sub(r'^\s*\d+([.\)]\d+)*[.\)]?\s*', '', s)
+    s2 = s2.lower().strip()
+    # Схлопываем повторяющиеся пробелы
+    s2 = _re.sub(r'\s+', ' ', s2)
+    return s2
+
+
+async def _resolve_feo_levels(
     levels: List[str],
     sid: int,
     feo_index: Dict[int, FeoCategory],
+    db=None,
+    feo_rows_all=None,
+    create_missing: bool = False,
 ) -> tuple:
     """
     Walk the FEO tree of THIS subsidy using ordered level values.
     levels = non-empty strings in order (e.g. ['Снаряжение', 'Одежда', 'Кепи']).
+
+    - Схлопывает соседние дубли (нормализованные): если levels[i] == levels[i-1], выбрасывает дубль.
+    - Матчинг: сначала точное совпадение по нормализованным именам, затем вхождение.
+    - При create_missing=True и наличии db: создаёт отсутствующие узлы автоматически.
     Returns (feo_category_id, error_message_or_None).
     """
     if not levels:
         return None, "Не указан ни один уровень ФЭО"
+
+    # Схлопнуть соседние дубли по нормализованному значению
+    deduped: List[str] = [levels[0]]
+    for lv in levels[1:]:
+        if _norm_feo(lv) != _norm_feo(deduped[-1]):
+            deduped.append(lv)
+    levels = deduped
 
     roots = [f for f in feo_index.values() if f.parent_id is None or f.parent_id not in feo_index]
     current_candidates = roots
     current_node = None
 
     for level_idx, part in enumerate(levels):
-        needle = part.lower().strip()
+        nn_needle = _norm_feo(part)
         matched = None
-        # exact match first
+        # exact match по нормализованным
         for candidate in current_candidates:
-            if candidate.name.lower().strip() == needle:
+            if _norm_feo(candidate.name) == nn_needle:
                 matched = candidate
                 break
-        # fallback: contains
+        # substring fallback по нормализованным
         if matched is None:
             for candidate in current_candidates:
-                if needle in candidate.name.lower().strip():
+                nn_cand = _norm_feo(candidate.name)
+                if nn_needle and nn_needle in nn_cand:
                     matched = candidate
                     break
+                if nn_cand and nn_cand in nn_needle:
+                    matched = candidate
+                    break
+        # Автосоздание, если не найдено
         if matched is None:
-            return None, f"ФЭО не найдено на уровне {level_idx + 1}: '{part}'"
+            if create_missing and db is not None:
+                parent_id = current_node.id if current_node is not None else None
+                # level = 1-based depth
+                depth = level_idx + 1
+                new_node = FeoCategory(
+                    subsidy_id=sid,
+                    parent_id=parent_id,
+                    level=depth,
+                    name=part,  # оригинальное имя из файла (с префиксом)
+                    sort_order=None,
+                    is_active=True,
+                )
+                db.add(new_node)
+                await db.flush()
+                # Добавляем в индекс и в общий список
+                feo_index[new_node.id] = new_node
+                if feo_rows_all is not None:
+                    feo_rows_all.append(new_node)
+                matched = new_node
+            else:
+                return None, f"ФЭО не найдено на уровне {level_idx + 1}: '{part}'"
         current_node = matched
         current_candidates = [f for f in feo_index.values() if f.parent_id == matched.id]
 
@@ -1735,19 +2305,22 @@ def _resolve_feo_levels(
     return current_node.id, None
 
 
-def _resolve_feo_path(
+async def _resolve_feo_path(
     path_str: str,
     feo_index: Dict[int, FeoCategory],
+    sid: int = 0,
+    db=None,
+    feo_rows_all=None,
+    create_missing: bool = False,
 ) -> tuple:
     """
     Backward-compat: resolve old single path string (parts separated by ' / ' or '>').
     Returns (feo_category_id, error_message_or_None).
     """
-    import re
-    parts = [p.strip() for p in re.split(r"\s*/\s*|\s*>\s*", path_str) if p.strip()]
+    parts = [p.strip() for p in _re.split(r"\s*/\s*|\s*>\s*", path_str) if p.strip()]
     if not parts:
         return None, "Пустой путь ФЭО"
-    return _resolve_feo_levels(parts, 0, feo_index)
+    return await _resolve_feo_levels(parts, sid, feo_index, db=db, feo_rows_all=feo_rows_all, create_missing=create_missing)
 
 
 def _find_payments_sheet(wb):
@@ -1822,6 +2395,54 @@ async def _parse_and_group(
     )
     existing_keys = {(r[0], r[1]) for r in existing_q.fetchall()}
 
+    # Duplicate-purchase index: существующие разовые (НЕ ежемесячные) закупки субсидии,
+    # ключ (contractor_id, сумма). Сумма = ЛЮБАЯ из {НМЦК, цена договора, платёж} +
+    # суммы отдельных платежей (Payment). Совпадение по любой сумме = возможный повтор.
+    existing_dup_q = await db.execute(
+        select(
+            Purchase.id, Purchase.purchase_number, Purchase.item_name,
+            Purchase.subject, Purchase.status, Purchase.contract_date,
+            Purchase.contractor_id, Purchase.total_nmck,
+            Purchase.contract_price, Purchase.payment_amount,
+        ).where(
+            Purchase.subsidy_id == sid,
+            Purchase.is_monthly_payment.isnot(True),
+            Purchase.contractor_id.isnot(None),
+        )
+    )
+    existing_rows = existing_dup_q.fetchall()
+    _exist_ids = [r.id for r in existing_rows]
+    exist_pay_amounts: dict = defaultdict(list)
+    if _exist_ids:
+        _pay_q = await db.execute(
+            select(Payment.purchase_id, Payment.amount).where(
+                Payment.purchase_id.in_(_exist_ids),
+                Payment.amount.isnot(None),
+            )
+        )
+        for _pr in _pay_q.fetchall():
+            exist_pay_amounts[_pr.purchase_id].append(_pr.amount)
+
+    existing_dup_index: dict = defaultdict(list)
+    for r in existing_rows:
+        _base = {
+            "source": "db",
+            "id": r.id,
+            "purchase_number": r.purchase_number,
+            "name": r.item_name or r.subject or "",
+            "status": r.status,
+            "contract_date": r.contract_date.isoformat() if r.contract_date else None,
+        }
+        _pairs = [("НМЦК", r.total_nmck), ("цена договора", r.contract_price), ("платёж", r.payment_amount)]
+        _pairs += [("платёж", a) for a in exist_pay_amounts.get(r.id, [])]
+        for _reason, _val in _pairs:
+            if _val is None:
+                continue
+            _fv = float(_val)
+            if _fv <= 0:
+                continue
+            existing_dup_index[(r.contractor_id, round(_fv, 2))].append({**_base, "amount": _fv, "match_reason": _reason})
+
     errors: list[dict] = []
     skipped = 0
 
@@ -1858,18 +2479,27 @@ async def _parse_and_group(
                 if not levels:
                     errors.append({"row": row_num, "name": item_name, "message": "ФЭО Ур.1 обязателен"})
                     continue
-                feo_id, feo_err = _resolve_feo_levels(levels, sid, feo_index)
+                feo_id, feo_err = await _resolve_feo_levels(
+                    levels, sid, feo_index,
+                    db=db, feo_rows_all=feo_rows_all, create_missing=commit,
+                )
                 if feo_err:
                     errors.append({"row": row_num, "name": item_name, "message": feo_err})
                     continue
             else:
                 if levels:
-                    feo_id, _ = _resolve_feo_levels(levels, sid, feo_index)
+                    feo_id, _ = await _resolve_feo_levels(
+                        levels, sid, feo_index,
+                        db=db, feo_rows_all=feo_rows_all, create_missing=commit,
+                    )
         elif has_old_feo:
             # Old: single path column (backward compat)
             feo_path_raw = cell(row, "feo_path") or cell(row, "feo_category_name")
             if feo_path_raw:
-                feo_id, feo_err = _resolve_feo_path(feo_path_raw, feo_index)
+                feo_id, feo_err = await _resolve_feo_path(
+                    feo_path_raw, feo_index,
+                    sid=sid, db=db, feo_rows_all=feo_rows_all, create_missing=commit,
+                )
                 if feo_err and not has_new_feo:
                     # only hard-error in old-style-only templates if it was new-enough format
                     pass  # leave feo_id as None
@@ -1972,11 +2602,31 @@ async def _parse_and_group(
         raw_delivery_date           = row[col_idx["delivery_date"]]           if "delivery_date"           in col_idx else None
         raw_payment_doc_date        = row[col_idx["payment_doc_date"]]        if "payment_doc_date"        in col_idx else None
         raw_acceptance_doc_date     = row[col_idx["acceptance_doc_date"]]     if "acceptance_doc_date"     in col_idx else None
+        raw_contract_end_date       = row[col_idx["contract_end_date"]]       if "contract_end_date"       in col_idx else None
+        raw_planned_payment_month   = row[col_idx["planned_payment_month"]]   if "planned_payment_month"   in col_idx else None
+        raw_submission_deadline     = row[col_idx["submission_deadline"]]     if "submission_deadline"     in col_idx else None
 
         # ---- Boolean flags ----
         vat_applicable_raw  = (cell(row, "vat_applicable") or "").lower().strip()
         is_prepayment_raw   = (cell(row, "is_prepayment") or "").lower().strip()
         is_monthly_raw      = (cell(row, "is_monthly_payment") or "").lower().strip()
+
+        # ---- Commitment quarter ----
+        _cq_raw = cell(row, "commitment_quarter")
+        commitment_quarter_val = None
+        if _cq_raw:
+            try:
+                _cq_int = int(str(_cq_raw).strip())
+                if 1 <= _cq_int <= 4:
+                    commitment_quarter_val = _cq_int
+            except Exception:
+                pass
+
+        # ---- VAT mode ----
+        vat_mode_raw = (cell(row, "vat_mode") or "").lower().strip()
+        _vat_mode_map = {"одинаковый": "uniform", "для каждого товара": "per_item",
+                         "uniform": "uniform", "per_item": "per_item"}
+        vat_mode_val = _vat_mode_map.get(vat_mode_raw, "uniform") if vat_mode_raw else None
 
         parsed_rows.append({
             "row_num":                  row_num,
@@ -2034,6 +2684,17 @@ async def _parse_and_group(
             "vat_rate":                 cell(row, "vat_rate"),
             "nmck":                     _to_dec(cell(row, "nmck")),
             "sid":                      row_sid,
+            # New extended fields
+            "region":                   cell(row, "region"),
+            "delivery_location":        cell(row, "delivery_location"),
+            "delivery_address":         cell(row, "delivery_address"),
+            "economy":                  _to_dec(cell(row, "economy")),
+            "contract_end_date":        _to_date_val(raw_contract_end_date),
+            "commitment_quarter":       commitment_quarter_val,
+            "planned_payment_month":    _to_date_val(raw_planned_payment_month),
+            "submission_deadline":      _to_date_val(raw_submission_deadline),
+            "vat_mode":                 vat_mode_val,
+            "stage_label":              cell(row, "stage_label"),
         })
 
     # --- Parse «Платежи» sheet ---
@@ -2089,6 +2750,8 @@ async def _parse_and_group(
     created_items = 0
     created_payments = 0
     preview_list = []
+    batch_seen_dup: dict = defaultdict(list)
+    duplicates_count = 0
 
     # Map contract_number → Purchase (built during commit, used for payment linking)
     contract_to_purchase: Dict[str, Purchase] = {}
@@ -2180,6 +2843,45 @@ async def _parse_and_group(
         }
 
         if not commit:
+            # --- Duplicate-purchase detection (preview only) ---
+            dup_matches = []
+            if (
+                not first.get("is_monthly_payment")
+                and first.get("cont_id")
+                and first["cont_id"] != -1
+            ):
+                _cand = [("НМЦК", first.get("nmck")), ("цена договора", plan_total_sum if plan_total_sum else None)]
+                _cand += [("платёж", ip.get("amount")) for ip in all_preview_payments]
+                _seen_db: set = set()
+                _seen_file: set = set()
+                for _reason, _val in _cand:
+                    if _val is None:
+                        continue
+                    _fv = float(_val)
+                    if _fv <= 0:
+                        continue
+                    dkey = (first["cont_id"], round(_fv, 2))
+                    for m in existing_dup_index.get(dkey, []):
+                        if m["id"] not in _seen_db:
+                            _seen_db.add(m["id"])
+                            dup_matches.append(m)
+                    for prev in batch_seen_dup.get(dkey, []):
+                        _fk = (prev["name"], prev["amount"])
+                        if _fk not in _seen_file:
+                            _seen_file.add(_fk)
+                            dup_matches.append(prev)
+                    batch_seen_dup[dkey].append({
+                        "source": "file",
+                        "id": None,
+                        "purchase_number": None,
+                        "name": (first.get("cont_name") or "") + " — " + (contract_num or group_key),
+                        "amount": _fv,
+                        "status": None,
+                        "contract_date": None,
+                        "match_reason": _reason,
+                    })
+            if dup_matches:
+                duplicates_count += 1
             preview_list.append({
                 "group_key": group_key,
                 "contract_number": contract_num or "",
@@ -2194,6 +2896,7 @@ async def _parse_and_group(
                 "payments_count": pay_count,
                 "payments_total": float(pay_total) if pay_total else None,
                 "skipped": False,
+                "duplicate_matches": dup_matches,
             })
             continue
 
@@ -2275,6 +2978,17 @@ async def _parse_and_group(
             country_origin=first["country_origin"],
             # Item type — from first row (group-level attribute)
             item_type=first.get("item_type"),
+            # New extended fields
+            region=first.get("region"),
+            delivery_location=first.get("delivery_location"),
+            delivery_address=first.get("delivery_address"),
+            economy=first.get("economy"),
+            contract_end_date=first.get("contract_end_date"),
+            commitment_quarter=first.get("commitment_quarter"),
+            planned_payment_month=first.get("planned_payment_month"),
+            submission_deadline=first.get("submission_deadline"),
+            vat_mode=first.get("vat_mode") or "uniform",
+            stage_label=first.get("stage_label"),
         )
 
         # --- Create PurchaseItems (dedup by key within group) ---
@@ -2453,6 +3167,7 @@ async def _parse_and_group(
             "payments_errors": payments_errors,
             "skipped": skipped,
             "errors": errors,
+            "duplicates_count": duplicates_count,
         }
 
 

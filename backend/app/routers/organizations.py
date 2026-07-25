@@ -65,6 +65,9 @@ def _merge_org_with_contractor(org: Organization, user_count: int = 0) -> Organi
         signatory_position=getattr(c, 'signatory_position', None) if c else None,
         signatory_basis=getattr(c, 'signatory_basis', None) if c else None,
         website=getattr(c, 'website', None) if c else None,
+        # Geo/delivery fields — нужны фронту для дефолта адреса доставки
+        region=org.region or None,
+        contract_city=org.contract_city or None,
     )
 
 

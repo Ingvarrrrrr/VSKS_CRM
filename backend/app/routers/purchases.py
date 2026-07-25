@@ -505,7 +505,11 @@ async def duplicate_check(
             Purchase.subsidy_id == subsidy_id,
             Purchase.contractor_id == contractor_id,
             Purchase.is_monthly_payment.isnot(True),
-            func.round(func.coalesce(Purchase.total_nmck, 0), 2) == amt,
+            or_(
+                func.round(func.coalesce(Purchase.total_nmck, 0), 2) == amt,
+                func.round(func.coalesce(Purchase.contract_price, 0), 2) == amt,
+                func.round(func.coalesce(Purchase.payment_amount, 0), 2) == amt,
+            ),
         )
         .options(selectinload(Purchase.contractor))
         .order_by(Purchase.id.desc())
@@ -514,6 +518,17 @@ async def duplicate_check(
     if exclude_id:
         stmt = stmt.where(Purchase.id != exclude_id)
     rows = (await db.execute(stmt)).scalars().all()
+
+    def _dup_reason(p):
+        fa = float(amt)
+        if p.total_nmck is not None and round(float(p.total_nmck), 2) == fa:
+            return "НМЦК"
+        if p.contract_price is not None and round(float(p.contract_price), 2) == fa:
+            return "цена договора"
+        if p.payment_amount is not None and round(float(p.payment_amount), 2) == fa:
+            return "платёж"
+        return ""
+
     return [
         {
             "id": p.id,
@@ -523,6 +538,7 @@ async def duplicate_check(
             "status": p.status,
             "contract_date": p.contract_date.isoformat() if p.contract_date else None,
             "contractor_name": p.contractor.name if p.contractor else None,
+            "match_reason": _dup_reason(p),
         }
         for p in rows
     ]
@@ -1473,6 +1489,8 @@ PATCHABLE_FIELDS = {
     "contract_number", "contract_date", "contract_price", "contract_end_date",
     "nmck", "planned_total_price",
     "delivery_date", "delivery_location", "delivery_address",
+    "delivery_region", "delivery_city", "delivery_street",
+    "delivery_house", "delivery_building", "delivery_postcode",
     "submission_deadline", "service_term_mode", "service_start_date",
     "service_end_date", "service_term_days", "service_term_type",
     "service_deadline_date", "third_party_involved",
@@ -1510,6 +1528,8 @@ PATCHABLE_FIELDS = {
     'etp_url',
     # Fabrikant: срок оплаты и дата рассмотрения заявок
     'payment_term_days', 'applications_review_date',
+    # Импорт/экспорт: квартал обязательств и планируемый месяц платежа
+    "commitment_quarter", "planned_payment_month",
 }
 
 
@@ -1527,6 +1547,7 @@ _DATE_FIELDS = {
     "contractor_ogrnip_date",
     # Fabrikant
     "applications_review_date",
+    "planned_payment_month",
 }
 _DATETIME_FIELDS = {"submission_deadline", "service_note_at"}
 

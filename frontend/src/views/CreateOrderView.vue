@@ -1547,23 +1547,87 @@
               </div>
             </v-col>
           </v-row>
+          <!-- Место поставки (структурированный адрес доставки для Фабриканта) -->
           <v-row>
-            <v-col cols="12">
+            <v-col cols="12" md="6">
               <div id="pub-target-region" style="position:relative">
                 <div v-if="pointerTarget === 'region'" class="pub-pointer"><span class="mdi mdi-arrow-down-bold" /></div>
                 <div :class="pointerTarget === 'region' ? 'pub-glow' : ''">
                   <v-autocomplete
-                    v-model="form.region"
+                    v-model="form.delivery_region"
                     :items="RUSSIAN_REGIONS"
-                    label="Регион проведения мероприятия"
+                    label="Субъект РФ (место поставки)"
                     density="compact"
                     variant="outlined"
                     clearable
                     hide-details
-                    @update:model-value="pointerTarget = null"
+                    hint="Используется для ОКАТО/федерального округа места поставки Фабриканта"
+                    persistent-hint
+                    @update:model-value="pointerTarget = null; clearGuideArrow()"
                   />
                 </div>
               </div>
+            </v-col>
+            <v-col cols="12" md="6">
+              <v-text-field
+                v-model="form.delivery_postcode"
+                label="Индекс"
+                variant="outlined"
+                density="compact"
+                hide-details
+              />
+            </v-col>
+          </v-row>
+          <v-row>
+            <v-col cols="12" md="4">
+              <v-text-field
+                v-model="form.delivery_city"
+                label="Город / населённый пункт"
+                variant="outlined"
+                density="compact"
+                hide-details
+              />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field
+                v-model="form.delivery_street"
+                label="Улица"
+                variant="outlined"
+                density="compact"
+                hide-details
+              />
+            </v-col>
+            <v-col cols="12" md="2">
+              <v-text-field
+                v-model="form.delivery_house"
+                label="Дом"
+                variant="outlined"
+                density="compact"
+                hide-details
+              />
+            </v-col>
+            <v-col cols="12" md="2">
+              <v-text-field
+                v-model="form.delivery_building"
+                label="Корпус"
+                variant="outlined"
+                density="compact"
+                hide-details
+              />
+            </v-col>
+          </v-row>
+          <!-- Регион проведения мероприятия — отдельное поле, не адрес доставки -->
+          <v-row>
+            <v-col cols="12">
+              <v-autocomplete
+                v-model="form.region"
+                :items="RUSSIAN_REGIONS"
+                label="Регион проведения мероприятия"
+                density="compact"
+                variant="outlined"
+                clearable
+                hide-details
+              />
             </v-col>
           </v-row>
           <!-- Новые поля: скорее всего понадобится, предоплата перенесена в «Сроки и даты», подпись этапа -->
@@ -1752,6 +1816,23 @@
                 :readonly="isFramework && !!selectedFrameworkContract?.end_date"
                 :bg-color="isFramework && selectedFrameworkContract?.end_date ? 'grey-lighten-4' : undefined"
                 hint="До какой даты действует договор" persistent-hint
+              />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-select
+                v-model="form.commitment_quarter"
+                :items="[1,2,3,4]"
+                label="Квартал принятия обязательств"
+                variant="outlined" density="compact" clearable
+                hint="Квартал, в котором приняты обязательства" persistent-hint
+              />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field
+                v-model="form.planned_payment_month"
+                label="Планируемый месяц платежа"
+                variant="outlined" density="compact" type="date"
+                hint="Месяц, в котором планируется платёж" persistent-hint
               />
             </v-col>
             <v-col cols="12" md="3">
@@ -2664,7 +2745,7 @@
                   Сбор ценовых предложений без объявления цены и позиций. НМЦД не требуется.
                 </v-alert>
 
-                <div style="position:relative">
+                <div id="pub-target-okpd2" style="position:relative">
                   <v-text-field
                     v-model="fabrikantOkpd2"
                     label="Код ОКПД2 (обязательно)"
@@ -2675,7 +2756,7 @@
                     class="mb-3"
                     placeholder="47.99.9"
                     :error="okpd2Pointer && !fabrikantOkpd2"
-                    @update:model-value="okpd2Pointer = false"
+                    @update:model-value="okpd2Pointer = false; clearGuideArrow()"
                   />
                   <div v-if="okpd2Pointer" class="pub-pointer"><span class="mdi mdi-arrow-down-bold" /></div>
                 </div>
@@ -2749,7 +2830,7 @@
                             label="Дата и время начала редукциона *"
                             variant="outlined" density="compact"
                             :error="!fabrikantAuctionDateStart"
-                            @update:model-value="auctionPointerTarget = null"
+                            @update:model-value="auctionPointerTarget = null; clearGuideArrow()"
                           />
                         </div>
                       </div>
@@ -2764,7 +2845,7 @@
                             label="Граница ставки от *"
                             variant="outlined" density="compact"
                             :error="fabrikantAuctionBetFrom === null"
-                            @update:model-value="auctionPointerTarget = null"
+                            @update:model-value="auctionPointerTarget = null; clearGuideArrow()"
                           />
                         </div>
                       </div>
@@ -2863,13 +2944,14 @@
       <v-card>
         <v-card-title class="text-warning">Возможный повтор закупки</v-card-title>
         <v-card-text>
-          <div class="mb-3">Уже есть разовые закупки с такой же суммой и контрагентом в этой субсидии. Возможно, это повтор:</div>
+          <div class="mb-3">Уже есть разовые закупки с этим контрагентом и совпадающей суммой (НМЦК, цена договора или платёж). Возможно, это повтор:</div>
           <v-list density="compact">
             <v-list-item v-for="m in duplicateMatches" :key="m.id"
               @click="$router.push(`/orders/${m.id}/edit`)" style="cursor:pointer;">
               <v-list-item-title>№{{ m.purchase_number ?? m.id }} — {{ m.name || 'без названия' }}</v-list-item-title>
               <v-list-item-subtitle>
                 {{ m.total_nmck != null ? Number(m.total_nmck).toLocaleString('ru-RU') + ' ₽' : '' }}
+                <span v-if="(m as any).match_reason"> · совпало по: {{ (m as any).match_reason }}</span>
                 <span v-if="m.contract_date"> · {{ m.contract_date }}</span>
                 · {{ m.status }}
               </v-list-item-subtitle>
@@ -3724,6 +3806,48 @@
       @dismiss="dismissValidationArrows"
     />
   </v-container>
+
+  <!-- Guide arrow overlay — летящая стрелка с пунктирным следом -->
+  <Teleport to="body">
+    <div
+      v-if="guideArrowVisible"
+      class="guide-arrow-overlay"
+      style="position:fixed;inset:0;pointer-events:none;z-index:9999"
+    >
+      <!-- Пунктирный след -->
+      <svg
+        v-if="guideTrail.length > 1"
+        style="position:absolute;inset:0;width:100%;height:100%;overflow:visible"
+      >
+        <polyline
+          :points="guideTrail.map(p => `${p.x},${p.y}`).join(' ')"
+          fill="none"
+          stroke="#e53935"
+          stroke-width="3"
+          stroke-dasharray="7 7"
+          stroke-linecap="round"
+          opacity="0.85"
+        />
+      </svg>
+      <!-- Div-стрелка (pointer-events auto для клика "скрыть") -->
+      <div
+        class="guide-arrow-icon"
+        :class="{ 'guide-arrow-arrived': guideArrowArrived }"
+        :style="{
+          position: 'absolute',
+          left: guideArrowPos.x + 'px',
+          top: guideArrowPos.y + 'px',
+          transform: `translate(-50%,-50%) rotate(${guideArrowArrived ? 0 : guideArrowAngle}deg)`,
+          pointerEvents: 'auto',
+          cursor: 'pointer',
+        }"
+        title="Скрыть"
+        @click="clearGuideArrow"
+      >
+        <span class="mdi mdi-arrow-down-bold guide-arrow-mdi" />
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -3756,7 +3880,7 @@ function onMonthlyStagesCreated(res: any) {
 }
 import AddressAutocomplete from '@/components/AddressAutocomplete.vue'
 import { RUSSIAN_REGIONS } from '@/constants/russian_regions'
-import { RU_REGION_OKATO } from '@/constants/ru_region_okato'
+import { RU_REGION_OKATO, resolveRegionOkato } from '@/constants/ru_region_okato'
 import { useDisplay } from 'vuetify'
 import { useEntityChanges } from '@/composables/useEntityChanges'
 import { useUndoRedo } from '@/composables/useUndoRedo'
@@ -4033,6 +4157,8 @@ const form = reactive({
   agreement_date: '' as string,     // Phase 26-K: Дата доп. соглашения
   order_date: '' as string,         // Phase 26-K: Дата заказа
   contract_end_date: '' as string,
+  commitment_quarter: null as number | null,
+  planned_payment_month: '' as string,
   delivery_date: '',
   delivery_address: '',
   procurement_planned_date: '',
@@ -4118,6 +4244,13 @@ const form = reactive({
   vehicle_id: null as number | null,
   // ЭТП: ссылка на конкурсную процедуру
   etp_url: null as string | null,
+  // Структурированный адрес доставки (Фабрикант: место поставки)
+  delivery_region: '' as string,
+  delivery_city: '' as string,
+  delivery_street: '' as string,
+  delivery_house: '' as string,
+  delivery_building: '' as string,
+  delivery_postcode: '' as string,
   // B-PIF1/F-PIF1: per-item FEO (UI-only, not persisted)
   feo_per_item: false as boolean,
 })
@@ -4292,7 +4425,10 @@ const _focusoutHandler = (e: FocusEvent) => {
   }
 }
 onMounted(() => document.addEventListener('focusout', _focusoutHandler, true))
-onUnmounted(() => document.removeEventListener('focusout', _focusoutHandler, true))
+onUnmounted(() => {
+  document.removeEventListener('focusout', _focusoutHandler, true)
+  clearGuideArrow()
+})
 onMounted(() => { if (!authStore.loaded) authStore.loadPermissions() })
 
 // Phase 31-07: Undo/Redo init — form is reactive, wrap in shallowRef so composable can mutate via .value[field]
@@ -4438,6 +4574,19 @@ watch(() => form.subsidy_id, async (sid) => {
     customerPreview.value = await apiFetch<any>(`/organizations/${subsidy.org_id}`)
   } catch { customerPreview.value = null }
 }, { immediate: true })
+
+// Дефолт адреса доставки из организации субсидии при смене субсидии
+watch(() => form.subsidy_id, async (sid) => {
+  if (!sid) return
+  try {
+    const subsidy = subsidies.value.find(s => s.id === sid)
+    if (!subsidy?.org_id) return
+    const org = await apiFetch<any>(`/organizations/${subsidy.org_id}`)
+    if (!form.delivery_address && org?.address) form.delivery_address = org.address
+    if (!form.delivery_region && org?.region) form.delivery_region = org.region
+    if (!form.delivery_city && org?.contract_city) form.delivery_city = org.contract_city
+  } catch { /* silent */ }
+})
 
 // Смена субсидии меняет допустимый круг исполнителей/адресатов СЗ
 watch(() => form.subsidy_id, () => { loadOrgUsers() })
@@ -5111,25 +5260,120 @@ let _auctionPointerTimer: ReturnType<typeof setTimeout> | null = null
 
 const AUCTION_TARGETS = new Set(['auction-date', 'auction-bet'])
 
-function revealField(target: string) {
-  if (AUCTION_TARGETS.has(target)) {
-    // Поля редукциона находятся внутри диалога — не закрывать, а прокрутить и показать стрелку
-    if (_auctionPointerTimer) clearTimeout(_auctionPointerTimer)
-    nextTick(() => {
-      document.getElementById('pub-target-' + target)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      auctionPointerTarget.value = target
-      _auctionPointerTimer = setTimeout(() => { auctionPointerTarget.value = null }, 5000)
-    })
-    return
+// ── Guide arrow (летящая стрелка с пунктирным следом) ────────────────────────
+const guideArrowVisible = ref(false)
+const guideArrowPos = ref({ x: 0, y: 0 })
+const guideArrowAngle = ref(0)
+const guideArrowArrived = ref(false)
+const guideTrail = ref<{ x: number; y: number }[]>([])
+
+let _guideRafId: number | null = null
+let _guideSafetyTimer: ReturnType<typeof setTimeout> | null = null
+
+function _getDestCenter(el: HTMLElement): { x: number; y: number } {
+  const r = el.getBoundingClientRect()
+  return { x: r.left + r.width / 2, y: r.top - 30 }
+}
+
+function clearGuideArrow() {
+  guideArrowVisible.value = false
+  guideArrowArrived.value = false
+  guideTrail.value = []
+  if (_guideRafId !== null) { cancelAnimationFrame(_guideRafId); _guideRafId = null }
+  if (_guideSafetyTimer !== null) { clearTimeout(_guideSafetyTimer); _guideSafetyTimer = null }
+}
+
+async function guideArrowTo(target: string) {
+  // Отменить предыдущий
+  clearGuideArrow()
+
+  const IN_DIALOG_TARGETS = new Set(['auction-date', 'auction-bet', 'okpd2'])
+
+  // Для out-of-dialog полей: закрыть диалог сначала
+  if (!IN_DIALOG_TARGETS.has(target)) {
+    publishDialog.value = false
+    pendingPlatform.value = null
   }
-  publishDialog.value = false
-  pendingPlatform.value = null
-  if (_pointerTimer) clearTimeout(_pointerTimer)
-  nextTick(() => {
-    document.getElementById('pub-target-' + target)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+
+  await nextTick()
+
+  const el = document.getElementById('pub-target-' + target)
+  if (!el) return
+
+  // Старт: правый верхний угол вьюпорта (где снэкбар)
+  const startX = window.innerWidth - 100
+  const startY = 90
+  guideArrowPos.value = { x: startX, y: startY }
+  guideTrail.value = [{ x: startX, y: startY }]
+  guideArrowVisible.value = true
+  guideArrowArrived.value = false
+
+  // Инициировать плавный скролл к полю
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+
+  // Также выставить glow
+  if (AUCTION_TARGETS.has(target)) {
+    if (_auctionPointerTimer) clearTimeout(_auctionPointerTimer)
+    auctionPointerTarget.value = target
+  } else if (target === 'okpd2') {
+    if (_okpd2Timer) clearTimeout(_okpd2Timer)
+    okpd2Pointer.value = true
+  } else {
+    if (_pointerTimer) clearTimeout(_pointerTimer)
     pointerTarget.value = target
-    _pointerTimer = setTimeout(() => { pointerTarget.value = null }, 5000)
-  })
+  }
+
+  const LERP = 0.07
+  const ARRIVE_DIST = 12
+  const TRAIL_MIN_DIST = 6
+  let arrived = false
+
+  function tick() {
+    const dest = _getDestCenter(el)
+    const cx = guideArrowPos.value.x
+    const cy = guideArrowPos.value.y
+
+    if (!arrived) {
+      const dx = dest.x - cx
+      const dy = dest.y - cy
+      const dist = Math.sqrt(dx * dx + dy * dy)
+      guideArrowAngle.value = (Math.atan2(dy, dx) * 180) / Math.PI + 90 // +90 т.к. стрелка вниз по умолчанию
+
+      const nx = cx + dx * LERP
+      const ny = cy + dy * LERP
+      guideArrowPos.value = { x: nx, y: ny }
+
+      // Добавить точку следа если сдвинулись достаточно
+      const last = guideTrail.value[guideTrail.value.length - 1]
+      const ldx = nx - (last?.x ?? nx)
+      const ldy = ny - (last?.y ?? ny)
+      if (Math.sqrt(ldx * ldx + ldy * ldy) > TRAIL_MIN_DIST) {
+        guideTrail.value.push({ x: nx, y: ny })
+        // Ограничим длину следа для производительности
+        if (guideTrail.value.length > 500) guideTrail.value.shift()
+      }
+
+      if (dist < ARRIVE_DIST) {
+        arrived = true
+        guideArrowArrived.value = true
+      }
+    } else {
+      // Прилипаем к полю (поле могло сдвинуться)
+      guideArrowPos.value = _getDestCenter(el)
+    }
+
+    _guideRafId = requestAnimationFrame(tick)
+  }
+
+  _guideRafId = requestAnimationFrame(tick)
+
+  // Safety: убираем через 3 минуты
+  _guideSafetyTimer = setTimeout(() => clearGuideArrow(), 3 * 60 * 1000)
+}
+// ── end guide arrow ────────────────────────────────────────────────────────────
+
+function revealField(target: string) {
+  guideArrowTo(target)
 }
 
 const publishNmck = computed(() => displayNmck.value || savedNmck.value || 0)
@@ -5153,12 +5397,12 @@ function checkPublishReady(): {text: string; target: PublishTarget}[] {
   // Мониторинг цен не требует позиций (и deliveryPlace там опционален)
   if (fabrikantProcedureType.value !== 'price_monitoring') {
     if (!items.value.some(i => i.item_name?.trim())) errors.push({ text: 'Нет позиций в закупке (добавьте хотя бы одну)', target: 'items' })
-    // Фабрикант требует lot_delivery_place.state/region/okato — нужен реальный субъект РФ
-    if (!form.region || !RU_REGION_OKATO[form.region]) {
+    // Фабрикант требует lot_delivery_place.state/region/okato — нужен реальный субъект РФ (поле доставки, не мероприятия)
+    if (!form.delivery_region || !resolveRegionOkato(form.delivery_region)) {
       errors.push({ text: 'Укажите субъект РФ (для места поставки)', target: 'region' })
     }
-    // Адрес поставки: карточный адрес → место оказания услуг → адрес организации субсидии
-    const hasAddress = !!String(form.delivery_address || '').trim()
+    // Адрес поставки: структурный → свободная строка → место оказания услуг → адрес организации субсидии
+    const hasAddress = !!String(form.delivery_city || form.delivery_street || form.delivery_address || '').trim()
       || !!String(form.delivery_location || '').trim()
       || !!String(customerPreview.value?.address || '').trim()
     if (!hasAddress) errors.push({ text: 'Укажите адрес доставки', target: 'address' })
@@ -5220,7 +5464,27 @@ async function doPublish(platform: string, procedureType?: string | null) {
     // Poll status for 30s
     pollPublication(pub.id)
   } catch (e: any) {
-    showSnack(e?.detail || 'Ошибка при отправке на публикацию', 'error')
+    const errText = e?.detail || e?.payload?.message || e?.message || 'Ошибка при отправке на публикацию'
+    if (platform === 'fabrikant') {
+      const errTarget = fabrikantErrorTarget(errText)
+      if (errTarget === 'okpd2') {
+        showSnack(errText, 'error', {
+          actionText: 'Показать поле',
+          onAction: () => guideArrowTo(errTarget),
+        })
+        guideArrowTo(errTarget)
+      } else if (errTarget === 'region' || errTarget === 'address') {
+        showSnack(errText, 'error', {
+          actionText: 'Показать поле',
+          onAction: () => guideArrowTo(errTarget),
+        })
+        guideArrowTo(errTarget)
+      } else {
+        showSnack(errText, 'error')
+      }
+    } else {
+      showSnack(errText, 'error')
+    }
   } finally {
     publishingPlatform.value = null
   }
@@ -5261,11 +5525,7 @@ function openFabrikantRetry(platform: string) {
   }
   const errTarget = fabrikantErrorTarget(lastPub?.error_text)
   if (errTarget === 'okpd2') {
-    nextTick(() => {
-      if (_okpd2Timer) clearTimeout(_okpd2Timer)
-      okpd2Pointer.value = true
-      _okpd2Timer = setTimeout(() => { okpd2Pointer.value = false }, 5000)
-    })
+    nextTick(() => guideArrowTo('okpd2'))
   } else if (errTarget === 'region' || errTarget === 'address') {
     // Показать блокер в списке ошибок диалога; клик → закрыть диалог → стрелка к полю
     if (!publishErrors.value.some(e => e.target === errTarget)) {
@@ -5285,12 +5545,15 @@ function pollPublication(pubId: number, attempts = 0) {
     if (pub && pub.status === 'error') {
       const errTarget = pub.platform === 'fabrikant' ? fabrikantErrorTarget(pub.error_text) : null
       if (errTarget === 'region' || errTarget === 'address') {
+        // АВТОМАТИЧЕСКИ запускаем стрелку без ожидания клика
+        guideArrowTo(errTarget)
         showSnack(pub.error_text || 'Ошибка публикации', 'error', {
           actionText: 'Показать поле',
-          onAction: () => revealField(errTarget),
+          onAction: () => guideArrowTo(errTarget),
         })
       } else if (errTarget === 'okpd2') {
         // Поле ОКПД2 находится в диалоге публикации — открываем диалог со стрелкой
+        openFabrikantRetry('fabrikant')
         showSnack(pub.error_text || 'Ошибка публикации', 'error', {
           actionText: 'Показать поле',
           onAction: () => openFabrikantRetry('fabrikant'),
@@ -6221,7 +6484,7 @@ const onSubsidyChange = async () => {
   loadResponsiblePersons()
   // Pre-fill delivery address from org if empty & load address history
   loadDeliveryAddressHistory()
-  if (!form.delivery_address && form.subsidy_id) {
+  if ((!form.delivery_address || !form.delivery_region) && form.subsidy_id) {
     try {
       const subsidy = subsidies.value.find(s => s.id === form.subsidy_id)
       if (subsidy?.org_id) {
@@ -6230,6 +6493,8 @@ const onSubsidyChange = async () => {
         const org = await apiFetch<any>(`/organizations/${subsidy.org_id}`)
         // не перетираем введённое, если пользователь успел заполнить пока грузили
         if (!form.delivery_address && org?.address) form.delivery_address = org.address
+        if (!form.delivery_region && org?.region) form.delivery_region = org.region
+        if (!form.delivery_city && org?.contract_city) form.delivery_city = org.contract_city
       }
     } catch { /* silent */ }
   }
@@ -6576,6 +6841,8 @@ const loadPurchase = async () => {
     agreement_date: data.agreement_date || '',
     order_date: data.order_date || '',
     contract_end_date: data.contract_end_date || '',
+    commitment_quarter: data.commitment_quarter ?? null,
+    planned_payment_month: data.planned_payment_month || '',
     delivery_date: data.delivery_date || '',
     delivery_address: data.delivery_address || '',
     procurement_planned_date: data.procurement_planned_date || '',
@@ -6662,6 +6929,13 @@ const loadPurchase = async () => {
     vehicle_id: data.vehicle_id ?? null,
     // ЭТП
     etp_url: data.etp_url ?? null,
+    // Структурированный адрес доставки (Фабрикант: место поставки)
+    delivery_region: data.delivery_region || '',
+    delivery_city: data.delivery_city || '',
+    delivery_street: data.delivery_street || '',
+    delivery_house: data.delivery_house || '',
+    delivery_building: data.delivery_building || '',
+    delivery_postcode: data.delivery_postcode || '',
   })
 
   // Save frozen НМЦД from DB
@@ -7365,8 +7639,17 @@ const doSave = async (adminOverride: boolean) => {
       agreement_date: form.agreement_date || null,
       order_date: form.order_date || null,
       contract_end_date: form.contract_end_date || null,
+      commitment_quarter: form.commitment_quarter ?? null,
+      planned_payment_month: form.planned_payment_month || null,
       delivery_date: form.delivery_date || null,
       delivery_address: form.delivery_address || null,
+      // Структурированный адрес доставки
+      delivery_region: form.delivery_region || null,
+      delivery_city: form.delivery_city || null,
+      delivery_street: form.delivery_street || null,
+      delivery_house: form.delivery_house || null,
+      delivery_building: form.delivery_building || null,
+      delivery_postcode: form.delivery_postcode || null,
       procurement_planned_date: form.procurement_planned_date || null,
       execution_term: form.execution_term || null,
       execution_term_changed: form.execution_term_changed || null,
@@ -8396,6 +8679,26 @@ async function downloadKpXlsx() {
 @keyframes missingFieldPulse {
   from { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
   to   { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
+}
+
+/* guide-arrow — летящая стрелка с пунктирным следом */
+.guide-arrow-overlay { pointer-events: none; }
+.guide-arrow-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  filter: drop-shadow(0 2px 6px rgba(229,57,53,0.6));
+  transition: transform 0.05s linear;
+}
+.guide-arrow-icon.guide-arrow-arrived {
+  animation: pub-pointer-wiggle 0.9s ease-in-out infinite;
+}
+.guide-arrow-mdi {
+  font-size: 34px;
+  color: #e53935;
+  line-height: 1;
 }
 
 /* pub-pointer / pub-glow — указатель на целевые поля из диалога публикации */

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Numeric, Boolean, ForeignKey, Date, Text, DateTime
+from sqlalchemy import Column, Integer, SmallInteger, String, Numeric, Boolean, ForeignKey, Date, Text, DateTime
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -91,7 +91,14 @@ class Purchase(Base):
     has_pretension = Column(Boolean, nullable=True, default=False)  # U: Претензионная работа
 
     # Сводная по продукции
-    delivery_address = Column(Text, nullable=True)          # адрес доставки
+    delivery_address = Column(Text, nullable=True)          # адрес доставки (свободная строка / фолбэк)
+    # Структурированный адрес доставки (Фабрикант: место поставки)
+    delivery_region = Column(String(100), nullable=True)    # субъект РФ доставки (→ ОКАТО / фед.округ)
+    delivery_city = Column(String(200), nullable=True)      # город / населённый пункт
+    delivery_street = Column(String(300), nullable=True)    # улица
+    delivery_house = Column(String(50), nullable=True)      # дом
+    delivery_building = Column(String(50), nullable=True)   # корпус / строение
+    delivery_postcode = Column(String(20), nullable=True)   # почтовый индекс
     procurement_planned_date = Column(Date, nullable=True)  # планируемая дата закупки
 
     # Phase 26-K: доп. соглашение и дата заказа
@@ -132,6 +139,11 @@ class Purchase(Base):
 
     # ЭТП: ссылка на конкурсную процедуру (заполнена → закупка проводилась через ЭТП)
     etp_url = Column(Text, nullable=True)
+
+    # Квартал принятия обязательств (1-4)
+    commitment_quarter = Column(SmallInteger, nullable=True)
+    # Планируемый месяц платежа (хранится первое число месяца)
+    planned_payment_month = Column(Date, nullable=True)
 
     # Fabrikant: срок оплаты в днях
     payment_term_days = Column(Integer, nullable=True)

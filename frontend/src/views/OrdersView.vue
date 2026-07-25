@@ -934,7 +934,7 @@
               <tbody>
                 <tr
                   v-for="p in importDialog.preview?.purchases" :key="p.group_key"
-                  :class="p.skipped ? 'import-preview-skipped' : ''"
+                  :class="[p.skipped ? 'import-preview-skipped' : '', p.duplicate_matches?.length ? 'import-preview-dup' : '']"
                 >
                   <td class="fz-11">
                     <span v-if="(p as any).purchase_group || (p as any).order_number">
@@ -965,10 +965,42 @@
                       </template>
                     </v-tooltip>
                     <v-chip v-else-if="!p.skipped" color="success" size="x-small" label>{{ p.status || 'OK' }}</v-chip>
+                    <v-chip v-if="!p.skipped && p.duplicate_matches?.length" color="warning" size="x-small" label class="ml-1">
+                      Возможный повтор
+                    </v-chip>
                   </td>
                 </tr>
               </tbody>
             </v-table>
+            <div v-if="(importDialog.preview?.duplicates_count ?? 0) > 0" class="mb-3">
+              <v-alert type="warning" variant="tonal" density="compact">
+                <div class="text-caption font-weight-bold mb-1">
+                  Возможные повторы: {{ importDialog.preview?.duplicates_count }}
+                </div>
+                <div class="text-caption mb-2">
+                  Разовые закупки с таким же контрагентом и суммой уже есть. Проверьте — это разные закупки или дубли.
+                </div>
+                <div v-for="p in importDialog.preview?.purchases?.filter((x: any) => x.duplicate_matches?.length)" :key="'dup-' + p.group_key" class="mb-2">
+                  <div class="text-caption font-weight-medium">
+                    {{ p.contractor || '—' }}<template v-if="p.contract_number"> · №{{ p.contract_number }}</template>
+                    <template v-if="p.plan_total != null"> · {{ p.plan_total.toLocaleString('ru-RU') }} ₽</template>
+                  </div>
+                  <ul class="text-caption ml-4 mb-0">
+                    <li v-for="(m, i) in p.duplicate_matches" :key="i">
+                      <a v-if="m.source === 'db' && m.id" :href="`/orders/${m.id}/edit`" target="_blank" rel="noopener">
+                        №{{ m.purchase_number ?? m.id }} — {{ m.name || 'без названия' }}
+                      </a>
+                      <span v-else>{{ m.name }} <em>(в этом же файле)</em></span>
+                      <template v-if="m.amount != null"> · {{ m.amount.toLocaleString('ru-RU') }} ₽</template>
+                      <template v-if="(m as any).match_reason"> · совпало по: {{ (m as any).match_reason }}</template>
+                      <template v-if="m.status"> · {{ m.status }}</template>
+                    </li>
+                  </ul>
+                </div>
+                <v-checkbox v-model="importDialog.dupAck" density="compact" hide-details
+                  label="Я проверил повторы — это разные закупки, импортировать" class="mt-1" />
+              </v-alert>
+            </div>
             <div v-if="importDialog.preview?.errors?.length || (importDialog.preview as any)?.payments_errors?.length" class="mt-2">
               <v-alert type="error" variant="tonal" density="compact" class="mb-0">
                 <div v-if="importDialog.preview?.errors?.length">
@@ -1062,7 +1094,7 @@
             <v-btn variant="text" @click="importDialog.step = 1">Назад</v-btn>
             <v-btn color="primary" variant="flat"
               :loading="importDialog.loading"
-              :disabled="!importDialog.preview?.purchases?.filter((p: any) => !p.skipped).length"
+              :disabled="!importDialog.preview?.purchases?.filter((p: any) => !p.skipped).length || ((importDialog.preview?.duplicates_count ?? 0) > 0 && !importDialog.dupAck)"
               @click="doImport">
               Импортировать
             </v-btn>
@@ -2207,6 +2239,7 @@ interface ImportPreviewPurchase {
   items_count: number; plan_total?: number; fact_total?: number; status?: string
   skipped: boolean; skip_reason?: string; payments_count?: number
   purchase_group?: string; order_number?: string
+  duplicate_matches?: Array<{ source: 'db' | 'file'; id: number | null; purchase_number: string | null; name: string; amount: number; status: string | null; contract_date: string | null }>
 }
 interface ImportPreview {
   purchases: ImportPreviewPurchase[]
@@ -2215,6 +2248,7 @@ interface ImportPreview {
   payments_count?: number
   payments_total?: number
   payments_errors?: Array<{ row?: number; contract_number?: string; message?: string }>
+  duplicates_count?: number
 }
 interface ImportResult {
   created_purchases: number; created_items: number; skipped: number; errors: ImportError[]
@@ -2231,6 +2265,7 @@ const importDialog = reactive({
   loading: false,
   preview: null as ImportPreview | null,
   result: null as ImportResult | null,
+  dupAck: false,
 })
 
 const previewPaymentsTotal = computed(() =>
@@ -2250,13 +2285,16 @@ const resetImport = () => {
   importDialog.assignedUserId = _importCurrentUserId || null
   importDialog.preview = null
   importDialog.result = null
+  importDialog.dupAck = false
 }
 
 const downloadTemplate = async () => {
   const token = localStorage.getItem('auth_token')
   const url = importDialog.format === 'feo'
     ? '/api/purchases/import/feo-format/template'
-    : '/api/purchases/import/template'
+    : importDialog.subsidyId
+      ? `/api/purchases/import/template?subsidy_id=${importDialog.subsidyId}`
+      : '/api/purchases/import/template'
   const filename = importDialog.format === 'feo' ? 'Шаблон_импорта_закупок_формат_ФЭО.xlsx' : 'Шаблон_импорта_закупок.xlsx'
   const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
   if (!response.ok) return
@@ -2581,6 +2619,7 @@ async function doExport() {
 }
 .import-preview-table { border: 1px solid var(--crm-border); border-radius: 8px; max-height: 280px; overflow-y: auto; }
 .import-preview-skipped { opacity: 0.55; }
+.import-preview-dup { background: rgba(251, 146, 60, 0.08); }
 .scans-folder-label {
   display: flex; align-items: center; gap: 6px;
   padding: 12px 16px; border: 2px dashed var(--crm-border);

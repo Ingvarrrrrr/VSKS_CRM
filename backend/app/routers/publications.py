@@ -247,30 +247,54 @@ async def _build_publish_payload(purchase_id: int, db: AsyncSession) -> dict:
 
     org_inn = None
     org_address = None
+    org_region = None
+    _sub_org = None
     if subsidy and subsidy.org_id:
         org_res = await db.execute(
             select(Organization)
             .where(Organization.id == subsidy.org_id)
             .options(selectinload(Organization.contractor))
         )
-        org = org_res.scalar_one_or_none()
-        if org:
-            org_inn = org.inn or (org.contractor.inn if org.contractor else None)
+        _sub_org = org_res.scalar_one_or_none()
+        if _sub_org:
+            org_inn = _sub_org.inn or (_sub_org.contractor.inn if _sub_org.contractor else None)
             # Адрес по merge-паттерну: org.address, при пустом — адрес привязанного контрагента
-            org_address = (org.address or "").strip() or (
-                (org.contractor.address or "").strip() if org.contractor else ""
+            org_address = (_sub_org.address or "").strip() or (
+                (_sub_org.contractor.address or "").strip() if _sub_org.contractor else ""
             ) or None
+            org_region = (_sub_org.region or "").strip() or None
 
-    # Фолбэк адреса поставки: карточный delivery_address → delivery_location → адрес организации субсидии
-    delivery_address = (
-        (p.delivery_address or "").strip()
-        or (p.delivery_location or "").strip()
-        or org_address
-    )
+    # Субъект РФ доставки: сначала явное поле delivery_region, фолбэк — регион организации субсидии.
+    # p.region — «Регион проведения мероприятия» (ДРУГОЕ поле, НЕ трогаем для места поставки).
+    delivery_region_value = (p.delivery_region or "").strip() or (org_region or "")
+    region_info = get_region_info(delivery_region_value) if delivery_region_value else None
 
-    # Субъект РФ → федеральный округ + ОКАТО (deliveryPlaceType Фабриканта).
-    # Если регион не заполнен / спец-значение — None, XML строится без этих элементов (не падаем).
-    region_info = get_region_info(p.region)
+    # Полный адрес доставки: собираем из структурных частей, фолбэк — свободные поля.
+    def _build_delivery_address() -> str | None:
+        parts = []
+        if (p.delivery_postcode or "").strip():
+            parts.append(p.delivery_postcode.strip())
+        if delivery_region_value:
+            parts.append(delivery_region_value)
+        if (p.delivery_city or "").strip():
+            parts.append(p.delivery_city.strip())
+        if (p.delivery_street or "").strip():
+            parts.append(p.delivery_street.strip())
+        if (p.delivery_house or "").strip():
+            parts.append("д. " + p.delivery_house.strip())
+        if (p.delivery_building or "").strip():
+            parts.append("к. " + p.delivery_building.strip())
+        if parts:
+            return ", ".join(parts)
+        # Фолбэк: свободная строка → место доставки/услуг → адрес организации субсидии
+        return (
+            (p.delivery_address or "").strip()
+            or (p.delivery_location or "").strip()
+            or org_address
+            or None
+        )
+
+    delivery_address = _build_delivery_address()
 
     return {
         "purchase_id":       p.id,
@@ -287,7 +311,7 @@ async def _build_publish_payload(purchase_id: int, db: AsyncSession) -> dict:
         "region":            p.region or None,
         # deliveryPlaceType: state (фед. округ) / region (субъект) / regionOkato (11 цифр)
         "delivery_state":    region_info["district"] if region_info else None,
-        "delivery_region":   p.region.strip() if (region_info and p.region) else None,
+        "delivery_region":   delivery_region_value if region_info else None,
         "delivery_okato":    region_info["okato"] if region_info else None,
         "org_inn":           org_inn,
         "contractor": {
@@ -1037,6 +1061,20 @@ async def publish_purchase(
         payload["auction_bet_limit_from"] = body.auction_bet_limit_from
     if body.auction_bet_limit_to is not None:
         payload["auction_bet_limit_to"] = body.auction_bet_limit_to
+
+    # ── Предварительная валидация для Фабриканта ──────────────────────────────
+    # Проверяем ЗДЕСЬ (до записи в БД и фонового вызова), чтобы вернуть русский
+    # 422 сразу, а не дожидаться бизнес-ошибки от ЭТП.
+    if body.platform == "fabrikant":
+        proc = payload.get("procedure_type") or "zp"
+        if proc != "price_monitoring":
+            preflight_errors: list[str] = []
+            if not payload.get("delivery_state") and not payload.get("delivery_okato"):
+                preflight_errors.append("Укажите субъект РФ (для места поставки)")
+            if not payload.get("delivery_address"):
+                preflight_errors.append("Укажите адрес доставки")
+            if preflight_errors:
+                raise HTTPException(422, "; ".join(preflight_errors))
 
     pub = PlatformPublication(
         purchase_id=purchase_id,

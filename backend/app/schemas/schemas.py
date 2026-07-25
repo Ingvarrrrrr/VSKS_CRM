@@ -625,6 +625,13 @@ class PurchaseCreate(BaseModel):
     execution_term_changed: Optional[date] = None
     delivery_date: Optional[date] = None
     delivery_address: Optional[str] = None
+    # Структурированный адрес доставки (Фабрикант: место поставки)
+    delivery_region: Optional[str] = None
+    delivery_city: Optional[str] = None
+    delivery_street: Optional[str] = None
+    delivery_house: Optional[str] = None
+    delivery_building: Optional[str] = None
+    delivery_postcode: Optional[str] = None
     procurement_planned_date: Optional[date] = None
     country_origin: Optional[str] = None
     subject: Optional[str] = None
@@ -646,6 +653,8 @@ class PurchaseCreate(BaseModel):
     vat_exemption_article: Optional[str] = None
     third_party_involved: Optional[bool] = False
     contract_end_date: Optional[date] = None
+    commitment_quarter: Optional[int] = None
+    planned_payment_month: Optional[date] = None
     service_period_type: Optional[str] = None
     service_start_date: Optional[date] = None
     service_end_date: Optional[date] = None
@@ -746,6 +755,13 @@ class PurchaseUpdate(BaseModel):
     execution_term_changed: Optional[date] = None
     delivery_date: Optional[date] = None
     delivery_address: Optional[str] = None
+    # Структурированный адрес доставки (Фабрикант: место поставки)
+    delivery_region: Optional[str] = None
+    delivery_city: Optional[str] = None
+    delivery_street: Optional[str] = None
+    delivery_house: Optional[str] = None
+    delivery_building: Optional[str] = None
+    delivery_postcode: Optional[str] = None
     procurement_planned_date: Optional[date] = None
     country_origin: Optional[str] = None
     subject: Optional[str] = None
@@ -766,6 +782,8 @@ class PurchaseUpdate(BaseModel):
     vat_exemption_article: Optional[str] = None
     third_party_involved: Optional[bool] = None
     contract_end_date: Optional[date] = None
+    commitment_quarter: Optional[int] = None
+    planned_payment_month: Optional[date] = None
     service_period_type: Optional[str] = None
     service_start_date: Optional[date] = None
     service_end_date: Optional[date] = None

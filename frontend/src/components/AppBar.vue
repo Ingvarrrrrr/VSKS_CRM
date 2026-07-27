@@ -1114,22 +1114,6 @@ watch(totalUnread, (val) => { badgeChatUnread.value = val })
   background: #FF9800;
 }
 
-/* ── AppBar glass effect ── */
-:deep(.v-app-bar) {
-  backdrop-filter: blur(8px) saturate(1.2);
-  -webkit-backdrop-filter: blur(8px) saturate(1.2);
-}
-
-/* iOS standalone (black-translucent статус-бар + viewport-fit=cover): контент
-   уходит под часы/нотч. Опускаем шапку на высоту safe-area, фон шапки закрывает
-   зону статус-бара. На desktop/Android env()=0 → правило ничего не меняет. */
-:deep(.v-app-bar.v-toolbar) {
-  height: calc(48px + env(safe-area-inset-top)) !important;
-  padding-top: env(safe-area-inset-top);
-}
-:deep(.v-app-bar .v-toolbar__content) {
-  height: 48px !important;
-}
 
 /* ── Logo title hover ── */
 :deep(.v-app-bar-title) {

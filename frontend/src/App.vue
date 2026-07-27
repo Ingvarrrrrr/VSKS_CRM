@@ -135,11 +135,34 @@ onUnmounted(() => {
 </script>
 
 <style>
+/* Высота статус-бара iOS вынесена в переменную: в десктопном браузере env() всегда
+   0 и проверить вёрстку под нотч нельзя — с переменной её можно подставить в тесте. */
+:root {
+  --gala-safe-top: env(safe-area-inset-top, 0px);
+}
+
 /* iOS safe-area: к layout-отступу под app-bar добавляем высоту статус-бара,
    чтобы верх контента (KPI дашборда и пр.) не прятался под часами. env()=0 на
    desktop/Android → сводится к обычному var(--v-layout-top). */
 .v-main {
-  padding-top: calc(var(--v-layout-top) + env(safe-area-inset-top)) !important;
+  padding-top: calc(var(--v-layout-top) + var(--gala-safe-top)) !important;
+}
+
+/* iOS standalone (black-translucent + viewport-fit=cover): статус-бар рисуется
+   поверх страницы. Опускаем шапку на высоту safe-area, её фон закрывает зону
+   часов/нотча. Правила ДОЛЖНЫ быть глобальными: в AppBar.vue v-app-bar —
+   корневой элемент, и scoped `:deep()` до него не достаёт.
+   env()=0 на desktop/Android → сводится к обычным 48px. */
+.v-application .v-app-bar.v-toolbar {
+  height: calc(48px + var(--gala-safe-top)) !important;
+  padding-top: var(--gala-safe-top) !important;
+}
+.v-application .v-app-bar .v-toolbar__content {
+  height: 48px !important;
+}
+.v-application .v-app-bar {
+  backdrop-filter: blur(8px) saturate(1.2);
+  -webkit-backdrop-filter: blur(8px) saturate(1.2);
 }
 
 /* Mobile bottom-nav (AppBar.vue) фиксирован внизу — освобождаем место под него */

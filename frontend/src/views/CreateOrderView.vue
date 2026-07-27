@@ -32,51 +32,60 @@
     </div>
 
     <div v-if="form.subsidy_id && (feoDirections.length || feoResiduals.length)" class="mb-4">
-      <!-- Остатки по направлениям ФЭО (ур.1) — видны при формировании, контроль бюджета -->
-      <template v-if="canViewAllLevelsBudget && feoDirections.length">
-        <v-alert
-          v-for="d in feoDirections" :key="d.id"
-          :type="d.spendable_remaining < 0 ? 'error' : 'info'"
-          variant="tonal" density="compact" class="mb-2">
-          <div class="text-subtitle-2 mb-1">{{ d.name }}</div>
-          <div class="d-flex flex-wrap gap-x-4 text-body-2">
-            <span>
-              Незаконтрактовано:
-              <strong :class="d.uncontracted_remaining < 0 ? 'text-error' : ''">{{ formatMoney(d.uncontracted_remaining) }}</strong>
-            </span>
-            <span>
-              На траты:
-              <strong :class="d.spendable_remaining < 0 ? 'text-error font-weight-bold' : ''">{{ formatMoney(d.spendable_remaining) }}</strong>
-              <span class="text-caption text-medium-emphasis"> из {{ formatMoney(d.budget) }}</span>
-            </span>
-          </div>
-        </v-alert>
-      </template>
-      <!-- Остатки по выбранным листовым ФЭО (после выбора пункта) -->
-      <template v-if="canViewLeafBudget">
-        <v-alert
-          v-for="r in feoResiduals" :key="r.id"
-          :type="(basketForNode(r.id) > r.spendable_remaining) ? 'warning' : r.spendable_remaining < 0 ? 'error' : 'info'"
-          variant="tonal" density="compact" class="mb-2">
-          <div class="text-subtitle-2 mb-1">Остаток по «{{ r.name }}»</div>
-          <div class="text-body-2">
-            <div>Бюджет: <strong>{{ formatMoney(r.budget) }}</strong></div>
-            <div>Осталось незаконтрактованным: <strong :class="r.uncontracted_remaining < 0 ? 'text-error' : ''">{{ formatMoney(r.uncontracted_remaining) }}</strong></div>
-            <div>Осталось на траты: <strong :class="r.spendable_remaining < 0 ? 'text-error font-weight-bold' : ''">{{ formatMoney(r.spendable_remaining) }}</strong></div>
-            <div :class="(r.spendable_remaining - basketForNode(r.id)) < 0 ? 'text-error font-weight-bold' : ''">
-              Осталось потратить (с учётом этой заявки): <strong>{{ formatMoney(r.spendable_remaining - basketForNode(r.id)) }}</strong>
+      <!-- Заголовок с переключателем свёртки -->
+      <div class="d-flex align-center text-subtitle-2 font-weight-medium mb-2"
+           style="cursor:pointer;user-select:none" @click="toggleFeoRemains">
+        <v-icon icon="mdi-chart-donut" size="18" color="grey" class="mr-2" />
+        <span>Остатки по категориям ФЭО</span>
+        <v-icon :icon="feoRemainsCollapsed ? 'mdi-chevron-down' : 'mdi-chevron-up'" size="18" color="grey" class="ml-1" />
+      </div>
+      <div v-show="!feoRemainsCollapsed">
+        <!-- Остатки по направлениям ФЭО (ур.1) — видны при формировании, контроль бюджета -->
+        <template v-if="canViewAllLevelsBudget && feoDirections.length">
+          <v-alert
+            v-for="d in feoDirections" :key="d.id"
+            :type="d.spendable_remaining < 0 ? 'error' : 'info'"
+            variant="tonal" density="compact" class="mb-2">
+            <div class="text-subtitle-2 mb-1">{{ d.name }}</div>
+            <div class="d-flex flex-wrap gap-x-4 text-body-2">
+              <span>
+                Незаконтрактовано:
+                <strong :class="d.uncontracted_remaining < 0 ? 'text-error' : ''">{{ formatMoney(d.uncontracted_remaining) }}</strong>
+              </span>
+              <span>
+                На траты:
+                <strong :class="d.spendable_remaining < 0 ? 'text-error font-weight-bold' : ''">{{ formatMoney(d.spendable_remaining) }}</strong>
+                <span class="text-caption text-medium-emphasis"> из {{ formatMoney(d.budget) }}</span>
+              </span>
             </div>
-            <div v-if="(r.spendable_remaining - basketForNode(r.id)) < 0" class="text-error text-caption mt-1">
-              Превышение на {{ formatMoney(Math.abs(r.spendable_remaining - basketForNode(r.id))) }} — потребуется согласование руководителя
+          </v-alert>
+        </template>
+        <!-- Остатки по выбранным листовым ФЭО (после выбора пункта) -->
+        <template v-if="canViewLeafBudget">
+          <v-alert
+            v-for="r in feoResiduals" :key="r.id"
+            :type="(basketForNode(r.id) > r.spendable_remaining) ? 'warning' : r.spendable_remaining < 0 ? 'error' : 'info'"
+            variant="tonal" density="compact" class="mb-2">
+            <div class="text-subtitle-2 mb-1">Остаток по «{{ r.name }}»</div>
+            <div class="text-body-2">
+              <div>Бюджет: <strong>{{ formatMoney(r.budget) }}</strong></div>
+              <div>Осталось незаконтрактованным: <strong :class="r.uncontracted_remaining < 0 ? 'text-error' : ''">{{ formatMoney(r.uncontracted_remaining) }}</strong></div>
+              <div>Осталось на траты: <strong :class="r.spendable_remaining < 0 ? 'text-error font-weight-bold' : ''">{{ formatMoney(r.spendable_remaining) }}</strong></div>
+              <div :class="(r.spendable_remaining - basketForNode(r.id)) < 0 ? 'text-error font-weight-bold' : ''">
+                Осталось потратить (с учётом этой заявки): <strong>{{ formatMoney(r.spendable_remaining - basketForNode(r.id)) }}</strong>
+              </div>
+              <div v-if="(r.spendable_remaining - basketForNode(r.id)) < 0" class="text-error text-caption mt-1">
+                Превышение на {{ formatMoney(Math.abs(r.spendable_remaining - basketForNode(r.id))) }} — потребуется согласование руководителя
+              </div>
             </div>
-          </div>
-          <div v-if="canViewAllLevelsBudget && r.ancestors && r.ancestors.length" class="mt-2 text-caption">
-            <div v-for="a in r.ancestors" :key="a.id">
-              ур.{{ a.level }} «{{ a.name }}»: незаконтрактовано <strong>{{ formatMoney(a.uncontracted_remaining) }}</strong> / на траты <strong>{{ formatMoney(a.spendable_remaining) }}</strong>
+            <div v-if="canViewAllLevelsBudget && r.ancestors && r.ancestors.length" class="mt-2 text-caption">
+              <div v-for="a in r.ancestors" :key="a.id">
+                ур.{{ a.level }} «{{ a.name }}»: незаконтрактовано <strong>{{ formatMoney(a.uncontracted_remaining) }}</strong> / на траты <strong>{{ formatMoney(a.spendable_remaining) }}</strong>
+              </div>
             </div>
-          </div>
-        </v-alert>
-      </template>
+          </v-alert>
+        </template>
+      </div>
     </div>
 
     <v-form ref="formRef" :class="{ 'compact-mobile': formMode === 'advance_report' }" @submit.prevent="save">
@@ -484,32 +493,32 @@
             </v-col>
             <!-- FEO level 1 — появляется после выбора субсидии -->
             <v-col v-if="form.subsidy_id && feoLevel1Options.length" cols="12" md="4">
-              <v-select v-model="selectedFeo1" :items="feoLevel1Options" item-title="name" item-value="id"
-                :label="formMode === 'service_note_delivery' ? 'Категория ФЭО (ур.1)' : 'Категория ФЭО (ур.1) *'"
+              <v-select v-model="selectedFeo1" :items="feoLevel1OptionsWithUnallocated" item-title="name" item-value="id"
+                :label="formMode === 'service_note_delivery' || formMode === 'advance_report' ? 'Категория ФЭО (ур.1)' : 'Категория ФЭО (ур.1) *'"
                 variant="outlined" density="compact" clearable
                 hint="Направление расходования средств" persistent-hint
-                :error-messages="feoSaveAttempted && !selectedFeo1 && formMode !== 'service_note_delivery' ? 'Обязательное поле' : ''"
+                :error-messages="feoSaveAttempted && !selectedFeo1 && formMode !== 'service_note_delivery' && formMode !== 'advance_report' ? 'Обязательное поле' : ''"
                 @update:model-value="onFeo1Change" />
             </v-col>
             <!-- FEO level 2 — появляется после выбора ур.1 -->
             <v-col v-if="selectedFeo1 && feoLevel2Options.length" cols="12" md="4">
               <v-select v-model="selectedFeo2" :items="feoLevel2Options" item-title="name" item-value="id"
-                :label="formMode === 'service_note_delivery' || feoSkipLast ? 'Категория ФЭО (ур.2)' : 'Категория ФЭО (ур.2) *'"
+                :label="formMode === 'service_note_delivery' || formMode === 'advance_report' || feoSkipLast ? 'Категория ФЭО (ур.2)' : 'Категория ФЭО (ур.2) *'"
                 variant="outlined" density="compact" clearable
-                :error-messages="feoSaveAttempted && !selectedFeo2 && !feoSkipLast && formMode !== 'service_note_delivery' ? 'Выберите уточняющую категорию' : ''"
+                :error-messages="feoSaveAttempted && !selectedFeo2 && !feoSkipLast && formMode !== 'service_note_delivery' && formMode !== 'advance_report' ? 'Выберите уточняющую категорию' : ''"
                 @update:model-value="onFeo2Change" />
             </v-col>
             <!-- FEO level 3 — появляется после выбора ур.2 -->
             <v-col v-if="selectedFeo2 && feoLevel3Options.length" cols="12" md="4">
               <v-select v-model="selectedFeo3" :items="feoLevel3Options" item-title="name" item-value="id"
-                :label="formMode === 'service_note_delivery' || feoSkipLast ? 'Категория ФЭО (ур.3)' : 'Категория ФЭО (ур.3) *'"
+                :label="formMode === 'service_note_delivery' || formMode === 'advance_report' || feoSkipLast ? 'Категория ФЭО (ур.3)' : 'Категория ФЭО (ур.3) *'"
                 variant="outlined" density="compact" clearable
                 :disabled="form.feo_per_item"
-                :error-messages="feoSaveAttempted && !selectedFeo3 && !feoSkipLast && !form.feo_per_item && formMode !== 'service_note_delivery' ? 'Выберите уточняющую категорию' : ''"
+                :error-messages="feoSaveAttempted && !selectedFeo3 && !feoSkipLast && !form.feo_per_item && formMode !== 'service_note_delivery' && formMode !== 'advance_report' ? 'Выберите уточняющую категорию' : ''"
                 @update:model-value="onFeo3Change" />
             </v-col>
             <!-- Переключатель «не указывать последний уровень ФЭО» -->
-            <v-col v-if="selectedFeo1 && feoLevel2Options.length && formMode !== 'service_note_delivery'" cols="12">
+            <v-col v-if="selectedFeo1 && feoLevel2Options.length && formMode !== 'service_note_delivery' && formMode !== 'advance_report'" cols="12">
               <v-switch
                 v-model="feoSkipLast"
                 label="Не указывать последний уровень ФЭО"
@@ -4058,6 +4067,14 @@ function toggleTz() {
   try { localStorage.setItem(TZ_COLLAPSE_KEY, tzCollapsed.value ? '1' : '0') } catch {}
 }
 
+// Блок «Остатки по категориям ФЭО» — свёрнут по умолчанию
+const FEO_REMAINS_COLLAPSE_KEY = 'purchase_feo_remains_collapsed'
+const feoRemainsCollapsed = ref(localStorage.getItem(FEO_REMAINS_COLLAPSE_KEY) !== '0')
+function toggleFeoRemains() {
+  feoRemainsCollapsed.value = !feoRemainsCollapsed.value
+  try { localStorage.setItem(FEO_REMAINS_COLLAPSE_KEY, feoRemainsCollapsed.value ? '1' : '0') } catch {}
+}
+
 // НМЦД mode: auto (from items) or manual (user enters directly)
 const nmckMode = ref<'auto' | 'manual'>('auto')
 const nmckManualValue = ref<number | null>(null)
@@ -6469,6 +6486,8 @@ const feoSkipLast = ref(false)
 const feoValidationError = computed((): string | null => {
   // SN-UX: в режиме служебной записки ФЭО необязательны
   if (formMode.value === 'service_note_delivery') return null
+  // Авансовый отчёт: ФЭО необязательна — чеки грузятся сразу, категория назначается позже
+  if (formMode.value === 'advance_report') return null
   if (!form.subsidy_id || !feoLevel1Options.value.length) return null
   if (!selectedFeo1.value) return 'Выберите категорию ФЭО'
   if (feoSkipLast.value) return null
@@ -6508,6 +6527,14 @@ const feoLevel1Options = computed(() =>
     ? allFeoCategories.value.filter(c => c.subsidy_id === form.subsidy_id && !c.parent_id && fundedFeoIds.value.has(c.id))
     : []
 )
+
+// Для авансового отчёта: добавляем псевдо-пункт «Не определена» в конец списка ур.1
+const feoLevel1OptionsWithUnallocated = computed((): FeoCategory[] => {
+  const base = feoLevel1Options.value
+  if (formMode.value !== 'advance_report' || !form.subsidy_id) return base
+  return [...base, { id: -1, name: '❓ Не определена', parent_id: null, level: 1, subsidy_id: form.subsidy_id }]
+})
+
 const feoLevel2Options = computed(() =>
   selectedFeo1.value
     ? allFeoCategories.value.filter(c => c.parent_id === selectedFeo1.value && fundedFeoIds.value.has(c.id))
@@ -6523,7 +6550,35 @@ const updateFeoId = () => {
   form.feo_category_id = selectedFeo3.value ?? selectedFeo2.value ?? selectedFeo1.value ?? null
 }
 
-const onFeo1Change = () => { selectedFeo2.value = null; selectedFeo3.value = null; updateFeoId() }
+const onFeo1Change = async (val: number | null) => {
+  // Псевдо-пункт «Не определена» для авансового отчёта
+  if (val === -1) {
+    const sid = form.subsidy_id
+    if (!sid) { selectedFeo1.value = null; return }
+    try {
+      const cat = await apiFetch<{ id: number; name: string; parent_id?: number | null }>(
+        '/feo-categories/unallocated',
+        { method: 'POST', body: JSON.stringify({ subsidy_id: sid }) }
+      )
+      // Добавить в allFeoCategories если отсутствует, чтобы computed-options видели её
+      if (!allFeoCategories.value.find(c => c.id === cat.id)) {
+        allFeoCategories.value = [
+          ...allFeoCategories.value,
+          { id: cat.id, name: cat.name, parent_id: cat.parent_id ?? null, level: 1, subsidy_id: sid },
+        ]
+      }
+      selectedFeo1.value = cat.id
+      selectedFeo2.value = null
+      selectedFeo3.value = null
+      updateFeoId()
+    } catch (e: any) {
+      selectedFeo1.value = null
+      showSnack(e?.payload?.message || e?.message || 'Не удалось получить категорию «Не определена»', 'error')
+    }
+    return
+  }
+  selectedFeo2.value = null; selectedFeo3.value = null; updateFeoId()
+}
 const onFeo2Change = () => { selectedFeo3.value = null; updateFeoId() }
 const onFeo3Change = () => { updateFeoId() }
 const onFeoPerItemChange = (val: boolean | null) => {

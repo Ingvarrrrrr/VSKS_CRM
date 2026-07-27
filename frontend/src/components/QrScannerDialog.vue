@@ -14,7 +14,30 @@
 
         <div v-show="hasCamera && !error" class="qr-frame">
           <video ref="video" autoplay playsinline muted />
-          <div class="qr-overlay" />
+
+          <!-- Затемнение вокруг прицела -->
+          <div class="qr-dimmer" />
+
+          <!-- Центральное окно прицела -->
+          <div class="qr-window">
+            <!-- Угловые маркеры -->
+            <span class="qr-corner qr-corner--tl" />
+            <span class="qr-corner qr-corner--tr" />
+            <span class="qr-corner qr-corner--bl" />
+            <span class="qr-corner qr-corner--br" />
+
+            <!-- Анимированная линия сканирования -->
+            <div class="qr-scan-line" :class="{ paused: busy || !!lastQr }" />
+
+            <!-- Оверлей успеха -->
+            <div v-if="detectedOk" class="qr-success-overlay">
+              <v-icon color="success" size="64">mdi-check-circle</v-icon>
+            </div>
+          </div>
+
+          <!-- Подпись под прицелом -->
+          <div class="qr-hint" v-if="!detectedOk">Наведите камеру на QR-код чека</div>
+          <div class="qr-hint qr-hint--ok" v-else>QR распознан ✓</div>
         </div>
 
         <!-- Phase 30.6: предупреждение если getUserMedia недоступен (http без https на Android) -->
@@ -41,7 +64,7 @@
         </div>
 
         <v-progress-linear v-if="busy" indeterminate color="primary" class="mt-3" />
-        <div v-if="lastQr" class="text-caption text-medium-emphasis mt-2">
+        <div v-if="lastQr && !detectedOk" class="text-caption text-medium-emphasis mt-2">
           Распознано: {{ lastQr }}
         </div>
       </v-card-text>
@@ -73,6 +96,7 @@ const error = ref('')
 const hasCamera = ref(true)
 const busy = ref(false)
 const lastQr = ref('')
+const detectedOk = ref(false)
 
 let stream: MediaStream | null = null
 let raf = 0
@@ -81,6 +105,7 @@ let canvas: HTMLCanvasElement | null = null
 async function start() {
   error.value = ''
   lastQr.value = ''
+  detectedOk.value = false
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     hasCamera.value = false
     return
@@ -112,6 +137,7 @@ function tick() {
     const img = ctx.getImageData(0, 0, canvas.width, canvas.height)
     const code = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' })
     if (code && code.data) {
+      detectedOk.value = true
       lastQr.value = code.data
       emit('detected', code.data)
       stop()
@@ -145,6 +171,7 @@ async function onFilePick(e: Event) {
   try {
     const result = await decodeQrFromImageFile(f)
     if (result) {
+      detectedOk.value = true
       lastQr.value = result
       emit('detected', result)
       stop()
@@ -164,6 +191,7 @@ defineExpose({ start, stop })
 </script>
 
 <style scoped>
+/* ── Контейнер видео ───────────────────────────────────────────── */
 .qr-frame {
   position: relative;
   width: 100%;
@@ -171,16 +199,123 @@ defineExpose({ start, stop })
   background: #000;
   border-radius: 8px;
   overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
+
 .qr-frame video {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
-.qr-overlay {
-  position: absolute; inset: 0;
-  border: 3px solid rgba(255,255,255,.6);
-  border-radius: 8px;
+
+/* ── Затемнение вокруг прицела ─────────────────────────────────── */
+/* Используем псевдоэлемент, чтобы не перекрывать клики по кнопкам */
+.qr-dimmer {
+  position: absolute;
+  inset: 0;
+  /* Дырка в центре: box-shadow на центральном окне создаёт затемнение,
+     но dimmer здесь — только фоновый слой без pointer-events */
   pointer-events: none;
+}
+
+/* ── Центральное прицельное окно (65% меньшей стороны) ────────── */
+.qr-window {
+  position: absolute;
+  /* 65% от контейнера; aspect-ratio 1:1 задаётся через width/height */
+  width: 65%;
+  aspect-ratio: 1 / 1;
+  /* Затемнение вокруг через box-shadow: заполняем 9999px вокруг */
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55);
+  border-radius: 4px;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* ── Угловые L-образные маркеры ────────────────────────────────── */
+.qr-corner {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border-color: #fb923c;
+  border-style: solid;
+}
+
+.qr-corner--tl {
+  top: 0; left: 0;
+  border-width: 3px 0 0 3px;
+  border-top-left-radius: 3px;
+}
+.qr-corner--tr {
+  top: 0; right: 0;
+  border-width: 3px 3px 0 0;
+  border-top-right-radius: 3px;
+}
+.qr-corner--bl {
+  bottom: 0; left: 0;
+  border-width: 0 0 3px 3px;
+  border-bottom-left-radius: 3px;
+}
+.qr-corner--br {
+  bottom: 0; right: 0;
+  border-width: 0 3px 3px 0;
+  border-bottom-right-radius: 3px;
+}
+
+/* ── Анимированная линия сканирования ──────────────────────────── */
+.qr-scan-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: #fb923c;
+  box-shadow: 0 0 6px 2px rgba(251, 146, 60, 0.7);
+  animation: scan-move 2s ease-in-out infinite;
+}
+
+.qr-scan-line.paused {
+  animation-play-state: paused;
+}
+
+@keyframes scan-move {
+  0%   { top: 0; }
+  50%  { top: calc(100% - 2px); }
+  100% { top: 0; }
+}
+
+/* ── Оверлей успеха (зелёная галочка) ─────────────────────────── */
+.qr-success-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fade-in 0.2s ease;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: scale(0.7); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ── Подпись под прицелом ──────────────────────────────────────── */
+.qr-hint {
+  position: absolute;
+  bottom: 12%;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #fff;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.9);
+  pointer-events: none;
+}
+
+.qr-hint--ok {
+  color: #4ade80;
+  font-weight: 600;
 }
 </style>

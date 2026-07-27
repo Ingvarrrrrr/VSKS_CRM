@@ -1030,7 +1030,7 @@ interface Contract {
 interface Subsidy { id: number; name: string; year: number }
 interface Contractor { id: number; name: string; inn?: string }
 interface PurchaseItem { item_name: string; quantity?: number; unit_price?: number; total_price?: number }
-interface Purchase { id: number; registry_number?: string; purchase_number?: number; subject?: string; item_name?: string; contract_price?: number; status: string; etp_url?: string | null; items?: PurchaseItem[] }
+interface Purchase { id: number; registry_number?: string; purchase_number?: number; subject?: string; item_name?: string; contract_price?: number; status: string; etp_url?: string | null; items?: PurchaseItem[]; purchase_method?: string | null }
 
 const contracts = ref<Contract[]>([])
 const subsidies = ref<Subsidy[]>([])
@@ -1149,7 +1149,7 @@ async function doExport() {
     const etpUrlsByContract = new Map<number, string>()
     for (const contract of filtered.value) {
       const ps = purchasesByContract.value[contract.id] || []
-      const urls = [...new Set(ps.map((p: Purchase) => p.etp_url).filter(Boolean))]
+      const urls = [...new Set(ps.filter((p: Purchase) => p.purchase_method !== 'advance').map((p: Purchase) => p.etp_url).filter(Boolean))]
       etpUrlsByContract.set(contract.id, urls.join('\n'))
     }
 

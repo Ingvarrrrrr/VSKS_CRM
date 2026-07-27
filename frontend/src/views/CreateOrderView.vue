@@ -82,17 +82,23 @@
     <v-form ref="formRef" :class="{ 'compact-mobile': formMode === 'advance_report' }" @submit.prevent="save">
 
       <!-- Чеки вверху — только при создании авансового отчёта -->
-      <v-card v-if="showReceiptsOnTop" variant="outlined" class="mb-4">
+      <v-card
+        v-if="showReceiptsOnTop"
+        variant="outlined"
+        class="mb-4"
+        style="border: 2px solid var(--gala-accent, #fb923c); background: rgba(251,146,60,0.04);"
+      >
         <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex flex-wrap align-center ga-2">
-          <span class="d-flex align-center">
-            <v-icon start>mdi-receipt-text-outline</v-icon>
-            <span>Чеки ({{ receipts.length }})</span>
+          <v-icon color="#fb923c" size="24" class="mr-2">mdi-receipt-text</v-icon>
+          <span class="d-flex align-center" style="color: #fb923c;">
+            <span>Загрузите чеки&nbsp;</span>
+            <v-chip size="x-small" color="#fb923c" variant="tonal" class="ml-1">{{ receipts.length }}</v-chip>
           </span>
           <v-spacer />
-          <v-btn size="small" variant="tonal" color="primary" @click="onScanQrClick">
+          <v-btn size="small" variant="flat" color="#fb923c" @click="onScanQrClick">
             <v-icon start>mdi-qrcode-scan</v-icon>Сканировать QR
           </v-btn>
-          <v-btn size="small" variant="tonal" @click="onJsonBtnClick">
+          <v-btn size="small" variant="tonal" color="#fb923c" @click="onJsonBtnClick">
             <v-icon start>mdi-file-upload</v-icon>Загрузить чек
           </v-btn>
           <input ref="advJsonReceiptInput" type="file" accept="image/*,.json" multiple
@@ -113,9 +119,59 @@
           </v-btn>
         </v-card-title>
         <v-card-text>
-          <v-alert type="info" variant="tonal" density="compact" class="mb-0 text-caption">
-            При сканировании QR или загрузке фото/JSON чека отчёт сохранится автоматически, позиции из чеков подтянутся в «Позиции закупки».
+          <v-alert type="warning" variant="tonal" density="compact" class="mb-3 text-caption" color="#fb923c">
+            Сначала загрузите все чеки — сканируйте QR или загрузите фото/JSON. После загрузки позиции и суммы подтянутся автоматически.
           </v-alert>
+
+          <!-- Empty-state: нет чеков — крупный призыв -->
+          <div v-if="receipts.length === 0" class="text-center py-6">
+            <v-icon size="48" style="color: #ccc; margin-bottom: 8px;" class="d-block mx-auto">mdi-receipt-text-plus</v-icon>
+            <div class="text-subtitle-2 text-medium-emphasis mb-1">Пока нет чеков</div>
+            <div class="text-caption text-medium-emphasis mb-4">Нажмите «Сканировать QR» или «Загрузить чек» выше</div>
+            <div class="d-flex justify-center ga-2 flex-wrap">
+              <v-btn variant="flat" color="#fb923c" @click="onScanQrClick">
+                <v-icon start>mdi-qrcode-scan</v-icon>Сканировать QR
+              </v-btn>
+              <v-btn variant="tonal" color="#fb923c" @click="onJsonBtnClick">
+                <v-icon start>mdi-file-upload</v-icon>Загрузить чек
+              </v-btn>
+            </div>
+          </div>
+
+          <!-- Список загруженных чеков -->
+          <v-table v-else density="compact">
+            <thead>
+              <tr>
+                <th>Дата</th>
+                <th>Продавец</th>
+                <th>ИНН</th>
+                <th class="text-right">Сумма ₽</th>
+                <th>Источник</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in receipts" :key="r.id">
+                <td>{{ r.receipt_datetime ? new Date(r.receipt_datetime).toLocaleString('ru-RU') : '—' }}</td>
+                <td>{{ r.seller_name || '—' }}</td>
+                <td>{{ r.seller_inn || '—' }}</td>
+                <td class="text-right">{{ r.total_sum != null ? Number(r.total_sum).toLocaleString('ru-RU') : '—' }}</td>
+                <td><v-chip size="x-small">{{ sourceLabel(r.source) }}</v-chip></td>
+                <td>
+                  <v-btn size="x-small" variant="text" color="primary"
+                    icon="mdi-file-pdf-box"
+                    :href="`/api/purchases/${purchaseId}/receipts/${r.id}/pdf`"
+                    target="_blank" rel="noopener" />
+                  <v-btn size="x-small" variant="text" color="primary"
+                    icon="mdi-file-image"
+                    :href="`/api/purchases/${purchaseId}/receipts/${r.id}/png`"
+                    target="_blank" rel="noopener" />
+                  <v-btn size="x-small" variant="text" color="error"
+                    icon="mdi-delete" @click="deleteReceipt(r.id)" />
+                </td>
+              </tr>
+            </tbody>
+          </v-table>
         </v-card-text>
       </v-card>
 
@@ -153,10 +209,15 @@
               <div :class="entityChanges.isFieldUnseen('subsidy_id') ? 'field-changed' : ''"
                 @click="entityChanges.dismissField('subsidy_id')">
                 <v-select v-model="form.subsidy_id" :items="subsidies" item-title="name" item-value="id"
-                  label="Субсидия *" variant="outlined" density="compact"
+                  :label="formMode === 'advance_report' ? 'Субсидия' : 'Субсидия *'" variant="outlined" density="compact"
                   hint="По какой субсидии финансируется закупка" persistent-hint
-                  :rules="[r => !!r || 'Выберите субсидию']" data-field="subsidy_id" @update:model-value="onSubsidyChange" />
+                  :rules="formMode === 'advance_report' ? [] : [r => !!r || 'Выберите субсидию']" data-field="subsidy_id" @update:model-value="onSubsidyChange" />
               </div>
+            </v-col>
+            <!-- Авансовый без субсидии: плейсхолдер ФЭО «Не определена» -->
+            <v-col v-if="formMode === 'advance_report' && !form.feo_category_id && !form.subsidy_id" cols="12" md="4">
+              <v-chip size="small" color="grey" variant="tonal">Категория ФЭО: Не определена</v-chip>
+              <div class="text-caption text-medium-emphasis mt-1">Укажите субсидию, чтобы выбрать категорию ФЭО</div>
             </v-col>
             <v-col v-if="isSectionVisible('contractor')" cols="12" md="3">
               <div :class="entityChanges.isFieldUnseen('contractor_id') ? 'field-changed' : ''"
@@ -406,6 +467,20 @@
                   </v-list-item>
                 </template>
               </v-autocomplete>
+            </v-col>
+            <!-- Fallback: категория ФЭО записана, но не найдена в справочнике (удалена/недоступна) -->
+            <v-col v-if="form.feo_category_id && !selectedFeo1 && form.subsidy_id" cols="12" md="4">
+              <v-text-field
+                :model-value="'Категория ФЭО недоступна (была удалена)'"
+                label="Категория ФЭО"
+                variant="outlined"
+                density="compact"
+                readonly
+                :hint="`ID категории: ${form.feo_category_id}`"
+                persistent-hint
+                error
+                error-messages="Категория удалена из справочника — выберите другую"
+              />
             </v-col>
             <!-- FEO level 1 — появляется после выбора субсидии -->
             <v-col v-if="form.subsidy_id && feoLevel1Options.length" cols="12" md="4">
@@ -1931,6 +2006,13 @@
               </v-col>
             </v-row>
             <v-divider v-if="idx < acceptanceDocs.length - 1" class="mt-3" />
+          </div>
+
+          <!-- Кнопка загрузки чека для авансового отчёта -->
+          <div v-if="isEdit && purchaseId && (formMode === 'advance_report' || form.purchase_method === 'advance')" class="mt-3 mb-1">
+            <v-btn size="small" variant="tonal" color="#fb923c" prepend-icon="mdi-receipt-text" @click="onJsonBtnClick">
+              Загрузить чек
+            </v-btn>
           </div>
 
           <!-- DnD-загрузка закрывающих документов (Phase 31-03) -->
@@ -4004,8 +4086,8 @@ function onVatModeChange(newMode: string) {
 // --- formMode: drives simplified views for service notes / advance reports ---
 const formMode = computed(() => (route.meta?.formMode as string) || 'default')
 
-// При создании авансового — блок чеков показывается первым (выше основной формы)
-const showReceiptsOnTop = computed(() => formMode.value === 'advance_report' && !isEdit.value)
+// При создании И редактировании авансового — блок чеков показывается первым (выше основной формы)
+const showReceiptsOnTop = computed(() => formMode.value === 'advance_report')
 
 const formModeHidden = computed((): Set<string> => {
   if (formMode.value === 'service_note_delivery')
@@ -4015,6 +4097,9 @@ const formModeHidden = computed((): Set<string> => {
   if (formMode.value === 'advance_report')
     return new Set(['contractor', 'contract_type', 'contract', 'contract_params',
                     'platform_publication', 'commercial_requests'])
+  // Авансовая закупка (редактирование существующей через /orders/:id/edit)
+  if ((form as any).purchase_method === 'advance')
+    return new Set(['contract_type'])
   return new Set()
 })
 
@@ -4533,7 +4618,7 @@ function deleteCustomDocType(val: string) {
 
 // 26-F2: показывать блок чеков и в обычной закупке
 const showReceiptsBlock = computed(() => {
-  return formMode.value === 'advance_report' || formMode.value === 'order'
+  return formMode.value === 'advance_report' || formMode.value === 'order' || (form as any).purchase_method === 'advance'
 })
 
 const addressLabel = computed(() => form.item_type === 'услуга' ? 'Адрес оказания услуг' : 'Адрес доставки')
@@ -6463,6 +6548,14 @@ const onServiceNoteToUserChange = (userId: number | null) => {
 const resolveFeeLevels = (id: number) => {
   const path: number[] = []
   let cur = allFeoCategories.value.find(c => c.id === id)
+  if (!cur) {
+    // Категория не найдена в справочнике (удалена или справочник ещё не загружен)
+    // Не выставляем сырой id — оставляем null, watch ниже перезапустит после загрузки
+    selectedFeo1.value = null
+    selectedFeo2.value = null
+    selectedFeo3.value = null
+    return
+  }
   while (cur) {
     path.unshift(cur.id)
     cur = cur.parent_id ? allFeoCategories.value.find(c => c.id === cur!.parent_id) : undefined
@@ -6471,6 +6564,18 @@ const resolveFeeLevels = (id: number) => {
   selectedFeo2.value = path[1] ?? null
   selectedFeo3.value = path[2] ?? null
 }
+
+// Пересчитываем выбранные уровни ФЭО как только справочник загружен/обновлён
+// (loadRefs и loadPurchase могут гоняться параллельно при медленном сервере)
+watch(allFeoCategories, (cats) => {
+  if (cats.length && form.feo_category_id && !selectedFeo1.value) {
+    resolveFeeLevels(form.feo_category_id as number)
+    if (isEdit.value) {
+      const hasChildren = cats.some(c => c.parent_id === form.feo_category_id)
+      if (hasChildren && !form.feo_per_item) feoSkipLast.value = true
+    }
+  }
+})
 
 const onSubsidyChange = async () => {
   form.feo_category_id = null
@@ -6863,7 +6968,7 @@ const loadPurchase = async () => {
     monthly_payment_count: data.monthly_payment_count ?? null,
     monthly_payment_amount: data.monthly_payment_amount ? Number(data.monthly_payment_amount) : null,
     purchase_number: data.purchase_number ?? null,
-    purchase_contract_type: data.purchase_contract_type || 'single',
+    purchase_contract_type: data.purchase_method === 'advance' ? (data.purchase_contract_type || null) : (data.purchase_contract_type || 'single'),
     contract_id: data.contract_id ?? null,
     framework_seq: data.framework_seq ?? null,
     responsible_person: data.responsible_person || '',
@@ -7196,7 +7301,7 @@ const POST_SAVE_ACTION_KEY = 'advance_report_post_save_action'
 
 async function ensureSavedThen(action: 'scan_qr' | 'upload_json' | 'manual_receipt') {
   if (purchaseId.value) return true
-  if (!form.subsidy_id) {
+  if (!form.subsidy_id && formMode.value !== 'advance_report') {
     showSnack('Сначала выберите субсидию (вверху страницы)', 'warning')
     return false
   }

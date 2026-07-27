@@ -800,7 +800,7 @@ const exportExcel = () => {
       p.procurement_planned_date ?? '',
       p.execution_term ?? '',
       statusLabel(p.status),
-      p.etp_url ?? '',
+      p.purchase_method === 'advance' ? '' : (p.etp_url ?? ''),
     ])
 
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows])

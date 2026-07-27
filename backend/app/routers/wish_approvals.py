@@ -267,6 +267,8 @@ async def decide_wish_approval(
     if decision not in ("approved", "rejected"):
         raise HTTPException(422, "decision должен быть 'approved' или 'rejected'")
     convert_error: str | None = None
+    _convert_warning: str | None = None
+    _created_ids: list[int] = []
 
     if not _is_saas(current_user) and wish.status != "submitted":
         raise HTTPException(400, "Заявка ещё не отправлена на согласование (статус должен быть 'submitted')")
@@ -323,8 +325,16 @@ async def decide_wish_approval(
         if remaining == 0:
             wish.status = "approved"
             wish.approved_by = current_user.id
-            # Конвертация в закупки — ТОЛЬКО явным действием пользователя (кнопка «Передать в план-график»).
-            # Здесь только ставим статус 'approved' и шлём уведомление.
+            # A2: автоконвертация в план-график при полном согласовании
+            # (аналогично кнопке /approve в wishes.py)
+            if wish.items:
+                try:
+                    from app.routers.wishes import _distribute_wish_to_purchases
+                    _created_ids = await _distribute_wish_to_purchases(wish, db, current_user, split=False)
+                    wish.status = "converted"
+                    _convert_warning = getattr(wish, "_convert_warning", None)
+                except Exception as _exc:
+                    logger.warning("auto-convert wish %s to purchases failed: %s", wish.id, _exc)
             await db.commit()
             if creator:
                 try:
@@ -345,7 +355,7 @@ async def decide_wish_approval(
                     db.add(ChatMessage(
                         room_id=room_id,
                         sender_id=current_user.id,
-                        content=f"✅ Заявка полностью согласована: {wish.title or '(без названия)'}. Передайте её в план-график.",
+                        content=f"✅ Заявка полностью согласована и передана в план-график: {wish.title or '(без названия)'}.",
                     ))
                     await db.flush()
                     await db.commit()
@@ -371,4 +381,10 @@ async def decide_wish_approval(
                         logger.warning("notify_wish_approval_step failed: %s", e)
 
     rows = await _load_approvals(wid, db)
-    return {"status": wish.status, "convert_error": convert_error, "approvers": [_approval_dict(a) for a in rows]}
+    return {
+        "status": wish.status,
+        "convert_error": convert_error,
+        "convert_warning": _convert_warning,
+        "purchase_ids": _created_ids,
+        "approvers": [_approval_dict(a) for a in rows],
+    }

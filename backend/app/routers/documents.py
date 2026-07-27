@@ -530,22 +530,20 @@ def _build_acceptance_doc_context(p, doc_type: str, doc_indices_csv: str | None)
                 selected = raw_docs
 
             if selected:
-                first = selected[0]
-                raw_date = first.get("date") or ""
-                # date may be ISO string "2026-05-08" or already a date object
-                if isinstance(raw_date, str) and raw_date:
-                    try:
-                        from datetime import date as _date
-                        fmt_date = _date.fromisoformat(raw_date).strftime("%d.%m.%Y")
-                    except ValueError:
-                        fmt_date = raw_date
-                else:
-                    fmt_date = _fmt_date(raw_date)
+                def _fmt_doc_date(raw_date) -> str:
+                    if isinstance(raw_date, str) and raw_date:
+                        try:
+                            from datetime import date as _date
+                            return _date.fromisoformat(raw_date).strftime("%d.%m.%Y")
+                        except ValueError:
+                            return raw_date
+                    return _fmt_date(raw_date)
+
                 total_amount = sum(float(d.get("amount") or 0) for d in selected)
                 return {
-                    "acceptance_doc_name":   first.get("name") or "",
-                    "acceptance_doc_number": first.get("number") or "",
-                    "acceptance_doc_date":   fmt_date,
+                    "acceptance_doc_name":   "; ".join(d.get("name") or "" for d in selected),
+                    "acceptance_doc_number": "; ".join(d.get("number") or "" for d in selected),
+                    "acceptance_doc_date":   "; ".join(_fmt_doc_date(d.get("date") or "") for d in selected),
                     "acceptance_doc_amount": _fmt_money(total_amount) if total_amount else _legacy_amount(),
                 }
 

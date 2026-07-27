@@ -431,6 +431,10 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
         effective_dates.discard(None)
         group_delivery_date = effective_dates.pop() if len(effective_dates) == 1 else None
 
+        # C1: авансовый отчёт → фиксируем тип; обычная заявка → single
+        _is_advance_wish = (getattr(wish, 'source', None) == 'advance_report')
+        _purchase_method = 'advance' if _is_advance_wish else 'single'
+        _payment_basis_type = 'advance_report' if _is_advance_wish else None
         p = Purchase(
             wish_id=wish.id,
             subsidy_id=wish.subsidy_id,
@@ -443,11 +447,16 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
             total_nmck=total_nmck,
             nmck=total_nmck,
             status=purchase_status,
-            assigned_user_id=getattr(wish, 'executor_id', None) or wish.assigned_to,  # B-exec
+            # B1: исполнитель = executor_id (без фолбэка на инициатора)
+            assigned_user_id=getattr(wish, 'executor_id', None),
+            # B1: служебка «на чьё имя» = assigned_to заявки
+            service_note_to_user_id=wish.assigned_to,
             execution_term=getattr(wish, 'execution_deadline', None),  # B-exec
             service_note_text=wish.justification,
             service_note_by=wish.created_by,
             delivery_date=group_delivery_date,  # W2: единая дата для группы
+            purchase_method=_purchase_method,
+            payment_basis_type=_payment_basis_type,
         )
         db.add(p)
         await db.flush()  # get p.id
@@ -850,6 +859,26 @@ async def update_wish(
     # Phase 31: capture old values for diff-tracking BEFORE any mutation (D-05..D-09)
     _old_wish_values = {f: getattr(wish, f, None) for f in WISH_TRACKED_FIELDS}
 
+    # A1 fix: снимок существенных скалярных полей ДО мутации (Дыра 2)
+    _APPROVAL_SENSITIVE_FIELDS: set[str] = {
+        "title", "subsidy_id", "feo_category_id", "estimated_price",
+        "quantity", "unit", "justification",
+    }
+    _old_sensitive = {f: getattr(wish, f, None) for f in _APPROVAL_SENSITIVE_FIELDS}
+
+    # A1 fix: снимок позиций ДО мутации для точного сравнения (Дыра 1)
+    _old_items = {
+        wi.id: (
+            str(wi.item_name or ''),
+            str(wi.unit or ''),
+            float(wi.quantity or 0),
+            float(wi.unit_price or 0),
+            float(wi.total_price or 0),
+            wi.feo_category_id,
+        )
+        for wi in (wish.items or [])
+    }
+
     update_data = body.model_dump(exclude_none=True, exclude={'items'})
     for field, value in update_data.items():
         setattr(wish, field, value)
@@ -902,26 +931,52 @@ async def update_wish(
             await db.flush()
 
     # W2: re-approval trigger for submitted/approved/converted wishes
+    # A1 fix: сбрасываем согласование ТОЛЬКО при изменении существенных полей.
+    # Существенные поля = те, что определяют предмет закупки и требуют повторного
+    # одобрения согласующих. Несущественные (priority, desired_date, event_id,
+    # assigned_to, executor_id, execution_deadline, link) НЕ сбрасывают цепочку.
     if old_status in ("submitted", "approved", "converted"):
-        # Проверяем наличие согласующих ДО смены статуса (старые заявки могли быть одобрены без цепочки)
-        from app.models.wish_approval import WishApproval as _WA
-        _approver_count = (await db.execute(
-            select(func.count()).select_from(_WA).where(_WA.wish_id == wish.id)
-        )).scalar() or 0
-        if _approver_count == 0:
-            raise HTTPException(
-                status_code=409,
-                detail="Заявка уйдёт на повторное согласование, но согласующие не выбраны — "
-                       "добавьте хотя бы одного согласующего в разделе «Согласующие».",
+        # Дыра 2 исправлена: используем _old_sensitive (снят ДО мутации) вместо
+        # _old_wish_values (который содержит только WISH_TRACKED_FIELDS, без feo_category_id/quantity/unit/justification).
+        _sensitive_changed = any(
+            str(_old_sensitive.get(f)) != str(getattr(wish, f, None))
+            for f in _APPROVAL_SENSITIVE_FIELDS
+        )
+        # Дыра 1 исправлена: сравниваем реальное содержимое позиций до/после.
+        # Фронт всегда шлёт body.items, поэтому «items is not None» — недостаточное условие.
+        _new_items = {
+            wi.id: (
+                str(wi.item_name or ''),
+                str(wi.unit or ''),
+                float(wi.quantity or 0),
+                float(wi.unit_price or 0),
+                float(wi.total_price or 0),
+                wi.feo_category_id,
             )
-        # W2: проверяем плановые даты перед сбросом в submitted (авансовые пропускаем)
-        if getattr(wish, 'source', None) != 'advance_report':
-            await _ensure_needed_dates(wish, db, wish.items or [], context="submit")
-        wish.status = "submitted"
-        await db.flush()
-        await _reset_approvals(wish.id, db)
-        requester_name = getattr(current_user, 'full_name', None) or current_user.username
-        await _notify_pending_approvers(wish, db, requester_name)
+            for wi in (wish.items or [])
+        }
+        _items_changed = (_old_items != _new_items)
+
+        if _sensitive_changed or _items_changed:
+            # Проверяем наличие согласующих ДО смены статуса (старые заявки могли быть одобрены без цепочки)
+            from app.models.wish_approval import WishApproval as _WA
+            _approver_count = (await db.execute(
+                select(func.count()).select_from(_WA).where(_WA.wish_id == wish.id)
+            )).scalar() or 0
+            if _approver_count == 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Заявка уйдёт на повторное согласование, но согласующие не выбраны — "
+                           "добавьте хотя бы одного согласующего в разделе «Согласующие».",
+                )
+            # W2: проверяем плановые даты перед сбросом в submitted (авансовые пропускаем)
+            if getattr(wish, 'source', None) != 'advance_report':
+                await _ensure_needed_dates(wish, db, wish.items or [], context="submit")
+            wish.status = "submitted"
+            await db.flush()
+            await _reset_approvals(wish.id, db)
+            requester_name = getattr(current_user, 'full_name', None) or current_user.username
+            await _notify_pending_approvers(wish, db, requester_name)
 
     await db.commit()
 
@@ -1269,6 +1324,10 @@ async def convert_wish(
     conv_dates.discard(None)
     conv_delivery_date = conv_dates.pop() if len(conv_dates) == 1 else None
 
+    # C1: авансовый отчёт → фиксируем тип; обычная заявка → single
+    _is_advance_conv = (getattr(wish, 'source', None) == 'advance_report')
+    _conv_purchase_method = 'advance' if _is_advance_conv else 'single'
+    _conv_payment_basis_type = 'advance_report' if _is_advance_conv else None
     p = Purchase(
         wish_id=wish.id,
         subsidy_id=body.subsidy_id or wish.subsidy_id,
@@ -1283,9 +1342,14 @@ async def convert_wish(
         status="plan_schedule",
         service_note_text=wish.justification,
         service_note_by=wish.created_by,
-        assigned_user_id=getattr(wish, 'executor_id', None) or wish.assigned_to,  # B-exec: исполнитель из заявки
+        # B1: исполнитель = executor_id (без фолбэка на инициатора)
+        assigned_user_id=getattr(wish, 'executor_id', None),
+        # B1: служебка «на чьё имя» = assigned_to заявки
+        service_note_to_user_id=wish.assigned_to,
         execution_term=getattr(wish, 'execution_deadline', None),  # B-exec: срок исполнения
         delivery_date=conv_delivery_date,
+        purchase_method=_conv_purchase_method,
+        payment_basis_type=_conv_payment_basis_type,
     )
     db.add(p)
     await db.flush()  # get p.id

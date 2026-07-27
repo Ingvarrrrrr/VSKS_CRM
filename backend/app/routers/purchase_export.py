@@ -286,7 +286,7 @@ def _get_cell_value(key: str, p: Purchase, ctx: dict):
     if key == "vat_mode":
         _vat_mode_labels = {"uniform": "Одинаковый", "per_item": "Для каждого товара"}
         return _vat_mode_labels.get(p.vat_mode or "uniform", p.vat_mode or "")
-    if key == "etp_url":                 return p.etp_url or ""
+    if key == "etp_url":                 return "" if getattr(p, 'purchase_method', None) == 'advance' else (p.etp_url or "")
     if key == "region":                  return p.region or ""
     if key == "delivery_location":       return p.delivery_location or ""
     if key == "delivery_address":        return p.delivery_address or ""

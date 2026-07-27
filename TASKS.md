@@ -1,5 +1,20 @@
 # TASKS — VSKS_CRM
 
+## 2026-07-25/26 — Security hardening сервера 85.239.53.155 (8 проектов) + глубокий аудит
+
+- [x] **Цель сессии**: закрыть дыры безопасности на общем сервере (коллега нашёл: приложения по голому HTTP, БД соседей в интернете), НЕ потеряв SSH-доступ и НЕ сломав автодеплой; поднять HTTPS для всех проектов; второй проход — найти пропущенное.
+  - ✅ **HTTPS для всех 6 проектов** через бесплатный nip.io + Let's Encrypt (ECDSA, HTTP-01 webroot): nemakh/sunduk/sizo/trading/uniform/fruits — 443-блоки в prod `/opt/vsks-crm/nginx/nginx.conf`, все https→200, http→301. Автопродление проверено (хостовый certbot 2.9.0, dry-run success).
+  - ✅ **GALA CRIT-1**: `listen 80 default_server` (IP-доступ по plaintext) → `301` на HTTPS-домен; сохранены на HTTP `/deploy/` (GitHub webhook) и acme. Домен 200, /deploy/ жив.
+  - ✅ **Firewall расширен**: закрыты снаружи (eth0) прямые web-порты 8080/8091/8002/8090/6080/8081 (в дополнение к БД/minio/n8n/webhook прошлой сессии). Идемпотентный скрипт + systemd, переживает ребут. HTTPS всех проектов после закрытия — 200.
+  - ✅ **SSH полностью зажат**: только по ключу — `PermitRootLogin without-password`, `PasswordAuthentication no`, `KbdInteractiveAuthentication no`, `AllowAgentForwarding no`, `X11Forwarding no`. Вход по ключу проверен после КАЖДОЙ правки. Брутфорс пароля (378k попыток в логах) теперь невозможен. Pivot-векторы forwarding убраны.
+  - 🔴 **Найдена и закрыта КРИТИЧЕСКАЯ утечка**: nemakh отдавал `/.git/` из веб-корня, в remote-url — ЖИВОЙ GitHub-токен `gho_...` (аккаунт `Ingvarrrrrr`, scopes `repo`+`workflow`, подтверждено api.github.com→200). Фикс на nginx: `location ~ /\.(git|env|svn|hg)` → 404 во всех 6 блоках. Ложные тревоги `.env`/`.git` у sunduk/sizo/GALA = SPA-fallback (проверено по телу).
+  - ✅ **Глубокий аудит — чисто**: docker.sock/TCP 2375 наружу нет, привилегированных/host-net контейнеров нет, sudo NOPASSWD нет, docker-compose.yml/*.sql/.env.production через web — 404.
+  - ✅ **Документация**: `SECURITY_AUDIT_2026-07-25.md` (полный отчёт, статусы шагов), память (`project_prod_firewall.md`, `reference_sandbox_proxies_tcp.md`), vault-сессия — обновлены.
+- Достижение цели: **~92%** — всё, что в моей зоне контроля (сеть/nginx/SSH/сертификаты/аудит), выполнено и верифицировано. Не 100%: единственная критичная находка (утёкший токен) требует ДЕЙСТВИЯ ПОЛЬЗОВАТЕЛЯ — отзыв на GitHub (из кода невозможно); выданы пошаговые инструкции (Authorized OAuth Apps → GitHub CLI → Revoke).
+- Примечание: `git diff --stat` пуст — вся работа серверная (SSH/nginx/iptables/certbot), в репо только untracked `SECURITY_AUDIT_2026-07-25.md`. Firewall и nginx-конфиг живут ТОЛЬКО на сервере (не в git).
+- [ ] **Не доделано (по решению/действию владельца)**: (a) 🔴 отозвать утёкший токен `Ingvarrrrrr` на GitHub ← №1; (b) переключить git-remote nemakh с «токен в URL» на SSH+deploy-key; (c) проверить, что n8n требует авторизацию (`/n8n/`→200); (d) nemakh-webhook увести на nginx /deploy/ + секрет в env; (e) fail2ban — опц. (пароль-вход выключен, брут бесполезен); (f) внешняя проверка портов nmap с независимой машины.
+- [ ] **Следующий шаг**: пользователь отзывает токен на GitHub → сообщает → я проверяю api.github.com (должен стать 401) → переключаю remote nemakh на SSH+deploy-key, чтобы автодеплой/git не отвалился.
+
 ## 2026-07-06/07 — Phase 31 «Feedback Backlog UX»: discuss → research → plan → execute
 
 - [x] **Цель сессии**: оформить и выполнить фазу 31 (беклог фидбека: DnD закрывающих документов, diff-подсветка, Undo/Redo, синхронизация договор↔закупка, бюджет План vs ФЭО, шаблоны ФАДМ_26).

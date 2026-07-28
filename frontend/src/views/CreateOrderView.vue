@@ -2527,20 +2527,46 @@
                   </v-chip>
                 </td>
                 <td class="text-caption">
-                  <span v-if="pub.external_id">{{ pub.external_id }}</span>
+                  <template v-if="pub.status === 'draft'">
+                    <span v-if="pub.platform_number" class="font-weight-medium">{{ pub.platform_number }}</span>
+                    <span v-else-if="pub.external_id" class="text-medium-emphasis">{{ pub.external_id }}</span>
+                    <span v-else class="text-medium-emphasis">—</span>
+                  </template>
+                  <span v-else-if="pub.external_id">{{ pub.external_id }}</span>
                   <span v-else-if="pub.error_text" class="text-error">{{ pub.error_text }}</span>
                   <span v-else class="text-medium-emphasis">—</span>
                 </td>
                 <td class="text-caption">
-                  <a v-if="pub.external_url" :href="pub.external_url" target="_blank"
-                    class="text-blue-darken-2 text-decoration-none">
-                    {{ pub.external_url }}
-                    <v-icon size="11">mdi-open-in-new</v-icon>
-                  </a>
-                  <span v-else class="text-medium-emphasis">—</span>
+                  <!-- Черновик: ссылка недоступна до размещения — показываем пояснение -->
+                  <template v-if="pub.status === 'draft'">
+                    <span class="text-orange-darken-2">
+                      Черновик №{{ pub.platform_number || '—' }} создан на Фабриканте.
+                      Разместите его в личном кабинете площадки — до размещения ссылка недоступна.
+                    </span>
+                  </template>
+                  <template v-else>
+                    <a v-if="pub.external_url" :href="pub.external_url" target="_blank"
+                      class="text-blue-darken-2 text-decoration-none">
+                      {{ pub.external_url }}
+                      <v-icon size="11">mdi-open-in-new</v-icon>
+                    </a>
+                    <span v-else class="text-medium-emphasis">—</span>
+                  </template>
                 </td>
-                <td style="width:36px">
-                  <v-btn v-if="pub.status === 'error'" icon="mdi-refresh" size="x-small" variant="text"
+                <td style="width:72px" class="text-right">
+                  <!-- Обновить статус: для черновика и опубликованного (состояние может меняться) -->
+                  <v-btn
+                    v-if="pub.platform === 'fabrikant' && (pub.status === 'draft' || pub.status === 'published')"
+                    icon="mdi-refresh"
+                    size="x-small"
+                    variant="text"
+                    color="orange-darken-2"
+                    :loading="refreshingPubId === pub.id"
+                    title="Обновить статус с площадки"
+                    @click="refreshPubStatus(pub)"
+                  />
+                  <!-- Ретрай при ошибке -->
+                  <v-btn v-if="pub.status === 'error'" icon="mdi-send" size="x-small" variant="text"
                     color="deep-purple" @click="pub.platform === 'fabrikant' ? openFabrikantRetry(pub.platform) : retryPublish(pub.platform)" />
                 </td>
               </tr>
@@ -2802,7 +2828,7 @@
                     :disabled="isPlatformPublished(pl.value)"
                     @click="pendingPlatform = pl.value; if (pl.value === 'fabrikant') { initFabrikantDates(); fabrikantNoNmcd = !(publishNmck > 0) }"
                   >
-                    {{ isPlatformPublished(pl.value) ? 'Опубликовано' : 'Опубликовать' }}
+                    {{ publications.some(p => p.platform === pl.value && p.status === 'draft') ? 'Черновик на ЭТП' : isPlatformPublished(pl.value) ? 'Опубликовано' : 'Опубликовать' }}
                   </v-btn>
                 </template>
               </v-list-item>
@@ -5312,6 +5338,7 @@ interface Publication {
   id: number; purchase_id: number; platform: string; status: string
   external_id?: string; external_url?: string; error_text?: string
   published_at?: string; created_at?: string
+  platform_number?: string; platform_state?: string
 }
 
 const AVAILABLE_PLATFORMS = [
@@ -5328,6 +5355,7 @@ const PUB_STATUS_COLOR: Record<string, string> = {
   pending:    'grey',
   publishing: 'blue',
   published:  'success',
+  draft:      'orange',
   error:      'error',
 }
 
@@ -5335,6 +5363,7 @@ const PUB_STATUS_LABEL: Record<string, string> = {
   pending:    'Ожидает',
   publishing: 'Публикуется...',
   published:  'Опубликовано',
+  draft:      'Черновик на ЭТП',
   error:      'Ошибка',
 }
 
@@ -5538,13 +5567,34 @@ const currentSubsidyOrgInn = computed(() =>
 )
 
 const isPlatformPublished = (platform: string) =>
-  publications.value.some(p => p.platform === platform && p.status === 'published')
+  publications.value.some(p => p.platform === platform && (p.status === 'published' || p.status === 'draft'))
+
+const refreshingPubId = ref<number | null>(null)
 
 async function loadPublications() {
   if (!purchaseId.value) return
   try {
     publications.value = await apiFetch<Publication[]>(`/publications/purchases/${purchaseId.value}`)
   } catch {}
+}
+
+async function refreshPubStatus(pub: Publication) {
+  refreshingPubId.value = pub.id
+  try {
+    const updated = await apiFetch<Publication>(`/publications/${pub.id}/refresh`, { method: 'POST' })
+    const idx = publications.value.findIndex(p => p.id === pub.id)
+    if (idx !== -1) publications.value[idx] = updated
+    if (updated.status === 'published') {
+      showSnack(`Процедура размещена на ${PLATFORM_LABELS[updated.platform] || updated.platform}`, 'success')
+    } else if (updated.status === 'draft') {
+      showSnack(`Статус обновлён: черновик${updated.platform_number ? ' №' + updated.platform_number : ''} на Фабриканте`)
+    }
+  } catch (e: any) {
+    const msg = e?.payload?.message || e?.detail || e?.message || 'Не удалось обновить статус'
+    showSnack(msg, 'error')
+  } finally {
+    refreshingPubId.value = null
+  }
 }
 
 async function doPublish(platform: string, procedureType?: string | null) {
@@ -5690,6 +5740,11 @@ function pollPublication(pubId: number, attempts = 0) {
       }
     } else if (pub && pub.status === 'published') {
       showSnack(`Закупка опубликована на ${PLATFORM_LABELS[pub.platform] || pub.platform}`, 'success')
+    } else if (pub && pub.status === 'draft') {
+      showSnack(
+        `Черновик процедуры${pub.platform_number ? ' №' + pub.platform_number : ''} создан на Фабриканте. Разместите его в личном кабинете площадки.`,
+        'warning',
+      )
     } else if (pub && pub.status === 'publishing') {
       pollPublication(pubId, attempts + 1)
     }

@@ -26,6 +26,8 @@ from app.models.contractor import Contractor
 from app.models.feo_category import FeoCategory
 from app.models.payment import Payment
 from app.auth.jwt import get_current_user
+from app.auth.visibility import get_visible_subsidy_ids
+from app.models.user import User
 from app.services.ru_regions import RU_REGIONS
 
 try:
@@ -1491,11 +1493,22 @@ def _build_dv_prompt(spec: dict) -> tuple[str, str]:
 async def download_import_template(
     subsidy_id: Optional[int] = Query(None, description="ID субсидии для каскадных ФЭО-списков"),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Скачать шаблон Excel для импорта закупок (лист «Закупки» + «Справочники» + «Справочник колонок»).
     При subsidy_id — добавляет дерево ФЭО субсидии с выпадающими списками на листе «Закупки»."""
     if Workbook is None:
         raise HTTPException(500, "openpyxl не установлен")
+
+    # Проверяем доступ к субсидии, если она указана
+    if subsidy_id is not None:
+        vis = await get_visible_subsidy_ids(current_user, db, "purchases")
+        if vis is not None and subsidy_id not in vis:
+            raise HTTPException(
+                403,
+                f"Субсидия #{subsidy_id} вам недоступна или не существует. "
+                "Проверьте права доступа к субсидии."
+            )
 
     wb = Workbook()
 

@@ -643,7 +643,9 @@ async def create_category(
 
 
 @router.get("/import/template")
-async def download_feo_template():
+async def download_feo_template(
+    _=Depends(get_current_user),
+):
     """Шаблон Excel для импорта категорий ФЭО.
 
     Колонки A–B: субсидия + Ур.2.

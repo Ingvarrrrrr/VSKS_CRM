@@ -643,7 +643,9 @@ async def delete_all_products(
 
 
 @router.get("/import/template")
-async def download_products_template():
+async def download_products_template(
+    _=Depends(get_current_user),
+):
     """Шаблон Excel для импорта товаров."""
     if Workbook is None:
         raise HTTPException(500, "openpyxl не установлен")

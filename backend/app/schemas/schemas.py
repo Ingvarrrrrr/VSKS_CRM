@@ -1055,6 +1055,8 @@ class PublicationOut(BaseModel):
     error_text: Optional[str] = None
     published_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
+    platform_number: Optional[str] = None
+    platform_state: Optional[str] = None
 
     class Config:
         from_attributes = True

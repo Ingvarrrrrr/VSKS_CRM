@@ -59,18 +59,39 @@ PLATFORM_LABELS = {
 
 SUPPORTED_PLATFORMS = set(PLATFORM_LABELS.keys())
 
+# SOAPAction per operation (tns = binding namespace)
+_FABRIKANT_SOAP_ACTION = {
+    "zp":               "tns:purchaseNoticeZPCommercial",
+    "reduction":        "tns:purchaseNoticeReductionCommercial",
+    "price_monitoring": "tns:purchaseNoticePriceMonitoringCommercial",
+}
+_FABRIKANT_SOAP_ACTION_CHECK     = "tns:checkRequest"
+_FABRIKANT_SOAP_ACTION_GET_INFO  = "tns:getProcedureInfo"
+
+NS_PI = "http://api.fabrikant.ru/multi-integration/common/commercial_trade/procedureInfo"
+
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 
-async def _set_pub_success(pub_id: int, external_id: str = None, external_url: str = None):
+async def _set_pub_success(
+    pub_id: int,
+    external_id: str = None,
+    external_url: str = None,
+    status: str = "published",
+    platform_number: str = None,
+    platform_state: str = None,
+):
     async with async_session() as db:
         res = await db.execute(select(PlatformPublication).where(PlatformPublication.id == pub_id))
         pub = res.scalar_one_or_none()
         if pub:
-            pub.status = "published"
+            pub.status = status
             pub.external_id = external_id
             pub.external_url = external_url
-            pub.published_at = datetime.now(timezone.utc)
+            pub.platform_number = platform_number
+            pub.platform_state = platform_state
+            if status == "published":
+                pub.published_at = datetime.now(timezone.utc)
             pub.updated_at = datetime.now(timezone.utc)
             await db.commit()
 
@@ -95,6 +116,69 @@ async def _set_pub_attachments_result(pub_id: int, results: list):
             pub.attachments_result = json.dumps(results, ensure_ascii=False)
             pub.updated_at = datetime.now(timezone.utc)
             await db.commit()
+
+
+async def _fabrikant_procedure_state(purchase_id_str: str, auth: str) -> dict | None:
+    """Синхронный вызов getProcedureInfo — возвращает словарь с состоянием процедуры.
+
+    Возвращает None при любой ошибке (наружу исключения не пробрасываем).
+    """
+    soap_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+        "<soap:Body>"
+        f'<pi:getProcedureInfo xmlns:pi="{NS_PI}">'
+        "<pi:body><pi:item><pi:getProcedureInfoData>"
+        f"<pi:purchaseId>{purchase_id_str}</pi:purchaseId>"
+        f"<pi:lotId>{purchase_id_str}</pi:lotId>"
+        "</pi:getProcedureInfoData></pi:item></pi:body>"
+        "</pi:getProcedureInfo>"
+        "</soap:Body></soap:Envelope>"
+    )
+    try:
+        req = urllib.request.Request(
+            FABRIKANT_URL,
+            data=soap_xml.encode("utf-8"),
+            method="POST",
+            headers={
+                "Content-Type": "text/xml; charset=utf-8",
+                "Authorization": f"Basic {auth}",
+                "SOAPAction": _FABRIKANT_SOAP_ACTION_GET_INFO,
+                "User-Agent": "VSKS-CRM/1.0",
+            },
+        )
+        loop = asyncio.get_event_loop()
+        try:
+            resp = await loop.run_in_executor(
+                None, lambda: urllib.request.urlopen(req, timeout=30, context=_make_ssl_ctx())
+            )
+            resp_text = resp.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            resp_text = e.read().decode("utf-8", errors="replace")
+
+        logger.info("Fabrikant getProcedureInfo (purchaseId=%s): %.600s", purchase_id_str, resp_text)
+
+        # Парсим локальными именами тегов, namespace-префикс произвольный
+        state_m   = re.search(r"<[^:>\s]*:?state[^>]*>([^<]+)<", resp_text)
+        lot_st_m  = re.search(r"<[^:>\s]*:?status[^>]*>([^<]+)<", resp_text)
+        num_m     = re.search(r"<[^:>\s]*:?procedureNumber[^>]*>([^<]+)<", resp_text)
+        # procedureUrl НЕ должен матчить draftProcedureUrl — негативный lookahead как в поллинге
+        url_m     = re.search(r"<(?:[^:>\s]*:)?procedureUrl(?![A-Za-z])[^>]*>([^<]+)<", resp_text)
+
+        if not state_m:
+            logger.warning("getProcedureInfo: не удалось извлечь state из ответа")
+            return None
+
+        return {
+            "state":            state_m.group(1).strip(),
+            "lot_status":       lot_st_m.group(1).strip() if lot_st_m else None,
+            "procedure_number": num_m.group(1).strip() if num_m else None,
+            "procedure_url":    url_m.group(1).strip() if url_m else None,
+        }
+
+    except Exception as exc:
+        logger.warning("Fabrikant getProcedureInfo error (purchaseId=%s): %s", purchase_id_str, exc)
+        return None
 
 
 # ── Фабрикант SOAP: addFileToPurchaseNotice ───────────────────────────────────
@@ -811,7 +895,7 @@ async def _poll_fabrikant_result(
             headers={
                 "Content-Type": "text/xml; charset=utf-8",
                 "Authorization": f"Basic {auth}",
-                "SOAPAction": '""',
+                "SOAPAction": _FABRIKANT_SOAP_ACTION_CHECK,
                 "User-Agent": "VSKS-CRM/1.0",
             },
         )
@@ -846,12 +930,20 @@ async def _poll_fabrikant_result(
         # Ready — check for error (match <message> or <ns1:message> with non-trivial content)
         err_m = re.search(r"<[^:>\s]*:?message\b[^>]*>([^<]{5,})<", resp_text)
 
-        url_m = re.search(r"<[^:>\s]*:?procedureUrl[^>]*>([^<]+)<", resp_text)
+        # Извлекаем номер процедуры из ответа создания извещения
+        num_m      = re.search(r"<[^:>\s]*:?procedureNumber[^>]*>([^<]+)<", resp_text)
+        # draftProcedureUrl — рабочая ссылка на черновик (procedureUrl даёт 403 до размещения)
+        draft_m    = re.search(r"<[^:>\s]*:?draftProcedureUrl[^>]*>([^<]+)<", resp_text)
+        # procedureUrl НЕ должен матчить draftProcedureUrl — используем негативный lookahead
+        url_m      = re.search(r"<(?:[^:>\s]*:)?procedureUrl(?![A-Za-z])[^>]*>([^<]+)<", resp_text)
 
-        if url_m:
-            proc_url = url_m.group(1).strip()
-            await _set_pub_success(pub_id, external_id=request_id, external_url=proc_url)
-            # Прикрепляем документы ПОСЛЕ успешной публикации
+        if url_m or draft_m:
+            # При наличии черновика используем его URL — он открывается сразу без авторизации
+            effective_url = (draft_m.group(1).strip() if draft_m else url_m.group(1).strip())
+            proc_number   = num_m.group(1).strip() if num_m else None
+
+            # Прикрепляем документы ДО определения финального статуса, т.к. площадка
+            # может не позволить размещение извещения без документов
             if attach_documents and purchase_db_id:
                 try:
                     await _attach_documents_to_notice(
@@ -862,7 +954,34 @@ async def _poll_fabrikant_result(
                     )
                 except Exception as _ae:
                     logger.error("Fabrikant attach_documents failed pub=%d: %s", pub_id, _ae)
-                    # Сбой прикрепления не должен ронять статус публикации
+
+            # Проверяем фактическое состояние процедуры на площадке
+            lookup_id = purchase_id_str or request_id
+            pi = await _fabrikant_procedure_state(lookup_id, auth)
+
+            if pi is not None:
+                state_str = pi.get("state") or ""
+                # Площадка вернула «Черновик» — фиксируем draft, иначе published
+                final_status = "draft" if "черновик" in state_str.lower() else "published"
+                final_state  = state_str
+                # Номер и URL приоритетно берём из getProcedureInfo (актуальнее)
+                if pi.get("procedure_number"):
+                    proc_number = pi["procedure_number"]
+                if pi.get("procedure_url"):
+                    effective_url = pi["procedure_url"]
+            else:
+                # getProcedureInfo не ответил — сохраняем published (прежнее поведение)
+                final_status = "published"
+                final_state  = None
+
+            await _set_pub_success(
+                pub_id,
+                external_id=request_id,
+                external_url=effective_url,
+                status=final_status,
+                platform_number=proc_number,
+                platform_state=final_state,
+            )
         elif err_m:
             await _set_pub_error(pub_id, f"Фабрикант: {err_m.group(1).strip()[:400]}")
         else:
@@ -949,6 +1068,7 @@ async def _call_fabrikant(pub_id: int, payload: dict, user_id: int | None = None
 
     auth = base64.b64encode(f"{login}:{password}".encode()).decode()
     soap_xml = _build_soap_xml(payload)
+    soap_action = _FABRIKANT_SOAP_ACTION.get(proc_type, _FABRIKANT_SOAP_ACTION["zp"])
 
     try:
         req = urllib.request.Request(
@@ -958,7 +1078,7 @@ async def _call_fabrikant(pub_id: int, payload: dict, user_id: int | None = None
             headers={
                 "Content-Type": "text/xml; charset=utf-8",
                 "Authorization": f"Basic {auth}",
-                "SOAPAction": '""',
+                "SOAPAction": soap_action,
                 "User-Agent": "VSKS-CRM/1.0",
             },
         )
@@ -1028,15 +1148,24 @@ async def publish_purchase(
     if body.platform not in SUPPORTED_PLATFORMS:
         raise HTTPException(400, f"Неизвестная площадка: {body.platform}")
 
-    existing = await db.execute(
+    existing_pub = (await db.execute(
         select(PlatformPublication).where(
             PlatformPublication.purchase_id == purchase_id,
             PlatformPublication.platform == body.platform,
-            PlatformPublication.status.in_(["pending", "publishing", "published"]),
+            PlatformPublication.status.in_(["pending", "publishing", "draft", "published"]),
         )
-    )
-    if existing.scalar_one_or_none():
-        raise HTTPException(409, f"Закупка уже опубликована или публикуется на {PLATFORM_LABELS.get(body.platform)}")
+    )).scalar_one_or_none()
+    if existing_pub:
+        platform_label = PLATFORM_LABELS.get(body.platform, body.platform)
+        if existing_pub.status == "draft":
+            proc_ref = f" №{existing_pub.platform_number}" if existing_pub.platform_number else ""
+            raise HTTPException(
+                409,
+                f"На {platform_label} уже создан черновик процедуры{proc_ref}. "
+                "Разместите его в личном кабинете площадки. "
+                "Если статус изменился — нажмите «Обновить статус» в карточке публикации."
+            )
+        raise HTTPException(409, f"Закупка уже опубликована или публикуется на {platform_label}")
 
     payload = await _build_publish_payload(purchase_id, db)
 
@@ -1093,6 +1222,77 @@ async def publish_purchase(
     elif body.platform == "roseltorg_rb":
         background_tasks.add_task(_call_roseltorg, pub.id, payload)
 
+    return pub
+
+
+@router.post("/{pub_id}/refresh", response_model=PublicationOut)
+async def refresh_publication_status(
+    pub_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Запрашивает актуальное состояние процедуры на площадке и обновляет запись публикации.
+
+    Поддерживается только Фабрикант (getProcedureInfo — синхронная операция).
+    """
+    res = await db.execute(select(PlatformPublication).where(PlatformPublication.id == pub_id))
+    pub = res.scalar_one_or_none()
+    if not pub:
+        raise HTTPException(404, "Публикация не найдена")
+
+    if pub.platform != "fabrikant":
+        raise HTTPException(400, f"Обновление статуса поддерживается только для Фабриканта, а не для {pub.platform}")
+
+    # Получаем credentials текущего пользователя (или env-fallback)
+    login = FABRIKANT_LOGIN
+    password = FABRIKANT_PASSWORD
+    try:
+        async with async_session() as cred_db:
+            result = await _get_platform_creds(cred_db, current_user.id, "fabrikant")
+        if result:
+            login, password = result
+    except Exception:
+        pass
+
+    if not login or not password:
+        raise HTTPException(503, "Не заданы учётные данные Фабриканта")
+
+    auth = base64.b64encode(f"{login}:{password}".encode()).decode()
+
+    # Загружаем закупку, чтобы получить правильный идентификатор процедуры на площадке.
+    # external_id хранит requestId SOAP-запроса, а getProcedureInfo принимает purchaseId/lotId —
+    # то есть registry_number закупки или её числовой id (как при публикации).
+    purchase_res = await db.execute(select(Purchase).where(Purchase.id == pub.purchase_id))
+    purchase = purchase_res.scalar_one_or_none()
+    if not purchase:
+        raise HTTPException(404, f"Закупка #{pub.purchase_id} для публикации {pub_id} не найдена")
+
+    lookup_id = (purchase.registry_number or "").strip() or str(purchase.id)
+    if not lookup_id:
+        raise HTTPException(
+            400,
+            "Процедура ещё не создана на площадке (нет идентификатора закупки) — обновлять нечего",
+        )
+
+    pi = await _fabrikant_procedure_state(lookup_id, auth)
+
+    if pi is None:
+        raise HTTPException(502, "Не удалось получить состояние процедуры от Фабриканта")
+
+    state_str = pi.get("state") or ""
+    new_status = "draft" if "черновик" in state_str.lower() else "published"
+    new_url = pi.get("procedure_url") or pub.external_url
+
+    pub.platform_state  = state_str
+    pub.platform_number = pi.get("procedure_number") or pub.platform_number
+    pub.external_url    = new_url
+    pub.status          = new_status
+    if new_status == "published" and not pub.published_at:
+        pub.published_at = datetime.now(timezone.utc)
+    pub.updated_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(pub)
     return pub
 
 

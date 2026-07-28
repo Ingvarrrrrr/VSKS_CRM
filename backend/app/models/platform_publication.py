@@ -10,7 +10,7 @@ class PlatformPublication(Base):
     id = Column(Integer, primary_key=True, index=True)
     purchase_id = Column(Integer, ForeignKey("purchases.id", ondelete="CASCADE"), nullable=False)
     platform = Column(String(50), nullable=False)   # fabrikant / roseltorg_rb
-    status = Column(String(30), nullable=False, default="pending")  # pending / publishing / published / error
+    status = Column(String(30), nullable=False, default="pending")  # pending / publishing / draft / published / error
     external_id = Column(String(200), nullable=True)   # ID лота на площадке
     external_url = Column(Text, nullable=True)         # ссылка на опубликованный лот
     error_text = Column(Text, nullable=True)
@@ -21,6 +21,8 @@ class PlatformPublication(Base):
     request_type = Column(String(50), nullable=True)       # auction / competition / price_request / monitoring
     auction_date = Column(DateTime(timezone=True), nullable=True)  # дата розыгрыша
     attachments_result = Column(Text, nullable=True)        # JSON: [{file, ok, error?}] — результат прикрепления документов
+    platform_number = Column(String(50), nullable=True)     # номер процедуры на ЭТП (например, 5560334)
+    platform_state = Column(String(100), nullable=True)     # состояние процедуры словами площадки: «Черновик», «Размещена» и т.п.
 
     # Phase 17.1-07 hotfix: cascade delete + passive_deletes so SQLAlchemy does not
     # try to NULL-out purchase_id on Purchase deletion (FK is NOT NULL).

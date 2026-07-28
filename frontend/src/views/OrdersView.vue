@@ -1001,6 +1001,36 @@
                   label="Я проверил повторы — это разные закупки, импортировать" class="mt-1" />
               </v-alert>
             </div>
+            <div v-if="(importDialog.preview?.feo_to_create?.length ?? 0) > 0" class="mb-3">
+              <v-alert type="info" variant="tonal" density="compact">
+                <div class="text-caption font-weight-bold mb-1">
+                  Будут созданы категории ФЭО ({{ importDialog.preview!.feo_to_create!.length }})
+                </div>
+                <div class="text-caption mb-2">
+                  <template v-if="importDialog.preview?.subsidy_has_feo === false">
+                    В субсидии ещё нет дерева ФЭО — оно будет создано из файла.
+                  </template>
+                  <template v-else>
+                    Этих категорий нет в дереве ФЭО субсидии. Проверьте, не опечатка ли это: при импорте они будут созданы как новые.
+                  </template>
+                </div>
+                <v-list density="compact" class="import-errors-list bg-transparent pa-0">
+                  <v-list-item
+                    v-for="f in importDialog.preview!.feo_to_create" :key="f.path"
+                    :title="f.path"
+                    prepend-icon="mdi-folder-plus-outline"
+                    color="info"
+                  />
+                </v-list>
+                <v-checkbox
+                  v-if="importDialog.preview?.subsidy_has_feo !== false"
+                  v-model="importDialog.feoAck"
+                  density="compact" hide-details
+                  label="Я проверил список — создать эти категории"
+                  class="mt-1"
+                />
+              </v-alert>
+            </div>
             <div v-if="importDialog.preview?.errors?.length || (importDialog.preview as any)?.payments_errors?.length" class="mt-2">
               <v-alert type="error" variant="tonal" density="compact" class="mb-0">
                 <div v-if="importDialog.preview?.errors?.length">
@@ -1094,7 +1124,7 @@
             <v-btn variant="text" @click="importDialog.step = 1">Назад</v-btn>
             <v-btn color="primary" variant="flat"
               :loading="importDialog.loading"
-              :disabled="!importDialog.preview?.purchases?.filter((p: any) => !p.skipped).length || ((importDialog.preview?.duplicates_count ?? 0) > 0 && !importDialog.dupAck)"
+              :disabled="!importDialog.preview?.purchases?.filter((p: any) => !p.skipped).length || ((importDialog.preview?.duplicates_count ?? 0) > 0 && !importDialog.dupAck) || (importDialog.preview?.subsidy_has_feo !== false && (importDialog.preview?.feo_to_create?.length ?? 0) > 0 && !importDialog.feoAck)"
               @click="doImport">
               Импортировать
             </v-btn>
@@ -2250,6 +2280,8 @@ interface ImportPreview {
   payments_total?: number
   payments_errors?: Array<{ row?: number; contract_number?: string; message?: string }>
   duplicates_count?: number
+  feo_to_create?: Array<{ level: number; name: string; path: string }>
+  subsidy_has_feo?: boolean
 }
 interface ImportResult {
   created_purchases: number; created_items: number; skipped: number; errors: ImportError[]
@@ -2267,6 +2299,7 @@ const importDialog = reactive({
   preview: null as ImportPreview | null,
   result: null as ImportResult | null,
   dupAck: false,
+  feoAck: false,
 })
 
 const previewPaymentsTotal = computed(() =>
@@ -2287,6 +2320,7 @@ const resetImport = () => {
   importDialog.preview = null
   importDialog.result = null
   importDialog.dupAck = false
+  importDialog.feoAck = false
 }
 
 const downloadTemplate = async () => {
@@ -2324,6 +2358,8 @@ const doPreview = async () => {
       return
     }
     importDialog.preview = await response.json()
+    importDialog.dupAck = false
+    importDialog.feoAck = false
     importDialog.step = 'preview'
   } catch (e: any) {
     showSnack(e.message || 'Ошибка предпросмотра', 'error')

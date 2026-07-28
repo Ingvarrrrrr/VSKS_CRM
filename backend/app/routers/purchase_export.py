@@ -2251,6 +2251,9 @@ async def _resolve_feo_levels(
     db=None,
     feo_rows_all=None,
     create_missing: bool = False,
+    simulate: bool = False,
+    pending_created: list | None = None,
+    _sim_id_counter: list | None = None,
 ) -> tuple:
     """
     Walk the FEO tree of THIS subsidy using ordered level values.
@@ -2259,6 +2262,8 @@ async def _resolve_feo_levels(
     - Схлопывает соседние дубли (нормализованные): если levels[i] == levels[i-1], выбрасывает дубль.
     - Матчинг: сначала точное совпадение по нормализованным именам, затем вхождение.
     - При create_missing=True и наличии db: создаёт отсутствующие узлы автоматически.
+    - При simulate=True: НЕ трогает БД, создаёт узлы-заглушки с отрицательными id,
+      собирает в pending_created список {level, name, path} для отображения в превью.
     Returns (feo_category_id, error_message_or_None).
     """
     if not levels:
@@ -2274,6 +2279,8 @@ async def _resolve_feo_levels(
     roots = [f for f in feo_index.values() if f.parent_id is None or f.parent_id not in feo_index]
     current_candidates = roots
     current_node = None
+    # Track path for pending_created
+    path_parts: List[str] = []
 
     for level_idx, part in enumerate(levels):
         nn_needle = _norm_feo(part)
@@ -2293,7 +2300,7 @@ async def _resolve_feo_levels(
                 if nn_cand and nn_cand in nn_needle:
                     matched = candidate
                     break
-        # Автосоздание, если не найдено
+        # Автосоздание / симуляция, если не найдено
         if matched is None:
             if create_missing and db is not None:
                 parent_id = current_node.id if current_node is not None else None
@@ -2314,8 +2321,41 @@ async def _resolve_feo_levels(
                 if feo_rows_all is not None:
                     feo_rows_all.append(new_node)
                 matched = new_node
+            elif simulate:
+                # Режим симуляции: создаём заглушку в памяти с отрицательным id
+                if _sim_id_counter is None:
+                    _sim_id_counter = [-1]
+                sim_id = _sim_id_counter[0]
+                _sim_id_counter[0] -= 1
+                parent_id = current_node.id if current_node is not None else None
+                depth = level_idx + 1
+                stub_node = FeoCategory(
+                    subsidy_id=sid,
+                    parent_id=parent_id,
+                    level=depth,
+                    name=part,
+                    sort_order=None,
+                    is_active=True,
+                )
+                # Присваиваем отрицательный id без записи в БД
+                stub_node.id = sim_id  # type: ignore[assignment]
+                feo_index[sim_id] = stub_node
+                if feo_rows_all is not None:
+                    feo_rows_all.append(stub_node)
+                # Собираем в коллектор (без дублей по полному пути)
+                full_path = " / ".join(path_parts + [part])
+                if pending_created is not None:
+                    existing_paths = {e["path"] for e in pending_created}
+                    if full_path not in existing_paths:
+                        pending_created.append({
+                            "level": depth,
+                            "name": part,
+                            "path": full_path,
+                        })
+                matched = stub_node
             else:
                 return None, f"ФЭО не найдено на уровне {level_idx + 1}: '{part}'"
+        path_parts.append(part)
         current_node = matched
         current_candidates = [f for f in feo_index.values() if f.parent_id == matched.id]
 
@@ -2331,6 +2371,9 @@ async def _resolve_feo_path(
     db=None,
     feo_rows_all=None,
     create_missing: bool = False,
+    simulate: bool = False,
+    pending_created: list | None = None,
+    _sim_id_counter: list | None = None,
 ) -> tuple:
     """
     Backward-compat: resolve old single path string (parts separated by ' / ' or '>').
@@ -2339,7 +2382,11 @@ async def _resolve_feo_path(
     parts = [p.strip() for p in _re.split(r"\s*/\s*|\s*>\s*", path_str) if p.strip()]
     if not parts:
         return None, "Пустой путь ФЭО"
-    return await _resolve_feo_levels(parts, sid, feo_index, db=db, feo_rows_all=feo_rows_all, create_missing=create_missing)
+    return await _resolve_feo_levels(
+        parts, sid, feo_index,
+        db=db, feo_rows_all=feo_rows_all, create_missing=create_missing,
+        simulate=simulate, pending_created=pending_created, _sim_id_counter=_sim_id_counter,
+    )
 
 
 def _find_payments_sheet(wb):
@@ -2465,6 +2512,12 @@ async def _parse_and_group(
     errors: list[dict] = []
     skipped = 0
 
+    # --- Simulate mode: коллектор создаваемых ФЭО и счётчик отрицательных id ---
+    simulate = not commit
+    pending_created: list = []          # список {level, name, path} без дублей
+    sim_id_counter: list = [-1]         # изменяемый счётчик [текущее_значение]
+    subsidy_has_feo: bool = bool(feo_index)  # были ли категории ДО разбора
+
     # --- Parse «Закупки» rows ---
     parsed_rows = []
     for row_num, row in enumerate(rows[1:], start=2):
@@ -2501,15 +2554,25 @@ async def _parse_and_group(
                 feo_id, feo_err = await _resolve_feo_levels(
                     levels, sid, feo_index,
                     db=db, feo_rows_all=feo_rows_all, create_missing=commit,
+                    simulate=simulate, pending_created=pending_created,
+                    _sim_id_counter=sim_id_counter,
                 )
                 if feo_err:
-                    errors.append({"row": row_num, "name": item_name, "message": feo_err})
-                    continue
+                    # В режиме симуляции ФЭО-ошибок не должно быть (simulate обработал),
+                    # но если всё же есть — добавляем ошибку, НЕ выбрасываем строку
+                    if commit:
+                        errors.append({"row": row_num, "name": item_name, "message": feo_err})
+                        continue
+                    else:
+                        errors.append({"row": row_num, "name": item_name, "message": feo_err})
+                        # Не делаем continue — строка уходит в превью как есть
             else:
                 if levels:
                     feo_id, _ = await _resolve_feo_levels(
                         levels, sid, feo_index,
                         db=db, feo_rows_all=feo_rows_all, create_missing=commit,
+                        simulate=simulate, pending_created=pending_created,
+                        _sim_id_counter=sim_id_counter,
                     )
         elif has_old_feo:
             # Old: single path column (backward compat)
@@ -2518,6 +2581,8 @@ async def _parse_and_group(
                 feo_id, feo_err = await _resolve_feo_path(
                     feo_path_raw, feo_index,
                     sid=sid, db=db, feo_rows_all=feo_rows_all, create_missing=commit,
+                    simulate=simulate, pending_created=pending_created,
+                    _sim_id_counter=sim_id_counter,
                 )
                 if feo_err and not has_new_feo:
                     # only hard-error in old-style-only templates if it was new-enough format
@@ -3189,6 +3254,8 @@ async def _parse_and_group(
             "skipped": skipped,
             "errors": errors,
             "duplicates_count": duplicates_count,
+            "feo_to_create": sorted(pending_created, key=lambda x: x["path"]),
+            "subsidy_has_feo": subsidy_has_feo,
         }
 
 

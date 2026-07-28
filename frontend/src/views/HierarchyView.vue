@@ -342,10 +342,21 @@
               :readonly="!!editOrgDialog.contractor_id"
             />
             <v-text-field
-              v-model="editOrgDialog.signatory" label="Подписант (ФИО, должность)"
+              v-model="editOrgDialog.signatory_position" label="Должность подписанта"
               variant="outlined" density="compact" class="mb-2"
               :readonly="!!editOrgDialog.contractor_id"
             />
+            <v-row dense class="mb-2">
+              <v-col cols="4">
+                <v-text-field v-model="editOrgDialog.signatory_last_name" label="Фамилия" variant="outlined" density="compact" hide-details :readonly="!!editOrgDialog.contractor_id" />
+              </v-col>
+              <v-col cols="4">
+                <v-text-field v-model="editOrgDialog.signatory_first_name" label="Имя" variant="outlined" density="compact" hide-details :readonly="!!editOrgDialog.contractor_id" />
+              </v-col>
+              <v-col cols="4">
+                <v-text-field v-model="editOrgDialog.signatory_middle_name" label="Отчество" variant="outlined" density="compact" hide-details :readonly="!!editOrgDialog.contractor_id" />
+              </v-col>
+            </v-row>
           </v-card-text>
           <v-card-actions class="pa-4 pt-0">
             <v-spacer />
@@ -651,9 +662,20 @@
             variant="outlined" density="compact" class="mb-2"
           />
           <v-text-field
-            v-model="newOrgDialog.signatory" label="Подписант (ФИО, должность)"
+            v-model="newOrgDialog.signatory_position" label="Должность подписанта"
             variant="outlined" density="compact" class="mb-2"
           />
+          <v-row dense class="mb-2">
+            <v-col cols="4">
+              <v-text-field v-model="newOrgDialog.signatory_last_name" label="Фамилия" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="4">
+              <v-text-field v-model="newOrgDialog.signatory_first_name" label="Имя" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="4">
+              <v-text-field v-model="newOrgDialog.signatory_middle_name" label="Отчество" variant="outlined" density="compact" hide-details />
+            </v-col>
+          </v-row>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
@@ -776,7 +798,7 @@ const isSuperadmin = localStorage.getItem('user_role') === 'superadmin'
 const isAccountOwner = localStorage.getItem('user_role') === 'account_owner'
 
 const newDeptDialog = ref({ show: false, name: '', orgId: null as number | null })
-const newOrgDialog = ref({ show: false, name: '', full_name: '', inn: '', kpp: '', ogrn: '', address: '', signatory: '', loading: false })
+const newOrgDialog = ref({ show: false, name: '', full_name: '', inn: '', kpp: '', ogrn: '', address: '', signatory_last_name: '', signatory_first_name: '', signatory_middle_name: '', signatory_position: '', loading: false })
 const newOrgEgrulLoading = ref(false)
 const newOrgEgrulMessage = ref('')
 const newOrgEgrulMessageType = ref<'success' | 'info' | 'error'>('info')
@@ -1084,7 +1106,7 @@ function applySearch() {
   }
 }
 
-const editOrgDialog = ref({ show: false, id: 0, name: '', full_name: '', inn: '', kpp: '', ogrn: '', address: '', signatory: '', contractor_id: null as number | null })
+const editOrgDialog = ref({ show: false, id: 0, name: '', full_name: '', inn: '', kpp: '', ogrn: '', address: '', signatory_last_name: '', signatory_first_name: '', signatory_middle_name: '', signatory_position: '', contractor_id: null as number | null })
 // Единая карточка контрагента (для организаций, привязанных к контрагенту)
 const contractorDialog = ref({ show: false, contractorId: null as number | null })
 async function onContractorSaved() {
@@ -1157,7 +1179,11 @@ onNodeDoubleClick(({ node }) => {
         show: true, id: orgId,
         name: o.name || '', full_name: o.full_name || '',
         inn: o.inn || '', kpp: o.kpp || '', ogrn: o.ogrn || '',
-        address: o.address || '', signatory: o.signatory || '',
+        address: o.address || '',
+        signatory_last_name: (o as any).signatory_last_name || '',
+        signatory_first_name: (o as any).signatory_first_name || '',
+        signatory_middle_name: (o as any).signatory_middle_name || '',
+        signatory_position: (o as any).signatory_position || '',
         contractor_id: o.contractor_id ?? null,
       }
       editOrgEgrulMessage.value = ''
@@ -1173,7 +1199,10 @@ onNodeDoubleClick(({ node }) => {
           fill('kpp', data.kpp)
           fill('ogrn', data.ogrn)
           fill('address', data.address)
-          fill('signatory', data.signatory)
+          fill('signatory_last_name', data.signatory_last_name)
+          fill('signatory_first_name', data.signatory_first_name)
+          fill('signatory_middle_name', data.signatory_middle_name)
+          fill('signatory_position', data.signatory_position)
         }).catch(() => { /* silent best-effort */ })
       }
     }
@@ -1192,7 +1221,10 @@ async function saveOrg() {
         kpp: d.kpp || null,
         ogrn: d.ogrn || null,
         address: d.address || null,
-        signatory: d.signatory || null,
+        signatory_last_name: d.signatory_last_name || null,
+        signatory_first_name: d.signatory_first_name || null,
+        signatory_middle_name: d.signatory_middle_name || null,
+        signatory_position: d.signatory_position || null,
         contractor_id: d.contractor_id ?? null,
       },
     })
@@ -2195,12 +2227,15 @@ async function createNewOrg() {
       kpp: d.kpp.trim() || null,
       ogrn: d.ogrn.trim() || null,
       address: d.address.trim() || null,
-      signatory: d.signatory.trim() || null,
+      signatory_last_name: d.signatory_last_name.trim() || null,
+      signatory_first_name: d.signatory_first_name.trim() || null,
+      signatory_middle_name: d.signatory_middle_name.trim() || null,
+      signatory_position: d.signatory_position.trim() || null,
       contractor_id: newOrgContractorId.value || null,
     }
     await apiFetch('/organizations/', { method: 'POST', body })
     showSnack(`Организация "${name}" создана`)
-    newOrgDialog.value = { show: false, name: '', full_name: '', inn: '', kpp: '', ogrn: '', address: '', signatory: '', loading: false }
+    newOrgDialog.value = { show: false, name: '', full_name: '', inn: '', kpp: '', ogrn: '', address: '', signatory_last_name: '', signatory_first_name: '', signatory_middle_name: '', signatory_position: '', loading: false }
     newOrgContractorId.value = null
     newOrgContractors.value = []
     newOrgEgrulMessage.value = ''
@@ -2225,7 +2260,10 @@ async function enrichNewOrgFromEgrul() {
     if (data.kpp) d.kpp = data.kpp
     if (data.ogrn) d.ogrn = data.ogrn
     if (data.address) d.address = data.address
-    if (data.signatory) d.signatory = data.signatory
+    if (data.signatory_last_name) d.signatory_last_name = data.signatory_last_name
+    if (data.signatory_first_name) d.signatory_first_name = data.signatory_first_name
+    if (data.signatory_middle_name) d.signatory_middle_name = data.signatory_middle_name
+    if (data.signatory_position) d.signatory_position = data.signatory_position
     newOrgEgrulMessage.value = 'Данные заполнены из ЕГРЮЛ'
     newOrgEgrulMessageType.value = 'success'
   } catch (e: any) {
@@ -2253,7 +2291,10 @@ async function enrichEditOrgFromEgrul() {
     if (data.kpp) d.kpp = data.kpp
     if (data.ogrn) d.ogrn = data.ogrn
     if (data.address) d.address = data.address
-    if (data.signatory) d.signatory = data.signatory
+    if (data.signatory_last_name) d.signatory_last_name = data.signatory_last_name
+    if (data.signatory_first_name) d.signatory_first_name = data.signatory_first_name
+    if (data.signatory_middle_name) d.signatory_middle_name = data.signatory_middle_name
+    if (data.signatory_position) d.signatory_position = data.signatory_position
     editOrgEgrulMessage.value = 'Данные обновлены из ЕГРЮЛ'
     editOrgEgrulMessageType.value = 'success'
   } catch (e: any) {

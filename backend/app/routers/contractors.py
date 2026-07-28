@@ -9,6 +9,7 @@ from app.schemas.schemas import ContractorCreate, ContractorOut
 from app.auth.jwt import require_role, get_current_user, get_org_filter, get_single_org_id, ADMIN_ROLES, MANAGER_ROLES, ALL_ROLES
 from app.auth.permissions import require_tab
 from app.models.user import User
+from app.services.fio import compose_fio, split_position_and_fio
 from typing import List, Optional
 from io import BytesIO
 
@@ -605,15 +606,15 @@ async def list_contractors_with_stats(
 
 
 def _split_signatory(raw, position=None):
-    """ЕГРЮЛ/локальная карточка иногда хранит руководителя как "ДОЛЖНОСТЬ: ФИО".
-    Возвращает (signatory_fio, signatory_position). Если position уже задан —
-    не трогаем. Если raw содержит ":" — режем по первому двоеточию."""
-    if position:
-        return (raw, position)
-    if raw and ":" in raw:
-        _pos, _fio = raw.split(":", 1)
-        return (_fio.strip() or None, _pos.strip() or None)
-    return (raw, None)
+    """Тонкая обёртка над split_position_and_fio из fio.py.
+
+    Сохраняет прежнюю сигнатуру и возврат (signatory_fio, signatory_position)
+    для обратной совместимости со всеми вызывающими местами.
+    """
+    from app.services.fio import split_position_and_fio, compose_fio
+    last, first, middle, pos = split_position_and_fio(raw, position)
+    fio = compose_fio(last, first, middle) or raw
+    return (fio, pos)
 
 
 @router.get("/lookup-inn/{inn}")
@@ -666,6 +667,9 @@ async def lookup_inn(
             "org_type": local_contractor.org_type,
             "signatory": _lc_sig,
             "signatory_position": _lc_pos,
+            "signatory_last_name": local_contractor.signatory_last_name,
+            "signatory_first_name": local_contractor.signatory_first_name,
+            "signatory_middle_name": local_contractor.signatory_middle_name,
             "signatory_basis": local_contractor.signatory_basis,
             "contact_person": local_contractor.contact_person,
             "phone": raw_phone,
@@ -716,6 +720,9 @@ async def lookup_inn(
             # ЕГРЮЛ возвращает руководителя как "ДОЛЖНОСТЬ: ФИО"
             # (например "ПРЕДСЕДАТЕЛЬ: Девлишева Максим Махмович").
             _signatory, _signatory_position = _split_signatory(row.get("g"))
+            _eg_last, _eg_first, _eg_middle, _ = split_position_and_fio(
+                row.get("g"), _signatory_position
+            )
             result = {
                 "name": row.get("c") or row.get("n"),  # c=short name, n=full name
                 "full_name": row.get("n"),              # n=full legal name
@@ -736,6 +743,9 @@ async def lookup_inn(
                 ),
                 "signatory": _signatory,  # director/head ФИО (без должности)
                 "signatory_position": _signatory_position,  # должность подписанта
+                "signatory_last_name": _eg_last,
+                "signatory_first_name": _eg_first,
+                "signatory_middle_name": _eg_middle,
                 "status": row.get("s"),  # status text
                 "registration_date": row.get("r"),
             }
@@ -1193,6 +1203,13 @@ async def create_contractor(
             return existing
 
     c = Contractor(**d)
+    # Пересобираем signatory из структурированных частей (только ФИО, без должности)
+    if any(d.get(f) for f in ('signatory_last_name', 'signatory_first_name', 'signatory_middle_name')):
+        c.signatory = compose_fio(
+            d.get('signatory_last_name'),
+            d.get('signatory_first_name'),
+            d.get('signatory_middle_name'),
+        )
     db.add(c)
     await db.commit()
     await db.refresh(c)
@@ -1226,8 +1243,16 @@ async def update_contractor(
     c = result.scalar_one_or_none()
     if not c:
         raise HTTPException(404, "Not found")
-    for k, v in data.model_dump().items():
+    d = data.model_dump()
+    for k, v in d.items():
         setattr(c, k, v)
+    # Пересобираем signatory из структурированных частей (только ФИО, без должности)
+    if any(d.get(f) for f in ('signatory_last_name', 'signatory_first_name', 'signatory_middle_name')):
+        c.signatory = compose_fio(
+            d.get('signatory_last_name'),
+            d.get('signatory_first_name'),
+            d.get('signatory_middle_name'),
+        )
     await db.commit()
     await db.refresh(c)
     return c

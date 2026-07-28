@@ -106,12 +106,16 @@
           <v-textarea v-model="form.postal_address" label="Почтовый адрес" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
 
           <div class="section-label mt-4">Подписант</div>
+          <v-text-field v-model="form.signatory_position" label="Должность подписанта" variant="outlined" density="compact" hide-details class="mb-2" />
           <v-row dense class="mb-3">
-            <v-col cols="7">
-              <v-text-field v-model="form.signatory" label="Подписант (ФИО)" variant="outlined" density="compact" hide-details />
+            <v-col cols="4">
+              <v-text-field v-model="form.signatory_last_name" label="Фамилия" variant="outlined" density="compact" hide-details />
             </v-col>
-            <v-col cols="5">
-              <v-text-field v-model="form.signatory_position" label="Должность подписанта" variant="outlined" density="compact" hide-details />
+            <v-col cols="4">
+              <v-text-field v-model="form.signatory_first_name" label="Имя" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="4">
+              <v-text-field v-model="form.signatory_middle_name" label="Отчество" variant="outlined" density="compact" hide-details />
             </v-col>
           </v-row>
           <v-text-field v-model="form.signatory_basis" label="На основании чего действует" variant="outlined" density="compact" hide-details
@@ -371,6 +375,9 @@ interface ContractorFull {
   treasury_account?: string
   single_treasury_account?: string
   signatory_position?: string
+  signatory_last_name?: string
+  signatory_first_name?: string
+  signatory_middle_name?: string
 }
 
 const props = defineProps<{
@@ -412,7 +419,9 @@ const EGRUL_FIELDS: { key: string; label: string }[] = [
   { key: 'ogrn',      label: 'ОГРН' },
   { key: 'address',   label: 'Адрес' },
   { key: 'org_type',  label: 'Форма организации' },
-  { key: 'signatory', label: 'Подписант' },
+  { key: 'signatory_last_name',  label: 'Фамилия подписанта' },
+  { key: 'signatory_first_name', label: 'Имя подписанта' },
+  { key: 'signatory_middle_name', label: 'Отчество подписанта' },
   { key: 'signatory_position', label: 'Должность подписанта' },
 ]
 
@@ -423,7 +432,7 @@ const contractorCardImporting = ref(false)
 const emptyForm = () => ({
   name: '', full_name: '', inn: '', kpp: '', address: '',
   contact_person: '', phone: '', email: '', org_phone: '', org_email: '', bank_details: '',
-  signatory: '', signatory_basis: '', postal_address: '',
+  signatory_basis: '', postal_address: '',
   ogrn: '', settlement_account: '', bank_name: '', bik: '', correspondent_account: '',
   org_type: '' as string | null,
   manual_product_categories: [] as string[],
@@ -431,6 +440,7 @@ const emptyForm = () => ({
   passport_issued_date: '', snils: '', registration_address: '', birth_date: '',
   website: '', registration_date: '', okpo: '', okved: '',
   treasury_account: '', single_treasury_account: '', signatory_position: '',
+  signatory_last_name: '', signatory_first_name: '', signatory_middle_name: '',
 })
 const form = ref(emptyForm())
 
@@ -596,7 +606,9 @@ function fillForm(c: ContractorFull) {
     email:                c.email                || '',
     org_email:            c.org_email            || '',
     bank_details:         c.bank_details         || '',
-    signatory:            c.signatory            || '',
+    signatory_last_name:  c.signatory_last_name  || '',
+    signatory_first_name: c.signatory_first_name || '',
+    signatory_middle_name: c.signatory_middle_name || '',
     signatory_basis:      c.signatory_basis      || '',
     postal_address:       c.postal_address       || '',
     ogrn:                 c.ogrn                 || '',

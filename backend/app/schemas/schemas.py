@@ -135,6 +135,10 @@ class OrganizationCreate(BaseModel):
     ogrn: Optional[str] = None
     address: Optional[str] = None
     signatory: Optional[str] = None
+    signatory_position: Optional[str] = None
+    signatory_last_name: Optional[str] = None
+    signatory_first_name: Optional[str] = None
+    signatory_middle_name: Optional[str] = None
     contractor_id: Optional[int] = None
     color: Optional[str] = None
     # Phase 30: geo + head
@@ -180,6 +184,9 @@ class OrganizationOut(BaseModel):
     single_treasury_account: Optional[str] = None
     registration_date: Optional[str] = None
     signatory_position: Optional[str] = None
+    signatory_last_name: Optional[str] = None
+    signatory_first_name: Optional[str] = None
+    signatory_middle_name: Optional[str] = None
     signatory_basis: Optional[str] = None
     website: Optional[str] = None
     # Fabrikant: город заключения договора
@@ -311,6 +318,10 @@ class SubsidyContractorOverrideCreate(BaseModel):
     kpp: Optional[str] = None
     ogrn: Optional[str] = None
     signatory: Optional[str] = None
+    signatory_position: Optional[str] = None
+    signatory_last_name: Optional[str] = None
+    signatory_first_name: Optional[str] = None
+    signatory_middle_name: Optional[str] = None
     signatory_basis: Optional[str] = None
     address: Optional[str] = None
     postal_address: Optional[str] = None
@@ -448,6 +459,9 @@ class ContractorCreate(BaseModel):
     treasury_account: Optional[str] = None
     single_treasury_account: Optional[str] = None
     signatory_position: Optional[str] = None
+    signatory_last_name: Optional[str] = None
+    signatory_first_name: Optional[str] = None
+    signatory_middle_name: Optional[str] = None
 
 class ContractorOut(ContractorCreate):
     id: int

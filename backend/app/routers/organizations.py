@@ -14,6 +14,7 @@ from app.models.contractor import Contractor
 from app.models.user import User
 from app.schemas.schemas import OrganizationCreate, OrganizationOut, RegisterRequest, UserOut
 from app.utils.email import send_verification_email
+from app.services.fio import compose_fio
 
 router = APIRouter(tags=["organizations"])
 
@@ -35,6 +36,17 @@ def _merge_org_with_contractor(org: Organization, user_count: int = 0) -> Organi
             return org_val
         return contractor_val
 
+    # Структурированные части подписанта: сначала из org, fallback из contractor
+    _sig_last = getattr(org, 'signatory_last_name', None) or (getattr(c, 'signatory_last_name', None) if c else None)
+    _sig_first = getattr(org, 'signatory_first_name', None) or (getattr(c, 'signatory_first_name', None) if c else None)
+    _sig_middle = getattr(org, 'signatory_middle_name', None) or (getattr(c, 'signatory_middle_name', None) if c else None)
+    # signatory: если есть структурированные части — пересобираем; иначе legacy fallback
+    _signatory_resolved: Optional[str]
+    if _sig_last or _sig_first:
+        _signatory_resolved = compose_fio(_sig_last, _sig_first, _sig_middle) or pick(org.signatory, getattr(c, 'signatory', None))
+    else:
+        _signatory_resolved = pick(org.signatory, getattr(c, 'signatory', None))
+
     return OrganizationOut(
         id=org.id,
         name=org.name,
@@ -43,7 +55,10 @@ def _merge_org_with_contractor(org: Organization, user_count: int = 0) -> Organi
         kpp=pick(org.kpp, getattr(c, 'kpp', None)),
         ogrn=pick(org.ogrn, getattr(c, 'ogrn', None)),
         address=pick(org.address, getattr(c, 'address', None)),
-        signatory=pick(org.signatory, getattr(c, 'signatory', None)),
+        signatory=_signatory_resolved,
+        signatory_last_name=_sig_last,
+        signatory_first_name=_sig_first,
+        signatory_middle_name=_sig_middle,
         is_active=org.is_active,
         created_at=org.created_at,
         user_count=user_count,
@@ -62,7 +77,7 @@ def _merge_org_with_contractor(org: Organization, user_count: int = 0) -> Organi
         bik=getattr(c, 'bik', None) if c else None,
         single_treasury_account=getattr(c, 'single_treasury_account', None) if c else None,
         registration_date=str(c.registration_date) if c and getattr(c, 'registration_date', None) else None,
-        signatory_position=getattr(c, 'signatory_position', None) if c else None,
+        signatory_position=getattr(org, 'signatory_position', None) or (getattr(c, 'signatory_position', None) if c else None),
         signatory_basis=getattr(c, 'signatory_basis', None) if c else None,
         website=getattr(c, 'website', None) if c else None,
         # Geo/delivery fields — нужны фронту для дефолта адреса доставки
@@ -243,6 +258,13 @@ async def create_organization(
         )).scalar_one_or_none()
         if _dup:
             raise _HTTPException(400, f"Организация с ИНН {_inn} уже существует: «{_dup.name}» (id={_dup.id}).")
+    # Пересобираем signatory из структурированных частей, если они заданы
+    _org_signatory = data.signatory
+    if any([data.signatory_last_name, data.signatory_first_name, data.signatory_middle_name]):
+        _org_signatory = compose_fio(
+            data.signatory_last_name, data.signatory_first_name, data.signatory_middle_name
+        ) or data.signatory
+
     if current_user.role == 'account_owner':
         org = Organization(
             name=data.name,
@@ -251,7 +273,11 @@ async def create_organization(
             kpp=data.kpp,
             ogrn=data.ogrn,
             address=data.address,
-            signatory=data.signatory,
+            signatory=_org_signatory,
+            signatory_position=data.signatory_position,
+            signatory_last_name=data.signatory_last_name,
+            signatory_first_name=data.signatory_first_name,
+            signatory_middle_name=data.signatory_middle_name,
             is_active=True,
             root_org_id=current_user.org_id,
             owner_user_id=current_user.id,
@@ -267,7 +293,11 @@ async def create_organization(
             kpp=data.kpp,
             ogrn=data.ogrn,
             address=data.address,
-            signatory=data.signatory,
+            signatory=_org_signatory,
+            signatory_position=data.signatory_position,
+            signatory_last_name=data.signatory_last_name,
+            signatory_first_name=data.signatory_first_name,
+            signatory_middle_name=data.signatory_middle_name,
             is_active=True,
             contractor_id=data.contractor_id,
             color=data.color,
@@ -345,10 +375,18 @@ async def update_organization(
     # Explicit contractor_id override (allows un-linking by setting null)
     if data.contractor_id is not None:
         org.contractor_id = data.contractor_id
-    for field in ('full_name', 'inn', 'kpp', 'ogrn', 'address', 'signatory', 'color'):
+    for field in ('full_name', 'inn', 'kpp', 'ogrn', 'address', 'color',
+                  'signatory_position', 'signatory_last_name', 'signatory_first_name', 'signatory_middle_name'):
         val = getattr(data, field, None)
         if val is not None:
             setattr(org, field, val or None)
+    # signatory: если пришли структурированные части — пересобрать; иначе обновить как обычно
+    if any([data.signatory_last_name, data.signatory_first_name, data.signatory_middle_name]):
+        org.signatory = compose_fio(
+            data.signatory_last_name, data.signatory_first_name, data.signatory_middle_name
+        ) or org.signatory
+    elif data.signatory is not None:
+        org.signatory = data.signatory or None
     # Auto-link by INN if still unlinked
     await _auto_link_contractor_by_inn(db, org, data)
     await db.commit()

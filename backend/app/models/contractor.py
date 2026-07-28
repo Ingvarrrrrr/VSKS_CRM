@@ -44,3 +44,6 @@ class Contractor(Base):
     treasury_account = Column(String(50), nullable=True)
     single_treasury_account = Column(String(50), nullable=True)
     signatory_position = Column(String(255), nullable=True)
+    signatory_last_name = Column(String(100), nullable=True)
+    signatory_first_name = Column(String(100), nullable=True)
+    signatory_middle_name = Column(String(100), nullable=True)

@@ -26,17 +26,16 @@ from app.models.contractor import Contractor
 from app.models.feo_category import FeoCategory
 from app.models.payment import Payment
 from app.auth.jwt import get_current_user
+from app.services.ru_regions import RU_REGIONS
 
 try:
     from openpyxl import Workbook, load_workbook
     from openpyxl.styles import Font, PatternFill, Alignment
-    from openpyxl.comments import Comment
     from openpyxl.worksheet.datavalidation import DataValidation
     from openpyxl.workbook.defined_name import DefinedName
 except ImportError:
     Workbook = None
     load_workbook = None
-    Comment = None
     DataValidation = None
     DefinedName = None
 
@@ -92,7 +91,8 @@ ALL_EXPORT_COLUMNS = {
     "vat_exemption_article":  {"label": "Статья НК РФ",          "group": "НДС"},
     "vat_mode":               {"label": "Режим НДС",             "group": "НДС"},
     "etp_url":                {"label": "Ссылка ЭТП",            "group": "Закупка"},
-    "region":                 {"label": "Регион поставки",        "group": "Позиция"},
+    "region":                 {"label": "Регион мероприятия",     "group": "Позиция"},
+    "delivery_region":        {"label": "Регион поставки",        "group": "Позиция"},
     "delivery_location":      {"label": "Место доставки/услуг",  "group": "Позиция"},
     "delivery_address":       {"label": "Адрес доставки",        "group": "Позиция"},
     "final_unit_price":       {"label": "Факт. цена за ед.",     "group": "Цены"},
@@ -108,7 +108,7 @@ ALL_EXPORT_COLUMNS = {
 
 DEFAULT_EXPORT_COLUMNS = [
     "purchase_number", "registry_number", "item_name", "item_type", "unit", "quantity",
-    "region", "nmck", "planned_total_price", "contract_price", "final_total_amount", "economy",
+    "region", "delivery_region", "nmck", "planned_total_price", "contract_price", "final_total_amount", "economy",
     "purchase_method", "contract_number", "contract_date", "contract_end_date",
     "contractor", "contractor_inn", "execution_term", "country_origin",
     "acceptance_doc_name", "acceptance_doc_number", "acceptance_doc_date", "acceptance_doc_amount",
@@ -238,6 +238,18 @@ _DD_VAT_MODE = [         # режим НДС
     ("Для каждого товара",  "per_item"),
 ]
 
+# 89 субъектов РФ — для поля delivery_region (регион поставки, без спец-значений)
+_DD_DELIVERY_REGION: list[tuple[str, str]] = [
+    (name, name) for name in sorted(RU_REGIONS.keys())
+]
+
+# 89 субъектов + спец-значения — для поля region (регион проведения мероприятия)
+_DD_EVENT_REGION: list[tuple[str, str]] = [
+    ("Не определён",         "Не определён"),
+    ("Несколько регионов",   "Несколько регионов"),
+    ("Федеральное мероприятие", "Федеральное мероприятие"),
+] + _DD_DELIVERY_REGION
+
 
 def _get_cell_value(key: str, p: Purchase, ctx: dict):
     if key == "purchase_number":         return p.purchase_number or ""
@@ -288,6 +300,7 @@ def _get_cell_value(key: str, p: Purchase, ctx: dict):
         return _vat_mode_labels.get(p.vat_mode or "uniform", p.vat_mode or "")
     if key == "etp_url":                 return "" if getattr(p, 'purchase_method', None) == 'advance' else (p.etp_url or "")
     if key == "region":                  return p.region or ""
+    if key == "delivery_region":         return p.delivery_region or ""
     if key == "delivery_location":       return p.delivery_location or ""
     if key == "delivery_address":        return p.delivery_address or ""
     if key == "final_unit_price":        return float(p.final_unit_price) if p.final_unit_price else ""
@@ -1141,17 +1154,32 @@ _COL_SPEC: list[dict] = [
         ),
     },
     {
-        "header":   "Регион",
+        "header":   "Регион проведения мероприятия",
         "required": False,
-        "width":    22,
-        "fmt":      "Москва / Московская область",
-        "effect":   "Регион проведения закупки / оказания услуг (region)",
-        "if_empty": "Регион не указывается",
+        "width":    30,
+        "fmt":      "Москва / Федеральное мероприятие",
+        "effect":   "Регион проведения мероприятия / оказания услуг (region) — отображается в карточке",
+        "if_empty": "Регион мероприятия не указывается",
         "comment":  (
-            "Субъект РФ или регион, в котором проводится закупка или оказывается услуга.\n"
-            "Отображается в карточке закупки. Одно из 89 субъектов РФ или свободный текст.\n"
-            "Если не заполнено — регион останется пустым."
+            "Субъект РФ, в котором проводится мероприятие, или спец-значение.\n"
+            "Допустимы: «Федеральное мероприятие», «Несколько регионов», «Не определён» или один из 89 субъектов.\n"
+            "Если не заполнено — регион мероприятия останется пустым."
         ),
+        "_dd": "_DD_EVENT_REGION",
+    },
+    {
+        "header":   "Регион поставки (субъект РФ)",
+        "required": False,
+        "width":    28,
+        "fmt":      "Москва / Московская область",
+        "effect":   "Субъект РФ места поставки (delivery_region) — используется для ОКАТО и федерального округа при публикации на ЭТП Фабрикант",
+        "if_empty": "Подставится адрес организации субсидии",
+        "comment":  (
+            "Субъект РФ, куда осуществляется поставка товара или оказывается услуга.\n"
+            "Используется для определения ОКАТО и федерального округа при публикации на ЭТП Фабрикант.\n"
+            "Если не заполнено — подставится регион из адреса организации субсидии."
+        ),
+        "_dd": "_DD_DELIVERY_REGION",
     },
     {
         "header":   "Место оказания услуг / доставки",
@@ -1415,104 +1443,46 @@ _TEMPLATE_EXAMPLE_ROW_2 = [
     "Одинаковый",                           # Режим НДС
     "",                                     # Подпись этапа
 ]
+def _build_dv_prompt(spec: dict) -> tuple[str, str]:
+    """Строит (promptTitle, prompt) для DataValidation, соблюдая лимиты Excel:
+    promptTitle <= 32 символа, prompt <= 255 символов (обрезка по границе слова)."""
 
+    # --- promptTitle: заголовок колонки, макс 32 символа ---
+    title_raw = spec["header"]
+    prompt_title = title_raw if len(title_raw) <= 32 else title_raw[:32]
 
-def _fix_comment_anchors(xlsx_bytes: bytes) -> bytes:
-    """
-    Пост-обработка xlsx: фиксирует VML-якоря комментариев openpyxl (все комментарии
-    вылетают в одно место из-за статичного margin-left/margin-top в ShapeWriter).
+    # --- prompt: короткий текст из полей spec ---
+    parts: list[str] = []
+    if spec.get("required"):
+        parts.append("Обязательное поле.")
 
-    openpyxl пишет комментарии в xl/drawings/commentsDrawingN.vml (не vmlDrawingN.vml).
-    Ищем ВСЕ .vml-файлы под xl/drawings/ и патчим каждый.
-    """
-    import zipfile
-    import io
+    # Первое предложение/строка comment
+    comment_raw = spec.get("comment", "")
+    first_sentence = comment_raw.split("\n")[0].split(". ")[0]
+    if first_sentence and not first_sentence.endswith("."):
+        first_sentence += "."
+    if first_sentence:
+        parts.append(first_sentence)
 
-    in_buf = io.BytesIO(xlsx_bytes)
-    out_buf = io.BytesIO()
+    if spec.get("if_empty"):
+        parts.append(f"Если не заполнено: {spec['if_empty']}")
 
-    try:
-        with zipfile.ZipFile(in_buf, 'r') as zin:
-            with zipfile.ZipFile(out_buf, 'w', compression=zipfile.ZIP_DEFLATED) as zout:
-                for item in zin.infolist():
-                    fname = item.filename  # ZipInfo.filename (не .name)
-                    data = zin.read(fname)
-                    # Патчим ЛЮБОЙ .vml под xl/drawings/ (commentsDrawingN.vml и vmlDrawingN.vml)
-                    if fname.startswith('xl/drawings/') and fname.endswith('.vml'):
-                        try:
-                            data = _patch_vml_anchors(data)
-                        except Exception:
-                            pass  # если что-то пошло не так — оставляем как есть
-                    zout.writestr(item, data)
-    except Exception:
-        return xlsx_bytes  # при любой ошибке возвращаем оригинал
+    if spec.get("_dd"):
+        parts.append("Можно выбрать из списка или вписать своё.")
 
-    return out_buf.getvalue()
+    full_prompt = "\n".join(parts)
 
+    # Обрезка до 255 символов по границе слова
+    MAX_PROMPT = 255
+    if len(full_prompt) > MAX_PROMPT:
+        cut = full_prompt[:MAX_PROMPT - 1]
+        # ищем последний пробел или перенос
+        boundary = max(cut.rfind(" "), cut.rfind("\n"))
+        if boundary > 0:
+            cut = cut[:boundary]
+        full_prompt = cut.rstrip() + "…"
 
-def _patch_vml_anchors(vml_bytes: bytes) -> bytes:
-    """
-    Перезаписывает margin-left/margin-top в style каждого Note-шейпа VML.
-
-    openpyxl использует namespace-префиксы ns0/ns1/ns2 (не v:/x:), поэтому
-    ищем шейпы и ClientData через regex, устойчивый к любому префиксу.
-
-    Позиционирование:
-      margin-left(pt) = сумма ширин колонок [0..Column-1] * 5.25pt + 5pt отступ
-      margin-top(pt)  = 32pt (под ячейкой заголовка Row=0)
-
-    Ширины колонок берём из _COL_SPEC[j]["width"] (Excel-единицы символов × 5.25pt/ед).
-    """
-    import re
-
-    vml_str = vml_bytes.decode('utf-8', errors='replace')
-
-    # Предвычисляем накопленные отступы по колонкам (0-based)
-    # _COL_SPEC[j]["width"] в символах Excel; 1 символ ≈ 7px ≈ 5.25pt
-    col_widths_pt = [s["width"] * 5.25 for s in _COL_SPEC]
-    # cumulative[j] = сумма ширин колонок 0..j-1 (отступ слева до начала колонки j)
-    cumulative = [0.0]
-    for w in col_widths_pt:
-        cumulative.append(cumulative[-1] + w)
-
-    # Regex для одного шейпа (ns-агностик): захватываем весь тег
-    # Шейпы не вложены, DOTALL нужен — используем нежадный поиск
-    shape_pat = re.compile(r'(<\w+:shape\b[^>]*>.*?</\w+:shape>)', re.DOTALL)
-
-    def fix_shape(m):
-        shape_text = m.group(1)
-
-        # Только шейпы с ObjectType="Note"
-        if 'ObjectType="Note"' not in shape_text:
-            return shape_text
-
-        # Читаем Column и Row из ClientData (ns-агностик)
-        col_m = re.search(r'<[^>]+:Column>(\d+)</[^>]+:Column>', shape_text)
-        row_m = re.search(r'<[^>]+:Row>(\d+)</[^>]+:Row>', shape_text)
-
-        col_idx = int(col_m.group(1)) if col_m else 0
-        row_idx = int(row_m.group(1)) if row_m else 0
-
-        # Вычисляем margin-left: сумма ширин колонок до col_idx + 5pt отступ
-        if col_idx < len(cumulative):
-            ml_pt = cumulative[col_idx] + 5.0
-        else:
-            ml_pt = cumulative[-1] + 5.0
-
-        # margin-top: комментарии на строке заголовка (Row=0) → 32pt ниже верха строки
-        mt_pt = 32.0 + row_idx * 20.0
-
-        new_ml = f"margin-left:{ml_pt:.2f}pt"
-        new_mt = f"margin-top:{mt_pt:.2f}pt"
-
-        # Заменяем margin-left:...pt и margin-top:...pt внутри style этого шейпа
-        shape_text = re.sub(r'margin-left:[0-9.]+pt', new_ml, shape_text, count=1)
-        shape_text = re.sub(r'margin-top:[0-9.]+pt', new_mt, shape_text, count=1)
-
-        return shape_text
-
-    new_vml = shape_pat.sub(fix_shape, vml_str)
-    return new_vml.encode('utf-8')
+    return prompt_title, full_prompt
 
 
 @router.get("/import/template")
@@ -1551,6 +1521,8 @@ async def download_import_template(
         "_DD_UNIT":            ("dd_unit",            "Ед. изм.",                 _DD_UNIT),
         "_DD_QUARTER":         ("dd_quarter",         "Квартал обязательств",     _DD_QUARTER),
         "_DD_VAT_MODE":        ("dd_vat_mode",        "Режим НДС",                _DD_VAT_MODE),
+        "_DD_DELIVERY_REGION": ("dd_delivery_region", "Регион поставки",          _DD_DELIVERY_REGION),
+        "_DD_EVENT_REGION":    ("dd_event_region",    "Регион мероприятия",       _DD_EVENT_REGION),
     }
 
     # Добавляем лист «Справочники» как второй (будет Sheet2)
@@ -1621,15 +1593,6 @@ async def download_import_template(
         c.fill = fill_req if spec["required"] else fill_opt
         c.font = font_hdr
         c.alignment = align_c
-        # Add Excel comment
-        if Comment is not None:
-            comment_text = spec["comment"]
-            if spec.get("_dd"):
-                comment_text += "\n\nДля ввода: выберите из выпадающего списка или впишите своё значение."
-            cmt = Comment(comment_text, "GALA")
-            cmt.width  = 360
-            cmt.height = 140
-            c.comment = cmt
 
     ws.append(_TEMPLATE_EXAMPLE_ROW)
     ws.append(_TEMPLATE_EXAMPLE_ROW_2)
@@ -1640,30 +1603,47 @@ async def download_import_template(
     ws.row_dimensions[1].height = 38
     ws.freeze_panes = "A2"
 
-    # ---- DataValidation на строки 2..1000 листа «Закупки» ----
+    # ---- DataValidation: два DV на каждую колонку — шапка (строка 1) и данные (2:1000) ----
+    # Два непересекающихся диапазона не конфликтуют в Excel.
+    # Шапка: только подсказка (type=None), данные: подсказка + список (если есть).
     if DataValidation is not None:
         for col_i, spec in enumerate(_COL_SPEC, 1):
-            dd_var = spec.get("_dd")
-            if not dd_var:
-                continue
-            ref_formula = _dd_ref_ranges.get(dd_var)
-            if not ref_formula:
-                continue
-
             col_letter = ws.cell(1, col_i).column_letter
-            dv = DataValidation(
-                type="list",
-                formula1=f"={ref_formula}",
-                allow_blank=True,
-                showErrorMessage=False,   # предупреждение, не блокировка
-                showInputMessage=False,
+            dd_var = spec.get("_dd")
+            ref_formula = _dd_ref_ranges.get(dd_var) if dd_var else None
+
+            prompt_title, prompt_text = _build_dv_prompt(spec)
+
+            # DV на шапку (строка 1): только подсказка, без списка
+            dv_hdr = DataValidation(
+                type=None,
+                showInputMessage=True,
             )
-            dv.error       = "Значение не из списка — будет принято как есть"
-            dv.errorTitle  = "Нестандартное значение"
-            dv.prompt      = "Выберите из списка или впишите своё значение"
-            dv.promptTitle = spec["header"]
-            dv.sqref       = f"{col_letter}2:{col_letter}1000"
-            ws.add_data_validation(dv)
+            dv_hdr.promptTitle = prompt_title
+            dv_hdr.prompt      = prompt_text
+            dv_hdr.sqref       = f"{col_letter}1"
+            ws.add_data_validation(dv_hdr)
+
+            # DV на строки данных (2:1000): подсказка + список если есть
+            if ref_formula:
+                dv_data = DataValidation(
+                    type="list",
+                    formula1=f"={ref_formula}",
+                    allow_blank=True,
+                    showErrorMessage=False,
+                    showInputMessage=True,
+                )
+                dv_data.error      = "Значение не из списка — будет принято как есть"
+                dv_data.errorTitle = "Нестандартное значение"
+            else:
+                dv_data = DataValidation(
+                    type=None,
+                    showInputMessage=True,
+                )
+            dv_data.promptTitle = prompt_title
+            dv_data.prompt      = prompt_text
+            dv_data.sqref       = f"{col_letter}2:{col_letter}1000"
+            ws.add_data_validation(dv_data)
 
     # =========================================================================
     # Sheet «Справочник колонок»
@@ -1860,6 +1840,8 @@ async def download_import_template(
 
                 # ---------------------------------------------------------------
                 # 5. DataValidation на листе «Закупки»
+                # Заменяем ранее добавленный DV (из основного цикла) на каскадный.
+                # Ровно ОДИН DataValidation на каждую ФЭО-колонку.
                 # ---------------------------------------------------------------
                 feo_headers_list = ["ФЭО Ур.1", "ФЭО Ур.2", "ФЭО Ур.3", "ФЭО Ур.4", "ФЭО Ур.5"]
                 for feo_col_i, spec in enumerate(_COL_SPEC, 1):
@@ -1881,31 +1863,47 @@ async def download_import_template(
                             # Нет хелпера (нет узлов на предыдущем уровне) — fallback
                             dn_formula = "=feo_roots"
 
+                    # Удаляем ранее добавленный DV данных этой колонки из основного цикла
+                    # (sqref данных основного цикла = "{col_letter}2:{col_letter}1000")
+                    # DV шапки ("{col_letter}1") не трогаем — он нужен пользователю.
+                    old_data_sqref = f"{col_letter}2:{col_letter}1000"
+                    ws.data_validations.dataValidation = [
+                        dv for dv in ws.data_validations.dataValidation
+                        if str(dv.sqref) != old_data_sqref
+                    ]
+
+                    # Строим prompt: базовый из _build_dv_prompt + строка о ФЭО
+                    base_prompt_title, base_prompt_text = _build_dv_prompt(spec)
+                    extra_line = f"Выберите категорию ФЭО уровня {level_num}."
+                    # Добавляем extra_line только если влезает в лимит 255 символов
+                    candidate_prompt = (base_prompt_text + "\n" + extra_line).strip() if base_prompt_text else extra_line
+                    if len(candidate_prompt) <= 255:
+                        final_prompt = candidate_prompt
+                    else:
+                        final_prompt = base_prompt_text
+
+                    # DV на строки данных (2:1000): каскадный список + подсказка
                     feo_dv = DataValidation(
                         type="list",
                         formula1=dn_formula,
                         allow_blank=True,
                         showErrorMessage=False,
-                        showInputMessage=False,
+                        showInputMessage=True,
                     )
-                    feo_dv.prompt      = f"Выберите категорию ФЭО уровня {level_num}"
-                    feo_dv.promptTitle = spec["header"]
+                    feo_dv.promptTitle = base_prompt_title
+                    feo_dv.prompt      = final_prompt
                     feo_dv.sqref       = f"{col_letter}2:{col_letter}1000"
                     ws.add_data_validation(feo_dv)
 
         except Exception:
             pass  # если что-то пошло не так с ФЭО — возвращаем шаблон без каскада
 
-    # Сохраняем в BytesIO и применяем фикс VML-якорей
+    # Сохраняем в BytesIO
     buffer = BytesIO()
     wb.save(buffer)
-    xlsx_bytes = buffer.getvalue()
-    xlsx_bytes = _fix_comment_anchors(xlsx_bytes)
-
-    result_buf = BytesIO(xlsx_bytes)
-    result_buf.seek(0)
+    buffer.seek(0)
     return StreamingResponse(
-        result_buf,
+        buffer,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('Шаблон_импорта_закупок.xlsx', safe='-_.~')}"}
     )

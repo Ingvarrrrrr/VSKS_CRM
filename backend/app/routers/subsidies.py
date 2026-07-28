@@ -42,6 +42,7 @@ from app.schemas.schemas import (
 from app.auth.jwt import get_current_user, require_role, get_org_filter, get_single_org_id, MANAGER_ROLES, ADMIN_ROLES, ALL_ROLES
 from app.auth.permissions import require_tab, require_action
 from app.models.user import User
+from app.services.fio import compose_fio
 from typing import List, Optional
 from datetime import date
 from pydantic import BaseModel
@@ -1005,14 +1006,24 @@ async def upsert_contractor_override(
         )
     )).scalar_one_or_none()
 
+    d = data.dict(exclude_unset=True) if override else data.dict()
+    # Пересобираем signatory из структурированных частей (только ФИО)
+    _fio_parts = (
+        d.get('signatory_last_name') or (override.signatory_last_name if override else None),
+        d.get('signatory_first_name') or (override.signatory_first_name if override else None),
+        d.get('signatory_middle_name') or (override.signatory_middle_name if override else None),
+    )
+    if any(_fio_parts):
+        d['signatory'] = compose_fio(*_fio_parts) or d.get('signatory')
+
     if override:
-        for key, value in data.dict(exclude_unset=True).items():
+        for key, value in d.items():
             setattr(override, key, value)
     else:
         override = SubsidyContractorOverride(
             subsidy_id=subsidy_id,
             contractor_id=subsidy.contractor_id,
-            **data.dict()
+            **d
         )
         db.add(override)
 

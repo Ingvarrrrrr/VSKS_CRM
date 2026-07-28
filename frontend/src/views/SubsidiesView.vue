@@ -2682,7 +2682,18 @@
           <v-textarea v-model="overrideForm.postal_address" label="Почтовый адрес" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
 
           <div class="section-label mt-4">Подписант</div>
-          <v-text-field v-model="overrideForm.signatory" label="Подписант (ФИО, должность)" variant="outlined" density="compact" class="mb-3" hide-details />
+          <v-text-field v-model="overrideForm.signatory_position" label="Должность подписанта" variant="outlined" density="compact" class="mb-2" hide-details />
+          <v-row dense class="mb-3">
+            <v-col cols="4">
+              <v-text-field v-model="overrideForm.signatory_last_name" label="Фамилия" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="4">
+              <v-text-field v-model="overrideForm.signatory_first_name" label="Имя" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="4">
+              <v-text-field v-model="overrideForm.signatory_middle_name" label="Отчество" variant="outlined" density="compact" hide-details />
+            </v-col>
+          </v-row>
           <v-text-field v-model="overrideForm.signatory_basis" label="На основании чего действует" variant="outlined" density="compact" hide-details
             placeholder="Устава, доверенности №..." />
 
@@ -4734,7 +4745,8 @@ const savingOverride = ref(false)
 const overrideSubsidyId = ref<number | null>(null)
 const overrideForm = ref({
   org_type: '', inn: '', kpp: '', ogrn: '',
-  signatory: '', signatory_basis: '', address: '', postal_address: '',
+  signatory_last_name: '', signatory_first_name: '', signatory_middle_name: '', signatory_position: '',
+  signatory_basis: '', address: '', postal_address: '',
   contact_person: '', phone: '', email: '', org_phone: '', org_email: '',
   bank_details: '', settlement_account: '', bank_name: '', bik: '', correspondent_account: '',
 })
@@ -6529,7 +6541,10 @@ async function openContractorOverride(s: SubsidyRow) {
       inn: data.inn || '',
       kpp: data.kpp || '',
       ogrn: data.ogrn || '',
-      signatory: data.signatory || '',
+      signatory_last_name: data.signatory_last_name || '',
+      signatory_first_name: data.signatory_first_name || '',
+      signatory_middle_name: data.signatory_middle_name || '',
+      signatory_position: data.signatory_position || '',
       signatory_basis: data.signatory_basis || '',
       address: data.address || '',
       postal_address: data.postal_address || '',

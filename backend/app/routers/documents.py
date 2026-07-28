@@ -17,6 +17,7 @@ from app.models.subsidy_approver import SubsidyApprover
 from app.models.feo_category import FeoCategory
 from app.models.event import Event
 from app.auth.jwt import get_current_user
+from app.services.fio import compose_fio as _compose_fio
 from typing import Optional
 import logging
 
@@ -414,17 +415,68 @@ def _signatory_position(signatory: str) -> str:
     return "Директор"
 
 
+# Phase 23: helpers for signatory formatting — used by both paths of _signatory_split
+
+def _fio_to_genitive(name_full: str) -> str:
+    """Rough genitive form of a full name: Козеев Евгений Викторович → Козеева Евгения Викторовича."""
+    def _word(w: str) -> str:
+        if w.endswith("ич"):  # Иванович → Ивановича
+            return w + "а"
+        if w.endswith("ий"):  # Евгений → Евгения
+            return w[:-2] + "ия"
+        if w.endswith("ья"):  # Илья → Ильи
+            return w[:-2] + "ьи"
+        if w.endswith("а") and len(w) > 2:
+            return w[:-1] + "ы"
+        # Last consonant cluster: add -а
+        vowels = set("аеёиоуыьъэюяАЕЁИОУЫЭЮЯ")
+        if w and w[-1] not in vowels and w[-1] not in "ьъ":
+            return w + "а"
+        return w  # fallback: as-is
+    return " ".join(_word(w) for w in name_full.split()) if name_full else name_full
+
+
+def _fio_to_initials(name_full: str) -> str:
+    """Return "Фамилия И.О." form; falls back to name_full when < 2 words."""
+    words = name_full.split() if name_full else []
+    if len(words) >= 3:
+        return f"{words[0]} {words[1][0]}.{words[2][0]}."
+    if len(words) == 2:
+        return f"{words[0]} {words[1][0]}."
+    return name_full
+
+
 # Phase 23: split "Президент Козеев Евгений Викторович" into structured parts
-def _signatory_split(signatory: str) -> dict:
-    """Split 'Position Lastname Firstname Patronymic' into structured dict.
+def _signatory_split(
+    signatory: str,
+    last: str | None = None,
+    first: str | None = None,
+    middle: str | None = None,
+    position: str | None = None,
+) -> dict:
+    """Split signatory string into structured dict.
+
+    If structured parts (last/first/middle) are provided — use them directly
+    instead of applying heuristics to *signatory*.  *position* is taken from
+    the argument when provided.
 
     Returns:
-        position      — all words before the ФИО (last 3 words treated as ФИО)
-        name_full     — last 3 words (ФИО)
-        name_genitive — rough genitive: add '-а'/'-я' to each part where possible
-        name_initials — "Козеев Е.В." (Lastname + Initials)
+        position      — должность подписанта
+        name_full     — ФИО (Фамилия Имя Отчество)
+        name_genitive — rough genitive form
+        name_initials — "Козеев Е.В."
     """
-    import re as _re
+    if last:
+        # Structured path — no heuristics needed
+        name_full = _compose_fio(last, first, middle) or signatory or ""
+        return {
+            "position": position or "",
+            "name_full": name_full,
+            "name_genitive": _fio_to_genitive(name_full),
+            "name_initials": _fio_to_initials(name_full),
+        }
+
+    # Legacy heuristic path (no structured parts available)
     if not signatory:
         return {"position": "", "name_full": "", "name_genitive": "", "name_initials": ""}
     parts = signatory.strip().split()
@@ -443,43 +495,14 @@ def _signatory_split(signatory: str) -> dict:
         pos_words = parts[:1]
         fio_words = parts[1:]
 
-    position = " ".join(pos_words)
+    resolved_position = position or " ".join(pos_words)
     name_full = " ".join(fio_words)
 
-    # Rough genitive: Козеев→Козеева, Евгений→Евгения, Викторович→Викторовича
-    def _to_genitive(word: str) -> str:
-        w = word
-        if w.endswith("ич"):  # Иванович → Ивановича
-            return w + "а"
-        if w.endswith("ий"):  # Евгений → Евгения
-            return w[:-2] + "ия"
-        if w.endswith("ья"):  # Илья → Ильи
-            return w[:-2] + "ьи"
-        if w.endswith("а") and len(w) > 2:
-            return w[:-1] + "ы"
-        # Last consonant cluster: add -а
-        vowels = set("аеёиоуыьъэюяАЕЁИОУЫЭЮЯ")
-        if w and w[-1] not in vowels and w[-1] not in "ьъ":
-            return w + "а"
-        return w  # fallback: as-is
-
-    genitive_parts = [_to_genitive(w) for w in fio_words]
-    name_genitive = " ".join(genitive_parts)
-
-    # Initials: "Козеев Е.В." — Фамилия + инициалы Имени и Отчества
-    if len(fio_words) >= 3:
-        lastname, firstname, patronymic = fio_words[0], fio_words[1], fio_words[2]
-        name_initials = f"{lastname} {firstname[0]}.{patronymic[0]}."
-    elif len(fio_words) == 2:
-        name_initials = f"{fio_words[0]} {fio_words[1][0]}."
-    else:
-        name_initials = name_full
-
     return {
-        "position": position,
+        "position": resolved_position,
         "name_full": name_full,
-        "name_genitive": name_genitive,
-        "name_initials": name_initials,
+        "name_genitive": _fio_to_genitive(name_full),
+        "name_initials": _fio_to_initials(name_full),
     }
 
 
@@ -1613,7 +1636,27 @@ async def generate_document(
         customer_org.signatory if customer_org else None,
         customer_ctr.signatory if customer_ctr else None,
     )
-    cust_sig = _signatory_split(cust_signatory_full)
+    # Структурированные части: приоритет org, затем ctr
+    _cust_last = _g(
+        getattr(customer_org, 'signatory_last_name', None) if customer_org else None,
+        getattr(customer_ctr, 'signatory_last_name', None) if customer_ctr else None,
+    ) or None
+    _cust_first = _g(
+        getattr(customer_org, 'signatory_first_name', None) if customer_org else None,
+        getattr(customer_ctr, 'signatory_first_name', None) if customer_ctr else None,
+    ) or None
+    _cust_middle = _g(
+        getattr(customer_org, 'signatory_middle_name', None) if customer_org else None,
+        getattr(customer_ctr, 'signatory_middle_name', None) if customer_ctr else None,
+    ) or None
+    _cust_position = _g(
+        getattr(customer_org, 'signatory_position', None) if customer_org else None,
+        getattr(customer_ctr, 'signatory_position', None) if customer_ctr else None,
+    ) or None
+    cust_sig = _signatory_split(
+        cust_signatory_full,
+        last=_cust_last, first=_cust_first, middle=_cust_middle, position=_cust_position,
+    )
     cust_signatory_basis = _g(
         customer_ctr.signatory_basis if customer_ctr else None,
         "Устава",
@@ -1696,7 +1739,13 @@ async def generate_document(
         context["applications_review_date"] = ""
 
     # Phase 23: расширенные поля подписанта Исполнителя (name_genitive, initials, ogrnip)
-    ctr_sig = _signatory_split(c.signatory if c else "")
+    ctr_sig = _signatory_split(
+        c.signatory if c else "",
+        last=getattr(c, 'signatory_last_name', None) if c else None,
+        first=getattr(c, 'signatory_first_name', None) if c else None,
+        middle=getattr(c, 'signatory_middle_name', None) if c else None,
+        position=getattr(c, 'signatory_position', None) if c else None,
+    )
     context.update({
         "contractor_signatory_name":          ctr_sig["name_full"],
         "contractor_signatory_name_genitive": ctr_sig["name_genitive"],
@@ -2385,13 +2434,38 @@ async def render_fabrikant_package_files(
         customer_org.signatory if customer_org else None,
         customer_ctr.signatory if customer_ctr else None,
     )
-    cust_sig_z = _signatory_split(cust_signatory_full_z)
+    _cust_z_last = _g2(
+        getattr(customer_org, 'signatory_last_name', None) if customer_org else None,
+        getattr(customer_ctr, 'signatory_last_name', None) if customer_ctr else None,
+    ) or None
+    _cust_z_first = _g2(
+        getattr(customer_org, 'signatory_first_name', None) if customer_org else None,
+        getattr(customer_ctr, 'signatory_first_name', None) if customer_ctr else None,
+    ) or None
+    _cust_z_middle = _g2(
+        getattr(customer_org, 'signatory_middle_name', None) if customer_org else None,
+        getattr(customer_ctr, 'signatory_middle_name', None) if customer_ctr else None,
+    ) or None
+    _cust_z_position = _g2(
+        getattr(customer_org, 'signatory_position', None) if customer_org else None,
+        getattr(customer_ctr, 'signatory_position', None) if customer_ctr else None,
+    ) or None
+    cust_sig_z = _signatory_split(
+        cust_signatory_full_z,
+        last=_cust_z_last, first=_cust_z_first, middle=_cust_z_middle, position=_cust_z_position,
+    )
     cust_signatory_basis_z = _g2(
         customer_ctr.signatory_basis if customer_ctr else None,
         "Устава",
     )
     c = p.contractor
-    ctr_sig_z = _signatory_split(c.signatory if c else "")
+    ctr_sig_z = _signatory_split(
+        c.signatory if c else "",
+        last=getattr(c, 'signatory_last_name', None) if c else None,
+        first=getattr(c, 'signatory_first_name', None) if c else None,
+        middle=getattr(c, 'signatory_middle_name', None) if c else None,
+        position=getattr(c, 'signatory_position', None) if c else None,
+    )
 
     # Fabrikant notice_number
     _notice_number = ""

@@ -1494,7 +1494,7 @@ PATCHABLE_FIELDS = {
     "submission_deadline", "service_term_mode", "service_start_date",
     "service_end_date", "service_term_days", "service_term_type",
     "service_deadline_date", "third_party_involved",
-    "vat_applicable", "vat_rate", "vat_exemption_article",
+    "vat_applicable", "vat_rate", "vat_exemption_article", "vat_mode",
     "acceptance_doc_name", "acceptance_doc_date", "acceptance_doc_number",
     "acceptance_doc_amount",
     # Phase 24 D-08: JSONB-массив закрывающих документов (АКТ/УПД/СЧФ/ТТН/...)

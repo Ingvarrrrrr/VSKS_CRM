@@ -246,10 +246,21 @@
             :readonly="!!editOrgItem.contractor_id"
           />
           <v-text-field
-            v-model="editOrgItem.signatory" label="Подписант (ФИО, должность)"
+            v-model="editOrgItem.signatory_position" label="Должность подписанта"
             variant="outlined" density="compact" class="mb-2"
             :readonly="!!editOrgItem.contractor_id"
           />
+          <v-row dense class="mb-2">
+            <v-col cols="4">
+              <v-text-field v-model="editOrgItem.signatory_last_name" label="Фамилия" variant="outlined" density="compact" hide-details :readonly="!!editOrgItem.contractor_id" />
+            </v-col>
+            <v-col cols="4">
+              <v-text-field v-model="editOrgItem.signatory_first_name" label="Имя" variant="outlined" density="compact" hide-details :readonly="!!editOrgItem.contractor_id" />
+            </v-col>
+            <v-col cols="4">
+              <v-text-field v-model="editOrgItem.signatory_middle_name" label="Отчество" variant="outlined" density="compact" hide-details :readonly="!!editOrgItem.contractor_id" />
+            </v-col>
+          </v-row>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
@@ -356,7 +367,10 @@ const EGRUL_FIELDS = [
   { key: 'kpp', label: 'КПП' },
   { key: 'ogrn', label: 'ОГРН' },
   { key: 'address', label: 'Адрес' },
-  { key: 'signatory', label: 'Подписант' },
+  { key: 'signatory_last_name', label: 'Фамилия подписанта' },
+  { key: 'signatory_first_name', label: 'Имя подписанта' },
+  { key: 'signatory_middle_name', label: 'Отчество подписанта' },
+  { key: 'signatory_position', label: 'Должность подписанта' },
 ]
 
 const router = useRouter()
@@ -391,7 +405,10 @@ const editOrgItem = ref({
   kpp: '',
   ogrn: '',
   address: '',
-  signatory: '',
+  signatory_last_name: '',
+  signatory_first_name: '',
+  signatory_middle_name: '',
+  signatory_position: '',
   contractor_id: null as number | null,
 })
 const egrulLoading = ref(false)
@@ -430,7 +447,10 @@ async function enrichFromEgrul() {
       kpp: data.kpp || '',
       ogrn: data.ogrn || '',
       address: data.address || '',
-      signatory: data.signatory || '',
+      signatory_last_name: data.signatory_last_name || '',
+      signatory_first_name: data.signatory_first_name || '',
+      signatory_middle_name: data.signatory_middle_name || '',
+      signatory_position: data.signatory_position || '',
     }
     const diffs: { label: string; old: string; new: string }[] = []
     for (const f of EGRUL_FIELDS) {
@@ -480,7 +500,10 @@ function openCreateOrg() {
     kpp: '',
     ogrn: '',
     address: '',
-    signatory: '',
+    signatory_last_name: '',
+    signatory_first_name: '',
+    signatory_middle_name: '',
+    signatory_position: '',
     contractor_id: null,
   }
   egrulMessage.value = ''
@@ -496,7 +519,10 @@ async function openEditOrg(org: Org) {
     kpp: org.kpp || '',
     ogrn: org.ogrn || '',
     address: org.address || '',
-    signatory: org.signatory || '',
+    signatory_last_name: (org as any).signatory_last_name || '',
+    signatory_first_name: (org as any).signatory_first_name || '',
+    signatory_middle_name: (org as any).signatory_middle_name || '',
+    signatory_position: (org as any).signatory_position || '',
     contractor_id: org.contractor_id ?? null,
   }
   egrulMessage.value = ''
@@ -517,7 +543,10 @@ async function openEditOrg(org: Org) {
       fill('kpp', data.kpp)
       fill('ogrn', data.ogrn)
       fill('address', data.address)
-      fill('signatory', data.signatory)
+      fill('signatory_last_name', data.signatory_last_name)
+      fill('signatory_first_name', data.signatory_first_name)
+      fill('signatory_middle_name', data.signatory_middle_name)
+      fill('signatory_position', data.signatory_position)
     } catch {
       // silent — prefill is best-effort
     }
@@ -544,7 +573,10 @@ async function saveOrg() {
       kpp: editOrgItem.value.kpp || null,
       ogrn: editOrgItem.value.ogrn || null,
       address: editOrgItem.value.address || null,
-      signatory: editOrgItem.value.signatory || null,
+      signatory_last_name: editOrgItem.value.signatory_last_name || null,
+      signatory_first_name: editOrgItem.value.signatory_first_name || null,
+      signatory_middle_name: editOrgItem.value.signatory_middle_name || null,
+      signatory_position: editOrgItem.value.signatory_position || null,
       contractor_id: editOrgItem.value.contractor_id ?? null,
     }
     if (isCreate) {

@@ -15,6 +15,10 @@ class Organization(Base):
     ogrn = Column(String(20), nullable=True)
     address = Column(String(500), nullable=True)
     signatory = Column(String(500), nullable=True)
+    signatory_position = Column(String(255), nullable=True)
+    signatory_last_name = Column(String(100), nullable=True)
+    signatory_first_name = Column(String(100), nullable=True)
+    signatory_middle_name = Column(String(100), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     # Multi-org / contour support

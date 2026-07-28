@@ -1631,7 +1631,7 @@
               </div>
             </v-col>
           </v-row>
-          <!-- Место поставки (структурированный адрес доставки для Фабриканта) -->
+          <!-- Регион поставки и Регион проведения мероприятия — рядом в одной строке -->
           <v-row>
             <v-col cols="12" md="6">
               <div id="pub-target-region" style="position:relative">
@@ -1639,8 +1639,8 @@
                 <div :class="pointerTarget === 'region' ? 'pub-glow' : ''">
                   <v-autocomplete
                     v-model="form.delivery_region"
-                    :items="RUSSIAN_REGIONS"
-                    label="Субъект РФ (место поставки)"
+                    :items="DELIVERY_REGIONS"
+                    label="Регион поставки (субъект РФ)"
                     density="compact"
                     variant="outlined"
                     clearable
@@ -1653,6 +1653,21 @@
               </div>
             </v-col>
             <v-col cols="12" md="6">
+              <v-autocomplete
+                v-model="form.region"
+                :items="RUSSIAN_REGIONS"
+                label="Регион проведения мероприятия"
+                density="compact"
+                variant="outlined"
+                clearable
+                hide-details
+                hint='Включая вариант "Федеральное мероприятие"'
+                persistent-hint
+              />
+            </v-col>
+          </v-row>
+          <v-row>
+            <v-col cols="12" md="3">
               <v-text-field
                 v-model="form.delivery_postcode"
                 label="Индекс"
@@ -1661,9 +1676,7 @@
                 hide-details
               />
             </v-col>
-          </v-row>
-          <v-row>
-            <v-col cols="12" md="4">
+            <v-col cols="12" md="3">
               <v-text-field
                 v-model="form.delivery_city"
                 label="Город / населённый пункт"
@@ -1672,7 +1685,7 @@
                 hide-details
               />
             </v-col>
-            <v-col cols="12" md="4">
+            <v-col cols="12" md="3">
               <v-text-field
                 v-model="form.delivery_street"
                 label="Улица"
@@ -1690,26 +1703,12 @@
                 hide-details
               />
             </v-col>
-            <v-col cols="12" md="2">
+            <v-col cols="12" md="1">
               <v-text-field
                 v-model="form.delivery_building"
                 label="Корпус"
                 variant="outlined"
                 density="compact"
-                hide-details
-              />
-            </v-col>
-          </v-row>
-          <!-- Регион проведения мероприятия — отдельное поле, не адрес доставки -->
-          <v-row>
-            <v-col cols="12">
-              <v-autocomplete
-                v-model="form.region"
-                :items="RUSSIAN_REGIONS"
-                label="Регион проведения мероприятия"
-                density="compact"
-                variant="outlined"
-                clearable
                 hide-details
               />
             </v-col>
@@ -3164,7 +3163,18 @@
           </v-row>
           <v-textarea v-model="addContractorForm.address" label="Адрес местонахождения" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
           <div class="text-caption text-medium-emphasis mt-4 mb-1">Подписант</div>
-          <v-text-field v-model="addContractorForm.signatory" label="Подписант (ФИО, должность)" variant="outlined" density="compact" class="mb-3" hide-details />
+          <v-text-field v-model="addContractorForm.signatory_position" label="Должность подписанта" variant="outlined" density="compact" class="mb-2" hide-details />
+          <v-row dense class="mb-3">
+            <v-col cols="4">
+              <v-text-field v-model="addContractorForm.signatory_last_name" label="Фамилия" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="4">
+              <v-text-field v-model="addContractorForm.signatory_first_name" label="Имя" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="4">
+              <v-text-field v-model="addContractorForm.signatory_middle_name" label="Отчество" variant="outlined" density="compact" hide-details />
+            </v-col>
+          </v-row>
           <div class="text-caption text-medium-emphasis mt-3 mb-1">Контакты</div>
           <v-row dense>
             <v-col cols="6">
@@ -3970,7 +3980,7 @@ function onMonthlyStagesCreated(res: any) {
   if (form.contract_id) loadFrameworkSiblings(form.contract_id)
 }
 import AddressAutocomplete from '@/components/AddressAutocomplete.vue'
-import { RUSSIAN_REGIONS } from '@/constants/russian_regions'
+import { RUSSIAN_REGIONS, DELIVERY_REGIONS } from '@/constants/russian_regions'
 import { RU_REGION_OKATO, resolveRegionOkato } from '@/constants/ru_region_okato'
 import { useDisplay } from 'vuetify'
 import { useEntityChanges } from '@/composables/useEntityChanges'
@@ -4437,6 +4447,12 @@ function serializeFormForAutosave() {
     initiator_id: f.initiator_id,
     subject_kind: f.subject_kind,
     delivery_address: f.delivery_address,
+    delivery_region: f.delivery_region || null,
+    delivery_city: f.delivery_city || null,
+    delivery_street: f.delivery_street || null,
+    delivery_house: f.delivery_house || null,
+    delivery_building: f.delivery_building || null,
+    delivery_postcode: f.delivery_postcode || null,
     execution_term: f.execution_term,
     contract_end_date: f.contract_end_date,
     event_id: f.event_id,
@@ -5533,6 +5549,15 @@ async function loadPublications() {
 
 async function doPublish(platform: string, procedureType?: string | null) {
   publishingPlatform.value = platform
+  // Сначала сбрасываем несохранённые изменения в БД, иначе бэкенд читает устаревший delivery_region
+  if (isEdit.value && purchaseId.value) {
+    await performAutosave()
+    if (autosaveState.value === 'error') {
+      showSnack('Не удалось сохранить изменения карточки — публикация отменена', 'error')
+      publishingPlatform.value = null
+      return
+    }
+  }
   try {
     const body: Record<string, any> = { platform }
     if (procedureType) body.procedure_type = procedureType
@@ -6761,7 +6786,7 @@ const contractorFilter = (value: string, query: string, item?: any): boolean => 
 const addContractorDialog = ref(false)
 const addContractorForm = reactive({
   name: '', inn: '', kpp: '', ogrn: '', address: '', phone: '', email: '',
-  contact_person: '', signatory: '', org_type: '' as string,
+  contact_person: '', signatory_last_name: '', signatory_first_name: '', signatory_middle_name: '', signatory_position: '', org_type: '' as string,
   bank_name: '', bik: '', settlement_account: '', correspondent_account: '',
 })
 const addContractorSaving = ref(false)
@@ -6772,7 +6797,7 @@ const egrulDiffItems = ref<{ key: string; label: string; old: string; new: strin
 const egrulDiffPending = ref<Record<string, string>>({})
 
 function openAddContractor() {
-  Object.assign(addContractorForm, { name: '', inn: '', kpp: '', ogrn: '', address: '', phone: '', email: '', contact_person: '', signatory: '', org_type: 'Юридическое лицо', bank_name: '', bik: '', settlement_account: '', correspondent_account: '' })
+  Object.assign(addContractorForm, { name: '', inn: '', kpp: '', ogrn: '', address: '', phone: '', email: '', contact_person: '', signatory_last_name: '', signatory_first_name: '', signatory_middle_name: '', signatory_position: '', org_type: 'Юридическое лицо', bank_name: '', bik: '', settlement_account: '', correspondent_account: '' })
   addContractorFile.value = null
   addContractorDialog.value = true
 }
@@ -6842,7 +6867,10 @@ async function lookupContractorInn() {
       { key: 'kpp', label: 'КПП' },
       { key: 'ogrn', label: 'ОГРН' },
       { key: 'address', label: 'Адрес' },
-      { key: 'signatory', label: 'Подписант' },
+      { key: 'signatory_last_name', label: 'Фамилия подписанта' },
+      { key: 'signatory_first_name', label: 'Имя подписанта' },
+      { key: 'signatory_middle_name', label: 'Отчество подписанта' },
+      { key: 'signatory_position', label: 'Должность подписанта' },
       { key: 'phone', label: 'Телефон' },
       { key: 'email', label: 'Email' },
       { key: 'bank_name', label: 'Банк' },

@@ -709,7 +709,7 @@ def _build_soap_xml(payload: dict) -> str:
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ЗП — Запрос предложений (purchaseNoticeZPCommercial)
-    # BaseDataType: purchaseId → purchaseCategoryCustom → name → placer?(skip) → customer? → notDishonest?
+    # BaseDataType: purchaseId → purchaseCategoryCustom → name → placer? → customer? → notDishonest?
     # lotType sequence: lotId → subject → currency → pricingMethod? → initialSumInfo → deliveryPlace? →
     #   [applicationSupplyNeeded+applicationSupplySumm]? → applicationSupplyExtra? → lotItems →
     #   proposalStartDateTime → proposalEndDateTime → proposalDeterminationDateTime →
@@ -731,6 +731,7 @@ def _build_soap_xml(payload: dict) -> str:
             f"<pnc:purchaseId>{purchase_id}</pnc:purchaseId>"
             "<pnc:purchaseCategoryCustom>Запрос предложений</pnc:purchaseCategoryCustom>"
             f"<pnc:name>{subject}</pnc:name>"
+            f"<pnc:placer><t:inn>{esc(payload.get('org_inn') or '')}</t:inn></pnc:placer>"
             f"<pnc:customer><t:inn>{esc(payload.get('org_inn') or '')}</t:inn></pnc:customer>"
             "<pnc:notDishonest>false</pnc:notDishonest>"
             "<pnc:lots><pnc:lot>"
@@ -754,7 +755,7 @@ def _build_soap_xml(payload: dict) -> str:
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Редукцион (purchaseNoticeReductionCommercial)
-    # BaseDataType: purchaseId → name → placer?(skip) → customer? → notDishonest?
+    # BaseDataType: purchaseId → name → placer? → customer? → notDishonest?
     #   (БЕЗ purchaseCategoryCustom!)
     # lotReductionType sequence: lotId → subject → currency → pricingMethod? → initialSumInfo →
     #   deliveryPlace(ОБЯЗАТЕЛЕН!) → [applicationSupplyNeeded+...]? → applicationSupplyExtra? →
@@ -788,6 +789,7 @@ def _build_soap_xml(payload: dict) -> str:
             "<pnc:body><pnc:item><pnc:purchaseNoticeReductionCommercialData>"
             f"<pnc:purchaseId>{purchase_id}</pnc:purchaseId>"
             f"<pnc:name>{subject}</pnc:name>"
+            f"<pnc:placer><t:inn>{esc(payload.get('org_inn') or '')}</t:inn></pnc:placer>"
             f"<pnc:customer><t:inn>{esc(payload.get('org_inn') or '')}</t:inn></pnc:customer>"
             "<pnc:notDishonest>false</pnc:notDishonest>"
             "<pnc:lots><pnc:lot>"
@@ -813,7 +815,7 @@ def _build_soap_xml(payload: dict) -> str:
 
     # ═══════════════════════════════════════════════════════════════════════════
     # Мониторинг цен (purchaseNoticePriceMonitoringCommercial)
-    # BaseDataType: purchaseId → name → placer?(skip) → customer?
+    # BaseDataType: purchaseId → name → placer? → customer?
     #   (без notDishonest, без purchaseCategoryCustom)
     # PriceMonitoringLotType sequence: lotId → subject → currency →
     #   [okei+qty]?(0..1) → okpd2(1..N, ОБЯЗАТЕЛЕН) → deliveryPlace? →
@@ -843,6 +845,7 @@ def _build_soap_xml(payload: dict) -> str:
         "<pnc:body><pnc:item><pnc:purchaseNoticePriceMonitoringCommercialData>"
         f"<pnc:purchaseId>{purchase_id}</pnc:purchaseId>"
         f"<pnc:name>{subject}</pnc:name>"
+        f"<pnc:placer><t:inn>{esc(payload.get('org_inn') or '')}</t:inn></pnc:placer>"
         f"<pnc:customer><t:inn>{esc(payload.get('org_inn') or '')}</t:inn></pnc:customer>"
         "<pnc:lots><pnc:lot>"
         f"<pnc:lotId>{purchase_id}</pnc:lotId>"

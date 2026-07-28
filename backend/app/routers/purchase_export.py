@@ -1367,7 +1367,8 @@ _TEMPLATE_EXAMPLE_ROW = [
     "Товар",                                # Тип позиции (Товар/Услуга)
     "Договор",                              # Основание для оплаты
     "2026",                                 # Год
-    "Москва",                               # Регион
+    "Москва",                               # Регион проведения мероприятия
+    "Москва",                               # Регион поставки (субъект РФ)
     "",                                     # Место оказания услуг / доставки
     "",                                     # Адрес доставки
     "10000",                                # Экономия по результатам конкурентных закупок
@@ -1432,7 +1433,8 @@ _TEMPLATE_EXAMPLE_ROW_2 = [
     "Услуга",                               # Тип позиции (Товар/Услуга)
     "Счёт",                                 # Основание для оплаты
     "2026",                                 # Год
-    "Санкт-Петербург",                      # Регион
+    "Санкт-Петербург",                      # Регион проведения мероприятия
+    "Санкт-Петербург",                      # Регион поставки (субъект РФ)
     "г. Санкт-Петербург, пр. Большой, 5",  # Место оказания услуг / доставки
     "",                                     # Адрес доставки
     "",                                     # Экономия по результатам конкурентных закупок
@@ -2040,6 +2042,12 @@ _COLUMN_MAP: Dict[str, str] = {
     "№ п/п":                        "purchase_number",
     # --- New extended columns (plan §3) ---
     "регион":                                               "region",
+    "регион проведения мероприятия":                        "region",
+    "регион мероприятия":                                   "region",
+    "регион поставки":                                      "delivery_region",
+    "регион поставки (субъект рф)":                         "delivery_region",
+    "субъект рф (место поставки)":                          "delivery_region",
+    "субъект рф":                                           "delivery_region",
     "место оказания услуг / доставки":                      "delivery_location",
     "место оказания услуг":                                 "delivery_location",
     "место доставки":                                       "delivery_location",
@@ -2684,6 +2692,7 @@ async def _parse_and_group(
             "sid":                      row_sid,
             # New extended fields
             "region":                   cell(row, "region"),
+            "delivery_region":          cell(row, "delivery_region"),
             "delivery_location":        cell(row, "delivery_location"),
             "delivery_address":         cell(row, "delivery_address"),
             "economy":                  _to_dec(cell(row, "economy")),
@@ -2978,6 +2987,7 @@ async def _parse_and_group(
             item_type=first.get("item_type"),
             # New extended fields
             region=first.get("region"),
+            delivery_region=first.get("delivery_region"),
             delivery_location=first.get("delivery_location"),
             delivery_address=first.get("delivery_address"),
             economy=first.get("economy"),

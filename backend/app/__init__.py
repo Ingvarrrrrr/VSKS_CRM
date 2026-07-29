@@ -1818,6 +1818,8 @@ app.include_router(checklists_router.router)           # /api/checklists
 app.include_router(incidents_router.router)            # /api/incidents
 from .routers import exports as exports_router
 app.include_router(exports_router.router)              # /api/exports
+from .routers import okpd2 as okpd2_router
+app.include_router(okpd2_router.router)                # /api/okpd2
 
 
 @app.get("/api/diag/version")

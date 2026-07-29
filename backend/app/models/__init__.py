@@ -64,3 +64,4 @@ from app.models.waybill_children import RouteStop, OdometerReading, FuelRefill  
 from app.models.checklist import Checklist, ChecklistItem  # noqa: F401 — Phase 30
 from app.models.incident import Incident  # noqa: F401 — Phase 30
 from app.models.user_platform_credential import UserPlatformCredential  # noqa: F401 — Phase 31 Fabrikant per-user creds
+from app.models.okpd2_code import Okpd2Code  # noqa: F401 — ОКПД2 classifier

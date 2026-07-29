@@ -202,16 +202,18 @@ def _build_add_file_soap_xml(
     packet_guid = str(uuid.uuid4())
     create_dt = datetime.now().strftime("%Y-%m-%dT%H:%M:%S+03:00")
 
+    item_guid = str(uuid.uuid4())
+
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
         "<soap:Body>"
-        f'<uf:addFileToPurchaseNotice xmlns:uf="{NS_UF}">'
-        "<uf:header>"
-        f"<uf:guid>{esc(packet_guid)}</uf:guid>"
-        f"<uf:createDateTime>{create_dt}</uf:createDateTime>"
-        "</uf:header>"
-        "<uf:body><uf:item><uf:addFileToPurchaseNoticeData>"
+        f'<uf:addFileToPurchaseNotice xmlns:uf="{NS_UF}" xmlns:t="{NS_T_TYPES}">'
+        "<t:header>"
+        f"<t:guid>{esc(packet_guid)}</t:guid>"
+        f"<t:createDateTime>{create_dt}</t:createDateTime>"
+        "</t:header>"
+        f"<uf:body><uf:item><t:guid>{esc(item_guid)}</t:guid><uf:addFileToPurchaseNoticeData>"
         f"<uf:purchaseId>{esc(purchase_id_str)}</uf:purchaseId>"
         f"<uf:fileId>{esc(file_id)}</uf:fileId>"
         f"<uf:fileName>{esc(file_name)}</uf:fileName>"
@@ -618,11 +620,17 @@ def _build_soap_xml(payload: dict) -> str:
 
     # ── Вспомогательный билдер: initialSumInfo с необязательным pricingMethod перед ним ──
     def _initial_sum_xml(nmck_val: float) -> str:
-        """XSD-схема Фабриканта (выяснено эмпирически 2026-07-23):
-        - Элемента <noNmcd> нет.
-        - lot-уровень: pricingMethod(0..1) → initialSumInfo(обязателен, minInclusive 0.01).
-        - Без НМЦД: берём сумму позиций или ставим pricingMethod=withoutNDSType + 1.00.
+        """XSD-схема Фабриканта (WSDL проверен 2026-07-28):
+        - initialSumInfo — minOccurs=0, элемент необязателен.
+        - Если явно запрошено «без НМЦД» (payload["no_nmcd"]) — не слать элемент вовсе.
+        - Иначе: есть НМЦД → шлём его; нет НМЦД → откат на сумму позиций;
+          нет ни того ни другого → не слать элемент (возвращаем "").
+        - pricingMethod=withoutNDSType добавляется перед initialSumInfo
+          когда НМЦД отсутствует, но есть сумма позиций.
         """
+        if payload.get("no_nmcd"):
+            # Пользователь явно потребовал публикацию без НМЦД — элемент не слать
+            return ""
         nmck_f = float(nmck_val or 0)
         if nmck_f >= 0.01:
             return (
@@ -634,12 +642,25 @@ def _build_soap_xml(payload: dict) -> str:
             for i in payload.get("items", [])
             if i.get("item_name")
         )
-        effective_sum = round(items_total, 2) if items_total >= 0.01 else 1.00
-        return (
-            "<pnc:pricingMethod>withoutNDSType</pnc:pricingMethod>"
-            f"<pnc:initialSumInfo><pnc:initialSum>{effective_sum:.2f}</pnc:initialSum>"
-            f"<pnc:ndsType>without_nds</pnc:ndsType></pnc:initialSumInfo>"
-        )
+        items_total = round(items_total, 2)
+        if items_total >= 0.01:
+            return (
+                "<pnc:pricingMethod>withoutNDSType</pnc:pricingMethod>"
+                f"<pnc:initialSumInfo><pnc:initialSum>{items_total:.2f}</pnc:initialSum>"
+                f"<pnc:ndsType>without_nds</pnc:ndsType></pnc:initialSumInfo>"
+            )
+        # Neither НМЦД nor item prices — omit the element entirely (minOccurs=0)
+        return ""
+
+    # ── Вывод ОКВЭД2 из кода ОКПД2 ──
+    def _okved2_from_okpd2(okpd2_code_raw: str) -> str:
+        """Возвращает код ОКВЭД2, взяв первые два сегмента ОКПД2. Пример: 29.20.23 → 29.20."""
+        parts = okpd2_code_raw.split(".")
+        if len(parts) >= 2:
+            derived = parts[0] + "." + parts[1]
+        else:
+            derived = okpd2_code_raw
+        return derived
 
     # ── Билдер lotItems для ЗП (lotItemType) ──
     def _build_lot_items_zp() -> str:
@@ -651,12 +672,15 @@ def _build_soap_xml(payload: dict) -> str:
             up = float(item.get("unit_price", 0))
             tp = float(item.get("total_price", 0)) or (up * qty)
             unit_name = esc(item.get("unit", "шт") or "шт")
-            okpd2_code = esc(item.get("okpd2_code") or payload.get("okpd2_code") or "")
+            okpd2_code_raw = item.get("okpd2_code") or payload.get("okpd2_code") or ""
+            okpd2_code = esc(okpd2_code_raw)
             okpd2_name = esc(item.get("okpd2_name") or item.get("item_name", "Товар")[:100])
-            okved2_code = esc(item.get("okved2_code") or "G")
-            okved2_name = esc(item.get("okved2_name") or "Торговля оптовая и розничная")
+            _derived_okved2 = _okved2_from_okpd2(okpd2_code_raw) if okpd2_code_raw else "G"
+            okved2_code = esc(item.get("okved2_code") or _derived_okved2)
+            okved2_name = esc(item.get("okved2_name") or item.get("okpd2_name") or item.get("item_name", "Товар")[:100])
             # positionPrice(total) before positionPricePerUnit per lotItemType sequence
-            if up > 0:
+            # При no_nmcd цены позиций не передаём (minOccurs=0 в lotItemType)
+            if up > 0 and not payload.get("no_nmcd"):
                 price_xml = (
                     f"<pnc:positionPrice><pnc:price>{tp}</pnc:price><pnc:ndsType>without_nds</pnc:ndsType></pnc:positionPrice>"
                     f"<pnc:positionPricePerUnit><pnc:price>{up}</pnc:price><pnc:ndsType>without_nds</pnc:ndsType></pnc:positionPricePerUnit>"
@@ -684,10 +708,12 @@ def _build_soap_xml(payload: dict) -> str:
                 continue
             qty = item.get("quantity", 1)
             unit_name = esc(item.get("unit", "шт") or "шт")
-            okpd2_code = esc(item.get("okpd2_code") or payload.get("okpd2_code") or "")
+            okpd2_code_raw = item.get("okpd2_code") or payload.get("okpd2_code") or ""
+            okpd2_code = esc(okpd2_code_raw)
             okpd2_name = esc(item.get("okpd2_name") or item.get("item_name", "Товар")[:100])
-            okved2_code = esc(item.get("okved2_code") or "G")
-            okved2_name = esc(item.get("okved2_name") or "Торговля оптовая и розничная")
+            _derived_okved2 = _okved2_from_okpd2(okpd2_code_raw) if okpd2_code_raw else "G"
+            okved2_code = esc(item.get("okved2_code") or _derived_okved2)
+            okved2_name = esc(item.get("okved2_name") or item.get("okpd2_name") or item.get("item_name", "Товар")[:100])
             # lotItemReductionType sequence: ordinalNumber? okpd2? okved2? okei? qty? additionalInfo?
             items_xml += (
                 f"<pnc:lotItem>"
@@ -973,8 +999,9 @@ async def _poll_fabrikant_result(
                 if pi.get("procedure_url"):
                     effective_url = pi["procedure_url"]
             else:
-                # getProcedureInfo не ответил — сохраняем published (прежнее поведение)
-                final_status = "published"
+                # getProcedureInfo не ответил — состояние неизвестно, но по API
+                # процедура может быть только черновиком (публикация в WSDL отсутствует)
+                final_status = "draft"
                 final_state  = None
 
             await _set_pub_success(
@@ -1174,6 +1201,7 @@ async def publish_purchase(
 
     if body.no_nmcd:
         payload["nmck"] = 0
+        payload["no_nmcd"] = True
 
     if body.procedure_type:
         payload["procedure_type"] = body.procedure_type

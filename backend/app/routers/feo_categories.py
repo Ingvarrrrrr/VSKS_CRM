@@ -646,12 +646,14 @@ async def create_category(
 async def download_feo_template(
     _=Depends(get_current_user),
 ):
-    """Шаблон Excel для импорта категорий ФЭО.
+    """Шаблон Excel для импорта категорий ФЭО (37 колонок).
 
-    Колонки A–B: субсидия + Ур.2.
-    Для Ур.2–4: сначала «Кол-во по ФЭО» + «Ед. изм. по ФЭО» (из документа ФЭО),
-                затем «Плановое кол-во» + «Ед. изм. плана» (CRM-план) + «Плановая стоимость за ед.»
-    Ур.5: позиции CRM. Атрибуты: Код, Приложение, Финансирование, Активна.
+    Для Ур.2–4: ФЭО-кол-во + ед.изм. + стоимость за ед. + СУММА по строке ФЭО;
+                плановое кол-во + ед.изм. + стоимость за ед. + СУММА плана.
+    Ур.5: плановый товар/услуга — кол-во, ед.изм., цена за ед., итоговая сумма.
+    Атрибуты: Код, Приложение, Финансирование, Активна.
+    Если уровень пропущен, содержимое нижнего поднимается на его место.
+    Сумма строки приоритетнее кол-во × цена; расхождение = предупреждение.
     """
     if Workbook is None:
         raise HTTPException(500, "openpyxl не установлен")
@@ -659,56 +661,61 @@ async def download_feo_template(
     ws = wb.active
     ws.title = "Категории ФЭО"
     headers = [
-        "Субсидия",                                        # A  1
-        "Уровень 2 (Направление расходов по ФЭО)",         # B  2
-        "Кол-во по ФЭО (Ур.2)",                            # C  3  ← feo_quantity
-        "Ед. изм. по ФЭО (Ур.2)",                          # D  4  ← feo_unit
-        "Стоимость по ФЭО (Ур.2)",                         # E  5  ← feo_amount
-        "Плановое кол-во (Ур.2)",                          # F  6  ← planned_quantity
-        "Ед. изм. плана (Ур.2)",                           # G  7  ← unit
-        "Плановая стоимость за ед. (Ур.2)",                # H  8
-        "Уровень 3 (Тип расходов по ФЭО)",                 # I  9
-        "Кол-во по ФЭО (Ур.3)",                            # J  10
-        "Ед. изм. по ФЭО (Ур.3)",                          # K  11
-        "Стоимость по ФЭО (Ур.3)",                         # L  12  ← feo_amount
-        "Плановое кол-во (Ур.3)",                          # M  13
-        "Ед. изм. плана (Ур.3)",                           # N  14
-        "Плановая стоимость за ед. (Ур.3)",                # O  15
-        "Уровень 4 (Конкретизированный)",                  # P  16
-        "Кол-во по ФЭО (Ур.4)",                            # Q  17
-        "Ед. изм. по ФЭО (Ур.4)",                         # R  18
-        "Стоимость по ФЭО (Ур.4)",                         # S  19  ← feo_amount
-        "Плановое кол-во (Ур.4)",                          # T  20
-        "Ед. изм. плана (Ур.4)",                           # U  21
-        "Плановая стоимость за ед. (Ур.4)",                # V  22
-        "Уровень 5 (Плановый товар/услуга)",               # W  23
-        "Количество (Ур.5)",                               # X  24
-        "Ед. измерения (Ур.5)",                            # Y  25
-        "Плановая стоимость за ед. (Ур.5)",                # Z  26
-        "Код",                                             # AA 27
-        "Приложение",                                      # AB 28
-        "Финансирование",                                  # AC 29
-        "Активна",                                         # AD 30
+        "Субсидия",                                         # A   1
+        "Уровень 2 (Направление расходов по ФЭО)",          # B   2
+        "Кол-во по ФЭО (Ур.2)",                             # C   3
+        "Ед. изм. по ФЭО (Ур.2)",                           # D   4
+        "Стоимость по ФЭО (Ур.2)",                          # E   5
+        "Сумма по ФЭО (Ур.2)",                              # F   6  ← НОВАЯ
+        "Плановое кол-во (Ур.2)",                           # G   7
+        "Ед. изм. плана (Ур.2)",                            # H   8
+        "Плановая стоимость за ед. (Ур.2)",                 # I   9
+        "Сумма плана (Ур.2)",                               # J  10  ← НОВАЯ
+        "Уровень 3 (Тип расходов по ФЭО)",                  # K  11
+        "Кол-во по ФЭО (Ур.3)",                             # L  12
+        "Ед. изм. по ФЭО (Ур.3)",                           # M  13
+        "Стоимость по ФЭО (Ур.3)",                          # N  14
+        "Сумма по ФЭО (Ур.3)",                              # O  15  ← НОВАЯ
+        "Плановое кол-во (Ур.3)",                           # P  16
+        "Ед. изм. плана (Ур.3)",                            # Q  17
+        "Плановая стоимость за ед. (Ур.3)",                 # R  18
+        "Сумма плана (Ур.3)",                               # S  19  ← НОВАЯ
+        "Уровень 4 (Конкретизированный)",                   # T  20
+        "Кол-во по ФЭО (Ур.4)",                             # U  21
+        "Ед. изм. по ФЭО (Ур.4)",                           # V  22
+        "Стоимость по ФЭО (Ур.4)",                          # W  23
+        "Сумма по ФЭО (Ур.4)",                              # X  24  ← НОВАЯ
+        "Плановое кол-во (Ур.4)",                           # Y  25
+        "Ед. изм. плана (Ур.4)",                            # Z  26
+        "Плановая стоимость за ед. (Ур.4)",                 # AA 27
+        "Сумма плана (Ур.4)",                               # AB 28  ← НОВАЯ
+        "Уровень 5 (Плановый товар/услуга)",                # AC 29
+        "Количество (Ур.5)",                                # AD 30
+        "Ед. измерения (Ур.5)",                             # AE 31
+        "Цена за ед. (Ур.5)",                               # AF 32  ← НОВАЯ
+        "Сумма по позиции (Ур.5)",                          # AG 33  ← переименование
+        "Код",                                              # AH 34
+        "Приложение",                                       # AI 35
+        "Финансирование",                                   # AJ 36
+        "Активна",                                          # AK 37
     ]
     ws.append(headers)
 
     # Цветовое кодирование заголовков
-    fill_cat  = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")   # синий — категории + ФЭО-кол-во
-    fill_plan = PatternFill(start_color="0891B2", end_color="0891B2", fill_type="solid")   # голубой — плановые кол-во/ед.изм./стоимость
-    fill_item = PatternFill(start_color="059669", end_color="059669", fill_type="solid")   # зелёный — позиции уровня 5
+    fill_cat  = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")   # синий — категории + ФЭО
+    fill_plan = PatternFill(start_color="0891B2", end_color="0891B2", fill_type="solid")   # голубой — плановые
+    fill_item = PatternFill(start_color="059669", end_color="059669", fill_type="solid")   # зелёный — ур.5
     fill_attr = PatternFill(start_color="7C3AED", end_color="7C3AED", fill_type="solid")  # фиолетовый — атрибуты
     font_w = Font(color="FFFFFF", bold=True, size=10)
 
     # col index (1-based):
-    # 1-2: субсидия+ур2 → синий
-    # 3-5: feo qty/unit/amount ур2 → синий; 6-8: plan ур2 → голубой
-    # 9: ур3 → синий; 10-12: feo ур3 → синий; 13-15: plan ур3 → голубой
-    # 16: ур4 → синий; 17-19: feo ур4 → синий; 20-22: plan ур4 → голубой
-    # 23-26: ур5 → зелёный
-    # 27-30: атрибуты → фиолетовый
-    _blue_cols  = {1, 2, 3, 4, 5, 9, 10, 11, 12, 16, 17, 18, 19}
-    _cyan_cols  = {6, 7, 8, 13, 14, 15, 20, 21, 22}
-    _green_cols = {23, 24, 25, 26}
+    # синий: 1-2 (субсидия+ур2), 3-6 (feo ур2+сумма), 11-15 (ур3+feo), 20-24 (ур4+feo)
+    # голубой: 7-10 (plan ур2), 16-19 (plan ур3), 25-28 (plan ур4)
+    # зелёный: 29-33 (ур5)
+    # фиолетовый: 34-37 (атрибуты)
+    _blue_cols  = {1, 2, 3, 4, 5, 6, 11, 12, 13, 14, 15, 20, 21, 22, 23, 24}
+    _cyan_cols  = {7, 8, 9, 10, 16, 17, 18, 19, 25, 26, 27, 28}
+    _green_cols = {29, 30, 31, 32, 33}
 
     for i, cell in enumerate(ws[1], start=1):
         if i in _blue_cols:
@@ -723,54 +730,69 @@ async def download_feo_template(
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
     ws.row_dimensions[1].height = 52
 
-    # Примеры (строки 2–6):
-    # col: A        B               C       D        E(feo_amt2) F    G    H    I               J      K         L(feo_amt3) M    N    O    P               Q   R     S(feo_amt4) T    U    V    W                    X   Y    Z       AA        AB       AC       AD
-    ws.append(["ФАДМ_2026", "Техническое оснащение штаба", "500", "компл.", "", "", "", "", "Техническое оснащение штаба", "", "", "", "", "", "", "Закупка компьютеров", "6", "шт", "", "", "", "", "", "", "", "", "01.01.01", "Прил. 1", "2000000", "да"])
-    ws.append(["ФАДМ_2026", "Техническое оснащение штаба", "500", "компл.", "", "", "", "", "Техническое оснащение штаба", "", "", "", "", "", "", "Закупка компьютеров", "6", "шт", "", "", "", "", "Ноутбук HP 15 Intel i5", "3", "шт", "150000", "01.01.01", "Прил. 1", "2000000", "да"])
-    ws.append(["ФАДМ_2026", "Техническое оснащение штаба", "500", "компл.", "", "", "", "", "Техническое оснащение штаба", "", "", "", "", "", "", "Закупка компьютеров", "6", "шт", "", "", "", "", "Монитор Dell 24\"", "3", "шт", "90000", "01.01.01", "Прил. 1", "", "да"])
-    ws.append(["ФАДМ_2026", "Организация мероприятий", "", "", "", "", "", "", "Слёт студентов-спасателей", "102", "чел.", "", "", "", "", "Услуги по организации", "", "", "", "", "", "", "Услуга проживания участников", "100", "чел.", "3000000", "02.01.01", "Прил. 2", "3000000", "да"])
-    ws.append(["ФАДМ_2026", "Организация мероприятий", "", "", "", "", "", "", "Слёт студентов-спасателей", "102", "чел.", "", "", "", "", "Услуги по организации", "", "", "", "", "", "", "Услуга логистики участников", "2", "рейс", "500000", "02.01.02", "Прил. 2", "", "да"])
+    # Примеры (строки 2–6), 37 элементов каждая:
+    # col:  1=Субс 2=Ур2       3=feoQ2  4=feoU2     5=feoA2 6=feoS2   7=pQ2 8=pU2 9=pA2 10=pS2   11=Ур3               12=feoQ3 13=feoU3  14=feoA3 15=feoS3   16=pQ3 17=pU3 18=pA3 19=pS3  20=Ур4                 21=feoQ4 22=feoU4 23=feoA4 24=feoS4   25=pQ4 26=pU4 27=pA4 28=pS4  29=Ур5                        30=qty 31=unit 32=цена  33=сумма   34=Код      35=Прил    36=Финанс  37=Акт
+    # Строка 1: у Ур.4 задана только сумма (без кол-во и цены)
+    ws.append(["ФАДМ_2026", "Техническое оснащение", "", "", "", "", "", "", "", "", "Оргтехника", "", "", "", "2000000", "", "", "", "", "Закупка компьютеров", "6", "шт", "", "", "", "", "", "", "", "", "", "", "", "01.01.01", "Прил. 1", "2000000", "да"])
+    # Строка 2: Ур.5 с ценой и кол-вом, сумма пуста → рассчитывается автоматически
+    ws.append(["ФАДМ_2026", "Техническое оснащение", "", "", "", "", "", "", "", "", "Оргтехника", "", "", "", "2000000", "", "", "", "", "Закупка компьютеров", "6", "шт", "", "", "", "", "", "", "Ноутбук HP 15 Intel i5", "3", "шт", "150000", "", "01.01.01", "Прил. 1", "2000000", "да"])
+    # Строка 3: Ур.5 с явной суммой (расхождение с ценой — предупреждение, берётся сумма)
+    ws.append(["ФАДМ_2026", "Техническое оснащение", "", "", "", "", "", "", "", "", "Оргтехника", "", "", "", "2000000", "", "", "", "", "Закупка компьютеров", "6", "шт", "", "", "", "", "", "", "Монитор Dell 24\"", "3", "шт", "90000", "280000", "01.01.01", "Прил. 1", "", "да"])
+    # Строка 4: Ур.3 задан, Ур.4 пуст → атрибуты ложатся на Ур.3; только сумма плана
+    ws.append(["ФАДМ_2026", "Организация мероприятий", "", "", "", "", "", "", "", "", "Слёт студентов-спасателей", "102", "чел.", "", "", "", "", "", "3500000", "", "", "", "", "", "", "", "", "", "Услуга проживания участников", "100", "чел.", "", "3000000", "02.01.01", "Прил. 2", "3000000", "да"])
+    # Строка 5: Ур.3 задан, Ур.4 пуст; Ур.5 только цена без суммы
+    ws.append(["ФАДМ_2026", "Организация мероприятий", "", "", "", "", "", "", "", "", "Слёт студентов-спасателей", "102", "чел.", "", "", "", "", "", "3500000", "", "", "", "", "", "", "", "", "", "Услуга логистики участников", "2", "рейс", "250000", "", "02.01.02", "Прил. 2", "", "да"])
 
-    # Комментарий в строке 7
+    # Подсказки в строке 7
     hints = [
-        "← Точное название как в системе",                          # A  1
-        "← Направление расходов (создаётся если нет)",              # B  2
-        "← Кол-во ФЭО Ур.2 (из документа ФЭО)",                    # C  3
-        "← Ед. изм. ФЭО Ур.2 (шт, компл...)",                      # D  4
-        "← Стоимость за ед. по ФЭО Ур.2 (руб.)",                   # E  5
-        "← Плановое кол-во Ур.2 (CRM-план, необязательно)",        # F  6
-        "← Ед. изм. плана Ур.2",                                    # G  7
-        "← Плановая стоимость за ед. Ур.2 (руб.)",                  # H  8
-        "← Тип расходов (если пусто — атрибуты к Ур.2)",           # I  9
-        "← Кол-во ФЭО Ур.3 (из документа ФЭО)",                    # J  10
-        "← Ед. изм. ФЭО Ур.3",                                     # K  11
-        "← Стоимость за ед. по ФЭО Ур.3 (руб.)",                   # L  12
-        "← Плановое кол-во Ур.3 (CRM-план)",                       # M  13
-        "← Ед. изм. плана Ур.3",                                    # N  14
-        "← Плановая стоимость за ед. Ур.3 (руб.)",                  # O  15
-        "← Конкретизированный (если пусто — к Ур.3)",              # P  16
-        "← Кол-во ФЭО Ур.4 (из документа ФЭО)",                    # Q  17
-        "← Ед. изм. ФЭО Ур.4",                                     # R  18
-        "← Стоимость за ед. по ФЭО Ур.4 (руб.)",                   # S  19
-        "← Плановое кол-во Ур.4 (CRM-план)",                       # T  20
-        "← Ед. изм. плана Ур.4",                                    # U  21
-        "← Плановая стоимость за ед. Ур.4 (руб.)",                  # V  22
-        "← Плановый товар/услуга (необязательно)",                  # W  23
-        "← Кол-во Ур.5 (необязательно)",                            # X  24
-        "← Ед. изм. (шт, кг, услуга...)",                           # Y  25
-        "← Плановая стоимость за ед. позиции",                      # Z  26
-        "← Код категории",                                           # AA 27
-        "← Номер приложения",                                        # AB 28
-        "← Бюджет категории",                                        # AC 29
-        "← да/нет",                                                  # AD 30
+        "← Точное название как в системе",                                                        # A   1
+        "← Направление расходов (создаётся если нет)",                                            # B   2
+        "← Кол-во ФЭО Ур.2 (из документа ФЭО)",                                                  # C   3
+        "← Ед. изм. ФЭО Ур.2 (шт, компл...)",                                                    # D   4
+        "← Стоимость за ед. по ФЭО Ур.2 (руб.)",                                                 # E   5
+        "← Сумма по строке ФЭО (руб.); если пусто — кол-во × цена",                              # F   6
+        "← Плановое кол-во Ур.2 (CRM-план, необязательно)",                                      # G   7
+        "← Ед. изм. плана Ур.2",                                                                  # H   8
+        "← Плановая стоимость за ед. Ур.2 (руб.)",                                               # I   9
+        "← Сумма плана (руб.); если пусто — кол-во × цена",                                      # J  10
+        "← Тип расходов (если пусто — атрибуты к Ур.2); если уровень пропущен, содержимое нижнего поднимается на его место",  # K  11
+        "← Кол-во ФЭО Ур.3 (из документа ФЭО)",                                                  # L  12
+        "← Ед. изм. ФЭО Ур.3",                                                                   # M  13
+        "← Стоимость за ед. по ФЭО Ур.3 (руб.)",                                                 # N  14
+        "← Сумма по строке ФЭО (руб.); если пусто — кол-во × цена",                              # O  15
+        "← Плановое кол-во Ур.3 (CRM-план)",                                                     # P  16
+        "← Ед. изм. плана Ур.3",                                                                  # Q  17
+        "← Плановая стоимость за ед. Ур.3 (руб.)",                                               # R  18
+        "← Сумма плана (руб.); если пусто — кол-во × цена",                                      # S  19
+        "← Конкретизированный (если пусто — к Ур.3); если уровень пропущен, содержимое нижнего поднимается на его место",  # T  20
+        "← Кол-во ФЭО Ур.4 (из документа ФЭО)",                                                  # U  21
+        "← Ед. изм. ФЭО Ур.4",                                                                   # V  22
+        "← Стоимость за ед. по ФЭО Ур.4 (руб.)",                                                 # W  23
+        "← Сумма по строке ФЭО (руб.); если пусто — кол-во × цена",                              # X  24
+        "← Плановое кол-во Ур.4 (CRM-план)",                                                     # Y  25
+        "← Ед. изм. плана Ур.4",                                                                  # Z  26
+        "← Плановая стоимость за ед. Ур.4 (руб.)",                                               # AA 27
+        "← Сумма плана (руб.); если пусто — кол-во × цена",                                      # AB 28
+        "← Плановый товар/услуга (необязательно)",                                                # AC 29
+        "← Кол-во Ур.5 (необязательно)",                                                          # AD 30
+        "← Ед. изм. (шт, кг, услуга...)",                                                        # AE 31
+        "← Цена за ед. позиции (если сумма пуста)",                                               # AF 32
+        "← Итог по позиции (руб.)",                                                               # AG 33
+        "← Код категории",                                                                        # AH 34
+        "← Номер приложения",                                                                     # AI 35
+        "← Бюджет категории",                                                                     # AJ 36
+        "← да/нет",                                                                               # AK 37
     ]
     for col, hint in enumerate(hints, start=1):
         ws.cell(7, col).value = hint
         ws.cell(7, col).font = Font(italic=True, color="888888", size=8)
 
-    # Ширины колонок (30 штук):
-    # A(18) B(42) C(14) D(14) E(16) F(14) G(14) H(16) I(42) J(14) K(14) L(16) M(14) N(14) O(16) P(45) Q(14) R(14) S(16) T(14) U(14) V(16) W(45) X(12) Y(14) Z(18) AA(10) AB(12) AC(18) AD(10)
-    col_widths = [18, 42, 14, 14, 16, 14, 14, 16, 42, 14, 14, 16, 14, 14, 16, 45, 14, 14, 16, 14, 14, 16, 45, 12, 14, 18, 10, 12, 18, 10]
+    # Ширины колонок (37 штук):
+    # A(18) B(42) C(14) D(14) E(16) F(16) G(14) H(14) I(16) J(16)
+    # K(42) L(14) M(14) N(16) O(16) P(14) Q(14) R(16) S(16)
+    # T(45) U(14) V(14) W(16) X(16) Y(14) Z(14) AA(16) AB(16)
+    # AC(45) AD(12) AE(14) AF(16) AG(18) AH(10) AI(12) AJ(18) AK(10)
+    col_widths = [18, 42, 14, 14, 16, 16, 14, 14, 16, 16, 42, 14, 14, 16, 16, 14, 14, 16, 16, 45, 14, 14, 16, 16, 14, 14, 16, 16, 45, 12, 14, 16, 18, 10, 12, 18, 10]
     for i, w in enumerate(col_widths, 1):
         ws.column_dimensions[ws.cell(1, i).column_letter].width = w
     ws.freeze_panes = "A2"
@@ -941,9 +963,22 @@ async def _do_feo_import(
     c_feo_amt_lvl2: int | None = None,
     c_feo_amt_lvl3: int | None = None,
     c_feo_amt_lvl4: int | None = None,
+    c_feo_sum_lvl2: int | None = None,
+    c_feo_sum_lvl3: int | None = None,
+    c_feo_sum_lvl4: int | None = None,
+    c_plan_sum_lvl2: int | None = None,
+    c_plan_sum_lvl3: int | None = None,
+    c_plan_sum_lvl4: int | None = None,
+    c_item_price: int | None = None,
     default_subsidy_id: int | None = None,
+    dry_run: bool = False,
 ) -> dict:
-    """Core import logic shared by /import and /import-mapped endpoints."""
+    """Core import logic shared by /import and /import-mapped endpoints.
+
+    dry_run=True: вся обработка выполняется, но транзакция откатывается.
+    Возвращает {created, updated, skipped, errors, warnings, ...}.
+    """
+    import re as _re
 
     if c_lvl2 is None:
         raise HTTPException(400, "Не найден обязательный столбец: 'Уровень 2 (Направление расходов)'")
@@ -952,12 +987,10 @@ async def _do_feo_import(
 
     def get_cell(row, col: int | None) -> str | None:
         if col is None or col < 0: return None
-        # Some rows may be shorter than header row — treat missing cells as None
         if col >= len(row): return None
         v = row[col]
         if v is None: return None
         s = str(v).strip()
-        # Treat "0", "0.0" etc. as valid values (not None)
         if not s or s.lower() in ('none', 'null'):
             return None
         return s
@@ -971,11 +1004,9 @@ async def _do_feo_import(
         s = str(v).strip()
         if not s or s in ('-', '—', '–', 'None', 'null', 'н/д', 'N/A'):
             return None
-        # Remove currency symbols, spaces, non-breaking spaces
         s = s.replace(" ", "").replace("\xa0", "").replace("\u202f", "")
         s = s.replace("₽", "").replace("руб", "").replace("р.", "").replace("р", "")
         s = s.replace(",", ".")
-        # Remove trailing dots
         s = s.rstrip(".")
         if not s:
             return None
@@ -983,6 +1014,22 @@ async def _do_feo_import(
             return Decimal(s)
         except Exception:
             return None
+
+    def _fmt(v) -> str:
+        """Число с разделителями разрядов для читаемых предупреждений."""
+        try:
+            return f"{float(v):,.2f}".replace(",", " ")
+        except Exception:
+            return str(v)
+
+    def _norm(s: str) -> str:
+        """Нормализация имени уровня для сравнения."""
+        s2 = _re.sub(r'^\s*\d+([.\)]\d+)*[.\)]?\s*', '', s)
+        s2 = s2.lower().strip()
+        return _re.sub(r'\s+', ' ', s2)
+
+    ZERO = Decimal("0")
+    QUANT = Decimal("0.01")
 
     from app.models.subsidy import Subsidy
     sub_rows = (await db.execute(select(Subsidy))).scalars().all()
@@ -994,9 +1041,16 @@ async def _do_feo_import(
         cat_cache[(c.subsidy_id, c.parent_id, c.name.lower().strip())] = c
 
     created = 0; updated = 0; skipped = 0; errors: list[dict] = []
+    warnings: list[dict] = []
     created_details: list[dict] = []
     updated_details: list[dict] = []
     skipped_details: list[dict] = []
+
+    # Для проверки родитель vs дети — список (родитель_id, дочерний_budget)
+    # Ключ: node_id → заданный budget (только если задан явно в файле)
+    explicit_budgets: dict[int, Decimal] = {}
+    # Список (parent_id, child_id) для агрегации после основного цикла
+    parent_child_pairs: list[tuple] = []
 
     async def find_or_create(subsidy_id: int, parent_id, name: str, level: int):
         key = (subsidy_id, parent_id, name.lower().strip())
@@ -1047,129 +1101,232 @@ async def _do_feo_import(
         item_qty    = to_dec(get_cell(row, c_qty))
         item_unit   = get_cell(row, c_unit)
         item_amount = to_dec(get_cell(row, c_item_amt))
+        item_price  = to_dec(get_cell(row, c_item_price)) if c_item_price is not None else None
 
-        qty_lvl2 = to_dec(get_cell(row, c_qty_lvl2)) if c_qty_lvl2 is not None else None
-        qty_lvl3 = to_dec(get_cell(row, c_qty_lvl3)) if c_qty_lvl3 is not None else None
-        qty_lvl4 = to_dec(get_cell(row, c_qty_lvl4)) if c_qty_lvl4 is not None else None
-        unit_lvl2 = get_cell(row, c_unit_lvl2) if c_unit_lvl2 is not None else None
-        unit_lvl3 = get_cell(row, c_unit_lvl3) if c_unit_lvl3 is not None else None
-        unit_lvl4 = get_cell(row, c_unit_lvl4) if c_unit_lvl4 is not None else None
-        amt_lvl2 = to_dec(get_cell(row, c_amt_lvl2)) if c_amt_lvl2 is not None else None
-        amt_lvl3 = to_dec(get_cell(row, c_amt_lvl3)) if c_amt_lvl3 is not None else None
-        amt_lvl4 = to_dec(get_cell(row, c_amt_lvl4)) if c_amt_lvl4 is not None else None
-        # ФЭО-количества из документа ФЭО
-        feo_qty_lvl2 = to_dec(get_cell(row, c_feo_qty_lvl2)) if c_feo_qty_lvl2 is not None else None
-        feo_qty_lvl3 = to_dec(get_cell(row, c_feo_qty_lvl3)) if c_feo_qty_lvl3 is not None else None
-        feo_qty_lvl4 = to_dec(get_cell(row, c_feo_qty_lvl4)) if c_feo_qty_lvl4 is not None else None
-        feo_unit_lvl2 = get_cell(row, c_feo_unit_lvl2) if c_feo_unit_lvl2 is not None else None
-        feo_unit_lvl3 = get_cell(row, c_feo_unit_lvl3) if c_feo_unit_lvl3 is not None else None
-        feo_unit_lvl4 = get_cell(row, c_feo_unit_lvl4) if c_feo_unit_lvl4 is not None else None
-        # ФЭО-стоимость из документа ФЭО; если плановая стоимость не задана отдельно — дублируем в planned_amount
-        feo_amt_lvl2 = to_dec(get_cell(row, c_feo_amt_lvl2)) if c_feo_amt_lvl2 is not None else None
-        feo_amt_lvl3 = to_dec(get_cell(row, c_feo_amt_lvl3)) if c_feo_amt_lvl3 is not None else None
-        feo_amt_lvl4 = to_dec(get_cell(row, c_feo_amt_lvl4)) if c_feo_amt_lvl4 is not None else None
-        # Обратная совместимость: старый заголовок «Кол-во (Ур.N)» без нового «Кол-во по ФЭО» —
-        # при отсутствии явного c_feo_qty_lvlN считаем qty_lvlN за ФЭО-количество и дублируем в оба поля
-        if c_feo_qty_lvl2 is None and qty_lvl2 is not None:
-            feo_qty_lvl2 = qty_lvl2
-        if c_feo_qty_lvl3 is None and qty_lvl3 is not None:
-            feo_qty_lvl3 = qty_lvl3
-        if c_feo_qty_lvl4 is None and qty_lvl4 is not None:
-            feo_qty_lvl4 = qty_lvl4
-        if c_feo_unit_lvl2 is None and unit_lvl2 is not None:
-            feo_unit_lvl2 = unit_lvl2
-        if c_feo_unit_lvl3 is None and unit_lvl3 is not None:
-            feo_unit_lvl3 = unit_lvl3
-        if c_feo_unit_lvl4 is None and unit_lvl4 is not None:
-            feo_unit_lvl4 = unit_lvl4
+        # Считать все данные по уровням (raw, без приоритизации)
+        _lv = [
+            {
+                "level_src": 2,
+                "name": lvl2_name,
+                "feo_qty":  to_dec(get_cell(row, c_feo_qty_lvl2))  if c_feo_qty_lvl2  is not None else (to_dec(get_cell(row, c_qty_lvl2)) if c_feo_qty_lvl2 is None else None),
+                "feo_unit": get_cell(row, c_feo_unit_lvl2) if c_feo_unit_lvl2 is not None else get_cell(row, c_unit_lvl2),
+                "feo_amt":  to_dec(get_cell(row, c_feo_amt_lvl2))  if c_feo_amt_lvl2  is not None else None,
+                "feo_sum":  to_dec(get_cell(row, c_feo_sum_lvl2))  if c_feo_sum_lvl2  is not None else None,
+                "plan_qty": to_dec(get_cell(row, c_qty_lvl2))      if c_qty_lvl2      is not None else None,
+                "plan_unit":get_cell(row, c_unit_lvl2)             if c_unit_lvl2     is not None else None,
+                "plan_amt": to_dec(get_cell(row, c_amt_lvl2))      if c_amt_lvl2      is not None else None,
+                "plan_sum": to_dec(get_cell(row, c_plan_sum_lvl2)) if c_plan_sum_lvl2 is not None else None,
+            },
+            {
+                "level_src": 3,
+                "name": lvl3_name,
+                "feo_qty":  to_dec(get_cell(row, c_feo_qty_lvl3))  if c_feo_qty_lvl3  is not None else (to_dec(get_cell(row, c_qty_lvl3)) if c_feo_qty_lvl3 is None else None),
+                "feo_unit": get_cell(row, c_feo_unit_lvl3) if c_feo_unit_lvl3 is not None else get_cell(row, c_unit_lvl3),
+                "feo_amt":  to_dec(get_cell(row, c_feo_amt_lvl3))  if c_feo_amt_lvl3  is not None else None,
+                "feo_sum":  to_dec(get_cell(row, c_feo_sum_lvl3))  if c_feo_sum_lvl3  is not None else None,
+                "plan_qty": to_dec(get_cell(row, c_qty_lvl3))      if c_qty_lvl3      is not None else None,
+                "plan_unit":get_cell(row, c_unit_lvl3)             if c_unit_lvl3     is not None else None,
+                "plan_amt": to_dec(get_cell(row, c_amt_lvl3))      if c_amt_lvl3      is not None else None,
+                "plan_sum": to_dec(get_cell(row, c_plan_sum_lvl3)) if c_plan_sum_lvl3 is not None else None,
+            },
+            {
+                "level_src": 4,
+                "name": lvl4_name,
+                "feo_qty":  to_dec(get_cell(row, c_feo_qty_lvl4))  if c_feo_qty_lvl4  is not None else (to_dec(get_cell(row, c_qty_lvl4)) if c_feo_qty_lvl4 is None else None),
+                "feo_unit": get_cell(row, c_feo_unit_lvl4) if c_feo_unit_lvl4 is not None else get_cell(row, c_unit_lvl4),
+                "feo_amt":  to_dec(get_cell(row, c_feo_amt_lvl4))  if c_feo_amt_lvl4  is not None else None,
+                "feo_sum":  to_dec(get_cell(row, c_feo_sum_lvl4))  if c_feo_sum_lvl4  is not None else None,
+                "plan_qty": to_dec(get_cell(row, c_qty_lvl4))      if c_qty_lvl4      is not None else None,
+                "plan_unit":get_cell(row, c_unit_lvl4)             if c_unit_lvl4     is not None else None,
+                "plan_amt": to_dec(get_cell(row, c_amt_lvl4))      if c_amt_lvl4      is not None else None,
+                "plan_sum": to_dec(get_cell(row, c_plan_sum_lvl4)) if c_plan_sum_lvl4 is not None else None,
+            },
+        ]
 
+        # Обратная совместимость: если нет явного feo_qty, берём plan_qty за feo_qty
+        for lv in _lv:
+            if c_feo_qty_lvl2 is None and lv["level_src"] == 2 and lv["feo_qty"] is None and lv["plan_qty"] is not None:
+                lv["feo_qty"] = lv["plan_qty"]
+            if c_feo_qty_lvl3 is None and lv["level_src"] == 3 and lv["feo_qty"] is None and lv["plan_qty"] is not None:
+                lv["feo_qty"] = lv["plan_qty"]
+            if c_feo_qty_lvl4 is None and lv["level_src"] == 4 and lv["feo_qty"] is None and lv["plan_qty"] is not None:
+                lv["feo_qty"] = lv["plan_qty"]
+
+        # Оставляем только уровни с непустым именем
+        filled = [lv for lv in _lv if lv["name"]]
+
+        # Схлопываем соседние дубли по нормализованному имени
+        deduped: list[dict] = []
+        for lv in filled:
+            if deduped and _norm(deduped[-1]["name"]) == _norm(lv["name"]):
+                warnings.append({
+                    "kind": "level_duplicate",
+                    "row": row_num,
+                    "name": lv["name"],
+                    "message": f"Ур.{lv['level_src']} и Ур.{deduped[-1]['level_src']} названы одинаково — склеены в один узел",
+                })
+                # Числа объединяем с приоритетом нижнего непустого
+                prev = deduped[-1]
+                for k in ("feo_qty", "feo_unit", "feo_amt", "feo_sum", "plan_qty", "plan_unit", "plan_amt", "plan_sum"):
+                    if lv[k] is not None:
+                        prev[k] = lv[k]
+            else:
+                # Проверяем пропуск уровня: если предыдущий src=2 а текущий src=4 — Ур.3 был пропущен
+                if deduped and lv["level_src"] - deduped[-1]["level_src"] > 1:
+                    warnings.append({
+                        "kind": "level_gap",
+                        "row": row_num,
+                        "name": lv["name"],
+                        "message": f"Ур.{lv['level_src']} поднят на место Ур.{deduped[-1]['level_src'] + 1} — промежуточный уровень не заполнен",
+                    })
+                deduped.append(lv)
+
+        # Нет ни одного заполненного уровня — уже пропустили по lvl2_name выше
         try:
-            cat_l1, new_l1 = await find_or_create(subsidy_id, None, lvl2_name, 1)
-            if new_l1:
-                created += 1
-                created_details.append({"row": row_num, "name": lvl2_name, "reason": "направление (ур. 2)"})
-            # feo_quantity — всегда из feo_qty_lvl2 (документ ФЭО)
-            if feo_qty_lvl2 is not None and cat_l1.feo_quantity != feo_qty_lvl2:
-                cat_l1.feo_quantity = feo_qty_lvl2
-            if feo_unit_lvl2 and cat_l1.feo_unit != feo_unit_lvl2:
-                cat_l1.feo_unit = feo_unit_lvl2
-            # feo_amount — стоимость за ед. по ФЭО; если planned_amount не задан отдельно — дублируем туда
-            if feo_amt_lvl2 is not None and cat_l1.feo_amount != feo_amt_lvl2:
-                cat_l1.feo_amount = feo_amt_lvl2
-            # planned_quantity — из qty_lvl2 (CRM-план); если не задан отдельно — из feo_qty (дублируем)
-            _pq2 = qty_lvl2 if qty_lvl2 is not None else feo_qty_lvl2
-            if _pq2 is not None and cat_l1.planned_quantity != _pq2:
-                cat_l1.planned_quantity = _pq2
-            _pu2 = unit_lvl2 if unit_lvl2 is not None else feo_unit_lvl2
-            if _pu2 and cat_l1.unit != _pu2:
-                cat_l1.unit = _pu2
-            _pa2 = amt_lvl2 if amt_lvl2 is not None else feo_amt_lvl2
-            if _pa2 is not None and cat_l1.planned_amount != _pa2:
-                cat_l1.planned_amount = _pa2
-            leaf = cat_l1
-            leaf_is_new = new_l1
+            prev_cat = None
+            cats_in_row: list[FeoCategory] = []
+            # Базовый level в БД для первого элемента = 1 (совпадает со старым поведением)
+            for seq_idx, lv in enumerate(deduped):
+                db_level = seq_idx + 1
+                parent_id = prev_cat.id if prev_cat else None
+                cat, is_new = await find_or_create(subsidy_id, parent_id, lv["name"], db_level)
 
-            if lvl3_name:
-                cat_l2, new_l2 = await find_or_create(subsidy_id, cat_l1.id, lvl3_name, 2)
-                if new_l2:
+                if is_new:
                     created += 1
-                    created_details.append({"row": row_num, "name": lvl3_name, "reason": "категория (ур. 3)"})
-                if feo_qty_lvl3 is not None and cat_l2.feo_quantity != feo_qty_lvl3:
-                    cat_l2.feo_quantity = feo_qty_lvl3
-                if feo_unit_lvl3 and cat_l2.feo_unit != feo_unit_lvl3:
-                    cat_l2.feo_unit = feo_unit_lvl3
-                if feo_amt_lvl3 is not None and cat_l2.feo_amount != feo_amt_lvl3:
-                    cat_l2.feo_amount = feo_amt_lvl3
-                _pq3 = qty_lvl3 if qty_lvl3 is not None else feo_qty_lvl3
-                if _pq3 is not None and cat_l2.planned_quantity != _pq3:
-                    cat_l2.planned_quantity = _pq3
-                _pu3 = unit_lvl3 if unit_lvl3 is not None else feo_unit_lvl3
-                if _pu3 and cat_l2.unit != _pu3:
-                    cat_l2.unit = _pu3
-                _pa3 = amt_lvl3 if amt_lvl3 is not None else feo_amt_lvl3
-                if _pa3 is not None and cat_l2.planned_amount != _pa3:
-                    cat_l2.planned_amount = _pa3
-                leaf = cat_l2
-                leaf_is_new = new_l2
+                    label = {1: "направление (ур. 2)", 2: "категория (ур. 3)", 3: "статья (ур. 4)"}.get(db_level, f"уровень {db_level + 1}")
+                    created_details.append({"row": row_num, "name": lv["name"], "reason": label})
 
-                if lvl4_name:
-                    cat_l3, new_l3 = await find_or_create(subsidy_id, cat_l2.id, lvl4_name, 3)
-                    if new_l3:
-                        created += 1
-                        created_details.append({"row": row_num, "name": lvl4_name, "reason": "статья (ур. 4)"})
-                    if feo_qty_lvl4 is not None and cat_l3.feo_quantity != feo_qty_lvl4:
-                        cat_l3.feo_quantity = feo_qty_lvl4
-                    if feo_unit_lvl4 and cat_l3.feo_unit != feo_unit_lvl4:
-                        cat_l3.feo_unit = feo_unit_lvl4
-                    if feo_amt_lvl4 is not None and cat_l3.feo_amount != feo_amt_lvl4:
-                        cat_l3.feo_amount = feo_amt_lvl4
-                    _pq4 = qty_lvl4 if qty_lvl4 is not None else feo_qty_lvl4
-                    if _pq4 is not None and cat_l3.planned_quantity != _pq4:
-                        cat_l3.planned_quantity = _pq4
-                    _pu4 = unit_lvl4 if unit_lvl4 is not None else feo_unit_lvl4
-                    if _pu4 and cat_l3.unit != _pu4:
-                        cat_l3.unit = _pu4
-                    _pa4 = amt_lvl4 if amt_lvl4 is not None else feo_amt_lvl4
-                    if _pa4 is not None and cat_l3.planned_amount != _pa4:
-                        cat_l3.planned_amount = _pa4
-                    leaf = cat_l3
-                    leaf_is_new = new_l3
+                # --- ФЭО-поля ---
+                feo_qty  = lv["feo_qty"]
+                feo_unit = lv["feo_unit"]
+                feo_amt  = lv["feo_amt"]
+                feo_sum  = lv["feo_sum"]
+
+                # Сумма ФЭО → budget
+                if feo_sum is not None:
+                    # Проверяем расхождение с кол-во × цена
+                    if feo_qty is not None and feo_amt is not None and feo_qty != ZERO:
+                        calc = (feo_qty * feo_amt).quantize(QUANT)
+                        if abs(calc - feo_sum) > Decimal("0.01"):
+                            warnings.append({
+                                "kind": "sum_mismatch",
+                                "row": row_num,
+                                "name": lv["name"],
+                                "message": f"Сумма по ФЭО {_fmt(feo_sum)} ≠ кол-во × цена = {_fmt(calc)}; взята сумма из файла",
+                            })
+                    if feo_qty is None:
+                        warnings.append({
+                            "kind": "sum_without_qty",
+                            "row": row_num,
+                            "name": lv["name"],
+                            "message": f"Сумма по ФЭО {_fmt(feo_sum)} задана без кол-во",
+                        })
+                    if cat.budget != feo_sum:
+                        cat.budget = feo_sum
+                    # Если feo_amt пуст, но есть кол-во — восстановим цену
+                    if feo_amt is None and feo_qty is not None and feo_qty != ZERO:
+                        feo_amt = (feo_sum / feo_qty).quantize(QUANT)
+                elif feo_qty is not None and feo_amt is not None and feo_qty != ZERO:
+                    # Считаем бюджет из кол-во × цена
+                    calc_budget = (feo_qty * feo_amt).quantize(QUANT)
+                    if cat.budget != calc_budget:
+                        cat.budget = calc_budget
+
+                if feo_qty is not None and cat.feo_quantity != feo_qty:
+                    cat.feo_quantity = feo_qty
+                if feo_unit and cat.feo_unit != feo_unit:
+                    cat.feo_unit = feo_unit
+                if feo_amt is not None and cat.feo_amount != feo_amt:
+                    cat.feo_amount = feo_amt
+
+                # --- Плановые поля ---
+                plan_qty  = lv["plan_qty"]
+                plan_unit = lv["plan_unit"]
+                plan_amt  = lv["plan_amt"]
+                plan_sum  = lv["plan_sum"]
+
+                if plan_sum is not None:
+                    # Проверяем расхождение
+                    if plan_qty is not None and plan_amt is not None and plan_qty != ZERO:
+                        calc_ps = (plan_qty * plan_amt).quantize(QUANT)
+                        if abs(calc_ps - plan_sum) > Decimal("0.01"):
+                            warnings.append({
+                                "kind": "sum_mismatch",
+                                "row": row_num,
+                                "name": lv["name"],
+                                "message": f"Сумма плана {_fmt(plan_sum)} ≠ кол-во × цена = {_fmt(calc_ps)}; взята сумма из файла",
+                            })
+                    if plan_qty is None:
+                        warnings.append({
+                            "kind": "sum_without_qty",
+                            "row": row_num,
+                            "name": lv["name"],
+                            "message": f"Сумма плана {_fmt(plan_sum)} задана без кол-во; установлено кол-во = 1",
+                        })
+                    # Обратный пересчёт: planned_amount = plan_sum / plan_qty
+                    eff_plan_qty = plan_qty if (plan_qty is not None and plan_qty != ZERO) else Decimal("1")
+                    if plan_qty is None:
+                        if cat.planned_quantity != Decimal("1"):
+                            cat.planned_quantity = Decimal("1")
+                    else:
+                        if cat.planned_quantity != plan_qty:
+                            cat.planned_quantity = plan_qty
+                    derived_plan_amt = (plan_sum / eff_plan_qty).quantize(QUANT)
+                    if cat.planned_amount != derived_plan_amt:
+                        cat.planned_amount = derived_plan_amt
+                else:
+                    # Старое поведение: план кол-во/ед/цена напрямую
+                    _pq = plan_qty if plan_qty is not None else feo_qty
+                    if _pq is not None and cat.planned_quantity != _pq:
+                        cat.planned_quantity = _pq
+                    _pa = plan_amt if plan_amt is not None else feo_amt
+                    if _pa is not None and cat.planned_amount != _pa:
+                        cat.planned_amount = _pa
+
+                _pu = plan_unit if plan_unit is not None else feo_unit
+                if _pu and cat.unit != _pu:
+                    cat.unit = _pu
+
+                cats_in_row.append(cat)
+                if prev_cat is not None:
+                    parent_child_pairs.append((prev_cat.id, cat.id))
+                prev_cat = cat
+
+            leaf = cats_in_row[-1]
+            leaf_is_new = (leaf.id is None or any(
+                d["name"] == leaf.name for d in created_details if d.get("row") == row_num
+            ))
 
             changed = False
             if code is not None and leaf.code != code:
                 leaf.code = code; changed = True
             if appendix is not None and leaf.appendix != appendix:
                 leaf.appendix = appendix; changed = True
-            if budget is not None and leaf.budget != budget:
-                leaf.budget = budget; changed = True
+            # budget из легаси-колонки «Финансирование» пишем только если per-level сумма не задана
+            if budget is not None:
+                # per-level feo_sum уже записан выше; не перезаписываем
+                if deduped and deduped[-1].get("feo_sum") is None:
+                    if leaf.budget != budget:
+                        leaf.budget = budget; changed = True
             if leaf.is_active != is_active:
                 leaf.is_active = is_active; changed = True
             if changed and not leaf_is_new:
                 updated += 1
                 updated_details.append({"row": row_num, "name": leaf.name, "reason": "обновлены поля категории"})
 
+            # Запомнить явный budget листа для проверки parent_sum_mismatch
+            if leaf.budget is not None:
+                explicit_budgets[id(leaf)] = leaf.budget
+
             if lvl5_name and lvl5_name not in ("←", ""):
                 from app.models.feo_planned_item import FeoPlannedItem
+
+                # Вычислить итоговую сумму позиции: item_amount приоритетнее
+                eff_item_amount = item_amount
+                if eff_item_amount is None and item_price is not None:
+                    eff_item_qty = item_qty if item_qty is not None else Decimal("1")
+                    eff_item_amount = (item_price * eff_item_qty).quantize(QUANT)
+
                 existing_item = (await db.execute(
                     select(FeoPlannedItem).where(
                         FeoPlannedItem.feo_category_id == leaf.id,
@@ -1182,7 +1339,7 @@ async def _do_feo_import(
                         name=lvl5_name,
                         quantity=item_qty,
                         unit=item_unit,
-                        amount=item_amount,
+                        amount=eff_item_amount,
                         is_active=is_active,
                     )
                     db.add(pi)
@@ -1195,8 +1352,8 @@ async def _do_feo_import(
                         existing_item.quantity = item_qty; ch2 = True
                     if item_unit is not None and existing_item.unit != item_unit:
                         existing_item.unit = item_unit; ch2 = True
-                    if item_amount is not None and existing_item.amount != item_amount:
-                        existing_item.amount = item_amount; ch2 = True
+                    if eff_item_amount is not None and existing_item.amount != eff_item_amount:
+                        existing_item.amount = eff_item_amount; ch2 = True
                     if ch2:
                         updated += 1
                         updated_details.append({"row": row_num, "name": lvl5_name, "reason": "обновлена позиция"})
@@ -1207,10 +1364,42 @@ async def _do_feo_import(
         except Exception as e:
             errors.append({"row": row_num, "name": lvl2_name, "message": str(e)})
 
-    await db.commit()
-    return {"created": created, "updated": updated, "skipped": skipped,
-            "errors": errors, "created_details": created_details,
-            "updated_details": updated_details, "skipped_details": skipped_details}
+    # Проверка родитель vs сумма детей (до commit)
+    # Собираем актуальные budget по id через cat_cache (все объекты уже в сессии)
+    cat_by_db_id: dict[int, FeoCategory] = {c.id: c for c in cat_cache.values() if c.id is not None}
+    # Агрегируем дочерние бюджеты per parent
+    parent_children_budget: dict[int, Decimal] = {}
+    for parent_id, child_id in parent_child_pairs:
+        if child_id in cat_by_db_id:
+            child_budget = cat_by_db_id[child_id].budget or ZERO
+            parent_children_budget[parent_id] = parent_children_budget.get(parent_id, ZERO) + child_budget
+    for parent_id, children_sum in parent_children_budget.items():
+        if parent_id in cat_by_db_id:
+            parent_cat = cat_by_db_id[parent_id]
+            parent_budget = parent_cat.budget or ZERO
+            if parent_budget and abs(parent_budget - children_sum) > Decimal("0.01"):
+                warnings.append({
+                    "kind": "parent_sum_mismatch",
+                    "row": None,
+                    "name": parent_cat.name,
+                    "message": (
+                        f"Родитель «{parent_cat.name}»: бюджет {_fmt(parent_budget)} ≠ "
+                        f"сумма детей {_fmt(children_sum)}; победит значение родителя"
+                    ),
+                })
+
+    if dry_run:
+        await db.rollback()
+    else:
+        await db.commit()
+
+    return {
+        "created": created, "updated": updated, "skipped": skipped,
+        "errors": errors, "warnings": warnings,
+        "created_details": created_details,
+        "updated_details": updated_details, "skipped_details": skipped_details,
+        "dry_run": dry_run,
+    }
 
 
 @router.post("/import")

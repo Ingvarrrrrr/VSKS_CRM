@@ -14,12 +14,15 @@ class FeoCategory(Base):
     appendix = Column(String(100), nullable=True)  # Номер приложения (например, "Прил. 2")
     is_active = Column(Boolean, default=True)
     description = Column(Text, nullable=True)  # Пояснение: что входит в направление расходов
-    budget = Column(Numeric(15, 2), nullable=True)  # Финансирование по ФЭО (ручное или NULL = авто из детей)
+    # Итоговая сумма строки по документу ФЭО (ручное или NULL = авто из детей).
+    # Заданный на родителе ОТМЕНЯЕТ авторасчёт по детям (см. feoEffectiveFor во фронте).
+    budget = Column(Numeric(15, 2), nullable=True)
     feo_quantity = Column(Numeric(15, 2), nullable=True)  # Количество по ФЭО — заложено в документе ФЭО
     feo_unit = Column(String(50), nullable=True)  # Ед. изм. по ФЭО — заложено в документе ФЭО
     feo_amount = Column(Numeric(15, 2), nullable=True)  # Стоимость за ед. по документу ФЭО; NULL = авто из детей
     planned_quantity = Column(Numeric(15, 2), nullable=True)  # NULL = авто из детей; значение = ручной (CRM-план)
-    planned_amount = Column(Numeric(15, 2), nullable=True)  # Плановая сумма (NULL = авто из детей)
+    # Плановая стоимость ЗА ЕДИНИЦУ (NULL = авто из детей); итог = planned_quantity × planned_amount
+    planned_amount = Column(Numeric(15, 2), nullable=True)
     unit = Column(String(50), nullable=True)  # ед. измерения для planned_quantity (шт, кг, компл.) (CRM-план)
     parent = relationship("FeoCategory", remote_side=[id], backref="children")
     subsidy = relationship("Subsidy", back_populates="feo_categories")

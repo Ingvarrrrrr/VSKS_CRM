@@ -164,6 +164,12 @@ class Purchase(Base):
     commission_member_3_name = Column(String(200), nullable=True) # член комиссии 3
     advance_amount = Column(Numeric(15, 2), nullable=True)        # сумма аванса (для актов «большой отчётности»)
 
+    # Phase 28 T6/T7: условные блоки шаблонов + протокол/приказ закупки
+    delivery_by_supplier = Column(Boolean, nullable=False, server_default='true')   # True=поставщик доставляет, False=самовывоз
+    has_stages = Column(Boolean, nullable=False, server_default='false')            # True=в Приложении №1 есть этапы оказания услуг
+    procurement_protocol_number = Column(String(100), nullable=True)                # номер протокола закупочной комиссии
+    procurement_order_number = Column(String(100), nullable=True)                   # номер приказа о закупке
+
     # Phase 19: template fields for docx context ---------------------------
     submission_deadline = Column(DateTime, nullable=True)          # дата+время завершения приёма заявок
     delivery_location = Column(String(500), nullable=True)          # место оказания услуг / доставки

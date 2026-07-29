@@ -47,3 +47,4 @@ class Contractor(Base):
     signatory_last_name = Column(String(100), nullable=True)
     signatory_first_name = Column(String(100), nullable=True)
     signatory_middle_name = Column(String(100), nullable=True)
+    personal_account = Column(String(50), nullable=True)  # лицевой счёт Заказчика

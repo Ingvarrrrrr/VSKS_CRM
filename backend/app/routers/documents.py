@@ -446,6 +446,17 @@ def _fio_to_initials(name_full: str) -> str:
     return name_full
 
 
+def _fio_to_initials_prefix(name_full: str) -> str:
+    """Return "И.О. Фамилия" form (инициалы впереди — для строки подписи).
+    Falls back to name_full when < 2 words."""
+    words = name_full.split() if name_full else []
+    if len(words) >= 3:
+        return f"{words[1][0]}.{words[2][0]}. {words[0]}"
+    if len(words) == 2:
+        return f"{words[1][0]}. {words[0]}"
+    return name_full
+
+
 # Phase 23: split "Президент Козеев Евгений Викторович" into structured parts
 def _signatory_split(
     signatory: str,
@@ -1255,7 +1266,11 @@ async def generate_document(
             "unit": item.unit or "",
             "unit_price": _fmt_money(item.unit_price),
             "total_price": _fmt_money(item.total_price),
+            "total": _fmt_money(item.total_price),
             "photo": _resolve_photo(photo_url),
+            # Поля для repair_framework (появятся позже, пока заглушки)
+            "code": "",
+            "norm_hours": "",
         })
 
     # Phase 23.1: auto-detect subject_kind for universal contract.docx
@@ -1524,6 +1539,8 @@ async def generate_document(
         "service_term_type":       p.service_term_type or "",
         "service_term_type_name":  {"calendar": "календарных", "working": "рабочих"}.get(p.service_term_type or "", ""),
         "service_deadline_date":   _fmt_date(p.service_deadline_date),
+        # Дата окончания срока действия договора (п. 8.1) — поле Purchase.contract_end_date
+        "contract_end_date":       _fmt_date(p.contract_end_date),
         # Phase 19: submission deadline (дата+время завершения приёма заявок)
         "submission_deadline_date":     p.submission_deadline.date().isoformat() if p.submission_deadline else "",
         "submission_deadline_time":     p.submission_deadline.strftime("%H:%M") if p.submission_deadline else "",
@@ -1587,13 +1604,17 @@ async def generate_document(
         context["advance_amount"]              = _fmt_money(p.advance_amount) if p.advance_amount else ""
         context["acceptance_term_days"]        = p.acceptance_term_days if p.acceptance_term_days is not None else 5
         context["penalty_rate"]                = str(p.penalty_rate) if p.penalty_rate is not None else "0.1"
-        context["procurement_protocol_number"] = ""
-        context["procurement_order_number"]    = ""
+        context["procurement_protocol_number"] = (p.procurement_protocol_number or "").strip()
+        context["procurement_order_number"]    = (p.procurement_order_number or "").strip()
         context["repair_request_number"]       = (p.repair_request_number or "").strip()
         context["contractor_ogrnip_date"]      = _fmt_date(p.contractor_ogrnip_date) if p.contractor_ogrnip_date else ""
         # Phase 28: гарантия + ретроактивный договор (комментарии пользователя 2026-05-19)
         context["warranty_period_days"]        = p.warranty_period_days if p.warranty_period_days is not None else 15
         context["is_retroactive"]              = bool(p.is_retroactive)
+        # delivery_by_supplier=True — поставщик доставляет; False — самовывоз.
+        # has_stages=True — в Приложении №1 есть этапы оказания услуг.
+        context["delivery_by_supplier"] = bool(getattr(p, "delivery_by_supplier", True))
+        context["has_stages"]           = bool(getattr(p, "has_stages", False))
         # Phase 28: subsidy-specific clauses (пункты из субсидии — раздельный учёт и т.п.)
         context["subsidy_extra_clause_1"]      = (subsidy.extra_contract_clause_1 or '').strip() if subsidy else ''
         context["subsidy_extra_clause_2"]      = (subsidy.extra_contract_clause_2 or '').strip() if subsidy else ''
@@ -1686,6 +1707,8 @@ async def generate_document(
         "customer_settlement_account":    _g(customer_ctr.settlement_account if customer_ctr else None),
         "customer_correspondent_account": _g(customer_ctr.correspondent_account if customer_ctr else None),
         "customer_bik":          _g(customer_ctr.bik if customer_ctr else None),
+        # Лицевой счёт Заказчика
+        "customer_personal_account": _g(customer_ctr.personal_account if customer_ctr else None),
         "customer_phone":        _g(customer_ctr.phone if customer_ctr else None),
         "customer_email":        _g(customer_ctr.email if customer_ctr else None),
         # Подписант Заказчика
@@ -1694,6 +1717,8 @@ async def generate_document(
         "customer_signatory_name":           cust_sig["name_full"],
         "customer_signatory_name_genitive":  cust_sig["name_genitive"],
         "customer_signatory_initials":       cust_sig["name_initials"],
+        # Инициалы впереди: «Е.В. Козеев» (для строки подписи _________________ / И.О. Фамилия)
+        "customer_signatory_name_initials":  _fio_to_initials_prefix(cust_sig["name_full"]),
         "customer_signatory_basis":          cust_signatory_basis,
         # Город заключения — из поля Organization.contract_city; fallback «Москва»
         "contract_city": (customer_org.contract_city or "Москва") if customer_org else "Москва",
@@ -2395,7 +2420,11 @@ async def render_fabrikant_package_files(
             "unit": item.unit or "",
             "unit_price": _fmt_money(item.unit_price),
             "total_price": _fmt_money(item.total_price),
+            "total": _fmt_money(item.total_price),
             "photo": "",
+            # Поля для repair_framework (появятся позже, пока заглушки)
+            "code": "",
+            "norm_hours": "",
         })
 
     vat_app = bool(p.vat_applicable)
@@ -2587,6 +2616,8 @@ async def render_fabrikant_package_files(
         "service_term_days": p.service_term_days or "",
         "service_term_type": p.service_term_type or "",
         "service_deadline_date": _fmt_date(p.service_deadline_date),
+        # Дата окончания срока действия договора (п. 8.1) — поле Purchase.contract_end_date
+        "contract_end_date": _fmt_date(p.contract_end_date),
         "third_party_involved": bool(p.third_party_involved),
         "acceptance_doc_name": p.acceptance_doc_name or "",
         "acceptance_doc_number": p.acceptance_doc_number or "",
@@ -2613,6 +2644,8 @@ async def render_fabrikant_package_files(
         "customer_settlement_account": _g2(customer_ctr.settlement_account if customer_ctr else None),
         "customer_correspondent_account": _g2(customer_ctr.correspondent_account if customer_ctr else None),
         "customer_bik": _g2(customer_ctr.bik if customer_ctr else None),
+        # Лицевой счёт Заказчика
+        "customer_personal_account": _g2(customer_ctr.personal_account if customer_ctr else None),
         "customer_phone": _g2(customer_ctr.phone if customer_ctr else None),
         "customer_email": _g2(customer_ctr.email if customer_ctr else None),
         "customer_signatory": cust_signatory_full_z,
@@ -2620,6 +2653,8 @@ async def render_fabrikant_package_files(
         "customer_signatory_name": cust_sig_z["name_full"],
         "customer_signatory_name_genitive": cust_sig_z["name_genitive"],
         "customer_signatory_initials": cust_sig_z["name_initials"],
+        # Инициалы впереди: «Е.В. Козеев» (для строки подписи)
+        "customer_signatory_name_initials": _fio_to_initials_prefix(cust_sig_z["name_full"]),
         "customer_signatory_basis": cust_signatory_basis_z,
         "contract_city": (customer_org.contract_city or "Москва") if customer_org else "Москва",
         # Fabrikant-specific
@@ -2635,6 +2670,9 @@ async def render_fabrikant_package_files(
         "penalty_rate": str(p.penalty_rate) if p.penalty_rate is not None else "0.1",
         "warranty_period_days": p.warranty_period_days if p.warranty_period_days is not None else 15,
         "is_retroactive": bool(p.is_retroactive),
+        # Phase 28 T3: условные блоки (поля в модели Purchase пока отсутствуют — T8)
+        "delivery_by_supplier": bool(getattr(p, "delivery_by_supplier", True)),
+        "has_stages": bool(getattr(p, "has_stages", False)),
         "subsidy_extra_clause_1": (subsidy.extra_contract_clause_1 or '').strip() if subsidy else '',
         "subsidy_extra_clause_2": (subsidy.extra_contract_clause_2 or '').strip() if subsidy else '',
         "commission_members": [],
@@ -2650,8 +2688,8 @@ async def render_fabrikant_package_files(
         "contractor_birth_date": _fmt_date(c.birth_date) if c and c.birth_date else '',
         "contractor_ogrnip_date": _fmt_date(p.contractor_ogrnip_date) if p.contractor_ogrnip_date else "",
         "repair_request_number": (p.repair_request_number or "").strip() if hasattr(p, "repair_request_number") else "",
-        "procurement_protocol_number": "",
-        "procurement_order_number": "",
+        "procurement_protocol_number": (p.procurement_protocol_number or "").strip(),
+        "procurement_order_number": (p.procurement_order_number or "").strip(),
     }
     context.update(ci_ctx_z)
     context["initiator_name_gen"] = ""

@@ -706,6 +706,26 @@
                   density="compact"
                 />
               </v-col>
+              <!-- Phase 28 T8: delivery_by_supplier — для договоров поставки -->
+              <v-col v-if="form.contract_form === 'goods_single'" cols="12" md="6">
+                <v-checkbox
+                  v-model="form.delivery_by_supplier"
+                  label="Доставка силами поставщика"
+                  hint="В договоре поставки: включено — поставщик доставляет сам; выключено — самовывоз со склада поставщика."
+                  persistent-hint
+                  density="compact"
+                />
+              </v-col>
+              <!-- Phase 28 T8: has_stages — для договоров ГПХ (услуги) -->
+              <v-col v-if="['gph_individual', 'gph_individual_rid'].includes(form.contract_form)" cols="12" md="6">
+                <v-checkbox
+                  v-model="form.has_stages"
+                  label="Этапы оказания услуг (Приложение №1)"
+                  hint="В Приложении №1 (ТЗ) есть этапы — в договор войдёт пункт о поэтапной оплате (п. 4.5.1) и упоминания «этапа оказания Услуг»."
+                  persistent-hint
+                  density="compact"
+                />
+              </v-col>
             </v-row>
             <!-- Ремонт ТС: дата ОГРНИП + номер заявки -->
             <v-row v-if="['repair_vehicle', 'repair_framework'].includes(form.contract_form)" class="mt-1">
@@ -738,6 +758,29 @@
               </v-col>
               <v-col cols="12" md="4">
                 <v-text-field v-model="form.commission_member_3_name" label="ФИО члена комиссии 3" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
+              </v-col>
+              <!-- Phase 28 T8: номера документов закупочной комиссии -->
+              <v-col cols="12" md="4">
+                <v-text-field
+                  v-model="form.procurement_protocol_number"
+                  label="Номер протокола закупочной комиссии"
+                  density="compact"
+                  variant="outlined"
+                  hint="Заполняется в шаблоне протокола. {{procurement_protocol_number}}"
+                  persistent-hint
+                  @blur="flushAutosaveOnBlur"
+                />
+              </v-col>
+              <v-col cols="12" md="4">
+                <v-text-field
+                  v-model="form.procurement_order_number"
+                  label="Номер приказа о закупке"
+                  density="compact"
+                  variant="outlined"
+                  hint="Номер внутреннего приказа, подтверждающего проведение закупки. {{procurement_order_number}}"
+                  persistent-hint
+                  @blur="flushAutosaveOnBlur"
+                />
               </v-col>
             </v-row>
           </template>
@@ -2532,8 +2575,8 @@
                     <span v-else-if="pub.external_id" class="text-medium-emphasis">{{ pub.external_id }}</span>
                     <span v-else class="text-medium-emphasis">—</span>
                   </template>
+                  <span v-else-if="pub.status === 'error'" class="text-error" style="white-space: normal; word-break: break-word">{{ pub.error_text || 'Ошибка публикации' }}</span>
                   <span v-else-if="pub.external_id">{{ pub.external_id }}</span>
-                  <span v-else-if="pub.error_text" class="text-error">{{ pub.error_text }}</span>
                   <span v-else class="text-medium-emphasis">—</span>
                 </td>
                 <td class="text-caption">
@@ -2862,18 +2905,30 @@
                 </v-alert>
 
                 <div id="pub-target-okpd2" style="position:relative">
-                  <v-text-field
+                  <v-autocomplete
                     v-model="fabrikantOkpd2"
+                    :items="okpd2Items"
+                    :item-value="(i: {code: string}) => i.code"
+                    :item-title="(i: {code: string; name: string}) => okpd2ItemTitle(i)"
+                    :no-filter="true"
+                    :loading="okpd2Loading"
+                    clearable
                     label="Код ОКПД2 (обязательно)"
-                    hint="Пример: 47.99.9 — Торговля розничная прочая"
-                    persistent-hint
                     variant="outlined"
                     density="compact"
                     class="mb-3"
-                    placeholder="47.99.9"
                     :error="okpd2Pointer && !fabrikantOkpd2"
+                    @update:search="searchOkpd2"
                     @update:model-value="okpd2Pointer = false; clearGuideArrow()"
-                  />
+                  >
+                    <template #no-data>
+                      <v-list-item>
+                        <v-list-item-title class="text-caption" :class="okpd2Error ? 'text-error' : 'text-medium-emphasis'">
+                          {{ okpd2Error || 'Ничего не найдено' }}
+                        </v-list-item-title>
+                      </v-list-item>
+                    </template>
+                  </v-autocomplete>
                   <div v-if="okpd2Pointer" class="pub-pointer"><span class="mdi mdi-arrow-down-bold" /></div>
                 </div>
 
@@ -4378,6 +4433,12 @@ const form = reactive({
   advance_amount: null as number | null,
   warranty_period_days: null as number | null,
   is_retroactive: false as boolean,
+  // Phase 28 T8: доставка и этапы (управляют ветвлениями в шаблонах договоров)
+  delivery_by_supplier: true as boolean,
+  has_stages: false as boolean,
+  // Phase 28 T8: документы закупочной комиссии
+  procurement_protocol_number: null as string | null,
+  procurement_order_number: null as string | null,
   // Phase 29: связь с ТС
   vehicle_id: null as number | null,
   // ЭТП: ссылка на конкурсную процедуру
@@ -4502,6 +4563,12 @@ function serializeFormForAutosave() {
     advance_amount: f.advance_amount ?? null,
     warranty_period_days: f.warranty_period_days ?? null,
     is_retroactive: f.is_retroactive ?? false,
+    // Phase 28 T8: доставка и этапы
+    delivery_by_supplier: f.delivery_by_supplier ?? true,
+    has_stages: f.has_stages ?? false,
+    // Phase 28 T8: документы закупочной комиссии
+    procurement_protocol_number: f.procurement_protocol_number || null,
+    procurement_order_number: f.procurement_order_number || null,
     // ЭТП
     etp_url: f.etp_url || null,
   })
@@ -5384,6 +5451,52 @@ const publishErrors = ref<{text: string; target: PublishTarget}[]>([])
 
 const fabrikantDates = ref({ proposal_start: '', proposal_end: '', determination_date: '', summing_up_date: '' })
 const fabrikantOkpd2 = ref('')
+// ОКПД2 autocomplete state
+const okpd2Items = ref<{code: string; name: string; section: string | null}[]>([])
+const okpd2Loading = ref(false)
+const okpd2Error = ref('')
+let _okpd2SearchTimer: ReturnType<typeof setTimeout> | null = null
+
+function okpd2ItemTitle(item: {code: string; name: string}): string {
+  return `${item.code} — ${item.name}`
+}
+
+async function searchOkpd2(q: string | undefined) {
+  if (_okpd2SearchTimer) clearTimeout(_okpd2SearchTimer)
+  if (!q || q.length < 2) {
+    okpd2Items.value = []
+    okpd2Error.value = ''
+    return
+  }
+  _okpd2SearchTimer = setTimeout(async () => {
+    okpd2Loading.value = true
+    try {
+      const token = localStorage.getItem('auth_token')
+      const res = await fetch(`/api/okpd2?q=${encodeURIComponent(q)}&limit=50`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        okpd2Error.value = ''
+        const data = await res.json()
+        // Ensure current value stays in the list if it was previously selected
+        if (fabrikantOkpd2.value && !data.find((d: {code: string}) => d.code === fabrikantOkpd2.value)) {
+          // keep existing items that include the current selection
+          const existing = okpd2Items.value.filter(i => i.code === fabrikantOkpd2.value)
+          okpd2Items.value = [...existing, ...data]
+        } else {
+          okpd2Items.value = data
+        }
+      } else {
+        okpd2Error.value = `Ошибка загрузки справочника (${res.status})`
+      }
+    } catch (_e) {
+      okpd2Error.value = 'Не удалось загрузить справочник ОКПД2'
+    } finally {
+      okpd2Loading.value = false
+    }
+  }, 300)
+}
+
 const fabrikantAttachDocs = ref(true)
 const fabrikantNoNmcd = ref(false)
 const fabrikantProcedureType = ref<'zp' | 'reduction' | 'price_monitoring'>('zp')
@@ -5535,6 +5648,10 @@ function initFabrikantDates() {
     proposal_end: fmt(end),
     determination_date: fmt(new Date(end.getTime() + 24*60*60*1000)),
     summing_up_date: fmt(new Date(end.getTime() + 2*24*60*60*1000)),
+  }
+  // Preload current ОКПД2 selection so v-autocomplete can display the label
+  if (fabrikantOkpd2.value && !okpd2Items.value.find(i => i.code === fabrikantOkpd2.value)) {
+    void searchOkpd2(fabrikantOkpd2.value)
   }
 }
 
@@ -5715,7 +5832,9 @@ function openFabrikantRetry(platform: string) {
 }
 
 function pollPublication(pubId: number, attempts = 0) {
-  if (attempts > 15) return
+  if (attempts > 60) return
+  // Первые 15 попыток — каждые 2с (быстрый отклик), дальше — каждые 5с (не долбим сервер)
+  const delay = attempts < 15 ? 2000 : 5000
   setTimeout(async () => {
     await loadPublications()
     const pub = publications.value.find(p => p.id === pubId)
@@ -5745,10 +5864,10 @@ function pollPublication(pubId: number, attempts = 0) {
         `Черновик процедуры${pub.platform_number ? ' №' + pub.platform_number : ''} создан на Фабриканте. Разместите его в личном кабинете площадки.`,
         'warning',
       )
-    } else if (pub && pub.status === 'publishing') {
+    } else if (pub && (pub.status === 'publishing' || pub.status === 'pending')) {
       pollPublication(pubId, attempts + 1)
     }
-  }, 2000)
+  }, delay)
 }
 
 // ── Linked tasks ─────────────────────────────────────────────────────────────
@@ -7168,6 +7287,12 @@ const loadPurchase = async () => {
     advance_amount: data.advance_amount != null ? Number(data.advance_amount) : null,
     warranty_period_days: data.warranty_period_days ?? null,
     is_retroactive: data.is_retroactive ?? false,
+    // Phase 28 T8: доставка и этапы
+    delivery_by_supplier: data.delivery_by_supplier ?? true,
+    has_stages: data.has_stages ?? false,
+    // Phase 28 T8: документы закупочной комиссии
+    procurement_protocol_number: data.procurement_protocol_number ?? null,
+    procurement_order_number: data.procurement_order_number ?? null,
     // Phase 29: связь с ТС
     vehicle_id: data.vehicle_id ?? null,
     // ЭТП

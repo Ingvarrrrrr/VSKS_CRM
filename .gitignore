@@ -132,6 +132,10 @@ skills-lock.json
 e2e-report/
 test-results/
 
+# Сборщик шаблонов договоров — исходник, а не build-артефакт Python (правило build/ выше его глушит)
+!backend/templates/build/
+backend/templates/build/_out/
+
 # Local deploy/utility scripts
 deploy_*.py
 apply_rsi_patches.py

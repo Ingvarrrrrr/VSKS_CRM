@@ -1530,6 +1530,9 @@ PATCHABLE_FIELDS = {
     'payment_term_days', 'applications_review_date',
     # Импорт/экспорт: квартал обязательств и планируемый месяц платежа
     "commitment_quarter", "planned_payment_month",
+    # Phase 28 T6/T7: условные блоки шаблонов + протокол/приказ закупки
+    "delivery_by_supplier", "has_stages",
+    "procurement_protocol_number", "procurement_order_number",
 }
 
 

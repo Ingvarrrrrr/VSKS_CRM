@@ -714,6 +714,11 @@ class PurchaseCreate(BaseModel):
     # Phase 28: гарантия + ретроактивный договор (комментарии пользователя 2026-05-19)
     warranty_period_days: Optional[int] = None
     is_retroactive: Optional[bool] = False
+    # Phase 28 T6/T7: условные блоки шаблонов + протокол/приказ закупки
+    delivery_by_supplier: Optional[bool] = True
+    has_stages: Optional[bool] = False
+    procurement_protocol_number: Optional[str] = None
+    procurement_order_number: Optional[str] = None
     # Phase 29: связь с ТС
     vehicle_id: Optional[int] = None
     # ЭТП: ссылка на конкурсную процедуру
@@ -842,6 +847,11 @@ class PurchaseUpdate(BaseModel):
     # Phase 28: гарантия + ретроактивный договор (комментарии пользователя 2026-05-19)
     warranty_period_days: Optional[int] = None
     is_retroactive: Optional[bool] = None
+    # Phase 28 T6/T7: условные блоки шаблонов + протокол/приказ закупки
+    delivery_by_supplier: Optional[bool] = None
+    has_stages: Optional[bool] = None
+    procurement_protocol_number: Optional[str] = None
+    procurement_order_number: Optional[str] = None
     # Phase 29: связь с ТС
     vehicle_id: Optional[int] = None
     # ЭТП: ссылка на конкурсную процедуру

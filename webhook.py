@@ -14,12 +14,16 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from socketserver import ThreadingMixIn
 
-SECRET = "vsks-autodeploy-secret-2026"
+SECRET = os.environ.get("DEPLOY_SECRET", "")
+if not SECRET:
+    print("DEPLOY_SECRET is not set, refusing to start", file=sys.stderr)
+    sys.exit(1)
 DEPLOY_SCRIPT = "/opt/vsks-crm/autodeploy.sh"
 LOG_PATH = "/var/log/vsks-deploy.log"
 LISTEN = ("0.0.0.0", 9000)

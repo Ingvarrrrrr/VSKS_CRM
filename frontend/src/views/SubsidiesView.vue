@@ -2851,8 +2851,109 @@
             </v-alert>
           </template>
 
-          <!-- Step 3: Result -->
+          <!-- Step 3: Dry-run preview (прогноз перед записью) -->
           <template v-if="feoImport.step === 3">
+            <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-clipboard-text-search-outline">
+              Это <strong>прогноз</strong> — данные ещё не записаны в базу. Проверьте результат и нажмите «Импортировать».
+            </v-alert>
+            <div v-if="feoImport.dryResult" class="d-flex flex-wrap gap-2 mb-3">
+              <v-chip color="success" variant="flat"
+                :disabled="!feoImport.dryResult.created_details?.length"
+                @click="feoToggleResultPanel('dry_created')">
+                <v-icon icon="mdi-plus-circle" start size="16" />Будет создано: {{ feoImport.dryResult.created ?? 0 }}
+                <v-icon v-if="feoImport.dryResult.created_details?.length" end size="16"
+                  :icon="feoResultPanels.includes('dry_created') ? 'mdi-chevron-up' : 'mdi-chevron-down'" />
+              </v-chip>
+              <v-chip color="warning" variant="flat"
+                :disabled="!feoImport.dryResult.updated_details?.length"
+                @click="feoToggleResultPanel('dry_updated')">
+                <v-icon icon="mdi-pencil" start size="16" />Будет обновлено: {{ feoImport.dryResult.updated ?? 0 }}
+                <v-icon v-if="feoImport.dryResult.updated_details?.length" end size="16"
+                  :icon="feoResultPanels.includes('dry_updated') ? 'mdi-chevron-up' : 'mdi-chevron-down'" />
+              </v-chip>
+              <v-chip color="grey" variant="flat"
+                :disabled="!feoImport.dryResult.skipped_details?.length"
+                @click="feoToggleResultPanel('dry_skipped')">
+                <v-icon icon="mdi-debug-step-over" start size="16" />Будет пропущено: {{ feoImport.dryResult.skipped }}
+                <v-icon v-if="feoImport.dryResult.skipped_details?.length" end size="16"
+                  :icon="feoResultPanels.includes('dry_skipped') ? 'mdi-chevron-up' : 'mdi-chevron-down'" />
+              </v-chip>
+            </div>
+            <!-- Предупреждения dry-run -->
+            <template v-if="feoImport.dryResult?.warnings?.length">
+              <div class="text-subtitle-2 mb-1 text-warning">Предупреждения ({{ feoImport.dryResult.warnings.length }}):</div>
+              <v-expansion-panels v-model="feoResultPanels" multiple class="mb-3">
+                <v-expansion-panel
+                  v-for="kind in [...new Set(feoImport.dryResult.warnings.map(w => w.kind))]"
+                  :key="'dw_' + kind"
+                  :value="'dw_' + kind">
+                  <v-expansion-panel-title>
+                    <v-icon icon="mdi-alert-outline" size="18" color="warning" class="mr-2" />
+                    {{ feoWarnKindLabel(kind) }} ({{ feoImport.dryResult.warnings.filter(w => w.kind === kind).length }})
+                  </v-expansion-panel-title>
+                  <v-expansion-panel-text>
+                    <v-list density="compact" max-height="280" class="overflow-y-auto">
+                      <v-list-item
+                        v-for="(w, wi) in feoImport.dryResult.warnings.filter(x => x.kind === kind)"
+                        :key="wi"
+                        :title="w.name"
+                        :subtitle="feoWarnSubtitle(w)" />
+                    </v-list>
+                  </v-expansion-panel-text>
+                </v-expansion-panel>
+              </v-expansion-panels>
+            </template>
+            <!-- Ошибки dry-run — красным, блокируют импорт -->
+            <div v-if="feoImport.dryResult?.errors?.length" class="mt-2">
+              <div class="text-subtitle-2 mb-1 text-error">Ошибки ({{ feoImport.dryResult.errors.length }}) — исправьте файл перед импортом:</div>
+              <v-list density="compact" class="bg-error-lighten-5 rounded">
+                <v-list-item v-for="(e, i) in feoImport.dryResult.errors" :key="i"
+                  :subtitle="`Стр. ${e.row}: ${e.name} — ${e.message}`" />
+              </v-list>
+            </div>
+            <!-- Детали по категориям (сворачиваемые) -->
+            <v-expansion-panels v-if="feoImport.dryResult" v-model="feoResultPanels" multiple class="mb-3">
+              <v-expansion-panel v-if="feoImport.dryResult.created_details?.length" value="dry_created">
+                <v-expansion-panel-title>
+                  <v-icon icon="mdi-plus-circle" size="18" color="success" class="mr-2" />
+                  Будет создано ({{ feoImport.dryResult.created_details.length }})
+                </v-expansion-panel-title>
+                <v-expansion-panel-text>
+                  <v-list density="compact" max-height="320" class="overflow-y-auto">
+                    <v-list-item v-for="(d, i) in feoImport.dryResult.created_details" :key="i"
+                      :title="d.name" :subtitle="`Стр. ${d.row} — ${d.reason}`" />
+                  </v-list>
+                </v-expansion-panel-text>
+              </v-expansion-panel>
+              <v-expansion-panel v-if="feoImport.dryResult.updated_details?.length" value="dry_updated">
+                <v-expansion-panel-title>
+                  <v-icon icon="mdi-pencil" size="18" color="warning" class="mr-2" />
+                  Будет обновлено ({{ feoImport.dryResult.updated_details.length }})
+                </v-expansion-panel-title>
+                <v-expansion-panel-text>
+                  <v-list density="compact" max-height="320" class="overflow-y-auto">
+                    <v-list-item v-for="(d, i) in feoImport.dryResult.updated_details" :key="i"
+                      :title="d.name" :subtitle="`Стр. ${d.row} — ${d.reason}`" />
+                  </v-list>
+                </v-expansion-panel-text>
+              </v-expansion-panel>
+              <v-expansion-panel v-if="feoImport.dryResult.skipped_details?.length" value="dry_skipped">
+                <v-expansion-panel-title>
+                  <v-icon icon="mdi-debug-step-over" size="18" color="grey" class="mr-2" />
+                  Будет пропущено ({{ feoImport.dryResult.skipped_details.length }})
+                </v-expansion-panel-title>
+                <v-expansion-panel-text>
+                  <v-list density="compact" max-height="320" class="overflow-y-auto">
+                    <v-list-item v-for="(d, i) in feoImport.dryResult.skipped_details" :key="i"
+                      :title="d.name" :subtitle="`Стр. ${d.row} — ${d.reason}`" />
+                  </v-list>
+                </v-expansion-panel-text>
+              </v-expansion-panel>
+            </v-expansion-panels>
+          </template>
+
+          <!-- Step 4: Result (после реального импорта) -->
+          <template v-if="feoImport.step === 4">
             <div v-if="feoImport.result" class="d-flex flex-wrap gap-2 mb-3">
               <v-chip color="success" variant="flat"
                 :disabled="!feoImport.result.created_details?.length"
@@ -2914,6 +3015,30 @@
                 </v-expansion-panel-text>
               </v-expansion-panel>
             </v-expansion-panels>
+            <!-- Предупреждения итогового импорта (те же kinds, но факт, не прогноз) -->
+            <template v-if="feoImport.result?.warnings?.length">
+              <div class="text-subtitle-2 mb-1 text-warning">Предупреждения ({{ feoImport.result.warnings.length }}):</div>
+              <v-expansion-panels v-model="feoResultPanels" multiple class="mb-3">
+                <v-expansion-panel
+                  v-for="kind in [...new Set(feoImport.result.warnings.map(w => w.kind))]"
+                  :key="'rw_' + kind"
+                  :value="'rw_' + kind">
+                  <v-expansion-panel-title>
+                    <v-icon icon="mdi-alert-outline" size="18" color="warning" class="mr-2" />
+                    {{ feoWarnKindLabel(kind) }} ({{ feoImport.result.warnings!.filter(w => w.kind === kind).length }})
+                  </v-expansion-panel-title>
+                  <v-expansion-panel-text>
+                    <v-list density="compact" max-height="280" class="overflow-y-auto">
+                      <v-list-item
+                        v-for="(w, wi) in feoImport.result.warnings!.filter(x => x.kind === kind)"
+                        :key="wi"
+                        :title="w.name"
+                        :subtitle="feoWarnSubtitle(w)" />
+                    </v-list>
+                  </v-expansion-panel-text>
+                </v-expansion-panel>
+              </v-expansion-panels>
+            </template>
             <div v-if="feoImport.result?.errors?.length" class="mt-2">
               <div class="text-subtitle-2 mb-1 text-error">Ошибки ({{ feoImport.result.errors.length }}):</div>
               <v-list density="compact" class="bg-error-lighten-5 rounded">
@@ -2928,14 +3053,23 @@
           <v-btn v-if="feoImport.step === 2" variant="text" @click="feoImport.step = 1">
             <v-icon icon="mdi-arrow-left" class="mr-1" /> Назад
           </v-btn>
+          <v-btn v-if="feoImport.step === 3" variant="text" @click="feoImport.step = 2">
+            <v-icon icon="mdi-arrow-left" class="mr-1" /> Назад к сопоставлению
+          </v-btn>
           <v-spacer />
-          <v-btn variant="text" @click="closeFeoImport">{{ feoImport.step === 3 ? 'Закрыть' : 'Отмена' }}</v-btn>
+          <v-btn variant="text" @click="closeFeoImport">{{ feoImport.step === 4 ? 'Закрыть' : 'Отмена' }}</v-btn>
           <v-btn v-if="feoImport.step === 1" color="primary" :loading="feoImport.loading"
             :disabled="!feoImport.file" @click="doFeoImport">Далее</v-btn>
-          <v-btn v-if="feoImport.step === 2" color="success" variant="flat"
+          <!-- Шаг 2: запускает dry-run → шаг 3 (Проверка) -->
+          <v-btn v-if="feoImport.step === 2" color="primary" variant="flat"
             :loading="feoImport.loading" :disabled="!feoMappingValid"
-            @click="doFeoMappedImport">Импортировать</v-btn>
-          <v-btn v-if="feoImport.step === 3" color="primary" variant="flat"
+            @click="doFeoMappedImport(true)">Проверить</v-btn>
+          <!-- Шаг 3: реальный импорт → шаг 4 (Результат); блокируется если есть ошибки -->
+          <v-btn v-if="feoImport.step === 3" color="success" variant="flat"
+            :loading="feoImport.loading"
+            :disabled="!!(feoImport.dryResult?.errors?.length)"
+            @click="doFeoMappedImport(false)">Импортировать</v-btn>
+          <v-btn v-if="feoImport.step === 4" color="primary" variant="flat"
             @click="closeFeoImport">Готово</v-btn>
         </v-card-actions>
       </v-card>
@@ -3856,10 +3990,40 @@ const dragNodeId = ref<number | null>(null)
 const dragOverId = ref<number | null>(null)
 
 // FEO Import
+interface FeoWarning {
+  kind: 'level_gap' | 'level_duplicate' | 'sum_mismatch' | 'sum_without_qty' | 'parent_sum_mismatch'
+  row: number | null
+  name: string
+  message: string
+}
+function feoWarnKindLabel(kind: string): string {
+  const labels: Record<string, string> = {
+    level_gap: 'Пропущенный уровень поднят выше',
+    level_duplicate: 'Одинаковые уровни склеены в один узел',
+    sum_mismatch: 'Сумма не совпадает с кол-во × цена',
+    sum_without_qty: 'Сумма задана без количества',
+    parent_sum_mismatch: 'Бюджет родителя ≠ сумма дочерних',
+  }
+  return labels[kind] ?? kind
+}
+function feoWarnSubtitle(w: FeoWarning): string {
+  return w.row != null ? `Стр. ${w.row} — ${w.message}` : w.message
+}
+interface FeoImportResult {
+  created: number
+  updated?: number
+  skipped: number
+  errors: { row: number; name: string; message: string }[]
+  updated_details?: { row: number; name: string; reason: string }[]
+  skipped_details?: { row: number; name: string; reason: string }[]
+  created_details?: { row: number; name: string; reason: string }[]
+  warnings?: FeoWarning[]
+}
 const feoImport = reactive({
   show: false, step: 1, file: null as File | null, fileList: [] as File[],
   loading: false,
-  result: null as { created: number; updated?: number; skipped: number; errors: { row: number; name: string; message: string }[]; updated_details?: { row: number; name: string; reason: string }[]; skipped_details?: { row: number; name: string; reason: string }[] } | null,
+  result: null as FeoImportResult | null,
+  dryResult: null as FeoImportResult | null,
   previewData: null as any,
   selectedSheet: '',
 })
@@ -3870,30 +4034,37 @@ const feoImportTargetSubsidy = ref<number | null>(null)
 const FEO_TARGET_FIELDS = [
   { value: 'subsidy',  title: 'Субсидия (название)',                          required: true },
   { value: 'lvl2',     title: 'Уровень 2 — Направление расходов по ФЭО',     required: true },
-  { value: 'qty_lvl2',  title: 'Количество для Уровня 2 (Направление)',      required: false },
-  { value: 'unit_lvl2', title: 'Единица измерения для Уровня 2',             required: false },
-  { value: 'amt_lvl2', title: 'Плановая стоимость за ед. для Уровня 2 (Направление)',   required: false },
-  { value: 'lvl3',     title: 'Уровень 3 — Тип расходов по ФЭО',            required: false },
-  { value: 'qty_lvl3', title: 'Количество для Уровня 3 (Тип расходов)',      required: false },
-  { value: 'unit_lvl3', title: 'Единица измерения для Уровня 3',             required: false },
-  { value: 'amt_lvl3', title: 'Плановая стоимость за ед. для Уровня 3 (Тип расходов)', required: false },
-  { value: 'lvl4',     title: 'Уровень 4 — Конкретизированный',              required: false },
-  { value: 'qty_lvl4', title: 'Количество для Уровня 4 (Конкретизир.)',      required: false },
-  { value: 'unit_lvl4', title: 'Единица измерения для Уровня 4',             required: false },
-  { value: 'amt_lvl4', title: 'Плановая стоимость за ед. для Уровня 4 (Конкретизир.)', required: false },
-  { value: 'lvl5',     title: 'Уровень 5 — Плановый товар / услуга',        required: false },
-  { value: 'quantity', title: 'Количество для Уровня 5 (Товар/услуга)',      required: false },
-  { value: 'unit',     title: 'Единица измерения (Ур.5: шт, кг, услуга)',   required: false },
-  { value: 'item_amt', title: 'Плановая стоимость за ед. Ур.5 (товар/услуга)', required: false },
-  { value: 'feo_qty_lvl2',    title: 'Кол-во по ФЭО (Ур.2)',                required: false },
-  { value: 'feo_unit_lvl2',  title: 'Ед. изм. по ФЭО (Ур.2)',              required: false },
-  { value: 'feo_amount_lvl2', title: 'Стоимость по ФЭО (Ур.2)',             required: false },
-  { value: 'feo_qty_lvl3',    title: 'Кол-во по ФЭО (Ур.3)',                required: false },
-  { value: 'feo_unit_lvl3',  title: 'Ед. изм. по ФЭО (Ур.3)',              required: false },
-  { value: 'feo_amount_lvl3', title: 'Стоимость по ФЭО (Ур.3)',             required: false },
-  { value: 'feo_qty_lvl4',    title: 'Кол-во по ФЭО (Ур.4)',                required: false },
-  { value: 'feo_unit_lvl4',  title: 'Ед. изм. по ФЭО (Ур.4)',              required: false },
-  { value: 'feo_amount_lvl4', title: 'Стоимость по ФЭО (Ур.4)',             required: false },
+  { value: 'qty_lvl2',      title: 'Количество для Уровня 2 (Направление)',       required: false },
+  { value: 'unit_lvl2',     title: 'Единица измерения для Уровня 2',              required: false },
+  { value: 'amt_lvl2',      title: 'Плановая стоимость за ед. для Уровня 2 (Направление)', required: false },
+  { value: 'plan_sum_lvl2', title: 'Сумма плана (Ур.2)',                          required: false },
+  { value: 'lvl3',          title: 'Уровень 3 — Тип расходов по ФЭО',            required: false },
+  { value: 'qty_lvl3',      title: 'Количество для Уровня 3 (Тип расходов)',      required: false },
+  { value: 'unit_lvl3',     title: 'Единица измерения для Уровня 3',              required: false },
+  { value: 'amt_lvl3',      title: 'Плановая стоимость за ед. для Уровня 3 (Тип расходов)', required: false },
+  { value: 'plan_sum_lvl3', title: 'Сумма плана (Ур.3)',                          required: false },
+  { value: 'lvl4',          title: 'Уровень 4 — Конкретизированный',              required: false },
+  { value: 'qty_lvl4',      title: 'Количество для Уровня 4 (Конкретизир.)',      required: false },
+  { value: 'unit_lvl4',     title: 'Единица измерения для Уровня 4',              required: false },
+  { value: 'amt_lvl4',      title: 'Плановая стоимость за ед. для Уровня 4 (Конкретизир.)', required: false },
+  { value: 'plan_sum_lvl4', title: 'Сумма плана (Ур.4)',                          required: false },
+  { value: 'lvl5',          title: 'Уровень 5 — Плановый товар / услуга',        required: false },
+  { value: 'quantity',      title: 'Количество для Уровня 5 (Товар/услуга)',      required: false },
+  { value: 'unit',          title: 'Единица измерения (Ур.5: шт, кг, услуга)',   required: false },
+  { value: 'item_amt',      title: 'Сумма по позиции (Ур.5)',                     required: false },
+  { value: 'item_price',    title: 'Цена за ед. (Ур.5)',                          required: false },
+  { value: 'feo_qty_lvl2',    title: 'Кол-во по ФЭО (Ур.2)',                     required: false },
+  { value: 'feo_unit_lvl2',   title: 'Ед. изм. по ФЭО (Ур.2)',                  required: false },
+  { value: 'feo_amount_lvl2', title: 'Стоимость по ФЭО (Ур.2)',                  required: false },
+  { value: 'feo_sum_lvl2',    title: 'Сумма по ФЭО (Ур.2)',                      required: false },
+  { value: 'feo_qty_lvl3',    title: 'Кол-во по ФЭО (Ур.3)',                     required: false },
+  { value: 'feo_unit_lvl3',   title: 'Ед. изм. по ФЭО (Ур.3)',                  required: false },
+  { value: 'feo_amount_lvl3', title: 'Стоимость по ФЭО (Ур.3)',                  required: false },
+  { value: 'feo_sum_lvl3',    title: 'Сумма по ФЭО (Ур.3)',                      required: false },
+  { value: 'feo_qty_lvl4',    title: 'Кол-во по ФЭО (Ур.4)',                     required: false },
+  { value: 'feo_unit_lvl4',   title: 'Ед. изм. по ФЭО (Ур.4)',                  required: false },
+  { value: 'feo_amount_lvl4', title: 'Стоимость по ФЭО (Ур.4)',                  required: false },
+  { value: 'feo_sum_lvl4',    title: 'Сумма по ФЭО (Ур.4)',                      required: false },
   { value: 'code',     title: 'Код категории ФЭО (Ур.2–4)',                 required: false },
   { value: 'appendix', title: 'Номер приложения (Ур.2–4: Прил. 1, Прил. 2...)', required: false },
   { value: 'budget',   title: 'Финансирование по ФЭО (Ур.2–4)', required: false },
@@ -3908,6 +4079,16 @@ function feoToggleResultPanel(key: string) {
   if (i >= 0) feoResultPanels.value.splice(i, 1)
   else feoResultPanels.value.push(key)
 }
+// При переходе на шаг 3 (dry-run) или шаг 4 (результат) раскрываем панели предупреждений
+watch(() => feoImport.step, (step) => {
+  if (step === 3 && feoImport.dryResult?.warnings?.length) {
+    const warnKeys = [...new Set(feoImport.dryResult.warnings.map(w => w.kind))].map(k => 'dw_' + k)
+    warnKeys.forEach(k => { if (!feoResultPanels.value.includes(k)) feoResultPanels.value.push(k) })
+  } else if (step === 4 && feoImport.result?.warnings?.length) {
+    const warnKeys = [...new Set(feoImport.result.warnings.map(w => w.kind))].map(k => 'rw_' + k)
+    warnKeys.forEach(k => { if (!feoResultPanels.value.includes(k)) feoResultPanels.value.push(k) })
+  }
+})
 
 const feoCurrentSheet = computed(() => {
   if (!feoImport.previewData) return null
@@ -3978,21 +4159,31 @@ function feoAutoMap(headers: string[]) {
     lvl2:     ['уровень 2', 'направление расходов', 'level 2'],
     qty_lvl2:  ['кол-во (ур.2)', 'кол-во ур.2', 'количество (ур.2)'],
     unit_lvl2: ['ед. изм. (ур.2)', 'ед.изм. ур.2', 'единица ур.2'],
-    amt_lvl2:  ['плановая стоимость за ед. (ур.2)', 'плановая стоимость (ур.2)', 'стоимость за ед. (ур.2)', 'стоимость ур.2', 'плановая сумма (ур.2)', 'сумма ур.2', 'план.сумма ур.2'],
+    // amt_lvl2 = цена за ед. — только специфичные алиасы, без «сумма» (сумму забирает plan_sum_lvl2)
+    amt_lvl2:  ['плановая стоимость за ед. (ур.2)', 'плановая стоимость (ур.2)', 'стоимость за ед. (ур.2)', 'стоимость ур.2'],
+    plan_sum_lvl2: ['сумма плана (ур.2)', 'плановая сумма (ур.2)', 'сумма ур.2'],
     lvl3:      ['уровень 3', 'тип расходов', 'level 3'],
     qty_lvl3:  ['кол-во (ур.3)', 'кол-во ур.3', 'количество (ур.3)'],
     unit_lvl3: ['ед. изм. (ур.3)', 'ед.изм. ур.3', 'единица ур.3'],
-    amt_lvl3:  ['плановая стоимость за ед. (ур.3)', 'плановая стоимость (ур.3)', 'стоимость за ед. (ур.3)', 'стоимость ур.3', 'плановая сумма (ур.3)', 'сумма ур.3'],
+    // amt_lvl3 = цена за ед.
+    amt_lvl3:  ['плановая стоимость за ед. (ур.3)', 'плановая стоимость (ур.3)', 'стоимость за ед. (ур.3)', 'стоимость ур.3'],
+    plan_sum_lvl3: ['сумма плана (ур.3)', 'плановая сумма (ур.3)', 'сумма ур.3'],
     lvl4:         ['уровень 4', 'конкретизир', 'level 4'],
     qty_lvl4:     ['кол-во (ур.4)', 'кол-во ур.4', 'количество (ур.4)'],
     unit_lvl4:    ['ед. изм. (ур.4)', 'ед.изм. ур.4', 'единица ур.4'],
-    amt_lvl4:     ['плановая стоимость за ед. (ур.4)', 'плановая стоимость (ур.4)', 'стоимость за ед. (ур.4)', 'стоимость ур.4', 'плановая сумма (ур.4)', 'сумма ур.4'],
+    // amt_lvl4 = цена за ед.
+    amt_lvl4:     ['плановая стоимость за ед. (ур.4)', 'плановая стоимость (ур.4)', 'стоимость за ед. (ур.4)', 'стоимость ур.4'],
+    plan_sum_lvl4: ['сумма плана (ур.4)', 'плановая сумма (ур.4)', 'сумма ур.4'],
+    // feo_sum_* идут ДО feo_amount_* (более специфичны «сумма по фэо»)
+    feo_sum_lvl2:    ['сумма по фэо (ур.2)', 'сумма по фэо ур.2'],
     feo_qty_lvl2:    ['кол-во по фэо (ур.2)', 'кол-во по фэо ур.2', 'кол-во по фэо'],
     feo_unit_lvl2:   ['ед. изм. по фэо (ур.2)', 'ед. изм. по фэо ур.2', 'ед. изм. по фэо'],
     feo_amount_lvl2: ['стоимость по фэо (ур.2)', 'стоимость по фэо ур.2', 'стоимость по фэо'],
+    feo_sum_lvl3:    ['сумма по фэо (ур.3)', 'сумма по фэо ур.3'],
     feo_qty_lvl3:    ['кол-во по фэо (ур.3)', 'кол-во по фэо ур.3'],
     feo_unit_lvl3:   ['ед. изм. по фэо (ур.3)', 'ед. изм. по фэо ур.3'],
     feo_amount_lvl3: ['стоимость по фэо (ур.3)', 'стоимость по фэо ур.3'],
+    feo_sum_lvl4:    ['сумма по фэо (ур.4)', 'сумма по фэо ур.4'],
     feo_qty_lvl4:    ['кол-во по фэо (ур.4)', 'кол-во по фэо ур.4'],
     feo_unit_lvl4:   ['ед. изм. по фэо (ур.4)', 'ед. изм. по фэо ур.4'],
     feo_amount_lvl4: ['стоимость по фэо (ур.4)', 'стоимость по фэо ур.4'],
@@ -4002,7 +4193,9 @@ function feoAutoMap(headers: string[]) {
     budget:   ['финансирование', 'бюджет'],
     quantity: ['количество (ур.5)', 'количество ур.5', 'кол-во (ур.5)', 'кол-во ур.5'],
     unit:     ['ед. измерения (ур.5)', 'ед. изм. (ур.5)', 'ед.изм. ур.5', 'единица ур.5', 'ед. изм', 'ед.изм', 'единица'],
-    item_amt: ['плановая стоимость за ед. (ур.5)', 'плановая стоимость (ур.5)', 'стоимость за ед. (ур.5)', 'стоимость ур.5', 'сумма плановая', 'сумма (ур.5)', 'сумма ур'],
+    // item_amt = итог позиции (amount); item_price = цена за ед. — специфичные ключи первыми
+    item_amt:   ['сумма по позиции (ур.5)', 'сумма плановая', 'сумма (ур.5)', 'плановая стоимость за ед. (ур.5)', 'плановая стоимость (ур.5)', 'стоимость за ед. (ур.5)', 'стоимость ур.5', 'сумма ур'],
+    item_price: ['цена за ед. (ур.5)', 'стоимость за ед. (ур.5)'],
     active:   ['активна', 'активен'],
   }
   // Каждая колонка достаётся ровно одному полю: без этого generic-ключи
@@ -5537,7 +5730,7 @@ async function doFeoImport() {
   }
 }
 
-async function doFeoMappedImport() {
+async function doFeoMappedImport(dryRun = false) {
   if (!feoImport.file) return
   feoImport.loading = true
   try {
@@ -5546,6 +5739,7 @@ async function doFeoMappedImport() {
     const params = new URLSearchParams({
       sheet_name: feoImport.selectedSheet,
       header_row_offset: String(sheet?.header_row_offset ?? 0),
+      dry_run: dryRun ? 'true' : 'false',
       col_subsidy:  String(m['subsidy']  ?? -1),
       default_subsidy_id: String(feoImportTargetSubsidy.value ?? -1),
       col_lvl2:     String(m['lvl2']     ?? -1),
@@ -5565,9 +5759,9 @@ async function doFeoMappedImport() {
       col_unit_lvl2: String(m['unit_lvl2'] ?? -1),
       col_unit_lvl3: String(m['unit_lvl3'] ?? -1),
       col_unit_lvl4: String(m['unit_lvl4'] ?? -1),
-      col_amt_lvl2:      String(m['amt_lvl2']      ?? -1),
-      col_amt_lvl3:      String(m['amt_lvl3']      ?? -1),
-      col_amt_lvl4:      String(m['amt_lvl4']      ?? -1),
+      col_amt_lvl2:  String(m['amt_lvl2']  ?? -1),
+      col_amt_lvl3:  String(m['amt_lvl3']  ?? -1),
+      col_amt_lvl4:  String(m['amt_lvl4']  ?? -1),
       col_feo_qty_lvl2:    String(m['feo_qty_lvl2']    ?? -1),
       col_feo_unit_lvl2:   String(m['feo_unit_lvl2']   ?? -1),
       col_feo_amount_lvl2: String(m['feo_amount_lvl2'] ?? -1),
@@ -5577,6 +5771,13 @@ async function doFeoMappedImport() {
       col_feo_qty_lvl4:    String(m['feo_qty_lvl4']    ?? -1),
       col_feo_unit_lvl4:   String(m['feo_unit_lvl4']   ?? -1),
       col_feo_amount_lvl4: String(m['feo_amount_lvl4'] ?? -1),
+      col_feo_sum_lvl2: String(m['feo_sum_lvl2'] ?? -1),
+      col_feo_sum_lvl3: String(m['feo_sum_lvl3'] ?? -1),
+      col_feo_sum_lvl4: String(m['feo_sum_lvl4'] ?? -1),
+      col_plan_sum_lvl2: String(m['plan_sum_lvl2'] ?? -1),
+      col_plan_sum_lvl3: String(m['plan_sum_lvl3'] ?? -1),
+      col_plan_sum_lvl4: String(m['plan_sum_lvl4'] ?? -1),
+      col_item_price:    String(m['item_price']    ?? -1),
     })
     const fd = new FormData()
     fd.append('file', feoImport.file)
@@ -5593,11 +5794,17 @@ async function doFeoMappedImport() {
       console.error('FEO import error:', err)
       return
     }
-    feoImport.result = await res.json()
-    feoImport.step = 3
-    showSnack(`Импорт завершён: создано ${feoImport.result!.created}`)
-    // Reload FEO tree immediately
-    if (selectedId.value) { await loadFeo(selectedId.value); syncFeoFilled() }
+    const data: FeoImportResult = await res.json()
+    if (dryRun) {
+      // Dry-run: show preview on step 3, no DB write, no snackbar, no tree reload
+      feoImport.dryResult = data
+      feoImport.step = 3
+    } else {
+      feoImport.result = data
+      feoImport.step = 4
+      showSnack(`Импорт завершён: создано ${data.created}`)
+      if (selectedId.value) { await loadFeo(selectedId.value); syncFeoFilled() }
+    }
   } catch {
     showSnack('Ошибка импорта', 'error')
   } finally {
@@ -5608,7 +5815,7 @@ async function doFeoMappedImport() {
 function closeFeoImport() {
   const wasCreated = (feoImport.result?.created ?? 0) > 0
   feoImport.show = false; feoImport.step = 1
-  feoImport.file = null; feoImport.fileList = []; feoImport.result = null
+  feoImport.file = null; feoImport.fileList = []; feoImport.result = null; feoImport.dryResult = null
   feoImport.previewData = null; feoImport.selectedSheet = ''
   feoDragMapping.value = {}; feoIgnoredCols.value = []
   if (wasCreated && selectedId.value) { loadFeo(selectedId.value); syncFeoFilled() }

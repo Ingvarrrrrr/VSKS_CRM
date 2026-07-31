@@ -2949,14 +2949,15 @@
                   </v-list>
                 </v-expansion-panel-text>
               </v-expansion-panel>
-              <v-expansion-panel v-if="feoImport.dryResult.deleted_paths?.length" value="dry_deleted">
+              <v-expansion-panel v-if="feoImport.dryResult.deleted_details?.length" value="dry_deleted">
                 <v-expansion-panel-title>
                   <v-icon icon="mdi-delete-outline" size="18" color="error" class="mr-2" />
-                  Будет удалено как пустое ({{ feoImport.dryResult.deleted_count ?? feoImport.dryResult.deleted_paths.length }})
+                  Будет удалено как пустое ({{ feoImport.dryResult.deleted_details.length }})
                 </v-expansion-panel-title>
                 <v-expansion-panel-text>
                   <v-list density="compact" max-height="240" class="overflow-y-auto">
-                    <v-list-item v-for="(p, i) in feoImport.dryResult.deleted_paths" :key="i" :title="p" />
+                    <v-list-item v-for="(d, i) in feoImport.dryResult.deleted_details" :key="i"
+                      :title="d.path" :subtitle="d.reason" />
                   </v-list>
                 </v-expansion-panel-text>
               </v-expansion-panel>
@@ -3103,16 +3104,17 @@
               icon="mdi-history" class="mb-3">
               Создана предыдущая редакция план-графика (доступна в истории для выгрузки)
             </v-alert>
-            <v-expansion-panels v-if="feoImport.result?.deleted_paths?.length || feoImport.result?.remap_applied?.length"
+            <v-expansion-panels v-if="feoImport.result?.deleted_details?.length || feoImport.result?.remap_applied?.length"
               v-model="feoResultPanels" multiple class="mb-3">
-              <v-expansion-panel v-if="feoImport.result?.deleted_paths?.length" value="result_deleted">
+              <v-expansion-panel v-if="feoImport.result?.deleted_details?.length" value="result_deleted">
                 <v-expansion-panel-title>
                   <v-icon icon="mdi-delete-outline" size="18" color="error" class="mr-2" />
-                  Удалённые узлы ({{ feoImport.result.deleted_paths.length }})
+                  Удалённые узлы ({{ feoImport.result.deleted_details.length }})
                 </v-expansion-panel-title>
                 <v-expansion-panel-text>
                   <v-list density="compact" max-height="240" class="overflow-y-auto">
-                    <v-list-item v-for="(p, i) in feoImport.result.deleted_paths" :key="i" :title="p" />
+                    <v-list-item v-for="(d, i) in feoImport.result.deleted_details" :key="i"
+                      :title="d.path" :subtitle="d.reason" />
                   </v-list>
                 </v-expansion-panel-text>
               </v-expansion-panel>
@@ -4172,7 +4174,7 @@ interface FeoImportResult {
   new_paths?: string[]
   deleted_count?: number
   relinked_count?: number
-  deleted_paths?: string[]
+  deleted_details?: { path: string; reason: string }[]
   remap_applied?: FeoRemapApplied[]
   remap_aborted_reason?: string | null
   version_created?: boolean

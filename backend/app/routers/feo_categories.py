@@ -1592,7 +1592,7 @@ async def _do_feo_import(
     relinked_count = 0
     deleted_count = 0
     remap_applied: list[dict] = []
-    deleted_paths: list[str] = []
+    deleted_details: list[dict] = []
     remap_aborted_reason: str | None = None
 
     if apply_remap:
@@ -1651,7 +1651,11 @@ async def _do_feo_import(
                 ))
                 if has_refs:
                     continue
-                deleted_paths.append(_cand["path"])
+                for _sid in subtree:
+                    if _sid == _cand_id:
+                        deleted_details.append({"path": _cand["path"], "reason": "нет в новом файле, ссылок нет"})
+                    else:
+                        deleted_details.append({"path": _full_path(_sid), "reason": f"внутри удаляемого «{_cand['path']}»"})
                 await _purge_feo_categories(subtree, db)
                 deleted_count += len(subtree)
                 already_deleted.update(subtree)
@@ -1695,7 +1699,7 @@ async def _do_feo_import(
         "new_paths": new_paths,
         "deleted_count": deleted_count,
         "relinked_count": relinked_count,
-        "deleted_paths": deleted_paths,
+        "deleted_details": deleted_details,
         "remap_applied": remap_applied,
         "remap_aborted_reason": remap_aborted_reason,
         "version_created": version_created,

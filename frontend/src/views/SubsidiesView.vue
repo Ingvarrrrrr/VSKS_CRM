@@ -2949,11 +2949,90 @@
                   </v-list>
                 </v-expansion-panel-text>
               </v-expansion-panel>
+              <v-expansion-panel v-if="feoImport.dryResult.deleted_paths?.length" value="dry_deleted">
+                <v-expansion-panel-title>
+                  <v-icon icon="mdi-delete-outline" size="18" color="error" class="mr-2" />
+                  Будет удалено как пустое ({{ feoImport.dryResult.deleted_count ?? feoImport.dryResult.deleted_paths.length }})
+                </v-expansion-panel-title>
+                <v-expansion-panel-text>
+                  <v-list density="compact" max-height="240" class="overflow-y-auto">
+                    <v-list-item v-for="(p, i) in feoImport.dryResult.deleted_paths" :key="i" :title="p" />
+                  </v-list>
+                </v-expansion-panel-text>
+              </v-expansion-panel>
             </v-expansion-panels>
+            <!-- Останется вне новой разбивки — узлы, ждущие решения человека -->
+            <template v-if="feoUnmatchedNeedsMapping.length">
+              <div class="text-subtitle-2 mb-1 text-error">
+                Останется вне новой разбивки ({{ feoUnmatchedNeedsMapping.length }}):
+              </div>
+              <v-list density="compact" class="bg-error-lighten-5 rounded mb-3">
+                <v-list-item v-for="n in feoUnmatchedNeedsMapping" :key="n.id"
+                  :title="n.path" :subtitle="feoLoadSummary(n.load)" />
+              </v-list>
+            </template>
+            <v-alert v-if="feoImport.dryResult?.remap_aborted_reason" type="warning" variant="tonal"
+              icon="mdi-alert" class="mb-3">
+              {{ feoImport.dryResult.remap_aborted_reason }}
+            </v-alert>
           </template>
 
-          <!-- Step 4: Result (после реального импорта) -->
+          <!-- Step 4: Remap unmatched nodes (условный — только если есть needs_mapping) -->
           <template v-if="feoImport.step === 4">
+            <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-source-branch">
+              <div class="text-body-2">
+                Направления, которых в файле нет вообще, дерево не трогает.<br>
+                Узел, которому не выбрали цель, останется в дереве как есть — ничего не теряется.<br>
+                Удалённое исчезает из текущего дерева, но остаётся в предыдущей редакции план-графика —
+                она доступна в Истории и выгружается из неё.
+              </div>
+            </v-alert>
+
+            <v-btn v-if="feoHasSuggestions" size="small" variant="tonal" color="primary" class="mb-3"
+              prepend-icon="mdi-auto-fix" @click="feoAcceptAllSuggestions">
+              Принять все подсказки
+            </v-btn>
+
+            <v-table density="comfortable" class="feo-remap-table">
+              <thead>
+                <tr>
+                  <th style="width:26%">Старый узел</th>
+                  <th style="width:28%">Что на нём висит</th>
+                  <th style="width:46%">Куда перенести</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="n in feoUnmatchedNeedsMapping" :key="n.id">
+                  <td>{{ n.path }}</td>
+                  <td>
+                    <div>{{ feoLoadSummary(n.load) }}</div>
+                    <div v-if="n.blocking_purchases?.length" class="text-caption text-medium-emphasis mt-1">
+                      <div v-for="bp in n.blocking_purchases" :key="bp.id" class="d-flex align-center" style="gap:4px">
+                        <span class="flex-shrink-0">{{ bp.purchase_number != null ? `№${bp.purchase_number}` : `Закупка #${bp.id}` }}</span>
+                        <span v-if="bp.subject" class="text-truncate" style="min-width:0">{{ bp.subject }}</span>
+                        <span class="flex-shrink-0">{{ bp.status_label }}</span>
+                      </div>
+                    </div>
+                  </td>
+                  <td class="py-2">
+                    <div v-if="n.suggestion" class="text-caption mb-1">
+                      Похоже на: «{{ n.suggestion }}»<span v-if="n.suggestion_reason"> ({{ n.suggestion_reason }})</span>
+                      <v-btn size="x-small" variant="text" color="primary" class="ml-1"
+                        @click="feoImport.remap[n.id] = n.suggestion">Принять</v-btn>
+                    </div>
+                    <v-autocomplete
+                      v-model="feoImport.remap[n.id]"
+                      :items="feoImport.dryResult?.new_paths || []"
+                      clearable density="compact" variant="outlined" hide-details
+                      placeholder="Оставить как есть" />
+                  </td>
+                </tr>
+              </tbody>
+            </v-table>
+          </template>
+
+          <!-- Step 5: Result (после реального импорта) -->
+          <template v-if="feoImport.step === 5">
             <div v-if="feoImport.result" class="d-flex flex-wrap gap-2 mb-3">
               <v-chip color="success" variant="flat"
                 :disabled="!feoImport.result.created_details?.length"
@@ -3015,6 +3094,41 @@
                 </v-expansion-panel-text>
               </v-expansion-panel>
             </v-expansion-panels>
+            <!-- Итоги переезда/удаления узлов -->
+            <div v-if="feoImport.result?.relinked_count || feoImport.result?.deleted_count" class="text-body-2 mb-2">
+              <div v-if="feoImport.result?.relinked_count">Перенесено ссылок: {{ feoImport.result.relinked_count }}</div>
+              <div v-if="feoImport.result?.deleted_count">Удалено узлов: {{ feoImport.result.deleted_count }}</div>
+            </div>
+            <v-alert v-if="feoImport.result?.version_created" type="info" variant="tonal" density="compact"
+              icon="mdi-history" class="mb-3">
+              Создана предыдущая редакция план-графика (доступна в истории для выгрузки)
+            </v-alert>
+            <v-expansion-panels v-if="feoImport.result?.deleted_paths?.length || feoImport.result?.remap_applied?.length"
+              v-model="feoResultPanels" multiple class="mb-3">
+              <v-expansion-panel v-if="feoImport.result?.deleted_paths?.length" value="result_deleted">
+                <v-expansion-panel-title>
+                  <v-icon icon="mdi-delete-outline" size="18" color="error" class="mr-2" />
+                  Удалённые узлы ({{ feoImport.result.deleted_paths.length }})
+                </v-expansion-panel-title>
+                <v-expansion-panel-text>
+                  <v-list density="compact" max-height="240" class="overflow-y-auto">
+                    <v-list-item v-for="(p, i) in feoImport.result.deleted_paths" :key="i" :title="p" />
+                  </v-list>
+                </v-expansion-panel-text>
+              </v-expansion-panel>
+              <v-expansion-panel v-if="feoImport.result?.remap_applied?.length" value="result_remap">
+                <v-expansion-panel-title>
+                  <v-icon icon="mdi-swap-horizontal" size="18" color="primary" class="mr-2" />
+                  Перенесённые узлы ({{ feoImport.result.remap_applied.length }})
+                </v-expansion-panel-title>
+                <v-expansion-panel-text>
+                  <v-list density="compact" max-height="280" class="overflow-y-auto">
+                    <v-list-item v-for="(r, i) in feoImport.result.remap_applied" :key="i"
+                      :title="`${r.old_path} → ${r.new_path}`" />
+                  </v-list>
+                </v-expansion-panel-text>
+              </v-expansion-panel>
+            </v-expansion-panels>
             <!-- Предупреждения итогового импорта (те же kinds, но факт, не прогноз) -->
             <template v-if="feoImport.result?.warnings?.length">
               <div class="text-subtitle-2 mb-1 text-warning">Предупреждения ({{ feoImport.result.warnings.length }}):</div>
@@ -3056,20 +3170,35 @@
           <v-btn v-if="feoImport.step === 3" variant="text" @click="feoImport.step = 2">
             <v-icon icon="mdi-arrow-left" class="mr-1" /> Назад к сопоставлению
           </v-btn>
+          <v-btn v-if="feoImport.step === 4" variant="text" @click="feoImport.step = 3">
+            <v-icon icon="mdi-arrow-left" class="mr-1" /> Назад
+          </v-btn>
           <v-spacer />
-          <v-btn variant="text" @click="closeFeoImport">{{ feoImport.step === 4 ? 'Закрыть' : 'Отмена' }}</v-btn>
+          <v-btn variant="text" @click="closeFeoImport">{{ feoImport.step === 5 ? 'Закрыть' : 'Отмена' }}</v-btn>
           <v-btn v-if="feoImport.step === 1" color="primary" :loading="feoImport.loading"
             :disabled="!feoImport.file" @click="doFeoImport">Далее</v-btn>
           <!-- Шаг 2: запускает dry-run → шаг 3 (Проверка) -->
           <v-btn v-if="feoImport.step === 2" color="primary" variant="flat"
             :loading="feoImport.loading" :disabled="!feoMappingValid"
             @click="doFeoMappedImport(true)">Проверить</v-btn>
-          <!-- Шаг 3: реальный импорт → шаг 4 (Результат); блокируется если есть ошибки -->
-          <v-btn v-if="feoImport.step === 3" color="success" variant="flat"
+          <!-- Шаг 3: если есть несопоставленные узлы — на шаг 4 (Сопоставление), иначе сразу реальный импорт → шаг 5 -->
+          <v-btn v-if="feoImport.step === 3 && feoUnmatchedNeedsMapping.length" color="primary" variant="flat"
+            :disabled="!!(feoImport.dryResult?.errors?.length)"
+            @click="feoImport.step = 4">Сопоставить ({{ feoUnmatchedNeedsMapping.length }})</v-btn>
+          <v-btn v-if="feoImport.step === 3 && !feoUnmatchedNeedsMapping.length" color="success" variant="flat"
             :loading="feoImport.loading"
             :disabled="!!(feoImport.dryResult?.errors?.length)"
-            @click="doFeoMappedImport(false)">Импортировать</v-btn>
-          <v-btn v-if="feoImport.step === 4" color="primary" variant="flat"
+            @click="doFeoMappedImport(false)">Импортировать<template v-if="feoImport.dryResult?.deleted_count">, удалить {{ feoImport.dryResult.deleted_count }}</template></v-btn>
+          <!-- Шаг 4: пересчитать прогноз с текущим remap или перейти к реальному импорту → шаг 5 -->
+          <v-btn v-if="feoImport.step === 4" variant="tonal" :loading="feoImport.loading"
+            @click="doFeoMappedImport(true, true)">
+            <v-icon icon="mdi-refresh" class="mr-1" /> Пересчитать
+          </v-btn>
+          <v-btn v-if="feoImport.step === 4" color="success" variant="flat"
+            :loading="feoImport.loading"
+            :disabled="!!(feoImport.dryResult?.errors?.length)"
+            @click="doFeoMappedImport(false)">{{ feoStep4MainLabel }}</v-btn>
+          <v-btn v-if="feoImport.step === 5" color="primary" variant="flat"
             @click="closeFeoImport">Готово</v-btn>
         </v-card-actions>
       </v-card>
@@ -4009,6 +4138,27 @@ function feoWarnKindLabel(kind: string): string {
 function feoWarnSubtitle(w: FeoWarning): string {
   return w.row != null ? `Стр. ${w.row} — ${w.message}` : w.message
 }
+interface FeoUnmatchedNode {
+  id: number
+  path: string
+  kind: 'empty' | 'needs_mapping'
+  suggestion: string | null
+  suggestion_reason: string | null
+  load: {
+    purchases?: number
+    purchase_items?: number
+    wishes?: number
+    wish_items?: number
+    products?: number
+    feo_planned_items?: number
+  }
+  blocking_purchases: { id: number; purchase_number: number | null; subject: string; status: string; status_label: string }[]
+}
+interface FeoRemapApplied {
+  old_path: string
+  new_path: string
+  counts: Record<string, number>
+}
 interface FeoImportResult {
   created: number
   updated?: number
@@ -4018,6 +4168,15 @@ interface FeoImportResult {
   skipped_details?: { row: number; name: string; reason: string }[]
   created_details?: { row: number; name: string; reason: string }[]
   warnings?: FeoWarning[]
+  unmatched?: FeoUnmatchedNode[]
+  new_paths?: string[]
+  deleted_count?: number
+  relinked_count?: number
+  deleted_paths?: string[]
+  remap_applied?: FeoRemapApplied[]
+  remap_aborted_reason?: string | null
+  version_created?: boolean
+  deletes_applied?: boolean
 }
 const feoImport = reactive({
   show: false, step: 1, file: null as File | null, fileList: [] as File[],
@@ -4026,6 +4185,8 @@ const feoImport = reactive({
   dryResult: null as FeoImportResult | null,
   previewData: null as any,
   selectedSheet: '',
+  // ключ = unmatched.id, значение = выбранный new_path либо null («оставить как есть»)
+  remap: {} as Record<number, string | null>,
 })
 
 const feoImportTargetSubsidy = ref<number | null>(null)
@@ -4079,16 +4240,51 @@ function feoToggleResultPanel(key: string) {
   if (i >= 0) feoResultPanels.value.splice(i, 1)
   else feoResultPanels.value.push(key)
 }
-// При переходе на шаг 3 (dry-run) или шаг 4 (результат) раскрываем панели предупреждений
+// При переходе на шаг 3 (dry-run) или шаг 5 (результат) раскрываем панели предупреждений
 watch(() => feoImport.step, (step) => {
   if (step === 3 && feoImport.dryResult?.warnings?.length) {
     const warnKeys = [...new Set(feoImport.dryResult.warnings.map(w => w.kind))].map(k => 'dw_' + k)
     warnKeys.forEach(k => { if (!feoResultPanels.value.includes(k)) feoResultPanels.value.push(k) })
-  } else if (step === 4 && feoImport.result?.warnings?.length) {
+  } else if (step === 5 && feoImport.result?.warnings?.length) {
     const warnKeys = [...new Set(feoImport.result.warnings.map(w => w.kind))].map(k => 'rw_' + k)
     warnKeys.forEach(k => { if (!feoResultPanels.value.includes(k)) feoResultPanels.value.push(k) })
   }
 })
+
+// Узлы, которым не хватает цели переезда — требуют решения человека (шаг «Сопоставление»)
+const feoUnmatchedNeedsMapping = computed<FeoUnmatchedNode[]>(() =>
+  (feoImport.dryResult?.unmatched || []).filter(u => u.kind === 'needs_mapping'))
+const feoHasSuggestions = computed(() => feoUnmatchedNeedsMapping.value.some(n => !!n.suggestion))
+const feoRemapPlannedCount = computed(() =>
+  feoUnmatchedNeedsMapping.value.filter(n => !!feoImport.remap[n.id]).length)
+function feoAcceptAllSuggestions() {
+  feoUnmatchedNeedsMapping.value.forEach(n => { if (n.suggestion) feoImport.remap[n.id] = n.suggestion })
+}
+const feoStep4MainLabel = computed(() => {
+  const parts = ['Импортировать']
+  if (feoRemapPlannedCount.value) parts.push(`перенести ${feoRemapPlannedCount.value}`)
+  const deleted = feoImport.dryResult?.deleted_count ?? 0
+  if (deleted) parts.push(`удалить ${deleted}`)
+  return parts.join(', ')
+})
+function feoPluralRu(n: number, forms: [string, string, string]): string {
+  const mod10 = n % 10
+  const mod100 = n % 100
+  if (mod10 === 1 && mod100 !== 11) return forms[0]
+  if ([2, 3, 4].includes(mod10) && ![12, 13, 14].includes(mod100)) return forms[1]
+  return forms[2]
+}
+function feoLoadSummary(load: FeoUnmatchedNode['load'] | undefined): string {
+  if (!load) return 'ничего'
+  const parts: string[] = []
+  if (load.purchases) parts.push(`${load.purchases} ${feoPluralRu(load.purchases, ['закупка', 'закупки', 'закупок'])}`)
+  if (load.purchase_items) parts.push(`${load.purchase_items} ${feoPluralRu(load.purchase_items, ['позиция закупки', 'позиции закупки', 'позиций закупки'])}`)
+  if (load.wishes) parts.push(`${load.wishes} ${feoPluralRu(load.wishes, ['заявка', 'заявки', 'заявок'])}`)
+  if (load.wish_items) parts.push(`${load.wish_items} ${feoPluralRu(load.wish_items, ['позиция заявки', 'позиции заявки', 'позиций заявки'])}`)
+  if (load.products) parts.push(`${load.products} ${feoPluralRu(load.products, ['товар', 'товара', 'товаров'])}`)
+  if (load.feo_planned_items) parts.push(`${load.feo_planned_items} ${feoPluralRu(load.feo_planned_items, ['плановая позиция', 'плановые позиции', 'плановых позиций'])}`)
+  return parts.length ? parts.join(', ') : 'ничего'
+}
 
 const feoCurrentSheet = computed(() => {
   if (!feoImport.previewData) return null
@@ -5730,16 +5926,21 @@ async function doFeoImport() {
   }
 }
 
-async function doFeoMappedImport(dryRun = false) {
+async function doFeoMappedImport(dryRun = false, keepStep = false) {
   if (!feoImport.file) return
   feoImport.loading = true
   try {
     const m = feoDragMapping.value
     const sheet = feoCurrentSheet.value
+    // remap задаётся путём, а не id: у целевого узла в момент показа таблицы ещё нет id — он появится только при записи
+    const remapEntries = Object.entries(feoImport.remap)
+      .filter(([, newPath]) => !!newPath)
+      .map(([oldId, newPath]) => ({ old_id: Number(oldId), new_path: newPath as string }))
     const params = new URLSearchParams({
       sheet_name: feoImport.selectedSheet,
       header_row_offset: String(sheet?.header_row_offset ?? 0),
       dry_run: dryRun ? 'true' : 'false',
+      apply_remap: 'true',
       col_subsidy:  String(m['subsidy']  ?? -1),
       default_subsidy_id: String(feoImportTargetSubsidy.value ?? -1),
       col_lvl2:     String(m['lvl2']     ?? -1),
@@ -5779,6 +5980,7 @@ async function doFeoMappedImport(dryRun = false) {
       col_plan_sum_lvl4: String(m['plan_sum_lvl4'] ?? -1),
       col_item_price:    String(m['item_price']    ?? -1),
     })
+    if (remapEntries.length) params.set('remap', JSON.stringify(remapEntries))
     const fd = new FormData()
     fd.append('file', feoImport.file)
     const token = localStorage.getItem('auth_token')
@@ -5796,13 +5998,19 @@ async function doFeoMappedImport(dryRun = false) {
     }
     const data: FeoImportResult = await res.json()
     if (dryRun) {
-      // Dry-run: show preview on step 3, no DB write, no snackbar, no tree reload
+      // Dry-run: show preview on step 3 (или остаёмся на шаге 4 при «Пересчитать»), no DB write, no snackbar, no tree reload
       feoImport.dryResult = data
-      feoImport.step = 3
+      ;(data.unmatched || []).forEach(u => {
+        if (u.kind === 'needs_mapping' && !(u.id in feoImport.remap)) feoImport.remap[u.id] = null
+      })
+      if (!keepStep) feoImport.step = 3
     } else {
       feoImport.result = data
-      feoImport.step = 4
-      showSnack(`Импорт завершён: создано ${data.created}`)
+      feoImport.step = 5
+      let msg = `Импорт завершён: создано ${data.created}`
+      if (data.relinked_count) msg += `, перенесено ссылок ${data.relinked_count}`
+      if (data.deleted_count) msg += `, удалено узлов ${data.deleted_count}`
+      showSnack(msg)
       if (selectedId.value) { await loadFeo(selectedId.value); syncFeoFilled() }
     }
   } catch {
@@ -5817,7 +6025,7 @@ function closeFeoImport() {
   feoImport.show = false; feoImport.step = 1
   feoImport.file = null; feoImport.fileList = []; feoImport.result = null; feoImport.dryResult = null
   feoImport.previewData = null; feoImport.selectedSheet = ''
-  feoDragMapping.value = {}; feoIgnoredCols.value = []
+  feoDragMapping.value = {}; feoIgnoredCols.value = []; feoImport.remap = {}
   if (wasCreated && selectedId.value) { loadFeo(selectedId.value); syncFeoFilled() }
 }
 

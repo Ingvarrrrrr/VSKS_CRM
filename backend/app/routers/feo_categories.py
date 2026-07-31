@@ -972,18 +972,48 @@ async def _do_feo_import(
     c_item_price: int | None = None,
     default_subsidy_id: int | None = None,
     dry_run: bool = False,
+    user=None,
+    remap: str = "",
+    apply_remap: bool = False,
 ) -> dict:
-    """Core import logic shared by /import and /import-mapped endpoints.
+    """Core import logic shared by /import и /import-mapped endpoints.
 
     dry_run=True: вся обработка выполняется, но транзакция откатывается.
     Возвращает {created, updated, skipped, errors, warnings, ...}.
+
+    N2б: `remap` — JSON-список {"old_id": int, "new_path": str} для явного
+    переезда несопоставленных узлов на новые (переезд + удаление опустевших
+    старых узлов выполняются после основного цикла, см. блок ниже unmatched).
+    Фаза переезда/удаления выполняется ТОЛЬКО при apply_remap=True — иначе
+    (обычная загрузка без мастера сопоставления) выполняется только анализ.
     """
     import re as _re
+    import json as _json
 
     if c_lvl2 is None:
         raise HTTPException(400, "Не найден обязательный столбец: 'Уровень 2 (Направление расходов)'")
     if c_subsidy is None and default_subsidy_id is None:
         raise HTTPException(400, "Укажите столбец 'Субсидия' или выберите субсидию назначения")
+    if remap and not apply_remap:
+        raise HTTPException(400, "Параметр remap передан без apply_remap=true")
+
+    remap_list: list[dict] = []
+    if remap:
+        try:
+            _raw_remap = _json.loads(remap)
+            if not isinstance(_raw_remap, list):
+                raise ValueError("ожидался список")
+            for _item in _raw_remap:
+                if not isinstance(_item, dict) or "old_id" not in _item or "new_path" not in _item:
+                    raise ValueError("каждый элемент должен содержать old_id и new_path")
+                remap_list.append({
+                    "old_id": int(_item["old_id"]),
+                    "new_path": str(_item["new_path"]).strip(),
+                })
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(400, f"Неверный формат параметра remap: {e}")
 
     def get_cell(row, col: int | None) -> str | None:
         if col is None or col < 0: return None
@@ -1040,6 +1070,64 @@ async def _do_feo_import(
     for c in existing_cats:
         cat_cache[(c.subsidy_id, c.parent_id, c.name.lower().strip())] = c
 
+    # --- Снимок дерева ДО импорта (нужен и для отчёта "несопоставленные узлы",
+    # и для фазы переезда/удаления N2б). Перенесено сюда с места ниже (после
+    # основного цикла) — переезд/удаление должны опираться на состояние дерева
+    # ДО того, как основной цикл его изменит.
+    existing_by_id: dict[int, FeoCategory] = {c.id: c for c in existing_cats}
+    existing_children: dict[int, list[int]] = {}
+    for c in existing_cats:
+        if c.parent_id is not None:
+            existing_children.setdefault(c.parent_id, []).append(c.id)
+
+    def _get_root_id(cat_id: int) -> int:
+        cur = existing_by_id.get(cat_id)
+        if cur is None:
+            return cat_id
+        visited: set[int] = set()
+        while cur.parent_id is not None and cur.parent_id in existing_by_id:
+            if cur.id in visited:
+                break
+            visited.add(cur.id)
+            cur = existing_by_id[cur.parent_id]
+        return cur.id
+
+    def _full_path(cat_id: int) -> str:
+        chain: list[str] = []
+        cur = existing_by_id.get(cat_id)
+        visited: set[int] = set()
+        while cur is not None and cur.id not in visited:
+            chain.append(cur.name)
+            visited.add(cur.id)
+            if cur.parent_id is None:
+                break
+            cur = existing_by_id.get(cur.parent_id)
+        return " / ".join(reversed(chain))
+
+    def _subtree_ids_local(root_id: int) -> list[int]:
+        ids = [root_id]
+        stack = [root_id]
+        while stack:
+            cur_id = stack.pop()
+            for ch_id in existing_children.get(cur_id, []):
+                ids.append(ch_id)
+                stack.append(ch_id)
+        return ids
+
+    def _strip_num(s: str) -> str:
+        return _re.sub(r'^\s*\d+([.\)]\d+)*[.\)]?\s*', '', s).strip()
+
+    def _canon_path(path: str, *, lower: bool, yo: bool) -> str:
+        out = []
+        for seg in path.split(" / "):
+            s = _strip_num(seg)
+            if lower:
+                s = _re.sub(r'\s+', ' ', s.lower()).strip()
+            if yo:
+                s = s.replace('ё', 'е')
+            out.append(s)
+        return " / ".join(out)
+
     created = 0; updated = 0; skipped = 0; errors: list[dict] = []
     warnings: list[dict] = []
     created_details: list[dict] = []
@@ -1048,6 +1136,13 @@ async def _do_feo_import(
 
     # Множество id родительских узлов, затронутых импортом — для parent_sum_mismatch
     touched_parents: set[int] = set()
+
+    # --- Для отчёта "несопоставленные узлы" (только анализ, БЕЗ мутаций) ---
+    seen_ids: set[int] = set()      # id всех категорий, вернувшихся из find_or_create
+    seen_roots: set[int] = set()    # id корневых (ур.2) узлов, затронутых файлом
+    new_paths: list[str] = []       # пути узлов, которые описывает файл ("Ур2 / Ур3 / Ур4")
+    _new_paths_seen: set[str] = set()
+    new_path_cats: dict[str, FeoCategory] = {}  # путь → объект категории (для резолва remap.new_path)
 
     async def find_or_create(subsidy_id: int, parent_id, name: str, level: int):
         key = (subsidy_id, parent_id, name.lower().strip())
@@ -1061,6 +1156,45 @@ async def _do_feo_import(
         await db.flush()
         cat_cache[key] = cat
         return cat, True
+
+    # --- N2б: пред-проход ТОЛЬКО ради определения затронутых субсидий (для
+    # снимка предыдущей редакции ниже) — лёгкая версия резолва subsidy_id,
+    # без накопления ошибок (их соберёт основной цикл).
+    touched_subsidies: set[int] = set()
+    for _row in rows:
+        _lvl2 = get_cell(_row, c_lvl2)
+        if not _lvl2 or _lvl2.startswith("←"):
+            continue
+        _sub_name = get_cell(_row, c_subsidy) if c_subsidy is not None else None
+        if _sub_name and not _sub_name.startswith("←"):
+            _sid = sub_by_name.get(_sub_name.lower().strip()) or default_subsidy_id
+        else:
+            _sid = default_subsidy_id
+        if _sid:
+            touched_subsidies.add(_sid)
+
+    # --- N2б: снимок предыдущей редакции — ВСЕГДА и ДО основного цикла.
+    # _create_plan_graph_version заново селектит FeoCategory, поэтому вызывать
+    # её нужно именно здесь: после основного цикла дерево уже было бы изменено
+    # (создание/обновление/удаление), и снимок перестал бы быть "предыдущей"
+    # редакцией. Снимок самодостаточен (дерево пишется в JSON инлайном), так
+    # что последующее удаление узлов не портит уже сохранённую версию.
+    version_created = False
+    if user is not None:
+        _remap_note_suffix = ""
+        if remap_list:
+            _pairs = []
+            for _rm in remap_list[:5]:
+                _pairs.append(f"«{_full_path(_rm['old_id'])}» → «{_rm['new_path']}»")
+            _remap_note_suffix = "; перенос узлов: " + "; ".join(_pairs)
+            if len(remap_list) > 5:
+                _remap_note_suffix += f" и ещё {len(remap_list) - 5}"
+        _note = "Загрузка новой редакции разбивки ФЭО" + _remap_note_suffix
+        from app.routers.purchases import _create_plan_graph_version
+        for _sid in touched_subsidies:
+            _v_created = await _create_plan_graph_version(subsidy_id=_sid, db=db, user=user, note=_note)
+            if _v_created:
+                version_created = True
 
     for row_num, row in enumerate(rows, start=2):
         lvl2_name = get_cell(row, c_lvl2)
@@ -1281,6 +1415,21 @@ async def _do_feo_import(
 
             leaf = cats_in_row[-1]
 
+            # --- Учёт для отчёта "несопоставленные узлы" (только анализ) ---
+            root_c = cats_in_row[0]
+            if root_c.id is not None:
+                seen_roots.add(root_c.id)
+            _path_parts: list[str] = []
+            for _c in cats_in_row:
+                if _c.id is not None:
+                    seen_ids.add(_c.id)
+                _path_parts.append(_c.name)
+                _p = " / ".join(_path_parts)
+                if _p not in _new_paths_seen:
+                    _new_paths_seen.add(_p)
+                    new_paths.append(_p)
+                new_path_cats[_p] = _c
+
             changed = False
             if code is not None and leaf.code != code:
                 leaf.code = code; changed = True
@@ -1371,6 +1520,148 @@ async def _do_feo_import(
                 ),
             })
 
+    # --- Отчёт "несопоставленные узлы": ТОЛЬКО анализ, без мутаций/перепривязок ---
+    # Дерево родитель→дети (existing_by_id/existing_children) и хелперы
+    # (_get_root_id/_full_path/_subtree_ids_local/_strip_num/_canon_path)
+    # определены выше, сразу после загрузки existing_cats — они нужны и здесь,
+    # и в фазе переезда/удаления ниже.
+    unmatched: list[dict] = []
+    if seen_roots:
+        candidates = [
+            c for c in existing_cats
+            if c.id not in seen_ids and _get_root_id(c.id) in seen_roots
+        ]
+        # Предрасчёт канонических форм всех new_paths (для подсказок)
+        _np_nonum = [(np, _canon_path(np, lower=False, yo=False)) for np in new_paths]
+        _np_norm = [(np, _canon_path(np, lower=True, yo=False)) for np in new_paths]
+        _np_yo = [(np, _canon_path(np, lower=True, yo=True)) for np in new_paths]
+
+        for cand in candidates:
+            cand_path = _full_path(cand.id)
+            subtree_ids = _subtree_ids_local(cand.id)
+            load = await _feo_category_load(subtree_ids, db)
+            has_refs = any(load[k] for k in (
+                "purchases", "purchase_items", "wishes", "wish_items", "products", "feo_planned_items",
+            ))
+            kind = "needs_mapping" if has_refs else "empty"
+
+            suggestion = None
+            suggestion_reason = None
+            if kind == "needs_mapping":
+                cand_nonum = _canon_path(cand_path, lower=False, yo=False)
+                for np, np_c in _np_nonum:
+                    if np != cand_path and np_c == cand_nonum:
+                        suggestion, suggestion_reason = np, "отличается нумерацией"
+                        break
+                if suggestion is None:
+                    cand_norm = _canon_path(cand_path, lower=True, yo=False)
+                    for np, np_c in _np_norm:
+                        if np != cand_path and np_c == cand_norm:
+                            suggestion, suggestion_reason = np, "отличается регистром или пробелами"
+                            break
+                if suggestion is None:
+                    cand_yo = _canon_path(cand_path, lower=True, yo=True)
+                    for np, np_c in _np_yo:
+                        if np != cand_path and np_c == cand_yo:
+                            suggestion, suggestion_reason = np, "отличается ё/е"
+                            break
+
+            unmatched.append({
+                "id": cand.id,
+                "path": cand_path,
+                "kind": kind,
+                "suggestion": suggestion,
+                "suggestion_reason": suggestion_reason,
+                "load": {
+                    "purchases": load["purchases"],
+                    "purchase_items": load["purchase_items"],
+                    "wishes": load["wishes"],
+                    "wish_items": load["wish_items"],
+                    "products": load["products"],
+                    "feo_planned_items": load["feo_planned_items"],
+                },
+                "blocking_purchases": load["blocking_purchases"],
+            })
+
+    # --- N2б: переезд (remap) + удаление опустевших старых узлов ---
+    # Обязательно ДО dry_run rollback/commit — все строки путей ниже нужно
+    # материализовать в обычные str/dict, пока ORM-объекты ещё не просрочены.
+    # Выполняется ТОЛЬКО при apply_remap=True (см. docstring) — обычная
+    # загрузка (без явного согласия из мастера сопоставления) делает только
+    # анализ unmatched/new_paths выше, ничего не переносит и не удаляет.
+    relinked_count = 0
+    deleted_count = 0
+    remap_applied: list[dict] = []
+    deleted_paths: list[str] = []
+    remap_aborted_reason: str | None = None
+
+    if apply_remap:
+        _unmatched_ids = {u["id"] for u in unmatched}
+
+        if errors:
+            remap_aborted_reason = "переезд отменён: в файле есть ошибки"
+        elif any(sd.get("reason") == "не указана субсидия назначения" for sd in skipped_details):
+            remap_aborted_reason = "переезд отменён: часть строк без субсидии назначения"
+        elif not seen_ids:
+            remap_aborted_reason = "переезд отменён: файл не описал ни одного узла"
+
+        _resolved_remap: list[tuple[int, FeoCategory, str]] = []
+        if remap_aborted_reason is None:
+            for _rm in remap_list:
+                _old_id = _rm["old_id"]
+                _new_path = _rm["new_path"]
+                if _old_id not in _unmatched_ids:
+                    remap_aborted_reason = f"переезд отменён: узел не найден среди несопоставленных (id={_old_id})"
+                    break
+                _new_cat = new_path_cats.get(_new_path)
+                if _new_cat is None or _new_cat.id is None:
+                    remap_aborted_reason = f"переезд отменён: цель сопоставления не найдена в новой разбивке: «{_new_path}»"
+                    break
+                _resolved_remap.append((_old_id, _new_cat, _new_path))
+
+        if remap_aborted_reason is None:
+            # Шаг A — применить переезды. Пути берём СЕЙЧАС (пока объекты живы).
+            for _old_id, _new_cat, _new_path in _resolved_remap:
+                _old_path = _full_path(_old_id)
+                _counts = await _relink_feo_category(_old_id, _new_cat.id, db)
+                relinked_count += sum(_counts.values())
+                remap_applied.append({
+                    "old_path": _old_path,
+                    "new_path": _new_path,
+                    "counts": _counts,
+                })
+
+            # Шаг B — удалить опустевшие несопоставленные узлы (кроме тех, кого
+            # файл всё-таки назвал где-то в поддереве — их каскадом не трогаем).
+            already_deleted: set[int] = set()
+            # обходим от корня к листьям (по глубине path), иначе ребёнок удалится раньше родителя и родитель останется пустым висяком
+            _unmatched_by_depth = sorted(unmatched, key=lambda _c: _c["path"].count(" / "))
+            for _cand in _unmatched_by_depth:
+                _cand_id = _cand["id"]
+                if _cand_id in already_deleted:
+                    continue
+                subtree = _subtree_ids_local(_cand_id)
+                if any(_sid in already_deleted for _sid in subtree):
+                    continue
+                if any(_sid in seen_ids for _sid in subtree):
+                    continue
+                load = await _feo_category_load(subtree, db)
+                has_refs = any(load[k] for k in (
+                    "purchases", "purchase_items", "wishes", "wish_items", "products", "feo_planned_items",
+                ))
+                if has_refs:
+                    continue
+                deleted_paths.append(_cand["path"])
+                await _purge_feo_categories(subtree, db)
+                deleted_count += len(subtree)
+                already_deleted.update(subtree)
+
+            # Шаг C — вычистить cat_cache от удалённых id, чтобы ниже по коду
+            # (если он появится) не переиспользовать протухшие объекты.
+            if already_deleted:
+                for _k in [k for k, c in cat_cache.items() if c.id in already_deleted]:
+                    del cat_cache[_k]
+
     if dry_run:
         await db.rollback()
     else:
@@ -1400,6 +1691,15 @@ async def _do_feo_import(
         "created_details": created_details,
         "updated_details": updated_details, "skipped_details": skipped_details,
         "dry_run": dry_run,
+        "unmatched": unmatched,
+        "new_paths": new_paths,
+        "deleted_count": deleted_count,
+        "relinked_count": relinked_count,
+        "deleted_paths": deleted_paths,
+        "remap_applied": remap_applied,
+        "remap_aborted_reason": remap_aborted_reason,
+        "version_created": version_created,
+        "deletes_applied": bool(apply_remap),
     }
 
 
@@ -1407,14 +1707,18 @@ async def _do_feo_import(
 async def import_feo_from_excel(
     file: UploadFile = File(...),
     dry_run: bool = Query(False),
+    remap: str = Query(""),
+    apply_remap: bool = Query(False),
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_tab('feo_categories')),
+    current_user=Depends(require_tab('feo_categories')),
 ):
     """Импорт категорий ФЭО из Excel.
     Формат: Субсидия | Уровень 2 | Уровень 3 | Уровень 4 | Код | Приложение | Финансирование | Активна
     Каждая строка задаёт путь в иерархии. Промежуточные узлы создаются автоматически.
     Код/Приложение/Финансирование/Активна применяются к самому глубокому указанному уровню.
     dry_run=true: возвращает {created, updated, skipped, errors, warnings} без записи в БД.
+    Переезд (remap) несопоставленных узлов и удаление опустевших старых узлов выполняются
+    только при apply_remap=true; иначе выполняется только анализ (unmatched/new_paths).
     Возвращает {created, updated, skipped, errors, warnings}."""
     if load_workbook is None:
         raise HTTPException(500, "openpyxl не установлен")
@@ -1505,6 +1809,7 @@ async def import_feo_from_excel(
         c_plan_sum_lvl2=c_plan_sum_lvl2, c_plan_sum_lvl3=c_plan_sum_lvl3, c_plan_sum_lvl4=c_plan_sum_lvl4,
         c_item_price=c_item_price,
         db=db, dry_run=dry_run,
+        user=current_user, remap=remap, apply_remap=apply_remap,
     )
 
 
@@ -1553,11 +1858,15 @@ async def import_feo_mapped(
     col_item_price: int = Query(-1),
     default_subsidy_id: int = Query(-1),
     dry_run: bool = Query(False),
+    remap: str = Query(""),
+    apply_remap: bool = Query(False),
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_tab('feo_categories')),
+    current_user=Depends(require_tab('feo_categories')),
 ):
     """Импорт категорий ФЭО с пользовательским маппингом столбцов.
     dry_run=true: вся обработка выполняется, транзакция откатывается; возвращает предупреждения.
+    Переезд (remap) несопоставленных узлов и удаление опустевших старых узлов выполняются
+    только при apply_remap=true; иначе выполняется только анализ (unmatched/new_paths).
     """
     if col_lvl2 < 0:
         raise HTTPException(400, "Не указан обязательный столбец: Уровень 2")
@@ -1660,6 +1969,7 @@ async def import_feo_mapped(
         c_item_price=col_item_price if col_item_price >= 0 else None,
         default_subsidy_id=default_subsidy_id if default_subsidy_id > 0 else None,
         db=db, dry_run=dry_run,
+        user=current_user, remap=remap, apply_remap=apply_remap,
     )
 
 
@@ -1834,6 +2144,218 @@ async def _update_subtree_levels(cat_id: int, level_delta: int, db: AsyncSession
         await _update_subtree_levels(child.id, level_delta, db)
 
 
+# Удаление блокируют только закупки, по которым работа реально идёт
+# (стадия «Ведётся работа» и далее). Желания/план-график/подтверждено —
+# работа не начата, категория удаляется, привязка обнуляется (FK SET NULL).
+BLOCKING_STATUSES = ("work_in_progress", "contracted", "ordered", "delivered", "paid")
+
+
+async def _collect_blocking_purchases(ids: list[int], db: AsyncSession) -> list:
+    """Закупки в блокирующих статусах, привязанные к переданным категориям
+    напрямую (Purchase.feo_category_id) либо через позиции (PurchaseItem.feo_category_id).
+    Уникальные по id, поля: id, purchase_number, subject, status."""
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+
+    direct = (await db.execute(
+        select(Purchase.id, Purchase.purchase_number, Purchase.subject, Purchase.status).where(
+            Purchase.feo_category_id.in_(ids),
+            Purchase.status.in_(BLOCKING_STATUSES),
+        )
+    )).all()
+    via_items = (await db.execute(
+        select(Purchase.id, Purchase.purchase_number, Purchase.subject, Purchase.status)
+        .join(PurchaseItem, PurchaseItem.purchase_id == Purchase.id)
+        .where(
+            PurchaseItem.feo_category_id.in_(ids),
+            Purchase.status.in_(BLOCKING_STATUSES),
+        )
+    )).all()
+
+    seen: dict[int, object] = {}
+    for row in direct:
+        seen[row.id] = row
+    for row in via_items:
+        seen.setdefault(row.id, row)
+    return list(seen.values())
+
+
+async def _purge_feo_categories(ids: list[int], db: AsyncSession):
+    """Отвязать все ссылки на переданные категории и удалить их. Не коммитит —
+    коммитит вызывающий."""
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+    from app.models.product import Product
+    from app.models.feo_planned_item import FeoPlannedItem
+
+    # Отвязать закупки ранних стадий и их позиции от удаляемого поддерева
+    await db.execute(
+        Purchase.__table__.update().where(Purchase.feo_category_id.in_(ids)).values(feo_category_id=None)
+    )
+    await db.execute(
+        PurchaseItem.__table__.update().where(PurchaseItem.feo_category_id.in_(ids)).values(feo_category_id=None)
+    )
+
+    # Nullify FK references in products before deleting
+    await db.execute(
+        Product.__table__.update().where(Product.feo_category_id.in_(ids)).values(feo_category_id=None)
+    )
+
+    # Nullify FK in purchase_items referencing planned_items of these categories
+    planned_item_ids = (await db.execute(
+        select(FeoPlannedItem.id).where(FeoPlannedItem.feo_category_id.in_(ids))
+    )).scalars().all()
+    if planned_item_ids:
+        await db.execute(
+            PurchaseItem.__table__.update().where(
+                PurchaseItem.feo_planned_item_id.in_(planned_item_ids)
+            ).values(feo_planned_item_id=None)
+        )
+
+    # Delete planned items explicitly (in case DB lacks CASCADE)
+    await db.execute(
+        FeoPlannedItem.__table__.delete().where(FeoPlannedItem.feo_category_id.in_(ids))
+    )
+
+    # Delete categories in one statement — feo_categories.parent_id is
+    # ON DELETE CASCADE in the DB, so order doesn't matter. Doing it via
+    # a table-level DELETE (instead of ORM db.delete per object) avoids
+    # lazy-loading the `children` backref (FeoCategory.parent relationship).
+    await db.execute(
+        FeoCategory.__table__.delete().where(FeoCategory.id.in_(ids))
+    )
+
+
+async def _relink_feo_category(old_id: int, new_id: int, db: AsyncSession) -> dict:
+    """Перевести все ссылки со старой категории на новую. Не коммитит.
+    Возвращает счётчик переехавших строк по каждой таблице."""
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+    from app.models.product import Product
+    from app.models.feo_planned_item import FeoPlannedItem
+    from app.models.wish import Wish
+    from app.models.wish_item import WishItem
+
+    counts: dict[str, int] = {}
+
+    def _rowcount(result) -> int:
+        rc = result.rowcount
+        return rc if rc and rc > 0 else 0
+
+    result = await db.execute(
+        Purchase.__table__.update().where(Purchase.feo_category_id == old_id).values(feo_category_id=new_id)
+    )
+    counts["purchases"] = _rowcount(result)
+
+    result = await db.execute(
+        PurchaseItem.__table__.update().where(PurchaseItem.feo_category_id == old_id).values(feo_category_id=new_id)
+    )
+    counts["purchase_items"] = _rowcount(result)
+
+    result = await db.execute(
+        Wish.__table__.update().where(Wish.feo_category_id == old_id).values(feo_category_id=new_id)
+    )
+    counts["wishes"] = _rowcount(result)
+
+    result = await db.execute(
+        WishItem.__table__.update().where(WishItem.feo_category_id == old_id).values(feo_category_id=new_id)
+    )
+    counts["wish_items"] = _rowcount(result)
+
+    result = await db.execute(
+        Product.__table__.update().where(Product.feo_category_id == old_id).values(feo_category_id=new_id)
+    )
+    counts["products"] = _rowcount(result)
+
+    # Плановые позиции — с дедупликацией по имени (регистронезависимо, trim)
+    old_items = (await db.execute(
+        select(FeoPlannedItem).where(FeoPlannedItem.feo_category_id == old_id)
+    )).scalars().all()
+    new_items = (await db.execute(
+        select(FeoPlannedItem).where(FeoPlannedItem.feo_category_id == new_id)
+    )).scalars().all()
+    new_by_name = {(i.name or "").strip().lower(): i for i in new_items}
+
+    planned_items_moved = 0
+    for item in old_items:
+        key = (item.name or "").strip().lower()
+        existing = new_by_name.get(key)
+        if existing is not None:
+            await db.execute(
+                PurchaseItem.__table__.update()
+                .where(PurchaseItem.feo_planned_item_id == item.id)
+                .values(feo_planned_item_id=existing.id)
+            )
+            await db.execute(
+                FeoPlannedItem.__table__.delete().where(FeoPlannedItem.id == item.id)
+            )
+        else:
+            await db.execute(
+                FeoPlannedItem.__table__.update()
+                .where(FeoPlannedItem.id == item.id)
+                .values(feo_category_id=new_id)
+            )
+            new_by_name[key] = item
+        planned_items_moved += 1
+    counts["feo_planned_items"] = planned_items_moved
+
+    return counts
+
+
+async def _feo_category_load(ids: list[int], db: AsyncSession) -> dict:
+    """Что висит на переданных категориях: количества по каждой из ссылающихся
+    таблиц + список блокирующих закупок с человекочитаемым статусом.
+    Позволяет вызывающему решить, пуст ли узел, и показать пользователю причину."""
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+    from app.models.product import Product
+    from app.models.feo_planned_item import FeoPlannedItem
+    from app.models.wish import Wish
+    from app.models.wish_item import WishItem
+    from app.routers.purchase_transitions import STATUS_LABELS
+
+    purchases_count = (await db.execute(
+        select(func.count(Purchase.id)).where(Purchase.feo_category_id.in_(ids))
+    )).scalar_one()
+    purchase_items_count = (await db.execute(
+        select(func.count(PurchaseItem.id)).where(PurchaseItem.feo_category_id.in_(ids))
+    )).scalar_one()
+    wishes_count = (await db.execute(
+        select(func.count(Wish.id)).where(Wish.feo_category_id.in_(ids))
+    )).scalar_one()
+    wish_items_count = (await db.execute(
+        select(func.count(WishItem.id)).where(WishItem.feo_category_id.in_(ids))
+    )).scalar_one()
+    products_count = (await db.execute(
+        select(func.count(Product.id)).where(Product.feo_category_id.in_(ids))
+    )).scalar_one()
+    planned_items_count = (await db.execute(
+        select(func.count(FeoPlannedItem.id)).where(FeoPlannedItem.feo_category_id.in_(ids))
+    )).scalar_one()
+
+    blocking = await _collect_blocking_purchases(ids, db)
+    purchases_list = [
+        {
+            "id": p.id,
+            "purchase_number": p.purchase_number,
+            "subject": p.subject,
+            "status": p.status,
+            "status_label": STATUS_LABELS.get(p.status, p.status),
+        }
+        for p in blocking
+    ]
+
+    return {
+        "purchases": purchases_count,
+        "purchase_items": purchase_items_count,
+        "wishes": wishes_count,
+        "wish_items": wish_items_count,
+        "products": products_count,
+        "feo_planned_items": planned_items_count,
+        "blocking_purchases": purchases_list,
+    }
+
+
 @router.get("/{cat_id}/subtree")
 async def get_category_subtree(
     cat_id: int,
@@ -1863,17 +2385,7 @@ async def delete_category(
     # Collect entire subtree
     all_ids = await _collect_subtree_ids(cat_id, db)
 
-    # Удаление блокируют только закупки, по которым работа реально идёт
-    # (стадия «Ведётся работа» и далее). Желания/план-график/подтверждено —
-    # работа не начата, категория удаляется, привязка обнуляется (FK SET NULL).
-    from app.models.purchase import Purchase
-    BLOCKING_STATUSES = ("work_in_progress", "contracted", "ordered", "delivered", "paid")
-    linked_purchases = (await db.execute(
-        select(Purchase.id, Purchase.subject).where(
-            Purchase.feo_category_id.in_(all_ids),
-            Purchase.status.in_(BLOCKING_STATUSES),
-        )
-    )).all()
+    linked_purchases = await _collect_blocking_purchases(all_ids, db)
     if linked_purchases:
         purchase_ids = [p.id for p in linked_purchases]
         raise HTTPException(
@@ -1889,44 +2401,7 @@ async def delete_category(
             }
         )
 
-    # Отвязать закупки ранних стадий и их позиции от удаляемого поддерева
-    from app.models.purchase_item import PurchaseItem as _PI
-    await db.execute(
-        Purchase.__table__.update().where(Purchase.feo_category_id.in_(all_ids)).values(feo_category_id=None)
-    )
-    await db.execute(
-        _PI.__table__.update().where(_PI.feo_category_id.in_(all_ids)).values(feo_category_id=None)
-    )
-
-    # Nullify FK references in products before deleting
-    from app.models.product import Product
-    await db.execute(
-        Product.__table__.update().where(Product.feo_category_id.in_(all_ids)).values(feo_category_id=None)
-    )
-
-    # Nullify FK in purchase_items referencing planned_items of these categories
-    from app.models.feo_planned_item import FeoPlannedItem
-    from app.models.purchase_item import PurchaseItem
-    planned_item_ids = (await db.execute(
-        select(FeoPlannedItem.id).where(FeoPlannedItem.feo_category_id.in_(all_ids))
-    )).scalars().all()
-    if planned_item_ids:
-        await db.execute(
-            PurchaseItem.__table__.update().where(
-                PurchaseItem.feo_planned_item_id.in_(planned_item_ids)
-            ).values(feo_planned_item_id=None)
-        )
-
-    # Delete planned items explicitly (in case DB lacks CASCADE)
-    await db.execute(
-        FeoPlannedItem.__table__.delete().where(FeoPlannedItem.feo_category_id.in_(all_ids))
-    )
-
-    # Cascade delete (children first)
-    for cid in reversed(all_ids):
-        obj = await db.get(FeoCategory, cid)
-        if obj:
-            await db.delete(obj)
+    await _purge_feo_categories(all_ids, db)
     await db.commit()
     deleted_count = len(all_ids)
     return {"ok": True, "deleted_count": deleted_count}

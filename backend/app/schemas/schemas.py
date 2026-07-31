@@ -696,6 +696,7 @@ class PurchaseCreate(BaseModel):
     assigned_user_id: Optional[int] = None  # Phase 28 B4: ответственный исполнитель
     service_note_to_user_id: Optional[int] = None  # SN-UX: адресат служебной записки
     vat_mode: Optional[str] = None  # Phase 26-U-3: 'uniform' | 'per_item'
+    feo_per_item: bool = False  # режим «своя категория ФЭО для каждого товара»
     # Phase 26-K: доп. соглашение и дата заказа
     agreement_number: Optional[str] = None
     agreement_date: Optional[date] = None
@@ -829,6 +830,7 @@ class PurchaseUpdate(BaseModel):
     reimbursement_user_id: Optional[int] = None
     assigned_user_id: Optional[int] = None  # Phase 28 B4
     vat_mode: Optional[str] = None  # Phase 26-U-3: 'uniform' | 'per_item'
+    feo_per_item: Optional[bool] = None  # режим «своя категория ФЭО для каждого товара»
     # Phase 26-K: доп. соглашение и дата заказа
     agreement_number: Optional[str] = None
     agreement_date: Optional[date] = None

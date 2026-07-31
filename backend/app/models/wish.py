@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Numeric, Text, ForeignKey, DateTime, Date
+from sqlalchemy import Column, Integer, String, Numeric, Text, ForeignKey, DateTime, Date, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -29,6 +29,11 @@ class Wish(Base):
 
     subsidy_id = Column(Integer, ForeignKey("subsidies.id", ondelete="SET NULL"), nullable=True)
     feo_category_id = Column(Integer, ForeignKey("feo_categories.id", ondelete="SET NULL"), nullable=True)
+    # Режим «своя категория ФЭО для каждого товара» — раньше вычислялся эвристикой
+    # на фронте (отдельно и по-разному для заявки и закупки) и слетал при конвертации.
+    feo_per_item = Column(Boolean, nullable=False, default=False, server_default="false")
+    # НДС режим — 'uniform' (одинаковый) или 'per_item' (для каждого товара), см. Purchase.vat_mode
+    vat_mode = Column(String(20), nullable=True, default="uniform", server_default="uniform")
     event_id = Column(Integer, ForeignKey("events.id", ondelete="SET NULL"), nullable=True)
     assigned_to = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     executor_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # Кто исполняет (ставит approver)

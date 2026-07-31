@@ -1,7 +1,7 @@
 import re as _re
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy import select, delete, func, or_, and_
-from datetime import date
+from datetime import date, datetime
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
@@ -151,6 +151,18 @@ async def _ensure_no_pending_approvals(
         await db.flush()
 
 
+def _as_date(value):
+    """needed_date приходит из нетипизированного items: list — Pydantic его не приводит."""
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+        return date.fromisoformat(value[:10])
+    if isinstance(value, datetime):
+        return value.date()
+    return value
+
+
 def _eff_date(wish, item):
     """Эффективная плановая дата позиции: приоритет
     позиция(needed_date) → Срок исполнения(execution_deadline) → Желаемая дата(desired_date)."""
@@ -267,8 +279,13 @@ async def _sync_wish_items_to_purchases(wish, db: AsyncSession) -> None:
             pi.unit_price = wi.unit_price
             pi.quantity = wi.quantity
             pi.total_price = (wi.unit_price or 0) * (wi.quantity or 0)
+            pi.feo_category_id = wi.feo_category_id
+            pi.vat_rate = getattr(wi, 'vat_rate', None)
             changed = True
         if changed:
+            if p.status not in CONTRACTED_STATUSES:
+                p.feo_per_item = bool(getattr(wish, 'feo_per_item', False))
+                p.vat_mode = getattr(wish, 'vat_mode', None) or 'uniform'
             await db.flush()
             # Пересчёт сумм закупки
             items_sum_res = await db.execute(
@@ -457,6 +474,8 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
             delivery_date=group_delivery_date,  # W2: единая дата для группы
             purchase_method=_purchase_method,
             payment_basis_type=_payment_basis_type,
+            feo_per_item=bool(getattr(wish, 'feo_per_item', False)),
+            vat_mode=(getattr(wish, 'vat_mode', None) or 'uniform'),
         )
         db.add(p)
         await db.flush()  # get p.id
@@ -476,6 +495,7 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
                 feo_category_id=wi.feo_category_id,  # B9: per-item feo
                 needed_date=_eff_date(wish, wi),  # W2: наследование эффективной даты
                 wish_item_id=wi.id,  # W1: hard link to source WishItem
+                vat_rate=getattr(wi, 'vat_rate', None),
             )
             db.add(pi)
         await db.flush()
@@ -797,6 +817,8 @@ async def create_wish(
         assigned_to=body.assigned_to,
         status="draft",
         created_by=current_user.id,
+        feo_per_item=body.feo_per_item,
+        vat_mode=body.vat_mode or 'uniform',
     )
     db.add(wish)
     await db.flush()
@@ -814,7 +836,8 @@ async def create_wish(
                 total_price=item_data.get('total_price', 0),
                 country_origin=item_data.get('country_origin', 'Россия'),
                 feo_category_id=item_data.get('feo_category_id'),  # B9
-                needed_date=item_data.get('needed_date'),  # W2
+                needed_date=_as_date(item_data.get('needed_date')),  # W2
+                vat_rate=item_data.get('vat_rate'),
             )
             db.add(wi)
         await db.flush()
@@ -899,7 +922,8 @@ async def update_wish(
                     total_price=item_data.get('total_price', 0),
                     country_origin=item_data.get('country_origin', 'Россия'),
                     feo_category_id=item_data.get('feo_category_id'),  # B9
-                    needed_date=item_data.get('needed_date'),  # W2
+                    needed_date=_as_date(item_data.get('needed_date')),  # W2
+                    vat_rate=item_data.get('vat_rate'),
                 )
                 db.add(wi)
             await db.flush()
@@ -927,7 +951,9 @@ async def update_wish(
                 if 'feo_category_id' in item_data:
                     wi.feo_category_id = item_data['feo_category_id']
                 if 'needed_date' in item_data:
-                    wi.needed_date = item_data['needed_date']
+                    wi.needed_date = _as_date(item_data['needed_date'])
+                if 'vat_rate' in item_data:
+                    wi.vat_rate = item_data['vat_rate']
             await db.flush()
 
     # W2: re-approval trigger for submitted/approved/converted wishes
@@ -1350,6 +1376,8 @@ async def convert_wish(
         delivery_date=conv_delivery_date,
         purchase_method=_conv_purchase_method,
         payment_basis_type=_conv_payment_basis_type,
+        feo_per_item=bool(getattr(wish, 'feo_per_item', False)),
+        vat_mode=(getattr(wish, 'vat_mode', None) or 'uniform'),
     )
     db.add(p)
     await db.flush()  # get p.id
@@ -1369,6 +1397,7 @@ async def convert_wish(
             feo_category_id=wi.feo_category_id,  # B9: per-item feo
             needed_date=_eff_date(wish, wi),  # W2: наследование эффективной даты
             wish_item_id=wi.id,  # W1: hard link to source WishItem
+            vat_rate=getattr(wi, 'vat_rate', None),
         )
         db.add(pi)
     await db.flush()

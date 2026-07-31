@@ -2,6 +2,7 @@ import os
 import re
 from io import BytesIO
 from datetime import date
+from decimal import Decimal
 from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse, FileResponse
@@ -405,6 +406,37 @@ def _fmt_money_plain(v) -> str:
     return f"{float(v):,.2f}".replace(",", " ").replace(".", ",")
 
 
+def _merge_identical_items(items):
+    """Склеивает позиции, у которых совпадает всё, кроме категории ФЭО.
+
+    Возвращает список кортежей (representative_item, merged_quantity, merged_total_price)
+    в порядке первого появления. Цена за единицу в группе одна и та же, поэтому
+    суммы документа склейка не меняет.
+    """
+    groups: dict = {}
+    order: list = []
+    for item in items or []:
+        # feo_category_id/feo_planned_item_id намеренно не входят в ключ — по ним и склеиваем
+        key = (
+            item.product_id,
+            (item.item_name or "").strip().lower(),
+            (item.item_type or ""),
+            (item.unit or ""),
+            str(item.unit_price) if item.unit_price is not None else "",
+            (item.country_origin or ""),
+            (getattr(item, "vat_rate", None) or ""),
+        )
+        if key not in groups:
+            groups[key] = [item, None, None]  # [representative, quantity, total_price]
+            order.append(key)
+        g = groups[key]
+        if item.quantity is not None:
+            g[1] = (g[1] if g[1] is not None else Decimal("0")) + Decimal(str(item.quantity))
+        if item.total_price is not None:
+            g[2] = (g[2] if g[2] is not None else Decimal("0")) + Decimal(str(item.total_price))
+    return [tuple(groups[key]) for key in order]
+
+
 # Signatory position: extract from signatory field if "Директор ФИО" format
 def _signatory_position(signatory: str) -> str:
     if not signatory:
@@ -632,15 +664,15 @@ async def _build_contract_items_context(p, db) -> dict:
             total_numeric += tot
     else:
         # D-08 fallback: contract_items empty — use purchase_items as deprecated alias
-        for idx, item in enumerate(getattr(p, "items", None) or [], start=1):
-            tot = float(item.total_price) if item.total_price else 0.0
+        for idx, (item, qty, total) in enumerate(_merge_identical_items(getattr(p, "items", None) or []), start=1):
+            tot = float(total) if total else 0.0
             result_list.append({
                 "num": idx,
                 "name": item.item_name or "",
-                "quantity": float(item.quantity) if item.quantity else "",
+                "quantity": float(qty) if qty else "",
                 "unit": item.unit or "",
                 "unit_price": _fmt_money(item.unit_price),
-                "total": _fmt_money(item.total_price),
+                "total": _fmt_money(total),
                 "total_numeric": tot,
             })
             total_numeric += tot
@@ -1102,24 +1134,41 @@ async def generate_document(
     feo_level_1 = ""
     feo_level_2 = ""
     feo_level_3 = ""
-    if p.feo_category_id:
+    item_feo_paths: list = []  # [(path_str, Decimal total)] по позициям со своей категорией ФЭО
+    item_feo_ids = list(dict.fromkeys(it.feo_category_id for it in (p.items or []) if it.feo_category_id))
+    if p.feo_category_id or item_feo_ids:
         feo_res = await db.execute(select(FeoCategory))
         all_feo = {f.id: f for f in feo_res.scalars().all()}
-        path_nodes: list = []
-        node_id = p.feo_category_id
-        visited: set = set()
-        while node_id and node_id not in visited:
-            visited.add(node_id)
-            cat = all_feo.get(node_id)
-            if not cat:
-                break
-            path_nodes.append(cat)
-            node_id = cat.parent_id
-        path_nodes.reverse()  # root → leaf
-        feo_path = " → ".join(n.name.strip() for n in path_nodes)
-        if len(path_nodes) >= 1: feo_level_1 = path_nodes[0].name.strip()
-        if len(path_nodes) >= 2: feo_level_2 = path_nodes[1].name.strip()
-        if len(path_nodes) >= 3: feo_level_3 = path_nodes[2].name.strip()
+
+        def _feo_path_nodes(node_id):
+            path_nodes: list = []
+            visited: set = set()
+            while node_id and node_id not in visited:
+                visited.add(node_id)
+                cat = all_feo.get(node_id)
+                if not cat:
+                    break
+                path_nodes.append(cat)
+                node_id = cat.parent_id
+            path_nodes.reverse()  # root → leaf
+            return path_nodes
+
+        if p.feo_category_id:
+            path_nodes = _feo_path_nodes(p.feo_category_id)
+            feo_path = " → ".join(n.name.strip() for n in path_nodes)
+            if len(path_nodes) >= 1: feo_level_1 = path_nodes[0].name.strip()
+            if len(path_nodes) >= 2: feo_level_2 = path_nodes[1].name.strip()
+            if len(path_nodes) >= 3: feo_level_3 = path_nodes[2].name.strip()
+
+        if item_feo_ids:
+            cat_sums: dict = {cid: Decimal("0") for cid in item_feo_ids}
+            for it in (p.items or []):
+                if it.feo_category_id and it.total_price is not None:
+                    cat_sums[it.feo_category_id] += Decimal(str(it.total_price))
+            for cid in item_feo_ids:
+                cat_path = " → ".join(n.name.strip() for n in _feo_path_nodes(cid))
+                if cat_path:
+                    item_feo_paths.append((cat_path, cat_sums[cid]))
 
     # B-dedup: формат ФИО → инициалы.
     # "Иванова Ирина Владиславовна"   → "Иванова И.В."
@@ -1251,7 +1300,7 @@ async def generate_document(
 
     # Build template context
     items_list = []
-    for idx, item in enumerate(p.items or [], start=1):
+    for idx, (item, qty, total) in enumerate(_merge_identical_items(p.items or []), start=1):
         photo_url = item.product.photo_url if item.product else None
         items_list.append({
             "num": idx,
@@ -1262,11 +1311,11 @@ async def generate_document(
             ) or "",
             "type": item.item_type or "",
             "item_kind": (item.product.item_kind if item.product else None) or "товар",
-            "quantity": float(item.quantity) if item.quantity else "",
+            "quantity": float(qty) if qty else "",
             "unit": item.unit or "",
             "unit_price": _fmt_money(item.unit_price),
-            "total_price": _fmt_money(item.total_price),
-            "total": _fmt_money(item.total_price),
+            "total_price": _fmt_money(total),
+            "total": _fmt_money(total),
             "photo": _resolve_photo(photo_url),
             # Поля для repair_framework (появятся позже, пока заглушки)
             "code": "",
@@ -1325,7 +1374,9 @@ async def generate_document(
         # Substitute responsible person into rows with empty or placeholder full_name
         if not full_name.strip().strip("_").strip():
             full_name = resolved_responsible
-        if getattr(a, "show_feo_path", False) and feo_path:
+        if getattr(a, "show_feo_path", False) and item_feo_paths:
+            note = "; ".join(f"{path} — {_fmt_money(total)} ₽" for path, total in item_feo_paths)
+        elif getattr(a, "show_feo_path", False) and feo_path:
             item_type_label = {"товар": "Товары", "услуга": "Услуги"}.get(p.item_type or "", "")
             note = feo_path + (f" ({item_type_label})" if item_type_label else "")
         else:
@@ -2413,18 +2464,18 @@ async def render_fabrikant_package_files(
     resolved_responsible = _fmt_initials(raw_responsible) if raw_responsible else ""
 
     items_list = []
-    for idx, item in enumerate(p.items or [], start=1):
+    for idx, (item, qty, total) in enumerate(_merge_identical_items(p.items or []), start=1):
         items_list.append({
             "num": idx,
             "name": item.item_name or "",
             "description": "",
             "type": item.item_type or "",
             "item_kind": (item.product.item_kind if item.product else None) or "товар",
-            "quantity": float(item.quantity) if item.quantity else "",
+            "quantity": float(qty) if qty else "",
             "unit": item.unit or "",
             "unit_price": _fmt_money(item.unit_price),
-            "total_price": _fmt_money(item.total_price),
-            "total": _fmt_money(item.total_price),
+            "total_price": _fmt_money(total),
+            "total": _fmt_money(total),
             "photo": "",
             # Поля для repair_framework (появятся позже, пока заглушки)
             "code": "",

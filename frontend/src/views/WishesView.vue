@@ -1100,6 +1100,7 @@
                       color="primary"
                       hide-details
                       :disabled="!isWishEditable && !canAssigneeAct"
+                      @update:model-value="onWishFeoPerItemChange"
                     />
                   </v-col>
                   <v-col cols="12">
@@ -1565,6 +1566,8 @@
                   :subsidy-id="wishForm.subsidy_id"
                   :default-feo-category-id="wishFeoSelected"
                   :show-needed-date="wishDateMode === 'per_item'"
+                  :vat-mode="wishForm.vat_mode"
+                  @update:vat-mode="(v: string) => { wishForm.vat_mode = v }"
                 />
                 <div class="d-flex justify-end mt-3">
                   <div class="text-subtitle-1 font-weight-bold">Сумма заявки: {{ formatMoney(totalNmck) }}</div>
@@ -1711,6 +1714,20 @@
           <v-btn variant="flat" color="error" :loading="rejectingWish" :disabled="!rejectionReason.trim()" @click="rejectWish">
             Отклонить
           </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-dialog v-model="wishFeoPerItemDisableDialog" max-width="480" :fullscreen="mobile">
+      <v-card>
+        <v-card-title class="pa-4 pb-2">Отключить разные ФЭО по позициям?</v-card-title>
+        <v-card-text class="pa-4">
+          У {{ wishFeoPerItemDisableCount }} {{ wishFeoPerItemDisableCount === 1 ? 'позиции' : 'позиций' }} указана своя категория ФЭО — при отключении режима она будет очищена при сохранении.
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="cancelWishFeoPerItemDisable">Отмена</v-btn>
+          <v-btn variant="flat" color="warning" @click="wishFeoPerItemDisableDialog = false">Отключить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -2101,6 +2118,21 @@ const eventsForSubsidy = computed(() => {
 const wishFeoSelected = ref<number | null>(null)
 const wishFeoSkipLast = ref(false)
 const wishFeoPerItem = ref(false)
+const wishFeoPerItemDisableDialog = ref(false)
+const wishFeoPerItemDisableCount = ref(0)
+const onWishFeoPerItemChange = (val: boolean | null) => {
+  if (val) return
+  // Ручное выключение — предупреждаем, если есть позиции с уже выбранной категорией
+  const count = wishForm.value.items.filter((i: any) => i.feo_category_id != null).length
+  if (count > 0) {
+    wishFeoPerItemDisableCount.value = count
+    wishFeoPerItemDisableDialog.value = true
+  }
+}
+const cancelWishFeoPerItemDisable = () => {
+  wishFeoPerItem.value = true
+  wishFeoPerItemDisableDialog.value = false
+}
 
 const orgMembers = ref<User[]>([])
 
@@ -2302,6 +2334,7 @@ const wishForm = ref({
   status: 'draft' as string,
   executor_id: null as number | null,
   execution_deadline: '' as string,
+  vat_mode: 'uniform' as string,
 })
 
 // ФЭО-дерево субсидии (узлы + листья с бюджетами) — объявлено ПОСЛЕ wishForm (TDZ)
@@ -2503,6 +2536,7 @@ function resetForm() {
     status: 'draft',
     executor_id: null,
     execution_deadline: '',
+    vat_mode: 'uniform',
   }
   wishFeoSelected.value = null
   wishFeoSkipLast.value = false
@@ -2540,6 +2574,7 @@ async function openEditDialog(wish: Wish) {
   wishForm.value.priority = wish.priority || 'medium'
   wishForm.value.desired_date = wish.desired_date || ''
   wishForm.value.status = wish.status || 'draft'
+  wishForm.value.vat_mode = (wish as any).vat_mode || 'uniform'
   forceStatusValue.value = wish.status || 'draft'
 
   // B5 — Seed cascade from wish.feo_category_id (цепочку строит сам FeoCascadeSelect).
@@ -2610,13 +2645,14 @@ async function openEditDialog(wish: Wish) {
         total_price: i.total_price != null ? Number(i.total_price) : null,
         country_origin: i.country_origin || 'РФ',
         feo_category_id: i.feo_category_id ?? null,
+        vat_rate: i.vat_rate ?? null,
         needed_date: i.needed_date ?? null,
         _photo_url: prod ? photoOf(prod) : undefined,
         _description: prod?.description || undefined,
       }
     }) as any
-    // B9: позиции с собственным ФЭО → включаем per-item режим
-    wishFeoPerItem.value = rawItems.some((i: any) => i.feo_category_id != null)
+    // Режим читаем из БД; фолбэк — только для записей, созданных до появления колонки.
+    wishFeoPerItem.value = (wish as any).feo_per_item ?? rawItems.some((i: any) => i.feo_category_id != null)
     wishDateMode.value = (wishForm.value.items as any[]).some(it => it.needed_date) ? 'per_item' : 'common'
     await loadWishMembers()
     await loadWishApprovers()
@@ -2903,6 +2939,7 @@ async function saveWish(andSubmit = false) {
     const payload = {
       ...wishForm.value,
       feo_category_id: feo,
+      feo_per_item: wishFeoPerItem.value,
       title,
       items: wishForm.value.items.map(({ _selectedProduct, _photo_url, _description, _description_44fz, ...rest }) => ({
         ...rest,

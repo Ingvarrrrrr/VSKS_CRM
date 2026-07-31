@@ -532,7 +532,7 @@
               </div>
             </v-col>
             <!-- F-PIF1: тогл «Разные ФЭО позиции для каждого товара» -->
-            <v-col v-if="selectedFeo2" cols="12">
+            <v-col v-if="selectedFeo2 || form.feo_per_item" cols="12">
               <v-switch
                 v-model="form.feo_per_item"
                 label="Разные ФЭО позиции для каждого товара"
@@ -916,7 +916,7 @@
             :form-mode="formMode"
             :contractors="contractors"
             :feo-per-item="form.feo_per_item"
-            :level2-id="selectedFeo2"
+            :level2-id="itemsFeoLevel2"
             :subsidy-id="form.subsidy_id"
             :purchase-id-feo="purchaseId"
             :default-feo-category-id="form.feo_category_id"
@@ -3107,6 +3107,23 @@
           <v-btn color="warning" variant="flat" :loading="saving" @click="doSave(true)">
             Сохранить с превышением
           </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-dialog v-model="feoPerItemDisableDialog" max-width="480" :fullscreen="mobile">
+      <v-card>
+        <v-card-title class="text-h6 d-flex align-center ga-2">
+          <v-icon color="warning">mdi-alert</v-icon>
+          Отключить разные ФЭО по позициям?
+        </v-card-title>
+        <v-card-text>
+          У {{ feoPerItemDisableCount }} {{ feoPerItemDisableCount === 1 ? 'позиции' : 'позиций' }} указана своя категория ФЭО — при отключении режима она будет очищена при сохранении.
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="outlined" @click="cancelFeoPerItemDisable">Отмена</v-btn>
+          <v-btn color="warning" variant="flat" @click="feoPerItemDisableDialog = false">Отключить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -6780,15 +6797,28 @@ const onFeo1Change = async (val: number | null) => {
 }
 const onFeo2Change = () => { selectedFeo3.value = null; updateFeoId() }
 const onFeo3Change = () => { updateFeoId() }
+const feoPerItemDisableDialog = ref(false)
+const feoPerItemDisableCount = ref(0)
 const onFeoPerItemChange = (val: boolean | null) => {
   // ISSUE-3 PART A: при включении per-item режима уровень 3 в шапке отключается,
   // поэтому самым глубоким выбранным уровнем шапки становится selectedFeo2.
   // Обновляем form.feo_category_id, чтобы он стал дефолтом для позиций.
   if (val) {
     form.feo_category_id = selectedFeo3.value ?? selectedFeo2.value ?? selectedFeo1.value ?? null
+    return
+  }
+  // Ручное выключение — предупреждаем, если есть позиции с уже выбранной категорией
+  const count = items.value.filter(i => i.feo_category_id != null).length
+  if (count > 0) {
+    feoPerItemDisableCount.value = count
+    feoPerItemDisableDialog.value = true
   }
   // Заполнение пустых позиций дефолтом выполняется внутри PurchaseItemsEditor
   // (watch на feoPerItem + defaultFeoCategoryId). При выключении ничего не делаем.
+}
+const cancelFeoPerItemDisable = () => {
+  form.feo_per_item = true
+  feoPerItemDisableDialog.value = false
 }
 
 // SN-UX: при выборе адресата СЗ — автоматически ставим его как ответственного, если пуст
@@ -6818,6 +6848,24 @@ const resolveFeeLevels = (id: number) => {
   selectedFeo2.value = path[1] ?? null
   selectedFeo3.value = path[2] ?? null
 }
+
+// FCAT-F1: в per-item режиме шапка ФЭО пуста (selectedFeo2 = null) — скоуп для
+// пер-позиционного пикера категорий берём от категории первой позиции с заполненным feo_category_id.
+// selectedFeo1/2/3 и form.feo_category_id НЕ трогаем, чтобы не дописать в БД
+// шапочную категорию, которую пользователь не выбирал.
+const itemsFeoLevel2 = computed<number | null>(() => {
+  if (selectedFeo2.value) return selectedFeo2.value
+  if (!form.feo_per_item) return null
+  const withCat = items.value.find(i => (i as any).feo_category_id != null)
+  if (!withCat) return null
+  const path: number[] = []
+  let cur = allFeoCategories.value.find(c => c.id === (withCat as any).feo_category_id)
+  while (cur) {
+    path.unshift(cur.id)
+    cur = cur.parent_id ? allFeoCategories.value.find(c => c.id === cur!.parent_id) : undefined
+  }
+  return path[1] ?? null
+})
 
 // Пересчитываем выбранные уровни ФЭО как только справочник загружен/обновлён
 // (loadRefs и loadPurchase могут гоняться параллельно при медленном сервере)
@@ -7365,14 +7413,8 @@ const loadPurchase = async () => {
         _description_44fz: i.product_description_44fz || prod?.description_44fz || undefined,
       }
     })
-    // F-PIF1/FCAT-F1: auto-detect per-item mode — если >=2 items с разными ненулевыми feo_category_id или feo_planned_item_id
-    {
-      const feoIds = data.items
-        .map((i: any) => i.feo_category_id ?? i.feo_planned_item_id)
-        .filter((id: any) => id != null)
-      const unique = new Set(feoIds)
-      if (unique.size >= 2) form.feo_per_item = true
-    }
+    // Режим читаем из БД; фолбэк — только для записей, созданных до появления колонки.
+    form.feo_per_item = data.feo_per_item ?? data.items.some((i: any) => i.feo_category_id != null)
   } else if (data.item_name) {
     // Migrate old single-item purchase
     items.value = [{
@@ -7995,10 +8037,8 @@ const doSave = async (adminOverride: boolean) => {
         // FCAT-F1: per-item leaf FeoCategory
         feo_category_id: form.feo_per_item ? (rest.feo_category_id ?? null) : null,
       }))
-    // F-PIF1: feo_per_item — UI-only поле, не отправляем на бэкенд
-    const { feo_per_item: _feoPerItem, ...formWithoutFeoPerItem } = form
     const payload = {
-      ...formWithoutFeoPerItem,
+      ...form,
       planned_total_price: displayNmck.value || null,
       total_nmck: displayNmck.value || null,
       framework_seq: form.framework_seq || null,

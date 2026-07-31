@@ -21,6 +21,7 @@ class WishItem(Base):
     # TODO: ALTER TABLE wish_items ADD COLUMN IF NOT EXISTS feo_category_id INTEGER REFERENCES feo_categories(id) ON DELETE SET NULL
     feo_category_id = Column(Integer, ForeignKey("feo_categories.id", ondelete="SET NULL"), nullable=True)
     needed_date = Column(Date, nullable=True)   # дата потребности per-item
+    vat_rate = Column(String(20), nullable=True)  # per-item НДС ставка (mirrors purchase_items.vat_rate)
 
     wish = relationship("Wish", back_populates="items")
     product = relationship("Product", foreign_keys=[product_id])

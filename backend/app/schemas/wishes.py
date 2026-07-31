@@ -36,6 +36,7 @@ class WishItemOut(BaseModel):
     target_column_key: Optional[str] = None  # Phase 13 D-04: kanban column override
     feo_category_id: Optional[int] = None  # B9: per-item FEO category
     needed_date: Optional[date] = None  # W2: дата потребности per-item
+    vat_rate: Optional[str] = None  # per-item НДС ставка (mirrors PurchaseItem.vat_rate)
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -59,6 +60,8 @@ class WishCreate(BaseModel):
     feo_category_id: Optional[int] = None
     event_id: Optional[int] = None
     assigned_to: Optional[int] = None
+    feo_per_item: bool = False  # режим «своя категория ФЭО для каждого товара»
+    vat_mode: Optional[str] = None  # 'uniform' | 'per_item'
     items: Optional[list] = None  # list of dicts with item_name, item_type, quantity, unit, unit_price, total_price, country_origin
 
     @field_validator('title')
@@ -87,6 +90,11 @@ class WishUpdate(BaseModel):
     feo_category_id: Optional[int] = None
     event_id: Optional[int] = None
     assigned_to: Optional[int] = None
+    # Optional[...] = None (не bool = False) намеренно: update_wish делает
+    # body.model_dump(exclude_none=True) — default False затирал бы существующее
+    # значение при каждом частичном PUT, не содержащем это поле.
+    feo_per_item: Optional[bool] = None
+    vat_mode: Optional[str] = None  # 'uniform' | 'per_item'
     items: Optional[list] = None  # list of dicts with item_name, item_type, quantity, unit, unit_price, total_price, country_origin
 
     @field_validator('title')
@@ -149,6 +157,8 @@ class WishOut(BaseModel):
     subsidy_id: Optional[int] = None
     subsidy_name: Optional[str] = None
     feo_category_id: Optional[int] = None
+    feo_per_item: bool = False  # режим «своя категория ФЭО для каждого товара»
+    vat_mode: Optional[str] = None  # 'uniform' | 'per_item'
     event_id: Optional[int] = None
     event_name: Optional[str] = None
     assigned_to: Optional[int] = None

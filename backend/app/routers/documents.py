@@ -1725,21 +1725,24 @@ async def generate_document(
     })
 
     # Fabrikant context keys ────────────────────────────────────────────────────
-    # notice_number — external_id последней записи platform_publications (platform=fabrikant)
+    # notice_number — номер процедуры на ЭТП (platform_number), а не наш internal
+    # requestId (external_id); откат на external_id, если platform_number ещё
+    # не проставлен площадкой на момент рендера
     _notice_number = ""
     try:
         from app.models.platform_publication import PlatformPublication as _PlatPub
         _pub_q = await db.execute(
-            select(_PlatPub.external_id)
+            select(_PlatPub.platform_number, _PlatPub.external_id)
             .where(
                 _PlatPub.purchase_id == p.id,
                 _PlatPub.platform == "fabrikant",
-                _PlatPub.external_id.isnot(None),
             )
             .order_by(_PlatPub.id.desc())
             .limit(1)
         )
-        _notice_number = _pub_q.scalar_one_or_none() or ""
+        _pub_row = _pub_q.first()
+        if _pub_row:
+            _notice_number = _pub_row[0] or _pub_row[1] or ""
     except Exception:
         pass
     context["notice_number"] = _notice_number
@@ -2262,13 +2265,14 @@ async def generate_document(
 
 # ── Fabrikant package ZIP endpoint ───────────────────────────────────────────
 
-# File names for Fabrikant document package (ASCII-safe for SOAP transport)
+# File names for Fabrikant document package (видны пользователю в кабинете
+# площадки в разделе документов извещения, поэтому названы по-русски)
 FABRIKANT_PKG_FILE_NAMES = [
-    ("fabrikant_instruction",      "instruction.docx",       "Инструкция по заполнению заявки"),
-    ("fabrikant_application_form", "application_form.docx",  "Заявка (форма)"),
-    ("fabrikant_documentation",    "documentation.docx",     "Документация к закупке"),
-    ("fabrikant_contract_project", "contract_project.docx",  "Проект договора"),
-    ("tech_spec_request",          "tech_spec.docx",         "Техническое задание"),
+    ("fabrikant_instruction",      "Инструкция по заполнению заявки.docx", "Инструкция по заполнению заявки"),
+    ("fabrikant_application_form", "Заявка (форма).docx",                  "Заявка (форма)"),
+    ("fabrikant_documentation",    "Документация к закупке.docx",          "Документация к закупке"),
+    ("fabrikant_contract_project", "Проект договора.docx",                 "Проект договора"),
+    ("tech_spec_request",          "Техническое задание.docx",             "Техническое задание"),
 ]
 
 
@@ -2496,21 +2500,23 @@ async def render_fabrikant_package_files(
         position=getattr(c, 'signatory_position', None) if c else None,
     )
 
-    # Fabrikant notice_number
+    # Fabrikant notice_number — platform_number (номер процедуры на ЭТП),
+    # откат на external_id (наш internal requestId), если ещё не проставлен
     _notice_number = ""
     try:
         from app.models.platform_publication import PlatformPublication as _PlatPubZ
         _pub_q = await db.execute(
-            select(_PlatPubZ.external_id)
+            select(_PlatPubZ.platform_number, _PlatPubZ.external_id)
             .where(
                 _PlatPubZ.purchase_id == p.id,
                 _PlatPubZ.platform == "fabrikant",
-                _PlatPubZ.external_id.isnot(None),
             )
             .order_by(_PlatPubZ.id.desc())
             .limit(1)
         )
-        _notice_number = _pub_q.scalar_one_or_none() or ""
+        _pub_row_z = _pub_q.first()
+        if _pub_row_z:
+            _notice_number = _pub_row_z[0] or _pub_row_z[1] or ""
     except Exception:
         pass
 

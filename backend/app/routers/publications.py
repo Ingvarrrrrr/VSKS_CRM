@@ -96,6 +96,20 @@ async def _set_pub_success(
             await db.commit()
 
 
+async def _set_pub_platform_number(pub_id: int, number: str):
+    """Проставляет platform_number ДО рендера/прикрепления документов, чтобы
+    печатная форма извещения показывала номер площадки, а не наш internal
+    requestId (external_id). _set_pub_success ниже по потоку перезапишет тем
+    же либо уточнённым номером."""
+    async with async_session() as db:
+        res = await db.execute(select(PlatformPublication).where(PlatformPublication.id == pub_id))
+        pub = res.scalar_one_or_none()
+        if pub:
+            pub.platform_number = number
+            pub.updated_at = datetime.now(timezone.utc)
+            await db.commit()
+
+
 async def _set_pub_error(pub_id: int, error_text: str):
     async with async_session() as db:
         res = await db.execute(select(PlatformPublication).where(PlatformPublication.id == pub_id))
@@ -970,6 +984,15 @@ async def _poll_fabrikant_result(
             # При наличии черновика используем его URL — он открывается сразу без авторизации
             effective_url = (draft_m.group(1).strip() if draft_m else url_m.group(1).strip())
             proc_number   = num_m.group(1).strip() if num_m else None
+
+            # Сохраняем номер процедуры ДО рендера документов — печатная форма
+            # (notice_number) читает platform_number из БД внутри _attach_documents_to_notice,
+            # иначе там был бы виден ещё не проставленный номер (fallback на external_id)
+            if proc_number:
+                try:
+                    await _set_pub_platform_number(pub_id, proc_number)
+                except Exception as _pne:
+                    logger.warning("Fabrikant _set_pub_platform_number failed pub=%d: %s", pub_id, _pne)
 
             # Прикрепляем документы ДО определения финального статуса, т.к. площадка
             # может не позволить размещение извещения без документов

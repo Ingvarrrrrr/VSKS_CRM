@@ -280,7 +280,7 @@
             <!-- 1. Бюджет (ФЭО) -->
             <v-tooltip location="bottom" :disabled="true">
               <template #activator="{ props: tip }">
-                <div v-bind="tip" class="kpi-card kpi-budget" title="Живой расчёт по дереву ФЭО: ручное финансирование категорий, без него — факт, иначе план. Совпадает с ИТОГО дерева ниже">
+                <div v-bind="tip" class="kpi-card kpi-budget" :class="kpiCardClass('budget')" title="Живой расчёт по дереву ФЭО: ручное финансирование категорий, без него — факт, иначе план. Совпадает с ИТОГО дерева ниже" @click="onKpiCardClick('budget')">
                   <div class="kpi-icon-box"><v-icon icon="mdi-wallet" size="26" /></div>
                   <div class="kpi-body">
                     <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_budget) }}</div>
@@ -292,7 +292,7 @@
             <!-- 2. Запланировано -->
             <v-tooltip location="bottom" :disabled="true">
               <template #activator="{ props: tip }">
-                <div v-bind="tip" class="kpi-card kpi-plan_schedule" title="Плановая сумма дерева ФЭО: ручные позиции (импорт/создание в ФЭО) + заявки в план-графике">
+                <div v-bind="tip" class="kpi-card kpi-plan_schedule" :class="kpiCardClass('plan_schedule')" title="Плановая сумма дерева ФЭО: ручные позиции (импорт/создание в ФЭО) + заявки в план-графике" @click="onKpiCardClick('plan_schedule')">
                   <div class="kpi-icon-box"><v-icon icon="mdi-calendar-clock" size="26" /></div>
                   <div class="kpi-body">
                     <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_plan_schedule) }}</div>
@@ -304,7 +304,7 @@
             <!-- 3. Ведётся работа -->
             <v-tooltip location="bottom" text="включает заказанные, поставленные и оплаченные">
               <template #activator="{ props: tip }">
-                <div v-bind="tip" class="kpi-card kpi-work">
+                <div v-bind="tip" class="kpi-card kpi-work" :class="kpiCardClass('work')" @click="onKpiCardClick('work')">
                   <div class="kpi-icon-box"><v-icon icon="mdi-progress-wrench" size="26" /></div>
                   <div class="kpi-body">
                     <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_work) }}</div>
@@ -316,7 +316,7 @@
             <!-- 4. Заказано -->
             <v-tooltip location="bottom" text="включает поставленные и оплаченные">
               <template #activator="{ props: tip }">
-                <div v-bind="tip" class="kpi-card kpi-ordered">
+                <div v-bind="tip" class="kpi-card kpi-ordered" :class="kpiCardClass('ordered')" @click="onKpiCardClick('ordered')">
                   <div class="kpi-icon-box"><v-icon icon="mdi-cart-check" size="26" /></div>
                   <div class="kpi-body">
                     <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_ordered) }}</div>
@@ -328,7 +328,7 @@
             <!-- 5. Заключено договоров -->
             <v-tooltip location="bottom" text="суммарная стоимость заключённых договоров">
               <template #activator="{ props: tip }">
-                <div v-bind="tip" class="kpi-card kpi-contracts">
+                <div v-bind="tip" class="kpi-card kpi-contracts" :class="kpiCardClass('contracts')" @click="onKpiCardClick('contracts')">
                   <div class="kpi-icon-box"><v-icon icon="mdi-file-sign" size="26" /></div>
                   <div class="kpi-body">
                     <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_contracts) }}</div>
@@ -340,7 +340,7 @@
             <!-- 6. Поставлено -->
             <v-tooltip location="bottom" text="включает оплаченные">
               <template #activator="{ props: tip }">
-                <div v-bind="tip" class="kpi-card kpi-delivered">
+                <div v-bind="tip" class="kpi-card kpi-delivered" :class="kpiCardClass('delivered')" @click="onKpiCardClick('delivered')">
                   <div class="kpi-icon-box"><v-icon icon="mdi-truck-check" size="26" /></div>
                   <div class="kpi-body">
                     <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_delivered) }}</div>
@@ -352,7 +352,7 @@
             <!-- 7. Поставлено, не оплачено -->
             <v-tooltip location="bottom" text="поставлено, но оплата ещё не прошла">
               <template #activator="{ props: tip }">
-                <div v-bind="tip" class="kpi-card kpi-delivered_unpaid">
+                <div v-bind="tip" class="kpi-card kpi-delivered_unpaid" :class="kpiCardClass('delivered_unpaid')" @click="onKpiCardClick('delivered_unpaid')">
                   <div class="kpi-icon-box"><v-icon icon="mdi-truck-alert" size="26" /></div>
                   <div class="kpi-body">
                     <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_delivered_unpaid) }}</div>
@@ -364,7 +364,7 @@
             <!-- 8. Оплачено -->
             <v-tooltip location="bottom" :disabled="true">
               <template #activator="{ props: tip }">
-                <div v-bind="tip" class="kpi-card kpi-paid">
+                <div v-bind="tip" class="kpi-card kpi-paid" :class="kpiCardClass('paid')" @click="onKpiCardClick('paid')">
                   <div class="kpi-icon-box"><v-icon icon="mdi-cash-check" size="26" /></div>
                   <div class="kpi-body">
                     <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_paid) }}</div>
@@ -376,7 +376,10 @@
             <!-- 9. Свободно -->
             <v-tooltip location="bottom" :disabled="true">
               <template #activator="{ props: tip }">
-                <div v-bind="tip" class="kpi-card kpi-free" :class="selectedBudget - selectedPlannedTotal < 0 ? 'kpi-over' : ''">
+                <div v-bind="tip" class="kpi-card kpi-free"
+                  :class="[selectedBudget - selectedPlannedTotal < 0 ? 'kpi-over' : '', kpiCardClass('free')]"
+                  @click="onKpiCardClick('free')"
+                >
                   <div class="kpi-icon-box"><v-icon icon="mdi-cash-lock-open" size="26" /></div>
                   <div class="kpi-body">
                     <div class="kpi-value">{{ formatCurrencyRound(Math.abs(kpiSubAnim_free)) }}</div>
@@ -385,6 +388,14 @@
                 </div>
               </template>
             </v-tooltip>
+          </div>
+          <!-- Подсказка активной KPI-метрики -->
+          <div v-if="activeKpi" class="feo-kpi-banner">
+            <v-icon icon="mdi-filter-variant" size="16" color="#fb923c" />
+            <span v-if="!plannedItemsLoaded">загрузка состава…</span>
+            <span v-else-if="kpiHasMatches">{{ KPI_LABELS[activeKpi] }}</span>
+            <span v-else>в дереве ФЭО нет позиций этой метрики — сумма посчитана на уровне закупок</span>
+            <v-btn size="x-small" variant="text" color="primary" class="ml-auto" @click="resetKpi">Сбросить</v-btn>
           </div>
           <!-- Контрагент -->
           <div v-if="selectedSubsidy.contractor_name" class="detail-contractor mt-2 mb-3">
@@ -568,6 +579,7 @@
                         `feo-tr--l${node.level}`,
                         dragOverId === node.id ? 'feo-drop-target' : '',
                         dragNodeId === node.id ? 'feo-dragging' : '',
+                        kpiNodeClass(node),
                       ]"
                       draggable="true"
                       @dragstart="onDragStart($event, node)"
@@ -1008,8 +1020,8 @@
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px;color:#64748b;font-size:11px">{{ actual.contractor_name || '—' }}</td>
                                 <td style="padding:4px 8px;text-align:center">
-                                  <v-chip size="x-small" color="blue" variant="tonal">
-                                    {{ PURCHASE_STATUS_LABELS[actual.purchase_status || ''] || actual.purchase_status }}
+                                  <v-chip size="x-small" color="blue" variant="tonal" :prepend-icon="purchaseStatusIcon(actual.purchase_status)">
+                                    {{ purchaseStatusLabel(actual.purchase_status) }}
                                   </v-chip>
                                 </td>
                                 <td style="padding:2px;text-align:center">
@@ -1095,6 +1107,7 @@
 
                               <!-- Одноимённые позиции из заявок: план-стадия, факта ещё нет -->
                               <tr v-for="it in (plannedBase === 'purchases' ? [] : matchedReqFor(node))" :key="`msrc-${it.id}`"
+                                :class="kpiItemRowClass(it)"
                                 style="border-bottom:1px solid #E0F2FE;background:rgba(59,130,246,0.05)">
                                 <td style="padding:4px 8px;color:#0c4a6e">
                                   <div class="d-flex align-center" style="gap:6px">
@@ -1102,6 +1115,7 @@
                                       @click.stop="photoPreview = { src: it.product_photo!, title: it.item_name }">
                                       <v-img :src="it.product_photo" cover />
                                     </v-avatar>
+                                    <v-icon :icon="purchaseStatusIcon(it.purchase_status)" :color="purchaseStatusColor(it.purchase_status)" size="14" class="mr-1" :title="purchaseStatusLabel(it.purchase_status)" />
                                     <div>{{ it.item_name }}</div>
                                   </div>
                                   <div class="d-flex align-center flex-wrap" style="gap:8px">
@@ -1130,8 +1144,8 @@
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px;color:#9ca3af">—</td>
                                 <td style="padding:4px 8px;text-align:center">
-                                  <v-chip size="x-small" color="blue" variant="tonal">
-                                    {{ PURCHASE_STATUS_LABELS[it.purchase_status] || it.purchase_status }}
+                                  <v-chip size="x-small" color="blue" variant="tonal" :prepend-icon="purchaseStatusIcon(it.purchase_status)">
+                                    {{ purchaseStatusLabel(it.purchase_status) }}
                                   </v-chip>
                                 </td>
                                 <td style="padding:2px;text-align:center;white-space:nowrap">
@@ -1198,6 +1212,7 @@
                         <template v-for="row in reqItemRowsFor(owner)" :key="`req-${owner.id}-${row.key}`">
                           <tr
                             class="feo-tr feo-req-row"
+                            :class="kpiReqRowClass(row)"
                             :style="row.group ? 'background:rgba(20,184,166,0.04)' : 'background:rgba(20,184,166,0.10)'"
                           >
                             <td class="feo-td feo-td-name" :style="{ paddingLeft: reqRowIndent(owner, row) }">
@@ -1216,6 +1231,11 @@
                                     @click.stop="photoPreview = { src: row.group.items.find(i => i.product_photo)!.product_photo!, title: row.group.name }">
                                     <v-img :src="row.group.items.find(i => i.product_photo)!.product_photo!" cover />
                                   </v-avatar>
+                                  <span class="feo-status-strip mr-1">
+                                    <v-icon v-for="gs in groupStatuses(row.group).slice(0, 3)" :key="gs.status"
+                                      :icon="purchaseStatusIcon(gs.status)" :color="purchaseStatusColor(gs.status)" size="13"
+                                      :title="`${gs.label} — ${gs.count} поз.`" class="mr-1" />
+                                  </span>
                                   <span class="feo-name feo-name--l3">{{ row.group.name }}</span>
                                   <span v-if="row.group.items.length > 1" class="feo-code ml-2"
                                     title="Слито из нескольких позиций заявок">{{ row.group.items.length }} поз. в заявках</span>
@@ -1293,13 +1313,14 @@
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    <tr v-for="it in row.group.items" :key="`src-${it.id}`" style="border-bottom:1px solid #E0F2FE">
+                                    <tr v-for="it in row.group.items" :key="`src-${it.id}`" :class="kpiItemRowClass(it)" style="border-bottom:1px solid #E0F2FE">
                                       <td style="padding:4px 8px;color:#0c4a6e">
                                         <div class="d-flex align-center" style="gap:6px">
                                           <v-avatar v-if="it.product_photo" size="28" rounded class="flex-shrink-0" style="cursor:pointer"
                                             @click.stop="photoPreview = { src: it.product_photo!, title: it.item_name }">
                                             <v-img :src="it.product_photo" cover />
                                           </v-avatar>
+                                          <v-icon :icon="purchaseStatusIcon(it.purchase_status)" :color="purchaseStatusColor(it.purchase_status)" size="14" class="mr-1" :title="purchaseStatusLabel(it.purchase_status)" />
                                           <div>{{ it.item_name }}</div>
                                         </div>
                                         <div class="d-flex align-center flex-wrap" style="gap:8px">
@@ -1331,8 +1352,8 @@
                                       <td style="padding:4px 8px;text-align:right;color:#9ca3af">—</td>
                                       <td style="padding:4px 8px;color:#9ca3af">—</td>
                                       <td style="padding:4px 8px;text-align:center">
-                                        <v-chip size="x-small" color="blue" variant="tonal">
-                                          {{ PURCHASE_STATUS_LABELS[it.purchase_status] || it.purchase_status }}
+                                        <v-chip size="x-small" color="blue" variant="tonal" :prepend-icon="purchaseStatusIcon(it.purchase_status)">
+                                          {{ purchaseStatusLabel(it.purchase_status) }}
                                         </v-chip>
                                       </td>
                                       <td style="padding:2px;text-align:center;white-space:nowrap">
@@ -1371,7 +1392,7 @@
                       <template v-else>
                         <!-- Режим «по закупкам»: папки по purchase_id без слияния -->
                         <template v-for="f in purchaseFoldersFor(owner)" :key="`pf-${owner.id}-${f.purchase_id}`">
-                          <tr class="feo-tr feo-req-row" style="background:rgba(20,184,166,0.10)">
+                          <tr class="feo-tr feo-req-row" :class="kpiFolderClass(f)" style="background:rgba(20,184,166,0.10)">
                             <td class="feo-td feo-td-name" :style="{ paddingLeft: ((owner.depth + 1) * 20 + 8) + 'px' }">
                               <div class="feo-name-inner">
                                 <span class="feo-tree-chevron" style="cursor:pointer" @click.stop="togglePurchaseFolder(f.purchase_id)">
@@ -1379,7 +1400,7 @@
                                 </span>
                                 <v-icon size="15" color="#0D9488" class="mr-1">{{ expandedPurchases.has(f.purchase_id) ? 'mdi-folder-open-outline' : 'mdi-folder-outline' }}</v-icon>
                                 <span>{{ purchaseFolderTitle(f) }}</span>
-                                <v-chip size="x-small" variant="tonal" color="blue" class="ml-2">{{ PURCHASE_STATUS_LABELS[f.purchase_status] || f.purchase_status }}</v-chip>
+                                <v-chip size="x-small" variant="tonal" color="blue" class="ml-2" :prepend-icon="purchaseStatusIcon(f.purchase_status)">{{ purchaseStatusLabel(f.purchase_status) }}</v-chip>
                                 <span class="feo-code ml-2">{{ f.items.length }} поз.</span>
                                 <a v-if="f.wish_id" href="javascript:void(0)" class="feo-purchase-link ml-2"
                                   title="Перейти к заявкам"
@@ -1407,7 +1428,7 @@
                             </td>
                           </tr>
                           <template v-if="expandedPurchases.has(f.purchase_id)">
-                            <tr v-for="it in f.items" :key="`pfi-${owner.id}-${it.id}`" class="feo-tr feo-req-row" style="background:rgba(20,184,166,0.04)">
+                            <tr v-for="it in f.items" :key="`pfi-${owner.id}-${it.id}`" class="feo-tr feo-req-row" :class="kpiItemRowClass(it)" style="background:rgba(20,184,166,0.04)">
                               <td class="feo-td feo-td-name" :style="{ paddingLeft: ((owner.depth + 2) * 20 + 8) + 'px' }">
                                 <div class="feo-name-inner">
                                   <span style="width:16px;display:inline-block" />
@@ -1416,6 +1437,7 @@
                                     @click.stop="photoPreview = { src: it.product_photo!, title: it.item_name }">
                                     <v-img :src="it.product_photo" cover />
                                   </v-avatar>
+                                  <v-icon :icon="purchaseStatusIcon(it.purchase_status)" :color="purchaseStatusColor(it.purchase_status)" size="14" class="mr-1" :title="purchaseStatusLabel(it.purchase_status)" />
                                   <span class="feo-name feo-name--l3">{{ it.item_name }}</span>
                                 </div>
                               </td>
@@ -3769,6 +3791,8 @@ import ContractorPicker from '@/components/ContractorPicker.vue'
 import BudgetBar from '@/components/BudgetBar.vue'
 import RegistryExportButton from '@/components/RegistryExportButton.vue'
 import { useRegistryExport } from '@/composables/useRegistryExport'
+import { PURCHASE_STATUS_META, PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusIcon, purchaseStatusColor } from '@/constants/purchaseStatus'
+import { type KpiKey, KPI_MODE, KPI_LABELS, kpiItemMatches } from '@/constants/kpiMetrics'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 
@@ -4523,6 +4547,12 @@ interface FeoReqItem {
   category: string
   product_type: string
   product_photo?: string | null
+  // Phase KPI-drilldown: расширено бэкендом, старый бэк может не отдавать — все опциональны
+  contract_id?: number | null
+  purchase_contract_type?: string | null
+  contract_type?: string | null
+  contract_status?: string | null
+  contract_number?: string | null
 }
 interface FeoReqRow {
   key: string
@@ -4532,6 +4562,7 @@ interface FeoReqRow {
   sumQty: number
   sum: number
   group: FeoVirtualGroup | null
+  items: FeoReqItem[]
 }
 const plannedItemsByCat = ref<Record<number, FeoReqItem[]>>({})
 const plannedItemsLoaded = ref(false)
@@ -4719,7 +4750,7 @@ function reqItemRowsFor(node: FeoNode): FeoReqRow[] {
   const groupsList = virtualGroupsFor(node)
   const mode = feoItemsGroupBy.value
   const groupRowOf = (g: FeoVirtualGroup): FeoReqRow =>
-    ({ key: `g-${normName(g.name)}`, header: '', level: 0, count: g.items.length, sumQty: g.qty, sum: g.total, group: g })
+    ({ key: `g-${normName(g.name)}`, header: '', level: 0, count: g.items.length, sumQty: g.qty, sum: g.total, group: g, items: g.items })
   if (mode === 'none') {
     return [...groupsList].sort((a, b) => a.name.localeCompare(b.name, 'ru')).map(groupRowOf)
   }
@@ -4736,6 +4767,7 @@ function reqItemRowsFor(node: FeoNode): FeoReqRow[] {
     sumQty: Math.round(grp.reduce((s, x) => s + x.qty, 0) * 10000) / 10000,
     sum: grp.reduce((s, x) => s + x.total, 0),
     group: null,
+    items: grp.flatMap(x => x.items),
   })
   for (const g of sorted) {
     if (g.category !== curCat) {
@@ -5366,6 +5398,241 @@ const kpiSubAnim_delivered_unpaid  = useAnimatedNumber(kpiSubTarget_delivered_un
 const kpiSubAnim_paid              = useAnimatedNumber(kpiSubTarget_paid,             800)
 const kpiSubAnim_free              = useAnimatedNumber(kpiSubTarget_free,             800)
 
+// ── KPI drill-down: клик по карточке подсвечивает в дереве ФЭО состав суммы ──────
+// Типы/константы/kpiItemMatches вынесены в @/constants/kpiMetrics.ts (см. import выше) —
+// логика покрыта тестом на паритет с backend/app/routers/dashboard.py.
+
+interface KpiSnapshot {
+  expandedIds: number[]
+  expandedReqItems: number[]
+  expandedPurchases: number[]
+  plannedBase: PlannedBase
+  feoSearch: string
+}
+const activeKpi = ref<KpiKey | null>(null)
+const kpiSnapshot = ref<KpiSnapshot | null>(null)
+
+function feoHasChildren(id: number): boolean {
+  return feoCategories.value.some(c => c.parent_id === id)
+}
+
+const feoParentMap = computed<Record<number, number | null>>(() => {
+  const map: Record<number, number | null> = {}
+  for (const c of feoCategories.value) map[c.id] = c.parent_id
+  return map
+})
+
+// Строгие предки узла (без самого узла), до корня
+function feoAncestorIds(id: number): number[] {
+  const result: number[] = []
+  let pid = feoParentMap.value[id] ?? null
+  while (pid != null) {
+    result.push(pid)
+    pid = feoParentMap.value[pid] ?? null
+  }
+  return result
+}
+
+// Все id позиций (FeoReqItem.id), из которых складывается активная метрика
+const kpiItemIds = computed<Set<number>>(() => {
+  const key = activeKpi.value
+  const set = new Set<number>()
+  if (!key || KPI_MODE[key] !== 'items') return set
+  for (const items of Object.values(plannedItemsByCat.value)) {
+    for (const it of items) if (kpiItemMatches(key, it)) set.add(it.id)
+  }
+  return set
+})
+
+// Закупки (purchase_id), содержащие подходящие позиции — для режима «по закупкам»
+const kpiPurchaseIds = computed<Set<number>>(() => {
+  const key = activeKpi.value
+  const set = new Set<number>()
+  if (!key || KPI_MODE[key] !== 'items') return set
+  for (const items of Object.values(plannedItemsByCat.value)) {
+    for (const it of items) if (kpiItemMatches(key, it)) set.add(it.purchase_id)
+  }
+  return set
+})
+
+// Листья ФЭО, в которые слиты одноимённые позиции заявок (mergedReqByCat.matched)
+const kpiMatchedLeafIds = computed<Set<number>>(() => {
+  const key = activeKpi.value
+  const set = new Set<number>()
+  if (!key || KPI_MODE[key] !== 'items') return set
+  for (const [leafIdStr, items] of Object.entries(mergedReqByCat.value.matched)) {
+    if (items.some(it => kpiItemMatches(key, it))) set.add(Number(leafIdStr))
+  }
+  return set
+})
+
+// Категории-владельцы «виртуальных» позиций заявок (не слитых в существующий лист)
+const kpiOwnerCatIds = computed<Set<number>>(() => {
+  const key = activeKpi.value
+  const set = new Set<number>()
+  if (!key || KPI_MODE[key] !== 'items') return set
+  if (plannedBase.value === 'purchases') {
+    for (const [catIdStr, folders] of Object.entries(purchaseFoldersByCat.value)) {
+      if (folders.some(f => f.items.some(it => kpiItemMatches(key, it)))) set.add(Number(catIdStr))
+    }
+    return set
+  }
+  for (const [catIdStr, groups] of Object.entries(mergedReqByCat.value.virtualByCat)) {
+    if (groups.some(g => g.items.some(it => kpiItemMatches(key, it)))) set.add(Number(catIdStr))
+  }
+  return set
+})
+
+// Узлы дерева ФЭО, попадающие в метрику напрямую (только режим 'nodes': budget/free)
+const kpiNodeIds = computed<Set<number>>(() => {
+  const key = activeKpi.value
+  const set = new Set<number>()
+  if (!key || KPI_MODE[key] !== 'nodes') return set
+  for (const n of flattenAll(feoTree.value)) {
+    if (key === 'budget' && n.budget != null) set.add(n.id)
+    if (key === 'free' && Math.abs(feoFinDiff(n)) > 0.005) set.add(n.id)
+  }
+  return set
+})
+
+// Что нужно раскрыть, чтобы показать состав активной метрики
+const kpiExpandTargets = computed<{ ids: Set<number>; reqItems: Set<number>; purchases: Set<number> }>(() => {
+  const ids = new Set<number>()
+  const reqItems = new Set<number>()
+  const purchases = new Set<number>()
+  if (!activeKpi.value) return { ids, reqItems, purchases }
+
+  for (const catId of kpiOwnerCatIds.value) {
+    for (const a of feoAncestorIds(catId)) ids.add(a)
+    if (feoHasChildren(catId)) ids.add(catId)
+    else reqItems.add(catId)
+  }
+  for (const leafId of kpiMatchedLeafIds.value) {
+    for (const a of feoAncestorIds(leafId)) ids.add(a)
+  }
+  for (const nodeId of kpiNodeIds.value) {
+    for (const a of feoAncestorIds(nodeId)) ids.add(a)
+  }
+  if (plannedBase.value === 'purchases') {
+    for (const pid of kpiPurchaseIds.value) purchases.add(pid)
+  }
+  return { ids, reqItems, purchases }
+})
+
+// Одно присваивание на каждый ref — именно это даёт автосворачивание лишних папок
+function applyKpiExpansion() {
+  const t = kpiExpandTargets.value
+  expandedIds.value = [...t.ids]
+  expandedReqItems.value = new Set(t.reqItems)
+  expandedPurchases.value = new Set(t.purchases)
+}
+
+async function scrollToFirstKpiHighlight() {
+  await nextTick()
+  const el = feoTableArea.value?.querySelector('.feo-kpi-hl')
+  el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
+
+function onKpiCardClick(key: KpiKey) {
+  if (!selectedSubsidy.value) return
+  if (activeKpi.value === key) { resetKpi(); return }
+  if (activeKpi.value === null) {
+    kpiSnapshot.value = {
+      expandedIds: [...expandedIds.value],
+      expandedReqItems: [...expandedReqItems.value],
+      expandedPurchases: [...expandedPurchases.value],
+      plannedBase: plannedBase.value,
+      feoSearch: feoSearch.value,
+    }
+  }
+  activeKpi.value = key
+  feoSearch.value = '' // поиск ломает isNodeVisible (при поиске видно всё без учёта expandedIds)
+  if (KPI_MODE[key] === 'items' && plannedBase.value !== 'all') {
+    plannedBase.value = 'all' // единственный режим, показывающий все позиции без утраты части
+  }
+  if (!plannedItemsLoaded.value) return // раскрытие применит watch(plannedItemsLoaded) после загрузки
+  applyKpiExpansion()
+  scrollToFirstKpiHighlight()
+}
+
+function resetKpi() {
+  const snap = kpiSnapshot.value
+  if (snap) {
+    expandedIds.value = [...snap.expandedIds]
+    expandedReqItems.value = new Set(snap.expandedReqItems)
+    expandedPurchases.value = new Set(snap.expandedPurchases)
+    plannedBase.value = snap.plannedBase
+    feoSearch.value = snap.feoSearch
+  }
+  activeKpi.value = null
+  kpiSnapshot.value = null
+}
+
+// watch(plannedBase, ...) вынесен ниже — plannedBase объявлен позже по файлу (TDZ)
+watch(plannedItemsLoaded, (v) => {
+  if (v && activeKpi.value) applyKpiExpansion()
+})
+watch(selectedId, () => {
+  // узлы другой субсидии — просто гасим kpi-режим, без восстановления снапшота
+  activeKpi.value = null
+  kpiSnapshot.value = null
+})
+watch(feoSearch, (v) => {
+  if (v && activeKpi.value) resetKpi()
+})
+
+function kpiCardClass(key: KpiKey): string {
+  return activeKpi.value === key ? 'kpi-card--active' : ''
+}
+
+const kpiHasMatches = computed(() => {
+  const key = activeKpi.value
+  if (!key) return false
+  if (KPI_MODE[key] === 'nodes') return kpiNodeIds.value.size > 0
+  return kpiItemIds.value.size > 0
+})
+
+// Класс строки узла дерева ФЭО (feo-tr на 564): совпал / на пути к совпадению / ни при чём
+function kpiNodeClass(node: FeoNode): string {
+  if (!activeKpi.value) return ''
+  if (kpiNodeIds.value.has(node.id) || kpiMatchedLeafIds.value.has(node.id)) return 'feo-kpi-hl'
+  if (kpiOwnerCatIds.value.has(node.id)) return 'feo-kpi-path'
+  const ancestors = feoAncestorIds(node.id)
+  if (ancestors.some(pid => kpiOwnerCatIds.value.has(pid) || kpiMatchedLeafIds.value.has(pid) || kpiNodeIds.value.has(pid))) {
+    return 'feo-kpi-path'
+  }
+  return 'feo-kpi-dim'
+}
+
+// Класс строки виртуальной позиции/заголовка группы (reqItemRowsFor)
+function kpiReqRowClass(row: FeoReqRow): string {
+  if (!activeKpi.value) return ''
+  const hit = row.items.some(it => kpiItemIds.value.has(it.id))
+  if (!hit) return 'feo-kpi-dim'
+  return row.group ? 'feo-kpi-hl' : 'feo-kpi-path'
+}
+
+// Класс строки одиночной позиции закупки (msrc / панель источников / товар в папке-закупке)
+function kpiItemRowClass(it: FeoReqItem): string {
+  if (!activeKpi.value) return ''
+  return kpiItemIds.value.has(it.id) ? 'feo-kpi-hl' : 'feo-kpi-dim'
+}
+
+// Класс строки папки-закупки (режим «по закупкам»)
+function kpiFolderClass(f: FeoPurchaseFolder): string {
+  if (!activeKpi.value) return ''
+  return f.items.some(it => kpiItemIds.value.has(it.id)) ? 'feo-kpi-path' : 'feo-kpi-dim'
+}
+
+// Уникальные статусы товаров виртуальной группы, отсортированные по жизненному циклу закупки
+function groupStatuses(g: FeoVirtualGroup): { status: string; count: number; label: string }[] {
+  const counts = new Map<string, number>()
+  for (const it of g.items) counts.set(it.purchase_status, (counts.get(it.purchase_status) || 0) + 1)
+  return PURCHASE_STATUS_ORDER
+    .filter(s => counts.has(s))
+    .map(s => ({ status: s, count: counts.get(s)!, label: PURCHASE_STATUS_META[s]?.label ?? s }))
+}
+
 // Финансирование ФЭО: ТОЛЬКО ручное значение (решение 14.07 — без авто-суммирования из детей)
 function feoBudgetFor(node: FeoNode): number {
   return node.budget != null ? Number(node.budget) : 0
@@ -5444,6 +5711,10 @@ const plannedBase = ref<PlannedBase>('all')
 const plannedSumBase = plannedBase
 const plannedQtyBase = plannedBase
 
+watch(plannedBase, () => {
+  if (activeKpi.value && plannedItemsLoaded.value) applyKpiExpansion()
+})
+
 function feoResidualBaseFor(node: FeoNode): number {
   return residualBase.value === 'feo' ? feoEffectiveFor(node) : feoPlannedDisplayFor(node)
 }
@@ -5482,11 +5753,6 @@ function isFactActual(a: { purchase_status?: string | null }): boolean {
 const WISH_PLAN_LOCKED_STATUSES = ['wishes', 'plan_schedule', 'work_in_progress']
 function isWishLocked(it: { wish_id?: number | null; purchase_status?: string | null }): boolean {
   return !!it.wish_id && WISH_PLAN_LOCKED_STATUSES.includes(it.purchase_status || '')
-}
-
-const PURCHASE_STATUS_LABELS: Record<string, string> = {
-  plan_schedule: 'План-график', work_in_progress: 'Ведётся работа',
-  contracted: 'Договор', ordered: 'Заказано', delivered: 'Поставлено', paid: 'Оплачено',
 }
 
 function actualFactFor(catId: number) {
@@ -7707,4 +7973,43 @@ onMounted(() => {
 .snapshot-tree-table .level-2 td { background: rgba(33,150,243,0.03); }
 .snapshot-tree-table tfoot td { background: rgba(0,0,0,0.05); padding: 8px; border-top: 2px solid rgba(0,0,0,0.15); }
 .snapshot-tree-table .status-orphan td:first-child { color: rgb(180,120,0); }
+
+/* ── KPI drill-down: подсветка дерева ФЭО по клику на карточку ── */
+.kpi-card { cursor: pointer; }
+.kpi-card--active {
+  outline: 2px solid #fb923c; outline-offset: -2px;
+  box-shadow: 0 0 0 4px rgba(251,146,60,.22);
+}
+.feo-kpi-hl > .feo-td, .feo-kpi-hl > td {
+  background: rgba(251,146,60,.16) !important;
+  animation: feo-kpi-glow 1.4s ease-in-out infinite;
+}
+.feo-kpi-hl > .feo-td:first-child, .feo-kpi-hl > td:first-child { border-left: 3px solid #fb923c; }
+@keyframes feo-kpi-glow {
+  0%, 100% { box-shadow: inset 0 0 0 9999px rgba(251,146,60,0); }
+  50%      { box-shadow: inset 0 0 0 9999px rgba(251,146,60,.14); }
+}
+.feo-kpi-path > .feo-td:first-child { border-left: 3px solid rgba(251,146,60,.35); }
+.feo-kpi-dim  > .feo-td, .feo-kpi-dim > td { opacity: .32; filter: grayscale(.5); }
+.feo-kpi-dim  > .feo-td-actions { opacity: 1; filter: none; }
+.feo-kpi-banner {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--crm-text-secondary);
+  background: rgba(251,146,60,.10); border: 1px solid rgba(251,146,60,.35);
+  border-radius: 8px; padding: 6px 12px; margin: -8px 0 16px;
+}
+.feo-status-strip { display: inline-flex; align-items: center; }
+
+/* Тёмная тема: .16/.32/.14 почти сливаются с тёмной подложкой — усиливаем контраст */
+.v-theme--dark .feo-kpi-hl > .feo-td,
+.v-theme--dark .feo-kpi-hl > td {
+  background: rgba(251,146,60,.30) !important;
+  animation-name: feo-kpi-glow-dark;
+}
+@keyframes feo-kpi-glow-dark {
+  0%, 100% { box-shadow: inset 0 0 0 9999px rgba(251,146,60,0); }
+  50%      { box-shadow: inset 0 0 0 9999px rgba(251,146,60,.22); }
+}
+.v-theme--dark .feo-kpi-dim > .feo-td,
+.v-theme--dark .feo-kpi-dim > td { opacity: .22; }
 </style>

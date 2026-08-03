@@ -91,6 +91,7 @@ async def get_planned_purchase_items(
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem
     from app.models.product import Product
+    from app.models.contract import Contract
     from app.routers.purchase_budget import PLANNED_STATUSES
 
     cat_col = func.coalesce(PurchaseItem.feo_category_id, Purchase.feo_category_id)
@@ -109,6 +110,11 @@ async def get_planned_purchase_items(
             Purchase.registry_number,
             Purchase.status.label("purchase_status"),
             Purchase.wish_id,
+            Purchase.contract_id,
+            Purchase.purchase_contract_type,
+            Contract.contract_type.label("contract_type"),
+            Contract.status.label("contract_status"),
+            Contract.number.label("contract_number"),
             Product.category.label("product_category"),
             Product.product_type.label("product_type"),
             Product.photo_data.isnot(None).label("product_has_photo"),
@@ -117,6 +123,7 @@ async def get_planned_purchase_items(
         )
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .outerjoin(Product, PurchaseItem.product_id == Product.id)
+        .outerjoin(Contract, Purchase.contract_id == Contract.id)
         .where(Purchase.subsidy_id == subsidy_id)
         .where(Purchase.status.in_(list(PLANNED_STATUSES)))
         .where(cat_col.isnot(None))
@@ -143,6 +150,11 @@ async def get_planned_purchase_items(
             "registry_number": r.registry_number,
             "purchase_status": r.purchase_status,
             "wish_id": r.wish_id,
+            "contract_id": r.contract_id,
+            "purchase_contract_type": r.purchase_contract_type,
+            "contract_type": r.contract_type,
+            "contract_status": r.contract_status,
+            "contract_number": r.contract_number,
             "category": r.product_category or "Без категории",
             "product_type": r.product_type or "Без вида",
             "product_photo": product_photo,

@@ -255,6 +255,7 @@ import { apiFetch } from '@/api'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import { useCardView } from '@/composables/useCardView'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
+import { purchaseStatusLabel, purchaseStatusColor } from '@/constants/purchaseStatus'
 
 const router = useRouter()
 
@@ -313,16 +314,15 @@ function truncate(str: string | undefined | null, len: number): string {
 
 const snack = reactive({ show: false, text: '', color: 'success' })
 
-const STATUS_LABEL: Record<string, string> = {
-  wishes: 'Желания', plan_schedule: 'План-график',
-  work_in_progress: 'Ведётся работа',
-  contracted: 'Договор', delivered: 'Поставлено', paid: 'Оплачено',
-}
-const STATUS_COLOR: Record<string, string> = {
-  wishes: 'amber', plan_schedule: 'orange',
-  work_in_progress: 'teal',
-  contracted: 'indigo', delivered: 'deep-purple', paid: 'green',
-}
+// Единый источник цвета/подписи статуса закупки: frontend/src/constants/purchaseStatus.ts
+// Служебные записки не доходят до 'ordered' — набор статусов здесь намеренно уже полного списка.
+const SERVICE_NOTE_STATUS_KEYS = ['wishes', 'plan_schedule', 'work_in_progress', 'contracted', 'delivered', 'paid'] as const
+const STATUS_LABEL: Record<string, string> = Object.fromEntries(
+  SERVICE_NOTE_STATUS_KEYS.map(s => [s, purchaseStatusLabel(s)])
+)
+const STATUS_COLOR: Record<string, string> = Object.fromEntries(
+  SERVICE_NOTE_STATUS_KEYS.map(s => [s, purchaseStatusColor(s)])
+)
 const statusItems = Object.entries(STATUS_LABEL).map(([value, label]) => ({
   value, label, color: STATUS_COLOR[value],
 }))

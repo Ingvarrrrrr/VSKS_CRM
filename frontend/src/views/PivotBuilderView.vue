@@ -296,6 +296,7 @@ import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { useToast } from '@/composables/useToast'
 import { usePivotConfig } from '@/composables/usePivotConfig'
+import { purchaseStatusLabel } from '@/constants/purchaseStatus'
 
 const route = useRoute()
 const router = useRouter()
@@ -331,14 +332,16 @@ const filterStatus = ref<string[]>([])
 const filterDateFrom = ref('')
 const filterDateTo = ref('')
 
+// Подписи — из единого источника (frontend/src/constants/purchaseStatus.ts);
+// 'planned' — легаси-алиас plan_schedule, отдельного канонического ключа не имеет.
 const statusOptions = [
-  { value: 'wishes', title: 'Желания' },
+  { value: 'wishes', title: purchaseStatusLabel('wishes') },
   { value: 'planned', title: 'Запланировано' },
-  { value: 'work_in_progress', title: 'Ведётся работа' },
-  { value: 'contracted', title: 'Договор' },
-  { value: 'ordered', title: 'Заказано' },
-  { value: 'delivered', title: 'Поставлено' },
-  { value: 'paid', title: 'Оплачено' },
+  { value: 'work_in_progress', title: purchaseStatusLabel('work_in_progress') },
+  { value: 'contracted', title: purchaseStatusLabel('contracted') },
+  { value: 'ordered', title: purchaseStatusLabel('ordered') },
+  { value: 'delivered', title: purchaseStatusLabel('delivered') },
+  { value: 'paid', title: purchaseStatusLabel('paid') },
 ]
 const aggOptions = [
   { value: 'sum', title: 'Сумма' },

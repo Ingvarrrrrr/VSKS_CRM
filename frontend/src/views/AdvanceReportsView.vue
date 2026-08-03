@@ -523,6 +523,7 @@ import RegistryExportButton from '@/components/RegistryExportButton.vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import { formatMoney } from '@/utils/formatMoney'
 import { useCardView } from '@/composables/useCardView'
+import { PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusColor } from '@/constants/purchaseStatus'
 
 const router = useRouter()
 const registryArea = ref<HTMLElement | null>(null)
@@ -582,18 +583,13 @@ const expandedRows = ref<number[]>([])
 
 const snack = reactive({ show: false, text: '', color: 'success' })
 
-const STATUS_LABEL: Record<string, string> = {
-  wishes: 'Желания', plan_schedule: 'План-график',
-  work_in_progress: 'Ведётся работа',
-  contracted: 'Договор', ordered: 'Заказано',
-  delivered: 'Поставлено', paid: 'Оплачено',
-}
-const STATUS_COLOR: Record<string, string> = {
-  wishes: 'amber', plan_schedule: 'orange',
-  work_in_progress: 'teal',
-  contracted: 'indigo', ordered: 'purple',
-  delivered: 'deep-purple', paid: 'green',
-}
+// Единый источник цвета/подписи статуса закупки: frontend/src/constants/purchaseStatus.ts
+const STATUS_LABEL: Record<string, string> = Object.fromEntries(
+  PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusLabel(s)])
+)
+const STATUS_COLOR: Record<string, string> = Object.fromEntries(
+  PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusColor(s)])
+)
 const statusItems = Object.entries(STATUS_LABEL).map(([value, label]) => ({
   value, label, color: STATUS_COLOR[value],
 }))

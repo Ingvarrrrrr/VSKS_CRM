@@ -1478,15 +1478,6 @@ const contractTypeLabels = Object.fromEntries(contractTypeItems.map(i => [i.valu
 const purchaseMethodLabels = Object.fromEntries(purchaseMethodItems.map(i => [i.value, i.label]))
 const statusLabels = Object.fromEntries(statusItems.map(i => [i.value, i.label]))
 
-const PURCHASE_STATUS_LABEL: Record<string, string> = {
-  wishes: 'Желания', plan_schedule: 'План-график',
-  work_in_progress: 'Ведётся работа', contracted: 'Договор',
-  delivered: 'Поставлено', paid: 'Оплачено',
-}
-const PURCHASE_STATUS_COLOR: Record<string, string> = {
-  wishes: 'grey', plan_schedule: 'orange',
-  work_in_progress: 'teal', contracted: 'indigo', delivered: 'deep-purple', paid: 'green',
-}
 const contractTypeColor = (t?: string) => {
   if (t === 'single') return 'blue'
   if (t?.startsWith('framework')) return 'orange'

@@ -97,6 +97,7 @@
  * Pure presentation — no API calls, no router, no store access.
  */
 import { ref, computed } from 'vue'
+import { purchaseStatusColor } from '@/constants/purchaseStatus'
 
 export interface Purchase {
   id: number
@@ -145,14 +146,16 @@ const emit = defineEmits<{
 }>()
 
 // ── Kanban columns definition ────────────────────────────────────────────────
+// Цвета — из единого источника (frontend/src/constants/purchaseStatus.ts).
+// Подписи 'wishes'/'paid' здесь намеренно другие («Желания сотрудников», «Оплачено (архив)») — оставлены как есть.
 const COLUMNS: KanbanColumn[] = [
-  { status: 'wishes', label: 'Желания сотрудников', color: '#F59E0B' },
-  { status: 'plan_schedule', label: 'План-график', color: '#FB923C' },
-  { status: 'work_in_progress', label: 'Ведётся работа', color: '#14B8A6' },
-  { status: 'contracted', label: 'Договор', color: '#6366F1' },
-  { status: 'delivered', label: 'Поставлено', color: '#8B5CF6' },
+  { status: 'wishes', label: 'Желания сотрудников', color: purchaseStatusColor('wishes') },
+  { status: 'plan_schedule', label: 'План-график', color: purchaseStatusColor('plan_schedule') },
+  { status: 'work_in_progress', label: 'Ведётся работа', color: purchaseStatusColor('work_in_progress') },
+  { status: 'contracted', label: 'Договор', color: purchaseStatusColor('contracted') },
+  { status: 'delivered', label: 'Поставлено', color: purchaseStatusColor('delivered') },
 ]
-const ARCHIVE_COLUMN: KanbanColumn = { status: 'paid', label: 'Оплачено (архив)', color: '#22C55E' }
+const ARCHIVE_COLUMN: KanbanColumn = { status: 'paid', label: 'Оплачено (архив)', color: purchaseStatusColor('paid') }
 
 const visibleColumns = computed<KanbanColumn[]>(() =>
   props.showArchive ? [...COLUMNS, ARCHIVE_COLUMN] : COLUMNS

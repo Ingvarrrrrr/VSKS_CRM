@@ -355,6 +355,7 @@ import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import * as XLSX from 'xlsx'
+import { PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusColor } from '@/constants/purchaseStatus'
 
 const router = useRouter()
 
@@ -407,14 +408,11 @@ const filterStatuses  = ref<string[]>([
   'plan_schedule', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid',
 ])
 
-const statusOptions = [
-  { value: 'plan_schedule',   label: 'План-график',     color: 'blue'   },
-  { value: 'work_in_progress',label: 'Ведётся работа',  color: 'teal'   },
-  { value: 'contracted',      label: 'Договор',         color: 'indigo' },
-  { value: 'ordered',         label: 'Заказано',        color: 'teal'   },
-  { value: 'delivered',       label: 'Поставлено',      color: 'green'  },
-  { value: 'paid',            label: 'Оплачено',        color: 'success'},
-]
+// Единый источник цвета/подписи статуса закупки: frontend/src/constants/purchaseStatus.ts
+// 'wishes' сюда намеренно не входит — фильтр плана начинается с plan_schedule (см. filterStatuses выше).
+const statusOptions = PURCHASE_STATUS_ORDER
+  .filter(s => s !== 'wishes')
+  .map(s => ({ value: s, label: purchaseStatusLabel(s), color: purchaseStatusColor(s) }))
 
 // ── Versions block ──
 const versionsList         = ref<PlanGraphVersion[]>([])
@@ -746,23 +744,16 @@ const isPastPlanned = (d?: string | null) => {
   return new Date(d) < new Date()
 }
 
+// Единый источник цвета/подписи статуса закупки: frontend/src/constants/purchaseStatus.ts
+// 'planned' — легаси-статус дочерних закупок после разделения (см. backend/app/routers/purchases.py,
+// status="planned"); по смыслу совпадает с plan_schedule — цвет берём оттуда, подпись оставлена отдельной.
 const STATUS_LABELS: Record<string, string> = {
-  planned:          'Планируется',
-  plan_schedule:    'План-график',
-  work_in_progress: 'Ведётся работа',
-  contracted:       'Договор',
-  ordered:          'Заказано',
-  delivered:        'Поставлено',
-  paid:             'Оплачено',
+  ...Object.fromEntries(PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusLabel(s)])),
+  planned: 'Планируется',
 }
 const STATUS_COLORS: Record<string, string> = {
-  planned:          'grey',
-  plan_schedule:    'blue',
-  work_in_progress: 'teal',
-  contracted:       'indigo',
-  ordered:          'orange',
-  delivered:        'green',
-  paid:             'success',
+  ...Object.fromEntries(PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusColor(s)])),
+  planned: purchaseStatusColor('plan_schedule'),
 }
 const statusLabel = (s: string) => STATUS_LABELS[s] ?? s
 const statusColor = (s: string) => STATUS_COLORS[s] ?? 'grey'

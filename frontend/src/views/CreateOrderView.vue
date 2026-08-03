@@ -4069,6 +4069,7 @@ import ValidationArrows from '@/components/ValidationArrows.vue'
 import MonthlyStagesDialog from '@/components/MonthlyStagesDialog.vue'
 import PaymentsBlock from '@/components/PaymentsBlock.vue'
 import { decodeQrFromImageFile } from '@/utils/qrDecode'
+import { PURCHASE_STATUS_ORDER, purchaseStatusColor } from '@/constants/purchaseStatus'
 
 const monthlyStagesDialogShow = ref(false)
 function onMonthlyStagesCreated(res: any) {
@@ -4256,7 +4257,9 @@ const backRoute = computed(() => {
   return '/orders'
 })
 
-const STATUS_ORDER = ['wishes', 'plan_schedule', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid']
+const STATUS_ORDER = PURCHASE_STATUS_ORDER
+// Подписи здесь намеренно длиннее/другие по смыслу, чем в общем словаре
+// (заголовок формы закупки: «Желания сотрудников», «Заключён договор/заказ») — оставлены как есть.
 const STATUS_LABEL_BASE: Record<string, string> = {
   wishes: 'Желания сотрудников', plan_schedule: 'План-график',
   work_in_progress: 'Ведётся работа',
@@ -4266,11 +4269,10 @@ const STATUS_LABEL = computed<Record<string, string>>(() => ({
   ...STATUS_LABEL_BASE,
   contracted: isFramework.value ? 'Заключён заказ' : 'Заключён договор',
 }))
-const STATUS_COLOR: Record<string, string> = {
-  wishes: 'amber', plan_schedule: 'orange',
-  work_in_progress: 'teal',
-  contracted: 'indigo', ordered: 'light-blue', delivered: 'deep-purple', paid: 'green',
-}
+// Единый источник цвета статуса закупки: frontend/src/constants/purchaseStatus.ts
+const STATUS_COLOR: Record<string, string> = Object.fromEntries(
+  PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusColor(s)])
+)
 const SUBSTATUS_OPTIONS = [
   { value: 'tz_forming', title: 'Формирование ТЗ' },
   { value: 'kp_collecting', title: 'Сбор КП' },

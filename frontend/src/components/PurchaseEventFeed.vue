@@ -132,6 +132,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
 import { apiFetch } from '@/api'
+import { PURCHASE_STATUS_ORDER, purchaseStatusLabel } from '@/constants/purchaseStatus'
 
 const props = defineProps<{ purchaseId: number }>()
 
@@ -188,7 +189,12 @@ const eventIcon = (type: string) => {
   return icons[type] || 'mdi-circle-small'
 }
 
+// Подписи здесь намеренно в грамматическом согласовании с «закупка» (женский род:
+// «Законтрактована», «Поставлена», «Оплачена») — оставлены как есть; недостающие статусы
+// (wishes/ordered) добираются из единого источника (frontend/src/constants/purchaseStatus.ts).
+// 'planned'/'in_progress' — легаси-алиасы (см. backend PLAN_STATUSES / status="planned").
 const STATUS_LABELS: Record<string, string> = {
+  ...Object.fromEntries(PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusLabel(s)])),
   planned: 'Планирование', work_in_progress: 'Ведётся работа', in_progress: 'Ведётся работа',
   contracted: 'Законтрактована', delivered: 'Поставлена', paid: 'Оплачена',
 }

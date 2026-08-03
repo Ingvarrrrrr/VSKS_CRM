@@ -1401,6 +1401,7 @@ import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import { formatMoney } from '@/utils/formatMoney'
 import { useDisplay } from 'vuetify'
+import { PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusColor } from '@/constants/purchaseStatus'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 const authStore = useAuthStore()
@@ -1499,24 +1500,19 @@ function advancePersonLabel(item: Purchase): string {
   return item.responsible_person || `#${item.assigned_user_id}` || '—'
 }
 
-const STATUS_ORDER = ['wishes', 'plan_schedule', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid']
-const STATUS_LABEL: Record<string, string> = {
-  wishes: 'Желания', plan_schedule: 'План-график',
-  work_in_progress: 'Ведётся работа',
-  contracted: 'Договор', ordered: 'Заказано',
-  delivered: 'Поставлено', paid: 'Оплачено',
-}
+// Единый источник цвета/подписи статуса закупки: frontend/src/constants/purchaseStatus.ts
+const STATUS_ORDER = PURCHASE_STATUS_ORDER
+const STATUS_LABEL: Record<string, string> = Object.fromEntries(
+  PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusLabel(s)])
+)
 function statusLabelFor(item: Purchase, status?: string): string {
   const s = status || item.status
   if (s === 'contracted' && isItemFramework(item)) return 'Заказ'
   return STATUS_LABEL[s] || s
 }
-const STATUS_COLOR: Record<string, string> = {
-  wishes: 'amber', plan_schedule: 'orange',
-  work_in_progress: 'teal',
-  contracted: 'indigo', ordered: 'purple',
-  delivered: 'deep-purple', paid: 'green',
-}
+const STATUS_COLOR: Record<string, string> = Object.fromEntries(
+  PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusColor(s)])
+)
 const SUBSTATUS_LABEL: Record<string, string> = {
   tz_forming: 'Формирование ТЗ',
   kp_collecting: 'Сбор КП',

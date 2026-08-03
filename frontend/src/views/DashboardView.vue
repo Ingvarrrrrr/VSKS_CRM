@@ -1026,6 +1026,7 @@ import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { GridLayout, GridItem } from 'grid-layout-plus'
 import { useDashboardLayout, type LayoutItem } from '@/composables/useDashboardLayout'
 import { useDashboardMode } from '@/composables/useDashboardMode'
+import { PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusColor } from '@/constants/purchaseStatus'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 const { layout, isEditing, toggleEditing, resetLayout, onLayoutUpdated, DEFAULT_SUMMARY_LAYOUT } = useDashboardLayout()
@@ -1565,11 +1566,13 @@ const radialOptions = computed(() => ({
 }))
 
 // ── Chart: Status Pie ─────────────────────────────
+// Единый источник цвета/подписи статуса закупки: frontend/src/constants/purchaseStatus.ts
+// 'planned'/'in_progress' — легаси-алиасы (см. backend PLAN_STATUSES / status="planned" для
+// дочерних закупок после разделения); резолвятся в тот же цвет, что канонический статус.
 const STATUS_LABELS: Record<string, string> = {
-  wishes: 'Желания', plan_schedule: 'План-график',
+  ...Object.fromEntries(PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusLabel(s)])),
   planned: 'Планируется',
-  in_progress: 'Ведётся работа', work_in_progress: 'Ведётся работа',
-  contracted: 'Договор', ordered: 'Заказано', delivered: 'Поставлено', paid: 'Оплачено'
+  in_progress: purchaseStatusLabel('work_in_progress'),
 }
 
 // Status counts filtered by selected subsidies
@@ -1584,10 +1587,9 @@ const filteredStatusCounts = computed(() => {
 })
 
 const STATUS_COLORS: Record<string, string> = {
-  wishes: '#6B7280', plan_schedule: '#F59E0B',
-  planned: '#94A3B8',
-  in_progress: '#14B8A6', work_in_progress: '#14B8A6',
-  contracted: '#6366F1', ordered: '#0EA5E9', delivered: '#8B5CF6', paid: '#22C55E',
+  ...Object.fromEntries(PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusColor(s)])),
+  planned: purchaseStatusColor('plan_schedule'),
+  in_progress: purchaseStatusColor('work_in_progress'),
 }
 
 const statusPieReady = computed(() =>
@@ -1956,20 +1958,14 @@ function statusLabel(s: string): string {
   return STATUS_LABELS[s] || s
 }
 
+// Раньше statusColor()/statusColorHex() дублировали свою урезанную карту (без wishes/plan_schedule/
+// ordered — те молча падали на серый), теперь оба берут цвет из общего STATUS_COLORS выше.
 function statusColor(s: string): string {
-  const map: Record<string, string> = {
-    planned: 'grey', work_in_progress: 'teal', in_progress: 'teal',
-    contracted: 'indigo', delivered: 'deep-purple', paid: 'success'
-  }
-  return map[s] || 'grey'
+  return STATUS_COLORS[s] || '#94A3B8'
 }
 
 function statusColorHex(s: string): string {
-  const map: Record<string, string> = {
-    planned: '#94A3B8', work_in_progress: '#14B8A6', in_progress: '#14B8A6',
-    contracted: '#6366F1', delivered: '#8B5CF6', paid: '#22C55E'
-  }
-  return map[s] || '#94A3B8'
+  return STATUS_COLORS[s] || '#94A3B8'
 }
 
 // ── Analytics Tab ─────────────────────────────────
@@ -1988,6 +1984,8 @@ interface AnalyticsData {
 const analyticsData = ref<AnalyticsData | null>(null)
 const analyticsLoading = ref(false)
 
+// Подписи здесь намеренно в грамматическом согласовании с «закупка» (женский род:
+// «Заказана», «Поставлена», «Оплачена») — оставлены как есть, унифицирован только цвет.
 const A_STATUS_LABELS: Record<string, string> = {
   wishes:           'Пожелания',
   plan_schedule:    'План-график',
@@ -2000,15 +1998,9 @@ const A_STATUS_LABELS: Record<string, string> = {
   in_progress:      'Ведётся работа',
 }
 const A_STATUS_COLORS: Record<string, string> = {
-  wishes:           'grey',
-  plan_schedule:    'blue-grey',
-  work_in_progress: 'teal',
-  contracted:       'indigo',
-  ordered:          'light-blue',
-  delivered:        'deep-purple',
-  paid:             'green',
-  planned:          'orange',
-  in_progress:      'teal',
+  ...Object.fromEntries(PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusColor(s)])),
+  planned: purchaseStatusColor('plan_schedule'),
+  in_progress: purchaseStatusColor('work_in_progress'),
 }
 const A_METHOD_LABELS: Record<string, string> = {
   single: 'Единственный поставщик', competitive: 'Конкурсная процедура',
@@ -2204,11 +2196,13 @@ function formatDate(iso: string) {
   return `${d}.${m}.${y}`
 }
 
+// 'wishes'/'contracted'/'planned' здесь намеренно в развёрнутой формулировке документа
+// финансового плана («Заявка», «Заключён договор», «Запланирован») — оставлены как есть;
+// остальные (в т.ч. написание «План-график») — из единого источника.
 const STATUS_LABELS_FINPLAN: Record<string, string> = {
+  ...Object.fromEntries(PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusLabel(s)])),
   planned: 'Запланирован', wishes: 'Заявка',
-  plan_schedule: 'План-График',
-  contracted: 'Заключён договор', ordered: 'Заказано', delivered: 'Поставлено',
-  paid: 'Оплачено', work_in_progress: 'Ведётся работа',
+  contracted: 'Заключён договор',
 }
 
 async function loadFinplan() {

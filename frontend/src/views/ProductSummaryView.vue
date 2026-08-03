@@ -185,6 +185,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { apiFetch } from '@/api'
 import { useResizableColumns } from '@/composables/useResizableColumns'
 import { RUSSIAN_REGIONS } from '@/constants/russian_regions'
+import { PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusColor } from '@/constants/purchaseStatus'
 
 interface SummaryItem {
   purchase_id: number
@@ -327,21 +328,19 @@ const pluralize = (n: number) => {
   return 'ок'
 }
 
-const statusColor = (s: string | null) => {
-  const map: Record<string, string> = {
-    wishes: 'grey', planned: 'blue', work_in_progress: 'teal',
-    contracted: 'orange', delivered: 'teal', paid: 'green',
-  }
-  return map[s || ''] || 'grey'
+// Единый источник цвета/подписи статуса закупки: frontend/src/constants/purchaseStatus.ts
+// 'planned' — легаси-алиас plan_schedule (см. backend PLAN_STATUSES / status="planned").
+const STATUS_COLOR_MAP: Record<string, string> = {
+  ...Object.fromEntries(PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusColor(s)])),
+  planned: purchaseStatusColor('plan_schedule'),
+}
+const STATUS_LABEL_MAP: Record<string, string> = {
+  ...Object.fromEntries(PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusLabel(s)])),
+  planned: 'Запланировано',
 }
 
-const statusLabel = (s: string | null) => {
-  const map: Record<string, string> = {
-    wishes: 'Пожелание', planned: 'Запланировано', work_in_progress: 'Ведётся работа',
-    contracted: 'Договор', delivered: 'Доставлено', paid: 'Оплачено',
-  }
-  return map[s || ''] || s || '—'
-}
+const statusColor = (s: string | null) => STATUS_COLOR_MAP[s || ''] || 'grey'
+const statusLabel = (s: string | null) => STATUS_LABEL_MAP[s || ''] || s || '—'
 
 const methodLabel = (m: string | null) => {
   if (!m) return '—'

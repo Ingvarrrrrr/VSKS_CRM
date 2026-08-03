@@ -54,6 +54,8 @@
  * Pure presentation — no API calls, no router, no store access.
  */
 
+import { purchaseStatusLabel as canonicalStatusLabel, purchaseStatusColor } from '@/constants/purchaseStatus'
+
 export interface Purchase {
   id: number
   purchase_number?: string | null
@@ -91,20 +93,12 @@ defineEmits<{
 }>()
 
 // ── Status/substatus labels ──────────────────────────────────────────────────
-const STATUS_LABELS: Record<string, string> = {
-  wishes: 'Желания',
-  plan_schedule: 'План-график',
-  work_in_progress: 'Ведётся работа',
-  contracted: 'Договор',
-  delivered: 'Поставлено',
-  paid: 'Оплачено',
-}
-
+// Единый источник цвета/подписи статуса закупки: frontend/src/constants/purchaseStatus.ts
 const FRAMEWORK_TYPES = new Set(['framework_cumulative', 'framework_with_amount'])
 
 function purchaseStatusLabel(task: Purchase): string {
   if (task.status === 'contracted' && FRAMEWORK_TYPES.has(task.purchase_contract_type || '')) return 'Заказ'
-  return STATUS_LABELS[task.status] || task.status
+  return canonicalStatusLabel(task.status)
 }
 
 const SUBSTATUS_LABEL: Record<string, string> = {
@@ -117,15 +111,7 @@ const SUBSTATUS_LABEL: Record<string, string> = {
 
 // ── Color helpers ────────────────────────────────────────────────────────────
 function statusColor(s: string): string {
-  const map: Record<string, string> = {
-    wishes: 'amber',
-    plan_schedule: 'orange',
-    work_in_progress: 'teal',
-    contracted: 'indigo',
-    delivered: 'deep-purple',
-    paid: 'success',
-  }
-  return map[s] || 'grey'
+  return purchaseStatusColor(s)
 }
 
 function deadlineColor(d: string): string {

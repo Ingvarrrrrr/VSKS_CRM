@@ -263,6 +263,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import RegistryExportButton from '@/components/RegistryExportButton.vue'
+import { PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusColor } from '@/constants/purchaseStatus'
 
 const router = useRouter()
 const loading = ref(false)
@@ -276,9 +277,18 @@ const filterDepartment = ref<string | null>(null)
 const subsidyOptions = ref<{ id: number; name: string }[]>([])
 const departmentOptions = ref<string[]>([])
 
+// Единый источник цвета/подписи статуса закупки: frontend/src/constants/purchaseStatus.ts
+// 'planned'/'in_progress' — легаси-алиасы (см. backend PLAN_STATUSES / status="planned").
+// 'delivered' здесь короче ('Поставл.') — узкая колонка таблицы, оставлено намеренно.
 const STATUS_LABELS: Record<string, string> = {
-  planned: 'План', work_in_progress: 'Ведётся работа', in_progress: 'Ведётся работа',
-  contracted: 'Договор', delivered: 'Поставл.', paid: 'Оплачена',
+  ...Object.fromEntries(PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusLabel(s)])),
+  planned: 'План', in_progress: purchaseStatusLabel('work_in_progress'),
+  delivered: 'Поставл.',
+}
+const STATUS_COLORS: Record<string, string> = {
+  ...Object.fromEntries(PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusColor(s)])),
+  planned: purchaseStatusColor('plan_schedule'),
+  in_progress: purchaseStatusColor('work_in_progress'),
 }
 
 const periodLabel = computed(() => {
@@ -308,11 +318,7 @@ function openItem(id: number) {
 }
 
 function statusColor(s: string): string {
-  const map: Record<string, string> = {
-    planned: 'grey', work_in_progress: 'teal', in_progress: 'teal',
-    contracted: 'indigo', delivered: 'deep-purple', paid: 'success',
-  }
-  return map[s] || 'grey'
+  return STATUS_COLORS[s] || 'grey'
 }
 
 function formatDateRu(d?: string): string {

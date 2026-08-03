@@ -208,6 +208,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { apiFetch } from '@/api'
+import { PURCHASE_STATUS_ORDER, purchaseStatusColor } from '@/constants/purchaseStatus'
 
 interface FunnelItem { status: string; count: number; total: number }
 interface MonthItem { year: number; month: number; total: number }
@@ -224,13 +225,18 @@ interface AnalyticsData {
   plan_fact: PlanFactItem[]
 }
 
+// Подписи здесь намеренно в грамматическом согласовании с «закупка» (женский род:
+// «Законтрактована», «Поставлена», «Оплачена») — оставлены как есть, унифицирован только цвет.
+// 'planned'/'in_progress' — легаси-алиасы (см. backend PLAN_STATUSES / status="planned" для
+// дочерних закупок после разделения); резолвятся в цвет соответствующего канонического статуса.
 const STATUS_LABELS: Record<string, string> = {
   planned: 'Планирование', work_in_progress: 'Ведётся работа', in_progress: 'Ведётся работа',
   contracted: 'Законтрактована', delivered: 'Поставлена', paid: 'Оплачена',
 }
 const STATUS_COLORS: Record<string, string> = {
-  planned: 'orange', work_in_progress: 'teal', in_progress: 'teal',
-  contracted: 'indigo', delivered: 'deep-purple', paid: 'green',
+  ...Object.fromEntries(PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusColor(s)])),
+  planned: purchaseStatusColor('plan_schedule'),
+  in_progress: purchaseStatusColor('work_in_progress'),
 }
 const METHOD_LABELS: Record<string, string> = {
   single: 'Единственный поставщик', competitive: 'Конкурсная процедура',

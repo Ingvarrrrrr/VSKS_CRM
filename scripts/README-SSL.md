@@ -94,7 +94,11 @@ git revert <hash_phase_30_07>
 docker compose up -d
 ```
 
-IP-доступ `http://85.239.53.155` продолжает работать независимо.
+С 2026-08-03 IP-доступ **больше не отдаёт сайт**: блок `listen 80 default_server`
+редиректит всё на `https://gaaala.duckdns.org` (CRIT-1 аудита 2026-07-25). На HTTP по IP
+остались только `/deploy/` (GitHub бьёт вебхуком по IP) и `/.well-known/acme-challenge/`.
+Поэтому откат HTTPS-блоков вернёт сайт в рабочее состояние только вместе с откатом
+редиректа — иначе получится петля на несуществующий HTTPS.
 
 ## Troubleshooting
 

@@ -59,15 +59,21 @@ services:
       - N8N_BASIC_AUTH_ACTIVE=true
       - N8N_BASIC_AUTH_USER=admin
       - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD:?Set N8N_BASIC_AUTH_PASSWORD in .env}
-      - N8N_HOST=localhost
+      # Наружу n8n доступен только через nginx по HTTPS на /n8n/.
+      # С localhost он генерировал внешние вебхуки с адресом localhost.
+      - N8N_HOST=gaaala.duckdns.org
       - N8N_PORT=5678
-      - N8N_PROTOCOL=http
-      - WEBHOOK_URL=http://localhost:5678/
+      - N8N_PROTOCOL=https
+      - WEBHOOK_URL=https://gaaala.duckdns.org/n8n/
       - GENERIC_TIMEZONE=Europe/Moscow
       - N8N_DEFAULT_USER_EMAIL=admin@vsks.local
       - N8N_DEFAULT_USER_PASSWORD=${N8N_BASIC_AUTH_PASSWORD:?Set N8N_BASIC_AUTH_PASSWORD in .env}
     ports:
-      - "5678:5678"
+      # Только на loopback: наружу n8n ходит через nginx /n8n/, а внутри
+      # docker-сети nginx обращается по http://n8n:5678. Публикация на
+      # 0.0.0.0 — это HIGH-5 из аудита 2026-07-25; сейчас её режет
+      # серверный файрвол, но он живёт вне git и однажды может не примениться.
+      - "127.0.0.1:5678:5678"
     volumes:
       - n8n_data:/home/node/.n8n
     depends_on:

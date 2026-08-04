@@ -437,11 +437,35 @@
               :title="`${item.unseen_changes_count} чужих правок с последнего просмотра`"
             >+{{ item.unseen_changes_count }}</v-chip>
           </div>
-          <div v-if="!item.contractor_name || !item.feo_category_id || !item.execution_term || !(item.planned_total_price)" class="d-flex flex-wrap ga-1 mt-1">
+          <div v-if="!item.contractor_name || !item.feo_category_id || !item.execution_term || !(item.planned_total_price) || dupGroupFor(item)" class="d-flex flex-wrap ga-1 mt-1">
             <v-chip v-if="!item.contractor_name" size="x-small" color="error" variant="tonal" prepend-icon="mdi-domain-off">Контрагент</v-chip>
             <v-chip v-if="!item.feo_category_id" size="x-small" color="warning" variant="tonal" prepend-icon="mdi-tag-off">ФЭО</v-chip>
             <v-chip v-if="!item.execution_term" size="x-small" color="warning" variant="tonal" prepend-icon="mdi-calendar-alert">Срок</v-chip>
             <v-chip v-if="!item.planned_total_price" size="x-small" color="warning" variant="tonal" prepend-icon="mdi-currency-rub">Сумма</v-chip>
+            <!-- Возможный дубликат: та же субсидия + контрагент + сумма (ежемесячные платежи исключены на бэке) -->
+            <v-tooltip v-if="dupGroupFor(item)" location="top" max-width="380" open-on-click>
+              <template #activator="{ props: dupTp }">
+                <v-chip v-bind="dupTp" size="x-small" color="warning" variant="tonal" prepend-icon="mdi-content-duplicate">
+                  возможный дубликат
+                </v-chip>
+              </template>
+              <div class="text-caption font-weight-bold mb-1">Возможный дубликат</div>
+              <div class="text-caption mb-2">
+                Та же субсидия, тот же контрагент и та же сумма. Проверьте — это разные закупки или дубль.
+              </div>
+              <div class="text-caption font-weight-medium">
+                {{ dupGroupFor(item)?.contractor_name || '—' }}
+                <template v-if="dupGroupFor(item)?.amount != null"> · {{ dupGroupFor(item).amount.toLocaleString('ru-RU') }} ₽</template>
+              </div>
+              <ul class="text-caption ml-4 mb-0">
+                <li v-for="dp in dupGroupFor(item)?.items?.filter((x: any) => x.id !== item.id)" :key="dp.id">
+                  <a :href="`/orders/${dp.id}/edit`" target="_blank" rel="noopener" style="color:#fff; text-decoration:underline">
+                    {{ dp.registry_number || ('№' + dp.purchase_number) }} — {{ dp.name || 'без названия' }}
+                  </a>
+                  <template v-if="dp.status"> · {{ dp.status }}</template>
+                </li>
+              </ul>
+            </v-tooltip>
           </div>
         </template>
 
@@ -1774,6 +1798,10 @@ async function doLinkTask(purchaseId: number) {
 }
 
 const orders = ref<Purchase[]>([])
+// Возможные дубликаты в реестре: purchase_id -> группа {contractor_name, amount, items: [...]}.
+// Заполняется batch-эндпоинтом GET /purchases/duplicate-groups, без N+1 запросов по строкам.
+const duplicateGroupsMap = ref<Map<number, any>>(new Map())
+function dupGroupFor(item: any) { return duplicateGroupsMap.value.get(item.id) }
 const subsidies = ref<Subsidy[]>([])
 const contractors = ref<Contractor[]>([])
 const loading = ref(false)
@@ -2038,6 +2066,22 @@ const loadOrders = async () => {
   }
 }
 
+// Подсказка «возможный дубликат» в реестре — молча игнорируем ошибку загрузки,
+// это вспомогательная подсказка, а не критичные данные строки.
+const loadDuplicateGroups = async () => {
+  try {
+    const qs = filterSubsidyId.value ? `?subsidy_id=${filterSubsidyId.value}` : ''
+    const groups = await apiFetch<any[]>(`/purchases/duplicate-groups${qs}`)
+    const map = new Map<number, any>()
+    for (const g of groups) {
+      for (const pid of g.purchase_ids || []) map.set(pid, g)
+    }
+    duplicateGroupsMap.value = map
+  } catch {
+    // не блокируем реестр — просто не покажем подсказку
+  }
+}
+
 const loadSubsidies = async () => {
   try {
     subsidies.value = await apiFetch<Subsidy[]>('/subsidies/')
@@ -2056,6 +2100,7 @@ const ordersTableRef = ref<any>(null)
 // dedupe-by-name из orders, не требует справочника.
 onMounted(async () => {
   loadOrders()
+  loadDuplicateGroups()
   loadSubsidies()
   loadFilterPresets()
   // Link task mode
@@ -2104,6 +2149,7 @@ onMounted(async () => {
 
 // Bidirectional sync with global subsidy
 watch(filterSubsidyId, (id: number | null) => { globalSubsidyId.value = id })
+watch(filterSubsidyId, () => { loadDuplicateGroups() })
 watch(globalSubsidyId, (id: number | null) => { filterSubsidyId.value = id })
 
 const doTransition = async (item: Purchase) => {

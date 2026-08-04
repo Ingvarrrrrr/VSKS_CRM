@@ -15,9 +15,11 @@ export type KpiKey = 'budget' | 'plan_schedule' | 'work' | 'ordered' | 'contract
   | 'delivered' | 'delivered_unpaid' | 'paid' | 'free'
 
 // budget/free считаются по узлам дерева (feo_categories.budget / feoFinDiff);
-// остальные — по позициям закупок «из заявок» (plannedItemsByCat)
-export const KPI_MODE: Record<KpiKey, 'items' | 'nodes'> = {
-  budget: 'nodes', plan_schedule: 'items', work: 'items', ordered: 'items',
+// work/ordered/contracts/delivered/delivered_unpaid/paid — по позициям закупок «из заявок» (plannedItemsByCat);
+// plan_schedule — 'mixed': сумма карточки складывается ИЗ ОБОИХ источников (ручные листья ФЭО + позиции заявок),
+// поэтому подсветка обязана покрывать и узлы (isManualPosLeaf), и позиции (plannedItemsByCat) одновременно
+export const KPI_MODE: Record<KpiKey, 'items' | 'nodes' | 'mixed'> = {
+  budget: 'nodes', plan_schedule: 'mixed', work: 'items', ordered: 'items',
   contracts: 'items', delivered: 'items', delivered_unpaid: 'items', paid: 'items', free: 'nodes',
 }
 
@@ -25,6 +27,26 @@ export const KPI_LABELS: Record<KpiKey, string> = {
   budget: 'Бюджет (ФЭО)', plan_schedule: 'Запланировано', work: 'Ведётся работа',
   ordered: 'Заказано', contracts: 'Заключено договоров', delivered: 'Поставлено',
   delivered_unpaid: 'Поставлено, не оплачено', paid: 'Оплачено', free: 'Свободно / Превышение',
+}
+
+// Пояснение для баннера, когда у активной метрики 0 совпадений в дереве ФЭО (kpiHasMatches === false).
+// Причины разные по метрикам — нельзя писать один универсальный текст:
+// - contracts считается по Contract.max_amount (single/framework_with_amount берутся целиком,
+//   независимо от статуса закупок — backend/app/routers/dashboard.py:360-369), позиции закупок
+//   тут вообще не участвуют, поэтому подсвечивать в дереве нечего в принципе;
+// - work/ordered/delivered/delivered_unpaid/paid считаются по позициям закупок в определённых
+//   статусах — заявки в статусе «Желания» (wishes) в PLANNED_STATUSES не входят и не учитываются;
+// - plan_schedule/budget/free — 0 совпадений означает, что в дереве действительно пусто/сошлось.
+export const KPI_EMPTY_REASONS: Record<KpiKey, string> = {
+  budget: 'ни одной категории с заданным финансированием ФЭО',
+  plan_schedule: 'нет ни ручных плановых позиций, ни позиций из заявок',
+  work: 'нет закупок в этих статусах, привязанных к категориям ФЭО (заявки в статусе «Желания» сюда не входят)',
+  ordered: 'нет закупок в этих статусах, привязанных к категориям ФЭО (заявки в статусе «Желания» сюда не входят)',
+  contracts: 'сумма складывается из сумм активных договоров субсидии, а не из позиций закупок',
+  delivered: 'нет закупок в этих статусах, привязанных к категориям ФЭО (заявки в статусе «Желания» сюда не входят)',
+  delivered_unpaid: 'нет закупок в этих статусах, привязанных к категориям ФЭО (заявки в статусе «Желания» сюда не входят)',
+  paid: 'нет закупок в этих статусах, привязанных к категориям ФЭО (заявки в статусе «Желания» сюда не входят)',
+  free: 'остаток распределён точно по лимитам — расхождений нет',
 }
 
 export const KPI_WORK_STATUSES = ['work_in_progress', 'contracted', 'ordered', 'delivered', 'paid']

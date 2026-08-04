@@ -394,7 +394,7 @@
             <v-icon icon="mdi-filter-variant" size="16" color="#fb923c" />
             <span v-if="!plannedItemsLoaded">загрузка состава…</span>
             <span v-else-if="kpiHasMatches">{{ KPI_LABELS[activeKpi] }}</span>
-            <span v-else>в дереве ФЭО нет позиций этой метрики — сумма посчитана на уровне закупок</span>
+            <span v-else>в дереве ФЭО нечего подсвечивать: {{ KPI_EMPTY_REASONS[activeKpi] }}</span>
             <v-btn size="x-small" variant="text" color="primary" class="ml-auto" @click="resetKpi">Сбросить</v-btn>
           </div>
           <!-- Контрагент -->
@@ -756,7 +756,7 @@
                       <!-- Плановая сумма: ручной план ФЭО и/или позиции заявок (по переключателю) -->
                       <td class="feo-td feo-td-num">
                         <span v-if="feoPlannedDisplayFor(node) > 0" class="feo-amount"
-                          :style="feoDisplayedFor(node) > 0 && feoPlannedDisplayFor(node) > feoDisplayedFor(node) ? 'color:#EF4444;font-weight:700' : ''"
+                          :style="(feoDisplayedFor(node) > 0 && feoPlannedDisplayFor(node) > feoDisplayedFor(node)) || feoHasOverspentDescendant(node) ? 'color:#EF4444;font-weight:700' : ''"
                           :title="plannedSumBase === 'all' ? `Ручные ${formatCurrency(feoPlannedTotalFor(node))} + из заявок ${formatCurrency(feoPlannedRequestsFor(node))}` : ''"
                         >{{ formatCurrency(feoPlannedDisplayFor(node)) }}</span>
                         <span v-else class="feo-amount-empty">—</span>
@@ -778,6 +778,12 @@
                           :title="`Финансирование по ФЭО ${formatCurrency(feoDisplayedFor(node))} − Плановая сумма ${formatCurrency(feoPlannedDisplayFor(node))}`"
                         >
                           {{ feoFinDiff(node) > 0 ? `можно добавить ${formatCurrency(feoFinDiff(node))}` : `надо убрать ${formatCurrency(-feoFinDiff(node))}` }}
+                        </div>
+                        <div v-if="!feoIsOverBudget(node) && feoHasOverspentDescendant(node)"
+                          class="feo-plan-note" style="color:#EF4444"
+                          :title="feoOverspentDescendantTitle(node)"
+                        >
+                          {{ feoOverspentDescendantText(node) }}
                         </div>
                       </td>
 
@@ -3792,7 +3798,7 @@ import BudgetBar from '@/components/BudgetBar.vue'
 import RegistryExportButton from '@/components/RegistryExportButton.vue'
 import { useRegistryExport } from '@/composables/useRegistryExport'
 import { PURCHASE_STATUS_META, PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusIcon, purchaseStatusColor } from '@/constants/purchaseStatus'
-import { type KpiKey, KPI_MODE, KPI_LABELS, kpiItemMatches } from '@/constants/kpiMetrics'
+import { type KpiKey, KPI_MODE, KPI_LABELS, KPI_EMPTY_REASONS, kpiItemMatches } from '@/constants/kpiMetrics'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 
@@ -5434,10 +5440,11 @@ function feoAncestorIds(id: number): number[] {
 }
 
 // Все id позиций (FeoReqItem.id), из которых складывается активная метрика
+// ('items' и 'mixed' считают позиции заявок; чистый 'nodes' — нет)
 const kpiItemIds = computed<Set<number>>(() => {
   const key = activeKpi.value
   const set = new Set<number>()
-  if (!key || KPI_MODE[key] !== 'items') return set
+  if (!key || KPI_MODE[key] === 'nodes') return set
   for (const items of Object.values(plannedItemsByCat.value)) {
     for (const it of items) if (kpiItemMatches(key, it)) set.add(it.id)
   }
@@ -5448,7 +5455,7 @@ const kpiItemIds = computed<Set<number>>(() => {
 const kpiPurchaseIds = computed<Set<number>>(() => {
   const key = activeKpi.value
   const set = new Set<number>()
-  if (!key || KPI_MODE[key] !== 'items') return set
+  if (!key || KPI_MODE[key] === 'nodes') return set
   for (const items of Object.values(plannedItemsByCat.value)) {
     for (const it of items) if (kpiItemMatches(key, it)) set.add(it.purchase_id)
   }
@@ -5459,7 +5466,7 @@ const kpiPurchaseIds = computed<Set<number>>(() => {
 const kpiMatchedLeafIds = computed<Set<number>>(() => {
   const key = activeKpi.value
   const set = new Set<number>()
-  if (!key || KPI_MODE[key] !== 'items') return set
+  if (!key || KPI_MODE[key] === 'nodes') return set
   for (const [leafIdStr, items] of Object.entries(mergedReqByCat.value.matched)) {
     if (items.some(it => kpiItemMatches(key, it))) set.add(Number(leafIdStr))
   }
@@ -5470,7 +5477,7 @@ const kpiMatchedLeafIds = computed<Set<number>>(() => {
 const kpiOwnerCatIds = computed<Set<number>>(() => {
   const key = activeKpi.value
   const set = new Set<number>()
-  if (!key || KPI_MODE[key] !== 'items') return set
+  if (!key || KPI_MODE[key] === 'nodes') return set
   if (plannedBase.value === 'purchases') {
     for (const [catIdStr, folders] of Object.entries(purchaseFoldersByCat.value)) {
       if (folders.some(f => f.items.some(it => kpiItemMatches(key, it)))) set.add(Number(catIdStr))
@@ -5483,14 +5490,20 @@ const kpiOwnerCatIds = computed<Set<number>>(() => {
   return set
 })
 
-// Узлы дерева ФЭО, попадающие в метрику напрямую (только режим 'nodes': budget/free)
+// Узлы дерева ФЭО, попадающие в метрику напрямую: режим 'nodes' (budget/free)
+// и режим 'mixed' (plan_schedule — ручные листья ФЭО, которые эндпоинт planned-purchase-items
+// вообще не видит). Условие для plan_schedule — НЕ isManualPosLeaf (та проверяет != null через OR
+// и подсветила бы лист без фактического вклада в сумму, например с заданным только количеством).
+// feoPlannedTotalFor(n) — ровно та формула, что складывается в карточку «Запланировано»
+// (qty > 0 && unitPrice > 0), поэтому подсветка совпадает с суммой 1:1.
 const kpiNodeIds = computed<Set<number>>(() => {
   const key = activeKpi.value
   const set = new Set<number>()
-  if (!key || KPI_MODE[key] !== 'nodes') return set
+  if (!key || KPI_MODE[key] === 'items') return set
   for (const n of flattenAll(feoTree.value)) {
     if (key === 'budget' && n.budget != null) set.add(n.id)
     if (key === 'free' && Math.abs(feoFinDiff(n)) > 0.005) set.add(n.id)
+    if (key === 'plan_schedule' && !n.hasChildren && feoPlannedTotalFor(n) > 0) set.add(n.id)
   }
   return set
 })
@@ -5547,7 +5560,7 @@ function onKpiCardClick(key: KpiKey) {
   }
   activeKpi.value = key
   feoSearch.value = '' // поиск ломает isNodeVisible (при поиске видно всё без учёта expandedIds)
-  if (KPI_MODE[key] === 'items' && plannedBase.value !== 'all') {
+  if ((KPI_MODE[key] === 'items' || KPI_MODE[key] === 'mixed') && plannedBase.value !== 'all') {
     plannedBase.value = 'all' // единственный режим, показывающий все позиции без утраты части
   }
   if (!plannedItemsLoaded.value) return // раскрытие применит watch(plannedItemsLoaded) после загрузки
@@ -5588,7 +5601,9 @@ function kpiCardClass(key: KpiKey): string {
 const kpiHasMatches = computed(() => {
   const key = activeKpi.value
   if (!key) return false
-  if (KPI_MODE[key] === 'nodes') return kpiNodeIds.value.size > 0
+  const mode = KPI_MODE[key]
+  if (mode === 'nodes') return kpiNodeIds.value.size > 0
+  if (mode === 'mixed') return kpiNodeIds.value.size > 0 || kpiItemIds.value.size > 0
   return kpiItemIds.value.size > 0
 })
 
@@ -5733,6 +5748,57 @@ function feoDisplayedFor(node: FeoNode): number {
 // Финансирование vs Плановая сумма (в текущем режиме): >0 — можно добавить (зелёная), <0 — надо убрать (красная)
 function feoFinDiff(node: FeoNode): number {
   return feoDisplayedFor(node) - feoPlannedDisplayFor(node)
+}
+
+// «Собственный» перерасход узла — ровно то же условие, по которому строка
+// "надо убрать N" уже красится ниже в шаблоне (feoDisplayedFor(node) > 0 — лимит вообще задан).
+// Без этой проверки feoFinDiff() ложно уходит в минус у любого листа без лимита ФЭО
+// (feoDisplayedFor = 0, а плановая сумма положительная — это НЕ перерасход, лимита просто нет).
+function feoIsOverBudget(node: FeoNode): boolean {
+  return feoDisplayedFor(node) > 0 && feoFinDiff(node) < -0.005
+}
+
+// Для каждого узла — потомки (любой глубины), у которых feoIsOverBudget === true.
+// Мемоизировано Map'ом за один обход дерева, а не пересчитывается в шаблоне на каждый узел —
+// дерево ФЭО большое, feoNodeClass/рендер строки вызываются в цикле по всем видимым узлам.
+interface FeoOverspentInfo { names: string[]; count: number }
+const feoOverspentDescendantMap = computed<Map<number, FeoOverspentInfo>>(() => {
+  const map = new Map<number, FeoOverspentInfo>()
+  function walk(node: FeoNode): string[] {
+    let names: string[] = []
+    for (const child of node.children) {
+      if (feoIsOverBudget(child)) names.push(child.name)
+      names = names.concat(walk(child))
+    }
+    map.set(node.id, { names, count: names.length })
+    return names
+  }
+  for (const root of feoTree.value) walk(root)
+  return map
+})
+
+// Есть ли хотя бы один потомок (на любой глубине), превышающий СВОЙ лимит ФЭО
+function feoHasOverspentDescendant(node: FeoNode): boolean {
+  return (feoOverspentDescendantMap.value.get(node.id)?.count ?? 0) > 0
+}
+
+// Текст комментария у родителя: если превышающая подкатегория одна — называем её,
+// иначе общая формулировка (по требованию пользователя)
+function feoOverspentDescendantText(node: FeoNode): string {
+  const info = feoOverspentDescendantMap.value.get(node.id)
+  if (!info || info.count === 0) return ''
+  if (info.count === 1) return `подкатегория «${info.names[0]}» превышает лимит`
+  return 'одна из подкатегорий превышает лимит'
+}
+
+// Тултип: до трёх имён превышающих подкатегорий + «и ещё N», чтобы было видно, куда идти
+function feoOverspentDescendantTitle(node: FeoNode): string {
+  const info = feoOverspentDescendantMap.value.get(node.id)
+  if (!info || info.count === 0) return ''
+  const shown = info.names.slice(0, 3)
+  const suffix = info.count > 3 ? ` и ещё ${info.count - 3}` : ''
+  const verb = info.count === 1 ? 'Превышает' : 'Превышают'
+  return `${verb} лимит ФЭО: ${shown.join(', ')}${suffix}`
 }
 
 // Ручное ФЭО дочерних vs собственная ручная сумма узла (без подмены фактом/планом)
@@ -7549,13 +7615,15 @@ onMounted(() => {
 /* Detail KPI mini-cards */
 .detail-kpis {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(236px, 1fr));
   grid-auto-rows: 1fr;
   gap: 12px;
   margin-bottom: 20px;
 }
 .detail-kpis .kpi-card {
-  min-height: 110px;
+  /* 132px даёт запас под 2-строчное значение (самая длинная сумма в проде —
+     «1 109 245 278,72 ₽», см. .kpi-value ниже) без клиппинга родительским overflow:hidden */
+  min-height: 132px;
   height: 100%;
 }
 
@@ -7641,12 +7709,17 @@ onMounted(() => {
 
 .kpi-body  { flex: 1; min-width: 0; }
 .kpi-value {
-  font-size: 20px;
+  /* Чуть меньше 20px + разрешённый перенос строк — гарантия, что даже самая длинная
+     сумма в проде («1 109 245 278,72 ₽», 19 символов) не будет ни обрезана,
+     ни съедена многоточием, независимо от ширины карточки (проверено Playwright,
+     см. отчёт в задаче: scrollHeight/scrollWidth не превышают clientHeight/clientWidth) */
+  font-size: 18px;
   font-weight: 700;
   color: var(--crm-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  line-height: 1.25;
 }
 .kpi-label {
   font-size: 12px;
@@ -7667,7 +7740,7 @@ onMounted(() => {
   }
   .kpi-icon-box :deep(.v-icon) { font-size: 18px !important; }
   .kpi-body  { width: 100%; }
-  .kpi-value { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .kpi-value { font-size: 15px; white-space: normal; overflow-wrap: break-word; word-break: break-word; line-height: 1.25; }
   .kpi-label { font-size: 10px; line-height: 1.2; white-space: normal; margin-top: 1px; }
 }
 

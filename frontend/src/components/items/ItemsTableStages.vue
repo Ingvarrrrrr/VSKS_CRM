@@ -228,15 +228,17 @@
                       <div class="d-flex align-start ga-4 flex-wrap py-1">
                         <!-- ФЭО позиция — горизонтальный каскад по уровням -->
                         <div v-if="feoPerItem" class="d-flex align-start ga-2 flex-wrap" style="flex:1 1 460px;min-width:300px">
-                          <span class="text-caption text-medium-emphasis mt-2" style="white-space:nowrap">ФЭО позиция *</span>
-                          <FeoCascadeSelect
+                          <FeoTreeSelect
                             :model-value="item.feo_node_id ?? item.feo_category_id"
                             :nodes="feoNodes"
                             :leaves="feoLeaves"
                             :readonly="readonly"
                             :error="isFeoMissing(item)"
                             horizontal
+                            label="ФЭО позиция"
+                            required
                             :allow-unallocated="!!subsidyId"
+                            :root-label="subsidyName"
                             style="flex:1 1 auto;min-width:240px"
                             @update:model-value="(v: number | null) => emit('item-feo-change', idx, v)"
                             @pick-unallocated="(parentId: number | null) => emit('item-pick-unallocated', idx, parentId)"
@@ -430,7 +432,7 @@
 </template>
 
 <script setup lang="ts">
-import FeoCascadeSelect from '@/components/items/FeoCascadeSelect.vue'
+import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import type { Contractor } from '@/components/items/types'
 import type { FeoNode } from '@/composables/useFeoLeaves'
 
@@ -452,6 +454,7 @@ defineProps<{
   feoNodes: FeoNode[]
   feoPerItem?: boolean
   subsidyId?: number | null
+  subsidyName?: string | null
   // mode flags (computed in parent)
   showVatColumnsInExpandRow: boolean
   showContractorColumn: boolean

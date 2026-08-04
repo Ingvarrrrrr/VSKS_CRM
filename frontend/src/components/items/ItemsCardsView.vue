@@ -99,7 +99,7 @@
                 hide-details :disabled="readonly"
                 @update:model-value="(v: string) => emit('item-type-change', idx, v)" />
               <template v-if="feoPerItem">
-                <FeoCascadeSelect
+                <FeoTreeSelect
                   :model-value="item.feo_node_id ?? item.feo_category_id"
                   :nodes="feoNodes"
                   :leaves="feoLeaves"
@@ -107,6 +107,7 @@
                   :error="isFeoMissing(item)"
                   class="mt-2"
                   :allow-unallocated="!!subsidyId"
+                  :root-label="subsidyName"
                   @update:model-value="(v: number | null) => emit('item-feo-change', idx, v)"
                   @pick-unallocated="(parentId: number | null) => emit('item-pick-unallocated', idx, parentId)"
                 />
@@ -227,7 +228,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import InlineProductMatch from '@/components/items/InlineProductMatch.vue'
-import FeoCascadeSelect from '@/components/items/FeoCascadeSelect.vue'
+import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import type { MatchCandidate } from '@/composables/useItemMatching'
 import type { Contractor, ProductLike, ItemsDisplayRow } from '@/components/items/types'
 import type { FeoNode } from '@/composables/useFeoLeaves'
@@ -256,6 +257,7 @@ const props = defineProps<{
   feoLeaves: any[]
   feoNodes: FeoNode[]
   subsidyId?: number | null
+  subsidyName?: string | null
   unitOptions: string[]
   vatRateOptions: any[]
   // Pure helper / computed-bound function props supplied by the parent:

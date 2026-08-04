@@ -478,7 +478,7 @@
               </v-autocomplete>
             </v-col>
             <!-- Fallback: категория ФЭО записана, но не найдена в справочнике (удалена/недоступна) -->
-            <v-col v-if="form.feo_category_id && !selectedFeo1 && form.subsidy_id" cols="12" md="4">
+            <v-col v-if="feoCategoryMissing" cols="12" md="4">
               <v-text-field
                 :model-value="'Категория ФЭО недоступна (была удалена)'"
                 label="Категория ФЭО"
@@ -491,34 +491,23 @@
                 error-messages="Категория удалена из справочника — выберите другую"
               />
             </v-col>
-            <!-- FEO level 1 — появляется после выбора субсидии -->
-            <v-col v-if="form.subsidy_id && feoLevel1Options.length" cols="12" md="4">
-              <v-select v-model="selectedFeo1" :items="feoLevel1OptionsWithUnallocated" item-title="name" item-value="id"
-                :label="formMode === 'service_note_delivery' || formMode === 'advance_report' ? 'Категория ФЭО (ур.1)' : 'Категория ФЭО (ур.1) *'"
-                variant="outlined" density="compact" clearable
-                hint="Направление расходования средств" persistent-hint
-                :error-messages="feoSaveAttempted && !selectedFeo1 && formMode !== 'service_note_delivery' && formMode !== 'advance_report' ? 'Обязательное поле' : ''"
-                @update:model-value="onFeo1Change" />
+            <!-- Дерево категорий ФЭО (замена трёхуровневого каскада) — один узел любой глубины,
+                 промежуточные уровни заполняются автоматически при клике на лист. -->
+            <v-col v-if="form.subsidy_id && feoTreeNodes.length" cols="12" md="4">
+              <FeoTreeSelect
+                v-model="form.feo_category_id"
+                :nodes="feoTreeNodes"
+                :leaves="feoTreeLeavesForNote"
+                :error="feoSaveAttempted && !!feoValidationError"
+                :allow-unallocated="formMode === 'advance_report'"
+                :required="formMode !== 'service_note_delivery' && formMode !== 'advance_report'"
+                :root-label="selectedSubsidyName"
+                @pick-unallocated="onFeoPickUnallocated"
+              />
             </v-col>
-            <!-- FEO level 2 — появляется после выбора ур.1 -->
-            <v-col v-if="selectedFeo1 && feoLevel2Options.length" cols="12" md="4">
-              <v-select v-model="selectedFeo2" :items="feoLevel2Options" item-title="name" item-value="id"
-                :label="formMode === 'service_note_delivery' || formMode === 'advance_report' || feoSkipLast ? 'Категория ФЭО (ур.2)' : 'Категория ФЭО (ур.2) *'"
-                variant="outlined" density="compact" clearable
-                :error-messages="feoSaveAttempted && !selectedFeo2 && !feoSkipLast && formMode !== 'service_note_delivery' && formMode !== 'advance_report' ? 'Выберите уточняющую категорию' : ''"
-                @update:model-value="onFeo2Change" />
-            </v-col>
-            <!-- FEO level 3 — появляется после выбора ур.2 -->
-            <v-col v-if="selectedFeo2 && feoLevel3Options.length" cols="12" md="4">
-              <v-select v-model="selectedFeo3" :items="feoLevel3Options" item-title="name" item-value="id"
-                :label="formMode === 'service_note_delivery' || formMode === 'advance_report' || feoSkipLast ? 'Категория ФЭО (ур.3)' : 'Категория ФЭО (ур.3) *'"
-                variant="outlined" density="compact" clearable
-                :disabled="form.feo_per_item"
-                :error-messages="feoSaveAttempted && !selectedFeo3 && !feoSkipLast && !form.feo_per_item && formMode !== 'service_note_delivery' && formMode !== 'advance_report' ? 'Выберите уточняющую категорию' : ''"
-                @update:model-value="onFeo3Change" />
-            </v-col>
-            <!-- Переключатель «не указывать последний уровень ФЭО» -->
-            <v-col v-if="selectedFeo1 && feoLevel2Options.length && formMode !== 'service_note_delivery' && formMode !== 'advance_report'" cols="12">
+            <!-- Переключатель «не указывать последний уровень ФЭО»: виден, когда выбран
+                 промежуточный (не листовой) узел — раньше это было «выбран ур.1 с детьми». -->
+            <v-col v-if="form.feo_category_id && !feoSelectedIsLeaf && formMode !== 'service_note_delivery' && formMode !== 'advance_report'" cols="12">
               <v-switch
                 v-model="feoSkipLast"
                 label="Не указывать последний уровень ФЭО"
@@ -532,7 +521,7 @@
               </div>
             </v-col>
             <!-- F-PIF1: тогл «Разные ФЭО позиции для каждого товара» -->
-            <v-col v-if="selectedFeo2 || form.feo_per_item" cols="12">
+            <v-col v-if="(feoSelectedLevel && feoSelectedLevel >= 2) || form.feo_per_item" cols="12">
               <v-switch
                 v-model="form.feo_per_item"
                 label="Разные ФЭО позиции для каждого товара"
@@ -918,6 +907,7 @@
             :feo-per-item="form.feo_per_item"
             :level2-id="itemsFeoLevel2"
             :subsidy-id="form.subsidy_id"
+            :subsidy-name="selectedSubsidyName"
             :purchase-id-feo="purchaseId"
             :default-feo-category-id="form.feo_category_id"
             @update:vat-mode="(v: string) => { form.vat_mode = v; onVatModeChange(v) }"
@@ -4068,6 +4058,8 @@ import QrScannerDialog from '@/components/QrScannerDialog.vue'
 import ValidationArrows from '@/components/ValidationArrows.vue'
 import MonthlyStagesDialog from '@/components/MonthlyStagesDialog.vue'
 import PaymentsBlock from '@/components/PaymentsBlock.vue'
+import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
+import { filterFundedNodes } from '@/composables/useFeoLeaves'
 import { decodeQrFromImageFile } from '@/utils/qrDecode'
 import { PURCHASE_STATUS_ORDER, purchaseStatusColor } from '@/constants/purchaseStatus'
 
@@ -4715,6 +4707,11 @@ const contractItemsState = ref<ContractItem[]>([])
 const canShowContractColumns = computed(() => isEdit.value)
 
 const subsidies = ref<Subsidy[]>([])
+// Название субсидии для «ствола» дерева ФЭО (FeoTreeSelect rootLabel) — то же,
+// что показывается в v-select «Субсидия» через item-title="name".
+const selectedSubsidyName = computed((): string | null =>
+  subsidies.value.find(s => s.id === form.subsidy_id)?.name ?? null
+)
 const contractors = ref<Contractor[]>([])
 const acceptanceDocs = ref<{ name: string; number: string; date: string; amount: number | null; file_id?: number | null }[]>([])
 function addAcceptanceDoc() {
@@ -6691,14 +6688,64 @@ const fileIcon = (mime?: string) => {
   return 'mdi-file'
 }
 
-// FEO — cascading selects
-const selectedFeo1 = ref<number | null>(null)
-const selectedFeo2 = ref<number | null>(null)
-const selectedFeo3 = ref<number | null>(null)
+// FEO — дерево категорий (заменяет трёхуровневый каскад selectedFeo1/2/3; form.feo_category_id
+// теперь ЕДИНСТВЕННЫЙ источник истины и хранит id любого выбранного узла, лист или папку).
 const feoSaveAttempted = ref(false)
-// Переключатель «не указывать последний уровень»: обязателен только уровень 1,
+// Переключатель «не указывать последний уровень»: обязателен хоть какой-то узел,
 // более глубокие уровни ФЭО можно не выбирать (закупка привяжется к промежуточной категории).
 const feoSkipLast = ref(false)
+
+// Узлы без заданных сумм финансирования (ни у себя, ни у потомков) — не уровень ФЭО,
+// к выбору не предлагаются. Используем ту же чистую функцию, что и остальные ФЭО-пикеры
+// в проекте (PurchaseItemsEditor и т.п.) — см. composables/useFeoLeaves.filterFundedNodes.
+const feoTreeNodes = computed(() => {
+  if (!form.subsidy_id) return []
+  const raw = allFeoCategories.value
+    .filter(c => c.subsidy_id === form.subsidy_id)
+    .map(c => ({ id: c.id, name: c.name, parent_id: c.parent_id, level: c.level, is_leaf: false, budget: c.budget ?? null }))
+  const funded = filterFundedNodes(raw)
+  const selId = form.feo_category_id
+  if (selId == null) return funded
+  const fundedIds = new Set(funded.map(n => n.id))
+  if (fundedIds.has(selId)) return funded
+  // Выбранная категория не профинансирована (например «Не определена», см. onFeoPickUnallocated,
+  // или ранее сохранённая закупка на неё ссылается) — всё равно показываем её путь целиком,
+  // иначе дерево не сможет отрисовать выбранный узел и поле окажется пустым.
+  const byId = new Map(raw.map(n => [n.id, n]))
+  const chain: typeof raw = []
+  let cur = byId.get(selId)
+  while (cur) {
+    if (!fundedIds.has(cur.id)) chain.push({ ...cur, is_leaf: cur.id === selId })
+    cur = cur.parent_id != null ? byId.get(cur.parent_id) : undefined
+  }
+  return chain.length ? [...funded, ...chain] : funded
+})
+const feoNodeById = computed(() => new Map(feoTreeNodes.value.map(n => [n.id, n])))
+const feoSelectedIsLeaf = computed(() => (form.feo_category_id != null ? (feoNodeById.value.get(form.feo_category_id)?.is_leaf ?? false) : false))
+const feoSelectedLevel = computed(() => (form.feo_category_id != null ? (feoNodeById.value.get(form.feo_category_id)?.level ?? null) : null))
+
+// Категория есть в form.feo_category_id, но полностью отсутствует в справочнике (удалена) —
+// раньше это определялось как «resolveFeeLevels не нашёл цепочку», теперь — прямой поиск.
+const feoCategoryMissing = computed(() =>
+  form.feo_category_id != null && !!form.subsidy_id && allFeoCategories.value.length > 0
+  && !allFeoCategories.value.some(c => c.id === form.feo_category_id)
+)
+
+// «Остатки» по узлу для подписи под деревом — переиспользуем уже загруженные feoResiduals
+// (см. loadFeoResiduals выше), а не отдельный composable: они и так грузятся под текущий
+// выбор ФЭО и содержат budget/residual, только под другими именами полей.
+const feoTreeLeavesForNote = computed(() =>
+  feoResiduals.value.map(r => ({
+    id: r.id,
+    name: r.name,
+    parent_id: feoNodeById.value.get(r.id)?.parent_id ?? null,
+    level: r.level,
+    budget: r.budget,
+    used_amount: r.used,
+    residual: r.residual,
+    path: r.path,
+  }))
+)
 
 // Ошибка выбора ФЭО: нужно выбрать самый глубокий доступный уровень
 const feoValidationError = computed((): string | null => {
@@ -6706,109 +6753,42 @@ const feoValidationError = computed((): string | null => {
   if (formMode.value === 'service_note_delivery') return null
   // Авансовый отчёт: ФЭО необязательна — чеки грузятся сразу, категория назначается позже
   if (formMode.value === 'advance_report') return null
-  if (!form.subsidy_id || !feoLevel1Options.value.length) return null
-  if (!selectedFeo1.value) return 'Выберите категорию ФЭО'
+  if (!form.subsidy_id || !feoTreeNodes.value.length) return null
+  if (!form.feo_category_id) return 'Выберите категорию ФЭО'
   if (feoSkipLast.value) return null
-  if (feoLevel2Options.value.length > 0 && !selectedFeo2.value) return 'Выберите категорию ФЭО уровня 2'
-  // В режиме per-item level-3 выбирается per-row — не требуем общий
-  if (!form.feo_per_item && feoLevel3Options.value.length > 0 && !selectedFeo3.value) return 'Выберите категорию ФЭО уровня 3'
+  // В режиме per-item конечный уровень выбирается per-row — не требуем общий
+  if (!form.feo_per_item && !feoSelectedIsLeaf.value) return 'Выберите конечную категорию ФЭО (самый глубокий уровень)'
   return null
 })
 
-// Узлы без заданных сумм финансирования (ни у себя, ни у потомков) — не уровень ФЭО,
-// к выбору не предлагаются.
-const fundedFeoIds = computed(() => {
-  const childrenByParent = new Map<number, FeoCategory[]>()
-  for (const c of allFeoCategories.value) {
-    if (c.parent_id != null) {
-      const arr = childrenByParent.get(c.parent_id) || []
-      arr.push(c)
-      childrenByParent.set(c.parent_id, arr)
+// Псевдо-«Не определена»: для авансового отчёта (см. allow-unallocated на FeoTreeSelect).
+// parentId — id узла, под которым кликнули строку «❓ Не определена» (null = корень).
+const onFeoPickUnallocated = async (parentId: number | null) => {
+  const sid = form.subsidy_id
+  if (!sid) return
+  try {
+    const cat = await apiFetch<{ id: number; name: string; parent_id?: number | null }>(
+      '/feo-categories/unallocated',
+      { method: 'POST', body: JSON.stringify({ subsidy_id: sid, parent_id: parentId }) }
+    )
+    if (!allFeoCategories.value.find(c => c.id === cat.id)) {
+      const parent = parentId != null ? allFeoCategories.value.find(c => c.id === parentId) : undefined
+      allFeoCategories.value = [
+        ...allFeoCategories.value,
+        { id: cat.id, name: cat.name, parent_id: cat.parent_id ?? parentId ?? null, level: parent ? parent.level + 1 : 1, subsidy_id: sid },
+      ]
     }
+    form.feo_category_id = cat.id
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Не удалось получить категорию «Не определена»', 'error')
   }
-  const memo = new Map<number, boolean>()
-  const isFunded = (c: FeoCategory): boolean => {
-    const cached = memo.get(c.id)
-    if (cached !== undefined) return cached
-    let ok = c.budget != null
-    if (!ok) ok = (childrenByParent.get(c.id) || []).some(isFunded)
-    memo.set(c.id, ok)
-    return ok
-  }
-  const res = new Set<number>()
-  for (const c of allFeoCategories.value) if (isFunded(c)) res.add(c.id)
-  return res
-})
-
-const feoLevel1Options = computed(() =>
-  form.subsidy_id
-    ? allFeoCategories.value.filter(c => c.subsidy_id === form.subsidy_id && !c.parent_id && fundedFeoIds.value.has(c.id))
-    : []
-)
-
-// Для авансового отчёта: добавляем псевдо-пункт «Не определена» в конец списка ур.1
-const feoLevel1OptionsWithUnallocated = computed((): FeoCategory[] => {
-  const base = feoLevel1Options.value
-  if (formMode.value !== 'advance_report' || !form.subsidy_id) return base
-  return [...base, { id: -1, name: '❓ Не определена', parent_id: null, level: 1, subsidy_id: form.subsidy_id }]
-})
-
-const feoLevel2Options = computed(() =>
-  selectedFeo1.value
-    ? allFeoCategories.value.filter(c => c.parent_id === selectedFeo1.value && fundedFeoIds.value.has(c.id))
-    : []
-)
-const feoLevel3Options = computed(() =>
-  selectedFeo2.value
-    ? allFeoCategories.value.filter(c => c.parent_id === selectedFeo2.value && fundedFeoIds.value.has(c.id))
-    : []
-)
-
-const updateFeoId = () => {
-  form.feo_category_id = selectedFeo3.value ?? selectedFeo2.value ?? selectedFeo1.value ?? null
 }
-
-const onFeo1Change = async (val: number | null) => {
-  // Псевдо-пункт «Не определена» для авансового отчёта
-  if (val === -1) {
-    const sid = form.subsidy_id
-    if (!sid) { selectedFeo1.value = null; return }
-    try {
-      const cat = await apiFetch<{ id: number; name: string; parent_id?: number | null }>(
-        '/feo-categories/unallocated',
-        { method: 'POST', body: JSON.stringify({ subsidy_id: sid }) }
-      )
-      // Добавить в allFeoCategories если отсутствует, чтобы computed-options видели её
-      if (!allFeoCategories.value.find(c => c.id === cat.id)) {
-        allFeoCategories.value = [
-          ...allFeoCategories.value,
-          { id: cat.id, name: cat.name, parent_id: cat.parent_id ?? null, level: 1, subsidy_id: sid },
-        ]
-      }
-      selectedFeo1.value = cat.id
-      selectedFeo2.value = null
-      selectedFeo3.value = null
-      updateFeoId()
-    } catch (e: any) {
-      selectedFeo1.value = null
-      showSnack(e?.payload?.message || e?.message || 'Не удалось получить категорию «Не определена»', 'error')
-    }
-    return
-  }
-  selectedFeo2.value = null; selectedFeo3.value = null; updateFeoId()
-}
-const onFeo2Change = () => { selectedFeo3.value = null; updateFeoId() }
-const onFeo3Change = () => { updateFeoId() }
 const feoPerItemDisableDialog = ref(false)
 const feoPerItemDisableCount = ref(0)
 const onFeoPerItemChange = (val: boolean | null) => {
-  // ISSUE-3 PART A: при включении per-item режима уровень 3 в шапке отключается,
-  // поэтому самым глубоким выбранным уровнем шапки становится selectedFeo2.
-  // Обновляем form.feo_category_id, чтобы он стал дефолтом для позиций.
-  if (val) {
-    form.feo_category_id = selectedFeo3.value ?? selectedFeo2.value ?? selectedFeo1.value ?? null
-    return
-  }
+  // С деревом form.feo_category_id уже актуален в любой момент (нет отдельных
+  // selectedFeo2/3 для «схлопывания») — при включении режима просто ничего не делаем.
+  if (val) return
   // Ручное выключение — предупреждаем, если есть позиции с уже выбранной категорией
   const count = items.value.filter(i => i.feo_category_id != null).length
   if (count > 0) {
@@ -6830,63 +6810,33 @@ const onServiceNoteToUserChange = (userId: number | null) => {
   }
 }
 
-// Resolve feo_category_id → path of ancestors for cascade
-const resolveFeeLevels = (id: number) => {
+// Цепочка id от корня до узла по allFeoCategories (используется только для itemsFeoLevel2 ниже).
+function feoAncestorChain(id: number | null | undefined): number[] {
   const path: number[] = []
-  let cur = allFeoCategories.value.find(c => c.id === id)
-  if (!cur) {
-    // Категория не найдена в справочнике (удалена или справочник ещё не загружен)
-    // Не выставляем сырой id — оставляем null, watch ниже перезапустит после загрузки
-    selectedFeo1.value = null
-    selectedFeo2.value = null
-    selectedFeo3.value = null
-    return
-  }
+  let cur = id != null ? allFeoCategories.value.find(c => c.id === id) : undefined
   while (cur) {
     path.unshift(cur.id)
     cur = cur.parent_id ? allFeoCategories.value.find(c => c.id === cur!.parent_id) : undefined
   }
-  selectedFeo1.value = path[0] ?? null
-  selectedFeo2.value = path[1] ?? null
-  selectedFeo3.value = path[2] ?? null
+  return path
 }
 
-// FCAT-F1: в per-item режиме шапка ФЭО пуста (selectedFeo2 = null) — скоуп для
-// пер-позиционного пикера категорий берём от категории первой позиции с заполненным feo_category_id.
-// selectedFeo1/2/3 и form.feo_category_id НЕ трогаем, чтобы не дописать в БД
-// шапочную категорию, которую пользователь не выбирал.
+// FCAT-F1: в per-item режиме шапка ФЭО обычно пуста — скоуп для пер-позиционного пикера
+// категорий берём от категории первой позиции с заполненным feo_category_id.
+// form.feo_category_id НЕ трогаем, чтобы не дописать в БД шапочную категорию,
+// которую пользователь не выбирал.
 const itemsFeoLevel2 = computed<number | null>(() => {
-  if (selectedFeo2.value) return selectedFeo2.value
+  const headChain = feoAncestorChain(form.feo_category_id)
+  if (headChain[1]) return headChain[1]
   if (!form.feo_per_item) return null
   const withCat = items.value.find(i => (i as any).feo_category_id != null)
   if (!withCat) return null
-  const path: number[] = []
-  let cur = allFeoCategories.value.find(c => c.id === (withCat as any).feo_category_id)
-  while (cur) {
-    path.unshift(cur.id)
-    cur = cur.parent_id ? allFeoCategories.value.find(c => c.id === cur!.parent_id) : undefined
-  }
-  return path[1] ?? null
-})
-
-// Пересчитываем выбранные уровни ФЭО как только справочник загружен/обновлён
-// (loadRefs и loadPurchase могут гоняться параллельно при медленном сервере)
-watch(allFeoCategories, (cats) => {
-  if (cats.length && form.feo_category_id && !selectedFeo1.value) {
-    resolveFeeLevels(form.feo_category_id as number)
-    if (isEdit.value) {
-      const hasChildren = cats.some(c => c.parent_id === form.feo_category_id)
-      if (hasChildren && !form.feo_per_item) feoSkipLast.value = true
-    }
-  }
+  return feoAncestorChain((withCat as any).feo_category_id)[1] ?? null
 })
 
 const onSubsidyChange = async () => {
   form.feo_category_id = null
   form.event_id = null
-  selectedFeo1.value = null
-  selectedFeo2.value = null
-  selectedFeo3.value = null
   feoSaveAttempted.value = false
   feoSkipLast.value = false
   fetchRemaining()
@@ -7441,9 +7391,9 @@ const loadPurchase = async () => {
     }
   }
 
-  // Resolve FEO cascade
+  // FEO: form.feo_category_id уже выставлен выше (Object.assign) — дереву больше ничего
+  // резолвить не нужно, путь строится напрямую из allFeoCategories по этому id.
   if (data.feo_category_id) {
-    resolveFeeLevels(data.feo_category_id)
     // Закупка сохранена на промежуточном уровне (у категории есть дети, глубже не выбрано) —
     // включаем «Не указывать последний уровень», чтобы редактирование не требовало довыбора.
     const hasChildren = allFeoCategories.value.some(c => c.parent_id === data.feo_category_id)

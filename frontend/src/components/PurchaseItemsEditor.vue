@@ -124,6 +124,7 @@
           :feo-nodes="feoNodes"
           :feo-per-item="props.feoPerItem"
           :subsidy-id="props.subsidyId"
+          :subsidy-name="props.subsidyName"
           :show-vat-columns-in-expand-row="showVatColumnsInExpandRow"
           :show-contractor-column="showContractorColumn"
           :is-advance="isAdvance"
@@ -197,6 +198,7 @@
           :feo-leaves="feoLeaves"
           :feo-nodes="feoNodes"
           :subsidy-id="props.subsidyId"
+          :subsidy-name="props.subsidyName"
           :unit-options="UNIT_OPTIONS"
           :vat-rate-options="VAT_RATE_OPTIONS"
           :is-over-budget="isOverBudget"
@@ -243,6 +245,7 @@
           :feo-leaves="feoLeaves"
           :feo-nodes="feoNodes"
           :subsidy-id="props.subsidyId"
+          :subsidy-name="props.subsidyName"
           :unit-options="UNIT_OPTIONS"
           :vat-rate-options="VAT_RATE_OPTIONS"
           :resize-style="resizeStyle"
@@ -472,11 +475,12 @@
           Назначить ФЭО для выбранных ({{ selectedItemIdxs.length }})
         </v-card-title>
         <v-card-text>
-          <FeoCascadeSelect
+          <FeoTreeSelect
             v-model="bulkFeoId"
             :nodes="feoNodes"
             :leaves="feoLeaves"
             :allow-unallocated="!!props.subsidyId"
+            :root-label="props.subsidyName"
             @pick-unallocated="(parentId: number | null) => applyBulkUnallocated(parentId)"
           />
         </v-card-text>
@@ -517,7 +521,7 @@ import ItemsTableFlat from '@/components/items/ItemsTableFlat.vue'
 import ItemsCardsView from '@/components/items/ItemsCardsView.vue'
 import ItemsTableWish from '@/components/items/ItemsTableWish.vue'
 import ItemsTableStages from '@/components/items/ItemsTableStages.vue'
-import FeoCascadeSelect from '@/components/items/FeoCascadeSelect.vue'
+import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import type { ContractItem } from '@/types/contractItem'
 import type { ItemsDisplayRow } from '@/components/items/types'
 import { copyFromPurchase as apiCopyFromPurchase } from '@/api/contractItems'
@@ -695,6 +699,8 @@ const props = withDefaults(defineProps<{
   feoPerItem?: boolean
   level2Id?: number | null
   subsidyId?: number | null
+  // Название субсидии — «ствол» дерева ФЭО (FeoTreeSelect rootLabel), опционально
+  subsidyName?: string | null
   purchaseIdFeo?: number | null
   // ISSUE-3: header-selected deepest FEO level — used to default per-item values
   defaultFeoCategoryId?: number | null
@@ -723,6 +729,7 @@ const props = withDefaults(defineProps<{
   feoPerItem: false,
   level2Id: null,
   subsidyId: null,
+  subsidyName: null,
   purchaseIdFeo: null,
   defaultFeoCategoryId: null,
   itemsTitle: undefined,
@@ -1649,9 +1656,17 @@ function closeBulkFeoDialog() {
 
 function applyBulkFeo() {
   if (bulkFeoId.value == null) return
+  // Same rule as onItemFeoChange: feo_node_id всегда получает выбранный узел
+  // (лист или промежуточная папка), feo_category_id — только когда узел лист.
+  // Раньше здесь писался только feo_category_id, и поле позиции (которое
+  // читает feo_node_id ?? feo_category_id) продолжало показывать старый путь.
+  const isLeaf = feoNodes.value.find(n => n.id === bulkFeoId.value)?.is_leaf ?? false
   for (const idx of selectedItemIdxs.value) {
     const item = localItems.value[idx]
-    if (item) item.feo_category_id = bulkFeoId.value
+    if (item) {
+      item.feo_node_id = bulkFeoId.value
+      item.feo_category_id = isLeaf ? bulkFeoId.value : null
+    }
   }
   bulkFeoDialog.value = false
   bulkFeoId.value = null

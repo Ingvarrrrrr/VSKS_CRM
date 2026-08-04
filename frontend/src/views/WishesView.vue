@@ -1052,19 +1052,19 @@
                     </v-btn-toggle>
                   </v-col>
                   <v-col v-if="wishForm.subsidy_id" cols="12">
-                    <div class="text-caption text-medium-emphasis mb-1">Категория ФЭО</div>
                     <v-alert v-if="wishFeoStale" type="warning" density="compact" variant="tonal" class="mb-2">
                       Категория ФЭО, выбранная в заявке, была удалена из справочника (структуру ФЭО субсидии
                       пересоздавали). Выберите актуальную категорию и сохраните. Если согласовать как есть —
                       закупка будет создана без категории ФЭО, её можно задать в «План-графике».
                     </v-alert>
-                    <FeoCascadeSelect
+                    <FeoTreeSelect
                       v-model="wishFeoSelected"
                       :nodes="wishFeoNodes"
                       :leaves="wishFeoLeaves"
                       horizontal
                       :readonly="!isWishEditable && !canEditWishFeo"
                       :allow-unallocated="!!(wishForm.subsidy_id && (isWishEditable || canEditWishFeo))"
+                      :root-label="selectedSubsidyName"
                       @pick-unallocated="(parentId: number | null) => pickWishUnallocated(parentId)"
                     />
                     <div v-if="!isWishEditable && canEditWishFeo && !canAssigneeAct" class="mt-2">
@@ -1564,6 +1564,7 @@
                   :readonly="!isWishEditable"
                   :feo-per-item="wishFeoPerItem"
                   :subsidy-id="wishForm.subsidy_id"
+                  :subsidy-name="selectedSubsidyName"
                   :default-feo-category-id="wishFeoSelected"
                   :show-needed-date="wishDateMode === 'per_item'"
                   :vat-mode="wishForm.vat_mode"
@@ -1804,7 +1805,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import { formatMoney } from '@/utils/formatMoney'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
-import FeoCascadeSelect from '@/components/items/FeoCascadeSelect.vue'
+import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import { useFeoLeaves } from '@/composables/useFeoLeaves'
 import WishDistributionKanban from '@/components/WishDistributionKanban.vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
@@ -2087,6 +2088,10 @@ const allFilters = [
 
 // Reference data
 const subsidies = ref<Subsidy[]>([])
+// Название субсидии для «ствола» дерева ФЭО (FeoTreeSelect rootLabel).
+const selectedSubsidyName = computed((): string | null =>
+  subsidies.value.find(s => s.id === wishForm.value.subsidy_id)?.name ?? null
+)
 const allFeoCategories = ref<FeoCategory[]>([])
 const users = ref<User[]>([])
 const events = ref<EventItem[]>([])

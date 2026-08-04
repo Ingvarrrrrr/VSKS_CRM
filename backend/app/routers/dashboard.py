@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, func, case, extract, and_, or_
+from sqlalchemy import select, func, case, extract, and_, or_, literal
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
@@ -353,10 +353,22 @@ async def dashboard_charts(
             )).scalars().all()
         }
 
-    # Виджет «Заключено договоров»: active-договоры, сумма по типу
-    #   single / framework_with_amount → max_amount
+    # Виджет «Заключено договоров»: active-договоры, сумма по типу.
+    # Единое правило для обоих типов: договор попадает в сумму, только если закупка по нему
+    # реально дошла до стадии «Договор заключён» (status in contracted/ordered/delivered/paid) —
+    # иначе метрика считает по справочнику max_amount договоров, у которых закупка ещё
+    # в «Желаниях»/плане или вообще не заведена, и раздувает виджет фантомными суммами
+    # (было замечено на ЦентрПоиск_2026: 53 млн вместо фактических 402 тыс., см. баг-репорт 2026-08).
+    #   single / framework_with_amount → max_amount договора, если EXISTS хотя бы одна
+    #     привязанная закупка (purchases.contract_id) с нужным статусом (сумма считается один
+    #     раз за договор, даже если подходящих закупок несколько — EXISTS, а не JOIN)
     #   framework_cumulative → SUM(COALESCE(p.contract_price, p.planned_total_price))
     #     по закупкам с contract_id=договор и status in (contracted,ordered,delivered,paid)
+    _contracted_purchase_exists = (
+        select(literal(1))
+        .where(Purchase.contract_id == Contract.id)
+        .where(Purchase.status.in_(["contracted", "ordered", "delivered", "paid"]))
+    )
     contract_single_q = (
         select(
             Contract.subsidy_id,
@@ -365,6 +377,7 @@ async def dashboard_charts(
         )
         .where(Contract.status == "active")
         .where(Contract.contract_type.in_(["single", "framework_with_amount"]))
+        .where(_contracted_purchase_exists.exists())
         .group_by(Contract.subsidy_id)
     )
     if use_sids:

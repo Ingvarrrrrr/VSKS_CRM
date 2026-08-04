@@ -31,9 +31,10 @@ export const KPI_LABELS: Record<KpiKey, string> = {
 
 // Пояснение для баннера, когда у активной метрики 0 совпадений в дереве ФЭО (kpiHasMatches === false).
 // Причины разные по метрикам — нельзя писать один универсальный текст:
-// - contracts считается по Contract.max_amount (single/framework_with_amount берутся целиком,
-//   независимо от статуса закупок — backend/app/routers/dashboard.py:360-369), позиции закупок
-//   тут вообще не участвуют, поэтому подсвечивать в дереве нечего в принципе;
+// - contracts считается по Contract.max_amount, но договор попадает в сумму, только если у него
+//   есть привязанная закупка в статусе из KPI_CONTRACTS_STATUSES (backend/app/routers/dashboard.py:356-382,
+//   единое правило для single/framework_with_amount/framework_cumulative) — закупки в «Желаниях»,
+//   плане или вообще без договора в сумму не входят;
 // - work/ordered/delivered/delivered_unpaid/paid считаются по позициям закупок в определённых
 //   статусах — заявки в статусе «Желания» (wishes) в PLANNED_STATUSES не входят и не учитываются;
 // - plan_schedule/budget/free — 0 совпадений означает, что в дереве действительно пусто/сошлось.
@@ -42,7 +43,7 @@ export const KPI_EMPTY_REASONS: Record<KpiKey, string> = {
   plan_schedule: 'нет ни ручных плановых позиций, ни позиций из заявок',
   work: 'нет закупок в этих статусах, привязанных к категориям ФЭО (заявки в статусе «Желания» сюда не входят)',
   ordered: 'нет закупок в этих статусах, привязанных к категориям ФЭО (заявки в статусе «Желания» сюда не входят)',
-  contracts: 'сумма складывается из сумм активных договоров субсидии, а не из позиций закупок',
+  contracts: 'нет активных договоров с закупкой, дошедшей до стадии «Договор заключён» (contracted/ordered/delivered/paid)',
   delivered: 'нет закупок в этих статусах, привязанных к категориям ФЭО (заявки в статусе «Желания» сюда не входят)',
   delivered_unpaid: 'нет закупок в этих статусах, привязанных к категориям ФЭО (заявки в статусе «Желания» сюда не входят)',
   paid: 'нет закупок в этих статусах, привязанных к категориям ФЭО (заявки в статусе «Желания» сюда не входят)',
@@ -60,16 +61,12 @@ export function kpiItemMatches(key: KpiKey, item: KpiMatchableItem): boolean {
     case 'plan_schedule':     return true
     case 'work':              return KPI_WORK_STATUSES.includes(item.purchase_status)
     case 'ordered':           return KPI_ORDERED_STATUSES.includes(item.purchase_status) && !!item.purchase_contract_type
-    case 'contracts': {
+    case 'contracts':
+      // Единое правило для всех типов договора: договор привязан, активен, и хотя бы одна
+      // его закупка дошла до стадии «Договор заключён» (dashboard.py:356-382 — EXISTS-проверка
+      // для single/framework_with_amount, JOIN+фильтр статуса для framework_cumulative).
       if (item.contract_id == null || item.contract_status !== 'active') return false
-      // framework_cumulative: сумма набирается по закупкам, поэтому статус важен (dashboard.py:380-393)
-      if (item.contract_type === 'framework_cumulative') {
-        return KPI_CONTRACTS_STATUSES.includes(item.purchase_status)
-      }
-      // single / framework_with_amount: в сумму входит max_amount договора целиком,
-      // независимо от этапа закупки (dashboard.py:360-369)
-      return true
-    }
+      return KPI_CONTRACTS_STATUSES.includes(item.purchase_status)
     case 'delivered':         return KPI_DELIVERED_STATUSES.includes(item.purchase_status)
     case 'delivered_unpaid':  return item.purchase_status === 'delivered'
     case 'paid':              return item.purchase_status === 'paid'

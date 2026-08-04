@@ -60,14 +60,27 @@ describe('kpiItemMatches — поведенческие тесты по кажд
   })
 
   // ── contracts ──────────────────────────────────────────────────
-  it('contracts: single/framework_with_amount matches ЛЮБОЙ статус закупки, включая plan_schedule', () => {
+  it('contracts: single/framework_with_amount matches ровно contracted/ordered/delivered/paid', () => {
+    for (const contractType of ['single', 'framework_with_amount']) {
+      for (const status of KPI_CONTRACTS_STATUSES) {
+        expect(kpiItemMatches('contracts', item({
+          purchase_status: status,
+          contract_id: 1,
+          contract_status: 'active',
+          contract_type: contractType,
+        }))).toBe(true)
+      }
+    }
+  })
+
+  it('contracts: не matches при plan_schedule даже для single/framework_with_amount', () => {
     for (const contractType of ['single', 'framework_with_amount']) {
       expect(kpiItemMatches('contracts', item({
         purchase_status: 'plan_schedule',
         contract_id: 1,
         contract_status: 'active',
         contract_type: contractType,
-      }))).toBe(true)
+      }))).toBe(false)
     }
   })
 
@@ -190,10 +203,10 @@ describe('kpiItemMatches — канарейка на паритет с backend/a
       'маркер-комментарий должен присутствовать рядом с total_ordered — если его убрали и «починили» ordered, kpiItemMatches тоже надо чинить')
   })
 
-  it('contract_single_q: single/framework_with_amount, active, БЕЗ фильтра по Purchase.status', () => {
-    const start = dashboardSrc.indexOf('contract_single_q = (')
+  it('contract_single_q: single/framework_with_amount, active, ЕСТЬ фильтр по Purchase.status через EXISTS', () => {
+    const start = dashboardSrc.indexOf('_contracted_purchase_exists = (')
     const end = dashboardSrc.indexOf('cs_rows = (await db.execute(contract_single_q))')
-    expect(start, 'не найден contract_single_q в dashboard.py').toBeGreaterThan(-1)
+    expect(start, 'не найден _contracted_purchase_exists в dashboard.py').toBeGreaterThan(-1)
     expect(end, 'не найден конец блока contract_single_q').toBeGreaterThan(start)
     const block = dashboardSrc.slice(start, end)
 
@@ -201,11 +214,18 @@ describe('kpiItemMatches — канарейка на паритет с backend/a
       'contract_single_q должен фильтровать типы договора single/framework_with_amount')
     expectContains(block, 'Contract.status == "active"',
       'contract_single_q должен фильтровать только активные договоры')
+    // После фикса 2026-08: single/framework_with_amount тоже требуют закупку в «договорных» статусах —
+    // раньше max_amount суммировался по всем активным договорам без привязки к закупкам, из-за чего
+    // виджет показывал фантомные суммы (ЦентрПоиск_2026: 53 млн вместо 402 тыс. факта).
     expect(
       block.includes('Purchase.status'),
-      'contract_single_q НЕ должен фильтровать по Purchase.status (single/framework_with_amount считаются целиком по max_amount) — ' +
-      'если фильтр появился, синхронизируй ветку contracts в kpiItemMatches'
-    ).toBe(false)
+      'contract_single_q ДОЛЖЕН фильтровать по Purchase.status (EXISTS-подзапрос _contracted_purchase_exists) — ' +
+      'если фильтр пропал, синхронизируй ветку contracts в kpiItemMatches обратно на «matches любой статус»'
+    ).toBe(true)
+    expectContains(block, 'Purchase.status.in_(["contracted", "ordered", "delivered", "paid"])',
+      'фильтр статуса закупки в EXISTS-подзапросе должен быть ровно KPI_CONTRACTS_STATUSES')
+    expectContains(block, '_contracted_purchase_exists.exists()',
+      'contract_single_q должен применять EXISTS-подзапрос, а не JOIN (чтобы не размножить сумму при нескольких закупках на договоре)')
   })
 
   it('contract_fc_q: framework_cumulative + Purchase.status in contracted/ordered/delivered/paid', () => {

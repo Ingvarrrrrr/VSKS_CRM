@@ -32,7 +32,7 @@ from app.models.wish import Wish
 from app.models.wish_item import WishItem
 
 # «Заказано» и дальше — закупка уже реально размещена (в отличие от plan_schedule/
-# work_in_progress/contracted, которые ещё черновик план-графика). FACT_CONFIRMED_STATUSES —
+# work_in_progress/contracted, которые ещё черновик плана закупок). FACT_CONFIRMED_STATUSES —
 # подтверждено закрывающим актом (delivered/paid), ORDERED_STATUSES — все три вместе.
 FACT_CONFIRMED_STATUSES: set = {"delivered", "paid"}
 ORDERED_STATUSES: set = {"ordered"} | FACT_CONFIRMED_STATUSES
@@ -316,7 +316,7 @@ async def compute_feo_plan_tree(
     """Рекурсивная формула «плановой суммы» дерева ФЭО — единый источник для
     _calculate_feo_planned_tree_bulk (subsidies.py, KPI «Запланировано»/«Свободно»
     на дашборде, в списке субсидий и в панели субсидии), _create_plan_graph_version
-    (purchases.py, снапшот версии план-графика), GET /api/feo-categories/plan-positions
+    (purchases.py, снапшот версии плана закупок), GET /api/feo-categories/plan-positions
     и GET /api/feo-categories/planned-purchase-totals.
 
     ФОРМУЛА v2 (сессия 2026-08-05, задача владельца «заказ замещает план, пока не
@@ -441,7 +441,7 @@ async def compute_feo_plan_tree(
     ordered_consumption = await ordered_consumption_by_category(db, subsidy_ids, exclude_planned_item_linked=True)
 
     # Согласование превышения плана над финансированием узла (feo_categories.budget) —
-    # задача владельца «должны быть заблокированы действия, пока план-график не
+    # задача владельца «должны быть заблокированы действия, пока план закупок не
     # загонять обратно в размеры ФЭО» + «согласование цепочкой». Берём ПОСЛЕДНИЙ
     # (по created_at) запрос plan_excess_approvals на каждый узел — если approved,
     # превышение считается легализованным и полностью входит в display; если
@@ -604,7 +604,7 @@ async def assert_no_unapproved_excess(
     миграцию h8i9j0k1l2m3 / app.models.plan_excess_approval).
 
     Требование владельца (2026-08-05): «Если где-то превысил план ФЭО, значит
-    где-то надо снимать — должны быть заблокированы действия, пока план-график
+    где-то надо снимать — должны быть заблокированы действия, пока план закупок
     не загонять обратно в размеры ФЭО». Вызывается ПЕРЕД действиями,
     УВЕЛИЧИВАЮЩИМИ план (создание закупки, увеличение суммы/смена категории ФЭО
     при PUT, согласование заявки → создание закупок) — см. вызывающий код в

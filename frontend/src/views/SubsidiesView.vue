@@ -292,7 +292,7 @@
             <!-- 2. Запланировано -->
             <v-tooltip location="bottom" :disabled="true">
               <template #activator="{ props: tip }">
-                <div v-bind="tip" class="kpi-card kpi-plan_schedule" :class="kpiCardClass('plan_schedule')" title="Плановая сумма дерева ФЭО: ручные позиции (импорт/создание в ФЭО) + заявки в план-графике" @click="onKpiCardClick('plan_schedule')">
+                <div v-bind="tip" class="kpi-card kpi-plan_schedule" :class="kpiCardClass('plan_schedule')" title="Плановая сумма дерева ФЭО: ручные позиции (импорт/создание в ФЭО) + заявки в плане закупок" @click="onKpiCardClick('plan_schedule')">
                   <div class="kpi-icon-box"><v-icon icon="mdi-calendar-clock" size="26" /></div>
                   <div class="kpi-body">
                     <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_plan_schedule) }}</div>
@@ -500,7 +500,7 @@
                       <div class="feo-residual-toggle">
                         <span
                           :class="plannedQtyBase === 'all' ? 'feo-residual-opt feo-residual-opt--active' : 'feo-residual-opt'"
-                          title="Ручной план ФЭО + позиции заявок в план-графике"
+                          title="Ручной план ФЭО + позиции заявок в плане закупок"
                           @click.stop="plannedQtyBase = 'all'"
                         >все</span>
                         <span
@@ -510,7 +510,7 @@
                         >ручные</span>
                         <span
                           :class="plannedQtyBase === 'requests' ? 'feo-residual-opt feo-residual-opt--active' : 'feo-residual-opt'"
-                          title="Только позиции заявок со статусом «План-график» и дальше"
+                          title="Только позиции заявок со статусом «План закупок» и дальше"
                           @click.stop="plannedQtyBase = 'requests'"
                         >из заявок</span>
                         <span
@@ -526,7 +526,7 @@
                       <div class="feo-residual-toggle">
                         <span
                           :class="plannedSumBase === 'all' ? 'feo-residual-opt feo-residual-opt--active' : 'feo-residual-opt'"
-                          title="Ручной план ФЭО + позиции заявок в план-графике"
+                          title="Ручной план ФЭО + позиции заявок в плане закупок"
                           @click.stop="plannedSumBase = 'all'"
                         >все</span>
                         <span
@@ -536,7 +536,7 @@
                         >ручные</span>
                         <span
                           :class="plannedSumBase === 'requests' ? 'feo-residual-opt feo-residual-opt--active' : 'feo-residual-opt'"
-                          title="Только позиции заявок со статусом «План-график» и дальше"
+                          title="Только позиции заявок со статусом «План закупок» и дальше"
                           @click.stop="plannedSumBase = 'requests'"
                         >из заявок</span>
                         <span
@@ -708,7 +708,7 @@
                           <div class="feo-amount">{{ feoQtyDisplayFor(node) > 0 ? feoQtyDisplayFor(node) : '—' }}{{ node.unit ? ` ${node.unit}` : '' }}</div>
                           <div v-if="plannedQtyBase === 'all' && feoQtyRequestsFor(node) > 0"
                             class="feo-plan-note text-medium-emphasis"
-                            :title="`Количество из позиций заявок в статусе «План-график» и дальше: ${feoQtyRequestsFor(node)}`"
+                            :title="`Количество из позиций заявок в статусе «План закупок» и дальше: ${feoQtyRequestsFor(node)}`"
                           >
                             в т.ч. из заявок {{ feoQtyRequestsFor(node) }}
                           </div>
@@ -732,7 +732,7 @@
                           <span v-else class="feo-set-hint">—</span>
                           <div v-if="plannedQtyBase === 'all' && feoQtyRequestsFor(node) > 0"
                             class="feo-plan-note text-medium-emphasis"
-                            :title="`Количество из позиций заявок в статусе «План-график» и дальше: ${feoQtyRequestsFor(node)}`"
+                            :title="`Количество из позиций заявок в статусе «План закупок» и дальше: ${feoQtyRequestsFor(node)}`"
                           >
                             в т.ч. из заявок {{ feoQtyRequestsFor(node) }}
                           </div>
@@ -762,7 +762,7 @@
                         <span v-else class="feo-amount-empty">—</span>
                         <div v-if="plannedSumBase === 'all' && feoPlannedRequestsFor(node) > 0"
                           class="feo-plan-note text-medium-emphasis"
-                          :title="`Позиции заявок в статусе «План-график» и дальше: ${formatCurrency(feoPlannedRequestsFor(node))}`"
+                          :title="`Позиции заявок в статусе «План закупок» и дальше: ${formatCurrency(feoPlannedRequestsFor(node))}`"
                         >
                           в т.ч. из заявок {{ formatCurrency(feoPlannedRequestsFor(node)) }}
                         </div>
@@ -1004,7 +1004,7 @@
                                   <td style="padding:4px 8px;color:#9ca3af">—</td>
                                   <td style="padding:4px 8px;text-align:center">
                                     <v-icon v-if="factForPlanned(node.id, planned.id).length" icon="mdi-check-circle" size="16" color="success" title="Сопоставлено" />
-                                    <v-chip v-else size="x-small" color="blue" variant="tonal" title="Запланировано в ФЭО — часть План-графика">План-график</v-chip>
+                                    <v-chip v-else size="x-small" color="blue" variant="tonal" title="Запланировано в ФЭО — часть Плана закупок">План закупок</v-chip>
                                   </td>
                                   <td style="padding:2px;text-align:center">
                                     <v-btn icon="mdi-pencil" size="x-small" variant="text" color="blue"
@@ -1100,7 +1100,7 @@
                                 </template>
                               </template>
 
-                              <!-- Плановые из закупок: подтверждённые, но ещё не поставленные (план-график … заказано) -->
+                              <!-- Плановые из закупок: подтверждённые, но ещё не поставленные (план закупок … заказано) -->
                               <template v-for="actual in actualPlanStageFor(node.id)" :key="`ps-${actual.purchase_item_id}`">
                               <tr
                                 style="border-bottom:1px solid #E0F2FE;background:rgba(59,130,246,0.05)">
@@ -1287,7 +1287,7 @@
                                 </td>
                                 <td style="padding:4px 8px;color:#9ca3af">—</td>
                                 <td style="padding:4px 8px;text-align:center">
-                                  <v-chip size="x-small" color="blue" variant="tonal" title="Запланировано в ФЭО — часть План-графика">План-график</v-chip>
+                                  <v-chip size="x-small" color="blue" variant="tonal" title="Запланировано в ФЭО — часть Плана закупок">План закупок</v-chip>
                                 </td>
                                 <td style="padding:2px"></td>
                               </tr>
@@ -2036,10 +2036,10 @@
             variant="outlined"
             density="compact"
           />
-          <!-- Настройки план-графика (только для admin+) -->
+          <!-- Настройки плана закупок (только для admin+) -->
           <template v-if="canSaveVersion">
             <v-divider class="mt-4 mb-3" />
-            <div class="text-caption text-medium-emphasis mb-2">Настройки план-графика</div>
+            <div class="text-caption text-medium-emphasis mb-2">Настройки плана закупок</div>
             <v-switch
               v-model="editForm.require_planned_dates"
               label="Требовать дату потребности у позиций (для помесячного плана)"
@@ -3304,7 +3304,7 @@
               <div class="text-body-2">
                 Направления, которых в файле нет вообще, дерево не трогает.<br>
                 Узел, которому не выбрали цель, останется в дереве как есть — ничего не теряется.<br>
-                Удалённое исчезает из текущего дерева, но остаётся в предыдущей редакции план-графика —
+                Удалённое исчезает из текущего дерева, но остаётся в предыдущей редакции плана закупок —
                 она доступна в Истории и выгружается из неё.
               </div>
             </v-alert>
@@ -3422,7 +3422,7 @@
             </div>
             <v-alert v-if="feoImport.result?.version_created" type="info" variant="tonal" density="compact"
               icon="mdi-history" class="mb-3">
-              Создана предыдущая редакция план-графика (доступна в истории для выгрузки)
+              Создана предыдущая редакция плана закупок (доступна в истории для выгрузки)
             </v-alert>
             <v-expansion-panels v-if="feoImport.result?.deleted_details?.length || feoImport.result?.remap_applied?.length"
               v-model="feoResultPanels" multiple class="mb-3">
@@ -3776,7 +3776,7 @@
       <v-card>
         <v-card-title class="d-flex align-center pa-4">
           <v-icon icon="mdi-history" size="20" color="blue-grey" class="mr-2" />
-          История план-графика
+          История плана закупок
           <v-spacer />
           <v-btn icon="mdi-close" size="x-small" variant="text" @click="showVersionHistoryDialog = false" />
         </v-card-title>
@@ -5908,7 +5908,7 @@ const selectedBudget = computed(() => {
   return selectedSubsidy.value.feo_budget_total || selectedSubsidy.value.budget || 0
 })
 
-// «Запланировано» панели ФЭО = плановая сумма дерева (ручные позиции ФЭО + из заявок в план-графике),
+// «Запланировано» панели ФЭО = плановая сумма дерева (ручные позиции ФЭО + из заявок в плане закупок),
 // а не только закупки — план вносится и импортом/созданием позиций прямо в ФЭО
 const selectedPlannedTotal = computed(() => {
   if (feoTree.value.length) {
@@ -6364,7 +6364,7 @@ function feoIsOverBudget(node: FeoNode): boolean {
 
 // Согласование превышения плана над финансированием ФЭО (задача владельца
 // 2026-08-05: «если где-то превысил план ФЭО, значит где-то надо снимать —
-// действия заблокированы, пока план-график не загонять обратно в размеры ФЭО,
+// действия заблокированы, пока план закупок не загонять обратно в размеры ФЭО,
 // либо согласовать превышение цепочкой»). excess_amount/excess_pending/
 // excess_approved приходят готовыми с бэкенда в planTreeByCat (см.
 // app.services.feo_plan.compute_feo_plan_tree) — фронт ничего не пересчитывает.
@@ -6569,7 +6569,7 @@ function actualFactFor(catId: number) {
   return (comparisonData.value[catId]?.actual || []).filter(a => isFactActual(a))
 }
 
-// Позиции закупок в плановых стадиях (план-график … заказано) — отображаются на стороне ПЛАН
+// Позиции закупок в плановых стадиях (план закупок … заказано) — отображаются на стороне ПЛАН
 function actualPlanStageFor(catId: number) {
   return (comparisonData.value[catId]?.actual || []).filter(a => !isFactActual(a))
 }
@@ -6676,7 +6676,7 @@ function isAutoQtyNode(node: FeoNode): boolean {
   return node.planned_quantity == null
 }
 
-// ── Плановое количество из заявок (статусы план-график и дальше), БЕЗ привязанных к
+// ── Плановое количество из заявок (статусы план закупок и дальше), БЕЗ привязанных к
 // плановой позиции (feo_planned_item_id) — те расходуют ручной план листа, а не
 // складываются с ним поверх. Карта plannedPurchaseQty уже нетто (qty − qty_linked).
 function feoQtyRequestsFor(node: FeoNode): number {
@@ -6761,7 +6761,7 @@ function feoPlannedTotalFor(node: FeoNode): number {
   return 0
 }
 
-// ── Плановая сумма из заявок (статусы план-график и дальше), БЕЗ позиций, привязанных
+// ── Плановая сумма из заявок (статусы план закупок и дальше), БЕЗ позиций, привязанных
 // к плановой позиции (feo_planned_item_id) — они РАСХОДУЮТ ручной план листа (Ур.5),
 // а не складываются с ним поверх (иначе план задваивается — см. feoPlannedConsumedFor).
 // Лист — из карты бэкенда (уже нетто: total − total_linked); группа — собственные

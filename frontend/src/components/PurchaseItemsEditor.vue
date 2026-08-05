@@ -741,7 +741,7 @@ const props = withDefaults(defineProps<{
   purchaseIdFeo?: number | null
   // ISSUE-3: header-selected deepest FEO level — used to default per-item values
   defaultFeoCategoryId?: number | null
-  // F-PLAN: привязка позиций заявки к плановым позициям план-графика (FeoPlannedItem).
+  // F-PLAN: привязка позиций заявки к плановым позициям плана закупок (FeoPlannedItem).
   // ⚠️ Не задавать значение по умолчанию в withDefaults ниже — undefined (проп НЕ передан
   // вызывающей стороной, напр. CreateOrderView.vue) обязан отличаться от явного null,
   // иначе шапка-источник-истины перезапишет feo_planned_item_id закупки, у которой
@@ -749,7 +749,7 @@ const props = withDefaults(defineProps<{
   defaultFeoPlannedItemId?: number | null
   // Разные плановые позиции для каждого товара (аналог feoPerItem, но для Ур.5 ФЭО)
   feoPlannedPerItem?: boolean
-  // Плановые позиции план-графика субсидии (единый источник /feo-categories/plan-positions) —
+  // Плановые позиции плана закупок субсидии (единый источник /feo-categories/plan-positions) —
   // для per-item выбора в таблице (FeoPlannedItemsSelect dense-режим в каждой строке).
   plannedItems?: FeoPlanPosition[]
   // SN-UX: кастомный заголовок секции позиций

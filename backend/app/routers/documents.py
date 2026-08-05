@@ -369,7 +369,7 @@ _CONTRACT_REQUIRED_FIELDS = {
 }
 
 _BASIS_LABELS = {
-    "plan_schedule": "план-график",
+    "plan_schedule": "план закупок",
     "service_note": "служебная записка",
 }
 
@@ -3030,7 +3030,7 @@ TEMPLATE_VARIABLES = [
     ("{{subject}}", "Предмет закупки", "{{subject}}", "Оказание услуг связи"),
     ("{{status}}", "Статус", "{{status}}", "contracted"),
     ("{{purchase_method}}", "Способ закупки", "{{purchase_method}}", "Единственный поставщик"),
-    ("{{purchase_basis}}", "Основание", "{{purchase_basis}}", "план-график"),
+    ("{{purchase_basis}}", "Основание", "{{purchase_basis}}", "план закупок"),
     ("{{contract_type}}", "Тип договора", "{{contract_type}}", "Единственный поставщик"),
     ("{{responsible_person}}", "ФИО ответственного исполнителя", "{{responsible_person}}", "Иванов Иван Иванович"),
     ("{{feo_category_name}}", "Категория ФЭО (только выбранный узел)", "{{feo_category_name}}", "Услуги связи"),

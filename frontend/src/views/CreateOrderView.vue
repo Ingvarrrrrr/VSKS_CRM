@@ -783,7 +783,7 @@
           <v-row>
             <v-col cols="12" md="4">
               <v-select v-model="form.purchase_basis" clearable
-                :items="[{value:'plan_schedule',title:'План-график'},{value:'service_note',title:'Служебная записка'},{value:'work_order',title:'Заказ-наряд'}]"
+                :items="[{value:'plan_schedule',title:'План закупок'},{value:'service_note',title:'Служебная записка'},{value:'work_order',title:'Заказ-наряд'}]"
                 item-title="title" item-value="value" label="Основание закупки" variant="outlined" density="compact"
                 hint="Документ-основание для закупки" persistent-hint />
             </v-col>
@@ -1796,7 +1796,7 @@
                 v-model="form.procurement_planned_date"
                 label="Планируемая дата закупки"
                 variant="outlined" density="compact" type="date"
-                hint="Когда планируем провести закупку — используется в план-графике"
+                hint="Когда планируем провести закупку — используется в плане закупок"
                 persistent-hint
               />
             </v-col>
@@ -4253,7 +4253,7 @@ const STATUS_ORDER = PURCHASE_STATUS_ORDER
 // Подписи здесь намеренно длиннее/другие по смыслу, чем в общем словаре
 // (заголовок формы закупки: «Желания сотрудников», «Заключён договор/заказ») — оставлены как есть.
 const STATUS_LABEL_BASE: Record<string, string> = {
-  wishes: 'Желания сотрудников', plan_schedule: 'План-график',
+  wishes: 'Желания сотрудников', plan_schedule: 'План закупок',
   work_in_progress: 'Ведётся работа',
   contracted: 'Заключён договор', ordered: 'Заказано', delivered: 'Поставлено', paid: 'Оплачено',
 }

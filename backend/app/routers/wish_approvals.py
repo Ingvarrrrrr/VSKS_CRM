@@ -308,7 +308,7 @@ async def decide_wish_approval(
     if decision == "rejected":
         wish.status = "rejected"
         wish.rejection_reason = body.get("comment")
-        # Согласующий отклонил — если по заявке уже есть закупка в План-графике
+        # Согласующий отклонил — если по заявке уже есть закупка в Плане закупок
         # (например от параллельного потока действий), убираем её из плана.
         from app.routers.wishes import _withdraw_wish_from_plan
         _plan_warning = await _withdraw_wish_from_plan(wish.id, db)
@@ -330,7 +330,7 @@ async def decide_wish_approval(
         if remaining == 0:
             wish.status = "approved"
             wish.approved_by = current_user.id
-            # A2: автоконвертация в план-график при полном согласовании
+            # A2: автоконвертация в план закупок при полном согласовании
             # (аналогично кнопке /approve в wishes.py)
             if wish.items:
                 try:
@@ -360,7 +360,7 @@ async def decide_wish_approval(
                     db.add(ChatMessage(
                         room_id=room_id,
                         sender_id=current_user.id,
-                        content=f"✅ Заявка полностью согласована и передана в план-график: {wish.title or '(без названия)'}.",
+                        content=f"✅ Заявка полностью согласована и передана в план закупок: {wish.title or '(без названия)'}.",
                     ))
                     await db.flush()
                     await db.commit()

@@ -242,7 +242,7 @@ async def kanban_status_change(
     STATUS_ALIASES = {"in_progress": "work_in_progress", "planned": "plan_schedule", "confirmed": "work_in_progress"}
     target_status = STATUS_ALIASES.get(target_status, target_status)
     if target_status not in STATUS_ORDER:
-        STATUS_LABELS_RU = dict(zip(STATUS_ORDER, ["Желания", "План-график", "Ведётся работа", "Договор", "Заказано", "Поставлено", "Оплачено"]))
+        STATUS_LABELS_RU = dict(zip(STATUS_ORDER, ["Желания", "План закупок", "Ведётся работа", "Договор", "Заказано", "Поставлено", "Оплачено"]))
         allowed = ", ".join(f"{k} ({v})" for k, v in STATUS_LABELS_RU.items())
         raise HTTPException(422, f"Недопустимый статус: «{target_status}». Допустимые: {allowed}")
     result = await db.execute(select(Purchase).where(Purchase.id == pid))

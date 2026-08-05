@@ -363,10 +363,10 @@
                 prepend-icon="mdi-cart-arrow-right"
                 @click="openConvertDialog(item)"
               >
-                Передать в план-график
+                Передать в план закупок
               </v-btn>
               <v-chip v-else size="x-small" color="success" variant="tonal">
-                Согласована — ждёт передачи в план-график
+                Согласована — ждёт передачи в план закупок
               </v-chip>
             </template>
             <v-btn
@@ -465,7 +465,7 @@
                     prepend-icon="mdi-cart-arrow-right"
                     @click.stop="openConvertDialog(w)"
                   >
-                    В план-график
+                    В план закупок
                   </v-btn>
                   <v-chip v-else size="x-small" color="success" variant="tonal">
                     Согласована
@@ -923,7 +923,7 @@
             closable
             @click:close="wishConvertError = null"
           >
-            <div class="font-weight-medium mb-1">Не удалось передать в план-график</div>
+            <div class="font-weight-medium mb-1">Не удалось передать в план закупок</div>
             <div style="white-space:pre-wrap">{{ wishConvertError.message }}</div>
             <div v-if="wishConvertError.missingItemNames.length" class="mt-2">
               <span class="font-weight-medium">Позиции без даты:</span>
@@ -1031,7 +1031,7 @@
                       prepend-inner-icon="mdi-truck-delivery-outline"
                       :readonly="!isWishEditable"
                       persistent-hint
-                      :hint="wishForm.execution_deadline ? 'Задан «Срок исполнения» — он перебивает эту дату при переносе в план-график' : 'К этой дате нужна поставка/исполнение. Нужна для переноса в план-график'"
+                      :hint="wishForm.execution_deadline ? 'Задан «Срок исполнения» — он перебивает эту дату при переносе в план закупок' : 'К этой дате нужна поставка/исполнение. Нужна для переноса в план закупок'"
                       :error-messages="serverFieldErrors.desired_date"
                       @update:model-value="serverFieldErrors.desired_date = ''"
                     />
@@ -1055,7 +1055,7 @@
                     <v-alert v-if="wishFeoStale" type="warning" density="compact" variant="tonal" class="mb-2">
                       Категория ФЭО, выбранная в заявке, была удалена из справочника (структуру ФЭО субсидии
                       пересоздавали). Выберите актуальную категорию и сохраните. Если согласовать как есть —
-                      закупка будет создана без категории ФЭО, её можно задать в «План-графике».
+                      закупка будет создана без категории ФЭО, её можно задать в «Плане закупок».
                     </v-alert>
                     <FeoTreeSelect
                       v-model="wishFeoSelected"
@@ -1666,7 +1666,7 @@
             </v-btn>
             <v-btn v-if="isManagerOrAdmin" color="primary" variant="flat" prepend-icon="mdi-cart-arrow-right"
                    @click="openConvertDialog(editingWish); wishDialog = false">
-              Передать в План-график
+              Передать в План закупок
             </v-btn>
           </template>
           <template v-else-if="canAssigneeAct && editingWish">
@@ -2166,13 +2166,13 @@ const cancelWishFeoPerItemDisable = () => {
   wishFeoPerItemDisableDialog.value = false
 }
 
-// F-PLAN: привязка к конкретной ПЛАНОВОЙ ПОЗИЦИИ план-графика (FeoPlannedItem) —
+// F-PLAN: привязка к конкретной ПЛАНОВОЙ ПОЗИЦИИ плана закупок (FeoPlannedItem) —
 // заявка расходует уже заложенный план, а не задваивает его. Блок FeoPlannedItemsSelect
 // показывается всегда, когда выбрана категория ФЭО (см. шаблон).
 // БАГ 3 (сессия 2026-08-05): псевдо-вариант «Вне плана (новая позиция)» убран целиком —
-// владелец: «"Создать в план-графике" замечательно отображает добавление новой позиции...
+// владелец: «"Создать в плане закупок" замечательно отображает добавление новой позиции...
 // "Вне плана" не нужна». Позицию без плановой привязки заводят кнопкой «Создать
-// в план-графике» (FeoPlannedItemsSelect) — она физически создаёт FeoPlannedItem и сразу
+// в плане закупок» (FeoPlannedItemsSelect) — она физически создаёт FeoPlannedItem и сразу
 // выбирает его, так что «непривязанного» состояния для НОВЫХ заявок больше не возникает.
 const wishFeoPlannedItemId = ref<number | null>(null)
 
@@ -2421,7 +2421,7 @@ function collectFeoDescendantIds(rootId: number): Set<number> {
   return result
 }
 // Есть ли у выбранной категории ФЭО (или её потомков) хоть одна плановая позиция
-// план-графика — если нет, блок «выберите плановую позицию» не имеет смысла
+// плана закупок — если нет, блок «выберите плановую позицию» не имеет смысла
 // требовать при отправке (см. saveWish).
 const wishFeoBranchHasPlannedItems = computed((): boolean => {
   if (wishFeoSelected.value == null) return false
@@ -2430,7 +2430,7 @@ const wishFeoBranchHasPlannedItems = computed((): boolean => {
   return wishPlannedResiduals.value.some(r => ids.has(r.category_id))
 })
 
-// F-PLAN: остатки плановых позиций план-графика (Ур.5 ФЭО) для текущей субсидии,
+// F-PLAN: остатки плановых позиций плана закупок (Ур.5 ФЭО) для текущей субсидии,
 // с исключением брони самой редактируемой заявки (иначе её же позиции «съедали» бы остаток).
 const {
   plannedResiduals: wishPlannedResiduals,
@@ -2847,7 +2847,7 @@ async function openEditDialog(wish: Wish) {
     // Режим читаем из БД; фолбэк — только для записей, созданных до появления колонки.
     wishFeoPerItem.value = (wish as any).feo_per_item ?? rawItems.some((i: any) => i.feo_category_id != null)
 
-    // F-PLAN: восстановить привязку к плановым позициям план-графика из фактических
+    // F-PLAN: восстановить привязку к плановым позициям плана закупок из фактических
     // значений позиций (отдельной колонки wishes.feo_planned_item_id нет и не будет).
     // БАГ 3 (сессия 2026-08-05): «вне плана» (over_plan) больше не отражается в шапке —
     // псевдо-вариант убран из UI; поле в БД у старых позиций может остаться true, но
@@ -3170,19 +3170,19 @@ async function saveWish(andSubmit = false) {
         return
       }
     }
-    // F-PLAN: в ветке выбранной категории ФЭО есть плановые позиции план-графика, но не
+    // F-PLAN: в ветке выбранной категории ФЭО есть плановые позиции плана закупок, но не
     // выбрана ни одна. БАГ 3 (сессия 2026-08-05): псевдо-вариант «Вне плана» убран —
     // непривязанная позиция просто увеличит плановую сумму категории, как раньше делало
     // «вне плана», поэтому это больше НЕ блокирует отправку — только мягкое предупреждение.
     if (wishFeoBranchHasPlannedItems.value && !wishFeoPerItem.value && !wishFeoPlannedItemId.value) {
-      showSnack('В этой категории ФЭО есть плановые позиции план-графика. Выберите одну из них или создайте новую кнопкой «Создать в план-графике» — без выбора позиция увеличит плановую сумму категории.', 'warning')
+      showSnack('В этой категории ФЭО есть плановые позиции плана закупок. Выберите одну из них или создайте новую кнопкой «Создать в плане закупок» — без выбора позиция увеличит плановую сумму категории.', 'warning')
     }
     // F-PLAN: режим «разные ФЭО для каждого товара» — плановая позиция выбирается
     // в каждой строке отдельно. Аналогично выше — мягкое предупреждение, не блокирует.
     if (wishFeoBranchHasPlannedItems.value && wishFeoPerItem.value) {
       const unfilledCount = wishForm.value.items.filter((it: any) => it.feo_planned_item_id == null).length
       if (unfilledCount > 0) {
-        showSnack(`У ${unfilledCount} ${unfilledCount === 1 ? 'позиции' : 'позиций'} не выбрана плановая позиция план-графика. Выберите её или создайте новую кнопкой «Создать в план-графике» — без выбора позиция увеличит плановую сумму категории.`, 'warning')
+        showSnack(`У ${unfilledCount} ${unfilledCount === 1 ? 'позиции' : 'позиций'} не выбрана плановая позиция плана закупок. Выберите её или создайте новую кнопкой «Создать в плане закупок» — без выбора позиция увеличит плановую сумму категории.`, 'warning')
       }
     }
   }

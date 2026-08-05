@@ -6,8 +6,8 @@
       <div class="page-header-left">
         <v-icon icon="mdi-calendar-check" size="32" color="#3B82F6" class="mr-3" />
         <div>
-          <div class="page-title">План-график закупок</div>
-          <div class="page-subtitle">Закупки план-графика · {{ selectedYear ?? 'все годы' }}</div>
+          <div class="page-title">План закупок закупок</div>
+          <div class="page-subtitle">Закупки плана закупок · {{ selectedYear ?? 'все годы' }}</div>
         </div>
       </div>
       <div class="page-header-right">
@@ -169,12 +169,12 @@
       </div>
     </div>
 
-    <!-- ── Версии план-графика (только при выборе одной субсидии) ── -->
+    <!-- ── Версии плана закупок (только при выборе одной субсидии) ── -->
     <div v-if="filterSubsidyId !== null" class="plan-card mt-5">
       <div class="versions-header">
         <div class="versions-title">
           <v-icon icon="mdi-history" size="20" color="primary" class="mr-2" />
-          Версии план-графика
+          Версии плана закупок
         </div>
         <div class="versions-summary" v-if="versionsList.length > 0">
           Остаток: <strong>{{ fmtSigned(versionsRemainder) }}</strong>
@@ -233,7 +233,7 @@
     <!-- ── Dialog: зафиксировать версию ── -->
     <v-dialog v-model="showSaveVersionDialog" max-width="420" persistent>
       <v-card>
-        <v-card-title class="text-h6 pt-4 px-5">Зафиксировать версию план-графика</v-card-title>
+        <v-card-title class="text-h6 pt-4 px-5">Зафиксировать версию плана закупок</v-card-title>
         <v-card-text class="px-5 pb-2">
           <v-textarea
             v-model="saveVersionNote"
@@ -535,7 +535,7 @@ const saveVersion = async () => {
       body: JSON.stringify({ note: saveVersionNote.value || null }),
     })
     showSaveVersionDialog.value = false
-    snack.value = { show: true, text: 'Версия план-графика зафиксирована', color: 'success' }
+    snack.value = { show: true, text: 'Версия плана закупок зафиксирована', color: 'success' }
     await loadVersions()
   } catch (e: any) {
     snack.value = { show: true, text: e?.payload?.message || e?.message || 'Ошибка сохранения', color: 'error' }
@@ -813,7 +813,7 @@ const exportExcel = () => {
     XLSX.utils.sheet_add_aoa(ws, [totalRow], { origin: -1 })
 
     const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'План-график')
+    XLSX.utils.book_append_sheet(wb, ws, 'План закупок')
 
     const year = selectedYear.value ?? 'все'
     XLSX.writeFile(wb, `план_график_${year}.xlsx`)

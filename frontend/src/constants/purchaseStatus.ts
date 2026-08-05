@@ -1,5 +1,5 @@
 /**
- * Единый словарь статусов закупки (жизненный цикл: Желания → План-график →
+ * Единый словарь статусов закупки (жизненный цикл: Желания → План закупок →
  * Ведётся работа → Договор → Заказано → Поставлено → Оплачено).
  *
  * Лейблы синхронизированы с тем, что реально видит пользователь сейчас:
@@ -16,7 +16,7 @@ export interface PurchaseStatusMeta { label: string; color: string; icon: string
 
 export const PURCHASE_STATUS_META: Record<string, PurchaseStatusMeta> = {
   wishes:           { label: 'Желания',        color: '#6B7280', icon: 'mdi-hand-heart-outline', order: 0 },
-  plan_schedule:    { label: 'План-график',    color: '#F59E0B', icon: 'mdi-calendar-clock',     order: 1 },
+  plan_schedule:    { label: 'План закупок',    color: '#F59E0B', icon: 'mdi-calendar-clock',     order: 1 },
   work_in_progress: { label: 'Ведётся работа', color: '#14B8A6', icon: 'mdi-progress-wrench',    order: 2 },
   contracted:       { label: 'Договор',        color: '#6366F1', icon: 'mdi-file-sign',          order: 3 },
   ordered:          { label: 'Заказано',       color: '#0EA5E9', icon: 'mdi-cart-check',         order: 4 },

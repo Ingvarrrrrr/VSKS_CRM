@@ -115,7 +115,7 @@
                   <v-icon icon="mdi-alert-outline" size="12" />
                   <span style="font-size:11px">Превышение: {{ fmtRub(overBudgetDelta(item)) }}</span>
                 </div>
-                <!-- F-PLAN: выбор плановой позиции план-графика (Ур.5 ФЭО) для этой позиции.
+                <!-- F-PLAN: выбор плановой позиции плана закупок (Ур.5 ФЭО) для этой позиции.
                      category-id — узел каскада (лист или промежуточный), НЕ только feo_category_id:
                      компонент сам находит дочерние конечные элементы под промежуточным узлом. -->
                 <FeoPlannedItemsSelect
@@ -260,7 +260,7 @@ const props = defineProps<{
   allowedItemTypes: string[]
   vatMode: 'uniform' | 'per_item'
   feoPerItem: boolean
-  // F-PLAN: разные плановые позиции план-графика (Ур.5 ФЭО) для каждого товара
+  // F-PLAN: разные плановые позиции плана закупок (Ур.5 ФЭО) для каждого товара
   feoPlannedPerItem?: boolean
   plannedItems?: any[]
   // F-PLAN2: производный выбор { kind, id } | null для FeoPlannedItemsSelect по

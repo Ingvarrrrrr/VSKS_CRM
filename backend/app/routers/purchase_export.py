@@ -125,7 +125,7 @@ _PURCHASE_METHOD_LABELS = {
     "advance":       "Авансовый отчёт",
 }
 _PURCHASE_BASIS_LABELS = {
-    "plan_schedule": "план-график",
+    "plan_schedule": "план закупок",
     "service_note":  "служебная записка",
 }
 _CONTRACT_TYPE_LABELS = {
@@ -135,7 +135,7 @@ _CONTRACT_TYPE_LABELS = {
 }
 _STATUS_LABELS = {
     "wishes":          "Желания сотрудников",
-    "plan_schedule":   "План-график",
+    "plan_schedule":   "План закупок",
     "work_in_progress":"Ведётся работа",
     "contracted":      "Заключён договор",
     "ordered":         "Заказано",
@@ -172,7 +172,7 @@ _DD_CONTRACT_TYPE   = [  # label → key stored in purchase_contract_type
 ]
 _DD_STATUS = [           # label → key stored in status
     ("Желания сотрудников",        "wishes"),
-    ("План-график",                "plan_schedule"),
+    ("План закупок",                "plan_schedule"),
     ("Ведётся работа",             "work_in_progress"),
     ("Заключён договор",           "contracted"),
     ("Заказано",                   "ordered"),
@@ -193,7 +193,7 @@ _DD_METHOD = [           # label → key stored in purchase_method
     ("Запрос котировок",        "quote_request"),
 ]
 _DD_BASIS = [            # label → key stored in purchase_basis
-    ("план-график",      "plan_schedule"),
+    ("план закупок",      "plan_schedule"),
     ("служебная записка","service_note"),
 ]
 _DD_VAT_APPLICABLE = [   # just display values, stored as bool
@@ -758,7 +758,7 @@ _COL_SPEC: list[dict] = [
         "if_empty": "Этап определяется автоматически по заполненным полям",
         "comment":  (
             "Этап закупки. Выберите из выпадающего списка или впишите вручную.\n"
-            "Допустимые значения: Желания сотрудников, План-график, Ведётся работа, "
+            "Допустимые значения: Желания сотрудников, План закупок, Ведётся работа, "
             "Заключён договор, Заказано, Поставлено (= поставлено, но не оплачено), Оплачено.\n"
             "Если не заполнено — этап определяется по данным строки: оплата → Оплачено, "
             "договор → Заключён договор, иначе → Ведётся работа."
@@ -784,12 +784,12 @@ _COL_SPEC: list[dict] = [
         "header":   "Основание закупки",
         "required": False,
         "width":    22,
-        "fmt":      "план-график / служебная записка",
+        "fmt":      "план закупок / служебная записка",
         "effect":   "Основание для проведения закупки (purchase_basis)",
         "if_empty": "Основание не указывается",
         "comment":  (
             "Основание для проведения закупки. Выберите из выпадающего списка.\n"
-            "Допустимые значения: «план-график» или «служебная записка».\n"
+            "Допустимые значения: «план закупок» или «служебная записка».\n"
             "Если не заполнено — основание не будет указано."
         ),
         "_dd": "_DD_BASIS",
@@ -1341,7 +1341,7 @@ _TEMPLATE_EXAMPLE_ROW = [
     "",                                     # Дата доставки
     "Оплачено",                             # Этап закупки
     "",                                     # Подстатус (для «Ведётся работа»)
-    "план-график",                          # Основание закупки
+    "план закупок",                          # Основание закупки
     "Петров П.П.",                          # Ответственное лицо
     "",                                     # Ссылка ЭТП
     "ПП-101",                               # Номер платёжного документа
@@ -2087,7 +2087,7 @@ _PAYMENTS_COLUMN_MAP: Dict[str, str] = {
 _STATUS_MAP = {
     # Русские лейблы из выпадающего списка (новый шаблон)
     "желания сотрудников": "wishes",
-    "план-график":         "plan_schedule",
+    "план закупок":         "plan_schedule",
     "ведётся работа":      "work_in_progress",
     "заключён договор":    "contracted",
     "поставлено":          "delivered",
@@ -2994,7 +2994,7 @@ async def _parse_and_group(
         # Resolve purchase_basis (backward compat: accept both key and label)
         basis_raw = (first.get("purchase_basis") or "").lower().strip()
         basis_val = None
-        if basis_raw in ("план-график", "план_график", "plan_schedule"):
+        if basis_raw in ("план закупок", "план_график", "plan_schedule"):
             basis_val = "plan_schedule"
         elif basis_raw in ("служебная записка", "служебная_записка", "service_note"):
             basis_val = "service_note"

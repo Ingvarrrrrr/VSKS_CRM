@@ -3,11 +3,14 @@
        конечный элемент дерева ФЭО с планом, статья ФЭО с планом, или детализация
        Ур.5 FeoPlannedItem) — визуально продолжение дерева ФЭО (FeoTreeSelect): те же
        рельсы/локти (feoTreeRails.css), корневая строка — выбранная категория, ниже —
-       её плановые позиции (сама категория + дочерние конечные элементы). Радио —
-       нативный <input>, НЕ v-radio-group (ломает flex-строку); клик по всей строке =
-       выбор, повторный клик по уже выбранной строке снимает выбор (см. onItemRadioClick).
+       её плановые позиции (сама категория + дочерние конечные элементы). Строка —
+       <div role="radio">, обработчик клика висит на самом div (НЕ на <label>, чтобы
+       браузер не удваивал клик синтетическим событием на вложенном <input> — см. баг
+       в onItemRadioClick); <input type="radio"> внутри — чисто визуальный индикатор,
+       pointer-events:none, tabindex="-1". Клик по всей строке = выбор, повторный клик
+       по уже выбранной строке снимает выбор (см. onItemRadioClick).
        Псевдо-вариант «Вне плана (новая позиция)» убран (сессия 2026-08-05) — владелец:
-       позицию, которой нет в плане, заводят кнопкой «Создать в план-графике» ниже. -->
+       позицию, которой нет в плане, заводят кнопкой «Создать в плане закупок» ниже. -->
   <div v-if="categoryId != null" class="feo-planned-select" :class="{ 'feo-planned-select--dense': dense }">
     <!-- skipLast: заявка привязана к промежуточному уровню — плановые позиции недоступны -->
     <template v-if="skipLast">
@@ -20,7 +23,7 @@
     <template v-else>
       <div class="feo-planned-title text-caption font-weight-medium d-flex align-center ga-1 mb-1">
         <v-icon size="16" icon="mdi-clipboard-list-outline" />
-        <span>Плановые позиции план-графика</span>
+        <span>Плановые позиции плана закупок</span>
       </div>
 
       <template v-if="loading">
@@ -55,14 +58,20 @@
               <div v-if="filteredItems.length === 0" class="feo-tree-row feo-tree-row--pseudo">
                 <span class="feo-tree-rail" /><span class="feo-tree-elbow feo-tree-elbow--open" />
                 <span class="feo-tree-name">В этой категории нет плановых позиций</span>
-                <v-btn size="x-small" variant="text" color="primary" :disabled="readonly" @click.stop="openCreateDialog">Создать в план-графике</v-btn>
+                <v-btn size="x-small" variant="text" color="primary" :disabled="readonly" @click.stop="openCreateDialog">Создать в плане закупок</v-btn>
               </div>
-              <label
+              <div
                 v-for="row in filteredItems"
                 :key="row.key"
                 class="feo-tree-row"
-                :class="{ 'feo-tree-row--selected': selectedKey === row.key }"
+                :class="{ 'feo-tree-row--selected': selectedKey === row.key, 'feo-tree-row--clickable': !readonly }"
                 :title="selectedKey === row.key ? 'Нажмите ещё раз, чтобы снять выбор' : undefined"
+                role="radio"
+                :aria-checked="selectedKey === row.key"
+                :tabindex="readonly ? -1 : 0"
+                @click="onItemRadioClick(row, $event)"
+                @keydown.enter.prevent="onItemRadioClick(row, $event)"
+                @keydown.space.prevent="onItemRadioClick(row, $event)"
               >
                 <span class="feo-tree-rail" />
                 <span class="feo-tree-elbow feo-tree-elbow--open" />
@@ -72,7 +81,7 @@
                   :name="radioName"
                   :checked="selectedKey === row.key"
                   :disabled="readonly"
-                  @click="onItemRadioClick(row, $event)"
+                  tabindex="-1"
                 />
                 <span class="feo-tree-name">
                   {{ row.name }}
@@ -93,7 +102,7 @@
                   <span :class="{ 'feo-planned-shortfall': isShort(row) }">остаток {{ fmt(row.residual) }}</span>
                   <span v-if="isShort(row)" class="feo-planned-shortfall-note"> — не хватает {{ fmt(Math.abs(shortfall(row))) }}</span>
                 </span>
-              </label>
+              </div>
             </v-card>
           </v-menu>
         </template>
@@ -111,15 +120,21 @@
           <div v-if="filteredItems.length === 0" class="feo-tree-row feo-tree-row--pseudo">
             <span class="feo-tree-rail" /><span class="feo-tree-elbow feo-tree-elbow--open" />
             <span class="feo-tree-name">В этой категории нет плановых позиций</span>
-            <v-btn size="x-small" variant="text" color="primary" :disabled="readonly" @click="openCreateDialog">Создать в план-графике</v-btn>
+            <v-btn size="x-small" variant="text" color="primary" :disabled="readonly" @click="openCreateDialog">Создать в плане закупок</v-btn>
           </div>
 
-          <label
+          <div
             v-for="row in filteredItems"
             :key="row.key"
             class="feo-tree-row"
-            :class="{ 'feo-tree-row--selected': selectedKey === row.key }"
+            :class="{ 'feo-tree-row--selected': selectedKey === row.key, 'feo-tree-row--clickable': !readonly }"
             :title="selectedKey === row.key ? 'Нажмите ещё раз, чтобы снять выбор' : undefined"
+            role="radio"
+            :aria-checked="selectedKey === row.key"
+            :tabindex="readonly ? -1 : 0"
+            @click="onItemRadioClick(row, $event)"
+            @keydown.enter.prevent="onItemRadioClick(row, $event)"
+            @keydown.space.prevent="onItemRadioClick(row, $event)"
           >
             <span class="feo-tree-rail" />
             <span class="feo-tree-elbow feo-tree-elbow--open" />
@@ -129,7 +144,7 @@
               :name="radioName"
               :checked="selectedKey === row.key"
               :disabled="readonly"
-              @click="onItemRadioClick(row, $event)"
+              tabindex="-1"
             />
             <span class="feo-tree-name">
               {{ row.name }}
@@ -150,11 +165,11 @@
               <span :class="{ 'feo-planned-shortfall': isShort(row) }">остаток {{ fmt(row.residual) }}</span>
               <span v-if="isShort(row)" class="feo-planned-shortfall-note"> — не хватает {{ fmt(Math.abs(shortfall(row))) }}</span>
             </span>
-          </label>
+          </div>
 
           <div class="mt-1">
             <v-btn size="x-small" variant="text" color="primary" prepend-icon="mdi-plus" :disabled="readonly" @click="openCreateDialog">
-              Создать в план-графике
+              Создать в плане закупок
             </v-btn>
           </div>
         </template>
@@ -245,7 +260,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [val: FeoPlanSelection | null]
-  /** Плановая позиция создана диалогом «Создать в план-графике» (POST /feo-planned-items/) —
+  /** Плановая позиция создана диалогом «Создать в плане закупок» (POST /feo-planned-items/) —
    *  родитель должен перезагрузить список плановых позиций (напр. useFeoPlannedResiduals.reloadPlanned). */
   'planned-item-created': []
 }>()
@@ -281,7 +296,7 @@ const filteredItems = computed((): FeoPlanPosition[] => {
 })
 
 // modelValue ссылается на строку, которой больше нет среди актуальных (отфильтрованных
-// по категории/потомкам) items — либо позицию удалили из план-графика, либо она
+// по категории/потомкам) items — либо позицию удалили из плана закупок, либо она
 // принадлежит категории вне текущей ветки дерева.
 const ghostRow = computed((): boolean => {
   if (!props.modelValue) return false
@@ -331,17 +346,19 @@ function selectItem(row: FeoPlanPosition) {
   emit('update:modelValue', { kind: row.kind, id: row.id })
 }
 
-// БАГ 2 (сессия 2026-08-05): нативный <input type="radio"> физически не умеет сниматься
-// повторным кликом (браузер не выдаёт 'change' на клике по уже отмеченной радиокнопке,
-// state не меняется), поэтому вся логика выбора/снятия — ОДИН обработчик на 'click'
-// (срабатывает всегда, вне зависимости от смены состояния); 'change' на радио НЕ вешаем
-// вовсе, иначе он отрабатывает следом за 'click' и заново выставляет выбор, который
-// 'click' только что снял. Источник правды — Vue-состояние (props.modelValue), а не
-// DOM-атрибут checked. preventDefault останавливает нативную активацию — дальше Vue сам
-// перерисует :checked по новому modelValue.
-function onItemRadioClick(row: FeoPlanPosition, event: MouseEvent) {
+// БАГ 2 (сессия 2026-08-05, добор 2026-08-05): изначально <input type="radio"> лежал
+// ВНУТРИ <label class="feo-tree-row">, а обработчик висел на самом <input>. Клик по
+// <label> браузер сам транслирует во ВТОРОЙ синтетический клик по вложенному <input> —
+// onItemRadioClick срабатывал дважды за один клик пользователя: первый раз выбирал
+// строку, второй тут же видел selectedKey === row.key и снимал выбор. Внешне — «клик
+// ничего не делает». Исправлено: обёртка теперь <div role="radio">, обработчик висит
+// на самом div (ровно один клик = ровно один вызов), а <input type="radio"> остался
+// чисто визуальным индикатором — tabindex="-1" и pointer-events:none в CSS, своих
+// событий не порождает. Источник правды — Vue-состояние (props.modelValue), а не
+// DOM-атрибут checked. Доступность: role="radio" + aria-checked + tabindex + Enter/Space.
+function onItemRadioClick(row: FeoPlanPosition, event?: Event) {
   if (props.readonly) return
-  event.preventDefault()
+  event?.preventDefault()
   if (selectedKey.value === row.key) {
     emit('update:modelValue', null)
   } else {
@@ -354,7 +371,7 @@ function detachGhost() {
   emit('update:modelValue', null)
 }
 
-// БАГ 3 (сессия 2026-08-05): раньше кнопка «Создать в план-графике» делала
+// БАГ 3 (сессия 2026-08-05): раньше кнопка «Создать в плане закупок» делала
 // router.push('/subsidies') — уводила пользователя со страницы, теряя введённые данные
 // формы, и ничего не создавала. Теперь — диалог тут же, POST /feo-planned-items/
 // (контракт см. backend/app/routers/feo_planned_items.py), затем родитель
@@ -424,7 +441,21 @@ async function saveCreateDialog() {
 .feo-planned-radio {
   flex-shrink: 0;
   margin-top: calc((var(--feo-row-line) - 14px) / 2);
+  /* Чисто визуальный индикатор — клик обрабатывается на обёртке .feo-tree-row (div
+     role="radio"), не на самом input (иначе браузер генерит второй синтетический клик
+     на вложенном input по клику на обёртке — двойное срабатывание onItemRadioClick,
+     см. комментарий в <script setup>). */
+  pointer-events: none;
+}
+.feo-planned-select .feo-tree-row--clickable {
   cursor: pointer;
+}
+.feo-planned-select .feo-tree-row:not(.feo-tree-row--clickable) {
+  cursor: default;
+}
+.feo-planned-select .feo-tree-row--clickable:focus-visible {
+  outline: 2px solid #3B82F6;
+  outline-offset: -2px;
 }
 .feo-planned-qty {
   margin-left: 6px;

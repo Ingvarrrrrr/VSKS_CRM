@@ -39,7 +39,7 @@ STATUS_LABELS: dict[str, str] = {
     "delivered":      "Поставлено",
     "paid":           "Оплачено",
     "wishes":         "Заявка",
-    "plan_schedule":  "План-график",
+    "plan_schedule":  "План закупок",
     "work_in_progress": "Ведётся работа",
     "cancelled":      "Отменён",
 }

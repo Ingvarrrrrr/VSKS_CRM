@@ -113,7 +113,7 @@ const router = createRouter({
       path: '/plan',
       name: 'plan',
       component: PlanView,
-      meta: { requiresAuth: true, title: 'План-график', tab_key: 'plan' }
+      meta: { requiresAuth: true, title: 'План закупок', tab_key: 'plan' }
     },
     {
       path: '/commercial-requests',

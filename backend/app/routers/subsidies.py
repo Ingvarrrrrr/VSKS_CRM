@@ -206,7 +206,7 @@ async def _calculate_feo_planned_tree_bulk(
          «Внедорожник повышенной проходимости» показывала 16 380 000 = план листа
          8 380 000 + позиция заявки на самой группе 8 000 000, вместо MAX = 8 380 000);
       2) не расходиться с _create_plan_graph_version (purchases.py) — снапшот
-         истории версий план-графика использует ту же compute_feo_plan_tree.
+         истории версий плана закупок использует ту же compute_feo_plan_tree.
 
     Совпадает с тем, что показывает панель ФЭО вкладки «Субсидии»
     (feoPlannedDisplayFor(root) в SubsidiesView.vue, режим 'all' — реализует ту же
@@ -1554,7 +1554,7 @@ async def get_plan_graph_version(
     )).scalar_one_or_none()
 
     if not ver:
-        raise HTTPException(404, "Версия план-графика не найдена")
+        raise HTTPException(404, "Версия плана закупок не найдена")
 
     resp = {
         "id": ver.id,
@@ -1697,7 +1697,7 @@ async def create_plan_graph_version_manual(
         effective_date=body.effective_date,
     )
     await db.commit()
-    return {"ok": True, "message": "Версия план-графика сохранена"}
+    return {"ok": True, "message": "Версия плана закупок сохранена"}
 
 
 # ── Plan-Graph Export (Phase 12-04) ───────────────────────────────────────────
@@ -1757,7 +1757,7 @@ def _render_plan_graph_workbook(tree: list, items: list, meta: dict):
 
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "План-график"
+    ws.title = "План закупок"
 
     # ── Title row ─────────────────────────────────────────────────────────────
     subsidy_name = meta.get("subsidy_name", "")
@@ -2331,7 +2331,7 @@ async def export_plan_graph_excel(
 
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "План-график"
+    ws.title = "План закупок"
 
     # Заголовок-титул в строке 1 (не через insert_rows — иначе гиперлинки не
     # сдвигаются вместе с ячейками и «съезжают» на строку выше).
@@ -2715,7 +2715,7 @@ async def export_plan_graph_version_excel(
         )
     )).scalar_one_or_none()
     if not ver:
-        raise HTTPException(404, "Версия план-графика не найдена")
+        raise HTTPException(404, "Версия плана закупок не найдена")
 
     snap = ver.snapshot or {}
     tree = snap.get("tree", [])

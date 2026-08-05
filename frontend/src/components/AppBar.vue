@@ -634,7 +634,7 @@ const _allMenuItems = [
   { title: 'Реестры', icon: 'mdi-table', route: '/reports/lists', tab_key: 'reports' },
   { title: 'Сводные', icon: 'mdi-pivot', route: '/reports/pivots', tab_key: 'reports' },
   { title: 'Дашборды', icon: 'mdi-view-dashboard', route: '/dashboards', tab_key: 'reports' },
-  { title: 'План-график', icon: 'mdi-calendar-check', route: '/plan', tab_key: 'plan' },
+  { title: 'План закупок', icon: 'mdi-calendar-check', route: '/plan', tab_key: 'plan' },
   { title: 'Инциденты', icon: 'mdi-alert-circle-outline', route: '/system-incidents', tab_key: 'system_incidents' },
   { title: 'Организации', icon: 'mdi-domain', route: '/organizations', tab_key: 'admin.organizations' },
   { title: 'Биллинг', icon: 'mdi-currency-rub', route: '/billing', tab_key: 'admin.billing' },

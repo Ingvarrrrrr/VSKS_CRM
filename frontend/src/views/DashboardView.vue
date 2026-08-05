@@ -1988,7 +1988,7 @@ const analyticsLoading = ref(false)
 // «Заказана», «Поставлена», «Оплачена») — оставлены как есть, унифицирован только цвет.
 const A_STATUS_LABELS: Record<string, string> = {
   wishes:           'Пожелания',
-  plan_schedule:    'План-график',
+  plan_schedule:    'План закупок',
   work_in_progress: 'Ведётся работа',
   contracted:       'Законтрактована',
   ordered:          'Заказана',
@@ -2198,7 +2198,7 @@ function formatDate(iso: string) {
 
 // 'wishes'/'contracted'/'planned' здесь намеренно в развёрнутой формулировке документа
 // финансового плана («Заявка», «Заключён договор», «Запланирован») — оставлены как есть;
-// остальные (в т.ч. написание «План-график») — из единого источника.
+// остальные (в т.ч. написание «План закупок») — из единого источника.
 const STATUS_LABELS_FINPLAN: Record<string, string> = {
   ...Object.fromEntries(PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusLabel(s)])),
   planned: 'Запланирован', wishes: 'Заявка',

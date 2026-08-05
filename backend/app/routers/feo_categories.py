@@ -59,7 +59,7 @@ async def get_planned_purchase_totals(
     db: AsyncSession = Depends(get_db),
     _=Depends(get_current_user),
 ):
-    """Плановая сумма и количество из заявок per feo_category_id: позиции закупок в статусах план-графика и дальше.
+    """Плановая сумма и количество из заявок per feo_category_id: позиции закупок в статусах плана закупок и дальше.
 
     `total`/`qty` — ВСЕ позиции (для обратной совместимости, режим отображения «из заявок»).
     `total_linked`/`qty_linked` — подмножество позиций, привязанных к плановой позиции
@@ -230,7 +230,7 @@ async def get_planned_purchase_items(
     db: AsyncSession = Depends(get_db),
     _=Depends(get_current_user),
 ):
-    """Позиции закупок «из заявок» per feo_category_id (статусы план-графика и дальше)."""
+    """Позиции закупок «из заявок» per feo_category_id (статусы плана закупок и дальше)."""
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem
     from app.models.product import Product
@@ -740,7 +740,7 @@ async def get_feo_flat(
     is_leaf = True if the node has no children within the same subsidy.
     budget = собственная (ручная) сумма финансирования узла, без расчёта по детям.
     planned_quantity/planned_amount — плановые показатели (CRM-план), заполняются НЕЗАВИСИМО
-    от budget: конечная категория может иметь план (использована в план-графике) без
+    от budget: конечная категория может иметь план (использована в плане закупок) без
     собственного budget. Фронт (useFeoLeaves.filterFundedNodes) считает узел значимым по
     budget != null ИЛИ planned_quantity*planned_amount > 0 — иначе такие категории
     вырезались из дерева выбора, хотя реально существуют и используются (баг «категория
@@ -2459,7 +2459,7 @@ async def _update_subtree_levels(cat_id: int, level_delta: int, db: AsyncSession
 
 
 # Удаление блокируют только закупки, по которым работа реально идёт
-# (стадия «Ведётся работа» и далее). Желания/план-график/подтверждено —
+# (стадия «Ведётся работа» и далее). Желания/план закупок/подтверждено —
 # работа не начата, категория удаляется, привязка обнуляется (FK SET NULL).
 BLOCKING_STATUSES = ("work_in_progress", "contracted", "ordered", "delivered", "paid")
 
@@ -2708,7 +2708,7 @@ async def delete_category(
                 "message": (
                     f"Нельзя удалить: {len(linked_purchases)} закупок со стадией "
                     f"«Ведётся работа» и далее привязано к этой категории. "
-                    f"Закупки на ранних стадиях (желания, план-график) удалению не мешают."
+                    f"Закупки на ранних стадиях (желания, план закупок) удалению не мешают."
                 ),
                 "purchase_ids": purchase_ids,
                 "feo_category_ids": all_ids,

@@ -20,7 +20,7 @@ class WishItem(Base):
     # B9: per-item FEO category link (mirroring purchase_items.feo_category_id)
     # TODO: ALTER TABLE wish_items ADD COLUMN IF NOT EXISTS feo_category_id INTEGER REFERENCES feo_categories(id) ON DELETE SET NULL
     feo_category_id = Column(Integer, ForeignKey("feo_categories.id", ondelete="SET NULL"), nullable=True)
-    # Привязка к конкретной плановой позиции план-графика (уровень 5 ФЭО, mirroring
+    # Привязка к конкретной плановой позиции плана закупок (уровень 5 ФЭО, mirroring
     # purchase_items.feo_planned_item_id) — чтобы согласование заявки расходовало
     # уже запланированную строку, а не создавало новую (иначе план задваивается).
     feo_planned_item_id = Column(Integer, ForeignKey("feo_planned_items.id", ondelete="SET NULL"), nullable=True, index=True)

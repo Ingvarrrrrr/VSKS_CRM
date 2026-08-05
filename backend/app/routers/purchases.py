@@ -319,7 +319,7 @@ async def _create_plan_graph_version(
         return own + sum(_node_manual_plan(c) for c in children)
     manual_plan_total = sum(_node_manual_plan(n) for n in feo_tree)
 
-    # purchases_plan_total / purchases_calc_total — суммы закупок в статусах план-графика
+    # purchases_plan_total / purchases_calc_total — суммы закупок в статусах плана закупок
     _PLAN_STATUSES = ("plan_schedule", "work_in_progress", "contracted", "ordered", "delivered", "paid")
     purch_rows = (await db.execute(
         select(_Purchase.id, _Purchase.status, _Purchase.planned_total_price, _Purchase.total_nmck, _Purchase.nmck, _Purchase.contract_price, _Purchase.payment_amount)
@@ -360,7 +360,7 @@ async def _create_plan_graph_version(
     # purchases_plan_total — задваивала план, когда позиция закупки лежала
     # ОДНОВРЕМЕННО на группе и на её дочернем листе (см. docstring
     # compute_feo_plan_tree). Значение обязано совпадать с текущим KPI, иначе
-    # история версий план-графика расходится с тем, что видно на вкладке
+    # история версий плана закупок расходится с тем, что видно на вкладке
     # «Субсидии».
     from app.services.feo_plan import feo_plan_subsidy_totals
     total_plan_combined = (await feo_plan_subsidy_totals(db, [subsidy_id])).get(subsidy_id, 0.0)
@@ -1200,7 +1200,7 @@ async def create_purchase(
     if not is_advance and not is_sn:
         raise HTTPException(
             403,
-            detail="Прямое создание закупки отключено. Создайте заявку в разделе «Заявки на закупку» и отправьте на согласование — после одобрения она автоматически станет закупкой в «План-графике». Исключения: авансовые отчёты и СЗ на выдачу."
+            detail="Прямое создание закупки отключено. Создайте заявку в разделе «Заявки на закупку» и отправьте на согласование — после одобрения она автоматически станет закупкой в «Плане закупок». Исключения: авансовые отчёты и СЗ на выдачу."
         )
 
     items_data = data.items or []

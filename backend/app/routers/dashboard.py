@@ -348,7 +348,7 @@ async def dashboard_charts(
     # Phase 31-05: canonical spent + planned_amounts for D-17 (единый источник)
     spent_map = await _calculate_spent_bulk(db, sid_list)
     planned_amounts_map = await _calculate_planned_amounts_bulk(db, sid_list)
-    # Единый источник «Запланировано»: план дерева ФЭО = ручные позиции + позиции из заявок план-графика.
+    # Единый источник «Запланировано»: план дерева ФЭО = ручные позиции + позиции из заявок плана закупок.
     # Совпадает с KPI «Запланировано» на вкладке «Субсидии» (selectedPlannedTotal).
     planned_tree_map = await _calculate_feo_planned_tree_bulk(db, sid_list)
     sub_objs = {}
@@ -1341,7 +1341,7 @@ async def export_financial_plan_xlsx(
 
     STATUS_LABELS = {
         "planned": "Запланирован", "wishes": "Заявка",
-        "plan_schedule": "План-график",
+        "plan_schedule": "План закупок",
         "contracted": "Заключён договор", "ordered": "Заказано", "delivered": "Поставлено",
         "paid": "Оплачено", "work_in_progress": "Ведётся работа",
     }
@@ -1483,7 +1483,7 @@ async def export_financial_plan_details_xlsx(
 
     STATUS_LABELS = {
         "planned": "Запланирован", "wishes": "Заявка",
-        "plan_schedule": "План-график",
+        "plan_schedule": "План закупок",
         "contracted": "Заключён договор", "ordered": "Заказано", "delivered": "Поставлено",
         "paid": "Оплачено", "work_in_progress": "Ведётся работа",
     }

@@ -150,7 +150,7 @@ const emit = defineEmits<{
 // Подписи 'wishes'/'paid' здесь намеренно другие («Желания сотрудников», «Оплачено (архив)») — оставлены как есть.
 const COLUMNS: KanbanColumn[] = [
   { status: 'wishes', label: 'Желания сотрудников', color: purchaseStatusColor('wishes') },
-  { status: 'plan_schedule', label: 'План-график', color: purchaseStatusColor('plan_schedule') },
+  { status: 'plan_schedule', label: 'План закупок', color: purchaseStatusColor('plan_schedule') },
   { status: 'work_in_progress', label: 'Ведётся работа', color: purchaseStatusColor('work_in_progress') },
   { status: 'contracted', label: 'Договор', color: purchaseStatusColor('contracted') },
   { status: 'delivered', label: 'Поставлено', color: purchaseStatusColor('delivered') },

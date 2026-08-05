@@ -4081,6 +4081,7 @@ import { ref, computed, onMounted, watch, reactive, nextTick } from 'vue'
 import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
+import { refreshMyPendingApprovals } from '@/composables/useApprovalsBadge'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { useResizableColumns } from '@/composables/useResizableColumns'
 import { useCardView } from '@/composables/useCardView'
@@ -6458,6 +6459,7 @@ async function decidePlanExcess(node: FeoNode, decision: 'approved' | 'rejected'
     })
     showSnack(decision === 'approved' ? 'Превышение согласовано' : 'Превышение отклонено', decision === 'approved' ? 'success' : 'warning')
     if (selectedId.value) await refreshReqData()
+    refreshMyPendingApprovals()  // бейдж «мои согласования» в сайдбаре
   } catch (e: any) {
     showSnack(e?.payload?.message || e?.message || 'Не удалось сохранить решение', 'error')
   } finally {

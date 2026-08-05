@@ -32,6 +32,31 @@
 
     <div v-show="!orgCardsOpen || orgSummary.length <= 1">
 
+      <!-- Ожидают моего согласования — закупки + заявки + превышения плана ФЭО.
+           Видно на любой вкладке (не только «Закупки»): согласования по заявкам
+           и по превышению плана к закупкам напрямую не относятся, а «узнать,
+           что пришло согласование» нужно из любого места этого раздела. -->
+      <v-card v-if="pendingApprovals.length" variant="outlined" class="mb-4" style="border-color:#059669">
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-3 d-flex align-center ga-2">
+          <v-icon icon="mdi-check-decagram" color="green-darken-2" size="20" />
+          Ожидают моего согласования
+          <v-chip color="orange" size="small" variant="tonal">{{ pendingApprovals.length }}</v-chip>
+        </v-card-title>
+        <v-list density="compact">
+          <v-list-item v-for="pa in pendingApprovals" :key="`${pa.kind}-${pa.approval_id}`"
+            :to="pa.link"
+            :prepend-icon="approvalKindIcon(pa.kind)">
+            <v-list-item-title class="d-flex align-center flex-wrap ga-2">
+              <v-chip :color="approvalKindColor(pa.kind)" size="x-small" variant="tonal">{{ approvalKindLabel(pa.kind) }}</v-chip>
+              <span>{{ pa.title }}</span>
+            </v-list-item-title>
+            <v-list-item-subtitle>
+              {{ pa.subtitle }}<span v-if="pa.amount != null"> — {{ formatApprovalAmount(pa.amount) }}</span>
+            </v-list-item-subtitle>
+          </v-list-item>
+        </v-list>
+      </v-card>
+
       <!-- Интерактивный поиск (общий для таблицы и канбана, обеих вкладок) -->
       <div v-if="activeTab === 'purchases' || activeTab === 'general'" class="mb-3">
         <v-text-field
@@ -49,27 +74,6 @@
 
       <!-- ═══ PURCHASES TAB ═══ -->
       <template v-if="activeTab === 'purchases'">
-        <!-- Pending approvals -->
-        <v-card v-if="pendingApprovals.length" variant="outlined" class="mb-4" style="border-color:#059669">
-          <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-3 d-flex align-center ga-2">
-            <v-icon icon="mdi-check-decagram" color="green-darken-2" size="20" />
-            Ожидают моего согласования
-            <v-chip color="orange" size="small" variant="tonal">{{ pendingApprovals.length }}</v-chip>
-          </v-card-title>
-          <v-list density="compact">
-            <v-list-item v-for="pa in pendingApprovals" :key="pa.approval.id"
-              :to="`/orders/${pa.approval.purchase_id}/edit`"
-              prepend-icon="mdi-file-sign">
-              <v-list-item-title>
-                Закупка #{{ pa.purchase.purchase_number }} — {{ pa.purchase.subject || pa.purchase.item_name || 'Без названия' }}
-              </v-list-item-title>
-              <v-list-item-subtitle>
-                {{ pa.approval.role_name }}: {{ pa.approval.approver_full_name }}
-              </v-list-item-subtitle>
-            </v-list-item>
-          </v-list>
-        </v-card>
-
         <!-- Loading -->
         <div v-if="loading && tasks.length === 0" class="d-flex justify-center py-12">
           <v-progress-circular indeterminate color="primary" size="48" />
@@ -296,6 +300,25 @@ function matchSearch(hay: (string | number | null | undefined)[]) {
 const tasks = ref<any[]>([])
 const archiveTasks = ref<any[]>([])
 const pendingApprovals = ref<any[]>([])
+
+// ── Ожидают моего согласования: закупки/заявки/превышения плана ФЭО (kind) ──
+const APPROVAL_KIND_META: Record<string, { icon: string; label: string; color: string }> = {
+  purchase: { icon: 'mdi-file-sign', label: 'Закупка', color: 'blue' },
+  wish: { icon: 'mdi-hand-heart-outline', label: 'Заявка', color: 'teal' },
+  plan_excess: { icon: 'mdi-scale-unbalanced', label: 'Превышение плана ФЭО', color: 'deep-orange' },
+}
+function approvalKindIcon(kind: string) { return APPROVAL_KIND_META[kind]?.icon || 'mdi-check-decagram' }
+function approvalKindLabel(kind: string) { return APPROVAL_KIND_META[kind]?.label || kind }
+function approvalKindColor(kind: string) { return APPROVAL_KIND_META[kind]?.color || 'grey' }
+function formatApprovalAmount(amount: number) { return amount.toLocaleString('ru-RU') + ' ₽' }
+
+async function loadPendingApprovals() {
+  try {
+    pendingApprovals.value = await apiFetch<any[]>('/approvals/my-pending')
+  } catch (e: any) {
+    console.error('Load pending approvals error:', e?.payload?.message || e?.message)
+  }
+}
 const filteredTasks = computed(() =>
   [...tasks.value, ...(showArchive.value ? archiveTasks.value : [])]
     .filter((t: any) => matchSearch([t.subject, t.contractor_name, t.registry_number]))
@@ -652,9 +675,13 @@ async function loadOrgData() {
     } else {
       const taskUrl = orgId !== null ? `/tasks/?org_id=${orgId}` : '/tasks/'
       const purchaseUrl = orgId !== null ? `/purchases/?org_id=${orgId}` : '/purchases/'
+      // /approvals/my-pending не зависит от orgId (согласования конкретного
+      // пользователя не org-scoped) — грузим её здесь тоже, иначе для
+      // менеджеров/админов (эта ветка, не load()) блок никогда не заполнялся.
       const [allTasks, allPurchases] = await Promise.all([
         apiFetch<any[]>(taskUrl).catch(() => []),
         apiFetch<any[]>(purchaseUrl).catch(() => []),
+        loadPendingApprovals(),
       ])
       generalTasks.value = allTasks
       tasks.value = allPurchases.filter((t: any) => t.status !== 'paid')
@@ -681,9 +708,7 @@ async function load() {
       apiFetch<any[]>('/purchases/my-tasks?include_archive=true')
         .then(archived => { archiveTasks.value = archived.filter(t => t.status === 'paid') })
         .catch(() => {}),
-      apiFetch<any[]>('/approvals/my-pending')
-        .then(r => { pendingApprovals.value = r })
-        .catch(() => { pendingApprovals.value = [] }),
+      loadPendingApprovals(),
     ])
   } catch (e) { console.error('Load error:', e) }
   finally { loading.value = false }
@@ -720,6 +745,7 @@ async function pollTasks() {
     ])
     generalTasks.value = myTasks
     pendingConsentTasks.value = pending
+    await loadPendingApprovals()
     consentDeclines.value = declines
   } catch { /* silent */ }
 }

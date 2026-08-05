@@ -1343,9 +1343,12 @@ const showVatColumnsInExpandRow = computed(() => {
 })
 
 // Phase 26-V: resizable columns
+// Phase 26-V-fix: «Тип» держит максимум «Услуга»+стрелка (6 букв) — не нужен
+// 120px. «Страна происхождения» ужата до 110 (текст в 2 строки заголовка),
+// чтобы на типичной ширине (~1280px) «Ед. изм.» не уезжала за край без скролла.
 const { onResizeStart, resizeStyle } = useResizableColumns('purchase-items-editor', {
-  name: 320, type: 120, qty: 90, unit: 90, price: 130, sum: 130,
-  country: 150, contractor: 200, actions: 80,
+  name: 320, type: 90, qty: 90, unit: 90, price: 130, sum: 130,
+  country: 110, contractor: 200, actions: 80,
 })
 
 // Phase 26-JJ: NO bulk load. Hydrate only known contractor_id from current items.

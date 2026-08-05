@@ -1068,7 +1068,7 @@
                       @pick-unallocated="(parentId: number | null) => pickWishUnallocated(parentId)"
                     />
                     <FeoPlannedItemsSelect
-                      v-if="wishFeoPlanLink && !wishFeoPerItem"
+                      v-if="wishFeoSelected && !wishFeoPerItem"
                       v-model="wishFeoPlanSelection"
                       v-model:out-of-plan="wishFeoPlanOptOut"
                       :category-id="wishFeoSelected"
@@ -1104,6 +1104,10 @@
                     <div v-if="wishFeoSkipLast" class="text-caption text-medium-emphasis mt-n2 mb-2">
                       Заявка будет привязана к выбранному уровню без детализации до конечной категории.
                     </div>
+                    <div v-else-if="wishFeoSelectedNotLeaf" class="text-caption text-medium-emphasis mt-n2 mb-2">
+                      Выбранная категория ФЭО не конечная — углубитесь до конечной категории в дереве выше
+                      либо включите этот переключатель, если сознательно хотите остановиться на этом уровне.
+                    </div>
                   </v-col>
                   <!-- Тогл «Разные ФЭО позиции для каждого товара» (как в закупке) -->
                   <v-col v-if="wishForm.subsidy_id" cols="12" class="py-0">
@@ -1116,21 +1120,6 @@
                       :disabled="!isWishEditable && !canAssigneeAct"
                       @update:model-value="onWishFeoPerItemChange"
                     />
-                  </v-col>
-                  <!-- F-PLAN: привязка к плановым позициям план-графика (Ур.5 ФЭО) -->
-                  <v-col v-if="wishForm.subsidy_id" cols="12" class="py-0">
-                    <v-switch
-                      v-model="wishFeoPlanLink"
-                      label="Привязать позиции к плановым позициям план-графика"
-                      density="compact"
-                      color="primary"
-                      hide-details
-                      :disabled="!isWishEditable && !canAssigneeAct"
-                      @update:model-value="onWishFeoPlanLinkChange"
-                    />
-                    <div v-if="wishFeoPlanLink" class="text-caption text-medium-emphasis mt-n2 mb-2">
-                      Заявка израсходует уже заложенный план, а не увеличит плановую сумму ФЭО.
-                    </div>
                   </v-col>
                   <v-col cols="12">
                     <v-autocomplete
@@ -1596,9 +1585,9 @@
                   :subsidy-id="wishForm.subsidy_id"
                   :subsidy-name="selectedSubsidyName"
                   :default-feo-category-id="wishFeoSelected"
-                  :default-feo-planned-item-id="wishFeoPlanLink && !wishFeoPerItem ? wishFeoPlannedItemId : null"
-                  :default-over-plan="wishFeoPlanLink && !wishFeoPerItem ? wishFeoPlanOptOut : false"
-                  :feo-planned-per-item="wishFeoPlanLink && wishFeoPerItem"
+                  :default-feo-planned-item-id="!wishFeoPerItem ? wishFeoPlannedItemId : null"
+                  :default-over-plan="!wishFeoPerItem ? wishFeoPlanOptOut : false"
+                  :feo-planned-per-item="wishFeoPerItem"
                   :planned-items="wishPlannedResiduals"
                   :show-needed-date="wishDateMode === 'per_item'"
                   :vat-mode="wishForm.vat_mode"
@@ -1767,20 +1756,6 @@
       </v-card>
     </v-dialog>
 
-    <v-dialog v-model="wishFeoPlanLinkDisableDialog" max-width="480" :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="pa-4 pb-2">Отключить привязку к плановым позициям?</v-card-title>
-        <v-card-text class="pa-4">
-          У {{ wishFeoPlanLinkDisableCount }} {{ wishFeoPlanLinkDisableCount === 1 ? 'позиции' : 'позиций' }} указана привязка к плановой позиции план-графика — при отключении режима она будет очищена при сохранении.
-        </v-card-text>
-        <v-card-actions class="pa-4 pt-0">
-          <v-spacer />
-          <v-btn variant="text" @click="cancelWishFeoPlanLinkDisable">Отмена</v-btn>
-          <v-btn variant="flat" color="warning" @click="wishFeoPlanLinkDisableDialog = false">Отключить</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
     <!-- ── CONVERT DIALOG ── -->
     <v-dialog v-model="convertDialog" max-width="540" :fullscreen="mobile">
       <v-card>
@@ -1849,6 +1824,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useUndoRedo } from '@/composables/useUndoRedo'
+import { refreshMyPendingApprovals } from '@/composables/useApprovalsBadge'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import { formatMoney } from '@/utils/formatMoney'
@@ -2191,25 +2167,13 @@ const cancelWishFeoPerItemDisable = () => {
 }
 
 // F-PLAN: привязка к конкретной ПЛАНОВОЙ ПОЗИЦИИ план-графика (FeoPlannedItem) —
-// заявка расходует уже заложенный план, а не задваивает его.
-const wishFeoPlanLink = ref(false)
+// заявка расходует уже заложенный план, а не задваивает его. Факт привязки
+// определяется тем, выбрана ли плановая позиция (wishFeoPlannedItemId) или
+// отмечено «вне плана» (wishFeoPlanOptOut) — отдельного тумблера-переключателя
+// больше нет (владелец не находил его в форме), блок FeoPlannedItemsSelect
+// показывается всегда, когда выбрана категория ФЭО (см. шаблон).
 const wishFeoPlannedItemId = ref<number | null>(null)
 const wishFeoPlanOptOut = ref(false)
-const wishFeoPlanLinkDisableDialog = ref(false)
-const wishFeoPlanLinkDisableCount = ref(0)
-const onWishFeoPlanLinkChange = (val: boolean | null) => {
-  if (val) return
-  // Ручное выключение — предупреждаем, если позиции уже привязаны к плановой позиции
-  const count = wishForm.value.items.filter((i: any) => i.feo_planned_item_id != null).length
-  if (count > 0 || wishFeoPlanOptOut.value) {
-    wishFeoPlanLinkDisableCount.value = count
-    wishFeoPlanLinkDisableDialog.value = true
-  }
-}
-const cancelWishFeoPlanLinkDisable = () => {
-  wishFeoPlanLink.value = true
-  wishFeoPlanLinkDisableDialog.value = false
-}
 
 const orgMembers = ref<User[]>([])
 
@@ -2417,6 +2381,52 @@ const wishForm = ref({
 // ФЭО-дерево субсидии (узлы + листья с бюджетами) — объявлено ПОСЛЕ wishForm (TDZ)
 const { feoLeaves: wishFeoLeaves, feoNodes: wishFeoNodes } = useFeoLeaves({
   subsidyId: computed(() => wishForm.value.subsidy_id),
+})
+
+// Подсказка у переключателя «Не указывать последний уровень ФЭО»: выбранная
+// категория ФЭО не конечная (есть дочерние узлы) — нужно либо углубиться до
+// конечной категории, либо осознанно включить переключатель. Тот же критерий
+// (node.is_leaf), что и в валидации отправки (см. saveWish).
+const wishFeoSelectedNotLeaf = computed((): boolean => {
+  if (wishFeoSelected.value == null) return false
+  const node = wishFeoNodes.value.find(n => n.id === wishFeoSelected.value)
+  return !!node && !node.is_leaf
+})
+
+// F-PLAN: собрать id всех потомков узла дерева ФЭО (по parent_id) — повторяет
+// collectDescendantIds из FeoPlannedItemsSelect.vue (тот компонент не трогаем,
+// у него своя копия для рендера строк; здесь нужна отдельная для валидации
+// отправки — «есть ли в ветке выбранной категории плановые позиции вообще»).
+function collectFeoDescendantIds(rootId: number): Set<number> {
+  const childrenByParent = new Map<number, number[]>()
+  for (const n of wishFeoNodes.value) {
+    if (n.parent_id != null) {
+      const arr = childrenByParent.get(n.parent_id) || []
+      arr.push(n.id)
+      childrenByParent.set(n.parent_id, arr)
+    }
+  }
+  const result = new Set<number>()
+  const stack = [rootId]
+  while (stack.length) {
+    const id = stack.pop() as number
+    for (const childId of childrenByParent.get(id) || []) {
+      if (!result.has(childId)) {
+        result.add(childId)
+        stack.push(childId)
+      }
+    }
+  }
+  return result
+}
+// Есть ли у выбранной категории ФЭО (или её потомков) хоть одна плановая позиция
+// план-графика — если нет, блок «выберите плановую позицию» не имеет смысла
+// требовать при отправке (см. saveWish).
+const wishFeoBranchHasPlannedItems = computed((): boolean => {
+  if (wishFeoSelected.value == null) return false
+  const ids = collectFeoDescendantIds(wishFeoSelected.value)
+  ids.add(wishFeoSelected.value)
+  return wishPlannedResiduals.value.some(r => ids.has(r.category_id))
 })
 
 // F-PLAN: остатки плановых позиций план-графика (Ур.5 ФЭО) для текущей субсидии,
@@ -2707,11 +2717,8 @@ function resetForm() {
   wishFeoSelected.value = null
   wishFeoSkipLast.value = false
   wishFeoPerItem.value = false
-  wishFeoPlanLink.value = false
   wishFeoPlannedItemId.value = null
   wishFeoPlanOptOut.value = false
-  wishFeoPlanLinkDisableDialog.value = false
-  wishFeoPlanLinkDisableCount.value = 0
   wishDateMode.value = 'common'
 }
 
@@ -2749,13 +2756,12 @@ async function openEditDialog(wish: Wish) {
   forceStatusValue.value = wish.status || 'draft'
 
   // B5 — Seed cascade from wish.feo_category_id (цепочку строит сам FeoCascadeSelect).
-  // Если выбранный узел не лист — заявка была сохранена «без последнего уровня».
+  // Владелец: переключатель «Не указывать последний уровень ФЭО» не должен включаться
+  // сам при открытии заявки — только пользователь решает. Раньше здесь стоял
+  // автоподъём wishFeoSkipLast при наличии дочерних узлов у сохранённой категории —
+  // убран. Если категория не конечная, это отражается подсказкой у переключателя
+  // (см. wishFeoSelectedNotLeaf) и валидацией при отправке.
   wishFeoSelected.value = wish.feo_category_id ?? null
-  if (wish.feo_category_id) {
-    const node = allFeoCategories.value.find(c => c.id === wish.feo_category_id)
-    const hasChildren = allFeoCategories.value.some(c => c.parent_id === wish.feo_category_id)
-    if (node && hasChildren) wishFeoSkipLast.value = true
-  }
 
   // Открываем диалог СРАЗУ после синхронного заполнения формы — пользователь
   // видит окно мгновенно, а тяжёлая загрузка позиций идёт под спиннером.
@@ -2842,23 +2848,19 @@ async function openEditDialog(wish: Wish) {
       const anyOverPlan = overPlanFlags.some(v => v)
       const allOverPlan = overPlanFlags.length > 0 && overPlanFlags.every(v => v)
       if (nonNullPlannedIds.length === 0 && !anyOverPlan) {
-        wishFeoPlanLink.value = false
         wishFeoPlannedItemId.value = null
         wishFeoPlanOptOut.value = false
       } else if (nonNullPlannedIds.length === 0 && allOverPlan) {
         // Все позиции — «вне плана» (новая позиция), единое состояние в шапке.
-        wishFeoPlanLink.value = true
         wishFeoPlannedItemId.value = null
         wishFeoPlanOptOut.value = true
       } else if (nonNullPlannedIds.length === plannedIds.length && new Set(nonNullPlannedIds).size === 1 && !anyOverPlan) {
         // Все позиции привязаны к ОДНОЙ и той же плановой позиции — единое значение в шапке
-        wishFeoPlanLink.value = true
         wishFeoPlannedItemId.value = nonNullPlannedIds[0]
         wishFeoPlanOptOut.value = false
       } else {
         // Привязки разные у разных позиций ИЛИ часть пустая — единый выбор в шапке не
         // отразит это корректно, переключаем в режим «по позициям» (как per-item ФЭО).
-        wishFeoPlanLink.value = true
         wishFeoPerItem.value = true
         wishFeoPlannedItemId.value = null
         wishFeoPlanOptOut.value = false
@@ -3104,6 +3106,7 @@ async function decideApprover(approvalId: number, decision: 'approved' | 'reject
     else showSnack(decision === 'approved' ? 'Согласовано' : 'Отклонено')
     await loadWishOnce()
     await loadWishes()
+    refreshMyPendingApprovals()  // бейдж «мои согласования» в сайдбаре
   } catch (e: any) {
     showSnack(e?.payload?.message || e?.message || 'Не удалось сохранить решение', 'error')
   } finally {
@@ -3165,15 +3168,17 @@ async function saveWish(andSubmit = false) {
         return
       }
     }
-    // F-PLAN: привязка к план-графику включена, но не выбрана ни плановая позиция,
-    // ни явное «вне плана» — неопределённое состояние, не даём отправить.
-    if (wishFeoPlanLink.value && !wishFeoPerItem.value && !wishFeoPlannedItemId.value && !wishFeoPlanOptOut.value) {
-      showSnack('Выберите плановую позицию или отметьте «Вне плана (новая позиция)»', 'warning')
+    // F-PLAN: в ветке выбранной категории ФЭО ЕСТЬ плановые позиции план-графика,
+    // но ни одна не выбрана и не отмечено «вне плана» — неопределённое состояние,
+    // не даём отправить. Если плановых позиций в ветке нет — выбор не требуем.
+    if (wishFeoBranchHasPlannedItems.value && !wishFeoPerItem.value && !wishFeoPlannedItemId.value && !wishFeoPlanOptOut.value) {
+      showSnack('В этой категории ФЭО есть плановые позиции план-графика — выберите одну из них или отметьте «Вне плана (новая позиция)»', 'warning')
       return
     }
     // F-PLAN: режим «разные ФЭО для каждого товара» — плановая позиция выбирается
-    // в каждой строке отдельно; не даём отправить, если хоть одна не заполнена.
-    if (wishFeoPlanLink.value && wishFeoPerItem.value) {
+    // в каждой строке отдельно; не даём отправить, если хоть одна не заполнена
+    // (и только если в ветке вообще есть плановые позиции).
+    if (wishFeoBranchHasPlannedItems.value && wishFeoPerItem.value) {
       const unfilledCount = wishForm.value.items.filter((it: any) => it.feo_planned_item_id == null).length
       if (unfilledCount > 0) {
         showSnack(`У ${unfilledCount} ${unfilledCount === 1 ? 'позиции' : 'позиций'} не выбрана плановая позиция план-графика`, 'warning')
@@ -3207,15 +3212,15 @@ async function saveWish(andSubmit = false) {
         // B9: per-item ФЭО сохраняем только в режиме «Разные ФЭО позиции»
         feo_category_id: wishFeoPerItem.value ? ((rest as any).feo_category_id ?? null) : null,
         // F-PLAN: колонки wishes.feo_planned_item_id нет — выбор из шапки проставляется
-        // каждой позиции; вне плана / выключенная привязка → null у всех позиций.
-        feo_planned_item_id: wishFeoPlanLink.value
-          ? (wishFeoPerItem.value ? ((rest as any).feo_planned_item_id ?? null) : (wishFeoPlannedItemId.value ?? null))
-          : null,
+        // каждой позиции; в per-item режиме каждая строка несёт свой выбор.
+        feo_planned_item_id: wishFeoPerItem.value
+          ? ((rest as any).feo_planned_item_id ?? null)
+          : (wishFeoPlannedItemId.value ?? null),
         // F-PLAN2: аналогично feo_planned_item_id — над over_plan нет отдельной колонки
         // шапки, шапочное значение проставляется каждой позиции в single-режиме.
-        over_plan: wishFeoPlanLink.value
-          ? (wishFeoPerItem.value ? !!((rest as any).over_plan) : wishFeoPlanOptOut.value)
-          : false,
+        over_plan: wishFeoPerItem.value
+          ? !!((rest as any).over_plan)
+          : wishFeoPlanOptOut.value,
       })),
     }
 

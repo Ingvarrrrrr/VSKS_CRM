@@ -305,6 +305,8 @@
         >
           <template v-slot:append>
             <div class="d-flex align-center ga-1">
+              <span v-if="item.route === '/my-tasks' && myPendingApprovalsCount > 0"
+                class="sidebar-badge sidebar-badge--approval" :title="`${myPendingApprovalsCount} согласований ждут вашего решения`">{{ myPendingApprovalsCount }}</span>
               <span v-if="item.route === '/my-tasks' && badgeNewTasks > 0"
                 class="sidebar-badge sidebar-badge--new" :title="`${badgeNewTasks} новых задач`">{{ badgeNewTasks }}</span>
               <span v-if="item.route === '/my-tasks' && badgeTaskChanges > 0"
@@ -476,6 +478,7 @@ import UserAvatar from './UserAvatar.vue'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { apiFetch, forceClearCacheAndReload } from '@/api'
 import { totalUnread, initChat, destroyChat } from '@/composables/useChat'
+import { myPendingApprovalsCount, initApprovalsBadge, destroyApprovalsBadge } from '@/composables/useApprovalsBadge'
 import { useAuthStore } from '../stores/auth'
 
 const { globalSubsidyId } = useGlobalSubsidy()
@@ -985,6 +988,7 @@ onMounted(async () => {
   loadBadges()
   _badgeInterval = setInterval(loadBadges, 60_000)  // refresh every 60s
   initChat()  // start WS connection for chat badge updates
+  initApprovalsBadge()  // счётчик «мои согласования» (закупки + заявки + превышения плана ФЭО)
 
   // Superadmin: auto-open org picker if no orgs selected
   if (isSuperadmin.value && selectedOrgIds.value.length === 0 && myOrgs.value.length > 0) {
@@ -999,6 +1003,7 @@ onMounted(async () => {
 onUnmounted(() => {
   if (_badgeInterval) { clearInterval(_badgeInterval); _badgeInterval = null }
   destroyChat()
+  destroyApprovalsBadge()
 })
 
 // Keep badgeChatUnread in sync with totalUnread from WS events (real-time)
@@ -1112,6 +1117,9 @@ watch(totalUnread, (val) => { badgeChatUnread.value = val })
 }
 .sidebar-badge--changes {
   background: #FF9800;
+}
+.sidebar-badge--approval {
+  background: #E53935;
 }
 
 

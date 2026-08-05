@@ -286,6 +286,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+import { refreshMyPendingApprovals } from '@/composables/useApprovalsBadge'
 import SignaturePad from '@/components/SignaturePad.vue'
 
 const { mobile } = useDisplay()
@@ -497,6 +498,7 @@ async function decideApproval(
       : 'Отклонено'
     emit('snack', msg, action === 'approve' ? 'success' : 'error')
     rejectDialog.value = false
+    refreshMyPendingApprovals()  // бейдж «мои согласования» в сайдбаре
   } catch (e: any) {
     emit('snack', e?.detail || e?.message || 'Ошибка', 'error')
   } finally { decidingApprovalId.value = null }

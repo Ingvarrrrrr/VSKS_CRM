@@ -1,11 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.purchase import Purchase
 from app.models.purchase_approval import PurchaseApproval
 from app.models.purchase_event import PurchaseEvent
 from app.models.subsidy_approver import SubsidyApprover
+from app.models.wish import Wish
+from app.models.wish_approval import WishApproval
+from app.models.plan_excess_approval import PlanExcessApproval, PlanExcessApprovalStep
+from app.models.feo_category import FeoCategory
 from app.schemas.schemas import PurchaseApprovalOut, ApprovalDecisionRequest
 from app.auth.jwt import get_current_user, ADMIN_ROLES, MANAGER_ROLES
 from app.models.user import User
@@ -455,14 +459,28 @@ async def reset_approvals(
     return {"ok": True}
 
 
-# ── 5. My pending approvals ─────────────────────────────────────────────────
+# ── 5. My pending approvals (закупки + заявки + превышения плана ФЭО) ──────
+#
+# Владелец: «Все согласования должны быть в разделе про согласование. Человек,
+# которому пришли согласования, должен узнавать об этом, и счётчик должен
+# быть». Раньше эндпоинт отдавал только закупки (PurchaseApproval) — теперь
+# аддитивно (kind + унифицированные поля title/subtitle/amount/link поверх
+# старой формы записи) собираем все три вида согласований одним helper'ом,
+# чтобы список (/my-pending) и счётчик (/my-pending/count) не могли разойтись.
 
-@router.get("/approvals/my-pending")
-async def my_pending_approvals(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    # Find all approvals assigned to current user with status=pending
+async def _collect_my_pending(db: AsyncSession, current_user: User) -> list[dict]:
+    """Единый список согласований, ожидающих решения current_user.
+
+    Правила отбора для каждого вида повторяют логику очереди последовательного
+    согласования, уже реализованную в «родном» роутере каждой сущности
+    (purchase_approvals.decide_approval / wish_approvals.decide_wish_approval /
+    plan_excess.decide_plan_excess_step) — здесь она не переизобретается,
+    а повторяется один в один, чтобы отбор в списке совпадал с тем, что
+    реально позволяет решить соответствующий /decide.
+    """
+    out: list[dict] = []
+
+    # ── закупки (PurchaseApproval) ──
     result = await db.execute(
         select(PurchaseApproval)
         .where(
@@ -472,15 +490,12 @@ async def my_pending_approvals(
         .order_by(PurchaseApproval.created_at)
     )
     my_approvals = result.scalars().all()
-
-    out = []
     for ap in my_approvals:
-        # Load purchase info
         purchase = await db.get(Purchase, ap.purchase_id)
         if not purchase or purchase.approval_status != "in_progress":
             continue
 
-        # Check if it's actually this user's turn (sequential mode only)
+        # Очередь последовательного согласования — не наступила ли она ещё
         if purchase.approval_mode != "parallel":
             prior_result = await db.execute(
                 select(PurchaseApproval)
@@ -491,9 +506,17 @@ async def my_pending_approvals(
             )
             prior = prior_result.scalars().all()
             if any(p.status not in ("approved", "skipped") for p in prior):
-                continue  # Not this user's turn yet
+                continue  # ещё не очередь этого согласующего
 
         out.append({
+            "kind": "purchase",
+            "approval_id": ap.id,
+            "title": f"Закупка № {purchase.purchase_number or purchase.id}",
+            "subtitle": f"{ap.role_name}: {ap.approver_full_name}",
+            "amount": float(purchase.contract_price) if purchase.contract_price else None,
+            "requested_at": ap.created_at.isoformat() if ap.created_at else None,
+            "link": f"/orders/{purchase.id}/edit",
+            # Старая форма записи — контракт с MyTasksView.vue не ломаем
             "approval": _to_out(ap),
             "purchase": {
                 "id": purchase.id,
@@ -506,7 +529,109 @@ async def my_pending_approvals(
             },
         })
 
+    # ── заявки (WishApproval) — см. wish_approvals.decide_wish_approval ──
+    wish_result = await db.execute(
+        select(WishApproval)
+        .where(
+            WishApproval.user_id == current_user.id,
+            WishApproval.status == "pending",
+        )
+        .order_by(WishApproval.created_at)
+    )
+    my_wish_approvals = wish_result.scalars().all()
+    for wa in my_wish_approvals:
+        wish = await db.get(Wish, wa.wish_id)
+        if not wish or wish.status != "submitted":
+            continue
+
+        if wish.approval_mode == "sequential":
+            lower_pending = (await db.execute(
+                select(func.count()).select_from(WishApproval).where(
+                    WishApproval.wish_id == wa.wish_id,
+                    WishApproval.order_num < wa.order_num,
+                    WishApproval.status == "pending",
+                )
+            )).scalar() or 0
+            if lower_pending > 0:
+                continue  # ещё не очередь этого согласующего
+
+        amount = None
+        if wish.estimated_price is not None:
+            qty = float(wish.quantity) if wish.quantity is not None else 1.0
+            amount = float(wish.estimated_price) * qty
+
+        out.append({
+            "kind": "wish",
+            "approval_id": wa.id,
+            "title": f"Заявка №{wish.id}: {wish.title or 'без названия'}",
+            "subtitle": f"{wa.role_name}: {wa.approver_full_name}" if wa.role_name else "",
+            "amount": amount,
+            "requested_at": wa.created_at.isoformat() if wa.created_at else None,
+            "link": f"/wishes?open={wish.id}",
+        })
+
+    # ── превышения плана ФЭО (PlanExcessApprovalStep) — см. plan_excess.decide_plan_excess_step ──
+    step_result = await db.execute(
+        select(PlanExcessApprovalStep)
+        .where(
+            PlanExcessApprovalStep.user_id == current_user.id,
+            PlanExcessApprovalStep.status == "pending",
+        )
+        .order_by(PlanExcessApprovalStep.created_at)
+    )
+    my_excess_steps = step_result.scalars().all()
+    for step in my_excess_steps:
+        approval = await db.get(PlanExcessApproval, step.approval_id)
+        if not approval or approval.status != "pending":
+            continue
+
+        all_steps_result = await db.execute(
+            select(PlanExcessApprovalStep).where(PlanExcessApprovalStep.approval_id == approval.id)
+        )
+        all_steps = all_steps_result.scalars().all()
+        if approval.mode != "parallel":
+            lower_pending = any(
+                s.order_num < step.order_num and s.status == "pending" for s in all_steps
+            )
+            if lower_pending:
+                continue  # ещё не очередь этого согласующего
+
+        cat = await db.get(FeoCategory, approval.feo_category_id)
+        cat_name = cat.name if cat else f"категория №{approval.feo_category_id}"
+
+        out.append({
+            "kind": "plan_excess",
+            "approval_id": step.id,
+            "title": f"Превышение плана ФЭО: {cat_name}",
+            "subtitle": f"Превышение над бюджетом: {float(approval.excess_amount):,.2f} ₽".replace(",", " "),
+            "amount": float(approval.excess_amount) if approval.excess_amount is not None else None,
+            "requested_at": step.created_at.isoformat() if step.created_at else None,
+            "link": f"/subsidies?sid={approval.subsidy_id}",
+        })
+
     return out
+
+
+@router.get("/approvals/my-pending")
+async def my_pending_approvals(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await _collect_my_pending(db, current_user)
+
+
+@router.get("/approvals/my-pending/count")
+async def my_pending_approvals_count(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Лёгкий счётчик для бейджа в сайдбаре — использует тот же helper, что и
+    список выше, поэтому число всегда совпадает с длиной /my-pending."""
+    items = await _collect_my_pending(db, current_user)
+    counts = {"purchase": 0, "wish": 0, "plan_excess": 0}
+    for it in items:
+        counts[it["kind"]] = counts.get(it["kind"], 0) + 1
+    return {"total": len(items), **counts}
 
 
 # ── 6. Add approver to purchase (all roles) ─────────────────────────────────

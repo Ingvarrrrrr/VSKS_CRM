@@ -26,6 +26,15 @@ export function useResizableColumns(tableId: string, defaults: Record<string, nu
       if (saved) {
         const parsed = JSON.parse(saved)
         colWidths.value = { ...defaults, ...parsed }
+        // Миграция: колонка «Тип» (Товар/Услуга, максимум 6 букв) у части пользователей
+        // сохранена растянутой ещё со старого дефолта (120px). Новый дефолт — 90px.
+        // Тем, у кого сохранена ширина шире разумного (>140px), подрезаем один раз и
+        // сохраняем обратно — иначе колонка «Ед. изм.» уезжает за край таблицы.
+        // Тот же приём, что и миграция layout KPI в useDashboardLayout.ts.
+        if (typeof colWidths.value.type === 'number' && colWidths.value.type > 140) {
+          colWidths.value.type = 90
+          save()
+        }
       }
     } catch {}
   })

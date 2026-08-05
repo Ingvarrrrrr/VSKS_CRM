@@ -115,6 +115,18 @@
                   <v-icon icon="mdi-alert-outline" size="12" />
                   <span style="font-size:11px">Превышение: {{ fmtRub(overBudgetDelta(item)) }}</span>
                 </div>
+                <!-- F-PLAN: выбор плановой позиции план-графика (Ур.5 ФЭО) для этой позиции.
+                     category-id — узел каскада (лист или промежуточный), НЕ только feo_category_id:
+                     компонент сам находит дочерние конечные элементы под промежуточным узлом. -->
+                <FeoPlannedItemsSelect
+                  v-if="feoPlannedPerItem"
+                  :model-value="plannedSelectionFor ? plannedSelectionFor(item) : null"
+                  :out-of-plan="!!item.over_plan"
+                  :category-id="item.feo_node_id ?? item.feo_category_id ?? null"
+                  :nodes="feoNodes" :items="plannedItems || []"
+                  :amount="item.total_price" :readonly="readonly" dense class="mt-1"
+                  @update:model-value="(v) => emit('item-planned-change', idx, v)"
+                  @update:out-of-plan="(v) => emit('item-out-of-plan-change', idx, v)" />
               </template>
             </v-col>
 
@@ -229,9 +241,11 @@
 import { computed } from 'vue'
 import InlineProductMatch from '@/components/items/InlineProductMatch.vue'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
+import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
 import type { MatchCandidate } from '@/composables/useItemMatching'
 import type { Contractor, ProductLike, ItemsDisplayRow } from '@/components/items/types'
 import type { FeoNode } from '@/composables/useFeoLeaves'
+import type { FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
 
 // EditorItem is structurally identical to the parent's; kept loose here since the
 // parent owns the canonical definition and passes its own objects through.
@@ -247,6 +261,12 @@ const props = defineProps<{
   allowedItemTypes: string[]
   vatMode: 'uniform' | 'per_item'
   feoPerItem: boolean
+  // F-PLAN: разные плановые позиции план-графика (Ур.5 ФЭО) для каждого товара
+  feoPlannedPerItem?: boolean
+  plannedItems?: any[]
+  // F-PLAN2: производный выбор { kind, id } | null для FeoPlannedItemsSelect по
+  // фактическим полям позиции — см. plannedSelectionFor() в PurchaseItemsEditor.vue.
+  plannedSelectionFor?: (item: EditorItem) => FeoPlanSelection | null
   showContractorColumn: boolean
   showNeededDate?: boolean
   contractors: Contractor[]
@@ -297,6 +317,8 @@ const emit = defineEmits<{
   'item-contractor-select': [idx: number, val: Contractor | null]
   'open-contractor-quick-create': [idx: number]
   'item-feo-change': [idx: number, val: number | null]
+  'item-planned-change': [idx: number, val: FeoPlanSelection | null]
+  'item-out-of-plan-change': [idx: number, val: boolean]
   'item-pick-unallocated': [idx: number, parentId: number | null]
   'item-type-change': [idx: number, val: string]
   'items-changed': []

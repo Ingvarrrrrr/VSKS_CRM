@@ -1,0 +1,273 @@
+"""plan_excess.py — согласование превышения плана ФЭО над финансированием узла.
+
+Требование владельца (2026-08-05): «Если где-то превысил план ФЭО, значит
+где-то надо снимать. Должны быть заблокированы действия, пока план-график не
+загонять обратно в размеры ФЭО. Согласование превышения должно быть цепочкой,
+организации бывают разные, к директору не всегда простой сотрудник может
+попасть» — цепочка строится тем же механизмом, что и у заявок (wishes), см.
+app.services.approval_chain.build_ascending_chain.
+
+Endpoints:
+  GET  /api/plan-excess?subsidy_id=            — список запросов по субсидии
+  POST /api/plan-excess                        — запросить согласование превышения по узлу
+  POST /api/plan-excess/{id}/decide             — решение шага (approve/reject)
+
+Влияние на app.services.feo_plan.compute_feo_plan_tree — см. её docstring и
+assert_no_unapproved_excess (вызывается перед действиями, увеличивающими план,
+в purchases.py/wishes.py).
+"""
+import logging
+from datetime import datetime, timezone
+from decimal import Decimal
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.database import get_db
+from app.auth.jwt import get_current_user, get_single_org_id, MANAGER_ROLES, OWNER_ROLES
+from app.auth.permissions import require_tab
+from app.models.user import User
+from app.models.feo_category import FeoCategory
+from app.models.subsidy import Subsidy
+from app.models.organization import Organization
+from app.models.plan_excess_approval import PlanExcessApproval, PlanExcessApprovalStep
+from app.services.approval_chain import build_ascending_chain
+from app.services.feo_plan import compute_feo_plan_tree
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/plan-excess", tags=["plan-excess"])
+
+
+def _is_saas(user: User) -> bool:
+    return user.role in OWNER_ROLES
+
+
+def _step_dict(s: PlanExcessApprovalStep) -> dict:
+    return {
+        "id": s.id,
+        "approval_id": s.approval_id,
+        "user_id": s.user_id,
+        "order_num": s.order_num,
+        "role_name": s.role_name,
+        "full_name": s.approver_full_name,
+        "status": s.status,
+        "comment": s.comment,
+        "decided_at": s.decided_at.isoformat() if s.decided_at else None,
+        "decided_by_user_id": s.decided_by_user_id,
+    }
+
+
+def _approval_dict(a: PlanExcessApproval) -> dict:
+    return {
+        "id": a.id,
+        "feo_category_id": a.feo_category_id,
+        "subsidy_id": a.subsidy_id,
+        "excess_amount": float(a.excess_amount) if a.excess_amount is not None else 0.0,
+        "plan_amount": float(a.plan_amount) if a.plan_amount is not None else None,
+        "budget_amount": float(a.budget_amount) if a.budget_amount is not None else None,
+        "status": a.status,
+        "mode": a.mode,
+        "requested_by_id": a.requested_by_id,
+        "created_at": a.created_at.isoformat() if a.created_at else None,
+        "resolved_at": a.resolved_at.isoformat() if a.resolved_at else None,
+        "comment": a.comment,
+        "steps": [_step_dict(s) for s in sorted(a.steps, key=lambda s: s.order_num)],
+    }
+
+
+async def _load_approval(approval_id: int, db: AsyncSession) -> PlanExcessApproval:
+    a = (await db.execute(
+        select(PlanExcessApproval)
+        .options(selectinload(PlanExcessApproval.steps))
+        .where(PlanExcessApproval.id == approval_id)
+    )).scalar_one_or_none()
+    if a is None:
+        raise HTTPException(404, "Запрос на согласование превышения не найден")
+    return a
+
+
+# ── GET list ──────────────────────────────────────────────────────────────────
+
+@router.get("")
+async def list_plan_excess_approvals(
+    subsidy_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab("feo_categories")),
+):
+    rows = (await db.execute(
+        select(PlanExcessApproval)
+        .options(selectinload(PlanExcessApproval.steps))
+        .where(PlanExcessApproval.subsidy_id == subsidy_id)
+        .order_by(PlanExcessApproval.created_at.desc())
+    )).scalars().all()
+    return [_approval_dict(a) for a in rows]
+
+
+# ── POST request ──────────────────────────────────────────────────────────────
+
+@router.post("", status_code=201)
+async def request_plan_excess_approval(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab("feo_categories")),
+):
+    """Запросить согласование превышения плана по узлу ФЭО. body:
+    {feo_category_id, top_user_id?, mode?}. top_user_id — как в заявках,
+    если не передан — берётся руководитель организации субсидии."""
+    feo_category_id = int(body.get("feo_category_id", 0))
+    if not feo_category_id:
+        raise HTTPException(422, "feo_category_id обязателен")
+
+    cat = await db.get(FeoCategory, feo_category_id)
+    if cat is None:
+        raise HTTPException(404, "Категория ФЭО не найдена")
+
+    subsidy = await db.get(Subsidy, cat.subsidy_id)
+    if subsidy is None:
+        raise HTTPException(404, "Субсидия не найдена")
+
+    tree = await compute_feo_plan_tree(db, [cat.subsidy_id])
+    node = tree.get(feo_category_id)
+    if node is None:
+        raise HTTPException(404, "Узел ФЭО не найден в дереве плана")
+
+    excess_amount = node.get("excess_amount") or 0.0
+    if excess_amount <= 0.005:
+        raise HTTPException(400, f"По категории «{cat.name}» нет превышения плана над финансированием ФЭО")
+
+    existing_pending = (await db.execute(
+        select(PlanExcessApproval).where(
+            PlanExcessApproval.feo_category_id == feo_category_id,
+            PlanExcessApproval.status == "pending",
+        ).order_by(PlanExcessApproval.created_at.desc()).limit(1)
+    )).scalar_one_or_none()
+    if existing_pending:
+        full = await _load_approval(existing_pending.id, db)
+        return _approval_dict(full)
+
+    mode = body.get("mode", "sequential")
+    if mode not in ("sequential", "parallel"):
+        mode = "sequential"
+
+    top_user_id = body.get("top_user_id")
+    top_user_id = int(top_user_id) if top_user_id else None
+    org_id = subsidy.org_id or get_single_org_id(current_user)
+    if not top_user_id and org_id:
+        org = await db.get(Organization, org_id)
+        top_user_id = org.head_user_id if org else None
+    if not top_user_id:
+        top_user_id = current_user.id  # fallback: некому эскалировать — согласующий сам себе
+
+    chain: list[dict] = []
+    chain_warning: str | None = None
+    if org_id:
+        chain, chain_warning = await build_ascending_chain(db, current_user.id, top_user_id, org_id)
+    if not chain:
+        chain = [{
+            "user_id": top_user_id,
+            "role_name": "Согласующий",
+            "full_name": None,
+            "order_num": 0,
+        }]
+
+    full_plan = node["plan"] + node["over"]  # текущая плановая сумма (до сжатия по бюджету)
+    approval = PlanExcessApproval(
+        feo_category_id=feo_category_id,
+        subsidy_id=cat.subsidy_id,
+        excess_amount=Decimal(str(excess_amount)),
+        plan_amount=Decimal(str(full_plan)),
+        budget_amount=Decimal(str(node.get("budget") or 0)),
+        status="pending",
+        mode=mode,
+        requested_by_id=current_user.id,
+    )
+    db.add(approval)
+    await db.flush()
+
+    for step in chain:
+        db.add(PlanExcessApprovalStep(
+            approval_id=approval.id,
+            user_id=step["user_id"],
+            order_num=step["order_num"],
+            role_name=step.get("role_name"),
+            approver_full_name=step.get("full_name"),
+            status="pending",
+        ))
+    await db.commit()
+
+    full = await _load_approval(approval.id, db)
+    resp = _approval_dict(full)
+    resp["warning"] = chain_warning
+    return resp
+
+
+# ── POST decide ───────────────────────────────────────────────────────────────
+
+@router.post("/{approval_id}/decide")
+async def decide_plan_excess_step(
+    approval_id: int,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab("feo_categories")),
+):
+    approval = await _load_approval(approval_id, db)
+
+    decision = body.get("decision")
+    if decision not in ("approved", "rejected"):
+        raise HTTPException(422, "decision должен быть 'approved' или 'rejected'")
+
+    step_id = body.get("step_id")
+    step: PlanExcessApprovalStep | None = None
+    if step_id:
+        step = next((s for s in approval.steps if s.id == int(step_id)), None)
+    else:
+        # Без явного step_id — первый pending-шаг, назначенный текущему пользователю
+        step = next(
+            (s for s in approval.steps if s.status == "pending" and s.user_id == current_user.id),
+            None,
+        )
+    if step is None:
+        raise HTTPException(404, "Шаг согласования не найден")
+
+    if step.status != "pending":
+        raise HTTPException(400, f"По этому шагу уже принято решение: {step.status}")
+
+    if not _is_saas(current_user) and current_user.role not in MANAGER_ROLES and step.user_id != current_user.id:
+        raise HTTPException(403, "Решение может принять только назначенный согласующий или менеджер+")
+
+    if approval.status != "pending":
+        raise HTTPException(400, f"По этому запросу уже принято решение: {approval.status}")
+
+    # Sequential: нельзя согласовать, пока нижестоящие (меньший order_num) ещё pending
+    if approval.mode == "sequential":
+        lower_pending = any(
+            s.order_num < step.order_num and s.status == "pending" for s in approval.steps
+        )
+        if lower_pending:
+            raise HTTPException(
+                400,
+                "Последовательное согласование: сначала должны согласовать нижестоящие в цепочке.",
+            )
+
+    step.status = decision
+    step.comment = body.get("comment")
+    step.decided_at = datetime.now(timezone.utc)
+    step.decided_by_user_id = current_user.id
+    await db.flush()
+
+    if decision == "rejected":
+        approval.status = "rejected"
+        approval.resolved_at = datetime.now(timezone.utc)
+        approval.comment = body.get("comment")
+    else:
+        remaining = any(s.status == "pending" for s in approval.steps)
+        if not remaining:
+            approval.status = "approved"
+            approval.resolved_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    full = await _load_approval(approval_id, db)
+    return _approval_dict(full)

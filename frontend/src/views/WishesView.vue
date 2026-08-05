@@ -1067,6 +1067,20 @@
                       :root-label="selectedSubsidyName"
                       @pick-unallocated="(parentId: number | null) => pickWishUnallocated(parentId)"
                     />
+                    <FeoPlannedItemsSelect
+                      v-if="wishFeoPlanLink && !wishFeoPerItem"
+                      v-model="wishFeoPlanSelection"
+                      v-model:out-of-plan="wishFeoPlanOptOut"
+                      :category-id="wishFeoSelected"
+                      :nodes="wishFeoNodes"
+                      :items="wishPlannedResiduals"
+                      :amount="totalNmck"
+                      :suggest-key="wishFeoPlanSuggestKey"
+                      :suggest-reason="wishFeoPlanSuggestReason"
+                      :loading="wishPlannedLoading"
+                      :readonly="!isWishEditable && !canEditWishFeo"
+                      :skip-last="wishFeoSkipLast"
+                    />
                     <div v-if="!isWishEditable && canEditWishFeo && !canAssigneeAct" class="mt-2">
                       <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-content-save"
                              :loading="savingExecution" @click="saveExecution">
@@ -1102,6 +1116,21 @@
                       :disabled="!isWishEditable && !canAssigneeAct"
                       @update:model-value="onWishFeoPerItemChange"
                     />
+                  </v-col>
+                  <!-- F-PLAN: привязка к плановым позициям план-графика (Ур.5 ФЭО) -->
+                  <v-col v-if="wishForm.subsidy_id" cols="12" class="py-0">
+                    <v-switch
+                      v-model="wishFeoPlanLink"
+                      label="Привязать позиции к плановым позициям план-графика"
+                      density="compact"
+                      color="primary"
+                      hide-details
+                      :disabled="!isWishEditable && !canAssigneeAct"
+                      @update:model-value="onWishFeoPlanLinkChange"
+                    />
+                    <div v-if="wishFeoPlanLink" class="text-caption text-medium-emphasis mt-n2 mb-2">
+                      Заявка израсходует уже заложенный план, а не увеличит плановую сумму ФЭО.
+                    </div>
                   </v-col>
                   <v-col cols="12">
                     <v-autocomplete
@@ -1306,6 +1335,7 @@
                 <!-- Список согласующих -->
                 <div v-if="wishApprovers.length === 0" class="text-caption text-medium-emphasis">
                   Согласующие ещё не назначены.
+                  <div v-if="approverTopUser">Нажмите «Построить цепочку» — или просто отправьте заявку, цепочка построится автоматически.</div>
                 </div>
                 <div v-else class="d-flex flex-column" style="gap:10px">
                   <v-sheet
@@ -1566,6 +1596,10 @@
                   :subsidy-id="wishForm.subsidy_id"
                   :subsidy-name="selectedSubsidyName"
                   :default-feo-category-id="wishFeoSelected"
+                  :default-feo-planned-item-id="wishFeoPlanLink && !wishFeoPerItem ? wishFeoPlannedItemId : null"
+                  :default-over-plan="wishFeoPlanLink && !wishFeoPerItem ? wishFeoPlanOptOut : false"
+                  :feo-planned-per-item="wishFeoPlanLink && wishFeoPerItem"
+                  :planned-items="wishPlannedResiduals"
                   :show-needed-date="wishDateMode === 'per_item'"
                   :vat-mode="wishForm.vat_mode"
                   @update:vat-mode="(v: string) => { wishForm.vat_mode = v }"
@@ -1733,6 +1767,20 @@
       </v-card>
     </v-dialog>
 
+    <v-dialog v-model="wishFeoPlanLinkDisableDialog" max-width="480" :fullscreen="mobile">
+      <v-card>
+        <v-card-title class="pa-4 pb-2">Отключить привязку к плановым позициям?</v-card-title>
+        <v-card-text class="pa-4">
+          У {{ wishFeoPlanLinkDisableCount }} {{ wishFeoPlanLinkDisableCount === 1 ? 'позиции' : 'позиций' }} указана привязка к плановой позиции план-графика — при отключении режима она будет очищена при сохранении.
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="cancelWishFeoPlanLinkDisable">Отмена</v-btn>
+          <v-btn variant="flat" color="warning" @click="wishFeoPlanLinkDisableDialog = false">Отключить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- ── CONVERT DIALOG ── -->
     <v-dialog v-model="convertDialog" max-width="540" :fullscreen="mobile">
       <v-card>
@@ -1806,7 +1854,10 @@ import { apiFetch } from '@/api'
 import { formatMoney } from '@/utils/formatMoney'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
+import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
 import { useFeoLeaves } from '@/composables/useFeoLeaves'
+import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
+import type { FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
 import WishDistributionKanban from '@/components/WishDistributionKanban.vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import ValidationArrows from '@/components/ValidationArrows.vue'
@@ -2139,6 +2190,27 @@ const cancelWishFeoPerItemDisable = () => {
   wishFeoPerItemDisableDialog.value = false
 }
 
+// F-PLAN: привязка к конкретной ПЛАНОВОЙ ПОЗИЦИИ план-графика (FeoPlannedItem) —
+// заявка расходует уже заложенный план, а не задваивает его.
+const wishFeoPlanLink = ref(false)
+const wishFeoPlannedItemId = ref<number | null>(null)
+const wishFeoPlanOptOut = ref(false)
+const wishFeoPlanLinkDisableDialog = ref(false)
+const wishFeoPlanLinkDisableCount = ref(0)
+const onWishFeoPlanLinkChange = (val: boolean | null) => {
+  if (val) return
+  // Ручное выключение — предупреждаем, если позиции уже привязаны к плановой позиции
+  const count = wishForm.value.items.filter((i: any) => i.feo_planned_item_id != null).length
+  if (count > 0 || wishFeoPlanOptOut.value) {
+    wishFeoPlanLinkDisableCount.value = count
+    wishFeoPlanLinkDisableDialog.value = true
+  }
+}
+const cancelWishFeoPlanLinkDisable = () => {
+  wishFeoPlanLink.value = true
+  wishFeoPlanLinkDisableDialog.value = false
+}
+
 const orgMembers = ref<User[]>([])
 
 async function loadOrgMembers(sid: number | null) {
@@ -2347,6 +2419,89 @@ const { feoLeaves: wishFeoLeaves, feoNodes: wishFeoNodes } = useFeoLeaves({
   subsidyId: computed(() => wishForm.value.subsidy_id),
 })
 
+// F-PLAN: остатки плановых позиций план-графика (Ур.5 ФЭО) для текущей субсидии,
+// с исключением брони самой редактируемой заявки (иначе её же позиции «съедали» бы остаток).
+const {
+  plannedResiduals: wishPlannedResiduals,
+  plannedByCategory: wishPlannedByCategory,
+  plannedLoading: wishPlannedLoading,
+} = useFeoPlannedResiduals({
+  subsidyId: computed(() => wishForm.value.subsidy_id),
+  excludeWishId: computed(() => editingWishId.value),
+})
+
+// Плановые позиции выбранной категории ФЭО заявки.
+const wishPlannedItemsForCategory = computed(() =>
+  wishFeoSelected.value != null ? (wishPlannedByCategory.value.get(wishFeoSelected.value) ?? []) : []
+)
+
+// F-PLAN2: composite-выбор { kind, id } | null для FeoPlannedItemsSelect (шапка,
+// единая привязка на всю заявку). get() восстанавливает выбор из фактического
+// состояния (wishFeoPlannedItemId для kind='planned_item'; либо wishFeoSelected,
+// если он сам является плановой позицией/статьёй ФЭО с планом — kind='plan_position'
+// | 'feo_article'); set() пишет обратно в те же поля — см. FeoPlannedItemsSelect.vue
+// (task 2) для семантики kind → куда что пишется.
+const wishFeoPlanSelection = computed<FeoPlanSelection | null>({
+  get() {
+    if (wishFeoPlannedItemId.value != null) return { kind: 'planned_item', id: wishFeoPlannedItemId.value }
+    if (wishFeoSelected.value != null) {
+      const row = wishPlannedResiduals.value.find(
+        r => r.category_id === wishFeoSelected.value && (r.kind === 'plan_position' || r.kind === 'feo_article')
+      )
+      if (row) return { kind: row.kind, id: wishFeoSelected.value }
+    }
+    return null
+  },
+  set(val) {
+    if (!val) {
+      wishFeoPlannedItemId.value = null
+      return
+    }
+    if (val.kind === 'planned_item') {
+      wishFeoPlannedItemId.value = val.id
+    } else {
+      // Плановая позиция/статья ФЭО с планом может оказаться ДОЧЕРНИМ листом
+      // относительно того, что выбрано в дереве выше (см. FeoPlannedItemsSelect) —
+      // уточняем категорию заявки до конкретного листа.
+      wishFeoPlannedItemId.value = null
+      wishFeoSelected.value = val.id
+    }
+  },
+})
+
+// Авто-подсказка: сравнение нормализованных наименований позиций заявки с именами
+// плановых позиций категории. Точное совпадение приоритетнее подстрочного (>= 4 симв.).
+// Подсказка НЕ применяется автоматически — только чипом в FeoPlannedItemsSelect.
+function normWishName(s: string | null | undefined): string {
+  return (s || '').trim().toLowerCase().replace(/\s+/g, ' ')
+}
+const wishFeoPlanSuggestion = computed((): { key: string; reason: string } | null => {
+  const candidates = wishPlannedItemsForCategory.value
+  if (!candidates.length) return null
+  const itemNames = wishForm.value.items.map(i => normWishName(i.item_name)).filter(Boolean)
+  if (!itemNames.length) return null
+  for (const row of candidates) {
+    const planName = normWishName(row.name)
+    if (!planName) continue
+    for (const itemName of itemNames) {
+      if (itemName === planName) return { key: row.key, reason: `Совпадает с «${row.name}»` }
+    }
+  }
+  for (const row of candidates) {
+    const planName = normWishName(row.name)
+    if (!planName) continue
+    for (const itemName of itemNames) {
+      if (itemName.length < 4 || planName.length < 4) continue
+      if (planName.includes(itemName) || itemName.includes(planName)) {
+        return { key: row.key, reason: `Похоже на «${row.name}»` }
+      }
+    }
+  }
+  return null
+})
+const wishFeoPlanSuggestKey = computed(() => wishFeoPlanSuggestion.value?.key ?? null)
+const wishFeoPlanSuggestReason = computed(() => wishFeoPlanSuggestion.value?.reason ?? null)
+
 // ФЭО заявки не найдена в текущем дереве субсидии → категорию удалили/пересоздали.
 // Согласование не блокируется (backend обнулит и создаст закупку без ФЭО),
 // но в форме подсказываем выбрать актуальную категорию.
@@ -2388,6 +2543,12 @@ onBeforeUnmount(() => {
 // Watchers зависят от wishForm — объявлены ПОСЛЕ его ref, иначе immediate:true
 // дёргает getter в TDZ (ReferenceError: Cannot access 'wishForm' before initialization)
 watch(() => wishForm.value.subsidy_id, (sid) => { loadOrgMembers(sid) }, { immediate: true })
+
+// F-PLAN: при включении «Не указывать последний уровень ФЭО» плановые позиции
+// недоступны (см. skipLast в FeoPlannedItemsSelect) — сбрасываем выбор.
+watch(wishFeoSkipLast, (v) => {
+  if (v) wishFeoPlannedItemId.value = null
+})
 
 // Items computed total
 const totalNmck = computed(() =>
@@ -2546,6 +2707,11 @@ function resetForm() {
   wishFeoSelected.value = null
   wishFeoSkipLast.value = false
   wishFeoPerItem.value = false
+  wishFeoPlanLink.value = false
+  wishFeoPlannedItemId.value = null
+  wishFeoPlanOptOut.value = false
+  wishFeoPlanLinkDisableDialog.value = false
+  wishFeoPlanLinkDisableCount.value = 0
   wishDateMode.value = 'common'
 }
 
@@ -2641,6 +2807,9 @@ async function openEditDialog(wish: Wish) {
     wishForm.value.items = rawItems.map((i: any) => {
       const prod = i.product_id != null ? byId.get(i.product_id) : null
       return {
+        // ⚠️ БЕЗ id ветка PUT (non-draft) матчит позиции по id и молча игнорирует
+        // ВСЕ правки позиций уже согласованной заявки — самостоятельный баг, не связанный с ФЭО.
+        id: i.id ?? null,
         product_id: i.product_id ?? null,
         item_name: i.item_name || '',
         item_type: i.item_type || 'товар',
@@ -2650,6 +2819,8 @@ async function openEditDialog(wish: Wish) {
         total_price: i.total_price != null ? Number(i.total_price) : null,
         country_origin: i.country_origin || 'РФ',
         feo_category_id: i.feo_category_id ?? null,
+        feo_planned_item_id: i.feo_planned_item_id ?? null,
+        over_plan: i.over_plan ?? false,
         vat_rate: i.vat_rate ?? null,
         needed_date: i.needed_date ?? null,
         _photo_url: prod ? photoOf(prod) : undefined,
@@ -2658,6 +2829,41 @@ async function openEditDialog(wish: Wish) {
     }) as any
     // Режим читаем из БД; фолбэк — только для записей, созданных до появления колонки.
     wishFeoPerItem.value = (wish as any).feo_per_item ?? rawItems.some((i: any) => i.feo_category_id != null)
+
+    // F-PLAN: восстановить привязку к плановым позициям план-графика из фактических
+    // значений позиций (отдельной колонки wishes.feo_planned_item_id нет и не будет).
+    // F-PLAN2: та же логика теперь учитывает over_plan («вне плана») — единое
+    // состояние в шапке, если оно одинаково у ВСЕХ позиций.
+    {
+      const items = wishForm.value.items as any[]
+      const plannedIds = items.map(it => it.feo_planned_item_id)
+      const nonNullPlannedIds = plannedIds.filter(id => id != null)
+      const overPlanFlags = items.map(it => !!it.over_plan)
+      const anyOverPlan = overPlanFlags.some(v => v)
+      const allOverPlan = overPlanFlags.length > 0 && overPlanFlags.every(v => v)
+      if (nonNullPlannedIds.length === 0 && !anyOverPlan) {
+        wishFeoPlanLink.value = false
+        wishFeoPlannedItemId.value = null
+        wishFeoPlanOptOut.value = false
+      } else if (nonNullPlannedIds.length === 0 && allOverPlan) {
+        // Все позиции — «вне плана» (новая позиция), единое состояние в шапке.
+        wishFeoPlanLink.value = true
+        wishFeoPlannedItemId.value = null
+        wishFeoPlanOptOut.value = true
+      } else if (nonNullPlannedIds.length === plannedIds.length && new Set(nonNullPlannedIds).size === 1 && !anyOverPlan) {
+        // Все позиции привязаны к ОДНОЙ и той же плановой позиции — единое значение в шапке
+        wishFeoPlanLink.value = true
+        wishFeoPlannedItemId.value = nonNullPlannedIds[0]
+        wishFeoPlanOptOut.value = false
+      } else {
+        // Привязки разные у разных позиций ИЛИ часть пустая — единый выбор в шапке не
+        // отразит это корректно, переключаем в режим «по позициям» (как per-item ФЭО).
+        wishFeoPlanLink.value = true
+        wishFeoPerItem.value = true
+        wishFeoPlannedItemId.value = null
+        wishFeoPlanOptOut.value = false
+      }
+    }
     wishDateMode.value = (wishForm.value.items as any[]).some(it => it.needed_date) ? 'per_item' : 'common'
     await loadWishMembers()
     await loadWishApprovers()
@@ -2783,15 +2989,20 @@ async function loadWishApprovers() {
     wishApprovers.value = await apiFetch<WishApprover[]>(`/wishes/${editingWishId.value}/approvers`)
   } catch { wishApprovers.value = [] }
 }
+// Общий вызов API построения цепочки — переиспользуется кнопкой «Построить
+// цепочку» и молчаливым автопостроением при отправке на согласование.
+async function callCascadeApi(wishId: number, topUserId: number) {
+  return apiFetch<{ approval_mode: string; approvers: WishApprover[]; warning?: string | null }>(
+    `/wishes/${wishId}/approvers/cascade`,
+    { method: 'POST', body: JSON.stringify({ top_user_id: topUserId, mode: approvalMode.value }) },
+  )
+}
 async function runCascade() {
   if (!editingWishId.value) { showSnack('Сначала сохраните заявку', 'warning'); return }
   if (!approverTopUser.value) { showSnack('Выберите верхнего согласующего', 'warning'); return }
   cascadeLoading.value = true
   try {
-    const res = await apiFetch<{ approval_mode: string; approvers: WishApprover[]; warning?: string | null }>(
-      `/wishes/${editingWishId.value}/approvers/cascade`,
-      { method: 'POST', body: JSON.stringify({ top_user_id: approverTopUser.value, mode: approvalMode.value }) },
-    )
+    const res = await callCascadeApi(editingWishId.value, approverTopUser.value)
     wishApprovers.value = res.approvers
     approverTopUser.value = null
     if (res.warning) {
@@ -2804,6 +3015,36 @@ async function runCascade() {
     showSnack(e?.payload?.message || e?.message || 'Не удалось построить цепочку', 'error')
   } finally {
     cascadeLoading.value = false
+  }
+}
+// Молчаливый фолбэк для отправки на согласование: пользователь выбрал
+// «Верхнего согласующего», но не нажал «Построить цепочку» — строим её сами,
+// чтобы не ругать снэкбаром на пустой список согласующих.
+async function ensureApprovers(wishId: number): Promise<boolean> {
+  if (wishApprovers.value.length > 0) return true
+  if (!approverTopUser.value) return false
+  try {
+    const res = await callCascadeApi(wishId, approverTopUser.value)
+    if (res.approvers.length > 0) {
+      wishApprovers.value = res.approvers
+    } else {
+      // Цепочка не построилась (например, у выбранного нет руководителей) —
+      // добавляем хотя бы его самого вручную и перечитываем список.
+      await apiFetch(`/wishes/${wishId}/approvers`, {
+        method: 'POST', body: JSON.stringify({ user_id: approverTopUser.value }),
+      })
+      await loadWishApprovers()
+    }
+    approverTopUser.value = null
+    if (res.warning) {
+      showSnack(`Цепочка построена автоматически. Внимание: ${res.warning}`, 'warning')
+    } else {
+      showSnack('Цепочка согласования построена автоматически')
+    }
+    return wishApprovers.value.length > 0
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Не удалось построить цепочку согласования', 'error')
+    return false
   }
 }
 async function addApprover(userId: number | null) {
@@ -2924,6 +3165,21 @@ async function saveWish(andSubmit = false) {
         return
       }
     }
+    // F-PLAN: привязка к план-графику включена, но не выбрана ни плановая позиция,
+    // ни явное «вне плана» — неопределённое состояние, не даём отправить.
+    if (wishFeoPlanLink.value && !wishFeoPerItem.value && !wishFeoPlannedItemId.value && !wishFeoPlanOptOut.value) {
+      showSnack('Выберите плановую позицию или отметьте «Вне плана (новая позиция)»', 'warning')
+      return
+    }
+    // F-PLAN: режим «разные ФЭО для каждого товара» — плановая позиция выбирается
+    // в каждой строке отдельно; не даём отправить, если хоть одна не заполнена.
+    if (wishFeoPlanLink.value && wishFeoPerItem.value) {
+      const unfilledCount = wishForm.value.items.filter((it: any) => it.feo_planned_item_id == null).length
+      if (unfilledCount > 0) {
+        showSnack(`У ${unfilledCount} ${unfilledCount === 1 ? 'позиции' : 'позиций'} не выбрана плановая позиция план-графика`, 'warning')
+        return
+      }
+    }
   }
 
   saving.value = true
@@ -2950,6 +3206,16 @@ async function saveWish(andSubmit = false) {
         ...rest,
         // B9: per-item ФЭО сохраняем только в режиме «Разные ФЭО позиции»
         feo_category_id: wishFeoPerItem.value ? ((rest as any).feo_category_id ?? null) : null,
+        // F-PLAN: колонки wishes.feo_planned_item_id нет — выбор из шапки проставляется
+        // каждой позиции; вне плана / выключенная привязка → null у всех позиций.
+        feo_planned_item_id: wishFeoPlanLink.value
+          ? (wishFeoPerItem.value ? ((rest as any).feo_planned_item_id ?? null) : (wishFeoPlannedItemId.value ?? null))
+          : null,
+        // F-PLAN2: аналогично feo_planned_item_id — над over_plan нет отдельной колонки
+        // шапки, шапочное значение проставляется каждой позиции в single-режиме.
+        over_plan: wishFeoPlanLink.value
+          ? (wishFeoPerItem.value ? !!((rest as any).over_plan) : wishFeoPlanOptOut.value)
+          : false,
       })),
     }
 
@@ -2957,8 +3223,9 @@ async function saveWish(andSubmit = false) {
       const currentStatus = (wishForm.value as any).status || 'draft'
       await apiFetch(`/wishes/${editingWishId.value}`, { method: 'PUT', body: JSON.stringify(payload) })
       if (andSubmit && ['draft', 'rejected'].includes(currentStatus)) {
-        if (wishApprovers.value.length === 0) {
-          showSnack('Добавьте хотя бы одного согласующего — заявку нельзя отправить неизвестно кому', 'error')
+        const hasApprovers = await ensureApprovers(editingWishId.value)
+        if (!hasApprovers) {
+          showSnack('Не выбраны согласующие. Выберите «Верхнего согласующего» в разделе «Согласующие» — цепочка построится автоматически.', 'error')
           return
         }
         await apiFetch(`/wishes/${editingWishId.value}/submit`, { method: 'POST' })
@@ -2973,11 +3240,14 @@ async function saveWish(andSubmit = false) {
     } else {
       const created = await apiFetch<any>('/wishes/', { method: 'POST', body: JSON.stringify(payload) })
       if (andSubmit && created?.id) {
-        if (wishApprovers.value.length === 0) {
+        // Переходим в режим редактирования ДО построения цепочки — ensureApprovers
+        // и loadWishApprovers читают editingWishId.
+        editingWishId.value = created.id
+        const hasApprovers = await ensureApprovers(created.id)
+        if (!hasApprovers) {
           // Черновик создан, но согласующих нет — переходим в режим редактирования
           // и объясняем, что нужно добавить согласующих перед отправкой
-          editingWishId.value = created.id
-          showSnack('Черновик сохранён. Добавьте хотя бы одного согласующего — заявку нельзя отправить неизвестно кому', 'error')
+          showSnack('Черновик сохранён. Не выбраны согласующие. Выберите «Верхнего согласующего» в разделе «Согласующие» — цепочка построится автоматически.', 'error')
           await loadWishMembers()
           await loadWishApprovers()
           await reloadActiveTab()

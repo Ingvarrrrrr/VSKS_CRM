@@ -548,6 +548,12 @@ class PurchaseItemCreate(BaseModel):
     feo_planned_item_id: Optional[int] = None  # 27.4-15: FEO link для plan-graph version
     feo_category_id: Optional[int] = None  # FCAT-B1: per-item привязка к leaf FeoCategory
     needed_date: Optional[_Date] = None  # W2: дата потребности per-item
+    over_plan: bool = False  # false — расходует план элемента ФЭО; true — сверх плана
+    # Стадия «Приняли» (5-я стадия жизненного цикла позиции): заполняется автоматически
+    # при переходе закупки в delivered, правится вручную — см. purchase_transitions.py.
+    accepted_name: Optional[str] = None
+    accepted_quantity: Optional[Decimal] = None
+    accepted_unit: Optional[str] = None
 
 class PurchaseItemOut(PurchaseItemCreate):
     id: int
@@ -1306,6 +1312,22 @@ class FeoPlannedItemOut(FeoPlannedItemCreate):
     model_config = {"from_attributes": True}
 
 
+class FeoStageOut(BaseModel):
+    """Одна стадия жизненного цикла позиции для /feo-planned-items/comparison.
+
+    Порядок стадий строго: feo → plan → purchase → contract → accepted.
+    Стадия попадает в массив, только если у неё есть хоть какие-то данные —
+    см. get_comparison() в feo_planned_items.py.
+    """
+    key: str            # 'feo' | 'plan' | 'purchase' | 'contract' | 'accepted'
+    label: str           # «ФЭО» | «План» | «Что выставляли на закупку» | «Номенклатура подрядчика» | «Приняли»
+    name: Optional[str] = None
+    quantity: Optional[Decimal] = None
+    unit: Optional[str] = None
+    unit_price: Optional[Decimal] = None
+    total: Optional[Decimal] = None
+
+
 class FeoActualItemOut(BaseModel):
     """Фактическая позиция — purchase_item, связанный с feo_category через purchase."""
     purchase_item_id: int
@@ -1322,6 +1344,22 @@ class FeoActualItemOut(BaseModel):
     contract_number: Optional[str] = None
     contractor_name: Optional[str] = None
     product_photo: Optional[str] = None
+    # Требование владельца (2026-08-05): факт появляется с «Заказано», уточняется закрывающими
+    # документами при «Поставлено»/«Оплачено». См. get_comparison() в feo_planned_items.py.
+    final_unit_price: Optional[Decimal] = None   # позиция: цена по закрывающему документу
+    final_total: Optional[Decimal] = None        # позиция: сумма по закрывающему документу
+    acceptance_doc_amount: Optional[Decimal] = None  # закупка: сумма акта приёмки
+    contract_price: Optional[Decimal] = None         # закупка: цена по договору
+    purchase_items_count: Optional[int] = None       # всего позиций в этой закупке (для распределения)
+    fact_amount: Optional[Decimal] = None             # вычисленная фактическая сумма (см. правила выше)
+    fact_confirmed: bool = False                      # True — подтверждено актом приёмки (delivered/paid)
+    fact_allocated: bool = False                       # True — сумма распределена пропорционально между позициями
+    over_plan: bool = False                            # позиция «сверх плана» (не расходует лимит своего элемента)
+    # Стадия «Приняли» — см. FeoStageOut / accepted stage
+    accepted_name: Optional[str] = None
+    accepted_quantity: Optional[Decimal] = None
+    accepted_unit: Optional[str] = None
+    stages: list[FeoStageOut] = []  # цепочка стадий feo→plan→purchase→contract→accepted, только заполненные
     model_config = {"from_attributes": True}
 
 

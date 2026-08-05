@@ -30,6 +30,15 @@ class PurchaseItem(Base):
     receipt_id = Column(Integer, ForeignKey('purchase_receipts.id', ondelete='SET NULL'), nullable=True, index=True)  # Phase 26-BB
     needed_date = Column(Date, nullable=True)   # дата потребности per-item
     wish_item_id = Column(Integer, ForeignKey("wish_items.id", ondelete="SET NULL"), nullable=True)  # W1: hard link to source WishItem
+    # false — позиция расходует план своего конечного элемента ФЭО; true — «сверх плана»,
+    # прибавляется к плановой сумме (не вычитается из исходного лимита элемента).
+    over_plan = Column(Boolean, nullable=False, default=False, server_default=text("FALSE"))
+    # Стадия «Приняли» (5-я стадия жизненного цикла позиции, «в голубой обложке»):
+    # заполняется автоматически при переходе закупки в delivered (из contract_items
+    # по source_item_id, либо из самой purchase_items), правится вручную дальше.
+    accepted_name = Column(Text, nullable=True)
+    accepted_quantity = Column(Numeric(15, 4), nullable=True)
+    accepted_unit = Column(String(50), nullable=True)
 
     purchase = relationship("Purchase", back_populates="items")
     product = relationship("Product")

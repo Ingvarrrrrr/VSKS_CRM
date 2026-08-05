@@ -63,6 +63,42 @@ TRANSITION_REQUIRED: dict[str, list[str]] = {
 }
 
 
+async def _autofill_accepted_fields(purchase: Purchase, db: AsyncSession) -> None:
+    """5-я стадия жизненного цикла позиции («приняли») — автозаполнение при delivered.
+
+    Для каждой purchase_item, у которой accepted_name ещё NULL: берём name/quantity/unit
+    из связанной ContractItem (по source_item_id), а если договорной строки нет — из самой
+    purchase_item (item_name/quantity/unit). Позиции, где accepted_name уже заполнен
+    (ручная правка PATCH-ем или повторный переход), не трогаем.
+    """
+    items_res = await db.execute(
+        select(PurchaseItem).where(PurchaseItem.purchase_id == purchase.id)
+    )
+    items = items_res.scalars().all()
+    if not items:
+        return
+    item_ids = [it.id for it in items]
+    ci_res = await db.execute(
+        select(ContractItem).where(ContractItem.source_item_id.in_(item_ids))
+    )
+    ci_by_source: dict[int, ContractItem] = {}
+    for ci in ci_res.scalars().all():
+        if ci.source_item_id not in ci_by_source:
+            ci_by_source[ci.source_item_id] = ci
+    for it in items:
+        if it.accepted_name is not None:
+            continue
+        ci = ci_by_source.get(it.id)
+        if ci is not None:
+            it.accepted_name = ci.name
+            it.accepted_quantity = ci.quantity
+            it.accepted_unit = ci.unit
+        else:
+            it.accepted_name = it.item_name
+            it.accepted_quantity = it.quantity
+            it.accepted_unit = it.unit
+
+
 @router.post("/{pid}/transition", response_model=PurchaseOutFull)
 async def transition_status(
     pid: int,
@@ -96,6 +132,8 @@ async def transition_status(
     # SaaS-bypass: superadmin/account_owner — force-set статус минуя любые guard'ы.
     if current_user.role in OWNER_ROLES:
         p.status = target_status
+        if target_status == "delivered":
+            await _autofill_accepted_fields(p, db)
         await db.commit()
         await db.refresh(p)
         return p
@@ -329,6 +367,10 @@ async def transition_status(
 
     old_status = p.status
     p.status = target_status
+
+    # Стадия «Приняли» — автозаполнение accepted_* у позиций при переходе в delivered
+    if target_status == "delivered":
+        await _autofill_accepted_fields(p, db)
 
     # При переходе в contracted — обновить цены в каталоге товаров
     if target_status == "contracted" and p.items:

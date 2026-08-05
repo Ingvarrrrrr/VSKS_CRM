@@ -123,6 +123,9 @@
           :feo-leaves="feoLeaves"
           :feo-nodes="feoNodes"
           :feo-per-item="props.feoPerItem"
+          :feo-planned-per-item="props.feoPlannedPerItem"
+          :planned-items="props.plannedItems"
+          :planned-selection-for="plannedSelectionFor"
           :subsidy-id="props.subsidyId"
           :subsidy-name="props.subsidyName"
           :show-vat-columns-in-expand-row="showVatColumnsInExpandRow"
@@ -169,10 +172,13 @@
           @item-contractor-select="onItemContractorSelect"
           @open-contractor-quick-create="openContractorQuickCreate"
           @item-feo-change="onItemFeoChange"
+          @item-planned-change="onItemPlannedChange"
+          @item-out-of-plan-change="onItemOutOfPlanChange"
           @item-pick-unallocated="pickUnallocatedForItem"
           @item-type-change="onItemTypeChange"
           @update-contract-field="updateContractField"
           @contract-vat-change="onContractVatRateChange"
+          @update-accepted-field="updateAcceptedField"
         />
       </template>
 
@@ -188,6 +194,9 @@
           :allowed-item-types="props.allowedItemTypes"
           :vat-mode="props.vatMode || 'uniform'"
           :feo-per-item="props.feoPerItem"
+          :feo-planned-per-item="props.feoPlannedPerItem"
+          :planned-items="props.plannedItems"
+          :planned-selection-for="plannedSelectionFor"
           :show-contractor-column="showContractorColumn"
           :show-needed-date="props.showNeededDate"
           :contractors="contractors"
@@ -223,6 +232,8 @@
           @item-contractor-select="onItemContractorSelect"
           @open-contractor-quick-create="openContractorQuickCreate"
           @item-feo-change="onItemFeoChange"
+          @item-planned-change="onItemPlannedChange"
+          @item-out-of-plan-change="onItemOutOfPlanChange"
           @item-pick-unallocated="pickUnallocatedForItem"
           @item-type-change="onItemTypeChange"
           @items-changed="emitUpdate"
@@ -235,6 +246,9 @@
           :allowed-item-types="props.allowedItemTypes"
           :vat-mode="props.vatMode || 'uniform'"
           :feo-per-item="props.feoPerItem"
+          :feo-planned-per-item="props.feoPlannedPerItem"
+          :planned-items="props.plannedItems"
+          :planned-selection-for="plannedSelectionFor"
           :show-contractor-column="showContractorColumn"
           :show-needed-date="props.showNeededDate"
           :contractors="contractors"
@@ -272,6 +286,8 @@
           @item-contractor-select="onItemContractorSelect"
           @open-contractor-quick-create="openContractorQuickCreate"
           @item-feo-change="onItemFeoChange"
+          @item-planned-change="onItemPlannedChange"
+          @item-out-of-plan-change="onItemOutOfPlanChange"
           @item-pick-unallocated="pickUnallocatedForItem"
           @item-type-change="onItemTypeChange"
           @items-changed="emitUpdate"
@@ -483,6 +499,16 @@
             :root-label="props.subsidyName"
             @pick-unallocated="(parentId: number | null) => applyBulkUnallocated(parentId)"
           />
+          <!-- F-PLAN: массовый выбор плановой позиции — компонент сам находит дочерние
+               конечные элементы, если выбранный в дереве выше узел не лист. -->
+          <FeoPlannedItemsSelect
+            v-if="props.feoPlannedPerItem"
+            v-model="bulkPlannedSelection"
+            :category-id="bulkFeoId"
+            :nodes="feoNodes"
+            :items="effectivePlannedItems"
+            class="mt-2"
+          />
         </v-card-text>
         <v-card-actions>
           <v-spacer />
@@ -522,12 +548,14 @@ import ItemsCardsView from '@/components/items/ItemsCardsView.vue'
 import ItemsTableWish from '@/components/items/ItemsTableWish.vue'
 import ItemsTableStages from '@/components/items/ItemsTableStages.vue'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
+import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
 import type { ContractItem } from '@/types/contractItem'
 import type { ItemsDisplayRow } from '@/components/items/types'
 import { copyFromPurchase as apiCopyFromPurchase } from '@/api/contractItems'
 import { useResizableColumns } from '@/composables/useResizableColumns'
 import { formatNumber, parseNumber, fmtRub } from '@/utils/numberFormat'
 import { useFeoLeaves } from '@/composables/useFeoLeaves'
+import type { FeoPlanPosition, FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
 import { useItemMatching, type MatchCandidate } from '@/composables/useItemMatching'
 import {
   VAT_RATE_OPTIONS,
@@ -569,8 +597,16 @@ interface EditorItem {
   feo_planned_item_id?: number | null
   feo_category_id?: number | null  // FCAT-F1: per-item привязка к leaf FeoCategory
   feo_node_id?: number | null      // UI-only: позиция каскада ФЭО (любой узел, не только лист)
+  // F-PLAN2: true — сумма позиции НЕ расходует план элемента ФЭО (сверх плана);
+  // категория (feo_category_id) при этом остаётся заполненной.
+  over_plan?: boolean | null
   // Per-item delivery date (ISO 'YYYY-MM-DD' | null)
   needed_date?: string | null
+  // Стадия «Приняли» (5-я стадия жизненного цикла позиции): автозаполняется на delivered,
+  // правится вручную — см. «Поставка» подстрока в ItemsTableStages.vue.
+  accepted_name?: string | null
+  accepted_quantity?: number | null
+  accepted_unit?: string | null
   // UI-local state (stripped by parent before save):
   _selectedProduct?: Product | null
   _photo_url?: string
@@ -704,6 +740,20 @@ const props = withDefaults(defineProps<{
   purchaseIdFeo?: number | null
   // ISSUE-3: header-selected deepest FEO level — used to default per-item values
   defaultFeoCategoryId?: number | null
+  // F-PLAN: привязка позиций заявки к плановым позициям план-графика (FeoPlannedItem).
+  // ⚠️ Не задавать значение по умолчанию в withDefaults ниже — undefined (проп НЕ передан
+  // вызывающей стороной, напр. CreateOrderView.vue) обязан отличаться от явного null,
+  // иначе шапка-источник-истины перезапишет feo_planned_item_id закупки, у которой
+  // своя, никак не связанная с заявками, привязка (см. fillItemsWithDefaultPlannedItem).
+  defaultFeoPlannedItemId?: number | null
+  // Аналог defaultFeoPlannedItemId, но для «вне плана» — распространяется ТОЛЬКО
+  // вместе с ним (тот же guard: пропускается, если defaultFeoPlannedItemId не передан).
+  defaultOverPlan?: boolean
+  // Разные плановые позиции для каждого товара (аналог feoPerItem, но для Ур.5 ФЭО)
+  feoPlannedPerItem?: boolean
+  // Плановые позиции план-графика субсидии (единый источник /feo-categories/plan-positions) —
+  // для per-item выбора в таблице (FeoPlannedItemsSelect dense-режим в каждой строке).
+  plannedItems?: FeoPlanPosition[]
   // SN-UX: кастомный заголовок секции позиций
   itemsTitle?: string
   // Per-item delivery date column (only shown when explicitly enabled)
@@ -732,6 +782,10 @@ const props = withDefaults(defineProps<{
   subsidyName: null,
   purchaseIdFeo: null,
   defaultFeoCategoryId: null,
+  // defaultFeoPlannedItemId — БЕЗ дефолта намеренно, см. комментарий у типа пропа.
+  defaultOverPlan: false,
+  feoPlannedPerItem: false,
+  plannedItems: () => [],
   itemsTitle: undefined,
   showNeededDate: false,
 })
@@ -781,10 +835,40 @@ function fillEmptyItemsWithDefaultFeo(): boolean {
   return changed
 }
 
+// F-PLAN: шапка — единственный источник feo_planned_item_id, когда режим
+// «разные плановые позиции для каждого товара» выключен (аналог feoPerItem/
+// defaultFeoCategoryId, но т.к. отдельной колонки wishes.feo_planned_item_id
+// НЕТ, значение нужно ПРОСТАВИТЬ КАЖДОЙ позиции, а не только пустым).
+// ⚠️ КРИТИЧЕСКИЙ GUARD: выполняется ТОЛЬКО если проп defaultFeoPlannedItemId
+// передан явно вызывающей стороной. Если он undefined (CreateOrderView.vue НЕ
+// передаёт этот проп и использует свою, не связанную с заявками привязку) —
+// немедленный выход, чтобы не затереть feo_planned_item_id закупки.
+function fillItemsWithDefaultPlannedItem(): boolean {
+  if (props.defaultFeoPlannedItemId === undefined) return false
+  if (props.feoPlannedPerItem) return false
+  let changed = false
+  const overPlan = props.defaultOverPlan ?? false
+  for (const it of localItems.value) {
+    if (it.feo_planned_item_id !== props.defaultFeoPlannedItemId) {
+      it.feo_planned_item_id = props.defaultFeoPlannedItemId
+      changed = true
+    }
+    if ((it.over_plan ?? false) !== overPlan) {
+      it.over_plan = overPlan
+      changed = true
+    }
+  }
+  return changed
+}
+
 watch(
-  () => [props.feoPerItem, props.defaultFeoCategoryId] as const,
+  () => [props.feoPerItem, props.defaultFeoCategoryId, props.feoPlannedPerItem, props.defaultFeoPlannedItemId, props.defaultOverPlan] as const,
   () => {
-    if (fillEmptyItemsWithDefaultFeo()) emitUpdate()
+    // ОСТОРОЖНО: не использовать || между вызовами — короткое замыкание
+    // пропустит вторую fill-функцию, если первая уже вернула true.
+    const changedFeo = fillEmptyItemsWithDefaultFeo()
+    const changedPlanned = fillItemsWithDefaultPlannedItem()
+    if (changedFeo || changedPlanned) emitUpdate()
   }
 )
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1017,6 +1101,20 @@ function updateContractField(rowIdx: number, field: keyof ContractItem, value: u
     }
   }
   emitContractItemsUpdate()
+}
+
+// Стадия «Поставка»/«Приняли» — то же по паттерну, что и updateContractField выше,
+// но поля живут прямо на purchase_item (accepted_name/accepted_quantity/accepted_unit),
+// не в отдельной сущности, поэтому просто мутируем localItems[idx] и синхронизируем наверх.
+function updateAcceptedField(
+  idx: number,
+  field: 'accepted_name' | 'accepted_quantity' | 'accepted_unit',
+  value: unknown,
+) {
+  const item = localItems.value[idx]
+  if (!item) return
+  ;(item as any)[field] = value
+  emitUpdate()
 }
 
 // Layer 3: extracted from the inline Договор-VAT @update:model-value handler so
@@ -1559,7 +1657,9 @@ function addItem(atStart = false) {
   if (props.itemShape === 'purchase') {
     newItem.final_unit_price = null
     newItem.final_total = null
-    newItem.feo_planned_item_id = null
+    // F-PLAN: новая строка сразу наследует шапочную плановую позицию, если задана
+    newItem.feo_planned_item_id = props.defaultFeoPlannedItemId ?? null
+    newItem.over_plan = (props.defaultFeoPlannedItemId !== undefined) ? (props.defaultOverPlan ?? false) : false
     // ISSUE-3 PART A: inherit header-selected deepest FEO level by default
     if (props.feoPerItem && newItem.feo_category_id == null && props.defaultFeoCategoryId != null) {
       newItem.feo_category_id = props.defaultFeoCategoryId
@@ -1642,16 +1742,23 @@ function removeSelectedItems() {
 // ── ISSUE-3 PART B: bulk-assign FEO level to selected items ───────────────────
 const bulkFeoDialog = ref(false)
 const bulkFeoId = ref<number | null>(null)
+// F-PLAN: массово назначаемая плановая позиция (единый источник plan-positions) для bulk-диалога.
+const bulkPlannedSelection = ref<FeoPlanSelection | null>(null)
 const unallocatedLoading = ref(false)
+
+// F-PLAN: список плановых позиций для bulk-диалога — то же, что приходит в проп.
+const effectivePlannedItems = computed(() => props.plannedItems || [])
 
 function openBulkFeoDialog() {
   bulkFeoId.value = null
+  bulkPlannedSelection.value = null
   bulkFeoDialog.value = true
 }
 
 function closeBulkFeoDialog() {
   bulkFeoDialog.value = false
   bulkFeoId.value = null
+  bulkPlannedSelection.value = null
 }
 
 function applyBulkFeo() {
@@ -1661,15 +1768,27 @@ function applyBulkFeo() {
   // Раньше здесь писался только feo_category_id, и поле позиции (которое
   // читает feo_node_id ?? feo_category_id) продолжало показывать старый путь.
   const isLeaf = feoNodes.value.find(n => n.id === bulkFeoId.value)?.is_leaf ?? false
+  const planned = bulkPlannedSelection.value
   for (const idx of selectedItemIdxs.value) {
     const item = localItems.value[idx]
     if (item) {
       item.feo_node_id = bulkFeoId.value
       item.feo_category_id = isLeaf ? bulkFeoId.value : null
+      // F-PLAN: массовое назначение плановой позиции — только когда выбрана явно в диалоге.
+      if (planned) {
+        if (planned.kind === 'planned_item') {
+          item.feo_planned_item_id = planned.id
+        } else {
+          item.feo_planned_item_id = null
+          item.feo_category_id = planned.id
+        }
+        item.over_plan = false
+      }
     }
   }
   bulkFeoDialog.value = false
   bulkFeoId.value = null
+  bulkPlannedSelection.value = null
   selectedItemIdxs.value = []
   emitUpdate()
 }
@@ -1761,9 +1880,61 @@ function onItemFeoChange(idx: number, nodeId: number | null) {
   // строки, чтобы смена ЛЮБОГО уровня в одной позиции отражалась во всех сразу.
   // feo_category_id (сохраняемый лист) выставляем только когда узел — лист.
   const isLeaf = nodeId != null && (feoNodes.value.find(n => n.id === nodeId)?.is_leaf ?? false)
+  const newCategoryId = isLeaf ? nodeId : null
   _propagateToSelected(idx, it => {
+    // F-PLAN: смена категории ФЭО делает привязанную плановую позицию (Ур.5)
+    // невалидной — она принадлежит другой категории и «расходовала» бы её план.
+    // Сбрасываем feo_planned_item_id, если он ссылается на позицию из старой категории.
+    // ⚠️ id-коллизия: feo_planned_item_id живёт в пространстве id FeoPlannedItem —
+    // сравнивать только со строками kind='planned_item', иначе можно случайно
+    // «попасть» в id категории (kind='plan_position'/'feo_article') с тем же числом.
+    if (it.feo_planned_item_id != null) {
+      const plannedCategoryId = (props.plannedItems || [])
+        .find(p => p.kind === 'planned_item' && p.id === it.feo_planned_item_id)?.category_id
+      if (plannedCategoryId !== newCategoryId) it.feo_planned_item_id = null
+    }
     it.feo_node_id = nodeId
-    it.feo_category_id = isLeaf ? nodeId : null
+    it.feo_category_id = newCategoryId
+  })
+}
+
+// F-PLAN2: производный выбор для FeoPlannedItemsSelect по фактическим полям позиции —
+// { kind:'planned_item', id: feo_planned_item_id } если задан; иначе, если категория
+// позиции сама является плановой позицией/статьёй ФЭО с планом (kind='plan_position'
+// | 'feo_article'), — её собственный ключ; иначе null (в т.ч. когда over_plan=true —
+// «Вне плана» рисуется через отдельный флаг outOfPlan, а не modelValue).
+function plannedSelectionFor(item: EditorItem): FeoPlanSelection | null {
+  if (item.feo_planned_item_id != null) return { kind: 'planned_item', id: item.feo_planned_item_id }
+  if (item.over_plan) return null
+  if (item.feo_category_id != null) {
+    const row = (props.plannedItems || [])
+      .find(p => p.category_id === item.feo_category_id && (p.kind === 'plan_position' || p.kind === 'feo_article'))
+    if (row) return { kind: row.kind, id: item.feo_category_id }
+  }
+  return null
+}
+
+function onItemPlannedChange(idx: number, val: FeoPlanSelection | null) {
+  _propagateToSelected(idx, it => {
+    if (!val) {
+      it.feo_planned_item_id = null
+      return
+    }
+    if (val.kind === 'planned_item') {
+      it.feo_planned_item_id = val.id
+      it.over_plan = false
+    } else {
+      it.feo_planned_item_id = null
+      it.feo_category_id = val.id
+      it.over_plan = false
+    }
+  })
+}
+
+function onItemOutOfPlanChange(idx: number, val: boolean) {
+  _propagateToSelected(idx, it => {
+    it.over_plan = val
+    if (val) it.feo_planned_item_id = null
   })
 }
 
@@ -2391,7 +2562,8 @@ function buildEditorItemFromRow(row: any[], mapping: Record<string, number | nul
   if (props.itemShape === 'purchase') {
     item.final_unit_price = null
     item.final_total = null
-    item.feo_planned_item_id = null
+    // F-PLAN: импортированные строки сразу наследуют шапочную плановую позицию
+    item.feo_planned_item_id = props.defaultFeoPlannedItemId ?? null
   }
   return item
 }
@@ -2881,7 +3053,8 @@ function commitPreviewItems(resolved: ResolvedRow[]) {
     if (props.itemShape === 'purchase') {
       item.final_unit_price = null
       item.final_total = null
-      item.feo_planned_item_id = null
+      // F-PLAN: импортированные строки сразу наследуют шапочную плановую позицию
+      item.feo_planned_item_id = props.defaultFeoPlannedItemId ?? null
     }
     return item
   })

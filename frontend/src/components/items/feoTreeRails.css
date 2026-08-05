@@ -1,0 +1,127 @@
+/* Вынесено дословно из FeoTreeSelect.vue (строки .feo-tree-row .. .feo-tree-residual),
+   чтобы новый FeoPlannedItemsSelect.vue визуально был продолжением того же дерева
+   (те же рельсы/лужочки глубины), не трогая рабочий FeoTreeSelect.vue. */
+.feo-tree-row {
+  --feo-row-line: 28px;
+  display: flex;
+  /* flex-start, не center: длинные названия переносятся на несколько строк
+     (см. .feo-tree-name), и «уголок»/иконка должны остаться у ПЕРВОЙ строки,
+     а не уехать в центр всего многострочного блока. */
+  align-items: flex-start;
+  min-height: var(--feo-row-line);
+  padding: 0 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--crm-text);
+  gap: 2px;
+}
+.feo-tree-row:hover {
+  background: var(--crm-surface-alt);
+}
+.feo-tree-row--selected {
+  background: rgba(59, 130, 246, 0.12);
+  font-weight: 600;
+}
+.feo-tree-row--pseudo {
+  color: var(--crm-text-muted);
+  font-style: italic;
+}
+.feo-tree-row--root {
+  font-weight: 700;
+}
+
+/* ── Направляющие линии «настоящего дерева» ──
+   Рисуются спейсерами с border/psevdo-элементами, не текстовыми символами,
+   чтобы не ломались при переносе текста в многострочном поле/строке. */
+.feo-tree-rail,
+.feo-tree-elbow {
+  position: relative;
+  width: 18px;
+  align-self: stretch;
+  flex-shrink: 0;
+}
+.feo-tree-rail--line::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--crm-border);
+}
+.feo-tree-elbow::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 0;
+  /* Высота — половина ОДНОЙ строки (не 50% всей, потенциально многострочной,
+     ячейки), чтобы горизонтальный стык уголка совпадал с первой строкой текста. */
+  height: calc(var(--feo-row-line) / 2);
+  width: 1px;
+  background: var(--crm-border);
+}
+.feo-tree-elbow::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: calc(var(--feo-row-line) / 2);
+  height: 1px;
+  width: 10px;
+  background: var(--crm-border);
+}
+/* Узел не последний среди соседей — вертикаль продолжается на всю высоту
+   строки (включая перенесённые строки текста), а не только до середины. */
+.feo-tree-elbow--open::before {
+  height: 100%;
+}
+
+.feo-tree-chevron {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+/* Шеврон и иконка узла — на уровне первой строки текста (row теперь
+   align-items:flex-start), небольшой отступ сверху для оптического центра. */
+.feo-tree-chevron,
+.feo-tree-row-icon {
+  margin-top: calc((var(--feo-row-line) - 16px) / 2);
+}
+.feo-tree-name {
+  /* Полный перенос вместо обрезки многоточием — пользователь явно просил
+     не прятать текст названий категорий, как раньше прятался путь в поле. */
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.feo-tree-name--pseudo {
+  font-style: italic;
+}
+.feo-tree-name--root {
+  font-weight: 700;
+}
+.feo-tree-hit {
+  background: rgba(251, 146, 60, 0.35);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.feo-tree-desc {
+  color: var(--crm-text-faint);
+  font-size: 11px;
+  margin-left: 6px;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  flex-shrink: 1;
+  min-width: 0;
+}
+.feo-tree-residual {
+  margin-left: auto;
+  padding-left: 10px;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--crm-text-muted);
+  white-space: nowrap;
+}

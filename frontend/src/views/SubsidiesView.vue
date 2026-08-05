@@ -785,6 +785,43 @@
                         >
                           {{ feoOverspentDescendantText(node) }}
                         </div>
+                        <div v-if="feoResidualNoteFor(node)"
+                          class="feo-plan-note text-medium-emphasis"
+                          title="Разбивка плана Ур.5 (плановых позиций) этой категории: сколько заложено, сколько уже расходуют привязанные заявки, сколько осталось"
+                        >
+                          план {{ formatCurrency(feoResidualNoteFor(node)!.planned) }} · выбрано заявками {{ formatCurrency(feoResidualNoteFor(node)!.consumed) }} · остаток
+                          <span :style="feoResidualNoteFor(node)!.residual < -0.005 ? 'color:#EF4444;font-weight:700' : ''">{{ formatCurrency(feoResidualNoteFor(node)!.residual) }}</span>
+                        </div>
+                        <div v-else-if="plannedSumBase === 'all' && feoPlanConsumedNoteFor(node)"
+                          class="feo-plan-note text-medium-emphasis"
+                          title="Ручной план элемента (или суммы его дочерних), сколько уже выбрано заявками (без привязанных к Ур.5 и без сверх плана) и сколько осталось"
+                        >
+                          план {{ formatCurrency(feoPlanConsumedNoteFor(node)!.planned) }} · выбрано {{ formatCurrency(feoPlanConsumedNoteFor(node)!.consumed) }} · остаток
+                          <span :style="feoPlanConsumedNoteFor(node)!.residual < -0.005 ? 'color:#EF4444;font-weight:700' : ''">{{ formatCurrency(feoPlanConsumedNoteFor(node)!.residual) }}</span>
+                        </div>
+                        <div v-if="feoForecastWarningFor(node)"
+                          class="feo-plan-note" style="color:#F97316;font-weight:600"
+                          :title="`По темпу заказанных цен прогноз итоговой суммы ${formatCurrency(feoForecastWarningFor(node)!.forecast)} превышает план ${formatCurrency(feoForecastWarningFor(node)!.planManual)} — не блокирует, только предупреждение`"
+                        >
+                          цена выше плановой · прогноз {{ formatCurrency(feoForecastWarningFor(node)!.forecast) }} при плане {{ formatCurrency(feoForecastWarningFor(node)!.planManual) }}
+                        </div>
+                        <!-- Превышение плана над финансированием ФЭО — требует согласования цепочкой
+                             (задача владельца 2026-08-05), см. excessFor()/requestPlanExcessApproval() -->
+                        <div v-if="excessFor(node)" class="feo-plan-note d-flex align-center flex-wrap ga-1 mt-1">
+                          <v-chip
+                            size="x-small"
+                            :color="excessFor(node)!.approved ? 'grey' : (excessFor(node)!.pending ? 'orange' : 'red')"
+                            variant="flat"
+                          >
+                            превышение {{ formatCurrency(excessFor(node)!.amount) }}
+                            {{ excessFor(node)!.approved ? '· согласовано' : (excessFor(node)!.pending ? '· на согласовании' : '— требуется согласование') }}
+                          </v-chip>
+                          <v-btn v-if="!excessFor(node)!.approved && !excessFor(node)!.pending"
+                            size="x-small" variant="tonal" color="red"
+                            :loading="excessRequestLoading === node.id"
+                            @click.stop="requestPlanExcessApproval(node)"
+                          >Согласовать</v-btn>
+                        </div>
                       </td>
 
                       <!-- Фактическая сумма -->
@@ -881,7 +918,10 @@
                           <table v-else-if="comparisonData[node.id]" style="width:100%;border-collapse:collapse;font-size:12px">
                             <thead>
                               <tr style="background:#CCFBF1">
-                                <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4" title="Значения берутся из плановых позиций категории">ПЛАН (из плановых)</th>
+                                <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4" title="Значения берутся из плановых позиций категории; для строк закупок (без своей плановой позиции) сюда попадает то, что выставили на закупку">
+                                  ПЛАН (из плановых)
+                                  <div style="font-weight:400;font-size:9px;color:#94a3b8">для строк закупок — что выставляли на закупку</div>
+                                </th>
                                 <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Кол-во (план)</th>
                                 <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Цена (план)</th>
                                 <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:110px">Сумма (план)</th>
@@ -896,26 +936,77 @@
                               </tr>
                             </thead>
                             <tbody>
-                              <!-- Сопоставленные пары: actual сгруппированы по planned_item_id -->
+                              <!-- Плановые позиции Ур.5: строка плана свёрнута по умолчанию, шеврон + чип
+                                   «заявок: N на сумму M» раскрывают привязанные позиции заявок ВНУТРИ неё
+                                   (feo_planned_item_id = planned.id) — переиспользует вёрстку строки позиции
+                                   заявки (аватар/ссылка на закупку/снять сопоставление), но с увеличенным
+                                   левым отступом первой ячейки, чтобы визуально вложить её под план. -->
                               <template v-for="planned in comparisonData[node.id].planned" :key="`p-${planned.id}`">
-                                <!-- Найдём все actual для этого planned -->
-                                <template v-for="(actual, ai) in factForPlanned(node.id, planned.id)" :key="`pa-${actual.purchase_item_id}`">
-                                  <tr style="border-bottom:1px solid #E0F2FE">
-                                    <td style="padding:4px 8px;color:#0c4a6e">
-                                      <span v-if="ai === 0">{{ planned.name }}</span>
-                                    </td>
-                                    <td style="padding:4px 8px;text-align:right;color:#64748b">
-                                      <span v-if="ai === 0 && planned.quantity">{{ parseFloat(String(planned.quantity)) }} {{ planned.unit || '' }}</span>
-                                    </td>
-                                    <td style="padding:4px 8px;text-align:right;color:#64748b">
-                                      <span v-if="ai === 0 && planned.amount && Number(planned.quantity) > 0">{{ formatCurrency(Number(planned.amount) / Number(planned.quantity)) }}</span>
-                                    </td>
-                                    <td style="padding:4px 8px;text-align:right;color:#64748b">
-                                      <span v-if="ai === 0 && planned.amount">{{ formatCurrency(planned.amount) }}</span>
-                                    </td>
-                                    <td style="padding:4px 8px;color:#166534">
+                                <tr style="border-bottom:1px solid #E0F2FE">
+                                  <td style="padding:4px 8px;color:#0c4a6e">
+                                    <div class="d-flex align-center" style="gap:2px">
+                                      <v-btn v-if="factForPlanned(node.id, planned.id).length"
+                                        :icon="expandedPlannedItems.has(planned.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
+                                        variant="text" density="compact" size="x-small" color="teal"
+                                        title="Показать/скрыть привязанные позиции заявок"
+                                        @click="togglePlannedItemFolder(planned.id)"
+                                      />
+                                      <span>{{ planned.name }}</span>
+                                    </div>
+                                  </td>
+                                  <td style="padding:4px 8px;text-align:right;color:#64748b">
+                                    <span v-if="planned.quantity">{{ parseFloat(String(planned.quantity)) }} {{ planned.unit || '' }}</span>
+                                  </td>
+                                  <td style="padding:4px 8px;text-align:right;color:#64748b">
+                                    <span v-if="planned.amount && Number(planned.quantity) > 0">{{ formatCurrency(Number(planned.amount) / Number(planned.quantity)) }}</span>
+                                  </td>
+                                  <td style="padding:4px 8px;text-align:right;color:#64748b">
+                                    <span v-if="planned.amount">{{ formatCurrency(planned.amount) }}</span>
+                                  </td>
+                                  <td colspan="4" style="padding:4px 8px">
+                                    <v-chip v-if="factForPlanned(node.id, planned.id).length" size="x-small" color="teal" variant="tonal"
+                                      style="cursor:pointer" @click="togglePlannedItemFolder(planned.id)"
+                                    >заявок: {{ factForPlanned(node.id, planned.id).length }} на сумму {{ formatCurrency(factForPlannedTotal(node.id, planned.id)) }}</v-chip>
+                                    <span v-else class="text-medium-emphasis" style="font-style:italic">ещё не сопоставлено</span>
+                                  </td>
+                                  <td style="padding:4px 8px;text-align:right">
+                                    <span v-if="planned.amount != null" :style="getDiffStyle(planned.amount, factForPlanned(node.id, planned.id))">
+                                      {{ formatCurrency(calcDiff(planned.amount, factForPlanned(node.id, planned.id))) }}
+                                    </span>
+                                  </td>
+                                  <td style="padding:4px 8px;color:#9ca3af">—</td>
+                                  <td style="padding:4px 8px;text-align:center">
+                                    <v-icon v-if="factForPlanned(node.id, planned.id).length" icon="mdi-check-circle" size="16" color="success" title="Сопоставлено" />
+                                    <v-chip v-else size="x-small" color="blue" variant="tonal" title="Запланировано в ФЭО — часть План-графика">План-график</v-chip>
+                                  </td>
+                                  <td style="padding:2px;text-align:center">
+                                    <v-btn icon="mdi-pencil" size="x-small" variant="text" color="blue"
+                                      title="Редактировать плановую позицию"
+                                      @click="openEditPlannedItem(planned)"
+                                    />
+                                    <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error"
+                                      title="Удалить плановую позицию"
+                                      @click="deletePlannedItem(planned)"
+                                    />
+                                  </td>
+                                </tr>
+                                <template v-if="expandedPlannedItems.has(planned.id)">
+                                  <template v-for="actual in factForPlanned(node.id, planned.id)" :key="`pa-${actual.purchase_item_id}`">
+                                  <tr
+                                    style="border-bottom:1px solid #E0F2FE;background:rgba(20,184,166,0.05)">
+                                    <td style="padding:4px 8px"></td>
+                                    <td style="padding:4px 8px"></td>
+                                    <td style="padding:4px 8px"></td>
+                                    <td style="padding:4px 8px"></td>
+                                    <td style="padding:4px 8px 4px 24px;color:#166534">
                                       <div class="d-flex align-center" style="gap:6px">
-                                        <v-avatar v-if="actual.product_photo" size="28" rounded class="flex-shrink-0" style="cursor:pointer"
+                                        <v-btn v-if="(actual.stages?.length || 0) >= 2"
+                                          :icon="expandedStageRows.has(`pa-${actual.purchase_item_id}`) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
+                                          variant="text" density="compact" size="x-small" color="teal"
+                                          title="Показать стадии уточнения позиции"
+                                          @click.stop="toggleStageRow(`pa-${actual.purchase_item_id}`)"
+                                        />
+                                        <v-avatar v-if="actual.product_photo" size="24" rounded class="flex-shrink-0" style="cursor:pointer"
                                           @click.stop="photoPreview = { src: actual.product_photo!, title: actual.item_name }">
                                           <v-img :src="actual.product_photo" cover />
                                         </v-avatar>
@@ -933,73 +1024,67 @@
                                     </td>
                                     <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
                                     <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.unit_price ? formatCurrency(actual.unit_price) : '—' }}</td>
-                                    <td style="padding:4px 8px;text-align:right;font-weight:500">{{ actual.total_price ? formatCurrency(actual.total_price) : '—' }}</td>
-                                    <td v-if="ai === 0" :rowspan="factForPlanned(node.id, planned.id).length" style="padding:4px 8px;text-align:right">
-                                      <span v-if="planned.amount != null" :style="getDiffStyle(planned, factForPlanned(node.id, planned.id))">
-                                        {{ formatCurrency(calcDiff(planned, factForPlanned(node.id, planned.id))) }}
-                                      </span>
+                                    <td style="padding:4px 8px;text-align:right;font-weight:500">
+                                      <template v-if="actual.fact_amount != null">
+                                        <span :title="actual.fact_allocated ? 'Распределено пропорционально между позициями закупки' : ''">{{ formatCurrency(actual.fact_amount) }}</span>
+                                        <v-chip v-if="!actual.fact_confirmed" size="x-small" variant="tonal" color="warning" class="ml-1" style="font-size:9px;height:16px"
+                                          title="Сумма по договору — закрывающими документами (актом приёмки) ещё не подтверждена"
+                                        >по договору</v-chip>
+                                      </template>
+                                      <span v-else class="text-medium-emphasis" style="font-style:italic;font-weight:400">{{ purchaseStatusLabel(actual.purchase_status) }}</span>
                                     </td>
+                                    <td style="padding:4px 8px"></td>
                                     <td style="padding:4px 8px;color:#64748b;font-size:11px">{{ actual.contractor_name || '—' }}</td>
                                     <td style="padding:4px 8px;text-align:center">
                                       <v-icon icon="mdi-check-circle" size="16" color="success" title="Сопоставлено" />
                                     </td>
                                     <td style="padding:2px;text-align:center">
-                                      <v-btn v-if="ai === 0" icon="mdi-pencil" size="x-small" variant="text" color="blue"
-                                        title="Редактировать плановую позицию"
-                                        @click="openEditPlannedItem(planned)"
-                                      />
                                       <v-btn icon="mdi-link-off" size="x-small" variant="text" color="grey"
                                         title="Снять сопоставление"
                                         @click="() => { mapTarget.value = actual; mapCategoryId.value = node.id; applyMapping(null) }"
                                       />
-                                      <v-btn v-if="ai === 0" icon="mdi-delete-outline" size="x-small" variant="text" color="error"
-                                        title="Удалить плановую позицию"
-                                        @click="deletePlannedItem(planned)"
-                                      />
                                     </td>
                                   </tr>
+                                  <!-- Подстроки стадий уточнения (справочно, НЕ входят в comparisonPlanTotal/comparisonFactTotal) -->
+                                  <template v-if="expandedStageRows.has(`pa-${actual.purchase_item_id}`)">
+                                  <tr v-for="sr in stagesWithDiff(actual.stages)" :key="`pa-stage-${actual.purchase_item_id}-${sr.stage.key}`"
+                                    style="border-bottom:1px solid #E0F2FE;background:rgba(20,184,166,0.09)">
+                                    <td style="padding:2px 8px 2px 40px;color:#94a3b8;font-size:10px">{{ sr.stage.label }}</td>
+                                    <td style="padding:2px 8px"></td>
+                                    <td style="padding:2px 8px"></td>
+                                    <td style="padding:2px 8px"></td>
+                                    <td style="padding:2px 8px" :style="sr.nameChanged ? 'color:#4F46E5' : ''">{{ sr.stage.name }}</td>
+                                    <td style="padding:2px 8px;text-align:right;color:#64748b">
+                                      {{ sr.stage.quantity != null ? `${parseFloat(String(sr.stage.quantity))} ${sr.stage.unit || ''}` : '—' }}
+                                      <div v-if="sr.qtyDeltaLabel" style="font-size:10px" :style="`color:${sr.qtyDeltaColor}`">{{ sr.qtyDeltaLabel }}</div>
+                                    </td>
+                                    <td style="padding:2px 8px;text-align:right;color:#64748b">
+                                      {{ sr.stage.unit_price != null ? formatCurrency(sr.stage.unit_price) : '—' }}
+                                      <div v-if="sr.priceDeltaLabel" style="font-size:10px" :style="`color:${sr.priceDeltaColor}`">{{ sr.priceDeltaLabel }}</div>
+                                    </td>
+                                    <td style="padding:2px 8px;text-align:right;color:#64748b">{{ sr.stage.total != null ? formatCurrency(sr.stage.total) : '—' }}</td>
+                                    <td style="padding:2px 8px"></td>
+                                    <td style="padding:2px 8px"></td>
+                                    <td style="padding:2px 8px"></td>
+                                    <td style="padding:2px 8px"></td>
+                                  </tr>
+                                  </template>
+                                  </template>
                                 </template>
-                                <!-- Плановая без факта -->
-                                <tr v-if="factForPlanned(node.id, planned.id).length === 0"
-                                  style="border-bottom:1px solid #E0F2FE">
-                                  <td style="padding:4px 8px;color:#0c4a6e">{{ planned.name }}</td>
-                                  <td style="padding:4px 8px;text-align:right;color:#64748b">
-                                    {{ planned.quantity ? `${parseFloat(String(planned.quantity))} ${planned.unit || ''}` : '—' }}
-                                  </td>
-                                  <td style="padding:4px 8px;text-align:right;color:#64748b">
-                                    {{ planned.amount && Number(planned.quantity) > 0 ? formatCurrency(Number(planned.amount) / Number(planned.quantity)) : '—' }}
-                                  </td>
-                                  <td style="padding:4px 8px;text-align:right;color:#64748b">
-                                    {{ planned.amount ? formatCurrency(planned.amount) : '—' }}
-                                  </td>
-                                  <td style="padding:4px 8px;color:#9ca3af;font-style:italic">—</td>
-                                  <td style="padding:4px 8px"></td>
-                                  <td style="padding:4px 8px"></td>
-                                  <td style="padding:4px 8px"></td>
-                                  <td style="padding:4px 8px;text-align:right;color:#9ca3af">{{ planned.amount ? formatCurrency(Number(planned.amount)) : '—' }}</td>
-                                  <td style="padding:4px 8px;color:#9ca3af">—</td>
-                                  <td style="padding:4px 8px;text-align:center">
-                                    <v-chip size="x-small" color="blue" variant="tonal" title="Запланировано в ФЭО — часть План-графика">План-график</v-chip>
-                                  </td>
-                                  <td style="padding:2px;text-align:center">
-                                    <v-btn icon="mdi-pencil" size="x-small" variant="text" color="blue"
-                                      title="Редактировать плановую позицию"
-                                      @click="openEditPlannedItem(planned)"
-                                    />
-                                    <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error"
-                                      title="Удалить плановую позицию"
-                                      @click="deletePlannedItem(planned)"
-                                    />
-                                  </td>
-                                </tr>
                               </template>
 
                               <!-- Плановые из закупок: подтверждённые, но ещё не поставленные (план-график … заказано) -->
-                              <tr v-for="actual in actualPlanStageFor(node.id)"
-                                :key="`ps-${actual.purchase_item_id}`"
+                              <template v-for="actual in actualPlanStageFor(node.id)" :key="`ps-${actual.purchase_item_id}`">
+                              <tr
                                 style="border-bottom:1px solid #E0F2FE;background:rgba(59,130,246,0.05)">
                                 <td style="padding:4px 8px;color:#0c4a6e">
                                   <div class="d-flex align-center" style="gap:6px">
+                                    <v-btn v-if="(actual.stages?.length || 0) >= 2"
+                                      :icon="expandedStageRows.has(`ps-${actual.purchase_item_id}`) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
+                                      variant="text" density="compact" size="x-small" color="teal"
+                                      title="Показать стадии уточнения позиции"
+                                      @click.stop="toggleStageRow(`ps-${actual.purchase_item_id}`)"
+                                    />
                                     <v-avatar v-if="actual.product_photo" size="28" rounded class="flex-shrink-0" style="cursor:pointer"
                                       @click.stop="photoPreview = { src: actual.product_photo!, title: actual.item_name }">
                                       <v-img :src="actual.product_photo" cover />
@@ -1019,11 +1104,11 @@
                                 <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
                                 <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.unit_price ? formatCurrency(actual.unit_price) : '—' }}</td>
                                 <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.total_price ? formatCurrency(actual.total_price) : '—' }}</td>
-                                <td style="padding:4px 8px;color:#9ca3af;font-style:italic">ещё не поставлено</td>
+                                <td style="padding:4px 8px;color:#9ca3af;font-style:italic">{{ purchaseStatusLabel(actual.purchase_status) }}</td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
-                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px;text-align:right;color:#9ca3af">{{ formatCurrency(calcDiff(actual.total_price, [actual])) }}</td>
                                 <td style="padding:4px 8px;color:#64748b;font-size:11px">{{ actual.contractor_name || '—' }}</td>
                                 <td style="padding:4px 8px;text-align:center">
                                   <v-chip size="x-small" color="blue" variant="tonal" :prepend-icon="purchaseStatusIcon(actual.purchase_status)">
@@ -1037,10 +1122,35 @@
                                   />
                                 </td>
                               </tr>
+                              <!-- Подстроки стадий уточнения (справочно, НЕ входят в comparisonPlanTotal/comparisonFactTotal) -->
+                              <template v-if="expandedStageRows.has(`ps-${actual.purchase_item_id}`)">
+                              <tr v-for="sr in stagesWithDiff(actual.stages)" :key="`ps-stage-${actual.purchase_item_id}-${sr.stage.key}`"
+                                style="border-bottom:1px solid #E0F2FE;background:rgba(59,130,246,0.09)">
+                                <td style="padding:2px 8px 2px 40px;color:#94a3b8;font-size:10px">{{ sr.stage.label }}</td>
+                                <td style="padding:2px 8px"></td>
+                                <td style="padding:2px 8px"></td>
+                                <td style="padding:2px 8px"></td>
+                                <td style="padding:2px 8px" :style="sr.nameChanged ? 'color:#4F46E5' : ''">{{ sr.stage.name }}</td>
+                                <td style="padding:2px 8px;text-align:right;color:#64748b">
+                                  {{ sr.stage.quantity != null ? `${parseFloat(String(sr.stage.quantity))} ${sr.stage.unit || ''}` : '—' }}
+                                  <div v-if="sr.qtyDeltaLabel" style="font-size:10px" :style="`color:${sr.qtyDeltaColor}`">{{ sr.qtyDeltaLabel }}</div>
+                                </td>
+                                <td style="padding:2px 8px;text-align:right;color:#64748b">
+                                  {{ sr.stage.unit_price != null ? formatCurrency(sr.stage.unit_price) : '—' }}
+                                  <div v-if="sr.priceDeltaLabel" style="font-size:10px" :style="`color:${sr.priceDeltaColor}`">{{ sr.priceDeltaLabel }}</div>
+                                </td>
+                                <td style="padding:2px 8px;text-align:right;color:#64748b">{{ sr.stage.total != null ? formatCurrency(sr.stage.total) : '—' }}</td>
+                                <td style="padding:2px 8px"></td>
+                                <td style="padding:2px 8px"></td>
+                                <td style="padding:2px 8px"></td>
+                                <td style="padding:2px 8px"></td>
+                              </tr>
+                              </template>
+                              </template>
 
                               <!-- Фактические без плана -->
-                              <tr v-for="actual in actualFactFor(node.id).filter(a => !a.feo_planned_item_id)"
-                                :key="`a-${actual.purchase_item_id}`"
+                              <template v-for="actual in actualFactFor(node.id).filter(a => !a.feo_planned_item_id)" :key="`a-${actual.purchase_item_id}`">
+                              <tr
                                 style="border-bottom:1px solid var(--crm-border);background:rgba(245,158,11,0.06)">
                                 <td style="padding:4px 8px;font-style:italic" class="text-medium-emphasis">—</td>
                                 <td style="padding:4px 8px"></td>
@@ -1048,6 +1158,12 @@
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px" class="text-orange-darken-2">
                                   <div class="d-flex align-center" style="gap:6px">
+                                    <v-btn v-if="(actual.stages?.length || 0) >= 2"
+                                      :icon="expandedStageRows.has(`a-${actual.purchase_item_id}`) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
+                                      variant="text" density="compact" size="x-small" color="teal"
+                                      title="Показать стадии уточнения позиции"
+                                      @click.stop="toggleStageRow(`a-${actual.purchase_item_id}`)"
+                                    />
                                     <v-avatar v-if="actual.product_photo" size="28" rounded class="flex-shrink-0" style="cursor:pointer"
                                       @click.stop="photoPreview = { src: actual.product_photo!, title: actual.item_name }">
                                       <v-img :src="actual.product_photo" cover />
@@ -1066,8 +1182,16 @@
                                 </td>
                                 <td style="padding:4px 8px;text-align:right" class="text-medium-emphasis">{{ actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
                                 <td style="padding:4px 8px;text-align:right" class="text-medium-emphasis">{{ actual.unit_price ? formatCurrency(actual.unit_price) : '—' }}</td>
-                                <td style="padding:4px 8px;text-align:right;font-weight:500" class="text-orange-darken-2">{{ actual.total_price ? formatCurrency(actual.total_price) : '—' }}</td>
-                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px;text-align:right;font-weight:500" class="text-orange-darken-2">
+                                  <template v-if="actual.fact_amount != null">
+                                    <span :title="actual.fact_allocated ? 'Распределено пропорционально между позициями закупки' : ''">{{ formatCurrency(actual.fact_amount) }}</span>
+                                    <v-chip v-if="!actual.fact_confirmed" size="x-small" variant="tonal" color="warning" class="ml-1" style="font-size:9px;height:16px"
+                                      title="Сумма по договору — закрывающими документами (актом приёмки) ещё не подтверждена"
+                                    >по договору</v-chip>
+                                  </template>
+                                  <span v-else class="text-medium-emphasis" style="font-style:italic;font-weight:400">{{ purchaseStatusLabel(actual.purchase_status) }}</span>
+                                </td>
+                                <td style="padding:4px 8px;text-align:right;color:#DC2626">{{ formatCurrency(calcDiff(0, [actual])) }}</td>
                                 <td style="padding:4px 8px;font-size:11px" class="text-medium-emphasis">{{ actual.contractor_name || '—' }}</td>
                                 <td style="padding:4px 8px;text-align:center">
                                   <v-icon icon="mdi-alert-circle-outline" size="16" color="warning"
@@ -1080,9 +1204,37 @@
                                   />
                                 </td>
                               </tr>
+                              <!-- Подстроки стадий уточнения (справочно, НЕ входят в comparisonPlanTotal/comparisonFactTotal) -->
+                              <template v-if="expandedStageRows.has(`a-${actual.purchase_item_id}`)">
+                              <tr v-for="sr in stagesWithDiff(actual.stages)" :key="`a-stage-${actual.purchase_item_id}-${sr.stage.key}`"
+                                style="border-bottom:1px solid var(--crm-border);background:rgba(245,158,11,0.1)">
+                                <td style="padding:2px 8px 2px 40px;color:#94a3b8;font-size:10px">{{ sr.stage.label }}</td>
+                                <td style="padding:2px 8px"></td>
+                                <td style="padding:2px 8px"></td>
+                                <td style="padding:2px 8px"></td>
+                                <td style="padding:2px 8px" :style="sr.nameChanged ? 'color:#4F46E5' : ''">{{ sr.stage.name }}</td>
+                                <td style="padding:2px 8px;text-align:right;color:#64748b">
+                                  {{ sr.stage.quantity != null ? `${parseFloat(String(sr.stage.quantity))} ${sr.stage.unit || ''}` : '—' }}
+                                  <div v-if="sr.qtyDeltaLabel" style="font-size:10px" :style="`color:${sr.qtyDeltaColor}`">{{ sr.qtyDeltaLabel }}</div>
+                                </td>
+                                <td style="padding:2px 8px;text-align:right;color:#64748b">
+                                  {{ sr.stage.unit_price != null ? formatCurrency(sr.stage.unit_price) : '—' }}
+                                  <div v-if="sr.priceDeltaLabel" style="font-size:10px" :style="`color:${sr.priceDeltaColor}`">{{ sr.priceDeltaLabel }}</div>
+                                </td>
+                                <td style="padding:2px 8px;text-align:right;color:#64748b">{{ sr.stage.total != null ? formatCurrency(sr.stage.total) : '—' }}</td>
+                                <td style="padding:2px 8px"></td>
+                                <td style="padding:2px 8px"></td>
+                                <td style="padding:2px 8px"></td>
+                                <td style="padding:2px 8px"></td>
+                              </tr>
+                              </template>
+                              </template>
 
-                              <!-- Ручной план ФЭО (сама категория) — отдельная плановая строка -->
-                              <tr v-if="matchedReqFor(node).length && (node.planned_quantity != null || node.planned_amount != null)"
+                              <!-- Ручной план ФЭО (сама категория) — отдельная плановая строка.
+                                   Гейт по matchedReqFor(node) СНЯТ (дефект 2026-08-05): раньше строка не
+                                   показывалась без одноимённых позиций заявок, из-за чего ручной план
+                                   (напр. 8 380 000 ₽) был не виден и панель писала «Нет плановых позиций». -->
+                              <tr v-if="node.planned_quantity != null || node.planned_amount != null"
                                 style="border-bottom:1px solid #E0F2FE">
                                 <td style="padding:4px 8px;color:#0c4a6e">
                                   <div style="font-weight:500">{{ node.name }}</div>
@@ -1103,7 +1255,9 @@
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
-                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px;text-align:right" :style="getDiffStyle(node.planned_amount, matchedReqFor(node))">
+                                  {{ formatCurrency(calcDiff(node.planned_amount, matchedReqFor(node))) }}
+                                </td>
                                 <td style="padding:4px 8px;color:#9ca3af">—</td>
                                 <td style="padding:4px 8px;text-align:center">
                                   <v-chip size="x-small" color="blue" variant="tonal" title="Запланировано в ФЭО — часть План-графика">План-график</v-chip>
@@ -1111,12 +1265,21 @@
                                 <td style="padding:2px"></td>
                               </tr>
 
-                              <!-- Одноимённые позиции из заявок: план-стадия, факта ещё нет -->
-                              <tr v-for="it in (plannedBase === 'purchases' ? [] : matchedReqFor(node))" :key="`msrc-${it.id}`"
+                              <!-- Одноимённые позиции из заявок: показываем фактическую стадию закупки
+                                   (дефект 2026-08-05: раньше всегда печаталось «ещё не поставлено»
+                                   независимо от реального статуса) -->
+                              <template v-for="it in (plannedBase === 'purchases' ? [] : matchedReqFor(node))" :key="`msrc-${it.id}`">
+                              <tr
                                 :class="kpiItemRowClass(it)"
                                 style="border-bottom:1px solid #E0F2FE;background:rgba(59,130,246,0.05)">
                                 <td style="padding:4px 8px;color:#0c4a6e">
                                   <div class="d-flex align-center" style="gap:6px">
+                                    <v-btn v-if="stagesForReqItem(node.id, it.id).length >= 2"
+                                      :icon="expandedStageRows.has(`msrc-${it.id}`) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
+                                      variant="text" density="compact" size="x-small" color="teal"
+                                      title="Показать стадии уточнения позиции"
+                                      @click.stop="toggleStageRow(`msrc-${it.id}`)"
+                                    />
                                     <v-avatar v-if="it.product_photo" size="28" rounded class="flex-shrink-0" style="cursor:pointer"
                                       @click.stop="photoPreview = { src: it.product_photo!, title: it.item_name }">
                                       <v-img :src="it.product_photo" cover />
@@ -1143,11 +1306,11 @@
                                 <td style="padding:4px 8px;text-align:right;color:#64748b">{{ it.quantity }}{{ it.unit ? ` ${it.unit}` : '' }}</td>
                                 <td style="padding:4px 8px;text-align:right;color:#64748b">{{ it.unit_price ? formatCurrency(it.unit_price) : '—' }}</td>
                                 <td style="padding:4px 8px;text-align:right;font-weight:500">{{ formatCurrency(it.total_price) }}</td>
-                                <td style="padding:4px 8px;color:#9ca3af;font-style:italic">ещё не поставлено</td>
+                                <td style="padding:4px 8px;color:#9ca3af;font-style:italic">{{ purchaseStatusLabel(it.purchase_status) }}</td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
-                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px;text-align:right" :style="getDiffStyle(it.total_price, [it])">{{ formatCurrency(calcDiff(it.total_price, [it])) }}</td>
                                 <td style="padding:4px 8px;color:#9ca3af">—</td>
                                 <td style="padding:4px 8px;text-align:center">
                                   <v-chip size="x-small" color="blue" variant="tonal" :prepend-icon="purchaseStatusIcon(it.purchase_status)">
@@ -1175,9 +1338,37 @@
                                   </template>
                                 </td>
                               </tr>
+                              <!-- Подстроки стадий уточнения (справочно, НЕ входят в comparisonPlanTotal/comparisonFactTotal) -->
+                              <template v-if="expandedStageRows.has(`msrc-${it.id}`)">
+                              <tr v-for="sr in stagesWithDiff(stagesForReqItem(node.id, it.id))" :key="`msrc-stage-${it.id}-${sr.stage.key}`"
+                                style="border-bottom:1px solid #E0F2FE;background:rgba(59,130,246,0.09)">
+                                <td style="padding:2px 8px 2px 40px;color:#94a3b8;font-size:10px">{{ sr.stage.label }}</td>
+                                <td style="padding:2px 8px"></td>
+                                <td style="padding:2px 8px"></td>
+                                <td style="padding:2px 8px"></td>
+                                <td style="padding:2px 8px" :style="sr.nameChanged ? 'color:#4F46E5' : ''">{{ sr.stage.name }}</td>
+                                <td style="padding:2px 8px;text-align:right;color:#64748b">
+                                  {{ sr.stage.quantity != null ? `${parseFloat(String(sr.stage.quantity))} ${sr.stage.unit || ''}` : '—' }}
+                                  <div v-if="sr.qtyDeltaLabel" style="font-size:10px" :style="`color:${sr.qtyDeltaColor}`">{{ sr.qtyDeltaLabel }}</div>
+                                </td>
+                                <td style="padding:2px 8px;text-align:right;color:#64748b">
+                                  {{ sr.stage.unit_price != null ? formatCurrency(sr.stage.unit_price) : '—' }}
+                                  <div v-if="sr.priceDeltaLabel" style="font-size:10px" :style="`color:${sr.priceDeltaColor}`">{{ sr.priceDeltaLabel }}</div>
+                                </td>
+                                <td style="padding:2px 8px;text-align:right;color:#64748b">{{ sr.stage.total != null ? formatCurrency(sr.stage.total) : '—' }}</td>
+                                <td style="padding:2px 8px"></td>
+                                <td style="padding:2px 8px"></td>
+                                <td style="padding:2px 8px"></td>
+                                <td style="padding:2px 8px"></td>
+                              </tr>
+                              </template>
+                              </template>
 
-                              <!-- Пусто -->
-                              <tr v-if="!comparisonData[node.id].planned.length && !comparisonData[node.id].actual.length && !matchedReqFor(node).length">
+                              <!-- Пусто: дефект 2026-08-05 — раньше срабатывало и при заполненном ручном
+                                   плане узла (planned_quantity/planned_amount), теперь эта проверка
+                                   тоже учитывается, чтобы «Нет плановых позиций» не показывалось поверх
+                                   реального плана. -->
+                              <tr v-if="!comparisonData[node.id].planned.length && !comparisonData[node.id].actual.length && !matchedReqFor(node).length && node.planned_quantity == null && node.planned_amount == null">
                                 <td colspan="12" style="padding:12px 8px;text-align:center;color:#9ca3af;font-style:italic">
                                   Нет плановых позиций. Добавьте вручную или загрузите из Excel.
                                 </td>
@@ -2275,6 +2466,33 @@
           <v-spacer />
           <v-btn variant="text" @click="reqItemDelete.show = false">Отмена</v-btn>
           <v-btn color="error" :loading="reqItemDelete.deleting" @click="doReqItemDelete">Удалить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── Позиция из заявки: точечное удаление запрещено — объясняем и даём легальный путь ── -->
+    <v-dialog v-model="wishBlockedDelete.show" max-width="520">
+      <v-card class="dialog-card">
+        <v-card-title class="dialog-title">
+          <v-icon icon="mdi-information-outline" color="primary" class="mr-2" />
+          Позиция создана заявкой №{{ wishBlockedDelete.wishId }}
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pt-4">
+          Позиция «<b>{{ wishBlockedDelete.name }}</b>» ({{ wishBlockedDelete.quantity }} {{ wishBlockedDelete.unit || 'шт' }}, {{ formatCurrency(wishBlockedDelete.sum) }} ₽)
+          пришла из заявки №{{ wishBlockedDelete.wishId }}.
+          <v-alert type="warning" variant="tonal" density="compact" class="mt-3">
+            Позиции согласованной заявки нельзя убирать из плана по одной: заявка меняется целиком и уходит на повторное согласование.
+          </v-alert>
+          <div class="mt-3">
+            Чтобы убрать её из плана-графика — откройте заявку и отредактируйте состав. При сохранении она вернётся на согласование и уйдёт из плана автоматически.
+          </div>
+        </v-card-text>
+        <v-card-actions class="px-4 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="wishBlockedDelete.show = false">Отмена</v-btn>
+          <v-btn color="primary" @click="openWishFromBlockedDelete">Открыть заявку</v-btn>
+          <v-btn v-if="isSaas" color="warning" :loading="wishBlockedDelete.reverting" @click="revertWishBlockedDeleteToDraft">Вернуть заявку в черновик</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -3905,8 +4123,39 @@ const loadingFeo = ref(false)
 const allSubsidies    = ref<SubsidyRow[]>([])
 const feoCategories   = ref<FeoCategory[]>([])
 const purchaseTotals  = ref<Record<number, number>>({})
+// НЕпривязанные (feo_planned_item_id IS NULL) — используются в feoPlannedRequestsFor/feoQtyRequestsFor,
+// чтобы не задваивать ручной план листа (Ур.5) позициями заявок, которые его уже расходуют.
 const plannedPurchaseTotals = ref<Record<number, number>>({})
 const plannedPurchaseQty = ref<Record<number, number>>({})
+// Привязанные (feo_planned_item_id IS NOT NULL) — «выбрано заявками» из плана; см.
+// feoPlannedConsumedFor/feoQtyConsumedFor и заметку под «Плановой суммой».
+const plannedPurchaseTotalsLinked = ref<Record<number, number>>({})
+const plannedPurchaseQtyLinked = ref<Record<number, number>>({})
+// «Сверх плана» (over_plan=true, НЕпривязанные) — прибавляется к плановой сумме элемента
+// безусловно, поверх план/заказ. См. feoPlannedOverFor/feoQtyOverFor. Итоговая «Плановая
+// сумма»/«Плановое количество» (feoPlannedDisplayRaw/feoQtyDisplayRaw) больше НЕ считается
+// на фронте — читается готовой из GET /api/feo-categories/plan-tree (planTreeByCat), см.
+// app.services.feo_plan.compute_feo_plan_tree (единый источник, сессия 2026-08-05).
+const plannedPurchaseTotalsOver = ref<Record<number, number>>({})
+const plannedPurchaseQtyOver = ref<Record<number, number>>({})
+// Прогнозное предупреждение «цена выше плановой» (сессия 2026-08-05, формула v2 —
+// backend app.services.feo_plan.compute_feo_plan_tree). Только для информирования,
+// НИКАКИХ блокировок — см. feoForecastWarningFor и предупреждение под «Плановой суммой».
+const plannedPurchaseForecast = ref<Record<number, { forecast: number; forecast_over: number; plan_manual: number }>>({})
+// Единая формула «Плановой суммы»/«Планового количества» узла — числа готовые с бэкенда
+// (сессия 2026-08-05, задача «формула только на бэкенде»: раньше фронт пересчитывал сам,
+// MAX(план, выбрано) + сверх_плана — СТАРАЯ формула, расходилась с KPI «Запланировано»
+// на дашборде/в списке субсидий, который считает НОВУЮ формулу «заказ замещает план»,
+// app.services.feo_plan.compute_feo_plan_tree). См. GET /api/feo-categories/plan-tree.
+// excess_amount/excess_pending/excess_approved — согласование превышения плана
+// над финансированием ФЭО узла (задача владельца 2026-08-05, «блокировать пока
+// не согласовано» — см. backend app.services.feo_plan.compute_feo_plan_tree /
+// app.routers.plan_excess). excessFor(node) ниже читает их из этой же карты.
+const planTreeByCat = ref<Record<number, {
+  display: number; display_quantity: number
+  excess_amount?: number; excess_pending?: boolean; excess_approved?: boolean
+}>>({})
+const excessRequestLoading = ref<number | null>(null)
 const expandedIds     = ref<number[]>([])
 const selectedId      = ref<number | null>(null)
 const selectedYear    = ref<number>(new Date().getFullYear())
@@ -3918,10 +4167,31 @@ const feoResiduals = ref<Record<number, {
   category_id: number
   planned_amount: number
   used_amount: number
+  wish_used_amount: number
   residual: number
   linked_purchase_ids: number[]
 }>>({})
 const residualsLoading = ref(false)
+
+// Плановые позиции (Ур.5) сгруппированы по листовой категории ФЭО — для заметки
+// «план N · выбрано заявками M · остаток K» под «Плановой суммой» (см. feoResidualNoteFor).
+// Переиспользует уже загруженный feoResiduals, ничего заново не считает.
+const feoResidualsByCat = computed<Record<number, { planned: number; consumed: number; residual: number }>>(() => {
+  const result: Record<number, { planned: number; consumed: number; residual: number }> = {}
+  for (const item of Object.values(feoResiduals.value)) {
+    const catId = item.category_id
+    if (catId == null) continue
+    const acc = (result[catId] ||= { planned: 0, consumed: 0, residual: 0 })
+    acc.planned += Number(item.planned_amount || 0)
+    acc.consumed += Number(item.used_amount || 0) + Number(item.wish_used_amount || 0)
+    acc.residual += Number(item.residual || 0)
+  }
+  return result
+})
+function feoResidualNoteFor(node: FeoNode): { planned: number; consumed: number; residual: number } | null {
+  if (node.hasChildren) return null
+  return feoResidualsByCat.value[node.id] || null
+}
 
 // 12-04: Version history state
 const showVersionHistoryDialog = ref(false)
@@ -4462,6 +4732,17 @@ interface FeoPlannedItem {
   months_count?: number | null
   monthly_amount?: number | null
 }
+// Стадия уточнения позиции (ФЭО → План → Что выставили на закупку → Номенклатура
+// подрядчика → Приняли) — справочная детализация, отдаётся бэкендом внутри FeoActualItem.stages.
+interface FeoStage {
+  key: string
+  label: string
+  name: string
+  quantity: number | null
+  unit: string | null
+  unit_price: number | null
+  total: number | null
+}
 interface FeoActualItem {
   purchase_item_id: number
   item_name: string
@@ -4477,6 +4758,19 @@ interface FeoActualItem {
   contract_number: string | null
   contractor_name: string | null
   product_photo?: string | null
+  // Требование владельца (2026-08-05): факт появляется с «Заказано», уточняется закрывающими
+  // документами при «Поставлено»/«Оплачено» — см. calcDiff/FACT_STATUSES ниже.
+  final_unit_price?: number | null
+  final_total?: number | null
+  acceptance_doc_amount?: number | null
+  contract_price?: number | null
+  purchase_items_count?: number | null
+  fact_amount?: number | null
+  fact_confirmed?: boolean
+  fact_allocated?: boolean
+  over_plan?: boolean
+  // Разворот по стадиям уточнения наименования/кол-ва (панель «план vs факт», см. FeoStage)
+  stages?: FeoStage[]
 }
 const expandedItemPanels = ref<Set<number>>(new Set())
 const comparisonData = ref<Record<number, { planned: FeoPlannedItem[]; actual: FeoActualItem[] }>>({})
@@ -4559,6 +4853,10 @@ interface FeoReqItem {
   contract_type?: string | null
   contract_status?: string | null
   contract_number?: string | null
+  // Anti-doublecount: позиция привязана к плановой позиции (feo_planned_items) — РАСХОДУЕТ
+  // её план, а не складывается с ним поверх. wish_item_id — исходная позиция заявки (справочно).
+  feo_planned_item_id?: number | null
+  wish_item_id?: number | null
 }
 interface FeoReqRow {
   key: string
@@ -4590,6 +4888,23 @@ const expandedPurchases = ref<Set<number>>(new Set())
 function togglePurchaseFolder(pid: number) {
   if (expandedPurchases.value.has(pid)) expandedPurchases.value.delete(pid)
   else expandedPurchases.value.add(pid)
+}
+
+// Раскрытие позиций закупок, привязанных к конкретной плановой позиции (Ур.5) в панели
+// «план vs факт» (по умолчанию свёрнуто — см. факт-строки под плановой в comparisonData).
+const expandedPlannedItems = ref<Set<number>>(new Set())
+function togglePlannedItemFolder(plannedId: number) {
+  if (expandedPlannedItems.value.has(plannedId)) expandedPlannedItems.value.delete(plannedId)
+  else expandedPlannedItems.value.add(plannedId)
+}
+
+// Разворот строки позиции закупки в подстроки стадий уточнения (ФЭО/План/Закупка/Договор/Приёмка).
+// Ключ — строка вида `<префикс-типа-строки>-<purchase_item_id | it.id>`, префикс совпадает с
+// префиксом :key соответствующей <tr v-for> ниже, чтобы не пересекаться между типами строк.
+const expandedStageRows = ref<Set<string>>(new Set())
+function toggleStageRow(key: string) {
+  if (expandedStageRows.value.has(key)) expandedStageRows.value.delete(key)
+  else expandedStageRows.value.add(key)
 }
 
 function hasReqItems(node: FeoNode): boolean {
@@ -4626,6 +4941,10 @@ function normName(s: string | null | undefined): string {
 const mergedReqByCat = computed(() => {
   const matched: Record<number, FeoReqItem[]> = {}
   const virtualByCat: Record<number, FeoVirtualGroup[]> = {}
+  // Позиции, привязанные к плановой позиции (feo_planned_item_id) — расходуют план Ур.5,
+  // а не складываются с ним поверх. Ключ — feo_planned_item_id. Исключены из matched/
+  // virtualByCat, иначе matchedReqTotal() и feoPlannedDisplayFor() задвоят план.
+  const linkedByPlanned: Record<number, FeoReqItem[]> = {}
   const byId: Record<number, FeoNode> = {}
   for (const n of flattenAll(feoTree.value)) byId[n.id] = n
   for (const [catIdStr, items] of Object.entries(plannedItemsByCat.value)) {
@@ -4637,6 +4956,10 @@ const mergedReqByCat = computed(() => {
     }
     const groups = new Map<string, FeoVirtualGroup>()
     for (const it of items || []) {
+      if (it.feo_planned_item_id != null) {
+        ;(linkedByPlanned[it.feo_planned_item_id] ||= []).push(it)
+        continue
+      }
       const key = normName(it.item_name)
       const childId = leafByName[key]
       if (childId != null) {
@@ -4656,7 +4979,7 @@ const mergedReqByCat = computed(() => {
     const list = [...groups.values()]
     if (list.length) virtualByCat[catId] = list
   }
-  return { matched, virtualByCat }
+  return { matched, virtualByCat, linkedByPlanned }
 })
 
 // Все позиции заявок сгруппированные по cat (без исключения matched) — для режима 'requests'
@@ -4860,6 +5183,13 @@ function reqItemActual(catId: number, itemId: number): FeoActualItem | null {
   return comparisonData.value[catId]?.actual.find(a => a.purchase_item_id === itemId) || null
 }
 
+// Стадии позиции «из заявок» (matchedReqFor) — сама FeoReqItem их не содержит, но одна и та же
+// позиция закупки, как правило, приходит и в comparisonData.actual (см. reqItemActual), где
+// бэкенд уже проставил stages.
+function stagesForReqItem(catId: number, itemId: number): FeoStage[] {
+  return reqItemActual(catId, itemId)?.stages || []
+}
+
 function reqItemPlanned(catId: number, itemId: number): FeoPlannedItem | null {
   const a = reqItemActual(catId, itemId)
   if (!a?.feo_planned_item_id) return null
@@ -4874,18 +5204,43 @@ function mapReqItem(node: FeoNode, item: FeoReqItem) {
 // Обновление данных «из заявок» без сброса раскрытых папок
 async function refreshReqData(catId?: number) {
   if (!selectedId.value) return
-  const [totals, items] = await Promise.all([
-    apiFetch<Record<number, { total: number; qty: number }>>(`/feo-categories/planned-purchase-totals?subsidy_id=${selectedId.value}`),
+  const [totals, items, planTree] = await Promise.all([
+    apiFetch<Record<number, { total: number; qty: number; total_linked?: number; qty_linked?: number; total_over?: number; qty_over?: number; forecast?: number; forecast_over?: number; plan_manual?: number }>>(`/feo-categories/planned-purchase-totals?subsidy_id=${selectedId.value}`),
     apiFetch<Record<number, FeoReqItem[]>>(`/feo-categories/planned-purchase-items?subsidy_id=${selectedId.value}`),
+    apiFetch<Record<number, { display: number; display_quantity: number; excess_amount?: number; excess_pending?: boolean; excess_approved?: boolean }>>(`/feo-categories/plan-tree?subsidy_id=${selectedId.value}`),
   ])
+  planTreeByCat.value = planTree
   const sums: Record<number, number> = {}
   const qtys: Record<number, number> = {}
+  const sumsLinked: Record<number, number> = {}
+  const qtysLinked: Record<number, number> = {}
+  const sumsOver: Record<number, number> = {}
+  const qtysOver: Record<number, number> = {}
+  const forecasts: Record<number, { forecast: number; forecast_over: number; plan_manual: number }> = {}
   for (const [k, v] of Object.entries(totals)) {
-    sums[Number(k)] = Number(v?.total || 0)
-    qtys[Number(k)] = Number(v?.qty || 0)
+    const totalLinked = Number(v?.total_linked || 0)
+    const qtyLinked = Number(v?.qty_linked || 0)
+    const totalOver = Number(v?.total_over || 0)
+    const qtyOver = Number(v?.qty_over || 0)
+    sums[Number(k)] = Number(v?.total || 0) - totalLinked - totalOver
+    qtys[Number(k)] = Number(v?.qty || 0) - qtyLinked - qtyOver
+    sumsLinked[Number(k)] = totalLinked
+    qtysLinked[Number(k)] = qtyLinked
+    sumsOver[Number(k)] = totalOver
+    qtysOver[Number(k)] = qtyOver
+    forecasts[Number(k)] = {
+      forecast: Number(v?.forecast || 0),
+      forecast_over: Number(v?.forecast_over || 0),
+      plan_manual: Number(v?.plan_manual || 0),
+    }
   }
   plannedPurchaseTotals.value = sums
   plannedPurchaseQty.value = qtys
+  plannedPurchaseTotalsLinked.value = sumsLinked
+  plannedPurchaseQtyLinked.value = qtysLinked
+  plannedPurchaseTotalsOver.value = sumsOver
+  plannedPurchaseQtyOver.value = qtysOver
+  plannedPurchaseForecast.value = forecasts
   plannedItemsByCat.value = items
   plannedItemsLoaded.value = true
   if (catId != null) {
@@ -4940,9 +5295,25 @@ const reqItemDelete = reactive({
   catId: null as number | null, purchaseId: null as number | null, itemId: null as number | null, name: '',
 })
 
+// Позиция «из заявки»: точечно удалить её из плана нельзя — заявка уже согласована,
+// и убрать одну строку в обход цепочки согласующих значит сломать инвариант
+// «изменил заявку → она уходит на повторное согласование» (см. backend/app/routers/purchases.py).
+// Вместо слепого перехода в заявку — объясняем, куда идти и что произойдёт.
+const wishBlockedDelete = reactive({
+  show: false, reverting: false,
+  wishId: null as number | null, catId: null as number | null,
+  name: '', quantity: null as number | null, unit: '' as string | null, sum: 0,
+})
+
 function confirmReqItemDelete(node: FeoNode, item: FeoReqItem) {
   if (item.wish_id) {
-    router.push({ path: '/wishes', query: { open: String(item.wish_id) } })
+    wishBlockedDelete.wishId = item.wish_id
+    wishBlockedDelete.catId = node.id
+    wishBlockedDelete.name = item.item_name
+    wishBlockedDelete.quantity = item.quantity
+    wishBlockedDelete.unit = item.unit
+    wishBlockedDelete.sum = item.total_price
+    wishBlockedDelete.show = true
     return
   }
   reqItemDelete.catId = node.id
@@ -4964,6 +5335,36 @@ async function doReqItemDelete() {
     showSnack(e?.payload?.message || e?.detail || 'Не удалось удалить позицию', 'error')
   } finally {
     reqItemDelete.deleting = false
+  }
+}
+
+function openWishFromBlockedDelete() {
+  wishBlockedDelete.show = false
+  router.push({ path: '/wishes', query: { open: String(wishBlockedDelete.wishId) } })
+}
+
+// Только для SaaS-ролей: принудительно вернуть заявку в черновик — эндпоинт сам
+// убирает всю заявку (не одну позицию) из плана-графика.
+async function revertWishBlockedDeleteToDraft() {
+  if (!wishBlockedDelete.wishId) return
+  wishBlockedDelete.reverting = true
+  try {
+    const res = await apiFetch<{ convert_warning?: string | null }>(`/wishes/${wishBlockedDelete.wishId}/status`, {
+      method: 'POST',
+      body: JSON.stringify({ status: 'draft' }),
+    })
+    wishBlockedDelete.show = false
+    if (res?.convert_warning) {
+      showSnack(`Заявка №${wishBlockedDelete.wishId} возвращена в черновик. ${res.convert_warning}`, 'warning')
+    } else {
+      showSnack(`Заявка №${wishBlockedDelete.wishId} возвращена в черновик и убрана из плана`)
+    }
+    await refreshReqData(wishBlockedDelete.catId ?? undefined)
+    await loadResiduals()
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Не удалось вернуть заявку в черновик', 'error')
+  } finally {
+    wishBlockedDelete.reverting = false
   }
 }
 
@@ -5101,13 +5502,62 @@ async function deletePlannedItem(item: FeoPlannedItem) {
 }
 
 // ── Diff helpers ──────────────────────────────────────────────────────────
-function calcDiff(planned: FeoPlannedItem, actuals: FeoActualItem[]): number {
-  const factSum = actuals.reduce((s, a) => s + Number(a.total_price || 0), 0)
-  return Number(planned.amount || 0) - factSum
+// Формула владельца (2026-08-05): «Остаток считается на основании "плановая сумма" минус
+// заказано, и если поставлено, то "плановая сумма" − "поставлено"». Применяется ко всем типам
+// строк панели (не только к плановым позициям Ур.5): если среди актуалов есть хотя бы одна
+// поставленная/оплаченная — вычитаем сумму поставленного, иначе — сумму заказанного.
+// fact_amount берём из API, если он отдан; иначе (напр. для «одноимённых из заявок», у которых
+// нет fact_amount) — падаем на total_price позиции.
+type DiffActual = { total_price?: number | string | null; fact_amount?: number | string | null; purchase_status?: string | null }
+function calcDiff(plannedAmount: number | string | null | undefined, actuals: DiffActual[]): number {
+  const amountOf = (a: DiffActual) => Number(a.fact_amount ?? a.total_price ?? 0)
+  const delivered = actuals.filter(a => ['delivered', 'paid'].includes(a.purchase_status || ''))
+  const ordered = actuals.filter(a => a.purchase_status === 'ordered')
+  const factSum = delivered.length
+    ? delivered.reduce((s, a) => s + amountOf(a), 0)
+    : ordered.reduce((s, a) => s + amountOf(a), 0)
+  return Number(plannedAmount || 0) - factSum
 }
-function getDiffStyle(planned: FeoPlannedItem, actuals: FeoActualItem[]): string {
-  const diff = calcDiff(planned, actuals)
+function getDiffStyle(plannedAmount: number | string | null | undefined, actuals: DiffActual[]): string {
+  const diff = calcDiff(plannedAmount, actuals)
   return diff >= 0 ? 'color:#166534;font-weight:600' : 'color:#DC2626;font-weight:600'
+}
+
+// ── Подстроки стадий (разворот позиции закупки на ФЭО/План/Закупка/Договор/Приёмка) ──
+// Совпадение соседних стадий — норма (уточнили наименование, но купили ровно то же кол-во/цену),
+// подсвечиваем ТОЛЬКО расхождение, чтобы не плодить визуальный шум там, где всё сошлось.
+interface FeoStageRow {
+  stage: FeoStage
+  nameChanged: boolean
+  qtyDeltaLabel: string | null
+  qtyDeltaColor: string
+  priceDeltaLabel: string | null
+  priceDeltaColor: string
+}
+function stagesWithDiff(stages: FeoStage[] | undefined): FeoStageRow[] {
+  const list = stages || []
+  return list.map((stage, i) => {
+    const prev = i > 0 ? list[i - 1] : null
+    let nameChanged = false
+    let qtyDeltaLabel: string | null = null
+    let qtyDeltaColor = ''
+    let priceDeltaLabel: string | null = null
+    let priceDeltaColor = ''
+    if (prev) {
+      nameChanged = normName(stage.name) !== normName(prev.name)
+      const qtyDelta = Math.round((Number(stage.quantity || 0) - Number(prev.quantity || 0)) * 10000) / 10000
+      if (Math.abs(qtyDelta) >= 0.0001) {
+        qtyDeltaColor = qtyDelta < 0 ? '#DC2626' : '#EA580C'
+        qtyDeltaLabel = `${qtyDelta > 0 ? '+' : '−'}${Math.abs(qtyDelta)}${stage.unit ? ' ' + stage.unit : ''}`
+      }
+      const priceDelta = Number(stage.unit_price || 0) - Number(prev.unit_price || 0)
+      if (Math.abs(priceDelta) >= 0.005) {
+        priceDeltaColor = priceDelta < 0 ? '#DC2626' : '#EA580C'
+        priceDeltaLabel = `${priceDelta > 0 ? '+' : '−'}${formatCurrencyRound(Math.abs(priceDelta))}`
+      }
+    }
+    return { stage, nameChanged, qtyDeltaLabel, qtyDeltaColor, priceDeltaLabel, priceDeltaColor }
+  })
 }
 
 // ── Edit planned item dialog ─────────────────────────────────────────────
@@ -5211,6 +5661,8 @@ const userRoleRaw = localStorage.getItem('user_role') || ''
 const isAdminLevel = ['superadmin', 'org_admin', 'admin'].includes(userRoleRaw)
 // 12-05: admin or account_owner can save a version
 const canSaveVersion = computed(() => ['superadmin', 'org_admin', 'admin', 'account_owner'].includes(userRoleRaw))
+// SaaS-роли (как в WishesView.vue) — им доступен force-возврат заявки в черновик из диалога блокировки удаления
+const isSaas = computed(() => ['superadmin', 'account_owner'].includes(userRoleRaw))
 
 const snack = ref({ show: false, text: '', color: 'success' })
 
@@ -5758,6 +6210,35 @@ function feoIsOverBudget(node: FeoNode): boolean {
   return feoDisplayedFor(node) > 0 && feoFinDiff(node) < -0.005
 }
 
+// Согласование превышения плана над финансированием ФЭО (задача владельца
+// 2026-08-05: «если где-то превысил план ФЭО, значит где-то надо снимать —
+// действия заблокированы, пока план-график не загонять обратно в размеры ФЭО,
+// либо согласовать превышение цепочкой»). excess_amount/excess_pending/
+// excess_approved приходят готовыми с бэкенда в planTreeByCat (см.
+// app.services.feo_plan.compute_feo_plan_tree) — фронт ничего не пересчитывает.
+function excessFor(node: FeoNode): { amount: number; pending: boolean; approved: boolean } | null {
+  const t = planTreeByCat.value[node.id]
+  const amount = Number(t?.excess_amount || 0)
+  if (amount <= 0.005) return null
+  return { amount, pending: !!t?.excess_pending, approved: !!t?.excess_approved }
+}
+
+async function requestPlanExcessApproval(node: FeoNode) {
+  excessRequestLoading.value = node.id
+  try {
+    await apiFetch('/plan-excess', {
+      method: 'POST',
+      body: JSON.stringify({ feo_category_id: node.id }),
+    })
+    showSnack('Запрос на согласование превышения плана отправлен', 'success')
+    if (selectedId.value) await refreshReqData()
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Не удалось запросить согласование превышения', 'error')
+  } finally {
+    excessRequestLoading.value = null
+  }
+}
+
 // Для каждого узла — потомки (любой глубины), у которых feoIsOverBudget === true.
 // Мемоизировано Map'ом за один обход дерева, а не пересчитывается в шаблоне на каждый узел —
 // дерево ФЭО большое, feoNodeClass/рендер строки вызываются в цикле по всем видимым узлам.
@@ -5808,8 +6289,10 @@ function feoChildrenBudgetDiff(node: FeoNode): number {
   return manualChildFeoSum(node) - node.budget
 }
 
-// Факт — только то, что реально поставлено/оплачено (по актам)
-const FACT_STATUSES = ['delivered', 'paid']
+// Факт по требованию владельца (2026-08-05): появляется с «Заказано» (по договору, актом ещё
+// не подтверждено — см. fact_confirmed), уточняется закрывающими документами при «Поставлено»/
+// «Оплачено». До «Заказано» это ещё ПЛАН, а не факт.
+const FACT_STATUSES = ['ordered', 'delivered', 'paid']
 function isFactActual(a: { purchase_status?: string | null }): boolean {
   return FACT_STATUSES.includes(a.purchase_status || '')
 }
@@ -5832,6 +6315,10 @@ function actualPlanStageFor(catId: number) {
 
 function factForPlanned(catId: number, plannedId: number) {
   return actualFactFor(catId).filter(a => a.feo_planned_item_id === plannedId)
+}
+
+function factForPlannedTotal(catId: number, plannedId: number): number {
+  return factForPlanned(catId, plannedId).reduce((s, a) => s + Number(a.total_price || 0), 0)
 }
 
 function comparisonPlanTotal(catId: number): number {
@@ -5928,27 +6415,61 @@ function isAutoQtyNode(node: FeoNode): boolean {
   return node.planned_quantity == null
 }
 
-// ── Плановое количество из заявок (статусы план-график и дальше) ───
+// ── Плановое количество из заявок (статусы план-график и дальше), БЕЗ привязанных к
+// плановой позиции (feo_planned_item_id) — те расходуют ручной план листа, а не
+// складываются с ним поверх. Карта plannedPurchaseQty уже нетто (qty − qty_linked).
 function feoQtyRequestsFor(node: FeoNode): number {
   const own = plannedPurchaseQty.value[node.id] || 0
   if (!node.hasChildren) return own
   return own + node.children.reduce((acc, child) => acc + feoQtyRequestsFor(child), 0)
 }
 
+// Количество «выбрано заявками» из ручного плана — зеркало feoQtyRequestsFor по карте
+// ПРИВЯЗАННЫХ позиций. Нужно, чтобы режимы 'purchases'/'requests' (показывающие ВСЕ
+// позиции заявок, не нетто) не потеряли привязанную часть после нетто-правки выше.
+function feoQtyConsumedFor(node: FeoNode): number {
+  const own = plannedPurchaseQtyLinked.value[node.id] || 0
+  if (!node.hasChildren) return own
+  return own + node.children.reduce((acc, child) => acc + feoQtyConsumedFor(child), 0)
+}
+
+// Количество «сверх плана» (over_plan=true, НЕпривязанные) — прибавляется к плановому
+// количеству элемента безусловно, поверх план/заказ. Зеркало feoPlannedOverFor (см. ниже)
+// для количеств.
+function feoQtyOverFor(node: FeoNode): number {
+  const own = plannedPurchaseQtyOver.value[node.id] || 0
+  if (!node.hasChildren) return own
+  return own + node.children.reduce((acc, child) => acc + feoQtyOverFor(child), 0)
+}
+
+// Единая формула «Планового количества» узла — считается на бэкенде (сессия
+// 2026-08-05, задача «формула только на бэкенде»: раньше здесь была СВОЯ формула
+// MAX(план, выбрано) + сверх_плана, которая расходилась с KPI «Запланировано» на
+// дашборде/в списке субсидий — тот считает НОВУЮ формулу «заказ замещает план»
+// (app.services.feo_plan.compute_feo_plan_tree). Теперь читаем готовое число из
+// GET /api/feo-categories/plan-tree (planTreeByCat) — фронт ничего не пересчитывает.
+function feoQtyDisplayRaw(node: FeoNode): number {
+  return planTreeByCat.value[node.id]?.display_quantity || 0
+}
+
 // Отображаемое «Плановое количество» по режиму собственного переключателя
 function feoQtyDisplayFor(node: FeoNode): number {
   if (plannedQtyBase.value === 'manual') return feoQtyFor(node)
-  if (plannedQtyBase.value === 'purchases') return feoQtyFor(node) + feoQtyRequestsFor(node)
+  // 'purchases'/'requests' — режимы «показать всё из заявок»: +Consumed/+Over возвращают
+  // привязанную и сверхплановую часть, вычтенные из feoQtyRequestsFor (иначе переключатель
+  // занизит объём).
+  if (plannedQtyBase.value === 'purchases') return feoQtyFor(node) + feoQtyRequestsFor(node) + feoQtyConsumedFor(node) + feoQtyOverFor(node)
   if (plannedQtyBase.value === 'requests') {
     // одноимённые из заявок привязаны к родителю — у слитого листа добавляем их явно
-    return feoQtyRequestsFor(node) + (!node.hasChildren ? matchedReqQty(node) : 0)
+    return feoQtyRequestsFor(node) + feoQtyConsumedFor(node) + feoQtyOverFor(node) + (!node.hasChildren ? matchedReqQty(node) : 0)
   }
   if (!node.hasChildren && matchedReqFor(node).length) {
-    // слитая позиция: всегда нарастающий итог — ручной план + одноимённые из заявок;
+    // слитая позиция: всегда нарастающий итог — ручной план + одноимённые из заявок + сверх плана;
     // сравнение с заложенным в ФЭО показателем — в заметке под числом
-    return feoQtyFor(node) + matchedReqQty(node) + feoQtyRequestsFor(node)
+    return feoQtyFor(node) + matchedReqQty(node) + feoQtyRequestsFor(node) + feoQtyOverFor(node)
   }
-  return feoQtyFor(node) + feoQtyRequestsFor(node)
+  // 'all' (по умолчанию): готовое число с бэкенда — см. feoQtyDisplayRaw.
+  return feoQtyDisplayRaw(node)
 }
 
 // Отклонение слитого кол-ва от заложенного в ФЭО показателя (кол-во по документу ФЭО)
@@ -5979,27 +6500,92 @@ function feoPlannedTotalFor(node: FeoNode): number {
   return 0
 }
 
-// ── Плановая сумма из заявок (статусы план-график и дальше) ───
-// Лист — из карты бэкенда; группа — собственные позиции (привязанные прямо к группе) + сумма детей
+// ── Плановая сумма из заявок (статусы план-график и дальше), БЕЗ позиций, привязанных
+// к плановой позиции (feo_planned_item_id) — они РАСХОДУЮТ ручной план листа (Ур.5),
+// а не складываются с ним поверх (иначе план задваивается — см. feoPlannedConsumedFor).
+// Лист — из карты бэкенда (уже нетто: total − total_linked); группа — собственные
+// позиции (привязанные прямо к группе) + сумма детей.
 function feoPlannedRequestsFor(node: FeoNode): number {
   const own = plannedPurchaseTotals.value[node.id] || 0
   if (!node.hasChildren) return own
   return own + node.children.reduce((acc, child) => acc + feoPlannedRequestsFor(child), 0)
 }
 
-// Отображаемая «Плановая сумма» по режиму переключателя
+// Сумма «выбрано заявками» из ручного плана — зеркало feoPlannedRequestsFor по карте
+// ПРИВЯЗАННЫХ позиций. Нужна для заметки под «Плановой суммой» и чтобы режимы
+// 'purchases'/'requests' (показывающие ВСЕ позиции заявок целиком) не потеряли
+// привязанную часть после нетто-правки feoPlannedRequestsFor выше.
+function feoPlannedConsumedFor(node: FeoNode): number {
+  const own = plannedPurchaseTotalsLinked.value[node.id] || 0
+  if (!node.hasChildren) return own
+  return own + node.children.reduce((acc, child) => acc + feoPlannedConsumedFor(child), 0)
+}
+
+// Сумма «сверх плана» (over_plan=true, НЕпривязанные) — прибавляется к плановой сумме
+// элемента безусловно, поверх план/заказ (см. feoPlannedDisplayRaw ниже).
+// Лист — из карты бэкенда (уже нетто относительно linked); группа — собственные
+// сверхплановые позиции (прямо на группе) + сумма детей.
+function feoPlannedOverFor(node: FeoNode): number {
+  const own = plannedPurchaseTotalsOver.value[node.id] || 0
+  if (!node.hasChildren) return own
+  return own + node.children.reduce((acc, child) => acc + feoPlannedOverFor(child), 0)
+}
+
+// Единая формула «Плановой суммы» узла — считается на бэкенде (сессия 2026-08-05,
+// задача «формула только на бэкенде»). Раньше здесь была СВОЯ формула
+// MAX(план, выбрано) + сверх_плана — расходилась с KPI «Запланировано» на дашборде/
+// в списке субсидий, который считает через _calculate_feo_planned_tree_bulk НОВУЮ
+// формулу «заказ замещает план, когда количество набрано полностью»
+// (app.services.feo_plan.compute_feo_plan_tree) — два разных числа на одном экране.
+// Теперь читаем готовое число из GET /api/feo-categories/plan-tree (planTreeByCat) —
+// единственный источник правды, фронт ничего не пересчитывает и не обходит детей сам.
+function feoPlannedDisplayRaw(node: FeoNode): number {
+  return planTreeByCat.value[node.id]?.display || 0
+}
+
+// Отображаемая «Плановая сумма» по режиму переключателя.
+// Нетто-исключение привязанных применяется ТОЛЬКО в ветке 'all' (последний return —
+// единственный режим, где «Плановая сумма» это цельный лимит листа, который заявка не
+// должна задваивать). 'purchases' и 'requests' — режимы «показать всё из заявок», там
+// +feoPlannedConsumedFor(node)/+feoPlannedOverFor(node) восстанавливают привязанную и
+// сверхплановую часть до полного объёма (feoPlannedRequestsFor теперь исключает обе).
 function feoPlannedDisplayFor(node: FeoNode): number {
   if (plannedSumBase.value === 'manual') return feoPlannedTotalFor(node)
-  if (plannedSumBase.value === 'purchases') return feoPlannedTotalFor(node) + feoPlannedRequestsFor(node)
+  if (plannedSumBase.value === 'purchases') return feoPlannedTotalFor(node) + feoPlannedRequestsFor(node) + feoPlannedConsumedFor(node) + feoPlannedOverFor(node)
   if (plannedSumBase.value === 'requests') {
     // одноимённые из заявок привязаны к родителю — у слитого листа добавляем их явно
-    return feoPlannedRequestsFor(node) + (!node.hasChildren ? matchedReqTotal(node) : 0)
+    return feoPlannedRequestsFor(node) + feoPlannedConsumedFor(node) + feoPlannedOverFor(node) + (!node.hasChildren ? matchedReqTotal(node) : 0)
   }
   if (!node.hasChildren && matchedReqFor(node).length) {
-    // слитая позиция: ручной план + одноимённые позиции заявок по их фактическим ценам
-    return feoPlannedTotalFor(node) + matchedReqTotal(node) + feoPlannedRequestsFor(node)
+    // слитая позиция: ручной план + одноимённые позиции заявок по их фактическим ценам + сверх плана
+    return feoPlannedTotalFor(node) + matchedReqTotal(node) + feoPlannedRequestsFor(node) + feoPlannedOverFor(node)
   }
-  return feoPlannedTotalFor(node) + feoPlannedRequestsFor(node)
+  // 'all' (по умолчанию): готовое число с бэкенда — см. feoPlannedDisplayRaw.
+  return feoPlannedDisplayRaw(node)
+}
+
+// Заметка под «Плановой суммой»: план N ₽ · выбрано M ₽ · остаток K ₽ (см. ЗАДАЧА
+// сессии 2026-08-05). Остаток = plan_manual − consumed (может уйти в минус —
+// красным в шаблоне). Показывается ТОЛЬКО в режиме 'all' (единственный режим,
+// где действует новая формула MAX) и только когда есть хоть какие-то числа —
+// пустые узлы (ни плана, ни заявок) заметку не показывают.
+function feoPlanConsumedNoteFor(node: FeoNode): { planned: number; consumed: number; residual: number } | null {
+  const planned = feoPlannedTotalFor(node)
+  const consumed = feoPlannedRequestsFor(node)
+  if (planned <= 0 && consumed <= 0) return null
+  return { planned, consumed, residual: planned - consumed }
+}
+
+// Прогнозное предупреждение «цена выше плановой» (ЗАДАЧА 2/3 сессии 2026-08-05).
+// Данные считаются на бэкенде (app.services.feo_plan.compute_feo_plan_tree, поля
+// forecast/forecast_over/plan_manual в GET /feo-categories/planned-purchase-totals,
+// см. plannedPurchaseForecast) — фронт только читает готовое число, НИКАКИХ
+// вычислений и блокировок. Только информирование: если по факту заказанного темпу
+// цен итоговая сумма грозит превысить план — оранжевая заметка под «Плановой суммой».
+function feoForecastWarningFor(node: FeoNode): { forecast: number; forecastOver: number; planManual: number } | null {
+  const v = plannedPurchaseForecast.value[node.id]
+  if (!v || !(v.forecast_over > 0)) return null
+  return { forecast: v.forecast, forecastOver: v.forecast_over, planManual: v.plan_manual }
 }
 
 function isAutoAmtNode(node: FeoNode): boolean {
@@ -6369,28 +6955,59 @@ async function loadFeo(subsidyId: number) {
   purchaseTotals.value = {}
   plannedPurchaseTotals.value = {}
   plannedPurchaseQty.value = {}
+  plannedPurchaseTotalsLinked.value = {}
+  plannedPurchaseQtyLinked.value = {}
+  plannedPurchaseTotalsOver.value = {}
+  plannedPurchaseQtyOver.value = {}
+  plannedPurchaseForecast.value = {}
+  planTreeByCat.value = {}
   plannedItemsByCat.value = {}
   plannedItemsLoaded.value = false
   expandedReqItems.value = new Set()
   try {
-    const [cats, totals, plannedTotals, plannedItems] = await Promise.all([
+    const [cats, totals, plannedTotals, plannedItems, planTree] = await Promise.all([
       apiFetch<FeoCategory[]>(`/feo-categories/?subsidy_id=${subsidyId}`),
       apiFetch<Record<number, number>>(`/feo-categories/purchase-totals?subsidy_id=${subsidyId}`),
-      apiFetch<Record<number, { total: number; qty: number }>>(`/feo-categories/planned-purchase-totals?subsidy_id=${subsidyId}`),
+      apiFetch<Record<number, { total: number; qty: number; total_linked?: number; qty_linked?: number; total_over?: number; qty_over?: number; forecast?: number; forecast_over?: number; plan_manual?: number }>>(`/feo-categories/planned-purchase-totals?subsidy_id=${subsidyId}`),
       apiFetch<Record<number, FeoReqItem[]>>(`/feo-categories/planned-purchase-items?subsidy_id=${subsidyId}`),
+      apiFetch<Record<number, { display: number; display_quantity: number; excess_amount?: number; excess_pending?: boolean; excess_approved?: boolean }>>(`/feo-categories/plan-tree?subsidy_id=${subsidyId}`),
     ])
     feoCategories.value = cats
     purchaseTotals.value = totals
+    planTreeByCat.value = planTree
     plannedItemsByCat.value = plannedItems
     plannedItemsLoaded.value = true
     const sums: Record<number, number> = {}
     const qtys: Record<number, number> = {}
+    const sumsLinked: Record<number, number> = {}
+    const qtysLinked: Record<number, number> = {}
+    const sumsOver: Record<number, number> = {}
+    const qtysOver: Record<number, number> = {}
+    const forecasts: Record<number, { forecast: number; forecast_over: number; plan_manual: number }> = {}
     for (const [k, v] of Object.entries(plannedTotals)) {
-      sums[Number(k)] = Number(v?.total || 0)
-      qtys[Number(k)] = Number(v?.qty || 0)
+      const totalLinked = Number(v?.total_linked || 0)
+      const qtyLinked = Number(v?.qty_linked || 0)
+      const totalOver = Number(v?.total_over || 0)
+      const qtyOver = Number(v?.qty_over || 0)
+      sums[Number(k)] = Number(v?.total || 0) - totalLinked - totalOver
+      qtys[Number(k)] = Number(v?.qty || 0) - qtyLinked - qtyOver
+      sumsLinked[Number(k)] = totalLinked
+      qtysLinked[Number(k)] = qtyLinked
+      sumsOver[Number(k)] = totalOver
+      qtysOver[Number(k)] = qtyOver
+      forecasts[Number(k)] = {
+        forecast: Number(v?.forecast || 0),
+        forecast_over: Number(v?.forecast_over || 0),
+        plan_manual: Number(v?.plan_manual || 0),
+      }
     }
     plannedPurchaseTotals.value = sums
     plannedPurchaseQty.value = qtys
+    plannedPurchaseTotalsLinked.value = sumsLinked
+    plannedPurchaseQtyLinked.value = qtysLinked
+    plannedPurchaseTotalsOver.value = sumsOver
+    plannedPurchaseQtyOver.value = qtysOver
+    plannedPurchaseForecast.value = forecasts
   } catch {
     showSnack('Ошибка загрузки категорий ФЭО', 'error')
   } finally {

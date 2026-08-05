@@ -21,6 +21,7 @@ from app.models.user import User
 from app.models.user_org_access import UserOrgAccess
 from app.routers.contracts import ensure_contract_linked
 from app.routers.purchase_budget import _check_budget, _assign_framework_seq, FRAMEWORK_TYPES
+from app.services.feo_plan import assert_no_unapproved_excess
 from app.product_matcher import find_matching_product
 from typing import List, Optional
 from pydantic import BaseModel
@@ -324,7 +325,6 @@ async def _create_plan_graph_version(
         select(_Purchase.id, _Purchase.status, _Purchase.planned_total_price, _Purchase.total_nmck, _Purchase.nmck, _Purchase.contract_price, _Purchase.payment_amount)
         .where(_Purchase.subsidy_id == subsidy_id, _Purchase.status.in_(_PLAN_STATUSES))
     )).all()
-    purchases_plan_total = 0.0
     purchases_calc_total = 0.0
     for pr in purch_rows:
         _plan = float(pr.planned_total_price or 0) or float(pr.total_nmck or 0) or float(pr.nmck or 0)
@@ -332,12 +332,38 @@ async def _create_plan_graph_version(
             _calc = float(pr.payment_amount or 0) or float(pr.contract_price or 0) or _plan
         else:
             _calc = _plan
-        purchases_plan_total += _plan
         purchases_calc_total += _calc
     purchase_statuses = {str(pr.id): pr.status for pr in purch_rows}
 
+    # purchases_plan_total — на уровне PurchaseItem (не Purchase.planned_total_price), чтобы
+    # частично привязанная к плану закупка не тянула в снапшот всю свою сумму целиком, и
+    # исключая позиции с feo_planned_item_id IS NOT NULL — они расходуют ручной план дерева
+    # ФЭО (manual_plan_total), а не складываются с ним поверх.
+    # (informational — плоская сумма по всей субсидии, без учёта дерева; для KPI-совместимой
+    # величины см. total_plan_combined ниже)
+    plan_item_total_q = (
+        select(func.coalesce(func.sum(PurchaseItem.total_price), 0))
+        .join(_Purchase, PurchaseItem.purchase_id == _Purchase.id)
+        .where(_Purchase.subsidy_id == subsidy_id)
+        .where(_Purchase.status.in_(_PLAN_STATUSES))
+        .where(PurchaseItem.feo_planned_item_id.is_(None))
+    )
+    purchases_plan_total = float((await db.execute(plan_item_total_q)).scalar() or 0)
+
     # total_effective = ручной план дерева ФЭО + фактические суммы закупок
     total_effective = manual_plan_total + purchases_calc_total
+
+    # total_plan_combined — единая формула дерева ФЭО (app.services.feo_plan.
+    # compute_feo_plan_tree/feo_plan_subsidy_totals), та же, что и в
+    # _calculate_feo_planned_tree_bulk (subsidies.py) — единый источник KPI
+    # «Запланировано». Раньше здесь была наивная сумма manual_plan_total +
+    # purchases_plan_total — задваивала план, когда позиция закупки лежала
+    # ОДНОВРЕМЕННО на группе и на её дочернем листе (см. docstring
+    # compute_feo_plan_tree). Значение обязано совпадать с текущим KPI, иначе
+    # история версий план-графика расходится с тем, что видно на вкладке
+    # «Субсидии».
+    from app.services.feo_plan import feo_plan_subsidy_totals
+    total_plan_combined = (await feo_plan_subsidy_totals(db, [subsidy_id])).get(subsidy_id, 0.0)
 
     snapshot = {
         "schema_version": 2,
@@ -349,7 +375,7 @@ async def _create_plan_graph_version(
         "manual_plan_total": manual_plan_total,
         "purchases_plan_total": purchases_plan_total,
         "purchases_calc_total": purchases_calc_total,
-        "total_plan_combined": manual_plan_total + purchases_plan_total,
+        "total_plan_combined": total_plan_combined,
         "purchase_statuses": purchase_statuses,
         "items": snapshot_items,  # backward-compat
         "tree": feo_tree,
@@ -426,7 +452,11 @@ def _item_to_out(item: PurchaseItem) -> PurchaseItemOut:
         total_with_vat=getattr(item, 'total_with_vat', None),
         feo_planned_item_id=getattr(item, 'feo_planned_item_id', None),
         feo_category_id=getattr(item, 'feo_category_id', None),
+        over_plan=getattr(item, 'over_plan', False) or False,
         needed_date=getattr(item, 'needed_date', None),
+        accepted_name=getattr(item, 'accepted_name', None),
+        accepted_quantity=getattr(item, 'accepted_quantity', None),
+        accepted_unit=getattr(item, 'accepted_unit', None),
         product_name=product_name,
         product_photo_url=product_photo_url,
         product_description=product_description,
@@ -1180,6 +1210,21 @@ async def create_purchase(
     if not admin_override and data.purchase_basis != 'service_note':
         await _check_budget(data.subsidy_id, total_nmck or data.planned_total_price, None, db)
 
+    # Задача владельца (2026-08-05) «блокировать пока не согласовано превышение плана
+    # ФЭО»: создание закупки — увеличивающее план действие. Проверяем по КАЖДОЙ
+    # категории ФЭО, к которой отнесены позиции (per-item feo_category_id,
+    # fallback — категория закупки целиком).
+    if not admin_override:
+        _cat_amounts: dict[int, Decimal] = {}
+        for _i in items_data:
+            _cid = _i.feo_category_id or data.feo_category_id
+            if _cid:
+                _cat_amounts[_cid] = _cat_amounts.get(_cid, Decimal("0")) + (_i.total_price or Decimal("0"))
+        if not _cat_amounts and data.feo_category_id:
+            _cat_amounts[data.feo_category_id] = total_nmck or Decimal("0")
+        for _cid, _amt in _cat_amounts.items():
+            await assert_no_unapproved_excess(db, _cid, adding_amount=_amt)
+
     if not data.purchase_number:
         max_result = await db.execute(select(func.coalesce(func.max(Purchase.purchase_number), 0)))
         data.purchase_number = max_result.scalar() + 1
@@ -1323,6 +1368,7 @@ async def update_purchase(
     if not p:
         raise HTTPException(404, "Not found")
     old_planned_total_price = p.planned_total_price  # capture BEFORE setattr loop
+    old_feo_category_id = p.feo_category_id  # capture BEFORE setattr loop (excess-gate below)
     # Phase 31: capture old values for diff-tracking BEFORE any mutation
     _old_purchase_values = {f: getattr(p, f, None) for f in PURCHASE_TRACKED_FIELDS}
     # Employees/managers can save any purchase they have access to (org-level access checked at list level)
@@ -1405,6 +1451,20 @@ async def update_purchase(
     # JSONB columns need explicit dirty-flag so SQLAlchemy detects mutations
     if "acceptance_docs" in data.model_fields_set:
         flag_modified(p, "acceptance_docs")
+
+    # Задача владельца (2026-08-05) «блокировать пока не согласовано превышение плана
+    # ФЭО»: изменение закупки, увеличивающее сумму ИЛИ меняющее категорию ФЭО —
+    # УВЕЛИЧИВАЮЩЕЕ план действие. НЕ блокируем переходы статусов вперёд/уменьшения
+    # сумм/смену категории на «без категории» — та ветка сюда не попадает, т.к.
+    # ни сумма не растёт, ни новая категория не задана.
+    if not admin_override and p.feo_category_id:
+        _new_amount = Decimal(str(p.total_nmck or 0))
+        _old_amount = Decimal(str(old_planned_total_price or 0))
+        _amount_increased = _new_amount > _old_amount
+        _category_changed = p.feo_category_id != old_feo_category_id
+        if _amount_increased or _category_changed:
+            _delta = (_new_amount - _old_amount) if _amount_increased else Decimal("0")
+            await assert_no_unapproved_excess(db, p.feo_category_id, adding_amount=_delta)
 
     # Contract price: авто-пересчёт из items для ВСЕХ типов закупок (phase26-l-1).
     # Рамочный (framework_cumulative / framework_with_amount) тоже должен суммироваться в total_ordered контракта.
@@ -2439,6 +2499,7 @@ async def split_purchase(
                     total_price=src_it.total_price,
                     country_origin=src_it.country_origin,
                     feo_planned_item_id=src_it.feo_planned_item_id,
+                    over_plan=getattr(src_it, 'over_plan', False) or False,
                 ))
             # Copy members
             for m in source_members:

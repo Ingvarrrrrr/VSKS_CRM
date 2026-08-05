@@ -118,6 +118,44 @@ async def import_debug(current_user: User = Depends(get_current_user)):
     out["ghostscript_bin"] = "ok" if shutil.which("gs") else "MISSING"
     out["pdftoppm_bin"] = "ok" if shutil.which("pdftoppm") else "MISSING"
     out["unpaper_bin"] = "ok" if shutil.which("unpaper") else "MISSING"
+    try:
+        import pdf_inspector
+        out["pdf_inspector"] = f"ok (v{getattr(pdf_inspector, '__version__', '?')})"
+    except Exception as e:
+        out["pdf_inspector"] = f"FAIL: {e}"
+    try:
+        import cv2
+        out["cv2"] = f"ok (v{cv2.__version__})"
+    except Exception as e:
+        out["cv2"] = f"FAIL: {e}"
+    try:
+        from app.utils.pdf_classify import inspect_pdf
+        # Minimal single-page PDF with a couple of words, generated via reportlab
+        # (already a dependency) rather than hand-built — just to exercise the
+        # subprocess plumbing, not to assert anything about classification quality.
+        from reportlab.pdfgen import canvas as _rl_canvas
+        _buf = BytesIO()
+        _c = _rl_canvas.Canvas(_buf)
+        _c.drawString(72, 700, "VSKS import-debug test PDF")
+        _c.save()
+        _tiny_pdf = _buf.getvalue()
+        _insp = inspect_pdf(_tiny_pdf, timeout=15)
+        if _insp.ok:
+            out["pdf_inspector_subprocess"] = "ok"
+            # Real values from the library, not documentation guesses — for a
+            # 1-page reportlab text PDF we'd *expect* pdf_type=="text",
+            # ocr_pages==[], page_count==1, but show whatever actually comes back.
+            out["pdf_inspector_result"] = {
+                "pdf_type": _insp.pdf_type,
+                "confidence": _insp.confidence,
+                "page_count": _insp.page_count,
+                "has_encoding_issues": _insp.has_encoding_issues,
+                "ocr_pages": _insp.ocr_pages,
+            }
+        else:
+            out["pdf_inspector_subprocess"] = f"FAIL: {_insp.error}"
+    except Exception as e:
+        out["pdf_inspector_subprocess"] = f"FAIL: {e}"
     return out
 
 
@@ -126,157 +164,29 @@ async def import_debug(current_user: User = Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 
 def _ocr_pdf_to_rows(content: bytes) -> tuple[list, str | None]:
-    """Convert scanned PDF to rows via OCR with layout awareness.
-    Uses pytesseract image_to_data (TSV) — gives bounding boxes per word.
-    Group words into rows by y-coordinate, then split into columns by
-    x-gaps within each row. Returns (rows, error_message).
+    """Thin delegating wrapper around app.utils.pdf_ocr.ocr_pdf_to_rows.
+
+    The real implementation was moved there (Wave 1 of the OCR-classification
+    work) so it isn't duplicated between this router and
+    app/utils/document_to_markdown.py. Kept here — same name, same signature,
+    unpaged — as the module's own OCR-fallback entry point (the two in-module
+    call sites that need page-targeted OCR now call
+    app.utils.pdf_ocr.ocr_pdf_to_rows_enhanced directly instead, since this
+    wrapper's signature has no `pages` argument to pass one through).
+    Import is local so importing this router doesn't pull in OCR-heavy deps.
     """
-    try:
-        from pdf2image import convert_from_bytes
-        import pytesseract
-    except ImportError:
-        return [], "OCR-библиотеки не установлены (pdf2image, pytesseract). Обратитесь к администратору."
-    try:
-        # 400 DPI gives noticeably better recognition on receipts/invoices than 300
-        images = convert_from_bytes(content, dpi=400)
-    except Exception as e:
-        return [], f"Не удалось преобразовать PDF в изображения для OCR (poppler установлен?): {e}"
-    if not images:
-        return [], "PDF не содержит страниц для распознавания."
-
-    all_rows: list[list[str]] = []
-    for img in images:
-        try:
-            # PSM 6 = "Assume a single uniform block of text" — best for tables/lists
-            data = pytesseract.image_to_data(
-                img, lang='rus+eng', config='--psm 6',
-                output_type=pytesseract.Output.DICT,
-            )
-        except Exception as e:
-            return [], f"Ошибка OCR-распознавания (tesseract установлен?): {e}"
-
-        # Group words by (block_num, par_num, line_num) → one OCR line each
-        n = len(data.get('text', []))
-        line_buckets: dict[tuple, list] = {}
-        for i in range(n):
-            word = (data['text'][i] or '').strip()
-            if not word:
-                continue
-            try:
-                conf = int(data['conf'][i])
-            except (ValueError, TypeError):
-                conf = -1
-            if conf < 0:
-                continue
-            key = (data['block_num'][i], data['par_num'][i], data['line_num'][i])
-            line_buckets.setdefault(key, []).append({
-                'text': word,
-                'left': int(data['left'][i]),
-                'right': int(data['left'][i]) + int(data['width'][i]),
-                'top': int(data['top'][i]),
-            })
-
-        # Sort lines top-to-bottom by mean y-coord of their words
-        sorted_lines = sorted(
-            line_buckets.values(),
-            key=lambda ws: sum(w['top'] for w in ws) / len(ws),
-        )
-
-        for words in sorted_lines:
-            words.sort(key=lambda w: w['left'])
-            # Split into cells: gap > 40px between adjacent words = new column
-            GAP_PX = 40
-            cells: list[str] = []
-            current = words[0]['text']
-            prev_right = words[0]['right']
-            for w in words[1:]:
-                if w['left'] - prev_right > GAP_PX:
-                    cells.append(current)
-                    current = w['text']
-                else:
-                    current += ' ' + w['text']
-                prev_right = w['right']
-            cells.append(current)
-            cells = [c.strip() for c in cells if c.strip()]
-            if cells:
-                all_rows.append(cells)
-
-    if not all_rows:
-        return [], "OCR не нашёл текст на страницах. Возможно, качество скана слишком низкое."
-    return all_rows, None
+    from app.utils.pdf_ocr import ocr_pdf_to_rows as _impl
+    return _impl(content)
 
 
 def _ocrmypdf_then_extract_tables(content: bytes) -> list[list[list[str]]]:
-    """Run ocrmypdf on scanned PDF (adds invisible OCR text layer),
-    then extract tables via pdfplumber from the OCR'd PDF.
-    Returns list of tables (each = list of rows). Empty list on failure.
+    """Thin delegating wrapper around app.utils.pdf_ocr.ocrmypdf_then_extract_tables.
+
+    See `_ocr_pdf_to_rows` above — same reasoning, same "keep name/signature,
+    delegate the body" approach.
     """
-    try:
-        import ocrmypdf
-        import pdfplumber as _pp
-    except ImportError as e:
-        logger.warning("ocrmypdf or pdfplumber not installed: %s", e)
-        return []
-    import tempfile, os
-    in_path = out_path = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as fin:
-            fin.write(content)
-            in_path = fin.name
-        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as fout:
-            out_path = fout.name
-        # force_ocr=True even if pdf has some text — scans often have garbage text layer
-        # skip_text=False ensures all pages get OCR'd
-        try:
-            ocrmypdf.ocr(
-                in_path, out_path,
-                language='rus+eng',
-                force_ocr=True,
-                deskew=True,
-                clean=True,
-                progress_bar=False,
-                output_type='pdf',
-            )
-        except Exception as e:
-            logger.warning("ocrmypdf failed: %s", e)
-            return []
-        # Now extract tables from the OCR'd PDF
-        tables_out: list[list[list[str]]] = []
-        try:
-            with _pp.open(out_path) as pdf:
-                for page in pdf.pages:
-                    for tbl in (page.extract_tables() or []):
-                        if tbl:
-                            cleaned = [[str(c).strip() if c else "" for c in row] for row in tbl]
-                            if any(any(c for c in row) for row in cleaned):
-                                tables_out.append(cleaned)
-                    # If no tables detected, fall back to text lines as virtual table
-                    if not tables_out:
-                        text = page.extract_text() or ""
-                        if text.strip():
-                            import re
-                            rows = []
-                            for line in text.split('\n'):
-                                line = line.strip()
-                                if not line:
-                                    continue
-                                cells = re.split(r'  {2,}|\t', line)
-                                cells = [c.strip() for c in cells if c.strip()]
-                                if cells:
-                                    rows.append(cells)
-                            if rows:
-                                tables_out.append(rows)
-        except Exception as e:
-            logger.warning("pdfplumber on OCR'd PDF failed: %s", e)
-            return []
-        return tables_out
-    finally:
-        for p in (in_path, out_path):
-            if p and os.path.exists(p):
-                try:
-                    os.unlink(p)
-                except OSError:
-                    pass
+    from app.utils.pdf_ocr import ocrmypdf_then_extract_tables as _impl
+    return _impl(content)
 
 
 def _extract_html_tables(content: bytes, filename: str = "doc.html") -> list[list[list[str]]]:
@@ -329,14 +239,35 @@ def _legacy_extract_tables(content: bytes, filename: str, file_type: str) -> lis
                     for tbl in tables:
                         if tbl:
                             raw_tables.append([[str(c) if c is not None else "" for c in row] for row in tbl])
+        # Classify once, only if pdfplumber didn't already find tables — the
+        # classification subprocess isn't free, no point paying for it when
+        # pdfplumber's native table extraction already succeeded.
+        _ocr_pages: list[int] | None = None
+        if not raw_tables:
+            try:
+                from app.utils.pdf_classify import inspect_pdf as _inspect_pdf_classify
+                _insp = _inspect_pdf_classify(content)
+                if _insp.ok:
+                    _ocr_pages = _insp.ocr_pages or None
+                    logger.info(
+                        "_legacy_extract_tables: pdf_classify pdf_type=%s ocr_pages=%s (classifier path)",
+                        _insp.pdf_type, _insp.ocr_pages,
+                    )
+                else:
+                    logger.info("_legacy_extract_tables: pdf classification failed (%s), OCR-ing whole document", _insp.error)
+            except Exception as e:
+                logger.warning("_legacy_extract_tables: pdf classification unavailable, OCR-ing whole document: %s", e)
         if not raw_tables:
             # Try ocrmypdf — adds OCR layer, then pdfplumber extracts tables natively
             ocr_tables = _ocrmypdf_then_extract_tables(content)
             if ocr_tables:
                 raw_tables.extend(ocr_tables)
         if not raw_tables:
-            # Last resort: raw OCR via image_to_data
-            ocr_rows, _ = _ocr_pdf_to_rows(content)
+            # Last resort: raw OCR via image_to_data, with preprocessing + PSM
+            # auto-selection, restricted to pdf-inspector's flagged pages when
+            # classification succeeded (whole document otherwise).
+            from app.utils.pdf_ocr import ocr_pdf_to_rows_enhanced
+            ocr_rows, _ = ocr_pdf_to_rows_enhanced(content, pages=_ocr_pages)
             if ocr_rows:
                 raw_tables.append(ocr_rows)
     elif file_type == "docx":
@@ -787,6 +718,8 @@ async def import_items_preview(
             # Sharp/Xerox scanners often embed a low-quality OCR layer that pdfplumber
             # reads as text but the result is unparseable. Skip text_lines and force
             # ocrmypdf if no line has ≥10 chars with a meaningful Russian/English word.
+            # This is the fallback path — kept as-is for when pdf-inspector classification
+            # is unavailable, but the classifier below takes priority when it succeeds.
             import re
             def _looks_like_real_text(lines: list[str]) -> bool:
                 for ln in lines:
@@ -796,7 +729,34 @@ async def import_items_preview(
                         return True
                 return False
 
-            text_layer_usable = bool(all_rows) or _looks_like_real_text(text_lines)
+            # Classify once per request (not once per fallback attempt — the
+            # subprocess isn't free) and let it decide "garbage text layer"
+            # when it's available; the home-grown heuristic above stays as the
+            # fallback for when classification itself is unavailable.
+            _insp = None
+            _ocr_pages: list[int] | None = None
+            try:
+                from app.utils.pdf_classify import inspect_pdf as _inspect_pdf_classify, needs_ocr as _needs_ocr_classify
+                _insp = _inspect_pdf_classify(content)
+            except Exception as e:
+                logger.warning("PDF preview: pdf classification unavailable, using legacy heuristic: %s", e)
+                _insp = None
+
+            if _insp is not None and _insp.ok:
+                text_layer_garbage = _needs_ocr_classify(_insp)
+                text_layer_usable = bool(all_rows) or not text_layer_garbage
+                _ocr_pages = _insp.ocr_pages or None
+                logger.info(
+                    "PDF preview: decision via classifier (pdf_type=%s, has_encoding_issues=%s, "
+                    "ocr_pages=%s) → text_layer_usable=%s",
+                    _insp.pdf_type, _insp.has_encoding_issues, _insp.ocr_pages, text_layer_usable,
+                )
+            else:
+                text_layer_usable = bool(all_rows) or _looks_like_real_text(text_lines)
+                logger.info(
+                    "PDF preview: decision via legacy heuristic (classifier %s) → text_layer_usable=%s",
+                    "unavailable" if _insp is None else f"failed: {_insp.error}", text_layer_usable,
+                )
 
             if not all_rows and text_layer_usable and text_lines:
                 # Real text PDF without explicit tables — split lines by gaps
@@ -817,9 +777,12 @@ async def import_items_preview(
                         all_rows.extend(tbl)
 
             if not all_rows:
-                # Last resort: raw pixel OCR via image_to_data
-                logger.info("PDF preview: ocrmypdf returned nothing, trying raw pytesseract OCR")
-                all_rows, ocr_error = _ocr_pdf_to_rows(content)
+                # Last resort: raw OCR via image_to_data, with preprocessing +
+                # PSM auto-selection, restricted to pdf-inspector's flagged
+                # pages when classification succeeded (whole document otherwise).
+                logger.info("PDF preview: ocrmypdf returned nothing, trying raw pytesseract OCR (pages=%s)", _ocr_pages)
+                from app.utils.pdf_ocr import ocr_pdf_to_rows_enhanced
+                all_rows, ocr_error = ocr_pdf_to_rows_enhanced(content, pages=_ocr_pages)
                 if not all_rows:
                     detail = ocr_error or "OCR не смог распознать таблицу."
                     raise HTTPException(

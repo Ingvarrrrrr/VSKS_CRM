@@ -41,22 +41,23 @@ describe('kpiItemMatches — поведенческие тесты по кажд
   })
 
   // ── ordered ────────────────────────────────────────────────────
-  it('ordered: НЕ включает статус "ordered" — известное расхождение с dashboard.py (do not fix)', () => {
-    // dashboard.py:251 — total_ordered намеренно исключает status='ordered'
-    expect(kpiItemMatches('ordered', item({ purchase_status: 'ordered', purchase_contract_type: 'single' }))).toBe(false)
+  it('ordered: включает статус "ordered" — правка 2026-08-04, формула на бэке починена', () => {
+    // dashboard.py — total_ordered теперь фильтрует status.in_(["ordered", "delivered", "paid"])
+    expect(kpiItemMatches('ordered', item({ purchase_status: 'ordered' }))).toBe(true)
   })
 
-  it('ordered: требует непустой purchase_contract_type даже при подходящем статусе', () => {
-    expect(kpiItemMatches('ordered', item({ purchase_status: 'contracted', purchase_contract_type: null }))).toBe(false)
-    expect(kpiItemMatches('ordered', item({ purchase_status: 'contracted', purchase_contract_type: '' }))).toBe(false)
-    expect(kpiItemMatches('ordered', item({ purchase_status: 'contracted', purchase_contract_type: 'single' }))).toBe(true)
+  it('ordered: НЕ требует purchase_contract_type — ветвление по типу договора убрано', () => {
+    expect(kpiItemMatches('ordered', item({ purchase_status: 'ordered', purchase_contract_type: null }))).toBe(true)
+    expect(kpiItemMatches('ordered', item({ purchase_status: 'ordered', purchase_contract_type: '' }))).toBe(true)
+    expect(kpiItemMatches('ordered', item({ purchase_status: 'ordered', purchase_contract_type: 'single' }))).toBe(true)
   })
 
-  it('ordered: покрывает ровно contracted/delivered/paid', () => {
+  it('ordered: покрывает ровно ordered/delivered/paid, но НЕ contracted (договор заключён — ещё не заказано)', () => {
     for (const status of KPI_ORDERED_STATUSES) {
-      expect(kpiItemMatches('ordered', item({ purchase_status: status, purchase_contract_type: 'single' }))).toBe(true)
+      expect(kpiItemMatches('ordered', item({ purchase_status: status }))).toBe(true)
     }
-    expect(kpiItemMatches('ordered', item({ purchase_status: 'work_in_progress', purchase_contract_type: 'single' }))).toBe(false)
+    expect(kpiItemMatches('ordered', item({ purchase_status: 'contracted' }))).toBe(false)
+    expect(kpiItemMatches('ordered', item({ purchase_status: 'work_in_progress' }))).toBe(false)
   })
 
   // ── contracts ──────────────────────────────────────────────────
@@ -182,7 +183,7 @@ function expectContains(haystack: string, needle: string, hint: string) {
 }
 
 describe('kpiItemMatches — канарейка на паритет с backend/app/routers/dashboard.py', () => {
-  it('total_ordered: статусы contracted/delivered/paid + типы договора framework_cumulative/framework_with_amount/single', () => {
+  it('total_ordered: статусы ordered/delivered/paid, БЕЗ ветвления по purchase_contract_type, ежемесячные исключены', () => {
     // Окно между соседними .label(...) — блок total_ordered идёт сразу после total_plan_schedule
     const start = dashboardSrc.indexOf('label("total_plan_schedule")')
     const end = dashboardSrc.indexOf('label("total_ordered")')
@@ -190,42 +191,69 @@ describe('kpiItemMatches — канарейка на паритет с backend/a
     expect(end, 'не найден label("total_ordered") в dashboard.py — total_ordered удалён или переименован, синхронизируй KPI_ORDERED_STATUSES/kpiItemMatches').toBeGreaterThan(start)
     const block = dashboardSrc.slice(start, end)
 
-    expectContains(block, 'Purchase.status.in_(["contracted", "delivered", "paid"])',
-      'total_ordered должен фильтровать по статусам contracted/delivered/paid')
-    expectContains(block, 'Purchase.purchase_contract_type.in_(["framework_cumulative", "framework_with_amount"])',
-      'total_ordered должен учитывать framework_cumulative/framework_with_amount отдельной веткой')
-    expectContains(block, 'Purchase.purchase_contract_type == "single"',
-      'total_ordered должен учитывать single отдельной веткой')
+    expectContains(block, 'Purchase.status.in_(["ordered", "delivered", "paid"])',
+      'total_ordered должен фильтровать по статусам ordered/delivered/paid (правка 2026-08-04 — раньше был "contracted" вместо "ordered")')
+    expectContains(block, 'Purchase.is_monthly_payment.isnot(True)',
+      'total_ordered должен исключать ежемесячные закупки (is_monthly_payment=true) — для них отдельное помесячное начисление (monthly_ordered_map)')
+    expectContains(block, 'func.coalesce(Purchase.contract_price, Purchase.planned_total_price)',
+      'total_ordered должен считать COALESCE(contract_price, planned_total_price) БЕЗ ветвления по purchase_contract_type — ' +
+      'если ветвление по типу договора вернулось, синхронизируй kpiItemMatches("ordered") обратно на проверку purchase_contract_type')
+    expect(
+      block.includes('Purchase.purchase_contract_type'),
+      'total_ordered НЕ должен ветвиться по purchase_contract_type (правка 2026-08-04 — раньше закупки с ' +
+      'purchase_contract_type IS NULL тихо выпадали из суммы) — если ветвление вернулось, верни проверку в kpiItemMatches("ordered")'
+    ).toBe(false)
   })
 
-  it('известное расхождение status=\'ordered\' задокументировано маркером "known discrepancy, do not fix"', () => {
-    expectContains(dashboardSrc, 'known discrepancy, do not fix',
-      'маркер-комментарий должен присутствовать рядом с total_ordered — если его убрали и «починили» ordered, kpiItemMatches тоже надо чинить')
+  it('маркер "known discrepancy, do not fix" у total_ordered убран — формула больше не намеренно сломана', () => {
+    expect(
+      dashboardSrc.includes('known discrepancy, do not fix'),
+      'маркер устаревшего "не чини" комментария снова появился рядом с total_ordered — ' +
+      'если формулу опять сломали намеренно, отмени это и почини как в правке 2026-08-04'
+    ).toBe(false)
   })
 
-  it('contract_single_q: single/framework_with_amount, active, ЕСТЬ фильтр по Purchase.status через EXISTS', () => {
+  it('contract_single_q: single требует EXISTS закупки в «договорном» статусе, framework_with_amount — БЕЗУСЛОВНО при active', () => {
     const start = dashboardSrc.indexOf('_contracted_purchase_exists = (')
     const end = dashboardSrc.indexOf('cs_rows = (await db.execute(contract_single_q))')
     expect(start, 'не найден _contracted_purchase_exists в dashboard.py').toBeGreaterThan(-1)
     expect(end, 'не найден конец блока contract_single_q').toBeGreaterThan(start)
     const block = dashboardSrc.slice(start, end)
 
-    expectContains(block, 'Contract.contract_type.in_(["single", "framework_with_amount"])',
-      'contract_single_q должен фильтровать типы договора single/framework_with_amount')
     expectContains(block, 'Contract.status == "active"',
       'contract_single_q должен фильтровать только активные договоры')
-    // После фикса 2026-08: single/framework_with_amount тоже требуют закупку в «договорных» статусах —
-    // раньше max_amount суммировался по всем активным договорам без привязки к закупкам, из-за чего
-    // виджет показывал фантомные суммы (ЦентрПоиск_2026: 53 млн вместо 402 тыс. факта).
-    expect(
-      block.includes('Purchase.status'),
-      'contract_single_q ДОЛЖЕН фильтровать по Purchase.status (EXISTS-подзапрос _contracted_purchase_exists) — ' +
-      'если фильтр пропал, синхронизируй ветку contracts в kpiItemMatches обратно на «matches любой статус»'
-    ).toBe(true)
     expectContains(block, 'Purchase.status.in_(["contracted", "ordered", "delivered", "paid"])',
       'фильтр статуса закупки в EXISTS-подзапросе должен быть ровно KPI_CONTRACTS_STATUSES')
     expectContains(block, '_contracted_purchase_exists.exists()',
-      'contract_single_q должен применять EXISTS-подзапрос, а не JOIN (чтобы не размножить сумму при нескольких закупках на договоре)')
+      'contract_single_q должен применять EXISTS-подзапрос для single (чтобы не размножить сумму при нескольких закупках на договоре)')
+    // Правка 2026-08-04: EXISTS обязателен ТОЛЬКО для single. framework_with_amount считается
+    // безусловно (рамочный договор с суммой подписывается заранее, закупки — потом) — раньше
+    // EXISTS требовался для ОБОИХ типов, из-за чего рамочные договоры без единой закупки
+    // ошибочно выпадали из виджета «Заключено договоров».
+    expectContains(block, 'Contract.contract_type == "single", _contracted_purchase_exists.exists()',
+      'single должен требовать EXISTS закупки — если это условие пропало, синхронизируй правило')
+    expectContains(block, 'Contract.contract_type == "framework_with_amount"',
+      'framework_with_amount должен фигурировать отдельной OR-веткой БЕЗ требования EXISTS закупки — ' +
+      'если framework_with_amount снова требует EXISTS, отмени эту правку')
+    expect(
+      block.includes('Contract.contract_type.in_(["single", "framework_with_amount"])'),
+      'contract_single_q больше НЕ должен применять единый .in_(["single","framework_with_amount"]) фильтр ' +
+      'ко всем типам сразу — EXISTS для них теперь разный (см. правку 2026-08-04)'
+    ).toBe(false)
+  })
+
+  it('widget «Заказано» согласован с total_ordered: строгий счётчик w_ordered_strict/so_amt_strict — ТОЛЬКО status=\'ordered\'', () => {
+    // Правка 2026-08-04: раньше per-subsidy widget.ordered и глобальный widgets["ordered"] считали
+    // contracted+ordered (через w_ordered/so_amt) — то есть иначе, чем total_ordered (ordered+delivered+paid).
+    // w_ordered/so_amt НЕ убраны — они всё ещё нужны для total_work/widget.work, где contracted обязан входить.
+    expectContains(dashboardSrc, 'label("w_ordered_strict")',
+      'w_ordered_strict должен существовать — отдельный аккумулятор ТОЛЬКО статуса ordered для per-subsidy widget.ordered')
+    expectContains(dashboardSrc, 'label("so_amt_strict")',
+      'so_amt_strict должен существовать — отдельный аккумулятор ТОЛЬКО статуса ordered для глобального widgets["ordered"]')
+    expectContains(dashboardSrc, 'float(row.w_ordered_strict) + float(row.w_delivered) + float(row.w_paid)',
+      'per-subsidy widget.ordered.amount должен использовать w_ordered_strict, а не w_ordered (contracted+ordered)')
+    expectContains(dashboardSrc, 'so_amt_strict + sd_amt + spd_amt',
+      'глобальный widgets["ordered"].amount должен использовать so_amt_strict, а не so_amt (contracted+ordered)')
   })
 
   it('contract_fc_q: framework_cumulative + Purchase.status in contracted/ordered/delivered/paid', () => {

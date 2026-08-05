@@ -54,6 +54,14 @@ CONTRACTED_STATUSES: set = {"contracted", "ordered", "delivered", "paid"}
 PLANNED_STATUSES: set = {"plan_schedule", "work_in_progress", "contracted", "ordered", "delivered", "paid"}
 """Statuses that represent financially planned spend (used for spendable_remaining)."""
 
+# По требованию владельца (2026-08-05): «Фактическое количество/цена/сумма должны начать
+# отображаться после того, как закупка переведена в статус "Заказано"». FACT_STATUSES — граница
+# для панели «Позиции: план vs факт» (fact_amount/fact_confirmed). НЕ путать с уже существующими
+# местами кода, где используется {"delivered", "paid"} для метрики «Фактическая сумма» в дереве
+# ФЭО (их 8+, у них другая семантика — «поставлено по актам» — не трогать).
+FACT_STATUSES: set = {"ordered", "delivered", "paid"}
+"""Statuses at/after which purchase items are shown as FACT (not plan) in the plan-vs-fact panel."""
+
 
 # ---------------------------------------------------------------------------
 # Helpers

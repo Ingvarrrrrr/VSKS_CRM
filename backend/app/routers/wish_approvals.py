@@ -269,6 +269,7 @@ async def decide_wish_approval(
     convert_error: str | None = None
     _convert_warning: str | None = None
     _created_ids: list[int] = []
+    _plan_warning: list[str] = []
 
     if not _is_saas(current_user) and wish.status != "submitted":
         raise HTTPException(400, "Заявка ещё не отправлена на согласование (статус должен быть 'submitted')")
@@ -307,6 +308,10 @@ async def decide_wish_approval(
     if decision == "rejected":
         wish.status = "rejected"
         wish.rejection_reason = body.get("comment")
+        # Согласующий отклонил — если по заявке уже есть закупка в План-графике
+        # (например от параллельного потока действий), убираем её из плана.
+        from app.routers.wishes import _withdraw_wish_from_plan
+        _plan_warning = await _withdraw_wish_from_plan(wish.id, db)
         await db.commit()
         if creator and creator.id != current_user.id:
             try:
@@ -387,4 +392,5 @@ async def decide_wish_approval(
         "convert_warning": _convert_warning,
         "purchase_ids": _created_ids,
         "approvers": [_approval_dict(a) for a in rows],
+        "plan_warning": _plan_warning,
     }

@@ -36,16 +36,164 @@ def file_to_markdown(content: bytes, filename: str) -> str:
     finally:
         os.unlink(tmp_path)
 
-    # If PDF returned empty text, try OCR fallback
-    if not text.strip() and ext == "pdf":
-        logger.info("markitdown returned empty for PDF, trying OCR fallback")
-        text = _ocr_pdf_to_markdown(content)
+    # Route the PDF branch through pdf-inspector classification when available;
+    # falls back to the legacy "empty text → OCR" rule when it isn't.
+    if ext == "pdf":
+        text = _route_pdf_markdown(content, text)
 
     return text
 
 
+def _route_pdf_markdown(content: bytes, markitdown_text: str) -> str:
+    """Decide how to turn a PDF into markdown, using pdf-inspector classification.
+
+    - inspect_pdf unavailable or insp.ok is False: EXACT legacy behavior —
+      OCR only when markitdown's own text is empty.
+    - insp.ok and needs_ocr(insp) (scanned/image/mixed pdf_type, OR a broken
+      text-layer encoding, OR specific pages flagged): always OCR, even if
+      markitdown_text is non-empty. A scan with a garbage text layer (a stamp,
+      a header fragment) can make `text.strip()` truthy while the document is
+      still effectively an image — that's exactly the case the old
+      `if not text.strip()` check missed.
+    - insp.ok, pdf_type == "text", no encoding issues: prefer pdf-inspector's
+      own markdown when it produced one (it preserves tables and multi-column
+      reading order, which markitdown does not) — otherwise keep markitdown's
+      text.
+    - Anything else classified successfully but not matching the above
+      (e.g. pdf_type == "unknown" with no OCR pages and no encoding issues):
+      keep the legacy empty-text-triggers-OCR fallback as a safety net.
+
+    Never raises — any failure here degrades to the legacy behavior.
+    """
+    try:
+        from app.utils.pdf_classify import inspect_pdf, needs_ocr
+    except Exception as e:
+        logger.warning("document_to_markdown: pdf_classify unavailable, using legacy OCR fallback: %s", e)
+        return _legacy_pdf_ocr_fallback(content, markitdown_text)
+
+    try:
+        insp = inspect_pdf(content)
+    except Exception as e:
+        logger.warning("document_to_markdown: inspect_pdf raised unexpectedly: %s", e)
+        return _legacy_pdf_ocr_fallback(content, markitdown_text)
+
+    if not insp.ok:
+        return _legacy_pdf_ocr_fallback(content, markitdown_text)
+
+    try:
+        route_needs_ocr = needs_ocr(insp)
+    except Exception as e:
+        logger.warning("document_to_markdown: needs_ocr() raised unexpectedly: %s", e)
+        return _legacy_pdf_ocr_fallback(content, markitdown_text)
+
+    if route_needs_ocr:
+        logger.info(
+            "document_to_markdown: pdf_classify routed to OCR (pdf_type=%s, "
+            "has_encoding_issues=%s, ocr_pages=%s)",
+            insp.pdf_type, insp.has_encoding_issues, insp.ocr_pages,
+        )
+        pages = insp.ocr_pages or None
+        try:
+            ocr_markdown = _ocr_pdf_to_markdown_tables(content, pages)
+        except Exception as e:
+            logger.warning("document_to_markdown: OCR table pipeline failed, using legacy OCR: %s", e)
+            ocr_markdown = ""
+        if ocr_markdown.strip():
+            return ocr_markdown
+        # OCR table pipeline found nothing usable — fall back to the proven
+        # plain-text OCR path rather than returning empty.
+        return _ocr_pdf_to_markdown(content)
+
+    if insp.pdf_type == "text" and not insp.has_encoding_issues:
+        if insp.markdown and insp.markdown.strip():
+            logger.info("document_to_markdown: using pdf-inspector markdown (text PDF, tables preserved)")
+            return insp.markdown
+        return markitdown_text
+
+    # Classified successfully but not confidently "text" or "needs OCR"
+    # (e.g. pdf_type == "unknown") — keep the legacy safety net.
+    return _legacy_pdf_ocr_fallback(content, markitdown_text)
+
+
+def _legacy_pdf_ocr_fallback(content: bytes, markitdown_text: str) -> str:
+    """Exact pre-classification behavior: OCR only if markitdown text is empty."""
+    if not markitdown_text.strip():
+        logger.info("markitdown returned empty for PDF, trying OCR fallback")
+        return _ocr_pdf_to_markdown(content)
+    return markitdown_text
+
+
+def _ocr_pdf_to_markdown_tables(content: bytes, pages: list[int] | None) -> str:
+    """OCR a PDF into markdown TABLES (not flat text), so parse_markdown_tables
+    can actually find something. Built entirely on top of the existing OCR
+    helpers in app.utils.pdf_ocr — no new recognition logic added here.
+
+    Order: ocrmypdf_then_extract_tables (adds an OCR text layer, then lets
+    pdfplumber's native table detection run on it) → if that yields nothing,
+    ocr_pdf_to_rows_enhanced (preprocessing + per-page PSM auto-selection,
+    treated as a single table). Returns "" if neither pipeline finds rows.
+    """
+    from app.utils.pdf_ocr import ocrmypdf_then_extract_tables, ocr_pdf_to_rows_enhanced
+
+    try:
+        tables = ocrmypdf_then_extract_tables(content)
+    except Exception as e:
+        logger.warning("_ocr_pdf_to_markdown_tables: ocrmypdf_then_extract_tables failed: %s", e)
+        tables = []
+
+    if not tables:
+        try:
+            rows, error = ocr_pdf_to_rows_enhanced(content, pages=pages)
+        except Exception as e:
+            logger.warning("_ocr_pdf_to_markdown_tables: ocr_pdf_to_rows_enhanced failed: %s", e)
+            rows, error = [], str(e)
+        if rows:
+            tables = [rows]
+        else:
+            logger.warning("_ocr_pdf_to_markdown_tables: no rows found (%s)", error)
+            return ""
+
+    rendered = [rows_to_markdown_table(t) for t in tables if t]
+    return "\n\n".join(r for r in rendered if r)
+
+
+def rows_to_markdown_table(rows: list) -> str:
+    """Render rows (list[list[str]]) as a GitHub-style markdown table string.
+
+    Produces `| a | b |` rows plus a `|---|---|` separator after the first
+    row, so parse_markdown_tables (which looks for lines wrapped in `|` and
+    discards the `|---|` separator) recognizes it. Cells: `|` is escaped to
+    `\\|` and newlines are collapsed to spaces so a cell can never break the
+    row out of its `|...|` line. Rows that are empty/all-blank are dropped;
+    returns "" if nothing is left after that.
+    """
+    def _escape_cell(cell) -> str:
+        text = "" if cell is None else str(cell)
+        text = text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+        text = text.replace("|", "\\|")
+        return text.strip()
+
+    clean_rows = [r for r in (rows or []) if r and any(str(c).strip() for c in r if c is not None)]
+    if not clean_rows:
+        return ""
+
+    ncols = max(len(r) for r in clean_rows)
+    lines: list[str] = []
+    for ri, row in enumerate(clean_rows):
+        padded_cells = list(row) + [""] * (ncols - len(row))
+        lines.append("| " + " | ".join(_escape_cell(c) for c in padded_cells) + " |")
+        if ri == 0:
+            lines.append("|" + "|".join(["---"] * ncols) + "|")
+    return "\n".join(lines)
+
+
 def _ocr_pdf_to_markdown(content: bytes) -> str:
-    """Fallback: convert scanned PDF to markdown via OCR."""
+    """Fallback: convert scanned PDF to markdown via OCR (flat text, no tables).
+
+    Kept verbatim as the last-resort fallback for the insp.ok is False legacy
+    path and for cases where the table-producing OCR pipeline above finds
+    nothing — plain text is still better than an empty result.
+    """
     try:
         from pdf2image import convert_from_bytes
         import pytesseract

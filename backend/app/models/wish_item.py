@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Numeric, Text, Date
+from sqlalchemy import Column, Integer, String, ForeignKey, Numeric, Text, Date, Boolean, text
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -20,8 +20,15 @@ class WishItem(Base):
     # B9: per-item FEO category link (mirroring purchase_items.feo_category_id)
     # TODO: ALTER TABLE wish_items ADD COLUMN IF NOT EXISTS feo_category_id INTEGER REFERENCES feo_categories(id) ON DELETE SET NULL
     feo_category_id = Column(Integer, ForeignKey("feo_categories.id", ondelete="SET NULL"), nullable=True)
+    # Привязка к конкретной плановой позиции план-графика (уровень 5 ФЭО, mirroring
+    # purchase_items.feo_planned_item_id) — чтобы согласование заявки расходовало
+    # уже запланированную строку, а не создавало новую (иначе план задваивается).
+    feo_planned_item_id = Column(Integer, ForeignKey("feo_planned_items.id", ondelete="SET NULL"), nullable=True, index=True)
     needed_date = Column(Date, nullable=True)   # дата потребности per-item
     vat_rate = Column(String(20), nullable=True)  # per-item НДС ставка (mirrors purchase_items.vat_rate)
+    # false — позиция расходует план своего конечного элемента ФЭО; true — «сверх плана»,
+    # прибавляется к плановой сумме (mirrors purchase_items.over_plan)
+    over_plan = Column(Boolean, nullable=False, default=False, server_default=text("FALSE"))
 
     wish = relationship("Wish", back_populates="items")
     product = relationship("Product", foreign_keys=[product_id])

@@ -247,6 +247,18 @@
                             <v-icon icon="mdi-alert-outline" size="14" />
                             Превышение: {{ fmtRub(overBudgetDelta(item)) }}
                           </div>
+                          <!-- F-PLAN: выбор плановой позиции план-графика (Ур.5 ФЭО) для этой позиции.
+                               category-id — узел каскада (лист или промежуточный), НЕ только feo_category_id:
+                               компонент сам находит дочерние конечные элементы под промежуточным узлом. -->
+                          <FeoPlannedItemsSelect
+                            v-if="feoPlannedPerItem"
+                            :model-value="plannedSelectionFor ? plannedSelectionFor(item) : null"
+                            :out-of-plan="!!item.over_plan"
+                            :category-id="item.feo_node_id ?? item.feo_category_id ?? null"
+                            :nodes="feoNodes" :items="plannedItems || []"
+                            :amount="item.total_price" :readonly="readonly" dense class="mt-1"
+                            @update:model-value="(v) => emit('item-planned-change', idx, v)"
+                            @update:out-of-plan="(v) => emit('item-out-of-plan-change', idx, v)" />
                         </div>
                         <!-- Тип -->
                         <v-select v-model="item.item_type"
@@ -328,19 +340,38 @@
                       </div>
                     </td>
                   </tr>
-                  <!-- Поставка sub-row (D-01.1.1) -->
+                  <!-- Поставка sub-row (D-01.1.1) — «Приняли»: редактируется на delivered/paid -->
                   <tr class="stage-delivery-row" :class="{ 'stage-delivery-empty': !isDeliveryFilled(idx) }">
                     <td><v-chip color="purple" size="x-small" variant="tonal">Поставка</v-chip></td>
-                    <template v-if="isDelivered(idx) && getContractItemFor(idx)">
-                      <!-- delivered/paid: копия Договор, readonly textarea (унифицировано с ТЗ/Договор) -->
+                    <template v-if="isDelivered(idx)">
+                      <!-- delivered/paid: редактируемые accepted_name/accepted_quantity/accepted_unit
+                           (та же стадия «Приняли», что и в /comparison stages). Автозаполняется на
+                           переходе в delivered из договора/ТЗ, дальше правится вручную. -->
                       <td>
-                        <div
-                          class="feo-name-display is-static"
-                          :title="getContractItemFor(idx)?.name || ''"
-                        >{{ getContractItemFor(idx)?.name || '—' }}</div>
+                        <v-textarea
+                          :model-value="(items[idx] as any)?.accepted_name ?? ''"
+                          density="compact" variant="outlined" hide-details placeholder="Наименование по приёмке"
+                          rows="2" :max-rows="6" auto-grow class="my-1 flex-grow-1" style="min-width:260px"
+                          :disabled="readonly"
+                          @update:model-value="(v: string) => emit('update-accepted-field', idx, 'accepted_name', v)"
+                        />
                       </td>
-                      <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.quantity ?? '—' }}</td>
-                      <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.unit ?? '—' }}</td>
+                      <td>
+                        <v-text-field
+                          :model-value="(items[idx] as any)?.accepted_quantity ?? ''"
+                          type="number" density="compact" variant="outlined" hide-details
+                          :disabled="readonly"
+                          @update:model-value="(v: string) => emit('update-accepted-field', idx, 'accepted_quantity', v === '' ? null : Number(v))"
+                        />
+                      </td>
+                      <td>
+                        <v-combobox
+                          :model-value="(items[idx] as any)?.accepted_unit ?? ''"
+                          :items="unitOptions" density="compact" variant="outlined" hide-details
+                          :disabled="readonly"
+                          @update:model-value="(v: string) => emit('update-accepted-field', idx, 'accepted_unit', v)"
+                        />
+                      </td>
                       <td class="text-caption text-grey-darken-1">{{ getContractItemFor(idx)?.unit_price ?? '—' }}</td>
                       <!-- Fix 4/5: НДС % readonly (Поставка) -->
                       <td v-if="showVatColumnsInExpandRow" class="text-caption text-grey-darken-1">{{ effectiveVatRate(idx, 'delivery') ?? '—' }}</td>
@@ -360,17 +391,12 @@
                           >
                             {{ deliveryStageContractorName(idx) }}
                           </v-chip>
-                          <v-tooltip location="top" text="Появится в Phase 27 (delivery_items). Будет создавать «Поставка 1» + «Поставка 2» для частичных поставок.">
-                            <template #activator="{ props: tp }">
-                              <v-btn v-bind="tp" icon="mdi-arrow-split-vertical" size="x-small" variant="text"
-                                color="grey" disabled />
-                            </template>
-                          </v-tooltip>
+                          <span v-else class="text-medium-emphasis text-caption">—</span>
                         </div>
                       </td>
                     </template>
                     <template v-else-if="isAdvance">
-                      <!-- advance: показываем данные из ТЗ вместо заглушки -->
+                      <!-- advance, ещё не delivered: показываем данные из ТЗ вместо заглушки -->
                       <td>
                         <div
                           class="feo-name-display is-static"
@@ -387,7 +413,7 @@
                     </template>
                     <template v-else>
                       <td :colspan="(showVatColumnsInExpandRow ? 9 : 7) - 1" class="text-caption text-grey-lighten-1 text-center py-1">
-                        Поставок ещё нет — появятся в Phase 27 (delivery_items)
+                        Появится после перевода закупки в статус «Поставлено»
                       </td>
                     </template>
                   </tr>
@@ -433,8 +459,10 @@
 
 <script setup lang="ts">
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
+import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
 import type { Contractor } from '@/components/items/types'
 import type { FeoNode } from '@/composables/useFeoLeaves'
+import type { FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
 
 type EditorItem = any
 type StageTotals = { tz: number; dog: number; delivery: number }
@@ -453,6 +481,12 @@ defineProps<{
   feoLeaves: any[]
   feoNodes: FeoNode[]
   feoPerItem?: boolean
+  // F-PLAN: разные плановые позиции план-графика (Ур.5 ФЭО) для каждого товара
+  feoPlannedPerItem?: boolean
+  plannedItems?: any[]
+  // F-PLAN2: производный выбор { kind, id } | null для FeoPlannedItemsSelect по
+  // фактическим полям позиции — см. plannedSelectionFor() в PurchaseItemsEditor.vue.
+  plannedSelectionFor?: (item: EditorItem) => FeoPlanSelection | null
   subsidyId?: number | null
   subsidyName?: string | null
   // mode flags (computed in parent)
@@ -502,6 +536,8 @@ const emit = defineEmits<{
   'calc-item-total': [idx: number]
   'vat-rate-change': [idx: number, val: any]
   'item-feo-change': [idx: number, val: number | null]
+  'item-planned-change': [idx: number, val: FeoPlanSelection | null]
+  'item-out-of-plan-change': [idx: number, val: boolean]
   'item-pick-unallocated': [idx: number, parentId: number | null]
   'item-type-change': [idx: number, val: string]
   'items-changed': []
@@ -510,6 +546,7 @@ const emit = defineEmits<{
   'open-contractor-quick-create': [idx: number]
   'update-contract-field': [idx: number, field: string, val: unknown]
   'contract-vat-change': [idx: number, val: any]
+  'update-accepted-field': [idx: number, field: 'accepted_name' | 'accepted_quantity' | 'accepted_unit', val: unknown]
 }>()
 </script>
 

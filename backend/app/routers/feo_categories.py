@@ -59,17 +59,46 @@ async def get_planned_purchase_totals(
     db: AsyncSession = Depends(get_db),
     _=Depends(get_current_user),
 ):
-    """Плановая сумма и количество из заявок per feo_category_id: позиции закупок в статусах план-графика и дальше."""
+    """Плановая сумма и количество из заявок per feo_category_id: позиции закупок в статусах план-графика и дальше.
+
+    `total`/`qty` — ВСЕ позиции (для обратной совместимости, режим отображения «из заявок»).
+    `total_linked`/`qty_linked` — подмножество позиций, привязанных к плановой позиции
+    (`PurchaseItem.feo_planned_item_id IS NOT NULL`): они РАСХОДУЮТ ручной план листа
+    (Ур.5), а не складываются с ним поверх — фронт вычитает linked из total, чтобы не
+    задваивать план в дереве ФЭО.
+    `total_over`/`qty_over` — подмножество НЕпривязанных позиций с `over_plan=true`:
+    расход «сверх плана» элемента, прибавляется к плановой сумме безусловно (не входит
+    в MAX(план, выбрано) — см. feoPlannedDisplayFor в SubsidiesView.vue и
+    app.services.feo_plan.compute_feo_plan_tree). Партиция чистая: total = total_linked +
+    total_over + «обычный» расход (total − total_linked − total_over), пересечения
+    linked∩over_plan сознательно отнесены к total_linked (привязанные к Ур.5 позиции не
+    участвуют в схеме over_plan этого эндпоинта).
+
+    Дополнительно (сессия 2026-08-05, формула v2 — «заказ замещает план, пока не набрано
+    количество»): `plan_manual`, `ordered_qty`, `ordered_sum`, `residual`, `forecast`,
+    `forecast_over` — из app.services.feo_plan.compute_feo_plan_tree (единый источник,
+    та же формула, что и в KPI «Запланировано»/«Свободно»). Присутствуют для КАЖДОЙ
+    категории субсидии (и листа, и группы), даже без единой позиции закупки — в отличие
+    от total/qty/... выше, которые есть только при наличии хотя бы одной позиции.
+    """
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem
     from app.routers.purchase_budget import PLANNED_STATUSES
+    from app.services.feo_plan import compute_feo_plan_tree
+    from sqlalchemy import case, and_, not_
 
     cat_col = func.coalesce(PurchaseItem.feo_category_id, Purchase.feo_category_id)
+    is_linked = PurchaseItem.feo_planned_item_id.isnot(None)
+    is_over_unlinked = and_(PurchaseItem.over_plan.is_(True), not_(is_linked))
     stmt = (
         select(
             cat_col.label("cat_id"),
             func.coalesce(func.sum(PurchaseItem.total_price), 0).label("total"),
             func.coalesce(func.sum(PurchaseItem.quantity), 0).label("qty"),
+            func.coalesce(func.sum(case((is_linked, PurchaseItem.total_price), else_=0)), 0).label("total_linked"),
+            func.coalesce(func.sum(case((is_linked, PurchaseItem.quantity), else_=0)), 0).label("qty_linked"),
+            func.coalesce(func.sum(case((is_over_unlinked, PurchaseItem.total_price), else_=0)), 0).label("total_over"),
+            func.coalesce(func.sum(case((is_over_unlinked, PurchaseItem.quantity), else_=0)), 0).label("qty_over"),
         )
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .where(Purchase.subsidy_id == subsidy_id)
@@ -78,7 +107,91 @@ async def get_planned_purchase_totals(
         .group_by(cat_col)
     )
     rows = (await db.execute(stmt)).all()
-    return {r.cat_id: {"total": float(r.total), "qty": float(r.qty)} for r in rows}
+    result = {
+        r.cat_id: {
+            "total": float(r.total),
+            "qty": float(r.qty),
+            "total_linked": float(r.total_linked),
+            "qty_linked": float(r.qty_linked),
+            "total_over": float(r.total_over),
+            "qty_over": float(r.qty_over),
+        }
+        for r in rows
+    }
+
+    # Аддитивно: формула v2 плановой суммы (см. docstring) — на КАЖДУЮ категорию
+    # субсидии, а не только на те, где уже есть позиции закупок.
+    tree = await compute_feo_plan_tree(db, [subsidy_id])
+    for cat_id, node in tree.items():
+        entry = result.setdefault(cat_id, {
+            "total": 0.0, "qty": 0.0, "total_linked": 0.0, "qty_linked": 0.0,
+            "total_over": 0.0, "qty_over": 0.0,
+        })
+        entry["plan_manual"] = node["plan_manual"]
+        entry["ordered_qty"] = node["ordered_quantity"]
+        entry["ordered_sum"] = node["ordered"]
+        entry["residual"] = node["residual"]
+        entry["forecast"] = node["forecast"]
+        entry["forecast_over"] = node["forecast_over"]
+
+    return result
+
+
+@router.get("/plan-tree")
+async def get_feo_plan_tree(
+    subsidy_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Числа по КАЖДОМУ узлу дерева ФЭО (и листу, и группе) — единый источник для
+    фронта (сессия 2026-08-05, задача «формула только на бэкенде»: раньше
+    SubsidiesView.vue пересчитывал «Плановую сумму»/«Плановое количество» сам
+    (feoPlannedDisplayRaw/feoQtyDisplayRaw, MAX(план, выбрано) + сверх_плана —
+    СТАРАЯ формула), а KPI «Запланировано» на дашборде/в списке субсидий считал
+    _calculate_feo_planned_tree_bulk по НОВОЙ формуле compute_feo_plan_tree —
+    два разных числа на одном экране. Теперь фронт только читает готовое отсюда.
+
+    Обёртка над app.services.feo_plan.compute_feo_plan_tree — просто отдаёт её
+    per-node словарь наружу, ничего не пересчитывая (см. её подробный docstring
+    за формулой «заказ замещает план, когда количество набрано полностью»).
+
+    Response: {cat_id: {plan_manual, ordered_qty, ordered_sum, over, over_quantity,
+                         plan, display, residual, forecast, forecast_over,
+                         consumed, consumed_quantity, qty_plan, display_quantity}}
+    display — то самое число, которое обязано совпасть с KPI «Запланировано»
+    (сумма display корневых узлов == _calculate_feo_planned_tree_bulk[subsidy_id]).
+    display_quantity — аналог display, но для «Планового количества» узла.
+    """
+    from app.services.feo_plan import compute_feo_plan_tree
+
+    tree = await compute_feo_plan_tree(db, [subsidy_id])
+    return {
+        cat_id: {
+            "plan_manual": node["plan_manual"],
+            "ordered_qty": node["ordered_qty"],
+            "ordered_sum": node["ordered_sum"],
+            "over": node["over"],
+            "over_quantity": node["over_quantity"],
+            "plan": node["plan"],
+            "display": node["display"],
+            "residual": node["residual"],
+            "forecast": node["forecast"],
+            "forecast_over": node["forecast_over"],
+            "consumed": node["consumed"],
+            "consumed_quantity": node["consumed_quantity"],
+            "qty_plan": node["qty_plan"],
+            "display_quantity": node["display_quantity"],
+            # Согласование превышения плана над финансированием ФЭО (задача владельца
+            # «блокировать пока не согласовано», 2026-08-05) — см. compute_feo_plan_tree
+            # и app.routers.plan_excess. excess_amount>0 — есть превышение над node.budget;
+            # excess_pending — есть незакрытый запрос на согласование; excess_approved —
+            # превышение легализовано (display включает его полностью).
+            "excess_amount": node["excess_amount"],
+            "excess_pending": node["excess_pending"],
+            "excess_approved": node["excess_approved"],
+        }
+        for cat_id, node in tree.items()
+    }
 
 
 @router.get("/planned-purchase-items")
@@ -106,6 +219,8 @@ async def get_planned_purchase_items(
             PurchaseItem.total_price,
             PurchaseItem.purchase_id,
             PurchaseItem.product_id,
+            PurchaseItem.feo_planned_item_id,
+            PurchaseItem.wish_item_id,
             Purchase.purchase_number,
             Purchase.registry_number,
             Purchase.status.label("purchase_status"),
@@ -146,6 +261,8 @@ async def get_planned_purchase_items(
             "unit_price": float(r.unit_price or 0),
             "total_price": float(r.total_price or 0),
             "purchase_id": r.purchase_id,
+            "feo_planned_item_id": r.feo_planned_item_id,
+            "wish_item_id": r.wish_item_id,
             "purchase_number": r.purchase_number,
             "registry_number": r.registry_number,
             "purchase_status": r.purchase_status,
@@ -255,6 +372,135 @@ async def get_feo_leaves(
         })
 
     # Сортировка по path для удобства autocomplete
+    result.sort(key=lambda x: x["path"])
+    return result
+
+
+@router.get("/plan-positions")
+async def get_plan_positions(
+    subsidy_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Единый источник «плановых позиций» субсидии.
+
+    Плановая позиция — конечный элемент дерева ФЭО (FeoCategory без детей) с
+    заполненными planned_quantity/planned_amount (произведение > 0). Плюс —
+    отдельными записями kind='planned_item' — существующие FeoPlannedItem
+    (Ур.5, необязательная более глубокая детализация внутри элемента).
+
+    kind:
+      'plan_position' — budget IS NULL AND feo_amount IS NULL (план без статьи ФЭО,
+                         «мы сами запланировали купить именно это»)
+      'feo_article'    — budget и/или feo_amount заполнены (план = статья ФЭО)
+      'planned_item'   — FeoPlannedItem внутри элемента
+
+    Response: [{id, name, path, category_id, kind, planned_quantity, unit,
+                planned_amount, unit_price, consumed, consumed_quantity,
+                residual, residual_quantity}]
+    planned_amount — ИТОГОВАЯ сумма плана (quantity × unit_price); unit_price —
+    цена за единицу (= FeoCategory.planned_amount / FeoPlannedItem.amount per unit).
+
+    Дополнительно на строках kind='plan_position'/'feo_article' (сессия 2026-08-05,
+    формула v2 — «заказ замещает план, пока не набрано количество», см.
+    app.services.feo_plan.compute_feo_plan_tree): `ordered_qty`, `ordered_sum`,
+    `plan_manual`, `ordered_residual`, `forecast`, `forecast_over`. Существующие
+    `consumed`/`consumed_quantity`/`residual`/`residual_quantity` НЕ трогаем (старая
+    семантика — используются FeoPlannedItemsSelect.vue/PurchaseItemsEditor.vue для
+    предотвращения повторного выбора уже занятого плана); `ordered_residual` — НОВЫЙ
+    остаток по формуле v2 (план − ordered_sum), под другим именем, чтобы не столкнуть
+    с уже существующим `residual`.
+    """
+    from app.models.feo_planned_item import FeoPlannedItem
+    from app.services.feo_plan import (
+        plan_consumption_by_category, planned_item_consumption, build_category_path,
+        compute_feo_plan_tree,
+    )
+
+    all_cats = (await db.execute(
+        select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id)
+    )).scalars().all()
+    if not all_cats:
+        return []
+
+    cat_by_id = {c.id: c for c in all_cats}
+    children_count: dict[int, int] = {}
+    for c in all_cats:
+        if c.parent_id is not None:
+            children_count[c.parent_id] = children_count.get(c.parent_id, 0) + 1
+    leaves = [c for c in all_cats if children_count.get(c.id, 0) == 0]
+
+    consumption = await plan_consumption_by_category(db, [subsidy_id])
+    tree = await compute_feo_plan_tree(db, [subsidy_id])
+
+    result = []
+    for c in leaves:
+        qty = float(c.planned_quantity) if c.planned_quantity is not None else 0.0
+        unit_price = float(c.planned_amount) if c.planned_amount is not None else 0.0
+        planned_total = qty * unit_price
+        if planned_total <= 0:
+            continue
+        cons = consumption.get(c.id, {"consumed": 0.0, "consumed_quantity": 0.0})
+        consumed = cons["consumed"]
+        consumed_qty = cons["consumed_quantity"]
+        kind = "plan_position" if (c.budget is None and c.feo_amount is None) else "feo_article"
+        node = tree.get(c.id, {})
+        result.append({
+            "id": c.id,
+            "name": c.name,
+            "path": build_category_path(c, cat_by_id),
+            "category_id": c.id,
+            "kind": kind,
+            "planned_quantity": qty,
+            "unit": c.unit,
+            "planned_amount": planned_total,
+            "unit_price": unit_price,
+            "consumed": consumed,
+            "consumed_quantity": consumed_qty,
+            "residual": planned_total - consumed,
+            "residual_quantity": qty - consumed_qty,
+            "ordered_qty": node.get("ordered_quantity", 0.0),
+            "ordered_sum": node.get("ordered", 0.0),
+            "plan_manual": node.get("plan_manual", planned_total),
+            "ordered_residual": node.get("residual", planned_total),
+            "forecast": node.get("forecast", planned_total),
+            "forecast_over": node.get("forecast_over", 0.0),
+        })
+
+    # + FeoPlannedItem (Ур.5) — детализация внутри элементов
+    if leaves:
+        fpi_rows = (await db.execute(
+            select(FeoPlannedItem)
+            .where(FeoPlannedItem.feo_category_id.in_([c.id for c in leaves]))
+            .where(FeoPlannedItem.is_active == True)
+            .order_by(FeoPlannedItem.id)
+        )).scalars().all()
+        if fpi_rows:
+            fpi_ids = [it.id for it in fpi_rows]
+            fpi_cons = await planned_item_consumption(db, fpi_ids)
+            for it in fpi_rows:
+                cat = cat_by_id.get(it.feo_category_id)
+                planned_total = float(it.amount or 0)
+                qty = float(it.quantity or 0)
+                c_cons = fpi_cons.get(it.id, {"used": 0.0, "used_qty": 0.0})
+                consumed = c_cons["used"]
+                consumed_qty = c_cons["used_qty"]
+                result.append({
+                    "id": it.id,
+                    "name": it.name,
+                    "path": build_category_path(cat, cat_by_id) if cat else "",
+                    "category_id": it.feo_category_id,
+                    "kind": "planned_item",
+                    "planned_quantity": qty,
+                    "unit": it.unit,
+                    "planned_amount": planned_total,
+                    "unit_price": (planned_total / qty) if qty else None,
+                    "consumed": consumed,
+                    "consumed_quantity": consumed_qty,
+                    "residual": planned_total - consumed,
+                    "residual_quantity": qty - consumed_qty,
+                })
+
     result.sort(key=lambda x: x["path"])
     return result
 

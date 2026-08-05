@@ -229,26 +229,26 @@ async def dashboard_charts(
             func.coalesce(func.sum(
                 case((Purchase.status == "work_in_progress", Purchase.planned_total_price), else_=None)
             ), 0).label("total_plan_schedule"),
+            # «Заказано» = закупки, реально дошедшие до стадии «Заказано» и дальше
+            # (ordered/delivered/paid) — НЕ 'contracted' (договор заключён, но ещё не заказано).
+            # Сумма = COALESCE(contract_price, planned_total_price), без ветвления по
+            # purchase_contract_type (раньше закупки с purchase_contract_type IS NULL тихо
+            # выпадали из суммы — второй дефект старой формулы).
+            # Ежемесячные закупки (is_monthly_payment=true) сюда НЕ входят — для них своя
+            # помесячная логика начисления (см. monthly_ordered_map ниже), иначе их полная
+            # сумма договора задвоилась бы с прогрессивным начислением по месяцам.
             func.coalesce(func.sum(
                 case(
                     (
                         and_(
-                            Purchase.status.in_(["contracted", "delivered", "paid"]),
-                            Purchase.purchase_contract_type.in_(["framework_cumulative", "framework_with_amount"])
+                            Purchase.status.in_(["ordered", "delivered", "paid"]),
+                            Purchase.is_monthly_payment.isnot(True),
                         ),
-                        Purchase.planned_total_price
-                    ),
-                    (
-                        and_(
-                            Purchase.status.in_(["contracted", "delivered", "paid"]),
-                            Purchase.purchase_contract_type == "single"
-                        ),
-                        Purchase.contract_price
+                        func.coalesce(Purchase.contract_price, Purchase.planned_total_price)
                     ),
                     else_=None
                 )
             ), 0).label("total_ordered"),
-            # NOTE: total_ordered above intentionally excludes status='ordered' (known discrepancy, do not fix)
             # Per-subsidy basket mirrors (для total_work / total_delivered / total_delivered_unpaid)
             func.coalesce(func.sum(
                 case(
@@ -257,6 +257,17 @@ async def dashboard_charts(
                     else_=None
                 )
             ), 0).label("w_ordered"),
+            # Строгий «Заказано» — ТОЛЬКО статус ordered (без contracted). w_ordered выше
+            # (contracted+ordered) НЕ трогаем — он используется в total_work, где заключённые
+            # договоры обязаны входить в «Ведётся работа». Эта колонка — только для widget.ordered,
+            # чтобы карточка «Заказано» на дашборде означала то же самое, что и total_ordered.
+            func.coalesce(func.sum(
+                case(
+                    (Purchase.status == "ordered",
+                     func.coalesce(Purchase.contract_price, Purchase.planned_total_price)),
+                    else_=None
+                )
+            ), 0).label("w_ordered_strict"),
             func.coalesce(func.sum(
                 case(
                     (Purchase.status == "delivered",
@@ -284,6 +295,9 @@ async def dashboard_charts(
             func.coalesce(func.count(
                 case((Purchase.status.in_(["contracted", "ordered"]), Purchase.id), else_=None)
             ), 0).label("so_cnt"),
+            func.coalesce(func.count(
+                case((Purchase.status == "ordered", Purchase.id), else_=None)
+            ), 0).label("so_cnt_strict"),
             func.coalesce(func.count(
                 case((Purchase.status == "delivered", Purchase.id), else_=None)
             ), 0).label("sd_cnt"),
@@ -354,14 +368,14 @@ async def dashboard_charts(
         }
 
     # Виджет «Заключено договоров»: active-договоры, сумма по типу.
-    # Единое правило для обоих типов: договор попадает в сумму, только если закупка по нему
-    # реально дошла до стадии «Договор заключён» (status in contracted/ordered/delivered/paid) —
-    # иначе метрика считает по справочнику max_amount договоров, у которых закупка ещё
-    # в «Желаниях»/плане или вообще не заведена, и раздувает виджет фантомными суммами
-    # (было замечено на ЦентрПоиск_2026: 53 млн вместо фактических 402 тыс., см. баг-репорт 2026-08).
-    #   single / framework_with_amount → max_amount договора, если EXISTS хотя бы одна
-    #     привязанная закупка (purchases.contract_id) с нужным статусом (сумма считается один
-    #     раз за договор, даже если подходящих закупок несколько — EXISTS, а не JOIN)
+    # Правило РАЗНОЕ для двух типов (правка 2026-08-04 — рамочные с суммой не требуют закупок):
+    #   single → max_amount договора, ТОЛЬКО если EXISTS хотя бы одна привязанная закупка
+    #     (purchases.contract_id) с нужным статусом. Разовый договор подписывается ПОД
+    #     конкретную закупку — без неё запись осиротевшая и не должна раздувать виджет
+    #     (было замечено на ЦентрПоиск_2026: 53 млн вместо фактических 402 тыс., см. баг-репорт 2026-08).
+    #   framework_with_amount → max_amount договора БЕЗУСЛОВНО, просто при status='active'.
+    #     Рамочный договор с суммой подписывается заранее, закупки по нему делаются постепенно
+    #     позже — поэтому он уже «заключён», даже если ни одной закупки по нему ещё не заведено.
     #   framework_cumulative → SUM(COALESCE(p.contract_price, p.planned_total_price))
     #     по закупкам с contract_id=договор и status in (contracted,ordered,delivered,paid)
     _contracted_purchase_exists = (
@@ -376,8 +390,12 @@ async def dashboard_charts(
             func.count(Contract.id).label("cnt"),
         )
         .where(Contract.status == "active")
-        .where(Contract.contract_type.in_(["single", "framework_with_amount"]))
-        .where(_contracted_purchase_exists.exists())
+        .where(
+            or_(
+                and_(Contract.contract_type == "single", _contracted_purchase_exists.exists()),
+                Contract.contract_type == "framework_with_amount",
+            )
+        )
         .group_by(Contract.subsidy_id)
     )
     if use_sids:
@@ -454,6 +472,89 @@ async def dashboard_charts(
     # включая договоры с subsidy_id IS NULL — они попадают в mp_map под ключом None)
     monthly_payments_total = float(sum(mp_map.values()))
 
+    # ── Ежемесячные закупки: начисление «Заказано» по прошедшим месяцам ──────────────
+    # is_monthly_payment=true закупки не имеют помесячного графика дат — период берём из
+    # service_start_date/service_end_date/service_deadline_date/contract_date. Правило
+    # пользователя: услуга оказывается по 31 мая, сегодня 1 июня → июнь уже считается
+    # заказанным (обязательство по месяцу уже возникло, раз услуга в нём оказывается).
+    # SQL-агрегат total_ordered выше исключает is_monthly_payment (Purchase.is_monthly_payment.isnot(True)) —
+    # поэтому их вклад в «Заказано» приходит РОВНО ОДИН РАЗ, отсюда, начислением. Ниже он
+    # СКЛАДЫВАЕТСЯ с SQL-агрегатом в итоговое поле total_ordered (не остаётся сбоку) — так
+    # «Заказано» реально включает то, что уже оказывается по ежемесячному договору в этом месяце.
+    # Применяется только начиная со статуса «Договор заключён» — без договора обязательства нет.
+    from app.services.plan_cashflow import add_months as _add_months
+
+    def _calendar_months(start: date, end: date) -> int:
+        """Кол-во календарных месяцев от месяца start до месяца end включительно.
+
+        Считает по месяцу/году, день не учитывается (сверено с примером пользователя:
+        услуга по 31 мая, сегодня 1 июня → результат уже включает июнь). 0, если end раньше start.
+        """
+        start_m = date(start.year, start.month, 1)
+        end_m = date(end.year, end.month, 1)
+        if end_m < start_m:
+            return 0
+        k = 0
+        cur = start_m
+        while cur <= end_m:
+            k += 1
+            cur = _add_months(start_m, k)
+        return k
+
+    monthly_q = (
+        select(
+            Purchase.subsidy_id, Purchase.contract_price, Purchase.planned_total_price,
+            Purchase.monthly_payment_count, Purchase.monthly_payment_amount,
+            Purchase.service_start_date, Purchase.service_end_date,
+            Purchase.service_deadline_date, Purchase.contract_date,
+        )
+        .where(Purchase.is_monthly_payment == True)
+        .where(Purchase.status.in_(["contracted", "ordered", "delivered", "paid"]))
+    )
+    if use_sids:
+        monthly_q = _apply_purchase_org_filter(monthly_q, current_user, subsidy_ids=visible_subsidy_ids)
+    else:
+        monthly_q = _apply_purchase_org_filter(monthly_q, current_user, org_ids)
+    monthly_rows = (await db.execute(monthly_q)).all()
+
+    monthly_ordered_map: dict[int, float] = {}
+    _today = date.today()
+    for r in monthly_rows:
+        start = r.service_start_date or r.contract_date
+        if not start:
+            continue  # нет точки отсчёта — начисление не делаем
+
+        months_elapsed = _calendar_months(start, _today)
+        if months_elapsed <= 0:
+            continue
+
+        count_cap = r.monthly_payment_count
+        if not count_cap:
+            period_end = r.service_end_date or r.service_deadline_date
+            derived = _calendar_months(start, period_end) if period_end else 0
+            count_cap = derived or None  # None = потолка по месяцам нет
+
+        months_to_pay = min(months_elapsed, count_cap) if count_cap else months_elapsed
+        if months_to_pay <= 0:
+            continue
+
+        amount_per_month = r.monthly_payment_amount
+        if amount_per_month is None:
+            contract_total = r.contract_price if r.contract_price is not None else r.planned_total_price
+            if contract_total is not None and r.monthly_payment_count:
+                amount_per_month = Decimal(contract_total) / Decimal(r.monthly_payment_count)
+            else:
+                continue  # ни суммы платежа, ни способа её вывести — начисление не делаем
+
+        accrued = Decimal(amount_per_month) * Decimal(months_to_pay)
+
+        contract_total = r.contract_price if r.contract_price is not None else r.planned_total_price
+        if contract_total is not None:
+            accrued = min(accrued, Decimal(contract_total))  # итог не превышает сумму договора/плана
+
+        if r.subsidy_id is not None:
+            monthly_ordered_map[r.subsidy_id] = monthly_ordered_map.get(r.subsidy_id, 0.0) + float(accrued)
+
     subsidy_stats = []
     for row in subsidy_rows:
         calc = budgets.get(row.id, 0.0)
@@ -484,7 +585,13 @@ async def dashboard_charts(
             "total_confirmed": float(row.total_confirmed),
             "total_paid": float(row.total_paid),
             "total_plan_schedule": float(row.total_plan_schedule),  # SUM work_in_progress planned_total_price
-            "total_ordered": float(row.total_ordered),
+            # total_ordered = SQL-агрегат по НЕежемесячным (row.total_ordered) + начисление по
+            # ежемесячным (monthly_ordered_map) — обязаны складываться в одно число: карточка
+            # «Заказано» должна включать месяц, за который услуга уже оказывается прямо сейчас.
+            "total_ordered": float(row.total_ordered) + monthly_ordered_map.get(row.id, 0.0),
+            # Справочно: какая часть total_ordered выше — из помесячного начисления (для отладки/подписи).
+            # УЖЕ ВХОДИТ в total_ordered, не складывать повторно.
+            "monthly_ordered_accrued": monthly_ordered_map.get(row.id, 0.0),
             "total_feo_planned": feo_planned_map.get(row.id, 0.0),  # NEW 12-01: SUM FeoPlannedItem.amount
             "planned_tree": planned_tree,  # единый источник: план дерева ФЭО (ручные + заявки)
             "feo_budget_total": effective_budget,
@@ -512,8 +619,14 @@ async def dashboard_charts(
                     "count": int(row.sw_cnt) + int(row.so_cnt) + int(row.sd_cnt) + int(row.spd_cnt),
                 },
                 "ordered": {
-                    "amount": float(row.w_ordered) + float(row.w_delivered) + float(row.w_paid),
-                    "count": int(row.so_cnt) + int(row.sd_cnt) + int(row.spd_cnt),
+                    # Строго status='ordered' (без 'contracted') — согласовано с total_ordered/
+                    # глобальным widgets["ordered"] (правка 2026-08-04). w_ordered (contracted+ordered)
+                    # остаётся в work/plan_schedule/total_work выше — там 'заключён договор' должен входить.
+                    # + начисление по ежемесячным (monthly_ordered_map) — та же сумма, что вошла
+                    # в total_ordered выше, widget.ordered обязан быть согласован с ним.
+                    "amount": float(row.w_ordered_strict) + float(row.w_delivered) + float(row.w_paid)
+                        + monthly_ordered_map.get(row.id, 0.0),
+                    "count": int(row.so_cnt_strict) + int(row.sd_cnt) + int(row.spd_cnt),
                     "monthly_payments_total": mp_map.get(row.id, 0.0),
                 },
                 "delivered": {
@@ -559,6 +672,19 @@ async def dashboard_charts(
             func.coalesce(func.count(
                 case((Purchase.status.in_(["contracted", "ordered"]), Purchase.id), else_=None)
             ), 0).label("so_cnt"),
+            # stage_ordered_strict : ТОЛЬКО ordered (без contracted) — для widget «Заказано»,
+            # чтобы означать то же самое, что и total_ordered. stage_ordered (so_amt/so_cnt) выше
+            # остаётся как было — используется в widget «work», где contracted обязан входить.
+            func.coalesce(func.sum(
+                case(
+                    (Purchase.status == "ordered",
+                     func.coalesce(Purchase.contract_price, Purchase.planned_total_price)),
+                    else_=None
+                )
+            ), 0).label("so_amt_strict"),
+            func.coalesce(func.count(
+                case((Purchase.status == "ordered", Purchase.id), else_=None)
+            ), 0).label("so_cnt_strict"),
             # stage_delivered_unpaid : delivered → COALESCE(contract_price, planned_total_price)
             func.coalesce(func.sum(
                 case(
@@ -593,8 +719,13 @@ async def dashboard_charts(
     sp_amt  = float(basket_row.sp_amt);  sp_cnt  = int(basket_row.sp_cnt)
     sw_amt  = float(basket_row.sw_amt);  sw_cnt  = int(basket_row.sw_cnt)
     so_amt  = float(basket_row.so_amt);  so_cnt  = int(basket_row.so_cnt)
+    so_amt_strict = float(basket_row.so_amt_strict); so_cnt_strict = int(basket_row.so_cnt_strict)
     sd_amt  = float(basket_row.sd_amt);  sd_cnt  = int(basket_row.sd_cnt)
     spd_amt = float(basket_row.spd_amt); spd_cnt = int(basket_row.spd_cnt)
+    # Глобальный итог начисления по ежемесячным — СУММА уже посчитанных per-subsidy начислений
+    # (monthly_ordered_map), а не отдельный пересчёт: monthly_q использует тот же use_sids/
+    # visible_subsidy_ids/org_ids фильтр видимости, что и basket_q выше — числа согласованы.
+    monthly_ordered_total = float(sum(monthly_ordered_map.values()))
 
     # ── Собираем виджеты ─────────────────────────────────────────────────────
     widgets = {
@@ -604,14 +735,20 @@ async def dashboard_charts(
             "count":  sp_cnt + sw_cnt + so_cnt + sd_cnt + spd_cnt,
         },
         # накопительно: stage_work + stage_ordered + stage_delivered_unpaid + stage_paid
+        # (stage_ordered = contracted+ordered — «заключён договор» уже означает, что работа ведётся)
         "work": {
             "amount": sw_amt + so_amt + sd_amt + spd_amt,
             "count":  sw_cnt + so_cnt + sd_cnt + spd_cnt,
         },
-        # накопительно: stage_ordered + stage_delivered_unpaid + stage_paid
+        # накопительно: stage_ordered_strict (ТОЛЬКО status='ordered') + stage_delivered_unpaid + stage_paid
+        # + начисление по ежемесячным (monthly_ordered_total). Согласовано с total_ordered
+        # (правка 2026-08-04) — раньше здесь была contracted+ordered (so_amt) БЕЗ начисления,
+        # из-за чего карточка «Заказано» на дашборде расходилась с той же меткой на
+        # вкладке «Субсидии» (total_ordered). НЕ используем so_amt/so_cnt здесь — те остаются
+        # в widget «work» выше, где contracted обязан входить.
         "ordered": {
-            "amount": so_amt + sd_amt + spd_amt,
-            "count":  so_cnt + sd_cnt + spd_cnt,
+            "amount": so_amt_strict + sd_amt + spd_amt + monthly_ordered_total,
+            "count":  so_cnt_strict + sd_cnt + spd_cnt,
             "monthly_payments_total": monthly_payments_total,
         },
         # накопительно: stage_delivered_unpaid + stage_paid

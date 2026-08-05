@@ -28,6 +28,7 @@ from .routers import user_addresses as user_addresses_router
 from .routers import org_config
 from .routers import purchase_transitions
 from .routers import feo_planned_items
+from .routers import plan_excess as plan_excess_router
 from .routers import telegram_webhook
 from .routers import settings as settings_router
 from .routers import chat as chat_router
@@ -1739,6 +1740,7 @@ app.include_router(bank_statements.router)
 app.include_router(payments.router)
 app.include_router(feo_categories.router)
 app.include_router(feo_planned_items.router)
+app.include_router(plan_excess_router.router)
 app.include_router(settings_router.router)
 app.include_router(dashboard.router)
 app.include_router(subsidies.router)

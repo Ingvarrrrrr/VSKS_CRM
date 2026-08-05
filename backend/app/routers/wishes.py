@@ -23,6 +23,8 @@ from app.models.purchase_item import PurchaseItem
 from app.models.purchase_event import PurchaseMember
 from app.routers.purchase_members import _create_assignment_chat_room
 from app.models.chat_message import ChatMessage
+from app.services.feo_plan import assert_no_unapproved_excess
+from decimal import Decimal
 
 
 def _is_saas(user: User) -> bool:
@@ -227,6 +229,22 @@ async def _wish_linked_purchases(wish_id: int, db: AsyncSession) -> list:
     return res.scalars().all()
 
 
+def _is_meaningful_item(it) -> bool:
+    """Строка-заготовка (без названия, количества и суммы) — фронт создаёт их
+    заранее для будущего ввода; в План-график и в гейты они попадать не должны."""
+    return bool((it.item_name or "").strip() or float(it.quantity or 0) or float(it.total_price or 0))
+
+
+# Единый текст предупреждения: закупки заявки, ушедшие дальше «План-графика»,
+# reject/force-status не трогают — их нужно отменять вручную в реестре закупок.
+def _plan_stage_warning_text(descriptions: list[str]) -> str:
+    return (
+        "Заявка откачена, но эти закупки остались в работе и из плана-графика не убраны — "
+        "их стадия уже прошла «План-график»: " + "; ".join(descriptions)
+        + ". При необходимости отмените их вручную в реестре закупок."
+    )
+
+
 async def _wish_contracted_locked(wish_id: int, db: AsyncSession) -> bool:
     """True если хотя бы одна привязанная закупка находится в статусе «Договор+»."""
     purchases = await _wish_linked_purchases(wish_id, db)
@@ -280,6 +298,8 @@ async def _sync_wish_items_to_purchases(wish, db: AsyncSession) -> None:
             pi.quantity = wi.quantity
             pi.total_price = (wi.unit_price or 0) * (wi.quantity or 0)
             pi.feo_category_id = wi.feo_category_id
+            pi.feo_planned_item_id = wi.feo_planned_item_id
+            pi.over_plan = getattr(wi, 'over_plan', False)
             pi.vat_rate = getattr(wi, 'vat_rate', None)
             changed = True
         if changed:
@@ -297,6 +317,36 @@ async def _sync_wish_items_to_purchases(wish, db: AsyncSession) -> None:
                 p.total_nmck = items_sum
                 p.planned_total_price = items_sum or p.planned_total_price
             await db.flush()
+
+
+async def _withdraw_wish_from_plan(wish_id: int, db: AsyncSession) -> list[str]:
+    """Убирает закупки заявки из план-графика — обратная операция к
+    _distribute_wish_to_purchases. Закупки в 'plan_schedule' возвращаются
+    в скрытый статус 'wishes' (не удаляются: сохраняются история, файлы,
+    чаты и связь с заявкой; при повторном одобрении гейт вернёт их в план).
+    Закупки, ушедшие дальше по стадиям (работа/договор/заказ/поставка/оплата),
+    НЕ трогаются — возвращается список их описаний для объяснения пользователю.
+    Commit НЕ делает — это на вызывающем.
+    """
+    from app.routers.purchase_budget import PLANNED_STATUSES
+    from app.routers.purchase_export import _STATUS_LABELS
+
+    purchases = await _wish_linked_purchases(wish_id, db)
+    warnings: list[str] = []
+    changed = False
+    for p in purchases:
+        if p.status == "plan_schedule":
+            p.status = "wishes"
+            changed = True
+        elif p.status in PLANNED_STATUSES:
+            # work_in_progress/contracted/ordered/delivered/paid — стадия ушла дальше
+            # «План-графика», закупку не трогаем, только предупреждаем пользователя.
+            label = _STATUS_LABELS.get(p.status, p.status)
+            warnings.append(f"№{p.purchase_number or p.id} «{p.item_name or ''}» — стадия «{label}»")
+        # status == 'wishes' и прочие (например 'cancelled') — не трогаем
+    if changed:
+        await db.flush()
+    return warnings
 
 
 async def _notify_pending_approvers(wish, db: AsyncSession, requester_name: str) -> None:
@@ -336,6 +386,7 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
     Защита от дублей: если по заявке уже есть закупки (purchases.wish_id == wish.id) — НИЧЕГО не создаёт и возвращает их id."""
     from sqlalchemy.orm import selectinload as sil
     from app.models.product import Product
+    from app.models.feo_planned_item import FeoPlannedItem
 
     # Защита от дублей: если по заявке уже есть закупки — ничего не создаём,
     # но скрытые до одобрения (status='wishes') продвигаем в целевой статус
@@ -350,7 +401,7 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
         wishes_purchases = [p for p in existing if p.status == "wishes"]
         if wishes_purchases:
             items_res = await db.execute(select(WishItem).where(WishItem.wish_id == wish.id))
-            items_for_gate = items_res.scalars().all()
+            items_for_gate = [it for it in items_res.scalars().all() if _is_meaningful_item(it)]
             await _ensure_needed_dates(wish, db, items_for_gate)
         for p in existing:
             if p.status == "wishes":
@@ -367,6 +418,10 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
         .where(WishItem.wish_id == wish.id)
     )
     items_full = res.scalars().all()
+
+    # Задача 3: строки-заготовки (без названия и без сумм/количества) — фронт
+    # создаёт их заранее для будущего ввода — не должны попадать в План-график.
+    items_full = [it for it in items_full if _is_meaningful_item(it)]
 
     # ФЭО могли удалить/пересоздать после выбора в заявке — валидируем заранее,
     # иначе insert закупки падает FK-violation → 500 без объяснения
@@ -435,6 +490,60 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
     # W2: Гейт обязательности дат потребности при переносе в План-график
     await _ensure_needed_dates(wish, db, items_full)
 
+    # 2026-08-05: позиция «вне плана» (over_plan=true), ещё не привязанная к плановой
+    # позиции — при переносе в План-график порождает НОВУЮ FeoPlannedItem, а не просто
+    # безымянной надбавкой прибавляет сумму поверх плана категории (см. feo_plan.py).
+    # После этого позиция становится обычной плановой (over_plan сбрасывается).
+    # Дедуп по (категория, нормализованное имя trim+lower) — как в импорте Excel Ур.5
+    # (feo_categories.py), но с нормализацией, т.к. источник — свободный ввод в заявке.
+    # Эта ветка недостижима при повторном согласовании: закупки уже существуют, и
+    # выполнение уходит в ветку `if existing:` выше, до сюда не доходя (идемпотентность).
+    _new_planned_cache: dict[tuple, int] = {}
+    for wi in items_full:
+        if wi.over_plan and not wi.feo_planned_item_id:
+            eff_cat_id = wi.feo_category_id or wish.feo_category_id
+            if not eff_cat_id:
+                continue
+            norm_name = (wi.item_name or "").strip().lower()
+            cache_key = (eff_cat_id, norm_name)
+            fpi_id = _new_planned_cache.get(cache_key)
+            if fpi_id is None:
+                existing_fpi = (await db.execute(
+                    select(FeoPlannedItem).where(
+                        FeoPlannedItem.feo_category_id == eff_cat_id,
+                        FeoPlannedItem.is_active == True,
+                        func.lower(func.trim(FeoPlannedItem.name)) == norm_name,
+                    )
+                )).scalar_one_or_none()
+                if existing_fpi is None:
+                    existing_fpi = FeoPlannedItem(
+                        feo_category_id=eff_cat_id,
+                        name=wi.item_name,
+                        quantity=wi.quantity,
+                        unit=wi.unit,
+                        amount=wi.total_price,
+                        is_active=True,
+                        notes=f"Создано заявкой №{wish.id}",
+                    )
+                    db.add(existing_fpi)
+                    await db.flush()
+                fpi_id = existing_fpi.id
+                _new_planned_cache[cache_key] = fpi_id
+            wi.feo_planned_item_id = fpi_id
+            wi.over_plan = False
+
+    # Задача владельца (2026-08-05) «блокировать пока не согласовано превышение плана
+    # ФЭО»: согласование заявки, создающее закупки — УВЕЛИЧИВАЮЩЕЕ план действие.
+    # Проверяем по КАЖДОЙ категории ФЭО, к которой отнесены позиции заявки
+    # (per-item feo_category_id, fallback — категория заявки целиком).
+    _cat_amounts: dict[int, Decimal] = {}
+    for _wi in items_full:
+        _cid = _wi.feo_category_id or wish.feo_category_id
+        if _cid:
+            _cat_amounts[_cid] = _cat_amounts.get(_cid, Decimal("0")) + Decimal(str(_wi.total_price or 0))
+    for _cid, _amt in _cat_amounts.items():
+        await assert_no_unapproved_excess(db, _cid, adding_amount=_amt)
+
     created_purchase_ids: list[int] = []
     for column_key, items_in_col in groups.items():
         total_nmck = sum(float(i.total_price or 0) for i in items_in_col)
@@ -493,6 +602,8 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
                 total_price=wi.total_price,
                 country_origin=wi.country_origin,
                 feo_category_id=wi.feo_category_id,  # B9: per-item feo
+                feo_planned_item_id=wi.feo_planned_item_id,  # расходуем уже запланированную позицию, не задваиваем план
+                over_plan=getattr(wi, 'over_plan', False),
                 needed_date=_eff_date(wish, wi),  # W2: наследование эффективной даты
                 wish_item_id=wi.id,  # W1: hard link to source WishItem
                 vat_rate=getattr(wi, 'vat_rate', None),
@@ -836,6 +947,8 @@ async def create_wish(
                 total_price=item_data.get('total_price', 0),
                 country_origin=item_data.get('country_origin', 'Россия'),
                 feo_category_id=item_data.get('feo_category_id'),  # B9
+                feo_planned_item_id=item_data.get('feo_planned_item_id'),  # привязка к плановой позиции план-графика
+                over_plan=item_data.get('over_plan', False),
                 needed_date=_as_date(item_data.get('needed_date')),  # W2
                 vat_rate=item_data.get('vat_rate'),
             )
@@ -922,6 +1035,8 @@ async def update_wish(
                     total_price=item_data.get('total_price', 0),
                     country_origin=item_data.get('country_origin', 'Россия'),
                     feo_category_id=item_data.get('feo_category_id'),  # B9
+                    feo_planned_item_id=item_data.get('feo_planned_item_id'),  # план-график ФЭО
+                    over_plan=item_data.get('over_plan', False),
                     needed_date=_as_date(item_data.get('needed_date')),  # W2
                     vat_rate=item_data.get('vat_rate'),
                 )
@@ -950,6 +1065,10 @@ async def update_wish(
                     wi.total_price = (wi.unit_price or 0) * (wi.quantity or 0)
                 if 'feo_category_id' in item_data:
                     wi.feo_category_id = item_data['feo_category_id']
+                if 'feo_planned_item_id' in item_data:
+                    wi.feo_planned_item_id = item_data['feo_planned_item_id']
+                if 'over_plan' in item_data:
+                    wi.over_plan = item_data['over_plan']
                 if 'needed_date' in item_data:
                     wi.needed_date = _as_date(item_data['needed_date'])
                 if 'vat_rate' in item_data:
@@ -1001,6 +1120,16 @@ async def update_wish(
             wish.status = "submitted"
             await db.flush()
             await _reset_approvals(wish.id, db)
+            # Заявка уходит на ПОВТОРНОЕ согласование — позиции могли измениться,
+            # закупка в План-графике больше не актуальна, убираем её оттуда. Если что-то
+            # уже в работе/договоре — откат запрещаем явно (не молчим, коммита ещё не было).
+            _plan_warning = await _withdraw_wish_from_plan(wish.id, db)
+            if _plan_warning:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Заявку нельзя вернуть на повторное согласование: закупка "
+                           f"{'; '.join(_plan_warning)} уже в работе.",
+                )
             requester_name = getattr(current_user, 'full_name', None) or current_user.username
             await _notify_pending_approvers(wish, db, requester_name)
 
@@ -1161,10 +1290,18 @@ async def reject_wish(
 
     wish.status = "rejected"
     wish.rejection_reason = body.rejection_reason
+    # SaaS может отклонить заявку в любом статусе (в т.ч. converted) — если по ней уже
+    # есть закупка в План-графике, убираем её из плана; дальше стадий — предупреждаем.
+    plan_warning = await _withdraw_wish_from_plan(wish.id, db)
     await db.commit()
     await db.refresh(wish)
     wish = await _load_wish(wish_id, db)
-    return _enrich(wish)
+    out = _enrich(wish)
+    if plan_warning:
+        # WishOut без отдельного поля plan_warning (схема вне разрешённых файлов) —
+        # переиспользуем convert_warning, семантически тоже «предупреждение о закупке».
+        out.convert_warning = _plan_stage_warning_text(plan_warning)
+    return out
 
 
 @router.patch("/{wish_id}/execution", response_model=WishOut)
@@ -1228,6 +1365,7 @@ async def force_wish_status(
         raise HTTPException(status_code=400, detail=f"Недопустимый статус. Разрешены: {sorted(allowed)}")
     wish = await _load_wish(wish_id, db)
 
+    plan_warning: list[str] = []
     if body.status == "converted":
         if not wish.items:
             raise HTTPException(status_code=400, detail="Заявка пустая — нечего распределять")
@@ -1262,12 +1400,18 @@ async def force_wish_status(
             wish.approved_by = current_user.id
         await db.commit()
     else:
-        # draft / submitted / rejected — просто переключение статуса
+        # draft / submitted / rejected — просто переключение статуса.
+        # Аварийный SaaS-рычаг: закупки в работе/договоре НЕ блокируют операцию,
+        # только предупреждаем — обратный путь для плана есть, для законтрактованного нет.
         wish.status = body.status
+        plan_warning = await _withdraw_wish_from_plan(wish.id, db)
         await db.commit()
 
     wish = await _load_wish(wish_id, db)
-    return _enrich(wish)
+    out = _enrich(wish)
+    if plan_warning:
+        out.convert_warning = _plan_stage_warning_text(plan_warning)
+    return out
 
 
 @router.post("/{wish_id}/convert")
@@ -1395,6 +1539,8 @@ async def convert_wish(
             total_price=wi.total_price,
             country_origin=wi.country_origin,
             feo_category_id=wi.feo_category_id,  # B9: per-item feo
+            feo_planned_item_id=wi.feo_planned_item_id,  # расходуем уже запланированную позицию, не задваиваем план
+            over_plan=getattr(wi, 'over_plan', False),
             needed_date=_eff_date(wish, wi),  # W2: наследование эффективной даты
             wish_item_id=wi.id,  # W1: hard link to source WishItem
             vat_rate=getattr(wi, 'vat_rate', None),
@@ -1423,6 +1569,16 @@ async def delete_wish(
         raise HTTPException(status_code=403, detail="Только автор может удалить заявку")
     if not _is_saas(current_user) and wish.status != "draft":
         raise HTTPException(status_code=400, detail="Можно удалить только черновик")
+
+    # Заявку удаляют — purchases.wish_id обнулится каскадом (ON DELETE SET NULL),
+    # закупка осиротеет в плане. Плановые (plan_schedule) убираем из плана заранее;
+    # если что-то уже в работе/договоре — удаление блокируем явно.
+    plan_warning = await _withdraw_wish_from_plan(wish.id, db)
+    if plan_warning:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Нельзя удалить заявку: закупка {'; '.join(plan_warning)} уже в работе.",
+        )
 
     await db.delete(wish)
     await db.commit()

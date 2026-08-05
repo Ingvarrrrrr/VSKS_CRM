@@ -195,72 +195,27 @@ async def _calculate_feo_planned_tree_bulk(
 ) -> dict[int, float]:
     """Плановая сумма дерева ФЭО для набора субсидий (единый источник для «Запланировано»).
 
-    = Σ (FeoCategory.planned_quantity × FeoCategory.planned_amount) по листам
-      + Σ PurchaseItem.total_price по статусам PLANNED_STATUSES, привязанных к feo_category_id.
+    Тонкая обёртка над app.services.feo_plan.feo_plan_subsidy_totals — Σ display
+    корневых узлов дерева ФЭО, где для каждого узла (листа и группы):
+      display = MAX(план, выбрано) + сверх_плана
+    План/выбрано/сверх план считаются рекурсивно по поддереву (см. подробный
+    docstring compute_feo_plan_tree в app/services/feo_plan.py). Формула вынесена
+    в общий сервис, чтобы:
+      1) устранить задвоение, когда позиция закупки лежит ОДНОВРЕМЕННО на группе
+         и на её дочернем листе (раньше их суммы складывались напрямую — группа
+         «Внедорожник повышенной проходимости» показывала 16 380 000 = план листа
+         8 380 000 + позиция заявки на самой группе 8 000 000, вместо MAX = 8 380 000);
+      2) не расходиться с _create_plan_graph_version (purchases.py) — снапшот
+         истории версий план-графика использует ту же compute_feo_plan_tree.
 
-    Совпадает с тем, что показывает панель ФЭО вкладки «Субсидии»:
-    selectedPlannedTotal = feoPlannedTotalFor() + feoPlannedRequestsFor().
+    Совпадает с тем, что показывает панель ФЭО вкладки «Субсидии»
+    (feoPlannedDisplayFor(root) в SubsidiesView.vue, режим 'all' — реализует ту же
+    формулу MAX(план, выбрано)+сверх_план на фронте, см. docstring там).
     """
     if not subsidy_ids:
         return {}
-    from app.models.purchase_item import PurchaseItem
-    from app.routers.purchase_budget import PLANNED_STATUSES
-
-    # Часть 1: FeoCategory leaf qty × amount
-    # Листовая нода = нет детей. Вычисляем через группировку: подсчитываем детей каждого узла.
-    cat_q = (
-        select(
-            FeoCategory.id,
-            FeoCategory.subsidy_id,
-            FeoCategory.parent_id,
-            FeoCategory.planned_quantity,
-            FeoCategory.planned_amount,
-        )
-        .where(FeoCategory.subsidy_id.in_(subsidy_ids))
-    )
-    cat_rows = (await db.execute(cat_q)).all()
-
-    # Определяем листы (нет детей) и считаем плановую сумму по ним
-    has_children: set[int] = set()
-    for r in cat_rows:
-        if r.parent_id is not None:
-            has_children.add(r.parent_id)
-
-    manual_by_subsidy: dict[int, float] = {}
-    for r in cat_rows:
-        if r.id not in has_children:  # лист
-            qty = float(r.planned_quantity) if r.planned_quantity is not None else 0.0
-            amt = float(r.planned_amount) if r.planned_amount is not None else 0.0
-            val = (qty * amt) if (qty > 0 and amt > 0) else 0.0
-            manual_by_subsidy[r.subsidy_id] = manual_by_subsidy.get(r.subsidy_id, 0.0) + val
-
-    # Часть 2: PurchaseItem суммы по feo_category_id для статусов план-графика и дальше
-    cat_ids = [r.id for r in cat_rows]
-    cat_to_subsidy: dict[int, int] = {r.id: r.subsidy_id for r in cat_rows}
-
-    purchase_by_subsidy: dict[int, float] = {}
-    if cat_ids:
-        pi_q = (
-            select(
-                func.coalesce(PurchaseItem.feo_category_id, Purchase.feo_category_id).label("cat_id"),
-                func.coalesce(func.sum(PurchaseItem.total_price), 0).label("total"),
-            )
-            .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
-            .where(Purchase.subsidy_id.in_(subsidy_ids))
-            .where(Purchase.status.in_(list(PLANNED_STATUSES)))
-            .where(func.coalesce(PurchaseItem.feo_category_id, Purchase.feo_category_id).in_(cat_ids))
-            .group_by(func.coalesce(PurchaseItem.feo_category_id, Purchase.feo_category_id))
-        )
-        pi_rows = (await db.execute(pi_q)).all()
-        for r in pi_rows:
-            sid = cat_to_subsidy.get(r.cat_id)
-            if sid:
-                purchase_by_subsidy[sid] = purchase_by_subsidy.get(sid, 0.0) + float(r.total)
-
-    result = {sid: 0.0 for sid in subsidy_ids}
-    for sid in subsidy_ids:
-        result[sid] = manual_by_subsidy.get(sid, 0.0) + purchase_by_subsidy.get(sid, 0.0)
-    return result
+    from app.services.feo_plan import feo_plan_subsidy_totals
+    return await feo_plan_subsidy_totals(db, subsidy_ids)
 
 
 @router.get("/", response_model=List[SubsidyOut])

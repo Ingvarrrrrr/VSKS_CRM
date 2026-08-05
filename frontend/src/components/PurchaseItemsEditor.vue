@@ -122,6 +122,7 @@
           :vat-rate-options="VAT_RATE_OPTIONS"
           :feo-leaves="feoLeaves"
           :feo-nodes="feoNodes"
+          :node-amounts="nodeAmounts"
           :feo-per-item="props.feoPerItem"
           :feo-planned-per-item="props.feoPlannedPerItem"
           :planned-items="props.plannedItems"
@@ -206,6 +207,7 @@
           :total-nmck="internalTotalNmck"
           :feo-leaves="feoLeaves"
           :feo-nodes="feoNodes"
+          :node-amounts="nodeAmounts"
           :subsidy-id="props.subsidyId"
           :subsidy-name="props.subsidyName"
           :unit-options="UNIT_OPTIONS"
@@ -258,6 +260,7 @@
           :total-nmck="internalTotalNmck"
           :feo-leaves="feoLeaves"
           :feo-nodes="feoNodes"
+          :node-amounts="nodeAmounts"
           :subsidy-id="props.subsidyId"
           :subsidy-name="props.subsidyName"
           :unit-options="UNIT_OPTIONS"
@@ -495,6 +498,8 @@
             v-model="bulkFeoId"
             :nodes="feoNodes"
             :leaves="feoLeaves"
+            :plan-positions="effectivePlannedItems"
+            :node-amounts="nodeAmounts"
             :allow-unallocated="!!props.subsidyId"
             :root-label="props.subsidyName"
             @pick-unallocated="(parentId: number | null) => applyBulkUnallocated(parentId)"
@@ -507,6 +512,7 @@
             :category-id="bulkFeoId"
             :nodes="feoNodes"
             :items="effectivePlannedItems"
+            :prefill="bulkPlannedPrefill"
             class="mt-2"
             @planned-item-created="emit('planned-item-created')"
           />
@@ -556,6 +562,7 @@ import { copyFromPurchase as apiCopyFromPurchase } from '@/api/contractItems'
 import { useResizableColumns } from '@/composables/useResizableColumns'
 import { formatNumber, parseNumber, fmtRub } from '@/utils/numberFormat'
 import { useFeoLeaves } from '@/composables/useFeoLeaves'
+import { useFeoNodeAmounts } from '@/composables/useFeoNodeAmounts'
 import type { FeoPlanPosition, FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
 import { useItemMatching, type MatchCandidate } from '@/composables/useItemMatching'
 import {
@@ -803,6 +810,14 @@ const {
   excludePurchaseId: computed(() => props.purchaseIdFeo),
 })
 
+// Задача владельца 2026-08-06: остаток по КАЖДОМУ узлу дерева ФЭО (не только листу),
+// считается один раз здесь (см. composables/useFeoNodeAmounts) и передаётся готовым
+// объектом во все 3 таблицы позиций + bulk-диалог ниже — FeoTreeSelect рендерится в
+// каждой строке, пересчитывать роллап внутри него нельзя (перф).
+const { nodeAmounts } = useFeoNodeAmounts({
+  subsidyId: computed(() => props.subsidyId),
+})
+
 // Thin row-wrappers so templates keep calling isOverBudget(item) / overBudgetDelta(item)
 function isOverBudget(row: EditorItem): boolean {
   return feoIsOverBudget(row.feo_category_id, row.total_price)
@@ -832,10 +847,13 @@ function fillEmptyItemsWithDefaultFeo(): boolean {
   return changed
 }
 
-// F-PLAN: шапка — единственный источник feo_planned_item_id, когда режим
-// «разные плановые позиции для каждого товара» выключен (аналог feoPerItem/
-// defaultFeoCategoryId, но т.к. отдельной колонки wishes.feo_planned_item_id
-// НЕТ, значение нужно ПРОСТАВИТЬ КАЖДОЙ позиции, а не только пустым).
+// F-PLAN: шапка — источник feo_planned_item_id по умолчанию, когда режим
+// «разные плановые позиции для каждого товара» выключен (та же логика, что у
+// fillEmptyItemsWithDefaultFeo выше: заполняем ТОЛЬКО пустые позиции). После
+// перестановки блоков диалога заявки (позиции теперь выше «Категории ФЭО»)
+// пользователь может успеть построчно выбрать плановую позицию ДО того, как
+// заполнит шапку — раньше эта функция затирала такой построчный выбор значением
+// из шапки у ВСЕХ позиций; теперь она не трогает уже заполненные строки.
 // ⚠️ КРИТИЧЕСКИЙ GUARD: выполняется ТОЛЬКО если проп defaultFeoPlannedItemId
 // передан явно вызывающей стороной. Если он undefined (CreateOrderView.vue НЕ
 // передаёт этот проп и использует свою, не связанную с заявками привязку) —
@@ -845,7 +863,7 @@ function fillItemsWithDefaultPlannedItem(): boolean {
   if (props.feoPlannedPerItem) return false
   let changed = false
   for (const it of localItems.value) {
-    if (it.feo_planned_item_id !== props.defaultFeoPlannedItemId) {
+    if (it.feo_planned_item_id == null) {
       it.feo_planned_item_id = props.defaultFeoPlannedItemId
       changed = true
     }
@@ -1747,6 +1765,21 @@ const unallocatedLoading = ref(false)
 
 // F-PLAN: список плановых позиций для bulk-диалога — то же, что приходит в проп.
 const effectivePlannedItems = computed(() => props.plannedItems || [])
+
+// Предзаполнение диалога «Создать в плане закупок» для bulk-выбора — имя первой
+// выбранной позиции, сумма — Σ total_price ВСЕХ выбранных (агрегат по группе, не
+// одна позиция, как в построчных редакторах).
+const bulkPlannedPrefill = computed(() => {
+  const rows = selectedItemIdxs.value.map(idx => localItems.value[idx]).filter((r): r is EditorItem => !!r)
+  const first = rows.find(r => (r.item_name || '').trim())
+  const amount = rows.reduce((sum, r) => sum + (Number(r.total_price) || 0), 0)
+  return {
+    name: first?.item_name ?? null,
+    quantity: first?.quantity ?? null,
+    unit: first?.unit ?? null,
+    amount,
+  }
+})
 
 function openBulkFeoDialog() {
   bulkFeoId.value = null

@@ -29,6 +29,18 @@ def _content_disposition(filename: str) -> str:
     return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename)}"
 
 
+async def _has_feo_action(current_user, db: AsyncSession, action_key: str) -> bool:
+    """Есть ли у пользователя один из feo_budget.* action-ключей (эффективно, с учётом
+    ролевой матрицы + персональных/субсидийных оверрайдов). superadmin — всегда True.
+    Общий хелпер для мягкого усечения денежных полей в /leaves, /flat, /plan-tree —
+    см. задачу владельца 2026-08-06 «остаток средств по каждой категории ФЭО»."""
+    if current_user.role == "superadmin":
+        return True
+    from app.auth.permissions import _get_effective, _active_org
+    effective = await _get_effective(current_user, db, _active_org(current_user))
+    return action_key in effective
+
+
 @router.get("/purchase-totals")
 async def get_purchase_totals(
     subsidy_id: int = Query(...),
@@ -141,7 +153,7 @@ async def get_planned_purchase_totals(
 async def get_feo_plan_tree(
     subsidy_id: int = Query(...),
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
     """Числа по КАЖДОМУ узлу дерева ФЭО (и листу, и группе) — единый источник для
     фронта (сессия 2026-08-05, задача «формула только на бэкенде»: раньше
@@ -169,12 +181,25 @@ async def get_feo_plan_tree(
     дерево — нет, см. сессию 2026-08-05). Не участвует в дереве/ИТОГО — чисто
     справочная сумма для отдельной строки на фронте. Отдаётся всегда (нули, если
     таких закупок нет), чтобы фронт не городил доп. ветвление на отсутствие ключа.
+
+    "budget" (задача владельца 2026-08-06, «остаток по каждой категории ФЭО в
+    дереве выбора») — финансирование по ФЭО узла (то же значение, что уже
+    участвует в формуле display/excess_amount выше), null если не задано.
+    free = budget − display считает фронт (см. FeoTreeSelect nodeAmounts).
+
+    Право feo_budget.view_tree_amounts (см. backend/app/__init__.py) гейтит ВСЕ
+    денежные поля узла (plan_manual, ordered_sum, over, plan, budget, display,
+    residual, forecast, forecast_over, consumed, excess_amount) — без права они
+    приходят null (структура ответа не меняется, количественные/булевы поля
+    остаются). superadmin — всегда видит.
     """
     from app.services.feo_plan import compute_feo_plan_tree
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem
     from app.routers.purchase_budget import PLANNED_STATUSES
     from sqlalchemy import exists, and_
+
+    can_view_amounts = await _has_feo_action(current_user, db, "feo_budget.view_tree_amounts")
 
     tree = await compute_feo_plan_tree(db, [subsidy_id])
     result: dict = {
@@ -185,6 +210,7 @@ async def get_feo_plan_tree(
             "over": node["over"],
             "over_quantity": node["over_quantity"],
             "plan": node["plan"],
+            "budget": node["budget"],
             "display": node["display"],
             "residual": node["residual"],
             "forecast": node["forecast"],
@@ -221,6 +247,20 @@ async def get_feo_plan_tree(
         "purchase_count": len(unassigned_rows),
         "purchase_ids": [r.id for r in unassigned_rows[:50]],
     }
+
+    if not can_view_amounts:
+        MONEY_FIELDS = (
+            "plan_manual", "ordered_sum", "over", "plan", "budget", "display",
+            "residual", "forecast", "forecast_over", "consumed", "excess_amount",
+        )
+        for cat_id, node in result.items():
+            if cat_id == "unassigned":
+                node["amount"] = None
+                continue
+            for f in MONEY_FIELDS:
+                if f in node:
+                    node[f] = None
+
     return result
 
 
@@ -314,13 +354,20 @@ async def get_feo_leaves(
     subsidy_id: int = Query(...),
     exclude_purchase_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
     """Returns leaf FeoCategory nodes (без детей) with aggregated used_amount via feo_category_id.
 
     Response: [{id, name, parent_id, level, budget, used_amount, residual, path}]
     where path = "Direction › Subcategory › LeafName".
+
+    Право feo_budget.view_leaf (см. backend/app/__init__.py, дефолт — все роли,
+    включая employee) гейтит денежные поля (budget, contracted_used, planned_used,
+    uncontracted_remaining, spendable_remaining, used_amount, residual) — без права
+    приходят 0, структура ответа не меняется (закрытие дыры: раньше эндпоинт вообще
+    не проверял права, см. задачу владельца 2026-08-06).
     """
+    can_view_leaf = await _has_feo_action(current_user, db, "feo_budget.view_leaf")
     from sqlalchemy import select, func as sqlfunc, case
     from app.models.purchase_item import PurchaseItem
     from app.models.purchase import Purchase as _Purchase
@@ -384,6 +431,8 @@ async def get_feo_leaves(
         contracted_used, planned_used = leaf_used_map.get(c.id, (0.0, 0.0))
         uncontracted_remaining = budget - contracted_used
         spendable_remaining = budget - planned_used
+        if not can_view_leaf:
+            budget = contracted_used = planned_used = uncontracted_remaining = spendable_remaining = 0.0
         result.append({
             "id": c.id,
             "name": c.name,
@@ -732,21 +781,36 @@ async def list_categories(
 async def get_feo_flat(
     subsidy_id: int = Query(...),
     db: AsyncSession = Depends(get_db),
-    _=Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
     """Returns all FeoCategory nodes for a subsidy as a flat list with is_leaf flag.
 
-    Response: [{id, name, parent_id, level, is_leaf, budget, planned_quantity, planned_amount}]
+    Response: [{id, name, parent_id, level, is_leaf, budget, planned_quantity, planned_amount,
+                has_budget, has_plan}]
     is_leaf = True if the node has no children within the same subsidy.
     budget = собственная (ручная) сумма финансирования узла, без расчёта по детям.
     planned_quantity/planned_amount — плановые показатели (CRM-план), заполняются НЕЗАВИСИМО
     от budget: конечная категория может иметь план (использована в плане закупок) без
-    собственного budget. Фронт (useFeoLeaves.filterFundedNodes) считает узел значимым по
-    budget != null ИЛИ planned_quantity*planned_amount > 0 — иначе такие категории
+    собственного budget.
+
+    has_budget/has_plan — СТРУКТУРНЫЕ булевы признаки (НЕ денежные величины, НЕ гейтятся
+    правом): has_budget истинен, если у узла задан собственный budget > 0; has_plan истинен,
+    если planned_quantity × planned_amount > 0. Фронт (useFeoLeaves.filterFundedNodes)
+    считает узел значимым по has_budget ИЛИ has_plan (с фолбэком на числовые budget/
+    planned_quantity/planned_amount, если бэкенд старый) — иначе такие категории
     вырезались из дерева выбора, хотя реально существуют и используются (баг «категория
-    ФЭО была удалена из справочника», сессия 2026-08-05).
+    ФЭО была удалена из справочника», сессия 2026-08-05). Важно: has_budget/has_plan
+    обязаны приходить ВСЕГДА, независимо от права feo_budget.view_leaf — иначе у роли без
+    этого права дерево выбора категорий ФЭО становится полностью пустым (найдено при
+    ревью гейта, сессия 2026-08-06).
     Sorted by level, then sort_order, then id.
+
+    Право feo_budget.view_leaf (дефолт — все роли, включая employee) гейтит денежные
+    поля budget/planned_amount — без права оба приходят null (уже допустимое по типу
+    состояние, см. ниже); planned_quantity — количество, не деньги, не гейтится.
+    Закрытие дыры: раньше эндпоинт вообще не проверял права (задача владельца 2026-08-06).
     """
+    can_view_leaf = await _has_feo_action(current_user, db, "feo_budget.view_leaf")
     cats_q = (
         select(FeoCategory)
         .where(FeoCategory.subsidy_id == subsidy_id)
@@ -770,9 +834,16 @@ async def get_feo_flat(
             "level": c.level,
             "is_leaf": c.id not in has_children,
             "description": c.description,
-            "budget": float(c.budget) if c.budget is not None else None,
+            "budget": (float(c.budget) if c.budget is not None else None) if can_view_leaf else None,
             "planned_quantity": float(c.planned_quantity) if c.planned_quantity is not None else None,
-            "planned_amount": float(c.planned_amount) if c.planned_amount is not None else None,
+            "planned_amount": (float(c.planned_amount) if c.planned_amount is not None else None) if can_view_leaf else None,
+            # Структурные признаки — НЕ гейтятся правом, см. docstring выше.
+            "has_budget": bool(c.budget is not None and float(c.budget) > 0),
+            "has_plan": bool(
+                c.planned_quantity is not None
+                and c.planned_amount is not None
+                and float(c.planned_quantity) * float(c.planned_amount) > 0
+            ),
         }
         for c in all_cats
     ]

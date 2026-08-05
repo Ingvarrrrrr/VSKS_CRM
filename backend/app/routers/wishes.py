@@ -229,10 +229,22 @@ async def _wish_linked_purchases(wish_id: int, db: AsyncSession) -> list:
     return res.scalars().all()
 
 
+def _item_field(it, name: str, default=None):
+    """Универсальный доступ к полю позиции: и pydantic/dict-payload (body.items —
+    список dict), и ORM WishItem (атрибуты) должны обрабатываться одним предикатом."""
+    if isinstance(it, dict):
+        return it.get(name, default)
+    return getattr(it, name, default)
+
+
 def _is_meaningful_item(it) -> bool:
     """Строка-заготовка (без названия, количества и суммы) — фронт создаёт их
-    заранее для будущего ввода; в План закупок и в гейты они попадать не должны."""
-    return bool((it.item_name or "").strip() or float(it.quantity or 0) or float(it.total_price or 0))
+    заранее для будущего ввода; в БД, План закупок и в гейты они попадать не должны.
+    Принимает как ORM WishItem, так и «сырой» dict из body.items."""
+    name = _item_field(it, "item_name") or ""
+    quantity = _item_field(it, "quantity") or 0
+    total_price = _item_field(it, "total_price") or 0
+    return bool(str(name).strip() or float(quantity or 0) or float(total_price or 0))
 
 
 # Единый текст предупреждения: закупки заявки, ушедшие дальше «Плана закупок»,
@@ -936,6 +948,8 @@ async def create_wish(
 
     if body.items:
         for item_data in body.items:
+            if not _is_meaningful_item(item_data):
+                continue  # пустая строка-заготовка — в БД не пишем
             wi = WishItem(
                 wish_id=wish.id,
                 product_id=item_data.get('product_id'),
@@ -1024,6 +1038,8 @@ async def update_wish(
             # Draft: delete+recreate (original behaviour)
             await db.execute(delete(WishItem).where(WishItem.wish_id == wish.id))
             for item_data in body.items:
+                if not _is_meaningful_item(item_data):
+                    continue  # пустая строка-заготовка — в БД не пишем
                 wi = WishItem(
                     wish_id=wish.id,
                     product_id=item_data.get('product_id'),
@@ -1043,11 +1059,17 @@ async def update_wish(
                 db.add(wi)
             await db.flush()
         else:
-            # Non-draft (submitted/approved/converted/rejected): update existing items in-place by id.
-            # Add/remove NOT supported for advanced wishes — only update matching items.
+            # Non-draft (submitted/approved/converted/rejected): update existing items in-place by id,
+            # and DELETE items that dropped out of the payload (owner removes a duplicate/empty row →
+            # it must actually disappear from the DB, not just from the UI). Add is still NOT
+            # supported here — out of scope, unchanged from prior behaviour (items without a
+            # matching id are silently skipped).
             existing_items = {wi.id: wi for wi in wish.items}
+            payload_ids: set[int] = set()
             for item_data in body.items:
                 item_id = item_data.get('id') if isinstance(item_data, dict) else getattr(item_data, 'id', None)
+                if item_id:
+                    payload_ids.add(item_id)
                 wi = existing_items.get(item_id) if item_id else None
                 if wi is None:
                     continue
@@ -1073,6 +1095,47 @@ async def update_wish(
                     wi.needed_date = _as_date(item_data['needed_date'])
                 if 'vat_rate' in item_data:
                     wi.vat_rate = item_data['vat_rate']
+
+            # Позиции, которых больше нет в payload, — удаляем физически.
+            ids_to_delete = set(existing_items.keys()) - payload_ids
+            if ids_to_delete:
+                if await _wish_contracted_locked(wish.id, db):
+                    from app.routers.purchase_export import _STATUS_LABELS
+                    _locked_purchases = [
+                        p for p in await _wish_linked_purchases(wish.id, db)
+                        if p.status in CONTRACTED_STATUSES
+                    ]
+                    _locked_descr = "; ".join(
+                        f"№{p.purchase_number or p.id} «{p.item_name or ''}» — стадия «{_STATUS_LABELS.get(p.status, p.status)}»"
+                        for p in _locked_purchases
+                    )
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"Нельзя удалить позицию заявки: закупка {_locked_descr} уже на этапе "
+                            "договора. Отмените закупку вручную в реестре закупок, либо не удаляйте позицию."
+                        ),
+                    )
+                # Сироты в закупке: PurchaseItem с FK на удаляемую позицию (ondelete=SET NULL
+                # только обнулит связь, но НЕ уберёт строку) — чистим явно, но только пока
+                # закупка ещё не ушла дальше «Плана закупок» (иначе выше сработал бы гейт).
+                _linked_purchases = await _wish_linked_purchases(wish.id, db)
+                _early_stage_purchase_ids = {
+                    p.id for p in _linked_purchases if p.status in ("plan_schedule", "wishes")
+                }
+                if _early_stage_purchase_ids:
+                    await db.execute(
+                        delete(PurchaseItem).where(
+                            PurchaseItem.wish_item_id.in_(ids_to_delete),
+                            PurchaseItem.purchase_id.in_(_early_stage_purchase_ids),
+                        )
+                    )
+                # Удаляем через саму relationship-коллекцию (cascade="all, delete-orphan" на
+                # Wish.items), а не Core delete(): так wish.items остаётся синхронной в памяти
+                # для последующего сравнения _old_items/_new_items (сброс согласования ниже).
+                for _del_id in ids_to_delete:
+                    wish.items.remove(existing_items[_del_id])
+
             await db.flush()
 
     # W2: re-approval trigger for submitted/approved/converted wishes

@@ -4,10 +4,10 @@
        Ур.5 FeoPlannedItem) — визуально продолжение дерева ФЭО (FeoTreeSelect): те же
        рельсы/локти (feoTreeRails.css), корневая строка — выбранная категория, ниже —
        её плановые позиции (сама категория + дочерние конечные элементы). Строка —
-       <div role="radio">, обработчик клика висит на самом div (НЕ на <label>, чтобы
-       браузер не удваивал клик синтетическим событием на вложенном <input> — см. баг
-       в onItemRadioClick); <input type="radio"> внутри — чисто визуальный индикатор,
-       pointer-events:none, tabindex="-1". Клик по всей строке = выбор, повторный клик
+       <div role="switch">, обработчик клика висит на самом div (НЕ на <label>, чтобы
+       браузер не удваивал клик синтетическим событием на вложенном контроле — см. баг
+       в onItemRadioClick); <v-switch> внутри — чисто визуальный индикатор,
+       pointer-events:none. Клик по всей строке = выбор, повторный клик
        по уже выбранной строке снимает выбор (см. onItemRadioClick).
        Псевдо-вариант «Вне плана (новая позиция)» убран (сессия 2026-08-05) — владелец:
        позицию, которой нет в плане, заводят кнопкой «Создать в плане закупок» ниже. -->
@@ -66,7 +66,7 @@
                 class="feo-tree-row"
                 :class="{ 'feo-tree-row--selected': selectedKey === row.key, 'feo-tree-row--clickable': !readonly }"
                 :title="selectedKey === row.key ? 'Нажмите ещё раз, чтобы снять выбор' : undefined"
-                role="radio"
+                role="switch"
                 :aria-checked="selectedKey === row.key"
                 :tabindex="readonly ? -1 : 0"
                 @click="onItemRadioClick(row, $event)"
@@ -75,13 +75,14 @@
               >
                 <span class="feo-tree-rail" />
                 <span class="feo-tree-elbow feo-tree-elbow--open" />
-                <input
-                  type="radio"
-                  class="feo-planned-radio"
-                  :name="radioName"
-                  :checked="selectedKey === row.key"
+                <v-switch
+                  :model-value="selectedKey === row.key"
                   :disabled="readonly"
-                  tabindex="-1"
+                  density="compact"
+                  hide-details
+                  inset
+                  color="primary"
+                  class="feo-planned-switch"
                 />
                 <span class="feo-tree-name">
                   {{ row.name }}
@@ -129,7 +130,7 @@
             class="feo-tree-row"
             :class="{ 'feo-tree-row--selected': selectedKey === row.key, 'feo-tree-row--clickable': !readonly }"
             :title="selectedKey === row.key ? 'Нажмите ещё раз, чтобы снять выбор' : undefined"
-            role="radio"
+            role="switch"
             :aria-checked="selectedKey === row.key"
             :tabindex="readonly ? -1 : 0"
             @click="onItemRadioClick(row, $event)"
@@ -138,13 +139,14 @@
           >
             <span class="feo-tree-rail" />
             <span class="feo-tree-elbow feo-tree-elbow--open" />
-            <input
-              type="radio"
-              class="feo-planned-radio"
-              :name="radioName"
-              :checked="selectedKey === row.key"
+            <v-switch
+              :model-value="selectedKey === row.key"
               :disabled="readonly"
-              tabindex="-1"
+              density="compact"
+              hide-details
+              inset
+              color="primary"
+              class="feo-planned-switch"
             />
             <span class="feo-tree-name">
               {{ row.name }}
@@ -256,6 +258,11 @@ const props = defineProps<{
   readonly?: boolean
   skipLast?: boolean
   dense?: boolean
+  /** Данные уже введённой позиции закупки — кнопка «Создать в плане закупок»
+   *  заполняет ими форму диалога вместо пустых полей (владелец: «пусть берёт
+   *  данные уже введённой позиции»). Опционально — без пропа диалог открывается
+   *  пустым, как раньше. */
+  prefill?: { name?: string | null; quantity?: number | null; unit?: string | null; amount?: number | null }
 }>()
 
 const emit = defineEmits<{
@@ -264,10 +271,6 @@ const emit = defineEmits<{
    *  родитель должен перезагрузить список плановых позиций (напр. useFeoPlannedResiduals.reloadPlanned). */
   'planned-item-created': []
 }>()
-
-// Уникальное имя radio-группы на инстанс — несколько компонентов на странице
-// не должны конфликтовать нативной радио-группировкой по имени.
-const radioName = `feo-planned-${Math.random().toString(36).slice(2)}`
 
 const denseMenuOpen = ref(false)
 
@@ -351,11 +354,13 @@ function selectItem(row: FeoPlanPosition) {
 // <label> браузер сам транслирует во ВТОРОЙ синтетический клик по вложенному <input> —
 // onItemRadioClick срабатывал дважды за один клик пользователя: первый раз выбирал
 // строку, второй тут же видел selectedKey === row.key и снимал выбор. Внешне — «клик
-// ничего не делает». Исправлено: обёртка теперь <div role="radio">, обработчик висит
-// на самом div (ровно один клик = ровно один вызов), а <input type="radio"> остался
-// чисто визуальным индикатором — tabindex="-1" и pointer-events:none в CSS, своих
-// событий не порождает. Источник правды — Vue-состояние (props.modelValue), а не
-// DOM-атрибут checked. Доступность: role="radio" + aria-checked + tabindex + Enter/Space.
+// ничего не делает». Исправлено: обёртка теперь <div role="switch">, обработчик висит
+// на самом div (ровно один клик = ровно один вызов). Индикатор выбора (сессия
+// 2026-08-06, владелец: «точка выбора не садится на позицию — сделай переключатель»)
+// заменён с input[type=radio] на <v-switch> — чисто визуальный, pointer-events:none
+// в CSS, своих событий не порождает. Источник правды — Vue-состояние (props.modelValue),
+// а не DOM-состояние переключателя. Доступность: role="switch" + aria-checked + tabindex
+// + Enter/Space.
 function onItemRadioClick(row: FeoPlanPosition, event?: Event) {
   if (props.readonly) return
   event?.preventDefault()
@@ -389,10 +394,12 @@ function showSnack(text: string, color: 'success' | 'error' = 'success') {
 
 function openCreateDialog() {
   if (props.readonly || props.categoryId == null) return
-  createForm.name = ''
-  createForm.quantity = null
-  createForm.unit = ''
-  createForm.amount = null
+  // Предзаполнение из уже введённой позиции закупки (см. prefill в defineProps),
+  // с фолбэком на пустые значения — как было раньше без пропа.
+  createForm.name = props.prefill?.name ?? ''
+  createForm.quantity = props.prefill?.quantity ?? null
+  createForm.unit = props.prefill?.unit ?? ''
+  createForm.amount = props.prefill?.amount ?? null
   createDialog.value = true
 }
 
@@ -438,14 +445,18 @@ async function saveCreateDialog() {
   cursor: default;
   opacity: 0.85;
 }
-.feo-planned-radio {
+.feo-planned-switch {
   flex-shrink: 0;
-  margin-top: calc((var(--feo-row-line) - 14px) / 2);
+  margin-top: -4px;
+  margin-bottom: -4px;
   /* Чисто визуальный индикатор — клик обрабатывается на обёртке .feo-tree-row (div
-     role="radio"), не на самом input (иначе браузер генерит второй синтетический клик
-     на вложенном input по клику на обёртке — двойное срабатывание onItemRadioClick,
+     role="switch"), не на самом переключателе (иначе браузер генерит второй
+     синтетический клик по клику на обёртке — двойное срабатывание onItemRadioClick,
      см. комментарий в <script setup>). */
   pointer-events: none;
+}
+.feo-planned-switch :deep(.v-selection-control) {
+  min-height: unset;
 }
 .feo-planned-select .feo-tree-row--clickable {
   cursor: pointer;

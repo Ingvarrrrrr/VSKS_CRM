@@ -31,6 +31,14 @@ export interface FeoNode {
   planned_quantity?: number | null
   /** Плановая стоимость за единицу (CRM-план), независимо от budget; null — не задано. */
   planned_amount?: number | null
+  /** Структурный признак «есть финансирование» — НЕ гейтится правом feo_budget.view_leaf,
+   *  в отличие от budget (который приходит null без права). Используй его, а не числовой
+   *  budget, для решений «показать/скрыть узел». */
+  has_budget?: boolean
+  /** Структурный признак «есть план» (planned_quantity × planned_amount > 0) — НЕ
+   *  гейтится правом. Используй его, а не planned_quantity/planned_amount, для решений
+   *  «показать/скрыть узел». */
+  has_plan?: boolean
 }
 
 /**
@@ -42,6 +50,12 @@ export interface FeoNode {
  * существуют и используются (баг «категория ФЭО была удалена из справочника,
  * структуру пересоздавали» при клике на плановую позицию — сессия 2026-08-05).
  * Пересчитываем is_leaf по оставшимся узлам.
+ *
+ * Решаем по булевым признакам has_budget/has_plan (не гейтятся правом
+ * feo_budget.view_leaf — приходят всегда, даже когда числовые budget/planned_amount
+ * скрыты за правом и равны null). Фолбэк на прежнюю числовую логику — на случай
+ * если бэкенд ещё не отдаёт эти поля (сессия 2026-08-06, ревью гейта: без фолбэка
+ * снятие права у роли делало дерево выбора категорий ФЭО полностью пустым).
  */
 export function filterFundedNodes(nodes: FeoNode[]): FeoNode[] {
   if (!nodes.length) return nodes
@@ -55,7 +69,9 @@ export function filterFundedNodes(nodes: FeoNode[]): FeoNode[] {
   function isFunded(n: FeoNode): boolean {
     const cached = fundedMemo.get(n.id)
     if (cached !== undefined) return cached
-    let ok = n.budget != null || (Number(n.planned_quantity || 0) * Number(n.planned_amount || 0) > 0)
+    const funded = n.has_budget ?? (n.budget != null)
+    const planned = n.has_plan ?? (Number(n.planned_quantity || 0) * Number(n.planned_amount || 0) > 0)
+    let ok = funded || planned
     if (!ok) ok = (childrenByParent.get(n.id) || []).some(isFunded)
     fundedMemo.set(n.id, ok)
     return ok

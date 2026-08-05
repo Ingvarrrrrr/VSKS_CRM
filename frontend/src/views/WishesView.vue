@@ -1051,6 +1051,55 @@
                       <v-btn value="per_item" size="small" prepend-icon="mdi-calendar-multiple">На каждую позицию</v-btn>
                     </v-btn-toggle>
                   </v-col>
+                </v-row>
+              </v-card-text>
+            </v-card>
+
+            <!-- Section 2: Позиции (перенесено выше «Категории ФЭО» по просьбе владельца: при заполнении заявки
+                 разумнее сначала завести позиции закупки, а уже потом — предмет ФЭО, мероприятие и получателя) -->
+            <v-card variant="outlined" class="mb-4">
+              <v-card-title class="text-subtitle-1 pa-4 pb-2">
+                <v-icon class="mr-2">mdi-format-list-numbered</v-icon>Позиции
+              </v-card-title>
+              <v-card-text class="pa-4 pt-2">
+                <PurchaseItemsEditor
+                  v-model="wishForm.items"
+                  item-shape="purchase"
+                  :purchase-id="null"
+                  :default-unit="'шт.'"
+                  :default-country="'РФ'"
+                  :allowed-item-types="['товар','услуга','работа']"
+                  :supports-excel-import="true"
+                  :supports-smart-import="true"
+                  :supports-full-product-dialog="true"
+                  :supports-photo-upload="true"
+                  :readonly="!isWishEditable"
+                  :feo-per-item="wishFeoPerItem"
+                  :subsidy-id="wishForm.subsidy_id"
+                  :subsidy-name="selectedSubsidyName"
+                  :default-feo-category-id="wishFeoSelected"
+                  :default-feo-planned-item-id="!wishFeoPerItem ? wishFeoPlannedItemId : null"
+                  :feo-planned-per-item="wishFeoPerItem"
+                  :planned-items="wishPlannedResiduals"
+                  :show-needed-date="wishDateMode === 'per_item'"
+                  :vat-mode="wishForm.vat_mode"
+                  @update:vat-mode="(v: string) => { wishForm.vat_mode = v }"
+                  @planned-item-created="onWishPlannedItemCreated"
+                />
+                <div class="d-flex justify-end mt-3">
+                  <div class="text-subtitle-1 font-weight-bold">Сумма заявки: {{ formatMoney(totalNmck) }}</div>
+                </div>
+              </v-card-text>
+            </v-card>
+
+            <!-- Section: Категория ФЭО (сознательно ниже «Позиций»: субсидия выбрана в «Основной информации» выше,
+                 а дерево ФЭО, плановые позиции и переключатели тут завязаны уже на введённые позиции закупки) -->
+            <v-card variant="outlined" class="mb-4">
+              <v-card-title class="text-subtitle-1 pa-4 pb-2">
+                <v-icon class="mr-2">mdi-sitemap</v-icon>Категория ФЭО
+              </v-card-title>
+              <v-card-text class="pa-4 pt-2">
+                <v-row dense>
                   <v-col v-if="wishForm.subsidy_id" cols="12">
                     <v-alert v-if="wishFeoStale" type="warning" density="compact" variant="tonal" class="mb-2">
                       Категория ФЭО, выбранная в заявке, была удалена из справочника (структуру ФЭО субсидии
@@ -1061,6 +1110,8 @@
                       v-model="wishFeoSelected"
                       :nodes="wishFeoNodes"
                       :leaves="wishFeoLeaves"
+                      :plan-positions="wishPlannedResiduals"
+                      :node-amounts="wishNodeAmounts"
                       horizontal
                       :readonly="!isWishEditable && !canEditWishFeo"
                       :allow-unallocated="!!(wishForm.subsidy_id && (isWishEditable || canEditWishFeo))"
@@ -1079,6 +1130,7 @@
                       :loading="wishPlannedLoading"
                       :readonly="!isWishEditable && !canEditWishFeo"
                       :skip-last="wishFeoSkipLast"
+                      :prefill="wishFeoPlannedPrefill"
                       @planned-item-created="onWishPlannedItemCreated"
                     />
                     <div v-if="!isWishEditable && canEditWishFeo && !canAssigneeAct" class="mt-2">
@@ -1563,42 +1615,6 @@
               </v-card-text>
             </v-card>
 
-            <!-- Section 2: Позиции -->
-            <v-card variant="outlined" class="mb-4">
-              <v-card-title class="text-subtitle-1 pa-4 pb-2">
-                <v-icon class="mr-2">mdi-format-list-numbered</v-icon>Позиции
-              </v-card-title>
-              <v-card-text class="pa-4 pt-2">
-                <PurchaseItemsEditor
-                  v-model="wishForm.items"
-                  item-shape="purchase"
-                  :purchase-id="null"
-                  :default-unit="'шт.'"
-                  :default-country="'РФ'"
-                  :allowed-item-types="['товар','услуга','работа']"
-                  :supports-excel-import="true"
-                  :supports-smart-import="true"
-                  :supports-full-product-dialog="true"
-                  :supports-photo-upload="true"
-                  :readonly="!isWishEditable"
-                  :feo-per-item="wishFeoPerItem"
-                  :subsidy-id="wishForm.subsidy_id"
-                  :subsidy-name="selectedSubsidyName"
-                  :default-feo-category-id="wishFeoSelected"
-                  :default-feo-planned-item-id="!wishFeoPerItem ? wishFeoPlannedItemId : null"
-                  :feo-planned-per-item="wishFeoPerItem"
-                  :planned-items="wishPlannedResiduals"
-                  :show-needed-date="wishDateMode === 'per_item'"
-                  :vat-mode="wishForm.vat_mode"
-                  @update:vat-mode="(v: string) => { wishForm.vat_mode = v }"
-                  @planned-item-created="onWishPlannedItemCreated"
-                />
-                <div class="d-flex justify-end mt-3">
-                  <div class="text-subtitle-1 font-weight-bold">Сумма заявки: {{ formatMoney(totalNmck) }}</div>
-                </div>
-              </v-card-text>
-            </v-card>
-
             <!-- Section 3: Обоснование и сроки -->
             <v-card variant="outlined" class="mb-4">
               <v-card-title class="text-subtitle-1 pa-4 pb-2">
@@ -1832,6 +1848,7 @@ import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
 import { useFeoLeaves } from '@/composables/useFeoLeaves'
+import { useFeoNodeAmounts } from '@/composables/useFeoNodeAmounts'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
 import type { FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
 import WishDistributionKanban from '@/components/WishDistributionKanban.vue'
@@ -2250,8 +2267,16 @@ function dismissValidationArrows() {
 function showValidationArrows() {
   const formEl = wishFormRef.value?.$el as HTMLElement | undefined
   if (!formEl) return
-  const errors = Array.from(formEl.querySelectorAll('.v-input.v-input--error')) as HTMLElement[]
-  if (!errors.length) return
+  const allErrors = Array.from(formEl.querySelectorAll('.v-input.v-input--error')) as HTMLElement[]
+  if (!allErrors.length) return
+  // После перестановки блоков «Позиции» теперь выше по DOM, чем часть полей шапки
+  // (например «Обоснование»). Поля с [data-field] — это осознанно провалидированные
+  // поля шапки/футера формы (субсидия, обоснование и т.п.); ошибка внутри таблицы
+  // позиций (PurchaseItemsEditor) не помечена [data-field] и не должна перехватывать
+  // стрелку у более важного поля шапки. Сначала ищем среди [data-field], и только
+  // если там чисто — берём первую ошибку по обычному DOM-порядку.
+  const headerErrors = allErrors.filter(el => el.closest('[data-field]'))
+  const errors = headerErrors.length ? headerErrors : allErrors
   const btn = (wishSubmitBtnRef.value?.$el ?? wishSubmitBtnRef.value) as HTMLElement | null
   if (!btn) return
   errors[0].scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -2381,6 +2406,12 @@ const wishForm = ref({
 
 // ФЭО-дерево субсидии (узлы + листья с бюджетами) — объявлено ПОСЛЕ wishForm (TDZ)
 const { feoLeaves: wishFeoLeaves, feoNodes: wishFeoNodes } = useFeoLeaves({
+  subsidyId: computed(() => wishForm.value.subsidy_id),
+})
+
+// Задача владельца 2026-08-06: остаток по КАЖДОМУ узлу дерева ФЭО в шапке заявки
+// (per-item таблица позиций считает свою карту сама внутри PurchaseItemsEditor).
+const { nodeAmounts: wishNodeAmounts } = useFeoNodeAmounts({
   subsidyId: computed(() => wishForm.value.subsidy_id),
 })
 
@@ -2576,6 +2607,19 @@ watch(wishFeoSkipLast, (v) => {
 const totalNmck = computed(() =>
   wishForm.value.items.reduce((sum, i) => sum + (i.total_price || 0), 0)
 )
+
+// Предзаполнение диалога «Создать в плане закупок» шапки заявки (FeoPlannedItemsSelect
+// без per-item ФЭО) — берём первую позицию с непустым наименованием (имя/количество/
+// единица), сумму — totalNmck (весь план заявки), а не total_price одной позиции.
+const wishFeoPlannedPrefill = computed(() => {
+  const first = wishForm.value.items.find(i => (i.item_name || '').trim())
+  return {
+    name: first?.item_name ?? null,
+    quantity: first?.quantity ?? null,
+    unit: first?.unit ?? null,
+    amount: totalNmck.value,
+  }
+})
 
 function onSubsidyChange() {
   wishFeoSelected.value = null
@@ -3207,20 +3251,26 @@ async function saveWish(andSubmit = false) {
       feo_category_id: feo,
       feo_per_item: wishFeoPerItem.value,
       title,
-      items: wishForm.value.items.map(({ _selectedProduct, _photo_url, _description, _description_44fz, ...rest }) => ({
-        ...rest,
-        // B9: per-item ФЭО сохраняем только в режиме «Разные ФЭО позиции»
-        feo_category_id: wishFeoPerItem.value ? ((rest as any).feo_category_id ?? null) : null,
-        // F-PLAN: колонки wishes.feo_planned_item_id нет — выбор из шапки проставляется
-        // каждой позиции; в per-item режиме каждая строка несёт свой выбор.
-        feo_planned_item_id: wishFeoPerItem.value
-          ? ((rest as any).feo_planned_item_id ?? null)
-          : (wishFeoPlannedItemId.value ?? null),
-        // БАГ 3 (сессия 2026-08-05): UI больше не выставляет over_plan (псевдо-вариант
-        // «Вне плана» убран) — колонка в БД и расчёты на бэкенде не тронуты, просто
-        // отправляем то, что уже было на позиции (false для новых/непривязанных).
-        over_plan: !!((rest as any).over_plan),
-      })),
+      items: wishForm.value.items
+        // Пустые строки-заготовки (фронт создаёт их заранее для будущего ввода) не отправляем —
+        // иначе они оседают в БД как «1 шт · 0 ₽» и «удаление» позиции визуально не работает
+        // (см. баг: владелец удаляет вторую пустую позицию, обновляет страницу — она снова там).
+        // Строку оставляем, если заполнено хоть наименование, хоть сумма (частичный ввод).
+        .filter((it: any) => (it.item_name || '').toString().trim() || Number(it.total_price) || Number(it.quantity))
+        .map(({ _selectedProduct, _photo_url, _description, _description_44fz, ...rest }) => ({
+          ...rest,
+          // B9: per-item ФЭО сохраняем только в режиме «Разные ФЭО позиции»
+          feo_category_id: wishFeoPerItem.value ? ((rest as any).feo_category_id ?? null) : null,
+          // F-PLAN: колонки wishes.feo_planned_item_id нет — выбор из шапки проставляется
+          // каждой позиции; в per-item режиме каждая строка несёт свой выбор.
+          feo_planned_item_id: wishFeoPerItem.value
+            ? ((rest as any).feo_planned_item_id ?? null)
+            : (wishFeoPlannedItemId.value ?? null),
+          // БАГ 3 (сессия 2026-08-05): UI больше не выставляет over_plan (псевдо-вариант
+          // «Вне плана» убран) — колонка в БД и расчёты на бэкенде не тронуты, просто
+          // отправляем то, что уже было на позиции (false для новых/непривязанных).
+          over_plan: !!((rest as any).over_plan),
+        })),
     }
 
     if (editingWishId.value) {

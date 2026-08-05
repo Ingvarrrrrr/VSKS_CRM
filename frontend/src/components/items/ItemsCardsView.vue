@@ -103,6 +103,8 @@
                   :model-value="item.feo_node_id ?? item.feo_category_id"
                   :nodes="feoNodes"
                   :leaves="feoLeaves"
+                  :plan-positions="plannedItems || []"
+                  :node-amounts="nodeAmounts"
                   :readonly="readonly"
                   :error="isFeoMissing(item)"
                   class="mt-2"
@@ -124,6 +126,7 @@
                   :category-id="item.feo_node_id ?? item.feo_category_id ?? null"
                   :nodes="feoNodes" :items="plannedItems || []"
                   :amount="item.total_price" :readonly="readonly" dense class="mt-1"
+                  :prefill="{ name: item.item_name, quantity: item.quantity, unit: item.unit, amount: item.total_price }"
                   @update:model-value="(v) => emit('item-planned-change', idx, v)"
                   @planned-item-created="emit('planned-item-created')" />
               </template>
@@ -275,6 +278,9 @@ const props = defineProps<{
   totalNmck: number
   feoLeaves: any[]
   feoNodes: FeoNode[]
+  // Задача владельца 2026-08-06: остаток по каждому узлу дерева ФЭО — считается один
+  // раз в родителе (см. composables/useFeoNodeAmounts), прокидывается в FeoTreeSelect.
+  nodeAmounts?: Record<number, { budget: number; free: number }> | null
   subsidyId?: number | null
   subsidyName?: string | null
   unitOptions: string[]

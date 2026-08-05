@@ -47,6 +47,18 @@ export interface FeoPlanPosition {
   residual_quantity: number
   /** `${kind}:${id}` — безопасный составной ключ для выбора/сравнения строк. */
   key: string
+  /** Формула v2 («заказ замещает план, пока не набрано количество», см.
+   *  app.services.feo_plan.compute_feo_plan_tree). Присутствуют ТОЛЬКО на строках
+   *  kind='plan_position'|'feo_article' (не на 'planned_item'). plan_manual — «сколько
+   *  сами запланировали»; ordered_residual — остаток по формуле v2 (план − ordered_sum),
+   *  НЕ путать с полем residual выше (старая семантика, используется для UI-предупреждения
+   *  о повторном выборе занятого плана). */
+  ordered_qty?: number
+  ordered_sum?: number
+  plan_manual?: number
+  ordered_residual?: number
+  forecast?: number
+  forecast_over?: number
 }
 
 /** @deprecated старое имя интерфейса (было завязано на /feo-planned-items/residuals) —

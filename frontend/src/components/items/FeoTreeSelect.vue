@@ -184,8 +184,19 @@
                   <template v-else>{{ item.name }}</template>
                 </span>
                 <span v-if="item.node!.description" class="feo-tree-desc">— {{ item.node!.description }}</span>
-                <span v-if="item.node!.is_leaf && leafById.get(item.node!.id)" class="feo-tree-residual">
-                  Ост.: {{ fmt(leafById.get(item.node!.id)!.residual) }}
+                <!-- Задача владельца 2026-08-06: остаток по КАЖДОМУ узлу (не только листу) —
+                     nodeAmountDisplayFor учитывает право feo_budget.view_tree_amounts и то,
+                     задан ли budget у узла; при отсутствии (nodeAmounts==null — обратная
+                     совместимость, либо узел не профинансирован) — старая leaf-only подпись. -->
+                <span
+                  v-if="nodeAmountDisplayFor(item.node!.id)"
+                  class="feo-tree-residual"
+                  :class="{ 'feo-tree-residual--negative': nodeAmountDisplayFor(item.node!.id)!.free < 0 }"
+                >
+                  по ФЭО: {{ fmt(nodeAmountDisplayFor(item.node!.id)!.budget) }} · своб.: {{ fmt(nodeAmountDisplayFor(item.node!.id)!.free) }}
+                </span>
+                <span v-else-if="item.node!.is_leaf && planNoteFor(item.node!.id)" class="feo-tree-residual">
+                  Ост.: {{ fmt(planNoteFor(item.node!.id)!.residual) }}
                 </span>
               </template>
             </div>
@@ -207,6 +218,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import type { FeoNode, FeoLeaf } from '@/composables/useFeoLeaves'
+import type { FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
+import { useAuthStore } from '@/stores/auth'
 
 const props = defineProps<{
   modelValue: number | null
@@ -219,6 +232,24 @@ const props = defineProps<{
   label?: string
   required?: boolean
   rootLabel?: string | null
+  /** Плановые позиции (GET /feo-categories/plan-positions) — опциональный источник
+   *  «правильного» плана для подписи под полем. leaves (проп выше) берёт план
+   *  ИСКЛЮЧИТЕЛЬНО из FeoCategory.budget/feo_amount; у плановых позиций (например,
+   *  тех, у кого финансирование задано через planned_quantity × planned_amount, а не
+   *  напрямую в категории) budget пуст и подпись показывала «План: 0 ₽», хотя план
+   *  реально есть (см. FeoPlanPosition.plan_manual/ordered_residual). Без пропа —
+   *  прежнее поведение (обратная совместимость, компонент используется в нескольких
+   *  местах и не везде под рукой есть загруженный список плановых позиций). */
+  planPositions?: FeoPlanPosition[]
+  /** Задача владельца 2026-08-06: «остаток средств напротив каждой категории ФЭО».
+   *  Карта {feo_category_id: {budget, free}} — budget = финансирование по ФЭО узла,
+   *  free = budget − плановая сумма (та же формула, что «можно добавить/надо убрать»
+   *  в дереве субсидий и KPI «Свободно», числа сойдутся). Считается ОДИН раз в родителе
+   *  (см. composables/useFeoNodeAmounts) из GET /feo-categories/plan-tree и передаётся
+   *  готовым объектом — компонент рендерится в каждой строке таблицы позиций (до ~50
+   *  инстансов), пересчитывать роллап тут нельзя (перф). null/undefined — прежнее
+   *  поведение (компонент используется в нескольких местах без этого пропа). */
+  nodeAmounts?: Record<number, { budget: number; free: number }> | null
 }>()
 
 const emit = defineEmits<{
@@ -276,6 +307,20 @@ const leafById = computed((): Map<number, FeoLeaf> => {
   return map
 })
 
+// Индекс плановых позиций по category_id — только 'plan_position'/'feo_article'
+// (у них category_id это id самой конечной категории ФЭО; 'planned_item' — это
+// детализация ВНУТРИ категории, её план не подменяет план самой категории).
+// Используется как фолбэк для подписи «План/Ост.», когда leafById не даёт budget
+// (см. planPositions в defineProps).
+const planByCategory = computed((): Map<number, FeoPlanPosition> => {
+  const map = new Map<number, FeoPlanPosition>()
+  for (const p of props.planPositions ?? []) {
+    if (p.kind === 'planned_item') continue
+    map.set(p.category_id, p)
+  }
+  return map
+})
+
 // Имена с обрезанными пробелами — считаем один раз здесь, а не в каждом месте
 // использования (путь, отображение в дереве, поиск, подсветка совпадений).
 // В реальных данных встречаются узлы с ведущими/хвостовыми пробелами в name,
@@ -324,10 +369,43 @@ const isLeafSelected = computed((): boolean => {
   return nodeById.value.get(props.modelValue)?.is_leaf ?? false
 })
 
-// Поле остатка на листе — то же, что берёт FeoCascadeSelect (budget/residual из FeoLeaf).
-const selectedLeafForNote = computed((): FeoLeaf | null => {
+// Подпись «План/Ост.» для узла: сперва пробуем leaves (budget/residual из FeoLeaf —
+// считается ИСКЛЮЧИТЕЛЬНО от FeoCategory.budget/feo_amount), и если там пусто —
+// фолбэк на плановую позицию из planPositions (план из planned_quantity ×
+// planned_amount, см. planByCategory выше). Без planPositions — прежнее поведение.
+function planNoteFor(nodeId: number): { budget: number | null; residual: number | null } | null {
+  const leaf = leafById.value.get(nodeId)
+  if (leaf && leaf.budget) {
+    return { budget: leaf.budget, residual: leaf.residual }
+  }
+  const plan = planByCategory.value.get(nodeId)
+  if (plan) {
+    return {
+      budget: plan.plan_manual ?? plan.planned_amount,
+      residual: plan.ordered_residual ?? plan.residual,
+    }
+  }
+  if (leaf) return { budget: leaf.budget, residual: leaf.residual }
+  return null
+}
+
+// ─── Остаток по КАЖДОМУ узлу (задача владельца 2026-08-06) ──────────────────
+// Гейт на праве проверяется здесь ЖЕ (belt-and-braces поверх бэкенда, который
+// и так возвращает budget/free=null без права feo_budget.view_tree_amounts) —
+// эффективные actions уже загружены authStore при старте сессии.
+const authStore = useAuthStore()
+const showNodeAmounts = computed(() => authStore.hasAction('feo_budget.view_tree_amounts'))
+
+function nodeAmountDisplayFor(nodeId: number): { budget: number; free: number } | null {
+  if (!showNodeAmounts.value || !props.nodeAmounts) return null
+  return props.nodeAmounts[nodeId] ?? null
+}
+
+// Поле остатка на листе — то же, что берёт FeoCascadeSelect (budget/residual из FeoLeaf),
+// с фолбэком на планPositions (см. planNoteFor).
+const selectedLeafForNote = computed((): { budget: number | null; residual: number | null } | null => {
   if (!isLeafSelected.value || props.modelValue == null) return null
-  return leafById.value.get(props.modelValue) ?? null
+  return planNoteFor(props.modelValue)
 })
 
 function fmt(v: number | null | undefined): string {
@@ -718,6 +796,10 @@ watch(menuOpen, (open) => {
   font-size: 11px;
   color: var(--crm-text-muted);
   white-space: nowrap;
+}
+.feo-tree-residual--negative {
+  color: #DC2626;
+  font-weight: 600;
 }
 
 /* Компактный режим для строк таблицы */

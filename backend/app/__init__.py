@@ -870,6 +870,43 @@ async def lifespan(app_: FastAPI):
         import logging
         logging.getLogger(__name__).warning(f"feo_budget visibility action seed skipped (non-fatal): {e}")
 
+    # Задача владельца (2026-08-06): «остаток средств напротив каждой категории ФЭО
+    # при выборе». Отдельный action-ключ (НЕ admin.* — иначе жёстко срезается у
+    # employee даже персональным грантом, см. app.auth.permissions._get_effective_simple)
+    # гейтит суммы (budget/free) на КАЖДОМ узле дерева выбора категории ФЭО
+    # (GET /feo-categories/plan-tree, см. роутер feo_categories.get_feo_plan_tree).
+    # Отличается от feo_budget.view_leaf/view_all_levels выше (те гейтят /leaves и
+    # /budget-residuals — старые экраны); этот — новый проп nodeAmounts у
+    # FeoTreeSelect.vue. Дефолт: все роли кроме employee.
+    try:
+        from sqlalchemy import select as _sel
+        from .models.permission import PermissionAction, RolePermission
+        async with async_session() as db:
+            ACTION_KEY = 'feo_budget.view_tree_amounts'
+            ex = await db.execute(_sel(PermissionAction).where(PermissionAction.action_key == ACTION_KEY))
+            if not ex.scalar_one_or_none():
+                db.add(PermissionAction(
+                    action_key=ACTION_KEY,
+                    description='Видеть суммы по ФЭО (финансирование и свободный остаток) в дереве выбора категорий',
+                ))
+                await db.commit()
+            ROLE_DEFAULTS = [
+                ('superadmin', True), ('account_owner', True),
+                ('admin', True), ('org_admin', True),
+                ('manager', True), ('employee', False),
+            ]
+            for role_name, granted in ROLE_DEFAULTS:
+                ex = await db.execute(_sel(RolePermission).where(
+                    RolePermission.role_name == role_name,
+                    RolePermission.key == ACTION_KEY,
+                ))
+                if not ex.scalar_one_or_none():
+                    db.add(RolePermission(role_name=role_name, key=ACTION_KEY, granted=granted))
+            await db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"feo_budget.view_tree_amounts seed skipped (non-fatal): {e}")
+
     # Phase 18: idempotent seed для tab 'staff_directory' (all 5 roles)
     try:
         from sqlalchemy import select as _sel

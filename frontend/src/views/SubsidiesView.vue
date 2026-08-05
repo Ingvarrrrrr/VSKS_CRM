@@ -4226,9 +4226,14 @@ const plannedPurchaseForecast = ref<Record<number, { forecast: number; forecast_
 // над финансированием ФЭО узла (задача владельца 2026-08-05, «блокировать пока
 // не согласовано» — см. backend app.services.feo_plan.compute_feo_plan_tree /
 // app.routers.plan_excess). excessFor(node) ниже читает их из этой же карты.
+// plan_manual/ordered_sum/residual/consumed — те же поля, что в GET /feo-categories/plan-tree
+// (см. compute_feo_plan_tree), нужны feoResidualNoteFor ниже, чтобы заметка под «Плановой
+// суммой» брала план из ТОГО ЖЕ источника, что и сама колонка (баг «заметка показывает
+// не тот план», сессия 2026-08-05) — не из feoResiduals (Ур.5-детализация, другая сущность).
 const planTreeByCat = ref<Record<number, {
   display: number; display_quantity: number
   excess_amount?: number; excess_pending?: boolean; excess_approved?: boolean
+  plan_manual?: number; ordered_sum?: number; residual?: number; consumed?: number
 }>>({})
 // Детали запросов согласования превышения плана ФЭО — GET /api/plan-excess?subsidy_id=
 // (backend/app/routers/plan_excess.py). Карта feo_category_id → ПОСЛЕДНИЙ (по created_at,
@@ -4271,6 +4276,7 @@ function splitPlanTree(raw: Record<string, any>) {
   return rest as Record<number, {
     display: number; display_quantity: number
     excess_amount?: number; excess_pending?: boolean; excess_approved?: boolean
+    plan_manual?: number; ordered_sum?: number; residual?: number; consumed?: number
   }>
 }
 function goToUnassignedFeoPurchases() {
@@ -4314,9 +4320,25 @@ const feoResidualsByCat = computed<Record<number, { planned: number; consumed: n
   }
   return result
 })
+// БАГ 4 (сессия 2026-08-05): раньше значения брались из feoResidualsByCat — суммы
+// ТОЛЬКО по Ур.5-записям (FeoPlannedItem) этой категории. У категории могли одновременно
+// быть: (а) собственный план на уровне листа (planned_quantity × planned_amount, напр.
+// 8 000 000 ₽) и (б) одна мелкая Ур.5-детализация (напр. «вавава» на 333 ₽) — заметка
+// показывала «план 333 ₽», хотя колонка «Плановая сумма» рядом честно показывала
+// 8 000 000 ₽ (из planTreeByCat/display). Теперь ЗНАЧЕНИЯ берутся из planTreeByCat —
+// того же источника, что и колонка (plan_manual/ordered_sum/residual); feoResidualsByCat
+// используется ТОЛЬКО как признак «у категории есть Ур.5-детализация», не как источник
+// чисел — иначе эта заметка задваивала бы feoPlanConsumedNoteFor (см. v-else-if в шаблоне).
 function feoResidualNoteFor(node: FeoNode): { planned: number; consumed: number; residual: number } | null {
   if (node.hasChildren) return null
-  return feoResidualsByCat.value[node.id] || null
+  if (!feoResidualsByCat.value[node.id]) return null
+  const t = planTreeByCat.value[node.id]
+  if (!t) return null
+  const planned = Number(t.plan_manual ?? 0)
+  const consumed = Number(t.ordered_sum ?? t.consumed ?? 0)
+  const residual = Number(t.residual ?? (planned - consumed))
+  if (planned <= 0 && consumed <= 0) return null
+  return { planned, consumed, residual }
 }
 
 // 12-04: Version history state

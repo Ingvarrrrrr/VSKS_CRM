@@ -121,7 +121,8 @@
                 :nodes="feoNodes" :items="plannedItems || []"
                 :amount="item.total_price" :readonly="readonly" dense class="mt-1"
                 @update:model-value="(v) => emit('item-planned-change', idx, v)"
-                @update:out-of-plan="(v) => emit('item-out-of-plan-change', idx, v)" />
+                @update:out-of-plan="(v) => emit('item-out-of-plan-change', idx, v)"
+                @planned-item-created="emit('planned-item-created')" />
             </template>
           </td>
           <td>
@@ -315,6 +316,7 @@ const emit = defineEmits<{
   'item-pick-unallocated': [idx: number, parentId: number | null]
   'item-type-change': [idx: number, val: string]
   'items-changed': []
+  'planned-item-created': []
 }>()
 </script>
 

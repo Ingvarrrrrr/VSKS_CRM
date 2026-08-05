@@ -53,13 +53,14 @@
               <div v-if="filteredItems.length === 0" class="feo-tree-row feo-tree-row--pseudo">
                 <span class="feo-tree-rail" /><span class="feo-tree-elbow feo-tree-elbow--open" />
                 <span class="feo-tree-name">В этой категории нет плановых позиций</span>
-                <v-btn size="x-small" variant="text" color="primary" @click.stop="goCreateInPlan">Создать в план-графике</v-btn>
+                <v-btn size="x-small" variant="text" color="primary" :disabled="readonly" @click.stop="openCreateDialog">Создать в план-графике</v-btn>
               </div>
               <label
                 v-for="row in filteredItems"
                 :key="row.key"
                 class="feo-tree-row"
                 :class="{ 'feo-tree-row--selected': selectedKey === row.key }"
+                :title="selectedKey === row.key ? 'Нажмите ещё раз, чтобы снять выбор' : undefined"
               >
                 <span class="feo-tree-rail" />
                 <span class="feo-tree-elbow feo-tree-elbow--open" />
@@ -69,6 +70,7 @@
                   :name="radioName"
                   :checked="selectedKey === row.key"
                   :disabled="readonly"
+                  @click="onItemRadioClick(row, $event)"
                   @change="selectItem(row)"
                 />
                 <span class="feo-tree-name">
@@ -91,7 +93,11 @@
                   <span v-if="isShort(row)" class="feo-planned-shortfall-note"> — не хватает {{ fmt(Math.abs(shortfall(row))) }}</span>
                 </span>
               </label>
-              <label class="feo-tree-row feo-tree-row--pseudo" :class="{ 'feo-tree-row--selected': outOfPlan }">
+              <label
+                class="feo-tree-row feo-tree-row--pseudo"
+                :class="{ 'feo-tree-row--selected': outOfPlan }"
+                :title="outOfPlan ? 'Нажмите ещё раз, чтобы снять выбор' : undefined"
+              >
                 <span class="feo-tree-rail" />
                 <span class="feo-tree-elbow" />
                 <input
@@ -100,6 +106,7 @@
                   :name="radioName"
                   :checked="!!outOfPlan"
                   :disabled="readonly"
+                  @click="onOutOfPlanRadioClick"
                   @change="selectOutOfPlan"
                 />
                 <span class="feo-tree-name feo-tree-name--pseudo">Вне плана (новая позиция)</span>
@@ -121,7 +128,7 @@
           <div v-if="filteredItems.length === 0" class="feo-tree-row feo-tree-row--pseudo">
             <span class="feo-tree-rail" /><span class="feo-tree-elbow feo-tree-elbow--open" />
             <span class="feo-tree-name">В этой категории нет плановых позиций</span>
-            <v-btn size="x-small" variant="text" color="primary" @click="goCreateInPlan">Создать в план-графике</v-btn>
+            <v-btn size="x-small" variant="text" color="primary" :disabled="readonly" @click="openCreateDialog">Создать в план-графике</v-btn>
           </div>
 
           <label
@@ -129,6 +136,7 @@
             :key="row.key"
             class="feo-tree-row"
             :class="{ 'feo-tree-row--selected': selectedKey === row.key }"
+            :title="selectedKey === row.key ? 'Нажмите ещё раз, чтобы снять выбор' : undefined"
           >
             <span class="feo-tree-rail" />
             <span class="feo-tree-elbow feo-tree-elbow--open" />
@@ -138,6 +146,7 @@
               :name="radioName"
               :checked="selectedKey === row.key"
               :disabled="readonly"
+              @click="onItemRadioClick(row, $event)"
               @change="selectItem(row)"
             />
             <span class="feo-tree-name">
@@ -162,7 +171,11 @@
           </label>
 
           <!-- Псевдо-строка «Вне плана» — всегда последняя -->
-          <label class="feo-tree-row feo-tree-row--pseudo" :class="{ 'feo-tree-row--selected': outOfPlan }">
+          <label
+            class="feo-tree-row feo-tree-row--pseudo"
+            :class="{ 'feo-tree-row--selected': outOfPlan }"
+            :title="outOfPlan ? 'Нажмите ещё раз, чтобы снять выбор' : undefined"
+          >
             <span class="feo-tree-rail" />
             <span class="feo-tree-elbow" />
             <input
@@ -171,6 +184,7 @@
               :name="radioName"
               :checked="!!outOfPlan"
               :disabled="readonly"
+              @click="onOutOfPlanRadioClick"
               @change="selectOutOfPlan"
             />
             <span class="feo-tree-name feo-tree-name--pseudo">Вне плана (новая позиция)</span>
@@ -179,15 +193,79 @@
           <v-alert v-if="outOfPlan" type="warning" density="compact" variant="tonal" class="mt-1">
             Позиция вне плана увеличит плановую сумму ФЭО «{{ categoryName }}» на {{ fmt(amount) }}.
           </v-alert>
+
+          <div class="mt-1">
+            <v-btn size="x-small" variant="text" color="primary" prepend-icon="mdi-plus" :disabled="readonly" @click="openCreateDialog">
+              Создать в план-графике
+            </v-btn>
+          </div>
         </template>
       </template>
     </template>
+
+    <!-- Диалог создания плановой позиции (Ур.5 FeoPlannedItem) прямо в текущей категории —
+         POST /feo-planned-items/, без перехода на другую страницу и потери введённых данных
+         формы (см. баг «кнопка ничего не делает», сессия 2026-08-05). -->
+    <v-dialog v-model="createDialog" max-width="420" persistent>
+      <v-card>
+        <v-card-title class="text-subtitle-1">Новая плановая позиция</v-card-title>
+        <v-card-text>
+          <div class="text-caption text-medium-emphasis mb-2">Категория: {{ categoryName }}</div>
+          <v-text-field
+            v-model="createForm.name"
+            label="Наименование *"
+            variant="outlined"
+            density="compact"
+            hide-details="auto"
+            class="mb-2"
+            autofocus
+          />
+          <v-text-field
+            v-model.number="createForm.quantity"
+            type="number"
+            label="Количество"
+            variant="outlined"
+            density="compact"
+            hide-details="auto"
+            class="mb-2"
+          />
+          <v-text-field
+            v-model="createForm.unit"
+            label="Ед. изм."
+            variant="outlined"
+            density="compact"
+            hide-details="auto"
+            class="mb-2"
+          />
+          <v-text-field
+            v-model.number="createForm.amount"
+            type="number"
+            label="Сумма плана, ₽"
+            variant="outlined"
+            density="compact"
+            hide-details="auto"
+          />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" :disabled="createSaving" @click="createDialog = false">Отмена</v-btn>
+          <v-btn color="primary" variant="flat" :loading="createSaving" @click="saveCreateDialog">Создать</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="snack.color === 'error' ? -1 : 3000" location="bottom right">
+      {{ snack.text }}
+      <template #actions>
+        <v-btn variant="text" @click="snack.show = false">Закрыть</v-btn>
+      </template>
+    </v-snackbar>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, reactive, ref } from 'vue'
+import { apiFetch } from '@/api'
 import type { FeoNode } from '@/composables/useFeoLeaves'
 import type { FeoPlanPosition, FeoPlanSelection, FeoPlanKind } from '@/composables/useFeoPlannedResiduals'
 
@@ -211,9 +289,10 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [val: FeoPlanSelection | null]
   'update:outOfPlan': [val: boolean]
+  /** Плановая позиция создана диалогом «Создать в план-графике» (POST /feo-planned-items/) —
+   *  родитель должен перезагрузить список плановых позиций (напр. useFeoPlannedResiduals.reloadPlanned). */
+  'planned-item-created': []
 }>()
-
-const router = useRouter()
 
 // Уникальное имя radio-группы на инстанс — несколько компонентов на странице
 // не должны конфликтовать нативной радио-группировкой по имени.
@@ -231,49 +310,18 @@ const selectedKey = computed((): string | null =>
   props.modelValue ? `${props.modelValue.kind}:${props.modelValue.id}` : null
 )
 
-// Рекурсивно собирает id всех потомков узла (по parent_id в nodes) — глубина дерева
-// ФЭО может доходить до 6-7 уровней, поэтому обход через стек, а не фиксированную
-// вложенность вызовов.
-function collectDescendantIds(rootId: number, nodes: FeoNode[]): Set<number> {
-  const childrenByParent = new Map<number, number[]>()
-  for (const n of nodes) {
-    if (n.parent_id != null) {
-      const arr = childrenByParent.get(n.parent_id) || []
-      arr.push(n.id)
-      childrenByParent.set(n.parent_id, arr)
-    }
-  }
-  const result = new Set<number>()
-  const stack = [rootId]
-  while (stack.length) {
-    const id = stack.pop() as number
-    for (const childId of childrenByParent.get(id) || []) {
-      if (!result.has(childId)) {
-        result.add(childId)
-        stack.push(childId)
-      }
-    }
-  }
-  return result
-}
-
-// Родитель может передавать полный список плановых позиций субсидии (все категории) —
-// компонент отфильтровывает по своей categoryId + релевантности: (а) сама категория,
-// если она конечная и попала в список плановых позиций, и (б) её ДОЧЕРНИЕ конечные
-// элементы — пользователь мог выбрать в дереве промежуточный узел («Внедорожник
-// повышенной проходимости»), а привязать позицию нужно к дочернему листу
-// («Great Wall POER 2026»).
-const relevantCategoryIds = computed((): Set<number> => {
-  if (props.categoryId == null) return new Set()
-  const ids = collectDescendantIds(props.categoryId, props.nodes)
-  ids.add(props.categoryId)
-  return ids
-})
-
+// БАГ 1 (сессия 2026-08-05): раньше фильтрация шла обходом props.nodes
+// (collectDescendantIds), а nodes приходит из useFeoLeaves → filterFundedNodes,
+// который ВЫРЕЗАЕТ конечные категории без собственного budget — даже если у них
+// заполнены planned_quantity/planned_amount (плановая позиция). Из-за этого
+// «В этой категории нет плановых позиций» показывалось для категорий, у которых
+// план ЕСТЬ, просто их лист не прошёл фильтр finansирования. Бэкенд
+// GET /feo-categories/plan-positions теперь отдаёт на каждой строке ancestor_ids
+// (id всех предков ДО корня) — матчим напрямую по нему, без обхода дерева.
 const filteredItems = computed((): FeoPlanPosition[] => {
   if (props.categoryId == null) return []
-  const ids = relevantCategoryIds.value
-  return props.items.filter(r => ids.has(r.category_id))
+  const cid = props.categoryId
+  return props.items.filter(r => r.category_id === cid || (r.ancestor_ids || []).includes(cid))
 })
 
 // modelValue ссылается на строку, которой больше нет среди актуальных (отфильтрованных
@@ -335,13 +383,88 @@ function selectOutOfPlan() {
   emit('update:outOfPlan', true)
 }
 
+// БАГ 2 (сессия 2026-08-05): нативный <input type="radio"> физически не умеет сниматься
+// повторным кликом (браузер не выдаёт 'change' на клике по уже отмеченной радиокнопке,
+// state не меняется). Обработчик вешаем на 'click' (он срабатывает ВСЕГДА, вне
+// зависимости от смены состояния), сравниваем с selectedKey/outOfPlan — источником
+// правды здесь служит Vue-состояние (props), а не DOM-атрибут checked, поэтому проверка
+// корректна независимо от того, что браузер успел сделать с checked до этого клика.
+// preventDefault останавливает нативную активацию — дальше Vue сам перерисует :checked
+// по новому modelValue/outOfPlan.
+function onItemRadioClick(row: FeoPlanPosition, event: MouseEvent) {
+  if (props.readonly) return
+  if (selectedKey.value === row.key) {
+    event.preventDefault()
+    emit('update:modelValue', null)
+  }
+}
+
+function onOutOfPlanRadioClick(event: MouseEvent) {
+  if (props.readonly) return
+  if (props.outOfPlan) {
+    event.preventDefault()
+    emit('update:outOfPlan', false)
+  }
+}
+
 function detachGhost() {
   if (props.readonly) return
   emit('update:modelValue', null)
 }
 
-function goCreateInPlan() {
-  router.push('/subsidies')
+// БАГ 3 (сессия 2026-08-05): раньше кнопка «Создать в план-графике» делала
+// router.push('/subsidies') — уводила пользователя со страницы, теряя введённые данные
+// формы, и ничего не создавала. Теперь — диалог тут же, POST /feo-planned-items/
+// (контракт см. backend/app/routers/feo_planned_items.py), затем родитель
+// перезагружает список ('planned-item-created') и созданная позиция выбирается сразу.
+const createDialog = ref(false)
+const createForm = reactive<{ name: string; quantity: number | null; unit: string; amount: number | null }>({
+  name: '', quantity: null, unit: '', amount: null,
+})
+const createSaving = ref(false)
+const snack = ref<{ show: boolean; text: string; color: 'success' | 'error' }>({ show: false, text: '', color: 'success' })
+
+function showSnack(text: string, color: 'success' | 'error' = 'success') {
+  snack.value = { show: true, text, color }
+}
+
+function openCreateDialog() {
+  if (props.readonly || props.categoryId == null) return
+  createForm.name = ''
+  createForm.quantity = null
+  createForm.unit = ''
+  createForm.amount = null
+  createDialog.value = true
+}
+
+async function saveCreateDialog() {
+  if (props.categoryId == null) return
+  if (!createForm.name.trim()) {
+    showSnack('Укажите наименование', 'error')
+    return
+  }
+  createSaving.value = true
+  try {
+    const created = await apiFetch<{ id: number }>('/feo-planned-items/', {
+      method: 'POST',
+      body: JSON.stringify({
+        feo_category_id: props.categoryId,
+        name: createForm.name.trim(),
+        quantity: createForm.quantity,
+        unit: createForm.unit.trim() || null,
+        amount: createForm.amount,
+      }),
+    })
+    createDialog.value = false
+    emit('planned-item-created')
+    emit('update:modelValue', { kind: 'planned_item', id: created.id })
+    if (props.outOfPlan) emit('update:outOfPlan', false)
+    showSnack('Плановая позиция создана')
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Не удалось создать плановую позицию', 'error')
+  } finally {
+    createSaving.value = false
+  }
 }
 </script>
 

@@ -425,11 +425,19 @@ async def get_plan_positions(
       'feo_article'    — budget и/или feo_amount заполнены (план = статья ФЭО)
       'planned_item'   — FeoPlannedItem внутри элемента
 
-    Response: [{id, name, path, category_id, kind, planned_quantity, unit,
+    Response: [{id, name, path, category_id, ancestor_ids, kind, planned_quantity, unit,
                 planned_amount, unit_price, consumed, consumed_quantity,
                 residual, residual_quantity}]
     planned_amount — ИТОГОВАЯ сумма плана (quantity × unit_price); unit_price —
     цена за единицу (= FeoCategory.planned_amount / FeoPlannedItem.amount per unit).
+    ancestor_ids — id всех предков category_id (от корня до непосредственного родителя),
+    см. app.services.feo_plan.build_ancestor_ids. Фронт (FeoPlannedItemsSelect.vue)
+    матчит категорию, выбранную в дереве заявки/закупки, по `category_id === selected
+    || ancestor_ids.includes(selected)` — НАПРЯМУЮ по этому полю, а не обходом
+    props.nodes/useFeoLeaves (тот массив обрезан filterFundedNodes: конечные категории
+    без собственного budget вырезаются из дерева, даже если у них есть
+    planned_quantity/planned_amount — баг «В этой категории нет плановых позиций»,
+    сессия 2026-08-05).
 
     Дополнительно на строках kind='plan_position'/'feo_article' (сессия 2026-08-05,
     формула v2 — «заказ замещает план, пока не набрано количество», см.
@@ -444,7 +452,7 @@ async def get_plan_positions(
     from app.models.feo_planned_item import FeoPlannedItem
     from app.services.feo_plan import (
         plan_consumption_by_category, planned_item_consumption, build_category_path,
-        compute_feo_plan_tree,
+        build_ancestor_ids, compute_feo_plan_tree,
     )
 
     all_cats = (await db.execute(
@@ -480,6 +488,11 @@ async def get_plan_positions(
             "name": c.name,
             "path": build_category_path(c, cat_by_id),
             "category_id": c.id,
+            # Предки категории (от корня до непосредственного родителя) — фронт
+            # сопоставляет позицию с выбранной в дереве категорией через
+            # category_id == selected ИЛИ selected in ancestor_ids, без обхода
+            # обрезанного props.nodes (см. build_ancestor_ids).
+            "ancestor_ids": build_ancestor_ids(c, cat_by_id),
             "kind": kind,
             "planned_quantity": qty,
             "unit": c.unit,
@@ -520,6 +533,7 @@ async def get_plan_positions(
                     "name": it.name,
                     "path": build_category_path(cat, cat_by_id) if cat else "",
                     "category_id": it.feo_category_id,
+                    "ancestor_ids": build_ancestor_ids(cat, cat_by_id) if cat else [],
                     "kind": "planned_item",
                     "planned_quantity": qty,
                     "unit": it.unit,

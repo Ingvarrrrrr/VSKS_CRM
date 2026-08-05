@@ -696,3 +696,23 @@ def build_category_path(cat, cat_by_id: dict) -> str:
         cur = cat_by_id[cur.parent_id]
         names.append(cur.name)
     return " › ".join(reversed(names))
+
+
+def build_ancestor_ids(cat, cat_by_id: dict) -> list:
+    """id всех предков категории, от корня до непосредственного родителя (сверху вниз).
+
+    Не включает саму `cat`. cat_by_id — {id: FeoCategory} той же субсидии (см.
+    build_category_path). Нужен фронту (GET /feo-categories/plan-positions), чтобы
+    находить плановые позиции вложенных конечных категорий по id родителя, выбранного
+    в дереве, БЕЗ обхода обрезанного фронтового дерева (frontend/useFeoLeaves
+    filterFundedNodes вырезает конечные узлы без собственного budget — см. баг «В этой
+    категории нет плановых позиций», сессия 2026-08-05).
+    """
+    if cat is None:
+        return []
+    ids = []
+    cur = cat
+    while cur.parent_id is not None and cur.parent_id in cat_by_id:
+        cur = cat_by_id[cur.parent_id]
+        ids.append(cur.id)
+    return list(reversed(ids))

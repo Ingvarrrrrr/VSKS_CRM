@@ -179,6 +179,7 @@
           @update-contract-field="updateContractField"
           @contract-vat-change="onContractVatRateChange"
           @update-accepted-field="updateAcceptedField"
+          @planned-item-created="emit('planned-item-created')"
         />
       </template>
 
@@ -237,6 +238,7 @@
           @item-pick-unallocated="pickUnallocatedForItem"
           @item-type-change="onItemTypeChange"
           @items-changed="emitUpdate"
+          @planned-item-created="emit('planned-item-created')"
         />
         <ItemsTableFlat
           v-else
@@ -291,6 +293,7 @@
           @item-pick-unallocated="pickUnallocatedForItem"
           @item-type-change="onItemTypeChange"
           @items-changed="emitUpdate"
+          @planned-item-created="emit('planned-item-created')"
         />
       </template>
     </template>
@@ -508,6 +511,7 @@
             :nodes="feoNodes"
             :items="effectivePlannedItems"
             class="mt-2"
+            @planned-item-created="emit('planned-item-created')"
           />
         </v-card-text>
         <v-card-actions>
@@ -882,6 +886,10 @@ const emit = defineEmits<{
   'product-created': [product: Product]
   'items-changed': []
   'reload-requested': []
+  /** Плановая позиция создана диалогом FeoPlannedItemsSelect (внутри бы это ни было —
+   *  массовый bulk-диалог или per-item пикер в таблице) — родитель должен перезагрузить
+   *  props.plannedItems (см. FeoPlannedItemsSelect.vue, баг «кнопка ничего не делает»). */
+  'planned-item-created': []
 }>()
 
 // ── Local state ──────────────────────────────────────────────────────────────

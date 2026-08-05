@@ -258,7 +258,8 @@
                             :nodes="feoNodes" :items="plannedItems || []"
                             :amount="item.total_price" :readonly="readonly" dense class="mt-1"
                             @update:model-value="(v) => emit('item-planned-change', idx, v)"
-                            @update:out-of-plan="(v) => emit('item-out-of-plan-change', idx, v)" />
+                            @update:out-of-plan="(v) => emit('item-out-of-plan-change', idx, v)"
+                            @planned-item-created="emit('planned-item-created')" />
                         </div>
                         <!-- Тип -->
                         <v-select v-model="item.item_type"
@@ -541,6 +542,7 @@ const emit = defineEmits<{
   'item-pick-unallocated': [idx: number, parentId: number | null]
   'item-type-change': [idx: number, val: string]
   'items-changed': []
+  'planned-item-created': []
   'contractor-search-input': [idx: number, search: string]
   'item-contractor-select': [idx: number, val: Contractor | null]
   'open-contractor-quick-create': [idx: number]

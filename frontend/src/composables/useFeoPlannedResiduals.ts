@@ -30,6 +30,10 @@ export interface FeoPlanPosition {
   path: string
   /** id FeoCategory, к которой относится строка (для planned_item — id родительского листа). */
   category_id: number
+  /** id всех предков category_id, от корня до непосредственного родителя (см. backend
+   *  app.services.feo_plan.build_ancestor_ids). Используется FeoPlannedItemsSelect.vue,
+   *  чтобы находить позиции вложенных категорий по id родителя, выбранного в дереве. */
+  ancestor_ids?: number[]
   kind: FeoPlanKind
   planned_quantity: number | null
   unit: string

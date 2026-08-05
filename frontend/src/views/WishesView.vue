@@ -1080,6 +1080,7 @@
                       :loading="wishPlannedLoading"
                       :readonly="!isWishEditable && !canEditWishFeo"
                       :skip-last="wishFeoSkipLast"
+                      @planned-item-created="onWishPlannedItemCreated"
                     />
                     <div v-if="!isWishEditable && canEditWishFeo && !canAssigneeAct" class="mt-2">
                       <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-content-save"
@@ -1592,6 +1593,7 @@
                   :show-needed-date="wishDateMode === 'per_item'"
                   :vat-mode="wishForm.vat_mode"
                   @update:vat-mode="(v: string) => { wishForm.vat_mode = v }"
+                  @planned-item-created="onWishPlannedItemCreated"
                 />
                 <div class="d-flex justify-end mt-3">
                   <div class="text-subtitle-1 font-weight-bold">Сумма заявки: {{ formatMoney(totalNmck) }}</div>
@@ -2435,10 +2437,21 @@ const {
   plannedResiduals: wishPlannedResiduals,
   plannedByCategory: wishPlannedByCategory,
   plannedLoading: wishPlannedLoading,
+  reloadPlanned: reloadWishPlanned,
 } = useFeoPlannedResiduals({
   subsidyId: computed(() => wishForm.value.subsidy_id),
   excludeWishId: computed(() => editingWishId.value),
 })
+
+// БАГ 3 (сессия 2026-08-05): FeoPlannedItemsSelect создаёт плановую позицию прямо в
+// форме (POST /feo-planned-items/) и эмитит 'planned-item-created' — перезагружаем
+// список, чтобы «призрак»-строка (выбор указывает на id, которого ещё нет в items)
+// исчез и подтянулись реальные план/остаток созданной позиции. wishPlannedResiduals
+// передаётся ОДНИМ и тем же массивом во вложенные FeoPlannedItemsSelect внутри
+// PurchaseItemsEditor (per-item режим) — перезагрузка тут актуализирует все разом.
+async function onWishPlannedItemCreated() {
+  await reloadWishPlanned()
+}
 
 // Плановые позиции выбранной категории ФЭО заявки.
 const wishPlannedItemsForCategory = computed(() =>

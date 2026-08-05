@@ -1688,6 +1688,31 @@
                     </td>
                   </tr>
 
+                  <!-- Без категории ФЭО: закупки субсидии, у которых ни сама закупка, ни одна
+                       позиция не привязаны к категории — деньги есть (KPI их видит), но в дереве
+                       ФЭО не отображаются, т.к. дерево строится по категориям. Справочная строка,
+                       НЕ входит в ИТОГО ниже. -->
+                  <tr v-if="unassignedFeo.amount > 0 || unassignedFeo.purchase_count > 0"
+                    class="feo-tr feo-tr--unassigned"
+                    style="cursor:pointer"
+                    title="Перейти в реестр закупок субсидии"
+                    @click="goToUnassignedFeoPurchases"
+                  >
+                    <td class="feo-td feo-td-name" style="padding-left:8px">
+                      <v-icon icon="mdi-help-circle-outline" size="16" color="#F59E0B" class="mr-1" />
+                      <span style="color:#F59E0B;font-weight:600">Без категории ФЭО</span>
+                      <div class="feo-plan-note text-medium-emphasis font-weight-regular">
+                        {{ unassignedFeo.purchase_count }} {{ unassignedFeo.purchase_count === 1 ? 'закупка не привязана' : 'закупок не привязаны' }}
+                        к категориям — распределите, иначе деньги не видны в плане
+                      </div>
+                    </td>
+                    <td class="feo-td feo-td-num">—</td>
+                    <td class="feo-td feo-td-num">—</td>
+                    <td class="feo-td feo-td-num" style="color:#F59E0B;font-weight:600">{{ formatCurrency(unassignedFeo.amount) }}</td>
+                    <td class="feo-td feo-td-num">—</td>
+                    <td class="feo-td feo-td-num">—</td>
+                  </tr>
+
                   <!-- Итого -->
                   <tr class="feo-tr feo-tr--total">
                     <td class="feo-td feo-td-name font-weight-bold" style="padding-left:8px">ИТОГО</td>
@@ -4155,6 +4180,33 @@ const planTreeByCat = ref<Record<number, {
   display: number; display_quantity: number
   excess_amount?: number; excess_pending?: boolean; excess_approved?: boolean
 }>>({})
+// Закупки субсидии без категории ФЭО (ни у самой закупки, ни у одной позиции) — деньги
+// есть (влияют на KPI «Ведётся работа»/«Запланировано» по субсидии), но в дереве ФЭО
+// их не видно, т.к. дерево строится по категориям (сессия 2026-08-05). Отдельный
+// ключ "unassigned" в GET /api/feo-categories/plan-tree, справочный, НЕ входит в
+// ИТОГО дерева / feoPlannedDisplayFor / comparisonPlanTotal.
+const unassignedFeo = ref<{ amount: number; purchase_count: number; purchase_ids: number[] }>({
+  amount: 0, purchase_count: 0, purchase_ids: [],
+})
+// GET /plan-tree отдаёт "unassigned" как ДОПОЛНИТЕЛЬНЫЙ ключ рядом с числовыми id категорий
+// (см. backend/app/routers/feo_categories.py) — вычленяем его в unassignedFeo, а
+// planTreeByCat остаётся чистым Record<number, ...>, как и раньше (по нему никто не
+// итерируется, только node.id → значение, так что нечисловой ключ и без выделения
+// был бы безвреден, но так типобезопаснее).
+function splitPlanTree(raw: Record<string, any>) {
+  const { unassigned, ...rest } = raw || {}
+  unassignedFeo.value = unassigned && typeof unassigned === 'object'
+    ? { amount: Number(unassigned.amount || 0), purchase_count: Number(unassigned.purchase_count || 0), purchase_ids: unassigned.purchase_ids || [] }
+    : { amount: 0, purchase_count: 0, purchase_ids: [] }
+  return rest as Record<number, {
+    display: number; display_quantity: number
+    excess_amount?: number; excess_pending?: boolean; excess_approved?: boolean
+  }>
+}
+function goToUnassignedFeoPurchases() {
+  if (!selectedId.value) return
+  router.push(`/orders?subsidy_id=${selectedId.value}`)
+}
 const excessRequestLoading = ref<number | null>(null)
 const expandedIds     = ref<number[]>([])
 const selectedId      = ref<number | null>(null)
@@ -5207,9 +5259,9 @@ async function refreshReqData(catId?: number) {
   const [totals, items, planTree] = await Promise.all([
     apiFetch<Record<number, { total: number; qty: number; total_linked?: number; qty_linked?: number; total_over?: number; qty_over?: number; forecast?: number; forecast_over?: number; plan_manual?: number }>>(`/feo-categories/planned-purchase-totals?subsidy_id=${selectedId.value}`),
     apiFetch<Record<number, FeoReqItem[]>>(`/feo-categories/planned-purchase-items?subsidy_id=${selectedId.value}`),
-    apiFetch<Record<number, { display: number; display_quantity: number; excess_amount?: number; excess_pending?: boolean; excess_approved?: boolean }>>(`/feo-categories/plan-tree?subsidy_id=${selectedId.value}`),
+    apiFetch<Record<string, any>>(`/feo-categories/plan-tree?subsidy_id=${selectedId.value}`),
   ])
-  planTreeByCat.value = planTree
+  planTreeByCat.value = splitPlanTree(planTree)
   const sums: Record<number, number> = {}
   const qtys: Record<number, number> = {}
   const sumsLinked: Record<number, number> = {}
@@ -6961,6 +7013,7 @@ async function loadFeo(subsidyId: number) {
   plannedPurchaseQtyOver.value = {}
   plannedPurchaseForecast.value = {}
   planTreeByCat.value = {}
+  unassignedFeo.value = { amount: 0, purchase_count: 0, purchase_ids: [] }
   plannedItemsByCat.value = {}
   plannedItemsLoaded.value = false
   expandedReqItems.value = new Set()
@@ -6970,11 +7023,11 @@ async function loadFeo(subsidyId: number) {
       apiFetch<Record<number, number>>(`/feo-categories/purchase-totals?subsidy_id=${subsidyId}`),
       apiFetch<Record<number, { total: number; qty: number; total_linked?: number; qty_linked?: number; total_over?: number; qty_over?: number; forecast?: number; forecast_over?: number; plan_manual?: number }>>(`/feo-categories/planned-purchase-totals?subsidy_id=${subsidyId}`),
       apiFetch<Record<number, FeoReqItem[]>>(`/feo-categories/planned-purchase-items?subsidy_id=${subsidyId}`),
-      apiFetch<Record<number, { display: number; display_quantity: number; excess_amount?: number; excess_pending?: boolean; excess_approved?: boolean }>>(`/feo-categories/plan-tree?subsidy_id=${subsidyId}`),
+      apiFetch<Record<string, any>>(`/feo-categories/plan-tree?subsidy_id=${subsidyId}`),
     ])
     feoCategories.value = cats
     purchaseTotals.value = totals
-    planTreeByCat.value = planTree
+    planTreeByCat.value = splitPlanTree(planTree)
     plannedItemsByCat.value = plannedItems
     plannedItemsLoaded.value = true
     const sums: Record<number, number> = {}

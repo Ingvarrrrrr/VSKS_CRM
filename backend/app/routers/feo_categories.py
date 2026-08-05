@@ -161,11 +161,23 @@ async def get_feo_plan_tree(
     display — то самое число, которое обязано совпасть с KPI «Запланировано»
     (сумма display корневых узлов == _calculate_feo_planned_tree_bulk[subsidy_id]).
     display_quantity — аналог display, но для «Планового количества» узла.
+
+    Плюс АДДИТИВНЫЙ ключ "unassigned" (строкой, не числовой id — чтобы не
+    столкнуться с id категории): {amount, purchase_count, purchase_ids} — деньги
+    закупок субсидии в PLANNED_STATUSES, у которых НИ сама закупка, НИ одна её
+    позиция не привязаны к категории ФЭО (баг «Ведётся работа» видит деньги,
+    дерево — нет, см. сессию 2026-08-05). Не участвует в дереве/ИТОГО — чисто
+    справочная сумма для отдельной строки на фронте. Отдаётся всегда (нули, если
+    таких закупок нет), чтобы фронт не городил доп. ветвление на отсутствие ключа.
     """
     from app.services.feo_plan import compute_feo_plan_tree
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+    from app.routers.purchase_budget import PLANNED_STATUSES
+    from sqlalchemy import exists, and_
 
     tree = await compute_feo_plan_tree(db, [subsidy_id])
-    return {
+    result: dict = {
         cat_id: {
             "plan_manual": node["plan_manual"],
             "ordered_qty": node["ordered_qty"],
@@ -192,6 +204,24 @@ async def get_feo_plan_tree(
         }
         for cat_id, node in tree.items()
     }
+
+    unassigned_stmt = (
+        select(Purchase.id, Purchase.planned_total_price)
+        .where(Purchase.subsidy_id == subsidy_id)
+        .where(Purchase.status.in_(list(PLANNED_STATUSES)))
+        .where(Purchase.feo_category_id.is_(None))
+        .where(~exists().where(and_(
+            PurchaseItem.purchase_id == Purchase.id,
+            PurchaseItem.feo_category_id.isnot(None),
+        )))
+    )
+    unassigned_rows = (await db.execute(unassigned_stmt)).all()
+    result["unassigned"] = {
+        "amount": sum(float(r.planned_total_price or 0) for r in unassigned_rows),
+        "purchase_count": len(unassigned_rows),
+        "purchase_ids": [r.id for r in unassigned_rows[:50]],
+    }
+    return result
 
 
 @router.get("/planned-purchase-items")

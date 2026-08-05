@@ -499,7 +499,7 @@
                 :nodes="feoTreeNodes"
                 :leaves="feoTreeLeavesForNote"
                 :error="feoSaveAttempted && !!feoValidationError"
-                :allow-unallocated="formMode === 'advance_report'"
+                :allow-unallocated="!!form.subsidy_id"
                 :required="formMode !== 'service_note_delivery' && formMode !== 'advance_report'"
                 :root-label="selectedSubsidyName"
                 @pick-unallocated="onFeoPickUnallocated"

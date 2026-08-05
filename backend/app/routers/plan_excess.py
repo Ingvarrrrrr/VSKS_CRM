@@ -106,6 +106,64 @@ async def list_plan_excess_approvals(
     return [_approval_dict(a) for a in rows]
 
 
+async def _notify_pending_plan_excess_approvers(
+    approval: PlanExcessApproval, db: AsyncSession, requester_name: str, cat_name: str,
+) -> None:
+    """Уведомляет согласующих из цепочки о необходимости решения по превышению плана ФЭО.
+
+    По образцу app.routers.wishes._notify_pending_approvers:
+    sequential → уведомить только первого (по order_num) pending-согласующего;
+    parallel → уведомить всех pending сразу.
+    """
+    try:
+        from app.notifications import notify_plan_excess_approval_step
+        pending = sorted(
+            (s for s in approval.steps if s.status == "pending"),
+            key=lambda s: s.order_num,
+        )
+        if not pending:
+            return
+        targets = pending[:1] if approval.mode != "parallel" else pending
+        for step in targets:
+            if step.user_id and step.user_id != approval.requested_by_id:
+                approver_user = await db.get(User, step.user_id)
+                if approver_user:
+                    await notify_plan_excess_approval_step(approval, approver_user, requester_name, cat_name)
+    except Exception as e:
+        logger.warning("notify plan-excess approvers failed: %s", e)
+
+
+async def _notify_plan_excess_decision(
+    approval: PlanExcessApproval, decided_step: PlanExcessApprovalStep,
+    db: AsyncSession, decided_by_name: str, cat_name: str,
+) -> None:
+    """Уведомляет автора запроса о финальном решении и, для последовательного
+    режима, следующего согласующего в очереди (если запрос ещё pending)."""
+    try:
+        from app.notifications import notify_plan_excess_decided, notify_plan_excess_approval_step
+        if approval.status in ("approved", "rejected"):
+            if approval.requested_by_id and approval.requested_by_id != decided_step.decided_by_user_id:
+                requester = await db.get(User, approval.requested_by_id)
+                if requester:
+                    await notify_plan_excess_decided(
+                        approval, requester, approval.status, decided_by_name,
+                        decided_step.comment, cat_name,
+                    )
+        elif approval.status == "pending" and approval.mode != "parallel":
+            nxt = next(
+                (s for s in sorted(approval.steps, key=lambda s: s.order_num) if s.status == "pending"),
+                None,
+            )
+            if nxt and nxt.user_id and nxt.user_id != approval.requested_by_id:
+                nxt_user = await db.get(User, nxt.user_id)
+                if nxt_user:
+                    requester = await db.get(User, approval.requested_by_id) if approval.requested_by_id else None
+                    requester_name = (requester.full_name or requester.username) if requester else "—"
+                    await notify_plan_excess_approval_step(approval, nxt_user, requester_name, cat_name)
+    except Exception as e:
+        logger.warning("notify plan-excess decision failed: %s", e)
+
+
 # ── POST request ──────────────────────────────────────────────────────────────
 
 @router.post("", status_code=201)
@@ -166,12 +224,32 @@ async def request_plan_excess_approval(
     if org_id:
         chain, chain_warning = await build_ascending_chain(db, current_user.id, top_user_id, org_id)
     if not chain:
+        top_user = await db.get(User, top_user_id)
         chain = [{
             "user_id": top_user_id,
             "role_name": "Согласующий",
-            "full_name": None,
+            "full_name": (top_user.full_name or top_user.username) if top_user else None,
             "order_num": 0,
         }]
+
+    # Задача 2 (2026-08-05): цепочка не должна вырождаться молча.
+    #   - цепочка полностью пуста (нет ни одного user_id) — некому направить запрос,
+    #     не создаём «висящий» запрос, а объясняем, что нужно настроить.
+    #   - цепочка состоит РОВНО из самого автора — формально запрос создаётся
+    #     (иначе превышение никогда не согласовать), но фронт обязан явно
+    #     показать пользователю, что согласовывать будет он сам.
+    chain = [s for s in chain if s.get("user_id")]
+    if not chain:
+        raise HTTPException(
+            409,
+            "Не удалось определить, кому направить запрос на согласование превышения: "
+            "у вас не назначен руководитель отдела, не задан руководитель организации "
+            "(Organization.head_user_id) и не указан вышестоящий начальник (User.superior_user_id). "
+            "Попросите администратора настроить одного из них.",
+        )
+    self_approval = all(s["user_id"] == current_user.id for s in chain)
+    if self_approval:
+        chain_warning = "Над вами нет вышестоящих согласующих — превышение будет согласовано вами лично."
 
     full_plan = node["plan"] + node["over"]  # текущая плановая сумма (до сжатия по бюджету)
     approval = PlanExcessApproval(
@@ -199,8 +277,12 @@ async def request_plan_excess_approval(
     await db.commit()
 
     full = await _load_approval(approval.id, db)
+    requester_name = current_user.full_name or current_user.username
+    await _notify_pending_plan_excess_approvers(full, db, requester_name, cat.name)
+
     resp = _approval_dict(full)
     resp["warning"] = chain_warning
+    resp["self_approval"] = self_approval
     return resp
 
 
@@ -268,6 +350,15 @@ async def decide_plan_excess_step(
             approval.status = "approved"
             approval.resolved_at = datetime.now(timezone.utc)
 
+    step_id_decided = step.id
+    decided_by_name = current_user.full_name or current_user.username
     await db.commit()
     full = await _load_approval(approval_id, db)
+
+    cat = await db.get(FeoCategory, full.feo_category_id)
+    cat_name = cat.name if cat else f"категория №{full.feo_category_id}"
+    decided_step = next((s for s in full.steps if s.id == step_id_decided), None)
+    if decided_step is not None:
+        await _notify_plan_excess_decision(full, decided_step, db, decided_by_name, cat_name)
+
     return _approval_dict(full)

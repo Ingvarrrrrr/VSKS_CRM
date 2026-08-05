@@ -806,21 +806,48 @@
                           цена выше плановой · прогноз {{ formatCurrency(feoForecastWarningFor(node)!.forecast) }} при плане {{ formatCurrency(feoForecastWarningFor(node)!.planManual) }}
                         </div>
                         <!-- Превышение плана над финансированием ФЭО — требует согласования цепочкой
-                             (задача владельца 2026-08-05), см. excessFor()/requestPlanExcessApproval() -->
+                             (задача владельца 2026-08-05), см. excessFor()/requestPlanExcessApproval().
+                             Детали запроса (шаги, ФИО текущего согласующего, комментарий отказа) —
+                             из planExcessApprovals (GET /api/plan-excess?subsidy_id=), см. loadPlanExcessApprovals(). -->
                         <div v-if="excessFor(node)" class="feo-plan-note d-flex align-center flex-wrap ga-1 mt-1">
-                          <v-chip
-                            size="x-small"
-                            :color="excessFor(node)!.approved ? 'grey' : (excessFor(node)!.pending ? 'orange' : 'red')"
-                            variant="flat"
-                          >
-                            превышение {{ formatCurrency(excessFor(node)!.amount) }}
-                            {{ excessFor(node)!.approved ? '· согласовано' : (excessFor(node)!.pending ? '· на согласовании' : '— требуется согласование') }}
-                          </v-chip>
-                          <v-btn v-if="!excessFor(node)!.approved && !excessFor(node)!.pending"
-                            size="x-small" variant="tonal" color="red"
-                            :loading="excessRequestLoading === node.id"
-                            @click.stop="requestPlanExcessApproval(node)"
-                          >Согласовать</v-btn>
+                          <template v-if="excessApprovalFor(node)?.status === 'pending'">
+                            <v-chip size="x-small" color="orange" variant="flat">
+                              превышение {{ formatCurrency(excessFor(node)!.amount) }} · на согласовании у: {{ excessPendingNames(node) || '—' }}
+                            </v-chip>
+                            <template v-if="excessMyPendingStep(node)">
+                              <v-btn size="x-small" variant="tonal" color="success"
+                                :loading="excessDecideLoading === node.id"
+                                @click.stop="decidePlanExcess(node, 'approved')"
+                              >Одобрить</v-btn>
+                              <v-btn size="x-small" variant="tonal" color="error"
+                                :loading="excessDecideLoading === node.id"
+                                @click.stop="openExcessRejectDialog(node)"
+                              >Отклонить</v-btn>
+                            </template>
+                          </template>
+                          <template v-else-if="excessApprovalFor(node)?.status === 'approved'">
+                            <v-chip size="x-small" color="grey" variant="flat">
+                              превышение {{ formatCurrency(excessFor(node)!.amount) }} · согласовано · {{ excessResolvedByName(node) }}{{ excessResolvedDate(node) ? ' · ' + excessResolvedDate(node) : '' }}
+                            </v-chip>
+                          </template>
+                          <template v-else-if="excessApprovalFor(node)?.status === 'rejected'">
+                            <v-chip size="x-small" color="red" variant="flat">
+                              превышение отклонено{{ excessApprovalFor(node)?.comment ? ': ' + excessApprovalFor(node)!.comment : '' }}
+                            </v-chip>
+                            <v-btn size="x-small" variant="tonal" color="red"
+                              :loading="excessRequestLoading === node.id"
+                              @click.stop="requestPlanExcessApproval(node)"
+                            >Согласовать</v-btn>
+                          </template>
+                          <template v-else>
+                            <v-chip size="x-small" color="red" variant="flat">
+                              превышение {{ formatCurrency(excessFor(node)!.amount) }} — требуется согласование
+                            </v-chip>
+                            <v-btn size="x-small" variant="tonal" color="red"
+                              :loading="excessRequestLoading === node.id"
+                              @click.stop="requestPlanExcessApproval(node)"
+                            >Согласовать</v-btn>
+                          </template>
                         </div>
                       </td>
 
@@ -2437,6 +2464,28 @@
           <v-spacer />
           <v-btn variant="text" @click="showDeleteFeoDialog = false">Отмена</v-btn>
           <v-btn v-if="!feoDeleteError" color="error" :loading="savingFeo" @click="deleteFeoCategory">Удалить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── Отклонить превышение плана ФЭО — обязательный комментарий (задача владельца 2026-08-05) ── -->
+    <v-dialog v-model="excessRejectDialog.show" max-width="440">
+      <v-card class="dialog-card">
+        <v-card-title class="dialog-title">
+          <v-icon icon="mdi-close-circle-outline" color="error" class="mr-2" />
+          Отклонить превышение плана
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="excessRejectDialog.show = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pt-4">
+          <div class="mb-2">«{{ excessRejectDialog.node?.name }}»</div>
+          <v-textarea v-model="excessRejectDialog.comment" label="Причина отклонения" density="comfortable"
+            variant="outlined" rows="3" autofocus hide-details="auto" />
+        </v-card-text>
+        <v-card-actions class="px-4 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="excessRejectDialog.show = false">Отмена</v-btn>
+          <v-btn color="error" :loading="excessDecideLoading === excessRejectDialog.node?.id" @click="submitExcessReject">Отклонить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -4180,6 +4229,26 @@ const planTreeByCat = ref<Record<number, {
   display: number; display_quantity: number
   excess_amount?: number; excess_pending?: boolean; excess_approved?: boolean
 }>>({})
+// Детали запросов согласования превышения плана ФЭО — GET /api/plan-excess?subsidy_id=
+// (backend/app/routers/plan_excess.py). Карта feo_category_id → ПОСЛЕДНИЙ (по created_at,
+// список от бэкенда уже отсортирован) запрос: шаги с ФИО согласующих, статус, комментарий
+// отказа. planTreeByCat.excess_pending/excess_approved читает ТУ ЖЕ таблицу на бэкенде
+// (см. app.services.feo_plan.compute_feo_plan_tree), поэтому статусы согласованы между
+// собой — этот объект добавляет детали (кто именно, комментарий), которых в plan-tree нет.
+interface PlanExcessStep {
+  id: number; approval_id: number; user_id: number | null; order_num: number
+  role_name: string | null; full_name: string | null; status: string
+  comment: string | null; decided_at: string | null; decided_by_user_id: number | null
+}
+interface PlanExcessApprovalDto {
+  id: number; feo_category_id: number; subsidy_id: number
+  excess_amount: number; plan_amount: number | null; budget_amount: number | null
+  status: string; mode: string; requested_by_id: number | null
+  created_at: string | null; resolved_at: string | null; comment: string | null
+  steps: PlanExcessStep[]
+  self_approval?: boolean; warning?: string | null
+}
+const planExcessApprovals = ref<Record<number, PlanExcessApprovalDto>>({})
 // Закупки субсидии без категории ФЭО (ни у самой закупки, ни у одной позиции) — деньги
 // есть (влияют на KPI «Ведётся работа»/«Запланировано» по субсидии), но в дереве ФЭО
 // их не видно, т.к. дерево строится по категориям (сессия 2026-08-05). Отдельный
@@ -4208,6 +4277,10 @@ function goToUnassignedFeoPurchases() {
   router.push(`/orders?subsidy_id=${selectedId.value}`)
 }
 const excessRequestLoading = ref<number | null>(null)
+const excessDecideLoading = ref<number | null>(null)
+const excessRejectDialog = ref<{ show: boolean; node: FeoNode | null; comment: string }>({
+  show: false, node: null, comment: '',
+})
 const expandedIds     = ref<number[]>([])
 const selectedId      = ref<number | null>(null)
 const selectedYear    = ref<number>(new Date().getFullYear())
@@ -5262,6 +5335,7 @@ async function refreshReqData(catId?: number) {
     apiFetch<Record<string, any>>(`/feo-categories/plan-tree?subsidy_id=${selectedId.value}`),
   ])
   planTreeByCat.value = splitPlanTree(planTree)
+  loadPlanExcessApprovals(selectedId.value)
   const sums: Record<number, number> = {}
   const qtys: Record<number, number> = {}
   const sumsLinked: Record<number, number> = {}
@@ -5715,6 +5789,9 @@ const isAdminLevel = ['superadmin', 'org_admin', 'admin'].includes(userRoleRaw)
 const canSaveVersion = computed(() => ['superadmin', 'org_admin', 'admin', 'account_owner'].includes(userRoleRaw))
 // SaaS-роли (как в WishesView.vue) — им доступен force-возврат заявки в черновик из диалога блокировки удаления
 const isSaas = computed(() => ['superadmin', 'account_owner'].includes(userRoleRaw))
+// Как в WishesView.vue — id текущего пользователя, чтобы определить «это назначенный
+// согласующий превышения плана ФЭО или нет» (см. excessMyPendingStep/decidePlanExcess).
+const currentUserId = Number(localStorage.getItem('user_id') || '0')
 
 const snack = ref({ show: false, text: '', color: 'success' })
 
@@ -6275,20 +6352,128 @@ function excessFor(node: FeoNode): { amount: number; pending: boolean; approved:
   return { amount, pending: !!t?.excess_pending, approved: !!t?.excess_approved }
 }
 
+// Детали запроса согласования превышения по узлу — см. planExcessApprovals/loadPlanExcessApprovals.
+function excessApprovalFor(node: FeoNode): PlanExcessApprovalDto | null {
+  return planExcessApprovals.value[node.id] || null
+}
+
+// ФИО, у кого сейчас на согласовании: sequential — первый pending-шаг по order_num,
+// parallel — все pending-шаги сразу (см. backend _notify_pending_plan_excess_approvers,
+// та же логика различия sequential/parallel).
+function excessPendingNames(node: FeoNode): string {
+  const appr = excessApprovalFor(node)
+  if (!appr || appr.status !== 'pending') return ''
+  const sorted = [...appr.steps].sort((a, b) => a.order_num - b.order_num)
+  const pendingSteps = appr.mode === 'parallel'
+    ? sorted.filter(s => s.status === 'pending')
+    : sorted.filter(s => s.status === 'pending').slice(0, 1)
+  return pendingSteps.map(s => s.full_name || s.role_name || `пользователь #${s.user_id}`).join(', ')
+}
+
+// Шаг, который может решить ИМЕННО текущий пользователь: назначенный согласующий
+// текущего шага, либо любая SaaS-роль (см. backend decide_plan_excess_step: !_is_saas
+// и role not in MANAGER_ROLES блокируют чужой шаг, иначе — можно).
+function excessMyPendingStep(node: FeoNode): PlanExcessStep | null {
+  const appr = excessApprovalFor(node)
+  if (!appr || appr.status !== 'pending') return null
+  const sorted = [...appr.steps].sort((a, b) => a.order_num - b.order_num)
+  if (appr.mode === 'parallel') {
+    return sorted.find(s => s.status === 'pending' && (s.user_id === currentUserId || isSaas.value)) || null
+  }
+  const first = sorted.find(s => s.status === 'pending')
+  if (first && (first.user_id === currentUserId || isSaas.value)) return first
+  return null
+}
+
+// Кто согласовал (последний решённый шаг approved) — для бейджа «превышение согласовано».
+function excessResolvedByName(node: FeoNode): string {
+  const appr = excessApprovalFor(node)
+  if (!appr) return ''
+  const decided = [...appr.steps]
+    .filter(s => s.status === 'approved' && s.decided_at)
+    .sort((a, b) => new Date(b.decided_at!).getTime() - new Date(a.decided_at!).getTime())
+  return decided[0]?.full_name || decided[0]?.role_name || '—'
+}
+
+function excessResolvedDate(node: FeoNode): string {
+  const appr = excessApprovalFor(node)
+  if (!appr?.resolved_at) return ''
+  return new Date(appr.resolved_at).toLocaleDateString('ru-RU')
+}
+
+// Загрузка запросов согласования превышения плана ФЭО по субсидии — GET /api/plan-excess.
+// Список уже отсортирован бэкендом по created_at desc, поэтому первое вхождение
+// на категорию — последний (актуальный) запрос.
+async function loadPlanExcessApprovals(subsidyId: number) {
+  try {
+    const rows = await apiFetch<PlanExcessApprovalDto[]>(`/plan-excess?subsidy_id=${subsidyId}`)
+    const map: Record<number, PlanExcessApprovalDto> = {}
+    for (const r of rows) {
+      if (!(r.feo_category_id in map)) map[r.feo_category_id] = r
+    }
+    planExcessApprovals.value = map
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Не удалось загрузить согласования превышения плана', 'error')
+  }
+}
+
 async function requestPlanExcessApproval(node: FeoNode) {
   excessRequestLoading.value = node.id
   try {
-    await apiFetch('/plan-excess', {
+    const res = await apiFetch<PlanExcessApprovalDto>('/plan-excess', {
       method: 'POST',
       body: JSON.stringify({ feo_category_id: node.id }),
     })
-    showSnack('Запрос на согласование превышения плана отправлен', 'success')
+    if (res.self_approval && res.warning) {
+      showSnack(res.warning, 'warning')
+    } else if (res.warning) {
+      showSnack(`Запрос отправлен. ${res.warning}`, 'warning')
+    } else {
+      showSnack('Запрос на согласование превышения плана отправлен', 'success')
+    }
     if (selectedId.value) await refreshReqData()
   } catch (e: any) {
     showSnack(e?.payload?.message || e?.message || 'Не удалось запросить согласование превышения', 'error')
   } finally {
     excessRequestLoading.value = null
   }
+}
+
+function openExcessRejectDialog(node: FeoNode) {
+  excessRejectDialog.value = { show: true, node, comment: '' }
+}
+
+async function decidePlanExcess(node: FeoNode, decision: 'approved' | 'rejected', comment?: string) {
+  const appr = excessApprovalFor(node)
+  const step = excessMyPendingStep(node)
+  if (!appr || !step) {
+    showSnack('Шаг согласования не найден — обновите страницу', 'error')
+    return
+  }
+  excessDecideLoading.value = node.id
+  try {
+    await apiFetch(`/plan-excess/${appr.id}/decide`, {
+      method: 'POST',
+      body: JSON.stringify({ decision, step_id: step.id, comment: comment || null }),
+    })
+    showSnack(decision === 'approved' ? 'Превышение согласовано' : 'Превышение отклонено', decision === 'approved' ? 'success' : 'warning')
+    if (selectedId.value) await refreshReqData()
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Не удалось сохранить решение', 'error')
+  } finally {
+    excessDecideLoading.value = null
+  }
+}
+
+async function submitExcessReject() {
+  const node = excessRejectDialog.value.node
+  if (!node) return
+  if (!excessRejectDialog.value.comment.trim()) {
+    showSnack('Укажите причину отклонения', 'error')
+    return
+  }
+  await decidePlanExcess(node, 'rejected', excessRejectDialog.value.comment.trim())
+  excessRejectDialog.value.show = false
 }
 
 // Для каждого узла — потомки (любой глубины), у которых feoIsOverBudget === true.
@@ -7013,6 +7198,7 @@ async function loadFeo(subsidyId: number) {
   plannedPurchaseQtyOver.value = {}
   plannedPurchaseForecast.value = {}
   planTreeByCat.value = {}
+  planExcessApprovals.value = {}
   unassignedFeo.value = { amount: 0, purchase_count: 0, purchase_ids: [] }
   plannedItemsByCat.value = {}
   plannedItemsLoaded.value = false
@@ -7028,6 +7214,7 @@ async function loadFeo(subsidyId: number) {
     feoCategories.value = cats
     purchaseTotals.value = totals
     planTreeByCat.value = splitPlanTree(planTree)
+    loadPlanExcessApprovals(subsidyId)
     plannedItemsByCat.value = plannedItems
     plannedItemsLoaded.value = true
     const sums: Record<number, number> = {}

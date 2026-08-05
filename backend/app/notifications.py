@@ -466,6 +466,61 @@ async def notify_wish_approved(wish, creator_user) -> None:
     await notify_user(creator_user, text, reply_markup_override=_wish_keyboard(wish.id))
 
 
+# ── Plan-excess (превышение плана ФЭО) notifications ──────────────────────────
+# См. app.routers.plan_excess — согласование превышения плана над финансированием
+# узла ФЭО, цепочка строится тем же механизмом, что и у заявок (build_ascending_chain).
+
+def _money(v) -> str:
+    try:
+        return f"{float(v):,.2f}".replace(",", " ").replace(".", ",") + " ₽"
+    except Exception:
+        return f"{v} ₽"
+
+
+def _plan_excess_url(subsidy_id: int) -> str:
+    return f"{BASE_URL}/subsidies?sid={subsidy_id}"
+
+
+def _plan_excess_keyboard(subsidy_id: int) -> dict:
+    return {
+        "inline_keyboard": [[
+            {"text": "➡️ Открыть", "url": _plan_excess_url(subsidy_id)},
+        ]]
+    }
+
+
+async def notify_plan_excess_approval_step(approval, approver_user, requester_name: str, cat_name: str) -> None:
+    """Notify an approver that a plan-excess (превышение плана ФЭО) request needs their decision."""
+    excess = _money(approval.excess_amount)
+    budget = _money(approval.budget_amount)
+    text = (
+        f"⚠️ <b>Требуется согласование превышения плана ФЭО</b>\n\n"
+        f"📂 Категория ФЭО: <b>{_esc(cat_name)}</b>\n"
+        f"💰 Превышение: <b>{excess}</b> (финансирование по ФЭО: {budget})\n"
+        f"👤 Запросил: <i>{_esc(requester_name)}</i>\n\n"
+        f"Откройте, чтобы согласовать или отклонить."
+    )
+    await notify_user(approver_user, text,
+                       reply_markup_override=_plan_excess_keyboard(approval.subsidy_id))
+
+
+async def notify_plan_excess_decided(approval, requester_user, decision: str, decided_by_name: str,
+                                      comment: str | None, cat_name: str) -> None:
+    """Notify the requester of a plan-excess request about the final decision."""
+    icon = "✅" if decision == "approved" else "❌"
+    label = "Превышение плана ФЭО согласовано" if decision == "approved" else "Превышение плана ФЭО отклонено"
+    comment_line = f"\n💬 Комментарий: <i>{_esc(comment)}</i>" if comment else ""
+    excess = _money(approval.excess_amount)
+    text = (
+        f"{icon} <b>{label}</b>\n\n"
+        f"📂 Категория ФЭО: <b>{_esc(cat_name)}</b>\n"
+        f"💰 Превышение: <b>{excess}</b>\n"
+        f"👤 Решение принял: <i>{_esc(decided_by_name)}</i>{comment_line}"
+    )
+    await notify_user(requester_user, text,
+                       reply_markup_override=_plan_excess_keyboard(approval.subsidy_id))
+
+
 async def notify_purchase_deadline(purchase, user, days_left: int, deadline_type: str) -> None:
     """Notify about approaching purchase deadline."""
     subject = _esc(purchase.subject or f"Закупка №{purchase.purchase_number}")

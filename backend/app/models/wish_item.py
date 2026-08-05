@@ -15,7 +15,7 @@ class WishItem(Base):
     unit = Column(String(50), default="шт")
     unit_price = Column(Numeric(15, 2), default=0)
     total_price = Column(Numeric(15, 2), default=0)
-    country_origin = Column(String(100), default="Россия")
+    country_origin = Column(String(100), default="РФ")
     target_column_key = Column(String(200), nullable=True)  # Phase 13 D-04: kanban column override; falls back to product.category when null
     # B9: per-item FEO category link (mirroring purchase_items.feo_category_id)
     # TODO: ALTER TABLE wish_items ADD COLUMN IF NOT EXISTS feo_category_id INTEGER REFERENCES feo_categories(id) ON DELETE SET NULL

@@ -945,7 +945,7 @@ async def create_wish(
                 unit=item_data.get('unit', 'шт'),
                 unit_price=item_data.get('unit_price', 0),
                 total_price=item_data.get('total_price', 0),
-                country_origin=item_data.get('country_origin', 'Россия'),
+                country_origin=item_data.get('country_origin', 'РФ'),
                 feo_category_id=item_data.get('feo_category_id'),  # B9
                 feo_planned_item_id=item_data.get('feo_planned_item_id'),  # привязка к плановой позиции план-графика
                 over_plan=item_data.get('over_plan', False),
@@ -1033,7 +1033,7 @@ async def update_wish(
                     unit=item_data.get('unit', 'шт'),
                     unit_price=item_data.get('unit_price', 0),
                     total_price=item_data.get('total_price', 0),
-                    country_origin=item_data.get('country_origin', 'Россия'),
+                    country_origin=item_data.get('country_origin', 'РФ'),
                     feo_category_id=item_data.get('feo_category_id'),  # B9
                     feo_planned_item_id=item_data.get('feo_planned_item_id'),  # план-график ФЭО
                     over_plan=item_data.get('over_plan', False),

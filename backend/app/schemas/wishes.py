@@ -32,7 +32,7 @@ class WishItemOut(BaseModel):
     unit: Optional[str] = "шт"
     unit_price: Optional[float] = 0
     total_price: Optional[float] = 0
-    country_origin: Optional[str] = "Россия"
+    country_origin: Optional[str] = "РФ"
     target_column_key: Optional[str] = None  # Phase 13 D-04: kanban column override
     feo_category_id: Optional[int] = None  # B9: per-item FEO category
     feo_planned_item_id: Optional[int] = None  # привязка к плановой позиции план-графика (mirrors PurchaseItem.feo_planned_item_id)

@@ -932,7 +932,7 @@ class ProductCreate(BaseModel):
     is_active: bool = True
     price: Optional[Decimal] = None
     price_links: List[PriceLink] = []
-    country_origin: Optional[str] = "Россия"
+    country_origin: Optional[str] = "РФ"
 
 class ProductOut(ProductCreate):
     id: int

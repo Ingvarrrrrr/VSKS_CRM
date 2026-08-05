@@ -33,7 +33,7 @@ class Product(Base):
     price_shared = Column(Boolean, default=False)  # делиться ценой с другими организациями
 
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True)
-    country_origin = Column(String(100), nullable=True, default="Россия")  # Страна производства (Приложение №3, кол. P)
+    country_origin = Column(String(100), nullable=True, default="РФ")  # Страна производства (Приложение №3, кол. P)
 
     # ТЗ верификация
     tz_verified_at = Column(DateTime, nullable=True)

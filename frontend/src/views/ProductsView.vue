@@ -185,7 +185,7 @@
         <!-- Country origin -->
         <template #item.country_origin="{ item }">
           <v-chip v-if="item.country_origin" size="x-small" variant="tonal"
-            :color="item.country_origin === 'Россия' ? 'primary' : 'orange'">
+            :color="isDomesticCountry(item.country_origin) ? 'primary' : 'orange'">
             {{ item.country_origin }}
           </v-chip>
           <v-chip v-else size="x-small" variant="tonal" color="error">не указана</v-chip>
@@ -411,17 +411,24 @@
               </v-combobox>
             </v-col>
 
+            <!-- Товар / Услуга -->
+            <v-col cols="12" md="3">
+              <v-select v-model="form.item_kind"
+                :items="[{ title: 'Товар', value: 'товар' }, { title: 'Услуга', value: 'услуга' }]"
+                label="Товар / Услуга" variant="outlined" density="compact" />
+            </v-col>
+
             <!-- Тип — свободный текст с подсказками -->
-            <v-col cols="12" md="6">
+            <v-col cols="12" md="4">
               <v-combobox v-model="form.product_type"
                 :items="typeOptions"
-                label="Товар / Услуга"
+                label="Тип товара"
                 variant="outlined" density="compact" clearable
                 hint="Напр.: Ноутбук, Тренажёр, Ткань" persistent-hint />
             </v-col>
 
             <!-- Категория — свободный текст с подсказками -->
-            <v-col cols="12" md="6">
+            <v-col cols="12" md="5">
               <v-combobox v-model="form.category"
                 :items="categoryOptions"
                 label="Категория" variant="outlined" density="compact" clearable
@@ -877,7 +884,7 @@ import { useCardView } from '@/composables/useCardView'
 
 interface PriceLink { url: string; price: number | null }
 interface Product {
-  id: number; name: string; category?: string; product_type?: string
+  id: number; name: string; category?: string; product_type?: string; item_kind?: string
   price?: number; description?: string; description_44fz?: string; photo_url?: string
   photo_link?: string; clarification_link?: string
   is_active: boolean; is_reusable?: boolean; feo_category_id?: number
@@ -887,6 +894,12 @@ interface Product {
   tz_44fz_verified_at?: string; tz_44fz_verified_by?: string
   has_photo?: boolean; photo_size?: number; photo_mime?: string
   country_origin?: string
+}
+
+// «РФ» — актуальный формат; «Россия» остаётся у старых записей до миграции/повторного сохранения.
+const DOMESTIC_COUNTRY_VALUES = new Set(['РФ', 'Россия'])
+function isDomesticCountry(v?: string | null): boolean {
+  return !!v && DOMESTIC_COUNTRY_VALUES.has(v.trim())
 }
 
 const userRole = localStorage.getItem('user_role') || ''
@@ -1010,11 +1023,11 @@ async function unverifyTz(item: Product, tzType: 'standard' | '44fz') {
 }
 
 const emptyForm = () => ({
-  name: '', category: '', product_type: '', price: null as number | null,
+  name: '', category: '', product_type: '', item_kind: 'товар' as string, price: null as number | null,
   description: '', description_44fz: '', photo_url: '', photo_link: '', clarification_link: '',
   is_active: true, is_reusable: true, feo_category_id: null as number | null,
   priceLinks: [] as PriceLink[],
-  country_origin: 'Россия' as string,
+  country_origin: 'РФ' as string,
   has_photo: false as boolean,
 })
 const form = reactive(emptyForm())
@@ -1214,14 +1227,14 @@ function onProductRowClick(_: any, { item }: { item: Product }) {
 
 function openEdit(p: Product) {
   Object.assign(form, {
-    name: p.name, category: p.category || '', product_type: p.product_type || '',
+    name: p.name, category: p.category || '', product_type: p.product_type || '', item_kind: p.item_kind || 'товар',
     price: p.price ?? null, description: p.description || '', description_44fz: p.description_44fz || '',
     photo_url: p.photo_url || '', photo_link: p.photo_link || '',
     clarification_link: p.clarification_link || '',
     is_active: p.is_active, is_reusable: p.is_reusable ?? true,
     feo_category_id: p.feo_category_id ?? null,
     priceLinks: (p.price_links || []).map(l => ({ url: l.url, price: l.price ?? null })),
-    country_origin: p.country_origin || 'Россия',
+    country_origin: p.country_origin || 'РФ',
     has_photo: !!p.has_photo,
   })
   photoCacheBuster.value = Date.now()

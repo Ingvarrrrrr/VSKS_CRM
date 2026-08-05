@@ -6702,7 +6702,12 @@ const feoTreeNodes = computed(() => {
   if (!form.subsidy_id) return []
   const raw = allFeoCategories.value
     .filter(c => c.subsidy_id === form.subsidy_id)
-    .map(c => ({ id: c.id, name: c.name, parent_id: c.parent_id, level: c.level, is_leaf: false, budget: c.budget ?? null }))
+    .map(c => ({
+      id: c.id, name: c.name, parent_id: c.parent_id, level: c.level, is_leaf: false,
+      budget: c.budget ?? null,
+      planned_quantity: (c as any).planned_quantity ?? null,
+      planned_amount: (c as any).planned_amount ?? null,
+    }))
   const funded = filterFundedNodes(raw)
   const selId = form.feo_category_id
   if (selId == null) return funded

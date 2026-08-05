@@ -3,9 +3,11 @@
        конечный элемент дерева ФЭО с планом, статья ФЭО с планом, или детализация
        Ур.5 FeoPlannedItem) — визуально продолжение дерева ФЭО (FeoTreeSelect): те же
        рельсы/локти (feoTreeRails.css), корневая строка — выбранная категория, ниже —
-       её плановые позиции (сама категория + дочерние конечные элементы) + строка
-       «Вне плана». Радио — нативный <input>, НЕ v-radio-group (ломает flex-строку);
-       клик по всей строке = выбор. -->
+       её плановые позиции (сама категория + дочерние конечные элементы). Радио —
+       нативный <input>, НЕ v-radio-group (ломает flex-строку); клик по всей строке =
+       выбор, повторный клик по уже выбранной строке снимает выбор (см. onItemRadioClick).
+       Псевдо-вариант «Вне плана (новая позиция)» убран (сессия 2026-08-05) — владелец:
+       позицию, которой нет в плане, заводят кнопкой «Создать в план-графике» ниже. -->
   <div v-if="categoryId != null" class="feo-planned-select" :class="{ 'feo-planned-select--dense': dense }">
     <!-- skipLast: заявка привязана к промежуточному уровню — плановые позиции недоступны -->
     <template v-if="skipLast">
@@ -71,7 +73,6 @@
                   :checked="selectedKey === row.key"
                   :disabled="readonly"
                   @click="onItemRadioClick(row, $event)"
-                  @change="selectItem(row)"
                 />
                 <span class="feo-tree-name">
                   {{ row.name }}
@@ -92,24 +93,6 @@
                   <span :class="{ 'feo-planned-shortfall': isShort(row) }">остаток {{ fmt(row.residual) }}</span>
                   <span v-if="isShort(row)" class="feo-planned-shortfall-note"> — не хватает {{ fmt(Math.abs(shortfall(row))) }}</span>
                 </span>
-              </label>
-              <label
-                class="feo-tree-row feo-tree-row--pseudo"
-                :class="{ 'feo-tree-row--selected': outOfPlan }"
-                :title="outOfPlan ? 'Нажмите ещё раз, чтобы снять выбор' : undefined"
-              >
-                <span class="feo-tree-rail" />
-                <span class="feo-tree-elbow" />
-                <input
-                  type="radio"
-                  class="feo-planned-radio"
-                  :name="radioName"
-                  :checked="!!outOfPlan"
-                  :disabled="readonly"
-                  @click="onOutOfPlanRadioClick"
-                  @change="selectOutOfPlan"
-                />
-                <span class="feo-tree-name feo-tree-name--pseudo">Вне плана (новая позиция)</span>
               </label>
             </v-card>
           </v-menu>
@@ -147,7 +130,6 @@
               :checked="selectedKey === row.key"
               :disabled="readonly"
               @click="onItemRadioClick(row, $event)"
-              @change="selectItem(row)"
             />
             <span class="feo-tree-name">
               {{ row.name }}
@@ -169,30 +151,6 @@
               <span v-if="isShort(row)" class="feo-planned-shortfall-note"> — не хватает {{ fmt(Math.abs(shortfall(row))) }}</span>
             </span>
           </label>
-
-          <!-- Псевдо-строка «Вне плана» — всегда последняя -->
-          <label
-            class="feo-tree-row feo-tree-row--pseudo"
-            :class="{ 'feo-tree-row--selected': outOfPlan }"
-            :title="outOfPlan ? 'Нажмите ещё раз, чтобы снять выбор' : undefined"
-          >
-            <span class="feo-tree-rail" />
-            <span class="feo-tree-elbow" />
-            <input
-              type="radio"
-              class="feo-planned-radio"
-              :name="radioName"
-              :checked="!!outOfPlan"
-              :disabled="readonly"
-              @click="onOutOfPlanRadioClick"
-              @change="selectOutOfPlan"
-            />
-            <span class="feo-tree-name feo-tree-name--pseudo">Вне плана (новая позиция)</span>
-          </label>
-
-          <v-alert v-if="outOfPlan" type="warning" density="compact" variant="tonal" class="mt-1">
-            Позиция вне плана увеличит плановую сумму ФЭО «{{ categoryName }}» на {{ fmt(amount) }}.
-          </v-alert>
 
           <div class="mt-1">
             <v-btn size="x-small" variant="text" color="primary" prepend-icon="mdi-plus" :disabled="readonly" @click="openCreateDialog">
@@ -271,7 +229,6 @@ import type { FeoPlanPosition, FeoPlanSelection, FeoPlanKind } from '@/composabl
 
 const props = defineProps<{
   modelValue: FeoPlanSelection | null
-  outOfPlan?: boolean
   categoryId: number | null
   nodes: FeoNode[]
   items: FeoPlanPosition[]
@@ -288,7 +245,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [val: FeoPlanSelection | null]
-  'update:outOfPlan': [val: boolean]
   /** Плановая позиция создана диалогом «Создать в план-графике» (POST /feo-planned-items/) —
    *  родитель должен перезагрузить список плановых позиций (напр. useFeoPlannedResiduals.reloadPlanned). */
   'planned-item-created': []
@@ -365,7 +321,6 @@ function kindChipColor(kind: FeoPlanKind): string { return KIND_CHIP_COLOR[kind]
 function kindChipLabel(kind: FeoPlanKind): string { return KIND_CHIP_LABEL[kind] }
 
 const denseSummaryLabel = computed((): string => {
-  if (props.outOfPlan) return 'Вне плана (новая позиция)'
   const row = selectedKey.value != null ? filteredItems.value.find(r => r.key === selectedKey.value) : undefined
   if (row) return `${row.name} — план ${fmt(row.planned_amount)} · остаток ${fmt(row.residual)}`
   return 'Выбрать плановую позицию'
@@ -374,36 +329,23 @@ const denseSummaryLabel = computed((): string => {
 function selectItem(row: FeoPlanPosition) {
   if (props.readonly) return
   emit('update:modelValue', { kind: row.kind, id: row.id })
-  if (props.outOfPlan) emit('update:outOfPlan', false)
-}
-
-function selectOutOfPlan() {
-  if (props.readonly) return
-  emit('update:modelValue', null)
-  emit('update:outOfPlan', true)
 }
 
 // БАГ 2 (сессия 2026-08-05): нативный <input type="radio"> физически не умеет сниматься
 // повторным кликом (браузер не выдаёт 'change' на клике по уже отмеченной радиокнопке,
-// state не меняется). Обработчик вешаем на 'click' (он срабатывает ВСЕГДА, вне
-// зависимости от смены состояния), сравниваем с selectedKey/outOfPlan — источником
-// правды здесь служит Vue-состояние (props), а не DOM-атрибут checked, поэтому проверка
-// корректна независимо от того, что браузер успел сделать с checked до этого клика.
-// preventDefault останавливает нативную активацию — дальше Vue сам перерисует :checked
-// по новому modelValue/outOfPlan.
+// state не меняется), поэтому вся логика выбора/снятия — ОДИН обработчик на 'click'
+// (срабатывает всегда, вне зависимости от смены состояния); 'change' на радио НЕ вешаем
+// вовсе, иначе он отрабатывает следом за 'click' и заново выставляет выбор, который
+// 'click' только что снял. Источник правды — Vue-состояние (props.modelValue), а не
+// DOM-атрибут checked. preventDefault останавливает нативную активацию — дальше Vue сам
+// перерисует :checked по новому modelValue.
 function onItemRadioClick(row: FeoPlanPosition, event: MouseEvent) {
   if (props.readonly) return
+  event.preventDefault()
   if (selectedKey.value === row.key) {
-    event.preventDefault()
     emit('update:modelValue', null)
-  }
-}
-
-function onOutOfPlanRadioClick(event: MouseEvent) {
-  if (props.readonly) return
-  if (props.outOfPlan) {
-    event.preventDefault()
-    emit('update:outOfPlan', false)
+  } else {
+    selectItem(row)
   }
 }
 
@@ -458,7 +400,6 @@ async function saveCreateDialog() {
     createDialog.value = false
     emit('planned-item-created')
     emit('update:modelValue', { kind: 'planned_item', id: created.id })
-    if (props.outOfPlan) emit('update:outOfPlan', false)
     showSnack('Плановая позиция создана')
   } catch (e: any) {
     showSnack(e?.payload?.message || e?.message || 'Не удалось создать плановую позицию', 'error')

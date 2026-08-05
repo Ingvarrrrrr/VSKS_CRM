@@ -1070,7 +1070,6 @@
                     <FeoPlannedItemsSelect
                       v-if="wishFeoSelected && !wishFeoPerItem"
                       v-model="wishFeoPlanSelection"
-                      v-model:out-of-plan="wishFeoPlanOptOut"
                       :category-id="wishFeoSelected"
                       :nodes="wishFeoNodes"
                       :items="wishPlannedResiduals"
@@ -1587,7 +1586,6 @@
                   :subsidy-name="selectedSubsidyName"
                   :default-feo-category-id="wishFeoSelected"
                   :default-feo-planned-item-id="!wishFeoPerItem ? wishFeoPlannedItemId : null"
-                  :default-over-plan="!wishFeoPerItem ? wishFeoPlanOptOut : false"
                   :feo-planned-per-item="wishFeoPerItem"
                   :planned-items="wishPlannedResiduals"
                   :show-needed-date="wishDateMode === 'per_item'"
@@ -2169,13 +2167,14 @@ const cancelWishFeoPerItemDisable = () => {
 }
 
 // F-PLAN: привязка к конкретной ПЛАНОВОЙ ПОЗИЦИИ план-графика (FeoPlannedItem) —
-// заявка расходует уже заложенный план, а не задваивает его. Факт привязки
-// определяется тем, выбрана ли плановая позиция (wishFeoPlannedItemId) или
-// отмечено «вне плана» (wishFeoPlanOptOut) — отдельного тумблера-переключателя
-// больше нет (владелец не находил его в форме), блок FeoPlannedItemsSelect
+// заявка расходует уже заложенный план, а не задваивает его. Блок FeoPlannedItemsSelect
 // показывается всегда, когда выбрана категория ФЭО (см. шаблон).
+// БАГ 3 (сессия 2026-08-05): псевдо-вариант «Вне плана (новая позиция)» убран целиком —
+// владелец: «"Создать в план-графике" замечательно отображает добавление новой позиции...
+// "Вне плана" не нужна». Позицию без плановой привязки заводят кнопкой «Создать
+// в план-графике» (FeoPlannedItemsSelect) — она физически создаёт FeoPlannedItem и сразу
+// выбирает его, так что «непривязанного» состояния для НОВЫХ заявок больше не возникает.
 const wishFeoPlannedItemId = ref<number | null>(null)
-const wishFeoPlanOptOut = ref(false)
 
 const orgMembers = ref<User[]>([])
 
@@ -2731,7 +2730,6 @@ function resetForm() {
   wishFeoSkipLast.value = false
   wishFeoPerItem.value = false
   wishFeoPlannedItemId.value = null
-  wishFeoPlanOptOut.value = false
   wishDateMode.value = 'common'
 }
 
@@ -2851,32 +2849,23 @@ async function openEditDialog(wish: Wish) {
 
     // F-PLAN: восстановить привязку к плановым позициям план-графика из фактических
     // значений позиций (отдельной колонки wishes.feo_planned_item_id нет и не будет).
-    // F-PLAN2: та же логика теперь учитывает over_plan («вне плана») — единое
-    // состояние в шапке, если оно одинаково у ВСЕХ позиций.
+    // БАГ 3 (сессия 2026-08-05): «вне плана» (over_plan) больше не отражается в шапке —
+    // псевдо-вариант убран из UI; поле в БД у старых позиций может остаться true, но
+    // header-состояние теперь целиком определяется feo_planned_item_id.
     {
       const items = wishForm.value.items as any[]
       const plannedIds = items.map(it => it.feo_planned_item_id)
       const nonNullPlannedIds = plannedIds.filter(id => id != null)
-      const overPlanFlags = items.map(it => !!it.over_plan)
-      const anyOverPlan = overPlanFlags.some(v => v)
-      const allOverPlan = overPlanFlags.length > 0 && overPlanFlags.every(v => v)
-      if (nonNullPlannedIds.length === 0 && !anyOverPlan) {
+      if (nonNullPlannedIds.length === 0) {
         wishFeoPlannedItemId.value = null
-        wishFeoPlanOptOut.value = false
-      } else if (nonNullPlannedIds.length === 0 && allOverPlan) {
-        // Все позиции — «вне плана» (новая позиция), единое состояние в шапке.
-        wishFeoPlannedItemId.value = null
-        wishFeoPlanOptOut.value = true
-      } else if (nonNullPlannedIds.length === plannedIds.length && new Set(nonNullPlannedIds).size === 1 && !anyOverPlan) {
+      } else if (nonNullPlannedIds.length === plannedIds.length && new Set(nonNullPlannedIds).size === 1) {
         // Все позиции привязаны к ОДНОЙ и той же плановой позиции — единое значение в шапке
         wishFeoPlannedItemId.value = nonNullPlannedIds[0]
-        wishFeoPlanOptOut.value = false
       } else {
         // Привязки разные у разных позиций ИЛИ часть пустая — единый выбор в шапке не
         // отразит это корректно, переключаем в режим «по позициям» (как per-item ФЭО).
         wishFeoPerItem.value = true
         wishFeoPlannedItemId.value = null
-        wishFeoPlanOptOut.value = false
       }
     }
     wishDateMode.value = (wishForm.value.items as any[]).some(it => it.needed_date) ? 'per_item' : 'common'
@@ -3181,21 +3170,19 @@ async function saveWish(andSubmit = false) {
         return
       }
     }
-    // F-PLAN: в ветке выбранной категории ФЭО ЕСТЬ плановые позиции план-графика,
-    // но ни одна не выбрана и не отмечено «вне плана» — неопределённое состояние,
-    // не даём отправить. Если плановых позиций в ветке нет — выбор не требуем.
-    if (wishFeoBranchHasPlannedItems.value && !wishFeoPerItem.value && !wishFeoPlannedItemId.value && !wishFeoPlanOptOut.value) {
-      showSnack('В этой категории ФЭО есть плановые позиции план-графика — выберите одну из них или отметьте «Вне плана (новая позиция)»', 'warning')
-      return
+    // F-PLAN: в ветке выбранной категории ФЭО есть плановые позиции план-графика, но не
+    // выбрана ни одна. БАГ 3 (сессия 2026-08-05): псевдо-вариант «Вне плана» убран —
+    // непривязанная позиция просто увеличит плановую сумму категории, как раньше делало
+    // «вне плана», поэтому это больше НЕ блокирует отправку — только мягкое предупреждение.
+    if (wishFeoBranchHasPlannedItems.value && !wishFeoPerItem.value && !wishFeoPlannedItemId.value) {
+      showSnack('В этой категории ФЭО есть плановые позиции план-графика. Выберите одну из них или создайте новую кнопкой «Создать в план-графике» — без выбора позиция увеличит плановую сумму категории.', 'warning')
     }
     // F-PLAN: режим «разные ФЭО для каждого товара» — плановая позиция выбирается
-    // в каждой строке отдельно; не даём отправить, если хоть одна не заполнена
-    // (и только если в ветке вообще есть плановые позиции).
+    // в каждой строке отдельно. Аналогично выше — мягкое предупреждение, не блокирует.
     if (wishFeoBranchHasPlannedItems.value && wishFeoPerItem.value) {
       const unfilledCount = wishForm.value.items.filter((it: any) => it.feo_planned_item_id == null).length
       if (unfilledCount > 0) {
-        showSnack(`У ${unfilledCount} ${unfilledCount === 1 ? 'позиции' : 'позиций'} не выбрана плановая позиция план-графика`, 'warning')
-        return
+        showSnack(`У ${unfilledCount} ${unfilledCount === 1 ? 'позиции' : 'позиций'} не выбрана плановая позиция план-графика. Выберите её или создайте новую кнопкой «Создать в план-графике» — без выбора позиция увеличит плановую сумму категории.`, 'warning')
       }
     }
   }
@@ -3229,11 +3216,10 @@ async function saveWish(andSubmit = false) {
         feo_planned_item_id: wishFeoPerItem.value
           ? ((rest as any).feo_planned_item_id ?? null)
           : (wishFeoPlannedItemId.value ?? null),
-        // F-PLAN2: аналогично feo_planned_item_id — над over_plan нет отдельной колонки
-        // шапки, шапочное значение проставляется каждой позиции в single-режиме.
-        over_plan: wishFeoPerItem.value
-          ? !!((rest as any).over_plan)
-          : wishFeoPlanOptOut.value,
+        // БАГ 3 (сессия 2026-08-05): UI больше не выставляет over_plan (псевдо-вариант
+        // «Вне плана» убран) — колонка в БД и расчёты на бэкенде не тронуты, просто
+        // отправляем то, что уже было на позиции (false для новых/непривязанных).
+        over_plan: !!((rest as any).over_plan),
       })),
     }
 

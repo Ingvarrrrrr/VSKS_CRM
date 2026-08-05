@@ -173,7 +173,6 @@
           @open-contractor-quick-create="openContractorQuickCreate"
           @item-feo-change="onItemFeoChange"
           @item-planned-change="onItemPlannedChange"
-          @item-out-of-plan-change="onItemOutOfPlanChange"
           @item-pick-unallocated="pickUnallocatedForItem"
           @item-type-change="onItemTypeChange"
           @update-contract-field="updateContractField"
@@ -234,7 +233,6 @@
           @open-contractor-quick-create="openContractorQuickCreate"
           @item-feo-change="onItemFeoChange"
           @item-planned-change="onItemPlannedChange"
-          @item-out-of-plan-change="onItemOutOfPlanChange"
           @item-pick-unallocated="pickUnallocatedForItem"
           @item-type-change="onItemTypeChange"
           @items-changed="emitUpdate"
@@ -289,7 +287,6 @@
           @open-contractor-quick-create="openContractorQuickCreate"
           @item-feo-change="onItemFeoChange"
           @item-planned-change="onItemPlannedChange"
-          @item-out-of-plan-change="onItemOutOfPlanChange"
           @item-pick-unallocated="pickUnallocatedForItem"
           @item-type-change="onItemTypeChange"
           @items-changed="emitUpdate"
@@ -750,9 +747,6 @@ const props = withDefaults(defineProps<{
   // иначе шапка-источник-истины перезапишет feo_planned_item_id закупки, у которой
   // своя, никак не связанная с заявками, привязка (см. fillItemsWithDefaultPlannedItem).
   defaultFeoPlannedItemId?: number | null
-  // Аналог defaultFeoPlannedItemId, но для «вне плана» — распространяется ТОЛЬКО
-  // вместе с ним (тот же guard: пропускается, если defaultFeoPlannedItemId не передан).
-  defaultOverPlan?: boolean
   // Разные плановые позиции для каждого товара (аналог feoPerItem, но для Ур.5 ФЭО)
   feoPlannedPerItem?: boolean
   // Плановые позиции план-графика субсидии (единый источник /feo-categories/plan-positions) —
@@ -787,7 +781,6 @@ const props = withDefaults(defineProps<{
   purchaseIdFeo: null,
   defaultFeoCategoryId: null,
   // defaultFeoPlannedItemId — БЕЗ дефолта намеренно, см. комментарий у типа пропа.
-  defaultOverPlan: false,
   feoPlannedPerItem: false,
   plannedItems: () => [],
   itemsTitle: undefined,
@@ -851,14 +844,9 @@ function fillItemsWithDefaultPlannedItem(): boolean {
   if (props.defaultFeoPlannedItemId === undefined) return false
   if (props.feoPlannedPerItem) return false
   let changed = false
-  const overPlan = props.defaultOverPlan ?? false
   for (const it of localItems.value) {
     if (it.feo_planned_item_id !== props.defaultFeoPlannedItemId) {
       it.feo_planned_item_id = props.defaultFeoPlannedItemId
-      changed = true
-    }
-    if ((it.over_plan ?? false) !== overPlan) {
-      it.over_plan = overPlan
       changed = true
     }
   }
@@ -866,7 +854,7 @@ function fillItemsWithDefaultPlannedItem(): boolean {
 }
 
 watch(
-  () => [props.feoPerItem, props.defaultFeoCategoryId, props.feoPlannedPerItem, props.defaultFeoPlannedItemId, props.defaultOverPlan] as const,
+  () => [props.feoPerItem, props.defaultFeoCategoryId, props.feoPlannedPerItem, props.defaultFeoPlannedItemId] as const,
   () => {
     // ОСТОРОЖНО: не использовать || между вызовами — короткое замыкание
     // пропустит вторую fill-функцию, если первая уже вернула true.
@@ -1670,7 +1658,7 @@ function addItem(atStart = false) {
     newItem.final_total = null
     // F-PLAN: новая строка сразу наследует шапочную плановую позицию, если задана
     newItem.feo_planned_item_id = props.defaultFeoPlannedItemId ?? null
-    newItem.over_plan = (props.defaultFeoPlannedItemId !== undefined) ? (props.defaultOverPlan ?? false) : false
+    newItem.over_plan = false
     // ISSUE-3 PART A: inherit header-selected deepest FEO level by default
     if (props.feoPerItem && newItem.feo_category_id == null && props.defaultFeoCategoryId != null) {
       newItem.feo_category_id = props.defaultFeoCategoryId
@@ -1912,11 +1900,9 @@ function onItemFeoChange(idx: number, nodeId: number | null) {
 // F-PLAN2: производный выбор для FeoPlannedItemsSelect по фактическим полям позиции —
 // { kind:'planned_item', id: feo_planned_item_id } если задан; иначе, если категория
 // позиции сама является плановой позицией/статьёй ФЭО с планом (kind='plan_position'
-// | 'feo_article'), — её собственный ключ; иначе null (в т.ч. когда over_plan=true —
-// «Вне плана» рисуется через отдельный флаг outOfPlan, а не modelValue).
+// | 'feo_article'), — её собственный ключ; иначе null.
 function plannedSelectionFor(item: EditorItem): FeoPlanSelection | null {
   if (item.feo_planned_item_id != null) return { kind: 'planned_item', id: item.feo_planned_item_id }
-  if (item.over_plan) return null
   if (item.feo_category_id != null) {
     const row = (props.plannedItems || [])
       .find(p => p.category_id === item.feo_category_id && (p.kind === 'plan_position' || p.kind === 'feo_article'))
@@ -1939,13 +1925,6 @@ function onItemPlannedChange(idx: number, val: FeoPlanSelection | null) {
       it.feo_category_id = val.id
       it.over_plan = false
     }
-  })
-}
-
-function onItemOutOfPlanChange(idx: number, val: boolean) {
-  _propagateToSelected(idx, it => {
-    it.over_plan = val
-    if (val) it.feo_planned_item_id = null
   })
 }
 

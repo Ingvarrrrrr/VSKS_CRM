@@ -27,12 +27,21 @@ export interface FeoNode {
   budget?: number | null
   /** Пояснение: что входит в направление. */
   description?: string | null
+  /** Плановое количество (CRM-план), независимо от budget; null — не задано. */
+  planned_quantity?: number | null
+  /** Плановая стоимость за единицу (CRM-план), независимо от budget; null — не задано. */
+  planned_amount?: number | null
 }
 
 /**
- * Узлы без заданного финансирования (ни у себя, ни у потомков) не являются
- * уровнем ФЭО и не предлагаются к выбору. Оставляем только «профинансированные»
- * узлы и пересчитываем is_leaf по оставшимся.
+ * Узлы без заданного финансирования И без планового показателя (ни у себя, ни у
+ * потомков) не являются уровнем ФЭО и не предлагаются к выбору. Оставляем узлы,
+ * у которых задан budget ИЛИ planned_quantity×planned_amount > 0 — конечная
+ * категория может иметь план (использована в план-графике) без собственного
+ * budget, и раньше такие узлы ошибочно вырезались из дерева, хотя реально
+ * существуют и используются (баг «категория ФЭО была удалена из справочника,
+ * структуру пересоздавали» при клике на плановую позицию — сессия 2026-08-05).
+ * Пересчитываем is_leaf по оставшимся узлам.
  */
 export function filterFundedNodes(nodes: FeoNode[]): FeoNode[] {
   if (!nodes.length) return nodes
@@ -46,7 +55,7 @@ export function filterFundedNodes(nodes: FeoNode[]): FeoNode[] {
   function isFunded(n: FeoNode): boolean {
     const cached = fundedMemo.get(n.id)
     if (cached !== undefined) return cached
-    let ok = n.budget != null
+    let ok = n.budget != null || (Number(n.planned_quantity || 0) * Number(n.planned_amount || 0) > 0)
     if (!ok) ok = (childrenByParent.get(n.id) || []).some(isFunded)
     fundedMemo.set(n.id, ok)
     return ok

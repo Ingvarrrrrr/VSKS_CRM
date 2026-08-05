@@ -736,9 +736,15 @@ async def get_feo_flat(
 ):
     """Returns all FeoCategory nodes for a subsidy as a flat list with is_leaf flag.
 
-    Response: [{id, name, parent_id, level, is_leaf, budget}]
+    Response: [{id, name, parent_id, level, is_leaf, budget, planned_quantity, planned_amount}]
     is_leaf = True if the node has no children within the same subsidy.
     budget = собственная (ручная) сумма финансирования узла, без расчёта по детям.
+    planned_quantity/planned_amount — плановые показатели (CRM-план), заполняются НЕЗАВИСИМО
+    от budget: конечная категория может иметь план (использована в план-графике) без
+    собственного budget. Фронт (useFeoLeaves.filterFundedNodes) считает узел значимым по
+    budget != null ИЛИ planned_quantity*planned_amount > 0 — иначе такие категории
+    вырезались из дерева выбора, хотя реально существуют и используются (баг «категория
+    ФЭО была удалена из справочника», сессия 2026-08-05).
     Sorted by level, then sort_order, then id.
     """
     cats_q = (
@@ -765,6 +771,8 @@ async def get_feo_flat(
             "is_leaf": c.id not in has_children,
             "description": c.description,
             "budget": float(c.budget) if c.budget is not None else None,
+            "planned_quantity": float(c.planned_quantity) if c.planned_quantity is not None else None,
+            "planned_amount": float(c.planned_amount) if c.planned_amount is not None else None,
         }
         for c in all_cats
     ]

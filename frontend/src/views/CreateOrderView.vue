@@ -3108,12 +3108,12 @@
           Отключить разные ФЭО по позициям?
         </v-card-title>
         <v-card-text>
-          У {{ feoPerItemDisableCount }} {{ feoPerItemDisableCount === 1 ? 'позиции' : 'позиций' }} указана своя категория ФЭО — при отключении режима она будет очищена при сохранении.
+          У {{ feoPerItemDisableCount }} {{ feoPerItemDisableCount === 1 ? 'позиции' : 'позиций' }} указана своя категория ФЭО — при отключении режима она будет очищена.
         </v-card-text>
         <v-card-actions>
           <v-spacer />
           <v-btn variant="outlined" @click="cancelFeoPerItemDisable">Отмена</v-btn>
-          <v-btn color="warning" variant="flat" @click="feoPerItemDisableDialog = false">Отключить</v-btn>
+          <v-btn color="warning" variant="flat" @click="confirmFeoPerItemDisable">Отключить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -6805,6 +6805,16 @@ const onFeoPerItemChange = (val: boolean | null) => {
 }
 const cancelFeoPerItemDisable = () => {
   form.feo_per_item = true
+  feoPerItemDisableDialog.value = false
+}
+// Подтверждение «Отключить» — очищаем per-item ФЭО СРАЗУ, а не только при сохранении
+// (см. аналогичный фикс в WishesView.vue): иначе до следующего save() позиции
+// продолжают нести свои feo_category_id/feo_planned_item_id.
+const confirmFeoPerItemDisable = () => {
+  for (const it of items.value as any[]) {
+    it.feo_category_id = null
+    it.feo_planned_item_id = null
+  }
   feoPerItemDisableDialog.value = false
 }
 

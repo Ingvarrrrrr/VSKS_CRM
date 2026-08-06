@@ -14,7 +14,7 @@
           </th>
           <th style="width:36px;text-align:center;color:#888;font-size:12px">№</th>
           <th :style="resizeStyle('name')">Наименование<span class="col-resize-handle" @mousedown="onResizeStart($event, 'name')">&nbsp;</span></th>
-          <th :style="resizeStyle('type')">Тип{{ feoPerItem ? ' / ФЭО *' : '' }}<span class="col-resize-handle" @mousedown="onResizeStart($event, 'type')">&nbsp;</span></th>
+          <th :style="resizeStyle('type')">Тип<span class="col-resize-handle" @mousedown="onResizeStart($event, 'type')">&nbsp;</span></th>
           <th :style="resizeStyle('qty')">Кол-во<span class="col-resize-handle" @mousedown="onResizeStart($event, 'qty')">&nbsp;</span></th>
           <th :style="resizeStyle('unit')">Ед. изм.<span class="col-resize-handle" @mousedown="onResizeStart($event, 'unit')">&nbsp;</span></th>
           <th :style="resizeStyle('price')">Цена ед., ₽<span class="col-resize-handle" @mousedown="onResizeStart($event, 'price')">&nbsp;</span></th>
@@ -40,8 +40,8 @@
           </td>
         </tr>
         <template v-else>
-        <tr v-for="{ item, idx } in [{ item: items[row.idx!], idx: row.idx! }]" :key="item._uid ?? idx"
-          :class="{ 'cv-row': virtualize }">
+        <template v-for="{ item, idx } in [{ item: items[row.idx!], idx: row.idx! }]" :key="item._uid ?? idx">
+        <tr :class="{ 'cv-row': virtualize }">
           <td style="width:36px;padding:0 4px;text-align:center">
             <v-checkbox :model-value="selectedItemIdxs.includes(idx)" density="compact" hide-details :rules="[]"
               @update:model-value="(val: boolean | null) => emit('toggle-item-select', idx, val)" />
@@ -93,38 +93,6 @@
               item-title="title" item-value="value" density="compact" variant="outlined"
               hide-details class="my-1" :disabled="readonly"
               @update:model-value="(v: string) => emit('item-type-change', idx, v)" />
-            <!-- F-PIF2/FCAT-F1: ФЭО позиция — каскадный выбор по уровням -->
-            <template v-if="feoPerItem">
-              <FeoTreeSelect
-                :model-value="item.feo_node_id ?? item.feo_category_id"
-                :nodes="feoNodes"
-                :leaves="feoLeaves"
-                :plan-positions="plannedItems || []"
-                :node-amounts="nodeAmounts"
-                :readonly="readonly"
-                :error="isFeoMissing(item)"
-                :allow-unallocated="!!subsidyId"
-                :root-label="subsidyName"
-                @update:model-value="(v: number | null) => emit('item-feo-change', idx, v)"
-                @pick-unallocated="(parentId: number | null) => emit('item-pick-unallocated', idx, parentId)"
-              />
-              <div v-if="isOverBudget(item)" class="text-caption text-warning d-flex align-center ga-1">
-                <v-icon icon="mdi-alert-outline" size="12" />
-                <span style="font-size:11px">Превышение: {{ fmtRub(overBudgetDelta(item)) }}</span>
-              </div>
-              <!-- F-PLAN: выбор плановой позиции плана закупок (Ур.5 ФЭО) для этой позиции.
-                   category-id — узел каскада (лист или промежуточный), НЕ только feo_category_id:
-                   компонент сам находит дочерние конечные элементы под промежуточным узлом. -->
-              <FeoPlannedItemsSelect
-                v-if="feoPlannedPerItem"
-                :model-value="plannedSelectionFor ? plannedSelectionFor(item) : null"
-                :category-id="item.feo_node_id ?? item.feo_category_id ?? null"
-                :nodes="feoNodes" :items="plannedItems || []"
-                :amount="item.total_price" :readonly="readonly" dense class="mt-1"
-                :prefill="{ name: item.item_name, quantity: item.quantity, unit: item.unit, amount: item.total_price }"
-                @update:model-value="(v) => emit('item-planned-change', idx, v)"
-                @planned-item-created="emit('planned-item-created')" />
-            </template>
           </td>
           <td>
             <v-text-field v-model.number="item.quantity" type="number" density="compact"
@@ -206,6 +174,53 @@
               :disabled="readonly" @click="emit('remove-item', idx)" />
           </td>
         </tr>
+        <!-- ФЭО-подстрока на всю ширину таблицы: путь категории ФЭО обычно длинный
+             («Родитель › Подкатегория › Конечная категория (уточнение)») и не помещается
+             в узкую 90px колонку «Тип» — раньше рендерился внутри неё и переносился по
+             одному слову, растягивая строку на ~700-1000px по вертикали («лапша»).
+             Вынесено из узкой колонки по аналогии с ItemsTableStages.vue (stage-attrs-row). -->
+        <tr v-if="feoPerItem" class="feo-attrs-row" :class="{ 'cv-row': virtualize }">
+          <td></td>
+          <td></td>
+          <td :colspan="totalColCount - 2">
+            <div class="d-flex align-start ga-4 flex-wrap py-1">
+              <FeoTreeSelect
+                :model-value="item.feo_node_id ?? item.feo_category_id"
+                :nodes="feoNodes"
+                :leaves="feoLeaves"
+                :plan-positions="plannedItems || []"
+                :node-amounts="nodeAmounts"
+                :readonly="readonly"
+                :error="isFeoMissing(item)"
+                label="Категория ФЭО"
+                required
+                :allow-unallocated="!!subsidyId"
+                :root-label="subsidyName"
+                style="flex:2 1 520px;min-width:320px"
+                @update:model-value="(v: number | null) => emit('item-feo-change', idx, v)"
+                @pick-unallocated="(parentId: number | null) => emit('item-pick-unallocated', idx, parentId)"
+              />
+              <div v-if="isOverBudget(item)" class="text-caption text-warning mt-2 d-flex align-center ga-1" style="white-space:nowrap">
+                <v-icon icon="mdi-alert-outline" size="14" />
+                Превышение: {{ fmtRub(overBudgetDelta(item)) }}
+              </div>
+              <!-- F-PLAN: выбор плановой позиции плана закупок (Ур.5 ФЭО) для этой позиции.
+                   category-id — узел каскада (лист или промежуточный), НЕ только feo_category_id:
+                   компонент сам находит дочерние конечные элементы под промежуточным узлом. -->
+              <FeoPlannedItemsSelect
+                v-if="feoPlannedPerItem"
+                :model-value="plannedSelectionFor ? plannedSelectionFor(item) : null"
+                :category-id="item.feo_node_id ?? item.feo_category_id ?? null"
+                :nodes="feoNodes" :items="plannedItems || []"
+                :amount="item.total_price" :readonly="readonly" dense
+                style="flex:1 1 320px;min-width:260px"
+                :prefill="{ name: item.item_name, quantity: item.quantity, unit: item.unit, amount: item.total_price }"
+                @update:model-value="(v) => emit('item-planned-change', idx, v)"
+                @planned-item-created="emit('planned-item-created')" />
+            </div>
+          </td>
+        </tr>
+        </template>
         </template>
         </template>
         <tr v-if="!items.length">
@@ -353,6 +368,13 @@ th { position: relative; }
 .cv-row {
   content-visibility: auto;
   contain-intrinsic-size: auto 88px;
+}
+
+/* ФЭО-подстрока (полная ширина, под строкой позиции) — визуально примыкает к
+   родительской строке, без собственной верхней границы/фона. */
+.feo-attrs-row td {
+  border-top: none;
+  padding-top: 0;
 }
 
 /* Группировка позиций по категориям/видам: строки-заголовки групп */

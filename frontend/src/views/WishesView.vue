@@ -1762,12 +1762,12 @@
       <v-card>
         <v-card-title class="pa-4 pb-2">Отключить разные ФЭО по позициям?</v-card-title>
         <v-card-text class="pa-4">
-          У {{ wishFeoPerItemDisableCount }} {{ wishFeoPerItemDisableCount === 1 ? 'позиции' : 'позиций' }} указана своя категория ФЭО — при отключении режима она будет очищена при сохранении.
+          У {{ wishFeoPerItemDisableCount }} {{ wishFeoPerItemDisableCount === 1 ? 'позиции' : 'позиций' }} указана своя категория ФЭО — при отключении режима она будет очищена.
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
           <v-btn variant="text" @click="cancelWishFeoPerItemDisable">Отмена</v-btn>
-          <v-btn variant="flat" color="warning" @click="wishFeoPerItemDisableDialog = false">Отключить</v-btn>
+          <v-btn variant="flat" color="warning" @click="confirmWishFeoPerItemDisable">Отключить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -2180,6 +2180,18 @@ const onWishFeoPerItemChange = (val: boolean | null) => {
 }
 const cancelWishFeoPerItemDisable = () => {
   wishFeoPerItem.value = true
+  wishFeoPerItemDisableDialog.value = false
+}
+// Подтверждение «Отключить» — очищаем per-item ФЭО СРАЗУ (не только при сохранении),
+// иначе до следующего save() позиции продолжают нести свои feo_category_id/
+// feo_planned_item_id, и любая эвристика по ним (см. loadWish) рискует снова
+// включить режим сама собой.
+const confirmWishFeoPerItemDisable = () => {
+  for (const it of wishForm.value.items as any[]) {
+    it.feo_category_id = null
+    it.feo_planned_item_id = null
+    it.over_plan = false
+  }
   wishFeoPerItemDisableDialog.value = false
 }
 
@@ -2888,8 +2900,13 @@ async function openEditDialog(wish: Wish) {
         _description: prod?.description || undefined,
       }
     }) as any
-    // Режим читаем из БД; фолбэк — только для записей, созданных до появления колонки.
-    wishFeoPerItem.value = (wish as any).feo_per_item ?? rawItems.some((i: any) => i.feo_category_id != null)
+    // Режим читаем из БД; фолбэк-эвристика — ТОЛЬКО для записей, созданных до появления
+    // колонки (feo_per_item === undefined/null). Если в БД явно сохранено false — это
+    // осознанный выбор владельца (выключил тумблер и сохранил), эвристика по позициям
+    // НЕ должна его перебивать (правило проекта: выбранное на предыдущем этапе не смеет
+    // меняться само). Запоминаем explicit-флаг отдельно для проверки ниже.
+    const wishFeoPerItemFromDb = (wish as any).feo_per_item
+    wishFeoPerItem.value = wishFeoPerItemFromDb ?? rawItems.some((i: any) => i.feo_category_id != null)
 
     // F-PLAN: восстановить привязку к плановым позициям плана закупок из фактических
     // значений позиций (отдельной колонки wishes.feo_planned_item_id нет и не будет).
@@ -2908,7 +2925,11 @@ async function openEditDialog(wish: Wish) {
       } else {
         // Привязки разные у разных позиций ИЛИ часть пустая — единый выбор в шапке не
         // отразит это корректно, переключаем в режим «по позициям» (как per-item ФЭО).
-        wishFeoPerItem.value = true
+        // НО: если владелец явно сохранил feo_per_item=false, эта эвристика его не трогает —
+        // иначе выключенный вручную режим включался бы обратно сам собой при переоткрытии.
+        if (wishFeoPerItemFromDb !== false) {
+          wishFeoPerItem.value = true
+        }
         wishFeoPlannedItemId.value = null
       }
     }

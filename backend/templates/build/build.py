@@ -18,6 +18,7 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 from backend.templates.build.sources import SOURCES
 from backend.templates.build import docxedit
+from backend.templates.build.rules_merge import merge_variant
 from backend.templates.build.rules_common import (
     RULES as COMMON_RULES,
     apply_common_rules,
@@ -81,10 +82,25 @@ def build_one(doc_type: str, out_dir: pathlib.Path) -> pathlib.Path:
 
     docxedit.normalize(root)
 
+    counts: dict[str, int] = {}
+
+    # M_gph_rid: слияние формы ГПХ «без РИД» (база) + «+РИД» (вариант) по
+    # флагу rid_transfer. Должно идти ПОСЛЕ normalize (принять tracked changes,
+    # слить runs — иначе сравнение абзацев base/variant будет ловить шум от
+    # раздробленных runs), но ДО остальных правил (R3/C-правил/R1/R2/R5) —
+    # чтобы вставленные из варианта абзацы тоже прошли через общие замены
+    # (реквизиты Заказчика/Исполнителя, НДС и т.п.), а не остались с сырыми
+    # бланками «_____» из образца-варианта.
+    if doc_type == "contract_gph_individual":
+        rid_src = _REPO_ROOT / SOURCES["contract_gph_individual_rid"]
+        if not rid_src.exists():
+            raise FileNotFoundError(f"Source not found: {rid_src}")
+        _rid_zip_bytes, rid_root = docxedit.load(str(rid_src))
+        docxedit.normalize(rid_root)
+        merge_variant(root, rid_root, "rid_transfer", counts, "M_gph_rid")
+
     ns = {"w": W}
     paragraphs = root.findall(".//w:p", ns)
-
-    counts: dict[str, int] = {}
 
     # R3 должен сработать ДО правил C08/C09 (они заменяют текст ЮЛ/ИП).
     # После вставки {%p if/else/endif %} список paragraphs устарел —
@@ -148,6 +164,11 @@ def build_one(doc_type: str, out_dir: pathlib.Path) -> pathlib.Path:
         "T4_repair_parts_row",
         "T4_repair_parts_removed",
         "T4_vat_rate_replaced",
+        "M_gph_rid_insert",
+        "M_gph_rid_replace",
+        "M_gph_rid_delete",
+        "M_gph_rid_skipped_empty",
+        "M_gph_rid_skipped_same",
     ]
     hit_rows = []
     zero_rows = []

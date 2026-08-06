@@ -30,6 +30,17 @@
           @click="openBulkFeoDialog">
           Назначить ФЭО для выбранных ({{ selectedItemIdxs.length }})
         </v-btn>
+        <!-- Владелец 2026-08-06: «если делаются разные категории ФЭО... должна быть общая
+             кнопка "Создать в плане закупок" — при нажатии на неё все позиции, которые не
+             привязались к плановым, надо создать будут в соответствующих категориях, как
+             плановые, которые для них выбраны». Видна только в режиме «Разные плановые
+             позиции для каждого товара» (feoPlannedPerItem) и только когда есть позиции,
+             у которых заполнена категория ФЭО, но нет привязки к плановой позиции. -->
+        <v-btn v-if="!props.readonly && props.feoPlannedPerItem && needPlanCount > 0"
+          variant="tonal" prepend-icon="mdi-clipboard-plus-outline" size="small" color="primary"
+          @click="openCreatePlannedBulkDialog">
+          Создать в плане закупок ({{ needPlanCount }})
+        </v-btn>
         <v-btn
           v-if="selectedItemIdxs.length > 0 && hasUncatalogedSelected && !props.readonly"
           size="small" variant="tonal" color="teal"
@@ -522,6 +533,55 @@
           <v-btn variant="text" @click="closeBulkFeoDialog">Отмена</v-btn>
           <v-btn color="primary" variant="flat" :disabled="bulkFeoId == null" @click="applyBulkFeo">
             Применить
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ===== Общая кнопка «Создать в плане закупок» (владелец 2026-08-06) — создаёт плановые
+         позиции (Ур.5 FeoPlannedItem) сразу для ВСЕХ позиций, у которых заполнена категория ФЭО,
+         но нет привязки к плановой позиции, каждую в своей категории. ===== -->
+    <v-dialog v-model="createPlannedBulkDialog" max-width="640" :persistent="createPlannedBulkLoading">
+      <v-card>
+        <v-card-title class="text-subtitle-1">
+          Создать в плане закупок ({{ needPlanRows.length }})
+        </v-card-title>
+        <v-card-text>
+          <div v-if="noCategoryCount > 0" class="text-caption mb-2" style="color:#EF4444">
+            У {{ noCategoryCount }} {{ noCategoryCount === 1 ? 'позиции' : 'позиций' }} не выбрана категория ФЭО — для них плановые позиции не создаются.
+          </div>
+          <v-table density="compact">
+            <thead>
+              <tr>
+                <th>Наименование</th>
+                <th>Кол-во</th>
+                <th>Сумма</th>
+                <th>Категория ФЭО</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in needPlanRows" :key="row.idx">
+                <td>{{ row.name }}</td>
+                <td>{{ row.quantity ?? '—' }} {{ row.unit }}</td>
+                <td>{{ fmtRub(row.amount) }}</td>
+                <td>{{ row.categoryName }}</td>
+              </tr>
+            </tbody>
+          </v-table>
+          <div v-if="createPlannedBulkLoading || createPlannedBulkProgress.total > 0" class="mt-3 d-flex align-center ga-2">
+            <v-progress-circular v-if="createPlannedBulkLoading" indeterminate size="18" width="2" color="primary" />
+            <span class="text-caption">Создано {{ createPlannedBulkProgress.done }} из {{ createPlannedBulkProgress.total }}</span>
+          </div>
+          <div v-if="createPlannedBulkFailures.length" class="mt-2 text-caption" style="color:#EF4444">
+            <div>Не удалось создать/привязать:</div>
+            <div v-for="(f, i) in createPlannedBulkFailures" :key="i">{{ f }}</div>
+          </div>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" :disabled="createPlannedBulkLoading" @click="closeCreatePlannedBulkDialog">Отмена</v-btn>
+          <v-btn color="primary" variant="flat" :loading="createPlannedBulkLoading" :disabled="needPlanRows.length === 0" @click="runCreatePlannedBulk">
+            Создать
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -1857,6 +1917,155 @@ async function applyBulkUnallocated(parentId: number | null) {
     showSnack(e?.payload?.message || e?.message || 'Ошибка получения категории «Не определена»', 'error')
   } finally {
     unallocatedLoading.value = false
+  }
+}
+
+// ── Владелец 2026-08-06: общая кнопка «Создать в плане закупок» ───────────────
+// «Если делаются разные категории ФЭО, то ... должна быть общая кнопка, которая
+// "Создать в плане закупок" — при нажатии на неё все позиции, которые не привязались
+// к плановым, надо создать будут в соответствующих категориях, как плановые, которые
+// для них выбраны». Категория позиции — тот же эффективный узел, что используют
+// per-item FeoPlannedItemsSelect в таблицах (item.feo_node_id ?? item.feo_category_id,
+// см. ItemsTableFlat.vue/ItemsCardsView.vue/ItemsTableStages.vue).
+interface PlanCreateRow {
+  idx: number
+  name: string
+  quantity: number | null
+  unit: string
+  amount: number | null
+  categoryId: number
+  categoryName: string
+}
+
+function _effectiveFeoCategoryId(it: EditorItem): number | null {
+  return it.feo_node_id ?? it.feo_category_id ?? null
+}
+
+// Кандидаты — непустое наименование, ещё нет привязки к плановой позиции (Ур.5).
+const _unlinkedCandidates = computed(() =>
+  localItems.value
+    .map((it, idx) => ({ it, idx }))
+    .filter(({ it }) => (it.item_name || '').trim() && it.feo_planned_item_id == null)
+)
+
+const needPlanRows = computed((): PlanCreateRow[] =>
+  _unlinkedCandidates.value
+    .map(({ it, idx }) => {
+      const categoryId = _effectiveFeoCategoryId(it)
+      if (categoryId == null) return null
+      const categoryName = feoNodes.value.find(n => n.id === categoryId)?.name ?? `#${categoryId}`
+      return {
+        idx,
+        name: (it.item_name || '').trim(),
+        quantity: it.quantity ?? null,
+        unit: it.unit || '',
+        amount: it.total_price ?? null,
+        categoryId,
+        categoryName,
+      } as PlanCreateRow
+    })
+    .filter((r): r is PlanCreateRow => r != null)
+)
+
+const needPlanCount = computed(() => needPlanRows.value.length)
+
+const noCategoryCount = computed(() =>
+  _unlinkedCandidates.value.filter(({ it }) => _effectiveFeoCategoryId(it) == null).length
+)
+
+const createPlannedBulkDialog = ref(false)
+const createPlannedBulkLoading = ref(false)
+const createPlannedBulkProgress = reactive({ done: 0, total: 0 })
+const createPlannedBulkFailures = ref<string[]>([])
+
+function openCreatePlannedBulkDialog() {
+  createPlannedBulkFailures.value = []
+  createPlannedBulkProgress.done = 0
+  createPlannedBulkProgress.total = 0
+  createPlannedBulkDialog.value = true
+}
+
+function closeCreatePlannedBulkDialog() {
+  if (createPlannedBulkLoading.value) return
+  createPlannedBulkDialog.value = false
+}
+
+// Дедуп — строго точное совпадение имени после нормализации (trim + схлопывание
+// пробелов + lower), НИКАКОГО fuzzy (правило проекта — fuzzy ложно сливал разные
+// SKU, см. Lessons: feedback_dedup_exact_only).
+function _normalizePlanName(s: string | null | undefined): string {
+  return (s || '').trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+async function runCreatePlannedBulk() {
+  const rows = needPlanRows.value
+  if (!rows.length) return
+  createPlannedBulkLoading.value = true
+  createPlannedBulkFailures.value = []
+  createPlannedBulkProgress.done = 0
+  createPlannedBulkProgress.total = rows.length
+  let anyChanged = false
+  // Дедуп ВНУТРИ одного прогона: props.plannedItems не перечитывается по ходу цикла
+  // (родитель обновит его только по emit('planned-item-created') в конце) — без этой
+  // карты 2+ позиции с одинаковым именем в одной категории, введённые в ОДНОМ клике,
+  // плодили бы по одному дублю на каждую. Ключ — то же нормализованное имя + категория,
+  // что и в основном дедупе; заполняется как найденными в props.plannedItems строками
+  // (чтобы вторая позиция в прогоне не полезла в POST мимо уже найденной), так и вновь
+  // созданными (чтобы третья и далее привязались к только что созданной, не к дублю).
+  const createdInRun = new Map<string, number>()
+  for (const row of rows) {
+    const item = localItems.value[row.idx]
+    if (!item) { createPlannedBulkProgress.done += 1; continue }
+    const dedupKey = `${row.categoryId}|${_normalizePlanName(row.name)}`
+    try {
+      const runMatch = createdInRun.get(dedupKey)
+      const existing = runMatch != null ? { id: runMatch } : (props.plannedItems || []).find(p =>
+        p.kind === 'planned_item' &&
+        p.category_id === row.categoryId &&
+        _normalizePlanName(p.name) === _normalizePlanName(row.name)
+      )
+      if (existing) {
+        item.feo_planned_item_id = existing.id
+        createdInRun.set(dedupKey, existing.id)
+      } else {
+        const created = await apiFetch<{ id: number }>('/feo-planned-items/', {
+          method: 'POST',
+          body: JSON.stringify({
+            feo_category_id: row.categoryId,
+            name: row.name,
+            quantity: row.quantity,
+            unit: row.unit || null,
+            amount: row.amount,
+          }),
+        })
+        item.feo_planned_item_id = created.id
+        createdInRun.set(dedupKey, created.id)
+      }
+      item.over_plan = false
+      anyChanged = true
+    } catch (e: any) {
+      const status = e?.status
+      const msg = e?.payload?.message || e?.message || 'неизвестная ошибка'
+      createPlannedBulkFailures.value.push(`«${row.name}»${status ? ` (HTTP ${status})` : ''}: ${msg}`)
+    } finally {
+      createPlannedBulkProgress.done += 1
+    }
+  }
+  if (anyChanged) {
+    emitUpdate()
+    emit('planned-item-created')
+  }
+  createPlannedBulkLoading.value = false
+  const failCount = createPlannedBulkFailures.value.length
+  if (failCount === 0) {
+    createPlannedBulkDialog.value = false
+    showSnack(`Плановые позиции созданы/привязаны: ${rows.length}`)
+  } else {
+    showSnack(
+      `Готово ${rows.length - failCount} из ${rows.length}. Не удалось: ${createPlannedBulkFailures.value.join('; ')}`,
+      'error'
+    )
+    // Диалог не закрываем — пусть видно, что не получилось; успевшие позиции уже привязаны.
   }
 }
 

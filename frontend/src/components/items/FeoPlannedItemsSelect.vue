@@ -58,7 +58,6 @@
               <div v-if="filteredItems.length === 0" class="feo-tree-row feo-tree-row--pseudo">
                 <span class="feo-tree-rail" /><span class="feo-tree-elbow feo-tree-elbow--open" />
                 <span class="feo-tree-name">В этой категории нет плановых позиций</span>
-                <v-btn size="x-small" variant="text" color="primary" :disabled="readonly" @click.stop="openCreateDialog">Создать в плане закупок</v-btn>
               </div>
               <div
                 v-for="row in filteredItems"
@@ -80,7 +79,6 @@
                   :disabled="readonly"
                   density="compact"
                   hide-details
-                  inset
                   color="primary"
                   class="feo-planned-switch"
                 />
@@ -103,6 +101,15 @@
                   <span :class="{ 'feo-planned-shortfall': isShort(row) }">остаток {{ fmt(row.residual) }}</span>
                   <span v-if="isShort(row)" class="feo-planned-shortfall-note"> — не хватает {{ fmt(Math.abs(shortfall(row))) }}</span>
                 </span>
+              </div>
+              <!-- Владелец 2026-08-06: кнопка «Создать в плане закупок» доступна ВСЕГДА в
+                   dense-режиме (не только когда список пуст) — если ни одна из существующих
+                   плановых позиций категории не подходит для конкретного товара, должна быть
+                   возможность завести новую, не переключаясь в развёрнутый режим. -->
+              <div class="mt-1 px-1">
+                <v-btn size="x-small" variant="text" color="primary" prepend-icon="mdi-plus" :disabled="readonly" @click.stop="openCreateDialog">
+                  Создать в плане закупок
+                </v-btn>
               </div>
             </v-card>
           </v-menu>
@@ -144,7 +151,6 @@
               :disabled="readonly"
               density="compact"
               hide-details
-              inset
               color="primary"
               class="feo-planned-switch"
             />
@@ -449,6 +455,12 @@ async function saveCreateDialog() {
   flex-shrink: 0;
   margin-top: -4px;
   margin-bottom: -4px;
+  /* Отступ до подписи (владелец 2026-08-06: текст «прилипал» к переключателю без
+     зазора) — 10px, как padding-left стандартного <v-switch><label> в форме (см.
+     «Не указывать последний уровень ФЭО» в WishesView.vue: там label получает его
+     из Vuetify по умолчанию, а тут подпись — соседний <span class="feo-tree-name">
+     без своего label/padding, поэтому зазор нужно задать явно). */
+  margin-right: 8px;
   /* Чисто визуальный индикатор — клик обрабатывается на обёртке .feo-tree-row (div
      role="switch"), не на самом переключателе (иначе браузер генерит второй
      синтетический клик по клику на обёртке — двойное срабатывание onItemRadioClick,

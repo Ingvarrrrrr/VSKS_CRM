@@ -70,6 +70,62 @@ def _sha256(path: pathlib.Path) -> str:
     return h.hexdigest()
 
 
+_METHODOLOGY_DOC_TYPES = ("methodology_large", "methodology_small")
+_METHODOLOGY_HEADING_PREFIX = "МЕТОДИЧЕСКИЕ РЕКОМЕНДАЦИИ"
+
+
+def _build_methodology(
+    doc_type: str,
+    zip_bytes: dict,
+    root,
+    out_dir: pathlib.Path,
+) -> pathlib.Path:
+    """
+    Методички — справочный текст, не бланк. Никаких normalize()/rules:
+    просто отрезаем от w:body всё, что идёт ДО абзаца-заголовка
+    «МЕТОДИЧЕСКИЕ РЕКОМЕНДАЦИИ», сам заголовок и всё после — не трогаем.
+    """
+    ns = {"w": W}
+    body = root.find("w:body", ns)
+    if body is None:
+        raise RuntimeError(f"{doc_type}: w:body не найден")
+
+    children = list(body)
+    heading_idx = None
+    for i, el in enumerate(children):
+        if el.tag == f"{{{W}}}p":
+            text = docxedit.para_text(el).strip()
+            if text.startswith(_METHODOLOGY_HEADING_PREFIX):
+                heading_idx = i
+                break
+
+    if heading_idx is None:
+        raise RuntimeError(
+            f"{doc_type}: абзац, начинающийся с "
+            f"«{_METHODOLOGY_HEADING_PREFIX}», не найден в источнике"
+        )
+
+    for el in children[:heading_idx]:
+        body.remove(el)
+
+    remaining = list(body)
+    sect_pr = body.find("w:sectPr", ns)
+    if sect_pr is None or remaining[-1] is not sect_pr:
+        raise RuntimeError(
+            f"{doc_type}: w:sectPr отсутствует или не является последним "
+            f"элементом w:body после отсечения"
+        )
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"{doc_type}.docx"
+    docxedit.save(zip_bytes, root, str(out_path))
+
+    n_paras = _count_paras(root)
+    print(f"  {doc_type}: абзацев={n_paras} (методичка, без normalize/правил)")
+
+    return out_path
+
+
 def build_one(doc_type: str, out_dir: pathlib.Path) -> pathlib.Path:
     rel_path = SOURCES[doc_type]
     src = _REPO_ROOT / rel_path
@@ -78,6 +134,10 @@ def build_one(doc_type: str, out_dir: pathlib.Path) -> pathlib.Path:
         raise FileNotFoundError(f"Source not found: {src}")
 
     zip_bytes, root = docxedit.load(str(src))
+
+    if doc_type in _METHODOLOGY_DOC_TYPES:
+        return _build_methodology(doc_type, zip_bytes, root, out_dir)
+
     n_comments = _count_source_comments(zip_bytes)
 
     docxedit.normalize(root)

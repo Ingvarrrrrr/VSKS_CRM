@@ -126,6 +126,146 @@ def _build_methodology(
     return out_path
 
 
+_CS_PRICE_SECTION_RE = re.compile(r"^4\.\s+Цена Договора")
+_CS_VAT_NO_VAT_SEARCH = "возникнет НДС"
+_CS_VAT_RATE_CHANGE_SEARCH = "изменится применяемая ставка НДС"
+
+
+def _cs_body_paragraphs(root) -> list:
+    """Прямые дети w:body с тегом w:p (без таблиц) — та же фильтрация,
+    что и в rules_merge._body_paragraphs, реализованная локально (правки
+    rules_merge.py запрещены для этой задачи)."""
+    ns = {"w": W}
+    body = root.find("w:body", ns)
+    if body is None:
+        return []
+    return [el for el in body if el.tag == f"{{{W}}}p"]
+
+
+def _cs_find_price_section_index(paragraphs: list) -> int:
+    for i, p in enumerate(paragraphs):
+        text = docxedit.para_text(p).strip()
+        if _CS_PRICE_SECTION_RE.match(text):
+            return i
+    raise RuntimeError(
+        "contract_services: заголовок «4. Цена Договора и порядок расчетов» "
+        "не найден"
+    )
+
+
+def _cs_cut_methodology(doc_type: str, root) -> int:
+    """
+    contract_services: отрезаем от w:body абзац-заголовок методички
+    («МЕТОДИЧЕСКИЕ РЕКОМЕНДАЦИИ...») и ВСЁ, что идёт после него, кроме
+    хвостового w:sectPr (в отличие от _build_methodology, которая отрезает
+    ДО заголовка — здесь наоборот, отрезаем ОТ заголовка и до конца).
+    Возвращает число удалённых элементов.
+    """
+    ns = {"w": W}
+    body = root.find("w:body", ns)
+    if body is None:
+        raise RuntimeError(f"{doc_type}: w:body не найден")
+
+    children = list(body)
+    heading_idx = None
+    for i, el in enumerate(children):
+        if el.tag == f"{{{W}}}p":
+            text = docxedit.para_text(el).strip()
+            if text.startswith(_METHODOLOGY_HEADING_PREFIX):
+                heading_idx = i
+                break
+
+    if heading_idx is None:
+        raise RuntimeError(
+            f"{doc_type}: абзац, начинающийся с "
+            f"«{_METHODOLOGY_HEADING_PREFIX}», не найден при отсечении методички"
+        )
+
+    sect_pr = body.find("w:sectPr", ns)
+    to_remove = [el for el in children[heading_idx:] if el is not sect_pr]
+    for el in to_remove:
+        body.remove(el)
+
+    remaining = list(body)
+    if sect_pr is None or remaining[-1] is not sect_pr:
+        raise RuntimeError(
+            f"{doc_type}: w:sectPr отсутствует или не является последним "
+            f"элементом w:body после отсечения методички"
+        )
+
+    return len(to_remove)
+
+
+def _cs_strip_style_refs(p) -> None:
+    """Та же логика, что rules_merge._clone_paragraph/_strip_style_refs,
+    реализованная локально (правки rules_merge.py запрещены)."""
+    ns = {"w": W}
+    for ppr in p.findall("w:pPr", ns):
+        for tag in ("w:pStyle", "w:numPr"):
+            for el in ppr.findall(tag, ns):
+                ppr.remove(el)
+    for rpr in p.iter(f"{{{W}}}rPr"):
+        for el in list(rpr):
+            if el.tag == f"{{{W}}}rStyle":
+                rpr.remove(el)
+
+
+def _cs_clone_paragraph(p):
+    import copy
+    new_p = copy.deepcopy(p)
+    _cs_strip_style_refs(new_p)
+    return new_p
+
+
+def _cs_insert_vat_rate_change_paragraph(root, food_root) -> None:
+    """
+    contract_services: вставляет абзац «изменится применяемая ставка НДС»
+    (взятый из contract_services_food) сразу после существующей пары
+    «возникнет НДС» + пустой абзац-разделитель, плюс добавляет ещё один
+    пустой разделитель после вставленного абзаца. Сам абзац НЕ оборачивается
+    условным тегом здесь — это делает apply_r1_vat_411_wrap() позже в общем
+    конвейере (она ищет его по тексту у ВСЕХ doc_type).
+    """
+    ns = {"w": W}
+
+    rate_change_p = None
+    for p in food_root.findall(".//w:p", ns):
+        if _CS_VAT_RATE_CHANGE_SEARCH in docxedit.para_text(p):
+            rate_change_p = p
+            break
+    if rate_change_p is None:
+        raise RuntimeError(
+            "contract_services: в contract_services_food не найден абзац "
+            f"«{_CS_VAT_RATE_CHANGE_SEARCH}»"
+        )
+
+    clone = _cs_clone_paragraph(rate_change_p)
+
+    no_vat_p = None
+    for p in root.findall(".//w:p", ns):
+        if _CS_VAT_NO_VAT_SEARCH in docxedit.para_text(p):
+            no_vat_p = p
+            break
+    if no_vat_p is None:
+        raise RuntimeError(
+            "contract_services: абзац "
+            f"«{_CS_VAT_NO_VAT_SEARCH}» не найден после слияния питания"
+        )
+
+    parent = no_vat_p.getparent()
+    siblings = list(parent)
+    anchor = no_vat_p
+    anchor_idx = siblings.index(no_vat_p)
+    if anchor_idx + 1 < len(siblings):
+        next_el = siblings[anchor_idx + 1]
+        if next_el.tag == f"{{{W}}}p" and not docxedit.para_text(next_el).strip():
+            anchor = next_el
+            anchor_idx += 1
+
+    parent.insert(anchor_idx + 1, clone)
+    docxedit.insert_para_after(clone, "")
+
+
 def build_one(doc_type: str, out_dir: pathlib.Path) -> pathlib.Path:
     rel_path = SOURCES[doc_type]
     src = _REPO_ROOT / rel_path
@@ -158,6 +298,34 @@ def build_one(doc_type: str, out_dir: pathlib.Path) -> pathlib.Path:
         _rid_zip_bytes, rid_root = docxedit.load(str(rid_src))
         docxedit.normalize(rid_root)
         merge_variant(root, rid_root, "rid_transfer", counts, "M_gph_rid")
+
+    # contract_services: объединённая форма услуг (large/small/food) без
+    # методических рекомендаций. Как и M_gph_rid выше — ПОСЛЕ normalize,
+    # ДО R3/common rules, чтобы вставленные из food абзацы тоже прошли
+    # через общие замены (реквизиты, НДС и т.п.).
+    if doc_type == "contract_services":
+        n_cut = _cs_cut_methodology(doc_type, root)
+
+        food_src = _REPO_ROOT / SOURCES["contract_services_food"]
+        if not food_src.exists():
+            raise FileNotFoundError(f"Source not found: {food_src}")
+        _food_zip_bytes, food_root = docxedit.load(str(food_src))
+        docxedit.normalize(food_root)
+
+        base_paragraphs = _cs_body_paragraphs(root)
+        var_paragraphs = _cs_body_paragraphs(food_root)
+        base_end = _cs_find_price_section_index(base_paragraphs)
+        var_end = _cs_find_price_section_index(var_paragraphs)
+
+        merge_variant(
+            root, food_root, "food_service", counts, "M_services_food",
+            handle_delete=False, base_end=base_end, var_end=var_end,
+        )
+
+        _cs_insert_vat_rate_change_paragraph(root, food_root)
+
+        counts["CS_methodology_cut"] = n_cut
+        counts["CS_vat_rate_change_insert"] = 1
 
     ns = {"w": W}
     paragraphs = root.findall(".//w:p", ns)
@@ -229,6 +397,13 @@ def build_one(doc_type: str, out_dir: pathlib.Path) -> pathlib.Path:
         "M_gph_rid_delete",
         "M_gph_rid_skipped_empty",
         "M_gph_rid_skipped_same",
+        "M_services_food_insert",
+        "M_services_food_replace",
+        "M_services_food_delete",
+        "M_services_food_skipped_empty",
+        "M_services_food_skipped_same",
+        "CS_methodology_cut",
+        "CS_vat_rate_change_insert",
     ]
     hit_rows = []
     zero_rows = []

@@ -101,11 +101,19 @@ def _insert_after(anchor, elements: list) -> None:
 
 def merge_variant(root, variant_root, flag: str, counts: dict,
                    rule_prefix: str, base_start: int = 0, var_start: int = 0,
-                   handle_delete: bool = True) -> None:
+                   handle_delete: bool = True, base_end: int | None = None,
+                   var_end: int | None = None) -> None:
     """
     Выравнивает абзацы body базового документа (root) и документа-варианта
     (variant_root), оборачивает различия в условные абзацные теги docxtpl
     по значению переменной flag.
+
+    base_end/var_end (не входят в диапазон, как обычный срез) ограничивают
+    сравнение СВЕРХУ — нужно, когда различия должны сравниваться только
+    в пределах одного раздела документа (напр. «тело» до заголовка методички),
+    а не до самого конца body. По умолчанию (None) — как раньше, до конца
+    списка абзацев (это и есть поведение единственного текущего вызова —
+    слияние ГПХ, где вариант отличается от базы до самого конца документа).
 
     - insert (абзацы только в варианте): {%p if flag %} + копии абзацев
       варианта + {%p endif %}.
@@ -142,8 +150,8 @@ def merge_variant(root, variant_root, flag: str, counts: dict,
 
     sm = difflib.SequenceMatcher(
         None,
-        base_norm[base_start:],
-        var_norm[var_start:],
+        base_norm[base_start:base_end],
+        var_norm[var_start:var_end],
     )
     opcodes = sm.get_opcodes()
 

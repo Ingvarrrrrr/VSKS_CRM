@@ -309,6 +309,13 @@ async def _sync_wish_items_to_purchases(wish, db: AsyncSession) -> None:
             pi.unit_price = wi.unit_price
             pi.quantity = wi.quantity
             pi.total_price = (wi.unit_price or 0) * (wi.quantity or 0)
+            # Снимок плана (Шаг 1): позиция ещё НЕ ушла из плана закупок (проверено
+            # выше — p.status not in CONTRACTED_STATUSES), поэтому правка заявки
+            # по-прежнему двигает и «текущую» цену, и зафиксированный план вместе —
+            # план не заморожен, пока закупка не объявлена (Шаг 2).
+            pi.planned_quantity = wi.quantity
+            pi.planned_unit_price = wi.unit_price
+            pi.planned_total = (wi.unit_price or 0) * (wi.quantity or 0)
             pi.feo_category_id = wi.feo_category_id
             pi.feo_planned_item_id = wi.feo_planned_item_id
             pi.over_plan = getattr(wi, 'over_plan', False)
@@ -528,6 +535,12 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
                     )
                 )).scalar_one_or_none()
                 if existing_fpi is None:
+                    # amount=wi.total_price — ЭТО и есть снимок плана (Шаг 1 «план ≠
+                    # факт»): на этом этапе PurchaseItem ещё не существует, wi.total_price
+                    # — единственное значение ТЗ, оно фиксируется как план категории раз
+                    # и навсегда в момент постановки в план закупок; последующая правка
+                    # цены по итогам закупки (см. purchase_items.planned_* снимок ниже)
+                    # эту сумму больше не трогает.
                     existing_fpi = FeoPlannedItem(
                         feo_category_id=eff_cat_id,
                         name=wi.item_name,
@@ -612,6 +625,13 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
                 unit=wi.unit,
                 unit_price=wi.unit_price,
                 total_price=wi.total_price,
+                # Снимок плана (Шаг 1 «план ≠ факт»): зафиксировать ТЗ заявки как план
+                # позиции ОТДЕЛЬНО от unit_price/total_price (которые дальше могут
+                # мутировать при правке цены по итогам закупки) — дерево ФЭО обязано
+                # читать planned_*, а не текущую unit_price/total_price.
+                planned_quantity=wi.quantity,
+                planned_unit_price=wi.unit_price,
+                planned_total=wi.total_price,
                 country_origin=wi.country_origin,
                 feo_category_id=wi.feo_category_id,  # B9: per-item feo
                 feo_planned_item_id=wi.feo_planned_item_id,  # расходуем уже запланированную позицию, не задваиваем план

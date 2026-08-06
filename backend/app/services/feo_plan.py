@@ -25,6 +25,7 @@ from typing import Optional
 from sqlalchemy import func, or_ as sqlor, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.contract_item import ContractItem
 from app.models.feo_category import FeoCategory
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
@@ -36,24 +37,56 @@ from app.models.wish_item import WishItem
 # подтверждено закрывающим актом (delivered/paid), ORDERED_STATUSES — все три вместе.
 FACT_CONFIRMED_STATUSES: set = {"delivered", "paid"}
 ORDERED_STATUSES: set = {"ordered"} | FACT_CONFIRMED_STATUSES
+
+# Задача владельца «план ≠ факт» (сессия 2026-08-06, план zany-fluttering-mountain.md,
+# шаг «A»): факт (цена по итогам КП/торгов) учитывается уже с «Ведётся работа» — как
+# только заполнены договорные позиции (ContractItem) или purchases.contract_price,
+# ещё ДО подписания договора (превентивный контроль, см. assert_no_unapproved_excess).
+# Раньше порог был только "ordered". НЕ путать с purchase_budget.FACT_STATUSES —
+# тот управляет другим порогом (панель «план vs факт» показывает факт с «Заказано» —
+# владелец описывал это ДО текущей задачи, см. purchase_budget.py комментарий) и его
+# трогать не просили.
+FACT_PRICED_STATUSES: set = {"work_in_progress", "contracted", "ordered"}
+# Все статусы, где purchase_item_fact_amount способен вернуть не-None (используется
+# fact_consumption_by_category / ordered_consumption_by_category).
+FACT_ELIGIBLE_STATUSES: set = FACT_PRICED_STATUSES | FACT_CONFIRMED_STATUSES
 _CENTS = Decimal("0.01")
 
 
 def purchase_item_fact_amount(
-    pi: PurchaseItem, purchase: Purchase, ratio: Decimal, items_count: int
+    pi: PurchaseItem,
+    purchase: Purchase,
+    ratio: Decimal,
+    items_count: int,
+    contract_item_total: Optional[Decimal] = None,
 ) -> tuple[Optional[Decimal], bool]:
     """Единая формула «фактической суммы» позиции закупки.
 
     Источник правды — GET /api/feo-planned-items/comparison (карточка сравнения
     план/факт), вынесено сюда, чтобы её переиспользовал и расчёт плановой суммы
-    (ordered_consumption_by_category ниже) — суммы не должны расходиться между
-    двумя местами (сессия 2026-08-05, задача владельца «новая формула плана»).
+    (ordered_consumption_by_category / fact_consumption_by_category ниже) — суммы
+    не должны расходиться между несколькими местами (сессия 2026-08-05/2026-08-06).
 
-    Правила владельца: до статуса «Заказано» это ещё ПЛАН, факта нет —
-    fact_amount=None. «Заказано» — «по договору» (final_total, если уже
-    импортирован по закрывающим документам, иначе доля contract_price).
-    «Поставлено»/«Оплачено» — подтверждено актом приёмки (final_total, иначе
-    доля acceptance_doc_amount).
+    Приоритет источников факта (задача владельца, сессия 2026-08-06):
+      1. contract_item_total — ContractItem.total, ТОЧНО сопоставленный этой позиции
+         через source_item_id (без пропорции — предпочтительнее, т.к. известна
+         именно ЭТА строка договора, а не доля от суммы закупки). Передаётся
+         вызывающим кодом (предзапрошен по PurchaseItem.id, см. ordered_consumption_by_category/
+         fact_consumption_by_category) — сама функция БД не читает.
+      2. final_total — сумма по закрывающим документам, если уже импортирована.
+      3. пропорция от purchases.contract_price (work_in_progress/contracted/ordered)
+         либо purchases.acceptance_doc_amount (delivered/paid) — по доле позиции
+         в сумме всех позиций закупки (ratio).
+      Ничего из этого нет → факта ещё нет, fact_amount=None (для delivered/paid —
+      исключение, см. ниже, сохранён старый фолбэк на total_price, т.к. эта стадия
+      подтверждена актом приёмки и факт обязан существовать).
+
+    Порог статуса (задача владельца «план ≠ факт», 2026-08-06): опущен с «Заказано»
+    до «Ведётся работа» (FACT_PRICED_STATUSES = work_in_progress/contracted/ordered) —
+    как только заполнены договорные позиции или contract_price, это уже ФАКТ, ещё до
+    подписания договора (превентивный контроль превышения). «Поставлено»/«Оплачено» —
+    подтверждено актом приёмки (final_total, иначе доля acceptance_doc_amount, иначе
+    total_price — старое поведение, не меняется).
 
     ratio — доля позиции в сумме ВСЕХ позиций закупки (для пропорционального
     распределения суммы уровня закупки между позициями, когда позиций
@@ -61,15 +94,21 @@ def purchase_item_fact_amount(
     fact_allocated=True, если сумма получена делением суммы закупки
     пропорционально (а не берётся напрямую).
     """
-    if purchase.status == "ordered":
+    if purchase.status in FACT_PRICED_STATUSES:
+        if contract_item_total is not None:
+            return contract_item_total, False
         if pi.final_total is not None:
             return Decimal(str(pi.final_total)), False
         if purchase.contract_price is not None:
             contract_price = Decimal(str(purchase.contract_price))
             amt = (contract_price * ratio).quantize(_CENTS) if items_count > 1 else contract_price
             return amt, items_count > 1
-        return Decimal(str(pi.total_price or 0)), False
+        # Нет ни строки договора, ни contract_price — факта ещё нет (текущее
+        # поведение plan_schedule: возвращаем None, а не total_price).
+        return None, False
     if purchase.status in FACT_CONFIRMED_STATUSES:
+        if contract_item_total is not None:
+            return contract_item_total, False
         if pi.final_total is not None:
             return Decimal(str(pi.final_total)), False
         if purchase.acceptance_doc_amount is not None:
@@ -77,8 +116,41 @@ def purchase_item_fact_amount(
             amt = (doc_amount * ratio).quantize(_CENTS) if items_count > 1 else doc_amount
             return amt, items_count > 1
         return Decimal(str(pi.total_price or 0)), False
-    # plan_schedule / work_in_progress / contracted — это ещё ПЛАН, факта нет.
+    # plan_schedule — это ещё ПЛАН, факта нет.
     return None, False
+
+
+async def _contract_item_totals(db: AsyncSession, item_ids) -> dict:
+    """{purchase_item_id: Σ ContractItem.total} по source_item_id — приоритет №1
+    формулы факта (purchase_item_fact_amount). Сумма (не последняя строка), на
+    случай если по одной позиции ТЗ создано несколько строк договора."""
+    item_ids = list(item_ids)
+    if not item_ids:
+        return {}
+    rows = (await db.execute(
+        select(ContractItem.source_item_id, func.coalesce(func.sum(ContractItem.total), 0))
+        .where(ContractItem.source_item_id.in_(item_ids))
+        .group_by(ContractItem.source_item_id)
+    )).all()
+    return {r[0]: Decimal(str(r[1])) for r in rows if r[1]}
+
+
+async def _purchase_item_totals(db: AsyncSession, purchase_ids) -> dict:
+    """{purchase_id: (items_count, Σ total_price)} — знаменатель для пропорционального
+    распределения (ratio) суммы уровня закупки между её позициями."""
+    purchase_ids = list(purchase_ids)
+    if not purchase_ids:
+        return {}
+    rows = (await db.execute(
+        select(
+            PurchaseItem.purchase_id,
+            func.count(PurchaseItem.id),
+            func.coalesce(func.sum(PurchaseItem.total_price), 0),
+        )
+        .where(PurchaseItem.purchase_id.in_(purchase_ids))
+        .group_by(PurchaseItem.purchase_id)
+    )).all()
+    return {r[0]: (r[1], Decimal(str(r[2] or 0))) for r in rows}
 
 
 async def plan_consumption_by_category(
@@ -110,13 +182,22 @@ async def plan_consumption_by_category(
 
     from app.routers.purchase_budget import PLANNED_STATUSES  # local: avoid router import cycle
 
+    # Задача владельца «план ≠ факт» (шаг B, сессия 2026-08-06): суммируем СНИМОК
+    # плана (planned_total/planned_quantity), а не мутирующую total_price/quantity —
+    # иначе правка цены ТЗ по итогам закупки (единственный оставшийся путь — заявка)
+    # двигала бы план у НЕпривязанных к FeoPlannedItem позиций. Снимок заполняется
+    # Шагом 1 (purchases.py/wishes.py) и заморожен с момента ухода из «План закупок»
+    # (см. patch_purchase_item); COALESCE — на случай строк без снимка (создано до
+    # миграции j1k2l3m4n5o6 и ещё не сохранялось повторно).
+    amount_expr = func.coalesce(PurchaseItem.planned_total, PurchaseItem.total_price)
+    qty_expr = func.coalesce(PurchaseItem.planned_quantity, PurchaseItem.quantity)
     cat_col = func.coalesce(PurchaseItem.feo_category_id, Purchase.feo_category_id)
     stmt = (
         select(
             cat_col.label("cat_id"),
             PurchaseItem.over_plan,
-            func.coalesce(func.sum(PurchaseItem.total_price), 0).label("amount"),
-            func.coalesce(func.sum(PurchaseItem.quantity), 0).label("qty"),
+            func.coalesce(func.sum(amount_expr), 0).label("amount"),
+            func.coalesce(func.sum(qty_expr), 0).label("qty"),
         )
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .join(FeoCategory, FeoCategory.id == cat_col)
@@ -196,16 +277,10 @@ async def ordered_consumption_by_category(
     # acceptance_doc_amount) между ВСЕМИ позициями закупки — как в /comparison,
     # считаем по всем позициям закупки, не только вошедшим в выборку.
     purchase_ids = {r.Purchase.id for r in rows}
-    totals_rows = (await db.execute(
-        select(
-            PurchaseItem.purchase_id,
-            func.count(PurchaseItem.id),
-            func.coalesce(func.sum(PurchaseItem.total_price), 0),
-        )
-        .where(PurchaseItem.purchase_id.in_(purchase_ids))
-        .group_by(PurchaseItem.purchase_id)
-    )).all()
-    purchase_totals = {r[0]: (r[1], Decimal(str(r[2] or 0))) for r in totals_rows}
+    purchase_totals = await _purchase_item_totals(db, purchase_ids)
+    # Приоритет №1 формулы факта (см. purchase_item_fact_amount) — ContractItem.total
+    # по source_item_id, предзапрошено одним батчем на все позиции выборки.
+    contract_totals = await _contract_item_totals(db, (r.PurchaseItem.id for r in rows))
 
     for r in rows:
         pi = r.PurchaseItem
@@ -218,12 +293,85 @@ async def ordered_consumption_by_category(
             ratio = Decimal(1) / Decimal(items_count)
         else:
             ratio = Decimal(1)
-        fact_amount, _allocated = purchase_item_fact_amount(pi, p, ratio, items_count)
+        fact_amount, _allocated = purchase_item_fact_amount(
+            pi, p, ratio, items_count, contract_item_total=contract_totals.get(pi.id)
+        )
         if fact_amount is None:
             continue
         d = result.setdefault(r.cat_id, {"ordered": 0.0, "ordered_quantity": 0.0})
         d["ordered"] += float(fact_amount)
         d["ordered_quantity"] += float(pi.quantity or 0)
+    return result
+
+
+async def fact_consumption_by_category(
+    db: AsyncSession,
+    subsidy_ids: list[int],
+) -> dict[int, dict]:
+    """{feo_category_id: {fact, fact_quantity}} — задача владельца «план ≠ факт»
+    (шаг A.2, сессия 2026-08-06): ФАКТ узла дерева ФЭО = Σ фактической суммы/
+    количества позиций закупок в FACT_ELIGIBLE_STATUSES (work_in_progress и
+    дальше — см. purchase_item_fact_amount), по правилам той же единой формулы.
+
+    Отличие от ordered_consumption_by_category — ДВА:
+      1. Порог статуса ниже (с «Ведётся работа», не с «Заказано») — превентивный
+         контроль превышения должен видеть цену по итогам КП/торгов ДО подписания
+         договора (см. assert_no_unapproved_excess).
+      2. Позиции, привязанные к FeoPlannedItem (feo_planned_item_id IS NOT NULL),
+         НЕ исключаются (в отличие от exclude_planned_item_linked=True, которым
+         compute_feo_plan_tree вызывает ordered/plan_consumption) — иначе именно
+         привязанные позиции (обычный сценарий: заявка → план → закупка) никогда
+         не показали бы факт, хотя это и есть основной случай владельца (Great
+         Wall POER, эталонный сценарий).
+
+    over_plan=true позиции исключены — они не участвуют в сравнении факт/план
+    (их расход уже безусловно учтён отдельно в excess_over_feo/over, см.
+    plan_consumption_by_category.over и compute_feo_plan_tree).
+
+    Изоляция субсидий — как в plan_consumption_by_category/ordered_consumption_by_category.
+    """
+    result: dict[int, dict] = {}
+    if not subsidy_ids:
+        return result
+
+    cat_col = func.coalesce(PurchaseItem.feo_category_id, Purchase.feo_category_id)
+    stmt = (
+        select(PurchaseItem, Purchase, cat_col.label("cat_id"))
+        .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
+        .join(FeoCategory, FeoCategory.id == cat_col)
+        .where(Purchase.status.in_(list(FACT_ELIGIBLE_STATUSES)))
+        .where(PurchaseItem.over_plan.is_(False))
+        .where(FeoCategory.subsidy_id.in_(subsidy_ids))
+        .where(Purchase.subsidy_id == FeoCategory.subsidy_id)
+    )
+
+    rows = (await db.execute(stmt)).all()
+    if not rows:
+        return result
+
+    purchase_ids = {r.Purchase.id for r in rows}
+    purchase_totals = await _purchase_item_totals(db, purchase_ids)
+    contract_totals = await _contract_item_totals(db, (r.PurchaseItem.id for r in rows))
+
+    for r in rows:
+        pi = r.PurchaseItem
+        p = r.Purchase
+        items_count, items_sum = purchase_totals.get(p.id, (1, Decimal(str(pi.total_price or 0))))
+        item_total = Decimal(str(pi.total_price or 0))
+        if items_count > 1 and items_sum > 0:
+            ratio = item_total / items_sum
+        elif items_count > 1:
+            ratio = Decimal(1) / Decimal(items_count)
+        else:
+            ratio = Decimal(1)
+        fact_amount, _allocated = purchase_item_fact_amount(
+            pi, p, ratio, items_count, contract_item_total=contract_totals.get(pi.id)
+        )
+        if fact_amount is None:
+            continue
+        d = result.setdefault(r.cat_id, {"fact": 0.0, "fact_quantity": 0.0})
+        d["fact"] += float(fact_amount)
+        d["fact_quantity"] += float(pi.quantity or 0)
     return result
 
 
@@ -439,6 +587,7 @@ async def compute_feo_plan_tree(
 
     over_consumption = await plan_consumption_by_category(db, subsidy_ids, exclude_planned_item_linked=True)
     ordered_consumption = await ordered_consumption_by_category(db, subsidy_ids, exclude_planned_item_linked=True)
+    fact_consumption = await fact_consumption_by_category(db, subsidy_ids)
 
     # Согласование превышения плана над финансированием узла (feo_categories.budget) —
     # задача владельца «должны быть заблокированы действия, пока план закупок не
@@ -488,6 +637,9 @@ async def compute_feo_plan_tree(
         ord_cons = ordered_consumption.get(cat_id) or {}
         own_ordered = ord_cons.get("ordered", 0.0)
         own_ordered_qty = ord_cons.get("ordered_quantity", 0.0)
+        fact_cons = fact_consumption.get(cat_id) or {}
+        own_fact = fact_cons.get("fact", 0.0)
+        own_fact_qty = fact_cons.get("fact_quantity", 0.0)
 
         kids = children_map.get(cat_id, [])
         if not kids:
@@ -502,6 +654,8 @@ async def compute_feo_plan_tree(
             over_qty = own_over_qty
             consumed = own_consumed
             consumed_qty = own_consumed_qty
+            fact = own_fact
+            fact_qty = own_fact_qty
             plan, forecast, forecast_over = _own_plan_and_forecast(qty, amt, plan_manual, ordered, ordered_qty)
             # qty_plan — тот же принцип замещения, что и plan (money), но для
             # количества: заказанное количество замещает плановое, когда оно набрано
@@ -518,6 +672,8 @@ async def compute_feo_plan_tree(
             children_consumed = sum(c["consumed"] for c in child_nodes)
             children_consumed_qty = sum(c["consumed_quantity"] for c in child_nodes)
             children_forecast_over = sum(c["forecast_over"] for c in child_nodes)
+            children_fact = sum(c["fact"] for c in child_nodes)
+            children_fact_qty = sum(c["fact_quantity"] for c in child_nodes)
 
             # Собственные planned_quantity/amount группы НЕ учитываются (см. docstring) —
             # own-часть формулы всегда получает qty=0, поэтому own_plan всегда
@@ -533,6 +689,8 @@ async def compute_feo_plan_tree(
             over_qty = own_over_qty + children_over_qty
             consumed = own_consumed + children_consumed
             consumed_qty = own_consumed_qty + children_consumed_qty
+            fact = own_fact + children_fact
+            fact_qty = own_fact_qty + children_fact_qty
             plan = own_plan + children_plan
             forecast_over = children_forecast_over
             forecast = plan_manual + forecast_over
@@ -553,15 +711,33 @@ async def compute_feo_plan_tree(
         excess_pending = False
         excess_approved = False
         display = full_display
+        appr = latest_approval_by_cat.get(cat_id)
         if budget is not None and full_display - budget > 0.005:
             excess_amount = full_display - budget
-            appr = latest_approval_by_cat.get(cat_id)
             if appr is not None and appr.status == "approved":
                 excess_approved = True
                 display = full_display
             else:
                 display = plan_manual
                 excess_pending = bool(appr is not None and appr.status == "pending")
+
+        # Задача владельца «план ≠ факт» (шаг C, сессия 2026-08-06): ВТОРОЕ,
+        # независимое превышение — «факт дороже плана» (итог закупки/КП больше,
+        # чем было запланировано), а НЕ «план дороже финансирования ФЭО»
+        # (excess_amount/excess_over_feo — старая, НЕ изменённая семантика, см.
+        # выше). excess_amount оставлен как есть для обратной совместимости
+        # существующих потребителей; excess_over_feo — то же число под понятным
+        # именем. НЕ влияет на display/full_display — это отдельный сигнал для
+        # гейта (assert_no_unapproved_excess) и панелей факт/план, а не для
+        # KPI «Запланировано».
+        excess_over_feo = excess_amount
+        excess_fact_over_plan = (fact - plan) if (fact - plan) > 0.005 else 0.0
+        # Согласование превышения факта над планом — та же PlanExcessApproval-запись
+        # на категорию (единый механизм согласования, задача владельца «согласование
+        # существующим механизмом»): approved снимает блокировку для ОБОИХ видов
+        # превышения одновременно (см. assert_no_unapproved_excess/plan_excess.py).
+        excess_fact_approved = bool(excess_fact_over_plan > 0.005 and appr is not None and appr.status == "approved")
+        excess_fact_pending = bool(excess_fact_over_plan > 0.005 and appr is not None and appr.status == "pending")
 
         node = {
             "subsidy_id": r.subsidy_id,
@@ -575,12 +751,18 @@ async def compute_feo_plan_tree(
             "over_quantity": over_qty,
             "consumed": consumed,
             "consumed_quantity": consumed_qty,
+            "fact": fact,
+            "fact_quantity": fact_qty,
             "plan": plan,
             "budget": budget,
             "display": display,
             "excess_amount": excess_amount,
             "excess_pending": excess_pending,
             "excess_approved": excess_approved,
+            "excess_over_feo": excess_over_feo,
+            "excess_fact_over_plan": excess_fact_over_plan,
+            "excess_fact_approved": excess_fact_approved,
+            "excess_fact_pending": excess_fact_pending,
             "residual": plan - ordered,
             "forecast": forecast,
             "forecast_over": forecast_over,
@@ -599,16 +781,26 @@ async def assert_no_unapproved_excess(
     db: AsyncSession, feo_category_id: int, adding_amount: Decimal = Decimal("0")
 ) -> None:
     """Бросает HTTPException 409, если узел ФЭО feo_category_id или любой его
-    ПРЕДОК имеет несогласованное превышение плана над финансированием ФЭО
-    (excess_amount > 0 и НЕ excess_approved — см. compute_feo_plan_tree и
-    миграцию h8i9j0k1l2m3 / app.models.plan_excess_approval).
+    ПРЕДОК имеет несогласованное превышение — ЛИБО плана над финансированием ФЭО
+    (excess_over_feo/excess_amount > 0 и НЕ excess_approved), ЛИБО факта над
+    планом (excess_fact_over_plan > 0 и НЕ excess_fact_approved — задача
+    владельца «план ≠ факт», шаг C, сессия 2026-08-06). См. compute_feo_plan_tree
+    и app.models.plan_excess_approval.
 
     Требование владельца (2026-08-05): «Если где-то превысил план ФЭО, значит
     где-то надо снимать — должны быть заблокированы действия, пока план закупок
-    не загонять обратно в размеры ФЭО». Вызывается ПЕРЕД действиями,
-    УВЕЛИЧИВАЮЩИМИ план (создание закупки, увеличение суммы/смена категории ФЭО
-    при PUT, согласование заявки → создание закупок) — см. вызывающий код в
-    app.routers.purchases / app.routers.wishes.
+    не загонять обратно в размеры ФЭО». Требование владельца (2026-08-06,
+    превентивность): контроль факт-над-планом включается уже на «Ведётся
+    работа» (см. FACT_PRICED_STATUSES) — переход закупки в «Договор» и
+    увеличение договорных позиций блокируются ДО подписания, пока превышение
+    итога закупки над планом не согласовано.
+
+    Вызывается ПЕРЕД действиями, УВЕЛИЧИВАЮЩИМИ план (создание закупки,
+    увеличение суммы/смена категории ФЭО при PUT, согласование заявки →
+    создание закупок) и ПЕРЕД действиями, УВЕЛИЧИВАЮЩИМИ факт сверх плана
+    (переход статуса закупки work_in_progress → contracted, сохранение/
+    изменение договорных позиций) — см. вызывающий код в app.routers.purchases /
+    app.routers.wishes / app.routers.contract_items.
 
     НЕ вызывается для переходов статусов вперёд у уже существующих закупок
     (ordered → delivered → paid), уменьшений сумм, удаления позиций, отката
@@ -643,6 +835,11 @@ async def assert_no_unapproved_excess(
 
     for cid in chain_ids:
         node = tree[cid]
+        extra = (
+            f" Запрашиваемое действие добавляет ещё {Decimal(str(adding_amount)):,.2f} ₽ поверх этого."
+            if adding_amount else ""
+        )
+
         excess = node.get("excess_amount") or 0.0
         if excess > 0.005 and not node.get("excess_approved"):
             cat_row = await db.get(FeoCategory, cid)
@@ -650,16 +847,28 @@ async def assert_no_unapproved_excess(
             budget_d = Decimal(str(node.get("budget") or 0.0))
             full_plan_d = Decimal(str(node["plan"] + node["over"]))  # текущая плановая сумма (до сжатия по бюджету)
             excess_d = Decimal(str(excess))
-            extra = (
-                f" Запрашиваемое действие добавляет ещё {Decimal(str(adding_amount)):,.2f} ₽ поверх этого."
-                if adding_amount else ""
-            )
             raise HTTPException(
                 409,
                 f"Превышение плана по категории ФЭО «{name}»: финансирование по ФЭО "
                 f"{budget_d:,.2f} ₽, текущая плановая сумма {full_plan_d:,.2f} ₽, превышение "
                 f"{excess_d:,.2f} ₽.{extra} Снимите позиции на {excess_d:,.2f} ₽ или согласуйте "
                 f"превышение (запрос согласования превышения плана ФЭО по категории «{name}»)."
+            )
+
+        excess_fact = node.get("excess_fact_over_plan") or 0.0
+        if excess_fact > 0.005 and not node.get("excess_fact_approved"):
+            cat_row = await db.get(FeoCategory, cid)
+            name = cat_row.name if cat_row else f"#{cid}"
+            plan_d = Decimal(str(node.get("plan") or 0.0))
+            fact_d = Decimal(str(node.get("fact") or 0.0))
+            excess_fact_d = Decimal(str(excess_fact))
+            raise HTTPException(
+                409,
+                f"Итог закупки по категории ФЭО «{name}» превышает план: план "
+                f"{plan_d:,.2f} ₽, факт (по договору/КП) {fact_d:,.2f} ₽, превышение "
+                f"{excess_fact_d:,.2f} ₽.{extra} Переход в «Договор» и увеличение договорных "
+                f"позиций заблокированы, пока превышение не согласовано (запрос согласования "
+                f"превышения плана по категории «{name}») или сумма договора не снижена до плана."
             )
 
 

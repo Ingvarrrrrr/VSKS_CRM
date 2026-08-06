@@ -27,6 +27,7 @@ from app.routers.contracts import ensure_contract_linked
 from app.routers.purchase_budget import _check_budget, _assign_framework_seq, FRAMEWORK_TYPES
 from app.routers.purchases import _purchase_to_full, _item_to_out, STATUS_ORDER, _sync_purchase_from_contract
 from app.schemas.schemas import PurchaseOutFull
+from app.services.feo_plan import assert_no_unapproved_excess
 
 router = APIRouter(prefix="/api/purchases", tags=["purchase-transitions"])
 
@@ -364,6 +365,27 @@ async def transition_status(
             ci_sum = ci_sum_res.scalar() or Decimal('0')
             if ci_sum > 0:
                 p.contract_price = ci_sum
+
+    # Задача владельца «план ≠ факт» (шаг C, сессия 2026-08-06): превентивный контроль
+    # факт-над-планом. С «Ведётся работа» договорные позиции/КП (ContractItem) уже
+    # могли сложиться дороже плана (см. FACT_PRICED_STATUSES/fact_consumption_by_category
+    # в app.services.feo_plan) — если это превышение не согласовано, подписывать
+    # договор нельзя (иначе перерасход закрывают постфактум поиском доп.
+    # финансирования — ровно то, что владелец просил предотвратить). OWNER_ROLES
+    # (superadmin/account_owner) уже обошли ВСЮ функцию раньше (см. bypass в начале)
+    # — этот гейт видят все остальные роли, включая ADMIN_ROLES (в отличие от PUT
+    # /api/purchases/{pid}, где admin_override — explicit query-флаг только для
+    # ADMIN_ROLES; здесь такого параметра нет, обход только через OWNER_ROLES).
+    if target_status == "contracted":
+        _gate_cat_ids: set[int] = set()
+        for _it in p.items:
+            _cid = _it.feo_category_id or p.feo_category_id
+            if _cid:
+                _gate_cat_ids.add(_cid)
+        if not _gate_cat_ids and p.feo_category_id:
+            _gate_cat_ids.add(p.feo_category_id)
+        for _cid in _gate_cat_ids:
+            await assert_no_unapproved_excess(db, _cid)
 
     old_status = p.status
     p.status = target_status

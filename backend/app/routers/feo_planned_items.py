@@ -174,6 +174,24 @@ async def create_planned_item(
     if not cat:
         raise HTTPException(404, "Категория ФЭО не найдена")
 
+    # Задача владельца «план ≠ факт» (шаг D, сессия 2026-08-06): защита от повторения
+    # К2 (боевые 16 760 000 — две активные плановые позиции с одинаковым именем под
+    # одной категорией). Дедуп по (категория, нормализованное имя trim+lower) — тот
+    # же принцип, что уже применяется в wishes.py._distribute_wish_to_purchases при
+    # автосоздании FeoPlannedItem из позиции заявки. Не плодим дубль — возвращаем
+    # уже существующую активную позицию как есть (без слияния количеств/сумм).
+    _norm_name = (data.name or "").strip().lower()
+    if _norm_name:
+        existing_item = (await db.execute(
+            select(FeoPlannedItem).where(
+                FeoPlannedItem.feo_category_id == data.feo_category_id,
+                FeoPlannedItem.is_active == True,
+                sqlfunc.lower(sqlfunc.trim(FeoPlannedItem.name)) == _norm_name,
+            )
+        )).scalar_one_or_none()
+        if existing_item is not None:
+            return existing_item
+
     item = FeoPlannedItem(
         feo_category_id=data.feo_category_id,
         name=data.name,

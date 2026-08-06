@@ -58,17 +58,26 @@
               </div>
             </td>
             <td @click.stop>
-              <v-text-field v-model.number="item.quantity" type="number" density="compact"
-                variant="outlined" hide-details class="my-1 summary-num-input" :disabled="readonly"
-                @update:model-value="emit('calc-item-total', idx)" />
+              <v-tooltip :disabled="!tzFrozen || readonly" :text="tzFrozenTooltip" location="top" max-width="280">
+                <template #activator="{ props: tip }">
+                  <v-text-field v-bind="tip" v-model.number="item.quantity" type="number" density="compact"
+                    variant="outlined" hide-details class="my-1 summary-num-input" :disabled="tzDisabled"
+                    @update:model-value="emit('calc-item-total', idx)" />
+                </template>
+              </v-tooltip>
             </td>
             <td @click.stop>
-              <v-text-field
-                :model-value="formatNumber(item.unit_price)"
-                density="compact" variant="outlined" hide-details class="my-1 summary-num-input"
-                :disabled="readonly"
-                @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; emit('calc-item-total', idx) }"
-              />
+              <v-tooltip :disabled="!tzFrozen || readonly" :text="tzFrozenTooltip" location="top" max-width="280">
+                <template #activator="{ props: tip }">
+                  <v-text-field
+                    v-bind="tip"
+                    :model-value="formatNumber(item.unit_price)"
+                    density="compact" variant="outlined" hide-details class="my-1 summary-num-input"
+                    :disabled="tzDisabled"
+                    @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; emit('calc-item-total', idx) }"
+                  />
+                </template>
+              </v-tooltip>
             </td>
             <td class="font-weight-medium" style="font-size:12px;white-space:nowrap">{{ fmtRub(totalWithVat(item)) }}</td>
             <td>
@@ -157,21 +166,30 @@
                       <!-- Phase 27.1.1 fix: per-item contractor только для авансовых (advance_report). Inline contractor для обычных закупок убран — 1 контрагент на закупку. -->
                     </td>
                     <td>
-                      <v-text-field v-model.number="item.quantity" type="number" density="compact"
-                        variant="outlined" hide-details class="my-1" :disabled="readonly"
-                        @update:model-value="emit('calc-item-total', idx)" />
+                      <v-tooltip :disabled="!tzFrozen || readonly" :text="tzFrozenTooltip" location="top" max-width="280">
+                        <template #activator="{ props: tip }">
+                          <v-text-field v-bind="tip" v-model.number="item.quantity" type="number" density="compact"
+                            variant="outlined" hide-details class="my-1" :disabled="tzDisabled"
+                            @update:model-value="emit('calc-item-total', idx)" />
+                        </template>
+                      </v-tooltip>
                     </td>
                     <td>
                       <v-combobox v-model="item.unit" :items="unitOptions" density="compact" variant="outlined"
                         hide-details class="my-1" :disabled="readonly" />
                     </td>
                     <td>
-                      <v-text-field
-                        :model-value="formatNumber(item.unit_price)"
-                        density="compact" variant="outlined" hide-details class="my-1"
-                        :disabled="readonly"
-                        @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; emit('calc-item-total', idx) }"
-                      />
+                      <v-tooltip :disabled="!tzFrozen || readonly" :text="tzFrozenTooltip" location="top" max-width="280">
+                        <template #activator="{ props: tip }">
+                          <v-text-field
+                            v-bind="tip"
+                            :model-value="formatNumber(item.unit_price)"
+                            density="compact" variant="outlined" hide-details class="my-1"
+                            :disabled="tzDisabled"
+                            @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; emit('calc-item-total', idx) }"
+                          />
+                        </template>
+                      </v-tooltip>
                     </td>
                     <!-- Fix 4/5: НДС % column -->
                     <td v-if="showVatColumnsInExpandRow">
@@ -460,6 +478,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
 import type { Contractor } from '@/components/items/types'
@@ -469,9 +488,13 @@ import type { FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
 type EditorItem = any
 type StageTotals = { tz: number; dog: number; delivery: number }
 
-defineProps<{
+const props = defineProps<{
   items: EditorItem[]
   readonly: boolean
+  // Шаг 2 «план ≠ факт» (сессия 2026-08-06): закупка объявлена (статус «Ведётся
+  // работа» и далее) — кол-во/цена ТЗ заморожены, редактируется только «Договор».
+  // Считается в родителе (PurchaseItemsEditor.vue::tzFrozen) по purchaseStatus.
+  tzFrozen?: boolean
   allowedItemTypes: string[]
   contractors: Contractor[]
   contractorLookupLoading: Record<number, boolean>
@@ -527,6 +550,13 @@ defineProps<{
   parseNumber: (v: string) => number | null
   contractorFilter: (value: string, query: string, item?: any) => boolean
 }>()
+
+// Шаг 2 «план ≠ факт»: кол-во/цена ТЗ недоступны для правки, если закупка уже
+// объявлена — либо потому что вся таблица readonly, либо потому что план
+// заморожен статусом закупки. Отдельный от `readonly` флаг — чтобы в тултипе
+// показать ИМЕННО причину заморозки, а не общий «нет доступа».
+const tzDisabled = computed(() => props.readonly || !!props.tzFrozen)
+const tzFrozenTooltip = 'Закупка объявлена — кол-во и цена ТЗ зафиксированы. Итоговую цену по результатам закупки внесите в подстроке «Договор» ниже.'
 
 const emit = defineEmits<{
   'toggle-select-all': [val: boolean | null]

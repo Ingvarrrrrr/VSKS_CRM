@@ -50,9 +50,13 @@ async def create_contract_item(pid: int, data: ContractItemCreate,
         raise HTTPException(404, detail={"code": "PURCHASE_NOT_FOUND",
                                           "message": f"Закупка #{pid} не найдена"})
     payload = data.model_dump(exclude_none=True)
-    # D-08-симметрия: Fuzzy auto-link product if missing
+    # D-08-симметрия: Fuzzy auto-link product if missing.
+    # Purchase не имеет .org_id напрямую (org — через subsidy); каталог товаров
+    # общий для всех орг (см. bulk replace_all_contract_items ниже — тот же
+    # паттерн), поэтому поиск без org_id. Раньше здесь падало с AttributeError
+    # ('Purchase' object has no attribute 'org_id') — 500 при любом POST с name.
     if not payload.get("product_id") and payload.get("name"):
-        matched = await find_matching_product(db, payload["name"], org_id=p.org_id)
+        matched = await find_matching_product(db, payload["name"])
         if matched:
             payload["product_id"] = matched.id
             payload["match_confirmed"] = False

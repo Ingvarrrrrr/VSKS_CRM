@@ -17,6 +17,15 @@ class PurchaseItem(Base):
     total_price = Column(Numeric(15, 2))
     final_unit_price = Column(Numeric(15, 2))
     final_total = Column(Numeric(15, 2))
+    # Снимок плана (Шаг 1, «план ≠ факт», zany-fluttering-mountain.md) — заполняется
+    # при постановке позиции в план закупок (из заявки/импорта/ручного ввода) и
+    # НЕ трогается после ухода закупки из статуса «План закупок» (заморозка ТЗ —
+    # сама блокировка правки поля вводится Шагом 2, здесь только не портим снимок).
+    # unit_price/total_price остаются «текущей» ценой ТЗ; planned_* — зафиксированный
+    # план, который дерево ФЭО должно читать вместо мутирующей unit_price/total_price.
+    planned_quantity = Column(Numeric(15, 4), nullable=True)
+    planned_unit_price = Column(Numeric(15, 2), nullable=True)
+    planned_total = Column(Numeric(15, 2), nullable=True)
     country_origin = Column(String(100), nullable=True)
     feo_planned_item_id = Column(Integer, ForeignKey("feo_planned_items.id", ondelete="SET NULL"), nullable=True)
     feo_category_id = Column(Integer, ForeignKey('feo_categories.id', ondelete='SET NULL'), nullable=True, index=True)

@@ -123,6 +123,7 @@
         <ItemsTableStages
           :items="localItems"
           :readonly="props.readonly"
+          :tz-frozen="tzFrozen"
           :allowed-item-types="props.allowedItemTypes"
           :contractors="contractors"
           :contractor-lookup-loading="contractorLookupLoading"
@@ -256,6 +257,7 @@
           :items="localItems"
           :display-rows="itemsDisplayRows"
           :readonly="props.readonly"
+          :tz-frozen="tzFrozen"
           :allowed-item-types="props.allowedItemTypes"
           :vat-mode="props.vatMode || 'uniform'"
           :feo-per-item="props.feoPerItem"
@@ -1286,6 +1288,13 @@ function isDelivered(idx: number): boolean {
   void idx
   return props.purchaseStatus === 'delivered' || props.purchaseStatus === 'paid'
 }
+
+// Шаг 2 «план ≠ факт» (сессия 2026-08-06): с этих статусов закупка объявлена —
+// поля кол-ва/цены ТЗ замораживаются на фронте (то же множество статусов, что
+// TZ_FROZEN_STATUSES в backend/app/routers/purchases.py::patch_purchase_item).
+// Итоговую цену по факту закупки вносят в подстроке «Договор» позиции.
+const TZ_FROZEN_STATUSES = new Set(['work_in_progress', 'contracted', 'ordered', 'delivered', 'paid'])
+const tzFrozen = computed(() => TZ_FROZEN_STATUSES.has(props.purchaseStatus || ''))
 
 function isDeliveryFilled(idx: number): boolean {
   return isDelivered(idx) && !!getContractItemFor(idx)

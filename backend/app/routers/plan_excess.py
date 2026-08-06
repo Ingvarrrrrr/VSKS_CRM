@@ -192,9 +192,19 @@ async def request_plan_excess_approval(
     if node is None:
         raise HTTPException(404, "Узел ФЭО не найден в дереве плана")
 
+    # Задача владельца «план ≠ факт» (сессия 2026-08-06): узел может иметь ДВА
+    # независимых превышения — «план дороже финансирования ФЭО» (excess_amount,
+    # как раньше) и/или «факт (итог закупки/КП) дороже плана» (excess_fact_over_plan,
+    # новое, см. compute_feo_plan_tree). Один и тот же механизм согласования
+    # (PlanExcessApproval по категории) закрывает оба — approved снимает блокировку
+    # для обоих видов сразу (см. assert_no_unapproved_excess).
     excess_amount = node.get("excess_amount") or 0.0
-    if excess_amount <= 0.005:
-        raise HTTPException(400, f"По категории «{cat.name}» нет превышения плана над финансированием ФЭО")
+    excess_fact_over_plan = node.get("excess_fact_over_plan") or 0.0
+    if excess_amount <= 0.005 and excess_fact_over_plan <= 0.005:
+        raise HTTPException(400, f"По категории «{cat.name}» нет превышения плана")
+    # Что именно согласуем в этом запросе — приоритет у превышения над финансированием
+    # ФЭО (более критичный тип, была реализована раньше), иначе — факт над планом.
+    excess_for_request = excess_amount if excess_amount > 0.005 else excess_fact_over_plan
 
     existing_pending = (await db.execute(
         select(PlanExcessApproval).where(
@@ -255,7 +265,7 @@ async def request_plan_excess_approval(
     approval = PlanExcessApproval(
         feo_category_id=feo_category_id,
         subsidy_id=cat.subsidy_id,
-        excess_amount=Decimal(str(excess_amount)),
+        excess_amount=Decimal(str(excess_for_request)),
         plan_amount=Decimal(str(full_plan)),
         budget_amount=Decimal(str(node.get("budget") or 0)),
         status="pending",

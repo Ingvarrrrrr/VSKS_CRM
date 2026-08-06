@@ -402,6 +402,11 @@ class FeoCategoryOut(BaseModel):
     planned_quantity: Optional[float] = None
     planned_amount: Optional[float] = None
     unit: Optional[str] = None
+    # Задача владельца «план ≠ факт» (шаг D, сессия 2026-08-06): непустое — только
+    # когда PUT /feo-categories/{id} заподозрил, что в planned_amount (цена ЗА
+    # ЕДИНИЦУ) записана СУММА (защита от повторения К1, см. update_category).
+    # Ничего не блокирует, чисто предупреждение для UI.
+    warning: Optional[str] = None
     model_config = {"from_attributes": True}
 
 class FeoCategoryTree(FeoCategoryOut):
@@ -537,6 +542,11 @@ class PurchaseItemCreate(BaseModel):
     total_price: Optional[Decimal] = None
     final_unit_price: Optional[Decimal] = None
     final_total: Optional[Decimal] = None
+    # Снимок плана (Шаг 1 «план ≠ факт») — обычно заполняется сервером, но поле
+    # оставлено настраиваемым на входе на случай явной установки (импорт/скрипт).
+    planned_quantity: Optional[Decimal] = None
+    planned_unit_price: Optional[Decimal] = None
+    planned_total: Optional[Decimal] = None
     country_origin: Optional[str] = None
     match_confirmed: bool = True
     contractor_id: Optional[int] = None

@@ -95,21 +95,30 @@
               @update:model-value="(v: string) => emit('item-type-change', idx, v)" />
           </td>
           <td>
-            <v-text-field v-model.number="item.quantity" type="number" density="compact"
-              variant="outlined" hide-details class="my-1" :disabled="readonly"
-              @update:model-value="emit('calc-item-total', idx)" />
+            <v-tooltip :disabled="!tzFrozen || readonly" :text="tzFrozenTooltip" location="top" max-width="280">
+              <template #activator="{ props: tip }">
+                <v-text-field v-bind="tip" v-model.number="item.quantity" type="number" density="compact"
+                  variant="outlined" hide-details class="my-1" :disabled="tzDisabled"
+                  @update:model-value="emit('calc-item-total', idx)" />
+              </template>
+            </v-tooltip>
           </td>
           <td>
             <v-combobox v-model="item.unit" :items="unitOptions" density="compact" variant="outlined"
               hide-details class="my-1" :disabled="readonly" />
           </td>
           <td>
-            <v-text-field
-              :model-value="formatNumber(item.unit_price)"
-              density="compact" variant="outlined" hide-details class="my-1"
-              :disabled="readonly"
-              @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; emit('calc-item-total', idx) }"
-            />
+            <v-tooltip :disabled="!tzFrozen || readonly" :text="tzFrozenTooltip" location="top" max-width="280">
+              <template #activator="{ props: tip }">
+                <v-text-field
+                  v-bind="tip"
+                  :model-value="formatNumber(item.unit_price)"
+                  density="compact" variant="outlined" hide-details class="my-1"
+                  :disabled="tzDisabled"
+                  @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; emit('calc-item-total', idx) }"
+                />
+              </template>
+            </v-tooltip>
           </td>
           <td>
             <v-text-field :model-value="formatNumber(item.total_price)" readonly density="compact"
@@ -263,6 +272,10 @@ const VIRT_THRESHOLD = 40
 const props = defineProps<{
   items: EditorItem[]
   readonly: boolean
+  // Шаг 2 «план ≠ факт» (сессия 2026-08-06): закупка объявлена (статус «Ведётся
+  // работа» и далее) — кол-во/цена ТЗ заморожены. Считается в родителе
+  // (PurchaseItemsEditor.vue::tzFrozen) по purchaseStatus.
+  tzFrozen?: boolean
   allowedItemTypes: string[]
   vatMode: 'uniform' | 'per_item'
   feoPerItem: boolean
@@ -306,6 +319,11 @@ const props = defineProps<{
 }>()
 
 const virtualize = computed(() => props.items.length > VIRT_THRESHOLD)
+
+// Шаг 2 «план ≠ факт»: кол-во/цена ТЗ недоступны для правки, если закупка уже
+// объявлена (см. ItemsTableStages.vue — тот же паттерн).
+const tzDisabled = computed(() => props.readonly || !!props.tzFrozen)
+const tzFrozenTooltip = 'Закупка объявлена — кол-во и цена ТЗ зафиксированы. Итоговую цену по результатам закупки внесите в договоре закупки.'
 
 const bodyRows = computed<ItemsDisplayRow[]>(() =>
   props.displayRows ?? props.items.map((_, i) => ({ idx: i }))

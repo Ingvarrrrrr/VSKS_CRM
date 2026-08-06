@@ -849,28 +849,80 @@
                             >Согласовать</v-btn>
                           </template>
                         </div>
+
+                        <!-- Задача владельца «план ≠ факт» (сессия 2026-08-06, Шаг 5, п.5): ВТОРАЯ,
+                             независимая плашка — «итог закупки/КП дороже плана» (excess_fact_over_plan),
+                             отдельно от превышения плана над финансированием ФЭО выше. Тот же механизм
+                             согласования (см. excessFactFor()/requestPlanExcessApproval()). -->
+                        <div v-if="excessFactFor(node)" class="feo-plan-note d-flex align-center flex-wrap ga-1 mt-1">
+                          <template v-if="excessApprovalFor(node)?.status === 'pending'">
+                            <v-chip size="x-small" color="orange" variant="flat">
+                              итог закупки дороже плана на {{ formatCurrency(excessFactFor(node)!.amount) }} · на согласовании у: {{ excessPendingNames(node) || '—' }}
+                            </v-chip>
+                            <template v-if="excessMyPendingStep(node)">
+                              <v-btn size="x-small" variant="tonal" color="success"
+                                :loading="excessDecideLoading === node.id"
+                                @click.stop="decidePlanExcess(node, 'approved')"
+                              >Одобрить</v-btn>
+                              <v-btn size="x-small" variant="tonal" color="error"
+                                :loading="excessDecideLoading === node.id"
+                                @click.stop="openExcessRejectDialog(node)"
+                              >Отклонить</v-btn>
+                            </template>
+                          </template>
+                          <template v-else-if="excessFactFor(node)!.approved">
+                            <v-chip size="x-small" color="grey" variant="flat">
+                              итог закупки дороже плана на {{ formatCurrency(excessFactFor(node)!.amount) }} · согласовано · {{ excessResolvedByName(node) }}{{ excessResolvedDate(node) ? ' · ' + excessResolvedDate(node) : '' }}
+                            </v-chip>
+                          </template>
+                          <template v-else-if="excessApprovalFor(node)?.status === 'rejected'">
+                            <v-chip size="x-small" color="red" variant="flat">
+                              превышение факта отклонено{{ excessApprovalFor(node)?.comment ? ': ' + excessApprovalFor(node)!.comment : '' }}
+                            </v-chip>
+                            <v-btn size="x-small" variant="tonal" color="red"
+                              :loading="excessRequestLoading === node.id"
+                              @click.stop="requestPlanExcessApproval(node)"
+                            >Согласовать</v-btn>
+                          </template>
+                          <template v-else>
+                            <v-chip size="x-small" color="red" variant="flat">
+                              итог закупки дороже плана на {{ formatCurrency(excessFactFor(node)!.amount) }} — требуется согласование
+                            </v-chip>
+                            <v-btn size="x-small" variant="tonal" color="red"
+                              :loading="excessRequestLoading === node.id"
+                              @click.stop="requestPlanExcessApproval(node)"
+                            >Согласовать</v-btn>
+                          </template>
+                        </div>
                       </td>
 
-                      <!-- Фактическая сумма -->
+                      <!-- Фактическая сумма — задача владельца «план ≠ факт» (сессия 2026-08-06, Шаг 5):
+                           источник заменён со старого feoPurchasedFor() (только delivered/paid, /feo-categories/
+                           purchase-totals) на fact из GET /feo-categories/plan-tree (compute_feo_plan_tree —
+                           тот же путь, что уже питает «Плановую сумму»/плашку превышения факта, п. Шаг 3/4).
+                           Новый fact учитывает ContractItem/contract_price уже с «Ведётся работа», а не только
+                           поставленное — иначе колонка молчала «—» весь путь от объявления закупки до поставки,
+                           хотя цена по итогам закупки уже известна. feoPurchasedFor() НЕ трогаем в остальных
+                           местах (Остаток, переход по клику) — вне явного поручения. -->
                       <td class="feo-td feo-td-num">
-                        <span :class="feoPurchasedFor(node) > 0 ? 'feo-amount feo-amount--link' : 'feo-amount-empty'"
-                          :style="(feoDisplayedFor(node) > 0 && feoPurchasedFor(node) > feoDisplayedFor(node)) || (feoPlannedDisplayFor(node) > 0 && feoPurchasedFor(node) > feoPlannedDisplayFor(node)) ? 'color:#EF4444;font-weight:700' : ''"
-                          :title="feoPurchasedFor(node) > 0 ? 'Открыть закупки по этой категории' : ''"
-                          @click="feoPurchasedFor(node) > 0 && router.push(`/orders?feo_category_id=${node.id}`)"
+                        <span :class="feoFactFor(node) > 0 ? 'feo-amount feo-amount--link' : 'feo-amount-empty'"
+                          :style="(feoDisplayedFor(node) > 0 && feoFactFor(node) > feoDisplayedFor(node)) || (feoPlannedDisplayFor(node) > 0 && feoFactFor(node) > feoPlannedDisplayFor(node)) ? 'color:#EF4444;font-weight:700' : ''"
+                          :title="feoFactFor(node) > 0 ? 'Открыть закупки по этой категории' : ''"
+                          @click="feoFactFor(node) > 0 && router.push(`/orders?feo_category_id=${node.id}`)"
                         >
-                          {{ feoPurchasedFor(node) > 0 ? formatCurrency(feoPurchasedFor(node)) : '—' }}
+                          {{ feoFactFor(node) > 0 ? formatCurrency(feoFactFor(node)) : '—' }}
                         </span>
-                        <div v-if="feoPlannedDisplayFor(node) > 0 && feoPurchasedFor(node) - feoPlannedDisplayFor(node) > 0.005"
+                        <div v-if="feoPlannedDisplayFor(node) > 0 && feoFactFor(node) - feoPlannedDisplayFor(node) > 0.005"
                           class="feo-plan-note" style="color:#EF4444"
-                          :title="`Факт ${formatCurrency(feoPurchasedFor(node))} превышает плановую сумму ${formatCurrency(feoPlannedDisplayFor(node))}`"
+                          :title="`Факт ${formatCurrency(feoFactFor(node))} превышает плановую сумму ${formatCurrency(feoPlannedDisplayFor(node))}`"
                         >
-                          больше плана на {{ formatCurrency(feoPurchasedFor(node) - feoPlannedDisplayFor(node)) }}
+                          больше плана на {{ formatCurrency(feoFactFor(node) - feoPlannedDisplayFor(node)) }}
                         </div>
-                        <div v-if="feoDisplayedFor(node) > 0 && feoPurchasedFor(node) - feoDisplayedFor(node) > 0.005"
+                        <div v-if="feoDisplayedFor(node) > 0 && feoFactFor(node) - feoDisplayedFor(node) > 0.005"
                           class="feo-plan-note" style="color:#EF4444"
-                          :title="`Факт ${formatCurrency(feoPurchasedFor(node))} превышает финансирование по ФЭО ${formatCurrency(feoDisplayedFor(node))}`"
+                          :title="`Факт ${formatCurrency(feoFactFor(node))} превышает финансирование по ФЭО ${formatCurrency(feoDisplayedFor(node))}`"
                         >
-                          больше ФЭО на {{ formatCurrency(feoPurchasedFor(node) - feoDisplayedFor(node)) }}
+                          больше ФЭО на {{ formatCurrency(feoFactFor(node) - feoDisplayedFor(node)) }}
                         </div>
                       </td>
 
@@ -1471,19 +1523,24 @@
                               <span v-if="row.group" class="feo-amount-empty"
                                 title="Эта позиция не задавалась в ФЭО — заведена через заявку">—</span>
                             </td>
-                            <!-- Плановое кол-во -->
+                            <!-- Плановое кол-во: снимок ТЗ (planned_quantity), НЕ текущее кол-во —
+                                 см. задачу владельца «план ≠ факт» (Шаг 5, п.1). -->
                             <td class="feo-td feo-td-num">
-                              <span class="feo-amount" :class="!row.group ? 'text-medium-emphasis' : ''" style="font-size:12px">{{ row.sumQty }}{{ row.group?.unit ? ` ${row.group.unit}` : '' }}</span>
+                              <span class="feo-amount" :class="!row.group ? 'text-medium-emphasis' : ''" style="font-size:12px">{{ row.group ? groupPlannedQty(row.group) : row.sumQty }}{{ row.group?.unit ? ` ${row.group.unit}` : '' }}</span>
                               <div v-if="row.group" class="feo-plan-note text-medium-emphasis">из заявок</div>
                             </td>
-                            <!-- Плановая сумма -->
+                            <!-- Плановая сумма: снимок ТЗ (planned_total), не съезжает при правке итоговой цены -->
                             <td class="feo-td feo-td-num">
-                              <span class="feo-amount" :class="!row.group ? 'text-medium-emphasis' : ''" style="font-size:12px">{{ formatCurrency(row.sum) }}</span>
-                              <div v-if="row.group && row.group.items.length === 1 && row.group.items[0].unit_price"
-                                class="feo-plan-note text-medium-emphasis">{{ formatCurrency(row.group.items[0].unit_price) }}/ед.</div>
+                              <span class="feo-amount" :class="!row.group ? 'text-medium-emphasis' : ''" style="font-size:12px">{{ formatCurrency(row.group ? groupPlannedTotal(row.group) : row.sum) }}</span>
+                              <div v-if="row.group && row.group.items.length === 1 && (row.group.items[0].planned_unit_price ?? row.group.items[0].unit_price)"
+                                class="feo-plan-note text-medium-emphasis">{{ formatCurrency(row.group.items[0].planned_unit_price ?? row.group.items[0].unit_price) }}/ед.</div>
                             </td>
-                            <!-- Факт / Остаток: не считаются по незаданной в ФЭО позиции -->
-                            <td class="feo-td feo-td-num"><span v-if="row.group" class="feo-amount-empty">—</span></td>
+                            <!-- Фактическая сумма: реальный факт (ContractItem/contract_price), а не заглушка —
+                                 см. задачу владельца «план ≠ факт» (Шаг 5, п.1). «—» только когда факта ещё нет. -->
+                            <td class="feo-td feo-td-num">
+                              <span v-if="row.group && groupFactTotal(row.group) != null" class="feo-amount" style="font-size:12px">{{ formatCurrency(groupFactTotal(row.group)!) }}</span>
+                              <span v-else-if="row.group" class="feo-amount-empty" title="Итог закупки/договора ещё не известен">—</span>
+                            </td>
                             <td class="feo-td feo-td-num"><span v-if="row.group" class="feo-amount-empty">—</span></td>
                             <td class="feo-td feo-td-actions">
                               <div v-if="row.group" class="d-flex align-center justify-end">
@@ -1522,10 +1579,10 @@
                                 <table v-else style="width:100%;border-collapse:collapse;font-size:11px;background:#fff">
                                   <thead>
                                     <tr style="background:#CCFBF1">
-                                      <th style="padding:3px 8px;text-align:left;color:#0f766e;font-weight:600">ПЛАН (из заявок)</th>
-                                      <th style="padding:3px 8px;text-align:right;color:#0f766e;font-weight:600;width:90px">Кол-во (план)</th>
-                                      <th style="padding:3px 8px;text-align:right;color:#0f766e;font-weight:600;width:90px">Цена (план)</th>
-                                      <th style="padding:3px 8px;text-align:right;color:#0f766e;font-weight:600;width:110px">Сумма (план)</th>
+                                      <th style="padding:3px 8px;text-align:left;color:#0f766e;font-weight:600">Название (из ТЗ)</th>
+                                      <th style="padding:3px 8px;text-align:right;color:#0f766e;font-weight:600;width:90px">Кол-во (из ТЗ)</th>
+                                      <th style="padding:3px 8px;text-align:right;color:#0f766e;font-weight:600;width:90px">Цена (из ТЗ)</th>
+                                      <th style="padding:3px 8px;text-align:right;color:#0f766e;font-weight:600;width:110px">Сумма (из ТЗ)</th>
                                       <th style="padding:3px 8px;text-align:left;color:#0f766e;font-weight:600">ФАКТ (из закупок)</th>
                                       <th style="padding:3px 8px;text-align:right;color:#0f766e;font-weight:600;width:90px">Кол-во (факт)</th>
                                       <th style="padding:3px 8px;text-align:right;color:#0f766e;font-weight:600;width:90px">Цена (факт)</th>
@@ -1566,14 +1623,18 @@
                                           сопоставлено с плановой «{{ reqItemPlanned(owner.id, it.id)?.name }}»
                                         </div>
                                       </td>
-                                      <td style="padding:4px 8px;text-align:right;color:#64748b">{{ it.quantity }}{{ it.unit ? ` ${it.unit}` : '' }}</td>
-                                      <td style="padding:4px 8px;text-align:right;color:#64748b">{{ it.unit_price ? formatCurrency(it.unit_price) : '—' }}</td>
-                                      <td style="padding:4px 8px;text-align:right;font-weight:500">{{ formatCurrency(it.total_price) }}</td>
-                                      <td style="padding:4px 8px;color:#9ca3af;font-style:italic">ещё не поставлено</td>
-                                      <td style="padding:4px 8px"></td>
-                                      <td style="padding:4px 8px"></td>
-                                      <td style="padding:4px 8px"></td>
-                                      <td style="padding:4px 8px;text-align:right;color:#9ca3af">—</td>
+                                      <!-- Снимок ТЗ (planned_*), заморожен с момента объявления закупки — не текущее
+                                           кол-во/цена, см. задачу владельца «план ≠ факт» (Шаг 5, п.1/2). -->
+                                      <td style="padding:4px 8px;text-align:right;color:#64748b">{{ it.planned_quantity ?? it.quantity }}{{ it.unit ? ` ${it.unit}` : '' }}</td>
+                                      <td style="padding:4px 8px;text-align:right;color:#64748b">{{ (it.planned_unit_price ?? it.unit_price) ? formatCurrency(it.planned_unit_price ?? it.unit_price) : '—' }}</td>
+                                      <td style="padding:4px 8px;text-align:right;font-weight:500">{{ formatCurrency(it.planned_total ?? it.total_price) }}</td>
+                                      <!-- ФАКТ: реальные данные (ContractItem/contract_price), «ещё не поставлено»
+                                           только когда факта действительно нет — Шаг 5, п.3. -->
+                                      <td style="padding:4px 8px;color:#9ca3af;font-style:italic">{{ it.fact_amount != null ? '' : 'ещё не поставлено' }}</td>
+                                      <td style="padding:4px 8px;text-align:right;color:#64748b">{{ it.fact_amount != null ? `${it.fact_quantity ?? it.planned_quantity ?? it.quantity}${it.unit ? ` ${it.unit}` : ''}` : '' }}</td>
+                                      <td style="padding:4px 8px;text-align:right;color:#64748b">{{ it.fact_amount != null && it.fact_unit_price != null ? formatCurrency(it.fact_unit_price) : '' }}</td>
+                                      <td style="padding:4px 8px;text-align:right;font-weight:500">{{ it.fact_amount != null ? formatCurrency(it.fact_amount) : '' }}</td>
+                                      <td style="padding:4px 8px;text-align:right" :style="getDiffStyle(it.planned_total ?? it.total_price, [it])">{{ formatCurrency(calcDiff(it.planned_total ?? it.total_price, [it])) }}</td>
                                       <td style="padding:4px 8px;color:#9ca3af">—</td>
                                       <td style="padding:4px 8px;text-align:center">
                                         <v-chip size="x-small" color="blue" variant="tonal" :prepend-icon="purchaseStatusIcon(it.purchase_status)">
@@ -4234,6 +4295,11 @@ const planTreeByCat = ref<Record<number, {
   display: number; display_quantity: number
   excess_amount?: number; excess_pending?: boolean; excess_approved?: boolean
   plan_manual?: number; ordered_sum?: number; residual?: number; consumed?: number
+  // Задача владельца «план ≠ факт» (сессия 2026-08-06): факт узла (fact/fact_quantity)
+  // и второй, независимый вид превышения — «итог закупки/КП дороже плана»
+  // (excess_fact_over_plan/excess_fact_pending/excess_fact_approved), см. excessFactFor().
+  plan?: number; fact?: number; fact_quantity?: number
+  excess_fact_over_plan?: number; excess_fact_pending?: boolean; excess_fact_approved?: boolean
 }>>({})
 // Детали запросов согласования превышения плана ФЭО — GET /api/plan-excess?subsidy_id=
 // (backend/app/routers/plan_excess.py). Карта feo_category_id → ПОСЛЕДНИЙ (по created_at,
@@ -4277,6 +4343,8 @@ function splitPlanTree(raw: Record<string, any>) {
     display: number; display_quantity: number
     excess_amount?: number; excess_pending?: boolean; excess_approved?: boolean
     plan_manual?: number; ordered_sum?: number; residual?: number; consumed?: number
+    plan?: number; fact?: number; fact_quantity?: number
+    excess_fact_over_plan?: number; excess_fact_pending?: boolean; excess_fact_approved?: boolean
   }>
 }
 function goToUnassignedFeoPurchases() {
@@ -5005,6 +5073,21 @@ interface FeoReqItem {
   // её план, а не складывается с ним поверх. wish_item_id — исходная позиция заявки (справочно).
   feo_planned_item_id?: number | null
   wish_item_id?: number | null
+  // Задача владельца «план ≠ факт» (сессия 2026-08-06, шаг 5): снимок ТЗ — заморожен
+  // с момента объявления закупки (см. purchase_items.planned_*), фолбэк на текущие
+  // quantity/unit_price/total_price для старых записей без снимка — см. backend
+  // /feo-categories/planned-purchase-items.
+  planned_quantity?: number | null
+  planned_unit_price?: number | null
+  planned_total?: number | null
+  // Факт — та же формула, что и FeoActualItem.fact_amount (comparison-эндпоинт):
+  // точное сопоставление по ContractItem.source_item_id, иначе пропорция от
+  // purchases.contract_price. null — факта ещё нет (план_schedule/нет договорных данных).
+  fact_amount?: number | null
+  fact_quantity?: number | null
+  fact_unit_price?: number | null
+  fact_confirmed?: boolean
+  fact_allocated?: boolean
 }
 interface FeoReqRow {
   key: string
@@ -5187,6 +5270,28 @@ function matchedReqFor(node: FeoNode): FeoReqItem[] {
 function virtualGroupsFor(node: FeoNode): FeoVirtualGroup[] {
   if (plannedBase.value === 'requests') return allReqGroupsByCat.value[node.id] || []
   return mergedReqByCat.value.virtualByCat[node.id] || []
+}
+
+// Задача владельца «план ≠ факт» (сессия 2026-08-06, Шаг 5, п.1): строка виртуальной
+// позиции «из заявок» обязана показывать ЗАМОРОЖЕННЫЙ снимок ТЗ (planned_quantity/
+// planned_total), а не текущее quantity/total_price позиции закупки (которое задним
+// числом подменяется ценой по итогам закупки) — иначе плановая сумма «съезжает» вслед
+// за правкой цены. it.planned_quantity/planned_total уже приходят с бэкенда с фолбэком
+// на текущие значения для старых записей без снимка (см. GET /feo-categories/planned-purchase-items) —
+// доп. `?? it.quantity`/`?? it.total_price` здесь — вторая линия защиты на случай отсутствия поля.
+function groupPlannedQty(g: FeoVirtualGroup): number {
+  return Math.round(g.items.reduce((s, it) => s + Number(it.planned_quantity ?? it.quantity ?? 0), 0) * 10000) / 10000
+}
+function groupPlannedTotal(g: FeoVirtualGroup): number {
+  return g.items.reduce((s, it) => s + Number(it.planned_total ?? it.total_price ?? 0), 0)
+}
+// Фактическая сумма группы: сумма fact_amount по позициям, у которых факт уже известен
+// (ContractItem/contract_price, см. purchase_item_fact_amount). null — ни у одной
+// позиции группы факта ещё нет (план_schedule или нет договорных данных).
+function groupFactTotal(g: FeoVirtualGroup): number | null {
+  const withFact = g.items.filter(it => it.fact_amount != null)
+  if (!withFact.length) return null
+  return withFact.reduce((s, it) => s + Number(it.fact_amount || 0), 0)
 }
 function matchedReqQty(node: FeoNode): number {
   return Math.round(matchedReqFor(node).reduce((s, x) => s + Number(x.quantity || 0), 0) * 10000) / 10000
@@ -5657,14 +5762,21 @@ async function deletePlannedItem(item: FeoPlannedItem) {
 // поставленная/оплаченная — вычитаем сумму поставленного, иначе — сумму заказанного.
 // fact_amount берём из API, если он отдан; иначе (напр. для «одноимённых из заявок», у которых
 // нет fact_amount) — падаем на total_price позиции.
+// Задача владельца «план ≠ факт» (сессия 2026-08-06, Шаг 5): «заказано»-уровень (комитированный,
+// но ещё не подтверждённый актом факт) расширен с одного статуса 'ordered' до всей тройки
+// work_in_progress/contracted/ordered (см. FACT_PRICED_STATUSES в backend/app/services/feo_plan.py) —
+// иначе позиция в статусе «Ведётся работа»/«Договор» с уже известной ценой по итогам закупки
+// (fact_amount) не давала вклада в factSum и «Разница» ошибочно показывала полный план вместо
+// план-факт.
 type DiffActual = { total_price?: number | string | null; fact_amount?: number | string | null; purchase_status?: string | null }
+const DIFF_COMMITTED_STATUSES = ['work_in_progress', 'contracted', 'ordered']
 function calcDiff(plannedAmount: number | string | null | undefined, actuals: DiffActual[]): number {
   const amountOf = (a: DiffActual) => Number(a.fact_amount ?? a.total_price ?? 0)
   const delivered = actuals.filter(a => ['delivered', 'paid'].includes(a.purchase_status || ''))
-  const ordered = actuals.filter(a => a.purchase_status === 'ordered')
+  const committed = actuals.filter(a => DIFF_COMMITTED_STATUSES.includes(a.purchase_status || ''))
   const factSum = delivered.length
     ? delivered.reduce((s, a) => s + amountOf(a), 0)
-    : ordered.reduce((s, a) => s + amountOf(a), 0)
+    : committed.reduce((s, a) => s + amountOf(a), 0)
   return Number(plannedAmount || 0) - factSum
 }
 function getDiffStyle(plannedAmount: number | string | null | undefined, actuals: DiffActual[]): string {
@@ -6321,6 +6433,17 @@ function feoPurchasedFor(node: FeoNode): number {
   return node.children.reduce((acc, child) => acc + feoPurchasedFor(child), 0)
 }
 
+// Задача владельца «план ≠ факт» (сессия 2026-08-06, Шаг 5): «Фактическая сумма» дерева ФЭО
+// читает готовое число fact из GET /feo-categories/plan-tree (compute_feo_plan_tree — единая
+// формула факта, уже питающая плашку «итог закупки дороже плана», см. excessFactFor()).
+// Учитывает ContractItem/contract_price с «Ведётся работа» (не только delivered/paid, как
+// feoPurchasedFor() выше — тот оставлен нетронутым для «Остатка» и прочих мест, не входящих
+// в явное поручение). planTreeByCat уже содержит fact для каждого узла, включая роллап по
+// родителям (бэкенд суммирует по дереву сам — фронт не пересчитывает).
+function feoFactFor(node: FeoNode): number {
+  return planTreeByCat.value[node.id]?.fact || 0
+}
+
 // База остатка: от плановой суммы или от финансирования по ФЭО
 const residualBase = ref<'plan' | 'feo'>('plan')
 
@@ -6373,6 +6496,21 @@ function excessFor(node: FeoNode): { amount: number; pending: boolean; approved:
   const amount = Number(t?.excess_amount || 0)
   if (amount <= 0.005) return null
   return { amount, pending: !!t?.excess_pending, approved: !!t?.excess_approved }
+}
+
+// Задача владельца «план ≠ факт» (сессия 2026-08-06, Шаг 5, п.5): ВТОРОЙ, независимый
+// вид превышения — «итог закупки/КП (факт) дороже плана», отличный от excessFor()
+// («план дороже финансирования ФЭО»). Оба поля приходят готовыми в той же карте
+// planTreeByCat (compute_feo_plan_tree — см. backend/app/services/feo_plan.py) и
+// закрываются ОДНИМ и тем же механизмом согласования (POST /plan-excess {feo_category_id}
+// сам решает, какое из двух превышений согласовывать — см. request_plan_excess_approval),
+// поэтому кнопка и вся инфраструктура approvalFor/pendingNames/decidePlanExcess ниже
+// переиспользуются без изменений.
+function excessFactFor(node: FeoNode): { amount: number; pending: boolean; approved: boolean } | null {
+  const t = planTreeByCat.value[node.id]
+  const amount = Number(t?.excess_fact_over_plan || 0)
+  if (amount <= 0.005) return null
+  return { amount, pending: !!t?.excess_fact_pending, approved: !!t?.excess_fact_approved }
 }
 
 // Детали запроса согласования превышения по узлу — см. planExcessApprovals/loadPlanExcessApprovals.
@@ -6553,7 +6691,13 @@ function feoChildrenBudgetDiff(node: FeoNode): number {
 // Факт по требованию владельца (2026-08-05): появляется с «Заказано» (по договору, актом ещё
 // не подтверждено — см. fact_confirmed), уточняется закрывающими документами при «Поставлено»/
 // «Оплачено». До «Заказано» это ещё ПЛАН, а не факт.
-const FACT_STATUSES = ['ordered', 'delivered', 'paid']
+// Задача владельца «план ≠ факт» (сессия 2026-08-06, Шаг 3/5): порог опущен с «Заказано» до
+// «Ведётся работа» (см. FACT_PRICED_STATUSES в backend/app/services/feo_plan.py) — факт (цена
+// по итогам КП/торгов) должен попадать в панель «план vs факт» ещё ДО подписания договора,
+// иначе позиция в статусе «Ведётся работа»/«Договор» с уже известным fact_amount ошибочно
+// оставалась в разделе «Плановые из закупок» (см. actualPlanStageFor) и показывала текущую
+// (замороженную ТЗ) сумму вместо факта — панель и дерево ФЭО расходились.
+const FACT_STATUSES = ['work_in_progress', 'contracted', 'ordered', 'delivered', 'paid']
 function isFactActual(a: { purchase_status?: string | null }): boolean {
   return FACT_STATUSES.includes(a.purchase_status || '')
 }
@@ -6579,7 +6723,9 @@ function factForPlanned(catId: number, plannedId: number) {
 }
 
 function factForPlannedTotal(catId: number, plannedId: number): number {
-  return factForPlanned(catId, plannedId).reduce((s, a) => s + Number(a.total_price || 0), 0)
+  // fact_amount — реальный факт (ContractItem/contract_price); total_price (ТЗ) —
+  // фолбэк только пока факта ещё нет (см. calcDiff::amountOf — тот же приоритет).
+  return factForPlanned(catId, plannedId).reduce((s, a) => s + Number(a.fact_amount ?? a.total_price ?? 0), 0)
 }
 
 function comparisonPlanTotal(catId: number): number {
@@ -6590,8 +6736,12 @@ function comparisonPlanTotal(catId: number): number {
   return planned + planStage
 }
 
+// Задача владельца «план ≠ факт» (сессия 2026-08-06, Шаг 5, п.6): ИТОГО «факт» панели
+// обязано суммировать РЕАЛЬНЫЙ факт (fact_amount — ContractItem/contract_price), а не
+// текущую total_price позиции — та с момента заморозки ТЗ (Шаг 2) держит плановую цену
+// и была бы неотличима от плана в самой строке, где как раз нужно показать факт.
 function comparisonFactTotal(catId: number): number {
-  return actualFactFor(catId).reduce((s, a) => s + Number(a.total_price || 0), 0)
+  return actualFactFor(catId).reduce((s, a) => s + Number(a.fact_amount ?? a.total_price ?? 0), 0)
 }
 
 function toggleExpand(id: number) {
@@ -6817,11 +6967,14 @@ function feoPlannedDisplayFor(node: FeoNode): number {
     // одноимённые из заявок привязаны к родителю — у слитого листа добавляем их явно
     return feoPlannedRequestsFor(node) + feoPlannedConsumedFor(node) + feoPlannedOverFor(node) + (!node.hasChildren ? matchedReqTotal(node) : 0)
   }
-  if (!node.hasChildren && matchedReqFor(node).length) {
-    // слитая позиция: ручной план + одноимённые позиции заявок по их фактическим ценам + сверх плана
-    return feoPlannedTotalFor(node) + matchedReqTotal(node) + feoPlannedRequestsFor(node) + feoPlannedOverFor(node)
-  }
   // 'all' (по умолчанию): готовое число с бэкенда — см. feoPlannedDisplayRaw.
+  // Задача владельца «план ≠ факт» (сессия 2026-08-06, Шаг 5, п.4): раньше здесь была
+  // ветка «слитая позиция: ручной план + matchedReqTotal(node)», которая СКЛАДЫВАЛА
+  // ручной план узла с суммой позиций заявок, сматченных с ним ПО ИМЕНИ — источник
+  // задвоения (пример владельца: ручной план 8 000 000 + заявка 8 380 000 = 16 760 000,
+  // хотя заявка ЯВЛЯЕТСЯ этим планом, а не чем-то поверх него). В режиме 'all' фронт
+  // обязан ТОЛЬКО читать готовое число с бэкенда (compute_feo_plan_tree уже правильно
+  // засчитывает факт/план по каждой позиции ровно один раз — см. feo_plan.py).
   return feoPlannedDisplayRaw(node)
 }
 

@@ -440,6 +440,11 @@ def _item_to_out(item: PurchaseItem) -> PurchaseItemOut:
         total_price=item.total_price,
         final_unit_price=item.final_unit_price,
         final_total=item.final_total,
+        # Снимок плана (Шаг 1 «план ≠ факт») — отдаём фронту вместе с текущей ценой,
+        # иначе дерево ФЭО/панели план-vs-факт (Шаг 5) не смогут отличить план от ТЗ.
+        planned_quantity=getattr(item, 'planned_quantity', None),
+        planned_unit_price=getattr(item, 'planned_unit_price', None),
+        planned_total=getattr(item, 'planned_total', None),
         country_origin=item.country_origin,
         # Phase 26-V/W/BB: contractor + match + receipt linkage — критично для UI
         contractor_id=item.contractor_id,
@@ -1283,6 +1288,13 @@ async def create_purchase(
                 await db.flush()
                 d["product_id"] = new_prod.id
         item = PurchaseItem(purchase_id=p.id, **d)
+        # Снимок плана (Шаг 1 «план ≠ факт»): позиция создаётся напрямую (не из
+        # заявки) — план фиксируется как введённые сейчас значения, если снимок
+        # не передан явно клиентом.
+        if item.planned_quantity is None and item.planned_unit_price is None and item.planned_total is None:
+            item.planned_quantity = item.quantity
+            item.planned_unit_price = item.unit_price
+            item.planned_total = item.total_price
         db.add(item)
 
     # Авансовый без wish_id → авто-заявка на возмещение (source='advance_report', status='submitted')
@@ -1466,6 +1478,27 @@ async def update_purchase(
             _delta = (_new_amount - _old_amount) if _amount_increased else Decimal("0")
             await assert_no_unapproved_excess(db, p.feo_category_id, adding_amount=_delta)
 
+    # Задача владельца «план ≠ факт» (шаг C, сессия 2026-08-06): переход закупки
+    # в «Договор» — превентивная точка контроля. С этого момента итог закупки
+    # (факт по договорным позициям/КП, см. FACT_PRICED_STATUSES в feo_plan.py)
+    # уже мог сложиться дороже плана ещё на «Ведётся работа» — если превышение
+    # факт-над-планом не согласовано, подписывать договор нельзя (иначе перерасход
+    # закрывают постфактум поиском доп. финансирования — ровно то, что владелец
+    # просил предотвратить). Проверяем по каждой категории ФЭО позиций закупки
+    # (per-item feo_category_id, fallback — категория закупки целиком), как и
+    # в create_purchase выше.
+    _old_status_for_gate = _old_purchase_values.get("status")
+    if not admin_override and p.status == "contracted" and _old_status_for_gate != "contracted":
+        _gate_cat_ids: set[int] = set()
+        for _i in items_data:
+            _cid = _i.feo_category_id or p.feo_category_id
+            if _cid:
+                _gate_cat_ids.add(_cid)
+        if not _gate_cat_ids and p.feo_category_id:
+            _gate_cat_ids.add(p.feo_category_id)
+        for _cid in _gate_cat_ids:
+            await assert_no_unapproved_excess(db, _cid)
+
     # Contract price: авто-пересчёт из items для ВСЕХ типов закупок (phase26-l-1).
     # Рамочный (framework_cumulative / framework_with_amount) тоже должен суммироваться в total_ordered контракта.
     if items_sum:
@@ -1498,6 +1531,19 @@ async def update_purchase(
                 await db.flush()
                 d["product_id"] = new_prod.id
         item = PurchaseItem(purchase_id=pid, **d)
+        # Снимок плана (Шаг 1 «план ≠ факт»): PUT удаляет и пересоздаёт ВСЕ позиции
+        # (нет id для сопоставления со старым снимком), поэтому снимок фиксируем из
+        # введённых значений только пока закупка ещё в статусе «План закупок» — так
+        # же, как PATCH одной позиции ниже. Для более поздних статусов снимок НЕ
+        # восстановить из уже удалённой строки — оставляем NULL, а не подставляем
+        # текущую (возможно уже не плановую) цену как будто это план.
+        if (
+            p.status == "plan_schedule"
+            and item.planned_quantity is None and item.planned_unit_price is None and item.planned_total is None
+        ):
+            item.planned_quantity = item.quantity
+            item.planned_unit_price = item.unit_price
+            item.planned_total = item.total_price
         db.add(item)
 
     # Phase 26-Z: при PUT — проставить contractor_id во все позиции без контрагента,
@@ -1887,6 +1933,16 @@ class _ItemPatchBody(BaseModel):
     unit_price: Optional[Decimal] = None
     feo_category_id: Optional[int] = None
     clear_feo_category: bool = False
+    # Шаг 2 «план ≠ факт» (сессия 2026-08-06): осознанный обход заморозки ТЗ —
+    # только ADMIN_ROLES, только явным флагом в теле запроса, пишется в EntityChange.
+    admin_override: bool = False
+
+
+# Шаг 2 «план ≠ факт»: с этих статусов закупка считается объявленной — количество/
+# цена ТЗ позиции замораживаются (иначе правка «съедает» зафиксированный план,
+# см. purchase_items.planned_* и compute_feo_plan_tree). Итоговую цену по факту
+# закупки/КП вносят в подстроке «Договор» позиции (contract_items), не здесь.
+TZ_FROZEN_STATUSES = {"work_in_progress", "contracted", "ordered", "delivered", "paid"}
 
 
 async def _recalc_purchase_totals(p: Purchase, db: AsyncSession) -> None:
@@ -1928,6 +1984,24 @@ async def patch_purchase_item(
                 409,
                 f"Позиция привязана к заявке #{p.wish_id} — редактируйте её в заявке",
             )
+    # Шаг 2 «план ≠ факт» (сессия 2026-08-06): заморозка ТЗ с момента объявления
+    # закупки. Приоритет ниже гейта W3 выше (тот уже отсёк позиции, привязанные к
+    # заявке, — для них редактирование в принципе идёт через заявку, а не сюда).
+    # Здесь — отдельная проверка для позиций БЕЗ привязки к заявке (созданных
+    # прямо в закупке) и как страховка на случай снятия W3 в будущем.
+    _old_qty = _old_price = None
+    _wants_tz_change = body.quantity is not None or body.unit_price is not None
+    if _wants_tz_change and p.status in TZ_FROZEN_STATUSES:
+        if body.admin_override and current_user.role in ADMIN_ROLES:
+            _old_qty, _old_price = it.quantity, it.unit_price
+        else:
+            from app.routers.purchase_export import _STATUS_LABELS
+            stage = _STATUS_LABELS.get(p.status, p.status)
+            raise HTTPException(
+                409,
+                f"Закупка №{p.purchase_number or p.id} объявлена (стадия «{stage}») — ТЗ зафиксировано. "
+                "Цену по итогам закупки внесите в подстроке «Договор» позиции.",
+            )
     if body.item_name is not None:
         name = body.item_name.strip()
         if not name:
@@ -1943,6 +2017,16 @@ async def patch_purchase_item(
         qty = it.quantity or Decimal("0")
         price = it.unit_price or Decimal("0")
         it.total_price = qty * price
+        # Снимок плана (Шаг 1 «план ≠ факт»): пока закупка в статусе «План закупок» —
+        # правка кол-ва/цены двигает и снимок плана вместе с ТЗ (план ещё формируется).
+        # С «Ведётся работа» и далее сюда попасть можно только через admin_override
+        # (гейт TZ_FROZEN_STATUSES выше) — снимок плана в этом случае намеренно НЕ
+        # трогаем: план обязан остаться зафиксированным даже при осознанном обходе
+        # заморозки ТЗ администратором.
+        if p.status == "plan_schedule":
+            it.planned_quantity = it.quantity
+            it.planned_unit_price = it.unit_price
+            it.planned_total = it.total_price
     if body.clear_feo_category:
         it.feo_category_id = None
     elif body.feo_category_id is not None:
@@ -1962,12 +2046,37 @@ async def patch_purchase_item(
     await _recalc_purchase_totals(p, db)
     if p and p.subsidy_id:
         await _create_plan_graph_version(subsidy_id=p.subsidy_id, db=db, user=current_user, note=f"Авто-версия: изменение позиций закупки #{p.purchase_number or p.id}")
+    # Шаг 2 «план ≠ факт»: admin_override обошёл заморозку ТЗ на объявленной
+    # закупке — фиксируем в EntityChange, чтобы правка была видна в истории.
+    if body.admin_override and current_user.role in ADMIN_ROLES and p.status in TZ_FROZEN_STATUSES:
+        try:
+            from app.models.entity_change import EntityChange as _EC
+            if _old_qty is not None and str(_old_qty) != str(it.quantity):
+                db.add(_EC(
+                    entity_type='purchase_item', entity_id=it.id, field_name='quantity',
+                    old_value=str(_old_qty), new_value=str(it.quantity),
+                    changed_by_id=current_user.id,
+                    changed_by_name=getattr(current_user, 'full_name', None) or current_user.username,
+                ))
+            if _old_price is not None and str(_old_price) != str(it.unit_price):
+                db.add(_EC(
+                    entity_type='purchase_item', entity_id=it.id, field_name='unit_price',
+                    old_value=str(_old_price), new_value=str(it.unit_price),
+                    changed_by_id=current_user.id,
+                    changed_by_name=getattr(current_user, 'full_name', None) or current_user.username,
+                ))
+        except Exception as _exc:
+            import logging as _log
+            _log.getLogger(__name__).warning("entity_change record failed for purchase_item admin_override: %s", _exc)
     await db.commit()
     return {
         "ok": True, "item_id": it.id, "item_name": it.item_name,
         "quantity": float(it.quantity or 0), "unit": it.unit,
         "unit_price": float(it.unit_price or 0), "total_price": float(it.total_price or 0),
         "feo_category_id": it.feo_category_id,
+        "planned_quantity": float(it.planned_quantity) if it.planned_quantity is not None else None,
+        "planned_unit_price": float(it.planned_unit_price) if it.planned_unit_price is not None else None,
+        "planned_total": float(it.planned_total) if it.planned_total is not None else None,
     }
 
 
@@ -2497,6 +2606,14 @@ async def split_purchase(
                     unit=src_it.unit,
                     unit_price=src_it.unit_price,
                     total_price=src_it.total_price,
+                    # Снимок плана (Шаг 1): разбиение закупки на подгруппы — переносим
+                    # УЖЕ зафиксированный план исходной позиции, а не текущую цену
+                    # (иначе разбиение задним числом «размораживало» бы план). Fallback
+                    # на текущие значения только если снимка ещё не было (позиция создана
+                    # до этой миграции/до бэкофилла).
+                    planned_quantity=src_it.planned_quantity if src_it.planned_quantity is not None else src_it.quantity,
+                    planned_unit_price=src_it.planned_unit_price if src_it.planned_unit_price is not None else src_it.unit_price,
+                    planned_total=src_it.planned_total if src_it.planned_total is not None else src_it.total_price,
                     country_origin=src_it.country_origin,
                     feo_planned_item_id=src_it.feo_planned_item_id,
                     over_plan=getattr(src_it, 'over_plan', False) or False,

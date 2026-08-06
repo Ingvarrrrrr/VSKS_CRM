@@ -227,6 +227,16 @@ async def get_feo_plan_tree(
             "excess_amount": node["excess_amount"],
             "excess_pending": node["excess_pending"],
             "excess_approved": node["excess_approved"],
+            # Задача владельца «план ≠ факт» (2026-08-06): факт со стадии «Ведётся
+            # работа» + независимое превышение «факт дороже плана» — см.
+            # compute_feo_plan_tree docstring (шаг C). Отсутствовали здесь —
+            # эндпоинт отдавал только явный whitelist полей и терял их молча.
+            "fact": node["fact"],
+            "fact_quantity": node["fact_quantity"],
+            "excess_over_feo": node["excess_over_feo"],
+            "excess_fact_over_plan": node["excess_fact_over_plan"],
+            "excess_fact_approved": node["excess_fact_approved"],
+            "excess_fact_pending": node["excess_fact_pending"],
         }
         for cat_id, node in tree.items()
     }
@@ -252,6 +262,7 @@ async def get_feo_plan_tree(
         MONEY_FIELDS = (
             "plan_manual", "ordered_sum", "over", "plan", "budget", "display",
             "residual", "forecast", "forecast_over", "consumed", "excess_amount",
+            "fact", "excess_over_feo", "excess_fact_over_plan",
         )
         for cat_id, node in result.items():
             if cat_id == "unassigned":
@@ -270,12 +281,29 @@ async def get_planned_purchase_items(
     db: AsyncSession = Depends(get_db),
     _=Depends(get_current_user),
 ):
-    """Позиции закупок «из заявок» per feo_category_id (статусы плана закупок и дальше)."""
+    """Позиции закупок «из заявок» per feo_category_id (статусы плана закупок и дальше).
+
+    Задача владельца «план ≠ факт» (сессия 2026-08-06, шаг 5): панель «Позиции: план
+    vs факт» (SubsidiesView.vue, таблица источников группы «из заявок») обязана
+    показывать ЗАМОРОЖЕННЫЙ снимок ТЗ (planned_quantity/planned_unit_price/planned_total,
+    см. Шаг 1/2 «план ≠ факт») и реальный факт (fact_amount/fact_confirmed) — раньше
+    отдавались только «текущие» quantity/unit_price/total_price (которые задним числом
+    подменяются ценой по итогам закупки) и фактических данных не было вовсе (фронт
+    печатал жёсткую заглушку «ещё не поставлено»). Формула факта — та же единая
+    purchase_item_fact_amount, что и в /feo-planned-items/comparison (Table A), чтобы
+    два соседних UI-блока не показывали разные числа по одной и той же позиции.
+    """
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem
     from app.models.product import Product
     from app.models.contract import Contract
     from app.routers.purchase_budget import PLANNED_STATUSES
+    from app.services.feo_plan import (
+        purchase_item_fact_amount,
+        FACT_CONFIRMED_STATUSES,
+        _contract_item_totals,
+        _purchase_item_totals,
+    )
 
     cat_col = func.coalesce(PurchaseItem.feo_category_id, Purchase.feo_category_id)
     stmt = (
@@ -287,6 +315,10 @@ async def get_planned_purchase_items(
             PurchaseItem.unit,
             PurchaseItem.unit_price,
             PurchaseItem.total_price,
+            PurchaseItem.planned_quantity,
+            PurchaseItem.planned_unit_price,
+            PurchaseItem.planned_total,
+            PurchaseItem.final_total,
             PurchaseItem.purchase_id,
             PurchaseItem.product_id,
             PurchaseItem.feo_planned_item_id,
@@ -297,6 +329,7 @@ async def get_planned_purchase_items(
             Purchase.wish_id,
             Purchase.contract_id,
             Purchase.purchase_contract_type,
+            Purchase.contract_price,
             Contract.contract_type.label("contract_type"),
             Contract.status.label("contract_status"),
             Contract.number.label("contract_number"),
@@ -315,6 +348,32 @@ async def get_planned_purchase_items(
         .order_by(cat_col, PurchaseItem.item_name)
     )
     rows = (await db.execute(stmt)).all()
+
+    # Факт: та же формула, что и в /feo-planned-items/comparison — точное сопоставление
+    # через ContractItem.source_item_id, иначе пропорция от purchases.contract_price.
+    _item_ids = [r.id for r in rows]
+    _purchase_ids = {r.purchase_id for r in rows}
+    _ci_totals = await _contract_item_totals(db, _item_ids)
+    _purchase_totals = await _purchase_item_totals(db, _purchase_ids)
+    # Кол-во/цена факта (не только сумма): берём напрямую из ТОЧНО сопоставленной строки
+    # договора (source_item_id), если она есть — та же строка, что дала _ci_totals.
+    from app.models.contract_item import ContractItem as _ContractItem
+    _ci_qty_price: dict[int, tuple] = {}
+    if _item_ids:
+        _ci_rows = (await db.execute(
+            select(_ContractItem.source_item_id, _ContractItem.quantity, _ContractItem.unit_price)
+            .where(_ContractItem.source_item_id.in_(_item_ids))
+        )).all()
+        for _row in _ci_rows:
+            if _row.source_item_id not in _ci_qty_price:
+                _ci_qty_price[_row.source_item_id] = (_row.quantity, _row.unit_price)
+    # Легковесные объекты-обёртки под purchase_item_fact_amount (принимает ORM-подобные
+    # PurchaseItem/Purchase — здесь только Row, поэтому оборачиваем нужные атрибуты).
+    class _PiShim:
+        __slots__ = ("total_price", "final_total")
+    class _PShim:
+        __slots__ = ("status", "contract_price", "acceptance_doc_amount")
+
     result: dict[int, list] = {}
     for r in rows:
         if r.product_id is not None and r.product_has_photo:
@@ -323,6 +382,45 @@ async def get_planned_purchase_items(
             product_photo = r.photo_url or r.photo_link or None
         else:
             product_photo = None
+
+        items_count, items_sum = _purchase_totals.get(r.purchase_id, (1, Decimal(str(r.total_price or 0))))
+        item_total = Decimal(str(r.total_price or 0))
+        if items_count > 1 and items_sum > 0:
+            ratio = item_total / items_sum
+        elif items_count > 1:
+            ratio = Decimal(1) / Decimal(items_count)
+        else:
+            ratio = Decimal(1)
+
+        pi_shim = _PiShim()
+        pi_shim.total_price = r.total_price
+        pi_shim.final_total = r.final_total
+        p_shim = _PShim()
+        p_shim.status = r.purchase_status
+        p_shim.contract_price = r.contract_price
+        p_shim.acceptance_doc_amount = None  # не выбирается этим запросом — не нужен для FACT_PRICED_STATUSES
+        fact_amount, fact_allocated = purchase_item_fact_amount(
+            pi_shim, p_shim, ratio, items_count, contract_item_total=_ci_totals.get(r.id)
+        )
+        fact_confirmed = r.purchase_status in FACT_CONFIRMED_STATUSES
+
+        # Кол-во/цена факта: из точно сопоставленной строки договора, если есть;
+        # иначе (пропорциональное распределение или факта ещё нет) — кол-во берём
+        # как у ТЗ (обычно не меняется договором), цену — делением суммы на кол-во.
+        _ci_qty, _ci_price = _ci_qty_price.get(r.id, (None, None))
+        if _ci_qty is not None:
+            fact_quantity = float(_ci_qty)
+        elif fact_amount is not None:
+            fact_quantity = float(r.quantity or 0)
+        else:
+            fact_quantity = None
+        if _ci_price is not None:
+            fact_unit_price = float(_ci_price)
+        elif fact_amount is not None and fact_quantity:
+            fact_unit_price = float(fact_amount) / fact_quantity
+        else:
+            fact_unit_price = None
+
         result.setdefault(r.cat_id, []).append({
             "id": r.id,
             "item_name": r.item_name,
@@ -330,6 +428,16 @@ async def get_planned_purchase_items(
             "unit": r.unit,
             "unit_price": float(r.unit_price or 0),
             "total_price": float(r.total_price or 0),
+            # Снимок плана (Шаг 1/2 «план ≠ факт») — заморожен с момента объявления
+            # закупки; фолбэк на текущие значения для старых позиций без снимка.
+            "planned_quantity": float(r.planned_quantity) if r.planned_quantity is not None else float(r.quantity or 0),
+            "planned_unit_price": float(r.planned_unit_price) if r.planned_unit_price is not None else float(r.unit_price or 0),
+            "planned_total": float(r.planned_total) if r.planned_total is not None else float(r.total_price or 0),
+            "fact_amount": float(fact_amount) if fact_amount is not None else None,
+            "fact_quantity": fact_quantity,
+            "fact_unit_price": fact_unit_price,
+            "fact_confirmed": fact_confirmed,
+            "fact_allocated": fact_allocated,
             "purchase_id": r.purchase_id,
             "feo_planned_item_id": r.feo_planned_item_id,
             "wish_item_id": r.wish_item_id,
@@ -2500,11 +2608,37 @@ async def update_category(
     cat.planned_quantity = category_data.planned_quantity
     cat.planned_amount = category_data.planned_amount
     cat.unit = category_data.unit
+
+    # Задача владельца «план ≠ факт» (шаг D, сессия 2026-08-06): защита от повторения
+    # К1 (боевые 16 760 000 — сумма записана в поле «цена за единицу»). НЕ блокируем
+    # (владелец мог ввести именно это осознанно), только предупреждаем в ответе, если
+    # planned_quantity × planned_amount более чем вдвое больше финансирования ФЭО —
+    # похоже на «сумму вместо цены за единицу» при quantity > 1.
+    warning: Optional[str] = None
+    if (
+        cat.planned_quantity is not None and float(cat.planned_quantity) > 1
+        and cat.planned_amount is not None
+        and cat.budget is not None and float(cat.budget) > 0
+    ):
+        _qty = float(cat.planned_quantity)
+        _amt = float(cat.planned_amount)
+        _budget = float(cat.budget)
+        _total = _qty * _amt
+        if _total > _budget * 2:
+            warning = (
+                f"Похоже, в поле «Цена за единицу» введена сумма: "
+                f"{_qty:g} × {_amt:,.2f} = {_total:,.2f} ₽ при финансировании {_budget:,.2f} ₽."
+            )
+
     if (cat.budget, cat.feo_quantity, cat.feo_amount, cat.planned_quantity, cat.planned_amount) != _old_plan and cat.subsidy_id:
         from app.routers.purchases import _create_plan_graph_version
         await _create_plan_graph_version(subsidy_id=cat.subsidy_id, db=db, user=current_user, note=f"Авто-версия: изменение плановых показателей ФЭО «{cat.name}»")
     await db.commit()
     await db.refresh(cat)
+    if warning:
+        out = FeoCategoryOut.model_validate(cat).model_dump()
+        out["warning"] = warning
+        return out
     return cat
 
 

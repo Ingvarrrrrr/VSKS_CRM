@@ -81,6 +81,15 @@ services:
 
   nginx:
     image: nginx:alpine
+    environment:
+      # Basic-auth для adminer.gaaala.duckdns.org. НЕ бинд-маунт: абсолютный
+      # хостовый путь ломал бы любую другую машину (docker создал бы там
+      # каталог вместо файла, если его нет). entrypoint.sh собирает из этой
+      # переменной /etc/nginx/secrets/adminer.htpasswd при старте контейнера;
+      # если переменная пуста — пишет заведомо неподходящий хеш, так что
+      # adminer честно отдаёт 401, а не 500. Значение — целая строка
+      # htpasswd (`user:hash`), см. .env.example.
+      ADMINER_HTPASSWD: ${ADMINER_HTPASSWD:-}
     ports:
       - "80:80"
       - "443:443"
@@ -93,12 +102,21 @@ services:
     depends_on:
       - backend
       - frontend
-    # entrypoint.d-скрипт создаёт self-signed placeholder если LE-сертификата нет,
-    # чтобы nginx стартовал. Реальный cert заменит его после setup-ssl.sh.
+    # entrypoint.d-скрипт создаёт self-signed placeholder если LE-сертификата нет
+    # и собирает adminer.htpasswd из ADMINER_HTPASSWD — чтобы nginx стартовал.
+    # Реальный cert заменит placeholder после setup-ssl.sh.
+    #
+    # ВАЖНО: раз у сервиса свой command (не голое "nginx"), официальный
+    # docker-entrypoint.sh НЕ запускает /docker-entrypoint.d/*.sh сам —
+    # он делает это только когда первый аргумент буквально "nginx"/"nginx-debug".
+    # Поэтому скрипт вызывается здесь явно и синхронно (до старта nginx),
+    # иначе он тихо не выполняется вообще (так и было до Phase 30-xx —
+    # маскировалось тем, что реальный LE-cert уже существовал).
+    #
     # Затем nginx перечитывает конфиг каждые 6 часов — подхватит обновлённые
     # сертификаты после certbot renew.
     command: >
-      sh -c "while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g 'daemon off;'"
+      sh -c "/docker-entrypoint.d/00-ensure-cert.sh && (while :; do sleep 6h & wait $${!}; nginx -s reload; done &) ; nginx -g 'daemon off;'"
 
   # Certbot с DNS-01 challenge через DuckDNS. Первый запуск — вручную через
   # `docker compose run --rm certbot certonly ...` (см. scripts/setup-ssl.sh).
@@ -111,6 +129,16 @@ services:
       - /etc/letsencrypt:/etc/letsencrypt
     entrypoint: >
       sh -c "trap exit TERM; while :; do certbot renew --quiet --deploy-hook 'echo renewed-at-$$(date -Iseconds)'; sleep 12h & wait $${!}; done"
+    restart: unless-stopped
+
+  # Phase 30-xx: Adminer — только для внутренней docker-сети (vsks-crm_default),
+  # наружу не публикуется портом. Доступ исключительно через nginx-прокси
+  # adminer.gaaala.duckdns.org с basic-auth (см. блок nginx выше и nginx.conf).
+  # Видит по имени сервисов только базы этого compose-проекта (db); для
+  # администрирования БД других проектов (sunduk/sizo/nemakh) их сети сюда
+  # не подключены — сознательно, чтобы не трогать чужую инфраструктуру.
+  adminer:
+    image: adminer:latest
     restart: unless-stopped
 
 volumes:

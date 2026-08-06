@@ -1425,8 +1425,13 @@ const showVatColumnsInExpandRow = computed(() => {
 // до 128 — замерено Playwright: оба варианта помещаются без многоточия.
 // «Страна происхождения» ужата до 110 (текст в 2 строки заголовка), чтобы на
 // типичной ширине (~1280px) «Ед. изм.» не уезжала за край без скролла.
+// unit: жалоба владельца — 90px было мало для v-combobox с выпадающей стрелкой,
+// самое длинное значение UNIT_OPTIONS («компл.») обрезалось в «ш..». Поднято
+// до 120 — замерено в браузере (Playwright): input.scrollWidth === input.clientWidth
+// (без обрезки) у «компл.» начинается с 116px ширины колонки, 120 даёт ~4px
+// запас. «кв.м.» умещается с ещё большим запасом.
 const { onResizeStart, resizeStyle } = useResizableColumns('purchase-items-editor', {
-  name: 320, type: 128, qty: 90, unit: 90, price: 130, sum: 130,
+  name: 320, type: 128, qty: 90, unit: 120, price: 130, sum: 130,
   country: 110, contractor: 200, actions: 80,
 })
 

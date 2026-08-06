@@ -14,6 +14,22 @@ import { ref, onMounted } from 'vue'
  *     <span class="col-resize-handle" @mousedown="onResizeStart($event, 'name')">&nbsp;</span>
  *   </th>
  */
+// Колонки, для которых когда-либо поднимали дефолт и поэтому нужно один раз
+// подтянуть сохранённую в localStorage ширину до нового defaults[key] — иначе
+// сохранённое старое значение (localStorage перебивает defaults) навсегда
+// перекрывает повышение дефолта в коде и пользователь правки не увидит.
+// Целевое значение — ВСЕГДА defaults[key], не хардкод, чтобы миграция не
+// разъехалась с дефолтом при следующей его смене. Тот же приём, что и
+// миграция layout KPI в useDashboardLayout.ts.
+//   - type: 2026-08 — ФЭО-каскад перестал рендериться внутри ячейки «Тип»
+//     (вынесен в отдельную full-width подстроку, см. ItemsTableFlat.vue),
+//     из-за чего «Товар»/«Услуга» + стрелка v-select обрезались в «Т...».
+//     Дефолт поднят до 128.
+//   - unit: 2026-08 — «Ед. изм.» (v-combobox) со стрелкой съедала почти всю
+//     90px ширину, самое длинное значение («компл.») обрезалось в «ш..».
+//     Дефолт поднят до 120 (замерено scrollWidth/clientWidth в браузере).
+const BUMP_TO_DEFAULT_KEYS = ['type', 'unit']
+
 export function useResizableColumns(tableId: string, defaults: Record<string, number>) {
   const STORAGE_KEY = `col_widths_${tableId}`
 
@@ -26,26 +42,28 @@ export function useResizableColumns(tableId: string, defaults: Record<string, nu
       if (saved) {
         const parsed = JSON.parse(saved)
         colWidths.value = { ...defaults, ...parsed }
-        // Миграция: колонка «Тип» (Товар/Услуга) у части пользователей сохранена
-        // растянутой ещё со старого дефолта (120px) сверх разумного. Подрезаем
-        // единожды к текущему дефолту (defaults.type, НЕ хардкод — иначе разъедется
-        // с ним при следующей смене дефолта) — иначе «Ед. изм.» уезжает за край
-        // таблицы. Верхняя граница (>140) — та же, что и была; поменялось только
-        // целевое значение отката (было жёстко 90).
-        // Тот же приём, что и миграция layout KPI в useDashboardLayout.ts.
+        let migrated = false
+
+        // «Тип» отдельно: у части пользователей ширина сохранена растянутой ещё
+        // со старого дефолта (>140px) сверх разумного. Этот верхний клэмп нужен
+        // только «Типу» (так исторически растягивали только его) — на «unit»
+        // и будущие ключи не распространяем без явной причины.
         if (typeof colWidths.value.type === 'number' && colWidths.value.type > 140) {
           colWidths.value.type = defaults.type
-          save()
-        // Миграция (2026-08-06): ФЭО-каскад перестал рендериться внутри ячейки «Тип»
-        // (вынесен в отдельную full-width подстроку, см. ItemsTableFlat.vue) — раньше
-        // именно он растягивал ячейку своим min-width, поэтому колонка держалась на
-        // 90px. Без него «Товар»/«Услуга» + стрелка v-select обрезаются в «Т...».
-        // Дефолт поднят до 128 — тем, у кого в localStorage уже лежит меньшее
-        // значение (в т.ч. 90 от миграции выше), поднимаем один раз до нового дефолта.
-        } else if (typeof colWidths.value.type === 'number' && colWidths.value.type < defaults.type) {
-          colWidths.value.type = defaults.type
-          save()
+          migrated = true
         }
+
+        // Общая миграция «подтянуть сохранённое к новому дефолту, если меньше»
+        // для всех ключей из BUMP_TO_DEFAULT_KEYS.
+        for (const key of BUMP_TO_DEFAULT_KEYS) {
+          const w = colWidths.value[key]
+          if (typeof w === 'number' && typeof defaults[key] === 'number' && w < defaults[key]) {
+            colWidths.value[key] = defaults[key]
+            migrated = true
+          }
+        }
+
+        if (migrated) save()
       }
     } catch {}
   })

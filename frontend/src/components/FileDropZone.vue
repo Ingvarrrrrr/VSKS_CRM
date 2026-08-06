@@ -1,9 +1,9 @@
 <template>
   <div
     class="file-drop-zone"
-    :class="{ 'file-drop-zone--active': dragging, 'file-drop-zone--has-file': !!modelValue }"
-    @dragenter.prevent.stop="dragging = true"
-    @dragover.prevent.stop="dragging = true"
+    :class="{ 'file-drop-zone--active': dragging, 'file-drop-zone--has-file': !!modelValue, 'file-drop-zone--disabled': disabled }"
+    @dragenter.prevent.stop="onDragEnter"
+    @dragover.prevent.stop="onDragEnter"
     @dragleave.prevent.stop="dragging = false"
     @drop.prevent.stop="onDrop"
     @click="openPicker"
@@ -30,6 +30,7 @@
       hidden
       :accept="accept"
       :multiple="multiple"
+      :disabled="disabled"
       @change="onFileSelect"
     />
   </div>
@@ -43,6 +44,7 @@ const props = defineProps<{
   accept?: string
   multiple?: boolean
   hint?: string
+  disabled?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -53,8 +55,14 @@ const emit = defineEmits<{
 const dragging = ref(false)
 const fileInput = ref<HTMLInputElement>()
 
+function onDragEnter() {
+  if (props.disabled) return
+  dragging.value = true
+}
+
 function onDrop(e: DragEvent) {
   dragging.value = false
+  if (props.disabled) return
   const files = Array.from(e.dataTransfer?.files || [])
   if (!files.length) return
   if (props.multiple) {
@@ -79,6 +87,7 @@ function onFileSelect(e: Event) {
 }
 
 function openPicker() {
+  if (props.disabled) return
   fileInput.value?.click()
 }
 
@@ -95,7 +104,7 @@ defineExpose({ openPicker, clear })
   border-radius: 8px;
   transition: all 0.2s;
   cursor: pointer;
-  min-height: 80px;
+  min-height: 120px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -108,5 +117,14 @@ defineExpose({ openPicker, clear })
 .file-drop-zone--has-file {
   border-style: solid;
   border-color: rgb(var(--v-theme-success));
+}
+.file-drop-zone--disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  background: rgba(var(--v-border-color), 0.03);
+}
+.file-drop-zone--disabled:hover {
+  border-color: rgba(var(--v-border-color), 0.3);
+  background: rgba(var(--v-border-color), 0.03);
 }
 </style>

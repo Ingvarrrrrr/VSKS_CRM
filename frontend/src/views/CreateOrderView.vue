@@ -2068,7 +2068,7 @@
             <template #default="{ dragging, open }">
               <div
                 class="d-flex align-center justify-center gap-2 pa-3"
-                style="min-height:50px; border:1px dashed var(--gala-accent, #fb923c); border-radius:6px"
+                style="min-height:120px; border:1px dashed var(--gala-accent, #fb923c); border-radius:6px"
                 :style="{ background: dragging ? 'rgba(251,146,60,0.08)' : 'transparent' }"
               >
                 <v-icon :color="dragging ? '#fb923c' : 'grey'" size="20">mdi-file-upload-outline</v-icon>
@@ -2214,48 +2214,46 @@
                документы» — единая точка загрузки всех файлов закупки.
                Каждая кнопка «Загрузить» назначает file_type (contract/act/upd/
                invoice/order/etc) при upload. Файлы списком ниже. -->
-          <div v-if="purchaseId" class="mb-4">
-            <div v-for="sec in DOC_UPLOAD_SECTIONS" :key="sec.type" class="d-flex align-center gap-2 py-2 border-b">
-              <v-icon size="18" :color="sec.color">{{ sec.icon }}</v-icon>
-              <span class="text-body-2 font-weight-medium" style="min-width:140px">{{ sec.label }}</span>
-              <v-btn size="x-small" variant="tonal" :color="sec.color" prepend-icon="mdi-upload"
-                :loading="uploading && pendingSectionUpload === sec.type" @click="uploadForSection(sec.type)">
-                Загрузить
-              </v-btn>
-              <v-spacer />
-              <div class="d-flex flex-wrap gap-1">
-                <template v-for="f in filesByType(sec.type)" :key="f.id">
-                  <v-chip size="small" :color="f.is_active ? sec.color : 'grey'" :variant="f.is_active ? 'tonal' : 'outlined'"
-                    closable @click:close="deleteFile(f.id)" @click="downloadFile(f.id, f.filename)">
-                    <v-icon start size="14">mdi-file</v-icon>
-                    {{ f.filename.length > 25 ? f.filename.slice(0, 22) + '...' : f.filename }}
-                    <template #append>
-                      <v-tooltip :text="f.is_active ? 'Актуальный — нажмите чтобы деактивировать' : 'Не актуальный — нажмите чтобы активировать'" location="top">
-                        <template #activator="{ props: tp }">
-                          <v-icon v-bind="tp" size="14" class="ml-1" :color="f.is_active ? 'success' : 'grey'"
-                            @click.stop="toggleFileActive(f)">{{ f.is_active ? 'mdi-check-circle' : 'mdi-close-circle-outline' }}</v-icon>
+          <div class="doc-upload-grid mb-4">
+            <FileDropZone v-for="sec in DOC_UPLOAD_SECTIONS" :key="sec.type"
+              accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" :multiple="true" :disabled="!purchaseId"
+              class="doc-upload-tile" style="min-height:140px; align-items:flex-start; padding:12px"
+              @files="(files: File[]) => uploadFilesForType(files, sec.type)">
+              <template #default="{ dragging }">
+                <div class="doc-upload-tile-inner" :class="{ 'doc-upload-tile-inner--dragging': dragging && purchaseId }">
+                  <div class="d-flex align-center gap-2 mb-1">
+                    <v-icon size="20" :color="sec.color">{{ sec.icon }}</v-icon>
+                    <span class="text-body-2 font-weight-medium">{{ sec.label }}</span>
+                    <v-spacer />
+                    <v-progress-circular v-if="uploading && pendingSectionUpload === sec.type"
+                      indeterminate size="16" width="2" :color="sec.color" />
+                  </div>
+                  <div class="text-caption text-medium-emphasis mb-2">
+                    {{ purchaseId ? 'Перетащите файл сюда или нажмите' : 'Сначала сохраните закупку' }}
+                  </div>
+                  <div v-if="filesByType(sec.type).length" class="d-flex flex-wrap gap-1" @click.stop>
+                    <template v-for="f in filesByType(sec.type)" :key="f.id">
+                      <v-chip size="small" :color="f.is_active ? sec.color : 'grey'" :variant="f.is_active ? 'tonal' : 'outlined'"
+                        closable @click:close="deleteFile(f.id)" @click="downloadFile(f.id, f.filename)">
+                        <v-icon start size="14">mdi-file</v-icon>
+                        {{ f.filename.length > 20 ? f.filename.slice(0, 17) + '...' : f.filename }}
+                        <template #append>
+                          <v-tooltip :text="f.is_active ? 'Актуальный — нажмите чтобы деактивировать' : 'Не актуальный — нажмите чтобы активировать'" location="top">
+                            <template #activator="{ props: tp }">
+                              <v-icon v-bind="tp" size="14" class="ml-1" :color="f.is_active ? 'success' : 'grey'"
+                                @click.stop="toggleFileActive(f)">{{ f.is_active ? 'mdi-check-circle' : 'mdi-close-circle-outline' }}</v-icon>
+                            </template>
+                          </v-tooltip>
                         </template>
-                      </v-tooltip>
+                      </v-chip>
                     </template>
-                  </v-chip>
-                </template>
-              </div>
-            </div>
-            <input ref="sectionFileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
-              style="display:none" @change="uploadSectionFile" />
+                  </div>
+                </div>
+              </template>
+            </FileDropZone>
           </div>
-
-          <FileDropZone accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" :multiple="true"
-            hint="PDF, Word, Excel, JPEG, PNG — перетащите или нажмите"
-            @files="onDocFilesDropped" class="mb-3">
-            <template #default="{ dragging, open }">
-              <div class="d-flex align-center justify-center gap-3 pa-4" style="min-height:60px">
-                <v-icon :color="dragging ? 'primary' : 'grey'" size="24">mdi-upload</v-icon>
-                <span class="text-body-2">Перетащите файлы сюда (тип: Прочее) или</span>
-                <v-btn variant="tonal" size="small" :loading="uploading" @click.stop="open()">Выбрать файл</v-btn>
-              </div>
-            </template>
-          </FileDropZone>
+          <input ref="sectionFileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+            style="display:none" @change="uploadSectionFile" />
           <input ref="fileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
             style="display:none" @change="uploadFile" />
 
@@ -8264,15 +8262,19 @@ const uploadFile = async (event: Event) => {
   }
 }
 
-async function onDocFilesDropped(files: File[]) {
+// Единая точка загрузки файлов закупки с заданным file_type — используется и
+// плитками drag-n-drop (Документы к закупке), и кнопкой «Загрузить» в разделе
+// «Платёж», и кликом по плитке (открывает системный выбор файла с тем же типом).
+async function uploadFilesForType(files: File[], fileType: string) {
   if (!purchaseId.value || !files.length) return
   uploading.value = true
+  pendingSectionUpload.value = fileType
   try {
     for (const file of files) {
       const resolvedFormat = EDITABLE_MIME.has(file.type) ? 'editable' : 'scan'
       const fd = new FormData()
       fd.append('file', file)
-      fd.append('file_type', 'other')
+      fd.append('file_type', fileType)
       fd.append('doc_format', resolvedFormat)
       const token = localStorage.getItem('auth_token')
       const res = await fetch(`/api/purchases/${purchaseId.value}/files`, {
@@ -8287,47 +8289,23 @@ async function onDocFilesDropped(files: File[]) {
         continue
       }
       const uploaded = await res.json()
+      // Backend деактивирует прежние файлы того же типа при загрузке — синхронизируем оптимистично
+      const ft = uploaded.file_type
+      uploadedFiles.value.forEach(f => { if (f.file_type === ft) f.is_active = false })
       uploadedFiles.value.push(uploaded)
     }
-    showSnack(`Загружено файлов: ${files.length}`)
+    showSnack(files.length > 1 ? `Загружено файлов: ${files.length}` : 'Файл загружен')
   } catch (e: any) {
     showSnack(e?.message || 'Ошибка загрузки файлов', 'error')
   } finally {
     uploading.value = false
+    pendingSectionUpload.value = null
   }
 }
 
 async function onAcceptanceDocFilesDropped(files: File[]) {
-  if (!isEdit.value || !purchaseId.value || !files.length) return
-  uploading.value = true
-  try {
-    for (const file of files) {
-      const resolvedFormat = EDITABLE_MIME.has(file.type) ? 'editable' : 'scan'
-      const fd = new FormData()
-      fd.append('file', file)
-      fd.append('file_type', 'other')
-      fd.append('doc_format', resolvedFormat)
-      const token = localStorage.getItem('auth_token')
-      const res = await fetch(`/api/purchases/${purchaseId.value}/files`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: fd,
-      })
-      if (!res.ok) {
-        let detail = `Ошибка загрузки (${res.status})`
-        try { const err = await res.json(); detail = err.detail || err.message || detail } catch {}
-        showSnack(`${file.name}: ${detail}`, 'error')
-        continue
-      }
-      const uploaded = await res.json()
-      uploadedFiles.value.push(uploaded)
-    }
-    showSnack(`Загружено файлов: ${files.length}`)
-  } catch (e: any) {
-    showSnack(e?.message || 'Ошибка загрузки файлов', 'error')
-  } finally {
-    uploading.value = false
-  }
+  if (!isEdit.value) return
+  await uploadFilesForType(files, 'other')
 }
 
 function uploadForSection(section: string) {
@@ -8353,40 +8331,10 @@ async function toggleFileActive(f: UploadedFile) {
 const uploadSectionFile = async (event: Event) => {
   const input = event.target as HTMLInputElement
   if (!input.files?.length || !purchaseId.value) return
-  uploading.value = true
-  try {
-    const file = input.files[0]
-    const resolvedFormat = EDITABLE_MIME.has(file.type) ? 'editable' : 'scan'
-    const fileType = pendingSectionUpload.value || 'other'
-    const fd = new FormData()
-    fd.append('file', file)
-    fd.append('file_type', fileType)
-    fd.append('doc_format', resolvedFormat)
-    const token = localStorage.getItem('auth_token')
-    const res = await fetch(`/api/purchases/${purchaseId.value}/files`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      body: fd,
-    })
-    if (!res.ok) {
-      let detail = `Ошибка загрузки (${res.status})`
-      try { const err = await res.json(); detail = err.detail || err.message || detail } catch {}
-      showSnack(detail, 'error')
-      return
-    }
-    const uploaded = await res.json()
-    // Deactivate other files of same type (backend already did this)
-    const ft = uploaded.file_type
-    uploadedFiles.value.forEach(f => { if (f.file_type === ft) f.is_active = false })
-    uploadedFiles.value.push(uploaded)
-    showSnack('Файл загружен')
-  } catch (e: any) {
-    showSnack(e?.message || 'Ошибка загрузки файла', 'error')
-  } finally {
-    uploading.value = false
-    pendingSectionUpload.value = null
-    if (sectionFileInputEl.value) sectionFileInputEl.value.value = ''
-  }
+  const file = input.files[0]
+  const fileType = pendingSectionUpload.value || 'other'
+  input.value = ''
+  await uploadFilesForType([file], fileType)
 }
 
 const downloadFile = async (fid: number, filename: string) => {
@@ -8935,6 +8883,24 @@ async function downloadKpXlsx() {
 </script>
 
 <style scoped>
+.doc-upload-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+@media (max-width: 600px) {
+  .doc-upload-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.doc-upload-tile-inner {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.doc-upload-tile-inner--dragging {
+  transform: scale(1.01);
+}
 .framework-siblings-label {
   font-size: 12px;
   color: var(--crm-text-muted);

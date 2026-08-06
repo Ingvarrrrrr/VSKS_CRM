@@ -85,8 +85,22 @@ def _rpr_key(r: etree._Element) -> str:
     return etree.tostring(rpr, encoding="unicode")
 
 
+def _iter_runs_in_order(para: etree._Element) -> list:
+    """
+    Все w:r внутри абзаца, в порядке документа, включая раны, вложенные в
+    контейнеры (w:hyperlink, w:smartTag, w:sdt/w:sdtContent и т.п.).
+
+    para.iter() у lxml — preorder-обход в порядке документа, поэтому просто
+    собираем ВСЕ потомки-раны, а не только прямых детей w:p. Это должно
+    совпадать с тем, что видит para_text()/_build_char_map() (тоже p.iter()),
+    иначе смещения замен и список ранов для записи рассинхронизируются —
+    именно так текст «утекал» из гиперссылки в собранных шаблонах.
+    """
+    return list(para.iter(_tag("r")))
+
+
 def _merge_runs(para: etree._Element) -> None:
-    runs = [child for child in para if child.tag == _tag("r")]
+    runs = _iter_runs_in_order(para)
     if len(runs) < 2:
         return
 
@@ -95,7 +109,13 @@ def _merge_runs(para: etree._Element) -> None:
         cur = runs[i]
         nxt = runs[i + 1]
 
-        if cur.getparent() is not para or nxt.getparent() is not para:
+        cur_parent = cur.getparent()
+        nxt_parent = nxt.getparent()
+
+        # Сливаем только ранов с ОБЩИМ родителем: если один лежит внутри
+        # w:hyperlink (или другого контейнера), а другой — снаружи, слияние
+        # запрещено, иначе текст утечёт внутрь/наружу ссылки.
+        if cur_parent is None or nxt_parent is None or cur_parent is not nxt_parent:
             i += 1
             continue
 
@@ -124,7 +144,7 @@ def _merge_runs(para: etree._Element) -> None:
         cur_t.text = combined
         cur_t.set(f"{{{XML}}}space", "preserve")
 
-        para.remove(nxt)
+        nxt_parent.remove(nxt)
         runs.pop(i + 1)
 
 

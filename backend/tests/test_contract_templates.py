@@ -1,8 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Phase 28 T5: приёмочные тесты шаблонов договоров.
+"""Phase 28 T5 + Этап 1 слияния форм договоров: приёмочные тесты шаблонов.
 
-48 кейсов (8 шаблонов × 6 комбо флагов).
+80 кейсов (8 шаблонов × 10 комбо флагов).
 Offline, синхронные, без БД и сети.
+
+Этап 1 слияния форм договоров (ещё не выполнено на уровне шаблонов) добавляет
+флаги отчётности/питания/РИД (large_reporting, food_service, rid_transfer) и
+целевые проверки на будущие слитые doc_type (contract_services,
+contract_gph_individual с флагом rid_transfer). До выполнения слияния эти
+проверки ДОЛЖНЫ падать — красный результат здесь ожидаем и является целью
+данного этапа (тест описывает целевое поведение заранее).
 
 Логика перенесена из .tmp_p28_strict.py.
 """
@@ -39,6 +46,10 @@ COMBOS = [
     ("без3лиц",   {"third_party_involved": False}),
     ("ретро",     {"is_retroactive": True}),
     ("самовывоз", {"delivery_by_supplier": False, "has_stages": False}),
+    ("отч.малая",   {"large_reporting": False}),
+    ("отч.большая", {"large_reporting": True}),
+    ("питание",     {"food_service": True}),
+    ("ГПХ+РИД",     {"rid_transfer": True}),
 ]
 
 # ---------------------------------------------------------------------------
@@ -161,6 +172,9 @@ def _make_ctx(**override):
         has_stages=True,
         delivery_by_supplier=True,
         commission_members=[],
+        large_reporting=False,
+        food_service=False,
+        rid_transfer=False,
     )
     ctx.update(override)
     return ctx
@@ -211,10 +225,35 @@ _SERVICES = frozenset(
 )
 _GPH = frozenset(("contract_gph_individual", "contract_gph_individual_rid"))
 
+# Область действия правил слияния Этапа 1 — работают и на текущих отдельных
+# шаблонах, и на будущем слитом doc_type.
+_SERVICES_MERGED = frozenset(("contract_services", "contract_services_large"))
+_FOOD_SCOPE = frozenset(("contract_services", "contract_services_food"))
+
 _R5_STAGE_MARKERS = [
     "В случае наличия этапов оказания Услуг",
     "или этапа оказания Услуг",
     "в т.ч. этапа оказания Услуг",
+]
+
+# Маркеры полной версии «Методических рекомендаций» (сейчас — только
+# contract_services_large). Эмпирически проверенные, не выдумывать новые.
+_FULL_METHODOLOGY_MARKERS = [
+    "к методическим рекомендациям по",
+    "СОДЕРЖАТЕЛЬНЫЙ ОТЧЕТ",
+    "Приложение №6",
+]
+
+# Маркеры формы «питание» (сейчас — только contract_services_food).
+_FOOD_MARKERS = [
+    "продукты питания",
+    "медицинск",
+]
+
+# Маркеры передачи прав на РИД (сейчас — только contract_gph_individual_rid).
+_RID_MARKERS = [
+    "1229",
+    "интеллектуальной собственности",
 ]
 
 # Нерешённые альтернативы — всегда дефект
@@ -326,6 +365,33 @@ def _branch_defects(doc_name: str, ctx: dict, txt: str) -> list[str]:
             for marker in _R5_STAGE_MARKERS:
                 must_have(marker, "R5-с-этапами")
 
+    # Этап 1 слияния — отчётность (полная/малая методичка)
+    if doc_name in _SERVICES_MERGED:
+        if ctx.get("large_reporting"):
+            for marker in _FULL_METHODOLOGY_MARKERS:
+                must_have(marker, "T1-отч.большая")
+        else:
+            for marker in _FULL_METHODOLOGY_MARKERS:
+                must_not(marker, "T1-отч.малая")
+
+    # Этап 1 слияния — питание
+    if doc_name in _FOOD_SCOPE:
+        if ctx.get("food_service"):
+            for marker in _FOOD_MARKERS:
+                must_have(marker, "T1-питание-вкл")
+        else:
+            for marker in _FOOD_MARKERS:
+                must_not(marker, "T1-питание-выкл")
+
+    # Этап 1 слияния — РИД (ГПХ)
+    if doc_name in _GPH:
+        if ctx.get("rid_transfer"):
+            for marker in _RID_MARKERS:
+                must_have(marker, "T1-РИД-вкл")
+        else:
+            for marker in _RID_MARKERS:
+                must_not(marker, "T1-РИД-выкл")
+
     # Нерешённые альтернативы «/»
     for alt in _UNRESOLVED_ALT:
         if alt in txt:
@@ -374,4 +440,60 @@ def test_contract_template(doc_type: str, combo_label: str, combo_override: dict
         report = "\n".join(f"  • {e}" for e in all_errors)
         pytest.fail(
             f"[{doc_type} / {combo_label}] {len(all_errors)} дефект(а):\n{report}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Этап 1 слияния форм договоров — отдельные целевые тесты
+# ---------------------------------------------------------------------------
+
+def _services_template_path() -> str:
+    """Путь к шаблону услуг: слитый contract_services.docx, если уже есть,
+    иначе текущий contract_services_large.docx (слияние ещё не выполнено)."""
+    merged = os.path.join(_TEMPLATES_DIR, "contract_services.docx")
+    if os.path.isfile(merged):
+        return merged
+    return os.path.join(_TEMPLATES_DIR, "contract_services_large.docx")
+
+
+def test_services_body_identical_across_reporting_level():
+    """Тело договора услуг не должно зависеть от уровня отчётности —
+    различаться должна только приложенная методичка (после «Приложение №1»)."""
+    template_path = _services_template_path()
+    assert os.path.isfile(template_path), f"Шаблон не найден: {template_path}"
+
+    txt_small = _render_text(template_path, _make_ctx(large_reporting=False))
+    txt_large = _render_text(template_path, _make_ctx(large_reporting=True))
+
+    marker = "Приложение №1"
+    idx_small = txt_small.find(marker)
+    idx_large = txt_large.find(marker)
+    assert idx_small != -1, f"«{marker}» не найден при large_reporting=False"
+    assert idx_large != -1, f"«{marker}» не найден при large_reporting=True"
+
+    body_small = txt_small[:idx_small]
+    body_large = txt_large[:idx_large]
+    assert body_small == body_large, (
+        "Тело договора услуг различается в зависимости от large_reporting "
+        "(до первого «Приложение №1») — методичка не должна влиять на тело договора"
+    )
+
+
+def test_unknown_flag_defaults_to_small():
+    """Опечатка в имени флага (large_reportng вместо large_reporting) не должна
+    случайно включать полную методичку — Undefined в Jinja обязан трактоваться
+    как falsy, а не как «истина по умолчанию»."""
+    template_path = _services_template_path()
+    assert os.path.isfile(template_path), f"Шаблон не найден: {template_path}"
+
+    ctx = _make_ctx()
+    ctx.pop("large_reporting", None)
+    ctx["large_reportng"] = True  # опечатка — намеренно НЕ large_reporting
+
+    txt = _render_text(template_path, ctx)
+
+    for marker in _FULL_METHODOLOGY_MARKERS:
+        assert marker not in txt, (
+            f"Опечатка в имени флага (large_reportng) неожиданно включила "
+            f"полную методичку: маркер «{marker}» найден в тексте"
         )

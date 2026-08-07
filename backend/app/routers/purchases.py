@@ -21,7 +21,7 @@ from app.models.user import User
 from app.models.user_org_access import UserOrgAccess
 from app.routers.contracts import ensure_contract_linked
 from app.routers.purchase_budget import _check_budget, _assign_framework_seq, FRAMEWORK_TYPES
-from app.services.feo_plan import assert_no_unapproved_excess
+from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_over_plan
 from app.product_matcher import find_matching_product
 from typing import List, Optional
 from pydantic import BaseModel
@@ -1230,6 +1230,23 @@ async def create_purchase(
         for _cid, _amt in _cat_amounts.items():
             await assert_no_unapproved_excess(db, _cid, adding_amount=_amt)
 
+    # Шаг 5 «цена ТЗ не выше плановой» (владелец, 2026-08-07): по каждой позиции,
+    # ДО создания закупки. over_plan=true пропускаем — такая позиция сознательно
+    # сверх плана и уже проходит через assert_no_unapproved_excess выше.
+    if not admin_override:
+        for _i in items_data:
+            if getattr(_i, "over_plan", False):
+                continue
+            await assert_tz_not_over_plan(
+                db,
+                feo_planned_item_id=_i.feo_planned_item_id,
+                feo_category_id=_i.feo_category_id or data.feo_category_id,
+                quantity=_i.quantity,
+                unit_price=_i.unit_price,
+                total_price=_i.total_price,
+                item_name=_i.item_name,
+            )
+
     if not data.purchase_number:
         max_result = await db.execute(select(func.coalesce(func.max(Purchase.purchase_number), 0)))
         data.purchase_number = max_result.scalar() + 1
@@ -1510,6 +1527,24 @@ async def update_purchase(
     if p.contract_id and p.contract_id != old_contract_id:
         await _sync_purchase_from_contract(p, db)
     await _assign_framework_seq(p, db, exclude_id=pid)
+
+    # Шаг 5 «цена ТЗ не выше плановой» (владелец, 2026-08-07): по каждой НОВОЙ позиции,
+    # ДО удаления старых (PUT заменяет все позиции целиком — старые снимки плана
+    # старых строк тут не помогут, проверяем именно то, что придёт в базу).
+    # over_plan=true пропускаем — сознательно сверх плана, см. create_purchase выше.
+    if not admin_override:
+        for _i in items_data:
+            if getattr(_i, "over_plan", False):
+                continue
+            await assert_tz_not_over_plan(
+                db,
+                feo_planned_item_id=_i.feo_planned_item_id,
+                feo_category_id=_i.feo_category_id or p.feo_category_id,
+                quantity=_i.quantity,
+                unit_price=_i.unit_price,
+                total_price=_i.total_price,
+                item_name=_i.item_name,
+            )
 
     # Replace items (auto-link to catalog via fuzzy match if product_id missing)
     await db.execute(delete(PurchaseItem).where(PurchaseItem.purchase_id == pid))
@@ -2002,6 +2037,28 @@ async def patch_purchase_item(
                 f"Закупка №{p.purchase_number or p.id} объявлена (стадия «{stage}») — ТЗ зафиксировано. "
                 "Цену по итогам закупки внесите в подстроке «Договор» позиции.",
             )
+    # Шаг 5 «цена ТЗ не выше плановой» (владелец, 2026-08-07): проверяем ДО записи
+    # цены/кол-ва — прогнозные значения (patch частичный, недостающие берём из
+    # текущей строки). admin_override (та же роль/флаг, что и для заморозки ТЗ
+    # выше) — осознанный обход, как и у остальных гейтов превышения плана.
+    if _wants_tz_change and not (body.admin_override and current_user.role in ADMIN_ROLES):
+        _prospective_qty = body.quantity if body.quantity is not None else it.quantity
+        _prospective_price = body.unit_price if body.unit_price is not None else it.unit_price
+        _prospective_total = (_prospective_qty or Decimal("0")) * (_prospective_price or Decimal("0"))
+        _eff_cat_id = it.feo_category_id
+        if body.clear_feo_category:
+            _eff_cat_id = None
+        elif body.feo_category_id is not None:
+            _eff_cat_id = body.feo_category_id
+        await assert_tz_not_over_plan(
+            db,
+            feo_planned_item_id=it.feo_planned_item_id,
+            feo_category_id=_eff_cat_id,
+            quantity=_prospective_qty,
+            unit_price=_prospective_price,
+            total_price=_prospective_total,
+            item_name=body.item_name if body.item_name is not None else it.item_name,
+        )
     if body.item_name is not None:
         name = body.item_name.strip()
         if not name:

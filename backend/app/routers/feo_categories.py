@@ -1623,6 +1623,39 @@ async def _do_feo_import(
     updated_details: list[dict] = []
     skipped_details: list[dict] = []
 
+    def _check_unit_shift(raw: str | None, row_num: int, name: str, col_label: str) -> str | None:
+        """Признак сдвига колонок при импорте ФЭО (задача владельца 2026-08-07,
+        прод: часть категорий получила ЧИСЛО в feo_categories.unit, а сумму — в
+        planned_amount/feo_amount вместо цены за единицу). Если значение, попавшее
+        в колонку «Ед. изм.», само выглядит числом (после нормализации пробелов/
+        неразрывных пробелов и запятой→точка) — это почти наверняка не единица
+        измерения, а число из соседней колонки, уехавшей на одну позицию влево.
+        Не молчим: пишем warning нового вида "column_shift" в тот же массив
+        `warnings`, что уже уходит на фронт, и НЕ отдаём число дальше как unit —
+        вызывающий код оставит прежнее/пустое значение вместо мусора.
+        Существующая проверка sum_mismatch (см. ниже) здесь бессильна: она
+        сравнивает сумму с кол-во×цена только когда в файле ЕСТЬ отдельная колонка
+        «Сумма по ФЭО» — а типичный сдвиг (нет колонки «Ед.изм.» в исходнике)
+        одновременно сдвигает и её, оставляя feo_sum пустым, так что сравнивать
+        не с чем. Эта проверка — независимый сигнал, не требующий колонки суммы.
+        """
+        if raw is None:
+            return None
+        s = raw.strip().replace(" ", "").replace("\xa0", "").replace(" ", "").replace(",", ".")
+        if not s:
+            return raw
+        try:
+            float(s)
+        except (ValueError, TypeError):
+            return raw
+        warnings.append({
+            "kind": "column_shift",
+            "row": row_num,
+            "name": name or "",
+            "message": f"Строка {row_num}: в колонке «{col_label}» число {raw} — похоже, колонки сдвинуты, проверьте раскладку файла",
+        })
+        return None
+
     # Множество id родительских узлов, затронутых импортом — для parent_sum_mismatch
     touched_parents: set[int] = set()
 
@@ -1720,6 +1753,9 @@ async def _do_feo_import(
 
         item_qty    = to_dec(get_cell(row, c_qty))
         item_unit   = get_cell(row, c_unit)
+        item_unit   = _check_unit_shift(
+            item_unit, row_num, lvl5_name or lvl4_name or lvl3_name or lvl2_name, "Ед. изм. (Ур.5)"
+        )
         item_amount = to_dec(get_cell(row, c_item_amt))
         item_price  = to_dec(get_cell(row, c_item_price)) if c_item_price is not None else None
 
@@ -1821,6 +1857,9 @@ async def _do_feo_import(
                 # --- ФЭО-поля ---
                 feo_qty  = lv["feo_qty"]
                 feo_unit = lv["feo_unit"]
+                feo_unit = _check_unit_shift(
+                    feo_unit, row_num, lv["name"], f"Ед. изм. по ФЭО (Ур.{lv['level_src']})"
+                )
                 feo_amt  = lv["feo_amt"]
                 feo_sum  = lv["feo_sum"]
 
@@ -1852,6 +1891,9 @@ async def _do_feo_import(
                 # --- Плановые поля ---
                 plan_qty  = lv["plan_qty"]
                 plan_unit = lv["plan_unit"]
+                plan_unit = _check_unit_shift(
+                    plan_unit, row_num, lv["name"], f"Ед. изм. плана (Ур.{lv['level_src']})"
+                )
                 plan_amt  = lv["plan_amt"]
                 plan_sum  = lv["plan_sum"]
 

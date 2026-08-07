@@ -34,6 +34,7 @@ from app.auth.permissions import require_tab
 from app.routers.purchases import _has_purchase_write_access
 from app.models.user import User
 from app.services.product_matcher import score as _fuzzy_score, SCORE_AUTO as _SCORE_AUTO
+from app.services.feo_plan import assert_tz_not_over_plan
 
 try:
     from openpyxl import Workbook, load_workbook
@@ -552,10 +553,16 @@ async def import_items_excel(
             col.setdefault('item_type', i)
         elif any(x in h_str for x in ('кол', 'количеств', 'qty', 'quantity')):
             col.setdefault('quantity', i)
-        elif any(x in h_str for x in ('ед.', 'единиц', 'unit', 'изм')):
-            col.setdefault('unit', i)
+        # Шаг 5 (владелец, 2026-08-07): проверка цены ПЕРЕД проверкой ед.изм. — заголовок
+        # шаблона «Цена за единицу» (см. items_import_template выше) содержит подстроку
+        # «единицу», которая раньше матчилась веткой ед.изм. ('единиц' in h_str) первой
+        # (elif сверху вниз) — колонка цены никогда не находилась, unit_price/total_price
+        # молча оставались NULL. Обнаружено при проверке шага 5 «ТЗ не выше плана»: гейт
+        # не мог сработать, т.к. цена не читалась из файла вообще.
         elif any(x in h_str for x in ('цена', 'price', 'стоимость', 'за единиц')):
             col.setdefault('unit_price', i)
+        elif any(x in h_str for x in ('ед.', 'единиц', 'unit', 'изм')):
+            col.setdefault('unit', i)
 
     if 'item_name' not in col:
         raise HTTPException(400, "Не найдена колонка с наименованием.")
@@ -604,7 +611,7 @@ async def import_items_excel(
     new_in_catalog = 0
     errors_list = []
 
-    for row in data_iter:
+    for row_idx, row in enumerate(data_iter, start=2):  # +1 заголовок, +1 — 1-based для пользователя
         item_name = _cell(row, 'item_name')
         if not item_name:
             continue
@@ -616,6 +623,25 @@ async def import_items_excel(
         unit = _cell(row, 'unit') or 'шт'
         unit_price = _to_dec(_cell(row, 'unit_price'))
         total_price = (quantity * unit_price) if unit_price else None
+
+        # Шаг 5 «цена ТЗ не выше плановой» (владелец, 2026-08-07): позиция импорта
+        # наследует ФЭО-категорию закупки (feo_planned_item_id импорт не проставляет —
+        # это делается отдельно, автоподбором/вручную после импорта). Ошибки
+        # аггрегируем по строкам — импорт не должен падать на первой же проблемной
+        # позиции, проблемные строки просто не добавляются, остальные — добавляются.
+        try:
+            await assert_tz_not_over_plan(
+                db,
+                feo_planned_item_id=None,
+                feo_category_id=purchase.feo_category_id,
+                quantity=quantity,
+                unit_price=unit_price,
+                total_price=total_price,
+                item_name=item_name,
+            )
+        except HTTPException as _tz_exc:
+            errors_list.append(f"Строка {row_idx}: {_tz_exc.detail}")
+            continue
 
         # Auto-match or create in catalog
         # 1) exact match (fast path)
@@ -1324,6 +1350,26 @@ async def import_items_mapped(
             elif not unit_price and total_price and quantity:
                 unit_price = total_price / quantity
 
+            # Шаг 5 «цена ТЗ не выше плановой» (владелец, 2026-08-07): позиция
+            # импорта наследует ФЭО-категорию закупки (feo_planned_item_id импорт
+            # не проставляет). Ловим ИМЕННО эту ошибку до общего `except Exception`
+            # ниже — тот делает db.rollback(), который стёр бы уже добавленные
+            # (ещё не закоммиченные) строки предыдущих итераций; здесь просто
+            # пропускаем строку и продолжаем — агрегация ошибок по строкам.
+            try:
+                await assert_tz_not_over_plan(
+                    db,
+                    feo_planned_item_id=None,
+                    feo_category_id=purchase.feo_category_id,
+                    quantity=quantity,
+                    unit_price=unit_price,
+                    total_price=total_price,
+                    item_name=item_name,
+                )
+            except HTTPException as _tz_exc:
+                errors_list.append(f"Строка {row_idx + 1}: {_tz_exc.detail}")
+                continue
+
             # VAT info → append to description
             vat_str = _cell(row, col_vat) if col_vat >= 0 else None
             if vat_str and description:
@@ -1624,12 +1670,19 @@ def _smart_import_xlsx_direct(content: bytes, fname: str = '') -> tuple[list[dic
     import re as _re
 
     # Header keywords (substring match, case-insensitive, tolerant к опечаткам через 'in')
+    # Шаг 5 (владелец, 2026-08-07): 'unit_price' проверяется РАНЬШЕ 'unit' —
+    # заголовок «Цена за единицу» содержит подстроку «единиц», которая раньше
+    # матчилась ключом 'unit' первой (dict сохраняет порядок вставки, matching
+    # идёт по порядку ключей) — колонка цены никогда не находилась, unit_price/
+    # total_price молча оставались None. Тот же баг, что и в _detect_columns_legacy
+    # (см. комментарий там) — независимая копия той же логики (проект уже
+    # предупреждал о дублировании normalize/tokenize, см. план шаг 4).
     HEADER_PATTERNS = {
         'item_name': ['наимен', 'товар', 'позици', 'описан', 'материал', 'предмет'],
         'item_type': ['тип', 'вид'],
         'quantity': ['колич', 'кол-во', 'кол.', 'кол ', 'кол.во', 'qty'],  # ловит "Количечество"
-        'unit': ['ед.из', 'ед. изм', 'едизм', 'единиц', 'unit'],
         'unit_price': ['цена за ед', 'цена ед', 'цена/ед', 'цена', 'unit price', 'стоимость ед'],
+        'unit': ['ед.из', 'ед. изм', 'едизм', 'единиц', 'unit'],
         'total_price': ['сумма', 'итого', 'стоимость', 'total'],
     }
 
@@ -1763,11 +1816,29 @@ async def _save_smart_preview_to_purchase(
     product_by_name = {(p.name or "").lower().strip(): p for p in products}
 
     added = matched_catalog = new_in_catalog = 0
-    for row_data in preview:
+    errors_list: list[str] = []
+    for row_idx, row_data in enumerate(preview, start=1):
         item_name = (row_data["item_name"] or "")[:500]
         qty = Decimal(str(row_data["quantity"])) if row_data["quantity"] else Decimal("1")
         unit_price = Decimal(str(row_data["unit_price"])) if row_data["unit_price"] else None
         total_price = Decimal(str(row_data["total_price"])) if row_data["total_price"] else None
+        # Шаг 5 «цена ТЗ не выше плановой» (владелец, 2026-08-07): позиция смарт-
+        # импорта наследует ФЭО-категорию закупки (feo_planned_item_id импорт не
+        # проставляет). Аггрегация ошибок по строкам — строка пропускается, импорт
+        # остальных продолжается.
+        try:
+            await assert_tz_not_over_plan(
+                db,
+                feo_planned_item_id=None,
+                feo_category_id=getattr(purchase, "feo_category_id", None),
+                quantity=qty,
+                unit_price=unit_price,
+                total_price=total_price if total_price is not None else (qty * unit_price if unit_price else None),
+                item_name=item_name,
+            )
+        except HTTPException as _tz_exc:
+            errors_list.append(f"Строка {row_idx}: {_tz_exc.detail}")
+            continue
         if skip_catalog:
             # «Не добавлять в каталог» (напр. авансовые платежи): позиции должны быть
             # один-в-один как в чеке, без какой-либо привязки к каталогу. Не матчим вовсе.
@@ -1811,7 +1882,7 @@ async def _save_smart_preview_to_purchase(
         ))
         added += 1
     await db.commit()
-    return {"ok": True, "added": added, "matched_catalog": matched_catalog, "new_in_catalog": new_in_catalog}
+    return {"ok": True, "added": added, "matched_catalog": matched_catalog, "new_in_catalog": new_in_catalog, "errors": errors_list}
 
 
 @router.post("/items/import-smart-nopid")

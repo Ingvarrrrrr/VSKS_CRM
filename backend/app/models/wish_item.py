@@ -24,6 +24,13 @@ class WishItem(Base):
     # purchase_items.feo_planned_item_id) — чтобы согласование заявки расходовало
     # уже запланированную строку, а не создавало новую (иначе план задваивается).
     feo_planned_item_id = Column(Integer, ForeignKey("feo_planned_items.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Флаг подтверждения привязки к плановой позиции (по образцу purchase_items
+    # .match_confirmed) — Шаг 4 плана zany-fluttering-mountain.md: «человек может
+    # подтвердить, что позиция выбрана правильно». True ТОЛЬКО когда пользователь
+    # явно нажал «Привязать» на предложенном по имени кандидате (POST
+    # /feo-planned-items/confirm-wish-plan-match) — простой ручной выбор из полного
+    # списка плановых позиций этот флаг не трогает (остаётся False по умолчанию).
+    feo_planned_item_match_confirmed = Column(Boolean, nullable=False, default=False, server_default=text("FALSE"))
     needed_date = Column(Date, nullable=True)   # дата потребности per-item
     vat_rate = Column(String(20), nullable=True)  # per-item НДС ставка (mirrors purchase_items.vat_rate)
     # false — позиция расходует план своего конечного элемента ФЭО; true — «сверх плана»,

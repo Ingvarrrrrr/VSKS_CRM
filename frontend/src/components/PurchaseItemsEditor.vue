@@ -139,6 +139,8 @@
           :feo-planned-per-item="props.feoPlannedPerItem"
           :planned-items="props.plannedItems"
           :planned-selection-for="plannedSelectionFor"
+          :plan-for-item="planForItem"
+          :plan-excess-for="planExcessFor"
           :subsidy-id="props.subsidyId"
           :subsidy-name="props.subsidyName"
           :show-vat-columns-in-expand-row="showVatColumnsInExpandRow"
@@ -264,6 +266,8 @@
           :feo-planned-per-item="props.feoPlannedPerItem"
           :planned-items="props.plannedItems"
           :planned-selection-for="plannedSelectionFor"
+          :plan-for-item="planForItem"
+          :plan-excess-for="planExcessFor"
           :show-contractor-column="showContractorColumn"
           :show-needed-date="props.showNeededDate"
           :contractors="contractors"
@@ -2170,6 +2174,44 @@ function plannedSelectionFor(item: EditorItem): FeoPlanSelection | null {
     if (row) return { kind: row.kind, id: item.feo_category_id }
   }
   return null
+}
+
+// Шаг 5 «ТЗ не дороже и не больше плана» (владелец, 2026-08-07, план
+// zany-fluttering-mountain.md): фронт-зеркало backend-гейта
+// assert_tz_not_over_plan (app/services/feo_plan.py) — подсвечивает
+// превышение ДО отправки, чтобы 409 не был первым, что видит пользователь.
+// Источник плана — та же строка, что выбрана для FeoPlannedItemsSelect
+// (plannedSelectionFor): planned_quantity / unit_price (цена за единицу) /
+// planned_amount (итоговая плановая сумма) — те же поля, что читает бэкенд
+// из FeoPlannedItem.quantity/amount либо FeoCategory.planned_quantity/
+// planned_amount (см. FeoPlanPosition в useFeoPlannedResiduals.ts).
+function planForItem(item: EditorItem): FeoPlanPosition | null {
+  const sel = plannedSelectionFor(item)
+  if (!sel) return null
+  return (props.plannedItems || []).find(p => p.key === `${sel.kind}:${sel.id}`) || null
+}
+
+interface TzPlanExcess {
+  plan: FeoPlanPosition
+  qtyOver: boolean
+  priceOver: boolean
+  totalOver: boolean
+}
+
+function planExcessFor(item: EditorItem): TzPlanExcess | null {
+  // over_plan=true — позиция сознательно сверх плана (согласуется отдельно,
+  // через превышение ФЭО категории) — не подсвечиваем как нарушение.
+  if (item.over_plan) return null
+  const plan = planForItem(item)
+  if (!plan) return null
+  const qty = Number(item.quantity) || 0
+  const price = Number(item.unit_price) || 0
+  const total = item.total_price != null ? Number(item.total_price) : qty * price
+  const qtyOver = plan.planned_quantity != null && qty > plan.planned_quantity
+  const priceOver = plan.unit_price != null && price > plan.unit_price
+  const totalOver = plan.planned_amount != null && total > plan.planned_amount
+  if (!qtyOver && !priceOver && !totalOver) return null
+  return { plan, qtyOver, priceOver, totalOver }
 }
 
 function onItemPlannedChange(idx: number, val: FeoPlanSelection | null) {

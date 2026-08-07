@@ -910,10 +910,12 @@
             :subsidy-name="selectedSubsidyName"
             :purchase-id-feo="purchaseId"
             :default-feo-category-id="form.feo_category_id"
+            :planned-items="purchasePlannedResiduals"
             @update:vat-mode="(v: string) => { form.vat_mode = v; onVatModeChange(v) }"
             @items-changed="syncContractPriceIfSingle"
             @reload-requested="loadPurchase"
             @product-created="onProductCreatedFromEditor"
+            @planned-item-created="reloadPurchasePlanned"
           />
           <!-- 12-02: FEO auto-match suggestion chips -->
           <div v-if="feoMatchSuggestions.length" class="px-4 pb-2">
@@ -4058,6 +4060,7 @@ import MonthlyStagesDialog from '@/components/MonthlyStagesDialog.vue'
 import PaymentsBlock from '@/components/PaymentsBlock.vue'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import { filterFundedNodes } from '@/composables/useFeoLeaves'
+import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
 import { decodeQrFromImageFile } from '@/utils/qrDecode'
 import { PURCHASE_STATUS_ORDER, purchaseStatusColor } from '@/constants/purchaseStatus'
 
@@ -4461,6 +4464,21 @@ const form = reactive({
   delivery_postcode: '' as string,
   // B-PIF1/F-PIF1: per-item FEO (UI-only, not persisted)
   feo_per_item: false as boolean,
+})
+
+// Шаг 5 «ТЗ не дороже и не больше плана» (владелец, 2026-08-07, план
+// zany-fluttering-mountain.md): плановые позиции субсидии — тот же источник и
+// composable, что WishesView.vue уже использует (useFeoPlannedResiduals) —
+// нужны PurchaseItemsEditor'у, чтобы planForItem/planExcessFor могли найти
+// плановую строку позиции (по feo_planned_item_id либо по feo_category_id) и
+// подсветить превышение ДО отправки (см. её planExcessFor/planForItem).
+// Раньше эта страница вообще не подгружала плановые позиции — подсказка/
+// подсветка были показывать нечем.
+const {
+  plannedResiduals: purchasePlannedResiduals,
+  reloadPlanned: reloadPurchasePlanned,
+} = useFeoPlannedResiduals({
+  subsidyId: computed(() => form.subsidy_id),
 })
 
 // Phase 29: Vehicle selector — ключевые слова для автопоказа селекта ТС

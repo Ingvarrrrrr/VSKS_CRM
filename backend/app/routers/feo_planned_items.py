@@ -1,7 +1,8 @@
 from decimal import Decimal, InvalidOperation
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func as sqlfunc, or_ as sqlor
+from pydantic import BaseModel
+from sqlalchemy import select, update as sql_update, func as sqlfunc, or_ as sqlor
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import get_current_user, require_role, ADMIN_ROLES
@@ -16,6 +17,7 @@ from app.models.contract_item import ContractItem
 from app.models.wish import Wish
 from app.models.wish_item import WishItem
 from app.schemas.schemas import FeoPlannedItemCreate, FeoPlannedItemOut, FeoComparisonOut, FeoActualItemOut, FeoStageOut
+from app.services.text_match import normalize as _norm_text, tokenize, stem, generic_progressive_match
 
 
 def _safe_mul(a, b) -> Optional[Decimal]:
@@ -176,19 +178,24 @@ async def create_planned_item(
 
     # Задача владельца «план ≠ факт» (шаг D, сессия 2026-08-06): защита от повторения
     # К2 (боевые 16 760 000 — две активные плановые позиции с одинаковым именем под
-    # одной категорией). Дедуп по (категория, нормализованное имя trim+lower) — тот
-    # же принцип, что уже применяется в wishes.py._distribute_wish_to_purchases при
-    # автосоздании FeoPlannedItem из позиции заявки. Не плодим дубль — возвращаем
-    # уже существующую активную позицию как есть (без слияния количеств/сумм).
-    _norm_name = (data.name or "").strip().lower()
+    # одной категорией). Дедуп по (категория, нормализованное имя) — точное совпадение,
+    # НИКАКОГО fuzzy (правило проекта, шаг 4 плана zany-fluttering-mountain.md: нечёткое
+    # сравнение допустимо только для предложения, которое подтверждает человек; дедуп при
+    # создании — строго точное совпадение). Нормализация — общий app.services.text_match
+    # .normalize (единственный источник, не дублируем ad-hoc trim+lower — Python-side
+    # сравнение вместо SQL lower(trim(...)), т.к. normalize() дополнительно убирает
+    # пунктуацию/двойные пробелы, что SQL-выражение не делает — расхождение исказило бы
+    # дедуп). wishes.py._auto_assign_planned_items использует свой trim+lower (тот файл
+    # не трогаем — параллельная задача другого исполнителя), но эта функция теперь общая.
+    _norm_name = _norm_text(data.name or "")
     if _norm_name:
-        existing_item = (await db.execute(
+        _candidates = (await db.execute(
             select(FeoPlannedItem).where(
                 FeoPlannedItem.feo_category_id == data.feo_category_id,
                 FeoPlannedItem.is_active == True,
-                sqlfunc.lower(sqlfunc.trim(FeoPlannedItem.name)) == _norm_name,
             )
-        )).scalar_one_or_none()
+        )).scalars().all()
+        existing_item = next((it for it in _candidates if _norm_text(it.name or "") == _norm_name), None)
         if existing_item is not None:
             return existing_item
 
@@ -314,6 +321,232 @@ async def map_purchase_item_to_planned(
     pi.feo_planned_item_id = planned_item_id
     await db.commit()
     return {"ok": True, "purchase_item_id": purchase_item_id, "planned_item_id": planned_item_id}
+
+
+# ---------------------------------------------------------------------------
+# Похожая плановая позиция с подтверждением (Шаг 4 плана
+# zany-fluttering-mountain.md): при заведении заявки, если в субсидии уже есть
+# плановые позиции, предлагать похожие по имени и давать подтвердить/отвергнуть —
+# ровно как сопоставление позиции с товаром каталога (products.py /match,
+# InlineProductMatch.vue + useItemMatching.ts). Движок — общий
+# app.services.text_match (вынесен из app.services.product_matcher, тот же
+# алгоритм нормализации+токенов+стемминга+прогрессивного сужения).
+# ---------------------------------------------------------------------------
+
+async def _load_plan_catalog(db: AsyncSession, subsidy_id: int) -> list[dict]:
+    """Каталог кандидатов для матчинга — тот же состав, что и в
+    GET /feo-categories/plan-positions (единый источник «плановых позиций»,
+    см. её докстринг): конечные категории ФЭО (лист дерева) с заполненным
+    planned_quantity×planned_amount > 0 (kind='plan_position'|'feo_article'),
+    плюс активные FeoPlannedItem этих листьев (kind='planned_item') — «может
+    быть запланирована в ФЭО, а может только планово» (формулировка владельца).
+
+    Не вызывает сам эндпоинт /plan-positions (тот считает ещё consumption/tree —
+    не нужно для матчинга по имени), а строит облегчённую версию тех же строк:
+    id/name/path/category_id/ancestor_ids/kind. path/ancestor_ids — те же
+    хелперы app.services.feo_plan.build_category_path/build_ancestor_ids
+    (read-only импорт, не дублируем).
+    """
+    from app.services.feo_plan import build_category_path, build_ancestor_ids
+
+    all_cats = (await db.execute(
+        select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id)
+    )).scalars().all()
+    if not all_cats:
+        return []
+
+    cat_by_id = {c.id: c for c in all_cats}
+    children_count: dict[int, int] = {}
+    for c in all_cats:
+        if c.parent_id is not None:
+            children_count[c.parent_id] = children_count.get(c.parent_id, 0) + 1
+    leaves = [c for c in all_cats if children_count.get(c.id, 0) == 0]
+
+    catalog: list[dict] = []
+    for c in leaves:
+        qty = float(c.planned_quantity) if c.planned_quantity is not None else 0.0
+        unit_price = float(c.planned_amount) if c.planned_amount is not None else 0.0
+        if qty * unit_price <= 0:
+            continue
+        kind = "plan_position" if (c.budget is None and c.feo_amount is None) else "feo_article"
+        catalog.append({
+            "id": c.id,
+            "name": c.name or "",
+            "path": build_category_path(c, cat_by_id),
+            "category_id": c.id,
+            "ancestor_ids": build_ancestor_ids(c, cat_by_id),
+            "kind": kind,
+        })
+
+    if leaves:
+        fpi_rows = (await db.execute(
+            select(FeoPlannedItem)
+            .where(FeoPlannedItem.feo_category_id.in_([c.id for c in leaves]))
+            .where(FeoPlannedItem.is_active == True)
+        )).scalars().all()
+        for it in fpi_rows:
+            cat = cat_by_id.get(it.feo_category_id)
+            catalog.append({
+                "id": it.id,
+                "name": it.name or "",
+                "path": build_category_path(cat, cat_by_id) if cat else "",
+                "category_id": it.feo_category_id,
+                "ancestor_ids": build_ancestor_ids(cat, cat_by_id) if cat else [],
+                "kind": "planned_item",
+            })
+
+    return catalog
+
+
+class _FeoMatchCandidate(BaseModel):
+    kind: str            # 'plan_position' | 'feo_article' | 'planned_item'
+    id: int               # id FeoCategory (plan_position/feo_article) или FeoPlannedItem (planned_item)
+    key: str               # `${kind}:${id}` — тот же составной ключ, что и в /plan-positions (фронт)
+    name: str
+    path: str
+    category_id: int
+    score: float
+    # Требование /feo-planned-items/map (совпадение категорий обязательно) — кандидаты
+    # из ЧУЖОЙ (относительно feo_category_id запроса) категории/ветки помечаются явно,
+    # а не подмешиваются молча (см. докстринг match_planned_items).
+    same_category: bool
+
+
+class _FeoMatchResultItem(BaseModel):
+    query: str
+    status: str  # 'auto' | 'suggest' | 'create' — см. text_match.generic_progressive_match
+    candidates: List[_FeoMatchCandidate]
+
+
+class _FeoMatchRequest(BaseModel):
+    queries: List[str]
+    subsidy_id: int
+    feo_category_id: Optional[int] = None
+    limit: int = 5
+
+
+class _FeoMatchResponse(BaseModel):
+    results: List[_FeoMatchResultItem]
+
+
+@router.post("/match", response_model=_FeoMatchResponse)
+async def match_planned_items(
+    body: _FeoMatchRequest,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Score a list of wish-item name queries against the subsidy's plan positions
+    (FeoCategory leaves with a plan + FeoPlannedItem) using the same token-based
+    fuzzy matching as /api/products/match.
+
+    Владелец: «когда заявки заведены, и если в субсидии уже есть плановая позиция,
+    предлагать плановые позиции, похожие по имени... человек может подтвердить, что
+    позиция выбрана правильно, а может отвергнуть и выбрать свою». Это ТОЛЬКО источник
+    предложений — привязка (feo_planned_item_id/feo_category_id заявки) остаётся,
+    как и раньше, через обычное сохранение заявки; см. POST /confirm-wish-plan-match
+    для фиксации флага «подтверждено человеком».
+
+    Кандидаты из ЧУЖОЙ (по отношению к feo_category_id запроса — включая её ветку
+    предков) категории НЕ отфильтровываются молча — они присутствуют в том же списке
+    candidates с same_category=false, фронт обязан показать их отдельной группой с
+    пометкой (правило: /feo-planned-items/map требует совпадения категорий для
+    фактической привязки purchase_item, так что «чужой» кандидат — это в лучшем
+    случае наведение на существующую плановую позицию другой категории, а не то,
+    что можно тихо подставить).
+    """
+    catalog = await _load_plan_catalog(db, body.subsidy_id)
+    if not catalog:
+        return _FeoMatchResponse(results=[
+            _FeoMatchResultItem(query=q, status='create', candidates=[]) for q in body.queries
+        ])
+
+    indexed = [
+        (entry, {stem(t) for t in tokenize(entry["name"])})
+        for entry in catalog
+    ]
+    target_cat = body.feo_category_id
+    top_k = max(1, min(body.limit, 10))
+
+    results: list[_FeoMatchResultItem] = []
+    for q in body.queries:
+        if not q or not q.strip():
+            results.append(_FeoMatchResultItem(query=q, status='create', candidates=[]))
+            continue
+        status, scored = generic_progressive_match(q, indexed)
+        candidates: list[_FeoMatchCandidate] = []
+        for entry, sc in scored[:top_k]:
+            same_cat = True
+            if target_cat is not None:
+                same_cat = entry["category_id"] == target_cat or target_cat in (entry["ancestor_ids"] or [])
+            candidates.append(_FeoMatchCandidate(
+                kind=entry["kind"],
+                id=entry["id"],
+                key=f"{entry['kind']}:{entry['id']}",
+                name=entry["name"],
+                path=entry["path"],
+                category_id=entry["category_id"],
+                score=sc,
+                same_category=same_cat,
+            ))
+        results.append(_FeoMatchResultItem(query=q, status=status, candidates=candidates))
+
+    return _FeoMatchResponse(results=results)
+
+
+class _ConfirmWishPlanMatchBody(BaseModel):
+    wish_id: int
+    kind: str            # 'plan_position' | 'feo_article' | 'planned_item'
+    target_id: int
+
+
+@router.post("/confirm-wish-plan-match")
+async def confirm_wish_plan_match(
+    body: _ConfirmWishPlanMatchBody,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Фиксирует флаг «плановую позицию подтвердил человек» (wish_items
+    .feo_planned_item_match_confirmed, по образцу purchase_items.match_confirmed)
+    после того, как заявка уже сохранена обычным путём (POST/PUT /wishes/ —
+    ТОТ роутер не трогаем, см. план zany-fluttering-mountain.md шаг 4).
+
+    feo_planned_item_id/feo_category_id сама заявка получает через обычное
+    сохранение (WishesView.vue уже шлёт их в payload — см. wishFeoPlanSelection);
+    этот эндпоинт — ТОЛЬКО про флаг подтверждения, прямой UPDATE в обход большого
+    create_wish/update_wish (мирроит паттерн /feo-planned-items/map для purchase_item).
+
+    kind='planned_item': подтверждаем ТОЛЬКО позиции заявки, у которых
+    feo_planned_item_id уже равен target_id (защита от простановки флага не на ту
+    строку, если что-то разошлось между сохранением и этим вызовом).
+    kind='plan_position'|'feo_article': категория хранится на уровне самой заявки
+    (wish.feo_category_id), а не на каждой позиции — подтверждаем все позиции заявки
+    без per-item фильтра (per-item ФЭО в это состояние вообще не должен попадать,
+    см. WishesView.vue — кнопка доступна только вне режима «разные ФЭО»).
+
+    _auto_assign_planned_items (wishes.py, другой исполнитель) уже НЕ трогает позиции
+    с непустым feo_planned_item_id независимо от этого флага — сам факт подтверждения
+    человеком физически защищён до вызова этого эндпоинта; флаг — только видимый
+    признак «откуда взялась привязка» (для UI/аудита), не гейт бизнес-логики.
+    """
+    wish = (await db.execute(select(Wish).where(Wish.id == body.wish_id))).scalar_one_or_none()
+    if not wish:
+        raise HTTPException(404, "Заявка не найдена")
+
+    if body.kind == "planned_item":
+        stmt = (
+            sql_update(WishItem)
+            .where(WishItem.wish_id == body.wish_id, WishItem.feo_planned_item_id == body.target_id)
+            .values(feo_planned_item_match_confirmed=True)
+        )
+    else:
+        stmt = (
+            sql_update(WishItem)
+            .where(WishItem.wish_id == body.wish_id)
+            .values(feo_planned_item_match_confirmed=True)
+        )
+    result = await db.execute(stmt)
+    await db.commit()
+    return {"ok": True, "wish_id": body.wish_id, "updated": result.rowcount}
 
 
 @router.get("/comparison", response_model=FeoComparisonOut)

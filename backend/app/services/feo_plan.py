@@ -872,6 +872,121 @@ async def assert_no_unapproved_excess(
             )
 
 
+def _fmt_qty(d: Decimal) -> str:
+    """Количество без хвостовых нулей (2, не 2.0000; 2.5, не 2.5000)."""
+    s = f"{d:,.4f}".rstrip("0").rstrip(".")
+    return s or "0"
+
+
+def _fmt_money(d: Decimal) -> str:
+    return f"{d:,.2f} ₽"
+
+
+async def assert_tz_not_over_plan(
+    db: AsyncSession,
+    *,
+    feo_planned_item_id: Optional[int],
+    feo_category_id: Optional[int],
+    quantity,
+    unit_price,
+    total_price,
+    item_name: str = "",
+) -> None:
+    """Бросает HTTPException 409, если ТЗ позиции (кол-во / цена за единицу / сумма)
+    превышает привязанную плановую позицию — владелец (2026-08-07, план
+    zany-fluttering-mountain.md, шаг 5): «ТЗ может быть НИЖЕ плана, но НЕ ВЫШЕ —
+    ни по количеству, ни по цене за единицу, ни по сумме».
+
+    Источник плана — РОВНО один из двух (не смешиваются между собой):
+      1. feo_planned_item_id задан → FeoPlannedItem.quantity / .amount (amount —
+         ВСЯ плановая сумма позиции, не цена за единицу; цена за единицу =
+         amount / quantity, только если quantity > 0).
+      2. Иначе, если задан feo_category_id → FeoCategory.planned_quantity /
+         .planned_amount листа (planned_amount там УЖЕ цена за единицу, см.
+         модель); плановая сумма = planned_quantity × planned_amount.
+
+    Количество проверяется ОТДЕЛЬНО и обязательно от суммы — сценарий владельца
+    «план 2 самолёта за 30 млн» не разрешает купить 3 штуки даже за те же 30 млн
+    (3 шт по более низкой цене может пройти по сумме, но не по количеству).
+
+    Никакого допуска: сравнение строго `>` в Decimal, без эпсилона («баланс
+    копейка в копейку» — владелец). Входные quantity/unit_price/total_price
+    приводятся к Decimal(str(...)) на входе (вызывающий код может передать
+    float/None).
+
+    Нет плановых данных (ни по FeoPlannedItem, ни по FeoCategory) → no-op —
+    позиции без плана этим правилом не ограничиваются.
+
+    Сообщение 409 перечисляет ВСЕ нарушенные величины разом (позиция может
+    одновременно превышать и количество, и сумму — напр. «3 шт × 4 000 000»
+    при плане «2 шт × 4 000 000»), с планом/фактом/разницей по каждой и общей
+    подсказкой «что делать».
+    """
+    from fastapi import HTTPException
+    from app.models.feo_planned_item import FeoPlannedItem
+
+    planned_qty: Optional[Decimal] = None
+    planned_unit_price: Optional[Decimal] = None
+    planned_total: Optional[Decimal] = None
+
+    if feo_planned_item_id:
+        fpi = await db.get(FeoPlannedItem, feo_planned_item_id)
+        if fpi is not None:
+            if fpi.quantity is not None:
+                planned_qty = Decimal(str(fpi.quantity))
+            if fpi.amount is not None:
+                planned_total = Decimal(str(fpi.amount))
+                if planned_qty is not None and planned_qty > 0:
+                    planned_unit_price = planned_total / planned_qty
+    elif feo_category_id:
+        cat = await db.get(FeoCategory, feo_category_id)
+        if cat is not None:
+            if cat.planned_quantity is not None:
+                planned_qty = Decimal(str(cat.planned_quantity))
+            if cat.planned_amount is not None:
+                planned_unit_price = Decimal(str(cat.planned_amount))
+            if planned_qty is not None and planned_unit_price is not None:
+                planned_total = planned_qty * planned_unit_price
+
+    if planned_qty is None and planned_unit_price is None and planned_total is None:
+        return  # плановые данные не заданы — правило не применяется
+
+    qty_d = Decimal(str(quantity)) if quantity is not None else Decimal("0")
+    price_d = Decimal(str(unit_price)) if unit_price is not None else Decimal("0")
+    total_d = Decimal(str(total_price)) if total_price is not None else (qty_d * price_d)
+
+    violations: list[str] = []
+    if planned_qty is not None and qty_d > planned_qty:
+        diff = qty_d - planned_qty
+        violations.append(
+            f"количество: план {_fmt_qty(planned_qty)}, в ТЗ {_fmt_qty(qty_d)} "
+            f"(больше на {_fmt_qty(diff)})"
+        )
+    if planned_unit_price is not None and price_d > planned_unit_price:
+        diff = price_d - planned_unit_price
+        violations.append(
+            f"цена за единицу: план {_fmt_money(planned_unit_price)}, в ТЗ {_fmt_money(price_d)} "
+            f"(больше на {_fmt_money(diff)})"
+        )
+    if planned_total is not None and total_d > planned_total:
+        diff = total_d - planned_total
+        violations.append(
+            f"сумма: план {_fmt_money(planned_total)}, в ТЗ {_fmt_money(total_d)} "
+            f"(больше на {_fmt_money(diff)})"
+        )
+
+    if not violations:
+        return
+
+    name = item_name.strip() if item_name else "позиция"
+    raise HTTPException(
+        409,
+        f"ТЗ позиции «{name}» превышает план: " + "; ".join(violations) + ". "
+        "Измените плановую позицию в Плане закупок (потребует согласования, если "
+        "выходит за ФЭО) или уменьшите ТЗ."
+    )
+
+
 async def feo_plan_subsidy_totals(
     db: AsyncSession, subsidy_ids: list[int]
 ) -> dict[int, float]:

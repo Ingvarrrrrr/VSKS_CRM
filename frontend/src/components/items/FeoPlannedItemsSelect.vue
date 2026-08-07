@@ -37,6 +37,46 @@
           <span class="feo-tree-name feo-tree-name--root">{{ categoryName }}</span>
         </div>
 
+        <!-- Шаг 4 плана zany-fluttering-mountain.md: похожие по имени плановые позиции
+             (POST /feo-planned-items/match) — новый блок поверх старого одиночного чипа
+             suggestKey/suggestReason (тот НЕ убран — PurchaseItemsEditor.vue его тоже
+             использует и не передаёт candidates, значит блок ниже там просто не рендерится,
+             v-if="candidates.length"). Каждый кандидат — % совпадения + «Привязать»;
+             кандидаты из чужой категории — отдельной подгруппой с пометкой (не молча). -->
+        <div v-if="!readonly && candidates && candidates.length" class="feo-match-suggestions mb-2">
+          <div class="text-caption text-medium-emphasis d-flex align-center ga-1 mb-1">
+            <v-icon size="14" icon="mdi-auto-fix" />
+            <span>Похожие плановые позиции — подтвердите выбор или выберите свою ниже</span>
+          </div>
+          <div
+            v-for="c in sameCategoryCandidates"
+            :key="'cand-' + c.key"
+            class="feo-match-candidate-row"
+          >
+            <v-chip size="small" :color="scoreColor(c.score)" variant="tonal" class="feo-match-score">
+              {{ Math.round(c.score * 100) }}%
+            </v-chip>
+            <span class="feo-match-name">{{ c.name }}</span>
+            <v-btn size="x-small" color="primary" variant="tonal" @click="bindCandidate(c)">Привязать</v-btn>
+          </div>
+          <div v-if="otherCategoryCandidates.length" class="mt-1">
+            <div class="text-caption text-medium-emphasis">Похожие есть и в других категориях (привязка недоступна — категории должны совпадать):</div>
+            <div
+              v-for="c in otherCategoryCandidates"
+              :key="'cand-other-' + c.key"
+              class="feo-match-candidate-row feo-match-candidate-row--other"
+            >
+              <v-chip size="small" color="grey" variant="tonal" class="feo-match-score">
+                {{ Math.round(c.score * 100) }}%
+              </v-chip>
+              <span class="feo-match-name">{{ c.name }} <span class="text-caption text-medium-emphasis">— {{ c.path }}</span></span>
+            </div>
+          </div>
+          <v-btn size="x-small" variant="text" color="primary" class="mt-1" @click="rejectSuggestions">
+            Ни одна не подходит — выбрать вручную
+          </v-btn>
+        </div>
+
         <!-- Компактный (dense) режим — свёрнутая строка с разворотом по клику -->
         <template v-if="dense">
           <v-menu v-model="denseMenuOpen" :close-on-content-click="false" location="bottom start">
@@ -249,6 +289,7 @@ import { computed, reactive, ref } from 'vue'
 import { apiFetch } from '@/api'
 import type { FeoNode } from '@/composables/useFeoLeaves'
 import type { FeoPlanPosition, FeoPlanSelection, FeoPlanKind } from '@/composables/useFeoPlannedResiduals'
+import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
 
 const props = defineProps<{
   modelValue: FeoPlanSelection | null
@@ -260,6 +301,10 @@ const props = defineProps<{
   /** Составной ключ (`${kind}:${id}`) авто-подсказанной строки — см. FeoPlanPosition.key. */
   suggestKey?: string | null
   suggestReason?: string | null
+  /** Шаг 4 плана zany-fluttering-mountain.md: кандидаты POST /feo-planned-items/match
+   *  (похожие по имени плановые позиции, со score) — опционально; без пропа блок
+   *  ниже НЕ рендерится (PurchaseItemsEditor.vue его не передаёт, back-compat). */
+  candidates?: FeoMatchCandidate[]
   loading?: boolean
   readonly?: boolean
   skipLast?: boolean
@@ -273,6 +318,11 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [val: FeoPlanSelection | null]
+  /** Пользователь нажал «Привязать» на предложенном кандидате (Шаг 4) — родитель
+   *  фиксирует, что привязку выбрал человек (флаг подтверждения, см.
+   *  POST /feo-planned-items/confirm-wish-plan-match). update:modelValue тоже
+   *  эмитится (сама привязка), это отдельное событие — только про подтверждение. */
+  'candidate-confirmed': [candidate: FeoMatchCandidate]
   /** Плановая позиция создана диалогом «Создать в плане закупок» (POST /feo-planned-items/) —
    *  родитель должен перезагрузить список плановых позиций (напр. useFeoPlannedResiduals.reloadPlanned). */
   'planned-item-created': []
@@ -353,6 +403,32 @@ const denseSummaryLabel = computed((): string => {
 function selectItem(row: FeoPlanPosition) {
   if (props.readonly) return
   emit('update:modelValue', { kind: row.kind, id: row.id })
+}
+
+// Шаг 4 плана zany-fluttering-mountain.md — кандидаты POST /feo-planned-items/match,
+// разделённые на «своей категории/ветки» (можно привязать сразу) и «из другой
+// категории» (показываем с пометкой, привязка недоступна — /feo-planned-items/map
+// требует совпадения категорий, см. backend docstring match_planned_items).
+const sameCategoryCandidates = computed(() => (props.candidates || []).filter(c => c.same_category))
+const otherCategoryCandidates = computed(() => (props.candidates || []).filter(c => !c.same_category))
+
+function scoreColor(score: number): string {
+  if (score >= 0.9) return 'success'
+  if (score >= 0.6) return 'amber'
+  return 'grey'
+}
+
+function bindCandidate(c: FeoMatchCandidate) {
+  if (props.readonly) return
+  emit('update:modelValue', { kind: c.kind, id: c.id })
+  emit('candidate-confirmed', c)
+}
+
+function rejectSuggestions() {
+  if (props.readonly) return
+  // «Выбрать другую» — открыть полный список: в dense-режиме список скрыт в меню,
+  // в развёрнутом он уже отображён ниже (filteredItems), просто фокус не требуется.
+  if (props.dense) denseMenuOpen.value = true
 }
 
 // БАГ 2 (сессия 2026-08-05, добор 2026-08-05): изначально <input type="radio"> лежал
@@ -504,5 +580,29 @@ async function saveCreateDialog() {
   max-height: 360px;
   overflow-y: auto;
   min-width: 320px;
+}
+.feo-match-suggestions {
+  border: 1px dashed #14B8A6;
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(20, 184, 166, 0.06);
+}
+.feo-match-candidate-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+.feo-match-candidate-row--other {
+  opacity: 0.75;
+}
+.feo-match-score {
+  flex-shrink: 0;
+  min-width: 44px;
+  justify-content: center;
+}
+.feo-match-name {
+  flex: 1 1 auto;
+  font-size: 13px;
 }
 </style>

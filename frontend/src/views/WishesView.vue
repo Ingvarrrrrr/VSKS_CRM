@@ -1127,11 +1127,13 @@
                       :amount="totalNmck"
                       :suggest-key="wishFeoPlanSuggestKey"
                       :suggest-reason="wishFeoPlanSuggestReason"
+                      :candidates="wishFeoPlanCandidatesForUi"
                       :loading="wishPlannedLoading"
                       :readonly="!isWishEditable && !canEditWishFeo"
                       :skip-last="wishFeoSkipLast"
                       :prefill="wishFeoPlannedPrefill"
                       @planned-item-created="onWishPlannedItemCreated"
+                      @candidate-confirmed="onWishFeoCandidateConfirmed"
                     />
                     <div v-if="!isWishEditable && canEditWishFeo && !canAssigneeAct" class="mt-2">
                       <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-content-save"
@@ -1851,6 +1853,8 @@ import { useFeoLeaves } from '@/composables/useFeoLeaves'
 import { useFeoNodeAmounts } from '@/composables/useFeoNodeAmounts'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
 import type { FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
+import { useFeoPlanMatching } from '@/composables/useFeoPlanMatching'
+import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
 import WishDistributionKanban from '@/components/WishDistributionKanban.vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import ValidationArrows from '@/components/ValidationArrows.vue'
@@ -2534,38 +2538,107 @@ const wishFeoPlanSelection = computed<FeoPlanSelection | null>({
   },
 })
 
-// Авто-подсказка: сравнение нормализованных наименований позиций заявки с именами
-// плановых позиций категории. Точное совпадение приоритетнее подстрочного (>= 4 симв.).
-// Подсказка НЕ применяется автоматически — только чипом в FeoPlannedItemsSelect.
-function normWishName(s: string | null | undefined): string {
-  return (s || '').trim().toLowerCase().replace(/\s+/g, ' ')
-}
-const wishFeoPlanSuggestion = computed((): { key: string; reason: string } | null => {
-  const candidates = wishPlannedItemsForCategory.value
-  if (!candidates.length) return null
-  const itemNames = wishForm.value.items.map(i => normWishName(i.item_name)).filter(Boolean)
-  if (!itemNames.length) return null
-  for (const row of candidates) {
-    const planName = normWishName(row.name)
-    if (!planName) continue
-    for (const itemName of itemNames) {
-      if (itemName === planName) return { key: row.key, reason: `Совпадает с «${row.name}»` }
-    }
-  }
-  for (const row of candidates) {
-    const planName = normWishName(row.name)
-    if (!planName) continue
-    for (const itemName of itemNames) {
-      if (itemName.length < 4 || planName.length < 4) continue
-      if (planName.includes(itemName) || itemName.includes(planName)) {
-        return { key: row.key, reason: `Похоже на «${row.name}»` }
+// Шаг 4 плана zany-fluttering-mountain.md: «когда заявки заведены, и если в субсидии
+// уже есть плановая позиция, предлагать плановые позиции, похожие по имени... человек
+// может подтвердить, что позиция выбрана правильно, а может отвергнуть и выбрать свою».
+// Раньше (naive) сравнение шло через .includes() без score, брало первое попавшееся —
+// заменено на POST /feo-planned-items/match (тот же token+stem движок, что и
+// сопоставление товара с каталогом, см. app/services/text_match.py).
+const { matchQueries: feoMatchQueries } = useFeoPlanMatching()
+const wishFeoPlanCandidates = ref<FeoMatchCandidate[]>([])
+// Кандидат, для которого пользователь нажал «Привязать» (FeoPlannedItemsSelect
+// candidate-confirmed) — после успешного сохранения заявки шлём флаг подтверждения
+// (POST /feo-planned-items/confirm-wish-plan-match), см. confirmWishPlanMatchIfNeeded.
+const wishFeoPlanConfirmedCandidate = ref<FeoMatchCandidate | null>(null)
+
+async function _runFeoPlanMatch() {
+  const subsidyId = wishForm.value.subsidy_id
+  if (!subsidyId || wishFeoPerItem.value) { wishFeoPlanCandidates.value = []; return }
+  const names = Array.from(new Set(
+    wishForm.value.items.map((i: any) => (i.item_name || '').trim()).filter(Boolean)
+  ))
+  if (!names.length) { wishFeoPlanCandidates.value = []; return }
+  try {
+    const results = await feoMatchQueries(names, subsidyId, wishFeoSelected.value)
+    const byKey = new Map<string, FeoMatchCandidate>()
+    for (const r of results) {
+      for (const c of r.candidates) {
+        const prev = byKey.get(c.key)
+        if (!prev || c.score > prev.score) byKey.set(c.key, c)
       }
     }
+    wishFeoPlanCandidates.value = Array.from(byKey.values()).sort((a, b) => b.score - a.score).slice(0, 5)
+  } catch {
+    wishFeoPlanCandidates.value = []
   }
-  return null
+}
+
+let _feoMatchTimer: ReturnType<typeof setTimeout> | null = null
+watch(
+  () => [
+    wishForm.value.subsidy_id,
+    wishFeoSelected.value,
+    wishFeoPerItem.value,
+    wishForm.value.items.map((i: any) => i.item_name).join('|'),
+  ] as const,
+  () => {
+    if (_feoMatchTimer) clearTimeout(_feoMatchTimer)
+    _feoMatchTimer = setTimeout(_runFeoPlanMatch, 400)
+  },
+  { immediate: true },
+)
+
+// Кандидаты для UI FeoPlannedItemsSelect: не показываем, если привязка уже выбрана
+// (нечего предлагать взамен уже выбранного) — компонент сам делит на «своя категория» /
+// «другая категория» (same_category), см. FeoPlannedItemsSelect.vue.
+const wishFeoPlanCandidatesForUi = computed((): FeoMatchCandidate[] =>
+  wishFeoPlanSelection.value ? [] : wishFeoPlanCandidates.value
+)
+
+// Старый чип «Похоже совпадает» (suggestKey/suggestReason) — сохранён для обратной
+// совместимости отображения, теперь питается лучшим score-кандидатом своей категории
+// вместо наивного includes().
+const wishFeoPlanSuggestKey = computed(() => {
+  const best = wishFeoPlanCandidatesForUi.value.find(c => c.same_category)
+  return best ? best.key : null
 })
-const wishFeoPlanSuggestKey = computed(() => wishFeoPlanSuggestion.value?.key ?? null)
-const wishFeoPlanSuggestReason = computed(() => wishFeoPlanSuggestion.value?.reason ?? null)
+const wishFeoPlanSuggestReason = computed(() => {
+  const best = wishFeoPlanCandidatesForUi.value.find(c => c.same_category)
+  return best ? `Похоже на «${best.name}» (${Math.round(best.score * 100)}%)` : null
+})
+
+function onWishFeoCandidateConfirmed(c: FeoMatchCandidate) {
+  wishFeoPlanConfirmedCandidate.value = c
+}
+
+// Ручной выбор (клик по строке полного списка) отличается от подтверждения кандидата —
+// если выбор разошёлся с подтверждённым кандидатом, флаг подтверждения больше не про
+// текущую привязку, сбрасываем.
+watch(wishFeoPlanSelection, (val) => {
+  const confirmed = wishFeoPlanConfirmedCandidate.value
+  if (!confirmed) return
+  if (!val || `${val.kind}:${val.id}` !== confirmed.key) {
+    wishFeoPlanConfirmedCandidate.value = null
+  }
+})
+
+/** После успешного сохранения заявки — фиксирует флаг «подтвердил человек» на бэкенде
+ *  (прямой UPDATE в обход create_wish/update_wish, см. backend docstring). Сама привязка
+ *  (feo_planned_item_id) уже сохранена обычным путём — это только про флаг. */
+async function confirmWishPlanMatchIfNeeded(wishId: number | null | undefined) {
+  const c = wishFeoPlanConfirmedCandidate.value
+  if (!c || !wishId) return
+  try {
+    await apiFetch('/feo-planned-items/confirm-wish-plan-match', {
+      method: 'POST',
+      body: { wish_id: wishId, kind: c.kind, target_id: c.id },
+    })
+  } catch {
+    // Не критично — сама привязка уже сохранена; флаг подтверждения — вспомогательный
+    // UI-признак, не гейт бизнес-логики (см. backend docstring confirm_wish_plan_match).
+  }
+  wishFeoPlanConfirmedCandidate.value = null
+}
 
 // ФЭО заявки не найдена в текущем дереве субсидии → категорию удалили/пересоздали.
 // Согласование не блокируется (backend обнулит и создаст закупку без ФЭО),
@@ -2787,6 +2860,10 @@ function resetForm() {
   wishFeoPerItem.value = false
   wishFeoPlannedItemId.value = null
   wishDateMode.value = 'common'
+  // Шаг 4 плана zany-fluttering-mountain.md — не тащить кандидатов/подтверждение
+  // от предыдущего открытого диалога в новый.
+  wishFeoPlanCandidates.value = []
+  wishFeoPlanConfirmedCandidate.value = null
 }
 
 function openCreateDialog() {
@@ -3297,6 +3374,10 @@ async function saveWish(andSubmit = false) {
     if (editingWishId.value) {
       const currentStatus = (wishForm.value as any).status || 'draft'
       await apiFetch(`/wishes/${editingWishId.value}`, { method: 'PUT', body: JSON.stringify(payload) })
+      // Шаг 4 плана zany-fluttering-mountain.md: если пользователь подтвердил похожую
+      // плановую позицию (кнопка «Привязать») — сама привязка уже ушла в payload.items
+      // выше, здесь только флаг подтверждения (см. confirmWishPlanMatchIfNeeded).
+      await confirmWishPlanMatchIfNeeded(editingWishId.value)
       if (andSubmit && ['draft', 'rejected'].includes(currentStatus)) {
         const hasApprovers = await ensureApprovers(editingWishId.value)
         if (!hasApprovers) {
@@ -3314,6 +3395,8 @@ async function saveWish(andSubmit = false) {
       }
     } else {
       const created = await apiFetch<any>('/wishes/', { method: 'POST', body: JSON.stringify(payload) })
+      // Шаг 4 плана zany-fluttering-mountain.md — см. комментарий у PUT-ветки выше.
+      await confirmWishPlanMatchIfNeeded(created?.id)
       if (andSubmit && created?.id) {
         // Переходим в режим редактирования ДО построения цепочки — ensureApprovers
         // и loadWishApprovers читают editingWishId.

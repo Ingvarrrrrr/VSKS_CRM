@@ -98,10 +98,15 @@
             <v-tooltip :disabled="!tzFrozen || readonly" :text="tzFrozenTooltip" location="top" max-width="280">
               <template #activator="{ props: tip }">
                 <v-text-field v-bind="tip" v-model.number="item.quantity" type="number" density="compact"
-                  variant="outlined" hide-details class="my-1" :disabled="tzDisabled"
+                  variant="outlined" hide-details class="my-1" :class="{ 'tz-over-plan': planExcessFor?.(item)?.qtyOver }"
+                  :disabled="tzDisabled"
                   @update:model-value="emit('calc-item-total', idx)" />
               </template>
             </v-tooltip>
+            <div v-if="planForItem?.(item)?.planned_quantity != null" class="text-caption plan-hint"
+              :class="planExcessFor?.(item)?.qtyOver ? 'text-error font-weight-bold' : 'text-medium-emphasis'">
+              план: {{ formatNumber(planForItem!(item)!.planned_quantity) }}{{ planForItem!(item)!.unit ? ' ' + planForItem!(item)!.unit : '' }}
+            </div>
           </td>
           <td>
             <v-combobox v-model="item.unit" :items="unitOptions" density="compact" variant="outlined"
@@ -114,15 +119,25 @@
                   v-bind="tip"
                   :model-value="formatNumber(item.unit_price)"
                   density="compact" variant="outlined" hide-details class="my-1"
+                  :class="{ 'tz-over-plan': planExcessFor?.(item)?.priceOver }"
                   :disabled="tzDisabled"
                   @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; emit('calc-item-total', idx) }"
                 />
               </template>
             </v-tooltip>
+            <div v-if="planForItem?.(item)?.unit_price != null" class="text-caption plan-hint"
+              :class="planExcessFor?.(item)?.priceOver ? 'text-error font-weight-bold' : 'text-medium-emphasis'">
+              план: {{ formatNumber(planForItem!(item)!.unit_price) }} ₽
+            </div>
           </td>
           <td>
             <v-text-field :model-value="formatNumber(item.total_price)" readonly density="compact"
-              variant="outlined" hide-details bg-color="grey-lighten-4" class="my-1" />
+              variant="outlined" hide-details bg-color="grey-lighten-4" class="my-1"
+              :class="{ 'tz-over-plan': planExcessFor?.(item)?.totalOver }" />
+            <div v-if="planForItem?.(item)?.planned_amount != null" class="text-caption plan-hint"
+              :class="planExcessFor?.(item)?.totalOver ? 'text-error font-weight-bold' : 'text-medium-emphasis'">
+              план: {{ formatNumber(planForItem!(item)!.planned_amount) }} ₽
+            </div>
           </td>
           <td>
             <v-text-field v-model="item.country_origin" density="compact"
@@ -257,7 +272,7 @@ import InlineProductMatch from '@/components/items/InlineProductMatch.vue'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
 import type { MatchCandidate } from '@/composables/useItemMatching'
-import type { FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
+import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import type { Contractor, ProductLike, ItemsDisplayRow } from '@/components/items/types'
 import type { FeoNode } from '@/composables/useFeoLeaves'
 
@@ -286,6 +301,13 @@ const props = defineProps<{
   // фактическим полям позиции (feo_planned_item_id / feo_category_id / over_plan) —
   // см. plannedSelectionFor() в PurchaseItemsEditor.vue (общая логика для всех 3 таблиц).
   plannedSelectionFor?: (item: EditorItem) => FeoPlanSelection | null
+  // Шаг 5 «ТЗ не дороже и не больше плана» (владелец, 2026-08-07): найти плановую
+  // строку позиции (для подписи «план: N шт / N ₽») и проверить превышение
+  // (для подсветки) — обе считаются один раз в родителе (см. planForItem/
+  // planExcessFor в PurchaseItemsEditor.vue), тот же источник, что и
+  // plannedSelectionFor выше.
+  planForItem?: (item: EditorItem) => FeoPlanPosition | null
+  planExcessFor?: (item: EditorItem) => { plan: FeoPlanPosition; qtyOver: boolean; priceOver: boolean; totalOver: boolean } | null
   showContractorColumn: boolean
   showNeededDate?: boolean
   contractors: Contractor[]
@@ -377,6 +399,18 @@ th { position: relative; }
 .feo-missing :deep(.v-field) {
   background: rgba(244, 67, 54, 0.06);
   border-color: rgba(244, 67, 54, 0.5);
+}
+
+/* Шаг 5 «ТЗ не дороже и не больше плана» (владелец, 2026-08-07): подсветка
+   ДО отправки — зеркалит backend-гейт assert_tz_not_over_plan, чтобы 409
+   не был первым, что видит пользователь. */
+.tz-over-plan :deep(.v-field) {
+  background: rgba(244, 67, 54, 0.08);
+  border-color: rgb(244, 67, 54);
+}
+.plan-hint {
+  line-height: 1.3;
+  margin-top: 2px;
 }
 
 /* Perf: content-visibility virtualization for large lists (> VIRT_THRESHOLD).

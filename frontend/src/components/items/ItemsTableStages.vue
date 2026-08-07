@@ -61,7 +61,9 @@
               <v-tooltip :disabled="!tzFrozen || readonly" :text="tzFrozenTooltip" location="top" max-width="280">
                 <template #activator="{ props: tip }">
                   <v-text-field v-bind="tip" v-model.number="item.quantity" type="number" density="compact"
-                    variant="outlined" hide-details class="my-1 summary-num-input" :disabled="tzDisabled"
+                    variant="outlined" hide-details class="my-1 summary-num-input"
+                    :class="{ 'tz-over-plan': planExcessFor?.(item)?.qtyOver }"
+                    :disabled="tzDisabled"
                     @update:model-value="emit('calc-item-total', idx)" />
                 </template>
               </v-tooltip>
@@ -73,13 +75,22 @@
                     v-bind="tip"
                     :model-value="formatNumber(item.unit_price)"
                     density="compact" variant="outlined" hide-details class="my-1 summary-num-input"
+                    :class="{ 'tz-over-plan': planExcessFor?.(item)?.priceOver }"
                     :disabled="tzDisabled"
                     @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; emit('calc-item-total', idx) }"
                   />
                 </template>
               </v-tooltip>
             </td>
-            <td class="font-weight-medium" style="font-size:12px;white-space:nowrap">{{ fmtRub(totalWithVat(item)) }}</td>
+            <td class="font-weight-medium" style="font-size:12px;white-space:nowrap">
+              {{ fmtRub(totalWithVat(item)) }}
+              <v-tooltip v-if="planExcessFor?.(item)" location="top" max-width="280">
+                <template #activator="{ props: tip }">
+                  <v-icon v-bind="tip" icon="mdi-alert-circle" color="error" size="14" class="ml-1" />
+                </template>
+                <span>ТЗ превышает план: {{ tzPlanExcessLabel(item) }}</span>
+              </v-tooltip>
+            </td>
             <td>
               <div class="d-flex ga-1 flex-wrap align-center">
                 <v-chip size="x-small" color="info" variant="tonal">ТЗ: {{ stageTotals(idx).tz > 0 ? stageTotals(idx).tz.toLocaleString('ru-RU') + ' ₽' : '—' }}</v-chip>
@@ -169,10 +180,16 @@
                       <v-tooltip :disabled="!tzFrozen || readonly" :text="tzFrozenTooltip" location="top" max-width="280">
                         <template #activator="{ props: tip }">
                           <v-text-field v-bind="tip" v-model.number="item.quantity" type="number" density="compact"
-                            variant="outlined" hide-details class="my-1" :disabled="tzDisabled"
+                            variant="outlined" hide-details class="my-1"
+                            :class="{ 'tz-over-plan': planExcessFor?.(item)?.qtyOver }"
+                            :disabled="tzDisabled"
                             @update:model-value="emit('calc-item-total', idx)" />
                         </template>
                       </v-tooltip>
+                      <div v-if="planForItem?.(item)?.planned_quantity != null" class="text-caption plan-hint"
+                        :class="planExcessFor?.(item)?.qtyOver ? 'text-error font-weight-bold' : 'text-medium-emphasis'">
+                        план: {{ formatNumber(planForItem!(item)!.planned_quantity) }}{{ planForItem!(item)!.unit ? ' ' + planForItem!(item)!.unit : '' }}
+                      </div>
                     </td>
                     <td>
                       <v-combobox v-model="item.unit" :items="unitOptions" density="compact" variant="outlined"
@@ -185,11 +202,16 @@
                             v-bind="tip"
                             :model-value="formatNumber(item.unit_price)"
                             density="compact" variant="outlined" hide-details class="my-1"
+                            :class="{ 'tz-over-plan': planExcessFor?.(item)?.priceOver }"
                             :disabled="tzDisabled"
                             @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; emit('calc-item-total', idx) }"
                           />
                         </template>
                       </v-tooltip>
+                      <div v-if="planForItem?.(item)?.unit_price != null" class="text-caption plan-hint"
+                        :class="planExcessFor?.(item)?.priceOver ? 'text-error font-weight-bold' : 'text-medium-emphasis'">
+                        план: {{ formatNumber(planForItem!(item)!.unit_price) }} ₽
+                      </div>
                     </td>
                     <!-- Fix 4/5: НДС % column -->
                     <td v-if="showVatColumnsInExpandRow">
@@ -483,7 +505,7 @@ import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
 import type { Contractor } from '@/components/items/types'
 import type { FeoNode } from '@/composables/useFeoLeaves'
-import type { FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
+import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 
 type EditorItem = any
 type StageTotals = { tz: number; dog: number; delivery: number }
@@ -515,6 +537,10 @@ const props = defineProps<{
   // F-PLAN2: производный выбор { kind, id } | null для FeoPlannedItemsSelect по
   // фактическим полям позиции — см. plannedSelectionFor() в PurchaseItemsEditor.vue.
   plannedSelectionFor?: (item: EditorItem) => FeoPlanSelection | null
+  // Шаг 5 «ТЗ не дороже и не больше плана» (владелец, 2026-08-07) — см. тот же
+  // проп в ItemsTableFlat.vue.
+  planForItem?: (item: EditorItem) => FeoPlanPosition | null
+  planExcessFor?: (item: EditorItem) => { plan: FeoPlanPosition; qtyOver: boolean; priceOver: boolean; totalOver: boolean } | null
   subsidyId?: number | null
   subsidyName?: string | null
   // mode flags (computed in parent)
@@ -557,6 +583,22 @@ const props = defineProps<{
 // показать ИМЕННО причину заморозки, а не общий «нет доступа».
 const tzDisabled = computed(() => props.readonly || !!props.tzFrozen)
 const tzFrozenTooltip = 'Закупка объявлена — кол-во и цена ТЗ зафиксированы. Итоговую цену по результатам закупки внесите в подстроке «Договор» ниже.'
+
+// Шаг 5 «ТЗ не дороже и не больше плана» (владелец, 2026-08-07): краткая
+// подсказка для tooltip на summary-row (свёрнутая строка — там нет места на
+// отдельные подписи под каждым полем, как в развёрнутой ТЗ-подстроке).
+function tzPlanExcessLabel(item: EditorItem): string {
+  const exc = props.planExcessFor?.(item)
+  if (!exc) return ''
+  const parts: string[] = []
+  if (exc.qtyOver) parts.push(`кол-во (план ${formatNumberSafe(exc.plan.planned_quantity)})`)
+  if (exc.priceOver) parts.push(`цена (план ${formatNumberSafe(exc.plan.unit_price)} ₽)`)
+  if (exc.totalOver) parts.push(`сумма (план ${formatNumberSafe(exc.plan.planned_amount)} ₽)`)
+  return parts.join(', ')
+}
+function formatNumberSafe(v: number | null | undefined): string {
+  return props.formatNumber(v)
+}
 
 const emit = defineEmits<{
   'toggle-select-all': [val: boolean | null]
@@ -666,5 +708,16 @@ const emit = defineEmits<{
 .feo-missing :deep(.v-field) {
   background: rgba(244, 67, 54, 0.06);
   border-color: rgba(244, 67, 54, 0.5);
+}
+/* Шаг 5 «ТЗ не дороже и не больше плана» (владелец, 2026-08-07): подсветка
+   ДО отправки — зеркалит backend-гейт assert_tz_not_over_plan, чтобы 409 не
+   был первым, что видит пользователь. */
+.tz-over-plan :deep(.v-field) {
+  background: rgba(244, 67, 54, 0.08);
+  border-color: rgb(244, 67, 54);
+}
+.plan-hint {
+  line-height: 1.3;
+  margin-top: 2px;
 }
 </style>

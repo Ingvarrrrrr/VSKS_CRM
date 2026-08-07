@@ -575,6 +575,7 @@
                     <tr
                       v-if="isNodeVisible(node) && !(plannedBase === 'requests' && isManualPosLeaf(node))"
                       class="feo-tr"
+                      :data-feo-node-id="node.id"
                       :class="[
                         `feo-tr--l${node.level}`,
                         dragOverId === node.id ? 'feo-drop-target' : '',
@@ -591,7 +592,13 @@
                       <!-- Наименование -->
                       <td class="feo-td feo-td-name" :style="{ paddingLeft: `${node.depth * 20 + 8}px` }">
                         <div class="feo-name-inner">
-                          <span class="feo-tree-chevron" @click="node.hasChildren ? toggleExpand(node.id) : (hasReqItems(node) ? toggleReqItems(node) : undefined)">
+                          <!-- Лист ФЭО: клик по папке/шеврону раскрывает ЕДИНУЮ панель «Плановые
+                               позиции» (expandedItemPanels/toggleItemPanel) — единственный источник
+                               детализации листа с 2026-08-07 (устранение тройного рендера одной и
+                               той же позиции, см. ШАГ 1 плана дедупликации дерева ФЭО). Раньше здесь
+                               был отдельный toggleReqItems (hasReqItems), дававший второй независимый
+                               список тех же позиций закупок — убран целиком. -->
+                          <span class="feo-tree-chevron" @click="node.hasChildren ? toggleExpand(node.id) : toggleItemPanel(node)">
                             <v-icon
                               v-if="node.hasChildren"
                               size="15"
@@ -600,25 +607,21 @@
                               class="mr-1 cursor-pointer"
                             />
                             <v-icon
-                              v-else-if="hasReqItems(node)"
+                              v-else
                               size="15"
-                              :icon="expandedReqItems.has(node.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
+                              :icon="expandedItemPanels.has(node.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
                               color="grey"
                               class="mr-1 cursor-pointer"
                             />
-                            <span v-else style="width:16px;display:inline-block" />
                           </span>
                           <v-icon
                             size="16"
-                            class="mr-1 flex-shrink-0"
-                            :class="hasReqItems(node) ? 'cursor-pointer' : ''"
+                            class="mr-1 flex-shrink-0 cursor-pointer"
                             :icon="node.hasChildren
                               ? (expandedIds.includes(node.id) ? 'mdi-folder-open' : 'mdi-folder')
-                              : hasReqItems(node)
-                                ? (expandedReqItems.has(node.id) ? 'mdi-folder-open' : 'mdi-folder')
-                                : 'mdi-file-document-outline'"
+                              : (expandedItemPanels.has(node.id) ? 'mdi-folder-open' : 'mdi-folder')"
                             :color="node.level === 1 ? '#3B82F6' : node.level === 2 ? '#F59E0B' : '#22C55E'"
-                            @click="hasReqItems(node) && !node.hasChildren ? toggleReqItems(node) : undefined"
+                            @click="node.hasChildren ? toggleExpand(node.id) : toggleItemPanel(node)"
                           />
                           <span class="feo-name" :class="`feo-name--l${node.level}`">{{ node.name }}</span>
                           <span v-if="node.code" class="feo-code ml-2">{{ node.code }}</span>
@@ -727,9 +730,16 @@
                             @keydown.esc="inlineQtyId = null"
                           />
                         </div>
-                        <div v-else class="feo-amount-cell" @click="startInlineQty(node)">
-                          <span v-if="feoQtyDisplayFor(node) > 0" class="feo-amount">{{ feoQtyDisplayFor(node) }}{{ node.unit ? ` ${node.unit}` : '' }}</span>
-                          <span v-else class="feo-set-hint">—</span>
+                        <template v-else>
+                          <!-- feo-amount-cell — display:inline-flex (см. стили ниже, нужен для строки
+                               «сумма/чип» в других колонках) — блочные пояснения feo-plan-note ниже
+                               ВЫНЕСЕНЫ из него сиблингами (как в колонке «Финансирование по ФЭО»,
+                               см. td выше), иначе inline-flex склеивает их с суммой в одну строку без
+                               пробела («204 услугав т.ч. из заявок 2», баг вёрстки 2026-08-07). -->
+                          <div class="feo-amount-cell" @click="startInlineQty(node)">
+                            <span v-if="feoQtyDisplayFor(node) > 0" class="feo-amount">{{ feoQtyDisplayFor(node) }}{{ node.unit ? ` ${node.unit}` : '' }}</span>
+                            <span v-else class="feo-set-hint">—</span>
+                          </div>
                           <div v-if="plannedQtyBase === 'all' && feoQtyRequestsFor(node) > 0"
                             class="feo-plan-note text-medium-emphasis"
                             :title="`Количество из позиций заявок в статусе «План закупок» и дальше: ${feoQtyRequestsFor(node)}`"
@@ -750,7 +760,7 @@
                               не хватает {{ -mergedQtyDiff(node) }} до заложенного в ФЭО ({{ Number(node.feo_quantity) || 0 }})
                             </div>
                           </template>
-                        </div>
+                        </template>
                       </td>
 
                       <!-- Плановая сумма: ручной план ФЭО и/или позиции заявок (по переключателю) -->
@@ -766,12 +776,12 @@
                         >
                           в т.ч. из заявок {{ formatCurrency(feoPlannedRequestsFor(node)) }}
                         </div>
-                        <div v-if="plannedSumBase === 'all' && matchedReqFor(node).length"
-                          class="feo-plan-note text-medium-emphasis"
-                          :title="mergedManualPriority(node) ? 'Сумма позиций заявок с тем же наименованием' : 'Сумма позиций заявок по фактическим ценам — прибавлена к ручному плану'"
-                        >
-                          в т.ч. из заявок {{ formatCurrency(matchedReqTotal(node)) }}
-                        </div>
+                        <!-- Заметка «в т.ч. из заявок {{ matchedReqTotal }}» УБРАНА 2026-08-07: с
+                             задачи «план ≠ факт» (2026-08-06) число выше в режиме 'all' читается
+                             ИСКЛЮЧИТЕЛЬНО с бэкенда (feoPlannedDisplayRaw) и больше НЕ включает
+                             matchedReqTotal — заметка стала враньём (утверждала, что сумма учтена
+                             в числе выше, хотя это не так), плюс сам matchedReqFor — сопоставление
+                             по ИМЕНИ, источник ложных совпадений (см. ШАГ 1 плана дедупликации). -->
                         <div v-if="feoDisplayedFor(node) > 0 && (node.budget != null || feoPlannedDisplayFor(node) > 0) && Math.abs(feoFinDiff(node)) > 0.005"
                           class="feo-plan-note"
                           :style="feoFinDiff(node) > 0 ? 'color:#16A34A' : 'color:#EF4444'"
@@ -973,7 +983,7 @@
                     </tr>
 
                     <!-- ── Level 5 панель: Плановые vs Фактические ── -->
-                    <tr v-if="!node.hasChildren && expandedItemPanels.has(node.id)" :key="`items-${node.id}`">
+                    <tr v-if="!node.hasChildren && expandedItemPanels.has(node.id)" :key="`items-${node.id}`" :data-feo-panel-for="node.id">
                       <td colspan="6" style="padding:0 0 0 60px; background:rgba(20,184,166,0.06)">
                         <div style="padding:10px 12px 12px">
                           <!-- Заголовок панели -->
@@ -1019,8 +1029,12 @@
                                    «заявок: N на сумму M» раскрывают привязанные позиции заявок ВНУТРИ неё
                                    (feo_planned_item_id = planned.id) — переиспользует вёрстку строки позиции
                                    заявки (аватар/ссылка на закупку/снять сопоставление), но с увеличенным
-                                   левым отступом первой ячейки, чтобы визуально вложить её под план. -->
-                              <template v-for="planned in comparisonData[node.id].planned" :key="`p-${planned.id}`">
+                                   левым отступом первой ячейки, чтобы визуально вложить её под план.
+                                   Источник строк — displayPlannedRowsFor(node): реальные FeoPlannedItem,
+                                   ИЛИ (если их нет) одна синтетическая «ручной план ФЭО» с id = -node.id —
+                                   единая иерархия ШАГ 1 (2026-08-07), псевдо-строка была отдельным блоком
+                                   ниже, теперь та же вёрстка, что и у реальной плановой позиции. -->
+                              <template v-for="planned in displayPlannedRowsFor(node)" :key="`p-${planned.id}`">
                                 <tr style="border-bottom:1px solid #E0F2FE">
                                   <td style="padding:4px 8px;color:#0c4a6e">
                                     <div class="d-flex align-center" style="gap:2px">
@@ -1031,6 +1045,9 @@
                                         @click="togglePlannedItemFolder(planned.id)"
                                       />
                                       <span>{{ planned.name }}</span>
+                                    </div>
+                                    <div v-if="planned.isManual" class="feo-plan-note text-medium-emphasis">
+                                      <v-icon icon="mdi-pencil-ruler" size="11" class="mr-1" />ручной план ФЭО — подробного деления в ФЭО не было
                                     </div>
                                   </td>
                                   <td style="padding:4px 8px;text-align:right;color:#64748b">
@@ -1059,19 +1076,26 @@
                                     <v-chip v-else size="x-small" color="blue" variant="tonal" title="Запланировано в ФЭО — часть Плана закупок">План закупок</v-chip>
                                   </td>
                                   <td style="padding:2px;text-align:center">
-                                    <v-btn icon="mdi-pencil" size="x-small" variant="text" color="blue"
-                                      title="Редактировать плановую позицию"
-                                      @click="openEditPlannedItem(planned)"
-                                    />
-                                    <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error"
-                                      title="Удалить плановую позицию"
-                                      @click="deletePlannedItem(planned)"
+                                    <template v-if="!planned.isManual">
+                                      <v-btn icon="mdi-pencil" size="x-small" variant="text" color="blue"
+                                        title="Редактировать плановую позицию"
+                                        @click="openEditPlannedItem(planned)"
+                                      />
+                                      <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error"
+                                        title="Удалить плановую позицию"
+                                        @click="deletePlannedItem(planned)"
+                                      />
+                                    </template>
+                                    <v-btn v-else icon="mdi-pencil" size="x-small" variant="text" color="blue"
+                                      title="Ручной план листа ФЭО правится в самой строке дерева (колонки «Финансирование по ФЭО» / «Плановое кол-во»)"
+                                      @click="startInlineBudget(node)"
                                     />
                                   </td>
                                 </tr>
                                 <template v-if="expandedPlannedItems.has(planned.id)">
                                   <template v-for="actual in factForPlanned(node.id, planned.id)" :key="`pa-${actual.purchase_item_id}`">
                                   <tr
+                                    :data-item-id="actual.purchase_item_id" data-item-group="planned"
                                     style="border-bottom:1px solid #E0F2FE;background:rgba(20,184,166,0.05)">
                                     <td style="padding:4px 8px"></td>
                                     <td style="padding:4px 8px"></td>
@@ -1155,6 +1179,7 @@
                               <!-- Плановые из закупок: подтверждённые, но ещё не поставленные (план закупок … заказано) -->
                               <template v-for="actual in actualPlanStageFor(node.id)" :key="`ps-${actual.purchase_item_id}`">
                               <tr
+                                :data-item-id="actual.purchase_item_id" data-item-group="plan-stage"
                                 style="border-bottom:1px solid #E0F2FE;background:rgba(59,130,246,0.05)">
                                 <td style="padding:4px 8px;color:#0c4a6e">
                                   <div class="d-flex align-center" style="gap:6px">
@@ -1227,9 +1252,22 @@
                               </template>
                               </template>
 
-                              <!-- Фактические без плана -->
-                              <template v-for="actual in actualFactFor(node.id).filter(a => !a.feo_planned_item_id)" :key="`a-${actual.purchase_item_id}`">
+                              <!-- «Не привязаны к плану — требуется действие»: фактические позиции
+                                   с плановыми позициями категории (displayPlannedRowsFor), но без
+                                   привязки к конкретной из них — единственное легаси-исключение из
+                                   правила «закупки вне плана не бывает» (см. план ШАГ 1). В норме
+                                   пусто; unplannedActualFor() возвращает [] когда плановых позиций
+                                   вообще нет (тогда это факт синтетической «ручной план ФЭО» строки
+                                   выше, а не «требует действия» — см. factForPlanned(catId, -node.id)). -->
+                              <tr v-if="unplannedActualFor(node).length" style="background:rgba(245,158,11,0.14)">
+                                <td colspan="12" style="padding:4px 8px;font-weight:600;color:#B45309;font-size:11px">
+                                  <v-icon icon="mdi-alert-circle-outline" size="14" color="warning" class="mr-1" />
+                                  Не привязаны к плану — требуется действие
+                                </td>
+                              </tr>
+                              <template v-for="actual in unplannedActualFor(node)" :key="`a-${actual.purchase_item_id}`">
                               <tr
+                                :data-item-id="actual.purchase_item_id" data-item-group="unplanned"
                                 style="border-bottom:1px solid var(--crm-border);background:rgba(245,158,11,0.06)">
                                 <td style="padding:4px 8px;font-style:italic" class="text-medium-emphasis">—</td>
                                 <td style="padding:4px 8px"></td>
@@ -1309,152 +1347,29 @@
                               </template>
                               </template>
 
-                              <!-- Ручной план ФЭО (сама категория) — отдельная плановая строка.
-                                   Гейт по matchedReqFor(node) СНЯТ (дефект 2026-08-05): раньше строка не
-                                   показывалась без одноимённых позиций заявок, из-за чего ручной план
-                                   (напр. 8 380 000 ₽) был не виден и панель писала «Нет плановых позиций». -->
-                              <tr v-if="node.planned_quantity != null || node.planned_amount != null"
-                                style="border-bottom:1px solid #E0F2FE">
-                                <td style="padding:4px 8px;color:#0c4a6e">
-                                  <div style="font-weight:500">{{ node.name }}</div>
-                                  <div class="feo-plan-note text-medium-emphasis">
-                                    <v-icon icon="mdi-pencil-ruler" size="11" class="mr-1" />{{ mergedManualPriority(node) ? 'ручной план ФЭО' : 'Внесено вручную: подробного деления в ФЭО не было' }}
-                                  </div>
-                                </td>
-                                <td style="padding:4px 8px;text-align:right;color:#64748b">
-                                  {{ node.planned_quantity != null ? `${parseFloat(String(node.planned_quantity))} ${node.unit || ''}` : '—' }}
-                                </td>
-                                <td style="padding:4px 8px;text-align:right;color:#64748b">
-                                  {{ node.planned_amount != null ? formatCurrency(Number(node.planned_amount)) : '—' }}
-                                </td>
-                                <td style="padding:4px 8px;text-align:right;color:#64748b">
-                                  {{ feoPlannedTotalFor(node) > 0 ? formatCurrency(feoPlannedTotalFor(node)) : '—' }}
-                                </td>
-                                <td style="padding:4px 8px;color:#9ca3af;font-style:italic">—</td>
-                                <td style="padding:4px 8px"></td>
-                                <td style="padding:4px 8px"></td>
-                                <td style="padding:4px 8px"></td>
-                                <td style="padding:4px 8px;text-align:right" :style="getDiffStyle(node.planned_amount, matchedReqFor(node))">
-                                  {{ formatCurrency(calcDiff(node.planned_amount, matchedReqFor(node))) }}
-                                </td>
-                                <td style="padding:4px 8px;color:#9ca3af">—</td>
-                                <td style="padding:4px 8px;text-align:center">
-                                  <v-chip size="x-small" color="blue" variant="tonal" title="Запланировано в ФЭО — часть Плана закупок">План закупок</v-chip>
-                                </td>
-                                <td style="padding:2px"></td>
-                              </tr>
+                              <!-- Ручной план ФЭО (сама категория) — до 2026-08-07 был отдельным блоком
+                                   строк здесь; теперь это ОДНА строка внутри цикла displayPlannedRowsFor
+                                   выше (id = -node.id, planned.isManual), переиспользующая ту же вёрстку,
+                                   что и реальная плановая позиция — не отдельный рендер. -->
 
-                              <!-- Одноимённые позиции из заявок: показываем фактическую стадию закупки
-                                   (дефект 2026-08-05: раньше всегда печаталось «ещё не поставлено»
-                                   независимо от реального статуса) -->
-                              <template v-for="it in (plannedBase === 'purchases' ? [] : matchedReqFor(node))" :key="`msrc-${it.id}`">
-                              <tr
-                                :class="kpiItemRowClass(it)"
-                                style="border-bottom:1px solid #E0F2FE;background:rgba(59,130,246,0.05)">
-                                <td style="padding:4px 8px;color:#0c4a6e">
-                                  <div class="d-flex align-center" style="gap:6px">
-                                    <v-btn v-if="stagesForReqItem(node.id, it.id).length >= 2"
-                                      :icon="expandedStageRows.has(`msrc-${it.id}`) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
-                                      variant="text" density="compact" size="x-small" color="teal"
-                                      title="Показать стадии уточнения позиции"
-                                      @click.stop="toggleStageRow(`msrc-${it.id}`)"
-                                    />
-                                    <v-avatar v-if="it.product_photo" size="28" rounded class="flex-shrink-0" style="cursor:pointer"
-                                      @click.stop="photoPreview = { src: it.product_photo!, title: it.item_name }">
-                                      <v-img :src="it.product_photo" cover />
-                                    </v-avatar>
-                                    <v-icon :icon="purchaseStatusIcon(it.purchase_status)" :color="purchaseStatusColor(it.purchase_status)" size="14" class="mr-1" :title="purchaseStatusLabel(it.purchase_status)" />
-                                    <div>{{ it.item_name }}</div>
-                                  </div>
-                                  <div class="d-flex align-center flex-wrap" style="gap:8px">
-                                    <a href="javascript:void(0)" class="feo-purchase-link"
-                                      :title="`Перейти в закупку #${it.purchase_id}`"
-                                      @click.stop="router.push(`/orders/${it.purchase_id}`)"
-                                    >
-                                      <v-icon icon="mdi-link-variant" size="11" class="mr-1" />
-                                      {{ it.registry_number || (it.purchase_number != null ? `№ ${it.purchase_number}` : `Закупка #${it.purchase_id}`) }}
-                                    </a>
-                                    <a v-if="it.wish_id" href="javascript:void(0)" class="feo-purchase-link"
-                                      title="Перейти к заявкам"
-                                      @click.stop="router.push('/wishes')"
-                                    >
-                                      <v-icon icon="mdi-hand-heart-outline" size="11" class="mr-1" />заявка #{{ it.wish_id }}
-                                    </a>
-                                  </div>
-                                </td>
-                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ it.quantity }}{{ it.unit ? ` ${it.unit}` : '' }}</td>
-                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ it.unit_price ? formatCurrency(it.unit_price) : '—' }}</td>
-                                <td style="padding:4px 8px;text-align:right;font-weight:500">{{ formatCurrency(it.total_price) }}</td>
-                                <td style="padding:4px 8px;color:#9ca3af;font-style:italic">{{ purchaseStatusLabel(it.purchase_status) }}</td>
-                                <td style="padding:4px 8px"></td>
-                                <td style="padding:4px 8px"></td>
-                                <td style="padding:4px 8px"></td>
-                                <td style="padding:4px 8px;text-align:right" :style="getDiffStyle(it.total_price, [it])">{{ formatCurrency(calcDiff(it.total_price, [it])) }}</td>
-                                <td style="padding:4px 8px;color:#9ca3af">—</td>
-                                <td style="padding:4px 8px;text-align:center">
-                                  <v-chip size="x-small" color="blue" variant="tonal" :prepend-icon="purchaseStatusIcon(it.purchase_status)">
-                                    {{ purchaseStatusLabel(it.purchase_status) }}
-                                  </v-chip>
-                                </td>
-                                <td style="padding:2px;text-align:center;white-space:nowrap">
-                                  <v-btn icon="mdi-cart-outline" size="x-small" variant="text" color="blue"
-                                    title="Открыть закупку"
-                                    @click.stop="router.push(`/orders/${it.purchase_id}`)" />
-                                  <a v-if="it.wish_id" href="javascript:void(0)" class="feo-purchase-link"
-                                    title="Изменить можно только в заявке"
-                                    @click.stop="router.push({ path: '/wishes', query: { open: String(it.wish_id) } })"
-                                  ><v-icon icon="mdi-hand-heart-outline" size="11" class="mr-1" />заявка #{{ it.wish_id }}</a>
-                                  <v-btn v-if="it.wish_id" icon="mdi-swap-horizontal" size="x-small" variant="text" color="teal"
-                                    title="Сменить категорию ФЭО позиции"
-                                    @click.stop="openWishItemFeoEdit(node, it)" />
-                                  <template v-if="!it.wish_id">
-                                    <v-btn icon="mdi-pencil-outline" size="x-small" variant="text" color="primary"
-                                      title="Редактировать позицию закупки"
-                                      @click="openReqItemEdit(node, it)" />
-                                    <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error"
-                                      title="Удалить позицию из закупки"
-                                      @click="confirmReqItemDelete(node, it)" />
-                                  </template>
-                                </td>
-                              </tr>
-                              <!-- Подстроки стадий уточнения (справочно, НЕ входят в comparisonPlanTotal/comparisonFactTotal) -->
-                              <template v-if="expandedStageRows.has(`msrc-${it.id}`)">
-                              <tr v-for="sr in stagesWithDiff(stagesForReqItem(node.id, it.id))" :key="`msrc-stage-${it.id}-${sr.stage.key}`"
-                                style="border-bottom:1px solid #E0F2FE;background:rgba(59,130,246,0.09)">
-                                <td style="padding:2px 8px 2px 40px;color:#94a3b8;font-size:10px">{{ sr.stage.label }}</td>
-                                <td style="padding:2px 8px"></td>
-                                <td style="padding:2px 8px"></td>
-                                <td style="padding:2px 8px"></td>
-                                <td style="padding:2px 8px" :style="sr.nameChanged ? 'color:#4F46E5' : ''">{{ sr.stage.name }}</td>
-                                <td style="padding:2px 8px;text-align:right;color:#64748b">
-                                  {{ sr.stage.quantity != null ? `${parseFloat(String(sr.stage.quantity))} ${sr.stage.unit || ''}` : '—' }}
-                                  <div v-if="sr.qtyDeltaLabel" style="font-size:10px" :style="`color:${sr.qtyDeltaColor}`">{{ sr.qtyDeltaLabel }}</div>
-                                </td>
-                                <td style="padding:2px 8px;text-align:right;color:#64748b">
-                                  {{ sr.stage.unit_price != null ? formatCurrency(sr.stage.unit_price) : '—' }}
-                                  <div v-if="sr.priceDeltaLabel" style="font-size:10px" :style="`color:${sr.priceDeltaColor}`">{{ sr.priceDeltaLabel }}</div>
-                                </td>
-                                <td style="padding:2px 8px;text-align:right;color:#64748b">{{ sr.stage.total != null ? formatCurrency(sr.stage.total) : '—' }}</td>
-                                <td style="padding:2px 8px"></td>
-                                <td style="padding:2px 8px"></td>
-                                <td style="padding:2px 8px"></td>
-                                <td style="padding:2px 8px"></td>
-                              </tr>
-                              </template>
-                              </template>
+                              <!-- «Одноимённые позиции из заявок» (сопоставление по ИМЕНИ, matchedReqFor)
+                                   УБРАНЫ ЦЕЛИКОМ 2026-08-07 (ШАГ 1 плана дедупликации дерева ФЭО): это был
+                                   ТРЕТИЙ независимый рендер тех же самых позиций закупок (см. Таблицу B —
+                                   reqOwnersAfter/reqItemRowsFor — и «actualFactFor» выше в этой же панели),
+                                   плюс сопоставление по названию давало ложные совпадения (позиция другой
+                                   категории с тем же именем показывалась здесь). Единственный источник
+                                   факта листа теперь — comparisonData[node.id].actual (см. factForPlanned/
+                                   actualPlanStageFor/unplannedActualFor). -->
 
-                              <!-- Пусто: дефект 2026-08-05 — раньше срабатывало и при заполненном ручном
-                                   плане узла (planned_quantity/planned_amount), теперь эта проверка
-                                   тоже учитывается, чтобы «Нет плановых позиций» не показывалось поверх
-                                   реального плана. -->
-                              <tr v-if="!comparisonData[node.id].planned.length && !comparisonData[node.id].actual.length && !matchedReqFor(node).length && node.planned_quantity == null && node.planned_amount == null">
+                              <!-- Пусто -->
+                              <tr v-if="!displayPlannedRowsFor(node).length && !comparisonData[node.id].actual.length">
                                 <td colspan="12" style="padding:12px 8px;text-align:center;color:#9ca3af;font-style:italic">
                                   Нет плановых позиций. Добавьте вручную или загрузите из Excel.
                                 </td>
                               </tr>
                             </tbody>
                             <!-- Итоговая строка -->
-                            <tfoot v-if="comparisonData[node.id].planned.length || comparisonData[node.id].actual.length">
+                            <tfoot v-if="displayPlannedRowsFor(node).length || comparisonData[node.id].actual.length">
                               <tr style="background:rgba(34,197,94,0.08);font-weight:600;border-top:2px solid rgba(34,197,94,0.3)">
                                 <td style="padding:4px 8px" class="text-success">ИТОГО</td>
                                 <td style="padding:4px 8px"></td>
@@ -1489,6 +1404,8 @@
                           <tr
                             class="feo-tr feo-req-row"
                             :class="kpiReqRowClass(row)"
+                            :data-item-ids="row.group ? row.group.items.map(i => i.id).join(',') : ''"
+                            data-item-group="owner-virtual"
                             :style="row.group ? 'background:rgba(20,184,166,0.04)' : 'background:rgba(20,184,166,0.10)'"
                           >
                             <td class="feo-td feo-td-name" :style="{ paddingLeft: reqRowIndent(owner, row) }">
@@ -1594,7 +1511,7 @@
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    <tr v-for="it in row.group.items" :key="`src-${it.id}`" :class="kpiItemRowClass(it)" style="border-bottom:1px solid #E0F2FE">
+                                    <tr v-for="it in row.group.items" :key="`src-${it.id}`" :class="kpiItemRowClass(it)" :data-item-id="it.id" data-item-group="owner-virtual-source" style="border-bottom:1px solid #E0F2FE">
                                       <td style="padding:4px 8px;color:#0c4a6e">
                                         <div class="d-flex align-center" style="gap:6px">
                                           <v-avatar v-if="it.product_photo" size="28" rounded class="flex-shrink-0" style="cursor:pointer"
@@ -1713,7 +1630,7 @@
                             </td>
                           </tr>
                           <template v-if="expandedPurchases.has(f.purchase_id)">
-                            <tr v-for="it in f.items" :key="`pfi-${owner.id}-${it.id}`" class="feo-tr feo-req-row" :class="kpiItemRowClass(it)" style="background:rgba(20,184,166,0.04)">
+                            <tr v-for="it in f.items" :key="`pfi-${owner.id}-${it.id}`" class="feo-tr feo-req-row" :class="kpiItemRowClass(it)" :data-item-id="it.id" data-item-group="owner-purchase-folder" style="background:rgba(20,184,166,0.04)">
                               <td class="feo-td feo-td-name" :style="{ paddingLeft: ((owner.depth + 2) * 20 + 8) + 'px' }">
                                 <div class="feo-name-inner">
                                   <span style="width:16px;display:inline-block" />
@@ -4156,6 +4073,29 @@ import { type KpiKey, KPI_MODE, KPI_LABELS, KPI_EMPTY_REASONS, kpiItemMatches } 
 
 const { globalSubsidyId } = useGlobalSubsidy()
 
+// ── Persist настроек отображения дерева ФЭО (localStorage) — по образцу CARD_ORDER_KEY
+// (см. ниже ~subsidyOrder). Без этого переключатель «план»/группировка/раскрытые узлы
+// сбрасывались при каждой загрузке страницы — «на разных компьютерах по-разному»
+// (задача владельца ШАГ 1, 2026-08-07). Загружается ОДИН раз при инициализации модуля;
+// используется как фолбэк для начальных значений refs, объявленных ниже по файлу.
+const FEO_DISPLAY_PREFS_KEY = 'subsidies_feo_display_prefs'
+interface FeoDisplayPrefs {
+  plannedBase?: 'all' | 'manual' | 'requests' | 'purchases'
+  feoItemsGroupBy?: 'none' | 'category' | 'category_type'
+  expandedIds?: number[]
+  expandedReqItems?: number[]
+  expandedItemPanels?: number[]
+}
+function loadFeoDisplayPrefs(): FeoDisplayPrefs {
+  try {
+    const raw = localStorage.getItem(FEO_DISPLAY_PREFS_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+const feoDisplayPrefs = loadFeoDisplayPrefs()
+
 // Название карточки в одну строку: базовый крупный шрифт, ужимается пока не влезет
 function fitTextToWidth(el: HTMLElement) {
   const base = 30
@@ -4356,7 +4296,7 @@ const excessDecideLoading = ref<number | null>(null)
 const excessRejectDialog = ref<{ show: boolean; node: FeoNode | null; comment: string }>({
   show: false, node: null, comment: '',
 })
-const expandedIds     = ref<number[]>([])
+const expandedIds     = ref<number[]>(feoDisplayPrefs.expandedIds || [])
 const selectedId      = ref<number | null>(null)
 const selectedYear    = ref<number>(new Date().getFullYear())
 
@@ -4988,7 +4928,7 @@ interface FeoActualItem {
   // Разворот по стадиям уточнения наименования/кол-ва (панель «план vs факт», см. FeoStage)
   stages?: FeoStage[]
 }
-const expandedItemPanels = ref<Set<number>>(new Set())
+const expandedItemPanels = ref<Set<number>>(new Set(feoDisplayPrefs.expandedItemPanels || []))
 const comparisonData = ref<Record<number, { planned: FeoPlannedItem[]; actual: FeoActualItem[] }>>({})
 const loadingComparison = ref<Set<number>>(new Set())
 
@@ -5101,8 +5041,8 @@ interface FeoReqRow {
 }
 const plannedItemsByCat = ref<Record<number, FeoReqItem[]>>({})
 const plannedItemsLoaded = ref(false)
-const expandedReqItems = ref<Set<number>>(new Set())
-const feoItemsGroupBy = ref<'none' | 'category' | 'category_type'>('none')
+const expandedReqItems = ref<Set<number>>(new Set(feoDisplayPrefs.expandedReqItems || []))
+const feoItemsGroupBy = ref<'none' | 'category' | 'category_type'>(feoDisplayPrefs.feoItemsGroupBy || 'none')
 
 interface FeoPurchaseFolder {
   purchase_id: number
@@ -5138,17 +5078,11 @@ function toggleStageRow(key: string) {
   else expandedStageRows.value.add(key)
 }
 
-function hasReqItems(node: FeoNode): boolean {
-  if (plannedBase.value === 'manual') return false
-  if (plannedBase.value === 'purchases') return !node.hasChildren && purchaseFoldersFor(node).length > 0
-  return !node.hasChildren && virtualGroupsFor(node).length > 0
-}
-
-function toggleReqItems(node: FeoNode) {
-  const id = node.id
-  if (expandedReqItems.value.has(id)) expandedReqItems.value.delete(id)
-  else expandedReqItems.value.add(id)
-}
+// hasReqItems/toggleReqItems (переключатель Таблицы B на САМОМ листе) убраны 2026-08-07 —
+// после ШАГ 1 плана дедупликации у листа единственный источник детализации это
+// expandedItemPanels/toggleItemPanel (Таблица A), см. шеврон/папку в имени узла выше.
+// expandedReqItems осталась — она всё ещё используется reqExpandedFor() для владельцев
+// (hasChildren-категорий), там Таблица B легитимна (см. reqOwnersAfter).
 
 // ── Слияние: позиции из заявок ↔ ручные дочерние позиции ФЭО ──
 function isManualPosLeaf(node: FeoNode): boolean {
@@ -5315,12 +5249,20 @@ function ownerReqRowCount(n: FeoNode): number {
   return plannedBase.value === 'purchases' ? purchaseFoldersFor(n).length : virtualGroupsFor(n).length
 }
 
+// ШАГ 1 плана дедупликации дерева ФЭО (2026-08-07): ЛИСТЬЯ (!n.hasChildren) исключены —
+// их plannedItemsByCat-позиции (эта же «Таблица B») сгруппированы РОВНО тем же ключом
+// coalesce(feo_category_id, purchase.feo_category_id), что и comparisonData[leaf.id].actual
+// (см. Таблицу A выше, expandedItemPanels) — то есть это ФИЗИЧЕСКИ ТЕ ЖЕ позиции закупок,
+// просто пришедшие с другого эндпоинта. Для листа Таблица A уже показывает их все —
+// повторный показ здесь был вторым независимым рендером (баг «Great Wall POER» ×2-3).
+// Для владельцев (hasChildren) содержимое другое — позиции, заведённые прямо на
+// родительскую категорию, а не на конкретный лист — оставлено без изменений.
 const reqOwnersAfter = computed<Record<number, FeoNode[]>>(() => {
   const map: Record<number, FeoNode[]> = {}
   const all = visibleFeoNodes.value
   for (let i = all.length - 1; i >= 0; i--) {
     const n = all[i]
-    if (!ownerReqRowCount(n) || !reqExpandedFor(n) || !isNodeVisible(n)) continue
+    if (!n.hasChildren || !ownerReqRowCount(n) || !reqExpandedFor(n) || !isNodeVisible(n)) continue
     let j = i
     while (j + 1 < all.length && all[j + 1].depth > n.depth) j++
     ;(map[all[j].id] ||= []).push(n)
@@ -6128,6 +6070,7 @@ interface KpiSnapshot {
   expandedIds: number[]
   expandedReqItems: number[]
   expandedPurchases: number[]
+  expandedItemPanels: number[]
   plannedBase: PlannedBase
   feoSearch: string
 }
@@ -6225,16 +6168,20 @@ const kpiNodeIds = computed<Set<number>>(() => {
 })
 
 // Что нужно раскрыть, чтобы показать состав активной метрики
-const kpiExpandTargets = computed<{ ids: Set<number>; reqItems: Set<number>; purchases: Set<number> }>(() => {
+const kpiExpandTargets = computed<{ ids: Set<number>; reqItems: Set<number>; itemPanels: Set<number>; purchases: Set<number> }>(() => {
   const ids = new Set<number>()
   const reqItems = new Set<number>()
+  const itemPanels = new Set<number>()
   const purchases = new Set<number>()
-  if (!activeKpi.value) return { ids, reqItems, purchases }
+  if (!activeKpi.value) return { ids, reqItems, itemPanels, purchases }
 
   for (const catId of kpiOwnerCatIds.value) {
     for (const a of feoAncestorIds(catId)) ids.add(a)
     if (feoHasChildren(catId)) ids.add(catId)
-    else reqItems.add(catId)
+    // ШАГ 1 (2026-08-07): у листа (!feoHasChildren) содержимое kpiOwnerCatIds теперь
+    // показывается ИСКЛЮЧИТЕЛЬНО через Таблицу A (expandedItemPanels) — Таблица B
+    // (expandedReqItems/reqOwnersAfter) для листьев больше не рендерится, см. reqOwnersAfter.
+    else itemPanels.add(catId)
   }
   for (const leafId of kpiMatchedLeafIds.value) {
     for (const a of feoAncestorIds(leafId)) ids.add(a)
@@ -6245,7 +6192,7 @@ const kpiExpandTargets = computed<{ ids: Set<number>; reqItems: Set<number>; pur
   if (plannedBase.value === 'purchases') {
     for (const pid of kpiPurchaseIds.value) purchases.add(pid)
   }
-  return { ids, reqItems, purchases }
+  return { ids, reqItems, itemPanels, purchases }
 })
 
 // Одно присваивание на каждый ref — именно это даёт автосворачивание лишних папок
@@ -6253,7 +6200,13 @@ function applyKpiExpansion() {
   const t = kpiExpandTargets.value
   expandedIds.value = [...t.ids]
   expandedReqItems.value = new Set(t.reqItems)
+  expandedItemPanels.value = new Set(t.itemPanels)
   expandedPurchases.value = new Set(t.purchases)
+  // Панели раскрыты напрямую присваиванием (не через toggleItemPanel) — данные для новых
+  // id надо подгрузить отдельно, иначе KPI-подсветка откроет пустую панель.
+  for (const id of t.itemPanels) {
+    if (!comparisonData.value[id] && !loadingComparison.value.has(id)) refreshComparison(id)
+  }
 }
 
 async function scrollToFirstKpiHighlight() {
@@ -6270,6 +6223,7 @@ function onKpiCardClick(key: KpiKey) {
       expandedIds: [...expandedIds.value],
       expandedReqItems: [...expandedReqItems.value],
       expandedPurchases: [...expandedPurchases.value],
+      expandedItemPanels: [...expandedItemPanels.value],
       plannedBase: plannedBase.value,
       feoSearch: feoSearch.value,
     }
@@ -6290,6 +6244,7 @@ function resetKpi() {
     expandedIds.value = [...snap.expandedIds]
     expandedReqItems.value = new Set(snap.expandedReqItems)
     expandedPurchases.value = new Set(snap.expandedPurchases)
+    expandedItemPanels.value = new Set(snap.expandedItemPanels)
     plannedBase.value = snap.plannedBase
     feoSearch.value = snap.feoSearch
   }
@@ -6449,13 +6404,32 @@ const residualBase = ref<'plan' | 'feo'>('plan')
 
 // Режим колонок «Плановая сумма»/«Плановое кол-во» — единый синхронный переключатель
 type PlannedBase = 'all' | 'manual' | 'requests' | 'purchases'
-const plannedBase = ref<PlannedBase>('all')
+const plannedBase = ref<PlannedBase>(feoDisplayPrefs.plannedBase || 'all')
 const plannedSumBase = plannedBase
 const plannedQtyBase = plannedBase
 
 watch(plannedBase, () => {
   if (activeKpi.value && plannedItemsLoaded.value) applyKpiExpansion()
 })
+
+// Сохранение настроек отображения дерева ФЭО (см. FEO_DISPLAY_PREFS_KEY/feoDisplayPrefs
+// в начале файла) — единая точка на все пять настроек, deep:true нужен, т.к. expandedIds/
+// expandedReqItems/expandedItemPanels мутируются на месте (push/add/delete), а не
+// переприсваиваются.
+function saveFeoDisplayPrefs() {
+  try {
+    localStorage.setItem(FEO_DISPLAY_PREFS_KEY, JSON.stringify({
+      plannedBase: plannedBase.value,
+      feoItemsGroupBy: feoItemsGroupBy.value,
+      expandedIds: expandedIds.value,
+      expandedReqItems: [...expandedReqItems.value],
+      expandedItemPanels: [...expandedItemPanels.value],
+    } satisfies FeoDisplayPrefs))
+  } catch {
+    // localStorage недоступен (приватный режим и т.п.) — не критично, просто не персистим
+  }
+}
+watch([plannedBase, feoItemsGroupBy, expandedIds, expandedReqItems, expandedItemPanels], saveFeoDisplayPrefs, { deep: true })
 
 function feoResidualBaseFor(node: FeoNode): number {
   return residualBase.value === 'feo' ? feoEffectiveFor(node) : feoPlannedDisplayFor(node)
@@ -6718,7 +6692,15 @@ function actualPlanStageFor(catId: number) {
   return (comparisonData.value[catId]?.actual || []).filter(a => !isFactActual(a))
 }
 
+// plannedId < 0 — синтетическая «ручная плановая позиция» (см. displayPlannedRowsFor):
+// когда у категории нет ни одной реальной FeoPlannedItem, а план задан прямо на листе
+// (node.planned_quantity/planned_amount), лист получает ОДНУ псевдо-строку с id = -node.id,
+// и её «факт» — это ВСЕ фактические позиции категории без привязки к плановой (им и
+// привязываться не к чему — детального деления в ФЭО не было). ШАГ 1 плана дедупликации
+// дерева ФЭО (2026-08-07): раньше эти же позиции рисовались ВТОРОЙ раз через matchedReqFor
+// (сопоставление по ИМЕНИ) — убрано целиком, единственный источник теперь этот.
 function factForPlanned(catId: number, plannedId: number) {
+  if (plannedId < 0) return actualFactFor(catId).filter(a => !a.feo_planned_item_id)
   return actualFactFor(catId).filter(a => a.feo_planned_item_id === plannedId)
 }
 
@@ -6727,6 +6709,74 @@ function factForPlannedTotal(catId: number, plannedId: number): number {
   // фолбэк только пока факта ещё нет (см. calcDiff::amountOf — тот же приоритет).
   return factForPlanned(catId, plannedId).reduce((s, a) => s + Number(a.fact_amount ?? a.total_price ?? 0), 0)
 }
+
+// Строки «Плановые позиции» листа для панели «план vs факт»: реальные FeoPlannedItem
+// категории, ИЛИ — если их нет, а план задан прямо на листе — одна псевдо-строка
+// «ручной план ФЭО» (id = -node.id, отрицательный, никогда не совпадает с реальным id).
+// Переиспользует вёрстку обычной плановой строки (см. таблицу ниже) вместо отдельного блока.
+function displayPlannedRowsFor(node: FeoNode): (FeoPlannedItem & { isManual?: boolean })[] {
+  const real = comparisonData.value[node.id]?.planned || []
+  if (real.length) return real
+  if (node.planned_quantity == null && node.planned_amount == null) return []
+  return [{
+    id: -node.id,
+    feo_category_id: node.id,
+    name: node.name,
+    quantity: node.planned_quantity != null ? Number(node.planned_quantity) : null,
+    unit: node.unit || null,
+    amount: node.planned_amount != null ? Number(node.planned_amount) : null,
+    notes: null,
+    is_active: true,
+    isManual: true,
+  }]
+}
+
+// «Не привязаны к плану — требуется действие»: фактические позиции категории без
+// feo_planned_item_id. НЕ показываются только в одном случае — когда те же самые позиции
+// уже отрисованы как факт синтетической строки «ручной план ФЭО» (displayPlannedRowsFor
+// возвращает псевдо-строку id=-node.id именно тогда, когда реальных плановых позиций нет,
+// а план на листе задан вручную — см. factForPlanned(catId, -node.id) выше). Если у листа
+// НЕТ ни реальных плановых позиций, ни ручного плана — абсорбировать эти факты некуда,
+// они обязаны показаться здесь как «требует действия» (иначе позиции пропадают из дерева
+// молча — так и было до фикса: 15+ позиций категории без плана исчезали совсем).
+function unplannedActualFor(node: FeoNode) {
+  const catId = node.id
+  const hasManualPseudoRow = !(comparisonData.value[catId]?.planned || []).length
+    && (node.planned_quantity != null || node.planned_amount != null)
+  if (hasManualPseudoRow) return []
+  return actualFactFor(catId).filter(a => !a.feo_planned_item_id)
+}
+
+// Dev-ассерт (ШАГ 1 плана дедупликации, 2026-08-07): панель «план vs факт» листа обязана
+// показывать каждую PurchaseItem РОВНО один раз — либо под своей плановой позицией
+// (factForPlanned), либо под синтетической (displayPlannedRowsFor), либо в
+// «Плановые из закупок» (actualPlanStageFor), либо в «Не привязаны» (unplannedActualFor).
+// Группы по построению не пересекаются (isFactActual делит .actual на факт/план-стадию,
+// feo_planned_item_id делит факт на привязанное/непривязанное) — если дубль всё же
+// появился, это регресс, и он обязан быть виден в консоли сразу, а не найден на проде.
+function devCheckNoDuplicateItems(catId: number) {
+  if (!import.meta.env.DEV) return
+  const node = flattenAll(feoTree.value).find(n => n.id === catId)
+  if (!node || node.hasChildren) return
+  const ids: number[] = []
+  for (const planned of displayPlannedRowsFor(node)) {
+    for (const a of factForPlanned(catId, planned.id)) ids.push(a.purchase_item_id)
+  }
+  for (const a of actualPlanStageFor(catId)) ids.push(a.purchase_item_id)
+  for (const a of unplannedActualFor(node)) ids.push(a.purchase_item_id)
+  const seen = new Set<number>()
+  const dups = new Set<number>()
+  for (const id of ids) {
+    if (seen.has(id)) dups.add(id)
+    seen.add(id)
+  }
+  if (dups.size) {
+    console.warn(`[ФЭО дерево] Дубли PurchaseItem.id в панели «${node.name}» (категория ${catId}):`, [...dups])
+  }
+}
+watch(comparisonData, (data) => {
+  for (const catId of Object.keys(data).map(Number)) devCheckNoDuplicateItems(catId)
+}, { deep: true })
 
 function comparisonPlanTotal(catId: number): number {
   const planned = (comparisonData.value[catId]?.planned || []).reduce((s, p) => s + Number(p.amount || 0), 0)
@@ -6874,12 +6924,12 @@ function feoQtyDisplayFor(node: FeoNode): number {
     // одноимённые из заявок привязаны к родителю — у слитого листа добавляем их явно
     return feoQtyRequestsFor(node) + feoQtyConsumedFor(node) + feoQtyOverFor(node) + (!node.hasChildren ? matchedReqQty(node) : 0)
   }
-  if (!node.hasChildren && matchedReqFor(node).length) {
-    // слитая позиция: всегда нарастающий итог — ручной план + одноимённые из заявок + сверх плана;
-    // сравнение с заложенным в ФЭО показателем — в заметке под числом
-    return feoQtyFor(node) + matchedReqQty(node) + feoQtyRequestsFor(node) + feoQtyOverFor(node)
-  }
-  // 'all' (по умолчанию): готовое число с бэкенда — см. feoQtyDisplayRaw.
+  // 'all' (по умолчанию): готовое число с бэкенда — см. feoQtyDisplayRaw. До 2026-08-07 здесь
+  // была ветка «слитая позиция: ручной план + matchedReqQty(node)» — складывала ручное
+  // количество узла с количеством позиций заявок, сматченных с ним ПО ИМЕНИ (см. matchedReqFor),
+  // то есть задваивала счётчик тем же способом, каким уже была исправлена «Плановая сумма»
+  // (см. feoPlannedDisplayFor выше, задача «план ≠ факт», сессия 2026-08-06). В 'all' фронт
+  // обязан ТОЛЬКО читать готовое число с бэкенда.
   return feoQtyDisplayRaw(node)
 }
 
@@ -7379,7 +7429,12 @@ async function loadFeo(subsidyId: number) {
   unassignedFeo.value = { amount: 0, purchase_count: 0, purchase_ids: [] }
   plannedItemsByCat.value = {}
   plannedItemsLoaded.value = false
-  expandedReqItems.value = new Set()
+  // expandedReqItems больше НЕ сбрасывается здесь безусловно (было `= new Set()`) — это
+  // ломало persist раскрытых узлов при перезагрузке страницы (см. FEO_DISPLAY_PREFS_KEY):
+  // loadFeo вызывается сразу при выборе субсидии, и сброс стирал восстановленное из
+  // localStorage состояние раньше, чем пользователь успевал его увидеть. Устаревшие id
+  // от другой субсидии безвредны — hasReqItems/virtualGroupsFor для несуществующего в
+  // текущей субсидии узла просто вернут пусто.
   try {
     const [cats, totals, plannedTotals, plannedItems, planTree] = await Promise.all([
       apiFetch<FeoCategory[]>(`/feo-categories/?subsidy_id=${subsidyId}`),
@@ -7425,6 +7480,12 @@ async function loadFeo(subsidyId: number) {
     plannedPurchaseTotalsOver.value = sumsOver
     plannedPurchaseQtyOver.value = qtysOver
     plannedPurchaseForecast.value = forecasts
+    // Восстановленные из localStorage раскрытые панели «план vs факт» (expandedItemPanels)
+    // не тянут свои данные сами — toggleItemPanel грузит их только по клику. Подгружаем
+    // явно, иначе после перезагрузки страницы раскрытая панель будет пустой до повторного клика.
+    for (const id of expandedItemPanels.value) {
+      if (feoCategories.value.some(c => c.id === id)) refreshComparison(id)
+    }
   } catch {
     showSnack('Ошибка загрузки категорий ФЭО', 'error')
   } finally {

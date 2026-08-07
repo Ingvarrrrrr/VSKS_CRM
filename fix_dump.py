@@ -5,14 +5,18 @@ Reads the dump, gets production column info via SSH,
 rewrites INSERTs to only include columns that exist in production.
 """
 import sys
+import os
 import re
 import paramiko
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
-HOST = "85.239.53.155"
+HOST = os.environ.get("REMOTE_HOST", "201.34.139.168")
 USER = "root"
-PASSWORD = "gGUW6H@i#s5NrZ"
+PASSWORD = os.environ.get("REMOTE_PASS")
+if not PASSWORD:
+    print("Задай REMOTE_PASS в окружении", file=sys.stderr)
+    sys.exit(1)
 
 def ssh_run(cmd, timeout=30):
     client = paramiko.SSHClient()

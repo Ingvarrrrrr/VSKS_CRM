@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import asyncio
+import os
+import secrets
 import sys
 sys.path.insert(0, '.')
 
@@ -40,9 +42,21 @@ async def init_db():
         # ── Пользователь admin
         admin = (await session.execute(select(User).where(User.username == "admin"))).scalar_one_or_none()
         if not admin:
-            session.add(User(username="admin", password_hash=hash_password("admin123"), role="admin", full_name="Администратор", is_email_confirmed=True))
+            # Больше нет захардкоженного пароля admin123. Задай SEED_ADMIN_PASSWORD
+            # в окружении (например, для e2e-тестов, которые ожидают admin/admin123 —
+            # см. e2e/helpers.ts — экспортируй SEED_ADMIN_PASSWORD=admin123 перед
+            # запуском init_db.py). Без переменной пароль генерируется случайно и
+            # печатается один раз в консоль — сохрани его, он больше нигде не хранится.
+            admin_password = os.environ.get("SEED_ADMIN_PASSWORD")
+            generated = admin_password is None
+            if generated:
+                admin_password = secrets.token_urlsafe(12)
+            session.add(User(username="admin", password_hash=hash_password(admin_password), role="admin", full_name="Администратор", is_email_confirmed=True))
             await session.commit()
             print("Создан пользователь admin.")
+            if generated:
+                print(f"Сгенерирован пароль admin: {admin_password}")
+                print("Сохрани его — он больше нигде не выводится и не хранится в открытом виде.")
         else:
             print("Пользователь admin уже существует")
         

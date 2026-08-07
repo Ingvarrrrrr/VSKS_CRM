@@ -149,6 +149,7 @@ backend/templates/*_fixed.docx
 backend/templates/*_marked.docx
 backend/templates/aproval_sheet_RESULT2.docx
 backend/templates/make_reference.py
-backend/test_topic.pydocker-compose.override.yml
+backend/test_topic.py
+docker-compose.override.yml
 .tmp_diag/
 .tmp_docx_media/

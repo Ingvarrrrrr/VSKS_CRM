@@ -1,8 +1,13 @@
+import sys
+
+from pydantic import ValidationError
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://clawd@localhost/vsks_crm"
-    SECRET_KEY: str = "vsks-jwt-secret-key-change-in-production"
+    # No hardcoded default: a leaked/guessable SECRET_KEY lets anyone forge JWTs.
+    # Must be provided via env (.env locally, ${SECRET_KEY:?} in docker-compose.yml).
+    SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 43200  # 30 days
     SUBSIDY_LIMIT: float = 26128070.0
@@ -14,4 +19,13 @@ class Settings(BaseSettings):
     SMTP_FROM: str = "noreply@vsks.ru"
     BASE_URL: str = "https://gaaala.duckdns.org"
 
-settings = Settings()
+try:
+    settings = Settings()
+except ValidationError as exc:
+    if "SECRET_KEY" in str(exc):
+        sys.exit(
+            "SECRET_KEY не задан. Укажи переменную окружения SECRET_KEY "
+            "(см. .env.example) перед запуском backend — "
+            "например: SECRET_KEY=$(python -c \"import secrets; print(secrets.token_urlsafe(48))\")"
+        )
+    raise

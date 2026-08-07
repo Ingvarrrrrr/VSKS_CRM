@@ -5,10 +5,13 @@ sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 import paramiko
 
-HOST = "85.239.53.155"
+HOST = os.environ.get("REMOTE_HOST", "201.34.139.168")
 PORT = 22
 USER = "root"
-PASS = os.environ.get("REMOTE_PASS", "gGUW6H@i#s5NrZ")
+PASS = os.environ.get("REMOTE_PASS")
+if not PASS:
+    print("Задай REMOTE_PASS в окружении", file=sys.stderr)
+    sys.exit(1)
 REMOTE_BASE = "/opt/vsks-crm"
 LOCAL_BASE = r"C:\Users\1\VSKS_CRM"
 

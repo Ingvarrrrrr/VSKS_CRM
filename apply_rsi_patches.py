@@ -4,9 +4,12 @@ import paramiko, os, sys
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 SCRIPT = "/opt/analiz-rsi/realtime_rsi_8_of_10_gui_like_backtest.py"
-HOST = "85.239.53.155"
+HOST = os.environ.get("REMOTE_HOST", "201.34.139.168")
 USER = "root"
-PASSWORD = os.environ.get("REMOTE_PASS", "gGUW6H@i#s5NrZ")
+PASSWORD = os.environ.get("REMOTE_PASS")
+if not PASSWORD:
+    print("Задай REMOTE_PASS в окружении", file=sys.stderr)
+    sys.exit(1)
 
 def ssh(cmd, timeout=15):
     c = paramiko.SSHClient()

@@ -4,12 +4,29 @@ import psycopg2
 import sys
 import os
 from decimal import Decimal
+from urllib.parse import urlparse
 
-# Настройки подключения к базе данных
-DB_HOST = "localhost"
-DB_NAME = "vsks_crm"
-DB_USER = "vsks_user"
-DB_PASSWORD = "vsks_password"
+# Настройки подключения к базе данных — читаются из окружения, как и
+# в backend/app/config.py (settings.DATABASE_URL). Пароля по умолчанию
+# больше нет: задай DATABASE_URL целиком либо DB_HOST/DB_NAME/DB_USER/DB_PASSWORD.
+_database_url = os.environ.get("DATABASE_URL")
+if _database_url:
+    _parsed = urlparse(_database_url.replace("+asyncpg", "").replace("+psycopg2", ""))
+    DB_HOST = _parsed.hostname or "localhost"
+    DB_PORT = _parsed.port or 5432
+    DB_NAME = (_parsed.path or "/").lstrip("/") or "vsks_crm"
+    DB_USER = _parsed.username
+    DB_PASSWORD = _parsed.password
+else:
+    DB_HOST = os.environ.get("DB_HOST", "localhost")
+    DB_PORT = int(os.environ.get("DB_PORT", "5432"))
+    DB_NAME = os.environ.get("DB_NAME", "vsks_crm")
+    DB_USER = os.environ.get("DB_USER", "vsks_user")
+    DB_PASSWORD = os.environ.get("DB_PASSWORD")
+
+if not DB_PASSWORD:
+    print("Задай DATABASE_URL (или DB_PASSWORD) в окружении для подключения к БД", file=sys.stderr)
+    sys.exit(1)
 
 # Путь к CSV файлу
 CSV_PATH = "/tmp/products_technical_specifications.csv"
@@ -46,6 +63,7 @@ def update_prices():
     try:
         conn = psycopg2.connect(
             host=DB_HOST,
+            port=DB_PORT,
             database=DB_NAME,
             user=DB_USER,
             password=DB_PASSWORD

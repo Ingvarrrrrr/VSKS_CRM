@@ -1,3 +1,10 @@
+import os
+
+# app.config.Settings requires SECRET_KEY (no hardcoded default — see
+# backend/app/config.py). Give the test suite a throwaway key so pytest
+# works out of the box without a real .env; never used outside tests.
+os.environ.setdefault("SECRET_KEY", "test-only-secret-key-not-for-production")
+
 import pytest
 import pytest_asyncio
 from decimal import Decimal

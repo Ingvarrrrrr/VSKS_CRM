@@ -29,6 +29,48 @@ def _content_disposition(filename: str) -> str:
     return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename)}"
 
 
+def _validate_plan_pair(planned_quantity: Optional[float], planned_amount: Optional[float]) -> None:
+    """Правило владельца (2026-08-09): плановое количество и плановая цена за
+    единицу — ПАРА. Если задана цена за единицу, обязано быть задано и
+    количество (тогда сумма = кол-во × цена считается автоматически). Если
+    задано количество без цены — то же самое наоборот. Пусто-пусто — план по
+    этому листу просто не задан руками (допустимо, план может считаться из
+    детей/факта). Оба заполнены — допустимо.
+
+    «Заполнено» = число > 0 (не просто not None) — совпадает с порогом
+    app.services.feo_plan.compute_feo_plan_tree._visit (qty > 0 and amt > 0),
+    иначе planned_quantity=0 с ценой прошло бы валидацию, но провалилось бы в
+    формуле плана (фолбэк на сумму активных FeoPlannedItem, как и «пусто-пусто» —
+    молчаливый и неожиданный для пользователя результат).
+
+    Альтернатива для плана ОБЩЕЙ суммой без разбивки на кол-во/цену (напр.
+    «Канцтовары» на 1 000 000 без детализации) — не эта пара полей категории, а
+    плановая позиция (FeoPlannedItem, кнопка «Добавить плановую» в панели) с
+    суммой amount и БЕЗ quantity.
+    """
+    qty_filled = planned_quantity is not None and float(planned_quantity) > 0
+    amt_filled = planned_amount is not None and float(planned_amount) > 0
+    if qty_filled == amt_filled:
+        return
+    if qty_filled:
+        detail = (
+            "Задано плановое количество, но не задана плановая стоимость за единицу. "
+            "Заполните оба поля («Плановое количество» и «Плановая стоимость за ед.») — "
+            "тогда сумма посчитается автоматически, — либо очистите количество и задайте "
+            "план общей суммой отдельной плановой позицией (кнопка «Добавить плановую» "
+            "в панели) без указания количества."
+        )
+    else:
+        detail = (
+            "Задана плановая стоимость за единицу, но не задано плановое количество. "
+            "Заполните оба поля («Плановое количество» и «Плановая стоимость за ед.») — "
+            "тогда сумма посчитается автоматически, — либо очистите цену и задайте план "
+            "общей суммой отдельной плановой позицией (кнопка «Добавить плановую» в "
+            "панели) без указания количества."
+        )
+    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+
+
 async def _has_feo_action(current_user, db: AsyncSession, action_key: str) -> bool:
     """Есть ли у пользователя один из feo_budget.* action-ключей (эффективно, с учётом
     ролевой матрицы + персональных/субсидийных оверрайдов). superadmin — всегда True.
@@ -1097,6 +1139,8 @@ async def create_category(
     db: AsyncSession = Depends(get_db),
     _=Depends(require_tab('feo_categories')),
 ):
+    _validate_plan_pair(category_data.planned_quantity, category_data.planned_amount)
+
     if category_data.parent_id:
         parent_result = await db.execute(
             select(FeoCategory).where(FeoCategory.id == category_data.parent_id)
@@ -2637,6 +2681,7 @@ async def update_category(
     cat = result.scalar_one_or_none()
     if not cat:
         raise HTTPException(status_code=404, detail="Категория не найдена")
+    _validate_plan_pair(category_data.planned_quantity, category_data.planned_amount)
     _old_plan = (cat.budget, cat.feo_quantity, cat.feo_amount, cat.planned_quantity, cat.planned_amount)
     cat.name = category_data.name
     cat.code = category_data.code

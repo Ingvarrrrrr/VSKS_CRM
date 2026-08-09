@@ -1375,7 +1375,7 @@
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px;text-align:right">
-                                  {{ formatCurrency(comparisonPlanTotal(node.id)) }}
+                                  {{ formatCurrency(comparisonPlanTotal(node)) }}
                                 </td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
@@ -1384,8 +1384,8 @@
                                   {{ formatCurrency(comparisonFactTotal(node.id)) }}
                                 </td>
                                 <td style="padding:4px 8px;text-align:right">
-                                  <span :class="comparisonPlanTotal(node.id) >= comparisonFactTotal(node.id) ? 'text-success' : 'text-error'">
-                                    {{ formatCurrency(comparisonPlanTotal(node.id) - comparisonFactTotal(node.id)) }}
+                                  <span :class="comparisonPlanTotal(node) >= comparisonFactTotal(node.id) ? 'text-success' : 'text-error'">
+                                    {{ formatCurrency(comparisonPlanTotal(node) - comparisonFactTotal(node.id)) }}
                                   </span>
                                 </td>
                                 <td colspan="3" style="padding:4px 8px"></td>
@@ -2173,7 +2173,12 @@
           </div>
           <!-- Блок: Плановые показатели (CRM) -->
           <div style="border:1px solid rgba(var(--v-border-color),var(--v-border-opacity));border-radius:8px;padding:12px">
-            <div class="text-body-2 font-weight-medium mb-3">Плановые показатели</div>
+            <div class="text-body-2 font-weight-medium mb-1">Плановые показатели</div>
+            <div class="text-caption text-medium-emphasis mb-3">
+              Кол-во и цена за ед. — пара: заполнены оба или ни одного (сумма посчитается сама). Если план известен
+              только общей суммой без разбивки (например, «Канцтовары» на 1 000 000 без детализации) — оставьте
+              оба поля пустыми и задайте план отдельной плановой позицией на сумму (кнопка «Добавить плановую» в панели).
+            </div>
             <!-- Плановое количество -->
             <div class="d-flex align-center mb-2">
               <span class="text-body-2">Плановое количество</span>
@@ -2194,6 +2199,7 @@
                   v-model.number="feoForm.planned_quantity"
                   label="Количество"
                   variant="outlined" density="compact" type="number" hide-details
+                  :error="!!feoAddPlanPairError"
                 />
               </v-col>
               <v-col cols="4">
@@ -2224,13 +2230,20 @@
               v-model.number="feoForm.planned_amount"
               label="Плановая стоимость за ед., ₽"
               variant="outlined" density="compact" type="number" hide-details
+              :error="!!feoAddPlanPairError"
             />
+            <v-alert
+              v-if="feoAddPlanPairError"
+              type="warning" variant="tonal" density="compact" class="mt-3 text-caption"
+            >
+              {{ feoAddPlanPairError }}
+            </v-alert>
           </div>
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
           <v-spacer />
           <v-btn variant="text" @click="showAddFeoDialog = false">Отмена</v-btn>
-          <v-btn color="primary" :loading="savingFeo" :disabled="!feoForm.name" @click="addFeoCategory">
+          <v-btn color="primary" :loading="savingFeo" :disabled="!feoForm.name || !!feoAddPlanPairError" @click="addFeoCategory">
             Добавить
           </v-btn>
         </v-card-actions>
@@ -2334,7 +2347,12 @@
           </div>
           <!-- Блок: Плановые показатели (CRM) -->
           <div style="border:1px solid rgba(var(--v-border-color),var(--v-border-opacity));border-radius:8px;padding:12px" class="mb-3">
-            <div class="text-body-2 font-weight-medium mb-3">Плановые показатели</div>
+            <div class="text-body-2 font-weight-medium mb-1">Плановые показатели</div>
+            <div class="text-caption text-medium-emphasis mb-3">
+              Кол-во и цена за ед. — пара: заполнены оба или ни одного (сумма посчитается сама). Если план известен
+              только общей суммой без разбивки (например, «Канцтовары» на 1 000 000 без детализации) — оставьте
+              оба поля пустыми и задайте план отдельной плановой позицией на сумму (кнопка «Добавить плановую» в панели).
+            </div>
             <!-- Плановое количество -->
             <div class="d-flex align-center mb-2">
               <span class="text-body-2">Плановое количество</span>
@@ -2356,6 +2374,7 @@
                   v-model.number="feoEditForm.planned_quantity"
                   label="Количество"
                   variant="outlined" density="compact" type="number" hide-details
+                  :error="!!feoEditPlanPairError"
                 />
               </v-col>
               <v-col cols="4">
@@ -2393,6 +2412,7 @@
               v-model.number="feoEditForm.planned_amount"
               label="Плановая стоимость за ед., ₽"
               variant="outlined" density="compact" type="number" hide-details
+              :error="!!feoEditPlanPairError"
             />
             <v-alert
               v-if="feoEditForm.hasChildren && feoEditForm.amtAuto"
@@ -2400,13 +2420,19 @@
             >
               Сумма рассчитывается автоматически из дочерних направлений
             </v-alert>
+            <v-alert
+              v-if="feoEditPlanPairError"
+              type="warning" variant="tonal" density="compact" class="mt-3 text-caption"
+            >
+              {{ feoEditPlanPairError }}
+            </v-alert>
           </div>
           <v-checkbox v-model="feoEditForm.is_active" label="Активна" density="compact" hide-details class="mt-2" />
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
           <v-spacer />
           <v-btn variant="text" @click="showEditFeoDialog = false">Отмена</v-btn>
-          <v-btn color="primary" :loading="savingFeo" :disabled="!feoEditForm.name" @click="updateFeoCategory">
+          <v-btn color="primary" :loading="savingFeo" :disabled="!feoEditForm.name || !!feoEditPlanPairError" @click="updateFeoCategory">
             Сохранить
           </v-btn>
         </v-card-actions>
@@ -5879,6 +5905,32 @@ const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 
 const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, feo_quantity: null as number | null, feo_unit: '' as string, description: '', feo_amount: '' as string | number })
 const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, is_active: true, hasChildren: false, parent_id: null as number | null, feo_quantity: null as number | null, feo_unit: '' as string, description: '', feo_amount: '' as string | number })
 
+// Правило владельца (2026-08-09): «Плановое кол-во»/«Плановая стоимость за ед.» —
+// пара. Задана цена без количества (или наоборот) → сумма НЕ считается автоматически
+// и молча ломается (см. backend _validate_plan_pair в feo_categories.py, тот же порог
+// >0). auto-режим («Авто из детей», отправляется как null) считается пустым полем —
+// зеркалит то, что реально уйдёт в payload PUT/POST.
+function feoPlanPairError(
+  qty: number | null, qtyAuto: boolean,
+  amt: number | null, amtAuto: boolean,
+): string {
+  const qFilled = !qtyAuto && qty != null && Number(qty) > 0
+  const aFilled = !amtAuto && amt != null && Number(amt) > 0
+  if (qFilled === aFilled) return ''
+  return qFilled
+    ? 'Задано количество, но не задана цена за ед. — заполните оба поля (сумма посчитается автоматически), либо очистите количество и задайте план общей суммой отдельной плановой позицией («Добавить плановую» в панели) без указания количества.'
+    : 'Задана цена за ед., но не задано количество — заполните оба поля (сумма посчитается автоматически), либо очистите цену и задайте план общей суммой отдельной плановой позицией («Добавить плановую» в панели) без указания количества.'
+}
+
+const feoAddPlanPairError = computed(() => feoPlanPairError(
+  feoForm.value.planned_quantity, feoForm.value.qtyAuto,
+  feoForm.value.planned_amount, feoForm.value.amtAuto,
+))
+const feoEditPlanPairError = computed(() => feoPlanPairError(
+  feoEditForm.value.planned_quantity, feoEditForm.value.qtyAuto,
+  feoEditForm.value.planned_amount, feoEditForm.value.amtAuto,
+))
+
 // ── Computed ──────────────────────────────────────
 const availableYears = computed(() =>
   [...new Set(allSubsidies.value.map(s => s.year))].sort((a, b) => b - a)
@@ -6714,17 +6766,37 @@ function factForPlannedTotal(catId: number, plannedId: number): number {
 // категории, ИЛИ — если их нет, а план задан прямо на листе — одна псевдо-строка
 // «ручной план ФЭО» (id = -node.id, отрицательный, никогда не совпадает с реальным id).
 // Переиспользует вёрстку обычной плановой строки (см. таблицу ниже) вместо отдельного блока.
+//
+// ⚠️ Семантика поля `amount` РАЗНАЯ у двух источников и это специально не унифицировано
+// в БД (баг с проды 2026-08-07): `FeoPlannedItem.amount` (реальная плановая позиция,
+// приходит от бэкенда как есть) — это уже ИТОГОВАЯ СУММА строки. А `FeoCategory.planned_amount`
+// (ручной план на листе, поля «Плановое кол-во»/«Финансирование по ФЭО» в дереве) — это ЦЕНА
+// ЗА ЕДИНИЦУ (см. feoPlannedTotalFor/feoAmtFor выше, которые считают qty × planned_amount).
+// Вся остальная вёрстка панели (строки 1057/1060/1069-1070 ниже, calcDiff, comparisonPlanTotal)
+// трактует `planned.amount` как СУММУ — поэтому здесь для синтетической строки amount ОБЯЗАН
+// быть посчитан как planned_quantity × planned_amount, а не взят «как есть» из planned_amount
+// (иначе «Сумма (план)» делится на количество ещё раз при выводе цены за единицу).
 function displayPlannedRowsFor(node: FeoNode): (FeoPlannedItem & { isManual?: boolean })[] {
   const real = comparisonData.value[node.id]?.planned || []
   if (real.length) return real
   if (node.planned_quantity == null && node.planned_amount == null) return []
+  const qty = node.planned_quantity != null ? Number(node.planned_quantity) : null
+  const unitPrice = node.planned_amount != null ? Number(node.planned_amount) : null
+  // И количество, И цена ОБЯЗАНЫ быть заданы и положительны, чтобы сумму вообще можно
+  // было посчитать — иначе null (неизвестно), а не «додумывать» недостающий множитель
+  // за 1. Проверено на приёмке 2026-08-07: значение «количество не задано → считать 1»
+  // ЗАВОДИТ РАСХОЖДЕНИЕ с «Плановой суммой» шапки дерева (feoPlannedTotalFor на фронте
+  // и plan_manual в backend/app/services/feo_plan.py::_visit — оба явно требуют
+  // `qty > 0 and amt > 0`, иначе план листа = 0/«не задано»). Панель обязана
+  // ЗЕРКАЛИТЬ эту же формулу, а не изобретать свою — их расхождение и есть баг.
+  const amount = (qty != null && qty > 0 && unitPrice != null && unitPrice > 0) ? qty * unitPrice : null
   return [{
     id: -node.id,
     feo_category_id: node.id,
     name: node.name,
-    quantity: node.planned_quantity != null ? Number(node.planned_quantity) : null,
+    quantity: qty,
     unit: node.unit || null,
-    amount: node.planned_amount != null ? Number(node.planned_amount) : null,
+    amount,
     notes: null,
     is_active: true,
     isManual: true,
@@ -6778,8 +6850,16 @@ watch(comparisonData, (data) => {
   for (const catId of Object.keys(data).map(Number)) devCheckNoDuplicateItems(catId)
 }, { deep: true })
 
-function comparisonPlanTotal(catId: number): number {
-  const planned = (comparisonData.value[catId]?.planned || []).reduce((s, p) => s + Number(p.amount || 0), 0)
+// ⚠️ БАГ с прода (2026-08-07): раньше суммировал ТОЛЬКО comparisonData.value[catId].planned —
+// это реальные FeoPlannedItem с бэкенда. У категории с РУЧНЫМ планом листа (planned_quantity/
+// planned_amount на FeoCategory) и без единой реальной FeoPlannedItem реальный список планового
+// пуст, и строка ИТОГО панели не учитывала ручной план вообще, расходясь с «Плановой суммой»
+// в шапке дерева (feoPlannedTotalFor/planTreeByCat). Теперь берём displayPlannedRowsFor(node) —
+// тот же источник строк, что рисует сама таблица (реальные позиции ИЛИ синтетическая
+// «ручной план ФЭО» с уже посчитанной суммой qty × unitPrice, см. displayPlannedRowsFor выше).
+function comparisonPlanTotal(node: FeoNode): number {
+  const catId = node.id
+  const planned = displayPlannedRowsFor(node).reduce((s, p) => s + Number(p.amount || 0), 0)
   // Несопоставленные плановые из закупок; сопоставленные уже учтены суммой плановой позиции
   const planStage = actualPlanStageFor(catId).filter(a => !a.feo_planned_item_id)
     .reduce((s, a) => s + Number(a.total_price || 0), 0)
@@ -7927,6 +8007,7 @@ function goToLinkedContracts() {
 
 async function addFeoCategory() {
   if (!selectedSubsidy.value) return
+  if (feoAddPlanPairError.value) { showSnack(feoAddPlanPairError.value, 'error'); return }
   savingFeo.value = true
   try {
     const res = await apiFetch<FeoCategory>('/feo-categories/', {
@@ -7954,8 +8035,8 @@ async function addFeoCategory() {
     showSnack('Направление добавлено')
     if (selectedId.value) await loadFeo(selectedId.value)
     syncFeoFilled()
-  } catch {
-    showSnack('Ошибка добавления направления', 'error')
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.detail || e?.message || 'Ошибка добавления направления', 'error')
   } finally {
     savingFeo.value = false
   }
@@ -8003,6 +8084,7 @@ function startFeoEdit(node: FeoNode) {
 
 async function updateFeoCategory() {
   if (!feoEditTarget.value) return
+  if (feoEditPlanPairError.value) { showSnack(feoEditPlanPairError.value, 'error'); return }
   savingFeo.value = true
   try {
     // Если parent_id изменился — вызываем move endpoint
@@ -8038,8 +8120,8 @@ async function updateFeoCategory() {
     showSnack('Направление обновлено')
     if (selectedId.value) await loadFeo(selectedId.value)
     syncFeoFilled()
-  } catch {
-    showSnack('Ошибка обновления', 'error')
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.detail || e?.message || 'Ошибка обновления', 'error')
   } finally {
     savingFeo.value = false
   }

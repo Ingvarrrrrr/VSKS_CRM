@@ -1100,11 +1100,36 @@
               </v-card-title>
               <v-card-text class="pa-4 pt-2">
                 <v-row dense>
-                  <v-col v-if="wishForm.subsidy_id" cols="12">
+                  <v-col v-if="wishForm.subsidy_id" cols="12" data-field="feo_category">
                     <v-alert v-if="wishFeoStale" type="warning" density="compact" variant="tonal" class="mb-2">
                       Категория ФЭО, выбранная в заявке, была удалена из справочника (структуру ФЭО субсидии
                       пересоздавали). Выберите актуальную категорию и сохраните. Если согласовать как есть —
                       закупка будет создана без категории ФЭО, её можно задать в «Плане закупок».
+                    </v-alert>
+                    <!-- Жёсткий гейт (владелец, 2026-08-11): без категории ФЭО заявку нельзя
+                         согласовать/отправить в План закупок — иначе закупка остаётся сиротой
+                         вне всех планов ФЭО (реальный случай с прода — заявка №32). Блокирует
+                         кнопку «Отправить на согласование», см. wishFeoCategoryMissing. -->
+                    <v-alert
+                      v-if="wishFeoCategoryMissing"
+                      type="error"
+                      density="compact"
+                      variant="tonal"
+                      class="mb-2"
+                      icon="mdi-alert-octagon-outline"
+                    >
+                      <div class="font-weight-medium">Категория ФЭО не выбрана — отправить заявку на согласование нельзя</div>
+                      <div class="mt-1">
+                        Без категории закупка не попадёт ни в один план ФЭО и её сумма потеряется.
+                        Выберите категорию {{ wishFeoPerItem ? 'для каждой позиции в таблице выше' : 'в дереве ниже' }},
+                        а если категория неизвестна — нажмите «Не определена».
+                      </div>
+                      <div v-if="wishFeoPerItem && wishItemsMissingFeoCategory.length" class="mt-2">
+                        <span class="font-weight-medium">Позиции без категории:</span>
+                        <ul class="ml-4 mt-1">
+                          <li v-for="(it, idx) in wishItemsMissingFeoCategory" :key="idx">{{ it.item_name || 'без названия' }}</li>
+                        </ul>
+                      </div>
                     </v-alert>
                     <FeoTreeSelect
                       v-model="wishFeoSelected"
@@ -1673,9 +1698,18 @@
             <v-btn color="grey" variant="tonal" :loading="saving" @click="saveWish(false)">
               Сохранить черновик
             </v-btn>
-            <v-btn ref="wishSubmitBtnRef" color="primary" variant="flat" :loading="saving" @click="saveWish(true)">
-              Отправить на согласование
-            </v-btn>
+            <v-tooltip :disabled="!wishFeoCategoryMissing" location="top">
+              <template #activator="{ props: tipProps }">
+                <span v-bind="tipProps">
+                  <v-btn ref="wishSubmitBtnRef" color="primary" variant="flat" :loading="saving"
+                         :class="{ 'wish-btn-blocked': wishFeoCategoryMissing }"
+                         @click="wishFeoCategoryMissing ? highlightMissingFeoCategory() : saveWish(true)">
+                    Отправить на согласование
+                  </v-btn>
+                </span>
+              </template>
+              Не выбрана категория ФЭО — заполните её ниже, иначе заявку нельзя будет согласовать
+            </v-tooltip>
           </template>
           <!-- approved/converted и editable (не contracted_locked): сохранить изменения -->
           <template v-else-if="isWishEditable && editingWish && ['approved', 'converted'].includes(editingWish.status)">
@@ -1691,10 +1725,18 @@
             <v-btn color="error" variant="tonal" prepend-icon="mdi-close" @click="openRejectDialog(editingWish); wishDialog = false">
               Отклонить
             </v-btn>
-            <v-btn color="success" variant="tonal" prepend-icon="mdi-check" :loading="approvingId === editingWish.id"
-                   @click="approveWish(editingWish).then(() => wishDialog = false)">
-              Одобрить без согласования остальных
-            </v-btn>
+            <v-tooltip :disabled="!wishFeoCategoryMissing" location="top">
+              <template #activator="{ props: tipProps }">
+                <span v-bind="tipProps">
+                  <v-btn color="success" variant="tonal" prepend-icon="mdi-check" :loading="approvingId === editingWish.id"
+                         :class="{ 'wish-btn-blocked': wishFeoCategoryMissing }"
+                         @click="wishFeoCategoryMissing ? highlightMissingFeoCategory() : approveWish(editingWish).then(() => wishDialog = false)">
+                    Одобрить без согласования остальных
+                  </v-btn>
+                </span>
+              </template>
+              Не выбрана категория ФЭО — заполните её ниже, иначе заявку нельзя будет согласовать
+            </v-tooltip>
             <v-btn color="primary" variant="flat" prepend-icon="mdi-view-column-outline"
                    @click="openKanbanDialog(editingWish); wishDialog = false">
               Распределить и одобрить
@@ -2635,12 +2677,48 @@ async function confirmWishPlanMatchIfNeeded(wishId: number | null | undefined) {
 }
 
 // ФЭО заявки не найдена в текущем дереве субсидии → категорию удалили/пересоздали.
-// Согласование не блокируется (backend обнулит и создаст закупку без ФЭО),
-// но в форме подсказываем выбрать актуальную категорию.
+// Владелец, 2026-08-11: раньше согласование не блокировалось (backend молча обнулял
+// и создавал закупку без ФЭО) — именно так реальная заявка №32 лишилась категории.
+// Теперь backend отвечает 409 (missing_feo_category) — подсказываем выбрать
+// актуальную категорию ДО попытки согласовать.
 const wishFeoStale = computed(() => {
   const id = wishFeoSelected.value
   return !!id && wishFeoNodes.value.length > 0 && !wishFeoNodes.value.some(n => n.id === id)
 })
+
+// Жёсткий гейт «без категории ФЭО заявку нельзя согласовать» (владелец, 2026-08-11):
+// зеркалит backend _ensure_feo_categories_assigned на фронте, чтобы блокировать
+// отправку ДО запроса, а не только показывать ошибку после отказа 409. Эффективная
+// категория позиции — её собственная (в режиме «разные ФЭО для каждого товара»),
+// иначе — категория заявки целиком (wishFeoSelected), см. payload в saveWish.
+const wishItemsMissingFeoCategory = computed(() => {
+  const items = (wishForm.value.items as any[]).filter(
+    (it) => (it.item_name || '').toString().trim() || Number(it.total_price) || Number(it.quantity)
+  )
+  if (!items.length) return [] as any[]
+  return items.filter((it) => {
+    const eff = wishFeoPerItem.value ? (it.feo_category_id ?? wishFeoSelected.value) : wishFeoSelected.value
+    return eff == null
+  })
+})
+const wishFeoCategoryMissing = computed(() => wishItemsMissingFeoCategory.value.length > 0)
+
+function highlightMissingFeoCategory() {
+  const formEl = wishFormRef.value?.$el as HTMLElement | undefined
+  const btn = (wishSubmitBtnRef.value?.$el ?? wishSubmitBtnRef.value) as HTMLElement | null
+  const target = formEl?.querySelector('[data-field="feo_category"]') as HTMLElement | null
+  if (!target) return
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  target.classList.add('wish-date-missing-pulse')
+  setTimeout(() => target.classList.remove('wish-date-missing-pulse'), 3000)
+  if (btn) {
+    validationArrowFrom.value = btn
+    validationArrowTargets.value = [target]
+    validationArrowsActive.value = true
+    if (validationArrowsTimer) window.clearTimeout(validationArrowsTimer)
+    validationArrowsTimer = window.setTimeout(dismissValidationArrows, 8000)
+  }
+}
 
 // Phase 31-07: Undo/Redo for wish edit form (WishDistributionCard is display-only;
 // actual wish editing happens here in WishesView via wishForm ref)
@@ -3245,7 +3323,13 @@ async function decideApprover(approvalId: number, decision: 'approved' | 'reject
     await loadWishes()
     refreshMyPendingApprovals()  // бейдж «мои согласования» в сайдбаре
   } catch (e: any) {
-    showSnack(e?.payload?.message || e?.message || 'Не удалось сохранить решение', 'error')
+    // Гейт ФЭО (владелец, 2026-08-11): последний согласующий цепочки может упереться
+    // в 409 missing_feo_category (backend откатывает decision, заявка НЕ зависает —
+    // остаётся 'submitted', попробовать decide можно снова после выбора категории).
+    const handled = editingWish.value ? await handleMissingFeoCategoryError(e, editingWish.value) : false
+    if (!handled) {
+      showSnack(e?.payload?.message || e?.message || 'Не удалось сохранить решение', 'error')
+    }
   } finally {
     decideLoading.value = null
   }
@@ -3297,6 +3381,15 @@ async function saveWish(andSubmit = false) {
   if (andSubmit) {
     const { valid } = await wishFormRef.value?.validate() ?? { valid: true }
     if (!valid) { await nextTick(); showValidationArrows(); return }
+    // Жёсткий гейт (владелец, 2026-08-11): без категории ФЭО заявку нельзя отправить
+    // на согласование — иначе одобряющий упрётся в 409 от backend, а созданная из неё
+    // закупка рискует остаться сиротой вне всех планов ФЭО (см. wishFeoCategoryMissing).
+    if (wishFeoCategoryMissing.value) {
+      showSnack('Нельзя отправить на согласование: не выбрана категория ФЭО. Выберите категорию в дереве ниже (или для каждой позиции), либо «Не определена», если категория неизвестна.', 'error')
+      await nextTick()
+      highlightMissingFeoCategory()
+      return
+    }
     // ФЭО выбрано не до конечной категории — требуем либо лист, либо явный skipLast
     if (wishFeoSelected.value && !wishFeoSkipLast.value && !wishFeoPerItem.value) {
       const node = wishFeoNodes.value.find(n => n.id === wishFeoSelected.value)
@@ -3515,6 +3608,22 @@ async function handleMissingDatesError(e: any, wish: Wish) {
   return true
 }
 
+// Гейт ФЭО (владелец, 2026-08-11): общий обработчик 409 missing_feo_category — открывает
+// диалог (если закрыт) и подсвечивает дерево категории стрелкой. Используется в
+// approveWish/decideApprover — submit endpoint этот гейт не проверяет (категорию можно
+// донести согласующим уже после отправки), поэтому там его вызывать не нужно.
+async function handleMissingFeoCategoryError(e: any, wish: Wish): Promise<boolean> {
+  const det = e?.payload?.details
+  if (e?.status !== 409 || det?.error_code !== 'missing_feo_category') return false
+  showSnack(det.message || e.message || 'Не выбрана категория ФЭО', 'error')
+  if (!wishDialog.value) {
+    await openEditDialog(wish)
+  }
+  await nextTick()
+  highlightMissingFeoCategory()
+  return true
+}
+
 async function approveWish(wish: Wish) {
   approvingId.value = wish.id
   try {
@@ -3524,7 +3633,7 @@ async function approveWish(wish: Wish) {
     wishConvertError.value = null
     await reloadActiveTab()
   } catch (e: any) {
-    const handled = await handleMissingDatesError(e, wish)
+    const handled = (await handleMissingDatesError(e, wish)) || (await handleMissingFeoCategoryError(e, wish))
     if (!handled) {
       showSnack(`Ошибка при одобрении: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
     }
@@ -3753,7 +3862,17 @@ async function convertWish() {
     await loadAllWishes()
     router.push(`/orders/${result.purchase_id}/edit`)
   } catch (e: any) {
-    showSnack(`Ошибка при создании закупки: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
+    // Гейт ФЭО (владелец, 2026-08-11): 409 missing_feo_category — этот диалог не
+    // умеет выбирать категорию, закрываем его и открываем форму заявки со стрелкой
+    // к полю категории.
+    const handled = convertingWish.value
+      ? await handleMissingFeoCategoryError(e, convertingWish.value)
+      : false
+    if (handled) {
+      convertDialog.value = false
+    } else {
+      showSnack(`Ошибка при создании закупки: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
+    }
   } finally {
     convertingWishLoading.value = false
   }
@@ -3890,5 +4009,12 @@ onMounted(async () => {
 .wish-date-missing-pulse {
   animation: wish-date-pulse 1s ease-out 3;
   border-radius: 4px;
+}
+/* Кнопка «заблокирована» гейтом категории ФЭО (владелец, 2026-08-11) — визуально
+   приглушена, но не :disabled: клик всё равно должен сработать и показать стрелку
+   к полю категории, а не молча ничего не делать. */
+.wish-btn-blocked {
+  opacity: 0.55;
+  filter: grayscale(0.35);
 }
 </style>

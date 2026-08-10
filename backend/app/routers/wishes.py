@@ -219,6 +219,84 @@ async def _ensure_needed_dates(wish, db, items, context: str = "convert") -> Non
     )
 
 
+async def _ensure_feo_categories_assigned(wish, items, db: AsyncSession) -> None:
+    """Жёсткий гейт «без категории ФЭО закупка не проходит» (владелец, 2026-08-11).
+
+    Реальный случай с прода: заявка №32 «Приобретение Пикапов» была согласована,
+    из неё создалась закупка РЕЕ-2026-00889 (Great Wall POER, 2 шт × 4 000 000), но
+    у позиции и у самой заявки feo_category_id был пуст. Автозаведение плановой
+    позиции (_auto_assign_planned_items) берёт эффективную категорию, не находит её
+    и молча пропускает позицию — закупка осталась сиротой, её сумма не попала ни в
+    один план ФЭО.
+
+    Проверяем ДО любых мутаций (при отказе ни одна закупка не создаётся частично):
+    у КАЖДОЙ позиции должна быть эффективная категория — item.feo_category_id, а
+    если он не задан — фолбэк на wish.feo_category_id. Категория должна не только
+    быть задана, но и реально существовать в справочнике (FeoCategory) — ссылка на
+    удалённую категорию (структуру ФЭО субсидии пересоздавали) раньше молча
+    обнулялась и закупка создавалась без ФЭО (см. историю ветки convert_warning,
+    убрана этим гейтом) — именно так обнулилась категория у заявки №32 ещё до
+    автозаведения. Теперь это тоже отказ, а не предупреждение постфактум.
+
+    wish.feo_category_id, если задан, тоже обязан существовать — он пишется в
+    Purchase.feo_category_id напрямую (не только как фолбэк для позиций без своей
+    категории), битая ссылка уронила бы INSERT закупки FK-violation'ом (500 без
+    объяснения), если бы её не отловили здесь заранее.
+
+    `items` — WishItem ORM или dict payload (см. _item_field) — вызывающий обязан
+    заранее отфильтровать строки-заготовки (_is_meaningful_item), иначе пустая
+    заготовка без названия тоже потребует категорию.
+    """
+    from app.models.feo_category import FeoCategory
+
+    wish_cat_id = wish.feo_category_id
+    ref_ids = {i for i in ({wish_cat_id} | {_item_field(it, 'feo_category_id') for it in items}) if i}
+    valid_ids: set[int] = set()
+    if ref_ids:
+        valid_ids = set((await db.execute(
+            select(FeoCategory.id).where(FeoCategory.id.in_(ref_ids))
+        )).scalars().all())
+
+    wish_cat_ok = wish_cat_id is None or wish_cat_id in valid_ids
+    problem_names: list[str] = []
+    for it in items:
+        item_cat = _item_field(it, 'feo_category_id')
+        eff_cat = item_cat or wish_cat_id
+        if eff_cat is None or eff_cat not in valid_ids:
+            problem_names.append(str(_item_field(it, 'item_name') or 'без названия'))
+
+    if not problem_names and wish_cat_ok:
+        return
+
+    names_list = ", ".join(f'«{n}»' for n in problem_names[:10])
+    suffix = f" и ещё {len(problem_names) - 10} поз." if len(problem_names) > 10 else ""
+    parts: list[str] = []
+    if problem_names:
+        parts.append(
+            f"у следующих позиций нет категории ФЭО, либо она ссылается на удалённую "
+            f"из справочника категорию: {names_list}{suffix}"
+        )
+    if not wish_cat_ok:
+        parts.append(
+            "категория ФЭО самой заявки была удалена из справочника "
+            "(структуру ФЭО субсидии пересоздавали)"
+        )
+    message = (
+        "Невозможно перенести заявку в План закупок: " + "; ".join(parts) + ". "
+        "Выберите категорию ФЭО для каждой позиции (или для заявки целиком в разделе "
+        "«Категория ФЭО»), а если категория неизвестна — выберите «Не определена». "
+        "Без категории закупка не попадёт ни в один план ФЭО и её сумма потеряется."
+    )
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "message": message,
+            "error_code": "missing_feo_category",
+            "missing_item_names": problem_names,
+        },
+    )
+
+
 # W1: статусы «дошли до договора» — блокируют редактирование привязанной заявки
 CONTRACTED_STATUSES = ("contracted", "ordered", "delivered", "paid")
 
@@ -591,11 +669,14 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
                 )
                 await db.flush()
             return [p.id for p in existing]
-        # W2-гейт: проверяем даты ПЕРЕД продвижением скрытых закупок в целевой статус
+        # W2-гейт: проверяем даты и категорию ФЭО ПЕРЕД продвижением скрытых закупок
+        # в целевой статус — это тоже момент «попадания в План закупок» (владелец,
+        # 2026-08-11): скрытые (status='wishes') закупки ещё не в плане.
         wishes_purchases = [p for p in existing if p.status == "wishes"]
         if wishes_purchases:
             items_res = await db.execute(select(WishItem).where(WishItem.wish_id == wish.id))
             items_for_gate = [it for it in items_res.scalars().all() if _is_meaningful_item(it)]
+            await _ensure_feo_categories_assigned(wish, items_for_gate, db)
             await _ensure_needed_dates(wish, db, items_for_gate)
         for p in existing:
             if p.status == "wishes":
@@ -617,34 +698,13 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
     # создаёт их заранее для будущего ввода — не должны попадать в План закупок.
     items_full = [it for it in items_full if _is_meaningful_item(it)]
 
-    # ФЭО могли удалить/пересоздать после выбора в заявке — валидируем заранее,
-    # иначе insert закупки падает FK-violation → 500 без объяснения
-    from app.models.feo_category import FeoCategory
-    feo_ids = {i for i in ({wish.feo_category_id} | {it.feo_category_id for it in items_full}) if i}
-    valid_feo: set[int] = set()
-    if feo_ids:
-        valid_feo = set((await db.execute(
-            select(FeoCategory.id).where(FeoCategory.id.in_(feo_ids))
-        )).scalars().all())
-    # Битые ссылки НЕ блокируют согласование: обнуляем и продолжаем — закупка
-    # создаётся без ФЭО, категорию можно задать в Плане закупок. Причину
-    # возвращаем предупреждением (wish._convert_warning) в approve/decide.
-    convert_warning: str | None = None
-    if wish.feo_category_id and wish.feo_category_id not in valid_feo:
-        convert_warning = (
-            "Категория ФЭО, выбранная в заявке, была удалена из справочника "
-            "(структуру ФЭО субсидии пересоздавали). Закупка создана без категории ФЭО — "
-            "задайте её в «Плане закупок», чтобы сумма попала в план ФЭО."
-        )
-        wish.feo_category_id = None
-    for it in items_full:
-        if it.feo_category_id and it.feo_category_id not in valid_feo:
-            it.feo_category_id = None
-            convert_warning = convert_warning or (
-                "У части позиций категория ФЭО была удалена из справочника — "
-                "они добавлены в закупку без ФЭО, задайте категории в «Плане закупок»."
-            )
-    wish._convert_warning = convert_warning
+    # Гейт ФЭО (владелец, 2026-08-11): позиция без категории (или со ссылкой на
+    # удалённую из справочника) не должна попасть в План закупок — раньше эта же
+    # ветка молча обнуляла битую ссылку и создавала закупку без ФЭО (предупреждением
+    # postfactum через wish._convert_warning). Именно так реальная заявка №32
+    # «Приобретение Пикапов» лишилась категории, а созданная из неё закупка
+    # осталась сиротой вне всех планов ФЭО. См. docstring _ensure_feo_categories_assigned.
+    await _ensure_feo_categories_assigned(wish, items_full, db)
 
     # Backfill product_id + category by item_name for legacy wish_items
     # (created before product_id was persisted on wish_items).
@@ -1721,11 +1781,16 @@ async def convert_wish(
         select(Purchase).where(Purchase.wish_id == wish.id)
     )).scalars().all()
     if existing:
-        # W2-гейт: проверяем даты ПЕРЕД продвижением скрытых закупок
+        # W2-гейт: проверяем категорию ФЭО и даты ПЕРЕД продвижением скрытых закупок —
+        # это тоже момент «попадания в План закупок» (владелец, 2026-08-11).
         wishes_existing = [ep for ep in existing if ep.status == "wishes"]
         if wishes_existing and getattr(wish, 'source', None) != 'advance_report':
             items_res = await db.execute(select(WishItem).where(WishItem.wish_id == wish.id))
-            await _ensure_needed_dates(wish, db, items_res.scalars().all())
+            _all_items_existing = items_res.scalars().all()
+            await _ensure_feo_categories_assigned(
+                wish, [it for it in _all_items_existing if _is_meaningful_item(it)], db,
+            )
+            await _ensure_needed_dates(wish, db, _all_items_existing)
         # Задача владельца, план zany-fluttering-mountain.md п.4 (2026-08-10): эта
         # ветка — ОТДЕЛЬНЫЙ путь движения закупки по стадиям (wishes → plan_schedule),
         # не проходящий через POST /api/purchases/{pid}/transition (см. её гейт в
@@ -1766,6 +1831,12 @@ async def convert_wish(
         select(WishItem).options(sil(WishItem.product)).where(WishItem.wish_id == wish.id)
     )
     items_full = res.scalars().all()
+
+    # Гейт ФЭО (владелец, 2026-08-11): /convert — отдельный путь создания закупок
+    # мимо _distribute_wish_to_purchases (см. комментарий про «Дефект» ниже про
+    # тот же паразитный дубль для «ТЗ не выше плана»/превышения ФЭО) — тем же
+    # общим хелпером закрываем и его. См. docstring _ensure_feo_categories_assigned.
+    await _ensure_feo_categories_assigned(wish, [it for it in items_full if _is_meaningful_item(it)], db)
 
     # W2-гейт в основном пути /convert
     await _ensure_needed_dates(wish, db, items_full)

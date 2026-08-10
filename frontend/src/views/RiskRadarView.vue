@@ -288,7 +288,7 @@ watch(() => loading.value, (val, prev) => {
     if (critical.length > 0) {
       toast.error(
         `Обнаружены критические риски: ${critical.map(s => s.label).join(', ')}`,
-        6000
+        { duration: 6000 }
       )
       hasShownCriticalToast = true
     }

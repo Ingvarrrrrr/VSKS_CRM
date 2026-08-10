@@ -751,11 +751,6 @@
       </v-card>
     </v-dialog>
 
-    <!-- Snackbar -->
-    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" location="bottom right">
-      {{ snack.text }}
-    </v-snackbar>
-
     <!-- Guard dialog -->
     <v-dialog v-model="guardDialog.show" max-width="480">
       <v-card>
@@ -1418,6 +1413,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
+import { useToast, type ToastType } from '@/composables/useToast'
 import { addResizeHandles, restoreTableWidths } from '@/composables/useTableResize'
 import FileDropZone from '@/components/FileDropZone.vue'
 import { useColumnConfig, type ColumnDef, type FilterValue } from '@/composables/useColumnConfig'
@@ -1860,7 +1856,10 @@ const contractorsForFilter = computed(() => {
 const expanded = ref<string[]>([])
 const selectedOrders = ref<Purchase[]>([])
 
-const snack = reactive({ show: false, text: '', color: 'success' })
+// Snackbar — единый механизм (useToast + ToastContainer, смонтирован в App.vue).
+// duration=0 по умолчанию: результат действия (смена статуса, удаление и т.п.)
+// не должен исчезать сам, пока пользователь не прочитал и не закрыл.
+const toast = useToast()
 
 // ---------------------------------------------------------------------------
 // Saved filter presets
@@ -1914,7 +1913,7 @@ const deleteDialog = reactive({
   show: false, single: null as Purchase | null, bulk: false, deleting: false,
 })
 
-const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
+const showSnack = (text: string, color: ToastType = 'success') => { toast.addToast(text, color) }
 
 const effectivePrice = (item: Purchase): number | null => {
   switch (item.status) {

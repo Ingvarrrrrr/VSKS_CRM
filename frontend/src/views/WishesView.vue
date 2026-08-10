@@ -1829,19 +1829,13 @@
       </v-card>
     </v-dialog>
 
-    <!-- Snackbar -->
-    <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="snackbarColor === 'error' ? -1 : 4000" location="bottom right">
-      {{ snackbarText }}
-      <template #actions>
-        <v-btn variant="text" @click="snackbar = false">Закрыть</v-btn>
-      </template>
-    </v-snackbar>
   </v-container>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useUndoRedo } from '@/composables/useUndoRedo'
+import { useToast, type ToastType } from '@/composables/useToast'
 import { refreshMyPendingApprovals } from '@/composables/useApprovalsBadge'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
@@ -2746,15 +2740,14 @@ const kanbanItems = ref<any[]>([])
 const downloadingServiceNoteId = ref<number | null>(null)
 const downloadingExcelId = ref<number | null>(null)
 
-// Snackbar
-const snackbar = ref(false)
-const snackbarText = ref('')
-const snackbarColor = ref('success')
+// Snackbar — единый механизм (useToast + ToastContainer, смонтирован в App.vue).
+// По умолчанию уведомление НЕ исчезает само (duration=0): результат действия
+// пользователя (согласование, сохранение, ошибка) должен быть прочитан, а не
+// пропасть за 3-4 секунды. Стек не затирает предыдущие — новые тосты копятся.
+const toast = useToast()
 
-function showSnack(text: string, color = 'success') {
-  snackbarText.value = text
-  snackbarColor.value = color
-  snackbar.value = true
+function showSnack(text: string, color: ToastType = 'success') {
+  toast.addToast(text, color)
 }
 
 // «Не определена» — парковка категории заявки (вызывается из @pick-unallocated каскада)

@@ -7,11 +7,22 @@
           :key="toast.id"
           class="toast-item"
           :class="'toast-' + toast.type"
-          @click="removeToast(toast.id)"
         >
           <v-icon :icon="iconMap[toast.type]" size="20" class="toast-icon" />
           <span class="toast-text">{{ toast.text }}</span>
-          <v-icon icon="mdi-close" size="16" class="toast-close" />
+          <div class="toast-actions">
+            <button
+              v-if="toast.actionText"
+              type="button"
+              class="toast-btn toast-btn-action"
+              @click="handleAction(toast)"
+            >{{ toast.actionText }}</button>
+            <button
+              type="button"
+              class="toast-btn toast-btn-close"
+              @click="removeToast(toast.id)"
+            >Закрыть</button>
+          </div>
         </div>
       </TransitionGroup>
     </div>
@@ -19,7 +30,7 @@
 </template>
 
 <script setup lang="ts">
-import { useToast } from '../composables/useToast'
+import { useToast, type Toast } from '../composables/useToast'
 
 const { toasts, removeToast } = useToast()
 
@@ -28,6 +39,11 @@ const iconMap: Record<string, string> = {
   error: 'mdi-alert-circle',
   info: 'mdi-information',
   warning: 'mdi-alert',
+}
+
+function handleAction(toast: Toast) {
+  toast.onAction?.()
+  removeToast(toast.id)
 }
 </script>
 
@@ -41,18 +57,17 @@ const iconMap: Record<string, string> = {
   flex-direction: column;
   gap: 8px;
   pointer-events: none;
-  max-width: 400px;
+  max-width: 420px;
 }
 
 .toast-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
-  padding: 12px 16px;
+  padding: 12px 14px;
   border-radius: 10px;
   backdrop-filter: blur(12px);
   box-shadow: 0 8px 32px rgba(0,0,0,0.18);
-  cursor: pointer;
   pointer-events: all;
   font-size: 14px;
   font-weight: 500;
@@ -77,14 +92,34 @@ const iconMap: Record<string, string> = {
   color: white;
 }
 
-.toast-icon { flex-shrink: 0; }
-.toast-text { flex: 1; }
-.toast-close {
+.toast-icon { flex-shrink: 0; margin-top: 1px; }
+.toast-text { flex: 1; white-space: pre-line; word-break: break-word; padding-top: 1px; }
+
+.toast-actions {
   flex-shrink: 0;
-  opacity: 0.6;
-  transition: opacity 0.15s;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
 }
-.toast-close:hover { opacity: 1; }
+
+.toast-btn {
+  border: none;
+  background: rgba(255,255,255,0.18);
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 1;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.toast-btn:hover { background: rgba(255,255,255,0.32); }
+.toast-btn-action { background: rgba(255,255,255,0.28); }
+.toast-btn-action:hover { background: rgba(255,255,255,0.42); }
 
 /* TransitionGroup animations */
 .toast-enter-active {

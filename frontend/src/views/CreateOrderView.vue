@@ -3157,14 +3157,6 @@
       @created="onMonthlyStagesCreated"
     />
 
-    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="snack.color === 'error' ? -1 : (snack.actionText ? -1 : 3500)" location="bottom right" multi-line>
-      {{ snack.text }}
-      <template #actions>
-        <v-btn v-if="snack.actionText && snack.onAction" variant="text" @click="snack.onAction?.(); snack.show = false">{{ snack.actionText }}</v-btn>
-        <v-btn variant="text" @click="snack.show = false">Закрыть</v-btn>
-      </template>
-    </v-snackbar>
-
     <!-- Split purchase kanban dialog -->
     <v-dialog v-model="splitKanbanDialog" max-width="1200" scrollable :fullscreen="mobile">
       <v-card>
@@ -4045,6 +4037,7 @@ import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { useContractorsStore } from '@/stores/contractors'
+import { useToast, type ToastType } from '@/composables/useToast'
 import { listContractItems, replaceAllContractItems } from '@/api/contractItems'
 import type { ContractItem } from '@/types/contractItem'
 import { useOrgConfig } from '@/composables/useOrgConfig'
@@ -5277,7 +5270,10 @@ async function confirmDocDownload() {
     await downloadDoc('approval_sheet', parts.length ? `?${parts.join('&')}` : '')
   }
 }
-const snack = reactive({ show: false, text: '', color: 'success', actionText: '' as string, onAction: null as (() => void) | null })
+// Snackbar — единый механизм (useToast + ToastContainer, смонтирован в App.vue).
+// duration=0 по умолчанию: результат действия (смена статуса, сохранение,
+// ошибка) не должен исчезать сам, пока пользователь не прочитал и не закрыл.
+const toast = useToast()
 const itemsEditorRef = ref<any>(null)
 const budgetInfo = ref<{ remaining: number; exceeded: boolean; over: number; limit?: number; spent?: number } | null>(null)
 // Остатки бюджета по ФЭО (по правам: лист всем с view_leaf, уровни выше — view_all_levels)
@@ -6685,12 +6681,12 @@ const monthlyTotal = computed(() => {
 
 const calcMonthlyTotal = () => { /* reactivity trigger — monthlyTotal is computed */ }
 
-const showSnack = (text: string, color = 'success', opts?: { actionText?: string; onAction?: () => void }) => {
-  snack.text = text
-  snack.color = color
-  snack.actionText = opts?.actionText || ''
-  snack.onAction = opts?.onAction || null
-  snack.show = true
+const showSnack = (
+  text: string,
+  color: ToastType = 'success',
+  opts?: { actionText?: string; onAction?: () => void; duration?: number },
+) => {
+  toast.addToast(text, color, opts)
 }
 const formatMoney = (v: number) => v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽'
 const formatSize = (bytes?: number) => !bytes ? '' : bytes > 1048576 ? (bytes / 1048576).toFixed(1) + ' МБ' : (bytes / 1024).toFixed(0) + ' КБ'
@@ -8423,7 +8419,7 @@ const copyDocError = async () => {
   const txt = lines.join('\n')
   try {
     await navigator.clipboard.writeText(txt)
-    showSnack('Текст ошибки скопирован в буфер обмена', 'success')
+    showSnack('Текст ошибки скопирован в буфер обмена', 'success', { duration: 2500 })
   } catch {
     // Fallback для http-контекста или ограничений permission
     try {
@@ -8435,7 +8431,7 @@ const copyDocError = async () => {
       ta.select()
       document.execCommand('copy')
       document.body.removeChild(ta)
-      showSnack('Текст ошибки скопирован', 'success')
+      showSnack('Текст ошибки скопирован', 'success', { duration: 2500 })
     } catch {
       showSnack('Не удалось скопировать. Выделите текст в блоке «Технические детали» и Ctrl+C', 'error')
     }
@@ -8719,7 +8715,7 @@ function openMailtoFree(fr: { name: string; email: string }) {
 
 function copyFreeEmail(fr: { name: string; email: string }) {
   navigator.clipboard.writeText(buildGenericEmail()).then(
-    () => showSnack('Текст письма скопирован'),
+    () => showSnack('Текст письма скопирован', 'success', { duration: 2500 }),
     () => showSnack('Не удалось скопировать', 'error')
   )
 }
@@ -8773,7 +8769,7 @@ function openMailtoForContractor(cid: number) {
 
 function copyContractorEmail(cid: number) {
   navigator.clipboard.writeText(buildContractorEmail(cid)).then(
-    () => showSnack('Текст письма скопирован'),
+    () => showSnack('Текст письма скопирован', 'success', { duration: 2500 }),
     () => showSnack('Не удалось скопировать', 'error')
   )
 }

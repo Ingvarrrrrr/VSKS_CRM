@@ -1007,13 +1007,13 @@
                           <table v-else-if="comparisonData[node.id]" style="width:100%;border-collapse:collapse;font-size:12px">
                             <thead>
                               <tr style="background:#CCFBF1">
-                                <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4" title="Значения берутся из плановых позиций категории; для строк закупок (без своей плановой позиции) сюда попадает то, что выставили на закупку">
-                                  ПЛАН (из плановых)
-                                  <div style="font-weight:400;font-size:9px;color:#94a3b8">для строк закупок — что выставляли на закупку</div>
+                                <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4" title="Строка плана — сама плановая позиция (чип «план»). У строк закупки — два состояния: до заключения договора показано, как товар завели в заявке/ТЗ («как выставили»); после заключения договора — номенклатура, количество и цена подрядчика («как в договоре»). Какое из двух показано — видно по пометке на строке.">
+                                  ТЗ / Договор
+                                  <div style="font-weight:400;font-size:9px;color:#94a3b8">план — своя строка; факт закупки — «как выставили» / «как в договоре»</div>
                                 </th>
-                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Кол-во (план)</th>
-                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Цена (план)</th>
-                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:110px">Сумма (план)</th>
+                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Кол-во</th>
+                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Цена</th>
+                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:110px">Сумма</th>
                                 <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4" title="Реальные закупки, сопоставленные с этой плановой позицией — что действительно куплено или заказано">ФАКТ (из закупок)</th>
                                 <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Кол-во (факт)</th>
                                 <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Цена (факт)</th>
@@ -1045,6 +1045,9 @@
                                         @click="togglePlannedItemFolder(planned.id)"
                                       />
                                       <span>{{ planned.name }}</span>
+                                      <v-chip size="x-small" color="blue-grey" variant="tonal" class="ml-1" style="font-size:9px;height:16px"
+                                        title="Это плановая позиция — она запланирована, а не выставлена в закупку и не приехала по факту"
+                                      >план</v-chip>
                                     </div>
                                     <div v-if="planned.isManual" class="feo-plan-note text-medium-emphasis">
                                       <v-icon icon="mdi-pencil-ruler" size="11" class="mr-1" />ручной план ФЭО — подробного деления в ФЭО не было
@@ -1086,9 +1089,9 @@
                                         @click="deletePlannedItem(planned)"
                                       />
                                     </template>
-                                    <v-btn v-else icon="mdi-pencil" size="x-small" variant="text" color="blue"
-                                      title="Изменить плановое количество и цену за единицу"
-                                      @click="startFeoEdit(node)"
+                                    <v-btn v-else icon="mdi-playlist-plus" size="x-small" variant="text" color="teal"
+                                      title="Завести плановую позицию — именованный товар/услуга вместо строки категории; количество и цена берутся из плана листа, факты привяжутся к ней автоматически"
+                                      @click="openConvertManualPlanToItem(node)"
                                     />
                                   </td>
                                 </tr>
@@ -1097,10 +1100,15 @@
                                   <tr
                                     :data-item-id="actual.purchase_item_id" data-item-group="planned"
                                     style="border-bottom:1px solid #E0F2FE;background:rgba(20,184,166,0.05)">
-                                    <td style="padding:4px 8px"></td>
-                                    <td style="padding:4px 8px"></td>
-                                    <td style="padding:4px 8px"></td>
-                                    <td style="padding:4px 8px"></td>
+                                    <td style="padding:4px 8px 4px 24px;color:#0c4a6e">
+                                      {{ leftGroupInfo(actual).name }}
+                                      <v-chip size="x-small" :color="leftGroupInfo(actual).isContract ? 'indigo' : 'blue-grey'" variant="tonal" class="ml-1" style="font-size:9px;height:16px"
+                                        :title="leftGroupInfo(actual).isContract ? 'Наименование, количество и цена — из договора с подрядчиком' : 'Как товар завели в заявке/ТЗ — до заключения договора'"
+                                      >{{ leftGroupInfo(actual).isContract ? 'как в договоре' : 'как выставили' }}</v-chip>
+                                    </td>
+                                    <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).quantity != null ? `${parseFloat(String(leftGroupInfo(actual).quantity))} ${leftGroupInfo(actual).unit || ''}` : '—' }}</td>
+                                    <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).unitPrice != null ? formatCurrency(leftGroupInfo(actual).unitPrice!) : '—' }}</td>
+                                    <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).total != null ? formatCurrency(leftGroupInfo(actual).total!) : '—' }}</td>
                                     <td style="padding:4px 8px 4px 24px;color:#166534">
                                       <div class="d-flex align-center" style="gap:6px">
                                         <v-btn v-if="(actual.stages?.length || 0) >= 2"
@@ -1147,7 +1155,11 @@
                                     <td style="padding:4px 8px;text-align:center">
                                       <v-icon icon="mdi-check-circle" size="16" color="success" title="Сопоставлено" />
                                     </td>
-                                    <td style="padding:2px;text-align:center">
+                                    <td style="padding:2px;text-align:center;white-space:nowrap">
+                                      <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary"
+                                        :title="actual.wish_id ? 'Позиция из заявки — открыть заявку для редактирования' : 'Редактировать позицию закупки'"
+                                        @click="openReqItemEditFromActual(node, actual)"
+                                      />
                                       <v-btn icon="mdi-link-off" size="x-small" variant="text" color="grey"
                                         title="Снять сопоставление"
                                         @click="() => { mapTarget.value = actual; mapCategoryId.value = node.id; applyMapping(null) }"
@@ -1199,7 +1211,10 @@
                                       @click.stop="photoPreview = { src: actual.product_photo!, title: actual.item_name }">
                                       <v-img :src="actual.product_photo" cover />
                                     </v-avatar>
-                                    <div>{{ actual.item_name }}</div>
+                                    <div>{{ leftGroupInfo(actual).name }}</div>
+                                    <v-chip size="x-small" :color="leftGroupInfo(actual).isContract ? 'indigo' : 'blue-grey'" variant="tonal" style="font-size:9px;height:16px"
+                                      :title="leftGroupInfo(actual).isContract ? 'Наименование, количество и цена — из договора с подрядчиком' : 'Как товар завели в заявке/ТЗ — до заключения договора'"
+                                    >{{ leftGroupInfo(actual).isContract ? 'как в договоре' : 'как выставили' }}</v-chip>
                                   </div>
                                   <a
                                     href="javascript:void(0)"
@@ -1217,9 +1232,9 @@
                                     <v-icon icon="mdi-hand-heart-outline" size="11" class="mr-1" />заявка #{{ actual.wish_id }}
                                   </a>
                                 </td>
-                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
-                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.unit_price ? formatCurrency(actual.unit_price) : '—' }}</td>
-                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.total_price ? formatCurrency(actual.total_price) : '—' }}</td>
+                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).quantity != null ? `${parseFloat(String(leftGroupInfo(actual).quantity))} ${leftGroupInfo(actual).unit || ''}` : '—' }}</td>
+                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).unitPrice != null ? formatCurrency(leftGroupInfo(actual).unitPrice!) : '—' }}</td>
+                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).total != null ? formatCurrency(leftGroupInfo(actual).total!) : '—' }}</td>
                                 <td style="padding:4px 8px;color:#9ca3af;font-style:italic">{{ purchaseStatusLabel(actual.purchase_status) }}</td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
@@ -1231,7 +1246,11 @@
                                     {{ purchaseStatusLabel(actual.purchase_status) }}
                                   </v-chip>
                                 </td>
-                                <td style="padding:2px;text-align:center">
+                                <td style="padding:2px;text-align:center;white-space:nowrap">
+                                  <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary"
+                                    :title="actual.wish_id ? 'Позиция из заявки — открыть заявку для редактирования' : 'Редактировать позицию закупки'"
+                                    @click="openReqItemEditFromActual(node, actual)"
+                                  />
                                   <v-btn v-if="!actual.feo_planned_item_id" icon="mdi-link-variant" size="x-small" variant="text" color="teal"
                                     title="Сопоставить с плановой"
                                     @click="openMapDialog(actual, node.id)"
@@ -1281,10 +1300,15 @@
                               <tr
                                 :data-item-id="actual.purchase_item_id" data-item-group="unplanned"
                                 style="border-bottom:1px solid var(--crm-border);background:rgba(245,158,11,0.06)">
-                                <td style="padding:4px 8px;font-style:italic" class="text-medium-emphasis">—</td>
-                                <td style="padding:4px 8px"></td>
-                                <td style="padding:4px 8px"></td>
-                                <td style="padding:4px 8px"></td>
+                                <td style="padding:4px 8px;color:#0c4a6e">
+                                  {{ leftGroupInfo(actual).name }}
+                                  <v-chip size="x-small" :color="leftGroupInfo(actual).isContract ? 'indigo' : 'blue-grey'" variant="tonal" class="ml-1" style="font-size:9px;height:16px"
+                                    :title="leftGroupInfo(actual).isContract ? 'Наименование, количество и цена — из договора с подрядчиком' : 'Как товар завели в заявке/ТЗ — до заключения договора'"
+                                  >{{ leftGroupInfo(actual).isContract ? 'как в договоре' : 'как выставили' }}</v-chip>
+                                </td>
+                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).quantity != null ? `${parseFloat(String(leftGroupInfo(actual).quantity))} ${leftGroupInfo(actual).unit || ''}` : '—' }}</td>
+                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).unitPrice != null ? formatCurrency(leftGroupInfo(actual).unitPrice!) : '—' }}</td>
+                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).total != null ? formatCurrency(leftGroupInfo(actual).total!) : '—' }}</td>
                                 <td style="padding:4px 8px" class="text-orange-darken-2">
                                   <div class="d-flex align-center" style="gap:6px">
                                     <v-btn v-if="(actual.stages?.length || 0) >= 2"
@@ -1332,7 +1356,11 @@
                                   <v-icon icon="mdi-alert-circle-outline" size="16" color="warning"
                                     title="Товар куплен и поставлен, но не привязан ни к одной плановой позиции — в графу «план» он не засчитан. Нажмите кнопку-ссылку справа «Сопоставить с плановой»." />
                                 </td>
-                                <td style="padding:2px;text-align:center">
+                                <td style="padding:2px;text-align:center;white-space:nowrap">
+                                  <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary"
+                                    :title="actual.wish_id ? 'Позиция из заявки — открыть заявку для редактирования' : 'Редактировать позицию закупки'"
+                                    @click="openReqItemEditFromActual(node, actual)"
+                                  />
                                   <v-btn icon="mdi-link-variant" size="x-small" variant="text" color="teal"
                                     title="Сопоставить с плановой"
                                     @click="openMapDialog(actual, node.id)"
@@ -5508,6 +5536,33 @@ function openReqItemEdit(node: FeoNode, item: FeoReqItem) {
   reqItemEdit.show = true
 }
 
+// Карандаш в строках факта панели «план vs факт» (все три блока) правит ПОЗИЦИЮ
+// ЗАКУПКИ, а не план — задача владельца (2026-08-09, пункт 2). Переиспользует
+// готовый диалог reqItemEdit/saveReqItemEdit выше вместо второго диалога:
+// адаптер собирает совместимый FeoReqItem из FeoActualItem (те же данные под
+// другими именами полей — purchase_item_id → id). Блокировки уже отработаны
+// внутри переиспользуемых функций, второй раз их тут не пишем: позиция из
+// заявки → openReqItemEdit сам делает router.push вместо диалога (см. выше);
+// заморозка ТЗ (TZ_FROZEN_STATUSES) и превышение плана (assert_tz_not_over_plan)
+// → 409 от PATCH /purchases/{id}/items/{id} (backend/app/routers/purchases.py),
+// распаковывается в saveReqItemEdit через e.payload.message/e.detail.
+function openReqItemEditFromActual(node: FeoNode, actual: FeoActualItem) {
+  openReqItemEdit(node, {
+    id: actual.purchase_item_id,
+    item_name: actual.item_name,
+    quantity: actual.quantity ?? 0,
+    unit: actual.unit,
+    unit_price: actual.unit_price ?? 0,
+    total_price: actual.total_price ?? 0,
+    purchase_id: actual.purchase_id,
+    purchase_number: actual.purchase_number,
+    registry_number: actual.registry_number,
+    purchase_status: actual.purchase_status || '',
+    wish_id: actual.wish_id ?? null,
+    category: '', product_type: '',
+  })
+}
+
 async function saveReqItemEdit() {
   if (!reqItemEdit.itemId || !reqItemEdit.purchaseId) return
   reqItemEdit.saving = true
@@ -5704,6 +5759,42 @@ function openAddPlannedItem(categoryId: number) {
     name: '', quantity: null, unit: '', amount: null,
     payment_mode: 'one_time', planned_date: '', monthly_start_date: '',
     months_count: null, monthly_amount: null,
+  }
+  showAddPlannedDialog.value = true
+}
+
+// «Завести плановую позицию» — задача владельца (2026-08-09, пункт 3): у категории
+// с ручным планом (нет ни одной реальной FeoPlannedItem, план задан прямо на
+// листе node.planned_quantity/planned_amount) строка называется именем категории
+// вместо именованного товара («Great Wall POER» ожидалось увидеть, а видно имя
+// категории). Действие создаёт именованную FeoPlannedItem с тем же кол-вом/ценой,
+// что уже показаны в ручном плане листа — node.planned_quantity/planned_amount
+// САМИ НЕ МЕНЯЮТСЯ, а backend/app/services/feo_plan.py::_visit продолжает считать
+// «Плановую сумму» шапки категории ИЗ ЭТИХ ПОЛЕЙ (qty×amt), а не суммой
+// FeoPlannedItem, пока это произведение > 0 — сумма НЕ задваивается. На фронте
+// синтетическая строка (displayPlannedRowsFor) после создания реальной
+// FeoPlannedItem перестаёт отрисовываться сама (real.length > 0), так что и
+// панель не задваивает план. Дедуп по точному совпадению нормализованного имени —
+// на бэкенде (POST /feo-planned-items/, см. докстринг create_planned_item).
+// Имя предзаполняется из единственного привязанного факта, если он ровно один
+// (обычный случай — «ручной план» листа обычно закрыт одной закупкой), иначе из
+// названия категории — пользователь правит перед сохранением. Переиспользует
+// диалог showAddPlannedDialog/plannedItemForm/savePlannedItem — второй диалог не
+// пишем.
+function openConvertManualPlanToItem(node: FeoNode) {
+  const facts = factForPlanned(node.id, -node.id)
+  const prefillName = facts.length === 1 ? facts[0].item_name : node.name
+  const qty = node.planned_quantity != null ? Number(node.planned_quantity) : null
+  const unitPrice = node.planned_amount != null ? Number(node.planned_amount) : null
+  const amount = (qty != null && qty > 0 && unitPrice != null && unitPrice > 0) ? qty * unitPrice : null
+  addPlannedCategoryId.value = node.id
+  plannedItemForm.value = {
+    name: prefillName,
+    quantity: qty,
+    unit: node.unit || '',
+    amount,
+    payment_mode: 'one_time',
+    planned_date: '', monthly_start_date: '', months_count: null, monthly_amount: null,
   }
   showAddPlannedDialog.value = true
 }
@@ -6779,6 +6870,50 @@ function factForPlannedTotal(catId: number, plannedId: number): number {
   // fact_amount — реальный факт (ContractItem/contract_price); total_price (ТЗ) —
   // фолбэк только пока факта ещё нет (см. calcDiff::amountOf — тот же приоритет).
   return factForPlanned(catId, plannedId).reduce((s, a) => s + Number(a.fact_amount ?? a.total_price ?? 0), 0)
+}
+
+// ── Левая группа колонок панели «план vs факт»: ДВА состояния, не «план» ──────
+// Правка владельца (2026-08-09): левая группа у строк ФАКТА — это НЕ план (план —
+// только строка самой плановой позиции, помечена чипом «план»). До заключения
+// договора показываем, как товар завели в заявке/ТЗ (stage 'purchase' в
+// _build_item_stages, backend/app/routers/feo_planned_items.py — снимок
+// PurchaseItem.item_name/quantity/unit_price/total_price); как только появилась
+// договорная позиция — номенклатуру, количество и цену подрядчика (stage
+// 'contract' — ContractItem). Источник — уже загруженный actual.stages, второй
+// запрос/расчёт не делает. Фолбэк на actual.* — на случай отсутствия stages
+// (защитный код: 'purchase' стадия в _build_item_stages есть всегда, но панель
+// не должна показывать пустые клетки, если что-то разошлось).
+interface FeoLeftGroupInfo {
+  name: string
+  quantity: number | null
+  unit: string | null
+  unitPrice: number | null
+  total: number | null
+  isContract: boolean
+}
+function leftGroupInfo(actual: FeoActualItem): FeoLeftGroupInfo {
+  const stages = actual.stages || []
+  const contract = stages.find(s => s.key === 'contract')
+  const purchase = stages.find(s => s.key === 'purchase')
+  const chosen = contract || purchase
+  if (chosen) {
+    return {
+      name: chosen.name || '',
+      quantity: chosen.quantity,
+      unit: chosen.unit,
+      unitPrice: chosen.unit_price,
+      total: chosen.total,
+      isContract: !!contract,
+    }
+  }
+  return {
+    name: actual.item_name,
+    quantity: actual.quantity,
+    unit: actual.unit,
+    unitPrice: actual.unit_price,
+    total: actual.total_price,
+    isContract: false,
+  }
 }
 
 // Строки «Плановые позиции» листа для панели «план vs факт»: реальные FeoPlannedItem

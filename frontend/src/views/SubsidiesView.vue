@@ -1037,12 +1037,15 @@
                                 <tr style="border-bottom:1px solid #E0F2FE">
                                   <td style="padding:4px 8px;color:#0c4a6e">
                                     <div class="d-flex align-center" style="gap:2px">
-                                      <v-btn
+                                      <!-- Требование владельца (2026-08-10): раскрытие не предлагается, если
+                                           у плановой позиции нет ни одной привязанной закупки — раскрывать нечего. -->
+                                      <v-btn v-if="factForPlanned(node.id, planned.id).length"
                                         :icon="expandedPlannedItems.has(planned.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
                                         variant="text" density="compact" size="x-small" color="teal"
                                         title="Показать/скрыть закупки, привязанные к этой плановой позиции"
                                         @click="togglePlannedItemFolder(planned.id)"
                                       />
+                                      <span v-else style="width:24px;display:inline-block" />
                                       <span>{{ planned.name }}</span>
                                       <v-chip size="x-small" color="blue-grey" variant="tonal" class="ml-1" style="font-size:9px;height:16px"
                                         title="Это плановая позиция — она запланирована, а не выставлена в закупку и не приехала по факту"
@@ -1069,15 +1072,21 @@
                                     <span v-if="planned.amount">{{ formatCurrency(planned.amount) }}</span>
                                   </td>
                                   <td colspan="4" style="padding:4px 8px"></td>
+                                  <!-- Требование владельца (2026-08-10): пока к плановой позиции не привязана ни
+                                       одна закупка, «Разница» — прочерк, а НЕ полная плановая сумма (calcDiff
+                                       при пустом факте вернул бы весь план — это не экономия, работа не началась).
+                                       calcDiff/getDiffStyle не переписаны — просто не вызываются без фактов. -->
                                   <td style="padding:4px 8px;text-align:right">
-                                    <span v-if="planned.amount != null" :style="getDiffStyle(planned.amount, factForPlanned(node.id, planned.id))">
+                                    <span v-if="planned.amount != null && factForPlanned(node.id, planned.id).length" :style="getDiffStyle(planned.amount, factForPlanned(node.id, planned.id))">
                                       {{ formatCurrency(calcDiff(planned.amount, factForPlanned(node.id, planned.id))) }}
                                     </span>
+                                    <span v-else-if="planned.amount != null" style="color:#9ca3af">—</span>
                                   </td>
-                                  <td style="padding:4px 8px;color:#9ca3af">—</td>
+                                  <td style="padding:4px 8px;color:#9ca3af">
+                                    <span v-if="factForPlanned(node.id, planned.id).length">—</span>
+                                  </td>
                                   <td style="padding:4px 8px;text-align:center">
                                     <v-icon v-if="factForPlanned(node.id, planned.id).length" icon="mdi-check-circle" size="16" color="success" title="Сопоставлено" />
-                                    <v-chip v-else size="x-small" color="blue" variant="tonal" title="Это плановая строка ФЭО — она запланирована, но ещё не закуплена (не сопоставлена ни с одной закупкой). Не путать со статусом закупки «План закупок».">Плановая позиция</v-chip>
                                   </td>
                                   <td style="padding:2px;text-align:center">
                                     <template v-if="!planned.isManual">
@@ -1096,20 +1105,19 @@
                                     />
                                   </td>
                                 </tr>
-                                <!-- Раскрывающийся блок плановой позиции (требование владельца 2026-08-09):
-                                     под одной плановой позицией может висеть несколько закупок («покупаю по
-                                     одной машине в каждой закупке») — раскрывается ВСЕГДА, не только когда
-                                     уже есть привязанные факты; пустая — понятная подсказка. Своя вложенная
-                                     таблица со своей шапкой (см. factStageHeaderFor/leftGroupInfo) — ровно
-                                     одна стадия, если все закупки позиции на ней, иначе нейтральный заголовок
-                                     и стадия подписана на каждой строке (пометка «как выставили»/«как в
-                                     договоре» уже есть на строке). -->
-                                <tr v-if="expandedPlannedItems.has(planned.id)">
+                                <!-- Раскрывающийся блок плановой позиции: под одной плановой позицией может
+                                     висеть несколько закупок («покупаю по одной машине в каждой закупке»).
+                                     Правка владельца (2026-08-10): раскрытие БОЛЬШЕ НЕ предлагается, если
+                                     фактов нет вовсе — раскрывать нечего (кнопка-шеврон уже скрыта выше);
+                                     доп. guard на factForPlanned здесь — на случай, если планово-позиция была
+                                     раскрыта ДО того, как её единственную закупку отвязали (expandedPlannedItems
+                                     переживает это в localStorage). Своя вложенная таблица со своей шапкой
+                                     (см. factStageHeaderFor/leftGroupInfo) — ровно одна стадия, если все
+                                     закупки позиции на ней, иначе нейтральный заголовок и стадия подписана
+                                     на каждой строке (пометка «как выставили»/«как в договоре» уже есть на строке). -->
+                                <tr v-if="expandedPlannedItems.has(planned.id) && factForPlanned(node.id, planned.id).length">
                                   <td colspan="12" style="padding:4px 8px 10px 32px;background:rgba(20,184,166,0.03)">
-                                    <div v-if="!factForPlanned(node.id, planned.id).length" class="text-medium-emphasis" style="font-style:italic;font-size:11px;padding:6px 4px">
-                                      По этой плановой позиции закупок пока нет.
-                                    </div>
-                                    <table v-else style="width:100%;border-collapse:collapse;font-size:12px">
+                                    <table style="width:100%;border-collapse:collapse;font-size:12px">
                                       <thead>
                                         <tr style="background:#E0F2FE">
                                           <th style="padding:4px 8px;text-align:left;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD" :title="factStageHeaderFor(node.id, planned.id) === 'Позиция закупки' ? 'Закупки этой плановой позиции сейчас на разных стадиях — стадия каждой подписана на её строке' : ''">
@@ -1462,11 +1470,14 @@
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
+                                <!-- Требование владельца (2026-08-10): фактическая часть ИТОГО наполняется,
+                                     только если факт есть хоть у одной строки категории; плановая часть —
+                                     всегда (см. td выше). -->
                                 <td style="padding:4px 8px;text-align:right">
-                                  {{ formatCurrency(comparisonFactTotal(node.id)) }}
+                                  <span v-if="actualFactFor(node.id).length">{{ formatCurrency(comparisonFactTotal(node.id)) }}</span>
                                 </td>
                                 <td style="padding:4px 8px;text-align:right">
-                                  <span :class="comparisonPlanTotal(node) >= comparisonFactTotal(node.id) ? 'text-success' : 'text-error'">
+                                  <span v-if="actualFactFor(node.id).length" :class="comparisonPlanTotal(node) >= comparisonFactTotal(node.id) ? 'text-success' : 'text-error'">
                                     {{ formatCurrency(comparisonPlanTotal(node) - comparisonFactTotal(node.id)) }}
                                   </span>
                                 </td>

@@ -1007,13 +1007,12 @@
                           <table v-else-if="comparisonData[node.id]" style="width:100%;border-collapse:collapse;font-size:12px">
                             <thead>
                               <tr style="background:#CCFBF1">
-                                <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4" title="Строка плана — сама плановая позиция (чип «план»). У строк закупки — два состояния: до заключения договора показано, как товар завели в заявке/ТЗ («как выставили»); после заключения договора — номенклатура, количество и цена подрядчика («как в договоре»). Какое из двух показано — видно по пометке на строке.">
-                                  ТЗ / Договор
-                                  <div style="font-weight:400;font-size:9px;color:#94a3b8">план — своя строка; факт закупки — «как выставили» / «как в договоре»</div>
+                                <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4" title="Плановая позиция. Закупки, привязанные к ней (как выставили в закупку / как в договоре — по стадии), — в раскрывающемся блоке под строкой плана.">
+                                  Позиция плана
                                 </th>
-                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Кол-во</th>
-                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Цена</th>
-                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:110px">Сумма</th>
+                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Кол-во плана</th>
+                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Цена плана</th>
+                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:110px">Сумма плана</th>
                                 <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4" title="Реальные закупки, сопоставленные с этой плановой позицией — что действительно куплено или заказано">ФАКТ (из закупок)</th>
                                 <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Кол-во (факт)</th>
                                 <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Цена (факт)</th>
@@ -1038,10 +1037,10 @@
                                 <tr style="border-bottom:1px solid #E0F2FE">
                                   <td style="padding:4px 8px;color:#0c4a6e">
                                     <div class="d-flex align-center" style="gap:2px">
-                                      <v-btn v-if="factForPlanned(node.id, planned.id).length"
+                                      <v-btn
                                         :icon="expandedPlannedItems.has(planned.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
                                         variant="text" density="compact" size="x-small" color="teal"
-                                        title="Показать/скрыть привязанные позиции заявок"
+                                        title="Показать/скрыть закупки, привязанные к этой плановой позиции"
                                         @click="togglePlannedItemFolder(planned.id)"
                                       />
                                       <span>{{ planned.name }}</span>
@@ -1051,6 +1050,13 @@
                                     </div>
                                     <div v-if="planned.isManual" class="feo-plan-note text-medium-emphasis">
                                       <v-icon icon="mdi-pencil-ruler" size="11" class="mr-1" />ручной план ФЭО — подробного деления в ФЭО не было
+                                    </div>
+                                    <!-- Разбор плана (требование владельца 2026-08-09): сколько уже разобрано
+                                         этой плановой позиции — и в штуках, и в деньгах, остаток тем же образом.
+                                         Штуки — только если у плана вообще задано количество (planned.quantity),
+                                         иначе у плана нет множителя количества и писать «из N шт» нечего. -->
+                                    <div v-if="planned.amount != null" class="text-medium-emphasis" style="font-size:10px;line-height:1.3;white-space:normal">
+                                      {{ planBreakdownText(node.id, planned) }}
                                     </div>
                                   </td>
                                   <td style="padding:4px 8px;text-align:right;color:#64748b">
@@ -1062,12 +1068,7 @@
                                   <td style="padding:4px 8px;text-align:right;color:#64748b">
                                     <span v-if="planned.amount">{{ formatCurrency(planned.amount) }}</span>
                                   </td>
-                                  <td colspan="4" style="padding:4px 8px">
-                                    <v-chip v-if="factForPlanned(node.id, planned.id).length" size="x-small" color="teal" variant="tonal"
-                                      style="cursor:pointer" @click="togglePlannedItemFolder(planned.id)"
-                                    >заявок: {{ factForPlanned(node.id, planned.id).length }} на сумму {{ formatCurrency(factForPlannedTotal(node.id, planned.id)) }}</v-chip>
-                                    <span v-else class="text-medium-emphasis" style="font-style:italic">ещё не сопоставлено</span>
-                                  </td>
+                                  <td colspan="4" style="padding:4px 8px"></td>
                                   <td style="padding:4px 8px;text-align:right">
                                     <span v-if="planned.amount != null" :style="getDiffStyle(planned.amount, factForPlanned(node.id, planned.id))">
                                       {{ formatCurrency(calcDiff(planned.amount, factForPlanned(node.id, planned.id))) }}
@@ -1095,103 +1096,138 @@
                                     />
                                   </td>
                                 </tr>
-                                <template v-if="expandedPlannedItems.has(planned.id)">
-                                  <template v-for="actual in factForPlanned(node.id, planned.id)" :key="`pa-${actual.purchase_item_id}`">
-                                  <tr
-                                    :data-item-id="actual.purchase_item_id" data-item-group="planned"
-                                    style="border-bottom:1px solid #E0F2FE;background:rgba(20,184,166,0.05)">
-                                    <td style="padding:4px 8px 4px 24px;color:#0c4a6e">
-                                      {{ leftGroupInfo(actual).name }}
-                                      <v-chip size="x-small" :color="leftGroupInfo(actual).isContract ? 'indigo' : 'blue-grey'" variant="tonal" class="ml-1" style="font-size:9px;height:16px"
-                                        :title="leftGroupInfo(actual).isContract ? 'Наименование, количество и цена — из договора с подрядчиком' : 'Как товар завели в заявке/ТЗ — до заключения договора'"
-                                      >{{ leftGroupInfo(actual).isContract ? 'как в договоре' : 'как выставили' }}</v-chip>
-                                    </td>
-                                    <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).quantity != null ? `${parseFloat(String(leftGroupInfo(actual).quantity))} ${leftGroupInfo(actual).unit || ''}` : '—' }}</td>
-                                    <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).unitPrice != null ? formatCurrency(leftGroupInfo(actual).unitPrice!) : '—' }}</td>
-                                    <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).total != null ? formatCurrency(leftGroupInfo(actual).total!) : '—' }}</td>
-                                    <td style="padding:4px 8px 4px 24px;color:#166534">
-                                      <div class="d-flex align-center" style="gap:6px">
-                                        <v-btn v-if="(actual.stages?.length || 0) >= 2"
-                                          :icon="expandedStageRows.has(`pa-${actual.purchase_item_id}`) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
-                                          variant="text" density="compact" size="x-small" color="teal"
-                                          title="Показать стадии уточнения позиции"
-                                          @click.stop="toggleStageRow(`pa-${actual.purchase_item_id}`)"
-                                        />
-                                        <v-avatar v-if="actual.product_photo" size="24" rounded class="flex-shrink-0" style="cursor:pointer"
-                                          @click.stop="photoPreview = { src: actual.product_photo!, title: actual.item_name }">
-                                          <v-img :src="actual.product_photo" cover />
-                                        </v-avatar>
-                                        <div>{{ actual.item_name }}</div>
-                                      </div>
-                                      <a
-                                        href="javascript:void(0)"
-                                        class="feo-purchase-link"
-                                        :title="`Перейти в закупку #${actual.purchase_id}`"
-                                        @click.stop="router.push(`/orders/${actual.purchase_id}`)"
-                                      >
-                                        <v-icon icon="mdi-link-variant" size="11" class="mr-1" />
-                                        {{ actual.registry_number || (actual.purchase_number != null ? `№ ${actual.purchase_number}` : `Закупка #${actual.purchase_id}`) }}
-                                      </a>
-                                      <a v-if="actual.wish_id" href="javascript:void(0)" class="feo-purchase-link ml-2"
-                                        title="Перейти к заявкам"
-                                        @click.stop="router.push('/wishes')"
-                                      >
-                                        <v-icon icon="mdi-hand-heart-outline" size="11" class="mr-1" />заявка #{{ actual.wish_id }}
-                                      </a>
-                                    </td>
-                                    <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
-                                    <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.unit_price ? formatCurrency(actual.unit_price) : '—' }}</td>
-                                    <td style="padding:4px 8px;text-align:right;font-weight:500">
-                                      <template v-if="actual.fact_amount != null">
-                                        <span :title="actual.fact_allocated ? 'Распределено пропорционально между позициями закупки' : ''">{{ formatCurrency(actual.fact_amount) }}</span>
-                                        <v-chip v-if="!actual.fact_confirmed" size="x-small" variant="tonal" color="warning" class="ml-1" style="font-size:9px;height:16px"
-                                          title="Сумма по договору — закрывающими документами (актом приёмки) ещё не подтверждена"
-                                        >по договору</v-chip>
-                                      </template>
-                                      <span v-else class="text-medium-emphasis" style="font-style:italic;font-weight:400">{{ purchaseStatusLabel(actual.purchase_status) }}</span>
-                                    </td>
-                                    <td style="padding:4px 8px"></td>
-                                    <td style="padding:4px 8px;color:#64748b;font-size:11px">{{ actual.contractor_name || '—' }}</td>
-                                    <td style="padding:4px 8px;text-align:center">
-                                      <v-icon icon="mdi-check-circle" size="16" color="success" title="Сопоставлено" />
-                                    </td>
-                                    <td style="padding:2px;text-align:center;white-space:nowrap">
-                                      <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary"
-                                        :title="actual.wish_id ? 'Позиция из заявки — открыть заявку для редактирования' : 'Редактировать позицию закупки'"
-                                        @click="openReqItemEditFromActual(node, actual)"
-                                      />
-                                      <v-btn icon="mdi-link-off" size="x-small" variant="text" color="grey"
-                                        title="Снять сопоставление"
-                                        @click="() => { mapTarget.value = actual; mapCategoryId.value = node.id; applyMapping(null) }"
-                                      />
-                                    </td>
-                                  </tr>
-                                  <!-- Подстроки стадий уточнения (справочно, НЕ входят в comparisonPlanTotal/comparisonFactTotal) -->
-                                  <template v-if="expandedStageRows.has(`pa-${actual.purchase_item_id}`)">
-                                  <tr v-for="sr in stagesWithDiff(actual.stages)" :key="`pa-stage-${actual.purchase_item_id}-${sr.stage.key}`"
-                                    style="border-bottom:1px solid #E0F2FE;background:rgba(20,184,166,0.09)">
-                                    <td style="padding:2px 8px 2px 40px;color:#94a3b8;font-size:10px">{{ sr.stage.label }}</td>
-                                    <td style="padding:2px 8px"></td>
-                                    <td style="padding:2px 8px"></td>
-                                    <td style="padding:2px 8px"></td>
-                                    <td style="padding:2px 8px" :style="sr.nameChanged ? 'color:#4F46E5' : ''">{{ sr.stage.name }}</td>
-                                    <td style="padding:2px 8px;text-align:right;color:#64748b">
-                                      {{ sr.stage.quantity != null ? `${parseFloat(String(sr.stage.quantity))} ${sr.stage.unit || ''}` : '—' }}
-                                      <div v-if="sr.qtyDeltaLabel" style="font-size:10px" :style="`color:${sr.qtyDeltaColor}`">{{ sr.qtyDeltaLabel }}</div>
-                                    </td>
-                                    <td style="padding:2px 8px;text-align:right;color:#64748b">
-                                      {{ sr.stage.unit_price != null ? formatCurrency(sr.stage.unit_price) : '—' }}
-                                      <div v-if="sr.priceDeltaLabel" style="font-size:10px" :style="`color:${sr.priceDeltaColor}`">{{ sr.priceDeltaLabel }}</div>
-                                    </td>
-                                    <td style="padding:2px 8px;text-align:right;color:#64748b">{{ sr.stage.total != null ? formatCurrency(sr.stage.total) : '—' }}</td>
-                                    <td style="padding:2px 8px"></td>
-                                    <td style="padding:2px 8px"></td>
-                                    <td style="padding:2px 8px"></td>
-                                    <td style="padding:2px 8px"></td>
-                                  </tr>
-                                  </template>
-                                  </template>
-                                </template>
+                                <!-- Раскрывающийся блок плановой позиции (требование владельца 2026-08-09):
+                                     под одной плановой позицией может висеть несколько закупок («покупаю по
+                                     одной машине в каждой закупке») — раскрывается ВСЕГДА, не только когда
+                                     уже есть привязанные факты; пустая — понятная подсказка. Своя вложенная
+                                     таблица со своей шапкой (см. factStageHeaderFor/leftGroupInfo) — ровно
+                                     одна стадия, если все закупки позиции на ней, иначе нейтральный заголовок
+                                     и стадия подписана на каждой строке (пометка «как выставили»/«как в
+                                     договоре» уже есть на строке). -->
+                                <tr v-if="expandedPlannedItems.has(planned.id)">
+                                  <td colspan="12" style="padding:4px 8px 10px 32px;background:rgba(20,184,166,0.03)">
+                                    <div v-if="!factForPlanned(node.id, planned.id).length" class="text-medium-emphasis" style="font-style:italic;font-size:11px;padding:6px 4px">
+                                      По этой плановой позиции закупок пока нет.
+                                    </div>
+                                    <table v-else style="width:100%;border-collapse:collapse;font-size:12px">
+                                      <thead>
+                                        <tr style="background:#E0F2FE">
+                                          <th style="padding:4px 8px;text-align:left;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD" :title="factStageHeaderFor(node.id, planned.id) === 'Позиция закупки' ? 'Закупки этой плановой позиции сейчас на разных стадиях — стадия каждой подписана на её строке' : ''">
+                                            {{ factStageHeaderFor(node.id, planned.id) }}
+                                          </th>
+                                          <th style="padding:4px 8px;text-align:right;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD;width:90px">Кол-во</th>
+                                          <th style="padding:4px 8px;text-align:right;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD;width:90px">Цена</th>
+                                          <th style="padding:4px 8px;text-align:right;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD;width:110px">Сумма</th>
+                                          <th style="padding:4px 8px;text-align:left;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD" title="Реальные закупки, привязанные к этой плановой позиции — что действительно куплено или заказано">ФАКТ (из закупок)</th>
+                                          <th style="padding:4px 8px;text-align:right;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD;width:90px">Кол-во (факт)</th>
+                                          <th style="padding:4px 8px;text-align:right;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD;width:90px">Цена (факт)</th>
+                                          <th style="padding:4px 8px;text-align:right;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD;width:110px">Сумма (факт)</th>
+                                          <th style="padding:4px 8px;text-align:right;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD;width:100px">Разница</th>
+                                          <th style="padding:4px 8px;text-align:left;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD;width:120px">Контрагент</th>
+                                          <th style="padding:4px 8px;text-align:center;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD;width:80px">Статус</th>
+                                          <th style="padding:4px 2px;width:80px;border-bottom:1px solid #BAE6FD"></th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        <template v-for="actual in factForPlanned(node.id, planned.id)" :key="`pa-${actual.purchase_item_id}`">
+                                        <tr
+                                          :data-item-id="actual.purchase_item_id" data-item-group="planned"
+                                          style="border-bottom:1px solid #E0F2FE;background:rgba(20,184,166,0.05)">
+                                          <td style="padding:4px 8px;color:#0c4a6e">
+                                            {{ leftGroupInfo(actual).name }}
+                                            <v-chip size="x-small" :color="leftGroupInfo(actual).isContract ? 'indigo' : 'blue-grey'" variant="tonal" class="ml-1" style="font-size:9px;height:16px"
+                                              :title="leftGroupInfo(actual).isContract ? 'Наименование, количество и цена — из договора с подрядчиком' : 'Как товар завели в заявке/ТЗ — до заключения договора'"
+                                            >{{ leftGroupInfo(actual).isContract ? 'как в договоре' : 'как выставили' }}</v-chip>
+                                          </td>
+                                          <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).quantity != null ? `${parseFloat(String(leftGroupInfo(actual).quantity))} ${leftGroupInfo(actual).unit || ''}` : '—' }}</td>
+                                          <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).unitPrice != null ? formatCurrency(leftGroupInfo(actual).unitPrice!) : '—' }}</td>
+                                          <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).total != null ? formatCurrency(leftGroupInfo(actual).total!) : '—' }}</td>
+                                          <td style="padding:4px 8px 4px 24px;color:#166534">
+                                            <div class="d-flex align-center" style="gap:6px">
+                                              <v-btn v-if="(actual.stages?.length || 0) >= 2"
+                                                :icon="expandedStageRows.has(`pa-${actual.purchase_item_id}`) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
+                                                variant="text" density="compact" size="x-small" color="teal"
+                                                title="Показать стадии уточнения позиции"
+                                                @click.stop="toggleStageRow(`pa-${actual.purchase_item_id}`)"
+                                              />
+                                              <v-avatar v-if="actual.product_photo" size="24" rounded class="flex-shrink-0" style="cursor:pointer"
+                                                @click.stop="photoPreview = { src: actual.product_photo!, title: actual.item_name }">
+                                                <v-img :src="actual.product_photo" cover />
+                                              </v-avatar>
+                                              <div>{{ actual.item_name }}</div>
+                                            </div>
+                                            <a
+                                              href="javascript:void(0)"
+                                              class="feo-purchase-link"
+                                              :title="`Перейти в закупку #${actual.purchase_id}`"
+                                              @click.stop="router.push(`/orders/${actual.purchase_id}`)"
+                                            >
+                                              <v-icon icon="mdi-link-variant" size="11" class="mr-1" />
+                                              {{ actual.registry_number || (actual.purchase_number != null ? `№ ${actual.purchase_number}` : `Закупка #${actual.purchase_id}`) }}
+                                            </a>
+                                            <a v-if="actual.wish_id" href="javascript:void(0)" class="feo-purchase-link ml-2"
+                                              title="Перейти к заявкам"
+                                              @click.stop="router.push('/wishes')"
+                                            >
+                                              <v-icon icon="mdi-hand-heart-outline" size="11" class="mr-1" />заявка #{{ actual.wish_id }}
+                                            </a>
+                                          </td>
+                                          <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
+                                          <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.unit_price ? formatCurrency(actual.unit_price) : '—' }}</td>
+                                          <td style="padding:4px 8px;text-align:right;font-weight:500">
+                                            <template v-if="actual.fact_amount != null">
+                                              <span :title="actual.fact_allocated ? 'Распределено пропорционально между позициями закупки' : ''">{{ formatCurrency(actual.fact_amount) }}</span>
+                                              <v-chip v-if="!actual.fact_confirmed" size="x-small" variant="tonal" color="warning" class="ml-1" style="font-size:9px;height:16px"
+                                                title="Сумма по договору — закрывающими документами (актом приёмки) ещё не подтверждена"
+                                              >по договору</v-chip>
+                                            </template>
+                                            <span v-else class="text-medium-emphasis" style="font-style:italic;font-weight:400">{{ purchaseStatusLabel(actual.purchase_status) }}</span>
+                                          </td>
+                                          <td style="padding:4px 8px"></td>
+                                          <td style="padding:4px 8px;color:#64748b;font-size:11px">{{ actual.contractor_name || '—' }}</td>
+                                          <td style="padding:4px 8px;text-align:center">
+                                            <v-icon icon="mdi-check-circle" size="16" color="success" title="Сопоставлено" />
+                                          </td>
+                                          <td style="padding:2px;text-align:center;white-space:nowrap">
+                                            <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary"
+                                              :title="actual.wish_id ? 'Позиция из заявки — открыть заявку для редактирования' : 'Редактировать позицию закупки'"
+                                              @click="openReqItemEditFromActual(node, actual)"
+                                            />
+                                            <v-btn icon="mdi-link-off" size="x-small" variant="text" color="grey"
+                                              title="Снять сопоставление"
+                                              @click="() => { mapTarget.value = actual; mapCategoryId.value = node.id; applyMapping(null) }"
+                                            />
+                                          </td>
+                                        </tr>
+                                        <!-- Подстроки стадий уточнения (справочно, НЕ входят в comparisonPlanTotal/comparisonFactTotal) -->
+                                        <template v-if="expandedStageRows.has(`pa-${actual.purchase_item_id}`)">
+                                        <tr v-for="sr in stagesWithDiff(actual.stages)" :key="`pa-stage-${actual.purchase_item_id}-${sr.stage.key}`"
+                                          style="border-bottom:1px solid #E0F2FE;background:rgba(20,184,166,0.09)">
+                                          <td style="padding:2px 8px 2px 40px;color:#94a3b8;font-size:10px">{{ sr.stage.label }}</td>
+                                          <td style="padding:2px 8px"></td>
+                                          <td style="padding:2px 8px"></td>
+                                          <td style="padding:2px 8px"></td>
+                                          <td style="padding:2px 8px" :style="sr.nameChanged ? 'color:#4F46E5' : ''">{{ sr.stage.name }}</td>
+                                          <td style="padding:2px 8px;text-align:right;color:#64748b">
+                                            {{ sr.stage.quantity != null ? `${parseFloat(String(sr.stage.quantity))} ${sr.stage.unit || ''}` : '—' }}
+                                            <div v-if="sr.qtyDeltaLabel" style="font-size:10px" :style="`color:${sr.qtyDeltaColor}`">{{ sr.qtyDeltaLabel }}</div>
+                                          </td>
+                                          <td style="padding:2px 8px;text-align:right;color:#64748b">
+                                            {{ sr.stage.unit_price != null ? formatCurrency(sr.stage.unit_price) : '—' }}
+                                            <div v-if="sr.priceDeltaLabel" style="font-size:10px" :style="`color:${sr.priceDeltaColor}`">{{ sr.priceDeltaLabel }}</div>
+                                          </td>
+                                          <td style="padding:2px 8px;text-align:right;color:#64748b">{{ sr.stage.total != null ? formatCurrency(sr.stage.total) : '—' }}</td>
+                                          <td style="padding:2px 8px"></td>
+                                          <td style="padding:2px 8px"></td>
+                                          <td style="padding:2px 8px"></td>
+                                          <td style="padding:2px 8px"></td>
+                                        </tr>
+                                        </template>
+                                        </template>
+                                      </tbody>
+                                    </table>
+                                  </td>
+                                </tr>
                               </template>
 
                               <!-- Плановые из закупок: подтверждённые, но ещё не поставленные (план закупок … заказано) -->
@@ -4144,6 +4180,7 @@ interface FeoDisplayPrefs {
   expandedIds?: number[]
   expandedReqItems?: number[]
   expandedItemPanels?: number[]
+  expandedPlannedItems?: number[]
 }
 function loadFeoDisplayPrefs(): FeoDisplayPrefs {
   try {
@@ -5123,7 +5160,9 @@ function togglePurchaseFolder(pid: number) {
 
 // Раскрытие позиций закупок, привязанных к конкретной плановой позиции (Ур.5) в панели
 // «план vs факт» (по умолчанию свёрнуто — см. факт-строки под плановой в comparisonData).
-const expandedPlannedItems = ref<Set<number>>(new Set())
+// Персистится в FEO_DISPLAY_PREFS_KEY наравне с остальными настройками дерева (требование
+// владельца 2026-08-09) — см. saveFeoDisplayPrefs/watch ниже.
+const expandedPlannedItems = ref<Set<number>>(new Set(feoDisplayPrefs.expandedPlannedItems || []))
 function togglePlannedItemFolder(plannedId: number) {
   if (expandedPlannedItems.value.has(plannedId)) expandedPlannedItems.value.delete(plannedId)
   else expandedPlannedItems.value.add(plannedId)
@@ -6565,9 +6604,9 @@ watch(plannedBase, () => {
 })
 
 // Сохранение настроек отображения дерева ФЭО (см. FEO_DISPLAY_PREFS_KEY/feoDisplayPrefs
-// в начале файла) — единая точка на все пять настроек, deep:true нужен, т.к. expandedIds/
-// expandedReqItems/expandedItemPanels мутируются на месте (push/add/delete), а не
-// переприсваиваются.
+// в начале файла) — единая точка на все шесть настроек, deep:true нужен, т.к. expandedIds/
+// expandedReqItems/expandedItemPanels/expandedPlannedItems мутируются на месте (push/add/
+// delete), а не переприсваиваются.
 function saveFeoDisplayPrefs() {
   try {
     localStorage.setItem(FEO_DISPLAY_PREFS_KEY, JSON.stringify({
@@ -6576,12 +6615,13 @@ function saveFeoDisplayPrefs() {
       expandedIds: expandedIds.value,
       expandedReqItems: [...expandedReqItems.value],
       expandedItemPanels: [...expandedItemPanels.value],
+      expandedPlannedItems: [...expandedPlannedItems.value],
     } satisfies FeoDisplayPrefs))
   } catch {
     // localStorage недоступен (приватный режим и т.п.) — не критично, просто не персистим
   }
 }
-watch([plannedBase, feoItemsGroupBy, expandedIds, expandedReqItems, expandedItemPanels], saveFeoDisplayPrefs, { deep: true })
+watch([plannedBase, feoItemsGroupBy, expandedIds, expandedReqItems, expandedItemPanels, expandedPlannedItems], saveFeoDisplayPrefs, { deep: true })
 
 function feoResidualBaseFor(node: FeoNode): number {
   return residualBase.value === 'feo' ? feoEffectiveFor(node) : feoPlannedDisplayFor(node)
@@ -6904,6 +6944,45 @@ function leftGroupInfo(actual: FeoActualItem): FeoLeftGroupInfo {
     total: actual.total_price,
     isContract: false,
   }
+}
+
+// ── Шапка вложенной таблицы закупок плановой позиции — ровно одна стадия ──────
+// Требование владельца (2026-08-09), дословно: «если ещё на стадии закупки, то просто
+// "как выставили в закупку", не надо туда дополнять "как в договоре"; когда переместится
+// на стадию договора, то тогда эта надпись меняется на "как в договоре", не нужно
+// дополнять непонятными сущностями». Переиспользует leftGroupInfo (тот же выбор
+// contract/purchase, что и у чипа на строке) — не изобретает вторую логику стадии:
+// все закупки этой плановой позиции на одной стадии → шапка называет ровно её;
+// стадии разные → нейтральное «Позиция закупки», стадия — на каждой строке (чип уже есть).
+function factStageHeaderFor(catId: number, plannedId: number): string {
+  const facts = factForPlanned(catId, plannedId)
+  if (!facts.length) return 'Позиция закупки'
+  const isContractFlags = new Set(facts.map(a => leftGroupInfo(a).isContract))
+  if (isContractFlags.size > 1) return 'Позиция закупки'
+  return isContractFlags.has(true) ? 'Как в договоре' : 'Как выставили в закупку'
+}
+
+// ── Разбор плана на строке плановой позиции («сколько уже разобрано») ─────────
+// Требование владельца (2026-08-09): под одной плановой позицией может висеть НЕСКОЛЬКО
+// закупок («покупаю по одной машине в каждой закупке») — на строке плана нужно видеть,
+// сколько уже взято и сколько осталось, И в штуках, И в деньгах. Деньги считаются той же
+// формулой, что и factForPlannedTotal (fact_amount, фолбэк total_price) — второй источник
+// приоритета не изобретаем. Штуки — Σ actual.quantity (реальное количество позиции закупки,
+// та же колонка «Кол-во (факт)» вложенной таблицы) против planned.quantity; если у плана
+// количество не задано — про штуки не пишем вообще (у плана тогда нет множителя количества).
+function planBreakdownText(catId: number, planned: FeoPlannedItem & { isManual?: boolean }): string {
+  const facts = factForPlanned(catId, planned.id)
+  const amountTotal = Number(planned.amount ?? 0)
+  const amountTaken = factForPlannedTotal(catId, planned.id)
+  const amountRemaining = amountTotal - amountTaken
+  const unit = planned.unit || 'шт'
+  if (planned.quantity != null) {
+    const qtyTotal = Math.round(Number(planned.quantity) * 10000) / 10000
+    const qtyTaken = Math.round(facts.reduce((s, a) => s + Number(a.quantity ?? 0), 0) * 10000) / 10000
+    const qtyRemaining = Math.round((qtyTotal - qtyTaken) * 10000) / 10000
+    return `закуплено ${qtyTaken} из ${qtyTotal} ${unit} · на ${formatCurrency(amountTaken)} из ${formatCurrency(amountTotal)} · остаток ${qtyRemaining} ${unit} и ${formatCurrency(amountRemaining)}`
+  }
+  return `закуплено на ${formatCurrency(amountTaken)} из ${formatCurrency(amountTotal)} · остаток ${formatCurrency(amountRemaining)}`
 }
 
 // Строки «Плановые позиции» листа для панели «план vs факт»: реальные FeoPlannedItem

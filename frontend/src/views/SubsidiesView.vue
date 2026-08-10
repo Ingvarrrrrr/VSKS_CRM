@@ -1014,13 +1014,13 @@
                                 <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Кол-во (план)</th>
                                 <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Цена (план)</th>
                                 <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:110px">Сумма (план)</th>
-                                <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4">ФАКТ (из закупок)</th>
+                                <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4" title="Реальные закупки, сопоставленные с этой плановой позицией — что действительно куплено или заказано">ФАКТ (из закупок)</th>
                                 <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Кол-во (факт)</th>
                                 <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Цена (факт)</th>
                                 <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:110px">Сумма (факт)</th>
-                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:100px">Разница</th>
+                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:100px" title="Плановая сумма минус фактическая по этой строке">Разница</th>
                                 <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:120px">Контрагент</th>
-                                <th style="padding:4px 8px;text-align:center;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:80px">Статус</th>
+                                <th style="padding:4px 8px;text-align:center;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:80px" title="Сопоставлена ли строка плана с реальной закупкой">Статус</th>
                                 <th style="padding:4px 2px;width:80px;border-bottom:1px solid #99F6E4"></th>
                               </tr>
                             </thead>
@@ -1073,7 +1073,7 @@
                                   <td style="padding:4px 8px;color:#9ca3af">—</td>
                                   <td style="padding:4px 8px;text-align:center">
                                     <v-icon v-if="factForPlanned(node.id, planned.id).length" icon="mdi-check-circle" size="16" color="success" title="Сопоставлено" />
-                                    <v-chip v-else size="x-small" color="blue" variant="tonal" title="Запланировано в ФЭО — часть Плана закупок">План закупок</v-chip>
+                                    <v-chip v-else size="x-small" color="blue" variant="tonal" title="Это плановая строка ФЭО — она запланирована, но ещё не закуплена (не сопоставлена ни с одной закупкой). Не путать со статусом закупки «План закупок».">Плановая позиция</v-chip>
                                   </td>
                                   <td style="padding:2px;text-align:center">
                                     <template v-if="!planned.isManual">
@@ -1087,8 +1087,8 @@
                                       />
                                     </template>
                                     <v-btn v-else icon="mdi-pencil" size="x-small" variant="text" color="blue"
-                                      title="Ручной план листа ФЭО правится в самой строке дерева (колонки «Финансирование по ФЭО» / «Плановое кол-во»)"
-                                      @click="startInlineBudget(node)"
+                                      title="Изменить плановое количество и цену за единицу"
+                                      @click="startFeoEdit(node)"
                                     />
                                   </td>
                                 </tr>
@@ -1123,6 +1123,12 @@
                                       >
                                         <v-icon icon="mdi-link-variant" size="11" class="mr-1" />
                                         {{ actual.registry_number || (actual.purchase_number != null ? `№ ${actual.purchase_number}` : `Закупка #${actual.purchase_id}`) }}
+                                      </a>
+                                      <a v-if="actual.wish_id" href="javascript:void(0)" class="feo-purchase-link ml-2"
+                                        title="Перейти к заявкам"
+                                        @click.stop="router.push('/wishes')"
+                                      >
+                                        <v-icon icon="mdi-hand-heart-outline" size="11" class="mr-1" />заявка #{{ actual.wish_id }}
                                       </a>
                                     </td>
                                     <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
@@ -1203,6 +1209,12 @@
                                   >
                                     <v-icon icon="mdi-link-variant" size="11" class="mr-1" />
                                     {{ actual.registry_number || (actual.purchase_number != null ? `№ ${actual.purchase_number}` : `Закупка #${actual.purchase_id}`) }}
+                                  </a>
+                                  <a v-if="actual.wish_id" href="javascript:void(0)" class="feo-purchase-link ml-2"
+                                    title="Перейти к заявкам"
+                                    @click.stop="router.push('/wishes')"
+                                  >
+                                    <v-icon icon="mdi-hand-heart-outline" size="11" class="mr-1" />заявка #{{ actual.wish_id }}
                                   </a>
                                 </td>
                                 <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
@@ -1295,6 +1307,12 @@
                                   >
                                     <v-icon icon="mdi-link-variant" size="11" class="mr-1" />
                                     {{ actual.registry_number || (actual.purchase_number != null ? `№ ${actual.purchase_number}` : `Закупка #${actual.purchase_id}`) }}
+                                  </a>
+                                  <a v-if="actual.wish_id" href="javascript:void(0)" class="feo-purchase-link ml-2"
+                                    title="Перейти к заявкам"
+                                    @click.stop="router.push('/wishes')"
+                                  >
+                                    <v-icon icon="mdi-hand-heart-outline" size="11" class="mr-1" />заявка #{{ actual.wish_id }}
                                   </a>
                                 </td>
                                 <td style="padding:4px 8px;text-align:right" class="text-medium-emphasis">{{ actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
@@ -4937,6 +4955,7 @@ interface FeoActualItem {
   purchase_number: number | null
   registry_number: string | null
   purchase_status: string | null
+  wish_id?: number | null
   contract_number: string | null
   contractor_name: string | null
   product_photo?: string | null

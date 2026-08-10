@@ -44,13 +44,26 @@
         hide-details clearable style="max-width:260px"
       />
       <div class="status-chips">
-        <v-chip
-          v-for="s in statusOptions" :key="s.value"
-          :color="filterStatuses.includes(s.value) ? s.color : 'default'"
-          :variant="filterStatuses.includes(s.value) ? 'flat' : 'outlined'"
-          size="small" class="mr-1 cursor-pointer"
-          @click="toggleStatus(s.value)"
-        >{{ s.label }}</v-chip>
+        <template v-for="s in statusOptions" :key="s.value">
+          <v-tooltip v-if="s.value === 'wishes'" :text="TT.draftChip" location="bottom" max-width="360">
+            <template #activator="{ props: tip }">
+              <v-chip
+                v-bind="tip"
+                :color="filterStatuses.includes(s.value) ? s.color : 'default'"
+                :variant="filterStatuses.includes(s.value) ? 'flat' : 'outlined'"
+                size="small" class="mr-1 cursor-pointer draft-chip"
+                @click="toggleStatus(s.value)"
+              >{{ s.label }}</v-chip>
+            </template>
+          </v-tooltip>
+          <v-chip
+            v-else
+            :color="filterStatuses.includes(s.value) ? s.color : 'default'"
+            :variant="filterStatuses.includes(s.value) ? 'flat' : 'outlined'"
+            size="small" class="mr-1 cursor-pointer"
+            @click="toggleStatus(s.value)"
+          >{{ s.label }}</v-chip>
+        </template>
       </div>
       <v-btn variant="text" size="small" color="grey" @click="resetFilters">Сбросить</v-btn>
     </div>
@@ -62,22 +75,34 @@
         <span class="stat-val">{{ filtered.length }}</span>
       </div>
       <div class="stat-sep" />
-      <div class="stat-item">
-        <span class="stat-label">Итого план</span>
-        <span class="stat-val">{{ fmt(totalPlan) }}</span>
-      </div>
+      <v-tooltip :text="TT.totalPlan" location="bottom" max-width="360">
+        <template #activator="{ props: tip }">
+          <div class="stat-item" v-bind="tip">
+            <span class="stat-label">Итого план <v-icon icon="mdi-information-outline" size="11" class="stat-info-icon" /></span>
+            <span class="stat-val">{{ fmt(totalPlan) }}</span>
+          </div>
+        </template>
+      </v-tooltip>
       <div class="stat-sep" />
-      <div class="stat-item">
-        <span class="stat-label">Итого расчёт</span>
-        <span class="stat-val" style="color:var(--color-contracted)">{{ fmt(totalCalc) }}</span>
-      </div>
+      <v-tooltip :text="TT.totalCalc" location="bottom" max-width="360">
+        <template #activator="{ props: tip }">
+          <div class="stat-item" v-bind="tip">
+            <span class="stat-label">Итого расчёт <v-icon icon="mdi-information-outline" size="11" class="stat-info-icon" /></span>
+            <span class="stat-val" style="color:var(--color-contracted)">{{ fmt(totalCalc) }}</span>
+          </div>
+        </template>
+      </v-tooltip>
       <div class="stat-sep" />
-      <div class="stat-item">
-        <span class="stat-label">Остаток</span>
-        <span class="stat-val" :style="{ color: totalPlan - totalCalc >= 0 ? 'var(--color-savings)' : 'var(--color-paid)' }">
-          {{ fmtSigned(totalPlan - totalCalc) }}
-        </span>
-      </div>
+      <v-tooltip :text="TT.remainder" location="bottom" max-width="360">
+        <template #activator="{ props: tip }">
+          <div class="stat-item" v-bind="tip">
+            <span class="stat-label">Остаток <v-icon icon="mdi-information-outline" size="11" class="stat-info-icon" /></span>
+            <span class="stat-val" :style="{ color: totalPlan - totalCalc >= 0 ? 'var(--color-savings)' : 'var(--color-paid)' }">
+              {{ fmtSigned(totalPlan - totalCalc) }}
+            </span>
+          </div>
+        </template>
+      </v-tooltip>
     </div>
 
     <!-- ── Table ── -->
@@ -109,7 +134,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(p, idx) in filtered" :key="p.id" class="plan-tr" @click="openOrder(p.id)">
+            <tr v-for="(p, idx) in filtered" :key="p.id" class="plan-tr" :class="{ 'plan-tr-draft': isDraft(p) }" @click="openOrder(p.id)">
               <td class="th-num text-medium-emphasis">{{ idx + 1 }}</td>
               <td class="th-name">
                 <div class="plan-name">{{ p.subject || p.item_name || '—' }}</div>
@@ -120,10 +145,12 @@
               <td class="th-money">
                 <span v-if="planAmount(p) > 0">{{ fmt(planAmount(p)) }}</span>
                 <span v-else class="text-medium-emphasis">—</span>
+                <div v-if="isDraft(p) && planAmount(p) > 0" class="draft-note" :title="TT.draftRowNote">справочно, не в плане</div>
               </td>
               <td class="th-money">
                 <span v-if="calcAmount(p) > 0" style="color:var(--color-contracted)">{{ fmt(calcAmount(p)) }}</span>
                 <span v-else class="text-medium-emphasis">—</span>
+                <div v-if="isDraft(p) && calcAmount(p) > 0" class="draft-note" :title="TT.draftRowNote">справочно, не в плане</div>
               </td>
               <td class="th-method">
                 <v-chip v-if="p.purchase_method" size="x-small"
@@ -155,13 +182,31 @@
           <!-- Footer totals -->
           <tfoot v-if="filtered.length > 0">
             <tr class="plan-total">
-              <td colspan="4" class="font-weight-bold pl-3">ИТОГО ({{ filtered.length }} позиций)</td>
-              <td class="th-money font-weight-bold">{{ fmt(totalPlan) }}</td>
-              <td class="th-money font-weight-bold" style="color:var(--color-contracted)">{{ fmt(totalCalc) }}</td>
+              <td colspan="4" class="font-weight-bold pl-3">
+                ИТОГО ({{ filteredForTotals.length }} позиций{{ draftCount > 0 ? `, ещё ${draftCount} черновиков — не в сумме` : '' }})
+              </td>
+              <td class="th-money font-weight-bold">
+                <v-tooltip :text="TT.totalPlan" location="top" max-width="360">
+                  <template #activator="{ props: tip }"><span v-bind="tip">{{ fmt(totalPlan) }}</span></template>
+                </v-tooltip>
+              </td>
+              <td class="th-money font-weight-bold" style="color:var(--color-contracted)">
+                <v-tooltip :text="TT.totalCalc" location="top" max-width="360">
+                  <template #activator="{ props: tip }"><span v-bind="tip">{{ fmt(totalCalc) }}</span></template>
+                </v-tooltip>
+              </td>
               <td />
               <td />
-              <td class="th-money font-weight-bold" style="color:var(--color-contracted)">{{ fmt(totalContracted) }}</td>
-              <td class="th-money font-weight-bold" style="color:var(--color-paid)">{{ fmt(totalPaid) }}</td>
+              <td class="th-money font-weight-bold" style="color:var(--color-contracted)">
+                <v-tooltip :text="TT.totalContracted" location="top" max-width="360">
+                  <template #activator="{ props: tip }"><span v-bind="tip">{{ fmt(totalContracted) }}</span></template>
+                </v-tooltip>
+              </td>
+              <td class="th-money font-weight-bold" style="color:var(--color-paid)">
+                <v-tooltip :text="TT.totalPaid" location="top" max-width="360">
+                  <template #activator="{ props: tip }"><span v-bind="tip">{{ fmt(totalPaid) }}</span></template>
+                </v-tooltip>
+              </td>
               <td colspan="3" />
             </tr>
           </tfoot>
@@ -176,9 +221,14 @@
           <v-icon icon="mdi-history" size="20" color="primary" class="mr-2" />
           Версии плана закупок
         </div>
-        <div class="versions-summary" v-if="versionsList.length > 0">
-          Остаток: <strong>{{ fmtSigned(versionsRemainder) }}</strong>
-        </div>
+        <v-tooltip v-if="versionsList.length > 0" :text="TT.versionsRemainder" location="bottom" max-width="360">
+          <template #activator="{ props: tip }">
+            <div class="versions-summary" v-bind="tip">
+              Остаток: <strong>{{ fmtSigned(versionsRemainder) }}</strong>
+              <v-icon icon="mdi-information-outline" size="11" class="stat-info-icon" />
+            </div>
+          </template>
+        </v-tooltip>
         <v-btn
           color="primary" size="small" variant="flat" prepend-icon="mdi-content-save"
           :loading="saveVersionLoading" @click="openSaveVersionDialog"
@@ -202,8 +252,16 @@
               <th style="width:110px">Дата</th>
               <th>Автор</th>
               <th>Примечание</th>
-              <th class="th-money">Итого план</th>
-              <th class="th-money">Итого расчёт</th>
+              <th class="th-money">
+                <v-tooltip :text="TT.versionPlan" location="top" max-width="360">
+                  <template #activator="{ props: tip }"><span v-bind="tip">Итого план <v-icon icon="mdi-information-outline" size="11" class="stat-info-icon" /></span></template>
+                </v-tooltip>
+              </th>
+              <th class="th-money">
+                <v-tooltip :text="TT.versionCalc" location="top" max-width="360">
+                  <template #activator="{ props: tip }"><span v-bind="tip">Итого расчёт <v-icon icon="mdi-information-outline" size="11" class="stat-info-icon" /></span></template>
+                </v-tooltip>
+              </th>
               <th style="width:80px"></th>
             </tr>
           </thead>
@@ -409,10 +467,16 @@ const filterStatuses  = ref<string[]>([
 ])
 
 // Единый источник цвета/подписи статуса закупки: frontend/src/constants/purchaseStatus.ts
-// 'wishes' сюда намеренно не входит — фильтр плана начинается с plan_schedule (см. filterStatuses выше).
-const statusOptions = PURCHASE_STATUS_ORDER
-  .filter(s => s !== 'wishes')
-  .map(s => ({ value: s, label: purchaseStatusLabel(s), color: purchaseStatusColor(s) }))
+// 'wishes' в общем словаре подписан «Желания», но в контексте плана закупок это черновик заявки,
+// который ещё не дошёл до плана-графика — на этой странице чип подписан «Черновик» (см. правку
+// владельца 2026-08: черновик может быть виден на /plan, но не должен учитываться в суммах, пока
+// не перейдёт в статус plan_schedule). По умолчанию выключен — см. filterStatuses ниже.
+const statusOptions = [
+  ...PURCHASE_STATUS_ORDER
+    .filter(s => s !== 'wishes')
+    .map(s => ({ value: s, label: purchaseStatusLabel(s), color: purchaseStatusColor(s) })),
+  { value: 'wishes', label: 'Черновик', color: purchaseStatusColor('wishes') },
+]
 
 // ── Versions block ──
 const versionsList         = ref<PlanGraphVersion[]>([])
@@ -458,10 +522,53 @@ const calcAmount = (p: Purchase) => {
   return planAmount(p)
 }
 
-const totalPlan       = computed(() => filtered.value.reduce((s, p) => s + planAmount(p), 0))
-const totalCalc       = computed(() => filtered.value.reduce((s, p) => s + calcAmount(p), 0))
-const totalContracted = computed(() => filtered.value.reduce((s, p) => s + Number(p.contract_price || 0), 0))
-const totalPaid       = computed(() => filtered.value.reduce((s, p) => s + Number(p.payment_amount || 0), 0))
+const isDraft = (p: Purchase) => p.status === 'wishes'
+
+// Черновики (status='wishes') видны в таблице, если включён одноимённый чип, но НЕ участвуют
+// в суммах плана закупок — заявка ещё не перешла на стадию «План закупок» (правка владельца).
+const filteredForTotals = computed(() => filtered.value.filter(p => !isDraft(p)))
+const draftCount = computed(() => filtered.value.length - filteredForTotals.value.length)
+
+const totalPlan       = computed(() => filteredForTotals.value.reduce((s, p) => s + planAmount(p), 0))
+const totalCalc       = computed(() => filteredForTotals.value.reduce((s, p) => s + calcAmount(p), 0))
+const totalContracted = computed(() => filteredForTotals.value.reduce((s, p) => s + Number(p.contract_price || 0), 0))
+const totalPaid       = computed(() => filteredForTotals.value.reduce((s, p) => s + Number(p.payment_amount || 0), 0))
+
+// ── Tooltip texts (единый источник — плитки сверху и одноимённые заголовки таблиц используют
+// один и тот же текст, чтобы не разойтись формулировками) ──
+const TT = {
+  totalPlan:
+    'Плановая сумма по закупкам, которые видны в таблице сейчас — берётся из НМЦД (начальной цены закупки). ' +
+    'Считается по текущим фильтрам (статусы, субсидия, год) и меняется при их переключении. ' +
+    'Черновики (статус «Черновик») в эту сумму не входят, даже если чип черновиков включён.',
+  totalCalc:
+    'Расчётная сумма по тем же закупкам: для уже поставленных или оплаченных берётся фактическая сумма ' +
+    '(оплата, а если оплаты ещё нет — цена договора), для остальных — плановая сумма (НМЦД). ' +
+    'Тоже считается по текущим фильтрам. Черновики в эту сумму не входят.',
+  remainder:
+    '«Итого план» минус «Итого расчёт» по закупкам, видимым сейчас в таблице (без черновиков). ' +
+    'Положительное значение — от плана ещё не «израсходовано», отрицательное — расчёт превысил план.',
+  totalContracted:
+    'Сумма по графе «Цена договора» среди видимых закупок (без черновиков) — только те, где договор уже заключён. ' +
+    'Закупки без договора в эту сумму не входят.',
+  totalPaid:
+    'Сумма по графе «Оплачено» среди видимых закупок (без черновиков) — только фактически произведённые оплаты. ' +
+    'Поставленные, но ещё не оплаченные закупки в эту сумму не входят.',
+  versionPlan:
+    'Плановая сумма закупок субсидии на момент, когда эта версия плана-графика была зафиксирована. ' +
+    'Дальнейшие изменения закупок задним числом на неё не влияют.',
+  versionCalc:
+    'Расчётная сумма закупок (факт по поставленным/оплаченным, иначе план) на момент фиксации этой версии. ' +
+    'Дальнейшие изменения закупок задним числом на неё не влияют.',
+  versionsRemainder:
+    'Разница между плановой суммой первой зафиксированной версии и расчётной суммой последней версии — ' +
+    'показывает, насколько расчёт разошёлся с планом с момента первой фиксации.',
+  draftChip:
+    'Заявки со статусом «Черновик» ещё не дошли до стадии «План закупок». Включите чип, чтобы увидеть их в таблице — ' +
+    'они будут показаны приглушённым цветом со справочной пометкой. Их суммы НЕ входят в «Итого план», '
+    + '«Итого расчёт», «Остаток» и итоговую строку таблицы, пока заявка не перейдёт на стадию «План закупок».',
+  draftRowNote: 'Черновик — сумма справочная, в итоги плана закупок не входит',
+}
 
 // ── Versions summary ──
 const versionsRemainder = computed(() => {
@@ -856,10 +963,11 @@ const exportExcel = () => {
   padding: 14px 24px; margin-bottom: 20px;
   flex-wrap: wrap; gap: 16px;
 }
-.stat-item  { display: flex; flex-direction: column; align-items: center; min-width: 100px; }
+.stat-item  { display: flex; flex-direction: column; align-items: center; min-width: 100px; cursor: help; }
 .stat-label { font-size: 11px; color: var(--crm-text-faint); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px; }
 .stat-val   { font-size: 17px; font-weight: 700; color: var(--crm-text); }
 .stat-sep   { width: 1px; height: 36px; background: var(--crm-border); flex-shrink: 0; }
+.stat-info-icon { opacity: 0.55; vertical-align: middle; margin-left: 1px; }
 
 /* ── Table card ── */
 .plan-card {
@@ -888,6 +996,13 @@ const exportExcel = () => {
 }
 .plan-tr { cursor: pointer; transition: background 0.1s; }
 .plan-tr:hover { background: rgba(59,130,246,0.04); }
+.plan-tr-draft { opacity: 0.55; }
+.plan-tr-draft:hover { background: rgba(107,114,128,0.08); }
+.draft-note {
+  font-size: 9px; color: var(--crm-text-faint); font-style: italic;
+  white-space: normal; line-height: 1.2; margin-top: 1px;
+}
+.draft-chip { border-style: dashed !important; }
 
 .th-num        { width: 40px; text-align: center; }
 .th-name       { min-width: 200px; max-width: 320px; }

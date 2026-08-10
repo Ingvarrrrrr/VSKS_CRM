@@ -1351,6 +1351,7 @@ class FeoActualItemOut(BaseModel):
     purchase_number: Optional[int] = None
     registry_number: Optional[str] = None
     purchase_status: Optional[str] = None
+    wish_id: Optional[int] = None  # заявка, из которой заведена закупка (пусто — закупка заведена напрямую)
     contract_number: Optional[str] = None
     contractor_name: Optional[str] = None
     product_photo: Optional[str] = None

@@ -704,6 +704,7 @@ async def get_comparison(
             purchase_number=p.purchase_number,
             registry_number=p.registry_number,
             purchase_status=p.status,
+            wish_id=p.wish_id,
             contract_number=p.contract_number,
             contractor_name=contractors.get(p.contractor_id) if p.contractor_id else p.item_name,
             product_photo=product_photo,

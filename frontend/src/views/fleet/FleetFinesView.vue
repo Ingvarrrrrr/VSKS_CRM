@@ -333,14 +333,6 @@
       </div>
     </div>
 
-    <!-- Snackbar -->
-    <v-snackbar v-model="snackbar.show" :color="snackbar.color" :timeout="-1">
-      {{ snackbar.text }}
-      <template #actions>
-        <v-btn variant="text" @click="snackbar.show = false">Закрыть</v-btn>
-      </template>
-    </v-snackbar>
-
   </v-container>
 </template>
 
@@ -353,6 +345,7 @@ import StatusPill from '@/components/fleet/StatusPill.vue'
 import GradientAvatar from '@/components/fleet/GradientAvatar.vue'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 import FineLeadersPodiumWidget from '@/components/vehicles/FineLeadersPodiumWidget.vue'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 const router = useRouter()
 const route = useRoute()
@@ -435,7 +428,7 @@ const statusFilter = ref('')
 const periodFilter = ref('')
 const search = ref('')
 
-const snackbar = ref({ show: false, text: '', color: 'success' })
+const toast = useToast()
 
 // ── Computed ──────────────────────────────────────────────────────────────
 
@@ -602,8 +595,8 @@ async function markPaid(fine: VehicleFine): Promise<void> {
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-function showSnack(text: string, color = 'success') {
-  snackbar.value = { show: true, text, color }
+function showSnack(text: string, color: ToastType = 'success') {
+  toast.addToast(text, color)
 }
 
 function fmtRub(val: number): string {

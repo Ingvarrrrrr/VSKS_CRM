@@ -67,7 +67,6 @@
       </v-card>
     </v-dialog>
 
-    <v-snackbar v-model="snackbar.show" :color="snackbar.color" timeout="3500">{{ snackbar.text }}</v-snackbar>
   </div>
 </template>
 
@@ -75,6 +74,7 @@
 import { ref, onMounted } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 const { mobile } = useDisplay()
 
@@ -91,7 +91,8 @@ const checklists = ref<Checklist[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const newDialog = ref(false)
-const snackbar = ref({ show: false, text: '', color: 'success' })
+const toast = useToast()
+function showSnack(text: string, color: ToastType = 'success') { toast.addToast(text, color) }
 
 const CHECKLIST_KEYS = ['akb', 'tires', 'mirrors', 'radio', 'firstaid', 'extinguisher', 'spare', 'lkp']
 const KEY_LABELS: Record<string, string> = {
@@ -154,7 +155,7 @@ async function loadChecklists() {
     checklists.value = await apiFetch<Checklist[]>(`/checklists/?vehicle_id=${props.vehicleId}`)
   } catch (e: any) {
     console.error('[VehicleChecklistsTab]', e)
-    snackbar.value = { show: true, text: 'Ошибка загрузки чек-листов', color: 'error' }
+    showSnack('Ошибка загрузки чек-листов', 'error')
   } finally { loading.value = false }
 }
 
@@ -181,10 +182,10 @@ async function saveChecklist() {
     }
     await apiFetch('/checklists/', { method: 'POST', body: JSON.stringify(payload) })
     newDialog.value = false
-    snackbar.value = { show: true, text: 'Чек-лист создан', color: 'success' }
+    showSnack('Чек-лист создан', 'success')
     await loadChecklists()
   } catch (e: any) {
-    snackbar.value = { show: true, text: 'Ошибка сохранения: ' + (e?.message || e), color: 'error' }
+    showSnack('Ошибка сохранения: ' + (e?.message || e), 'error')
   } finally { saving.value = false }
 }
 

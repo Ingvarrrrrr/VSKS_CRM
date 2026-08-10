@@ -294,18 +294,6 @@
       </v-card>
     </v-dialog>
 
-    <!-- Snackbar -->
-    <v-snackbar
-      v-model="snack.show"
-      :color="snack.color"
-      timeout="-1"
-      location="bottom right"
-    >
-      {{ snack.text }}
-      <template #actions>
-        <v-btn variant="text" @click="snack.show = false">Закрыть</v-btn>
-      </template>
-    </v-snackbar>
   </div>
 </template>
 
@@ -314,6 +302,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import FileDropZone from '@/components/FileDropZone.vue'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 const { mobile } = useDisplay()
 
@@ -428,11 +417,7 @@ const addError = reactive({
   correlationId: '',
 })
 
-const snack = reactive({
-  show: false,
-  text: '',
-  color: 'success' as string,
-})
+const toast = useToast()
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -452,10 +437,8 @@ function computedTotal(item: FuelLogOut): number | null {
   return null
 }
 
-function showSnack(text: string, color = 'success') {
-  snack.text = text
-  snack.color = color
-  snack.show = true
+function showSnack(text: string, color: ToastType = 'success') {
+  toast.addToast(text, color)
 }
 
 function showAddError(err: unknown) {

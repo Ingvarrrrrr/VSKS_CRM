@@ -249,14 +249,6 @@
       </v-card>
     </v-dialog>
 
-    <!-- Snackbar -->
-    <v-snackbar v-model="snackbar.show" :color="snackbar.color" timeout="4000">
-      {{ snackbar.text }}
-      <template #actions>
-        <v-btn variant="text" @click="snackbar.show = false">Закрыть</v-btn>
-      </template>
-    </v-snackbar>
-
   </div>
 </template>
 
@@ -264,6 +256,7 @@
 import { ref, onMounted } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 const { mobile } = useDisplay()
 
@@ -331,10 +324,10 @@ const form = ref({
 const deleteDialog = ref(false)
 const deleteTarget = ref<VehicleFine | null>(null)
 
-const snackbar = ref({ show: false, text: '', color: 'success' })
+const toast = useToast()
 
-function showSnack(text: string, color = 'success') {
-  snackbar.value = { show: true, text, color }
+function showSnack(text: string, color: ToastType = 'success') {
+  toast.addToast(text, color)
 }
 
 function formatDateTime(val: string): string {

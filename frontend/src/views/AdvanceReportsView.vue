@@ -12,7 +12,7 @@
           :get-columns="() => visibleHeaders.filter(h => !['actions','avatar','data-table-expand','data-table-select'].includes(h.key) && !!h.title).map(h => ({ key: h.key, title: h.title, align: h.align }))"
           :get-rows="() => filteredItems"
           :get-capture-el="() => registryArea"
-          @error="(msg) => { snack.text = msg; snack.color = 'error'; snack.show = true }"
+          @error="(msg) => showSnack(msg, 'error')"
         />
         <v-btn color="primary" prepend-icon="mdi-plus" to="/advance-reports/create">Добавить</v-btn>
         <v-btn-toggle v-if="!arMobile" v-model="arViewMode" mandatory density="comfortable" variant="outlined" divided class="ml-1">
@@ -495,10 +495,6 @@
     </div>
     </div>
 
-    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" location="bottom right">
-      {{ snack.text }}
-    </v-snackbar>
-
     <ColumnConfigDialog
       v-model="showColumnPicker"
       :all-columns="allColumns"
@@ -524,6 +520,7 @@ import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import { formatMoney } from '@/utils/formatMoney'
 import { useCardView } from '@/composables/useCardView'
 import { PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusColor } from '@/constants/purchaseStatus'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 const router = useRouter()
 const registryArea = ref<HTMLElement | null>(null)
@@ -581,7 +578,8 @@ const fProduct = ref('')
 const selected = ref<number[]>([])
 const expandedRows = ref<number[]>([])
 
-const snack = reactive({ show: false, text: '', color: 'success' })
+const toast = useToast()
+const showSnack = (text: string, color: ToastType = 'success') => { toast.addToast(text, color) }
 
 // Единый источник цвета/подписи статуса закупки: frontend/src/constants/purchaseStatus.ts
 const STATUS_LABEL: Record<string, string> = Object.fromEntries(
@@ -853,7 +851,7 @@ async function load() {
     subsidies.value = subsidiesData
     allUsers.value = Array.isArray(usersData) ? usersData : []
   } catch {
-    snack.text = 'Ошибка загрузки'; snack.color = 'error'; snack.show = true
+    showSnack('Ошибка загрузки', 'error')
   } finally {
     loading.value = false
   }

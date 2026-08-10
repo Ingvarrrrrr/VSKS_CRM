@@ -321,8 +321,6 @@
       </v-card>
     </v-dialog>
 
-    <v-snackbar v-model="snack.show" :color="snack.color" timeout="3000">{{ snack.text }}</v-snackbar>
-
     <ColumnConfigDialog
       v-model="showColumnPicker"
       :all-columns="allColumns"
@@ -345,6 +343,7 @@ import { useCardView } from '@/composables/useCardView'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import RegistryExportButton from '@/components/RegistryExportButton.vue'
 import ContractorEditDialog from '@/components/ContractorEditDialog.vue'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 interface Org {
   id: number
@@ -390,8 +389,8 @@ function debouncedLoad() {
   if (debounceTimer) clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => loadOrgs(), 300)
 }
-const snack = reactive({ show: false, text: '', color: 'success' })
-const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
+const toast = useToast()
+const showSnack = (text: string, color: ToastType = 'success') => { toast.addToast(text, color) }
 
 const deleteDialog = reactive({ show: false, item: null as Org | null, deleting: false })
 

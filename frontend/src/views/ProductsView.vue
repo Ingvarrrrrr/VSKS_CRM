@@ -871,9 +871,6 @@
       </v-card>
     </v-dialog>
 
-    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" location="bottom right">
-      {{ snack.text }}
-    </v-snackbar>
   </v-container>
 </template>
 
@@ -881,6 +878,7 @@
 import { ref, computed, onMounted, nextTick, reactive, watch } from 'vue'
 import { apiFetch } from '@/api'
 import { useCardView } from '@/composables/useCardView'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 interface PriceLink { url: string; price: number | null }
 interface Product {
@@ -932,8 +930,8 @@ const photoFile     = ref<File | null>(null)
 const photoFileList = ref<File[]>([])
 const photoPreview  = ref<string | null>(null)
 
-const snack = reactive({ show: false, text: '', color: 'success' })
-const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
+const toast = useToast()
+const showSnack = (text: string, color: ToastType = 'success') => { toast.addToast(text, color) }
 
 const deduplicating = ref(false)
 interface DupProduct { id: number; name: string; category?: string; product_type?: string; has_photo?: boolean; has_description?: boolean; score?: number; match?: 'exact' | 'fuzzy' }

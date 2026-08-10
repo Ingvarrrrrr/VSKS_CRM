@@ -3576,20 +3576,6 @@
       </v-card>
     </v-dialog>
 
-    <!-- ── Snackbar ── -->
-    <v-snackbar
-      v-model="snack.show"
-      :color="snack.color"
-      :timeout="snack.color === 'error' ? -1 : 3000"
-      location="bottom right"
-      :multi-line="snack.color === 'error'"
-      max-width="600">
-      {{ snack.text }}
-      <template #actions>
-        <v-btn variant="text" @click="snack.show = false">Закрыть</v-btn>
-      </template>
-    </v-snackbar>
-
     <!-- ── Диалог редактирования плановой позиции ── -->
     <v-dialog v-model="editPlannedDialog.show" max-width="480" :fullscreen="mobile">
       <v-card>
@@ -4135,6 +4121,7 @@ import { refreshMyPendingApprovals } from '@/composables/useApprovalsBadge'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { useResizableColumns } from '@/composables/useResizableColumns'
 import { useCardView } from '@/composables/useCardView'
+import { useToast, type ToastType } from '@/composables/useToast'
 import BudgetHistoryDialog from '@/components/BudgetHistoryDialog.vue'
 import ContractorPicker from '@/components/ContractorPicker.vue'
 import BudgetBar from '@/components/BudgetBar.vue'
@@ -4606,7 +4593,7 @@ async function copyVar(text: string) {
       document.body.removeChild(ta)
     }
   } catch { ok = false }
-  if (ok) showSnack(`Скопировано: ${text}`, 'success')
+  if (ok) showSnack(`Скопировано: ${text}`, 'success', { duration: 2500 })
   else showSnack(`Не удалось скопировать. Выделите и нажмите Ctrl+C: ${text}`, 'error')
 }
 
@@ -6006,7 +5993,10 @@ const isSaas = computed(() => ['superadmin', 'account_owner'].includes(userRoleR
 // согласующий превышения плана ФЭО или нет» (см. excessMyPendingStep/decidePlanExcess).
 const currentUserId = Number(localStorage.getItem('user_id') || '0')
 
-const snack = ref({ show: false, text: '', color: 'success' })
+// Snackbar — единый механизм (useToast + ToastContainer, смонтирован в App.vue).
+// По умолчанию уведомление НЕ исчезает само (duration=0): результат действия
+// пользователя должен быть прочитан, а не пропасть за 3-4 секунды.
+const toast = useToast()
 
 const contractors = ref<{ id: number; name: string; inn?: string }[]>([])
 
@@ -7802,7 +7792,7 @@ async function downloadVersionExcel(vid: number) {
     a.href = url; a.download = filename; a.click()
     URL.revokeObjectURL(url)
   } catch (e: any) {
-    snack.value = { show: true, text: e?.message || 'Ошибка экспорта', color: 'error' }
+    showSnack(e?.message || 'Ошибка экспорта', 'error')
   }
 }
 
@@ -7907,7 +7897,7 @@ async function downloadCompareExcel() {
     a.href = url; a.download = filename; a.click()
     URL.revokeObjectURL(url)
   } catch (e: any) {
-    snack.value = { show: true, text: e?.message || 'Ошибка сравнения', color: 'error' }
+    showSnack(e?.message || 'Ошибка сравнения', 'error')
   } finally {
     compareLoading.value = false
   }
@@ -7973,9 +7963,9 @@ async function saveVersion() {
     if (showVersionHistoryDialog.value) {
       await loadVersionHistory()
     }
-    snack.value = { show: true, text: 'Редакция ФЭО сохранена', color: 'success' }
+    showSnack('Редакция ФЭО сохранена')
   } catch (e: any) {
-    snack.value = { show: true, text: e?.payload?.message || e?.message || 'Ошибка сохранения редакции', color: 'error' }
+    showSnack(e?.payload?.message || e?.message || 'Ошибка сохранения редакции', 'error')
   } finally {
     saveVersionLoading.value = false
   }
@@ -8606,8 +8596,12 @@ function formatCurrencyShort(v: number) {
   return v.toLocaleString('ru-RU') + ' ₽'
 }
 
-function showSnack(text: string, color = 'success') {
-  snack.value = { show: true, text, color }
+function showSnack(
+  text: string,
+  color: ToastType = 'success',
+  opts?: { actionText?: string; onAction?: () => void; duration?: number },
+) {
+  toast.addToast(text, color, opts)
 }
 
 // ── Contractor override ─────────────────────────
@@ -8704,9 +8698,9 @@ async function addEvent() {
     newEventMediaLink2.value = ''
     newEventMediaLink3.value = ''
     await loadEvents(selectedId.value)
-    snack.value = { show: true, text: 'Мероприятие добавлено', color: 'success' }
+    showSnack('Мероприятие добавлено')
   } catch (e: any) {
-    snack.value = { show: true, text: e.message || 'Ошибка', color: 'error' }
+    showSnack(e.message || 'Ошибка', 'error')
   }
 }
 
@@ -8753,9 +8747,9 @@ async function saveEditEvent() {
     })
     showEditEventDialog.value = false
     await loadEvents(selectedId.value)
-    snack.value = { show: true, text: 'Мероприятие обновлено', color: 'success' }
+    showSnack('Мероприятие обновлено')
   } catch (e: any) {
-    snack.value = { show: true, text: e.message || 'Ошибка', color: 'error' }
+    showSnack(e.message || 'Ошибка', 'error')
   } finally {
     savingEvent.value = false
   }
@@ -8776,7 +8770,7 @@ async function downloadReport(subsidyId: number) {
     a.click()
     URL.revokeObjectURL(url)
   } catch (e: any) {
-    snack.value = { show: true, text: e.message || 'Ошибка скачивания', color: 'error' }
+    showSnack(e.message || 'Ошибка скачивания', 'error')
   }
 }
 
@@ -8785,9 +8779,9 @@ async function deleteEvent(eventId: number) {
   try {
     await apiFetch(`/events/${eventId}`, { method: 'DELETE' })
     await loadEvents(selectedId.value)
-    snack.value = { show: true, text: 'Мероприятие удалено', color: 'success' }
+    showSnack('Мероприятие удалено')
   } catch (e: any) {
-    snack.value = { show: true, text: e.message || 'Ошибка', color: 'error' }
+    showSnack(e.message || 'Ошибка', 'error')
   }
 }
 

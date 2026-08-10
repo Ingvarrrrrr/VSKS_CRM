@@ -275,12 +275,6 @@
       </v-card>
     </v-dialog>
 
-    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="snack.color === 'error' ? -1 : 3000" location="bottom right">
-      {{ snack.text }}
-      <template #actions>
-        <v-btn variant="text" @click="snack.show = false">Закрыть</v-btn>
-      </template>
-    </v-snackbar>
   </div>
 </template>
 
@@ -290,6 +284,7 @@ import { apiFetch } from '@/api'
 import type { FeoNode } from '@/composables/useFeoLeaves'
 import type { FeoPlanPosition, FeoPlanSelection, FeoPlanKind } from '@/composables/useFeoPlannedResiduals'
 import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 const props = defineProps<{
   modelValue: FeoPlanSelection | null
@@ -468,10 +463,10 @@ const createForm = reactive<{ name: string; quantity: number | null; unit: strin
   name: '', quantity: null, unit: '', amount: null,
 })
 const createSaving = ref(false)
-const snack = ref<{ show: boolean; text: string; color: 'success' | 'error' }>({ show: false, text: '', color: 'success' })
-
-function showSnack(text: string, color: 'success' | 'error' = 'success') {
-  snack.value = { show: true, text, color }
+// Snackbar — единый механизм (useToast + ToastContainer, смонтирован в App.vue).
+const toast = useToast()
+function showSnack(text: string, color: ToastType = 'success') {
+  toast.addToast(text, color)
 }
 
 function openCreateDialog() {

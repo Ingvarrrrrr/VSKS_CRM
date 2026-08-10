@@ -144,9 +144,6 @@
       </v-card>
     </v-dialog>
 
-    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" location="bottom right">
-      {{ snack.text }}
-    </v-snackbar>
   </v-container>
 </template>
 
@@ -154,6 +151,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { useOrgConfig } from '@/composables/useOrgConfig'
 import { apiFetch } from '@/api'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 const { hiddenSections, loadConfig, updateConfig, loading: configLoading } = useOrgConfig()
 
@@ -221,8 +219,8 @@ const SECTIONS: Section[] = [
 const localHidden = ref<Set<string>>(new Set())
 const saving = ref(false)
 
-const snack = reactive({ show: false, text: '', color: 'success' })
-const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
+const toast = useToast()
+const showSnack = (text: string, color: ToastType = 'success') => { toast.addToast(text, color) }
 
 const warnDialog = reactive<{ show: boolean; section: Section | null; }>({ show: false, section: null })
 

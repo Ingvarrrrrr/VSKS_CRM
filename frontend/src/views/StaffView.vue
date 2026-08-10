@@ -1307,8 +1307,6 @@
       </v-card>
     </v-dialog>
 
-    <v-snackbar v-model="snack.show" :color="snack.color" timeout="3000">{{ snack.text }}</v-snackbar>
-
     <ColumnConfigDialog
       v-model="showColumnPicker"
       :all-columns="allColumns"
@@ -1338,6 +1336,7 @@ import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import RegistryExportButton from '@/components/RegistryExportButton.vue'
 import { useCardView } from '@/composables/useCardView'
 import { useDisplay } from 'vuetify'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 // ── Hierarchy ref ──
 const hierarchyRef = ref<InstanceType<typeof HierarchyView> | null>(null)
@@ -1472,9 +1471,9 @@ const currentRole = localStorage.getItem('user_role') || ''
 const currentUserId = Number(localStorage.getItem('user_id') || 0)
 const isAdmin = computed(() => ['admin', 'org_admin', 'account_owner', 'superadmin'].includes(currentRole))
 
-// ── Snackbar ──
-const snack = reactive({ show: false, text: '', color: 'success' })
-const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
+// ── Snackbar ── единый механизм (useToast + ToastContainer, смонтирован в App.vue).
+const toast = useToast()
+const showSnack = (text: string, color: ToastType = 'success') => { toast.addToast(text, color) }
 
 // ═══════════════════════════════════════════════════════════════
 // SHARED STATE

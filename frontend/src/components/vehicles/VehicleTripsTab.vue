@@ -324,19 +324,6 @@
       </v-card>
     </v-dialog>
 
-    <!-- ─── Snackbar ─── -->
-    <v-snackbar
-      v-model="snackbar.show"
-      :color="snackbar.color"
-      :timeout="snackbar.color === 'error' ? -1 : 4000"
-      location="bottom right"
-    >
-      {{ snackbar.text }}
-      <template #actions>
-        <v-btn variant="text" @click="snackbar.show = false">Закрыть</v-btn>
-      </template>
-    </v-snackbar>
-
   </div>
 </template>
 
@@ -345,6 +332,7 @@ import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 const { mobile } = useDisplay()
 
@@ -410,11 +398,7 @@ const loadingDrivers = ref(false)
 const availableDrivers = ref<AvailableDriver[]>([])
 const selectedDriver = ref<AvailableDriver | null>(null)
 
-const snackbar = reactive({
-  show: false,
-  text: '',
-  color: 'success' as string,
-})
+const toast = useToast()
 
 // ─── Form ────────────────────────────────────────────────────────────────────
 
@@ -468,10 +452,8 @@ function driverFilter(value: string, query: string, item?: any): boolean {
   return name.includes(query.toLowerCase())
 }
 
-function showSnack(text: string, color = 'success') {
-  snackbar.text = text
-  snackbar.color = color
-  snackbar.show = true
+function showSnack(text: string, color: ToastType = 'success') {
+  toast.addToast(text, color)
 }
 
 // ─── Load trips ───────────────────────────────────────────────────────────────

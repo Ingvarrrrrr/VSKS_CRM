@@ -431,9 +431,6 @@
       </v-card>
     </v-dialog>
 
-    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" location="bottom right">
-      {{ snack.text }}
-    </v-snackbar>
   </div>
 </template>
 
@@ -441,6 +438,7 @@
 import { ref, computed, watch, reactive, nextTick } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 const { mobile } = useDisplay()
 
@@ -476,7 +474,7 @@ const inlineBudgetId  = ref<number | null>(null)
 const inlineBudgetVal = ref('')
 const inlineInputEl   = ref<HTMLInputElement | null>(null)
 
-const snack       = reactive({ show: false, text: '', color: 'success' })
+const toast       = useToast()
 const dialogError = ref('')
 const dialogLoading = ref(false)
 
@@ -723,7 +721,7 @@ const submitDelete = async () => {
   finally { dialogLoading.value = false }
 }
 
-const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
+const showSnack = (text: string, color: ToastType = 'success') => { toast.addToast(text, color) }
 
 // ─── Drag & Drop ──────────────────────────────────────────────────────────────
 function collectSubtreeIds(nodeId: number): number[] {

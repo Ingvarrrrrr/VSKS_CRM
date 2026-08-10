@@ -325,10 +325,6 @@
       Раздел доступен администраторам организаций.
     </v-alert>
 
-    <v-snackbar v-model="snack.show" :color="snack.color" timeout="3000" location="bottom right">
-      {{ snack.text }}
-    </v-snackbar>
-
     <ColumnConfigDialog
       v-model="showColumnPicker"
       :all-columns="allColumns"
@@ -348,14 +344,15 @@ import { apiFetch } from '@/api'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import { useCardView, refGetter } from '@/composables/useCardView'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 const role = localStorage.getItem('user_role') || ''
 const isSuperadmin = role === 'superadmin'
 const isAccountOwner = role === 'account_owner'
 
 const loading = ref(false)
-const snack = ref({ show: false, text: '', color: 'success' })
-const showSnack = (text: string, color = 'success') => { snack.value = { show: true, text, color } }
+const toast = useToast()
+const showSnack = (text: string, color: ToastType = 'success') => { toast.addToast(text, color) }
 
 // ── Superadmin state ──
 const orgs = ref<any[]>([])

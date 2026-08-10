@@ -478,18 +478,6 @@
 
     </div><!-- /wbf-layout -->
 
-    <!-- Snackbar for errors/success -->
-    <v-snackbar
-      v-model="snackbar.show"
-      :color="snackbar.color"
-      :timeout="snackbar.color === 'error' ? -1 : 4000"
-      location="bottom right"
-    >
-      {{ snackbar.text }}
-      <template #actions>
-        <v-btn variant="text" @click="snackbar.show = false">Закрыть</v-btn>
-      </template>
-    </v-snackbar>
   </div>
 </template>
 
@@ -509,6 +497,7 @@ import SignaturePad from '@/components/fleet/SignaturePad.vue'
 import WaybillSummaryAside from '@/components/fleet/WaybillSummaryAside.vue'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 import type { RouteStop } from '@/components/fleet/RouteStopsEditor.vue'
+import { useToast } from '@/composables/useToast'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Vehicle {
@@ -600,14 +589,12 @@ const saving = ref(false)
 const actionLoading = ref(false)
 const signingLoading = ref(false)
 const downloadingDocx = ref(false)
-const snackbar = ref<{ show: boolean; text: string; color: string }>({
-  show: false, text: '', color: 'success',
-})
+const toast = useToast()
 function showError(msg: string) {
-  snackbar.value = { show: true, text: msg, color: 'error' }
+  toast.error(msg)
 }
 function showSuccess(msg: string) {
-  snackbar.value = { show: true, text: msg, color: 'success' }
+  toast.success(msg)
 }
 
 const form = ref<WaybillForm>({

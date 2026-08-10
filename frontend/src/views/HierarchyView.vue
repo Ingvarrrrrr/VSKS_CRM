@@ -685,10 +685,6 @@
       </v-card>
     </v-dialog>
 
-    <!-- Snackbar -->
-    <v-snackbar v-model="snack.show" :color="snack.color" timeout="3000" location="bottom right">
-      {{ snack.text }}
-    </v-snackbar>
   </div>
 </template>
 
@@ -717,6 +713,7 @@ import { useDisplay } from 'vuetify'
 
 const { mobile } = useDisplay()
 import ContractorEditDialog from '@/components/ContractorEditDialog.vue'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const DEPT_W = 268     // dept container width in px
@@ -791,8 +788,8 @@ const nodes = ref<Node[]>([])
 const edges = ref<Edge[]>([])
 const loading = ref(false)
 const helpDialog = ref(false)
-const snack = ref({ show: false, text: '', color: 'success' })
-const showSnack = (text: string, color = 'success') => { snack.value = { show: true, text, color } }
+const toast = useToast()
+const showSnack = (text: string, color: ToastType = 'success') => { toast.addToast(text, color) }
 
 const isSuperadmin = localStorage.getItem('user_role') === 'superadmin'
 const isAccountOwner = localStorage.getItem('user_role') === 'account_owner'

@@ -75,9 +75,6 @@
           </div>
         </template>
 
-        <v-snackbar v-model="verifiedSnack" color="success" timeout="4000">
-          Email подтверждён — можно войти!
-        </v-snackbar>
       </v-card>
     </v-responsive>
   </v-container>
@@ -87,6 +84,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { useToast } from '@/composables/useToast'
 
 const router = useRouter()
 const route = useRoute()
@@ -96,7 +94,7 @@ const password = ref('')
 const showPassword = ref(false)
 const loading = ref(false)
 const error = ref('')
-const verifiedSnack = ref(false)
+const toast = useToast()
 const errors = ref({ username: '', password: '' })
 
 // Forgot password state
@@ -173,7 +171,7 @@ const sendReset = async () => {
 }
 
 onMounted(() => {
-  if (route.query.verified === '1') verifiedSnack.value = true
+  if (route.query.verified === '1') toast.success('Email подтверждён — можно войти!')
   const savedToken = localStorage.getItem('auth_token')
   if (savedToken && savedToken.startsWith('eyJ')) router.push('/')
 })

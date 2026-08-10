@@ -158,8 +158,6 @@
       </v-card>
     </v-dialog>
 
-    <v-snackbar v-model="snack.show" :color="snack.color" timeout="3000">{{ snack.text }}</v-snackbar>
-
     <ColumnConfigDialog
       v-model="showColumnPicker"
       :all-columns="allColumns"
@@ -179,6 +177,7 @@ import { apiFetch } from '@/api'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import { useCardView } from '@/composables/useCardView'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 interface Incident {
   id: number
@@ -204,8 +203,8 @@ const search = ref('')
 const clearDialog = ref(false)
 
 const detailDialog = reactive({ show: false, item: null as Incident | null })
-const snack = reactive({ show: false, text: '', color: 'success' })
-const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
+const toast = useToast()
+const showSnack = (text: string, color: ToastType = 'success') => { toast.addToast(text, color) }
 
 const allColumns: ColumnDef[] = [
   { title: 'Время', key: 'created_at', width: 160 },

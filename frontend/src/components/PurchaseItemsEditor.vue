@@ -593,13 +593,6 @@
       </v-card>
     </v-dialog>
 
-    <!-- ===== Snackbar ===== -->
-    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="snack.color === 'error' ? -1 : 3500" location="bottom right" multi-line>
-      {{ snack.text }}
-      <template #actions>
-        <v-btn variant="text" size="small" @click="snack.show = false">OK</v-btn>
-      </template>
-    </v-snackbar>
   </div>
 </template>
 
@@ -631,6 +624,7 @@ import { useFeoLeaves } from '@/composables/useFeoLeaves'
 import { useFeoNodeAmounts } from '@/composables/useFeoNodeAmounts'
 import type { FeoPlanPosition, FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
 import { useItemMatching, type MatchCandidate } from '@/composables/useItemMatching'
+import { useToast, type ToastType } from '@/composables/useToast'
 import {
   VAT_RATE_OPTIONS,
   parseVatRatePercent,
@@ -1376,10 +1370,16 @@ function deliveryStageContractorName(idx: number): string {
   return contractStageContractorName(idx)
 }
 
-// Snackbar
-const snack = reactive({ show: false, text: '', color: 'success' })
-function showSnack(text: string, color = 'success') {
-  snack.text = text; snack.color = color; snack.show = true
+// Snackbar — единый механизм (useToast + ToastContainer, смонтирован в App.vue).
+// По умолчанию уведомление НЕ исчезает само (duration=0): результат действия
+// пользователя должен быть прочитан, а не пропасть за 3-4 секунды.
+const toast = useToast()
+function showSnack(
+  text: string,
+  color: ToastType = 'success',
+  opts?: { actionText?: string; onAction?: () => void; duration?: number },
+) {
+  toast.addToast(text, color, opts)
 }
 
 // Products catalogue

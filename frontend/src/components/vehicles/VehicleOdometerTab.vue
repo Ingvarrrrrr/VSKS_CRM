@@ -216,24 +216,13 @@
       </v-card>
     </v-dialog>
 
-    <!-- Cell error snackbar (non-409 errors) -->
-    <v-snackbar
-      v-model="snackbar.show"
-      :color="snackbar.color"
-      :timeout="-1"
-      location="bottom right"
-    >
-      {{ snackbar.message }}
-      <template #actions>
-        <v-btn variant="text" @click="snackbar.show = false">Закрыть</v-btn>
-      </template>
-    </v-snackbar>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { apiFetch } from '@/api'
+import { useToast } from '@/composables/useToast'
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 const props = defineProps<{
@@ -302,13 +291,11 @@ const deleteDialog = ref(false)
 const deleteTarget = ref<OdometerRow | null>(null)
 const deletingId = ref<number | null>(null)
 
-// ── Snackbar ──────────────────────────────────────────────────────────────────
-const snackbar = reactive({ show: false, message: '', color: 'error' })
+// ── Snackbar ── единый механизм (useToast + ToastContainer, смонтирован в App.vue).
+const toast = useToast()
 
 function showError(msg: string) {
-  snackbar.message = msg
-  snackbar.color = 'error'
-  snackbar.show = true
+  toast.error(msg)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

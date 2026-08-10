@@ -38,7 +38,6 @@
     <!-- Add contractor dialog (shared full create/edit dialog) -->
     <ContractorEditDialog v-model="addContractorDialog" :contractor-id="null" @saved="onContractorCreated" />
 
-    <v-snackbar v-model="snack.show" :color="snack.color" timeout="3000">{{ snack.text }}</v-snackbar>
   </div>
 </template>
 
@@ -46,6 +45,7 @@
 import { ref, computed, watch } from 'vue'
 import { useContractorsStore } from '@/stores/contractors'
 import ContractorEditDialog from '@/components/ContractorEditDialog.vue'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 interface Contractor { id: number; name: string; inn?: string }
 
@@ -71,8 +71,8 @@ watch(() => props.initialContractor, (c) => {
   if (c && c.id && !contractors.value.find(x => x.id === c.id)) contractors.value.push({ ...c })
 }, { immediate: true })
 
-const snack = ref({ show: false, text: '', color: 'success' })
-function showSnack(text: string, color = 'success') { snack.value = { show: true, text, color } }
+const toast = useToast()
+function showSnack(text: string, color: ToastType = 'success') { toast.addToast(text, color) }
 
 const contractorFilter = (value: string, query: string, item?: any): boolean => {
   const q = query.toLowerCase()

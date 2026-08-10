@@ -255,13 +255,6 @@
       </v-card>
     </v-dialog>
 
-    <!-- Snackbar -->
-    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" rounded="lg">
-      {{ snack.text }}
-      <template #actions>
-        <v-btn variant="text" size="small" @click="snack.show = false">Закрыть</v-btn>
-      </template>
-    </v-snackbar>
   </div>
 </template>
 
@@ -272,6 +265,7 @@ import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 import VehicleTypeIcon from '@/components/vehicles/VehicleTypeIcon.vue'
 import StatusPill from '@/components/fleet/StatusPill.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 const authStore = useAuthStore()
 const router = useRouter()
@@ -292,7 +286,8 @@ const odometerDialog = ref(false)
 const newOdometer = ref<number | null>(null)
 const savingOdometer = ref(false)
 
-const snack = ref({ show: false, text: '', color: 'success' })
+const toast = useToast()
+function showSnack(text: string, color: ToastType = 'success') { toast.addToast(text, color) }
 
 // ---- Active waybill ----
 const activeWaybillId = ref<number | null>(null)
@@ -585,14 +580,14 @@ function openWaybill() {
   if (activeWaybillId.value) {
     router.push({ name: 'm-driver-waybill', params: { id: String(activeWaybillId.value) } })
   } else {
-    snack.value = { show: true, text: 'Активных путевых листов нет. Обратитесь к диспетчеру.', color: 'info' }
+    showSnack('Активных путевых листов нет. Обратитесь к диспетчеру.', 'info')
   }
 }
 
 async function saveOdometer() {
   if (!vehicle.value || newOdometer.value == null) return
   if (newOdometer.value < (vehicle.value.current_odometer_km || 0)) {
-    snack.value = { show: true, text: 'Пробег не может быть меньше текущего', color: 'error' }
+    showSnack('Пробег не может быть меньше текущего', 'error')
     return
   }
   savingOdometer.value = true
@@ -612,9 +607,9 @@ async function saveOdometer() {
     }
     vehicle.value.current_odometer_km = newOdometer.value
     odometerDialog.value = false
-    snack.value = { show: true, text: 'Пробег обновлён', color: 'success' }
+    showSnack('Пробег обновлён', 'success')
   } catch (e: any) {
-    snack.value = { show: true, text: `Ошибка: ${e.message}`, color: 'error' }
+    showSnack(`Ошибка: ${e.message}`, 'error')
   } finally {
     savingOdometer.value = false
   }

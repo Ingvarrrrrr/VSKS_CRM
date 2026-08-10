@@ -437,8 +437,6 @@
       </v-card>
     </v-dialog>
 
-    <v-snackbar v-model="snack.show" :color="snack.color" timeout="3000">{{ snack.text }}</v-snackbar>
-
     <ColumnConfigDialog
       v-model="showColumnPicker"
       :all-columns="allColumns"
@@ -459,6 +457,7 @@ import { useContractorsStore } from '@/stores/contractors'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import { useCardView } from '@/composables/useCardView'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 interface Recipient { id: number; contractor_id?: number; contractor_name?: string; email?: string; status: string }
 interface CommercialRequest {
@@ -512,8 +511,8 @@ const loading = ref(false)
 const filterStatus = ref('')
 const search = ref('')
 
-const snack = reactive({ show: false, text: '', color: 'success' })
-const showSnack = (text: string, color = 'success') => { snack.text = text; snack.color = color; snack.show = true }
+const toast = useToast()
+const showSnack = (text: string, color: ToastType = 'success') => { toast.addToast(text, color) }
 
 const createDialog = reactive({
   show: false,

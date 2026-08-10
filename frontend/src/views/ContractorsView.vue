@@ -541,11 +541,6 @@
       </v-card>
     </v-dialog>
 
-    <!-- ── Snackbar ── -->
-    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="4000" location="bottom right">
-      {{ snack.text }}
-    </v-snackbar>
-
   </div>
 </template>
 
@@ -556,6 +551,7 @@ import FileDropZone from '@/components/FileDropZone.vue'
 import ContractorEditDialog from '@/components/ContractorEditDialog.vue'
 import { formatPhoneRu } from '@/utils/phoneFormat'
 import { useCardView } from '@/composables/useCardView'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 interface ContractorWithStats {
   id: number
@@ -650,7 +646,7 @@ const selectedIds = ref(new Set<number>())
 const categoriesDialog = ref(false)
 const categoriesDialogContractor = ref<ContractorWithStats | null>(null)
 
-const snack = ref({ show: false, text: '', color: 'success' })
+const toast = useToast()
 
 // ── Contractor import state ──
 const contractorImportDialog  = ref(false)
@@ -1084,8 +1080,8 @@ function closeContractorImport() {
 }
 
 // ── Helpers ───────────────────────────────────────
-function showSnack(text: string, color = 'success') {
-  snack.value = { show: true, text, color }
+function showSnack(text: string, color: ToastType = 'success') {
+  toast.addToast(text, color)
 }
 
 watch(filterCategory, () => { contractorsPage.value = 1; loadContractors() })

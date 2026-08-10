@@ -938,19 +938,6 @@
       </v-card>
     </v-dialog>
 
-    <!-- ── Snackbar ── -->
-    <v-snackbar
-      v-model="snack.show"
-      :color="snack.color"
-      :timeout="snack.color === 'error' ? -1 : 3000"
-      location="bottom right"
-    >
-      {{ snack.text }}
-      <template #actions>
-        <v-btn v-if="snack.color === 'error'" variant="text" @click="snack.show = false">Закрыть</v-btn>
-      </template>
-    </v-snackbar>
-
   </v-container>
 </template>
 
@@ -971,6 +958,7 @@ import VehicleHistoryTab from '@/components/vehicles/VehicleHistoryTab.vue'
 import VehicleRelatedPurchasesTab from '@/components/vehicles/VehicleRelatedPurchasesTab.vue'
 import VehicleChecklistsTab from '@/components/vehicles/VehicleChecklistsTab.vue'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 // ─────────────── Types ───────────────
 
@@ -1945,12 +1933,10 @@ function copyError() {
 
 // ─────────────── Snackbar ───────────────
 
-const snack = reactive({ show: false, text: '', color: 'success' })
+const toast = useToast()
 
-function showSnack(text: string, color = 'success') {
-  snack.text = text
-  snack.color = color
-  snack.show = true
+function showSnack(text: string, color: ToastType = 'success') {
+  toast.addToast(text, color)
 }
 
 // ─────────────── Helpers ───────────────

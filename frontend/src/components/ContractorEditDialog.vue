@@ -322,10 +322,6 @@
     </v-card>
   </v-dialog>
 
-  <!-- ── Snackbar ── -->
-  <v-snackbar v-model="snack.show" :color="snack.color" :timeout="4000" location="bottom right">
-    {{ snack.text }}
-  </v-snackbar>
 </template>
 
 <script setup lang="ts">
@@ -334,6 +330,7 @@ import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import FileDropZone from '@/components/FileDropZone.vue'
 import { formatPhoneRu, unformatPhone } from '@/utils/phoneFormat'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 const { mobile } = useDisplay()
 
@@ -401,9 +398,9 @@ const loadingContractor = ref(false)
 const formRef     = ref()
 const editId      = ref<number | null>(null)
 
-const snack = ref({ show: false, text: '', color: 'success' })
-function showSnack(text: string, color = 'success') {
-  snack.value = { show: true, text, color }
+const toast = useToast()
+function showSnack(text: string, color: ToastType = 'success') {
+  toast.addToast(text, color)
 }
 
 // Confirmation dialog for EGRUL diff

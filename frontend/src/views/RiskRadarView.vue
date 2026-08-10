@@ -287,8 +287,7 @@ watch(() => loading.value, (val, prev) => {
     const critical = scores.value.filter(s => s.severity === 'critical')
     if (critical.length > 0) {
       toast.error(
-        `Обнаружены критические риски: ${critical.map(s => s.label).join(', ')}`,
-        { duration: 6000 }
+        `Обнаружены критические риски: ${critical.map(s => s.label).join(', ')}`
       )
       hasShownCriticalToast = true
     }

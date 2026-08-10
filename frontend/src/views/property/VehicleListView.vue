@@ -629,13 +629,6 @@
       </v-card>
     </v-dialog>
 
-    <!-- Snackbar -->
-    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="snack.color === 'error' ? -1 : 3000" location="bottom right">
-      {{ snack.text }}
-      <template #actions>
-        <v-btn v-if="snack.color === 'error'" variant="text" @click="snack.show = false">Закрыть</v-btn>
-      </template>
-    </v-snackbar>
   </v-container>
 </template>
 
@@ -650,6 +643,7 @@ import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import VehicleImportDialog from '@/components/vehicles/VehicleImportDialog.vue'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 import { useCardView } from '@/composables/useCardView'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 // ─────────────── Types ───────────────
 
@@ -1140,14 +1134,12 @@ function copyError() {
   navigator.clipboard.writeText(text).catch(() => {})
 }
 
-// ─────────────── Snackbar ───────────────
+// ─────────────── Snackbar ─────────────── единый механизм (useToast + ToastContainer)
 
-const snack = reactive({ show: false, text: '', color: 'success' })
+const toast = useToast()
 
-function showSnack(text: string, color = 'success') {
-  snack.text = text
-  snack.color = color
-  snack.show = true
+function showSnack(text: string, color: ToastType = 'success') {
+  toast.addToast(text, color)
 }
 
 // ─────────────── Watchers ───────────────

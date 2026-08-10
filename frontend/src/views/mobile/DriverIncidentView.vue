@@ -150,25 +150,20 @@
       </div>
     </div>
 
-    <!-- Snackbar -->
-    <v-snackbar v-model="snack.show" :color="snack.color" rounded="lg" :timeout="snack.timeout ?? 3000">
-      {{ snack.text }}
-      <template #actions>
-        <v-btn variant="text" size="small" @click="snack.show = false">Закрыть</v-btn>
-      </template>
-    </v-snackbar>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 const router = useRouter()
 
 // ---- State ----
 const submitting = ref(false)
-const snack = ref({ show: false, text: '', color: 'success', timeout: 3000 })
+const toast = useToast()
+function showSnack(text: string, color: ToastType = 'success') { toast.addToast(text, color) }
 
 const fileInputs = ref<HTMLInputElement[]>([])
 const photoFiles = ref<File[]>([])
@@ -264,18 +259,18 @@ function onPhotoChange(event: Event, index: number) {
 
 async function submitIncident() {
   if (!form.affectedSystem) {
-    snack.value = { show: true, text: 'Выберите систему (что сломалось)', color: 'error', timeout: -1 }
+    showSnack('Выберите систему (что сломалось)', 'error')
     return
   }
   if (!form.description.trim()) {
-    snack.value = { show: true, text: 'Заполните описание проблемы', color: 'error', timeout: -1 }
+    showSnack('Заполните описание проблемы', 'error')
     return
   }
 
   const vehicleId = vehicle.value?.id
     || parseInt(localStorage.getItem('driver_selected_vehicle_id') || '0')
   if (!vehicleId) {
-    snack.value = { show: true, text: 'Нет выбранного ТС', color: 'error', timeout: -1 }
+    showSnack('Нет выбранного ТС', 'error')
     return
   }
 
@@ -308,10 +303,10 @@ async function submitIncident() {
       throw new Error(err?.detail || `HTTP ${res.status}`)
     }
 
-    snack.value = { show: true, text: 'Рапорт отправлен', color: 'success', timeout: 3000 }
+    showSnack('Рапорт отправлен', 'success')
     setTimeout(() => router.push({ name: 'm-driver-home' }), 1200)
   } catch (e: any) {
-    snack.value = { show: true, text: `Ошибка: ${e.message}`, color: 'error', timeout: -1 }
+    showSnack(`Ошибка: ${e.message}`, 'error')
   } finally {
     submitting.value = false
   }

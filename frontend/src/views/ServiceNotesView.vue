@@ -231,10 +231,6 @@
       />
     </div>
 
-    <v-snackbar v-model="snack.show" :color="snack.color" :timeout="3000" location="bottom right">
-      {{ snack.text }}
-    </v-snackbar>
-
     <ColumnConfigDialog
       v-model="showColumnPicker"
       :all-columns="allColumns"
@@ -256,6 +252,7 @@ import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import { useCardView } from '@/composables/useCardView'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import { purchaseStatusLabel, purchaseStatusColor } from '@/constants/purchaseStatus'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 const router = useRouter()
 
@@ -312,7 +309,8 @@ function truncate(str: string | undefined | null, len: number): string {
   return str.length > len ? str.slice(0, len) + '…' : str
 }
 
-const snack = reactive({ show: false, text: '', color: 'success' })
+const toast = useToast()
+function showSnack(text: string, color: ToastType = 'success') { toast.addToast(text, color) }
 
 // Единый источник цвета/подписи статуса закупки: frontend/src/constants/purchaseStatus.ts
 // Служебные записки не доходят до 'ordered' — набор статусов здесь намеренно уже полного списка.
@@ -391,7 +389,7 @@ async function load() {
       apiFetch<User[]>('/users/'),
     ])
   } catch {
-    snack.text = 'Ошибка загрузки'; snack.color = 'error'; snack.show = true
+    showSnack('Ошибка загрузки', 'error')
   } finally {
     loading.value = false
   }

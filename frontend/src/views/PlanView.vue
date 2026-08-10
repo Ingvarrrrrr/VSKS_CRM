@@ -401,10 +401,6 @@
       </div>
     </div>
 
-    <!-- ── Snackbar ── -->
-    <v-snackbar v-model="snack.show" :color="snack.color" timeout="4000">
-      {{ snack.text }}
-    </v-snackbar>
   </div>
 </template>
 
@@ -414,6 +410,7 @@ import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import * as XLSX from 'xlsx'
 import { PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusColor } from '@/constants/purchaseStatus'
+import { useToast, type ToastType } from '@/composables/useToast'
 
 const router = useRouter()
 
@@ -484,7 +481,11 @@ const versionsLoading      = ref(false)
 const showSaveVersionDialog = ref(false)
 const saveVersionNote      = ref('')
 const saveVersionLoading   = ref(false)
-const snack = ref({ show: false, text: '', color: 'info' })
+// Snackbar — единый механизм (useToast + ToastContainer, смонтирован в App.vue).
+const toast = useToast()
+function showSnack(text: string, color: ToastType = 'info') {
+  toast.addToast(text, color)
+}
 
 const availableYears = computed(() => {
   const years = new Set<number>()
@@ -642,10 +643,10 @@ const saveVersion = async () => {
       body: JSON.stringify({ note: saveVersionNote.value || null }),
     })
     showSaveVersionDialog.value = false
-    snack.value = { show: true, text: 'Версия плана закупок зафиксирована', color: 'success' }
+    showSnack('Версия плана закупок зафиксирована', 'success')
     await loadVersions()
   } catch (e: any) {
-    snack.value = { show: true, text: e?.payload?.message || e?.message || 'Ошибка сохранения', color: 'error' }
+    showSnack(e?.payload?.message || e?.message || 'Ошибка сохранения', 'error')
   } finally {
     saveVersionLoading.value = false
   }
@@ -668,7 +669,7 @@ const downloadVersionExcel = async (vid: number) => {
     a.href = url; a.download = filename; a.click()
     URL.revokeObjectURL(url)
   } catch (e: any) {
-    snack.value = { show: true, text: e?.message || 'Ошибка экспорта', color: 'error' }
+    showSnack(e?.message || 'Ошибка экспорта', 'error')
   }
 }
 

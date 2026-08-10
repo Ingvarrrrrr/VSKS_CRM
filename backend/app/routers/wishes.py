@@ -1726,6 +1726,32 @@ async def convert_wish(
         if wishes_existing and getattr(wish, 'source', None) != 'advance_report':
             items_res = await db.execute(select(WishItem).where(WishItem.wish_id == wish.id))
             await _ensure_needed_dates(wish, db, items_res.scalars().all())
+        # Задача владельца, план zany-fluttering-mountain.md п.4 (2026-08-10): эта
+        # ветка — ОТДЕЛЬНЫЙ путь движения закупки по стадиям (wishes → plan_schedule),
+        # не проходящий через POST /api/purchases/{pid}/transition (см. её гейт в
+        # purchase_transitions.py) — идемпотентное повторное согласование заявки,
+        # у которой уже есть скрытые закупки. «Не двигаются дальше по стадиям, пока
+        # не согласовано превышение» касается и этого пути.
+        if wishes_existing:
+            from app.models.purchase_item import PurchaseItem as _PurchaseItem
+            _ep_ids = [ep.id for ep in wishes_existing]
+            _items_res = await db.execute(
+                select(_PurchaseItem).where(_PurchaseItem.purchase_id.in_(_ep_ids))
+            )
+            _items_by_purchase: dict[int, list] = {}
+            for _pit in _items_res.scalars().all():
+                _items_by_purchase.setdefault(_pit.purchase_id, []).append(_pit)
+            _gate_cat_ids: set[int] = set()
+            for ep in wishes_existing:
+                _ep_items = _items_by_purchase.get(ep.id, [])
+                for _pit in _ep_items:
+                    _cid = _pit.feo_category_id or ep.feo_category_id
+                    if _cid:
+                        _gate_cat_ids.add(_cid)
+                if not any(_pit.feo_category_id for _pit in _ep_items) and ep.feo_category_id:
+                    _gate_cat_ids.add(ep.feo_category_id)
+            for _cid in _gate_cat_ids:
+                await assert_no_unapproved_excess(db, _cid)
         for ep in existing:
             if ep.status == "wishes":
                 ep.status = "plan_schedule"

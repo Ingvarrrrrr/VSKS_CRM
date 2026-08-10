@@ -229,13 +229,19 @@ async def get_feo_plan_tree(
     участвует в формуле display/excess_amount выше), null если не задано.
     free = budget − display считает фронт (см. FeoTreeSelect nodeAmounts).
 
+    "excess_culprit" (задача владельца, план zany-fluttering-mountain.md п.4,
+    2026-08-10) — закупка-«виновник», из-за которой узел вышел за ФЭО: null,
+    если превышения нет/оно согласовано, иначе {purchase_id, purchase_number,
+    item_id, item_name, amount_before, amount_at_crossing, cumulative_after} —
+    см. app.services.feo_plan.find_excess_culprit за методом определения.
+
     Право feo_budget.view_tree_amounts (см. backend/app/__init__.py) гейтит ВСЕ
     денежные поля узла (plan_manual, ordered_sum, over, plan, budget, display,
     residual, forecast, forecast_over, consumed, excess_amount) — без права они
     приходят null (структура ответа не меняется, количественные/булевы поля
     остаются). superadmin — всегда видит.
     """
-    from app.services.feo_plan import compute_feo_plan_tree
+    from app.services.feo_plan import compute_feo_plan_tree, find_excess_culprit
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem
     from app.routers.purchase_budget import PLANNED_STATUSES
@@ -279,9 +285,21 @@ async def get_feo_plan_tree(
             "excess_fact_over_plan": node["excess_fact_over_plan"],
             "excess_fact_approved": node["excess_fact_approved"],
             "excess_fact_pending": node["excess_fact_pending"],
+            # Виновник превышения (задача владельца, план zany-fluttering-mountain.md
+            # п.4, 2026-08-10) заполняется НИЖЕ, точечно только для узлов с
+            # неснятым excess_amount — find_excess_culprit не бесплатна (доп. запрос),
+            # гнать её на каждый узел дерева на каждый вызов (в т.ч. KPI-дашборд) не нужно.
+            "excess_culprit": None,
         }
         for cat_id, node in tree.items()
     }
+
+    # Виновник превышения плана над ФЭО — «должна отображаться данная закупка и
+    # показать, что из-за неё всё превысило» (владелец). Считаем только для узлов
+    # с непогашенным excess_amount (обычно единицы, не весь тысячестрочный тред).
+    for cat_id, node in tree.items():
+        if (node.get("excess_amount") or 0) > 0.005 and not node.get("excess_approved"):
+            result[cat_id]["excess_culprit"] = await find_excess_culprit(db, cat_id, node.get("budget"))
 
     unassigned_stmt = (
         select(Purchase.id, Purchase.planned_total_price)
@@ -304,7 +322,7 @@ async def get_feo_plan_tree(
         MONEY_FIELDS = (
             "plan_manual", "ordered_sum", "over", "plan", "budget", "display",
             "residual", "forecast", "forecast_over", "consumed", "excess_amount",
-            "fact", "excess_over_feo", "excess_fact_over_plan",
+            "fact", "excess_over_feo", "excess_fact_over_plan", "excess_culprit",
         )
         for cat_id, node in result.items():
             if cat_id == "unassigned":

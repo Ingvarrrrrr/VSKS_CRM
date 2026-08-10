@@ -1397,7 +1397,18 @@ async def update_purchase(
     if not p:
         raise HTTPException(404, "Not found")
     old_planned_total_price = p.planned_total_price  # capture BEFORE setattr loop
-    old_feo_category_id = p.feo_category_id  # capture BEFORE setattr loop (excess-gate below)
+    # Задача владельца, план zany-fluttering-mountain.md п.4 (2026-08-10): PUT
+    # заменяет ВСЕ позиции закупки (delete+recreate ниже), у каждой может быть
+    # СВОЯ feo_category_id, отличная от p.feo_category_id. Старая проверка ниже
+    # смотрела только на p.feo_category_id целиком — если позиции распределены
+    # по нескольким категориям (feo_per_item), рост суммы в ОДНОЙ из них проходил
+    # мимо гейта, пока «нетто» по закупке не рос. Снимок «сколько СЕЙЧАС числится
+    # по каждой категории» — ДО удаления старых позиций — нужен для сравнения.
+    old_item_cat_amounts: dict[int, Decimal] = {}
+    for _oi in p.items:
+        _ocid = _oi.feo_category_id or p.feo_category_id
+        if _ocid:
+            old_item_cat_amounts[_ocid] = old_item_cat_amounts.get(_ocid, Decimal("0")) + Decimal(str(_oi.total_price or 0))
     # Phase 31: capture old values for diff-tracking BEFORE any mutation
     _old_purchase_values = {f: getattr(p, f, None) for f in PURCHASE_TRACKED_FIELDS}
     # Employees/managers can save any purchase they have access to (org-level access checked at list level)
@@ -1482,18 +1493,30 @@ async def update_purchase(
         flag_modified(p, "acceptance_docs")
 
     # Задача владельца (2026-08-05) «блокировать пока не согласовано превышение плана
-    # ФЭО»: изменение закупки, увеличивающее сумму ИЛИ меняющее категорию ФЭО —
-    # УВЕЛИЧИВАЮЩЕЕ план действие. НЕ блокируем переходы статусов вперёд/уменьшения
-    # сумм/смену категории на «без категории» — та ветка сюда не попадает, т.к.
-    # ни сумма не растёт, ни новая категория не задана.
-    if not admin_override and p.feo_category_id:
-        _new_amount = Decimal(str(p.total_nmck or 0))
-        _old_amount = Decimal(str(old_planned_total_price or 0))
-        _amount_increased = _new_amount > _old_amount
-        _category_changed = p.feo_category_id != old_feo_category_id
-        if _amount_increased or _category_changed:
-            _delta = (_new_amount - _old_amount) if _amount_increased else Decimal("0")
-            await assert_no_unapproved_excess(db, p.feo_category_id, adding_amount=_delta)
+    # ФЭО», расширено 2026-08-10 (план zany-fluttering-mountain.md п.4) на ПЕР-ITEM
+    # категории: изменение закупки, увеличивающее сумму В КОНКРЕТНОЙ категории ФЭО
+    # (не только на уровне закупки целиком) — УВЕЛИЧИВАЮЩЕЕ план действие. Сравниваем
+    # НОВЫЙ снимок по категориям (из items_data, только что распределённого PUT'ом,
+    # тот же принцип, что и в create_purchase per-item) со СТАРЫМ (old_item_cat_amounts,
+    # снят до удаления старых позиций выше) — категория, чья сумма ВЫРОСЛА (в т.ч. с
+    # нуля — позиция перевешена в неё из другой категории), проходит гейт с дельтой
+    # роста; категории, чья сумма НЕ выросла (уменьшилась/не изменилась), не трогаем —
+    # это путь возврата в рамки плана, блокировать нельзя (см. assert_no_unapproved_excess
+    # docstring).
+    if not admin_override:
+        _new_item_cat_amounts: dict[int, Decimal] = {}
+        for _i in items_data:
+            _ncid = _i.feo_category_id or p.feo_category_id
+            if _ncid:
+                _new_item_cat_amounts[_ncid] = _new_item_cat_amounts.get(_ncid, Decimal("0")) + (_i.total_price or Decimal("0"))
+        if not _new_item_cat_amounts and p.feo_category_id:
+            _new_item_cat_amounts[p.feo_category_id] = Decimal(str(p.total_nmck or 0))
+        _touched_cat_ids = set(_new_item_cat_amounts) | set(old_item_cat_amounts)
+        for _cid in _touched_cat_ids:
+            _new_amt = _new_item_cat_amounts.get(_cid, Decimal("0"))
+            _old_amt = old_item_cat_amounts.get(_cid, Decimal("0"))
+            if _new_amt > _old_amt:
+                await assert_no_unapproved_excess(db, _cid, adding_amount=_new_amt - _old_amt)
 
     # Задача владельца «план ≠ факт» (шаг C, сессия 2026-08-06): переход закупки
     # в «Договор» — превентивная точка контроля. С этого момента итог закупки
@@ -2059,6 +2082,39 @@ async def patch_purchase_item(
             total_price=_prospective_total,
             item_name=body.item_name if body.item_name is not None else it.item_name,
         )
+    # Задача владельца, план zany-fluttering-mountain.md п.4 (2026-08-10): точечная
+    # правка позиции — тоже «добавление позиции в категорию» (рост суммы позиции
+    # ИЛИ смена её категории ФЭО на другую) — увеличивающее план действие. Раньше
+    # здесь проверялось только «ТЗ не выше своей плановой позиции» (assert_tz_not_over_plan
+    # выше) — сторону «категория не превышает финансирование ФЭО» (assert_no_unapproved_excess)
+    # этот эндпоинт вообще не видел. Считаем ДО и ПОСЛЕ отдельно от _wants_tz_change
+    # выше — смена ТОЛЬКО feo_category_id (без правки qty/price) тоже обязана
+    # пройти гейт, а _wants_tz_change в этом случае False.
+    if not (body.admin_override and current_user.role in ADMIN_ROLES):
+        _old_item_cat_id = it.feo_category_id
+        _old_item_total = Decimal(str(it.total_price or 0))
+        _new_item_cat_id = _old_item_cat_id
+        if body.clear_feo_category:
+            _new_item_cat_id = None
+        elif body.feo_category_id is not None:
+            _new_item_cat_id = body.feo_category_id
+        if body.quantity is not None or body.unit_price is not None:
+            _new_qty_g = body.quantity if body.quantity is not None else it.quantity
+            _new_price_g = body.unit_price if body.unit_price is not None else it.unit_price
+            _new_item_total = (_new_qty_g or Decimal("0")) * (_new_price_g or Decimal("0"))
+        else:
+            _new_item_total = _old_item_total
+        if _new_item_cat_id:
+            if _new_item_cat_id == _old_item_cat_id:
+                _item_delta = _new_item_total - _old_item_total
+                if _item_delta > 0:
+                    await assert_no_unapproved_excess(db, _new_item_cat_id, adding_amount=_item_delta)
+            else:
+                # Категория сменилась — вся текущая сумма позиции «свежая» для НОВОЙ
+                # категории (в старой она, наоборот, уменьшается — уменьшение не
+                # блокируется, см. docstring assert_no_unapproved_excess: путь возврата
+                # в рамки плана блокировать нельзя).
+                await assert_no_unapproved_excess(db, _new_item_cat_id, adding_amount=_new_item_total)
     if body.item_name is not None:
         name = body.item_name.strip()
         if not name:

@@ -777,6 +777,186 @@ async def compute_feo_plan_tree(
     return result
 
 
+async def find_excess_culprit(
+    db: AsyncSession, feo_category_id: int, budget: Optional[float]
+) -> Optional[dict]:
+    """Находит «виновника» превышения плана над финансированием ФЭО узла
+    feo_category_id (compute_feo_plan_tree.excess_amount) — задача владельца, план
+    zany-fluttering-mountain.md п.4 «Превышение: показать виновника» (2026-08-10):
+    «должна отображаться данная закупка и показать, что из-за неё всё превысило».
+
+    ВАЖНО — что именно составляет full_display (plan + over), с которым
+    сравнивается budget в compute_feo_plan_tree._visit (см. её docstring), и
+    почему виновник ищется именно там, а не в сумме позиций закупок «в лоб»:
+      «Плановая сумма» листа (plan_manual) — это НЕ сумма позиций закупок этой
+      категории, а РУЧНОЙ план: либо planned_quantity×planned_amount самой
+      FeoCategory (одно число, без разбивки — плановые позиции тут ни при чём),
+      либо, если эти поля не заданы, Σ amount активных FeoPlannedItem (Ур.5,
+      «плановые позиции» — как раз панель «Добавить плановую», из примера
+      владельца «Great Wall POER · план 2 шт × 4 000 000»). Плюс `over` —
+      Σ сумм PurchaseItem с over_plan=true (сознательно сверх плана),
+      прибавляется БЕЗУСЛОВНО поверх — вот это уже реальные позиции закупок.
+
+    Поэтому виновник ищется как ПЕРВЫЙ элемент, на котором нарастающая сумма по
+    ДВУМ источникам (в порядке их вклада в формулу — сначала «план», потом
+    «сверх плана») впервые пересекла budget:
+      1) активные FeoPlannedItem узла/его листьев-потомков, по возрастанию
+         `created_at` (у FeoPlannedItem ЕСТЬ created_at — реальное время
+         появления плановой позиции, самый честный источник «времени попадания
+         в план», который вообще есть в модели данных), tie-break — id.
+         Каждая плановая позиция резолвится к закупке, которая на неё
+         ссылается (PurchaseItem.feo_planned_item_id) — берётся САМАЯ РАННЯЯ
+         (min Purchase.id), т.к. обычно именно она породила эту плановую
+         позицию автозаведением (_auto_assign_planned_items, wishes.py); если
+         ни одна закупка ещё не привязана — виновник этой строки безымянный
+         (purchase_id=None, названа сама плановая позиция).
+      2) позиции закупок (PurchaseItem) с over_plan=true в PLANNED_STATUSES,
+         по возрастанию Purchase.id (у Purchase НЕТ created_at — id это PK
+         IDENTITY/serial, монотонно растёт при INSERT, надёжный прокси
+         времени), tie-break — id позиции.
+    Если категория имеет СОБСТВЕННЫЙ planned_quantity×planned_amount (не 0) —
+    Ур.5-фолбэк формулой не используется вовсе (см. compute_feo_plan_tree), и
+    разбить это ОДНО число на закупки нельзя: в качестве первого «контрибьютора»
+    подставляется синтетическая запись «плановое значение категории» без
+    purchase_id — так превышение всё равно объясняется числом, даже если
+    конкретной закупки-виновника формально не существует.
+
+    Если превышение набралось несколькими контрибьюторами — виновником назван
+    именно тот, кто пересёк границу budget (не последний/крупнейший).
+
+    Возвращает None, если budget не задан или контрибьюторов не нашлось (не
+    должно случаться при excess_amount>0, но не падаем — просто нет данных для
+    подсветки виновника).
+    """
+    if budget is None:
+        return None
+    cat = await db.get(FeoCategory, feo_category_id)
+    if cat is None:
+        return None
+
+    all_cats = (await db.execute(
+        select(
+            FeoCategory.id, FeoCategory.parent_id,
+            FeoCategory.planned_quantity, FeoCategory.planned_amount,
+        ).where(FeoCategory.subsidy_id == cat.subsidy_id)
+    )).all()
+    by_id = {r.id: r for r in all_cats}
+    children_map: dict[int, list[int]] = {}
+    for r in all_cats:
+        if r.parent_id is not None:
+            children_map.setdefault(r.parent_id, []).append(r.id)
+    leaf_ids: list[int] = []
+    stack = [feo_category_id]
+    while stack:
+        cur = stack.pop()
+        kids = children_map.get(cur, [])
+        if kids:
+            stack.extend(kids)
+        else:
+            leaf_ids.append(cur)
+    if not leaf_ids:
+        return None
+
+    from app.models.feo_planned_item import FeoPlannedItem
+    from app.routers.purchase_budget import PLANNED_STATUSES  # local: avoid router import cycle
+
+    # ── Источник №1: «план» — собственные qty×amount листа, ИЛИ (fallback)
+    # Σ активных FeoPlannedItem ────────────────────────────────────────────
+    contributors: list[dict] = []
+
+    fallback_leaf_ids = [
+        lid for lid in leaf_ids
+        if not (by_id[lid].planned_quantity and by_id[lid].planned_amount
+                and float(by_id[lid].planned_quantity) > 0 and float(by_id[lid].planned_amount) > 0)
+    ]
+    direct_leaf_ids = [lid for lid in leaf_ids if lid not in fallback_leaf_ids]
+
+    for lid in direct_leaf_ids:
+        r = by_id[lid]
+        amt = Decimal(str(r.planned_quantity)) * Decimal(str(r.planned_amount))
+        if amt > 0:
+            cat_row = await db.get(FeoCategory, lid)
+            contributors.append({
+                "amount": amt, "purchase_id": None, "purchase_number": None,
+                "item_name": f"плановое значение категории «{cat_row.name if cat_row else lid}»",
+                "created_at": None, "sort_key": (0, lid),
+            })
+
+    if fallback_leaf_ids:
+        fpi_rows = (await db.execute(
+            select(FeoPlannedItem.id, FeoPlannedItem.name, FeoPlannedItem.amount, FeoPlannedItem.created_at)
+            .where(FeoPlannedItem.feo_category_id.in_(fallback_leaf_ids))
+            .where(FeoPlannedItem.is_active.is_(True))
+            .order_by(FeoPlannedItem.created_at.asc(), FeoPlannedItem.id.asc())
+        )).all()
+        fpi_ids = [r.id for r in fpi_rows]
+        linked_purchase_by_fpi: dict[int, tuple] = {}
+        if fpi_ids:
+            link_rows = (await db.execute(
+                select(PurchaseItem.feo_planned_item_id, Purchase.id, Purchase.purchase_number)
+                .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
+                .where(PurchaseItem.feo_planned_item_id.in_(fpi_ids))
+                .order_by(PurchaseItem.feo_planned_item_id, Purchase.id.asc())
+            )).all()
+            for _fpi_id, _pur_id, _pur_num in link_rows:
+                if _fpi_id not in linked_purchase_by_fpi:
+                    linked_purchase_by_fpi[_fpi_id] = (_pur_id, _pur_num)
+        for i, r in enumerate(fpi_rows):
+            pur_id, pur_num = linked_purchase_by_fpi.get(r.id, (None, None))
+            amt = Decimal(str(r.amount or 0))
+            if amt <= 0:
+                continue
+            contributors.append({
+                "amount": amt, "purchase_id": pur_id, "purchase_number": pur_num,
+                "item_name": r.name, "created_at": r.created_at, "sort_key": (1, i),
+            })
+
+    # ── Источник №2: «сверх плана» — PurchaseItem.over_plan=true, прибавляется
+    # безусловно ПОВЕРХ плана (см. compute_feo_plan_tree.over) ─────────────
+    cat_col = func.coalesce(PurchaseItem.feo_category_id, Purchase.feo_category_id)
+    amount_expr = func.coalesce(PurchaseItem.planned_total, PurchaseItem.total_price)
+    over_rows = (await db.execute(
+        select(
+            PurchaseItem.id.label("item_id"), PurchaseItem.item_name.label("item_name"),
+            amount_expr.label("amount"), Purchase.id.label("purchase_id"),
+            Purchase.purchase_number.label("purchase_number"),
+        )
+        .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
+        .where(cat_col.in_(leaf_ids))
+        .where(Purchase.status.in_(list(PLANNED_STATUSES)))
+        .where(Purchase.subsidy_id == cat.subsidy_id)
+        .where(PurchaseItem.over_plan.is_(True))
+        .order_by(Purchase.id.asc(), PurchaseItem.id.asc())
+    )).all()
+    for j, r in enumerate(over_rows):
+        amt = Decimal(str(r.amount or 0))
+        if amt <= 0:
+            continue
+        contributors.append({
+            "amount": amt, "purchase_id": r.purchase_id, "purchase_number": r.purchase_number,
+            "item_name": r.item_name, "created_at": None, "sort_key": (2, j),
+        })
+
+    if not contributors:
+        return None
+
+    budget_d = Decimal(str(budget))
+    cumulative = Decimal("0")
+    for c in contributors:
+        before = cumulative
+        cumulative += c["amount"]
+        if cumulative - budget_d > Decimal("0.005"):
+            return {
+                "purchase_id": c["purchase_id"],
+                "purchase_number": c["purchase_number"],
+                "item_name": c["item_name"],
+                "amount_before": float(before),
+                "amount_at_crossing": float(c["amount"]),
+                "cumulative_after": float(cumulative),
+            }
+    return None
+
+
 async def assert_no_unapproved_excess(
     db: AsyncSession, feo_category_id: int, adding_amount: Decimal = Decimal("0")
 ) -> None:
@@ -847,12 +1027,55 @@ async def assert_no_unapproved_excess(
             budget_d = Decimal(str(node.get("budget") or 0.0))
             full_plan_d = Decimal(str(node["plan"] + node["over"]))  # текущая плановая сумма (до сжатия по бюджету)
             excess_d = Decimal(str(excess))
+            # Владелец, план zany-fluttering-mountain.md п.4 (2026-08-10): «должна
+            # отображаться данная закупка и показать, что из-за неё всё превысило» —
+            # находим виновника (см. find_excess_culprit) и называем его в отказе,
+            # а не только абстрактную сумму превышения.
+            culprit = await find_excess_culprit(db, cid, node.get("budget"))
+            culprit_txt = ""
+            culprit_fields: dict = {
+                "culprit_purchase_id": None,
+                "culprit_purchase_number": None,
+                "culprit_item_name": None,
+                "culprit_amount_before": None,
+            }
+            if culprit:
+                if culprit["purchase_id"] is not None:
+                    cnum = culprit["purchase_number"] or culprit["purchase_id"]
+                    who = f"закупка №{cnum} (id {culprit['purchase_id']})"
+                else:
+                    # Плановое значение самой категории (planned_quantity×planned_amount) —
+                    # у него нет конкретной закупки-источника, см. find_excess_culprit.
+                    who = "плановая позиция без привязанной закупки"
+                culprit_txt = (
+                    f" Виновник — {who}: до неё по этой категории было выбрано "
+                    f"{culprit['amount_before']:,.2f} ₽, позиция «{culprit['item_name']}» "
+                    f"({culprit['amount_at_crossing']:,.2f} ₽) вывела сумму за границу ФЭО "
+                    f"{budget_d:,.2f} ₽."
+                )
+                culprit_fields.update({
+                    "culprit_purchase_id": culprit["purchase_id"],
+                    "culprit_purchase_number": culprit["purchase_number"],
+                    "culprit_item_name": culprit["item_name"],
+                    "culprit_amount_before": culprit["amount_before"],
+                })
             raise HTTPException(
                 409,
-                f"Превышение плана по категории ФЭО «{name}»: финансирование по ФЭО "
-                f"{budget_d:,.2f} ₽, текущая плановая сумма {full_plan_d:,.2f} ₽, превышение "
-                f"{excess_d:,.2f} ₽.{extra} Снимите позиции на {excess_d:,.2f} ₽ или согласуйте "
-                f"превышение (запрос согласования превышения плана ФЭО по категории «{name}»)."
+                {
+                    "code": "PLAN_EXCESS_OVER_FEO",
+                    "message": (
+                        f"Превышение плана по категории ФЭО «{name}»: финансирование по ФЭО "
+                        f"{budget_d:,.2f} ₽, текущая плановая сумма {full_plan_d:,.2f} ₽, превышение "
+                        f"{excess_d:,.2f} ₽.{culprit_txt}{extra} Снимите позиции на {excess_d:,.2f} ₽ "
+                        f"или согласуйте превышение (запрос согласования превышения плана ФЭО по "
+                        f"категории «{name}»)."
+                    ),
+                    "feo_category_id": cid,
+                    "excess_amount": float(excess_d),
+                    "budget": float(budget_d),
+                    "plan_amount": float(full_plan_d),
+                    **culprit_fields,
+                },
             )
 
         excess_fact = node.get("excess_fact_over_plan") or 0.0

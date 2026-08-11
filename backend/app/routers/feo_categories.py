@@ -1728,6 +1728,16 @@ async def _do_feo_import(
     _new_paths_seen: set[str] = set()
     new_path_cats: dict[str, FeoCategory] = {}  # путь → объект категории (для резолва remap.new_path)
 
+    # --- 2026-08: план больше не пишется прямо в cat.planned_quantity/planned_amount
+    # (владелец требует, чтобы план жил ЗАПИСЯМИ внутри категории — FeoPlannedItem,
+    # у которой amount — это СУММА, а не цена за единицу). Пока идёт цикл по строкам,
+    # копим посчитанный план каждого уровня сюда, а после цикла (когда уже видно,
+    # у какой категории есть дети, а у какой — свои позиции Ур.5) превращаем
+    # в FeoPlannedItem, см. блок обработки collected_plan ниже.
+    collected_plan: dict[int, dict] = {}  # cat.id -> {"qty","unit","amount","row","name"}
+    lvl5_leaves: set[int] = set()         # id категорий, которым в ЭТОМ импорте заведены/обновлены позиции Ур.5
+    lvl5_sum_by_cat: dict[int, Decimal] = {}  # сумма amount позиций Ур.5 по категории (из этого импорта)
+
     async def find_or_create(subsidy_id: int, parent_id, name: str, level: int):
         key = (subsidy_id, parent_id, name.lower().strip())
         if key in cat_cache:
@@ -1951,6 +1961,15 @@ async def _do_feo_import(
                     cat.feo_amount = feo_amt
 
                 # --- Плановые поля ---
+                # 2026-08: план строки больше НЕ пишется в cat.planned_quantity/
+                # cat.planned_amount — только копится в collected_plan. Присвоение
+                # полей категории отсюда убрано намеренно: план должен жить
+                # ЗАПИСЬЮ FeoPlannedItem внутри категории (там amount — СУММА,
+                # не цена за единицу), а не полями категории. Что именно делать
+                # с собранным планом (создать позицию листа / обновить существующую /
+                # обнулить поля группы) решается ПОСЛЕ цикла по всем строкам —
+                # см. блок обработки collected_plan ниже, там уже видно, у какой
+                # категории есть дети, а у какой — свои позиции Ур.5.
                 plan_qty  = lv["plan_qty"]
                 plan_unit = lv["plan_unit"]
                 plan_unit = _check_unit_shift(
@@ -1958,6 +1977,8 @@ async def _do_feo_import(
                 )
                 plan_amt  = lv["plan_amt"]
                 plan_sum  = lv["plan_sum"]
+
+                _pu = plan_unit if plan_unit is not None else feo_unit
 
                 if plan_sum is not None:
                     # Проверяем расхождение
@@ -1977,27 +1998,28 @@ async def _do_feo_import(
                             "name": lv["name"],
                             "message": f"Сумма плана {_fmt(plan_sum)} задана без кол-во; установлено кол-во = 1",
                         })
-                    # Обратный пересчёт: planned_amount = plan_sum / plan_qty
+                    # amount = сумма плана как есть; qty = кол-во из файла, иначе 1
                     eff_plan_qty = plan_qty if (plan_qty is not None and plan_qty != ZERO) else Decimal("1")
-                    if plan_qty is None:
-                        if cat.planned_quantity != Decimal("1"):
-                            cat.planned_quantity = Decimal("1")
-                    else:
-                        if cat.planned_quantity != plan_qty:
-                            cat.planned_quantity = plan_qty
-                    derived_plan_amt = (plan_sum / eff_plan_qty).quantize(QUANT)
-                    if cat.planned_amount != derived_plan_amt:
-                        cat.planned_amount = derived_plan_amt
+                    collected_plan[cat.id] = {
+                        "qty": eff_plan_qty,
+                        "unit": _pu,
+                        "amount": plan_sum,
+                        "row": row_num,
+                        "name": cat.name,
+                    }
                 else:
-                    # Старое поведение: план кол-во/ед/цена напрямую
+                    # Старое поведение источника данных: план кол-во/ед/цена напрямую
                     _pq = plan_qty if plan_qty is not None else feo_qty
-                    if _pq is not None and cat.planned_quantity != _pq:
-                        cat.planned_quantity = _pq
                     _pa = plan_amt if plan_amt is not None else feo_amt
-                    if _pa is not None and cat.planned_amount != _pa:
-                        cat.planned_amount = _pa
+                    if _pq is not None and _pa is not None:
+                        collected_plan[cat.id] = {
+                            "qty": _pq,
+                            "unit": _pu,
+                            "amount": (_pq * _pa).quantize(QUANT),
+                            "row": row_num,
+                            "name": cat.name,
+                        }
 
-                _pu = plan_unit if plan_unit is not None else feo_unit
                 if _pu and cat.unit != _pu:
                     cat.unit = _pu
 
@@ -2049,6 +2071,12 @@ async def _do_feo_import(
                     eff_item_qty = item_qty if item_qty is not None else Decimal("1")
                     eff_item_amount = (item_price * eff_item_qty).quantize(QUANT)
 
+                # Категория получила позицию Ур.5 в ЭТОМ импорте — план строки
+                # (собранный выше в collected_plan) для неё уже не отдельная
+                # позиция, а описание её содержимого; см. блок ниже.
+                lvl5_leaves.add(leaf.id)
+                lvl5_sum_by_cat[leaf.id] = lvl5_sum_by_cat.get(leaf.id, ZERO) + (eff_item_amount or ZERO)
+
                 existing_item = (await db.execute(
                     select(FeoPlannedItem).where(
                         FeoPlannedItem.feo_category_id == leaf.id,
@@ -2086,9 +2114,136 @@ async def _do_feo_import(
         except Exception as e:
             errors.append({"row": row_num, "name": lvl2_name, "message": str(e)})
 
-    # Проверка родитель vs сумма ВСЕХ дочерних узлов (до commit)
-    # Собираем актуальные объекты по id через cat_cache (все объекты уже в сессии)
+    # Собираем актуальные объекты категорий по id через cat_cache (все объекты
+    # уже в сессии) — нужно и для обработки collected_plan ниже, и для проверки
+    # "родитель vs сумма детей" после неё.
     cat_by_db_id: dict[int, FeoCategory] = {c.id: c for c in cat_cache.values() if c.id is not None}
+
+    # --- Обработка collected_plan: план строки → FeoPlannedItem внутри
+    # категории, а не поля категории (см. комментарий у объявления collected_plan
+    # выше цикла по строкам). Делается ЗДЕСЬ, после цикла по всем строкам файла,
+    # потому что только сейчас окончательно видно: у категории есть подкатегории
+    # (группа) или нет (лист), и получила ли она в этом же импорте отдельные
+    # позиции Ур.5.
+    if collected_plan:
+        from app.models.feo_planned_item import FeoPlannedItem
+
+        _plan_ids = list(collected_plan.keys())
+        # Кто из собранных категорий — родитель (группа): есть хотя бы один
+        # ребёнок — существующий или только что созданный в этом же импорте
+        # (find_or_create уже сделал flush, поэтому дети видны через запрос).
+        _parent_rows = (await db.execute(
+            select(FeoCategory.parent_id).where(FeoCategory.parent_id.in_(_plan_ids))
+        )).scalars().all()
+        _groups_with_plan = {pid for pid in _parent_rows if pid is not None}
+
+        for _cat_id, _pdata in collected_plan.items():
+            _cat_obj = cat_by_db_id.get(_cat_id)
+            if _cat_obj is None:
+                continue
+            _plan_name = _pdata["name"]
+            _plan_row = _pdata["row"]
+
+            if _cat_id in _groups_with_plan:
+                # Категория-ГРУППА: собственный план группы в compute_feo_plan_tree
+                # (app/services/feo_plan.py) вообще не участвует в расчёте — план
+                # группы считается только по сумме подкатегорий. Оставлять здесь
+                # значения — мёртвые данные, которые незаметно всплывают и ломают
+                # числа, если подкатегория потом пропадёт из файла (боевой случай:
+                # категория «Микроавтобус (автобус)» после исчезновения подкатегории
+                # (DONGFENG) JUNFENG K33 внезапно показала цену 10 130 000 за штуку
+                # и превышение на «Транспорт и техника»).
+                if _cat_obj.planned_quantity is not None:
+                    _cat_obj.planned_quantity = None
+                if _cat_obj.planned_amount is not None:
+                    _cat_obj.planned_amount = None
+                warnings.append({
+                    "kind": "group_plan_ignored",
+                    "row": _plan_row,
+                    "name": _plan_name,
+                    "message": f"План строки «{_plan_name}» не записан: у категории есть подкатегории, план группы считается по ним",
+                })
+                continue
+
+            if _cat_id in lvl5_leaves:
+                # Лист уже описан отдельными позициями Ур.5 в этом же импорте —
+                # план строки дублировал бы их сумму, отдельную позицию с именем
+                # самой категории не создаём.
+                if _cat_obj.planned_quantity is not None:
+                    _cat_obj.planned_quantity = None
+                if _cat_obj.planned_amount is not None:
+                    _cat_obj.planned_amount = None
+                _items_sum = lvl5_sum_by_cat.get(_cat_id, ZERO)
+                if abs(_items_sum - (_pdata["amount"] or ZERO)) > Decimal("0.01"):
+                    warnings.append({
+                        "kind": "plan_vs_items_mismatch",
+                        "row": _plan_row,
+                        "name": _plan_name,
+                        "message": (
+                            f"План строки «{_plan_name}» = {_fmt(_pdata['amount'])}, а сумма позиций Ур.5 "
+                            f"= {_fmt(_items_sum)} — расхождение, план строки не записан"
+                        ),
+                    })
+                continue
+
+            # ЛИСТ без своих позиций Ур.5 в этом импорте — план строки описывает
+            # саму категорию; реализуем плановой позицией с именем категории.
+            # Ищем существующую активную позицию по точному совпадению имени
+            # (TRIM+LOWER) — повторная загрузка того же файла обязана найти и
+            # обновить именно её, а не плодить дубли.
+            _name_norm = (_plan_name or "").strip().lower()
+            _existing_items = (await db.execute(
+                select(FeoPlannedItem).where(
+                    FeoPlannedItem.feo_category_id == _cat_id,
+                    FeoPlannedItem.is_active == True,  # noqa: E712
+                )
+            )).scalars().all()
+            _match_item = next(
+                (it for it in _existing_items if (it.name or "").strip().lower() == _name_norm),
+                None,
+            )
+            if _match_item is not None:
+                _ch = False
+                if _pdata["qty"] is not None and _match_item.quantity != _pdata["qty"]:
+                    _match_item.quantity = _pdata["qty"]; _ch = True
+                if _pdata["unit"] is not None and _match_item.unit != _pdata["unit"]:
+                    _match_item.unit = _pdata["unit"]; _ch = True
+                if _pdata["amount"] is not None and _match_item.amount != _pdata["amount"]:
+                    _match_item.amount = _pdata["amount"]; _ch = True
+                if _ch:
+                    updated += 1
+                    updated_details.append({"row": _plan_row, "name": _plan_name, "reason": "плановая позиция из плана строки"})
+            else:
+                _other_active = [it for it in _existing_items if (it.amount or ZERO) != ZERO]
+                if _other_active:
+                    # У категории уже есть свои плановые позиции — не задваиваем.
+                    warnings.append({
+                        "kind": "plan_skipped_has_items",
+                        "row": _plan_row,
+                        "name": _plan_name,
+                        "message": f"У категории «{_plan_name}» уже есть плановые позиции — план строки не записан, чтобы не задвоить",
+                    })
+                else:
+                    _pi = FeoPlannedItem(
+                        feo_category_id=_cat_id,
+                        name=(_plan_name or "")[:500],
+                        quantity=_pdata["qty"],
+                        unit=_pdata["unit"],
+                        amount=_pdata["amount"],
+                        is_active=True,
+                        notes="из импорта ФЭО",
+                    )
+                    db.add(_pi)
+                    await db.flush()
+                    created += 1
+                    created_details.append({"row": _plan_row, "name": _plan_name, "reason": "плановая позиция из плана строки"})
+
+            if _cat_obj.planned_quantity is not None:
+                _cat_obj.planned_quantity = None
+            if _cat_obj.planned_amount is not None:
+                _cat_obj.planned_amount = None
+
+    # Проверка родитель vs сумма ВСЕХ дочерних узлов (до commit)
     for parent_id in touched_parents:
         if parent_id not in cat_by_db_id:
             continue
@@ -2133,8 +2288,13 @@ async def _do_feo_import(
             cand_path = _full_path(cand.id)
             subtree_ids = _subtree_ids_local(cand.id)
             load = await _feo_category_load(subtree_ids, db)
+            # own_data (свой план/финансирование/поля ФЭО) считается наравне со
+            # внешними ссылками — узел с собственными данными не «пустой», даже
+            # если на него никто не ссылается (см. own_data в _feo_category_load,
+            # причина — боевая пропажа категории (DONGFENG) JUNFENG K33).
             has_refs = any(load[k] for k in (
                 "purchases", "purchase_items", "wishes", "wish_items", "products", "feo_planned_items",
+                "own_data",
             ))
             kind = "needs_mapping" if has_refs else "empty"
 
@@ -2239,10 +2399,27 @@ async def _do_feo_import(
                 if any(_sid in seen_ids for _sid in subtree):
                     continue
                 load = await _feo_category_load(subtree, db)
-                has_refs = any(load[k] for k in (
+                _real_refs = any(load[k] for k in (
                     "purchases", "purchase_items", "wishes", "wish_items", "products", "feo_planned_items",
                 ))
+                # own_data (свой план/финансирование/поля ФЭО) считается наравне со
+                # внешними ссылками — узел с собственными данными НЕ удаляется, даже
+                # если в файле его нет и ссылок на него нет. Боевая причина: категория
+                # «(DONGFENG) JUNFENG K33» дважды исчезала с прода — в ней был план
+                # (planned_quantity/planned_amount) на 10 130 000, но ссылок не было,
+                # и старая проверка has_refs их не видела, поэтому узел молча удалялся.
+                has_refs = _real_refs or bool(load.get("own_data"))
                 if has_refs:
+                    if not _real_refs:
+                        warnings.append({
+                            "kind": "kept_has_own_plan",
+                            "row": None,
+                            "name": _cand["path"],
+                            "message": (
+                                f"Категория «{_cand['path']}» не удалена: в ней есть собственный план или "
+                                f"финансирование по ФЭО, хотя в файле её нет. Проверьте, не потерялась ли строка в файле"
+                            ),
+                        })
                     continue
                 for _sid in subtree:
                     if _sid == _cand_id:
@@ -2929,7 +3106,18 @@ async def _relink_feo_category(old_id: int, new_id: int, db: AsyncSession) -> di
 async def _feo_category_load(ids: list[int], db: AsyncSession) -> dict:
     """Что висит на переданных категориях: количества по каждой из ссылающихся
     таблиц + список блокирующих закупок с человекочитаемым статусом.
-    Позволяет вызывающему решить, пуст ли узел, и показать пользователю причину."""
+    Позволяет вызывающему решить, пуст ли узел, и показать пользователю причину.
+
+    own_data (2026-08, боевая причина): раньше "пусто" проверялось ТОЛЬКО по
+    внешним ссылкам (закупки/позиции/заявки/товары/плановые позиции). Собственные
+    данные категории — план (planned_quantity/planned_amount), финансирование
+    (budget) и поля ФЭО (feo_quantity/feo_amount) — не считались ничем, поэтому
+    категория с планом на 10 130 000 руб., но без единой ссылки, признавалась
+    пустой и удалялась молча. Так дважды пропадала с прода категория
+    «(DONGFENG) JUNFENG K33». own_data = сколько из переданных id имеют хоть одно
+    из этих полей not NULL и не ноль — вызывающий код обязан учитывать его наравне
+    с остальными ссылками при решении "пуст ли узел".
+    """
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem
     from app.models.product import Product
@@ -2937,6 +3125,7 @@ async def _feo_category_load(ids: list[int], db: AsyncSession) -> dict:
     from app.models.wish import Wish
     from app.models.wish_item import WishItem
     from app.routers.purchase_transitions import STATUS_LABELS
+    from sqlalchemy import or_, and_
 
     purchases_count = (await db.execute(
         select(func.count(Purchase.id)).where(Purchase.feo_category_id.in_(ids))
@@ -2955,6 +3144,18 @@ async def _feo_category_load(ids: list[int], db: AsyncSession) -> dict:
     )).scalar_one()
     planned_items_count = (await db.execute(
         select(func.count(FeoPlannedItem.id)).where(FeoPlannedItem.feo_category_id.in_(ids))
+    )).scalar_one()
+    own_data_count = (await db.execute(
+        select(func.count(FeoCategory.id)).where(
+            FeoCategory.id.in_(ids),
+            or_(
+                and_(FeoCategory.budget.isnot(None), FeoCategory.budget != 0),
+                and_(FeoCategory.feo_quantity.isnot(None), FeoCategory.feo_quantity != 0),
+                and_(FeoCategory.feo_amount.isnot(None), FeoCategory.feo_amount != 0),
+                and_(FeoCategory.planned_quantity.isnot(None), FeoCategory.planned_quantity != 0),
+                and_(FeoCategory.planned_amount.isnot(None), FeoCategory.planned_amount != 0),
+            ),
+        )
     )).scalar_one()
 
     blocking = await _collect_blocking_purchases(ids, db)
@@ -2976,6 +3177,7 @@ async def _feo_category_load(ids: list[int], db: AsyncSession) -> dict:
         "wish_items": wish_items_count,
         "products": products_count,
         "feo_planned_items": planned_items_count,
+        "own_data": own_data_count,
         "blocking_purchases": purchases_list,
     }
 

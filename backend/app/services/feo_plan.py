@@ -477,7 +477,12 @@ async def compute_feo_plan_tree(
         лист:  planned_quantity × planned_amount (planned_amount — цена за
                единицу); если произведение = 0, а активные FeoPlannedItem (Ур.5)
                есть — fallback на Σ FeoPlannedItem.amount (план введён по
-               позициям, а не по листу целиком);
+               позициям, а не по листу целиком). Количество (qty), участвующее
+               в этой формуле и далее в plan/qty_plan, — тоже с fallback'ом:
+               planned_quantity листа, а если оно не задано (0) — Σ quantity
+               тех же активных FeoPlannedItem (симметрично fallback'у по сумме,
+               иначе plan_manual посчитается по позициям, а qty_plan всё равно
+               уйдёт в 0 и замещение «заказ вместо плана» не сработает);
         группа: Σ plan_manual прямых детей. Собственные planned_quantity/amount
                 группы НЕ учитываются — так же, как feoPlannedTotalFor во
                 фронте, иначе формулы разойдутся (см. ниже — по той же причине
@@ -570,13 +575,20 @@ async def compute_feo_plan_tree(
 
     # Fallback-сумма Σ FeoPlannedItem.amount активных позиций Ур.5 per лист — нужна,
     # когда planned_quantity/planned_amount листа не заполнены, а план введён
-    # позициями (импорт Excel).
+    # позициями (импорт Excel). Тут же — симметричный fallback по количеству
+    # (Σ quantity), т.к. план у владельца переезжает с полей категории на плановые
+    # позиции внутри неё (модель «всё планирование — записи внутри категории»):
+    # без этого qty листа остаётся 0, «плановое количество» в UI показывает ноль,
+    # а правило замещения «заказ вместо плана» (qty > 0 and ordered_qty >= qty)
+    # никогда не срабатывает, потому что ему не с чем сравнивать.
     leaf_item_amt: dict[int, float] = {}
+    leaf_item_qty: dict[int, float] = {}
     if leaf_ids:
         fpi_q = (
             select(
                 FeoPlannedItem.feo_category_id,
                 func.coalesce(func.sum(FeoPlannedItem.amount), 0).label("amt"),
+                func.coalesce(func.sum(FeoPlannedItem.quantity), 0).label("qty"),
             )
             .where(FeoPlannedItem.feo_category_id.in_(leaf_ids))
             .where(FeoPlannedItem.is_active.is_(True))
@@ -584,6 +596,7 @@ async def compute_feo_plan_tree(
         )
         for r in (await db.execute(fpi_q)).all():
             leaf_item_amt[r.feo_category_id] = float(r.amt)
+            leaf_item_qty[r.feo_category_id] = float(r.qty)
 
     over_consumption = await plan_consumption_by_category(db, subsidy_ids, exclude_planned_item_linked=True)
     ordered_consumption = await ordered_consumption_by_category(db, subsidy_ids, exclude_planned_item_linked=True)
@@ -648,6 +661,12 @@ async def compute_feo_plan_tree(
             plan_manual = (qty * amt) if (qty > 0 and amt > 0) else 0.0
             if plan_manual == 0.0:
                 plan_manual = leaf_item_amt.get(cat_id, 0.0)
+            if qty == 0.0:
+                # planned_quantity категории не задано (план введён позициями,
+                # не полями листа) — без этого fallback'а qty_plan/display_quantity
+                # ниже обнуляются, и правило замещения «заказ вместо плана»
+                # (qty > 0 and ordered_qty >= qty) не срабатывает, т.к. qty всегда 0.
+                qty = leaf_item_qty.get(cat_id, 0.0)
             ordered = own_ordered
             ordered_qty = own_ordered_qty
             over = own_over

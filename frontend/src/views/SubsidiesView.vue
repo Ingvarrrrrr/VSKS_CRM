@@ -1115,10 +1115,16 @@
                                         @click="deletePlannedItem(planned)"
                                       />
                                     </template>
-                                    <v-btn v-else icon="mdi-playlist-plus" size="x-small" variant="text" color="teal"
-                                      title="Завести плановую позицию — именованный товар/услуга вместо строки категории; количество и цена берутся из плана листа, факты привяжутся к ней автоматически"
-                                      @click="openConvertManualPlanToItem(node)"
-                                    />
+                                    <template v-else>
+                                      <v-btn icon="mdi-pencil" size="x-small" variant="text" color="blue"
+                                        title="Редактировать план категории — количество, цена за единицу, единица измерения"
+                                        @click="openEditCategoryPlan(node)"
+                                      />
+                                      <v-btn icon="mdi-playlist-plus" size="x-small" variant="text" color="teal"
+                                        title="Завести плановую позицию — именованный товар/услуга вместо строки категории; количество и цена берутся из плана листа, факты привяжутся к ней автоматически"
+                                        @click="openConvertManualPlanToItem(node)"
+                                      />
+                                    </template>
                                   </td>
                                 </tr>
                                 <!-- Раскрывающийся блок плановой позиции: под одной плановой позицией может
@@ -2216,73 +2222,25 @@
               </v-col>
             </v-row>
           </div>
-          <!-- Блок: Плановые показатели (CRM) -->
+          <!-- Блок: Плановые показатели (CRM) — задача владельца (2026-08-11, Правка 2):
+               план теперь вводится именованной плановой позицией внутри категории, а не
+               голыми числами на самой категории (planned_quantity/planned_amount) — иначе
+               план виден как безымянное число без ответа на вопрос «что именно планируем
+               купить». Поля здесь больше не редактируются при создании: feoForm.planned_quantity/
+               planned_amount остаются null (см. addFeoCategory) — «Ед. изм.» ниже это
+               единица измерения САМОЙ КАТЕГОРИИ (для отображения), а не план. -->
           <div style="border:1px solid rgba(var(--v-border-color),var(--v-border-opacity));border-radius:8px;padding:12px">
             <div class="text-body-2 font-weight-medium mb-1">Плановые показатели</div>
-            <div class="text-caption text-medium-emphasis mb-3">
-              Кол-во и цена за ед. — пара: заполнены оба или ни одного (сумма посчитается сама). Если план известен
-              только общей суммой без разбивки (например, «Канцтовары» на 1 000 000 без детализации) — оставьте
-              оба поля пустыми и задайте план отдельной плановой позицией на сумму (кнопка «Добавить плановую» в панели).
-            </div>
-            <!-- Плановое количество -->
-            <div class="d-flex align-center mb-2">
-              <span class="text-body-2">Плановое количество</span>
-              <v-btn-toggle
-                v-model="feoForm.qtyAuto"
-                mandatory
-                density="compact"
-                class="ml-4"
-                color="primary"
-              >
-                <v-btn :value="false" size="x-small">Вручную</v-btn>
-                <v-btn :value="true" size="x-small">Авто из детей</v-btn>
-              </v-btn-toggle>
-            </div>
-            <v-row v-if="!feoForm.qtyAuto" dense class="mb-3">
-              <v-col cols="8">
-                <v-text-field
-                  v-model.number="feoForm.planned_quantity"
-                  label="Количество"
-                  variant="outlined" density="compact" type="number" hide-details
-                  :error="!!feoAddPlanPairError"
-                />
-              </v-col>
-              <v-col cols="4">
-                <v-combobox
-                  v-model="feoForm.unit"
-                  :items="['шт', 'компл', 'кг', 'л', 'м', 'услуга', 'чел.', 'рейс']"
-                  label="Ед. изм."
-                  variant="outlined" density="compact" hide-details
-                />
-              </v-col>
-            </v-row>
-            <!-- Плановая стоимость за ед. -->
-            <div class="d-flex align-center mb-2">
-              <span class="text-body-2">Плановая стоимость за ед.</span>
-              <v-btn-toggle
-                v-model="feoForm.amtAuto"
-                mandatory
-                density="compact"
-                class="ml-4"
-                color="primary"
-              >
-                <v-btn :value="false" size="x-small">Вручную</v-btn>
-                <v-btn :value="true" size="x-small">Авто из детей</v-btn>
-              </v-btn-toggle>
-            </div>
-            <v-text-field
-              v-if="!feoForm.amtAuto"
-              v-model.number="feoForm.planned_amount"
-              label="Плановая стоимость за ед., ₽"
-              variant="outlined" density="compact" type="number" hide-details
-              :error="!!feoAddPlanPairError"
-            />
-            <v-alert
-              v-if="feoAddPlanPairError"
-              type="warning" variant="tonal" density="compact" class="mt-3 text-caption"
-            >
-              {{ feoAddPlanPairError }}
+            <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+              План задаётся плановой позицией внутри категории: создайте категорию и нажмите «Добавить плановую
+              позицию» в панели. Так у плана будет название (что именно планируем купить), а не просто число.
             </v-alert>
+            <v-combobox
+              v-model="feoForm.unit"
+              :items="['шт', 'компл', 'кг', 'л', 'м', 'услуга', 'чел.', 'рейс']"
+              label="Ед. изм. категории"
+              variant="outlined" density="compact" hide-details
+            />
           </div>
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
@@ -2390,94 +2348,77 @@
               </v-col>
             </v-row>
           </div>
-          <!-- Блок: Плановые показатели (CRM) -->
+          <!-- Блок: Плановые показатели (CRM) — Правка 2Б (2026-08-11): поля больше не
+               редактируются здесь напрямую (см. Правку 1 — путаница planned_amount
+               «цена за ед.» vs FeoPlannedItem.amount «сумма» уже дважды ломала боевые
+               числа). Три состояния: (1) есть подкатегории — план считают они;
+               (2) план не задан — подсказка завести плановую позицию; (3) план задан
+               старыми полями категории — показываем только для чтения + кнопка
+               переноса в плановую позицию (openConvertManualPlanToItem, уже переносит
+               значения и после сохранения сам чистит эти поля — см. savePlannedItem). -->
           <div style="border:1px solid rgba(var(--v-border-color),var(--v-border-opacity));border-radius:8px;padding:12px" class="mb-3">
             <div class="text-body-2 font-weight-medium mb-1">Плановые показатели</div>
-            <div class="text-caption text-medium-emphasis mb-3">
-              Кол-во и цена за ед. — пара: заполнены оба или ни одного (сумма посчитается сама). Если план известен
-              только общей суммой без разбивки (например, «Канцтовары» на 1 000 000 без детализации) — оставьте
-              оба поля пустыми и задайте план отдельной плановой позицией на сумму (кнопка «Добавить плановую» в панели).
-            </div>
-            <!-- Плановое количество -->
-            <div class="d-flex align-center mb-2">
-              <span class="text-body-2">Плановое количество</span>
-              <v-btn-toggle
-                v-if="feoEditForm.hasChildren"
-                v-model="feoEditForm.qtyAuto"
-                mandatory
-                density="compact"
-                class="ml-4"
-                color="primary"
+
+            <v-alert
+              v-if="feoEditForm.hasChildren"
+              type="info" variant="tonal" density="compact" class="text-caption"
+            >
+              У категории есть подкатегории: план считается по ним, собственный план категории в расчёте не участвует.
+            </v-alert>
+
+            <template v-else-if="feoEditManualPlanSet">
+              <div class="d-flex align-center flex-wrap mb-2" style="gap:8px">
+                <span class="text-body-2">
+                  Плановое количество: <strong>{{ feoEditForm.planned_quantity ?? '—' }} {{ feoEditForm.unit || 'ед.' }}</strong>
+                </span>
+                <v-chip size="x-small" color="orange" variant="tonal">старый формат</v-chip>
+              </div>
+              <div class="text-body-2 mb-2">
+                Плановая цена за единицу: <strong>{{ feoEditForm.planned_amount != null ? formatCurrency(feoEditForm.planned_amount) : '—' }}</strong>
+              </div>
+              <div class="text-body-2 mb-3">
+                Плановая сумма: {{ feoEditForm.planned_quantity ?? '—' }} × {{ feoEditForm.planned_amount != null ? formatCurrency(feoEditForm.planned_amount) : '—' }}
+                <template v-if="feoEditForm.planned_quantity != null && feoEditForm.planned_amount != null">
+                  = <strong>{{ formatCurrency(Number(feoEditForm.planned_quantity) * Number(feoEditForm.planned_amount)) }}</strong>
+                </template>
+              </div>
+              <v-alert
+                v-if="feoEditPlanPairError"
+                type="warning" variant="tonal" density="compact" class="mb-3 text-caption"
               >
-                <v-btn :value="false" size="x-small">Вручную</v-btn>
-                <v-btn :value="true" size="x-small">Авто из детей</v-btn>
-              </v-btn-toggle>
-            </div>
-            <v-row v-if="!feoEditForm.hasChildren || !feoEditForm.qtyAuto" dense class="mb-2">
-              <v-col cols="8">
-                <v-text-field
-                  v-model.number="feoEditForm.planned_quantity"
-                  label="Количество"
-                  variant="outlined" density="compact" type="number" hide-details
-                  :error="!!feoEditPlanPairError"
-                />
-              </v-col>
-              <v-col cols="4">
-                <v-combobox
-                  v-model="feoEditForm.unit"
-                  :items="['шт', 'компл', 'кг', 'л', 'м', 'услуга', 'чел.', 'рейс']"
-                  label="Ед. изм."
-                  variant="outlined" density="compact" hide-details
-                />
-              </v-col>
-            </v-row>
-            <v-alert
-              v-if="feoEditForm.hasChildren && feoEditForm.qtyAuto"
-              type="info" variant="tonal" density="compact" class="mb-2 text-caption"
-            >
-              Количество рассчитывается автоматически из дочерних направлений
-            </v-alert>
-            <!-- Плановая стоимость за ед. -->
-            <div class="d-flex align-center mb-2">
-              <span class="text-body-2">Плановая стоимость за ед.</span>
-              <v-btn-toggle
-                v-if="feoEditForm.hasChildren"
-                v-model="feoEditForm.amtAuto"
-                mandatory
-                density="compact"
-                class="ml-4"
-                color="primary"
-              >
-                <v-btn :value="false" size="x-small">Вручную</v-btn>
-                <v-btn :value="true" size="x-small">Авто из детей</v-btn>
-              </v-btn-toggle>
-            </div>
-            <v-text-field
-              v-if="!feoEditForm.hasChildren || !feoEditForm.amtAuto"
-              v-model.number="feoEditForm.planned_amount"
-              label="Плановая стоимость за ед., ₽"
-              variant="outlined" density="compact" type="number" hide-details
-              :error="!!feoEditPlanPairError"
-            />
-            <v-alert
-              v-if="feoEditForm.hasChildren && feoEditForm.amtAuto"
-              type="info" variant="tonal" density="compact" class="mt-2 text-caption"
-            >
-              Сумма рассчитывается автоматически из дочерних направлений
-            </v-alert>
-            <v-alert
-              v-if="feoEditPlanPairError"
-              type="warning" variant="tonal" density="compact" class="mt-3 text-caption"
-            >
-              {{ feoEditPlanPairError }}
-            </v-alert>
+                {{ feoEditPlanPairError }}
+              </v-alert>
+              <div class="text-caption text-medium-emphasis mb-3">
+                План записан полями самой категории, без названия. Перенесите его в плановую позицию — тогда будет
+                видно, что именно запланировано, и позицию можно будет править.
+              </div>
+              <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-swap-horizontal" @click="convertCategoryEditPlanToItem">
+                Перенести в плановую позицию
+              </v-btn>
+            </template>
+
+            <template v-else>
+              <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+                План задаётся плановой позицией внутри категории: нажмите «Добавить плановую позицию» ниже. Так у
+                плана будет название (что именно планируем купить), а не просто число.
+              </v-alert>
+              <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-playlist-plus" @click="openAddPlannedItemFromCategoryEdit">
+                Добавить плановую позицию
+              </v-btn>
+            </template>
           </div>
           <v-checkbox v-model="feoEditForm.is_active" label="Активна" density="compact" hide-details class="mt-2" />
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
           <v-spacer />
           <v-btn variant="text" @click="showEditFeoDialog = false">Отмена</v-btn>
-          <v-btn color="primary" :loading="savingFeo" :disabled="!feoEditForm.name || !!feoEditPlanPairError" @click="updateFeoCategory">
+          <!-- feoEditPlanPairError НЕ гейтит кнопку (см. ответ в отчёте по Правке 2Б):
+               planned_quantity/planned_amount больше не редактируются в этом диалоге,
+               мисматч пары может быть только унаследован из БД — категория с таким
+               мисматчем обязана сохраняться (иначе «Сохранить» блокируется навсегда
+               без способа это поправить из этой формы). Предупреждение всё равно
+               показывается пользователю в блоке «старый формат» выше. -->
+          <v-btn color="primary" :loading="savingFeo" :disabled="!feoEditForm.name" @click="updateFeoCategory">
             Сохранить
           </v-btn>
         </v-card-actions>
@@ -3655,6 +3596,59 @@
           <v-spacer />
           <v-btn variant="text" @click="editPlannedDialog.show = false">Отмена</v-btn>
           <v-btn color="primary" variant="tonal" :loading="editPlannedDialog.saving" @click="saveEditPlannedItem">Сохранить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── Диалог редактирования ручного плана категории (синтетическая строка «ручной
+         план ФЭО» в панели, planned.isManual) — правит planned_quantity/planned_amount/
+         unit НА КАТЕГОРИИ, а не заводит FeoPlannedItem (для этого рядом отдельная кнопка). ── -->
+    <v-dialog v-model="editCategoryPlanDialog.show" max-width="440" :fullscreen="mobile">
+      <v-card>
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">
+          <v-icon icon="mdi-pencil-ruler" color="blue" class="mr-2" />
+          Редактировать план категории
+        </v-card-title>
+        <v-card-text class="px-4 pb-2">
+          <div class="text-caption text-medium-emphasis mb-3">{{ editCategoryPlanDialog.categoryName }}</div>
+          <v-row dense>
+            <v-col cols="6">
+              <v-text-field
+                v-model="editCategoryPlanDialog.quantity"
+                label="Плановое количество" type="number"
+                variant="outlined" density="compact" autofocus
+              />
+            </v-col>
+            <v-col cols="6">
+              <v-text-field
+                v-model="editCategoryPlanDialog.unitPrice"
+                label="Плановая цена за единицу, ₽" type="number"
+                variant="outlined" density="compact"
+              />
+            </v-col>
+          </v-row>
+          <v-combobox
+            v-model="editCategoryPlanDialog.unit"
+            :items="CATEGORY_UNIT_OPTIONS"
+            label="Единица измерения"
+            variant="outlined" density="compact" class="mb-1"
+            :color="isCategoryUnitSuspicious ? 'warning' : undefined"
+          />
+          <div v-if="isCategoryUnitSuspicious" class="text-caption mb-2" style="color:#B45309;display:flex;align-items:flex-start;gap:4px">
+            <v-icon icon="mdi-alert" size="14" style="margin-top:2px" />
+            <span>Похоже на число, а не единицу измерения — след старого импорта со сдвигом колонок. Выберите единицу из списка или введите свою.</span>
+          </div>
+          <div class="text-caption text-medium-emphasis mt-2" style="border-top:1px solid #e2e8f0;padding-top:8px">
+            Плановая сумма (кол-во × цена):
+            <span class="font-weight-medium" :style="editCategoryPlanSum != null ? 'color:#0f766e' : ''">
+              {{ editCategoryPlanSum != null ? formatCurrency(editCategoryPlanSum) : '—' }}
+            </span>
+          </div>
+        </v-card-text>
+        <v-card-actions class="px-4 pb-3">
+          <v-spacer />
+          <v-btn variant="text" @click="editCategoryPlanDialog.show = false">Отмена</v-btn>
+          <v-btn color="primary" variant="tonal" :loading="editCategoryPlanDialog.saving" @click="saveEditCategoryPlan">Сохранить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -5030,6 +5024,14 @@ const mappingInProgress = ref(false)
 const showAddPlannedDialog = ref(false)
 const addPlannedCategoryId = ref<number | null>(null)
 const savingPlannedItem = ref(false)
+// Флаг «эта позиция заводится действием "Перенести в плановую позицию"» (не обычной
+// кнопкой «Добавить плановую») — savePlannedItem после успешного создания по нему
+// очищает planned_quantity/planned_amount категории (см. ниже), иначе поля категории
+// продолжают заслонять созданную запись в расчёте плана листа. Сбрасывается и при
+// отмене/закрытии диалога любым способом (watch на showAddPlannedDialog ниже), чтобы
+// следующее обычное «Добавить плановую» не подхватило чужой id и не очистило план
+// категории, которую пользователь трогать не просил.
+const convertFromCategoryPlanId = ref<number | null>(null)
 const plannedItemForm = ref({
   name: '',
   quantity: null as number | null,
@@ -5810,6 +5812,7 @@ async function applyMapping(plannedItemId: number | null) {
 
 function openAddPlannedItem(categoryId: number) {
   addPlannedCategoryId.value = categoryId
+  convertFromCategoryPlanId.value = null
   plannedItemForm.value = {
     name: '', quantity: null, unit: '', amount: null,
     payment_mode: 'one_time', planned_date: '', monthly_start_date: '',
@@ -5817,6 +5820,13 @@ function openAddPlannedItem(categoryId: number) {
   }
   showAddPlannedDialog.value = true
 }
+
+// Диалог showAddPlannedDialog закрывается разными путями (Отмена/backdrop/Esc, не
+// только через savePlannedItem) — сбрасываем convertFromCategoryPlanId при ЛЮБОМ
+// закрытии, чтобы флаг не «протёк» в следующее открытие обычной кнопкой.
+watch(showAddPlannedDialog, (val) => {
+  if (!val) convertFromCategoryPlanId.value = null
+})
 
 // «Завести плановую позицию» — задача владельца (2026-08-09, пункт 3): у категории
 // с ручным планом (нет ни одной реальной FeoPlannedItem, план задан прямо на
@@ -5843,6 +5853,7 @@ function openConvertManualPlanToItem(node: FeoNode) {
   const unitPrice = node.planned_amount != null ? Number(node.planned_amount) : null
   const amount = (qty != null && qty > 0 && unitPrice != null && unitPrice > 0) ? qty * unitPrice : null
   addPlannedCategoryId.value = node.id
+  convertFromCategoryPlanId.value = node.id
   plannedItemForm.value = {
     name: prefillName,
     quantity: qty,
@@ -5876,11 +5887,54 @@ async function savePlannedItem() {
         monthly_amount: isMonthly ? f.monthly_amount : null,
       }),
     })
+    // Позиция создана. Если это было действие «Перенести в плановую позицию»
+    // (convertFromCategoryPlanId стоит на id этой же категории) — очищаем
+    // planned_quantity/planned_amount категории: иначе они и дальше заслоняют
+    // только что созданную запись при расчёте плана листа (backend суммирует
+    // плановые позиции, ТОЛЬКО когда qty×amt категории не заданы), и правка
+    // записи не будет менять сумму в шапке — ровно та жалоба, из-за которой
+    // всё это переделывается. Сначала — успешное создание позиции (уже
+    // произошло выше), потом — очистка полей категории.
+    const convertCategoryId = convertFromCategoryPlanId.value === addPlannedCategoryId.value
+      ? convertFromCategoryPlanId.value
+      : null
     showAddPlannedDialog.value = false
+    convertFromCategoryPlanId.value = null
     await refreshComparison(addPlannedCategoryId.value)
+    if (convertCategoryId) await clearCategoryManualPlan(convertCategoryId)
   } finally {
     savingPlannedItem.value = false
   }
+}
+
+// Чистит planned_quantity/planned_amount категории после переноса ручного плана в
+// именованную плановую позицию (см. openConvertManualPlanToItem/savePlannedItem выше).
+// PUT с ПОЛНЫМ payload — как в saveEditCategoryPlan: неполный payload (см. историю
+// startInlineAmt/startInlineQty) обнуляет на сервере поля, которых в нём нет.
+async function clearCategoryManualPlan(categoryId: number) {
+  const cat = feoCategories.value.find(c => c.id === categoryId)
+  if (cat) {
+    try {
+      await apiFetch(`/feo-categories/${categoryId}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          subsidy_id: cat.subsidy_id, name: cat.name, code: cat.code ?? null, appendix: cat.appendix ?? null,
+          is_active: cat.is_active, budget: cat.budget ?? null,
+          feo_quantity: cat.feo_quantity ?? null, feo_unit: cat.feo_unit ?? null, feo_amount: cat.feo_amount ?? null,
+          description: cat.description ?? null, unit: cat.unit ?? null,
+          planned_quantity: null, planned_amount: null,
+        }),
+      })
+      cat.planned_quantity = null
+      cat.planned_amount = null
+    } catch (e: any) {
+      // Позиция УЖЕ создана — не откатываем и не пугаем «ошибка добавления», честно
+      // говорим, что не подчистилось старое поле, и ниже всё равно перезагружаем
+      // данные, чтобы пользователь видел реальное состояние, а не выдуманное.
+      showSnack(e?.payload?.message || e?.detail || 'Позиция создана, но не удалось очистить старый план категории — проверьте вручную', 'error')
+    }
+  }
+  if (selectedId.value) await loadFeo(selectedId.value)
 }
 
 async function deletePlannedItem(item: FeoPlannedItem) {
@@ -6012,6 +6066,106 @@ async function saveEditPlannedItem() {
   }
 }
 
+// ── Edit category manual-plan dialog (ручной план ФЭО на самой категории) ──
+// Жалоба владельца (2026-08-11): «Great Wall POER могу редактировать, а Микроавтобус
+// плановый — не могу». Причина — у синтетической строки «ручной план ФЭО» в панели
+// (displayPlannedRowsFor, planned.isManual, id = -node.id) карандаш раньше отсутствовал,
+// был только «Завести плановую позицию» (это про другое — заводит именованную
+// FeoPlannedItem, план листа сам не трогает). Этот диалог — лёгкий редактор ровно тех
+// полей, что и формируют синтетическую строку: planned_quantity/planned_amount/unit
+// НА САМОЙ КАТЕГОРИИ (PUT /feo-categories/{id}), а НЕ полный feoEditForm (там полей
+// больше, чем нужно для этой задачи — легче промахнуться не в то поле).
+// ⚠️ Семантика (см. displayPlannedRowsFor выше): FeoCategory.planned_amount — ЦЕНА ЗА
+// ЕДИНИЦУ, а не сумма (в отличие от FeoPlannedItem.amount, которое сумма). Подписи
+// полей ниже — «Плановое количество» / «Плановая цена за единицу» — и расчётная сумма
+// рядом, чтобы это не перепуталось снова (уже дважды ломало боевые числа).
+// ⚠️ startInlineAmt/startInlineQty (см. выше) шлют PUT-payload БЕЗ feo_quantity/
+// feo_unit/feo_amount/description — FastAPI трактует отсутствующее поле как None
+// (см. backend/app/routers/feo_categories.py::update_category — `cat.description =
+// category_data.description` присваивается безусловно) и обнуляет их на сервере.
+// Здесь эта ловушка не повторяется — payload переносит все существующие поля из `cat`,
+// меняются только planned_quantity/planned_amount/unit.
+const CATEGORY_UNIT_OPTIONS = ['шт.', 'усл.', 'компл.', 'уп.', 'м.', 'кг.', 'л.', 'п.м.', 'кв.м.', 'час.', 'мес.', 'год']
+
+// «Ед. изм.» — число (напр. 5500000 вместо «шт») — след старого импорта со сдвигом
+// колонок (на проде таких 35 категорий). Распознаём как «подозрительно», если строка
+// целиком — число (с необязательным десятичным разделителем), но не молчим и не правим
+// сами — только подсвечиваем и предлагаем заменить (см. isCategoryUnitSuspicious ниже).
+function isNumericLikeUnit(u: string | null | undefined): boolean {
+  const s = String(u ?? '').trim()
+  if (!s) return false
+  return /^-?\d+([.,]\d+)?$/.test(s.replace(/\s+/g, ''))
+}
+
+const editCategoryPlanDialog = reactive({
+  show: false, saving: false,
+  nodeId: 0, categoryName: '',
+  quantity: '' as string | number,
+  unitPrice: '' as string | number,
+  unit: '' as string,
+})
+
+const isCategoryUnitSuspicious = computed(() => isNumericLikeUnit(editCategoryPlanDialog.unit))
+
+const editCategoryPlanSum = computed<number | null>(() => {
+  const q = editCategoryPlanDialog.quantity !== '' ? Number(editCategoryPlanDialog.quantity) : null
+  const p = editCategoryPlanDialog.unitPrice !== '' ? Number(editCategoryPlanDialog.unitPrice) : null
+  if (q != null && p != null && !isNaN(q) && !isNaN(p) && q > 0 && p > 0) return q * p
+  return null
+})
+
+function openEditCategoryPlan(node: FeoNode) {
+  editCategoryPlanDialog.nodeId = node.id
+  editCategoryPlanDialog.categoryName = node.name
+  editCategoryPlanDialog.quantity = node.planned_quantity != null ? parseFloat(String(node.planned_quantity)) : ''
+  editCategoryPlanDialog.unitPrice = node.planned_amount != null ? parseFloat(String(node.planned_amount)) : ''
+  editCategoryPlanDialog.unit = node.unit || ''
+  editCategoryPlanDialog.show = true
+}
+
+async function saveEditCategoryPlan() {
+  const nodeId = editCategoryPlanDialog.nodeId
+  const cat = feoCategories.value.find(c => c.id === nodeId)
+  if (!nodeId || !cat) { editCategoryPlanDialog.show = false; return }
+  editCategoryPlanDialog.saving = true
+  try {
+    const qtyRaw = String(editCategoryPlanDialog.quantity ?? '').trim()
+    const amtRaw = String(editCategoryPlanDialog.unitPrice ?? '').trim()
+    const qty = qtyRaw === '' ? null : Number(qtyRaw)
+    const unitPrice = amtRaw === '' ? null : Number(amtRaw)
+    const unit = editCategoryPlanDialog.unit.trim() || null
+    const res = await apiFetch<any>(`/feo-categories/${nodeId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        subsidy_id: cat.subsidy_id, name: cat.name, code: cat.code ?? null, appendix: cat.appendix ?? null,
+        is_active: cat.is_active, budget: cat.budget ?? null,
+        feo_quantity: cat.feo_quantity ?? null, feo_unit: cat.feo_unit ?? null, feo_amount: cat.feo_amount ?? null,
+        description: cat.description ?? null,
+        planned_quantity: qty, planned_amount: unitPrice, unit,
+      }),
+    })
+    // Оптимистично патчим локально (строка панели — displayPlannedRowsFor читает node
+    // напрямую из feoCategories), НО «Плановая сумма» в шапке (feoPlannedDisplayFor)
+    // читает готовое число с бэкенда (planTreeByCat, см. feoPlannedDisplayRaw) — этот
+    // локальный патч его не трогает. startInlineAmt/startInlineQty останавливаются
+    // здесь и из-за этого шапка у них не обновляется без reload — тот же полный
+    // updateFeoCategory() (v-diалог «Редактировать») дальше зовёт loadFeo(), и здесь
+    // тоже зовём — иначе не выполняется приёмка «шапка обновилась без перезагрузки».
+    cat.planned_quantity = qty
+    cat.planned_amount = unitPrice
+    cat.unit = unit
+    feoCategories.value = [...feoCategories.value]
+    editCategoryPlanDialog.show = false
+    showSnack('План категории сохранён')
+    if (res?.warning) showSnack(res.warning, 'warning')
+    if (selectedId.value) await loadFeo(selectedId.value)
+  } catch (e: any) {
+    showSnack(e.detail || 'Ошибка сохранения', 'error')
+  } finally {
+    editCategoryPlanDialog.saving = false
+  }
+}
+
 // Contractor override state
 const showOverrideDialog = ref(false)
 const savingOverride = ref(false)
@@ -6098,6 +6252,19 @@ const feoEditPlanPairError = computed(() => feoPlanPairError(
   feoEditForm.value.planned_quantity, feoEditForm.value.qtyAuto,
   feoEditForm.value.planned_amount, feoEditForm.value.amtAuto,
 ))
+
+// Правка 2Б (2026-08-11): диалог редактирования категории решает, какую из трёх
+// подстрок «Плановых показателей» показать — «есть подкатегории» / «план не задан,
+// заведите позицию» / «старый формат, только для чтения». Категория без детей и
+// хотя бы с одним из двух полей — тот самый «старый формат»; ноль/пусто в обоих —
+// план ещё не задан вовсе.
+const feoEditManualPlanSet = computed(() => {
+  const f = feoEditForm.value
+  if (f.hasChildren) return false
+  const q = f.planned_quantity
+  const a = f.planned_amount
+  return (q != null && Number(q) > 0) || (a != null && Number(a) > 0)
+})
 
 // ── Computed ──────────────────────────────────────
 const availableYears = computed(() =>
@@ -8384,9 +8551,37 @@ function startFeoEdit(node: FeoNode) {
   showEditFeoDialog.value = true
 }
 
+// Правка 2Б (2026-08-11): из диалога редактирования категории — план не задан вовсе →
+// сразу открыть форму «Добавить плановую позицию» на той же категории (переиспользует
+// openAddPlannedItem, второй диалог не заводим).
+function openAddPlannedItemFromCategoryEdit() {
+  if (!feoEditTarget.value) return
+  const categoryId = feoEditTarget.value.id
+  showEditFeoDialog.value = false
+  openAddPlannedItem(categoryId)
+}
+
+// Правка 2Б: план уже задан старым способом (planned_quantity/planned_amount на самой
+// категории) → перенести его в именованную плановую позицию тем же путём, что и кнопка
+// в панели (openConvertManualPlanToItem уже переносит кол-во/цену и после сохранения
+// сам чистит эти поля категории, см. savePlannedItem/clearCategoryManualPlan выше).
+// Функции нужен FeoNode (с hasChildren/depth), а feoEditTarget — просто FeoCategory,
+// поэтому берём актуальный узел из дерева по id — так же, как это делает
+// openEditCategoryPlan для той же категории.
+function convertCategoryEditPlanToItem() {
+  if (!feoEditTarget.value) return
+  const node = flattenAll(feoTree.value).find(n => n.id === feoEditTarget.value!.id)
+  if (!node) return
+  showEditFeoDialog.value = false
+  openConvertManualPlanToItem(node)
+}
+
 async function updateFeoCategory() {
   if (!feoEditTarget.value) return
-  if (feoEditPlanPairError.value) { showSnack(feoEditPlanPairError.value, 'error'); return }
+  // feoEditPlanPairError больше НЕ блокирует сохранение здесь (см. комментарий у кнопки
+  // «Сохранить» в шаблоне) — planned_quantity/planned_amount не редактируются в этом
+  // диалоге, мисматч пары может прийти только унаследованным из БД, и сохранение
+  // остальных полей категории (название, код и т.д.) обязано проходить в любом случае.
   savingFeo.value = true
   try {
     // Если parent_id изменился — вызываем move endpoint

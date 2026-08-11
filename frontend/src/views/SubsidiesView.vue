@@ -1072,12 +1072,15 @@
                                     <span v-if="planned.amount">{{ formatCurrency(planned.amount) }}</span>
                                   </td>
                                   <td colspan="4" style="padding:4px 8px"></td>
-                                  <!-- Требование владельца (2026-08-10): пока к плановой позиции не привязана ни
-                                       одна закупка, «Разница» — прочерк, а НЕ полная плановая сумма (calcDiff
-                                       при пустом факте вернул бы весь план — это не экономия, работа не началась).
-                                       calcDiff/getDiffStyle не переписаны — просто не вызываются без фактов. -->
+                                  <!-- Требование владельца (2026-08-10, уточнено 2026-08-11): пока ни одна
+                                       привязанная закупка не дошла хотя бы до «Ведётся работа» (isFactActual),
+                                       «Разница» — прочерк, а НЕ полная плановая сумма. factForPlanned теперь
+                                       включает ЛЮБУЮ стадию (в т.ч. «План закупок» — «пикап» с закупкой РЕЕ-2026-00889
+                                       без этого guard показал бы «Разница = 8 000 000», хотя calcDiff внутри себя
+                                       и так игнорирует не-committed/delivered статусы — guard должен смотреть
+                                       на то же самое множество статусов, иначе пустой факт рисуется как «есть». -->
                                   <td style="padding:4px 8px;text-align:right">
-                                    <span v-if="planned.amount != null && factForPlanned(node.id, planned.id).length" :style="getDiffStyle(planned.amount, factForPlanned(node.id, planned.id))">
+                                    <span v-if="planned.amount != null && factForPlanned(node.id, planned.id).some(isFactActual)" :style="getDiffStyle(planned.amount, factForPlanned(node.id, planned.id))">
                                       {{ formatCurrency(calcDiff(planned.amount, factForPlanned(node.id, planned.id))) }}
                                     </span>
                                     <span v-else-if="planned.amount != null" style="color:#9ca3af">—</span>
@@ -1201,9 +1204,17 @@
                                               :title="actual.wish_id ? 'Позиция из заявки — открыть заявку для редактирования' : 'Редактировать позицию закупки'"
                                               @click="openReqItemEditFromActual(node, actual)"
                                             />
+                                            <!-- Баг найден при приёмке (2026-08-11): mapTarget/mapCategoryId — refs,
+                                                 в шаблоне уже auto-unwrap; `mapTarget.value = actual` пытался создать
+                                                 свойство "value" на РАЗВЁРНУТОМ значении (объекте/числе), а не на самом
+                                                 ref — падало TypeError «Cannot create property 'value' on number»,
+                                                 и applyMapping(null) вообще не успевал выполниться (обрыв на строке
+                                                 выше). «Снять сопоставление» из вложенной таблицы плановой позиции
+                                                 был полностью нерабочим. Исправлено на прямое присваивание — компилятор
+                                                 Vue сам генерирует `x.value = y` для присваивания top-level ref. -->
                                             <v-btn icon="mdi-link-off" size="x-small" variant="text" color="grey"
                                               title="Снять сопоставление"
-                                              @click="() => { mapTarget.value = actual; mapCategoryId.value = node.id; applyMapping(null) }"
+                                              @click="() => { mapTarget = actual; mapCategoryId = node.id; applyMapping(null) }"
                                             />
                                           </td>
                                         </tr>
@@ -1238,102 +1249,26 @@
                                 </tr>
                               </template>
 
-                              <!-- Плановые из закупок: подтверждённые, но ещё не поставленные (план закупок … заказано) -->
-                              <template v-for="actual in actualPlanStageFor(node.id)" :key="`ps-${actual.purchase_item_id}`">
-                              <tr
-                                :data-item-id="actual.purchase_item_id" data-item-group="plan-stage"
-                                style="border-bottom:1px solid #E0F2FE;background:rgba(59,130,246,0.05)">
-                                <td style="padding:4px 8px;color:#0c4a6e">
-                                  <div class="d-flex align-center" style="gap:6px">
-                                    <v-btn v-if="(actual.stages?.length || 0) >= 2"
-                                      :icon="expandedStageRows.has(`ps-${actual.purchase_item_id}`) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
-                                      variant="text" density="compact" size="x-small" color="teal"
-                                      title="Показать стадии уточнения позиции"
-                                      @click.stop="toggleStageRow(`ps-${actual.purchase_item_id}`)"
-                                    />
-                                    <v-avatar v-if="actual.product_photo" size="28" rounded class="flex-shrink-0" style="cursor:pointer"
-                                      @click.stop="photoPreview = { src: actual.product_photo!, title: actual.item_name }">
-                                      <v-img :src="actual.product_photo" cover />
-                                    </v-avatar>
-                                    <div>{{ leftGroupInfo(actual).name }}</div>
-                                    <v-chip size="x-small" :color="leftGroupInfo(actual).isContract ? 'indigo' : 'blue-grey'" variant="tonal" style="font-size:9px;height:16px"
-                                      :title="leftGroupInfo(actual).isContract ? 'Наименование, количество и цена — из договора с подрядчиком' : 'Как товар завели в заявке/ТЗ — до заключения договора'"
-                                    >{{ leftGroupInfo(actual).isContract ? 'как в договоре' : 'как выставили' }}</v-chip>
-                                  </div>
-                                  <a
-                                    href="javascript:void(0)"
-                                    class="feo-purchase-link"
-                                    :title="`Перейти в закупку #${actual.purchase_id}`"
-                                    @click.stop="router.push(`/orders/${actual.purchase_id}`)"
-                                  >
-                                    <v-icon icon="mdi-link-variant" size="11" class="mr-1" />
-                                    {{ actual.registry_number || (actual.purchase_number != null ? `№ ${actual.purchase_number}` : `Закупка #${actual.purchase_id}`) }}
-                                  </a>
-                                  <a v-if="actual.wish_id" href="javascript:void(0)" class="feo-purchase-link ml-2"
-                                    title="Перейти к заявкам"
-                                    @click.stop="router.push('/wishes')"
-                                  >
-                                    <v-icon icon="mdi-hand-heart-outline" size="11" class="mr-1" />заявка #{{ actual.wish_id }}
-                                  </a>
-                                </td>
-                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).quantity != null ? `${parseFloat(String(leftGroupInfo(actual).quantity))} ${leftGroupInfo(actual).unit || ''}` : '—' }}</td>
-                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).unitPrice != null ? formatCurrency(leftGroupInfo(actual).unitPrice!) : '—' }}</td>
-                                <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).total != null ? formatCurrency(leftGroupInfo(actual).total!) : '—' }}</td>
-                                <td style="padding:4px 8px;color:#9ca3af;font-style:italic">{{ purchaseStatusLabel(actual.purchase_status) }}</td>
-                                <td style="padding:4px 8px"></td>
-                                <td style="padding:4px 8px"></td>
-                                <td style="padding:4px 8px"></td>
-                                <td style="padding:4px 8px;text-align:right;color:#9ca3af">{{ formatCurrency(calcDiff(actual.total_price, [actual])) }}</td>
-                                <td style="padding:4px 8px;color:#64748b;font-size:11px">{{ actual.contractor_name || '—' }}</td>
-                                <td style="padding:4px 8px;text-align:center">
-                                  <v-chip size="x-small" color="blue" variant="tonal" :prepend-icon="purchaseStatusIcon(actual.purchase_status)">
-                                    {{ purchaseStatusLabel(actual.purchase_status) }}
-                                  </v-chip>
-                                </td>
-                                <td style="padding:2px;text-align:center;white-space:nowrap">
-                                  <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary"
-                                    :title="actual.wish_id ? 'Позиция из заявки — открыть заявку для редактирования' : 'Редактировать позицию закупки'"
-                                    @click="openReqItemEditFromActual(node, actual)"
-                                  />
-                                  <v-btn v-if="!actual.feo_planned_item_id" icon="mdi-link-variant" size="x-small" variant="text" color="teal"
-                                    title="Сопоставить с плановой"
-                                    @click="openMapDialog(actual, node.id)"
-                                  />
-                                </td>
-                              </tr>
-                              <!-- Подстроки стадий уточнения (справочно, НЕ входят в comparisonPlanTotal/comparisonFactTotal) -->
-                              <template v-if="expandedStageRows.has(`ps-${actual.purchase_item_id}`)">
-                              <tr v-for="sr in stagesWithDiff(actual.stages)" :key="`ps-stage-${actual.purchase_item_id}-${sr.stage.key}`"
-                                style="border-bottom:1px solid #E0F2FE;background:rgba(59,130,246,0.09)">
-                                <td style="padding:2px 8px 2px 40px;color:#94a3b8;font-size:10px">{{ sr.stage.label }}</td>
-                                <td style="padding:2px 8px"></td>
-                                <td style="padding:2px 8px"></td>
-                                <td style="padding:2px 8px"></td>
-                                <td style="padding:2px 8px" :style="sr.nameChanged ? 'color:#4F46E5' : ''">{{ sr.stage.name }}</td>
-                                <td style="padding:2px 8px;text-align:right;color:#64748b">
-                                  {{ sr.stage.quantity != null ? `${parseFloat(String(sr.stage.quantity))} ${sr.stage.unit || ''}` : '—' }}
-                                  <div v-if="sr.qtyDeltaLabel" style="font-size:10px" :style="`color:${sr.qtyDeltaColor}`">{{ sr.qtyDeltaLabel }}</div>
-                                </td>
-                                <td style="padding:2px 8px;text-align:right;color:#64748b">
-                                  {{ sr.stage.unit_price != null ? formatCurrency(sr.stage.unit_price) : '—' }}
-                                  <div v-if="sr.priceDeltaLabel" style="font-size:10px" :style="`color:${sr.priceDeltaColor}`">{{ sr.priceDeltaLabel }}</div>
-                                </td>
-                                <td style="padding:2px 8px;text-align:right;color:#64748b">{{ sr.stage.total != null ? formatCurrency(sr.stage.total) : '—' }}</td>
-                                <td style="padding:2px 8px"></td>
-                                <td style="padding:2px 8px"></td>
-                                <td style="padding:2px 8px"></td>
-                                <td style="padding:2px 8px"></td>
-                              </tr>
-                              </template>
-                              </template>
+                              <!-- Правка владельца (2026-08-11): «Плановые из закупок» как самостоятельный
+                                   блок УБРАН — позиция в стадии «План закупок» это уже начало жизни строки
+                                   плана, а не отдельная параллельная сущность (баг «пикап Great Wall POER»:
+                                   рисовалась ЗДЕСЬ и одновременно план ФЭО отдельной строкой — ИТОГО складывал
+                                   план с закупкой, 16 000 000 вместо 8 000 000). Такие позиции (привязанные —
+                                   feo_planned_item_id, непривязанные — на синтетическую «ручной план ФЭО»)
+                                   теперь нарисованы ВНУТРИ раскрывающегося блока плановой строки выше —
+                                   см. factForPlanned (расширен до ЛЮБОЙ стадии закупки, не только FACT_STATUSES). -->
 
-                              <!-- «Не привязаны к плану — требуется действие»: фактические позиции
-                                   с плановыми позициями категории (displayPlannedRowsFor), но без
-                                   привязки к конкретной из них — единственное легаси-исключение из
-                                   правила «закупки вне плана не бывает» (см. план ШАГ 1). В норме
-                                   пусто; unplannedActualFor() возвращает [] когда плановых позиций
-                                   вообще нет (тогда это факт синтетической «ручной план ФЭО» строки
-                                   выше, а не «требует действия» — см. factForPlanned(catId, -node.id)). -->
+                              <!-- «Не привязаны к плану — требуется действие»: позиции закупок ЛЮБОЙ
+                                   стадии (правка 2026-08-11 — раньше только FACT_STATUSES, теперь
+                                   unplannedActualFor смотрит на allActualFor, иначе позиции в статусе
+                                   «План закупок» без привязки молча пропадали бы после удаления блока
+                                   «Плановые из закупок») без feo_planned_item_id. Показывается ТОЛЬКО
+                                   когда есть куда «не привязаться» осмысленно: у листа либо вообще нет
+                                   плановой строки (ни реальных FeoPlannedItem, ни ручного плана —
+                                   тогда те же самые позиции стали бы фактом синтетической «ручной план
+                                   ФЭО» строки, см. factForPlanned(catId, -node.id) — hasManualPseudoRow
+                                   ниже это и проверяет), либо реальные плановые позиции есть, но именно
+                                   эта закупка ни к одной не привязана. -->
                               <tr v-if="unplannedActualFor(node).length" style="background:rgba(245,158,11,0.14)">
                                 <td colspan="12" style="padding:4px 8px;font-weight:600;color:#B45309;font-size:11px">
                                   <v-icon icon="mdi-alert-circle-outline" size="14" color="warning" class="mr-1" />
@@ -1394,11 +1329,15 @@
                                   </template>
                                   <span v-else class="text-medium-emphasis" style="font-style:italic;font-weight:400">{{ purchaseStatusLabel(actual.purchase_status) }}</span>
                                 </td>
-                                <td style="padding:4px 8px;text-align:right;color:#DC2626">{{ formatCurrency(calcDiff(0, [actual])) }}</td>
+                                <!-- calcDiff(0,[actual]) считает вклад в diff ТОЛЬКО для committed/delivered
+                                     статусов (см. DIFF_COMMITTED_STATUSES) — для позиции в «План закупок»
+                                     это дало бы враньё «0», хотя вся сумма ей не покрыта планом; здесь
+                                     нет строки плана вовсе, поэтому просто минус вся сумма позиции. -->
+                                <td style="padding:4px 8px;text-align:right;color:#DC2626">{{ formatCurrency(-(Number(actual.fact_amount ?? actual.total_price ?? 0))) }}</td>
                                 <td style="padding:4px 8px;font-size:11px" class="text-medium-emphasis">{{ actual.contractor_name || '—' }}</td>
                                 <td style="padding:4px 8px;text-align:center">
                                   <v-icon icon="mdi-alert-circle-outline" size="16" color="warning"
-                                    title="Товар куплен и поставлен, но не привязан ни к одной плановой позиции — в графу «план» он не засчитан. Нажмите кнопку-ссылку справа «Сопоставить с плановой»." />
+                                    title="Закупка не привязана ни к одной плановой позиции — в графу «план» она не засчитана. Нажмите кнопку-ссылку справа «Сопоставить с плановой»." />
                                 </td>
                                 <td style="padding:2px;text-align:center;white-space:nowrap">
                                   <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary"
@@ -1449,7 +1388,7 @@
                                    плюс сопоставление по названию давало ложные совпадения (позиция другой
                                    категории с тем же именем показывалась здесь). Единственный источник
                                    факта листа теперь — comparisonData[node.id].actual (см. factForPlanned/
-                                   actualPlanStageFor/unplannedActualFor). -->
+                                   unplannedActualFor). -->
 
                               <!-- Пусто -->
                               <tr v-if="!displayPlannedRowsFor(node).length && !comparisonData[node.id].actual.length">
@@ -5780,7 +5719,13 @@ async function applyMapping(plannedItemId: number | null) {
   if (!mapTarget.value) return
   mappingInProgress.value = true
   try {
-    await apiFetch(`/feo-planned-items/map?purchase_item_id=${mapTarget.value.purchase_item_id}&planned_item_id=${plannedItemId ?? ''}`, {
+    // Баг найден при приёмке (2026-08-11): при снятии сопоставления (plannedItemId=null)
+    // `planned_item_id=${plannedItemId ?? ''}` слал ПУСТУЮ строку вместо отсутствия параметра —
+    // бэкенд (Optional[int] = None) валит пустую строку 422 «ожидается целое число», «Снять
+    // сопоставление» падало молча (mappingInProgress просто гасился в finally). Параметр нужно
+    // не слать вовсе, когда planned_item_id=null — тогда FastAPI подставляет свой default None.
+    const qs = `purchase_item_id=${mapTarget.value.purchase_item_id}` + (plannedItemId != null ? `&planned_item_id=${plannedItemId}` : '')
+    await apiFetch(`/feo-planned-items/map?${qs}`, {
       method: 'POST',
     })
     showMapDialog.value = false
@@ -6872,8 +6817,10 @@ function feoChildrenBudgetDiff(node: FeoNode): number {
 // «Ведётся работа» (см. FACT_PRICED_STATUSES в backend/app/services/feo_plan.py) — факт (цена
 // по итогам КП/торгов) должен попадать в панель «план vs факт» ещё ДО подписания договора,
 // иначе позиция в статусе «Ведётся работа»/«Договор» с уже известным fact_amount ошибочно
-// оставалась в разделе «Плановые из закупок» (см. actualPlanStageFor) и показывала текущую
-// (замороженную ТЗ) сумму вместо факта — панель и дерево ФЭО расходились.
+// показывала текущую (замороженную ТЗ) сумму вместо факта — панель и дерево ФЭО расходились.
+// isFactActual/FACT_STATUSES остаются нужны для ИТОГО/факт-колонок и для guard'а «Разница»
+// (нужен именно подтверждённый факт); для вложения строк ПОД плановой позицией с 2026-08-11
+// используется расширенный allActualFor/factForPlanned — см. ниже.
 const FACT_STATUSES = ['work_in_progress', 'contracted', 'ordered', 'delivered', 'paid']
 function isFactActual(a: { purchase_status?: string | null }): boolean {
   return FACT_STATUSES.includes(a.purchase_status || '')
@@ -6890,21 +6837,28 @@ function actualFactFor(catId: number) {
   return (comparisonData.value[catId]?.actual || []).filter(a => isFactActual(a))
 }
 
-// Позиции закупок в плановых стадиях (план закупок … заказано) — отображаются на стороне ПЛАН
-function actualPlanStageFor(catId: number) {
-  return (comparisonData.value[catId]?.actual || []).filter(a => !isFactActual(a))
+// Все позиции закупок категории, ЛЮБОЙ стадии (включая «План закупок» — по нашей модели это
+// уже начало жизни позиции, не отдельная параллельная сущность). Правка владельца 2026-08-11
+// («пикап» Great Wall POER на стадии «План закупок» рисовался ОТДЕЛЬНОЙ строкой рядом с планом
+// вместо вложения под неё, ИТОГО складывал план с закупкой) — единственный источник вложенных
+// строк под плановой позицией теперь этот, а не actualFactFor (тот остаётся только для
+// ИТОГО/факт-колонок, где нужен именно подтверждённый факт, см. comparisonFactTotal).
+function allActualFor(catId: number) {
+  return comparisonData.value[catId]?.actual || []
 }
 
 // plannedId < 0 — синтетическая «ручная плановая позиция» (см. displayPlannedRowsFor):
 // когда у категории нет ни одной реальной FeoPlannedItem, а план задан прямо на листе
 // (node.planned_quantity/planned_amount), лист получает ОДНУ псевдо-строку с id = -node.id,
-// и её «факт» — это ВСЕ фактические позиции категории без привязки к плановой (им и
-// привязываться не к чему — детального деления в ФЭО не было). ШАГ 1 плана дедупликации
-// дерева ФЭО (2026-08-07): раньше эти же позиции рисовались ВТОРОЙ раз через matchedReqFor
-// (сопоставление по ИМЕНИ) — убрано целиком, единственный источник теперь этот.
+// и её «факт» — это ВСЕ позиции категории без привязки к плановой (им и привязываться не к
+// чему — детального деления в ФЭО не было). ШАГ 1 плана дедупликации дерева ФЭО (2026-08-07):
+// раньше эти же позиции рисовались ВТОРОЙ раз через matchedReqFor (сопоставление по ИМЕНИ) —
+// убрано целиком, единственный источник теперь этот. С 2026-08-11 — allActualFor (любая
+// стадия), а не actualFactFor: закупка на стадии «План закупок» тоже обязана лечь ПОД свою
+// плановую строку, а не рисоваться рядом отдельным блоком (см. снесённый actualPlanStageFor).
 function factForPlanned(catId: number, plannedId: number) {
-  if (plannedId < 0) return actualFactFor(catId).filter(a => !a.feo_planned_item_id)
-  return actualFactFor(catId).filter(a => a.feo_planned_item_id === plannedId)
+  if (plannedId < 0) return allActualFor(catId).filter(a => !a.feo_planned_item_id)
+  return allActualFor(catId).filter(a => a.feo_planned_item_id === plannedId)
 }
 
 function factForPlannedTotal(catId: number, plannedId: number): number {
@@ -6981,6 +6935,9 @@ function factStageHeaderFor(catId: number, plannedId: number): string {
 // приоритета не изобретаем. Штуки — Σ actual.quantity (реальное количество позиции закупки,
 // та же колонка «Кол-во (факт)» вложенной таблицы) против planned.quantity; если у плана
 // количество не задано — про штуки не пишем вообще (у плана тогда нет множителя количества).
+// Правка владельца (2026-08-11): facts (factForPlanned) теперь включает ЛЮБУЮ стадию закупки,
+// в т.ч. «План закупок» — слово «закуплено» для неё враньё (ничего ещё не куплено, только
+// выставлено в закупку). Нейтральное «в закупках» верно для всех стадий одинаково.
 function planBreakdownText(catId: number, planned: FeoPlannedItem & { isManual?: boolean }): string {
   const facts = factForPlanned(catId, planned.id)
   const amountTotal = Number(planned.amount ?? 0)
@@ -6991,9 +6948,9 @@ function planBreakdownText(catId: number, planned: FeoPlannedItem & { isManual?:
     const qtyTotal = Math.round(Number(planned.quantity) * 10000) / 10000
     const qtyTaken = Math.round(facts.reduce((s, a) => s + Number(a.quantity ?? 0), 0) * 10000) / 10000
     const qtyRemaining = Math.round((qtyTotal - qtyTaken) * 10000) / 10000
-    return `закуплено ${qtyTaken} из ${qtyTotal} ${unit} · на ${formatCurrency(amountTaken)} из ${formatCurrency(amountTotal)} · остаток ${qtyRemaining} ${unit} и ${formatCurrency(amountRemaining)}`
+    return `в закупках ${qtyTaken} из ${qtyTotal} ${unit} · на ${formatCurrency(amountTaken)} из ${formatCurrency(amountTotal)} · остаток ${qtyRemaining} ${unit} и ${formatCurrency(amountRemaining)}`
   }
-  return `закуплено на ${formatCurrency(amountTaken)} из ${formatCurrency(amountTotal)} · остаток ${formatCurrency(amountRemaining)}`
+  return `в закупках на ${formatCurrency(amountTaken)} из ${formatCurrency(amountTotal)} · остаток ${formatCurrency(amountRemaining)}`
 }
 
 // Строки «Плановые позиции» листа для панели «план vs факт»: реальные FeoPlannedItem
@@ -7037,12 +6994,13 @@ function displayPlannedRowsFor(node: FeoNode): (FeoPlannedItem & { isManual?: bo
   }]
 }
 
-// «Не привязаны к плану — требуется действие»: фактические позиции категории без
+// «Не привязаны к плану — требуется действие»: позиции категории (ЛЮБОЙ стадии закупки —
+// правка 2026-08-11, было actualFactFor/FACT_STATUSES, см. allActualFor) без
 // feo_planned_item_id. НЕ показываются только в одном случае — когда те же самые позиции
 // уже отрисованы как факт синтетической строки «ручной план ФЭО» (displayPlannedRowsFor
 // возвращает псевдо-строку id=-node.id именно тогда, когда реальных плановых позиций нет,
 // а план на листе задан вручную — см. factForPlanned(catId, -node.id) выше). Если у листа
-// НЕТ ни реальных плановых позиций, ни ручного плана — абсорбировать эти факты некуда,
+// НЕТ ни реальных плановых позиций, ни ручного плана — абсорбировать эти позиции некуда,
 // они обязаны показаться здесь как «требует действия» (иначе позиции пропадают из дерева
 // молча — так и было до фикса: 15+ позиций категории без плана исчезали совсем).
 function unplannedActualFor(node: FeoNode) {
@@ -7050,16 +7008,18 @@ function unplannedActualFor(node: FeoNode) {
   const hasManualPseudoRow = !(comparisonData.value[catId]?.planned || []).length
     && (node.planned_quantity != null || node.planned_amount != null)
   if (hasManualPseudoRow) return []
-  return actualFactFor(catId).filter(a => !a.feo_planned_item_id)
+  return allActualFor(catId).filter(a => !a.feo_planned_item_id)
 }
 
-// Dev-ассерт (ШАГ 1 плана дедупликации, 2026-08-07): панель «план vs факт» листа обязана
-// показывать каждую PurchaseItem РОВНО один раз — либо под своей плановой позицией
-// (factForPlanned), либо под синтетической (displayPlannedRowsFor), либо в
-// «Плановые из закупок» (actualPlanStageFor), либо в «Не привязаны» (unplannedActualFor).
-// Группы по построению не пересекаются (isFactActual делит .actual на факт/план-стадию,
-// feo_planned_item_id делит факт на привязанное/непривязанное) — если дубль всё же
-// появился, это регресс, и он обязан быть виден в консоли сразу, а не найден на проде.
+// Dev-ассерт (ШАГ 1 плана дедупликации, 2026-08-07; расширен 2026-08-11 после удаления
+// блока «Плановые из закупок»): панель «план vs факт» листа обязана показывать каждую
+// PurchaseItem категории РОВНО один раз — либо под своей плановой позицией/синтетической
+// строкой (factForPlanned, любая стадия), либо в «Не привязаны» (unplannedActualFor).
+// Группы по построению не пересекаются (feo_planned_item_id делит позиции на
+// привязанные/непривязанные, hasManualPseudoRow решает, кто абсорбирует непривязанные) —
+// если дубль или пропажа всё же появились, это регресс, обязан быть виден в консоли сразу,
+// а не найден на проде (см. feedback_no_false_absence_claims в Lessons — позиции не должны
+// пропадать молча).
 function devCheckNoDuplicateItems(catId: number) {
   if (!import.meta.env.DEV) return
   const node = flattenAll(feoTree.value).find(n => n.id === catId)
@@ -7068,7 +7028,6 @@ function devCheckNoDuplicateItems(catId: number) {
   for (const planned of displayPlannedRowsFor(node)) {
     for (const a of factForPlanned(catId, planned.id)) ids.push(a.purchase_item_id)
   }
-  for (const a of actualPlanStageFor(catId)) ids.push(a.purchase_item_id)
   for (const a of unplannedActualFor(node)) ids.push(a.purchase_item_id)
   const seen = new Set<number>()
   const dups = new Set<number>()
@@ -7078,6 +7037,10 @@ function devCheckNoDuplicateItems(catId: number) {
   }
   if (dups.size) {
     console.warn(`[ФЭО дерево] Дубли PurchaseItem.id в панели «${node.name}» (категория ${catId}):`, [...dups])
+  }
+  const missing = allActualFor(catId).filter(a => !seen.has(a.purchase_item_id))
+  if (missing.length) {
+    console.warn(`[ФЭО дерево] Позиции закупок пропали из панели «${node.name}» (категория ${catId}):`, missing.map(a => a.purchase_item_id))
   }
 }
 watch(comparisonData, (data) => {
@@ -7091,13 +7054,16 @@ watch(comparisonData, (data) => {
 // в шапке дерева (feoPlannedTotalFor/planTreeByCat). Теперь берём displayPlannedRowsFor(node) —
 // тот же источник строк, что рисует сама таблица (реальные позиции ИЛИ синтетическая
 // «ручной план ФЭО» с уже посчитанной суммой qty × unitPrice, см. displayPlannedRowsFor выше).
+// ⚠️ ВТОРОЙ БАГ с прода (2026-08-11, «пикап» Great Wall POER, категория 903): раньше СВЕРХУ
+// ещё добавлялась сумма непривязанных позиций закупки в плановой стадии (planStage,
+// через actualPlanStageFor) — план и сама закупка складывались (ИТОГО 16 000 000 вместо
+// 8 000 000). Плановая часть ИТОГО обязана быть РОВНО суммой плановых строк — позиции
+// закупок (любой стадии) теперь либо вложены ПОД своей плановой строкой (не добавляют
+// ничего к сумме — она уже посчитана в planned.amount), либо, если не привязаны и плана нет
+// вовсе, повисают в «Не привязаны» и намеренно НЕ участвуют ни в плановом, ни в фактическом
+// ИТОГО (это и есть смысл пометки «требуется действие»).
 function comparisonPlanTotal(node: FeoNode): number {
-  const catId = node.id
-  const planned = displayPlannedRowsFor(node).reduce((s, p) => s + Number(p.amount || 0), 0)
-  // Несопоставленные плановые из закупок; сопоставленные уже учтены суммой плановой позиции
-  const planStage = actualPlanStageFor(catId).filter(a => !a.feo_planned_item_id)
-    .reduce((s, a) => s + Number(a.total_price || 0), 0)
-  return planned + planStage
+  return displayPlannedRowsFor(node).reduce((s, p) => s + Number(p.amount || 0), 0)
 }
 
 // Задача владельца «план ≠ факт» (сессия 2026-08-06, Шаг 5, п.6): ИТОГО «факт» панели

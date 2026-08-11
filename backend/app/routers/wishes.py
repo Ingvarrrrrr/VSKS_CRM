@@ -23,7 +23,7 @@ from app.models.purchase_item import PurchaseItem
 from app.models.purchase_event import PurchaseMember
 from app.routers.purchase_members import _create_assignment_chat_room
 from app.models.chat_message import ChatMessage
-from app.services.feo_plan import assert_tz_not_over_plan, _auto_assign_planned_items
+from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_over_plan
 from decimal import Decimal
 
 
@@ -505,6 +505,136 @@ async def _notify_pending_approvers(wish, db: AsyncSession, requester_name: str)
         _log.getLogger(__name__).warning("notify approvers failed: %s", e)
 
 
+async def _auto_assign_planned_items(
+    items, fallback_category_id: Optional[int], db: AsyncSession, *, note: str = "автозаведением плана",
+) -> None:
+    """Инвариант «закупки вне плана не бывает» (владелец, 2026-08-07, план
+    zany-fluttering-mountain.md шаг 3): КАЖДАЯ позиция без явной привязки
+    (feo_planned_item_id ещё не проставлен — ни автоподбором, ни пользователем)
+    находит существующую FeoPlannedItem по точному совпадению нормализованного
+    имени В ПРЕДЕЛАХ категории, либо создаёт новую, и привязывается к ней.
+    Явный выбор пользователя не перебивается — такие позиции сюда не попадают
+    (проверка `feo_planned_item_id` до вызова функции для каждой it).
+
+    Нормализация — ОБЩАЯ `app.services.text_match.normalize()` (та же, что и
+    матчер плановых позиций / товаров), а НЕ отдельная копия `.strip().lower()`
+    (была раньше — приёмка 2026-08-07 нашла её пятой копией нормализации в
+    проекте). normalize() дополнительно убирает пунктуацию и схлопывает пробелы
+    («Бумага А4,» и «Бумага А4» — одна позиция, это ожидаемо).
+
+    Дедуп сравнивается ЦЕЛИКОМ В PYTHON, а не через SQL `lower(trim(name))`:
+    так и было раньше, но `lower(trim())` в SQL не убирает пунктуацию, а
+    `normalize()` в Python — убирает, поэтому смешивать их — рассинхрон
+    (по SQL «Бумага А4,» ≠ «Бумага А4», по Python — равны, и уже к этой позиции
+    неверно привязалось/не привязалось бы в зависимости от того, на какой
+    стороне считать). Поэтому: для каждой категории все активные плановые
+    позиции загружаются ОДИН раз, индексируются `normalize(name)`, и все
+    дальнейшие сравнения (существующие + вновь созданные в этом же вызове) идут
+    по одному и тому же индексу — обе стороны нормализуются одной функцией.
+
+    Дублирует логику дедупа импорта Excel Ур.5 (feo_categories.py), но с
+    нормализацией — источник тут свободный ввод (заявка/авансовый отчёт), а не
+    структурированный файл.
+
+    `items` — любые объекты с атрибутами item_name/quantity/unit/total_price/
+    feo_category_id/feo_planned_item_id/over_plan — подходят и WishItem, и
+    PurchaseItem (общий набор колонок, см. модели). Общий код, чтобы не плодить
+    вторую копию: используется и для обычных заявок (WishItem, при переносе в
+    План закупок), и для авансовых отчётов (PurchaseItem напрямую — см. вызов
+    в _distribute_wish_to_purchases для source == 'advance_report', у которых
+    Purchase создаётся раньше самой заявки и мимо обычного пути копирования).
+
+    ВАЖНО (приёмка 2026-08-07, обнаружено эмпирически при проверке Шага 5):
+    если у листа УЖЕ задан «ручной план ФЭО» напрямую (FeoCategory.
+    planned_quantity/planned_amount — как «Great Wall POER (лист): 2×4 000 000»
+    без дочерних FeoPlannedItem), для такой позиции НЕЛЬЗЯ заводить новую
+    самоссылающуюся FeoPlannedItem (amount = собственная цена позиции): тогда
+    1) assert_tz_not_over_plan сравнивал бы позицию САМУ С СОБОЙ — план листа
+       (4 000 000/ед) навсегда обходится любой ценой, дефект 1 остаётся дырой;
+    2) compute_feo_plan_tree (см. plan_consumption_by_category/
+       ordered_consumption_by_category, exclude_planned_item_linked=True)
+       исключает позиции с feo_planned_item_id из consumed/ordered ЛИСТА —
+       сумма позиции стала бы невидимой для plan_manual листа НАВСЕГДА (лист
+       вечно показывает «0 заказано» при реально потраченных деньгах — ровно
+       те осиротевшие/задвоенные строки, из-за которых затевался этот план).
+    В этом случае оставляем feo_planned_item_id = None: assert_tz_not_over_plan
+    сам берёт план из FeoCategory.planned_quantity/planned_amount (ветка 2 её
+    docstring), а дерево ФЭО считает позицию как обычный расход листа (без
+    exclude_planned_item_linked) — ровно «псевдо-строка ручного плана»,
+    описанная в плане (не изобретаем новую сущность, лист уже И ЕСТЬ план).
+    Автозаведение НОВОЙ FeoPlannedItem остаётся только там, где на листе
+    никакого плана вообще нет (сценарий «канцтовары» — много разных позиций,
+    план вводится по факту заявки).
+    Commit НЕ делает — это на вызывающем.
+    """
+    from app.models.feo_planned_item import FeoPlannedItem
+    from app.models.feo_category import FeoCategory
+    from app.services.text_match import normalize
+
+    # cat_id -> {normalize(name): fpi_id}; загружается лениво, один раз на категорию.
+    _cat_index: dict[int, dict[str, int]] = {}
+    # cat_id -> есть ли у листа собственный «ручной план» (planned_quantity/amount)
+    _cat_has_leaf_plan: dict[int, bool] = {}
+    for it in items:
+        if getattr(it, "feo_planned_item_id", None):
+            continue
+        eff_cat_id = getattr(it, "feo_category_id", None) or fallback_category_id
+        if not eff_cat_id:
+            continue
+        norm_name = normalize(getattr(it, "item_name", None) or "")
+        if not norm_name:
+            continue
+        index = _cat_index.get(eff_cat_id)
+        if index is None:
+            existing_res = await db.execute(
+                select(FeoPlannedItem).where(
+                    FeoPlannedItem.feo_category_id == eff_cat_id,
+                    FeoPlannedItem.is_active == True,
+                )
+            )
+            index = {}
+            for fpi in existing_res.scalars().all():
+                key = normalize(fpi.name or "")
+                if key and key not in index:
+                    index[key] = fpi.id  # первое совпадение побеждает при легаси-дублях в БД
+            _cat_index[eff_cat_id] = index
+
+            cat_row = await db.get(FeoCategory, eff_cat_id)
+            _cat_has_leaf_plan[eff_cat_id] = bool(
+                cat_row is not None
+                and ((cat_row.planned_quantity or 0) > 0 or (cat_row.planned_amount or 0) > 0)
+            )
+        index = _cat_index[eff_cat_id]
+        fpi_id = index.get(norm_name)
+        if fpi_id is None:
+            if _cat_has_leaf_plan.get(eff_cat_id):
+                # У листа уже есть ручной план целиком — он и есть «план» этой
+                # позиции (см. предупреждение в docstring выше). Не создаём
+                # дублирующую FeoPlannedItem, оставляем позицию непривязанной —
+                # assert_tz_not_over_plan и дерево ФЭО прочитают план с листа.
+                continue
+            # amount=it.total_price — снимок плана (Шаг 1 «план ≠ факт»): фиксируется
+            # как план категории в момент постановки в план закупок.
+            new_fpi = FeoPlannedItem(
+                feo_category_id=eff_cat_id,
+                name=getattr(it, "item_name", None),
+                quantity=getattr(it, "quantity", None),
+                unit=getattr(it, "unit", None),
+                amount=getattr(it, "total_price", None),
+                is_active=True,
+                notes=f"Создано {note}",
+            )
+            db.add(new_fpi)
+            await db.flush()
+            fpi_id = new_fpi.id
+            index[norm_name] = fpi_id  # следующая позиция этого же вызова с тем же
+            # нормализованным именем (напр. «Бумага А4,» после «Бумага А4») найдёт
+            # её здесь и не создаст вторую плановую строку.
+        it.feo_planned_item_id = fpi_id
+        if hasattr(it, "over_plan"):
+            it.over_plan = False
+
+
 async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status: str = "plan_schedule", split: bool = True) -> list[int]:
     """Создаёт закупки (status='plan_schedule' — «План закупок») из позиций заявки по группам колонок,
     копирует позиции, добавляет участников и чаты, ставит purchase.wish_id.
@@ -638,17 +768,19 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
     # _distribute_wish_to_purchases — это общий путь создания закупок из заявки
     # (approve_wish, force_wish_status('converted'), сам convert_wish воспроизводит
     # тот же порядок отдельно, см. его код), т.е. САМОЕ частое место, где ТЗ
-    # превращается в закупку. Порядок ОБЯЗАТЕЛЕН:
+    # превращается в закупку. Раньше здесь проверялось только превышение бюджета
+    # ФЭО (assert_no_unapproved_excess ниже) — позиция дороже своей плановой строки
+    # проходила без единого отказа. Порядок трёх шагов ОБЯЗАТЕЛЕН и именно такой:
     #   1) автозаведение (_auto_assign_planned_items выше) — ДО проверки цены,
     #      иначе у большинства позиций feo_planned_item_id ещё пуст и проверять
     #      не с чем (assert_tz_not_over_plan — no-op без плана, любая цена прошла бы);
     #   2) «ТЗ не выше плана» (здесь) — точечная причина отказа по КОНКРЕТНОЙ
-    #      позиции (кол-во/цена/сумма) — эта проверка НЕ трогается планом п.3б
-    #      (2026-08-11), она про «закупка дороже своей плановой позиции», а не
-    #      про «план дороже ФЭО» (см. assert_tz_not_over_plan docstring).
-    # Превышение плана над ФЭО (было шагом 3 — assert_no_unapproved_excess по
-    # категории) больше НЕ проверяется здесь (план п.3б) — планирование им не
-    # блокируется, см. комментарий ниже.
+    #      позиции (кол-во/цена/сумма), самая частная и понятная формулировка;
+    #   3) превышение ФЭО (assert_no_unapproved_excess ниже) — по КАТЕГОРИИ
+    #      целиком, уже ПОСЛЕ того как автозаведение нарастило план категории
+    #      всеми новыми позициями; это самая общая причина отказа, ей место
+    #      последней, чтобы пользователь сначала увидел, какая именно позиция
+    #      виновата, а не абстрактное «превышен бюджет категории».
     # over_plan=true — сознательно сверх плана (тот же обход, что и в
     # _sync_wish_items_to_purchases/update_wish/purchases.py) — пропускаем.
     for _wi in items_full:
@@ -664,17 +796,17 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
             item_name=_wi.item_name,
         )
 
-    # План п.3б (2026-08-11), владелец: «если план превышает ФЭО, тогда ты
-    # начинаешь митинговать ахтунг-ахтунг, а не просто говорить, что нельзя
-    # добавить» — согласование заявки (план категории ФЭО растёт) БОЛЬШЕ НЕ
-    # блокируется превышением плана над финансированием ФЭО (excess_over_feo).
-    # Раньше здесь стоял assert_no_unapproved_excess по каждой категории —
-    # убран (см. docstring assert_no_unapproved_excess и purchase_transitions.py,
-    # где блокировка осталась на переходе work_in_progress → contracted и
-    # дальше — это и есть «движение закупки дальше», а не планирование).
-    # excess_amount/excess_over_feo/excess_culprit по-прежнему считаются
-    # деревом (compute_feo_plan_tree/find_excess_culprit) и видны фронту —
-    # превышение остаётся ЗАМЕТНЫМ, просто не блокирует эти действия.
+    # Задача владельца (2026-08-05) «блокировать пока не согласовано превышение плана
+    # ФЭО»: согласование заявки, создающее закупки — УВЕЛИЧИВАЮЩЕЕ план действие.
+    # Проверяем по КАЖДОЙ категории ФЭО, к которой отнесены позиции заявки
+    # (per-item feo_category_id, fallback — категория заявки целиком).
+    _cat_amounts: dict[int, Decimal] = {}
+    for _wi in items_full:
+        _cid = _wi.feo_category_id or wish.feo_category_id
+        if _cid:
+            _cat_amounts[_cid] = _cat_amounts.get(_cid, Decimal("0")) + Decimal(str(_wi.total_price or 0))
+    for _cid, _amt in _cat_amounts.items():
+        await assert_no_unapproved_excess(db, _cid, adding_amount=_amt)
 
     created_purchase_ids: list[int] = []
     for column_key, items_in_col in groups.items():
@@ -1663,11 +1795,28 @@ async def convert_wish(
         # ветка — ОТДЕЛЬНЫЙ путь движения закупки по стадиям (wishes → plan_schedule),
         # не проходящий через POST /api/purchases/{pid}/transition (см. её гейт в
         # purchase_transitions.py) — идемпотентное повторное согласование заявки,
-        # у которой уже есть скрытые закупки. Раньше здесь тоже стоял
-        # assert_no_unapproved_excess по каждой категории позиций — план п.3б
-        # (2026-08-11) снял его: wishes → plan_schedule — планирование, а не
-        # «движение закупки дальше» (то остаётся в purchase_transitions.py на
-        # переходе work_in_progress → contracted и позже).
+        # у которой уже есть скрытые закупки. «Не двигаются дальше по стадиям, пока
+        # не согласовано превышение» касается и этого пути.
+        if wishes_existing:
+            from app.models.purchase_item import PurchaseItem as _PurchaseItem
+            _ep_ids = [ep.id for ep in wishes_existing]
+            _items_res = await db.execute(
+                select(_PurchaseItem).where(_PurchaseItem.purchase_id.in_(_ep_ids))
+            )
+            _items_by_purchase: dict[int, list] = {}
+            for _pit in _items_res.scalars().all():
+                _items_by_purchase.setdefault(_pit.purchase_id, []).append(_pit)
+            _gate_cat_ids: set[int] = set()
+            for ep in wishes_existing:
+                _ep_items = _items_by_purchase.get(ep.id, [])
+                for _pit in _ep_items:
+                    _cid = _pit.feo_category_id or ep.feo_category_id
+                    if _cid:
+                        _gate_cat_ids.add(_cid)
+                if not any(_pit.feo_category_id for _pit in _ep_items) and ep.feo_category_id:
+                    _gate_cat_ids.add(ep.feo_category_id)
+            for _cid in _gate_cat_ids:
+                await assert_no_unapproved_excess(db, _cid)
         for ep in existing:
             if ep.status == "wishes":
                 ep.status = "plan_schedule"
@@ -1726,9 +1875,13 @@ async def convert_wish(
             total_price=_wi.total_price,
             item_name=_wi.item_name,
         )
-    # План п.3б (2026-08-11): превышение плана над ФЭО больше не блокирует
-    # /convert (тот же путь планирования, что и _distribute_wish_to_purchases —
-    # см. её комментарий выше про снятый assert_no_unapproved_excess).
+    _conv_cat_amounts: dict[int, Decimal] = {}
+    for _wi in items_full:
+        _cid = _wi.feo_category_id or wish.feo_category_id
+        if _cid:
+            _conv_cat_amounts[_cid] = _conv_cat_amounts.get(_cid, Decimal("0")) + Decimal(str(_wi.total_price or 0))
+    for _cid, _amt in _conv_cat_amounts.items():
+        await assert_no_unapproved_excess(db, _cid, adding_amount=_amt)
 
     # B4: planned_total_price = SUM(items.total_price), fallback to body/wish
     total_nmck = sum(float(i.total_price or 0) for i in items_full)

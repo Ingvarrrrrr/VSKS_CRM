@@ -182,9 +182,11 @@ async def create_planned_item(
     # НИКАКОГО fuzzy (правило проекта, шаг 4 плана zany-fluttering-mountain.md: нечёткое
     # сравнение допустимо только для предложения, которое подтверждает человек; дедуп при
     # создании — строго точное совпадение). Нормализация — общий app.services.text_match
-    # .normalize (единственный источник) — та же нормализация, что и в
-    # app.services.feo_plan._auto_assign_planned_items (автозаведение из заявки/закупки),
-    # обе стороны сравнивают по одной функции, дублей быть не должно.
+    # .normalize (единственный источник, не дублируем ad-hoc trim+lower — Python-side
+    # сравнение вместо SQL lower(trim(...)), т.к. normalize() дополнительно убирает
+    # пунктуацию/двойные пробелы, что SQL-выражение не делает — расхождение исказило бы
+    # дедуп). wishes.py._auto_assign_planned_items использует свой trim+lower (тот файл
+    # не трогаем — параллельная задача другого исполнителя), но эта функция теперь общая.
     _norm_name = _norm_text(data.name or "")
     if _norm_name:
         _candidates = (await db.execute(
@@ -196,35 +198,6 @@ async def create_planned_item(
         existing_item = next((it for it in _candidates if _norm_text(it.name or "") == _norm_name), None)
         if existing_item is not None:
             return existing_item
-
-        # Конвертация ручного плана листа (план п.3а, 2026-08-11): пользователь
-        # вручную добавляет именованную плановую позицию в категорию, у которой
-        # пока нет НИ ОДНОЙ позиции с реальной суммой — если на листе задан
-        # ручной план (planned_quantity×planned_amount), число переносится в
-        # отдельную позицию с именем категории ДО того, как заведётся позиция
-        # под введённое имя (см. convert_manual_plan_to_item и compute_feo_plan_tree
-        # — план листа обязан быть суммой позиций, а не «либо ручное число, либо
-        # позиции»). Условие — СУММА существующих активных позиций <= 0, а не
-        # «позиций вовсе нет» (найдено этим же отчётом-приёмкой на боевых
-        # данных, 2026-08-11): 27 категорий на проде уже имеют легаси-мусорную
-        # активную FeoPlannedItem с amount=NULL от совсем другой, более старой
-        # истории — «позиций нет» было бы False, конвертация никогда не
-        # сработала бы, и ручной план потерялся бы молча при первой же реальной
-        # позиции.
-        _existing_amount_sum = sum(float(it.amount or 0) for it in _candidates)
-        if _existing_amount_sum <= 0:
-            from app.services.feo_plan import convert_manual_plan_to_item
-            converted = await convert_manual_plan_to_item(db, cat)
-            if converted is not None and _norm_text(converted.name or "") == _norm_name:
-                # Введённое имя совпало с именем категории — конвертированная
-                # позиция и есть искомая, вторую заводить не нужно.
-                _sid = cat.subsidy_id
-                if _sid is not None:
-                    from app.routers.purchases import _create_plan_graph_version
-                    await _create_plan_graph_version(subsidy_id=_sid, db=db, user=current_user, note="Авто-версия: изменение плановых позиций")
-                await db.commit()
-                await db.refresh(converted)
-                return converted
 
     item = FeoPlannedItem(
         feo_category_id=data.feo_category_id,

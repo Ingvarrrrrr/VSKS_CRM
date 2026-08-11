@@ -505,27 +505,6 @@
                 @pick-unallocated="onFeoPickUnallocated"
               />
             </v-col>
-            <!-- Пункт 2 плана zany-fluttering-mountain.md: выбор ПЛАНОВОЙ ПОЗИЦИИ на уровне
-                 закупки — тот же компонент и вид, что в заявке (WishesView.vue), с подсказкой
-                 похожих по имени (POST /feo-planned-items/match). Только режим «одна категория
-                 на всю закупку» — per-item выбор остаётся внутри PurchaseItemsEditor. -->
-            <v-col v-if="form.subsidy_id && form.feo_category_id && !form.feo_per_item" cols="12">
-              <FeoPlannedItemsSelect
-                v-model="feoPlanSelection"
-                :category-id="form.feo_category_id"
-                :nodes="feoTreeNodes"
-                :items="purchasePlannedResiduals"
-                :amount="displayNmck"
-                :suggest-key="headFeoPlanSuggestKey"
-                :suggest-reason="headFeoPlanSuggestReason"
-                :candidates="headFeoPlanCandidatesForUi"
-                :loading="purchasePlannedLoading"
-                :skip-last="feoSkipLast"
-                :prefill="headFeoPlannedPrefill"
-                @planned-item-created="reloadPurchasePlanned"
-                @candidate-confirmed="onHeadFeoCandidateConfirmed"
-              />
-            </v-col>
             <!-- Переключатель «не указывать последний уровень ФЭО»: виден, когда выбран
                  промежуточный (не листовой) узел — раньше это было «выбран ур.1 с детьми». -->
             <v-col v-if="form.feo_category_id && !feoSelectedIsLeaf && formMode !== 'service_note_delivery' && formMode !== 'advance_report'" cols="12">
@@ -931,8 +910,6 @@
             :subsidy-name="selectedSubsidyName"
             :purchase-id-feo="purchaseId"
             :default-feo-category-id="form.feo_category_id"
-            :default-feo-planned-item-id="!form.feo_per_item ? headFeoPlannedItemId : null"
-            :feo-planned-per-item="form.feo_per_item"
             :planned-items="purchasePlannedResiduals"
             @update:vat-mode="(v: string) => { form.vat_mode = v; onVatModeChange(v) }"
             @items-changed="syncContractPriceIfSingle"
@@ -4075,12 +4052,8 @@ import ValidationArrows from '@/components/ValidationArrows.vue'
 import MonthlyStagesDialog from '@/components/MonthlyStagesDialog.vue'
 import PaymentsBlock from '@/components/PaymentsBlock.vue'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
-import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
 import { filterFundedNodes } from '@/composables/useFeoLeaves'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
-import type { FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
-import { useFeoPlanMatching } from '@/composables/useFeoPlanMatching'
-import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
 import { decodeQrFromImageFile } from '@/utils/qrDecode'
 import { PURCHASE_STATUS_ORDER, purchaseStatusColor } from '@/constants/purchaseStatus'
 
@@ -4496,7 +4469,6 @@ const form = reactive({
 // подсветка были показывать нечем.
 const {
   plannedResiduals: purchasePlannedResiduals,
-  plannedLoading: purchasePlannedLoading,
   reloadPlanned: reloadPurchasePlanned,
 } = useFeoPlannedResiduals({
   subsidyId: computed(() => form.subsidy_id),
@@ -6806,122 +6778,6 @@ const feoValidationError = computed((): string | null => {
   return null
 })
 
-// Пункт 2 плана zany-fluttering-mountain.md: выбор ПЛАНОВОЙ ПОЗИЦИИ на уровне
-// самой закупки (владелец: «как так из карточки закупки ты это убрал, если в заявке
-// это есть — закупка же следующая стадия заявки»). Тот же компонент и вид, что в
-// WishesView.vue (wishFeoPlannedItemId/wishFeoPlanSelection) — код ниже намеренно
-// зеркалит те же имена/структуру. UI-only ref — сознательно НЕ внутри `form` (form
-// спреится в payload через ...form при сохранении, а у Purchase нет своей колонки
-// feo_planned_item_id — эта привязка живёт на позициях). Только для режима «одна
-// категория на всю закупку» (form.feo_per_item === false) — при сохранении
-// переносится в feo_planned_item_id КАЖДОЙ позиции, см. validItems в doSave.
-const headFeoPlannedItemId = ref<number | null>(null)
-
-// Composite-выбор { kind, id } | null для FeoPlannedItemsSelect — зеркалит
-// wishFeoPlanSelection (WishesView.vue), см. её комментарий за семантикой kind.
-const feoPlanSelection = computed<FeoPlanSelection | null>({
-  get() {
-    if (headFeoPlannedItemId.value != null) return { kind: 'planned_item', id: headFeoPlannedItemId.value }
-    if (form.feo_category_id != null) {
-      const row = purchasePlannedResiduals.value.find(
-        r => r.category_id === form.feo_category_id && (r.kind === 'plan_position' || r.kind === 'feo_article')
-      )
-      if (row) return { kind: row.kind, id: form.feo_category_id }
-    }
-    return null
-  },
-  set(val) {
-    if (!val) {
-      headFeoPlannedItemId.value = null
-      return
-    }
-    if (val.kind === 'planned_item') {
-      headFeoPlannedItemId.value = val.id
-    } else {
-      // Плановая позиция/статья ФЭО с планом может оказаться дочерним листом
-      // относительно того, что выбрано в дереве выше — уточняем категорию закупки.
-      headFeoPlannedItemId.value = null
-      form.feo_category_id = val.id
-    }
-  },
-})
-
-// «Не указывать последний уровень» — плановые позиции недоступны (см. skipLast в
-// FeoPlannedItemsSelect), сбрасываем выбор — зеркалит watch(wishFeoSkipLast) в WishesView.vue.
-watch(feoSkipLast, (v) => { if (v) headFeoPlannedItemId.value = null })
-
-// Шаг 4 плана zany-fluttering-mountain.md: подсказка похожих по имени плановых
-// позиций (POST /feo-planned-items/match) — тот же composable и та же логика, что
-// WishesView.vue (_runFeoPlanMatch/wishFeoPlanCandidates), только источник имён —
-// позиции закупки (items.value), а не заявки.
-const { matchQueries: headFeoMatchQueries } = useFeoPlanMatching()
-const headFeoPlanCandidates = ref<FeoMatchCandidate[]>([])
-
-async function _runHeadFeoPlanMatch() {
-  const subsidyId = form.subsidy_id
-  if (!subsidyId || form.feo_per_item) { headFeoPlanCandidates.value = []; return }
-  const names = Array.from(new Set(
-    items.value.map((i: any) => (i.item_name || '').trim()).filter(Boolean)
-  ))
-  if (!names.length) { headFeoPlanCandidates.value = []; return }
-  try {
-    const results = await headFeoMatchQueries(names, subsidyId, form.feo_category_id)
-    const byKey = new Map<string, FeoMatchCandidate>()
-    for (const r of results) {
-      for (const c of r.candidates) {
-        const prev = byKey.get(c.key)
-        if (!prev || c.score > prev.score) byKey.set(c.key, c)
-      }
-    }
-    headFeoPlanCandidates.value = Array.from(byKey.values()).sort((a, b) => b.score - a.score).slice(0, 5)
-  } catch {
-    headFeoPlanCandidates.value = []
-  }
-}
-
-let _headFeoMatchTimer: ReturnType<typeof setTimeout> | null = null
-watch(
-  () => [
-    form.subsidy_id,
-    form.feo_category_id,
-    form.feo_per_item,
-    items.value.map((i: any) => i.item_name).join('|'),
-  ] as const,
-  () => {
-    if (_headFeoMatchTimer) clearTimeout(_headFeoMatchTimer)
-    _headFeoMatchTimer = setTimeout(_runHeadFeoPlanMatch, 400)
-  },
-  { immediate: true },
-)
-
-const headFeoPlanCandidatesForUi = computed((): FeoMatchCandidate[] =>
-  feoPlanSelection.value ? [] : headFeoPlanCandidates.value
-)
-const headFeoPlanSuggestKey = computed(() => {
-  const best = headFeoPlanCandidatesForUi.value.find(c => c.same_category)
-  return best ? best.key : null
-})
-const headFeoPlanSuggestReason = computed(() => {
-  const best = headFeoPlanCandidatesForUi.value.find(c => c.same_category)
-  return best ? `Похоже на «${best.name}» (${Math.round(best.score * 100)}%)` : null
-})
-// Нет отдельного confirm-эндпоинта для закупок (в отличие от заявок,
-// /feo-planned-items/confirm-wish-plan-match) — сама привязка уже применена через
-// update:modelValue, дополнительного действия на подтверждение не требуется.
-function onHeadFeoCandidateConfirmed(_c: FeoMatchCandidate) {}
-
-// Предзаполнение диалога «Создать в плане закупок» — первая позиция с непустым
-// наименованием, сумма — вся НМЦД закупки (зеркалит wishFeoPlannedPrefill).
-const headFeoPlannedPrefill = computed(() => {
-  const first = items.value.find((i: any) => (i.item_name || '').trim())
-  return {
-    name: first?.item_name ?? null,
-    quantity: first?.quantity ?? null,
-    unit: first?.unit ?? null,
-    amount: displayNmck.value,
-  }
-})
-
 // Псевдо-«Не определена»: для авансового отчёта (см. allow-unallocated на FeoTreeSelect).
 // parentId — id узла, под которым кликнули строку «❓ Не определена» (null = корень).
 const onFeoPickUnallocated = async (parentId: number | null) => {
@@ -7010,7 +6866,6 @@ const onSubsidyChange = async () => {
   form.event_id = null
   feoSaveAttempted.value = false
   feoSkipLast.value = false
-  headFeoPlannedItemId.value = null
   fetchRemaining()
   loadResponsiblePersons()
   // Pre-fill delivery address from org if empty & load address history
@@ -7539,15 +7394,6 @@ const loadPurchase = async () => {
     })
     // Режим читаем из БД; фолбэк — только для записей, созданных до появления колонки.
     form.feo_per_item = data.feo_per_item ?? data.items.some((i: any) => i.feo_category_id != null)
-    // Пункт 2 плана zany-fluttering-mountain.md: header-выбор плановой позиции —
-    // восстанавливаем из фактических данных первой позиции с привязкой (после фикса
-    // пункта 1 все позиции в single-режиме несут одну и ту же feo_planned_item_id).
-    if (!form.feo_per_item) {
-      const withPlanned = data.items.find((i: any) => i.feo_planned_item_id != null)
-      headFeoPlannedItemId.value = withPlanned?.feo_planned_item_id ?? null
-    } else {
-      headFeoPlannedItemId.value = null
-    }
   } else if (data.item_name) {
     // Migrate old single-item purchase
     items.value = [{
@@ -8165,17 +8011,10 @@ const doSave = async (adminOverride: boolean) => {
         ...rest,
         unit_price: (rest.unit_price !== '' && rest.unit_price != null) ? rest.unit_price : null,
         quantity: (rest.quantity !== '' && rest.quantity != null) ? rest.quantity : null,
-        // Косяк 2 плана zany-fluttering-mountain.md (КОРЕНЬ ПРОБЛЕМЫ): раньше здесь
-        // ОБА поля принудительно писались как null в режиме single — позиция
-        // пересоздавалась и ЛЮБАЯ привязка стиралась первым же сохранением (id 2871 →
-        // 2872 на проде, привязка «Great Wall POER» потеряна). В режиме «одна категория
-        // на всю закупку» позиции теперь получают плановую позицию/категорию, выбранную
-        // НА УРОВНЕ ЗАКУПКИ (headFeoPlannedItemId/form.feo_category_id, см. пункт 2 плана,
-        // FeoPlannedItemsSelect под «Категорией ФЭО») — обнуление осталось только в явном
-        // действии пользователя (confirmFeoPerItemDisable — диалог отключения per-item режима).
-        feo_planned_item_id: form.feo_per_item ? (rest.feo_planned_item_id ?? null) : (headFeoPlannedItemId.value ?? null),
+        // F-PIF1: в режиме single — очищаем per-item feo_planned_item_id (нет глобально выбранного PlannedItem)
+        feo_planned_item_id: form.feo_per_item ? (rest.feo_planned_item_id ?? null) : null,
         // FCAT-F1: per-item leaf FeoCategory
-        feo_category_id: form.feo_per_item ? (rest.feo_category_id ?? null) : (form.feo_category_id ?? null),
+        feo_category_id: form.feo_per_item ? (rest.feo_category_id ?? null) : null,
       }))
     const payload = {
       ...form,

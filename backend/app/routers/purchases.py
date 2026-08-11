@@ -21,7 +21,7 @@ from app.models.user import User
 from app.models.user_org_access import UserOrgAccess
 from app.routers.contracts import ensure_contract_linked
 from app.routers.purchase_budget import _check_budget, _assign_framework_seq, FRAMEWORK_TYPES
-from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_over_plan, _auto_assign_planned_items
+from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_over_plan
 from app.product_matcher import find_matching_product
 from typing import List, Optional
 from pydantic import BaseModel
@@ -1215,20 +1215,24 @@ async def create_purchase(
     if not admin_override and data.purchase_basis != 'service_note':
         await _check_budget(data.subsidy_id, total_nmck or data.planned_total_price, None, db)
 
-    # План п.3б (2026-08-11), владелец: «если план превышает ФЭО, тогда ты
-    # начинаешь митинговать ахтунг-ахтунг, а не просто говорить, что нельзя
-    # добавить» — создание закупки БОЛЬШЕ НЕ блокируется превышением плана над
-    # финансированием ФЭО. Раньше здесь стоял assert_no_unapproved_excess по
-    # каждой категории (per-item feo_category_id, fallback — категория закупки
-    # целиком) — убран. Блокировка осталась на «движении закупки дальше» —
-    # переходе work_in_progress → contracted и позже (purchase_transitions.py).
-    # excess_amount/excess_over_feo/excess_culprit по-прежнему считаются деревом
-    # (compute_feo_plan_tree/find_excess_culprit) — превышение остаётся видимым.
+    # Задача владельца (2026-08-05) «блокировать пока не согласовано превышение плана
+    # ФЭО»: создание закупки — увеличивающее план действие. Проверяем по КАЖДОЙ
+    # категории ФЭО, к которой отнесены позиции (per-item feo_category_id,
+    # fallback — категория закупки целиком).
+    if not admin_override:
+        _cat_amounts: dict[int, Decimal] = {}
+        for _i in items_data:
+            _cid = _i.feo_category_id or data.feo_category_id
+            if _cid:
+                _cat_amounts[_cid] = _cat_amounts.get(_cid, Decimal("0")) + (_i.total_price or Decimal("0"))
+        if not _cat_amounts and data.feo_category_id:
+            _cat_amounts[data.feo_category_id] = total_nmck or Decimal("0")
+        for _cid, _amt in _cat_amounts.items():
+            await assert_no_unapproved_excess(db, _cid, adding_amount=_amt)
 
     # Шаг 5 «цена ТЗ не выше плановой» (владелец, 2026-08-07): по каждой позиции,
     # ДО создания закупки. over_plan=true пропускаем — такая позиция сознательно
-    # сверх плана. Эта проверка НЕ трогается планом п.3б — она про «закупка
-    # дороже своей плановой позиции», а не про «план дороже ФЭО».
+    # сверх плана и уже проходит через assert_no_unapproved_excess выше.
     if not admin_override:
         for _i in items_data:
             if getattr(_i, "over_plan", False):
@@ -1283,7 +1287,6 @@ async def create_purchase(
 
     await _assign_framework_seq(p, db)
 
-    _created_items: list[PurchaseItem] = []
     for item_d in items_data:
         d = item_d.model_dump()
         if not d.get("product_id") and d.get("item_name"):
@@ -1310,15 +1313,6 @@ async def create_purchase(
             item.planned_unit_price = item.unit_price
             item.planned_total = item.total_price
         db.add(item)
-        _created_items.append(item)
-
-    # План п.2 (2026-08-11), владелец: «когда я к предпоследнему уровню привязываю,
-    # для каждого товара, который есть в закупке, создаётся его плановая позиция
-    # внутри этой категории» — те же правила автозаведения, что и при согласовании
-    # заявки (wishes.py), теперь и для позиций закупки с категорией, но без
-    # плановой позиции (fallback — категория закупки целиком).
-    if _created_items:
-        await _auto_assign_planned_items(_created_items, p.feo_category_id, db, note="автозаведением из закупки")
 
     # Авансовый без wish_id → авто-заявка на возмещение (source='advance_report', status='submitted')
     if is_advance and not data.wish_id:
@@ -1403,6 +1397,18 @@ async def update_purchase(
     if not p:
         raise HTTPException(404, "Not found")
     old_planned_total_price = p.planned_total_price  # capture BEFORE setattr loop
+    # Задача владельца, план zany-fluttering-mountain.md п.4 (2026-08-10): PUT
+    # заменяет ВСЕ позиции закупки (delete+recreate ниже), у каждой может быть
+    # СВОЯ feo_category_id, отличная от p.feo_category_id. Старая проверка ниже
+    # смотрела только на p.feo_category_id целиком — если позиции распределены
+    # по нескольким категориям (feo_per_item), рост суммы в ОДНОЙ из них проходил
+    # мимо гейта, пока «нетто» по закупке не рос. Снимок «сколько СЕЙЧАС числится
+    # по каждой категории» — ДО удаления старых позиций — нужен для сравнения.
+    old_item_cat_amounts: dict[int, Decimal] = {}
+    for _oi in p.items:
+        _ocid = _oi.feo_category_id or p.feo_category_id
+        if _ocid:
+            old_item_cat_amounts[_ocid] = old_item_cat_amounts.get(_ocid, Decimal("0")) + Decimal(str(_oi.total_price or 0))
     # Phase 31: capture old values for diff-tracking BEFORE any mutation
     _old_purchase_values = {f: getattr(p, f, None) for f in PURCHASE_TRACKED_FIELDS}
     # Employees/managers can save any purchase they have access to (org-level access checked at list level)
@@ -1486,14 +1492,31 @@ async def update_purchase(
     if "acceptance_docs" in data.model_fields_set:
         flag_modified(p, "acceptance_docs")
 
-    # План п.3б (2026-08-11), владелец: «если план превышает ФЭО, тогда ты
-    # начинаешь митинговать ахтунг-ахтунг, а не просто говорить, что нельзя
-    # добавить» — PUT закупки на стадии «План закупок» (рост суммы в любой
-    # категории ФЭО позиций) БОЛЬШЕ НЕ блокируется превышением плана над
-    # финансированием ФЭО. Раньше здесь стоял per-item assert_no_unapproved_excess
-    # (сравнение нового снимка по категориям со старым) — убран. Блокировка
-    # осталась на «движении закупки дальше» — ниже, переход в «Договор», и на
-    # переходах work_in_progress → contracted и позже (purchase_transitions.py).
+    # Задача владельца (2026-08-05) «блокировать пока не согласовано превышение плана
+    # ФЭО», расширено 2026-08-10 (план zany-fluttering-mountain.md п.4) на ПЕР-ITEM
+    # категории: изменение закупки, увеличивающее сумму В КОНКРЕТНОЙ категории ФЭО
+    # (не только на уровне закупки целиком) — УВЕЛИЧИВАЮЩЕЕ план действие. Сравниваем
+    # НОВЫЙ снимок по категориям (из items_data, только что распределённого PUT'ом,
+    # тот же принцип, что и в create_purchase per-item) со СТАРЫМ (old_item_cat_amounts,
+    # снят до удаления старых позиций выше) — категория, чья сумма ВЫРОСЛА (в т.ч. с
+    # нуля — позиция перевешена в неё из другой категории), проходит гейт с дельтой
+    # роста; категории, чья сумма НЕ выросла (уменьшилась/не изменилась), не трогаем —
+    # это путь возврата в рамки плана, блокировать нельзя (см. assert_no_unapproved_excess
+    # docstring).
+    if not admin_override:
+        _new_item_cat_amounts: dict[int, Decimal] = {}
+        for _i in items_data:
+            _ncid = _i.feo_category_id or p.feo_category_id
+            if _ncid:
+                _new_item_cat_amounts[_ncid] = _new_item_cat_amounts.get(_ncid, Decimal("0")) + (_i.total_price or Decimal("0"))
+        if not _new_item_cat_amounts and p.feo_category_id:
+            _new_item_cat_amounts[p.feo_category_id] = Decimal(str(p.total_nmck or 0))
+        _touched_cat_ids = set(_new_item_cat_amounts) | set(old_item_cat_amounts)
+        for _cid in _touched_cat_ids:
+            _new_amt = _new_item_cat_amounts.get(_cid, Decimal("0"))
+            _old_amt = old_item_cat_amounts.get(_cid, Decimal("0"))
+            if _new_amt > _old_amt:
+                await assert_no_unapproved_excess(db, _cid, adding_amount=_new_amt - _old_amt)
 
     # Задача владельца «план ≠ факт» (шаг C, сессия 2026-08-06): переход закупки
     # в «Договор» — превентивная точка контроля. С этого момента итог закупки
@@ -1595,23 +1618,12 @@ async def update_purchase(
                 _it.contractor_inn = _ctr_put.inn
                 _it.contractor_name = _ctr_put.name
 
+    # 12-02: Auto-match FEO items for purchase items without feo_planned_item_id
+    suggested_feo_matches = []
     await db.flush()  # ensure new items are visible
     _flushed_items = (await db.execute(
         select(PurchaseItem).where(PurchaseItem.purchase_id == pid)
     )).scalars().all()
-
-    # План п.2 (2026-08-11), владелец: «когда я к предпоследнему уровню привязываю,
-    # для каждого товара, который есть в закупке, создаётся его плановая позиция
-    # внутри этой категории» — те же правила автозаведения, что и при согласовании
-    # заявки (wishes.py), для позиций закупки с категорией (per-item или fallback —
-    # категория закупки целиком), у которых пока нет плановой позиции. ДО фуззи-
-    # подсказки ниже — точное совпадение имени приоритетнее и не должно ещё и
-    # предлагаться как «похожее».
-    if _flushed_items:
-        await _auto_assign_planned_items(_flushed_items, p.feo_category_id, db, note="автозаведением из закупки")
-
-    # 12-02: Auto-match FEO items for purchase items without feo_planned_item_id
-    suggested_feo_matches = []
     for idx, pi in enumerate(_flushed_items):
         if pi.feo_planned_item_id is not None:
             continue  # already linked
@@ -2070,14 +2082,39 @@ async def patch_purchase_item(
             total_price=_prospective_total,
             item_name=body.item_name if body.item_name is not None else it.item_name,
         )
-    # План п.3б (2026-08-11), владелец: «если план превышает ФЭО, тогда ты
-    # начинаешь митинговать ахтунг-ахтунг, а не просто говорить, что нельзя
-    # добавить» — точечная правка позиции (рост суммы позиции ИЛИ смена её
-    # категории ФЭО на другую) БОЛЬШЕ НЕ блокируется превышением плана над
-    # финансированием ФЭО. Раньше здесь стоял assert_no_unapproved_excess по
-    # старому/новому снимку суммы категории — убран. Блокировка осталась на
-    # «движении закупки дальше» (work_in_progress → contracted и позже,
-    # purchase_transitions.py), не на редактировании позиций плана.
+    # Задача владельца, план zany-fluttering-mountain.md п.4 (2026-08-10): точечная
+    # правка позиции — тоже «добавление позиции в категорию» (рост суммы позиции
+    # ИЛИ смена её категории ФЭО на другую) — увеличивающее план действие. Раньше
+    # здесь проверялось только «ТЗ не выше своей плановой позиции» (assert_tz_not_over_plan
+    # выше) — сторону «категория не превышает финансирование ФЭО» (assert_no_unapproved_excess)
+    # этот эндпоинт вообще не видел. Считаем ДО и ПОСЛЕ отдельно от _wants_tz_change
+    # выше — смена ТОЛЬКО feo_category_id (без правки qty/price) тоже обязана
+    # пройти гейт, а _wants_tz_change в этом случае False.
+    if not (body.admin_override and current_user.role in ADMIN_ROLES):
+        _old_item_cat_id = it.feo_category_id
+        _old_item_total = Decimal(str(it.total_price or 0))
+        _new_item_cat_id = _old_item_cat_id
+        if body.clear_feo_category:
+            _new_item_cat_id = None
+        elif body.feo_category_id is not None:
+            _new_item_cat_id = body.feo_category_id
+        if body.quantity is not None or body.unit_price is not None:
+            _new_qty_g = body.quantity if body.quantity is not None else it.quantity
+            _new_price_g = body.unit_price if body.unit_price is not None else it.unit_price
+            _new_item_total = (_new_qty_g or Decimal("0")) * (_new_price_g or Decimal("0"))
+        else:
+            _new_item_total = _old_item_total
+        if _new_item_cat_id:
+            if _new_item_cat_id == _old_item_cat_id:
+                _item_delta = _new_item_total - _old_item_total
+                if _item_delta > 0:
+                    await assert_no_unapproved_excess(db, _new_item_cat_id, adding_amount=_item_delta)
+            else:
+                # Категория сменилась — вся текущая сумма позиции «свежая» для НОВОЙ
+                # категории (в старой она, наоборот, уменьшается — уменьшение не
+                # блокируется, см. docstring assert_no_unapproved_excess: путь возврата
+                # в рамки плана блокировать нельзя).
+                await assert_no_unapproved_excess(db, _new_item_cat_id, adding_amount=_new_item_total)
     if body.item_name is not None:
         name = body.item_name.strip()
         if not name:
@@ -2118,14 +2155,6 @@ async def patch_purchase_item(
         wi = await db.get(_WishItem, it.wish_item_id)
         if wi is not None:
             wi.feo_category_id = it.feo_category_id
-    # План п.2 (2026-08-11), владелец: «когда я к предпоследнему уровню
-    # привязываю... создаётся его плановая позиция внутри этой категории» —
-    # именно этот эндпоинт и есть «привязка к предпоследнему уровню» для
-    # позиции закупки. Только когда категория реально задана этим PATCH'ем
-    # (не clear) и позиция ещё не привязана к плановой — привязка пользователя
-    # (уже проставленный feo_planned_item_id) не перебивается.
-    if body.feo_category_id is not None and not it.feo_planned_item_id:
-        await _auto_assign_planned_items([it], None, db, note="автозаведением из закупки")
     await db.flush()
     await _recalc_purchase_totals(p, db)
     if p and p.subsidy_id:

@@ -859,6 +859,18 @@
                             >Согласовать</v-btn>
                           </template>
                         </div>
+                        <!-- «Заметный сигнал превышения» (план zany-fluttering-mountain.md, возвращено
+                             из отката e0db76a): владелец — «в случае превышения должна отображаться
+                             данная закупка и показать, что из-за неё всё превысило». Раньше плашка выше
+                             называла ТОЛЬКО сумму — виновник нигде не был виден. Крупно, адресно, с
+                             прямой ссылкой на закупку. -->
+                        <div v-if="excessCulpritFor(node)" class="feo-excess-culprit">
+                          <v-icon size="16" icon="mdi-alert-decagram" class="mr-1" />
+                          {{ excessCulpritText(node) }}
+                          <v-btn v-if="excessCulpritFor(node)!.purchase_id" size="x-small" variant="flat" color="red"
+                            class="ml-1" @click.stop="router.push(`/orders/${excessCulpritFor(node)!.purchase_id}`)"
+                          >Открыть закупку</v-btn>
+                        </div>
 
                         <!-- Задача владельца «план ≠ факт» (сессия 2026-08-06, Шаг 5, п.5): ВТОРАЯ,
                              независимая плашка — «итог закупки/КП дороже плана» (excess_fact_over_plan),
@@ -986,10 +998,11 @@
                     <tr v-if="!node.hasChildren && expandedItemPanels.has(node.id)" :key="`items-${node.id}`" :data-feo-panel-for="node.id">
                       <td colspan="6" style="padding:0 0 0 60px; background:rgba(20,184,166,0.06)">
                         <div style="padding:10px 12px 12px">
-                          <!-- Заголовок панели -->
+                          <!-- Требование владельца (план zany-fluttering-mountain.md, возвращено из отката
+                               e0db76a): при раскрытии категории СРАЗУ видны её плановые позиции — БЕЗ
+                               промежуточного заголовка-обёртки «Позиции: план vs факт», это уже просто
+                               продолжение дерева. Кнопка добавления плановой позиции осталась, без title. -->
                           <div class="d-flex align-center mb-2" style="gap:8px">
-                            <v-icon icon="mdi-compare-horizontal" size="16" color="teal" />
-                            <span style="font-size:12px;font-weight:600" class="text-teal-darken-2">Позиции: план vs факт</span>
                             <v-spacer />
                             <v-btn size="x-small" variant="tonal" color="teal" prepend-icon="mdi-plus"
                               @click="openAddPlannedItem(node.id)">
@@ -4131,6 +4144,15 @@ interface FeoDisplayPrefs {
   expandedReqItems?: number[]
   expandedItemPanels?: number[]
   expandedPlannedItems?: number[]
+  // Возвращено из отката e0db76a (план zany-fluttering-mountain.md, п.4): строка плана
+  // раскрыта по умолчанию, если под ней есть закупка (см. applyDefaultPlannedExpansion) —
+  // но явное решение пользователя СВЕРНУТЬ строку обязано пережить перезагрузку и не быть
+  // перезаписано дефолтом. Раз "развёрнуто" теперь может появиться и БЕЗ клика пользователя,
+  // самого expandedPlannedItems недостаточно, чтобы отличить «дефолт» от «пользователь
+  // свернул» (оба случая — id отсутствует в массиве). collapsedPlannedItems — id, которые
+  // пользователь ЯВНО свернул кликом по шеврону (см. togglePlannedItemFolder) —
+  // единственный признак с приоритетом над дефолтом.
+  collapsedPlannedItems?: number[]
 }
 function loadFeoDisplayPrefs(): FeoDisplayPrefs {
   try {
@@ -4277,6 +4299,18 @@ const plannedPurchaseForecast = ref<Record<number, { forecast: number; forecast_
 // (см. compute_feo_plan_tree), нужны feoResidualNoteFor ниже, чтобы заметка под «Плановой
 // суммой» брала план из ТОГО ЖЕ источника, что и сама колонка (баг «заметка показывает
 // не тот план», сессия 2026-08-05) — не из feoResiduals (Ур.5-детализация, другая сущность).
+// Виновник превышения плана над ФЭО (задача владельца, план zany-fluttering-mountain.md
+// п.«Заметный сигнал превышения», возвращено из отката e0db76a) — см. backend/app/services/
+// feo_plan.py::find_excess_culprit за методом определения; null, пока превышения нет либо
+// оно согласовано (сервер считает виновника только для узлов с неснятым excess_amount).
+interface ExcessCulprit {
+  purchase_id: number | null
+  purchase_number: string | number | null
+  item_name: string | null
+  amount_before: number
+  amount_at_crossing: number
+  cumulative_after: number
+}
 const planTreeByCat = ref<Record<number, {
   display: number; display_quantity: number
   excess_amount?: number; excess_pending?: boolean; excess_approved?: boolean
@@ -4286,6 +4320,9 @@ const planTreeByCat = ref<Record<number, {
   // (excess_fact_over_plan/excess_fact_pending/excess_fact_approved), см. excessFactFor().
   plan?: number; fact?: number; fact_quantity?: number
   excess_fact_over_plan?: number; excess_fact_pending?: boolean; excess_fact_approved?: boolean
+  // «Заметный сигнал превышения» — то же excess_amount под понятным именем + виновник
+  // (закупка, из-за которой узел вышел за ФЭО), см. ExcessCulprit выше.
+  excess_over_feo?: number; excess_culprit?: ExcessCulprit | null
 }>>({})
 // Детали запросов согласования превышения плана ФЭО — GET /api/plan-excess?subsidy_id=
 // (backend/app/routers/plan_excess.py). Карта feo_category_id → ПОСЛЕДНИЙ (по created_at,
@@ -4331,6 +4368,7 @@ function splitPlanTree(raw: Record<string, any>) {
     plan_manual?: number; ordered_sum?: number; residual?: number; consumed?: number
     plan?: number; fact?: number; fact_quantity?: number
     excess_fact_over_plan?: number; excess_fact_pending?: boolean; excess_fact_approved?: boolean
+    excess_over_feo?: number; excess_culprit?: ExcessCulprit | null
   }>
 }
 function goToUnassignedFeoPurchases() {
@@ -5019,6 +5057,7 @@ async function toggleItemPanel(node: FeoNode) {
       `/feo-planned-items/comparison?feo_category_id=${id}${subsId ? `&subsidy_id=${subsId}` : ''}`
     )
     comparisonData.value[id] = res
+    applyDefaultPlannedExpansion(id)
   } catch {
     comparisonData.value[id] = { planned: [], actual: [] }
   } finally {
@@ -5032,6 +5071,7 @@ async function refreshComparison(categoryId: number) {
     `/feo-planned-items/comparison?feo_category_id=${categoryId}${subsId ? `&subsidy_id=${subsId}` : ''}`
   )
   comparisonData.value[categoryId] = res
+  applyDefaultPlannedExpansion(categoryId)
 }
 
 // ── Позиции «из заявок» в дереве ФЭО (раскрытие листа-папки) ──
@@ -5109,13 +5149,45 @@ function togglePurchaseFolder(pid: number) {
 }
 
 // Раскрытие позиций закупок, привязанных к конкретной плановой позиции (Ур.5) в панели
-// «план vs факт» (по умолчанию свёрнуто — см. факт-строки под плановой в comparisonData).
-// Персистится в FEO_DISPLAY_PREFS_KEY наравне с остальными настройками дерева (требование
-// владельца 2026-08-09) — см. saveFeoDisplayPrefs/watch ниже.
+// «план vs факт». Персистится в FEO_DISPLAY_PREFS_KEY наравне с остальными настройками
+// дерева (требование владельца 2026-08-09) — см. saveFeoDisplayPrefs/watch ниже.
+// Возвращено из отката e0db76a (план zany-fluttering-mountain.md, п.4): владелец решил,
+// что закупки под плановой строкой «нет вовсе», если её не видно без клика — раскрыто ПО
+// УМОЛЧАНИЮ, когда под строкой есть хотя бы одна закупка (см. applyDefaultPlannedExpansion).
+// Явное решение пользователя свернуть строку (collapsedPlannedItems, см. интерфейс
+// FeoDisplayPrefs) имеет приоритет над этим правилом — именно поэтому toggle ниже пишет
+// в ОБА множества.
 const expandedPlannedItems = ref<Set<number>>(new Set(feoDisplayPrefs.expandedPlannedItems || []))
+const collapsedPlannedItems = ref<Set<number>>(new Set(feoDisplayPrefs.collapsedPlannedItems || []))
 function togglePlannedItemFolder(plannedId: number) {
-  if (expandedPlannedItems.value.has(plannedId)) expandedPlannedItems.value.delete(plannedId)
-  else expandedPlannedItems.value.add(plannedId)
+  if (expandedPlannedItems.value.has(plannedId)) {
+    expandedPlannedItems.value.delete(plannedId)
+    collapsedPlannedItems.value.add(plannedId)
+  } else {
+    expandedPlannedItems.value.add(plannedId)
+    collapsedPlannedItems.value.delete(plannedId)
+  }
+}
+
+// Применяет правило «раскрыто по умолчанию, если под плановой позицией есть закупка» —
+// вызывается сразу после того, как comparisonData[catId] загрузился (единственный момент,
+// когда factForPlanned() вообще может быть непустым), см. toggleItemPanel/refreshComparison/
+// ensureComparison. Пропускает id из collapsedPlannedItems (пользователь явно свернул —
+// его выбор приоритетнее) и id, уже присутствующие в expandedPlannedItems (нечего делать).
+function applyDefaultPlannedExpansion(catId: number) {
+  const data = comparisonData.value[catId]
+  if (!data) return
+  const cat = feoCategories.value.find(c => c.id === catId)
+  const plannedIds: number[] = data.planned.length
+    ? data.planned.map(p => p.id)
+    : (cat && (cat.planned_quantity != null || cat.planned_amount != null)) ? [-catId] : []
+  for (const pid of plannedIds) {
+    if (collapsedPlannedItems.value.has(pid)) continue
+    if (expandedPlannedItems.value.has(pid)) continue
+    if (factForPlanned(catId, pid).length > 0) {
+      expandedPlannedItems.value.add(pid)
+    }
+  }
 }
 
 // Разворот строки позиции закупки в подстроки стадий уточнения (ФЭО/План/Закупка/Договор/Приёмка).
@@ -5380,6 +5452,7 @@ async function ensureComparison(catId: number) {
     comparisonData.value[catId] = await apiFetch<{ planned: FeoPlannedItem[]; actual: FeoActualItem[] }>(
       `/feo-planned-items/comparison?feo_category_id=${catId}${subsId ? `&subsidy_id=${subsId}` : ''}`
     )
+    applyDefaultPlannedExpansion(catId)
   } catch {
     comparisonData.value[catId] = { planned: [], actual: [] }
   } finally {
@@ -6560,9 +6633,9 @@ watch(plannedBase, () => {
 })
 
 // Сохранение настроек отображения дерева ФЭО (см. FEO_DISPLAY_PREFS_KEY/feoDisplayPrefs
-// в начале файла) — единая точка на все шесть настроек, deep:true нужен, т.к. expandedIds/
-// expandedReqItems/expandedItemPanels/expandedPlannedItems мутируются на месте (push/add/
-// delete), а не переприсваиваются.
+// в начале файла) — единая точка на все семь настроек, deep:true нужен, т.к. expandedIds/
+// expandedReqItems/expandedItemPanels/expandedPlannedItems/collapsedPlannedItems мутируются
+// на месте (push/add/delete), а не переприсваиваются.
 function saveFeoDisplayPrefs() {
   try {
     localStorage.setItem(FEO_DISPLAY_PREFS_KEY, JSON.stringify({
@@ -6572,12 +6645,17 @@ function saveFeoDisplayPrefs() {
       expandedReqItems: [...expandedReqItems.value],
       expandedItemPanels: [...expandedItemPanels.value],
       expandedPlannedItems: [...expandedPlannedItems.value],
+      collapsedPlannedItems: [...collapsedPlannedItems.value],
     } satisfies FeoDisplayPrefs))
   } catch {
     // localStorage недоступен (приватный режим и т.п.) — не критично, просто не персистим
   }
 }
-watch([plannedBase, feoItemsGroupBy, expandedIds, expandedReqItems, expandedItemPanels, expandedPlannedItems], saveFeoDisplayPrefs, { deep: true })
+watch(
+  [plannedBase, feoItemsGroupBy, expandedIds, expandedReqItems, expandedItemPanels, expandedPlannedItems, collapsedPlannedItems],
+  saveFeoDisplayPrefs,
+  { deep: true },
+)
 
 function feoResidualBaseFor(node: FeoNode): number {
   return residualBase.value === 'feo' ? feoEffectiveFor(node) : feoPlannedDisplayFor(node)
@@ -6618,6 +6696,30 @@ function excessFor(node: FeoNode): { amount: number; pending: boolean; approved:
   const amount = Number(t?.excess_amount || 0)
   if (amount <= 0.005) return null
   return { amount, pending: !!t?.excess_pending, approved: !!t?.excess_approved }
+}
+
+// «Заметный сигнал превышения» (план zany-fluttering-mountain.md, возвращено из отката
+// e0db76a) — виновная закупка, из-за которой узел вышел за финансирование ФЭО. Приходит
+// готовой с бэкенда (см. app.services.feo_plan.find_excess_culprit, GET /api/feo-categories/
+// plan-tree) — сервер заполняет её ТОЛЬКО пока excess_amount не согласован, поэтому
+// дополнительно проверять excessApprovalFor тут не нужно: approved-случай уже отдаёт
+// culprit=null сам по себе.
+function excessCulpritFor(node: FeoNode): ExcessCulprit | null {
+  return planTreeByCat.value[node.id]?.excess_culprit ?? null
+}
+
+// Текст виновника — «закупка № РЕЕ-2026-00889 «Great Wall POER» добавила 4 000 000 ₽,
+// после неё выбрано 12 000 000 ₽ при ФЭО 8 000 000 ₽», либо без номера закупки, если
+// виновник — синтетическое «плановое значение категории» (ручной план листа без
+// разбивки на плановые позиции, см. find_excess_culprit).
+function excessCulpritText(node: FeoNode): string {
+  const c = excessCulpritFor(node)
+  if (!c) return ''
+  const source = c.purchase_number != null
+    ? `закупка № ${c.purchase_number}${c.item_name ? ` «${c.item_name}»` : ''}`
+    : (c.item_name || 'плановое значение категории')
+  const budget = node.budget != null ? formatCurrency(node.budget) : '—'
+  return `из-за чего: ${source} — добавила ${formatCurrency(c.amount_at_crossing)}, после неё выбрано ${formatCurrency(c.cumulative_after)} при ФЭО ${budget}`
 }
 
 // Задача владельца «план ≠ факт» (сессия 2026-08-06, Шаг 5, п.5): ВТОРОЙ, независимый
@@ -9207,6 +9309,16 @@ onMounted(() => {
 .feo-tr--l1 .feo-td { background: var(--crm-surface-alt); }
 .feo-tr--l1:hover .feo-td { background: var(--crm-surface-hover); }
 .feo-plan-note { font-size: 10px; line-height: 1.2; white-space: nowrap; }
+/* «Заметный сигнал превышения» (план zany-fluttering-mountain.md, возвращено из отката
+   e0db76a) — сознательно КРУПНЕЕ и заметнее соседних .feo-plan-note (10px, тонкий текст):
+   владелец жаловался, что превышение «теряется среди чисел» — эта плашка обязана читаться
+   с первого взгляда, поэтому контрастный красный фон/рамка, а не просто цвет текста. */
+.feo-excess-culprit {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
+  font-size: 12px; font-weight: 700; line-height: 1.4; white-space: normal;
+  color: #7f1d1d; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.45);
+  border-radius: 6px; padding: 4px 8px; margin-top: 4px; max-width: 100%;
+}
 .feo-residual-toggle { display: flex; gap: 2px; justify-content: flex-end; margin-top: 2px; }
 .feo-residual-opt {
   font-size: 9px; font-weight: 500; text-transform: none; letter-spacing: 0;

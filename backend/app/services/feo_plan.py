@@ -458,6 +458,195 @@ async def planned_item_consumption(
     return result
 
 
+async def convert_manual_plan_to_item(db: AsyncSession, cat_row: FeoCategory) -> Optional["FeoPlannedItem"]:
+    """Конвертация ручного плана листа в именованную плановую позицию (владелец,
+    план zany-fluttering-mountain.md п.3а, 2026-08-11): «ручной план листа» —
+    FeoCategory.planned_quantity × planned_amount, одно безымянное число на
+    категорию — и «плановая позиция» (FeoPlannedItem) больше НЕ смешиваются
+    формулой «либо-либо» (см. compute_feo_plan_tree.plan_manual ниже): план
+    категории обязан быть суммой именованных плановых позиций, а не либо
+    ручным числом, либо суммой позиций.
+
+    Чтобы число с листа не потерялось И не задвоилось с новой именованной
+    позицией, при появлении в категории ПЕРВОЙ активной FeoPlannedItem число с
+    листа переносится в FeoPlannedItem с именем категории (кол-во/цена
+    сохраняются), а planned_quantity/planned_amount листа очищаются — дальше
+    категория живёт только именованными позициями, которые суммируются.
+
+    Вызывающий код ОБЯЗАН убедиться, что у категории пока нет ни одной активной
+    FeoPlannedItem (условие «первая позиция») — эта функция сама не проверяет
+    (вызывается из _auto_assign_planned_items и create_planned_item, у обоих
+    уже есть посчитанный список/индекс существующих активных позиций на
+    момент вызова, повторный подсчёт здесь был бы лишним запросом). Вызов при
+    уже существующих позициях задвоил бы план — конвертировать НЕЛЬЗЯ, если
+    index/existing_items не пуст.
+
+    Нет ручного плана (оба поля 0/NULL) → no-op, возвращает None. Commit НЕ
+    делает (это на вызывающем) — flush делает сама, чтобы созданная позиция
+    была видна следующему запросу в том же вызове (см. _auto_assign_planned_items,
+    где сразу после конвертации ищется/создаётся ещё и позиция под конкретный
+    товар — обе операции обязаны быть одной транзакцией, иначе на мгновение
+    возникает состояние «плана нет» и параллельная проверка превышения могла
+    бы отработать по нулю, см. план п.3а «Риски»).
+    """
+    from app.models.feo_planned_item import FeoPlannedItem
+
+    if cat_row is None:
+        return None
+    mqty = Decimal(str(cat_row.planned_quantity)) if cat_row.planned_quantity else Decimal("0")
+    mamt = Decimal(str(cat_row.planned_amount)) if cat_row.planned_amount else Decimal("0")
+    if mqty <= 0 and mamt <= 0:
+        return None
+    converted = FeoPlannedItem(
+        feo_category_id=cat_row.id,
+        name=cat_row.name,
+        quantity=cat_row.planned_quantity,
+        unit=cat_row.unit,
+        amount=(mqty * mamt) if (mqty > 0 and mamt > 0) else None,
+        is_active=True,
+        notes="Конвертировано из ручного плана категории",
+    )
+    db.add(converted)
+    cat_row.planned_quantity = None
+    cat_row.planned_amount = None
+    await db.flush()
+    return converted
+
+
+async def _auto_assign_planned_items(
+    items, fallback_category_id: Optional[int], db: AsyncSession, *, note: str = "автозаведением плана",
+) -> None:
+    """Инвариант «закупки вне плана не бывает» (владелец, 2026-08-07, план
+    zany-fluttering-mountain.md шаг 3; расширено 2026-08-11, шаг 2, на позиции
+    ЗАКУПКИ — не только заявки, см. вызовы в purchases.py): КАЖДАЯ позиция без
+    явной привязки (feo_planned_item_id ещё не проставлен — ни автоподбором,
+    ни пользователем) находит существующую FeoPlannedItem по точному
+    совпадению нормализованного имени В ПРЕДЕЛАХ категории, либо создаёт
+    новую, и привязывается к ней. Явный выбор пользователя не перебивается —
+    такие позиции сюда не попадают (проверка `feo_planned_item_id` до вызова
+    функции для каждой it).
+
+    Общее место (вынесено из wishes.py в feo_plan.py, план п.2 «Функцию не
+    дублируй — вынеси в общее место»): используется и wishes.py (согласование
+    заявки), и purchases.py (создание/правка закупки, точечная правка позиции) —
+    единственная точка, где заводятся автоматические плановые позиции.
+
+    Нормализация — ОБЩАЯ `app.services.text_match.normalize()` (та же, что и
+    матчер плановых позиций / товаров), а НЕ отдельная копия `.strip().lower()`
+    (была раньше — приёмка 2026-08-07 нашла её пятой копией нормализации в
+    проекте). normalize() дополнительно убирает пунктуацию и схлопывает пробелы
+    («Бумага А4,» и «Бумага А4» — одна позиция, это ожидаемо).
+
+    Дедуп сравнивается ЦЕЛИКОМ В PYTHON, а не через SQL `lower(trim(name))`:
+    так и было раньше, но `lower(trim())` в SQL не убирает пунктуацию, а
+    `normalize()` в Python — убирает, поэтому смешивать их — рассинхрон
+    (по SQL «Бумага А4,» ≠ «Бумага А4», по Python — равны, и уже к этой позиции
+    неверно привязалось/не привязалось бы в зависимости от того, на какой
+    стороне считать). Поэтому: для каждой категории все активные плановые
+    позиции загружаются ОДИН раз, индексируются `normalize(name)`, и все
+    дальнейшие сравнения (существующие + вновь созданные в этом же вызове) идут
+    по одному и тому же индексу — обе стороны нормализуются одной функцией.
+
+    Дублирует логику дедупа импорта Excel Ур.5 (feo_categories.py), но с
+    нормализацией — источник тут свободный ввод (заявка/авансовый отчёт), а не
+    структурированный файл.
+
+    `items` — любые объекты с атрибутами item_name/quantity/unit/total_price/
+    feo_category_id/feo_planned_item_id/over_plan — подходят и WishItem, и
+    PurchaseItem (общий набор колонок, см. модели). Общий код, чтобы не плодить
+    вторую копию: используется и для обычных заявок (WishItem, при переносе в
+    План закупок), и для авансовых отчётов и позиций закупок (PurchaseItem
+    напрямую).
+
+    Конвертация ручного плана листа (план п.3а, 2026-08-11, см.
+    convert_manual_plan_to_item выше): если у категории пока НЕТ ни одной
+    активной FeoPlannedItem (index пуст на момент первого обращения к этой
+    категории в рамках вызова), а на листе задан ручной план — число с листа
+    конвертируется в именованную позицию ДО того, как заводится/ищется
+    позиция под текущий товар. Это ЗАМЕНИЛО прежнее исключение «не создавать
+    позицию, если у листа есть ручной план» (было нужно, чтобы не задвоить
+    план при формуле «либо-либо»; план п.2 «ВАЖНО: снять существующее
+    исключение — оно теряет смысл после конвертации» — теперь формула
+    compute_feo_plan_tree суммирует именованные позиции, а не конкурирует с
+    ручным числом, конвертация физически убирает число с листа, задваивать
+    больше нечего).
+    Commit НЕ делает — это на вызывающем.
+    """
+    from app.models.feo_planned_item import FeoPlannedItem
+    from app.models.feo_category import FeoCategory
+    from app.services.text_match import normalize
+
+    # cat_id -> {normalize(name): fpi_id}; загружается лениво, один раз на категорию.
+    _cat_index: dict[int, dict[str, int]] = {}
+    for it in items:
+        if getattr(it, "feo_planned_item_id", None):
+            continue
+        eff_cat_id = getattr(it, "feo_category_id", None) or fallback_category_id
+        if not eff_cat_id:
+            continue
+        norm_name = normalize(getattr(it, "item_name", None) or "")
+        if not norm_name:
+            continue
+        index = _cat_index.get(eff_cat_id)
+        if index is None:
+            existing_res = await db.execute(
+                select(FeoPlannedItem).where(
+                    FeoPlannedItem.feo_category_id == eff_cat_id,
+                    FeoPlannedItem.is_active == True,
+                )
+            )
+            index = {}
+            _existing_amount_sum = Decimal("0")
+            for fpi in existing_res.scalars().all():
+                key = normalize(fpi.name or "")
+                if key and key not in index:
+                    index[key] = fpi.id  # первое совпадение побеждает при легаси-дублях в БД
+                _existing_amount_sum += Decimal(str(fpi.amount or 0))
+
+            # Конвертируем ручной план листа, если у категории пока нет НИ ОДНОЙ
+            # позиции с реальной суммой — НЕ «index пуст» (нашлось эмпирически
+            # этим же отчётом-приёмкой на боевых данных, 2026-08-11): 27 категорий
+            # на проде имеют легаси-мусорную активную FeoPlannedItem от совсем
+            # другой, более старой истории (name буквально содержит число вроде
+            # "2000000", quantity/amount = NULL) — «index пуст» было бы False,
+            # конвертация никогда не сработала бы, и первый же РЕАЛЬНЫЙ товар,
+            # добавленный в такую категорию, получил бы plan_manual = ТОЛЬКО его
+            # сумма (см. compute_feo_plan_tree) — ручной план потерялся бы молча.
+            # `_existing_amount_sum <= 0` ловит и «позиций нет вовсе», и «есть
+            # только мусорные нулевые» — в обоих случаях терять нечего.
+            if _existing_amount_sum <= 0:
+                cat_row = await db.get(FeoCategory, eff_cat_id)
+                converted = await convert_manual_plan_to_item(db, cat_row)
+                if converted is not None:
+                    conv_key = normalize(converted.name or "")
+                    if conv_key and conv_key not in index:
+                        index[conv_key] = converted.id
+            _cat_index[eff_cat_id] = index
+        index = _cat_index[eff_cat_id]
+        fpi_id = index.get(norm_name)
+        if fpi_id is None:
+            # amount=it.total_price — снимок плана (Шаг 1 «план ≠ факт»): фиксируется
+            # как план категории в момент постановки в план закупок.
+            new_fpi = FeoPlannedItem(
+                feo_category_id=eff_cat_id,
+                name=getattr(it, "item_name", None),
+                quantity=getattr(it, "quantity", None),
+                unit=getattr(it, "unit", None),
+                amount=getattr(it, "total_price", None),
+                is_active=True,
+                notes=f"Создано {note}",
+            )
+            db.add(new_fpi)
+            await db.flush()
+            fpi_id = new_fpi.id
+            index[norm_name] = fpi_id  # следующая позиция этого же вызова с тем же
+            # нормализованным именем (напр. «Бумага А4,» после «Бумага А4») найдёт
+            # её здесь и не создаст вторую плановую строку.
+        it.feo_planned_item_id = fpi_id
+        if hasattr(it, "over_plan"):
+            it.over_plan = False
+
+
 async def compute_feo_plan_tree(
     db: AsyncSession, subsidy_ids: list[int]
 ) -> dict[int, dict]:
@@ -473,11 +662,17 @@ async def compute_feo_plan_tree(
     ВСЁ количество целиком. Теперь — явная замена, а не MAX:
 
     Для каждой категории cat_id (и листа, и группы — не только листьев) считается:
-      plan_manual — «сколько сами запланировали»:
-        лист:  planned_quantity × planned_amount (planned_amount — цена за
-               единицу); если произведение = 0, а активные FeoPlannedItem (Ур.5)
-               есть — fallback на Σ FeoPlannedItem.amount (план введён по
-               позициям, а не по листу целиком);
+      plan_manual — «сколько сами запланировали» (план п.3а, 2026-08-11,
+        владелец «план — это 8 миллионов плюс 3 миллиона» — суммирование, а
+        НЕ «либо-либо»):
+        лист:  если у категории есть хотя бы одна активная FeoPlannedItem (Ур.5) —
+               plan_manual = Σ FeoPlannedItem.amount ЭТИХ позиций (planned_quantity
+               × planned_amount листа игнорируется — на практике оно уже NULL,
+               см. convert_manual_plan_to_item: как только в категории
+               появляется первая именованная позиция, ручной план листа
+               конвертируется в неё и поля обнуляются, состояния не
+               сосуществуют); иначе (позиций ещё нет вовсе) — planned_quantity ×
+               planned_amount листа (planned_amount — цена за единицу);
         группа: Σ plan_manual прямых детей. Собственные planned_quantity/amount
                 группы НЕ учитываются — так же, как feoPlannedTotalFor во
                 фронте, иначе формулы разойдутся (см. ниже — по той же причине
@@ -645,9 +840,39 @@ async def compute_feo_plan_tree(
         if not kids:
             qty = float(r.planned_quantity) if r.planned_quantity is not None else 0.0
             amt = float(r.planned_amount) if r.planned_amount is not None else 0.0
-            plan_manual = (qty * amt) if (qty > 0 and amt > 0) else 0.0
-            if plan_manual == 0.0:
-                plan_manual = leaf_item_amt.get(cat_id, 0.0)
+            # План п.3а (2026-08-11), владелец: «план — это 8 миллионов плюс 3
+            # миллиона» — план листа = СУММА активных плановых позиций (Ур.5),
+            # а не «либо ручное число листа, либо позиции» (было раньше —
+            # позиция «Ford Mustang» на 3 000 000 не попадала в план листа с
+            # ручными 8 000 000, план оставался 8 000 000 вместо 11 000 000).
+            # Ветка qty×amount используется ТОЛЬКО пока у категории вообще нет
+            # ни одной активной FeoPlannedItem — на практике конвертация
+            # (convert_manual_plan_to_item, вызывается из _auto_assign_planned_items
+            # и create_planned_item при появлении первой позиции) гарантирует,
+            # что оба состояния не сосуществуют: как только позиция появляется,
+            # planned_quantity/planned_amount листа обнуляются.
+            #
+            # Защита от боевых данных (найдено этим же отчётом-приёмкой,
+            # 2026-08-11): на проде есть 27 категорий, где активная
+            # FeoPlannedItem — легаси-мусор ИЗ СОВСЕМ ДРУГОЙ, более старой
+            # истории (name буквально содержит число вроде "2000000",
+            # quantity/amount = NULL — сумма позиции 0), СОСУЩЕСТВУЮЩИЙ с
+            # реальным ручным планом листа. `cat_id in leaf_item_amt` —
+            # признак «активная позиция существует», но НЕ признак «есть что
+            # просуммировать»: наивная сумма позиций (2-я строка ниже, будь
+            # она без doubles-guard) обнулила бы реальный план листа —
+            # ручное число потерялось бы БЕЗ переноса в позицию (конвертация
+            # не сработала бы, т.к. запускается только для ПЕРВОЙ позиции —
+            # эта уже существует). Используем сумму позиций, только если она
+            # РЕАЛЬНО положительна — иначе (позиции есть, но все нулевые)
+            # доверяем ручному числу листа, как раньше. Легитимный сценарий
+            # владельца (несколько позиций суммируются) под это не попадает —
+            # там сумма позиций всегда > 0 (реальные закупки/заявки).
+            items_sum = leaf_item_amt.get(cat_id, 0.0)
+            if items_sum > 0:
+                plan_manual = items_sum
+            else:
+                plan_manual = (qty * amt) if (qty > 0 and amt > 0) else 0.0
             ordered = own_ordered
             ordered_qty = own_ordered_qty
             over = own_over

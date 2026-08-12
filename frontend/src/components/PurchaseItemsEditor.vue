@@ -2185,10 +2185,61 @@ function plannedSelectionFor(item: EditorItem): FeoPlanSelection | null {
 // planned_amount (итоговая плановая сумма) — те же поля, что читает бэкенд
 // из FeoPlannedItem.quantity/amount либо FeoCategory.planned_quantity/
 // planned_amount (см. FeoPlanPosition в useFeoPlannedResiduals.ts).
+// Фолбэк для МИГРИРОВАННЫХ категорий-листьев (2026-08-12, зеркалит backend-фолбэк
+// в assert_tz_not_over_plan / app/services/feo_plan.py): план переехал из
+// planned_quantity/planned_amount самой категории в отдельные плановые позиции
+// (kind='planned_item') внутри неё. У такой категории оба поля плана категории
+// = null, поэтому /feo-categories/plan-positions НЕ эмитит для неё строку
+// 'plan_position'/'feo_article', plannedSelectionFor(item) возвращает null
+// (строки для выбора нет), и без этого фолбэка planForItem/planExcessFor тоже
+// всегда возвращали null — предупреждение «ТЗ превышает план» тихо переставало
+// работать. Складываем ровно те поля, которые читает planExcessFor
+// (planned_quantity / unit_price / planned_amount) плюс остальные, требуемые
+// типом FeoPlanPosition, из активных 'planned_item' той же категории: сумма
+// плана Σ planned_amount, количество Σ planned_quantity, цена за единицу =
+// сумма/количество при количестве > 0.
+function plannedAggregateForCategory(categoryId: number): FeoPlanPosition | null {
+  const rows = (props.plannedItems || []).filter(
+    p => p.kind === 'planned_item' && p.category_id === categoryId
+  )
+  if (!rows.length) return null
+  const plannedQty = rows.reduce((s, r) => s + (r.planned_quantity ?? 0), 0)
+  const plannedAmount = rows.reduce((s, r) => s + (r.planned_amount ?? 0), 0)
+  const consumed = rows.reduce((s, r) => s + (r.consumed ?? 0), 0)
+  const consumedQty = rows.reduce((s, r) => s + (r.consumed_quantity ?? 0), 0)
+  const residual = rows.reduce((s, r) => s + (r.residual ?? 0), 0)
+  const residualQty = rows.reduce((s, r) => s + (r.residual_quantity ?? 0), 0)
+  return {
+    id: categoryId,
+    name: rows[0].name,
+    path: rows[0].path,
+    category_id: categoryId,
+    kind: 'plan_position',
+    planned_quantity: plannedQty > 0 ? plannedQty : null,
+    unit: rows[0].unit,
+    planned_amount: plannedAmount,
+    unit_price: plannedQty > 0 ? plannedAmount / plannedQty : null,
+    consumed,
+    consumed_quantity: consumedQty,
+    residual,
+    residual_quantity: residualQty,
+    key: `plan_position:${categoryId}`,
+  }
+}
+
 function planForItem(item: EditorItem): FeoPlanPosition | null {
   const sel = plannedSelectionFor(item)
-  if (!sel) return null
-  return (props.plannedItems || []).find(p => p.key === `${sel.kind}:${sel.id}`) || null
+  if (sel) {
+    const row = (props.plannedItems || []).find(p => p.key === `${sel.kind}:${sel.id}`)
+    if (row) return row
+  }
+  // sel === null (нет агрегатной строки категории) ИЛИ позиция не привязана к
+  // конкретной plannedItem (feo_planned_item_id не задан) — пробуем агрегат
+  // по 'planned_item' той же категории (см. plannedAggregateForCategory выше).
+  if (item.feo_planned_item_id == null && item.feo_category_id != null) {
+    return plannedAggregateForCategory(item.feo_category_id)
+  }
+  return null
 }
 
 interface TzPlanExcess {

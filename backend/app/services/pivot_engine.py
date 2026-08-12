@@ -4,9 +4,11 @@
 Whitelist полей и aggs из field_registry — защита от SQL-инъекций.
 """
 
+from decimal import Decimal
 from typing import Any, Optional, List, Dict
-from sqlalchemy import select, func, and_, literal
+from sqlalchemy import select, func, and_, literal, inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy import text
 
@@ -211,6 +213,14 @@ async def _execute_list(base, config, feo_l1, feo_l2, feo_l3, db) -> Dict:
     offset = int(config.get('offset', 0))
     order_by = config.get('order_by', [])
 
+    # 'feo_planned_quantity'/'feo_planned_amount' в списочном режиме считаются в Python
+    # (см. _extract_feo_planned) из feo_categories.planned_items — этого relationship'а
+    # base-запрос по умолчанию не грузит. Догружаем его заранее через selectinload,
+    # чтобы не дёргать ленивую подгрузку в async-коде (обращение к незагруженному
+    # relationship в AsyncSession бросает MissingGreenlet).
+    if 'feo_planned_quantity' in columns or 'feo_planned_amount' in columns:
+        base = base.options(selectinload(FeoCategory.planned_items))
+
     for ob in order_by:
         key = ob.get('field')
         direction = ob.get('dir', 'asc')
@@ -263,8 +273,20 @@ def _extract_value(key, purchase, contractor, subsidy, feo_cat, feo_l1, feo_l2, 
     f = get_field(key)
     if f is None:
         return None
+
+    # 'feo_planned_quantity'/'feo_planned_amount': sql_expr — COALESCE(...) с подзапросом
+    # (см. field_registry.py), общий разбор "таблица.колонка" ниже такое не понимает —
+    # считаем значение отдельно из уже загруженных ORM-объектов.
+    if key in ('feo_planned_quantity', 'feo_planned_amount'):
+        return _extract_feo_planned(key, feo_cat)
+
     expr = f.sql_expr.strip()
-    if '.' in expr and 'CASE' not in expr.upper():
+    # ' ' not in expr — та же проверка, что в _resolve_column. Без неё сложные выражения
+    # (COALESCE(...), подзапросы и т.п.), в тексте которых нет слова "CASE", ложно проходят
+    # как "таблица.колонка": split('.', 1) даёт мусор вида "COALESCE(feo_categories" / "planned_quantity, (SELECT ...",
+    # обе части не совпадают ни с одним ключом obj_map — getattr тихо возвращает None вместо
+    # честного "не поддерживаем" (что и наблюдалось для feo_planned_* до этого фикса).
+    if '.' in expr and ' ' not in expr and 'CASE' not in expr.upper():
         parts = expr.split('.', 1)
         if len(parts) == 2:
             t, c = parts
@@ -280,8 +302,45 @@ def _extract_value(key, purchase, contractor, subsidy, feo_cat, feo_l1, feo_l2, 
             obj = obj_map.get(t)
             if obj is not None:
                 return getattr(obj, c, None)
-    # Computed (CASE/EXTRACT) — для list-режима не поддерживаем
+    # Computed (CASE/EXTRACT/COALESCE/подзапросы) — для list-режима не поддерживаем
     return None
+
+
+def _extract_feo_planned(key, feo_cat):
+    """Список-режим для 'feo_planned_quantity' / 'feo_planned_amount'.
+
+    Повторяет логику COALESCE(...) из field_registry.py, но на Python-объектах:
+      1) собственные поля категории (planned_quantity / planned_amount у НЕмигрированной
+         категории) — совпадает с первым операндом COALESCE в SQL;
+      2) иначе — сумма по активным feo_planned_items категории (план, переехавший в записи
+         внутри категории). relationship 'planned_items' грузится заранее через selectinload
+         в _execute_list, если эти поля запрошены — здесь его ЛЕНИВО не подгружаем: обращение
+         к незагруженному relationship в AsyncSession бросает MissingGreenlet. Если он всё же
+         не загружен (вызвали не через _execute_list, либо selectinload убрали) — честно None,
+         а не тихая ленивая подгрузка.
+    """
+    if feo_cat is None:
+        return None
+
+    if key == 'feo_planned_quantity':
+        if feo_cat.planned_quantity is not None:
+            return feo_cat.planned_quantity
+    else:  # feo_planned_amount — это ПРОИЗВЕДЕНИЕ planned_quantity × planned_amount (цена за ед.)
+        if feo_cat.planned_quantity is not None and feo_cat.planned_amount is not None:
+            return feo_cat.planned_quantity * feo_cat.planned_amount
+
+    state = sa_inspect(feo_cat)
+    if 'planned_items' in state.unloaded:
+        # Мигрированная категория, но relationship не подгружен в этом контексте —
+        # честно пусто, а не молчаливая ленивая подгрузка (см. docstring).
+        return None
+
+    items = [it for it in (feo_cat.planned_items or []) if it.is_active]
+    if not items:
+        return None
+    if key == 'feo_planned_quantity':
+        return sum((it.quantity for it in items if it.quantity is not None), Decimal('0'))
+    return sum((it.amount for it in items if it.amount is not None), Decimal('0'))
 
 
 async def _execute_pivot(base, config, feo_l1, feo_l2, feo_l3, db) -> Dict:

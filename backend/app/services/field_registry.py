@@ -69,8 +69,14 @@ FIELDS: dict[str, FieldDef] = {
     'feo_l2_name': FieldDef('feo_l2_name', 'Тип расходов конкретизированный (2 уровень)', 'string', 'computed', 'feo_l2.name', 'ФЭО'),
     'feo_l3_name': FieldDef('feo_l3_name', 'Направление из приложений к ФЭО (3 уровень)', 'string', 'computed', 'feo_l3.name', 'ФЭО'),
     'feo_appendix': FieldDef('feo_appendix', 'Приложение ФЭО', 'string', 'feo_category', 'feo_categories.appendix', 'ФЭО'),
-    'feo_planned_quantity': FieldDef('feo_planned_quantity', 'Количество из ФЭО', 'number', 'feo_category', 'feo_categories.planned_quantity', 'ФЭО', is_measure=True, agg_default='sum'),
-    'feo_planned_amount': FieldDef('feo_planned_amount', 'Сумма из ФЭО', 'currency', 'feo_category', 'feo_categories.planned_amount', 'ФЭО', format='rub', is_measure=True, agg_default='sum'),
+    # feo_categories.planned_amount — это ЦЕНА ЗА ЕДИНИЦУ, а не сумма (сумма = planned_quantity × planned_amount).
+    # Второй операнд COALESCE — план, переехавший в записи внутри категории (feo_planned_items, только is_active=true);
+    # у мигрированных категорий planned_quantity/planned_amount = NULL, поэтому берём сумму по её активным позициям.
+    'feo_planned_quantity': FieldDef('feo_planned_quantity', 'Количество из ФЭО', 'number', 'feo_category', "COALESCE(feo_categories.planned_quantity, (SELECT SUM(fpi.quantity) FROM feo_planned_items fpi WHERE fpi.feo_category_id = feo_categories.id AND fpi.is_active))", 'ФЭО', is_measure=True, agg_default='sum'),
+    # ВНИМАНИЕ: раньше здесь складывались цены за единицу (бессмысленная величина) — у сохранённых отчётов
+    # значение поля «Сумма из ФЭО» изменится. Теперь это произведение planned_quantity × planned_amount
+    # категории, либо (для категорий с планом в позициях) сумма amount по активным feo_planned_items.
+    'feo_planned_amount': FieldDef('feo_planned_amount', 'Сумма из ФЭО', 'currency', 'feo_category', "COALESCE(feo_categories.planned_quantity * feo_categories.planned_amount, (SELECT SUM(fpi.amount) FROM feo_planned_items fpi WHERE fpi.feo_category_id = feo_categories.id AND fpi.is_active))", 'ФЭО', format='rub', is_measure=True, agg_default='sum'),
 
     # === ЦЕНЫ И КОЛИЧЕСТВО ===
     'planned_quantity': FieldDef('planned_quantity', 'Плановое количество', 'number', 'purchase', 'purchases.planned_quantity', 'Цены', is_measure=True, agg_default='sum'),

@@ -312,11 +312,57 @@ const leafById = computed((): Map<number, FeoLeaf> => {
 // детализация ВНУТРИ категории, её план не подменяет план самой категории).
 // Используется как фолбэк для подписи «План/Ост.», когда leafById не даёт budget
 // (см. planPositions в defineProps).
+//
+// Фолбэк для МИГРИРОВАННЫХ категорий-листьев (2026-08-12): план переехал из
+// planned_quantity/planned_amount самой категории в отдельные плановые позиции
+// (kind='planned_item') внутри неё — у такой категории ОБА поля плана = null,
+// и сервер (GET /feo-categories/plan-positions) НЕ эмитит для неё строку
+// 'plan_position'/'feo_article' (условие planned_total > 0 не выполняется, см.
+// докстринг эндпоинта). Без фолбэка planByCategory для такой категории пуста,
+// и planNoteFor ниже показывает «—» вместо реального плана/остатка. Если
+// агрегатная строка ('plan_position'/'feo_article') ЕСТЬ — она приоритетна и
+// 'planned_item' по-прежнему пропускаются (иначе план задвоится).
 const planByCategory = computed((): Map<number, FeoPlanPosition> => {
   const map = new Map<number, FeoPlanPosition>()
+  const plannedItemRows = new Map<number, FeoPlanPosition[]>()
   for (const p of props.planPositions ?? []) {
-    if (p.kind === 'planned_item') continue
+    if (p.kind === 'planned_item') {
+      const arr = plannedItemRows.get(p.category_id) ?? []
+      arr.push(p)
+      plannedItemRows.set(p.category_id, arr)
+      continue
+    }
     map.set(p.category_id, p)
+  }
+  // planNoteFor читает РОВНО budget = plan.plan_manual ?? plan.planned_amount и
+  // residual = plan.ordered_residual ?? plan.residual. У 'planned_item' нет ни
+  // plan_manual, ни ordered_residual (формула v2 считается только для
+  // 'plan_position'/'feo_article', см. useFeoPlannedResiduals.ts), поэтому ??
+  // корректно уходит на сырые Σ planned_amount / Σ residual ниже.
+  for (const [categoryId, rows] of plannedItemRows) {
+    if (map.has(categoryId)) continue
+    const plannedQty = rows.reduce((s, r) => s + (r.planned_quantity ?? 0), 0)
+    const plannedAmount = rows.reduce((s, r) => s + (r.planned_amount ?? 0), 0)
+    const consumed = rows.reduce((s, r) => s + (r.consumed ?? 0), 0)
+    const consumedQty = rows.reduce((s, r) => s + (r.consumed_quantity ?? 0), 0)
+    const residual = rows.reduce((s, r) => s + (r.residual ?? 0), 0)
+    const residualQty = rows.reduce((s, r) => s + (r.residual_quantity ?? 0), 0)
+    map.set(categoryId, {
+      id: categoryId,
+      name: rows[0].name,
+      path: rows[0].path,
+      category_id: categoryId,
+      kind: 'plan_position',
+      planned_quantity: plannedQty > 0 ? plannedQty : null,
+      unit: rows[0].unit,
+      planned_amount: plannedAmount,
+      unit_price: plannedQty > 0 ? plannedAmount / plannedQty : null,
+      consumed,
+      consumed_quantity: consumedQty,
+      residual,
+      residual_quantity: residualQty,
+      key: `plan_position:${categoryId}`,
+    })
   }
   return map
 })

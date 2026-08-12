@@ -996,8 +996,16 @@
 
                     <!-- ── Level 5 панель: Плановые vs Фактические ── -->
                     <tr v-if="!node.hasChildren && expandedItemPanels.has(node.id)" :key="`items-${node.id}`" :data-feo-panel-for="node.id">
-                      <td colspan="6" style="padding:0 0 0 60px; background:rgba(20,184,166,0.06)">
-                        <div style="padding:10px 12px 12px">
+                      <!-- Правка владельца (2026-08-12): отступ 0 0 0 60px убран — он сдвигал ВСЮ
+                           вложенную таблицу плановых позиций вправо и ломал вертикальное выравнивание
+                           её колонок с колонками основной таблицы (feo-table). Визуальная вложенность
+                           теперь только padding-left ВНУТРИ первой ячейки «Позиция плана» ниже. -->
+                      <td colspan="6" style="padding:0; background:rgba(20,184,166,0.06)">
+                        <!-- padding-left:0 (было 12px) — тот же замер в браузере показал, что этот
+                             левый паддинг сдвигал ВСЮ вложенную таблицу плановых позиций на 12px
+                             вправо от колонок основной таблицы feo-table; правый/нижний/верхний
+                             оставлены, только left обнулён. -->
+                        <div style="padding:10px 12px 12px 0">
                           <!-- Требование владельца (план zany-fluttering-mountain.md, возвращено из отката
                                e0db76a): при раскрытии категории СРАЗУ видны её плановые позиции — БЕЗ
                                промежуточного заголовка-обёртки «Позиции: план vs факт», это уже просто
@@ -1019,21 +1027,28 @@
                           <!-- Таблица сравнения -->
                           <table v-else-if="comparisonData[node.id]" style="width:100%;border-collapse:collapse;font-size:12px">
                             <thead>
-                              <tr style="background:#CCFBF1">
-                                <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4" title="Плановая позиция. Закупки, привязанные к ней (как выставили в закупку / как в договоре — по стадии), — в раскрывающемся блоке под строкой плана.">
+                              <!-- Требование владельца (2026-08-12): в рамках одной плановой позиции может быть
+                                   несколько разных закупок — одна строка на уровне плана физически не может
+                                   описать факт по всем сразу (либо врёт, либо пустует). Поэтому фактические
+                                   колонки убраны с ЭТОГО уровня целиком: тут только план (синий), весь факт —
+                                   уровнем ниже, в раскрывающемся блоке «План vs факт» под каждой плановой
+                                   позицией (см. ниже, вёрстка не тронута). Строка-группировка «ПОЗИЦИИ ПЛАНА» /
+                                   «ПЛАН VS ФАКТ» убрана — делить больше нечего, вся таблица теперь про план. -->
+                              <!-- Правка владельца (2026-08-12): колонки этой (вложенной) таблицы выровнены
+                                   ПОД одноимёнными колонками ОСНОВНОЙ таблицы дерева ФЭО (feo-table) — тем же
+                                   feoResize.resizeStyle(key), тот же порядок ключей: name → budget → qty → planned.
+                                   «Цена плана» стоит под budget («Количество и финансирование по ФЭО» — там тоже
+                                   деньги), поэтому она ЛЕВЕЕ «Кол-во плана» (qty) — так требует вертикальное
+                                   выравнивание, не смысловой порядок колонок. Последняя ячейка (кнопки) — без
+                                   явной ширины, забирает остаток контейнера (примерно под spent+residual). -->
+                              <tr style="background:#DBEAFE">
+                                <th :style="feoResize.resizeStyle('name')" style="padding:4px 8px 4px 32px;text-align:left;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE;background:#DBEAFE" title="Плановая позиция. Закупки, привязанные к ней (как выставили в закупку / как в договоре — по стадии), — в раскрывающемся блоке под строкой плана.">
                                   Позиция плана
                                 </th>
-                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Кол-во плана</th>
-                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Цена плана</th>
-                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:110px">Сумма плана</th>
-                                <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4" title="Реальные закупки, сопоставленные с этой плановой позицией — что действительно куплено или заказано">ФАКТ (из закупок)</th>
-                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Кол-во (факт)</th>
-                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Цена (факт)</th>
-                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:110px">Сумма (факт)</th>
-                                <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:100px" title="Плановая сумма минус фактическая по этой строке">Разница</th>
-                                <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:120px">Контрагент</th>
-                                <th style="padding:4px 8px;text-align:center;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:80px" title="Сопоставлена ли строка плана с реальной закупкой">Статус</th>
-                                <th style="padding:4px 2px;width:80px;border-bottom:1px solid #99F6E4"></th>
+                                <th :style="feoResize.resizeStyle('budget')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE;background:#DBEAFE">Цена плана</th>
+                                <th :style="feoResize.resizeStyle('qty')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE;background:#DBEAFE">Кол-во плана</th>
+                                <th :style="feoResize.resizeStyle('planned')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE;background:#DBEAFE">Сумма плана</th>
+                                <th style="padding:4px 2px;border-bottom:1px solid #BFDBFE;background:#DBEAFE"></th>
                               </tr>
                             </thead>
                             <tbody>
@@ -1048,17 +1063,18 @@
                                    ниже, теперь та же вёрстка, что и у реальной плановой позиции. -->
                               <template v-for="planned in displayPlannedRowsFor(node)" :key="`p-${planned.id}`">
                                 <tr style="border-bottom:1px solid #E0F2FE">
-                                  <td style="padding:4px 8px;color:#0c4a6e">
+                                  <td :style="feoResize.resizeStyle('name')" style="padding:4px 8px 4px 32px;color:#0c4a6e;background:rgba(59,130,246,0.05)">
                                     <div class="d-flex align-center" style="gap:2px">
-                                      <!-- Требование владельца (2026-08-10): раскрытие не предлагается, если
-                                           у плановой позиции нет ни одной привязанной закупки — раскрывать нечего. -->
-                                      <v-btn v-if="factForPlanned(node.id, planned.id).length"
+                                      <!-- Правка владельца (жалоба по скриншоту): раскрытие теперь доступно ВСЕГДА —
+                                           даже без единой привязанной закупки, чтобы блок «План vs факт» не пропадал
+                                           бесследно и не вводил в заблуждение. Раньше (2026-08-10) шеврон скрывался
+                                           при пустом factForPlanned; теперь пустой случай рисует заглушку внутри. -->
+                                      <v-btn
                                         :icon="expandedPlannedItems.has(planned.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
                                         variant="text" density="compact" size="x-small" color="teal"
                                         title="Показать/скрыть закупки, привязанные к этой плановой позиции"
                                         @click="togglePlannedItemFolder(planned.id)"
                                       />
-                                      <span v-else style="width:24px;display:inline-block" />
                                       <span>{{ planned.name }}</span>
                                       <v-chip size="x-small" color="blue-grey" variant="tonal" class="ml-1" style="font-size:9px;height:16px"
                                         title="Это плановая позиция — она запланирована, а не выставлена в закупку и не приехала по факту"
@@ -1075,36 +1091,34 @@
                                       {{ planBreakdownText(node.id, planned) }}
                                     </div>
                                   </td>
-                                  <td style="padding:4px 8px;text-align:right;color:#64748b">
-                                    <span v-if="planned.quantity">{{ parseFloat(String(planned.quantity)) }} {{ planned.unit || '' }}</span>
-                                  </td>
-                                  <td style="padding:4px 8px;text-align:right;color:#64748b">
+                                  <!-- Правка владельца (2026-08-12): «Цена плана» — под колонкой budget
+                                       («Количество и финансирование по ФЭО») основной таблицы, поэтому она
+                                       ЛЕВЕЕ «Кол-во плана» (qty) ниже — порядок задан выравниванием колонок. -->
+                                  <td :style="feoResize.resizeStyle('budget')" style="padding:4px 8px;text-align:right;color:#64748b;background:rgba(59,130,246,0.05)">
                                     <span v-if="planned.amount && Number(planned.quantity) > 0">{{ formatCurrency(Number(planned.amount) / Number(planned.quantity)) }}</span>
                                   </td>
-                                  <td style="padding:4px 8px;text-align:right;color:#64748b">
+                                  <td :style="feoResize.resizeStyle('qty')" style="padding:4px 8px;text-align:right;color:#64748b;background:rgba(59,130,246,0.05)">
+                                    <span v-if="planned.quantity">{{ parseFloat(String(planned.quantity)) }} {{ planned.unit || '' }}</span>
+                                  </td>
+                                  <td :style="feoResize.resizeStyle('planned')" style="padding:4px 8px;text-align:right;color:#64748b;background:rgba(59,130,246,0.05)">
                                     <span v-if="planned.amount">{{ formatCurrency(planned.amount) }}</span>
                                   </td>
-                                  <td colspan="4" style="padding:4px 8px"></td>
-                                  <!-- Требование владельца (2026-08-10, уточнено 2026-08-11): пока ни одна
-                                       привязанная закупка не дошла хотя бы до «Ведётся работа» (isFactActual),
-                                       «Разница» — прочерк, а НЕ полная плановая сумма. factForPlanned теперь
-                                       включает ЛЮБУЮ стадию (в т.ч. «План закупок» — «пикап» с закупкой РЕЕ-2026-00889
-                                       без этого guard показал бы «Разница = 8 000 000», хотя calcDiff внутри себя
-                                       и так игнорирует не-committed/delivered статусы — guard должен смотреть
-                                       на то же самое множество статусов, иначе пустой факт рисуется как «есть». -->
-                                  <td style="padding:4px 8px;text-align:right">
-                                    <span v-if="planned.amount != null && factForPlanned(node.id, planned.id).some(isFactActual)" :style="getDiffStyle(planned.amount, factForPlanned(node.id, planned.id))">
-                                      {{ formatCurrency(calcDiff(planned.amount, factForPlanned(node.id, planned.id))) }}
-                                    </span>
-                                    <span v-else-if="planned.amount != null" style="color:#9ca3af">—</span>
-                                  </td>
-                                  <td style="padding:4px 8px;color:#9ca3af">
-                                    <span v-if="factForPlanned(node.id, planned.id).length">—</span>
-                                  </td>
-                                  <td style="padding:4px 8px;text-align:center">
-                                    <v-icon v-if="factForPlanned(node.id, planned.id).length" icon="mdi-check-circle" size="16" color="success" title="Сопоставлено" />
-                                  </td>
-                                  <td style="padding:2px;text-align:center">
+                                  <!-- Требование владельца (2026-08-12): факт (colspan-заглушка, «Разница»,
+                                       «Контрагент», «Статус» — factForPlanned/calcDiff/getDiffStyle/isFactActual)
+                                       убран с уровня строки плановой позиции целиком — одна строка не может
+                                       описать несколько разных закупок под одной плановой позицией; весь факт
+                                       теперь только в раскрывающемся блоке ниже (шеврон слева от названия).
+                                       Кнопка «План vs факт» (жалоба владельца 2026-08-12 — раскрытие было не
+                                       видно, только маленький шеврон у названия) дублирует togglePlannedItemFolder
+                                       текстовой ссылкой; видна на КАЖДОЙ строке, включая синтетическую
+                                       (planned.isManual), поэтому вынесена ИЗ ветки v-if/v-else ниже. -->
+                                  <td style="padding:2px;text-align:center;background:rgba(59,130,246,0.05)">
+                                    <v-btn
+                                      size="x-small" variant="text" color="teal" class="text-none"
+                                      :prepend-icon="expandedPlannedItems.has(planned.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
+                                      title="Показать/скрыть закупки, привязанные к этой плановой позиции"
+                                      @click="togglePlannedItemFolder(planned.id)"
+                                    >План vs факт</v-btn>
                                     <template v-if="!planned.isManual">
                                       <v-btn icon="mdi-pencil" size="x-small" variant="text" color="blue"
                                         title="Редактировать плановую позицию"
@@ -1129,40 +1143,45 @@
                                 </tr>
                                 <!-- Раскрывающийся блок плановой позиции: под одной плановой позицией может
                                      висеть несколько закупок («покупаю по одной машине в каждой закупке»).
-                                     Правка владельца (2026-08-10): раскрытие БОЛЬШЕ НЕ предлагается, если
-                                     фактов нет вовсе — раскрывать нечего (кнопка-шеврон уже скрыта выше);
-                                     доп. guard на factForPlanned здесь — на случай, если планово-позиция была
-                                     раскрыта ДО того, как её единственную закупку отвязали (expandedPlannedItems
-                                     переживает это в localStorage). Своя вложенная таблица со своей шапкой
-                                     (см. factStageHeaderFor/leftGroupInfo) — ровно одна стадия, если все
-                                     закупки позиции на ней, иначе нейтральный заголовок и стадия подписана
-                                     на каждой строке (пометка «как выставили»/«как в договоре» уже есть на строке). -->
-                                <tr v-if="expandedPlannedItems.has(planned.id) && factForPlanned(node.id, planned.id).length">
-                                  <td colspan="12" style="padding:4px 8px 10px 32px;background:rgba(20,184,166,0.03)">
+                                     Правка владельца (жалоба по скриншоту): раскрытие теперь доступно ВСЕГДА,
+                                     даже без единой закупки — иначе блок «План vs факт» пропадал бесследно и
+                                     вводил в заблуждение (было видно только у позиций С закупками). Пустой
+                                     случай рисует ту же шапку и одну строку-заглушку вместо строк actual —
+                                     фактические ячейки НЕ заполняются плановыми числами (правка 2026-08-10
+                                     остаётся в силе, тут просто видимость блока, не логика чисел). Своя
+                                     вложенная таблица со своей шапкой (см. factStageHeaderFor/leftGroupInfo) —
+                                     ровно одна стадия, если все закупки позиции на ней, иначе нейтральный
+                                     заголовок и стадия подписана на каждой строке (пометка «как выставили»/
+                                     «как в договоре» уже есть на строке). -->
+                                <tr v-if="expandedPlannedItems.has(planned.id)">
+                                  <td colspan="5" style="padding:4px 8px 10px 32px;background:rgba(20,184,166,0.03)">
                                     <table style="width:100%;border-collapse:collapse;font-size:12px">
                                       <thead>
-                                        <tr style="background:#E0F2FE">
-                                          <th style="padding:4px 8px;text-align:left;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD" :title="factStageHeaderFor(node.id, planned.id) === 'Позиция закупки' ? 'Закупки этой плановой позиции сейчас на разных стадиях — стадия каждой подписана на её строке' : ''">
+                                        <tr style="background:#CCFBF1">
+                                          <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4" :title="factStageHeaderFor(node.id, planned.id) === 'Позиция закупки' ? 'Закупки этой плановой позиции сейчас на разных стадиях — стадия каждой подписана на её строке' : ''">
                                             {{ factStageHeaderFor(node.id, planned.id) }}
                                           </th>
-                                          <th style="padding:4px 8px;text-align:right;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD;width:90px">Кол-во</th>
-                                          <th style="padding:4px 8px;text-align:right;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD;width:90px">Цена</th>
-                                          <th style="padding:4px 8px;text-align:right;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD;width:110px">Сумма</th>
-                                          <th style="padding:4px 8px;text-align:left;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD" title="Реальные закупки, привязанные к этой плановой позиции — что действительно куплено или заказано">ФАКТ (из закупок)</th>
-                                          <th style="padding:4px 8px;text-align:right;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD;width:90px">Кол-во (факт)</th>
-                                          <th style="padding:4px 8px;text-align:right;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD;width:90px">Цена (факт)</th>
-                                          <th style="padding:4px 8px;text-align:right;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD;width:110px">Сумма (факт)</th>
-                                          <th style="padding:4px 8px;text-align:right;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD;width:100px">Разница</th>
-                                          <th style="padding:4px 8px;text-align:left;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD;width:120px">Контрагент</th>
-                                          <th style="padding:4px 8px;text-align:center;color:#0369a1;font-weight:600;border-bottom:1px solid #BAE6FD;width:80px">Статус</th>
-                                          <th style="padding:4px 2px;width:80px;border-bottom:1px solid #BAE6FD"></th>
+                                          <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Кол-во</th>
+                                          <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Цена</th>
+                                          <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:110px">Сумма</th>
+                                          <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4" title="Реальные закупки, привязанные к этой плановой позиции — что действительно куплено или заказано">ФАКТ (из закупок)</th>
+                                          <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Кол-во (факт)</th>
+                                          <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Цена (факт)</th>
+                                          <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:110px">Сумма (факт)</th>
+                                          <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:100px">Разница</th>
+                                          <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:120px">Контрагент</th>
+                                          <th style="padding:4px 8px;text-align:center;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:80px">Статус</th>
+                                          <th style="padding:4px 2px;width:80px;border-bottom:1px solid #99F6E4"></th>
                                         </tr>
                                       </thead>
                                       <tbody>
+                                        <tr v-if="!factForPlanned(node.id, planned.id).length">
+                                          <td colspan="12" style="padding:8px 8px;color:#94a3b8;font-style:italic">Закупок по этой плановой позиции пока нет</td>
+                                        </tr>
                                         <template v-for="actual in factForPlanned(node.id, planned.id)" :key="`pa-${actual.purchase_item_id}`">
                                         <tr
                                           :data-item-id="actual.purchase_item_id" data-item-group="planned"
-                                          style="border-bottom:1px solid #E0F2FE;background:rgba(20,184,166,0.05)">
+                                          style="border-bottom:1px solid #CCFBF1;background:rgba(20,184,166,0.05)">
                                           <td style="padding:4px 8px;color:#0c4a6e">
                                             {{ leftGroupInfo(actual).name }}
                                             <v-chip size="x-small" :color="leftGroupInfo(actual).isContract ? 'indigo' : 'blue-grey'" variant="tonal" class="ml-1" style="font-size:9px;height:16px"
@@ -1240,7 +1259,7 @@
                                         <!-- Подстроки стадий уточнения (справочно, НЕ входят в comparisonPlanTotal/comparisonFactTotal) -->
                                         <template v-if="expandedStageRows.has(`pa-${actual.purchase_item_id}`)">
                                         <tr v-for="sr in stagesWithDiff(actual.stages)" :key="`pa-stage-${actual.purchase_item_id}-${sr.stage.key}`"
-                                          style="border-bottom:1px solid #E0F2FE;background:rgba(20,184,166,0.09)">
+                                          style="border-bottom:1px solid #99F6E4;background:rgba(20,184,166,0.09)">
                                           <td style="padding:2px 8px 2px 40px;color:#94a3b8;font-size:10px">{{ sr.stage.label }}</td>
                                           <td style="padding:2px 8px"></td>
                                           <td style="padding:2px 8px"></td>
@@ -1411,13 +1430,17 @@
 
                               <!-- Пусто -->
                               <tr v-if="!displayPlannedRowsFor(node).length && !comparisonData[node.id].actual.length">
-                                <td colspan="12" style="padding:12px 8px;text-align:center;color:#9ca3af;font-style:italic">
+                                <td colspan="5" style="padding:12px 8px;text-align:center;color:#9ca3af;font-style:italic">
                                   Нет плановых позиций. Добавьте вручную или загрузите из Excel.
                                 </td>
                               </tr>
                             </tbody>
                             <!-- Итоговая строка -->
                             <tfoot v-if="displayPlannedRowsFor(node).length || comparisonData[node.id].actual.length">
+                              <!-- Требование владельца (2026-08-12): ИТОГО на уровне плана — только план,
+                                   фактическая сумма/разница отсюда убраны вместе с остальными факт-колонками
+                                   этого уровня (см. thead выше); факт по-прежнему суммируется в раскрывающихся
+                                   блоках под каждой плановой позицией. -->
                               <tr style="background:rgba(34,197,94,0.08);font-weight:600;border-top:2px solid rgba(34,197,94,0.3)">
                                 <td style="padding:4px 8px" class="text-success">ИТОГО</td>
                                 <td style="padding:4px 8px"></td>
@@ -1426,20 +1449,6 @@
                                   {{ formatCurrency(comparisonPlanTotal(node)) }}
                                 </td>
                                 <td style="padding:4px 8px"></td>
-                                <td style="padding:4px 8px"></td>
-                                <td style="padding:4px 8px"></td>
-                                <!-- Требование владельца (2026-08-10): фактическая часть ИТОГО наполняется,
-                                     только если факт есть хоть у одной строки категории; плановая часть —
-                                     всегда (см. td выше). -->
-                                <td style="padding:4px 8px;text-align:right">
-                                  <span v-if="actualFactFor(node.id).length">{{ formatCurrency(comparisonFactTotal(node.id)) }}</span>
-                                </td>
-                                <td style="padding:4px 8px;text-align:right">
-                                  <span v-if="actualFactFor(node.id).length" :class="comparisonPlanTotal(node) >= comparisonFactTotal(node.id) ? 'text-success' : 'text-error'">
-                                    {{ formatCurrency(comparisonPlanTotal(node) - comparisonFactTotal(node.id)) }}
-                                  </span>
-                                </td>
-                                <td colspan="3" style="padding:4px 8px"></td>
                               </tr>
                             </tfoot>
                           </table>
@@ -4172,8 +4181,18 @@ const vFitText = {
   updated: fitTextToWidth,
 }
 
+// Правка владельца (2026-08-12): name/qty/planned переведены с "авто" (0) на явную
+// ширину 180px — тот же прецедент, что уже был у budget/spent. Причина: feo-table
+// сидит на table-layout:fixed, где колонки без явной ширины делят ОСТАТОК места
+// ПОРОВНУ между собой — а вложенная таблица плановых позиций (панель «План vs факт»
+// под каждой категорией ФЭО) имеет ДРУГОЙ набор колонок (нет spent/residual/actions,
+// вместо них одна колонка кнопок), поэтому её «авто»-колонки получали совсем другую
+// долю остатка и визуально уезжали в сторону от одноимённых колонок основной таблицы
+// (замерено: было name~470px vs 187px — расхождение в 4 раза). С явной шириной
+// resizeStyle(key) отдаёт одно и то же {width,minWidth,maxWidth} в обеих таблицах —
+// колонки совпадают по построению, независимо от auto-раскладки соседних ячеек.
 const feoResize = useResizableColumns('feo-table', {
-  name: 0, budget: 180, qty: 0, planned: 0, spent: 180, residual: 0,
+  name: 180, budget: 180, qty: 180, planned: 180, spent: 180, residual: 0,
 })
 
 const router = useRouter()
@@ -4309,6 +4328,11 @@ const planTreeByCat = ref<Record<number, {
   display: number; display_quantity: number
   excess_amount?: number; excess_pending?: boolean; excess_approved?: boolean
   plan_manual?: number; ordered_sum?: number; residual?: number; consumed?: number
+  // qty_plan — количественный двойник plan_manual/plan (замещение «заказ вместо плана»,
+  // если набрано полностью, иначе собственный plan_manual-по-количеству), см.
+  // backend/app/services/feo_plan.py::compute_feo_plan_tree. Нужен фолбэком в feoQtyFor
+  // для мигрированных листьев (план в FeoPlannedItem, planned_quantity узла = null).
+  qty_plan?: number
   // Задача владельца «план ≠ факт» (сессия 2026-08-06): факт узла (fact/fact_quantity)
   // и второй, независимый вид превышения — «итог закупки/КП дороже плана»
   // (excess_fact_over_plan/excess_fact_pending/excess_fact_approved), см. excessFactFor().
@@ -4360,6 +4384,7 @@ function splitPlanTree(raw: Record<string, any>) {
     display: number; display_quantity: number
     excess_amount?: number; excess_pending?: boolean; excess_approved?: boolean
     plan_manual?: number; ordered_sum?: number; residual?: number; consumed?: number
+    qty_plan?: number
     plan?: number; fact?: number; fact_quantity?: number
     excess_fact_over_plan?: number; excess_fact_pending?: boolean; excess_fact_approved?: boolean
     excess_over_feo?: number; excess_culprit?: ExcessCulprit | null
@@ -5208,8 +5233,18 @@ function toggleStageRow(key: string) {
 // (hasChildren-категорий), там Таблица B легитимна (см. reqOwnersAfter).
 
 // ── Слияние: позиции из заявок ↔ ручные дочерние позиции ФЭО ──
+// Миграция плана категории → плановые позиции (сессия 2026-08-12): у мигрированного
+// листа planned_quantity/planned_amount оба null, хотя план есть (живёт в активных
+// плановых позициях) — без фолбэка isManualPosLeaf вернула бы false, и «строгая
+// фильтрация ручные/из заявок» (v-if в шапке дерева, plannedBase==='requests')
+// перестала бы прятать мигрированный лист, как прятала до миграции. Фолбэк —
+// planTreeByCat.plan_manual > 0, тот же сигнал «есть план в позициях», что и в
+// feoPlannedTotalFor выше (там же объяснение поля).
 function isManualPosLeaf(node: FeoNode): boolean {
-  return !node.hasChildren && (node.planned_quantity != null || node.planned_amount != null)
+  if (node.hasChildren) return false
+  if (node.planned_quantity != null || node.planned_amount != null) return true
+  const t = planTreeByCat.value[node.id]
+  return !!(t && Number(t.plan_manual || 0) > 0)
 }
 
 interface FeoVirtualGroup {
@@ -7414,8 +7449,16 @@ async function saveInlineBudget(node: FeoNode) {
 }
 
 // ── Planned quantity helpers ─────────────────────
+// Зеркало фолбэка feoPlannedTotalFor выше (миграция плана → плановые позиции): у
+// мигрированного листа planned_quantity null, но план есть в плановых позициях —
+// берём qty_plan из planTreeByCat вместо 0.
 function feoQtyFor(node: FeoNode): number {
-  if (!node.hasChildren) return node.planned_quantity != null ? Number(node.planned_quantity) : 0
+  if (!node.hasChildren) {
+    if (node.planned_quantity != null) return Number(node.planned_quantity)
+    const t = planTreeByCat.value[node.id]
+    if (t && t.qty_plan != null) return Number(t.qty_plan)
+    return 0
+  }
   if (node.planned_quantity != null) return Number(node.planned_quantity)
   return node.children.reduce((acc, child) => acc + feoQtyFor(child), 0)
 }
@@ -7499,6 +7542,13 @@ function feoAmtFor(node: FeoNode): number {
 // ── Computed planned total: кол-во × стоимость за ед. ───
 // Parent = sum of children's planned totals (never qty × unitPrice of parent)
 // Leaf = own planned_quantity × own planned_amount
+// Миграция плана категории → именованные плановые позиции (FeoPlannedItem, сессия
+// 2026-08-12): у мигрированного листа planned_quantity/planned_amount оба null (план
+// живёт в активных плановых позициях), поэтому qty×unitPrice ниже даёт 0. Фолбэк —
+// planTreeByCat.value[node.id]?.plan_manual, точный двойник этой функции на бэкенде
+// (см. app.services.feo_plan.compute_feo_plan_tree: qty×amt, если поля заданы, иначе
+// Σ сумм активных плановых позиций). Если дерево плана ещё не загружено — старая
+// локальная формула как запасной вариант (даст 0 для мигрированного листа, как раньше).
 function feoPlannedTotalFor(node: FeoNode): number {
   if (node.hasChildren) {
     return node.children.reduce((acc, child) => acc + feoPlannedTotalFor(child), 0)
@@ -7507,6 +7557,10 @@ function feoPlannedTotalFor(node: FeoNode): number {
   const qty = node.planned_quantity != null ? Number(node.planned_quantity) : 0
   const unitPrice = node.planned_amount != null ? Number(node.planned_amount) : 0
   if (qty > 0 && unitPrice > 0) return qty * unitPrice
+  if (node.planned_quantity == null && node.planned_amount == null) {
+    const t = planTreeByCat.value[node.id]
+    if (t && t.plan_manual != null) return Number(t.plan_manual)
+  }
   return 0
 }
 

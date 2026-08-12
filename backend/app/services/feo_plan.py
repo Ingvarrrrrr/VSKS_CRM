@@ -22,7 +22,7 @@ Purchase.subsidy_id вовсе NULL — не совпадает ни с чем),
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import func, or_ as sqlor, select
+from sqlalchemy import case, func, or_ as sqlor, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.contract_item import ContractItem
@@ -1146,6 +1146,13 @@ async def assert_tz_not_over_plan(
       2. Иначе, если задан feo_category_id → FeoCategory.planned_quantity /
          .planned_amount листа (planned_amount там УЖЕ цена за единицу, см.
          модель); плановая сумма = planned_quantity × planned_amount.
+         Фолбэк (план переехал в записи внутри категории): если ОБА поля
+         категории пусты (NULL) — берём активные FeoPlannedItem этой категории:
+         plan_total = Σ amount (только положительные суммы), plan_qty =
+         Σ quantity (если сумма количеств > 0), plan_unit_price = plan_total /
+         plan_qty при plan_qty > 0. Без этого фолбэка гейт «ТЗ не дороже и не
+         больше плана» тихо отключается для мигрированных категорий-листьев —
+         см. compute_feo_plan_tree (тот же приём, та же семантика).
 
     Количество проверяется ОТДЕЛЬНО и обязательно от суммы — сценарий владельца
     «план 2 самолёта за 30 млн» не разрешает купить 3 штуки даже за те же 30 млн
@@ -1189,6 +1196,36 @@ async def assert_tz_not_over_plan(
                 planned_unit_price = Decimal(str(cat.planned_amount))
             if planned_qty is not None and planned_unit_price is not None:
                 planned_total = planned_qty * planned_unit_price
+            elif planned_qty is None and planned_unit_price is None:
+                # План переехал в записи внутри категории (FeoPlannedItem) — у
+                # мигрированных категорий-листьев planned_quantity/planned_amount
+                # самой категории — NULL, план лежит в активных FeoPlannedItem.
+                # Без этого фолбэка planned_qty/planned_unit_price/planned_total
+                # остаются None, ниже срабатывает no-op, и позиция закупки,
+                # привязанная к КАТЕГОРИИ напрямую (без конкретной плановой
+                # позиции), перестаёт ограничиваться вообще — 409 не сработает
+                # никогда. Один запрос с агрегатами, без загрузки всех строк —
+                # см. образец в compute_feo_plan_tree (feo_plan.py).
+                fpi_agg_q = (
+                    select(
+                        func.coalesce(
+                            func.sum(case((FeoPlannedItem.amount > 0, FeoPlannedItem.amount), else_=0)),
+                            0,
+                        ).label("amt"),
+                        func.coalesce(func.sum(FeoPlannedItem.quantity), 0).label("qty"),
+                    )
+                    .where(FeoPlannedItem.feo_category_id == feo_category_id)
+                    .where(FeoPlannedItem.is_active.is_(True))
+                )
+                agg_row = (await db.execute(fpi_agg_q)).one()
+                fb_amt = Decimal(str(agg_row.amt or 0))
+                fb_qty = Decimal(str(agg_row.qty or 0))
+                if fb_amt > 0:
+                    planned_total = fb_amt
+                if fb_qty > 0:
+                    planned_qty = fb_qty
+                if planned_qty is not None and planned_qty > 0 and planned_total is not None:
+                    planned_unit_price = planned_total / planned_qty
 
     if planned_qty is None and planned_unit_price is None and planned_total is None:
         return  # плановые данные не заданы — правило не применяется

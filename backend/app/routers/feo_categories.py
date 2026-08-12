@@ -963,7 +963,11 @@ async def get_feo_flat(
 
     has_budget/has_plan — СТРУКТУРНЫЕ булевы признаки (НЕ денежные величины, НЕ гейтятся
     правом): has_budget истинен, если у узла задан собственный budget > 0; has_plan истинен,
-    если planned_quantity × planned_amount > 0. Фронт (useFeoLeaves.filterFundedNodes)
+    если planned_quantity × planned_amount > 0, ЛИБО (фолбэк — план переехал в записи
+    внутри категории) у узла есть активная FeoPlannedItem с amount > 0. Без этого фолбэка
+    мигрированные категории-листья (planned_quantity/planned_amount категории пусты, план
+    введён плановыми позициями) пропадают из дерева выбора категории ФЭО в заявке/закупке
+    — к ним нельзя привязать закупку, хотя план реально есть. Фронт (useFeoLeaves.filterFundedNodes)
     считает узел значимым по has_budget ИЛИ has_plan (с фолбэком на числовые budget/
     planned_quantity/planned_amount, если бэкенд старый) — иначе такие категории
     вырезались из дерева выбора, хотя реально существуют и используются (баг «категория
@@ -994,6 +998,26 @@ async def get_feo_flat(
         if c.parent_id is not None:
             has_children.add(c.parent_id)
 
+    # Фолбэк has_plan: план переехал в записи внутри категории (FeoPlannedItem) —
+    # у мигрированных категорий-листьев planned_quantity/planned_amount пусты, план
+    # введён активными плановыми позициями. Без этого набора has_plan у таких узлов
+    # уходит в false, и они пропадают из дерева выбора категории ФЭО на фронте
+    # (useFeoLeaves.filterFundedNodes) — к ним нельзя привязать закупку, хотя план
+    # реально есть (на боевых данных таких категорий около сотни). Один batch-запрос
+    # на все категории ответа — без N+1 в цикле.
+    from app.models.feo_planned_item import FeoPlannedItem
+    cat_ids = [c.id for c in all_cats]
+    cats_with_plan_items: set[int] = set()
+    if cat_ids:
+        plan_rows = (await db.execute(
+            select(FeoPlannedItem.feo_category_id)
+            .where(FeoPlannedItem.feo_category_id.in_(cat_ids))
+            .where(FeoPlannedItem.is_active.is_(True))
+            .where(FeoPlannedItem.amount > 0)
+            .group_by(FeoPlannedItem.feo_category_id)
+        )).scalars().all()
+        cats_with_plan_items = set(plan_rows)
+
     return [
         {
             "id": c.id,
@@ -1008,9 +1032,12 @@ async def get_feo_flat(
             # Структурные признаки — НЕ гейтятся правом, см. docstring выше.
             "has_budget": bool(c.budget is not None and float(c.budget) > 0),
             "has_plan": bool(
-                c.planned_quantity is not None
-                and c.planned_amount is not None
-                and float(c.planned_quantity) * float(c.planned_amount) > 0
+                (
+                    c.planned_quantity is not None
+                    and c.planned_amount is not None
+                    and float(c.planned_quantity) * float(c.planned_amount) > 0
+                )
+                or c.id in cats_with_plan_items
             ),
         }
         for c in all_cats

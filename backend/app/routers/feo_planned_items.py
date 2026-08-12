@@ -46,10 +46,17 @@ def _build_item_stages(
     ci: Optional[ContractItem],
     cat: Optional[FeoCategory],
     plan_items_map: dict,
+    cat_plan_fallback: Optional[dict] = None,
 ) -> list[FeoStageOut]:
     """Собирает цепочку стадий feo → plan → purchase → contract → accepted для одной
     фактической позиции (см. /comparison). Стадия попадает в массив, только если у
     неё есть хоть какие-то данные. Порядок — строго фиксированный.
+
+    cat_plan_fallback — фолбэк для стадии «План», когда план переехал в записи
+    внутри категории (FeoPlannedItem) и у категории cat.planned_quantity/
+    planned_amount оба NULL: dict {"quantity", "unit_price", "amount"}, посчитанный
+    ОДНИМ запросом на весь /comparison-эндпоинт (см. вызывающий код), а не в цикле
+    по позициям — категория здесь всегда одна на запрос.
     """
     stages: list[FeoStageOut] = []
 
@@ -87,6 +94,19 @@ def _build_item_stages(
             unit=cat.unit,
             unit_price=cat.planned_amount,
             total=_safe_mul(cat.planned_quantity, cat.planned_amount),
+        ))
+    elif cat is not None and cat_plan_fallback is not None:
+        # План переехал в записи внутри категории — у мигрированных категорий-листьев
+        # cat.planned_quantity/planned_amount оба пусты (NULL), план лежит в активных
+        # FeoPlannedItem. Без этого фолбэка стадия «План» не добавляется вовсе, и в
+        # цепочке ФЭО→План→Закупка→Договор→Приёмка выпадает целое звено, хотя план есть.
+        stages.append(FeoStageOut(
+            key="plan", label="План",
+            name=cat.name,
+            quantity=cat_plan_fallback.get("quantity"),
+            unit=cat.unit,
+            unit_price=cat_plan_fallback.get("unit_price"),
+            total=cat_plan_fallback.get("amount"),
         ))
 
     # 3. Что выставляли на закупку — всегда есть (purchase_item сюда дошёл, значит есть item_name)
@@ -623,6 +643,31 @@ async def get_comparison(
     feo_cat = (await db.execute(
         select(FeoCategory).where(FeoCategory.id == feo_category_id)
     )).scalar_one_or_none()
+
+    # Фолбэк стадии «План» (_build_item_stages): план переехал в записи внутри
+    # категории — если planned_quantity/planned_amount категории оба NULL, план
+    # лежит в активных FeoPlannedItem. Считаем ОДНИМ запросом-агрегатом на весь
+    # эндпоинт (категория тут всегда одна — feo_category_id из query), не в цикле
+    # по фактическим позициям ниже.
+    cat_plan_fallback: Optional[dict] = None
+    if feo_cat is not None and feo_cat.planned_quantity is None and feo_cat.planned_amount is None:
+        _fb_row = (await db.execute(
+            select(
+                sqlfunc.coalesce(sqlfunc.sum(FeoPlannedItem.amount), 0),
+                sqlfunc.coalesce(sqlfunc.sum(FeoPlannedItem.quantity), 0),
+            )
+            .where(FeoPlannedItem.feo_category_id == feo_category_id)
+            .where(FeoPlannedItem.is_active == True)
+        )).one()
+        _fb_amt = Decimal(str(_fb_row[0] or 0))
+        _fb_qty = Decimal(str(_fb_row[1] or 0))
+        if _fb_amt > 0 or _fb_qty > 0:
+            cat_plan_fallback = {
+                "quantity": _fb_qty if _fb_qty > 0 else None,
+                "amount": _fb_amt if _fb_amt > 0 else None,
+                "unit_price": (_fb_amt / _fb_qty) if _fb_qty > 0 else None,
+            }
+
     _plan_item_ids = {row.PurchaseItem.feo_planned_item_id for row in actual_rows if row.PurchaseItem.feo_planned_item_id}
     plan_items_map: dict = {}
     if _plan_item_ids:
@@ -690,7 +735,7 @@ async def get_comparison(
         # (plan_schedule / work_in_progress / contracted — это ещё ПЛАН, fact_amount=None)
 
         _ci = ci_by_pi_id.get(pi.id)
-        _stages = _build_item_stages(pi, _ci, feo_cat, plan_items_map)
+        _stages = _build_item_stages(pi, _ci, feo_cat, plan_items_map, cat_plan_fallback)
 
         actual_out.append(FeoActualItemOut(
             purchase_item_id=pi.id,

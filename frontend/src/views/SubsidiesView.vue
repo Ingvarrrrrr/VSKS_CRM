@@ -1042,7 +1042,7 @@
                                    выравнивание, не смысловой порядок колонок. Последняя ячейка (кнопки) — без
                                    явной ширины, забирает остаток контейнера (примерно под spent+residual). -->
                               <tr style="background:#DBEAFE">
-                                <th :style="feoResize.resizeStyle('name')" style="padding:4px 8px 4px 32px;text-align:left;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE;background:#DBEAFE" title="Плановая позиция. Закупки, привязанные к ней (как выставили в закупку / как в договоре — по стадии), — в раскрывающемся блоке под строкой плана.">
+                                <th :style="[feoResize.resizeStyle('name'), { paddingLeft: `${plannedItemIndentPx(node)}px` }]" style="padding-top:4px;padding-right:8px;padding-bottom:4px;text-align:left;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE;background:#DBEAFE" title="Плановая позиция. Закупки, привязанные к ней (как выставили в закупку / как в договоре — по стадии), — в раскрывающемся блоке под строкой плана.">
                                   Позиция плана
                                 </th>
                                 <th :style="feoResize.resizeStyle('budget')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE;background:#DBEAFE">Плановая цена за единицу</th>
@@ -1063,7 +1063,7 @@
                                    ниже, теперь та же вёрстка, что и у реальной плановой позиции. -->
                               <template v-for="planned in displayPlannedRowsFor(node)" :key="`p-${planned.id}`">
                                 <tr style="border-bottom:1px solid #E0F2FE">
-                                  <td :style="feoResize.resizeStyle('name')" style="padding:4px 8px 4px 32px;color:#0c4a6e;background:rgba(59,130,246,0.05)">
+                                  <td :style="[feoResize.resizeStyle('name'), { paddingLeft: `${plannedItemIndentPx(node)}px` }]" style="padding-top:4px;padding-right:8px;padding-bottom:4px;color:#0c4a6e;background:rgba(59,130,246,0.05)">
                                     <div class="d-flex align-center" style="gap:2px">
                                       <!-- Правка владельца (жалоба по скриншоту): раскрытие теперь доступно ВСЕГДА —
                                            даже без единой привязанной закупки, чтобы блок «План vs факт» не пропадал
@@ -1442,7 +1442,7 @@
                                    этого уровня (см. thead выше); факт по-прежнему суммируется в раскрывающихся
                                    блоках под каждой плановой позицией. -->
                               <tr style="background:rgba(34,197,94,0.08);font-weight:600;border-top:2px solid rgba(34,197,94,0.3)">
-                                <td style="padding:4px 8px" class="text-success">ИТОГО</td>
+                                <td :style="{ paddingLeft: `${plannedItemIndentPx(node)}px` }" style="padding-top:4px;padding-right:8px;padding-bottom:4px" class="text-success">ИТОГО</td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px"></td>
                                 <td style="padding:4px 8px;text-align:right">
@@ -7375,6 +7375,21 @@ watch(comparisonData, (data) => {
 // ИТОГО (это и есть смысл пометки «требуется действие»).
 function comparisonPlanTotal(node: FeoNode): number {
   return displayPlannedRowsFor(node).reduce((s, p) => s + Number(p.amount || 0), 0)
+}
+
+// Требование владельца (2026-08-12): таблица плановых позиций должна выглядеть вложенной
+// в свою категорию — так же, как «Внедорожник» вложен в «Транспорт и технику». 20px — это
+// сам шаг вложенности дерева (paddingLeft строки категории в основном дереве =
+// node.depth * 20 + 8px, см. feo-td-name выше), к нему прибавлен один уровень (+20) плюс
+// поправка +5px компенсирующая разницу ширины иконок ПЕРЕД текстом: в строке дерева их
+// две — шеврон + папка (~39px), а в строке плановой позиции — одна маленькая (~14px);
+// без этой поправки визуальный левый край текста «съедает» уступ и вложенность не видна
+// на глаз, хотя padding формально уже глубже. Итог замерян в браузере (getBoundingClientRect
+// по текстовым узлам): «Транспорт и техника» → «Внедорожник» → «Great Wall POER» идут
+// лесенкой с шагом ≈20px. Привязано к depth, а не константе, чтобы уступ был одинаковым
+// на любом уровне вложенности дерева.
+function plannedItemIndentPx(node: FeoNode): number {
+  return node.depth * 20 + 53
 }
 
 // Задача владельца «план ≠ факт» (сессия 2026-08-06, Шаг 5, п.6): ИТОГО «факт» панели

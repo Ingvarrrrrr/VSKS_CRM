@@ -1045,7 +1045,7 @@
                                 <th :style="feoResize.resizeStyle('name')" style="padding:4px 8px 4px 32px;text-align:left;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE;background:#DBEAFE" title="Плановая позиция. Закупки, привязанные к ней (как выставили в закупку / как в договоре — по стадии), — в раскрывающемся блоке под строкой плана.">
                                   Позиция плана
                                 </th>
-                                <th :style="feoResize.resizeStyle('budget')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE;background:#DBEAFE">Цена плана</th>
+                                <th :style="feoResize.resizeStyle('budget')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE;background:#DBEAFE">Плановая цена за единицу</th>
                                 <th :style="feoResize.resizeStyle('qty')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE;background:#DBEAFE">Кол-во плана</th>
                                 <th :style="feoResize.resizeStyle('planned')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE;background:#DBEAFE">Сумма плана</th>
                                 <th style="padding:4px 2px;border-bottom:1px solid #BFDBFE;background:#DBEAFE"></th>
@@ -6443,7 +6443,14 @@ const visibleFeoNodes = computed(() => {
   const q = feoSearch.value.toLowerCase()
   const all = flattenAll(feoTree.value)
   if (q) return all.filter(n => n.name.toLowerCase().includes(q) || (n.code ?? '').toLowerCase().includes(q))
-  return all
+  // Баг (2026-08-12): фильтр по видимости предков раньше стоял только на guard'е
+  // ОСНОВНОЙ строки узла в шаблоне (v-if="isNodeVisible(node) && ..."). Остальные
+  // блоки того же v-for (панель плановых позиций, служебки, папки закупок) такого
+  // guard'а не имели — при сворачивании родительской категории её строка пропадала,
+  // а эти блоки дочерних узлов оставались висеть на экране. Фильтруем здесь, в
+  // источнике списка, чтобы ни один блок цикла не рендерился для скрытого узла —
+  // isNodeVisible сама учитывает expandedIds (и остаётся true при активном поиске).
+  return all.filter(isNodeVisible)
 })
 
 // Решение 14.07: итог по субсидии НЕ суммируется из дерева — сравнение всегда

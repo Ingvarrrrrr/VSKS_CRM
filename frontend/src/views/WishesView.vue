@@ -2848,6 +2848,34 @@ function showSnack(text: string, color: ToastType = 'success') {
   toast.addToast(text, color)
 }
 
+// Предупреждение о превышении ФЭО (задача владельца 2026-08-12: «согласовали —
+// всё равно конвертировать в закупку, но заметно показать, из-за чего
+// превышение»). Бэкенд отдаёт его ключом excess_warnings в ответе эндпоинтов
+// согласования/конвертации заявки (decide/approve/convert) — пустой массив,
+// пока превышения нет. Поле опционально: пока бэкенд не доехал, warnings
+// будет undefined/[] и никакого уведомления не покажем (тихая деградация).
+interface ExcessWarningItem { name: string; amount: number }
+interface ExcessWarning {
+  category_id: number
+  category_name: string
+  budget: number | null
+  plan_after: number
+  excess_amount: number
+  items: ExcessWarningItem[]
+}
+
+function showExcessWarnings(warnings: ExcessWarning[] | null | undefined, actionPrefix: string) {
+  if (!warnings || !warnings.length) return
+  const parts = warnings.map(w => {
+    const itemsText = (w.items || []).map(i => `${i.name} — ${formatPrice(i.amount)}`).join(', ')
+    return `Категория «${w.category_name}»: план превышает ФЭО на ${formatPrice(w.excess_amount)}${itemsText ? ` (позиции: ${itemsText})` : ''}`
+  })
+  showSnack(
+    `${actionPrefix} ${parts.join('; ')}. Закупка не пойдёт дальше "Ведётся работа", пока превышение не убрано или не согласовано — перенесите позиции в другую категорию в панели субсидии.`,
+    'warning',
+  )
+}
+
 // «Не определена» — парковка категории заявки (вызывается из @pick-unallocated каскада)
 async function pickWishUnallocated(parentId: number | null) {
   const sid = wishForm.value.subsidy_id
@@ -3330,7 +3358,7 @@ async function decideApprover(approvalId: number, decision: 'approved' | 'reject
   if (!editingWishId.value) return
   decideLoading.value = approvalId
   try {
-    const res = await apiFetch<{ status: string; convert_error?: string | null; approvers: WishApprover[] }>(
+    const res = await apiFetch<{ status: string; convert_error?: string | null; approvers: WishApprover[]; excess_warnings?: ExcessWarning[] }>(
       `/wishes/${editingWishId.value}/approvers/${approvalId}/decide`,
       { method: 'POST', body: JSON.stringify({ decision, comment: decideComment.value[approvalId] || null }) },
     )
@@ -3339,6 +3367,7 @@ async function decideApprover(approvalId: number, decision: 'approved' | 'reject
     if (wishForm.value) (wishForm.value as any).status = res.status
     if (res.convert_error) showSnack(res.convert_error, 'warning')
     else showSnack(decision === 'approved' ? 'Согласовано' : 'Отклонено')
+    showExcessWarnings(res.excess_warnings, 'Заявка согласована, закупка создана.')
     await loadWishOnce()
     await loadWishes()
     refreshMyPendingApprovals()  // бейдж «мои согласования» в сайдбаре
@@ -3659,9 +3688,10 @@ async function handleMissingFeoCategoryError(e: any, wish: Wish): Promise<boolea
 async function approveWish(wish: Wish) {
   approvingId.value = wish.id
   try {
-    const res = await apiFetch<{ convert_warning?: string | null }>(`/wishes/${wish.id}/approve`, { method: 'POST' })
+    const res = await apiFetch<{ convert_warning?: string | null; excess_warnings?: ExcessWarning[] }>(`/wishes/${wish.id}/approve`, { method: 'POST' })
     if (res?.convert_warning) showSnack(res.convert_warning, 'warning')
     else showSnack('Заявка одобрена')
+    showExcessWarnings(res?.excess_warnings, 'Заявка одобрена, закупка создана.')
     wishConvertError.value = null
     await reloadActiveTab()
   } catch (e: any) {
@@ -3914,11 +3944,12 @@ async function convertWish() {
     if (convertForm.value.approved_quantity != null) body.approved_quantity = convertForm.value.approved_quantity
     if (convertForm.value.approved_price != null) body.approved_price = convertForm.value.approved_price
     if (convertForm.value.subsidy_id != null) body.subsidy_id = convertForm.value.subsidy_id
-    const result = await apiFetch<{ wish_id: number; purchase_id: number; status: string }>(
+    const result = await apiFetch<{ wish_id: number; purchase_id: number; status: string; excess_warnings?: ExcessWarning[] }>(
       `/wishes/${convertingWish.value.id}/convert`,
       { method: 'POST', body: JSON.stringify(body) }
     )
     showSnack('Закупка создана')
+    showExcessWarnings(result.excess_warnings, 'Закупка создана.')
     convertDialog.value = false
     await loadAllWishes()
     router.push(`/orders/${result.purchase_id}/edit`)

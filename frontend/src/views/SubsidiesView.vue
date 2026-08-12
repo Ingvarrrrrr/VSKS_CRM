@@ -1235,6 +1235,9 @@
                                                 <v-img :src="actual.product_photo" cover />
                                               </v-avatar>
                                               <div>{{ actual.item_name }}</div>
+                                              <v-chip v-if="isExcessCulpritActual(node, actual)" size="x-small" color="red" variant="flat" class="ml-1"
+                                                style="font-size:9px;height:16px" :title="excessCulpritChipTooltip(node)"
+                                              ><v-icon icon="mdi-alert-decagram" size="10" class="mr-1" />из-за неё превышение</v-chip>
                                             </div>
                                             <a
                                               href="javascript:void(0)"
@@ -1379,6 +1382,9 @@
                                       <v-img :src="actual.product_photo" cover />
                                     </v-avatar>
                                     <div>{{ actual.item_name }}</div>
+                                    <v-chip v-if="isExcessCulpritActual(node, actual)" size="x-small" color="red" variant="flat" class="ml-1"
+                                      style="font-size:9px;height:16px" :title="excessCulpritChipTooltip(node)"
+                                    ><v-icon icon="mdi-alert-decagram" size="10" class="mr-1" />из-за неё превышение</v-chip>
                                   </div>
                                   <a
                                     href="javascript:void(0)"
@@ -2549,8 +2555,17 @@
             <v-text-field v-model.number="reqItemEdit.form.unit_price" label="Цена за ед., ₽" type="number" min="0"
               density="comfortable" variant="outlined" hide-details="auto" />
           </div>
-          <div class="text-body-2 text-medium-emphasis">
+          <div class="text-body-2 text-medium-emphasis mb-3">
             Сумма: <b>{{ formatCurrency((Number(reqItemEdit.form.quantity) || 0) * (Number(reqItemEdit.form.unit_price) || 0)) }}</b>
+          </div>
+          <FeoTreeSelect
+            v-model="reqItemEdit.form.feo_category_id"
+            :nodes="reqItemEditFeoNodes"
+            :leaves="reqItemEditFeoLeaves"
+            label="Категория ФЭО"
+          />
+          <div class="text-caption text-medium-emphasis mt-1">
+            Перенос в другую категорию не тратит новых денег — так перерасход и разбирается
           </div>
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
@@ -4169,6 +4184,8 @@ import ContractorPicker from '@/components/ContractorPicker.vue'
 import BudgetBar from '@/components/BudgetBar.vue'
 import RegistryExportButton from '@/components/RegistryExportButton.vue'
 import { useRegistryExport } from '@/composables/useRegistryExport'
+import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
+import { useFeoLeaves } from '@/composables/useFeoLeaves'
 import { PURCHASE_STATUS_META, PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusIcon, purchaseStatusColor } from '@/constants/purchaseStatus'
 import { type KpiKey, KPI_MODE, KPI_LABELS, KPI_EMPTY_REASONS, kpiItemMatches } from '@/constants/kpiMetrics'
 
@@ -5650,8 +5667,16 @@ async function refreshReqData(catId?: number) {
 const reqItemEdit = reactive({
   show: false, saving: false,
   catId: null as number | null, purchaseId: null as number | null, itemId: null as number | null,
-  form: { item_name: '', quantity: null as number | null, unit: '', unit_price: null as number | null },
+  form: { item_name: '', quantity: null as number | null, unit: '', unit_price: null as number | null, feo_category_id: null as number | null },
 })
+
+// Дерево категорий ФЭО для пикера в диалоге правки позиции (Правка владельца
+// 2026-08-12: «перенести позицию в другую категорию — так превышение и
+// разбирается»). Переиспользует useFeoLeaves (тот же composable, что
+// PurchaseItemsEditor использует под FeoTreeSelect) — реагирует на subsidyId,
+// сам подгружает узлы/листья при открытии диалога/смене субсидии.
+const reqItemEditSubsidyId = computed(() => selectedSubsidy.value?.id ?? null)
+const { feoLeaves: reqItemEditFeoLeaves, feoNodes: reqItemEditFeoNodes } = useFeoLeaves({ subsidyId: reqItemEditSubsidyId })
 
 function openReqItemEdit(node: FeoNode, item: FeoReqItem) {
   if (item.wish_id) {
@@ -5661,7 +5686,7 @@ function openReqItemEdit(node: FeoNode, item: FeoReqItem) {
   reqItemEdit.catId = node.id
   reqItemEdit.purchaseId = item.purchase_id
   reqItemEdit.itemId = item.id
-  reqItemEdit.form = { item_name: item.item_name, quantity: item.quantity, unit: item.unit || '', unit_price: item.unit_price }
+  reqItemEdit.form = { item_name: item.item_name, quantity: item.quantity, unit: item.unit || '', unit_price: item.unit_price, feo_category_id: node.id }
   reqItemEdit.show = true
 }
 
@@ -5696,17 +5721,27 @@ async function saveReqItemEdit() {
   if (!reqItemEdit.itemId || !reqItemEdit.purchaseId) return
   reqItemEdit.saving = true
   try {
+    const body: Record<string, any> = {
+      item_name: reqItemEdit.form.item_name,
+      quantity: reqItemEdit.form.quantity,
+      unit: reqItemEdit.form.unit || null,
+      unit_price: reqItemEdit.form.unit_price,
+    }
+    // Категорию отправляем ТОЛЬКО если пользователь её реально сменил (catId —
+    // категория, под которой позиция открыта в дереве, т.е. текущая) — не
+    // переписывать лишнего при обычном редактировании имени/цены.
+    const categoryChanged = reqItemEdit.form.feo_category_id != null && reqItemEdit.form.feo_category_id !== reqItemEdit.catId
+    if (categoryChanged) body.feo_category_id = reqItemEdit.form.feo_category_id
     await apiFetch(`/purchases/${reqItemEdit.purchaseId}/items/${reqItemEdit.itemId}`, {
       method: 'PATCH',
-      body: JSON.stringify({
-        item_name: reqItemEdit.form.item_name,
-        quantity: reqItemEdit.form.quantity,
-        unit: reqItemEdit.form.unit || null,
-        unit_price: reqItemEdit.form.unit_price,
-      }),
+      body: JSON.stringify(body),
     })
     reqItemEdit.show = false
     await refreshReqData(reqItemEdit.catId ?? undefined)
+    if (categoryChanged && reqItemEdit.form.feo_category_id != null) {
+      delete comparisonData.value[reqItemEdit.form.feo_category_id]
+      await ensureComparison(reqItemEdit.form.feo_category_id)
+    }
     showSnack('Позиция обновлена')
   } catch (e: any) {
     showSnack(e?.payload?.message || e?.detail || 'Не удалось сохранить позицию', 'error')
@@ -6972,6 +7007,25 @@ function excessCulpritText(node: FeoNode): string {
     : (c.item_name || 'плановое значение категории')
   const budget = node.budget != null ? formatCurrency(node.budget) : '—'
   return `из-за чего: ${source} — добавила ${formatCurrency(c.amount_at_crossing)}, после неё выбрано ${formatCurrency(c.cumulative_after)} при ФЭО ${budget}`
+}
+
+// Правка владельца (2026-08-12): виновник превышения (excess_culprit) уже виден
+// плашкой над деревом, но НЕ на самой строке позиции в панели «план vs факт» —
+// найти её среди десятков строк было неочевидно. Сопоставляем по purchase_id +
+// item_name (у ExcessCulprit нет purchase_item_id — сервер отдаёт только эти два
+// поля, см. find_excess_culprit); ничего не пересчитываем, только сверяем то,
+// что уже пришло с бэкенда.
+function isExcessCulpritActual(node: FeoNode, actual: FeoActualItem): boolean {
+  const c = excessCulpritFor(node)
+  if (!c || c.purchase_id == null) return false
+  return c.purchase_id === actual.purchase_id && (c.item_name || '') === (actual.item_name || '')
+}
+
+function excessCulpritChipTooltip(node: FeoNode): string {
+  const c = excessCulpritFor(node)
+  if (!c) return ''
+  const budget = node.budget != null ? formatCurrency(node.budget) : '—'
+  return `Добавила ${formatCurrency(c.amount_at_crossing)} — после неё выбрано ${formatCurrency(c.cumulative_after)} при ФЭО ${budget}`
 }
 
 // Задача владельца «план ≠ факт» (сессия 2026-08-06, Шаг 5, п.5): ВТОРОЙ, независимый
@@ -9265,9 +9319,12 @@ onMounted(() => {
 
 <style scoped>
 /* ── Layout ── */
+/* Ширина страницы не ограничивается (жалоба владельца 2026-08-12: «какого хуя
+   половина окна не задействована»): раньше стоял max-width: 1600px, и на широком
+   мониторе правая половина экрана пустовала, хотя таблица ФЭО как раз просит
+   ширины — у неё шесть числовых колонок плюс раскрывающиеся панели плана и факта. */
 .subsidies-page {
   padding: 20px 24px;
-  max-width: 1600px;
   width: 100%;
   box-sizing: border-box;
 }

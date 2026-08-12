@@ -520,6 +520,15 @@
               {{ SUBSTATUS_LABEL[item.substatus] || item.substatus }}
             </v-chip>
             <v-icon v-if="item.is_monthly_payment" size="x-small" color="blue" title="Ежемесячный платёж">mdi-calendar-sync</v-icon>
+            <!-- Задача владельца 2026-08-12: заявку согласовали — закупка всё равно
+                 создаётся, но виден значок превышения ФЭО, пока его не убрали/не
+                 согласовали (см. панель субсидии — там же можно перенести позицию
+                 в другую категорию). -->
+            <v-chip v-if="item.feo_excess" size="x-small" color="red" variant="flat"
+              :title="`${item.feo_excess_hint ? item.feo_excess_hint + ' — ' : ''}закупка не пойдёт дальше «Ведётся работа», пока превышение не убрано или не согласовано`"
+            >
+              <v-icon icon="mdi-alert-decagram" size="12" class="mr-1" />Превышение ФЭО
+            </v-chip>
           </div>
         </template>
 
@@ -686,6 +695,11 @@
               <div class="d-flex flex-wrap ga-1 mb-2">
                 <v-chip :color="purchaseTypeColor(item)" size="x-small" variant="tonal">{{ purchaseTypeLabel(item) }}</v-chip>
                 <v-chip v-if="item.approval_status" :color="APPROVAL_STATUS_COLOR[item.approval_status]" size="x-small" variant="tonal">{{ APPROVAL_STATUS_LABEL[item.approval_status] }}</v-chip>
+                <v-chip v-if="item.feo_excess" size="x-small" color="red" variant="flat"
+                  :title="`${item.feo_excess_hint ? item.feo_excess_hint + ' — ' : ''}закупка не пойдёт дальше «Ведётся работа», пока превышение не убрано или не согласовано`"
+                >
+                  <v-icon icon="mdi-alert-decagram" size="12" class="mr-1" />Превышение ФЭО
+                </v-chip>
               </div>
               <div class="text-caption text-medium-emphasis">Контрагент</div>
               <div class="text-body-2 mb-1" style="overflow-wrap:anywhere">{{ item.contractor_name || '—' }}</div>
@@ -1490,6 +1504,12 @@ interface Purchase {
   order_date?: string
   // Phase 32: file count from backend
   files_count?: number
+  // Задача владельца 2026-08-12: «согласовали заявку — закупка всё равно
+  // создаётся, но на ней должен стоять значок превышения ФЭО». Поля опциональны —
+  // пока бэкенд их не отдаёт (или список не запрошен с with_feo_excess=true),
+  // просто нет чипа, без ошибок.
+  feo_excess?: boolean
+  feo_excess_hint?: string | null
 }
 
 const FRAMEWORK_TYPES = new Set(['framework_cumulative', 'framework_with_amount'])
@@ -2057,7 +2077,11 @@ const filteredSum = computed(() =>
 const loadOrders = async () => {
   loading.value = true
   try {
-    orders.value = await apiFetch<Purchase[]>('/purchases/?scope=purchases')
+    // with_feo_excess=true — просим бэкенд досчитать feo_excess/feo_excess_hint
+    // на элементах (задача владельца 2026-08-12, значок превышения ФЭО на
+    // закупке). Если бэкенд ещё не знает этот параметр, лишний query-параметр
+    // FastAPI молча игнорирует — список грузится как раньше, просто без чипа.
+    orders.value = await apiFetch<Purchase[]>('/purchases/?scope=purchases&with_feo_excess=true')
   } catch {
     showSnack('Ошибка загрузки закупок', 'error')
   } finally {

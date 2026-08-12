@@ -893,6 +893,10 @@ class PurchaseOut(PurchaseCreate):
     contract_conflict: bool = False
     # Phase 32: quick access to file count from list view
     files_count: int = 0
+    # Владелец (2026-08-12): значок «закупка создаёт превышение плана ФЭО» в списке
+    # закупок — считается опционально (?with_feo_excess=true), см. list_purchases.
+    feo_excess: bool = False
+    feo_excess_hint: Optional[str] = None
     model_config = {"from_attributes": True}
 
 class PurchaseOutFull(PurchaseOut):

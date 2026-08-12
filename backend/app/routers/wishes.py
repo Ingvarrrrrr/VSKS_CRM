@@ -23,7 +23,7 @@ from app.models.purchase_item import PurchaseItem
 from app.models.purchase_event import PurchaseMember
 from app.routers.purchase_members import _create_assignment_chat_room
 from app.models.chat_message import ChatMessage
-from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_over_plan
+from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_over_plan, compute_feo_plan_tree
 from decimal import Decimal
 
 
@@ -635,6 +635,68 @@ async def _auto_assign_planned_items(
             it.over_plan = False
 
 
+async def _collect_excess_warnings(
+    db: AsyncSession, subsidy_id: Optional[int], cat_items: dict[int, list[dict]],
+) -> list[dict]:
+    """Владелец (2026-08-12): «Когда заявка идёт с превышением, ... она должна
+    уходить [в закупку], но на закупке должен быть значок, что она заблокирована
+    из-за превышения» — согласование заявки больше НЕ блокируется несогласованным
+    превышением плана ФЭО (assert_no_unapproved_excess убран из путей создания
+    закупок из заявки, см. вызывающий код), а вместо отказа собирает
+    ПРЕДУПРЕЖДЕНИЯ, по одному на каждую затронутую категорию ФЭО (включая
+    ПРЕДКОВ — та же цепочка parent_id, что и в assert_no_unapproved_excess, но
+    без исключения).
+
+    cat_items — {feo_category_id (лист, куда попала позиция заявки): [{"name","amount"}, ...]}.
+    Вызывать ПОСЛЕ того как закупки/позиции уже созданы и flush()-нуты (до
+    commit) — иначе compute_feo_plan_tree не увидит новый план и excess будет
+    занижен на сумму этого самого действия.
+
+    Возвращает список (дубли по category_id схлопнуты):
+      {"category_id", "category_name", "budget", "plan_after", "excess_amount", "items"}
+    Пустой список, если превышения нет или category_ids/subsidy_id отсутствуют.
+    """
+    if not cat_items or not subsidy_id:
+        return []
+    tree = await compute_feo_plan_tree(db, [subsidy_id])
+    if not tree:
+        return []
+    from app.models.feo_category import FeoCategory
+
+    warnings_by_cat: dict[int, dict] = {}
+    for leaf_cid, items in cat_items.items():
+        if leaf_cid not in tree or not items:
+            continue
+        # Цепочка «узел → предки» через parent_id (снизу вверх) — как в
+        # assert_no_unapproved_excess, но собираем предупреждения, а не бросаем 409.
+        chain_ids: list[int] = []
+        cur_id: Optional[int] = leaf_cid
+        seen: set[int] = set()
+        while cur_id is not None and cur_id not in seen and cur_id in tree:
+            seen.add(cur_id)
+            chain_ids.append(cur_id)
+            cur_id = tree[cur_id]["parent_id"]
+        for cid in chain_ids:
+            node = tree[cid]
+            excess = node.get("excess_over_feo") or node.get("excess_amount") or 0.0
+            if excess <= 0.005 or node.get("excess_approved"):
+                continue
+            entry = warnings_by_cat.get(cid)
+            if entry is None:
+                cat_row = await db.get(FeoCategory, cid)
+                entry = {
+                    "category_id": cid,
+                    "category_name": cat_row.name if cat_row else f"#{cid}",
+                    "budget": node.get("budget"),
+                    "plan_after": float((node.get("plan") or 0.0) + (node.get("over") or 0.0)),
+                    "excess_amount": float(excess),
+                    "items": [],
+                }
+                warnings_by_cat[cid] = entry
+            entry["items"].extend(items)
+    return list(warnings_by_cat.values())
+
+
 async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status: str = "plan_schedule", split: bool = True) -> list[int]:
     """Создаёт закупки (status='plan_schedule' — «План закупок») из позиций заявки по группам колонок,
     копирует позиции, добавляет участников и чаты, ставит purchase.wish_id.
@@ -796,17 +858,24 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
             item_name=_wi.item_name,
         )
 
-    # Задача владельца (2026-08-05) «блокировать пока не согласовано превышение плана
-    # ФЭО»: согласование заявки, создающее закупки — УВЕЛИЧИВАЮЩЕЕ план действие.
-    # Проверяем по КАЖДОЙ категории ФЭО, к которой отнесены позиции заявки
-    # (per-item feo_category_id, fallback — категория заявки целиком).
-    _cat_amounts: dict[int, Decimal] = {}
+    # Владелец (2026-08-12): «Когда заявка идёт с превышением, ... она должна
+    # уходить [в закупку], но на закупке должен быть значок, что она заблокирована
+    # из-за превышения. Должна быть возможность передвижки, уменьшения». Раньше
+    # здесь стоял assert_no_unapproved_excess — согласование заявки, создающее
+    # закупки целиком отказывало 409, пока превышение (в т.ч. на ПРЕДКЕ категории)
+    # не согласовано или не убрано, и никакого способа перенести/уменьшить позиции
+    # ПОСЛЕ создания закупки не было. Теперь action не блокируется — вместо этого
+    # ниже, ПОСЛЕ фактического создания закупок (когда план уже вырос), собираем
+    # excess_warnings по каждой затронутой категории ФЭО (и её предкам) — см.
+    # _collect_excess_warnings. Здесь только группируем позиции по листовой
+    # категории (per-item feo_category_id, fallback — категория заявки целиком).
+    _cat_items: dict[int, list[dict]] = {}
     for _wi in items_full:
         _cid = _wi.feo_category_id or wish.feo_category_id
         if _cid:
-            _cat_amounts[_cid] = _cat_amounts.get(_cid, Decimal("0")) + Decimal(str(_wi.total_price or 0))
-    for _cid, _amt in _cat_amounts.items():
-        await assert_no_unapproved_excess(db, _cid, adding_amount=_amt)
+            _cat_items.setdefault(_cid, []).append({
+                "name": _wi.item_name, "amount": float(_wi.total_price or 0),
+            })
 
     created_purchase_ids: list[int] = []
     for column_key, items_in_col in groups.items():
@@ -913,6 +982,11 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
 
     if created_purchase_ids and not wish.purchase_id:
         wish.purchase_id = created_purchase_ids[0]
+
+    # После создания закупок (план уже вырос) — собрать предупреждения о
+    # превышении вместо блокировки, см. комментарий у _cat_items выше.
+    wish._excess_warnings = await _collect_excess_warnings(db, wish.subsidy_id, _cat_items)
+
     return created_purchase_ids
 
 
@@ -1590,12 +1664,14 @@ async def approve_wish(
         created_ids = await _distribute_wish_to_purchases(wish, db, current_user, split=False)
         wish.status = "converted"
     warning = getattr(wish, "_convert_warning", None)
+    excess_warnings = getattr(wish, "_excess_warnings", [])
     await db.commit()
     await db.refresh(wish)
     wish = await _load_wish(wish_id, db)
     out = _enrich(wish)
     out.convert_warning = warning
     out.purchase_ids = created_ids
+    out.excess_warnings = excess_warnings
     return out
 
 
@@ -1694,6 +1770,7 @@ async def force_wish_status(
     if body.status not in allowed:
         raise HTTPException(status_code=400, detail=f"Недопустимый статус. Разрешены: {sorted(allowed)}")
     wish = await _load_wish(wish_id, db)
+    excess_warnings: list = []
 
     if body.status == "converted":
         if not wish.items:
@@ -1716,6 +1793,7 @@ async def force_wish_status(
             await _distribute_wish_to_purchases(wish, db, current_user, split=False)
             wish.status = "converted"
             wish.approved_by = wish.approved_by or current_user.id
+            excess_warnings = getattr(wish, "_excess_warnings", [])
             await db.commit()
         except HTTPException:
             await db.rollback()
@@ -1744,6 +1822,7 @@ async def force_wish_status(
 
     wish = await _load_wish(wish_id, db)
     out = _enrich(wish)
+    out.excess_warnings = excess_warnings
     return out
 
 
@@ -1795,8 +1874,12 @@ async def convert_wish(
         # ветка — ОТДЕЛЬНЫЙ путь движения закупки по стадиям (wishes → plan_schedule),
         # не проходящий через POST /api/purchases/{pid}/transition (см. её гейт в
         # purchase_transitions.py) — идемпотентное повторное согласование заявки,
-        # у которой уже есть скрытые закупки. «Не двигаются дальше по стадиям, пока
-        # не согласовано превышение» касается и этого пути.
+        # у которой уже есть скрытые закупки.
+        # Владелец (2026-08-12): продвижение больше НЕ блокируется несогласованным
+        # превышением — assert_no_unapproved_excess убран, вместо отказа собираем
+        # excess_warnings (по категории и её предкам) ПОСЛЕ фактического
+        # продвижения статусов, см. _collect_excess_warnings.
+        _cat_items: dict[int, list[dict]] = {}
         if wishes_existing:
             from app.models.purchase_item import PurchaseItem as _PurchaseItem
             _ep_ids = [ep.id for ep in wishes_existing]
@@ -1806,25 +1889,32 @@ async def convert_wish(
             _items_by_purchase: dict[int, list] = {}
             for _pit in _items_res.scalars().all():
                 _items_by_purchase.setdefault(_pit.purchase_id, []).append(_pit)
-            _gate_cat_ids: set[int] = set()
             for ep in wishes_existing:
                 _ep_items = _items_by_purchase.get(ep.id, [])
                 for _pit in _ep_items:
                     _cid = _pit.feo_category_id or ep.feo_category_id
                     if _cid:
-                        _gate_cat_ids.add(_cid)
+                        _cat_items.setdefault(_cid, []).append({
+                            "name": _pit.item_name, "amount": float(_pit.total_price or 0),
+                        })
                 if not any(_pit.feo_category_id for _pit in _ep_items) and ep.feo_category_id:
-                    _gate_cat_ids.add(ep.feo_category_id)
-            for _cid in _gate_cat_ids:
-                await assert_no_unapproved_excess(db, _cid)
+                    _cat_items.setdefault(ep.feo_category_id, []).append({
+                        "name": ep.item_name or ep.subject or f"Закупка №{ep.id}",
+                        "amount": float(ep.total_nmck or ep.planned_total_price or 0),
+                    })
         for ep in existing:
             if ep.status == "wishes":
                 ep.status = "plan_schedule"
         wish.status = "converted"
         wish.approved_by = wish.approved_by or current_user.id
         wish.purchase_id = wish.purchase_id or existing[0].id
+        await db.flush()
+        _excess_warnings = await _collect_excess_warnings(db, wish.subsidy_id, _cat_items)
         await db.commit()
-        return {"wish_id": wish.id, "purchase_id": existing[0].id, "status": "converted"}
+        return {
+            "wish_id": wish.id, "purchase_id": existing[0].id, "status": "converted",
+            "excess_warnings": _excess_warnings,
+        }
 
     # Preload items with products (B4/B10)
     res = await db.execute(
@@ -1875,13 +1965,17 @@ async def convert_wish(
             total_price=_wi.total_price,
             item_name=_wi.item_name,
         )
-    _conv_cat_amounts: dict[int, Decimal] = {}
+    # Владелец (2026-08-12): /convert больше не блокируется несогласованным
+    # превышением ФЭО — assert_no_unapproved_excess убран, вместо отказа собираем
+    # excess_warnings ПОСЛЕ создания закупки (см. вызов _collect_excess_warnings
+    # ниже, уже после flush() позиций).
+    _conv_cat_items: dict[int, list[dict]] = {}
     for _wi in items_full:
         _cid = _wi.feo_category_id or wish.feo_category_id
         if _cid:
-            _conv_cat_amounts[_cid] = _conv_cat_amounts.get(_cid, Decimal("0")) + Decimal(str(_wi.total_price or 0))
-    for _cid, _amt in _conv_cat_amounts.items():
-        await assert_no_unapproved_excess(db, _cid, adding_amount=_amt)
+            _conv_cat_items.setdefault(_cid, []).append({
+                "name": _wi.item_name, "amount": float(_wi.total_price or 0),
+            })
 
     # B4: planned_total_price = SUM(items.total_price), fallback to body/wish
     total_nmck = sum(float(i.total_price or 0) for i in items_full)
@@ -1952,9 +2046,14 @@ async def convert_wish(
     wish.purchase_id = p.id
     wish.status = "converted"
     wish.approved_by = current_user.id
+
+    _excess_warnings = await _collect_excess_warnings(db, wish.subsidy_id, _conv_cat_items)
     await db.commit()
 
-    return {"wish_id": wish.id, "purchase_id": p.id, "status": "converted"}
+    return {
+        "wish_id": wish.id, "purchase_id": p.id, "status": "converted",
+        "excess_warnings": _excess_warnings,
+    }
 
 
 @router.delete("/{wish_id}", status_code=204)
@@ -2054,6 +2153,7 @@ async def approve_distribution(
         "count": len(ids),
         "status": "converted",
         "warning": getattr(wish, "_convert_warning", None),
+        "excess_warnings": getattr(wish, "_excess_warnings", []),
     }
 
 

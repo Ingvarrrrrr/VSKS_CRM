@@ -21,7 +21,7 @@ from app.models.user import User
 from app.models.user_org_access import UserOrgAccess
 from app.routers.contracts import ensure_contract_linked
 from app.routers.purchase_budget import _check_budget, _assign_framework_seq, FRAMEWORK_TYPES
-from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_over_plan
+from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_over_plan, compute_feo_plan_tree
 from app.product_matcher import find_matching_product
 from typing import List, Optional
 from pydantic import BaseModel
@@ -746,6 +746,14 @@ async def list_purchases(
     wish_id: Optional[int] = Query(None),
     limit: Optional[int] = Query(None),
     scope: Optional[str] = Query(None),
+    with_feo_excess: bool = Query(
+        False,
+        description=(
+            "Владелец (2026-08-12): значок «закупка создаёт превышение плана ФЭО» — "
+            "считается ОПЦИОНАЛЬНО (compute_feo_plan_tree по субсидиям видимой страницы, "
+            "не N+1, но заметно тяжелее обычного списка), фронт запрашивает явно."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -918,6 +926,28 @@ async def list_purchases(
         )
         contract_data_map = {row[0]: (row[1], row[2]) for row in _cr.all()}
 
+    # Владелец (2026-08-12): значок «закупка создаёт превышение плана ФЭО» — опционален
+    # (?with_feo_excess=true), считаем ОДНИМ вызовом compute_feo_plan_tree на все субсидии
+    # видимой страницы (не N+1), без новых колонок в БД. «Плохая» категория — план после
+    # создания закупок превышает финансирование ФЭО И превышение НЕ согласовано (тот же
+    # критерий, что блокировал бы assert_no_unapproved_excess).
+    _bad_feo_cats: dict[int, dict] = {}
+    _bad_feo_cat_names: dict[int, str] = {}
+    if with_feo_excess and purchases:
+        _feo_subsidy_ids = list({p.subsidy_id for p in purchases if p.subsidy_id})
+        if _feo_subsidy_ids:
+            _feo_tree = await compute_feo_plan_tree(db, _feo_subsidy_ids)
+            _bad_feo_cats = {
+                cid: node for cid, node in (_feo_tree or {}).items()
+                if (node.get("excess_over_feo") or node.get("excess_amount") or 0.0) > 0.005
+                and not node.get("excess_approved")
+            }
+            if _bad_feo_cats:
+                _names_r = await db.execute(
+                    select(FeoCategory.id, FeoCategory.name).where(FeoCategory.id.in_(_bad_feo_cats.keys()))
+                )
+                _bad_feo_cat_names = {row[0]: row[1] for row in _names_r.all()}
+
     result_rows = []
     for p in purchases:
         out = _purchase_to_full(p, contractors, subsidies, contractor_inns=contractor_inns, receipt_map=receipt_map, ru_map=ru_map)
@@ -933,6 +963,17 @@ async def list_purchases(
                 (c_number is not None and p.contract_number != c_number)
                 or (c_date is not None and p.contract_date != c_date)
             )
+        if _bad_feo_cats:
+            _p_cat_ids = {it.feo_category_id for it in p.items if it.feo_category_id}
+            if p.feo_category_id:
+                _p_cat_ids.add(p.feo_category_id)
+            _hit_cid = next((cid for cid in _p_cat_ids if cid in _bad_feo_cats), None)
+            if _hit_cid is not None:
+                _hit_node = _bad_feo_cats[_hit_cid]
+                _hit_name = _bad_feo_cat_names.get(_hit_cid, f"#{_hit_cid}")
+                _hit_excess = _hit_node.get("excess_over_feo") or _hit_node.get("excess_amount") or 0.0
+                out.feo_excess = True
+                out.feo_excess_hint = f"Категория «{_hit_name}»: план превышает ФЭО на {_hit_excess:,.2f} ₽"
         result_rows.append(out)
     return result_rows
 
@@ -2105,16 +2146,24 @@ async def patch_purchase_item(
         else:
             _new_item_total = _old_item_total
         if _new_item_cat_id:
+            _item_delta = _new_item_total - _old_item_total
             if _new_item_cat_id == _old_item_cat_id:
-                _item_delta = _new_item_total - _old_item_total
                 if _item_delta > 0:
                     await assert_no_unapproved_excess(db, _new_item_cat_id, adding_amount=_item_delta)
             else:
-                # Категория сменилась — вся текущая сумма позиции «свежая» для НОВОЙ
-                # категории (в старой она, наоборот, уменьшается — уменьшение не
-                # блокируется, см. docstring assert_no_unapproved_excess: путь возврата
-                # в рамки плана блокировать нельзя).
-                await assert_no_unapproved_excess(db, _new_item_cat_id, adding_amount=_new_item_total)
+                # Владелец (2026-08-12): «Когда заявка идёт с превышением ... должна
+                # быть возможность передвижки, уменьшения». Боевой случай — позиции
+                # «Перчатки нитриловые» нельзя было перенести 3710→3691, потому что у
+                # их общего предка 3676 висело непогашенное превышение, хотя перенос
+                # не тратит ни рубля сверху и как раз чинит перерасход категории-
+                # источника. Смена категории — ПЕРЕКЛАДЫВАНИЕ, а не новая трата: сумма
+                # уходит из старой категории (там это путь возврата в рамки плана — не
+                # блокируется) и появляется в новой БЕЗ прироста суммарно по субсидии.
+                # Блокируем ТОЛЬКО реальный прирост денег (если позиция одновременно с
+                # переездом ещё и подорожала) — против НОВОЙ категории, а не всю сумму
+                # позиции целиком.
+                if _item_delta > 0:
+                    await assert_no_unapproved_excess(db, _new_item_cat_id, adding_amount=_item_delta)
     if body.item_name is not None:
         name = body.item_name.strip()
         if not name:

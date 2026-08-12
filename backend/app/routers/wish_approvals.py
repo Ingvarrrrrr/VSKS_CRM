@@ -421,4 +421,10 @@ async def decide_wish_approval(
         "purchase_ids": _created_ids,
         "approvers": [_approval_dict(a) for a in rows],
         "plan_warning": _plan_warning,
+        # Превышение ФЭО больше не отказ, а предупреждение (владелец, 2026-08-12):
+        # _distribute_wish_to_purchases складывает его в wish._excess_warnings, и этот
+        # путь — согласование ЦЕПОЧКОЙ — обязан доносить его до согласующего так же,
+        # как прямой /wishes/{id}/approve. Иначе последний согласующий создаёт закупку
+        # с перерасходом и не видит об этом ни слова.
+        "excess_warnings": getattr(wish, "_excess_warnings", []),
     }

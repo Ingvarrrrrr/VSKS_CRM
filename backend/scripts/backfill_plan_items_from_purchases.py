@@ -31,13 +31,25 @@ wishes.py._auto_assign_planned_items) раньше вызывалось ТОЛЬ
     закупки в 'wishes' (скрыта до одобрения), 'cancelled', 'split' вне
     жизненного цикла плана — заводить им план рано/незачем.
 
-Категория подходит для бэкфилла, ТОЛЬКО если у неё:
-  - НЕТ ни одной активной (is_active=True) FeoPlannedItem;
-  - И НЕТ собственного «ручного плана» в полях категории (planned_quantity > 0
-    AND planned_amount > 0 — та же формула, что и в compute_feo_plan_tree).
-Если хоть одно из двух условий не выполняется — у категории УЖЕ ЕСТЬ план в
-каком-то виде, это другая история (расхождение план/факт, не «плана не было
-вовсе») — категория пропускается целиком, попадает в --report с причиной.
+РАСШИРЕНИЕ (сессия 2026-08-12, часть 2 — задача владельца «Разобрано по
+данным: ... Должно уже быть за всё», распространить бэкфилл на ВСЕ
+непривязанные позиции). ДО этой правки категория подходила для бэкфилла,
+ТОЛЬКО если плана не было вовсе (ни активных FeoPlannedItem, ни ручных полей) —
+любая категория, где план в каком-то виде уже существовал, пропускалась
+целиком, даже если рядом лежали другие непривязанные позиции той же
+категории. Теперь категория подходит для бэкфилла, ЕСЛИ у неё:
+  - НЕТ собственного «ручного плана» в полях категории (planned_quantity > 0
+    AND planned_amount > 0 — та же формула, что и в compute_feo_plan_tree;
+    там СВОЯ семантика ввода плана, трогать нельзя).
+Наличие уже существующих активных FeoPlannedItem категорию БОЛЬШЕ НЕ
+дисквалифицирует — план в такой категории просто вырастет (дозаведутся
+позиции для оставшихся непривязанных кандидатов); это тоже отдельно попадает
+в отчёт («категорий, где план УЖЕ был»), чтобы владелец видел рост явно, а
+не только «появление» плана с нуля. Категории-НАПРАВЛЕНИЯ (с подкатегориями)
+участвуют наравне с листьями — feo_category_id позиции закупки может
+указывать и на них (боевой пример — «Бинт марлевый» на категории 3677
+«Окружные»); после задачи 1 (compute_feo_plan_tree суммирует собственные
+плановые позиции узла с детьми) такой план теперь виден в дереве.
 
 Дедуп — ТОЧНОЕ совпадение нормализованного имени (app.services.text_match.
 normalize — тот же движок, что у plan_autoassign.py и создания плановой
@@ -45,7 +57,11 @@ normalize — тот же движок, что у plan_autoassign.py и созд
 именем схлопываются в ОДНУ новую FeoPlannedItem (auto_created=True); quantity/
 amount новой записи — Σ quantity/Σ total_price всех дедуплицированных позиций,
 unit — берётся у первой позиции группы, где он задан. Все позиции группы
-привязываются (feo_planned_item_id) к этой одной записи.
+привязываются (feo_planned_item_id) к этой одной записи. Дедуп — ТОЛЬКО среди
+кандидатов этого запуска; с уже существующими активными FeoPlannedItem
+категории (если они есть) новые записи не сливаются — даже при совпадении
+имени заводится отдельная позиция (сохранение поведения «как есть», задача
+не просила слияние с существующим планом).
 
 ⚠️ ОТЛИЧИЕ от backend/scripts/migrate_category_plan_to_planned_items.py: там
 числа НЕ должны были поменяться (перенос одного и того же плана между двумя
@@ -59,6 +75,18 @@ unit — берётся у первой позиции группы, где он
 затронутой категории и ИТОГ по субсидиям, плюс отдельно считает, у скольких
 категорий превышение исчезло. Откат — ТОЛЬКО при технической ошибке
 (исключение при записи), не по результату сравнения чисел.
+
+ДВА ДОПОЛНИТЕЛЬНЫХ РАЗДЕЛА ОТЧЁТА (часть 2, см. РАСШИРЕНИЕ выше):
+  1) «Позиций попало в категории, где план УЖЕ был» — сколько кандидатов
+     привязано к категориям, у которых на момент запуска уже была хотя бы
+     одна активная FeoPlannedItem (эти категории не появляются в плане
+     впервые, а РАСТУТ — важно показать отдельно от «плана не было вовсе»).
+  2) «Новое превышение план > ручной план» — категории (в т.ч. родительские
+     направления, за счёт rollup), где compute_feo_plan_tree.
+     excess_plan_over_manual ПОСЛЕ бэкфилла стало > 0 (и/или выросло), со
+     старым/новым значением. Владелец должен увидеть этот список ДО --apply
+     и решить, что уменьшать вручную (или согласовать превышение отдельно,
+     см. app/routers/plan_excess.py).
 
 ФЛАГИ:
   --apply         без него — dry-run: показывает, что было бы сделано, и в
@@ -183,7 +211,12 @@ async def main() -> int:
         subsidy_names = {r.id: r.name for r in subsidy_rows}
 
         # ---- отбор категорий --------------------------------------------
+        # РАСШИРЕНИЕ (часть 2, см. docstring): «уже есть активные плановые
+        # позиции» БОЛЬШЕ НЕ дисквалифицирует категорию — она просто растёт.
+        # Дисквалифицирует ТОЛЬКО ручной план в полях категории (своя
+        # семантика, старый формат, planned_quantity×planned_amount).
         qualifying_cat_ids: list[int] = []
+        already_had_plan_cat_ids: set[int] = set()
         skipped: list[dict] = []
         for cid in cat_ids:
             cat = cat_by_id.get(cid)
@@ -195,27 +228,28 @@ async def main() -> int:
                     "reason": "категория удалена из справочника FeoCategory — не создаём план на несуществующей категории",
                 })
                 continue
-            has_active_plan = cid in cats_with_active_plan
             qty = _dec(cat.planned_quantity)
             amt = _dec(cat.planned_amount)
             has_manual_plan = qty > 0 and amt > 0
-            if has_active_plan or has_manual_plan:
-                reasons = []
-                if has_active_plan:
-                    reasons.append("у категории уже есть активные плановые позиции")
-                if has_manual_plan:
-                    reasons.append(f"есть ручной план в полях категории ({qty}×{amt}={qty*amt})")
+            if has_manual_plan:
                 skipped.append({
                     "id": cid, "path": _category_path(cat_by_id, cid),
                     "subsidy_id": cat.subsidy_id, "subsidy_name": subsidy_names.get(cat.subsidy_id, ""),
                     "candidates": len(candidates_by_cat[cid]),
-                    "reason": "; ".join(reasons),
+                    "reason": f"есть ручной план в полях категории ({qty}×{amt}={qty*amt}) — своя семантика, не трогаем",
                 })
                 continue
             qualifying_cat_ids.append(cid)
+            if cid in cats_with_active_plan:
+                already_had_plan_cat_ids.add(cid)
 
-        print(f"Категорий, подходящих для бэкфилла (плана вообще не было): {len(qualifying_cat_ids)}")
-        print(f"Категорий пропущено (план уже есть в каком-то виде / категория удалена): {len(skipped)}")
+        already_had_plan_candidates = sum(len(candidates_by_cat[cid]) for cid in already_had_plan_cat_ids)
+        print(f"Категорий, подходящих для бэкфилла: {len(qualifying_cat_ids)}")
+        print(f"  из них — план уже был (категория ВЫРАСТЕТ): {len(already_had_plan_cat_ids)} категорий, "
+              f"{already_had_plan_candidates} позиций закупок")
+        print(f"  из них — плана не было вовсе (категория появится в плане впервые): "
+              f"{len(qualifying_cat_ids) - len(already_had_plan_cat_ids)} категорий")
+        print(f"Категорий пропущено (ручной план в полях категории / категория удалена): {len(skipped)}")
         if skipped:
             for s in skipped[:20]:
                 print(f"  #{s['id']} «{cat_names_snapshot.get(s['id'], s['path'])}» (субсидия «{s['subsidy_name']}», {s['candidates']} кандидат(ов)): {s['reason']}")
@@ -225,8 +259,13 @@ async def main() -> int:
         # Пути категорий для итогового отчёта — считаем СЕЙЧАС, пока cat_by_id ещё
         # не истёк (см. предупреждение у cat_names_snapshot выше): после
         # db.expire_all() ниже (после мутаций) _category_path не сможет читать
-        # .name/.parent_id живых ORM-объектов вне greenlet.
+        # .name/.parent_id живых ORM-объектов вне greenlet. all_cat_paths — ПО
+        # ВСЕМ категориям (не только qualifying_cat_ids), нужно для отчёта
+        # «новое превышение план>ручной план» — он смотрит и на родительские
+        # направления, куда excess_plan_over_manual поднимается rollup'ом и
+        # которые сами могли не быть кандидатами на бэкфилл.
         qualifying_cat_paths: dict[int, str] = {cid: _category_path(cat_by_id, cid) for cid in qualifying_cat_ids}
+        all_cat_paths: dict[int, str] = {cid: _category_path(cat_by_id, cid) for cid in cat_by_id}
 
         if not qualifying_cat_ids:
             print("Применять нечего — ни одна категория не подошла под отбор.")
@@ -294,6 +333,7 @@ async def main() -> int:
                 category_reports.append({
                     "cat_id": cid,
                     "new_items": cat_new_items, "linked": cat_linked,
+                    "already_had_plan": cid in already_had_plan_cat_ids,
                 })
 
             await db.flush()
@@ -332,11 +372,12 @@ async def main() -> int:
             if resolved:
                 excess_resolved_count += 1
             mark = "  <-- превышение исчезло" if resolved else ""
+            grown_mark = "  [план УЖЕ был — категория растёт]" if cr["already_had_plan"] else ""
             print(
                 f"  #{cid} «{cat_name}» (субсидия «{subsidy_names.get(cat_subsidy_id, '')}»): "
                 f"позиций {cr['linked']} → {cr['new_items']} план. поз.; "
                 f"план {plan_before:,.2f} -> {plan_after:,.2f} ₽; "
-                f"превышение факт>план {excess_before:,.2f} -> {excess_after:,.2f} ₽{mark}"
+                f"превышение факт>план {excess_before:,.2f} -> {excess_after:,.2f} ₽{mark}{grown_mark}"
             )
             report_rows.append({
                 "id": cid, "name": cat_name, "path": qualifying_cat_paths.get(cid, f"#{cid}"),
@@ -345,9 +386,13 @@ async def main() -> int:
                 "plan_before": plan_before, "plan_after": plan_after,
                 "excess_before": excess_before, "excess_after": excess_after,
                 "excess_resolved": "да" if resolved else "нет",
+                "already_had_plan": "да" if cr["already_had_plan"] else "нет",
             })
         print("=" * 130)
         print(f"У категорий, где было превышение факта над планом, оно ИСЧЕЗЛО у: {excess_resolved_count} из {len(category_reports)}")
+        print(f"Категорий, где план УЖЕ был (выросли, а не появились впервые): "
+              f"{len(already_had_plan_cat_ids)} из {len(category_reports)}, "
+              f"{already_had_plan_candidates} позиций закупок в них")
         print()
 
         print("=" * 100)
@@ -359,6 +404,46 @@ async def main() -> int:
             print(f"  «{subsidy_names.get(sid)}» (id={sid}): до={b:,.2f} ₽  после={a:,.2f} ₽  разница={a - b:,.2f} ₽")
         print("=" * 100)
 
+        # ---- НОВОЕ превышение «план больше ручного плана» после бэкфилла -----
+        # Задача владельца (часть 2): показать ДО --apply, где после бэкфилла
+        # появится/вырастет excess_plan_over_manual (compute_feo_plan_tree,
+        # задача владельца п.2 сессии 2026-08-12) — «планируются одни траты, а
+        # тут уже превысили», владелец должен решить, что уменьшать вручную.
+        # Смотрим ВСЕ категории обеих деревьев (не только qualifying_cat_ids) —
+        # превышение листа рекурсивно поднимается rollup'ом и на родительские
+        # направления (см. ветку группы в compute_feo_plan_tree).
+        print()
+        print("=" * 130)
+        print("НОВОЕ ПРЕВЫШЕНИЕ «ПЛАН > РУЧНОЙ ПЛАН» (excess_plan_over_manual) ПОСЛЕ БЭКФИЛЛА")
+        print("=" * 130)
+        excess_manual_rows: list[dict] = []
+        all_touched_cat_ids = sorted(set(tree_after.keys()) | set(tree_before.keys()))
+        for cid in all_touched_cat_ids:
+            excess_before_m = _tree_num(tree_before, cid, "excess_plan_over_manual")
+            excess_after_m = _tree_num(tree_after, cid, "excess_plan_over_manual")
+            if excess_after_m <= TOLERANCE:
+                continue
+            cat_name = cat_names_snapshot.get(cid) or f"#{cid}"
+            cat_subsidy_id = cat_subsidy_snapshot.get(cid)
+            is_new = excess_before_m <= TOLERANCE
+            print(
+                f"  #{cid} «{cat_name}» (субсидия «{subsidy_names.get(cat_subsidy_id, '')}»): "
+                f"превышение план>ручной план {excess_before_m:,.2f} -> {excess_after_m:,.2f} ₽"
+                f"{'  <-- НОВОЕ' if is_new else '  (уже было, выросло)'}"
+            )
+            excess_manual_rows.append({
+                "id": cid, "name": cat_name,
+                "path": all_cat_paths.get(cid, f"#{cid}"),
+                "subsidy_id": cat_subsidy_id, "subsidy_name": subsidy_names.get(cat_subsidy_id, ""),
+                "excess_before": excess_before_m, "excess_after": excess_after_m,
+                "is_new": "да" if is_new else "нет",
+            })
+        if not excess_manual_rows:
+            print("  Нет ни одной категории с превышением плана над ручным планом после бэкфилла.")
+        print("=" * 130)
+        print(f"Категорий с превышением план>ручной план после бэкфилла: {len(excess_manual_rows)}")
+        print()
+
         # ---- CSV-отчёт ------------------------------------------------------
         if args.report:
             with open(args.report, "w", newline="", encoding="utf-8-sig") as f:
@@ -367,14 +452,25 @@ async def main() -> int:
                     "id", "название", "путь категории", "subsidy_id", "субсидия",
                     "затронуто позиций закупок", "создано плановых позиций",
                     "план до", "план после", "превышение факт>план до", "превышение факт>план после",
-                    "превышение исчезло",
+                    "превышение исчезло", "план уже был (категория растёт)",
                 ])
                 for row in report_rows:
                     writer.writerow([
                         row["id"], row["name"], row["path"], row["subsidy_id"], row["subsidy_name"],
                         row["linked_positions"], row["new_plan_items"],
                         row["plan_before"], row["plan_after"], row["excess_before"], row["excess_after"],
-                        row["excess_resolved"],
+                        row["excess_resolved"], row["already_had_plan"],
+                    ])
+                writer.writerow([])
+                writer.writerow(["НОВОЕ ПРЕВЫШЕНИЕ ПЛАН > РУЧНОЙ ПЛАН (excess_plan_over_manual) ПОСЛЕ БЭКФИЛЛА"])
+                writer.writerow([
+                    "id", "название", "путь категории", "subsidy_id", "субсидия",
+                    "превышение до", "превышение после", "новое",
+                ])
+                for row in excess_manual_rows:
+                    writer.writerow([
+                        row["id"], row["name"], row["path"], row["subsidy_id"], row["subsidy_name"],
+                        row["excess_before"], row["excess_after"], row["is_new"],
                     ])
                 writer.writerow([])
                 writer.writerow(["ПРОПУЩЕННЫЕ КАТЕГОРИИ"])

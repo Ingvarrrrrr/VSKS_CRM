@@ -470,7 +470,19 @@ async def compute_feo_plan_tree(
     ФОРМУЛА v2 (сессия 2026-08-05, задача владельца «заказ замещает план, пока не
     набрано количество — план не трогаем»). Раньше было display = MAX(plan_manual,
     consumed) + over — эконом на частичном заказе не высвобождался, пока не заказано
-    ВСЁ количество целиком. Теперь — явная замена, а не MAX:
+    ВСЁ количество целиком. Теперь — явная замена, а не MAX.
+
+    ФОРМУЛА v3 (сессия 2026-08-12, задача владельца «направление со временем может
+    наполниться, соответственно должно считаться и оно»). Повод: у категории 3677
+    «Окружные» (НЕ лист — направление с 5 подкатегориями) автозаведение создало
+    плановую позицию «Бинт марлевый» на 48 441,80 ₽ прямо на самом направлении
+    (а не на одной из подкатегорий). compute_feo_plan_tree считал plan_manual/plan
+    группы ТОЛЬКО как сумму детей — собственные плановые позиции узла с детьми
+    нигде не попадали в дерево, 48 441,80 ₽ «терялись». Решение: узел с детьми
+    теперь суммирует ещё и СВОИ активные FeoPlannedItem (той же формулой
+    _own_plan_and_forecast, что и лист) — см. plan_manual/plan/qty_plan группы
+    ниже. Собственные ПОЛЯ группы (planned_quantity × planned_amount, старый
+    формат) как НЕ учитывались, так и не учитываются — см. предупреждение там же.
 
     Для каждой категории cat_id (и листа, и группы — не только листьев) считается:
       plan_manual — «сколько сами запланировали»:
@@ -483,10 +495,16 @@ async def compute_feo_plan_tree(
                тех же активных FeoPlannedItem (симметрично fallback'у по сумме,
                иначе plan_manual посчитается по позициям, а qty_plan всё равно
                уйдёт в 0 и замещение «заказ вместо плана» не сработает);
-        группа: Σ plan_manual прямых детей. Собственные planned_quantity/amount
-                группы НЕ учитываются — так же, как feoPlannedTotalFor во
-                фронте, иначе формулы разойдутся (см. ниже — по той же причине
-                «собственная» часть группы всегда даёт 0 в plan/plan_manual).
+        группа: Σ plan_manual прямых детей ПЛЮС собственные активные FeoPlannedItem
+                узла (Ур.5), заведённые прямо на направлении, а не на листе —
+                задача владельца «направление со временем может наполниться,
+                соответственно должно считаться и оно» (сессия 2026-08-12,
+                см. ФОРМУЛА v3 ниже). Собственные ПОЛЯ группы (planned_quantity×
+                planned_amount, старый формат) по-прежнему НЕ учитываются —
+                так же, как feoPlannedTotalFor во фронте, иначе формулы
+                разойдутся; на этом поле уже была боевая поломка (категория
+                «Микроавтобус» после пропажи подкатегории показала цену
+                10 130 000 за штуку).
       ordered / ordered_quantity — Σ фактической суммы/количества позиций в
         статусах «Заказано»/«Поставлено»/«Оплачено» (ORDERED_STATUSES,
         см. ordered_consumption_by_category), БЕЗ over_plan=true и БЕЗ
@@ -503,13 +521,19 @@ async def compute_feo_plan_tree(
                 высвобождается; ИНАЧЕ (заказано частично или количество не
                 задано) — plan_manual (весь план резервируется, даже если
                 частично уже заказано дешевле/дороже).
-        группа: Σ plan прямых детей + «собственный» plan узла (та же формула
-                относительно planned_quantity/ordered_quantity САМОЙ группы —
-                но т.к. planned_quantity группы не учитывается (см. выше),
-                собственная часть группы всегда равна 0, own-позиции группы
-                в план не попадают — они и раньше терялись в MAX, если не
-                превышали план детей; см. проверенный кейс с группой
-                «Внедорожник повышенной проходимости»).
+        группа: Σ plan прямых детей + «собственный» plan узла — та же функция
+                _own_plan_and_forecast, что и у листа, но с qty/amt взятыми
+                из собственных активных FeoPlannedItem узла (leaf_item_qty/
+                leaf_item_amt по cat_id самой группы), а НЕ из planned_quantity/
+                planned_amount группы (те по-прежнему 0, см. выше). ДО задачи
+                «направление со временем может наполниться» (2026-08-12)
+                собственная часть группы была всегда 0 — own-позиции группы
+                вообще нигде не считались (боевой пример — «Бинт марлевый»
+                48 441,80 ₽ на категории 3677 «Окружные», направление с 5
+                подкатегориями: план был, а в дереве нигде не отображался).
+                Теперь own-позиции узла с детьми участвуют в plan наравне с
+                позициями листа, тем же правилом замещения «заказ вместо
+                плана» (qty > 0 and ordered_qty >= qty).
       display — «плановая сумма» для UI/KPI = plan + over.
       residual — plan − ordered (может уйти в минус — «перерасход» в UI).
       ordered_qty / ordered_sum — алиасы ordered_quantity/ordered (те же значения,
@@ -529,18 +553,22 @@ async def compute_feo_plan_tree(
         plan/display, но для количества (аналог для GET /api/feo-categories/
         plan-tree и «Планового количества» в SubsidiesView.vue): лист — ordered_qty,
         ЕСЛИ planned_quantity > 0 И ordered_qty ≥ planned_quantity, иначе
-        planned_quantity; группа — Σ qty_plan прямых детей (собственное
-        planned_quantity группы не учитывается — та же причина, что и у plan).
+        planned_quantity; группа — Σ qty_plan прямых детей ПЛЮС собственный
+        qty_plan узла (той же формулой замещения, от Σ quantity собственных
+        активных FeoPlannedItem группы — planned_quantity ПОЛЯ группы по-прежнему
+        не учитывается, см. plan выше).
         display_quantity = qty_plan + over_quantity.
       forecast / forecast_over — прогнозное предупреждение (не блокирует,
         только для UI): avg_ordered_price = ordered / ordered_quantity (если
         ordered_quantity > 0); forecast = ordered + оставшееся_количество ×
         avg_ordered_price; forecast_over = max(0, forecast − plan_manual).
         Для узлов без заказов или без planned_quantity forecast = plan_manual,
-        forecast_over = 0 (прогнозировать не на чем). Для групп — только
-        накопление forecast_over детей (rollup-индикатор «где-то в подветке
-        цена выше плановой»), их собственная часть не считается по той же
-        причине, что и plan.
+        forecast_over = 0 (прогнозировать не на чем). Для групп forecast_over —
+        по-прежнему только накопление (rollup) forecast_over детей, БЕЗ
+        собственной части узла (own_forecast/own_forecast_over считаются в коде
+        для единообразия с plan, но не используются в forecast группы — задача
+        владельца охватывала только plan/plan_manual/qty_plan/display, прогнозное
+        предупреждение per-направление не заказывалось, поведение не меняем).
 
     ТРИ НЕЗАВИСИМЫХ вида превышения плана (задача владельца, сессия 2026-08-12) —
     участвуют в assert_no_unapproved_excess наравне друг с другом, один и тот же
@@ -614,24 +642,31 @@ async def compute_feo_plan_tree(
 
     leaf_ids = [r.id for r in cat_rows if r.id not in has_children]
 
-    # Fallback-сумма Σ FeoPlannedItem.amount активных позиций Ур.5 per лист — нужна,
-    # когда planned_quantity/planned_amount листа не заполнены, а план введён
-    # позициями (импорт Excel). Тут же — симметричный fallback по количеству
-    # (Σ quantity), т.к. план у владельца переезжает с полей категории на плановые
-    # позиции внутри неё (модель «всё планирование — записи внутри категории»):
-    # без этого qty листа остаётся 0, «плановое количество» в UI показывает ноль,
-    # а правило замещения «заказ вместо плана» (qty > 0 and ordered_qty >= qty)
-    # никогда не срабатывает, потому что ему не с чем сравнивать.
+    # Σ amount/Σ quantity активных FeoPlannedItem (Ур.5) per категория — задача
+    # владельца «направление со временем может наполниться, соответственно
+    # должно считаться и оно» (сессия 2026-08-12): ДО этой задачи запрос был
+    # ограничен leaf_ids, потому что собственные плановые позиции узла с детьми
+    # (направления) нигде не суммировались. Теперь считаем по ВСЕМ категориям
+    # (list(by_id.keys())), не только по листьям — группа (см. её ветку в _visit
+    # ниже) тоже читает свою запись отсюда и прибавляет её к сумме детей.
+    # Для листа — тот же fallback, что и раньше: когда planned_quantity/
+    # planned_amount листа не заполнены, а план введён позициями (импорт Excel).
+    # Симметричный fallback по количеству (Σ quantity) — т.к. план у владельца
+    # переезжает с полей категории на плановые позиции внутри неё (модель «всё
+    # планирование — записи внутри категории»): без этого qty листа остаётся 0,
+    # «плановое количество» в UI показывает ноль, а правило замещения «заказ
+    # вместо плана» (qty > 0 and ordered_qty >= qty) никогда не срабатывает,
+    # потому что ему не с чем сравнивать.
     leaf_item_amt: dict[int, float] = {}
     leaf_item_qty: dict[int, float] = {}
-    if leaf_ids:
+    if by_id:
         fpi_q = (
             select(
                 FeoPlannedItem.feo_category_id,
                 func.coalesce(func.sum(FeoPlannedItem.amount), 0).label("amt"),
                 func.coalesce(func.sum(FeoPlannedItem.quantity), 0).label("qty"),
             )
-            .where(FeoPlannedItem.feo_category_id.in_(leaf_ids))
+            .where(FeoPlannedItem.feo_category_id.in_(list(by_id.keys())))
             .where(FeoPlannedItem.is_active.is_(True))
             .group_by(FeoPlannedItem.feo_category_id)
         )
@@ -843,14 +878,28 @@ async def compute_feo_plan_tree(
             children_fact = sum(c["fact"] for c in child_nodes)
             children_fact_qty = sum(c["fact_quantity"] for c in child_nodes)
 
-            # Собственные planned_quantity/amount группы НЕ учитываются (см. docstring) —
-            # own-часть формулы всегда получает qty=0, поэтому own_plan всегда
-            # схлопывается к own_plan_manual=0 (замещать нечего, цели нет).
+            # Задача владельца «направление со временем может наполниться,
+            # соответственно должно считаться и оно» (сессия 2026-08-12, повод —
+            # позиция «Бинт марлевый» 48 441,80 ₽ заведена автозаведением прямо
+            # на категории 3677 «Окружные», а это НЕ лист, а направление с 5
+            # подкатегориями — сумма терялась нигде). own_qty/own_amt — те же
+            # активные FeoPlannedItem, что читает лист (leaf_item_qty/leaf_item_amt,
+            # теперь собраны по ВСЕМ категориям, не только листьям), но
+            # ПРИВЯЗАННЫЕ ПРЯМО К ЭТОМУ УЗЛУ. Собственные ПОЛЯ группы
+            # (planned_quantity × planned_amount) по-прежнему НЕ учитываются —
+            # старый формат, дублирующий детей; на нём уже была боевая поломка
+            # (категория «Микроавтобус» после пропажи подкатегории показала
+            # цену 10 130 000 за штуку) — учитываются ТОЛЬКО именованные
+            # плановые позиции (FeoPlannedItem), той же формулой замещения
+            # «заказ вместо плана» (_own_plan_and_forecast), что и у листа.
+            own_qty = leaf_item_qty.get(cat_id, 0.0)
+            own_amt = leaf_item_amt.get(cat_id, 0.0)
             own_plan, _own_forecast, _own_forecast_over = _own_plan_and_forecast(
-                0.0, 0.0, 0.0, own_ordered, own_ordered_qty
+                own_qty, own_amt, own_amt, own_ordered, own_ordered_qty
             )
+            own_qty_plan = own_ordered_qty if (own_qty > 0 and own_ordered_qty >= own_qty) else own_qty
 
-            plan_manual = children_plan_manual
+            plan_manual = children_plan_manual + own_amt
             ordered = own_ordered + children_ordered
             ordered_qty = own_ordered_qty + children_ordered_qty
             over = own_over + children_over
@@ -862,10 +911,10 @@ async def compute_feo_plan_tree(
             plan = own_plan + children_plan
             forecast_over = children_forecast_over
             forecast = plan_manual + forecast_over
-            # Собственное plan_quantity группы тоже НЕ учитывается — та же причина,
-            # что и own_plan выше (own_qty_plan всегда 0, qty=0 → условие ложно).
+            # qty_plan группы = Σ qty_plan детей + собственный qty_plan узла (та же
+            # формула замещения, что и own_plan выше, но для количества).
             children_qty_plan = sum(c["qty_plan"] for c in child_nodes)
-            qty_plan = children_qty_plan
+            qty_plan = children_qty_plan + own_qty_plan
 
             # excess_plan_over_manual (задача владельца п.2) — группа НЕ считает
             # собственную логику (у группы нет своих плановых позиций — планирование

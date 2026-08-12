@@ -1023,12 +1023,17 @@
                       <!-- Действия -->
                       <td class="feo-td feo-td-actions">
                         <div class="feo-actions-wrap">
-                          <!-- Level 3: кнопка раскрытия позиций / spacer for alignment -->
-                          <span class="feo-action-slot"><v-btn v-if="!node.hasChildren"
+                          <!-- Level 3: кнопка раскрытия позиций / spacer for alignment.
+                               Задача владельца «направление со временем может наполниться»
+                               (2026-08-12): у направления (node.hasChildren) кнопка тоже
+                               появляется, но ТОЛЬКО если у него есть СОБСТВЕННЫЕ плановые
+                               позиции (hasOwnPlannedAmountFor) — иначе раскрывать нечего,
+                               ничего не меняется для обычных направлений без своего плана. -->
+                          <span class="feo-action-slot"><v-btn v-if="!node.hasChildren || hasOwnPlannedAmountFor(node)"
                             :icon="expandedItemPanels.has(node.id) ? 'mdi-list-box' : 'mdi-list-box-outline'"
                             variant="text" size="x-small"
                             :color="expandedItemPanels.has(node.id) ? 'teal' : 'grey'"
-                            title="Показать плановые / фактические позиции"
+                            :title="node.hasChildren ? 'Показать плановые позиции, привязанные прямо к направлению' : 'Показать плановые / фактические позиции'"
                             @click="toggleItemPanel(node)"
                           /></span>
                           <!-- Стрелки — друг под другом -->
@@ -1054,8 +1059,11 @@
                       </td>
                     </tr>
 
-                    <!-- ── Level 5 панель: Плановые vs Фактические ── -->
-                    <tr v-if="!node.hasChildren && expandedItemPanels.has(node.id)" :key="`items-${node.id}`" :data-feo-panel-for="node.id">
+                    <!-- ── Level 5 панель: Плановые vs Фактические ──
+                         Условие расширено (!node.hasChildren || hasOwnPlannedAmountFor(node)) —
+                         см. комментарий у hasOwnPlannedAmountFor выше: у направления панель
+                         раскрывается, только если есть чем её наполнить. -->
+                    <tr v-if="(!node.hasChildren || hasOwnPlannedAmountFor(node)) && expandedItemPanels.has(node.id)" :key="`items-${node.id}`" :data-feo-panel-for="node.id">
                       <!-- Правка владельца (2026-08-12): отступ 0 0 0 60px убран — он сдвигал ВСЮ
                            вложенную таблицу плановых позиций вправо и ломал вертикальное выравнивание
                            её колонок с колонками основной таблицы (feo-table). Визуальная вложенность
@@ -1172,6 +1180,15 @@
                                       <v-chip size="x-small" color="blue-grey" variant="tonal" class="ml-1" style="font-size:9px;height:16px"
                                         title="Это плановая позиция — она запланирована, а не выставлена в закупку и не приехала по факту"
                                       >план</v-chip>
+                                      <!-- Спокойная пометка владельца (2026-08-12, повод — «Бинт марлевый» на
+                                           «Окружных»): панель сейчас открыта для направления (node.hasChildren) —
+                                           ЛЮБАЯ плановая позиция в ней по построению привязана ПРЯМО к нему
+                                           (comparisonData грузится по feo_category_id=node.id, без детей),
+                                           а не к какой-то из его конечных категорий. Не тревожный красный —
+                                           нейтральный серый, суммы при переносе вниз не меняются. -->
+                                      <v-chip v-if="node.hasChildren" size="x-small" color="grey" variant="tonal" class="ml-1" style="font-size:9px;height:16px"
+                                        title="Позиция привязана к направлению, а не к конечной категории. Её можно перенести вниз, в подходящую категорию — суммы при этом не изменятся."
+                                      >на направлении целиком</v-chip>
                                     </div>
                                     <div v-if="planned.isManual" class="feo-plan-note text-medium-emphasis">
                                       <v-icon icon="mdi-pencil-ruler" size="11" class="mr-1" />ручной план ФЭО — подробного деления в ФЭО не было
@@ -1242,6 +1259,31 @@
                                       @click="togglePlannedItemFolder(planned.id)"
                                     >План vs факт</v-btn>
                                     <template v-if="!planned.isManual">
+                                      <!-- Требование владельца, п.2/п.3 (2026-08-12): позицию, висящую прямо на
+                                           направлении («на направлении целиком», см. чип выше), можно перенести
+                                           вниз, в подходящую конечную категорию — суммы при этом не меняются
+                                           (перенос просто меняет feo_category_id, деньги как считались в плане
+                                           направления, так и продолжат считаться, просто уже на новом узле).
+                                           Кнопка видна ТОЛЬКО в панели направления (node.hasChildren) — у обычной
+                                           конечной категории переносить пока некуда конкретным местом, ничего не
+                                           меняем в её поведении. -->
+                                      <v-menu v-if="node.hasChildren" location="bottom end">
+                                        <template #activator="{ props: moveMenuProps }">
+                                          <v-btn v-bind="moveMenuProps" icon="mdi-arrow-down-bold-box-outline"
+                                            size="x-small" variant="text" color="orange-darken-1"
+                                            :loading="movingPlannedItemId === planned.id"
+                                            title="Перенести позицию вниз, в подходящую конечную категорию — суммы не изменятся"
+                                          />
+                                        </template>
+                                        <v-list density="compact" max-height="320" style="overflow-y:auto">
+                                          <v-list-subheader>Перенести в категорию</v-list-subheader>
+                                          <v-list-item v-for="d in descendantCategoriesFor(node)" :key="d.id"
+                                            :title="d.name"
+                                            :style="{ paddingLeft: `${8 + (d.depth - node.depth - 1) * 16}px` }"
+                                            @click="movePlannedItemToCategory(planned, d.id)"
+                                          />
+                                        </v-list>
+                                      </v-menu>
                                       <v-btn icon="mdi-pencil" size="x-small" variant="text" color="blue"
                                         title="Редактировать плановую позицию"
                                         @click="openEditPlannedItem(planned)"
@@ -5506,6 +5548,53 @@ function isManualPosLeaf(node: FeoNode): boolean {
   return !!(t && Number(t.plan_manual || 0) > 0)
 }
 
+// Задача владельца «направление со временем может наполниться, соответственно
+// должно считаться и оно» (сессия 2026-08-12, повод — «Бинт марлевый» 48 441,80 ₽
+// привязан прямо к «Окружным», а это направление с 5 подкатегориями, не лист —
+// панель «Плановые позиции» раньше раскрывалась ТОЛЬКО у листа, состав был не
+// посмотреть). Раскрывать панель у узла с детьми имеет смысл, только если у него
+// САМОГО есть активные FeoPlannedItem (иначе раскрывать нечего — там всегда пусто).
+//
+// Выбор способа определения «есть свои позиции» БЕЗ похода в сеть за comparisonData
+// для каждого узла подряд (это раскрывало бы GET .../comparison на КАЖДУЮ группу
+// дерева сразу при рендере — дорого и не нужно, панель и так грузится ЛЕНИВО по
+// клику): бэкенд (compute_feo_plan_tree, app/services/feo_plan.py, ветка с детьми)
+// теперь считает plan_manual направления как «Σ plan_manual детей + Σ amount
+// СОБСТВЕННЫХ активных плановых позиций узла» (own_amt). Раз оба числа уже лежат в
+// planTreeByCat (bulk-загружен один раз в loadFeo для ВСЕХ категорий сразу),
+// «plan_manual узла минус Σ plan_manual его НЕПОСРЕДСТВЕННЫХ детей» и есть own_amt —
+// без единого дополнительного запроса. Для многоуровневых направлений это тоже
+// корректно: plan_manual каждого ребёнка уже рекурсивно включает ЕГО own_amt, поэтому
+// разница с суммой прямых детей даёт own_amt именно ЭТОГО узла, а не всей ветки.
+//
+// Если бэкенд-правка ещё не выкатилась (plan_manual группы = Σ детей без own_amt,
+// как было раньше) — diff всегда 0, и кнопка раскрытия у направления не появится,
+// даже если своя позиция физически есть. Это ожидаемо и безопасно (см. поручение) —
+// как только бэкенд посчитает own_amt, число само перестанет быть нулевым без правок
+// фронта.
+function hasOwnPlannedAmountFor(node: FeoNode): boolean {
+  if (!node.hasChildren) return false
+  const t = planTreeByCat.value[node.id]
+  if (t) {
+    const childrenPlanManual = (node.children || []).reduce(
+      (sum, ch) => sum + Number(planTreeByCat.value[ch.id]?.plan_manual || 0), 0
+    )
+    const ownAmt = Number(t.plan_manual || 0) - childrenPlanManual
+    if (ownAmt > 0.005) return true
+  }
+  // Фолбэк на приёмке (2026-08-12): на живых данных бэкенд-процесс ещё не перезапущен
+  // с правкой own_amt (см. комментарий выше — файл поменялся, работающий сервер нет),
+  // поэтому diff по plan_manual выше пока всегда 0, хотя «Бинт марлевый» физически
+  // висит на категории 3677. Используем УЖЕ загруженный bulk-массив plannedItemsByCat
+  // (`/feo-categories/planned-purchase-items`, грузится один раз на всю субсидию в
+  // loadFeo/refreshReqData, БЕЗ дополнительного запроса на этот узел) — если у узла
+  // есть СОБСТВЕННЫЕ позиции закупок (те же, что попадают в панель через
+  // unplannedActualFor/displayPlannedRowsFor), считаем, что раскрывать есть что.
+  // Не идеальный признак (пропустит совсем ручной FeoPlannedItem без единой закупки
+  // за ним), но не требует похода в сеть и покрывает боевой сценарий задачи.
+  return (plannedItemsByCat.value[node.id]?.length || 0) > 0
+}
+
 interface FeoVirtualGroup {
   name: string
   unit: string | null
@@ -6257,6 +6346,59 @@ async function clearCategoryManualPlan(categoryId: number) {
 async function deletePlannedItem(item: FeoPlannedItem) {
   await apiFetch(`/feo-planned-items/${item.id}`, { method: 'DELETE' })
   await refreshComparison(item.feo_category_id)
+}
+
+// Все категории, лежащие НИЖЕ данного узла в дереве (сам узел не включён) — источник
+// списка «Куда перенести» для плановой позиции направления (см. кнопку
+// mdi-arrow-down-bold-box-outline в панели выше). flattenAll(node.children) уже
+// используется в файле для того же обхода дерева (см. её объявление выше).
+function descendantCategoriesFor(node: FeoNode): FeoNode[] {
+  return flattenAll(node.children || [])
+}
+
+// Требование владельца, п.2/п.3 (2026-08-12): «Её можно перенести вниз, в подходящую
+// категорию — суммы при этом не изменятся» — перенос плановой позиции, привязанной
+// прямо к направлению, в одну из его конечных (или промежуточных) категорий.
+// PUT /feo-planned-items/{id} — та же ПОЛНАЯ замена, что и у saveEditPlannedItem/
+// reorderPlannedItem выше (неполный payload обнулил бы остальные поля позиции),
+// меняется только feo_category_id.
+const movingPlannedItemId = ref<number | null>(null)
+async function movePlannedItemToCategory(item: FeoPlannedItem, targetCategoryId: number) {
+  if (item.feo_category_id === targetCategoryId) return
+  const sourceCategoryId = item.feo_category_id
+  movingPlannedItemId.value = item.id
+  try {
+    await apiFetch(`/feo-planned-items/${item.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        feo_category_id: targetCategoryId,
+        name: item.name,
+        quantity: item.quantity,
+        unit: item.unit,
+        amount: item.amount,
+        notes: item.notes,
+        is_active: item.is_active,
+        payment_mode: item.payment_mode ?? 'one_time',
+        planned_date: item.planned_date ?? null,
+        monthly_start_date: item.monthly_start_date ?? null,
+        months_count: item.months_count ?? null,
+        monthly_amount: item.monthly_amount ?? null,
+        sort_order: item.sort_order ?? null,
+      }),
+    })
+    // Затронуты ДВА узла (старый и новый) плюс их суммы по всей ветке вверх —
+    // refreshComparison точечно обновляет составы обеих панелей, refreshReqData
+    // перечитывает planTreeByCat (plan_manual/display), от которого зависит и
+    // «Плановая сумма» в шапке дерева, и hasOwnPlannedAmountFor (раскрытие панели
+    // направления) для обоих узлов.
+    await Promise.all([refreshComparison(sourceCategoryId), refreshComparison(targetCategoryId)])
+    await refreshReqData()
+    showSnack('Позиция перенесена')
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.detail || 'Ошибка переноса', 'error')
+  } finally {
+    movingPlannedItemId.value = null
+  }
 }
 
 // Замечание владельца 2 (2026-08-12): «должна быть возможность менять плановые позиции

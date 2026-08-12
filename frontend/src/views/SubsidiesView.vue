@@ -999,13 +999,21 @@
                       <!-- Правка владельца (2026-08-12): отступ 0 0 0 60px убран — он сдвигал ВСЮ
                            вложенную таблицу плановых позиций вправо и ломал вертикальное выравнивание
                            её колонок с колонками основной таблицы (feo-table). Визуальная вложенность
-                           теперь только padding-left ВНУТРИ первой ячейки «Позиция плана» ниже. -->
-                      <td colspan="6" style="padding:0; background:rgba(20,184,166,0.06)">
+                           теперь только padding-left ВНУТРИ первой ячейки «Позиция плана» ниже.
+                           colspan="7" (было 6) — вложенная таблица теперь имеет ту же раскладку из
+                           7 колонок, что и основная (см. feoResize выше); чтобы её auto-колонки делили
+                           РОВНО ТУ ЖЕ полную ширину контейнера, что и основная таблица, ячейка обязана
+                           захватывать ВСЕ 7 колонок основной строки, а не 6. -->
+                      <td colspan="7" style="padding:0; background:rgba(20,184,166,0.06)">
                         <!-- padding-left:0 (было 12px) — тот же замер в браузере показал, что этот
                              левый паддинг сдвигал ВСЮ вложенную таблицу плановых позиций на 12px
-                             вправо от колонок основной таблицы feo-table; правый/нижний/верхний
-                             оставлены, только left обнулён. -->
-                        <div style="padding:10px 12px 12px 0">
+                             вправо от колонок основной таблицы feo-table.
+                             padding-right:0 (было 12px, правка 2026-08-12) — тот же принцип: правый
+                             паддинг урезал ширину вложенной таблицы на 12px относительно основной,
+                             из-за чего table-layout:fixed делил остаток на 3px меньше на каждую
+                             auto-колонку и budget/qty/planned чуть съезжали влево от одноимённых
+                             колонок основной таблицы. Только top/bottom оставлены. -->
+                        <div style="padding:10px 0 12px 0">
                           <!-- Требование владельца (план zany-fluttering-mountain.md, возвращено из отката
                                e0db76a): при раскрытии категории СРАЗУ видны её плановые позиции — БЕЗ
                                промежуточного заголовка-обёртки «Позиции: план vs факт», это уже просто
@@ -1025,7 +1033,13 @@
                           </div>
 
                           <!-- Таблица сравнения -->
-                          <table v-else-if="comparisonData[node.id]" style="width:100%;border-collapse:collapse;font-size:12px">
+                          <!-- table-layout:fixed (правка 2026-08-12, вместе с откатом фиксированных 180px
+                               выше): без него браузер считает ширину auto-колонок ПО СОДЕРЖИМОМУ (обычный
+                               table-layout:auto), а не делит остаток поровну как в основной .feo-table
+                               (там table-layout:fixed задан классом). Из-за этого «Позиция плана» (длинный
+                               текст) раздувалась на сотни px, а budget/qty/planned вообще не совпадали с
+                               основной таблицей, несмотря на одинаковые resizeStyle(key). -->
+                          <table v-else-if="comparisonData[node.id]" style="width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px">
                             <thead>
                               <!-- Требование владельца (2026-08-12): в рамках одной плановой позиции может быть
                                    несколько разных закупок — одна строка на уровне плана физически не может
@@ -1039,8 +1053,14 @@
                                    feoResize.resizeStyle(key), тот же порядок ключей: name → budget → qty → planned.
                                    «Цена плана» стоит под budget («Количество и финансирование по ФЭО» — там тоже
                                    деньги), поэтому она ЛЕВЕЕ «Кол-во плана» (qty) — так требует вертикальное
-                                   выравнивание, не смысловой порядок колонок. Последняя ячейка (кнопки) — без
-                                   явной ширины, забирает остаток контейнера (примерно под spent+residual). -->
+                                   выравнивание, не смысловой порядок колонок.
+                                   Правка владельца (2026-08-12, откат фиксированных 180px): чтобы авто-колонки
+                                   (name/qty/planned/residual, ширина 0 = делят остаток) делили ОДИНАКОВЫЙ
+                                   остаток в обеих таблицах, у вложенной таблицы теперь РОВНО ТЕ ЖЕ 7 колонок,
+                                   что у основной — добавлены пустые spent/residual (те же ключи, те же
+                                   fixed/auto свойства), а колонка кнопок зафиксирована в 112px — как
+                                   .feo-th-actions у основной (там тоже fixed, не auto). Иначе набор и число
+                                   auto-колонок в двух таблицах отличались бы, и остаток делился бы по-разному. -->
                               <tr style="background:#DBEAFE">
                                 <th :style="[feoResize.resizeStyle('name'), { paddingLeft: `${plannedItemIndentPx(node)}px` }]" style="padding-top:4px;padding-right:8px;padding-bottom:4px;text-align:left;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE;background:#DBEAFE" title="Плановая позиция. Закупки, привязанные к ней (как выставили в закупку / как в договоре — по стадии), — в раскрывающемся блоке под строкой плана.">
                                   Позиция плана
@@ -1048,7 +1068,9 @@
                                 <th :style="feoResize.resizeStyle('budget')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE;background:#DBEAFE">Плановая цена за единицу</th>
                                 <th :style="feoResize.resizeStyle('qty')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE;background:#DBEAFE">Кол-во плана</th>
                                 <th :style="feoResize.resizeStyle('planned')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE;background:#DBEAFE">Сумма плана</th>
-                                <th style="padding:4px 2px;border-bottom:1px solid #BFDBFE;background:#DBEAFE"></th>
+                                <th :style="feoResize.resizeStyle('spent')" style="border-bottom:1px solid #BFDBFE;background:#DBEAFE"></th>
+                                <th :style="feoResize.resizeStyle('residual')" style="border-bottom:1px solid #BFDBFE;background:#DBEAFE"></th>
+                                <th style="width:112px;min-width:112px;max-width:112px;padding:4px 2px;border-bottom:1px solid #BFDBFE;background:#DBEAFE"></th>
                               </tr>
                             </thead>
                             <tbody>
@@ -1103,6 +1125,10 @@
                                   <td :style="feoResize.resizeStyle('planned')" style="padding:4px 8px;text-align:right;color:#64748b;background:rgba(59,130,246,0.05)">
                                     <span v-if="planned.amount">{{ formatCurrency(planned.amount) }}</span>
                                   </td>
+                                  <!-- spent/residual — пустые заглушки, только чтобы раскладка колонок совпадала
+                                       со основной таблицей (см. правку выше у feoResize/th этой таблицы). -->
+                                  <td :style="feoResize.resizeStyle('spent')" style="background:rgba(59,130,246,0.05)"></td>
+                                  <td :style="feoResize.resizeStyle('residual')" style="background:rgba(59,130,246,0.05)"></td>
                                   <!-- Требование владельца (2026-08-12): факт (colspan-заглушка, «Разница»,
                                        «Контрагент», «Статус» — factForPlanned/calcDiff/getDiffStyle/isFactActual)
                                        убран с уровня строки плановой позиции целиком — одна строка не может
@@ -1111,8 +1137,10 @@
                                        Кнопка «План vs факт» (жалоба владельца 2026-08-12 — раскрытие было не
                                        видно, только маленький шеврон у названия) дублирует togglePlannedItemFolder
                                        текстовой ссылкой; видна на КАЖДОЙ строке, включая синтетическую
-                                       (planned.isManual), поэтому вынесена ИЗ ветки v-if/v-else ниже. -->
-                                  <td style="padding:2px;text-align:center;background:rgba(59,130,246,0.05)">
+                                       (planned.isManual), поэтому вынесена ИЗ ветки v-if/v-else ниже.
+                                       width:112px — как у .feo-th-actions основной таблицы (fixed, не auto),
+                                       чтобы остаток между auto-колонками делился одинаково в обеих таблицах. -->
+                                  <td style="width:112px;min-width:112px;max-width:112px;padding:2px;text-align:center;background:rgba(59,130,246,0.05)">
                                     <v-btn
                                       size="x-small" variant="text" color="teal" class="text-none"
                                       :prepend-icon="expandedPlannedItems.has(planned.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
@@ -1154,7 +1182,10 @@
                                      заголовок и стадия подписана на каждой строке (пометка «как выставили»/
                                      «как в договоре» уже есть на строке). -->
                                 <tr v-if="expandedPlannedItems.has(planned.id)">
-                                  <td colspan="5" style="padding:4px 8px 10px 32px;background:rgba(20,184,166,0.03)">
+                                  <!-- colspan="7" (было 5) — у вложенной таблицы плановых позиций теперь 7 колонок
+                                       (добавлены пустые spent/residual, см. выше), эта ячейка должна закрывать
+                                       всю строку целиком, а не оставлять 2 колонки «дыркой» справа. -->
+                                  <td colspan="7" style="padding:4px 8px 10px 32px;background:rgba(20,184,166,0.03)">
                                     <table style="width:100%;border-collapse:collapse;font-size:12px">
                                       <thead>
                                         <tr style="background:#CCFBF1">
@@ -1221,8 +1252,13 @@
                                               <v-icon icon="mdi-hand-heart-outline" size="11" class="mr-1" />заявка #{{ actual.wish_id }}
                                             </a>
                                           </td>
-                                          <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
-                                          <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.unit_price ? formatCurrency(actual.unit_price) : '—' }}</td>
+                                          <!-- Правка владельца (2026-08-12): «Кол-во (факт)»/«Цена (факт)» раньше
+                                               брались из actual.quantity/unit_price — это поля позиции закупки,
+                                               заполненные на ЛЮБОЙ стадии (даже «план закупок», без единой поставки).
+                                               Тот же признак факта, что уже работает у «Сумма (факт)»:
+                                               fact_amount != null — до появления факта прочерк, как и у суммы. -->
+                                          <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.fact_amount != null && actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
+                                          <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.fact_amount != null && actual.unit_price ? formatCurrency(actual.unit_price) : '—' }}</td>
                                           <td style="padding:4px 8px;text-align:right;font-weight:500">
                                             <template v-if="actual.fact_amount != null">
                                               <span :title="actual.fact_allocated ? 'Распределено пропорционально между позициями закупки' : ''">{{ formatCurrency(actual.fact_amount) }}</span>
@@ -1234,8 +1270,12 @@
                                           </td>
                                           <td style="padding:4px 8px"></td>
                                           <td style="padding:4px 8px;color:#64748b;font-size:11px">{{ actual.contractor_name || '—' }}</td>
-                                          <td style="padding:4px 8px;text-align:center">
-                                            <v-icon icon="mdi-check-circle" size="16" color="success" title="Сопоставлено" />
+                                          <!-- Правка владельца (2026-08-12): галочка mdi-check-circle стояла безусловно
+                                               (строка и так вложена под своей плановой позицией — «сопоставлено» и
+                                               так очевидно, галочка ничего не сообщала). Вместо неё — стадия закупки
+                                               текстом, тем же purchaseStatusLabel, что и в других местах файла. -->
+                                          <td style="padding:4px 8px;text-align:center;color:#94a3b8;font-size:10px">
+                                            {{ purchaseStatusLabel(actual.purchase_status) }}
                                           </td>
                                           <td style="padding:2px;text-align:center;white-space:nowrap">
                                             <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary"
@@ -1430,7 +1470,7 @@
 
                               <!-- Пусто -->
                               <tr v-if="!displayPlannedRowsFor(node).length && !comparisonData[node.id].actual.length">
-                                <td colspan="5" style="padding:12px 8px;text-align:center;color:#9ca3af;font-style:italic">
+                                <td colspan="7" style="padding:12px 8px;text-align:center;color:#9ca3af;font-style:italic">
                                   Нет плановых позиций. Добавьте вручную или загрузите из Excel.
                                 </td>
                               </tr>
@@ -4181,18 +4221,21 @@ const vFitText = {
   updated: fitTextToWidth,
 }
 
-// Правка владельца (2026-08-12): name/qty/planned переведены с "авто" (0) на явную
-// ширину 180px — тот же прецедент, что уже был у budget/spent. Причина: feo-table
-// сидит на table-layout:fixed, где колонки без явной ширины делят ОСТАТОК места
-// ПОРОВНУ между собой — а вложенная таблица плановых позиций (панель «План vs факт»
-// под каждой категорией ФЭО) имеет ДРУГОЙ набор колонок (нет spent/residual/actions,
-// вместо них одна колонка кнопок), поэтому её «авто»-колонки получали совсем другую
-// долю остатка и визуально уезжали в сторону от одноимённых колонок основной таблицы
-// (замерено: было name~470px vs 187px — расхождение в 4 раза). С явной шириной
-// resizeStyle(key) отдаёт одно и то же {width,minWidth,maxWidth} в обеих таблицах —
-// колонки совпадают по построению, независимо от auto-раскладки соседних ячеек.
+// Правка владельца (2026-08-12, откат явных 180px — регресс): фиксированные
+// name/qty/planned/spent=180px сузили feo-table в узкую полосу по центру экрана
+// (авто-колонки с width:0 растягивали таблицу на всю ширину, фиксированные — нет).
+// Возвращены авто-ширины (0) для name/qty/planned/residual — budget/spent остаются
+// зафиксированы под деньги (180px), как и раньше. Совпадение колонок вложенной
+// таблицы плановых позиций с основной (см. предыдущую правку выше и баг
+// «name~470px vs 187px») теперь достигается НЕ фиксацией ширин, а тем, что у
+// вложенной таблицы РОВНО ТОТ ЖЕ набор из 7 колонок, что и у основной —
+// name/budget/qty/planned/spent/residual (spent/residual — пустые заглушки) +
+// колонка кнопок шириной 112px (как .feo-th-actions у основной). При одинаковом
+// наборе фиксированных/авто-колонок и одинаковой полной ширине контейнера
+// (colspan захватывает ВСЕ 7 колонок основной таблицы, а не 6) table-layout:fixed
+// делит остаток одинаково в обеих таблицах — колонки совпадают по построению.
 const feoResize = useResizableColumns('feo-table', {
-  name: 180, budget: 180, qty: 180, planned: 180, spent: 180, residual: 0,
+  name: 0, budget: 180, qty: 0, planned: 0, spent: 180, residual: 0,
 })
 
 const router = useRouter()

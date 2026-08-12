@@ -4463,6 +4463,14 @@ const expandedIds     = ref<number[]>(feoDisplayPrefs.expandedIds || [])
 const selectedId      = ref<number | null>(null)
 const selectedYear    = ref<number>(new Date().getFullYear())
 
+// Объявлен здесь (не ниже, у других computed из блока «панель субсидии»), потому что
+// reqItemEditSubsidyId (см. useFeoLeaves для диалога правки позиции) читает
+// selectedSubsidy.value синхронно при вызове composable'а — до его собственной
+// декларации это ReferenceError "Cannot access 'selectedSubsidy' before initialization".
+const selectedSubsidy = computed(() =>
+  allSubsidies.value.find(s => s.id === selectedId.value) ?? null
+)
+
 // 12-04: Residuals state
 const feoResiduals = ref<Record<number, {
   feo_item_id: number
@@ -5670,6 +5678,11 @@ const reqItemEdit = reactive({
   form: { item_name: '', quantity: null as number | null, unit: '', unit_price: null as number | null, feo_category_id: null as number | null },
 })
 
+// selectedSubsidy объявлен выше (сразу после allSubsidies/selectedId) — useFeoLeaves
+// ниже читает reqItemEditSubsidyId.value синхронно при вызове (immediate-watch внутри
+// композабла), поэтому computed(), от которого он зависит, обязан быть создан ДО этой
+// строки, иначе ReferenceError "Cannot access before initialization" (было до 2026-08-12).
+//
 // Дерево категорий ФЭО для пикера в диалоге правки позиции (Правка владельца
 // 2026-08-12: «перенести позицию в другую категорию — так превышение и
 // разбирается»). Переиспользует useFeoLeaves (тот же composable, что
@@ -6450,10 +6463,6 @@ function getSubsidyExportColumns() {
 function getSubsidyExportRows() {
   return filteredSubsidies.value
 }
-
-const selectedSubsidy = computed(() =>
-  allSubsidies.value.find(s => s.id === selectedId.value) ?? null
-)
 
 const selectedBudget = computed(() => {
   if (!selectedSubsidy.value) return 0
@@ -7255,6 +7264,43 @@ function allActualFor(catId: number) {
   return comparisonData.value[catId]?.actual || []
 }
 
+// Фолбэк владельца (2026-08-12): «плановая позиция была создана из заявки — названия сейчас
+// совпадают, значит должны разворачиваться в план БЕЗ факта». У части плановых позиций
+// (проверено в БД, категория 3710) ни одна позиция закупки не получила feo_planned_item_id —
+// привязка не проставлена (ручной ввод/миграция пропустили её), хотя закупка с тем же
+// названием реально существует в той же категории. Считаем ОДИН РАЗ на всю категорию (не в
+// factForPlanned/unplannedActualFor по отдельности!) — единый источник для обеих функций
+// ниже, иначе одна и та же позиция закупки задвоится: попадёт и под план (по имени), и в
+// «Не привязаны к плану» (по !feo_planned_item_id). Жадный «первое совпадение выигрывает»
+// (usedIds) — на случай двух плановых позиций с одинаковым именем в одной категории, чтобы
+// одна непривязанная позиция не досталась сразу обеим. Плановые позиции, у которых УЖЕ есть
+// хоть одна привязанная (bound) позиция, в фолбэке не участвуют — там factForPlanned и так
+// находит факт напрямую.
+const fallbackAbsorbedByCategory = computed((): Record<number, Map<number, number>> => {
+  const result: Record<number, Map<number, number>> = {}
+  for (const key of Object.keys(comparisonData.value)) {
+    const catId = Number(key)
+    const data = comparisonData.value[catId]
+    const map = new Map<number, number>()
+    const usedIds = new Set<number>()
+    for (const planned of data.planned || []) {
+      const hasBound = (data.actual || []).some(a => a.feo_planned_item_id === planned.id)
+      if (hasBound) continue
+      const targetName = normName(planned.name)
+      if (!targetName) continue
+      for (const a of data.actual || []) {
+        if (a.feo_planned_item_id) continue
+        if (usedIds.has(a.purchase_item_id)) continue
+        if (normName(a.item_name) !== targetName) continue
+        map.set(a.purchase_item_id, planned.id)
+        usedIds.add(a.purchase_item_id)
+      }
+    }
+    result[catId] = map
+  }
+  return result
+})
+
 // plannedId < 0 — синтетическая «ручная плановая позиция» (см. displayPlannedRowsFor):
 // когда у категории нет ни одной реальной FeoPlannedItem, а план задан прямо на листе
 // (node.planned_quantity/planned_amount), лист получает ОДНУ псевдо-строку с id = -node.id,
@@ -7264,9 +7310,15 @@ function allActualFor(catId: number) {
 // убрано целиком, единственный источник теперь этот. С 2026-08-11 — allActualFor (любая
 // стадия), а не actualFactFor: закупка на стадии «План закупок» тоже обязана лечь ПОД свою
 // плановую строку, а не рисоваться рядом отдельным блоком (см. снесённый actualPlanStageFor).
+// С 2026-08-12 (plannedId >= 0) — если привязанных позиций нет вовсе, фолбэк на
+// fallbackAbsorbedByCategory (см. выше, комментарий там).
 function factForPlanned(catId: number, plannedId: number) {
   if (plannedId < 0) return allActualFor(catId).filter(a => !a.feo_planned_item_id)
-  return allActualFor(catId).filter(a => a.feo_planned_item_id === plannedId)
+  const bound = allActualFor(catId).filter(a => a.feo_planned_item_id === plannedId)
+  if (bound.length) return bound
+  const absorbed = fallbackAbsorbedByCategory.value[catId]
+  if (!absorbed) return bound
+  return allActualFor(catId).filter(a => absorbed.get(a.purchase_item_id) === plannedId)
 }
 
 function factForPlannedTotal(catId: number, plannedId: number): number {
@@ -7323,16 +7375,30 @@ function leftGroupInfo(actual: FeoActualItem): FeoLeftGroupInfo {
 // Требование владельца (2026-08-09), дословно: «если ещё на стадии закупки, то просто
 // "как выставили в закупку", не надо туда дополнять "как в договоре"; когда переместится
 // на стадию договора, то тогда эта надпись меняется на "как в договоре", не нужно
-// дополнять непонятными сущностями». Переиспользует leftGroupInfo (тот же выбор
-// contract/purchase, что и у чипа на строке) — не изобретает вторую логику стадии:
-// все закупки этой плановой позиции на одной стадии → шапка называет ровно её;
-// стадии разные → нейтральное «Позиция закупки», стадия — на каждой строке (чип уже есть).
+// дополнять непонятными сущностями». Все закупки этой плановой позиции на одной стадии →
+// шапка называет ровно её; стадии разные → нейтральное «Позиция закупки», стадия —
+// на каждой строке (чип уже есть).
+//
+// Правка владельца (2026-08-12, разбор задвоения плановой позиции без факта): раньше
+// шапка различала только 2 состояния (leftGroupInfo.isContract), из-за чего заявка
+// (wishes/plan_schedule) и «Ведётся работа» получали одну и ту же надпись «Как выставили
+// в закупку». Дословно от владельца: «плановая позиция была создана из заявки, названия
+// сейчас совпадают [→ "Как называется в заявке"]. Перейдёт в работу — статус сменится
+// "как называется в закупке" [work_in_progress], далее в договоре [contracted/ordered/
+// delivered/paid → "Как в договоре"]». PURCHASE_STATUS_META — единственный источник
+// статусов (constants/purchaseStatus.ts), см. импорт в начале файла.
+function stageHeaderLabelFor(status: string | null | undefined): string {
+  if (status === 'wishes' || status === 'plan_schedule') return 'Как называется в заявке'
+  if (status === 'work_in_progress') return 'Как называется в закупке'
+  if (status === 'contracted' || status === 'ordered' || status === 'delivered' || status === 'paid') return 'Как в договоре'
+  return 'Позиция закупки'
+}
 function factStageHeaderFor(catId: number, plannedId: number): string {
   const facts = factForPlanned(catId, plannedId)
   if (!facts.length) return 'Позиция закупки'
-  const isContractFlags = new Set(facts.map(a => leftGroupInfo(a).isContract))
-  if (isContractFlags.size > 1) return 'Позиция закупки'
-  return isContractFlags.has(true) ? 'Как в договоре' : 'Как выставили в закупку'
+  const labels = new Set(facts.map(a => stageHeaderLabelFor(a.purchase_status)))
+  if (labels.size > 1) return 'Позиция закупки'
+  return [...labels][0]
 }
 
 // ── Разбор плана на строке плановой позиции («сколько уже разобрано») ─────────
@@ -7411,12 +7477,16 @@ function displayPlannedRowsFor(node: FeoNode): (FeoPlannedItem & { isManual?: bo
 // НЕТ ни реальных плановых позиций, ни ручного плана — абсорбировать эти позиции некуда,
 // они обязаны показаться здесь как «требует действия» (иначе позиции пропадают из дерева
 // молча — так и было до фикса: 15+ позиций категории без плана исчезали совсем).
+// С 2026-08-12 — дополнительно исключены позиции, поглощённые фолбэком по имени
+// (fallbackAbsorbedByCategory, см. factForPlanned) — те уже показаны ПОД своей плановой
+// строкой, повторно рисовать их тут значило бы задвоить одну и ту же закупку на экране.
 function unplannedActualFor(node: FeoNode) {
   const catId = node.id
   const hasManualPseudoRow = !(comparisonData.value[catId]?.planned || []).length
     && (node.planned_quantity != null || node.planned_amount != null)
   if (hasManualPseudoRow) return []
-  return allActualFor(catId).filter(a => !a.feo_planned_item_id)
+  const absorbed = fallbackAbsorbedByCategory.value[catId]
+  return allActualFor(catId).filter(a => !a.feo_planned_item_id && !(absorbed && absorbed.has(a.purchase_item_id)))
 }
 
 // Dev-ассерт (ШАГ 1 плана дедупликации, 2026-08-07; расширен 2026-08-11 после удаления

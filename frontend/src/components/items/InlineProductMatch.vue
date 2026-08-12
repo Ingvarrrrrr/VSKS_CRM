@@ -42,7 +42,7 @@
       clearable
       :disabled="disabled"
       :loading="matching"
-      :menu-props="{ maxWidth: 520 }"
+      :menu-props="{ maxWidth: 520, maxHeight: 420 }"
       placeholder="Начните вводить наименование..."
       class="flex-grow-1"
       style="min-width:200px"
@@ -84,6 +84,13 @@
         <v-list-item>
           <div class="text-caption text-medium-emphasis py-1">
             {{ matching ? 'Поиск…' : (searchText && searchText.length >= 2 ? 'Совпадений нет' : 'Введите минимум 2 символа') }}
+          </div>
+        </v-list-item>
+      </template>
+      <template #prepend-item>
+        <v-list-item v-if="candidates.length > 5" disabled>
+          <div class="text-caption text-medium-emphasis">
+            Найдено {{ candidates.length }} — прокрутите список
           </div>
         </v-list-item>
       </template>
@@ -236,7 +243,7 @@ async function runMatch(query: string) {
     status.value = 'create'
     return
   }
-  const res = await matchOne(q)
+  const res = await matchOne(q, 100, true)
   if (res) {
     candidates.value = res.candidates ?? []
     status.value = res.status ?? 'create'

@@ -1352,7 +1352,7 @@
                     а на согласование заявка уйдёт только по кнопке «Отправить на согласование».
                   </div>
                   <v-row dense align="center">
-                    <v-col cols="12" md="6">
+                    <v-col cols="12" md="6" data-field="approvers">
                       <v-autocomplete
                         v-model="approverTopUser"
                         :items="orgUsers"
@@ -2316,6 +2316,19 @@ function dismissValidationArrows() {
   validationArrowTargets.value = []
   if (validationArrowsTimer) { window.clearTimeout(validationArrowsTimer); validationArrowsTimer = null }
 }
+// Общий хелпер: рисует стрелки от кнопки «Отправить/Сохранить» к переданным целям.
+// Используется во всех местах точечной подсветки одного/нескольких полей (ФЭО-категория,
+// недостающие даты позиций/общая дата), чтобы не дублировать возню с рефами и таймером.
+function pointArrowsTo(targets: HTMLElement[]) {
+  if (!targets.length) return
+  const btn = (wishSubmitBtnRef.value?.$el ?? wishSubmitBtnRef.value) as HTMLElement | null
+  if (!btn) return
+  validationArrowFrom.value = btn
+  validationArrowTargets.value = targets.slice(0, 8)
+  validationArrowsActive.value = true
+  if (validationArrowsTimer) window.clearTimeout(validationArrowsTimer)
+  validationArrowsTimer = window.setTimeout(dismissValidationArrows, 8000)
+}
 function showValidationArrows() {
   const formEl = wishFormRef.value?.$el as HTMLElement | undefined
   if (!formEl) return
@@ -2323,12 +2336,14 @@ function showValidationArrows() {
   if (!allErrors.length) return
   // После перестановки блоков «Позиции» теперь выше по DOM, чем часть полей шапки
   // (например «Обоснование»). Поля с [data-field] — это осознанно провалидированные
-  // поля шапки/футера формы (субсидия, обоснование и т.п.); ошибка внутри таблицы
-  // позиций (PurchaseItemsEditor) не помечена [data-field] и не должна перехватывать
-  // стрелку у более важного поля шапки. Сначала ищем среди [data-field], и только
-  // если там чисто — берём первую ошибку по обычному DOM-порядку.
+  // поля шапки/футера формы (субсидия, обоснование и т.п.) и им отдаём приоритет —
+  // первой целью и первым скроллом становится ошибка шапки. Но ошибки внутри таблицы
+  // позиций (PurchaseItemsEditor), не помеченные [data-field], больше НЕ теряются:
+  // они дописываются следом, чтобы стрелки указывали на все незаполненные поля
+  // формы, а не только на шапку.
   const headerErrors = allErrors.filter(el => el.closest('[data-field]'))
-  const errors = headerErrors.length ? headerErrors : allErrors
+  const restErrors = allErrors.filter(el => !el.closest('[data-field]'))
+  const errors = [...headerErrors, ...restErrors].slice(0, 8)
   const btn = (wishSubmitBtnRef.value?.$el ?? wishSubmitBtnRef.value) as HTMLElement | null
   if (!btn) return
   errors[0].scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -2705,19 +2720,24 @@ const wishFeoCategoryMissing = computed(() => wishItemsMissingFeoCategory.value.
 
 function highlightMissingFeoCategory() {
   const formEl = wishFormRef.value?.$el as HTMLElement | undefined
-  const btn = (wishSubmitBtnRef.value?.$el ?? wishSubmitBtnRef.value) as HTMLElement | null
   const target = formEl?.querySelector('[data-field="feo_category"]') as HTMLElement | null
   if (!target) return
   target.scrollIntoView({ behavior: 'smooth', block: 'center' })
   target.classList.add('wish-date-missing-pulse')
   setTimeout(() => target.classList.remove('wish-date-missing-pulse'), 3000)
-  if (btn) {
-    validationArrowFrom.value = btn
-    validationArrowTargets.value = [target]
-    validationArrowsActive.value = true
-    if (validationArrowsTimer) window.clearTimeout(validationArrowsTimer)
-    validationArrowsTimer = window.setTimeout(dismissValidationArrows, 8000)
-  }
+  pointArrowsTo([target])
+}
+
+// Гейт «нельзя отправить без согласующих» (saveWish): по образцу highlightMissingFeoCategory —
+// подсвечивает поле «Верхний согласующий» в секции «Согласующие» стрелкой от кнопки отправки.
+function highlightMissingApprovers() {
+  const formEl = wishFormRef.value?.$el as HTMLElement | undefined
+  const target = formEl?.querySelector('[data-field="approvers"]') as HTMLElement | null
+  if (!target) return
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  target.classList.add('wish-date-missing-pulse')
+  setTimeout(() => target.classList.remove('wish-date-missing-pulse'), 3000)
+  pointArrowsTo([target])
 }
 
 // Phase 31-07: Undo/Redo for wish edit form (WishDistributionCard is display-only;
@@ -3395,6 +3415,8 @@ async function saveWish(andSubmit = false) {
       const node = wishFeoNodes.value.find(n => n.id === wishFeoSelected.value)
       if (node && !node.is_leaf) {
         showSnack('Выберите конечную категорию ФЭО или включите «Не указывать последний уровень ФЭО»', 'warning')
+        await nextTick()
+        highlightMissingFeoCategory()
         return
       }
     }
@@ -3468,6 +3490,8 @@ async function saveWish(andSubmit = false) {
         const hasApprovers = await ensureApprovers(editingWishId.value)
         if (!hasApprovers) {
           showSnack('Не выбраны согласующие. Выберите «Верхнего согласующего» в разделе «Согласующие» — цепочка построится автоматически.', 'error')
+          await nextTick()
+          highlightMissingApprovers()
           return
         }
         await apiFetch(`/wishes/${editingWishId.value}/submit`, { method: 'POST' })
@@ -3495,6 +3519,8 @@ async function saveWish(andSubmit = false) {
           await loadWishMembers()
           await loadWishApprovers()
           await reloadActiveTab()
+          await nextTick()
+          highlightMissingApprovers()
           return
         }
         await apiFetch(`/wishes/${created.id}/submit`, { method: 'POST' })
@@ -3525,8 +3551,10 @@ async function saveWish(andSubmit = false) {
     wishDialog.value = false
     await reloadActiveTab()
   } catch (e: any) {
-    // T3: 409 missing_needed_dates — не закрывать диалог, включить per-item режим
-    if (editingWish.value && await handleMissingDatesError(e, editingWish.value)) {
+    // T3: 409 missing_needed_dates — не закрывать диалог, включить per-item режим.
+    // editingWish может быть null при СОЗДАНИИ новой заявки (только что переведена в
+    // per-item и отправлена без даты) — handleMissingDatesError теперь это допускает.
+    if (await handleMissingDatesError(e, editingWish.value)) {
       return
     }
     // Серверная валидация: backend шлёт {message, fields:[{field,label}]}.
@@ -3581,8 +3609,11 @@ async function deleteWish(wish: Wish) {
   }
 }
 
-// T3: общий обработчик 409 missing_needed_dates — используется в approveWish/saveWish/submitWish
-async function handleMissingDatesError(e: any, wish: Wish) {
+// T3: общий обработчик 409 missing_needed_dates — используется в approveWish/saveWish/submitWish.
+// wish необязателен: при СОЗДАНИИ новой заявки editingWish ещё null (openEditDialog его не
+// выставляла — заявки ещё не существовало), но диалог создания и так уже открыт, поэтому
+// открывать нечего.
+async function handleMissingDatesError(e: any, wish?: Wish | null) {
   const det = e?.payload?.details
   if (e?.status !== 409 || det?.error_code !== 'missing_needed_dates') return false
   const missingIds: number[] = det.missing_item_ids || []
@@ -3592,15 +3623,16 @@ async function handleMissingDatesError(e: any, wish: Wish) {
     missingItemIds: missingIds,
     missingItemNames: missingNames,
   }
-  // Убедиться, что диалог открыт
-  if (!wishDialog.value) {
+  // Убедиться, что диалог открыт (только если известна заявка и диалог реально закрыт —
+  // при создании новой заявки диалог уже открыт и wish ещё не существует)
+  if (!wishDialog.value && wish) {
     await openEditDialog(wish)
   }
   // Переключить в per-item режим дат и подсветить проблемные позиции
   if (missingIds.length > 0) {
     if (wishDateMode.value !== 'per_item') wishDateMode.value = 'per_item'
     await nextTick()
-    highlightMissingDateItems(missingIds)
+    highlightMissingDateItems(missingIds, missingNames)
   } else {
     await nextTick()
     highlightCommonDateField()
@@ -3643,7 +3675,7 @@ async function approveWish(wish: Wish) {
 }
 
 // ── T3: highlight items without needed_date ──────────────────────────────
-function highlightMissingDateItems(missingItemIds: number[]) {
+function highlightMissingDateItems(missingItemIds: number[], missingItemNames: string[] = []) {
   if (!missingItemIds.length) return
   // Find all item rows in the dialog (PurchaseItemsEditor renders them).
   // Items table rows are <tr> elements; date input is <input type="date"> inside a td.
@@ -3655,9 +3687,34 @@ function highlightMissingDateItems(missingItemIds: number[]) {
   // Each item row has an index matching wishForm.value.items order.
   // missingItemIds are WishItem.id values; we cross-reference by index.
   const items = (wishForm.value as any).items as any[]
-  const missingIndexes = new Set(
-    items.map((it: any, idx: number) => missingItemIds.includes(it.id) ? idx : -1).filter(i => i !== -1)
+  let missingIndexes = new Set(
+    items.map((it: any, idx: number) => missingItemIds.includes(it.id) ? idx : -1).filter((i: number) => i !== -1)
   )
+  // (б) У ТОЛЬКО ЧТО СОЗДАННОЙ заявки локальные строки формы ещё не имеют серверных id
+  // (заявка создаётся, а следом сразу шлётся submit) — сопоставление по id даёт пусто.
+  // Пробуем сопоставить по нормализованному имени позиции, которое сервер прислал вместе
+  // с missing_item_ids.
+  if (!missingIndexes.size && missingItemNames.length) {
+    const namesNorm = new Set(missingItemNames.map(n => String(n).trim().toLowerCase()).filter(Boolean))
+    missingIndexes = new Set(
+      items
+        .map((it: any, idx: number) => namesNorm.has(String(it.item_name || '').trim().toLowerCase()) ? idx : -1)
+        .filter((i: number) => i !== -1)
+    )
+  }
+  // (в) Если и по имени сопоставить не удалось (например сервер имена не прислал) — считаем
+  // проблемными ВСЕ непустые строки без даты потребности. Условие «непустая строка» —
+  // то же самое, что используется при фильтрации payload перед отправкой в saveWish.
+  if (!missingIndexes.size) {
+    missingIndexes = new Set(
+      items
+        .map((it: any, idx: number) => {
+          const nonEmpty = (it.item_name || '').toString().trim() || Number(it.total_price) || Number(it.quantity)
+          return (nonEmpty && !it.needed_date) ? idx : -1
+        })
+        .filter((i: number) => i !== -1)
+    )
+  }
   if (!missingIndexes.size) {
     // Fallback: highlight common date field
     highlightCommonDateField()
@@ -3686,6 +3743,9 @@ function highlightMissingDateItems(missingItemIds: number[]) {
     el.classList.add('wish-date-missing-pulse')
     setTimeout(() => el.classList.remove('wish-date-missing-pulse'), 3000)
   })
+
+  // Стрелка от кнопки отправки к подсвеченным строкам (как highlightMissingFeoCategory)
+  pointArrowsTo(highlighted)
 }
 
 function highlightCommonDateField() {
@@ -3702,6 +3762,7 @@ function highlightCommonDateField() {
     if (wrap) {
       wrap.classList.add('wish-date-missing-pulse')
       setTimeout(() => wrap.classList.remove('wish-date-missing-pulse'), 3000)
+      pointArrowsTo([wrap])
     }
   }
 }

@@ -45,14 +45,24 @@ export interface MatchableRow {
 export function useItemMatching() {
   const matching = ref(false)
 
-  /** Call POST /products/match for a batch of query strings. */
-  async function matchQueries(queries: string[]): Promise<MatchResult[]> {
+  /**
+   * Call POST /products/match for a batch of query strings.
+   * `prefix` (default: unset → backend defaults to false) enables prefix-stem
+   * matching for interactive typing in the row's inline product search — words
+   * longer than 6 chars otherwise only match starting at the 6th typed
+   * character (see backend text_match._stem_hits). Batch/import callers must
+   * leave it unset so matching stays strict.
+   */
+  async function matchQueries(queries: string[], limit?: number, prefix?: boolean): Promise<MatchResult[]> {
     if (!queries.length) return []
     matching.value = true
     try {
+      const body: { queries: string[]; limit?: number; prefix?: boolean } = { queries }
+      if (limit != null) body.limit = limit
+      if (prefix != null) body.prefix = prefix
       const data = await apiFetch<{ results: MatchResult[] }>('/products/match', {
         method: 'POST',
-        body: { queries },
+        body,
       })
       return data?.results ?? []
     } finally {
@@ -61,10 +71,10 @@ export function useItemMatching() {
   }
 
   /** Convenience: match a single query, return its candidate list (status badge too). */
-  async function matchOne(query: string): Promise<MatchResult | null> {
+  async function matchOne(query: string, limit?: number, prefix?: boolean): Promise<MatchResult | null> {
     const q = (query || '').trim()
     if (!q) return null
-    const results = await matchQueries([q])
+    const results = await matchQueries([q], limit, prefix)
     return results[0] ?? null
   }
 

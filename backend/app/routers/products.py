@@ -326,6 +326,11 @@ class _MatchResultItem(BaseModel):
 class _MatchRequest(BaseModel):
     queries: List[str]
     limit: int = 3
+    # Интерактивный набор в строке позиции: включает префиксное сопоставление
+    # стемов (см. text_match._stem_hits), чтобы подсказки появлялись раньше
+    # 6-го символа для слов длиннее 6 букв. По умолчанию выключено — пакетный
+    # импорт/дедуп не должен становиться нечётким.
+    prefix: bool = False
 
 
 class _MatchResponse(BaseModel):
@@ -371,8 +376,11 @@ async def match_products(
         for r in rows
     ]
 
-    top_k = max(1, min(body.limit, 10))
-    results = bulk_match(body.queries, catalog, top_k=top_k)
+    # Потолок поднят с 10 до 200: инлайновый поиск в строке позиции (InlineProductMatch)
+    # должен показывать весь список совпадений с прокруткой, а не top-3/top-10.
+    # Пакетный импорт по-прежнему не шлёт limit явно и получает дефолт 3.
+    top_k = max(1, min(body.limit, 200))
+    results = bulk_match(body.queries, catalog, top_k=top_k, prefix_match=body.prefix)
 
     _log.info(
         "POST /api/products/match: %d queries, catalog_size=%d, "

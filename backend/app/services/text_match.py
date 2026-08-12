@@ -103,9 +103,34 @@ def score(query: str, catalog_name: str) -> float:
 # Generic progressive narrowing (domain-agnostic — works on any payload)
 # ---------------------------------------------------------------------------
 
+def _stem_hits(q_stem: str, c_stems: set[str], prefix_match: bool) -> bool:
+    """Совпал ли стем запроса `q_stem` с каким-то стемом каталожной записи `c_stems`.
+
+    `prefix_match=False` (по умолчанию) — прежнее строгое поведение: точное
+    равенство стемов (`q_stem in c_stems`). Используется в пакетном
+    сопоставлении/дедупе — там расширять правила совпадения нельзя (владелец
+    явно требовал не делать матчинг нечётким по умолчанию).
+
+    `prefix_match=True` — для интерактивного набора с клавиатуры: `stem()`
+    обрезает токен до 6 символов, поэтому слово длиннее 6 букв (например,
+    «огнетушитель» → стем «огнету») не совпадает с своими же префиксами
+    короче 6 символов («ог», «огн», «огне», «огнет») при точном сравнении —
+    подсказки появляются только с 6-го введённого символа, хотя UI обещает
+    «минимум 2». При этом флаге совпадением считается ЛИБО точное равенство,
+    ЛИБО когда какой-то стем записи НАЧИНАЕТСЯ с q_stem (пользователь печатает
+    начало слова слева направо, а не наоборот).
+    """
+    if q_stem in c_stems:
+        return True
+    if prefix_match:
+        return any(c.startswith(q_stem) for c in c_stems)
+    return False
+
+
 def generic_progressive_match(
     query: str,
     indexed: list[tuple[Any, set[str]]],
+    prefix_match: bool = False,
 ) -> tuple[str, list[tuple[Any, float]]]:
     """Прогрессивное сужение по словам — domain-agnostic ядро (см. модуль docstring).
 
@@ -118,6 +143,15 @@ def generic_progressive_match(
     слова — из БД вылезают совпадения как интерактивный фильтр. Если по первому
     слову 0 — товара/позиции нет, добавлять. Если несколько — следующие слова,
     пока не останется один похожий.»
+
+    `prefix_match` (по умолчанию False) — включает префиксное сопоставление стемов
+    через `_stem_hits` (см. её docstring за подробным обоснованием: `stem()` режет
+    по 6 символам, из-за чего интерактивный набор слова длиннее 6 букв не даёт
+    подсказок до 6-го символа, хотя UI обещает «минимум 2»). Флаг по умолчанию
+    выключен и должен явно включаться только вызывающей стороной, отвечающей за
+    интерактивный ввод (инлайновый подбор товара в строке позиции) — пакетное
+    сопоставление при импорте/дедупе товаров обязано оставаться строгим, чтобы не
+    расширять его поведение по умолчанию.
 
     Возвращает (status, [(payload, coverage_score), ...]) — score в [0, 1],
     отсортировано по score desc, отфильтровано по SCORE_DIFFERENT (заведомо
@@ -138,7 +172,7 @@ def generic_progressive_match(
     pool = indexed
     matched_stem_count = 0
     for q_stem in q_stems:
-        next_pool = [entry for entry in pool if q_stem in entry[1]]
+        next_pool = [entry for entry in pool if _stem_hits(q_stem, entry[1], prefix_match)]
         if not next_pool:
             if matched_stem_count == 0:
                 # Даже первый токен query ни у кого из каталога не встречается
@@ -152,7 +186,7 @@ def generic_progressive_match(
 
     results: list[tuple[Any, float]] = []
     for payload, c_stems in pool:
-        coverage = len([s for s in q_stems if s in c_stems]) / len(q_stems)
+        coverage = len([s for s in q_stems if _stem_hits(s, c_stems, prefix_match)]) / len(q_stems)
         results.append((payload, round(coverage, 4)))
 
     results.sort(key=lambda x: x[1], reverse=True)

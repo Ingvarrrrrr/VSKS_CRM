@@ -916,6 +916,66 @@
                             >Согласовать</v-btn>
                           </template>
                         </div>
+
+                        <!-- Замечание владельца п.2 (2026-08-12): ТРЕТЬЯ, независимая плашка — сумма
+                             плановых позиций категории превысила вручную заданный план (excessPlanFor).
+                             Тот же механизм согласования — см. excessPlanFor()/requestPlanExcessApproval(). -->
+                        <div v-if="excessPlanFor(node)" class="feo-plan-note d-flex align-center flex-wrap ga-1 mt-1">
+                          <template v-if="excessApprovalFor(node)?.status === 'pending'">
+                            <v-chip size="x-small" color="orange" variant="flat">
+                              план превышает заданный вручную на {{ formatCurrency(excessPlanFor(node)!.amount) }} (задано {{ formatCurrency(excessPlanFor(node)!.manualEntered) }}, стало {{ formatCurrency(excessPlanFor(node)!.manualEntered + excessPlanFor(node)!.amount) }}) · на согласовании у: {{ excessPendingNames(node) || '—' }}
+                            </v-chip>
+                            <template v-if="excessMyPendingStep(node)">
+                              <v-btn size="x-small" variant="tonal" color="success"
+                                :loading="excessDecideLoading === node.id"
+                                @click.stop="decidePlanExcess(node, 'approved')"
+                              >Одобрить</v-btn>
+                              <v-btn size="x-small" variant="tonal" color="error"
+                                :loading="excessDecideLoading === node.id"
+                                @click.stop="openExcessRejectDialog(node)"
+                              >Отклонить</v-btn>
+                            </template>
+                          </template>
+                          <template v-else-if="excessApprovalFor(node)?.status === 'rejected'">
+                            <v-chip size="x-small" color="red" variant="flat">
+                              превышение плана над ручным отклонено{{ excessApprovalFor(node)?.comment ? ': ' + excessApprovalFor(node)!.comment : '' }}
+                            </v-chip>
+                            <v-btn size="x-small" variant="tonal" color="red"
+                              :loading="excessRequestLoading === node.id"
+                              @click.stop="requestPlanExcessApproval(node)"
+                            >Согласовать</v-btn>
+                          </template>
+                          <template v-else>
+                            <v-chip size="x-small" color="red" variant="flat">
+                              план превышает заданный вручную на {{ formatCurrency(excessPlanFor(node)!.amount) }} (задано {{ formatCurrency(excessPlanFor(node)!.manualEntered) }}, стало {{ formatCurrency(excessPlanFor(node)!.manualEntered + excessPlanFor(node)!.amount) }})
+                            </v-chip>
+                            <v-btn size="x-small" variant="tonal" color="red"
+                              :loading="excessRequestLoading === node.id"
+                              @click.stop="requestPlanExcessApproval(node)"
+                            >Согласовать</v-btn>
+                          </template>
+                          <div v-if="excessPlanFor(node)!.items.length" style="width:100%;font-size:11px;color:#B45309">
+                            Позиции-виновники: {{ excessPlanItemsText(node) }}
+                          </div>
+                        </div>
+
+                        <!-- Замечание владельца п.4: «если согласовали превышение — так и остаётся,
+                             надо чтобы висело предупреждение, что согласовали» — постоянная спокойная
+                             пометка, НЕ зависит от того, активно ли превышение прямо сейчас. -->
+                        <div v-if="excessPlanApprovalPermanent(node)" class="feo-plan-note mt-1">
+                          <v-chip size="x-small" color="grey" variant="tonal" prepend-icon="mdi-check-decagram">
+                            превышение согласовано: {{ formatCurrency(excessPlanApprovalPermanent(node)!.amount) }}{{ excessPlanApprovalPermanent(node)!.at ? ', ' + excessPlanApprovalPermanent(node)!.at : '' }}, {{ excessPlanApprovalPermanent(node)!.by }}
+                          </v-chip>
+                        </div>
+
+                        <!-- Замечание владельца п.3: «Приравнять ФЭО к плану» — только org_admin и выше
+                             (canSaveVersion — переиспользован без изменений, см. её объявление ниже). -->
+                        <div v-if="canSaveVersion" class="mt-1">
+                          <v-btn size="x-small" variant="text" color="blue-grey" prepend-icon="mdi-equal"
+                            title="Установить финансирование по ФЭО этой категории равным её полной плановой сумме"
+                            @click.stop="openAlignBudgetConfirm(node)"
+                          >Приравнять ФЭО к плану</v-btn>
+                        </div>
                       </td>
 
                       <!-- Фактическая сумма — задача владельца «план ≠ факт» (сессия 2026-08-06, Шаг 5):
@@ -1004,7 +1064,7 @@
                            7 колонок, что и основная (см. feoResize выше); чтобы её auto-колонки делили
                            РОВНО ТУ ЖЕ полную ширину контейнера, что и основная таблица, ячейка обязана
                            захватывать ВСЕ 7 колонок основной строки, а не 6. -->
-                      <td colspan="7" style="padding:0; background:rgba(20,184,166,0.06)">
+                      <td colspan="7" style="padding:0">
                         <!-- padding-left:0 (было 12px) — тот же замер в браузере показал, что этот
                              левый паддинг сдвигал ВСЮ вложенную таблицу плановых позиций на 12px
                              вправо от колонок основной таблицы feo-table.
@@ -1019,6 +1079,14 @@
                                промежуточного заголовка-обёртки «Позиции: план vs факт», это уже просто
                                продолжение дерева. Кнопка добавления плановой позиции осталась, без title. -->
                           <div class="d-flex align-center mb-2" style="gap:8px">
+                            <!-- Замечание владельца 1 (2026-08-12): «по одной сворачивать неудобно,
+                                 надо развернуть все сразу, посмотреть, как что покупалось, и свернуть
+                                 все сразу» — переключатель раскрытия «План vs факт» у ВСЕХ плановых
+                                 позиций именно этой категории, см. toggleAllPlannedItemsForCategory. -->
+                            <v-btn v-if="displayPlannedRowsFor(node).length > 1" size="x-small" variant="text" color="teal"
+                              :prepend-icon="anyPlannedExpandedFor(node) ? 'mdi-arrow-collapse-vertical' : 'mdi-arrow-expand-vertical'"
+                              @click="toggleAllPlannedItemsForCategory(node)"
+                            >{{ anyPlannedExpandedFor(node) ? 'Свернуть всё' : 'Развернуть всё' }}</v-btn>
                             <v-spacer />
                             <v-btn size="x-small" variant="tonal" color="teal" prepend-icon="mdi-plus"
                               @click="openAddPlannedItem(node.id)">
@@ -1061,16 +1129,19 @@
                                    fixed/auto свойства), а колонка кнопок зафиксирована в 112px — как
                                    .feo-th-actions у основной (там тоже fixed, не auto). Иначе набор и число
                                    auto-колонок в двух таблицах отличались бы, и остаток делился бы по-разному. -->
-                              <tr style="background:#DBEAFE">
-                                <th :style="[feoResize.resizeStyle('name'), { paddingLeft: `${plannedItemIndentPx(node)}px` }]" style="padding-top:4px;padding-right:8px;padding-bottom:4px;text-align:left;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE;background:#DBEAFE" title="Плановая позиция. Закупки, привязанные к ней (как выставили в закупку / как в договоре — по стадии), — в раскрывающемся блоке под строкой плана.">
+                              <!-- Замечание владельца 3 (2026-08-12): «слишком сливающиеся подложки» —
+                                   фон шапки/строк убран (белый), синий остался только в тексте заголовков
+                                   и тонкой нижней границе шапки. -->
+                              <tr>
+                                <th :style="[feoResize.resizeStyle('name'), { paddingLeft: `${plannedItemIndentPx(node)}px` }]" style="padding-top:4px;padding-right:8px;padding-bottom:4px;text-align:left;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE" title="Плановая позиция. Закупки, привязанные к ней (как выставили в закупку / как в договоре — по стадии), — в раскрывающемся блоке под строкой плана.">
                                   Позиция плана
                                 </th>
-                                <th :style="feoResize.resizeStyle('budget')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE;background:#DBEAFE">Плановая цена за единицу</th>
-                                <th :style="feoResize.resizeStyle('qty')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE;background:#DBEAFE">Кол-во плана</th>
-                                <th :style="feoResize.resizeStyle('planned')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE;background:#DBEAFE">Сумма плана</th>
-                                <th :style="feoResize.resizeStyle('spent')" style="border-bottom:1px solid #BFDBFE;background:#DBEAFE"></th>
-                                <th :style="feoResize.resizeStyle('residual')" style="border-bottom:1px solid #BFDBFE;background:#DBEAFE"></th>
-                                <th style="width:112px;min-width:112px;max-width:112px;padding:4px 2px;border-bottom:1px solid #BFDBFE;background:#DBEAFE"></th>
+                                <th :style="feoResize.resizeStyle('budget')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE">Плановая цена за единицу</th>
+                                <th :style="feoResize.resizeStyle('qty')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE">Кол-во плана</th>
+                                <th :style="feoResize.resizeStyle('planned')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE">Сумма плана</th>
+                                <th :style="feoResize.resizeStyle('spent')" style="border-bottom:1px solid #BFDBFE"></th>
+                                <th :style="feoResize.resizeStyle('residual')" style="border-bottom:1px solid #BFDBFE"></th>
+                                <th style="width:112px;min-width:112px;max-width:112px;padding:4px 2px;border-bottom:1px solid #BFDBFE"></th>
                               </tr>
                             </thead>
                             <tbody>
@@ -1083,9 +1154,9 @@
                                    ИЛИ (если их нет) одна синтетическая «ручной план ФЭО» с id = -node.id —
                                    единая иерархия ШАГ 1 (2026-08-07), псевдо-строка была отдельным блоком
                                    ниже, теперь та же вёрстка, что и у реальной плановой позиции. -->
-                              <template v-for="planned in displayPlannedRowsFor(node)" :key="`p-${planned.id}`">
-                                <tr style="border-bottom:1px solid #E0F2FE">
-                                  <td :style="[feoResize.resizeStyle('name'), { paddingLeft: `${plannedItemIndentPx(node)}px` }]" style="padding-top:4px;padding-right:8px;padding-bottom:4px;color:#0c4a6e;background:rgba(59,130,246,0.05)">
+                              <template v-for="(planned, pIdx) in displayPlannedRowsFor(node)" :key="`p-${planned.id}`">
+                                <tr style="border-bottom:1px solid #E5E7EB">
+                                  <td :style="[feoResize.resizeStyle('name'), { paddingLeft: `${plannedItemIndentPx(node)}px` }]" style="padding-top:4px;padding-right:8px;padding-bottom:4px;color:#0c4a6e">
                                     <div class="d-flex align-center" style="gap:2px">
                                       <!-- Правка владельца (жалоба по скриншоту): раскрытие теперь доступно ВСЕГДА —
                                            даже без единой привязанной закупки, чтобы блок «План vs факт» не пропадал
@@ -1116,19 +1187,19 @@
                                   <!-- Правка владельца (2026-08-12): «Цена плана» — под колонкой budget
                                        («Количество и финансирование по ФЭО») основной таблицы, поэтому она
                                        ЛЕВЕЕ «Кол-во плана» (qty) ниже — порядок задан выравниванием колонок. -->
-                                  <td :style="feoResize.resizeStyle('budget')" style="padding:4px 8px;text-align:right;color:#64748b;background:rgba(59,130,246,0.05)">
+                                  <td :style="feoResize.resizeStyle('budget')" style="padding:4px 8px;text-align:right;color:#64748b">
                                     <span v-if="planned.amount && Number(planned.quantity) > 0">{{ formatCurrency(Number(planned.amount) / Number(planned.quantity)) }}</span>
                                   </td>
-                                  <td :style="feoResize.resizeStyle('qty')" style="padding:4px 8px;text-align:right;color:#64748b;background:rgba(59,130,246,0.05)">
+                                  <td :style="feoResize.resizeStyle('qty')" style="padding:4px 8px;text-align:right;color:#64748b">
                                     <span v-if="planned.quantity">{{ parseFloat(String(planned.quantity)) }} {{ planned.unit || '' }}</span>
                                   </td>
-                                  <td :style="feoResize.resizeStyle('planned')" style="padding:4px 8px;text-align:right;color:#64748b;background:rgba(59,130,246,0.05)">
+                                  <td :style="feoResize.resizeStyle('planned')" style="padding:4px 8px;text-align:right;color:#64748b">
                                     <span v-if="planned.amount">{{ formatCurrency(planned.amount) }}</span>
                                   </td>
                                   <!-- spent/residual — пустые заглушки, только чтобы раскладка колонок совпадала
                                        со основной таблицей (см. правку выше у feoResize/th этой таблицы). -->
-                                  <td :style="feoResize.resizeStyle('spent')" style="background:rgba(59,130,246,0.05)"></td>
-                                  <td :style="feoResize.resizeStyle('residual')" style="background:rgba(59,130,246,0.05)"></td>
+                                  <td :style="feoResize.resizeStyle('spent')"></td>
+                                  <td :style="feoResize.resizeStyle('residual')"></td>
                                   <!-- Требование владельца (2026-08-12): факт (colspan-заглушка, «Разница»,
                                        «Контрагент», «Статус» — factForPlanned/calcDiff/getDiffStyle/isFactActual)
                                        убран с уровня строки плановой позиции целиком — одна строка не может
@@ -1140,7 +1211,30 @@
                                        (planned.isManual), поэтому вынесена ИЗ ветки v-if/v-else ниже.
                                        width:112px — как у .feo-th-actions основной таблицы (fixed, не auto),
                                        чтобы остаток между auto-колонками делился одинаково в обеих таблицах. -->
-                                  <td style="width:112px;min-width:112px;max-width:112px;padding:2px;text-align:center;background:rgba(59,130,246,0.05)">
+                                  <td style="width:112px;min-width:112px;max-width:112px;padding:2px;text-align:center">
+                                    <div class="d-flex align-center flex-wrap justify-center" style="gap:0">
+                                      <!-- Замечание владельца 2 (2026-08-12): «должна быть возможность менять
+                                           плановые позиции местами внутри категории» — те же стрелки, что уже
+                                           есть у категорий ФЭО в дереве (reorderFeoNode), только для плановых
+                                           позиций (reorderPlannedItem, PUT /feo-planned-items/{id} с sort_order).
+                                           Не показываются у синтетической строки (planned.isManual) — она одна
+                                           и переставлять её не с чем (displayPlannedRowsFor никогда не мешает
+                                           ручную строку с реальными). -->
+                                      <template v-if="!planned.isManual">
+                                        <v-btn icon="mdi-chevron-up" variant="text" size="x-small" color="grey-darken-1"
+                                          :disabled="pIdx === 0"
+                                          :loading="reorderingPlannedItemId === planned.id"
+                                          title="Переместить выше"
+                                          @click.stop="reorderPlannedItem(node, pIdx, 'up')"
+                                        />
+                                        <v-btn icon="mdi-chevron-down" variant="text" size="x-small" color="grey-darken-1"
+                                          :disabled="pIdx === displayPlannedRowsFor(node).length - 1"
+                                          :loading="reorderingPlannedItemId === planned.id"
+                                          title="Переместить ниже"
+                                          @click.stop="reorderPlannedItem(node, pIdx, 'down')"
+                                        />
+                                      </template>
+                                    </div>
                                     <v-btn
                                       size="x-small" variant="text" color="teal" class="text-none"
                                       :prepend-icon="expandedPlannedItems.has(planned.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
@@ -1185,19 +1279,30 @@
                                   <!-- colspan="7" (было 5) — у вложенной таблицы плановых позиций теперь 7 колонок
                                        (добавлены пустые spent/residual, см. выше), эта ячейка должна закрывать
                                        всю строку целиком, а не оставлять 2 колонки «дыркой» справа. -->
-                                  <td colspan="7" style="padding:4px 8px 10px 32px;background:rgba(20,184,166,0.03)">
-                                    <table style="width:100%;border-collapse:collapse;font-size:12px">
+                                  <!-- Замечание владельца 3+4 (2026-08-12): вложенный блок «План vs факт» —
+                                       собственная светло-серая заливка + рамка + заметный отступ сверху/слева
+                                       (визуальная вложенность внутрь плановой позиции), ЧТОБЫ читался как
+                                       отдельная от плана сущность. table-layout:fixed добавлен на ВНУТРЕННЮЮ
+                                       таблицу (у неё его не было — вот почему в МИНПРОСе блок садился по
+                                       ширине содержимого вместо 100% строки, см. разбор в отчёте задачи;
+                                       у обёртки-td теперь padding:0, вся раскладка — во внутреннем div). -->
+                                  <td colspan="7" style="padding:0">
+                                    <div style="margin:10px 8px 12px 32px;padding:8px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:6px">
+                                    <table style="width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px">
                                       <thead>
-                                        <tr style="background:#CCFBF1">
+                                        <!-- Замечание владельца 5 (2026-08-12): порядок «цена → количество → сумма»,
+                                             как в «Позициях плана» — было «кол-во → цена», переставлено местами
+                                             в ОБЕИХ группах (план-сторона и факт-сторона). Подписи не менялись. -->
+                                        <tr>
                                           <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4" :title="factStageHeaderFor(node.id, planned.id) === 'Позиция закупки' ? 'Закупки этой плановой позиции сейчас на разных стадиях — стадия каждой подписана на её строке' : ''">
                                             {{ factStageHeaderFor(node.id, planned.id) }}
                                           </th>
-                                          <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Кол-во</th>
                                           <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Цена</th>
+                                          <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Кол-во</th>
                                           <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:110px">Сумма</th>
                                           <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4" title="Реальные закупки, привязанные к этой плановой позиции — что действительно куплено или заказано">ФАКТ (из закупок)</th>
-                                          <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Кол-во (факт)</th>
                                           <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Цена (факт)</th>
+                                          <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:90px">Кол-во (факт)</th>
                                           <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:110px">Сумма (факт)</th>
                                           <th style="padding:4px 8px;text-align:right;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:100px">Разница</th>
                                           <th style="padding:4px 8px;text-align:left;color:#0f766e;font-weight:600;border-bottom:1px solid #99F6E4;width:120px">Контрагент</th>
@@ -1212,15 +1317,15 @@
                                         <template v-for="actual in factForPlanned(node.id, planned.id)" :key="`pa-${actual.purchase_item_id}`">
                                         <tr
                                           :data-item-id="actual.purchase_item_id" data-item-group="planned"
-                                          style="border-bottom:1px solid #CCFBF1;background:rgba(20,184,166,0.05)">
+                                          style="border-bottom:1px solid #E2E8F0">
                                           <td style="padding:4px 8px;color:#0c4a6e">
                                             {{ leftGroupInfo(actual).name }}
                                             <v-chip size="x-small" :color="leftGroupInfo(actual).isContract ? 'indigo' : 'blue-grey'" variant="tonal" class="ml-1" style="font-size:9px;height:16px"
                                               :title="leftGroupInfo(actual).isContract ? 'Наименование, количество и цена — из договора с подрядчиком' : 'Как товар завели в заявке/ТЗ — до заключения договора'"
                                             >{{ leftGroupInfo(actual).isContract ? 'как в договоре' : 'как выставили' }}</v-chip>
                                           </td>
-                                          <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).quantity != null ? `${parseFloat(String(leftGroupInfo(actual).quantity))} ${leftGroupInfo(actual).unit || ''}` : '—' }}</td>
                                           <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).unitPrice != null ? formatCurrency(leftGroupInfo(actual).unitPrice!) : '—' }}</td>
+                                          <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).quantity != null ? `${parseFloat(String(leftGroupInfo(actual).quantity))} ${leftGroupInfo(actual).unit || ''}` : '—' }}</td>
                                           <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).total != null ? formatCurrency(leftGroupInfo(actual).total!) : '—' }}</td>
                                           <td style="padding:4px 8px 4px 24px;color:#166534">
                                             <div class="d-flex align-center" style="gap:6px">
@@ -1260,8 +1365,8 @@
                                                заполненные на ЛЮБОЙ стадии (даже «план закупок», без единой поставки).
                                                Тот же признак факта, что уже работает у «Сумма (факт)»:
                                                fact_amount != null — до появления факта прочерк, как и у суммы. -->
-                                          <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.fact_amount != null && actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
                                           <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.fact_amount != null && actual.unit_price ? formatCurrency(actual.unit_price) : '—' }}</td>
+                                          <td style="padding:4px 8px;text-align:right;color:#64748b">{{ actual.fact_amount != null && actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
                                           <td style="padding:4px 8px;text-align:right;font-weight:500">
                                             <template v-if="actual.fact_amount != null">
                                               <span :title="actual.fact_allocated ? 'Распределено пропорционально между позициями закупки' : ''">{{ formatCurrency(actual.fact_amount) }}</span>
@@ -1302,19 +1407,19 @@
                                         <!-- Подстроки стадий уточнения (справочно, НЕ входят в comparisonPlanTotal/comparisonFactTotal) -->
                                         <template v-if="expandedStageRows.has(`pa-${actual.purchase_item_id}`)">
                                         <tr v-for="sr in stagesWithDiff(actual.stages)" :key="`pa-stage-${actual.purchase_item_id}-${sr.stage.key}`"
-                                          style="border-bottom:1px solid #99F6E4;background:rgba(20,184,166,0.09)">
+                                          style="border-bottom:1px solid #E2E8F0">
                                           <td style="padding:2px 8px 2px 40px;color:#94a3b8;font-size:10px">{{ sr.stage.label }}</td>
                                           <td style="padding:2px 8px"></td>
                                           <td style="padding:2px 8px"></td>
                                           <td style="padding:2px 8px"></td>
                                           <td style="padding:2px 8px" :style="sr.nameChanged ? 'color:#4F46E5' : ''">{{ sr.stage.name }}</td>
                                           <td style="padding:2px 8px;text-align:right;color:#64748b">
-                                            {{ sr.stage.quantity != null ? `${parseFloat(String(sr.stage.quantity))} ${sr.stage.unit || ''}` : '—' }}
-                                            <div v-if="sr.qtyDeltaLabel" style="font-size:10px" :style="`color:${sr.qtyDeltaColor}`">{{ sr.qtyDeltaLabel }}</div>
-                                          </td>
-                                          <td style="padding:2px 8px;text-align:right;color:#64748b">
                                             {{ sr.stage.unit_price != null ? formatCurrency(sr.stage.unit_price) : '—' }}
                                             <div v-if="sr.priceDeltaLabel" style="font-size:10px" :style="`color:${sr.priceDeltaColor}`">{{ sr.priceDeltaLabel }}</div>
+                                          </td>
+                                          <td style="padding:2px 8px;text-align:right;color:#64748b">
+                                            {{ sr.stage.quantity != null ? `${parseFloat(String(sr.stage.quantity))} ${sr.stage.unit || ''}` : '—' }}
+                                            <div v-if="sr.qtyDeltaLabel" style="font-size:10px" :style="`color:${sr.qtyDeltaColor}`">{{ sr.qtyDeltaLabel }}</div>
                                           </td>
                                           <td style="padding:2px 8px;text-align:right;color:#64748b">{{ sr.stage.total != null ? formatCurrency(sr.stage.total) : '—' }}</td>
                                           <td style="padding:2px 8px"></td>
@@ -1326,6 +1431,7 @@
                                         </template>
                                       </tbody>
                                     </table>
+                                    </div>
                                   </td>
                                 </tr>
                               </template>
@@ -1349,13 +1455,31 @@
                                    тогда те же самые позиции стали бы фактом синтетической «ручной план
                                    ФЭО» строки, см. factForPlanned(catId, -node.id) — hasManualPseudoRow
                                    ниже это и проверяет), либо реальные плановые позиции есть, но именно
-                                   эта закупка ни к одной не привязана. -->
-                              <tr v-if="unplannedActualFor(node).length" style="background:rgba(245,158,11,0.14)">
-                                <td colspan="12" style="padding:4px 8px;font-weight:600;color:#B45309;font-size:11px">
-                                  <v-icon icon="mdi-alert-circle-outline" size="14" color="warning" class="mr-1" />
-                                  Не привязаны к плану — требуется действие
-                                </td>
-                              </tr>
+                                   эта закупка ни к одной не привязана.
+                                   Правка (регресс вёрстки, найдено при разборе задачи): этот блок — 12
+                                   реальных колонок (те же, что у вложенной таблицы «План vs факт» выше —
+                                   см. её thead), а НЕ 7 колонок основной таблицы плановых позиций. Раньше
+                                   его строки были ПРЯМЫМИ детьми <tbody> внешней 7-колоночной таблицы —
+                                   table-layout:fixed считал колонки по МАКСИМУМУ ячеек среди ВСЕХ строк
+                                   таблицы (а не только thead), находил тут 12 и делил остаток между 4+8=12
+                                   auto-колонками вместо 4, отчего «Позиция плана»/«Кол-во плана»/«Сумма
+                                   плана» в шапке резко сужались и текст/подписи наезжали друг на друга —
+                                   именно это было на скриншоте по МИНПРОС (у категорий без непривязанных
+                                   закупок, как «Внедорожник» у ЦентрПоиск, эффекта не было, поэтому баг
+                                   был на вид «плавающий»). Оборачиваем в colspan="7"+свою таблицу — тот
+                                   же приём, что уже применён у «План vs факт» (td colspan=7 → div → own
+                                   table), тогда обе таблицы снова независимы по колонкам. -->
+                              <tr v-if="unplannedActualFor(node).length">
+                                <td colspan="7" style="padding:0">
+                                  <div style="margin:8px 8px 4px 8px;padding:8px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.35);border-radius:6px">
+                                  <table style="width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px">
+                                    <tbody>
+                                    <tr style="background:rgba(245,158,11,0.14)">
+                                      <td colspan="12" style="padding:4px 8px;font-weight:600;color:#B45309;font-size:11px">
+                                        <v-icon icon="mdi-alert-circle-outline" size="14" color="warning" class="mr-1" />
+                                        Не привязаны к плану — требуется действие
+                                      </td>
+                                    </tr>
                               <template v-for="actual in unplannedActualFor(node)" :key="`a-${actual.purchase_item_id}`">
                               <tr
                                 :data-item-id="actual.purchase_item_id" data-item-group="unplanned"
@@ -1459,6 +1583,11 @@
                               </tr>
                               </template>
                               </template>
+                                    </tbody>
+                                  </table>
+                                  </div>
+                                </td>
+                              </tr>
 
                               <!-- Ручной план ФЭО (сама категория) — до 2026-08-07 был отдельным блоком
                                    строк здесь; теперь это ОДНА строка внутри цикла displayPlannedRowsFor
@@ -2509,6 +2638,27 @@
           <v-spacer />
           <v-btn variant="text" @click="showDeleteFeoDialog = false">Отмена</v-btn>
           <v-btn v-if="!feoDeleteError" color="error" :loading="savingFeo" @click="deleteFeoCategory">Удалить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── «Приравнять ФЭО к плану» — подтверждение с текущими числами (замечание владельца п.3, 2026-08-12) ── -->
+    <v-dialog v-model="alignBudgetDialog.show" max-width="440">
+      <v-card class="dialog-card">
+        <v-card-title class="dialog-title">
+          <v-icon icon="mdi-equal" color="primary" class="mr-2" />
+          Приравнять ФЭО к плану?
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="alignBudgetDialog.show = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pt-4">
+          <div class="mb-2">«{{ alignBudgetDialog.node?.name }}»</div>
+          <div>ФЭО категории станет {{ formatCurrency(alignBudgetDialog.newBudget) }} вместо {{ formatCurrency(alignBudgetDialog.oldBudget) }}</div>
+        </v-card-text>
+        <v-card-actions class="px-4 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="alignBudgetDialog.show = false">Отмена</v-btn>
+          <v-btn color="primary" :loading="alignBudgetLoading === alignBudgetDialog.node?.id" @click="confirmAlignBudgetToPlan">Приравнять</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -4401,6 +4551,23 @@ const planTreeByCat = ref<Record<number, {
   // «Заметный сигнал превышения» — то же excess_amount под понятным именем + виновник
   // (закупка, из-за которой узел вышел за ФЭО), см. ExcessCulprit выше.
   excess_over_feo?: number; excess_culprit?: ExcessCulprit | null
+  // over — полная плановая сумма узла ПОВЕРХ node["plan"] (см. backend
+  // align_budget_to_plan: new_budget = plan + over), нужен фронту только чтобы
+  // показать «станет N ₽» в подтверждении «Приравнять ФЭО к плану» ДО вызова —
+  // реальный расчёт всё равно делает бэкенд.
+  over?: number
+  // Замечания владельца п.2/п.4 (2026-08-12, «план ≠ факт», продолжение) —
+  // ТРЕТИЙ вид превышения (Σ плановых позиций > вручную заданного плана) и
+  // постоянная пометка «превышение согласовано», см. excessPlanFor()/
+  // excessPlanApprovalPermanent() ниже.
+  manual_plan_entered?: number
+  excess_plan_over_manual?: number
+  excess_plan_approved?: boolean
+  excess_plan_pending?: boolean
+  excess_plan_items?: { name: string; amount: number }[]
+  excess_approval_amount?: number | null
+  excess_approval_at?: string | null
+  excess_approval_by_name?: string | null
 }>>({})
 // Детали запросов согласования превышения плана ФЭО — GET /api/plan-excess?subsidy_id=
 // (backend/app/routers/plan_excess.py). Карта feo_category_id → ПОСЛЕДНИЙ (по created_at,
@@ -5058,6 +5225,9 @@ interface FeoPlannedItem {
   monthly_start_date?: string | null
   months_count?: number | null
   monthly_amount?: number | null
+  // Владелец (2026-08-12, замечание 2): порядок позиций внутри категории —
+  // настраиваемый (стрелки вверх/вниз), см. reorderPlannedItem ниже.
+  sort_order?: number | null
 }
 // Стадия уточнения позиции (ФЭО → План → Что выставили на закупку → Номенклатура
 // подрядчика → Приняли) — справочная детализация, отдаётся бэкендом внутри FeoActualItem.stages.
@@ -5281,6 +5451,27 @@ function applyDefaultPlannedExpansion(catId: number) {
     if (expandedPlannedItems.value.has(pid)) continue
     if (factForPlanned(catId, pid).length > 0) {
       expandedPlannedItems.value.add(pid)
+    }
+  }
+}
+
+// Замечание владельца 1 (2026-08-12): «по одной сворачивать неудобно, надо развернуть
+// все сразу, посмотреть, как что покупалось, и свернуть все сразу». Кнопка-переключатель
+// в шапке раскрытой категории — использует ТЕ ЖЕ expandedPlannedItems/collapsedPlannedItems
+// (persist через FEO_DISPLAY_PREFS_KEY уже работает, см. watch ниже), ничего нового не заводит.
+function anyPlannedExpandedFor(node: FeoNode): boolean {
+  return displayPlannedRowsFor(node).some(p => expandedPlannedItems.value.has(p.id))
+}
+function toggleAllPlannedItemsForCategory(node: FeoNode) {
+  const ids = displayPlannedRowsFor(node).map(p => p.id)
+  const collapse = ids.some(id => expandedPlannedItems.value.has(id))
+  for (const id of ids) {
+    if (collapse) {
+      expandedPlannedItems.value.delete(id)
+      collapsedPlannedItems.value.add(id)
+    } else {
+      expandedPlannedItems.value.add(id)
+      collapsedPlannedItems.value.delete(id)
     }
   }
 }
@@ -6066,6 +6257,66 @@ async function clearCategoryManualPlan(categoryId: number) {
 async function deletePlannedItem(item: FeoPlannedItem) {
   await apiFetch(`/feo-planned-items/${item.id}`, { method: 'DELETE' })
   await refreshComparison(item.feo_category_id)
+}
+
+// Замечание владельца 2 (2026-08-12): «должна быть возможность менять плановые позиции
+// местами внутри категории». Бэкенд готов — FeoPlannedItem.sort_order (nulls last),
+// PUT /feo-planned-items/{id} принимает sort_order как ОБЫЧНОЕ поле полного payload'а
+// (тот же роутер, что update_planned_item — НЕ отдельный /reorder-эндпоинт, как у
+// категорий ФЭО, см. reorderFeoNode выше). PUT там — ПОЛНАЯ замена (см. её же
+// докстринг/паттерн saveEditPlannedItem/clearCategoryManualPlan) — неполный payload
+// обнулил бы amount/quantity/notes и т.д., поэтому отправляем ВСЕ поля позиции как есть.
+const reorderingPlannedItemId = ref<number | null>(null)
+async function savePlannedItemSortOrder(item: FeoPlannedItem, newOrder: number) {
+  await apiFetch(`/feo-planned-items/${item.id}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      feo_category_id: item.feo_category_id,
+      name: item.name,
+      quantity: item.quantity,
+      unit: item.unit,
+      amount: item.amount,
+      notes: item.notes,
+      is_active: item.is_active,
+      payment_mode: item.payment_mode ?? 'one_time',
+      planned_date: item.planned_date ?? null,
+      monthly_start_date: item.monthly_start_date ?? null,
+      months_count: item.months_count ?? null,
+      monthly_amount: item.monthly_amount ?? null,
+      sort_order: newOrder,
+    }),
+  })
+}
+
+async function reorderPlannedItem(node: FeoNode, pIdx: number, direction: 'up' | 'down') {
+  const rows = displayPlannedRowsFor(node)
+  const a = rows[pIdx]
+  const targetIdx = direction === 'up' ? pIdx - 1 : pIdx + 1
+  if (!a || a.isManual || targetIdx < 0 || targetIdx >= rows.length) return
+  const b = rows[targetIdx]
+  if (!b || b.isManual) return
+  reorderingPlannedItemId.value = a.id
+  try {
+    // sort_order пуст у части/всех (старые данные, до этой правки) — при первом
+    // перемещении проставляем базовую нумерацию по текущему видимому порядку (1,2,3…),
+    // чтобы дальше поведение было предсказуемым (требование владельца).
+    const needsBaseline = rows.some(p => p.sort_order == null)
+    const orders = needsBaseline ? rows.map((_, i) => i + 1) : rows.map(p => Number(p.sort_order))
+    if (needsBaseline) {
+      for (let i = 0; i < rows.length; i++) {
+        if (i === pIdx || i === targetIdx) continue
+        if (Number(rows[i].sort_order) === orders[i]) continue
+        await savePlannedItemSortOrder(rows[i], orders[i])
+      }
+    }
+    await savePlannedItemSortOrder(a, orders[targetIdx])
+    await savePlannedItemSortOrder(b, orders[pIdx])
+    await refreshComparison(node.id)
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.detail || e?.message || 'Не удалось изменить порядок плановых позиций', 'error')
+  } finally {
+    reorderingPlannedItemId.value = null
+  }
 }
 
 // ── Diff helpers ──────────────────────────────────────────────────────────
@@ -7050,6 +7301,51 @@ function excessFactFor(node: FeoNode): { amount: number; pending: boolean; appro
   const amount = Number(t?.excess_fact_over_plan || 0)
   if (amount <= 0.005) return null
   return { amount, pending: !!t?.excess_fact_pending, approved: !!t?.excess_fact_approved }
+}
+
+// Замечание владельца п.2 (2026-08-12, сессия «план ≠ факт», продолжение): ТРЕТИЙ,
+// независимый вид превышения — Σ всех активных плановых позиций категории больше
+// вручную заданного плана (excess_plan_over_manual/manual_plan_entered/excess_plan_items
+// приходят готовыми в planTreeByCat, см. app.services.feo_plan.compute_feo_plan_tree).
+// Тот же механизм согласования (POST /plan-excess сам выбирает, какое из трёх
+// превышений согласовывать по приоритету — см. requestPlanExcessApproval выше,
+// backend app.routers.plan_excess.request_plan_excess_approval), поэтому вся
+// инфраструктура excessApprovalFor/excessPendingNames/excessMyPendingStep/
+// decidePlanExcess переиспользуется без изменений.
+function excessPlanFor(node: FeoNode): { amount: number; pending: boolean; approved: boolean; manualEntered: number; items: { name: string; amount: number }[] } | null {
+  const t = planTreeByCat.value[node.id]
+  const amount = Number(t?.excess_plan_over_manual || 0)
+  if (amount <= 0.005) return null
+  return {
+    amount,
+    pending: !!t?.excess_plan_pending,
+    approved: !!t?.excess_plan_approved,
+    manualEntered: Number(t?.manual_plan_entered || 0),
+    items: t?.excess_plan_items || [],
+  }
+}
+function excessPlanItemsText(node: FeoNode): string {
+  const items = excessPlanFor(node)?.items || []
+  if (!items.length) return ''
+  const shown = items.slice(0, 5).map(it => `«${it.name}» (${formatCurrency(it.amount)})`).join('; ')
+  const more = items.length > 5 ? ` и ещё ${items.length - 5} поз.` : ''
+  return shown + more
+}
+
+// Замечание владельца п.4: «если согласовали превышение — так и остаётся, надо чтобы
+// висело предупреждение, что согласовали» — спокойная ПОСТОЯННАЯ пометка, читает
+// excess_approval_amount/at/by_name (данные ПОСЛЕДНЕГО approved-запроса по категории,
+// см. compute_feo_plan_tree) НЕЗАВИСИМО от того, есть ли активное превышение прямо
+// сейчас (excessPlanFor может уже вернуть null, если план снова уложился в ручной,
+// пометка о прошлом согласовании всё равно должна остаться видна).
+function excessPlanApprovalPermanent(node: FeoNode): { amount: number; at: string; by: string } | null {
+  const t = planTreeByCat.value[node.id]
+  if (t?.excess_approval_amount == null) return null
+  return {
+    amount: Number(t.excess_approval_amount),
+    at: t.excess_approval_at ? new Date(t.excess_approval_at).toLocaleDateString('ru-RU') : '',
+    by: t.excess_approval_by_name || '—',
+  }
 }
 
 // Детали запроса согласования превышения по узлу — см. planExcessApprovals/loadPlanExcessApprovals.
@@ -8300,6 +8596,40 @@ async function reorderFeoNode(node: any, direction: 'up' | 'down') {
     syncFeoFilled()
   } catch (e: any) {
     showSnack(e?.detail || e?.payload?.message || 'Не удалось переместить', 'error')
+  }
+}
+
+// Замечание владельца п.3 (2026-08-12): «Приравнять ФЭО к плану» — POST
+// /feo-categories/{id}/align-budget-to-plan (бэкенд уже готов, включая жёсткий
+// потолок субсидии — assert внутри самого эндпоинта, фронт ничего не проверяет
+// заранее). Доступ — org_admin и выше: переиспользуем canSaveVersion (тот же
+// набор ролей, что backend ADMIN_ROLES = superadmin/account_owner/admin/org_admin,
+// см. её объявление ниже) — НЕ придумываем новую проверку, чтобы не потерять
+// org_admin, как это уже бывало в проекте (см. Lessons).
+const alignBudgetLoading = ref<number | null>(null)
+const alignBudgetDialog = ref<{ show: boolean; node: FeoNode | null; newBudget: number; oldBudget: number }>({
+  show: false, node: null, newBudget: 0, oldBudget: 0,
+})
+function openAlignBudgetConfirm(node: FeoNode) {
+  const t = planTreeByCat.value[node.id]
+  const newBudget = Number(t?.plan || 0) + Number(t?.over || 0)
+  alignBudgetDialog.value = { show: true, node, newBudget, oldBudget: Number(node.budget || 0) }
+}
+async function confirmAlignBudgetToPlan() {
+  const node = alignBudgetDialog.value.node
+  if (!node) return
+  alignBudgetLoading.value = node.id
+  try {
+    await apiFetch(`/feo-categories/${node.id}/align-budget-to-plan`, { method: 'POST' })
+    alignBudgetDialog.value.show = false
+    showSnack('Финансирование по ФЭО приравнено к плану', 'success')
+    if (selectedId.value) await loadFeo(selectedId.value)
+  } catch (e: any) {
+    // Ошибку показываем распакованной (в т.ч. отказ по общему потолку субсидии,
+    // код PLAN_OVER_SUBSIDY_CEILING) — showSnack по умолчанию без автозакрытия.
+    showSnack(e?.payload?.message || e?.detail || e?.message || 'Не удалось приравнять ФЭО к плану', 'error')
+  } finally {
+    alignBudgetLoading.value = null
   }
 }
 

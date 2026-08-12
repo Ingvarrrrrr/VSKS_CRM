@@ -240,6 +240,19 @@ async def get_feo_plan_tree(
     residual, forecast, forecast_over, consumed, excess_amount) — без права они
     приходят null (структура ответа не меняется, количественные/булевы поля
     остаются). superadmin — всегда видит.
+
+    Задача владельца, сессия 2026-08-12 («план ≠ факт», продолжение) — три
+    дополнительных поля узла (см. app.services.feo_plan.compute_feo_plan_tree
+    docstring за формулой):
+      manual_plan_entered/excess_plan_over_manual/excess_plan_approved/
+      excess_plan_pending/excess_plan_items — ТРЕТИЙ вид превышения: Σ ВСЕХ
+      плановых позиций листа/подветки больше «ручного» плана (поля категории
+      старого формата + Σ позиций без auto_created). excess_plan_items —
+      [{name, amount}] автоматически заведённых позиций, из-за которых вылезли.
+      excess_approval_amount/excess_approval_at/excess_approval_by_id/
+      excess_approval_by_name — «превышение согласовано»: данные последнего
+      approved-запроса PlanExcessApproval по категории (висит, даже если узел
+      всё ещё формально в превышении — display включает его целиком).
     """
     from app.services.feo_plan import compute_feo_plan_tree, find_excess_culprit
     from app.models.purchase import Purchase
@@ -285,6 +298,20 @@ async def get_feo_plan_tree(
             "excess_fact_over_plan": node["excess_fact_over_plan"],
             "excess_fact_approved": node["excess_fact_approved"],
             "excess_fact_pending": node["excess_fact_pending"],
+            # Задача владельца п.2 (2026-08-12, сессия «план ≠ факт», продолжение):
+            # ТРЕТИЙ вид превышения — Σ плановых позиций против «ручного» плана,
+            # см. compute_feo_plan_tree docstring.
+            "manual_plan_entered": node["manual_plan_entered"],
+            "excess_plan_over_manual": node["excess_plan_over_manual"],
+            "excess_plan_approved": node["excess_plan_approved"],
+            "excess_plan_pending": node["excess_plan_pending"],
+            "excess_plan_items": node["excess_plan_items"],
+            # Задача владельца п.4 (2026-08-12): «превышение согласовано» — данные
+            # последнего approved-запроса по категории (см. compute_feo_plan_tree).
+            "excess_approval_amount": node["excess_approval_amount"],
+            "excess_approval_at": node["excess_approval_at"],
+            "excess_approval_by_id": node["excess_approval_by_id"],
+            "excess_approval_by_name": node["excess_approval_by_name"],
             # Виновник превышения (задача владельца, план zany-fluttering-mountain.md
             # п.4, 2026-08-10) заполняется НИЖЕ, точечно только для узлов с
             # неснятым excess_amount — find_excess_culprit не бесплатна (доп. запрос),
@@ -323,6 +350,8 @@ async def get_feo_plan_tree(
             "plan_manual", "ordered_sum", "over", "plan", "budget", "display",
             "residual", "forecast", "forecast_over", "consumed", "excess_amount",
             "fact", "excess_over_feo", "excess_fact_over_plan", "excess_culprit",
+            "manual_plan_entered", "excess_plan_over_manual", "excess_plan_items",
+            "excess_approval_amount",
         )
         for cat_id, node in result.items():
             if cat_id == "unassigned":
@@ -2949,6 +2978,105 @@ async def update_category(
         out["warning"] = warning
         return out
     return cat
+
+
+@router.post("/{cat_id}/align-budget-to-plan")
+async def align_budget_to_plan(
+    cat_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_role(*ADMIN_ROLES)),
+):
+    """«Приравнять ФЭО к сумме плана» — задача владельца (2026-08-12): «должна быть
+    кнопка, которая приравнивает сумму ФЭО к сумме плана — условно в конце, когда
+    подбивают итоги; это может сделать только админ организации, не ниже».
+
+    Права: require_role(*ADMIN_ROLES) — ADMIN_ROLES = (superadmin, account_owner,
+    admin, org_admin), см. app.auth.jwt — org_admin и выше, org_admin включён
+    ЯВНО (в подобных кортежах ролей в проекте раньше терялся именно он).
+
+    Целевое значение budget = node["plan"] + node["over"] — ПОЛНАЯ плановая сумма
+    узла (см. app.services.feo_plan.compute_feo_plan_tree._visit: full_display),
+    а НЕ node["display"]. display может быть уже искусственно занижен до
+    plan_manual, если по узлу висит несогласованное превышение плана над ФЭО
+    (excess_amount>0 и не excess_approved) — использовать урезанный display
+    означало бы занизить итоговое ФЭО и молча оставить расхождение вместо того,
+    чтобы его устранить. plan+over — это РЕАЛЬНАЯ сумма того, что запланировано/
+    заказано по узлу целиком, именно её и нужно «подбить» в ФЭО при закрытии
+    итогов.
+
+    Обязана уважать жёсткий потолок субсидии (задача владельца п.3, см.
+    app.services.feo_plan.assert_no_unapproved_excess) — если ПОСЛЕ приравнивания
+    суммарный план по субсидии окажется больше суммарного финансирования по ФЭО
+    (calculate_budget_from_categories), budget откатывается и действие отклоняется
+    с цифрами. Это тот же потолок, что не согласуется НИ ПРИ КАКИХ обстоятельствах —
+    у align-budget-to-plan для него тоже нет обхода.
+
+    Response: {id, name, subsidy_id, old_budget, new_budget}. В проекте нет
+    отдельного механизма истории/audit-лога для feo_categories (проверено —
+    BudgetHistory существует, но её entity_type жёстко "subsidy"/"purchase", для
+    категорий ФЭО не заводился и заводить его тут не стали, чтобы не путать
+    существующих потребителей этой таблицы) — только before/after в этом ответе.
+    """
+    from app.services.feo_plan import compute_feo_plan_tree
+    from app.routers.subsidies import calculate_budget_from_categories
+
+    cat = await db.get(FeoCategory, cat_id)
+    if cat is None:
+        raise HTTPException(404, "Категория ФЭО не найдена")
+    if not cat.subsidy_id:
+        raise HTTPException(422, "У категории не задана субсидия")
+
+    tree = await compute_feo_plan_tree(db, [cat.subsidy_id])
+    node = tree.get(cat_id)
+    if node is None:
+        raise HTTPException(404, "Узел ФЭО не найден в дереве плана")
+
+    old_budget = float(cat.budget) if cat.budget is not None else None
+    new_budget = Decimal(str(node["plan"] + node["over"])).quantize(Decimal("0.01"))
+
+    cat.budget = new_budget
+    await db.flush()
+
+    # Пересчитать дерево/потолок УЖЕ с новым budget — изменение budget само влияет
+    # и на display/excess_amount узла, и на общий потолок финансирования субсидии
+    # (см. app.routers.subsidies.calculate_budget_from_categories).
+    tree_after = await compute_feo_plan_tree(db, [cat.subsidy_id])
+    total_plan_after = sum(n["display"] for n in tree_after.values() if n["parent_id"] is None)
+    ceiling_after = await calculate_budget_from_categories(db, cat.subsidy_id)
+
+    if ceiling_after and ceiling_after > 0:
+        total_plan_after_d = Decimal(str(total_plan_after))
+        ceiling_after_d = Decimal(str(ceiling_after))
+        if total_plan_after_d - ceiling_after_d > Decimal("0.005"):
+            over_d = total_plan_after_d - ceiling_after_d
+            await db.rollback()
+            raise HTTPException(
+                409,
+                {
+                    "code": "PLAN_OVER_SUBSIDY_CEILING",
+                    "message": (
+                        f"Приравнять ФЭО к плану нельзя: после этого суммарный план по субсидии "
+                        f"составит {total_plan_after_d:,.2f} ₽, а общий потолок финансирования по "
+                        f"ФЭО — {ceiling_after_d:,.2f} ₽ (превышение {over_d:,.2f} ₽). Уменьшите "
+                        f"финансирование или план по другим категориям субсидии."
+                    ),
+                    "subsidy_id": cat.subsidy_id,
+                    "total_plan": float(total_plan_after_d),
+                    "ceiling": float(ceiling_after_d),
+                    "over_amount": float(over_d),
+                },
+            )
+
+    await db.commit()
+    await db.refresh(cat)
+
+    return {
+        "id": cat.id,
+        "name": cat.name,
+        "subsidy_id": cat.subsidy_id,
+        "old_budget": old_budget,
+        "new_budget": float(cat.budget),
+    }
 
 
 async def _collect_subtree_ids(cat_id: int, db: AsyncSession) -> list[int]:

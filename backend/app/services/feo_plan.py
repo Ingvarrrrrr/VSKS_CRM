@@ -542,6 +542,47 @@ async def compute_feo_plan_tree(
         цена выше плановой»), их собственная часть не считается по той же
         причине, что и plan.
 
+    ТРИ НЕЗАВИСИМЫХ вида превышения плана (задача владельца, сессия 2026-08-12) —
+    участвуют в assert_no_unapproved_excess наравне друг с другом, один и тот же
+    PlanExcessApproval по категории закрывает все три сразу:
+      1) excess_over_feo/excess_amount — план дороже финансирования по ФЭО узла
+         (budget), см. выше.
+      2) excess_fact_over_plan — факт (итог закупки/КП) дороже плана узла, см. выше.
+         СУПРЕССИЯ (задача п.1): если у листа ЕСТЬ хотя бы одна активная плановая
+         позиция (FeoPlannedItem) и ВСЕ они auto_created=true (заведены автоматически
+         из закупки/заявки, не человеком) — excess_fact_over_plan принудительно 0:
+         план по определению следует за такой закупкой, ругаться не на что (боевой
+         пример — «Приобретение брендированных футболок участников финала»). Если
+         хоть одна позиция заведена руками/импортом — правило работает как раньше.
+         Для групп собственной логики нет — просто rollup fact/plan детей, как и
+         было.
+      3) excess_plan_over_manual (НОВОЕ, задача п.2) — Σ ВСЕХ активных плановых
+         позиций листа/подветки (= plan_manual) больше «ручного» плана
+         (manual_plan_entered): «планируются одни траты, а тут уже превысили —
+         не хватит на всё». manual_plan_entered листа = planned_quantity×
+         planned_amount категории (старый формат, если оба >0) ПЛЮС Σ amount
+         активных FeoPlannedItem с auto_created=false; правило молчит, если
+         manual_plan_entered == 0 (ручного плана нет вовсе — планом становятся
+         сами закупки). excess_plan_items — активные auto_created-позиции этого
+         листа (name/amount), из-за которых вылезли (для группы — конкатенация
+         списков детей). Клэмп >=0 делается НА ЛИСТЕ, группа суммирует уже
+         клэмпнутые значения детей (own-часть группы всегда 0 — у группы нет
+         собственных плановых позиций) — та же схема, что у forecast_over.
+         excess_plan_approved/excess_plan_pending — тот же PlanExcessApproval.
+
+    excess_approval_amount/excess_approval_at/excess_approval_by_id/
+    excess_approval_by_name (задача п.4) — данные ПОСЛЕДНЕГО approved-запроса
+    PlanExcessApproval по категории (сумма превышения на момент запроса, когда
+    resolved_at и кто — финализирующий шаг, последний decided_at среди approved
+    шагов цепочки), чтобы фронт мог показать «превышение согласовано» ДАЖЕ когда
+    узел всё ещё формально в превышении (excess_approved=true, display включает
+    превышение полностью) — «если согласовали, так и остаётся».
+
+    ЧЕТВЁРТЫЙ вид — жёсткий потолок субсидии (Σ display корневых узлов не может
+    превышать общее финансирование по ФЭО субсидии) — НЕ в узле дерева (это
+    свойство субсидии целиком, не категории), проверяется отдельно в самом начале
+    assert_no_unapproved_excess и НЕ согласуется вообще (см. её docstring).
+
     К каждому узлу также приложены subsidy_id/parent_id, чтобы вызывающий код мог
     просуммировать корневые узлы (parent_id IS NULL) для тотала субсидии без
     повторного запроса к FeoCategory.
@@ -602,6 +643,53 @@ async def compute_feo_plan_tree(
     ordered_consumption = await ordered_consumption_by_category(db, subsidy_ids, exclude_planned_item_linked=True)
     fact_consumption = await fact_consumption_by_category(db, subsidy_ids)
 
+    # Задача владельца «план ≠ факт, шаг 2» (сессия 2026-08-12): FeoPlannedItem.auto_created
+    # («плановая позиция заведена автоматически из закупки/заявки, а не человеком») — нужен
+    # для ДВУХ независимых правил:
+    #  1) leaf_all_auto (ниже, в _visit) — если ВСЕ активные позиции листа автозаведены,
+    #     excess_fact_over_plan для этого листа не поднимается (план по определению следует
+    #     за закупкой — ругаться не на что, боевой пример «Приобретение брендированных
+    #     футболок участников финала»);
+    #  2) excess_plan_over_manual — Σ ВСЕХ активных плановых позиций листа против «ручного»
+    #     плана (поля категории старого формата + Σ позиций БЕЗ auto_created) — сигнал
+    #     «план разъехался с тем, что реально запланировали руками», см. docstring ниже.
+    # leaf_item_flags: {cat_id: (кол-во активных позиций, из них auto_created, Σ amount
+    # НЕавтозаведённых)} — один batch-запрос на все листья субсидии.
+    leaf_item_flags: dict[int, tuple] = {}
+    # leaf_auto_items: {cat_id: [{name, amount}, ...]} — сами автозаведённые позиции, чтобы
+    # назвать «виновников» превышения ручного плана (см. excess_plan_items).
+    leaf_auto_items: dict[int, list[dict]] = {}
+    if leaf_ids:
+        flags_q = (
+            select(
+                FeoPlannedItem.feo_category_id,
+                func.count(FeoPlannedItem.id).label("cnt"),
+                func.coalesce(
+                    func.sum(case((FeoPlannedItem.auto_created.is_(True), 1), else_=0)), 0
+                ).label("auto_cnt"),
+                func.coalesce(
+                    func.sum(case((FeoPlannedItem.auto_created.is_(False), FeoPlannedItem.amount), else_=0)), 0
+                ).label("manual_amt"),
+            )
+            .where(FeoPlannedItem.feo_category_id.in_(leaf_ids))
+            .where(FeoPlannedItem.is_active.is_(True))
+            .group_by(FeoPlannedItem.feo_category_id)
+        )
+        for fr in (await db.execute(flags_q)).all():
+            leaf_item_flags[fr.feo_category_id] = (int(fr.cnt), int(fr.auto_cnt), float(fr.manual_amt))
+
+        auto_items_q = (
+            select(FeoPlannedItem.feo_category_id, FeoPlannedItem.name, FeoPlannedItem.amount)
+            .where(FeoPlannedItem.feo_category_id.in_(leaf_ids))
+            .where(FeoPlannedItem.is_active.is_(True))
+            .where(FeoPlannedItem.auto_created.is_(True))
+            .order_by(FeoPlannedItem.feo_category_id, FeoPlannedItem.created_at.asc(), FeoPlannedItem.id.asc())
+        )
+        for fr in (await db.execute(auto_items_q)).all():
+            leaf_auto_items.setdefault(fr.feo_category_id, []).append(
+                {"name": fr.name, "amount": float(fr.amount or 0)}
+            )
+
     # Согласование превышения плана над финансированием узла (feo_categories.budget) —
     # задача владельца «должны быть заблокированы действия, пока план закупок не
     # загонять обратно в размеры ФЭО» + «согласование цепочкой». Берём ПОСЛЕДНИЙ
@@ -621,6 +709,37 @@ async def compute_feo_plan_tree(
         for a in appr_rows:
             if a.feo_category_id not in latest_approval_by_cat:
                 latest_approval_by_cat[a.feo_category_id] = a
+
+    # Задача владельца п.4 (2026-08-12): «если согласовали превышение — так и
+    # остаётся... надо, чтобы висело предупреждение, что согласовали». Для КАЖДОЙ
+    # approved-заявки находим финализирующий шаг (кто последним поставил approved,
+    # с максимальным decided_at — в sequential/parallel цепочке это и есть тот, чьё
+    # решение закрыло запрос) — см. app.routers.plan_excess.decide_plan_excess_step.
+    finalizer_by_approval: dict[int, tuple] = {}
+    finalizer_names: dict[int, Optional[str]] = {}
+    approved_ids = [a.id for a in latest_approval_by_cat.values() if a.status == "approved"]
+    if approved_ids:
+        from app.models.plan_excess_approval import PlanExcessApprovalStep
+        step_rows = (await db.execute(
+            select(
+                PlanExcessApprovalStep.approval_id,
+                PlanExcessApprovalStep.decided_by_user_id,
+                PlanExcessApprovalStep.decided_at,
+            )
+            .where(PlanExcessApprovalStep.approval_id.in_(approved_ids))
+            .where(PlanExcessApprovalStep.status == "approved")
+            .order_by(PlanExcessApprovalStep.approval_id, PlanExcessApprovalStep.decided_at.desc())
+        )).all()
+        for sr in step_rows:
+            if sr.approval_id not in finalizer_by_approval:
+                finalizer_by_approval[sr.approval_id] = (sr.decided_by_user_id, sr.decided_at)
+        finalizer_user_ids = {v[0] for v in finalizer_by_approval.values() if v[0]}
+        if finalizer_user_ids:
+            from app.models.user import User
+            user_rows = (await db.execute(
+                select(User.id, User.full_name, User.username).where(User.id.in_(finalizer_user_ids))
+            )).all()
+            finalizer_names = {u.id: (u.full_name or u.username) for u in user_rows}
 
     def _own_plan_and_forecast(qty: float, amt: float, plan_manual: float, ordered: float, ordered_qty: float):
         """Формула замещения плана заказом для ОДНОГО узла (без учёта детей) —
@@ -654,11 +773,21 @@ async def compute_feo_plan_tree(
         own_fact = fact_cons.get("fact", 0.0)
         own_fact_qty = fact_cons.get("fact_quantity", 0.0)
 
+        leaf_all_auto = False
+        manual_plan_entered = 0.0
+        excess_plan_over_manual = 0.0
+        excess_plan_items: list = []
+
         kids = children_map.get(cat_id, [])
         if not kids:
             qty = float(r.planned_quantity) if r.planned_quantity is not None else 0.0
             amt = float(r.planned_amount) if r.planned_amount is not None else 0.0
             plan_manual = (qty * amt) if (qty > 0 and amt > 0) else 0.0
+            # cat_fields_total — «старый формат» ручного плана (поля категории), ДО
+            # фолбэка на сумму позиций ниже. Нужен отдельно для manual_plan_entered
+            # (задача владельца п.2), т.к. в отличие от plan_manual, ручной план
+            # СКЛАДЫВАЕТ поля категории с суммой позиций, а не замещает одно другим.
+            cat_fields_total = plan_manual
             if plan_manual == 0.0:
                 plan_manual = leaf_item_amt.get(cat_id, 0.0)
             if qty == 0.0:
@@ -680,6 +809,26 @@ async def compute_feo_plan_tree(
             # количества: заказанное количество замещает плановое, когда оно набрано
             # полностью, иначе показывается всё плановое количество листа.
             qty_plan = ordered_qty if (qty > 0 and ordered_qty >= qty) else qty
+
+            # Задача владельца п.1 (2026-08-12): leaf_all_auto — истинно, если у листа
+            # ЕСТЬ хотя бы одна активная плановая позиция и ВСЕ они auto_created —
+            # план целиком заведён автоматически из закупки, ругаться на «факт дороже
+            # плана» на таком листе бессмысленно (см. применение ниже, у excess_fact_over_plan).
+            _flags = leaf_item_flags.get(cat_id)
+            leaf_all_auto = bool(_flags and _flags[0] > 0 and _flags[0] == _flags[1])
+            _manual_items_amt = _flags[2] if _flags else 0.0
+
+            # Задача владельца п.2 (2026-08-12): «ручной план» листа = поля категории
+            # старого формата ПЛЮС Σ amount активных позиций БЕЗ auto_created (см.
+            # docstring compute_feo_plan_tree). «Весь план» — это уже посчитанный выше
+            # plan_manual (Σ ВСЕХ активных позиций либо поля категории — по существующей
+            # формуле, см. её комментарий). Правило молчит, если ручного плана нет вовсе.
+            manual_plan_entered = cat_fields_total + _manual_items_amt
+            if manual_plan_entered > 0.005:
+                _plan_over_manual = plan_manual - manual_plan_entered
+                if _plan_over_manual > 0.005:
+                    excess_plan_over_manual = _plan_over_manual
+                    excess_plan_items = leaf_auto_items.get(cat_id, [])
         else:
             child_nodes = [_visit(c) for c in kids]
             children_plan = sum(c["plan"] for c in child_nodes)
@@ -718,6 +867,15 @@ async def compute_feo_plan_tree(
             children_qty_plan = sum(c["qty_plan"] for c in child_nodes)
             qty_plan = children_qty_plan
 
+            # excess_plan_over_manual (задача владельца п.2) — группа НЕ считает
+            # собственную логику (у группы нет своих плановых позиций — планирование
+            # только внутри категорий-листьев, см. docstring), просто rollup уже
+            # посчитанных (и уже «зажатых» до >=0) значений детей — та же схема, что
+            # у forecast_over выше (клэмп на листе, сумма на группе).
+            manual_plan_entered = sum(c["manual_plan_entered"] for c in child_nodes)
+            excess_plan_over_manual = sum(c["excess_plan_over_manual"] for c in child_nodes)
+            excess_plan_items = [it for c in child_nodes for it in c["excess_plan_items"]]
+
         # Согласование превышения (см. комментарий у latest_approval_by_cat выше):
         # full_display — «настоящая» плановая сумма узла (как считалось раньше,
         # ДО задачи владельца «блокировать пока не согласовано превышение»).
@@ -751,12 +909,42 @@ async def compute_feo_plan_tree(
         # KPI «Запланировано».
         excess_over_feo = excess_amount
         excess_fact_over_plan = (fact - plan) if (fact - plan) > 0.005 else 0.0
+        if leaf_all_auto:
+            # Задача владельца п.1 (2026-08-12): весь план листа автозаведён из
+            # самой же закупки (см. leaf_all_auto выше) — план по определению
+            # следует за закупкой, «факт дороже плана» тут ложная тревога.
+            excess_fact_over_plan = 0.0
         # Согласование превышения факта над планом — та же PlanExcessApproval-запись
         # на категорию (единый механизм согласования, задача владельца «согласование
-        # существующим механизмом»): approved снимает блокировку для ОБОИХ видов
+        # существующим механизмом»): approved снимает блокировку для ВСЕХ ТРЁХ видов
         # превышения одновременно (см. assert_no_unapproved_excess/plan_excess.py).
         excess_fact_approved = bool(excess_fact_over_plan > 0.005 and appr is not None and appr.status == "approved")
         excess_fact_pending = bool(excess_fact_over_plan > 0.005 and appr is not None and appr.status == "pending")
+
+        # Задача владельца п.2 (2026-08-12): ТРЕТЬЕ независимое превышение — Σ ВСЕХ
+        # плановых позиций листа/подветки (plan_manual) больше «ручного» плана
+        # (manual_plan_entered, посчитан выше в _visit) — «планируются одни траты,
+        # а тут уже превысили, значит не хватит на всё». Тот же PlanExcessApproval
+        # закрывает и это (см. assert_no_unapproved_excess).
+        excess_plan_approved = bool(excess_plan_over_manual > 0.005 and appr is not None and appr.status == "approved")
+        excess_plan_pending = bool(excess_plan_over_manual > 0.005 and appr is not None and appr.status == "pending")
+
+        # Задача владельца п.4 (2026-08-12): «если согласовали превышение — так и
+        # остаётся... надо, чтобы висело предупреждение, что согласовали» — данные
+        # для такого предупреждения (сумма/дата/автор ПОСЛЕДНЕГО approved-запроса
+        # по категории), независимо от того, какой из трёх видов превышения его
+        # породил и даже если сейчас узел уже не в превышении (запись не стирается).
+        if appr is not None and appr.status == "approved":
+            excess_approval_amount = float(appr.excess_amount) if appr.excess_amount is not None else None
+            excess_approval_at = appr.resolved_at.isoformat() if appr.resolved_at else None
+            _finalizer = finalizer_by_approval.get(appr.id)
+            excess_approval_by_id = _finalizer[0] if _finalizer else None
+            excess_approval_by_name = finalizer_names.get(_finalizer[0]) if _finalizer and _finalizer[0] else None
+        else:
+            excess_approval_amount = None
+            excess_approval_at = None
+            excess_approval_by_id = None
+            excess_approval_by_name = None
 
         node = {
             "subsidy_id": r.subsidy_id,
@@ -782,6 +970,19 @@ async def compute_feo_plan_tree(
             "excess_fact_over_plan": excess_fact_over_plan,
             "excess_fact_approved": excess_fact_approved,
             "excess_fact_pending": excess_fact_pending,
+            # Задача владельца п.2 (2026-08-12): Σ плановых позиций против «ручного»
+            # плана — см. комментарий у excess_plan_approved выше.
+            "manual_plan_entered": manual_plan_entered,
+            "excess_plan_over_manual": excess_plan_over_manual,
+            "excess_plan_approved": excess_plan_approved,
+            "excess_plan_pending": excess_plan_pending,
+            "excess_plan_items": excess_plan_items,
+            # Задача владельца п.4 (2026-08-12): данные последнего approved-согласования
+            # по категории (для предупреждения «превышение согласовано»), см. комментарий выше.
+            "excess_approval_amount": excess_approval_amount,
+            "excess_approval_at": excess_approval_at,
+            "excess_approval_by_id": excess_approval_by_id,
+            "excess_approval_by_name": excess_approval_by_name,
             "residual": plan - ordered,
             "forecast": forecast,
             "forecast_over": forecast_over,
@@ -1005,13 +1206,26 @@ async def assert_no_unapproved_excess(
     (ordered → delivered → paid), уменьшений сумм, удаления позиций, отката
     заявок — это путь ВОЗВРАТА в рамки плана, его блокировать нельзя.
 
-    adding_amount — необязательная сумма добавляемого действия, используется
+    adding_amount — необязательная сумма добавляемого действия. Для ДВУХ
+    существующих видов превышения (план>ФЭО узла, факт>план узла) используется
     ТОЛЬКО для текста отказа (сколько ещё пытаются добавить сверху уже
     несогласованного превышения); на решение блокировать/не блокировать не
     влияет — блокирует сам факт СУЩЕСТВУЮЩЕГО несогласованного превышения на
     узле или предке (см. сценарий владельца: первая закупка, создавшая
     превышение, не блокируется — блокируется каждая СЛЕДУЮЩАЯ, пока
-    превышение не согласовано или не убрано).
+    превышение не согласовано или не убрано). ИСКЛЮЧЕНИЕ — жёсткий потолок
+    субсидии (см. ниже, задача владельца п.3): там adding_amount ДЕЙСТВИТЕЛЬНО
+    участвует в решении блокировать, т.к. это правило не про «уже случившееся»,
+    а про «это конкретное действие не должно случиться».
+
+    Задача владельца п.3 (2026-08-12, «жёсткий потолок»): «общий план по всем
+    подкатегориям не должен превышать общую сумму ФЭО — критично, ни при каких
+    обстоятельствах». Проверяется ПЕРВЫМ, до узловых проверок ниже, и НЕ
+    участвует в согласовании через PlanExcessApproval вообще — ни admin_override,
+    ни обход для OWNER_ROLES: если план (с учётом adding_amount) выходит за
+    потолок финансирования по ФЭО субсидии (calculate_budget_from_categories,
+    тот же источник, что и feo_budget_total у субсидии, см. app.routers.
+    subsidies) — действие безусловно отклоняется.
     """
     from fastapi import HTTPException
 
@@ -1022,6 +1236,36 @@ async def assert_no_unapproved_excess(
     tree = await compute_feo_plan_tree(db, [cat.subsidy_id])
     if not tree or feo_category_id not in tree:
         return
+
+    # ── Жёсткий потолок субсидии (задача владельца п.3) — см. docstring выше. ──
+    from app.routers.subsidies import calculate_budget_from_categories  # local: avoid router import cycle
+    ceiling = await calculate_budget_from_categories(db, cat.subsidy_id)
+    if ceiling and ceiling > 0:
+        total_plan_now = sum(n["display"] for n in tree.values() if n["parent_id"] is None)
+        total_plan_after_d = Decimal(str(total_plan_now)) + Decimal(str(adding_amount))
+        ceiling_d = Decimal(str(ceiling))
+        if total_plan_after_d - ceiling_d > Decimal("0.005"):
+            from app.models.subsidy import Subsidy
+            subsidy_row = await db.get(Subsidy, cat.subsidy_id)
+            subsidy_name = subsidy_row.name if subsidy_row else f"#{cat.subsidy_id}"
+            over_d = total_plan_after_d - ceiling_d
+            raise HTTPException(
+                409,
+                {
+                    "code": "PLAN_OVER_SUBSIDY_CEILING",
+                    "message": (
+                        f"Жёсткий потолок ФЭО по субсидии «{subsidy_name}»: всего запланировано "
+                        f"{total_plan_after_d:,.2f} ₽, финансирование по ФЭО (потолок) "
+                        f"{ceiling_d:,.2f} ₽, превышение {over_d:,.2f} ₽. Это ограничение НЕ "
+                        f"согласуется ни при каких обстоятельствах — уменьшите план по какой-либо "
+                        f"подкатегории минимум на {over_d:,.2f} ₽."
+                    ),
+                    "subsidy_id": cat.subsidy_id,
+                    "total_plan": float(total_plan_after_d),
+                    "ceiling": float(ceiling_d),
+                    "over_amount": float(over_d),
+                },
+            )
 
     # Цепочка «узел → предки» через parent_id (снизу вверх)
     chain_ids: list[int] = []
@@ -1111,6 +1355,46 @@ async def assert_no_unapproved_excess(
                 f"{excess_fact_d:,.2f} ₽.{extra} Переход в «Договор» и увеличение договорных "
                 f"позиций заблокированы, пока превышение не согласовано (запрос согласования "
                 f"превышения плана по категории «{name}») или сумма договора не снижена до плана."
+            )
+
+        # Задача владельца п.2 (2026-08-12): ТРЕТИЙ вид — Σ плановых позиций больше
+        # «ручного» плана (manual_plan_entered) — «планируются одни траты, а тут уже
+        # превысили, значит не хватит на всё, надо думать, что уменьшать». Наравне с
+        # двумя видами выше: блокирует уже СУЩЕСТВУЮЩЕЕ несогласованное превышение
+        # (adding_amount — только в тексте, как и у них).
+        excess_plan = node.get("excess_plan_over_manual") or 0.0
+        if excess_plan > 0.005 and not node.get("excess_plan_approved"):
+            cat_row = await db.get(FeoCategory, cid)
+            name = cat_row.name if cat_row else f"#{cid}"
+            manual_d = Decimal(str(node.get("manual_plan_entered") or 0.0))
+            full_d = Decimal(str(node.get("plan_manual") or 0.0))
+            excess_plan_d = Decimal(str(excess_plan))
+            items = node.get("excess_plan_items") or []
+            items_txt = ""
+            if items:
+                shown = "; ".join(
+                    f"«{it['name']}» ({Decimal(str(it['amount'])):,.2f} ₽)" for it in items[:10]
+                )
+                more = f" и ещё {len(items) - 10} поз." if len(items) > 10 else ""
+                items_txt = f" Из-за автоматически заведённых позиций: {shown}{more}."
+            raise HTTPException(
+                409,
+                {
+                    "code": "PLAN_ITEMS_OVER_MANUAL_PLAN",
+                    "message": (
+                        f"Сумма плановых позиций по категории ФЭО «{name}» превышает вручную "
+                        f"заведённый план: ручной план {manual_d:,.2f} ₽, сумма всех плановых "
+                        f"позиций {full_d:,.2f} ₽, превышение {excess_plan_d:,.2f} ₽.{items_txt}"
+                        f"{extra} Уменьшите/уберите лишние автоматически заведённые позиции, либо "
+                        f"увеличьте ручной план, либо согласуйте превышение (запрос согласования "
+                        f"превышения плана по категории «{name}»)."
+                    ),
+                    "feo_category_id": cid,
+                    "excess_amount": float(excess_plan_d),
+                    "manual_plan": float(manual_d),
+                    "plan_amount": float(full_d),
+                    "items": items,
+                },
             )
 
 

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Numeric, Boolean, Text, DateTime, Date, ForeignKey, func
+from sqlalchemy import Column, Integer, String, Numeric, Boolean, Text, DateTime, Date, ForeignKey, func, text
 from sqlalchemy.orm import relationship, backref
 from app.database import Base
 
@@ -20,6 +20,13 @@ class FeoPlannedItem(Base):
     monthly_start_date = Column(Date, nullable=True)    # первый платёж для monthly
     months_count = Column(Integer, nullable=True)       # на сколько месяцев
     monthly_amount = Column(Numeric(15, 2), nullable=True)  # платёж за ОДИН месяц
+    # Владелец (2026-08-12, «закупка сама становится планом»): позиция заведена
+    # автоматически из закупки/заявки (app/services/plan_autoassign.py), а не
+    # человеком — UI-признак, не гейт бизнес-логики (см. миграцию m8n9o0p1q2r3).
+    auto_created = Column(Boolean, nullable=False, default=False, server_default=text("FALSE"))
+    # Порядок позиций внутри категории (владелец просил менять их местами);
+    # выдача сортируется sort_order NULLS LAST, id — см. GET /feo-planned-items/.
+    sort_order = Column(Integer, nullable=True)
 
     feo_category = relationship(
         "FeoCategory",

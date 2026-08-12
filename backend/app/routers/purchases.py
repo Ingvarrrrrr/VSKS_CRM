@@ -22,6 +22,11 @@ from app.models.user_org_access import UserOrgAccess
 from app.routers.contracts import ensure_contract_linked
 from app.routers.purchase_budget import _check_budget, _assign_framework_seq, FRAMEWORK_TYPES
 from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_over_plan, compute_feo_plan_tree
+# Владелец (2026-08-12, «закупка сама становится планом»): та же логика
+# автозаведения плановой позиции, что и в wishes.py, нужна и здесь — для
+# закупок, созданных/меняемых в обход заявки (см. вызовы ниже в update_purchase
+# и patch_purchase_item). См. app/services/plan_autoassign.py.
+from app.services.plan_autoassign import auto_assign_planned_items
 from app.product_matcher import find_matching_product
 from typing import List, Optional
 from pydantic import BaseModel
@@ -1533,6 +1538,26 @@ async def update_purchase(
     if "acceptance_docs" in data.model_fields_set:
         flag_modified(p, "acceptance_docs")
 
+    # Владелец (2026-08-12, «закупка сама становится планом»): PUT — единственный
+    # путь добавить/поменять позицию в УЖЕ СУЩЕСТВУЮЩЕЙ закупке напрямую (в обход
+    # заявки — реальный случай с прода: категория 3716 «Приобретение брендированных
+    # футболок» получила закупку на 149 282,50 ₽ без единой плановой позиции, ФЭО
+    # автозаведения тогда не видело). Каждая позиция с категорией ФЭО (своей или
+    # закупки целиком, items_data уже несёт её из payload'а — категория «применена»
+    # раньше любых расчётных проверок ниже) без явной привязки находит/заводит
+    # FeoPlannedItem — ДО assert_no_unapproved_excess/assert_tz_not_over_plan ниже,
+    # иначе им не с чем сравнивать (тот же порядок, что в wishes.py._distribute_
+    # wish_to_purchases). Работает на items_data (ещё pydantic, не персистентные
+    # PurchaseItem) — auto_assign_planned_items требует только атрибуты
+    # item_name/quantity/unit/total_price/feo_category_id/feo_planned_item_id/
+    # over_plan, которые есть у обеих сторон; итоговый feo_planned_item_id/
+    # over_plan, проставленные функцией на items_data, попадают в PurchaseItem
+    # ниже через item_d.model_dump().
+    await auto_assign_planned_items(
+        items_data, p.feo_category_id, db,
+        note=f"закупкой №{p.purchase_number or p.id} (правка вне заявки)",
+    )
+
     # Задача владельца (2026-08-05) «блокировать пока не согласовано превышение плана
     # ФЭО», расширено 2026-08-10 (план zany-fluttering-mountain.md п.4) на ПЕР-ITEM
     # категории: изменение закупки, увеличивающее сумму В КОНКРЕТНОЙ категории ФЭО
@@ -2101,23 +2126,65 @@ async def patch_purchase_item(
                 f"Закупка №{p.purchase_number or p.id} объявлена (стадия «{stage}») — ТЗ зафиксировано. "
                 "Цену по итогам закупки внесите в подстроке «Договор» позиции.",
             )
+    # Владелец (2026-08-12, «закупка сама становится планом»): категорию ФЭО
+    # применяем ДО расчётных проверок ниже (Шаг 5 и Шаг 4), а не после них, как
+    # было раньше, — так гейты и автозаведение плана видят актуальную категорию.
+    # Перенос позиции в ДРУГУЮ категорию (боевой случай — категория 3716
+    # «Приобретение брендированных футболок» получила закупку без единой
+    # плановой позиции) означает, что старая привязка feo_planned_item_id
+    # принадлежит прежней категории и в категории-получателе может не быть
+    # ничего — очищаем её и заводим/находим план в новой категории тем же
+    # общим сервисом, что и wishes.py (app/services/plan_autoassign.py).
+    _cat_id_before_patch = it.feo_category_id
+    _category_changing = False
+    if body.clear_feo_category:
+        if it.feo_category_id is not None:
+            _category_changing = True
+        it.feo_category_id = None
+    elif body.feo_category_id is not None:
+        cat = await db.get(FeoCategory, body.feo_category_id)
+        if not cat:
+            raise HTTPException(404, "Категория ФЭО не найдена")
+        if p.subsidy_id and cat.subsidy_id != p.subsidy_id:
+            raise HTTPException(422, "Категория ФЭО относится к другой субсидии")
+        if body.feo_category_id != it.feo_category_id:
+            _category_changing = True
+        it.feo_category_id = body.feo_category_id
+    # Синхронизировать feo_category_id с WishItem при category-only правке wish-позиции
+    if it.wish_item_id is not None and (body.clear_feo_category or body.feo_category_id is not None):
+        from app.models.wish_item import WishItem as _WishItem
+        wi = await db.get(_WishItem, it.wish_item_id)
+        if wi is not None:
+            wi.feo_category_id = it.feo_category_id
+    if _category_changing and it.feo_planned_item_id is not None:
+        # Старая привязка — из прежней категории, в новой она бессмысленна
+        # (FeoPlannedItem.feo_category_id жёстко привязана к одной категории).
+        it.feo_planned_item_id = None
+        it.over_plan = False
+    if _category_changing and it.feo_category_id is not None:
+        # auto_assign_planned_items смотрит на текущие item_name/quantity/
+        # total_price позиции — если это ЖЕ тело правки одновременно меняет и
+        # название/кол-во/цену (мутируются НИЖЕ), новая плановая позиция (если
+        # заводится с нуля) фиксирует снимок ДО этих правок; для типичного
+        # случая «просто перенести позицию в другую категорию» разницы нет.
+        await auto_assign_planned_items(
+            [it], it.feo_category_id, db,
+            note=f"переносом позиции в закупке №{p.purchase_number or p.id}",
+        )
     # Шаг 5 «цена ТЗ не выше плановой» (владелец, 2026-08-07): проверяем ДО записи
     # цены/кол-ва — прогнозные значения (patch частичный, недостающие берём из
     # текущей строки). admin_override (та же роль/флаг, что и для заморозки ТЗ
     # выше) — осознанный обход, как и у остальных гейтов превышения плана.
+    # feo_planned_item_id/feo_category_id берём УЖЕ ФИНАЛЬНЫМИ с it (категория и
+    # автозаведение применены выше).
     if _wants_tz_change and not (body.admin_override and current_user.role in ADMIN_ROLES):
         _prospective_qty = body.quantity if body.quantity is not None else it.quantity
         _prospective_price = body.unit_price if body.unit_price is not None else it.unit_price
         _prospective_total = (_prospective_qty or Decimal("0")) * (_prospective_price or Decimal("0"))
-        _eff_cat_id = it.feo_category_id
-        if body.clear_feo_category:
-            _eff_cat_id = None
-        elif body.feo_category_id is not None:
-            _eff_cat_id = body.feo_category_id
         await assert_tz_not_over_plan(
             db,
             feo_planned_item_id=it.feo_planned_item_id,
-            feo_category_id=_eff_cat_id,
+            feo_category_id=it.feo_category_id,
             quantity=_prospective_qty,
             unit_price=_prospective_price,
             total_price=_prospective_total,
@@ -2130,15 +2197,13 @@ async def patch_purchase_item(
     # выше) — сторону «категория не превышает финансирование ФЭО» (assert_no_unapproved_excess)
     # этот эндпоинт вообще не видел. Считаем ДО и ПОСЛЕ отдельно от _wants_tz_change
     # выше — смена ТОЛЬКО feo_category_id (без правки qty/price) тоже обязана
-    # пройти гейт, а _wants_tz_change в этом случае False.
+    # пройти гейт, а _wants_tz_change в этом случае False. Старая категория —
+    # _cat_id_before_patch (снята ДО применения категории выше), новая — it.feo_category_id
+    # (уже финальная).
     if not (body.admin_override and current_user.role in ADMIN_ROLES):
-        _old_item_cat_id = it.feo_category_id
+        _old_item_cat_id = _cat_id_before_patch
         _old_item_total = Decimal(str(it.total_price or 0))
-        _new_item_cat_id = _old_item_cat_id
-        if body.clear_feo_category:
-            _new_item_cat_id = None
-        elif body.feo_category_id is not None:
-            _new_item_cat_id = body.feo_category_id
+        _new_item_cat_id = it.feo_category_id
         if body.quantity is not None or body.unit_price is not None:
             _new_qty_g = body.quantity if body.quantity is not None else it.quantity
             _new_price_g = body.unit_price if body.unit_price is not None else it.unit_price
@@ -2189,21 +2254,6 @@ async def patch_purchase_item(
             it.planned_quantity = it.quantity
             it.planned_unit_price = it.unit_price
             it.planned_total = it.total_price
-    if body.clear_feo_category:
-        it.feo_category_id = None
-    elif body.feo_category_id is not None:
-        cat = await db.get(FeoCategory, body.feo_category_id)
-        if not cat:
-            raise HTTPException(404, "Категория ФЭО не найдена")
-        if p.subsidy_id and cat.subsidy_id != p.subsidy_id:
-            raise HTTPException(422, "Категория ФЭО относится к другой субсидии")
-        it.feo_category_id = body.feo_category_id
-    # Синхронизировать feo_category_id с WishItem при category-only правке wish-позиции
-    if it.wish_item_id is not None and (body.clear_feo_category or body.feo_category_id is not None):
-        from app.models.wish_item import WishItem as _WishItem
-        wi = await db.get(_WishItem, it.wish_item_id)
-        if wi is not None:
-            wi.feo_category_id = it.feo_category_id
     await db.flush()
     await _recalc_purchase_totals(p, db)
     if p and p.subsidy_id:

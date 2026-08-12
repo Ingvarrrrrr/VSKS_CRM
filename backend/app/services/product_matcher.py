@@ -50,6 +50,7 @@ class MatchResult:
 def progressive_match(
     query: str,
     catalog_indexed: list[tuple[int, str, Optional[float], set[str], Optional[str], Optional[str], Optional[str], Optional[str]]],
+    prefix_match: bool = False,
 ) -> tuple[str, list[CandidateResult]]:
     """27.4-27: Прогрессивное сужение по словам — обёртка над
     text_match.generic_progressive_match, строит product-специфичные CandidateResult.
@@ -57,11 +58,15 @@ def progressive_match(
     `catalog_indexed` entries: (product_id, name, price, stem_set, description,
     photo_url, item_type, category) — как и раньше, см. bulk_match ниже.
 
+    `prefix_match` — просто пробрасывается в text_match.generic_progressive_match
+    (см. её docstring/`_stem_hits`): включает префиксное сопоставление стемов для
+    интерактивного набора. По умолчанию False — прежнее строгое поведение.
+
     Возвращает (status, candidates) — семантика status не изменилась (см.
     text_match.generic_progressive_match docstring).
     """
     indexed = [(entry, entry[3]) for entry in catalog_indexed]
-    status, scored = generic_progressive_match(query, indexed)
+    status, scored = generic_progressive_match(query, indexed, prefix_match=prefix_match)
 
     candidates: list[CandidateResult] = []
     for entry, sc in scored:
@@ -88,6 +93,7 @@ def bulk_match(
     catalog: list[tuple],
     top_k: int = 3,
     threshold: float = SCORE_SUGGEST,
+    prefix_match: bool = False,
 ) -> list[MatchResult]:
     """27.4-27: прогрессивное сужение по словам (вместо score-based fuzzy).
 
@@ -95,6 +101,12 @@ def bulk_match(
       «Не брать всю фразу сразу. Вводит слова — из БД вылезают совпадения как
        интерактивный фильтр. Если по первому слову 0 — товара нет, добавлять.
        Если несколько — следующие слова, пока не останется один похожий.»
+
+    `prefix_match` — пробрасывается в progressive_match/generic_progressive_match.
+    По умолчанию False (строгое совпадение стемов) — обязательно для пакетного
+    сопоставления/дедупа товаров, чтобы не расширять его поведение по умолчанию.
+    Только явный вызов с prefix_match=True (интерактивный набор в UI) включает
+    префиксное сравнение.
 
     status:
       - 'auto'    — найден единственный товар покрывающий все токены query
@@ -122,7 +134,7 @@ def bulk_match(
         if not query or not query.strip():
             results.append(MatchResult(query=query, status='create', candidates=[]))
             continue
-        status, candidates = progressive_match(query, catalog_indexed)
+        status, candidates = progressive_match(query, catalog_indexed, prefix_match=prefix_match)
         # Ограничиваем top_k для UI
         results.append(MatchResult(
             query=query,

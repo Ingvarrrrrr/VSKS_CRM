@@ -179,7 +179,10 @@ async def list_planned_items(
     rows = (await db.execute(
         select(FeoPlannedItem)
         .where(FeoPlannedItem.feo_category_id == feo_category_id)
-        .order_by(FeoPlannedItem.id)
+        # Владелец (2026-08-12): позиции можно переставлять местами вручную —
+        # sort_order, если задан, а незаполненные (легаси/автозаведённые) —
+        # следом в порядке создания.
+        .order_by(FeoPlannedItem.sort_order.nulls_last(), FeoPlannedItem.id)
     )).scalars().all()
     return rows
 
@@ -226,6 +229,9 @@ async def create_planned_item(
         unit=data.unit,
         notes=data.notes,
         is_active=data.is_active,
+        sort_order=data.sort_order,
+        # auto_created — НЕ принимается на вход (это точечное создание человеком
+        # через UI), остаётся дефолтным False колонки.
     )
     _apply_payment_fields(item, data)
     db.add(item)
@@ -257,6 +263,7 @@ async def update_planned_item(
     item.unit = data.unit
     item.notes = data.notes
     item.is_active = data.is_active
+    item.sort_order = data.sort_order
     _apply_payment_fields(item, data)
     _sid = (await db.execute(
         select(FeoCategory.subsidy_id).where(FeoCategory.id == _feo_cat_id)
@@ -588,12 +595,17 @@ async def get_comparison(
     from app.routers.purchase_budget import PLANNED_STATUSES
     from app.services.feo_plan import purchase_item_fact_amount, FACT_CONFIRMED_STATUSES
 
-    # Плановые позиции — только активные (согласовано с /residuals, is_active=False скрыты)
+    # Плановые позиции — только активные (согласовано с /residuals, is_active=False скрыты).
+    # Порядок — sort_order, потом id: владелец просил менять плановые позиции местами
+    # внутри категории, и стрелки в панели субсидии пишут именно sort_order. Раньше здесь
+    # стояло order_by(id), и панель (она читает ИМЕННО этот эндпоинт) порядок игнорировала:
+    # перестановка сохранялась в БД, но на экране ничего не менялось. В соседнем
+    # GET /feo-planned-items/ сортировка уже была правильной — расхождение и было багом.
     planned_rows = (await db.execute(
         select(FeoPlannedItem)
         .where(FeoPlannedItem.feo_category_id == feo_category_id)
         .where(FeoPlannedItem.is_active == True)
-        .order_by(FeoPlannedItem.id)
+        .order_by(FeoPlannedItem.sort_order.nulls_last(), FeoPlannedItem.id)
     )).scalars().all()
 
     # Фактические: purchase_items через COALESCE(PurchaseItem.feo_category_id, Purchase.feo_category_id) —

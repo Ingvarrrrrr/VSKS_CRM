@@ -37,13 +37,27 @@
             <!-- v-textarea вместо v-text-field: путь переносится и виден целиком,
                  а не обрезается многоточием в одну строку. Label встроен в поле
                  (как у соседних полей формы), поэтому отдельная подпись сверху
-                 родителям больше не нужна. -->
+                 родителям больше не нужна.
+                 Жалоба владельца (повторно, 2026-08-12): в карточке закупки (строка
+                 таблицы позиций, :horizontal + density=compact, поле глубоко внутри
+                 expand-row с transition) Vuetify-шный auto-grow считает высоту НЕВЕРНО —
+                 остаётся зафиксирован на высоте одной строки (32px), хотя реальный текст
+                 требует больше (scrollHeight 44px), и путь обрезается внутренним скроллом
+                 textarea. В панели субсидии (comfortable density, обычный v-card-text,
+                 без table/transition-вложенности) тот же auto-grow считает верно — баг
+                 именно в измерении высоты в этом глубоко вложенном/анимированном контексте.
+                 Фикс: не полагаемся на встроенный auto-grow вообще — измеряем и
+                 выставляем высоту textarea сами (resizeFeoTextarea, ищет <textarea>
+                 через fieldWrapEl — ref прямо на v-textarea здесь не завести: у
+                 элемента есть v-bind="activatorProps" (слот-активатор v-menu), из-за
+                 чего компилятор мёржит проп ref через _mergeProps и теряет спец-
+                 обработку строкового/функционального ref для <script setup>). -->
             <v-textarea
               v-bind="activatorProps"
               :model-value="selectedPath"
               readonly
               no-resize
-              auto-grow
+              :auto-grow="false"
               rows="1"
               variant="outlined"
               :density="horizontal ? 'compact' : 'comfortable'"
@@ -216,7 +230,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { FeoNode, FeoLeaf } from '@/composables/useFeoLeaves'
 import type { FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import { useAuthStore } from '@/stores/auth'
@@ -632,6 +646,47 @@ function scrollToSelected() {
   el?.scrollIntoView({ block: 'center' })
 }
 
+// ─── Ручной auto-grow для поля (см. докстринг у v-textarea выше) ───────────────
+// Встроенный auto-grow Vuetify считает высоту неверно в глубоко вложенном/анимированном
+// контексте (expand-row таблицы позиций закупки) — остаётся на высоте одной строки,
+// путь обрезается внутренним скроллом. Меряем и выставляем высоту сами: это не зависит
+// от того, где и как смонтирован компонент.
+function resizeFeoTextarea() {
+  // fieldWrapEl — обычный DOM-ref на оборачивающий div (уже используется в
+  // updateMenuWidth), а не ref на сам компонент v-textarea: ref прямо на
+  // <v-textarea v-bind="activatorProps"> не долетает до значения (компилятор
+  // мёржит проп ref через _mergeProps и теряет спец-обработку для <script setup>,
+  // проверено экспериментально). Обёртка ни с чем не мёржится — её ref рабочий.
+  const ta = fieldWrapEl.value?.querySelector?.('textarea') as HTMLTextAreaElement | null | undefined
+  if (!ta) return
+  ta.style.height = 'auto'
+  ta.style.height = `${ta.scrollHeight}px`
+}
+
+let fieldResizeObserver: ResizeObserver | null = null
+
+onMounted(() => {
+  // Первичная высота — после отрисовки label/border (nextTick), и повторно на
+  // следующем тике на случай, если шрифт/иконки ещё не подгрузились к первому замеру.
+  nextTick(resizeFeoTextarea)
+  requestAnimationFrame(resizeFeoTextarea)
+  // Ширина поля меняется НЕ только при маунте: разворачивание строки таблицы (transition),
+  // изменение ширины колонки, ресайз окна — во всех случаях перенос текста может измениться,
+  // и высоту нужно пересчитать заново.
+  if (fieldWrapEl.value && typeof ResizeObserver !== 'undefined') {
+    fieldResizeObserver = new ResizeObserver(() => resizeFeoTextarea())
+    fieldResizeObserver.observe(fieldWrapEl.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  fieldResizeObserver?.disconnect()
+  fieldResizeObserver = null
+})
+
+// Текст поля меняется при выборе другого узла ФЭО — пересчитываем высоту.
+watch(selectedPath, () => nextTick(resizeFeoTextarea))
+
 watch(menuOpen, (open) => {
   if (!open) return
   searchQuery.value = ''
@@ -667,6 +722,13 @@ watch(menuOpen, (open) => {
 }
 .feo-tree-select :deep(.feo-tree-field textarea) {
   cursor: pointer;
+  /* Высоту считаем и выставляем сами (см. resizeFeoTextarea) — здесь только
+     гарантируем, что при любой рассинхронизации замера НЕ появится внутренний
+     скролл/обрезка, а перенос идёт по словам, а не обрезкой символа. */
+  overflow-y: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 /* Многострочное значение растёт вниз — крестик очистки и каретку держим
    у ПЕРВОЙ строки (flex-start), иначе они уедут в вертикальный центр поля. */

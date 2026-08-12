@@ -1319,10 +1319,16 @@ class FeoPlannedItemCreate(BaseModel):
     monthly_start_date: Optional[_Date] = None
     months_count: Optional[int] = None
     monthly_amount: Optional[Decimal] = None
+    # Владелец (2026-08-12, «закупка сама становится планом»): порядок позиций
+    # внутри категории — настраиваемый на входе (ручное «менять местами»).
+    sort_order: Optional[int] = None
 
 class FeoPlannedItemOut(FeoPlannedItemCreate):
     id: int
     created_at: Optional[datetime] = None
+    # Заведена автоматически (plan_autoassign.py), а не человеком — только
+    # для отображения, НЕ принимается на вход (см. create_planned_item).
+    auto_created: bool = False
     model_config = {"from_attributes": True}
 
 

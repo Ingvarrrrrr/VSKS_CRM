@@ -41,6 +41,9 @@ except ImportError:
     DataValidation = None
     DefinedName = None
 
+import logging
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/purchases", tags=["purchase-export"])
 
 # ---------------------------------------------------------------------------
@@ -1510,6 +1513,17 @@ async def download_import_template(
                 "Проверьте права доступа к субсидии."
             )
 
+    subsidy_name: Optional[str] = None
+    if subsidy_id is not None:
+        subsidy_name = (await db.execute(select(Subsidy.name).where(Subsidy.id == subsidy_id))).scalar_one_or_none()
+    # Причина, по которой каскада ФЭО в файле нет (если такое случится) — покажем её прямо в файле.
+    feo_warning: Optional[str] = None
+    if subsidy_id is None:
+        feo_warning = (
+            "Шаблон скачан без выбранной субсидии — направления расходов (ФЭО) в него не подставлены "
+            "и связанные списки Ур.1→Ур.5 не работают. Выберите субсидию в диалоге импорта и скачайте шаблон заново."
+        )
+
     wb = Workbook()
 
     fill_req  = PatternFill(start_color="DC2626", end_color="DC2626", fill_type="solid")
@@ -1677,6 +1691,11 @@ async def download_import_template(
     fill_req_row = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
     align_wrap = Alignment(wrap_text=True, vertical="top")
 
+    # Строки колонок «ФЭО Ур.N» на этом листе — запоминаем, чтобы после построения каскада
+    # (ниже по коду) дописать в «Формат/пример», что это связанный список.
+    _feo_fmt_rows: dict[int, int] = {}
+    _feo_headers_set = {"ФЭО Ур.1", "ФЭО Ур.2", "ФЭО Ур.3", "ФЭО Ур.4", "ФЭО Ур.5"}
+
     for spec in _COL_SPEC:
         fmt_val = spec["fmt"]
         # Если у колонки есть dd — добавляем ключи в формат
@@ -1691,6 +1710,8 @@ async def download_import_template(
         ]
         ref_ws.append(row_vals)
         row_idx = ref_ws.max_row
+        if spec["header"] in _feo_headers_set:
+            _feo_fmt_rows[int(spec["header"][-1])] = row_idx
         if spec["required"]:
             for col_idx2 in range(1, 6):
                 ref_ws.cell(row_idx, col_idx2).fill = fill_req_row
@@ -1716,202 +1737,306 @@ async def download_import_template(
     #   Ур.5 = INDIRECT("feo_" & helper4)  — дети выбранного Ур.4
     # Хелпер L для строки r: =IFERROR(INDEX(lvlL_ids, MATCH(<ФЭО-ячейка L>, lvlL_names, 0)), "")
     # Примечание: при дублях имён внутри уровня MATCH возьмёт первое совпадение (допустимое ограничение).
+    feo_dd_levels: set[int] = set()  # уровни, для которых реально построен связанный список (для «Справочник колонок»)
     if subsidy_id is not None and DataValidation is not None and DefinedName is not None:
         try:
             feo_q = select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id).order_by(
-                FeoCategory.level, FeoCategory.sort_order.is_(None), FeoCategory.sort_order, FeoCategory.id
+                FeoCategory.sort_order.is_(None), FeoCategory.sort_order, FeoCategory.id
             )
             feo_all_cats = (await db.execute(feo_q)).scalars().all()
 
-            if feo_all_cats:
-                # Найти корневые узлы (parent_id is None или родитель другой субсидии)
-                cat_ids = {c.id for c in feo_all_cats}
-                roots = [c for c in feo_all_cats if c.parent_id is None or c.parent_id not in cat_ids]
+            if not feo_all_cats:
+                feo_warning = (
+                    f"У субсидии «{subsidy_name or subsidy_id}» не заполнено дерево направлений расходов (ФЭО), "
+                    "поэтому связанных списков в шаблоне нет. Заполните направления в карточке субсидии."
+                )
+            else:
+                # Уровень считаем по цепочке родителей, а не по колонке level (она может быть
+                # NULL/0-based/рассинхронизирована с parent_id — тогда фильтр по level молчаливо
+                # ничего не находит и каждый уровень тихо получает fallback на корни).
+                by_id = {c.id: c for c in feo_all_cats}
+
+                def _depth_of(cat) -> int:
+                    d, cur, guard = 1, cat, 0
+                    while cur.parent_id in by_id and guard < 12:
+                        cur = by_id[cur.parent_id]
+                        d += 1
+                        guard += 1
+                    return d
+
+                cats_by_depth: dict[int, list] = {}
+                for cat in feo_all_cats:
+                    cats_by_depth.setdefault(_depth_of(cat), []).append(cat)
+
+                roots = cats_by_depth.get(1, [])
                 root_names = [c.name for c in roots]
 
-                # Строим карту детей: parent_id → [children]
-                children_map: dict[int, list] = {}
-                for cat in feo_all_cats:
-                    if cat.parent_id is not None and cat.parent_id in cat_ids:
-                        children_map.setdefault(cat.parent_id, []).append(cat)
-
-                # Находим последнюю занятую колонку «Справочники»
-                feo_ref_start_col = len(_DD_REGISTRY) + 1
-
-                # ---------------------------------------------------------------
-                # 1. Колонка корней (Ур.1) + defined name feo_roots
-                # ---------------------------------------------------------------
-                feo_root_col = feo_ref_start_col
-                feo_root_col_letter = wb_ref_ws.cell(1, feo_root_col).column_letter
-                wb_ref_ws.cell(2, feo_root_col, "ФЭО Ур.1 (корни)").font = ref_hdr_font
-                wb_ref_ws.cell(2, feo_root_col).fill = ref_hdr_fill
-                for ri, name in enumerate(root_names, 1):
-                    wb_ref_ws.cell(2 + ri, feo_root_col, name).alignment = ref_val_align
-                feo_root_last = 2 + len(root_names) + max(len(root_names), 5)
-                feo_root_attr = f"'Справочники'!${feo_root_col_letter}$3:${feo_root_col_letter}${feo_root_last}"
-                wb.defined_names["feo_roots"] = DefinedName("feo_roots", attr_text=feo_root_attr)
-                wb_ref_ws.column_dimensions[feo_root_col_letter].width = 36
-
-                # ---------------------------------------------------------------
-                # 2. Для каждого узла с детьми — отдельная колонка + defined name feo_<id>
-                # ---------------------------------------------------------------
-                feo_node_next_col = feo_ref_start_col + 1  # следующая свободная колонка
-                for parent_cat in feo_all_cats:
-                    kids = children_map.get(parent_cat.id)
-                    if not kids:
-                        continue
-                    kid_names = [k.name for k in kids]
-                    nc = feo_node_next_col
-                    nc_letter = wb_ref_ws.cell(1, nc).column_letter
-                    hdr_label_node = f"ФЭО дети {parent_cat.id}"
-                    wb_ref_ws.cell(2, nc, hdr_label_node).font = ref_hdr_font
-                    wb_ref_ws.cell(2, nc).fill = ref_hdr_fill
-                    for ki, kname in enumerate(kid_names, 1):
-                        wb_ref_ws.cell(2 + ki, nc, kname).alignment = ref_val_align
-                    node_last = 2 + len(kid_names) + max(len(kid_names), 3)
-                    node_attr = f"'Справочники'!${nc_letter}$3:${nc_letter}${node_last}"
-                    dn_node = f"feo_{parent_cat.id}"
-                    wb.defined_names[dn_node] = DefinedName(dn_node, attr_text=node_attr)
-                    wb_ref_ws.column_dimensions[nc_letter].width = 32
-                    feo_node_next_col += 1
-
-                # ---------------------------------------------------------------
-                # 3. Для каждого уровня 1..4: колонки имён + id (lvlL_names, lvlL_ids)
-                #    Нужны для хелперов INDEX/MATCH: по имени выбранной ячейки → id узла
-                # ---------------------------------------------------------------
-                lvl_cols: dict[int, dict] = {}  # level → {names_col, ids_col, names_letter, ids_letter}
-                for lvl in range(1, 5):
-                    cats_at_lvl = [c for c in feo_all_cats if c.level == lvl]
-                    if not cats_at_lvl:
-                        continue
-                    names_col = feo_node_next_col
-                    ids_col   = feo_node_next_col + 1
-                    names_letter = wb_ref_ws.cell(1, names_col).column_letter
-                    ids_letter   = wb_ref_ws.cell(1, ids_col).column_letter
-
-                    wb_ref_ws.cell(2, names_col, f"Ур.{lvl} имена (служ.)").font = ref_hdr_font
-                    wb_ref_ws.cell(2, names_col).fill = ref_hdr_fill
-                    wb_ref_ws.cell(2, ids_col, f"Ур.{lvl} id (служ.)").font = ref_hdr_font
-                    wb_ref_ws.cell(2, ids_col).fill = ref_hdr_fill
-
-                    for ri, cat in enumerate(cats_at_lvl, 1):
-                        wb_ref_ws.cell(2 + ri, names_col, cat.name).alignment = ref_val_align
-                        wb_ref_ws.cell(2 + ri, ids_col, cat.id).alignment = ref_val_align
-
-                    lvl_last = 2 + len(cats_at_lvl) + max(len(cats_at_lvl), 3)
-                    names_attr = f"'Справочники'!${names_letter}$3:${names_letter}${lvl_last}"
-                    ids_attr   = f"'Справочники'!${ids_letter}$3:${ids_letter}${lvl_last}"
-                    wb.defined_names[f"lvl{lvl}_names"] = DefinedName(f"lvl{lvl}_names", attr_text=names_attr)
-                    wb.defined_names[f"lvl{lvl}_ids"]   = DefinedName(f"lvl{lvl}_ids",   attr_text=ids_attr)
-
-                    wb_ref_ws.column_dimensions[names_letter].width = 30
-                    wb_ref_ws.column_dimensions[ids_letter].width = 10
-
-                    lvl_cols[lvl] = {
-                        "names_col": names_col, "ids_col": ids_col,
-                        "names_letter": names_letter, "ids_letter": ids_letter,
-                        "lvl_last": lvl_last,
-                    }
-                    feo_node_next_col += 2
-
-                # ---------------------------------------------------------------
-                # 4. Скрытые хелпер-колонки на листе «Закупки» (col 70+)
-                #    helperL → id выбранного узла уровня L в этой строке
-                # ---------------------------------------------------------------
-                # Находим колонки ФЭО Ур.1..5 на листе «Закупки»
-                feo_headers_map: dict[int, str] = {}  # level → col_letter
-                for feo_col_i, spec in enumerate(_COL_SPEC, 1):
-                    hdr = spec["header"]
-                    if hdr in ("ФЭО Ур.1", "ФЭО Ур.2", "ФЭО Ур.3", "ФЭО Ур.4", "ФЭО Ур.5"):
-                        lvl_num = int(hdr[-1])
-                        feo_headers_map[lvl_num] = ws.cell(1, feo_col_i).column_letter
-
-                # Хелпер-колонки начинаем с col=70 (заведомо за _COL_SPEC)
-                helper_start_col = 70
-                helper_cols: dict[int, str] = {}  # level → col_letter of helper
-
-                for lvl in range(1, 5):
-                    if lvl not in lvl_cols or lvl not in feo_headers_map:
-                        continue
-                    h_col = helper_start_col + (lvl - 1)
-                    from openpyxl.utils import get_column_letter
-                    h_letter = get_column_letter(h_col)
-                    helper_cols[lvl] = h_letter
-
-                    feo_letter = feo_headers_map[lvl]
-                    names_dn = f"lvl{lvl}_names"
-                    ids_dn   = f"lvl{lvl}_ids"
-
-                    # Формулы для строк 2..1000
-                    for r in range(2, 1001):
-                        formula = (
-                            f"=IFERROR(INDEX({ids_dn},"
-                            f"MATCH({feo_letter}{r},{names_dn},0)),\"\")"
-                        )
-                        ws.cell(r, h_col, formula)
-
-                    # Скрываем хелпер-колонку
-                    ws.column_dimensions[h_letter].hidden = True
-
-                # ---------------------------------------------------------------
-                # 5. DataValidation на листе «Закупки»
-                # Заменяем ранее добавленный DV (из основного цикла) на каскадный.
-                # Ровно ОДИН DataValidation на каждую ФЭО-колонку.
-                # ---------------------------------------------------------------
-                feo_headers_list = ["ФЭО Ур.1", "ФЭО Ур.2", "ФЭО Ур.3", "ФЭО Ур.4", "ФЭО Ур.5"]
-                for feo_col_i, spec in enumerate(_COL_SPEC, 1):
-                    if spec["header"] not in feo_headers_list:
-                        continue
-                    level_num = int(spec["header"][-1])
-                    col_letter = ws.cell(1, feo_col_i).column_letter
-
-                    if level_num == 1:
-                        dn_formula = "=feo_roots"
-                    else:
-                        prev_lvl = level_num - 1
-                        h_letter = helper_cols.get(prev_lvl)
-                        if h_letter:
-                            # Относительная ссылка на хелпер (без фиксации строки)
-                            # Excel применит её построчно в диапазоне sqref
-                            dn_formula = f'=INDIRECT("feo_"&${h_letter}2)'
-                        else:
-                            # Нет хелпера (нет узлов на предыдущем уровне) — fallback
-                            dn_formula = "=feo_roots"
-
-                    # Удаляем ранее добавленный DV данных этой колонки из основного цикла
-                    # (sqref данных основного цикла = "{col_letter}2:{col_letter}1000")
-                    # DV шапки ("{col_letter}1") не трогаем — он нужен пользователю.
-                    old_data_sqref = f"{col_letter}2:{col_letter}1000"
-                    ws.data_validations.dataValidation = [
-                        dv for dv in ws.data_validations.dataValidation
-                        if str(dv.sqref) != old_data_sqref
-                    ]
-
-                    # Строим prompt: базовый из _build_dv_prompt + строка о ФЭО
-                    base_prompt_title, base_prompt_text = _build_dv_prompt(spec)
-                    extra_line = f"Выберите категорию ФЭО уровня {level_num}."
-                    # Добавляем extra_line только если влезает в лимит 255 символов
-                    candidate_prompt = (base_prompt_text + "\n" + extra_line).strip() if base_prompt_text else extra_line
-                    if len(candidate_prompt) <= 255:
-                        final_prompt = candidate_prompt
-                    else:
-                        final_prompt = base_prompt_text
-
-                    # DV на строки данных (2:1000): каскадный список + подсказка
-                    feo_dv = DataValidation(
-                        type="list",
-                        formula1=dn_formula,
-                        allow_blank=True,
-                        showErrorMessage=False,
-                        showInputMessage=True,
+                if not roots:
+                    feo_warning = (
+                        f"В дереве направлений расходов (ФЭО) субсидии «{subsidy_name or subsidy_id}» не найдено "
+                        "ни одного корневого узла — связанные списки в шаблоне не построены."
                     )
-                    feo_dv.promptTitle = base_prompt_title
-                    feo_dv.prompt      = final_prompt
-                    feo_dv.sqref       = f"{col_letter}2:{col_letter}1000"
-                    ws.add_data_validation(feo_dv)
+                else:
+                    max_depth = max(cats_by_depth)
 
-        except Exception:
-            pass  # если что-то пошло не так с ФЭО — возвращаем шаблон без каскада
+                    # Строим карту детей: parent_id → [children] (для служебных колонок «ФЭО дети <id>»)
+                    children_map: dict[int, list] = {}
+                    for cat in feo_all_cats:
+                        if cat.parent_id is not None and cat.parent_id in by_id:
+                            children_map.setdefault(cat.parent_id, []).append(cat)
+
+                    # Находим последнюю занятую колонку «Справочники»
+                    feo_ref_start_col = len(_DD_REGISTRY) + 1
+
+                    # ---------------------------------------------------------------
+                    # 1. Колонка корней (Ур.1) + defined name feo_roots — видимая, понятная пользователю
+                    # ---------------------------------------------------------------
+                    feo_root_col = feo_ref_start_col
+                    feo_root_col_letter = wb_ref_ws.cell(1, feo_root_col).column_letter
+                    root_hdr_label = f"Направления расходов — {(subsidy_name or '')[:40]} (Ур.1)"
+                    wb_ref_ws.cell(2, feo_root_col, root_hdr_label).font = ref_hdr_font
+                    wb_ref_ws.cell(2, feo_root_col).fill = ref_hdr_fill
+                    for ri, name in enumerate(root_names, 1):
+                        wb_ref_ws.cell(2 + ri, feo_root_col, name).alignment = ref_val_align
+                    # Диапазон без пустого хвоста — ровно столько строк, сколько корневых направлений
+                    feo_root_last = 2 + len(root_names)
+                    feo_root_attr = f"'Справочники'!${feo_root_col_letter}$3:${feo_root_col_letter}${feo_root_last}"
+                    wb.defined_names["feo_roots"] = DefinedName("feo_roots", attr_text=feo_root_attr)
+                    wb_ref_ws.column_dimensions[feo_root_col_letter].width = 36
+
+                    # ---------------------------------------------------------------
+                    # 2. Для каждого узла с детьми — отдельная СЛУЖЕБНАЯ (скрытая) колонка + defined name feo_<id>
+                    # ---------------------------------------------------------------
+                    feo_node_next_col = feo_ref_start_col + 1  # следующая свободная колонка
+                    for parent_cat in feo_all_cats:
+                        kids = children_map.get(parent_cat.id)
+                        if not kids:
+                            continue
+                        kid_names = [k.name for k in kids]
+                        nc = feo_node_next_col
+                        nc_letter = wb_ref_ws.cell(1, nc).column_letter
+                        hdr_label_node = f"ФЭО дети {parent_cat.id}"
+                        wb_ref_ws.cell(2, nc, hdr_label_node).font = ref_hdr_font
+                        wb_ref_ws.cell(2, nc).fill = ref_hdr_fill
+                        for ki, kname in enumerate(kid_names, 1):
+                            wb_ref_ws.cell(2 + ki, nc, kname).alignment = ref_val_align
+                        node_last = 2 + len(kid_names)
+                        node_attr = f"'Справочники'!${nc_letter}$3:${nc_letter}${node_last}"
+                        dn_node = f"feo_{parent_cat.id}"
+                        wb.defined_names[dn_node] = DefinedName(dn_node, attr_text=node_attr)
+                        wb_ref_ws.column_dimensions[nc_letter].width = 32
+                        wb_ref_ws.column_dimensions[nc_letter].hidden = True
+                        feo_node_next_col += 1
+
+                    # ---------------------------------------------------------------
+                    # 3. Для каждой глубины 1..4: колонка имён (видимая) + id (служебная, скрытая)
+                    #    Нужны для хелперов INDEX/MATCH: по имени выбранной ячейки → id узла
+                    # ---------------------------------------------------------------
+                    lvl_cols: dict[int, dict] = {}  # глубина → {names_col, ids_col, names_letter, ids_letter}
+                    for lvl in range(1, 5):
+                        cats_at_lvl = cats_by_depth.get(lvl)
+                        if not cats_at_lvl:
+                            continue
+                        names_col = feo_node_next_col
+                        ids_col   = feo_node_next_col + 1
+                        names_letter = wb_ref_ws.cell(1, names_col).column_letter
+                        ids_letter   = wb_ref_ws.cell(1, ids_col).column_letter
+
+                        wb_ref_ws.cell(2, names_col, f"Направления Ур.{lvl} (все)").font = ref_hdr_font
+                        wb_ref_ws.cell(2, names_col).fill = ref_hdr_fill
+                        wb_ref_ws.cell(2, ids_col, f"Ур.{lvl} id (служ.)").font = ref_hdr_font
+                        wb_ref_ws.cell(2, ids_col).fill = ref_hdr_fill
+
+                        for ri, cat in enumerate(cats_at_lvl, 1):
+                            wb_ref_ws.cell(2 + ri, names_col, cat.name).alignment = ref_val_align
+                            wb_ref_ws.cell(2 + ri, ids_col, cat.id).alignment = ref_val_align
+
+                        lvl_last = 2 + len(cats_at_lvl)
+                        names_attr = f"'Справочники'!${names_letter}$3:${names_letter}${lvl_last}"
+                        ids_attr   = f"'Справочники'!${ids_letter}$3:${ids_letter}${lvl_last}"
+                        wb.defined_names[f"lvl{lvl}_names"] = DefinedName(f"lvl{lvl}_names", attr_text=names_attr)
+                        wb.defined_names[f"lvl{lvl}_ids"]   = DefinedName(f"lvl{lvl}_ids",   attr_text=ids_attr)
+
+                        wb_ref_ws.column_dimensions[names_letter].width = 30
+                        wb_ref_ws.column_dimensions[ids_letter].width = 10
+                        wb_ref_ws.column_dimensions[ids_letter].hidden = True
+
+                        lvl_cols[lvl] = {
+                            "names_col": names_col, "ids_col": ids_col,
+                            "names_letter": names_letter, "ids_letter": ids_letter,
+                            "lvl_last": lvl_last,
+                        }
+                        feo_node_next_col += 2
+
+                    # ---------------------------------------------------------------
+                    # 4. Скрытые хелпер-колонки на листе «Закупки» (col 70+)
+                    #    helperL → id выбранного узла уровня L в этой строке
+                    # ---------------------------------------------------------------
+                    # Находим колонки ФЭО Ур.1..5 на листе «Закупки»
+                    feo_headers_map: dict[int, str] = {}  # уровень → col_letter
+                    for feo_col_i, spec in enumerate(_COL_SPEC, 1):
+                        hdr = spec["header"]
+                        if hdr in ("ФЭО Ур.1", "ФЭО Ур.2", "ФЭО Ур.3", "ФЭО Ур.4", "ФЭО Ур.5"):
+                            lvl_num = int(hdr[-1])
+                            feo_headers_map[lvl_num] = ws.cell(1, feo_col_i).column_letter
+
+                    # Хелпер-колонки начинаем с col=70 (заведомо за _COL_SPEC)
+                    helper_start_col = 70
+                    helper_cols: dict[int, str] = {}  # уровень → col_letter хелпера
+                    from openpyxl.utils import get_column_letter
+
+                    for lvl in range(1, 5):
+                        # Хелпер уровня lvl нужен только чтобы вести список СЛЕДУЮЩЕГО уровня —
+                        # если lvl уже листовой (глубже дерева нет), строить его не нужно: он бы
+                        # ссылался на defined name feo_<id> для узла без детей, которого не существует.
+                        if lvl not in lvl_cols or lvl not in feo_headers_map or lvl >= max_depth:
+                            continue
+                        h_col = helper_start_col + (lvl - 1)
+                        h_letter = get_column_letter(h_col)
+                        helper_cols[lvl] = h_letter
+
+                        feo_letter = feo_headers_map[lvl]
+                        names_dn = f"lvl{lvl}_names"
+                        ids_dn   = f"lvl{lvl}_ids"
+
+                        # Формулы для строк 2..1000
+                        for r in range(2, 1001):
+                            formula = (
+                                f"=IFERROR(INDEX({ids_dn},"
+                                f"MATCH({feo_letter}{r},{names_dn},0)),\"\")"
+                            )
+                            ws.cell(r, h_col, formula)
+
+                        # Скрываем хелпер-колонку
+                        ws.column_dimensions[h_letter].hidden = True
+
+                    # ---------------------------------------------------------------
+                    # 5. DataValidation на листе «Закупки»
+                    # Заменяем ранее добавленный DV (из основного цикла) на каскадный.
+                    # Ровно ОДИН DataValidation на каждую ФЭО-колонку.
+                    # Ур.1 → всегда feo_roots; Ур.N>1 → INDIRECT от хелпера предыдущего уровня,
+                    # ЕСЛИ хелпер есть; иначе (в т.ч. N > глубины дерева субсидии) — списка НЕТ,
+                    # только подсказка, что уровня в дереве субсидии нет. Никакого fallback на корни.
+                    # ---------------------------------------------------------------
+                    feo_headers_list = ["ФЭО Ур.1", "ФЭО Ур.2", "ФЭО Ур.3", "ФЭО Ур.4", "ФЭО Ур.5"]
+                    for feo_col_i, spec in enumerate(_COL_SPEC, 1):
+                        if spec["header"] not in feo_headers_list:
+                            continue
+                        level_num = int(spec["header"][-1])
+                        col_letter = ws.cell(1, feo_col_i).column_letter
+
+                        dn_formula = None
+                        if level_num == 1:
+                            dn_formula = "=feo_roots"
+                        else:
+                            prev_lvl = level_num - 1
+                            h_letter = helper_cols.get(prev_lvl)
+                            if h_letter:
+                                # Относительная ссылка на хелпер (без фиксации строки)
+                                # Excel применит её построчно в диапазоне sqref
+                                dn_formula = f'=INDIRECT("feo_"&${h_letter}2)'
+
+                        # Удаляем ранее добавленный DV данных этой колонки из основного цикла
+                        # (sqref данных основного цикла = "{col_letter}2:{col_letter}1000")
+                        # DV шапки ("{col_letter}1") не трогаем — он нужен пользователю.
+                        old_data_sqref = f"{col_letter}2:{col_letter}1000"
+                        ws.data_validations.dataValidation = [
+                            dv for dv in ws.data_validations.dataValidation
+                            if str(dv.sqref) != old_data_sqref
+                        ]
+
+                        base_prompt_title, base_prompt_text = _build_dv_prompt(spec)
+
+                        if dn_formula:
+                            # Строим prompt: базовый из _build_dv_prompt + строка о ФЭО
+                            extra_line = f"Выберите категорию ФЭО уровня {level_num}."
+                            candidate_prompt = (
+                                (base_prompt_text + "\n" + extra_line).strip() if base_prompt_text else extra_line
+                            )
+                            final_prompt = candidate_prompt if len(candidate_prompt) <= 255 else base_prompt_text
+
+                            feo_dv = DataValidation(
+                                type="list",
+                                formula1=dn_formula,
+                                allow_blank=True,
+                                showErrorMessage=False,
+                                showInputMessage=True,
+                            )
+                            feo_dv.promptTitle = base_prompt_title
+                            feo_dv.prompt      = final_prompt
+                            feo_dv.sqref       = f"{col_letter}2:{col_letter}1000"
+                            ws.add_data_validation(feo_dv)
+                            feo_dd_levels.add(level_num)
+                        else:
+                            # В дереве субсидии нет такого уровня — списка нет, только подсказка
+                            extra_line = (
+                                f"В дереве субсидии «{subsidy_name or subsidy_id}» нет уровня {level_num} — "
+                                "колонку можно оставить пустой."
+                            )
+                            candidate_prompt = (
+                                (base_prompt_text + "\n" + extra_line).strip() if base_prompt_text else extra_line
+                            )
+                            final_prompt = candidate_prompt if len(candidate_prompt) <= 255 else base_prompt_text
+
+                            feo_dv = DataValidation(
+                                type=None,
+                                showInputMessage=True,
+                            )
+                            feo_dv.promptTitle = base_prompt_title
+                            feo_dv.prompt      = final_prompt
+                            feo_dv.sqref       = f"{col_letter}2:{col_letter}1000"
+                            ws.add_data_validation(feo_dv)
+
+        except Exception as exc:
+            logger.exception("Не удалось построить каскад ФЭО для субсидии %s", subsidy_id)
+            feo_warning = (
+                f"Связанные списки ФЭО не построены из-за ошибки на сервере: {type(exc).__name__}: {exc}. "
+                "Сообщите администратору — в логах бэкенда есть подробности."
+            )
+
+    # Дописываем в «Справочник колонок», что колонки ФЭО с реально построенным списком — связанные
+    if feo_dd_levels:
+        note = " (выпадающий список направлений субсидии, привязан к предыдущему уровню)"
+        for lvl_num, row_idx in _feo_fmt_rows.items():
+            if lvl_num in feo_dd_levels:
+                cell = ref_ws.cell(row_idx, 3)
+                cell.value = (cell.value or "") + note
+
+    # Если каскада ФЭО в файле нет (или он не построился из-за ошибки) — делаем это заметным
+    # прямо в файле, а не только в API/логах, чтобы пользователь не листал пустые списки молча.
+    if feo_warning:
+        logger.warning("Шаблон импорта закупок отдан без каскада ФЭО (subsidy_id=%s): %s", subsidy_id, feo_warning)
+
+        # На листе «Справочники»: дописываем предупреждение к подсказке в A1
+        warn_cell = wb_ref_ws.cell(1, 1)
+        base_hint = (
+            "Допишите свои значения в пустые ячейки под списком — они появятся в выпадающих списках "
+            "на листе «Закупки»"
+        )
+        warn_cell.value = base_hint + "\n⚠ " + feo_warning
+        warn_cell.font = Font(bold=True, color="B91C1C", size=10)
+        warn_cell.alignment = Alignment(wrap_text=True)
+        wb_ref_ws.row_dimensions[1].height = 46
+
+        # На листе «Закупки»: серая заливка шапки + предупреждение в подсказке DV колонок ФЭО Ур.1..5
+        fill_warn = PatternFill(start_color="9CA3AF", end_color="9CA3AF", fill_type="solid")
+        feo_headers_list = ["ФЭО Ур.1", "ФЭО Ур.2", "ФЭО Ур.3", "ФЭО Ур.4", "ФЭО Ур.5"]
+        for feo_col_i, spec in enumerate(_COL_SPEC, 1):
+            if spec["header"] not in feo_headers_list:
+                continue
+            col_letter = ws.cell(1, feo_col_i).column_letter
+            ws.cell(1, feo_col_i).fill = fill_warn
+            for dv in ws.data_validations.dataValidation:
+                if str(dv.sqref) != f"{col_letter}2:{col_letter}1000":
+                    continue
+                combined = (dv.prompt + "\n⚠ " + feo_warning) if dv.prompt else ("⚠ " + feo_warning)
+                if len(combined) > 255:
+                    cut = combined[:254]
+                    boundary = max(cut.rfind(" "), cut.rfind("\n"))
+                    if boundary > 0:
+                        cut = cut[:boundary]
+                    combined = cut.rstrip() + "…"
+                dv.prompt = combined
 
     # Сохраняем в BytesIO
     buffer = BytesIO()

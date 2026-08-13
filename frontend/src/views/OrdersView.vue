@@ -1151,8 +1151,12 @@
 
         </v-card-text>
         <v-card-actions class="pa-5 pt-0">
-          <v-btn variant="text" size="small" prepend-icon="mdi-download"
-            @click="downloadTemplate">Скачать шаблон</v-btn>
+          <div class="d-flex flex-column align-start">
+            <v-btn variant="text" size="small" prepend-icon="mdi-download"
+              :disabled="importDialog.format === 'standard' && !importDialog.subsidyId"
+              @click="downloadTemplate">Скачать шаблон</v-btn>
+            <span v-if="templateSubsidyHint" class="text-caption text-medium-emphasis ml-2">{{ templateSubsidyHint }}</span>
+          </div>
           <v-spacer />
           <!-- Step 1: setup -->
           <template v-if="importDialog.step === 1">
@@ -2404,6 +2408,15 @@ const previewPaymentsTotal = computed(() =>
   (importDialog.preview?.purchases ?? []).reduce((s, p) => s + (p.payments_count ?? 0), 0)
 )
 
+// Подсказка у кнопки «Скачать шаблон»: без субсидии в шаблоне не будет каскада ФЭО-списков —
+// об этом надо сказать явно, а не молча отдавать урезанный файл.
+const templateSubsidyHint = computed(() => {
+  if (importDialog.format !== 'standard') return ''
+  if (!importDialog.subsidyId) return 'Выберите субсидию — в шаблон подставятся её направления расходов'
+  const s = subsidies.value.find(x => x.id === importDialog.subsidyId)
+  return `Шаблон с направлениями расходов субсидии «${s?.name ?? importDialog.subsidyId}»`
+})
+
 apiFetch<any[]>('/users/in-my-orgs').then(users => {
   importUserItems.value = users.map(u => ({ text: u.full_name || u.username, value: u.id }))
 }).catch(() => {})
@@ -2422,6 +2435,10 @@ const resetImport = () => {
 }
 
 const downloadTemplate = async () => {
+  if (importDialog.format === 'standard' && !importDialog.subsidyId) {
+    showSnack('Сначала выберите субсидию: без неё в шаблоне не будет связанных списков направлений расходов (ФЭО)', 'error')
+    return
+  }
   const token = localStorage.getItem('auth_token')
   const url = importDialog.format === 'feo'
     ? '/api/purchases/import/feo-format/template'
@@ -2430,7 +2447,17 @@ const downloadTemplate = async () => {
       : '/api/purchases/import/template'
   const filename = importDialog.format === 'feo' ? 'Шаблон_импорта_закупок_формат_ФЭО.xlsx' : 'Шаблон_импорта_закупок.xlsx'
   const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-  if (!response.ok) return
+  if (!response.ok) {
+    let detail = 'Не удалось скачать шаблон'
+    try {
+      const err = await response.json()
+      detail = err?.detail || err?.message || detail
+    } catch {
+      // тело не JSON — оставляем причину по умолчанию
+    }
+    showSnack(`Не удалось скачать шаблон (HTTP ${response.status}): ${detail}`, 'error')
+    return
+  }
   const blob = await response.blob()
   const blobUrl = window.URL.createObjectURL(blob)
   const a = document.createElement('a'); a.href = blobUrl; a.download = filename

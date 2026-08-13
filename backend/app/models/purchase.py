@@ -1,6 +1,8 @@
-from sqlalchemy import Column, Integer, SmallInteger, String, Numeric, Boolean, ForeignKey, Date, Text, DateTime
+from datetime import date as _date
+from sqlalchemy import Column, Integer, SmallInteger, String, Numeric, Boolean, ForeignKey, Date, Text, DateTime, event, update
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, Session
+from sqlalchemy.orm.attributes import set_committed_value
 from app.database import Base
 
 class Purchase(Base):
@@ -216,3 +218,58 @@ class Purchase(Base):
     approvals = relationship("PurchaseApproval", back_populates="purchase",
                              cascade="all, delete-orphan", lazy="selectin",
                              order_by="PurchaseApproval.order_num")
+
+
+def _registry_number_for(purchase_id: int) -> str:
+    """Единый формат номера — тот же, что раньше жил только в purchases.py (~стр. 1339-1341)
+    и в бэкфилле app/__init__.py (Phase 26-BBB). Год берётся из текущей даты, т.к. в модели
+    нет created_at."""
+    return f"РЕЕ-{_date.today().year}-{purchase_id:05d}"
+
+
+@event.listens_for(Session, "after_flush")
+def _assign_purchase_registry_number(session, flush_context):
+    """Жалоба владельца (2026-08-13): закупка «Закупка огнетушителей ОУ-2 в Москву»,
+    созданная конвертацией заявки, осталась БЕЗ реестрового номера — искать/привязать
+    её было нельзя. Причина: registry_number присваивался только вручную, одной строкой
+    в purchases.py (POST /api/purchases, ~стр. 1339-1341), сразу после db.flush(). Но
+    объекты Purchase(...) создаются минимум в семи местах (wishes.py x2 — конвертация
+    заявки и есть источник этого бага, purchases.py x2, contracts.py, purchase_export.py,
+    purchase_items_import.py) — точечная правка в одном месте гарантированно забудется
+    в следующем (и в любом будущем). Поэтому гарантия перенесена на уровень модели/сессии:
+    ЛЮБАЯ новая запись Purchase без registry_number получает номер сразу после INSERT,
+    независимо от пути создания.
+
+    Технически: after_flush видит объекты Purchase в session.new ПОСЛЕ того, как для них
+    уже выполнен INSERT (id заполнен autoincrement'ом), но ДО того, как flush полностью
+    завершится — документированное место для доп. SQL в той же транзакции
+    (docs.sqlalchemy.org/en/20/orm/session_events.html#after-flush). Обновление идёт
+    через core UPDATE на session.connection() (не через ORM-атрибут — это не триггерит
+    повторный autoflush/рекурсию), а значение в самом Python-объекте синхронизируется
+    через set_committed_value, чтобы объект НЕ считался «грязным» и не улетел лишним
+    UPDATE на следующем flush/commit.
+
+    Импорт из Excel и любой другой путь, где registry_number уже проставлен явно, —
+    пропускается: чужой номер главнее (он мог прийти из внешней системы).
+
+    AsyncSession оборачивает синхронную Session — слушать нужно именно её (см.
+    docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html#synopsis-orm), поэтому
+    listener навешан глобально на sqlalchemy.orm.Session, а не на конкретный класс.
+    """
+    new_purchases = [
+        obj for obj in session.new
+        if isinstance(obj, Purchase) and not getattr(obj, "registry_number", None)
+    ]
+    if not new_purchases:
+        return
+    connection = session.connection()
+    for p in new_purchases:
+        if p.id is None:
+            continue  # не должно случиться после INSERT, но не падать в этом случае
+        number = _registry_number_for(p.id)
+        connection.execute(
+            update(Purchase.__table__)
+            .where(Purchase.__table__.c.id == p.id)
+            .values(registry_number=number)
+        )
+        set_committed_value(p, "registry_number", number)

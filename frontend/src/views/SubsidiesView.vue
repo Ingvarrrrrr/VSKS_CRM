@@ -770,24 +770,34 @@
                           :title="plannedSumBase === 'all' ? `Ручные ${formatCurrency(feoPlannedTotalFor(node))} + из заявок ${formatCurrency(feoPlannedRequestsFor(node))}` : ''"
                         >{{ formatCurrency(feoPlannedDisplayFor(node)) }}</span>
                         <span v-else class="feo-amount-empty">—</span>
-                        <div v-if="plannedSumBase === 'all' && feoPlannedRequestsFor(node) > 0"
-                          class="feo-plan-note text-medium-emphasis"
-                          :title="`Позиции заявок в статусе «План закупок» и дальше: ${formatCurrency(feoPlannedRequestsFor(node))}`"
+                        <!-- Заметка «в т.ч. из заявок N ₽» под плановой суммой УБРАНА (жалоба
+                             владельца 2026-08-13): совпадает по величине с «в закупках» из строки
+                             разбора ниже (feoResidualNoteFor/feoPlanConsumedNoteFor), но стояла прямо
+                             под планом и читалась как его часть — «выбрано 695 656, что уже больше
+                             561». Та же заметка в колонке «Плановое количество» (feoQtyRequestsFor,
+                             см. ниже по файлу) НЕ трогается — она про количество, путаницы там не
+                             было. Заметка «в т.ч. из заявок {{ matchedReqTotal }}» (matchedReqFor,
+                             сопоставление по ИМЕНИ) была убрана раньше, 2026-08-07, — см. ШАГ 1
+                             плана дедупликации. -->
+                        <!-- «В т.ч. на самом направлении N ₽» (жалоба владельца 2026-08-13:
+                             «48 441,80 — нигде нет такой суммы», «что это за фантом») — часть плана
+                             узла с детьми, заложенная НЕПОСРЕДСТВЕННО на нём самом (плановые позиции,
+                             привязанные к направлению, а не к его подкатегориям), см.
+                             feoOwnDirectionPlanFor(). Кликабельна — раскрывает ту же панель, что и
+                             иконка-список в «Действиях» (toggleItemPanel), см. feo-action-slot ниже. -->
+                        <div v-if="feoOwnDirectionPlanFor(node) > 0"
+                          class="feo-plan-note text-medium-emphasis feo-plan-note--link"
+                          title="Часть плана этого направления, заложенная прямо на нём (не в подкатегориях). Клик открывает список этих плановых позиций"
+                          @click="toggleItemPanel(node)"
                         >
-                          в т.ч. из заявок {{ formatCurrency(feoPlannedRequestsFor(node)) }}
+                          в т.ч. на самом направлении {{ formatCurrency(feoOwnDirectionPlanFor(node)) }}
                         </div>
-                        <!-- Заметка «в т.ч. из заявок {{ matchedReqTotal }}» УБРАНА 2026-08-07: с
-                             задачи «план ≠ факт» (2026-08-06) число выше в режиме 'all' читается
-                             ИСКЛЮЧИТЕЛЬНО с бэкенда (feoPlannedDisplayRaw) и больше НЕ включает
-                             matchedReqTotal — заметка стала враньём (утверждала, что сумма учтена
-                             в числе выше, хотя это не так), плюс сам matchedReqFor — сопоставление
-                             по ИМЕНИ, источник ложных совпадений (см. ШАГ 1 плана дедупликации). -->
                         <div v-if="feoDisplayedFor(node) > 0 && (node.budget != null || feoPlannedDisplayFor(node) > 0) && Math.abs(feoFinDiff(node)) > 0.005"
                           class="feo-plan-note"
                           :style="feoFinDiff(node) > 0 ? 'color:#16A34A' : 'color:#EF4444'"
-                          :title="`Финансирование по ФЭО ${formatCurrency(feoDisplayedFor(node))} − Плановая сумма ${formatCurrency(feoPlannedDisplayFor(node))}`"
+                          :title="`Финансирование по ФЭО (бюджет, заложенный в документе ФЭО): ${formatCurrency(feoDisplayedFor(node))}. Плановая сумма (сколько уже расписано по плану/заявкам): ${formatCurrency(feoPlannedDisplayFor(node))}`"
                         >
-                          {{ feoFinDiff(node) > 0 ? `можно добавить ${formatCurrency(feoFinDiff(node))}` : `надо убрать ${formatCurrency(-feoFinDiff(node))}` }}
+                          {{ feoFinDiff(node) > 0 ? `можно добавить ${formatCurrency(feoFinDiff(node))} до финансирования ФЭО` : `надо убрать ${formatCurrency(-feoFinDiff(node))}, чтобы уложиться в ФЭО` }}
                         </div>
                         <div v-if="!feoIsOverBudget(node) && feoHasOverspentDescendant(node)"
                           class="feo-plan-note" style="color:#EF4444"
@@ -795,25 +805,38 @@
                         >
                           {{ feoOverspentDescendantText(node) }}
                         </div>
+                        <!-- Разбор «план · в закупках · свободно» (жалоба владельца 2026-08-13:
+                             «план 513 244 — это откуда? Выбрано 695 — откуда?»). Оба источника
+                             (feoResidualNoteFor — лист со своими Ур.5-позициями; feoPlanConsumedNoteFor —
+                             остальные узлы, включая направления) теперь берут «план» из ТОГО ЖЕ
+                             planTreeByCat.plan_manual, что и шапка строки (не считают свою отдельную
+                             формулу), и «в закупках» = привязанные + непривязанные позиции заявок —
+                             см. комментарии у функций ниже по файлу. -->
                         <div v-if="feoResidualNoteFor(node)"
                           class="feo-plan-note text-medium-emphasis"
-                          title="Разбивка плана Ур.5 (плановых позиций) этой категории: сколько заложено, сколько уже расходуют привязанные заявки, сколько осталось"
+                          title="План: сумма плановых позиций этой категории. В закупках: сколько из них уже набрано заявками (привязанными к этим позициям). Свободно: план минус то, что в закупках — если в закупках больше плана, показано превышение"
                         >
-                          план {{ formatCurrency(feoResidualNoteFor(node)!.planned) }} · выбрано заявками {{ formatCurrency(feoResidualNoteFor(node)!.consumed) }} · остаток
-                          <span :style="feoResidualNoteFor(node)!.residual < -0.005 ? 'color:#EF4444;font-weight:700' : ''">{{ formatCurrency(feoResidualNoteFor(node)!.residual) }}</span>
+                          план {{ formatCurrency(feoResidualNoteFor(node)!.planned) }} · в закупках {{ formatCurrency(feoResidualNoteFor(node)!.consumed) }} ·
+                          <span v-if="feoResidualNoteFor(node)!.residual < -0.005" style="color:#EF4444;font-weight:700">больше плана на {{ formatCurrency(-feoResidualNoteFor(node)!.residual) }}</span>
+                          <span v-else>свободно {{ formatCurrency(feoResidualNoteFor(node)!.residual) }}</span>
                         </div>
                         <div v-else-if="plannedSumBase === 'all' && feoPlanConsumedNoteFor(node)"
                           class="feo-plan-note text-medium-emphasis"
-                          title="Ручной план элемента (или суммы его дочерних), сколько уже выбрано заявками (без привязанных к Ур.5 и без сверх плана) и сколько осталось"
+                          title="План: та же сумма, что и в плановой сумме строки выше. В закупках: сколько из плана уже занято заявками — своими и заявками подкатегорий. Свободно: план минус то, что в закупках — если в закупках больше плана, показано превышение"
                         >
-                          план {{ formatCurrency(feoPlanConsumedNoteFor(node)!.planned) }} · выбрано {{ formatCurrency(feoPlanConsumedNoteFor(node)!.consumed) }} · остаток
-                          <span :style="feoPlanConsumedNoteFor(node)!.residual < -0.005 ? 'color:#EF4444;font-weight:700' : ''">{{ formatCurrency(feoPlanConsumedNoteFor(node)!.residual) }}</span>
+                          план {{ formatCurrency(feoPlanConsumedNoteFor(node)!.planned) }} · в закупках {{ formatCurrency(feoPlanConsumedNoteFor(node)!.consumed) }} ·
+                          <span v-if="feoPlanConsumedNoteFor(node)!.residual < -0.005" style="color:#EF4444;font-weight:700">больше плана на {{ formatCurrency(-feoPlanConsumedNoteFor(node)!.residual) }}</span>
+                          <span v-else>свободно {{ formatCurrency(feoPlanConsumedNoteFor(node)!.residual) }}</span>
                         </div>
-                        <div v-if="feoForecastWarningFor(node)"
+                        <!-- Прогноз «цена выше плановой» — ТОЛЬКО у конечной категории (жалоба
+                             владельца 2026-08-13: «вишенкой откуда-то выяснилось, что цена выше
+                             плановой и прогноз 1 257 342» — у направления с детьми это план плюс
+                             перерасходы детей, число не значит ничего осмысленного). -->
+                        <div v-if="!node.hasChildren && feoForecastWarningFor(node)"
                           class="feo-plan-note" style="color:#F97316;font-weight:600"
-                          :title="`По темпу заказанных цен прогноз итоговой суммы ${formatCurrency(feoForecastWarningFor(node)!.forecast)} превышает план ${formatCurrency(feoForecastWarningFor(node)!.planManual)} — не блокирует, только предупреждение`"
+                          :title="`Если оставшуюся часть купить по нынешней средней цене заказанного, итоговая сумма составит ${formatCurrency(feoForecastWarningFor(node)!.forecast)} — выше плана ${formatCurrency(feoForecastWarningFor(node)!.planManual)}. Не блокирует, только предупреждение`"
                         >
-                          цена выше плановой · прогноз {{ formatCurrency(feoForecastWarningFor(node)!.forecast) }} при плане {{ formatCurrency(feoForecastWarningFor(node)!.planManual) }}
+                          если оставшееся купить по нынешней средней цене, выйдет {{ formatCurrency(feoForecastWarningFor(node)!.forecast) }} при плане {{ formatCurrency(feoForecastWarningFor(node)!.planManual) }}
                         </div>
                         <!-- Превышение плана над финансированием ФЭО — требует согласования цепочкой
                              (задача владельца 2026-08-05), см. excessFor()/requestPlanExcessApproval().
@@ -1033,7 +1056,7 @@
                             :icon="expandedItemPanels.has(node.id) ? 'mdi-list-box' : 'mdi-list-box-outline'"
                             variant="text" size="x-small"
                             :color="expandedItemPanels.has(node.id) ? 'teal' : 'grey'"
-                            :title="node.hasChildren ? 'Показать плановые позиции, привязанные прямо к направлению' : 'Показать плановые / фактические позиции'"
+                            :title="node.hasChildren ? 'Состав плана: позиции, привязанные к самому направлению (не к его подкатегориям)' : 'Показать плановые / фактические позиции'"
                             @click="toggleItemPanel(node)"
                           /></span>
                           <!-- Стрелки — друг под другом -->
@@ -4714,17 +4737,29 @@ const feoResidualsByCat = computed<Record<number, { planned: number; consumed: n
 // 8 000 000 ₽) и (б) одна мелкая Ур.5-детализация (напр. «вавава» на 333 ₽) — заметка
 // показывала «план 333 ₽», хотя колонка «Плановая сумма» рядом честно показывала
 // 8 000 000 ₽ (из planTreeByCat/display). Теперь ЗНАЧЕНИЯ берутся из planTreeByCat —
-// того же источника, что и колонка (plan_manual/ordered_sum/residual); feoResidualsByCat
-// используется ТОЛЬКО как признак «у категории есть Ур.5-детализация», не как источник
-// чисел — иначе эта заметка задваивала бы feoPlanConsumedNoteFor (см. v-else-if в шаблоне).
+// того же источника, что и колонка (plan_manual); feoResidualsByCat используется
+// ТОЛЬКО как признак «у категории есть Ур.5-детализация», не как источник чисел —
+// иначе эта заметка задваивала бы feoPlanConsumedNoteFor (см. v-else-if в шаблоне).
+//
+// БАГ (жалоба владельца 2026-08-13, конечная категория «Расходные материалы для
+// проведения окружных полуфиналов…»): «Выбрано заявками 0 — это блядь что значит?»
+// — consumed раньше читался из t.ordered_sum/t.consumed (planTreeByCat) — это
+// backend-поле own_ordered/ordered, СЧИТАЕТ ТОЛЬКО заявки, ПРИВЯЗАННЫЕ к плановым
+// позициям этой категории (feo_planned_item_id). У этой категории все 9 закупленных
+// позиций на 118 365,60 ₽ заведены БЕЗ привязки (обычные позиции с тем же
+// feo_category_id) — ordered_sum по ним 0, хотя по плану уже фактически набрано.
+// Тот же приём, что и в feoPlanConsumedNoteFor: consumed = непривязанные
+// (feoPlannedRequestsFor, карта plannedPurchaseTotals) + привязанные
+// (feoPlannedConsumedFor, карта plannedPurchaseTotalsLinked) — «в закупках» считает
+// ВСЕ заявки по категории, а не только те, что явно привязаны к Ур.5-позиции.
 function feoResidualNoteFor(node: FeoNode): { planned: number; consumed: number; residual: number } | null {
   if (node.hasChildren) return null
   if (!feoResidualsByCat.value[node.id]) return null
   const t = planTreeByCat.value[node.id]
   if (!t) return null
   const planned = Number(t.plan_manual ?? 0)
-  const consumed = Number(t.ordered_sum ?? t.consumed ?? 0)
-  const residual = Number(t.residual ?? (planned - consumed))
+  const consumed = feoPlannedRequestsFor(node) + feoPlannedConsumedFor(node)
+  const residual = planned - consumed
   if (planned <= 0 && consumed <= 0) return null
   return { planned, consumed, residual }
 }
@@ -5593,6 +5628,25 @@ function hasOwnPlannedAmountFor(node: FeoNode): boolean {
   // Не идеальный признак (пропустит совсем ручной FeoPlannedItem без единой закупки
   // за ним), но не требует похода в сеть и покрывает боевой сценарий задачи.
   return (plannedItemsByCat.value[node.id]?.length || 0) > 0
+}
+
+// Числовой двойник hasOwnPlannedAmountFor выше — не просто «есть ли своя сумма», а
+// СКОЛЬКО её (жалоба владельца 2026-08-13: «48 441,80 — нигде нет такой суммы»,
+// «внутри какой панели, я нигде не вижу этой хуйни, что это за фантом» — план
+// направления после бэкенд-правки own_amt уже включает свою часть в шапке строки, но
+// нигде не показан отдельным числом). Та же формула («plan_manual узла минус Σ
+// plan_manual его непосредственных детей» = own_amt этого узла, см. комментарий у
+// hasOwnPlannedAmountFor), только возвращает сумму, а не boolean — используется в
+// строке «в т.ч. на самом направлении N ₽» под «Плановой суммой» направления.
+function feoOwnDirectionPlanFor(node: FeoNode): number {
+  if (!node.hasChildren) return 0
+  const t = planTreeByCat.value[node.id]
+  if (!t) return 0
+  const childrenPlanManual = (node.children || []).reduce(
+    (sum, ch) => sum + Number(planTreeByCat.value[ch.id]?.plan_manual || 0), 0
+  )
+  const own = Number(t.plan_manual || 0) - childrenPlanManual
+  return own > 0.005 ? own : 0
 }
 
 interface FeoVirtualGroup {
@@ -8258,14 +8312,31 @@ function feoPlannedDisplayFor(node: FeoNode): number {
   return feoPlannedDisplayRaw(node)
 }
 
-// Заметка под «Плановой суммой»: план N ₽ · выбрано M ₽ · остаток K ₽ (см. ЗАДАЧА
-// сессии 2026-08-05). Остаток = plan_manual − consumed (может уйти в минус —
-// красным в шаблоне). Показывается ТОЛЬКО в режиме 'all' (единственный режим,
-// где действует новая формула MAX) и только когда есть хоть какие-то числа —
+// Заметка под «Плановой суммой»: план N ₽ · в закупках M ₽ · свободно K ₽ (см. ЗАДАЧА
+// сессии 2026-08-05). Свободно = plan_manual − consumed (может уйти в минус — тогда
+// шаблон пишет «больше плана на X»). Показывается ТОЛЬКО в режиме 'all' (единственный
+// режим, где действует новая формула MAX) и только когда есть хоть какие-то числа —
 // пустые узлы (ни плана, ни заявок) заметку не показывают.
+//
+// БАГ (жалоба владельца 2026-08-13, «Окружные»): «план 513 244 — это откуда?» — раньше
+// planned = feoPlannedTotalFor(node), а та для узла с детьми считает ТОЛЬКО сумму
+// планов детей, без собственной плановой позиции узла — расходилась с шапкой строки
+// (feoPlannedDisplayFor/planTreeByCat.plan_manual, который = дети + own_amt, см.
+// feoOwnDirectionPlanFor). Теперь planned читается из ТОГО ЖЕ planTreeByCat.plan_manual,
+// что и шапка — те же 561 685,80, а не 513 244. feoPlannedTotalFor(node) остаётся ТОЛЬКО
+// запасным вариантом на случай, когда дерево плана (planTreeByCat) ещё не загружено.
+//
+// БАГ 2: «выбрано 695 656 — откуда?» / у конечной категории «выбрано заявками 0,00»
+// при факте 118 365,60 закупками — раньше consumed = feoPlannedRequestsFor(node), это
+// ТОЛЬКО непривязанные к Ур.5 позиции заявок (plannedPurchaseTotals). Если у категории
+// все позиции привязаны (feo_planned_item_id задан), consumed был 0, хотя по плану уже
+// набрано. Складываем непривязанные (feoPlannedRequestsFor) с привязанными
+// (feoPlannedConsumedFor, карта plannedPurchaseTotalsLinked) — «в закупках» теперь
+// считает ВСЁ, что стоит за планом, вне зависимости от привязки.
 function feoPlanConsumedNoteFor(node: FeoNode): { planned: number; consumed: number; residual: number } | null {
-  const planned = feoPlannedTotalFor(node)
-  const consumed = feoPlannedRequestsFor(node)
+  const t = planTreeByCat.value[node.id]
+  const planned = (t && t.plan_manual != null) ? Number(t.plan_manual) : feoPlannedTotalFor(node)
+  const consumed = feoPlannedRequestsFor(node) + feoPlannedConsumedFor(node)
   if (planned <= 0 && consumed <= 0) return null
   return { planned, consumed, residual: planned - consumed }
 }
@@ -10222,6 +10293,10 @@ onMounted(() => {
 .feo-tr--l1 .feo-td { background: var(--crm-surface-alt); }
 .feo-tr--l1:hover .feo-td { background: var(--crm-surface-hover); }
 .feo-plan-note { font-size: 10px; line-height: 1.2; white-space: nowrap; }
+/* Кликабельная заметка «в т.ч. на самом направлении N ₽» (жалоба владельца
+   2026-08-13) — раскрывает панель направления, см. feoOwnDirectionPlanFor(). */
+.feo-plan-note--link { cursor: pointer; text-decoration: none; }
+.feo-plan-note--link:hover { text-decoration: underline; color: #0f766e; }
 /* «Заметный сигнал превышения» (план zany-fluttering-mountain.md, возвращено из отката
    e0db76a) — сознательно КРУПНЕЕ и заметнее соседних .feo-plan-note (10px, тонкий текст):
    владелец жаловался, что превышение «теряется среди чисел» — эта плашка обязана читаться

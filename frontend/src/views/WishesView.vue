@@ -1151,21 +1151,44 @@
                   @update:vat-mode="(v: string) => { wishForm.vat_mode = v }"
                   @planned-item-created="onWishPlannedItemCreated"
                 />
-                <!-- Владелец, 2026-08-13: чип «в закупке иначе» у позиции, разошедшейся с тем, что
-                     согласовали (категория ФЭО/кол-во/цена). Сейчас API заявки не присылает снимок
-                     связанной позиции закупки на wish item — сопоставлять не по чему, чип нигде не
-                     появится (см. itemDiscrepancy). Оставлено готовым: как только бэкенд начнёт
-                     отдавать такую привязку, чип заработает без правок разметки. -->
-                <div v-if="wishForm.items.some(i => itemDiscrepancy(i))" class="d-flex flex-wrap ga-1 mt-2">
-                  <template v-for="(it, idx) in wishForm.items" :key="'disc-' + idx">
-                    <v-tooltip v-if="itemDiscrepancy(it)" location="top">
-                      <template #activator="{ props: dTip }">
-                        <v-chip v-bind="dTip" size="x-small" color="orange" variant="tonal" prepend-icon="mdi-alert-outline">
-                          {{ it.item_name }}: в закупке иначе
-                        </v-chip>
-                      </template>
-                      В закупке иначе: {{ itemDiscrepancy(it)!.text }}
-                    </v-tooltip>
+                <!-- Владелец, 2026-08-13: построчные пометки — что остановлено, что разошлось с
+                     закупкой, что не удалось сопоставить однозначно. Данные — item.purchase_match
+                     с бэка (только в карточке). ⚠️ PurchaseItemsEditor.vue вне задачи — подсветить
+                     саму строку таблицы позиций отсюда нельзя, поэтому статус выведен отдельным
+                     списком под таблицей, по одной строке на позицию. -->
+                <div v-if="wishForm.items.some(i => wishItemStatus(i))" class="mt-2 d-flex flex-column" style="gap:4px">
+                  <template v-for="(it, idx) in wishForm.items" :key="'pmstatus-' + idx">
+                    <div v-if="wishItemStatus(it)" class="d-flex align-center flex-wrap" style="gap:6px">
+                      <span class="text-caption" :class="it.purchase_match?.purchase_stopped_at ? 'text-medium-emphasis text-decoration-line-through' : 'text-medium-emphasis'">
+                        {{ it.item_name || 'без названия' }}:
+                      </span>
+                      <v-chip
+                        v-if="it.purchase_match?.purchase_stopped_at"
+                        size="x-small" color="error" variant="tonal" prepend-icon="mdi-stop-circle-outline"
+                        :style="it.purchase_match?.purchase_id ? 'cursor:pointer' : ''"
+                        :title="`Закупка №${it.purchase_match?.purchase_number || it.purchase_match?.purchase_id} остановлена ${formatDate(it.purchase_match!.purchase_stopped_at!)}`"
+                        @click="goToMatchedPurchase(it)"
+                      >остановлена</v-chip>
+                      <v-tooltip v-if="itemDiscrepancy(it)" location="top">
+                        <template #activator="{ props: dTip }">
+                          <v-chip
+                            v-bind="dTip"
+                            size="x-small" color="orange" variant="tonal" prepend-icon="mdi-alert-outline"
+                            :style="it.purchase_match?.purchase_id ? 'cursor:pointer' : ''"
+                            @click="goToMatchedPurchase(it)"
+                          >в закупке иначе</v-chip>
+                        </template>
+                        <div style="white-space:pre-line">{{ itemDiscrepancy(it)!.lines.join('\n') }}</div>
+                      </v-tooltip>
+                      <v-tooltip v-else-if="it.purchase_match?.match_method === 'item_name_ambiguous'" location="top">
+                        <template #activator="{ props: aTip }">
+                          <v-chip v-bind="aTip" size="x-small" color="grey" variant="tonal" prepend-icon="mdi-help-circle-outline">
+                            двойник в закупке не определён
+                          </v-chip>
+                        </template>
+                        Под этим наименованием в закупке несколько строк ({{ it.purchase_match?.ambiguous_candidates_count }}) — различить их автоматически нельзя.
+                      </v-tooltip>
+                    </div>
                   </template>
                 </div>
                 <div class="d-flex justify-end mt-3">
@@ -2030,6 +2053,23 @@ const router = useRouter()
 const route = useRoute()
 const registryArea = ref<HTMLElement | null>(null)
 
+// Владелец, 2026-08-13: снимок сопоставленной позиции закупки — приходит на каждой
+// позиции карточки заявки (GET /wishes/{id}). В списке заявок этого поля нет.
+interface PurchaseMatch {
+  match_method: 'wish_item_id' | 'item_name' | 'item_name_qty' | 'item_name_ambiguous'
+  ambiguous_candidates_count?: number | null
+  purchase_item_id?: number | null
+  purchase_id?: number | null
+  purchase_number?: string | null
+  purchase_status?: string | null
+  purchase_stopped_at?: string | null
+  feo_category_id?: number | null
+  feo_category_name?: string | null
+  quantity?: number | null
+  unit_price?: number | null
+  total_price?: number | null
+}
+
 interface WishItem {
   item_name: string
   item_type: string
@@ -2038,6 +2078,8 @@ interface WishItem {
   unit_price: number
   total_price: number
   country_origin: string
+  feo_category_id?: number | null
+  purchase_match?: PurchaseMatch | null
 }
 
 interface Wish {
@@ -3073,28 +3115,56 @@ function wishItemsTotal(w: Wish): number | null {
 }
 
 // Владелец, 2026-08-13: чип «в закупке иначе» — расхождение позиции заявки с
-// привязанной позицией закупки (категория ФЭО/кол-во/цена), чтобы «при
-// сравнении было видно, где накосячили». ⚠️ Текущий ответ API заявки не содержит
-// снимка связанной позиции закупки на wish item (нет общего поля вроде
-// purchase_item_snapshot/linked_purchase_item) — сравнивать не с чем, функция
-// всегда возвращает null, чип нигде не показывается. Логика оставлена готовой:
-// как только бэкенд начнёт присылать такую привязку прямо на items заявки, чип
-// заработает без правок разметки — она уже вызывает эту функцию.
-function itemDiscrepancy(item: any): { text: string } | null {
-  const linked = item?.purchase_item_snapshot || item?.linked_purchase_item || null
-  if (!linked) return null
-  const diffs: string[] = []
-  if (linked.feo_category_id != null && linked.feo_category_id !== item.feo_category_id) {
-    diffs.push('другая категория ФЭО')
+// сопоставленной позицией закупки (категория ФЭО/кол-во/цена), чтобы «при сравнении
+// было видно, где накосячили». Бэкенд отдаёт снимок закупочной позиции в
+// item.purchase_match (только в карточке, GET /wishes/{id} — см. openEditDialog).
+// Деньги/количество сравниваем с допуском в копейку (округление до 2 знаков), чтобы
+// не дёргать чип из-за 0,004 разницы округления. Категорию сравниваем по id, а
+// показываем названиями: своё — по allFeoCategories (справочник грузится глобально,
+// отдельного поля с именем на позиции заявки нет), закупочное — feo_category_name,
+// которое уже приходит готовым с бэка.
+function moneyRoundedEq(a: number | null | undefined, b: number | null | undefined): boolean {
+  if (a == null || b == null) return true
+  return Math.round(Number(a) * 100) === Math.round(Number(b) * 100)
+}
+function feoCategoryNameById(id?: number | null): string {
+  if (id == null) return ''
+  return allFeoCategories.value.find(c => c.id === id)?.name || `#${id}`
+}
+function itemDiscrepancy(item: any): { lines: string[] } | null {
+  const pm = item?.purchase_match
+  if (!pm || pm.match_method === 'item_name_ambiguous') return null
+  const lines: string[] = []
+  // Эффективная своя категория позиции: как и в остальном файле (см. wishFeoSelected
+  // fallback), если у позиции нет собственной feo_category_id (режим «одна категория
+  // на заявку»), берём общую категорию заявки.
+  const ownCategoryId = item.feo_category_id ?? wishFeoSelected.value
+  if (pm.feo_category_id != null && ownCategoryId != null && pm.feo_category_id !== ownCategoryId) {
+    const ownName = feoCategoryNameById(ownCategoryId) || '—'
+    const purchName = pm.feo_category_name || feoCategoryNameById(pm.feo_category_id) || '—'
+    lines.push(`категория: «${ownName}» → «${purchName}»`)
   }
-  if (linked.quantity != null && Number(linked.quantity) !== Number(item.quantity)) {
-    diffs.push(`кол-во в закупке: ${linked.quantity}`)
+  if (pm.quantity != null && item.quantity != null && !moneyRoundedEq(item.quantity, pm.quantity)) {
+    lines.push(`количество: ${item.quantity} → ${pm.quantity}`)
   }
-  if (linked.unit_price != null && Number(linked.unit_price) !== Number(item.unit_price)) {
-    diffs.push(`цена в закупке: ${formatPrice(Number(linked.unit_price))}`)
+  if (pm.unit_price != null && item.unit_price != null && !moneyRoundedEq(item.unit_price, pm.unit_price)) {
+    lines.push(`цена: ${formatMoney(item.unit_price)} → ${formatMoney(pm.unit_price)}`)
   }
-  if (!diffs.length) return null
-  return { text: diffs.join('; ') }
+  if (!lines.length) return null
+  return { lines }
+}
+// Есть что показать построчно: остановлена / расхождение / неоднозначный двойник
+function wishItemStatus(item: any): boolean {
+  const pm = item?.purchase_match
+  if (!pm) return false
+  if (pm.purchase_stopped_at) return true
+  if (pm.match_method === 'item_name_ambiguous') return true
+  return !!itemDiscrepancy(item)
+}
+function goToMatchedPurchase(item: any) {
+  const pid = item?.purchase_match?.purchase_id
+  if (!pid) return
+  router.push(`/orders/${pid}/edit`)
 }
 
 // Владелец, 2026-08-13: «остановка заявки» — крупная подпись под алертом.
@@ -3230,13 +3300,17 @@ async function openEditDialog(wish: Wish) {
 
   try {
     let rawItems: any[] = []
-    if (Array.isArray((wish as any).items) && (wish as any).items.length > 0) {
+    // Владелец, 2026-08-13: список заявок (myWishes/allWishes/incoming) уже подгружает
+    // items, но БЕЗ purchase_match (бэк считает его только в карточке, GET /wishes/{id}
+    // — дорогой запрос под конкретный id). Построчные пометки «остановлена»/«в закупке
+    // иначе» без этого поля не построить, поэтому при открытии карточки всегда идём за
+    // свежими данными; items из списка — только фолбэк, если запрос не удался.
+    try {
+      const fresh = await apiFetch<any>(`/wishes/${wish.id}`)
+      if (Array.isArray(fresh?.items)) rawItems = fresh.items
+    } catch {}
+    if (!rawItems.length && Array.isArray((wish as any).items) && (wish as any).items.length > 0) {
       rawItems = (wish as any).items
-    } else {
-      try {
-        const fresh = await apiFetch<any>(`/wishes/${wish.id}`)
-        if (Array.isArray(fresh?.items)) rawItems = fresh.items
-      } catch {}
     }
 
     // Backfill product_id by matching item_name against catalog — handles legacy
@@ -3289,6 +3363,9 @@ async function openEditDialog(wish: Wish) {
         over_plan: i.over_plan ?? false,
         vat_rate: i.vat_rate ?? null,
         needed_date: i.needed_date ?? null,
+        // Владелец, 2026-08-13: снимок сопоставленной позиции закупки — для построчных
+        // пометок «остановлена»/«в закупке иначе»/«двойник не определён» (см. itemStatus).
+        purchase_match: i.purchase_match ?? null,
         _photo_url: prod ? photoOf(prod) : undefined,
         _description: prod?.description || undefined,
       }

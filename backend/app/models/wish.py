@@ -41,10 +41,22 @@ class Wish(Base):
     approval_mode = Column(String(20), nullable=False, default="sequential", server_default="sequential")  # sequential/parallel
     source = Column(String(30), nullable=True)  # 'advance_report' = авто-заявка из авансового; NULL = обычная
 
+    # Остановка заявки (владелец, 2026-08-13): «Останавливать могут все» —
+    # заявка не удаляется, а исчезает из плана закупок и перестаёт считаться в
+    # ФЭО. Обратной операции (возобновление) нет — владелец её не просил.
+    # См. app/routers/wishes.py::stop_wish, app/services/feo_plan.py.
+    stopped_at = Column(DateTime(timezone=True), nullable=True)
+    stopped_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    stopped_reason = Column(Text, nullable=True)
+    # True — остановились НЕ все привязанные закупки (часть уже была на стадии
+    # договора/заказано для рамочных — см. Purchase.stopped_at).
+    stopped_partial = Column(Boolean, nullable=False, default=False, server_default="false")
+
     creator = relationship("User", foreign_keys=[created_by], lazy="joined")
     approver = relationship("User", foreign_keys=[approved_by], lazy="joined")
     assignee = relationship("User", foreign_keys=[assigned_to], lazy="selectin")
     executor = relationship("User", foreign_keys=[executor_id], lazy="selectin")
+    stopped_by_user = relationship("User", foreign_keys=[stopped_by], lazy="selectin")
     purchase = relationship("Purchase", foreign_keys=[purchase_id])
     subsidy = relationship("Subsidy", lazy="selectin")
     event = relationship("Event", foreign_keys=[event_id], lazy="selectin")

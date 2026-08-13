@@ -155,10 +155,14 @@ async def _check_budget(
                 limit = float(subsidy.budget or 0)
 
             # Spent WITHOUT this purchase (exclude_pid = id of current purchase on UPDATE)
+            # Остановленные закупки (владелец, 2026-08-13, «остановка заявки») —
+            # исключены из потраченного, как и «cancelled»: «остановленные позиции
+            # убираются из плана закупок и не считаются».
             from sqlalchemy import func as _func
             spent_q = select(_func.coalesce(_func.sum(Purchase.planned_total_price), 0)).where(
                 Purchase.subsidy_id == subsidy_id,
                 Purchase.status.notin_(("cancelled",)),
+                Purchase.stopped_at.is_(None),
             )
             if exclude_pid:
                 spent_q = spent_q.where(Purchase.id != exclude_pid)
@@ -207,7 +211,9 @@ async def _check_budget(
         used_q = select(
             func.coalesce(func.sum(PurchaseItem.total_price), 0)
         ).join(Purchase, PurchaseItem.purchase_id == Purchase.id).where(
-            PurchaseItem.feo_planned_item_id == fpi_id
+            PurchaseItem.feo_planned_item_id == fpi_id,
+            # Остановленные закупки не считаются (владелец, 2026-08-13).
+            Purchase.stopped_at.is_(None),
         )
         if exclude_pid:
             used_q = used_q.where(Purchase.id != exclude_pid)

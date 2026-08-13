@@ -897,6 +897,14 @@ class PurchaseOut(PurchaseCreate):
     # закупок — считается опционально (?with_feo_excess=true), см. list_purchases.
     feo_excess: bool = False
     feo_excess_hint: Optional[str] = None
+    # Остановка закупки (владелец, 2026-08-13) — read-only, системой проставляется
+    # в POST /api/wishes/{wish_id}/stop, НЕ через PUT/PATCH закупки напрямую
+    # (намеренно отсутствует в PurchaseCreate/PurchaseUpdate — см. update_purchase
+    # payload_dict/exclude_unset и PATCHABLE_FIELDS в purchases.py).
+    stopped_at: Optional[datetime] = None
+    stopped_by: Optional[int] = None
+    stopped_by_name: Optional[str] = None
+    stopped_wish_id: Optional[int] = None
     model_config = {"from_attributes": True}
 
 class PurchaseOutFull(PurchaseOut):

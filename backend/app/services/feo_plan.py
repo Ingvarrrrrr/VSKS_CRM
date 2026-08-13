@@ -175,6 +175,11 @@ async def plan_consumption_by_category(
     PurchaseItem.feo_planned_item_id IS NOT NULL (они уже расходуют план
     конкретной FeoPlannedItem — Ур.5 — и не должны задваиваться с планом
     самого листа; используется _calculate_feo_planned_tree_bulk).
+
+    Остановленные закупки (владелец, 2026-08-13, «остановка заявки»):
+    Purchase.stopped_at IS NOT NULL исключаются целиком — «остановленные
+    позиции убираются из плана закупок и не считаются» (строки НЕ удаляются,
+    только перестают участвовать в суммах).
     """
     result: dict[int, dict] = {}
     if not subsidy_ids:
@@ -202,6 +207,7 @@ async def plan_consumption_by_category(
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .join(FeoCategory, FeoCategory.id == cat_col)
         .where(Purchase.status.in_(list(PLANNED_STATUSES)))
+        .where(Purchase.stopped_at.is_(None))
         .where(FeoCategory.subsidy_id.in_(subsidy_ids))
         .where(Purchase.subsidy_id == FeoCategory.subsidy_id)
         .group_by(cat_col, PurchaseItem.over_plan)
@@ -251,6 +257,9 @@ async def ordered_consumption_by_category(
     Изоляция субсидий — как в plan_consumption_by_category (Purchase.
     subsidy_id == FeoCategory.subsidy_id категории, к которой отнесена
     позиция).
+
+    Остановленные закупки исключены (Purchase.stopped_at IS NOT NULL) — см.
+    docstring plan_consumption_by_category.
     """
     result: dict[int, dict] = {}
     if not subsidy_ids:
@@ -262,6 +271,7 @@ async def ordered_consumption_by_category(
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .join(FeoCategory, FeoCategory.id == cat_col)
         .where(Purchase.status.in_(list(ORDERED_STATUSES)))
+        .where(Purchase.stopped_at.is_(None))
         .where(PurchaseItem.over_plan.is_(False))
         .where(FeoCategory.subsidy_id.in_(subsidy_ids))
         .where(Purchase.subsidy_id == FeoCategory.subsidy_id)
@@ -329,6 +339,9 @@ async def fact_consumption_by_category(
     plan_consumption_by_category.over и compute_feo_plan_tree).
 
     Изоляция субсидий — как в plan_consumption_by_category/ordered_consumption_by_category.
+
+    Остановленные закупки исключены (Purchase.stopped_at IS NOT NULL) — см.
+    docstring plan_consumption_by_category.
     """
     result: dict[int, dict] = {}
     if not subsidy_ids:
@@ -340,6 +353,7 @@ async def fact_consumption_by_category(
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .join(FeoCategory, FeoCategory.id == cat_col)
         .where(Purchase.status.in_(list(FACT_ELIGIBLE_STATUSES)))
+        .where(Purchase.stopped_at.is_(None))
         .where(PurchaseItem.over_plan.is_(False))
         .where(FeoCategory.subsidy_id.in_(subsidy_ids))
         .where(Purchase.subsidy_id == FeoCategory.subsidy_id)
@@ -395,6 +409,10 @@ async def planned_item_consumption(
     (draft/submitted/approved, purchase_id IS NULL), уже «бронирующих» план.
     linked_purchase_ids — уникальные id закупок, чьи позиции привязаны к
     плановой позиции (тоже только PLANNED_STATUSES).
+
+    Остановленные закупки (Purchase.stopped_at IS NOT NULL) и остановленные
+    заявки (Wish.stopped_at IS NOT NULL) исключены — «остановленные позиции
+    убираются из плана закупок и не считаются» (владелец, 2026-08-13).
     """
     result: dict[int, dict] = {
         iid: {"used": 0.0, "used_qty": 0.0, "wish_used": 0.0, "linked_purchase_ids": []}
@@ -414,6 +432,7 @@ async def planned_item_consumption(
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .where(PurchaseItem.feo_planned_item_id.in_(item_ids))
         .where(Purchase.status.in_(list(PLANNED_STATUSES)))
+        .where(Purchase.stopped_at.is_(None))
     )
     if exclude_purchase_id is not None:
         used_q = used_q.where(PurchaseItem.purchase_id != exclude_purchase_id)
@@ -433,6 +452,7 @@ async def planned_item_consumption(
         .where(WishItem.feo_planned_item_id.in_(item_ids))
         .where(Wish.status.in_(("draft", "submitted", "approved")))
         .where(Wish.purchase_id.is_(None))
+        .where(Wish.stopped_at.is_(None))
     )
     if exclude_wish_id is not None:
         wish_used_q = wish_used_q.where(Wish.id != exclude_wish_id)
@@ -445,6 +465,7 @@ async def planned_item_consumption(
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .where(PurchaseItem.feo_planned_item_id.in_(item_ids))
         .where(Purchase.status.in_(list(PLANNED_STATUSES)))
+        .where(Purchase.stopped_at.is_(None))
     )
     if exclude_purchase_id is not None:
         links_q = links_q.where(PurchaseItem.purchase_id != exclude_purchase_id)

@@ -116,6 +116,14 @@ class Purchase(Base):
     # Распределённая заявка переходит в status='converted' и уходит из «Заявок» в «Закупки».
     wish_id = Column(Integer, ForeignKey("wishes.id", ondelete="SET NULL"), nullable=True, index=True)
 
+    # Остановка закупки (владелец, 2026-08-13) — каскадом от остановки заявки
+    # (app/routers/wishes.py::stop_wish): останавливается закупка, ещё не
+    # дошедшая до договора (для рамочных — ещё не «Заказано»). Не удаляется —
+    # сохраняется история. stopped_wish_id — какая именно заявка её остановила.
+    stopped_at = Column(DateTime(timezone=True), nullable=True)
+    stopped_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    stopped_wish_id = Column(Integer, ForeignKey("wishes.id", ondelete="SET NULL"), nullable=True)
+
     # Авансовый отчёт: кому возмещать (сотрудник)
     reimbursement_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
@@ -190,6 +198,7 @@ class Purchase(Base):
     contract = relationship("Contract", back_populates="purchases")
     assigned_user = relationship("User", foreign_keys=[assigned_user_id])
     service_note_author = relationship("User", foreign_keys=[service_note_by])
+    stopped_by_user = relationship("User", foreign_keys=[stopped_by])
     reimbursement_user = relationship("User", foreign_keys=[reimbursement_user_id])
     service_note_to_user = relationship("User", foreign_keys=[service_note_to_user_id])
     event = relationship("Event")

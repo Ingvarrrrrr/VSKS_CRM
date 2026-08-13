@@ -277,6 +277,12 @@
           </v-chip>
         </template>
         <template #item.title_col="{ item }">
+          <!-- Владелец, 2026-08-13: остановка заявки — крупный алерт на всю строку -->
+          <div v-if="item.stopped_at" class="wish-stopped-banner">
+            <v-icon icon="mdi-alert-octagon" size="18" class="mr-1" />
+            <span class="wish-stopped-banner__title">{{ item.stopped_partial ? 'ОСТАНОВЛЕНА ЧАСТИЧНО' : 'ЗАЯВКА ОСТАНОВЛЕНА' }}</span>
+            <span class="wish-stopped-banner__meta">{{ stoppedByLine(item) }}</span>
+          </div>
           <div class="d-flex align-center flex-wrap" style="gap:6px">
             <span class="font-weight-medium">{{ item.title }}</span>
             <!-- Phase 31-06: badge for unseen changes -->
@@ -290,8 +296,6 @@
           </div>
           <div class="text-caption text-medium-emphasis">
             <span v-if="item.items_count">Позиций: <b>{{ item.items_count }}</b></span>
-            <span v-if="item.items_count && item.total_amount"> · </span>
-            <span v-if="item.total_amount">НМЦК: <b>{{ formatPrice(item.total_amount) }}</b></span>
           </div>
         </template>
         <template #item.creator_name="{ item }">
@@ -311,6 +315,18 @@
             :sort-by="colSort.event_name"
             @update:model-value="v => colFilters.event_name = v"
             @sort="dir => colSort.event_name = dir" />
+        </template>
+        <!-- Владелец, 2026-08-13: сумма заявки (Σ total_price позиций) -->
+        <template #item.wish_total="{ item }">
+          {{ wishItemsTotal(item) != null ? formatPrice(wishItemsTotal(item)!) : '—' }}
+        </template>
+        <template #header.wish_total="{ column }">
+          <ColumnHeaderMenu col-key="wish_total" :title="column.title" col-type="number"
+            align="end"
+            :model-value="colFilters.wish_total"
+            :sort-by="colSort.wish_total"
+            @update:model-value="v => colFilters.wish_total = v"
+            @sort="dir => colSort.wish_total = dir" />
         </template>
         <template #item.created_at="{ item }">
           {{ formatDate(item.created_at) }}
@@ -394,6 +410,12 @@
         <v-row dense>
           <v-col v-for="w in pagedWishes" :key="w.id" cols="12" sm="6" lg="4">
             <v-card variant="outlined" class="h-100 d-flex flex-column" hover @click="openEditDialog(w)">
+              <!-- Владелец, 2026-08-13: остановка заявки — крупный алерт на всю ширину карточки -->
+              <div v-if="w.stopped_at" class="wish-stopped-banner ma-2 mb-0">
+                <v-icon icon="mdi-alert-octagon" size="18" class="mr-1" />
+                <span class="wish-stopped-banner__title">{{ w.stopped_partial ? 'ОСТАНОВЛЕНА ЧАСТИЧНО' : 'ЗАЯВКА ОСТАНОВЛЕНА' }}</span>
+                <span class="wish-stopped-banner__meta">{{ stoppedByLine(w) }}</span>
+              </div>
               <v-card-item class="pb-1">
                 <template #prepend>
                   <v-icon icon="mdi-hand-heart-outline" color="primary" size="20" />
@@ -422,8 +444,8 @@
                 <div v-if="w.execution_deadline" class="text-caption text-medium-emphasis mb-1">
                   Срок: <span class="font-weight-medium">{{ formatDate(w.execution_deadline) }}</span>
                 </div>
-                <div v-if="w.total_amount" class="text-caption text-medium-emphasis mb-1">
-                  НМЦК: <span class="font-weight-medium">{{ formatPrice(w.total_amount) }}</span>
+                <div v-if="wishItemsTotal(w) != null" class="text-caption text-medium-emphasis mb-1">
+                  Сумма: <span class="font-weight-medium">{{ formatPrice(wishItemsTotal(w)!) }}</span>
                 </div>
               </v-card-text>
               <v-divider />
@@ -590,6 +612,12 @@
           </v-chip>
         </template>
         <template #item.title_col="{ item }">
+          <!-- Владелец, 2026-08-13: остановка заявки — крупный алерт на всю строку -->
+          <div v-if="item.stopped_at" class="wish-stopped-banner">
+            <v-icon icon="mdi-alert-octagon" size="18" class="mr-1" />
+            <span class="wish-stopped-banner__title">{{ item.stopped_partial ? 'ОСТАНОВЛЕНА ЧАСТИЧНО' : 'ЗАЯВКА ОСТАНОВЛЕНА' }}</span>
+            <span class="wish-stopped-banner__meta">{{ stoppedByLine(item) }}</span>
+          </div>
           <div class="d-flex align-center flex-wrap" style="gap:6px">
             <span class="font-weight-medium">{{ item.title }}</span>
             <!-- Phase 31-06: badge for unseen changes -->
@@ -603,8 +631,6 @@
           </div>
           <div class="text-caption text-medium-emphasis">
             <span v-if="item.items_count">Позиций: <b>{{ item.items_count }}</b></span>
-            <span v-if="item.items_count && item.total_amount"> · </span>
-            <span v-if="item.total_amount">НМЦК: <b>{{ formatPrice(item.total_amount) }}</b></span>
           </div>
         </template>
         <template #item.creator_name="{ item }">
@@ -624,6 +650,18 @@
             :sort-by="colSort.event_name"
             @update:model-value="v => colFilters.event_name = v"
             @sort="dir => colSort.event_name = dir" />
+        </template>
+        <!-- Владелец, 2026-08-13: сумма заявки (Σ total_price позиций) -->
+        <template #item.wish_total="{ item }">
+          {{ wishItemsTotal(item) != null ? formatPrice(wishItemsTotal(item)!) : '—' }}
+        </template>
+        <template #header.wish_total="{ column }">
+          <ColumnHeaderMenu col-key="wish_total" :title="column.title" col-type="number"
+            align="end"
+            :model-value="colFilters.wish_total"
+            :sort-by="colSort.wish_total"
+            @update:model-value="v => colFilters.wish_total = v"
+            @sort="dir => colSort.wish_total = dir" />
         </template>
         <template #item.created_at="{ item }">
           {{ formatDate(item.created_at) }}
@@ -772,6 +810,12 @@
           </v-chip>
         </template>
         <template #item.title_col="{ item }">
+          <!-- Владелец, 2026-08-13: остановка заявки — крупный алерт на всю строку -->
+          <div v-if="item.stopped_at" class="wish-stopped-banner">
+            <v-icon icon="mdi-alert-octagon" size="18" class="mr-1" />
+            <span class="wish-stopped-banner__title">{{ item.stopped_partial ? 'ОСТАНОВЛЕНА ЧАСТИЧНО' : 'ЗАЯВКА ОСТАНОВЛЕНА' }}</span>
+            <span class="wish-stopped-banner__meta">{{ stoppedByLine(item) }}</span>
+          </div>
           <div class="d-flex align-center flex-wrap" style="gap:6px">
             <span class="font-weight-medium">{{ item.title }}</span>
             <!-- Phase 31-06: badge for unseen changes -->
@@ -785,8 +829,6 @@
           </div>
           <div class="text-caption text-medium-emphasis">
             <span v-if="item.items_count">Позиций: <b>{{ item.items_count }}</b></span>
-            <span v-if="item.items_count && item.total_amount"> · </span>
-            <span v-if="item.total_amount">НМЦК: <b>{{ formatPrice(item.total_amount) }}</b></span>
           </div>
         </template>
         <template #item.creator_name="{ item }">
@@ -806,6 +848,18 @@
             :sort-by="colSort.event_name"
             @update:model-value="v => colFilters.event_name = v"
             @sort="dir => colSort.event_name = dir" />
+        </template>
+        <!-- Владелец, 2026-08-13: сумма заявки (Σ total_price позиций) -->
+        <template #item.wish_total="{ item }">
+          {{ wishItemsTotal(item) != null ? formatPrice(wishItemsTotal(item)!) : '—' }}
+        </template>
+        <template #header.wish_total="{ column }">
+          <ColumnHeaderMenu col-key="wish_total" :title="column.title" col-type="number"
+            align="end"
+            :model-value="colFilters.wish_total"
+            :sort-by="colSort.wish_total"
+            @update:model-value="v => colFilters.wish_total = v"
+            @sort="dir => colSort.wish_total = dir" />
         </template>
         <template #item.created_at="{ item }">
           {{ formatDate(item.created_at) }}
@@ -914,6 +968,17 @@
           <div v-if="editingWish.execution_deadline"><b>Срок исполнения:</b> {{ formatDate(editingWish.execution_deadline) }}</div>
         </v-card-subtitle>
         <v-card-text class="pa-4">
+          <!-- Владелец, 2026-08-13: остановка заявки — крупный алерт в красной рамке на всю ширину -->
+          <div v-if="editingWish?.stopped_at" class="wish-stopped-banner wish-stopped-banner--large mb-3">
+            <v-icon icon="mdi-alert-octagon" size="26" class="mr-2" />
+            <div>
+              <div class="wish-stopped-banner__title">{{ editingWish.stopped_partial ? 'ЗАЯВКА ОСТАНОВЛЕНА ЧАСТИЧНО' : 'ЗАЯВКА ОСТАНОВЛЕНА' }}</div>
+              <div class="wish-stopped-banner__meta">{{ stoppedByLine(editingWish) }}</div>
+              <div v-if="editingWish.stopped_partial" class="wish-stopped-banner__meta mt-1">
+                Часть закупок этой заявки уже прошла договор (и не останавливается) — точный список пока не отдаётся с сервера построчно. Проверьте статус позиций в разделе «Закупки».
+              </div>
+            </div>
+          </div>
           <!-- T3: v-alert для ошибки «нет даты потребности» — остаётся пока пользователь не заполнит даты -->
           <v-alert
             v-if="wishConvertError"
@@ -1086,6 +1151,23 @@
                   @update:vat-mode="(v: string) => { wishForm.vat_mode = v }"
                   @planned-item-created="onWishPlannedItemCreated"
                 />
+                <!-- Владелец, 2026-08-13: чип «в закупке иначе» у позиции, разошедшейся с тем, что
+                     согласовали (категория ФЭО/кол-во/цена). Сейчас API заявки не присылает снимок
+                     связанной позиции закупки на wish item — сопоставлять не по чему, чип нигде не
+                     появится (см. itemDiscrepancy). Оставлено готовым: как только бэкенд начнёт
+                     отдавать такую привязку, чип заработает без правок разметки. -->
+                <div v-if="wishForm.items.some(i => itemDiscrepancy(i))" class="d-flex flex-wrap ga-1 mt-2">
+                  <template v-for="(it, idx) in wishForm.items" :key="'disc-' + idx">
+                    <v-tooltip v-if="itemDiscrepancy(it)" location="top">
+                      <template #activator="{ props: dTip }">
+                        <v-chip v-bind="dTip" size="x-small" color="orange" variant="tonal" prepend-icon="mdi-alert-outline">
+                          {{ it.item_name }}: в закупке иначе
+                        </v-chip>
+                      </template>
+                      В закупке иначе: {{ itemDiscrepancy(it)!.text }}
+                    </v-tooltip>
+                  </template>
+                </div>
                 <div class="d-flex justify-end mt-3">
                   <div class="text-subtitle-1 font-weight-bold">Сумма заявки: {{ formatMoney(totalNmck) }}</div>
                 </div>
@@ -1692,6 +1774,20 @@
               <v-list-item prepend-icon="mdi-image-off" title="Без фото" @click="downloadWishExcel(editingWish as any, false)" />
             </v-list>
           </v-menu>
+          <!-- Владелец, 2026-08-13: копирование — доступно всегда, кто видит заявку -->
+          <v-tooltip v-if="editingWishId && editingWish" location="top" text="Скопируются позиции и количества, остальное заполните заново">
+            <template #activator="{ props: tipProps }">
+              <v-btn v-bind="tipProps" variant="tonal" color="secondary" prepend-icon="mdi-content-copy"
+                     :loading="copyingId === editingWishId" @click="copyWish(editingWish)">
+                Скопировать заявку
+              </v-btn>
+            </template>
+          </v-tooltip>
+          <!-- Владелец, 2026-08-13: «останавливать могут все» — без ролевых проверок -->
+          <v-btn v-if="editingWishId && editingWish && !editingWish.stopped_at" variant="tonal" color="error"
+                 prepend-icon="mdi-stop-circle-outline" @click="openStopDialog(editingWish)">
+            Остановить заявку
+          </v-btn>
           <v-spacer />
           <!-- draft/rejected или новая заявка: черновик + отправить -->
           <template v-if="isWishEditable && (!editingWishId || ['draft', 'rejected'].includes((wishForm as any).status))">
@@ -1797,6 +1893,36 @@
           <v-btn variant="text" @click="rejectDialog = false">Отмена</v-btn>
           <v-btn variant="flat" color="error" :loading="rejectingWish" :disabled="!rejectionReason.trim()" @click="rejectWish">
             Отклонить
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── STOP DIALOG (владелец, 2026-08-13) ── -->
+    <v-dialog v-model="stopDialog" max-width="520" :fullscreen="mobile">
+      <v-card>
+        <v-card-title class="pa-4 pb-2 d-flex align-center ga-2">
+          <v-icon color="error">mdi-alert-octagon</v-icon>
+          Остановить заявку
+        </v-card-title>
+        <v-card-text class="pa-4">
+          <v-alert type="warning" variant="tonal" density="compact" class="mb-3">
+            Заявка и её закупки, не дошедшие до договора, будут остановлены и уйдут из плана закупок.
+            Данные не удаляются. Чтобы изменить количество, создайте новую заявку (можно скопировать эту).
+          </v-alert>
+          <v-textarea
+            v-model="stopReason"
+            label="Причина остановки (необязательно)"
+            variant="outlined"
+            density="compact"
+            rows="3"
+          />
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="stopDialog = false">Отмена</v-btn>
+          <v-btn variant="flat" color="error" :loading="stoppingWish" @click="confirmStopWish">
+            Остановить заявку
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -1947,6 +2073,17 @@ interface Wish {
   approver_names?: string[]
   purchase_ids?: number[]
   contracted_locked?: boolean
+  items?: WishItem[]
+  // Владелец, 2026-08-13: сумма заявки (Σ total_price позиций) — приходит с бэка
+  // батчем в списке; если поле ещё не подъехало (параллельная разработка), считаем
+  // сами из items на фронте (см. wishItemsTotal).
+  items_total?: number | string | null
+  // Остановка заявки (владелец, 2026-08-13, POST /{id}/stop)
+  stopped_at?: string | null
+  stopped_by?: number | null
+  stopped_by_name?: string | null
+  stopped_reason?: string | null
+  stopped_partial?: boolean
 }
 
 // «От кого»: Фамилия И.О. вместо полного ФИО
@@ -2057,11 +2194,20 @@ const priorityOptions = [
 // Table headers
 const wishHeaders = [
   { title: 'Статус', key: 'status', width: 110, sortable: true },
-  { title: 'Заявка', key: 'title_col', sortable: false },
+  // Явный width (не только «резиновая» колонка без width): «Заявка» — единственная
+  // колонка без фикс. width, при добавлении «Суммы» ниже сумма фикс. width колонок
+  // превысила типичную ширину экрана и она схлопывалась почти до нуля — текст рвался
+  // по буквам в вертикальный столбик (Vuetify 3.11 minWidth в headers не действует
+  // на раскладку th — проверено). Таблица уходит в горизонтальный скролл, как и
+  // остальные широкие реестры проекта.
+  { title: 'Заявка', key: 'title_col', width: 260, sortable: false },
   { title: 'От кого', key: 'creator_name', width: 180, sortable: true },
   // «Кому» = назначенный (assigned_to) или цепочка согласующих — одно понятие
   { title: 'Кому', key: 'approver_names', width: 180, sortable: false },
   { title: 'Мероприятие', key: 'event_name', width: 180, sortable: true },
+  // Владелец, 2026-08-13: сумма заявки (Σ total_price позиций) — как денежные колонки
+  // в закупках (formatPrice), с сортировкой (соседние колонки тоже sortable).
+  { title: 'Сумма', key: 'wish_total', width: 120, align: 'end' as const, sortable: true },
   { title: 'Создано', key: 'created_at', width: 110, sortable: true },
   { title: 'Срок', key: 'desired_date', width: 110, sortable: true },
   { title: 'Исполнитель', key: 'executor_name', width: 160, sortable: true },
@@ -2907,6 +3053,57 @@ async function pickWishUnallocated(parentId: number | null) {
 
 function formatPrice(price: number) {
   return price.toLocaleString('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 })
+}
+
+// Владелец, 2026-08-13: столбец «сумма заявки» на /wishes. Бэк батчем считает
+// items_total (Σ total_price позиций) и в списке, и в карточке — используем его;
+// если поле почему-то не пришло (переходный момент/старый кэш), считаем сами из
+// items. ⚠️ НЕ используем total_amount как фолбэк — по подтверждению бэкенда это
+// мёртвое поле (никогда не заполнялось), оставлено в типе как есть, но не трогается.
+function wishItemsTotal(w: Wish): number | null {
+  if (w.items_total != null) {
+    const n = Number(w.items_total)
+    if (Number.isFinite(n)) return n
+  }
+  if (Array.isArray(w.items) && w.items.length) {
+    const sum = w.items.reduce((s, i) => s + (Number(i.total_price) || 0), 0)
+    if (sum > 0) return sum
+  }
+  return null
+}
+
+// Владелец, 2026-08-13: чип «в закупке иначе» — расхождение позиции заявки с
+// привязанной позицией закупки (категория ФЭО/кол-во/цена), чтобы «при
+// сравнении было видно, где накосячили». ⚠️ Текущий ответ API заявки не содержит
+// снимка связанной позиции закупки на wish item (нет общего поля вроде
+// purchase_item_snapshot/linked_purchase_item) — сравнивать не с чем, функция
+// всегда возвращает null, чип нигде не показывается. Логика оставлена готовой:
+// как только бэкенд начнёт присылать такую привязку прямо на items заявки, чип
+// заработает без правок разметки — она уже вызывает эту функцию.
+function itemDiscrepancy(item: any): { text: string } | null {
+  const linked = item?.purchase_item_snapshot || item?.linked_purchase_item || null
+  if (!linked) return null
+  const diffs: string[] = []
+  if (linked.feo_category_id != null && linked.feo_category_id !== item.feo_category_id) {
+    diffs.push('другая категория ФЭО')
+  }
+  if (linked.quantity != null && Number(linked.quantity) !== Number(item.quantity)) {
+    diffs.push(`кол-во в закупке: ${linked.quantity}`)
+  }
+  if (linked.unit_price != null && Number(linked.unit_price) !== Number(item.unit_price)) {
+    diffs.push(`цена в закупке: ${formatPrice(Number(linked.unit_price))}`)
+  }
+  if (!diffs.length) return null
+  return { text: diffs.join('; ') }
+}
+
+// Владелец, 2026-08-13: «остановка заявки» — крупная подпись под алертом.
+function stoppedByLine(w: { stopped_by_name?: string | null; stopped_at?: string | null; stopped_reason?: string | null }): string {
+  const who = w.stopped_by_name || 'неизвестно кем'
+  const when = w.stopped_at ? formatDate(w.stopped_at) : ''
+  let line = `остановил${when ? ' ' + who + ',' : ' ' + who} ${when}`.trim()
+  if (w.stopped_reason) line += ` — ${w.stopped_reason}`
+  return line
 }
 
 function formatDate(dateStr: string) {
@@ -3916,6 +4113,66 @@ async function rejectWish() {
   }
 }
 
+// ── Остановка заявки (владелец, 2026-08-13): «Останавливать могут все» — доступно
+// любому, кто видит заявку, без ролевых проверок. Причина необязательна.
+const stopDialog = ref(false)
+const stoppingWish = ref(false)
+const stopReason = ref('')
+const stoppingWishItem = ref<Wish | null>(null)
+
+function openStopDialog(wish: Wish) {
+  stoppingWishItem.value = wish
+  stopReason.value = ''
+  stopDialog.value = true
+}
+
+async function confirmStopWish() {
+  if (!stoppingWishItem.value) return
+  stoppingWish.value = true
+  try {
+    const body: Record<string, string> = {}
+    if (stopReason.value.trim()) body.reason = stopReason.value.trim()
+    const updated = await apiFetch<Wish>(`/wishes/${stoppingWishItem.value.id}/stop`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+    showSnack(
+      updated?.stopped_partial ? 'Заявка остановлена частично' : 'Заявка остановлена',
+      updated?.stopped_partial ? 'warning' : 'success',
+    )
+    stopDialog.value = false
+    // Обновить открытую карточку заявки на лету, без ожидания перезагрузки списка
+    if (editingWish.value && editingWish.value.id === stoppingWishItem.value.id) {
+      editingWish.value = { ...editingWish.value, ...updated }
+    }
+    await reloadActiveTab()
+  } catch (e: any) {
+    showSnack(`Не удалось остановить заявку: ${e?.payload?.message || e?.message || 'неизвестная ошибка'}`, 'error')
+  } finally {
+    stoppingWish.value = false
+  }
+}
+
+// ── Копирование заявки (владелец, 2026-08-13): «переделывать большие заявки без
+// двойной работы» — копируются только позиции (наименование/тип/кол-во/ед./
+// страна), остальное дозаполняется. Открывает копию сразу на редактирование.
+const copyingId = ref<number | null>(null)
+
+async function copyWish(wish: Wish) {
+  copyingId.value = wish.id
+  try {
+    const created = await apiFetch<Wish>(`/wishes/${wish.id}/copy`, { method: 'POST' })
+    showSnack('Заявка скопирована — дозаполните недостающее')
+    wishDialog.value = false
+    await reloadActiveTab()
+    if (created?.id) await openEditDialog(created)
+  } catch (e: any) {
+    showSnack(`Не удалось скопировать заявку: ${e?.payload?.message || e?.message || 'неизвестная ошибка'}`, 'error')
+  } finally {
+    copyingId.value = null
+  }
+}
+
 async function openConvertDialog(wish: Wish) {
   convertingWish.value = wish
   // Pre-fill from items: sum quantities and total_prices
@@ -3977,6 +4234,7 @@ const colFilters = ref<Record<string, any>>({
   creator_name: null,
   approver_names: null,
   event_name: null,
+  wish_total: null,
   created_at: null,
   desired_date: null,
   executor_name: null,
@@ -3988,6 +4246,7 @@ const colSort = ref<Record<string, 'asc' | 'desc' | null>>({
   creator_name: null,
   approver_names: null,
   event_name: null,
+  wish_total: null,
   created_at: null,
   desired_date: null,
   executor_name: null,
@@ -4011,17 +4270,36 @@ function applyColFilters(rows: Wish[]): Wish[] {
   // enum filter for status
   if (colFilters.value.status?.type === 'enum' && Array.isArray(colFilters.value.status.values) && colFilters.value.status.values.length)
     result = result.filter(r => colFilters.value.status.values.includes(r.status))
+  // number filter for wish_total (сумма заявки)
+  if (colFilters.value.wish_total?.type === 'number') {
+    const { min, max } = colFilters.value.wish_total
+    result = result.filter(r => {
+      const v = wishItemsTotal(r)
+      if (v == null) return false
+      if (min != null && v < min) return false
+      if (max != null && v > max) return false
+      return true
+    })
+  }
   // sort: pick first active sort
   const activeSort = Object.entries(colSort.value).find(([_, v]) => v)
   if (activeSort) {
     const [k, dir] = activeSort
-    result.sort((a: any, b: any) => {
-      const pick = (r: any) => k === 'approver_names' ? wishRecipients(r) : r[k === 'title_col' ? 'title' : k]
-      const va = pick(a) ?? ''
-      const vb = pick(b) ?? ''
-      const cmp = String(va).localeCompare(String(vb), 'ru', { numeric: true })
-      return dir === 'asc' ? cmp : -cmp
-    })
+    if (k === 'wish_total') {
+      result.sort((a, b) => {
+        const va = wishItemsTotal(a) ?? -Infinity
+        const vb = wishItemsTotal(b) ?? -Infinity
+        return dir === 'asc' ? va - vb : vb - va
+      })
+    } else {
+      result.sort((a: any, b: any) => {
+        const pick = (r: any) => k === 'approver_names' ? wishRecipients(r) : r[k === 'title_col' ? 'title' : k]
+        const va = pick(a) ?? ''
+        const vb = pick(b) ?? ''
+        const cmp = String(va).localeCompare(String(vb), 'ru', { numeric: true })
+        return dir === 'asc' ? cmp : -cmp
+      })
+    }
   }
   return result
 }
@@ -4087,6 +4365,43 @@ onMounted(async () => {
 <style scoped>
 .wish-dialog.v-theme--light :deep(.text-medium-emphasis) {
   color: rgba(0, 0, 0, 0.72) !important;
+}
+
+/* Владелец, 2026-08-13: «остановка заявки/закупки» — крупный алерт в красной
+   рамке на всю ширину строки/карточки, а не мелкий чип. */
+.wish-stopped-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: 10px;
+  row-gap: 2px;
+  width: 100%;
+  border: 2px solid #d32f2f;
+  background: #fdecea;
+  color: #b71c1c;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+}
+.wish-stopped-banner__title {
+  font-weight: 800;
+  font-size: 0.92rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.wish-stopped-banner__meta {
+  font-size: 0.78rem;
+  font-weight: 500;
+  opacity: 0.9;
+}
+.wish-stopped-banner--large {
+  padding: 12px 16px;
+}
+.wish-stopped-banner--large .wish-stopped-banner__title {
+  font-size: 1.15rem;
+}
+.wish-stopped-banner--large .wish-stopped-banner__meta {
+  font-size: 0.85rem;
 }
 </style>
 

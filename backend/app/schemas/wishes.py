@@ -23,6 +23,45 @@ def _blank_to_none(v):
     return v
 
 
+class WishItemPurchaseMatch(BaseModel):
+    """W-diff (2026-08-13): сведения о «двойнике» позиции заявки в закупке —
+    нужны фронту для двух вещей, которые он сам посчитать не может:
+    1) какие позиции остановлены, а какие идут (purchase_stopped_at);
+    2) чип «в закупке иначе» — сравнение feo_category_id/quantity/unit_price/
+       total_price этой модели с одноимёнными полями WishItemOut.
+
+    Только читает, ничего не чинит: если сопоставить не удалось — все поля
+    пустые (match_method=None), кроме, при неоднозначности по имени,
+    ambiguous_candidates_count.
+    """
+    # 'wish_item_id' — надёжная прямая связь purchase_items.wish_item_id;
+    # 'item_name' — старые данные без связи, сопоставлено по точному
+    #   нормализованному имени (единственный кандидат) среди позиций закупок
+    #   ЭТОЙ ЖЕ заявки;
+    # 'item_name_qty' — по имени нашлось НЕСКОЛЬКО позиций закупки, но после
+    #   сужения точным совпадением quantity остался ровно один кандидат
+    #   (напр. одно и то же название дважды в заявке с разным количеством —
+    #   человек различает их количеством, не наугад);
+    # 'item_name_ambiguous' — по имени (и, если пробовали, по количеству)
+    #   всё ещё НЕСКОЛЬКО позиций закупки (см. ambiguous_candidates_count) —
+    #   специально не выбираем наугад, остальные поля в этом случае пустые.
+    match_method: Optional[str] = None
+    ambiguous_candidates_count: Optional[int] = None  # только при match_method='item_name_ambiguous'
+    purchase_item_id: Optional[int] = None
+    purchase_id: Optional[int] = None
+    purchase_number: Optional[int] = None
+    purchase_status: Optional[str] = None
+    # Не пусто — закупка (или её рамочный договор) остановлена: см. app.routers.wishes.stop_wish.
+    # По этому полю фронт красит позицию как «остановлена» vs «идёт».
+    purchase_stopped_at: Optional[datetime] = None
+    feo_category_id: Optional[int] = None
+    feo_category_name: Optional[str] = None
+    quantity: Optional[float] = None
+    unit_price: Optional[float] = None
+    total_price: Optional[float] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
 class WishItemOut(BaseModel):
     id: int
     product_id: Optional[int] = None
@@ -40,6 +79,9 @@ class WishItemOut(BaseModel):
     needed_date: Optional[date] = None  # W2: дата потребности per-item
     vat_rate: Optional[str] = None  # per-item НДС ставка (mirrors PurchaseItem.vat_rate)
     over_plan: bool = False  # false — расходует план элемента ФЭО; true — сверх плана (mirrors PurchaseItem.over_plan)
+    # W-diff (2026-08-13): «двойник» позиции в закупке — заполняется ТОЛЬКО в карточке
+    # заявки (GET /{wish_id}), в списке (GET /) отсутствует (лишний вес). См. WishItemPurchaseMatch.
+    purchase_match: Optional[WishItemPurchaseMatch] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -113,6 +155,11 @@ class WishUpdate(BaseModel):
 
 class WishReject(BaseModel):
     rejection_reason: str
+
+
+class WishStop(BaseModel):
+    """POST /{wish_id}/stop — необязательная причина остановки."""
+    reason: Optional[str] = None
 
 
 class WishExecutionPatch(BaseModel):
@@ -192,6 +239,18 @@ class WishOut(BaseModel):
     source: Optional[str] = None
     # W1: True если привязанная закупка перешла в Договор+ (редактирование запрещено)
     contracted_locked: bool = False
+    # Остановка заявки (владелец, 2026-08-13) — см. POST /{wish_id}/stop
+    stopped_at: Optional[datetime] = None
+    stopped_by: Optional[int] = None
+    stopped_by_name: Optional[str] = None
+    stopped_reason: Optional[str] = None
+    stopped_partial: bool = False
+    # Владелец: столбец «сумма заявки» на листе /wishes — Σ total_price её
+    # позиций (WishItem), НЕ то же самое, что estimated_price (единая ручная
+    # оценка на уровне заявки, не сумма по позициям). Список считает батчем
+    # одним агрегирующим запросом (см. list_wishes); карточка — из уже
+    # загруженных items, без доп. запроса.
+    items_total: Optional[Decimal] = None
 
     class Config:
         from_attributes = True

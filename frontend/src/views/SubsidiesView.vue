@@ -1435,6 +1435,10 @@
                                             >
                                               <v-icon icon="mdi-hand-heart-outline" size="11" class="mr-1" />заявка #{{ actual.wish_id }}
                                             </a>
+                                            <!-- Владелец, 2026-08-13: остановка закупки — см. FeoActualItem.stopped_at -->
+                                            <div v-if="actual.stopped_at" class="feo-stopped-marker mt-1">
+                                              <v-icon icon="mdi-alert-octagon" size="13" class="mr-1" />ЗАКУПКА ОСТАНОВЛЕНА · {{ feoStoppedLine(actual) }}
+                                            </div>
                                           </td>
                                           <!-- Правка владельца (2026-08-12): «Кол-во (факт)»/«Цена (факт)» раньше
                                                брались из actual.quantity/unit_price — это поля позиции закупки,
@@ -1601,6 +1605,10 @@
                                   >
                                     <v-icon icon="mdi-hand-heart-outline" size="11" class="mr-1" />заявка #{{ actual.wish_id }}
                                   </a>
+                                  <!-- Владелец, 2026-08-13: остановка закупки — см. FeoActualItem.stopped_at -->
+                                  <div v-if="actual.stopped_at" class="feo-stopped-marker mt-1">
+                                    <v-icon icon="mdi-alert-octagon" size="13" class="mr-1" />ЗАКУПКА ОСТАНОВЛЕНА · {{ feoStoppedLine(actual) }}
+                                  </div>
                                 </td>
                                 <td style="padding:4px 8px;text-align:right" class="text-medium-emphasis">{{ actual.quantity ? `${parseFloat(String(actual.quantity))} ${actual.unit || ''}` : '—' }}</td>
                                 <td style="padding:4px 8px;text-align:right" class="text-medium-emphasis">{{ actual.unit_price ? formatCurrency(actual.unit_price) : '—' }}</td>
@@ -1921,6 +1929,11 @@
                                 >
                                   <v-icon icon="mdi-hand-heart-outline" size="11" class="mr-1" />заявка #{{ f.wish_id }}
                                 </a>
+                                <!-- Владелец, 2026-08-13: остановка закупки (сейчас всегда скрыт — backend
+                                     ещё не отдаёт stopped_at в этой выборке, см. FeoPurchaseFolder.stopped_at) -->
+                                <span v-if="f.stopped_at" class="feo-stopped-marker ml-2">
+                                  <v-icon icon="mdi-alert-octagon" size="13" class="mr-1" />ЗАКУПКА ОСТАНОВЛЕНА · {{ feoStoppedLine(f) }}
+                                </span>
                               </div>
                             </td>
                             <td class="feo-td feo-td-num"><span class="feo-amount-empty">—</span></td>
@@ -5357,6 +5370,13 @@ interface FeoActualItem {
   over_plan?: boolean
   // Разворот по стадиям уточнения наименования/кол-ва (панель «план vs факт», см. FeoStage)
   stages?: FeoStage[]
+  // Владелец, 2026-08-13: остановка закупки — read-only, системой проставляется в
+  // POST /api/wishes/{wish_id}/stop. ⚠️ /feo-planned-items/comparison пока не
+  // выбирает и не отдаёт эти поля на строке позиции (только Purchase.status) —
+  // поля опциональны и на практике сейчас всегда undefined, маркер «ЗАКУПКА
+  // ОСТАНОВЛЕНА» ниже по файлу не появится, пока бэкенд их не добавит.
+  stopped_at?: string | null
+  stopped_by_name?: string | null
 }
 const expandedItemPanels = ref<Set<number>>(new Set(feoDisplayPrefs.expandedItemPanels || []))
 const comparisonData = ref<Record<number, { planned: FeoPlannedItem[]; actual: FeoActualItem[] }>>({})
@@ -5468,6 +5488,11 @@ interface FeoReqItem {
   fact_unit_price?: number | null
   fact_confirmed?: boolean
   fact_allocated?: boolean
+  // Владелец, 2026-08-13: остановка закупки — см. аналогичный комментарий у
+  // FeoActualItem.stopped_at. /feo-categories/planned-purchase-items тоже пока
+  // не отдаёт эти поля — на практике всегда undefined.
+  stopped_at?: string | null
+  stopped_by_name?: string | null
 }
 interface FeoReqRow {
   key: string
@@ -5494,6 +5519,10 @@ interface FeoPurchaseFolder {
   unit: string | null
   total: number
   items: FeoReqItem[]
+  // Владелец, 2026-08-13: остановка закупки — переносится из items[0] при
+  // группировке (см. purchaseFoldersFor), см. комментарий у FeoReqItem.stopped_at.
+  stopped_at?: string | null
+  stopped_by_name?: string | null
 }
 const expandedPurchases = ref<Set<number>>(new Set())
 function togglePurchaseFolder(pid: number) {
@@ -5749,7 +5778,7 @@ const purchaseFoldersByCat = computed<Record<number, FeoPurchaseFolder[]>>(() =>
     for (const it of items || []) {
       let f = byPid.get(it.purchase_id)
       if (!f) {
-        f = { purchase_id: it.purchase_id, purchase_number: it.purchase_number, registry_number: it.registry_number, purchase_status: it.purchase_status, wish_id: it.wish_id, qty: 0, unit: it.unit, total: 0, items: [] }
+        f = { purchase_id: it.purchase_id, purchase_number: it.purchase_number, registry_number: it.registry_number, purchase_status: it.purchase_status, wish_id: it.wish_id, qty: 0, unit: it.unit, total: 0, items: [], stopped_at: it.stopped_at, stopped_by_name: it.stopped_by_name }
         byPid.set(it.purchase_id, f)
       }
       f.qty = Math.round((f.qty + Number(it.quantity || 0)) * 10000) / 10000
@@ -5764,6 +5793,16 @@ const purchaseFoldersByCat = computed<Record<number, FeoPurchaseFolder[]>>(() =>
 })
 function purchaseFoldersFor(node: FeoNode): FeoPurchaseFolder[] {
   return purchaseFoldersByCat.value[node.id] || []
+}
+// Владелец, 2026-08-13: «закупка остановлена {ФИО}, {дата}» — используется в
+// маркере ЗАКУПКА ОСТАНОВЛЕНА у позиций/папок закупок (см. FeoActualItem/
+// FeoReqItem/FeoPurchaseFolder.stopped_at — сейчас всегда undefined, т.к.
+// /feo-planned-items/comparison и /feo-categories/planned-purchase-items ещё не
+// отдают эти поля; функция готова, сработает как только бэкенд их добавит).
+function feoStoppedLine(row: { stopped_by_name?: string | null; stopped_at?: string | null }): string {
+  const who = row.stopped_by_name || 'неизвестно кем'
+  const when = row.stopped_at ? new Date(row.stopped_at).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }) : ''
+  return `остановлена ${who}${when ? ', ' + when : ''}`
 }
 function purchaseFolderTitle(f: FeoPurchaseFolder): string {
   return 'Закупка ' + (f.registry_number || (f.purchase_number != null ? '№ ' + f.purchase_number : '#' + f.purchase_id))
@@ -10296,6 +10335,23 @@ onMounted(() => {
   cursor: pointer;
 }
 .feo-purchase-link:hover { text-decoration: underline; color: #0f766e; }
+
+/* Владелец, 2026-08-13: «остановка закупки» — крупный (для контекста строки
+   плотной таблицы) маркер в красной рамке, тот же приём, что и в WishesView/
+   OrdersView. Сейчас всегда скрыт (v-if на stopped_at) — см. комментарии у
+   FeoActualItem/FeoReqItem/FeoPurchaseFolder.stopped_at. */
+.feo-stopped-marker {
+  display: inline-flex;
+  align-items: center;
+  font-weight: 800;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: #b71c1c;
+  background: #fdecea;
+  border: 1.5px solid #d32f2f;
+  border-radius: 4px;
+  padding: 2px 8px;
+}
 
 /* FEO table */
 .feo-table-wrap {

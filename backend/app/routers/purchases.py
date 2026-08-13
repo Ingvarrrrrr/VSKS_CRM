@@ -474,7 +474,7 @@ def _item_to_out(item: PurchaseItem) -> PurchaseItemOut:
     )
 
 
-def _purchase_to_full(p: Purchase, contractors: dict, subsidies: dict, allocations: list | None = None, contractor_inns: dict | None = None, receipt_map: dict | None = None, ru_map: dict | None = None) -> PurchaseOutFull:
+def _purchase_to_full(p: Purchase, contractors: dict, subsidies: dict, allocations: list | None = None, contractor_inns: dict | None = None, receipt_map: dict | None = None, ru_map: dict | None = None, su_map: dict | None = None) -> PurchaseOutFull:
     data = {c.name: getattr(p, c.name) for c in Purchase.__table__.columns}
     items = [_item_to_out(i) for i in (p.items or [])]
     files = [
@@ -527,6 +527,9 @@ def _purchase_to_full(p: Purchase, contractors: dict, subsidies: dict, allocatio
         last_receipt_date=(receipt_map or {}).get(p.id),
         reimbursement_user_name=(ru_map or {}).get(p.reimbursement_user_id),
         multi_contractor_label=multi_contractor_label,
+        # Остановка закупки (владелец, 2026-08-13) — имя того, кто остановил
+        # (см. Wish._enrich stopped_by_name: тот же приём — full_name или username).
+        stopped_by_name=(su_map or {}).get(p.stopped_by),
     )
 
 
@@ -874,6 +877,15 @@ async def list_purchases(
         res = await db.execute(select(User.id, User.full_name).where(User.id.in_(ru_ids)))
         ru_map = {uid: name for uid, name in res.all()}
 
+    # Остановка закупки (владелец, 2026-08-13): batch-fetch имён остановивших
+    # (full_name или username, как для остальных «кто сделал» полей) — одним
+    # запросом на всю страницу, без N+1.
+    su_ids = [p.stopped_by for p in purchases if p.stopped_by]
+    su_map: dict = {}
+    if su_ids:
+        res = await db.execute(select(User.id, User.full_name, User.username).where(User.id.in_(su_ids)))
+        su_map = {uid: (fn or un) for uid, fn, un in res.all()}
+
     # Batch-fetch last receipt date for advance purchases
     from app.models.purchase_receipt import PurchaseReceipt
     adv_ids = [p.id for p in purchases if p.purchase_method == 'advance']
@@ -955,7 +967,7 @@ async def list_purchases(
 
     result_rows = []
     for p in purchases:
-        out = _purchase_to_full(p, contractors, subsidies, contractor_inns=contractor_inns, receipt_map=receipt_map, ru_map=ru_map)
+        out = _purchase_to_full(p, contractors, subsidies, contractor_inns=contractor_inns, receipt_map=receipt_map, ru_map=ru_map, su_map=su_map)
         if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):
             out.framework_contract_total = display_total_by_contract.get(p.contract_id)
         _unseen = unseen_map.get(p.id, [])
@@ -1099,6 +1111,7 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
             selectinload(Purchase.files),
             selectinload(Purchase.event),
             selectinload(Purchase.reimbursement_user),
+            selectinload(Purchase.stopped_by_user),
         )
         .where(Purchase.id == pid)
     )
@@ -1194,7 +1207,10 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
     single_ru_map: dict = {}
     if p.reimbursement_user_id and p.reimbursement_user:
         single_ru_map = {p.reimbursement_user_id: p.reimbursement_user.full_name}
-    out = _purchase_to_full(p, contractors, subsidies, allocations=allocations, ru_map=single_ru_map)
+    single_su_map: dict = {}
+    if p.stopped_by and p.stopped_by_user:
+        single_su_map = {p.stopped_by: (p.stopped_by_user.full_name or p.stopped_by_user.username)}
+    out = _purchase_to_full(p, contractors, subsidies, allocations=allocations, ru_map=single_ru_map, su_map=single_su_map)
     # phase26-m: populate framework_contract_total for single purchase view
     if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):
         c = await db.get(Contract, p.contract_id)

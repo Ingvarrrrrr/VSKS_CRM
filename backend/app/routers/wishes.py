@@ -17,9 +17,11 @@ from app.models.user import User
 from app.models.wish import Wish
 from app.models.wish_item import WishItem
 from app.models.wish_member import WishMember
-from app.schemas.wishes import WishCreate, WishUpdate, WishOut, WishReject, WishConvert, WishItemPatch, WishExecutionPatch, WishStatusForce
+from app.schemas.wishes import WishCreate, WishUpdate, WishOut, WishReject, WishConvert, WishItemPatch, WishExecutionPatch, WishStatusForce, WishStop, WishItemPurchaseMatch
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
+from app.models.feo_category import FeoCategory
+from app.services.text_match import normalize as _normalize_name
 from app.models.purchase_event import PurchaseMember
 from app.routers.purchase_members import _create_assignment_chat_room
 from app.models.chat_message import ChatMessage
@@ -63,6 +65,8 @@ def _enrich(w: Wish) -> WishOut:
         d.event_name = w.event.name
     if getattr(w, 'executor', None):
         d.executor_name = w.executor.full_name or w.executor.username
+    if getattr(w, 'stopped_by_user', None):
+        d.stopped_by_name = w.stopped_by_user.full_name or w.stopped_by_user.username
     return d
 
 
@@ -78,6 +82,7 @@ async def _load_wish(wish_id: int, db: AsyncSession) -> Wish:
             selectinload(Wish.event),
             selectinload(Wish.executor),
             selectinload(Wish.items),
+            selectinload(Wish.stopped_by_user),
         )
         .where(Wish.id == wish_id)
     )
@@ -85,6 +90,126 @@ async def _load_wish(wish_id: int, db: AsyncSession) -> Wish:
     if wish is None:
         raise HTTPException(status_code=404, detail="Заявка не найдена")
     return wish
+
+
+async def _attach_purchase_matches(wish: Wish, enriched: WishOut, db: AsyncSession) -> None:
+    """W-diff (2026-08-13, карточка заявки только): для каждой позиции заявки
+    находит её «двойника» в закупке(ах), созданных из этой заявки, и заполняет
+    WishItemOut.purchase_match (см. WishItemPurchaseMatch за назначением полей).
+
+    Сопоставление (владелец, 2026-08-13, доразбор неоднозначности заявки №31 —
+    «Перчатки … размер L» дважды в заявке, 4 шт/«Финал» и 20 шт/«Окружные»,
+    человек различает их количеством):
+      1. По PurchaseItem.wish_item_id — надёжная прямая связь.
+      2. Иначе — по точному нормализованному имени (app.services.text_match.normalize)
+         среди позиций закупок ЭТОЙ ЖЕ заявки, у которых wish_item_id ПУСТ (позиции
+         с прямой связью уже разобраны шагом 1 и не участвуют в поиске по имени —
+         иначе можно «увести» чужого двойника). Если под этим именем ИЗНАЧАЛЬНО
+         (до любых claim'ов) был ровно один кандидат — match_method='item_name'.
+      3. Если изначально кандидатов было НЕСКОЛЬКО — сужаем точным совпадением
+         quantity. Единственный кандидат с подходящим количеством —
+         match_method='item_name_qty' (связь по имени И количеству, честно
+         отличается от простого 'item_name'). Это касается КАЖДОЙ позиции
+         заявки из такой группы, даже если к моменту её обработки в пуле
+         остался только один кандидат (соседняя позиция уже забрала другой) —
+         статус группы «была неоднозначна по имени» фиксируется ДО обработки,
+         чтобы обе позиции пары «4 шт/20 шт» получили одинаково честную метку,
+         а не «первая — по количеству, вторая — как бы просто по имени».
+      4. Всё ещё больше одного кандидата с подходящим количеством (или у позиции
+         заявки количество не задано) — неоднозначность, наугад не выбираем:
+         match_method='item_name_ambiguous' + ambiguous_candidates_count.
+         Остальные поля пустые.
+      5. Не нашлось вовсе — все поля None.
+
+    Каждый кандидат-двойник закупки достаётся НЕ БОЛЕЕ ЧЕМ одной позиции заявки:
+    выбранный кандидат удаляется из пула конкретного имени (list.pop/remove),
+    иначе при повторе того же имени в заявке (см. пример выше) вторая позиция
+    получила бы того же самого «уже занятого» двойника.
+
+    Один пакетный запрос закупок + один пакетный запрос их позиций (с JOIN на
+    feo_categories.name) на всю заявку — без N+1 по позициям.
+    """
+    purchases_rows = (await db.execute(
+        select(Purchase.id, Purchase.purchase_number, Purchase.status, Purchase.stopped_at)
+        .where(Purchase.wish_id == wish.id)
+    )).all()
+    purchase_info = {r[0]: r for r in purchases_rows}  # purchase_id -> (id, number, status, stopped_at)
+    purchase_ids = list(purchase_info.keys())
+
+    purchase_items_rows = []
+    if purchase_ids:
+        purchase_items_rows = (await db.execute(
+            select(PurchaseItem, FeoCategory.name)
+            .outerjoin(FeoCategory, FeoCategory.id == PurchaseItem.feo_category_id)
+            .where(PurchaseItem.purchase_id.in_(purchase_ids))
+        )).all()
+
+    direct_by_wish_item_id: dict[int, tuple] = {}
+    unclaimed_by_name: dict[str, list[tuple]] = {}
+    for pi, feo_name in purchase_items_rows:
+        if pi.wish_item_id is not None:
+            direct_by_wish_item_id.setdefault(pi.wish_item_id, (pi, feo_name))
+        else:
+            key = _normalize_name(pi.item_name or "")
+            if key:
+                unclaimed_by_name.setdefault(key, []).append((pi, feo_name))
+    # Кол-во кандидатов под каждое имя ДО начала claim'а (снимок) — нужно, чтобы
+    # оба «близнеца» одной пары «одинаковое имя, разное количество» (см. докстринг)
+    # были помечены одинаково 'item_name_qty', а не «первый по количеству, второй
+    # по остатку» (иначе один и тот же по сути разбор количества выглядел бы для
+    # фронта как связь по имени БЕЗ количества у второй позиции).
+    original_candidate_count: dict[str, int] = {k: len(v) for k, v in unclaimed_by_name.items()}
+
+    def _build_match(method: str, pi, feo_name) -> WishItemPurchaseMatch:
+        p_row = purchase_info.get(pi.purchase_id)
+        return WishItemPurchaseMatch(
+            match_method=method,
+            purchase_item_id=pi.id,
+            purchase_id=pi.purchase_id,
+            purchase_number=p_row[1] if p_row else None,
+            purchase_status=p_row[2] if p_row else None,
+            purchase_stopped_at=p_row[3] if p_row else None,
+            feo_category_id=pi.feo_category_id,
+            feo_category_name=feo_name,
+            quantity=float(pi.quantity) if pi.quantity is not None else None,
+            unit_price=float(pi.unit_price) if pi.unit_price is not None else None,
+            total_price=float(pi.total_price) if pi.total_price is not None else None,
+        )
+
+    wish_items = list(wish.items or [])
+    for w_item, out_item in zip(wish_items, enriched.items):
+        direct = direct_by_wish_item_id.get(w_item.id)
+        if direct is not None:
+            out_item.purchase_match = _build_match("wish_item_id", direct[0], direct[1])
+            continue
+        key = _normalize_name(w_item.item_name or "")
+        candidates = unclaimed_by_name.get(key, []) if key else []
+        was_ambiguous_name = original_candidate_count.get(key, 0) > 1
+        if not candidates:
+            continue  # не нашлось — purchase_match остаётся None (default)
+        if len(candidates) == 1 and not was_ambiguous_name:
+            # Имя изначально указывало ровно на одну позицию закупки — количество
+            # не потребовалось.
+            pi, feo_name = candidates.pop(0)
+            out_item.purchase_match = _build_match("item_name", pi, feo_name)
+        else:
+            # Имя само по себе неоднозначно (сейчас или изначально — включая
+            # случай, когда «сосед» по имени уже разобран выше и остался ровно
+            # один кандидат: для НЕГО это тоже разбор по количеству, а не по
+            # голому имени). Сужаем точным совпадением quantity.
+            qty_matches = [
+                c for c in candidates
+                if w_item.quantity is not None and c[0].quantity == w_item.quantity
+            ]
+            if len(qty_matches) == 1:
+                pi, feo_name = qty_matches[0]
+                candidates.remove((pi, feo_name))  # claim — не достанется другой позиции заявки
+                out_item.purchase_match = _build_match("item_name_qty", pi, feo_name)
+            else:
+                out_item.purchase_match = WishItemPurchaseMatch(
+                    match_method="item_name_ambiguous",
+                    ambiguous_candidates_count=len(candidates),
+                )
 
 
 async def _is_wish_member(wish_id: int, user_id: int, db: AsyncSession) -> bool:
@@ -353,7 +478,14 @@ async def _reset_approvals(wish_id: int, db: AsyncSession) -> None:
 
 
 async def _sync_wish_items_to_purchases(wish, db: AsyncSession) -> None:
-    """Синхронизирует позиции заявки в связанные закупки (не в TZ_FROZEN_STATUSES).
+    """УСТАРЕЛО, БОЛЬШЕ НЕ ВЫЗЫВАЕТСЯ (владелец, 2026-08-13): «после согласования
+    заявку править нельзя, только в закупке» — единственный вызывающий код
+    (_distribute_wish_to_purchases, ветка повторного одобрения уже
+    конвертированной заявки) отключён, т.к. правка wish.items теперь
+    запрещена на статусе 'converted' (см. гейт в update_wish). Оставлено в
+    коде на случай будущего отката решения — НЕ удалять просто так.
+
+    Синхронизирует позиции заявки в связанные закупки (не в TZ_FROZEN_STATUSES).
 
     Для каждой закупки НЕ в TZ_FROZEN_STATUSES: каждая PurchaseItem с wish_item_id
     находит соответствующий WishItem и копирует item_name/unit/unit_price/quantity/total_price.
@@ -619,9 +751,15 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
         for p in existing:
             if p.status == "wishes":
                 p.status = purchase_status
-        # W2: синхронизируем изменённые позиции заявки в уже существующие закупки
-        # (единственная точка propagation при повторном одобрении после редактирования)
-        await _sync_wish_items_to_purchases(wish, db)
+        # Владелец (2026-08-13): синхронизация заявка→закупка ОТКЛЮЧЕНА — после
+        # конвертации единственный источник правды это сама закупка (см. гейт в
+        # update_wish, блокирующий правку wish.items на статусе 'converted').
+        # Раньше здесь стоял _sync_wish_items_to_purchases (копировал название/
+        # кол-во/цену позиции, но НЕ категорию ФЭО — данные расходились между
+        # заявкой и закупкой). Этот код всегда фигурировал ТОЛЬКО в ветке
+        # повторного одобрения УЖЕ конвертированной заявки (Purchase.wish_id уже
+        # проставлен) — а правка items там теперь запрещена, так что синхронизация
+        # больше не нужна.
         return [p.id for p in existing]
 
     # Preload wish items with products for category resolution
@@ -901,6 +1039,7 @@ async def list_wishes(
         selectinload(Wish.event),
         selectinload(Wish.executor),
         selectinload(Wish.items),
+        selectinload(Wish.stopped_by_user),
     )
     if vis is not None:
         # Two-level gate: rows WITH subsidy → gate by vis; rows WITHOUT subsidy → org gate
@@ -1040,12 +1179,25 @@ async def list_wishes(
         for p_wid, p_id in pres.all():
             purchases_map.setdefault(p_wid, []).append(p_id)
 
+    # Владелец: столбец «сумма заявки» на листе /wishes — Σ total_price позиций
+    # (WishItem), ОДНИМ агрегирующим запросом на всю страницу (без N+1 и без
+    # загрузки всех позиций построчно).
+    items_total_map: dict[int, Decimal] = {}
+    if wish_ids:
+        itres = await db.execute(
+            select(WishItem.wish_id, func.coalesce(func.sum(WishItem.total_price), 0))
+            .where(WishItem.wish_id.in_(wish_ids))
+            .group_by(WishItem.wish_id)
+        )
+        items_total_map = {wid: total for wid, total in itres.all()}
+
     out_list = []
     for w in wishes:
         enriched = _enrich(w)
         enriched.member_names = members_map.get(w.id, [])
         enriched.approver_names = approvers_map.get(w.id, [])
         enriched.purchase_ids = purchases_map.get(w.id, [])
+        enriched.items_total = items_total_map.get(w.id, Decimal("0"))
         _unseen = unseen_map.get(w.id, [])
         enriched.unseen_fields = _unseen
         enriched.unseen_changes_count = len(_unseen)
@@ -1103,9 +1255,15 @@ async def get_wish(
     enriched.purchase_ids = (await db.execute(
         select(Purchase.id).where(Purchase.wish_id == wish_id).order_by(Purchase.id)
     )).scalars().all()
+    # items уже загружены selectinload'ом в _load_wish — суммируем в памяти,
+    # без доп. запроса (см. items_total в list_wishes для батч-версии).
+    enriched.items_total = sum((it.total_price or Decimal("0")) for it in (wish.items or [])) or Decimal("0")
 
     # W1: contracted_locked — есть ли закупка в статусе Договор+
     enriched.contracted_locked = await _wish_contracted_locked(wish_id, db)
+
+    # W-diff: «двойник» каждой позиции в закупке — только карточка, не список
+    await _attach_purchase_matches(wish, enriched, db)
 
     # Phase 31: unseen_fields for single wish GET (D-05..D-09)
     try:
@@ -1119,6 +1277,184 @@ async def get_wish(
         _log.getLogger(__name__).warning("unseen wish single failed: %s", _exc)
 
     return enriched
+
+
+@router.post("/{wish_id}/copy", response_model=WishOut, status_code=201)
+async def copy_wish(
+    wish_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Копирование заявки (владелец, 2026-08-13): «при переделывании больших
+    заявок не приходилось делать двойную работу — могут быть однотипные заявки
+    с небольшим расхождением». Создаёт НОВУЮ заявку-черновик.
+
+    Копируется ТОЛЬКО то, что описывает сам товар — item_name/item_type/
+    product_id/quantity/unit/country_origin по каждой позиции — и заголовок
+    исходной заявки с пометкой «(копия)».
+
+    НЕ копируется (владелец прямо просил дозаполнять и проверять, «куда что
+    идёт»): категории ФЭО у позиций (feo_category_id), привязка к плановым
+    позициям (feo_planned_item_id/match_confirmed), НДС-ставка и over_plan,
+    цены (unit_price/total_price), даты потребности (needed_date), исполнитель,
+    согласующие, статус, привязки к закупкам, вложения. Сама новая заявка
+    всегда создаётся в статусе 'draft' (как в create_wish), автор — текущий
+    пользователь.
+
+    org_id и subsidy_id копируются «как есть» — это рамка (организация и
+    бюджет), в которой человек работает, а не «куда что идёт» внутри неё.
+
+    Права: та же проверка видимости, что в GET /{wish_id} (без доп. ролевых
+    ограничений сверх неё — копировать может любой, кто видит заявку).
+    """
+    wish = await _load_wish(wish_id, db)
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None and wish.org_id not in org_ids:
+        raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
+    if current_user.role == 'employee' and wish.created_by != current_user.id and wish.assigned_to != current_user.id:
+        member_res = await db.execute(
+            select(WishMember).where(
+                WishMember.wish_id == wish_id,
+                WishMember.user_id == current_user.id,
+            )
+        )
+        if member_res.scalar_one_or_none() is None:
+            from app.models.wish_approval import WishApproval
+            appr = await db.execute(
+                select(WishApproval.id).where(
+                    WishApproval.wish_id == wish_id,
+                    WishApproval.user_id == current_user.id,
+                ).limit(1)
+            )
+            if appr.scalar_one_or_none() is None:
+                raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
+
+    from app.schemas.wishes import _clamp_title
+    new_title = _clamp_title(f"{wish.title} (копия)")
+
+    new_wish = Wish(
+        org_id=wish.org_id,
+        title=new_title,
+        subsidy_id=wish.subsidy_id,
+        status="draft",
+        created_by=current_user.id,
+    )
+    db.add(new_wish)
+    await db.flush()
+
+    for it in (wish.items or []):
+        db.add(WishItem(
+            wish_id=new_wish.id,
+            product_id=it.product_id,
+            item_name=it.item_name,
+            item_type=it.item_type,
+            quantity=it.quantity,
+            unit=it.unit,
+            country_origin=it.country_origin,
+        ))
+
+    await db.commit()
+    new_wish = await _load_wish(new_wish.id, db)
+    enriched = _enrich(new_wish)
+    enriched.items_total = sum((it.total_price or Decimal("0")) for it in (new_wish.items or [])) or Decimal("0")
+    return enriched
+
+
+@router.post("/{wish_id}/stop", response_model=WishOut)
+async def stop_wish(
+    wish_id: int,
+    body: WishStop,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Остановка заявки (владелец, 2026-08-13): «Останавливать могут все» — доступно
+    ЛЮБОМУ пользователю, видящему заявку, без ролевых ограничений (та же проверка
+    видимости, что и GET /{wish_id}).
+
+    Заявка НЕ удаляется — проставляются stopped_at/stopped_by/stopped_reason,
+    и она исчезает из плана закупок (см. app/services/feo_plan.py — агрегаты
+    исключают Purchase.stopped_at IS NOT NULL / Wish.stopped_at IS NOT NULL).
+
+    Останавливаются все привязанные закупки, ещё НЕ дошедшие до договора:
+    обычные — раньше 'contracted' по STATUS_ORDER; рамочные (purchase_contract_type
+    в FRAMEWORK_TYPES) — раньше 'ordered' (у рамочного договора отдельная граница,
+    т.к. сам договор — отдельная сущность, не по каждой закупке). Если остановились
+    не все закупки заявки — wish.stopped_partial=True.
+
+    Исполнителю (Wish.executor_id) уходит уведомление. Обратной операции
+    (возобновление) нет — владелец её не просил.
+    """
+    from app.routers.purchases import STATUS_ORDER
+    from app.routers.purchase_budget import FRAMEWORK_TYPES
+
+    wish = await _load_wish(wish_id, db)
+
+    # Видимость — та же проверка, что и в GET /{wish_id} (владелец: «Останавливать
+    # могут все» = любой, кто вообще видит заявку, без доп. ролевых ограничений).
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None and wish.org_id not in org_ids:
+        raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
+    if current_user.role == 'employee' and wish.created_by != current_user.id and wish.assigned_to != current_user.id:
+        member_res = await db.execute(
+            select(WishMember).where(
+                WishMember.wish_id == wish_id,
+                WishMember.user_id == current_user.id,
+            )
+        )
+        if member_res.scalar_one_or_none() is None:
+            from app.models.wish_approval import WishApproval
+            appr = await db.execute(
+                select(WishApproval.id).where(
+                    WishApproval.wish_id == wish_id,
+                    WishApproval.user_id == current_user.id,
+                ).limit(1)
+            )
+            if appr.scalar_one_or_none() is None:
+                raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
+
+    if wish.stopped_at is not None:
+        raise HTTPException(status_code=409, detail="Заявка уже остановлена")
+
+    from datetime import timezone as _timezone
+    now = datetime.now(_timezone.utc)
+    wish.stopped_at = now
+    wish.stopped_by = current_user.id
+    wish.stopped_reason = (body.reason if body else None) or None
+
+    purchases = await _wish_linked_purchases(wish_id, db)
+    stopped_count = 0
+    for p in purchases:
+        if p.stopped_at is not None:
+            continue  # уже остановлена ранее (другой заявкой/повторный вызов)
+        is_framework = p.purchase_contract_type in FRAMEWORK_TYPES
+        threshold_status = "ordered" if is_framework else "contracted"
+        cur_idx = STATUS_ORDER.index(p.status) if p.status in STATUS_ORDER else 0
+        threshold_idx = STATUS_ORDER.index(threshold_status)
+        if cur_idx < threshold_idx:
+            p.stopped_at = now
+            p.stopped_by = current_user.id
+            p.stopped_wish_id = wish.id
+            stopped_count += 1
+
+    total = len(purchases)
+    partial = total > 0 and stopped_count < total
+    wish.stopped_partial = partial
+
+    await db.commit()
+
+    try:
+        from app.notifications import notify_wish_stopped
+        wish_for_notify = await _load_wish(wish_id, db)
+        executor = getattr(wish_for_notify, 'executor', None)
+        if executor and executor.id != current_user.id:
+            stopper_name = getattr(current_user, 'full_name', None) or current_user.username
+            await notify_wish_stopped(wish_for_notify, executor, stopper_name, partial)
+    except Exception as _exc:
+        import logging as _log
+        _log.getLogger(__name__).warning("notify wish stopped failed: %s", _exc)
+
+    wish = await _load_wish(wish_id, db)
+    return _enrich(wish)
 
 
 @router.post("/", response_model=WishOut, status_code=201)
@@ -1211,6 +1547,28 @@ async def update_wish(
                 detail="Заявка привязана к закупке на этапе «Договор» — редактирование запрещено",
             )
         # SaaS is always allowed; for others allow draft/rejected AND submitted/approved/converted
+
+    # Владелец (2026-08-13): «После согласования заявку править нельзя, только в
+    # закупке» — на статусе 'converted' заявка уже в Плане закупок, единственный
+    # источник правды для позиций — сама закупка (PurchaseItem), а не WishItem.
+    # Раньше правка позиций тут ЧАСТИЧНО синхронизировалась в закупку
+    # (_sync_wish_items_to_purchases копировал название/кол-во/цену, но НЕ
+    # категорию ФЭО) — данные расходились: в заявке позиция в одной категории,
+    # в закупке в другой. Теперь правка позиций конвертированной заявки
+    # отклоняется явно; несущественные поля заявки (приоритет, срок и т.п.)
+    # по-прежнему редактируемы — блокируются только `items`.
+    if not _is_saas(current_user) and wish.status == "converted" and body.items is not None:
+        _linked_purchases = await _wish_linked_purchases(wish_id, db)
+        _purchase_nums = ", ".join(
+            f"№{p.purchase_number or p.id}" for p in _linked_purchases
+        ) or "не найдена"
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Заявка уже в плане закупок — изменения вносятся в закупке "
+                f"({_purchase_nums})"
+            ),
+        )
 
     # Capture old status BEFORE mutation
     old_status = wish.status

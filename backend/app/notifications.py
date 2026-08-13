@@ -466,6 +466,35 @@ async def notify_wish_approved(wish, creator_user) -> None:
     await notify_user(creator_user, text, reply_markup_override=_wish_keyboard(wish.id))
 
 
+async def notify_wish_stopped(wish, executor_user, stopper_name: str, partial: bool) -> None:
+    """Notify the wish executor that the wish (or part of it) has been stopped.
+
+    Владелец, 2026-08-13: «Останавливать могут все. Исполнителю приходит
+    уведомление... Если остановилась часть — уведомление "Заявка остановлена
+    частично, ФИО в родительном падеже, дата"».
+
+    В проекте нет готового склонения ФИО в родительный падеж (склонение имён
+    без сторонней библиотеки ненадёжно) — используется именительный падеж с
+    явной формулировкой «остановил(а) {ФИО}», без искажения фамилии.
+    """
+    from datetime import datetime
+    title = _esc(getattr(wish, 'title', None) or f"Заявка №{wish.id}")
+    date_str = datetime.now().strftime("%d.%m.%Y")
+    name = _esc(stopper_name)
+    if partial:
+        headline = "⏸️ <b>Заявка остановлена частично</b>"
+        detail = f"остановил(а) {name}, {date_str}"
+    else:
+        headline = "⏹️ <b>Заявка остановлена</b>"
+        detail = f"остановил(а) {name}, {date_str}"
+    text = (
+        f"{headline}\n\n"
+        f"📌 <b>{title}</b>\n"
+        f"{detail}"
+    )
+    await notify_user(executor_user, text, reply_markup_override=_wish_keyboard(wish.id))
+
+
 # ── Plan-excess (превышение плана ФЭО) notifications ──────────────────────────
 # См. app.routers.plan_excess — согласование превышения плана над финансированием
 # узла ФЭО, цепочка строится тем же механизмом, что и у заявок (build_ascending_chain).

@@ -426,6 +426,12 @@
 
         <!-- Предмет договора -->
         <template #item.subject="{ item }">
+          <!-- Владелец, 2026-08-13: остановка закупки — крупный алерт на всю ширину -->
+          <div v-if="item.stopped_at" class="purchase-stopped-banner">
+            <v-icon icon="mdi-alert-octagon" size="18" class="mr-1" />
+            <span class="purchase-stopped-banner__title">ЗАКУПКА ОСТАНОВЛЕНА</span>
+            <span class="purchase-stopped-banner__meta">{{ stoppedPurchaseLine(item) }}</span>
+          </div>
           <div class="d-flex align-center flex-wrap" style="gap:6px">
             <span>{{ item.subject || item.item_name || '—' }}</span>
             <!-- Phase 31-06: badge for unseen changes -->
@@ -630,6 +636,11 @@
           <tr>
             <td :colspan="columns.length" class="pa-0 bg-grey-lighten-5">
               <div class="pa-3">
+                <div v-if="item.stopped_at" class="purchase-stopped-banner mb-3">
+                  <v-icon icon="mdi-alert-octagon" size="18" class="mr-1" />
+                  <span class="purchase-stopped-banner__title">ЗАКУПКА ОСТАНОВЛЕНА</span>
+                  <span class="purchase-stopped-banner__meta">{{ stoppedPurchaseLine(item) }}</span>
+                </div>
                 <v-table density="compact" class="rounded border expand-items-table">
                   <colgroup>
                     <col style="width: auto">
@@ -681,6 +692,12 @@
       <v-row dense>
         <v-col v-for="item in pagedCards" :key="item.id" cols="12" sm="6" lg="4">
           <v-card variant="outlined" class="h-100 d-flex flex-column" hover @click="router.push(`/orders/${item.id}/edit`)">
+            <!-- Владелец, 2026-08-13: остановка закупки — крупный алерт на всю ширину карточки -->
+            <div v-if="item.stopped_at" class="purchase-stopped-banner ma-2 mb-0">
+              <v-icon icon="mdi-alert-octagon" size="18" class="mr-1" />
+              <span class="purchase-stopped-banner__title">ЗАКУПКА ОСТАНОВЛЕНА</span>
+              <span class="purchase-stopped-banner__meta">{{ stoppedPurchaseLine(item) }}</span>
+            </div>
             <v-card-item class="pb-1">
               <template #prepend>
                 <v-checkbox-btn :model-value="isOrderSelected(item)" density="compact" @click.stop @update:model-value="toggleOrderSelected(item)" />
@@ -1510,6 +1527,13 @@ interface Purchase {
   // просто нет чипа, без ошибок.
   feo_excess?: boolean
   feo_excess_hint?: string | null
+  // Остановка закупки (владелец, 2026-08-13, см. POST /api/wishes/{wish_id}/stop) —
+  // read-only, проставляется системой при остановке заявки. Закупка НЕ удаляется —
+  // просто помечается, чтобы видна была история.
+  stopped_at?: string | null
+  stopped_by?: number | null
+  stopped_by_name?: string | null
+  stopped_wish_id?: number | null
 }
 
 const FRAMEWORK_TYPES = new Set(['framework_cumulative', 'framework_with_amount'])
@@ -1951,6 +1975,15 @@ const effectivePrice = (item: Purchase): number | null => {
 const formatDate = (d: string) => {
   const [y, m, day] = d.split('-')
   return `${day}.${m}.${y}`
+}
+
+// Владелец, 2026-08-13: «закупка остановлена {ФИО}, {дата}» — stopped_at приходит
+// полным ISO-таймстампом (не YYYY-MM-DD, как formatDate выше ожидает), поэтому
+// отдельная функция без ручного split.
+function stoppedPurchaseLine(p: { stopped_by_name?: string | null; stopped_at?: string | null }): string {
+  const who = p.stopped_by_name || 'неизвестно кем'
+  const when = p.stopped_at ? new Date(p.stopped_at).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }) : ''
+  return `остановил ${who}${when ? ', ' + when : ''}`
 }
 
 const itemDisplayName = (p: Purchase) => {
@@ -2731,4 +2764,31 @@ async function doExport() {
 .scans-folder-label:hover { border-color: teal; color: teal; }
 .scans-folder-label--active { border-color: teal; color: teal; }
 .scans-folder-row { border: 1px solid var(--crm-border); border-radius: 8px; padding: 8px 12px; }
+
+/* Владелец, 2026-08-13: «остановка закупки» — крупный алерт в красной рамке, а
+   не мелкий чип (тот же приём, что и wish-stopped-banner в WishesView.vue). */
+.purchase-stopped-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: 10px;
+  row-gap: 2px;
+  width: 100%;
+  border: 2px solid #d32f2f;
+  background: #fdecea;
+  color: #b71c1c;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+}
+.purchase-stopped-banner__title {
+  font-weight: 800;
+  font-size: 0.92rem;
+  letter-spacing: 0.02em;
+}
+.purchase-stopped-banner__meta {
+  font-size: 0.78rem;
+  font-weight: 500;
+  opacity: 0.9;
+}
 </style>

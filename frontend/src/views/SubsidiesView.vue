@@ -1392,13 +1392,14 @@
                                         </tr>
                                         <template v-for="actual in factForPlanned(node.id, planned.id)" :key="`pa-${actual.purchase_item_id}`">
                                         <tr
+                                          :class="kpiItemRowClass(actual)"
                                           :data-item-id="actual.purchase_item_id" data-item-group="planned"
                                           style="border-bottom:1px solid #E2E8F0">
                                           <td style="padding:4px 8px;color:#0c4a6e">
                                             {{ leftGroupInfo(actual).name }}
-                                            <v-chip size="x-small" :color="leftGroupInfo(actual).isContract ? 'indigo' : 'blue-grey'" variant="tonal" class="ml-1" style="font-size:9px;height:16px"
-                                              :title="leftGroupInfo(actual).isContract ? 'Наименование, количество и цена — из договора с подрядчиком' : 'Как товар завели в заявке/ТЗ — до заключения договора'"
-                                            >{{ leftGroupInfo(actual).isContract ? 'как в договоре' : 'как выставили' }}</v-chip>
+                                            <v-chip size="x-small" :color="stageChipColorFor(actual.purchase_status)" variant="tonal" class="ml-1" style="font-size:9px;height:16px"
+                                              :title="stageChipTitleFor(actual.purchase_status)"
+                                            >{{ stageChipLabelFor(actual.purchase_status) }}</v-chip>
                                           </td>
                                           <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).unitPrice != null ? formatCurrency(leftGroupInfo(actual).unitPrice!) : '—' }}</td>
                                           <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).quantity != null ? `${parseFloat(String(leftGroupInfo(actual).quantity))} ${leftGroupInfo(actual).unit || ''}` : '—' }}</td>
@@ -1566,9 +1567,9 @@
                                 style="border-bottom:1px solid var(--crm-border);background:rgba(245,158,11,0.06)">
                                 <td style="padding:4px 8px;color:#0c4a6e">
                                   {{ leftGroupInfo(actual).name }}
-                                  <v-chip size="x-small" :color="leftGroupInfo(actual).isContract ? 'indigo' : 'blue-grey'" variant="tonal" class="ml-1" style="font-size:9px;height:16px"
-                                    :title="leftGroupInfo(actual).isContract ? 'Наименование, количество и цена — из договора с подрядчиком' : 'Как товар завели в заявке/ТЗ — до заключения договора'"
-                                  >{{ leftGroupInfo(actual).isContract ? 'как в договоре' : 'как выставили' }}</v-chip>
+                                  <v-chip size="x-small" :color="stageChipColorFor(actual.purchase_status)" variant="tonal" class="ml-1" style="font-size:9px;height:16px"
+                                    :title="stageChipTitleFor(actual.purchase_status)"
+                                  >{{ stageChipLabelFor(actual.purchase_status) }}</v-chip>
                                 </td>
                                 <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).quantity != null ? `${parseFloat(String(leftGroupInfo(actual).quantity))} ${leftGroupInfo(actual).unit || ''}` : '—' }}</td>
                                 <td style="padding:4px 8px;text-align:right;color:#64748b">{{ leftGroupInfo(actual).unitPrice != null ? formatCurrency(leftGroupInfo(actual).unitPrice!) : '—' }}</td>
@@ -7105,6 +7106,7 @@ interface KpiSnapshot {
   expandedReqItems: number[]
   expandedPurchases: number[]
   expandedItemPanels: number[]
+  expandedPlannedItems: number[]
   plannedBase: PlannedBase
   feoSearch: string
 }
@@ -7183,6 +7185,41 @@ const kpiOwnerCatIds = computed<Set<number>>(() => {
   return set
 })
 
+// Регресс владельца (2026-08-13): подсветка выше искала подходящие позиции ТОЛЬКО среди
+// mergedReqByCat (matched/virtualByCat) — а туда попадают лишь позиции БЕЗ привязки к плановой
+// позиции (feo_planned_item_id == null, см. фильтр в mergedReqByCat). После бэкфилла привязок
+// на проде (МИНПРОС_2026) все позиции категории оказались привязаны — mergedReqByCat опустел,
+// и плитке «Поставлено, не оплачено» стало нечего раскрывать, хотя сумма на плитке ненулевая.
+// plannedItemsByCat (см. её объявление выше) — источник истины: ВСЕ позиции закупок категории,
+// привязанные и нет, без исключений. Категория попадает сюда, если у неё директно (не у потомков —
+// ключ карты это feo_category_id самой позиции) есть хоть одна позиция под активную метрику —
+// не важно, лист это или направление (направления теперь тоже могут иметь свои плановые позиции,
+// см. hasOwnPlannedAmountFor выше).
+const kpiPlannedOwnerCatIds = computed<Set<number>>(() => {
+  const key = activeKpi.value
+  const set = new Set<number>()
+  if (!key || KPI_MODE[key] === 'nodes') return set
+  for (const [catIdStr, items] of Object.entries(plannedItemsByCat.value)) {
+    if (items.some(it => kpiItemMatches(key, it))) set.add(Number(catIdStr))
+  }
+  return set
+})
+
+// Плановые позиции (FeoPlannedItem.id), к которым привязана подходящая позиция закупки —
+// нужно раскрыть саму строку «Позиция плана» (expandedPlannedItems), иначе панель категории
+// откроется (см. kpiPlannedOwnerCatIds выше), а строка «План vs факт» под конкретной плановой
+// позицией останется свёрнутой, и позиция всё равно не будет видна. mergedReqByCat.linkedByPlanned
+// уже группирует ВСЕ привязанные позиции закупок по feo_planned_item_id — ровно то, что нужно.
+const kpiPlannedRowIds = computed<Set<number>>(() => {
+  const key = activeKpi.value
+  const set = new Set<number>()
+  if (!key || KPI_MODE[key] === 'nodes') return set
+  for (const [plannedIdStr, items] of Object.entries(mergedReqByCat.value.linkedByPlanned)) {
+    if (items.some(it => kpiItemMatches(key, it))) set.add(Number(plannedIdStr))
+  }
+  return set
+})
+
 // Узлы дерева ФЭО, попадающие в метрику напрямую: режим 'nodes' (budget/free)
 // и режим 'mixed' (plan_schedule — ручные листья ФЭО, которые эндпоинт planned-purchase-items
 // вообще не видит). Условие для plan_schedule — НЕ isManualPosLeaf (та проверяет != null через OR
@@ -7202,12 +7239,13 @@ const kpiNodeIds = computed<Set<number>>(() => {
 })
 
 // Что нужно раскрыть, чтобы показать состав активной метрики
-const kpiExpandTargets = computed<{ ids: Set<number>; reqItems: Set<number>; itemPanels: Set<number>; purchases: Set<number> }>(() => {
+const kpiExpandTargets = computed<{ ids: Set<number>; reqItems: Set<number>; itemPanels: Set<number>; purchases: Set<number>; plannedItems: Set<number> }>(() => {
   const ids = new Set<number>()
   const reqItems = new Set<number>()
   const itemPanels = new Set<number>()
   const purchases = new Set<number>()
-  if (!activeKpi.value) return { ids, reqItems, itemPanels, purchases }
+  const plannedItems = new Set<number>()
+  if (!activeKpi.value) return { ids, reqItems, itemPanels, purchases, plannedItems }
 
   for (const catId of kpiOwnerCatIds.value) {
     for (const a of feoAncestorIds(catId)) ids.add(a)
@@ -7217,6 +7255,16 @@ const kpiExpandTargets = computed<{ ids: Set<number>; reqItems: Set<number>; ite
     // (expandedReqItems/reqOwnersAfter) для листьев больше не рендерится, см. reqOwnersAfter.
     else itemPanels.add(catId)
   }
+  // Охват для позиций, привязанных к плановой позиции (регресс 2026-08-13, см. комментарий
+  // у kpiPlannedOwnerCatIds выше) — панель категории (лист ИЛИ направление со своими позициями)
+  // открывается через Таблицу A так же, как и у kpiOwnerCatIds; сама подходящая позиция
+  // подсвечивается ВНУТРИ панели, под своей плановой строкой (см. kpiItemRowClass в шаблоне).
+  for (const catId of kpiPlannedOwnerCatIds.value) {
+    for (const a of feoAncestorIds(catId)) ids.add(a)
+    itemPanels.add(catId)
+    if (feoHasChildren(catId)) ids.add(catId)
+  }
+  for (const plannedId of kpiPlannedRowIds.value) plannedItems.add(plannedId)
   for (const leafId of kpiMatchedLeafIds.value) {
     for (const a of feoAncestorIds(leafId)) ids.add(a)
   }
@@ -7226,7 +7274,7 @@ const kpiExpandTargets = computed<{ ids: Set<number>; reqItems: Set<number>; ite
   if (plannedBase.value === 'purchases') {
     for (const pid of kpiPurchaseIds.value) purchases.add(pid)
   }
-  return { ids, reqItems, itemPanels, purchases }
+  return { ids, reqItems, itemPanels, purchases, plannedItems }
 })
 
 // Одно присваивание на каждый ref — именно это даёт автосворачивание лишних папок
@@ -7236,6 +7284,14 @@ function applyKpiExpansion() {
   expandedReqItems.value = new Set(t.reqItems)
   expandedItemPanels.value = new Set(t.itemPanels)
   expandedPurchases.value = new Set(t.purchases)
+  // Строки «Позиция плана», под которыми лежит подходящая позиция — раскрываются тем же
+  // приёмом (сплошное присваивание). collapsedPlannedItems (ручное сворачивание пользователем,
+  // см. комментарий у togglePlannedItemFolder) сюда НЕ подмешивается — эта запись читается
+  // только внутри applyDefaultPlannedExpansion, которую этот путь не вызывает; чистим её для
+  // раскрытых KPI id на всякий случай, чтобы более поздний ре-запрос comparison (после правки
+  // пользователем) не унаследовал стухшее «было свёрнуто вручную» от ДО клика по плитке.
+  expandedPlannedItems.value = new Set(t.plannedItems)
+  for (const pid of t.plannedItems) collapsedPlannedItems.value.delete(pid)
   // Панели раскрыты напрямую присваиванием (не через toggleItemPanel) — данные для новых
   // id надо подгрузить отдельно, иначе KPI-подсветка откроет пустую панель.
   for (const id of t.itemPanels) {
@@ -7258,6 +7314,7 @@ function onKpiCardClick(key: KpiKey) {
       expandedReqItems: [...expandedReqItems.value],
       expandedPurchases: [...expandedPurchases.value],
       expandedItemPanels: [...expandedItemPanels.value],
+      expandedPlannedItems: [...expandedPlannedItems.value],
       plannedBase: plannedBase.value,
       feoSearch: feoSearch.value,
     }
@@ -7279,6 +7336,7 @@ function resetKpi() {
     expandedReqItems.value = new Set(snap.expandedReqItems)
     expandedPurchases.value = new Set(snap.expandedPurchases)
     expandedItemPanels.value = new Set(snap.expandedItemPanels)
+    expandedPlannedItems.value = new Set(snap.expandedPlannedItems)
     plannedBase.value = snap.plannedBase
     feoSearch.value = snap.feoSearch
   }
@@ -7316,9 +7374,9 @@ const kpiHasMatches = computed(() => {
 function kpiNodeClass(node: FeoNode): string {
   if (!activeKpi.value) return ''
   if (kpiNodeIds.value.has(node.id) || kpiMatchedLeafIds.value.has(node.id)) return 'feo-kpi-hl'
-  if (kpiOwnerCatIds.value.has(node.id)) return 'feo-kpi-path'
+  if (kpiOwnerCatIds.value.has(node.id) || kpiPlannedOwnerCatIds.value.has(node.id)) return 'feo-kpi-path'
   const ancestors = feoAncestorIds(node.id)
-  if (ancestors.some(pid => kpiOwnerCatIds.value.has(pid) || kpiMatchedLeafIds.value.has(pid) || kpiNodeIds.value.has(pid))) {
+  if (ancestors.some(pid => kpiOwnerCatIds.value.has(pid) || kpiPlannedOwnerCatIds.value.has(pid) || kpiMatchedLeafIds.value.has(pid) || kpiNodeIds.value.has(pid))) {
     return 'feo-kpi-path'
   }
   return 'feo-kpi-dim'
@@ -7332,10 +7390,15 @@ function kpiReqRowClass(row: FeoReqRow): string {
   return row.group ? 'feo-kpi-hl' : 'feo-kpi-path'
 }
 
-// Класс строки одиночной позиции закупки (msrc / панель источников / товар в папке-закупке)
-function kpiItemRowClass(it: FeoReqItem): string {
+// Класс строки одиночной позиции закупки (msrc / панель источников / товар в папке-закупке).
+// Принимает и FeoReqItem (id), и FeoActualItem (purchase_item_id — та же строка purchase_items,
+// просто другой эндпоинт/интерфейс, см. комментарий у FeoActualItem) — обе используют один и тот
+// же набор id, kpiItemIds. Добавлено для строк «План vs факт» внутри панели плановой позиции
+// (регресс 2026-08-13: раньше у этих строк не было kpi-класса вовсе, см. правку у kpiPlannedOwnerCatIds).
+function kpiItemRowClass(it: FeoReqItem | FeoActualItem): string {
   if (!activeKpi.value) return ''
-  return kpiItemIds.value.has(it.id) ? 'feo-kpi-hl' : 'feo-kpi-dim'
+  const id = 'id' in it ? it.id : it.purchase_item_id
+  return kpiItemIds.value.has(id) ? 'feo-kpi-hl' : 'feo-kpi-dim'
 }
 
 // Класс строки папки-закупки (режим «по закупкам»)
@@ -7989,6 +8052,33 @@ function stageHeaderLabelFor(status: string | null | undefined): string {
   if (status === 'work_in_progress') return 'Как называется в закупке'
   if (status === 'contracted' || status === 'ordered' || status === 'delivered' || status === 'paid') return 'Как в договоре'
   return 'Позиция закупки'
+}
+// Краткий вариант stageHeaderLabelFor для чипа НА СТРОКЕ (не в шапке колонки).
+// Баг владельца (2026-08-13): у «Бинт марлевый Навтекс» в статусе «План закупок»
+// чип писал «как выставили», хотя ничего ещё не выставлено в закупку — это
+// название из заявки. Чип раньше жил на своей отдельной двоичной логике
+// (leftGroupInfo.isContract ? 'как в договоре' : 'как выставили'), не совпадающей
+// со стадийной функцией шапки. Переиспользуем stageHeaderLabelFor, никакой новой
+// логики стадий не изобретаем.
+function stageChipLabelFor(status: string | null | undefined): string {
+  const full = stageHeaderLabelFor(status)
+  if (full === 'Как называется в заявке') return 'как в заявке'
+  if (full === 'Как называется в закупке') return 'как в закупке'
+  if (full === 'Как в договоре') return 'как в договоре'
+  return 'как выставили'
+}
+// Хвост той же правки (2026-08-13): :title и :color рядом с чипом остались на старой
+// двоичной логике (leftGroupInfo.isContract) — у позиции «Ведётся работа» чип уже писал
+// «как в закупке» (stageChipLabelFor выше), а подсказка при наведении всё ещё говорила
+// про заявку/ТЗ. Считаем обе от той же стадии (actual.purchase_status), что и текст чипа.
+function stageChipTitleFor(status: string | null | undefined): string {
+  if (status === 'wishes' || status === 'plan_schedule') return 'Наименование, количество и цена — как их завели в заявке; в закупку ещё не выставлено'
+  if (status === 'work_in_progress') return 'Наименование, количество и цена — как выставлено в закупке'
+  if (status === 'contracted' || status === 'ordered' || status === 'delivered' || status === 'paid') return 'Наименование, количество и цена — из договора с подрядчиком'
+  return 'Как товар завели в заявке/ТЗ — до заключения договора'
+}
+function stageChipColorFor(status: string | null | undefined): string {
+  return (status === 'contracted' || status === 'ordered' || status === 'delivered' || status === 'paid') ? 'indigo' : 'blue-grey'
 }
 function factStageHeaderFor(catId: number, plannedId: number): string {
   const facts = factForPlanned(catId, plannedId)

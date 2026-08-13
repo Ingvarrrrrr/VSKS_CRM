@@ -62,6 +62,24 @@ class WishItemPurchaseMatch(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class WishPurchaseSummary(BaseModel):
+    """Пункт 4 (владелец, 2026-08-13): «из согласованной заявки нужно перейти
+    в закупку(и), которые из неё исполняются; если их несколько — выпадающий
+    список». purchase_ids (List[int]) для этого недостаточно — фронту нужны
+    номер/статус/сумма для каждой закупки, чтобы список был осмысленным, без
+    догадок и доп. запросов на клике. Заполняется батчем (см. _wish_purchase_summaries_map
+    в app.routers.wishes) — так же, как purchase_ids/items_total рядом."""
+    id: int
+    purchase_number: Optional[int] = None
+    registry_number: Optional[str] = None
+    item_name: Optional[str] = None
+    status: Optional[str] = None
+    status_label: Optional[str] = None
+    amount: Optional[Decimal] = None
+    stopped_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
 class WishItemOut(BaseModel):
     id: int
     product_id: Optional[int] = None
@@ -224,6 +242,9 @@ class WishOut(BaseModel):
     approver_names: List[str] = []
     # Все закупки, созданные из заявки (конвертация разбивает по категориям)
     purchase_ids: List[int] = []
+    # Пункт 4 (владелец, 2026-08-13): то же самое, но с номером/статусом/суммой —
+    # для меню «Перейти в закупку». purchase_ids НЕ убираем (используется как есть).
+    purchases: List[WishPurchaseSummary] = []
     items: List[WishItemOut] = []
     # Phase 31: diff-tracking — unseen changes from other users
     unseen_fields: List[str] = []

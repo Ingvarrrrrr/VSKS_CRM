@@ -17,7 +17,7 @@ from app.models.user import User
 from app.models.wish import Wish
 from app.models.wish_item import WishItem
 from app.models.wish_member import WishMember
-from app.schemas.wishes import WishCreate, WishUpdate, WishOut, WishReject, WishConvert, WishItemPatch, WishExecutionPatch, WishStatusForce, WishStop, WishItemPurchaseMatch
+from app.schemas.wishes import WishCreate, WishUpdate, WishOut, WishReject, WishConvert, WishItemPatch, WishExecutionPatch, WishStatusForce, WishStop, WishItemPurchaseMatch, WishPurchaseSummary
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.feo_category import FeoCategory
@@ -436,6 +436,48 @@ async def _wish_linked_purchases(wish_id: int, db: AsyncSession) -> list:
     """Возвращает список закупок, привязанных к заявке."""
     res = await db.execute(select(Purchase).where(Purchase.wish_id == wish_id))
     return res.scalars().all()
+
+
+async def _wish_purchase_summaries_map(wish_ids: list, db: AsyncSession) -> dict:
+    """Пункт 4 (владелец, 2026-08-13): «из согласованной заявки — переход в её
+    закупки; если их несколько — выпадающий список с номером/статусом/суммой».
+    purchase_ids (List[int], см. рядом) отдаёт только id — этого мало для
+    осмысленного меню. Один батч-запрос на весь список заявок, без N+1 — тем же
+    приёмом, что purchases_map/items_total_map в list_wishes ниже.
+
+    Сумма закупки — тот же приоритет полей, что и в
+    app.services.match_candidates._purchase_amount (переиспользуем логику, не
+    дублируем свою): contract_price → planned_total_price → total_nmck.
+    """
+    out: dict = {}
+    if not wish_ids:
+        return out
+    from app.routers.purchase_export import _STATUS_LABELS
+    rows = (await db.execute(
+        select(
+            Purchase.wish_id, Purchase.id, Purchase.purchase_number,
+            Purchase.registry_number, Purchase.item_name, Purchase.status,
+            Purchase.stopped_at, Purchase.contract_price,
+            Purchase.planned_total_price, Purchase.total_nmck,
+        )
+        .where(Purchase.wish_id.in_(wish_ids))
+        .order_by(Purchase.id)
+    )).all()
+    for wid, pid, pnum, regnum, iname, status, stopped_at, contract_price, planned_total, total_nmck in rows:
+        amount = contract_price if contract_price is not None else (
+            planned_total if planned_total is not None else total_nmck
+        )
+        out.setdefault(wid, []).append(WishPurchaseSummary(
+            id=pid,
+            purchase_number=pnum,
+            registry_number=regnum,
+            item_name=iname,
+            status=status,
+            status_label=_STATUS_LABELS.get(status, status),
+            amount=amount,
+            stopped_at=stopped_at,
+        ))
+    return out
 
 
 def _item_field(it, name: str, default=None):
@@ -1179,6 +1221,10 @@ async def list_wishes(
         for p_wid, p_id in pres.all():
             purchases_map.setdefault(p_wid, []).append(p_id)
 
+    # Пункт 4 (владелец, 2026-08-13): сводка закупок (номер/статус/сумма) для меню
+    # «Перейти в закупку» — батчем, тем же приёмом, что purchases_map выше.
+    purchase_summaries_map = await _wish_purchase_summaries_map(wish_ids, db)
+
     # Владелец: столбец «сумма заявки» на листе /wishes — Σ total_price позиций
     # (WishItem), ОДНИМ агрегирующим запросом на всю страницу (без N+1 и без
     # загрузки всех позиций построчно).
@@ -1197,6 +1243,7 @@ async def list_wishes(
         enriched.member_names = members_map.get(w.id, [])
         enriched.approver_names = approvers_map.get(w.id, [])
         enriched.purchase_ids = purchases_map.get(w.id, [])
+        enriched.purchases = purchase_summaries_map.get(w.id, [])
         enriched.items_total = items_total_map.get(w.id, Decimal("0"))
         _unseen = unseen_map.get(w.id, [])
         enriched.unseen_fields = _unseen
@@ -1255,6 +1302,8 @@ async def get_wish(
     enriched.purchase_ids = (await db.execute(
         select(Purchase.id).where(Purchase.wish_id == wish_id).order_by(Purchase.id)
     )).scalars().all()
+    # Пункт 4 (владелец, 2026-08-13): номер/статус/сумма для меню «Перейти в закупку».
+    enriched.purchases = (await _wish_purchase_summaries_map([wish_id], db)).get(wish_id, [])
     # items уже загружены selectinload'ом в _load_wish — суммируем в памяти,
     # без доп. запроса (см. items_total в list_wishes для батч-версии).
     enriched.items_total = sum((it.total_price or Decimal("0")) for it in (wish.items or [])) or Decimal("0")
@@ -1577,13 +1626,22 @@ async def update_wish(
     _old_wish_values = {f: getattr(wish, f, None) for f in WISH_TRACKED_FIELDS}
 
     # A1 fix: снимок существенных скалярных полей ДО мутации (Дыра 2)
+    # Жалоба владельца 2026-08-13: привязка позиции к категории/плановой позиции
+    # ФЭО — это маршрутизация по бюджету, а не смена предмета закупки. Согласующий
+    # привязывал позицию к ФЭО и нажимал «Сохранить» уже ПОСЛЕ того, как согласовал —
+    # feo_category_id в этом наборе стирал его же согласование («повторное
+    # согласование» без реального изменения того, ЧТО закупается). За перерасход
+    # отвечают отдельные гейты (assert_no_unapproved_excess / потолок субсидии),
+    # поэтому feo_category_id сюда не входит.
     _APPROVAL_SENSITIVE_FIELDS: set[str] = {
-        "title", "subsidy_id", "feo_category_id", "estimated_price",
+        "title", "subsidy_id", "estimated_price",
         "quantity", "unit", "justification",
     }
     _old_sensitive = {f: getattr(wish, f, None) for f in _APPROVAL_SENSITIVE_FIELDS}
 
     # A1 fix: снимок позиций ДО мутации для точного сравнения (Дыра 1)
+    # feo_category_id намеренно НЕ входит в кортеж сравнения — см. комментарий
+    # у _APPROVAL_SENSITIVE_FIELDS выше (жалоба 2026-08-13).
     _old_items = {
         wi.id: (
             str(wi.item_name or ''),
@@ -1591,7 +1649,6 @@ async def update_wish(
             float(wi.quantity or 0),
             float(wi.unit_price or 0),
             float(wi.total_price or 0),
-            wi.feo_category_id,
         )
         for wi in (wish.items or [])
     }
@@ -1728,13 +1785,15 @@ async def update_wish(
     # assigned_to, executor_id, execution_deadline, link) НЕ сбрасывают цепочку.
     if old_status in ("submitted", "approved", "converted"):
         # Дыра 2 исправлена: используем _old_sensitive (снят ДО мутации) вместо
-        # _old_wish_values (который содержит только WISH_TRACKED_FIELDS, без feo_category_id/quantity/unit/justification).
+        # _old_wish_values (который содержит только WISH_TRACKED_FIELDS, без quantity/unit/justification).
         _sensitive_changed = any(
             str(_old_sensitive.get(f)) != str(getattr(wish, f, None))
             for f in _APPROVAL_SENSITIVE_FIELDS
         )
         # Дыра 1 исправлена: сравниваем реальное содержимое позиций до/после.
         # Фронт всегда шлёт body.items, поэтому «items is not None» — недостаточное условие.
+        # feo_category_id намеренно НЕ входит — привязка к ФЭО/плановой позиции не
+        # меняет предмет закупки, это маршрутизация по бюджету (жалоба 2026-08-13).
         _new_items = {
             wi.id: (
                 str(wi.item_name or ''),
@@ -1742,7 +1801,6 @@ async def update_wish(
                 float(wi.quantity or 0),
                 float(wi.unit_price or 0),
                 float(wi.total_price or 0),
-                wi.feo_category_id,
             )
             for wi in (wish.items or [])
         }

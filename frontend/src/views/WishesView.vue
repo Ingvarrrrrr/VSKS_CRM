@@ -385,6 +385,21 @@
                 Согласована — ждёт передачи в план закупок
               </v-chip>
             </template>
+            <v-menu v-else-if="item.status === 'converted' && item.purchase_id && (item.purchases?.length || 0) > 1">
+              <template #activator="{ props: menuProps }">
+                <v-btn v-bind="menuProps" size="x-small" variant="tonal" color="purple" prepend-icon="mdi-cart-arrow-right">
+                  {{ wishPurchasesLabel(item) }}
+                </v-btn>
+              </template>
+              <v-list density="compact">
+                <v-list-item v-for="p in item.purchases" :key="p.id" @click="goToPurchase(p.id)">
+                  <v-list-item-title>
+                    {{ purchaseMenuLabel(p) }}
+                    <v-chip v-if="p.stopped_at" size="x-small" color="error" variant="tonal" class="ml-1">остановлена</v-chip>
+                  </v-list-item-title>
+                </v-list-item>
+              </v-list>
+            </v-menu>
             <v-btn
               v-else-if="item.status === 'converted' && item.purchase_id"
               size="x-small"
@@ -493,6 +508,21 @@
                     Согласована
                   </v-chip>
                 </template>
+                <v-menu v-else-if="w.status === 'converted' && w.purchase_id && (w.purchases?.length || 0) > 1">
+                  <template #activator="{ props: menuProps }">
+                    <v-btn v-bind="menuProps" size="x-small" variant="tonal" color="purple" prepend-icon="mdi-cart-arrow-right" @click.stop>
+                      {{ wishPurchasesLabel(w) }}
+                    </v-btn>
+                  </template>
+                  <v-list density="compact">
+                    <v-list-item v-for="p in w.purchases" :key="p.id" @click.stop="goToPurchase(p.id)">
+                      <v-list-item-title>
+                        {{ purchaseMenuLabel(p) }}
+                        <v-chip v-if="p.stopped_at" size="x-small" color="error" variant="tonal" class="ml-1">остановлена</v-chip>
+                      </v-list-item-title>
+                    </v-list-item>
+                  </v-list>
+                </v-menu>
                 <v-btn
                   v-else-if="w.status === 'converted' && w.purchase_id"
                   size="x-small"
@@ -904,8 +934,23 @@
             >
               Закупку
             </v-btn>
+            <v-menu v-if="item.status === 'converted' && item.purchase_id && (item.purchases?.length || 0) > 1">
+              <template #activator="{ props: menuProps }">
+                <v-btn v-bind="menuProps" size="x-small" variant="tonal" color="purple">
+                  {{ wishPurchasesLabel(item) }}
+                </v-btn>
+              </template>
+              <v-list density="compact">
+                <v-list-item v-for="p in item.purchases" :key="p.id" @click="goToPurchase(p.id)">
+                  <v-list-item-title>
+                    {{ purchaseMenuLabel(p) }}
+                    <v-chip v-if="p.stopped_at" size="x-small" color="error" variant="tonal" class="ml-1">остановлена</v-chip>
+                  </v-list-item-title>
+                </v-list-item>
+              </v-list>
+            </v-menu>
             <v-btn
-              v-if="item.status === 'converted' && item.purchase_id"
+              v-else-if="item.status === 'converted' && item.purchase_id"
               size="x-small"
               variant="tonal"
               color="purple"
@@ -2070,6 +2115,19 @@ interface PurchaseMatch {
   total_price?: number | null
 }
 
+// Пункт 4 (владелец, 2026-08-13): сводка закупки для меню «Перейти в закупку»
+// (см. WishPurchaseSummary в backend/app/schemas/wishes.py).
+interface WishPurchaseSummary {
+  id: number
+  purchase_number?: number | null
+  registry_number?: string | null
+  item_name?: string | null
+  status?: string | null
+  status_label?: string | null
+  amount?: number | string | null
+  stopped_at?: string | null
+}
+
 interface WishItem {
   item_name: string
   item_type: string
@@ -2114,6 +2172,7 @@ interface Wish {
   member_names?: string[]
   approver_names?: string[]
   purchase_ids?: number[]
+  purchases?: WishPurchaseSummary[]
   contracted_locked?: boolean
   items?: WishItem[]
   // Владелец, 2026-08-13: сумма заявки (Σ total_price позиций) — приходит с бэка
@@ -2153,15 +2212,32 @@ function wishRecipients(w: { assigned_to_name?: string | null; approver_names?: 
   return (w.approver_names || []).map(shortName).join(' → ')
 }
 // Конвертация разбивает заявку на несколько закупок: одна → сразу в карточку,
-// несколько → список закупок с фильтром по заявке
+// несколько → выпадающий список (см. purchaseMenuLabel/goToPurchase) в шаблоне —
+// эта функция остаётся фолбэком для одной закупки / случая без w.purchases.
+// Пункт 4 (владелец, 2026-08-13): «переход в закупки, исполняемые на основании
+// заявки; несколько — выпадающий список». Навигация — тем же путём, что и везде
+// в проекте (router.push(`/orders/{id}/edit`), см. DashboardView/PlanView и др.).
 function goToWishPurchases(w: Wish) {
+  const purchases = w.purchases || []
+  if (purchases.length === 1) { router.push(`/orders/${purchases[0].id}/edit`); return }
   const ids = w.purchase_ids || []
   if (ids.length > 1) router.push({ path: '/orders', query: { wish_id: String(w.id) } })
   else router.push(`/orders/${w.purchase_id}/edit`)
 }
 function wishPurchasesLabel(w: Wish): string {
-  const n = (w.purchase_ids || []).length
+  const n = (w.purchases || w.purchase_ids || []).length
   return n > 1 ? `Закупки (${n})` : 'Закупка'
+}
+function goToPurchase(id: number) {
+  router.push(`/orders/${id}/edit`)
+}
+// Подпись пункта меню: «№123 — Заключён договор — 45 000 ₽» (+ «остановлена»).
+function purchaseMenuLabel(p: WishPurchaseSummary): string {
+  const num = p.registry_number || (p.purchase_number != null ? `№${p.purchase_number}` : `№${p.id}`)
+  const parts = [num, p.status_label || p.status].filter(Boolean)
+  const amt = Number(p.amount)
+  if (p.amount != null && !Number.isNaN(amt)) parts.push(formatPrice(amt))
+  return parts.join(' — ')
 }
 
 interface Subsidy {
@@ -3407,6 +3483,9 @@ async function openEditDialog(wish: Wish) {
     await loadWishMembers()
     await loadWishApprovers()
     approvalMode.value = ((wish as any).approval_mode === 'parallel') ? 'parallel' : 'sequential'
+    // Пункт 3 (владелец, 2026-08-13): базовый снимок формы «как загружено» — approveWish
+    // сравнивает с ним, чтобы понять, есть ли несохранённые правки перед согласованием.
+    wishFormSavedSnapshot.value = wishPayloadSnapshotJson()
   } finally {
     wishDialogLoading.value = false
   }
@@ -3630,6 +3709,20 @@ async function removeApprover(approvalId: number) {
 }
 async function decideApprover(approvalId: number, decision: 'approved' | 'rejected') {
   if (!editingWishId.value) return
+  // Пункт 3 (владелец, 2026-08-13): реальный сценарий жалобы — в открытой карточке
+  // поменял привязку ФЭО, нажал «Согласовать» (эта кнопка), нажал «Сохранить изменения»:
+  // согласование легло ДО сохранения, а сохранение потом сбрасывало его поверх свежего
+  // согласования. Фикс: несохранённые правки формы сохраняем СНАЧАЛА (тем же путём,
+  // что кнопка «Сохранить изменения» — saveWish, код не дублируем), и только потом
+  // шлём решение по согласованию. Правок нет — лишний PUT не шлём. Сохранение упало —
+  // решение не отправляем, ошибку сервера уже показал сам saveWish.
+  if (decision === 'approved') {
+    const currentSnapshot = wishPayloadSnapshotJson()
+    if (currentSnapshot && currentSnapshot !== wishFormSavedSnapshot.value) {
+      const saved = await saveWish(false)
+      if (!saved) return
+    }
+  }
   decideLoading.value = approvalId
   try {
     const res = await apiFetch<{ status: string; convert_error?: string | null; approvers: WishApprover[]; excess_warnings?: ExcessWarning[] }>(
@@ -3697,13 +3790,71 @@ async function respondWishConsent(wishId: number, accept: boolean) {
   }
 }
 
+// Снимок последнего сохранённого/загруженного состояния формы заявки — используется
+// approveWish (пункт 3, владелец 2026-08-13), чтобы не слать лишний PUT, если правок
+// со времени открытия карточки/последнего сохранения не было.
+const wishFormSavedSnapshot = ref<string>('')
+
+// Собирает PUT/POST-payload заявки из wishForm — вынесено из saveWish, чтобы
+// approveWish мог построить ТОТ ЖЕ payload для сравнения со снимком, не дублируя
+// логику сохранения (пункт 3, владелец 2026-08-13).
+function buildWishPayload() {
+  const feo = wishFeoSelected.value
+  // Заголовок: приоритет — ручной «Предмет заявки»; иначе автосклейка из позиций
+  // (при множестве позиций — первая + счётчик, чтобы не переполнить VARCHAR 500).
+  let title = (wishForm.value.title || '').trim().slice(0, 255)
+  if (!title) {
+    const names = wishForm.value.items.map(i => i.item_name).filter(Boolean)
+    title = names.join(', ') || 'Новая заявка'
+    if (title.length > 255) {
+      title = names.length > 1
+        ? `${names[0].slice(0, 120)} + ещё ${names.length - 1} поз.`
+        : names[0].slice(0, 252) + '…'
+    }
+  }
+  return {
+    ...wishForm.value,
+    feo_category_id: feo,
+    feo_per_item: wishFeoPerItem.value,
+    title,
+    items: wishForm.value.items
+      // Пустые строки-заготовки (фронт создаёт их заранее для будущего ввода) не отправляем —
+      // иначе они оседают в БД как «1 шт · 0 ₽» и «удаление» позиции визуально не работает
+      // (см. баг: владелец удаляет вторую пустую позицию, обновляет страницу — она снова там).
+      // Строку оставляем, если заполнено хоть наименование, хоть сумма (частичный ввод).
+      .filter((it: any) => (it.item_name || '').toString().trim() || Number(it.total_price) || Number(it.quantity))
+      .map(({ _selectedProduct, _photo_url, _description, _description_44fz, ...rest }) => ({
+        ...rest,
+        // B9: per-item ФЭО сохраняем только в режиме «Разные ФЭО позиции»
+        feo_category_id: wishFeoPerItem.value ? ((rest as any).feo_category_id ?? null) : null,
+        // F-PLAN: колонки wishes.feo_planned_item_id нет — выбор из шапки проставляется
+        // каждой позиции; в per-item режиме каждая строка несёт свой выбор.
+        feo_planned_item_id: wishFeoPerItem.value
+          ? ((rest as any).feo_planned_item_id ?? null)
+          : (wishFeoPlannedItemId.value ?? null),
+        // БАГ 3 (сессия 2026-08-05): UI больше не выставляет over_plan (псевдо-вариант
+        // «Вне плана» убран) — колонка в БД и расчёты на бэкенде не тронуты, просто
+        // отправляем то, что уже было на позиции (false для новых/непривязанных).
+        over_plan: !!((rest as any).over_plan),
+      })),
+  }
+}
+
+// Возвращает JSON-снимок текущего payload формы для сравнения «есть ли несохранённые
+// правки» (approveWish, пункт 3). try/catch — сериализация не должна ронять approve.
+function wishPayloadSnapshotJson(): string {
+  try { return JSON.stringify(buildWishPayload()) } catch { return '' }
+}
+
 // TODO: B8 — нужен отдельный endpoint PATCH /wishes/{id}/feo для approver на submitted-заявке
-async function saveWish(andSubmit = false) {
+// Возвращает true при успешном сохранении, false при ошибке (approveWish, пункт 3,
+// проверяет это перед отправкой согласования — существующие вызовы результат игнорируют).
+async function saveWish(andSubmit = false): Promise<boolean> {
   // Черновик можно сохранить всегда — прерваться на любом этапе (даже 200 позиций,
   // часть не в каталоге). Валидацию формы требуем только при отправке на согласование.
   if (andSubmit) {
     const { valid } = await wishFormRef.value?.validate() ?? { valid: true }
-    if (!valid) { await nextTick(); showValidationArrows(); return }
+    if (!valid) { await nextTick(); showValidationArrows(); return false }
     // Жёсткий гейт (владелец, 2026-08-11): без категории ФЭО заявку нельзя отправить
     // на согласование — иначе одобряющий упрётся в 409 от backend, а созданная из неё
     // закупка рискует остаться сиротой вне всех планов ФЭО (см. wishFeoCategoryMissing).
@@ -3711,7 +3862,7 @@ async function saveWish(andSubmit = false) {
       showSnack('Нельзя отправить на согласование: не выбрана категория ФЭО. Выберите категорию в дереве ниже (или для каждой позиции), либо «Не определена», если категория неизвестна.', 'error')
       await nextTick()
       highlightMissingFeoCategory()
-      return
+      return false
     }
     // ФЭО выбрано не до конечной категории — требуем либо лист, либо явный skipLast
     if (wishFeoSelected.value && !wishFeoSkipLast.value && !wishFeoPerItem.value) {
@@ -3720,7 +3871,7 @@ async function saveWish(andSubmit = false) {
         showSnack('Выберите конечную категорию ФЭО или включите «Не указывать последний уровень ФЭО»', 'warning')
         await nextTick()
         highlightMissingFeoCategory()
-        return
+        return false
       }
     }
     // F-PLAN: в ветке выбранной категории ФЭО есть плановые позиции плана закупок, но не
@@ -3742,49 +3893,19 @@ async function saveWish(andSubmit = false) {
 
   saving.value = true
   try {
-    const feo = wishFeoSelected.value
-    // Заголовок: приоритет — ручной «Предмет заявки»; иначе автосклейка из позиций
-    // (при множестве позиций — первая + счётчик, чтобы не переполнить VARCHAR 500).
-    let title = (wishForm.value.title || '').trim().slice(0, 255)
-    if (!title) {
-      const names = wishForm.value.items.map(i => i.item_name).filter(Boolean)
-      title = names.join(', ') || 'Новая заявка'
-      if (title.length > 255) {
-        title = names.length > 1
-          ? `${names[0].slice(0, 120)} + ещё ${names.length - 1} поз.`
-          : names[0].slice(0, 252) + '…'
-      }
-    }
-    const payload = {
-      ...wishForm.value,
-      feo_category_id: feo,
-      feo_per_item: wishFeoPerItem.value,
-      title,
-      items: wishForm.value.items
-        // Пустые строки-заготовки (фронт создаёт их заранее для будущего ввода) не отправляем —
-        // иначе они оседают в БД как «1 шт · 0 ₽» и «удаление» позиции визуально не работает
-        // (см. баг: владелец удаляет вторую пустую позицию, обновляет страницу — она снова там).
-        // Строку оставляем, если заполнено хоть наименование, хоть сумма (частичный ввод).
-        .filter((it: any) => (it.item_name || '').toString().trim() || Number(it.total_price) || Number(it.quantity))
-        .map(({ _selectedProduct, _photo_url, _description, _description_44fz, ...rest }) => ({
-          ...rest,
-          // B9: per-item ФЭО сохраняем только в режиме «Разные ФЭО позиции»
-          feo_category_id: wishFeoPerItem.value ? ((rest as any).feo_category_id ?? null) : null,
-          // F-PLAN: колонки wishes.feo_planned_item_id нет — выбор из шапки проставляется
-          // каждой позиции; в per-item режиме каждая строка несёт свой выбор.
-          feo_planned_item_id: wishFeoPerItem.value
-            ? ((rest as any).feo_planned_item_id ?? null)
-            : (wishFeoPlannedItemId.value ?? null),
-          // БАГ 3 (сессия 2026-08-05): UI больше не выставляет over_plan (псевдо-вариант
-          // «Вне плана» убран) — колонка в БД и расчёты на бэкенде не тронуты, просто
-          // отправляем то, что уже было на позиции (false для новых/непривязанных).
-          over_plan: !!((rest as any).over_plan),
-        })),
-    }
+    const payload = buildWishPayload()
 
     if (editingWishId.value) {
       const currentStatus = (wishForm.value as any).status || 'draft'
-      await apiFetch(`/wishes/${editingWishId.value}`, { method: 'PUT', body: JSON.stringify(payload) })
+      // Жалоба владельца 2026-08-13: раньше текст снекбара выбирался по статусу ДО
+      // сохранения и не смотрел на ответ сервера — «отправлена на повторное согласование»
+      // всплывало даже когда бэкенд ничего не сбрасывал (привязка к ФЭО — не смена
+      // предмета закупки). Теперь смотрим на факт: что реально вернул PUT.
+      const putResp = await apiFetch<any>(`/wishes/${editingWishId.value}`, { method: 'PUT', body: JSON.stringify(payload) })
+      const newStatus = putResp?.status || currentStatus
+      // Пункт 3 (владелец, 2026-08-13): снимок того, что реально уехало на сервер —
+      // approveWish сравнивает с ним, чтобы не слать повторный PUT без правок.
+      wishFormSavedSnapshot.value = JSON.stringify(payload)
       // Шаг 4 плана zany-fluttering-mountain.md: если пользователь подтвердил похожую
       // плановую позицию (кнопка «Привязать») — сама привязка уже ушла в payload.items
       // выше, здесь только флаг подтверждения (см. confirmWishPlanMatchIfNeeded).
@@ -3795,19 +3916,24 @@ async function saveWish(andSubmit = false) {
           showSnack('Не выбраны согласующие. Выберите «Верхнего согласующего» в разделе «Согласующие» — цепочка построится автоматически.', 'error')
           await nextTick()
           highlightMissingApprovers()
-          return
+          return false
         }
         await apiFetch(`/wishes/${editingWishId.value}/submit`, { method: 'POST' })
         showSnack('Заявка отправлена на согласование')
-      } else if (['approved', 'converted'].includes(currentStatus)) {
-        // Бэкенд автоматически переводит обратно в submitted при PUT — /submit не нужен
-        showSnack('Заявка отправлена на повторное согласование')
+      } else if (['approved', 'converted'].includes(currentStatus) && newStatus === 'submitted') {
+        // Бэкенд реально сбросил согласование (изменился предмет закупки) — /submit не нужен.
+        showSnack('Заявка изменена по существу и ушла на повторное согласование', 'error')
         await loadWishApprovers()
+      } else if (['approved', 'converted'].includes(currentStatus)) {
+        // Статус не изменился — сохранили несущественную правку (например, привязку к ФЭО),
+        // согласование бэкенд не трогал.
+        showSnack('Заявка обновлена, согласование сохранено')
       } else {
         showSnack('Заявка обновлена')
       }
     } else {
       const created = await apiFetch<any>('/wishes/', { method: 'POST', body: JSON.stringify(payload) })
+      wishFormSavedSnapshot.value = JSON.stringify(payload)
       // Шаг 4 плана zany-fluttering-mountain.md — см. комментарий у PUT-ветки выше.
       await confirmWishPlanMatchIfNeeded(created?.id)
       if (andSubmit && created?.id) {
@@ -3824,7 +3950,7 @@ async function saveWish(andSubmit = false) {
           await reloadActiveTab()
           await nextTick()
           highlightMissingApprovers()
-          return
+          return false
         }
         await apiFetch(`/wishes/${created.id}/submit`, { method: 'POST' })
         showSnack('Заявка отправлена на согласование')
@@ -3847,18 +3973,19 @@ async function saveWish(andSubmit = false) {
           : 'Черновик сохранён — добавьте участников для совместной работы')
         await loadWishMembers()
         await reloadActiveTab()
-        return
+        return true
       }
     }
 
     wishDialog.value = false
     await reloadActiveTab()
+    return true
   } catch (e: any) {
     // T3: 409 missing_needed_dates — не закрывать диалог, включить per-item режим.
     // editingWish может быть null при СОЗДАНИИ новой заявки (только что переведена в
     // per-item и отправлена без даты) — handleMissingDatesError теперь это допускает.
     if (await handleMissingDatesError(e, editingWish.value)) {
-      return
+      return false
     }
     // Серверная валидация: backend шлёт {message, fields:[{field,label}]}.
     // Подсвечиваем проблемные поля и скроллим к первому — «стрелочка» вместо
@@ -3878,6 +4005,7 @@ async function saveWish(andSubmit = false) {
     }
     const msg = e?.payload?.message || e?.message || 'неизвестная ошибка'
     showSnack(`Не удалось сохранить: ${msg}`, 'error')
+    return false
   } finally {
     saving.value = false
   }
@@ -3960,6 +4088,21 @@ async function handleMissingFeoCategoryError(e: any, wish: Wish): Promise<boolea
 }
 
 async function approveWish(wish: Wish) {
+  // Пункт 3 (владелец, 2026-08-13): реальный сценарий жалобы — в открытой карточке
+  // поменял привязку ФЭО, нажал «Согласовал», нажал «Сохранить изменения»: согласование
+  // легло ДО сохранения, а сохранение потом сбрасывало его поверх свежего согласования
+  // (актуально и для других существенных полей — количество, цена — не только ФЭО).
+  // Фикс: если карточка ЭТОЙ заявки открыта и есть несохранённые правки — сохраняем их
+  // СНАЧАЛА тем же путём, что кнопка «Сохранить изменения» (saveWish, не дублируем код),
+  // и только потом шлём согласование. Правок нет — лишний PUT не шлём.
+  if (wishDialog.value && editingWishId.value === wish.id) {
+    const currentSnapshot = wishPayloadSnapshotJson()
+    if (currentSnapshot && currentSnapshot !== wishFormSavedSnapshot.value) {
+      const saved = await saveWish(false)
+      if (!saved) return // saveWish уже показал ошибку сервера (правило: не глотать) — согласование не шлём
+    }
+  }
+
   approvingId.value = wish.id
   try {
     const res = await apiFetch<{ convert_warning?: string | null; excess_warnings?: ExcessWarning[] }>(`/wishes/${wish.id}/approve`, { method: 'POST' })

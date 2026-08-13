@@ -68,6 +68,11 @@ def _approval_dict(a: PlanExcessApproval) -> dict:
         "excess_amount": float(a.excess_amount) if a.excess_amount is not None else 0.0,
         "plan_amount": float(a.plan_amount) if a.plan_amount is not None else None,
         "budget_amount": float(a.budget_amount) if a.budget_amount is not None else None,
+        # Владелец, план zany-fluttering-mountain.md (2026-08-13): «план был X →
+        # стал Y» — заполнено только для превышения вида plan_over_manual, см.
+        # request_plan_excess_approval.
+        "plan_before": float(a.plan_before) if a.plan_before is not None else None,
+        "plan_after": float(a.plan_after) if a.plan_after is not None else None,
         "status": a.status,
         "mode": a.mode,
         "requested_by_id": a.requested_by_id,
@@ -308,17 +313,35 @@ async def request_plan_excess_approval(
         chain_warning = "Над вами нет вышестоящих согласующих — превышение будет согласовано вами лично."
 
     full_plan = node["plan"] + node["over"]  # текущая плановая сумма (до сжатия по бюджету)
-    # У PlanExcessApproval нет отдельного поля «вид превышения» (миграции сейчас
-    # трогает другой агент, новую колонку не добавляем) — различаем вид текстом
-    # в comment, см. excess_description выше. Тот же принцип, что и у полей
-    # excess_amount/plan_amount/budget_amount ниже — они уже были общими для
-    # обоих старых видов, comment теперь тоже общий, но содержательный per-вид.
+    # Владелец, план zany-fluttering-mountain.md (2026-08-13): «прежний план обязан
+    # сохраниться в базе» — для превышения вида plan_over_manual фиксируем
+    # plan_before (вручную заданная сумма на момент запроса) / plan_after (Σ
+    # плановых позиций на тот же момент), см. app.models.plan_excess_approval.
+    # NULL для остальных двух видов (over_feo/fact_over_plan) — там понятия
+    # «план был → стал» не было запрошено владельцем.
+    plan_before = plan_after = None
+    if excess_kind == "plan_over_manual":
+        # ⚠️ node["plan_manual"] ЗДЕСЬ — ЕЩЁ вручную заданная сумма, не Σ позиций:
+        # пока НЕТ approved-запроса, app.services.feo_plan._manual_plan_for держит
+        # plan_manual == manual_plan_amount (план не подменяется, пока не согласовано —
+        # см. её docstring), а этот запрос как раз ТОЛЬКО создаётся. Σ позиций
+        # («стало») = manual_plan_entered + excess_plan_over_manual (excess = Σ
+        # позиций минус ручная сумма, по определению).
+        plan_before = Decimal(str(node.get("manual_plan_entered") or 0.0))
+        plan_after = plan_before + Decimal(str(node.get("excess_plan_over_manual") or 0.0))
+
+    # У PlanExcessApproval нет отдельного поля «вид превышения» — различаем вид
+    # текстом в comment, см. excess_description выше. Тот же принцип, что и у
+    # полей excess_amount/plan_amount/budget_amount ниже — они уже были общими
+    # для всех трёх видов, comment теперь тоже общий, но содержательный per-вид.
     approval = PlanExcessApproval(
         feo_category_id=feo_category_id,
         subsidy_id=cat.subsidy_id,
         excess_amount=Decimal(str(excess_for_request)),
         plan_amount=Decimal(str(full_plan)),
         budget_amount=Decimal(str(node.get("budget") or 0)),
+        plan_before=plan_before,
+        plan_after=plan_after,
         status="pending",
         mode=mode,
         requested_by_id=current_user.id,

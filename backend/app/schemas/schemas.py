@@ -384,6 +384,12 @@ class FeoCategoryCreate(BaseModel):
     planned_quantity: Optional[float] = None
     planned_amount: Optional[float] = None
     unit: Optional[str] = None
+    # Владелец, план zany-fluttering-mountain.md (2026-08-13): переключатель способа
+    # расчёта плана — см. app/models/feo_category.py. Дефолт строкой (не None) —
+    # колонка NOT NULL, а FastAPI/pydantic отправляет явный None при пропуске поля
+    # старым клиентом, что уронило бы INSERT/UPDATE constraint-нарушением.
+    plan_source: str = "planned_items"
+    manual_plan_amount: Optional[float] = None
 
 class FeoCategoryOut(BaseModel):
     id: int
@@ -402,6 +408,8 @@ class FeoCategoryOut(BaseModel):
     planned_quantity: Optional[float] = None
     planned_amount: Optional[float] = None
     unit: Optional[str] = None
+    plan_source: str = "planned_items"
+    manual_plan_amount: Optional[float] = None
     # Задача владельца «план ≠ факт» (шаг D, сессия 2026-08-06): непустое — только
     # когда PUT /feo-categories/{id} заподозрил, что в planned_amount (цена ЗА
     # ЕДИНИЦУ) записана СУММА (защита от повторения К1, см. update_category).

@@ -442,41 +442,30 @@ async def _wish_purchase_summaries_map(wish_ids: list, db: AsyncSession) -> dict
     """Пункт 4 (владелец, 2026-08-13): «из согласованной заявки — переход в её
     закупки; если их несколько — выпадающий список с номером/статусом/суммой».
     purchase_ids (List[int], см. рядом) отдаёт только id — этого мало для
-    осмысленного меню. Один батч-запрос на весь список заявок, без N+1 — тем же
-    приёмом, что purchases_map/items_total_map в list_wishes ниже.
-
-    Сумма закупки — тот же приоритет полей, что и в
-    app.services.match_candidates._purchase_amount (переиспользуем логику, не
-    дублируем свою): contract_price → planned_total_price → total_nmck.
+    осмысленного меню. Формат карточки закупки вынесен в
+    app.services.purchase_summary.purchase_summaries_by_id (план
+    zany-fluttering-mountain.md, 2026-08-13) — переиспользуется и «виновниками»
+    превышения плана (excess_plan_items, см. app.services.feo_plan), чтобы
+    формат карточки не разъехался на два.
     """
     out: dict = {}
     if not wish_ids:
         return out
-    from app.routers.purchase_export import _STATUS_LABELS
-    rows = (await db.execute(
-        select(
-            Purchase.wish_id, Purchase.id, Purchase.purchase_number,
-            Purchase.registry_number, Purchase.item_name, Purchase.status,
-            Purchase.stopped_at, Purchase.contract_price,
-            Purchase.planned_total_price, Purchase.total_nmck,
-        )
+    from app.services.purchase_summary import purchase_summaries_by_id
+
+    link_rows = (await db.execute(
+        select(Purchase.wish_id, Purchase.id)
         .where(Purchase.wish_id.in_(wish_ids))
         .order_by(Purchase.id)
     )).all()
-    for wid, pid, pnum, regnum, iname, status, stopped_at, contract_price, planned_total, total_nmck in rows:
-        amount = contract_price if contract_price is not None else (
-            planned_total if planned_total is not None else total_nmck
-        )
-        out.setdefault(wid, []).append(WishPurchaseSummary(
-            id=pid,
-            purchase_number=pnum,
-            registry_number=regnum,
-            item_name=iname,
-            status=status,
-            status_label=_STATUS_LABELS.get(status, status),
-            amount=amount,
-            stopped_at=stopped_at,
-        ))
+    if not link_rows:
+        return out
+    summaries = await purchase_summaries_by_id(db, (pid for _wid, pid in link_rows))
+    for wid, pid in link_rows:
+        s = summaries.get(pid)
+        if s is None:
+            continue
+        out.setdefault(wid, []).append(WishPurchaseSummary(**s))
     return out
 
 

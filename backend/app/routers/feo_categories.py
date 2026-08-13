@@ -253,6 +253,16 @@ async def get_feo_plan_tree(
       excess_approval_by_name — «превышение согласовано»: данные последнего
       approved-запроса PlanExcessApproval по категории (висит, даже если узел
       всё ещё формально в превышении — display включает его целиком).
+
+    Задача владельца, план zany-fluttering-mountain.md (2026-08-13, переключатель
+    способа расчёта плана): plan_source ('planned_items' | 'manual_sum') и
+    manual_plan_amount — форма категории читает/пишет эту пару (POST/PUT
+    /feo-categories). excess_plan_items теперь в новом виде — [{id, name, amount,
+    purchases: [{id, registry_number, purchase_number, status, status_label,
+    amount, stopped_at}]}], клик по виновнику открывает его закупку(и).
+    excess_approval_plan_before/excess_approval_plan_after — «план был X → стал
+    Y» для excess_kind='plan_over_manual' (см. app.services.feo_plan и
+    app.routers.plan_excess), null для остальных видов превышения.
     """
     from app.services.feo_plan import compute_feo_plan_tree, find_excess_culprit
     from app.models.purchase import Purchase
@@ -306,12 +316,20 @@ async def get_feo_plan_tree(
             "excess_plan_approved": node["excess_plan_approved"],
             "excess_plan_pending": node["excess_plan_pending"],
             "excess_plan_items": node["excess_plan_items"],
+            # Владелец, план zany-fluttering-mountain.md (2026-08-13): переключатель
+            # способа расчёта плана узла — форма категории читает/пишет эту пару.
+            "plan_source": node["plan_source"],
+            "manual_plan_amount": node["manual_plan_amount"],
             # Задача владельца п.4 (2026-08-12): «превышение согласовано» — данные
             # последнего approved-запроса по категории (см. compute_feo_plan_tree).
             "excess_approval_amount": node["excess_approval_amount"],
             "excess_approval_at": node["excess_approval_at"],
             "excess_approval_by_id": node["excess_approval_by_id"],
             "excess_approval_by_name": node["excess_approval_by_name"],
+            # Владелец, план zany-fluttering-mountain.md (2026-08-13): «план был X →
+            # стал Y» на постоянной плашке — см. compute_feo_plan_tree.
+            "excess_approval_plan_before": node["excess_approval_plan_before"],
+            "excess_approval_plan_after": node["excess_approval_plan_after"],
             # Виновник превышения (задача владельца, план zany-fluttering-mountain.md
             # п.4, 2026-08-10) заполняется НИЖЕ, точечно только для узлов с
             # неснятым excess_amount — find_excess_culprit не бесплатна (доп. запрос),
@@ -351,7 +369,8 @@ async def get_feo_plan_tree(
             "residual", "forecast", "forecast_over", "consumed", "excess_amount",
             "fact", "excess_over_feo", "excess_fact_over_plan", "excess_culprit",
             "manual_plan_entered", "excess_plan_over_manual", "excess_plan_items",
-            "excess_approval_amount",
+            "excess_approval_amount", "manual_plan_amount",
+            "excess_approval_plan_before", "excess_approval_plan_after",
         )
         for cat_id, node in result.items():
             if cat_id == "unassigned":
@@ -1242,6 +1261,8 @@ async def create_category(
         planned_quantity=category_data.planned_quantity,
         planned_amount=category_data.planned_amount,
         unit=category_data.unit,
+        plan_source=category_data.plan_source or "planned_items",
+        manual_plan_amount=category_data.manual_plan_amount,
     )
     db.add(new_category)
     await db.commit()
@@ -2933,7 +2954,10 @@ async def update_category(
     if not cat:
         raise HTTPException(status_code=404, detail="Категория не найдена")
     _validate_plan_pair(category_data.planned_quantity, category_data.planned_amount)
-    _old_plan = (cat.budget, cat.feo_quantity, cat.feo_amount, cat.planned_quantity, cat.planned_amount)
+    _old_plan = (
+        cat.budget, cat.feo_quantity, cat.feo_amount, cat.planned_quantity, cat.planned_amount,
+        cat.plan_source, cat.manual_plan_amount,
+    )
     cat.name = category_data.name
     cat.code = category_data.code
     cat.appendix = category_data.appendix
@@ -2946,6 +2970,8 @@ async def update_category(
     cat.planned_quantity = category_data.planned_quantity
     cat.planned_amount = category_data.planned_amount
     cat.unit = category_data.unit
+    cat.plan_source = category_data.plan_source or "planned_items"
+    cat.manual_plan_amount = category_data.manual_plan_amount
 
     # Задача владельца «план ≠ факт» (шаг D, сессия 2026-08-06): защита от повторения
     # К1 (боевые 16 760 000 — сумма записана в поле «цена за единицу»). НЕ блокируем
@@ -2968,7 +2994,36 @@ async def update_category(
                 f"{_qty:g} × {_amt:,.2f} = {_total:,.2f} ₽ при финансировании {_budget:,.2f} ₽."
             )
 
-    if (cat.budget, cat.feo_quantity, cat.feo_amount, cat.planned_quantity, cat.planned_amount) != _old_plan and cat.subsidy_id:
+    # Владелец, план zany-fluttering-mountain.md (2026-08-13): предупреждение о
+    # смене режима расчёта плана, если в категории уже есть плановые позиции —
+    # переключение на 'manual_sum' не удаляет их (они продолжают участвовать в
+    # excess_plan_over_manual/qty_plan), но раньше именно их сумма БЫЛА планом,
+    # теперь плановой суммой становится manual_plan_amount, введённая руками.
+    if _old_plan[5] != cat.plan_source:
+        from app.models.feo_planned_item import FeoPlannedItem as _FeoPlannedItem
+        _items_cnt = (await db.execute(
+            select(func.count(_FeoPlannedItem.id))
+            .where(_FeoPlannedItem.feo_category_id == cat_id)
+            .where(_FeoPlannedItem.is_active.is_(True))
+        )).scalar_one()
+        if _items_cnt:
+            _mode_warning = (
+                f"Смена способа расчёта плана: у категории уже есть {_items_cnt} "
+                f"плановых позиций. "
+                + (
+                    "Планом теперь становится введённая сумма, а не их Σ — если сумма "
+                    "меньше, появится превышение."
+                    if cat.plan_source == "manual_sum"
+                    else "Планом снова становится Σ плановых позиций."
+                )
+            )
+            warning = f"{warning} {_mode_warning}" if warning else _mode_warning
+
+    _new_plan = (
+        cat.budget, cat.feo_quantity, cat.feo_amount, cat.planned_quantity, cat.planned_amount,
+        cat.plan_source, cat.manual_plan_amount,
+    )
+    if _new_plan != _old_plan and cat.subsidy_id:
         from app.routers.purchases import _create_plan_graph_version
         await _create_plan_graph_version(subsidy_id=cat.subsidy_id, db=db, user=current_user, note=f"Авто-версия: изменение плановых показателей ФЭО «{cat.name}»")
     await db.commit()

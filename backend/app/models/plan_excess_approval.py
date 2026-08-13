@@ -21,6 +21,19 @@ class PlanExcessApproval(Base):
     status = Column(String(20), nullable=False, default="pending")  # pending/approved/rejected
     mode = Column(String(20), nullable=False, default="sequential")  # sequential/parallel
 
+    # Владелец, план zany-fluttering-mountain.md (2026-08-13): «прежний план обязан
+    # сохраниться в базе» — заполняются в момент создания запроса ТОЛЬКО для превышения
+    # вида plan_over_manual (Σ плановых позиций против вручную заданной суммы, см.
+    # app.routers.plan_excess.request_plan_excess_approval): plan_before — ручная сумма
+    # на тот момент (manual_plan_entered), plan_after — Σ активных плановых позиций
+    # (manual_plan_entered + excess_plan_over_manual — на момент СОЗДАНИЯ запроса
+    # node["plan_manual"] ещё РАВЕН ручной сумме, а не Σ позиций: подмена происходит
+    # только ПОСЛЕ approved, см. app.services.feo_plan._manual_plan_for). NULL для
+    # остальных двух видов превышения (over_feo/fact_over_plan) — там «план был →
+    # стал» не запрашивался.
+    plan_before = Column(Numeric(15, 2), nullable=True)
+    plan_after = Column(Numeric(15, 2), nullable=True)
+
     requested_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     resolved_at = Column(DateTime(timezone=True), nullable=True)

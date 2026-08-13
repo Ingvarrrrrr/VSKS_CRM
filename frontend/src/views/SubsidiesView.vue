@@ -988,17 +988,47 @@
                               @click.stop="requestPlanExcessApproval(node)"
                             >Согласовать</v-btn>
                           </template>
-                          <div v-if="excessPlanFor(node)!.items.length" style="width:100%;font-size:11px;color:#B45309">
-                            Позиции-виновники: {{ excessPlanItemsText(node) }}
+                          <!-- План zany-fluttering-mountain.md, п.2: вместо текстовой строки —
+                               кликабельные чипы по позициям. Одна связанная закупка → сразу
+                               открыть (router.push, тот же приём, что и у excessCulpritFor
+                               выше/virtCart); несколько — v-menu со списком «номер · статус ·
+                               сумма», остановленные помечены; закупок нет — чип без действия,
+                               с подсказкой почему (см. excessPlanItemPurchaseTitle). -->
+                          <div v-if="excessPlanFor(node)!.items.length" class="d-flex align-center flex-wrap ga-1 mt-1" style="width:100%">
+                            <span style="font-size:11px;color:#B45309">Позиции-виновники:</span>
+                            <template v-for="item in excessPlanFor(node)!.items" :key="item.id">
+                              <span v-if="!item.purchases.length" class="feo-purchase-link" style="cursor:default;opacity:0.7"
+                                :title="`«${item.name}» (${formatCurrency(item.amount)}) — нет связанной закупки: позиция ещё не попала ни в одну закупку`"
+                              >{{ item.name }} ({{ formatCurrency(item.amount) }})</span>
+                              <a v-else-if="item.purchases.length === 1" href="javascript:void(0)" class="feo-purchase-link"
+                                @click.stop="router.push(`/orders/${item.purchases[0].id}`)"
+                              >{{ item.name }} ({{ formatCurrency(item.amount) }})</a>
+                              <v-menu v-else location="bottom start">
+                                <template #activator="{ props: purchMenuProps }">
+                                  <a href="javascript:void(0)" class="feo-purchase-link" v-bind="purchMenuProps" @click.stop
+                                  >{{ item.name }} ({{ formatCurrency(item.amount) }})</a>
+                                </template>
+                                <v-list density="compact">
+                                  <v-list-item v-for="p in item.purchases" :key="p.id" @click="router.push(`/orders/${p.id}`)">
+                                    <v-list-item-title>
+                                      {{ excessPlanItemPurchaseTitle(p) }}
+                                      <span v-if="p.stopped_at" class="feo-stopped-marker ml-1">остановлена</span>
+                                    </v-list-item-title>
+                                  </v-list-item>
+                                </v-list>
+                              </v-menu>
+                            </template>
                           </div>
                         </div>
 
                         <!-- Замечание владельца п.4: «если согласовали превышение — так и остаётся,
                              надо чтобы висело предупреждение, что согласовали» — постоянная спокойная
-                             пометка, НЕ зависит от того, активно ли превышение прямо сейчас. -->
+                             пометка, НЕ зависит от того, активно ли превышение прямо сейчас. План
+                             zany-fluttering-mountain.md, п.3: дополнено «план был X → стал Y» из
+                             excess_approval_plan_before/after (может отсутствовать у старых запросов). -->
                         <div v-if="excessPlanApprovalPermanent(node)" class="feo-plan-note mt-1">
                           <v-chip size="x-small" color="grey" variant="tonal" prepend-icon="mdi-check-decagram">
-                            превышение согласовано: {{ formatCurrency(excessPlanApprovalPermanent(node)!.amount) }}{{ excessPlanApprovalPermanent(node)!.at ? ', ' + excessPlanApprovalPermanent(node)!.at : '' }}, {{ excessPlanApprovalPermanent(node)!.by }}
+                            превышение согласовано: {{ formatCurrency(excessPlanApprovalPermanent(node)!.amount) }}{{ excessPlanApprovalPermanent(node)!.at ? ', ' + excessPlanApprovalPermanent(node)!.at : '' }}, {{ excessPlanApprovalPermanent(node)!.by }}<template v-if="excessPlanApprovalPermanent(node)!.planBefore != null && excessPlanApprovalPermanent(node)!.planAfter != null"> · план был {{ formatCurrency(excessPlanApprovalPermanent(node)!.planBefore!) }} → стал {{ formatCurrency(excessPlanApprovalPermanent(node)!.planAfter!) }}</template>
                           </v-chip>
                         </div>
 
@@ -2497,17 +2527,44 @@
             </v-row>
           </div>
           <!-- Блок: Плановые показатели (CRM) — задача владельца (2026-08-11, Правка 2):
-               план теперь вводится именованной плановой позицией внутри категории, а не
+               план вводится именованной плановой позицией внутри категории, а не
                голыми числами на самой категории (planned_quantity/planned_amount) — иначе
                план виден как безымянное число без ответа на вопрос «что именно планируем
-               купить». Поля здесь больше не редактируются при создании: feoForm.planned_quantity/
-               planned_amount остаются null (см. addFeoCategory) — «Ед. изм.» ниже это
-               единица измерения САМОЙ КАТЕГОРИИ (для отображения), а не план. -->
+               купить». Поля planned_quantity/planned_amount по-прежнему не редактируются
+               при создании (см. addFeoCategory) — «Ед. изм.» ниже это единица измерения
+               САМОЙ КАТЕГОРИИ (для отображения), а не план.
+
+               План zany-fluttering-mountain.md, п.1/п.5 (2026-08-13): добавлен переключатель
+               «Как считать план» — способ теперь ЗАДАЁТСЯ явно, а не угадывается по тому,
+               пустые ли поля (это угадывание билось само с собой — см. контекст плана).
+               «По плановым позициям» (по умолчанию) — план = Σ позиций категории. «По
+               вручную заданной сумме» — ОДНО поле manual_plan_amount, без кол-ва/цены за
+               ед. (владелец прямо выбрал одно поле, не количество × цена). -->
           <div style="border:1px solid rgba(var(--v-border-color),var(--v-border-opacity));border-radius:8px;padding:12px">
-            <div class="text-body-2 font-weight-medium mb-1">Плановые показатели</div>
-            <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
-              План задаётся плановой позицией внутри категории: создайте категорию и нажмите «Добавить плановую
-              позицию» в панели. Так у плана будет название (что именно планируем купить), а не просто число.
+            <div class="text-body-2 font-weight-medium mb-1">Как считать план</div>
+            <v-btn-toggle
+              v-model="feoForm.planSource"
+              mandatory
+              density="compact"
+              color="primary"
+              class="mb-2"
+            >
+              <v-btn value="planned_items" size="x-small">По плановым позициям</v-btn>
+              <v-btn value="manual_sum" size="x-small">По вручную заданной сумме</v-btn>
+            </v-btn-toggle>
+            <div class="text-caption text-medium-emphasis mb-3">
+              «По плановым позициям» — план складывается из именованных позиций внутри категории (видно, что именно
+              планируем купить). «По вручную заданной сумме» — план это одно число; позиции можно вести отдельно,
+              но если их сумма превысит его — потребуется согласование.
+            </div>
+            <v-text-field
+              v-if="feoForm.planSource === 'manual_sum'"
+              v-model.number="feoForm.manual_plan_amount"
+              label="Плановая сумма, ₽"
+              variant="outlined" density="compact" type="number" hide-details class="mb-3"
+            />
+            <v-alert v-else type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+              Создайте категорию и нажмите «Добавить плановую позицию» в панели.
             </v-alert>
             <v-combobox
               v-model="feoForm.unit"
@@ -2622,63 +2679,103 @@
               </v-col>
             </v-row>
           </div>
-          <!-- Блок: Плановые показатели (CRM) — Правка 2Б (2026-08-11): поля больше не
-               редактируются здесь напрямую (см. Правку 1 — путаница planned_amount
-               «цена за ед.» vs FeoPlannedItem.amount «сумма» уже дважды ломала боевые
-               числа). Три состояния: (1) есть подкатегории — план считают они;
-               (2) план не задан — подсказка завести плановую позицию; (3) план задан
-               старыми полями категории — показываем только для чтения + кнопка
-               переноса в плановую позицию (openConvertManualPlanToItem, уже переносит
-               значения и после сохранения сам чистит эти поля — см. savePlannedItem). -->
+          <!-- Блок: Как считать план — план zany-fluttering-mountain.md, п.1/п.5
+               (2026-08-13). Способ теперь ЗАДАЁТСЯ явно переключателем, а не угадывается
+               по тому, пустые ли поля planned_quantity/planned_amount (угадывание билось
+               само с собой — см. контекст плана, категория 3710). «По вручную заданной
+               сумме» — ОДНО поле manual_plan_amount (не количество × цена — владелец
+               прямо выбрал одно поле). Переключение на «ручную сумму» у категории, где
+               уже есть плановые позиции (feoEditPlanSourceSwitchWarning), сопровождается
+               предупреждением о последствиях: позиции останутся, но план будет считаться
+               от суммы, их превышение потребует согласования. -->
           <div style="border:1px solid rgba(var(--v-border-color),var(--v-border-opacity));border-radius:8px;padding:12px" class="mb-3">
-            <div class="text-body-2 font-weight-medium mb-1">Плановые показатели</div>
+            <div class="text-body-2 font-weight-medium mb-1">Как считать план</div>
+            <v-btn-toggle
+              v-model="feoEditForm.planSource"
+              mandatory
+              density="compact"
+              color="primary"
+              class="mb-2"
+            >
+              <v-btn value="planned_items" size="x-small">По плановым позициям</v-btn>
+              <v-btn value="manual_sum" size="x-small">По вручную заданной сумме</v-btn>
+            </v-btn-toggle>
+            <div class="text-caption text-medium-emphasis mb-3">
+              «По плановым позициям» — план складывается из именованных позиций внутри категории (видно, что именно
+              планируем купить). «По вручную заданной сумме» — план это одно число; позиции можно вести отдельно,
+              но если их сумма превысит его — потребуется согласование.
+            </div>
 
             <v-alert
-              v-if="feoEditForm.hasChildren"
-              type="info" variant="tonal" density="compact" class="text-caption"
+              v-if="feoEditPlanSourceSwitchWarning"
+              type="warning" variant="tonal" density="compact" class="mb-3 text-caption"
             >
-              У категории есть подкатегории: план считается по ним, собственный план категории в расчёте не участвует.
+              У категории уже есть плановые позиции — они останутся на месте, но план будет считаться от введённой
+              суммы. Если сумма позиций превысит её, потребуется согласование превышения.
             </v-alert>
 
-            <template v-else-if="feoEditManualPlanSet">
-              <div class="d-flex align-center flex-wrap mb-2" style="gap:8px">
-                <span class="text-body-2">
-                  Плановое количество: <strong>{{ feoEditForm.planned_quantity ?? '—' }} {{ feoEditForm.unit || 'ед.' }}</strong>
-                </span>
-                <v-chip size="x-small" color="orange" variant="tonal">старый формат</v-chip>
-              </div>
-              <div class="text-body-2 mb-2">
-                Плановая цена за единицу: <strong>{{ feoEditForm.planned_amount != null ? formatCurrency(feoEditForm.planned_amount) : '—' }}</strong>
-              </div>
-              <div class="text-body-2 mb-3">
-                Плановая сумма: {{ feoEditForm.planned_quantity ?? '—' }} × {{ feoEditForm.planned_amount != null ? formatCurrency(feoEditForm.planned_amount) : '—' }}
-                <template v-if="feoEditForm.planned_quantity != null && feoEditForm.planned_amount != null">
-                  = <strong>{{ formatCurrency(Number(feoEditForm.planned_quantity) * Number(feoEditForm.planned_amount)) }}</strong>
-                </template>
-              </div>
-              <v-alert
-                v-if="feoEditPlanPairError"
-                type="warning" variant="tonal" density="compact" class="mb-3 text-caption"
-              >
-                {{ feoEditPlanPairError }}
-              </v-alert>
-              <div class="text-caption text-medium-emphasis mb-3">
-                План записан полями самой категории, без названия. Перенесите его в плановую позицию — тогда будет
-                видно, что именно запланировано, и позицию можно будет править.
-              </div>
-              <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-swap-horizontal" @click="convertCategoryEditPlanToItem">
-                Перенести в плановую позицию
-              </v-btn>
+            <template v-if="feoEditForm.planSource === 'manual_sum'">
+              <v-text-field
+                v-model.number="feoEditForm.manual_plan_amount"
+                label="Плановая сумма, ₽"
+                variant="outlined" density="compact" type="number" hide-details
+              />
             </template>
 
+            <!-- Правка 2Б (2026-08-11): три состояния старого способа отображения плана —
+                 (1) есть подкатегории — план считают они; (2) план не задан — подсказка
+                 завести плановую позицию; (3) план задан старыми полями категории — только
+                 для чтения + перенос в плановую позицию (openConvertManualPlanToItem). Всё
+                 показывается только в режиме «по плановым позициям» — режим «по сумме» выше
+                 уже закрыл вопрос одним полем. -->
             <template v-else>
-              <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
-                План задаётся плановой позицией внутри категории: нажмите «Добавить плановую позицию» ниже. Так у
-                плана будет название (что именно планируем купить), а не просто число.
+              <v-alert
+                v-if="feoEditForm.hasChildren"
+                type="info" variant="tonal" density="compact" class="text-caption"
+              >
+                У категории есть подкатегории: план считается по ним, собственный план категории в расчёте не участвует.
               </v-alert>
-              <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-playlist-plus" @click="openAddPlannedItemFromCategoryEdit">
-                Добавить плановую позицию
-              </v-btn>
+
+              <template v-else-if="feoEditManualPlanSet">
+                <div class="d-flex align-center flex-wrap mb-2" style="gap:8px">
+                  <span class="text-body-2">
+                    Плановое количество: <strong>{{ feoEditForm.planned_quantity ?? '—' }} {{ feoEditForm.unit || 'ед.' }}</strong>
+                  </span>
+                  <v-chip size="x-small" color="orange" variant="tonal">старый формат</v-chip>
+                </div>
+                <div class="text-body-2 mb-2">
+                  Плановая цена за единицу: <strong>{{ feoEditForm.planned_amount != null ? formatCurrency(feoEditForm.planned_amount) : '—' }}</strong>
+                </div>
+                <div class="text-body-2 mb-3">
+                  Плановая сумма: {{ feoEditForm.planned_quantity ?? '—' }} × {{ feoEditForm.planned_amount != null ? formatCurrency(feoEditForm.planned_amount) : '—' }}
+                  <template v-if="feoEditForm.planned_quantity != null && feoEditForm.planned_amount != null">
+                    = <strong>{{ formatCurrency(Number(feoEditForm.planned_quantity) * Number(feoEditForm.planned_amount)) }}</strong>
+                  </template>
+                </div>
+                <v-alert
+                  v-if="feoEditPlanPairError"
+                  type="warning" variant="tonal" density="compact" class="mb-3 text-caption"
+                >
+                  {{ feoEditPlanPairError }}
+                </v-alert>
+                <div class="text-caption text-medium-emphasis mb-3">
+                  План записан полями самой категории, без названия. Перенесите его в плановую позицию — тогда будет
+                  видно, что именно запланировано, и позицию можно будет править.
+                </div>
+                <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-swap-horizontal" @click="convertCategoryEditPlanToItem">
+                  Перенести в плановую позицию
+                </v-btn>
+              </template>
+
+              <template v-else>
+                <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
+                  План задаётся плановой позицией внутри категории: нажмите «Добавить плановую позицию» ниже. Так у
+                  плана будет название (что именно планируем купить), а не просто число.
+                </v-alert>
+                <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-playlist-plus" @click="openAddPlannedItemFromCategoryEdit">
+                  Добавить плановую позицию
+                </v-btn>
+              </template>
             </template>
           </div>
           <v-checkbox v-model="feoEditForm.is_active" label="Активна" density="compact" hide-details class="mt-2" />
@@ -4528,6 +4625,12 @@ interface FeoCategory {
   is_active: boolean; budget: number | null; planned_quantity: number | null; planned_amount: number | null; unit: string | null
   feo_quantity: number | null; feo_unit: string | null
   description: string | null; feo_amount: number | null
+  // План zany-fluttering-mountain.md, п.1/п.5: способ расчёта плана — переключатель
+  // «по плановым позициям» / «по вручную заданной сумме», см. feoForm.planSource ниже.
+  // Опционально: старые категории на бэкенде без миграции отдают undefined — фронт
+  // трактует это как значение по умолчанию 'planned_items' (см. startFeoEdit).
+  plan_source?: 'planned_items' | 'manual_sum'
+  manual_plan_amount?: number | null
 }
 
 interface FeoNode extends FeoCategory {
@@ -4624,6 +4727,27 @@ interface ExcessCulprit {
   amount_at_crossing: number
   cumulative_after: number
 }
+// План zany-fluttering-mountain.md, п.4/п.2 (фронт): «позиции-виновники» превышения
+// плана над вручную заданной суммой (excess_plan_items) — раньше приходили как голое
+// {name, amount} без возможности перейти в закупку. Теперь каждая позиция несёт свой
+// id и список связанных закупок (переиспользует planned_item_consumption на бэкенде,
+// см. app/services/feo_plan.py); клик по позиции с одной закупкой ведёт прямо туда,
+// с несколькими — открывает список (см. excessPlanCulpritClick/шаблон ниже).
+interface ExcessPlanItemPurchase {
+  id: number
+  registry_number: string | number | null
+  purchase_number: string | number | null
+  status: string | null
+  status_label: string | null
+  amount: number
+  stopped_at: string | null
+}
+interface ExcessPlanItem {
+  id: number
+  name: string
+  amount: number
+  purchases: ExcessPlanItemPurchase[]
+}
 const planTreeByCat = ref<Record<number, {
   display: number; display_quantity: number
   excess_amount?: number; excess_pending?: boolean; excess_approved?: boolean
@@ -4654,10 +4778,21 @@ const planTreeByCat = ref<Record<number, {
   excess_plan_over_manual?: number
   excess_plan_approved?: boolean
   excess_plan_pending?: boolean
-  excess_plan_items?: { name: string; amount: number }[]
+  excess_plan_items?: ExcessPlanItem[]
   excess_approval_amount?: number | null
   excess_approval_at?: string | null
   excess_approval_by_name?: string | null
+  // План zany-fluttering-mountain.md, п.3: «план был X → стал Y» в постоянной плашке
+  // «превышение согласовано» — снимок plan_excess_approvals.plan_before/plan_after на
+  // МОМЕНТ создания запроса согласования (не пересчитывается задним числом), см.
+  // excessPlanApprovalPermanent() ниже.
+  excess_approval_plan_before?: number | null
+  excess_approval_plan_after?: number | null
+  // План zany-fluttering-mountain.md, п.1/п.5: способ расчёта плана категории —
+  // переключатель в диалоге создания/редактирования, см. feoForm.planSource/
+  // feoEditForm.planSource ниже.
+  plan_source?: 'planned_items' | 'manual_sum'
+  manual_plan_amount?: number | null
 }>>({})
 // Детали запросов согласования превышения плана ФЭО — GET /api/plan-excess?subsidy_id=
 // (backend/app/routers/plan_excess.py). Карта feo_category_id → ПОСЛЕДНИЙ (по created_at,
@@ -6848,8 +6983,11 @@ const contractors = ref<{ id: number; name: string; inn?: string }[]>([])
 
 const form = ref({ name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string })
 const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string, grantor_name: '' as string, ministry_name: '' as string, extra_contract_clause_1: null as string | null, extra_contract_clause_2: null as string | null, require_planned_dates: true as boolean })
-const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, feo_quantity: null as number | null, feo_unit: '' as string, description: '', feo_amount: '' as string | number })
-const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, is_active: true, hasChildren: false, parent_id: null as number | null, feo_quantity: null as number | null, feo_unit: '' as string, description: '', feo_amount: '' as string | number })
+// План zany-fluttering-mountain.md, п.1/п.5: planSource/manual_plan_amount — новый
+// переключатель «как считать план» (по плановым позициям / по вручную заданной
+// сумме), см. блок «Плановые показатели» в диалогах создания/редактирования ниже.
+const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, feo_quantity: null as number | null, feo_unit: '' as string, description: '', feo_amount: '' as string | number, planSource: 'planned_items' as 'planned_items' | 'manual_sum', manual_plan_amount: null as number | null })
+const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, is_active: true, hasChildren: false, parent_id: null as number | null, feo_quantity: null as number | null, feo_unit: '' as string, description: '', feo_amount: '' as string | number, planSource: 'planned_items' as 'planned_items' | 'manual_sum', manual_plan_amount: null as number | null })
 
 // Правило владельца (2026-08-09): «Плановое кол-во»/«Плановая стоимость за ед.» —
 // пара. Задана цена без количества (или наоборот) → сумма НЕ считается автоматически
@@ -6888,6 +7026,23 @@ const feoEditManualPlanSet = computed(() => {
   const q = f.planned_quantity
   const a = f.planned_amount
   return (q != null && Number(q) > 0) || (a != null && Number(a) > 0)
+})
+
+// План zany-fluttering-mountain.md, п.1: «при переключении на ручную сумму у
+// категории, где уже есть плановые позиции, — предупреждение о последствиях»
+// (владелец: позиции останутся, план будет считаться от суммы, их превышение
+// потребует согласования). «Уже есть позиции» — категория до открытия диалога
+// была в режиме 'planned_items' (feoEditTarget — исходный, не мутируется формой)
+// и её Σ позиций (plan_manual из planTreeByCat, тот же сигнал, что и в
+// isManualPosLeaf выше) больше нуля.
+const feoEditPlanSourceSwitchWarning = computed(() => {
+  const target = feoEditTarget.value
+  if (!target) return false
+  const origSource = target.plan_source || 'planned_items'
+  if (origSource !== 'planned_items') return false
+  if (feoEditForm.value.planSource !== 'manual_sum') return false
+  const t = planTreeByCat.value[target.id]
+  return !!(t && Number(t.plan_manual || 0) > 0.005)
 })
 
 // ── Computed ──────────────────────────────────────
@@ -7642,7 +7797,7 @@ function excessFactFor(node: FeoNode): { amount: number; pending: boolean; appro
 // backend app.routers.plan_excess.request_plan_excess_approval), поэтому вся
 // инфраструктура excessApprovalFor/excessPendingNames/excessMyPendingStep/
 // decidePlanExcess переиспользуется без изменений.
-function excessPlanFor(node: FeoNode): { amount: number; pending: boolean; approved: boolean; manualEntered: number; items: { name: string; amount: number }[] } | null {
+function excessPlanFor(node: FeoNode): { amount: number; pending: boolean; approved: boolean; manualEntered: number; items: ExcessPlanItem[] } | null {
   const t = planTreeByCat.value[node.id]
   const amount = Number(t?.excess_plan_over_manual || 0)
   if (amount <= 0.005) return null
@@ -7654,12 +7809,16 @@ function excessPlanFor(node: FeoNode): { amount: number; pending: boolean; appro
     items: t?.excess_plan_items || [],
   }
 }
-function excessPlanItemsText(node: FeoNode): string {
-  const items = excessPlanFor(node)?.items || []
-  if (!items.length) return ''
-  const shown = items.slice(0, 5).map(it => `«${it.name}» (${formatCurrency(it.amount)})`).join('; ')
-  const more = items.length > 5 ? ` и ещё ${items.length - 5} поз.` : ''
-  return shown + more
+
+// Клик по чипу «позиция-виновник» (план zany-fluttering-mountain.md, п.2): одна связанная
+// закупка → сразу открыть её (тот же приём router.push, что и у excessCulpritFor/
+// virtCart выше — ничего нового не изобретаем); несколько — открывается v-menu со
+// списком прямо в шаблоне (см. .feo-excess-plan-item-chip), сюда доходит только
+// однозначный случай.
+function excessPlanItemPurchaseTitle(p: ExcessPlanItemPurchase): string {
+  const num = p.registry_number || (p.purchase_number != null ? `№ ${p.purchase_number}` : `#${p.id}`)
+  const status = p.status_label || p.status || '—'
+  return `${num} · ${status} · ${formatCurrency(p.amount)}`
 }
 
 // Замечание владельца п.4: «если согласовали превышение — так и остаётся, надо чтобы
@@ -7668,13 +7827,18 @@ function excessPlanItemsText(node: FeoNode): string {
 // см. compute_feo_plan_tree) НЕЗАВИСИМО от того, есть ли активное превышение прямо
 // сейчас (excessPlanFor может уже вернуть null, если план снова уложился в ручной,
 // пометка о прошлом согласовании всё равно должна остаться видна).
-function excessPlanApprovalPermanent(node: FeoNode): { amount: number; at: string; by: string } | null {
+function excessPlanApprovalPermanent(node: FeoNode): { amount: number; at: string; by: string; planBefore: number | null; planAfter: number | null } | null {
   const t = planTreeByCat.value[node.id]
   if (t?.excess_approval_amount == null) return null
   return {
     amount: Number(t.excess_approval_amount),
     at: t.excess_approval_at ? new Date(t.excess_approval_at).toLocaleDateString('ru-RU') : '',
     by: t.excess_approval_by_name || '—',
+    // План zany-fluttering-mountain.md, п.3: снимок «план был X → стал Y» на момент
+    // согласования (plan_excess_approvals.plan_before/plan_after) — может быть null у
+    // старых запросов, созданных до миграции; тогда фронт просто не показывает стрелку.
+    planBefore: t.excess_approval_plan_before != null ? Number(t.excess_approval_plan_before) : null,
+    planAfter: t.excess_approval_plan_after != null ? Number(t.excess_approval_plan_after) : null,
   }
 }
 
@@ -9477,11 +9641,15 @@ async function addFeoCategory() {
         feo_unit: feoForm.value.feo_unit || null,
         description: feoForm.value.description?.trim() || null,
         feo_amount: feoForm.value.feo_amount === '' || feoForm.value.feo_amount == null ? null : Number(feoForm.value.feo_amount),
+        // План zany-fluttering-mountain.md, п.1: способ расчёта плана — при 'manual_sum'
+        // уходит введённая сумма, при 'planned_items' поле обнуляется (истина в позициях).
+        plan_source: feoForm.value.planSource,
+        manual_plan_amount: feoForm.value.planSource === 'manual_sum' ? (feoForm.value.manual_plan_amount ?? null) : null,
       })
     })
     feoCategories.value.push(res)
     showAddFeoDialog.value = false
-    feoForm.value = { parentId: null, name: '', code: '', appendix: '', budget: null, budgetAuto: false, planned_quantity: null, qtyAuto: false, planned_amount: null, amtAuto: false, unit: '', feo_quantity: null, feo_unit: '', description: '', feo_amount: '' }
+    feoForm.value = { parentId: null, name: '', code: '', appendix: '', budget: null, budgetAuto: false, planned_quantity: null, qtyAuto: false, planned_amount: null, amtAuto: false, unit: '', feo_quantity: null, feo_unit: '', description: '', feo_amount: '', planSource: 'planned_items', manual_plan_amount: null }
     showSnack('Направление добавлено')
     if (selectedId.value) await loadFeo(selectedId.value)
     syncFeoFilled()
@@ -9528,6 +9696,8 @@ function startFeoEdit(node: FeoNode) {
     feo_unit: node.feo_unit || '',
     description: node.description || '',
     feo_amount: node.feo_amount ?? '',
+    planSource: node.plan_source || 'planned_items',
+    manual_plan_amount: node.manual_plan_amount ?? null,
   }
   showEditFeoDialog.value = true
 }
@@ -9592,6 +9762,10 @@ async function updateFeoCategory() {
         feo_unit: feoEditForm.value.feo_unit || null,
         description: feoEditForm.value.description?.trim() || null,
         feo_amount: feoEditForm.value.feo_amount === '' || feoEditForm.value.feo_amount == null ? null : Number(feoEditForm.value.feo_amount),
+        // План zany-fluttering-mountain.md, п.1: способ расчёта плана — см. комментарий
+        // у того же поля в addFeoCategory выше.
+        plan_source: feoEditForm.value.planSource,
+        manual_plan_amount: feoEditForm.value.planSource === 'manual_sum' ? (feoEditForm.value.manual_plan_amount ?? null) : null,
       })
     })
     showEditFeoDialog.value = false

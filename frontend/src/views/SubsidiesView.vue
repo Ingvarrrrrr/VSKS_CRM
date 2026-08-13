@@ -819,6 +819,17 @@
                           план {{ formatCurrency(feoResidualNoteFor(node)!.planned) }} · в закупках {{ formatCurrency(feoResidualNoteFor(node)!.consumed) }} ·
                           <span v-if="feoResidualNoteFor(node)!.residual < -0.005" style="color:#EF4444;font-weight:700">больше плана на {{ formatCurrency(-feoResidualNoteFor(node)!.residual) }}</span>
                           <span v-else>свободно {{ formatCurrency(feoResidualNoteFor(node)!.residual) }}</span>
+                          <!-- Расшифровка «больше плана на X» (жалоба владельца 2026-08-13: «откуда 5 121,60,
+                               если в позициях плана этого нет?» — закупка без плановой позиции существовать не
+                               может, разница набегает из перерасхода отдельных плановых позиций категории, см.
+                               factExcessPlanItemsText). Показываем ТОЛЬКО когда comparisonData[node.id] уже
+                               загружена (панель плановых позиций категории раскрывалась) — сами загрузку не
+                               триггерим, чтобы не тянуть её для всех категорий подряд. -->
+                          <div v-if="feoResidualNoteFor(node)!.residual < -0.005 && comparisonData[node.id] && factExcessPlanItemsText(node)"
+                            style="font-size:10px;color:#B45309;white-space:normal"
+                          >
+                            {{ factExcessPlanItemsText(node) }}
+                          </div>
                         </div>
                         <div v-else-if="plannedSumBase === 'all' && feoPlanConsumedNoteFor(node)"
                           class="feo-plan-note text-medium-emphasis"
@@ -6940,6 +6951,17 @@ const totals = computed(() => ({
 }))
 
 // ── FEO tree ──────────────────────────────────────
+// ФИКС (замер на проде 2026-08-13, жалоба владельца: «Приобретение футболок…» смещено
+// относительно «Призового фонда…», дети «Окружных»/«Финала» не на одной линии, хотя в БД
+// у всех level=3 и один и тот же parent_id — данные ровные, врала отрисовка). Раньше
+// глубина ребёнка бралась из node.depth родителя ПРЯМО В ЭТОМ ЖЕ ПРОХОДЕ по плоскому
+// cats.forEach — если ребёнок в массиве (порядок = sort_order/id) шёл РАНЬШЕ своего
+// родителя, у родителя на тот момент ещё не была проставлена его собственная глубина
+// (он сам ещё не был привязан к своему родителю в этом же проходе), и ребёнок получал
+// depth на 1 меньше правильного. Отсюда «часть строк ровные, часть съехала» — зависело
+// от порядка в массиве, а не от structure. Теперь связи (children/hasChildren/roots)
+// строятся отдельным первым проходом, а depth — вторым проходом, обходом уже готового
+// дерева от корней, поэтому не зависит от порядка элементов в исходном списке.
 const feoTree = computed<FeoNode[]>(() => {
   const cats = feoCategories.value
   const byId: Record<number, FeoNode> = {}
@@ -6950,11 +6972,21 @@ const feoTree = computed<FeoNode[]>(() => {
     if (c.parent_id && byId[c.parent_id]) {
       byId[c.parent_id].children.push(node)
       byId[c.parent_id].hasChildren = true
-      node.depth = byId[c.parent_id].depth + 1
     } else {
       roots.push(node)
     }
   })
+  // visited защищает от циклов в битых данных (узел, ссылающийся сам на себя или
+  // образующий петлю через parent_id) — такой узел просто не будет посещён повторно,
+  // обход не зависает.
+  const visited = new Set<number>()
+  const assignDepth = (node: FeoNode, depth: number) => {
+    if (visited.has(node.id)) return
+    visited.add(node.id)
+    node.depth = depth
+    node.children.forEach(child => assignDepth(child, depth + 1))
+  }
+  roots.forEach(r => assignDepth(r, 0))
   return roots
 })
 
@@ -7817,6 +7849,40 @@ function factForPlannedTotal(catId: number, plannedId: number): number {
   // fact_amount — реальный факт (ContractItem/contract_price); total_price (ТЗ) —
   // фолбэк только пока факта ещё нет (см. calcDiff::amountOf — тот же приоритет).
   return factForPlanned(catId, plannedId).reduce((s, a) => s + Number(a.fact_amount ?? a.total_price ?? 0), 0)
+}
+
+// Расшифровка «больше плана на X» у заметки «план … · в закупках … · больше плана на …»
+// (жалоба владельца 2026-08-13: «в закупках 118 365,60 — больше плана на 5 121,60, откуда,
+// если в позициях плана этого нет?»). Это заметка feoResidualNoteFor/feoPlanConsumedNoteFor
+// ниже по шаблону (строки «план X · в закупках Y · больше плана на Z»), НЕ плашка у
+// «Фактической суммы» (та про контрактный факт, отдельная и обычно ещё пустая, пока
+// закупка не дошла до договора/поставки — «в закупках» здесь про заявки/ТЗ). Закупка без
+// плановой позиции существовать не может — разница ВСЕГДА складывается из перерасхода
+// каких-то плановых позиций категории, просто по СУММЕ категории это не видно на глаз
+// (пример владельца: 4 позиции «Перчатки нитриловые» L/S/M/XL, по каждой закуплено 24 шт
+// вместо 20 — четыре небольших перерасхода в сумме дают весь «необъяснимый» остаток).
+// Арифметика перерасхода ОДНОЙ позиции — та же, что уже использует planBreakdownText
+// (factForPlannedTotal(catId, planned.id) − planned.amount), только берём здесь только
+// положительные (позиция сама в плюсе), отрицательные (позиция ещё недобрана) не виновники.
+//
+// ⚠️ comparisonData[node.id] грузится ТОЛЬКО когда панель плановых позиций категории
+// раскрыта (см. loadComparison/toggleItemPanel) — читаем здесь готовое значение ref'а,
+// НИЧЕГО сами не запрашиваем и не триггерим загрузку. Если данных ещё нет — вызывающий
+// шаблон обязан сам проверить comparisonData[node.id] и не звать эту функцию (плашка
+// «больше плана на X» тогда остаётся как раньше, без расшифровки).
+function factExcessPlanItems(node: FeoNode): { name: string; amount: number }[] {
+  const planned = comparisonData.value[node.id]?.planned || []
+  return planned
+    .map(p => ({ name: p.name, amount: factForPlannedTotal(node.id, p.id) - Number(p.amount ?? 0) }))
+    .filter(it => it.amount > 0.005)
+    .sort((a, b) => b.amount - a.amount)
+}
+function factExcessPlanItemsText(node: FeoNode): string {
+  const items = factExcessPlanItems(node)
+  if (!items.length) return ''
+  const shown = items.slice(0, 5).map(it => `${it.name} +${formatCurrency(it.amount)}`).join(' · ')
+  const more = items.length > 5 ? ` и ещё ${items.length - 5}` : ''
+  return `из-за: ${shown}${more}`
 }
 
 // ── Левая группа колонок панели «план vs факт»: ДВА состояния, не «план» ──────

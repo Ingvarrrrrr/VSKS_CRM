@@ -265,6 +265,18 @@
             variant="outlined"
             density="compact"
             hide-details="auto"
+            class="mb-2"
+          />
+          <!-- Блок 1 (план zany-fluttering-mountain.md, 2026-08-14): товар/услуга/работа —
+               необязательно, как и у остальных полей этого диалога. -->
+          <v-select
+            v-model="createForm.item_type"
+            :items="ITEM_TYPE_OPTIONS"
+            label="Тип"
+            variant="outlined"
+            density="compact"
+            hide-details="auto"
+            clearable
           />
         </v-card-text>
         <v-card-actions>
@@ -459,8 +471,16 @@ function detachGhost() {
 // (контракт см. backend/app/routers/feo_planned_items.py), затем родитель
 // перезагружает список ('planned-item-created') и созданная позиция выбирается сразу.
 const createDialog = ref(false)
-const createForm = reactive<{ name: string; quantity: number | null; unit: string; amount: number | null }>({
-  name: '', quantity: null, unit: '', amount: null,
+// Блок 1 (план zany-fluttering-mountain.md, 2026-08-14): товар/услуга/работа —
+// нижний регистр, как хранится в БД (см. normalize_item_type в
+// backend/app/routers/feo_planned_items.py).
+const ITEM_TYPE_OPTIONS = [
+  { title: 'Товар', value: 'товар' },
+  { title: 'Услуга', value: 'услуга' },
+  { title: 'Работа', value: 'работа' },
+]
+const createForm = reactive<{ name: string; quantity: number | null; unit: string; amount: number | null; item_type: string | null }>({
+  name: '', quantity: null, unit: '', amount: null, item_type: null,
 })
 const createSaving = ref(false)
 // Snackbar — единый механизм (useToast + ToastContainer, смонтирован в App.vue).
@@ -477,6 +497,7 @@ function openCreateDialog() {
   createForm.quantity = props.prefill?.quantity ?? null
   createForm.unit = props.prefill?.unit ?? ''
   createForm.amount = props.prefill?.amount ?? null
+  createForm.item_type = null
   createDialog.value = true
 }
 
@@ -496,6 +517,7 @@ async function saveCreateDialog() {
         quantity: createForm.quantity,
         unit: createForm.unit.trim() || null,
         amount: createForm.amount,
+        item_type: createForm.item_type,
       }),
     })
     createDialog.value = false

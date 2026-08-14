@@ -11,6 +11,7 @@ class FeoPlannedItem(Base):
     name = Column(String(500), nullable=False)
     quantity = Column(Numeric(15, 4), nullable=True)
     unit = Column(String(50), nullable=True)
+    item_type = Column(String(20), nullable=True)  # товар / услуга / работа
     amount = Column(Numeric(15, 2), nullable=True)
     notes = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)

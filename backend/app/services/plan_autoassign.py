@@ -113,7 +113,7 @@ async def auto_assign_planned_items(
             for fpi in existing_res.scalars().all():
                 key = normalize(fpi.name or "")
                 if key and key not in index:
-                    index[key] = fpi.id  # первое совпадение побеждает при легаси-дублях в БД
+                    index[key] = (fpi.id, fpi.item_type)  # первое совпадение побеждает при легаси-дублях в БД
             _cat_index[eff_cat_id] = index
 
             cat_row = await db.get(FeoCategory, eff_cat_id)
@@ -122,8 +122,8 @@ async def auto_assign_planned_items(
                 and ((cat_row.planned_quantity or 0) > 0 or (cat_row.planned_amount or 0) > 0)
             )
         index = _cat_index[eff_cat_id]
-        fpi_id = index.get(norm_name)
-        if fpi_id is None:
+        entry = index.get(norm_name)
+        if entry is None:
             if _cat_has_leaf_plan.get(eff_cat_id):
                 # У листа уже есть ручной план целиком — он и есть «план» этой
                 # позиции (см. предупреждение в docstring выше). Не создаём
@@ -147,10 +147,57 @@ async def auto_assign_planned_items(
             )
             db.add(new_fpi)
             await db.flush()
-            fpi_id = new_fpi.id
-            index[norm_name] = fpi_id  # следующая позиция этого же вызова с тем же
+            entry = (new_fpi.id, new_fpi.item_type)
+            index[norm_name] = entry  # следующая позиция этого же вызова с тем же
             # нормализованным именем (напр. «Бумага А4,» после «Бумага А4») найдёт
             # её здесь и не создаст вторую плановую строку.
+        fpi_id, _fpi_item_type = entry
         it.feo_planned_item_id = fpi_id
         if hasattr(it, "over_plan"):
             it.over_plan = False
+        # Признак «Товар/Услуга/Работа» (блок 1, план zany-fluttering-mountain.md):
+        # свежепривязанная плановая позиция задаёт тип по умолчанию, если у самой
+        # позиции заявки/закупки он ещё не заполнен — уже заполненный не трогаем.
+        if _fpi_item_type and hasattr(it, "item_type") and not getattr(it, "item_type", None):
+            it.item_type = _fpi_item_type
+
+    # Позиции, у которых feo_planned_item_id был проставлен ДО этого вызова (явный
+    # выбор пользователя/матчинг) — их сам цикл выше пропускает (см. continue в
+    # начале), но проброс типа от плановой позиции им всё равно причитается.
+    await backfill_item_type_from_plan(items, db)
+
+
+async def backfill_item_type_from_plan(items, db: AsyncSession) -> None:
+    """Признак «Товар/Услуга/Работа» (блок 1, план zany-fluttering-mountain.md,
+    2026-08-14): если у позиции заявки/закупки item_type ещё пуст, а связанная
+    плановая позиция (FeoPlannedItem.item_type) его знает — подставляем. Уже
+    заполненный item_type НИКОГДА не перетирается (правило проекта — выбранное
+    пользователем на предыдущем этапе не меняется само).
+
+    Общая функция для WishItem и PurchaseItem (тот же набор атрибутов
+    item_type/feo_planned_item_id, что и у auto_assign_planned_items выше) —
+    вызывается как из неё самой (для позиций, у которых feo_planned_item_id уже
+    был проставлен ДО вызова и поэтому не попал в её основной цикл), так и
+    отдельно из мест, которые НЕ проходят через auto_assign_planned_items
+    (см. app/routers/wishes.py::_sync_wish_items_to_purchases).
+
+    Кэширует lookup по feo_planned_item_id внутри одного вызова — несколько
+    позиций одной и той же плановой строки не порождают лишних SELECT.
+    Commit НЕ делает — это на вызывающем.
+    """
+    from app.models.feo_planned_item import FeoPlannedItem
+
+    _cache: dict[int, Optional[str]] = {}
+    for it in items:
+        if not hasattr(it, "item_type") or getattr(it, "item_type", None):
+            continue
+        fpi_id = getattr(it, "feo_planned_item_id", None)
+        if not fpi_id:
+            continue
+        if fpi_id not in _cache:
+            _cache[fpi_id] = (await db.execute(
+                select(FeoPlannedItem.item_type).where(FeoPlannedItem.id == fpi_id)
+            )).scalar_one_or_none()
+        fpi_item_type = _cache[fpi_id]
+        if fpi_item_type:
+            it.item_type = fpi_item_type

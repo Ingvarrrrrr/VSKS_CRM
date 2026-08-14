@@ -15,9 +15,11 @@ from io import BytesIO
 try:
     from openpyxl import Workbook, load_workbook
     from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.worksheet.datavalidation import DataValidation
 except ImportError:
     Workbook = None
     load_workbook = None
+    DataValidation = None
 
 router = APIRouter(prefix="/api/feo-categories", tags=["feo_categories"])
 
@@ -1274,14 +1276,26 @@ async def create_category(
 async def download_feo_template(
     _=Depends(get_current_user),
 ):
-    """Шаблон Excel для импорта категорий ФЭО (37 колонок).
+    """Шаблон Excel для импорта категорий ФЭО (18 колонок, переверстан 2026-08-14).
 
-    Для Ур.2–4: ФЭО-кол-во + ед.изм. + стоимость за ед. + СУММА по строке ФЭО;
-                плановое кол-во + ед.изм. + стоимость за ед. + СУММА плана.
-    Ур.5: плановый товар/услуга — кол-во, ед.изм., цена за ед., итоговая сумма.
-    Атрибуты: Код, Приложение, Финансирование, Активна.
-    Если уровень пропущен, содержимое нижнего поднимается на его место.
-    Сумма строки приоритетнее кол-во × цена; расхождение = предупреждение.
+    Причина переверстки (боевой файл владельца, «Субсидия ДНР 2.xlsx»): в
+    37-колоночном шаблоне между заголовком уровня и его числовыми колонками
+    стояло по семь числовых колонок — легко промахнуться и набрать название
+    следующего уровня в числовой колонке предыдущего (см. level_name_in_number_column
+    в _do_feo_import). Новый шаблон разводит уровни (только названия, 4 колонки)
+    и числа (2 ОДНА-на-всю-строку пары колонок «по ФЭО»/«плана», а не по 12
+    числовых колонок на каждый уровень) — числа сами прикрепляются к самому
+    глубокому заполненному уровню строки, либо к плановой позиции, если она
+    заполнена (колонка 5).
+
+    Колонки: Субсидия | Уровень 2 | Уровень 3 | Уровень 4 | Плановая позиция
+    (папка НЕ создаётся) | Товар/услуга | Количество/Ед.изм./Цена/Сумма по ФЭО
+    (одна пара на строку) | Плановое количество/Ед.изм./Цена/Сумма плана (одна
+    пара на строку) | Код | Приложение | Активна | Финансирование (устар.).
+    Если уровень пропущен, содержимое нижнего поднимается на его место. Если в
+    строке нет ни одного уровня, а плановая позиция заполнена — её название
+    становится Уровнем 2. Сумма строки приоритетнее кол-во × цена; расхождение —
+    предупреждение. Второй лист «Как заполнять» — текстовые правила.
     """
     if Workbook is None:
         raise HTTPException(500, "openpyxl не установлен")
@@ -1289,61 +1303,37 @@ async def download_feo_template(
     ws = wb.active
     ws.title = "Категории ФЭО"
     headers = [
-        "Субсидия",                                         # A   1
-        "Уровень 2 (Направление расходов по ФЭО)",          # B   2
-        "Кол-во по ФЭО (Ур.2)",                             # C   3
-        "Ед. изм. по ФЭО (Ур.2)",                           # D   4
-        "Стоимость по ФЭО (Ур.2)",                          # E   5
-        "Сумма по ФЭО (Ур.2)",                              # F   6  ← НОВАЯ
-        "Плановое кол-во (Ур.2)",                           # G   7
-        "Ед. изм. плана (Ур.2)",                            # H   8
-        "Плановая стоимость за ед. (Ур.2)",                 # I   9
-        "Сумма плана (Ур.2)",                               # J  10  ← НОВАЯ
-        "Уровень 3 (Тип расходов по ФЭО)",                  # K  11
-        "Кол-во по ФЭО (Ур.3)",                             # L  12
-        "Ед. изм. по ФЭО (Ур.3)",                           # M  13
-        "Стоимость по ФЭО (Ур.3)",                          # N  14
-        "Сумма по ФЭО (Ур.3)",                              # O  15  ← НОВАЯ
-        "Плановое кол-во (Ур.3)",                           # P  16
-        "Ед. изм. плана (Ур.3)",                            # Q  17
-        "Плановая стоимость за ед. (Ур.3)",                 # R  18
-        "Сумма плана (Ур.3)",                               # S  19  ← НОВАЯ
-        "Уровень 4 (Конкретизированный)",                   # T  20
-        "Кол-во по ФЭО (Ур.4)",                             # U  21
-        "Ед. изм. по ФЭО (Ур.4)",                           # V  22
-        "Стоимость по ФЭО (Ур.4)",                          # W  23
-        "Сумма по ФЭО (Ур.4)",                              # X  24  ← НОВАЯ
-        "Плановое кол-во (Ур.4)",                           # Y  25
-        "Ед. изм. плана (Ур.4)",                            # Z  26
-        "Плановая стоимость за ед. (Ур.4)",                 # AA 27
-        "Сумма плана (Ур.4)",                               # AB 28  ← НОВАЯ
-        "Уровень 5 (Плановый товар/услуга)",                # AC 29
-        "Количество (Ур.5)",                                # AD 30
-        "Ед. измерения (Ур.5)",                             # AE 31
-        "Цена за ед. (Ур.5)",                               # AF 32  ← НОВАЯ
-        "Сумма по позиции (Ур.5)",                          # AG 33  ← переименование
-        "Код",                                              # AH 34
-        "Приложение",                                       # AI 35
-        "Финансирование",                                   # AJ 36
-        "Активна",                                          # AK 37
+        "Субсидия",                                          # A   1
+        "Уровень 2 (Направление расходов по ФЭО)",           # B   2
+        "Уровень 3 (Тип расходов по ФЭО)",                    # C   3
+        "Уровень 4 (Конкретизированный)",                     # D   4
+        "Плановая позиция (папка НЕ создаётся)",              # E   5
+        "Товар/услуга",                                       # F   6
+        "Количество по ФЭО",                                  # G   7
+        "Ед. изм. по ФЭО",                                    # H   8
+        "Цена за единицу по ФЭО",                             # I   9
+        "Сумма по ФЭО",                                       # J  10
+        "Плановое количество",                                # K  11
+        "Ед. изм. плана",                                     # L  12
+        "Плановая цена за единицу",                           # M  13
+        "Сумма плана",                                        # N  14
+        "Код",                                                # O  15
+        "Приложение",                                         # P  16
+        "Активна",                                            # Q  17
+        "Финансирование (устар., можно не заполнять)",        # R  18
     ]
     ws.append(headers)
 
     # Цветовое кодирование заголовков
-    fill_cat  = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")   # синий — категории + ФЭО
-    fill_plan = PatternFill(start_color="0891B2", end_color="0891B2", fill_type="solid")   # голубой — плановые
-    fill_item = PatternFill(start_color="059669", end_color="059669", fill_type="solid")   # зелёный — ур.5
-    fill_attr = PatternFill(start_color="7C3AED", end_color="7C3AED", fill_type="solid")  # фиолетовый — атрибуты
+    fill_cat  = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")   # синий — субсидия/уровни + ФЭО
+    fill_plan = PatternFill(start_color="0891B2", end_color="0891B2", fill_type="solid")   # голубой — план
+    fill_item = PatternFill(start_color="059669", end_color="059669", fill_type="solid")   # зелёный — плановая позиция
+    fill_attr = PatternFill(start_color="7C3AED", end_color="7C3AED", fill_type="solid")   # фиолетовый — атрибуты
     font_w = Font(color="FFFFFF", bold=True, size=10)
 
-    # col index (1-based):
-    # синий: 1-2 (субсидия+ур2), 3-6 (feo ур2+сумма), 11-15 (ур3+feo), 20-24 (ур4+feo)
-    # голубой: 7-10 (plan ур2), 16-19 (plan ур3), 25-28 (plan ур4)
-    # зелёный: 29-33 (ур5)
-    # фиолетовый: 34-37 (атрибуты)
-    _blue_cols  = {1, 2, 3, 4, 5, 6, 11, 12, 13, 14, 15, 20, 21, 22, 23, 24}
-    _cyan_cols  = {7, 8, 9, 10, 16, 17, 18, 19, 25, 26, 27, 28}
-    _green_cols = {29, 30, 31, 32, 33}
+    _blue_cols  = {1, 2, 3, 4, 7, 8, 9, 10}    # субсидия, уровни, «по ФЭО» (одна пара на строку)
+    _cyan_cols  = {11, 12, 13, 14}             # план (одна пара на строку)
+    _green_cols = {5, 6}                       # плановая позиция + тип
 
     for i, cell in enumerate(ws[1], start=1):
         if i in _blue_cols:
@@ -1356,74 +1346,90 @@ async def download_feo_template(
             cell.fill = fill_attr
         cell.font = font_w
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    ws.row_dimensions[1].height = 52
+    ws.row_dimensions[1].height = 40
 
-    # Примеры (строки 2–6), 37 элементов каждая:
-    # col:  1=Субс 2=Ур2       3=feoQ2  4=feoU2     5=feoA2 6=feoS2   7=pQ2 8=pU2 9=pA2 10=pS2   11=Ур3               12=feoQ3 13=feoU3  14=feoA3 15=feoS3   16=pQ3 17=pU3 18=pA3 19=pS3  20=Ур4                 21=feoQ4 22=feoU4 23=feoA4 24=feoS4   25=pQ4 26=pU4 27=pA4 28=pS4  29=Ур5                        30=qty 31=unit 32=цена  33=сумма   34=Код      35=Прил    36=Финанс  37=Акт
-    # Строка 1: у Ур.4 задана только сумма (без кол-во и цены)
-    ws.append(["ФАДМ_2026", "Техническое оснащение", "", "", "", "", "", "", "", "", "Оргтехника", "", "", "", "2000000", "", "", "", "", "Закупка компьютеров", "6", "шт", "", "", "", "", "", "", "", "", "", "", "", "01.01.01", "Прил. 1", "2000000", "да"])
-    # Строка 2: Ур.5 с ценой и кол-вом, сумма пуста → рассчитывается автоматически
-    ws.append(["ФАДМ_2026", "Техническое оснащение", "", "", "", "", "", "", "", "", "Оргтехника", "", "", "", "2000000", "", "", "", "", "Закупка компьютеров", "6", "шт", "", "", "", "", "", "", "Ноутбук HP 15 Intel i5", "3", "шт", "150000", "", "01.01.01", "Прил. 1", "2000000", "да"])
-    # Строка 3: Ур.5 с явной суммой — сумма из файла приоритетна над кол-во × цена
-    ws.append(["ФАДМ_2026", "Техническое оснащение", "", "", "", "", "", "", "", "", "Оргтехника", "", "", "", "2000000", "", "", "", "", "Закупка компьютеров", "6", "шт", "", "", "", "", "", "", "Монитор Dell 24\"", "3", "шт", "90000", "270000", "01.01.01", "Прил. 1", "", "да"])
-    # Строка 4: Ур.3 задан, Ур.4 пуст → атрибуты ложатся на Ур.3; только сумма плана
-    ws.append(["ФАДМ_2026", "Организация мероприятий", "", "", "", "", "", "", "", "", "Слёт студентов-спасателей", "102", "чел.", "", "", "", "", "", "3500000", "", "", "", "", "", "", "", "", "", "Услуга проживания участников", "100", "чел.", "", "3000000", "02.01.01", "Прил. 2", "3000000", "да"])
-    # Строка 5: Ур.3 задан, Ур.4 пуст; Ур.5 только цена без суммы
-    ws.append(["ФАДМ_2026", "Организация мероприятий", "", "", "", "", "", "", "", "", "Слёт студентов-спасателей", "102", "чел.", "", "", "", "", "", "3500000", "", "", "", "", "", "", "", "", "", "Услуга логистики участников", "2", "рейс", "250000", "", "02.01.02", "Прил. 2", "", "да"])
+    # Примеры (строки 2–6), 18 элементов каждая:
+    # col: 1=Субс 2=Ур2 3=Ур3 4=Ур4 5=Плановая_позиция 6=Тип 7=feoQ 8=feoU 9=feoЦена 10=feoСумма 11=planQ 12=planU 13=planЦена 14=planСумма 15=Код 16=Прил 17=Акт 18=Финанс(устар.)
+
+    # Строка 1: только Ур.2+Ур.3 (Ур.4 пропущен), сумма ФЭО оседает на Ур.3 (самом глубоком уровне строки)
+    ws.append(["ДНР_2026", "Техническое оснащение", "Оргтехника", "", "", "", "", "", "", "2000000", "", "", "", "", "01.01.01", "Прил. 1", "да", ""])
+    # Строка 2: Ур.4 заполнен — числа «по ФЭО» и «плана» садятся на него (кол-во×цена, сумма не задана — считается)
+    ws.append(["ДНР_2026", "Техническое оснащение", "Оргтехника", "Закупка компьютеров", "", "", "6", "шт", "150000", "", "6", "шт", "150000", "900000", "01.01.02", "Прил. 1", "да", ""])
+    # Строка 3: боевой кейс владельца — Ур.4 пуст, «Плановая позиция» заполнена: числа плана уходят В ПОЗИЦИЮ, а не на Ур.3
+    ws.append(["ДНР_2026", "Прочие расходы", "Расходы на содержание и ремонт ТС", "", "УАЗ Патриот У914ВН 180", "Товар", "", "", "", "", "1", "усл", "178779.59", "178779.59", "02.01.01", "Прил. 2", "да", ""])
+    # Строка 4: в строке нет ни одного уровня (Ур.2/3/4 пусты) — «Плановая позиция» становится Уровнем 2, позиция НЕ создаётся
+    ws.append(["ДНР_2026", "", "", "", "Услуга по заправке техники", "Услуга", "", "", "", "", "500", "л", "60", "30000", "", "", "да", ""])
+    # Строка 5: Ур.3 задан, Ур.4 пропущен, позиции нет — сумма плана садится прямо на Ур.3
+    ws.append(["ДНР_2026", "Организация мероприятий", "Слёт студентов-спасателей", "", "", "", "", "", "", "", "", "", "", "3500000", "02.02.01", "Прил. 2", "да", ""])
 
     # Подсказки в строке 7
     hints = [
-        "← Точное название как в системе",                                                        # A   1
-        "← Направление расходов (создаётся если нет)",                                            # B   2
-        "← Кол-во ФЭО Ур.2 (из документа ФЭО)",                                                  # C   3
-        "← Ед. изм. ФЭО Ур.2 (шт, компл...)",                                                    # D   4
-        "← Стоимость за ед. по ФЭО Ур.2 (руб.)",                                                 # E   5
-        "← Сумма по строке ФЭО (руб.); если пусто — кол-во × цена",                              # F   6
-        "← Плановое кол-во Ур.2 (CRM-план, необязательно)",                                      # G   7
-        "← Ед. изм. плана Ур.2",                                                                  # H   8
-        "← Плановая стоимость за ед. Ур.2 (руб.)",                                               # I   9
-        "← Сумма плана (руб.); если пусто — кол-во × цена",                                      # J  10
-        "← Тип расходов (если пусто — атрибуты к Ур.2); если уровень пропущен, содержимое нижнего поднимается на его место",  # K  11
-        "← Кол-во ФЭО Ур.3 (из документа ФЭО)",                                                  # L  12
-        "← Ед. изм. ФЭО Ур.3",                                                                   # M  13
-        "← Стоимость за ед. по ФЭО Ур.3 (руб.)",                                                 # N  14
-        "← Сумма по строке ФЭО (руб.); если пусто — кол-во × цена",                              # O  15
-        "← Плановое кол-во Ур.3 (CRM-план)",                                                     # P  16
-        "← Ед. изм. плана Ур.3",                                                                  # Q  17
-        "← Плановая стоимость за ед. Ур.3 (руб.)",                                               # R  18
-        "← Сумма плана (руб.); если пусто — кол-во × цена",                                      # S  19
-        "← Конкретизированный (если пусто — к Ур.3); если уровень пропущен, содержимое нижнего поднимается на его место",  # T  20
-        "← Кол-во ФЭО Ур.4 (из документа ФЭО)",                                                  # U  21
-        "← Ед. изм. ФЭО Ур.4",                                                                   # V  22
-        "← Стоимость за ед. по ФЭО Ур.4 (руб.)",                                                 # W  23
-        "← Сумма по строке ФЭО (руб.); если пусто — кол-во × цена",                              # X  24
-        "← Плановое кол-во Ур.4 (CRM-план)",                                                     # Y  25
-        "← Ед. изм. плана Ур.4",                                                                  # Z  26
-        "← Плановая стоимость за ед. Ур.4 (руб.)",                                               # AA 27
-        "← Сумма плана (руб.); если пусто — кол-во × цена",                                      # AB 28
-        "← Плановый товар/услуга (необязательно)",                                                # AC 29
-        "← Кол-во Ур.5 (необязательно)",                                                          # AD 30
-        "← Ед. изм. (шт, кг, услуга...)",                                                        # AE 31
-        "← Цена за ед. позиции (если сумма пуста)",                                               # AF 32
-        "← Итог по позиции (руб.)",                                                               # AG 33
-        "← Код категории",                                                                        # AH 34
-        "← Номер приложения",                                                                     # AI 35
-        "← Бюджет категории",                                                                     # AJ 36
-        "← да/нет",                                                                               # AK 37
+        "← Точное название как в системе",                                                              # A   1
+        "← Направление расходов (создаётся если нет)",                                                  # B   2
+        "← Тип расходов (если пусто — атрибуты к Ур.2); пропущенный уровень поднимается вверх",          # C   3
+        "← Конкретизированный (если пусто — к Ур.3); пропущенный уровень поднимается вверх",             # D   4
+        "← Плановая позиция — папка НЕ создаётся; если уровней в строке вовсе нет, станет Уровнем 2",    # E   5
+        "← Товар / Услуга / Работа (выпадающий список)",                                                 # F   6
+        "← Кол-во по ФЭО — одна колонка на строку, привязывается к самому глубокому уровню",             # G   7
+        "← Ед. изм. по ФЭО",                                                                              # H   8
+        "← Цена за единицу по ФЭО (руб.)",                                                                # I   9
+        "← Сумма по ФЭО (руб.); если пусто — кол-во × цена; сумма приоритетнее",                          # J  10
+        "← Плановое кол-во — одна колонка на строку; если задана «Плановая позиция», уходит в неё",       # K  11
+        "← Ед. изм. плана",                                                                               # L  12
+        "← Плановая цена за единицу (руб.)",                                                              # M  13
+        "← Сумма плана (руб.); если пусто — кол-во × цена; сумма приоритетнее",                           # N  14
+        "← Код категории",                                                                                # O  15
+        "← Номер приложения",                                                                             # P  16
+        "← да/нет",                                                                                       # Q  17
+        "← устарело, можно не заполнять — используйте «Сумма по ФЭО»",                                    # R  18
     ]
     for col, hint in enumerate(hints, start=1):
         ws.cell(7, col).value = hint
         ws.cell(7, col).font = Font(italic=True, color="888888", size=8)
 
-    # Ширины колонок (37 штук):
-    # A(18) B(42) C(14) D(14) E(16) F(16) G(14) H(14) I(16) J(16)
-    # K(42) L(14) M(14) N(16) O(16) P(14) Q(14) R(16) S(16)
-    # T(45) U(14) V(14) W(16) X(16) Y(14) Z(14) AA(16) AB(16)
-    # AC(45) AD(12) AE(14) AF(16) AG(18) AH(10) AI(12) AJ(18) AK(10)
-    col_widths = [18, 42, 14, 14, 16, 16, 14, 14, 16, 16, 42, 14, 14, 16, 16, 14, 14, 16, 16, 45, 14, 14, 16, 16, 14, 14, 16, 16, 45, 12, 14, 16, 18, 10, 12, 18, 10]
+    # Ширины колонок (18 штук)
+    col_widths = [18, 42, 42, 42, 42, 14, 16, 14, 16, 16, 16, 14, 16, 16, 10, 12, 10, 22]
     for i, w in enumerate(col_widths, 1):
         ws.column_dimensions[ws.cell(1, i).column_letter].width = w
     ws.freeze_panes = "A2"
+
+    # Выпадающий список Товар/Услуга/Работа на колонку F (Товар/услуга), строки данных 2:1000.
+    if DataValidation is not None:
+        dv_item_type = DataValidation(
+            type="list",
+            formula1='"Товар,Услуга,Работа"',
+            allow_blank=True,
+            showErrorMessage=False,
+            showInputMessage=True,
+        )
+        dv_item_type.error = "Значение не из списка — будет принято как есть"
+        dv_item_type.errorTitle = "Нестандартное значение"
+        dv_item_type.promptTitle = "Товар/услуга"
+        dv_item_type.prompt = "Выберите Товар, Услуга или Работа"
+        dv_item_type.sqref = "F2:F1000"
+        ws.add_data_validation(dv_item_type)
+
+    # Второй лист — текстовые правила заполнения.
+    ws2 = wb.create_sheet("Как заполнять")
+    ws2.column_dimensions["A"].width = 110
+    rules = [
+        "Как заполнять шаблон импорта направлений ФЭО",
+        "",
+        "1. Уровни (Уровень 2 → Уровень 3 → Уровень 4) идут СЛЕВА НАПРАВО. Уровень 2 — обязателен.",
+        "2. Пропущенный уровень поджимается вверх: заполнены Уровень 2 и Уровень 4, а Уровень 3 пуст — Уровень 4 становится ребёнком Уровня 2 напрямую.",
+        "3. «Плановая позиция» (колонка 5) — конкретный товар/услуга/работа ВНУТРИ категории. Заполненная «Плановая позиция» папку (категорию) НЕ создаёт — только позицию.",
+        "4. Если в строке не заполнен НИ ОДИН из уровней (2/3/4), а «Плановая позиция» заполнена — её название становится Уровнем 2 (создаётся направлением), а позиция при этом не создаётся.",
+        "5. «Количество/Ед.изм./Цена/Сумма по ФЭО» и «Плановое количество/Ед.изм./Цена/Сумма плана» — ОДНА пара колонок на всю строку, а не по уровням. Если «Плановая позиция» не задана — числа привязываются к самому глубокому заполненному уровню строки. Если позиция задана — числа плана описывают именно её.",
+        "6. Сумма (по ФЭО / плана) ПРИОРИТЕТНЕЕ «количество × цена»: если сумма указана явно — используется она; расхождение с расчётом по кол-во × цена попадёт в предупреждения импорта.",
+        "7. «Товар/услуга» (колонка 6) — тип плановой позиции: Товар, Услуга или Работа (выпадающий список в ячейке).",
+        "8. Не меняйте заголовки колонок — импорт определяет их по названию, а не по порядку.",
+        "9. Строка-подсказка (начинается с «←», строка 7 примера) в файл не попадает — служебная, игнорируется при импорте.",
+    ]
+    for line in rules:
+        ws2.append([line])
+    ws2["A1"].font = Font(bold=True, size=12)
+
+    wb.active = 0
     buf = BytesIO(); wb.save(buf); buf.seek(0)
     return StreamingResponse(buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1598,6 +1604,17 @@ async def _do_feo_import(
     c_plan_sum_lvl3: int | None = None,
     c_plan_sum_lvl4: int | None = None,
     c_item_price: int | None = None,
+    # Новый 18-колоночный шаблон (2026-08-14): числа «по ФЭО»/«плана» — ОДНА пара
+    # колонок на всю строку (не по уровням), см. блок «плоские числа» ниже.
+    c_row_feo_qty: int | None = None,
+    c_row_feo_unit: int | None = None,
+    c_row_feo_price: int | None = None,
+    c_row_feo_sum: int | None = None,
+    c_row_plan_qty: int | None = None,
+    c_row_plan_unit: int | None = None,
+    c_row_plan_price: int | None = None,
+    c_row_plan_sum: int | None = None,
+    c_item_type: int | None = None,
     default_subsidy_id: int | None = None,
     dry_run: bool = False,
     user=None,
@@ -1617,6 +1634,25 @@ async def _do_feo_import(
     """
     import re as _re
     import json as _json
+
+    try:
+        # Нормализатор типа плановой позиции (Товар/Услуга/Работа) — общий с
+        # app.routers.feo_planned_items, чтобы не разъезжались правила. Локальный
+        # fallback ниже — только на случай, если модуль/функция ещё не готовы
+        # (параллельная задача добавляет и её, и поле FeoPlannedItem.item_type);
+        # предпочтителен импорт, fallback не должен жить долго.
+        from app.routers.feo_planned_items import normalize_item_type
+    except ImportError:
+        def normalize_item_type(v):
+            if not v:
+                return None
+            s = str(v).strip().lower()
+            mapping = {
+                "товар": "товар", "товары": "товар", "т": "товар",
+                "услуга": "услуга", "услуги": "услуга", "у": "услуга",
+                "работа": "работа", "работы": "работа", "р": "работа",
+            }
+            return mapping.get(s)
 
     if c_lvl2 is None:
         raise HTTPException(400, "Не найден обязательный столбец: 'Уровень 2 (Направление расходов)'")
@@ -1795,6 +1831,50 @@ async def _do_feo_import(
         })
         return None
 
+    def _numeric_shift_scan(row_num: int, level_n: int, next_name: str | None, cols_and_labels: list) -> str | None:
+        """Обратный случай column_shift (задача владельца, боевой файл «Субсидия
+        ДНР 2.xlsx», 82 строки): не единица измерения попала в числовую колонку,
+        а НАЗВАНИЕ следующего уровня — стояло в числовой колонке уровня N (между
+        заголовком уровня и его собственными числовыми колонками — до семи
+        числовых колонок, легко промахнуться). to_dec() на таком тексте молча
+        возвращает None и уровень N+1 просто исчезает — соседний уровень N+2
+        (например «Уровень 4») поджимается на его место и становится СОСЕДОМ
+        уровня N, а не его ребёнком (баг «лишняя папка-двойник»).
+
+        Признак: значение длиннее 15 символов, не приводится к числу, строка не
+        служебная (не начинается с «←»). Если колонка «Уровень N+1» пуста —
+        текст принимается как её имя (то самое, что «должно было» туда попасть).
+        Если колонка «Уровень N+1» уже заполнена — текст игнорируется, тем не
+        менее предупреждаем (возможно опечатка/дублирование, стоит проверить строку).
+        Возвращает восстановленное имя уровня N+1 (или None, если восстанавливать нечего).
+        """
+        recovered: str | None = None
+        cur_next = next_name
+        for col, label in cols_and_labels:
+            raw = get_cell(row, col)
+            if raw is None or raw.startswith("←"):
+                continue
+            if len(raw) <= 15 or to_dec(raw) is not None:
+                continue
+            short = raw if len(raw) <= 40 else raw[:40] + "…"
+            if not cur_next:
+                warnings.append({
+                    "kind": "level_name_in_number_column",
+                    "row": row_num,
+                    "name": raw,
+                    "message": f"Название «{short}» стояло в колонке «{label}» — принято как Уровень {level_n + 1}",
+                })
+                recovered = raw
+                cur_next = raw
+            else:
+                warnings.append({
+                    "kind": "level_name_in_number_column",
+                    "row": row_num,
+                    "name": raw,
+                    "message": f"Название «{short}» стояло в колонке «{label}» — Уровень {level_n + 1} уже заполнен, проверьте строку",
+                })
+        return recovered
+
     # Множество id родительских узлов, затронутых импортом — для parent_sum_mismatch
     touched_parents: set[int] = set()
 
@@ -1869,12 +1949,69 @@ async def _do_feo_import(
 
     for row_num, row in enumerate(rows, start=2):
         lvl2_name = get_cell(row, c_lvl2)
-        if not lvl2_name or lvl2_name.startswith("←"):
+
+        # Строка-подсказка («← ...») — всегда служебная, ничего в ней (включая
+        # числовые колонки) реальными данными не считаем.
+        if lvl2_name and lvl2_name.startswith("←"):
+            skipped += 1
+            skipped_details.append({"row": row_num, "name": lvl2_name, "reason": "служебная строка"})
+            continue
+
+        lvl3_name = get_cell(row, c_lvl3)
+        lvl4_name = get_cell(row, c_lvl4)
+        lvl5_name = get_cell(row, c_lvl5)
+
+        # Защита от сдвига колонок (боевой файл «Субсидия ДНР 2.xlsx»): название
+        # уровня N+1, случайно набранное в числовой колонке уровня N, — вернуть
+        # на место ДО того, как из lvl2/3/4/5_name соберётся дерево строки.
+        lvl3_name = _numeric_shift_scan(row_num, 2, lvl3_name, [
+            (c_feo_qty_lvl2, "Кол-во по ФЭО (Ур.2)"),
+            (c_feo_amt_lvl2, "Стоимость по ФЭО (Ур.2)"),
+            (c_feo_sum_lvl2, "Сумма по ФЭО (Ур.2)"),
+            (c_qty_lvl2, "Плановое кол-во (Ур.2)"),
+            (c_amt_lvl2, "Плановая стоимость за ед. (Ур.2)"),
+            (c_plan_sum_lvl2, "Сумма плана (Ур.2)"),
+        ]) or lvl3_name
+        lvl4_name = _numeric_shift_scan(row_num, 3, lvl4_name, [
+            (c_feo_qty_lvl3, "Кол-во по ФЭО (Ур.3)"),
+            (c_feo_amt_lvl3, "Стоимость по ФЭО (Ур.3)"),
+            (c_feo_sum_lvl3, "Сумма по ФЭО (Ур.3)"),
+            (c_qty_lvl3, "Плановое кол-во (Ур.3)"),
+            (c_amt_lvl3, "Плановая стоимость за ед. (Ур.3)"),
+            (c_plan_sum_lvl3, "Сумма плана (Ур.3)"),
+        ]) or lvl4_name
+        lvl5_name = _numeric_shift_scan(row_num, 4, lvl5_name, [
+            (c_feo_qty_lvl4, "Кол-во по ФЭО (Ур.4)"),
+            (c_feo_amt_lvl4, "Стоимость по ФЭО (Ур.4)"),
+            (c_feo_sum_lvl4, "Сумма по ФЭО (Ур.4)"),
+            (c_qty_lvl4, "Плановое кол-во (Ур.4)"),
+            (c_amt_lvl4, "Плановая стоимость за ед. (Ур.4)"),
+            (c_plan_sum_lvl4, "Сумма плана (Ур.4)"),
+        ]) or lvl5_name
+
+        # Позиция без уровней → переезжает на Уровень 2 (задача владельца,
+        # шаблон 2026-08-14): если Ур.2/3/4 пусты, а «Плановая позиция» заполнена —
+        # её название становится направлением (Ур.2), плановая позиция при этом
+        # НЕ создаётся — продолжение правила «пропущенный уровень поджимается
+        # вверх», доведённое до предела (когда поджиматься уже некуда). Никакой
+        # памяти между строками не заводим, к предыдущей строке ничего не цепляем.
+        if (not lvl2_name) and (not lvl3_name or lvl3_name.startswith("←")) and (not lvl4_name or lvl4_name.startswith("←")):
+            if lvl5_name and not lvl5_name.startswith("←"):
+                warnings.append({
+                    "kind": "item_promoted_to_level2",
+                    "row": row_num,
+                    "name": lvl5_name,
+                    "message": f"Плановая позиция «{lvl5_name}» — в строке нет ни одного уровня, создана направлением (Ур.2)",
+                })
+                lvl2_name = lvl5_name
+                lvl5_name = None
+
+        if not lvl2_name:
             skipped += 1
             skipped_details.append({
                 "row": row_num,
                 "name": lvl2_name or "(пустая строка)",
-                "reason": "служебная строка" if lvl2_name else "нет наименования (уровень 2 пуст)",
+                "reason": "нет наименования (уровень 2 пуст)",
             })
             continue
 
@@ -1891,10 +2028,6 @@ async def _do_feo_import(
                 skipped_details.append({"row": row_num, "name": lvl2_name, "reason": "не указана субсидия назначения"})
                 continue
 
-        lvl3_name = get_cell(row, c_lvl3)
-        lvl4_name = get_cell(row, c_lvl4)
-        lvl5_name = get_cell(row, c_lvl5)
-
         code      = get_cell(row, c_code)
         appendix  = get_cell(row, c_appendix)
         budget    = to_dec(get_cell(row, c_budget))
@@ -1907,6 +2040,16 @@ async def _do_feo_import(
         )
         item_amount = to_dec(get_cell(row, c_item_amt))
         item_price  = to_dec(get_cell(row, c_item_price)) if c_item_price is not None else None
+
+        raw_item_type = get_cell(row, c_item_type) if c_item_type is not None else None
+        item_type = normalize_item_type(raw_item_type) if raw_item_type else None
+        if raw_item_type and item_type is None:
+            warnings.append({
+                "kind": "item_type_unknown",
+                "row": row_num,
+                "name": lvl5_name or lvl2_name,
+                "message": f"Тип позиции «{raw_item_type}» не распознан (ожидались: товар/услуга/работа) — не заполнен",
+            })
 
         # Считать все данные по уровням (raw, без приоритизации)
         _lv = [
@@ -1956,6 +2099,57 @@ async def _do_feo_import(
                 lv["feo_qty"] = lv["plan_qty"]
             elif lv["level_src"] == 4 and c_feo_qty_lvl4 is None and lv["feo_qty"] is None and lv["plan_qty"] is not None:
                 lv["feo_qty"] = lv["plan_qty"]
+
+        # --- Плоские числа нового 18-колоночного шаблона (2026-08-14): «Количество/
+        # Ед.изм./Цена/Сумма по ФЭО» и «Плановое количество/Ед.изм./Цена/Сумма плана» —
+        # ОДНА пара колонок на всю строку, не по уровням. Прикрепляются к САМОМУ
+        # ГЛУБОКОМУ заполненному уровню строки, либо — если заполнена «Плановая
+        # позиция» — к переменной позиции (item_qty/item_unit/item_price/item_amount).
+        # Значения из per-level колонок (уже посчитаны в _lv выше) ИМЕЮТ ПРИОРИТЕТ —
+        # присваиваем только там, где ещё None, — так старые 37-колоночные файлы
+        # (с явными per-level колонками) ведут себя ровно как раньше.
+        _row_feo_qty   = to_dec(get_cell(row, c_row_feo_qty))   if c_row_feo_qty   is not None else None
+        _row_feo_unit  = get_cell(row, c_row_feo_unit)          if c_row_feo_unit  is not None else None
+        _row_feo_price = to_dec(get_cell(row, c_row_feo_price)) if c_row_feo_price is not None else None
+        _row_feo_sum   = to_dec(get_cell(row, c_row_feo_sum))   if c_row_feo_sum   is not None else None
+        _row_plan_qty   = to_dec(get_cell(row, c_row_plan_qty))   if c_row_plan_qty   is not None else None
+        _row_plan_unit  = get_cell(row, c_row_plan_unit)          if c_row_plan_unit  is not None else None
+        _row_plan_price = to_dec(get_cell(row, c_row_plan_price)) if c_row_plan_price is not None else None
+        _row_plan_sum   = to_dec(get_cell(row, c_row_plan_sum))   if c_row_plan_sum   is not None else None
+
+        _deepest_lv = next((lv for lv in reversed(_lv) if lv["name"]), None)
+
+        if _deepest_lv is not None and any(v is not None for v in (_row_feo_qty, _row_feo_unit, _row_feo_price, _row_feo_sum)):
+            if _deepest_lv["feo_qty"] is None:
+                _deepest_lv["feo_qty"] = _row_feo_qty
+            if _deepest_lv["feo_unit"] is None:
+                _deepest_lv["feo_unit"] = _row_feo_unit
+            if _deepest_lv["feo_amt"] is None:
+                _deepest_lv["feo_amt"] = _row_feo_price
+            if _deepest_lv["feo_sum"] is None:
+                _deepest_lv["feo_sum"] = _row_feo_sum
+
+        if any(v is not None for v in (_row_plan_qty, _row_plan_unit, _row_plan_price, _row_plan_sum)):
+            if lvl5_name and not lvl5_name.startswith("←"):
+                # «Плановая позиция» заполнена — плоский план описывает ЕЁ (переменную
+                # позицию), а не категорию; см. item_qty/item_unit/item_price/item_amount ниже.
+                if item_qty is None:
+                    item_qty = _row_plan_qty
+                if item_unit is None:
+                    item_unit = _row_plan_unit
+                if item_price is None:
+                    item_price = _row_plan_price
+                if item_amount is None:
+                    item_amount = _row_plan_sum
+            elif _deepest_lv is not None:
+                if _deepest_lv["plan_qty"] is None:
+                    _deepest_lv["plan_qty"] = _row_plan_qty
+                if _deepest_lv["plan_unit"] is None:
+                    _deepest_lv["plan_unit"] = _row_plan_unit
+                if _deepest_lv["plan_amt"] is None:
+                    _deepest_lv["plan_amt"] = _row_plan_price
+                if _deepest_lv["plan_sum"] is None:
+                    _deepest_lv["plan_sum"] = _row_plan_sum
 
         # Оставляем только уровни с непустым именем
         filled = [lv for lv in _lv if lv["name"]]
@@ -2083,9 +2277,16 @@ async def _do_feo_import(
                         "amount": plan_sum,
                         "row": row_num,
                         "name": cat.name,
+                        "item_type": item_type,
+                        "from_feo_fallback": False,
                     }
                 else:
-                    # Старое поведение источника данных: план кол-во/ед/цена напрямую
+                    # Старое поведение источника данных: план кол-во/ед/цена напрямую.
+                    # Если ОБЕ плановые колонки (кол-во и цена) пусты — сумма целиком
+                    # взята из чисел «по ФЭО» (feo_qty × feo_amt), а не из плановых
+                    # колонок; помечаем происхождение флагом from_feo_fallback, чтобы
+                    # предупреждение plan_vs_items_mismatch ниже не выдавало эту сумму
+                    # за «план строки» без уточнения, откуда она на самом деле взята.
                     _pq = plan_qty if plan_qty is not None else feo_qty
                     _pa = plan_amt if plan_amt is not None else feo_amt
                     if _pq is not None and _pa is not None:
@@ -2095,6 +2296,8 @@ async def _do_feo_import(
                             "amount": (_pq * _pa).quantize(QUANT),
                             "row": row_num,
                             "name": cat.name,
+                            "item_type": item_type,
+                            "from_feo_fallback": plan_qty is None and plan_amt is None,
                         }
 
                 if _pu and cat.unit != _pu:
@@ -2161,7 +2364,10 @@ async def _do_feo_import(
                     )
                 )).scalar_one_or_none()
                 if not existing_item:
-                    pi = FeoPlannedItem(
+                    # item_type (Товар/Услуга/Работа, задача владельца 2026-08-14):
+                    # поле добавляется параллельно в модель FeoPlannedItem — hasattr-
+                    # проверка, чтобы этот код не падал, пока миграция ещё не применена.
+                    _fpi_kwargs = dict(
                         feo_category_id=leaf.id,
                         name=lvl5_name,
                         quantity=item_qty,
@@ -2169,6 +2375,9 @@ async def _do_feo_import(
                         amount=eff_item_amount,
                         is_active=is_active,
                     )
+                    if hasattr(FeoPlannedItem, "item_type"):
+                        _fpi_kwargs["item_type"] = item_type
+                    pi = FeoPlannedItem(**_fpi_kwargs)
                     db.add(pi)
                     await db.flush()
                     created += 1
@@ -2181,6 +2390,8 @@ async def _do_feo_import(
                         existing_item.unit = item_unit; ch2 = True
                     if eff_item_amount is not None and existing_item.amount != eff_item_amount:
                         existing_item.amount = eff_item_amount; ch2 = True
+                    if item_type is not None and hasattr(existing_item, "item_type") and existing_item.item_type != item_type:
+                        existing_item.item_type = item_type; ch2 = True
                     if ch2:
                         updated += 1
                         updated_details.append({"row": row_num, "name": lvl5_name, "reason": "обновлена позиция"})
@@ -2252,12 +2463,21 @@ async def _do_feo_import(
                     _cat_obj.planned_amount = None
                 _items_sum = lvl5_sum_by_cat.get(_cat_id, ZERO)
                 if abs(_items_sum - (_pdata["amount"] or ZERO)) > Decimal("0.01"):
+                    # Честное указание источника (задача владельца): если этот план
+                    # строки на самом деле собран старым фолбэком из чисел «по ФЭО»
+                    # (см. from_feo_fallback выше — плановых кол-ва/цены в файле не
+                    # было), пользователь не должен думать, что цифра пришла из
+                    # плановых колонок — уточняем происхождение прямо в тексте.
+                    _fallback_note = (
+                        " (взят из чисел по ФЭО, плановые колонки пустые)"
+                        if _pdata.get("from_feo_fallback") else ""
+                    )
                     warnings.append({
                         "kind": "plan_vs_items_mismatch",
                         "row": _plan_row,
                         "name": _plan_name,
                         "message": (
-                            f"План строки «{_plan_name}» = {_fmt(_pdata['amount'])}, а сумма позиций Ур.5 "
+                            f"План строки «{_plan_name}» = {_fmt(_pdata['amount'])}{_fallback_note}, а сумма позиций Ур.5 "
                             f"= {_fmt(_items_sum)} — расхождение, план строки не записан"
                         ),
                     })
@@ -2287,6 +2507,8 @@ async def _do_feo_import(
                     _match_item.unit = _pdata["unit"]; _ch = True
                 if _pdata["amount"] is not None and _match_item.amount != _pdata["amount"]:
                     _match_item.amount = _pdata["amount"]; _ch = True
+                if _pdata.get("item_type") is not None and hasattr(_match_item, "item_type") and _match_item.item_type != _pdata["item_type"]:
+                    _match_item.item_type = _pdata["item_type"]; _ch = True
                 if _ch:
                     updated += 1
                     updated_details.append({"row": _plan_row, "name": _plan_name, "reason": "плановая позиция из плана строки"})
@@ -2301,7 +2523,7 @@ async def _do_feo_import(
                         "message": f"У категории «{_plan_name}» уже есть плановые позиции — план строки не записан, чтобы не задвоить",
                     })
                 else:
-                    _pi = FeoPlannedItem(
+                    _pi_kwargs = dict(
                         feo_category_id=_cat_id,
                         name=(_plan_name or "")[:500],
                         quantity=_pdata["qty"],
@@ -2310,6 +2532,9 @@ async def _do_feo_import(
                         is_active=True,
                         notes="из импорта ФЭО",
                     )
+                    if hasattr(FeoPlannedItem, "item_type"):
+                        _pi_kwargs["item_type"] = _pdata.get("item_type")
+                    _pi = FeoPlannedItem(**_pi_kwargs)
                     db.add(_pi)
                     await db.flush()
                     created += 1
@@ -2603,7 +2828,7 @@ async def import_feo_from_excel(
     c_lvl2     = find_col(["уровень 2", "направление расходов", "level 2"])
     c_lvl3     = find_col(["уровень 3", "тип расходов", "level 3"])
     c_lvl4     = find_col(["уровень 4", "конкретизир", "level 4"])
-    c_lvl5     = find_col(["уровень 5", "плановый товар", "level 5"])
+    c_lvl5     = find_col(["плановая позиция", "уровень 5", "плановый товар", "level 5"])
     c_qty      = find_col(["количество (ур.5)", "количество ур.5", "кол-во (ур.5)", "кол-во ур.5"])
     # Новый шаблон: «кол-во по фэо» — feo_quantity
     c_feo_qty_lvl2  = find_col(["кол-во по фэо (ур.2)", "кол-во по фэо ур.2"])
@@ -2634,6 +2859,22 @@ async def import_feo_from_excel(
     c_plan_sum_lvl2 = find_col(["сумма плана (ур.2)", "плановая сумма (ур.2)", "сумма ур.2"])
     c_plan_sum_lvl3 = find_col(["сумма плана (ур.3)", "плановая сумма (ур.3)", "сумма ур.3"])
     c_plan_sum_lvl4 = find_col(["сумма плана (ур.4)", "плановая сумма (ур.4)", "сумма ур.4"])
+    # Новый плоский 18-колоночный шаблон (2026-08-14): числа по ФЭО/плану — ОДНА
+    # пара колонок на всю строку (не по уровням), см. _do_feo_import, блок «плоские
+    # числа». Объявлены ПОСЛЕ всех per-level find_col выше и ДО generic-фолбэков
+    # ниже (c_qty/c_unit) — иначе более общие ключи перехватили бы эти колонки
+    # раньше специфичных. На старых 37-колоночных файлах колонки этих названий нет
+    # (там «Кол-во по ФЭО (Ур.N)» уже разобран per-level выше и помечен used) — эти
+    # find_col останутся None, старое поведение не меняется.
+    c_row_feo_qty    = find_col(["количество по фэо"])
+    c_row_feo_unit   = find_col(["ед. изм. по фэо"])
+    c_row_feo_price  = find_col(["цена за единицу по фэо", "цена за ед. по фэо"])
+    c_row_feo_sum    = find_col(["сумма по фэо"])
+    c_row_plan_qty   = find_col(["плановое количество"])
+    c_row_plan_unit  = find_col(["ед. изм. плана"])
+    c_row_plan_price = find_col(["плановая цена за единицу", "плановая цена за ед."])
+    c_row_plan_sum   = find_col(["сумма плана"])
+    c_item_type      = find_col(["товар/услуга", "тип позиции"])
     # Fallback: generic qty column if no specific level columns present
     if c_qty is None and c_qty_lvl2 is None and c_qty_lvl3 is None and c_qty_lvl4 is None and c_feo_qty_lvl2 is None and c_feo_qty_lvl3 is None and c_feo_qty_lvl4 is None:
         c_qty = find_col(["количество", "кол-во", "qty"])
@@ -2659,6 +2900,11 @@ async def import_feo_from_excel(
         c_feo_sum_lvl2=c_feo_sum_lvl2, c_feo_sum_lvl3=c_feo_sum_lvl3, c_feo_sum_lvl4=c_feo_sum_lvl4,
         c_plan_sum_lvl2=c_plan_sum_lvl2, c_plan_sum_lvl3=c_plan_sum_lvl3, c_plan_sum_lvl4=c_plan_sum_lvl4,
         c_item_price=c_item_price,
+        c_row_feo_qty=c_row_feo_qty, c_row_feo_unit=c_row_feo_unit,
+        c_row_feo_price=c_row_feo_price, c_row_feo_sum=c_row_feo_sum,
+        c_row_plan_qty=c_row_plan_qty, c_row_plan_unit=c_row_plan_unit,
+        c_row_plan_price=c_row_plan_price, c_row_plan_sum=c_row_plan_sum,
+        c_item_type=c_item_type,
         db=db, dry_run=dry_run,
         user=current_user, remap=remap, apply_remap=apply_remap,
     )
@@ -2707,6 +2953,17 @@ async def import_feo_mapped(
     col_plan_sum_lvl3: int = Query(-1),
     col_plan_sum_lvl4: int = Query(-1),
     col_item_price: int = Query(-1),
+    # Новый плоский 18-колоночный шаблон (2026-08-14) — одна пара колонок «по
+    # ФЭО»/«плана» на всю строку, плюс тип плановой позиции.
+    col_row_feo_qty: int = Query(-1),
+    col_row_feo_unit: int = Query(-1),
+    col_row_feo_price: int = Query(-1),
+    col_row_feo_sum: int = Query(-1),
+    col_row_plan_qty: int = Query(-1),
+    col_row_plan_unit: int = Query(-1),
+    col_row_plan_price: int = Query(-1),
+    col_row_plan_sum: int = Query(-1),
+    col_item_type: int = Query(-1),
     default_subsidy_id: int = Query(-1),
     dry_run: bool = Query(False),
     remap: str = Query(""),
@@ -2818,6 +3075,15 @@ async def import_feo_mapped(
         c_plan_sum_lvl3=col_plan_sum_lvl3 if col_plan_sum_lvl3 >= 0 else None,
         c_plan_sum_lvl4=col_plan_sum_lvl4 if col_plan_sum_lvl4 >= 0 else None,
         c_item_price=col_item_price if col_item_price >= 0 else None,
+        c_row_feo_qty=col_row_feo_qty if col_row_feo_qty >= 0 else None,
+        c_row_feo_unit=col_row_feo_unit if col_row_feo_unit >= 0 else None,
+        c_row_feo_price=col_row_feo_price if col_row_feo_price >= 0 else None,
+        c_row_feo_sum=col_row_feo_sum if col_row_feo_sum >= 0 else None,
+        c_row_plan_qty=col_row_plan_qty if col_row_plan_qty >= 0 else None,
+        c_row_plan_unit=col_row_plan_unit if col_row_plan_unit >= 0 else None,
+        c_row_plan_price=col_row_plan_price if col_row_plan_price >= 0 else None,
+        c_row_plan_sum=col_row_plan_sum if col_row_plan_sum >= 0 else None,
+        c_item_type=col_item_type if col_item_type >= 0 else None,
         default_subsidy_id=default_subsidy_id if default_subsidy_id > 0 else None,
         db=db, dry_run=dry_run,
         user=current_user, remap=remap, apply_remap=apply_remap,

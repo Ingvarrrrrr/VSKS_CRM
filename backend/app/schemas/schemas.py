@@ -1329,6 +1329,9 @@ class FeoPlannedItemCreate(BaseModel):
     amount: Optional[Decimal] = None
     notes: Optional[str] = None
     is_active: bool = True
+    # Блок 1 (план zany-fluttering-mountain.md): товар / услуга / работа —
+    # нормализуется normalize_item_type() в app/routers/feo_planned_items.py.
+    item_type: Optional[str] = None
     # W1b: payment schedule fields
     payment_mode: str = "one_time"
     planned_date: Optional[_Date] = None

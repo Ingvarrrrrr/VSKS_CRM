@@ -31,7 +31,10 @@ from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_ove
 # закупок, созданных/меняемых в обход заявки. Поведение НЕ менялось при переносе —
 # см. полный докстринг в app/services/plan_autoassign.py::auto_assign_planned_items.
 # Alias сохраняет имя со старым подчёркиванием — все вызовы ниже по файлу не тронуты.
-from app.services.plan_autoassign import auto_assign_planned_items as _auto_assign_planned_items
+from app.services.plan_autoassign import (
+    auto_assign_planned_items as _auto_assign_planned_items,
+    backfill_item_type_from_plan as _backfill_item_type_from_plan,
+)
 from decimal import Decimal
 
 
@@ -586,6 +589,10 @@ async def _sync_wish_items_to_purchases(wish, db: AsyncSession) -> None:
             pi.vat_rate = getattr(wi, 'vat_rate', None)
             changed = True
         if changed:
+            # Признак «Товар/Услуга/Работа» (блок 1): наследуется от плановой
+            # позиции, если у самой позиции закупки он ещё не задан (уже
+            # заполненный — не трогаем).
+            await _backfill_item_type_from_plan(pitems, db)
             p.feo_per_item = bool(getattr(wish, 'feo_per_item', False))
             p.vat_mode = getattr(wish, 'vat_mode', None) or 'uniform'
             await db.flush()

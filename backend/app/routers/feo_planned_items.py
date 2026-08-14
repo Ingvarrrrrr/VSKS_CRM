@@ -147,6 +147,27 @@ def _build_item_stages(
     return stages
 
 
+def normalize_item_type(v: Optional[str]) -> Optional[str]:
+    """Признак «Товар/Услуга/Работа» плановой позиции (блок 1, план
+    zany-fluttering-mountain.md) — приводит свободный ввод (в т.ч. импорт ФЭО)
+    к одному из трёх нижнерегистрных значений, как в purchase_items.item_type/
+    wish_items.item_type. Пусто/непонятное значение → None (поле необязательное).
+    Экспортируется — используется импортом ФЭО (тот же нормализатор, не дублируем).
+    """
+    if not v:
+        return None
+    s = str(v).strip().lower()
+    if not s:
+        return None
+    if s.startswith("тов"):
+        return "товар"
+    if s.startswith("усл"):
+        return "услуга"
+    if s.startswith("раб"):
+        return "работа"
+    return None
+
+
 def _apply_payment_fields(item: FeoPlannedItem, data: FeoPlannedItemCreate) -> None:
     """
     W1b: Apply payment schedule fields and enforce the amount consistency rule:
@@ -230,6 +251,7 @@ async def create_planned_item(
         notes=data.notes,
         is_active=data.is_active,
         sort_order=data.sort_order,
+        item_type=normalize_item_type(data.item_type),
         # auto_created — НЕ принимается на вход (это точечное создание человеком
         # через UI), остаётся дефолтным False колонки.
     )
@@ -264,6 +286,14 @@ async def update_planned_item(
     item.notes = data.notes
     item.is_active = data.is_active
     item.sort_order = data.sort_order
+    # Тип позиции — единственное поле, которое НЕ обнуляется молчанием клиента.
+    # PUT здесь полная замена, а вызовов у него много (перенос в другую категорию,
+    # смена порядка, правка из карточки, внешние клиенты) — любой из них, не
+    # приславший item_type, стирал бы выбранный человеком тип. Правило проекта:
+    # выбранное на предыдущем этапе не меняется само. Явный item_type: null в теле
+    # запроса по-прежнему очищает поле — это осознанное действие.
+    if "item_type" in data.model_fields_set:
+        item.item_type = normalize_item_type(data.item_type)
     _apply_payment_fields(item, data)
 
     # БАГ (владелец, 2026-08-13): «нажал на кнопку переноса, выбрал категорию,

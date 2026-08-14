@@ -1211,6 +1211,13 @@
                                 <th :style="feoResize.resizeStyle('budget')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE">Плановая цена за единицу</th>
                                 <th :style="feoResize.resizeStyle('qty')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE">Кол-во плана</th>
                                 <th :style="feoResize.resizeStyle('planned')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE">Сумма плана</th>
+                                <!-- «Тип» (блок 1, план zany-fluttering-mountain.md, 2026-08-14): товар/услуга/
+                                     работа плановой позиции. Колонка ДОПОЛНИТЕЛЬНАЯ, фиксированной ширины (не
+                                     через feoResize) — сознательно нарушает описанный выше «ровно те же 7
+                                     колонок» подсчёт остатка совместно с основной таблицей; смирились с этим
+                                     ради нового признака, вертикальное совпадение auto-колонок левее (name/
+                                     budget/qty/planned) не страдает. -->
+                                <th style="width:74px;min-width:74px;padding:4px 8px;text-align:center;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE">Тип</th>
                                 <th :style="feoResize.resizeStyle('spent')" style="border-bottom:1px solid #BFDBFE"></th>
                                 <th :style="feoResize.resizeStyle('residual')" style="border-bottom:1px solid #BFDBFE"></th>
                                 <th style="width:112px;min-width:112px;max-width:112px;padding:4px 2px;border-bottom:1px solid #BFDBFE"></th>
@@ -1276,6 +1283,9 @@
                                   </td>
                                   <td :style="feoResize.resizeStyle('planned')" style="padding:4px 8px;text-align:right;color:#64748b">
                                     <span v-if="planned.amount">{{ formatCurrency(planned.amount) }}</span>
+                                  </td>
+                                  <td style="width:74px;min-width:74px;padding:4px 8px;text-align:center;color:#64748b">
+                                    {{ planned.item_type || '—' }}
                                   </td>
                                   <!-- spent/residual — пустые заглушки, только чтобы раскладка колонок совпадала
                                        со основной таблицей (см. правку выше у feoResize/th этой таблицы). -->
@@ -1382,9 +1392,10 @@
                                      заголовок и стадия подписана на каждой строке (пометка «как выставили»/
                                      «как в договоре» уже есть на строке). -->
                                 <tr v-if="expandedPlannedItems.has(planned.id)">
-                                  <!-- colspan="7" (было 5) — у вложенной таблицы плановых позиций теперь 7 колонок
-                                       (добавлены пустые spent/residual, см. выше), эта ячейка должна закрывать
-                                       всю строку целиком, а не оставлять 2 колонки «дыркой» справа. -->
+                                  <!-- colspan="8" (было 7, до колонки «Тип» — 5) — у вложенной таблицы плановых
+                                       позиций теперь 8 колонок (добавлены пустые spent/residual + «Тип», см.
+                                       выше), эта ячейка должна закрывать всю строку целиком, а не оставлять
+                                       колонки «дыркой» справа. -->
                                   <!-- Замечание владельца 3+4 (2026-08-12): вложенный блок «План vs факт» —
                                        собственная светло-серая заливка + рамка + заметный отступ сверху/слева
                                        (визуальная вложенность внутрь плановой позиции), ЧТОБЫ читался как
@@ -1392,7 +1403,7 @@
                                        таблицу (у неё его не было — вот почему в МИНПРОСе блок садился по
                                        ширине содержимого вместо 100% строки, см. разбор в отчёте задачи;
                                        у обёртки-td теперь padding:0, вся раскладка — во внутреннем div). -->
-                                  <td colspan="7" style="padding:0">
+                                  <td colspan="8" style="padding:0">
                                     <div style="margin:10px 8px 12px 32px;padding:8px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:6px">
                                     <table style="width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px">
                                       <thead>
@@ -1720,7 +1731,7 @@
 
                               <!-- Пусто -->
                               <tr v-if="!displayPlannedRowsFor(node).length && !comparisonData[node.id].actual.length">
-                                <td colspan="7" style="padding:12px 8px;text-align:center;color:#9ca3af;font-style:italic">
+                                <td colspan="8" style="padding:12px 8px;text-align:center;color:#9ca3af;font-style:italic">
                                   Нет плановых позиций. Добавьте вручную или загрузите из Excel.
                                 </td>
                               </tr>
@@ -5154,6 +5165,8 @@ const dragOverId = ref<number | null>(null)
 // FEO Import
 interface FeoWarning {
   kind: 'level_gap' | 'level_duplicate' | 'sum_mismatch' | 'sum_without_qty' | 'parent_sum_mismatch'
+    | 'level_name_in_number_column' | 'item_promoted_to_level2' | 'item_type_unknown'
+    | 'column_shift' | 'group_plan_ignored' | 'plan_vs_items_mismatch' | 'plan_skipped_has_items'
   row: number | null
   name: string
   message: string
@@ -5165,6 +5178,13 @@ function feoWarnKindLabel(kind: string): string {
     sum_mismatch: 'Сумма не совпадает с кол-во × цена',
     sum_without_qty: 'Сумма задана без количества',
     parent_sum_mismatch: 'Бюджет родителя ≠ сумма дочерних',
+    level_name_in_number_column: 'Название уровня стояло в числовой колонке',
+    item_promoted_to_level2: 'Плановая позиция без уровней — создана направлением',
+    item_type_unknown: 'Не распознан тип товар/услуга',
+    column_shift: 'Похоже, колонки сдвинуты — число попало не в ту колонку',
+    group_plan_ignored: 'План строки не записан — у категории есть подкатегории',
+    plan_vs_items_mismatch: 'План строки не совпадает с суммой плановых позиций',
+    plan_skipped_has_items: 'План строки не записан — у категории уже есть позиции',
   }
   return labels[kind] ?? kind
 }
@@ -5242,7 +5262,18 @@ const FEO_TARGET_FIELDS = [
   { value: 'unit_lvl4',     title: 'Единица измерения для Уровня 4',              required: false },
   { value: 'amt_lvl4',      title: 'Плановая стоимость за ед. для Уровня 4 (Конкретизир.)', required: false },
   { value: 'plan_sum_lvl4', title: 'Сумма плана (Ур.4)',                          required: false },
-  { value: 'lvl5',          title: 'Уровень 5 — Плановый товар / услуга',        required: false },
+  { value: 'lvl5',          title: 'Плановая позиция (папку не создаёт)',        required: false },
+  { value: 'item_type',       title: 'Товар/услуга',                             required: false },
+  // Новый плоский 18-колоночный шаблон (2026-08-14): одна пара колонок «по ФЭО»/«плана»
+  // на всю строку — вместо колонок-на-каждый-уровень выше. См. col_row_* в _do_feo_import.
+  { value: 'row_feo_qty',     title: 'Количество по ФЭО',                        required: false },
+  { value: 'row_feo_unit',    title: 'Ед. изм. по ФЭО',                          required: false },
+  { value: 'row_feo_price',   title: 'Цена за единицу по ФЭО',                   required: false },
+  { value: 'row_feo_sum',     title: 'Сумма по ФЭО',                             required: false },
+  { value: 'row_plan_qty',    title: 'Плановое количество',                      required: false },
+  { value: 'row_plan_unit',   title: 'Ед. изм. плана',                           required: false },
+  { value: 'row_plan_price',  title: 'Плановая цена за единицу',                 required: false },
+  { value: 'row_plan_sum',    title: 'Сумма плана',                              required: false },
   { value: 'quantity',      title: 'Количество для Уровня 5 (Товар/услуга)',      required: false },
   { value: 'unit',          title: 'Единица измерения (Ур.5: шт, кг, услуга)',   required: false },
   { value: 'item_amt',      title: 'Сумма по позиции (Ур.5)',                     required: false },
@@ -5405,9 +5436,13 @@ function feoAutoMap(headers: string[]) {
     plan_sum_lvl4: ['сумма плана (ур.4)', 'плановая сумма (ур.4)', 'сумма ур.4'],
     // feo_sum_* идут ДО feo_amount_* (более специфичны «сумма по фэо»)
     feo_sum_lvl2:    ['сумма по фэо (ур.2)', 'сумма по фэо ур.2'],
-    feo_qty_lvl2:    ['кол-во по фэо (ур.2)', 'кол-во по фэо ур.2', 'кол-во по фэо'],
-    feo_unit_lvl2:   ['ед. изм. по фэо (ур.2)', 'ед. изм. по фэо ур.2', 'ед. изм. по фэо'],
-    feo_amount_lvl2: ['стоимость по фэо (ур.2)', 'стоимость по фэо ур.2', 'стоимость по фэо'],
+    // Бэкенд (see find_col в import_feo_from_excel) НЕ имеет generic-фолбэка без
+    // «(Ур.2)» для этих трёх — иначе эти ключи перехватывали бы плоские колонки
+    // нового 18-колоночного шаблона («Количество по ФЭО» и т.п.), которые обязаны
+    // достаться row_feo_qty/row_feo_unit/row_feo_price ниже
+    feo_qty_lvl2:    ['кол-во по фэо (ур.2)', 'кол-во по фэо ур.2'],
+    feo_unit_lvl2:   ['ед. изм. по фэо (ур.2)', 'ед. изм. по фэо ур.2'],
+    feo_amount_lvl2: ['стоимость по фэо (ур.2)', 'стоимость по фэо ур.2'],
     feo_sum_lvl3:    ['сумма по фэо (ур.3)', 'сумма по фэо ур.3'],
     feo_qty_lvl3:    ['кол-во по фэо (ур.3)', 'кол-во по фэо ур.3'],
     feo_unit_lvl3:   ['ед. изм. по фэо (ур.3)', 'ед. изм. по фэо ур.3'],
@@ -5416,7 +5451,23 @@ function feoAutoMap(headers: string[]) {
     feo_qty_lvl4:    ['кол-во по фэо (ур.4)', 'кол-во по фэо ур.4'],
     feo_unit_lvl4:   ['ед. изм. по фэо (ур.4)', 'ед. изм. по фэо ур.4'],
     feo_amount_lvl4: ['стоимость по фэо (ур.4)', 'стоимость по фэо ур.4'],
-    lvl5:     ['уровень 5', 'плановый товар', 'level 5'],
+    lvl5:     ['плановая позиция', 'уровень 5', 'плановый товар', 'level 5'],
+    // Новый плоский 18-колоночный шаблон (2026-08-14): одна пара «по ФЭО»/«плана» на
+    // всю строку. Объявлены ПОСЛЕ всех per-level ключей выше и ДО generic-фолбэков
+    // ниже (quantity/unit/item_amt/item_price) — порядок и слова совпадают с
+    // col_row_* в import_feo_mapped/import_feo_from_excel (backend). lvl5 обязан
+    // резолвиться раньше item_type, иначе «Уровень 5 (Плановый товар/услуга)»
+    // старого шаблона перехватит item_type своим «товар/услуга» — здесь lvl5 уже
+    // объявлен строкой выше, порядок соблюдён.
+    row_feo_qty:    ['количество по фэо'],
+    row_feo_unit:   ['ед. изм. по фэо'],
+    row_feo_price:  ['цена за единицу по фэо', 'цена за ед. по фэо'],
+    row_feo_sum:    ['сумма по фэо'],
+    row_plan_qty:   ['плановое количество'],
+    row_plan_unit:  ['ед. изм. плана'],
+    row_plan_price: ['плановая цена за единицу', 'плановая цена за ед.'],
+    row_plan_sum:   ['сумма плана'],
+    item_type:      ['товар/услуга', 'тип позиции'],
     code:     ['код'],
     appendix: ['приложение'],
     budget:   ['финансирование', 'бюджет'],
@@ -5465,6 +5516,8 @@ interface FeoPlannedItem {
   // Владелец (2026-08-12, замечание 2): порядок позиций внутри категории —
   // настраиваемый (стрелки вверх/вниз), см. reorderPlannedItem ниже.
   sort_order?: number | null
+  // Блок 1 (план zany-fluttering-mountain.md, 2026-08-14): товар / услуга / работа.
+  item_type?: string | null
 }
 // Стадия уточнения позиции (ФЭО → План → Что выставили на закупку → Номенклатура
 // подрядчика → Приняли) — справочная детализация, отдаётся бэкендом внутри FeoActualItem.stages.
@@ -6624,6 +6677,7 @@ async function movePlannedItemToCategory(item: FeoPlannedItem, targetCategoryId:
         months_count: item.months_count ?? null,
         monthly_amount: item.monthly_amount ?? null,
         sort_order: item.sort_order ?? null,
+        item_type: item.item_type ?? null,
       }),
     })
     // Затронуты ДВА узла (старый и новый) плюс их суммы по всей ветке вверх —
@@ -6666,6 +6720,7 @@ async function savePlannedItemSortOrder(item: FeoPlannedItem, newOrder: number) 
       months_count: item.months_count ?? null,
       monthly_amount: item.monthly_amount ?? null,
       sort_order: newOrder,
+      item_type: item.item_type ?? null,
     }),
   })
 }
@@ -6777,6 +6832,12 @@ const editPlannedDialog = reactive({
   monthly_start_date: '' as string,
   months_count: null as number | null,
   monthly_amount: null as number | null,
+  // Блок 1 (план zany-fluttering-mountain.md, 2026-08-14): PUT — полная замена
+  // (FeoPlannedItemCreate), поле обязано доехать до payload неизменным, иначе
+  // любое сохранение этого диалога молча стирало бы уже выбранный тип (см.
+  // «выбранное на предыдущем этапе не смеет меняться само»). Своего v-select
+  // тут нет — правка типа только через диалог создания/импорт.
+  item_type: null as string | null,
 })
 
 function openEditPlannedItem(item: FeoPlannedItem) {
@@ -6789,6 +6850,7 @@ function openEditPlannedItem(item: FeoPlannedItem) {
   editPlannedDialog.payment_mode = item.payment_mode ?? 'one_time'
   editPlannedDialog.planned_date = item.planned_date ?? ''
   editPlannedDialog.monthly_start_date = item.monthly_start_date ?? ''
+  editPlannedDialog.item_type = item.item_type ?? null
   editPlannedDialog.months_count = item.months_count ?? null
   editPlannedDialog.monthly_amount = item.monthly_amount ?? null
   editPlannedDialog.show = true
@@ -6814,6 +6876,7 @@ async function saveEditPlannedItem() {
         monthly_start_date: isMonthly && d.monthly_start_date ? d.monthly_start_date : null,
         months_count: isMonthly ? d.months_count : null,
         monthly_amount: isMonthly ? d.monthly_amount : null,
+        item_type: d.item_type,
       }),
     })
     editPlannedDialog.show = false
@@ -9023,6 +9086,16 @@ async function doFeoMappedImport(dryRun = false, keepStep = false) {
       col_plan_sum_lvl3: String(m['plan_sum_lvl3'] ?? -1),
       col_plan_sum_lvl4: String(m['plan_sum_lvl4'] ?? -1),
       col_item_price:    String(m['item_price']    ?? -1),
+      // Новый плоский 18-колоночный шаблон (2026-08-14)
+      col_row_feo_qty:    String(m['row_feo_qty']    ?? -1),
+      col_row_feo_unit:   String(m['row_feo_unit']   ?? -1),
+      col_row_feo_price:  String(m['row_feo_price']  ?? -1),
+      col_row_feo_sum:    String(m['row_feo_sum']    ?? -1),
+      col_row_plan_qty:   String(m['row_plan_qty']   ?? -1),
+      col_row_plan_unit:  String(m['row_plan_unit']  ?? -1),
+      col_row_plan_price: String(m['row_plan_price'] ?? -1),
+      col_row_plan_sum:   String(m['row_plan_sum']   ?? -1),
+      col_item_type:      String(m['item_type']      ?? -1),
     })
     if (remapEntries.length) params.set('remap', JSON.stringify(remapEntries))
     const fd = new FormData()

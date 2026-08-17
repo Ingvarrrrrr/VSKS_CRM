@@ -1161,6 +1161,39 @@
                       <v-btn value="per_item" size="small" prepend-icon="mdi-calendar-multiple">На каждую позицию</v-btn>
                     </v-btn-toggle>
                   </v-col>
+                  <!-- Task 2 (сессия 2026-08-17): контрагент заявки — необязательное поле.
+                       Владелец: «должна быть возможность указывать контрагента и его имя,
+                       но это по желанию». Переиспользуем ContractorPicker (тот же модуль,
+                       что в SubsidiesView/ContractsView), плюс ручной ввод имени, если
+                       контрагента ещё нет в справочнике. -->
+                  <v-col cols="12" data-field="contractor">
+                    <div class="text-caption font-weight-medium mb-1">Контрагент <span class="text-medium-emphasis">(необязательно)</span></div>
+                    <v-row v-if="isWishEditable || canAssigneeAct" dense>
+                      <v-col cols="12" md="6">
+                        <ContractorPicker
+                          v-model="wishForm.contractor_id"
+                          :initial-contractor="wishContractorInitial"
+                          label="Из справочника"
+                          hint="Необязательно. Поиск по названию или ИНН"
+                          @select="onWishContractorSelect"
+                        />
+                      </v-col>
+                      <v-col cols="12" md="6">
+                        <v-text-field
+                          v-model="wishForm.contractor_name"
+                          label="Или впишите имя вручную"
+                          variant="outlined"
+                          density="compact"
+                          clearable
+                          hint="Если контрагента ещё нет в справочнике"
+                          persistent-hint
+                        />
+                      </v-col>
+                    </v-row>
+                    <div v-else class="text-body-2">
+                      {{ editingWish?.contractor_display_name || wishForm.contractor_name || '—' }}
+                    </div>
+                  </v-col>
                 </v-row>
               </v-card-text>
             </v-card>
@@ -1172,6 +1205,11 @@
                 <v-icon class="mr-2">mdi-format-list-numbered</v-icon>Позиции
               </v-card-title>
               <v-card-text class="pa-4 pt-2">
+                <!-- Владелец (сессия 2026-08-17): построчный выбор ФЭО доступен ВСЕГДА (раньше
+                     был за тумблером «Разные ФЭО позиции для каждого товара», убранным ниже).
+                     Шапка (wishFeoSelected/wishFeoPlannedItemId) теперь только дефолт для строк
+                     БЕЗ собственного значения — feo-planned-per-item=false держит автозаполнение
+                     пустых строк включённым (см. fillItemsWithDefaultPlannedItem в PurchaseItemsEditor.vue). -->
                 <PurchaseItemsEditor
                   v-model="wishForm.items"
                   item-shape="purchase"
@@ -1184,12 +1222,12 @@
                   :supports-full-product-dialog="true"
                   :supports-photo-upload="true"
                   :readonly="!isWishEditable"
-                  :feo-per-item="wishFeoPerItem"
+                  :feo-per-item="true"
                   :subsidy-id="wishForm.subsidy_id"
                   :subsidy-name="selectedSubsidyName"
                   :default-feo-category-id="wishFeoSelected"
-                  :default-feo-planned-item-id="!wishFeoPerItem ? wishFeoPlannedItemId : null"
-                  :feo-planned-per-item="wishFeoPerItem"
+                  :default-feo-planned-item-id="wishFeoPlannedItemId"
+                  :feo-planned-per-item="false"
                   :allow-per-item-plan="!!wishFeoSelected"
                   :planned-items="wishPlannedResiduals"
                   :show-needed-date="wishDateMode === 'per_item'"
@@ -1272,10 +1310,11 @@
                       <div class="font-weight-medium">Категория ФЭО не выбрана — отправить заявку на согласование нельзя</div>
                       <div class="mt-1">
                         Без категории закупка не попадёт ни в один план ФЭО и её сумма потеряется.
-                        Выберите категорию {{ wishFeoPerItem ? 'для каждой позиции в таблице выше' : 'в дереве ниже' }},
+                        Выберите категорию для каждой позиции в таблице выше (или общую в дереве
+                        ниже — она станет умолчанием для позиций без своей категории),
                         а если категория неизвестна — нажмите «Не определена».
                       </div>
-                      <div v-if="wishFeoPerItem && wishItemsMissingFeoCategory.length" class="mt-2">
+                      <div v-if="wishItemsMissingFeoCategory.length" class="mt-2">
                         <span class="font-weight-medium">Позиции без категории:</span>
                         <ul class="ml-4 mt-1">
                           <li v-for="(it, idx) in wishItemsMissingFeoCategory" :key="idx">{{ it.item_name || 'без названия' }}</li>
@@ -1295,7 +1334,7 @@
                       @pick-unallocated="(parentId: number | null) => pickWishUnallocated(parentId)"
                     />
                     <FeoPlannedItemsSelect
-                      v-if="wishFeoSelected && !wishFeoPerItem"
+                      v-if="wishFeoSelected"
                       v-model="wishFeoPlanSelection"
                       :category-id="wishFeoSelected"
                       :nodes="wishFeoNodes"
@@ -1342,18 +1381,10 @@
                       либо включите этот переключатель, если сознательно хотите остановиться на этом уровне.
                     </div>
                   </v-col>
-                  <!-- Тогл «Разные ФЭО позиции для каждого товара» (как в закупке) -->
-                  <v-col v-if="wishForm.subsidy_id" cols="12" class="py-0">
-                    <v-switch
-                      v-model="wishFeoPerItem"
-                      label="Разные ФЭО позиции для каждого товара"
-                      density="compact"
-                      color="primary"
-                      hide-details
-                      :disabled="!isWishEditable && !canAssigneeAct"
-                      @update:model-value="onWishFeoPerItemChange"
-                    />
-                  </v-col>
+                  <!-- Владелец (сессия 2026-08-17): тумблер «Разные ФЭО позиции для каждого
+                       товара» убран — построчный выбор категории ФЭО (см. таблицу позиций
+                       выше) доступен ВСЕГДА, дерево ниже задаёт только значение по умолчанию
+                       для позиций без собственной категории (см. buildWishPayload). -->
                   <v-col cols="12">
                     <v-autocomplete
                       v-model="wishForm.event_id"
@@ -2000,20 +2031,6 @@
       </v-card>
     </v-dialog>
 
-    <v-dialog v-model="wishFeoPerItemDisableDialog" max-width="480" :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="pa-4 pb-2">Отключить разные ФЭО по позициям?</v-card-title>
-        <v-card-text class="pa-4">
-          У {{ wishFeoPerItemDisableCount }} {{ wishFeoPerItemDisableCount === 1 ? 'позиции' : 'позиций' }} указана своя категория ФЭО — при отключении режима она будет очищена.
-        </v-card-text>
-        <v-card-actions class="pa-4 pt-0">
-          <v-spacer />
-          <v-btn variant="text" @click="cancelWishFeoPerItemDisable">Отмена</v-btn>
-          <v-btn variant="flat" color="warning" @click="confirmWishFeoPerItemDisable">Отключить</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
     <!-- ── CONVERT DIALOG ── -->
     <v-dialog v-model="convertDialog" max-width="540" :fullscreen="mobile">
       <v-card>
@@ -2081,6 +2098,10 @@ import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import { formatMoney } from '@/utils/formatMoney'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
+// Task 2 (сессия 2026-08-17): переиспользуем существующий пикер контрагентов (уже
+// применяется в SubsidiesView/ContractsView; server-search по всей базе, RU ИНН выше) —
+// не плодить урезанную копию (правило проекта: один модуль везде).
+import ContractorPicker from '@/components/ContractorPicker.vue'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
 import { useFeoLeaves } from '@/composables/useFeoLeaves'
@@ -2189,6 +2210,12 @@ interface Wish {
   stopped_by_name?: string | null
   stopped_reason?: string | null
   stopped_partial?: boolean
+  // Task 2 (сессия 2026-08-17): контрагент заявки — необязателен. contractor_id — из
+  // справочника; contractor_name — ручной ввод, если контрагента в справочнике ещё нет;
+  // contractor_display_name — готовое имя для показа, считает backend (только чтение).
+  contractor_id?: number | null
+  contractor_name?: string | null
+  contractor_display_name?: string | null
 }
 
 // «От кого»: Фамилия И.О. вместо полного ФИО
@@ -2474,34 +2501,12 @@ const eventsForSubsidy = computed(() => {
 // wishFeoSelected — самый глубокий выбранный узел (лист или промежуточный при skipLast).
 const wishFeoSelected = ref<number | null>(null)
 const wishFeoSkipLast = ref(false)
-const wishFeoPerItem = ref(false)
-const wishFeoPerItemDisableDialog = ref(false)
-const wishFeoPerItemDisableCount = ref(0)
-const onWishFeoPerItemChange = (val: boolean | null) => {
-  if (val) return
-  // Ручное выключение — предупреждаем, если есть позиции с уже выбранной категорией
-  const count = wishForm.value.items.filter((i: any) => i.feo_category_id != null).length
-  if (count > 0) {
-    wishFeoPerItemDisableCount.value = count
-    wishFeoPerItemDisableDialog.value = true
-  }
-}
-const cancelWishFeoPerItemDisable = () => {
-  wishFeoPerItem.value = true
-  wishFeoPerItemDisableDialog.value = false
-}
-// Подтверждение «Отключить» — очищаем per-item ФЭО СРАЗУ (не только при сохранении),
-// иначе до следующего save() позиции продолжают нести свои feo_category_id/
-// feo_planned_item_id, и любая эвристика по ним (см. loadWish) рискует снова
-// включить режим сама собой.
-const confirmWishFeoPerItemDisable = () => {
-  for (const it of wishForm.value.items as any[]) {
-    it.feo_category_id = null
-    it.feo_planned_item_id = null
-    it.over_plan = false
-  }
-  wishFeoPerItemDisableDialog.value = false
-}
+// Владелец (сессия 2026-08-17): тумблер «Разные ФЭО позиции для каждого товара» убран —
+// построчный выбор категории/плановой позиции теперь ЕДИНСТВЕННЫЙ режим (см. шаблон:
+// PurchaseItemsEditor всегда получает feo-per-item=true). wishFeoSelected/wishFeoPlannedItemId
+// остаются, но теперь это только значение ПО УМОЛЧАНИЮ для позиций без своего значения —
+// см. fillEmptyItemsWithDefaultFeo/fillItemsWithDefaultPlannedItem в PurchaseItemsEditor.vue
+// и симметричный фолбэк в buildWishPayload ниже.
 
 // F-PLAN: привязка к конкретной ПЛАНОВОЙ ПОЗИЦИИ плана закупок (FeoPlannedItem) —
 // заявка расходует уже заложенный план, а не задваивает его. Блок FeoPlannedItemsSelect
@@ -2737,7 +2742,29 @@ const wishForm = ref({
   executor_id: null as number | null,
   execution_deadline: '' as string,
   vat_mode: 'uniform' as string,
+  // Task 2 (сессия 2026-08-17): контрагент заявки — оба поля необязательны.
+  // contractor_id — выбор из справочника; contractor_name — ручной ввод, если
+  // контрагента в справочнике ещё нет. contractor_display_name на форме не
+  // редактируется (готовое имя для показа считает backend).
+  contractor_id: null as number | null,
+  contractor_name: '' as string,
 })
+
+// Task 2 (сессия 2026-08-17): предзаполнение ContractorPicker при открытии карточки —
+// без него автокомплит не знает имя выбранного контрагента, пока не подгрузит его
+// поиском (по образцу editInitialContractor в SubsidiesView.vue).
+const wishContractorInitial = computed(() => {
+  const id = wishForm.value.contractor_id
+  if (!id) return null
+  const name = editingWish.value?.contractor_display_name || `Контрагент #${id}`
+  return { id, name }
+})
+// Выбор контрагента из справочника — ручное имя больше не нужно (иначе два
+// источника contractor_display_name на бэке разойдутся); очистка picker'а
+// (id → null) ручной ввод не трогает — пользователь мог начать с него.
+function onWishContractorSelect(c: { id: number; name: string } | null) {
+  if (c) wishForm.value.contractor_name = ''
+}
 
 // ФЭО-дерево субсидии (узлы + листья с бюджетами) — объявлено ПОСЛЕ wishForm (TDZ)
 const { feoLeaves: wishFeoLeaves, feoNodes: wishFeoNodes } = useFeoLeaves({
@@ -2872,7 +2899,7 @@ const wishFeoPlanConfirmedCandidate = ref<FeoMatchCandidate | null>(null)
 
 async function _runFeoPlanMatch() {
   const subsidyId = wishForm.value.subsidy_id
-  if (!subsidyId || wishFeoPerItem.value) { wishFeoPlanCandidates.value = []; return }
+  if (!subsidyId) { wishFeoPlanCandidates.value = []; return }
   const names = Array.from(new Set(
     wishForm.value.items.map((i: any) => (i.item_name || '').trim()).filter(Boolean)
   ))
@@ -2897,7 +2924,6 @@ watch(
   () => [
     wishForm.value.subsidy_id,
     wishFeoSelected.value,
-    wishFeoPerItem.value,
     wishForm.value.items.map((i: any) => i.item_name).join('|'),
   ] as const,
   () => {
@@ -2972,17 +2998,14 @@ const wishFeoStale = computed(() => {
 // Жёсткий гейт «без категории ФЭО заявку нельзя согласовать» (владелец, 2026-08-11):
 // зеркалит backend _ensure_feo_categories_assigned на фронте, чтобы блокировать
 // отправку ДО запроса, а не только показывать ошибку после отказа 409. Эффективная
-// категория позиции — её собственная (в режиме «разные ФЭО для каждого товара»),
-// иначе — категория заявки целиком (wishFeoSelected), см. payload в saveWish.
+// категория позиции — её собственная, а если её нет — категория заявки целиком
+// (wishFeoSelected) как значение по умолчанию, см. симметричный payload в buildWishPayload.
 const wishItemsMissingFeoCategory = computed(() => {
   const items = (wishForm.value.items as any[]).filter(
     (it) => (it.item_name || '').toString().trim() || Number(it.total_price) || Number(it.quantity)
   )
   if (!items.length) return [] as any[]
-  return items.filter((it) => {
-    const eff = wishFeoPerItem.value ? (it.feo_category_id ?? wishFeoSelected.value) : wishFeoSelected.value
-    return eff == null
-  })
+  return items.filter((it) => (it.feo_category_id ?? wishFeoSelected.value) == null)
 })
 const wishFeoCategoryMissing = computed(() => wishItemsMissingFeoCategory.value.length > 0)
 
@@ -3352,10 +3375,11 @@ function resetForm() {
     executor_id: null,
     execution_deadline: '',
     vat_mode: 'uniform',
+    contractor_id: null,
+    contractor_name: '',
   }
   wishFeoSelected.value = null
   wishFeoSkipLast.value = false
-  wishFeoPerItem.value = false
   wishFeoPlannedItemId.value = null
   wishDateMode.value = 'common'
   // Шаг 4 плана zany-fluttering-mountain.md — не тащить кандидатов/подтверждение
@@ -3395,6 +3419,8 @@ async function openEditDialog(wish: Wish) {
   wishForm.value.desired_date = wish.desired_date || ''
   wishForm.value.status = wish.status || 'draft'
   wishForm.value.vat_mode = (wish as any).vat_mode || 'uniform'
+  wishForm.value.contractor_id = (wish as any).contractor_id ?? null
+  wishForm.value.contractor_name = (wish as any).contractor_name || ''
   forceStatusValue.value = wish.status || 'draft'
 
   // B5 — Seed cascade from wish.feo_category_id (цепочку строит сам FeoCascadeSelect).
@@ -3482,36 +3508,33 @@ async function openEditDialog(wish: Wish) {
         _description: prod?.description || undefined,
       }
     }) as any
-    // Режим читаем из БД; фолбэк-эвристика — ТОЛЬКО для записей, созданных до появления
-    // колонки (feo_per_item === undefined/null). Если в БД явно сохранено false — это
-    // осознанный выбор владельца (выключил тумблер и сохранил), эвристика по позициям
-    // НЕ должна его перебивать (правило проекта: выбранное на предыдущем этапе не смеет
-    // меняться само). Запоминаем explicit-флаг отдельно для проверки ниже.
-    const wishFeoPerItemFromDb = (wish as any).feo_per_item
-    wishFeoPerItem.value = wishFeoPerItemFromDb ?? rawItems.some((i: any) => i.feo_category_id != null)
+    // Владелец (сессия 2026-08-17): тумблер «Разные ФЭО позиции для каждого товара» убран,
+    // построчная категория читается как есть — ничего гадать не нужно. Старые заявки,
+    // сохранённые в «общем» режиме (feo_per_item=false), имели пустой feo_category_id на
+    // всех позициях — заполняем его значением из шапки ЗДЕСЬ (а не полагаемся на watch в
+    // PurchaseItemsEditor.vue, у него нет immediate:true — при монтировании карточки
+    // defaultFeoCategoryId уже равен wishFeoSelected с самого начала, «изменения» не
+    // происходит, автозаполнение там не сработает), чтобы позиция сразу показывала
+    // категорию, а не пустой обязательный выбор. Правило проекта соблюдено: трогаем
+    // ТОЛЬКО пустые позиции, построчный выбор никогда не перезаписывается.
+    if (wishFeoSelected.value != null) {
+      for (const it of wishForm.value.items as any[]) {
+        if (it.feo_category_id == null) it.feo_category_id = wishFeoSelected.value
+      }
+    }
 
     // F-PLAN: восстановить привязку к плановым позициям плана закупок из фактических
     // значений позиций (отдельной колонки wishes.feo_planned_item_id нет и не будет).
-    // БАГ 3 (сессия 2026-08-05): «вне плана» (over_plan) больше не отражается в шапке —
-    // псевдо-вариант убран из UI; поле в БД у старых позиций может остаться true, но
-    // header-состояние теперь целиком определяется feo_planned_item_id.
+    // Если у ВСЕХ позиций одна и та же плановая позиция — отражаем её в шапке (удобно
+    // менять всем сразу); иначе шапка остаётся пустой и служит только дефолтом для
+    // позиций без своей привязки (см. buildWishPayload).
     {
       const items = wishForm.value.items as any[]
       const plannedIds = items.map(it => it.feo_planned_item_id)
       const nonNullPlannedIds = plannedIds.filter(id => id != null)
-      if (nonNullPlannedIds.length === 0) {
-        wishFeoPlannedItemId.value = null
-      } else if (nonNullPlannedIds.length === plannedIds.length && new Set(nonNullPlannedIds).size === 1) {
-        // Все позиции привязаны к ОДНОЙ и той же плановой позиции — единое значение в шапке
+      if (nonNullPlannedIds.length > 0 && nonNullPlannedIds.length === plannedIds.length && new Set(nonNullPlannedIds).size === 1) {
         wishFeoPlannedItemId.value = nonNullPlannedIds[0]
       } else {
-        // Привязки разные у разных позиций ИЛИ часть пустая — единый выбор в шапке не
-        // отразит это корректно, переключаем в режим «по позициям» (как per-item ФЭО).
-        // НО: если владелец явно сохранил feo_per_item=false, эта эвристика его не трогает —
-        // иначе выключенный вручную режим включался бы обратно сам собой при переоткрытии.
-        if (wishFeoPerItemFromDb !== false) {
-          wishFeoPerItem.value = true
-        }
         wishFeoPlannedItemId.value = null
       }
     }
@@ -3851,8 +3874,24 @@ function buildWishPayload() {
   return {
     ...wishForm.value,
     feo_category_id: feo,
-    feo_per_item: wishFeoPerItem.value,
+    // Владелец (сессия 2026-08-17): тумблер «Разные ФЭО позиции для каждого товара» убран —
+    // построчный режим стал единственным. feo_per_item — отдельная колонка бэкенда (её
+    // правит параллельная сессия), форма больше ей не управляет; шлём true, потому что
+    // построчный выбор (см. PurchaseItemsEditor feo-per-item=true в шаблоне) — это и есть
+    // новое единое поведение.
+    feo_per_item: true,
     title,
+    // Контрагент — необязательное поле, снятие должно долетать до бэкенда как явный
+    // null (backend различает «null» = очистить от «ключ отсутствует» = не трогать,
+    // см. update_wish в backend/app/routers/wishes.py). wishForm хранит contractor_id
+    // как null уже по умолчанию, но contractor_name — как '' (пустая строка, не null:
+    // так исторически инициализировано поле формы), и ContractorPicker/ручная очистка
+    // текстового поля не гарантированно приходят null-ом. Нормализуем оба явным null
+    // при пустом значении здесь, в одном месте построения payload — иначе «снятие»
+    // контрагента через очистку текстового поля тихо сохранило бы пустую строку
+    // вместо NULL в БД.
+    contractor_id: wishForm.value.contractor_id || null,
+    contractor_name: (wishForm.value.contractor_name || '').toString().trim() || null,
     items: wishForm.value.items
       // Пустые строки-заготовки (фронт создаёт их заранее для будущего ввода) не отправляем —
       // иначе они оседают в БД как «1 шт · 0 ₽» и «удаление» позиции визуально не работает
@@ -3861,20 +3900,18 @@ function buildWishPayload() {
       .filter((it: any) => (it.item_name || '').toString().trim() || Number(it.total_price) || Number(it.quantity))
       .map(({ _selectedProduct, _photo_url, _description, _description_44fz, ...rest }) => ({
         ...rest,
-        // B9: per-item ФЭО сохраняем только в режиме «Разные ФЭО позиции»
-        feo_category_id: wishFeoPerItem.value ? ((rest as any).feo_category_id ?? null) : null,
+        // Владелец (сессия 2026-08-17): построчный выбор — источник истины; шапка
+        // (wishFeoSelected) — только значение по умолчанию для позиций БЕЗ своей категории.
+        // Симметрично уже существующей логике feo_planned_item_id ниже (правило проекта:
+        // выбранное на предыдущем этапе не меняется само — построчный выбор никогда не
+        // затирается шапкой, только дополняет пустые строки).
+        feo_category_id: (rest as any).feo_category_id ?? feo ?? null,
         // F-PLAN: колонки wishes.feo_planned_item_id нет — выбор из шапки проставляется
-        // каждой позиции; в per-item режиме каждая строка несёт свой выбор.
-        // Владелец (сессия 2026-08-17, «7 позиций — план создался только на 1»): диалог
-        // «Создать в плане закупок» умеет создавать СВОЮ плановую позицию под каждый
-        // товар даже вне per-item режима (общая категория на заявку) — такая позиция
-        // уже несёт СВОЙ feo_planned_item_id (см. onWishFeoBulkItemsCreated) и не имеет
-        // права быть затёртой шапочным значением (правило проекта: выбранное на
-        // предыдущем этапе не меняется само) — только позиции БЕЗ собственной привязки
-        // продолжают наследовать её из шапки, как раньше.
-        feo_planned_item_id: wishFeoPerItem.value
-          ? ((rest as any).feo_planned_item_id ?? null)
-          : ((rest as any).feo_planned_item_id ?? wishFeoPlannedItemId.value ?? null),
+        // ТОЛЬКО позициям без собственной привязки. Диалог «Создать в плане закупок»
+        // умеет создавать СВОЮ плановую позицию под каждый товар — такая позиция уже
+        // несёт СВОЙ feo_planned_item_id (см. onWishFeoBulkItemsCreated) и не имеет права
+        // быть затёртой шапочным значением.
+        feo_planned_item_id: (rest as any).feo_planned_item_id ?? wishFeoPlannedItemId.value ?? null,
         // БАГ 3 (сессия 2026-08-05): UI больше не выставляет over_plan (псевдо-вариант
         // «Вне плана» убран) — колонка в БД и расчёты на бэкенде не тронуты, просто
         // отправляем то, что уже было на позиции (false для новых/непривязанных).
@@ -3907,8 +3944,11 @@ async function saveWish(andSubmit = false): Promise<boolean> {
       highlightMissingFeoCategory()
       return false
     }
-    // ФЭО выбрано не до конечной категории — требуем либо лист, либо явный skipLast
-    if (wishFeoSelected.value && !wishFeoSkipLast.value && !wishFeoPerItem.value) {
+    // ФЭО в шапке выбрано не до конечной категории — требуем либо лист, либо явный
+    // skipLast. Проверяем всегда (не только когда шапка используется как основная
+    // категория) — раз шапка теперь ещё и дефолт для пустых строк, промежуточный
+    // узел без skipLast мог бы незаметно расползтись по позициям без своей категории.
+    if (wishFeoSelected.value && !wishFeoSkipLast.value) {
       const node = wishFeoNodes.value.find(n => n.id === wishFeoSelected.value)
       if (node && !node.is_leaf) {
         showSnack('Выберите конечную категорию ФЭО или включите «Не указывать последний уровень ФЭО»', 'warning')
@@ -3917,16 +3957,11 @@ async function saveWish(andSubmit = false): Promise<boolean> {
         return false
       }
     }
-    // F-PLAN: в ветке выбранной категории ФЭО есть плановые позиции плана закупок, но не
-    // выбрана ни одна. БАГ 3 (сессия 2026-08-05): псевдо-вариант «Вне плана» убран —
-    // непривязанная позиция просто увеличит плановую сумму категории, как раньше делало
-    // «вне плана», поэтому это больше НЕ блокирует отправку — только мягкое предупреждение.
-    if (wishFeoBranchHasPlannedItems.value && !wishFeoPerItem.value && !wishFeoPlannedItemId.value) {
-      showSnack('В этой категории ФЭО есть плановые позиции плана закупок. Выберите одну из них или создайте новую кнопкой «Создать в плане закупок» — без выбора позиция увеличит плановую сумму категории.', 'warning')
-    }
-    // F-PLAN: режим «разные ФЭО для каждого товара» — плановая позиция выбирается
-    // в каждой строке отдельно. Аналогично выше — мягкое предупреждение, не блокирует.
-    if (wishFeoBranchHasPlannedItems.value && wishFeoPerItem.value) {
+    // F-PLAN: в ветке выбранной категории ФЭО есть плановые позиции плана закупок, но
+    // не у всех позиций заявки выбрана своя. БАГ 3 (сессия 2026-08-05): псевдо-вариант
+    // «Вне плана» убран — непривязанная позиция просто увеличит плановую сумму
+    // категории, поэтому это НЕ блокирует отправку — только мягкое предупреждение.
+    if (wishFeoBranchHasPlannedItems.value) {
       const unfilledCount = wishForm.value.items.filter((it: any) => it.feo_planned_item_id == null).length
       if (unfilledCount > 0) {
         showSnack(`У ${unfilledCount} ${unfilledCount === 1 ? 'позиции' : 'позиций'} не выбрана плановая позиция плана закупок. Выберите её или создайте новую кнопкой «Создать в плане закупок» — без выбора позиция увеличит плановую сумму категории.`, 'warning')

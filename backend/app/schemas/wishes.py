@@ -125,6 +125,12 @@ class WishCreate(BaseModel):
     assigned_to: Optional[int] = None
     feo_per_item: bool = False  # режим «своя категория ФЭО для каждого товара»
     vat_mode: Optional[str] = None  # 'uniform' | 'per_item'
+    # Контрагент — необязательное поле (владелец, 2026-08-17): либо ссылка на
+    # справочник (contractor_id), либо просто имя от руки, если контрагента
+    # там ещё нет (contractor_name). Ни то, ни другое не обязательно и не
+    # блокирует сохранение/согласование/конвертацию заявки.
+    contractor_id: Optional[int] = None
+    contractor_name: Optional[str] = None
     items: Optional[list] = None  # list of dicts with item_name, item_type, quantity, unit, unit_price, total_price, country_origin
 
     @field_validator('title')
@@ -158,6 +164,19 @@ class WishUpdate(BaseModel):
     # значение при каждом частичном PUT, не содержащем это поле.
     feo_per_item: Optional[bool] = None
     vat_mode: Optional[str] = None  # 'uniform' | 'per_item'
+    # Контрагент — см. WishCreate.contractor_id/contractor_name. Optional[...] = None,
+    # как и у остальных полей формы заявки (feo_category_id/subsidy_id выше) —
+    # общий model_dump(exclude_none=True) в update_wish по-прежнему трактует
+    # отсутствующий/null ключ как «не менять». НО контрагент — необязательное
+    # поле, которое обязано уметь и ОЧИЩАТЬСЯ явным null (иначе поставить его
+    # можно, а снять — нельзя ничем). update_wish обрабатывает это точечно,
+    # ПОСЛЕ общего exclude_none-дампа: смотрит body.model_fields_set (Pydantic v2
+    # помечает поле как «set», если ключ реально присутствовал в теле запроса,
+    # даже если значение null) — так отличает «прислали null» (очистить) от
+    # «ключ не прислали вовсе» (не трогать, например автосохранение другого
+    # поля). См. комментарий в app/routers/wishes.py::update_wish.
+    contractor_id: Optional[int] = None
+    contractor_name: Optional[str] = None
     items: Optional[list] = None  # list of dicts with item_name, item_type, quantity, unit, unit_price, total_price, country_origin
 
     @field_validator('title')
@@ -227,6 +246,14 @@ class WishOut(BaseModel):
     feo_category_id: Optional[int] = None
     feo_per_item: bool = False  # режим «своя категория ФЭО для каждого товара»
     vat_mode: Optional[str] = None  # 'uniform' | 'per_item'
+    # Контрагент заявки — необязательный (владелец, 2026-08-17). contractor_id —
+    # ссылка на справочник, contractor_name — свободный ввод, когда контрагента
+    # там ещё нет. contractor_display_name — готовое имя для показа: из
+    # справочника, если contractor_id задан, иначе contractor_name — фронту не
+    # нужно резолвить самому (см. _enrich в app.routers.wishes).
+    contractor_id: Optional[int] = None
+    contractor_name: Optional[str] = None
+    contractor_display_name: Optional[str] = None
     event_id: Optional[int] = None
     event_name: Optional[str] = None
     assigned_to: Optional[int] = None
@@ -256,6 +283,12 @@ class WishOut(BaseModel):
     # где план после создания закупок превышает финансирование (см.
     # _collect_excess_warnings в app.routers.wishes). Пустой список — превышения нет.
     excess_warnings: List[dict] = []
+    # Плановые позиции следуют за сменой категории (владелец, 2026-08-17):
+    # непусто, когда PUT сменил категорию ФЭО у позиции заявки, чья плановая
+    # позиция была общей с другими закупками/заявками — переехать она не
+    # смогла (испортила бы план для остальных), привязка снята явно, а не
+    # молча. См. app/services/plan_autoassign.py::move_or_detach_planned_item.
+    plan_transfer_warnings: List[str] = []
     # 'advance_report' = авто-заявка из авансового отчёта; NULL = обычная
     source: Optional[str] = None
     # W1: True если привязанная закупка перешла в Договор+ (редактирование запрещено)

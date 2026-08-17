@@ -29,6 +29,14 @@ class Wish(Base):
 
     subsidy_id = Column(Integer, ForeignKey("subsidies.id", ondelete="SET NULL"), nullable=True)
     feo_category_id = Column(Integer, ForeignKey("feo_categories.id", ondelete="SET NULL"), nullable=True)
+    # Контрагент заявки — необязательный (владелец, 2026-08-17): «должна быть
+    # возможность указывать контрагента и его имя, но это по желанию».
+    # contractor_id — ссылка на справочник (mirrors PurchaseItem.contractor_id);
+    # contractor_name — просто имя от руки, когда контрагента в справочнике ещё
+    # нет (mirrors PurchaseItem.contractor_name). Оба поля НЕ валидируются и не
+    # блокируют сохранение/согласование/конвертацию.
+    contractor_id = Column(Integer, ForeignKey("contractors.id", ondelete="SET NULL"), nullable=True)
+    contractor_name = Column(String(500), nullable=True)
     # Режим «своя категория ФЭО для каждого товара» — раньше вычислялся эвристикой
     # на фронте (отдельно и по-разному для заявки и закупки) и слетал при конвертации.
     feo_per_item = Column(Boolean, nullable=False, default=False, server_default="false")
@@ -58,6 +66,7 @@ class Wish(Base):
     executor = relationship("User", foreign_keys=[executor_id], lazy="selectin")
     stopped_by_user = relationship("User", foreign_keys=[stopped_by], lazy="selectin")
     purchase = relationship("Purchase", foreign_keys=[purchase_id])
+    contractor = relationship("Contractor", foreign_keys=[contractor_id], lazy="selectin")
     subsidy = relationship("Subsidy", lazy="selectin")
     event = relationship("Event", foreign_keys=[event_id], lazy="selectin")
     items = relationship("WishItem", back_populates="wish", cascade="all, delete-orphan", lazy="selectin")

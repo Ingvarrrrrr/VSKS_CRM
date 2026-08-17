@@ -16,7 +16,7 @@ wishes.py — путь заявки не должен измениться ни 
 """
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, func, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -201,3 +201,176 @@ async def backfill_item_type_from_plan(items, db: AsyncSession) -> None:
         fpi_item_type = _cache[fpi_id]
         if fpi_item_type:
             it.item_type = fpi_item_type
+
+
+# ---------------------------------------------------------------------------
+# «Плановые позиции следуют за сменой категории» (владелец, 2026-08-17):
+# если позиция заявки/закупки переезжает в другую категорию ФЭО, а у неё есть
+# СОБСТВЕННАЯ плановая позиция (FeoPlannedItem), созданная из неё же и ни на
+# кого больше не завязанная, — плановая позиция обязана переехать вместе с
+# позицией (та же строка, тот же id, история/notes/sort_order не теряются), а
+# не остаться сиротой в старой категории, пока auto_assign_planned_items выше
+# заводит/находит новую по имени в категории-получателе. Если же на плановую
+# позицию завязано что-то ещё (общий план на несколько закупок/заявку и её
+# уже сконвертированную закупку одновременно) — переезд запрещён: трогаем
+# только привязку переезжающей позиции, отдаём предупреждение вызывающему.
+# ---------------------------------------------------------------------------
+
+async def move_planned_item_to_category(db: AsyncSession, fpi, new_category_id: int) -> None:
+    """Единая логика «переезда» FeoPlannedItem в другую категорию ФЭО вместе со
+    ВСЕМИ позициями закупок/заявок, которые на неё ссылаются (feo_planned_item_id).
+
+    Вынесено из app.routers.feo_planned_items.update_planned_item (там раньше
+    жила единственная копия этой логики — ручной перенос человеком через
+    PUT /feo-planned-items/{id}), чтобы её же мог переиспользовать автоматический
+    перенос вслед за позицией заявки/закупки (см. move_or_detach_planned_item
+    ниже) — без второй копии того же SQL.
+
+    Каскад теперь покрывает и PurchaseItem, и WishItem (раньше в
+    update_planned_item каскадился только PurchaseItem — если на ту же плановую
+    позицию была ещё жива ссылка WishItem несконвертированной заявки, она
+    расходилась с новой категорией; тот же класс бага, что и с PurchaseItem).
+    Commit — на вызывающем.
+    """
+    from app.models.purchase_item import PurchaseItem
+    from app.models.wish_item import WishItem
+
+    fpi.feo_category_id = new_category_id
+    await db.execute(
+        sql_update(PurchaseItem)
+        .where(PurchaseItem.feo_planned_item_id == fpi.id)
+        .values(feo_category_id=new_category_id)
+    )
+    await db.execute(
+        sql_update(WishItem)
+        .where(WishItem.feo_planned_item_id == fpi.id)
+        .values(feo_category_id=new_category_id)
+    )
+
+
+async def _fpi_reference_keys(db: AsyncSession, fpi_id: int) -> set:
+    """Множество «логических владельцев» плановой позиции fpi_id.
+
+    Заявка, сконвертированная в закупку, оставляет ДВЕ строки с одним и тем же
+    feo_planned_item_id (WishItem — заморожена, PurchaseItem.wish_item_id её
+    зеркалит, см. app/routers/wishes.py — конвертация копирует
+    feo_planned_item_id в PurchaseItem). Это ОДНА логическая позиция, а не два
+    независимых потребителя плана — иначе перенос никогда не считался бы
+    «эксклюзивным» ни для одной сконвертированной заявки. Ключ:
+      - PurchaseItem с wish_item_id → ('wish_item', wish_item_id) — та же
+        позиция, что и её исходная WishItem;
+      - PurchaseItem без wish_item_id (заведена прямо в закупке) →
+        ('purchase_item', id);
+      - WishItem → ('wish_item', id).
+    """
+    from app.models.purchase_item import PurchaseItem
+    from app.models.wish_item import WishItem
+
+    keys: set = set()
+    pi_rows = (await db.execute(
+        select(PurchaseItem.id, PurchaseItem.wish_item_id)
+        .where(PurchaseItem.feo_planned_item_id == fpi_id)
+    )).all()
+    for pid, wiid in pi_rows:
+        keys.add(("wish_item", wiid) if wiid is not None else ("purchase_item", pid))
+    wi_rows = (await db.execute(
+        select(WishItem.id).where(WishItem.feo_planned_item_id == fpi_id)
+    )).all()
+    for (wid,) in wi_rows:
+        keys.add(("wish_item", wid))
+    return keys
+
+
+async def deactivate_if_orphaned(db: AsyncSession, fpi) -> None:
+    """Правило уборки: плановая позиция, заведённая АВТОМАТИЧЕСКИ
+    (auto_created=True) из заявки/закупки и оставшаяся без единой привязки
+    (ни одна PurchaseItem/WishItem больше на неё не ссылается — значит и
+    расход по ней нулевой), деактивируется (is_active=False), а не удаляется
+    физически — история (created_at/notes/сумма) остаётся в БД для аудита, но
+    позиция пропадает из всех расчётов плана: compute_feo_plan_tree/
+    plan_consumption_by_category/plan-positions/_load_plan_catalog — везде
+    фильтр FeoPlannedItem.is_active == True (см. app/services/feo_plan.py).
+
+    Плановые позиции, заведённые ЧЕЛОВЕКОМ (auto_created=False), НИКОГДА не
+    трогаются здесь, даже без привязок и расхода — их деактивирует/удаляет
+    только явное действие человека (DELETE /feo-planned-items/{id} или
+    снятие галочки «активна» через PUT).
+    """
+    if fpi is None or not fpi.is_active or not fpi.auto_created:
+        return
+    keys = await _fpi_reference_keys(db, fpi.id)
+    if keys:
+        return
+    fpi.is_active = False
+
+
+async def move_or_detach_planned_item(db: AsyncSession, item, new_category_id: int) -> Optional[str]:
+    """Позиция заявки/закупки (`item` — WishItem или PurchaseItem с уже
+    актуальным `.feo_category_id`, но ещё старым `.feo_planned_item_id`)
+    переезжает в другую категорию ФЭО. Решает судьбу её привязки к плановой
+    позиции (FeoPlannedItem):
+
+    - если у плановой позиции нет других владельцев (см. _fpi_reference_keys) —
+      плановая позиция физически переезжает в новую категорию ВМЕСТЕ с item
+      (move_planned_item_to_category), привязка item.feo_planned_item_id не
+      меняется — возвращает None (без предупреждения, переезд тихий и полный);
+    - если у плановой позиции есть другие владельцы (общий план на несколько
+      закупок/заявку и её уже сконвертированную закупку одновременно) —
+      трогать её нельзя (испортит план для остальных владельцев): у ПЕРЕЕЗЖАЮЩЕЙ
+      позиции привязка снимается (item.feo_planned_item_id = None, over_plan
+      сбрасывается — так же, как раньше делал безусловный сброс в
+      purchases.py::patch_purchase_item), а плановая позиция проверяется на
+      «уборку» (см. deactivate_if_orphaned — на практике здесь она НЕ
+      осиротеет, т.к. по условию ветки у неё есть другие владельцы; проверка
+      оставлена как страховка) и возвращается ЯВНОЕ текстовое предупреждение —
+      вызывающий обязан вернуть его в ответе API, не проглатывать молча.
+
+    Само item.feo_category_id уже должно быть проставлено ДО вызова (вызывающий
+    применяет новую категорию сам, эта функция её не трогает) — new_category_id
+    передаётся отдельно, т.к. может понадобиться раньше присвоения (см.
+    purchases.py::patch_purchase_item, где категория применяется в начале
+    функции). Commit — на вызывающем.
+    """
+    from app.models.feo_planned_item import FeoPlannedItem
+    from app.models.feo_category import FeoCategory
+    from app.models.purchase_item import PurchaseItem
+    from app.models.wish_item import WishItem
+
+    fpi_id = getattr(item, "feo_planned_item_id", None)
+    if not fpi_id:
+        return None
+    fpi = (await db.execute(
+        select(FeoPlannedItem).where(FeoPlannedItem.id == fpi_id)
+    )).scalar_one_or_none()
+    if fpi is None:
+        # Привязка на несуществующую строку (данные разъехались раньше) — просто чистим.
+        item.feo_planned_item_id = None
+        return None
+    if fpi.feo_category_id == new_category_id:
+        return None  # уже там — нечего переносить
+
+    if isinstance(item, PurchaseItem):
+        self_key = ("wish_item", item.wish_item_id) if item.wish_item_id is not None else ("purchase_item", item.id)
+    elif isinstance(item, WishItem):
+        self_key = ("wish_item", item.id)
+    else:
+        self_key = None
+
+    all_keys = await _fpi_reference_keys(db, fpi_id)
+    other_keys = all_keys - ({self_key} if self_key is not None else set())
+
+    if not other_keys:
+        await move_planned_item_to_category(db, fpi, new_category_id)
+        return None
+
+    old_cat_name = (await db.execute(
+        select(FeoCategory.name).where(FeoCategory.id == fpi.feo_category_id)
+    )).scalar_one_or_none()
+    item.feo_planned_item_id = None
+    if hasattr(item, "over_plan"):
+        item.over_plan = False
+    await deactivate_if_orphaned(db, fpi)  # страховка — см. докстринг
+    return (
+        f"Плановая позиция «{fpi.name}» используется ещё и другими закупками/заявками — "
+        f"привязка снята, сама плановая позиция осталась в категории «{old_cat_name or '—'}»."
+    )

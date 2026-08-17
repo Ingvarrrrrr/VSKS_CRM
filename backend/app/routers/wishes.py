@@ -34,6 +34,7 @@ from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_ove
 from app.services.plan_autoassign import (
     auto_assign_planned_items as _auto_assign_planned_items,
     backfill_item_type_from_plan as _backfill_item_type_from_plan,
+    move_or_detach_planned_item as _move_or_detach_planned_item,
 )
 from decimal import Decimal
 
@@ -70,6 +71,12 @@ def _enrich(w: Wish) -> WishOut:
         d.executor_name = w.executor.full_name or w.executor.username
     if getattr(w, 'stopped_by_user', None):
         d.stopped_by_name = w.stopped_by_user.full_name or w.stopped_by_user.username
+    # Контрагент — из справочника, если contractor_id задан, иначе свободный
+    # ввод contractor_name (см. WishOut.contractor_display_name).
+    if getattr(w, 'contractor', None):
+        d.contractor_display_name = w.contractor.name
+    elif w.contractor_name:
+        d.contractor_display_name = w.contractor_name
     return d
 
 
@@ -86,6 +93,7 @@ async def _load_wish(wish_id: int, db: AsyncSession) -> Wish:
             selectinload(Wish.executor),
             selectinload(Wish.items),
             selectinload(Wish.stopped_by_user),
+            selectinload(Wish.contractor),
         )
         .where(Wish.id == wish_id)
     )
@@ -922,6 +930,17 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
                 "name": _wi.item_name, "amount": float(_wi.total_price or 0),
             })
 
+    # Контрагент заявки (владелец, 2026-08-17) — резолвим один раз на всю
+    # конвертацию (не per-группу), чтобы название контрагента попало и в
+    # PurchaseItem.contractor_name каждой позиции (mirrors purchases.py PUT,
+    # см. её докстринг «Phase 26-Z» — тот же паттерн проставления контрагента
+    # позициям без своего). Только заполняем — сами позиции только что созданы,
+    # перетирать нечего.
+    _wish_contractor_obj = None
+    if getattr(wish, 'contractor_id', None):
+        from app.models.contractor import Contractor as _Contractor
+        _wish_contractor_obj = await db.get(_Contractor, wish.contractor_id)
+
     created_purchase_ids: list[int] = []
     for column_key, items_in_col in groups.items():
         total_nmck = sum(float(i.total_price or 0) for i in items_in_col)
@@ -963,6 +982,10 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
             payment_basis_type=_payment_basis_type,
             feo_per_item=bool(getattr(wish, 'feo_per_item', False)),
             vat_mode=(getattr(wish, 'vat_mode', None) or 'uniform'),
+            # Контрагент заявки (владелец, 2026-08-17) — переезжает в закупку,
+            # если указан. Purchase свежесозданный (contractor_id ещё пуст) —
+            # «не перетирать уже заданное» тут выполняется автоматически.
+            contractor_id=getattr(wish, 'contractor_id', None),
         )
         db.add(p)
         await db.flush()  # get p.id
@@ -992,6 +1015,15 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
                 needed_date=_eff_date(wish, wi),  # W2: наследование эффективной даты
                 wish_item_id=wi.id,  # W1: hard link to source WishItem
                 vat_rate=getattr(wi, 'vat_rate', None),
+                # Контрагент заявки — на каждую позицию (см. резолв _wish_contractor_obj
+                # выше). Если контрагента в справочнике ещё нет — свободный ввод
+                # contractor_name (второе поле у Wish, ровно для этого случая).
+                contractor_id=(_wish_contractor_obj.id if _wish_contractor_obj else None),
+                contractor_inn=(_wish_contractor_obj.inn if _wish_contractor_obj else None),
+                contractor_name=(
+                    _wish_contractor_obj.name if _wish_contractor_obj
+                    else getattr(wish, 'contractor_name', None)
+                ),
             )
             db.add(pi)
         await db.flush()
@@ -1071,6 +1103,7 @@ async def list_wishes(
         selectinload(Wish.executor),
         selectinload(Wish.items),
         selectinload(Wish.stopped_by_user),
+        selectinload(Wish.contractor),
     )
     if vis is not None:
         # Two-level gate: rows WITH subsidy → gate by vis; rows WITHOUT subsidy → org gate
@@ -1525,6 +1558,8 @@ async def create_wish(
         created_by=current_user.id,
         feo_per_item=body.feo_per_item,
         vat_mode=body.vat_mode or 'uniform',
+        contractor_id=body.contractor_id,
+        contractor_name=body.contractor_name,
     )
     db.add(wish)
     await db.flush()
@@ -1646,6 +1681,28 @@ async def update_wish(
     for field, value in update_data.items():
         setattr(wish, field, value)
 
+    # Контрагент — необязательное поле (владелец, 2026-08-17), а «необязательное»
+    # значит, что его можно и СНЯТЬ, не только поставить. Общий model_dump(exclude_none=True)
+    # выше НЕ трогаем скопом: на нём годами держится поведение остальных Optional-полей
+    # формы заявки («ключ отсутствует/null» = «не менять», привычно для частичных PUT —
+    # например автосохранение одного поля не должно стирать все остальные) — массовая
+    # замена на exclude_unset рисковала бы молча обнулить что-то, что никто не просил
+    # чистить. Поэтому точечно, только для contractor_id/contractor_name: используем
+    # body.model_fields_set — Pydantic v2 кладёт туда имя поля, если СООТВЕТСТВУЮЩИЙ КЛЮЧ
+    # реально присутствовал в JSON тела запроса (даже если значение — null), и не кладёт,
+    # если ключ отсутствовал вовсе. Так «прислали null» (пользователь снял контрагента)
+    # отличается от «ключ не прислали» (например, автосохранение другого поля заявки —
+    # значение контрагента трогать не должно).
+    if 'contractor_id' in body.model_fields_set:
+        wish.contractor_id = body.contractor_id
+    if 'contractor_name' in body.model_fields_set:
+        wish.contractor_name = body.contractor_name
+
+    # Плановые позиции следуют за сменой категории (владелец, 2026-08-17):
+    # предупреждения, когда привязку пришлось снять вместо переезда (см. ветку
+    # non-draft ниже) — возвращаются в ответе, не проглатываются молча.
+    _plan_transfer_warnings: list[str] = []
+
     if body.items is not None:
         if old_status == "draft":
             # Draft: delete+recreate (original behaviour)
@@ -1698,10 +1755,38 @@ async def update_wish(
                     wi.total_price = item_data['total_price']
                 elif 'unit_price' in item_data or 'quantity' in item_data:
                     wi.total_price = (wi.unit_price or 0) * (wi.quantity or 0)
+                _wi_cat_changing = (
+                    'feo_category_id' in item_data
+                    and item_data['feo_category_id'] != wi.feo_category_id
+                )
                 if 'feo_category_id' in item_data:
                     wi.feo_category_id = item_data['feo_category_id']
                 if 'feo_planned_item_id' in item_data:
+                    # Явный выбор плановой позиции с фронта (в т.ч. её очистка) —
+                    # доверяем как есть, автоперенос ниже не запускаем.
                     wi.feo_planned_item_id = item_data['feo_planned_item_id']
+                elif _wi_cat_changing and wi.feo_planned_item_id is not None:
+                    # Плановые позиции следуют за сменой категории (владелец,
+                    # 2026-08-17): payload сменил feo_category_id позиции, но не
+                    # прислал новый feo_planned_item_id явно — старая привязка
+                    # осталась указывать на прежнюю категорию. Если позиция —
+                    # единственный владелец своей плановой строки, строка
+                    # переезжает вместе с ней; если план общий с другими
+                    # закупками/заявками — привязка снимается и предупреждение
+                    # копится в _plan_transfer_warnings (возвращается в ответе).
+                    if wi.feo_category_id is not None:
+                        _w = await _move_or_detach_planned_item(db, wi, wi.feo_category_id)
+                        if _w:
+                            _plan_transfer_warnings.append(_w)
+                    else:
+                        # Категория очищена целиком — плановой позиции
+                        # переезжать некуда, привязка просто снимается.
+                        from app.models.feo_planned_item import FeoPlannedItem as _FPI2
+                        from app.services.plan_autoassign import deactivate_if_orphaned as _deactivate_if_orphaned
+                        _old_fpi2 = await db.get(_FPI2, wi.feo_planned_item_id)
+                        wi.feo_planned_item_id = None
+                        wi.over_plan = False
+                        await _deactivate_if_orphaned(db, _old_fpi2)
                 if 'over_plan' in item_data:
                     wi.over_plan = item_data['over_plan']
                 if 'needed_date' in item_data:
@@ -1851,7 +1936,9 @@ async def update_wish(
         _log.getLogger(__name__).warning("entity_change record failed for wish: %s", _exc)
 
     wish = await _load_wish(wish_id, db)
-    return _enrich(wish)
+    out = _enrich(wish)
+    out.plan_transfer_warnings = _plan_transfer_warnings
+    return out
 
 
 @router.post("/{wish_id}/submit", response_model=WishOut)
@@ -2186,6 +2273,11 @@ async def convert_wish(
         for ep in existing:
             if ep.status == "wishes":
                 ep.status = "plan_schedule"
+            # Контрагент заявки (владелец, 2026-08-17) — заполняем ТОЛЬКО пустое
+            # поле закупки, не перетираем уже заданное (могло быть проставлено
+            # вручную прямо в закупке).
+            if getattr(wish, 'contractor_id', None) and not ep.contractor_id:
+                ep.contractor_id = wish.contractor_id
         wish.status = "converted"
         wish.approved_by = wish.approved_by or current_user.id
         wish.purchase_id = wish.purchase_id or existing[0].id
@@ -2289,9 +2381,21 @@ async def convert_wish(
         payment_basis_type=_conv_payment_basis_type,
         feo_per_item=bool(getattr(wish, 'feo_per_item', False)),
         vat_mode=(getattr(wish, 'vat_mode', None) or 'uniform'),
+        # Контрагент заявки (владелец, 2026-08-17) — переезжает в закупку, если
+        # указан. Purchase свежесозданный, поэтому «не перетирать уже заданное»
+        # выполняется автоматически.
+        contractor_id=getattr(wish, 'contractor_id', None),
     )
     db.add(p)
     await db.flush()  # get p.id
+
+    # Контрагент заявки — на каждую позицию (см. аналогичный резолв в
+    # _distribute_wish_to_purchases выше). Если контрагента в справочнике ещё
+    # нет — свободный ввод contractor_name.
+    _conv_contractor_obj = None
+    if getattr(wish, 'contractor_id', None):
+        from app.models.contractor import Contractor as _ConvContractor
+        _conv_contractor_obj = await db.get(_ConvContractor, wish.contractor_id)
 
     # B4/B9/B10: copy all WishItems to PurchaseItems
     for wi in items_full:
@@ -2311,6 +2415,12 @@ async def convert_wish(
             needed_date=_eff_date(wish, wi),  # W2: наследование эффективной даты
             wish_item_id=wi.id,  # W1: hard link to source WishItem
             vat_rate=getattr(wi, 'vat_rate', None),
+            contractor_id=(_conv_contractor_obj.id if _conv_contractor_obj else None),
+            contractor_inn=(_conv_contractor_obj.inn if _conv_contractor_obj else None),
+            contractor_name=(
+                _conv_contractor_obj.name if _conv_contractor_obj
+                else getattr(wish, 'contractor_name', None)
+            ),
         )
         db.add(pi)
     await db.flush()

@@ -26,7 +26,7 @@ from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_ove
 # автозаведения плановой позиции, что и в wishes.py, нужна и здесь — для
 # закупок, созданных/меняемых в обход заявки (см. вызовы ниже в update_purchase
 # и patch_purchase_item). См. app/services/plan_autoassign.py.
-from app.services.plan_autoassign import auto_assign_planned_items
+from app.services.plan_autoassign import auto_assign_planned_items, move_or_detach_planned_item, deactivate_if_orphaned
 from app.product_matcher import find_matching_product
 from typing import List, Optional
 from pydantic import BaseModel
@@ -2156,12 +2156,29 @@ async def patch_purchase_item(
         wi = await db.get(_WishItem, it.wish_item_id)
         if wi is not None:
             wi.feo_category_id = it.feo_category_id
+    # Плановые позиции следуют за сменой категории (владелец, 2026-08-17):
+    # если у переносимой позиции есть СОБСТВЕННАЯ плановая позиция (никто
+    # больше на неё не ссылается — см. move_or_detach_planned_item), она
+    # переезжает в новую категорию ВМЕСТЕ с этой позицией — та же строка, тот
+    # же id, история не теряется. Если позиция — не единственный владелец
+    # плановой строки (общий план на несколько закупок/заявку и её уже
+    # сконвертированную закупку), плановая строка НЕ трогается, привязка
+    # переносимой позиции снимается, а предупреждение уходит в ответ явно
+    # (см. _plan_transfer_warning в теле ответа ниже).
+    _plan_transfer_warning: Optional[str] = None
     if _category_changing and it.feo_planned_item_id is not None:
-        # Старая привязка — из прежней категории, в новой она бессмысленна
-        # (FeoPlannedItem.feo_category_id жёстко привязана к одной категории).
-        it.feo_planned_item_id = None
-        it.over_plan = False
-    if _category_changing and it.feo_category_id is not None:
+        if it.feo_category_id is not None:
+            _plan_transfer_warning = await move_or_detach_planned_item(db, it, it.feo_category_id)
+        else:
+            # clear_feo_category: категории больше нет — плановой позиции
+            # переезжать некуда, привязка просто снимается (как и раньше).
+            _old_fpi_id = it.feo_planned_item_id
+            it.feo_planned_item_id = None
+            it.over_plan = False
+            from app.models.feo_planned_item import FeoPlannedItem as _FPI
+            _old_fpi = await db.get(_FPI, _old_fpi_id)
+            await deactivate_if_orphaned(db, _old_fpi)
+    if _category_changing and it.feo_category_id is not None and it.feo_planned_item_id is None:
         # auto_assign_planned_items смотрит на текущие item_name/quantity/
         # total_price позиции — если это ЖЕ тело правки одновременно меняет и
         # название/кол-во/цену (мутируются НИЖЕ), новая плановая позиция (если
@@ -2312,9 +2329,15 @@ async def patch_purchase_item(
         "quantity": float(it.quantity or 0), "unit": it.unit,
         "unit_price": float(it.unit_price or 0), "total_price": float(it.total_price or 0),
         "feo_category_id": it.feo_category_id,
+        "feo_planned_item_id": it.feo_planned_item_id,
         "planned_quantity": float(it.planned_quantity) if it.planned_quantity is not None else None,
         "planned_unit_price": float(it.planned_unit_price) if it.planned_unit_price is not None else None,
         "planned_total": float(it.planned_total) if it.planned_total is not None else None,
+        # Плановые позиции следуют за сменой категории: не None, если плановая
+        # позиция была общей с другими закупками/заявкой и её пришлось
+        # отвязать вместо переезда (см. move_or_detach_planned_item) — фронт
+        # обязан показать это пользователю, а не проглатывать молча.
+        "plan_transfer_warning": _plan_transfer_warning,
     }
 
 

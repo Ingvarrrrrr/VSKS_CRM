@@ -446,16 +446,14 @@ async def update_planned_item(
         # purchases.py::patch_purchase_item для смены feo_category_id позиции
         # закупки (см. её докстринг про боевой случай 3710→3691): блокировать
         # нужно только реальный ПРИРОСТ суммы, а не сам факт переноса.
-        item.feo_category_id = data.feo_category_id
-        # Позиции закупок, уже привязанные к этой плановой позиции, обязаны
-        # переехать вместе с ней — иначе план уедет в новую категорию, а расход
-        # (purchase_items) останется числиться в старой, и план≠факт разъедется
-        # ровно там, где его чинили.
-        await db.execute(
-            sql_update(PurchaseItem)
-            .where(PurchaseItem.feo_planned_item_id == item.id)
-            .values(feo_category_id=data.feo_category_id)
-        )
+        # Позиции закупок И заявок, уже привязанные к этой плановой позиции,
+        # обязаны переехать вместе с ней — иначе план уедет в новую категорию, а
+        # расход (purchase_items/wish_items) останется числиться в старой, и
+        # план≠факт разъедется ровно там, где его чинили. Общая логика (тоже
+        # используется автопереносом вслед за сменой категории у самой позиции
+        # заявки/закупки) — см. app/services/plan_autoassign.py::move_planned_item_to_category.
+        from app.services.plan_autoassign import move_planned_item_to_category
+        await move_planned_item_to_category(db, item, data.feo_category_id)
 
     _sid = (await db.execute(
         select(FeoCategory.subsidy_id).where(FeoCategory.id == item.feo_category_id)

@@ -16,7 +16,10 @@ from app.models.product import Product
 from app.models.contract_item import ContractItem
 from app.models.wish import Wish
 from app.models.wish_item import WishItem
-from app.schemas.schemas import FeoPlannedItemCreate, FeoPlannedItemOut, FeoComparisonOut, FeoActualItemOut, FeoStageOut
+from app.schemas.schemas import (
+    FeoPlannedItemCreate, FeoPlannedItemOut, FeoComparisonOut, FeoActualItemOut, FeoStageOut,
+    FeoPlannedItemBulkCreate, FeoPlannedItemBulkCreateResult,
+)
 from app.services.text_match import normalize as _norm_text, tokenize, stem, generic_progressive_match
 
 
@@ -265,6 +268,128 @@ async def create_planned_item(
     await db.commit()
     await db.refresh(item)
     return item
+
+
+@router.post("/bulk", response_model=FeoPlannedItemBulkCreateResult)
+async def create_planned_items_bulk(
+    body: FeoPlannedItemBulkCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_tab('feo_categories')),
+):
+    """Создать несколько плановых позиций (Ур.5 FeoPlannedItem) ОДНОЙ атомарной
+    транзакцией — вместо цикла отдельных POST /feo-planned-items/ с фронта.
+
+    Жалоба владельца (сессия 2026-08-17): «Создать в плане закупок» на заявке с
+    7 разными товарами создавала ровно ОДНУ плановую позицию (имя первого товара)
+    на всю НМЦД заявки — остальные 6 товаров теряли план целиком. Причина была на
+    фронте (headFeoPlannedPrefill/wishFeoPlannedPrefill брали первую позицию + всю
+    сумму, диалог создавал 1 запись), но N отдельных POST из цикла на фронте —
+    не атомарно и не в одной транзакции, как требует задача; этот эндпоинт решает
+    обе части: один HTTP-запрос, одна транзакция, при ошибке — ничего не создаётся.
+
+    Дедуп — тот же принцип, что и в одиночном create_planned_item (см. его
+    докстринг): ТОЛЬКО точное совпадение (категория, нормализованное имя),
+    никакого fuzzy. Если позиция с таким именем уже активна в категории —
+    возвращается она, новая не создаётся (защита от повторного клика/двойного
+    сабмита). Дедуп учитывает и позиции, создаваемые в ЭТОМ ЖЕ вызове (две строки
+    запроса с одинаковым именем в одной категории не плодят два дубля).
+
+    auto_created НЕ проставляется (остаётся False колонки по умолчанию) — все
+    позиции этого эндпоинта заведены человеком через диалог выбора способа
+    создания, а не автоматически из закупки без участия человека.
+    """
+    if not body.items:
+        raise HTTPException(400, "Список позиций пуст")
+    if len(body.items) > 500:
+        raise HTTPException(400, "Слишком много позиций за один раз (максимум 500)")
+
+    cat_ids = {it.feo_category_id for it in body.items}
+    cats = (await db.execute(
+        select(FeoCategory).where(FeoCategory.id.in_(cat_ids))
+    )).scalars().all()
+    cat_by_id = {c.id: c for c in cats}
+    missing = cat_ids - set(cat_by_id)
+    if missing:
+        raise HTTPException(404, f"Категория ФЭО не найдена: {', '.join(str(m) for m in sorted(missing))}")
+
+    existing_by_cat: dict[int, list[FeoPlannedItem]] = {}
+    if cat_ids:
+        existing_rows = (await db.execute(
+            select(FeoPlannedItem).where(
+                FeoPlannedItem.feo_category_id.in_(cat_ids),
+                FeoPlannedItem.is_active == True,
+            )
+        )).scalars().all()
+        for r in existing_rows:
+            existing_by_cat.setdefault(r.feo_category_id, []).append(r)
+
+    max_sort_by_cat: dict[int, int] = {}
+    for cid, rows in existing_by_cat.items():
+        vals = [r.sort_order for r in rows if r.sort_order is not None]
+        max_sort_by_cat[cid] = max(vals) if vals else 0
+
+    created: list[FeoPlannedItem] = []
+    dedup_seen: dict[tuple[int, str], FeoPlannedItem] = {}
+    touched_subsidies: set[int] = set()
+
+    for data in body.items:
+        cat = cat_by_id[data.feo_category_id]
+        norm_name = _norm_text(data.name or "")
+        dedup_key = (data.feo_category_id, norm_name)
+        existing_item = None
+        if norm_name:
+            if dedup_key in dedup_seen:
+                existing_item = dedup_seen[dedup_key]
+            else:
+                existing_item = next(
+                    (it for it in existing_by_cat.get(data.feo_category_id, [])
+                     if _norm_text(it.name or "") == norm_name),
+                    None,
+                )
+        if existing_item is not None:
+            created.append(existing_item)
+            dedup_seen[dedup_key] = existing_item
+            continue
+
+        sort_order = data.sort_order
+        if sort_order is None:
+            max_sort_by_cat[data.feo_category_id] = max_sort_by_cat.get(data.feo_category_id, 0) + 1
+            sort_order = max_sort_by_cat[data.feo_category_id]
+
+        item = FeoPlannedItem(
+            feo_category_id=data.feo_category_id,
+            name=data.name,
+            quantity=data.quantity,
+            unit=data.unit,
+            notes=data.notes,
+            is_active=data.is_active,
+            sort_order=sort_order,
+            item_type=normalize_item_type(data.item_type),
+            # auto_created — НЕ принимается на вход, см. докстринг эндпоинта.
+        )
+        _apply_payment_fields(item, data)
+        db.add(item)
+        created.append(item)
+        if norm_name:
+            dedup_seen[dedup_key] = item
+        if cat.subsidy_id is not None:
+            touched_subsidies.add(cat.subsidy_id)
+
+    await db.flush()
+
+    if touched_subsidies:
+        from app.routers.purchases import _create_plan_graph_version
+        for sid in touched_subsidies:
+            await _create_plan_graph_version(
+                subsidy_id=sid, db=db, user=current_user,
+                note="Авто-версия: массовое создание плановых позиций",
+            )
+
+    await db.commit()
+    for it in created:
+        await db.refresh(it)
+
+    return FeoPlannedItemBulkCreateResult(items=created)
 
 
 @router.put("/{item_id}", response_model=FeoPlannedItemOut)

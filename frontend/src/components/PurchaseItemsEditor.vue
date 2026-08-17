@@ -137,6 +137,8 @@
           :node-amounts="nodeAmounts"
           :feo-per-item="props.feoPerItem"
           :feo-planned-per-item="props.feoPlannedPerItem"
+          :allow-per-item-plan="props.allowPerItemPlan"
+          :default-feo-category-id="props.defaultFeoCategoryId"
           :planned-items="props.plannedItems"
           :planned-selection-for="plannedSelectionFor"
           :plan-for-item="planForItem"
@@ -210,6 +212,8 @@
           :vat-mode="props.vatMode || 'uniform'"
           :feo-per-item="props.feoPerItem"
           :feo-planned-per-item="props.feoPlannedPerItem"
+          :allow-per-item-plan="props.allowPerItemPlan"
+          :default-feo-category-id="props.defaultFeoCategoryId"
           :planned-items="props.plannedItems"
           :planned-selection-for="plannedSelectionFor"
           :show-contractor-column="showContractorColumn"
@@ -264,6 +268,8 @@
           :vat-mode="props.vatMode || 'uniform'"
           :feo-per-item="props.feoPerItem"
           :feo-planned-per-item="props.feoPlannedPerItem"
+          :allow-per-item-plan="props.allowPerItemPlan"
+          :default-feo-category-id="props.defaultFeoCategoryId"
           :planned-items="props.plannedItems"
           :planned-selection-for="plannedSelectionFor"
           :plan-for-item="planForItem"
@@ -816,6 +822,14 @@ const props = withDefaults(defineProps<{
   defaultFeoPlannedItemId?: number | null
   // Разные плановые позиции для каждого товара (аналог feoPerItem, но для Ур.5 ФЭО)
   feoPlannedPerItem?: boolean
+  // Владелец (сессия 2026-08-17): «Создать в плане закупок» внутри позиции должна быть
+  // доступна и в режиме «одна категория ФЭО на всю закупку» (feoPerItem=false), не только
+  // в per-item режиме — раньше построчная FeoPlannedItemsSelect не рендерилась вовсе
+  // (была жёстко внутри `<tr v-if="feoPerItem">`). Это отдельный от feoPlannedPerItem флаг
+  // намеренно: feoPlannedPerItem ещё управляет ГЕЙТОМ автозаполнения feo_planned_item_id
+  // из шапки (fillItemsWithDefaultPlannedItem ниже) — смешивать нельзя, иначе шапочный
+  // выбор перестанет каскадом проставляться на пустые позиции.
+  allowPerItemPlan?: boolean
   // Плановые позиции плана закупок субсидии (единый источник /feo-categories/plan-positions) —
   // для per-item выбора в таблице (FeoPlannedItemsSelect dense-режим в каждой строке).
   plannedItems?: FeoPlanPosition[]
@@ -849,6 +863,7 @@ const props = withDefaults(defineProps<{
   defaultFeoCategoryId: null,
   // defaultFeoPlannedItemId — БЕЗ дефолта намеренно, см. комментарий у типа пропа.
   feoPlannedPerItem: false,
+  allowPerItemPlan: false,
   plannedItems: () => [],
   itemsTitle: undefined,
   showNeededDate: false,

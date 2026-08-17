@@ -203,38 +203,41 @@
              в узкую 90px колонку «Тип» — раньше рендерился внутри неё и переносился по
              одному слову, растягивая строку на ~700-1000px по вертикали («лапша»).
              Вынесено из узкой колонки по аналогии с ItemsTableStages.vue (stage-attrs-row). -->
-        <tr v-if="feoPerItem" class="feo-attrs-row" :class="{ 'cv-row': virtualize }">
+        <tr v-if="feoPerItem || allowPerItemPlan" class="feo-attrs-row" :class="{ 'cv-row': virtualize }">
           <td></td>
           <td></td>
           <td :colspan="totalColCount - 2">
             <div class="d-flex align-start ga-4 flex-wrap py-1">
-              <FeoTreeSelect
-                :model-value="item.feo_node_id ?? item.feo_category_id"
-                :nodes="feoNodes"
-                :leaves="feoLeaves"
-                :plan-positions="plannedItems || []"
-                :node-amounts="nodeAmounts"
-                :readonly="readonly"
-                :error="isFeoMissing(item)"
-                label="Категория ФЭО"
-                required
-                :allow-unallocated="!!subsidyId"
-                :root-label="subsidyName"
-                style="flex:2 1 520px;min-width:320px"
-                @update:model-value="(v: number | null) => emit('item-feo-change', idx, v)"
-                @pick-unallocated="(parentId: number | null) => emit('item-pick-unallocated', idx, parentId)"
-              />
-              <div v-if="isOverBudget(item)" class="text-caption text-warning mt-2 d-flex align-center ga-1" style="white-space:nowrap">
-                <v-icon icon="mdi-alert-outline" size="14" />
-                Превышение: {{ fmtRub(overBudgetDelta(item)) }}
-              </div>
+              <template v-if="feoPerItem">
+                <FeoTreeSelect
+                  :model-value="item.feo_node_id ?? item.feo_category_id"
+                  :nodes="feoNodes"
+                  :leaves="feoLeaves"
+                  :plan-positions="plannedItems || []"
+                  :node-amounts="nodeAmounts"
+                  :readonly="readonly"
+                  :error="isFeoMissing(item)"
+                  label="Категория ФЭО"
+                  required
+                  :allow-unallocated="!!subsidyId"
+                  :root-label="subsidyName"
+                  style="flex:2 1 520px;min-width:320px"
+                  @update:model-value="(v: number | null) => emit('item-feo-change', idx, v)"
+                  @pick-unallocated="(parentId: number | null) => emit('item-pick-unallocated', idx, parentId)"
+                />
+                <div v-if="isOverBudget(item)" class="text-caption text-warning mt-2 d-flex align-center ga-1" style="white-space:nowrap">
+                  <v-icon icon="mdi-alert-outline" size="14" />
+                  Превышение: {{ fmtRub(overBudgetDelta(item)) }}
+                </div>
+              </template>
               <!-- F-PLAN: выбор плановой позиции плана закупок (Ур.5 ФЭО) для этой позиции.
-                   category-id — узел каскада (лист или промежуточный), НЕ только feo_category_id:
-                   компонент сам находит дочерние конечные элементы под промежуточным узлом. -->
+                   category-id — узел каскада (лист или промежуточный), НЕ только feo_category_id;
+                   владелец 2026-08-17: в общем режиме (без своей категории у строки) падает на
+                   defaultFeoCategoryId — категорию, выбранную один раз в шапке заявки/закупки. -->
               <FeoPlannedItemsSelect
-                v-if="feoPlannedPerItem"
+                v-if="feoPlannedPerItem || allowPerItemPlan"
                 :model-value="plannedSelectionFor ? plannedSelectionFor(item) : null"
-                :category-id="item.feo_node_id ?? item.feo_category_id ?? null"
+                :category-id="item.feo_node_id ?? item.feo_category_id ?? defaultFeoCategoryId ?? null"
                 :nodes="feoNodes" :items="plannedItems || []"
                 :amount="item.total_price" :readonly="readonly" dense
                 style="flex:1 1 320px;min-width:260px"
@@ -296,6 +299,14 @@ const props = defineProps<{
   feoPerItem: boolean
   // F-PLAN: разные плановые позиции плана закупок (Ур.5 ФЭО) для каждого товара
   feoPlannedPerItem?: boolean
+  // Владелец (сессия 2026-08-17): показать построчный пикер/кнопку «Создать в плане
+  // закупок» ДАЖЕ когда feoPerItem=false (общая категория ФЭО на всю закупку) — см.
+  // комментарий у одноимённого пропа в PurchaseItemsEditor.vue.
+  allowPerItemPlan?: boolean
+  // Фолбэк категории для построчного FeoPlannedItemsSelect, когда у самой позиции
+  // своей feo_node_id/feo_category_id нет (обычный случай в общем режиме — категория
+  // выбирается один раз в шапке, а не на каждой строке).
+  defaultFeoCategoryId?: number | null
   plannedItems?: any[]
   // F-PLAN2: производный выбор { kind, id } | null для FeoPlannedItemsSelect по
   // фактическим полям позиции (feo_planned_item_id / feo_category_id / over_plan) —

@@ -1351,6 +1351,19 @@ class FeoPlannedItemOut(FeoPlannedItemCreate):
     model_config = {"from_attributes": True}
 
 
+class FeoPlannedItemBulkCreate(BaseModel):
+    """POST /feo-planned-items/bulk — создать несколько плановых позиций (Ур.5)
+    одной атомарной транзакцией (жалоба владельца, сессия 2026-08-17: «Создать в
+    плане закупок» создавала только ОДНУ позицию на всю НМЦД закупки вместо одной
+    позиции на каждый товар). Каждая позиция списка может относиться к своей
+    категории ФЭО (per-item режим) либо все — к одной (общий режим)."""
+    items: List[FeoPlannedItemCreate]
+
+
+class FeoPlannedItemBulkCreateResult(BaseModel):
+    items: List[FeoPlannedItemOut]
+
+
 class FeoStageOut(BaseModel):
     """Одна стадия жизненного цикла позиции для /feo-planned-items/comparison.
 

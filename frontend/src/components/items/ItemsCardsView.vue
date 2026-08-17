@@ -117,19 +117,20 @@
                   <v-icon icon="mdi-alert-outline" size="12" />
                   <span style="font-size:11px">Превышение: {{ fmtRub(overBudgetDelta(item)) }}</span>
                 </div>
-                <!-- F-PLAN: выбор плановой позиции плана закупок (Ур.5 ФЭО) для этой позиции.
-                     category-id — узел каскада (лист или промежуточный), НЕ только feo_category_id:
-                     компонент сам находит дочерние конечные элементы под промежуточным узлом. -->
-                <FeoPlannedItemsSelect
-                  v-if="feoPlannedPerItem"
-                  :model-value="plannedSelectionFor ? plannedSelectionFor(item) : null"
-                  :category-id="item.feo_node_id ?? item.feo_category_id ?? null"
-                  :nodes="feoNodes" :items="plannedItems || []"
-                  :amount="item.total_price" :readonly="readonly" dense class="mt-1"
-                  :prefill="{ name: item.item_name, quantity: item.quantity, unit: item.unit, amount: item.total_price }"
-                  @update:model-value="(v) => emit('item-planned-change', idx, v)"
-                  @planned-item-created="emit('planned-item-created')" />
               </template>
+              <!-- F-PLAN: выбор плановой позиции плана закупок (Ур.5 ФЭО) для этой позиции.
+                   category-id — узел каскада (лист или промежуточный), НЕ только feo_category_id;
+                   владелец 2026-08-17: в общем режиме падает на defaultFeoCategoryId — категорию,
+                   выбранную один раз в шапке заявки/закупки. -->
+              <FeoPlannedItemsSelect
+                v-if="feoPlannedPerItem || allowPerItemPlan"
+                :model-value="plannedSelectionFor ? plannedSelectionFor(item) : null"
+                :category-id="item.feo_node_id ?? item.feo_category_id ?? defaultFeoCategoryId ?? null"
+                :nodes="feoNodes" :items="plannedItems || []"
+                :amount="item.total_price" :readonly="readonly" dense class="mt-1"
+                :prefill="{ name: item.item_name, quantity: item.quantity, unit: item.unit, amount: item.total_price }"
+                @update:model-value="(v) => emit('item-planned-change', idx, v)"
+                @planned-item-created="emit('planned-item-created')" />
             </v-col>
 
             <!-- Кол-во -->
@@ -265,6 +266,12 @@ const props = defineProps<{
   feoPerItem: boolean
   // F-PLAN: разные плановые позиции плана закупок (Ур.5 ФЭО) для каждого товара
   feoPlannedPerItem?: boolean
+  // Владелец (сессия 2026-08-17): показать построчный пикер/кнопку «Создать в плане
+  // закупок» ДАЖЕ когда feoPerItem=false — см. PurchaseItemsEditor.vue.
+  allowPerItemPlan?: boolean
+  // Фолбэк категории для построчного FeoPlannedItemsSelect, когда у самой позиции
+  // своей feo_node_id/feo_category_id нет (обычный случай в общем режиме).
+  defaultFeoCategoryId?: number | null
   plannedItems?: any[]
   // F-PLAN2: производный выбор { kind, id } | null для FeoPlannedItemsSelect по
   // фактическим полям позиции — см. plannedSelectionFor() в PurchaseItemsEditor.vue.

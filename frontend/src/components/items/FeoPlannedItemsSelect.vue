@@ -147,7 +147,7 @@
                    плановых позиций категории не подходит для конкретного товара, должна быть
                    возможность завести новую, не переключаясь в развёрнутый режим. -->
               <div class="mt-1 px-1">
-                <v-btn size="x-small" variant="text" color="primary" prepend-icon="mdi-plus" :disabled="readonly" @click.stop="openCreateDialog">
+                <v-btn size="x-small" variant="text" color="primary" prepend-icon="mdi-plus" :disabled="readonly" @click.stop="openCreateEntry">
                   Создать в плане закупок
                 </v-btn>
               </div>
@@ -168,7 +168,7 @@
           <div v-if="filteredItems.length === 0" class="feo-tree-row feo-tree-row--pseudo">
             <span class="feo-tree-rail" /><span class="feo-tree-elbow feo-tree-elbow--open" />
             <span class="feo-tree-name">В этой категории нет плановых позиций</span>
-            <v-btn size="x-small" variant="text" color="primary" :disabled="readonly" @click="openCreateDialog">Создать в плане закупок</v-btn>
+            <v-btn size="x-small" variant="text" color="primary" :disabled="readonly" @click="openCreateEntry">Создать в плане закупок</v-btn>
           </div>
 
           <div
@@ -216,7 +216,7 @@
           </div>
 
           <div class="mt-1">
-            <v-btn size="x-small" variant="text" color="primary" prepend-icon="mdi-plus" :disabled="readonly" @click="openCreateDialog">
+            <v-btn size="x-small" variant="text" color="primary" prepend-icon="mdi-plus" :disabled="readonly" @click="openCreateEntry">
               Создать в плане закупок
             </v-btn>
           </div>
@@ -287,6 +287,110 @@
       </v-card>
     </v-dialog>
 
+    <!-- Диалог выбора СПОСОБА создания (владелец, сессия 2026-08-17): «Создать в плане
+         закупок» на «шапочном» экземпляре (см. проп bulkItems) больше не создаёт молча
+         одну позицию на имя первого товара и всю НМЦД — сначала спрашивает, как именно.
+         POST /feo-planned-items/bulk — одна атомарная транзакция на все выбранные строки. -->
+    <v-dialog v-model="bulkChooserDialog" max-width="640" :persistent="bulkCreating">
+      <v-card>
+        <v-card-title class="text-subtitle-1">Создать в плане закупок</v-card-title>
+        <v-card-text>
+          <div class="text-caption text-medium-emphasis mb-3">Категория: {{ categoryName }}</div>
+          <v-radio-group v-model="bulkMode" hide-details density="compact" class="mb-3">
+            <v-radio value="per_item">
+              <template #label>
+                <span>По плановой позиции на <b>каждый товар</b> — {{ bulkPerItemCandidates.length }}
+                  {{ bulkPerItemCandidates.length === 1 ? 'позиция' : 'позиций' }}, каждая на свою сумму</span>
+              </template>
+            </v-radio>
+            <v-radio value="single">
+              <template #label>
+                <span>Одна <b>общая</b> позиция на всю закупку — сумма {{ fmt(bulkTotalAmount) }}</span>
+              </template>
+            </v-radio>
+            <v-radio value="manual">
+              <template #label>
+                <span>Выбрать позиции <b>вручную</b></span>
+              </template>
+            </v-radio>
+          </v-radio-group>
+
+          <v-text-field
+            v-if="bulkMode === 'single'"
+            v-model="bulkSingleName"
+            label="Наименование *"
+            variant="outlined"
+            density="compact"
+            hide-details="auto"
+            class="mb-3"
+            autofocus
+          />
+
+          <div v-if="bulkMode === 'manual'" class="mb-3">
+            <div class="text-caption text-medium-emphasis mb-1">Отметьте позиции для создания:</div>
+            <div v-for="row in props.bulkItems" :key="'manual-' + row.idx" class="d-flex align-center ga-1">
+              <v-checkbox
+                :model-value="manualChecked.includes(row.idx)"
+                density="compact"
+                hide-details
+                class="flex-shrink-0"
+                @update:model-value="(v: boolean | null) => toggleManualChecked(row.idx, !!v)"
+              />
+              <span class="text-body-2">
+                {{ row.name }}
+                <span class="text-caption text-medium-emphasis">— {{ fmt(row.amount) }}</span>
+                <span v-if="row.linked" class="text-caption text-medium-emphasis"> (уже привязана к плановой позиции — по умолчанию не отмечена)</span>
+              </span>
+            </div>
+          </div>
+
+          <div class="text-caption text-medium-emphasis mb-1">Будет создано:</div>
+          <v-table density="compact">
+            <thead>
+              <tr><th>Наименование</th><th>Кол-во</th><th class="text-right">Сумма</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, i) in bulkPreviewRows" :key="'prev-' + (row.idx ?? 'single') + '-' + i">
+                <td>{{ row.name || '—' }}</td>
+                <td>{{ row.quantity ?? '—' }} {{ row.unit || '' }}</td>
+                <td class="text-right">{{ fmt(row.amount) }}</td>
+              </tr>
+              <tr v-if="bulkPreviewRows.length === 0">
+                <td colspan="3" class="text-medium-emphasis">Нечего создавать — отметьте хотя бы одну позицию</td>
+              </tr>
+            </tbody>
+            <tfoot>
+              <tr>
+                <td class="font-weight-bold">ИТОГО</td>
+                <td></td>
+                <td class="text-right font-weight-bold">{{ fmt(bulkPreviewTotal) }}</td>
+              </tr>
+            </tfoot>
+          </v-table>
+          <div v-if="bulkMode === 'per_item' && bulkSkippedLinkedCount > 0" class="text-caption text-medium-emphasis mt-1">
+            {{ bulkSkippedLinkedCount }} {{ bulkSkippedLinkedCount === 1 ? 'позиция уже привязана' : 'позиций уже привязаны' }} к плановой позиции — пропущены.
+          </div>
+          <div v-if="bulkCreating" class="mt-2 d-flex align-center ga-2">
+            <v-progress-circular indeterminate size="18" width="2" color="primary" />
+            <span class="text-caption">Создание…</span>
+          </div>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" :disabled="bulkCreating" @click="bulkChooserDialog = false">Отмена</v-btn>
+          <v-btn
+            color="primary"
+            variant="flat"
+            :loading="bulkCreating"
+            :disabled="bulkPreviewRows.length === 0 || (bulkMode === 'single' && !bulkSingleName.trim())"
+            @click="runBulkCreate"
+          >
+            Создать
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
   </div>
 </template>
 
@@ -321,6 +425,18 @@ const props = defineProps<{
    *  данные уже введённой позиции»). Опционально — без пропа диалог открывается
    *  пустым, как раньше. */
   prefill?: { name?: string | null; quantity?: number | null; unit?: string | null; amount?: number | null }
+  /** Позиции заявки/закупки — доступны ТОЛЬКО у «шапочного» экземпляра компонента
+   *  (CreateOrderView.vue/WishesView.vue, один на всю заявку/закупку), НЕ у построчных
+   *  (dense-режим внутри PurchaseItemsEditor — там prefill уже про ОДНУ строку и старый
+   *  однопозиционный диалог остаётся как есть). Наличие и непустота этого пропа — сигнал
+   *  открывать диалог ВЫБОРА СПОСОБА вместо старого прямого диалога создания (жалоба
+   *  владельца, сессия 2026-08-17: кнопка создавала ровно одну плановую позицию на имя
+   *  первого товара и на всю НМЦД закупки/заявки — 6 из 7 товаров заявки теряли план). */
+  bulkItems?: { idx: number; name: string; quantity: number | null; unit: string | null; amount: number | null; linked: boolean }[]
+  /** Заголовок заявки/закупки — дефолт имени для варианта «одна общая позиция» (вариант б):
+   *  задаётся пользователем, но предзаполняется НЕ именем первого товара (как было раньше),
+   *  а названием самой заявки/закупки. */
+  bulkTitle?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -333,6 +449,12 @@ const emit = defineEmits<{
   /** Плановая позиция создана диалогом «Создать в плане закупок» (POST /feo-planned-items/) —
    *  родитель должен перезагрузить список плановых позиций (напр. useFeoPlannedResiduals.reloadPlanned). */
   'planned-item-created': []
+  /** Диалог выбора способа (bulkItems) создал 1+ плановых позиций через
+   *  POST /feo-planned-items/bulk — родитель обязан привязать каждую созданную
+   *  позицию к её товару заявки/закупки по idx (results[i].idx — индекс в том же
+   *  массиве, что был передан через bulkItems; null у режима «одна общая позиция»,
+   *  там привязка приходит через update:modelValue как обычно). */
+  'bulk-items-created': [payload: { mode: 'per_item' | 'single' | 'manual'; results: { idx: number | null; id: number }[] }]
 }>()
 
 const denseMenuOpen = ref(false)
@@ -499,6 +621,113 @@ function openCreateDialog() {
   createForm.amount = props.prefill?.amount ?? null
   createForm.item_type = null
   createDialog.value = true
+}
+
+// Владелец (сессия 2026-08-17): «должна сразу предлагать, как сделать» — на
+// «шапочном» экземпляре (bulkItems передан и непуст) кнопка открывает диалог выбора
+// способа вместо старого прямого диалога на одну позицию. Построчные (dense/prefill
+// одной позиции внутри PurchaseItemsEditor) bulkItems не получают и продолжают
+// пользоваться старым простым openCreateDialog — там кнопка и так «про эту позицию».
+function openCreateEntry() {
+  if (props.readonly || props.categoryId == null) return
+  if (props.bulkItems && props.bulkItems.length > 0) {
+    openBulkChooserDialog()
+  } else {
+    openCreateDialog()
+  }
+}
+
+// ── Диалог выбора способа массового создания (владелец, сессия 2026-08-17) ────
+const bulkChooserDialog = ref(false)
+const bulkMode = ref<'per_item' | 'single' | 'manual'>('per_item')
+const bulkSingleName = ref('')
+const manualChecked = ref<number[]>([])
+const bulkCreating = ref(false)
+
+function toggleManualChecked(idx: number, checked: boolean) {
+  if (checked) {
+    if (!manualChecked.value.includes(idx)) manualChecked.value = [...manualChecked.value, idx]
+  } else {
+    manualChecked.value = manualChecked.value.filter(i => i !== idx)
+  }
+}
+
+function openBulkChooserDialog() {
+  bulkMode.value = 'per_item'
+  bulkSingleName.value = props.bulkTitle?.trim() || ''
+  // По умолчанию отмечены позиции БЕЗ существующей привязки к плановой позиции —
+  // владелец: «уже привязанные по умолчанию не отмечать и пояснить почему».
+  manualChecked.value = (props.bulkItems || []).filter(r => !r.linked).map(r => r.idx)
+  bulkChooserDialog.value = true
+}
+
+const bulkTotalAmount = computed((): number =>
+  (props.bulkItems || []).reduce((s, r) => s + (Number(r.amount) || 0), 0)
+)
+
+// Вариант (а) «по позиции на каждый товар» — пропускает уже привязанные к плановой
+// позиции строки (иначе плодили бы вторую плановую позицию поверх уже существующей).
+const bulkPerItemCandidates = computed(() => (props.bulkItems || []).filter(r => !r.linked))
+const bulkSkippedLinkedCount = computed(() => (props.bulkItems || []).filter(r => r.linked).length)
+
+interface BulkPreviewRow {
+  idx: number | null
+  name: string
+  quantity: number | null
+  unit: string | null
+  amount: number | null
+}
+
+const bulkPreviewRows = computed((): BulkPreviewRow[] => {
+  if (bulkMode.value === 'single') {
+    const name = bulkSingleName.value.trim()
+    if (!name) return []
+    return [{ idx: null, name, quantity: null, unit: null, amount: bulkTotalAmount.value }]
+  }
+  if (bulkMode.value === 'manual') {
+    return (props.bulkItems || [])
+      .filter(r => manualChecked.value.includes(r.idx))
+      .map(r => ({ idx: r.idx, name: r.name, quantity: r.quantity, unit: r.unit, amount: r.amount }))
+  }
+  // per_item
+  return bulkPerItemCandidates.value.map(r => ({ idx: r.idx, name: r.name, quantity: r.quantity, unit: r.unit, amount: r.amount }))
+})
+
+const bulkPreviewTotal = computed((): number =>
+  bulkPreviewRows.value.reduce((s, r) => s + (Number(r.amount) || 0), 0)
+)
+
+async function runBulkCreate() {
+  if (props.categoryId == null) return
+  const rows = bulkPreviewRows.value
+  if (!rows.length) return
+  bulkCreating.value = true
+  try {
+    const resp = await apiFetch<{ items: { id: number }[] }>('/feo-planned-items/bulk', {
+      method: 'POST',
+      body: JSON.stringify({
+        items: rows.map(r => ({
+          feo_category_id: props.categoryId,
+          name: r.name,
+          quantity: r.quantity,
+          unit: r.unit || null,
+          amount: r.amount,
+        })),
+      }),
+    })
+    const results = resp.items.map((it, i) => ({ idx: rows[i].idx, id: it.id }))
+    bulkChooserDialog.value = false
+    emit('planned-item-created')
+    emit('bulk-items-created', { mode: bulkMode.value, results })
+    if (bulkMode.value === 'single' && results[0]) {
+      emit('update:modelValue', { kind: 'planned_item', id: results[0].id })
+    }
+    showSnack(`Плановых позиций создано/привязано: ${results.length}`)
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Не удалось создать плановые позиции', 'error')
+  } finally {
+    bulkCreating.value = false
+  }
 }
 
 async function saveCreateDialog() {

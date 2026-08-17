@@ -1190,6 +1190,7 @@
                   :default-feo-category-id="wishFeoSelected"
                   :default-feo-planned-item-id="!wishFeoPerItem ? wishFeoPlannedItemId : null"
                   :feo-planned-per-item="wishFeoPerItem"
+                  :allow-per-item-plan="!!wishFeoSelected"
                   :planned-items="wishPlannedResiduals"
                   :show-needed-date="wishDateMode === 'per_item'"
                   :vat-mode="wishForm.vat_mode"
@@ -1307,8 +1308,11 @@
                       :readonly="!isWishEditable && !canEditWishFeo"
                       :skip-last="wishFeoSkipLast"
                       :prefill="wishFeoPlannedPrefill"
+                      :bulk-items="wishFeoBulkItems"
+                      :bulk-title="wishForm.title"
                       @planned-item-created="onWishPlannedItemCreated"
                       @candidate-confirmed="onWishFeoCandidateConfirmed"
+                      @bulk-items-created="onWishFeoBulkItemsCreated"
                     />
                     <div v-if="!isWishEditable && canEditWishFeo && !canAssigneeAct" class="mt-2">
                       <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-content-save"
@@ -3049,18 +3053,50 @@ const totalNmck = computed(() =>
   wishForm.value.items.reduce((sum, i) => sum + (i.total_price || 0), 0)
 )
 
-// Предзаполнение диалога «Создать в плане закупок» шапки заявки (FeoPlannedItemsSelect
-// без per-item ФЭО) — берём первую позицию с непустым наименованием (имя/количество/
-// единица), сумму — totalNmck (весь план заявки), а не total_price одной позиции.
-const wishFeoPlannedPrefill = computed(() => {
-  const first = wishForm.value.items.find(i => (i.item_name || '').trim())
-  return {
-    name: first?.item_name ?? null,
-    quantity: first?.quantity ?? null,
-    unit: first?.unit ?? null,
-    amount: totalNmck.value,
+// Предзаполнение СТАРОГО прямого диалога (openCreateDialog в FeoPlannedItemsSelect) —
+// используется, только когда wishFeoBulkItems пуст (в заявке ещё нет ни одной именованной
+// позиции). Владелец (сессия 2026-08-17): раньше имя бралось у ПЕРВОЙ позиции, а сумма —
+// весь план заявки — из-за чего кнопка «съедала» все позиции заявки в одну; теперь имя
+// по умолчанию — название самой заявки (wishForm.title), не случайного товара.
+const wishFeoPlannedPrefill = computed(() => ({
+  name: wishForm.value.title || null,
+  quantity: null,
+  unit: null,
+  amount: totalNmck.value,
+}))
+
+// Позиции заявки для диалога выбора способа создания (FeoPlannedItemsSelect.vue,
+// проп bulkItems) — жалоба владельца (сессия 2026-08-17): «Создать в плане закупок»
+// создавала ровно ОДНУ плановую позицию на имя первой позиции и на весь план заявки,
+// остальные позиции теряли план целиком. idx — индекс в wishForm.value.items, чтобы
+// после POST /feo-planned-items/bulk привязать созданные id обратно к нужным позициям
+// (см. onWishFeoBulkItemsCreated).
+const wishFeoBulkItems = computed(() =>
+  wishForm.value.items
+    .map((it: any, idx: number) => ({ it, idx }))
+    .filter(({ it }: any) => (it.item_name || '').trim())
+    .map(({ it, idx }: any) => ({
+      idx,
+      name: (it.item_name || '').trim(),
+      quantity: it.quantity ?? null,
+      unit: it.unit || null,
+      amount: it.total_price ?? null,
+      linked: it.feo_planned_item_id != null,
+    }))
+)
+
+// Родитель диалога выбора способа: привязывает каждую созданную плановую позицию
+// (Ур.5) к своей позиции заявки по idx — сразу, без отдельного PUT/PATCH.
+function onWishFeoBulkItemsCreated(payload: { mode: string; results: { idx: number | null; id: number }[] }) {
+  for (const r of payload.results) {
+    if (r.idx == null) continue
+    const it = wishForm.value.items[r.idx] as any
+    if (it) {
+      it.feo_planned_item_id = r.id
+      it.over_plan = false
+    }
   }
-})
+}
 
 function onSubsidyChange() {
   wishFeoSelected.value = null
@@ -3829,9 +3865,16 @@ function buildWishPayload() {
         feo_category_id: wishFeoPerItem.value ? ((rest as any).feo_category_id ?? null) : null,
         // F-PLAN: колонки wishes.feo_planned_item_id нет — выбор из шапки проставляется
         // каждой позиции; в per-item режиме каждая строка несёт свой выбор.
+        // Владелец (сессия 2026-08-17, «7 позиций — план создался только на 1»): диалог
+        // «Создать в плане закупок» умеет создавать СВОЮ плановую позицию под каждый
+        // товар даже вне per-item режима (общая категория на заявку) — такая позиция
+        // уже несёт СВОЙ feo_planned_item_id (см. onWishFeoBulkItemsCreated) и не имеет
+        // права быть затёртой шапочным значением (правило проекта: выбранное на
+        // предыдущем этапе не меняется само) — только позиции БЕЗ собственной привязки
+        // продолжают наследовать её из шапки, как раньше.
         feo_planned_item_id: wishFeoPerItem.value
           ? ((rest as any).feo_planned_item_id ?? null)
-          : (wishFeoPlannedItemId.value ?? null),
+          : ((rest as any).feo_planned_item_id ?? wishFeoPlannedItemId.value ?? null),
         // БАГ 3 (сессия 2026-08-05): UI больше не выставляет over_plan (псевдо-вариант
         // «Вне плана» убран) — колонка в БД и расчёты на бэкенде не тронуты, просто
         // отправляем то, что уже было на позиции (false для новых/непривязанных).

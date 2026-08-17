@@ -68,11 +68,13 @@ export type FeoPlannedResidual = FeoPlanPosition
 export interface UseFeoPlannedResidualsOptions {
   /** Subsidy whose plan positions we load (null → empty list). */
   subsidyId: Ref<number | null | undefined>
-  /** Заявка, которую редактируем — исключить её собственную бронь остатка.
-   *  ⚠️ Бэкенд /feo-categories/plan-positions пока НЕ поддерживает exclude_wish_id
-   *  (параметр отправляется и молча игнорируется) — при редактировании заявки её
-   *  собственная бронь по-прежнему учитывается в consumed/residual. */
+  /** Заявка, которую редактируем — исключить её собственную бронь остатка,
+   *  иначе плановая позиция сравнивается сама с собой (остаток 0 и ложное
+   *  «не хватает»). */
   excludeWishId?: Ref<number | null | undefined>
+  /** Закупка, которую редактируем — исключить её собственные позиции из consumed/residual,
+   *  иначе плановая позиция сравнивается сама с собой (остаток 0 и ложное «не хватает»). */
+  excludePurchaseId?: Ref<number | null | undefined>
 }
 
 export function useFeoPlannedResiduals(opts: UseFeoPlannedResidualsOptions) {
@@ -81,16 +83,17 @@ export function useFeoPlannedResiduals(opts: UseFeoPlannedResidualsOptions) {
 
   async function reloadPlanned() {
     const subsidyId = opts.subsidyId.value
-    const excludeId = opts.excludeWishId?.value
     if (!subsidyId) {
       plannedResiduals.value = []
       return
     }
     plannedLoading.value = true
     try {
-      const qs = excludeId != null ? `&exclude_wish_id=${excludeId}` : ''
+      const parts = [`subsidy_id=${subsidyId}`]
+      if (opts.excludeWishId?.value != null) parts.push(`exclude_wish_id=${opts.excludeWishId.value}`)
+      if (opts.excludePurchaseId?.value != null) parts.push(`exclude_purchase_id=${opts.excludePurchaseId.value}`)
       const rows = await apiFetch<Array<Omit<FeoPlanPosition, 'key'>>>(
-        `/feo-categories/plan-positions?subsidy_id=${subsidyId}${qs}`
+        `/feo-categories/plan-positions?${parts.join('&')}`
       )
       plannedResiduals.value = rows.map(r => ({ ...r, key: `${r.kind}:${r.id}` }))
     } catch {
@@ -101,7 +104,7 @@ export function useFeoPlannedResiduals(opts: UseFeoPlannedResidualsOptions) {
   }
 
   watch(
-    () => [opts.subsidyId.value, opts.excludeWishId?.value] as const,
+    () => [opts.subsidyId.value, opts.excludeWishId?.value, opts.excludePurchaseId?.value] as const,
     () => { reloadPlanned() },
     { immediate: true },
   )

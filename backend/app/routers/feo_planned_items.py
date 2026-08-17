@@ -996,9 +996,14 @@ async def get_feo_residuals(
     used_amount and linked_purchase_ids. Use when editing an existing purchase
     to avoid double-counting its own rows.
 
-    Optional ?exclude_wish_id=X — excludes purchases/wishes spawned by that wish
-    from used_amount / wish_used_amount. Use when editing an existing wish to
-    avoid showing its own привязка as already-consumed plan.
+    Optional ?exclude_wish_id=X — excludes purchases spawned by that wish
+    from used_amount. Use when editing an existing wish to avoid showing its
+    own привязка as already-consumed plan.
+
+    Решение владельца (2026-08-17): незаконвертированные заявки (Wish) в
+    остаток НЕ входят вообще — план расходуют только позиции, попавшие в
+    план закупок. Поле wish_used_amount осталось в ответе и всегда равно
+    0.0 — ради обратной совместимости фронта, который его читает.
     """
     from app.services.feo_plan import planned_item_consumption
 
@@ -1038,7 +1043,7 @@ async def get_feo_residuals(
             "planned_amount": planned,
             "used_amount": used,
             "wish_used_amount": wish_used,
-            "residual": planned - used - wish_used,
+            "residual": planned - used,
             "linked_purchase_ids": c["linked_purchase_ids"],
             "quantity": planned_qty,
             "unit": item.unit,

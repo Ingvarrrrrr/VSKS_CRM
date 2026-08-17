@@ -523,8 +523,11 @@
                 :loading="purchasePlannedLoading"
                 :skip-last="feoSkipLast"
                 :prefill="headFeoPlannedPrefill"
+                :bulk-items="headFeoBulkItems"
+                :bulk-title="form.subject"
                 @planned-item-created="reloadPurchasePlanned"
                 @candidate-confirmed="onHeadFeoCandidateConfirmed"
+                @bulk-items-created="onHeadFeoBulkItemsCreated"
               />
             </v-col>
             <!-- Переключатель «не указывать последний уровень ФЭО»: виден, когда выбран
@@ -934,6 +937,7 @@
             :default-feo-category-id="form.feo_category_id"
             :default-feo-planned-item-id="!form.feo_per_item ? headFeoPlannedItemId : null"
             :feo-planned-per-item="form.feo_per_item"
+            :allow-per-item-plan="!!form.feo_category_id"
             :planned-items="purchasePlannedResiduals"
             @update:vat-mode="(v: string) => { form.vat_mode = v; onVatModeChange(v) }"
             @items-changed="syncContractPriceIfSingle"
@@ -4495,12 +4499,17 @@ const form = reactive({
 // подсветить превышение ДО отправки (см. её planExcessFor/planForItem).
 // Раньше эта страница вообще не подгружала плановые позиции — подсказка/
 // подсветка были показывать нечем.
+// ⚠️ excludeWishId здесь НЕ передаём: он исключает ВСЕ закупки одной заявки, а у
+// заявки их может быть несколько (_distribute_wish_to_purchases) — остаток завысился бы.
 const {
   plannedResiduals: purchasePlannedResiduals,
   plannedLoading: purchasePlannedLoading,
   reloadPlanned: reloadPurchasePlanned,
 } = useFeoPlannedResiduals({
   subsidyId: computed(() => form.subsidy_id),
+  // Своя закупка не занимает свой же план — иначе двойное вычитание и ложное
+  // «не хватает»; при создании purchaseId=null, исключать нечего.
+  excludePurchaseId: computed(() => purchaseId.value),
 })
 
 // Phase 29: Vehicle selector — ключевые слова для автопоказа селекта ТС
@@ -6910,17 +6919,51 @@ const headFeoPlanSuggestReason = computed(() => {
 // update:modelValue, дополнительного действия на подтверждение не требуется.
 function onHeadFeoCandidateConfirmed(_c: FeoMatchCandidate) {}
 
-// Предзаполнение диалога «Создать в плане закупок» — первая позиция с непустым
-// наименованием, сумма — вся НМЦД закупки (зеркалит wishFeoPlannedPrefill).
-const headFeoPlannedPrefill = computed(() => {
-  const first = items.value.find((i: any) => (i.item_name || '').trim())
-  return {
-    name: first?.item_name ?? null,
-    quantity: first?.quantity ?? null,
-    unit: first?.unit ?? null,
-    amount: displayNmck.value,
+// Предзаполнение СТАРОГО прямого диалога (openCreateDialog в FeoPlannedItemsSelect) —
+// используется, только когда bulkItems пуст (в закупке ещё нет ни одной именованной
+// позиции). Владелец (сессия 2026-08-17): раньше имя бралось у ПЕРВОГО товара, а сумма —
+// вся НМЦД закупки, из-за чего кнопка «съедала» все 7 позиций заявки в одну — теперь
+// имя по умолчанию — название самой закупки (form.subject), не случайного товара.
+const headFeoPlannedPrefill = computed(() => ({
+  name: form.subject || null,
+  quantity: null,
+  unit: null,
+  amount: displayNmck.value,
+}))
+
+// Позиции закупки для диалога выбора способа создания (FeoPlannedItemsSelect.vue,
+// проп bulkItems) — жалоба владельца (сессия 2026-08-17): «Создать в плане закупок»
+// создавала ровно ОДНУ плановую позицию на имя первого товара и на всю НМЦД закупки,
+// остальные позиции теряли план целиком. idx — индекс в items.value, чтобы после
+// POST /feo-planned-items/bulk можно было привязать созданные id обратно к нужным
+// позициям (см. onHeadFeoBulkItemsCreated).
+const headFeoBulkItems = computed(() =>
+  items.value
+    .map((it: any, idx: number) => ({ it, idx }))
+    .filter(({ it }: any) => (it.item_name || '').trim())
+    .map(({ it, idx }: any) => ({
+      idx,
+      name: (it.item_name || '').trim(),
+      quantity: it.quantity ?? null,
+      unit: it.unit || null,
+      amount: it.total_price ?? null,
+      linked: it.feo_planned_item_id != null,
+    }))
+)
+
+// Родитель диалога выбора способа: привязывает каждую созданную плановую позицию
+// (Ур.5) к своему товару закупки по idx — сразу, без отдельного PUT/PATCH, как и
+// обычный per-item выбор (см. onItemPlannedChange в PurchaseItemsEditor.vue).
+function onHeadFeoBulkItemsCreated(payload: { mode: string; results: { idx: number | null; id: number }[] }) {
+  for (const r of payload.results) {
+    if (r.idx == null) continue
+    const it = items.value[r.idx]
+    if (it) {
+      it.feo_planned_item_id = r.id
+      it.over_plan = false
+    }
   }
-})
+}
 
 // Псевдо-«Не определена»: для авансового отчёта (см. allow-unallocated на FeoTreeSelect).
 // parentId — id узла, под которым кликнули строку «❓ Не определена» (null = корень).
@@ -8169,13 +8212,24 @@ const doSave = async (adminOverride: boolean) => {
         // принудительно писались как null в режиме single — позиция пересоздавалась
         // и ЛЮБАЯ привязка стиралась первым же сохранением (id 2871 → 2872 на проде,
         // привязка «Great Wall POER» потеряна). В режиме «одна категория на всю
-        // закупку» позиции теперь получают плановую позицию/категорию, выбранную НА
-        // УРОВНЕ ЗАКУПКИ (headFeoPlannedItemId/form.feo_category_id — FeoPlannedItemsSelect
+        // закупку» позиции по умолчанию получают плановую позицию/категорию, выбранную
+        // НА УРОВНЕ ЗАКУПКИ (headFeoPlannedItemId/form.feo_category_id — FeoPlannedItemsSelect
         // под «Категорией ФЭО») — обнуление осталось только в явном действии пользователя
         // (confirmFeoPerItemDisable — диалог отключения per-item режима).
-        feo_planned_item_id: form.feo_per_item ? (rest.feo_planned_item_id ?? null) : (headFeoPlannedItemId.value ?? null),
+        // Владелец (сессия 2026-08-17, «7 позиций — план создался только на 1»): диалог
+        // «Создать в плане закупок» умеет создавать СВОЮ плановую позицию под каждый
+        // товар, даже когда form.feo_per_item=false (общая категория на закупку) — такая
+        // позиция уже несёт СВОЙ feo_planned_item_id/feo_category_id (см.
+        // onHeadFeoBulkItemsCreated) и не имеет права быть затёртой шапочным значением
+        // (правило проекта: выбранное на предыдущем этапе не меняется само) — только
+        // позиции БЕЗ собственной привязки продолжают наследовать её из шапки, как раньше.
+        feo_planned_item_id: form.feo_per_item
+          ? (rest.feo_planned_item_id ?? null)
+          : (rest.feo_planned_item_id ?? headFeoPlannedItemId.value ?? null),
         // FCAT-F1: per-item leaf FeoCategory
-        feo_category_id: form.feo_per_item ? (rest.feo_category_id ?? null) : (form.feo_category_id ?? null),
+        feo_category_id: form.feo_per_item
+          ? (rest.feo_category_id ?? null)
+          : (rest.feo_category_id ?? form.feo_category_id ?? null),
       }))
     const payload = {
       ...form,

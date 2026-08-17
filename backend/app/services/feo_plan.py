@@ -29,8 +29,6 @@ from app.models.contract_item import ContractItem
 from app.models.feo_category import FeoCategory
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
-from app.models.wish import Wish
-from app.models.wish_item import WishItem
 from app.services.purchase_summary import purchase_summaries_by_id
 
 # «Заказано» и дальше — закупка уже реально размещена (в отличие от plan_schedule/
@@ -158,6 +156,8 @@ async def plan_consumption_by_category(
     db: AsyncSession,
     subsidy_ids: list[int],
     exclude_planned_item_linked: bool = False,
+    exclude_purchase_id: Optional[int] = None,
+    exclude_wish_id: Optional[int] = None,
 ) -> dict[int, dict]:
     """{feo_category_id: {consumed, consumed_quantity, over, over_quantity}}
 
@@ -181,6 +181,12 @@ async def plan_consumption_by_category(
     Purchase.stopped_at IS NOT NULL исключаются целиком — «остановленные
     позиции убираются из плана закупок и не считаются» (строки НЕ удаляются,
     только перестают участвовать в суммах).
+
+    exclude_purchase_id/exclude_wish_id (сессия 2026-08-17, баг «план 54 318 ·
+    выбрано 54 318 · не хватает 54 318»): исключают строки редактируемой сейчас
+    сущности, чтобы её собственные позиции не считались «занявшими» план —
+    иначе позиция сравнивается сама с собой: остаток 0, и UI повторно вычитает
+    ту же сумму. Точно так же устроен planned_item_consumption в этом же файле.
     """
     result: dict[int, dict] = {}
     if not subsidy_ids:
@@ -215,6 +221,10 @@ async def plan_consumption_by_category(
     )
     if exclude_planned_item_linked:
         stmt = stmt.where(PurchaseItem.feo_planned_item_id.is_(None))
+    if exclude_purchase_id is not None:
+        stmt = stmt.where(PurchaseItem.purchase_id != exclude_purchase_id)
+    if exclude_wish_id is not None:
+        stmt = stmt.where(sqlor(Purchase.wish_id != exclude_wish_id, Purchase.wish_id.is_(None)))
 
     rows = (await db.execute(stmt)).all()
     for r in rows:
@@ -399,21 +409,26 @@ async def planned_item_consumption(
     """{feo_planned_item_id: {used, used_qty, wish_used, linked_purchase_ids}}
 
     Расход конкретной плановой позиции (FeoPlannedItem, Ур.5) через
-    PurchaseItem.feo_planned_item_id / WishItem.feo_planned_item_id. Общая
-    часть GET /api/feo-planned-items/residuals и
-    GET /api/feo-categories/plan-positions — чтобы оба эндпоинта считали
+    PurchaseItem.feo_planned_item_id. Общая часть GET /api/feo-planned-items/residuals
+    и GET /api/feo-categories/plan-positions — чтобы оба эндпоинта считали
     расход плановой позиции одинаково и не расходились.
 
     used/used_qty — SUM по PurchaseItem в PLANNED_STATUSES, привязанным к
     item_ids через feo_planned_item_id.
-    wish_used — SUM WishItem.total_price ещё не сконвертированных заявок
-    (draft/submitted/approved, purchase_id IS NULL), уже «бронирующих» план.
     linked_purchase_ids — уникальные id закупок, чьи позиции привязаны к
     плановой позиции (тоже только PLANNED_STATUSES).
 
-    Остановленные закупки (Purchase.stopped_at IS NOT NULL) и остановленные
-    заявки (Wish.stopped_at IS NOT NULL) исключены — «остановленные позиции
-    убираются из плана закупок и не считаются» (владелец, 2026-08-13).
+    Остановленные закупки (Purchase.stopped_at IS NOT NULL) исключены —
+    «остановленные позиции убираются из плана закупок и не считаются»
+    (владелец, 2026-08-13).
+
+    Решение владельца (2026-08-17): незаконвертированные заявки (Wish) НЕ
+    резервируют план — заявок может лежать сколько угодно (хоть на миллион
+    при плане 500 тыс.), из плана вычитается ТОЛЬКО то, что уже попало в план
+    закупок (позиции закупок, PurchaseItem). При работе с конкретной заявкой
+    показывается только она сама, а не сумма всех заявок. Ключ "wish_used"
+    сохранён в возвращаемом словаре и всегда равен 0.0 — исключительно ради
+    обратной совместимости вызывающего кода, который его читает.
     """
     result: dict[int, dict] = {
         iid: {"used": 0.0, "used_qty": 0.0, "wish_used": 0.0, "linked_purchase_ids": []}
@@ -443,23 +458,6 @@ async def planned_item_consumption(
     for r in (await db.execute(used_q)).all():
         result[r.feo_planned_item_id]["used"] = float(r.used)
         result[r.feo_planned_item_id]["used_qty"] = float(r.used_qty)
-
-    wish_used_q = (
-        select(
-            WishItem.feo_planned_item_id,
-            func.coalesce(func.sum(WishItem.total_price), 0).label("wish_used"),
-        )
-        .join(Wish, WishItem.wish_id == Wish.id)
-        .where(WishItem.feo_planned_item_id.in_(item_ids))
-        .where(Wish.status.in_(("draft", "submitted", "approved")))
-        .where(Wish.purchase_id.is_(None))
-        .where(Wish.stopped_at.is_(None))
-    )
-    if exclude_wish_id is not None:
-        wish_used_q = wish_used_q.where(Wish.id != exclude_wish_id)
-    wish_used_q = wish_used_q.group_by(WishItem.feo_planned_item_id)
-    for r in (await db.execute(wish_used_q)).all():
-        result[r.feo_planned_item_id]["wish_used"] = float(r.wish_used)
 
     links_q = (
         select(PurchaseItem.feo_planned_item_id, PurchaseItem.purchase_id)
@@ -1613,6 +1611,8 @@ async def assert_tz_not_over_plan(
     unit_price,
     total_price,
     item_name: str = "",
+    sibling_quantity=0,
+    sibling_total=0,
 ) -> None:
     """Бросает HTTPException 409, если ТЗ позиции (кол-во / цена за единицу / сумма)
     превышает привязанную плановую позицию — владелец (2026-08-07, план
@@ -1650,6 +1650,20 @@ async def assert_tz_not_over_plan(
     одновременно превышать и количество, и сумму — напр. «3 шт × 4 000 000»
     при плане «2 шт × 4 000 000»), с планом/фактом/разницей по каждой и общей
     подсказкой «что делать».
+
+    sibling_quantity/sibling_total (владелец, задача от 2026-08-17, прод-инцидент
+    закупка РЕЕ-2026-00887, +5 761 ₽): эта функция изначально проверяла КАЖДУЮ
+    строку ТЗ по отдельности против ПОЛНОГО плана её плановой позиции — если в
+    одной операции ДВЕ строки ссылались на ОДНУ и ту же плановую позицию, каждая
+    проходила поодиночке, а суммарно план превышался. Параметры добавляют к
+    проверяемым количеству и сумме остальные строки ТОЙ ЖЕ операции (закупки/
+    заявки), уже привязанные к той же плановой позиции — накопление в пределах
+    ОДНОЙ операции, межзакупочный расход сознательно НЕ учитывается (на проде
+    таких случаев не было, а проверка через операции несёт риск ложных отказов).
+    К цене за единицу (unit_price/price_d) siblings НЕ прибавляются — цена за
+    единицу не накапливается, это свойство конкретной строки, а не объёма.
+    Дефолт 0 — поведение без siblings не меняется. См. также обёртку
+    assert_tz_batch_not_over_plan ниже, которая считает siblings по списку строк.
     """
     from fastapi import HTTPException
     from app.models.feo_planned_item import FeoPlannedItem
@@ -1710,9 +1724,16 @@ async def assert_tz_not_over_plan(
     if planned_qty is None and planned_unit_price is None and planned_total is None:
         return  # плановые данные не заданы — правило не применяется
 
-    qty_d = Decimal(str(quantity)) if quantity is not None else Decimal("0")
+    own_qty_d = Decimal(str(quantity)) if quantity is not None else Decimal("0")
     price_d = Decimal(str(unit_price)) if unit_price is not None else Decimal("0")
-    total_d = Decimal(str(total_price)) if total_price is not None else (qty_d * price_d)
+    own_total_d = Decimal(str(total_price)) if total_price is not None else (own_qty_d * price_d)
+
+    sib_qty_d = Decimal(str(sibling_quantity)) if sibling_quantity is not None else Decimal("0")
+    sib_total_d = Decimal(str(sibling_total)) if sibling_total is not None else Decimal("0")
+
+    qty_d = own_qty_d + sib_qty_d
+    total_d = own_total_d + sib_total_d
+    has_siblings = sib_qty_d != 0 or sib_total_d != 0
 
     violations: list[str] = []
     if planned_qty is not None and qty_d > planned_qty:
@@ -1738,12 +1759,134 @@ async def assert_tz_not_over_plan(
         return
 
     name = item_name.strip() if item_name else "позиция"
+    siblings_note = (
+        " (учтены все строки этой операции, привязанные к той же плановой позиции)"
+        if has_siblings else ""
+    )
     raise HTTPException(
         409,
-        f"ТЗ позиции «{name}» превышает план: " + "; ".join(violations) + ". "
+        f"ТЗ позиции «{name}»{siblings_note} превышает план: " + "; ".join(violations) + ". "
         "Измените плановую позицию в Плане закупок (потребует согласования, если "
         "выходит за ФЭО) или уменьшите ТЗ."
     )
+
+
+async def assert_tz_batch_not_over_plan(
+    db: AsyncSession,
+    rows: list,
+    *,
+    fallback_category_id: Optional[int] = None,
+) -> None:
+    """Гейт «ТЗ не выше плана» (assert_tz_not_over_plan) для СПИСКА строк одной
+    операции (закупка/заявка) целиком — владелец, 2026-08-17, прод-инцидент
+    закупка РЕЕ-2026-00887 (+5 761 ₽): assert_tz_not_over_plan проверяла КАЖДУЮ
+    строку по отдельности против ПОЛНОГО плана её плановой позиции — если в
+    одной операции ДВЕ строки ссылались на ОДНУ и ту же плановую позицию, каждая
+    поодиночке проходила (например «план 21 шт / 15 750 ₽»: строка А = 21 шт /
+    15 750 ₽ — ровно план, строка Б = 4 шт / 3 000 ₽ — тоже ≤ плана), а вместе
+    план превышали (25 шт / 18 750 ₽ против 21 шт / 15 750 ₽). Эта обёртка
+    группирует строки по feo_planned_item_id и проверяет план ОДИН раз на
+    группу, передавая сумму количества/суммы группы.
+
+    Граница области (важно, НЕ расширять): накопление применяется ТОЛЬКО к
+    строкам с заполненным feo_planned_item_id. Строки с feo_planned_item_id
+    пустым проверяются против плана КАТЕГОРИИ по отдельности, как раньше —
+    накопление там дублировало бы assert_no_unapproved_excess (у которого есть
+    свой путь согласования). Межзакупочный расход (та же плановая позиция в
+    ДРУГОЙ операции) сознательно НЕ учитывается — на проде таких случаев ноль,
+    а проверка через операции несёт риск ложных отказов.
+
+    Строки с over_plan=True пропускаются полностью — не проверяются и не
+    учитываются в сумме группы (та же семантика, что и в поштучных вызовах
+    во всех местах, откуда раньше вызывалась assert_tz_not_over_plan напрямую).
+
+    unit_price группы = МАКСИМАЛЬНАЯ цена за единицу среди строк группы —
+    правило «цена за единицу не выше плановой» обязано сработать на самой
+    дорогой строке; для группы из одной строки это её собственная цена, т.е.
+    поведение идентично прежнему поштучному вызову.
+
+    Порядок обхода — сначала строки без плановой позиции (в порядке появления
+    в rows), затем группы (в порядке первого появления feo_planned_item_id в
+    rows) — детерминированный при одинаковом входе, чтобы сообщение об ошибке
+    не «прыгало» между одинаковыми запросами. Полное совпадение с исходным
+    построчным порядком невозможно в принципе: сумму группы нельзя посчитать,
+    не увидев все её строки, поэтому группы проверяются отдельным проходом
+    после сборки.
+
+    Разложение суммы группы на «свою»/«братьев» (2026-08-17, фикс текста
+    ошибки): ДО этого вызов передавал в assert_tz_not_over_plan уже готовую
+    сумму группы целиком через quantity/total_price, БЕЗ sibling_quantity/
+    sibling_total — из-за этого внутри has_siblings всегда получался False
+    (siblings были нулевыми), и пояснение «учтены все строки...» в тексте 409
+    никогда не появлялось, хотя число уже было накоплено по группе — владелец
+    видел «в ТЗ 26 шт» и не понимал, откуда взялась цифра, если в его строке
+    было только 21. Теперь количество/сумма ПЕРВОЙ строки группы передаются
+    как «свои» (quantity/total_price), а Σ остальных строк группы — как
+    sibling_quantity/sibling_total. Итоговые проверяемые величины (qty_d =
+    own + sib, total_d = own + sib внутри assert_tz_not_over_plan) численно
+    ИДЕНТИЧНЫ прежним — меняется только то, что has_siblings становится True
+    для групп из 2+ строк и в сообщение попадает пояснение. Для группы из
+    ОДНОЙ строки siblings = 0 — поведение полностью совпадает с прежним.
+    """
+    groups: dict[int, list] = {}
+    individuals: list = []
+    for row in rows:
+        if getattr(row, "over_plan", False):
+            continue
+        fpi_id = getattr(row, "feo_planned_item_id", None)
+        if fpi_id:
+            groups.setdefault(fpi_id, []).append(row)
+        else:
+            individuals.append(row)
+
+    for row in individuals:
+        await assert_tz_not_over_plan(
+            db,
+            feo_planned_item_id=None,
+            feo_category_id=getattr(row, "feo_category_id", None) or fallback_category_id,
+            quantity=row.quantity,
+            unit_price=row.unit_price,
+            total_price=row.total_price,
+            item_name=row.item_name,
+        )
+
+    for fpi_id, group_rows in groups.items():
+        first = group_rows[0]
+        siblings = group_rows[1:]
+
+        max_price = Decimal("0")
+        for r in group_rows:
+            r_price = Decimal(str(r.unit_price)) if r.unit_price is not None else Decimal("0")
+            if r_price > max_price:
+                max_price = r_price
+
+        own_qty = Decimal(str(first.quantity)) if first.quantity is not None else Decimal("0")
+        own_price = Decimal(str(first.unit_price)) if first.unit_price is not None else Decimal("0")
+        own_total = Decimal(str(first.total_price)) if first.total_price is not None else (own_qty * own_price)
+
+        sib_qty = Decimal("0")
+        sib_total = Decimal("0")
+        for r in siblings:
+            r_qty = Decimal(str(r.quantity)) if r.quantity is not None else Decimal("0")
+            r_price = Decimal(str(r.unit_price)) if r.unit_price is not None else Decimal("0")
+            r_total = Decimal(str(r.total_price)) if r.total_price is not None else (r_qty * r_price)
+            sib_qty += r_qty
+            sib_total += r_total
+
+        name = (first.item_name or "").strip() or "позиция"
+        if len(group_rows) > 1:
+            name = f"{name} и ещё {len(group_rows) - 1} поз."
+        await assert_tz_not_over_plan(
+            db,
+            feo_planned_item_id=fpi_id,
+            feo_category_id=(getattr(first, "feo_category_id", None) or fallback_category_id),
+            quantity=own_qty,
+            unit_price=max_price,
+            total_price=own_total,
+            item_name=name,
+            sibling_quantity=sib_qty,
+            sibling_total=sib_total,
+        )
 
 
 async def feo_plan_subsidy_totals(

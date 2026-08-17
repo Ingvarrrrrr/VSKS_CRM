@@ -4897,7 +4897,9 @@ const feoResidualsByCat = computed<Record<number, { planned: number; consumed: n
     if (catId == null) continue
     const acc = (result[catId] ||= { planned: 0, consumed: 0, residual: 0 })
     acc.planned += Number(item.planned_amount || 0)
-    acc.consumed += Number(item.used_amount || 0) + Number(item.wish_used_amount || 0)
+    // Заявки не расходуют план (владелец, 2026-08-17) — в consumed идут только
+    // позиции закупок; wish_used_amount всегда 0, но поле оставлено в типе ради контракта ответа.
+    acc.consumed += Number(item.used_amount || 0)
     acc.residual += Number(item.residual || 0)
   }
   return result

@@ -25,7 +25,7 @@ from app.services.text_match import normalize as _normalize_name
 from app.models.purchase_event import PurchaseMember
 from app.routers.purchase_members import _create_assignment_chat_room
 from app.models.chat_message import ChatMessage
-from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_over_plan, compute_feo_plan_tree
+from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_over_plan, assert_tz_batch_not_over_plan, compute_feo_plan_tree
 # _auto_assign_planned_items вынесена в app.services.plan_autoassign (владелец,
 # 2026-08-12, «закупка сама становится планом»): нужна ТАКЖЕ из purchases.py для
 # закупок, созданных/меняемых в обход заявки. Поведение НЕ менялось при переносе —
@@ -897,18 +897,11 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
     #      виновата, а не абстрактное «превышен бюджет категории».
     # over_plan=true — сознательно сверх плана (тот же обход, что и в
     # _sync_wish_items_to_purchases/update_wish/purchases.py) — пропускаем.
-    for _wi in items_full:
-        if getattr(_wi, 'over_plan', False):
-            continue
-        await assert_tz_not_over_plan(
-            db,
-            feo_planned_item_id=_wi.feo_planned_item_id,
-            feo_category_id=_wi.feo_category_id,
-            quantity=_wi.quantity,
-            unit_price=_wi.unit_price,
-            total_price=_wi.total_price,
-            item_name=_wi.item_name,
-        )
+    # Владелец (2026-08-17, прод-инцидент РЕЕ-2026-00887): позиции, привязанные
+    # к ОДНОЙ и той же плановой позиции, накапливаются в пределах ЭТОЙ заявки
+    # (assert_tz_batch_not_over_plan), а не проверяются поштучно против ПОЛНОГО
+    # плана — иначе две строки в сумме превышают план, каждая проходя поодиночке.
+    await assert_tz_batch_not_over_plan(db, items_full)
 
     # Владелец (2026-08-12): «Когда заявка идёт с превышением, ... она должна
     # уходить [в закупку], но на закупке должен быть значок, что она заблокирована
@@ -2241,18 +2234,9 @@ async def convert_wish(
     await _auto_assign_planned_items(
         items_full, wish.feo_category_id, db, note=f"заявкой №{wish.id} (/convert)",
     )
-    for _wi in items_full:
-        if getattr(_wi, 'over_plan', False):
-            continue
-        await assert_tz_not_over_plan(
-            db,
-            feo_planned_item_id=_wi.feo_planned_item_id,
-            feo_category_id=_wi.feo_category_id,
-            quantity=_wi.quantity,
-            unit_price=_wi.unit_price,
-            total_price=_wi.total_price,
-            item_name=_wi.item_name,
-        )
+    # Владелец (2026-08-17, прод-инцидент РЕЕ-2026-00887): накопление по общей
+    # плановой позиции в пределах ЭТОЙ заявки — см. assert_tz_batch_not_over_plan.
+    await assert_tz_batch_not_over_plan(db, items_full)
     # Владелец (2026-08-12): /convert больше не блокируется несогласованным
     # превышением ФЭО — assert_no_unapproved_excess убран, вместо отказа собираем
     # excess_warnings ПОСЛЕ создания закупки (см. вызов _collect_excess_warnings

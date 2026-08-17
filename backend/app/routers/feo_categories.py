@@ -676,6 +676,8 @@ async def get_feo_leaves(
 @router.get("/plan-positions")
 async def get_plan_positions(
     subsidy_id: int = Query(...),
+    exclude_purchase_id: Optional[int] = Query(None),
+    exclude_wish_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     _=Depends(get_current_user),
 ):
@@ -715,6 +717,15 @@ async def get_plan_positions(
     предотвращения повторного выбора уже занятого плана); `ordered_residual` — НОВЫЙ
     остаток по формуле v2 (план − ordered_sum), под другим именем, чтобы не столкнуть
     с уже существующим `residual`.
+
+    exclude_purchase_id/exclude_wish_id (сессия 2026-08-17): редактирование
+    существующей закупки/заявки — её собственные строки не должны выглядеть
+    занявшими план (иначе позиция сравнивается сама с собой: остаток 0, и UI
+    повторно вычитает ту же сумму — баг «план 54 318 · выбрано 54 318 · не
+    хватает 54 318»). Ровно то же уже делает GET /api/feo-planned-items/residuals.
+    Поля `ordered_qty`/`ordered_sum`/`plan_manual`/`ordered_residual`/`forecast`/
+    `forecast_over` приходят из compute_feo_plan_tree и исключение НЕ учитывают —
+    это осознанно, в UI-подписи «не хватает» они не участвуют.
     """
     from app.models.feo_planned_item import FeoPlannedItem
     from app.services.feo_plan import (
@@ -735,7 +746,9 @@ async def get_plan_positions(
             children_count[c.parent_id] = children_count.get(c.parent_id, 0) + 1
     leaves = [c for c in all_cats if children_count.get(c.id, 0) == 0]
 
-    consumption = await plan_consumption_by_category(db, [subsidy_id])
+    consumption = await plan_consumption_by_category(
+        db, [subsidy_id], exclude_purchase_id=exclude_purchase_id, exclude_wish_id=exclude_wish_id
+    )
     tree = await compute_feo_plan_tree(db, [subsidy_id])
 
     result = []
@@ -787,7 +800,7 @@ async def get_plan_positions(
         )).scalars().all()
         if fpi_rows:
             fpi_ids = [it.id for it in fpi_rows]
-            fpi_cons = await planned_item_consumption(db, fpi_ids)
+            fpi_cons = await planned_item_consumption(db, fpi_ids, exclude_purchase_id, exclude_wish_id)
             for it in fpi_rows:
                 cat = cat_by_id.get(it.feo_category_id)
                 planned_total = float(it.amount or 0)

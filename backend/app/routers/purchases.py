@@ -21,7 +21,7 @@ from app.models.user import User
 from app.models.user_org_access import UserOrgAccess
 from app.routers.contracts import ensure_contract_linked
 from app.routers.purchase_budget import _check_budget, _assign_framework_seq, FRAMEWORK_TYPES
-from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_over_plan, compute_feo_plan_tree
+from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_over_plan, assert_tz_batch_not_over_plan, compute_feo_plan_tree
 # Владелец (2026-08-12, «закупка сама становится планом»): та же логика
 # автозаведения плановой позиции, что и в wishes.py, нужна и здесь — для
 # закупок, созданных/меняемых в обход заявки (см. вызовы ниже в update_purchase
@@ -1295,19 +1295,12 @@ async def create_purchase(
     # Шаг 5 «цена ТЗ не выше плановой» (владелец, 2026-08-07): по каждой позиции,
     # ДО создания закупки. over_plan=true пропускаем — такая позиция сознательно
     # сверх плана и уже проходит через assert_no_unapproved_excess выше.
+    # Владелец (2026-08-17, прод-инцидент РЕЕ-2026-00887): позиции, привязанные
+    # к ОДНОЙ и той же плановой позиции, накапливаются в пределах ЭТОЙ закупки
+    # (assert_tz_batch_not_over_plan), а не проверяются поштучно против ПОЛНОГО
+    # плана — иначе две строки в сумме превышают план, каждая проходя поодиночке.
     if not admin_override:
-        for _i in items_data:
-            if getattr(_i, "over_plan", False):
-                continue
-            await assert_tz_not_over_plan(
-                db,
-                feo_planned_item_id=_i.feo_planned_item_id,
-                feo_category_id=_i.feo_category_id or data.feo_category_id,
-                quantity=_i.quantity,
-                unit_price=_i.unit_price,
-                total_price=_i.total_price,
-                item_name=_i.item_name,
-            )
+        await assert_tz_batch_not_over_plan(db, items_data, fallback_category_id=data.feo_category_id)
 
     if not data.purchase_number:
         max_result = await db.execute(select(func.coalesce(func.max(Purchase.purchase_number), 0)))
@@ -1637,19 +1630,10 @@ async def update_purchase(
     # ДО удаления старых (PUT заменяет все позиции целиком — старые снимки плана
     # старых строк тут не помогут, проверяем именно то, что придёт в базу).
     # over_plan=true пропускаем — сознательно сверх плана, см. create_purchase выше.
+    # Владелец (2026-08-17, прод-инцидент РЕЕ-2026-00887): накопление по общей
+    # плановой позиции в пределах ЭТОЙ закупки — см. assert_tz_batch_not_over_plan.
     if not admin_override:
-        for _i in items_data:
-            if getattr(_i, "over_plan", False):
-                continue
-            await assert_tz_not_over_plan(
-                db,
-                feo_planned_item_id=_i.feo_planned_item_id,
-                feo_category_id=_i.feo_category_id or p.feo_category_id,
-                quantity=_i.quantity,
-                unit_price=_i.unit_price,
-                total_price=_i.total_price,
-                item_name=_i.item_name,
-            )
+        await assert_tz_batch_not_over_plan(db, items_data, fallback_category_id=p.feo_category_id)
 
     # Replace items (auto-link to catalog via fuzzy match if product_id missing)
     await db.execute(delete(PurchaseItem).where(PurchaseItem.purchase_id == pid))
@@ -2197,6 +2181,30 @@ async def patch_purchase_item(
         _prospective_qty = body.quantity if body.quantity is not None else it.quantity
         _prospective_price = body.unit_price if body.unit_price is not None else it.unit_price
         _prospective_total = (_prospective_qty or Decimal("0")) * (_prospective_price or Decimal("0"))
+        # Владелец (2026-08-17, прод-инцидент РЕЕ-2026-00887): PATCH правит ОДНУ
+        # позицию — «братья» (другие строки ЭТОЙ ЖЕ закупки на ту же плановую
+        # позицию) лежат в БД, а не в памяти, как у create/PUT. Считаем их сумму
+        # отдельным запросом и передаём как sibling_quantity/sibling_total, иначе
+        # эта позиция пройдёт гейт поодиночке, даже если вместе с братьями план
+        # уже превышен (см. assert_tz_batch_not_over_plan в feo_plan.py).
+        _sib_qty = Decimal("0")
+        _sib_total = Decimal("0")
+        if it.feo_planned_item_id is not None:
+            _sib_row = (
+                await db.execute(
+                    select(
+                        func.coalesce(func.sum(PurchaseItem.quantity), 0),
+                        func.coalesce(func.sum(PurchaseItem.total_price), 0),
+                    ).where(
+                        PurchaseItem.purchase_id == pid,
+                        PurchaseItem.feo_planned_item_id == it.feo_planned_item_id,
+                        PurchaseItem.id != it.id,
+                        func.coalesce(PurchaseItem.over_plan, False).is_(False),
+                    )
+                )
+            ).one()
+            _sib_qty = Decimal(str(_sib_row[0] or 0))
+            _sib_total = Decimal(str(_sib_row[1] or 0))
         await assert_tz_not_over_plan(
             db,
             feo_planned_item_id=it.feo_planned_item_id,
@@ -2205,6 +2213,8 @@ async def patch_purchase_item(
             unit_price=_prospective_price,
             total_price=_prospective_total,
             item_name=body.item_name if body.item_name is not None else it.item_name,
+            sibling_quantity=_sib_qty,
+            sibling_total=_sib_total,
         )
     # Задача владельца, план zany-fluttering-mountain.md п.4 (2026-08-10): точечная
     # правка позиции — тоже «добавление позиции в категорию» (рост суммы позиции

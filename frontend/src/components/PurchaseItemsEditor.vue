@@ -19,6 +19,16 @@
             </template>
           </v-tooltip>
         </v-btn-toggle>
+        <!-- Владелец 2026-08-18: «сделать кнопку, чтобы разворачивались все позиции сразу» —
+             видна только когда есть строки с раскрытием (stagesEnabled → ItemsTableStages,
+             единственное представление с expand-row ТЗ/Договор/Поставка; у Flat/Cards
+             раскрытия нет вовсе). -->
+        <v-btn v-if="stagesEnabled && localItems.length > 0"
+          variant="tonal" size="small"
+          :prepend-icon="allExpanded ? 'mdi-unfold-less-horizontal' : 'mdi-unfold-more-horizontal'"
+          @click="toggleExpandAll">
+          {{ allExpanded ? 'Свернуть всё' : 'Развернуть всё' }}
+        </v-btn>
         <v-btn v-if="selectedItemIdxs.length > 0 && !props.readonly"
           variant="tonal" prepend-icon="mdi-delete-sweep-outline" size="small" color="error"
           @click="removeSelectedItems">
@@ -115,6 +125,14 @@
           @click="itemsFilterCats = []; itemsFilterTypes = []">Сбросить</v-btn>
       </template>
     </div>
+
+    <!-- Владелец 2026-08-18: «У меня в закупке имеются позиции, не привязанные к плановым.
+         Это косяк, об этом надо сообщать!» — плашка над таблицей, исчезает сама, когда
+         непривязанных нет (пока позиции ещё грузятся, localItems пуст — плашка не появляется). -->
+    <v-alert v-if="itemsMissingPlan.length > 0" type="warning" variant="tonal" density="compact" class="mb-2">
+      {{ itemsMissingPlan.length }} {{ itemsMissingPlanWord }} без плановой позиции: {{ itemsMissingPlanSummary }}.
+      Такие позиции не расходуют план и не видны в плане закупок.
+    </v-alert>
 
     <!-- Purchase shape table -->
     <template v-if="itemShape === 'purchase'">
@@ -1359,6 +1377,21 @@ function toggleExpand(idx: number) {
   expanded.value[idx] = !expanded.value[idx]
 }
 
+// Владелец 2026-08-18: «Развернуть всё / Свернуть всё» — один переключатель над
+// таблицей. allExpanded=true только когда ВСЕ текущие строки раскрыты (пустой
+// список позиций считается «не всё раскрыто», чтобы кнопка не пряталась в стейте
+// «Свернуть всё» без единой строки).
+const allExpanded = computed(() =>
+  localItems.value.length > 0 && localItems.value.every((_, i) => !!expanded.value[i])
+)
+
+function toggleExpandAll() {
+  const next: Record<number, boolean> = {}
+  const shouldExpand = !allExpanded.value
+  localItems.value.forEach((_, i) => { next[i] = shouldExpand })
+  expanded.value = next
+}
+
 // Auto-expand для match_confirmed=false (D-01.1.2)
 watch(localItems, (items) => {
   items.forEach((it, i) => {
@@ -2236,6 +2269,35 @@ const _unlinkedCandidates = computed(() =>
     .map((it, idx) => ({ it, idx }))
     .filter(({ it }) => (it.item_name || '').trim() && it.feo_planned_item_id == null)
 )
+
+// Владелец 2026-08-18: «У меня в закупке имеются позиции, не привязанные к
+// плановым. Это косяк, об этом надо сообщать!» — те же строки, что и
+// _unlinkedCandidates (непустое имя, feo_planned_item_id == null), НО без
+// over_plan=true: такие позиции сознательно заведены сверх плана (согласуется
+// отдельно, см. EditorItem.over_plan / F-PLAN2) и привязки к плановой позиции
+// не требуют — не считаем их «косяком». Гейт по subsidyId: без субсидии у
+// закупки нет плана вовсе, предупреждение всегда было бы включено — бесполезный шум.
+const itemsMissingPlan = computed(() => {
+  if (props.itemShape !== 'purchase' || !props.subsidyId) return []
+  return _unlinkedCandidates.value.filter(({ it }) => !it.over_plan).map(({ it }) => it)
+})
+
+function _pluralRu(n: number, [one, few, many]: [string, string, string]): string {
+  const mod10 = n % 10
+  const mod100 = n % 100
+  if (mod10 === 1 && mod100 !== 11) return one
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few
+  return many
+}
+
+const itemsMissingPlanWord = computed(() => _pluralRu(itemsMissingPlan.value.length, ['позиция', 'позиции', 'позиций']))
+
+const itemsMissingPlanSummary = computed(() => {
+  const names = itemsMissingPlan.value.map(it => (it.item_name || '').trim() || '—')
+  const shown = names.slice(0, 3)
+  const restCount = names.length - shown.length
+  return shown.join(', ') + (restCount > 0 ? ` и ещё ${restCount}` : '')
+})
 
 const needPlanRows = computed((): PlanCreateRow[] =>
   _unlinkedCandidates.value

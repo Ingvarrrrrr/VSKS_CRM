@@ -1339,7 +1339,12 @@
                                     <span v-if="planned.amount">{{ formatCurrency(planned.amount) }}</span>
                                   </td>
                                   <td style="width:74px;min-width:74px;padding:4px 8px;text-align:center;color:#64748b">
-                                    {{ planned.item_type || '—' }}
+                                    <span
+                                      v-if="planned.item_type_inherited"
+                                      class="text-medium-emphasis"
+                                      title="Тип взят из позиций закупок — у самой плановой позиции он не задан"
+                                    >{{ planned.item_type_effective }}</span>
+                                    <span v-else>{{ planned.item_type_effective || '—' }}</span>
                                   </td>
                                   <!-- spent/residual — пустые заглушки, только чтобы раскладка колонок совпадала
                                        со основной таблицей (см. правку выше у feoResize/th этой таблицы). -->
@@ -5625,6 +5630,11 @@ interface FeoPlannedItem {
   sort_order?: number | null
   // Блок 1 (план zany-fluttering-mountain.md, 2026-08-14): товар / услуга / работа.
   item_type?: string | null
+  // Владелец (2026-08-18): «данные есть [у связанных позиций закупок], почему
+  // не подтягиваются?» — свой item_type, иначе унаследованный от purchase_items,
+  // иначе null (GET /feo-planned-items/comparison, см. FeoPlannedItemOut в бэкенде).
+  item_type_effective?: string | null
+  item_type_inherited?: boolean
 }
 // Стадия уточнения позиции (ФЭО → План → Что выставили на закупку → Номенклатура
 // подрядчика → Приняли) — справочная детализация, отдаётся бэкендом внутри FeoActualItem.stages.

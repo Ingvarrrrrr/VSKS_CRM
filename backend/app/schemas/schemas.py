@@ -1348,6 +1348,15 @@ class FeoPlannedItemOut(FeoPlannedItemCreate):
     # Заведена автоматически (plan_autoassign.py), а не человеком — только
     # для отображения, НЕ принимается на вход (см. create_planned_item).
     auto_created: bool = False
+    # Владелец (2026-08-18): «в позициях точно прописано, к чему относятся
+    # данные позиции — товар/услуга/работа... почему не подтягиваются?».
+    # Считаются ТОЛЬКО в GET /feo-planned-items/comparison (см. get_comparison) —
+    # остальные эндпоинты, отдающие FeoPlannedItemOut, оставляют дефолты
+    # (item_type_effective=None, item_type_inherited=False), т.к. у них нет
+    # под рукой связанных purchase_items. Собственный item_type НЕ трогается —
+    # это read-only вычисление, не запись (правило «выбранное не меняется само»).
+    item_type_effective: Optional[str] = None  # свой item_type, иначе унаследованный от закупок, иначе None
+    item_type_inherited: bool = False           # True — item_type_effective взят у связанных purchase_items
     model_config = {"from_attributes": True}
 
 

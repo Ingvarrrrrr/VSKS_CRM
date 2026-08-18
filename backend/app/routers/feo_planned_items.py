@@ -935,6 +935,36 @@ async def get_comparison(
         )).scalars().all()
         plan_items_map = {p.id: p for p in _pi_rows}
 
+    # Владелец (2026-08-18): «данные-то есть [в позициях закупок], почему они не
+    # подтягиваются?» — плановая позиция без СВОЕГО item_type наследует тип от
+    # связанных позиций закупок (см. FeoPlannedItemOut.item_type_effective/
+    # item_type_inherited). Один сгруппированный запрос на ВСЕ плановые позиции
+    # категории сразу (не в цикле по planned_rows — иначе N+1). Фильтры статуса/
+    # stopped_at — те же, что и у actual_rows выше (PLANNED_STATUSES +
+    # Purchase.stopped_at.is_(None)), чтобы «тип» не подтягивался из
+    # отменённых/остановленных закупок.
+    _planned_ids_all = [p.id for p in planned_rows]
+    _inherited_type_map: dict[int, Optional[str]] = {}
+    if _planned_ids_all:
+        _type_rows = (await db.execute(
+            select(PurchaseItem.feo_planned_item_id, PurchaseItem.item_type)
+            .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
+            .where(PurchaseItem.feo_planned_item_id.in_(_planned_ids_all))
+            .where(Purchase.status.in_(PLANNED_STATUSES))
+            .where(Purchase.stopped_at.is_(None))
+            .distinct()
+        )).all()
+        _types_by_planned: dict[int, set] = {}
+        for _fpi_id, _itype in _type_rows:
+            if not _itype:
+                continue
+            _types_by_planned.setdefault(_fpi_id, set()).add(_itype)
+        for _fpi_id, _types in _types_by_planned.items():
+            # Один и тот же непустой тип у всех связанных позиций — наследуем.
+            # Разные типы — не выдумываем за пользователя, отдаём None
+            # (см. item_type_effective ниже: own или ничего).
+            _inherited_type_map[_fpi_id] = next(iter(_types)) if len(_types) == 1 else None
+
     # Resolve contractor names
     from app.models.contractor import Contractor
     contractor_ids = {row.Purchase.contractor_id for row in actual_rows if row.Purchase.contractor_id}
@@ -1027,8 +1057,21 @@ async def get_comparison(
             stages=_stages,
         ))
 
+    planned_out: list[FeoPlannedItemOut] = []
+    for r in planned_rows:
+        out = FeoPlannedItemOut.model_validate(r)
+        _own_type = r.item_type
+        if _own_type:
+            out.item_type_effective = _own_type
+            out.item_type_inherited = False
+        else:
+            _inherited = _inherited_type_map.get(r.id)
+            out.item_type_effective = _inherited
+            out.item_type_inherited = bool(_inherited)
+        planned_out.append(out)
+
     return FeoComparisonOut(
-        planned=[FeoPlannedItemOut.model_validate(r) for r in planned_rows],
+        planned=planned_out,
         actual=actual_out,
     )
 

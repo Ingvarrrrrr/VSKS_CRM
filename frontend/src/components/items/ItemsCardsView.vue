@@ -29,6 +29,15 @@
       class="mb-3 item-card"
       :class="{ 'cv-card': virtualize }"
     >
+      <!-- Split (top-right, absolute, next to delete) — владелец 2026-08-18:
+           разбивка позиции по разным категориям ФЭО. Только для закупок
+           (supportsSplit), не для заявок (wish), от 2 единиц количества. -->
+      <v-tooltip v-if="supportsSplit && !readonly && (item.quantity ?? 0) >= 2" text="Разбить по категориям ФЭО" location="top">
+        <template #activator="{ props: tip }">
+          <v-btn v-bind="tip" icon="mdi-call-split" variant="text" size="small" color="primary"
+            class="item-card-split" data-testid="split-item-btn" @click="emit('split-item', idx)" />
+        </template>
+      </v-tooltip>
       <!-- Delete (top-right, absolute) -->
       <v-btn v-if="!readonly" icon="mdi-delete-outline" variant="text" size="small" color="error"
         class="item-card-delete" @click="emit('remove-item', idx)" />
@@ -276,6 +285,9 @@ const props = defineProps<{
   // F-PLAN2: производный выбор { kind, id } | null для FeoPlannedItemsSelect по
   // фактическим полям позиции — см. plannedSelectionFor() в PurchaseItemsEditor.vue.
   plannedSelectionFor?: (item: EditorItem) => FeoPlanSelection | null
+  // Владелец 2026-08-18: показать кнопку «Разбить» на карточке — только у закупок
+  // (POST /purchases/{pid}/items/{item_id}/split не существует для заявок/wish-позиций).
+  supportsSplit?: boolean
   showContractorColumn: boolean
   showNeededDate?: boolean
   contractors: Contractor[]
@@ -325,6 +337,7 @@ const emit = defineEmits<{
   'calc-item-total': [idx: number]
   'vat-rate-change': [idx: number, v: any]
   'remove-item': [idx: number]
+  'split-item': [idx: number]
   'contractor-search-input': [idx: number, search: string]
   'item-contractor-select': [idx: number, val: Contractor | null]
   'open-contractor-quick-create': [idx: number]
@@ -343,6 +356,12 @@ const emit = defineEmits<{
   position: absolute;
   top: 4px;
   right: 4px;
+  z-index: 2;
+}
+.item-card-split {
+  position: absolute;
+  top: 4px;
+  right: 44px;
   z-index: 2;
 }
 .item-card-photo { background: rgb(var(--v-theme-surface)); }

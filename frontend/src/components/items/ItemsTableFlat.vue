@@ -194,8 +194,20 @@
             </div>
           </td>
           <td>
-            <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
-              :disabled="readonly" @click="emit('remove-item', idx)" />
+            <div class="d-flex">
+              <!-- Владелец 2026-08-18: разбивка позиции по разным категориям ФЭО
+                   (напр. 66 огнетушителей → 41 по одной категории, 25 по другой).
+                   Доступно от 2 единиц количества, недоступно в readonly. -->
+              <v-tooltip v-if="!readonly && (item.quantity ?? 0) >= 2" text="Разбить по категориям ФЭО" location="top">
+                <template #activator="{ props: tip }">
+                  <v-btn v-bind="tip" icon="mdi-call-split" variant="text" size="small" color="primary"
+                    data-testid="split-item-btn"
+                    @click="emit('split-item', idx)" />
+                </template>
+              </v-tooltip>
+              <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
+                :disabled="readonly" @click="emit('remove-item', idx)" />
+            </div>
           </td>
         </tr>
         <!-- ФЭО-подстрока на всю ширину таблицы: путь категории ФЭО обычно длинный
@@ -377,6 +389,7 @@ const emit = defineEmits<{
   'calc-item-total': [idx: number]
   'vat-rate-change': [idx: number, v: any]
   'remove-item': [idx: number]
+  'split-item': [idx: number]
   'contractor-search-input': [idx: number, search: string]
   'item-contractor-select': [idx: number, val: Contractor | null]
   'open-contractor-quick-create': [idx: number]

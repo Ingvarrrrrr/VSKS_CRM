@@ -2455,6 +2455,364 @@ async def patch_purchase_item(
     }
 
 
+class _ItemSplitPart(BaseModel):
+    quantity: Decimal
+    feo_category_id: Optional[int] = None
+    feo_planned_item_id: Optional[int] = None
+
+
+class _ItemSplitBody(BaseModel):
+    parts: list[_ItemSplitPart]
+
+
+def _split_by_quantity(
+    total,
+    original_qty: Decimal,
+    quantities: list[Decimal],
+    precision: Decimal,
+) -> list[Optional[Decimal]]:
+    """Раскладывает `total` на доли, пропорциональные `quantities` от `original_qty`
+    — владелец (2026-08-18, разбивка позиции закупки, см. split_purchase_item).
+
+    `total is None` → весь результат None (снимка/поля не было — незачем его
+    придумывать). Последняя доля получает остаток (`total − Σ предыдущих`), а не
+    свою пропорциональную долю — иначе округление до `precision` может увести
+    сумму долей от исходного `total` на копейки («баланс копейка в копейку»).
+    """
+    if total is None:
+        return [None] * len(quantities)
+    total_d = Decimal(str(total))
+    n = len(quantities)
+    shares: list[Decimal] = []
+    running = Decimal("0")
+    for i, q in enumerate(quantities):
+        if i < n - 1:
+            share = (total_d * q / original_qty).quantize(precision)
+            shares.append(share)
+            running += share
+        else:
+            shares.append(total_d - running)
+    return shares
+
+
+@router.post("/{pid}/items/{item_id}/split")
+async def split_purchase_item(
+    pid: int,
+    item_id: int,
+    body: _ItemSplitBody,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Разбивка ОДНОЙ позиции закупки на несколько частей по разным категориям
+    ФЭО / плановым позициям — владелец (2026-08-18, закупка №890 «Огнетушители»,
+    status=ordered): 66 шт нужно разложить 41+25 по разным ФЭО, а добавление
+    НОВОЙ позиции в проведённую/поставленную закупку справедливо запрещено
+    (см. TZ_FROZEN_STATUSES у patch_purchase_item).
+
+    Ключевое отличие от patch_purchase_item: разбивка НЕ меняет ни Σ количества,
+    ни Σ суммы позиции (66 остаются 66, 54 318 ₽ остаются 54 318 ₽) — меняется
+    только распределение по категориям/плановым позициям. Поэтому TZ_FROZEN_STATUSES
+    ЗДЕСЬ СОЗНАТЕЛЬНО НЕ ПРИМЕНЯЕТСЯ (в отличие от patch_purchase_item) — заморозка
+    защищает от изменения зафиксированного ТЗ, а не от его перекладки по одной и
+    той же сумме между категориями.
+
+    Порядок: СНАЧАЛА все проверки (включая гейт «ТЗ не выше плана» на
+    получившийся набор частей целиком), ПОТОМ любые мутации/db.add — при отказе
+    на любом шаге в сессии нет ни одной применённой правки (общий паттерн ORM-
+    сессии в этом роутере: без явного db.commit() правки не переживают закрытие
+    сессии, но здесь валидация вынесена перед мутациями even more строго — чтобы
+    не зависеть от этого поведения).
+    """
+    if not await _has_purchase_write_access(current_user, db):
+        raise HTTPException(403, "Нет прав на редактирование этой закупки. Обратитесь к администратору организации.")
+    it = await db.get(PurchaseItem, item_id)
+    if not it or it.purchase_id != pid:
+        raise HTTPException(404, "Позиция не найдена")
+    p = await db.get(Purchase, pid)
+    if not p:
+        raise HTTPException(404, "Закупка не найдена")
+
+    parts = body.parts
+    if len(parts) < 2:
+        raise HTTPException(400, "Для разбивки нужно минимум 2 части")
+    for idx, part in enumerate(parts, start=1):
+        if part.quantity is None or part.quantity <= 0:
+            raise HTTPException(400, f"Количество части {idx} должно быть больше нуля")
+
+    original_qty = Decimal(str(it.quantity or 0))
+    quantities = [Decimal(str(pt.quantity)) for pt in parts]
+    parts_qty_sum = sum(quantities, Decimal("0"))
+    if parts_qty_sum != original_qty:
+        raise HTTPException(
+            409,
+            f"Сумма количества частей ({parts_qty_sum}) не равна количеству позиции «{it.item_name}» "
+            f"({original_qty}) — разбивка не меняет ни количество, ни сумму позиции, только распределение "
+            "по категориям ФЭО.",
+        )
+
+    # Категории/плановые позиции частей — те же проверки и формулировки ошибок,
+    # что и в patch_purchase_item (см. ветки feo_category_id / _explicit_planned_item_chosen).
+    from app.models.feo_planned_item import FeoPlannedItem as _FPI
+    for idx, part in enumerate(parts, start=1):
+        if part.feo_category_id is not None:
+            cat = await db.get(FeoCategory, part.feo_category_id)
+            if not cat:
+                raise HTTPException(404, f"Категория ФЭО части {idx} не найдена")
+            if p.subsidy_id and cat.subsidy_id != p.subsidy_id:
+                raise HTTPException(422, f"Категория ФЭО части {idx} относится к другой субсидии")
+        if part.feo_planned_item_id is not None:
+            fpi = await db.get(_FPI, part.feo_planned_item_id)
+            if not fpi:
+                raise HTTPException(404, f"Плановая позиция части {idx} не найдена")
+            if not fpi.is_active:
+                raise HTTPException(
+                    409,
+                    f"Плановая позиция «{fpi.name}» (часть {idx}) деактивирована (удалена из плана), "
+                    "привязка к ней невозможна — выберите действующую или создайте новую.",
+                )
+            if part.feo_category_id is None or fpi.feo_category_id != part.feo_category_id:
+                _fpi_cat_name = (await db.execute(
+                    select(FeoCategory.name).where(FeoCategory.id == fpi.feo_category_id)
+                )).scalar_one_or_none() or f"#{fpi.feo_category_id}"
+                if part.feo_category_id is not None:
+                    _target_cat_name = (await db.execute(
+                        select(FeoCategory.name).where(FeoCategory.id == part.feo_category_id)
+                    )).scalar_one_or_none() or f"#{part.feo_category_id}"
+                else:
+                    _target_cat_name = "без категории ФЭО"
+                raise HTTPException(
+                    409,
+                    f"Плановая позиция «{fpi.name}» относится к категории «{_fpi_cat_name}», "
+                    f"а часть {idx} — к категории «{_target_cat_name}». Выберите плановую позицию той же категории.",
+                )
+
+    # Договорные строки (contract_items.source_item_id == item_id): решение
+    # владельца (2026-08-18) — разбить в ТОЙ ЖЕ пропорции количества. Если строк
+    # больше одной, однозначного правила разложения нет («какая из двух строк
+    # какую часть представляет?») — отказываем, а не гадаем.
+    from app.models.contract_item import ContractItem
+    contract_rows = (await db.execute(
+        select(ContractItem).where(ContractItem.source_item_id == item_id)
+    )).scalars().all()
+    if len(contract_rows) > 1:
+        raise HTTPException(
+            409,
+            f"К позиции «{it.item_name}» привязано {len(contract_rows)} строк договора — "
+            "разбивка позиций с несколькими договорными строками не поддерживается.",
+        )
+
+    # unit_price всех частей — как у исходной позиции (правило 4: не принимается
+    # из тела вовсе). total_price части = quantity × unit_price, последняя часть
+    # добирает остаток (исходный total_price − сумма предыдущих) — так Σ total
+    # сходится копейка в копейку даже при округлении quantity × unit_price.
+    unit_price = it.unit_price if it.unit_price is not None else Decimal("0")
+    original_total = Decimal(str(it.total_price or 0))
+    n = len(parts)
+    part_totals: list[Decimal] = []
+    _running_total = Decimal("0")
+    for i, q in enumerate(quantities):
+        if i < n - 1:
+            t = (q * unit_price).quantize(Decimal("0.01"))
+            part_totals.append(t)
+            _running_total += t
+        else:
+            part_totals.append(original_total - _running_total)
+
+    # Снимок плана — пропорционально quantity; planned_unit_price копируется как
+    # есть (не пересчитывается), planned_total — тем же правилом остатка, что и total_price.
+    planned_quantities = _split_by_quantity(it.planned_quantity, original_qty, quantities, Decimal("0.0001"))
+    planned_totals = _split_by_quantity(it.planned_total, original_qty, quantities, Decimal("0.01"))
+    # НДС-поля и final_total — тоже денежные величины, зависящие от суммы позиции;
+    # раскладываем той же пропорцией с остатком у последней части, иначе у новых
+    # частей осталась бы сумма НДС/факт-итог ВСЕЙ исходной позиции целиком.
+    vat_amounts = _split_by_quantity(it.vat_amount, original_qty, quantities, Decimal("0.01"))
+    total_with_vats = _split_by_quantity(it.total_with_vat, original_qty, quantities, Decimal("0.01"))
+    final_totals = _split_by_quantity(it.final_total, original_qty, quantities, Decimal("0.01"))
+
+    # Гейт «ТЗ не выше плана» — на получившийся набор частей ЦЕЛИКОМ, через уже
+    # существующий assert_tz_batch_not_over_plan (правило 8): он группирует по
+    # feo_planned_item_id и накапливает, чтобы две части на одну плановую позицию
+    # считались вместе, а не проходили гейт поодиночке. Лёгкие объекты
+    # (SimpleNamespace), а не реальные ORM-строки — проверка идёт ДО каких-либо
+    # мутаций/db.add (см. docstring выше).
+    from types import SimpleNamespace
+    _check_rows = [
+        SimpleNamespace(
+            item_name=it.item_name,
+            quantity=quantities[i],
+            unit_price=unit_price,
+            total_price=part_totals[i],
+            feo_planned_item_id=parts[i].feo_planned_item_id,
+            feo_category_id=parts[i].feo_category_id,
+            # over_plan исходной позиции наследуется частями (не сбрасывается в
+            # False) — разбивка не меняет ни количество, ни сумму позиции в
+            # целом, значит уже согласованное превышение плана не растёт;
+            # assert_tz_batch_not_over_plan пропускает строки с over_plan=True
+            # целиком (см. её docstring), поэтому легитимная разбивка
+            # согласованной сверх-плана позиции не должна получать 409
+            # (находка QA 2026-08-18).
+            over_plan=bool(it.over_plan),
+        )
+        for i in range(n)
+    ]
+    await assert_tz_batch_not_over_plan(db, _check_rows, fallback_category_id=it.feo_category_id)
+
+    # --- Все проверки пройдены — дальше только мутации. ---
+
+    # Снимок «прочих» полей исходной позиции ДО мутации — копируется в новые части.
+    # accepted_name/accepted_quantity/accepted_unit (стадия «Приняли») сознательно
+    # НЕ копируются в новые части: это факт приёмки уже поставленного количества,
+    # привязанный к конкретной приёмке, а не к распределению по ФЭО — слепое
+    # копирование задвоило бы принятое количество на бумаге. Остаётся только у
+    # исходной строки (первая часть).
+    _src_item_name = it.item_name
+    _src_item_type = it.item_type
+    _src_unit = it.unit
+    _src_product_id = it.product_id
+    _src_country_origin = it.country_origin
+    _src_contractor_id = it.contractor_id
+    _src_contractor_inn = it.contractor_inn
+    _src_contractor_name = it.contractor_name
+    _src_match_confirmed = it.match_confirmed
+    _src_vat_rate = it.vat_rate
+    _src_receipt_id = it.receipt_id
+    _src_needed_date = it.needed_date
+    _src_final_unit_price = it.final_unit_price
+    _src_planned_unit_price = it.planned_unit_price
+
+    # Часть 1 — мутируем исходную строку: id, история (EntityChange), wish_item_id
+    # и прочие ссылки сохраняются (правило: «исходная строка сохраняется»).
+    it.quantity = quantities[0]
+    it.total_price = part_totals[0]
+    it.feo_category_id = parts[0].feo_category_id
+    it.feo_planned_item_id = parts[0].feo_planned_item_id
+    # over_plan НЕ сбрасывается — см. комментарий у _check_rows выше
+    # (находка QA 2026-08-18): количество/сумма позиции не меняются разбивкой,
+    # значит и статус согласованного превышения плана остаётся тем же.
+    it.planned_quantity = planned_quantities[0]
+    it.planned_total = planned_totals[0]
+    it.vat_amount = vat_amounts[0]
+    it.total_with_vat = total_with_vats[0]
+    it.final_total = final_totals[0]
+
+    created_items: list[PurchaseItem] = [it]
+    for i in range(1, n):
+        new_item = PurchaseItem(
+            purchase_id=pid,
+            product_id=_src_product_id,
+            item_name=_src_item_name,
+            item_type=_src_item_type,
+            quantity=quantities[i],
+            unit=_src_unit,
+            unit_price=unit_price,
+            total_price=part_totals[i],
+            final_unit_price=_src_final_unit_price,
+            final_total=final_totals[i],
+            planned_quantity=planned_quantities[i],
+            planned_unit_price=_src_planned_unit_price,
+            planned_total=planned_totals[i],
+            country_origin=_src_country_origin,
+            feo_planned_item_id=parts[i].feo_planned_item_id,
+            feo_category_id=parts[i].feo_category_id,
+            match_confirmed=_src_match_confirmed,
+            contractor_id=_src_contractor_id,
+            contractor_inn=_src_contractor_inn,
+            contractor_name=_src_contractor_name,
+            vat_rate=_src_vat_rate,
+            vat_amount=vat_amounts[i],
+            total_with_vat=total_with_vats[i],
+            receipt_id=_src_receipt_id,
+            needed_date=_src_needed_date,
+            # W1 (hard link заявка↔строка закупки): одна позиция заявки не может
+            # соответствовать двум строкам закупки — у НОВЫХ частей wish_item_id
+            # всегда NULL, привязку к заявке «наследует» только исходная строка.
+            wish_item_id=None,
+            # over_plan наследуется от исходной позиции — см. комментарий у
+            # _check_rows выше (находка QA 2026-08-18).
+            over_plan=bool(it.over_plan),
+        )
+        db.add(new_item)
+        created_items.append(new_item)
+    await db.flush()  # получить id новых позиций — нужны для source_item_id договорных строк и ответа
+
+    # Договорные строки (максимум одна — отказ выше при 2+, правило владельца):
+    # разбиваются в ТОЙ ЖЕ пропорции quantity, что и сама позиция закупки. Сумма
+    # договора не меняется — та же логика остатка у последней части.
+    new_contract_ids: list[int] = []
+    if contract_rows:
+        cr = contract_rows[0]
+        cr_quantities = _split_by_quantity(cr.quantity, original_qty, quantities, Decimal("0.0001"))
+        cr_totals = _split_by_quantity(cr.total, original_qty, quantities, Decimal("0.01"))
+        cr.quantity = cr_quantities[0]
+        cr.total = cr_totals[0]
+        # source_item_id у исходной строки договора не меняется (it.id тот же).
+        for i in range(1, n):
+            new_cr = ContractItem(
+                purchase_id=pid,
+                source_item_id=created_items[i].id,
+                contract_id=cr.contract_id,
+                product_id=cr.product_id,
+                name=cr.name,
+                quantity=cr_quantities[i],
+                unit=cr.unit,
+                unit_price=cr.unit_price,
+                total=cr_totals[i],
+                vat_rate=cr.vat_rate,
+                match_confirmed=cr.match_confirmed,
+            )
+            db.add(new_cr)
+            new_contract_ids.append(new_cr)
+        await db.flush()
+        new_contract_ids = [c.id for c in new_contract_ids]
+
+    await _recalc_purchase_totals(p, db)
+    if p.subsidy_id:
+        await _create_plan_graph_version(
+            subsidy_id=p.subsidy_id, db=db, user=current_user,
+            note=f"Авто-версия: разбивка позиции закупки #{p.purchase_number or p.id}",
+        )
+
+    # История — тем же способом, что patch_purchase_item (EntityChange), с
+    # осмысленным описанием («разбита позиция N на M частей»); ошибка записи
+    # истории не должна ронять уже прошедшую валидацию операцию (см. try/except
+    # у admin_override-ветки patch_purchase_item выше).
+    try:
+        from app.models.entity_change import EntityChange as _EC
+        _parts_desc = "; ".join(
+            f"#{ci.id}: {q} шт / {t} ₽" for ci, q, t in zip(created_items, quantities, part_totals)
+        )
+        db.add(_EC(
+            entity_type='purchase_item', entity_id=item_id, field_name='split',
+            old_value=f"1 позиция «{_src_item_name}»: {original_qty} шт / {original_total} ₽",
+            new_value=f"разбита на {n} частей — {_parts_desc}",
+            changed_by_id=current_user.id,
+            changed_by_name=getattr(current_user, 'full_name', None) or current_user.username,
+        ))
+    except Exception as _exc:
+        import logging as _log
+        _log.getLogger(__name__).warning("entity_change record failed for purchase_item split: %s", _exc)
+
+    await db.commit()
+    for ci in created_items:
+        await db.refresh(ci)
+
+    return {
+        "ok": True,
+        "item_ids": [ci.id for ci in created_items],
+        "parts": [
+            {
+                "item_id": ci.id,
+                "quantity": float(ci.quantity or 0),
+                "total_price": float(ci.total_price or 0),
+                "feo_category_id": ci.feo_category_id,
+                "feo_planned_item_id": ci.feo_planned_item_id,
+            }
+            for ci in created_items
+        ],
+        "contract_item_ids": new_contract_ids,
+    }
+
+
 @router.delete("/{pid}/items/{item_id}")
 async def delete_purchase_item(
     pid: int,

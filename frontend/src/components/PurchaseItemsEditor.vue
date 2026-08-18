@@ -179,6 +179,7 @@
           @confirm-match="confirmMatch"
           @open-repick-dialog="openRepickDialog"
           @remove-item="removeItem"
+          @split-item="openSplitDialog"
           @open-product-picker="openProductPicker"
           @clear-item="clearItem"
           @open-quick-product-edit="openQuickProductEdit"
@@ -208,6 +209,7 @@
           :items="localItems"
           :display-rows="itemsDisplayRows"
           :readonly="props.readonly"
+          :supports-split="true"
           :allowed-item-types="props.allowedItemTypes"
           :vat-mode="props.vatMode || 'uniform'"
           :feo-per-item="props.feoPerItem"
@@ -248,6 +250,7 @@
           @calc-item-total="calcItemTotal"
           @vat-rate-change="onVatRateChange"
           @remove-item="removeItem"
+          @split-item="openSplitDialog"
           @contractor-search-input="onContractorSearchInput"
           @item-contractor-select="onItemContractorSelect"
           @open-contractor-quick-create="openContractorQuickCreate"
@@ -308,6 +311,7 @@
           @calc-item-total="calcItemTotal"
           @vat-rate-change="onVatRateChange"
           @remove-item="removeItem"
+          @split-item="openSplitDialog"
           @contractor-search-input="onContractorSearchInput"
           @item-contractor-select="onItemContractorSelect"
           @open-contractor-quick-create="openContractorQuickCreate"
@@ -594,6 +598,90 @@
           <v-btn variant="text" :disabled="createPlannedBulkLoading" @click="closeCreatePlannedBulkDialog">Отмена</v-btn>
           <v-btn color="primary" variant="flat" :loading="createPlannedBulkLoading" :disabled="needPlanRows.length === 0" @click="runCreatePlannedBulk">
             Создать
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ===== Разбивка позиции по категориям ФЭО (владелец 2026-08-18): закупка
+         в статусе «Заказано» с заморозкой ТЗ (добавлять НОВЫЕ позиции нельзя), но
+         владельцу нужно разложить уже существующую позицию (напр. 66 огнетушителей)
+         по нескольким категориям ФЭО/плановым позициям — количество и сумма НЕ
+         меняются, меняется только распределение. См. POST
+         /purchases/{pid}/items/{item_id}/split в backend/app/routers/purchases.py. ===== -->
+    <v-dialog v-model="splitDialog.show" :max-width="splitDialogWidth" :fullscreen="mobile" :persistent="splitDialog.saving">
+      <v-card v-if="splitItem">
+        <v-card-title class="text-subtitle-1">
+          Разбить позицию «{{ splitItem.item_name || '—' }}»
+        </v-card-title>
+        <v-card-text>
+          <div class="text-caption text-medium-emphasis mb-3">
+            Исходное количество: {{ formatNumber(splitItem.quantity) }} {{ splitItem.unit }}
+            &nbsp;·&nbsp; цена за единицу: {{ fmtRub(splitItem.unit_price || 0) }}
+            &nbsp;·&nbsp; сумма: {{ fmtRub(splitItem.total_price || 0) }}
+          </div>
+
+          <div v-for="(part, i) in splitParts" :key="i" class="split-part-block mb-4 pa-3">
+            <div class="d-flex align-center justify-space-between mb-2">
+              <span class="text-caption font-weight-bold">Часть {{ i + 1 }}</span>
+              <v-btn v-if="splitParts.length > 2" icon="mdi-close" size="x-small" variant="text" color="error"
+                title="Удалить часть" @click="removeSplitPart(i)" />
+            </div>
+            <v-row dense>
+              <v-col cols="12" sm="4">
+                <v-text-field
+                  :model-value="formatNumber(part.quantity)"
+                  label="Кол-во" density="compact" variant="outlined" hide-details
+                  @update:model-value="(v: string) => { part.quantity = parseNumber(v) }"
+                />
+              </v-col>
+              <v-col cols="12" sm="8" class="d-flex align-center">
+                <span class="text-caption text-medium-emphasis">
+                  Сумма части: {{ splitPartAmount(i) != null ? fmtRub(splitPartAmount(i)!) : '—' }}
+                </span>
+              </v-col>
+              <v-col cols="12">
+                <FeoTreeSelect
+                  :model-value="part.feo_node_id"
+                  :nodes="feoNodes"
+                  :leaves="feoLeaves"
+                  :plan-positions="effectivePlannedItems"
+                  :node-amounts="nodeAmounts"
+                  :allow-unallocated="!!props.subsidyId"
+                  :root-label="props.subsidyName"
+                  label="Категория ФЭО"
+                  @update:model-value="(v: number | null) => onSplitPartFeoChange(i, v)"
+                />
+              </v-col>
+              <v-col v-if="props.feoPlannedPerItem || props.allowPerItemPlan" cols="12">
+                <FeoPlannedItemsSelect
+                  :model-value="splitPartPlannedSelection(i)"
+                  :category-id="part.feo_node_id ?? part.feo_category_id"
+                  :nodes="feoNodes"
+                  :items="effectivePlannedItems"
+                  :amount="splitPartAmount(i)"
+                  dense
+                  @update:model-value="(v) => onSplitPartPlannedChange(i, v)"
+                  @planned-item-created="emit('planned-item-created')"
+                />
+              </v-col>
+            </v-row>
+          </div>
+
+          <v-btn variant="tonal" prepend-icon="mdi-plus" size="small" @click="addSplitPart">Добавить часть</v-btn>
+
+          <div class="mt-4">
+            <span class="text-body-2 font-weight-bold" :class="splitBalanced ? 'text-success' : 'text-error'">
+              Распределено {{ formatNumber(splitDistributed) }} из {{ formatNumber(splitItem.quantity) }}
+              <template v-if="!splitBalanced">, остаток {{ formatNumber(splitRemaining) }}</template>
+            </span>
+          </div>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" :disabled="splitDialog.saving" @click="closeSplitDialog">Отмена</v-btn>
+          <v-btn color="primary" variant="flat" :loading="splitDialog.saving" :disabled="!splitCanSave" @click="saveSplit">
+            Разбить
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -1826,6 +1914,174 @@ function calcItemTotal(idx: number) {
     item.total_price = null
   }
   emitUpdate()
+}
+
+// ── Разбивка позиции по категориям ФЭО (владелец 2026-08-18) ────────────────
+// Закупка «Заказано» (statuses с tzFrozen=true) запрещает ДОБАВЛЕНИЕ новых
+// позиций, но не запрещает разложить уже существующую позицию по нескольким
+// категориям/плановым позициям — количество и сумма не меняются, только
+// распределение. POST /purchases/{pid}/items/{item_id}/split (backend, не
+// трогаем): Σ quantity частей ДОЛЖНА точно совпасть с quantity исходной
+// позиции, иначе backend вернёт 409 с числами — здесь этот же инвариант
+// проверяется на лету, чтобы 409 не был первым, что видит пользователь.
+interface SplitPart {
+  quantity: number | null
+  // UI-only: узел дерева ФЭО (может быть промежуточным, не только листом) —
+  // тот же паттерн, что item.feo_node_id/feo_category_id у обычной позиции
+  // (см. onItemFeoChange выше).
+  feo_node_id: number | null
+  feo_category_id: number | null
+  feo_planned_item_id: number | null
+}
+
+const splitDialog = reactive({
+  show: false,
+  idx: null as number | null,
+  saving: false,
+})
+const splitParts = ref<SplitPart[]>([])
+
+const splitItem = computed<EditorItem | null>(() =>
+  splitDialog.idx != null ? (localItems.value[splitDialog.idx] ?? null) : null
+)
+
+// Тот же приём адаптивной ширины диалога, что и reqItemEditDialogWidth в
+// SubsidiesView.vue (сессия 2026-08-18): 720 планшет/маленький ноутбук, 900
+// обычный десктоп, 1100 крупный монитор. mobile (уже объявлен выше) держит
+// :fullscreen, как у остальных диалогов этого файла.
+const splitDialogWidth = computed(() => {
+  if (display.smAndDown.value) return 720
+  if (display.mdAndDown.value) return 900
+  return 1100
+})
+
+const splitDistributed = computed(() =>
+  splitParts.value.reduce((s, p) => s + (Number(p.quantity) || 0), 0)
+)
+const splitRemaining = computed(() => {
+  const total = Number(splitItem.value?.quantity ?? 0)
+  // Округление до 4 знаков — в БД parts.quantity Numeric(15,4), сравнение «в лоб»
+  // float'ов иначе почти никогда не даст точный 0.
+  return Math.round((total - splitDistributed.value) * 10000) / 10000
+})
+const splitBalanced = computed(() => splitParts.value.length >= 2 && Math.abs(splitRemaining.value) < 0.0001)
+// Backend требует quantity части > 0 (см. split_purchase_item) — проверяем на
+// лету, чтобы не отправлять заведомо отклоняемый запрос (часть с пустым/нулевым
+// кол-вом при «сходящемся» остатке технически возможна, если другая часть
+// компенсирует разницу).
+const splitPartsValid = computed(() => splitParts.value.every(p => Number(p.quantity) > 0))
+const splitCanSave = computed(() => splitBalanced.value && splitPartsValid.value)
+
+function openSplitDialog(idx: number) {
+  const item = localItems.value[idx]
+  if (!item) return
+  splitDialog.idx = idx
+  splitParts.value = [
+    {
+      quantity: null,
+      feo_node_id: item.feo_node_id ?? item.feo_category_id ?? null,
+      feo_category_id: item.feo_category_id ?? null,
+      feo_planned_item_id: null,
+    },
+    { quantity: null, feo_node_id: null, feo_category_id: null, feo_planned_item_id: null },
+  ]
+  splitDialog.show = true
+}
+
+// ⚠️ БАГ (найден живым тестом на локалке, сессия 2026-08-18): guard
+// `splitDialog.saving` защищает от закрытия ПОЛЬЗОВАТЕЛЕМ (кнопка «Отмена»/
+// клик вне диалога) во время сохранения — но saveSplit() ниже вызывает эту же
+// функцию ПОСЛЕ успешного запроса, ДО того как finally сбросит saving в false,
+// поэтому guard молча блокировал автозакрытие: сеть отвечала 200, снэкбар
+// «Позиция разбита на части» показывался, а диалог оставался открытым с
+// прежними значениями частей. Поэтому здесь guard не проверяется — вызывающая
+// сторона (saveSplit) сама решает, когда звать forceClose; пользовательский
+// путь (кнопка «Отмена») защищён отдельно через :disabled на этой кнопке и
+// :persistent на v-dialog (см. template), а не через эту функцию.
+function closeSplitDialog() {
+  splitDialog.show = false
+  splitDialog.idx = null
+  splitParts.value = []
+}
+
+function addSplitPart() {
+  splitParts.value.push({ quantity: null, feo_node_id: null, feo_category_id: null, feo_planned_item_id: null })
+}
+
+function removeSplitPart(i: number) {
+  if (splitParts.value.length <= 2) return
+  splitParts.value.splice(i, 1)
+}
+
+// Тот же паттерн, что onItemFeoChange: клик по нелистовому узлу дерева только
+// углубляет навигацию (feo_category_id остаётся null), клик по листу — фиксирует
+// категорию части. Смена категории части сбрасывает её плановую позицию (Ур.5),
+// если та принадлежала другой категории — иначе backend отклонит part с 409.
+function onSplitPartFeoChange(i: number, nodeId: number | null) {
+  const part = splitParts.value[i]
+  if (!part) return
+  const isLeaf = nodeId != null && (feoNodes.value.find(n => n.id === nodeId)?.is_leaf ?? false)
+  const newCategoryId = isLeaf ? nodeId : null
+  if (part.feo_category_id !== newCategoryId) part.feo_planned_item_id = null
+  part.feo_node_id = nodeId
+  part.feo_category_id = newCategoryId
+}
+
+function splitPartPlannedSelection(i: number): FeoPlanSelection | null {
+  const part = splitParts.value[i]
+  if (!part || part.feo_planned_item_id == null) return null
+  return { kind: 'planned_item', id: part.feo_planned_item_id }
+}
+
+// feo_planned_item_id (POST /split) — id конкретной FeoPlannedItem (Ур.5), НЕ
+// id категории/плановой строки уровня категории. FeoPlannedItemsSelect может
+// эмитить kind='plan_position'|'feo_article' (план на уровне самой категории,
+// без отдельной Ур.5 записи) — такие значения split-эндпоинту не передаём.
+function onSplitPartPlannedChange(i: number, val: FeoPlanSelection | null) {
+  const part = splitParts.value[i]
+  if (!part) return
+  part.feo_planned_item_id = val && val.kind === 'planned_item' ? val.id : null
+}
+
+function splitPartAmount(i: number): number | null {
+  const part = splitParts.value[i]
+  const unitPrice = splitItem.value?.unit_price
+  if (!part || part.quantity == null || unitPrice == null) return null
+  return Math.round(Number(part.quantity) * Number(unitPrice) * 100) / 100
+}
+
+async function saveSplit() {
+  const item = splitItem.value
+  if (!item || props.purchaseId == null) return
+  const itemId = (item as any).id
+  if (itemId == null) {
+    showSnack('Позиция ещё не сохранена — сохраните закупку и повторите', 'warning')
+    return
+  }
+  if (!splitCanSave.value) return
+  splitDialog.saving = true
+  try {
+    await apiFetch(`/purchases/${props.purchaseId}/items/${itemId}/split`, {
+      method: 'POST',
+      body: JSON.stringify({
+        parts: splitParts.value.map(p => ({
+          quantity: p.quantity,
+          feo_category_id: p.feo_category_id,
+          feo_planned_item_id: p.feo_planned_item_id,
+        })),
+      }),
+    })
+    showSnack('Позиция разбита на части', 'success')
+    closeSplitDialog()
+    // Тот же приём, что у bulkAddToCatalog/runCreatePlannedBulk выше: сервер
+    // пересчитал/создал позиции — перезагружаем их у родителя, а не пытаемся
+    // угадать результат локально.
+    emit('reload-requested')
+  } catch (e: any) {
+    showSnack(e?.payload?.message ?? e?.detail ?? e?.message ?? 'Ошибка разбивки позиции', 'error')
+  } finally {
+    splitDialog.saving = false
+  }
 }
 
 // ── Selection ────────────────────────────────────────────────────────────────
@@ -3641,6 +3897,12 @@ defineExpose({
 </script>
 
 <style scoped>
+/* Владелец 2026-08-18: карточки частей в диалоге разбивки позиции */
+.split-part-block {
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  border-radius: 8px;
+}
+
 /* Phase 26-V: resizable column handles */
 .col-resize-handle {
   position: absolute;

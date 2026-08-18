@@ -129,6 +129,14 @@
                       @click.stop="emit('open-repick-dialog', idx)" />
                   </template>
                 </v-tooltip>
+                <!-- Владелец 2026-08-18: разбивка позиции по разным категориям ФЭО. -->
+                <v-tooltip v-if="!readonly && (item.quantity ?? 0) >= 2" text="Разбить по категориям ФЭО" location="top">
+                  <template #activator="{ props: tip }">
+                    <v-btn v-bind="tip" icon="mdi-call-split" size="x-small" variant="text"
+                      color="primary" data-testid="split-item-btn"
+                      @click.stop="emit('split-item', idx)" />
+                  </template>
+                </v-tooltip>
                 <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
                   :disabled="readonly"
                   @click.stop="emit('remove-item', idx)" />
@@ -616,6 +624,7 @@ const emit = defineEmits<{
   'confirm-match': [idx: number]
   'open-repick-dialog': [idx: number]
   'remove-item': [idx: number]
+  'split-item': [idx: number]
   'open-product-picker': [idx: number]
   'clear-item': [idx: number]
   'open-quick-product-edit': [item: EditorItem]

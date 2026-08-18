@@ -472,6 +472,23 @@ async def delete_planned_item(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_tab('feo_categories')),
 ):
+    """Жёсткое удаление плановой позиции.
+
+    БАГ ЦЕЛОСТНОСТИ (владелец, 2026-08-17): здесь раньше не снимались ссылки
+    у purchase_items/wish_items.feo_planned_item_id перед удалением строки —
+    а в БД для этих колонок никогда не было FK-констрейнта (см. миграцию
+    x9y8z7w6v5u4_feo_planned_item_fk_integrity), так что удаление молча
+    оставляло висячие ссылки: позиция закупки пропадала с экрана целиком
+    (не подставляется — плановой строки уже нет; не попадает в «Не привязаны
+    к плану» — там фильтр по ПУСТОЙ привязке), а её сумма продолжала входить
+    в «в закупках» категории — необъяснимое превышение плана.
+
+    Миграция x9y8z7w6v5u4 добавила настоящий FK ON DELETE SET NULL — этого
+    достаточно, чтобы битых ссылок больше не появлялось. Явный UPDATE ниже —
+    вторая, независимая от наличия констрейнта в БД, страховка (в той же
+    транзакции, до удаления строки): поведение не должно зависеть от того,
+    жива ли FK в конкретном окружении.
+    """
     item = (await db.execute(
         select(FeoPlannedItem).where(FeoPlannedItem.id == item_id)
     )).scalar_one_or_none()
@@ -481,6 +498,16 @@ async def delete_planned_item(
     _sid = (await db.execute(
         select(FeoCategory.subsidy_id).where(FeoCategory.id == _feo_cat_id)
     )).scalar_one_or_none()
+    await db.execute(
+        sql_update(PurchaseItem)
+        .where(PurchaseItem.feo_planned_item_id == item_id)
+        .values(feo_planned_item_id=None)
+    )
+    await db.execute(
+        sql_update(WishItem)
+        .where(WishItem.feo_planned_item_id == item_id)
+        .values(feo_planned_item_id=None)
+    )
     await db.delete(item)
     if _sid is not None:
         from app.routers.purchases import _create_plan_graph_version

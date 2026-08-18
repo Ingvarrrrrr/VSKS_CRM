@@ -636,7 +636,12 @@
                       </td>
 
                       <!-- Финансирование по ФЭО (inline edit) -->
-                      <td class="feo-td feo-td-num">
+                      <!-- vertical-align:top (жалоба владельца 2026-08-17, разбор превышения): .feo-td
+                           по умолчанию vertical-align:middle — когда «Плановая сумма» справа выросла
+                           расшифровкой «из-за: …» на несколько строк, соседние числовые колонки
+                           центрировались по всей высоте строки и визуально ЗАЛЕЗАЛИ на середину текста
+                           расшифровки. top — сироты не всплывают в середину. -->
+                      <td class="feo-td feo-td-num" style="vertical-align:top">
                         <template v-if="feoRollup(node).qty != null || feoRollup(node).amount != null">
                           <div class="feo-plan-note text-right"
                             :class="feoRollup(node).qtyAuto || feoRollup(node).amountAuto ? 'text-medium-emphasis' : ''"
@@ -706,7 +711,7 @@
                       </td>
 
                       <!-- Плановое количество -->
-                      <td class="feo-td feo-td-num">
+                      <td class="feo-td feo-td-num" style="vertical-align:top">
                         <div v-if="isAutoQtyNode(node)" class="text-right">
                           <div class="feo-amount">{{ feoQtyDisplayFor(node) > 0 ? feoQtyDisplayFor(node) : '—' }}{{ node.unit ? ` ${node.unit}` : '' }}</div>
                           <div v-if="plannedQtyBase === 'all' && feoQtyRequestsFor(node) > 0"
@@ -764,7 +769,7 @@
                       </td>
 
                       <!-- Плановая сумма: ручной план ФЭО и/или позиции заявок (по переключателю) -->
-                      <td class="feo-td feo-td-num">
+                      <td class="feo-td feo-td-num" style="vertical-align:top">
                         <span v-if="feoPlannedDisplayFor(node) > 0" class="feo-amount"
                           :style="(feoDisplayedFor(node) > 0 && feoPlannedDisplayFor(node) > feoDisplayedFor(node)) || feoHasOverspentDescendant(node) ? 'color:#EF4444;font-weight:700' : ''"
                           :title="plannedSumBase === 'all' ? `Ручные ${formatCurrency(feoPlannedTotalFor(node))} + из заявок ${formatCurrency(feoPlannedRequestsFor(node))}` : ''"
@@ -792,12 +797,23 @@
                         >
                           в т.ч. на самом направлении {{ formatCurrency(feoOwnDirectionPlanFor(node)) }}
                         </div>
+                        <!-- Жалоба владельца 2026-08-17: «можно добавить N ₽ до финансирования ФЭО» считало
+                             N как ФЭО минус ПЛАН (560 000 − 351 844 = 208 156), хотя в закупках уже размещено
+                             432 162 — реально до потолка ФЭО остаётся 127 838 (560 000 − 432 162), меньше почти
+                             в 2 раза. Первая строка теперь явно называет себя «остатком по ПЛАНУ», вторая
+                             (feoRemainingWithPurchasesNote) появляется, только когда «в закупках» уже больше
+                             плана — тогда именно она честная, а не первая. -->
                         <div v-if="feoDisplayedFor(node) > 0 && (node.budget != null || feoPlannedDisplayFor(node) > 0) && Math.abs(feoFinDiff(node)) > 0.005"
                           class="feo-plan-note"
                           :style="feoFinDiff(node) > 0 ? 'color:#16A34A' : 'color:#EF4444'"
                           :title="`Финансирование по ФЭО (бюджет, заложенный в документе ФЭО): ${formatCurrency(feoDisplayedFor(node))}. Плановая сумма (сколько уже расписано по плану/заявкам): ${formatCurrency(feoPlannedDisplayFor(node))}`"
                         >
-                          {{ feoFinDiff(node) > 0 ? `можно добавить ${formatCurrency(feoFinDiff(node))} до финансирования ФЭО` : `надо убрать ${formatCurrency(-feoFinDiff(node))}, чтобы уложиться в ФЭО` }}
+                          {{ feoFinDiff(node) > 0 ? `по плану можно добавить ещё ${formatCurrency(feoFinDiff(node))} до финансирования ФЭО (это остаток по плану, не по факту закупок)` : `надо убрать ${formatCurrency(-feoFinDiff(node))}, чтобы уложиться в ФЭО` }}
+                          <div v-if="feoRemainingWithPurchasesNote(node)"
+                            style="font-size:11px;color:#EF4444;font-weight:600;margin-top:2px"
+                          >
+                            {{ feoRemainingWithPurchasesNote(node) }}
+                          </div>
                         </div>
                         <div v-if="!feoIsOverBudget(node) && feoHasOverspentDescendant(node)"
                           class="feo-plan-note" style="color:#EF4444"
@@ -820,15 +836,52 @@
                           <span v-if="feoResidualNoteFor(node)!.residual < -0.005" style="color:#EF4444;font-weight:700">больше плана на {{ formatCurrency(-feoResidualNoteFor(node)!.residual) }}</span>
                           <span v-else>свободно {{ formatCurrency(feoResidualNoteFor(node)!.residual) }}</span>
                           <!-- Расшифровка «больше плана на X» (жалоба владельца 2026-08-13: «откуда 5 121,60,
-                               если в позициях плана этого нет?» — закупка без плановой позиции существовать не
-                               может, разница набегает из перерасхода отдельных плановых позиций категории, см.
-                               factExcessPlanItemsText). Показываем ТОЛЬКО когда comparisonData[node.id] уже
-                               загружена (панель плановых позиций категории раскрывалась) — сами загрузку не
-                               триггерим, чтобы не тянуть её для всех категорий подряд. -->
-                          <div v-if="feoResidualNoteFor(node)!.residual < -0.005 && comparisonData[node.id] && factExcessPlanItemsText(node)"
-                            style="font-size:10px;color:#B45309;white-space:normal"
-                          >
-                            {{ factExcessPlanItemsText(node) }}
+                               если в позициях плана этого нет?»; продолжение 2026-08-17: «где это превышение
+                               80 318? где оно?» — см. factExcessReasonItems, считает ОБА источника: перерасход
+                               внутри плановых позиций И закупки без действующей плановой привязки/с мёртвой
+                               привязкой). Данные (comparisonData[node.id]) грузятся лениво — если панель плана
+                               ещё не раскрывали, вместо расшифровки кнопка «Показать, из-за чего», которая сама
+                               догружает сравнение (ensureComparison, тот же запрос, что и обычное раскрытие
+                               панели) — точечно для ЭТОГО узла, не для всего дерева разом. -->
+                          <div v-if="feoResidualNoteFor(node)!.residual < -0.005" style="font-size:11px;white-space:normal;margin-top:2px">
+                            <v-btn v-if="!comparisonData[node.id]"
+                              size="x-small" variant="text" color="orange-darken-3"
+                              :loading="loadingComparison.has(node.id)"
+                              @click.stop="ensureComparison(node.id)"
+                            >Показать, из-за чего</v-btn>
+                            <template v-else-if="factExcessReasonItems(node).length">
+                              <span style="color:#B45309">из-за: </span>
+                              <template v-for="(it, idx) in factExcessReasonItems(node)" :key="it.key">
+                                <span v-if="idx > 0" style="color:#B45309"> · </span>
+                                <a v-if="it.purchases.length === 1" href="javascript:void(0)" class="feo-purchase-link"
+                                  :title="`Перейти в закупку ${it.purchases[0].label}`"
+                                  @click.stop="router.push(`/orders/${it.purchases[0].id}`)"
+                                >{{ it.name }} +{{ formatCurrency(it.amount) }}</a>
+                                <v-menu v-else location="bottom start">
+                                  <template #activator="{ props: excMenuProps }">
+                                    <a href="javascript:void(0)" class="feo-purchase-link" v-bind="excMenuProps" @click.stop
+                                    >{{ it.name }} +{{ formatCurrency(it.amount) }}</a>
+                                  </template>
+                                  <v-list density="compact">
+                                    <v-list-item v-for="p in it.purchases" :key="p.id" @click="router.push(`/orders/${p.id}`)">
+                                      <v-list-item-title>
+                                        {{ p.label }} · {{ formatCurrency(p.amount) }}
+                                        <span v-if="p.stopped" class="feo-stopped-marker ml-1">остановлена</span>
+                                      </v-list-item-title>
+                                    </v-list-item>
+                                  </v-list>
+                                </v-menu>
+                              </template>
+                              <!-- Сумма расшифровки обязана сходиться с самим числом превышения (владелец,
+                                   2026-08-17) — если не сходится (недобор по другим плановым позициям съедает
+                                   часть), честно показываем остаток строкой, а не молчим про разницу. -->
+                              <span v-if="factExcessReasonRemainder(node) > 0.5" style="color:#B45309">
+                                и ещё {{ formatCurrency(factExcessReasonRemainder(node)) }} (гасится недобором по другим плановым позициям — расшифровка не покрывает эту часть один-в-один)
+                              </span>
+                            </template>
+                            <span v-else style="color:#B45309">
+                              точную причину разобрать не удалось — {{ formatCurrency(factExcessReasonRemainder(node)) }} без разбивки по позициям
+                            </span>
                           </div>
                         </div>
                         <div v-else-if="plannedSumBase === 'all' && feoPlanConsumedNoteFor(node)"
@@ -1050,7 +1103,7 @@
                            поставленное — иначе колонка молчала «—» весь путь от объявления закупки до поставки,
                            хотя цена по итогам закупки уже известна. feoPurchasedFor() НЕ трогаем в остальных
                            местах (Остаток, переход по клику) — вне явного поручения. -->
-                      <td class="feo-td feo-td-num">
+                      <td class="feo-td feo-td-num" style="vertical-align:top">
                         <span :class="feoFactFor(node) > 0 ? 'feo-amount feo-amount--link' : 'feo-amount-empty'"
                           :style="(feoDisplayedFor(node) > 0 && feoFactFor(node) > feoDisplayedFor(node)) || (feoPlannedDisplayFor(node) > 0 && feoFactFor(node) > feoPlannedDisplayFor(node)) ? 'color:#EF4444;font-weight:700' : ''"
                           :title="feoFactFor(node) > 0 ? 'Открыть закупки по этой категории' : ''"
@@ -1073,7 +1126,7 @@
                       </td>
 
                       <!-- Остаток = (Плановая сумма | Финансирование по ФЭО) − Фактическая сумма -->
-                      <td class="feo-td feo-td-num">
+                      <td class="feo-td feo-td-num" style="vertical-align:top">
                         <span v-if="feoResidualBaseFor(node) > 0 || feoPurchasedFor(node) > 0"
                           class="feo-amount"
                           :style="feoResidualFor(node) < -0.005 ? 'color:#EF4444;font-weight:700' : 'color:#16A34A'"
@@ -1364,6 +1417,7 @@
                                       />
                                       <v-btn icon="mdi-delete-outline" size="x-small" variant="text" color="error"
                                         title="Удалить плановую позицию"
+                                        :loading="deletingPlannedItemId === planned.id"
                                         @click="deletePlannedItem(planned)"
                                       />
                                     </template>
@@ -1631,6 +1685,14 @@
                                     <v-chip v-if="isExcessCulpritActual(node, actual)" size="x-small" color="red" variant="flat" class="ml-1"
                                       style="font-size:9px;height:16px" :title="excessCulpritChipTooltip(node)"
                                     ><v-icon icon="mdi-alert-decagram" size="10" class="mr-1" />из-за неё превышение</v-chip>
+                                    <!-- Жалоба владельца 2026-08-17 (категория 3710): позиции с feo_planned_item_id,
+                                         указывающим на УЖЕ УДАЛЁННУЮ плановую позицию, раньше пропадали с экрана
+                                         молча (см. правку unplannedActualFor/isOrphanedActual) — теперь показаны
+                                         здесь же, с пометкой ПОЧЕМУ они тут, а не просто «не привязаны». -->
+                                    <v-chip v-if="isOrphanedActual(actual)" size="x-small" color="deep-orange" variant="flat" class="ml-1"
+                                      style="font-size:9px;height:16px"
+                                      title="feo_planned_item_id заполнен, но такой плановой позиции больше нет среди плановых позиций категории — она была удалена. Привязка мертва, позиция не засчитана в план. Заведите новую плановую позицию (кнопка справа) или сопоставьте с существующей."
+                                    ><v-icon icon="mdi-link-off" size="10" class="mr-1" />привязана к удалённой плановой позиции</v-chip>
                                   </div>
                                   <a
                                     href="javascript:void(0)"
@@ -1671,12 +1733,23 @@
                                 <td style="padding:4px 8px;font-size:11px" class="text-medium-emphasis">{{ actual.contractor_name || '—' }}</td>
                                 <td style="padding:4px 8px;text-align:center">
                                   <v-icon icon="mdi-alert-circle-outline" size="16" color="warning"
-                                    title="Закупка не привязана ни к одной плановой позиции — в графу «план» она не засчитана. Нажмите кнопку-ссылку справа «Сопоставить с плановой»." />
+                                    :title="isOrphanedActual(actual)
+                                      ? 'Закупка привязана к плановой позиции, которой больше нет (удалена) — в графу «план» она не засчитана. Заведите новую плановую позицию кнопкой справа, либо сопоставьте с существующей.'
+                                      : 'Закупка не привязана ни к одной плановой позиции — в графу «план» она не засчитана. Нажмите кнопку-ссылку справа «Сопоставить с плановой».'" />
                                 </td>
                                 <td style="padding:2px;text-align:center;white-space:nowrap">
                                   <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary"
                                     :title="actual.wish_id ? 'Позиция из заявки — открыть заявку для редактирования' : 'Редактировать позицию закупки'"
                                     @click="openReqItemEditFromActual(node, actual)"
+                                  />
+                                  <!-- Задача владельца 2026-08-17: «раз причина в том, что плановой позиции
+                                       нет — предложи создать её из данных этой позиции закупки и сразу
+                                       привязать». Переиспользует showAddPlannedDialog/plannedItemForm/
+                                       savePlannedItem (тот же диалог, что «Добавить плановую» и
+                                       openConvertManualPlanToItem выше) — второй диалог не пишем. -->
+                                  <v-btn icon="mdi-plus-box-outline" size="x-small" variant="text" color="deep-orange"
+                                    title="Завести плановую позицию по этой закупке и сразу привязать"
+                                    @click="openCreatePlannedFromActual(node, actual)"
                                   />
                                   <v-btn icon="mdi-link-variant" size="x-small" variant="text" color="teal"
                                     title="Сопоставить с плановой"
@@ -5594,6 +5667,14 @@ const savingPlannedItem = ref(false)
 // следующее обычное «Добавить плановую» не подхватило чужой id и не очистило план
 // категории, которую пользователь трогать не просил.
 const convertFromCategoryPlanId = ref<number | null>(null)
+// Флаг «эта плановая позиция заводится из КОНКРЕТНОЙ позиции закупки» (кнопка
+// mdi-plus-box-outline в блоке «Не привязаны к плану», см. openCreatePlannedFromActual)
+// — хранит purchase_item_id, который savePlannedItem обязан привязать к только что
+// созданной плановой позиции (POST /feo-planned-items/map), иначе позиция создастся, но
+// закупка так и останется висеть в «Не привязаны» до следующего ручного клика. Сбрасывается
+// тем же watch(showAddPlannedDialog), что и convertFromCategoryPlanId — по той же причине
+// (не «протекать» в следующее открытие диалога другим путём).
+const createPlannedFromActualId = ref<number | null>(null)
 const plannedItemForm = ref({
   name: '',
   quantity: null as number | null,
@@ -6514,6 +6595,7 @@ async function applyMapping(plannedItemId: number | null) {
 function openAddPlannedItem(categoryId: number) {
   addPlannedCategoryId.value = categoryId
   convertFromCategoryPlanId.value = null
+  createPlannedFromActualId.value = null
   plannedItemForm.value = {
     name: '', quantity: null, unit: '', amount: null,
     payment_mode: 'one_time', planned_date: '', monthly_start_date: '',
@@ -6523,10 +6605,10 @@ function openAddPlannedItem(categoryId: number) {
 }
 
 // Диалог showAddPlannedDialog закрывается разными путями (Отмена/backdrop/Esc, не
-// только через savePlannedItem) — сбрасываем convertFromCategoryPlanId при ЛЮБОМ
-// закрытии, чтобы флаг не «протёк» в следующее открытие обычной кнопкой.
+// только через savePlannedItem) — сбрасываем convertFromCategoryPlanId/createPlannedFromActualId
+// при ЛЮБОМ закрытии, чтобы флаги не «протекли» в следующее открытие обычной кнопкой.
 watch(showAddPlannedDialog, (val) => {
-  if (!val) convertFromCategoryPlanId.value = null
+  if (!val) { convertFromCategoryPlanId.value = null; createPlannedFromActualId.value = null }
 })
 
 // «Завести плановую позицию» — задача владельца (2026-08-09, пункт 3): у категории
@@ -6566,13 +6648,37 @@ function openConvertManualPlanToItem(node: FeoNode) {
   showAddPlannedDialog.value = true
 }
 
+// Действие владельца 2026-08-17 (жалоба «где превышение 80 318? где увидеть?»): у
+// позиции без ДЕЙСТВУЮЩЕЙ плановой привязки (обычная «не привязана» ИЛИ мёртвая ссылка
+// на удалённую плановую позицию, см. isOrphanedActual/unplannedActualFor) предлагаем
+// сразу завести плановую позицию по данным САМОЙ закупки (наименование/количество/сумма —
+// leftGroupInfo, тот же источник, что уже рисует эту строку в таблице) и сразу привязать.
+// Переиспользует showAddPlannedDialog/plannedItemForm/savePlannedItem — второй диалог не
+// пишем; savePlannedItem довязывает созданную позицию к purchase_item_id по
+// createPlannedFromActualId (см. ниже).
+function openCreatePlannedFromActual(node: FeoNode, actual: FeoActualItem) {
+  const info = leftGroupInfo(actual)
+  addPlannedCategoryId.value = node.id
+  convertFromCategoryPlanId.value = null
+  createPlannedFromActualId.value = actual.purchase_item_id
+  plannedItemForm.value = {
+    name: info.name || actual.item_name,
+    quantity: info.quantity,
+    unit: info.unit || '',
+    amount: info.total ?? Number(actual.fact_amount ?? actual.total_price ?? 0),
+    payment_mode: 'one_time',
+    planned_date: '', monthly_start_date: '', months_count: null, monthly_amount: null,
+  }
+  showAddPlannedDialog.value = true
+}
+
 async function savePlannedItem() {
   if (!addPlannedCategoryId.value || !plannedItemForm.value.name.trim()) return
   savingPlannedItem.value = true
   try {
     const f = plannedItemForm.value
     const isMonthly = f.payment_mode === 'monthly'
-    await apiFetch('/feo-planned-items/', {
+    const created = await apiFetch<FeoPlannedItem>('/feo-planned-items/', {
       method: 'POST',
       body: JSON.stringify({
         feo_category_id: addPlannedCategoryId.value,
@@ -6588,6 +6694,23 @@ async function savePlannedItem() {
         monthly_amount: isMonthly ? f.monthly_amount : null,
       }),
     })
+    // Если позиция заводилась ИЗ конкретной закупки (openCreatePlannedFromActual выше) —
+    // сразу привязываем её к только что созданной плановой позиции тем же эндпоинтом, что
+    // и ручное «Сопоставить с плановой» (applyMapping/POST /feo-planned-items/map), иначе
+    // плановая позиция создастся, а закупка так и провисит в «Не привязаны» до следующего
+    // ручного клика — половинчатое действие. Ошибку не глотаем — распаковываем
+    // e.payload.message (правило проекта), позиция при этом уже создана, поэтому диалог
+    // не блокируем повторной попыткой, просто честно сообщаем, что довязать не вышло.
+    if (createPlannedFromActualId.value != null) {
+      try {
+        await apiFetch(`/feo-planned-items/map?purchase_item_id=${createPlannedFromActualId.value}&planned_item_id=${created.id}`, {
+          method: 'POST',
+        })
+      } catch (e: any) {
+        showSnack(e?.payload?.message || e?.detail || e?.message || 'Плановая позиция создана, но не удалось привязать к ней закупку — сопоставьте вручную кнопкой «Сопоставить с плановой»', 'error')
+      }
+      createPlannedFromActualId.value = null
+    }
     // Позиция создана. Если это было действие «Перенести в плановую позицию»
     // (convertFromCategoryPlanId стоит на id этой же категории) — очищаем
     // planned_quantity/planned_amount категории: иначе они и дальше заслоняют
@@ -6601,7 +6724,12 @@ async function savePlannedItem() {
       : null
     showAddPlannedDialog.value = false
     convertFromCategoryPlanId.value = null
-    await refreshComparison(addPlannedCategoryId.value)
+    // refreshComparison обновляет только состав панели «План vs факт»; числа узла/
+    // родителей в шапке дерева и плашка превышения читаются из planTreeByCat —
+    // его обновляет refreshReqData (см. разбор жалобы владельца у deletePlannedItem
+    // и уже работающий movePlannedItemToCategory). Без него новая плановая позиция
+    // не давала вклад в «Плановую сумму» до перезагрузки страницы.
+    await Promise.all([refreshComparison(addPlannedCategoryId.value), refreshReqData()])
     if (convertCategoryId) await clearCategoryManualPlan(convertCategoryId)
   } finally {
     savingPlannedItem.value = false
@@ -6638,9 +6766,24 @@ async function clearCategoryManualPlan(categoryId: number) {
   if (selectedId.value) await loadFeo(selectedId.value)
 }
 
+// Баг владельца (2026-08-17): «убрал огнетушитель — сумма не пересчиталась,
+// превышение осталось». Причина — эта функция звала ТОЛЬКО refreshComparison
+// (перечитывает состав панели «План vs факт» для одной категории), а числа узла/
+// родителей в шапке дерева (feoPlannedDisplayFor/excessFor и т.д.) читаются из
+// planTreeByCat — его обновляет ТОЛЬКО refreshReqData (см. movePlannedItemToCategory
+// выше, который уже делает это правильно). Без refreshReqData() дерево показывало
+// старые plan_manual/display/excess_amount до полной перезагрузки страницы.
+const deletingPlannedItemId = ref<number | null>(null)
 async function deletePlannedItem(item: FeoPlannedItem) {
-  await apiFetch(`/feo-planned-items/${item.id}`, { method: 'DELETE' })
-  await refreshComparison(item.feo_category_id)
+  deletingPlannedItemId.value = item.id
+  try {
+    await apiFetch(`/feo-planned-items/${item.id}`, { method: 'DELETE' })
+    await Promise.all([refreshComparison(item.feo_category_id), refreshReqData()])
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.detail || e?.message || 'Не удалось удалить плановую позицию', 'error')
+  } finally {
+    deletingPlannedItemId.value = null
+  }
 }
 
 // Все категории, лежащие НИЖЕ данного узла в дереве (сам узел не включён) — источник
@@ -6882,9 +7025,11 @@ async function saveEditPlannedItem() {
       }),
     })
     editPlannedDialog.show = false
-    await refreshComparison(d.feo_category_id)
+    // См. комментарий у deletePlannedItem — refreshComparison один не обновляет
+    // planTreeByCat, от которого зависят числа узла/родителей и плашка превышения.
+    await Promise.all([refreshComparison(d.feo_category_id), refreshReqData()])
   } catch (e: any) {
-    showSnack(e.detail || 'Ошибка сохранения', 'error')
+    showSnack(e?.payload?.message || e?.detail || e?.message || 'Ошибка сохранения', 'error')
   } finally {
     editPlannedDialog.saving = false
   }
@@ -7774,6 +7919,23 @@ function feoFinDiff(node: FeoNode): number {
   return feoDisplayedFor(node) - feoPlannedDisplayFor(node)
 }
 
+// Жалоба владельца 2026-08-17 (категория 3710, «Расходные материалы для проведения
+// окружных полуфиналов…»): «можно добавить 208 156 ₽ до финансирования ФЭО» вводит в
+// заблуждение — это ФЭО минус ПЛАН (560 000 − 351 844), но в закупках уже 432 162 ₽ (план
+// уже превышен закупками), и реально до потолка ФЭО остаётся 560 000 − 432 162 = 127 838 ₽,
+// почти вдвое меньше. Вторая строка появляется ТОЛЬКО когда «в закупках» уже больше плана
+// (иначе она дублировала бы первую строку той же цифрой, см. feedback_no_duplicate_metrics_
+// same_label в Lessons) — берёт consumed из ТОЙ ЖЕ заметки «план · в закупках · свободно»
+// (feoResidualNoteFor/feoPlanConsumedNoteFor), что уже нарисована строкой ниже под этим же
+// узлом — второй источник чисел не изобретаем.
+function feoRemainingWithPurchasesNote(node: FeoNode): string | null {
+  if (feoFinDiff(node) <= 0.005) return null
+  const note = feoResidualNoteFor(node) || feoPlanConsumedNoteFor(node)
+  if (!note || note.residual >= -0.005) return null
+  const remaining = feoDisplayedFor(node) - note.consumed
+  return `с учётом уже размещённых закупок (${formatCurrency(note.consumed)}) до потолка ФЭО реально остаётся ${formatCurrency(remaining)}`
+}
+
 // «Собственный» перерасход узла — ровно то же условие, по которому строка
 // "надо убрать N" уже красится ниже в шаблоне (feoDisplayedFor(node) > 0 — лимит вообще задан).
 // Без этой проверки feoFinDiff() ложно уходит в минус у любого листа без лимита ФЭО
@@ -8184,36 +8346,82 @@ function factForPlannedTotal(catId: number, plannedId: number): number {
 
 // Расшифровка «больше плана на X» у заметки «план … · в закупках … · больше плана на …»
 // (жалоба владельца 2026-08-13: «в закупках 118 365,60 — больше плана на 5 121,60, откуда,
-// если в позициях плана этого нет?»). Это заметка feoResidualNoteFor/feoPlanConsumedNoteFor
-// ниже по шаблону (строки «план X · в закупках Y · больше плана на Z»), НЕ плашка у
-// «Фактической суммы» (та про контрактный факт, отдельная и обычно ещё пустая, пока
-// закупка не дошла до договора/поставки — «в закупках» здесь про заявки/ТЗ). Закупка без
-// плановой позиции существовать не может — разница ВСЕГДА складывается из перерасхода
-// каких-то плановых позиций категории, просто по СУММЕ категории это не видно на глаз
-// (пример владельца: 4 позиции «Перчатки нитриловые» L/S/M/XL, по каждой закуплено 24 шт
-// вместо 20 — четыре небольших перерасхода в сумме дают весь «необъяснимый» остаток).
-// Арифметика перерасхода ОДНОЙ позиции — та же, что уже использует planBreakdownText
-// (factForPlannedTotal(catId, planned.id) − planned.amount), только берём здесь только
-// положительные (позиция сама в плюсе), отрицательные (позиция ещё недобрана) не виновники.
+// если в позициях плана этого нет?»; продолжение — 2026-08-17, категория 3710: «где это
+// превышение 80 318? где оно?»). Это заметка feoResidualNoteFor ниже по шаблону (строка
+// «план X · в закупках Y · больше плана на Z»), НЕ плашка у «Фактической суммы» (та про
+// контрактный факт, отдельная и обычно ещё пустая, пока закупка не дошла до договора/
+// поставки — «в закупках» здесь про заявки/ТЗ).
+//
+// Превышение складывается из ДВУХ независимых источников — расследование 2026-08-17
+// показало, что раньше учитывался только первый, из-за чего у категории 3710 расшифровка
+// молчала (пусто), хотя число «больше плана на 80 318» было честным:
+//  1) перерасход ВНУТРИ существующей плановой позиции — сумма закупок, привязанных к ней
+//     (factForPlanned), больше её planned.amount. Арифметика — та же, что у
+//     planBreakdownText (factForPlannedTotal − planned.amount), берём только положительные.
+//  2) позиции закупок БЕЗ действующей плановой позиции — unplannedActualFor(node) (и вовсе
+//     непривязанные, и с мёртвой привязкой на удалённую плановую позицию, см. её правку
+//     выше) — такая позиция ничей план не убавляет, целиком уходит в превышение категории
+//     (пример владельца: огнетушитель 54 318 ₽ + каска 26 000 ₽ = ровно 80 318 ₽, обе с
+//     feo_planned_item_id на уже удалённые плановые позиции 809/1409).
+// Каждый пункт несёт список закупок-источников (обычно один, но плановая позиция может
+// быть покрыта несколькими закупками сразу) — шаблон рисует по ним кликабельные ссылки/меню
+// (тот же приём, что excessPlanFor().items выше по файлу — v-menu при >1 закупке).
 //
 // ⚠️ comparisonData[node.id] грузится ТОЛЬКО когда панель плановых позиций категории
-// раскрыта (см. loadComparison/toggleItemPanel) — читаем здесь готовое значение ref'а,
-// НИЧЕГО сами не запрашиваем и не триггерим загрузку. Если данных ещё нет — вызывающий
-// шаблон обязан сам проверить comparisonData[node.id] и не звать эту функцию (плашка
-// «больше плана на X» тогда остаётся как раньше, без расшифровки).
-function factExcessPlanItems(node: FeoNode): { name: string; amount: number }[] {
-  const planned = comparisonData.value[node.id]?.planned || []
-  return planned
-    .map(p => ({ name: p.name, amount: factForPlannedTotal(node.id, p.id) - Number(p.amount ?? 0) }))
-    .filter(it => it.amount > 0.005)
-    .sort((a, b) => b.amount - a.amount)
+// раскрыта, либо когда явно нажали «Показать, из-за чего» (см. ensureComparison в шаблоне) —
+// читаем здесь готовое значение ref'а, ничего сами не запрашиваем.
+interface ExcessReasonPurchase { id: number; label: string; amount: number; stopped: boolean }
+interface ExcessReasonItem { key: string; name: string; amount: number; purchases: ExcessReasonPurchase[] }
+function purchaseLabelFor(a: { registry_number?: string | null; purchase_number?: number | null; purchase_id: number }): string {
+  return a.registry_number || (a.purchase_number != null ? `№ ${a.purchase_number}` : `#${a.purchase_id}`)
 }
-function factExcessPlanItemsText(node: FeoNode): string {
-  const items = factExcessPlanItems(node)
-  if (!items.length) return ''
-  const shown = items.slice(0, 5).map(it => `${it.name} +${formatCurrency(it.amount)}`).join(' · ')
-  const more = items.length > 5 ? ` и ещё ${items.length - 5}` : ''
-  return `из-за: ${shown}${more}`
+function factExcessReasonItems(node: FeoNode): ExcessReasonItem[] {
+  const catId = node.id
+  const data = comparisonData.value[catId]
+  if (!data) return []
+  const items: ExcessReasonItem[] = []
+  // Источник 1 — перерасход внутри существующих плановых позиций.
+  for (const p of data.planned || []) {
+    const amount = factForPlannedTotal(catId, p.id) - Number(p.amount ?? 0)
+    if (amount <= 0.005) continue
+    const facts = factForPlanned(catId, p.id)
+    items.push({
+      key: `p-${p.id}`,
+      name: p.name,
+      amount,
+      purchases: facts.map(a => ({
+        id: a.purchase_id,
+        label: purchaseLabelFor(a),
+        amount: Number(a.fact_amount ?? a.total_price ?? 0),
+        stopped: !!a.stopped_at,
+      })),
+    })
+  }
+  // Источник 2 — закупки без действующей плановой позиции (непривязанные ИЛИ с мёртвой
+  // привязкой на удалённую плановую позицию) — unplannedActualFor уже ловит оба случая.
+  for (const a of unplannedActualFor(node)) {
+    const amount = Number(a.fact_amount ?? a.total_price ?? 0)
+    if (amount <= 0.005) continue
+    items.push({
+      key: `a-${a.purchase_item_id}`,
+      name: a.item_name,
+      amount,
+      purchases: [{ id: a.purchase_id, label: purchaseLabelFor(a), amount, stopped: !!a.stopped_at }],
+    })
+  }
+  return items.sort((a, b) => b.amount - a.amount)
+}
+// Расшифровка обязана сходиться с самим числом превышения (требование владельца
+// 2026-08-17: «если не сходится — показывай остаток строкой, а не молчи»). Расхождение
+// возможно: источник 1 берёт только плановые позиции, которые САМИ перерасходованы —
+// недобор по другим плановым позициям категории эту сумму не компенсирует здесь, хотя
+// компенсирует итоговый residual категории (там план минус ВЕСЬ consumed целиком).
+function factExcessReasonRemainder(node: FeoNode): number {
+  const note = feoResidualNoteFor(node)
+  if (!note) return 0
+  const total = -note.residual
+  const shown = factExcessReasonItems(node).reduce((s, it) => s + it.amount, 0)
+  return total - shown
 }
 
 // ── Левая группа колонок панели «план vs факт»: ДВА состояния, не «план» ──────
@@ -8396,13 +8604,43 @@ function displayPlannedRowsFor(node: FeoNode): (FeoPlannedItem & { isManual?: bo
 // С 2026-08-12 — дополнительно исключены позиции, поглощённые фолбэком по имени
 // (fallbackAbsorbedByCategory, см. factForPlanned) — те уже показаны ПОД своей плановой
 // строкой, повторно рисовать их тут значило бы задвоить одну и ту же закупку на экране.
+//
+// БАГ (жалоба владельца 2026-08-17, категория 3710 «Расходные материалы для проведения
+// окружных полуфиналов…»): «где превышение 80 318? где его увидеть?» — две позиции закупок
+// (огнетушитель 54 318 ₽, каска 26 000 ₽) имели feo_planned_item_id, указывающий на
+// плановые позиции, которые к этому моменту УДАЛЕНЫ (id 809/1409 больше нет среди
+// comparisonData[catId].planned). Из-за этого они проваливались МИМО обеих веток: у
+// factForPlanned нет плановой строки с таким id, чтобы их подставить, а этот фильтр
+// (`!a.feo_planned_item_id`) их тоже отбрасывал — feo_planned_item_id формально заполнен,
+// просто ссылка мертва. Позиции исчезали с экрана совсем — не факт, не план, ничего.
+// Теперь ловим ОБА случая: (1) привязки вовсе нет — прежнее поведение; (2) привязка ЕСТЬ,
+// но указанной плановой позиции больше не существует в текущем списке категории — «мёртвая»
+// привязка. Мёртвая привязка показывается ВСЕГДА (даже при hasManualPseudoRow — абсорбировать
+// в синтетическую строку её всё равно нельзя, там участвуют только позиции без
+// feo_planned_item_id вовсе, см. factForPlanned(catId, -node.id)). Различение — isOrphanedActual
+// ниже, шаблон рисует по нему отдельную пометку «привязана к удалённой плановой позиции».
 function unplannedActualFor(node: FeoNode) {
   const catId = node.id
   const hasManualPseudoRow = !(comparisonData.value[catId]?.planned || []).length
     && (node.planned_quantity != null || node.planned_amount != null)
-  if (hasManualPseudoRow) return []
   const absorbed = fallbackAbsorbedByCategory.value[catId]
-  return allActualFor(catId).filter(a => !a.feo_planned_item_id && !(absorbed && absorbed.has(a.purchase_item_id)))
+  const plannedIds = new Set((comparisonData.value[catId]?.planned || []).map(p => p.id))
+  return allActualFor(catId).filter(a => {
+    if (a.feo_planned_item_id != null) {
+      // Мёртвая привязка — не зависит от hasManualPseudoRow/fallback, показываем всегда.
+      return !plannedIds.has(a.feo_planned_item_id)
+    }
+    if (hasManualPseudoRow) return false
+    return !(absorbed && absorbed.has(a.purchase_item_id))
+  })
+}
+
+// Различает две причины попадания в «Не привязаны к плану»: мёртвая привязка (позиция
+// формально привязана к feo_planned_item_id, но та плановая позиция удалена) vs позиция
+// вообще никогда не была привязана. Внутри unplannedActualFor(node) — единственный
+// источник истины, что считается «мёртвым», эта функция ничего не решает заново.
+function isOrphanedActual(actual: FeoActualItem): boolean {
+  return actual.feo_planned_item_id != null
 }
 
 // Dev-ассерт (ШАГ 1 плана дедупликации, 2026-08-07; расширен 2026-08-11 после удаления

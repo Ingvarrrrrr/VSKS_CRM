@@ -60,7 +60,7 @@
             <v-btn size="x-small" color="primary" variant="tonal" @click="bindCandidate(c)">Привязать</v-btn>
           </div>
           <div v-if="otherCategoryCandidates.length" class="mt-1">
-            <div class="text-caption text-medium-emphasis">Похожие есть и в других категориях (привязка недоступна — категории должны совпадать):</div>
+            <div class="text-caption text-medium-emphasis">Похожие есть и в других категориях — привязка перенесёт позицию в категорию плановой позиции:</div>
             <div
               v-for="c in otherCategoryCandidates"
               :key="'cand-other-' + c.key"
@@ -70,6 +70,13 @@
                 {{ Math.round(c.score * 100) }}%
               </v-chip>
               <span class="feo-match-name">{{ c.name }} <span class="text-caption text-medium-emphasis">— {{ c.path }}</span></span>
+              <v-btn
+                size="x-small"
+                color="warning"
+                variant="tonal"
+                :title="`Привязать и перенести позицию в категорию: ${c.path}`"
+                @click="bindCandidate(c)"
+              >Привязать</v-btn>
             </div>
           </div>
           <v-btn size="x-small" variant="text" color="primary" class="mt-1" @click="rejectSuggestions">
@@ -536,8 +543,11 @@ function selectItem(row: FeoPlanPosition) {
 
 // Шаг 4 плана zany-fluttering-mountain.md — кандидаты POST /feo-planned-items/match,
 // разделённые на «своей категории/ветки» (можно привязать сразу) и «из другой
-// категории» (показываем с пометкой, привязка недоступна — /feo-planned-items/map
-// требует совпадения категорий, см. backend docstring match_planned_items).
+// категории» (показываем отдельной группой как визуальную подсказку). С 2026-08-18
+// /feo-planned-items/map больше НЕ требует совпадения категорий — привязка к
+// плановой позиции из другой категории разрешена и переносит позицию закупки
+// (и связанную позицию заявки) в категорию этой плановой позиции, same_category
+// тут только влияет на группировку в UI, не на доступность действия.
 const sameCategoryCandidates = computed(() => (props.candidates || []).filter(c => c.same_category))
 const otherCategoryCandidates = computed(() => (props.candidates || []).filter(c => !c.same_category))
 

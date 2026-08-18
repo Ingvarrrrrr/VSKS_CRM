@@ -1564,7 +1564,7 @@
                                           </td>
                                           <td style="padding:2px;text-align:center;white-space:nowrap">
                                             <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary"
-                                              :title="actual.wish_id ? 'Позиция из заявки — открыть заявку для редактирования' : 'Редактировать позицию закупки'"
+                                              title="Редактировать позицию закупки"
                                               @click="openReqItemEditFromActual(node, actual)"
                                             />
                                             <!-- Баг найден при приёмке (2026-08-11): mapTarget/mapCategoryId — refs,
@@ -1740,7 +1740,7 @@
                                 </td>
                                 <td style="padding:2px;text-align:center;white-space:nowrap">
                                   <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary"
-                                    :title="actual.wish_id ? 'Позиция из заявки — открыть заявку для редактирования' : 'Редактировать позицию закупки'"
+                                    title="Редактировать позицию закупки"
                                     @click="openReqItemEditFromActual(node, actual)"
                                   />
                                   <!-- Задача владельца 2026-08-17: «раз причина в том, что плановой позиции
@@ -6335,6 +6335,11 @@ const reqItemEdit = reactive({
   show: false, saving: false,
   catId: null as number | null, purchaseId: null as number | null, itemId: null as number | null,
   form: { item_name: '', quantity: null as number | null, unit: '', unit_price: null as number | null, feo_category_id: null as number | null },
+  // Снимок значений на момент открытия диалога (правка 2026-08-18): saveReqItemEdit
+  // шлёт в PATCH только реально изменённые поля — иначе при заморозке ТЗ
+  // (TZ_FROZEN_STATUSES) правка ОДНОЙ ТОЛЬКО категории отбивается 409 из-за
+  // молча переотправленных qty/price, которых пользователь не трогал.
+  original: { item_name: '', quantity: null as number | null, unit: '', unit_price: null as number | null },
 })
 
 // selectedSubsidy объявлен выше (сразу после allSubsidies/selectedId) — useFeoLeaves
@@ -6350,15 +6355,24 @@ const reqItemEdit = reactive({
 const reqItemEditSubsidyId = computed(() => selectedSubsidy.value?.id ?? null)
 const { feoLeaves: reqItemEditFeoLeaves, feoNodes: reqItemEditFeoNodes } = useFeoLeaves({ subsidyId: reqItemEditSubsidyId })
 
+// Принцип владельца (2026-08-18): «после того как заявка попала в План
+// закупок, дальше редактирование и перераспределение между плановыми
+// позициями — только в Закупках». Раньше здесь был ранний выход в /wishes
+// для item.wish_id — тупик: заявка, уже ушедшая в закупку, там заблокирована
+// (TZ_FROZEN_STATUSES), и пользователь упирался в баннер «редактирование
+// запрещено», хотя позиция реально существует в закупке и правится через
+// PATCH /purchases/{id}/items/{id} (см. saveReqItemEdit ниже). Диалог теперь
+// открывается всегда; блокировки (заморозка ТЗ, превышение плана) отрабатывает
+// сам PATCH своим 409, который saveReqItemEdit уже распаковывает.
 function openReqItemEdit(node: FeoNode, item: FeoReqItem) {
-  if (item.wish_id) {
-    router.push({ path: '/wishes', query: { open: String(item.wish_id) } })
-    return
-  }
   reqItemEdit.catId = node.id
   reqItemEdit.purchaseId = item.purchase_id
   reqItemEdit.itemId = item.id
   reqItemEdit.form = { item_name: item.item_name, quantity: item.quantity, unit: item.unit || '', unit_price: item.unit_price, feo_category_id: node.id }
+  reqItemEdit.original = {
+    item_name: reqItemEdit.form.item_name, quantity: reqItemEdit.form.quantity,
+    unit: reqItemEdit.form.unit, unit_price: reqItemEdit.form.unit_price,
+  }
   reqItemEdit.show = true
 }
 
@@ -6367,10 +6381,9 @@ function openReqItemEdit(node: FeoNode, item: FeoReqItem) {
 // готовый диалог reqItemEdit/saveReqItemEdit выше вместо второго диалога:
 // адаптер собирает совместимый FeoReqItem из FeoActualItem (те же данные под
 // другими именами полей — purchase_item_id → id). Блокировки уже отработаны
-// внутри переиспользуемых функций, второй раз их тут не пишем: позиция из
-// заявки → openReqItemEdit сам делает router.push вместо диалога (см. выше);
-// заморозка ТЗ (TZ_FROZEN_STATUSES) и превышение плана (assert_tz_not_over_plan)
-// → 409 от PATCH /purchases/{id}/items/{id} (backend/app/routers/purchases.py),
+// внутри переиспользуемых функций, второй раз их тут не пишем: заморозка ТЗ
+// (TZ_FROZEN_STATUSES) и превышение плана (assert_tz_not_over_plan) → 409 от
+// PATCH /purchases/{id}/items/{id} (backend/app/routers/purchases.py),
 // распаковывается в saveReqItemEdit через e.payload.message/e.detail.
 function openReqItemEditFromActual(node: FeoNode, actual: FeoActualItem) {
   openReqItemEdit(node, {
@@ -6393,17 +6406,34 @@ async function saveReqItemEdit() {
   if (!reqItemEdit.itemId || !reqItemEdit.purchaseId) return
   reqItemEdit.saving = true
   try {
-    const body: Record<string, any> = {
-      item_name: reqItemEdit.form.item_name,
-      quantity: reqItemEdit.form.quantity,
-      unit: reqItemEdit.form.unit || null,
-      unit_price: reqItemEdit.form.unit_price,
+    // Шлём ТОЛЬКО реально изменённые поля (правка 2026-08-18) — сверяем со
+    // снимком, сделанным при открытии диалога (reqItemEdit.original). Раньше
+    // тело PATCH всегда несло item_name/quantity/unit/unit_price целиком, даже
+    // нетронутыми — при заморозке ТЗ (TZ_FROZEN_STATUSES) это отбивало 409
+    // правку ОДНОЙ ТОЛЬКО категории, хотя её менять можно.
+    const body: Record<string, any> = {}
+    if (reqItemEdit.form.item_name !== reqItemEdit.original.item_name) {
+      body.item_name = reqItemEdit.form.item_name
+    }
+    if (reqItemEdit.form.quantity !== reqItemEdit.original.quantity) {
+      body.quantity = reqItemEdit.form.quantity
+    }
+    if ((reqItemEdit.form.unit || '') !== (reqItemEdit.original.unit || '')) {
+      body.unit = reqItemEdit.form.unit || null
+    }
+    if (reqItemEdit.form.unit_price !== reqItemEdit.original.unit_price) {
+      body.unit_price = reqItemEdit.form.unit_price
     }
     // Категорию отправляем ТОЛЬКО если пользователь её реально сменил (catId —
     // категория, под которой позиция открыта в дереве, т.е. текущая) — не
     // переписывать лишнего при обычном редактировании имени/цены.
     const categoryChanged = reqItemEdit.form.feo_category_id != null && reqItemEdit.form.feo_category_id !== reqItemEdit.catId
     if (categoryChanged) body.feo_category_id = reqItemEdit.form.feo_category_id
+    if (Object.keys(body).length === 0) {
+      reqItemEdit.show = false
+      showSnack('Изменений нет')
+      return
+    }
     await apiFetch(`/purchases/${reqItemEdit.purchaseId}/items/${reqItemEdit.itemId}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
@@ -6585,11 +6615,34 @@ async function applyMapping(plannedItemId: number | null) {
     // сопоставление» падало молча (mappingInProgress просто гасился в finally). Параметр нужно
     // не слать вовсе, когда planned_item_id=null — тогда FastAPI подставляет свой default None.
     const qs = `purchase_item_id=${mapTarget.value.purchase_item_id}` + (plannedItemId != null ? `&planned_item_id=${plannedItemId}` : '')
-    await apiFetch(`/feo-planned-items/map?${qs}`, {
+    const result = await apiFetch<{ moved_to_category_id?: number | null }>(`/feo-planned-items/map?${qs}`, {
       method: 'POST',
     })
     showMapDialog.value = false
-    if (mapCategoryId.value) await refreshComparison(mapCategoryId.value)
+    // Правка владельца (2026-08-18): «позиции в дашборде должны пересчитываться
+    // сразу» — map/unmap двигает total_linked/qty_linked в /planned-purchase-totals
+    // (шапка узла, «Не привязаны к плану»), а refreshComparison() один обновлял
+    // только панель «план vs факт», не дашборд. refreshReqData(catId) — тот же
+    // приём, что в saveReqItemEdit/doReqItemDelete: перечитывает totals/items/
+    // plan-tree И делает delete comparisonData[catId] + ensureComparison(catId)
+    // (см. её тело выше), так что оба источника обновляются одним вызовом.
+    const movedToCategoryId = result?.moved_to_category_id ?? null
+    if (mapCategoryId.value) await refreshReqData(mapCategoryId.value)
+    // Перенос между категориями ФЭО (решение владельца 2026-08-18): бэкенд
+    // POST /feo-planned-items/map при сопоставлении с плановой позицией из ДРУГОЙ
+    // категории больше не отказывает 409, а переносит позицию закупки (и
+    // зеркально — связанную позицию заявки) в категорию плановой позиции,
+    // возвращая moved_to_category_id. refreshReqData(mapCategoryId) выше уже
+    // перечитал totals/items/plan-tree по всей субсидии разом (эндпоинты не
+    // фильтруются по категории) и инвалидировал comparisonData СТАРОЙ категории —
+    // но НОВУЮ категорию она не трогала, и панель «план vs факт» там показывала
+    // бы устаревшие числа до перезагрузки страницы. Инвалидируем и её тем же
+    // приёмом, что saveReqItemEdit делает при ручной смене категории (см. выше):
+    // без повторного похода за totals/items/plan-tree, только delete+ensureComparison.
+    if (movedToCategoryId != null && movedToCategoryId !== mapCategoryId.value) {
+      delete comparisonData.value[movedToCategoryId]
+      await ensureComparison(movedToCategoryId)
+    }
   } finally {
     mappingInProgress.value = false
   }

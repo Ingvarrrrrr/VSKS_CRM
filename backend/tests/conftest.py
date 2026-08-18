@@ -11,32 +11,107 @@ from decimal import Decimal
 from httpx import AsyncClient, ASGITransport
 
 
-@pytest_asyncio.fixture
-async def client() -> AsyncClient:
-    """HTTPX AsyncClient wired to the FastAPI app via ASGITransport."""
-    from app import app  # noqa: WPS433 — deferred to avoid import-time side effects
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as c:
-        yield c
-
-
 # ---------------------------------------------------------------------------
-# Phase 13 plan 02: DB / user / auth fixtures for approve-distribution tests
+# Test isolation (2026-08-18): db_session used to commit straight into
+# app.database.async_session — the SAME database the local backend container
+# uses. Every `.commit()` in a factory fixture (test_org/test_user/...) was a
+# REAL commit, so a pytest run left rows behind forever (no teardown ever ran
+# to undo them). This bit us for real: three "Great Wall POER" purchase_items
+# (8 380 000 each) from test_feo_plan_tree_scenarios.py were mistaken for
+# production data corruption during an unrelated FK audit.
+#
+# Fix: wrap each test in ONE outer transaction on a dedicated connection and
+# roll it back at teardown, no matter how many times test code calls
+# `.commit()`. `join_transaction_mode="create_savepoint"` (SQLAlchemy 2.0)
+# makes the session's `.commit()` release a SAVEPOINT instead of ending the
+# real transaction — so existing fixtures/tests that call `.commit()` keep
+# working unmodified, but nothing survives past `outer_tx.rollback()`.
+#
+# Why not a separate test database/schema instead: the backend only reaches
+# Postgres at `db:5432` inside the compose network (no host port is
+# published, by design — see security baseline), so tests already run
+# in-container against the one real dev DB. Standing up a second schema would
+# need its own migration bootstrap/teardown per run and would stop tests from
+# exercising the actual FK/constraint behaviour of the live schema (exactly
+# what the FK-integrity migrations in this session are about). Transaction
+# rollback gets the same "leaves nothing behind" guarantee for free, on the
+# schema that's actually representative.
+#
+# `client` now depends on `db_session` and overrides `get_db` to hand out the
+# SAME session/connection: request handlers (which normally open their own
+# session via get_db()) and directly-created fixtures (test_user, test_org,
+# ...) need to see each other's uncommitted rows within the one test
+# transaction — otherwise HTTP requests made through `client` would look at a
+# separate real connection and simply not see data created via `db_session`
+# in the same test (auth_headers/test_user would 401 against a real login).
+#
+# Known limitation (not fixed here, out of scope): a handful of modules
+# (app/routers/chat.py, app/routers/publications.py,
+# app/routers/telegram_webhook.py) import `async_session` directly at module
+# level instead of going through `get_db()`, so they bypass this override and
+# would still hit the real engine. No current test exercises those paths.
+#
+# Known unrelated flake (do not "fix" by touching this): async tests fail
+# with "attached to a different loop" when run together in bulk; pytest.ini
+# uses asyncio_mode=auto with the pytest-asyncio default (a fresh event loop
+# per test function) against one process-wide `engine`/connection pool. Not a
+# regression from this change — run suspect files individually.
 # ---------------------------------------------------------------------------
 
 @pytest_asyncio.fixture
 async def db_session():
-    """Provide a real AsyncSession connected to the app database.
+    """Real AsyncSession bound to a per-test connection + outer transaction.
 
-    Uses the same async_session factory as the app, but as a standalone
-    session for test setup and assertions. Data is committed so that the
-    ASGITransport app (which uses its own get_db() sessions) can see it.
+    Everything the test (or any fixture/request sharing this session, see
+    `client`) commits lives inside a SAVEPOINT within that one transaction.
+    Teardown always rolls the outer transaction back — no row ever survives
+    the test, regardless of how many `.commit()` calls happened.
     """
-    from app.database import async_session
-    async with async_session() as session:
+    from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+    from app.database import engine
+
+    connection = await engine.connect()
+    outer_tx = await connection.begin()
+    session_factory = async_sessionmaker(
+        bind=connection,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    session = session_factory()
+    try:
         yield session
+    finally:
+        await session.close()
+        await outer_tx.rollback()
+        await connection.close()
+
+
+@pytest_asyncio.fixture
+async def client(db_session) -> AsyncClient:
+    """HTTPX AsyncClient wired to the FastAPI app via ASGITransport.
+
+    Overrides get_db() to hand out db_session's own connection-bound session,
+    so HTTP requests made through this client participate in the same outer
+    transaction/rollback as db_session (see module docstring above) — needed
+    for auth_headers/test_user (created via db_session) to be visible to
+    request handlers, and for anything a request writes to be rolled back too.
+    """
+    from app import app  # noqa: WPS433 — deferred to avoid import-time side effects
+    from app.database import get_db
+
+    async def _override_get_db():
+        yield db_session
+
+    app.dependency_overrides[get_db] = _override_get_db
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as c:
+            yield c
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 @pytest_asyncio.fixture
@@ -201,7 +276,8 @@ async def make_role_permission(db_session):
         created.append(rp)
         return rp
     yield _factory
-    # no rollback — cross-test isolation via unique org/user fixtures
+    # No manual cleanup needed here — db_session's outer transaction rollback
+    # (see module docstring) discards everything created via this factory.
 
 @pytest_asyncio.fixture
 async def make_override(db_session):

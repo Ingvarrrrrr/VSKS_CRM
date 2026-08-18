@@ -18,7 +18,8 @@ class WishItem(Base):
     country_origin = Column(String(100), default="РФ")
     target_column_key = Column(String(200), nullable=True)  # Phase 13 D-04: kanban column override; falls back to product.category when null
     # B9: per-item FEO category link (mirroring purchase_items.feo_category_id)
-    # TODO: ALTER TABLE wish_items ADD COLUMN IF NOT EXISTS feo_category_id INTEGER REFERENCES feo_categories(id) ON DELETE SET NULL
+    # FK применена миграцией f6g7h8i9j0k1 (2026-08-17/18) — ранее модель объявляла
+    # ForeignKey, но DDL в БД не применялась; TODO закрыт.
     feo_category_id = Column(Integer, ForeignKey("feo_categories.id", ondelete="SET NULL"), nullable=True)
     # Привязка к конкретной плановой позиции плана закупок (уровень 5 ФЭО, mirroring
     # purchase_items.feo_planned_item_id) — чтобы согласование заявки расходовало

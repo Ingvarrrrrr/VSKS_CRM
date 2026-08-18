@@ -293,6 +293,11 @@ class WishOut(BaseModel):
     source: Optional[str] = None
     # W1: True если привязанная закупка перешла в Договор+ (редактирование запрещено)
     contracted_locked: bool = False
+    # Правка владельца (2026-08-18): человекочитаемое описание блокирующих закупок
+    # («№890 «...» — стадия «Заказано»») для баннера на фронте — раньше текст был
+    # захардкожен «на этапе «Договор»» независимо от реальной стадии. None, если
+    # заявка не заблокирована. См. _wish_locked_descr в app/routers/wishes.py.
+    contracted_locked_reason: Optional[str] = None
     # Остановка заявки (владелец, 2026-08-13) — см. POST /{wish_id}/stop
     stopped_at: Optional[datetime] = None
     stopped_by: Optional[int] = None

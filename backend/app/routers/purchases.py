@@ -2099,9 +2099,21 @@ async def patch_purchase_item(
     p = await db.get(Purchase, pid)
     if not p:
         raise HTTPException(404, "Закупка не найдена")
-    # W3: позиция привязана к заявке — редактировать только в заявке,
-    # НО смена категории ФЭО (feo_category_id / clear_feo_category) разрешена.
-    if it.wish_item_id is not None:
+    # W3 (сужено — принцип владельца, 2026-08-18): «когда перевели в Закупку,
+    # редактироваться должно в Закупке — зачем перебрасывает в заявку?». Пока
+    # закупка ещё на стадии `wishes` (скрытая закупка-заготовка, которую видно
+    # только через дашборд ФЭО, — план закупок её ещё не видел) источник
+    # правды остаётся заявка, поэтому правка позиции здесь запрещена. С
+    # момента, когда закупка попала в план закупок (`plan_schedule` и дальше),
+    # источник правды — сама закупка: правка идёт прямо тут, а не редиректом в
+    # заявку (раньше запрет действовал для ЛЮБОГО статуса — правка открывалась
+    # в диалоге, но 409'ила при сохранении, тупик с другим текстом). Смена
+    # категории ФЭО (feo_category_id / clear_feo_category) была разрешена уже
+    # тогда — остаётся разрешена и здесь. Ниже по коду продолжает работать
+    # своя, отдельная заморозка ТЗ (TZ_FROZEN_STATUSES) — именно она теперь
+    # настоящий ограничитель для объявленных закупок, и её сообщение понятное
+    # («закупка объявлена, ТЗ зафиксировано»), а не молчаливый редирект.
+    if it.wish_item_id is not None and p.status == "wishes":
         substantive_keys = set(body.model_dump(exclude_unset=True).keys()) - {"feo_category_id", "clear_feo_category"}
         if substantive_keys:
             raise HTTPException(
@@ -2297,6 +2309,37 @@ async def patch_purchase_item(
             it.planned_quantity = it.quantity
             it.planned_unit_price = it.unit_price
             it.planned_total = it.total_price
+    # Зеркалим правку обратно в позицию заявки (принцип владельца, 2026-08-18):
+    # раз W3 выше больше не запрещает править позицию прямо в закупке для
+    # закупок, ушедших в план (см. комментарий у W3), позиция закупки и
+    # связанная wish_items начнут расходиться — ровно тот дефект, на который
+    # жаловался владелец («заявка показывает одну плановую позицию, дашборд
+    # другую»). Симметрично зеркалированию в POST /api/feo-planned-items/map
+    # (app/routers/feo_planned_items.py::map_purchase_item_to_planned).
+    # Синхронизируем ТОЛЬКО то, что реально пришло/изменилось этим запросом —
+    # не переписывать в заявке то, чего не трогали (выбранное на предыдущем
+    # этапе не меняется само). _category_changing/it.feo_planned_item_id уже
+    # финальные на этом месте (категория и автоподбор плана применены выше).
+    if it.wish_item_id is not None:
+        _patch_keys = set(body.model_dump(exclude_unset=True).keys())
+        _qty_or_price_changed = "quantity" in _patch_keys or "unit_price" in _patch_keys
+        if _patch_keys & {"item_name", "quantity", "unit", "unit_price"} or _category_changing:
+            from app.models.wish_item import WishItem as _WishItem
+            wi = await db.get(_WishItem, it.wish_item_id)
+            if wi is not None:
+                if "item_name" in _patch_keys:
+                    wi.item_name = it.item_name
+                if "quantity" in _patch_keys:
+                    wi.quantity = it.quantity
+                if "unit" in _patch_keys:
+                    wi.unit = it.unit
+                if "unit_price" in _patch_keys:
+                    wi.unit_price = it.unit_price
+                if _qty_or_price_changed:
+                    wi.total_price = it.total_price
+                if _category_changing:
+                    wi.feo_category_id = it.feo_category_id
+                    wi.feo_planned_item_id = it.feo_planned_item_id
     await db.flush()
     await _recalc_purchase_totals(p, db)
     if p and p.subsidy_id:

@@ -499,9 +499,32 @@ def _is_meaningful_item(it) -> bool:
 
 
 async def _wish_contracted_locked(wish_id: int, db: AsyncSession) -> bool:
-    """True если хотя бы одна привязанная закупка находится в статусе «Договор+»."""
+    """True если хотя бы одна привязанная закупка находится в статусе «Договор+».
+    Тонкая обёртка над _wish_locked_descr (см. ниже) — держим оба места на одном
+    источнике правды, чтобы bool-гейт и текстовое сообщение не разъехались."""
+    return bool(await _wish_locked_descr(wish_id, db))
+
+
+async def _wish_locked_descr(wish_id: int, db: AsyncSession) -> Optional[str]:
+    """Человекочитаемое описание закупок, из-за которых заявка заблокирована
+    для правки (Договор+) — None, если блокирующих закупок нет.
+
+    Владелец увидел на проде сообщение «на этапе «Договор»» для закупки в
+    статусе `ordered` («Заказано») — CONTRACTED_STATUSES шире одного статуса
+    «Договор» (contracted/ordered/delivered/paid), а текст называл только его.
+    Единый хелпер вместо копипасты формата в двух местах (409 при PUT и при
+    удалении позиций) — чтобы формулировка не расходилась. Формат каждой
+    закупки: `№{purchase_number or id} «{item_name}» — стадия «{label}»`.
+    """
+    from app.routers.purchase_export import _STATUS_LABELS
     purchases = await _wish_linked_purchases(wish_id, db)
-    return any(p.status in CONTRACTED_STATUSES for p in purchases)
+    locked = [p for p in purchases if p.status in CONTRACTED_STATUSES]
+    if not locked:
+        return None
+    return "; ".join(
+        f"№{p.purchase_number or p.id} «{p.item_name or ''}» — стадия «{_STATUS_LABELS.get(p.status, p.status)}»"
+        for p in locked
+    )
 
 
 async def _reset_approvals(wish_id: int, db: AsyncSession) -> None:
@@ -1331,7 +1354,13 @@ async def get_wish(
     enriched.items_total = sum((it.total_price or Decimal("0")) for it in (wish.items or [])) or Decimal("0")
 
     # W1: contracted_locked — есть ли закупка в статусе Договор+
-    enriched.contracted_locked = await _wish_contracted_locked(wish_id, db)
+    # Правка владельца (2026-08-18): сообщение о блокировке должно называть
+    # конкретную закупку и её реальную стадию, а не всегда «Договор» — см.
+    # _wish_locked_descr. contracted_locked_reason — готовая строка для баннера
+    # на фронте (frontend/src/views/WishesView.vue), None если не заблокировано.
+    _locked_descr = await _wish_locked_descr(wish_id, db)
+    enriched.contracted_locked = bool(_locked_descr)
+    enriched.contracted_locked_reason = _locked_descr
 
     # W-diff: «двойник» каждой позиции в закупке — только карточка, не список
     await _attach_purchase_matches(wish, enriched, db)
@@ -1614,10 +1643,11 @@ async def update_wish(
 
     # W2: contracted-lock replaces old draft-only gate
     if not _is_saas(current_user):
-        if await _wish_contracted_locked(wish.id, db):
+        _locked_descr = await _wish_locked_descr(wish.id, db)
+        if _locked_descr:
             raise HTTPException(
                 status_code=409,
-                detail="Заявка привязана к закупке на этапе «Договор» — редактирование запрещено",
+                detail=f"Заявка привязана к закупке — {_locked_descr}. Редактирование запрещено",
             )
         # SaaS is always allowed; for others allow draft/rejected AND submitted/approved/converted
 
@@ -1813,16 +1843,8 @@ async def update_wish(
             # Позиции, которых больше нет в payload, — удаляем физически.
             ids_to_delete = set(existing_items.keys()) - payload_ids
             if ids_to_delete:
-                if await _wish_contracted_locked(wish.id, db):
-                    from app.routers.purchase_export import _STATUS_LABELS
-                    _locked_purchases = [
-                        p for p in await _wish_linked_purchases(wish.id, db)
-                        if p.status in CONTRACTED_STATUSES
-                    ]
-                    _locked_descr = "; ".join(
-                        f"№{p.purchase_number or p.id} «{p.item_name or ''}» — стадия «{_STATUS_LABELS.get(p.status, p.status)}»"
-                        for p in _locked_purchases
-                    )
+                _locked_descr = await _wish_locked_descr(wish.id, db)
+                if _locked_descr:
                     raise HTTPException(
                         status_code=409,
                         detail=(

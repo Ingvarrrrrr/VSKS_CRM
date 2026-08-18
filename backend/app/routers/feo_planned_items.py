@@ -531,6 +531,8 @@ async def map_purchase_item_to_planned(
     if not pi:
         raise HTTPException(404, "Позиция закупки не найдена")
 
+    moved_to_category_id = None
+
     if planned_item_id is not None:
         planned = (await db.execute(
             select(FeoPlannedItem).where(FeoPlannedItem.id == planned_item_id)
@@ -538,8 +540,17 @@ async def map_purchase_item_to_planned(
         if not planned:
             raise HTTPException(404, "Плановая позиция не найдена")
 
-        # Плановая позиция и позиция закупки обязаны быть в ОДНОЙ категории ФЭО,
-        # иначе сумма «исчезает» из одной категории плана и не появляется в другой.
+        # Раньше (до 2026-08-18) привязка к плановой позиции из ДРУГОЙ категории
+        # ФЭО отклонялась с 409 — считалось, что сумма «исчезает» из одной
+        # категории плана и не появляется в другой. На практике владелец
+        # переносит закупки между плановыми позициями именно чтобы
+        # перераспределить их между категориями (пример прода: purchase_item
+        # 2897 нужно было перепривязать с категории 3710 на категорию 3688) —
+        # отказ просто не давал это сделать, и переброска происходила «руками»
+        # в обход эндпоинта, из-за чего дашборд расходился с реальностью.
+        # Теперь при несовпадении категорий мы явно ПЕРЕНОСИМ позицию закупки
+        # в категорию плановой позиции — сумма переезжает целиком вместе с
+        # привязкой, ничего не исчезает и не задваивается.
         purchase = (await db.execute(
             select(Purchase).where(Purchase.id == pi.purchase_id)
         )).scalar_one_or_none()
@@ -547,24 +558,40 @@ async def map_purchase_item_to_planned(
             purchase.feo_category_id if purchase else None
         )
         if effective_cat_id != planned.feo_category_id:
-            cat_ids = [c for c in (effective_cat_id, planned.feo_category_id) if c is not None]
-            cat_names = {}
-            if cat_ids:
-                cat_rows = (await db.execute(
-                    select(FeoCategory.id, FeoCategory.name).where(FeoCategory.id.in_(cat_ids))
-                )).all()
-                cat_names = {row.id: row.name for row in cat_rows}
-            planned_cat_name = cat_names.get(planned.feo_category_id, "—")
-            item_cat_name = cat_names.get(effective_cat_id, "без категории") if effective_cat_id is not None else "без категории"
-            raise HTTPException(
-                409,
-                f"Плановая позиция «{planned.name}» относится к категории ФЭО «{planned_cat_name}», "
-                f"а позиция закупки — к «{item_cat_name}». Привязка между разными категориями невозможна.",
-            )
+            pi.feo_category_id = planned.feo_category_id
+            moved_to_category_id = planned.feo_category_id
+
+        # НЕ вызываем здесь assert_no_unapproved_excess/другие гейты превышения:
+        # это действие перераспределения — его смысл в том, чтобы дать человеку
+        # убрать превышение плана, перекинув закупку в правильную категорию,
+        # а не заблокировать перенос ещё одной проверкой превышения.
+    else:
+        planned = None
 
     pi.feo_planned_item_id = planned_item_id
+
+    # Зеркалим привязку в связанную позицию заявки — иначе заявка и закупка
+    # расходятся (ровно баг с прода: wish_items.id=2583 остался с
+    # feo_planned_item_id=123/категория 3688, пока purchase_items.id=2897
+    # уехал на несуществующую плановую позицию 809/категорию 3710).
+    if pi.wish_item_id is not None:
+        wi = (await db.execute(
+            select(WishItem).where(WishItem.id == pi.wish_item_id)
+        )).scalar_one_or_none()
+        if wi:
+            wi.feo_planned_item_id = planned_item_id
+            if planned_item_id is not None and planned is not None:
+                wi.feo_category_id = planned.feo_category_id
+            # при отвязке (planned_item_id is None) категорию позиции заявки
+            # не трогаем — её мог осознанно задать человек отдельно от плана
+
     await db.commit()
-    return {"ok": True, "purchase_item_id": purchase_item_id, "planned_item_id": planned_item_id}
+    return {
+        "ok": True,
+        "purchase_item_id": purchase_item_id,
+        "planned_item_id": planned_item_id,
+        "moved_to_category_id": moved_to_category_id,
+    }
 
 
 # ---------------------------------------------------------------------------

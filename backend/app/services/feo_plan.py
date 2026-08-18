@@ -187,12 +187,32 @@ async def plan_consumption_by_category(
     сущности, чтобы её собственные позиции не считались «занявшими» план —
     иначе позиция сравнивается сама с собой: остаток 0, и UI повторно вычитает
     ту же сумму. Точно так же устроен planned_item_consumption в этом же файле.
+
+    ⚠️ exclude_planned_item_linked=True больше НЕ доверяет голому «feo_planned_item_id
+    IS NOT NULL» (сессия 2026-08-18, находка на проде — категория 3710 «Расходные
+    материалы для проведения окружных полуфиналов», позиция «Огнетушитель
+    углекислотный ОУ-2» 54 318 ₽): позиция считается «уже учтённой своей плановой
+    строкой» и потому исключаемой из «в закупках» ТОЛЬКО если связанная FeoPlannedItem
+    (а) существует, (б) is_active=True И (в) её feo_category_id совпадает с cat_col —
+    категорией, к которой ЭТА строка фактически отнесена. Раньше проверялся только
+    факт наличия feo_planned_item_id — если плановую позицию деактивировали
+    (plan_autoassign.deactivate_if_orphaned) или она осталась в чужой категории
+    (позиция закупки переехала, а плановая строка — нет), сумма пропадала из «в
+    закупках»/«превышение» ОБЕИХ категорий одновременно: у «своей» плановой строки
+    она не всплывала (плановая строка не активна/не в этой категории — не участвует
+    в leaf_item_amt/planned_rows), а у категории, где реально лежит позиция закупки,
+    её выкидывал именно этот фильтр. Ни рубль не должен исчезать из-за служебного
+    флага/рассинхрона категорий — невалидная привязка теперь равнозначна её
+    отсутствию для целей ЭТОЙ суммы (сама привязка feo_planned_item_id при этом не
+    трогается, только формула consumed/over).
     """
     result: dict[int, dict] = {}
     if not subsidy_ids:
         return result
 
     from app.routers.purchase_budget import PLANNED_STATUSES  # local: avoid router import cycle
+    from app.models.feo_planned_item import FeoPlannedItem
+    from sqlalchemy.orm import aliased
 
     # Задача владельца «план ≠ факт» (шаг B, сессия 2026-08-06): суммируем СНИМОК
     # плана (planned_total/planned_quantity), а не мутирующую total_price/quantity —
@@ -204,6 +224,7 @@ async def plan_consumption_by_category(
     amount_expr = func.coalesce(PurchaseItem.planned_total, PurchaseItem.total_price)
     qty_expr = func.coalesce(PurchaseItem.planned_quantity, PurchaseItem.quantity)
     cat_col = func.coalesce(PurchaseItem.feo_category_id, Purchase.feo_category_id)
+    _fpi = aliased(FeoPlannedItem)
     stmt = (
         select(
             cat_col.label("cat_id"),
@@ -213,6 +234,7 @@ async def plan_consumption_by_category(
         )
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .join(FeoCategory, FeoCategory.id == cat_col)
+        .outerjoin(_fpi, _fpi.id == PurchaseItem.feo_planned_item_id)
         .where(Purchase.status.in_(list(PLANNED_STATUSES)))
         .where(Purchase.stopped_at.is_(None))
         .where(FeoCategory.subsidy_id.in_(subsidy_ids))
@@ -220,7 +242,19 @@ async def plan_consumption_by_category(
         .group_by(cat_col, PurchaseItem.over_plan)
     )
     if exclude_planned_item_linked:
-        stmt = stmt.where(PurchaseItem.feo_planned_item_id.is_(None))
+        # Исключаем (считаем «уже учтено своей плановой строкой») ТОЛЬКО строки с
+        # валидной привязкой — см. предупреждение в docstring выше. Остаются (т.е.
+        # НЕ исключаются, а значит попадают в consumed/over этой суммы): вовсе не
+        # привязанные, привязанные на несуществующую/неактивную/чужой-категории
+        # плановую строку — ровно то, что раньше тихо пропадало.
+        stmt = stmt.where(
+            sqlor(
+                PurchaseItem.feo_planned_item_id.is_(None),
+                _fpi.id.is_(None),
+                _fpi.is_active.is_(False),
+                _fpi.feo_category_id != cat_col,
+            )
+        )
     if exclude_purchase_id is not None:
         stmt = stmt.where(PurchaseItem.purchase_id != exclude_purchase_id)
     if exclude_wish_id is not None:
@@ -263,7 +297,13 @@ async def ordered_consumption_by_category(
 
     exclude_planned_item_linked — см. plan_consumption_by_category, тот же
     смысл: позиции, привязанные к конкретной FeoPlannedItem (Ур.5), не
-    задваивают план листа целиком.
+    задваивают план листа целиком. С 2026-08-18 — та же поправка, что и там:
+    исключается только ВАЛИДНАЯ привязка (FeoPlannedItem существует, активна,
+    её feo_category_id совпадает с cat_col этой строки); деактивированная или
+    привязанная-к-чужой-категории плановая строка для целей ЭТОЙ суммы
+    равнозначна отсутствию привязки — иначе сумма пропадает из «в закупках»
+    молча (см. подробный докстринг exclude_planned_item_linked в
+    plan_consumption_by_category).
 
     Изоляция субсидий — как в plan_consumption_by_category (Purchase.
     subsidy_id == FeoCategory.subsidy_id категории, к которой отнесена
@@ -276,11 +316,16 @@ async def ordered_consumption_by_category(
     if not subsidy_ids:
         return result
 
+    from app.models.feo_planned_item import FeoPlannedItem
+    from sqlalchemy.orm import aliased
+
     cat_col = func.coalesce(PurchaseItem.feo_category_id, Purchase.feo_category_id)
+    _fpi = aliased(FeoPlannedItem)
     stmt = (
         select(PurchaseItem, Purchase, cat_col.label("cat_id"))
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .join(FeoCategory, FeoCategory.id == cat_col)
+        .outerjoin(_fpi, _fpi.id == PurchaseItem.feo_planned_item_id)
         .where(Purchase.status.in_(list(ORDERED_STATUSES)))
         .where(Purchase.stopped_at.is_(None))
         .where(PurchaseItem.over_plan.is_(False))
@@ -288,7 +333,14 @@ async def ordered_consumption_by_category(
         .where(Purchase.subsidy_id == FeoCategory.subsidy_id)
     )
     if exclude_planned_item_linked:
-        stmt = stmt.where(PurchaseItem.feo_planned_item_id.is_(None))
+        stmt = stmt.where(
+            sqlor(
+                PurchaseItem.feo_planned_item_id.is_(None),
+                _fpi.id.is_(None),
+                _fpi.is_active.is_(False),
+                _fpi.feo_category_id != cat_col,
+            )
+        )
 
     rows = (await db.execute(stmt)).all()
     if not rows:

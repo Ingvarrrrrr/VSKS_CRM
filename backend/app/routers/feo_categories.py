@@ -159,6 +159,9 @@ async def get_planned_purchase_totals(
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .where(Purchase.subsidy_id == subsidy_id)
         .where(Purchase.status.in_(list(PLANNED_STATUSES)))
+        # Выравниваем с app.services.feo_plan.py — остановленные закупки не считаются
+        # (решение владельца 2026-08-13).
+        .where(Purchase.stopped_at.is_(None))
         .where(cat_col.isnot(None))
         .group_by(cat_col)
     )
@@ -454,6 +457,9 @@ async def get_planned_purchase_items(
         .outerjoin(Contract, Purchase.contract_id == Contract.id)
         .where(Purchase.subsidy_id == subsidy_id)
         .where(Purchase.status.in_(list(PLANNED_STATUSES)))
+        # Выравниваем с app.services.feo_plan.py — остановленные закупки не считаются
+        # (решение владельца 2026-08-13).
+        .where(Purchase.stopped_at.is_(None))
         .where(cat_col.isnot(None))
         .order_by(cat_col, PurchaseItem.item_name)
     )

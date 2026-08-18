@@ -547,8 +547,10 @@
                       </div>
                       <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'planned')"></span>
                     </th>
-                    <th class="feo-th feo-th-num" :style="feoResize.resizeStyle('spent')">
-                      Фактическая сумма
+                    <th class="feo-th feo-th-num" :style="feoResize.resizeStyle('spent')"
+                      title="Сумма всех позиций закупок этой категории во всех статусах плана закупок (включая «План закупок»), в отличие от договорного факта"
+                    >
+                      В плане-графике
                       <span class="col-resize-handle" @mousedown="feoResize.onResizeStart($event, 'spent')"></span>
                     </th>
                     <th class="feo-th feo-th-num" :style="feoResize.resizeStyle('residual')">
@@ -556,12 +558,12 @@
                       <div class="feo-residual-toggle">
                         <span
                           :class="residualBase === 'plan' ? 'feo-residual-opt feo-residual-opt--active' : 'feo-residual-opt'"
-                          title="Остаток = Плановая сумма − Фактическая"
+                          title="Остаток = Плановая сумма − В плане-графике"
                           @click.stop="residualBase = 'plan'"
                         >от плановой</span>
                         <span
                           :class="residualBase === 'feo' ? 'feo-residual-opt feo-residual-opt--active' : 'feo-residual-opt'"
-                          title="Остаток = Финансирование по ФЭО − Фактическая"
+                          title="Остаток = Финансирование по ФЭО − В плане-графике"
                           @click.stop="residualBase = 'feo'"
                         >от ФЭО</span>
                       </div>
@@ -1095,42 +1097,41 @@
                         </div>
                       </td>
 
-                      <!-- Фактическая сумма — задача владельца «план ≠ факт» (сессия 2026-08-06, Шаг 5):
-                           источник заменён со старого feoPurchasedFor() (только delivered/paid, /feo-categories/
-                           purchase-totals) на fact из GET /feo-categories/plan-tree (compute_feo_plan_tree —
-                           тот же путь, что уже питает «Плановую сумму»/плашку превышения факта, п. Шаг 3/4).
-                           Новый fact учитывает ContractItem/contract_price уже с «Ведётся работа», а не только
-                           поставленное — иначе колонка молчала «—» весь путь от объявления закупки до поставки,
-                           хотя цена по итогам закупки уже известна. feoPurchasedFor() НЕ трогаем в остальных
-                           местах (Остаток, переход по клику) — вне явного поручения. -->
+                      <!-- «В плане-графике» — решение владельца 2026-08-18 (жалоба на категории 3710:
+                           строка дерева показывала три несводимые шкалы одновременно — план 351 844,
+                           «фактическая» 54 318 (договорный факт), остаток 351 844 (плюс ещё заметка ниже
+                           «в закупках 432 162»). Владелец потребовал «фактическая должна получаться
+                           432 162» — свели колонку к той же шкале, что и заметка «в закупках» под
+                           «Плановой суммой» (feoInPlanScheduleFor — сумма всех статусов плана закупок,
+                           второй источник не изобретаем). feoFactFor (plan_tree.fact, договорный факт
+                           work_in_progress…paid) НЕ удалён и не изменён — остался подписью «по договору»
+                           ниже и по-прежнему единственный источник плашки превышения факта. -->
                       <td class="feo-td feo-td-num" style="vertical-align:top">
-                        <span :class="feoFactFor(node) > 0 ? 'feo-amount feo-amount--link' : 'feo-amount-empty'"
-                          :style="(feoDisplayedFor(node) > 0 && feoFactFor(node) > feoDisplayedFor(node)) || (feoPlannedDisplayFor(node) > 0 && feoFactFor(node) > feoPlannedDisplayFor(node)) ? 'color:#EF4444;font-weight:700' : ''"
-                          :title="feoFactFor(node) > 0 ? 'Открыть закупки по этой категории' : ''"
-                          @click="feoFactFor(node) > 0 && router.push(`/orders?feo_category_id=${node.id}`)"
+                        <span :class="feoInPlanScheduleFor(node) > 0 ? 'feo-amount feo-amount--link' : 'feo-amount-empty'"
+                          :style="(feoDisplayedFor(node) > 0 && feoInPlanScheduleFor(node) > feoDisplayedFor(node)) || (feoPlannedDisplayFor(node) > 0 && feoInPlanScheduleFor(node) > feoPlannedDisplayFor(node)) ? 'color:#EF4444;font-weight:700' : ''"
+                          :title="feoInPlanScheduleFor(node) > 0 ? 'Открыть закупки по этой категории' : ''"
+                          @click="feoInPlanScheduleFor(node) > 0 && router.push(`/orders?feo_category_id=${node.id}`)"
                         >
-                          {{ feoFactFor(node) > 0 ? formatCurrency(feoFactFor(node)) : '—' }}
+                          {{ feoInPlanScheduleFor(node) > 0 ? formatCurrency(feoInPlanScheduleFor(node)) : '—' }}
                         </span>
-                        <div v-if="feoPlannedDisplayFor(node) > 0 && feoFactFor(node) - feoPlannedDisplayFor(node) > 0.005"
-                          class="feo-plan-note" style="color:#EF4444"
-                          :title="`Факт ${formatCurrency(feoFactFor(node))} превышает плановую сумму ${formatCurrency(feoPlannedDisplayFor(node))}`"
+                        <!-- Договорный факт — подпись, не отдельная метрика (правило «одна подпись = одна
+                             метрика»): показываем только когда он есть и реально отличается от «в плане-графике». -->
+                        <div v-if="feoFactFor(node) > 0 && Math.abs(feoInPlanScheduleFor(node) - feoFactFor(node)) > 0.005"
+                          class="feo-plan-note text-medium-emphasis"
+                          :title="`Из них уже есть договорная цена (договор/акт). Остальное — закупки, которые ещё в статусе «План закупок»`"
                         >
-                          больше плана на {{ formatCurrency(feoFactFor(node) - feoPlannedDisplayFor(node)) }}
-                        </div>
-                        <div v-if="feoDisplayedFor(node) > 0 && feoFactFor(node) - feoDisplayedFor(node) > 0.005"
-                          class="feo-plan-note" style="color:#EF4444"
-                          :title="`Факт ${formatCurrency(feoFactFor(node))} превышает финансирование по ФЭО ${formatCurrency(feoDisplayedFor(node))}`"
-                        >
-                          больше ФЭО на {{ formatCurrency(feoFactFor(node) - feoDisplayedFor(node)) }}
+                          по договору {{ formatCurrency(feoFactFor(node)) }}
                         </div>
                       </td>
 
-                      <!-- Остаток = (Плановая сумма | Финансирование по ФЭО) − Фактическая сумма -->
+                      <!-- Остаток = (Плановая сумма | Финансирование по ФЭО) − В плане-графике.
+                           Решение владельца 2026-08-18: та же шкала, что и колонка «В плане-графике»
+                           и заметка «в закупках» — см. feoResidualFor/feoInPlanScheduleFor. -->
                       <td class="feo-td feo-td-num" style="vertical-align:top">
-                        <span v-if="feoResidualBaseFor(node) > 0 || feoPurchasedFor(node) > 0"
+                        <span v-if="feoResidualBaseFor(node) > 0 || feoInPlanScheduleFor(node) > 0"
                           class="feo-amount"
                           :style="feoResidualFor(node) < -0.005 ? 'color:#EF4444;font-weight:700' : 'color:#16A34A'"
-                          :title="`${residualBase === 'feo' ? 'ФЭО' : 'План'} ${formatCurrency(feoResidualBaseFor(node))} − Факт ${formatCurrency(feoPurchasedFor(node))}`"
+                          :title="`${residualBase === 'feo' ? 'ФЭО' : 'План'} ${formatCurrency(feoResidualBaseFor(node))} − В плане-графике ${formatCurrency(feoInPlanScheduleFor(node))}`"
                         >
                           {{ feoResidualFor(node) < 0 ? '−' : '' }}{{ formatCurrency(Math.abs(feoResidualFor(node))) }}
                         </span>
@@ -2188,9 +2189,11 @@
                     <td class="feo-td feo-td-num font-weight-bold">
                       {{ feoTree.reduce((acc, r) => acc + feoPlannedDisplayFor(r), 0) > 0 ? formatCurrency(feoTree.reduce((acc, r) => acc + feoPlannedDisplayFor(r), 0)) : '—' }}
                     </td>
-                    <td class="feo-td feo-td-num font-weight-bold">{{ formatCurrency(totalFeoPurchased) }}</td>
+                    <!-- Футер обязан считаться по той же шкале, что и колонка «В плане-графике» в строках
+                         (решение владельца 2026-08-18), иначе ИТОГО противоречит телу таблицы. -->
+                    <td class="feo-td feo-td-num font-weight-bold">{{ formatCurrency(totalFeoInPlanSchedule) }}</td>
                     <td class="feo-td feo-td-num font-weight-bold">
-                      {{ formatCurrency(feoTree.reduce((acc, r) => acc + feoResidualBaseFor(r), 0) - totalFeoPurchased) }}
+                      {{ formatCurrency(feoTree.reduce((acc, r) => acc + feoResidualBaseFor(r), 0) - totalFeoInPlanSchedule) }}
                     </td>
                   </tr>
                 </tbody>
@@ -5004,7 +5007,7 @@ function feoResidualNoteFor(node: FeoNode): { planned: number; consumed: number;
   const t = planTreeByCat.value[node.id]
   if (!t) return null
   const planned = Number(t.plan_manual ?? 0)
-  const consumed = feoPlannedRequestsFor(node) + feoPlannedConsumedFor(node)
+  const consumed = feoInPlanScheduleFor(node)
   const residual = planned - consumed
   if (planned <= 0 && consumed <= 0) return null
   return { planned, consumed, residual }
@@ -7441,6 +7444,11 @@ const totalFeoDiff = computed(() =>
 
 const totalFeoPurchased = computed(() => feoTree.value.reduce((a, r) => a + feoPurchasedFor(r), 0))
 
+// Итог по той же шкале, что и колонка «В плане-графике» в строках дерева (решение
+// владельца 2026-08-18) — footer «ИТОГО» обязан считаться через feoInPlanScheduleFor,
+// иначе строки показывают сумму по плану закупок, а ИТОГО — старую (только delivered/paid).
+const totalFeoInPlanSchedule = computed(() => feoTree.value.reduce((a, r) => a + feoInPlanScheduleFor(r), 0))
+
 // ── Animated KPI targets for the detail panel (9 cards) ──────────────
 const kpiSubTarget_budget            = computed(() => selectedBudget.value)
 const kpiSubTarget_plan_schedule     = computed(() => selectedPlannedTotal.value)
@@ -7843,6 +7851,9 @@ function feoRollup(node: FeoNode): { qty: number | null; qtyAuto: boolean; amoun
 // Фактически запланированные расходы:
 // - листовая категория (нет детей) → берём закупки, привязанные напрямую к ней
 // - родительская категория → ТОЛЬКО сумма детей (закупки напрямую на уровне 1/2 не считаются)
+// ⚠️ Старая шкала «Остатка» (только delivered/paid) — решением владельца 2026-08-18 строка
+// дерева ФЭО больше НЕ использует эту функцию (заменена на feoInPlanScheduleFor), но саму
+// функцию не удаляем: проверено грепом, используется в других местах (напр. плашка факта).
 function feoPurchasedFor(node: FeoNode): number {
   if (!node.hasChildren) {
     return purchaseTotals.value[node.id] || 0
@@ -7903,9 +7914,12 @@ function feoResidualBaseFor(node: FeoNode): number {
   return residualBase.value === 'feo' ? feoEffectiveFor(node) : feoPlannedDisplayFor(node)
 }
 
-// Остаток = (Плановая сумма | Финансирование по ФЭО) − Фактическая сумма
+// Остаток = (Плановая сумма | Финансирование по ФЭО) − В плане-графике.
+// Решение владельца 2026-08-18: раньше вычитался feoPurchasedFor (только delivered/paid),
+// из-за чего «Остаток» жил на третьей шкале, отдельной от «В плане-графике»/заметки
+// «в закупках» — сводим все три числа строки к одной шкале.
 function feoResidualFor(node: FeoNode): number {
-  return feoResidualBaseFor(node) - feoPurchasedFor(node)
+  return feoResidualBaseFor(node) - feoInPlanScheduleFor(node)
 }
 
 // Отображаемое финансирование по ФЭО: ручное значение, для групп без ручного — серый расчёт
@@ -7929,6 +7943,9 @@ function feoFinDiff(node: FeoNode): number {
 // (feoResidualNoteFor/feoPlanConsumedNoteFor), что уже нарисована строкой ниже под этим же
 // узлом — второй источник чисел не изобретаем.
 function feoRemainingWithPurchasesNote(node: FeoNode): string | null {
+  // Решение владельца 2026-08-18: при базе «от ФЭО» ровно это число (feoDisplayedFor − consumed)
+  // уже стоит в колонке «ОСТАТОК» — не дублируем ту же величину второй строкой под «Плановой суммой».
+  if (residualBase.value === 'feo') return null
   if (feoFinDiff(node) <= 0.005) return null
   const note = feoResidualNoteFor(node) || feoPlanConsumedNoteFor(node)
   if (!note || note.residual >= -0.005) return null
@@ -8928,6 +8945,15 @@ function feoPlannedConsumedFor(node: FeoNode): number {
   return own + node.children.reduce((acc, child) => acc + feoPlannedConsumedFor(child), 0)
 }
 
+// «В плане-графике» — решение владельца 2026-08-18 (категория 3710: три несводимые шкалы
+// в строке дерева читались как противоречие). Это ровно та же величина, что уже показывает
+// заметка «в закупках» под «Плановой суммой» (feoResidualNoteFor/feoPlanConsumedNoteFor
+// считают consumed этой же суммой) — второй источник чисел не изобретаем, оба места сведены
+// к этому хелперу.
+function feoInPlanScheduleFor(node: FeoNode): number {
+  return feoPlannedRequestsFor(node) + feoPlannedConsumedFor(node)
+}
+
 // Сумма «сверх плана» (over_plan=true, НЕпривязанные) — прибавляется к плановой сумме
 // элемента безусловно, поверх план/заказ (см. feoPlannedDisplayRaw ниже).
 // Лист — из карты бэкенда (уже нетто относительно linked); группа — собственные
@@ -8998,7 +9024,7 @@ function feoPlannedDisplayFor(node: FeoNode): number {
 function feoPlanConsumedNoteFor(node: FeoNode): { planned: number; consumed: number; residual: number } | null {
   const t = planTreeByCat.value[node.id]
   const planned = (t && t.plan_manual != null) ? Number(t.plan_manual) : feoPlannedTotalFor(node)
-  const consumed = feoPlannedRequestsFor(node) + feoPlannedConsumedFor(node)
+  const consumed = feoInPlanScheduleFor(node)
   if (planned <= 0 && consumed <= 0) return null
   return { planned, consumed, residual: planned - consumed }
 }

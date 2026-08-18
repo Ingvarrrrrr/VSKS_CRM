@@ -845,6 +845,9 @@ async def get_comparison(
         # Желания — ещё не подтверждённые хотелки; cancelled/split — вне жизненного цикла закупки.
         # Явное перечисление вместо `!= "wishes"`, чтобы cancelled/split не попадали в план/факт.
         .where(Purchase.status.in_(PLANNED_STATUSES))
+        # Выравниваем с app.services.feo_plan.py — остановленные закупки не считаются
+        # (решение владельца 2026-08-13).
+        .where(Purchase.stopped_at.is_(None))
     )
     if subsidy_id is not None:
         stmt = stmt.where(Purchase.subsidy_id == subsidy_id)

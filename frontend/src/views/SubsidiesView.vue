@@ -2960,7 +2960,7 @@
     </v-dialog>
 
     <!-- ── Редактирование позиции закупки (из дерева ФЭО) ── -->
-    <v-dialog v-model="reqItemEdit.show" max-width="520" :fullscreen="mobile">
+    <v-dialog v-model="reqItemEdit.show" :max-width="reqItemEditDialogWidth" :fullscreen="mobile">
       <v-card class="dialog-card">
         <v-card-title class="dialog-title">
           <v-icon icon="mdi-pencil-outline" color="primary" class="mr-2" />
@@ -4615,6 +4615,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, reactive, nextTick } from 'vue'
+import { useDisplay } from 'vuetify'
 import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
@@ -6368,6 +6369,19 @@ const reqItemEdit = reactive({
   // (TZ_FROZEN_STATUSES) правка ОДНОЙ ТОЛЬКО категории отбивается 409 из-за
   // молча переотправленных qty/price, которых пользователь не трогал.
   original: { item_name: '', quantity: null as number | null, unit: '', unit_price: null as number | null },
+})
+
+// Жалоба владельца (2026-08-18): диалог правки позиции всегда был зашит в
+// max-width 520 — на мониторе 27" название категории/позиции не влезает, а
+// внутри уже дерево ФЭО + список плановых позиций, которым тесно. В файле нет
+// общего паттерна адаптивной ширины диалогов (остальные — фикс max-width +
+// :fullscreen="mobile"), поэтому заводим свой computed по брейкпоинтам
+// Vuetify. mobile (<mobileBreakpoint) уже держит fullscreen как было.
+const { smAndDown: reqItemEditSmAndDown, mdAndDown: reqItemEditMdAndDown } = useDisplay()
+const reqItemEditDialogWidth = computed(() => {
+  if (reqItemEditSmAndDown.value) return 720   // планшет/маленький ноутбук
+  if (reqItemEditMdAndDown.value) return 900   // обычный десктоп
+  return 1100                                   // крупный монитор (lg/xl и выше)
 })
 
 // selectedSubsidy объявлен выше (сразу после allSubsidies/selectedId) — useFeoLeaves

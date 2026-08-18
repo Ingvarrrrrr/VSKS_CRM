@@ -8,6 +8,14 @@
      (см. .feo-tree-name), и «уголок»/иконка должны остаться у ПЕРВОЙ строки,
      а не уехать в центр всего многострочного блока. */
   align-items: flex-start;
+  /* Жалоба владельца (2026-08-18): в узком диалоге .feo-tree-residual (nowrap,
+     flex-shrink:0) выдавливал .feo-tree-name до нулевой ширины, и
+     overflow-wrap:anywhere рвал название по одной букве в столбик. wrap
+     позволяет ЦЕЛОМУ residual-блоку уехать на свою строку, когда places не
+     хватает — rail/elbow (flex-shrink:0, малая ширина) на первой строке
+     всегда помещаются и не двигаются, съезжает только residual. В широком
+     контейнере ничего не меняется — перенос не происходит, пока всё влезает. */
+  flex-wrap: wrap;
   min-height: var(--feo-row-line);
   padding: 0 8px;
   cursor: pointer;
@@ -92,8 +100,13 @@
   white-space: normal;
   word-break: break-word;
   overflow-wrap: anywhere;
-  flex: 1 1 auto;
-  min-width: 0;
+  /* min-width:0 позволял flex-shrink сжать блок до нуля, и тогда
+     overflow-wrap:anywhere рвал название по одной букве (жалоба владельца
+     2026-08-18). 14ch — минимум, при котором ещё видно осмысленный кусок
+     названия; дальше выдавливать некуда — переносится .feo-tree-residual
+     (см. .feo-tree-row flex-wrap). */
+  flex: 1 1 14ch;
+  min-width: 14ch;
 }
 .feo-tree-name--pseudo {
   font-style: italic;
@@ -123,5 +136,10 @@
   flex-shrink: 0;
   font-size: 11px;
   color: var(--crm-text-muted);
+  /* nowrap оставлен НЕ ломающим сам текст цифр («план · выбрано · остаток»
+     остаётся одной строкой) — если места не хватает, переносится (см.
+     .feo-tree-row flex-wrap) весь блок целиком на свою строку, а не рвётся
+     по словам/буквам. В широком контейнере margin-left:auto по-прежнему
+     прижимает его вправо на той же строке, что и раньше. */
   white-space: nowrap;
 }

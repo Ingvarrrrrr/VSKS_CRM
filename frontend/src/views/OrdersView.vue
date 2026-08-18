@@ -1474,7 +1474,7 @@ const cardsPageSize = 24
 const userRole = localStorage.getItem('user_role') || ''
 const isAdmin = ['admin', 'superadmin', 'org_admin'].includes(userRole)
 
-interface PurchaseItem { id: number; item_name: string; item_type?: string; quantity?: number; unit?: string; unit_price?: number; total_price?: number }
+interface PurchaseItem { id: number; item_name: string; item_type?: string; quantity?: number; unit?: string; unit_price?: number; total_price?: number; feo_category_id?: number | null }
 interface Subsidy { id: number; name: string; year: number }
 interface Contractor { id: number; name: string }
 interface Purchase {
@@ -2004,6 +2004,24 @@ const nextStatus = (current: string): string | null => {
   return idx >= 0 && idx < STATUS_ORDER.length - 1 ? STATUS_ORDER[idx + 1] : null
 }
 
+// Все категории ФЭО, к которым относится закупка через свои позиции —
+// COALESCE(item.feo_category_id, purchase.feo_category_id) на каждую позицию,
+// как считает дерево ФЭО (см. backend/app/services/feo_plan.py, cat_col).
+// Позиция без своей категории наследует категорию закупки; закупка без позиций
+// (или все позиции без own-категории) — просто своя категория.
+function purchaseFeoCategoryIds(o: Purchase): number[] {
+  const ids = new Set<number>()
+  if (o.items && o.items.length > 0) {
+    for (const it of o.items) {
+      const cid = it.feo_category_id ?? o.feo_category_id
+      if (cid != null) ids.add(cid)
+    }
+  } else if (o.feo_category_id != null) {
+    ids.add(o.feo_category_id)
+  }
+  return [...ids]
+}
+
 const filteredOrders = computed(() => {
   let r = orders.value
   if (filterStatus.value) {
@@ -2013,10 +2031,15 @@ const filteredOrders = computed(() => {
   if (filterSubsidyId.value) r = r.filter(o => o.subsidy_id === filterSubsidyId.value)
   if (filterWishId.value) r = r.filter(o => (o as any).wish_id === filterWishId.value)
   if (filterFeoCategoryId.value) {
-    const feoIds = filterFeoCategoryIds.value
-    r = feoIds.size
-      ? r.filter(o => o.feo_category_id != null && feoIds.has(o.feo_category_id))
-      : r.filter(o => o.feo_category_id === filterFeoCategoryId.value)
+    // Владелец 2026-08-17: клик по сумме категории ФЭО (SubsidiesView) должен
+    // находить закупку по КАЖДОЙ категории, к которой относится хоть одна её
+    // позиция — тот же COALESCE(PurchaseItem.feo_category_id, Purchase.feo_category_id),
+    // которым дерево ФЭО (backend/app/services/feo_plan.py, cat_col) считает деньги
+    // категории. Раньше фильтр смотрел только на категорию самой закупки — закупка
+    // с позициями в нескольких категориях (напр. #887: 3677/3691/3710 при шапке 3710)
+    // не находилась по деньгам своих позиций.
+    const target = filterFeoCategoryIds.value.size ? filterFeoCategoryIds.value : new Set([filterFeoCategoryId.value])
+    r = r.filter(o => purchaseFeoCategoryIds(o).some(cid => target.has(cid)))
   }
   if (filterMethod.value) r = r.filter(o => o.purchase_method === filterMethod.value)
   if (filterOverdue.value) {

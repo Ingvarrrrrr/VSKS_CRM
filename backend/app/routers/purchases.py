@@ -2057,6 +2057,14 @@ class _ItemPatchBody(BaseModel):
     unit_price: Optional[Decimal] = None
     feo_category_id: Optional[int] = None
     clear_feo_category: bool = False
+    # Владелец (2026-08-18, прод-инцидент — «Огнетушитель ОУ-2» перенесён в новую
+    # категорию, auto_assign_planned_items не нашёл точное совпадение имени и молча
+    # завёл вторую плановую позицию рядом с уже подходящей): явный выбор плановой
+    # позиции пользователем в диалоге «Редактировать позицию» — приоритет над
+    # автоподбором. Optional[int] с default=None НЕ различает «поле не прислали» и
+    # «прислали null» — различаем через `body.model_fields_set` (см. эндпоинт ниже):
+    # null, присланный явно, значит «осознанно оставить без плановой позиции».
+    feo_planned_item_id: Optional[int] = None
     # Шаг 2 «план ≠ факт» (сессия 2026-08-06): осознанный обход заморозки ТЗ —
     # только ADMIN_ROLES, только явным флагом в теле запроса, пишется в EntityChange.
     admin_override: bool = False
@@ -2177,29 +2185,88 @@ async def patch_purchase_item(
     # сконвертированную закупку), плановая строка НЕ трогается, привязка
     # переносимой позиции снимается, а предупреждение уходит в ответ явно
     # (см. _plan_transfer_warning в теле ответа ниже).
+    # Владелец (2026-08-18): пользователь выбрал плановую позицию САМ (диалог
+    # «Редактировать позицию», FeoPlannedItemsSelect) — приоритет над автоподбором
+    # по имени. `"feo_planned_item_id" in body.model_fields_set` отличает «поле не
+    # прислали» (прежнее поведение, автоподбор ниже) от «прислали, в т.ч. null»
+    # (осознанный выбор/снятие выбора человеком). При явном выборе НЕ вызываем ни
+    # move_or_detach_planned_item, ни auto_assign_planned_items — иначе они, отработав
+    # по СТАРОЙ привязке it.feo_planned_item_id (переезд/автоподбор смотрят именно на
+    # неё), либо молча переедут/создадут не то, что выбрал человек, либо (что хуже)
+    # move_or_detach_planned_item отработает первым и его результат применится ДО
+    # явного выбора и будет им тут же перезаписан — вычислять его вообще незачем.
+    _explicit_planned_item_chosen = "feo_planned_item_id" in body.model_fields_set
     _plan_transfer_warning: Optional[str] = None
-    if _category_changing and it.feo_planned_item_id is not None:
-        if it.feo_category_id is not None:
-            _plan_transfer_warning = await move_or_detach_planned_item(db, it, it.feo_category_id)
+    if not _explicit_planned_item_chosen:
+        if _category_changing and it.feo_planned_item_id is not None:
+            if it.feo_category_id is not None:
+                _plan_transfer_warning = await move_or_detach_planned_item(db, it, it.feo_category_id)
+            else:
+                # clear_feo_category: категории больше нет — плановой позиции
+                # переезжать некуда, привязка просто снимается (как и раньше).
+                _old_fpi_id = it.feo_planned_item_id
+                it.feo_planned_item_id = None
+                it.over_plan = False
+                from app.models.feo_planned_item import FeoPlannedItem as _FPI
+                _old_fpi = await db.get(_FPI, _old_fpi_id)
+                await deactivate_if_orphaned(db, _old_fpi)
+        if _category_changing and it.feo_category_id is not None and it.feo_planned_item_id is None:
+            # auto_assign_planned_items смотрит на текущие item_name/quantity/
+            # total_price позиции — если это ЖЕ тело правки одновременно меняет и
+            # название/кол-во/цену (мутируются НИЖЕ), новая плановая позиция (если
+            # заводится с нуля) фиксирует снимок ДО этих правок; для типичного
+            # случая «просто перенести позицию в другую категорию» разницы нет.
+            await auto_assign_planned_items(
+                [it], it.feo_category_id, db,
+                note=f"переносом позиции в закупке №{p.purchase_number or p.id}",
+            )
+    else:
+        from app.models.feo_planned_item import FeoPlannedItem as _FPIExplicit
+        _old_fpi_id_explicit = it.feo_planned_item_id
+        if body.feo_planned_item_id is not None:
+            _chosen_fpi = await db.get(_FPIExplicit, body.feo_planned_item_id)
+            if not _chosen_fpi:
+                raise HTTPException(404, "Плановая позиция не найдена")
+            # Деактивированная плановая позиция исключена из UI-подбора
+            # (/feo-categories/plan-positions фильтрует is_active == True), но
+            # явный выбор идёт по id и обходит этот фильтр. Привязка к погашенной
+            # позиции делает сумму невидимой для
+            # plan_consumption_by_category(exclude_planned_item_linked=True) —
+            # позиция числится «привязанной к плану», а плана нет. Находка QA
+            # 2026-08-18.
+            if not _chosen_fpi.is_active:
+                raise HTTPException(
+                    409,
+                    f"Плановая позиция «{_chosen_fpi.name}» деактивирована (удалена из плана), "
+                    f"привязка к ней невозможна — выберите действующую или создайте новую.",
+                )
+            if it.feo_category_id is None or _chosen_fpi.feo_category_id != it.feo_category_id:
+                _chosen_cat_name = (await db.execute(
+                    select(FeoCategory.name).where(FeoCategory.id == _chosen_fpi.feo_category_id)
+                )).scalar_one_or_none() or f"#{_chosen_fpi.feo_category_id}"
+                if it.feo_category_id is not None:
+                    _target_cat_name = (await db.execute(
+                        select(FeoCategory.name).where(FeoCategory.id == it.feo_category_id)
+                    )).scalar_one_or_none() or f"#{it.feo_category_id}"
+                else:
+                    _target_cat_name = "без категории ФЭО"
+                raise HTTPException(
+                    409,
+                    f"Плановая позиция «{_chosen_fpi.name}» относится к категории «{_chosen_cat_name}», "
+                    f"а позиция закупки — к категории «{_target_cat_name}». Выберите плановую позицию той же категории.",
+                )
+            it.feo_planned_item_id = body.feo_planned_item_id
+            it.over_plan = False
         else:
-            # clear_feo_category: категории больше нет — плановой позиции
-            # переезжать некуда, привязка просто снимается (как и раньше).
-            _old_fpi_id = it.feo_planned_item_id
+            # Явный null — пользователь снял выбор, осознанно оставляем без плана.
             it.feo_planned_item_id = None
             it.over_plan = False
-            from app.models.feo_planned_item import FeoPlannedItem as _FPI
-            _old_fpi = await db.get(_FPI, _old_fpi_id)
-            await deactivate_if_orphaned(db, _old_fpi)
-    if _category_changing and it.feo_category_id is not None and it.feo_planned_item_id is None:
-        # auto_assign_planned_items смотрит на текущие item_name/quantity/
-        # total_price позиции — если это ЖЕ тело правки одновременно меняет и
-        # название/кол-во/цену (мутируются НИЖЕ), новая плановая позиция (если
-        # заводится с нуля) фиксирует снимок ДО этих правок; для типичного
-        # случая «просто перенести позицию в другую категорию» разницы нет.
-        await auto_assign_planned_items(
-            [it], it.feo_category_id, db,
-            note=f"переносом позиции в закупке №{p.purchase_number or p.id}",
-        )
+        # Старая привязка (если была и реально сменилась) больше не имеет прежнего
+        # владельца — если она была заведена автоматически и осиротела, деактивируем
+        # (тот же порядок уборки, что и у move_or_detach_planned_item/clear-ветки выше).
+        if _old_fpi_id_explicit is not None and _old_fpi_id_explicit != it.feo_planned_item_id:
+            _old_fpi_explicit = await db.get(_FPIExplicit, _old_fpi_id_explicit)
+            await deactivate_if_orphaned(db, _old_fpi_explicit)
     # Шаг 5 «цена ТЗ не выше плановой» (владелец, 2026-08-07): проверяем ДО записи
     # цены/кол-ва — прогнозные значения (patch частичный, недостающие берём из
     # текущей строки). admin_override (та же роль/флаг, что и для заморозки ТЗ
@@ -2323,7 +2390,11 @@ async def patch_purchase_item(
     if it.wish_item_id is not None:
         _patch_keys = set(body.model_dump(exclude_unset=True).keys())
         _qty_or_price_changed = "quantity" in _patch_keys or "unit_price" in _patch_keys
-        if _patch_keys & {"item_name", "quantity", "unit", "unit_price"} or _category_changing:
+        # Явный выбор плановой позиции (см. _explicit_planned_item_chosen выше) тоже
+        # обязан зеркалиться в WishItem — иначе он мирроится только при СМЕНЕ
+        # категории, а «выбрал другую плановую позицию внутри той же категории»
+        # (типичный случай диалога «Редактировать позицию») расходится с заявкой.
+        if _patch_keys & {"item_name", "quantity", "unit", "unit_price"} or _category_changing or _explicit_planned_item_chosen:
             from app.models.wish_item import WishItem as _WishItem
             wi = await db.get(_WishItem, it.wish_item_id)
             if wi is not None:
@@ -2337,7 +2408,7 @@ async def patch_purchase_item(
                     wi.unit_price = it.unit_price
                 if _qty_or_price_changed:
                     wi.total_price = it.total_price
-                if _category_changing:
+                if _category_changing or _explicit_planned_item_chosen:
                     wi.feo_category_id = it.feo_category_id
                     wi.feo_planned_item_id = it.feo_planned_item_id
     await db.flush()

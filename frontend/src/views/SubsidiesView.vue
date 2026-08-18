@@ -2988,8 +2988,28 @@
             :leaves="reqItemEditFeoLeaves"
             label="Категория ФЭО"
           />
-          <div class="text-caption text-medium-emphasis mt-1">
+          <div class="text-caption text-medium-emphasis mt-1 mb-2">
             Перенос в другую категорию не тратит новых денег — так перерасход и разбирается
+          </div>
+          <!-- Владелец (2026-08-18): выбор ПЛАНОВОЙ ПОЗИЦИИ внутри выбранной категории —
+               без него позиция при переносе в новую категорию находит план только точным
+               совпадением имени, иначе молча заводит новую плановую позицию рядом с уже
+               подходящей (прод-инцидент «Огнетушитель ОУ-2»). -->
+          <FeoPlannedItemsSelect
+            v-if="reqItemEdit.form.feo_category_id"
+            :model-value="reqItemEditPlanSelection"
+            :category-id="reqItemEdit.form.feo_category_id"
+            :nodes="reqItemEditFeoNodes"
+            :items="reqItemEditPlannedResiduals"
+            :amount="reqItemEditPlanAmount"
+            :loading="reqItemEditPlannedLoading"
+            :prefill="reqItemEditPlanPrefill"
+            @update:model-value="onReqItemEditPlanSelect"
+            @planned-item-created="reloadReqItemEditPlanned"
+          />
+          <div class="text-caption text-medium-emphasis mt-1">
+            Можно привязать к существующей плановой позиции или создать новую — если не
+            выбирать, система подберёт сама по точному совпадению названия.
           </div>
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
@@ -4610,6 +4630,14 @@ import RegistryExportButton from '@/components/RegistryExportButton.vue'
 import { useRegistryExport } from '@/composables/useRegistryExport'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import { useFeoLeaves } from '@/composables/useFeoLeaves'
+// Владелец (2026-08-18, прод-инцидент — «Огнетушитель ОУ-2» перенесён в новую
+// категорию, автоподбор не нашёл точное совпадение имени и молча завёл вторую
+// плановую позицию рядом с уже подходящей): диалог «Редактировать позицию»
+// теперь даёт выбрать плановую позицию явно, тот же компонент, что в
+// CreateOrderView.vue/WishesView.vue — см. reqItemEdit ниже.
+import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
+import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
+import type { FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
 import { PURCHASE_STATUS_META, PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusIcon, purchaseStatusColor } from '@/constants/purchaseStatus'
 import { type KpiKey, KPI_MODE, KPI_LABELS, KPI_EMPTY_REASONS, kpiItemMatches } from '@/constants/kpiMetrics'
 
@@ -6355,6 +6383,49 @@ const reqItemEdit = reactive({
 const reqItemEditSubsidyId = computed(() => selectedSubsidy.value?.id ?? null)
 const { feoLeaves: reqItemEditFeoLeaves, feoNodes: reqItemEditFeoNodes } = useFeoLeaves({ subsidyId: reqItemEditSubsidyId })
 
+// Плановые позиции категории для диалога правки (владелец, 2026-08-18) — тот же
+// источник (/feo-categories/plan-positions) и composable, что CreateOrderView.vue
+// использует для того же компонента (purchasePlannedResiduals) — здесь своя копия,
+// т.к. reqItemEdit — отдельный, независимый от формы создания закупки диалог.
+// plannedItemsByCat в этом файле — ДРУГОЕ (реальные позиции закупок категории из
+// /feo-categories/planned-purchase-items, «Таблица B»), не годится как items для
+// FeoPlannedItemsSelect (там нужны сами плановые строки с planned_amount/residual).
+// excludePurchaseId — своя закупка не занимает свой же план (иначе двойное вычитание).
+const {
+  plannedResiduals: reqItemEditPlannedResiduals,
+  plannedLoading: reqItemEditPlannedLoading,
+  reloadPlanned: reloadReqItemEditPlanned,
+} = useFeoPlannedResiduals({
+  subsidyId: reqItemEditSubsidyId,
+  excludePurchaseId: computed(() => reqItemEdit.purchaseId),
+})
+// Составной выбор { kind, id } | null — зеркалит feoPlanSelection в CreateOrderView.vue.
+// touched различает «не трогал» (PATCH без feo_planned_item_id — прежний автоподбор)
+// от «явно выбрал/снял выбор» (PATCH шлёт feo_planned_item_id, в т.ч. null).
+const reqItemEditPlanSelection = ref<FeoPlanSelection | null>(null)
+const reqItemEditPlanTouched = ref(false)
+function onReqItemEditPlanSelect(val: FeoPlanSelection | null) {
+  reqItemEditPlanTouched.value = true
+  // Строки kind='plan_position'/'feo_article' — план самого листа категории ФЭО
+  // (FeoCategory.planned_quantity/amount), а не отдельная FeoPlannedItem — им нечего
+  // положить в feo_planned_item_id (id там — id категории, не плановой позиции).
+  // Выбор такой строки означает «план — на уровне категории», что эквивалентно
+  // отсутствию привязки к конкретной FeoPlannedItem — отправляем null тем же путём,
+  // что и снятие выбора.
+  reqItemEditPlanSelection.value = val && val.kind === 'planned_item' ? val : null
+}
+// Сумма редактируемой позиции — компонент честно покажет, хватает ли остатка плана.
+const reqItemEditPlanAmount = computed(() =>
+  (Number(reqItemEdit.form.quantity) || 0) * (Number(reqItemEdit.form.unit_price) || 0)
+)
+// Предзаполнение диалога «Создать в плане закупок» данными уже введённой позиции.
+const reqItemEditPlanPrefill = computed(() => ({
+  name: reqItemEdit.form.item_name,
+  quantity: reqItemEdit.form.quantity,
+  unit: reqItemEdit.form.unit,
+  amount: reqItemEditPlanAmount.value,
+}))
+
 // Принцип владельца (2026-08-18): «после того как заявка попала в План
 // закупок, дальше редактирование и перераспределение между плановыми
 // позициями — только в Закупках». Раньше здесь был ранний выход в /wishes
@@ -6373,6 +6444,12 @@ function openReqItemEdit(node: FeoNode, item: FeoReqItem) {
     item_name: reqItemEdit.form.item_name, quantity: reqItemEdit.form.quantity,
     unit: reqItemEdit.form.unit, unit_price: reqItemEdit.form.unit_price,
   }
+  // Текущая привязка к плановой позиции — начальное состояние пикера ниже; сброс
+  // touched — открытие диалога не считается правкой, пока пользователь не кликнет.
+  reqItemEditPlanSelection.value = item.feo_planned_item_id != null
+    ? { kind: 'planned_item', id: item.feo_planned_item_id }
+    : null
+  reqItemEditPlanTouched.value = false
   reqItemEdit.show = true
 }
 
@@ -6399,6 +6476,7 @@ function openReqItemEditFromActual(node: FeoNode, actual: FeoActualItem) {
     purchase_status: actual.purchase_status || '',
     wish_id: actual.wish_id ?? null,
     category: '', product_type: '',
+    feo_planned_item_id: actual.feo_planned_item_id ?? null,
   })
 }
 
@@ -6429,6 +6507,13 @@ async function saveReqItemEdit() {
     // переписывать лишнего при обычном редактировании имени/цены.
     const categoryChanged = reqItemEdit.form.feo_category_id != null && reqItemEdit.form.feo_category_id !== reqItemEdit.catId
     if (categoryChanged) body.feo_category_id = reqItemEdit.form.feo_category_id
+    // Явный выбор плановой позиции (владелец, 2026-08-18) — шлём поле ТОЛЬКО если
+    // пользователь реально кликнул в пикере (reqItemEditPlanTouched), иначе бэкенд
+    // не должен отличить «не трогал» от «выбрал и снял» — молчание сохраняет прежний
+    // автоподбор по точному совпадению имени (см. backend patch_purchase_item).
+    if (reqItemEditPlanTouched.value) {
+      body.feo_planned_item_id = reqItemEditPlanSelection.value?.id ?? null
+    }
     if (Object.keys(body).length === 0) {
       reqItemEdit.show = false
       showSnack('Изменений нет')

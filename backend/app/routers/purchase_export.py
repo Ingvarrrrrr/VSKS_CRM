@@ -25,6 +25,7 @@ from app.models.subsidy import Subsidy
 from app.models.contractor import Contractor
 from app.models.feo_category import FeoCategory
 from app.models.payment import Payment
+from app.services.purchase_payments import recompute_purchase_payments
 from app.models.event import Event
 from app.routers.events import normalize_event_name
 from app.auth.jwt import get_current_user
@@ -3382,17 +3383,16 @@ async def _parse_and_group(
                 payment_objects.append(pay_obj)
                 created_payments += 1
 
-            # Update Purchase summary fields from payments
-            amounts = [pp["amount"] for pp in pay_list if pp["amount"] is not None]
-            dates   = [pp["payment_date"] for pp in pay_list if pp["payment_date"] is not None]
-            doc_nums= [pp["document_number"] for pp in pay_list if pp["document_number"]]
-
-            if amounts:
-                purchase.payment_amount = sum(amounts)
-            if doc_nums:
-                purchase.payment_doc_number = doc_nums[0]
-            if dates:
-                purchase.payment_doc_date = min(dates)
+            # Владелец (2026-08-19): платежи из Excel-импорта — это тоже «по нашим
+            # данным» (payment_source='manual' по умолчанию на модели,
+            # confirmed_by_statement=False), НЕ подтверждённая казначейством
+            # оплата. Раньше здесь payment_amount проставлялся напрямую суммой
+            # ИМПОРТИРОВАННЫХ платежей — что и выдавало заявленное за
+            # подтверждённое. Теперь агрегаты (payment_amount = подтверждено,
+            # payment_amount_declared = заявлено) считает recompute_purchase_payments
+            # по тем же правилам, что и форма в карточке закупки.
+            if payment_objects:
+                await recompute_purchase_payments(db, purchase.id)
 
     elif not commit and parsed_payments:
         # Preview mode: validate payment links only

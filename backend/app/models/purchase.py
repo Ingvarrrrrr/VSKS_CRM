@@ -56,7 +56,14 @@ class Purchase(Base):
     acceptance_docs = Column(JSONB, default=list)  # [{name, number, date, amount}, ...]
     payment_doc_number = Column(String(100))
     payment_doc_date = Column(Date)
+    # Сумма ПОДТВЕРЖДЁННЫХ казначейством платежей ("оплачено") — считается по
+    # payments.confirmed_by_statement=True, см. app/services/purchase_payments.py.
     payment_amount = Column(Numeric(15, 2))
+    # Владелец (2026-08-19): сумма РУЧНЫХ неподтверждённых платежей ("отмечено
+    # человеком, ждёт подтверждения выпиской") — считается по payments с
+    # payment_source='manual' AND confirmed_by_statement=False. НЕ участвует в
+    # авто-переходе закупки в статус paid (см. recompute_purchase_payments).
+    payment_amount_declared = Column(Numeric(15, 2))
     payment_federal = Column(Numeric(15, 2))
     purchase_contract_type = Column(String(50), nullable=True)  # single / framework_cumulative / framework_with_amount
     framework_seq = Column(Integer, nullable=True)              # порядковый номер закупки в рамках рамочного договора

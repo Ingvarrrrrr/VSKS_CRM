@@ -1894,6 +1894,8 @@ from .routers import exports as exports_router
 app.include_router(exports_router.router)              # /api/exports
 from .routers import okpd2 as okpd2_router
 app.include_router(okpd2_router.router)                # /api/okpd2
+from .routers import expense_codes as expense_codes_router
+app.include_router(expense_codes_router.router)         # /api/expense-codes
 
 
 @app.get("/api/diag/version")

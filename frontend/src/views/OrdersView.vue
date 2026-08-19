@@ -10,6 +10,7 @@
         <v-btn variant="outlined" size="small" prepend-icon="mdi-download" @click="downloadTemplate">Шаблон</v-btn>
         <v-btn variant="outlined" prepend-icon="mdi-file-import" color="blue" @click="importDialog.show = true">Импорт</v-btn>
         <v-btn variant="outlined" prepend-icon="mdi-folder-upload" color="teal" @click="scansDialog.show = true">Сканы</v-btn>
+        <v-btn variant="outlined" prepend-icon="mdi-bank-transfer" color="indigo" @click="openPaymentMatchDialog">Разнести платежи</v-btn>
         <v-btn variant="outlined" prepend-icon="mdi-file-export" color="success" @click="openExportDialog">Excel</v-btn>
         <v-btn v-if="authStore.hasTab('wishes')" color="primary" prepend-icon="mdi-plus" to="/wishes?create=1">Добавить</v-btn>
       </div>
@@ -565,6 +566,22 @@
         </template>
         <template #item.diff_ordered_paid="{ item }">
           {{ FIELD_GETTERS.diff_ordered_paid(item) != null ? formatMoney(FIELD_GETTERS.diff_ordered_paid(item)) : '—' }}
+        </template>
+
+        <!-- Владелец (2026-08-19): подтверждённая сумма — основная (жирная,
+             зелёная), заявленная (не подтв.) — рядом и визуально слабее, не
+             выдаём заявленное за подтверждённое. -->
+        <template #item.payment_amount="{ item }">
+          <span v-if="item.payment_amount != null" class="font-weight-bold text-green">{{ formatMoney(Number(item.payment_amount)) }}</span>
+          <span v-else class="text-medium-emphasis">—</span>
+        </template>
+        <template #item.payment_amount_declared="{ item }">
+          <v-tooltip v-if="item.payment_amount_declared != null" location="top" text="Отмечено человеком, без подтверждения казначейской выпиской">
+            <template #activator="{ props: tp }">
+              <span v-bind="tp" class="text-caption text-orange-darken-2">{{ formatMoney(Number(item.payment_amount_declared)) }}</span>
+            </template>
+          </v-tooltip>
+          <span v-else class="text-medium-emphasis">—</span>
         </template>
 
         <template #item.contract_date="{ item }">
@@ -1356,6 +1373,121 @@
       </v-card>
     </v-dialog>
 
+    <!-- Разнести платежи (Этап 7а) — прогон match-payments по субсидии -->
+    <v-dialog v-model="paymentMatchDialog.show" max-width="720" scrollable :fullscreen="mobile" persistent>
+      <v-card>
+        <v-card-title class="d-flex align-center pa-4">
+          <v-icon start color="indigo">mdi-bank-transfer</v-icon>
+          Разнести платежи
+          <v-spacer />
+          <v-btn icon="mdi-close" variant="text" size="small" @click="closePaymentMatchDialog" />
+        </v-card-title>
+        <v-card-text class="pa-4 pt-0">
+          <v-select
+            v-model="paymentMatchDialog.subsidyId"
+            :items="subsidies"
+            item-title="name"
+            item-value="id"
+            label="Субсидия"
+            variant="outlined"
+            density="compact"
+            :disabled="!!paymentMatchDialog.report"
+            hide-details
+            class="mb-3"
+          />
+
+          <div v-if="!paymentMatchDialog.report" class="text-caption text-medium-emphasis mb-2">
+            Найдёт группы закупок субсидии (по договору + реестровому номеру), подберёт
+            платежи из реестра по ИНН, сумме и коду расходов, и покажет предпросмотр —
+            ничего не изменится, пока вы не нажмёте «Применить».
+          </div>
+
+          <div v-if="paymentMatchDialog.loading" class="d-flex justify-center py-8">
+            <v-progress-circular indeterminate color="indigo" />
+          </div>
+
+          <template v-else-if="paymentMatchDialog.report">
+            <div class="d-flex flex-wrap gap-2 mb-3">
+              <v-chip color="grey" variant="tonal" size="small">Групп всего: {{ paymentMatchDialog.report.groups_total }}</v-chip>
+              <v-chip color="success" variant="tonal" size="small">
+                {{ paymentMatchDialog.applied ? 'Разнесено' : 'Будет разнесено' }}: {{ paymentMatchDialog.report.attached.length }}
+              </v-chip>
+              <v-chip color="warning" variant="tonal" size="small">Неоднозначно: {{ paymentMatchDialog.report.ambiguous.length }}</v-chip>
+              <v-chip color="grey" variant="tonal" size="small">Не найдено: {{ paymentMatchDialog.report.not_found.length }}</v-chip>
+              <v-chip v-if="paymentMatchDialog.report.suspicious.length" color="error" variant="tonal" size="small">
+                Подозрительные дубли: {{ paymentMatchDialog.report.suspicious.length }}
+              </v-chip>
+            </div>
+
+            <div v-if="paymentMatchDialog.report.attached.length" class="mb-3">
+              <div class="text-subtitle-2 font-weight-bold mb-1">
+                {{ paymentMatchDialog.applied ? 'Разнесено' : 'Будет разнесено' }}
+              </div>
+              <div v-for="g in paymentMatchDialog.report.attached" :key="g.group_key" class="text-body-2 mb-1">
+                Реестр № {{ g.registry_number || '—' }}:
+                <span v-for="(it, i) in g.items" :key="i">
+                  {{ it.kind === 'goods' ? 'товары' : 'услуги' }} {{ formatMoney(it.amount) }}{{ i < g.items.length - 1 ? ', ' : '' }}
+                </span>
+              </div>
+            </div>
+
+            <div v-if="paymentMatchDialog.report.ambiguous.length" class="mb-3">
+              <div class="text-subtitle-2 font-weight-bold mb-1 text-warning">Неоднозначно — требует ручного разбора</div>
+              <div v-for="g in paymentMatchDialog.report.ambiguous" :key="g.group_key" class="text-body-2 mb-1">
+                Реестр № {{ g.registry_number || '—' }}:
+                <span v-for="(it, i) in g.items" :key="i">
+                  {{ it.kind === 'goods' ? 'товары' : 'услуги' }} — {{ it.reason }}{{ i < g.items.length - 1 ? '; ' : '' }}
+                </span>
+              </div>
+            </div>
+
+            <div v-if="paymentMatchDialog.report.not_found.length" class="mb-3">
+              <div class="text-subtitle-2 font-weight-bold mb-1">Не найдено ни одного кандидата</div>
+              <div class="text-body-2">
+                {{ paymentMatchDialog.report.not_found.map((g: any) => `№ ${g.registry_number || '—'}`).join(', ') }}
+              </div>
+            </div>
+
+            <v-alert v-if="paymentMatchDialog.report.suspicious.length" type="warning" variant="tonal" density="compact" class="mb-2">
+              {{ paymentMatchDialog.report.suspicious.length }} групп(ы) закупок похожи на дубликаты
+              (одинаковая сумма, пустой предмет, без договора/субсидии) — они пропущены и требуют
+              ручного разбора реестровых номеров, прежде чем участвовать в разнесении.
+            </v-alert>
+
+            <v-alert v-if="paymentMatchDialog.applied" type="success" variant="tonal" density="compact">
+              Готово. Обновите реестр закупок, чтобы увидеть новые платежи.
+            </v-alert>
+          </template>
+
+          <v-alert v-if="paymentMatchDialog.error" type="error" variant="tonal" density="compact" class="mt-2">
+            {{ paymentMatchDialog.error }}
+          </v-alert>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <template v-if="!paymentMatchDialog.report">
+            <v-btn variant="text" @click="closePaymentMatchDialog">Отмена</v-btn>
+            <v-btn color="indigo" variant="flat" :disabled="!paymentMatchDialog.subsidyId" :loading="paymentMatchDialog.loading" @click="runPaymentMatchPreview">
+              Предпросмотр
+            </v-btn>
+          </template>
+          <template v-else-if="!paymentMatchDialog.applied">
+            <v-btn variant="text" @click="paymentMatchDialog.report = null">Назад</v-btn>
+            <v-btn
+              color="indigo" variant="flat" :loading="paymentMatchDialog.loading"
+              :disabled="!paymentMatchDialog.report.attached.length"
+              @click="applyPaymentMatch"
+            >
+              Применить ({{ paymentMatchDialog.report.attached.length }})
+            </v-btn>
+          </template>
+          <template v-else>
+            <v-btn color="primary" variant="flat" @click="closePaymentMatchDialog">Готово</v-btn>
+          </template>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Save Filter Preset Dialog -->
     <v-dialog v-model="filterPresetDialog.show" max-width="380">
       <v-card>
@@ -1543,6 +1675,8 @@ interface Purchase {
   payment_doc_number?: string
   payment_doc_date?: string
   payment_amount?: number
+  // Владелец (2026-08-19): «заявлено, ждёт подтверждения» — см. PaymentsBlock.vue
+  payment_amount_declared?: number
   items?: PurchaseItem[]
   approval_status?: string
   execution_term?: string
@@ -1721,7 +1855,12 @@ const allColumns: ColumnDef[] = [
   { title: 'Сумма закрывающего', key: 'acceptance_doc_amount', width: 180, align: 'end', group: 'all' },
   { title: '№ ПП', key: 'payment_doc_number', width: 110, group: 'all' },
   { title: 'Дата ПП', key: 'payment_doc_date', width: 130, group: 'all' },
-  { title: 'Оплачено', key: 'payment_amount', width: 130, align: 'end', group: 'all' },
+  { title: 'Оплачено (подтверждено)', key: 'payment_amount', width: 170, align: 'end', group: 'all' },
+  // Владелец (2026-08-19): «заявлено, ждёт подтверждения» — ручные платежи,
+  // не подтверждённые казначейской выпиской. Показывается рядом с
+  // payment_amount, но визуально слабее (см. слот ниже) — чтобы не выдавать
+  // заявленное за подтверждённое.
+  { title: 'Заявлено (не подтв.)', key: 'payment_amount_declared', width: 170, align: 'end', group: 'all' },
   { title: 'Оплачено (федерал.)', key: 'payment_federal', width: 170, align: 'end', group: 'all' },
   { title: 'НДС применяется', key: 'vat_applicable', width: 150, group: 'all' },
   { title: 'Ставка НДС', key: 'vat_rate', width: 120, group: 'all' },
@@ -2190,6 +2329,78 @@ const loadDuplicateGroups = async () => {
     duplicateGroupsMap.value = map
   } catch {
     // не блокируем реестр — просто не покажем подсказку
+  }
+}
+
+// ── «Разнести платежи» (Этап 7а) — прогон /purchases/match-payments по субсидии ──
+interface PaymentMatchGroupItem { kind: string; bank_payment_id: number; amount: number; basis_label?: string | null; reason?: string }
+interface PaymentMatchGroupRow { group_key: string; registry_number: string | null; items: PaymentMatchGroupItem[] }
+interface PaymentMatchReport {
+  subsidy_id: number
+  dry_run: boolean
+  groups_total: number
+  attached: PaymentMatchGroupRow[]
+  ambiguous: PaymentMatchGroupRow[]
+  not_found: { group_key: string; registry_number: string | null }[]
+  suspicious: any[]
+}
+
+const paymentMatchDialog = reactive({
+  show: false,
+  subsidyId: null as number | null,
+  loading: false,
+  applied: false,
+  report: null as PaymentMatchReport | null,
+  error: '',
+})
+
+function openPaymentMatchDialog() {
+  paymentMatchDialog.show = true
+  paymentMatchDialog.subsidyId = filterSubsidyId.value ?? null
+  paymentMatchDialog.loading = false
+  paymentMatchDialog.applied = false
+  paymentMatchDialog.report = null
+  paymentMatchDialog.error = ''
+}
+
+function closePaymentMatchDialog() {
+  paymentMatchDialog.show = false
+  if (paymentMatchDialog.applied) {
+    loadOrders()
+  }
+}
+
+async function runPaymentMatchPreview() {
+  if (!paymentMatchDialog.subsidyId) return
+  paymentMatchDialog.loading = true
+  paymentMatchDialog.error = ''
+  try {
+    paymentMatchDialog.report = await apiFetch<PaymentMatchReport>(
+      `/purchases/match-payments?subsidy_id=${paymentMatchDialog.subsidyId}&dry_run=true`,
+      { method: 'POST' }
+    )
+  } catch (e: any) {
+    paymentMatchDialog.error = e?.payload?.message || e?.detail || e?.message || 'Ошибка предпросмотра'
+  } finally {
+    paymentMatchDialog.loading = false
+  }
+}
+
+async function applyPaymentMatch() {
+  if (!paymentMatchDialog.subsidyId) return
+  paymentMatchDialog.loading = true
+  paymentMatchDialog.error = ''
+  try {
+    paymentMatchDialog.report = await apiFetch<PaymentMatchReport>(
+      `/purchases/match-payments?subsidy_id=${paymentMatchDialog.subsidyId}&dry_run=false`,
+      { method: 'POST' }
+    )
+    paymentMatchDialog.applied = true
+    toast.addToast(`Разнесено платежей: ${paymentMatchDialog.report.attached.length}`, 'success')
+  } catch (e: any) {
+    paymentMatchDialog.error = e?.payload?.message || e?.detail || e?.message || 'Ошибка применения'
+  } finally {
+    paymentMatchDialog.loading = false
   }
 }
 

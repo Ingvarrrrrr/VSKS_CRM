@@ -319,6 +319,12 @@ const router = createRouter({
       component: OrgSettingsView,
       meta: { requiresAuth: true, title: 'Настройки организации', tab_key: 'admin.settings' }
     },
+    {
+      path: '/expense-codes',
+      name: 'expense-codes',
+      component: () => import('../views/ExpenseCodesView.vue'),
+      meta: { requiresAuth: true, title: 'Коды расходов', tab_key: 'admin.settings' }
+    },
     // Wishes
     {
       path: '/wishes',

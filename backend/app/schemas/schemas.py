@@ -681,6 +681,10 @@ class PurchaseCreate(BaseModel):
     payment_doc_number: Optional[str] = None
     payment_doc_date: Optional[date] = None
     payment_amount: Optional[Decimal] = None
+    # Владелец (2026-08-19): «заявлено, ждёт подтверждения» — сумма ручных
+    # неподтверждённых платежей, отдельно от payment_amount («оплачено» —
+    # только подтверждённое казначейством). См. app/services/purchase_payments.py.
+    payment_amount_declared: Optional[Decimal] = None
     payment_federal: Optional[Decimal] = None
     total_nmck: Optional[Decimal] = None
     purchase_contract_type: Optional[str] = None
@@ -817,6 +821,7 @@ class PurchaseUpdate(BaseModel):
     payment_doc_number: Optional[str] = None
     payment_doc_date: Optional[date] = None
     payment_amount: Optional[Decimal] = None
+    payment_amount_declared: Optional[Decimal] = None
     payment_federal: Optional[Decimal] = None
     total_nmck: Optional[Decimal] = None
     purchase_contract_type: Optional[str] = None
@@ -940,6 +945,19 @@ class PaymentOut(PaymentCreate):
     id: int
     bank_payment_id: Optional[int] = None
     matched_confirmed: bool = False
+    # Владелец (2026-08-19): «по нашим данным» vs «подтверждено казначейством» —
+    # см. app/models/payment.py::Payment.payment_source/confirmed_by_statement.
+    payment_source: str = "manual"
+    confirmed_by_statement: bool = False
+    # Этап 4/5/7: код расходов и основание платежа (app/services/payment_basis.py) —
+    # проставляются при разнесении через payment_lookup.py::attach; нужны PaymentsBlock.vue
+    # для отображения «Назначение / основание» и «Код расходов» в карточке закупки.
+    expense_code: Optional[str] = None
+    basis_kind: Optional[str] = None
+    basis_number: Optional[str] = None
+    basis_date: Optional[date] = None
+    basis_key: Optional[str] = None
+    basis_label: Optional[str] = None
     model_config = {"from_attributes": True}
 
 # Product
@@ -1557,6 +1575,7 @@ class ReceiptOut(BaseModel):
 class BankStatementImportOut(BaseModel):
     id: int
     uploaded_by_id: Optional[int] = None
+    org_id: Optional[int] = None
     uploaded_at: Optional[datetime] = None
     file_name: Optional[str] = None
     sheet_name: Optional[str] = None
@@ -1566,6 +1585,7 @@ class BankStatementImportOut(BaseModel):
     rows_matched: int = 0
     rows_unmatched: int = 0
     rows_dup: int = 0
+    rows_no_subsidy: int = 0
     status: str = "processing"
     error_message: Optional[str] = None
 
@@ -1575,6 +1595,9 @@ class BankStatementImportOut(BaseModel):
 class BankPaymentOut(BaseModel):
     id: int
     import_id: Optional[int] = None
+    org_id: Optional[int] = None
+    subsidy_id: Optional[int] = None
+    external_doc_id: Optional[str] = None
     payment_number: Optional[str] = None
     payment_date: Optional[_Date] = None
     execution_datetime: Optional[datetime] = None
@@ -1596,6 +1619,14 @@ class BankPaymentOut(BaseModel):
     basis_doc_date: Optional[_Date] = None
     basis_doc_text: Optional[str] = None
     subsidy_code: Optional[str] = None
+    # Этап 3/7: код направления расходования целевых средств (КРЦС) — см.
+    # app/services/payment_basis.py::expense_code; expense_code_name — расшифровка
+    # из справочника expense_codes, простановлена в bank_statements.py::list_bank_payment_registry.
+    expense_code: Optional[str] = None
+    expense_code_name: Optional[str] = None
+    # Этап 7в: «Куда отнесён» — закупки, на которые платёж РЕАЛЬНО разнесён через
+    # Payment(matched_confirmed=true); может быть несколько при allocations-сплите.
+    attached_purchases: Optional[List[Dict]] = None
     matched_contractor_id: Optional[int] = None
     matched_contract_id: Optional[int] = None
     matched_purchase_id: Optional[int] = None

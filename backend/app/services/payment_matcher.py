@@ -8,6 +8,8 @@
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,50 +19,51 @@ from app.models.contract import Contract
 from app.models.purchase import Purchase
 from app.models.subsidy import Subsidy
 
+# Этап 3: normalize_doc_number перенесена в payment_basis.py — ре-экспорт
+# здесь, чтобы существующие импорты (`from app.services.payment_matcher import
+# normalize_doc_number`) не сломались.
+from app.services.payment_basis import normalize_doc_number  # noqa: F401
 
-def normalize_doc_number(s: str) -> str:
-    if not s:
-        return ""
-    return s.replace(" ", "").replace("-", "").replace("/", "").replace(".", "").upper()
 
+async def resolve_subsidy(
+    db: AsyncSession,
+    basis_doc_number: Optional[str],
+    basis_doc_date=None,
+    parsed_documents: Optional[dict] = None,
+    subsidy_code: Optional[str] = None,
+) -> Optional[Subsidy]:
+    """Единая логика поиска Subsidy по документу-основанию платежа.
 
-async def auto_match(bp: BankPayment, db: AsyncSession) -> None:
-    """Заполняет matched_*_id поля без commit. Caller сам делает db.commit()."""
-
-    # 1. Contractor по ИНН (точное совпадение)
-    if bp.payee_inn:
-        q = await db.execute(select(Contractor).where(Contractor.inn == bp.payee_inn).limit(1))
-        contractor = q.scalar_one_or_none()
-        if contractor:
-            bp.matched_contractor_id = contractor.id
-
-    if not bp.matched_contractor_id:
-        return  # Без контрагента дальше не идём
-
-    # 2. Subsidy: basis_doc_number + basis_doc_date (точная) → fallback только по номеру
-    if bp.basis_doc_number and bp.basis_doc_date:
+    Порядок: basis_doc_number+date (точно) → basis_doc_number (только номер) →
+    agreements[] из parsed_documents (СОГЛАШЕНИЕ в назначении платежа) →
+    subsidy_code. Используется и в auto_match (для matched_subsidy_id, после
+    того как найден контрагент), и напрямую при импорте — для bank_payments.subsidy_id/
+    org_id (Этап 1), где привязка НЕ должна зависеть от того, опознан ли контрагент
+    (платежи физлицам/авансовые тоже относятся к субсидии по тому же basis_doc_number).
+    """
+    if basis_doc_number and basis_doc_date:
         q = await db.execute(
             select(Subsidy).where(
-                Subsidy.basis_doc_number == bp.basis_doc_number,
-                Subsidy.basis_doc_date == bp.basis_doc_date,
+                Subsidy.basis_doc_number == basis_doc_number,
+                Subsidy.basis_doc_date == basis_doc_date,
             ).limit(1)
         )
         s = q.scalar_one_or_none()
         if s:
-            bp.matched_subsidy_id = s.id
+            return s
 
-    if not bp.matched_subsidy_id and bp.basis_doc_number:
+    if basis_doc_number:
         q = await db.execute(
-            select(Subsidy).where(Subsidy.basis_doc_number == bp.basis_doc_number).limit(1)
+            select(Subsidy).where(Subsidy.basis_doc_number == basis_doc_number).limit(1)
         )
         s = q.scalar_one_or_none()
         if s:
-            bp.matched_subsidy_id = s.id
+            return s
 
     # Fallback: СОГЛАШЕНИЕ из parsed_documents.agreements (purpose_text)
-    if not bp.matched_subsidy_id:
+    if parsed_documents:
         from datetime import datetime as _dt
-        agreements_list = (bp.parsed_documents or {}).get("agreements", [])
+        agreements_list = parsed_documents.get("agreements", [])
         for a in agreements_list:
             num = a.get("number")
             date_str = a.get("date")
@@ -78,31 +81,49 @@ async def auto_match(bp: BankPayment, db: AsyncSession) -> None:
                     )
                     s = q.scalar_one_or_none()
                     if s:
-                        bp.matched_subsidy_id = s.id
-                        break
+                        return s
                 except (ValueError, TypeError):
                     pass
             # без даты — только по номеру
-            if not bp.matched_subsidy_id:
-                q = await db.execute(
-                    select(Subsidy).where(Subsidy.basis_doc_number == num).limit(1)
-                )
-                s = q.scalar_one_or_none()
-                if s:
-                    bp.matched_subsidy_id = s.id
-                    break
-
-    # Дополнительный fallback: subsidy_code если есть поле
-    if not bp.matched_subsidy_id and bp.subsidy_code:
-        try:
             q = await db.execute(
-                select(Subsidy).where(Subsidy.code == bp.subsidy_code).limit(1)
+                select(Subsidy).where(Subsidy.basis_doc_number == num).limit(1)
             )
             s = q.scalar_one_or_none()
             if s:
-                bp.matched_subsidy_id = s.id
+                return s
+
+    # Дополнительный fallback: subsidy_code если есть поле
+    if subsidy_code:
+        try:
+            q = await db.execute(
+                select(Subsidy).where(Subsidy.code == subsidy_code).limit(1)
+            )
+            s = q.scalar_one_or_none()
+            if s:
+                return s
         except Exception:
             pass  # Поле code может отсутствовать в модели Subsidy
+
+    return None
+
+
+async def auto_match(bp: BankPayment, db: AsyncSession) -> None:
+    """Заполняет matched_*_id поля без commit. Caller сам делает db.commit()."""
+
+    # 1. Contractor по ИНН (точное совпадение)
+    if bp.payee_inn:
+        q = await db.execute(select(Contractor).where(Contractor.inn == bp.payee_inn).limit(1))
+        contractor = q.scalar_one_or_none()
+        if contractor:
+            bp.matched_contractor_id = contractor.id
+
+    if not bp.matched_contractor_id:
+        return  # Без контрагента дальше не идём
+
+    # 2. Subsidy
+    s = await resolve_subsidy(db, bp.basis_doc_number, bp.basis_doc_date, bp.parsed_documents, bp.subsidy_code)
+    if s:
+        bp.matched_subsidy_id = s.id
 
     # 3. Contract: contractor_id + ANY parsed_documents.contracts[*].number
     # ВАЖНО: пропускаем номера из agreements — они относятся к субсидии, не к договору
@@ -189,22 +210,39 @@ async def auto_match(bp: BankPayment, db: AsyncSession) -> None:
         if not matched_purchase and len(purchases) == 1:
             bp.matched_purchase_id = purchases[0].id
 
-    # Для advance purchases: parsed_documents.advance_reports[0] перезаписывает
-    # contract_number/date в Purchase. Override (не if not) — bank_payment авторитетнее чека.
-    if bp.matched_purchase_id:
+    # Этап 0 (попутная гигиена, synchronous-knitting-thacker.md): раньше здесь
+    # advance_reports[0] безусловно перезаписывал Purchase.contract_number/date
+    # как побочный эффект КАЖДОГО auto_match — включая rematch(only_unmatched=false),
+    # то есть чужая закупка переписывалась при каждом переигрывании матчинга.
+    # Вынесено в apply_advance_report_override() ниже — вызывается ЯВНО только в
+    # момент подтверждения платежа (bank_statements.py::confirm_bank_payment →
+    # purchase_payments.py::create_payments_from_bank, и
+    # payment_lookup.py::attach), а не при каждом (re)matching.
+
+
+def apply_advance_report_override(purchase: Optional[Purchase], bp: BankPayment) -> None:
+    """Аванс-отчёт из назначения платежа (parsed_documents.advance_reports[0])
+    авторитетнее уже сохранённого Purchase.contract_number/contract_date для
+    авансовых закупок (purchase_method == 'advance') — bank_payment это
+    реальный чек, а не то, что менеджер мог ввести вручную при создании.
+
+    Вызывать ТОЛЬКО в момент, когда платёж реально подтверждается/разносится
+    на эту закупку (не на каждый auto_match/rematch — см. докстринг в
+    auto_match() выше, почему раньше это было ошибкой)."""
+    if not purchase or purchase.purchase_method != 'advance':
+        return
+    advance_reports = (bp.parsed_documents or {}).get('advance_reports', [])
+    if not advance_reports:
+        return
+    first = advance_reports[0] or {}
+    if first.get('number'):
+        purchase.contract_number = str(first['number'])
+    if first.get('date'):
         from datetime import datetime as _dt2
-        purchase = await db.get(Purchase, bp.matched_purchase_id)
-        if purchase and purchase.purchase_method == 'advance':
-            advance_reports = (bp.parsed_documents or {}).get('advance_reports', [])
-            if advance_reports:
-                first = advance_reports[0] or {}
-                if first.get('number'):
-                    purchase.contract_number = str(first['number'])
-                if first.get('date'):
-                    try:
-                        purchase.contract_date = _dt2.strptime(first['date'], "%d.%m.%Y").date()
-                    except (ValueError, TypeError):
-                        pass
+        try:
+            purchase.contract_date = _dt2.strptime(first['date'], "%d.%m.%Y").date()
+        except (ValueError, TypeError):
+            pass
 
 
 async def match_all_in_import(db: AsyncSession, import_id: int) -> dict:

@@ -69,6 +69,12 @@ HEADER_MAP: dict[str, str] = {
     "ДАТА": "payment_date",
     "СТАТУС ДОКУМЕНТА": "status",
     "СУММА": "amount",
+    # Этап 1: устойчивый natural key строки — используется для дедупликации
+    # вместо/в дополнение к source_row_hash (тот ловит дубли только при
+    # побайтовом совпадении строки).
+    "ИДЕНТИФИКАТОР ДОКУМЕНТА": "external_doc_id",
+    "ИДЕНТИФИКАТОР ДОК-ТА": "external_doc_id",
+    "ID ДОКУМЕНТА": "external_doc_id",
     "ДАТА ИСПОЛНЕНИЯ ОПЕРАЦИИ": "execution_date",
     "ДАТА ПРОВОДКИ": "posting_date",
     "ДАТА И ВРЕМЯ УТВЕРЖДЕНИЯ ЦС": "execution_datetime",
@@ -119,6 +125,14 @@ HEADER_MAP: dict[str, str] = {
     # Дополнительная информация
     "ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ (НАЗНАЧЕНИЕ ПЛАТЕЖА)": "purpose_text",
     "ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ (УПНО)": "upno",
+    # Этап 3: код направления расходования целевых средств (КРЦС) — отдельные
+    # колонки выгрузки (когда есть) приоритетнее регулярки из purpose_text,
+    # см. app.services.payment_basis.expense_code.
+    "КОД РАСХОДОВ": "expense_code_short_col",
+    "ДЕТАЛИЗИРОВАННЫЙ КОД РАСХОДОВ": "expense_code_detail_col",
+    "КОД НАПРАВЛЕНИЯ РАСХОДОВАНИЯ": "expense_code_detail_col",
+    "КОД НАПРАВЛЕНИЯ РАСХОДОВАНИЯ ЦЕЛЕВЫХ СРЕДСТВ": "expense_code_detail_col",
+    "ДЕТАЛИЗИРОВАННЫЙ КОД РАСХОДОВ/КОД НАПРАВЛЕНИЯ РАСХОДОВАНИЯ": "expense_code_detail_col",
 }
 
 
@@ -165,11 +179,20 @@ def reparse_bank_payment_typed(bp) -> None:
             norm_raw_decomposed[mapped] = nv
 
     # Применяем HEADER_MAP
+    _expense_code_short: Optional[str] = None
+    _expense_code_detail: Optional[str] = None
     for header, field_name in HEADER_MAP.items():
         v = norm_raw.get(header)
         if v is None:
             v = norm_raw_decomposed.get(header)
         if v is None:
+            continue
+
+        if field_name == "expense_code_short_col":
+            _expense_code_short = str(v).strip() if v else None
+            continue
+        elif field_name == "expense_code_detail_col":
+            _expense_code_detail = str(v).strip() if v else None
             continue
 
         if field_name == "payment_number":
@@ -219,6 +242,8 @@ def reparse_bank_payment_typed(bp) -> None:
             bp.basis_doc_text = str(v).strip() if v else None
         elif field_name == "subsidy_code":
             bp.subsidy_code = str(v).strip() if v else None
+        elif field_name == "external_doc_id":
+            bp.external_doc_id = _norm_inn(v)  # снимает «.0» у числовых идентификаторов из xlsx
 
     # Парсим purpose_text → parsed_documents/contract_number/kbk
     if bp.purpose_text:
@@ -259,6 +284,19 @@ def reparse_bank_payment_typed(bp) -> None:
         if bd and not bp.basis_doc_date:
             bp.basis_doc_date = bd
 
+    # Этап 3: код расходов (КРЦС) — из колонок выписки (если есть) или
+    # regex-fallback из purpose_text. Не перезаписываем уже сохранённое
+    # значение (idempotent reparse не должен затирать ручную правку).
+    if not bp.expense_code:
+        from app.services.payment_basis import expense_code as _resolve_expense_code
+        from types import SimpleNamespace
+        _probe = SimpleNamespace(
+            expense_code_short_col=_expense_code_short,
+            expense_code_detail_col=_expense_code_detail,
+            purpose_text=bp.purpose_text,
+        )
+        bp.expense_code = _resolve_expense_code(_probe)
+
 
 # Финальные ИСПОЛНЕНО-эквивалентные статусы
 EXECUTED_STATUSES = {"ИСПОЛНЕН", "ИСПОЛНЕНО", "ОТРАЖЕНО НА Л/С ПЛАТЕЛЬЩИКА"}
@@ -290,21 +328,26 @@ RX_VAT = re.compile(r"НДС\s*([\d.,]+)", re.IGNORECASE)
 # ---------------------------------------------------------------------------
 
 DOC_PATTERNS: dict[str, re.Pattern] = {
+    # \b после типа обязателен — без него «ДОГ(ОВОР)?» ловил и словоформу
+    # «договор**ом**» (падеж, не номер документа) внутри «с заключен
+    # договором», отдавая мусорный «номер» вроде «ом» (см. RX_INN.search).
     "contracts": re.compile(
-        r"(?P<type>ДОГ(?:ОВОР)?|КОНТРАКТ)"
+        r"(?P<type>ДОГ(?:ОВОР)?|КОНТРАКТ)\b"
         r"\.?\s*№?\s*(?P<num>[0-9\-/А-ЯA-Z]+)"
         r"(?:\s+ОТ\s+(?P<date>\d{2}\.\d{2}\.\d{4}))?",
         re.IGNORECASE | re.UNICODE,
     ),
     "agreements": re.compile(
-        r"СОГЛАШ(?:ЕНИЕ)?"
+        r"СОГЛАШ(?:ЕНИЕ)?\b"
         r"\.?\s*№?\s*(?P<num>[0-9\-/А-ЯA-Z]+)"
         r"(?:\s+ОТ\s+(?P<date>\d{2}\.\d{2}\.\d{4}))?",
         re.IGNORECASE | re.UNICODE,
     ),
+    # «Акт б/н от ДД.ММ.ГГГГ» — без номера (bn-ветка); иначе как раньше
+    # digit-based номер (без обязательного «№», реальные выписки его не пишут).
     "acts": re.compile(
         r"АКТ(?:\s*(?:ПРИ[ЁЕ]МКИ|ВЫПОЛНЕННЫХ\s*РАБОТ))?"
-        r"\.?\s*№?\s*(?P<num>[0-9\-/]+)"
+        r"\.?\s*№?\s*(?:(?P<bn>Б\s*/\s*Н\b)|(?P<num>[0-9\-/]+))"
         r"(?:\s+ОТ\s+(?P<date>\d{2}\.\d{2}\.\d{4}))?",
         re.IGNORECASE | re.UNICODE,
     ),
@@ -321,6 +364,12 @@ DOC_PATTERNS: dict[str, re.Pattern] = {
     ),
     "ttn": re.compile(
         r"ТТН\.?\s*№?\s*(?P<num>[0-9\-/]+)"
+        r"(?:\s+ОТ\s+(?P<date>\d{2}\.\d{2}\.\d{4}))?",
+        re.IGNORECASE | re.UNICODE,
+    ),
+    # Отдельно от ТТН — «Накладная 2571 от 27.02.2026» (не «товарно-транспортная»).
+    "waybills": re.compile(
+        r"НАКЛАДНАЯ\b\.?\s*№?\s*(?P<num>[0-9\-/]+)"
         r"(?:\s+ОТ\s+(?P<date>\d{2}\.\d{2}\.\d{4}))?",
         re.IGNORECASE | re.UNICODE,
     ),
@@ -357,6 +406,13 @@ BASIS_DOC_PATTERN = re.compile(
 # extract_all_documents
 # ---------------------------------------------------------------------------
 
+def _is_garbage_number(num: Optional[str]) -> bool:
+    """Чисто кириллическая «строка» ≤3 символов — падеж/окончание слова
+    (напр. «ом» из «договором»), пойманное регуляркой мимо реального номера
+    документа, не номер документа."""
+    return bool(num) and len(num) <= 3 and bool(re.fullmatch(r"[А-Яа-яЁё]+", num))
+
+
 def extract_all_documents(purpose_text: str) -> dict:
     """Возвращает {'contracts': [...], 'acts': [...], ...} — все находки из назначения платежа."""
     if not purpose_text:
@@ -369,11 +425,22 @@ def extract_all_documents(purpose_text: str) -> dict:
                 num = m.group("num")
             except IndexError:
                 num = None
+            is_bn = False
+            if not num:
+                # «acts» имеет альтернативную bn-ветку — «Акт б/н» без номера.
+                # «БН» — намеренный маркер, не «мусорный номер» (см. _is_garbage_number).
+                try:
+                    bn = m.group("bn")
+                except IndexError:
+                    bn = None
+                if bn:
+                    num = "БН"
+                    is_bn = True
             try:
                 dt = m.group("date")
             except IndexError:
                 dt = None
-            if num:
+            if num and (is_bn or not _is_garbage_number(num)):
                 matches.append({"number": num, "date": dt})
         if matches:
             result[key] = matches
@@ -568,6 +635,14 @@ class ParsedRow:
     basis_doc_number: Optional[str] = None
     basis_doc_date: Optional[date] = None
     subsidy_code: Optional[str] = None
+    external_doc_id: Optional[str] = None
+
+    # Этап 3: код расходов (КРЦС). *_col — сырые значения колонок выписки
+    # (транзитные, в BankPayment не сохраняются), expense_code — итоговое
+    # значение (см. app.services.payment_basis.expense_code).
+    expense_code_short_col: Optional[str] = None
+    expense_code_detail_col: Optional[str] = None
+    expense_code: Optional[str] = None
 
     raw_json: dict = field(default_factory=dict)
     source_row_hash: Optional[str] = None
@@ -745,7 +820,11 @@ def _build_row(
         if v is None:
             continue
 
-        if field_name == "payment_number":
+        if field_name == "expense_code_short_col":
+            row.expense_code_short_col = str(v).strip() if v else None
+        elif field_name == "expense_code_detail_col":
+            row.expense_code_detail_col = str(v).strip() if v else None
+        elif field_name == "payment_number":
             row.payment_number = _norm_inn(v)
         elif field_name == "payment_date":
             row.payment_date = _to_date(v)
@@ -794,6 +873,8 @@ def _build_row(
             row.basis_doc_text = str(v).strip() if v else None
         elif field_name == "subsidy_code":
             row.subsidy_code = str(v).strip() if v else None
+        elif field_name == "external_doc_id":
+            row.external_doc_id = _norm_inn(v)
 
     # Парсим purpose_text
     if row.purpose_text:
@@ -816,12 +897,19 @@ def _build_row(
     if row.basis_doc_text:
         row.basis_doc_number, row.basis_doc_date = parse_basis_doc(row.basis_doc_text)
 
+    # Этап 3: код расходов (КРЦС) — колонки выписки приоритетнее regex из purpose_text
+    from app.services.payment_basis import expense_code as _resolve_expense_code
+    row.expense_code = _resolve_expense_code(row)
+
     # Статус
     status_norm = (row.status or "").upper().strip()
     if status_norm in EXECUTED_STATUSES:
         row.is_executed = True
-    if status_norm in REJECTED_STATUSES:
-        row.skip_reason = status_norm
+    # Этап 1: отклонённые/аннулированные статусы больше НЕ пропускают импорт —
+    # строка сохраняется как есть (status хранит фактический статус), иначе
+    # аннулированный платёж негде увидеть. REJECTED_STATUSES остаётся
+    # классификатором для UI/отчётов, но не поводом для skip_reason.
+    # skip_reason остаётся общим механизмом для будущих причин пропуска строки.
 
     return row
 

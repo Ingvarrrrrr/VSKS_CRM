@@ -643,6 +643,7 @@ const _allMenuItems = [
   { title: 'Реестр авансовых отчётов', icon: 'mdi-cash-register', route: '/advance-reports', tab_key: 'advance_reports' },
   { title: 'Платежи', icon: 'mdi-bank-transfer', route: '/payments/import', tab_key: 'payment_registry' },
   { title: 'Настройки', icon: 'mdi-cog-outline', route: '/org-settings', tab_key: 'admin.settings' },
+  { title: 'Коды расходов', icon: 'mdi-format-list-numbered', route: '/expense-codes', tab_key: 'admin.settings' },
   // Phase 30.2: fleet routes moved to dedicated v-list-group «Автопарк» — removed from flat list to avoid duplication
   { title: 'Чат', icon: 'mdi-message-outline', route: '/chat', tab_key: 'chat' },
   { title: 'Роли', icon: 'mdi-shield-key-outline', route: '/admin/roles', tab_key: 'admin.roles' },

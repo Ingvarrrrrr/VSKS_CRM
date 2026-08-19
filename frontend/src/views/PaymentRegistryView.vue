@@ -65,6 +65,9 @@
               <v-chip color="warning" variant="tonal" size="small" prepend-icon="mdi-help">
                 Только в закупках: {{ reconciliation.purchases_only_count }}
               </v-chip>
+              <v-chip color="orange" variant="tonal" size="small" prepend-icon="mdi-account-alert">
+                Заявлено, не подтверждено: {{ reconciliation.declared_unconfirmed_count }}
+              </v-chip>
               <v-spacer />
               <v-chip size="small" variant="tonal">
                 Показано: {{ filteredReconciliationRows.length }} / {{ reconciliation.total }}
@@ -278,6 +281,18 @@
             style="min-width:160px; max-width:200px"
             @keyup.enter="applyFilters"
           />
+          <v-select
+            v-model="fDisposition"
+            :items="dispositionOptions"
+            item-title="label"
+            item-value="value"
+            label="Разнесение"
+            variant="outlined"
+            density="compact"
+            hide-details
+            clearable
+            style="min-width:190px; max-width:230px"
+          />
           <v-btn color="primary" variant="elevated" @click="applyFilters" :loading="loading">
             Применить
           </v-btn>
@@ -372,6 +387,14 @@
           @update:model-value="v => setFilter('parsed_kbk', v)"
           @sort="dir => applySort('parsed_kbk', dir)"
           @hide="toggleVisible('parsed_kbk', false)" />
+      </template>
+      <template #header.expense_code="{ column }">
+        <ColumnHeaderMenu col-key="expense_code" :title="column.title" col-type="text"
+          :model-value="colConfigState.filters['expense_code'] ?? null"
+          :sort-by="getSortBy('expense_code')"
+          @update:model-value="v => setFilter('expense_code', v)"
+          @sort="dir => applySort('expense_code', dir)"
+          @hide="toggleVisible('expense_code', false)" />
       </template>
       <template #header.status="{ column }">
         <ColumnHeaderMenu col-key="status" :title="column.title" col-type="enum"
@@ -554,6 +577,30 @@
           <div v-if="item.matched_purchase_amount != null" class="text-caption font-weight-medium">
             {{ formatMoney(item.matched_purchase_amount) }}
           </div>
+        </div>
+        <span v-else class="text-medium-emphasis">—</span>
+      </template>
+
+      <!-- Этап 7в: Код расходов -->
+      <template #item.expense_code="{ item }">
+        <v-chip v-if="item.expense_code" size="x-small" variant="tonal" color="blue" :title="item.expense_code_name || ''">
+          {{ item.expense_code }}
+        </v-chip>
+        <span v-else class="text-medium-emphasis">—</span>
+      </template>
+
+      <!-- Этап 7в: Куда отнесён — закупки, на которые платёж реально разнесён -->
+      <template #item.attached_purchases="{ item }">
+        <div v-if="item.attached_purchases && item.attached_purchases.length">
+          <a v-for="ap in item.attached_purchases" :key="ap.purchase_id"
+             :href="`/orders/${ap.purchase_id}/edit`" target="_blank"
+             class="text-decoration-none d-block mb-1">
+            <v-chip size="x-small" color="primary" variant="tonal" prepend-icon="mdi-arrow-right-bold">
+              <span v-if="ap.purchase_number">№ {{ ap.purchase_number }}</span>
+              <span v-else>#{{ ap.purchase_id }}</span>
+              <span v-if="ap.amount != null" class="ml-1">· {{ formatMoney(ap.amount) }}</span>
+            </v-chip>
+          </a>
         </div>
         <span v-else class="text-medium-emphasis">—</span>
       </template>
@@ -854,6 +901,13 @@ const fStatus = ref<string | null>(null)
 const fMatched = ref<string | null>(null)
 const fConfirmed = ref<string | null>(null)
 const fInn = ref<string>('')
+// Этап 7в: «свободные / разнесённые» — разнесение через новое групповое
+// сопоставление (app/services/payment_lookup.py::attach), не старая matched_*.
+const fDisposition = ref<string | null>(null)
+const dispositionOptions = [
+  { label: 'Свободные (не разнесены)', value: 'free' },
+  { label: 'Разнесённые', value: 'attached' },
+]
 
 const statusOptions = [
   { label: 'ИСПОЛНЕН', value: 'ИСПОЛНЕН' },
@@ -928,7 +982,7 @@ const filteredSum = computed(() =>
 
 const hasFilters = computed(() =>
   fDateFrom.value || fDateTo.value || fStatus.value || fMatched.value || fConfirmed.value || fInn.value ||
-  activeFilterCount.value > 0
+  fDisposition.value || activeFilterCount.value > 0
 )
 
 function clearFilters() {
@@ -938,6 +992,7 @@ function clearFilters() {
   fMatched.value = null
   fConfirmed.value = null
   fInn.value = ''
+  fDisposition.value = null
   searchQuery.value = ''
   filterSubsidyId.value = null
   clearAllFilters()
@@ -998,6 +1053,16 @@ interface BankPayment {
   matched_purchase_item_name: string | null
   matched_purchase_amount: number | null
   created_at: string | null
+  // Этап 7в
+  expense_code: string | null
+  expense_code_name: string | null
+  attached_purchases: Array<{
+    purchase_id: number
+    purchase_number: number | null
+    item_name: string | null
+    amount: number | null
+    basis_label: string | null
+  }> | null
 }
 
 const payments = ref<BankPayment[]>([])
@@ -1056,6 +1121,8 @@ const _colMetaDefaults: Record<string, { width?: number; sortable?: boolean }> =
   matched_contract_id:         { width: 240, sortable: false },
   matched_purchase_id:         { width: 240, sortable: false },
   matched_subsidy_id:          { width: 200, sortable: false },
+  expense_code:                { width: 150 },
+  attached_purchases:          { width: 220, sortable: false },
   created_at:                  { width: 150 },
   actions:                     { sortable: false, width: 110 },
   'data-table-expand':         { width: 48 },
@@ -1095,6 +1162,9 @@ const coreColumnDefs: ColumnDef[] = [
   { title: 'Договор (авто)', key: 'parsed_contract_number', group: 'core', ..._colMetaDefaults['parsed_contract_number'] },
   { title: 'Дата договора (авто)', key: 'parsed_contract_date', group: 'core', ..._colMetaDefaults['parsed_contract_date'] },
   { title: 'КБК', key: 'parsed_kbk', group: 'core', ..._colMetaDefaults['parsed_kbk'] },
+  // Этап 7в: код расходов (КРЦС) + куда фактически разнесён (новое групповое сопоставление)
+  { title: 'Код расходов', key: 'expense_code', group: 'core', ..._colMetaDefaults['expense_code'] },
+  { title: 'Куда отнесён', key: 'attached_purchases', group: 'core', ..._colMetaDefaults['attached_purchases'] },
   // Match
   { title: 'Match: Контрагент', key: 'matched_contractor_id', group: 'core', ..._colMetaDefaults['matched_contractor_id'] },
   { title: 'Match: Субсидия', key: 'matched_subsidy_id', group: 'core', ..._colMetaDefaults['matched_subsidy_id'] },
@@ -1205,6 +1275,7 @@ async function loadPayments() {
     if (fMatched.value !== null && fMatched.value !== '') params.set('matched', fMatched.value)
     if (fConfirmed.value !== null && fConfirmed.value !== '') params.set('confirmed', fConfirmed.value)
     if (fInn.value) params.set('payee_inn', fInn.value)
+    if (fDisposition.value) params.set('disposition', fDisposition.value)
     if (importId.value) params.set('import_id', String(importId.value))
 
     const data = await apiFetch<any>(`/payments/registry?${params}`)
@@ -1400,7 +1471,7 @@ function openMatchFromReconciliation(bpId: number) {
 
 function reconciliationRowClass(status: string): string {
   if (status === 'amount_mismatch' || status === 'registry_only') return 'bg-red-lighten-5'
-  if (status === 'purchases_only') return 'bg-amber-lighten-5'
+  if (status === 'purchases_only' || status === 'declared_unconfirmed') return 'bg-amber-lighten-5'
   return ''
 }
 
@@ -1409,6 +1480,7 @@ function reconciliationStatusColor(status: string): string {
   if (status === 'amount_mismatch') return 'error'
   if (status === 'registry_only') return 'error'
   if (status === 'purchases_only') return 'warning'
+  if (status === 'declared_unconfirmed') return 'orange'
   return 'grey'
 }
 
@@ -1418,6 +1490,7 @@ function reconciliationStatusLabel(status: string): string {
     amount_mismatch: 'Расхождение сумм',
     registry_only: 'Только в реестре',
     purchases_only: 'Только в закупках',
+    declared_unconfirmed: 'Заявлено, не подтверждено',
   }
   return labels[status] || status
 }

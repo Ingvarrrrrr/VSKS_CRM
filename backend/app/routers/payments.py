@@ -28,12 +28,33 @@ async def list_payments(
 
 @router.post("/", response_model=PaymentOut)
 async def create_payment(data: PaymentCreate, db: AsyncSession = Depends(get_db), _=Depends(require_action('payment.register'))):
-    p = Payment(**data.model_dump())
+    # Владелец (2026-08-19): «поставленная человеком галочка, что платёж прошёл,
+    # без подтверждения выпиской из казначейства, не является подтверждением,
+    # что платёж прошёл» — платёж, заведённый вручную через эту форму, остаётся
+    # payment_source='manual', confirmed_by_statement=False (заявление, не
+    # факт), пока не сопоставится с реальной строкой выписки (см.
+    # app/services/payment_lookup.py::attach / purchase_payments.py::create_payments_from_bank,
+    # которые тогда ПОМЕЧАЮТ эту же запись подтверждённой, а не заводят вторую).
+    # Он попадает в agregat Purchase.payment_amount_declared («заявлено, ждёт
+    # подтверждения»), НЕ в Purchase.payment_amount («оплачено») — см.
+    # app/services/purchase_payments.py::recompute_purchase_payments.
+    #
+    # matched_confirmed НЕ ставится в True здесь — по смыслу это «сопоставление
+    # строки выписки с закупкой подтверждено», ручной платёж строкой выписки
+    # ещё не является.
+    #
+    # ВАЖНО (порядок commit/recompute верен и оставлен как есть): recompute_purchase_payments
+    # сам НЕ коммитит (только flush) — раньше db.commit() стоял ДО него, поэтому
+    # пересчитанный Purchase.payment_amount молча терялся при закрытии сессии.
+    # Коммитим ОДИН раз, после recompute, чтобы обе записи (Payment +
+    # пересчитанный агрегат) попали в одну транзакцию.
+    p = Payment(**data.model_dump(), payment_source="manual", confirmed_by_statement=False)
     db.add(p)
-    await db.commit()
-    await db.refresh(p)
+    await db.flush()
     if p.purchase_id:
         await recompute_purchase_payments(db, p.purchase_id)
+    await db.commit()
+    await db.refresh(p)
     return p
 
 @router.delete("/{pid}")
@@ -44,7 +65,8 @@ async def delete_payment(pid: int, db: AsyncSession = Depends(get_db), _=Depends
         raise HTTPException(404, "Not found")
     purchase_id = p.purchase_id
     await db.delete(p)
-    await db.commit()
+    # Тот же порядок, что и в create_payment выше: recompute ДО единственного commit.
     if purchase_id:
         await recompute_purchase_payments(db, purchase_id)
+    await db.commit()
     return {"ok": True}

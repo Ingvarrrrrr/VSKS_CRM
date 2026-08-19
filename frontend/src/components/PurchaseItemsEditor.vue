@@ -160,6 +160,7 @@
           :default-feo-category-id="props.defaultFeoCategoryId"
           :planned-items="props.plannedItems"
           :planned-selection-for="plannedSelectionFor"
+          :pending-by-planned-item="pendingByPlannedItem"
           :plan-for-item="planForItem"
           :plan-excess-for="planExcessFor"
           :subsidy-id="props.subsidyId"
@@ -238,6 +239,7 @@
           :default-feo-category-id="props.defaultFeoCategoryId"
           :planned-items="props.plannedItems"
           :planned-selection-for="plannedSelectionFor"
+          :pending-by-planned-item="pendingByPlannedItem"
           :show-contractor-column="showContractorColumn"
           :show-needed-date="props.showNeededDate"
           :contractors="contractors"
@@ -296,6 +298,7 @@
           :default-feo-category-id="props.defaultFeoCategoryId"
           :planned-items="props.plannedItems"
           :planned-selection-for="plannedSelectionFor"
+          :pending-by-planned-item="pendingByPlannedItem"
           :plan-for-item="planForItem"
           :plan-excess-for="planExcessFor"
           :show-contractor-column="showContractorColumn"
@@ -2521,6 +2524,32 @@ function plannedSelectionFor(item: EditorItem): FeoPlanSelection | null {
   }
   return null
 }
+
+// Жалоба владельца (сессия 2026-08-19): «включаю переключатель — должно стать выбрано
+// 1 500, остаток 0... а сейчас включаю-выключаю, там по-прежнему план 1 500, выбрано 0».
+// row.consumed/row.residual в FeoPlanPosition приходят С СЕРВЕРА
+// (/feo-categories/plan-positions, exclude_purchase_id — своя закупка НЕ учтена, это
+// осознанно и трогать НЕЛЬЗЯ, см. комментарий в useFeoPlannedResiduals.ts), но выбор,
+// сделанный ПРЯМО СЕЙЧАС в этой форме (переключатель включён/выключен на строке),
+// в них не отражён вовсе — карта ниже суммирует «занято сейчас в этой форме» по
+// каждой плановой позиции и передаётся в FeoPlannedItemsSelect (проп
+// pendingByPlannedItem), который добавляет её поверх серверных чисел. Строки с
+// over_plan===true НЕ считаем — они сознательно сверх плана и не расходуют его (тот
+// же признак, что и в pendingByPlannedItem-соседях: plannedSelectionFor/EditorItem.
+// over_plan). Сумма строки — total_price, тот же источник, что и totalNmck/прочие
+// суммы в этом файле. Реактивность: computed от localItems — переключение
+// switch(row) меняет it.feo_planned_item_id внутри localItems (см. item-planned-change
+// хендлеры ниже), карта пересчитывается сама.
+const pendingByPlannedItem = computed((): Record<number, number> => {
+  const map: Record<number, number> = {}
+  for (const it of localItems.value) {
+    const pid = (it as any).feo_planned_item_id
+    if (pid == null) continue
+    if ((it as any).over_plan === true) continue
+    map[pid] = (map[pid] || 0) + Number((it as any).total_price || 0)
+  }
+  return map
+})
 
 // Шаг 5 «ТЗ не дороже и не больше плана» (владелец, 2026-08-07, план
 // zany-fluttering-mountain.md): фронт-зеркало backend-гейта

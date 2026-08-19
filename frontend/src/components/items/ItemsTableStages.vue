@@ -309,6 +309,7 @@
                             :category-id="item.feo_node_id ?? item.feo_category_id ?? defaultFeoCategoryId ?? null"
                             :nodes="feoNodes" :items="plannedItems || []"
                             :amount="item.total_price" :readonly="feoReadonly" dense class="mt-1"
+                            :pending-by-planned-item="pendingByPlannedItem"
                             :prefill="{ name: item.item_name, quantity: item.quantity, unit: item.unit, amount: item.total_price }"
                             @update:model-value="(v) => emit('item-planned-change', idx, v)"
                             @planned-item-created="emit('planned-item-created')" />
@@ -558,6 +559,10 @@ const props = defineProps<{
   // F-PLAN2: производный выбор { kind, id } | null для FeoPlannedItemsSelect по
   // фактическим полям позиции — см. plannedSelectionFor() в PurchaseItemsEditor.vue.
   plannedSelectionFor?: (item: EditorItem) => FeoPlanSelection | null
+  // Жалоба владельца (сессия 2026-08-19): «выбрано/остаток» должны учитывать переключатели,
+  // включённые ПРЯМО СЕЙЧАС в этой форме — см. pendingByPlannedItem в
+  // PurchaseItemsEditor.vue / одноимённый проп в ItemsTableFlat.vue.
+  pendingByPlannedItem?: Record<number, number> | null
   // Шаг 5 «ТЗ не дороже и не больше плана» (владелец, 2026-08-07) — см. тот же
   // проп в ItemsTableFlat.vue.
   planForItem?: (item: EditorItem) => FeoPlanPosition | null

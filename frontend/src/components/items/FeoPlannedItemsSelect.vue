@@ -144,8 +144,8 @@
                   >{{ suggestReason || 'Похоже совпадает' }}</v-chip>
                 </span>
                 <span class="feo-tree-residual">
-                  план {{ fmt(row.planned_amount) }} · выбрано {{ fmt(row.consumed) }} ·
-                  <span :class="{ 'feo-planned-shortfall': isShort(row) }">остаток {{ fmt(row.residual) }}</span>
+                  план {{ fmt(row.planned_amount) }} · выбрано {{ fmt(consumedFor(row)) }} ·
+                  <span :class="{ 'feo-planned-shortfall': isShort(row) }">остаток {{ fmt(residualFor(row)) }}</span>
                   <span v-if="isShort(row)" class="feo-planned-shortfall-note"> — не хватает {{ fmt(Math.abs(shortfall(row))) }}</span>
                 </span>
               </div>
@@ -491,6 +491,15 @@ const props = defineProps<{
    *  задаётся пользователем, но предзаполняется НЕ именем первого товара (как было раньше),
    *  а названием самой заявки/закупки. */
   bulkTitle?: string | null
+  /** Жалоба владельца (сессия 2026-08-19): «включаю переключатель — должно стать выбрано
+   *  1500, остаток 0... а сейчас включаю-выключаю, там по-прежнему выбрано 0». row.consumed/
+   *  row.residual приходят С СЕРВЕРА (/feo-categories/plan-positions, exclude_purchase_id —
+   *  своя закупка НЕ учтена, это верно и не трогается), но выбор, сделанный ПРЯМО СЕЙЧАС в
+   *  этой форме, в них не отражён. Карта feo_planned_item_id → сумма позиций ЭТОЙ формы
+   *  (PurchaseItemsEditor.vue::pendingByPlannedItem) добавляется поверх серверных чисел —
+   *  см. pendingFor/consumedFor/residualFor ниже. Только для kind==='planned_item' (id —
+   *  это id FeoPlannedItem; у plan_position/feo_article своей плановой позиции нет). */
+  pendingByPlannedItem?: Record<number, number> | null
 }>()
 
 const emit = defineEmits<{
@@ -555,9 +564,36 @@ function fmtQty(row: FeoPlanPosition): string {
   return `${qty} ${row.unit || ''}`.trim()
 }
 
+// «Занято прямо сейчас в этой форме» поверх серверных consumed/residual — см. проп
+// pendingByPlannedItem выше. Только planned_item (row.id живёт в пространстве id
+// FeoPlannedItem у этого kind; у plan_position/feo_article своей плановой позиции нет,
+// поэтому pendingFor для них всегда 0 и consumedFor/residualFor равны серверным числам).
+function pendingFor(row: FeoPlanPosition): number {
+  if (row.kind !== 'planned_item') return 0
+  return props.pendingByPlannedItem?.[row.id] || 0
+}
+
+function consumedFor(row: FeoPlanPosition): number {
+  return row.consumed + pendingFor(row)
+}
+
+function residualFor(row: FeoPlanPosition): number {
+  // row.residual с сервера уже = planned_amount − consumed (backend/app/routers/
+  // feo_categories.py::spendable_remaining, без клампинга) — вычитаем pendingFor
+  // отдельно, а не пересчитываем через planned_amount (может быть null у legacy строк).
+  return row.residual - pendingFor(row)
+}
+
 function shortfall(row: FeoPlanPosition): number {
   if (props.amount == null) return 0
-  return row.residual - props.amount
+  // Строка row уже выбрана (selectedKey === row.key) — её собственная сумма (props.amount,
+  // сумма ЭТОЙ редактируемой позиции) уже учтена в consumedFor(row) через
+  // pendingByPlannedItem (карта считается по ВСЕЙ форме, включая текущую строку). Добавлять
+  // props.amount поверх ещё раз значило бы посчитать одну и ту же сумму дважды. Для остальных
+  // (пока не выбранных) строк props.amount — гипотетическая проверка «войдёт ли эта сумма,
+  // если переключить сюда».
+  const alreadySelected = selectedKey.value === row.key
+  return residualFor(row) - (alreadySelected ? 0 : props.amount)
 }
 
 function isShort(row: FeoPlanPosition): boolean {
@@ -579,7 +615,7 @@ function kindChipLabel(kind: FeoPlanKind): string { return KIND_CHIP_LABEL[kind]
 
 const denseSummaryLabel = computed((): string => {
   const row = selectedKey.value != null ? filteredItems.value.find(r => r.key === selectedKey.value) : undefined
-  if (row) return `${row.name} — план ${fmt(row.planned_amount)} · остаток ${fmt(row.residual)}`
+  if (row) return `${row.name} — план ${fmt(row.planned_amount)} · остаток ${fmt(residualFor(row))}`
   return 'Выбрать плановую позицию'
 })
 

@@ -270,11 +270,24 @@ async def create_planned_item(
                 has_edit_feo = await has_org_key(
                     current_user, db, subsidy.org_id, "wish.edit_feo", subsidy_id=subsidy.id,
                 )
+        # Решение владельца (2026-08-19): «Планы должны создаваться всеми, кто
+        # создают закупки и заявки. У него же корректировка будет проходить на
+        # этапе согласования, и вышестоящий должен увидеть, что идёт
+        # превышение, и что-то с этим решить». Третий путь доступа: вкладка
+        # wishes ЛИБО purchases — человек и так заводит заявки/закупки, значит
+        # ему нужно уметь завести недостающую плановую позицию под них.
+        has_wishes_or_purchases = False
         if not has_tab and not has_edit_feo:
+            has_wishes_or_purchases = (
+                await _has_key_in_any_org(current_user, db, 'wishes')
+                or await _has_key_in_any_org(current_user, db, 'purchases')
+            )
+        if not has_tab and not has_edit_feo and not has_wishes_or_purchases:
             raise HTTPException(
                 403,
-                "Нет доступа к справочнику ФЭО и нет права на перераспределение позиций "
-                "заявки по категориям ФЭО — создание плановой позиции недоступно",
+                "Нет доступа к справочнику ФЭО, нет права на перераспределение позиций "
+                "заявки по категориям ФЭО и нет вкладки заявок/закупок — создание "
+                "плановой позиции недоступно",
             )
 
     # Задача владельца «план ≠ факт» (шаг D, сессия 2026-08-06): защита от повторения

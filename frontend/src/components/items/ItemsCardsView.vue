@@ -137,6 +137,7 @@
                 :category-id="item.feo_node_id ?? item.feo_category_id ?? defaultFeoCategoryId ?? null"
                 :nodes="feoNodes" :items="plannedItems || []"
                 :amount="item.total_price" :readonly="feoReadonly" dense class="mt-1"
+                :pending-by-planned-item="pendingByPlannedItem"
                 :prefill="{ name: item.item_name, quantity: item.quantity, unit: item.unit, amount: item.total_price }"
                 @update:model-value="(v) => emit('item-planned-change', idx, v)"
                 @planned-item-created="emit('planned-item-created')" />
@@ -289,6 +290,10 @@ const props = defineProps<{
   // F-PLAN2: производный выбор { kind, id } | null для FeoPlannedItemsSelect по
   // фактическим полям позиции — см. plannedSelectionFor() в PurchaseItemsEditor.vue.
   plannedSelectionFor?: (item: EditorItem) => FeoPlanSelection | null
+  // Жалоба владельца (сессия 2026-08-19): «выбрано/остаток» должны учитывать переключатели,
+  // включённые ПРЯМО СЕЙЧАС в этой форме — см. pendingByPlannedItem в
+  // PurchaseItemsEditor.vue / одноимённый проп в ItemsTableFlat.vue.
+  pendingByPlannedItem?: Record<number, number> | null
   // Владелец 2026-08-18: показать кнопку «Разбить» на карточке — только у закупок
   // (POST /purchases/{pid}/items/{item_id}/split не существует для заявок/wish-позиций).
   supportsSplit?: boolean

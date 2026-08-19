@@ -1160,6 +1160,27 @@
                       <v-btn value="common" size="small" prepend-icon="mdi-calendar">Одна на заявку</v-btn>
                       <v-btn value="per_item" size="small" prepend-icon="mdi-calendar-multiple">На каждую позицию</v-btn>
                     </v-btn-toggle>
+                    <!-- Владелец (сессия 2026-08-19): «Должна быть возможность задать дату
+                         поставки всем позициям заявки одновременно. Если позиций много,
+                         заполнять каждую очень неудобно» — в режиме «на каждую позицию»
+                         поле выше только дозаполняет ПУСТЫЕ позиции при переключении
+                         режима (см. watch(wishDateMode)), явного массового действия не
+                         было. Кнопка берёт текущее значение поля и раздаёт его всем
+                         непустым позициям, ПЕРЕЗАПИСЫВАЯ уже проставленные — как и
+                         единственный другой confirm() в этом файле (forceStatus), без
+                         нового визуального языка. -->
+                    <v-btn
+                      v-if="wishDateMode === 'per_item' && isWishEditable"
+                      size="small"
+                      variant="text"
+                      color="primary"
+                      class="mt-1"
+                      prepend-icon="mdi-calendar-sync-outline"
+                      :disabled="!wishForm.desired_date"
+                      @click="applyCommonDateToAllItems"
+                    >
+                      Проставить эту дату всем позициям
+                    </v-btn>
                   </v-col>
                   <!-- Task 2 (сессия 2026-08-17): контрагент заявки — необязательное поле.
                        Владелец: «должна быть возможность указывать контрагента и его имя,
@@ -2607,6 +2628,27 @@ watch(wishDateMode, (mode, prev) => {
     }
   }
 })
+
+// Владелец (сессия 2026-08-19): «Должна быть возможность задать дату поставки всем
+// позициям заявки одновременно». В отличие от watch(wishDateMode) выше (дозаполняет
+// только ПУСТЫЕ позиции при переключении режима один раз), это явное действие кнопки —
+// перезаписывает дату даже у уже заполненных позиций. Считаем «непустой» позицию так
+// же, как остальные проверки формы (wishItemsMissingFeoCategory и т.п.): есть название,
+// сумма или количество — иначе это ещё не заведённая заготовка строки.
+function applyCommonDateToAllItems() {
+  const d = wishForm.value.desired_date
+  if (!d) return
+  const items = (wishForm.value.items as any[]).filter(
+    (it) => (it.item_name || '').toString().trim() || Number(it.total_price) || Number(it.quantity)
+  )
+  if (!items.length) return
+  const hasDifferent = items.some((it) => it.needed_date && it.needed_date !== d)
+  if (hasDifferent) {
+    if (!confirm('У части позиций уже указана другая дата поставки. Заменить её выбранной датой у ВСЕХ позиций?')) return
+  }
+  for (const it of items) it.needed_date = d
+  showSnack('Дата поставки проставлена всем позициям')
+}
 const editingWish = ref<Wish | null>(null)
 const wishFormRef = ref<any>(null)
 const wishSubmitBtnRef = ref<any>(null)
@@ -3600,21 +3642,24 @@ async function openEditDialog(wish: Wish) {
       }
     }
 
-    // F-PLAN: восстановить привязку к плановым позициям плана закупок из фактических
-    // значений позиций (отдельной колонки wishes.feo_planned_item_id нет и не будет).
-    // Если у ВСЕХ позиций одна и та же плановая позиция — отражаем её в шапке (удобно
-    // менять всем сразу); иначе шапка остаётся пустой и служит только дефолтом для
-    // позиций без своей привязки (см. buildWishPayload).
-    {
-      const items = wishForm.value.items as any[]
-      const plannedIds = items.map(it => it.feo_planned_item_id)
-      const nonNullPlannedIds = plannedIds.filter(id => id != null)
-      if (nonNullPlannedIds.length > 0 && nonNullPlannedIds.length === plannedIds.length && new Set(nonNullPlannedIds).size === 1) {
-        wishFeoPlannedItemId.value = nonNullPlannedIds[0]
-      } else {
-        wishFeoPlannedItemId.value = null
-      }
-    }
+    // F-PLAN (владелец, 2026-08-19, баг «привязываются все позиции к первой плановой»):
+    // раньше здесь восстанавливали wishFeoPlannedItemId из фактических значений позиций
+    // (даже с гвардом «только если ВСЕ позиции совпадают» — казалось безобидно, т.к.
+    // ничего не перезаписывает). Ловушка была не в этом чтении, а в том, что
+    // wishFeoPlannedItemId одновременно передаётся в PurchaseItemsEditor как
+    // :default-feo-planned-item-id — а addItem()/импорт Excel/умный импорт в
+    // PurchaseItemsEditor.vue штампуют props.defaultFeoPlannedItemId В ЛЮБУЮ НОВУЮ
+    // строку безусловно (без проверки feoPlannedPerItem). Открыл заявку с одной
+    // позицией → шапка восстанавливалась из неё → добавил вторую позицию → она молча
+    // наследовала чужую плановую. Начиная с этой сессии карточка выбора шапки для
+    // автора/редактора не рендерится вовсе (см. v-if="!isWishEditable && canEditWishFeo"
+    // у «Категория ФЭО (согласующий)»), поэтому переменная больше НЕ наполняется из
+    // позиций при загрузке — остаётся null, как после resetForm(). Для согласующего
+    // (canEditWishFeo) это означает, что при открытии уже согласованной по всем
+    // позициям одинаковой плановой заявки шапка не покажет её преднабранной — принятый
+    // компромисс: согласующий при необходимости выбирает заново, зато построчный выбор
+    // инициатора никогда не отбирается по умолчанию.
+    wishFeoPlannedItemId.value = null
     wishDateMode.value = (wishForm.value.items as any[]).some(it => it.needed_date) ? 'per_item' : 'common'
     await loadWishMembers()
     await loadWishApprovers()
@@ -3988,7 +4033,17 @@ function buildWishPayload() {
         // умеет создавать СВОЮ плановую позицию под каждый товар — такая позиция уже
         // несёт СВОЙ feo_planned_item_id (см. onWishFeoBulkItemsCreated) и не имеет права
         // быть затёртой шапочным значением.
-        feo_planned_item_id: (rest as any).feo_planned_item_id ?? wishFeoPlannedItemId.value ?? null,
+        // Владелец, 2026-08-19 (баг «привязываются все позиции к первой плановой»):
+        // фолбэк из шапки оставлен ТОЛЬКО для согласующего (!isWishEditable) — там
+        // карточка «Категория ФЭО (согласующий)» реально пишет в wishFeoPlannedItemId
+        // и «Согласовал» может дойти сюда через approveWish→saveWish без отдельного
+        // PATCH. Для автора/редактора (isWishEditable) карточка не рендерится и
+        // wishFeoPlannedItemId всегда null (см. openEditDialog/resetForm) — но фолбэк
+        // всё равно жёстко выключен здесь, а не «сам получится null», чтобы будущий
+        // код не смог тихо восстановить утечку через этот путь.
+        feo_planned_item_id: (rest as any).feo_planned_item_id
+          ?? (!isWishEditable.value ? wishFeoPlannedItemId.value : null)
+          ?? null,
         // БАГ 3 (сессия 2026-08-05): UI больше не выставляет over_plan (псевдо-вариант
         // «Вне плана» убран) — колонка в БД и расчёты на бэкенде не тронуты, просто
         // отправляем то, что уже было на позиции (false для новых/непривязанных).

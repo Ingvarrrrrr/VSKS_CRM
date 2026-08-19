@@ -505,30 +505,50 @@
                 @pick-unallocated="onFeoPickUnallocated"
               />
             </v-col>
-            <!-- Возвращено из отката e0db76a (план zany-fluttering-mountain.md, п.2): выбор
-                 ПЛАНОВОЙ ПОЗИЦИИ на уровне закупки — тот же компонент и вид, что в заявке
-                 (WishesView.vue:1146), с подсказкой похожих по имени (POST /feo-planned-items/
-                 match). Только режим «одна категория на всю закупку» — per-item выбор остаётся
-                 внутри PurchaseItemsEditor. -->
-            <v-col v-if="form.subsidy_id && form.feo_category_id && !form.feo_per_item" cols="12">
-              <FeoPlannedItemsSelect
-                v-model="feoPlanSelection"
-                :category-id="form.feo_category_id"
-                :nodes="feoTreeNodes"
-                :items="purchasePlannedResiduals"
-                :amount="displayNmck"
-                :suggest-key="headFeoPlanSuggestKey"
-                :suggest-reason="headFeoPlanSuggestReason"
-                :candidates="headFeoPlanCandidatesForUi"
-                :loading="purchasePlannedLoading"
-                :skip-last="feoSkipLast"
-                :prefill="headFeoPlannedPrefill"
-                :bulk-items="headFeoBulkItems"
-                :bulk-title="form.subject"
-                @planned-item-created="reloadPurchasePlanned"
-                @candidate-confirmed="onHeadFeoCandidateConfirmed"
-                @bulk-items-created="onHeadFeoBulkItemsCreated"
-              />
+            <!-- Владелец (сессия 2026-08-19): «Меню с кучей переключателей. Когда плановые
+                 позиции для каждой отдельной позиции закупки разные, это меню нефункционально:
+                 я выбираю одну и привязываюсь сразу ко всем — это невозможно. Плюс оно вносит
+                 сумбур, потому что выше уже привязал каждую позицию к отдельной плановой».
+                 Раньше здесь стоял FeoPlannedItemsSelect (v-model=feoPlanSelection) — привязка
+                 ОДНОЙ плановой позиции на всю закупку, дублирующая построчный выбор внутри
+                 PurchaseItemsEditor. Заменено read-only перечнем плановых позиций категории —
+                 только просмотр цифр и удаление (высвобождение денег), без выбора/переключателей;
+                 сама привязка — исключительно построчно в таблице позиций ниже. -->
+            <v-col v-if="form.subsidy_id && form.feo_category_id && !form.feo_per_item && headPlannedListItems.length" cols="12">
+              <div class="text-caption font-weight-medium d-flex align-center ga-1 mb-1 text-medium-emphasis">
+                <v-icon size="16" icon="mdi-clipboard-list-outline" />
+                <span>Плановые позиции категории</span>
+                <v-progress-circular v-if="purchasePlannedLoading" indeterminate size="14" width="2" class="ml-1" />
+              </div>
+              <v-list density="compact" class="pa-0" style="background:transparent">
+                <v-list-item
+                  v-for="row in headPlannedListItems"
+                  :key="row.key"
+                  class="px-2"
+                  style="border:1px solid rgba(0,0,0,0.08); border-radius:6px"
+                  :class="{ 'mb-1': true }"
+                >
+                  <template #title>
+                    <span class="text-body-2">{{ row.name }}</span>
+                    <span class="text-caption text-medium-emphasis ml-1">{{ fmtHeadPlannedQty(row) }}</span>
+                  </template>
+                  <template #subtitle>
+                    план {{ fmtHeadPlannedMoney(row.planned_amount) }} · выбрано {{ fmtHeadPlannedMoney(row.consumed) }} ·
+                    остаток {{ fmtHeadPlannedMoney(row.residual) }}
+                  </template>
+                  <template #append>
+                    <v-btn
+                      v-if="row.kind === 'planned_item'"
+                      icon="mdi-delete-outline"
+                      variant="text"
+                      size="small"
+                      color="error"
+                      title="Удалить плановую позицию"
+                      @click="deleteHeadPlannedItem(row)"
+                    />
+                  </template>
+                </v-list-item>
+              </v-list>
             </v-col>
             <!-- Переключатель «не указывать последний уровень ФЭО»: виден, когда выбран
                  промежуточный (не листовой) узел — раньше это было «выбран ур.1 с детьми». -->
@@ -4096,12 +4116,9 @@ import ValidationArrows from '@/components/ValidationArrows.vue'
 import MonthlyStagesDialog from '@/components/MonthlyStagesDialog.vue'
 import PaymentsBlock from '@/components/PaymentsBlock.vue'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
-import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
 import { filterFundedNodes } from '@/composables/useFeoLeaves'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
-import type { FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
-import { useFeoPlanMatching } from '@/composables/useFeoPlanMatching'
-import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
+import type { FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import { decodeQrFromImageFile } from '@/utils/qrDecode'
 import { PURCHASE_STATUS_ORDER, purchaseStatusColor } from '@/constants/purchaseStatus'
 
@@ -6882,141 +6899,56 @@ const feoValidationError = computed((): string | null => {
 // переносится в feo_planned_item_id КАЖДОЙ позиции, см. validItems в doSave.
 const headFeoPlannedItemId = ref<number | null>(null)
 
-// Composite-выбор { kind, id } | null для FeoPlannedItemsSelect — зеркалит
-// wishFeoPlanSelection (WishesView.vue), см. её комментарий за семантикой kind.
-const feoPlanSelection = computed<FeoPlanSelection | null>({
-  get() {
-    if (headFeoPlannedItemId.value != null) return { kind: 'planned_item', id: headFeoPlannedItemId.value }
-    if (form.feo_category_id != null) {
-      const row = purchasePlannedResiduals.value.find(
-        r => r.category_id === form.feo_category_id && (r.kind === 'plan_position' || r.kind === 'feo_article')
-      )
-      if (row) return { kind: row.kind, id: form.feo_category_id }
-    }
-    return null
-  },
-  set(val) {
-    if (!val) {
-      headFeoPlannedItemId.value = null
-      return
-    }
-    if (val.kind === 'planned_item') {
-      headFeoPlannedItemId.value = val.id
-    } else {
-      // Плановая позиция/статья ФЭО с планом может оказаться дочерним листом
-      // относительно того, что выбрано в дереве выше — уточняем категорию закупки.
-      headFeoPlannedItemId.value = null
-      form.feo_category_id = val.id
-    }
-  },
-})
-
 // «Не указывать последний уровень» — плановые позиции недоступны (см. skipLast в
-// FeoPlannedItemsSelect), сбрасываем выбор — зеркалит watch(wishFeoSkipLast) в WishesView.vue.
+// FeoPlannedItemsSelect), сбрасываем дефолт для новых строк — зеркалит
+// watch(wishFeoSkipLast) в WishesView.vue.
 watch(feoSkipLast, (v) => { if (v) headFeoPlannedItemId.value = null })
 
-// Подсказка похожих по имени плановых позиций (POST /feo-planned-items/match) — тот же
-// composable и та же логика, что WishesView.vue (_runFeoPlanMatch/wishFeoPlanCandidates),
-// только источник имён — позиции закупки (items.value), а не заявки.
-const { matchQueries: headFeoMatchQueries } = useFeoPlanMatching()
-const headFeoPlanCandidates = ref<FeoMatchCandidate[]>([])
+// Владелец (сессия 2026-08-19): read-only перечень плановых позиций выбранной
+// категории — заменяет собой убранный FeoPlannedItemsSelect в шапке (см. комментарий
+// в шаблоне выше). Фильтрация — та же, что и в FeoPlannedItemsSelect.filteredItems
+// (category_id === выбранная категория ИЛИ выбранная категория среди её предков),
+// источник данных — тот же purchasePlannedResiduals, что и раньше.
+const headPlannedListItems = computed((): FeoPlanPosition[] => {
+  const cid = form.feo_category_id
+  if (cid == null) return []
+  return purchasePlannedResiduals.value.filter(
+    r => r.category_id === cid || (r.ancestor_ids || []).includes(cid)
+  )
+})
 
-async function _runHeadFeoPlanMatch() {
-  const subsidyId = form.subsidy_id
-  if (!subsidyId || form.feo_per_item) { headFeoPlanCandidates.value = []; return }
-  const names = Array.from(new Set(
-    items.value.map((i: any) => (i.item_name || '').trim()).filter(Boolean)
-  ))
-  if (!names.length) { headFeoPlanCandidates.value = []; return }
-  try {
-    const results = await headFeoMatchQueries(names, subsidyId, form.feo_category_id)
-    const byKey = new Map<string, FeoMatchCandidate>()
-    for (const r of results) {
-      for (const c of r.candidates) {
-        const prev = byKey.get(c.key)
-        if (!prev || c.score > prev.score) byKey.set(c.key, c)
-      }
-    }
-    headFeoPlanCandidates.value = Array.from(byKey.values()).sort((a, b) => b.score - a.score).slice(0, 5)
-  } catch {
-    headFeoPlanCandidates.value = []
-  }
+// Форматирование — как fmt()/fmtQty() в FeoPlannedItemsSelect.vue (та же подпись
+// «план · выбрано · остаток», тот же формат чисел), чтобы список выглядел
+// продолжением остальных мест, где эти цифры уже показывались.
+function fmtHeadPlannedMoney(v: number | null | undefined): string {
+  if (v == null) return '—'
+  return v.toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' ₽'
+}
+function fmtHeadPlannedQty(row: FeoPlanPosition): string {
+  const qty = row.planned_quantity != null ? row.planned_quantity.toLocaleString('ru-RU') : '—'
+  return `${qty} ${row.unit || ''}`.trim()
 }
 
-let _headFeoMatchTimer: ReturnType<typeof setTimeout> | null = null
-watch(
-  () => [
-    form.subsidy_id,
-    form.feo_category_id,
-    form.feo_per_item,
-    items.value.map((i: any) => i.item_name).join('|'),
-  ] as const,
-  () => {
-    if (_headFeoMatchTimer) clearTimeout(_headFeoMatchTimer)
-    _headFeoMatchTimer = setTimeout(_runHeadFeoPlanMatch, 400)
-  },
-  { immediate: true },
-)
-
-const headFeoPlanCandidatesForUi = computed((): FeoMatchCandidate[] =>
-  feoPlanSelection.value ? [] : headFeoPlanCandidates.value
-)
-const headFeoPlanSuggestKey = computed(() => {
-  const best = headFeoPlanCandidatesForUi.value.find(c => c.same_category)
-  return best ? best.key : null
-})
-const headFeoPlanSuggestReason = computed(() => {
-  const best = headFeoPlanCandidatesForUi.value.find(c => c.same_category)
-  return best ? `Похоже на «${best.name}» (${Math.round(best.score * 100)}%)` : null
-})
-// Нет отдельного confirm-эндпоинта для закупок (в отличие от заявок,
-// /feo-planned-items/confirm-wish-plan-match) — сама привязка уже применена через
-// update:modelValue, дополнительного действия на подтверждение не требуется.
-function onHeadFeoCandidateConfirmed(_c: FeoMatchCandidate) {}
-
-// Предзаполнение СТАРОГО прямого диалога (openCreateDialog в FeoPlannedItemsSelect) —
-// используется, только когда bulkItems пуст (в закупке ещё нет ни одной именованной
-// позиции). Владелец (сессия 2026-08-17): раньше имя бралось у ПЕРВОГО товара, а сумма —
-// вся НМЦД закупки, из-за чего кнопка «съедала» все 7 позиций заявки в одну — теперь
-// имя по умолчанию — название самой закупки (form.subject), не случайного товара.
-const headFeoPlannedPrefill = computed(() => ({
-  name: form.subject || null,
-  quantity: null,
-  unit: null,
-  amount: displayNmck.value,
-}))
-
-// Позиции закупки для диалога выбора способа создания (FeoPlannedItemsSelect.vue,
-// проп bulkItems) — жалоба владельца (сессия 2026-08-17): «Создать в плане закупок»
-// создавала ровно ОДНУ плановую позицию на имя первого товара и на всю НМЦД закупки,
-// остальные позиции теряли план целиком. idx — индекс в items.value, чтобы после
-// POST /feo-planned-items/bulk можно было привязать созданные id обратно к нужным
-// позициям (см. onHeadFeoBulkItemsCreated).
-const headFeoBulkItems = computed(() =>
-  items.value
-    .map((it: any, idx: number) => ({ it, idx }))
-    .filter(({ it }: any) => (it.item_name || '').trim())
-    .map(({ it, idx }: any) => ({
-      idx,
-      name: (it.item_name || '').trim(),
-      quantity: it.quantity ?? null,
-      unit: it.unit || null,
-      amount: it.total_price ?? null,
-      linked: it.feo_planned_item_id != null,
-    }))
-)
-
-// Родитель диалога выбора способа: привязывает каждую созданную плановую позицию
-// (Ур.5) к своему товару закупки по idx — сразу, без отдельного PUT/PATCH, как и
-// обычный per-item выбор (см. onItemPlannedChange в PurchaseItemsEditor.vue).
-function onHeadFeoBulkItemsCreated(payload: { mode: string; results: { idx: number | null; id: number }[] }) {
-  for (const r of payload.results) {
-    if (r.idx == null) continue
-    const it = items.value[r.idx]
-    if (it) {
-      it.feo_planned_item_id = r.id
-      it.over_plan = false
-    }
+// Удаление плановой позиции прямо из перечня (владелец: «оставить перечень плановых,
+// для возможности их удаления и высвобождения денег») — DELETE /feo-planned-items/{id}
+// с purchase_id ТЕКУЩЕЙ закупки: бэкенд снимает «свои» ссылки (эта закупка + заявка,
+// которая её породила) молча, а если позицию держит ЧУЖАЯ закупка/заявка — отвечает
+// 409 со списком держателей и ничего не меняет (см. backend/app/routers/
+// feo_planned_items.py::delete_planned_item). Кнопка есть только у kind==='planned_item'
+// (FeoPlannedItem) — строки kind='plan_position'/'feo_article' это сама категория ФЭО
+// дерева, их «удаление» — совсем другое действие (справочник ФЭО), вне этой задачи.
+async function deleteHeadPlannedItem(row: FeoPlanPosition) {
+  if (row.kind !== 'planned_item') return
+  const msg = `Удалить плановую позицию «${row.name}»? План ${fmtHeadPlannedMoney(row.planned_amount)}, ` +
+    `сейчас выбрано ${fmtHeadPlannedMoney(row.consumed)}.`
+  if (!confirm(msg)) return
+  try {
+    const qs = purchaseId.value != null ? `?purchase_id=${purchaseId.value}` : ''
+    await apiFetch(`/feo-planned-items/${row.id}${qs}`, { method: 'DELETE', suppressErrorDialog: true })
+    await reloadPurchasePlanned()
+    showSnack('Плановая позиция удалена')
+  } catch (e: any) {
+    showSnack(e?.payload?.message ?? e?.detail ?? e?.message ?? 'Не удалось удалить плановую позицию', 'error')
   }
 }
 

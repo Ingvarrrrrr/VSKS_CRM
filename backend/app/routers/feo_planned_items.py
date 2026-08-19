@@ -220,6 +220,48 @@ def _apply_payment_fields(item: FeoPlannedItem, data: FeoPlannedItemCreate) -> N
 router = APIRouter(prefix="/api/feo-planned-items", tags=["feo_planned_items"])
 
 
+async def _check_planned_item_write_access(current_user, db: AsyncSession, cat: FeoCategory) -> None:
+    """Общая проверка доступа к созданию/удалению плановой позиции (Ур.5
+    FeoPlannedItem) — вынесена из create_planned_item (см. её докстринг,
+    владелец 2026-08-19), чтобы delete_planned_item проверял ровно ту же
+    матрицу доступа, а не дублировал условия:
+      superadmin ЛИБО вкладка feo_categories ЛИБО право wish.edit_feo по
+      субсидии категории ЛИБО вкладка wishes/purchases (кто заводит
+      заявки/закупки, должен уметь поправить недостающую/лишнюю плановую
+      позицию под них).
+    has_org_key (НЕ _has_key_in_any_org/_get_effective) — ненаследующая
+    проверка: иерархия «ставлю задачи» не даёт права на чужую субсидию.
+    POST /bulk, PUT /{id}, /map по-прежнему НЕ используют этот хелпер —
+    остаются доступны только через вкладку feo_categories (владелец
+    ограничил задачу именно созданием/удалением одиночной позиции).
+    """
+    if current_user.role == "superadmin":
+        return
+    has_tab = await _has_key_in_any_org(current_user, db, 'feo_categories')
+    has_edit_feo = False
+    if not has_tab and cat.subsidy_id is not None:
+        subsidy = (await db.execute(
+            select(Subsidy).where(Subsidy.id == cat.subsidy_id)
+        )).scalar_one_or_none()
+        if subsidy is not None:
+            has_edit_feo = await has_org_key(
+                current_user, db, subsidy.org_id, "wish.edit_feo", subsidy_id=subsidy.id,
+            )
+    has_wishes_or_purchases = False
+    if not has_tab and not has_edit_feo:
+        has_wishes_or_purchases = (
+            await _has_key_in_any_org(current_user, db, 'wishes')
+            or await _has_key_in_any_org(current_user, db, 'purchases')
+        )
+    if not has_tab and not has_edit_feo and not has_wishes_or_purchases:
+        raise HTTPException(
+            403,
+            "Нет доступа к справочнику ФЭО, нет права на перераспределение позиций "
+            "заявки по категориям ФЭО и нет вкладки заявок/закупок — действие с "
+            "плановой позицией недоступно",
+        )
+
+
 @router.get("/", response_model=List[FeoPlannedItemOut])
 async def list_planned_items(
     feo_category_id: int = Query(...),
@@ -253,42 +295,11 @@ async def create_planned_item(
     # возможность переделывать всё ФЭО» — согласующий с правом wish.edit_feo
     # (перераспределение позиций заявки по ФЭО) должен мочь создать
     # НЕДОСТАЮЩУЮ плановую позицию, даже без вкладки feo_categories. Остальные
-    # эндпоинты роутера (bulk/PUT/DELETE/map) и весь feo_categories.py
-    # НАМЕРЕННО не тронуты — удаление, перемещение и импорт дерева ФЭО
-    # остаются доступны только через вкладку.
-    # has_org_key (НЕ _has_key_in_any_org/_get_effective) — ненаследующая
-    # проверка права: иерархия «ставлю задачи» не должна давать чужому
-    # руководителю право создавать плановые позиции чужой субсидии.
-    if current_user.role != "superadmin":
-        has_tab = await _has_key_in_any_org(current_user, db, 'feo_categories')
-        has_edit_feo = False
-        if not has_tab and cat.subsidy_id is not None:
-            subsidy = (await db.execute(
-                select(Subsidy).where(Subsidy.id == cat.subsidy_id)
-            )).scalar_one_or_none()
-            if subsidy is not None:
-                has_edit_feo = await has_org_key(
-                    current_user, db, subsidy.org_id, "wish.edit_feo", subsidy_id=subsidy.id,
-                )
-        # Решение владельца (2026-08-19): «Планы должны создаваться всеми, кто
-        # создают закупки и заявки. У него же корректировка будет проходить на
-        # этапе согласования, и вышестоящий должен увидеть, что идёт
-        # превышение, и что-то с этим решить». Третий путь доступа: вкладка
-        # wishes ЛИБО purchases — человек и так заводит заявки/закупки, значит
-        # ему нужно уметь завести недостающую плановую позицию под них.
-        has_wishes_or_purchases = False
-        if not has_tab and not has_edit_feo:
-            has_wishes_or_purchases = (
-                await _has_key_in_any_org(current_user, db, 'wishes')
-                or await _has_key_in_any_org(current_user, db, 'purchases')
-            )
-        if not has_tab and not has_edit_feo and not has_wishes_or_purchases:
-            raise HTTPException(
-                403,
-                "Нет доступа к справочнику ФЭО, нет права на перераспределение позиций "
-                "заявки по категориям ФЭО и нет вкладки заявок/закупок — создание "
-                "плановой позиции недоступно",
-            )
+    # эндпоинты роутера (bulk/PUT/map) и весь feo_categories.py НАМЕРЕННО не
+    # тронуты — перемещение и импорт дерева ФЭО остаются доступны только через
+    # вкладку. DELETE (см. _check_planned_item_write_access, добавлено
+    # 2026-08-19 расширение доступа к удалению) теперь использует ту же матрицу.
+    await _check_planned_item_write_access(current_user, db, cat)
 
     # Задача владельца «план ≠ факт» (шаг D, сессия 2026-08-06): защита от повторения
     # К2 (боевые 16 760 000 — две активные плановые позиции с одинаковым именем под
@@ -567,10 +578,18 @@ async def update_planned_item(
 @router.delete("/{item_id}")
 async def delete_planned_item(
     item_id: int,
+    purchase_id: Optional[int] = Query(
+        None,
+        description=(
+            "Закупка, из которой удаляют плановую позицию (перечень плановых позиций "
+            "в шапке карточки закупки — CreateOrderView.vue). Её ссылки и ссылки "
+            "заявки, породившей эту закупку, считаются «своими» и просто снимаются."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_tab('feo_categories')),
+    current_user=Depends(get_current_user),
 ):
-    """Жёсткое удаление плановой позиции.
+    """Удаление плановой позиции.
 
     БАГ ЦЕЛОСТНОСТИ (владелец, 2026-08-17): здесь раньше не снимались ссылки
     у purchase_items/wish_items.feo_planned_item_id перед удалением строки —
@@ -586,6 +605,24 @@ async def delete_planned_item(
     вторая, независимая от наличия констрейнта в БД, страховка (в той же
     транзакции, до удаления строки): поведение не должно зависеть от того,
     жива ли FK в конкретном окружении.
+
+    ЗАЩИТА ОТ ПОРЧИ ЧУЖИХ ЗАКУПОК (владелец, 2026-08-19): «Меню с кучей
+    переключателей... я выбираю одну и привязываюсь сразу ко всем — это
+    невозможно... надо просто оставить перечень плановых, для возможности их
+    удаления и высвобождения денег» — CreateOrderView.vue теперь показывает
+    read-only перечень плановых позиций категории с кнопкой удаления вместо
+    привязки. Одна и та же плановая позиция может быть привязана к позициям
+    НЕСКОЛЬКИХ разных закупок/заявок одновременно — удаление её из ОДНОЙ
+    карточки закупки не должно молча отвязывать и обнулять план у чужих.
+    purchase_id (закупка, из которой жмут «удалить») + заявка, породившая
+    именно эту закупку (Purchase.wish_id), — единственные держатели, которых
+    можно снять молча. Любой ДРУГОЙ держатель (другая закупка/заявка) блокирует
+    удаление 409-м с перечнем — реестровый номер закупки и/или номер заявки,
+    максимум 3, дальше «и ещё N»; в БД при этом ничего не меняется.
+    Доступ — расширен под ту же матрицу, что и POST / (см.
+    _check_planned_item_write_access) вместо жёсткой привязки к вкладке
+    feo_categories: владелец явно попросил, чтобы удаление работало из
+    карточки закупки/заявки, а не только из справочника ФЭО.
     """
     item = (await db.execute(
         select(FeoPlannedItem).where(FeoPlannedItem.id == item_id)
@@ -593,9 +630,50 @@ async def delete_planned_item(
     if not item:
         raise HTTPException(404, "Плановая позиция не найдена")
     _feo_cat_id = item.feo_category_id
-    _sid = (await db.execute(
-        select(FeoCategory.subsidy_id).where(FeoCategory.id == _feo_cat_id)
+    cat = (await db.execute(
+        select(FeoCategory).where(FeoCategory.id == _feo_cat_id)
     )).scalar_one_or_none()
+    if cat is None:
+        raise HTTPException(404, "Категория ФЭО не найдена")
+    await _check_planned_item_write_access(current_user, db, cat)
+    _sid = cat.subsidy_id
+
+    own_purchase_id = purchase_id
+    own_wish_id: Optional[int] = None
+    if purchase_id is not None:
+        own_wish_id = (await db.execute(
+            select(Purchase.wish_id).where(Purchase.id == purchase_id)
+        )).scalar_one_or_none()
+
+    pi_holder_rows = (await db.execute(
+        select(Purchase.id, Purchase.registry_number)
+        .join(PurchaseItem, PurchaseItem.purchase_id == Purchase.id)
+        .where(PurchaseItem.feo_planned_item_id == item_id)
+        .distinct()
+    )).all()
+    wi_holder_rows = (await db.execute(
+        select(Wish.id, Wish.title)
+        .join(WishItem, WishItem.wish_id == Wish.id)
+        .where(WishItem.feo_planned_item_id == item_id)
+        .distinct()
+    )).all()
+
+    foreign_purchases = [(pid, reg) for pid, reg in pi_holder_rows if pid != own_purchase_id]
+    foreign_wishes = [(wid, title) for wid, title in wi_holder_rows if wid != own_wish_id]
+
+    if foreign_purchases or foreign_wishes:
+        holders = [f"закупка {reg or ('№' + str(pid))}" for pid, reg in foreign_purchases]
+        holders += [f"заявка №{wid}" for wid, _title in foreign_wishes]
+        shown = holders[:3]
+        more = len(holders) - len(shown)
+        holders_text = ", ".join(shown) + (f" и ещё {more}" if more > 0 else "")
+        raise HTTPException(
+            409,
+            f"Плановую позицию «{item.name}» использует не только эта закупка: "
+            f"{holders_text}. Сначала снимите привязку там — из этой карточки "
+            "удалять нельзя.",
+        )
+
     await db.execute(
         sql_update(PurchaseItem)
         .where(PurchaseItem.feo_planned_item_id == item_id)

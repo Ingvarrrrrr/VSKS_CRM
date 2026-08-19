@@ -6,10 +6,11 @@ from sqlalchemy import select, update as sql_update, func as sqlfunc, or_ as sql
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import get_current_user, require_role, ADMIN_ROLES
-from app.auth.permissions import require_tab
+from app.auth.permissions import require_tab, has_org_key, _has_key_in_any_org
 from app.database import get_db
 from app.models.feo_planned_item import FeoPlannedItem
 from app.models.feo_category import FeoCategory
+from app.models.subsidy import Subsidy
 from app.models.purchase_item import PurchaseItem
 from app.models.purchase import Purchase
 from app.models.product import Product
@@ -215,13 +216,41 @@ async def list_planned_items(
 async def create_planned_item(
     data: FeoPlannedItemCreate,
     db: AsyncSession = Depends(get_db),
-    current_user=Depends(require_tab('feo_categories')),
+    current_user=Depends(get_current_user),
 ):
     cat = (await db.execute(
         select(FeoCategory).where(FeoCategory.id == data.feo_category_id)
     )).scalar_one_or_none()
     if not cat:
         raise HTTPException(404, "Категория ФЭО не найдена")
+
+    # Владелец (2026-08-19): «поправить распределение не должно давать
+    # возможность переделывать всё ФЭО» — согласующий с правом wish.edit_feo
+    # (перераспределение позиций заявки по ФЭО) должен мочь создать
+    # НЕДОСТАЮЩУЮ плановую позицию, даже без вкладки feo_categories. Остальные
+    # эндпоинты роутера (bulk/PUT/DELETE/map) и весь feo_categories.py
+    # НАМЕРЕННО не тронуты — удаление, перемещение и импорт дерева ФЭО
+    # остаются доступны только через вкладку.
+    # has_org_key (НЕ _has_key_in_any_org/_get_effective) — ненаследующая
+    # проверка права: иерархия «ставлю задачи» не должна давать чужому
+    # руководителю право создавать плановые позиции чужой субсидии.
+    if current_user.role != "superadmin":
+        has_tab = await _has_key_in_any_org(current_user, db, 'feo_categories')
+        has_edit_feo = False
+        if not has_tab and cat.subsidy_id is not None:
+            subsidy = (await db.execute(
+                select(Subsidy).where(Subsidy.id == cat.subsidy_id)
+            )).scalar_one_or_none()
+            if subsidy is not None:
+                has_edit_feo = await has_org_key(
+                    current_user, db, subsidy.org_id, "wish.edit_feo", subsidy_id=subsidy.id,
+                )
+        if not has_tab and not has_edit_feo:
+            raise HTTPException(
+                403,
+                "Нет доступа к справочнику ФЭО и нет права на перераспределение позиций "
+                "заявки по категориям ФЭО — создание плановой позиции недоступно",
+            )
 
     # Задача владельца «план ≠ факт» (шаг D, сессия 2026-08-06): защита от повторения
     # К2 (боевые 16 760 000 — две активные плановые позиции с одинаковым именем под

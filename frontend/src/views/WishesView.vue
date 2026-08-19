@@ -2172,6 +2172,7 @@ import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import ValidationArrows from '@/components/ValidationArrows.vue'
 import { useCardView } from '@/composables/useCardView'
 import RegistryExportButton from '@/components/RegistryExportButton.vue'
+import { useAuthStore } from '@/stores/auth'
 
 // Phase 31-06: GALA-orange for unseen-changes badges
 const GALA_ORANGE = '#fb923c'
@@ -2179,6 +2180,13 @@ const GALA_ORANGE = '#fb923c'
 const router = useRouter()
 const route = useRoute()
 const registryArea = ref<HTMLElement | null>(null)
+
+// Владелец (2026-08-19): «менять позиции может только тот, кто имеет право» —
+// см. canEditWishFeo ниже. Тот же паттерн, что и PaymentRegistryView.vue.
+const authStore = useAuthStore()
+function can(action: string) {
+  return authStore.hasAction?.(action) ?? true
+}
 
 // Владелец, 2026-08-13: снимок сопоставленной позиции закупки — приходит на каждой
 // позиции карточки заявки (GET /wishes/{id}). В списке заявок этого поля нет.
@@ -2798,9 +2806,16 @@ const canAssigneeAct = computed(() =>
 const isChainApprover = computed(() =>
   wishApprovers.value.some(a => a.user_id === currentUserId)
 )
+// Владелец (2026-08-19): «менять позиции может только тот, кто имеет право» —
+// построчная правка ФЭО (см. backend PATCH /execution, гейт wish.edit_feo)
+// теперь дополнительно требует явного права, иначе любой согласующий из
+// цепочки (например, случайный юрист) мог сам перетыкивать позиции.
 const canEditWishFeo = computed(() =>
-  canAssigneeAct.value
-  || (!!editingWish.value && editingWish.value.status === 'submitted' && isChainApprover.value)
+  can('wish.edit_feo')
+  && (
+    canAssigneeAct.value
+    || (!!editingWish.value && editingWish.value.status === 'submitted' && isChainApprover.value)
+  )
 )
 // Зеркало backend-гейта PATCH /wishes/{id}/execution: assigned_to может менять
 // менеджер/админ, согласующий цепочки или сам назначенный (при статусах submitted/approved)

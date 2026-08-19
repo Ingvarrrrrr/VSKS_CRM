@@ -11,7 +11,7 @@ from app.auth.jwt import (
     get_current_user, get_org_filter, require_role,
     ALL_ROLES, MANAGER_ROLES, ADMIN_ROLES, OWNER_ROLES,
 )
-from app.auth.permissions import require_tab
+from app.auth.permissions import require_tab, has_org_key
 from app.auth.visibility import build_visibility_clause, get_visible_user_ids, get_visible_subsidy_ids
 from app.models.user import User
 from app.models.wish import Wish
@@ -2127,6 +2127,21 @@ async def patch_wish_execution(
         )).scalar_one_or_none()
         if not in_chain:
             raise HTTPException(status_code=403, detail="Только согласующий (в т.ч. из цепочки) или менеджер+ может менять эти поля")
+
+    # Владелец (2026-08-19): «менять позиции может только тот, кто имеет право» —
+    # правку ФЭО (категория заявки + построчные feo_category_id/feo_planned_item_id)
+    # закрываем ОТДЕЛЬНЫМ правом wish.edit_feo — иначе любой согласующий из цепочки
+    # (например, случайный юрист) мог сам перетыкивать позиции. Остальные поля
+    # этого эндпоинта (executor_id/execution_deadline/event_id/assigned_to) это
+    # право не трогает — их разрешают проверки выше (цепочка/assignee/менеджер+).
+    _feo_fields_touched = body.feo_category_id is not None or body.items is not None
+    if _feo_fields_touched and current_user.role != "superadmin":
+        if not await has_org_key(current_user, db, wish.org_id, "wish.edit_feo", subsidy_id=wish.subsidy_id):
+            raise HTTPException(
+                status_code=403,
+                detail="Право на перераспределение позиций заявки по категориям ФЭО не выдано, обратитесь к администратору",
+            )
+
     if body.executor_id is not None:
         wish.executor_id = body.executor_id
     if body.execution_deadline is not None:

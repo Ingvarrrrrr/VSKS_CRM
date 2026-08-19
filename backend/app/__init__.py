@@ -907,6 +907,41 @@ async def lifespan(app_: FastAPI):
         import logging
         logging.getLogger(__name__).warning(f"feo_budget.view_tree_amounts seed skipped (non-fatal): {e}")
 
+    # Владелец (2026-08-19): «менять позиции может только тот, кто имеет право» —
+    # правку категории ФЭО/плановой позиции построчно (коммит 80dfe9c) мог делать
+    # любой согласующий из цепочки, включая случайного участника (например,
+    # юриста). Отдельное action-право wish.edit_feo сужает это до менеджеров+.
+    # Дефолт: superadmin/admin/org_admin/manager=TRUE; employee=FALSE (сознательно,
+    # это и есть защита).
+    try:
+        from sqlalchemy import select as _sel
+        from .models.permission import PermissionAction, RolePermission
+        async with async_session() as db:
+            ACTION_KEY = 'wish.edit_feo'
+            ex = await db.execute(_sel(PermissionAction).where(PermissionAction.action_key == ACTION_KEY))
+            if not ex.scalar_one_or_none():
+                db.add(PermissionAction(
+                    action_key=ACTION_KEY,
+                    description='Перераспределение позиций заявки по категориям ФЭО и плановым позициям',
+                ))
+                await db.commit()
+            ROLE_DEFAULTS = [
+                ('superadmin', True), ('admin', True),
+                ('org_admin', True), ('manager', True),
+                ('employee', False),
+            ]
+            for role_name, granted in ROLE_DEFAULTS:
+                ex = await db.execute(_sel(RolePermission).where(
+                    RolePermission.role_name == role_name,
+                    RolePermission.key == ACTION_KEY,
+                ))
+                if not ex.scalar_one_or_none():
+                    db.add(RolePermission(role_name=role_name, key=ACTION_KEY, granted=granted))
+            await db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"wish.edit_feo action seed skipped (non-fatal): {e}")
+
     # Phase 18: idempotent seed для tab 'staff_directory' (all 5 roles)
     try:
         from sqlalchemy import select as _sel

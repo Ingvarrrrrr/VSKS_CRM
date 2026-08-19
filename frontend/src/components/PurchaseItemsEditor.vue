@@ -141,6 +141,7 @@
         <ItemsTableStages
           :items="localItems"
           :readonly="props.readonly"
+          :feo-attrs-editable="props.feoAttrsEditable"
           :tz-frozen="tzFrozen"
           :allowed-item-types="props.allowedItemTypes"
           :contractors="contractors"
@@ -227,6 +228,7 @@
           :items="localItems"
           :display-rows="itemsDisplayRows"
           :readonly="props.readonly"
+          :feo-attrs-editable="props.feoAttrsEditable"
           :supports-split="true"
           :allowed-item-types="props.allowedItemTypes"
           :vat-mode="props.vatMode || 'uniform'"
@@ -284,6 +286,7 @@
           :items="localItems"
           :display-rows="itemsDisplayRows"
           :readonly="props.readonly"
+          :feo-attrs-editable="props.feoAttrsEditable"
           :tz-frozen="tzFrozen"
           :allowed-item-types="props.allowedItemTypes"
           :vat-mode="props.vatMode || 'uniform'"
@@ -907,6 +910,15 @@ const props = withDefaults(defineProps<{
   supportsFullProductDialog?: boolean
   supportsPhotoUpload?: boolean
   readonly?: boolean
+  // Владелец (2026-08-19): согласующий заявки из цепочки видит состав (название/
+  // кол-во/цену/ед./страну) заблокированным через readonly=true — состав это
+  // предмет закупки, менять его не его дело. Но перераспределить позиции по
+  // категориям/плановым позициям ФЭО он должен мочь — это его специфика. Когда
+  // readonly=true И feoAttrsEditable=true, ТОЛЬКО построчные FeoTreeSelect/
+  // FeoPlannedItemsSelect (и кнопка «Создать в плане закупок» внутри последнего)
+  // остаются кликабельными — см. feoReadonly в ItemsTableFlat/ItemsTableStages/
+  // ItemsCardsView.vue. Остальные поля строки и add/remove-позиция не трогает.
+  feoAttrsEditable?: boolean
   vatMode?: 'uniform' | 'per_item'          // Phase 26-U-3: НДС режим
   uniformVatRate?: string | null             // Phase 26-U-3: ставка для uniform режима
   formMode?: string                          // Phase 26-X: 'advance_report' → показывать колонку Контрагент
@@ -957,6 +969,7 @@ const props = withDefaults(defineProps<{
   supportsFullProductDialog: true,
   supportsPhotoUpload: true,
   readonly: false,
+  feoAttrsEditable: false,
   purchaseId: null,
   vatMode: 'uniform',
   uniformVatRate: null,

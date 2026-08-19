@@ -17,7 +17,7 @@ from app.models.user import User
 from app.models.wish import Wish
 from app.models.wish_item import WishItem
 from app.models.wish_member import WishMember
-from app.schemas.wishes import WishCreate, WishUpdate, WishOut, WishReject, WishConvert, WishItemPatch, WishExecutionPatch, WishStatusForce, WishStop, WishItemPurchaseMatch, WishPurchaseSummary
+from app.schemas.wishes import WishCreate, WishUpdate, WishOut, WishReject, WishConvert, WishItemPatch, WishExecutionPatch, WishItemFeoPatch, WishStatusForce, WishStop, WishItemPurchaseMatch, WishPurchaseSummary
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.feo_category import FeoCategory
@@ -35,7 +35,9 @@ from app.services.plan_autoassign import (
     auto_assign_planned_items as _auto_assign_planned_items,
     backfill_item_type_from_plan as _backfill_item_type_from_plan,
     move_or_detach_planned_item as _move_or_detach_planned_item,
+    deactivate_if_orphaned as _deactivate_if_orphaned,
 )
+from app.models.feo_planned_item import FeoPlannedItem
 from decimal import Decimal
 
 
@@ -2136,9 +2138,93 @@ async def patch_wish_execution(
     # W2: assigned_to меняется без сброса цепочки согласования
     if body.assigned_to is not None:
         wish.assigned_to = body.assigned_to
+
+    # Владелец (2026-08-19): построчные ФЭО-правки согласующего (см.
+    # WishItemFeoPatch) — состав заявки для него заблокирован на фронте
+    # (PurchaseItemsEditor readonly + feoAttrsEditable), но категорию и
+    # плановую позицию по каждой строке он вправе перераспределить. Здесь —
+    # ТОЛЬКО эти два поля, никогда item_name/quantity/unit_price/total_price/
+    # unit/country_origin и без добавления/удаления строк.
+    _plan_transfer_warnings: list[str] = []
+    if body.items is not None:
+        _items_by_id = {wi.id: wi for wi in (wish.items or [])}
+        # Валидация ВСЕГО набора до мутации — либо применяем целиком, либо
+        # не трогаем ничего (одна транзакция, никаких частичных правок при 400/409).
+        for item_patch in body.items:
+            if item_patch.id not in _items_by_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Позиция #{item_patch.id} не принадлежит заявке №{wish.id}",
+                )
+        for item_patch in body.items:
+            wi = _items_by_id[item_patch.id]
+            _fields_set = item_patch.model_fields_set
+            _cat_changing = (
+                'feo_category_id' in _fields_set
+                and item_patch.feo_category_id != wi.feo_category_id
+            )
+            if 'feo_category_id' in _fields_set:
+                wi.feo_category_id = item_patch.feo_category_id
+            if 'feo_planned_item_id' in _fields_set:
+                _old_fpi_id = wi.feo_planned_item_id
+                if item_patch.feo_planned_item_id is not None:
+                    fpi = await db.get(FeoPlannedItem, item_patch.feo_planned_item_id)
+                    if not fpi:
+                        raise HTTPException(status_code=409, detail="Плановая позиция не найдена")
+                    if not fpi.is_active:
+                        raise HTTPException(
+                            status_code=409,
+                            detail=(
+                                f"Плановая позиция «{fpi.name}» деактивирована (удалена из плана), "
+                                "привязка к ней невозможна — выберите действующую или создайте новую."
+                            ),
+                        )
+                    if wi.feo_category_id is None or fpi.feo_category_id != wi.feo_category_id:
+                        _chosen_cat_name = (await db.execute(
+                            select(FeoCategory.name).where(FeoCategory.id == fpi.feo_category_id)
+                        )).scalar_one_or_none() or f"#{fpi.feo_category_id}"
+                        if wi.feo_category_id is not None:
+                            _target_cat_name = (await db.execute(
+                                select(FeoCategory.name).where(FeoCategory.id == wi.feo_category_id)
+                            )).scalar_one_or_none() or f"#{wi.feo_category_id}"
+                        else:
+                            _target_cat_name = "без категории ФЭО"
+                        raise HTTPException(
+                            status_code=409,
+                            detail=(
+                                f"Плановая позиция «{fpi.name}» относится к категории «{_chosen_cat_name}», "
+                                f"а позиция заявки — к категории «{_target_cat_name}». "
+                                "Выберите плановую позицию той же категории."
+                            ),
+                        )
+                    wi.feo_planned_item_id = item_patch.feo_planned_item_id
+                    wi.over_plan = False
+                else:
+                    wi.feo_planned_item_id = None
+                    wi.over_plan = False
+                if _old_fpi_id is not None and _old_fpi_id != wi.feo_planned_item_id:
+                    _old_fpi = await db.get(FeoPlannedItem, _old_fpi_id)
+                    await _deactivate_if_orphaned(db, _old_fpi)
+            elif _cat_changing and wi.feo_planned_item_id is not None:
+                # Категория сменилась, а плановую позицию явно не переприслали —
+                # та же логика «плановые позиции следуют за сменой категории»,
+                # что и в update_wish (см. комментарий там, владелец 2026-08-17).
+                if wi.feo_category_id is not None:
+                    _w = await _move_or_detach_planned_item(db, wi, wi.feo_category_id)
+                    if _w:
+                        _plan_transfer_warnings.append(_w)
+                else:
+                    _old_fpi_id2 = wi.feo_planned_item_id
+                    _old_fpi2 = await db.get(FeoPlannedItem, _old_fpi_id2)
+                    wi.feo_planned_item_id = None
+                    wi.over_plan = False
+                    await _deactivate_if_orphaned(db, _old_fpi2)
+
     await db.commit()
     wish = await _load_wish(wish_id, db)
-    return _enrich(wish)
+    out = _enrich(wish)
+    out.plan_transfer_warnings = _plan_transfer_warnings
+    return out
 
 
 @router.post("/{wish_id}/status", response_model=WishOut)

@@ -1296,6 +1296,7 @@
                     :supports-full-product-dialog="true"
                     :supports-photo-upload="true"
                     :readonly="!isWishEditable"
+                    :feo-attrs-editable="!isWishEditable && canEditWishFeo"
                     :feo-per-item="true"
                     :subsidy-id="wishForm.subsidy_id"
                     :subsidy-name="selectedSubsidyName"
@@ -1410,7 +1411,13 @@
                   @candidate-confirmed="onWishFeoCandidateConfirmed"
                   @bulk-items-created="onWishFeoBulkItemsCreated"
                 />
-                <div v-if="!canAssigneeAct" class="mt-2">
+                <!-- Владелец (2026-08-19): для «чистого» согласующего из цепочки (не assignee/admin)
+                     кнопка видна всегда (!canAssigneeAct). Для assignee/admin (canAssigneeAct — у них
+                     есть свои кнопки решения «Распределить и одобрить»/«Отклонить» выше) кнопка
+                     появляется ДОПОЛНИТЕЛЬНО, только когда они что-то поменяли построчно в
+                     категориях/плановых позициях ФЭО (wishItemsFeoDirty) — иначе не мешает их обычному
+                     сценарию одобрения. -->
+                <div v-if="!canAssigneeAct || wishItemsFeoDirty" class="mt-2">
                   <v-btn size="small" color="primary" variant="tonal" prepend-icon="mdi-content-save"
                          :loading="savingExecution" @click="saveExecution">
                     Сохранить ФЭО
@@ -3667,6 +3674,10 @@ async function openEditDialog(wish: Wish) {
     // Пункт 3 (владелец, 2026-08-13): базовый снимок формы «как загружено» — approveWish
     // сравнивает с ним, чтобы понять, есть ли несохранённые правки перед согласованием.
     wishFormSavedSnapshot.value = wishPayloadSnapshotJson()
+    // Владелец (2026-08-19): снимок построчных feo_category_id/feo_planned_item_id —
+    // см. wishItemsFeoSnapshot/wishItemsFeoDirty у saveExecution. Берётся ПОСЛЕ автозаполнения
+    // категории из шапки выше (это не правка согласующего, а достройка данных при загрузке).
+    snapshotWishItemsFeo()
   } finally {
     wishDialogLoading.value = false
   }
@@ -3695,6 +3706,48 @@ async function forceStatus() {
 }
 
 const savingExecution = ref(false)
+
+// Владелец (2026-08-19): согласующий из цепочки не может редактировать состав
+// заявки (PurchaseItemsEditor readonly), но должен уметь перераспределить
+// позиции по категориям/плановым позициям ФЭО построчно — эти изменения
+// прилетают в те же wishForm.value.items объекты (FeoTreeSelect/FeoPlannedItemsSelect
+// пишут в них напрямую через emitUpdate, независимо от readonly, который блокирует
+// только название/кол-во/цену). Снимок feo_category_id/feo_planned_item_id на момент
+// открытия карточки — чтобы понимать, что реально поменялось, и отправлять на
+// PATCH /execution только эти два поля, никогда не состав. Снимок ключуется по id —
+// позиции без id (только что добавленные автором, недоступно согласующему — состав
+// у него readonly) в диф не попадают.
+const wishItemsFeoSnapshot = ref<Map<number, { feo_category_id: number | null; feo_planned_item_id: number | null }>>(new Map())
+
+function snapshotWishItemsFeo() {
+  const m = new Map<number, { feo_category_id: number | null; feo_planned_item_id: number | null }>()
+  for (const it of wishForm.value.items as any[]) {
+    if (it.id != null) {
+      m.set(it.id, {
+        feo_category_id: it.feo_category_id ?? null,
+        feo_planned_item_id: it.feo_planned_item_id ?? null,
+      })
+    }
+  }
+  wishItemsFeoSnapshot.value = m
+}
+
+const wishItemsFeoDirtyList = computed(() => {
+  const out: { id: number; feo_category_id: number | null; feo_planned_item_id: number | null }[] = []
+  for (const it of wishForm.value.items as any[]) {
+    if (it.id == null) continue
+    const before = wishItemsFeoSnapshot.value.get(it.id)
+    if (!before) continue
+    const catId = it.feo_category_id ?? null
+    const planId = it.feo_planned_item_id ?? null
+    if (before.feo_category_id !== catId || before.feo_planned_item_id !== planId) {
+      out.push({ id: it.id, feo_category_id: catId, feo_planned_item_id: planId })
+    }
+  }
+  return out
+})
+const wishItemsFeoDirty = computed(() => wishItemsFeoDirtyList.value.length > 0)
+
 async function saveExecution() {
   if (!editingWishId.value) { showSnack('Сначала сохраните заявку', 'warning'); return }
   savingExecution.value = true
@@ -3706,14 +3759,18 @@ async function saveExecution() {
       feo_category_id: wishFeoSelected.value || wishForm.value.feo_category_id,
       assigned_to: wishForm.value.assigned_to,
     }
+    if (wishItemsFeoDirtyList.value.length > 0) {
+      body.items = wishItemsFeoDirtyList.value
+    }
     await apiFetch(`/wishes/${editingWishId.value}/execution`, {
       method: 'PATCH',
       body: JSON.stringify(body),
     })
     showSnack('Сохранено: исполнитель / срок / мероприятие / ФЭО / получатель')
+    snapshotWishItemsFeo()
     await reloadActiveTab()
   } catch (e: any) {
-    showSnack(`Ошибка: ${e?.message || e?.payload?.message || 'не удалось сохранить'}`, 'error')
+    showSnack(`Ошибка: ${e?.payload?.message ?? e?.detail ?? e?.message ?? 'не удалось сохранить'}`, 'error')
   } finally {
     savingExecution.value = false
   }

@@ -114,7 +114,7 @@
                   :leaves="feoLeaves"
                   :plan-positions="plannedItems || []"
                   :node-amounts="nodeAmounts"
-                  :readonly="readonly"
+                  :readonly="feoReadonly"
                   :error="isFeoMissing(item)"
                   class="mt-2"
                   :allow-unallocated="!!subsidyId"
@@ -136,7 +136,7 @@
                 :model-value="plannedSelectionFor ? plannedSelectionFor(item) : null"
                 :category-id="item.feo_node_id ?? item.feo_category_id ?? defaultFeoCategoryId ?? null"
                 :nodes="feoNodes" :items="plannedItems || []"
-                :amount="item.total_price" :readonly="readonly" dense class="mt-1"
+                :amount="item.total_price" :readonly="feoReadonly" dense class="mt-1"
                 :prefill="{ name: item.item_name, quantity: item.quantity, unit: item.unit, amount: item.total_price }"
                 @update:model-value="(v) => emit('item-planned-change', idx, v)"
                 @planned-item-created="emit('planned-item-created')" />
@@ -270,6 +270,10 @@ const VIRT_THRESHOLD = 40
 const props = defineProps<{
   items: EditorItem[]
   readonly: boolean
+  // Владелец (2026-08-19): согласующий заявки — состав заблокирован, но построчная
+  // категория/плановая позиция ФЭО остаётся редактируемой. См. одноимённый проп в
+  // PurchaseItemsEditor.vue и feoReadonly ниже.
+  feoAttrsEditable?: boolean
   allowedItemTypes: string[]
   vatMode: 'uniform' | 'per_item'
   feoPerItem: boolean
@@ -319,6 +323,9 @@ const props = defineProps<{
 }>()
 
 const virtualize = computed(() => props.items.length > VIRT_THRESHOLD)
+// См. feoAttrsEditable в defineProps выше — построчные ФЭО-контролы остаются
+// кликабельными даже при readonly=true, если родитель явно это разрешил.
+const feoReadonly = computed(() => props.readonly && !props.feoAttrsEditable)
 
 const bodyRows = computed<ItemsDisplayRow[]>(() =>
   props.displayRows ?? props.items.map((_, i) => ({ idx: i }))

@@ -199,6 +199,17 @@ class WishStop(BaseModel):
     reason: Optional[str] = None
 
 
+class WishItemFeoPatch(BaseModel):
+    """Владелец (2026-08-19): согласующий из цепочки может перераспределять
+    позиции заявки по категориям/плановым позициям ФЭО, НЕ трогая состав
+    (название/кол-во/цену/ед./страну) — тот заблокирован для него на фронте
+    (PurchaseItemsEditor readonly + feoAttrsEditable). Только эти два поля
+    и попадают в патч построчно, см. patch_wish_execution."""
+    id: int
+    feo_category_id: Optional[int] = None
+    feo_planned_item_id: Optional[int] = None
+
+
 class WishExecutionPatch(BaseModel):
     """B-exec: approver sets executor + execution deadline + event + assigned_to."""
     executor_id: Optional[int] = None
@@ -206,6 +217,9 @@ class WishExecutionPatch(BaseModel):
     event_id: Optional[int] = None
     feo_category_id: Optional[int] = None
     assigned_to: Optional[int] = None
+    # Построчные ФЭО-правки согласующего (см. WishItemFeoPatch) — отдельно от
+    # WishUpdate.items (тот меняет состав, доступен только автору/участнику).
+    items: Optional[List[WishItemFeoPatch]] = None
 
 
 class WishStatusForce(BaseModel):

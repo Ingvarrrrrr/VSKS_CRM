@@ -227,7 +227,7 @@
                   :leaves="feoLeaves"
                   :plan-positions="plannedItems || []"
                   :node-amounts="nodeAmounts"
-                  :readonly="readonly"
+                  :readonly="feoReadonly"
                   :error="isFeoMissing(item)"
                   label="Категория ФЭО"
                   required
@@ -251,7 +251,7 @@
                 :model-value="plannedSelectionFor ? plannedSelectionFor(item) : null"
                 :category-id="item.feo_node_id ?? item.feo_category_id ?? defaultFeoCategoryId ?? null"
                 :nodes="feoNodes" :items="plannedItems || []"
-                :amount="item.total_price" :readonly="readonly" dense
+                :amount="item.total_price" :readonly="feoReadonly" dense
                 style="flex:1 1 320px;min-width:260px"
                 :prefill="{ name: item.item_name, quantity: item.quantity, unit: item.unit, amount: item.total_price }"
                 @update:model-value="(v) => emit('item-planned-change', idx, v)"
@@ -302,6 +302,12 @@ const VIRT_THRESHOLD = 40
 const props = defineProps<{
   items: EditorItem[]
   readonly: boolean
+  // Владелец (2026-08-19): согласующий заявки видит состав заблокированным
+  // (readonly=true), но должен иметь возможность перераспределить категорию/
+  // плановую позицию ФЭО построчно — см. одноимённый проп в PurchaseItemsEditor.vue.
+  // Действует ТОЛЬКО на FeoTreeSelect/FeoPlannedItemsSelect ниже (см. feoReadonly),
+  // остальные поля строки остаются readonly как есть.
+  feoAttrsEditable?: boolean
   // Шаг 2 «план ≠ факт» (сессия 2026-08-06): закупка объявлена (статус «Ведётся
   // работа» и далее) — кол-во/цена ТЗ заморожены. Считается в родителе
   // (PurchaseItemsEditor.vue::tzFrozen) по purchaseStatus.
@@ -369,6 +375,9 @@ const virtualize = computed(() => props.items.length > VIRT_THRESHOLD)
 // объявлена (см. ItemsTableStages.vue — тот же паттерн).
 const tzDisabled = computed(() => props.readonly || !!props.tzFrozen)
 const tzFrozenTooltip = 'Закупка объявлена — кол-во и цена ТЗ зафиксированы. Итоговую цену по результатам закупки внесите в договоре закупки.'
+// См. feoAttrsEditable выше — построчные ФЭО-контролы остаются кликабельными
+// даже при readonly=true, если родитель явно это разрешил.
+const feoReadonly = computed(() => props.readonly && !props.feoAttrsEditable)
 
 const bodyRows = computed<ItemsDisplayRow[]>(() =>
   props.displayRows ?? props.items.map((_, i) => ({ idx: i }))

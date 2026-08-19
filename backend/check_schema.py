@@ -10,6 +10,7 @@ Run as part of EVERY backend deploy, BEFORE docker restart:
     docker exec vsks-crm-backend-1 python /app/check_schema.py --apply
 """
 import asyncio
+import re
 import sys
 import os
 
@@ -104,13 +105,63 @@ def _sqlalchemy_type_to_pg(col_type) -> str:
     return 'TEXT'
 
 
+# Инцидент деплоя 2026-08-19: `Column(..., server_default="manual")` — голая
+# Python-строка — подставлялась в SQL как есть → `DEFAULT manual` без кавычек.
+# Postgres прочитал это не как строковый литерал, а как ССЫЛКУ НА КОЛОНКУ
+# `manual` (asyncpg.exceptions.FeatureNotSupportedError: cannot use column
+# reference in DEFAULT expression). Ключевые слова/выражения (CURRENT_TIMESTAMP,
+# TRUE/FALSE, now(), числа) — валидный SQL и кавычки им противопоказаны, поэтому
+# заворачивать в кавычки нужно ТОЛЬКО голый строковый литерал, отличая его от
+# SQL-выражения по форме.
+_SQL_KEYWORD_DEFAULTS = {
+    'null', 'true', 'false',
+    'current_timestamp', 'current_date', 'current_time',
+    'current_user', 'localtimestamp', 'localtime',
+}
+_FUNC_CALL_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*\s*\(.*\)$')
+_NUMBER_RE = re.compile(r'^-?\d+(\.\d+)?$')
+
+
+def _is_sql_expression(value: str) -> bool:
+    """True, если строка сама по себе валидный SQL (не нуждается в кавычках)."""
+    v = value.strip()
+    if not v:
+        return False
+    if v.lower() in _SQL_KEYWORD_DEFAULTS:
+        return True
+    if _NUMBER_RE.match(v):
+        return True
+    if _FUNC_CALL_RE.match(v):
+        return True
+    return False
+
+
+def _quote_default_literal(value: str) -> str:
+    """Строку — в кавычки (с экранированием '), SQL-выражение — как есть."""
+    if _is_sql_expression(value):
+        return value
+    escaped = value.replace("'", "''")
+    return f"'{escaped}'"
+
+
 def _col_default_clause(col) -> str:
     """Generate DEFAULT clause for a column."""
     server_default = col.server_default
     if server_default is not None:
         # Use server_default if explicitly set
         if hasattr(server_default, 'arg'):
-            return f" DEFAULT {server_default.arg}"
+            arg = server_default.arg
+            # text("now()") / FetchedValue / прочие ClauseElement — уже готовый
+            # SQL-текст (доступен через .text), кавычить нельзя.
+            if hasattr(arg, 'text'):
+                return f" DEFAULT {arg.text}"
+            if isinstance(arg, bool):
+                return f" DEFAULT {'TRUE' if arg else 'FALSE'}"
+            if isinstance(arg, str):
+                return f" DEFAULT {_quote_default_literal(arg)}"
+            return f" DEFAULT {arg}"
+        if isinstance(server_default, str):
+            return f" DEFAULT {_quote_default_literal(server_default)}"
         return f" DEFAULT {server_default}"
 
     # Check Python-side default
@@ -1451,17 +1502,34 @@ async def main(apply: bool = False) -> int:
 
         print("\nApplying migrations...")
         errors = []
+        applied = 0
         for _, stmt in alters:
+            # Инцидент деплоя 2026-08-19: все ALTER'ы шли в ОДНОЙ транзакции
+            # (внешний `async with engine.begin()`). Как только один statement
+            # падал, Postgres переводил всю транзакцию в aborted-состояние, и
+            # ВСЕ следующие statement'ы (включая корректные и вообще не
+            # связанные с первой ошибкой — например чужие ALTER TABLE wishes)
+            # валились с `InFailedSQLTransactionError: current transaction is
+            # aborted, commands ignored until end of transaction block`. Это
+            # маскировало настоящую причину под 10 одинаковых на вид ошибок.
+            # Фикс: каждый statement выполняется в своём SAVEPOINT
+            # (conn.begin_nested()). Если он падает — откатываем ТОЛЬКО этот
+            # SAVEPOINT, внешняя транзакция остаётся рабочей, и следующие
+            # statement'ы применяются независимо.
             try:
-                await conn.execute(text(stmt))
+                async with conn.begin_nested():
+                    await conn.execute(text(stmt))
                 print(f"  ✅  {stmt}")
+                applied += 1
             except Exception as e:
                 print(f"  ❌  FAILED: {stmt}")
                 print(f"       {e}")
                 errors.append((stmt, str(e)))
 
         if errors:
-            print(f"\n❌  {len(errors)} statement(s) failed — check above.")
+            print(f"\n❌  {len(errors)}/{len(alters)} statement(s) failed, {applied} applied.")
+            first_stmt, first_err = errors[0]
+            print(f"   Первая настоящая ошибка: {first_stmt}\n   {first_err}")
             return 1
 
         print(f"\n✅  All {len(alters)} column(s) added successfully.")

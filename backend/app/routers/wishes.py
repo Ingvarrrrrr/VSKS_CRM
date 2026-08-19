@@ -73,6 +73,8 @@ def _enrich(w: Wish) -> WishOut:
         d.executor_name = w.executor.full_name or w.executor.username
     if getattr(w, 'stopped_by_user', None):
         d.stopped_by_name = w.stopped_by_user.full_name or w.stopped_by_user.username
+    if getattr(w, 'rejected_by_user', None):
+        d.rejected_by_name = w.rejected_by_user.full_name or w.rejected_by_user.username
     # Контрагент — из справочника, если contractor_id задан, иначе свободный
     # ввод contractor_name (см. WishOut.contractor_display_name).
     if getattr(w, 'contractor', None):
@@ -96,6 +98,7 @@ async def _load_wish(wish_id: int, db: AsyncSession) -> Wish:
             selectinload(Wish.items),
             selectinload(Wish.stopped_by_user),
             selectinload(Wish.contractor),
+            selectinload(Wish.rejected_by_user),
         )
         .where(Wish.id == wish_id)
     )
@@ -529,13 +532,21 @@ async def _wish_locked_descr(wish_id: int, db: AsyncSession) -> Optional[str]:
     )
 
 
-async def _reset_approvals(wish_id: int, db: AsyncSession) -> None:
-    """Сбрасывает все решения согласующих цепочки обратно в pending."""
+async def _reset_approvals(wish_id: int, db: AsyncSession, keep_user_id: Optional[int] = None) -> None:
+    """Сбрасывает решения согласующих цепочки обратно в pending.
+
+    keep_user_id (владелец, 2026-08-19: «нужно, чтобы было видно, кто
+    отклонил») — строка ЭТОГО согласующего НЕ трогается: у него остаются
+    status='rejected', decided_at, decided_by_user_id, comment, чтобы после
+    сброса остальных было видно, кто именно отклонил заявку. Остальные — как
+    раньше, в pending."""
     from app.models.wish_approval import WishApproval
     approvals = (await db.execute(
         select(WishApproval).where(WishApproval.wish_id == wish_id)
     )).scalars().all()
     for a in approvals:
+        if keep_user_id is not None and a.user_id == keep_user_id:
+            continue
         a.status = "pending"
         a.decided_at = None
         a.decided_by_user_id = None
@@ -1129,6 +1140,7 @@ async def list_wishes(
         selectinload(Wish.items),
         selectinload(Wish.stopped_by_user),
         selectinload(Wish.contractor),
+        selectinload(Wish.rejected_by_user),
     )
     if vis is not None:
         # Two-level gate: rows WITH subsidy → gate by vis; rows WITHOUT subsidy → org gate
@@ -1920,6 +1932,11 @@ async def update_wish(
             if getattr(wish, 'source', None) != 'advance_report':
                 await _ensure_needed_dates(wish, db, wish.items or [], context="submit")
             wish.status = "submitted"
+            # Повторная отправка на согласование после правки — старое
+            # отклонение больше не актуально (владелец, 2026-08-19).
+            wish.rejected_by = None
+            wish.rejected_at = None
+            wish.rejection_reason = None
             await db.flush()
             await _reset_approvals(wish.id, db)
             # Заявка уходит на ПОВТОРНОЕ согласование — позиции могли измениться,
@@ -1997,8 +2014,21 @@ async def submit_wish(
     if getattr(wish, 'source', None) != 'advance_report':
         await _ensure_needed_dates(wish, db, wish.items or [], context="submit")
 
+    _was_rejected = wish.status == "rejected"
     wish.status = "submitted"
+    # Повторная отправка на согласование (в т.ч. из 'rejected') — старое
+    # отклонение больше не актуально, владелец просил не оставлять его висеть
+    # (см. Wish.rejected_by докстринг в models/wish.py).
+    wish.rejected_by = None
+    wish.rejected_at = None
+    wish.rejection_reason = None
     await db.flush()
+    if _was_rejected:
+        # Без keep_user_id — сброс ПОЛНЫЙ. Иначе строка отклонившего согласующего
+        # (см. _reset_approvals в decide()) осталась бы 'rejected' навсегда: при
+        # повторном дохождении очереди до неё sequential-гейт увидел бы «уже
+        # принято решение» и заблокировал бы согласование заново.
+        await _reset_approvals(wish.id, db)
 
     # Уведомить согласующих из цепочки (вынесено в _notify_pending_approvers)
     requester_name = current_user.full_name or current_user.username
@@ -2095,6 +2125,13 @@ async def reject_wish(
 
     wish.status = "rejected"
     wish.rejection_reason = body.rejection_reason
+    # Владелец (2026-08-19): «нужно, чтобы было видно, кто отклонил» — прямое
+    # отклонение (эта ветка) часто идёт без единой WishApproval-строки вовсе
+    # (менеджер+ отклоняет напрямую, минуя цепочку согласующих), поэтому
+    # rejected_by/rejected_at на самой заявке — единственный надёжный источник.
+    from datetime import timezone as _tz
+    wish.rejected_by = current_user.id
+    wish.rejected_at = datetime.now(_tz.utc)
     # Владелец (2026-08-19): «если заявка отклоняется одним из согласующих, она
     # отклоняется у всех, потому что заявку могут изменить именно так, с чем
     # остальные согласующие могут не согласиться. И надо будет повторить заново» —
@@ -2317,6 +2354,17 @@ async def force_wish_status(
         }.get(body.status, "сменить статус")
         await _withdraw_wish_from_plan(wish.id, db, action_text=_force_action_text)
         wish.status = body.status
+        if body.status in ("draft", "submitted"):
+            # Возврат в черновик / на повторное согласование форс-рычагом —
+            # старое отклонение так же не актуально, как и в обычном пути.
+            wish.rejected_by = None
+            wish.rejected_at = None
+            wish.rejection_reason = None
+            await db.flush()
+            # Полный сброс (без keep_user_id) — иначе строка отклонившего
+            # согласующего (см. decide()) осталась бы 'rejected' навсегда и
+            # заблокировала бы sequential-гейт при повторном согласовании.
+            await _reset_approvals(wish.id, db)
         await db.commit()
 
     wish = await _load_wish(wish_id, db)

@@ -272,7 +272,12 @@
             @sort="dir => colSort.execution_deadline = dir" />
         </template>
         <template #item.status="{ item }">
-          <v-chip :color="statusColor[item.status]" size="small" variant="tonal">
+          <v-chip
+            :color="statusColor[item.status]"
+            size="small"
+            variant="tonal"
+            :title="item.status === 'rejected' ? rejectedByLine(item) : undefined"
+          >
             {{ statusLabel[item.status] }}
           </v-chip>
         </template>
@@ -637,7 +642,12 @@
             @sort="dir => colSort.execution_deadline = dir" />
         </template>
         <template #item.status="{ item }">
-          <v-chip :color="statusColor[item.status]" size="small" variant="tonal">
+          <v-chip
+            :color="statusColor[item.status]"
+            size="small"
+            variant="tonal"
+            :title="item.status === 'rejected' ? rejectedByLine(item) : undefined"
+          >
             {{ statusLabel[item.status] }}
           </v-chip>
         </template>
@@ -835,7 +845,12 @@
             @sort="dir => colSort.execution_deadline = dir" />
         </template>
         <template #item.status="{ item }">
-          <v-chip :color="statusColor[item.status]" size="small" variant="tonal">
+          <v-chip
+            :color="statusColor[item.status]"
+            size="small"
+            variant="tonal"
+            :title="item.status === 'rejected' ? rejectedByLine(item) : undefined"
+          >
             {{ statusLabel[item.status] }}
           </v-chip>
         </template>
@@ -1012,6 +1027,13 @@
           <div v-if="editingWish.executor_name"><b>Исполнитель:</b> {{ editingWish.executor_name }}</div>
           <div v-if="editingWish.execution_deadline"><b>Срок исполнения:</b> {{ formatDate(editingWish.execution_deadline) }}</div>
         </v-card-subtitle>
+        <!-- Владелец, 2026-08-19: «нужно, чтобы было видно, кто отклонил. Так удобнее
+             сходить внутри офиса и спросить, что не так, или просто связаться» -->
+        <div v-if="editingWish && editingWish.status === 'rejected'" class="px-4 pb-3">
+          <v-alert type="error" variant="tonal" density="compact" icon="mdi-close-circle-outline">
+            {{ rejectedByLine(editingWish) }}
+          </v-alert>
+        </div>
         <v-card-text class="pa-4">
           <!-- Владелец, 2026-08-13: остановка заявки — крупный алерт в красной рамке на всю ширину -->
           <div v-if="editingWish?.stopped_at" class="wish-stopped-banner wish-stopped-banner--large mb-3">
@@ -1226,64 +1248,135 @@
                 <v-icon class="mr-2">mdi-format-list-numbered</v-icon>Позиции
               </v-card-title>
               <v-card-text class="pa-4 pt-2">
-                <!-- Владелец (сессия 2026-08-17): построчный выбор ФЭО доступен ВСЕГДА (раньше
-                     был за тумблером «Разные ФЭО позиции для каждого товара», убранным ниже).
-                     Шапка (wishFeoSelected/wishFeoPlannedItemId) теперь только дефолт для строк
-                     БЕЗ собственного значения — feo-planned-per-item=false держит автозаполнение
-                     пустых строк включённым (см. fillItemsWithDefaultPlannedItem в PurchaseItemsEditor.vue). -->
-                <!-- Владелец (сессия 2026-08-19): «два раза даёт выбирать категорию ФЭО... если
-                     в верхнем выбираешь — не даёт выбрать плановую позицию, только в нижнем».
-                     Причина была здесь: allow-per-item-plan="!!wishFeoSelected" — построчный
-                     FeoPlannedItemsSelect (ItemsTableFlat.vue/ItemsCardsView.vue/ItemsTableStages.vue,
-                     :category-id="item.feo_node_id ?? item.feo_category_id ?? defaultFeoCategoryId")
-                     УЖЕ предпочитает категорию САМОЙ СТРОКИ и только потом падает на шапку — но
-                     v-if="feoPlannedPerItem || allowPerItemPlan" вообще не рендерил построчный
-                     блок, пока в шапке (сейчас убранной, см. ниже) ничего не выбрано. Включаем
-                     всегда — построчный выбор плановой позиции доступен сразу после выбора
-                     категории СТРОКИ, шапка (карточка «Категория ФЭО») больше не участвует. -->
-                <!-- data-field="feo_category" — цель для highlightMissingFeoCategory (было на
-                     карточке «Категория ФЭО», перенесено сюда вместе с гейтом — см. п.5 задачи
-                     2026-08-19: без категории хотя бы у одной позиции отправить нельзя). -->
+                <!-- Владелец (сессия 2026-08-19): тумблер «Разные ФЭО позиции для каждого товара»
+                     ВЕРНУЛИ — «куда ты дел переключатель между тем, что категория ФЭО для всех
+                     одинаковая, плановые позиции для всех одна или не одна? Сейчас этого
+                     переключателя нет, а он нужен». Был убран 2026-08-17, а следом 2026-08-19
+                     убрали и дублирующую карточку «Категория ФЭО» (коммит c1225bd, «два раза
+                     даёт выбирать категорию — дубляж») — без тумблера общий выбор пропал совсем.
+                     Общий выбор и построчный НИКОГДА не показываются одновременно (см. v-if
+                     ниже) — именно их одновременное присутствие владелец и назвал «дубляжом».
+                     Тумблер переключает между режимами, по образцу закупки — CreateOrderView.vue
+                     (form.feo_per_item, строки 569-577). -->
+                <v-switch
+                  v-if="wishForm.subsidy_id"
+                  v-model="wishForm.feo_per_item"
+                  label="Разные ФЭО позиции для каждого товара"
+                  density="compact"
+                  color="primary"
+                  hide-details
+                  class="mb-3"
+                  :disabled="!isWishEditable"
+                  @update:model-value="onWishFeoPerItemChange"
+                />
+                <!-- data-field="feo_category" — цель для highlightMissingFeoCategory. Общая для
+                     обоих режимов: внутри либо общий выбор (шапка), либо построчный — см. п.5
+                     задачи 2026-08-19: без категории заявку отправить нельзя ни в одном режиме. -->
                 <div data-field="feo_category">
-                  <!-- Было wishFeoStale (для категории шапки) — теперь по каждой позиции: своя
-                       feo_category_id ссылается на узел, которого больше нет в дереве субсидии
-                       (структуру ФЭО пересоздавали). См. wishItemsWithStaleFeoCategory. -->
-                  <v-alert v-if="wishItemsWithStaleFeoCategory.length" type="warning" density="compact" variant="tonal" class="mb-2">
-                    У части позиций категория ФЭО была удалена из справочника (структуру ФЭО субсидии
-                    пересоздавали). Выберите актуальную категорию у этих позиций и сохраните — иначе
-                    закупка будет создана без категории ФЭО.
-                    <ul class="ml-4 mt-1">
-                      <li v-for="(it, idx) in wishItemsWithStaleFeoCategory" :key="'stale-' + idx">{{ it.item_name || 'без названия' }}</li>
-                    </ul>
-                  </v-alert>
-                  <!-- Жёсткий гейт (владелец, 2026-08-11, переведён на позиции 2026-08-19, тумблер
-                       «Не указывать последний уровень ФЭО» убран в тот же день): без КОНЕЧНОЙ
-                       категории ФЭО хотя бы у одной непустой позиции заявку нельзя согласовать/
-                       отправить в План закупок — иначе закупка остаётся сиротой вне всех планов
-                       ФЭО (реальный случай с прода — заявка №32). Промежуточный (нелистовой) узел
-                       дерева считается таким же отсутствием категории. Блокирует кнопку
-                       «Отправить на согласование», см. wishFeoCategoryMissing. -->
-                  <v-alert
-                    v-if="wishFeoCategoryMissing"
-                    type="error"
-                    density="compact"
-                    variant="tonal"
-                    class="mb-2"
-                    icon="mdi-alert-octagon-outline"
-                  >
-                    <div class="font-weight-medium">Конечная категория ФЭО не выбрана — отправить заявку на согласование нельзя</div>
-                    <div class="mt-1">
-                      Без конечной категории закупка не попадёт ни в один план ФЭО и её сумма потеряется.
-                      Выберите категорию у каждой позиции в таблице ниже, углубившись до самого конечного
-                      уровня дерева, а если категория неизвестна — нажмите «Не определена» у нужной строки.
-                    </div>
-                    <div v-if="wishItemsMissingFeoCategory.length" class="mt-2">
-                      <span class="font-weight-medium">Позиции без конечной категории:</span>
+                  <!-- Режим «одна категория и одна плановая позиция на всю заявку» (тумблер
+                       выключен) — общий выбор, как раньше было в карточке «Категория ФЭО» (до
+                       c1225bd) и как в шапке закупки. Скрыт, если то же самое уже показывает
+                       карточка «Категория ФЭО (согласующий)» ниже (canEditWishFeo && !isWishEditable) —
+                       иначе это снова тот самый дубляж, на который жаловался владелец. -->
+                  <template v-if="!wishForm.feo_per_item">
+                    <v-alert v-if="wishFeoStale" type="warning" density="compact" variant="tonal" class="mb-2">
+                      Категория ФЭО, выбранная в заявке, была удалена из справочника (структуру ФЭО субсидии
+                      пересоздавали). Выберите актуальную категорию и сохраните. Если согласовать как есть —
+                      закупка будет создана без категории ФЭО, её можно задать в «Плане закупок».
+                    </v-alert>
+                    <v-alert
+                      v-if="wishFeoCategoryMissing"
+                      type="error"
+                      density="compact"
+                      variant="tonal"
+                      class="mb-2"
+                      icon="mdi-alert-octagon-outline"
+                    >
+                      <div class="font-weight-medium">Конечная категория ФЭО не выбрана — отправить заявку на согласование нельзя</div>
+                      <div class="mt-1">
+                        Без конечной категории закупка не попадёт ни в один план ФЭО и её сумма потеряется.
+                        Выберите категорию ниже, углубившись до самого конечного уровня дерева, а если
+                        категория неизвестна — нажмите «Не определена».
+                      </div>
+                    </v-alert>
+                    <template v-if="wishForm.subsidy_id && !(canEditWishFeo && !isWishEditable)">
+                      <FeoTreeSelect
+                        v-model="wishFeoSelected"
+                        :nodes="wishFeoNodes"
+                        :leaves="wishFeoLeaves"
+                        :plan-positions="wishPlannedResiduals"
+                        :node-amounts="wishNodeAmounts"
+                        horizontal
+                        :readonly="!isWishEditable && !canEditWishFeo"
+                        :allow-unallocated="!!(wishForm.subsidy_id && (isWishEditable || canEditWishFeo))"
+                        :root-label="selectedSubsidyName"
+                        @pick-unallocated="(parentId: number | null) => pickWishUnallocated(parentId)"
+                      />
+                      <FeoPlannedItemsSelect
+                        v-if="wishFeoSelected"
+                        v-model="wishFeoPlanSelection"
+                        :category-id="wishFeoSelected"
+                        :nodes="wishFeoNodes"
+                        :items="wishPlannedResiduals"
+                        :amount="totalNmck"
+                        :suggest-key="wishFeoPlanSuggestKey"
+                        :suggest-reason="wishFeoPlanSuggestReason"
+                        :candidates="wishFeoPlanCandidatesForUi"
+                        :loading="wishPlannedLoading"
+                        :readonly="!isWishEditable && !canEditWishFeo"
+                        :prefill="wishFeoPlannedPrefill"
+                        :bulk-items="wishFeoBulkItems"
+                        :bulk-title="wishForm.title"
+                        @planned-item-created="onWishPlannedItemCreated"
+                        @planned-item-deleted="onWishPlannedItemCreated"
+                        @candidate-confirmed="onWishFeoCandidateConfirmed"
+                        @bulk-items-created="onWishFeoBulkItemsCreated"
+                      />
+                    </template>
+                  </template>
+                  <!-- Режим «каждой позиции своя категория» (тумблер включён) — построчный выбор,
+                       как было единственным режимом 2026-08-17..08-19. Общий выбор выше СКРЫТ. -->
+                  <template v-else>
+                    <!-- Было wishFeoStale (для категории шапки) — теперь по каждой позиции: своя
+                         feo_category_id ссылается на узел, которого больше нет в дереве субсидии
+                         (структуру ФЭО пересоздавали). См. wishItemsWithStaleFeoCategory. -->
+                    <v-alert v-if="wishItemsWithStaleFeoCategory.length" type="warning" density="compact" variant="tonal" class="mb-2">
+                      У части позиций категория ФЭО была удалена из справочника (структуру ФЭО субсидии
+                      пересоздавали). Выберите актуальную категорию у этих позиций и сохраните — иначе
+                      закупка будет создана без категории ФЭО.
                       <ul class="ml-4 mt-1">
-                        <li v-for="(it, idx) in wishItemsMissingFeoCategory" :key="idx">{{ it.item_name || 'без названия' }}</li>
+                        <li v-for="(it, idx) in wishItemsWithStaleFeoCategory" :key="'stale-' + idx">{{ it.item_name || 'без названия' }}</li>
                       </ul>
-                    </div>
-                  </v-alert>
+                    </v-alert>
+                    <!-- Жёсткий гейт (владелец, 2026-08-11, переведён на позиции 2026-08-19, тумблер
+                         «Не указывать последний уровень ФЭО» убран в тот же день): без КОНЕЧНОЙ
+                         категории ФЭО хотя бы у одной непустой позиции заявку нельзя согласовать/
+                         отправить в План закупок — иначе закупка остаётся сиротой вне всех планов
+                         ФЭО (реальный случай с прода — заявка №32). Промежуточный (нелистовой) узел
+                         дерева считается таким же отсутствием категории. Блокирует кнопку
+                         «Отправить на согласование», см. wishFeoCategoryMissing. -->
+                    <v-alert
+                      v-if="wishFeoCategoryMissing"
+                      type="error"
+                      density="compact"
+                      variant="tonal"
+                      class="mb-2"
+                      icon="mdi-alert-octagon-outline"
+                    >
+                      <div class="font-weight-medium">Конечная категория ФЭО не выбрана — отправить заявку на согласование нельзя</div>
+                      <div class="mt-1">
+                        Без конечной категории закупка не попадёт ни в один план ФЭО и её сумма потеряется.
+                        Выберите категорию у каждой позиции в таблице ниже, углубившись до самого конечного
+                        уровня дерева, а если категория неизвестна — нажмите «Не определена» у нужной строки.
+                      </div>
+                      <div v-if="wishItemsMissingFeoCategory.length" class="mt-2">
+                        <span class="font-weight-medium">Позиции без конечной категории:</span>
+                        <ul class="ml-4 mt-1">
+                          <li v-for="(it, idx) in wishItemsMissingFeoCategory" :key="idx">{{ it.item_name || 'без названия' }}</li>
+                        </ul>
+                      </div>
+                    </v-alert>
+                  </template>
                   <PurchaseItemsEditor
                     v-model="wishForm.items"
                     item-shape="purchase"
@@ -1297,13 +1390,13 @@
                     :supports-photo-upload="true"
                     :readonly="!isWishEditable"
                     :feo-attrs-editable="!isWishEditable && canEditWishFeo"
-                    :feo-per-item="true"
+                    :feo-per-item="wishForm.feo_per_item"
                     :subsidy-id="wishForm.subsidy_id"
                     :subsidy-name="selectedSubsidyName"
                     :default-feo-category-id="wishFeoSelected"
                     :default-feo-planned-item-id="wishFeoPlannedItemId"
                     :feo-planned-per-item="false"
-                    :allow-per-item-plan="true"
+                    :allow-per-item-plan="wishForm.feo_per_item"
                     :planned-items="wishPlannedResiduals"
                     :show-needed-date="wishDateMode === 'per_item'"
                     :vat-mode="wishForm.vat_mode"
@@ -1312,11 +1405,6 @@
                     @planned-item-deleted="onWishPlannedItemCreated"
                   />
                 </div>
-                <!-- Владелец, 2026-08-19: тумблер «Не указывать последний уровень ФЭО» убран —
-                     для всех закупок без плановой позиции она теперь создаётся автоматически,
-                     поэтому промежуточный (нелистовой) уровень категории больше не допускается
-                     нигде: гейт отправки требует конечную категорию у каждой позиции, см.
-                     wishItemsMissingFeoCategory ниже. -->
                 <!-- Владелец, 2026-08-13: построчные пометки — что остановлено, что разошлось с
                      закупкой, что не удалось сопоставить однозначно. Данные — item.purchase_match
                      с бэка (только в карточке). ⚠️ PurchaseItemsEditor.vue вне задачи — подсветить
@@ -1376,43 +1464,58 @@
                 <v-icon class="mr-2">mdi-sitemap</v-icon>Категория ФЭО (согласующий)
               </v-card-title>
               <v-card-text class="pa-4 pt-2">
-                <v-alert v-if="wishFeoStale" type="warning" density="compact" variant="tonal" class="mb-2">
-                  Категория ФЭО, выбранная в заявке, была удалена из справочника (структуру ФЭО субсидии
-                  пересоздавали). Выберите актуальную категорию и сохраните. Если согласовать как есть —
-                  закупка будет создана без категории ФЭО, её можно задать в «Плане закупок».
-                </v-alert>
-                <FeoTreeSelect
-                  v-model="wishFeoSelected"
-                  :nodes="wishFeoNodes"
-                  :leaves="wishFeoLeaves"
-                  :plan-positions="wishPlannedResiduals"
-                  :node-amounts="wishNodeAmounts"
-                  horizontal
-                  :readonly="!isWishEditable && !canEditWishFeo"
-                  :allow-unallocated="!!(wishForm.subsidy_id && (isWishEditable || canEditWishFeo))"
-                  :root-label="selectedSubsidyName"
-                  @pick-unallocated="(parentId: number | null) => pickWishUnallocated(parentId)"
-                />
-                <FeoPlannedItemsSelect
-                  v-if="wishFeoSelected"
-                  v-model="wishFeoPlanSelection"
-                  :category-id="wishFeoSelected"
-                  :nodes="wishFeoNodes"
-                  :items="wishPlannedResiduals"
-                  :amount="totalNmck"
-                  :suggest-key="wishFeoPlanSuggestKey"
-                  :suggest-reason="wishFeoPlanSuggestReason"
-                  :candidates="wishFeoPlanCandidatesForUi"
-                  :loading="wishPlannedLoading"
-                  :readonly="!isWishEditable && !canEditWishFeo"
-                  :prefill="wishFeoPlannedPrefill"
-                  :bulk-items="wishFeoBulkItems"
-                  :bulk-title="wishForm.title"
-                  @planned-item-created="onWishPlannedItemCreated"
-                  @planned-item-deleted="onWishPlannedItemCreated"
-                  @candidate-confirmed="onWishFeoCandidateConfirmed"
-                  @bulk-items-created="onWishFeoBulkItemsCreated"
-                />
+                <!-- QA-фикс (2026-08-19, дефект 1 «дубляж категории ФЭО в режиме согласующего»):
+                     общий выбор (шапка) имеет смысл ТОЛЬКО в режиме «одна категория на всех»
+                     (wishForm.feo_per_item === false) — в режиме «каждому своя» он дублирует
+                     построчные контролы, доступные согласующему прямо в таблице «Позиции»
+                     (:feo-attrs-editable="!isWishEditable && canEditWishFeo" у PurchaseItemsEditor,
+                     см. выше). Кнопка «Сохранить ФЭО» ниже НЕ прячется — она же сохраняет
+                     построчные правки (wishItemsFeoDirtyList), это единственный Save для
+                     «чистого» согласующего (не canAssigneeAct, у которого есть своя кнопка в
+                     карточке «На исполнение»). -->
+                <template v-if="!wishForm.feo_per_item">
+                  <v-alert v-if="wishFeoStale" type="warning" density="compact" variant="tonal" class="mb-2">
+                    Категория ФЭО, выбранная в заявке, была удалена из справочника (структуру ФЭО субсидии
+                    пересоздавали). Выберите актуальную категорию и сохраните. Если согласовать как есть —
+                    закупка будет создана без категории ФЭО, её можно задать в «Плане закупок».
+                  </v-alert>
+                  <FeoTreeSelect
+                    v-model="wishFeoSelected"
+                    :nodes="wishFeoNodes"
+                    :leaves="wishFeoLeaves"
+                    :plan-positions="wishPlannedResiduals"
+                    :node-amounts="wishNodeAmounts"
+                    horizontal
+                    :readonly="!isWishEditable && !canEditWishFeo"
+                    :allow-unallocated="!!(wishForm.subsidy_id && (isWishEditable || canEditWishFeo))"
+                    :root-label="selectedSubsidyName"
+                    @pick-unallocated="(parentId: number | null) => pickWishUnallocated(parentId)"
+                  />
+                  <FeoPlannedItemsSelect
+                    v-if="wishFeoSelected"
+                    v-model="wishFeoPlanSelection"
+                    :category-id="wishFeoSelected"
+                    :nodes="wishFeoNodes"
+                    :items="wishPlannedResiduals"
+                    :amount="totalNmck"
+                    :suggest-key="wishFeoPlanSuggestKey"
+                    :suggest-reason="wishFeoPlanSuggestReason"
+                    :candidates="wishFeoPlanCandidatesForUi"
+                    :loading="wishPlannedLoading"
+                    :readonly="!isWishEditable && !canEditWishFeo"
+                    :prefill="wishFeoPlannedPrefill"
+                    :bulk-items="wishFeoBulkItems"
+                    :bulk-title="wishForm.title"
+                    @planned-item-created="onWishPlannedItemCreated"
+                    @planned-item-deleted="onWishPlannedItemCreated"
+                    @candidate-confirmed="onWishFeoCandidateConfirmed"
+                    @bulk-items-created="onWishFeoBulkItemsCreated"
+                  />
+                </template>
+                <div v-else class="text-caption text-medium-emphasis mb-2">
+                  Включён режим «Разные ФЭО позиции для каждого товара» — категория выбирается по каждой
+                  позиции в таблице «Позиции» выше.
+                </div>
                 <!-- Владелец (2026-08-19): для «чистого» согласующего из цепочки (не assignee/admin)
                      кнопка видна всегда (!canAssigneeAct). Для assignee/admin (canAssigneeAct — у них
                      есть свои кнопки решения «Распределить и одобрить»/«Отклонить» выше) кнопка
@@ -1966,7 +2069,7 @@
                   </v-btn>
                 </span>
               </template>
-              Не у всех позиций выбрана категория ФЭО — заполните её в таблице позиций выше, иначе заявку нельзя будет согласовать
+              {{ wishFeoCategoryMissingTooltip }}
             </v-tooltip>
           </template>
           <!-- approved/converted и editable (не contracted_locked): сохранить изменения -->
@@ -1993,7 +2096,7 @@
                   </v-btn>
                 </span>
               </template>
-              Не у всех позиций выбрана категория ФЭО — заполните её в таблице позиций выше, иначе заявку нельзя будет согласовать
+              {{ wishFeoCategoryMissingTooltip }}
             </v-tooltip>
             <v-btn color="primary" variant="flat" prepend-icon="mdi-view-column-outline"
                    @click="openKanbanDialog(editingWish); wishDialog = false">
@@ -2056,6 +2159,23 @@
           <v-btn variant="flat" color="error" :loading="rejectingWish" :disabled="!rejectionReason.trim()" @click="rejectWish">
             Отклонить
           </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── FEO PER-ITEM DISABLE CONFIRM (владелец, 2026-08-19, тумблер вернули) ── -->
+    <v-dialog v-model="wishFeoPerItemDisableDialog" max-width="480" :fullscreen="mobile">
+      <v-card>
+        <v-card-title class="pa-4 pb-2">Одна категория ФЭО на всю заявку?</v-card-title>
+        <v-card-text class="pa-4">
+          У позиций заявки разные категории ФЭО (разных категорий: {{ wishFeoPerItemDisableCount }}) —
+          при переключении в режим «одна на всех» построчный выбор будет очищен, и всем позициям
+          достанется ОДНА категория, которую нужно будет выбрать в открывшемся блоке над таблицей.
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="cancelWishFeoPerItemDisable">Отмена</v-btn>
+          <v-btn variant="flat" color="warning" @click="confirmWishFeoPerItemDisable">Переключить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -2246,6 +2366,11 @@ interface Wish {
   justification?: string
   status: 'draft' | 'submitted' | 'approved' | 'rejected' | 'converted'
   rejection_reason?: string
+  // Владелец, 2026-08-19: «нужно, чтобы было видно, кто отклонил» — переживает
+  // сброс approver_names/цепочки при отклонении (см. backend Wish.rejected_by).
+  rejected_by?: number | null
+  rejected_at?: string | null
+  rejected_by_name?: string | null
   created_by: number
   creator_name?: string
   approved_by?: number
@@ -2286,6 +2411,9 @@ interface Wish {
   contractor_id?: number | null
   contractor_name?: string | null
   contractor_display_name?: string | null
+  // Владелец, 2026-08-19: тумблер вернули — режим «одна на всех» / «каждой позиции своя»,
+  // NOT NULL колонка бэкенда (см. backend/app/schemas/wishes.py::WishOut.feo_per_item).
+  feo_per_item?: boolean
 }
 
 // «От кого»: Фамилия И.О. вместо полного ФИО
@@ -2572,12 +2700,11 @@ const eventsForSubsidy = computed(() => {
 // «Не указывать последний уровень ФЭО» (wishFeoSkipLast) убран — теперь узел всегда
 // должен быть листом дерева, промежуточный уровень не допускается нигде.
 const wishFeoSelected = ref<number | null>(null)
-// Владелец (сессия 2026-08-17): тумблер «Разные ФЭО позиции для каждого товара» убран —
-// построчный выбор категории/плановой позиции теперь ЕДИНСТВЕННЫЙ режим (см. шаблон:
-// PurchaseItemsEditor всегда получает feo-per-item=true). wishFeoSelected/wishFeoPlannedItemId
-// остаются, но теперь это только значение ПО УМОЛЧАНИЮ для позиций без своего значения —
-// см. fillEmptyItemsWithDefaultFeo/fillItemsWithDefaultPlannedItem в PurchaseItemsEditor.vue
-// и симметричный фолбэк в buildWishPayload ниже.
+// Владелец, 2026-08-19: тумблер «Разные ФЭО позиции для каждого товара» ВЕРНУЛИ (был убран
+// 2026-08-17) — режим снова переключаемый (wishForm.value.feo_per_item), см. шаблон карточки
+// «Позиции». wishFeoSelected/wishFeoPlannedItemId — значение шапки: единственный источник
+// истины в режиме «одна на всех» (feo_per_item=false) и дефолт для позиций БЕЗ своей категории
+// в режиме «каждому своя» (feo_per_item=true) — см. симметричный фолбэк в buildWishPayload.
 
 // F-PLAN: привязка к конкретной ПЛАНОВОЙ ПОЗИЦИИ плана закупок (FeoPlannedItem) —
 // заявка расходует уже заложенный план, а не задваивает его. Блок FeoPlannedItemsSelect
@@ -2588,6 +2715,72 @@ const wishFeoSelected = ref<number | null>(null)
 // в плане закупок» (FeoPlannedItemsSelect) — она физически создаёт FeoPlannedItem и сразу
 // выбирает его, так что «непривязанного» состояния для НОВЫХ заявок больше не возникает.
 const wishFeoPlannedItemId = ref<number | null>(null)
+
+// Владелец, 2026-08-19: тумблер вернули — «Разные ФЭО позиции для каждого товара» переключает
+// между «одна категория на всех» и «каждой позиции своя», по образцу CreateOrderView.vue
+// (onFeoPerItemChange/feoPerItemDisableDialog). Включение (каждой своя) всегда безопасно —
+// шапка просто становится дефолтом для строк без собственной категории. Выключение (одна на
+// всех) рискует молча потерять информацию, если у позиций УЖЕ разные категории — buildWishPayload
+// в этом режиме проставляет ОДНУ шапочную категорию КАЖДОЙ позиции безусловно (см. ниже), поэтому
+// правило проекта «выбранное на предыдущем этапе не смеет меняться само» требует подтверждения.
+const wishFeoPerItemDisableDialog = ref(false)
+const wishFeoPerItemDisableCount = ref(0)
+function onWishFeoPerItemChange(val: boolean | null) {
+  if (val) return // включение — безопасно, ничего подтверждать не нужно
+  const relevantItems = (wishForm.value.items as any[])
+    .filter((it) => (it.item_name || '').toString().trim() || Number(it.total_price) || Number(it.quantity))
+  const distinctCats = new Set(
+    relevantItems.map((it) => it.feo_category_id).filter((id) => id != null)
+  )
+  if (distinctCats.size > 1) {
+    wishFeoPerItemDisableCount.value = distinctCats.size
+    wishFeoPerItemDisableDialog.value = true
+    wishForm.value.feo_per_item = true // держим тумблер включённым, пока владелец не подтвердит
+    return
+  }
+  // QA-фикс (2026-08-19, дефект 2 «молчаливая потеря категории при ВКЛ→ВЫКЛ»): раньше при
+  // distinctCats.size === 1 функция ничего не делала — wishFeoSelected (шапка) оставался null,
+  // а buildWishPayload в ветке feo_per_item=false шлёт feo_category_id: feo ?? null КАЖДОЙ
+  // позиции безусловно (см. ~строка 4312), т.е. единственная реальная категория молча стиралась
+  // в null. Если категория одна и та же у всех непустых позиций — переносим её в шапку молча
+  // (пользователю нечего терять и не в чем подтверждаться), заодно переносим плановую позицию,
+  // если она тоже одна на все строки с этой категорией. Построчные значения после переноса
+  // очищаем — источник истины в режиме «одна на всех» теперь шапка (симметрично
+  // confirmWishFeoPerItemDisable ниже).
+  if (distinctCats.size === 1) {
+    const onlyCatId = distinctCats.values().next().value as number
+    wishFeoSelected.value = onlyCatId
+    const distinctPlanIds = new Set(
+      relevantItems
+        .filter((it) => it.feo_category_id === onlyCatId)
+        .map((it) => it.feo_planned_item_id)
+        .filter((id) => id != null)
+    )
+    wishFeoPlannedItemId.value = distinctPlanIds.size === 1 ? (distinctPlanIds.values().next().value as number) : null
+    for (const it of wishForm.value.items as any[]) {
+      it.feo_category_id = null
+      it.feo_planned_item_id = null
+    }
+  }
+  // Категория нигде не выбрана (distinctCats.size === 0) — выключение ничего не теряет,
+  // подтверждение не требуется.
+}
+function cancelWishFeoPerItemDisable() {
+  wishForm.value.feo_per_item = true
+  wishFeoPerItemDisableDialog.value = false
+}
+// Подтверждение «Переключить» — сразу очищаем построчные категории/плановые позиции, чтобы
+// в UI не оставалось невидимого расхождения между тем, что показано (общий выбор в шапке,
+// изначально пустой), и тем, что реально лежит в позициях (см. аналогичный фикс в
+// CreateOrderView.vue::confirmFeoPerItemDisable).
+function confirmWishFeoPerItemDisable() {
+  for (const it of wishForm.value.items as any[]) {
+    it.feo_category_id = null
+    it.feo_planned_item_id = null
+  }
+  wishForm.value.feo_per_item = false
+  wishFeoPerItemDisableDialog.value = false
+}
 
 const orgMembers = ref<User[]>([])
 
@@ -2778,9 +2971,13 @@ const approvalStatusColor: Record<string, string> = {
   skipped: 'grey',
 }
 const approvalStatusLabel: Record<string, string> = {
-  pending: 'На согласовании',
+  // Владелец, 2026-08-19: после отклонения строка отклонившего в цепочке
+  // больше не сбрасывается в pending (см. backend _reset_approvals
+  // keep_user_id) — чип должен явно читаться как «отклонил», не общим
+  // «не согласовано», иначе рядом с чипами «ожидает» не видно, кто виновник.
+  pending: 'Ожидает',
   approved: 'Согласовано',
-  rejected: 'Не согласовано',
+  rejected: 'Отклонил',
   skipped: 'Пропущено',
 }
 
@@ -2847,6 +3044,12 @@ const wishForm = ref({
   // редактируется (готовое имя для показа считает backend).
   contractor_id: null as number | null,
   contractor_name: '' as string,
+  // Владелец, 2026-08-19: тумблер «Разные ФЭО позиции для каждого товара» вернули — режим
+  // хранится в РЕАЛЬНОЙ колонке бэкенда (Wish.feo_per_item, NOT NULL, уже была заведена и
+  // использовалась 2026-08-06..08-17, см. backend/app/models/wish.py, buildWishPayload и
+  // openEditDialog ниже), а не в локальном ref-е — так режим переживает перезагрузку страницы
+  // и виден в GET /wishes без гадания по позициям.
+  feo_per_item: false as boolean,
 })
 
 // Task 2 (сессия 2026-08-17): предзаполнение ContractorPicker при открытии карточки —
@@ -3114,6 +3317,18 @@ const wishItemsMissingFeoCategory = computed(() => {
     (it) => (it.item_name || '').toString().trim() || Number(it.total_price) || Number(it.quantity)
   )
   if (!items.length) return [] as any[]
+  // Владелец, 2026-08-19: тумблер вернули — гейт снова режимо-зависимый (п.4 задачи).
+  // «Одна на всех» (feo_per_item=false): единственная проверяемая категория — шапочная
+  // (wishFeoSelected), т.к. buildWishPayload при сохранении проставит её КАЖДОЙ позиции
+  // безусловно — собственная категория позиции тут вообще не смотрится.
+  if (!wishForm.value.feo_per_item) {
+    const catId = wishFeoSelected.value
+    if (catId == null) return items
+    const node = wishFeoNodes.value.find(n => n.id === catId)
+    return (node && !node.is_leaf) ? items : []
+  }
+  // «Каждому своя» (feo_per_item=true, как было единственным режимом 2026-08-17..08-19):
+  // собственная категория позиции, а если её нет — шапка как дефолт (см. buildWishPayload).
   return items.filter((it) => {
     const catId = it.feo_category_id ?? wishFeoSelected.value
     if (catId == null) return true
@@ -3122,6 +3337,14 @@ const wishItemsMissingFeoCategory = computed(() => {
   })
 })
 const wishFeoCategoryMissing = computed(() => wishItemsMissingFeoCategory.value.length > 0)
+// Владелец, 2026-08-19: текст подсказки у заблокированных кнопок отправки/одобрения —
+// режимо-зависимый (тот же п.4), иначе в режиме «одна на всех» текст врал бы про «таблицу
+// позиций выше», в которой построчных ФЭО-контролов в этом режиме нет вовсе.
+const wishFeoCategoryMissingTooltip = computed(() =>
+  wishForm.value.feo_per_item
+    ? 'Не у всех позиций выбрана категория ФЭО — заполните её в таблице позиций выше, иначе заявку нельзя будет согласовать'
+    : 'Категория ФЭО заявки не выбрана (или не до конечного уровня) — заполните её в блоке выше, иначе заявку нельзя будет согласовать'
+)
 
 // Было wishFeoStale (для шапочного выбора) — по каждой позиции: собственная feo_category_id
 // ссылается на узел, которого больше нет в дереве субсидии (структуру ФЭО пересоздавали).
@@ -3456,6 +3679,16 @@ function stoppedByLine(w: { stopped_by_name?: string | null; stopped_at?: string
   return line
 }
 
+// Владелец, 2026-08-19: «нужно, чтобы было видно, кто отклонил» — строка для
+// шапки диалога и tooltip'а статуса «Не согласована» в списке.
+function rejectedByLine(w: { rejected_by_name?: string | null; rejected_at?: string | null; rejection_reason?: string | null }): string {
+  const who = w.rejected_by_name || 'неизвестно кем'
+  const when = w.rejected_at ? formatDate(w.rejected_at) : ''
+  let line = `Отклонил: ${who}${when ? ', ' + when : ''}`
+  if (w.rejection_reason) line += ` — ${w.rejection_reason}`
+  return line
+}
+
 function formatDate(dateStr: string) {
   if (!dateStr) return ''
   const d = new Date(dateStr)
@@ -3522,6 +3755,7 @@ function resetForm() {
     vat_mode: 'uniform',
     contractor_id: null,
     contractor_name: '',
+    feo_per_item: false,
   }
   wishFeoSelected.value = null
   wishFeoPlannedItemId.value = null
@@ -3565,6 +3799,10 @@ async function openEditDialog(wish: Wish) {
   wishForm.value.vat_mode = (wish as any).vat_mode || 'uniform'
   wishForm.value.contractor_id = (wish as any).contractor_id ?? null
   wishForm.value.contractor_name = (wish as any).contractor_name || ''
+  // Владелец, 2026-08-19: тумблер вернули — режим читаем из БД (Wish.feo_per_item, NOT NULL
+  // колонка бэка, всегда реальный boolean). Никакой эвристики по позициям не нужно — значение
+  // либо явно сохранено пользователем, либо false по умолчанию для совсем старых записей.
+  wishForm.value.feo_per_item = (wish as any).feo_per_item ?? false
   forceStatusValue.value = wish.status || 'draft'
 
   // B5 — Seed cascade from wish.feo_category_id (цепочку строит сам FeoCascadeSelect).
@@ -3668,22 +3906,27 @@ async function openEditDialog(wish: Wish) {
 
     // F-PLAN (владелец, 2026-08-19, баг «привязываются все позиции к первой плановой»):
     // раньше здесь восстанавливали wishFeoPlannedItemId из фактических значений позиций
-    // (даже с гвардом «только если ВСЕ позиции совпадают» — казалось безобидно, т.к.
-    // ничего не перезаписывает). Ловушка была не в этом чтении, а в том, что
-    // wishFeoPlannedItemId одновременно передаётся в PurchaseItemsEditor как
-    // :default-feo-planned-item-id — а addItem()/импорт Excel/умный импорт в
-    // PurchaseItemsEditor.vue штампуют props.defaultFeoPlannedItemId В ЛЮБУЮ НОВУЮ
-    // строку безусловно (без проверки feoPlannedPerItem). Открыл заявку с одной
-    // позицией → шапка восстанавливалась из неё → добавил вторую позицию → она молча
-    // наследовала чужую плановую. Начиная с этой сессии карточка выбора шапки для
-    // автора/редактора не рендерится вовсе (см. v-if="!isWishEditable && canEditWishFeo"
-    // у «Категория ФЭО (согласующий)»), поэтому переменная больше НЕ наполняется из
-    // позиций при загрузке — остаётся null, как после resetForm(). Для согласующего
-    // (canEditWishFeo) это означает, что при открытии уже согласованной по всем
-    // позициям одинаковой плановой заявки шапка не покажет её преднабранной — принятый
-    // компромисс: согласующий при необходимости выбирает заново, зато построчный выбор
-    // инициатора никогда не отбирается по умолчанию.
-    wishFeoPlannedItemId.value = null
+    // безусловно — addItem()/импорт Excel/умный импорт в PurchaseItemsEditor.vue штампуют
+    // props.defaultFeoPlannedItemId В ЛЮБУЮ НОВУЮ строку безусловно (без проверки
+    // feoPlannedPerItem), поэтому шапка, восстановленная из одной позиции, молча
+    // «заражала» вторую, только что добавленную. Владелец, 2026-08-19 (тот же день, тумблер
+    // вернули): правильное решение — не убирать восстановление совсем, а включать его ТОЛЬКО
+    // в режиме «одна на всех» (wishForm.value.feo_per_item === false) — там шапка снова
+    // источник истины, и КАЖДАЯ позиция при сохранении получает именно её (см.
+    // buildWishPayload), так что восстановление из совпадающих у всех позиций значений
+    // безопасно. В режиме «каждому своя» шапка остаётся null — построчный выбор инициатора
+    // никогда не подменяется автоматически.
+    if (wishForm.value.feo_per_item) {
+      wishFeoPlannedItemId.value = null
+    } else {
+      const plannedIds = (wishForm.value.items as any[]).map((it: any) => it.feo_planned_item_id)
+      const nonNullPlannedIds = plannedIds.filter((id: any) => id != null)
+      wishFeoPlannedItemId.value = (
+        nonNullPlannedIds.length > 0
+        && nonNullPlannedIds.length === plannedIds.length
+        && new Set(nonNullPlannedIds).size === 1
+      ) ? nonNullPlannedIds[0] : null
+    }
     wishDateMode.value = (wishForm.value.items as any[]).some(it => it.needed_date) ? 'per_item' : 'common'
     await loadWishMembers()
     await loadWishApprovers()
@@ -4070,12 +4313,11 @@ function buildWishPayload() {
   return {
     ...wishForm.value,
     feo_category_id: feo,
-    // Владелец (сессия 2026-08-17): тумблер «Разные ФЭО позиции для каждого товара» убран —
-    // построчный режим стал единственным. feo_per_item — отдельная колонка бэкенда (её
-    // правит параллельная сессия), форма больше ей не управляет; шлём true, потому что
-    // построчный выбор (см. PurchaseItemsEditor feo-per-item=true в шаблоне) — это и есть
-    // новое единое поведение.
-    feo_per_item: true,
+    // Владелец, 2026-08-19: тумблер вернули — feo_per_item снова реальный флаг формы
+    // (wishForm.value.feo_per_item), а не жёстко true. Явная строка здесь чисто
+    // документирующая (значение и так уже уехало через ...wishForm.value выше) — оставлена,
+    // чтобы читатель не искал его глазами по всему объекту.
+    feo_per_item: wishForm.value.feo_per_item,
     title,
     // Контрагент — необязательное поле, снятие должно долетать до бэкенда как явный
     // null (backend различает «null» = очистить от «ключ отсутствует» = не трогать,
@@ -4096,28 +4338,28 @@ function buildWishPayload() {
       .filter((it: any) => (it.item_name || '').toString().trim() || Number(it.total_price) || Number(it.quantity))
       .map(({ _selectedProduct, _photo_url, _description, _description_44fz, ...rest }) => ({
         ...rest,
-        // Владелец (сессия 2026-08-17): построчный выбор — источник истины; шапка
-        // (wishFeoSelected) — только значение по умолчанию для позиций БЕЗ своей категории.
-        // Симметрично уже существующей логике feo_planned_item_id ниже (правило проекта:
-        // выбранное на предыдущем этапе не меняется само — построчный выбор никогда не
-        // затирается шапкой, только дополняет пустые строки).
-        feo_category_id: (rest as any).feo_category_id ?? feo ?? null,
-        // F-PLAN: колонки wishes.feo_planned_item_id нет — выбор из шапки проставляется
-        // ТОЛЬКО позициям без собственной привязки. Диалог «Создать в плане закупок»
-        // умеет создавать СВОЮ плановую позицию под каждый товар — такая позиция уже
-        // несёт СВОЙ feo_planned_item_id (см. onWishFeoBulkItemsCreated) и не имеет права
-        // быть затёртой шапочным значением.
-        // Владелец, 2026-08-19 (баг «привязываются все позиции к первой плановой»):
-        // фолбэк из шапки оставлен ТОЛЬКО для согласующего (!isWishEditable) — там
-        // карточка «Категория ФЭО (согласующий)» реально пишет в wishFeoPlannedItemId
-        // и «Согласовал» может дойти сюда через approveWish→saveWish без отдельного
-        // PATCH. Для автора/редактора (isWishEditable) карточка не рендерится и
-        // wishFeoPlannedItemId всегда null (см. openEditDialog/resetForm) — но фолбэк
-        // всё равно жёстко выключен здесь, а не «сам получится null», чтобы будущий
-        // код не смог тихо восстановить утечку через этот путь.
-        feo_planned_item_id: (rest as any).feo_planned_item_id
-          ?? (!isWishEditable.value ? wishFeoPlannedItemId.value : null)
-          ?? null,
+        // Владелец, 2026-08-19: тумблер вернули — режим снова определяет, чья категория
+        // «главная». feo_per_item=false («одна на всех», общий выбор в карточке «Позиции»):
+        // ВСЯ заявка получает ОДНУ категорию — построчное значение (даже если где-то осталось
+        // от предыдущего режима) игнорируется целиком, иначе «одна категория на всех» была бы
+        // неправдой при сохранении (см. п.2 задачи 2026-08-19; именно поэтому
+        // onWishFeoPerItemChange спрашивает подтверждение при выключении, если позиции уже
+        // разошлись по разным категориям). feo_per_item=true («каждому своя», как было
+        // единственным режимом 2026-08-17..08-19): построчный выбор — источник истины, шапка —
+        // только дефолт для позиций БЕЗ своей категории (правило проекта: выбранное на
+        // предыдущем этапе не меняется само).
+        feo_category_id: wishForm.value.feo_per_item
+          ? ((rest as any).feo_category_id ?? feo ?? null)
+          : (feo ?? null),
+        // F-PLAN: симметрично feo_category_id выше. feo_per_item=false — шапочная плановая
+        // позиция (wishFeoPlannedItemId) уходит в КАЖДУЮ позицию безусловно. feo_per_item=true
+        // — построчная привязка источник истины; фолбэк из шапки остаётся ТОЛЬКО для
+        // согласующего (!isWishEditable, см. карточка «Категория ФЭО (согласующий)» и баг
+        // «привязываются все позиции к первой плановой», владелец 2026-08-19) — для
+        // автора/редактора карточка не рендерится, wishFeoPlannedItemId всегда null.
+        feo_planned_item_id: wishForm.value.feo_per_item
+          ? ((rest as any).feo_planned_item_id ?? (!isWishEditable.value ? wishFeoPlannedItemId.value : null) ?? null)
+          : (wishFeoPlannedItemId.value ?? null),
         // БАГ 3 (сессия 2026-08-05): UI больше не выставляет over_plan (псевдо-вариант
         // «Вне плана» убран) — колонка в БД и расчёты на бэкенде не тронуты, просто
         // отправляем то, что уже было на позиции (false для новых/непривязанных).
@@ -4148,8 +4390,12 @@ async function saveWish(andSubmit = false): Promise<boolean> {
     // созданная из неё закупка рискует остаться сиротой вне всех планов ФЭО (см.
     // wishFeoCategoryMissing / wishItemsMissingFeoCategory).
     if (wishFeoCategoryMissing.value) {
-      const names = wishItemsMissingFeoCategory.value.map((it: any) => it.item_name || 'без названия').join(', ')
-      showSnack(`Нельзя отправить на согласование: не выбрана конечная категория ФЭО у позиций (${names}). Выберите категорию в таблице позиций, углубившись до конечного уровня, либо «Не определена», если категория неизвестна.`, 'error')
+      // Владелец, 2026-08-19: тумблер вернули — сообщение снова режимо-зависимое (п.4
+      // задачи): «одна на всех» указывает на общий выбор, «каждому своя» — на позиции поимённо.
+      const message = wishForm.value.feo_per_item
+        ? `Нельзя отправить на согласование: не выбрана конечная категория ФЭО у позиций (${wishItemsMissingFeoCategory.value.map((it: any) => it.item_name || 'без названия').join(', ')}). Выберите категорию в таблице позиций, углубившись до конечного уровня, либо «Не определена», если категория неизвестна.`
+        : 'Нельзя отправить на согласование: не выбрана конечная категория ФЭО заявки. Выберите категорию в блоке выше, углубившись до конечного уровня, либо «Не определена», если категория неизвестна.'
+      showSnack(message, 'error')
       await nextTick()
       highlightMissingFeoCategory()
       return false
@@ -4158,10 +4404,18 @@ async function saveWish(andSubmit = false): Promise<boolean> {
     // не у всех позиций заявки выбрана своя. БАГ 3 (сессия 2026-08-05): псевдо-вариант
     // «Вне плана» убран — непривязанная позиция просто увеличит плановую сумму
     // категории, поэтому это НЕ блокирует отправку — только мягкое предупреждение.
+    // Владелец, 2026-08-19: режимо-зависимо (тумблер вернули) — «одна на всех» смотрит
+    // на шапочную плановую позицию целиком, «каждому своя» — на позиции поштучно.
     if (wishFeoBranchHasPlannedItems.value) {
-      const unfilledCount = wishForm.value.items.filter((it: any) => it.feo_planned_item_id == null).length
-      if (unfilledCount > 0) {
-        showSnack(`У ${unfilledCount} ${unfilledCount === 1 ? 'позиции' : 'позиций'} не выбрана плановая позиция плана закупок. Выберите её или создайте новую кнопкой «Создать в плане закупок» — без выбора позиция увеличит плановую сумму категории.`, 'warning')
+      if (!wishForm.value.feo_per_item) {
+        if (wishFeoPlannedItemId.value == null) {
+          showSnack('В этой категории ФЭО есть плановые позиции плана закупок. Выберите одну из них в блоке выше или создайте новую кнопкой «Создать в плане закупок» — без выбора заявка увеличит плановую сумму категории.', 'warning')
+        }
+      } else {
+        const unfilledCount = wishForm.value.items.filter((it: any) => it.feo_planned_item_id == null).length
+        if (unfilledCount > 0) {
+          showSnack(`У ${unfilledCount} ${unfilledCount === 1 ? 'позиции' : 'позиций'} не выбрана плановая позиция плана закупок. Выберите её или создайте новую кнопкой «Создать в плане закупок» — без выбора позиция увеличит плановую сумму категории.`, 'warning')
+        }
       }
     }
   }

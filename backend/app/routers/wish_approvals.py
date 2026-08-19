@@ -308,6 +308,12 @@ async def decide_wish_approval(
     if decision == "rejected":
         wish.status = "rejected"
         wish.rejection_reason = body.get("comment")
+        # Владелец (2026-08-19): «нужно, чтобы было видно, кто отклонил» —
+        # см. Wish.rejected_by/rejected_at (models/wish.py). Ставим ДО
+        # _reset_approvals ниже — сама заявка это переживает, в отличие от
+        # WishApproval-строки отклонившего (та без keep_user_id тоже стёрлась бы).
+        wish.rejected_by = current_user.id
+        wish.rejected_at = datetime.now(timezone.utc)
         # Согласующий отклонил — если по заявке уже есть закупка в Плане закупок
         # (например от параллельного потока действий), убираем её из плана.
         from app.routers.wishes import _withdraw_wish_from_plan
@@ -325,7 +331,7 @@ async def decide_wish_approval(
         # Тот же helper и тот же паттерн, что уже применяется в wishes.py::reject_wish
         # (см. _reset_approvals там, строка ~2105).
         from app.routers.wishes import _reset_approvals
-        await _reset_approvals(wish.id, db)
+        await _reset_approvals(wish.id, db, keep_user_id=a.user_id)
         await db.commit()
         if creator and creator.id != current_user.id:
             try:

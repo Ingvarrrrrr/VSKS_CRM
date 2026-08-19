@@ -21,6 +21,14 @@ class Wish(Base):
     justification = Column(Text, nullable=True)
     status = Column(String(30), default="draft", nullable=False, index=True)
     rejection_reason = Column(Text, nullable=True)
+    # Владелец (2026-08-19): «нужно, чтобы было видно, кто отклонил» — раньше
+    # _reset_approvals сбрасывала ВСЕ решения согласующих (включая отклонившего)
+    # обратно в pending, и кто именно отклонил заявку становилось не видно.
+    # rejected_by/rejected_at хранят это отдельно от WishApproval-цепочки —
+    # переживают сброс. Обнуляются при повторной отправке на согласование
+    # (см. wishes.py::submit_wish, update_wish resubmit-ветка).
+    rejected_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    rejected_at = Column(DateTime(timezone=True), nullable=True)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     approved_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     purchase_id = Column(Integer, ForeignKey("purchases.id"), nullable=True)
@@ -65,6 +73,7 @@ class Wish(Base):
     assignee = relationship("User", foreign_keys=[assigned_to], lazy="selectin")
     executor = relationship("User", foreign_keys=[executor_id], lazy="selectin")
     stopped_by_user = relationship("User", foreign_keys=[stopped_by], lazy="selectin")
+    rejected_by_user = relationship("User", foreign_keys=[rejected_by], lazy="selectin")
     purchase = relationship("Purchase", foreign_keys=[purchase_id])
     contractor = relationship("Contractor", foreign_keys=[contractor_id], lazy="selectin")
     subsidy = relationship("Subsidy", lazy="selectin")

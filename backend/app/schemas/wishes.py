@@ -248,6 +248,11 @@ class WishOut(BaseModel):
     justification: Optional[str] = None
     status: str
     rejection_reason: Optional[str] = None
+    # Владелец (2026-08-19): «нужно, чтобы было видно, кто отклонил» — переживает
+    # сброс WishApproval-цепочки (см. Wish.rejected_by докстринг в models/wish.py).
+    rejected_by: Optional[int] = None
+    rejected_at: Optional[datetime] = None
+    rejected_by_name: Optional[str] = None
     created_by: int
     creator_name: Optional[str] = None
     approved_by: Optional[int] = None

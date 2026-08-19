@@ -1309,6 +1309,7 @@
                     :vat-mode="wishForm.vat_mode"
                     @update:vat-mode="(v: string) => { wishForm.vat_mode = v }"
                     @planned-item-created="onWishPlannedItemCreated"
+                    @planned-item-deleted="onWishPlannedItemCreated"
                   />
                 </div>
                 <!-- Владелец, 2026-08-19: тумблер «Не указывать последний уровень ФЭО» убран —
@@ -1408,6 +1409,7 @@
                   :bulk-items="wishFeoBulkItems"
                   :bulk-title="wishForm.title"
                   @planned-item-created="onWishPlannedItemCreated"
+                  @planned-item-deleted="onWishPlannedItemCreated"
                   @candidate-confirmed="onWishFeoCandidateConfirmed"
                   @bulk-items-created="onWishFeoBulkItemsCreated"
                 />

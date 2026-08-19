@@ -3013,8 +3013,10 @@
             :amount="reqItemEditPlanAmount"
             :loading="reqItemEditPlannedLoading"
             :prefill="reqItemEditPlanPrefill"
+            :purchase-id="reqItemEdit.purchaseId"
             @update:model-value="onReqItemEditPlanSelect"
             @planned-item-created="reloadReqItemEditPlanned"
+            @planned-item-deleted="reloadReqItemEditPlanned"
           />
           <div class="text-caption text-medium-emphasis mt-1">
             Можно привязать к существующей плановой позиции или создать новую — если не

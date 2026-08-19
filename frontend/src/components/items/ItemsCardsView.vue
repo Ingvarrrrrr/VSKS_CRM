@@ -138,9 +138,11 @@
                 :nodes="feoNodes" :items="plannedItems || []"
                 :amount="item.total_price" :readonly="feoReadonly" dense class="mt-1"
                 :pending-by-planned-item="pendingByPlannedItem"
+                :purchase-id="purchaseId"
                 :prefill="{ name: item.item_name, quantity: item.quantity, unit: item.unit, amount: item.total_price }"
                 @update:model-value="(v) => emit('item-planned-change', idx, v)"
-                @planned-item-created="emit('planned-item-created')" />
+                @planned-item-created="emit('planned-item-created')"
+                @planned-item-deleted="emit('planned-item-deleted')" />
             </v-col>
 
             <!-- Кол-во -->
@@ -294,6 +296,10 @@ const props = defineProps<{
   // включённые ПРЯМО СЕЙЧАС в этой форме — см. pendingByPlannedItem в
   // PurchaseItemsEditor.vue / одноимённый проп в ItemsTableFlat.vue.
   pendingByPlannedItem?: Record<number, number> | null
+  // Владелец (сессия 2026-08-19): «где эта корзиночка?» — корзинка построчного удаления
+  // плановой позиции (FeoPlannedItemsSelect) нужна знать, «откуда удаляют», см. одноимённый
+  // проп в FeoPlannedItemsSelect.vue / PurchaseItemsEditor.vue.
+  purchaseId?: number | null
   // Владелец 2026-08-18: показать кнопку «Разбить» на карточке — только у закупок
   // (POST /purchases/{pid}/items/{item_id}/split не существует для заявок/wish-позиций).
   supportsSplit?: boolean
@@ -359,6 +365,7 @@ const emit = defineEmits<{
   'item-type-change': [idx: number, val: string]
   'items-changed': []
   'planned-item-created': []
+  'planned-item-deleted': []
 }>()
 </script>
 

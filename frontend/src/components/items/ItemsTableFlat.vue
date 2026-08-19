@@ -253,10 +253,12 @@
                 :nodes="feoNodes" :items="plannedItems || []"
                 :amount="item.total_price" :readonly="feoReadonly" dense
                 :pending-by-planned-item="pendingByPlannedItem"
+                :purchase-id="purchaseId"
                 style="flex:1 1 320px;min-width:260px"
                 :prefill="{ name: item.item_name, quantity: item.quantity, unit: item.unit, amount: item.total_price }"
                 @update:model-value="(v) => emit('item-planned-change', idx, v)"
-                @planned-item-created="emit('planned-item-created')" />
+                @planned-item-created="emit('planned-item-created')"
+                @planned-item-deleted="emit('planned-item-deleted')" />
             </div>
           </td>
         </tr>
@@ -336,6 +338,10 @@ const props = defineProps<{
   // feo_planned_item_id → сумма позиций ЭТОЙ формы (см. pendingByPlannedItem в
   // PurchaseItemsEditor.vue), прокидывается как есть в FeoPlannedItemsSelect.
   pendingByPlannedItem?: Record<number, number> | null
+  // Владелец (сессия 2026-08-19): «где эта корзиночка?» — корзинка построчного удаления
+  // плановой позиции (FeoPlannedItemsSelect) нужна знать, «откуда удаляют», см. одноимённый
+  // проп в FeoPlannedItemsSelect.vue / PurchaseItemsEditor.vue.
+  purchaseId?: number | null
   // Шаг 5 «ТЗ не дороже и не больше плана» (владелец, 2026-08-07): найти плановую
   // строку позиции (для подписи «план: N шт / N ₽») и проверить превышение
   // (для подсветки) — обе считаются один раз в родителе (см. planForItem/
@@ -414,6 +420,7 @@ const emit = defineEmits<{
   'item-type-change': [idx: number, val: string]
   'items-changed': []
   'planned-item-created': []
+  'planned-item-deleted': []
 }>()
 </script>
 

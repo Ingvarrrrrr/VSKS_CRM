@@ -161,6 +161,7 @@
           :planned-items="props.plannedItems"
           :planned-selection-for="plannedSelectionFor"
           :pending-by-planned-item="pendingByPlannedItem"
+          :purchase-id="props.purchaseId"
           :plan-for-item="planForItem"
           :plan-excess-for="planExcessFor"
           :subsidy-id="props.subsidyId"
@@ -217,6 +218,7 @@
           @contract-vat-change="onContractVatRateChange"
           @update-accepted-field="updateAcceptedField"
           @planned-item-created="emit('planned-item-created')"
+          @planned-item-deleted="emit('planned-item-deleted')"
         />
       </template>
 
@@ -240,6 +242,7 @@
           :planned-items="props.plannedItems"
           :planned-selection-for="plannedSelectionFor"
           :pending-by-planned-item="pendingByPlannedItem"
+          :purchase-id="props.purchaseId"
           :show-contractor-column="showContractorColumn"
           :show-needed-date="props.showNeededDate"
           :contractors="contractors"
@@ -282,6 +285,7 @@
           @item-type-change="onItemTypeChange"
           @items-changed="emitUpdate"
           @planned-item-created="emit('planned-item-created')"
+          @planned-item-deleted="emit('planned-item-deleted')"
         />
         <ItemsTableFlat
           v-else
@@ -299,6 +303,7 @@
           :planned-items="props.plannedItems"
           :planned-selection-for="plannedSelectionFor"
           :pending-by-planned-item="pendingByPlannedItem"
+          :purchase-id="props.purchaseId"
           :plan-for-item="planForItem"
           :plan-excess-for="planExcessFor"
           :show-contractor-column="showContractorColumn"
@@ -345,6 +350,7 @@
           @item-type-change="onItemTypeChange"
           @items-changed="emitUpdate"
           @planned-item-created="emit('planned-item-created')"
+          @planned-item-deleted="emit('planned-item-deleted')"
         />
       </template>
     </template>
@@ -564,8 +570,10 @@
             :nodes="feoNodes"
             :items="effectivePlannedItems"
             :prefill="bulkPlannedPrefill"
+            :purchase-id="props.purchaseId"
             class="mt-2"
             @planned-item-created="emit('planned-item-created')"
+            @planned-item-deleted="emit('planned-item-deleted')"
           />
         </v-card-text>
         <v-card-actions>
@@ -684,9 +692,11 @@
                   :nodes="feoNodes"
                   :items="effectivePlannedItems"
                   :amount="splitPartAmount(i)"
+                  :purchase-id="props.purchaseId"
                   dense
                   @update:model-value="(v) => onSplitPartPlannedChange(i, v)"
                   @planned-item-created="emit('planned-item-created')"
+                  @planned-item-deleted="emit('planned-item-deleted')"
                 />
               </v-col>
             </v-row>
@@ -1093,6 +1103,10 @@ const emit = defineEmits<{
    *  массовый bulk-диалог или per-item пикер в таблице) — родитель должен перезагрузить
    *  props.plannedItems (см. FeoPlannedItemsSelect.vue, баг «кнопка ничего не делает»). */
   'planned-item-created': []
+  /** Плановая позиция удалена корзинкой из строки списка (FeoPlannedItemsSelect,
+   *  владелец, сессия 2026-08-19: «где эта корзиночка?») — родитель перезагружает
+   *  props.plannedItems тем же обработчиком, что и на 'planned-item-created'. */
+  'planned-item-deleted': []
 }>()
 
 // ── Local state ──────────────────────────────────────────────────────────────

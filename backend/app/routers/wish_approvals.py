@@ -311,7 +311,21 @@ async def decide_wish_approval(
         # Согласующий отклонил — если по заявке уже есть закупка в Плане закупок
         # (например от параллельного потока действий), убираем её из плана.
         from app.routers.wishes import _withdraw_wish_from_plan
-        _plan_warning = await _withdraw_wish_from_plan(wish.id, db)
+        # Пред-существующий баг: action_text — обязательный именованный параметр
+        # (см. wishes.py::_withdraw_wish_from_plan), без него вызов падал с
+        # TypeError на КАЖДОМ отклонении через эту цепочку. Значение — как в
+        # аналогичном вызове reject_wish (wishes.py, строка ~2094).
+        _plan_warning = await _withdraw_wish_from_plan(wish.id, db, action_text="отклонить")
+        # Владелец (2026-08-19): «если заявка отклоняется одним из согласующих, она
+        # отклоняется у всех, потому что заявку могут изменить именно так, с чем
+        # остальные согласующие могут не согласиться. И надо будет повторить заново» —
+        # отклонение ОДНИМ согласующим сбрасывает решения ВСЕХ согласующих цепочки
+        # обратно в pending (включая решение самого отклонившего — заявка идёт на
+        # повторный круг согласования целиком), а не только правит wish.status.
+        # Тот же helper и тот же паттерн, что уже применяется в wishes.py::reject_wish
+        # (см. _reset_approvals там, строка ~2105).
+        from app.routers.wishes import _reset_approvals
+        await _reset_approvals(wish.id, db)
         await db.commit()
         if creator and creator.id != current_user.id:
             try:

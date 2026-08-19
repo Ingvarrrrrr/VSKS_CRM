@@ -148,6 +148,20 @@
                   <span :class="{ 'feo-planned-shortfall': isShort(row) }">остаток {{ fmt(residualFor(row)) }}</span>
                   <span v-if="isShort(row)" class="feo-planned-shortfall-note"> — не хватает {{ fmt(Math.abs(shortfall(row))) }}</span>
                 </span>
+                <!-- Владелец (сессия 2026-08-19): «где эта корзиночка?» — удаление плановой
+                     позиции прямо из строки списка, только у kind='planned_item' (см.
+                     deletePlannedItem). @click.stop — клик по кнопке НЕ должен сработать как
+                     выбор строки (обработчик клика висит на самом .feo-tree-row). -->
+                <v-btn
+                  v-if="row.kind === 'planned_item' && !readonly"
+                  icon="mdi-delete-outline"
+                  variant="text"
+                  size="x-small"
+                  color="error"
+                  class="feo-planned-delete-btn"
+                  title="Удалить плановую позицию"
+                  @click.stop="deletePlannedItem(row)"
+                />
               </div>
               <!-- Владелец 2026-08-06: кнопка «Создать в плане закупок» доступна ВСЕГДА в
                    dense-режиме (не только когда список пуст) — если ни одна из существующих
@@ -220,6 +234,20 @@
               <span :class="{ 'feo-planned-shortfall': isShort(row) }">остаток {{ fmt(row.residual) }}</span>
               <span v-if="isShort(row)" class="feo-planned-shortfall-note"> — не хватает {{ fmt(Math.abs(shortfall(row))) }}</span>
             </span>
+            <!-- Владелец (сессия 2026-08-19): «где эта корзиночка?» — удаление плановой
+                 позиции прямо из строки списка, только у kind='planned_item' (см.
+                 deletePlannedItem). @click.stop — клик по кнопке НЕ должен сработать как
+                 выбор строки (обработчик клика висит на самом .feo-tree-row). -->
+            <v-btn
+              v-if="row.kind === 'planned_item' && !readonly"
+              icon="mdi-delete-outline"
+              variant="text"
+              size="x-small"
+              color="error"
+              class="feo-planned-delete-btn"
+              title="Удалить плановую позицию"
+              @click.stop="deletePlannedItem(row)"
+            />
           </div>
 
           <div class="mt-1">
@@ -500,6 +528,14 @@ const props = defineProps<{
    *  см. pendingFor/consumedFor/residualFor ниже. Только для kind==='planned_item' (id —
    *  это id FeoPlannedItem; у plan_position/feo_article своей плановой позиции нет). */
   pendingByPlannedItem?: Record<number, number> | null
+  /** Жалоба владельца (сессия 2026-08-19): «Хочу удалить плановую позицию... где эта
+   *  корзиночка?» — корзинка уже была в ШАПКЕ карточки закупки (CreateOrderView.vue::
+   *  deleteHeadPlannedItem, коммит 5901986), но не в этом компоненте, через который
+   *  реально идёт построчный/dense выбор. purchaseId — «откуда удаляют» (см.
+   *  deletePlannedItem ниже и backend/app/routers/feo_planned_items.py::
+   *  delete_planned_item) — необязателен: PurchaseItemsEditor.vue его знает и
+   *  прокидывает, форма заявки (ещё не закупка) — нет, и это нормально. */
+  purchaseId?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -512,6 +548,11 @@ const emit = defineEmits<{
   /** Плановая позиция создана диалогом «Создать в плане закупок» (POST /feo-planned-items/) —
    *  родитель должен перезагрузить список плановых позиций (напр. useFeoPlannedResiduals.reloadPlanned). */
   'planned-item-created': []
+  /** Плановая позиция удалена корзинкой прямо из строки списка (см. deletePlannedItem) —
+   *  родитель должен перезагрузить список плановых позиций, тем же обработчиком, что
+   *  и на 'planned-item-created' (owner: «оставить перечень плановых, для возможности
+   *  их удаления и высвобождения денег»). */
+  'planned-item-deleted': []
   /** Диалог выбора способа (bulkItems) создал 1+ плановых позиций через
    *  POST /feo-planned-items/bulk — родитель обязан привязать каждую созданную
    *  позицию к её товару заявки/закупки по idx (results[i].idx — индекс в том же
@@ -678,6 +719,37 @@ function onItemRadioClick(row: FeoPlanPosition, event?: Event) {
 function detachGhost() {
   if (props.readonly) return
   emit('update:modelValue', null)
+}
+
+// Жалоба владельца (сессия 2026-08-19): «Я не увидел здесь возможности удалять ненужные
+// плановые позиции... где эта корзиночка?» — DELETE /feo-planned-items/{id}, с
+// purchase_id ТЕКУЩЕЙ закупки (props.purchaseId), если он известен: бэкенд снимает
+// «свои» ссылки (эта закупка + заявка, которая её породила) молча, а если позицию
+// держит ЧУЖАЯ закупка/заявка — отвечает 409 со списком держателей и ничего не меняет
+// (см. backend/app/routers/feo_planned_items.py::delete_planned_item). Формулировка
+// подтверждения — по образцу deleteHeadPlannedItem в CreateOrderView.vue (та же
+// корзинка, но в ШАПКЕ карточки, коммит 5901986). Кнопка есть только у
+// kind==='planned_item' — строки уровня категории (plan_position/feo_article) это сама
+// категория ФЭО дерева, их «удаление» другое, куда более опасное действие.
+async function deletePlannedItem(row: FeoPlanPosition) {
+  if (props.readonly || row.kind !== 'planned_item') return
+  const msg = `Удалить плановую позицию «${row.name}»? План ${fmt(row.planned_amount)}, ` +
+    `сейчас выбрано ${fmt(consumedFor(row))}.`
+  if (!confirm(msg)) return
+  try {
+    const qs = props.purchaseId != null ? `?purchase_id=${props.purchaseId}` : ''
+    await apiFetch(`/feo-planned-items/${row.id}${qs}`, { method: 'DELETE', suppressErrorDialog: true })
+    // Удалённая позиция была выбрана в этой строке — снять выбор, чтобы не остался
+    // «призрак» (см. ghostRow computed выше — он и без этого поймал бы несоответствие,
+    // но снимаем явно, не дожидаясь перезагрузки родителем).
+    if (selectedKey.value === row.key) {
+      emit('update:modelValue', null)
+    }
+    emit('planned-item-deleted')
+    showSnack('Плановая позиция удалена')
+  } catch (e: any) {
+    showSnack(e?.payload?.message ?? e?.detail ?? e?.message ?? 'Не удалось удалить плановую позицию', 'error')
+  }
 }
 
 // БАГ 3 (сессия 2026-08-05): раньше кнопка «Создать в плане закупок» делала
@@ -1015,6 +1087,13 @@ async function confirmCreateDuplicate() {
 .feo-planned-shortfall-note {
   color: #EF4444;
   font-weight: 700;
+}
+.feo-planned-delete-btn {
+  flex-shrink: 0;
+  margin-left: 2px;
+  /* Оптический центр по первой строке текста — тот же приём, что у
+     .feo-tree-chevron/.feo-tree-row-icon выше (row теперь align-items:flex-start). */
+  margin-top: calc((var(--feo-row-line) - 24px) / 2);
 }
 .feo-planned-ghost {
   color: #EF4444;

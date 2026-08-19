@@ -979,6 +979,7 @@
             @reload-requested="loadPurchase"
             @product-created="onProductCreatedFromEditor"
             @planned-item-created="reloadPurchasePlanned"
+            @planned-item-deleted="reloadPurchasePlanned"
           />
           <!-- 12-02: FEO auto-match suggestion chips -->
           <div v-if="feoMatchSuggestions.length" class="px-4 pb-2">

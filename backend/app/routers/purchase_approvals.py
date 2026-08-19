@@ -16,6 +16,7 @@ from app.models.user import User
 from app.models.task import Task, TaskAssignee, TaskStatus, TaskPriority
 from app.models.chat_message import ChatMessage
 from app.routers.purchase_members import _create_assignment_chat_room
+from app.services.responsible_role import is_responsible_role, RESPONSIBLE_PLACEHOLDER
 from typing import List
 from datetime import datetime, timezone, time
 
@@ -113,19 +114,44 @@ async def start_approval(
     if not approvers:
         raise HTTPException(422, "У субсидии нет согласующих (approvers). Добавьте их во вкладке «Субсидии».")
 
-    # Create PurchaseApproval records
+    # Create PurchaseApproval records.
+    # «Ответственный исполнитель» — роль-слот в subsidy_approvers (см.
+    # app/services/responsible_role.py): ФИО там ВСЕГДА плейсхолдер, реальный
+    # исполнитель определяется по КАЖДОЙ закупке отдельно, а не берётся
+    # фиксированным из настроек субсидии — иначе он утекает во все закупки.
     created = []
     for sa in approvers:
-        pa = PurchaseApproval(
-            purchase_id=pid,
-            subsidy_approver_id=sa.id,
-            order_num=sa.order_num,
-            role_name=sa.role_name,
-            approver_full_name=sa.full_name,
-            user_id=sa.user_id,
-            status="pending",
-            approval_deadline=approval_deadline,
-        )
+        if is_responsible_role(sa.role_name):
+            resolved_uid = p.assigned_user_id or p.service_note_by
+            resolved_name = ""
+            if resolved_uid:
+                resolved_user = await db.get(User, resolved_uid)
+                resolved_name = (getattr(resolved_user, "full_name", None) or "").strip() if resolved_user else ""
+            if not resolved_name:
+                resolved_name = (p.responsible_person or "").strip()
+            if not resolved_name:
+                resolved_name = RESPONSIBLE_PLACEHOLDER
+            pa = PurchaseApproval(
+                purchase_id=pid,
+                subsidy_approver_id=sa.id,
+                order_num=sa.order_num,
+                role_name=sa.role_name,
+                approver_full_name=resolved_name,
+                user_id=resolved_uid,
+                status="pending",
+                approval_deadline=approval_deadline,
+            )
+        else:
+            pa = PurchaseApproval(
+                purchase_id=pid,
+                subsidy_approver_id=sa.id,
+                order_num=sa.order_num,
+                role_name=sa.role_name,
+                approver_full_name=sa.full_name,
+                user_id=sa.user_id,
+                status="pending",
+                approval_deadline=approval_deadline,
+            )
         db.add(pa)
         created.append(pa)
 

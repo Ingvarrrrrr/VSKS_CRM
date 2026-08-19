@@ -3745,25 +3745,26 @@
           <!-- approval_sheet: responsible person + checkboxes -->
           <div v-else>
             <!-- Ответственный исполнитель -->
-            <div class="d-flex align-center gap-2 mb-4">
+            <div class="d-flex align-start gap-2 mb-4">
               <v-autocomplete
                 v-model="pickerResponsibleName"
-                :items="responsiblePersonsList"
+                :items="responsibleOptions"
                 item-title="display"
                 item-value="full_name"
                 label="Ответственный исполнитель"
                 variant="outlined"
                 density="compact"
                 clearable
-                hide-details
                 class="flex-grow-1"
                 :return-object="false"
                 autocomplete="off"
+                hint="По умолчанию — ответственный исполнитель этой закупки. Можно выбрать другого сотрудника или запись справочника."
+                persistent-hint
               />
               <v-tooltip text="Добавить в справочник" location="top">
                 <template #activator="{ props: tip }">
                   <v-btn v-bind="tip" icon="mdi-account-plus-outline" size="small"
-                    variant="tonal" color="teal" @click="addResponsibleDialog = true" />
+                    variant="tonal" color="teal" class="mt-1" @click="addResponsibleDialog = true" />
                 </template>
               </v-tooltip>
             </div>
@@ -5224,6 +5225,44 @@ async function loadResponsiblePersonsList() {
   } catch { responsiblePersonsList.value = [] }
 }
 
+// Список для выбора «Ответственный исполнитель» в диалоге листа согласования:
+// сотрудники организации (orgUsersList) + справочник ответственных
+// (responsiblePersonsList), объединённые и дедуплицированные по ФИО.
+// При совпадении приоритет у записи справочника (там указана должность).
+// Плюс: текущее предзаполненное значение (pickerResponsibleName) добавляется
+// принудительно, если его нет ни в одном из наборов — иначе оно "исчезает"
+// из списка при открытии автокомплита (v-autocomplete показывает пусто для
+// значения, отсутствующего в items).
+const responsibleOptions = computed(() => {
+  const norm = (s: string) => s.trim().toLowerCase()
+  const byName = new Map<string, { full_name: string; position?: string | null; display: string; source: 'user' | 'directory' }>()
+
+  for (const u of orgUsersList.value) {
+    if (!u.full_name) continue
+    byName.set(norm(u.full_name), {
+      full_name: u.full_name,
+      position: u.position,
+      display: u.position ? `${u.full_name} (${u.position})` : u.full_name,
+      source: 'user',
+    })
+  }
+  // Справочник имеет приоритет — перезаписывает запись сотрудника с тем же ФИО.
+  for (const p of responsiblePersonsList.value) {
+    if (!p.full_name) continue
+    byName.set(norm(p.full_name), {
+      full_name: p.full_name,
+      position: p.position,
+      display: p.display || (p.position ? `${p.full_name} (${p.position})` : p.full_name),
+      source: 'directory',
+    })
+  }
+  const current = pickerResponsibleName.value?.trim()
+  if (current && !byName.has(norm(current))) {
+    byName.set(norm(current), { full_name: current, display: current, source: 'directory' })
+  }
+  return [...byName.values()].sort((a, b) => a.full_name.localeCompare(b.full_name, 'ru'))
+})
+
 async function saveNewResponsible() {
   if (!newResponsibleName.value.trim() || !form.subsidy_id) return
   savingResponsible.value = true
@@ -5263,6 +5302,7 @@ async function openDocPicker(type: 'service_note_procurement' | 'service_note_de
     const [list] = await Promise.all([
       apiFetch<DocApprover[]>(`/subsidies/${form.subsidy_id}/approvers`),
       loadResponsiblePersonsList(),
+      orgUsersList.value.length ? Promise.resolve() : loadOrgUsers(),
     ])
     docApprovers.value = list
     if (type === 'approval_sheet') {

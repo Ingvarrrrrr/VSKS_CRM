@@ -26,9 +26,19 @@ async def list_responsible_persons(
     current_user=Depends(get_current_user),
 ):
     await _get_subsidy_or_404(sid, db)
+    # Только записи своей субсидии. Глобальные записи (subsidy_id IS NULL)
+    # намеренно НЕ подмешиваем: такая запись всплывала бы «ответственным
+    # исполнителем» сразу во всех субсидиях подряд — именно так «Филиппов
+    # Д.П.» (id=1, subsidy_id=NULL) оказывался предложен везде, хотя владелец
+    # его туда не добавлял. Пустоты в списке это не создаёт: диалог документа
+    # (responsibleOptions в CreateOrderView.vue) уже подмешивает сотрудников
+    # субсидии из orgUsersList поверх этого справочника.
     result = await db.execute(
         select(ResponsiblePerson)
-        .where(ResponsiblePerson.subsidy_id == sid, ResponsiblePerson.is_active == True)
+        .where(
+            ResponsiblePerson.subsidy_id == sid,
+            ResponsiblePerson.is_active == True,
+        )
         .order_by(ResponsiblePerson.full_name)
     )
     return result.scalars().all()

@@ -10,6 +10,7 @@ from app.models.subsidy_approver import SubsidyApprover
 from app.models.user import User
 from app.schemas.schemas import SubsidyApproverCreate, SubsidyApproverOut
 from app.auth.jwt import get_current_user, get_org_filter
+from app.services.responsible_role import is_responsible_role, RESPONSIBLE_PLACEHOLDER
 from typing import List
 
 SUBSIDY_TEMPLATES_DIR = "/app/uploads/templates/subsidies"
@@ -68,12 +69,18 @@ async def create_approver(
     current_user=Depends(get_current_user),
 ):
     await _get_subsidy_or_404(sid, db, current_user, edit=True)
-    user_id = data.model_dump().get("user_id")
+    payload = data.model_dump()
+    user_id = payload.get("user_id")
     if user_id is not None:
         target_user = await db.get(User, user_id)
         if target_user and target_user.role == "superadmin":
             raise HTTPException(400, "Суперадмина нельзя назначить согласующим")
-    approver = SubsidyApprover(subsidy_id=sid, **data.model_dump())
+    if is_responsible_role(payload.get("role_name")):
+        # «Ответственный исполнитель» — роль-слот, ФИО определяется по
+        # закупке, а не хранится фиксированным в настройках субсидии.
+        payload["full_name"] = RESPONSIBLE_PLACEHOLDER
+        payload["user_id"] = None
+    approver = SubsidyApprover(subsidy_id=sid, **payload)
     db.add(approver)
     await db.commit()
     await db.refresh(approver)
@@ -97,12 +104,16 @@ async def update_approver(
     approver = result.scalar_one_or_none()
     if not approver:
         raise HTTPException(404, "Согласующий не найден")
-    user_id = data.model_dump().get("user_id")
+    payload = data.model_dump()
+    user_id = payload.get("user_id")
     if user_id is not None:
         target_user = await db.get(User, user_id)
         if target_user and target_user.role == "superadmin":
             raise HTTPException(400, "Суперадмина нельзя назначить согласующим")
-    for k, v in data.model_dump().items():
+    if is_responsible_role(payload.get("role_name")):
+        payload["full_name"] = RESPONSIBLE_PLACEHOLDER
+        payload["user_id"] = None
+    for k, v in payload.items():
         setattr(approver, k, v)
     await db.commit()
     await db.refresh(approver)

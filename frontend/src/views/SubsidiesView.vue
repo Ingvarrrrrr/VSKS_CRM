@@ -3244,7 +3244,7 @@
             variant="tonal"
             density="compact"
             class="mb-3"
-            text="Для роли «Ответственный исполнитель» ФИО не указывается — исполнитель определяется для каждой закупки из её данных."
+            text="Для роли «Ответственный исполнитель» ФИО не указывается — исполнитель определяется для каждой закупки из её данных. Конкретного человека можно выбрать при скачивании листа согласования — поле «Ответственный исполнитель» в диалоге документа."
           />
           <v-autocomplete
             v-if="approverForm.role_name !== 'Ответственный исполнитель'"
@@ -10362,20 +10362,29 @@ function startAddApprover() {
 
 function startEditApprover(a: SubsidyApprover) {
   approverEditTarget.value = a
-  const foundUser = a.user_id ? (approverUsersList.value.find(u => u.id === a.user_id) ?? null) : null
+  // «Ответственный исполнитель» — роль-слот: ФИО определяется по каждой
+  // закупке, а не хранится фиксированным в настройках субсидии. Даже если
+  // в БД у старой записи оказалось живое ФИО (баг, почищен миграцией
+  // g8h9i0j1k2l3), форма редактирования не должна его снова показывать и
+  // молча сохранять обратно — иначе правка любого другого поля этой строки
+  // (например order_num) вернула бы фиксированное ФИО.
+  const isResponsibleRole = a.role_name === 'Ответственный исполнитель'
+  const foundUser = (!isResponsibleRole && a.user_id)
+    ? (approverUsersList.value.find(u => u.id === a.user_id) ?? null)
+    : null
   approverForm.value = {
     role_name: a.role_name,
-    full_name: a.full_name,
+    full_name: isResponsibleRole ? RESPONSIBLE_PLACEHOLDER : a.full_name,
     order_num: a.order_num,
     is_default: a.is_default,
     can_initiate: a.can_initiate,
     show_feo_path: a.show_feo_path ?? false,
-    user_id: a.user_id ?? null,
+    user_id: isResponsibleRole ? null : (a.user_id ?? null),
     selectedUser: foundUser,
   }
   loadApproverUsers().then(() => {
     // re-resolve after load in case list was empty when dialog opened
-    if (a.user_id && !approverForm.value.selectedUser) {
+    if (!isResponsibleRole && a.user_id && !approverForm.value.selectedUser) {
       approverForm.value.selectedUser = approverUsersList.value.find(u => u.id === a.user_id) ?? null
     }
   })

@@ -19,6 +19,7 @@ from app.models.feo_category import FeoCategory
 from app.models.event import Event
 from app.auth.jwt import get_current_user
 from app.services.fio import compose_fio as _compose_fio
+from app.services.responsible_role import is_responsible_role, is_blank_person_name, RESPONSIBLE_PLACEHOLDER
 from typing import Optional
 import logging
 
@@ -997,6 +998,7 @@ async def generate_document(
             selectinload(Purchase.feo_category),
             selectinload(Purchase.contract_items),  # Phase 27.1 CD-5: eager-load for docxtpl context
             selectinload(Purchase.assigned_user),  # B-dedup: для авто-инициалов responsible_person
+            selectinload(Purchase.service_note_author),  # fallback «Ответственный исполнитель» = автор СЗ
         )
         .where(Purchase.id == pid)
     )
@@ -1187,9 +1189,16 @@ async def generate_document(
                 initials.append(p_word[0].upper() + ".")
         return f"{surname} {''.join(initials)}".strip()
 
-    # Resolved responsible person: priority = ?responsible_name → assigned_user.full_name → p.responsible_person
+    # Resolved responsible person: priority = ?responsible_name → assigned_user.full_name
+    # → p.responsible_person → автор служебной записки (последний фолбэк, чтобы клетка
+    # «Ответственный исполнитель» никогда не оставалась привязанной к фиксированному
+    # человеку из настроек субсидии — см. app/services/responsible_role.py)
     assigned_full = (getattr(p.assigned_user, "full_name", None) or "") if getattr(p, "assigned_user", None) else ""
-    raw_responsible = responsible_name or assigned_full or p.responsible_person or ""
+    service_note_author_full = (
+        (getattr(p.service_note_author, "full_name", None) or "")
+        if getattr(p, "service_note_author", None) else ""
+    )
+    raw_responsible = responsible_name or assigned_full or p.responsible_person or service_note_author_full or ""
     resolved_responsible = _format_initials(raw_responsible) if raw_responsible else ""
     resolved_responsible_full = raw_responsible  # для шаблонов которым нужно полное ФИО
 
@@ -1371,9 +1380,12 @@ async def generate_document(
     approvers_list = []
     for i, a in enumerate(selected_approvers):
         full_name = a.full_name or ""
-        # Substitute responsible person into rows with empty or placeholder full_name
-        if not full_name.strip().strip("_").strip():
-            full_name = resolved_responsible
+        # «Ответственный исполнитель» — роль-слот (app/services/responsible_role.py):
+        # хранимое в subsidy_approvers ФИО для неё ИГНОРИРУЕТСЯ ВСЕГДА, даже если там
+        # почему-то оказалось живое имя — источник истины только резолв по закупке.
+        # Для остальных ролей подставляем резолв только если сохранённое ФИО пустое/плейсхолдер.
+        if is_responsible_role(a.role_name) or is_blank_person_name(full_name):
+            full_name = resolved_responsible or RESPONSIBLE_PLACEHOLDER
         if getattr(a, "show_feo_path", False) and item_feo_paths:
             note = "; ".join(f"{path} — {_fmt_money(total)} ₽" for path, total in item_feo_paths)
         elif getattr(a, "show_feo_path", False) and feo_path:
@@ -1430,10 +1442,19 @@ async def generate_document(
         parts = full_name.split()
         return parts[-1] if parts else full_name
 
+    # Сумма закупки для документов (Phase: лист согласования не зависит от стадии).
+    # До момента заключения договора contract_price всегда NULL — берём НМЦК/план,
+    # а если и они пусты (стадия «Хотелки», ФЭО ещё не привязано) — сумму позиций,
+    # она есть с момента создания закупки.
+    items_sum_val = float(sum(Decimal(str(it.total_price or 0)) for it in (p.items or [])))
+    doc_amount_val = (float(p.contract_price or 0) or float(p.total_nmck or 0)
+                      or float(p.nmck or 0) or float(p.planned_total_price or 0) or items_sum_val)
+    amount_is_planned = not bool(p.contract_price)
+
     # VAT calculations
     vat_app = bool(p.vat_applicable)
     vat_rate_val = p.vat_rate or 20
-    price_val = float(p.contract_price or 0)
+    price_val = doc_amount_val
     if vat_app and price_val:
         vat_amount_val = price_val * vat_rate_val / (100 + vat_rate_val)
     else:
@@ -1508,10 +1529,12 @@ async def generate_document(
         # максимальная цена договора). total_nmck is kept as a deprecated
         # alias so existing templates keep rendering. Use total_nmcd in new
         # templates.
-        "total_nmcd": _fmt_money(p.total_nmck or p.nmck or p.planned_total_price),
-        "total_nmck": _fmt_money(p.total_nmck or p.nmck or p.planned_total_price),
-        "nmck": _fmt_money(p.nmck or p.total_nmck),
-        "contract_price": _fmt_money(p.contract_price),
+        # Phase: суммы в шапке документов не должны зависеть от стадии закупки —
+        # фолбэк на doc_amount_val/items_sum_val, см. расчёт выше (перед НДС).
+        "total_nmcd": _fmt_money(p.total_nmck or p.nmck or p.planned_total_price or items_sum_val),
+        "total_nmck": _fmt_money(p.total_nmck or p.nmck or p.planned_total_price or items_sum_val),
+        "nmck": _fmt_money(p.nmck or p.total_nmck or items_sum_val),
+        "contract_price": _fmt_money(p.contract_price or doc_amount_val),
         "economy": _fmt_money(p.economy),
         "price_increase": _fmt_money(p.price_increase),
         # Договор
@@ -1609,9 +1632,15 @@ async def generate_document(
         "vat_amount_words":      _rubles_to_words(vat_amount_val),
         "vat_exemption_article": p.vat_exemption_article or "",
         "vat_info_line":         vat_info_line,
-        # Цена прописью
-        "contract_price_num":   _fmt_money_plain(p.contract_price),
-        "contract_price_words": _rubles_to_words(p.contract_price),
+        # Цена прописью (фолбэк на doc_amount_val, если договор ещё не заключён)
+        "contract_price_num":   _fmt_money_plain(p.contract_price or doc_amount_val),
+        "contract_price_words": _rubles_to_words(p.contract_price or doc_amount_val),
+        # Phase: сумма закупки для документов, не зависящая от стадии (план/договор).
+        "doc_amount":         _fmt_money(doc_amount_val),
+        "doc_amount_num":     _fmt_money_plain(doc_amount_val),
+        "doc_amount_words":   _rubles_to_words(doc_amount_val),
+        "amount_is_planned":  amount_is_planned,
+        "amount_source_label": "НМЦК (план)" if amount_is_planned else "Цена договора",
         # Phase 23: service_subject alias (same as subject but clearer name in services template)
         "service_subject": p.subject or "",
         # Phase 23.1: subject_kind for universal contract.docx auto-switch
@@ -3103,6 +3132,11 @@ TEMPLATE_VARIABLES = [
     ("{{contract_price_words}}", "Цена прописью", "{{contract_price_words}}", "сто тридцать тысяч рублей 00 копеек"),
     ("{{economy}}", "Экономия", "{{economy}}", "5 000,00 ₽"),
     ("{{price_increase}}", "Увеличение цены", "{{price_increase}}", "0,00 ₽"),
+    ("{{doc_amount}}", "Сумма закупки для документов (не зависит от стадии: договор → НМЦК/план → сумма позиций)", "{{doc_amount}}", "130 000,00 ₽"),
+    ("{{doc_amount_num}}", "Сумма для документов без валюты", "{{doc_amount_num}}", "130 000,00"),
+    ("{{doc_amount_words}}", "Сумма для документов прописью", "{{doc_amount_words}}", "сто тридцать тысяч рублей 00 копеек"),
+    ("{{amount_is_planned}}", "true, если сумма плановая (договор ещё не заключён)", "{{amount_is_planned}}", "true"),
+    ("{{amount_source_label}}", "Подпись источника суммы", "{{amount_source_label}}", "НМЦК (план)"),
     # ── НДС ──
     ("", "НДС", "", ""),
     ("{{vat_applicable}}", "Облагается НДС", "{{vat_applicable}}", "true"),

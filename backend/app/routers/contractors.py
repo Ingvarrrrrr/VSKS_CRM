@@ -617,6 +617,47 @@ def _split_signatory(raw, position=None):
     return (fio, pos)
 
 
+async def _check_npd_status(inn: str) -> dict:
+    """Статус плательщика НПД (самозанятого) в реестре ФНС.
+
+    ЕГРЮЛ/ЕГРИП самозанятых НЕ содержит — по такому ИНН egrul.nalog.ru отдаёт
+    пустой rows, хотя человек реально работает и его находит проверка на
+    npd.nalog.ru. Это единственный публичный источник по НПД, и он отдаёт
+    только факт статуса — ни ФИО, ни адреса там нет.
+
+    Возвращает {'state': 'yes' | 'no' | 'invalid' | 'unknown', 'message': str}.
+    'invalid' — ИНН не проходит проверку контрольной цифры (ФНС: validation.failed).
+    'unknown' — сервис недоступен либо упёрлись в его лимит запросов с одного IP
+    (ФНС отдаёт taxpayer.status.service.limited.error); отличать от 'no' важно,
+    иначе пользователю соврём, что человек не самозанятый.
+    """
+    import httpx
+    import logging
+    from datetime import date as _date
+
+    logger = logging.getLogger(__name__)
+    try:
+        async with httpx.AsyncClient(timeout=10, verify=False) as client:
+            resp = await client.post(
+                "https://statusnpd.nalog.ru/api/v1/tracker/taxpayer_status",
+                json={"inn": inn, "requestDate": _date.today().isoformat()},
+            )
+            data = resp.json()
+    except Exception as e:
+        logger.warning("NPD status check failed for INN %s: %s", inn, e)
+        return {"state": "unknown", "message": "сервис проверки самозанятых ФНС не ответил"}
+
+    if data.get("code"):
+        logger.warning("NPD status refused for INN %s: %s", inn, data)
+        _msg = data.get("message") or str(data.get("code"))
+        if data.get("code") == "validation.failed":
+            return {"state": "invalid", "message": _msg}
+        return {"state": "unknown", "message": _msg}
+    if data.get("status") is True:
+        return {"state": "yes", "message": data.get("message") or ""}
+    return {"state": "no", "message": data.get("message") or ""}
+
+
 @router.get("/lookup-inn/{inn}")
 async def lookup_inn(
     inn: str,
@@ -707,11 +748,53 @@ async def lookup_inn(
                     break
 
             if not rows:
+                # Самозанятых (плательщиков НПД) в ЕГРЮЛ/ЕГРИП нет вообще —
+                # прежде чем сказать «не найден», спрашиваем реестр НПД.
+                npd = await _check_npd_status(inn) if len(inn) == 12 else {"state": "no", "message": ""}
+                if npd["state"] == "yes":
+                    return {
+                        "inn": inn,
+                        "org_type": "Самозанятый",
+                        "status": npd["message"],
+                        "_source": "npd",
+                        "_notice": (
+                            f"ИНН {inn} — самозанятый (плательщик налога на профессиональный доход). "
+                            "В ЕГРЮЛ/ЕГРИП таких записей нет, поэтому ФИО, адрес и банковские "
+                            "реквизиты придётся заполнить вручную."
+                        ),
+                    }
+                if npd["state"] == "invalid":
+                    raise HTTPException(
+                        status_code=404,
+                        detail={
+                            "code": "INN_NOT_FOUND",
+                            "message": (
+                                f"ИНН {inn} некорректен — не проходит проверку контрольной цифры ФНС. "
+                                "Скорее всего, в номере опечатка."
+                            ),
+                            "hint": "Сверьте ИНН с документом контрагента.",
+                        },
+                    )
+                if npd["state"] == "unknown":
+                    raise HTTPException(
+                        status_code=404,
+                        detail={
+                            "code": "INN_NOT_FOUND",
+                            "message": (
+                                f"ИНН {inn} не найден в ЕГРЮЛ/ЕГРИП. Проверить, не самозанятый ли это, "
+                                f"сейчас не получилось: {npd['message']}."
+                            ),
+                            "hint": "Повторите попытку через минуту либо заполните карточку вручную.",
+                        },
+                    )
                 raise HTTPException(
                     status_code=404,
                     detail={
                         "code": "INN_NOT_FOUND",
-                        "message": f"ИНН {inn} не найден в базе и не зарегистрирован в ЕГРЮЛ/ЕГРИП. Проверьте правильность ввода.",
+                        "message": (
+                            f"ИНН {inn} не найден: его нет ни в ЕГРЮЛ/ЕГРИП, ни в реестре самозанятых. "
+                            "Проверьте правильность ввода."
+                        ),
                         "hint": "Если организация существует, попробуйте найти её по названию или КПП.",
                     },
                 )

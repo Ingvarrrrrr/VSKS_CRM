@@ -2251,6 +2251,11 @@ async function enrichNewOrgFromEgrul() {
   newOrgEgrulMessage.value = ''
   try {
     const data = await apiFetch<Record<string, any>>(`/contractors/lookup-inn/${inn}?force_egrul=1`)
+    if (data._source === 'npd') {
+      newOrgEgrulMessage.value = data._notice || `ИНН ${inn} — самозанятый, данных в ЕГРЮЛ нет`
+      newOrgEgrulMessageType.value = 'warning'
+      return
+    }
     const d = newOrgDialog.value
     if (data.name && !d.name.trim()) d.name = data.name
     if (data.full_name) d.full_name = data.full_name
@@ -2283,6 +2288,11 @@ async function enrichEditOrgFromEgrul() {
   editOrgEgrulMessage.value = ''
   try {
     const data = await apiFetch<Record<string, any>>(`/contractors/lookup-inn/${inn}?force_egrul=1`)
+    if (data._source === 'npd') {
+      editOrgEgrulMessage.value = data._notice || `ИНН ${inn} — самозанятый, данных в ЕГРЮЛ нет`
+      editOrgEgrulMessageType.value = 'warning'
+      return
+    }
     const d = editOrgDialog.value
     if (data.full_name) d.full_name = data.full_name
     if (data.kpp) d.kpp = data.kpp

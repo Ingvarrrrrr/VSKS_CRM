@@ -440,6 +440,11 @@ async function enrichFromEgrul() {
   egrulMessage.value = ''
   try {
     const data = await apiFetch<Record<string, any>>(`/contractors/lookup-inn/${inn}?force_egrul=1`)
+    if (data._source === 'npd') {
+      egrulMessage.value = data._notice || `ИНН ${inn} — самозанятый, данных в ЕГРЮЛ нет`
+      egrulMessageType.value = 'warning'
+      return
+    }
     const mapped: Record<string, string> = {
       name: data.name || '',
       full_name: data.full_name || '',

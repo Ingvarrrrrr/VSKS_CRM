@@ -7250,6 +7250,12 @@ async function lookupContractorInn() {
   if (!inn || inn.length < 10) return
   try {
     const data = await apiFetch<any>(`/contractors/lookup-inn/${inn}?force_egrul=1`)
+    // Самозанятый: в ЕГРЮЛ/ЕГРИП его нет, реестр НПД отдаёт только статус
+    if (data?._source === 'npd') {
+      if (!addContractorForm.org_type) addContractorForm.org_type = 'Самозанятый'
+      showSnack(data._notice || `ИНН ${inn} — самозанятый, данных в ЕГРЮЛ нет`, 'warning')
+      return
+    }
     const FIELDS = [
       { key: 'name', label: 'Наименование' },
       { key: 'full_name', label: 'Полное наименование' },

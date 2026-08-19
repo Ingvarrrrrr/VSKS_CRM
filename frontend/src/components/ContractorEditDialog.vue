@@ -490,7 +490,8 @@ async function lookupFns(forceEgrul = false) {
   try {
     const url = forceEgrul ? `/contractors/lookup-inn/${inn}?force_egrul=1` : `/contractors/lookup-inn/${inn}`
     const data = await apiFetch<Record<string, any>>(url)
-    const source = (data as any)._source === 'local' ? 'нашей БД' : 'ЕГРЮЛ'
+    const _src = (data as any)._source
+    const source = _src === 'local' ? 'нашей БД' : _src === 'npd' ? 'реестра самозанятых ФНС' : 'ЕГРЮЛ'
 
     // If the lookup found an existing local contractor (not the one being edited) — show alert
     if ((data as any)._source === 'local' && (data as any).id && (data as any).id !== editId.value) {
@@ -512,6 +513,18 @@ async function lookupFns(forceEgrul = false) {
         diffs.push({ label, old: current || '(пусто)', new: incoming })
         pending[key] = incoming
       }
+    }
+
+    // Самозанятый: реестр НПД отдаёт только сам факт статуса, ФИО и реквизитов там нет
+    if (_src === 'npd') {
+      if (diffs.length) {
+        egrulDiffItems.value = diffs
+        egrulDiffPending.value = pending
+        egrulDiffDialog.value = true
+      }
+      fnsMessage.value = (data as any)._notice || `ИНН найден в ${source}`
+      fnsMessageType.value = 'warning'
+      return
     }
 
     if (diffs.length === 0) {

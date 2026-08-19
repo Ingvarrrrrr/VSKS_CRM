@@ -587,15 +587,30 @@
             </v-col>
             <!-- Мероприятие (после выбора субсидии, или всегда для служебных записок) -->
             <v-col v-if="(form.subsidy_id && filteredEvents.length) || formMode === 'service_note_delivery'" cols="12" md="4">
-              <v-select
-                v-model="form.event_id"
-                :items="filteredEvents"
-                item-title="name" item-value="id"
-                label="Мероприятие *"
-                variant="outlined" density="compact"
-                :rules="[v => !!v || 'Обязательное поле']"
-                hint="К какому мероприятию относится закупка" persistent-hint
-              />
+              <div class="d-flex align-center gap-2">
+                <v-select
+                  v-model="form.event_id"
+                  :items="filteredEvents"
+                  item-title="name" item-value="id"
+                  label="Мероприятие *"
+                  variant="outlined" density="compact"
+                  :rules="[v => !!v || 'Обязательное поле']"
+                  hint="К какому мероприятию относится закупка" persistent-hint
+                  class="flex-grow-1"
+                />
+                <v-tooltip v-if="!isNew && !form.event_id" location="top" text="Мероприятие не привязано">
+                  <template #activator="{ props: tooltipProps }">
+                    <v-icon v-bind="tooltipProps" icon="mdi-calendar-alert" color="warning" class="mb-5" />
+                  </template>
+                </v-tooltip>
+              </div>
+            </v-col>
+            <!-- Мероприятие не привязано, а у субсидии их вообще нет — значок вместо поля -->
+            <v-col v-else-if="!isNew && form.subsidy_id && !form.event_id" cols="12" md="4">
+              <div class="d-flex align-center gap-2" style="height: 40px;">
+                <v-icon icon="mdi-calendar-alert" color="warning" />
+                <span class="text-body-2 text-medium-emphasis">Мероприятие не привязано</span>
+              </div>
             </v-col>
             <!-- delivery_date перенесена в блок «Сроки и даты» ниже -->
           </v-row>

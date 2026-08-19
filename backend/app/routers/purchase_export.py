@@ -28,6 +28,7 @@ from app.models.payment import Payment
 from app.models.event import Event
 from app.routers.events import normalize_event_name
 from app.auth.jwt import get_current_user
+from app.auth.permissions import has_org_key
 from app.auth.visibility import get_visible_subsidy_ids
 from app.models.user import User
 from app.services.ru_regions import RU_REGIONS
@@ -2646,6 +2647,7 @@ async def _parse_and_group(
             existing_dup_index[(r.contractor_id, round(_fv, 2))].append({**_base, "amount": _fv, "match_reason": _reason})
 
     errors: list[dict] = []
+    warnings: list[dict] = []
     skipped = 0
 
     # --- Simulate mode: коллектор создаваемых ФЭО и счётчик отрицательных id ---
@@ -2752,9 +2754,13 @@ async def _parse_and_group(
             continue
 
         # ---- Event (Приложение №3) ----
-        # Строго среди мероприятий ЭТОЙ субсидии; пустая ячейка — молча, без
-        # ошибки. Ничего не создаётся — единственная точка ввода мероприятий
-        # это карточка субсидии.
+        # НЕ обязательно (требование владельца, 2026-08-19): «не всегда
+        # известно». Пустая ячейка — молча, без предупреждения. Название, не
+        # найденное среди мероприятий субсидии, тоже больше НЕ роняет строку —
+        # закупка создаётся без event_id, а пользователь видит предупреждение
+        # (preview/импорт) и оранжевый значок в реестре закупок. Ничего не
+        # создаётся автоматически — единственная точка ввода мероприятий это
+        # карточка субсидии.
         event_id_val = None
         event_name_raw = cell(row, "event_name")
         if event_name_raw:
@@ -2762,15 +2768,15 @@ async def _parse_and_group(
             if _ev_match:
                 event_id_val = _ev_match[0]
             else:
-                errors.append({
+                warnings.append({
                     "row": row_num,
                     "name": item_name,
                     "message": (
-                        f"Мероприятие «{event_name_raw}» не найдено среди мероприятий субсидии. "
-                        "Добавьте его в карточке субсидии (Приложение №3) или очистите ячейку."
+                        f"Строка {row_num}: мероприятие «{event_name_raw}» не найдено среди "
+                        "мероприятий субсидии — закупка создана без привязки. Заведите "
+                        "мероприятие в карточке субсидии (Приложение №3) и привяжите вручную."
                     ),
                 })
-                continue
 
         # ---- Contractor ----
         c_inn  = cell(row, "contractor_inn")
@@ -2995,6 +3001,7 @@ async def _parse_and_group(
     preview_list = []
     batch_seen_dup: dict = defaultdict(list)
     duplicates_count = 0
+    without_event = 0  # закупки (созданные/preview), у которых event_id не проставлен
 
     # Map contract_number → Purchase (built during commit, used for payment linking)
     contract_to_purchase: Dict[str, Purchase] = {}
@@ -3125,6 +3132,8 @@ async def _parse_and_group(
                     })
             if dup_matches:
                 duplicates_count += 1
+            if not first.get("event_id"):
+                without_event += 1
             preview_list.append({
                 "group_key": group_key,
                 "contract_number": contract_num or "",
@@ -3140,6 +3149,8 @@ async def _parse_and_group(
                 "payments_total": float(pay_total) if pay_total else None,
                 "skipped": False,
                 "duplicate_matches": dup_matches,
+                "event_id": first.get("event_id"),
+                "event_name": first.get("event_name"),
             })
             continue
 
@@ -3278,6 +3289,8 @@ async def _parse_and_group(
 
         created_purchases += 1
         created_items += len(items)
+        if not first.get("event_id"):
+            without_event += 1
 
         # --- Create Payment records from inline rows ---
         if unique_inline:
@@ -3405,6 +3418,8 @@ async def _parse_and_group(
             "created_payments": created_payments,
             "skipped": skipped,
             "errors": errors + payments_errors,
+            "warnings": warnings,
+            "without_event": without_event,
         }
     else:
         return {
@@ -3412,10 +3427,33 @@ async def _parse_and_group(
             "payments_errors": payments_errors,
             "skipped": skipped,
             "errors": errors,
+            "warnings": warnings,
+            "without_event": without_event,
             "duplicates_count": duplicates_count,
             "feo_to_create": sorted(pending_created, key=lambda x: x["path"]),
             "subsidy_has_feo": subsidy_has_feo,
         }
+
+
+async def _check_purchases_import_permission(
+    subsidy_id: int, db: AsyncSession, current_user
+) -> Subsidy:
+    """Заливать закупки из Excel может только тот, у кого есть право
+    редактировать ИМЕННО эту субсидию (subsidy.edit) — просто «залогинен»
+    недостаточно (требование владельца, 2026-08-19). Тот же паттерн, что
+    events._get_subsidy_for_events(edit=True) и
+    subsidy_approvers._get_subsidy_or_404(edit=True)."""
+    result = await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))
+    subsidy = result.scalar_one_or_none()
+    if not subsidy:
+        raise HTTPException(404, "Субсидия не найдена")
+    if not await has_org_key(current_user, db, subsidy.org_id, 'subsidy.edit', subsidy_id=subsidy_id):
+        raise HTTPException(
+            403,
+            "Импортировать закупки в эту субсидию может только тот, у кого есть право "
+            "её редактирования",
+        )
+    return subsidy
 
 
 # ---------------------------------------------------------------------------
@@ -3430,6 +3468,7 @@ async def import_purchases_from_excel(
     current_user=Depends(get_current_user),
 ):
     """Импорт закупок из Excel. Возвращает {created_purchases, created_items, created_payments, skipped, errors}."""
+    await _check_purchases_import_permission(subsidy_id, db, current_user)
     if load_workbook is None:
         raise HTTPException(500, "openpyxl не установлен")
     if not (file.filename or "").lower().endswith((".xlsx", ".xls")):
@@ -3451,6 +3490,7 @@ async def preview_purchases_import(
     current_user=Depends(get_current_user),
 ):
     """Превью импорта без сохранения. Возвращает {purchases, payments_errors, skipped, errors}."""
+    await _check_purchases_import_permission(subsidy_id, db, current_user)
     if load_workbook is None:
         raise HTTPException(500, "openpyxl не установлен")
     if not (file.filename or "").lower().endswith((".xlsx", ".xls")):

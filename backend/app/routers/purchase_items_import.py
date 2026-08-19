@@ -29,8 +29,9 @@ from app.models.purchase_item import PurchaseItem
 from app.models.product import Product
 from app.models.contractor import Contractor
 from app.models.feo_category import FeoCategory
+from app.models.subsidy import Subsidy
 from app.auth.jwt import get_current_user, require_role, get_single_org_id, MANAGER_ROLES
-from app.auth.permissions import require_tab
+from app.auth.permissions import require_tab, has_org_key
 from app.routers.purchases import _has_purchase_write_access
 from app.models.user import User
 from app.services.product_matcher import score as _fuzzy_score, SCORE_AUTO as _SCORE_AUTO
@@ -2448,6 +2449,53 @@ async def import_feo_format(
     errors_list = []
 
     data_start = header_idx + 1
+
+    # ---- Permission pre-pass ----
+    # Субсидия определяется только через feo_category.subsidy_id, поэтому
+    # какие субсидии затронуты — известно только ПОСЛЕ разбора ФЭО-колонки.
+    # Право «редактировать субсидию» (subsidy.edit) проверяется по КАЖДОЙ
+    # затронутой субсидии ДО создания хоть одной закупки — нет права хотя бы
+    # по одной → 403 с названием этой субсидии, ничего не создаётся
+    # (требование владельца, 2026-08-19).
+    def _resolve_feo_for_row(row):
+        feo_name_raw = _cell(row, "feo_name")
+        if not feo_name_raw:
+            return None
+        feo_obj = feo_by_name.get(feo_name_raw.lower().strip())
+        if not feo_obj:
+            for k, v in feo_by_name.items():
+                if feo_name_raw.lower() in k or k in feo_name_raw.lower():
+                    feo_obj = v
+                    break
+        return feo_obj
+
+    touched_subsidy_ids: set[int] = set()
+    for row in rows[data_start:]:
+        if not _cell(row, "item_name"):
+            continue
+        feo_obj = _resolve_feo_for_row(row)
+        if feo_obj is not None:
+            touched_subsidy_ids.add(feo_obj.subsidy_id)
+
+    if touched_subsidy_ids:
+        touched_subsidies = (
+            await db.execute(select(Subsidy).where(Subsidy.id.in_(touched_subsidy_ids)))
+        ).scalars().all()
+        subsidies_by_id = {s.id: s for s in touched_subsidies}
+        for sub_id in touched_subsidy_ids:
+            sub = subsidies_by_id.get(sub_id)
+            sub_name = sub.name if sub else f"id {sub_id}"
+            has_perm = (
+                sub is not None
+                and await has_org_key(current_user, db, sub.org_id, 'subsidy.edit', subsidy_id=sub_id)
+            )
+            if not has_perm:
+                raise HTTPException(
+                    403,
+                    f"Импортировать закупки в субсидию «{sub_name}» может только тот, у кого "
+                    "есть право её редактирования",
+                )
+
     for row_num, row in enumerate(rows[data_start:], start=data_start + 1):
         item_name = _cell(row, "item_name")
         if not item_name:

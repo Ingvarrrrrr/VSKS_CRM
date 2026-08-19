@@ -577,6 +577,15 @@
           </span>
         </template>
 
+        <template #item.event_name="{ item }">
+          <span v-if="item.event_name" class="text-body-2">{{ item.event_name }}</span>
+          <v-tooltip v-else location="top" text="Мероприятие не привязано">
+            <template #activator="{ props: tooltipProps }">
+              <v-icon v-bind="tooltipProps" icon="mdi-calendar-alert" color="warning" size="20" />
+            </template>
+          </v-tooltip>
+        </template>
+
         <template #item.approval_status="{ item }">
           <v-chip v-if="item.approval_status" :color="APPROVAL_STATUS_COLOR[item.approval_status]" size="x-small" variant="tonal"
                   style="white-space: normal; height: auto; min-height: 22px; padding: 2px 8px;">
@@ -1079,6 +1088,25 @@
                   label="Я проверил список — создать эти категории"
                   class="mt-1"
                 />
+              </v-alert>
+            </div>
+            <div v-if="(importDialog.preview?.without_event ?? 0) > 0 || importDialog.preview?.warnings?.length" class="mb-3">
+              <v-alert type="warning" variant="tonal" density="compact">
+                <div class="text-caption font-weight-bold mb-1">
+                  Без мероприятия: {{ importDialog.preview?.without_event ?? 0 }}
+                </div>
+                <div class="text-caption mb-2">
+                  Эти закупки будут созданы без привязки к мероприятию — привяжите вручную в карточке закупки.
+                </div>
+                <v-list v-if="importDialog.preview?.warnings?.length" density="compact" class="import-errors-list bg-transparent pa-0">
+                  <v-list-item
+                    v-for="w in importDialog.preview!.warnings" :key="'warn-' + w.row"
+                    :title="`Строка ${w.row}: ${w.name}`"
+                    :subtitle="w.message ?? ''"
+                    prepend-icon="mdi-calendar-alert"
+                    color="warning"
+                  />
+                </v-list>
               </v-alert>
             </div>
             <div v-if="importDialog.preview?.errors?.length || (importDialog.preview as any)?.payments_errors?.length" class="mt-2">
@@ -2396,11 +2424,14 @@ interface ImportPreviewPurchase {
   skipped: boolean; skip_reason?: string; payments_count?: number
   purchase_group?: string; order_number?: string
   duplicate_matches?: Array<{ source: 'db' | 'file'; id: number | null; purchase_number: string | null; name: string; amount: number; status: string | null; contract_date: string | null }>
+  event_id?: number | null; event_name?: string | null
 }
 interface ImportPreview {
   purchases: ImportPreviewPurchase[]
   skipped: number
   errors: ImportError[]
+  warnings?: ImportError[]
+  without_event?: number
   payments_count?: number
   payments_total?: number
   payments_errors?: Array<{ row?: number; contract_number?: string; message?: string }>
@@ -2410,6 +2441,8 @@ interface ImportPreview {
 }
 interface ImportResult {
   created_purchases: number; created_items: number; skipped: number; errors: ImportError[]
+  warnings?: ImportError[]
+  without_event?: number
   created_payments?: number
 }
 

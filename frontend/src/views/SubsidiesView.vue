@@ -6900,6 +6900,19 @@ async function savePlannedItem() {
     // не давала вклад в «Плановую сумму» до перезагрузки страницы.
     await Promise.all([refreshComparison(addPlannedCategoryId.value), refreshReqData()])
     if (convertCategoryId) await clearCategoryManualPlan(convertCategoryId)
+  } catch (e: any) {
+    // Жалоба владельца (сессия 2026-08-19): create_planned_item теперь отдаёт 409
+    // planned_item_duplicate_name вместо тихого слияния с существующей позицией (см.
+    // backend/app/routers/feo_planned_items.py). Полноценный диалог выбора (привязать/
+    // создать отдельную), как в FeoPlannedItemsSelect.vue, здесь не заводим — этот путь
+    // создания «из закупки»/«из ручного плана категории» — редкий сценарий, здесь просто
+    // честно показываем сообщение сервера, не глотаем ошибку generic-снэкбаром.
+    const det = e?.payload?.details
+    if (e?.status === 409 && det?.error_code === 'planned_item_duplicate_name') {
+      showSnack(det.message || e.message || 'Такая плановая позиция уже есть в категории', 'error')
+    } else {
+      showSnack(e?.payload?.message || e?.detail || e?.message || 'Не удалось создать плановую позицию', 'error')
+    }
   } finally {
     savingPlannedItem.value = false
   }

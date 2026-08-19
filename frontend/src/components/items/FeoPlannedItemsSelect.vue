@@ -294,6 +294,53 @@
       </v-card>
     </v-dialog>
 
+    <!-- Жалоба владельца (сессия 2026-08-19): «создаю новую позицию 10 шт — она молча
+         привязывается к существующей 14 шт». POST /feo-planned-items/ теперь отдаёт 409
+         planned_item_duplicate_name вместо тихого return existing_item — этот диалог
+         показывает ОБА набора чисел (что уже есть / что вводит человек) и даёт выбор:
+         привязаться к существующей плановой позиции или создать отдельную (allow_duplicate_name). -->
+    <v-dialog v-model="duplicateDialog" max-width="460" persistent>
+      <v-card>
+        <v-card-title class="text-subtitle-1">Такая позиция уже есть в плане</v-card-title>
+        <v-card-text>
+          <div class="mb-3">{{ duplicateInfo?.message }}</div>
+          <v-table density="compact" class="mb-2">
+            <thead>
+              <tr><th></th><th>Кол-во</th><th class="text-right">Сумма</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="text-medium-emphasis">Уже в плане</td>
+                <td>{{ duplicateInfo?.existingQuantity ?? '—' }} {{ duplicateInfo?.existingUnit || '' }}</td>
+                <td class="text-right">{{ fmt(duplicateInfo?.existingAmount ?? null) }}</td>
+              </tr>
+              <tr>
+                <td class="text-medium-emphasis">Вы вводите</td>
+                <td>{{ duplicateInfo?.newQuantity ?? '—' }} {{ duplicateInfo?.newUnit || '' }}</td>
+                <td class="text-right">{{ fmt(duplicateInfo?.newAmount ?? null) }}</td>
+              </tr>
+            </tbody>
+          </v-table>
+          <!-- Жалоба владельца (добор 2026-08-19): «Привязать к существующей» была
+               активна, даже когда в найденной позиции остатка не было — новые числа
+               молча садились поверх уже выбранных. -->
+          <div v-if="attachBlockedReason" class="feo-planned-shortfall-note">{{ attachBlockedReason }}</div>
+        </v-card-text>
+        <v-card-actions class="flex-wrap">
+          <v-spacer />
+          <v-btn variant="text" :disabled="createSaving" @click="duplicateDialog = false">Отмена</v-btn>
+          <v-btn
+            variant="outlined"
+            color="primary"
+            :disabled="createSaving || attachDisabled"
+            :title="attachBlockedReason || undefined"
+            @click="confirmAttachDuplicate"
+          >Привязать к существующей</v-btn>
+          <v-btn color="primary" variant="flat" :loading="createSaving" @click="confirmCreateDuplicate">Создать отдельную</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Диалог выбора СПОСОБА создания (владелец, сессия 2026-08-17): «Создать в плане
          закупок» на «шапочном» экземпляре (см. проп bulkItems) больше не создаёт молча
          одну позицию на имя первого товара и всю НМЦД — сначала спрашивает, как именно.
@@ -740,6 +787,77 @@ async function runBulkCreate() {
   }
 }
 
+// Жалоба владельца (сессия 2026-08-19): 409 planned_item_duplicate_name — бэкенд
+// (backend/app/routers/feo_planned_items.py, create_planned_item) отдаёт данные
+// обеих позиций вместо тихого слияния. duplicateInfo хранит и то, чем отвечать
+// при «Создать отдельную» (allow_duplicate_name: true, тот же payload).
+interface DuplicateInfo {
+  message: string
+  existingItemId: number
+  existingQuantity: number | null
+  existingUnit: string | null
+  existingAmount: number | null
+  newQuantity: number | null
+  newUnit: string | null
+  newAmount: number | null
+}
+const duplicateDialog = ref(false)
+const duplicateInfo = ref<DuplicateInfo | null>(null)
+
+// Жалоба владельца (добор сессии 2026-08-19): диалог показывал только «план»
+// существующей позиции, без «выбрано»/«остаток» — «Привязать к существующей»
+// оставалась активной, даже когда там уже выбрано 14 из 14 и человек садил новые
+// 10 шт поверх. duplicateInfo (из тела 409) содержит только собственный план
+// позиции (existing_item.quantity/amount), НЕ её выбранность — это есть только
+// в props.items (единый источник consumed/residual, см. useFeoPlannedResiduals),
+// поэтому строку ищем там по existingItemId (kind всегда 'planned_item' — дедуп
+// на бэке идёт по FeoPlannedItem, см. create_planned_item).
+const duplicateExistingRow = computed((): FeoPlanPosition | null => {
+  const id = duplicateInfo.value?.existingItemId
+  if (id == null) return null
+  return props.items.find(r => r.kind === 'planned_item' && r.id === id) ?? null
+})
+
+// Допуск как у соседних сравнений остатков в проекте (PurchaseItemsEditor.vue,
+// SubsidiesView.vue) — количество в БД Numeric(15,4), точное сравнение ловило бы
+// ложные «не влезает» на округлении с плавающей точкой.
+const RESIDUAL_EPS = 0.0001
+
+function fmtNum(v: number | null | undefined): string {
+  if (v == null) return '—'
+  return v.toLocaleString('ru-RU')
+}
+
+// Не найдена строка в props.items — ведём себя как раньше (кнопка активна,
+// сравнивать остаток не с чем).
+const attachBlockedReason = computed((): string | null => {
+  const row = duplicateExistingRow.value
+  const info = duplicateInfo.value
+  if (!row || !info) return null
+  const amountShort = info.newAmount != null && info.newAmount > row.residual + RESIDUAL_EPS
+  const qtyShort = info.newQuantity != null && row.residual_quantity != null
+    && info.newQuantity > row.residual_quantity + RESIDUAL_EPS
+  if (!amountShort && !qtyShort) return null
+  const qtyPart = row.planned_quantity != null
+    ? `выбрано ${fmtNum(row.consumed_quantity)} из ${fmtNum(row.planned_quantity)} ${row.unit || ''}`.trim() + ' '
+    : 'выбрано '
+  return `в этой плановой позиции не осталось места: ${qtyPart}(${fmt(row.consumed)} из ${fmt(row.planned_amount)}), остаток ${fmt(row.residual)}`
+})
+
+const attachDisabled = computed((): boolean => attachBlockedReason.value != null)
+
+function buildCreatePayload(allowDuplicate: boolean) {
+  return {
+    feo_category_id: props.categoryId,
+    name: createForm.name.trim(),
+    quantity: createForm.quantity,
+    unit: createForm.unit.trim() || null,
+    amount: createForm.amount,
+    item_type: createForm.item_type,
+    allow_duplicate_name: allowDuplicate,
+  }
+}
+
 async function saveCreateDialog() {
   if (props.categoryId == null) return
   if (!createForm.name.trim()) {
@@ -750,21 +868,60 @@ async function saveCreateDialog() {
   try {
     const created = await apiFetch<{ id: number }>('/feo-planned-items/', {
       method: 'POST',
-      body: JSON.stringify({
-        feo_category_id: props.categoryId,
-        name: createForm.name.trim(),
-        quantity: createForm.quantity,
-        unit: createForm.unit.trim() || null,
-        amount: createForm.amount,
-        item_type: createForm.item_type,
-      }),
+      body: JSON.stringify(buildCreatePayload(false)),
     })
     createDialog.value = false
     emit('planned-item-created')
     emit('update:modelValue', { kind: 'planned_item', id: created.id })
     showSnack('Плановая позиция создана')
   } catch (e: any) {
-    showSnack(e?.payload?.message || e?.message || 'Не удалось создать плановую позицию', 'error')
+    const det = e?.payload?.details
+    if (e?.status === 409 && det?.error_code === 'planned_item_duplicate_name') {
+      duplicateInfo.value = {
+        message: det.message || e.message,
+        existingItemId: det.existing_item_id,
+        existingQuantity: det.existing_item_quantity != null ? Number(det.existing_item_quantity) : null,
+        existingUnit: det.existing_item_unit ?? null,
+        existingAmount: det.existing_item_amount != null ? Number(det.existing_item_amount) : null,
+        newQuantity: det.new_quantity != null ? Number(det.new_quantity) : null,
+        newUnit: det.new_unit ?? null,
+        newAmount: det.new_amount != null ? Number(det.new_amount) : null,
+      }
+      duplicateDialog.value = true
+    } else {
+      showSnack(e?.payload?.message || e?.detail || e?.message || 'Не удалось создать плановую позицию', 'error')
+    }
+  } finally {
+    createSaving.value = false
+  }
+}
+
+// «Привязать к существующей» — тот же путь выбора, что и клик по строке списка
+// (selectItem): просто выбираем уже существующую плановую позицию, ничего не создаём.
+function confirmAttachDuplicate() {
+  if (!duplicateInfo.value || attachDisabled.value) return
+  emit('update:modelValue', { kind: 'planned_item', id: duplicateInfo.value.existingItemId })
+  duplicateDialog.value = false
+  createDialog.value = false
+}
+
+// «Создать отдельную» — повторный POST с allow_duplicate_name: true (тот же payload
+// формы, дедуп на бэке осознанно пропущен), затем выбираем созданную позицию.
+async function confirmCreateDuplicate() {
+  if (props.categoryId == null) return
+  createSaving.value = true
+  try {
+    const created = await apiFetch<{ id: number }>('/feo-planned-items/', {
+      method: 'POST',
+      body: JSON.stringify(buildCreatePayload(true)),
+    })
+    duplicateDialog.value = false
+    createDialog.value = false
+    emit('planned-item-created')
+    emit('update:modelValue', { kind: 'planned_item', id: created.id })
+    showSnack('Плановая позиция создана')
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.detail || e?.message || 'Не удалось создать плановую позицию', 'error')
   } finally {
     createSaving.value = false
   }

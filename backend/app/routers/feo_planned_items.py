@@ -45,6 +45,31 @@ def _safe_div(a, b) -> Optional[Decimal]:
         return None
 
 
+def _fmt_money(v) -> str:
+    """Человекочитаемая сумма для текста 409-ответа дедупа (см. create_planned_item).
+    Округление до целого — как fmt() на фронте (FeoPlannedItemsSelect.vue), это
+    только для сообщения человеку, структурные суммы уходят в detail отдельными
+    полями с полной точностью (str(Decimal), без округления)."""
+    if v is None:
+        return "—"
+    try:
+        n = int(Decimal(str(v)).quantize(Decimal("1")))
+    except (InvalidOperation, TypeError):
+        return "—"
+    return f"{n:,}".replace(",", " ") + " ₽"
+
+
+def _fmt_qty(qty, unit) -> str:
+    if qty is None:
+        return "—"
+    try:
+        q = Decimal(str(qty))
+        q_str = str(q.quantize(Decimal("1")) if q == q.to_integral_value() else q)
+    except (InvalidOperation, TypeError):
+        q_str = str(qty)
+    return f"{q_str} {unit}".strip() if unit else q_str
+
+
 def _build_item_stages(
     pi: PurchaseItem,
     ci: Optional[ContractItem],
@@ -272,8 +297,39 @@ async def create_planned_item(
             )
         )).scalars().all()
         existing_item = next((it for it in _candidates if _norm_text(it.name or "") == _norm_name), None)
-        if existing_item is not None:
-            return existing_item
+        # Жалоба владельца (сессия 2026-08-19): раньше здесь молча делали
+        # `return existing_item` — введённые пользователем количество/сумма
+        # выбрасывались, новая строка тихо привязывалась к чужой позиции без
+        # единого сигнала (боевой пример: футболки 14 шт/15 793,40 ₽ против
+        # новых 10 шт/11 281 ₽ — разное нанесение, разные позиции). Дедуп
+        # остаётся (защита от повторного клика/двойного сабмита и от боевого
+        # случая К2 — см. докстринг выше), но теперь это осознанный выбор
+        # человека: 409 с данными обеих позиций, allow_duplicate_name=True
+        # пропускает дедуп и создаёт вторую позицию с тем же именем.
+        if existing_item is not None and not data.allow_duplicate_name:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": (
+                        f"В этой категории уже есть плановая позиция с таким названием: "
+                        f"«{existing_item.name}» — {_fmt_qty(existing_item.quantity, existing_item.unit)} "
+                        f"на {_fmt_money(existing_item.amount)}. Вы вводите: "
+                        f"{_fmt_qty(data.quantity, data.unit)} на {_fmt_money(data.amount)}. "
+                        f"Привязать к существующей или создать отдельную?"
+                    ),
+                    "error_code": "planned_item_duplicate_name",
+                    "existing_item_id": existing_item.id,
+                    "existing_item_name": existing_item.name,
+                    "existing_item_quantity": str(existing_item.quantity) if existing_item.quantity is not None else None,
+                    "existing_item_unit": existing_item.unit,
+                    "existing_item_amount": str(existing_item.amount) if existing_item.amount is not None else None,
+                    "new_quantity": str(data.quantity) if data.quantity is not None else None,
+                    "new_unit": data.unit,
+                    "new_amount": str(data.amount) if data.amount is not None else None,
+                },
+            )
+        # existing_item is not None здесь означает allow_duplicate_name=True —
+        # дедуп осознанно пропущен, ниже создаётся вторая позиция с тем же именем.
 
     item = FeoPlannedItem(
         feo_category_id=data.feo_category_id,

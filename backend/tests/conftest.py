@@ -302,12 +302,18 @@ async def make_override(db_session):
 
 @pytest_asyncio.fixture
 async def make_purchase(db_session, test_org):
-    """Phase 27.1: Factory for creating a minimal Purchase in tests."""
+    """Phase 27.1: Factory for creating a minimal Purchase in tests.
+
+    Purchase has no org_id column (that's a data-issue bug — see
+    purchase_approvals.py::_resolve_purchase_org_id, org comes from the
+    purchase's subsidy, not its own column) — don't pass org_id to the
+    model. test_org is kept as a dependency so callers get an org to attach
+    via subsidy_id if the test needs one.
+    """
     from app.models.purchase import Purchase
 
-    async def _make(status="planned", org_id=None, **kwargs):
+    async def _make(status="planned", **kwargs):
         p = Purchase(
-            org_id=org_id if org_id is not None else test_org.id,
             status=status,
             item_type="goods",
             item_name="Test purchase",
@@ -323,13 +329,15 @@ async def make_purchase(db_session, test_org):
 
 @pytest_asyncio.fixture
 async def make_purchase_with_items(db_session, test_org):
-    """Phase 27.1: Factory for creating a Purchase with PurchaseItems."""
+    """Phase 27.1: Factory for creating a Purchase with PurchaseItems.
+
+    See make_purchase above — Purchase has no org_id column.
+    """
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem
 
-    async def _make(status="planned", items_count=2, item_total=Decimal("500"), org_id=None):
+    async def _make(status="planned", items_count=2, item_total=Decimal("500")):
         p = Purchase(
-            org_id=org_id if org_id is not None else test_org.id,
             status=status,
             item_type="goods",
             item_name="Test purchase with items",

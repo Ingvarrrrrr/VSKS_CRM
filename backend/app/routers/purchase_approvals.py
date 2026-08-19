@@ -32,6 +32,20 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+async def _resolve_purchase_org_id(db: AsyncSession, purchase: Purchase, current_user: User) -> int | None:
+    """Purchase не хранит свою org_id (такой колонки нет ни в модели, ни в таблице
+    purchases) — организация закупки определяется через субсидию, как и в
+    purchases.py (`Purchase.subsidy_id == Subsidy.id` → `Subsidy.org_id`) и
+    events.py/subsidy_approvers.py. Фолбэк на org_id текущего пользователя,
+    если у закупки нет субсидии (см. исходный `p.org_id or current_user.org_id`)."""
+    if purchase.subsidy_id:
+        from app.models.subsidy import Subsidy
+        subsidy = await db.get(Subsidy, purchase.subsidy_id)
+        if subsidy is not None:
+            return subsidy.org_id
+    return current_user.org_id
+
+
 def _to_out(a: PurchaseApproval) -> dict:
     return {
         "id": a.id,
@@ -169,7 +183,7 @@ async def start_approval(
 
     # Create Task + ChatRoom for each approver with user_id (best-effort, same transaction)
     purchase_label = f"Согласование закупки № {p.purchase_number or p.id}"
-    org_id = p.org_id or current_user.org_id
+    org_id = await _resolve_purchase_org_id(db, p, current_user)
     for pa in created:
         if not pa.user_id:
             continue
@@ -401,10 +415,14 @@ async def decide_approval(
         from app.notifications import notify_approval_decided, notify_approval_your_turn, notify_approval_completed
         approver_name = approval.approver_full_name or current_user.full_name
 
-        # Collect purchase members/creator to notify
+        # Collect purchase members/creator to notify.
+        # Purchase has no created_by_id column (that's a Task field — same mine
+        # as p.org_id above); reuse the "responsible person" resolution already
+        # established for this purchase in start_approval() above.
         notify_users = []
-        if purchase.created_by_id:
-            creator = await db.get(User, purchase.created_by_id)
+        responsible_uid = purchase.assigned_user_id or purchase.service_note_by
+        if responsible_uid:
+            creator = await db.get(User, responsible_uid)
             if creator:
                 notify_users.append(creator)
 

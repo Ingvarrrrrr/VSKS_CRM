@@ -2257,6 +2257,10 @@
         </v-card-title>
         <v-divider />
         <v-card-text class="pa-4">
+          <v-alert type="info" variant="tonal" density="compact" class="mb-3">
+            Это единственное место, где заводятся мероприятия. В заявках, закупках и импорте
+            они только выбираются из этого списка — не создавайте копию с другим написанием.
+          </v-alert>
           <v-text-field v-model="newEventName" label="Название мероприятия *" variant="outlined" density="compact" class="mb-3" />
           <v-row dense>
             <v-col cols="12" md="6">
@@ -10718,7 +10722,7 @@ async function addEvent() {
     await loadEvents(selectedId.value)
     showSnack('Мероприятие добавлено')
   } catch (e: any) {
-    showSnack(e.message || 'Ошибка', 'error')
+    showSnack(e?.payload?.detail || e?.payload?.message || e?.message || 'Ошибка', 'error')
   }
 }
 
@@ -10767,7 +10771,7 @@ async function saveEditEvent() {
     await loadEvents(selectedId.value)
     showSnack('Мероприятие обновлено')
   } catch (e: any) {
-    showSnack(e.message || 'Ошибка', 'error')
+    showSnack(e?.payload?.detail || e?.payload?.message || e?.message || 'Ошибка', 'error')
   } finally {
     savingEvent.value = false
   }
@@ -10799,7 +10803,7 @@ async function deleteEvent(eventId: number) {
     await loadEvents(selectedId.value)
     showSnack('Мероприятие удалено')
   } catch (e: any) {
-    showSnack(e.message || 'Ошибка', 'error')
+    showSnack(e?.payload?.detail || e?.payload?.message || e?.message || 'Ошибка', 'error')
   }
 }
 

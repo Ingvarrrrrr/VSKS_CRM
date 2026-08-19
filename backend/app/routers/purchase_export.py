@@ -25,6 +25,8 @@ from app.models.subsidy import Subsidy
 from app.models.contractor import Contractor
 from app.models.feo_category import FeoCategory
 from app.models.payment import Payment
+from app.models.event import Event
+from app.routers.events import normalize_event_name
 from app.auth.jwt import get_current_user
 from app.auth.visibility import get_visible_subsidy_ids
 from app.models.user import User
@@ -2576,6 +2578,15 @@ async def _parse_and_group(
     feo_rows_all = (await db.execute(select(FeoCategory))).scalars().all()
     feo_index = _build_feo_index(feo_rows_all, sid)
 
+    # Мероприятия (Приложение №3): единственная точка ввода — карточка
+    # субсидии; импорт только резолвит event_name → event_id среди
+    # мероприятий ЭТОЙ субсидии, ничего не создаёт (требование владельца
+    # 2026-08-19, «иначе я потом никогда ничего не посчитаю»).
+    event_rows_all = (await db.execute(select(Event))).scalars().all()
+    events_by_subsidy: Dict[int, Dict[str, tuple]] = defaultdict(dict)
+    for _ev in event_rows_all:
+        events_by_subsidy[_ev.subsidy_id][normalize_event_name(_ev.name)] = (_ev.id, _ev.name)
+
     # Anti-dup: existing (contract_number, order_number) pairs for this subsidy
     existing_q = await db.execute(
         select(Purchase.contract_number, Purchase.order_number).where(
@@ -2740,6 +2751,27 @@ async def _parse_and_group(
             errors.append({"row": row_num, "name": item_name, "message": "Субсидия не указана"})
             continue
 
+        # ---- Event (Приложение №3) ----
+        # Строго среди мероприятий ЭТОЙ субсидии; пустая ячейка — молча, без
+        # ошибки. Ничего не создаётся — единственная точка ввода мероприятий
+        # это карточка субсидии.
+        event_id_val = None
+        event_name_raw = cell(row, "event_name")
+        if event_name_raw:
+            _ev_match = events_by_subsidy.get(row_sid, {}).get(normalize_event_name(event_name_raw))
+            if _ev_match:
+                event_id_val = _ev_match[0]
+            else:
+                errors.append({
+                    "row": row_num,
+                    "name": item_name,
+                    "message": (
+                        f"Мероприятие «{event_name_raw}» не найдено среди мероприятий субсидии. "
+                        "Добавьте его в карточке субсидии (Приложение №3) или очистите ячейку."
+                    ),
+                })
+                continue
+
         # ---- Contractor ----
         c_inn  = cell(row, "contractor_inn")
         c_name = cell(row, "contractor_name")
@@ -2850,7 +2882,8 @@ async def _parse_and_group(
             "cont_id":                  cont_id,
             "cont_inn":                 c_inn,
             "cont_name":                c_name,
-            "event_name":               cell(row, "event_name"),
+            "event_name":               event_name_raw,
+            "event_id":                 event_id_val,
             "status":                   status,
             "substatus":                substatus_val,
             "contract_type_val":        contract_type_val,
@@ -3141,6 +3174,7 @@ async def _parse_and_group(
         p = Purchase(
             subsidy_id=first["sid"],
             feo_category_id=first["feo_id"],
+            event_id=first.get("event_id"),
             contractor_id=first["cont_id"] if (first["cont_id"] and first["cont_id"] != -1) else None,
             item_name=(first.get("subject") or first["item_name"]),
             purchase_number=int(first["purchase_group_num"]) if (first.get("purchase_group_num") or "").strip().isdigit() else None,
@@ -3393,6 +3427,7 @@ async def import_purchases_from_excel(
     file: UploadFile = File(...),
     subsidy_id: int = Query(..., description="ID субсидии (обязательно)"),
     db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
     """Импорт закупок из Excel. Возвращает {created_purchases, created_items, created_payments, skipped, errors}."""
     if load_workbook is None:
@@ -3413,6 +3448,7 @@ async def preview_purchases_import(
     file: UploadFile = File(...),
     subsidy_id: int = Query(..., description="ID субсидии (обязательно)"),
     db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
     """Превью импорта без сохранения. Возвращает {purchases, payments_errors, skipped, errors}."""
     if load_workbook is None:

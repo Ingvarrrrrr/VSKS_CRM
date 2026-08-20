@@ -21,6 +21,10 @@ class WishApproval(Base):
     comment = Column(Text, nullable=True)
     decided_at = Column(DateTime(timezone=True), nullable=True)
     decided_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # Снапшот ФИО решившего на момент решения — переименование/удаление
+    # пользователя не должно стирать историю "кто решил за кого".
+    # Образец: app/models/purchase_approval.py::decided_by_username.
+    decided_by_username = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     wish = relationship("Wish", back_populates="approvals")

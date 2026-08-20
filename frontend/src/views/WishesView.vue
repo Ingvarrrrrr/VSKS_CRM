@@ -1817,27 +1817,39 @@
                         @click="removeApprover(a.id)"
                       />
                     </div>
+                    <div v-if="approverDecisionLine(a)" class="text-caption text-medium-emphasis mt-1">
+                      {{ approverDecisionLine(a) }}
+                    </div>
                     <div v-if="a.comment" class="text-caption text-medium-emphasis mt-1">
                       Комментарий: {{ a.comment }}
                     </div>
                     <!-- Действия текущего пользователя-согласующего -->
                     <div v-if="canDecideApprover(a)" class="mt-2">
+                      <div v-if="isDecidingOnBehalf(a)" class="text-caption text-orange-darken-3 mb-1 d-flex align-center" style="gap:4px">
+                        <v-icon size="14">mdi-account-arrow-right</v-icon>
+                        Вы решаете за {{ shortName(a.full_name) || a.full_name || 'назначенного согласующего' }}
+                      </div>
                       <v-textarea
                         v-model="decideComment[a.id]"
-                        label="Комментарий (необязательно при согласовании, обязателен при отказе)"
+                        :label="isDecidingOnBehalf(a) ? 'Причина решения за другого (обязательно)' : 'Комментарий (необязательно при согласовании, обязателен при отказе)'"
                         variant="outlined"
                         density="compact"
                         rows="2"
                         auto-grow
                         hide-details
-                        class="mb-2"
+                        class="mb-1"
                       />
+                      <div v-if="isDecidingOnBehalf(a) && !(decideComment[a.id] || '').trim()" class="text-caption text-red mb-2">
+                        Укажите причину — например, что согласующий в отпуске или поручил вам решение.
+                      </div>
+                      <div v-else class="mb-2" />
                       <div class="d-flex" style="gap:8px">
                         <v-btn
                           color="green"
                           variant="flat"
                           size="small"
                           :loading="decideLoading === a.id"
+                          :disabled="isDecidingOnBehalf(a) && !(decideComment[a.id] || '').trim()"
                           prepend-icon="mdi-check"
                           @click="decideApprover(a.id, 'approved')"
                         >Согласовать</v-btn>
@@ -1851,6 +1863,15 @@
                           @click="decideApprover(a.id, 'rejected')"
                         >Отклонить</v-btn>
                       </div>
+                    </div>
+                    <!-- Задача 2: строка стала неактуальна из-за живого обновления
+                    (кто-то другой согласовал/отклонил, пока диалог был открыт) —
+                    вместо молчаливого исчезновения кнопок объясняем причину. -->
+                    <div
+                      v-else-if="a.status === 'pending' && (a.user_id === currentUserId || isAdmin) && editingWish && editingWish.status !== 'submitted'"
+                      class="text-caption text-medium-emphasis mt-2"
+                    >
+                      Действие недоступно — статус заявки изменился на «{{ statusLabel[editingWish.status] || editingWish.status }}».
                     </div>
                   </v-sheet>
                 </div>
@@ -2299,6 +2320,7 @@ import { ref, computed, onMounted, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useUndoRedo } from '@/composables/useUndoRedo'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { refreshMyPendingApprovals } from '@/composables/useApprovalsBadge'
+import { useWishLive } from '@/composables/useWishLive'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import { formatMoney } from '@/utils/formatMoney'
@@ -2981,6 +3003,10 @@ interface WishApprover {
   comment: string | null
   decided_at: string | null
   decided_by_user_id: number | null
+  // Задача 1 (сессия 2026-08-20): кто РЕАЛЬНО принял решение и решал ли не за
+  // себя — бэкенд отдаёт оба поля в GET /approvers и в ответе decide.
+  decided_by_name?: string | null
+  is_on_behalf?: boolean
 }
 const wishApprovers = ref<WishApprover[]>([])
 const approverTopUser = ref<number | null>(null)
@@ -3721,6 +3747,18 @@ function formatDate(dateStr: string) {
   return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
+// Задача 1 (сессия 2026-08-20): строка решения в цепочке согласования
+// («Согласовал: ... вместо ... · 20.08.2026 14:49») требует времени, а не
+// только даты — своего хелпера с временем в файле не было, минимальный,
+// без сторонних библиотек.
+function formatDateTime(dateStr?: string | null): string {
+  if (!dateStr) return ''
+  const d = new Date(dateStr)
+  const date = d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  const time = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+  return `${date} ${time}`
+}
+
 async function loadWishes() {
   loading.value = true
   try {
@@ -4149,6 +4187,28 @@ onBeforeUnmount(() => {
   if (feoAutosaveTimer) clearTimeout(feoAutosaveTimer)
 })
 
+// Задача 2 (сессия 2026-08-20): живое обновление открытой заявки — работает
+// только пока wishDialog открыт (useWishLive сам ставит/снимает setInterval +
+// visibilitychange/focus по этому флагу и снимает их на unmount компонента).
+// wishForm НЕ передаём и намеренно: composable обновляет только wishApprovers
+// и перечисленные шапочные поля editingWish, чтобы не затереть несохранённые
+// правки ФЭО (scheduleFeoAutosave/flushFeoAutosave выше).
+const wishLive = useWishLive({
+  wishId: editingWishId,
+  isOpen: wishDialog,
+  approvers: wishApprovers,
+  wish: editingWish,
+  currentUserId,
+  isAutosaveBusy: () => feoAutosaveSaving.value || feoAutosavePending.value,
+  showSnack,
+  shortName,
+  onExternalChange: () => {
+    loadWishes()
+    loadAllWishes()
+    refreshMyPendingApprovals()
+  },
+})
+
 async function saveExecution() {
   if (!editingWishId.value) { showSnack('Сначала сохраните заявку', 'warning'); return }
   // «Сохранить ФЭО» больше не единственный способ сохранить (п.в задачи), но
@@ -4384,6 +4444,11 @@ async function decideApprover(approvalId: number, decision: 'approved' | 'reject
     wishApprovers.value = res.approvers
     decideComment.value[approvalId] = ''
     if (wishForm.value) (wishForm.value as any).status = res.status
+    // QA (сессия 2026-08-20): свежий ответ decide применён выше — сообщаем
+    // useWishLive, что локальное состояние продвинулось дальше, чтобы уже
+    // летящий фоновый тик не перезатёр его своим устаревшим снимком (см.
+    // комментарий у markLocalUpdate в composables/useWishLive.ts).
+    wishLive.markLocalUpdate()
     // Владелец (2026-08-20): согласование ПОСЛЕДНИМ в цепочке само создаёт закупку
     // и переводит заявку в 'converted' на бэке (см. wish_approvals.py::decide) — не
     // просто «Согласовано», а явно сказать, что заявка уехала в закупку, иначе
@@ -4404,7 +4469,7 @@ async function decideApprover(approvalId: number, decision: 'approved' | 'reject
     // остаётся 'submitted', попробовать decide можно снова после выбора категории).
     const handled = editingWish.value ? await handleMissingFeoCategoryError(e, editingWish.value) : false
     if (!handled) {
-      showSnack(e?.payload?.message || e?.message || 'Не удалось сохранить решение', 'error')
+      showSnack(e?.payload?.message ?? e?.detail ?? e?.message ?? 'Не удалось сохранить решение', 'error')
     }
   } finally {
     decideLoading.value = null
@@ -4423,6 +4488,14 @@ async function loadWishOnce() {
 const canDecideApprover = (a: WishApprover): boolean => {
   if (a.status !== 'pending') return false
   if ((wishForm.value as any).status !== 'submitted') return false
+  // Задача 2 (сессия 2026-08-20, живое обновление): editingWish.status обновляется
+  // композаблом useWishLive независимо от wishForm (который живым тиком НЕ трогаем,
+  // чтобы не затирать несохранённые правки ФЭО) — если пока пользователь сидел в
+  // диалоге, заявку отклонил/согласовал кто-то другой (что после отклонения сбрасывает
+  // остальные строки цепочки обратно в pending, см. backend _reset_approvals), кнопки
+  // решения обязаны спрятаться и без перезагрузки формы. wishForm.status при этом
+  // остаётся статичным «submitted» до явного действия — сверяем со свежим editingWish.
+  if (editingWish.value && editingWish.value.status !== 'submitted') return false
   const mine = a.user_id === currentUserId || isAdmin.value
   if (!mine) return false
   if (approvalMode.value === 'sequential') {
@@ -4430,6 +4503,25 @@ const canDecideApprover = (a: WishApprover): boolean => {
     if (lowerPending) return false
   }
   return true
+}
+// Задача 1: решает не сам назначенный (менеджер+/SaaS решает вместо него) —
+// зеркалит backend-гейт wish_approvals.py::decide_wish_approval (a.user_id != current_user.id).
+function isDecidingOnBehalf(a: WishApprover): boolean {
+  return a.user_id !== currentUserId
+}
+// Строка решения под именем в цепочке: кто и когда решил, и решал ли не за себя.
+// Ничего не показываем, пока решения нет (decided_at пуст / статус ещё pending/skipped).
+function approverDecisionLine(a: WishApprover): string | null {
+  if (!a.decided_at || (a.status !== 'approved' && a.status !== 'rejected')) return null
+  const when = formatDateTime(a.decided_at)
+  if (a.is_on_behalf) {
+    const verb = a.status === 'rejected' ? 'Отклонил' : 'Согласовал'
+    const who = shortName(a.decided_by_name) || a.decided_by_name || '—'
+    const whom = shortName(a.full_name) || a.full_name || '—'
+    return `${verb}: ${who} вместо ${whom} · ${when}`
+  }
+  const verb = a.status === 'rejected' ? 'Отклонено' : 'Согласовано'
+  return `${verb} ${when}`
 }
 
 async function loadPendingWishConsents() {

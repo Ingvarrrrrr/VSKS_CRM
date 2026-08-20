@@ -281,6 +281,7 @@ async def _ensure_no_pending_approvals(
                 a.status = "approved"
                 a.decided_at = now
                 a.decided_by_user_id = current_user.id
+                a.decided_by_username = current_user.full_name or current_user.username
                 a.comment = override_comment
             await db.flush()
         else:
@@ -296,6 +297,7 @@ async def _ensure_no_pending_approvals(
         a.status = "approved"
         a.decided_at = datetime.now(timezone.utc)
         a.decided_by_user_id = current_user.id
+        a.decided_by_username = current_user.full_name or current_user.username
     if own:
         await db.flush()
 
@@ -550,6 +552,7 @@ async def _reset_approvals(wish_id: int, db: AsyncSession, keep_user_id: Optiona
         a.status = "pending"
         a.decided_at = None
         a.decided_by_user_id = None
+        a.decided_by_username = None
         a.comment = None
     if approvals:
         await db.flush()
@@ -2331,6 +2334,7 @@ async def force_wish_status(
                 a.status = "approved"
                 a.comment = "Закрыто принудительным переводом статуса"
                 a.decided_by_user_id = current_user.id
+                a.decided_by_username = current_user.full_name or current_user.username
                 a.decided_at = func.now()
             await _distribute_wish_to_purchases(wish, db, current_user, split=False)
             wish.status = "converted"

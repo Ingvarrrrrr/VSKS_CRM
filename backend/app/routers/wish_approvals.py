@@ -26,7 +26,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/wishes", tags=["wish-approvals"])
 
 
-def _approval_dict(a: WishApproval) -> dict:
+def _approval_dict(a: WishApproval, names: dict[int, str] | None = None) -> dict:
+    """names — пакетно резолвленные ФИО (см. _resolve_decided_names), только
+    для строк, у которых нет снапшота decided_by_username (историчные)."""
+    names = names or {}
+    decided_by_name = None
+    if a.decided_by_user_id is not None:
+        decided_by_name = a.decided_by_username or names.get(a.decided_by_user_id)
     return {
         "id": a.id,
         "wish_id": a.wish_id,
@@ -39,7 +45,27 @@ def _approval_dict(a: WishApproval) -> dict:
         "comment": a.comment,
         "decided_at": a.decided_at.isoformat() if a.decided_at else None,
         "decided_by_user_id": a.decided_by_user_id,
+        "decided_by_name": decided_by_name,
+        "is_on_behalf": a.decided_by_user_id is not None and a.decided_by_user_id != a.user_id,
     }
+
+
+async def _resolve_decided_names(rows: list[WishApproval], db: AsyncSession) -> dict[int, str]:
+    """Резолвит ФИО решивших ОДНИМ SELECT, без N+1 (образец:
+    purchase_approvals.py::list_approvals). Резолвит только id, у которых нет
+    снапшота decided_by_username — исторические строки без снапшота."""
+    ids = {a.decided_by_user_id for a in rows if a.decided_by_user_id and not a.decided_by_username}
+    if not ids:
+        return {}
+    rows_u = (await db.execute(
+        select(User.id, User.full_name, User.username).where(User.id.in_(ids))
+    )).all()
+    return {uid: (full_name or username) for uid, full_name, username in rows_u}
+
+
+async def _approval_dicts(rows: list[WishApproval], db: AsyncSession) -> list[dict]:
+    names = await _resolve_decided_names(rows, db)
+    return [_approval_dict(a, names) for a in rows]
 
 
 async def _get_wish_or_403(wid: int, current_user: User, db: AsyncSession) -> Wish:
@@ -72,7 +98,7 @@ async def list_wish_approvers(
 ):
     await _get_wish_or_403(wid, current_user, db)
     rows = await _load_approvals(wid, db)
-    return [_approval_dict(a) for a in rows]
+    return await _approval_dicts(rows, db)
 
 
 # ── POST cascade ──────────────────────────────────────────────────────────────
@@ -130,7 +156,7 @@ async def cascade_wish_approvers(
     await db.commit()
 
     rows = await _load_approvals(wid, db)
-    return {"approval_mode": mode, "approvers": [_approval_dict(a) for a in rows], "warning": chain_warning}
+    return {"approval_mode": mode, "approvers": await _approval_dicts(rows, db), "warning": chain_warning}
 
 
 # ── POST add manual ───────────────────────────────────────────────────────────
@@ -181,7 +207,7 @@ async def add_wish_approver(
         )
     )).scalar_one_or_none()
     if existing:
-        return _approval_dict(existing)
+        return (await _approval_dicts([existing], db))[0]
 
     max_order = (await db.execute(
         select(func.max(WishApproval.order_num)).where(WishApproval.wish_id == wid)
@@ -200,7 +226,7 @@ async def add_wish_approver(
     db.add(a)
     await db.commit()
     await db.refresh(a)
-    return _approval_dict(a)
+    return (await _approval_dicts([a], db))[0]
 
 
 # ── POST reorder ──────────────────────────────────────────────────────────────
@@ -224,7 +250,7 @@ async def reorder_wish_approvers(
     for i, aid in enumerate(ids):
         by_id[aid].order_num = i
     await db.commit()
-    return [_approval_dict(a) for a in await _load_approvals(wid, db)]
+    return await _approval_dicts(await _load_approvals(wid, db), db)
 
 
 # ── DELETE ────────────────────────────────────────────────────────────────────
@@ -297,10 +323,26 @@ async def decide_wish_approval(
                 "Последовательное согласование: сначала должны согласовать нижестоящие в цепочке.",
             )
 
+    # Задача 2 (владелец, 2026-08-20): решение ЗА ДРУГОГО (менеджер+/SaaS решает
+    # вместо назначенного согласующего) обязано называть причину — без неё
+    # непонятно, почему согласующий не решил сам. Собственное решение (a.user_id
+    # == current_user.id) комментария по-прежнему не требует. Не путать с
+    # массовым «Одобрить без согласования остальных» (_ensure_no_pending_approvals
+    # в wishes.py) — там уже пишется собственный поясняющий комментарий.
+    raw_comment = body.get("comment")
+    if a.user_id != current_user.id and not (raw_comment and raw_comment.strip()):
+        who = a.approver_full_name or (f"пользователя #{a.user_id}" if a.user_id else "назначенного согласующего")
+        raise HTTPException(
+            400,
+            f"Вы принимаете решение за {who}. Укажите причину — например, что "
+            "согласующий в отпуске или поручил вам.",
+        )
+
     a.status = decision
-    a.comment = body.get("comment")
+    a.comment = raw_comment
     a.decided_at = datetime.now(timezone.utc)
     a.decided_by_user_id = current_user.id
+    a.decided_by_username = current_user.full_name or current_user.username
     await db.flush()
 
     creator = await db.get(User, wish.created_by) if wish.created_by else None
@@ -456,7 +498,7 @@ async def decide_wish_approval(
         "convert_warning": _convert_warning,
         "purchase_ids": _created_ids,
         "purchases": _created_purchases,
-        "approvers": [_approval_dict(a) for a in rows],
+        "approvers": await _approval_dicts(rows, db),
         "plan_warning": _plan_warning,
         # Превышение ФЭО больше не отказ, а предупреждение (владелец, 2026-08-12):
         # _distribute_wish_to_purchases складывает его в wish._excess_warnings, и этот

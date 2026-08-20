@@ -1656,7 +1656,22 @@ async def update_wish(
     if not _is_saas(current_user) and wish.created_by != current_user.id:
         # Участники заявки (WishMember) тоже могут её редактировать
         if not await _is_wish_member(wish_id, current_user.id, db):
-            raise HTTPException(status_code=403, detail="Редактировать заявку может автор или участник заявки")
+            # Дефект 1 (владелец, 2026-08-20): согласующий из цепочки WishApproval
+            # сюда попадать не должен вовсе — фронт больше не зовёт PUT для него,
+            # ФЭО он правит через PATCH /execution. Но если это всё-таки произошло
+            # (старый фронт/прямой запрос) — подсказать конкретно, а не молчать
+            # общей фразой (feedback_explain_blocking_reason).
+            from app.models.wish_approval import WishApproval
+            is_chain_approver = (await db.execute(
+                select(WishApproval.id).where(
+                    WishApproval.wish_id == wish_id,
+                    WishApproval.user_id == current_user.id,
+                ).limit(1)
+            )).scalar_one_or_none() is not None
+            detail = "Редактировать заявку может автор или участник заявки"
+            if is_chain_approver:
+                detail += ". Состав заявки меняет автор — как согласующий, правьте категорию ФЭО прямо в форме (сохраняется автоматически), решение отправляйте кнопкой «Согласовать»/«Отклонить»"
+            raise HTTPException(status_code=403, detail=detail)
 
     # W2: contracted-lock replaces old draft-only gate
     if not _is_saas(current_user):

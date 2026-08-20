@@ -30,7 +30,7 @@
       <tbody>
         <template v-for="(item, idx) in items" :key="item._uid ?? idx">
           <!-- Summary row -->
-          <tr class="summary-row" style="cursor:pointer" @click="emit('toggle-expand', idx)">
+          <tr :id="`item-row-${item._uid ?? idx}`" class="summary-row" style="cursor:pointer" @click="emit('toggle-expand', idx)">
             <td style="width:36px;text-align:center">
               <v-btn
                 :icon="expanded[idx] ? 'mdi-chevron-up' : 'mdi-chevron-down'"

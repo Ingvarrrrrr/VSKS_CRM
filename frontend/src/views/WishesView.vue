@@ -4101,6 +4101,19 @@ const feoAutosavePending = ref(false)
 const feoAutosaveSaving = ref(false)
 let feoAutosaveInFlight: Promise<boolean> | null = null
 
+// Регресс (владелец, 2026-08-20): автосейв ФЭО добавлен для сценария согласующего/
+// исполнителя на ОТПРАВЛЕННОЙ заявке — сервер (PATCH /wishes/{id}/execution, см.
+// backend/app/routers/wishes.py::patch_wish_execution) отвечает 400 на любом другом
+// статусе («Срок и исполнителя можно задать только на статусах submitted/approved»).
+// В черновике (и rejected/converted) построчная правка ФЭО всё равно попадает в
+// wishItemsFeoDirtyList (диф пишется напрямую в wishForm.items дочерними компонентами
+// независимо от статуса), но сохраняется она обычным «Сохранить черновик»/PUT — не
+// планируем автосейв там, где backend его гарантированно отклонит, иначе пользователь
+// видит лишний красный тост про несуществующую проблему со сроком/исполнителем.
+const feoAutosaveApplicable = computed(() =>
+  !!editingWishId.value && ['submitted', 'approved'].includes((wishForm.value as any).status)
+)
+
 function scheduleFeoAutosave() {
   feoAutosavePending.value = true
   if (feoAutosaveTimer) clearTimeout(feoAutosaveTimer)
@@ -4114,9 +4127,22 @@ function scheduleFeoAutosave() {
 // компонентами (FeoTreeSelect/FeoPlannedItemsSelect, см. комментарий у
 // wishItemsFeoSnapshot выше) — wishItemsFeoDirtyList уже computed поверх этого,
 // пересчитывается на каждое изменение. Наблюдаем за НИМ, а не за items напрямую —
-// он и так меняет ссылку при каждом релевантном изменении.
+// он и так меняет ссылку при каждом релевантном изменении. Не планируем автосейв
+// вовсе, если статус не submitted/approved (см. feoAutosaveApplicable выше) — правка
+// остаётся в форме и уйдёт обычным сохранением заявки.
 watch(() => wishItemsFeoDirtyList.value, (list) => {
-  if (list.length > 0) scheduleFeoAutosave()
+  if (list.length > 0 && feoAutosaveApplicable.value) scheduleFeoAutosave()
+})
+
+// Если пока тикал debounce статус заявки перестал быть submitted/approved (например,
+// подгрузка живого обновления откатила её) — гасим таймер без отправки: сработавший
+// PATCH всё равно был бы отклонён backend'ом 400-й.
+watch(feoAutosaveApplicable, (applicable) => {
+  if (!applicable && feoAutosaveTimer) {
+    clearTimeout(feoAutosaveTimer)
+    feoAutosaveTimer = null
+    feoAutosavePending.value = false
+  }
 })
 
 async function runFeoAutosave(): Promise<boolean> {
@@ -4132,6 +4158,11 @@ async function runFeoAutosave(): Promise<boolean> {
     const prevOk = await feoAutosaveInFlight
     if (!prevOk) return false
   }
+  // Статус сменился (или заявка ещё не сохранена) между планированием и срабатыванием —
+  // backend отклонит PATCH /execution 400-й вне submitted/approved. Не шлём, но и не
+  // считаем это ошибкой: правка жива в форме, уйдёт обычным сохранением. true — чтобы
+  // flushFeoAutosave (п. задачи) не блокировал вызывающих там, где автосейв неприменим.
+  if (!feoAutosaveApplicable.value) return true
   if (!editingWishId.value || wishItemsFeoDirtyList.value.length === 0) return true
   const items = wishItemsFeoDirtyList.value
   feoAutosaveSaving.value = true
@@ -4143,6 +4174,12 @@ async function runFeoAutosave(): Promise<boolean> {
         suppressErrorDialog: true,
       })
       snapshotWishItemsFeo()
+      // Дефект 1 (владелец, 2026-08-20): buildWishPayload() включает feo_category_id/
+      // feo_planned_item_id позиций — без обновления снимка здесь decideApprover/
+      // approveWish видели бы ВЕЧНЫЙ ложный diff со снимком, взятым при открытии
+      // карточки (wishFormSavedSnapshot обновлялся раньше только после PUT), и звали
+      // saveWish там, где он не нужен и не должен вызываться.
+      wishFormSavedSnapshot.value = wishPayloadSnapshotJson()
       // Тихое подтверждение — короткий самоисчезающий тост (composables/useToast.ts
       // явно разрешает duration только для фонового автосейва, не для результата
       // ручного действия пользователя).
@@ -4236,6 +4273,9 @@ async function saveExecution() {
     })
     showSnack('Сохранено: исполнитель / срок / мероприятие / ФЭО / получатель')
     snapshotWishItemsFeo()
+    // Дефект 1 (владелец, 2026-08-20): см. тот же комментарий в runFeoAutosave — без
+    // этого diff со снимком «как загружено» оставался бы вечным и ложным.
+    wishFormSavedSnapshot.value = wishPayloadSnapshotJson()
     await reloadActiveTab()
   } catch (e: any) {
     showSnack(`Ошибка: ${e?.payload?.message ?? e?.detail ?? e?.message ?? 'не удалось сохранить'}`, 'error')
@@ -4415,6 +4455,14 @@ async function removeApprover(approvalId: number) {
 }
 async function decideApprover(approvalId: number, decision: 'approved' | 'rejected') {
   if (!editingWishId.value) return
+  // Дефект 1 (владелец, 2026-08-20): согласующий из цепочки правит категории ФЭО
+  // построчно (canEditWishFeo) — эти правки летят автосейвом на PATCH /execution
+  // (см. runFeoAutosave), НЕ через saveWish/PUT. Флаш ПЕРВЫМ — гасит висящий
+  // debounce и дожидается уже летящего запроса, чтобы «Согласовать» не ушло со
+  // старыми плановыми позициями. Флаш упал — решение не отправляем, причину уже
+  // показал сам runFeoAutosave.
+  const flushedFeo = await flushFeoAutosave()
+  if (!flushedFeo) return
   // Пункт 3 (владелец, 2026-08-13): реальный сценарий жалобы — в открытой карточке
   // поменял привязку ФЭО, нажал «Согласовать» (эта кнопка), нажал «Сохранить изменения»:
   // согласование легло ДО сохранения, а сохранение потом сбрасывало его поверх свежего
@@ -4422,7 +4470,12 @@ async function decideApprover(approvalId: number, decision: 'approved' | 'reject
   // что кнопка «Сохранить изменения» — saveWish, код не дублируем), и только потом
   // шлём решение по согласованию. Правок нет — лишний PUT не шлём. Сохранение упало —
   // решение не отправляем, ошибку сервера уже показал сам saveWish.
-  if (decision === 'approved') {
+  // Дефект 1 (владелец, 2026-08-20): PUT /wishes/{id} доступен только автору/участнику
+  // (backend update_wish) — согласующий из цепочки, у которого isWishEditable=false
+  // (статус submitted), туда попадать не должен вовсе: его правки уже ушли автосейвом
+  // выше, а wishFormSavedSnapshot он в принципе не может сравнять с текущим payload
+  // (тело заявки ему readonly), diff был бы вечным и ложным.
+  if (decision === 'approved' && isWishEditable.value) {
     const currentSnapshot = wishPayloadSnapshotJson()
     if (currentSnapshot && currentSnapshot !== wishFormSavedSnapshot.value) {
       const saved = await saveWish(false)
@@ -4898,10 +4951,15 @@ async function approveWish(wish: Wish) {
     // saveWish, чтобы при ошибке сохранения ФЭО согласование точно не ушло.
     const flushedFeo = await flushFeoAutosave()
     if (!flushedFeo) return // flushFeoAutosave/runFeoAutosave уже показал причину — не дублируем
-    const currentSnapshot = wishPayloadSnapshotJson()
-    if (currentSnapshot && currentSnapshot !== wishFormSavedSnapshot.value) {
-      const saved = await saveWish(false)
-      if (!saved) return // saveWish уже показал ошибку сервера (правило: не глотать) — согласование не шлём
+    // Дефект 1 (владелец, 2026-08-20): PUT /wishes/{id} доступен только автору/участнику —
+    // согласующему (isWishEditable=false на статусе submitted) хватает автосейва ФЭО выше,
+    // saveWish/PUT ему вызывать не за чем и он вернёт 403 (см. decideApprover, тот же гейт).
+    if (isWishEditable.value) {
+      const currentSnapshot = wishPayloadSnapshotJson()
+      if (currentSnapshot && currentSnapshot !== wishFormSavedSnapshot.value) {
+        const saved = await saveWish(false)
+        if (!saved) return // saveWish уже показал ошибку сервера (правило: не глотать) — согласование не шлём
+      }
     }
   }
 

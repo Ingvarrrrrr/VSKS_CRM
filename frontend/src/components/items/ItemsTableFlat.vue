@@ -41,7 +41,7 @@
         </tr>
         <template v-else>
         <template v-for="{ item, idx } in [{ item: items[row.idx!], idx: row.idx! }]" :key="item._uid ?? idx">
-        <tr :class="{ 'cv-row': virtualize }">
+        <tr :id="`item-row-${item._uid ?? idx}`" :class="{ 'cv-row': virtualize }">
           <td style="width:36px;padding:0 4px;text-align:center">
             <v-checkbox :model-value="selectedItemIdxs.includes(idx)" density="compact" hide-details :rules="[]"
               @update:model-value="(val: boolean | null) => emit('toggle-item-select', idx, val)" />

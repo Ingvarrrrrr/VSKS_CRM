@@ -43,14 +43,29 @@
         <!-- Владелец 2026-08-06: «если делаются разные категории ФЭО... должна быть общая
              кнопка "Создать в плане закупок" — при нажатии на неё все позиции, которые не
              привязались к плановым, надо создать будут в соответствующих категориях, как
-             плановые, которые для них выбраны». Видна только в режиме «Разные плановые
-             позиции для каждого товара» (feoPlannedPerItem) и только когда есть позиции,
-             у которых заполнена категория ФЭО, но нет привязки к плановой позиции. -->
-        <v-btn v-if="!props.readonly && props.feoPlannedPerItem && needPlanCount > 0"
-          variant="tonal" prepend-icon="mdi-clipboard-plus-outline" size="small" color="primary"
-          @click="openCreatePlannedBulkDialog">
-          Создать в плане закупок ({{ needPlanCount }})
-        </v-btn>
+             плановые, которые для них выбраны». Видна в режиме «Разные плановые позиции
+             для каждого товара» (feoPlannedPerItem) — ИЛИ allowPerItemPlan (Дефект 2,
+             владелец 2026-08-20): заявка передаёт feoPlannedPerItem=false всегда (проп
+             ещё управляет автозаполнением), но построчный выбор плановой позиции и эта
+             кнопка должны быть доступны и там — см. allow-per-item-plan у ItemsTableFlat/
+             ItemsCardsView/ItemsTableStages, тот же паттерн. Видна, когда есть хоть одна
+             непривязанная к плановой позиция (с категорией или без — без категории кнопка
+             ниже просто заблокирована с объяснением, а не спрятана молча). -->
+        <v-tooltip :disabled="itemsMissingCategoryForPlan.length === 0" location="top" max-width="360">
+          <template #activator="{ props: tip }">
+            <span v-bind="tip">
+              <v-btn v-if="!props.readonly && (props.feoPlannedPerItem || props.allowPerItemPlan) && (needPlanCount > 0 || itemsMissingCategoryForPlan.length > 0)"
+                variant="tonal" prepend-icon="mdi-clipboard-plus-outline" size="small" color="primary"
+                :class="{ 'plan-bulk-btn-blocked': itemsMissingCategoryForPlan.length > 0 }"
+                @click="itemsMissingCategoryForPlan.length > 0 ? highlightMissingCategoryForPlan() : openCreatePlannedBulkDialog()">
+                Создать в плане закупок ({{ needPlanCount }})
+              </v-btn>
+            </span>
+          </template>
+          У {{ itemsMissingCategoryForPlan.length }} {{ itemsMissingCategoryForPlan.length === 1 ? 'позиции' : 'позиций' }}
+          не выбрана конечная категория ФЭО — заполните её, иначе для этих строк нельзя создать плановую позицию:
+          {{ itemsMissingCategoryForPlan.slice(0, 5).map(r => `№${r.idx + 1} «${r.name}»`).join(', ') }}{{ itemsMissingCategoryForPlan.length > 5 ? `, …и ещё ${itemsMissingCategoryForPlan.length - 5}` : '' }}
+        </v-tooltip>
         <v-btn
           v-if="selectedItemIdxs.length > 0 && hasUncatalogedSelected && !props.readonly"
           size="small" variant="tonal" color="teal"
@@ -605,6 +620,13 @@
           <div v-if="noCategoryCount > 0" class="text-caption mb-2" style="color:#EF4444">
             У {{ noCategoryCount }} {{ noCategoryCount === 1 ? 'позиции' : 'позиций' }} не выбрана категория ФЭО — для них плановые позиции не создаются.
           </div>
+          <!-- Дефект 2 (владелец, 2026-08-20): решение владельца — каждая строка получает
+               СВОЮ плановую позицию, одноимённые не объединяются. Честно предупреждаем,
+               если в категории уже есть плановая с тем же именем — это НЕ блокирует
+               создание и НЕ меняет поведение, только предупреждает, чтобы не было сюрприза. -->
+          <div v-if="needPlanRows.some(r => r.duplicateOf)" class="text-caption mb-2" style="color:#B45309">
+            У части позиций (отмечены ниже) в этой категории уже есть плановая позиция с таким же названием — будет создана ОТДЕЛЬНАЯ, не объединяются.
+          </div>
           <v-table density="compact">
             <thead>
               <tr>
@@ -615,8 +637,15 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="row in needPlanRows" :key="row.idx">
-                <td>{{ row.name }}</td>
+              <tr v-for="row in needPlanRows" :key="row.uid">
+                <td>
+                  {{ row.name }}
+                  <v-tooltip v-if="row.duplicateOf" location="top" :text="`Уже есть: «${row.duplicateOf.name}» — будет создана отдельная позиция`">
+                    <template #activator="{ props: tip }">
+                      <v-icon v-bind="tip" icon="mdi-alert-outline" size="16" color="warning" class="ml-1" />
+                    </template>
+                  </v-tooltip>
+                </td>
                 <td>{{ row.quantity ?? '—' }} {{ row.unit }}</td>
                 <td>{{ fmtRub(row.amount) }}</td>
                 <td>{{ row.categoryName }}</td>
@@ -2296,12 +2325,18 @@ async function applyBulkUnallocated(parentId: number | null) {
 // см. ItemsTableFlat.vue/ItemsCardsView.vue/ItemsTableStages.vue).
 interface PlanCreateRow {
   idx: number
+  uid: string | number
   name: string
   quantity: number | null
   unit: string
   amount: number | null
   categoryId: number
   categoryName: string
+  // Дефект 2 (владелец, 2026-08-20): решение владельца — каждой строке своя ОТДЕЛЬНАЯ
+  // плановая позиция, одноимённые НЕ объединяются (см. runCreatePlannedBulk). Это поле
+  // чисто информационное — честно предупредить в предпросмотре, что в этой категории
+  // уже есть плановая позиция с таким же именем, НЕ блокирует и НЕ меняет создание.
+  duplicateOf: { id: number; name: string } | null
 }
 
 function _effectiveFeoCategoryId(it: EditorItem): number | null {
@@ -2350,14 +2385,26 @@ const needPlanRows = computed((): PlanCreateRow[] =>
       const categoryId = _effectiveFeoCategoryId(it)
       if (categoryId == null) return null
       const categoryName = feoNodes.value.find(n => n.id === categoryId)?.name ?? `#${categoryId}`
+      const name = (it.item_name || '').trim()
+      // Дефект 2 (владелец, 2026-08-20): ЧЕСТНОЕ предупреждение — в этой категории уже
+      // есть плановая позиция с таким же именем. Информационное, НЕ дедуп: runCreatePlannedBulk
+      // ниже больше не привязывает к ней и не пропускает создание — каждая строка получает
+      // свою отдельную плановую позицию (allow_duplicate_name), одноимённые не объединяются.
+      const dup = (effectivePlannedItems.value || []).find(p =>
+        p.kind === 'planned_item'
+        && p.category_id === categoryId
+        && _normalizePlanName(p.name) === _normalizePlanName(name)
+      )
       return {
         idx,
-        name: (it.item_name || '').trim(),
+        uid: it._uid ?? idx,
+        name,
         quantity: it.quantity ?? null,
         unit: it.unit || '',
         amount: it.total_price ?? null,
         categoryId,
         categoryName,
+        duplicateOf: dup ? { id: dup.id, name: dup.name } : null,
       } as PlanCreateRow
     })
     .filter((r): r is PlanCreateRow => r != null)
@@ -2367,6 +2414,16 @@ const needPlanCount = computed(() => needPlanRows.value.length)
 
 const noCategoryCount = computed(() =>
   _unlinkedCandidates.value.filter(({ it }) => _effectiveFeoCategoryId(it) == null).length
+)
+
+// Дефект 2 (владелец, 2026-08-20): пункт 3 задачи — кнопка «Создать в плане закупок»
+// заблокирована, пока хоть у одной непривязанной позиции нет конечной категории ФЭО
+// (иначе клик по кнопке частично создаёт план и молча пропускает остальное — путаница).
+// Список нужен и для тултипа-объяснения, и для перехода/подсветки первой строки.
+const itemsMissingCategoryForPlan = computed(() =>
+  _unlinkedCandidates.value
+    .filter(({ it }) => _effectiveFeoCategoryId(it) == null)
+    .map(({ it, idx }) => ({ idx, uid: it._uid ?? idx, name: (it.item_name || '').trim() || 'без названия' }))
 )
 
 const createPlannedBulkDialog = ref(false)
@@ -2386,6 +2443,23 @@ function closeCreatePlannedBulkDialog() {
   createPlannedBulkDialog.value = false
 }
 
+// Дефект 2, п.3 (владелец, 2026-08-20): клик по заблокированной кнопке «Создать в плане
+// закупок» не молчит — прокручивает к первой позиции без категории ФЭО и подсвечивает её
+// строку (тот же приём, что highlightMissingFeoCategory/highlightMissingDateItems в
+// WishesView.vue: pulse-класс + scrollIntoView, только здесь без общего arrow-оверлея —
+// компонент переиспользуется вне WishesView, ссылаться на её рефы нельзя). item-row-*
+// id проставлен на строку/карточку каждой позиции в ItemsTableFlat/ItemsCardsView/
+// ItemsTableStages (см. соответствующие файлы).
+function highlightMissingCategoryForPlan() {
+  const first = itemsMissingCategoryForPlan.value[0]
+  if (!first) return
+  const el = document.getElementById(`item-row-${first.uid}`)
+  if (!el) return
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  el.classList.add('plan-bulk-row-pulse')
+  setTimeout(() => el.classList.remove('plan-bulk-row-pulse'), 3000)
+}
+
 // Дедуп — строго точное совпадение имени после нормализации (trim + схлопывание
 // пробелов + lower), НИКАКОГО fuzzy (правило проекта — fuzzy ложно сливал разные
 // SKU, см. Lessons: feedback_dedup_exact_only).
@@ -2393,6 +2467,15 @@ function _normalizePlanName(s: string | null | undefined): string {
   return (s || '').trim().replace(/\s+/g, ' ').toLowerCase()
 }
 
+// Дефект 2 (владелец, 2026-08-20): решение владельца — «каждой строке своя отдельная
+// плановая позиция, одноимённые НЕ объединять». Раньше здесь был дедуп (внутри прогона
+// И против props.plannedItems) — 2 позиции заявки с одинаковым названием («Футболка
+// поло», 10 шт и 15 шт с разной печатью) схлопывались в одну плановую и роняли остаток
+// плана. Теперь КАЖДАЯ строка — отдельный POST с allow_duplicate_name:true (backend
+// feo_planned_items.py::create_planned_item, тот же флаг, что снимает интерактивный
+// 409 planned_item_duplicate_name у одиночного создания) — дедуп по имени внутри
+// категории сознательно пропускается, needPlanRows.duplicateOf выше только предупреждает
+// об этом в предпросмотре, не меняя поведение.
 async function runCreatePlannedBulk() {
   const rows = needPlanRows.value
   if (!rows.length) return
@@ -2401,42 +2484,22 @@ async function runCreatePlannedBulk() {
   createPlannedBulkProgress.done = 0
   createPlannedBulkProgress.total = rows.length
   let anyChanged = false
-  // Дедуп ВНУТРИ одного прогона: props.plannedItems не перечитывается по ходу цикла
-  // (родитель обновит его только по emit('planned-item-created') в конце) — без этой
-  // карты 2+ позиции с одинаковым именем в одной категории, введённые в ОДНОМ клике,
-  // плодили бы по одному дублю на каждую. Ключ — то же нормализованное имя + категория,
-  // что и в основном дедупе; заполняется как найденными в props.plannedItems строками
-  // (чтобы вторая позиция в прогоне не полезла в POST мимо уже найденной), так и вновь
-  // созданными (чтобы третья и далее привязались к только что созданной, не к дублю).
-  const createdInRun = new Map<string, number>()
   for (const row of rows) {
     const item = localItems.value[row.idx]
     if (!item) { createPlannedBulkProgress.done += 1; continue }
-    const dedupKey = `${row.categoryId}|${_normalizePlanName(row.name)}`
     try {
-      const runMatch = createdInRun.get(dedupKey)
-      const existing = runMatch != null ? { id: runMatch } : (props.plannedItems || []).find(p =>
-        p.kind === 'planned_item' &&
-        p.category_id === row.categoryId &&
-        _normalizePlanName(p.name) === _normalizePlanName(row.name)
-      )
-      if (existing) {
-        item.feo_planned_item_id = existing.id
-        createdInRun.set(dedupKey, existing.id)
-      } else {
-        const created = await apiFetch<{ id: number }>('/feo-planned-items/', {
-          method: 'POST',
-          body: JSON.stringify({
-            feo_category_id: row.categoryId,
-            name: row.name,
-            quantity: row.quantity,
-            unit: row.unit || null,
-            amount: row.amount,
-          }),
-        })
-        item.feo_planned_item_id = created.id
-        createdInRun.set(dedupKey, created.id)
-      }
+      const created = await apiFetch<{ id: number }>('/feo-planned-items/', {
+        method: 'POST',
+        body: JSON.stringify({
+          feo_category_id: row.categoryId,
+          name: row.name,
+          quantity: row.quantity,
+          unit: row.unit || null,
+          amount: row.amount,
+          allow_duplicate_name: true,
+        }),
+      })
+      item.feo_planned_item_id = created.id
       item.over_plan = false
       anyChanged = true
     } catch (e: any) {
@@ -2453,9 +2516,10 @@ async function runCreatePlannedBulk() {
   }
   createPlannedBulkLoading.value = false
   const failCount = createPlannedBulkFailures.value.length
+  // Дефект 2, п.4 (владелец): ОДИН тост на весь прогон, не по одному на позицию.
   if (failCount === 0) {
     createPlannedBulkDialog.value = false
-    showSnack(`Плановые позиции созданы/привязаны: ${rows.length}`)
+    showSnack(`Плановые позиции созданы: ${rows.length}`)
   } else {
     showSnack(
       `Готово ${rows.length - failCount} из ${rows.length}. Не удалось: ${createPlannedBulkFailures.value.join('; ')}`,
@@ -4194,5 +4258,28 @@ th { position: relative; }
 /* ──────────────────────────────────────────────────────── */
 .purchase-items-editor {
   width: 100%;
+}
+</style>
+
+<style>
+/* Дефект 2 (владелец, 2026-08-20): «Создать в плане закупок» заблокирована, пока хоть у
+   одной непривязанной позиции нет конечной категории ФЭО — визуально приглушена, но не
+   :disabled (клик всё равно должен сработать и подсветить проблемную строку, а не молча
+   ничего не делать; тот же приём, что .wish-btn-blocked в WishesView.vue). Глобальный
+   (не scoped) стиль — id строки, к которой ведёт подсветка, живёт в дочернем компоненте
+   (ItemsTableFlat/ItemsCardsView/ItemsTableStages), а не в этом шаблоне. */
+.plan-bulk-btn-blocked {
+  opacity: 0.55;
+  filter: grayscale(0.35);
+}
+@keyframes plan-bulk-row-pulse-kf {
+  0%   { box-shadow: 0 0 0 0 rgba(211, 47, 47, 0.6); outline: 2px solid rgba(211, 47, 47, 0.8); }
+  40%  { box-shadow: 0 0 0 8px rgba(211, 47, 47, 0); outline: 2px solid rgba(211, 47, 47, 0.4); }
+  60%  { box-shadow: 0 0 0 0 rgba(211, 47, 47, 0); outline: 2px solid rgba(211, 47, 47, 0.8); }
+  100% { box-shadow: 0 0 0 0 rgba(211, 47, 47, 0); outline: 2px solid transparent; }
+}
+.plan-bulk-row-pulse {
+  animation: plan-bulk-row-pulse-kf 1s ease-out 3;
+  border-radius: 4px;
 }
 </style>

@@ -25,6 +25,7 @@
     <v-card
       v-for="{ item, idx } in [{ item: items[row.idx!], idx: row.idx! }]"
       :key="item._uid ?? idx"
+      :id="`item-row-${item._uid ?? idx}`"
       variant="outlined"
       class="mb-3 item-card"
       :class="{ 'cv-card': virtualize }"

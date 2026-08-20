@@ -269,6 +269,7 @@ async def decide_wish_approval(
     convert_error: str | None = None
     _convert_warning: str | None = None
     _created_ids: list[int] = []
+    _created_purchases: list[dict] = []
     _plan_warning: list[str] = []
 
     if not _is_saas(current_user) and wish.status != "submitted":
@@ -358,6 +359,21 @@ async def decide_wish_approval(
                     _created_ids = await _distribute_wish_to_purchases(wish, db, current_user, split=False)
                     wish.status = "converted"
                     _convert_warning = getattr(wish, "_convert_warning", None)
+                    # Владелец (2026-08-20): согласование последним в цепочке САМО создаёт
+                    # закупку и переводит заявку в 'converted' здесь. Фронт раньше не знал
+                    # об этом и после этого ответа отдельно дёргал POST /convert — тот бился
+                    # об гейт «должна быть approved» (заявка уже converted), пользователь видел
+                    # красную ошибку поверх настоящего успеха. Отдаём id+номер созданной
+                    # закупки сразу в ЭТОМ ответе, чтобы фронт не звал /convert вообще.
+                    if _created_ids:
+                        from app.models.purchase import Purchase as _Purchase
+                        _p_res = await db.execute(
+                            select(_Purchase.id, _Purchase.registry_number)
+                            .where(_Purchase.id.in_(_created_ids))
+                        )
+                        _created_purchases = [
+                            {"id": pid, "registry_number": rn} for pid, rn in _p_res.all()
+                        ]
                 except HTTPException:
                     # Приёмка 2026-08-07 (владелец): гейты «ТЗ не выше плана» /
                     # «превышение ФЭО» — тоже HTTPException, а он наследник Exception,
@@ -439,6 +455,7 @@ async def decide_wish_approval(
         "convert_error": convert_error,
         "convert_warning": _convert_warning,
         "purchase_ids": _created_ids,
+        "purchases": _created_purchases,
         "approvers": [_approval_dict(a) for a in rows],
         "plan_warning": _plan_warning,
         # Превышение ФЭО больше не отказ, а предупреждение (владелец, 2026-08-12):

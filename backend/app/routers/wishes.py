@@ -2094,6 +2094,12 @@ async def approve_wish(
     out.convert_warning = warning
     out.purchase_ids = created_ids
     out.excess_warnings = excess_warnings
+    # Владелец (2026-08-20): быстрое одобрение тоже создаёт закупку сразу здесь
+    # (см. wish.status = "converted" выше) — отдаём номер закупки в этом же ответе,
+    # чтобы фронт не звал следом POST /convert «на всякий случай» (см. тот же фикс
+    # в wish_approvals.py::decide и wishes.py::convert_wish).
+    if created_ids:
+        out.purchases = (await _wish_purchase_summaries_map([wish_id], db)).get(wish_id, [])
     return out
 
 
@@ -2390,9 +2396,26 @@ async def convert_wish(
     from sqlalchemy.orm import selectinload as sil
 
     wish = await _load_wish(wish_id, db)
+    # Идемпотентность (владелец, 2026-08-20): последний согласующий цепочки сам
+    # переносит заявку в закупку (см. wish_approvals.py::decide, _distribute_wish_to_purchases
+    # + wish.status = "converted"). Если фронт после этого всё равно дёргает /convert
+    # (например пользователь нажал «Передать в План закупок» по старой памяти) — заявка
+    # уже 'converted', и раньше это падало 400 «должна быть в статусе approved», хотя
+    # закупка реально была создана. Статус 'converted' здесь пропускаем в общий путь —
+    # ниже блок «защита от дублей» (existing purchases) находит её и просто возвращает,
+    # вторую закупку не создавая.
+    _was_already_converted = wish.status == "converted"
 
-    if not _is_saas(current_user) and wish.status != "approved":
-        raise HTTPException(status_code=400, detail="Заявка должна быть в статусе 'approved'")
+    if not _is_saas(current_user) and wish.status not in ("approved", "converted"):
+        from app.routers.feo_planned_items import _WISH_STATUS_LABELS
+        _label = _WISH_STATUS_LABELS.get(wish.status, wish.status)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Заявку нельзя перенести в закупку: она в статусе «{_label}». "
+                "Перенести можно только согласованную заявку."
+            ),
+        )
 
     # Org isolation
     org_ids = get_org_filter(current_user)
@@ -2406,6 +2429,20 @@ async def convert_wish(
     existing = (await db.execute(
         select(Purchase).where(Purchase.wish_id == wish.id)
     )).scalars().all()
+
+    if _was_already_converted and not existing:
+        # Рассинхрон: заявка помечена converted, но ни одной закупки по ней нет —
+        # такого в норме не бывает (единственный путь в 'converted' — либо этот же
+        # эндпоинт, либо decide()/approve(), оба создают закупку ДО смены статуса).
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Заявка помечена как перенесённая в закупку, но сама закупка не найдена "
+                "(рассинхронизация данных). Обратитесь к администратору — вручную создавать "
+                "закупку заново нельзя, это привело бы к дублю."
+            ),
+        )
+
     if existing:
         # W2-гейт: проверяем категорию ФЭО и даты ПЕРЕД продвижением скрытых закупок —
         # это тоже момент «попадания в План закупок» (владелец, 2026-08-11).
@@ -2465,6 +2502,8 @@ async def convert_wish(
         await db.commit()
         return {
             "wish_id": wish.id, "purchase_id": existing[0].id, "status": "converted",
+            "registry_number": existing[0].registry_number,
+            "already_converted": _was_already_converted,
             "excess_warnings": _excess_warnings,
         }
 
@@ -2613,6 +2652,8 @@ async def convert_wish(
 
     return {
         "wish_id": wish.id, "purchase_id": p.id, "status": "converted",
+        "registry_number": p.registry_number,
+        "already_converted": False,
         "excess_warnings": _excess_warnings,
     }
 

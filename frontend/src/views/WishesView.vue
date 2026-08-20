@@ -2094,9 +2094,18 @@
             <v-btn color="primary" variant="tonal" :loading="saving" @click="saveWish(false)">
               Сохранить изменения
             </v-btn>
-            <v-btn v-if="isManagerOrAdmin" color="primary" variant="flat" prepend-icon="mdi-cart-arrow-right"
+            <!-- Владелец (2026-08-20): 'approved' — закупки ещё нет, кнопка её создаёт.
+                 'converted' — закупка УЖЕ создана (согласование последним в цепочке или
+                 «Одобрить» делает это само, см. decideApprover/approveWish) — повторный
+                 POST /convert здесь раньше бился об гейт статуса, хотя всё уже готово;
+                 показываем переход в готовую закупку вместо повторного создания. -->
+            <v-btn v-if="isManagerOrAdmin && editingWish.status === 'approved'" color="primary" variant="flat" prepend-icon="mdi-cart-arrow-right"
                    @click="openConvertDialog(editingWish); wishDialog = false">
               Передать в План закупок
+            </v-btn>
+            <v-btn v-else-if="editingWish.status === 'converted' && editingWish.purchase_id" color="primary" variant="flat" prepend-icon="mdi-cart-arrow-right"
+                   @click="goToWishPurchases(editingWish); wishDialog = false">
+              Перейти в {{ (editingWish.purchases?.length || editingWish.purchase_ids?.length || 1) > 1 ? 'закупки' : 'закупку' }}
             </v-btn>
           </template>
           <template v-else-if="canAssigneeAct && editingWish">
@@ -4362,14 +4371,28 @@ async function decideApprover(approvalId: number, decision: 'approved' | 'reject
   }
   decideLoading.value = approvalId
   try {
-    const res = await apiFetch<{ status: string; convert_error?: string | null; approvers: WishApprover[]; excess_warnings?: ExcessWarning[] }>(
+    const res = await apiFetch<{
+      status: string
+      convert_error?: string | null
+      approvers: WishApprover[]
+      excess_warnings?: ExcessWarning[]
+      purchases?: { id: number; registry_number?: string | null }[]
+    }>(
       `/wishes/${editingWishId.value}/approvers/${approvalId}/decide`,
       { method: 'POST', body: JSON.stringify({ decision, comment: decideComment.value[approvalId] || null }) },
     )
     wishApprovers.value = res.approvers
     decideComment.value[approvalId] = ''
     if (wishForm.value) (wishForm.value as any).status = res.status
+    // Владелец (2026-08-20): согласование ПОСЛЕДНИМ в цепочке само создаёт закупку
+    // и переводит заявку в 'converted' на бэке (см. wish_approvals.py::decide) — не
+    // просто «Согласовано», а явно сказать, что заявка уехала в закупку, иначе
+    // пользователь не понимает, что делать дальше (и раньше сам нажимал «Передать
+    // в План закупок» второй раз, получая красную ошибку поверх настоящего успеха).
+    const _convertedPurchase = res.status === 'converted' ? (res.purchases || [])[0] : null
     if (res.convert_error) showSnack(res.convert_error, 'warning')
+    else if (_convertedPurchase)
+      showSnack(`Заявка согласована и перенесена в закупку ${_convertedPurchase.registry_number || `№${_convertedPurchase.id}`}`)
     else showSnack(decision === 'approved' ? 'Согласовано' : 'Отклонено')
     showExcessWarnings(res.excess_warnings, 'Заявка согласована, закупка создана.')
     await loadWishOnce()
@@ -4792,8 +4815,20 @@ async function approveWish(wish: Wish) {
 
   approvingId.value = wish.id
   try {
-    const res = await apiFetch<{ convert_warning?: string | null; excess_warnings?: ExcessWarning[] }>(`/wishes/${wish.id}/approve`, { method: 'POST' })
+    const res = await apiFetch<{
+      status?: string
+      convert_warning?: string | null
+      excess_warnings?: ExcessWarning[]
+      purchases?: { id: number; registry_number?: string | null }[]
+    }>(`/wishes/${wish.id}/approve`, { method: 'POST' })
+    // Владелец (2026-08-20): «Одобрить без согласования остальных» тоже создаёт
+    // закупку сразу (wish.status становится 'converted' на бэке) — говорим об этом
+    // явно, той же формулировкой, что и цепочка согласующих (decideApprover), иначе
+    // пользователь не понимает, что закупка уже готова и второй раз жать не нужно.
+    const _convertedPurchase = res?.status === 'converted' ? (res.purchases || [])[0] : null
     if (res?.convert_warning) showSnack(res.convert_warning, 'warning')
+    else if (_convertedPurchase)
+      showSnack(`Заявка одобрена и перенесена в закупку ${_convertedPurchase.registry_number || `№${_convertedPurchase.id}`}`)
     else showSnack('Заявка одобрена')
     showExcessWarnings(res?.excess_warnings, 'Заявка одобрена, закупка создана.')
     wishConvertError.value = null
@@ -5131,12 +5166,28 @@ async function convertWish() {
     if (convertForm.value.approved_quantity != null) body.approved_quantity = convertForm.value.approved_quantity
     if (convertForm.value.approved_price != null) body.approved_price = convertForm.value.approved_price
     if (convertForm.value.subsidy_id != null) body.subsidy_id = convertForm.value.subsidy_id
-    const result = await apiFetch<{ wish_id: number; purchase_id: number; status: string; excess_warnings?: ExcessWarning[] }>(
+    const result = await apiFetch<{
+      wish_id: number
+      purchase_id: number
+      status: string
+      registry_number?: string | null
+      already_converted?: boolean
+      excess_warnings?: ExcessWarning[]
+    }>(
       `/wishes/${convertingWish.value.id}/convert`,
       { method: 'POST', body: JSON.stringify(body) }
     )
-    showSnack('Закупка создана')
-    showExcessWarnings(result.excess_warnings, 'Закупка создана.')
+    // Владелец (2026-08-20): идемпотентность — заявка могла уже уехать в закупку
+    // раньше (согласование последним в цепочке / «Одобрить» делают это сами), этот
+    // клик просто подтверждает то же самое, а не создаёт вторую закупку. Раньше это
+    // падало 400 «должна быть approved» — теперь бэк отдаёт ту же закупку 200-м с
+    // already_converted:true, показываем это честно, не как «закупка создана».
+    if (result.already_converted) {
+      showSnack(`Закупка уже создана: ${result.registry_number || `№${result.purchase_id}`}`)
+    } else {
+      showSnack('Закупка создана')
+      showExcessWarnings(result.excess_warnings, 'Закупка создана.')
+    }
     convertDialog.value = false
     await loadAllWishes()
     router.push(`/orders/${result.purchase_id}/edit`)

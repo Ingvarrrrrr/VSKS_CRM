@@ -994,7 +994,7 @@
           </div>
         </v-overlay>
         <v-card-title class="pa-4 pb-2 d-flex align-center justify-space-between">
-          <span>{{ editingWishId ? 'Редактировать заявку' : 'Новая заявка' }}</span>
+          <span>{{ editingWishId ? `Заявка №${editingWishId} — редактирование` : 'Новая заявка' }}</span>
           <!-- Phase 31-07: Undo/Redo кнопки -->
           <div class="d-flex ga-1 align-center">
             <v-btn
@@ -4546,14 +4546,27 @@ async function saveWish(andSubmit = false): Promise<boolean> {
     // Владелец, 2026-08-19: режимо-зависимо (тумблер вернули) — «одна на всех» смотрит
     // на шапочную плановую позицию целиком, «каждому своя» — на позиции поштучно.
     if (wishFeoBranchHasPlannedItems.value) {
+      // Жалоба владельца 2026-08-20: снекбар не называл ни заявку, ни конкретные позиции —
+      // «какой заявки, к чему относится, непонятно». Теперь префикс с номером/предметом
+      // заявки (тот же номер, что в шапке диалога, см. v-card-title) — как для новой заявки
+      // (editingWishId ещё нет), так и для существующей.
+      const wishLabel = (editingWishId.value ? `Заявка №${editingWishId.value}` : 'Новая заявка')
+        + (wishForm.value.title ? ` «${wishForm.value.title}»` : '')
       if (!wishForm.value.feo_per_item) {
         if (wishFeoPlannedItemId.value == null) {
-          showSnack('В этой категории ФЭО есть плановые позиции плана закупок. Выберите одну из них в блоке выше или создайте новую кнопкой «Создать в плане закупок» — без выбора заявка увеличит плановую сумму категории.', 'warning')
+          showSnack(`${wishLabel}: в этой категории ФЭО есть плановые позиции плана закупок. Выберите одну из них в блоке выше или создайте новую кнопкой «Создать в плане закупок» — без выбора заявка увеличит плановую сумму категории.`, 'warning')
         }
       } else {
-        const unfilledCount = wishForm.value.items.filter((it: any) => it.feo_planned_item_id == null).length
-        if (unfilledCount > 0) {
-          showSnack(`У ${unfilledCount} ${unfilledCount === 1 ? 'позиции' : 'позиций'} не выбрана плановая позиция плана закупок. Выберите её или создайте новую кнопкой «Создать в плане закупок» — без выбора позиция увеличит плановую сумму категории.`, 'warning')
+        // Номер позиции — как в таблице позиций (PurchaseItemsEditor нумерует №${idx+1}).
+        const unfilledItems = wishForm.value.items
+          .map((it: any, idx: number) => ({ it, idx }))
+          .filter(({ it }) => it.feo_planned_item_id == null)
+        if (unfilledItems.length > 0) {
+          const names = unfilledItems.slice(0, 5)
+            .map(({ it, idx }) => `№${idx + 1} «${it.item_name || 'без названия'}»`)
+            .join(', ')
+          const more = unfilledItems.length > 5 ? `, …и ещё ${unfilledItems.length - 5}` : ''
+          showSnack(`${wishLabel}: позиции без плановой позиции плана закупок — ${names}${more}. Выберите её или создайте новую кнопкой «Создать в плане закупок» — без выбора позиция увеличит плановую сумму категории.`, 'warning')
         }
       }
     }

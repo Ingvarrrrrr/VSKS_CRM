@@ -144,7 +144,17 @@
                   >{{ suggestReason || 'Похоже совпадает' }}</v-chip>
                 </span>
                 <span class="feo-tree-residual">
-                  план {{ fmt(row.planned_amount) }} · выбрано {{ fmt(consumedFor(row)) }} ·
+                  план {{ fmt(row.planned_amount) }} ·
+                  <span
+                    v-if="row.kind === 'planned_item'"
+                    class="feo-planned-consumed-link"
+                    role="button"
+                    tabindex="0"
+                    title="Кто расходует план — показать построчно"
+                    @click.stop="openConsumers(row)"
+                    @keydown.enter.stop.prevent="openConsumers(row)"
+                  >выбрано {{ fmt(consumedFor(row)) }}<v-icon size="12" icon="mdi-magnify" class="ml-1" /></span>
+                  <span v-else>выбрано {{ fmt(consumedFor(row)) }}</span> ·
                   <span :class="{ 'feo-planned-shortfall': isShort(row) }">остаток {{ fmt(residualFor(row)) }}</span>
                   <span v-if="isShort(row)" class="feo-planned-shortfall-note"> — не хватает {{ fmt(Math.abs(shortfall(row))) }}</span>
                 </span>
@@ -230,7 +240,17 @@
               >{{ suggestReason || 'Похоже совпадает' }}</v-chip>
             </span>
             <span class="feo-tree-residual">
-              план {{ fmt(row.planned_amount) }} · выбрано {{ fmt(row.consumed) }} ·
+              план {{ fmt(row.planned_amount) }} ·
+              <span
+                v-if="row.kind === 'planned_item'"
+                class="feo-planned-consumed-link"
+                role="button"
+                tabindex="0"
+                title="Кто расходует план — показать построчно"
+                @click.stop="openConsumers(row)"
+                @keydown.enter.stop.prevent="openConsumers(row)"
+              >выбрано {{ fmt(row.consumed) }}<v-icon size="12" icon="mdi-magnify" class="ml-1" /></span>
+              <span v-else>выбрано {{ fmt(row.consumed) }}</span> ·
               <span :class="{ 'feo-planned-shortfall': isShort(row) }">остаток {{ fmt(row.residual) }}</span>
               <span v-if="isShort(row)" class="feo-planned-shortfall-note"> — не хватает {{ fmt(Math.abs(shortfall(row))) }}</span>
             </span>
@@ -473,6 +493,138 @@
       </v-card>
     </v-dialog>
 
+    <!-- «Кто расходует план» (владелец, 2026-08-20) — расшифровка GET
+         /feo-planned-items/{id}/consumers, см. openConsumers выше. -->
+    <v-dialog v-model="consumersDialog.open" max-width="760">
+      <v-card>
+        <v-card-title class="text-subtitle-1">
+          Кто расходует план{{ consumersDialog.row ? ' — «' + consumersDialog.row.name + '»' : '' }}
+        </v-card-title>
+        <v-card-text>
+          <div v-if="consumersDialog.loading" class="d-flex justify-center align-center py-8">
+            <v-progress-circular indeterminate color="primary" />
+          </div>
+          <v-alert v-else-if="consumersDialog.error" type="error" variant="tonal" density="compact">
+            {{ consumersDialog.error }}
+          </v-alert>
+          <template v-else-if="consumersDialog.data && consumersDialog.row">
+            <!-- Итог — ТЕ ЖЕ слагаемые, что строка списка (consumedFor/residualFor
+                 consumersDialog.row), НЕ пересчитаны заново: серверные
+                 consumersDialog.data.consumed/residual не знают о позициях ЭТОЙ формы,
+                 ещё не сохранённых на сервер (см. pendingItemsFor/группа 1 ниже) — если
+                 взять их напрямую, число в диалоге разойдётся с числом в строке (жалоба
+                 владельца, боевой случай: строка «выбрано 11 281», диалог «съедено 0 ₽»). -->
+            <div class="text-body-2 mb-3">
+              план {{ fmt(consumersDialog.row.planned_amount) }} ·
+              выбрано {{ fmt(consumedFor(consumersDialog.row)) }} ·
+              <span :class="{ 'feo-planned-shortfall': residualFor(consumersDialog.row) < 0 }">
+                остаток {{ fmt(residualFor(consumersDialog.row)) }}
+              </span>
+            </div>
+            <div v-if="dialogIsEmpty" class="text-body-2 text-medium-emphasis">
+              На эту плановую позицию ничего не привязано — план ещё свободен целиком.
+            </div>
+            <template v-else>
+              <!-- Группа 1: позиции ЭТОЙ ЖЕ открытой формы — причина, по которой «выбрано»
+                   в строке больше нуля даже когда сервер ещё ничего не видит (форма не
+                   сохранена). -->
+              <div v-if="dialogPendingItems.length" class="feo-consumers-group mb-3">
+                <div class="text-caption font-weight-medium text-medium-emphasis mb-1">{{ dialogFormLabel }}</div>
+                <v-table density="compact" class="feo-consumers-table">
+                  <thead>
+                    <tr><th>Что</th><th class="text-right">Кол-во</th><th class="text-right">Сумма</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(p, i) in dialogPendingItems" :key="'pend-' + i">
+                      <td>{{ p.name }}</td>
+                      <td class="text-right">{{ fmtNum(p.quantity) }} {{ p.unit || '' }}</td>
+                      <td class="text-right">{{ fmt(p.amount) }}</td>
+                    </tr>
+                  </tbody>
+                </v-table>
+              </div>
+
+              <!-- Группа 2: позиции ДРУГИХ закупок, реально расходующие план (то, что
+                   сервер считает в consumed) — своя (props.purchaseId) отфильтрована,
+                   она уже показана группой 1. -->
+              <div v-if="dialogOtherPurchases.length" class="feo-consumers-group mb-3">
+                <div class="text-caption font-weight-medium text-medium-emphasis mb-1">Другие закупки, расходующие план</div>
+                <v-table density="compact" class="feo-consumers-table">
+                  <thead>
+                    <tr>
+                      <th>Что</th><th>Где</th><th>Статус</th>
+                      <th class="text-right">Кол-во</th><th class="text-right">Сумма</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      v-for="(c, i) in dialogOtherPurchases"
+                      :key="'pur-' + i"
+                      :class="{ 'feo-consumer-row--excluded': !c.counts_towards_consumed }"
+                    >
+                      <td>{{ c.item_name }}</td>
+                      <td>
+                        <a href="#" class="feo-consumer-link" @click.prevent="goToPurchase(c.purchase_id)">
+                          Закупка {{ c.registry_number || ('№' + (c.purchase_number ?? c.purchase_id)) }}
+                        </a>
+                        <div class="text-caption text-medium-emphasis">{{ c.purchase_subject }}</div>
+                        <div v-if="c.wish_id" class="text-caption text-medium-emphasis">из заявки №{{ c.wish_id }}</div>
+                      </td>
+                      <td>
+                        {{ c.status_label }}
+                        <div v-if="!c.counts_towards_consumed" class="text-caption text-medium-emphasis">
+                          не входит в остаток
+                        </div>
+                      </td>
+                      <td class="text-right">{{ fmtNum(c.quantity) }} {{ c.unit || '' }}</td>
+                      <td class="text-right">{{ fmt(c.amount) }}</td>
+                    </tr>
+                  </tbody>
+                </v-table>
+              </div>
+
+              <!-- Группа 3: позиции ДРУГИХ заявок — план НЕ резервируют (резервируют
+                   только после переноса в план закупок), на остаток не влияют. Своя
+                   заявка (props.wishId) отфильтрована — она уже показана группой 1. -->
+              <div v-if="dialogOtherWishes.length" class="feo-consumers-group">
+                <div class="text-caption font-weight-medium text-medium-emphasis mb-1">
+                  Другие заявки — план не резервируют, на остаток не влияют (заявка резервирует
+                  план только после переноса в план закупок)
+                </div>
+                <v-table density="compact" class="feo-consumers-table">
+                  <thead>
+                    <tr>
+                      <th>Что</th><th>Заявка</th><th>Статус</th>
+                      <th class="text-right">Кол-во</th><th class="text-right">Сумма</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(c, i) in dialogOtherWishes" :key="'wish-' + i" class="feo-consumer-row--excluded">
+                      <td>{{ c.item_name }}</td>
+                      <td>
+                        <div>Заявка №{{ c.wish_id }} «{{ c.wish_title }}»</div>
+                        <div class="text-caption text-medium-emphasis">автор: {{ c.author_name || '—' }}</div>
+                      </td>
+                      <td>
+                        {{ c.status_label }}
+                        <div class="text-caption text-medium-emphasis">не входит в остаток</div>
+                      </td>
+                      <td class="text-right">{{ fmtNum(c.quantity) }} {{ c.unit || '' }}</td>
+                      <td class="text-right">{{ fmt(c.amount) }}</td>
+                    </tr>
+                  </tbody>
+                </v-table>
+              </div>
+            </template>
+          </template>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="consumersDialog.open = false">Закрыть</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
   </div>
 </template>
 
@@ -528,6 +680,15 @@ const props = defineProps<{
    *  см. pendingFor/consumedFor/residualFor ниже. Только для kind==='planned_item' (id —
    *  это id FeoPlannedItem; у plan_position/feo_article своей плановой позиции нет). */
   pendingByPlannedItem?: Record<number, number> | null
+  /** Расшифровка «Кто расходует план» (владелец, 2026-08-20): та же выборка, что дала
+   *  pendingByPlannedItem, но самими позициями (имя/кол-во/ед./сумма) — построена в
+   *  PurchaseItemsEditor.vue::pendingItemsByPlannedItem той же фильтрацией (pid != null,
+   *  !over_plan). Диалог «Кто расходует план» (см. openConsumers/pendingItemsFor ниже)
+   *  показывает их отдельным блоком «в этой заявке/закупке (сейчас на экране)» — это
+   *  и есть причина, по которой consumedFor(row) > row.consumed с сервера, и без этого
+   *  блока расшифровка молча не сходится со строкой (жалоба владельца: «съедено 0 ₽»
+   *  в диалоге при «выбрано 11 281» в строке). */
+  pendingItemsByPlannedItem?: Record<number, { name: string; quantity: number | null; unit: string | null; amount: number }[]> | null
   /** Жалоба владельца (сессия 2026-08-19): «Хочу удалить плановую позицию... где эта
    *  корзиночка?» — корзинка уже была в ШАПКЕ карточки закупки (CreateOrderView.vue::
    *  deleteHeadPlannedItem, коммит 5901986), но не в этом компоненте, через который
@@ -536,6 +697,22 @@ const props = defineProps<{
    *  delete_planned_item) — необязателен: PurchaseItemsEditor.vue его знает и
    *  прокидывает, форма заявки (ещё не закупка) — нет, и это нормально. */
   purchaseId?: number | null
+  /** Дефект 2 (владелец, 2026-08-20): «При создании заявки случайно создали плановую
+   *  позицию неправильно, надо удалить» — та же роль, что purchaseId выше, но для
+   *  формы ЗАЯВКИ (WishesView.vue), у которой закупки ещё нет и purchase_id взять
+   *  неоткуда. wish_id уходит в DELETE (см. deletePlannedItem) — бэкенд считает
+   *  ссылки wish_items ЭТОЙ заявки «своими» и снимает их молча, как purchase_id
+   *  снимает ссылки своей закупки. Отдельный проп от excludeWishId ниже: тот только
+   *  влияет на СЧЁТ «съедено» в GET consumers, этот — на право удалить. */
+  wishId?: number | null
+  /** Та же заявка/закупка, что родитель передал useFeoPlannedResiduals как
+   *  excludeWishId/excludePurchaseId при загрузке props.items (WishesView.vue —
+   *  editingWishId, CreateOrderView.vue/PurchaseItemsEditor.vue — purchaseId) —
+   *  чтобы GET /feo-planned-items/{id}/consumers (см. openConsumers ниже) считал
+   *  «съедено» ТЕМИ ЖЕ исключениями, что и уже показанное row.consumed, иначе два
+   *  числа на экране разойдутся между собой. */
+  excludeWishId?: number | null
+  excludePurchaseId?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -616,6 +793,13 @@ function pendingFor(row: FeoPlanPosition): number {
 
 function consumedFor(row: FeoPlanPosition): number {
   return row.consumed + pendingFor(row)
+}
+
+// Расшифровка «Кто расходует план» — сами позиции ЭТОЙ формы, дающие pendingFor(row)
+// (см. проп pendingItemsByPlannedItem). Тот же guard kind!=='planned_item' → [].
+function pendingItemsFor(row: FeoPlanPosition): { name: string; quantity: number | null; unit: string | null; amount: number }[] {
+  if (row.kind !== 'planned_item') return []
+  return props.pendingItemsByPlannedItem?.[row.id] || []
 }
 
 function residualFor(row: FeoPlanPosition): number {
@@ -723,21 +907,28 @@ function detachGhost() {
 
 // Жалоба владельца (сессия 2026-08-19): «Я не увидел здесь возможности удалять ненужные
 // плановые позиции... где эта корзиночка?» — DELETE /feo-planned-items/{id}, с
-// purchase_id ТЕКУЩЕЙ закупки (props.purchaseId), если он известен: бэкенд снимает
-// «свои» ссылки (эта закупка + заявка, которая её породила) молча, а если позицию
-// держит ЧУЖАЯ закупка/заявка — отвечает 409 со списком держателей и ничего не меняет
-// (см. backend/app/routers/feo_planned_items.py::delete_planned_item). Формулировка
+// purchase_id ТЕКУЩЕЙ закупки (props.purchaseId) и/или wish_id ТЕКУЩЕЙ заявки
+// (props.wishId, дефект 2, владелец 2026-08-20 — «случайно создали плановую позицию
+// неправильно, надо удалить» ПРЯМО ИЗ ФОРМЫ ЗАЯВКИ, ещё до появления закупки), если они
+// известны: бэкенд снимает «свои» ссылки (эта закупка + заявка, которая её породила,
+// и/или сама эта заявка) молча, а если позицию держит ЧУЖАЯ закупка/заявка — отвечает
+// 409 со списком держателей и ничего не меняет (см.
+// backend/app/routers/feo_planned_items.py::delete_planned_item). Формулировка
 // подтверждения — по образцу deleteHeadPlannedItem в CreateOrderView.vue (та же
-// корзинка, но в ШАПКЕ карточки, коммит 5901986). Кнопка есть только у
+// корзинка, но в ШАПКЕ карточки, коммит 5901986), дополнена количеством (дефект 2, п.в:
+// называть позицию по имени/кол-ву/сумме, не по id). Кнопка есть только у
 // kind==='planned_item' — строки уровня категории (plan_position/feo_article) это сама
 // категория ФЭО дерева, их «удаление» другое, куда более опасное действие.
 async function deletePlannedItem(row: FeoPlanPosition) {
   if (props.readonly || row.kind !== 'planned_item') return
-  const msg = `Удалить плановую позицию «${row.name}»? План ${fmt(row.planned_amount)}, ` +
-    `сейчас выбрано ${fmt(consumedFor(row))}.`
+  const msg = `Удалить плановую позицию «${row.name}»? Кол-во ${fmtQty(row)}, ` +
+    `план ${fmt(row.planned_amount)}, сейчас выбрано ${fmt(consumedFor(row))}.`
   if (!confirm(msg)) return
   try {
-    const qs = props.purchaseId != null ? `?purchase_id=${props.purchaseId}` : ''
+    const qsParts: string[] = []
+    if (props.purchaseId != null) qsParts.push(`purchase_id=${props.purchaseId}`)
+    if (props.wishId != null) qsParts.push(`wish_id=${props.wishId}`)
+    const qs = qsParts.length ? `?${qsParts.join('&')}` : ''
     await apiFetch(`/feo-planned-items/${row.id}${qs}`, { method: 'DELETE', suppressErrorDialog: true })
     // Удалённая позиция была выбрана в этой строке — снять выбор, чтобы не остался
     // «призрак» (см. ghostRow computed выше — он и без этого поймал бы несоответствие,
@@ -750,6 +941,105 @@ async function deletePlannedItem(row: FeoPlanPosition) {
   } catch (e: any) {
     showSnack(e?.payload?.message ?? e?.detail ?? e?.message ?? 'Не удалось удалить плановую позицию', 'error')
   }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// «Кто расходует план» (владелец, 2026-08-20): «Откуда у 14 футболок... остаток
+// 4512? Я ничего к ним не привязывал. Я не могу это найти. Нигде этого не
+// видно» — строка показывает «план X · выбрано Y · остаток Z», но КТО съел Y
+// нигде не видно. Клик по «выбрано» (только у kind==='planned_item' — только
+// у него есть отдельная запись FeoPlannedItem, к которой можно обратиться;
+// у plan_position/feo_article «выбрано» — это сумма по всему поддереву
+// категории, для неё такой расшифровки бэкенд не считает) открывает диалог
+// с расшифровкой GET /feo-planned-items/{id}/consumers.
+interface FeoPlannedConsumer {
+  type: 'purchase' | 'wish'
+  counts_towards_consumed: boolean
+  item_name: string
+  quantity: number | null
+  unit: string | null
+  amount: number
+  purchase_id?: number
+  purchase_number?: number | null
+  registry_number?: string | null
+  purchase_subject?: string | null
+  wish_id?: number | null
+  wish_title?: string | null
+  author_name?: string | null
+  status: string
+  status_label: string
+}
+interface FeoPlannedConsumersResponse {
+  planned_item_id: number
+  planned_item_name: string
+  planned_amount: number
+  consumed: number
+  residual: number
+  consumers: FeoPlannedConsumer[]
+}
+const consumersDialog = reactive<{
+  open: boolean
+  loading: boolean
+  error: string | null
+  row: FeoPlanPosition | null
+  data: FeoPlannedConsumersResponse | null
+}>({ open: false, loading: false, error: null, row: null, data: null })
+
+async function openConsumers(row: FeoPlanPosition) {
+  if (row.kind !== 'planned_item') return
+  consumersDialog.row = row
+  consumersDialog.open = true
+  consumersDialog.loading = true
+  consumersDialog.error = null
+  consumersDialog.data = null
+  try {
+    const parts: string[] = []
+    if (props.excludePurchaseId != null) parts.push(`exclude_purchase_id=${props.excludePurchaseId}`)
+    if (props.excludeWishId != null) parts.push(`exclude_wish_id=${props.excludeWishId}`)
+    const qs = parts.length ? `?${parts.join('&')}` : ''
+    consumersDialog.data = await apiFetch<FeoPlannedConsumersResponse>(
+      `/feo-planned-items/${row.id}/consumers${qs}`,
+    )
+  } catch (e: any) {
+    consumersDialog.error = e?.payload?.message ?? e?.detail ?? e?.message ?? 'Не удалось загрузить расшифровку расхода плана'
+  } finally {
+    consumersDialog.loading = false
+  }
+}
+
+// Три группы расшифровки — обязаны в сумме дать ровно то же Y/Z, что строка списка
+// (см. итоговую строку диалога ниже, которая берёт числа через consumedFor/residualFor(
+// consumersDialog.row), а не пересчитывает их сама, чтобы гарантированно совпасть):
+//   1) pendingItemsFor(row) — позиции ЭТОЙ ЖЕ открытой формы (WishesView/PurchaseItemsEditor
+//      localItems), ещё не обязательно сохранённые на сервер — источник pendingFor(row);
+//   2) серверные consumers типа 'purchase' из ДРУГИХ закупок (не той, что сейчас
+//      редактируется — props.purchaseId, её собственные строки уже показаны группой 1);
+//   3) серверные consumers типа 'wish' из ДРУГИХ заявок (не той, что сейчас редактируется —
+//      props.wishId, по той же причине) — план не резервируют, показаны для полноты.
+const dialogPendingItems = computed((): { name: string; quantity: number | null; unit: string | null; amount: number }[] =>
+  consumersDialog.row ? pendingItemsFor(consumersDialog.row) : []
+)
+const dialogOtherPurchases = computed((): FeoPlannedConsumer[] =>
+  (consumersDialog.data?.consumers || []).filter(c => c.type === 'purchase' && c.purchase_id !== props.purchaseId)
+)
+const dialogOtherWishes = computed((): FeoPlannedConsumer[] =>
+  (consumersDialog.data?.consumers || []).filter(c => c.type === 'wish' && c.wish_id !== props.wishId)
+)
+const dialogIsEmpty = computed((): boolean =>
+  dialogPendingItems.value.length === 0 && dialogOtherPurchases.value.length === 0 && dialogOtherWishes.value.length === 0
+)
+const dialogFormLabel = computed((): string => {
+  if (props.purchaseId != null) return 'в этой закупке (сейчас на экране)'
+  if (props.wishId != null) return 'в этой заявке (сейчас на экране)'
+  return 'в этой форме (сейчас на экране)'
+})
+
+function goToPurchase(id: number | undefined) {
+  if (id == null) return
+  // Открываем в новой вкладке, а не router.push — этот диалог обычно висит
+  // поверх ЕЩЁ НЕ сохранённой формы заявки/закупки (та самая, из которой его
+  // открыли), уводить с неё нельзя.
+  window.open(`/orders/${id}`, '_blank')
 }
 
 // БАГ 3 (сессия 2026-08-05): раньше кнопка «Создать в плане закупок» делала
@@ -1087,6 +1377,29 @@ async function confirmCreateDuplicate() {
 .feo-planned-shortfall-note {
   color: #EF4444;
   font-weight: 700;
+}
+.feo-planned-consumed-link {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.feo-planned-consumed-link:hover,
+.feo-planned-consumed-link:focus-visible {
+  color: #3B82F6;
+  outline: none;
+}
+.feo-consumers-table :deep(td) {
+  vertical-align: top;
+}
+.feo-consumer-row--excluded {
+  opacity: 0.6;
+}
+.feo-consumer-link {
+  color: #3B82F6;
+  text-decoration: none;
+}
+.feo-consumer-link:hover {
+  text-decoration: underline;
 }
 .feo-planned-delete-btn {
   flex-shrink: 0;

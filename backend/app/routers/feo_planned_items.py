@@ -586,6 +586,16 @@ async def delete_planned_item(
             "заявки, породившей эту закупку, считаются «своими» и просто снимаются."
         ),
     ),
+    wish_id: Optional[int] = Query(
+        None,
+        description=(
+            "Заявка, из формы которой удаляют плановую позицию (корзинка в "
+            "FeoPlannedItemsSelect внутри WishesView.vue — плановая позиция создана и "
+            "тут же привязана прямо при заполнении заявки, ещё до конвертации в "
+            "закупку). Ссылки wish_items ЭТОЙ заявки считаются «своими» и снимаются "
+            "молча — так же, как purchase_id снимает ссылки своей закупки."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -623,6 +633,17 @@ async def delete_planned_item(
     _check_planned_item_write_access) вместо жёсткой привязки к вкладке
     feo_categories: владелец явно попросил, чтобы удаление работало из
     карточки закупки/заявки, а не только из справочника ФЭО.
+
+    ДЕФЕКТ 2 (владелец, 2026-08-20): «При создании заявки случайно создали
+    плановую позицию неправильно, надо удалить, для этого не должно быть
+    необходимости лезть куда-то ещё» — параметр wish_id (см. выше) добавлен по
+    точной аналогии с purchase_id: заявка, из формы которой жмут «удалить»,
+    и её собственные wish_items — «свой» держатель, снимается молча. Раньше
+    own_wish_id вычислялся ТОЛЬКО из purchase_id → Purchase.wish_id, поэтому
+    при удалении прямо из формы заявки (закупки ещё нет, purchase_id
+    неоткуда взять) ссылка самой этой заявки всегда попадала в
+    foreign_wishes и отдавала 409 — удалить только что созданную свою же
+    плановую позицию было невозможно.
     """
     item = (await db.execute(
         select(FeoPlannedItem).where(FeoPlannedItem.id == item_id)
@@ -639,11 +660,18 @@ async def delete_planned_item(
     _sid = cat.subsidy_id
 
     own_purchase_id = purchase_id
-    own_wish_id: Optional[int] = None
+    # Держатели-«свои»: заявка, чью закупку удаляют (Purchase.wish_id), И/ИЛИ
+    # заявка, из формы которой жмут «удалить» напрямую (wish_id параметр) —
+    # объединяем в множество, обе ситуации не исключают друг друга.
+    own_wish_ids: set[int] = set()
     if purchase_id is not None:
-        own_wish_id = (await db.execute(
+        _wish_from_purchase = (await db.execute(
             select(Purchase.wish_id).where(Purchase.id == purchase_id)
         )).scalar_one_or_none()
+        if _wish_from_purchase is not None:
+            own_wish_ids.add(_wish_from_purchase)
+    if wish_id is not None:
+        own_wish_ids.add(wish_id)
 
     pi_holder_rows = (await db.execute(
         select(Purchase.id, Purchase.registry_number)
@@ -659,7 +687,7 @@ async def delete_planned_item(
     )).all()
 
     foreign_purchases = [(pid, reg) for pid, reg in pi_holder_rows if pid != own_purchase_id]
-    foreign_wishes = [(wid, title) for wid, title in wi_holder_rows if wid != own_wish_id]
+    foreign_wishes = [(wid, title) for wid, title in wi_holder_rows if wid not in own_wish_ids]
 
     if foreign_purchases or foreign_wishes:
         holders = [f"закупка {reg or ('№' + str(pid))}" for pid, reg in foreign_purchases]
@@ -1250,6 +1278,173 @@ async def get_comparison(
         planned=planned_out,
         actual=actual_out,
     )
+
+
+_WISH_STATUS_LABELS = {
+    "draft": "Черновик",
+    "submitted": "На согласовании",
+    "approved": "Согласовано",
+    "rejected": "Не согласовано",
+    "converted": "Передано в исполнение",
+}
+"""Человекочитаемые подписи статуса заявки — зеркалит WishesView.vue (STATUS_LABELS,
+не вынесен в общий backend-модуль, у wishes.py своего словаря нет). Используется
+ТОЛЬКО GET /{item_id}/consumers ниже — остальной роутер заявочные статусы не
+показывает."""
+
+
+@router.get("/{item_id}/consumers")
+async def get_planned_item_consumers(
+    item_id: int,
+    exclude_purchase_id: Optional[int] = Query(
+        None,
+        description="Та же закупка, что исключается при загрузке /feo-categories/plan-positions "
+                     "и /feo-planned-items/residuals — чтобы редактируемая сейчас закупка не "
+                     "выглядела потребителем самой себя, и сумма «съедено» совпадала с consumed.",
+    ),
+    exclude_wish_id: Optional[int] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Расшифровка расхода плановой позиции (владелец, 2026-08-20): «Откуда у 14
+    футболок... остаток 4512? Я ничего к ним не привязывал. Я не могу это найти.
+    Нигде этого не видно...» — список плановых позиций показывает «план X ·
+    выбрано Y · остаток Z» (FeoPlannedItemsSelect.vue), но КТО съел Y — нигде не
+    видно. Боевой случай: у одной плановой позиции («Футболка Trisar (цвет
+    олива) с нанесением», план 15 793,40 ₽) висели ДВЕ строки заявки №40 — сама
+    заявка и её собственная закупка. Этот эндпоинт возвращает каждую позицию
+    закупки/заявки, ссылающуюся на item_id (feo_planned_item_id), с суммой,
+    статусом (по-русски) и данными для перехода — а не просто цифру.
+
+    Фильтры и суммы — СТРОГО та же логика, что app.services.feo_plan
+    .planned_item_consumption (используется /feo-categories/plan-positions и
+    /feo-planned-items/residuals для того же числа `consumed`): позиция закупки
+    учитывается, только если Purchase.status в PLANNED_STATUSES (значит, ещё не
+    отменена/не «желание») И Purchase.stopped_at IS NULL И не исключена
+    exclude_purchase_id/exclude_wish_id. Иначе цифра «съедено» здесь разошлась бы
+    с той, что уже видна в списке позиций — ровно тот дефект, который чинится.
+
+    Каждая позиция ЗАКУПКИ, ссылающаяся на item_id, попадает в ответ ВСЕГДА (даже
+    если сейчас не учитывается в сумме — например, закупка отменена/остановлена);
+    поле counts_towards_consumed показывает, входит ли она в consumed. Позиции
+    ЗАЯВКИ (wish_items) сами по себе план НЕ резервируют (решение владельца
+    2026-08-17 — см. planned_item_consumption), поэтому у них
+    counts_towards_consumed всегда false; они показаны для полноты картины
+    («заявка ещё не в закупке, но уже помечена этой плановой позицией»).
+
+    Дедуп факт-конвертации (владелец: «заявка и закупка — это одна позиция»,
+    см. plan_autoassign._fpi_reference_keys): если у позиции заявки есть
+    порождённая ею позиция закупки (PurchaseItem.wish_item_id), которая ТОЖЕ
+    ссылается на этот же item_id, — в ответе показывается ТОЛЬКО строка закупки
+    (более свежие/актуальные данные), а не обе; иначе одна и та же позиция
+    выглядела бы двумя потребителями и сумма/список задваивались бы. Сама связь
+    видна через поле wish_id на строке закупки — оно указывает, из какой заявки
+    та выросла.
+    """
+    from app.routers.purchase_budget import PLANNED_STATUSES
+    from app.routers.purchase_export import _STATUS_LABELS as _PURCHASE_STATUS_LABELS
+    from app.models.user import User
+
+    item = (await db.execute(
+        select(FeoPlannedItem).where(FeoPlannedItem.id == item_id)
+    )).scalar_one_or_none()
+    if not item:
+        raise HTTPException(404, "Плановая позиция не найдена")
+
+    pi_rows = (await db.execute(
+        select(PurchaseItem, Purchase)
+        .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
+        .where(PurchaseItem.feo_planned_item_id == item_id)
+        .order_by(PurchaseItem.id)
+    )).all()
+    wi_rows = (await db.execute(
+        select(WishItem, Wish)
+        .join(Wish, WishItem.wish_id == Wish.id)
+        .where(WishItem.feo_planned_item_id == item_id)
+        .order_by(WishItem.id)
+    )).all()
+
+    # Автор заявки — батч одним запросом (не полагаемся на Wish.creator lazy="joined"
+    # автоподгрузку через plain select(Wish, WishItem), чтобы не зависеть от деталей
+    # стратегии загрузки relationship при явном JOIN на два entity).
+    creator_ids = {w.created_by for _wi, w in wi_rows if w.created_by is not None}
+    creators: dict[int, str] = {}
+    if creator_ids:
+        u_rows = (await db.execute(
+            select(User.id, User.full_name, User.username).where(User.id.in_(creator_ids))
+        )).all()
+        creators = {u.id: (u.full_name or u.username) for u in u_rows}
+
+    def _pi_counts(purchase: Purchase) -> bool:
+        if purchase.status not in PLANNED_STATUSES:
+            return False
+        if purchase.stopped_at is not None:
+            return False
+        if exclude_purchase_id is not None and purchase.id == exclude_purchase_id:
+            return False
+        if exclude_wish_id is not None and purchase.wish_id == exclude_wish_id:
+            return False
+        return True
+
+    converted_wish_item_ids = {pi.wish_item_id for pi, _p in pi_rows if pi.wish_item_id is not None}
+
+    consumers: list[dict] = []
+    total_consumed = Decimal("0")
+
+    for pi, p in pi_rows:
+        counts = _pi_counts(p)
+        amount = Decimal(str(pi.total_price)) if pi.total_price is not None else Decimal("0")
+        if counts:
+            total_consumed += amount
+        consumers.append({
+            "type": "purchase",
+            "counts_towards_consumed": counts,
+            "item_name": pi.item_name,
+            "quantity": float(pi.quantity) if pi.quantity is not None else None,
+            "unit": pi.unit,
+            "amount": float(amount),
+            "purchase_id": p.id,
+            "purchase_number": p.purchase_number,
+            "registry_number": p.registry_number,
+            "purchase_subject": p.subject or p.item_name,
+            "status": p.status,
+            "status_label": _PURCHASE_STATUS_LABELS.get(p.status, p.status),
+            "wish_id": p.wish_id,
+        })
+
+    for wi, w in wi_rows:
+        # Уже представлена строкой закупки выше (см. докстринг: одна логическая
+        # позиция) — не дублируем и не считаем сумму дважды.
+        if wi.id in converted_wish_item_ids:
+            continue
+        amount = Decimal(str(wi.total_price)) if wi.total_price is not None else Decimal("0")
+        consumers.append({
+            "type": "wish",
+            # Незаконвертированная заявка план не резервирует (владелец, 2026-08-17) —
+            # см. докстринг planned_item_consumption. Показана только для полноты.
+            "counts_towards_consumed": False,
+            "item_name": wi.item_name,
+            "quantity": float(wi.quantity) if wi.quantity is not None else None,
+            "unit": wi.unit,
+            "amount": float(amount),
+            "wish_id": w.id,
+            "wish_title": w.title,
+            "status": w.status,
+            "status_label": _WISH_STATUS_LABELS.get(w.status, w.status),
+            "author_name": creators.get(w.created_by) if w.created_by is not None else None,
+        })
+
+    planned_amount = float(item.amount) if item.amount is not None else 0.0
+    residual = planned_amount - float(total_consumed)
+
+    return {
+        "planned_item_id": item.id,
+        "planned_item_name": item.name,
+        "planned_amount": planned_amount,
+        "consumed": float(total_consumed),
+        "residual": residual,
+        "consumers": consumers,
+    }
 
 
 @router.get("/residuals")

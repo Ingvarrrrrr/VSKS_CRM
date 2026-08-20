@@ -161,7 +161,9 @@
           :planned-items="props.plannedItems"
           :planned-selection-for="plannedSelectionFor"
           :pending-by-planned-item="pendingByPlannedItem"
+          :pending-items-by-planned-item="pendingItemsByPlannedItem"
           :purchase-id="props.purchaseId"
+          :wish-id="props.wishId"
           :plan-for-item="planForItem"
           :plan-excess-for="planExcessFor"
           :subsidy-id="props.subsidyId"
@@ -242,7 +244,9 @@
           :planned-items="props.plannedItems"
           :planned-selection-for="plannedSelectionFor"
           :pending-by-planned-item="pendingByPlannedItem"
+          :pending-items-by-planned-item="pendingItemsByPlannedItem"
           :purchase-id="props.purchaseId"
+          :wish-id="props.wishId"
           :show-contractor-column="showContractorColumn"
           :show-needed-date="props.showNeededDate"
           :contractors="contractors"
@@ -303,7 +307,9 @@
           :planned-items="props.plannedItems"
           :planned-selection-for="plannedSelectionFor"
           :pending-by-planned-item="pendingByPlannedItem"
+          :pending-items-by-planned-item="pendingItemsByPlannedItem"
           :purchase-id="props.purchaseId"
+          :wish-id="props.wishId"
           :plan-for-item="planForItem"
           :plan-excess-for="planExcessFor"
           :show-contractor-column="showContractorColumn"
@@ -571,6 +577,7 @@
             :items="effectivePlannedItems"
             :prefill="bulkPlannedPrefill"
             :purchase-id="props.purchaseId"
+            :exclude-purchase-id="props.purchaseId"
             class="mt-2"
             @planned-item-created="emit('planned-item-created')"
             @planned-item-deleted="emit('planned-item-deleted')"
@@ -693,6 +700,7 @@
                   :items="effectivePlannedItems"
                   :amount="splitPartAmount(i)"
                   :purchase-id="props.purchaseId"
+                  :exclude-purchase-id="props.purchaseId"
                   dense
                   @update:model-value="(v) => onSplitPartPlannedChange(i, v)"
                   @planned-item-created="emit('planned-item-created')"
@@ -914,6 +922,12 @@ const props = withDefaults(defineProps<{
   purchaseStatus?: string               // Phase 27.1.1: для определения isDelivered (D-01.1.1)
   itemShape: 'purchase' | 'wish'
   purchaseId?: number | null
+  // Дефект 2 (владелец, 2026-08-20): «удалить случайно созданную плановую позицию
+  // прямо из заявки» — та же роль, что purchaseId выше, для формы заявки, у которой
+  // закупки ещё нет. Прокидывается дальше в ItemsTableStages/ItemsCardsView/
+  // ItemsTableFlat → FeoPlannedItemsSelect::wishId (см. deletePlannedItem там и
+  // backend/app/routers/feo_planned_items.py::delete_planned_item).
+  wishId?: number | null
   allowedItemTypes?: string[]
   defaultItemType?: string
   defaultUnit?: string
@@ -984,6 +998,7 @@ const props = withDefaults(defineProps<{
   readonly: false,
   feoAttrsEditable: false,
   purchaseId: null,
+  wishId: null,
   vatMode: 'uniform',
   uniformVatRate: null,
   formMode: 'default',
@@ -2561,6 +2576,30 @@ const pendingByPlannedItem = computed((): Record<number, number> => {
     if (pid == null) continue
     if ((it as any).over_plan === true) continue
     map[pid] = (map[pid] || 0) + Number((it as any).total_price || 0)
+  }
+  return map
+})
+
+// Расшифровка «Кто расходует план» (владелец, 2026-08-20): диалог
+// FeoPlannedItemsSelect.vue::openConsumers должен показать, ЧТО именно даёт число
+// pendingByPlannedItem, а не только саму сумму — иначе «выбрано Y» в строке списка
+// нечем объяснить (боевой случай: 14 футболок, план 15 793,40, «выбрано 11 281» —
+// потому что на ту же плановую позицию ссылается ЕЩЁ ОДНА строка ЭТОЙ ЖЕ формы на
+// 10 шт, ещё не сохранённая на сервер). Та же фильтрация (pid != null, !over_plan),
+// но список позиций {name, quantity, unit, amount} вместо суммы.
+const pendingItemsByPlannedItem = computed((): Record<number, { name: string; quantity: number | null; unit: string | null; amount: number }[]> => {
+  const map: Record<number, { name: string; quantity: number | null; unit: string | null; amount: number }[]> = {}
+  for (const it of localItems.value) {
+    const pid = (it as any).feo_planned_item_id
+    if (pid == null) continue
+    if ((it as any).over_plan === true) continue
+    if (!map[pid]) map[pid] = []
+    map[pid].push({
+      name: (it as any).item_name || 'без названия',
+      quantity: (it as any).quantity ?? null,
+      unit: (it as any).unit ?? null,
+      amount: Number((it as any).total_price || 0),
+    })
   }
   return map
 })

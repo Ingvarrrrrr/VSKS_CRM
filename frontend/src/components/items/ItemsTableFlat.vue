@@ -253,7 +253,9 @@
                 :nodes="feoNodes" :items="plannedItems || []"
                 :amount="item.total_price" :readonly="feoReadonly" dense
                 :pending-by-planned-item="pendingByPlannedItem"
+                :pending-items-by-planned-item="pendingItemsByPlannedItem"
                 :purchase-id="purchaseId"
+                :wish-id="wishId"
                 style="flex:1 1 320px;min-width:260px"
                 :prefill="{ name: item.item_name, quantity: item.quantity, unit: item.unit, amount: item.total_price }"
                 @update:model-value="(v) => emit('item-planned-change', idx, v)"
@@ -338,10 +340,17 @@ const props = defineProps<{
   // feo_planned_item_id → сумма позиций ЭТОЙ формы (см. pendingByPlannedItem в
   // PurchaseItemsEditor.vue), прокидывается как есть в FeoPlannedItemsSelect.
   pendingByPlannedItem?: Record<number, number> | null
+  // Расшифровка «Кто расходует план» (владелец, 2026-08-20): та же карта, но со списком
+  // самих позиций формы (имя/кол-во/сумма), не только суммой — см. одноимённый проп в
+  // PurchaseItemsEditor.vue / FeoPlannedItemsSelect.vue.
+  pendingItemsByPlannedItem?: Record<number, { name: string; quantity: number | null; unit: string | null; amount: number }[]> | null
   // Владелец (сессия 2026-08-19): «где эта корзиночка?» — корзинка построчного удаления
   // плановой позиции (FeoPlannedItemsSelect) нужна знать, «откуда удаляют», см. одноимённый
   // проп в FeoPlannedItemsSelect.vue / PurchaseItemsEditor.vue.
   purchaseId?: number | null
+  // Дефект 2 (владелец, 2026-08-20): та же роль, что purchaseId выше, для формы заявки
+  // (закупки ещё нет) — см. одноимённый проп в FeoPlannedItemsSelect.vue / PurchaseItemsEditor.vue.
+  wishId?: number | null
   // Шаг 5 «ТЗ не дороже и не больше плана» (владелец, 2026-08-07): найти плановую
   // строку позиции (для подписи «план: N шт / N ₽») и проверить превышение
   // (для подсветки) — обе считаются один раз в родителе (см. planForItem/

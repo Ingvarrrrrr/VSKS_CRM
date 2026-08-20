@@ -1318,6 +1318,8 @@
                         :category-id="wishFeoSelected"
                         :nodes="wishFeoNodes"
                         :items="wishPlannedResiduals"
+                        :exclude-wish-id="editingWishId"
+                        :wish-id="editingWishId"
                         :amount="totalNmck"
                         :suggest-key="wishFeoPlanSuggestKey"
                         :suggest-reason="wishFeoPlanSuggestReason"
@@ -1377,10 +1379,23 @@
                       </div>
                     </v-alert>
                   </template>
+                  <!-- Дефект 1 (владелец, 2026-08-20): видимый индикатор автосейва построчных
+                       ФЭО-правок (правило проекта — долгая операция без индикатора запрещена).
+                       Показывается только согласующему, который реально может править
+                       feo-attrs-editable построчно ниже. -->
+                  <div
+                    v-if="!isWishEditable && canEditWishFeo && (feoAutosaveSaving || feoAutosavePending)"
+                    class="d-flex align-center ga-2 mb-2 text-caption text-medium-emphasis"
+                  >
+                    <v-progress-circular v-if="feoAutosaveSaving" size="14" width="2" indeterminate color="primary" />
+                    <v-icon v-else size="14" icon="mdi-clock-outline" />
+                    {{ feoAutosaveSaving ? 'Сохранение ФЭО…' : 'Есть несохранённые изменения ФЭО — сохранятся автоматически' }}
+                  </div>
                   <PurchaseItemsEditor
                     v-model="wishForm.items"
                     item-shape="purchase"
                     :purchase-id="null"
+                    :wish-id="editingWishId"
                     :default-unit="'шт.'"
                     :default-country="'РФ'"
                     :allowed-item-types="['товар','услуга','работа']"
@@ -1497,6 +1512,8 @@
                     :category-id="wishFeoSelected"
                     :nodes="wishFeoNodes"
                     :items="wishPlannedResiduals"
+                    :exclude-wish-id="editingWishId"
+                    :wish-id="editingWishId"
                     :amount="totalNmck"
                     :suggest-key="wishFeoPlanSuggestKey"
                     :suggest-reason="wishFeoPlanSuggestReason"
@@ -3536,8 +3553,8 @@ const downloadingExcelId = ref<number | null>(null)
 // пропасть за 3-4 секунды. Стек не затирает предыдущие — новые тосты копятся.
 const toast = useToast()
 
-function showSnack(text: string, color: ToastType = 'success') {
-  toast.addToast(text, color)
+function showSnack(text: string, color: ToastType = 'success', opts?: { duration?: number }) {
+  toast.addToast(text, color, opts)
 }
 
 // Предупреждение о превышении ФЭО (задача владельца 2026-08-12: «согласовали —
@@ -4008,8 +4025,130 @@ const wishItemsFeoDirtyList = computed(() => {
 })
 const wishItemsFeoDirty = computed(() => wishItemsFeoDirtyList.value.length > 0)
 
+// ── ДЕФЕКТ 1 (владелец, 2026-08-20): автосохранение построчных ФЭО-правок ──────
+// Дословно: «Я поменял плановую позицию футболки 10 шт с 15 на 10 и дальше нажал
+// "Распределить и одобрить". Но этого не происходит, потому что мои изменения не
+// сохраняются, они должны сохраняться автоматически, только когда я поменяю».
+// Правки жили ТОЛЬКО в wishForm.value.items (см. wishItemsFeoDirtyList выше) до
+// нажатия отдельной кнопки «Сохранить ФЭО» (saveExecution ниже) — «Распределить
+// и одобрить» вообще перезагружает состав заявки СВЕЖИМ с сервера
+// (openKanbanDialog → GET /wishes/{id}), поэтому только что сделанная правка
+// терялась молча, а действие уходило со старыми данными.
+//
+// Правило проекта (feedback_new_field_three_places): валидация/серверное действие
+// допускаются только ПОСЛЕ автосейва. Debounce 700мс на изменение
+// wishItemsFeoDirtyList → тихая отправка PATCH /execution ТОЛЬКО с items (никогда
+// executor_id/execution_deadline/event_id/feo_category_id/assigned_to — те поля
+// патчатся, только если явно не null, см. patch_wish_execution в
+// backend/app/routers/wishes.py, так что отправка одних items их не трогает).
+// flushFeoAutosave() — обязательная точка перед approveWish/rejectWish/
+// openKanbanDialog (единственные серверные действия формы, достижимые в
+// состоянии, когда wishItemsFeoDirtyList вообще может быть непустым — см.
+// разбор feoAttrsEditable/canEditWishFeo/canAssigneeAct у соответствующих
+// кнопок; «Сохранить черновик»/«Отправить»/«Сохранить изменения» показываются
+// только когда isWishEditable, а тогда feoAttrsEditable всегда false).
+let feoAutosaveTimer: ReturnType<typeof setTimeout> | null = null
+// Индикатор для UI (правило проекта: долгая операция без индикатора запрещена) —
+// pending = тикает debounce, saving = запрос реально в полёте.
+const feoAutosavePending = ref(false)
+const feoAutosaveSaving = ref(false)
+let feoAutosaveInFlight: Promise<boolean> | null = null
+
+function scheduleFeoAutosave() {
+  feoAutosavePending.value = true
+  if (feoAutosaveTimer) clearTimeout(feoAutosaveTimer)
+  feoAutosaveTimer = setTimeout(() => {
+    feoAutosaveTimer = null
+    void runFeoAutosave()
+  }, 700)
+}
+
+// Правки построчного ФЭО пишутся напрямую в объекты wishForm.value.items дочерними
+// компонентами (FeoTreeSelect/FeoPlannedItemsSelect, см. комментарий у
+// wishItemsFeoSnapshot выше) — wishItemsFeoDirtyList уже computed поверх этого,
+// пересчитывается на каждое изменение. Наблюдаем за НИМ, а не за items напрямую —
+// он и так меняет ссылку при каждом релевантном изменении.
+watch(() => wishItemsFeoDirtyList.value, (list) => {
+  if (list.length > 0) scheduleFeoAutosave()
+})
+
+async function runFeoAutosave(): Promise<boolean> {
+  feoAutosavePending.value = false
+  if (feoAutosaveInFlight) {
+    // Уже летит запрос — items для НЕГО захвачены ДО этого await и правку,
+    // сделанную ПОКА он в полёте, не содержат. Ждём его, затем пересчитываем
+    // дифф заново (снимок уже обновлён завершившимся запросом) — если правка,
+    // сделанная во время ожидания, всё ещё не сохранена, шлём её отдельным
+    // запросом. Без этого повторного шага она молча пропала бы: снимок
+    // обновляется по ТЕКУЩЕМУ состоянию формы, а не по тому, что реально ушло
+    // на сервер.
+    const prevOk = await feoAutosaveInFlight
+    if (!prevOk) return false
+  }
+  if (!editingWishId.value || wishItemsFeoDirtyList.value.length === 0) return true
+  const items = wishItemsFeoDirtyList.value
+  feoAutosaveSaving.value = true
+  const p = (async (): Promise<boolean> => {
+    try {
+      await apiFetch(`/wishes/${editingWishId.value}/execution`, {
+        method: 'PATCH',
+        body: JSON.stringify({ items }),
+        suppressErrorDialog: true,
+      })
+      snapshotWishItemsFeo()
+      // Тихое подтверждение — короткий самоисчезающий тост (composables/useToast.ts
+      // явно разрешает duration только для фонового автосейва, не для результата
+      // ручного действия пользователя).
+      showSnack('ФЭО сохранено', 'success', { duration: 2000 })
+      return true
+    } catch (e: any) {
+      const msg = e?.payload?.message ?? e?.detail ?? e?.message ?? 'не удалось сохранить'
+      const status = e?.status != null ? ` (HTTP ${e.status})` : ''
+      showSnack(`Автосохранение ФЭО не удалось${status}: ${msg}`, 'error')
+      return false
+    } finally {
+      feoAutosaveSaving.value = false
+      feoAutosaveInFlight = null
+    }
+  })()
+  feoAutosaveInFlight = p
+  return p
+}
+
+// Обязательная точка перед серверными действиями формы (п.б задачи): гасит
+// висящий debounce и шлёт правки немедленно, дожидается уже летящего запроса.
+// false — сохранение реально требовалось и упало; вызывающий обязан НЕ выполнять
+// действие (ошибку уже показал runFeoAutosave выше — не дублируем).
+async function flushFeoAutosave(): Promise<boolean> {
+  if (feoAutosaveTimer) {
+    clearTimeout(feoAutosaveTimer)
+    feoAutosaveTimer = null
+    feoAutosavePending.value = false
+  }
+  if (feoAutosaveInFlight) {
+    // См. комментарий в runFeoAutosave — после того как летящий запрос завершится
+    // и обновит снимок, перепроверяем дифф заново, а не просто возвращаем его
+    // результат: правка, сделанная, пока он летел, в его тело не попала.
+    const ok = await feoAutosaveInFlight
+    if (!ok) return false
+  }
+  if (wishItemsFeoDirtyList.value.length === 0) return true
+  return runFeoAutosave()
+}
+
+onBeforeUnmount(() => {
+  if (feoAutosaveTimer) clearTimeout(feoAutosaveTimer)
+})
+
 async function saveExecution() {
   if (!editingWishId.value) { showSnack('Сначала сохраните заявку', 'warning'); return }
+  // «Сохранить ФЭО» больше не единственный способ сохранить (п.в задачи), но
+  // остаётся ручным путём — гасим висящий автосейв-debounce и дожидаемся уже
+  // летящего запроса, чтобы не отправить items дважды гонкой (единый источник
+  // истины на подпись — runFeoAutosave/эта функция никогда не выполняются
+  // параллельно друг с другом).
+  if (feoAutosaveTimer) { clearTimeout(feoAutosaveTimer); feoAutosaveTimer = null; feoAutosavePending.value = false }
+  if (feoAutosaveInFlight) await feoAutosaveInFlight
   savingExecution.value = true
   try {
     const body: any = {
@@ -4625,6 +4764,12 @@ async function approveWish(wish: Wish) {
   // СНАЧАЛА тем же путём, что кнопка «Сохранить изменения» (saveWish, не дублируем код),
   // и только потом шлём согласование. Правок нет — лишний PUT не шлём.
   if (wishDialog.value && editingWishId.value === wish.id) {
+    // Дефект 1 (владелец, 2026-08-20): та же логика для построчных ФЭО-правок
+    // согласующего (wishItemsFeoDirtyList) — «Одобрить без согласования остальных»
+    // не должно уходить старыми плановыми позициями. Флаш ПЕРВЫМ — до общего
+    // saveWish, чтобы при ошибке сохранения ФЭО согласование точно не ушло.
+    const flushedFeo = await flushFeoAutosave()
+    if (!flushedFeo) return // flushFeoAutosave/runFeoAutosave уже показал причину — не дублируем
     const currentSnapshot = wishPayloadSnapshotJson()
     if (currentSnapshot && currentSnapshot !== wishFormSavedSnapshot.value) {
       const saved = await saveWish(false)
@@ -4745,6 +4890,19 @@ function highlightCommonDateField() {
 
 // ── Kanban distribution (Phase 13) ─────────────────────────────────────
 async function openKanbanDialog(wish: Wish) {
+  // Дефект 1 (владелец, 2026-08-20): «нажал "Распределить и одобрить". Но этого
+  // не происходит, потому что мои изменения не сохраняются» — этот диалог грузит
+  // состав заявки СВЕЖИМ с сервера (GET /wishes/{id} ниже), поэтому несохранённая
+  // построчная ФЭО-правка терялась молча ещё ДО открытия кнопки «Распределить».
+  // Кнопка закрывает wishDialog синхронно (см. @click="openKanbanDialog(editingWish);
+  // wishDialog = false" в шаблоне), так что здесь, как и в rejectWish, гейт — только
+  // по совпадению id, не по wishDialog.value. Флаш упал — диалог распределения не
+  // открываем вообще (иначе он покажет старые данные), причину уже показал
+  // runFeoAutosave.
+  if (editingWishId.value === wish.id) {
+    const flushedFeo = await flushFeoAutosave()
+    if (!flushedFeo) return
+  }
   kanbanWish.value = wish
   kanbanItems.value = []
   kanbanDialog.value = true
@@ -4846,6 +5004,16 @@ function openRejectDialog(wish: Wish) {
 
 async function rejectWish() {
   if (!rejectionReason.value.trim() || !rejectingWishItem.value) return
+  // Дефект 1 (владелец, 2026-08-20): кнопка «Отклонить» закрывает wishDialog
+  // СИНХРОННО, до открытия диалога причины (см. @click="openRejectDialog(editingWish);
+  // wishDialog = false" в шаблоне) — к моменту вызова этой функции wishDialog уже
+  // false, поэтому здесь (в отличие от approveWish) флаш НЕ гейтуется на
+  // wishDialog.value, только на совпадение id — та же заявка, чья форма ещё
+  // держит несохранённые построчные ФЭО-правки.
+  if (editingWishId.value === rejectingWishItem.value.id) {
+    const flushedFeo = await flushFeoAutosave()
+    if (!flushedFeo) return
+  }
   rejectingWish.value = true
   try {
     await apiFetch(`/wishes/${rejectingWishItem.value.id}/reject`, {

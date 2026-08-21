@@ -790,6 +790,291 @@ async def _collect_excess_warnings(
     return list(warnings_by_cat.values())
 
 
+async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> Optional[dict]:
+    """Повторное согласование заявки (вернули в черновик/отклонили → поправили →
+    согласовали заново) приводит УЖЕ СУЩЕСТВУЮЩУЮ закупку заявки к её текущему
+    состоянию — предмет и состав позиций (владелец, план crystalline-soaring-
+    heron.md, п.2). Прод-находка: РЕЕ-2026-00898 сохранила предмет заявки №40 на
+    момент ПЕРВОГО переноса, хотя заявку потом правили (в т.ч. предмет) и
+    согласовывали заново — `_distribute_wish_to_purchases` в ветке «защита от
+    дублей» раньше только продвигала статус скрытой закупки, ничего не сверяя.
+
+    Вызывается из `_distribute_wish_to_purchases`/`convert_wish` ТОЛЬКО когда у
+    заявки уже есть закупка(и) — по построению это повторный проход. Правка
+    wish.items вне пути «вернуть в черновик» заблокирована на статусе 'converted'
+    (см. гейт в update_wish), так что к моменту вызова любое расхождение состава —
+    легитимная правка, сделанная, пока заявка была НЕ converted; правило «после
+    согласования правят в закупке» этим не нарушается.
+
+    len(purchases) != 1 — заявка когда-то распределена канбаном на НЕСКОЛЬКО
+    закупок (split=True, approve_distribution) — без сохранённого сопоставления
+    «группа → закупка» синхронизация неоднозначна, поэтому не выполняется вовсе
+    (возвращает None, поведение как до этой задачи). Обычное согласование
+    (split=False) — всегда ОДНА закупка, это подавляющее большинство случаев,
+    включая описанный на проде.
+
+    Гейт по стадии — тот же принцип и те же тексты, что `_withdraw_wish_from_plan`
+    выше: закупка ушла дальше «Плана закупок» (TZ_FROZEN_STATUSES) — состав и
+    предмет НЕ трогаются, причина возвращается в `blocked_reason` с номером и
+    стадией по-русски (не HTTPException — согласование заявки уже состоялось,
+    отказывать в нём из-за стадии закупки владелец не просил).
+
+    Возвращает контракт `purchase_sync` (см. план, зафиксирован для фронта):
+    {purchase_id, registry_number, subject_before, subject_after, items_added,
+    items_removed, items_changed, items_conflicted, items_kept_manual,
+    blocked_reason}. None — нечего/некого синхронизировать (0 или 2+ закупок).
+    Commit НЕ делает — это на вызывающем (как и весь _distribute_wish_to_purchases).
+    """
+    if len(purchases) != 1:
+        return None
+    from app.routers.purchases import TZ_FROZEN_STATUSES
+    from app.routers.purchase_export import _STATUS_LABELS
+
+    p = purchases[0]
+
+    if p.status in TZ_FROZEN_STATUSES:
+        label = _STATUS_LABELS.get(p.status, p.status)
+        return {
+            "purchase_id": p.id,
+            "registry_number": p.registry_number,
+            "subject_before": p.subject,
+            "subject_after": p.subject,
+            "items_added": [],
+            "items_removed": [],
+            "items_changed": [],
+            "items_conflicted": [],
+            "items_kept_manual": [],
+            "blocked_reason": (
+                f"Закупка №{p.purchase_number or p.id} «{p.subject or p.item_name or ''}» "
+                f"уже на стадии «{label}» — обновить предмет и состав из заявки нельзя. "
+                "Дальнейшие изменения вносите прямо в закупке."
+            ),
+        }
+
+    items_res = await db.execute(select(WishItem).where(WishItem.wish_id == wish.id))
+    _all_wish_items = items_res.scalars().all()
+    wish_items = [it for it in _all_wish_items if _is_meaningful_item(it)]
+    # Дефект 2 (QA): ВСЕ id позиций заявки (включая «незначимые» — пустые
+    # заготовки), не только meaningful — по ним отличаем «строка когда-то
+    # пришла из заявки» от «заведена вручную прямо в закупке» ниже.
+    _all_wish_item_ids = {it.id for it in _all_wish_items}
+
+    # Те же гейты, что при первом переносе (_distribute_wish_to_purchases ниже) —
+    # новая/изменившаяся позиция обязана иметь категорию ФЭО и дату потребности
+    # прежде чем попасть в закупку.
+    await _ensure_feo_categories_assigned(wish, wish_items, db)
+    await _ensure_needed_dates(wish, db, wish_items)
+    await _auto_assign_planned_items(
+        wish_items, wish.feo_category_id, db, note=f"повторным согласованием заявки №{wish.id}",
+    )
+    await assert_tz_batch_not_over_plan(db, wish_items)
+
+    pitems_res = await db.execute(
+        select(PurchaseItem).where(PurchaseItem.purchase_id == p.id)
+    )
+    existing_items = pitems_res.scalars().all()
+
+    # Дефект 1 (QA, 2026-08-21): сопоставление «старая позиция закупки → текущая
+    # позиция заявки» ДВУХСТУПЕНЧАТО. Ступень 1 — по жёсткой связи wish_item_id
+    # (переживает переименование позиции в НЕ-draft статусах заявки — update_wish
+    # правит WishItem по id in-place там, см. докстринг функции выше). Ступень 2 —
+    # по нормализованному имени (app.services.text_match.normalize, та же
+    # функция, что и в plan_autoassign.auto_assign_planned_items) — ТОЛЬКО для
+    # позиций закупки, не разобранных на ступени 1 (правка в статусе 'draft' идёт
+    # «удалить все WishItem → создать заново» — id теряются целиком, имя остаётся
+    # единственным якорем). Без ступени 1 переименование позиции читалось как
+    # «удалить строку закупки → создать новую» и стирало ручные поля закупки
+    # (contractor_id/contractor_name/contractor_inn/receipt_id/match_confirmed/
+    # final_unit_price и пр.) — тот самый дефект.
+    from app.services.text_match import normalize as _normalize_name
+
+    _existing_by_wid: dict[int, PurchaseItem] = {}
+    _unmatched_existing: list[PurchaseItem] = []
+    for pi in existing_items:
+        if pi.wish_item_id is not None and pi.wish_item_id in _all_wish_item_ids:
+            _existing_by_wid[pi.wish_item_id] = pi
+        else:
+            _unmatched_existing.append(pi)
+
+    _existing_pool: dict[str, list[PurchaseItem]] = {}
+    for pi in _unmatched_existing:
+        key = _normalize_name(pi.item_name or "")
+        _existing_pool.setdefault(key, []).append(pi)
+
+    _wish_contractor_obj = None
+    if getattr(wish, 'contractor_id', None):
+        from app.models.contractor import Contractor as _Contractor
+        _wish_contractor_obj = await db.get(_Contractor, wish.contractor_id)
+
+    items_added: list[dict] = []
+    items_removed: list[dict] = []
+    items_changed: list[dict] = []
+    items_conflicted: list[dict] = []
+    items_kept_manual: list[dict] = []
+    synced_items: list[PurchaseItem] = []
+
+    def _fmt(qty, price, total) -> str:
+        return f"{qty or 0} × {price or 0} ₽ = {float(total or 0):.2f} ₽"
+
+    # Дефект 3 (QA): поля с сохранённым «снимком ТЗ на момент переноса» —
+    # planned_* движется вместе с текущим значением ТОЛЬКО пока его не трогали
+    # руками в закупке (правило проекта «после согласования правят в закупке»).
+    # Признак ручной правки — текущее значение отличается от снимка; тогда поле
+    # НЕ перезаписывается из заявки (ни значение, ни сам снимок), а расхождение
+    # возвращается в items_conflicted, чтобы фронт показал его человеку вместо
+    # молчаливого отката.
+    _tracked_fields = (
+        ("quantity", "planned_quantity"),
+        ("unit_price", "planned_unit_price"),
+        ("total_price", "planned_total"),
+    )
+
+    for wi in wish_items:
+        pi = _existing_by_wid.pop(wi.id, None)
+        if pi is None:
+            _key = _normalize_name(wi.item_name or "")
+            _bucket = _existing_pool.get(_key)
+            pi = _bucket.pop(0) if _bucket else None
+        if pi is None:
+            new_pi = PurchaseItem(
+                purchase_id=p.id,
+                product_id=wi.product_id,
+                item_name=wi.item_name,
+                item_type=wi.item_type,
+                quantity=wi.quantity,
+                unit=wi.unit,
+                unit_price=wi.unit_price,
+                total_price=wi.total_price,
+                planned_quantity=wi.quantity,
+                planned_unit_price=wi.unit_price,
+                planned_total=wi.total_price,
+                country_origin=wi.country_origin,
+                feo_category_id=wi.feo_category_id,
+                feo_planned_item_id=wi.feo_planned_item_id,
+                over_plan=getattr(wi, 'over_plan', False),
+                needed_date=_eff_date(wish, wi),
+                wish_item_id=wi.id,
+                vat_rate=getattr(wi, 'vat_rate', None),
+                contractor_id=(_wish_contractor_obj.id if _wish_contractor_obj else None),
+                contractor_inn=(_wish_contractor_obj.inn if _wish_contractor_obj else None),
+                contractor_name=(
+                    _wish_contractor_obj.name if _wish_contractor_obj
+                    else getattr(wish, 'contractor_name', None)
+                ),
+            )
+            db.add(new_pi)
+            synced_items.append(new_pi)
+            items_added.append({
+                "name": wi.item_name, "quantity": float(wi.quantity or 0), "amount": float(wi.total_price or 0),
+            })
+            continue
+
+        _before_qty, _before_price, _before_total = pi.quantity, pi.unit_price, pi.total_price
+        _name_changed = (pi.item_name or "") != (wi.item_name or "")
+
+        _any_field_changed = _name_changed
+        for field, snap_field in _tracked_fields:
+            cur_val = float(getattr(pi, field) or 0)
+            snap_val = float(getattr(pi, snap_field) or 0)
+            wish_val = float(getattr(wi, field) or 0)
+            _manually_edited = abs(cur_val - snap_val) > 0.005
+            if _manually_edited:
+                if abs(cur_val - wish_val) > 0.005:
+                    items_conflicted.append({
+                        "name": wi.item_name, "field": field,
+                        "in_purchase": cur_val, "in_wish": wish_val,
+                    })
+                # Не трогаем ни значение, ни снимок — ручная правка остаётся как есть.
+                continue
+            if abs(cur_val - wish_val) > 0.005:
+                _any_field_changed = True
+            setattr(pi, field, getattr(wi, field))
+            setattr(pi, snap_field, getattr(wi, field))
+
+        if _any_field_changed:
+            items_changed.append({
+                "name": wi.item_name,
+                "was": _fmt(_before_qty, _before_price, _before_total),
+                "now": _fmt(pi.quantity, pi.unit_price, pi.total_price),
+            })
+        pi.item_name = wi.item_name
+        pi.item_type = wi.item_type or pi.item_type
+        pi.unit = wi.unit
+        pi.country_origin = wi.country_origin
+        pi.feo_category_id = wi.feo_category_id
+        pi.feo_planned_item_id = wi.feo_planned_item_id
+        pi.over_plan = getattr(wi, 'over_plan', False)
+        pi.vat_rate = getattr(wi, 'vat_rate', None)
+        pi.needed_date = _eff_date(wish, wi)
+        # Ре-линковка (см. комментарий у _existing_by_wid/_existing_pool выше):
+        # правка в 'draft' пересоздаёт WishItem с новым id — восстанавливаем hard
+        # link на АКТУАЛЬНЫЙ id, иначе связь «заявка ↔ строка закупки» (W1,
+        # используется W-diff/exclude_wish_id/_fpi_reference_keys) обрывается
+        # молча при первом же возврате в черновик, даже когда содержимое позиции
+        # не менялось.
+        pi.wish_item_id = wi.id
+        synced_items.append(pi)
+
+    # Дефект 2 (QA): позиции закупки, оставшиеся непарными, удаляются ТОЛЬКО
+    # если реально пришли из заявки (wish_item_id указывает на позицию ЭТОЙ
+    # заявки — включая «незначимые», см. _all_wish_item_ids выше — просто её
+    # больше нет среди текущих значимых позиций заявки, автор убрал/обнулил её).
+    # Строки, заведённые закупщиком прямо в закупке (wish_item_id пуст или
+    # указывает не на эту заявку), НИКОГДА не трогаются — они возвращаются
+    # отдельным списком items_kept_manual, чтобы пользователь видел, что они
+    # остались, а не решил, что их «забыли».
+    # _existing_by_wid, оставшийся непустым после основного цикла (см. .pop()
+    # там) — записи, чей wish_item_id указывает на РЕАЛЬНУЮ позицию этой заявки,
+    # но она перестала быть «значимой» (обнулена) и в wish_items не попала;
+    # по тому же правилу это тоже «пришла из заявки» → в общий проход удаления.
+    _leftover_buckets = list(_existing_pool.values()) + [[pi] for pi in _existing_by_wid.values()]
+    for _bucket in _leftover_buckets:
+        for pi in _bucket:
+            if pi.wish_item_id is not None and pi.wish_item_id in _all_wish_item_ids:
+                items_removed.append({
+                    "name": pi.item_name, "quantity": float(pi.quantity or 0), "amount": float(pi.total_price or 0),
+                })
+                await db.delete(pi)
+            else:
+                items_kept_manual.append({
+                    "name": pi.item_name, "quantity": float(pi.quantity or 0), "amount": float(pi.total_price or 0),
+                })
+
+    if synced_items:
+        await _backfill_item_type_from_plan(synced_items, db)
+
+    _subject_before = p.subject
+    title = (wish.title or "").strip() or f"Заявка #{wish.id}"
+    p.subject = title
+    p.item_name = title
+    if getattr(wish, 'contractor_id', None) and not p.contractor_id:
+        p.contractor_id = wish.contractor_id
+
+    await db.flush()
+
+    items_sum_res = await db.execute(
+        select(func.coalesce(func.sum(PurchaseItem.total_price), 0)).where(PurchaseItem.purchase_id == p.id)
+    )
+    items_sum = items_sum_res.scalar() or 0
+    p.total_nmck = items_sum
+    p.planned_total_price = items_sum
+    p.nmck = items_sum
+    await db.flush()
+
+    return {
+        "purchase_id": p.id,
+        "registry_number": p.registry_number,
+        "subject_before": _subject_before,
+        "subject_after": p.subject,
+        "items_added": items_added,
+        "items_removed": items_removed,
+        "items_changed": items_changed,
+        "items_conflicted": items_conflicted,
+        "items_kept_manual": items_kept_manual,
+        "blocked_reason": None,
+    }
+
+
 async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status: str = "plan_schedule", split: bool = True) -> list[int]:
     """Создаёт закупки (status='plan_schedule' — «План закупок») из позиций заявки по группам колонок,
     копирует позиции, добавляет участников и чаты, ставит purchase.wish_id.
@@ -836,15 +1121,20 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
         for p in existing:
             if p.status == "wishes":
                 p.status = purchase_status
-        # Владелец (2026-08-13): синхронизация заявка→закупка ОТКЛЮЧЕНА — после
-        # конвертации единственный источник правды это сама закупка (см. гейт в
-        # update_wish, блокирующий правку wish.items на статусе 'converted').
-        # Раньше здесь стоял _sync_wish_items_to_purchases (копировал название/
-        # кол-во/цену позиции, но НЕ категорию ФЭО — данные расходились между
-        # заявкой и закупкой). Этот код всегда фигурировал ТОЛЬКО в ветке
-        # повторного одобрения УЖЕ конвертированной заявки (Purchase.wish_id уже
-        # проставлен) — а правка items там теперь запрещена, так что синхронизация
-        # больше не нужна.
+        # Владелец (план crystalline-soaring-heron.md, п.2, 2026-08-21): «после
+        # согласования заявку правят в закупке, а не в заявке» — верно, ПОКА
+        # заявка остаётся converted (правка wish.items на этом статусе заблокирована,
+        # см. гейт в update_wish). Но владелец наблюдал ОБРАТНОЕ на проде: заявку
+        # ВОЗВРАЩАЛИ в черновик (там правка снова разрешена), меняли предмет и
+        # состав, согласовывали ЗАНОВО — а закупка (РЕЕ-2026-00898) осталась со
+        # старым предметом, потому что раньше эта ветка (существующая закупка —
+        # "защита от дублей" сработала) молчала: только продвигала статус, ничего
+        # не сверяла. Единственный путь СЮДА с изменившимися items — именно
+        # «вернули в черновик → поправили → согласовали заново» (иначе items не
+        # изменить), так что синхронизация здесь НЕ нарушает правило «после
+        # согласования — только в закупке»: она реагирует именно на легитимную
+        # правку, сделанную, пока заявка была НЕ converted.
+        wish._purchase_sync = await _sync_purchase_from_wish(wish, existing, db)
         return [p.id for p in existing]
 
     # Preload wish items with products for category resolution
@@ -2105,6 +2395,7 @@ async def approve_wish(
         wish.status = "converted"
     warning = getattr(wish, "_convert_warning", None)
     excess_warnings = getattr(wish, "_excess_warnings", [])
+    purchase_sync = getattr(wish, "_purchase_sync", None)
     await db.commit()
     await db.refresh(wish)
     wish = await _load_wish(wish_id, db)
@@ -2112,6 +2403,7 @@ async def approve_wish(
     out.convert_warning = warning
     out.purchase_ids = created_ids
     out.excess_warnings = excess_warnings
+    out.purchase_sync = purchase_sync
     # Владелец (2026-08-20): быстрое одобрение тоже создаёт закупку сразу здесь
     # (см. wish.status = "converted" выше) — отдаём номер закупки в этом же ответе,
     # чтобы фронт не звал следом POST /convert «на всякий случай» (см. тот же фикс
@@ -2331,6 +2623,7 @@ async def force_wish_status(
         raise HTTPException(status_code=400, detail=f"Недопустимый статус. Разрешены: {sorted(allowed)}")
     wish = await _load_wish(wish_id, db)
     excess_warnings: list = []
+    purchase_sync: Optional[dict] = None
 
     if body.status == "converted":
         if not wish.items:
@@ -2355,6 +2648,7 @@ async def force_wish_status(
             wish.status = "converted"
             wish.approved_by = wish.approved_by or current_user.id
             excess_warnings = getattr(wish, "_excess_warnings", [])
+            purchase_sync = getattr(wish, "_purchase_sync", None)
             await db.commit()
         except HTTPException:
             await db.rollback()
@@ -2395,6 +2689,7 @@ async def force_wish_status(
     wish = await _load_wish(wish_id, db)
     out = _enrich(wish)
     out.excess_warnings = excess_warnings
+    out.purchase_sync = purchase_sync
     return out
 
 
@@ -2516,6 +2811,10 @@ async def convert_wish(
         wish.status = "converted"
         wish.approved_by = wish.approved_by or current_user.id
         wish.purchase_id = wish.purchase_id or existing[0].id
+        # Повторный перенос (владелец, план crystalline-soaring-heron.md, п.2) —
+        # тот же helper, что и в _distribute_wish_to_purchases: приводит предмет и
+        # состав уже существующей закупки к текущей заявке (см. её докстринг).
+        _purchase_sync = await _sync_purchase_from_wish(wish, existing, db)
         await db.flush()
         _excess_warnings = await _collect_excess_warnings(db, wish.subsidy_id, _cat_items)
         await db.commit()
@@ -2524,6 +2823,7 @@ async def convert_wish(
             "registry_number": existing[0].registry_number,
             "already_converted": _was_already_converted,
             "excess_warnings": _excess_warnings,
+            "purchase_sync": _purchase_sync,
         }
 
     # Preload items with products (B4/B10)
@@ -2674,6 +2974,9 @@ async def convert_wish(
         "registry_number": p.registry_number,
         "already_converted": False,
         "excess_warnings": _excess_warnings,
+        # Первое создание закупки — синхронизировать нечего (см. purchase_sync
+        # в ветке «существующая закупка» выше).
+        "purchase_sync": None,
     }
 
 

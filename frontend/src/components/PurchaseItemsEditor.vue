@@ -262,6 +262,8 @@
           :pending-items-by-planned-item="pendingItemsByPlannedItem"
           :purchase-id="props.purchaseId"
           :wish-id="props.wishId"
+          :plan-for-item="planForItem"
+          :plan-excess-for="planExcessFor"
           :show-contractor-column="showContractorColumn"
           :show-needed-date="props.showNeededDate"
           :contractors="contractors"

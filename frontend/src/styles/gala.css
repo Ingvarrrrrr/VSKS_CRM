@@ -79,3 +79,13 @@ body {
 .mono-num {
   font-family: var(--font-mono);
 }
+
+/* Единая подсветка отрицательного остатка/превышения плана (владелец, сессия
+   2026-08-21: «Подсвечено должно быть везде такое несоответствие») — глобальный
+   класс, а не per-component scoped CSS, чтобы все места (FeoPlannedItemsSelect,
+   CreateOrderView, ItemsCardsView и т.д.) красили одинаково. Ставится хелпером
+   formatPlanResidual() из utils/numberFormat.ts. */
+.plan-residual--negative {
+  color: var(--gala-error, #ef4444);
+  font-weight: 700;
+}

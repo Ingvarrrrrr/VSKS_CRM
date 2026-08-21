@@ -152,7 +152,16 @@
             <v-col cols="6" sm="3">
               <v-text-field v-model.number="item.quantity" type="number" density="compact"
                 variant="outlined" label="Кол-во" hide-details :disabled="readonly"
+                :class="{ 'tz-over-plan': planExcessFor?.(item)?.qtyOver }"
                 @update:model-value="emit('calc-item-total', idx)" />
+              <!-- Шаг 5 «ТЗ не дороже и не больше плана» (владелец, 2026-08-07) — раньше
+                   этой подсказки на карточках не было вовсе (только в ItemsTableFlat/
+                   ItemsTableStages), задача владельца 2026-08-21 «на мобильном подсветки
+                   нет вовсе» устранена прокидыванием plan-for-item/plan-excess-for. -->
+              <div v-if="planForItem?.(item)?.planned_quantity != null" class="text-caption plan-hint"
+                :class="planExcessFor?.(item)?.qtyOver ? 'text-error font-weight-bold' : 'text-medium-emphasis'">
+                план: {{ formatNumber(planForItem!(item)!.planned_quantity) }}{{ planForItem!(item)!.unit ? ' ' + planForItem!(item)!.unit : '' }}
+              </div>
             </v-col>
 
             <!-- Ед. изм. -->
@@ -167,14 +176,31 @@
                 :model-value="formatNumber(item.unit_price)"
                 density="compact" variant="outlined" label="Цена ед., ₽" hide-details
                 :disabled="readonly"
+                :class="{ 'tz-over-plan': planExcessFor?.(item)?.priceOver }"
                 @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; emit('calc-item-total', idx) }"
               />
+              <div v-if="planForItem?.(item)?.unit_price != null" class="text-caption plan-hint"
+                :class="planExcessFor?.(item)?.priceOver ? 'text-error font-weight-bold' : 'text-medium-emphasis'">
+                план: {{ formatNumber(planForItem!(item)!.unit_price) }} ₽
+              </div>
             </v-col>
 
             <!-- Сумма (readonly) -->
             <v-col cols="6" sm="4">
               <v-text-field :model-value="formatNumber(item.total_price)" readonly density="compact"
-                variant="outlined" label="Сумма, ₽" hide-details bg-color="grey-lighten-4" />
+                variant="outlined" label="Сумма, ₽" hide-details bg-color="grey-lighten-4"
+                :class="{ 'tz-over-plan': planExcessFor?.(item)?.totalOver }" />
+              <div v-if="planForItem?.(item)?.planned_amount != null" class="text-caption plan-hint"
+                :class="planExcessFor?.(item)?.totalOver ? 'text-error font-weight-bold' : 'text-medium-emphasis'">
+                план: {{ formatNumber(planForItem!(item)!.planned_amount) }} ₽
+              </div>
+              <!-- Задача владельца (сессия 2026-08-21): plan_residual с сервера
+                   (GET /api/purchases/{id}, контракт backend-агента) — показываем
+                   только когда отрицательный (реальное превышение), тем же хелпером,
+                   что и остальные места «остаток/превышение». -->
+              <div v-if="itemPlanResidualDisplay(item)" class="text-caption plan-hint mt-1" :class="itemPlanResidualDisplay(item)!.cssClass">
+                {{ itemPlanResidualDisplay(item)!.text }}
+              </div>
             </v-col>
 
             <!-- Страна -->
@@ -263,7 +289,8 @@ import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
 import type { MatchCandidate } from '@/composables/useItemMatching'
 import type { Contractor, ProductLike, ItemsDisplayRow } from '@/components/items/types'
 import type { FeoNode } from '@/composables/useFeoLeaves'
-import type { FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
+import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
+import { formatPlanResidual } from '@/utils/numberFormat'
 
 // EditorItem is structurally identical to the parent's; kept loose here since the
 // parent owns the canonical definition and passes its own objects through.
@@ -295,6 +322,13 @@ const props = defineProps<{
   // F-PLAN2: производный выбор { kind, id } | null для FeoPlannedItemsSelect по
   // фактическим полям позиции — см. plannedSelectionFor() в PurchaseItemsEditor.vue.
   plannedSelectionFor?: (item: EditorItem) => FeoPlanSelection | null
+  // Шаг 5 «ТЗ не дороже и не больше плана» (владелец, 2026-08-07) + задача владельца
+  // (сессия 2026-08-21: «на мобильном подсветки "ТЗ дороже плана" нет вовсе») —
+  // те же function-props, что уже прокинуты в ItemsTableFlat.vue/ItemsTableStages.vue
+  // (см. одноимённые пропы + planForItem/planExcessFor в PurchaseItemsEditor.vue),
+  // раньше сюда не передавались вовсе.
+  planForItem?: (item: EditorItem) => FeoPlanPosition | null
+  planExcessFor?: (item: EditorItem) => { plan: FeoPlanPosition; qtyOver: boolean; priceOver: boolean; totalOver: boolean } | null
   // Жалоба владельца (сессия 2026-08-19): «выбрано/остаток» должны учитывать переключатели,
   // включённые ПРЯМО СЕЙЧАС в этой форме — см. pendingByPlannedItem в
   // PurchaseItemsEditor.vue / одноимённый проп в ItemsTableFlat.vue.
@@ -347,6 +381,19 @@ const virtualize = computed(() => props.items.length > VIRT_THRESHOLD)
 // См. feoAttrsEditable в defineProps выше — построчные ФЭО-контролы остаются
 // кликабельными даже при readonly=true, если родитель явно это разрешил.
 const feoReadonly = computed(() => props.readonly && !props.feoAttrsEditable)
+
+// Задача владельца (сессия 2026-08-21): GET /api/purchases/{id} отдаёт на каждой
+// позиции plan_residual (её собственный остаток плановой позиции, посчитанный
+// сервером) — показываем ТОЛЬКО когда он отрицательный (реальное превышение), тем
+// же хелпером formatPlanResidual, что и остальные места «остаток/превышение».
+// item.plan_residual необязателен — у новых, ещё не сохранённых позиций его нет,
+// блок тихо не рендерится (без заглушек).
+function itemPlanResidualDisplay(item: EditorItem) {
+  const r = (item as any)?.plan_residual
+  if (r == null) return null
+  const d = formatPlanResidual(r)
+  return d.negative ? d : null
+}
 
 const bodyRows = computed<ItemsDisplayRow[]>(() =>
   props.displayRows ?? props.items.map((_, i) => ({ idx: i }))
@@ -403,6 +450,19 @@ const emit = defineEmits<{
 .feo-missing :deep(.v-field) {
   background: rgba(244, 67, 54, 0.06);
   border-color: rgba(244, 67, 54, 0.5);
+}
+
+/* Шаг 5 «ТЗ не дороже и не больше плана» (владелец, 2026-08-07) — та же подсветка,
+   что ItemsTableFlat.vue/ItemsTableStages.vue; задача владельца (сессия 2026-08-21):
+   «на мобильном подсветки "ТЗ дороже плана" нет вовсе», устранено прокидыванием
+   plan-for-item/plan-excess-for сюда (см. PurchaseItemsEditor.vue). */
+.tz-over-plan :deep(.v-field) {
+  background: rgba(244, 67, 54, 0.08);
+  border-color: rgb(244, 67, 54);
+}
+.plan-hint {
+  line-height: 1.3;
+  margin-top: 2px;
 }
 
 /* Perf: content-visibility virtualization for large lists (> VIRT_THRESHOLD),

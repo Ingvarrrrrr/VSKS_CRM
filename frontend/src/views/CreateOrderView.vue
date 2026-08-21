@@ -31,6 +31,26 @@
       <v-btn variant="outlined" prepend-icon="mdi-arrow-left" :to="backRoute">К списку</v-btn>
     </div>
 
+    <!-- Задача владельца (сессия 2026-08-21): плашка превышения ФЭО + строка «Создана
+         из заявки №N». См. computed-и purchaseExcess*/purchaseData выше — оба блока
+         тихо не рендерятся, пока backend-агент не досчитал соответствующие поля в
+         GET /api/purchases/{id} (v-if по наличию полей, не заглушки). -->
+    <div v-if="isEdit && purchaseData?.feo_excess" class="feo-excess-culprit mb-3">
+      <v-icon size="16" icon="mdi-alert-decagram" class="mr-1" />
+      <span>{{ purchaseExcessText }}</span>
+      <v-chip size="x-small" :color="purchaseExcessStateColor" variant="flat" class="ml-1">
+        {{ purchaseExcessStateText }}
+      </v-chip>
+    </div>
+    <div v-if="isEdit && purchaseData?.wish_id" class="text-caption text-medium-emphasis mb-3 d-flex align-center ga-1 flex-wrap">
+      <v-icon size="14" icon="mdi-file-document-outline" />
+      <span>Создана из заявки №{{ purchaseData.wish_id }}{{ purchaseData.wish_title ? ` «${purchaseData.wish_title}»` : '' }}</span>
+      <v-btn size="x-small" variant="text" color="primary"
+        @click="router.push({ path: '/wishes', query: { open: String(purchaseData.wish_id) } })">
+        Открыть заявку
+      </v-btn>
+    </div>
+
     <div v-if="form.subsidy_id && (feoDirections.length || feoResiduals.length)" class="mb-4">
       <!-- Заголовок с переключателем свёртки -->
       <div class="d-flex align-center text-subtitle-2 font-weight-medium mb-2"
@@ -534,7 +554,7 @@
                   </template>
                   <template #subtitle>
                     план {{ fmtHeadPlannedMoney(row.planned_amount) }} · выбрано {{ fmtHeadPlannedMoney(row.consumed) }} ·
-                    остаток {{ fmtHeadPlannedMoney(row.residual) }}
+                    <span :class="headPlannedResidualDisplay(row).cssClass">{{ headPlannedResidualDisplay(row).text }}</span>
                   </template>
                   <template #append>
                     <v-btn
@@ -4121,6 +4141,7 @@ import { filterFundedNodes } from '@/composables/useFeoLeaves'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
 import type { FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import { decodeQrFromImageFile } from '@/utils/qrDecode'
+import { formatPlanResidual } from '@/utils/numberFormat'
 import { PURCHASE_STATUS_ORDER, purchaseStatusColor } from '@/constants/purchaseStatus'
 
 const monthlyStagesDialogShow = ref(false)
@@ -4153,6 +4174,50 @@ const purchaseData = ref<any>(null)
 // Phase 31-06: diff-tracking composable for purchase fields
 const _purchaseUnseenFields = computed<string[]>(() => purchaseData.value?.unseen_fields ?? [])
 const entityChanges = useEntityChanges('purchase', purchaseId, _purchaseUnseenFields)
+
+// Задача владельца (сессия 2026-08-21): «в закупке видно превышение и родительская
+// заявка» — GET /api/purchases/{id} отдаёт (контракт backend-агента, работающего
+// параллельно в эту же сессию): feo_excess, feo_excess_hint, feo_excess_amount,
+// feo_excess_category, feo_excess_state ('none'|'not_requested'|'pending'|'approved'),
+// feo_excess_approved_by, feo_excess_approved_at, wish_id, wish_title. Поля опциональны
+// (purchaseData — any) — пока бэкенд их не отдаёт, computed-и ниже тихо не показывают
+// блок (v-if), никаких заглушек. Плашка — по образцу .feo-excess-culprit
+// (SubsidiesView.vue:956-962 + CSS :11219-11224, задача 3): согласованное превышение
+// раньше просто гасило индикатор (purchases.py:959-961) — теперь состояние называется
+// прямо и НЕ прячет сам факт превышения.
+const purchaseExcessAmount = computed((): number | null => {
+  const v = purchaseData.value?.feo_excess_amount
+  return v == null ? null : Number(v)
+})
+const purchaseExcessText = computed((): string => {
+  const d = purchaseData.value
+  if (!d) return ''
+  const cat = d.feo_excess_category ? ` по категории «${d.feo_excess_category}»` : ''
+  const amt = purchaseExcessAmount.value != null ? `: превышение ${fmtHeadPlannedMoney(Math.abs(purchaseExcessAmount.value))}` : ''
+  return d.feo_excess_hint || `Превышение плана ФЭО${cat}${amt}`
+})
+// Три состояния согласования превышения (задача 3, владелец: «превышение могут
+// согласовывать только определённые люди, это разные уровни» — не путать с
+// согласованием самой заявки). Источник — feo_excess_state с бэка, тот же контур
+// PlanExcessApproval, что и в SubsidiesView.
+const purchaseExcessStateColor = computed((): string => {
+  const st = purchaseData.value?.feo_excess_state
+  if (st === 'approved') return 'grey'
+  if (st === 'pending') return 'orange'
+  return 'red' // not_requested (и любое иное непустое значение) — по умолчанию тревожный цвет
+})
+const purchaseExcessStateText = computed((): string => {
+  const d = purchaseData.value
+  const st = d?.feo_excess_state
+  if (st === 'approved') {
+    const who = d.feo_excess_approved_by || '—'
+    const when = d.feo_excess_approved_at ? new Date(d.feo_excess_approved_at).toLocaleDateString('ru-RU') : ''
+    return `превышение согласовано: ${who}${when ? ', ' + when : ''}`
+  }
+  if (st === 'pending') return 'превышение на согласовании'
+  // not_requested / отсутствует состояние, но feo_excess=true — согласование ещё не запрашивалось
+  return 'превышение не согласовано'
+})
 // Tooltip state for "было: X" on highlighted fields
 const fieldHistoryMenu = ref<Record<string, boolean>>({})
 const fieldHistoryData = ref<Record<string, Array<{ old_value: string | null; changed_by_name: string | null; changed_at: string }>>>({})
@@ -6929,6 +6994,14 @@ function fmtHeadPlannedQty(row: FeoPlanPosition): string {
   const qty = row.planned_quantity != null ? row.planned_quantity.toLocaleString('ru-RU') : '—'
   return `${qty} ${row.unit || ''}`.trim()
 }
+// Задача владельца (сессия 2026-08-21): «подсвечено должно быть везде такое
+// несоответствие» — тот же единый хелпер, что и FeoPlannedItemsSelect.vue
+// (planResidualDisplay), с тем же форматом чисел (fmtHeadPlannedMoney), чтобы
+// перечень плановых позиций в шапке закупки красил остаток/превышение так же,
+// как и построчный выбор ниже.
+function headPlannedResidualDisplay(row: FeoPlanPosition) {
+  return formatPlanResidual(row.residual, { money: fmtHeadPlannedMoney })
+}
 
 // Удаление плановой позиции прямо из перечня (владелец: «оставить перечень плановых,
 // для возможности их удаления и высвобождения денег») — DELETE /feo-planned-items/{id}
@@ -9106,6 +9179,17 @@ async function downloadKpXlsx() {
 </script>
 
 <style scoped>
+/* «Заметный сигнал превышения» — по образцу .feo-excess-culprit в SubsidiesView.vue
+   (сознательно крупнее и контрастнее .feo-plan-note — задача владельца, сессия
+   2026-08-21: «в карточке закупки видно превышение»). Scoped-стиль, дублируется
+   как и остальные per-view карточки в этом проекте (не вынесен в общий CSS, т.к.
+   применяется только к заголовку карточки закупки). */
+.feo-excess-culprit {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
+  font-size: 13px; font-weight: 700; line-height: 1.4; white-space: normal;
+  color: #7f1d1d; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.45);
+  border-radius: 6px; padding: 6px 10px; max-width: 100%;
+}
 .doc-upload-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));

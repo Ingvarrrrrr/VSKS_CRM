@@ -297,6 +297,7 @@ async def decide_wish_approval(
     _created_ids: list[int] = []
     _created_purchases: list[dict] = []
     _plan_warning: list[str] = []
+    _purchase_sync: dict | None = None
 
     if not _is_saas(current_user) and wish.status != "submitted":
         raise HTTPException(400, "Заявка ещё не отправлена на согласование (статус должен быть 'submitted')")
@@ -401,6 +402,10 @@ async def decide_wish_approval(
                     _created_ids = await _distribute_wish_to_purchases(wish, db, current_user, split=False)
                     wish.status = "converted"
                     _convert_warning = getattr(wish, "_convert_warning", None)
+                    # Повторное согласование заявки, у которой уже была закупка
+                    # (владелец, план crystalline-soaring-heron.md, п.2) — см.
+                    # wishes.py::_sync_purchase_from_wish.
+                    _purchase_sync = getattr(wish, "_purchase_sync", None)
                     # Владелец (2026-08-20): согласование последним в цепочке САМО создаёт
                     # закупку и переводит заявку в 'converted' здесь. Фронт раньше не знал
                     # об этом и после этого ответа отдельно дёргал POST /convert — тот бился
@@ -506,4 +511,5 @@ async def decide_wish_approval(
         # как прямой /wishes/{id}/approve. Иначе последний согласующий создаёт закупку
         # с перерасходом и не видит об этом ни слова.
         "excess_warnings": getattr(wish, "_excess_warnings", []),
+        "purchase_sync": _purchase_sync,
     }

@@ -62,6 +62,35 @@ class WishItemPurchaseMatch(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class WishPurchaseSync(BaseModel):
+    """Ответ повторного согласования заявки, у которой уже есть закупка (план
+    crystalline-soaring-heron.md, п.2) — приведение существующей закупки к
+    текущему состоянию заявки. См. app.routers.wishes._sync_purchase_from_wish.
+    Фронт использует для предпросмотра «что изменилось» (предмет было/стало,
+    добавленные/убранные/изменённые позиции). `blocked_reason` непусто, если
+    закупка ушла дальше «Плана закупок» — тогда предмет/состав НЕ менялись, и
+    остальные списки (items_added/items_removed/items_changed) пустые.
+
+    QA-правки (2026-08-21): items_conflicted — поля (quantity/unit_price/
+    total_price), которые правили В ЗАКУПКЕ после переноса (значение разошлось
+    со снимком planned_*) — из заявки НЕ перезаписаны, конфликт возвращён на
+    показ человеку. items_kept_manual — строки закупки без живой связи с этой
+    заявкой (заведены закупщиком прямо в закупке) — НЕ удалены при сверке с
+    заявкой, но и не участвуют в её составе; список для «эти позиции остались,
+    не потерялись»."""
+    purchase_id: int
+    registry_number: Optional[str] = None
+    subject_before: Optional[str] = None
+    subject_after: Optional[str] = None
+    items_added: List[dict] = []
+    items_removed: List[dict] = []
+    items_changed: List[dict] = []
+    items_conflicted: List[dict] = []
+    items_kept_manual: List[dict] = []
+    blocked_reason: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
 class WishPurchaseSummary(BaseModel):
     """Пункт 4 (владелец, 2026-08-13): «из согласованной заявки нужно перейти
     в закупку(и), которые из неё исполняются; если их несколько — выпадающий
@@ -308,6 +337,10 @@ class WishOut(BaseModel):
     # смогла (испортила бы план для остальных), привязка снята явно, а не
     # молча. См. app/services/plan_autoassign.py::move_or_detach_planned_item.
     plan_transfer_warnings: List[str] = []
+    # Повторное согласование, приведение существующей закупки к заявке (план
+    # crystalline-soaring-heron.md, п.2) — см. WishPurchaseSync. None — либо
+    # закупка ещё не создавалась, либо этот вызов её не создавал/не проверял.
+    purchase_sync: Optional[WishPurchaseSync] = None
     # 'advance_report' = авто-заявка из авансового отчёта; NULL = обычная
     source: Optional[str] = None
     # W1: True если привязанная закупка перешла в Договор+ (редактирование запрещено)

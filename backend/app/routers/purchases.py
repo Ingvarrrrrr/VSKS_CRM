@@ -424,7 +424,79 @@ STATUS_ORDER = ["wishes", "plan_schedule", "work_in_progress", "contracted", "or
 VALID_SUBSTATUSES = ("tz_forming", "kp_collecting", "on_platform", "contractor_negotiations", "contract_signing")
 
 
-def _item_to_out(item: PurchaseItem) -> PurchaseItemOut:
+async def _compute_purchase_feo_excess(db: AsyncSession, purchases: list) -> dict:
+    """Владелец (2026-08-12, дополнено планом crystalline-soaring-heron.md, п.4):
+    «превышение плана ФЭО» по закупке(ам) — по категории, к которой отнесена сама
+    закупка или хотя бы одна её позиция. Единый код для GET /api/purchases
+    (список, ?with_feo_excess=true) и GET /api/purchases/{id} (карточка) — раньше
+    карточка эти поля вообще не считала (только список), значок пропадал при
+    открытии закупки.
+
+    Владелец (п.4): согласованное превышение больше НЕ гасит сам факт превышения —
+    feo_excess остаётся True всегда, когда план категории больше её финансирования
+    по ФЭО; feo_excess_state отдельно различает «не запрошено/на согласовании/
+    согласовано» (тот же PlanExcessApproval, что уже использует compute_feo_plan_tree —
+    вторая копия чтения approval не заводится).
+
+    Возвращает {purchase_id: {feo_excess, feo_excess_hint, feo_excess_amount,
+    feo_excess_category, feo_excess_state, feo_excess_approved_by,
+    feo_excess_approved_at}} — на КАЖДУЮ закупку из `purchases` (нули/None/"none",
+    если превышения нет или у закупки вовсе нет субсидии/категории).
+    `purchases` обязаны иметь загруженные `.items` (selectinload/joinedload) — по
+    ним ищется категория-виновник, если сама закупка без feo_category_id.
+    """
+    _empty = {
+        "feo_excess": False, "feo_excess_hint": None, "feo_excess_amount": None,
+        "feo_excess_category": None, "feo_excess_state": "none",
+        "feo_excess_approved_by": None, "feo_excess_approved_at": None,
+    }
+    result: dict = {p.id: dict(_empty) for p in purchases}
+    subsidy_ids = list({p.subsidy_id for p in purchases if p.subsidy_id})
+    if not subsidy_ids:
+        return result
+
+    tree = await compute_feo_plan_tree(db, subsidy_ids)
+    bad_cats = {
+        cid: node for cid, node in (tree or {}).items()
+        if (node.get("excess_over_feo") or node.get("excess_amount") or 0.0) > 0.005
+    }
+    if not bad_cats:
+        return result
+
+    names_r = await db.execute(
+        select(FeoCategory.id, FeoCategory.name).where(FeoCategory.id.in_(bad_cats.keys()))
+    )
+    cat_names = {row[0]: row[1] for row in names_r.all()}
+
+    for p in purchases:
+        cat_ids = {it.feo_category_id for it in (p.items or []) if it.feo_category_id}
+        if p.feo_category_id:
+            cat_ids.add(p.feo_category_id)
+        hit_cid = next((cid for cid in cat_ids if cid in bad_cats), None)
+        if hit_cid is None:
+            continue
+        node = bad_cats[hit_cid]
+        excess = float(node.get("excess_over_feo") or node.get("excess_amount") or 0.0)
+        name = cat_names.get(hit_cid, f"#{hit_cid}")
+        if node.get("excess_approved"):
+            state = "approved"
+        elif node.get("excess_pending"):
+            state = "pending"
+        else:
+            state = "not_requested"
+        result[p.id] = {
+            "feo_excess": True,
+            "feo_excess_hint": f"Категория «{name}»: план превышает ФЭО на {excess:,.2f} ₽",
+            "feo_excess_amount": excess,
+            "feo_excess_category": name,
+            "feo_excess_state": state,
+            "feo_excess_approved_by": node.get("excess_approval_by_name"),
+            "feo_excess_approved_at": node.get("excess_approval_at"),
+        }
+    return result
+
+
+def _item_to_out(item: PurchaseItem, plan_residual=None, plan_planned_amount=None) -> PurchaseItemOut:
     product_name = None
     product_photo_url = None
     product_description = None
@@ -471,12 +543,23 @@ def _item_to_out(item: PurchaseItem) -> PurchaseItemOut:
         product_photo_url=product_photo_url,
         product_description=product_description,
         product_description_44fz=product_description_44fz,
+        plan_residual=plan_residual,
+        plan_planned_amount=plan_planned_amount,
     )
 
 
-def _purchase_to_full(p: Purchase, contractors: dict, subsidies: dict, allocations: list | None = None, contractor_inns: dict | None = None, receipt_map: dict | None = None, ru_map: dict | None = None, su_map: dict | None = None) -> PurchaseOutFull:
+def _purchase_to_full(
+    p: Purchase, contractors: dict, subsidies: dict, allocations: list | None = None,
+    contractor_inns: dict | None = None, receipt_map: dict | None = None, ru_map: dict | None = None,
+    su_map: dict | None = None, feo_excess_map: dict | None = None, item_plan_map: dict | None = None,
+    wish_title_map: dict | None = None,
+) -> PurchaseOutFull:
     data = {c.name: getattr(p, c.name) for c in Purchase.__table__.columns}
-    items = [_item_to_out(i) for i in (p.items or [])]
+    _ipm = item_plan_map or {}
+    items = [
+        _item_to_out(i, *(_ipm.get(i.id) or (None, None)))
+        for i in (p.items or [])
+    ]
     files = [
         PurchaseFileOut(
             id=f.id,
@@ -513,6 +596,7 @@ def _purchase_to_full(p: Purchase, contractors: dict, subsidies: dict, allocatio
         elif len(unique_names) == 1:
             multi_contractor_label = next(iter(unique_names))
 
+    _excess = (feo_excess_map or {}).get(p.id) or {}
     return PurchaseOutFull(
         **data,
         items=items,
@@ -530,6 +614,19 @@ def _purchase_to_full(p: Purchase, contractors: dict, subsidies: dict, allocatio
         # Остановка закупки (владелец, 2026-08-13) — имя того, кто остановил
         # (см. Wish._enrich stopped_by_name: тот же приём — full_name или username).
         stopped_by_name=(su_map or {}).get(p.stopped_by),
+        # Превышение плана ФЭО (план crystalline-soaring-heron.md, п.4) — см.
+        # _compute_purchase_feo_excess; пусто (feo_excess=False), если карта не
+        # передана (вызывающий не просил ?with_feo_excess) или превышения нет.
+        feo_excess=_excess.get("feo_excess", False),
+        feo_excess_hint=_excess.get("feo_excess_hint"),
+        feo_excess_amount=_excess.get("feo_excess_amount"),
+        feo_excess_category=_excess.get("feo_excess_category"),
+        feo_excess_state=_excess.get("feo_excess_state", "none"),
+        feo_excess_approved_by=_excess.get("feo_excess_approved_by"),
+        feo_excess_approved_at=_excess.get("feo_excess_approved_at"),
+        # Родительская заявка (план crystalline-soaring-heron.md, п.3) — «Создана
+        # из заявки №N «…»» на карточке закупки.
+        wish_title=(wish_title_map or {}).get(p.wish_id) if p.wish_id else None,
     )
 
 
@@ -944,30 +1041,19 @@ async def list_purchases(
         contract_data_map = {row[0]: (row[1], row[2]) for row in _cr.all()}
 
     # Владелец (2026-08-12): значок «закупка создаёт превышение плана ФЭО» — опционален
-    # (?with_feo_excess=true), считаем ОДНИМ вызовом compute_feo_plan_tree на все субсидии
-    # видимой страницы (не N+1), без новых колонок в БД. «Плохая» категория — план после
-    # создания закупок превышает финансирование ФЭО И превышение НЕ согласовано (тот же
-    # критерий, что блокировал бы assert_no_unapproved_excess).
-    _bad_feo_cats: dict[int, dict] = {}
-    _bad_feo_cat_names: dict[int, str] = {}
+    # (?with_feo_excess=true), считается ОДНИМ вызовом compute_feo_plan_tree на все субсидии
+    # видимой страницы (не N+1), без новых колонок в БД. Общий код с GET /{id} — см.
+    # _compute_purchase_feo_excess (план crystalline-soaring-heron.md, п.4).
+    _feo_excess_map: dict = {}
     if with_feo_excess and purchases:
-        _feo_subsidy_ids = list({p.subsidy_id for p in purchases if p.subsidy_id})
-        if _feo_subsidy_ids:
-            _feo_tree = await compute_feo_plan_tree(db, _feo_subsidy_ids)
-            _bad_feo_cats = {
-                cid: node for cid, node in (_feo_tree or {}).items()
-                if (node.get("excess_over_feo") or node.get("excess_amount") or 0.0) > 0.005
-                and not node.get("excess_approved")
-            }
-            if _bad_feo_cats:
-                _names_r = await db.execute(
-                    select(FeoCategory.id, FeoCategory.name).where(FeoCategory.id.in_(_bad_feo_cats.keys()))
-                )
-                _bad_feo_cat_names = {row[0]: row[1] for row in _names_r.all()}
+        _feo_excess_map = await _compute_purchase_feo_excess(db, purchases)
 
     result_rows = []
     for p in purchases:
-        out = _purchase_to_full(p, contractors, subsidies, contractor_inns=contractor_inns, receipt_map=receipt_map, ru_map=ru_map, su_map=su_map)
+        out = _purchase_to_full(
+            p, contractors, subsidies, contractor_inns=contractor_inns, receipt_map=receipt_map,
+            ru_map=ru_map, su_map=su_map, feo_excess_map=_feo_excess_map,
+        )
         if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):
             out.framework_contract_total = display_total_by_contract.get(p.contract_id)
         _unseen = unseen_map.get(p.id, [])
@@ -980,17 +1066,6 @@ async def list_purchases(
                 (c_number is not None and p.contract_number != c_number)
                 or (c_date is not None and p.contract_date != c_date)
             )
-        if _bad_feo_cats:
-            _p_cat_ids = {it.feo_category_id for it in p.items if it.feo_category_id}
-            if p.feo_category_id:
-                _p_cat_ids.add(p.feo_category_id)
-            _hit_cid = next((cid for cid in _p_cat_ids if cid in _bad_feo_cats), None)
-            if _hit_cid is not None:
-                _hit_node = _bad_feo_cats[_hit_cid]
-                _hit_name = _bad_feo_cat_names.get(_hit_cid, f"#{_hit_cid}")
-                _hit_excess = _hit_node.get("excess_over_feo") or _hit_node.get("excess_amount") or 0.0
-                out.feo_excess = True
-                out.feo_excess_hint = f"Категория «{_hit_name}»: план превышает ФЭО на {_hit_excess:,.2f} ₽"
         result_rows.append(out)
     return result_rows
 
@@ -1296,7 +1371,60 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
     single_su_map: dict = {}
     if p.stopped_by and p.stopped_by_user:
         single_su_map = {p.stopped_by: (p.stopped_by_user.full_name or p.stopped_by_user.username)}
-    out = _purchase_to_full(p, contractors, subsidies, allocations=allocations, ru_map=single_ru_map, su_map=single_su_map)
+
+    # Превышение плана ФЭО (план crystalline-soaring-heron.md, п.4) — раньше
+    # считалось только в списке (?with_feo_excess=true), карточка отдавала пусто.
+    # Общий код с list_purchases — см. _compute_purchase_feo_excess.
+    _single_feo_excess_map = await _compute_purchase_feo_excess(db, [p])
+
+    # Остаток плановой позиции на КАЖДУЮ строку закупки (план п.4, «по позициям
+    # отдавать остаток их плановой позиции, чтобы строку можно было подсветить»):
+    #   - позиция привязана к FeoPlannedItem (Ур.5) — остаток берём с точностью
+    #     до позиции (planned_item_consumption — тот же расчёт, что и в
+    #     /feo-planned-items/residuals, БЕЗ exclude — это read-only карточка
+    #     закупки, а не форма редактирования, своя же строка обязана входить в
+    #     «съедено», иначе остаток был бы неправдой);
+    #   - позиция только с feo_category_id (без Ур.5, план листа целиком) —
+    #     остаток узла дерева ФЭО (compute_feo_plan_tree.residual), тот же расчёт,
+    #     что использует /feo-categories/plan-positions для строк kind='feo_article'.
+    _item_plan_map: dict = {}
+    if p.items and p.subsidy_id:
+        from app.models.feo_planned_item import FeoPlannedItem
+        _fpi_ids = list({it.feo_planned_item_id for it in p.items if it.feo_planned_item_id})
+        _fpi_residual: dict = {}
+        if _fpi_ids:
+            from app.services.feo_plan import planned_item_consumption as _planned_item_consumption
+            _fpi_rows = (await db.execute(
+                select(FeoPlannedItem.id, FeoPlannedItem.amount).where(FeoPlannedItem.id.in_(_fpi_ids))
+            )).all()
+            _fpi_amounts = {r[0]: float(r[1] or 0) for r in _fpi_rows}
+            _fpi_cons = await _planned_item_consumption(db, _fpi_ids)
+            for _fid in _fpi_ids:
+                _amt = _fpi_amounts.get(_fid, 0.0)
+                _used = (_fpi_cons.get(_fid) or {}).get("used", 0.0)
+                _fpi_residual[_fid] = (_amt - _used, _amt)
+        _need_tree = any(not it.feo_planned_item_id and (it.feo_category_id or p.feo_category_id) for it in p.items)
+        _tree = await compute_feo_plan_tree(db, [p.subsidy_id]) if _need_tree else {}
+        for it in p.items:
+            if it.feo_planned_item_id and it.feo_planned_item_id in _fpi_residual:
+                _item_plan_map[it.id] = _fpi_residual[it.feo_planned_item_id]
+                continue
+            _cid = it.feo_category_id or p.feo_category_id
+            _node = _tree.get(_cid) if _cid else None
+            if _node is not None:
+                _item_plan_map[it.id] = (_node.get("residual"), _node.get("plan"))
+
+    _wish_title_map: dict = {}
+    if p.wish_id:
+        from app.models.wish import Wish as _Wish
+        _w = await db.get(_Wish, p.wish_id)
+        if _w:
+            _wish_title_map[p.wish_id] = _w.title
+
+    out = _purchase_to_full(
+        p, contractors, subsidies, allocations=allocations, ru_map=single_ru_map, su_map=single_su_map,
+        feo_excess_map=_single_feo_excess_map, item_plan_map=_item_plan_map, wish_title_map=_wish_title_map,
+    )
     # phase26-m: populate framework_contract_total for single purchase view
     if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):
         c = await db.get(Contract, p.contract_id)

@@ -47,7 +47,8 @@
       </div>
       <!-- Budget indicator under the last selected leaf -->
       <div v-if="selectedLeaf" class="feo-cascade-note text-caption text-medium-emphasis mt-1 px-1">
-        План: {{ fmt(selectedLeaf.budget) }} • Ост.: {{ fmt(selectedLeaf.residual) }}
+        План: {{ fmt(selectedLeaf.budget) }} •
+        <span :class="residualDisplay(selectedLeaf.residual).cssClass">{{ residualDisplay(selectedLeaf.residual).text }}</span>
       </div>
       <div v-if="error && !isLeafSelected" class="feo-cascade-note text-caption text-error mt-1 px-1">
         Обязательно
@@ -59,6 +60,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { FeoNode, FeoLeaf } from '@/composables/useFeoLeaves'
+import { formatPlanResidual } from '@/utils/numberFormat'
 
 const props = defineProps<{
   modelValue: number | null
@@ -170,6 +172,15 @@ const selectedLeaf = computed((): FeoLeaf | null => {
 function fmt(v: number | null | undefined): string {
   if (v == null) return '—'
   return v.toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' ₽'
+}
+
+// Задача владельца (сессия 2026-08-21): та же подпись «План: … • Ост.: …», что в
+// FeoTreeSelect.vue (см. residualDisplay там же) — сведена к общему
+// formatPlanResidual (utils/numberFormat.ts) вместо простого серого fmt(), чтобы
+// отрицательный остаток читался как «превышение на N ₽» и красился одинаково
+// во всех местах, а не оставался пятым способом красить.
+function residualDisplay(residual: number | null | undefined): { text: string; cssClass: string } {
+  return formatPlanResidual(residual, { label: 'Ост.:', money: fmt })
 }
 
 function onSelect(levelIdx: number, val: number | null) {

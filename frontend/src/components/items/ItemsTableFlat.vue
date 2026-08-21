@@ -138,6 +138,9 @@
               :class="planExcessFor?.(item)?.totalOver ? 'text-error font-weight-bold' : 'text-medium-emphasis'">
               план: {{ formatNumber(planForItem!(item)!.planned_amount) }} ₽
             </div>
+            <div v-if="itemPlanResidualDisplay(item)" class="text-caption plan-hint" :class="itemPlanResidualDisplay(item)!.cssClass">
+              {{ itemPlanResidualDisplay(item)!.text }}
+            </div>
           </td>
           <td>
             <v-text-field v-model="item.country_origin" density="compact"
@@ -295,6 +298,7 @@ import type { MatchCandidate } from '@/composables/useItemMatching'
 import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import type { Contractor, ProductLike, ItemsDisplayRow } from '@/components/items/types'
 import type { FeoNode } from '@/composables/useFeoLeaves'
+import { formatPlanResidual } from '@/utils/numberFormat'
 
 // EditorItem is structurally identical to the parent's; kept loose here since the
 // parent owns the canonical definition and passes its own objects through.
@@ -407,6 +411,19 @@ const bodyRows = computed<ItemsDisplayRow[]>(() =>
 const totalColCount = computed(() =>
   10 + (props.vatMode === 'per_item' ? 1 : 0) + (props.showNeededDate ? 1 : 0) + (props.showContractorColumn ? 1 : 0)
 )
+
+// Задача владельца (сессия 2026-08-21): GET /api/purchases/{id} отдаёт на каждой
+// позиции plan_residual (её собственный остаток плановой позиции, посчитанный
+// сервером — контракт backend-агента) — показываем ТОЛЬКО когда он отрицательный
+// (реальное превышение), тем же хелпером formatPlanResidual, что и остальные места
+// «остаток/превышение». item.plan_residual необязателен: у новых, ещё не
+// сохранённых позиций его нет — блок тихо не рендерится (без заглушек).
+function itemPlanResidualDisplay(item: EditorItem) {
+  const r = (item as any)?.plan_residual
+  if (r == null) return null
+  const d = formatPlanResidual(r)
+  return d.negative ? d : null
+}
 
 const emit = defineEmits<{
   'toggle-select-all': [val: boolean | null]

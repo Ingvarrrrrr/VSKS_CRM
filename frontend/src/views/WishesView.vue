@@ -3620,6 +3620,79 @@ function showExcessWarnings(warnings: ExcessWarning[] | null | undefined, action
   )
 }
 
+// Задача владельца (сессия 2026-08-21, план «Превышение плана видно везде; закупка
+// знает свою заявку и обновляется вместе с ней»): «повторное согласование обновляет
+// закупку из заявки» + «перед применением показать, что именно изменится — молча
+// переписывать документ нельзя». Бэкенд-агент (параллельная сессия) добавляет поле
+// purchase_sync в ответ decide/approve/convert (те же три эндпоинта, что уже отдают
+// excess_warnings выше) — эта функция превращает его в понятную сводку: что
+// поменялось в закупке (предмет было→стало, сколько позиций добавлено/убрано/
+// изменено), либо причину, почему обновление заблокировано (закупка ушла дальше
+// «Плана закупок» — blocked_reason). Поле опционально — пока бэкенд его не отдаёт,
+// sync будет undefined и функция тихо ничего не показывает (без заглушек).
+interface PurchaseSyncItem { name: string; quantity?: number | null; amount?: number | null }
+interface PurchaseSyncItemChange { name: string; was?: string | number | null; now?: string | number | null }
+// QA-правки (2026-08-21, дефекты 2-3 «потеря данных при повторном согласовании»):
+// items_conflicted — поля, которые правили ПРЯМО В ЗАКУПКЕ после переноса (значение
+// разошлось со снимком planned_*) — из заявки НЕ перезаписаны, показываем конфликт,
+// а не молча теряем правку. items_kept_manual — строки закупки без связи с заявкой
+// (заведены закупщиком в самой закупке) — при сверке не удаляются; сообщаем, что
+// они остались, чтобы не выглядело, будто их «забыли».
+interface PurchaseSyncItemConflict { name: string; field: string; in_purchase?: number | null; in_wish?: number | null }
+interface PurchaseSync {
+  purchase_id: number
+  registry_number?: string | null
+  subject_before?: string | null
+  subject_after?: string | null
+  items_added?: PurchaseSyncItem[]
+  items_removed?: PurchaseSyncItem[]
+  items_changed?: PurchaseSyncItemChange[]
+  items_conflicted?: PurchaseSyncItemConflict[]
+  items_kept_manual?: PurchaseSyncItem[]
+  blocked_reason?: string | null
+}
+
+const _SYNC_FIELD_LABELS: Record<string, string> = {
+  quantity: 'количество', unit_price: 'цена', total_price: 'сумма',
+}
+
+function showPurchaseSync(sync: PurchaseSync | null | undefined) {
+  if (!sync) return
+  const label = sync.registry_number || `№${sync.purchase_id}`
+  if (sync.blocked_reason) {
+    showSnack(`Закупка ${label} НЕ обновлена из заявки: ${sync.blocked_reason}`, 'warning')
+    return
+  }
+  const parts: string[] = []
+  if (sync.subject_before != null && sync.subject_after != null && sync.subject_before !== sync.subject_after) {
+    parts.push(`предмет: «${sync.subject_before}» → «${sync.subject_after}»`)
+  }
+  const added = sync.items_added || []
+  const removed = sync.items_removed || []
+  const changed = sync.items_changed || []
+  const keptManual = sync.items_kept_manual || []
+  if (added.length) parts.push(`добавлено позиций: ${added.length} (${added.map(i => i.name).join(', ')})`)
+  if (removed.length) parts.push(`убрано позиций: ${removed.length} (${removed.map(i => i.name).join(', ')})`)
+  if (changed.length) parts.push(`изменено позиций: ${changed.length} (${changed.map(i => i.name).join(', ')})`)
+  if (keptManual.length) parts.push(`оставлены как есть (заведены в закупке): ${keptManual.length} (${keptManual.map(i => i.name).join(', ')})`)
+  if (!parts.length) {
+    showSnack(`Закупка ${label} сверена с заявкой — изменений в составе нет`, 'info')
+  } else {
+    showSnack(`Закупка ${label} обновлена из заявки — ${parts.join('; ')}.`, 'info')
+  }
+
+  const conflicted = sync.items_conflicted || []
+  if (conflicted.length) {
+    const conflictText = conflicted
+      .map(c => `${c.name} (${_SYNC_FIELD_LABELS[c.field] || c.field}: в закупке ${c.in_purchase ?? '—'}, в заявке ${c.in_wish ?? '—'})`)
+      .join('; ')
+    showSnack(
+      `Закупка ${label}: значения правили прямо в закупке — из заявки НЕ перезаписаны: ${conflictText}. Сверьте вручную.`,
+      'warning',
+    )
+  }
+}
+
 // «Не определена» — парковка категории заявки (вызывается из @pick-unallocated каскада)
 async function pickWishUnallocated(parentId: number | null) {
   const sid = wishForm.value.subsidy_id
@@ -4490,6 +4563,7 @@ async function decideApprover(approvalId: number, decision: 'approved' | 'reject
       approvers: WishApprover[]
       excess_warnings?: ExcessWarning[]
       purchases?: { id: number; registry_number?: string | null }[]
+      purchase_sync?: PurchaseSync | null
     }>(
       `/wishes/${editingWishId.value}/approvers/${approvalId}/decide`,
       { method: 'POST', body: JSON.stringify({ decision, comment: decideComment.value[approvalId] || null }) },
@@ -4513,6 +4587,7 @@ async function decideApprover(approvalId: number, decision: 'approved' | 'reject
       showSnack(`Заявка согласована и перенесена в закупку ${_convertedPurchase.registry_number || `№${_convertedPurchase.id}`}`)
     else showSnack(decision === 'approved' ? 'Согласовано' : 'Отклонено')
     showExcessWarnings(res.excess_warnings, 'Заявка согласована, закупка создана.')
+    showPurchaseSync(res.purchase_sync)
     await loadWishOnce()
     await loadWishes()
     refreshMyPendingApprovals()  // бейдж «мои согласования» в сайдбаре
@@ -4970,6 +5045,7 @@ async function approveWish(wish: Wish) {
       convert_warning?: string | null
       excess_warnings?: ExcessWarning[]
       purchases?: { id: number; registry_number?: string | null }[]
+      purchase_sync?: PurchaseSync | null
     }>(`/wishes/${wish.id}/approve`, { method: 'POST' })
     // Владелец (2026-08-20): «Одобрить без согласования остальных» тоже создаёт
     // закупку сразу (wish.status становится 'converted' на бэке) — говорим об этом
@@ -4981,6 +5057,7 @@ async function approveWish(wish: Wish) {
       showSnack(`Заявка одобрена и перенесена в закупку ${_convertedPurchase.registry_number || `№${_convertedPurchase.id}`}`)
     else showSnack('Заявка одобрена')
     showExcessWarnings(res?.excess_warnings, 'Заявка одобрена, закупка создана.')
+    showPurchaseSync(res?.purchase_sync)
     wishConvertError.value = null
     await reloadActiveTab()
   } catch (e: any) {
@@ -5323,6 +5400,7 @@ async function convertWish() {
       registry_number?: string | null
       already_converted?: boolean
       excess_warnings?: ExcessWarning[]
+      purchase_sync?: PurchaseSync | null
     }>(
       `/wishes/${convertingWish.value.id}/convert`,
       { method: 'POST', body: JSON.stringify(body) }
@@ -5338,6 +5416,10 @@ async function convertWish() {
       showSnack('Закупка создана')
       showExcessWarnings(result.excess_warnings, 'Закупка создана.')
     }
+    // Задача владельца (сессия 2026-08-21): «повторное согласование обновляет
+    // закупку из заявки» — показываем ОБА случая (свежесозданную и уже
+    // существующую, но обновлённую/заблокированную), не только «создана».
+    showPurchaseSync(result.purchase_sync)
     convertDialog.value = false
     await loadAllWishes()
     router.push(`/orders/${result.purchase_id}/edit`)

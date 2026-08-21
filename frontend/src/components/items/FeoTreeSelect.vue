@@ -205,12 +205,12 @@
                 <span
                   v-if="nodeAmountDisplayFor(item.node!.id)"
                   class="feo-tree-residual"
-                  :class="{ 'feo-tree-residual--negative': nodeAmountDisplayFor(item.node!.id)!.free < 0 }"
                 >
-                  по ФЭО: {{ fmt(nodeAmountDisplayFor(item.node!.id)!.budget) }} · своб.: {{ fmt(nodeAmountDisplayFor(item.node!.id)!.free) }}
+                  по ФЭО: {{ fmt(nodeAmountDisplayFor(item.node!.id)!.budget) }} ·
+                  <span :class="freeDisplay(nodeAmountDisplayFor(item.node!.id)!.free).cssClass">{{ freeDisplay(nodeAmountDisplayFor(item.node!.id)!.free).text }}</span>
                 </span>
                 <span v-else-if="item.node!.is_leaf && planNoteFor(item.node!.id)" class="feo-tree-residual">
-                  Ост.: {{ fmt(planNoteFor(item.node!.id)!.residual) }}
+                  <span :class="residualDisplay(planNoteFor(item.node!.id)!.residual, 'Ост.:').cssClass">{{ residualDisplay(planNoteFor(item.node!.id)!.residual, 'Ост.:').text }}</span>
                 </span>
               </template>
             </div>
@@ -220,7 +220,8 @@
 
       <!-- Подпись бюджета выбранного листа — как в каскаде -->
       <div v-if="selectedLeafForNote" class="feo-tree-note text-caption text-medium-emphasis mt-1 px-1">
-        План: {{ fmt(selectedLeafForNote.budget) }} • Ост.: {{ fmt(selectedLeafForNote.residual) }}
+        План: {{ fmt(selectedLeafForNote.budget) }} •
+        <span :class="residualDisplay(selectedLeafForNote.residual, 'Ост.:').cssClass">{{ residualDisplay(selectedLeafForNote.residual, 'Ост.:').text }}</span>
       </div>
       <div v-if="error && !isLeafSelected" class="feo-tree-note text-caption text-error mt-1 px-1">
         Обязательно
@@ -234,6 +235,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { FeoNode, FeoLeaf } from '@/composables/useFeoLeaves'
 import type { FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import { useAuthStore } from '@/stores/auth'
+import { formatPlanResidual } from '@/utils/numberFormat'
 
 const props = defineProps<{
   modelValue: number | null
@@ -471,6 +473,27 @@ const selectedLeafForNote = computed((): { budget: number | null; residual: numb
 function fmt(v: number | null | undefined): string {
   if (v == null) return '—'
   return v.toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' ₽'
+}
+
+// Задача владельца (сессия 2026-08-21, добор после проверки в браузере): «под
+// выбором категории ФЭО... минус обычным серым текстом, без подсветки» — «План: … •
+// Ост.: −45 438 ₽». Раньше отрицательный остаток здесь красился ЛОКАЛЬНЫМ классом
+// .feo-tree-residual--negative (пятый по счёту способ красить, наравне с
+// .feo-planned-shortfall/инлайн-стилем SubsidiesView/.feo-excess-culprit) — сведено
+// к общему formatPlanResidual (см. utils/numberFormat.ts), тому же, что уже стоит в
+// FeoPlannedItemsSelect.vue/CreateOrderView.vue/ItemsTableFlat.vue/ItemsCardsView.vue.
+// residual==null (план неизвестен) — старое поведение «Ост.: —», без подсветки:
+// formatPlanResidual трактует null/undefined как 0, что здесь означало бы ложное
+// «Ост.: 0 ₽» вместо честного «нет данных».
+function residualDisplay(residual: number | null | undefined, label: string): { text: string; cssClass: string } {
+  if (residual == null) return { text: `${label} —`, cssClass: '' }
+  return formatPlanResidual(residual, { label, money: fmt })
+}
+// «Своб.:» (nodeAmountDisplayFor.free) — та же семантика отрицательного числа
+// (бюджет исчерпан/превышен), тот же хелпер, без label-двоеточия в отдельной
+// текстовой подписи (див. использование в шаблоне — «своб.:» уже часть label).
+function freeDisplay(free: number): { text: string; cssClass: string } {
+  return formatPlanResidual(free, { label: 'своб.:', money: fmt })
 }
 
 // ─── Подсветка совпадений поиска ────────────────────────────────────────────

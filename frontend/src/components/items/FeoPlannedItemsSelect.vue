@@ -91,7 +91,12 @@
               <div v-bind="menuActivatorProps" class="feo-tree-row feo-planned-dense-row">
                 <span class="feo-tree-rail" />
                 <span class="feo-tree-elbow" />
-                <span class="feo-tree-name">{{ denseSummaryLabel }}</span>
+                <span class="feo-tree-name">
+                  <template v-if="denseSummaryRow">{{ denseSummaryRow.name }} — план {{ fmt(denseSummaryRow.planned_amount) }} ·
+                    <span :class="denseResidualDisplay!.cssClass">{{ denseResidualDisplay!.text }}</span>
+                  </template>
+                  <template v-else>Выбрать плановую позицию</template>
+                </span>
                 <v-icon size="16" icon="mdi-chevron-down" class="flex-shrink-0" />
               </div>
             </template>
@@ -155,7 +160,7 @@
                     @keydown.enter.stop.prevent="openConsumers(row)"
                   >выбрано {{ fmt(consumedFor(row)) }}<v-icon size="12" icon="mdi-magnify" class="ml-1" /></span>
                   <span v-else>выбрано {{ fmt(consumedFor(row)) }}</span> ·
-                  <span :class="{ 'feo-planned-shortfall': isShort(row) }">остаток {{ fmt(residualFor(row)) }}</span>
+                  <span :class="planResidualDisplay(row).cssClass">{{ planResidualDisplay(row).text }}</span>
                   <span v-if="isShort(row)" class="feo-planned-shortfall-note"> — не хватает {{ fmt(Math.abs(shortfall(row))) }}</span>
                 </span>
                 <!-- Владелец (сессия 2026-08-19): «где эта корзиночка?» — удаление плановой
@@ -249,9 +254,9 @@
                 title="Кто расходует план — показать построчно"
                 @click.stop="openConsumers(row)"
                 @keydown.enter.stop.prevent="openConsumers(row)"
-              >выбрано {{ fmt(row.consumed) }}<v-icon size="12" icon="mdi-magnify" class="ml-1" /></span>
-              <span v-else>выбрано {{ fmt(row.consumed) }}</span> ·
-              <span :class="{ 'feo-planned-shortfall': isShort(row) }">остаток {{ fmt(row.residual) }}</span>
+              >выбрано {{ fmt(consumedFor(row)) }}<v-icon size="12" icon="mdi-magnify" class="ml-1" /></span>
+              <span v-else>выбрано {{ fmt(consumedFor(row)) }}</span> ·
+              <span :class="planResidualDisplay(row).cssClass">{{ planResidualDisplay(row).text }}</span>
               <span v-if="isShort(row)" class="feo-planned-shortfall-note"> — не хватает {{ fmt(Math.abs(shortfall(row))) }}</span>
             </span>
             <!-- Владелец (сессия 2026-08-19): «где эта корзиночка?» — удаление плановой
@@ -517,8 +522,8 @@
             <div class="text-body-2 mb-3">
               план {{ fmt(consumersDialog.row.planned_amount) }} ·
               выбрано {{ fmt(consumedFor(consumersDialog.row)) }} ·
-              <span :class="{ 'feo-planned-shortfall': residualFor(consumersDialog.row) < 0 }">
-                остаток {{ fmt(residualFor(consumersDialog.row)) }}
+              <span :class="planResidualDisplay(consumersDialog.row).cssClass">
+                {{ planResidualDisplay(consumersDialog.row).text }}
               </span>
             </div>
             <div v-if="dialogIsEmpty" class="text-body-2 text-medium-emphasis">
@@ -635,6 +640,7 @@ import type { FeoNode } from '@/composables/useFeoLeaves'
 import type { FeoPlanPosition, FeoPlanSelection, FeoPlanKind } from '@/composables/useFeoPlannedResiduals'
 import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
 import { useToast, type ToastType } from '@/composables/useToast'
+import { formatPlanResidual } from '@/utils/numberFormat'
 
 const props = defineProps<{
   modelValue: FeoPlanSelection | null
@@ -809,6 +815,17 @@ function residualFor(row: FeoPlanPosition): number {
   return row.residual - pendingFor(row)
 }
 
+// Единый источник числа И цвета для «остаток/превышение» строки (владелец,
+// сессия 2026-08-21: «Подсвечено должно быть везде такое несоответствие» —
+// раньше класс .feo-planned-shortfall вешался по isShort()/props.amount (другому
+// условию — «войдёт ли ЭТА сумма»), а число печаталось из residualFor(row)
+// (или вовсе сырого row.residual в развёрнутом списке) — при отрицательном
+// остатке цвет мог не загореться. formatPlanResidual берёт residualFor(row)
+// ОДИН раз и производит из него и текст, и класс — расхождение больше невозможно.
+function planResidualDisplay(row: FeoPlanPosition) {
+  return formatPlanResidual(residualFor(row))
+}
+
 function shortfall(row: FeoPlanPosition): number {
   if (props.amount == null) return 0
   // Строка row уже выбрана (selectedKey === row.key) — её собственная сумма (props.amount,
@@ -838,11 +855,15 @@ const KIND_CHIP_LABEL: Record<FeoPlanKind, string> = {
 function kindChipColor(kind: FeoPlanKind): string { return KIND_CHIP_COLOR[kind] }
 function kindChipLabel(kind: FeoPlanKind): string { return KIND_CHIP_LABEL[kind] }
 
-const denseSummaryLabel = computed((): string => {
-  const row = selectedKey.value != null ? filteredItems.value.find(r => r.key === selectedKey.value) : undefined
-  if (row) return `${row.name} — план ${fmt(row.planned_amount)} · остаток ${fmt(residualFor(row))}`
-  return 'Выбрать плановую позицию'
-})
+// Разбито на структурированный computed (было — готовая строка denseSummaryLabel)
+// специально ради подсветки: шаблону нужен отдельный элемент для «остаток/
+// превышение», чтобы повесить на него planResidualDisplay(row).cssClass.
+const denseSummaryRow = computed((): FeoPlanPosition | undefined =>
+  selectedKey.value != null ? filteredItems.value.find(r => r.key === selectedKey.value) : undefined
+)
+const denseResidualDisplay = computed(() =>
+  denseSummaryRow.value ? planResidualDisplay(denseSummaryRow.value) : null
+)
 
 function selectItem(row: FeoPlanPosition) {
   if (props.readonly) return

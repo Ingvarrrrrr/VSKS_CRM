@@ -580,6 +580,14 @@ class PurchaseItemOut(PurchaseItemCreate):
     product_description: Optional[str] = None
     product_description_44fz: Optional[str] = None
     receipt_id: Optional[int] = None  # Phase 26-BB
+    # Владелец (план crystalline-soaring-heron.md, п.4): остаток плановой позиции
+    # этой строки закупки, с учётом ВСЕХ расходов (включая саму эту строку) —
+    # отрицательное значение = превышение. Источник — FeoPlannedItem (Ур.5), если
+    # позиция к ней привязана (feo_planned_item_id), иначе узел дерева ФЭО её
+    # категории (см. GET /api/purchases/{id} — _attach_feo_excess_fields). None —
+    # у позиции вовсе нет категории ФЭО (план посчитать не от чего).
+    plan_residual: Optional[Decimal] = None
+    plan_planned_amount: Optional[Decimal] = None
     model_config = {"from_attributes": True}
 
 class PurchaseFileOut(BaseModel):
@@ -908,8 +916,23 @@ class PurchaseOut(PurchaseCreate):
     files_count: int = 0
     # Владелец (2026-08-12): значок «закупка создаёт превышение плана ФЭО» в списке
     # закупок — считается опционально (?with_feo_excess=true), см. list_purchases.
+    # Дополнено планом crystalline-soaring-heron.md (п.4, 2026-08-21): теперь
+    # считается и в карточке закупки (GET /api/purchases/{id}), не только в
+    # списке — см. app.routers.purchases._compute_purchase_feo_excess.
     feo_excess: bool = False
     feo_excess_hint: Optional[str] = None
+    feo_excess_amount: Optional[Decimal] = None
+    feo_excess_category: Optional[str] = None
+    # "none" — превышения нет; "not_requested" — есть, согласование не запрошено;
+    # "pending" — запрос на согласование превышения ФЭО на рассмотрении;
+    # "approved" — согласовано (feo_excess при этом остаётся True — согласование
+    # НЕ прячет сам факт превышения, см. докстринг _compute_purchase_feo_excess).
+    feo_excess_state: str = "none"
+    feo_excess_approved_by: Optional[str] = None
+    feo_excess_approved_at: Optional[str] = None
+    # Название родительской заявки (Wish.title) — «Создана из заявки №N «…»»
+    # на карточке закупки (wish_id уже был на PurchaseOut, см. ниже).
+    wish_title: Optional[str] = None
     # Остановка закупки (владелец, 2026-08-13) — read-only, системой проставляется
     # в POST /api/wishes/{wish_id}/stop, НЕ через PUT/PATCH закупки напрямую
     # (намеренно отсутствует в PurchaseCreate/PurchaseUpdate — см. update_purchase

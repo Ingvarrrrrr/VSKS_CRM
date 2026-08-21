@@ -22,7 +22,7 @@ Purchase.subsidy_id вовсе NULL — не совпадает ни с чем),
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import case, func, or_ as sqlor, select
+from sqlalchemy import and_ as sqland, case, func, or_ as sqlor, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.contract_item import ContractItem
@@ -50,6 +50,44 @@ FACT_PRICED_STATUSES: set = {"work_in_progress", "contracted", "ordered"}
 # fact_consumption_by_category / ordered_consumption_by_category).
 FACT_ELIGIBLE_STATUSES: set = FACT_PRICED_STATUSES | FACT_CONFIRMED_STATUSES
 _CENTS = Decimal("0.01")
+
+
+def apply_wish_item_exclusion(stmt, exclude_wish_id: Optional[int]):
+    """Исключает из `stmt` (обязан уже быть заджойнен PurchaseItem+Purchase) строки,
+    принадлежащие заявке `exclude_wish_id` — «одна логическая позиция», то же
+    прочтение, что и в app.services.plan_autoassign._fpi_reference_keys (задача
+    владельца, план crystalline-soaring-heron.md, п.1): позиция закупки,
+    порождённая заявкой (PurchaseItem.wish_item_id → WishItem этой заявки), и
+    сама закупка заявки (Purchase.wish_id) — ОДНО и то же, обе стороны обязаны
+    исключаться синхронно, иначе форма сконвертированной заявки видит расход,
+    в который уже включена её собственная закупка, и задваивает его, добавляя
+    свои позиции поверх (см. GET /consumers, докстринг про «Футболку Trisar» —
+    тот же боевой случай, заявка №40, там дедуп уже был нужен в списке).
+
+    Basic-условие `Purchase.wish_id == exclude_wish_id` покрывает подавляющее
+    большинство случаев (закупка целиком порождена этой заявкой), но НЕ
+    гарантирован структурой БД как единственный признак — PurchaseItem.wish_item_id
+    прямая ссылка на WishItem, независимая от Purchase.wish_id закупки, в которой
+    эта строка сейчас физически лежит (например, после разбиения позиции —
+    purchases.py:2815 — часть переезжает в НОВУЮ строку той же закупки, но в
+    будущем правки могли бы разъединить их дальше). Оба признака объединены
+    через AND(NOT A, NOT B) — исключаем, если ЛЮБОЙ из них указывает на эту
+    заявку.
+
+    Commit не делает, мутаций не делает — только достраивает WHERE. Безопасно
+    вызывать с exclude_wish_id=None (возвращает stmt как есть).
+    """
+    if exclude_wish_id is None:
+        return stmt
+    from app.models.wish_item import WishItem
+
+    _wish_item_ids = select(WishItem.id).where(WishItem.wish_id == exclude_wish_id)
+    return stmt.where(
+        sqland(
+            sqlor(Purchase.wish_id != exclude_wish_id, Purchase.wish_id.is_(None)),
+            sqlor(PurchaseItem.wish_item_id.not_in(_wish_item_ids), PurchaseItem.wish_item_id.is_(None)),
+        )
+    )
 
 
 def purchase_item_fact_amount(
@@ -257,8 +295,7 @@ async def plan_consumption_by_category(
         )
     if exclude_purchase_id is not None:
         stmt = stmt.where(PurchaseItem.purchase_id != exclude_purchase_id)
-    if exclude_wish_id is not None:
-        stmt = stmt.where(sqlor(Purchase.wish_id != exclude_wish_id, Purchase.wish_id.is_(None)))
+    stmt = apply_wish_item_exclusion(stmt, exclude_wish_id)
 
     rows = (await db.execute(stmt)).all()
     for r in rows:
@@ -504,8 +541,7 @@ async def planned_item_consumption(
     )
     if exclude_purchase_id is not None:
         used_q = used_q.where(PurchaseItem.purchase_id != exclude_purchase_id)
-    if exclude_wish_id is not None:
-        used_q = used_q.where(sqlor(Purchase.wish_id != exclude_wish_id, Purchase.wish_id.is_(None)))
+    used_q = apply_wish_item_exclusion(used_q, exclude_wish_id)
     used_q = used_q.group_by(PurchaseItem.feo_planned_item_id)
     for r in (await db.execute(used_q)).all():
         result[r.feo_planned_item_id]["used"] = float(r.used)
@@ -520,8 +556,7 @@ async def planned_item_consumption(
     )
     if exclude_purchase_id is not None:
         links_q = links_q.where(PurchaseItem.purchase_id != exclude_purchase_id)
-    if exclude_wish_id is not None:
-        links_q = links_q.where(sqlor(Purchase.wish_id != exclude_wish_id, Purchase.wish_id.is_(None)))
+    links_q = apply_wish_item_exclusion(links_q, exclude_wish_id)
     for lr in (await db.execute(links_q)).all():
         lst = result[lr.feo_planned_item_id]["linked_purchase_ids"]
         if lr.purchase_id not in lst:

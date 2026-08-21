@@ -531,10 +531,10 @@
                  создаётся, но виден значок превышения ФЭО, пока его не убрали/не
                  согласовали (см. панель субсидии — там же можно перенести позицию
                  в другую категорию). -->
-            <v-chip v-if="item.feo_excess" size="x-small" color="red" variant="flat"
-              :title="`${item.feo_excess_hint ? item.feo_excess_hint + ' — ' : ''}закупка не пойдёт дальше «Ведётся работа», пока превышение не убрано или не согласовано`"
+            <v-chip v-if="item.feo_excess" size="x-small" :color="feoExcessChip(item).color" variant="flat"
+              :title="feoExcessChip(item).title"
             >
-              <v-icon icon="mdi-alert-decagram" size="12" class="mr-1" />Превышение ФЭО
+              <v-icon icon="mdi-alert-decagram" size="12" class="mr-1" />{{ feoExcessChip(item).text }}
             </v-chip>
           </div>
         </template>
@@ -738,10 +738,10 @@
               <div class="d-flex flex-wrap ga-1 mb-2">
                 <v-chip :color="purchaseTypeColor(item)" size="x-small" variant="tonal">{{ purchaseTypeLabel(item) }}</v-chip>
                 <v-chip v-if="item.approval_status" :color="APPROVAL_STATUS_COLOR[item.approval_status]" size="x-small" variant="tonal">{{ APPROVAL_STATUS_LABEL[item.approval_status] }}</v-chip>
-                <v-chip v-if="item.feo_excess" size="x-small" color="red" variant="flat"
-                  :title="`${item.feo_excess_hint ? item.feo_excess_hint + ' — ' : ''}закупка не пойдёт дальше «Ведётся работа», пока превышение не убрано или не согласовано`"
+                <v-chip v-if="item.feo_excess" size="x-small" :color="feoExcessChip(item).color" variant="flat"
+                  :title="feoExcessChip(item).title"
                 >
-                  <v-icon icon="mdi-alert-decagram" size="12" class="mr-1" />Превышение ФЭО
+                  <v-icon icon="mdi-alert-decagram" size="12" class="mr-1" />{{ feoExcessChip(item).text }}
                 </v-chip>
               </div>
               <div class="text-caption text-medium-emphasis">Контрагент</div>
@@ -1693,6 +1693,12 @@ interface Purchase {
   // просто нет чипа, без ошибок.
   feo_excess?: boolean
   feo_excess_hint?: string | null
+  // QA-правка (2026-08-21, дефект 4): согласованное превышение больше НЕ гасит
+  // feo_excess (см. _compute_purchase_feo_excess) — состояние отдельно в
+  // feo_excess_state: 'not_requested' | 'pending' | 'approved' | 'none'. Чип
+  // не может красить любое feo_excess красным с текстом про блокировку —
+  // approved-превышение уже никого не блокирует.
+  feo_excess_state?: 'not_requested' | 'pending' | 'approved' | 'none' | null
   // Остановка закупки (владелец, 2026-08-13, см. POST /api/wishes/{wish_id}/stop) —
   // read-only, проставляется системой при остановке заявки. Закупка НЕ удаляется —
   // просто помечается, чтобы видна была история.
@@ -1728,6 +1734,37 @@ function purchaseTypeColor(item: Purchase): string {
 }
 function advancePersonLabel(item: Purchase): string {
   return item.responsible_person || `#${item.assigned_user_id}` || '—'
+}
+
+// QA-правка (2026-08-21, дефект 4): чип «Превышение ФЭО» раньше красился красным
+// и грозил блокировкой для ЛЮБОГО item.feo_excess — но с тех пор как согласованное
+// превышение перестало гасить сам feo_excess (владелец, п.4 в _compute_purchase_feo_excess),
+// это стало вводить в заблуждение: уже согласованное превышение никого не блокирует.
+// Различаем по feo_excess_state: not_requested — как раньше (красный, «блокирует»);
+// pending — на согласовании (жёлтый, без утверждения про блокировку); approved —
+// согласовано (спокойный серый/зелёный, без утверждения про блокировку).
+function feoExcessChip(item: Purchase): { color: string; text: string; title: string } {
+  const hint = item.feo_excess_hint ? item.feo_excess_hint + ' — ' : ''
+  const state = item.feo_excess_state || 'not_requested'
+  if (state === 'approved') {
+    return {
+      color: 'green-darken-1',
+      text: 'Превышение ФЭО согласовано',
+      title: `${hint}превышение плана ФЭО согласовано`,
+    }
+  }
+  if (state === 'pending') {
+    return {
+      color: 'amber-darken-2',
+      text: 'Превышение ФЭО на согласовании',
+      title: `${hint}превышение плана ФЭО отправлено на согласование`,
+    }
+  }
+  return {
+    color: 'red',
+    text: 'Превышение ФЭО',
+    title: `${hint}закупка не пойдёт дальше «Ведётся работа», пока превышение не убрано или не согласовано`,
+  }
 }
 
 // Единый источник цвета/подписи статуса закупки: frontend/src/constants/purchaseStatus.ts

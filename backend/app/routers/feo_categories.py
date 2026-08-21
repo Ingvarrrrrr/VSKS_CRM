@@ -112,10 +112,17 @@ async def get_purchase_totals(
 @router.get("/planned-purchase-totals")
 async def get_planned_purchase_totals(
     subsidy_id: int = Query(...),
+    exclude_purchase_id: Optional[int] = Query(None),
+    exclude_wish_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     _=Depends(get_current_user),
 ):
     """Плановая сумма и количество из заявок per feo_category_id: позиции закупок в статусах плана закупок и дальше.
+
+    exclude_purchase_id/exclude_wish_id (план crystalline-soaring-heron.md, п.1):
+    та же исключающая логика, что и в plan_consumption_by_category/planned_item_consumption
+    (см. app.services.feo_plan.apply_wish_item_exclusion) — редактируемая сейчас
+    закупка/заявка не должна выглядеть потребителем самой себя.
 
     `total`/`qty` — ВСЕ позиции (для обратной совместимости, режим отображения «из заявок»).
     `total_linked`/`qty_linked` — подмножество позиций, привязанных к плановой позиции
@@ -140,7 +147,7 @@ async def get_planned_purchase_totals(
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem
     from app.routers.purchase_budget import PLANNED_STATUSES
-    from app.services.feo_plan import compute_feo_plan_tree
+    from app.services.feo_plan import compute_feo_plan_tree, apply_wish_item_exclusion
     from sqlalchemy import case, and_, not_
 
     cat_col = func.coalesce(PurchaseItem.feo_category_id, Purchase.feo_category_id)
@@ -163,8 +170,11 @@ async def get_planned_purchase_totals(
         # (решение владельца 2026-08-13).
         .where(Purchase.stopped_at.is_(None))
         .where(cat_col.isnot(None))
-        .group_by(cat_col)
     )
+    if exclude_purchase_id is not None:
+        stmt = stmt.where(PurchaseItem.purchase_id != exclude_purchase_id)
+    stmt = apply_wish_item_exclusion(stmt, exclude_wish_id)
+    stmt = stmt.group_by(cat_col)
     rows = (await db.execute(stmt)).all()
     result = {
         r.cat_id: {

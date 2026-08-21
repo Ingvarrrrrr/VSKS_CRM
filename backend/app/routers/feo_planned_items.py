@@ -1028,6 +1028,8 @@ async def confirm_wish_plan_match(
 async def get_comparison(
     feo_category_id: int = Query(...),
     subsidy_id: Optional[int] = Query(None),
+    exclude_purchase_id: Optional[int] = Query(None),
+    exclude_wish_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
     _=Depends(get_current_user),
 ):
@@ -1039,9 +1041,15 @@ async def get_comparison(
     закрывающих документов». Реализовано полем fact_amount/fact_confirmed на каждой позиции —
     см. правила ниже. До «Заказано» (plan_schedule/work_in_progress/contracted) это ещё ПЛАН,
     а не факт, поэтому fact_amount=None.
+
+    exclude_purchase_id/exclude_wish_id (план crystalline-soaring-heron.md, п.1): та же
+    исключающая логика, что и в /feo-categories/plan-positions и /feo-planned-items/residuals
+    (см. app.services.feo_plan.apply_wish_item_exclusion) — редактируемая сейчас закупка
+    или заявка, чья закупка уже отражена в actual, не должна выглядеть задвоенной суммой,
+    если вызывающий экран сам добавляет её позиции поверх (форма сконвертированной заявки).
     """
     from app.routers.purchase_budget import PLANNED_STATUSES
-    from app.services.feo_plan import purchase_item_fact_amount, FACT_CONFIRMED_STATUSES
+    from app.services.feo_plan import purchase_item_fact_amount, FACT_CONFIRMED_STATUSES, apply_wish_item_exclusion
 
     # Плановые позиции — только активные (согласовано с /residuals, is_active=False скрыты).
     # Порядок — sort_order, потом id: владелец просил менять плановые позиции местами
@@ -1082,6 +1090,9 @@ async def get_comparison(
     )
     if subsidy_id is not None:
         stmt = stmt.where(Purchase.subsidy_id == subsidy_id)
+    if exclude_purchase_id is not None:
+        stmt = stmt.where(PurchaseItem.purchase_id != exclude_purchase_id)
+    stmt = apply_wish_item_exclusion(stmt, exclude_wish_id)
 
     actual_rows = (await db.execute(stmt)).all()
 
@@ -1375,7 +1386,16 @@ async def get_planned_item_consumers(
         )).all()
         creators = {u.id: (u.full_name or u.username) for u in u_rows}
 
-    def _pi_counts(purchase: Purchase) -> bool:
+    # Та же «одна логическая позиция» (app.services.plan_autoassign._fpi_reference_keys /
+    # app.services.feo_plan.apply_wish_item_exclusion) — исключаем строку закупки не
+    # только по Purchase.wish_id, но и по PurchaseItem.wish_item_id, если он указывает
+    # на WishItem исключаемой заявки, ссылающийся на ЭТУ ЖЕ плановую позицию (уже
+    # загружено в wi_rows ниже — второго запроса не требуется).
+    _excluded_wish_item_ids = (
+        {wi.id for wi, w in wi_rows if w.id == exclude_wish_id} if exclude_wish_id is not None else set()
+    )
+
+    def _pi_counts(pi: PurchaseItem, purchase: Purchase) -> bool:
         if purchase.status not in PLANNED_STATUSES:
             return False
         if purchase.stopped_at is not None:
@@ -1383,6 +1403,8 @@ async def get_planned_item_consumers(
         if exclude_purchase_id is not None and purchase.id == exclude_purchase_id:
             return False
         if exclude_wish_id is not None and purchase.wish_id == exclude_wish_id:
+            return False
+        if pi.wish_item_id is not None and pi.wish_item_id in _excluded_wish_item_ids:
             return False
         return True
 
@@ -1392,7 +1414,7 @@ async def get_planned_item_consumers(
     total_consumed = Decimal("0")
 
     for pi, p in pi_rows:
-        counts = _pi_counts(p)
+        counts = _pi_counts(pi, p)
         amount = Decimal(str(pi.total_price)) if pi.total_price is not None else Decimal("0")
         if counts:
             total_consumed += amount

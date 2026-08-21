@@ -534,51 +534,15 @@
                 @pick-unallocated="onFeoPickUnallocated"
               />
             </v-col>
-            <!-- Владелец (сессия 2026-08-19): «Меню с кучей переключателей. Когда плановые
-                 позиции для каждой отдельной позиции закупки разные, это меню нефункционально:
-                 я выбираю одну и привязываюсь сразу ко всем — это невозможно. Плюс оно вносит
-                 сумбур, потому что выше уже привязал каждую позицию к отдельной плановой».
-                 Раньше здесь стоял FeoPlannedItemsSelect (v-model=feoPlanSelection) — привязка
-                 ОДНОЙ плановой позиции на всю закупку, дублирующая построчный выбор внутри
-                 PurchaseItemsEditor. Заменено read-only перечнем плановых позиций категории —
-                 только просмотр цифр и удаление (высвобождение денег), без выбора/переключателей;
-                 сама привязка — исключительно построчно в таблице позиций ниже. -->
-            <v-col v-if="form.subsidy_id && form.feo_category_id && !form.feo_per_item && headPlannedListItems.length" cols="12">
-              <div class="text-caption font-weight-medium d-flex align-center ga-1 mb-1 text-medium-emphasis">
-                <v-icon size="16" icon="mdi-clipboard-list-outline" />
-                <span>Плановые позиции категории</span>
-                <v-progress-circular v-if="purchasePlannedLoading" indeterminate size="14" width="2" class="ml-1" />
-              </div>
-              <v-list density="compact" class="pa-0" style="background:transparent">
-                <v-list-item
-                  v-for="row in headPlannedListItems"
-                  :key="row.key"
-                  class="px-2"
-                  style="border:1px solid rgba(0,0,0,0.08); border-radius:6px"
-                  :class="{ 'mb-1': true }"
-                >
-                  <template #title>
-                    <span class="text-body-2">{{ row.name }}</span>
-                    <span class="text-caption text-medium-emphasis ml-1">{{ fmtHeadPlannedQty(row) }}</span>
-                  </template>
-                  <template #subtitle>
-                    план {{ fmtHeadPlannedMoney(row.planned_amount) }} · выбрано {{ fmtHeadPlannedMoney(row.consumed) }} ·
-                    <span :class="headPlannedResidualDisplay(row).cssClass">{{ headPlannedResidualDisplay(row).text }}</span>
-                  </template>
-                  <template #append>
-                    <v-btn
-                      v-if="row.kind === 'planned_item'"
-                      icon="mdi-delete-outline"
-                      variant="text"
-                      size="small"
-                      color="error"
-                      title="Удалить плановую позицию"
-                      @click="deleteHeadPlannedItem(row)"
-                    />
-                  </template>
-                </v-list-item>
-              </v-list>
-            </v-col>
+            <!-- Владелец (сессия 2026-08-21): шапочный read-only перечень плановых позиций
+                 категории (просмотр + удаление) убран — дублирует то же самое, что уже
+                 показывает построчный FeoPlannedItemsSelect в таблице позиций ниже, когда
+                 открываешь его выпадающий список (тот же fmt/остаток/кнопка «удалить»,
+                 см. filteredItems в FeoPlannedItemsSelect.vue). Единственное отличие
+                 (видно даже без открытия строки) не перевешивает дублирование — обоснование
+                 в отчёте задачи. Просмотр/удаление доступны через построчный выбор
+                 (allow-per-item-plan, см. PurchaseItemsEditor ниже), даже в режиме «одна
+                 категория на всю закупку». -->
             <!-- Переключатель «не указывать последний уровень ФЭО»: виден, когда выбран
                  промежуточный (не листовой) узел — раньше это было «выбран ур.1 с детьми». -->
             <v-col v-if="form.feo_category_id && !feoSelectedIsLeaf && formMode !== 'service_note_delivery' && formMode !== 'advance_report'" cols="12">
@@ -598,7 +562,7 @@
             <v-col v-if="(feoSelectedLevel && feoSelectedLevel >= 2) || form.feo_per_item" cols="12">
               <v-switch
                 v-model="form.feo_per_item"
-                label="Разные ФЭО позиции для каждого товара"
+                label="Разные категории ФЭО для каждого товара"
                 density="compact"
                 color="primary"
                 hide-details
@@ -999,7 +963,6 @@
             :subsidy-name="selectedSubsidyName"
             :purchase-id-feo="purchaseId"
             :default-feo-category-id="form.feo_category_id"
-            :default-feo-planned-item-id="!form.feo_per_item ? headFeoPlannedItemId : null"
             :feo-planned-per-item="form.feo_per_item"
             :allow-per-item-plan="!!form.feo_category_id"
             :planned-items="purchasePlannedResiduals"
@@ -4200,9 +4163,7 @@ import PaymentsBlock from '@/components/PaymentsBlock.vue'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import { filterFundedNodes } from '@/composables/useFeoLeaves'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
-import type { FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import { decodeQrFromImageFile } from '@/utils/qrDecode'
-import { formatPlanResidual } from '@/utils/numberFormat'
 import { PURCHASE_STATUS_ORDER, purchaseStatusColor } from '@/constants/purchaseStatus'
 
 const monthlyStagesDialogShow = ref(false)
@@ -7044,76 +7005,17 @@ const feoValidationError = computed((): string | null => {
   return null
 })
 
-// Возвращено из отката e0db76a (план zany-fluttering-mountain.md, п.2): выбор ПЛАНОВОЙ
-// ПОЗИЦИИ на уровне самой закупки (владелец: «как так из карточки закупки ты это убрал,
-// если в заявке это есть — закупка же следующая стадия заявки»). Тот же компонент и вид,
-// что в WishesView.vue (wishFeoPlannedItemId/wishFeoPlanSelection) — код ниже намеренно
-// зеркалит те же имена/структуру. UI-only ref — сознательно НЕ внутри `form` (form
-// спреится в payload через ...form при сохранении, а у Purchase нет своей колонки
-// feo_planned_item_id — эта привязка живёт на позициях). Только для режима «одна
-// категория на всю закупку» (form.feo_per_item === false) — при сохранении
-// переносится в feo_planned_item_id КАЖДОЙ позиции, см. validItems в doSave.
-const headFeoPlannedItemId = ref<number | null>(null)
-
-// «Не указывать последний уровень» — плановые позиции недоступны (см. skipLast в
-// FeoPlannedItemsSelect), сбрасываем дефолт для новых строк — зеркалит
-// watch(wishFeoSkipLast) в WishesView.vue.
-watch(feoSkipLast, (v) => { if (v) headFeoPlannedItemId.value = null })
-
-// Владелец (сессия 2026-08-19): read-only перечень плановых позиций выбранной
-// категории — заменяет собой убранный FeoPlannedItemsSelect в шапке (см. комментарий
-// в шаблоне выше). Фильтрация — та же, что и в FeoPlannedItemsSelect.filteredItems
-// (category_id === выбранная категория ИЛИ выбранная категория среди её предков),
-// источник данных — тот же purchasePlannedResiduals, что и раньше.
-const headPlannedListItems = computed((): FeoPlanPosition[] => {
-  const cid = form.feo_category_id
-  if (cid == null) return []
-  return purchasePlannedResiduals.value.filter(
-    r => r.category_id === cid || (r.ancestor_ids || []).includes(cid)
-  )
-})
-
-// Форматирование — как fmt()/fmtQty() в FeoPlannedItemsSelect.vue (та же подпись
-// «план · выбрано · остаток», тот же формат чисел), чтобы список выглядел
-// продолжением остальных мест, где эти цифры уже показывались.
+// Владелец (сессия 2026-08-21): шапочная плановая позиция «на всю закупку»
+// (headFeoPlannedItemId) и read-only перечень для её просмотра/удаления
+// (headPlannedListItems/deleteHeadPlannedItem) убраны целиком — «каждому товару надо
+// присваивать свою плановую» (то же требование, что и в WishesView.vue). Привязка
+// feo_planned_item_id теперь ВСЕГДА построчная (см. allow-per-item-plan ниже и
+// feo_planned_item_id в validItems/doSave), просмотр/удаление доступны через
+// построчный FeoPlannedItemsSelect (тот же список filteredItems, что показывал
+// убранный шапочный перечень). fmtHeadPlannedMoney используется и ниже (excess badge).
 function fmtHeadPlannedMoney(v: number | null | undefined): string {
   if (v == null) return '—'
   return v.toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' ₽'
-}
-function fmtHeadPlannedQty(row: FeoPlanPosition): string {
-  const qty = row.planned_quantity != null ? row.planned_quantity.toLocaleString('ru-RU') : '—'
-  return `${qty} ${row.unit || ''}`.trim()
-}
-// Задача владельца (сессия 2026-08-21): «подсвечено должно быть везде такое
-// несоответствие» — тот же единый хелпер, что и FeoPlannedItemsSelect.vue
-// (planResidualDisplay), с тем же форматом чисел (fmtHeadPlannedMoney), чтобы
-// перечень плановых позиций в шапке закупки красил остаток/превышение так же,
-// как и построчный выбор ниже.
-function headPlannedResidualDisplay(row: FeoPlanPosition) {
-  return formatPlanResidual(row.residual, { money: fmtHeadPlannedMoney })
-}
-
-// Удаление плановой позиции прямо из перечня (владелец: «оставить перечень плановых,
-// для возможности их удаления и высвобождения денег») — DELETE /feo-planned-items/{id}
-// с purchase_id ТЕКУЩЕЙ закупки: бэкенд снимает «свои» ссылки (эта закупка + заявка,
-// которая её породила) молча, а если позицию держит ЧУЖАЯ закупка/заявка — отвечает
-// 409 со списком держателей и ничего не меняет (см. backend/app/routers/
-// feo_planned_items.py::delete_planned_item). Кнопка есть только у kind==='planned_item'
-// (FeoPlannedItem) — строки kind='plan_position'/'feo_article' это сама категория ФЭО
-// дерева, их «удаление» — совсем другое действие (справочник ФЭО), вне этой задачи.
-async function deleteHeadPlannedItem(row: FeoPlanPosition) {
-  if (row.kind !== 'planned_item') return
-  const msg = `Удалить плановую позицию «${row.name}»? План ${fmtHeadPlannedMoney(row.planned_amount)}, ` +
-    `сейчас выбрано ${fmtHeadPlannedMoney(row.consumed)}.`
-  if (!confirm(msg)) return
-  try {
-    const qs = purchaseId.value != null ? `?purchase_id=${purchaseId.value}` : ''
-    await apiFetch(`/feo-planned-items/${row.id}${qs}`, { method: 'DELETE', suppressErrorDialog: true })
-    await reloadPurchasePlanned()
-    showSnack('Плановая позиция удалена')
-  } catch (e: any) {
-    showSnack(e?.payload?.message ?? e?.detail ?? e?.message ?? 'Не удалось удалить плановую позицию', 'error')
-  }
 }
 
 // Псевдо-«Не определена»: для авансового отчёта (см. allow-unallocated на FeoTreeSelect).
@@ -7204,7 +7106,6 @@ const onSubsidyChange = async () => {
   form.event_id = null
   feoSaveAttempted.value = false
   feoSkipLast.value = false
-  headFeoPlannedItemId.value = null
   fetchRemaining()
   loadResponsiblePersons()
   // Pre-fill delivery address from org if empty & load address history
@@ -7739,15 +7640,9 @@ const loadPurchase = async () => {
     })
     // Режим читаем из БД; фолбэк — только для записей, созданных до появления колонки.
     form.feo_per_item = data.feo_per_item ?? data.items.some((i: any) => i.feo_category_id != null)
-    // Возвращено из отката e0db76a: header-выбор плановой позиции — восстанавливаем
-    // из фактических данных первой позиции с привязкой (после фикса doSave все позиции
-    // в single-режиме несут одну и ту же feo_planned_item_id).
-    if (!form.feo_per_item) {
-      const withPlanned = data.items.find((i: any) => i.feo_planned_item_id != null)
-      headFeoPlannedItemId.value = withPlanned?.feo_planned_item_id ?? null
-    } else {
-      headFeoPlannedItemId.value = null
-    }
+    // Владелец (сессия 2026-08-21): «каждому товару надо присваивать свою плановую» —
+    // шапочного значения feo_planned_item_id больше нет ни в одном режиме, построчные
+    // значения читаются как есть выше (feo_planned_item_id: i.feo_planned_item_id).
   } else if (data.item_name) {
     // Migrate old single-item purchase
     items.value = [{
@@ -8384,21 +8279,12 @@ const doSave = async (adminOverride: boolean) => {
         // Возвращено из отката e0db76a (КОРЕНЬ ПРОБЛЕМЫ): раньше здесь ОБА поля
         // принудительно писались как null в режиме single — позиция пересоздавалась
         // и ЛЮБАЯ привязка стиралась первым же сохранением (id 2871 → 2872 на проде,
-        // привязка «Great Wall POER» потеряна). В режиме «одна категория на всю
-        // закупку» позиции по умолчанию получают плановую позицию/категорию, выбранную
-        // НА УРОВНЕ ЗАКУПКИ (headFeoPlannedItemId/form.feo_category_id — FeoPlannedItemsSelect
-        // под «Категорией ФЭО») — обнуление осталось только в явном действии пользователя
-        // (confirmFeoPerItemDisable — диалог отключения per-item режима).
-        // Владелец (сессия 2026-08-17, «7 позиций — план создался только на 1»): диалог
-        // «Создать в плане закупок» умеет создавать СВОЮ плановую позицию под каждый
-        // товар, даже когда form.feo_per_item=false (общая категория на закупку) — такая
-        // позиция уже несёт СВОЙ feo_planned_item_id/feo_category_id (см.
-        // onHeadFeoBulkItemsCreated) и не имеет права быть затёртой шапочным значением
-        // (правило проекта: выбранное на предыдущем этапе не меняется само) — только
-        // позиции БЕЗ собственной привязки продолжают наследовать её из шапки, как раньше.
-        feo_planned_item_id: form.feo_per_item
-          ? (rest.feo_planned_item_id ?? null)
-          : (rest.feo_planned_item_id ?? headFeoPlannedItemId.value ?? null),
+        // привязка «Great Wall POER» потеряна). Владелец (сессия 2026-08-21): «каждому
+        // товару надо присваивать свою плановую» — feo_planned_item_id ВСЕГДА построчный,
+        // в ОБОИХ режимах (никакого шапочного фолбэка больше нет, см. allow-per-item-plan
+        // в шаблоне и headFeoPlannedItemId — убран целиком). feo_category_id ниже остаётся
+        // режимо-зависимым — категория в single-режиме по-прежнему общая на всю закупку.
+        feo_planned_item_id: rest.feo_planned_item_id ?? null,
         // FCAT-F1: per-item leaf FeoCategory
         feo_category_id: form.feo_per_item
           ? (rest.feo_category_id ?? null)

@@ -271,7 +271,8 @@
                   clearable
                   auto-select-first
                   :custom-filter="contractorFilter"
-                  :loading="contractorSearchLoading"
+                  :loading="contractorSearchLoading || contractorsInitialLoading"
+                  :no-data-text="contractorsNoDataText"
                   :menu-props="{ maxWidth: 500 }"
                   hint="Поставщик/исполнитель. Поиск по названию или ИНН" persistent-hint
                   data-field="contractor_id"
@@ -3757,7 +3758,7 @@
           <v-autocomplete v-model="newFrameworkForm.contractor_id"
             :items="contractors" item-title="name" item-value="id"
             label="Контрагент" variant="outlined" density="compact" clearable
-            :custom-filter="contractorFilter" class="mb-3">
+            :custom-filter="contractorFilter" :no-data-text="contractorsNoDataText" class="mb-3">
             <template #item="{ item, props }">
               <v-list-item v-bind="props">
                 <template #subtitle>
@@ -7215,6 +7216,7 @@ const loadRefs = async () => {
   products.value = prods
   allEvents.value = evts
   loadOrgUsers()
+  loadInitialContractors()
 }
 
 const contractorFilter = (value: string, query: string, item?: any): boolean => {
@@ -7223,6 +7225,32 @@ const contractorFilter = (value: string, query: string, item?: any): boolean => 
   const inn = (item?.raw?.inn || '').toLowerCase()
   return name.includes(q) || inn.includes(q)
 }
+
+// Жалоба владельца (2026-08-21): пустое поле «Контрагент» показывало
+// английскую заглушку Vuetify "No data available" при открытии без ввода.
+// Подгружаем первую страницу контрагентов заранее; серверный поиск при
+// вводе (onContractorSearch) не трогаем.
+const contractorsInitialLoading = ref(false)
+const contractorsInitialLoaded = ref(false)
+async function loadInitialContractors() {
+  if (contractorsInitialLoaded.value || contractorsInitialLoading.value) return
+  contractorsInitialLoading.value = true
+  try {
+    const list = await contractorsStore.search('', 50)
+    const existing = new Set(contractors.value.map(c => c.id))
+    for (const c of list) if (!existing.has(c.id)) contractors.value.push(c as Contractor)
+  } finally {
+    contractorsInitialLoading.value = false
+    contractorsInitialLoaded.value = true
+  }
+}
+const contractorsNoDataText = computed(() => {
+  if (contractorSearchLoading.value || contractorsInitialLoading.value) return 'Загрузка…'
+  if (contractors.value.length === 0) {
+    return 'В справочнике пока нет контрагентов — начните вводить название или ИНН, либо добавьте нового'
+  }
+  return 'Ничего не найдено'
+})
 
 const addContractorDialog = ref(false)
 const addContractorForm = reactive({

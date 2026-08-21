@@ -12,11 +12,13 @@
       auto-select-first
       :custom-filter="contractorFilter"
       :loading="contractorSearchLoading"
+      :no-data-text="noDataText"
       :menu-props="{ maxWidth: 500 }"
       :hint="hint"
       persistent-hint
       @update:model-value="onSelect"
       @update:search="onContractorSearch"
+      @update:focused="onFocused"
       @click:clear="$emit('clear')"
     >
       <template #item="{ item, props: itemProps }">
@@ -42,7 +44,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useContractorsStore } from '@/stores/contractors'
 import ContractorEditDialog from '@/components/ContractorEditDialog.vue'
 import { useToast, type ToastType } from '@/composables/useToast'
@@ -80,7 +82,38 @@ const contractorFilter = (value: string, query: string, item?: any): boolean => 
   const inn = (item?.raw?.inn || '').toLowerCase()
   return name.includes(q) || inn.includes(q)
 }
-const contractorSearchLoading = computed(() => contractorsStore.searching)
+
+// Жалоба владельца (2026-08-21): пустой список при открытии поля показывал
+// английскую заглушку Vuetify "No data available". Подгружаем первую страницу
+// контрагентов заранее (без ввода), серверный поиск при вводе не трогаем.
+const initialLoading = ref(false)
+const initialLoaded = ref(false)
+async function loadInitialContractors() {
+  if (initialLoaded.value || initialLoading.value) return
+  initialLoading.value = true
+  try {
+    const list = await contractorsStore.search('', 50)
+    const existing = new Set(contractors.value.map(c => c.id))
+    for (const c of list) if (!existing.has(c.id)) contractors.value.push(c as Contractor)
+  } finally {
+    initialLoading.value = false
+    initialLoaded.value = true
+  }
+}
+onMounted(loadInitialContractors)
+function onFocused(focused: boolean) {
+  if (focused) loadInitialContractors()
+}
+
+const contractorSearchLoading = computed(() => contractorsStore.searching || initialLoading.value)
+const noDataText = computed(() => {
+  if (contractorSearchLoading.value) return 'Загрузка…'
+  if (contractors.value.length === 0) {
+    return 'В справочнике пока нет контрагентов — начните вводить название или ИНН, либо добавьте нового'
+  }
+  return 'Ничего не найдено'
+})
+
 let _searchTimeout: any = null
 function onContractorSearch(query: string) {
   clearTimeout(_searchTimeout)

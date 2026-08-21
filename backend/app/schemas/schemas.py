@@ -933,6 +933,12 @@ class PurchaseOut(PurchaseCreate):
     # Название родительской заявки (Wish.title) — «Создана из заявки №N «…»»
     # на карточке закупки (wish_id уже был на PurchaseOut, см. ниже).
     wish_title: Optional[str] = None
+    # Статус родительской заявки (Wish.status: draft/submitted/approved/rejected/
+    # converted) — владелец (2026-08-21, дефект «отцеплённая закупка»): карточка
+    # закупки, скрытой в статусе 'wishes', обязана прямо объяснять, что с ней —
+    # ждёт одобрения или отцеплена обратно в черновик (см. wish_id/wish_title,
+    # используется вместе на карточке; см. get_purchase в purchases.py).
+    wish_status: Optional[str] = None
     # Остановка закупки (владелец, 2026-08-13) — read-only, системой проставляется
     # в POST /api/wishes/{wish_id}/stop, НЕ через PUT/PATCH закупки напрямую
     # (намеренно отсутствует в PurchaseCreate/PurchaseUpdate — см. update_purchase

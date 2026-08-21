@@ -552,7 +552,7 @@ def _purchase_to_full(
     p: Purchase, contractors: dict, subsidies: dict, allocations: list | None = None,
     contractor_inns: dict | None = None, receipt_map: dict | None = None, ru_map: dict | None = None,
     su_map: dict | None = None, feo_excess_map: dict | None = None, item_plan_map: dict | None = None,
-    wish_title_map: dict | None = None,
+    wish_title_map: dict | None = None, wish_status_map: dict | None = None,
 ) -> PurchaseOutFull:
     data = {c.name: getattr(p, c.name) for c in Purchase.__table__.columns}
     _ipm = item_plan_map or {}
@@ -627,6 +627,9 @@ def _purchase_to_full(
         # Родительская заявка (план crystalline-soaring-heron.md, п.3) — «Создана
         # из заявки №N «…»» на карточке закупки.
         wish_title=(wish_title_map or {}).get(p.wish_id) if p.wish_id else None,
+        # Статус заявки — карточке закупки в статусе 'wishes' нужно объяснить,
+        # ждёт она одобрения или отцеплена (владелец, 2026-08-21, дефект 1).
+        wish_status=(wish_status_map or {}).get(p.wish_id) if p.wish_id else None,
     )
 
 
@@ -940,6 +943,20 @@ async def list_purchases(
     # Hide purchases that were split into children unless explicitly requested
     if status != "split":
         q = q.where(Purchase.status != "split")
+    # Владелец (2026-08-21, дефект «отцеплённая закупка»): скрытые закупки
+    # (status='wishes' — ещё не прошли гейт одобрения заявки ИЛИ принудительно
+    # возвращены обратно через force_wish_status/_withdraw_wish_from_plan) не
+    # должны попадать в реестр закупок — план они не расходуют, «не в работе»
+    # (см. wishes.py._withdraw_wish_from_plan). Ограничено scope="purchases" —
+    # ЕДИНСТВЕННЫЙ сценарий, которым пользуется реестр (OrdersView.vue грузит
+    # /purchases/?scope=purchases, см. docstring duplicate_groups выше). Другие
+    # места, где 'wishes' показывается НАМЕРЕННО (my-tasks/kanban «Желания
+    # сотрудников», PlanView.vue scope=plan со справочным draft-чипом,
+    # purchase_export.py, dashboard-виджеты), используют другие
+    # запросы/scope и этим фильтром не затрагиваются. Явный status=wishes
+    # запрос выполняем как есть (задан пользователем).
+    if scope == "purchases" and status != "wishes":
+        q = q.where(Purchase.status != "wishes")
     if search:
         like = f"%{search}%"
         from sqlalchemy import cast, String as SAString
@@ -1415,15 +1432,18 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
                 _item_plan_map[it.id] = (_node.get("residual"), _node.get("plan"))
 
     _wish_title_map: dict = {}
+    _wish_status_map: dict = {}
     if p.wish_id:
         from app.models.wish import Wish as _Wish
         _w = await db.get(_Wish, p.wish_id)
         if _w:
             _wish_title_map[p.wish_id] = _w.title
+            _wish_status_map[p.wish_id] = _w.status
 
     out = _purchase_to_full(
         p, contractors, subsidies, allocations=allocations, ru_map=single_ru_map, su_map=single_su_map,
         feo_excess_map=_single_feo_excess_map, item_plan_map=_item_plan_map, wish_title_map=_wish_title_map,
+        wish_status_map=_wish_status_map,
     )
     # phase26-m: populate framework_contract_total for single purchase view
     if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):

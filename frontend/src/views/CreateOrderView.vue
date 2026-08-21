@@ -50,6 +50,15 @@
         Открыть заявку
       </v-btn>
     </div>
+    <!-- Владелец (2026-08-21, дефект «отцеплённая закупка»): status='wishes' —
+         закупка скрыта из реестра (см. backend list_purchases). Чип «Желания
+         сотрудников» сам по себе ничего не объясняет — прямо говорим, что
+         происходит: ждёт одобрения заявки (ещё не в плане) или отцеплена
+         обратно в черновик (force_wish_status/принудительный откат). -->
+    <v-alert v-if="isEdit && purchaseData?.status === 'wishes' && purchaseData?.wish_id"
+      type="warning" variant="tonal" density="compact" class="mb-3">
+      {{ wishWithdrawnBannerText }}
+    </v-alert>
 
     <div v-if="form.subsidy_id && (feoDirections.length || feoResiduals.length)" class="mb-4">
       <!-- Заголовок с переключателем свёртки -->
@@ -2888,7 +2897,7 @@
           @click="_undoRedo?.redo()"
         />
         <v-btn v-if="isEdit && nextStatusTarget" :color="STATUS_COLOR[nextStatusTarget]" size="large"
-          variant="tonal" :loading="transitioning" prepend-icon="mdi-arrow-right-circle" @click="doTransition">
+          variant="tonal" :loading="transitioning" prepend-icon="mdi-arrow-right-circle" @click="onTransitionClick">
           → {{ nextStatusTarget === 'work_in_progress' ? 'Направлено в закупку' : STATUS_LABEL[nextStatusTarget] }}
         </v-btn>
         <v-select v-if="isEdit && form.status === 'work_in_progress'" v-model="form.substatus"
@@ -3225,6 +3234,58 @@
           <v-spacer/>
           <v-btn variant="text" @click="duplicateDialog = false">Отмена</v-btn>
           <v-btn color="warning" variant="flat" @click="confirmDuplicateSave">Всё равно сохранить</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Владелец (2026-08-21, дефект «Цена договора пустая»): переход в «Договор»
+         молча подставлял сумму позиций (backend Phase 27.1 D-07) без единого
+         подтверждения — предлагаем проверить цену и перечень позиций (обычно
+         переносятся из ТЗ) перед заключением договора. -->
+    <v-dialog v-model="showContractedConfirm" max-width="560" :fullscreen="mobile">
+      <v-card>
+        <v-card-title class="text-subtitle-1 font-weight-bold d-flex align-center ga-2">
+          <v-icon color="indigo">mdi-file-sign</v-icon>
+          Проверьте перед переходом в «Договор»
+        </v-card-title>
+        <v-card-text>
+          <div class="mb-3">
+            Цена договора = сумма позиций
+            <strong>{{ formatMoney(displayNmck) }}</strong>.
+            Проверьте перед заключением договора — при необходимости измените ниже.
+          </div>
+          <v-text-field
+            v-model.number="form.contract_price"
+            label="Цена договора" type="number" variant="outlined" density="compact"
+            suffix="₽" hide-details class="mb-3"
+            @update:model-value="contractPriceMode = 'manual'"
+          />
+          <div class="text-caption text-medium-emphasis mb-1">
+            В договор уйдут позиции ниже. Названия обычно переносятся из ТЗ — если что-то
+            нужно поправить, откройте редактор позиций.
+          </div>
+          <v-list density="compact" class="mb-2" style="max-height:260px;overflow-y:auto">
+            <v-list-item v-for="(it, idx) in contractedConfirmItems" :key="idx">
+              <v-list-item-title>{{ it.name }}</v-list-item-title>
+              <v-list-item-subtitle>
+                {{ it.qty ?? '—' }} {{ it.unit || '' }} × {{ it.price != null ? formatMoney(it.price) : '—' }}
+              </v-list-item-subtitle>
+            </v-list-item>
+            <v-list-item v-if="!contractedConfirmItems.length">
+              <v-list-item-title class="text-medium-emphasis">Позиции не заполнены</v-list-item-title>
+            </v-list-item>
+          </v-list>
+          <v-btn size="small" variant="text" color="primary" prepend-icon="mdi-pencil"
+            @click="editItemsBeforeContract">
+            Изменить позиции
+          </v-btn>
+        </v-card-text>
+        <v-card-actions class="px-4 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="showContractedConfirm = false">Отмена</v-btn>
+          <v-btn color="indigo" variant="flat" :loading="transitioning" @click="confirmContractedTransition">
+            Всё верно, перейти в «Договор»
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -4217,6 +4278,24 @@ const purchaseExcessStateText = computed((): string => {
   if (st === 'pending') return 'превышение на согласовании'
   // not_requested / отсутствует состояние, но feo_excess=true — согласование ещё не запрашивалось
   return 'превышение не согласовано'
+})
+// Владелец (2026-08-21, дефект «отцеплённая закупка»): закупка со status='wishes'
+// либо ещё ждёт одобрения (свежесозданная), либо была отцеплена обратно —
+// wish.status с бэка (draft/rejected → отцеплена; submitted/approved → ждёт
+// решения) различает эти два случая. См. GET /api/purchases/{id}: wish_status.
+const wishWithdrawnBannerText = computed((): string => {
+  const d = purchaseData.value
+  if (!d) return ''
+  const num = d.wish_id
+  const title = d.wish_title ? ` «${d.wish_title}»` : ''
+  const ws = d.wish_status
+  if (ws === 'draft' || ws === 'rejected') {
+    return `Возвращена в заявку №${num}${title} — не в работе, план не расходует. `
+      + `Чтобы закупка вернулась в реестр и План закупок, согласуйте заявку заново.`
+  }
+  // submitted / approved / неизвестно — заявка ещё идёт по цепочке согласования,
+  // закупка создана заранее, но гейт одобрения ещё не пройден.
+  return `Ожидает одобрения заявки №${num}${title} — пока не в Плане закупок, в реестре закупок не отображается.`
 })
 // Tooltip state for "было: X" on highlighted fields
 const fieldHistoryMenu = ref<Record<string, boolean>>({})
@@ -6840,6 +6919,17 @@ function syncContractPriceIfSingle() {
   }
 }
 
+// Владелец (2026-08-21): подпись «Цена договора» обещает автозаполнение суммой
+// позиций, но раньше syncContractPriceIfSingle() вызывался только из watcher'ов
+// nmckMode/nmckManualValue/contractPriceMode — НЕ при изменении самих позиций
+// (totalNmck) и не при первой загрузке закупки. Итог: у закупки, приехавшей из
+// заявки с уже готовыми позициями, поле оставалось пустым. displayNmck уже
+// учитывает и авто-сумму позиций, и ручной оверрайд НМЦД, и замороженное
+// (isContracted) значение — тот же источник, которым пользуется сама функция
+// выше, поэтому один watcher покрывает все случаи «состав/цены позиций
+// изменились».
+watch(displayNmck, () => { syncContractPriceIfSingle() })
+
 function onProductCreatedFromEditor(product: Product) {
   // Mirror the existing behaviour: push into local products list so any
   // parent-side product selects stay up-to-date.
@@ -7784,6 +7874,22 @@ const loadPurchase = async () => {
     }
   }
 
+  // Владелец (2026-08-21): «Цена договора = сумма позиций, заполняется
+  // автоматически» — но раньше синхронизация запускалась только по
+  // watcher'ам режимов, не при самой загрузке закупки (см. syncContractPriceIfSingle
+  // выше). Тот же приём, что и для НМЦД строкой выше: сохранённая цена,
+  // отличающаяся от текущей суммы позиций, считается осознанно введённой
+  // вручную (contractPriceMode='manual', не перебиваем) — иначе (пусто или
+  // совпадает) остаёмся в «Авто» и подтягиваем/держим её равной сумме.
+  if (isSinglePurchase.value && !isContracted.value) {
+    const itemsTotal = items.value.reduce((s, i) => s + (i.total_price || 0), 0)
+    if (form.contract_price != null && Math.abs(Number(form.contract_price) - itemsTotal) > 0.01) {
+      contractPriceMode.value = 'manual'
+    } else {
+      syncContractPriceIfSingle()
+    }
+  }
+
   // Phase 23.5: данные загружены — теперь заголовок показывает актуальный номер
   purchaseLoaded.value = true
   // Phase 31-06: sync unseen_fields from freshly loaded purchase
@@ -8465,6 +8571,38 @@ function highlightMissingFields(fields: string[]) {
     }
     highlightedFields.value = new Set()
   }, 6000)
+}
+
+// Владелец (2026-08-21, дефект «Цена договора пустая»): «предлагать ПРОВЕРИТЬ,
+// а не молча подставлять» + «названия позиций обычно переносятся из ТЗ — дать
+// увидеть перечень, чтобы поправить». Разовая закупка (не рамочная) при переходе
+// в «Договор» — лёгкое подтверждение вместо тяжёлого мастера: показываем цену
+// (= сумма позиций) и список позиций, которые уйдут в договор; «Изменить
+// позиции» уводит к существующему редактору (переиспользуем guideArrowTo,
+// он же используется для наведения на поля публикации).
+const showContractedConfirm = ref(false)
+const contractedConfirmItems = computed(() =>
+  items.value
+    .filter(i => (i.item_name || '').trim())
+    .map(i => ({ name: i.item_name, qty: i.quantity, unit: i.unit, price: i.unit_price }))
+)
+
+function onTransitionClick() {
+  if (nextStatusTarget.value === 'contracted' && isSinglePurchase.value && !isFramework.value) {
+    showContractedConfirm.value = true
+    return
+  }
+  doTransition()
+}
+
+function confirmContractedTransition() {
+  showContractedConfirm.value = false
+  doTransition()
+}
+
+function editItemsBeforeContract() {
+  showContractedConfirm.value = false
+  nextTick(() => guideArrowTo('items'))
 }
 
 const doTransition = async () => {

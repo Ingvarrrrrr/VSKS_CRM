@@ -911,9 +911,9 @@
                         <div v-if="excessFor(node)" class="feo-plan-note d-flex align-center flex-wrap ga-1 mt-1">
                           <template v-if="excessApprovalFor(node)?.status === 'pending'">
                             <v-chip size="x-small" color="orange" variant="flat">
-                              превышение {{ formatCurrency(excessFor(node)!.amount) }} · на согласовании у: {{ excessPendingNames(node) || '—' }}
+                              согласование ПРЕВЫШЕНИЯ ПЛАНА (не закупки) {{ formatCurrency(excessFor(node)!.amount) }} · на согласовании у: {{ excessPendingNames(node) || '—' }}
                             </v-chip>
-                            <template v-if="excessMyPendingStep(node)">
+                            <template v-if="excessMyPendingStep(node) && canDecidePlanExcess">
                               <v-btn size="x-small" variant="tonal" color="success"
                                 :loading="excessDecideLoading === node.id"
                                 @click.stop="decidePlanExcess(node, 'approved')"
@@ -923,6 +923,9 @@
                                 @click.stop="openExcessRejectDialog(node)"
                               >Отклонить</v-btn>
                             </template>
+                            <div v-else-if="excessMyPendingStep(node) && !canDecidePlanExcess" class="feo-plan-note text-medium-emphasis" style="width:100%">
+                              Решение по превышению принимают только уполномоченные (владелец/финансист). Обратитесь к ним — согласовывать может не любой назначенный.
+                            </div>
                           </template>
                           <template v-else-if="excessApprovalFor(node)?.status === 'approved'">
                             <v-chip size="x-small" color="grey" variant="flat">
@@ -968,9 +971,9 @@
                         <div v-if="excessFactFor(node)" class="feo-plan-note d-flex align-center flex-wrap ga-1 mt-1">
                           <template v-if="excessApprovalFor(node)?.status === 'pending'">
                             <v-chip size="x-small" color="orange" variant="flat">
-                              итог закупки дороже плана на {{ formatCurrency(excessFactFor(node)!.amount) }} · на согласовании у: {{ excessPendingNames(node) || '—' }}
+                              согласование ПРЕВЫШЕНИЯ: итог закупки дороже плана на {{ formatCurrency(excessFactFor(node)!.amount) }} · на согласовании у: {{ excessPendingNames(node) || '—' }}
                             </v-chip>
-                            <template v-if="excessMyPendingStep(node)">
+                            <template v-if="excessMyPendingStep(node) && canDecidePlanExcess">
                               <v-btn size="x-small" variant="tonal" color="success"
                                 :loading="excessDecideLoading === node.id"
                                 @click.stop="decidePlanExcess(node, 'approved')"
@@ -980,6 +983,9 @@
                                 @click.stop="openExcessRejectDialog(node)"
                               >Отклонить</v-btn>
                             </template>
+                            <div v-else-if="excessMyPendingStep(node) && !canDecidePlanExcess" class="feo-plan-note text-medium-emphasis" style="width:100%">
+                              Решение по превышению принимают только уполномоченные (владелец/финансист). Обратитесь к ним — согласовывать может не любой назначенный.
+                            </div>
                           </template>
                           <template v-else-if="excessFactFor(node)!.approved">
                             <v-chip size="x-small" color="grey" variant="flat">
@@ -1012,9 +1018,9 @@
                         <div v-if="excessPlanFor(node)" class="feo-plan-note d-flex align-center flex-wrap ga-1 mt-1">
                           <template v-if="excessApprovalFor(node)?.status === 'pending'">
                             <v-chip size="x-small" color="orange" variant="flat">
-                              план превышает заданный вручную на {{ formatCurrency(excessPlanFor(node)!.amount) }} (задано {{ formatCurrency(excessPlanFor(node)!.manualEntered) }}, стало {{ formatCurrency(excessPlanFor(node)!.manualEntered + excessPlanFor(node)!.amount) }}) · на согласовании у: {{ excessPendingNames(node) || '—' }}
+                              согласование ПРЕВЫШЕНИЯ: план превышает заданный вручную на {{ formatCurrency(excessPlanFor(node)!.amount) }} (задано {{ formatCurrency(excessPlanFor(node)!.manualEntered) }}, стало {{ formatCurrency(excessPlanFor(node)!.manualEntered + excessPlanFor(node)!.amount) }}) · на согласовании у: {{ excessPendingNames(node) || '—' }}
                             </v-chip>
-                            <template v-if="excessMyPendingStep(node)">
+                            <template v-if="excessMyPendingStep(node) && canDecidePlanExcess">
                               <v-btn size="x-small" variant="tonal" color="success"
                                 :loading="excessDecideLoading === node.id"
                                 @click.stop="decidePlanExcess(node, 'approved')"
@@ -1024,6 +1030,9 @@
                                 @click.stop="openExcessRejectDialog(node)"
                               >Отклонить</v-btn>
                             </template>
+                            <div v-else-if="excessMyPendingStep(node) && !canDecidePlanExcess" class="feo-plan-note text-medium-emphasis" style="width:100%">
+                              Решение по превышению принимают только уполномоченные (владелец/финансист). Обратитесь к ним — согласовывать может не любой назначенный.
+                            </div>
                           </template>
                           <template v-else-if="excessApprovalFor(node)?.status === 'rejected'">
                             <v-chip size="x-small" color="red" variant="flat">
@@ -4652,6 +4661,7 @@ import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
 import type { FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
 import { PURCHASE_STATUS_META, PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusIcon, purchaseStatusColor } from '@/constants/purchaseStatus'
 import { type KpiKey, KPI_MODE, KPI_LABELS, KPI_EMPTY_REASONS, kpiItemMatches } from '@/constants/kpiMetrics'
+import { useAuthStore } from '@/stores/auth'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 
@@ -4721,6 +4731,15 @@ const feoResize = useResizableColumns('feo-table', {
 
 const router = useRouter()
 const route  = useRoute()
+
+// Владелец (2026-08-29): «превышение согласовывают только владельцы/финансисты,
+// у начальника отдела таких прав быть не может» — право plan_excess.decide проверяем
+// поверх «я назначен в шаге» (excessMyPendingStep), тот же паттерн, что и WishesView.vue.
+const authStore = useAuthStore()
+function can(action: string) {
+  return authStore.hasAction?.(action) ?? true
+}
+const canDecidePlanExcess = computed(() => can('plan_excess.decide'))
 
 interface SubsidyRow {
   id: number; name: string; year: number; budget: number

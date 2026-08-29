@@ -1636,17 +1636,22 @@
               </v-card-text>
             </v-card>
 
-            <!-- Section: Согласующие (мультисогласование с авто-каскадом) -->
+            <!-- Section: Согласующие необходимости закупки (мультисогласование с авто-каскадом).
+                 Владелец, 2026-08-29: развести название с согласованием ПРЕВЫШЕНИЯ плана ФЭО
+                 (см. SubsidiesView.vue) — это два разных контура, пользователь их путал. -->
             <v-card v-if="isWishEditable || editingWishId" variant="outlined" class="mb-4">
               <v-card-title class="text-subtitle-1 pa-4 pb-2">
                 <v-icon class="mr-2" color="primary">mdi-account-check</v-icon>
-                Согласующие
+                Согласующие необходимости закупки
                 <v-chip class="ml-2" size="x-small" variant="tonal">{{ wishApprovers.length }}</v-chip>
                 <v-spacer />
                 <v-chip size="x-small" :color="approvalMode === 'sequential' ? 'blue' : 'teal'" variant="tonal">
                   {{ approvalMode === 'sequential' ? 'Последовательно' : 'Параллельно' }}
                 </v-chip>
               </v-card-title>
+              <div class="text-caption text-medium-emphasis px-4 pb-2">
+                Здесь подтверждают, что закупка вообще нужна. Согласование превышения плана ФЭО — отдельно, в разделе субсидии, и доступно только уполномоченным.
+              </div>
               <v-card-text class="pa-4 pt-2">
                 <!-- Владелец, 2026-08-19: «почему в поле „Согласующие" написано „Сохранить
                      черновик"? Там должна быть простая кнопка „Добавить согласующих"... черновик
@@ -3801,6 +3806,14 @@ async function openEditDialog(wish: Wish) {
         purchase_match: i.purchase_match ?? null,
         _photo_url: prod ? photoOf(prod) : undefined,
         _description: prod?.description || undefined,
+        // Владелец, 2026-08-29: штамп даты/источника актуализации цены — из
+        // привязанного товара каталога, см. usePriceFreshness.ts.
+        _price_meta: prod ? {
+          price_updated_at: prod.price_updated_at ?? null,
+          price_source: prod.price_source ?? null,
+          price_source_ref: prod.price_source_ref ?? null,
+          price_freshness: prod.price_freshness ?? null,
+        } : null,
       }
     }) as any
     // Владелец (сессия 2026-08-17): тумблер «Разные ФЭО позиции для каждого товара» убран,
@@ -4476,7 +4489,7 @@ function buildWishPayload() {
       // (см. баг: владелец удаляет вторую пустую позицию, обновляет страницу — она снова там).
       // Строку оставляем, если заполнено хоть наименование, хоть сумма (частичный ввод).
       .filter((it: any) => (it.item_name || '').toString().trim() || Number(it.total_price) || Number(it.quantity))
-      .map(({ _selectedProduct, _photo_url, _description, _description_44fz, ...rest }) => ({
+      .map(({ _selectedProduct, _photo_url, _description, _description_44fz, _price_meta, ...rest }) => ({
         ...rest,
         // Владелец, 2026-08-19: тумблер вернули — режим снова определяет, чья категория
         // «главная». feo_per_item=false («одна на всех», общий выбор в карточке «Позиции»):

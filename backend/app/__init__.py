@@ -45,7 +45,6 @@ from .routers import vehicle_fines
 from .routers import fleet_documents as fleet_documents_router
 from .routers import checklists as checklists_router
 from .routers import incidents as incidents_router
-from .routers import price_freshness as price_freshness_router
 from .models import platform_publication  # ensure table is registered
 from .models import subsidy_allocation    # ensure purchase_subsidy_allocations table is created
 from .models import contract_subsidy      # ensure contract_subsidies table is created
@@ -1951,7 +1950,6 @@ from .routers import exports as exports_router
 app.include_router(exports_router.router)              # /api/exports
 from .routers import okpd2 as okpd2_router
 app.include_router(okpd2_router.router)                # /api/okpd2
-app.include_router(price_freshness_router.router)       # /api/price-freshness
 from .routers import expense_codes as expense_codes_router
 app.include_router(expense_codes_router.router)         # /api/expense-codes
 

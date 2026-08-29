@@ -45,6 +45,7 @@ from .routers import vehicle_fines
 from .routers import fleet_documents as fleet_documents_router
 from .routers import checklists as checklists_router
 from .routers import incidents as incidents_router
+from .routers import price_freshness as price_freshness_router
 from .models import platform_publication  # ensure table is registered
 from .models import subsidy_allocation    # ensure purchase_subsidy_allocations table is created
 from .models import contract_subsidy      # ensure contract_subsidies table is created
@@ -942,6 +943,44 @@ async def lifespan(app_: FastAPI):
         import logging
         logging.getLogger(__name__).warning(f"wish.edit_feo action seed skipped (non-fatal): {e}")
 
+    # Владелец (2026-08-29): «превышение не может согласовывать любой из цепочки
+    # согласования… только определённые люди — например, только владельцы или
+    # только финансисты. У начальника отдела таких прав быть не может». На вопрос
+    # «кому по умолчанию давать право» — никому, выдаётся галочкой поимённо. См.
+    # app.routers.plan_excess (гейт /decide и _authorized_plan_excess_approvers) —
+    # ОБА используют app.auth.permissions.has_org_key с этим ключом, вторая логика
+    # не пишется. Дефолт: superadmin/account_owner=TRUE (SaaS-обход, как и везде);
+    # admin/org_admin/manager/employee=FALSE — организационные роли НЕ получают
+    # это право автоматически, только персональным или субсидийным грантом.
+    try:
+        from sqlalchemy import select as _sel
+        from .models.permission import PermissionAction, RolePermission
+        async with async_session() as db:
+            ACTION_KEY = 'plan_excess.decide'
+            ex = await db.execute(_sel(PermissionAction).where(PermissionAction.action_key == ACTION_KEY))
+            if not ex.scalar_one_or_none():
+                db.add(PermissionAction(
+                    action_key=ACTION_KEY,
+                    description='Согласование превышения плана ФЭО (только уполномоченные — финансисты, владельцы)',
+                ))
+                await db.commit()
+            ROLE_DEFAULTS = [
+                ('superadmin', True), ('account_owner', True),
+                ('admin', False), ('org_admin', False),
+                ('manager', False), ('employee', False),
+            ]
+            for role_name, granted in ROLE_DEFAULTS:
+                ex = await db.execute(_sel(RolePermission).where(
+                    RolePermission.role_name == role_name,
+                    RolePermission.key == ACTION_KEY,
+                ))
+                if not ex.scalar_one_or_none():
+                    db.add(RolePermission(role_name=role_name, key=ACTION_KEY, granted=granted))
+            await db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"plan_excess.decide action seed skipped (non-fatal): {e}")
+
     # Phase 18: idempotent seed для tab 'staff_directory' (all 5 roles)
     try:
         from sqlalchemy import select as _sel
@@ -1651,6 +1690,24 @@ async def lifespan(app_: FastAPI):
         logging.getLogger(__name__).warning(
             f"org-dedup по ИНН skipped (non-fatal): {e}"
         )
+
+    # price-freshness: разовый бэкафилл истории курса USD + обновление на
+    # сегодня с cbr.ru при старте (владелец, 2026-08-29 + ревью 2026-08-29).
+    # backfill ПЕРЕД refresh: без истории курсовой триггер в
+    # app/services/price_freshness.py никогда не срабатывает (в fx_rates
+    # была бы только «сегодняшняя» строка). Non-fatal — если ЦБ недоступен,
+    # актуализация цены просто не учитывает курсовой триггер до следующего
+    # рестарта/деплоя. Обе функции сами пропускают сетевой запрос, если
+    # данных уже достаточно — никакого бесконечного цикла здесь не заводим.
+    try:
+        from app.services.fx_rates import backfill_cbr_history, refresh_cbr_rates
+        async with async_session() as _db_fx:
+            await backfill_cbr_history(_db_fx)
+            await refresh_cbr_rates(_db_fx)
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            f"fx_rates refresh skipped (non-fatal): {e}"
+        )
     yield
     task.cancel()
     try:
@@ -1894,6 +1951,7 @@ from .routers import exports as exports_router
 app.include_router(exports_router.router)              # /api/exports
 from .routers import okpd2 as okpd2_router
 app.include_router(okpd2_router.router)                # /api/okpd2
+app.include_router(price_freshness_router.router)       # /api/price-freshness
 from .routers import expense_codes as expense_codes_router
 app.include_router(expense_codes_router.router)         # /api/expense-codes
 

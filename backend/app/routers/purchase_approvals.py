@@ -10,8 +10,10 @@ from app.models.wish import Wish
 from app.models.wish_approval import WishApproval
 from app.models.plan_excess_approval import PlanExcessApproval, PlanExcessApprovalStep
 from app.models.feo_category import FeoCategory
+from app.models.subsidy import Subsidy
 from app.schemas.schemas import PurchaseApprovalOut, ApprovalDecisionRequest
-from app.auth.jwt import get_current_user, ADMIN_ROLES, MANAGER_ROLES
+from app.auth.jwt import get_current_user, ADMIN_ROLES, MANAGER_ROLES, OWNER_ROLES
+from app.auth.permissions import has_org_key
 from app.models.user import User
 from app.models.task import Task, TaskAssignee, TaskStatus, TaskPriority
 from app.models.chat_message import ChatMessage
@@ -628,6 +630,19 @@ async def _collect_my_pending(db: AsyncSession, current_user: User) -> list[dict
         approval = await db.get(PlanExcessApproval, step.approval_id)
         if not approval or approval.status != "pending":
             continue
+
+        # Синхронизация с гейтом app.routers.plan_excess.decide_plan_excess_step
+        # (владелец, 2026-08-29): шаг мог быть назначен пользователю, у которого
+        # право plan_excess.decide позже отозвали, или он оказался автором своего
+        # же запроса — в обоих случаях он реально решить его не может, значит не
+        # должен видеть его в «моих согласованиях» (задача повиснет иначе).
+        if current_user.role not in OWNER_ROLES:
+            subsidy = await db.get(Subsidy, approval.subsidy_id)
+            org_id = subsidy.org_id if subsidy else None
+            if not await has_org_key(current_user, db, org_id, "plan_excess.decide", subsidy_id=approval.subsidy_id):
+                continue
+            if approval.requested_by_id == current_user.id:
+                continue
 
         all_steps_result = await db.execute(
             select(PlanExcessApprovalStep).where(PlanExcessApprovalStep.approval_id == approval.id)

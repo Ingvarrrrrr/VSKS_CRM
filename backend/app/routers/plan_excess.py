@@ -4,13 +4,28 @@
 где-то надо снимать. Должны быть заблокированы действия, пока план закупок не
 загонять обратно в размеры ФЭО. Согласование превышения должно быть цепочкой,
 организации бывают разные, к директору не всегда простой сотрудник может
-попасть» — цепочка строится тем же механизмом, что и у заявок (wishes), см.
-app.services.approval_chain.build_ascending_chain.
+попасть».
+
+Уточнение владельца (2026-08-29): «Превышение не может согласовывать любой из
+цепочки согласования. Это только определённые люди… Такие права могут быть,
+например, только у владельцев или только у финансистов. У начальника отдела
+таких прав быть не может, но он точно знает, что эта закупка необходима. И
+надо добавить, что согласование — это именно согласование НЕОБХОДИМОСТИ
+закупки. Это не согласование превышения». Право выдаётся точечно (галочкой),
+никому не полагается по умолчанию — см. app.auth.permissions.has_org_key и
+action-ключ 'plan_excess.decide'. Цепочка (см. _authorized_plan_excess_approvers
+ниже) строится НЕ оргструктурой (в отличие от заявок/wishes, у которых остаётся
+app.services.approval_chain.build_ascending_chain), а списком пользователей,
+у которых это право есть (персонально или по данной субсидии).
 
 Endpoints:
-  GET  /api/plan-excess?subsidy_id=            — список запросов по субсидии
+  GET  /api/plan-excess?subsidy_id=            — список запросов по субсидии (вкладка
+                                                  feo_categories ИЛИ право plan_excess.decide —
+                                                  точечно назначенный согласующий обязан видеть
+                                                  список, иначе решать ему нечего, см. п. ниже)
   POST /api/plan-excess                        — запросить согласование превышения по узлу
-  POST /api/plan-excess/{id}/decide             — решение шага (approve/reject)
+  POST /api/plan-excess/{id}/decide             — решение шага (approve/reject; тоже без
+                                                  require_tab('feo_categories') — см. её докстринг)
 
 Влияние на app.services.feo_plan.compute_feo_plan_tree — см. её docstring и
 assert_no_unapproved_excess (вызывается перед действиями, увеличивающими план,
@@ -26,14 +41,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.auth.jwt import get_current_user, get_single_org_id, MANAGER_ROLES, OWNER_ROLES
-from app.auth.permissions import require_tab
+from app.auth.jwt import get_current_user, get_single_org_id, OWNER_ROLES
+from app.auth.permissions import require_tab, has_org_key, _has_key_in_any_org, _ROLE_PRIORITY
 from app.models.user import User
+from app.models.user_organization import UserOrganization
+from app.models.user_org_access import UserOrgAccess
+from app.models.user_subsidy_access import UserSubsidyAccess
 from app.models.feo_category import FeoCategory
 from app.models.subsidy import Subsidy
-from app.models.organization import Organization
 from app.models.plan_excess_approval import PlanExcessApproval, PlanExcessApprovalStep
-from app.services.approval_chain import build_ascending_chain
 from app.services.feo_plan import compute_feo_plan_tree
 
 logger = logging.getLogger(__name__)
@@ -43,6 +59,55 @@ router = APIRouter(prefix="/api/plan-excess", tags=["plan-excess"])
 
 def _is_saas(user: User) -> bool:
     return user.role in OWNER_ROLES
+
+
+async def _authorized_plan_excess_approvers(
+    db: AsyncSession, org_id: int, subsidy_id: int, exclude_user_id: int | None = None,
+) -> list[User]:
+    """Уполномоченные на решение по превышению плана ФЭО — пользователи, у которых
+    эффективно есть action-право 'plan_excess.decide' в организации субсидии (та
+    же проверка, что и в гейте /decide — app.auth.permissions.has_org_key, — не
+    дублируем логику).
+
+    Кандидаты собираются из трёх источников (кто ВООБЩЕ может иметь это право):
+    членство в организации (UserOrganization), явная орг-роль (UserOrgAccess) и
+    персональный грант на саму субсидию (UserSubsidyAccess). Из них has_org_key
+    отбирает тех, у кого право реально включено (по роли, орг-override или
+    субсидийному гранту).
+
+    Автор запроса (exclude_user_id) исключается — самосогласование запрещено
+    (владелец, 2026-08-29: «согласование — это не согласование превышения»
+    самим заявителем).
+
+    Порядок результата — «по-человечески»: сначала более высокая роль, затем
+    ФИО по алфавиту.
+    """
+    candidate_ids: set[int] = set()
+    for stmt in (
+        select(UserOrganization.user_id).where(UserOrganization.org_id == org_id),
+        select(UserOrgAccess.user_id).where(UserOrgAccess.org_id == org_id),
+        select(UserSubsidyAccess.user_id).where(UserSubsidyAccess.subsidy_id == subsidy_id),
+    ):
+        candidate_ids.update((await db.execute(stmt)).scalars().all())
+
+    if exclude_user_id is not None:
+        candidate_ids.discard(exclude_user_id)
+    if not candidate_ids:
+        return []
+
+    users = (await db.execute(select(User).where(User.id.in_(candidate_ids)))).scalars().all()
+    authorized: list[User] = []
+    for u in users:
+        if await has_org_key(u, db, org_id, "plan_excess.decide", subsidy_id=subsidy_id):
+            authorized.append(u)
+
+    def _sort_key(u: User):
+        prio = _ROLE_PRIORITY.get(u.role or "", 0)
+        name = (u.full_name or u.username or "").lower()
+        return (-prio, name)
+
+    authorized.sort(key=_sort_key)
+    return authorized
 
 
 def _step_dict(s: PlanExcessApprovalStep) -> dict:
@@ -100,8 +165,30 @@ async def _load_approval(approval_id: int, db: AsyncSession) -> PlanExcessApprov
 async def list_plan_excess_approvals(
     subsidy_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_tab("feo_categories")),
+    current_user: User = Depends(get_current_user),
 ):
+    # Владелец (2026-08-29): точечно назначенный на 'plan_excess.decide' согласующий
+    # (например, финансист) может НЕ иметь вкладки 'feo_categories' вовсе — та же
+    # логика, что и в /decide (см. её комментарий выше). Раньше этот список требовал
+    # require_tab('feo_categories') безусловно, из-за чего такой согласующий получал
+    # 403 и вообще не видел секцию превышения — то есть фикс /decide был бесполезен.
+    # Пускаем по ЛЮБОМУ из двух условий: обычная вкладка feo_categories (как раньше)
+    # ИЛИ action-право plan_excess.decide на организацию/субсидию — has_org_key,
+    # та же проверка, что в /decide и в _authorized_plan_excess_approvers, логику не
+    # дублируем.
+    if current_user.role != "superadmin" and not await _has_key_in_any_org(current_user, db, "feo_categories"):
+        subsidy = await db.get(Subsidy, subsidy_id)
+        if subsidy is None:
+            raise HTTPException(404, "Субсидия не найдена")
+        org_id = subsidy.org_id or get_single_org_id(current_user)
+        if not await has_org_key(current_user, db, org_id, "plan_excess.decide", subsidy_id=subsidy_id):
+            raise HTTPException(
+                403,
+                "Нет доступа к списку запросов на согласование превышения плана ФЭО: "
+                "требуется вкладка «Категории ФЭО» либо право «Согласование превышения "
+                "плана ФЭО» (plan_excess.decide) по этой субсидии.",
+            )
+
     rows = (await db.execute(
         select(PlanExcessApproval)
         .options(selectinload(PlanExcessApproval.steps))
@@ -178,8 +265,9 @@ async def request_plan_excess_approval(
     current_user: User = Depends(require_tab("feo_categories")),
 ):
     """Запросить согласование превышения плана по узлу ФЭО. body:
-    {feo_category_id, top_user_id?, mode?}. top_user_id — как в заявках,
-    если не передан — берётся руководитель организации субсидии."""
+    {feo_category_id, mode?}. Кому направить запрос решает НЕ автор (никакого
+    top_user_id) — цепочка строится из уполномоченных, см.
+    _authorized_plan_excess_approvers."""
     feo_category_id = int(body.get("feo_category_id", 0))
     if not feo_category_id:
         raise HTTPException(422, "feo_category_id обязателен")
@@ -271,46 +359,40 @@ async def request_plan_excess_approval(
     if mode not in ("sequential", "parallel"):
         mode = "sequential"
 
-    top_user_id = body.get("top_user_id")
-    top_user_id = int(top_user_id) if top_user_id else None
     org_id = subsidy.org_id or get_single_org_id(current_user)
-    if not top_user_id and org_id:
-        org = await db.get(Organization, org_id)
-        top_user_id = org.head_user_id if org else None
-    if not top_user_id:
-        top_user_id = current_user.id  # fallback: некому эскалировать — согласующий сам себе
-
-    chain: list[dict] = []
-    chain_warning: str | None = None
-    if org_id:
-        chain, chain_warning = await build_ascending_chain(db, current_user.id, top_user_id, org_id)
-    if not chain:
-        top_user = await db.get(User, top_user_id)
-        chain = [{
-            "user_id": top_user_id,
-            "role_name": "Согласующий",
-            "full_name": (top_user.full_name or top_user.username) if top_user else None,
-            "order_num": 0,
-        }]
-
-    # Задача 2 (2026-08-05): цепочка не должна вырождаться молча.
-    #   - цепочка полностью пуста (нет ни одного user_id) — некому направить запрос,
-    #     не создаём «висящий» запрос, а объясняем, что нужно настроить.
-    #   - цепочка состоит РОВНО из самого автора — формально запрос создаётся
-    #     (иначе превышение никогда не согласовать), но фронт обязан явно
-    #     показать пользователю, что согласовывать будет он сам.
-    chain = [s for s in chain if s.get("user_id")]
-    if not chain:
+    if not org_id:
         raise HTTPException(
             409,
-            "Не удалось определить, кому направить запрос на согласование превышения: "
-            "у вас не назначен руководитель отдела, не задан руководитель организации "
-            "(Organization.head_user_id) и не указан вышестоящий начальник (User.superior_user_id). "
-            "Попросите администратора настроить одного из них.",
+            "Не удалось определить организацию субсидии — согласование превышения плана невозможно настроить.",
         )
-    self_approval = all(s["user_id"] == current_user.id for s in chain)
-    if self_approval:
-        chain_warning = "Над вами нет вышестоящих согласующих — превышение будет согласовано вами лично."
+
+    # Владелец (2026-08-29): цепочка превышения — НЕ оргструктура (начальник
+    # отдела/руководитель организации подтверждают НЕОБХОДИМОСТЬ закупки, но не
+    # вправе решать по превышению). Уполномоченные — только те, у кого включено
+    # действие 'plan_excess.decide' (выдаётся точечно, см. _authorized_plan_excess_approvers).
+    approvers = await _authorized_plan_excess_approvers(
+        db, org_id, cat.subsidy_id, exclude_user_id=current_user.id,
+    )
+    if not approvers:
+        raise HTTPException(
+            409,
+            "Превышение плана ФЭО согласовать некому: ни у одного пользователя организации нет права "
+            "«Согласование превышения плана ФЭО» (plan_excess.decide). Выдайте это право нужному кругу "
+            "лиц — например, финансисту или владельцу организации, персонально или по этой субсидии — "
+            "и повторите запрос.",
+        )
+
+    chain = [
+        {
+            "user_id": u.id,
+            "role_name": "Уполномочен на согласование превышения",
+            "full_name": u.full_name or u.username,
+            "order_num": i,
+        }
+        for i, u in enumerate(approvers)
+    ]
+    chain_warning: str | None = None
+    self_approval = False
 
     full_plan = node["plan"] + node["over"]  # текущая плановая сумма (до сжатия по бюджету)
     # Владелец, план zany-fluttering-mountain.md (2026-08-13): «прежний план обязан
@@ -386,7 +468,12 @@ async def decide_plan_excess_step(
     approval_id: int,
     body: dict,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_tab("feo_categories")),
+    # Владелец (2026-08-29): НЕ require_tab('feo_categories') — уполномоченный на
+    # решение (например, точечно нанятый «финансист») может не иметь широкой
+    # вкладки ФЭО вовсе, у него есть только персональное/субсидийное action-право
+    # 'plan_excess.decide', которое и проверяется ниже (has_org_key). Внешний
+    # тab-гейт здесь только исключал бы таких людей.
+    current_user: User = Depends(get_current_user),
 ):
     approval = await _load_approval(approval_id, db)
 
@@ -410,8 +497,36 @@ async def decide_plan_excess_step(
     if step.status != "pending":
         raise HTTPException(400, f"По этому шагу уже принято решение: {step.status}")
 
-    if not _is_saas(current_user) and current_user.role not in MANAGER_ROLES and step.user_id != current_user.id:
-        raise HTTPException(403, "Решение может принять только назначенный согласующий или менеджер+")
+    subsidy = await db.get(Subsidy, approval.subsidy_id)
+    if subsidy is None:
+        raise HTTPException(404, "Субсидия не найдена")
+
+    is_saas = _is_saas(current_user)
+
+    # Владелец (2026-08-29): «превышение не может согласовывать любой из цепочки
+    # согласования… только определённые люди — например, только владельцы или
+    # только финансисты». Право выдаётся точечно (галочкой), никому не положено
+    # по умолчанию — см. app.auth.permissions.has_org_key + action-ключ
+    # 'plan_excess.decide'. SaaS-роли (superadmin/account_owner) — бессрочный
+    # обход, как и везде в проекте.
+    if not is_saas:
+        if not await has_org_key(current_user, db, subsidy.org_id, "plan_excess.decide", subsidy_id=approval.subsidy_id):
+            raise HTTPException(
+                403,
+                "Право на согласование превышения плана ФЭО не выдано, обратитесь к администратору",
+            )
+
+    # Нельзя решать за другого — даже имея право plan_excess.decide, закрыть
+    # можно только СВОЙ назначенный шаг (кроме SaaS — им можно разрулить любой
+    # зависший шаг).
+    if not is_saas and step.user_id != current_user.id:
+        raise HTTPException(403, "Это не ваш шаг согласования — решение может принять только назначенный согласующий")
+
+    # Самосогласование запрещено: автор запроса не может согласовывать
+    # собственное превышение плана (владелец, 2026-08-29: «согласование — это
+    # не согласование превышения» самого заявителя).
+    if not is_saas and approval.requested_by_id == current_user.id:
+        raise HTTPException(403, "Автор запроса не может согласовывать собственное превышение плана")
 
     if approval.status != "pending":
         raise HTTPException(400, f"По этому запросу уже принято решение: {approval.status}")

@@ -330,6 +330,35 @@ DOC_TYPES = {
     "fabrikant_contract_project":   ("fabrikant_contract_project.docx",   "Фабрикант_проект_договора"),
 }
 
+# Требование владельца («Плановые не равно Договор»): для этих типов документ
+# печатает ТОЛЬКО позиции и суммы "Как в договоре" (ContractItem) — без
+# молчаливого отката на плановые purchase_items / НМЦК. Лист согласования
+# входит сюда же: он визирует именно то, что уйдёт в договор.
+#
+# НЕ включены намеренно:
+#   - tech_spec_request — ТЗ для ЗАПРОСА цен, по смыслу плановый документ;
+#   - service_note_* — служебные записки оформляются ДО заключения договора;
+#   - fabrikant_* — пакет документов для тендерной процедуры на Фабрикант,
+#     публикуется ДО выбора поставщика, договора ещё не существует;
+#   - order_purchase — приказ о закупке, тоже предшествует договору.
+# tech_spec_request и tech_spec_contract сейчас оба резолвятся в один файл
+# contract_tz.docx (см. DOC_TYPE_FALLBACK_FILES), но теперь ведут себя
+# по-разному — это ожидаемо и намеренно.
+CONTRACT_FAMILY_DOC_TYPES = {
+    "contract_services_large",
+    "contract_services_small",
+    "contract_services_food",
+    "contract_goods_single",
+    "contract_gph_individual",
+    "contract_gph_individual_rid",
+    "contract_repair_vehicle",
+    "contract_repair_framework",
+    "contract",
+    "contract_tz",
+    "tech_spec_contract",
+    "approval_sheet",
+}
+
 # Phase 19.05: fallback map — if a dedicated template file is missing,
 # fall back to the legacy file so the endpoint still works before admins
 # upload per-subsidy overrides.
@@ -686,6 +715,133 @@ async def _build_contract_items_context(p, db) -> dict:
     }
 
 
+def _contract_items_total(p) -> float:
+    """Сумма ContractItem.total закупки (relationship должен быть eager-loaded)."""
+    total = 0.0
+    for ci in (getattr(p, "contract_items", None) or []):
+        try:
+            total += float(ci.total or 0)
+        except Exception:
+            pass
+    return total
+
+
+def _build_items_list_from_contract_items(p, resolve_photo=None) -> list[dict]:
+    """items_list для договорных документов — ТОЛЬКО из ContractItem.
+
+    Поля те же, что у items_list из purchase_items (num/name/description/
+    type/item_kind/quantity/unit/unit_price/total_price/total/photo/code/
+    norm_hours), чтобы существующие шаблоны (contract_tz.docx,
+    contract_repair_framework.docx и др.), перебирающие {{items}}, работали
+    без правки .docx. Никакого отката на purchase_items здесь нет —
+    «Плановые не равно Договор» (требование владельца).
+    """
+    items_list: list[dict] = []
+    for idx, ci in enumerate(getattr(p, "contract_items", None) or [], start=1):
+        product = getattr(ci, "product", None)
+        photo_url = getattr(product, "photo_url", None) if product else None
+        items_list.append({
+            "num": idx,
+            "name": ci.name or "",
+            "description": ((getattr(product, "description", None) if product else "") or ""),
+            "type": "",
+            "item_kind": (getattr(product, "item_kind", None) if product else None) or "товар",
+            "quantity": float(ci.quantity) if ci.quantity else "",
+            "unit": ci.unit or "",
+            "unit_price": _fmt_money(ci.unit_price),
+            "total_price": _fmt_money(ci.total),
+            "total": _fmt_money(ci.total),
+            "photo": resolve_photo(photo_url) if resolve_photo else "",
+            # Поля для repair_framework (появятся позже, пока заглушки)
+            "code": "",
+            "norm_hours": "",
+        })
+    return items_list
+
+
+def _build_items_list_from_purchase_items(p, tz_override_mode=None, resolve_photo=None) -> list[dict]:
+    """items_list для плановых документов — из purchase_items (как раньше).
+
+    Извлечено без изменения поведения из тела generate_document(), чтобы
+    логика выбора источника (план vs договор) была тестируемой чистой
+    функцией и переиспользовалась в обоих местах построения контекста.
+    """
+    description_mode = tz_override_mode or getattr(p, "description_mode", None) or "exact"
+    items_list: list[dict] = []
+    for idx, (item, qty, total) in enumerate(_merge_identical_items(getattr(p, "items", None) or []), start=1):
+        photo_url = item.product.photo_url if item.product else None
+        items_list.append({
+            "num": idx,
+            "name": item.item_name or "",
+            "description": (
+                (item.product.description_44fz if description_mode == "44fz" else item.product.description)
+                if item.product else ""
+            ) or "",
+            "type": item.item_type or "",
+            "item_kind": (item.product.item_kind if item.product else None) or "товар",
+            "quantity": float(qty) if qty else "",
+            "unit": item.unit or "",
+            "unit_price": _fmt_money(item.unit_price),
+            "total_price": _fmt_money(total),
+            "total": _fmt_money(total),
+            "photo": resolve_photo(photo_url) if resolve_photo else "",
+            # Поля для repair_framework (появятся позже, пока заглушки)
+            "code": "",
+            "norm_hours": "",
+        })
+    return items_list
+
+
+def _resolve_doc_amount(p, doc_type: str) -> tuple[float, bool]:
+    """Вернуть (doc_amount_val, amount_is_planned) — сумму документа.
+
+    Для CONTRACT_FAMILY_DOC_TYPES сумма берётся ТОЛЬКО из p.contract_price
+    или суммы ContractItem, БЕЗ отката на НМЦК/план/сумму плановых позиций
+    (требование владельца: «Плановые не равно Договор»). total_nmck/nmck
+    сюда не входят — они остаются плановыми полями в контексте документа.
+
+    Для остальных типов — старое поведение: контракт → НМЦК/план → сумма
+    плановых позиций.
+    """
+    if doc_type in CONTRACT_FAMILY_DOC_TYPES:
+        amount = float(p.contract_price or 0) or _contract_items_total(p)
+        return amount, False
+    items_sum_val = float(sum(Decimal(str(it.total_price or 0)) for it in (getattr(p, "items", None) or [])))
+    doc_amount_val = (float(p.contract_price or 0) or float(getattr(p, "total_nmck", None) or 0)
+                      or float(getattr(p, "nmck", None) or 0) or float(getattr(p, "planned_total_price", None) or 0)
+                      or items_sum_val)
+    amount_is_planned = not bool(p.contract_price)
+    return doc_amount_val, amount_is_planned
+
+
+def _require_contract_items_for_doc(p, doc_type: str) -> None:
+    """422, если запрошен договорной документ, а позиции договора не заполнены.
+
+    Молчаливый откат на purchase_items здесь недопустим — «Плановые не равно
+    Договор» (требование владельца). Код ошибки CONTRACT_ITEMS_REQUIRED тот
+    же, что и в purchase_transitions.py (переход в «Заключён договор»), для
+    единообразия обработки на фронте.
+    """
+    if doc_type not in CONTRACT_FAMILY_DOC_TYPES:
+        return
+    if getattr(p, "contract_items", None):
+        return
+    raise HTTPException(
+        422,
+        detail={
+            "code": "CONTRACT_ITEMS_REQUIRED",
+            "message": (
+                "Позиции договора не заполнены — документ сформирован не "
+                "будет, потому что плановые значения не равны договорным. "
+                "Воспользуйтесь кнопкой «Скопировать из заявки» в карточке "
+                "закупки и уточните наименования и цены."
+            ),
+            "missing_fields": ["contract_items"],
+            "doc_type": doc_type,
+        },
+    )
+
+
 async def _resolve_user_dept(user, db, org_id: Optional[int] = None) -> str:
     """Возвращает название отдела пользователя для шаблона СЗ.
 
@@ -1006,6 +1162,12 @@ async def generate_document(
     if not p:
         raise HTTPException(404, "Закупка не найдена")
 
+    # Требование владельца («Плановые не равно Договор»): для договорных
+    # типов документа позиции/суммы обязаны быть заполнены в ContractItem —
+    # никакого молчаливого отката на plan/НМЦК. Гейт стоит максимально рано,
+    # до тяжёлых запросов ниже.
+    _require_contract_items_for_doc(p, doc_type)
+
     # Override template path with subsidy-specific template if available
     if p.subsidy_id:
         subsidy_template = os.path.join(SUBSIDY_TEMPLATES_DIR, "subsidies", str(p.subsidy_id), f"{doc_type}.docx")
@@ -1308,28 +1470,16 @@ async def generate_document(
             return ""
 
     # Build template context
-    items_list = []
-    for idx, (item, qty, total) in enumerate(_merge_identical_items(p.items or []), start=1):
-        photo_url = item.product.photo_url if item.product else None
-        items_list.append({
-            "num": idx,
-            "name": item.item_name or "",
-            "description": (
-                (item.product.description_44fz if (tz_override_mode or p.description_mode or "exact") == "44fz" else item.product.description)
-                if item.product else ""
-            ) or "",
-            "type": item.item_type or "",
-            "item_kind": (item.product.item_kind if item.product else None) or "товар",
-            "quantity": float(qty) if qty else "",
-            "unit": item.unit or "",
-            "unit_price": _fmt_money(item.unit_price),
-            "total_price": _fmt_money(total),
-            "total": _fmt_money(total),
-            "photo": _resolve_photo(photo_url),
-            # Поля для repair_framework (появятся позже, пока заглушки)
-            "code": "",
-            "norm_hours": "",
-        })
+    # «Плановые не равно Договор»: для CONTRACT_FAMILY_DOC_TYPES позиции
+    # берутся ТОЛЬКО из ContractItem (гейт _require_contract_items_for_doc
+    # выше уже гарантировал, что contract_items не пуст). Для остальных —
+    # старое поведение (purchase_items).
+    if doc_type in CONTRACT_FAMILY_DOC_TYPES:
+        items_list = _build_items_list_from_contract_items(p, resolve_photo=_resolve_photo)
+    else:
+        items_list = _build_items_list_from_purchase_items(
+            p, tz_override_mode=tz_override_mode, resolve_photo=_resolve_photo,
+        )
 
     # Phase 23.1: auto-detect subject_kind for universal contract.docx
     # 'services' if ALL items have item_kind='услуга', otherwise 'goods' (default)
@@ -1442,14 +1592,17 @@ async def generate_document(
         parts = full_name.split()
         return parts[-1] if parts else full_name
 
-    # Сумма закупки для документов (Phase: лист согласования не зависит от стадии).
-    # До момента заключения договора contract_price всегда NULL — берём НМЦК/план,
-    # а если и они пусты (стадия «Хотелки», ФЭО ещё не привязано) — сумму позиций,
-    # она есть с момента создания закупки.
+    # Сумма закупки для документов.
+    # items_sum_val — сумма ПЛАНОВЫХ позиций, нужна только как последний
+    # фолбэк для total_nmcd/total_nmck/nmck ниже (они остаются плановыми
+    # полями всегда, независимо от doc_type — НМЦК по определению начальная
+    # плановая цена).
+    # doc_amount_val/amount_is_planned — сумма ДОКУМЕНТА: для
+    # CONTRACT_FAMILY_DOC_TYPES («Плановые не равно Договор») — ТОЛЬКО
+    # p.contract_price / сумма ContractItem, без отката на НМЦК/план. Для
+    # остальных типов — старое поведение (план/НМЦК до заключения договора).
     items_sum_val = float(sum(Decimal(str(it.total_price or 0)) for it in (p.items or [])))
-    doc_amount_val = (float(p.contract_price or 0) or float(p.total_nmck or 0)
-                      or float(p.nmck or 0) or float(p.planned_total_price or 0) or items_sum_val)
-    amount_is_planned = not bool(p.contract_price)
+    doc_amount_val, amount_is_planned = _resolve_doc_amount(p, doc_type)
 
     # VAT calculations
     vat_app = bool(p.vat_applicable)
@@ -2491,6 +2644,23 @@ async def render_fabrikant_package_files(
     assigned_full = (getattr(p.assigned_user, "full_name", None) or "") if getattr(p, "assigned_user", None) else ""
     raw_responsible = assigned_full or p.responsible_person or ""
     resolved_responsible = _fmt_initials(raw_responsible) if raw_responsible else ""
+
+    # Этот эндпоинт всегда рендерит один и тот же фиксированный набор из 5
+    # doc_type — FABRIKANT_PKG_FILE_NAMES (fabrikant_* + tech_spec_request).
+    # ВСЕ они намеренно исключены из CONTRACT_FAMILY_DOC_TYPES: это пакет для
+    # тендерной процедуры на Фабрикант, публикуется ДО выбора поставщика —
+    # ContractItem на этой стадии закупки ещё физически не существует, поэтому
+    # items_list здесь по-прежнему строится из purchase_items (план), как и
+    # раньше. Sanity-check ниже фейлит явно, если это когда-нибудь изменится
+    # (новый doc_type в списке окажется договорным) — молчаливая подмена на
+    # плановые данные для настоящего договорного документа недопустима.
+    _fabrikant_pkg_doc_keys = {dk for dk, _, _ in FABRIKANT_PKG_FILE_NAMES}
+    assert not (_fabrikant_pkg_doc_keys & CONTRACT_FAMILY_DOC_TYPES), (
+        "render_fabrikant_package_files теперь рендерит договорной doc_type "
+        f"({_fabrikant_pkg_doc_keys & CONTRACT_FAMILY_DOC_TYPES}) — items_list "
+        "здесь построен из purchase_items (план), нужно переключить на "
+        "_build_items_list_from_contract_items, иначе документ уйдёт с плановыми данными"
+    )
 
     items_list = []
     for idx, (item, qty, total) in enumerate(_merge_identical_items(p.items or []), start=1):

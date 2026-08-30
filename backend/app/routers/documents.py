@@ -726,6 +726,67 @@ def _contract_items_total(p) -> float:
     return total
 
 
+FEO_PATH_UNRESOLVED_LABEL = "Категория ФЭО не определена (позиция договора без привязки к плановой)"
+
+
+def _build_contract_item_feo_paths(contract_items, plan_items, feo_path_nodes) -> list:
+    """Путь ФЭО по ДОГОВОРНЫМ позициям для листа согласования.
+
+    Требование владельца (2026-08-30): «В "Путь ФЭО" должны прописываться
+    договорные категории, они должны совпадать с Плановыми». У ContractItem
+    своего поля ФЭО нет — категория берётся у плановой PurchaseItem, из
+    которой договорная позиция скопирована (``source_item_id``). Этим
+    совпадение договорных категорий с плановыми гарантировано по построению:
+    это буквально та же запись категории, а не пересчёт/эвристика.
+
+    Договорная позиция без ``source_item_id`` (заведена вручную, а не
+    копированием из плана) не может унаследовать чужую категорию — попадает
+    в отдельную группу с меткой :data:`FEO_PATH_UNRESOLVED_LABEL`, чтобы в
+    документе было видно, что категория не определена, вместо того чтобы
+    либо промолчать, либо подставить произвольную.
+
+    Args:
+        contract_items: iterable ContractItem (source_item_id, total).
+        plan_items: iterable PurchaseItem (id, feo_category_id) — используется
+            только как справочник id → feo_category_id, суммы отсюда не берутся.
+        feo_path_nodes: callable(category_id) -> list[FeoCategory] (root → leaf),
+            та же функция, что строит feo_path/feo_level_* выше по контексту.
+
+    Returns:
+        [(path_str, Decimal total), ...] — по одной строке на категорию, в
+        порядке первого появления среди contract_items; группа «не
+        определена» (если есть) — последней.
+    """
+    plan_feo_by_id = {
+        it.id: it.feo_category_id for it in (plan_items or []) if getattr(it, "feo_category_id", None)
+    }
+    cat_sums: dict = {}
+    order: list = []
+    unresolved_sum = Decimal("0")
+    has_unresolved = False
+    for ci in (contract_items or []):
+        amt = Decimal(str(ci.total)) if ci.total is not None else Decimal("0")
+        source_id = getattr(ci, "source_item_id", None)
+        cid = plan_feo_by_id.get(source_id) if source_id else None
+        if cid:
+            if cid not in cat_sums:
+                cat_sums[cid] = Decimal("0")
+                order.append(cid)
+            cat_sums[cid] += amt
+        else:
+            has_unresolved = True
+            unresolved_sum += amt
+
+    item_feo_paths: list = []
+    for cid in order:
+        cat_path = " → ".join(n.name.strip() for n in feo_path_nodes(cid))
+        if cat_path:
+            item_feo_paths.append((cat_path, cat_sums[cid]))
+    if has_unresolved:
+        item_feo_paths.append((FEO_PATH_UNRESOLVED_LABEL, unresolved_sum))
+    return item_feo_paths
+
+
 def _build_items_list_from_contract_items(p, resolve_photo=None) -> list[dict]:
     """items_list для договорных документов — ТОЛЬКО из ContractItem.
 
@@ -1299,8 +1360,25 @@ async def generate_document(
     feo_level_2 = ""
     feo_level_3 = ""
     item_feo_paths: list = []  # [(path_str, Decimal total)] по позициям со своей категорией ФЭО
-    item_feo_ids = list(dict.fromkeys(it.feo_category_id for it in (p.items or []) if it.feo_category_id))
-    if p.feo_category_id or item_feo_ids:
+
+    # Требование владельца (2026-08-30): «В "Путь ФЭО" должны прописываться
+    # договорные категории, они должны совпадать с Плановыми». Лист
+    # согласования и остальные CONTRACT_FAMILY_DOC_TYPES визируют ДОГОВОРНЫЕ
+    # позиции (ContractItem) — цены там уже договорные, поэтому путь ФЭО
+    # тоже обязан идти от договорных позиций, иначе строки «цена / категория»
+    # расходятся. См. _build_contract_item_feo_paths().
+    _is_contract_family = doc_type in CONTRACT_FAMILY_DOC_TYPES
+    if _is_contract_family:
+        _plan_feo_by_id = {it.id: it.feo_category_id for it in (p.items or []) if it.feo_category_id}
+        item_feo_ids = list(dict.fromkeys(
+            _plan_feo_by_id[ci.source_item_id]
+            for ci in (p.contract_items or [])
+            if ci.source_item_id and ci.source_item_id in _plan_feo_by_id
+        ))
+    else:
+        item_feo_ids = list(dict.fromkeys(it.feo_category_id for it in (p.items or []) if it.feo_category_id))
+
+    if p.feo_category_id or item_feo_ids or (_is_contract_family and (p.contract_items or [])):
         feo_res = await db.execute(select(FeoCategory))
         all_feo = {f.id: f for f in feo_res.scalars().all()}
 
@@ -1324,7 +1402,11 @@ async def generate_document(
             if len(path_nodes) >= 2: feo_level_2 = path_nodes[1].name.strip()
             if len(path_nodes) >= 3: feo_level_3 = path_nodes[2].name.strip()
 
-        if item_feo_ids:
+        if _is_contract_family:
+            item_feo_paths = _build_contract_item_feo_paths(
+                p.contract_items or [], p.items or [], _feo_path_nodes,
+            )
+        elif item_feo_ids:
             cat_sums: dict = {cid: Decimal("0") for cid in item_feo_ids}
             for it in (p.items or []):
                 if it.feo_category_id and it.total_price is not None:

@@ -2115,6 +2115,8 @@ PATCHABLE_FIELDS = {
     "agreement_number", "agreement_date", "order_date",
     # Phase 28: форма договора (выбор шаблона при генерации)
     "contract_form",
+    # Методичка, приклеиваемая к договору (large / small / none)
+    "methodology",
     # Phase 28: contract-specific поля (условия конкретного договора)
     'acceptance_term_days', 'penalty_rate', 'contractor_ogrnip_date',
     'repair_request_number',

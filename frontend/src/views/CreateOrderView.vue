@@ -721,7 +721,7 @@
           <!-- Phase 28: Условия конкретного договора — видно только если выбрана форма договора -->
           <template v-if="form.contract_form">
             <!-- Срок приёмки + неустойка — для поставки и услуг -->
-            <v-row v-if="['goods_single', 'services_large', 'services_small', 'services_food'].includes(form.contract_form)" class="mt-1">
+            <v-row v-if="['goods_single', 'services', 'services_food'].includes(form.contract_form)" class="mt-1">
               <v-col cols="12" class="pb-0">
                 <div class="text-subtitle-2 text-medium-emphasis">Условия договора</div>
               </v-col>
@@ -788,8 +788,8 @@
                 <v-text-field v-model="form.repair_request_number" label="Номер заявки на ремонт" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
               </v-col>
             </v-row>
-            <!-- Сумма аванса — только для большой отчётности -->
-            <v-row v-if="form.contract_form === 'services_large'" class="mt-1">
+            <!-- Сумма аванса — только для большой отчётности (теперь это ось методички, не формы) -->
+            <v-row v-if="form.methodology === 'large'" class="mt-1">
               <v-col cols="6" md="3">
                 <v-text-field v-model.number="form.advance_amount" type="number" label="Сумма аванса, ₽" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
               </v-col>
@@ -1687,19 +1687,33 @@
           <div class="text-caption text-high-emphasis mb-2">
             Переменные, которые не были определены ранее (форма договора, приём заявок, место и срок оказания услуг)
           </div>
-          <!-- Форма договора: выбор текста договора (малая / большая отчётность) -->
+          <!-- Форма договора (текст договора) + методичка (приложение к договору, выбирается отдельно) -->
           <v-row v-if="formMode !== 'service_note_delivery' && formMode !== 'advance_report' && form.purchase_method !== 'advance'">
-            <v-col cols="12">
+            <v-col cols="12" md="6">
               <v-select
                 v-model="form.contract_form"
                 :items="contractFormOptions"
                 item-title="title"
                 item-value="value"
-                label="Форма договора (текст: малая / большая отчётность)"
+                label="Форма договора (текст договора)"
                 variant="outlined"
                 density="compact"
                 clearable
                 hint="Определяет какой шаблон используется при скачивании «Договор» и «Договор+ТЗ»"
+                persistent-hint
+              />
+            </v-col>
+            <v-col cols="12" md="6">
+              <v-select
+                v-model="form.methodology"
+                :items="methodologyOptions"
+                item-title="title"
+                item-value="value"
+                label="Методические рекомендации"
+                variant="outlined"
+                density="compact"
+                clearable
+                hint="Приложение к договору — приклеивается к готовому документу отдельно от формы договора. Не выбирается автоматически."
                 persistent-hint
               />
             </v-col>
@@ -4623,6 +4637,8 @@ const form = reactive({
   vat_mode: 'uniform' as string,
   // Phase 28: форма договора (определяет шаблон при скачивании)
   contract_form: null as string | null,
+  // Методичка, приклеиваемая к договору (large / small / none) — отдельно от формы
+  methodology: null as string | null,
   // Phase 28: contract-specific поля (условия конкретного договора)
   acceptance_term_days: null as number | null,
   penalty_rate: null as number | null,
@@ -4775,6 +4791,8 @@ function serializeFormForAutosave() {
     ...(f.assigned_user_id ? { assigned_user_id: f.assigned_user_id } : {}),
     // Phase 28: форма договора
     contract_form: f.contract_form || null,
+    // Методичка, приклеиваемая к договору — отдельно от формы
+    methodology: f.methodology || null,
     // Phase 28: contract-specific поля
     acceptance_term_days: f.acceptance_term_days ?? null,
     penalty_rate: f.penalty_rate ?? null,
@@ -6582,22 +6600,22 @@ const CONTRACT_TYPES = [
   { value: 'framework_with_amount', title: 'Рамочный с суммой' },
 ]
 
-// Phase 28: варианты формы договора — определяют какой шаблон используется при скачивании
+// Phase 28: варианты формы договора — определяют какой шаблон используется при скачивании.
+// Семь форм (большая/малая отчётность объединены в «Услуги» — различие теперь
+// не в тексте договора, а в приклеиваемой методичке, см. methodologyOptions ниже).
 const contractFormOptions = [
-  { value: 'services_large',     title: 'Услуги — большая отчётность' },
-  { value: 'services_small',     title: 'Услуги — малая отчётность' },
+  { value: 'services',           title: 'Услуги' },
   { value: 'services_food',      title: 'Услуги — питание' },
   { value: 'goods_single',       title: 'Поставка — разовый договор' },
-  { value: 'gph_individual',     title: 'ГПХ с физ.лицом (без РИД)' },
-  { value: 'gph_individual_rid', title: 'ГПХ с физ.лицом (+РИД)' },
+  { value: 'gph_individual',     title: 'ГПХ с физ.лицом' },
+  { value: 'gph_individual_rid', title: 'ГПХ с физ.лицом, передача прав на РИД' },
   { value: 'repair_vehicle',     title: 'Договор на ремонт ТС' },
   { value: 'repair_framework',   title: 'Рамочный договор на ремонт ТС' },
 ]
 
 // Phase 28: маппинг contract_form → doc_type для кнопки «Договор»
 const contractDocTypeMap: Record<string, string> = {
-  services_large:     'contract_services_large',
-  services_small:     'contract_services_small',
+  services:           'contract_services',
   services_food:      'contract_services_food',
   goods_single:       'contract_goods_single',
   gph_individual:     'contract_gph_individual',
@@ -6605,6 +6623,14 @@ const contractDocTypeMap: Record<string, string> = {
   repair_vehicle:     'contract_repair_vehicle',
   repair_framework:   'contract_repair_framework',
 }
+
+// Методичка, приклеиваемая к договору при генерации (docxcompose) — выбирается
+// ОТДЕЛЬНО от формы договора, владелец запретил автовыбор. 'none' — не приклеивать.
+const methodologyOptions = [
+  { value: 'large', title: 'Большие' },
+  { value: 'small', title: 'Малые' },
+  { value: 'none',  title: 'Без методички' },
+]
 
 // Форма конкурентной процедуры релевантна только при purchase_method === 'competitive' —
 // при смене способа закупки на другой сбрасываем, чтобы в базе не оставалась неактуальная форма
@@ -6616,7 +6642,7 @@ watch(() => form.purchase_method, (newMethod) => {
 watch(() => form.item_type, (newType) => {
   if (form.contract_form) return  // не перезаписываем если уже выбрано
   if (newType === 'услуга') {
-    form.contract_form = 'services_small'
+    form.contract_form = 'services'
   } else if (newType === 'товар' || newType === 'mixed') {
     form.contract_form = 'goods_single'
   }
@@ -7609,6 +7635,8 @@ const loadPurchase = async () => {
     vat_mode: data.vat_mode || 'uniform',
     // Phase 28: форма договора
     contract_form: data.contract_form || null,
+    // Методичка, приклеиваемая к договору — отдельно от формы
+    methodology: data.methodology || null,
     // Phase 28: contract-specific поля
     acceptance_term_days: data.acceptance_term_days ?? null,
     penalty_rate: data.penalty_rate != null ? Number(data.penalty_rate) : null,

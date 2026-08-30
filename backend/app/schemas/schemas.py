@@ -766,6 +766,8 @@ class PurchaseCreate(BaseModel):
     order_date: Optional[date] = None
     # Phase 28: форма договора для выбора шаблона при генерации
     contract_form: Optional[str] = None
+    # Методичка (большая/малая/без), приклеивается к договору отдельно от формы
+    methodology: Optional[str] = None
     # Phase 28: contract-specific поля (условия конкретного договора)
     acceptance_term_days: Optional[int] = None
     penalty_rate: Optional[Decimal] = None
@@ -903,6 +905,8 @@ class PurchaseUpdate(BaseModel):
     order_date: Optional[date] = None
     # Phase 28: форма договора для выбора шаблона при генерации
     contract_form: Optional[str] = None
+    # Методичка (большая/малая/без), приклеивается к договору отдельно от формы
+    methodology: Optional[str] = None
     # Phase 28: contract-specific поля (условия конкретного договора)
     acceptance_term_days: Optional[int] = None
     penalty_rate: Optional[Decimal] = None

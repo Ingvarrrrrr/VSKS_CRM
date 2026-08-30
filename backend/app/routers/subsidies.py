@@ -1017,14 +1017,19 @@ SUPPORTED_DOC_TYPES = {
     "approval_sheet":           "Лист согласования",
     "order_purchase":           "Приказ на закупку",
     # Phase 28: typed contract forms per-subsidy
-    "contract_services_large":      "Договор услуг (большая отчётность)",
-    "contract_services_small":      "Договор услуг (малая отчётность)",
+    # Форма «услуги» объединена в один шаблон; большая/малая отчётность теперь
+    # выбирается отдельной методичкой (methodology_large/small), приклеиваемой
+    # к любому из семи договоров, а не отдельным шаблоном текста договора.
+    "contract_services":             "Договор услуг",
     "contract_services_food":       "Договор услуг (питание)",
     "contract_goods_single":        "Договор поставки (разовый)",
     "contract_gph_individual":      "Договор ГПХ с физ.лицом (без РИД)",
     "contract_gph_individual_rid":  "Договор ГПХ с физ.лицом (+РИД)",
     "contract_repair_vehicle":      "Договор на ремонт ТС",
     "contract_repair_framework":    "Рамочный договор на ремонт ТС",
+    # Методические рекомендации — приклеиваются к договору по Purchase.methodology
+    "methodology_large":            "Методические рекомендации — большие",
+    "methodology_small":            "Методические рекомендации — малые",
     # Fabrikant ЭТП package
     "fabrikant_instruction":        "Инструкция по заполнению заявки (Фабрикант)",
     "fabrikant_application_form":   "Форма заявки (Фабрикант)",

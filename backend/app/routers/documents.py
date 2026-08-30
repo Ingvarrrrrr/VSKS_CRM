@@ -315,9 +315,17 @@ DOC_TYPES = {
     "approval_sheet":        ("approval_sheet.docx",        "Лист_согласования"),
     "order_purchase":        ("order_purchase.docx",        "Приказ_о_закупке"),
     # Phase 28: typed contract forms per-subsidy
-    "contract_services_large":      ("contract_services_large.docx",      "Договор_услуги_крупный"),
-    "contract_services_small":      ("contract_services_small.docx",      "Договор_услуги_малый"),
+    # Форма «услуги» объединена в один файл (contract_services.docx) — большая/малая
+    # отчётность теперь не отдельные шаблоны договора, а отдельная методичка
+    # (methodology_large / methodology_small), приклеиваемая к готовому договору.
+    "contract_services":             ("contract_services.docx",            "Договор_услуг"),
+    # Алиасы на новый объединённый файл — НЕ удалять: у уже существующих закупок
+    # doc_type мог быть сохранён/запрошен под старым именем, без алиаса — 404.
+    "contract_services_large":      ("contract_services.docx",      "Договор_услуги_крупный"),
+    "contract_services_small":      ("contract_services.docx",      "Договор_услуги_малый"),
     "contract_services_food":       ("contract_services_food.docx",       "Договор_услуги_питание"),
+    "methodology_large":             ("methodology_large.docx",            "Методические_рекомендации_большие"),
+    "methodology_small":             ("methodology_small.docx",            "Методические_рекомендации_малые"),
     "contract_goods_single":        ("contract_goods_single.docx",        "Договор_поставка_единственный"),
     "contract_gph_individual":      ("contract_gph_individual.docx",      "Договор_ГПХ_физлицо"),
     "contract_gph_individual_rid":  ("contract_gph_individual_rid.docx",  "Договор_ГПХ_физлицо_РИД"),
@@ -345,6 +353,9 @@ DOC_TYPES = {
 # contract_tz.docx (см. DOC_TYPE_FALLBACK_FILES), но теперь ведут себя
 # по-разному — это ожидаемо и намеренно.
 CONTRACT_FAMILY_DOC_TYPES = {
+    "contract_services",
+    # Алиасы — держим в семье тоже, чтобы гейт «Плановые не равно Договор»
+    # срабатывал одинаково, если старый doc_type всё же запрошен.
     "contract_services_large",
     "contract_services_small",
     "contract_services_food",
@@ -357,6 +368,23 @@ CONTRACT_FAMILY_DOC_TYPES = {
     "contract_tz",
     "tech_spec_contract",
     "approval_sheet",
+}
+
+# Семь типовых форм договора (+ 2 legacy-алиаса на contract_services) — только
+# к НИМ приклеивается методичка (Purchase.methodology), см. generate_document
+# ниже. 'contract' (старый универсальный шаблон), 'approval_sheet',
+# 'contract_tz', 'tech_spec_contract' — не подписываемый контрагентом текст
+# договора, методичка к ним не приклеивается.
+CONTRACT_TYPED_FORM_DOC_TYPES = {
+    "contract_services",
+    "contract_services_large",
+    "contract_services_small",
+    "contract_services_food",
+    "contract_goods_single",
+    "contract_gph_individual",
+    "contract_gph_individual_rid",
+    "contract_repair_vehicle",
+    "contract_repair_framework",
 }
 
 # Phase 19.05: fallback map — if a dedicated template file is missing,
@@ -380,6 +408,42 @@ DOC_TYPE_FALLBACK_FILES = {
     "contract_repair_vehicle":     "contract.docx",
     "contract_repair_framework":   "contract.docx",
 }
+
+
+def _resolve_doc_template_path(doc_type: str, subsidy_id: Optional[int]) -> tuple[str, str, str]:
+    """Резолвит путь к файлу шаблона doc_type с единым приоритетом:
+
+      1) субсидийный override (uploads/templates/subsidies/<id>/<doc_type>.docx),
+      2) глобальный файл backend/templates/<doc_type>.docx,
+      3) DOC_TYPE_FALLBACK_FILES[doc_type], если глобальный файл отсутствует.
+
+    Используется и для основного документа, и для приклеиваемой методички —
+    единственное место с этой логикой, чтобы приоритет «сначала субсидия,
+    иначе глобальный» не разъезжался между местами вызова.
+
+    Возвращает (template_path, template_file, filename_base). template_path
+    может не существовать — вызывающий код обязан проверить os.path.exists.
+    """
+    template_file, filename_base = DOC_TYPES[doc_type]
+    template_path = os.path.join(TEMPLATES_DIR, template_file)
+
+    if not os.path.exists(template_path):
+        fallback = DOC_TYPE_FALLBACK_FILES.get(doc_type)
+        if fallback:
+            fallback_path = os.path.join(TEMPLATES_DIR, fallback)
+            if os.path.exists(fallback_path):
+                template_path = fallback_path
+                template_file = fallback
+
+    if subsidy_id:
+        subsidy_template = os.path.join(
+            SUBSIDY_TEMPLATES_DIR, "subsidies", str(subsidy_id), f"{doc_type}.docx"
+        )
+        if os.path.exists(subsidy_template):
+            template_path = subsidy_template
+
+    return template_path, template_file, filename_base
+
 
 # Fields required to generate a FADM contract; maps field_path → label
 _CONTRACT_REQUIRED_FIELDS = {
@@ -1254,22 +1318,11 @@ async def generate_document(
     if doc_type not in DOC_TYPES:
         raise HTTPException(400, f"Неизвестный тип документа: {doc_type}. Доступны: {', '.join(DOC_TYPES)}")
 
-    template_file, filename_base = DOC_TYPES[doc_type]
-    template_path = os.path.join(TEMPLATES_DIR, template_file)
-
-    # For contract documents: check subsidy-specific template first
-    # (loaded after purchase is fetched below, but we need subsidy_id from the purchase)
-    # We'll resolve the path after loading the purchase — placeholder here
-
-    # Phase 19.05: for new split doc_types, fall back to legacy template file
-    # if the dedicated one hasn't been uploaded yet.
-    if not os.path.exists(template_path):
-        fallback = DOC_TYPE_FALLBACK_FILES.get(doc_type)
-        if fallback:
-            fallback_path = os.path.join(TEMPLATES_DIR, fallback)
-            if os.path.exists(fallback_path):
-                template_path = fallback_path
-                template_file = fallback
+    # Резолв шаблона: субсидийный override нужен по subsidy_id закупки, которая
+    # ещё не загружена — на этом шаге резолвим без него (subsidy_id=None), только
+    # чтобы рано отбить полностью отсутствующий шаблон (глобальный + fallback).
+    # Полный резолв (с субсидийным override) повторяется ниже, после загрузки p.
+    template_path, template_file, filename_base = _resolve_doc_template_path(doc_type, None)
     if not os.path.exists(template_path):
         raise HTTPException(
             404,
@@ -1303,10 +1356,7 @@ async def generate_document(
     _require_purchase_method_for_doc(p, doc_type)
 
     # Override template path with subsidy-specific template if available
-    if p.subsidy_id:
-        subsidy_template = os.path.join(SUBSIDY_TEMPLATES_DIR, "subsidies", str(p.subsidy_id), f"{doc_type}.docx")
-        if os.path.exists(subsidy_template):
-            template_path = subsidy_template
+    template_path, template_file, filename_base = _resolve_doc_template_path(doc_type, p.subsidy_id)
 
     subsidy_r = await db.execute(select(Subsidy).where(Subsidy.id == p.subsidy_id))
     subsidy = subsidy_r.scalar_one_or_none()
@@ -2584,6 +2634,66 @@ async def generate_document(
             # Don't fail the whole request if ТЗ append fails — just log
             import traceback
             print(f"ТЗ append error: {tz_err}\n{traceback.format_exc()}")
+
+    # ── Methodology attach: приклеиваем методичку к готовому договору ──────
+    # Владелец: методичка (большая/малая) — отдельный документ, физически
+    # отсутствующий во всех семи шаблонах договора (см. test_contract_templates.py,
+    # _METHODOLOGY_MARKERS). Она приклеивается ПОСЛЕ рендера договора через
+    # docxcompose.Composer — итоговый файл содержит и договор, и методичку.
+    if doc_type in CONTRACT_TYPED_FORM_DOC_TYPES:
+        methodology = getattr(p, "methodology", None)
+        if methodology in ("large", "small"):
+            methodology_doc_type = f"methodology_{methodology}"
+            meth_label = "большие" if methodology == "large" else "малые"
+            meth_path, _meth_file, _meth_base = _resolve_doc_template_path(
+                methodology_doc_type, p.subsidy_id
+            )
+            if not os.path.exists(meth_path):
+                raise HTTPException(
+                    422,
+                    detail={
+                        "code": "METHODOLOGY_TEMPLATE_MISSING",
+                        "message": f"Не найден файл методических рекомендаций ({meth_label})",
+                        "hint": (
+                            f"В закупке выбрана методичка «{meth_label}», но соответствующий "
+                            f"файл шаблона ({DOC_TYPES[methodology_doc_type][0]}) не загружен "
+                            "ни на субсидию, ни глобально. Загрузите файл в «Шаблоны документов» "
+                            "субсидии или положите его в backend/templates/, либо снимите выбор "
+                            "методички в закупке."
+                        ),
+                        "doc_type": doc_type,
+                        "methodology": methodology,
+                    },
+                )
+            try:
+                from docxcompose.composer import Composer as _Composer
+                from docx import Document as _ComposeDoc
+
+                buf.seek(0)
+                _master = _ComposeDoc(buf)
+                _composer = _Composer(_master)
+                _composer.append(_ComposeDoc(meth_path))
+                _composed_buf = BytesIO()
+                _composer.save(_composed_buf)
+                _composed_buf.seek(0)
+                buf = _composed_buf
+            except HTTPException:
+                raise
+            except Exception as meth_err:
+                logger.exception(
+                    "Methodology attach error for purchase %s, doc_type=%s, methodology=%s",
+                    pid, doc_type, methodology,
+                )
+                raise HTTPException(
+                    422,
+                    detail={
+                        "code": "METHODOLOGY_ATTACH_FAILED",
+                        "message": "Не удалось приклеить методические рекомендации к договору",
+                        "hint": f"{type(meth_err).__name__}: {meth_err}",
+                        "doc_type": doc_type,
+                        "methodology": methodology,
+                    },
+                )
 
     # ── Phase 19.06: merge with secondary doc ──────────────────────────────
     # When ?merge=<doc_type> is passed, render the secondary template against

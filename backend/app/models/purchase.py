@@ -154,9 +154,16 @@ class Purchase(Base):
     recompute_snapshot_hash = Column(String(64), nullable=True)
 
     # Phase 28: форма договора для выбора нужного шаблона при генерации документа.
-    # Значения: 'services_large' | 'services_small' | 'services_food' | 'goods_single'
-    # | 'gph_individual' | 'gph_individual_rid' | 'repair_vehicle' | 'repair_framework'
+    # Значения: 'services' | 'services_food' | 'goods_single' | 'gph_individual'
+    # | 'gph_individual_rid' | 'repair_vehicle' | 'repair_framework'
+    # ('services_large' / 'services_small' объединены в 'services' —
+    # см. миграцию q4r5s6t7u8v9_purchase_methodology.py)
     contract_form = Column(String(50), nullable=True)
+
+    # Методичка, приклеиваемая к договору при генерации (docxcompose) — раньше
+    # определяла ТЕКСТ договора (services_large/services_small), теперь
+    # отдельный документ поверх любой из семи форм. 'large' | 'small' | 'none' | NULL
+    methodology = Column(String(10), nullable=True)
 
     # Phase 29 D-18: связь с ТС (nullable FK, ON DELETE SET NULL)
     vehicle_id = Column(Integer, ForeignKey("vehicles.id", ondelete="SET NULL"), nullable=True, index=True)

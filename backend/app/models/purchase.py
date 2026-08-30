@@ -39,7 +39,10 @@ class Purchase(Base):
     contract_number = Column(String(100))
     contract_date = Column(Date)
     registry_number = Column(String(100))
-    purchase_method = Column(String(50))  # 'single' | 'competitive'
+    purchase_method = Column(String(50))  # 'single' | 'competitive' | 'advance'
+    # Уточнение к purchase_method == 'competitive' (сама форма конкурентной
+    # процедуры не отдельный способ закупки): 'price_request' | 'auction' | 'tender'
+    competitive_form = Column(String(30), nullable=True)
     nmck = Column(Numeric(15, 2))
     contract_price = Column(Numeric(15, 2))
     economy = Column(Numeric(15, 2))

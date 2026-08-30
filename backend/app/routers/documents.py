@@ -413,6 +413,64 @@ _PURCHASE_METHOD_LABELS = {
     "advance": "Авансовый отчёт",
 }
 
+# Уточняющая форма конкурентной процедуры (Purchase.competitive_form).
+# Владелец: «"Запрос цен" — это вариант конкурсной процедуры, так же как и
+# Аукцион — он же редукцион, а также Конкурс» — НЕ отдельный способ закупки,
+# применимо только когда purchase_method == 'competitive'.
+_COMPETITIVE_FORM_LABELS = {
+    "price_request": "Запрос цен",
+    "auction": "Аукцион (редукцион)",
+    "tender": "Конкурс",
+}
+
+
+def _purchase_method_label(p) -> str:
+    """Подпись способа закупки для п.2 приказа/листа согласования.
+
+    Если способ — конкурентная процедура и заполнена уточняющая форма
+    (competitive_form), подписью становится конкретная форма («Запрос цен» /
+    «Аукцион (редукцион)» / «Конкурс»), а не общее «Конкурсная процедура».
+    Форма не выбрана — старое поведение (общая подпись способа).
+    """
+    method = p.purchase_method or ""
+    if method == "competitive":
+        form = getattr(p, "competitive_form", None)
+        form_label = _COMPETITIVE_FORM_LABELS.get(form or "")
+        if form_label:
+            return form_label
+    return _PURCHASE_METHOD_LABELS.get(method, method)
+
+
+# Приказ о закупке и лист согласования визируют способ закупки как отдельный
+# распорядительный пункт — без него документ юридически бессмысленный
+# («2. Определить способ закупки: .»). Владелец подтвердил для приказа
+# уверенно, для листа согласования — «наверное тоже надо» (менее строго).
+PURCHASE_METHOD_REQUIRED_DOC_TYPES = {"order_purchase", "approval_sheet"}
+
+
+def _require_purchase_method_for_doc(p, doc_type: str) -> None:
+    """422, если запрошен приказ о закупке/лист согласования, а способ закупки не выбран."""
+    if doc_type not in PURCHASE_METHOD_REQUIRED_DOC_TYPES:
+        return
+    if p.purchase_method:
+        return
+    raise HTTPException(
+        422,
+        detail={
+            "code": "PURCHASE_METHOD_REQUIRED",
+            "message": "Не выбран способ закупки",
+            "hint": (
+                "Способ закупки — обязательный пункт приказа о закупке и листа "
+                "согласования: без него документ считается недействительным. "
+                "Откройте карточку закупки и заполните поле «Способ закупки». "
+                "Если это конкурентная процедура, укажите ещё и её форму — "
+                "запрос цен, аукцион или конкурс."
+            ),
+            "missing_fields": ["purchase_method"],
+            "doc_type": doc_type,
+        },
+    )
+
 
 def _fmt_date(d) -> str:
     if not d:
@@ -1242,6 +1300,7 @@ async def generate_document(
     # никакого молчаливого отката на plan/НМЦК. Гейт стоит максимально рано,
     # до тяжёлых запросов ниже.
     _require_contract_items_for_doc(p, doc_type)
+    _require_purchase_method_for_doc(p, doc_type)
 
     # Override template path with subsidy-specific template if available
     if p.subsidy_id:
@@ -1736,7 +1795,10 @@ async def generate_document(
         "purchase_method": _PURCHASE_METHOD_LABELS.get(p.purchase_method or "", p.purchase_method or ""),
         # order_purchase (приказ на закупку), п.2: способ закупки прописью.
         # Неизвестный код способа закупки — подставляем сам код, не пустую строку.
-        "purchase_method_label": _PURCHASE_METHOD_LABELS.get(p.purchase_method or "", p.purchase_method or ""),
+        # Конкурентная процедура с заполненной формой (competitive_form) —
+        # подпись конкретной формы («Запрос цен» / «Аукцион (редукцион)» /
+        # «Конкурс»), не общее «Конкурсная процедура» (см. _purchase_method_label).
+        "purchase_method_label": _purchase_method_label(p),
         "subject": p.subject or "",
         "status": p.status or "",
         "purchase_basis": _BASIS_LABELS.get(p.purchase_basis or "", ""),

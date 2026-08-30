@@ -2087,7 +2087,7 @@ async def _recalc_contract_price_from_contract_items(purchase_id: int, db: Async
 # Не пересчитывает items/НМЦК/contract_price (этим занимается PUT при явном Save).
 PATCHABLE_FIELDS = {
     "subject", "description", "contractor_id", "feo_category_id",
-    "purchase_method", "purchase_contract_type",
+    "purchase_method", "competitive_form", "purchase_contract_type",
     "contract_number", "contract_date", "contract_price", "contract_end_date",
     "nmck", "planned_total_price",
     "delivery_date", "delivery_location", "delivery_address",

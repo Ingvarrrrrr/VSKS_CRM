@@ -184,8 +184,8 @@ def test_contract_doc_without_contract_items_raises_422():
     detail = exc_info.value.detail
     assert detail["code"] == "CONTRACT_ITEMS_REQUIRED"
     assert "не заполнены" in detail["message"]
-    assert "не будет" in detail["message"] or "не сформирован" in detail["message"]
-    assert "Скопировать из заявки" in detail["message"]
+    assert "нечего" in detail["hint"]  # объясняет, почему документ не сформировать
+    assert "Скопировать из заявки" in detail["hint"]
 
 
 def test_plan_doc_without_contract_items_does_not_raise():

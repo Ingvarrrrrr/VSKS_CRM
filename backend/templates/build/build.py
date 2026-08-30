@@ -18,6 +18,7 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 from backend.templates.build.sources import SOURCES
 from backend.templates.build import docxedit
+from backend.templates.build import rules_order
 from backend.templates.build.rules_common import (
     RULES as COMMON_RULES,
     apply_common_rules,
@@ -121,6 +122,64 @@ def _build_methodology(
 
     n_paras = _count_paras(root)
     print(f"  {doc_type}: абзацев={n_paras} (методичка, без normalize/правил)")
+
+    return out_path
+
+
+_ORDER_DOC_TYPES = ("order_purchase",)
+
+
+def _build_order_purchase(
+    doc_type: str,
+    zip_bytes: dict,
+    root,
+    out_dir: pathlib.Path,
+) -> pathlib.Path:
+    """
+    order_purchase (Приказ на закупку ВСКС) — печатается по ПЛАНОВЫМ данным
+    (owner: НЕ входит в CONTRACT_FAMILY_DOC_TYPES). Разметка задана владельцем
+    дословно, правила — в rules_order.py. Только normalize() + rules_order,
+    без R1-R6/T4 (это правила договорных шаблонов, к приказу не относятся).
+    """
+    docxedit.normalize(root)
+
+    counts: dict[str, int] = {}
+
+    # Многоабзацная ячейка шапки (полное наименование ВСКС) — до RULES,
+    # т.к. удаляет второй абзац и меняет список абзацев документа.
+    rules_order.apply_order_header_customer_name(root, counts)
+
+    ns = {"w": W}
+    for p in root.findall(".//w:p", ns):
+        rules_order.apply_order_rules(p, counts)
+
+    n_paras = _count_paras(root)
+    n_blanks = _count_blanks(root)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"{doc_type}.docx"
+    docxedit.save(zip_bytes, root, str(out_path))
+
+    all_rule_ids = ["O00_customer_full_name_header_cell"] + [
+        r[0] for r in rules_order.RULES
+    ]
+    hit_rows = []
+    zero_rows = []
+    for rid in all_rule_ids:
+        n = counts.get(rid, 0)
+        if n > 0:
+            hit_rows.append(f"    {rid}: {n}")
+        else:
+            zero_rows.append(f"    WARN 0-срабатываний: {rid}")
+
+    print(
+        f"  {doc_type}: абзацев={n_paras}, "
+        f"бланков(___) после правил={n_blanks}"
+    )
+    for row in hit_rows:
+        print(row)
+    for row in zero_rows:
+        print(row)
 
     return out_path
 
@@ -254,6 +313,9 @@ def build_one(doc_type: str, out_dir: pathlib.Path) -> pathlib.Path:
 
     if doc_type in _METHODOLOGY_DOC_TYPES:
         return _build_methodology(doc_type, zip_bytes, root, out_dir)
+
+    if doc_type in _ORDER_DOC_TYPES:
+        return _build_order_purchase(doc_type, zip_bytes, root, out_dir)
 
     n_comments = _count_source_comments(zip_bytes)
 

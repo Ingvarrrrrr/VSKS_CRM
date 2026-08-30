@@ -45,3 +45,7 @@ SOURCES["methodology_small"] = SOURCES["contract_services_small"]
 # больше нет (решение владельца от отката Этапа 1 слияния форм) — контент
 # берётся из того же образца, что и у contract_services_large.
 SOURCES["contract_services"] = SOURCES["contract_services_large"]
+
+# Приказ на закупку (ВСКС) — печатается по ПЛАНОВЫМ данным (owner: НЕ входит
+# в CONTRACT_FAMILY_DOC_TYPES, см. rules_order.py / build.py _build_order_purchase).
+SOURCES["order_purchase"] = "типовые документы/Приказ на закупку (ВСКС) образец.docx"

@@ -403,6 +403,16 @@ _BASIS_LABELS = {
     "service_note": "служебная записка",
 }
 
+# Способ закупки (Purchase.purchase_method) → человекочитаемая подпись.
+# Значения см. frontend/src/views/CreateOrderView.vue (v-select purchase_method)
+# и ContractsView.vue (purchaseMethodItems): в системе только 3 кода.
+# Неизвестный код — не пустая строка, а сам код (см. order_purchase, п.2).
+_PURCHASE_METHOD_LABELS = {
+    "single": "Единственный поставщик",
+    "competitive": "Конкурсная процедура",
+    "advance": "Авансовый отчёт",
+}
+
 
 def _fmt_date(d) -> str:
     if not d:
@@ -1723,7 +1733,10 @@ async def generate_document(
         # Закупка
         "purchase_number": p.purchase_number or "",
         "registry_number": p.registry_number or "",
-        "purchase_method": {"single": "Единственный поставщик", "competitive": "Конкурсная процедура", "advance": "Авансовый отчёт"}.get(p.purchase_method or "", p.purchase_method or ""),
+        "purchase_method": _PURCHASE_METHOD_LABELS.get(p.purchase_method or "", p.purchase_method or ""),
+        # order_purchase (приказ на закупку), п.2: способ закупки прописью.
+        # Неизвестный код способа закупки — подставляем сам код, не пустую строку.
+        "purchase_method_label": _PURCHASE_METHOD_LABELS.get(p.purchase_method or "", p.purchase_method or ""),
         "subject": p.subject or "",
         "status": p.status or "",
         "purchase_basis": _BASIS_LABELS.get(p.purchase_basis or "", ""),
@@ -3315,6 +3328,7 @@ TEMPLATE_VARIABLES = [
     ("{{subject}}", "Предмет закупки", "{{subject}}", "Оказание услуг связи"),
     ("{{status}}", "Статус", "{{status}}", "contracted"),
     ("{{purchase_method}}", "Способ закупки", "{{purchase_method}}", "Единственный поставщик"),
+    ("{{purchase_method_label}}", "Способ закупки (для order_purchase, п.2)", "{{purchase_method_label}}", "Единственный поставщик"),
     ("{{purchase_basis}}", "Основание", "{{purchase_basis}}", "план закупок"),
     ("{{contract_type}}", "Тип договора", "{{contract_type}}", "Единственный поставщик"),
     ("{{responsible_person}}", "ФИО ответственного исполнителя", "{{responsible_person}}", "Иванов Иван Иванович"),

@@ -1,15 +1,22 @@
 # -*- coding: utf-8 -*-
-"""Phase 28 T5 + Этап 1 слияния форм договоров: приёмочные тесты шаблонов.
+"""Phase 28 T5: приёмочные тесты шаблонов договоров.
 
-80 кейсов (8 шаблонов × 10 комбо флагов).
+42 кейса (7 шаблонов × 6 комбо флагов) + отдельные целевые тесты.
 Offline, синхронные, без БД и сети.
 
-Этап 1 слияния форм договоров (ещё не выполнено на уровне шаблонов) добавляет
-флаги отчётности/питания/РИД (large_reporting, food_service, rid_transfer) и
-целевые проверки на будущие слитые doc_type (contract_services,
-contract_gph_individual с флагом rid_transfer). До выполнения слияния эти
-проверки ДОЛЖНЫ падать — красный результат здесь ожидаем и является целью
-данного этапа (тест описывает целевое поведение заранее).
+Владелец отменил слияние форм под флагами (Этап 1: large_reporting,
+food_service, rid_transfer) — итоговый состав форм СЕМЬ отдельных файлов:
+contract_goods_single, contract_services, contract_services_food,
+contract_gph_individual, contract_gph_individual_rid, contract_repair_vehicle,
+contract_repair_framework. Флагами внутри файлов остаются только простые
+реквизиты сделки (НДС/без НДС, ИП/ЮЛ, третьи лица, ретро, доставка/самовывоз,
+этапность — правила R1–R6).
+
+Методические рекомендации вынесены в отдельные документы (methodology_large,
+methodology_small) и физически отсутствуют во всех семи договорных шаблонах.
+Абзацы про питание (contract_services_food) и про передачу прав на РИД
+(contract_gph_individual_rid) присутствуют в соответствующих файлах
+БЕЗУСЛОВНО — никакой Jinja-условности по отменённым флагам.
 
 Логика перенесена из .tmp_p28_strict.py.
 """
@@ -29,10 +36,9 @@ _THIS_DIR = os.path.dirname(__file__)
 _TEMPLATES_DIR = os.path.normpath(os.path.join(_THIS_DIR, "..", "templates"))
 
 DOC_TYPES = [
-    "contract_services_large",
-    "contract_services_small",
-    "contract_services_food",
     "contract_goods_single",
+    "contract_services",
+    "contract_services_food",
     "contract_gph_individual",
     "contract_gph_individual_rid",
     "contract_repair_vehicle",
@@ -46,10 +52,6 @@ COMBOS = [
     ("без3лиц",   {"third_party_involved": False}),
     ("ретро",     {"is_retroactive": True}),
     ("самовывоз", {"delivery_by_supplier": False, "has_stages": False}),
-    ("отч.малая",   {"large_reporting": False}),
-    ("отч.большая", {"large_reporting": True}),
-    ("питание",     {"food_service": True}),
-    ("ГПХ+РИД",     {"rid_transfer": True}),
 ]
 
 # ---------------------------------------------------------------------------
@@ -172,9 +174,6 @@ def _make_ctx(**override):
         has_stages=True,
         delivery_by_supplier=True,
         commission_members=[],
-        large_reporting=False,
-        food_service=False,
-        rid_transfer=False,
     )
     ctx.update(override)
     return ctx
@@ -220,15 +219,8 @@ STATIC_FORBIDDEN = {
     "ВСКС-полное": "Всероссийский студенческий корпус спасателей",
 }
 
-_SERVICES = frozenset(
-    ("contract_services_large", "contract_services_small", "contract_services_food")
-)
+_SERVICES = frozenset(("contract_services", "contract_services_food"))
 _GPH = frozenset(("contract_gph_individual", "contract_gph_individual_rid"))
-
-# Область действия правил слияния Этапа 1 — работают и на текущих отдельных
-# шаблонах, и на будущем слитом doc_type.
-_SERVICES_MERGED = frozenset(("contract_services", "contract_services_large"))
-_FOOD_SCOPE = frozenset(("contract_services", "contract_services_food"))
 
 _R5_STAGE_MARKERS = [
     "В случае наличия этапов оказания Услуг",
@@ -236,21 +228,28 @@ _R5_STAGE_MARKERS = [
     "в т.ч. этапа оказания Услуг",
 ]
 
-# Маркеры полной версии «Методических рекомендаций» (сейчас — только
-# contract_services_large). Эмпирически проверенные, не выдумывать новые.
-_FULL_METHODOLOGY_MARKERS = [
+# Маркеры «Методических рекомендаций» — методичка вынесена в отдельные
+# документы (methodology_large/methodology_small) и НЕ должна физически
+# присутствовать ни в одном из семи договорных шаблонов. Эмпирически
+# проверенные, не выдумывать новые.
+_METHODOLOGY_MARKERS = [
+    "МЕТОДИЧЕСКИЕ РЕКОМЕНДАЦИИ",
     "к методическим рекомендациям по",
     "СОДЕРЖАТЕЛЬНЫЙ ОТЧЕТ",
     "Приложение №6",
+    "Требования к фотографиям",
 ]
 
-# Маркеры формы «питание» (сейчас — только contract_services_food).
+# Маркеры формы «питание» — присутствуют в contract_services_food БЕЗУСЛОВНО
+# (никакого флага food_service — он отменён вместе со слиянием).
 _FOOD_MARKERS = [
     "продукты питания",
     "медицинск",
 ]
 
-# Маркеры передачи прав на РИД (сейчас — только contract_gph_individual_rid).
+# Маркеры передачи прав на РИД — присутствуют в contract_gph_individual_rid
+# БЕЗУСЛОВНО и отсутствуют в contract_gph_individual (флаг rid_transfer
+# отменён вместе со слиянием).
 _RID_MARKERS = [
     "1229",
     "интеллектуальной собственности",
@@ -367,32 +366,26 @@ def _branch_defects(doc_name: str, ctx: dict, txt: str) -> list[str]:
             for marker in _R5_STAGE_MARKERS:
                 must_have(marker, "R5-с-этапами")
 
-    # Этап 1 слияния — отчётность (полная/малая методичка)
-    if doc_name in _SERVICES_MERGED:
-        if ctx.get("large_reporting"):
-            for marker in _FULL_METHODOLOGY_MARKERS:
-                must_have(marker, "T1-отч.большая")
-        else:
-            for marker in _FULL_METHODOLOGY_MARKERS:
-                must_not(marker, "T1-отч.малая")
+    # Методичка вынесена в отдельные документы — ни в одном из семи
+    # договорных шаблонов её маркеры не должны появляться ни при каком ctx.
+    for marker in _METHODOLOGY_MARKERS:
+        must_not(marker, "методичка-отсутствует")
 
-    # Этап 1 слияния — питание
-    if doc_name in _FOOD_SCOPE:
-        if ctx.get("food_service"):
-            for marker in _FOOD_MARKERS:
-                must_have(marker, "T1-питание-вкл")
-        else:
-            for marker in _FOOD_MARKERS:
-                must_not(marker, "T1-питание-выкл")
+    # Питание — абзацы в contract_services_food присутствуют БЕЗУСЛОВНО
+    # (никакого флага food_service).
+    if doc_name == "contract_services_food":
+        for marker in _FOOD_MARKERS:
+            must_have(marker, "питание-безусловно")
 
-    # Этап 1 слияния — РИД (ГПХ)
-    if doc_name in _GPH:
-        if ctx.get("rid_transfer"):
-            for marker in _RID_MARKERS:
-                must_have(marker, "T1-РИД-вкл")
-        else:
-            for marker in _RID_MARKERS:
-                must_not(marker, "T1-РИД-выкл")
+    # РИД — присутствует БЕЗУСЛОВНО в contract_gph_individual_rid,
+    # отсутствует вовсе в contract_gph_individual (никакого флага
+    # rid_transfer — формы разные файлы, не варианты одного).
+    if doc_name == "contract_gph_individual_rid":
+        for marker in _RID_MARKERS:
+            must_have(marker, "РИД-безусловно")
+    elif doc_name == "contract_gph_individual":
+        for marker in _RID_MARKERS:
+            must_not(marker, "РИД-отсутствует")
 
     # Нерешённые альтернативы «/»
     for alt in _UNRESOLVED_ALT:
@@ -446,56 +439,104 @@ def test_contract_template(doc_type: str, combo_label: str, combo_override: dict
 
 
 # ---------------------------------------------------------------------------
-# Этап 1 слияния форм договоров — отдельные целевые тесты
+# Откат Этапа 1 слияния форм договоров — отдельные целевые тесты.
+# Проверяют «сырой» docx (без рендера docxtpl), чтобы доказать, что
+# отменённые конструкции физически отсутствуют в шаблоне, а не просто
+# «не сработали» при конкретном наборе значений контекста.
 # ---------------------------------------------------------------------------
 
-def _services_template_path() -> str:
-    """Путь к шаблону услуг: слитый contract_services.docx, если уже есть,
-    иначе текущий contract_services_large.docx (слияние ещё не выполнено)."""
-    merged = os.path.join(_TEMPLATES_DIR, "contract_services.docx")
-    if os.path.isfile(merged):
-        return merged
-    return os.path.join(_TEMPLATES_DIR, "contract_services_large.docx")
+def _raw_docx_text(template_path: str) -> str:
+    """Текст шаблона как есть, без рендера docxtpl (Jinja-теги остаются
+    литеральным текстом) — абзацы + ячейки таблиц."""
+    d = docx.Document(template_path)
+    parts = [p.text for p in d.paragraphs]
+    for tb in d.tables:
+        for row in tb.rows:
+            for cell in row.cells:
+                parts.append(cell.text)
+    return "\n".join(parts)
 
 
-def test_services_body_identical_across_reporting_level():
-    """Тело договора услуг не должно зависеть от уровня отчётности —
-    различаться должна только приложенная методичка (после «Приложение №1»)."""
-    template_path = _services_template_path()
+_CANCELLED_FLAGS = ["large_reporting", "food_service", "rid_transfer"]
+
+
+@pytest.mark.parametrize("doc_type", DOC_TYPES)
+def test_no_cancelled_merge_flags_in_template(doc_type: str):
+    """Флаги слияния Этапа 1 (large_reporting/food_service/rid_transfer)
+    отменены владельцем — не должны физически присутствовать в тексте
+    ни одного из семи шаблонов, в т.ч. внутри Jinja-тегов."""
+    template_path = os.path.join(_TEMPLATES_DIR, f"{doc_type}.docx")
     assert os.path.isfile(template_path), f"Шаблон не найден: {template_path}"
 
-    txt_small = _render_text(template_path, _make_ctx(large_reporting=False))
-    txt_large = _render_text(template_path, _make_ctx(large_reporting=True))
+    txt = _raw_docx_text(template_path)
+    for flag in _CANCELLED_FLAGS:
+        assert flag not in txt, (
+            f"[{doc_type}] отменённый флаг «{flag}» найден в тексте шаблона"
+        )
 
-    marker = "Приложение №1"
-    idx_small = txt_small.find(marker)
-    idx_large = txt_large.find(marker)
-    assert idx_small != -1, f"«{marker}» не найден при large_reporting=False"
-    assert idx_large != -1, f"«{marker}» не найден при large_reporting=True"
 
-    body_small = txt_small[:idx_small]
-    body_large = txt_large[:idx_large]
-    assert body_small == body_large, (
-        "Тело договора услуг различается в зависимости от large_reporting "
-        "(до первого «Приложение №1») — методичка не должна влиять на тело договора"
+@pytest.mark.parametrize("doc_type", DOC_TYPES)
+def test_no_methodology_markers_raw(doc_type: str):
+    """Маркеры методических рекомендаций физически отсутствуют во всех семи
+    договорных шаблонах (методичка вынесена в methodology_large/small) —
+    проверка на «сыром» docx (абзацы + таблицы), без рендера."""
+    template_path = os.path.join(_TEMPLATES_DIR, f"{doc_type}.docx")
+    assert os.path.isfile(template_path), f"Шаблон не найден: {template_path}"
+
+    txt = _raw_docx_text(template_path)
+    for marker in _METHODOLOGY_MARKERS:
+        assert marker not in txt, (
+            f"[{doc_type}] маркер методички «{marker}» найден в шаблоне"
+        )
+
+
+def test_services_food_markers_unconditional_raw():
+    """Абзацы про питание в contract_services_food НЕ обёрнуты в Jinja-условие
+    — присутствуют в тексте шаблона безусловно (сырой docx, без рендера)."""
+    template_path = os.path.join(_TEMPLATES_DIR, "contract_services_food.docx")
+    assert os.path.isfile(template_path), f"Шаблон не найден: {template_path}"
+
+    txt = _raw_docx_text(template_path)
+    for marker in _FOOD_MARKERS:
+        assert marker in txt, (
+            f"«{marker}» отсутствует в contract_services_food (сырой docx)"
+        )
+
+
+def test_gph_rid_markers_unconditional_raw():
+    """Маркеры РИД присутствуют безусловно в contract_gph_individual_rid и
+    отсутствуют вовсе в contract_gph_individual (сырой docx, без рендера) —
+    это два отдельных файла, не варианты одного под флагом rid_transfer."""
+    rid_path = os.path.join(_TEMPLATES_DIR, "contract_gph_individual_rid.docx")
+    no_rid_path = os.path.join(_TEMPLATES_DIR, "contract_gph_individual.docx")
+    assert os.path.isfile(rid_path), f"Шаблон не найден: {rid_path}"
+    assert os.path.isfile(no_rid_path), f"Шаблон не найден: {no_rid_path}"
+
+    rid_txt = _raw_docx_text(rid_path)
+    no_rid_txt = _raw_docx_text(no_rid_path)
+    for marker in _RID_MARKERS:
+        assert marker in rid_txt, (
+            f"«{marker}» отсутствует в contract_gph_individual_rid (сырой docx)"
+        )
+        assert marker not in no_rid_txt, (
+            f"«{marker}» неожиданно найден в contract_gph_individual (сырой docx)"
+        )
+
+
+def test_services_vat_rate_change_clause_gated_by_vat_applicable():
+    """contract_services: пункт «изменится применяемая ставка НДС» вносится
+    правилом R1 независимо от отката слияния питания (п.4 задания) — должен
+    присутствовать при vat_applicable=True и отсутствовать при False."""
+    template_path = os.path.join(_TEMPLATES_DIR, "contract_services.docx")
+    assert os.path.isfile(template_path), f"Шаблон не найден: {template_path}"
+
+    marker = "изменится применяемая ставка НДС"
+    txt_true = _render_text(
+        template_path, _make_ctx(vat_applicable=True, vat_rate=20)
+    )
+    txt_false = _render_text(
+        template_path, _make_ctx(vat_applicable=False, vat_rate=0)
     )
 
-
-def test_unknown_flag_defaults_to_small():
-    """Опечатка в имени флага (large_reportng вместо large_reporting) не должна
-    случайно включать полную методичку — Undefined в Jinja обязан трактоваться
-    как falsy, а не как «истина по умолчанию»."""
-    template_path = _services_template_path()
-    assert os.path.isfile(template_path), f"Шаблон не найден: {template_path}"
-
-    ctx = _make_ctx()
-    ctx.pop("large_reporting", None)
-    ctx["large_reportng"] = True  # опечатка — намеренно НЕ large_reporting
-
-    txt = _render_text(template_path, ctx)
-
-    for marker in _FULL_METHODOLOGY_MARKERS:
-        assert marker not in txt, (
-            f"Опечатка в имени флага (large_reportng) неожиданно включила "
-            f"полную методичку: маркер «{marker}» найден в тексте"
-        )
+    assert marker in txt_true, f"«{marker}» отсутствует при vat_applicable=True"
+    assert marker not in txt_false, f"«{marker}» присутствует при vat_applicable=False"

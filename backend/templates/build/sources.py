@@ -39,8 +39,9 @@ SOURCES: dict[str, str] = {
 SOURCES["methodology_large"] = SOURCES["contract_services_large"]
 SOURCES["methodology_small"] = SOURCES["contract_services_small"]
 
-# contract_services — объединённая форма услуг (large/small/food слиты
-# в один шаблон без методических рекомендаций). Образец берём тот же,
-# что у large: он служит базой, к которой примешивается вариативность
-# питания (см. build.py, спецблок doc_type == "contract_services").
+# contract_services — форма услуг «большая отчётность» БЕЗ методических
+# рекомендаций (методичка вынесена в отдельный документ methodology_large,
+# см. build.py, _cs_cut_methodology). Никакого слияния с другими образцами
+# больше нет (решение владельца от отката Этапа 1 слияния форм) — контент
+# берётся из того же образца, что и у contract_services_large.
 SOURCES["contract_services"] = SOURCES["contract_services_large"]

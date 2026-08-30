@@ -18,7 +18,6 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 from backend.templates.build.sources import SOURCES
 from backend.templates.build import docxedit
-from backend.templates.build.rules_merge import merge_variant
 from backend.templates.build.rules_common import (
     RULES as COMMON_RULES,
     apply_common_rules,
@@ -126,39 +125,17 @@ def _build_methodology(
     return out_path
 
 
-_CS_PRICE_SECTION_RE = re.compile(r"^4\.\s+Цена Договора")
 _CS_VAT_NO_VAT_SEARCH = "возникнет НДС"
 _CS_VAT_RATE_CHANGE_SEARCH = "изменится применяемая ставка НДС"
 
 
-def _cs_body_paragraphs(root) -> list:
-    """Прямые дети w:body с тегом w:p (без таблиц) — та же фильтрация,
-    что и в rules_merge._body_paragraphs, реализованная локально (правки
-    rules_merge.py запрещены для этой задачи)."""
-    ns = {"w": W}
-    body = root.find("w:body", ns)
-    if body is None:
-        return []
-    return [el for el in body if el.tag == f"{{{W}}}p"]
-
-
-def _cs_find_price_section_index(paragraphs: list) -> int:
-    for i, p in enumerate(paragraphs):
-        text = docxedit.para_text(p).strip()
-        if _CS_PRICE_SECTION_RE.match(text):
-            return i
-    raise RuntimeError(
-        "contract_services: заголовок «4. Цена Договора и порядок расчетов» "
-        "не найден"
-    )
-
-
 def _cs_cut_methodology(doc_type: str, root) -> int:
     """
-    contract_services: отрезаем от w:body абзац-заголовок методички
-    («МЕТОДИЧЕСКИЕ РЕКОМЕНДАЦИИ...») и ВСЁ, что идёт после него, кроме
-    хвостового w:sectPr (в отличие от _build_methodology, которая отрезает
-    ДО заголовка — здесь наоборот, отрезаем ОТ заголовка и до конца).
+    contract_services / contract_services_food: отрезаем от w:body
+    абзац-заголовок методички («МЕТОДИЧЕСКИЕ РЕКОМЕНДАЦИИ...») и ВСЁ, что
+    идёт после него, кроме хвостового w:sectPr (в отличие от
+    _build_methodology, которая отрезает ДО заголовка — здесь наоборот,
+    отрезаем ОТ заголовка и до конца).
     Возвращает число удалённых элементов.
     """
     ns = {"w": W}
@@ -249,7 +226,7 @@ def _cs_insert_vat_rate_change_paragraph(root, food_root) -> None:
     if no_vat_p is None:
         raise RuntimeError(
             "contract_services: абзац "
-            f"«{_CS_VAT_NO_VAT_SEARCH}» не найден после слияния питания"
+            f"«{_CS_VAT_NO_VAT_SEARCH}» не найден в исходном образце"
         )
 
     parent = no_vat_p.getparent()
@@ -284,47 +261,30 @@ def build_one(doc_type: str, out_dir: pathlib.Path) -> pathlib.Path:
 
     counts: dict[str, int] = {}
 
-    # M_gph_rid: слияние формы ГПХ «без РИД» (база) + «+РИД» (вариант) по
-    # флагу rid_transfer. Должно идти ПОСЛЕ normalize (принять tracked changes,
-    # слить runs — иначе сравнение абзацев base/variant будет ловить шум от
-    # раздробленных runs), но ДО остальных правил (R3/C-правил/R1/R2/R5) —
-    # чтобы вставленные из варианта абзацы тоже прошли через общие замены
-    # (реквизиты Заказчика/Исполнителя, НДС и т.п.), а не остались с сырыми
-    # бланками «_____» из образца-варианта.
-    if doc_type == "contract_gph_individual":
-        rid_src = _REPO_ROOT / SOURCES["contract_gph_individual_rid"]
-        if not rid_src.exists():
-            raise FileNotFoundError(f"Source not found: {rid_src}")
-        _rid_zip_bytes, rid_root = docxedit.load(str(rid_src))
-        docxedit.normalize(rid_root)
-        merge_variant(root, rid_root, "rid_transfer", counts, "M_gph_rid")
-
-    # contract_services: объединённая форма услуг (large/small/food) без
-    # методических рекомендаций. Как и M_gph_rid выше — ПОСЛЕ normalize,
-    # ДО R3/common rules, чтобы вставленные из food абзацы тоже прошли
-    # через общие замены (реквизиты, НДС и т.п.).
-    if doc_type == "contract_services":
+    # contract_services / contract_services_food: обе формы собираются каждая
+    # из СВОЕГО образца (без слияния друг с другом — решение владельца об
+    # откате Этапа 1), но обе — без вшитой методички (она вынесена в отдельные
+    # documents methodology_large/methodology_small). Отрезаем методичку тем
+    # же способом, что и раньше для contract_services.
+    if doc_type in ("contract_services", "contract_services_food"):
         n_cut = _cs_cut_methodology(doc_type, root)
+        counts["CS_methodology_cut"] = n_cut
 
+    # contract_services: пункт про изменение ставки НДС («изменится
+    # применяемая ставка НДС») отсутствует у образца «большая отчётность»,
+    # но есть у образца ПИТАНИЕ (образец «малая отчётность») — переносим его
+    # безусловно, условие vat_applicable накладывается позже в общем
+    # конвейере (apply_r1_vat_411_wrap ищет абзац по тексту у ВСЕХ doc_type).
+    # Это НЕ связано со слиянием форм — правило самостоятельное.
+    if doc_type == "contract_services":
         food_src = _REPO_ROOT / SOURCES["contract_services_food"]
         if not food_src.exists():
             raise FileNotFoundError(f"Source not found: {food_src}")
         _food_zip_bytes, food_root = docxedit.load(str(food_src))
         docxedit.normalize(food_root)
 
-        base_paragraphs = _cs_body_paragraphs(root)
-        var_paragraphs = _cs_body_paragraphs(food_root)
-        base_end = _cs_find_price_section_index(base_paragraphs)
-        var_end = _cs_find_price_section_index(var_paragraphs)
-
-        merge_variant(
-            root, food_root, "food_service", counts, "M_services_food",
-            handle_delete=False, base_end=base_end, var_end=var_end,
-        )
-
         _cs_insert_vat_rate_change_paragraph(root, food_root)
 
-        counts["CS_methodology_cut"] = n_cut
         counts["CS_vat_rate_change_insert"] = 1
 
     ns = {"w": W}
@@ -392,16 +352,6 @@ def build_one(doc_type: str, out_dir: pathlib.Path) -> pathlib.Path:
         "T4_repair_parts_row",
         "T4_repair_parts_removed",
         "T4_vat_rate_replaced",
-        "M_gph_rid_insert",
-        "M_gph_rid_replace",
-        "M_gph_rid_delete",
-        "M_gph_rid_skipped_empty",
-        "M_gph_rid_skipped_same",
-        "M_services_food_insert",
-        "M_services_food_replace",
-        "M_services_food_delete",
-        "M_services_food_skipped_empty",
-        "M_services_food_skipped_same",
         "CS_methodology_cut",
         "CS_vat_rate_change_insert",
     ]

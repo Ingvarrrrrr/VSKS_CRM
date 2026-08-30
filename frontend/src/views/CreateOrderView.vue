@@ -334,6 +334,12 @@
                 item-title="title" item-value="value" label="Способ закупки" variant="outlined" density="compact"
                 hint="Как выбирается поставщик" persistent-hint />
             </v-col>
+            <v-col v-if="formMode !== 'service_note_delivery' && formMode !== 'advance_report' && form.purchase_method === 'competitive'" cols="12" md="2">
+              <v-select v-model="form.competitive_form"
+                :items="[{value:'price_request',title:'Запрос цен'},{value:'auction',title:'Аукцион (редукцион)'},{value:'tender',title:'Конкурс'}]"
+                item-title="title" item-value="value" label="Форма процедуры" variant="outlined" density="compact"
+                hint="Конкретная форма конкурентной процедуры — попадёт в приказ о закупке" persistent-hint />
+            </v-col>
             <v-col v-if="formMode !== 'service_note_delivery'" cols="12" md="2">
               <v-select v-model="form.item_type"
                 :items="[{value:'товар',title:'Поставка товара'},{value:'услуга',title:'Оказание услуг'},{value:'mixed',title:'Поставка товаров и услуг'}]"
@@ -4063,7 +4069,7 @@
           <v-alert v-if="docErrorInfo.hint" type="info" variant="tonal" density="compact" class="mb-3">
             <div class="text-body-2" style="white-space: pre-line">{{ docErrorInfo.hint }}</div>
           </v-alert>
-          <v-expansion-panels variant="accordion" :model-value="[]" class="mt-2">
+          <v-expansion-panels v-if="docErrorInfo.error_raw || docErrorInfo.error_class" variant="accordion" :model-value="[]" class="mt-2">
             <v-expansion-panel>
               <v-expansion-panel-title class="text-caption">
                 Технические детали ({{ docErrorInfo.error_class }})
@@ -4084,6 +4090,11 @@
             target="_self" @click="docErrorDialog = false"
             v-if="docErrorInfo?.template_source?.includes('субсидии') || docErrorInfo?.code === 'TEMPLATE_RENDER_ERROR'">
             Редактор шаблонов субсидии
+          </v-btn>
+          <v-btn variant="tonal" color="primary" prepend-icon="mdi-format-list-bulleted"
+            @click="docErrorDialog = false; revealField('items')"
+            v-if="docErrorInfo?.code === 'CONTRACT_ITEMS_REQUIRED'">
+            Показать позиции
           </v-btn>
           <v-spacer />
           <v-btn @click="docErrorDialog = false">Закрыть</v-btn>
@@ -4441,7 +4452,12 @@ const SUBSTATUS_OPTIONS = [
 interface FeoCategory { id: number; name: string; parent_id: number | null; level: number; subsidy_id: number; budget?: number | null }
 interface Contractor { id: number; name: string; inn?: string }
 interface Subsidy { id: number; name: string; year: number; budget: number; org_id?: number | null; org_inn?: string | null }
-interface Product { id: number; name: string; price?: number; product_type?: string; description?: string; description_44fz?: string; photo_url?: string; photo_link?: string; category?: string; has_photo?: boolean }
+interface Product {
+  id: number; name: string; price?: number; product_type?: string; description?: string; description_44fz?: string
+  photo_url?: string; photo_link?: string; category?: string; has_photo?: boolean
+  price_updated_at?: string | null; price_source?: string | null; price_source_ref?: string | null
+  price_freshness?: import('@/composables/usePriceFreshness').PriceFreshness | null
+}
 
 // Phase 17.1-08: prefer bytea endpoint when DB has a cached copy.
 function productPhotoSrc(p: Pick<Product, 'id' | 'has_photo' | 'photo_url' | 'photo_link'> | null | undefined): string | undefined {
@@ -4466,6 +4482,13 @@ interface OrderItem {
   _photo_url?: string
   _description?: string
   _description_44fz?: string
+  // Владелец, 2026-08-29: штамп даты/источника актуализации цены — см. usePriceFreshness.ts.
+  _price_meta?: {
+    price_updated_at?: string | null
+    price_source?: string | null
+    price_source_ref?: string | null
+    price_freshness?: import('@/composables/usePriceFreshness').PriceFreshness | null
+  } | null
 }
 interface UploadedFile { id: number; purchase_id: number; filename: string; mime_type?: string; size?: number; file_type?: string; doc_format?: string; is_active?: boolean; uploaded_by_name?: string | null; created_at?: string | null }
 
@@ -4510,6 +4533,7 @@ function fileTypeColor(t?: string): string {
 
 const form = reactive({
   purchase_method: '',
+  competitive_form: '',
   purchase_basis: 'service_note' as string,
   item_type: 'товар' as string,
   subsidy_id: null as number | null,
@@ -4698,6 +4722,7 @@ function serializeFormForAutosave() {
     contractor_id: f.contractor_id,
     feo_category_id: f.feo_category_id,
     purchase_method: f.purchase_method,
+    competitive_form: f.competitive_form,
     purchase_contract_type: f.purchase_contract_type,
     contract_number: f.contract_number,
     contract_date: f.contract_date,
@@ -6581,6 +6606,12 @@ const contractDocTypeMap: Record<string, string> = {
   repair_framework:   'contract_repair_framework',
 }
 
+// Форма конкурентной процедуры релевантна только при purchase_method === 'competitive' —
+// при смене способа закупки на другой сбрасываем, чтобы в базе не оставалась неактуальная форма
+watch(() => form.purchase_method, (newMethod) => {
+  if (newMethod !== 'competitive') form.competitive_form = ''
+})
+
 // Phase 28: авто-предложение contract_form при первом выборе item_type
 watch(() => form.item_type, (newType) => {
   if (form.contract_form) return  // не перезаписываем если уже выбрано
@@ -7488,6 +7519,7 @@ const loadPurchase = async () => {
 
   Object.assign(form, {
     purchase_method: data.purchase_method || '',
+    competitive_form: data.competitive_form || '',
     purchase_basis: data.purchase_basis || '',
     item_type: data.item_type || 'товар',
     subsidy_id: data.subsidy_id ?? null,
@@ -7664,6 +7696,14 @@ const loadPurchase = async () => {
         _photo_url: productPhotoSrc(prod),
         _description: i.product_description || prod?.description || undefined,
         _description_44fz: i.product_description_44fz || prod?.description_44fz || undefined,
+        // Владелец, 2026-08-29: штамп актуализации цены — из привязанного товара
+        // каталога (позиция закупки сама по себе цену не «актуализирует»).
+        _price_meta: prod ? {
+          price_updated_at: prod.price_updated_at ?? null,
+          price_source: prod.price_source ?? null,
+          price_source_ref: prod.price_source_ref ?? null,
+          price_freshness: prod.price_freshness ?? null,
+        } : null,
       }
     })
     // Режим читаем из БД; фолбэк — только для записей, созданных до появления колонки.
@@ -8300,7 +8340,7 @@ const doSave = async (adminOverride: boolean) => {
   try {
     const validItems = items.value
       .filter(i => i.item_name?.trim())
-      .map(({ _selectedProduct, _photo_url, _description, _description_44fz, feo_node_id: _feoNodeId, ...rest }) => ({
+      .map(({ _selectedProduct, _photo_url, _description, _description_44fz, _price_meta, feo_node_id: _feoNodeId, ...rest }) => ({
         ...rest,
         unit_price: (rest.unit_price !== '' && rest.unit_price != null) ? rest.unit_price : null,
         quantity: (rest.quantity !== '' && rest.quantity != null) ? rest.quantity : null,

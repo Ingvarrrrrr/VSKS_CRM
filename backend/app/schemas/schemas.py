@@ -225,30 +225,7 @@ class SubsidyCreate(BaseModel):
     require_planned_dates: bool = True
     # Fabrikant: номер соглашения о субсидии
     agreement_number: Optional[str] = None
-    # Р’Р»Р°РґРµР»РµС† (2026-08-30): РїСЂРµРґСѓРїСЂРµР¶РґРµРЅРёРµ В«СЃСѓРјРјР° Р·Р°РєР°Р·Р°РЅРЅРѕРіРѕ РїСЂРёР±Р»РёР¶Р°РµС‚СЃСЏ Рє
-    # РїРѕС‚РѕР»РєСѓ СЃСѓР±СЃРёРґРёРёВ». ceiling_warn_percent вЂ” РЅР°СЃС‚СЂР°РёРІР°РµРјС‹Р№ РїРѕСЂРѕРі (С…СЂР°РЅРёС‚СЃСЏ
-    # РІ Р‘Р”, СѓРјРѕР»С‡Р°РЅРёРµ 90 РїСЂРёРјРµРЅСЏРµС‚СЃСЏ РІ СЃРµСЂРІРёСЃРµ РµСЃР»Рё NULL). РћСЃС‚Р°Р»СЊРЅС‹Рµ РїРѕР»СЏ вЂ”
-    # СЂР°СЃС‡С‘С‚ РЅР° Р»РµС‚Сѓ, СЃРј. app.services.feo_plan.calculate_ceiling_forecast*:
-    #   ceiling_total            вЂ” РїРѕС‚РѕР»РѕРє (calculate_budget_from_categories,
-    #                              С‚РѕС‚ Р¶Рµ РёСЃС‚РѕС‡РЅРёРє, С‡С‚Рѕ Рё Р¶С‘СЃС‚РєРёР№ РіРµР№С‚
-    #                              PLAN_OVER_SUBSIDY_CEILING)
-    #   ceiling_committed_total  вЂ” В«СЃСѓРјРјР° Р·Р°РєР°Р·Р°РЅРЅРѕРіРѕВ»: СЂР°Р·РѕРІС‹Рµ/Р°РІР°РЅСЃРѕРІС‹Рµ/
-    #                              СЂР°РјРѕС‡РЅС‹Рµ Р·Р°РєСѓРїРєРё РІ СЃС‚Р°С‚СѓСЃР°С… Р—Р°РєР°Р·Р°РЅРѕ+, РџР›Р®РЎ
-    #                              РµР¶РµРјРµСЃСЏС‡РЅС‹Рµ РїР»Р°С‚РµР¶Рё Р’Р•РЎР¬ РіСЂР°С„РёРє С†РµР»РёРєРѕРј
-    #   ceiling_committed_percent вЂ” committed / ceiling * 100
-    #   ceiling_near_warning     вЂ” percent >= ceiling_warn_percent (Рё ceiling > 0)
-    #   ceiling_exceeded         вЂ” committed > ceiling (РїРѕС‚РѕР»РѕРє СѓР¶Рµ РїСЂРµРІС‹С€РµРЅ)
-    ceiling_warn_percent: Optional[float] = None
-    ceiling_total: Optional[float] = None
-    ceiling_committed_total: Optional[float] = None
-    ceiling_committed_one_off: Optional[float] = None   # СЂР°Р·РѕРІС‹Рµ/Р°РІР°РЅСЃРѕРІС‹Рµ/СЂР°РјРѕС‡РЅС‹Рµ (СЃС‚Р°С‚СѓСЃС‹ Р—Р°РєР°Р·Р°РЅРѕ+)
-    ceiling_committed_monthly: Optional[float] = None   # РµР¶РµРјРµСЃСЏС‡РЅС‹Рµ РїР»Р°С‚РµР¶Рё, РІРµСЃСЊ РіСЂР°С„РёРє С†РµР»РёРєРѕРј
-    ceiling_committed_percent: Optional[float] = None
-    ceiling_near_warning: bool = False
-    ceiling_exceeded: bool = False
-    # Р’Р»Р°РґРµР»РµС† (2026-08-30): РїРѕСЂРѕРі РїСЂРµРґСѓРїСЂРµР¶РґРµРЅРёСЏ Рѕ РїРѕРґС…РѕРґРµ Рє РїРѕС‚РѕР»РєСѓ СЃСѓР±СЃРёРґРёРё (%)
-    ceiling_warn_percent: Optional[float] = None
-    # Р’Р»Р°РґРµР»РµС† (2026-08-30): РїРѕСЂРѕРі РїСЂРµРґСѓРїСЂРµР¶РґРµРЅРёСЏ Рѕ РїРѕРґС…РѕРґРµ Рє РїРѕС‚РѕР»РєСѓ СЃСѓР±СЃРёРґРёРё (%)
+    # Владелец (2026-08-30): порог предупреждения о подходе к потолку субсидии (%)
     ceiling_warn_percent: Optional[float] = None
 
     @field_validator('basis_doc_date', mode='before')
@@ -286,6 +263,8 @@ class SubsidyUpdate(BaseModel):
     require_planned_dates: Optional[bool] = None
     # Fabrikant: номер соглашения о субсидии
     agreement_number: Optional[str] = None
+    # Владелец (2026-08-30): порог предупреждения о подходе к потолку субсидии (%)
+    ceiling_warn_percent: Optional[float] = None
 
     @field_validator('basis_doc_date', mode='before')
     @classmethod
@@ -334,6 +313,27 @@ class SubsidyOut(BaseModel):
     require_planned_dates: bool = True
     # Fabrikant: номер соглашения о субсидии
     agreement_number: Optional[str] = None
+    # Владелец (2026-08-30): предупреждение «сумма заказанного приближается к
+    # потолку субсидии». ceiling_warn_percent — настраиваемый порог (хранится
+    # в БД, умолчание 90 применяется в сервисе если NULL). Остальные поля —
+    # расчёт на лету, см. app.services.feo_plan.calculate_ceiling_forecast*:
+    #   ceiling_total            — потолок (calculate_budget_from_categories,
+    #                              тот же источник, что и жёсткий гейт
+    #                              PLAN_OVER_SUBSIDY_CEILING)
+    #   ceiling_committed_total  — «сумма заказанного»: разовые/авансовые/
+    #                              рамочные закупки в статусах Заказано+, ПЛЮС
+    #                              ежемесячные платежи ВЕСЬ график целиком
+    #   ceiling_committed_percent — committed / ceiling * 100
+    #   ceiling_near_warning     — percent >= ceiling_warn_percent (и ceiling > 0)
+    #   ceiling_exceeded         — committed > ceiling (потолок уже превышен)
+    ceiling_warn_percent: Optional[float] = None
+    ceiling_total: Optional[float] = None
+    ceiling_committed_total: Optional[float] = None
+    ceiling_committed_one_off: Optional[float] = None   # разовые/авансовые/рамочные (статусы Заказано+)
+    ceiling_committed_monthly: Optional[float] = None   # ежемесячные платежи, весь график целиком
+    ceiling_committed_percent: Optional[float] = None
+    ceiling_near_warning: bool = False
+    ceiling_exceeded: bool = False
     model_config = {"from_attributes": True}
 
 
@@ -685,7 +685,9 @@ class PurchaseCreate(BaseModel):
     contract_number: Optional[str] = None
     contract_date: Optional[date] = None
     registry_number: Optional[str] = None
-    purchase_method: Optional[str] = None  # 'single' | 'competitive'
+    purchase_method: Optional[str] = None  # 'single' | 'competitive' | 'advance'
+    # Уточнение к purchase_method == 'competitive': 'price_request' | 'auction' | 'tender'
+    competitive_form: Optional[str] = None
     purchase_basis: Optional[str] = None   # 'plan_schedule' | 'service_note'
     responsible_person: Optional[str] = None
     nmck: Optional[Decimal] = None
@@ -826,6 +828,8 @@ class PurchaseUpdate(BaseModel):
     contract_date: Optional[date] = None
     registry_number: Optional[str] = None
     purchase_method: Optional[str] = None
+    # Уточнение к purchase_method == 'competitive': 'price_request' | 'auction' | 'tender'
+    competitive_form: Optional[str] = None
     purchase_basis: Optional[str] = None
     responsible_person: Optional[str] = None
     nmck: Optional[Decimal] = None
@@ -1018,6 +1022,22 @@ class PaymentOut(PaymentCreate):
 class PriceLink(BaseModel):
     url: str
     price: Optional[float] = None
+    # Дата сбора цены по ссылке — читается _calc_price_from_links (было мёртвой
+    # веткой: схема раньше отбрасывала поле, хотя парсер уже искал l.get("collected_at")).
+    collected_at: Optional[str] = None
+
+
+# ── Price freshness (владелец, 2026-08-29) ──────────────────────────────────
+# Контракт с фронтом — см. app/services/price_freshness.py::evaluate docstring.
+# Поля/имена менять нельзя без согласования.
+class PriceFreshnessOut(BaseModel):
+    is_stale: bool
+    age_days: Optional[int] = None
+    ttl_days: int
+    base_ttl_days: int
+    reason: str  # 'ok' | 'never' | 'expired' | 'fx'
+    fx_change_pct: Optional[float] = None
+    label: str
 
 class ProductCreate(BaseModel):
     feo_category_id: Optional[int] = None
@@ -1059,6 +1079,13 @@ class ProductOut(ProductCreate):
     has_photo: bool = False
     photo_size: Optional[int] = None
     photo_mime: Optional[str] = None
+    # Актуализация цены (владелец, 2026-08-29)
+    price_updated_at: Optional[datetime] = None
+    price_source: Optional[str] = None
+    price_source_ref: Optional[str] = None
+    price_source_contractor_id: Optional[int] = None
+    price_ttl_days: Optional[int] = None
+    price_freshness: Optional[PriceFreshnessOut] = None
     model_config = {"from_attributes": True}
 
     @model_validator(mode='before')
@@ -1084,6 +1111,30 @@ class ProductOut(ProductCreate):
         except Exception:
             pass
         return data
+
+class PriceActualizationIn(BaseModel):
+    """Тело POST /api/products/{id}/price-actualization — ручная актуализация цены."""
+    price: Decimal
+    source: str  # 'contract' | 'kp' | 'manual' | 'import' | 'monitoring'
+    source_ref: Optional[str] = None
+    contractor_id: Optional[int] = None
+    collected_at: Optional[str] = None  # ISO date
+    note: Optional[str] = None
+
+
+class ProductPriceHistoryOut(BaseModel):
+    id: int
+    product_id: int
+    price: Optional[Decimal] = None
+    source: Optional[str] = None
+    source_ref: Optional[str] = None
+    contractor_id: Optional[int] = None
+    collected_at: Optional[date] = None
+    note: Optional[str] = None
+    created_by: Optional[int] = None
+    created_at: Optional[datetime] = None
+    model_config = {"from_attributes": True}
+
 
 # Product Summary (сводная по продукции)
 class ProductSummaryItem(BaseModel):
@@ -1224,6 +1275,32 @@ class CommercialRequestOut(BaseModel):
     created_by: Optional[int] = None
     created_at: Optional[datetime] = None
     recipients: List[CommercialRequestRecipientOut] = []
+
+
+# ── Commercial Request Offers (владелец, 2026-08-29) — цены, полученные от
+# получателей запроса КП. Принятое предложение актуализирует цену товара. ──
+class CommercialRequestOfferIn(BaseModel):
+    id: Optional[int] = None  # существующий offer при обновлении набора; None → создать
+    recipient_id: Optional[int] = None
+    product_id: Optional[int] = None
+    item_name: Optional[str] = None
+    unit: Optional[str] = None
+    unit_price: Optional[Decimal] = None
+    note: Optional[str] = None
+
+
+class CommercialRequestOfferOut(BaseModel):
+    id: int
+    request_id: int
+    recipient_id: Optional[int] = None
+    product_id: Optional[int] = None
+    item_name: Optional[str] = None
+    unit: Optional[str] = None
+    unit_price: Optional[Decimal] = None
+    is_accepted: bool = False
+    note: Optional[str] = None
+    created_at: Optional[datetime] = None
+    model_config = {"from_attributes": True}
 
 
 # ── Suppliers ──────────────────────────────────────────────────────────────────

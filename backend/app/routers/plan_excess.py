@@ -148,6 +148,64 @@ def _approval_dict(a: PlanExcessApproval) -> dict:
     }
 
 
+async def _plan_excess_decide_error(
+    user: User, db: AsyncSession, org_id: int | None, approval: PlanExcessApproval,
+    step: PlanExcessApprovalStep,
+) -> str | None:
+    """Единственный источник истины для «может ли user решить именно этот step
+    approval прямо сейчас» — те же три проверки, что раньше жили только внутри
+    decide_plan_excess_step (has_org_key, «это не ваш шаг», самосогласование).
+    Вынесено в отдельную функцию (правка 2026-08-29), чтобы GET /api/plan-excess
+    (can_decide, см. _can_decide_plan_excess) и сам гейт POST /decide НИКОГДА не
+    расходились — раньше фронт судил о видимости кнопок по наследующему
+    get_effective_actions (/api/users/me), а гейт /decide — по ненаследующей
+    has_org_key, из-за чего org_admin видел кнопку «Одобрить» и получал 403.
+
+    Не проверяет approval.status / step.status (pending) — это забота вызывающего
+    кода (у него разные реакции: 400 в /decide, просто False в can_decide).
+
+    Возвращает None, если решать можно; иначе — текст причины отказа (тот же,
+    что раньше был захардкожен в /decide).
+    """
+    if _is_saas(user):
+        return None
+    if not await has_org_key(user, db, org_id, "plan_excess.decide", subsidy_id=approval.subsidy_id):
+        return "Право на согласование превышения плана ФЭО не выдано, обратитесь к администратору"
+    if step.user_id != user.id:
+        return "Это не ваш шаг согласования — решение может принять только назначенный согласующий"
+    if approval.requested_by_id == user.id:
+        return "Автор запроса не может согласовывать собственное превышение плана"
+    return None
+
+
+async def _can_decide_plan_excess(
+    user: User, db: AsyncSession, approval: PlanExcessApproval, org_id: int | None,
+) -> bool:
+    """can_decide для GET /api/plan-excess — true ровно тогда, когда POST
+    /{id}/decide для этого approval реально пройдёт у этого user (без step_id —
+    бэкенд сам находит подходящий шаг, см. decide_plan_excess_step).
+
+    Выбор шага-кандидата зеркалит фронтовый excessMyPendingStep (SubsidiesView.vue):
+    sequential — только САМЫЙ РАННИЙ pending-шаг по order_num (тот же эффект, что
+    и проверка «нижестоящие ещё pending» в /decide), parallel — любой pending-шаг.
+    SaaS-роли (superadmin/account_owner) могут решить любой шаг из кандидатов, как
+    и на фронте (isSaas в excessMyPendingStep)."""
+    if approval.status != "pending":
+        return False
+    sorted_steps = sorted(approval.steps, key=lambda s: s.order_num)
+    pending_steps = [s for s in sorted_steps if s.status == "pending"]
+    if not pending_steps:
+        return False
+    candidates = pending_steps if approval.mode == "parallel" else pending_steps[:1]
+    is_saas = _is_saas(user)
+    step = next((s for s in candidates if s.user_id == user.id), None)
+    if step is None:
+        if not is_saas:
+            return False
+        step = candidates[0]
+    return await _plan_excess_decide_error(user, db, org_id, approval, step) is None
+
+
 async def _load_approval(approval_id: int, db: AsyncSession) -> PlanExcessApproval:
     a = (await db.execute(
         select(PlanExcessApproval)
@@ -176,11 +234,14 @@ async def list_plan_excess_approvals(
     # ИЛИ action-право plan_excess.decide на организацию/субсидию — has_org_key,
     # та же проверка, что в /decide и в _authorized_plan_excess_approvers, логику не
     # дублируем.
+    subsidy = await db.get(Subsidy, subsidy_id)
+    if subsidy is None:
+        raise HTTPException(404, "Субсидия не найдена")
+    # Нужен и для гейта ниже, и для can_decide каждой строки (has_org_key той же
+    # орги, что и в /decide) — считаем один раз.
+    org_id = subsidy.org_id or get_single_org_id(current_user)
+
     if current_user.role != "superadmin" and not await _has_key_in_any_org(current_user, db, "feo_categories"):
-        subsidy = await db.get(Subsidy, subsidy_id)
-        if subsidy is None:
-            raise HTTPException(404, "Субсидия не найдена")
-        org_id = subsidy.org_id or get_single_org_id(current_user)
         if not await has_org_key(current_user, db, org_id, "plan_excess.decide", subsidy_id=subsidy_id):
             raise HTTPException(
                 403,
@@ -195,7 +256,15 @@ async def list_plan_excess_approvals(
         .where(PlanExcessApproval.subsidy_id == subsidy_id)
         .order_by(PlanExcessApproval.created_at.desc())
     )).scalars().all()
-    return [_approval_dict(a) for a in rows]
+    result = []
+    for a in rows:
+        d = _approval_dict(a)
+        # Источник истины для кнопок «Одобрить/Отклонить» на фронте (правка
+        # 2026-08-29) — см. _can_decide_plan_excess: та же проверка, что и в
+        # реальном гейте /decide, а не наследующий список прав с /api/users/me.
+        d["can_decide"] = await _can_decide_plan_excess(current_user, db, a, org_id)
+        result.append(d)
+    return result
 
 
 async def _notify_pending_plan_excess_approvers(
@@ -501,32 +570,16 @@ async def decide_plan_excess_step(
     if subsidy is None:
         raise HTTPException(404, "Субсидия не найдена")
 
-    is_saas = _is_saas(current_user)
-
     # Владелец (2026-08-29): «превышение не может согласовывать любой из цепочки
     # согласования… только определённые люди — например, только владельцы или
     # только финансисты». Право выдаётся точечно (галочкой), никому не положено
-    # по умолчанию — см. app.auth.permissions.has_org_key + action-ключ
-    # 'plan_excess.decide'. SaaS-роли (superadmin/account_owner) — бессрочный
-    # обход, как и везде в проекте.
-    if not is_saas:
-        if not await has_org_key(current_user, db, subsidy.org_id, "plan_excess.decide", subsidy_id=approval.subsidy_id):
-            raise HTTPException(
-                403,
-                "Право на согласование превышения плана ФЭО не выдано, обратитесь к администратору",
-            )
-
-    # Нельзя решать за другого — даже имея право plan_excess.decide, закрыть
-    # можно только СВОЙ назначенный шаг (кроме SaaS — им можно разрулить любой
-    # зависший шаг).
-    if not is_saas and step.user_id != current_user.id:
-        raise HTTPException(403, "Это не ваш шаг согласования — решение может принять только назначенный согласующий")
-
-    # Самосогласование запрещено: автор запроса не может согласовывать
-    # собственное превышение плана (владелец, 2026-08-29: «согласование — это
-    # не согласование превышения» самого заявителя).
-    if not is_saas and approval.requested_by_id == current_user.id:
-        raise HTTPException(403, "Автор запроса не может согласовывать собственное превышение плана")
+    # по умолчанию. Единая проверка (has_org_key + «это не ваш шаг» + запрет
+    # самосогласования, SaaS — бессрочный обход) вынесена в _plan_excess_decide_error
+    # (правка 2026-08-29) — та же функция используется в can_decide GET
+    # /api/plan-excess, чтобы кнопки на фронте и этот гейт никогда не расходились.
+    decide_error = await _plan_excess_decide_error(current_user, db, subsidy.org_id, approval, step)
+    if decide_error:
+        raise HTTPException(403, decide_error)
 
     if approval.status != "pending":
         raise HTTPException(400, f"По этому запросу уже принято решение: {approval.status}")

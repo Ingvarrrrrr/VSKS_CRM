@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Text, Boolean
+from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Text, Boolean, Numeric
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -22,6 +22,11 @@ class Subsidy(Base):
     extra_contract_clause_1 = Column(Text, nullable=True)
     extra_contract_clause_2 = Column(Text, nullable=True)
     require_planned_dates = Column(Boolean, nullable=False, server_default='true')  # обязательность даты потребности
+    # Владелец (2026-08-30): порог предупреждения «сумма заказанного приближается
+    # к потолку субсидии» — настраиваемый НА КАЖДОЙ субсидии, умолчание 90%.
+    # Потолок = calculate_budget_from_categories (тот же источник, что и жёсткий
+    # гейт PLAN_OVER_SUBSIDY_CEILING). См. app.services.feo_plan.calculate_ceiling_forecast*.
+    ceiling_warn_percent = Column(Numeric(5, 2), nullable=True)  # None → фактическое умолчание 90 применяется в сервисе
     # Fabrikant: номер соглашения о субсидии (для документов закупки)
     agreement_number = Column(String(200), nullable=True)
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True)

@@ -88,6 +88,16 @@
               size="18"
             />
           </template>
+          <template #item.ceiling_committed_percent="{ item }">
+            <v-chip
+              v-if="item.ceiling_exceeded || item.ceiling_near_warning"
+              size="x-small"
+              :color="item.ceiling_exceeded ? 'error' : 'warning'"
+              variant="flat"
+              :title="`Заказано ${formatCurrency(item.ceiling_committed_total || 0)} из потолка ${formatCurrency(item.ceiling_total || 0)} — ${item.ceiling_committed_percent}% (порог предупреждения ${item.ceiling_warn_percent}%)`"
+            >{{ item.ceiling_committed_percent }}%</v-chip>
+            <span v-else class="text-medium-emphasis">—</span>
+          </template>
           <template #item.name="{ item }">
             <span class="font-weight-medium cursor-pointer" @click="toggleSelect(item.id)">{{ item.name }}</span>
           </template>
@@ -193,6 +203,14 @@
               prepend-icon="mdi-check"
               :title="`Бюджет ФЭО и запланировано (план ФЭО + заявки) совпадают: ${Math.round(s.planned).toLocaleString('ru-RU')} ₽`"
             >ФЭО = план</v-chip>
+            <v-chip
+              v-if="s.ceiling_exceeded || s.ceiling_near_warning"
+              :color="s.ceiling_exceeded ? '#ef4444' : '#f59e0b'"
+              size="small"
+              class="mt-1 sc-delta-chip"
+              prepend-icon="mdi-alert-octagon"
+              :title="`Заказано ${formatCurrencyShort(s.ceiling_committed_total || 0)} из потолка ${formatCurrencyShort(s.ceiling_total || 0)} — ${s.ceiling_committed_percent}% (порог предупреждения ${s.ceiling_warn_percent}%)`"
+            >{{ s.ceiling_exceeded ? 'Потолок превышен' : 'Близко к потолку' }}: {{ s.ceiling_committed_percent }}%</v-chip>
             <div v-if="s.contractor_name" class="sc-contractor">
               <v-icon icon="mdi-account-tie" size="13" class="mr-1" />
               <span>{{ s.contractor_name }}</span>
@@ -389,6 +407,25 @@
               </template>
             </v-tooltip>
           </div>
+          <!-- Владелец (2026-08-30): предупреждение «сумма заказанного приближается
+               к потолку субсидии» — потолок = calculate_budget_from_categories
+               (тот же источник, что и жёсткий гейт PLAN_OVER_SUBSIDY_CEILING),
+               заказано = разовые/авансовые/рамочные закупки в статусах Заказано+
+               И ежемесячные платежи ВЕСЬ график целиком (см. app/services/feo_plan.py). -->
+          <v-alert
+            v-if="selectedSubsidy.ceiling_exceeded || selectedSubsidy.ceiling_near_warning"
+            :type="selectedSubsidy.ceiling_exceeded ? 'error' : 'warning'"
+            density="compact"
+            variant="tonal"
+            class="mb-3"
+            icon="mdi-alert-octagon-outline"
+          >
+            {{ selectedSubsidy.ceiling_exceeded ? 'Потолок субсидии превышен: ' : 'Приближение к потолку субсидии: ' }}
+            заказано {{ formatCurrency(selectedSubsidy.ceiling_committed_total || 0) }}
+            из потолка {{ formatCurrency(selectedSubsidy.ceiling_total || 0) }}
+            — это {{ selectedSubsidy.ceiling_committed_percent }}%
+            (порог предупреждения {{ selectedSubsidy.ceiling_warn_percent }}%).
+          </v-alert>
           <!-- Подсказка активной KPI-метрики -->
           <div v-if="activeKpi" class="feo-kpi-banner">
             <v-icon icon="mdi-filter-variant" size="16" color="#fb923c" />
@@ -913,7 +950,7 @@
                             <v-chip size="x-small" color="orange" variant="flat">
                               согласование ПРЕВЫШЕНИЯ ПЛАНА (не закупки) {{ formatCurrency(excessFor(node)!.amount) }} · на согласовании у: {{ excessPendingNames(node) || '—' }}
                             </v-chip>
-                            <template v-if="excessMyPendingStep(node) && canDecidePlanExcess">
+                            <template v-if="excessMyPendingStep(node) && excessApprovalFor(node)?.can_decide">
                               <v-btn size="x-small" variant="tonal" color="success"
                                 :loading="excessDecideLoading === node.id"
                                 @click.stop="decidePlanExcess(node, 'approved')"
@@ -923,7 +960,7 @@
                                 @click.stop="openExcessRejectDialog(node)"
                               >Отклонить</v-btn>
                             </template>
-                            <div v-else-if="excessMyPendingStep(node) && !canDecidePlanExcess" class="feo-plan-note text-medium-emphasis" style="width:100%">
+                            <div v-else-if="excessMyPendingStep(node) && !excessApprovalFor(node)?.can_decide" class="feo-plan-note text-medium-emphasis" style="width:100%">
                               Решение по превышению принимают только уполномоченные (владелец/финансист). Обратитесь к ним — согласовывать может не любой назначенный.
                             </div>
                           </template>
@@ -973,7 +1010,7 @@
                             <v-chip size="x-small" color="orange" variant="flat">
                               согласование ПРЕВЫШЕНИЯ: итог закупки дороже плана на {{ formatCurrency(excessFactFor(node)!.amount) }} · на согласовании у: {{ excessPendingNames(node) || '—' }}
                             </v-chip>
-                            <template v-if="excessMyPendingStep(node) && canDecidePlanExcess">
+                            <template v-if="excessMyPendingStep(node) && excessApprovalFor(node)?.can_decide">
                               <v-btn size="x-small" variant="tonal" color="success"
                                 :loading="excessDecideLoading === node.id"
                                 @click.stop="decidePlanExcess(node, 'approved')"
@@ -983,7 +1020,7 @@
                                 @click.stop="openExcessRejectDialog(node)"
                               >Отклонить</v-btn>
                             </template>
-                            <div v-else-if="excessMyPendingStep(node) && !canDecidePlanExcess" class="feo-plan-note text-medium-emphasis" style="width:100%">
+                            <div v-else-if="excessMyPendingStep(node) && !excessApprovalFor(node)?.can_decide" class="feo-plan-note text-medium-emphasis" style="width:100%">
                               Решение по превышению принимают только уполномоченные (владелец/финансист). Обратитесь к ним — согласовывать может не любой назначенный.
                             </div>
                           </template>
@@ -1020,7 +1057,7 @@
                             <v-chip size="x-small" color="orange" variant="flat">
                               согласование ПРЕВЫШЕНИЯ: план превышает заданный вручную на {{ formatCurrency(excessPlanFor(node)!.amount) }} (задано {{ formatCurrency(excessPlanFor(node)!.manualEntered) }}, стало {{ formatCurrency(excessPlanFor(node)!.manualEntered + excessPlanFor(node)!.amount) }}) · на согласовании у: {{ excessPendingNames(node) || '—' }}
                             </v-chip>
-                            <template v-if="excessMyPendingStep(node) && canDecidePlanExcess">
+                            <template v-if="excessMyPendingStep(node) && excessApprovalFor(node)?.can_decide">
                               <v-btn size="x-small" variant="tonal" color="success"
                                 :loading="excessDecideLoading === node.id"
                                 @click.stop="decidePlanExcess(node, 'approved')"
@@ -1030,7 +1067,7 @@
                                 @click.stop="openExcessRejectDialog(node)"
                               >Отклонить</v-btn>
                             </template>
-                            <div v-else-if="excessMyPendingStep(node) && !canDecidePlanExcess" class="feo-plan-note text-medium-emphasis" style="width:100%">
+                            <div v-else-if="excessMyPendingStep(node) && !excessApprovalFor(node)?.can_decide" class="feo-plan-note text-medium-emphasis" style="width:100%">
                               Решение по превышению принимают только уполномоченные (владелец/финансист). Обратитесь к ним — согласовывать может не любой назначенный.
                             </div>
                           </template>
@@ -2496,6 +2533,17 @@
               Без дат плановые траты по месяцам считаться не будут
             </v-alert>
           </template>
+          <v-divider class="mt-4 mb-3" />
+          <v-text-field
+            v-model.number="editForm.ceiling_warn_percent"
+            label="Порог предупреждения о подходе к потолку субсидии, %"
+            hint="Когда сумма заказанного (включая ежемесячные платежи — весь график) достигнет этого процента от потолка ФЭО, появится предупреждение в карточке субсидии, списке и на дашборде. По умолчанию 90%."
+            persistent-hint
+            type="number"
+            min="1" max="100"
+            variant="outlined" density="compact"
+            class="mt-1"
+          />
         </v-card-text>
         <v-card-actions class="px-4 pb-4">
           <v-spacer />
@@ -4661,7 +4709,6 @@ import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
 import type { FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
 import { PURCHASE_STATUS_META, PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusIcon, purchaseStatusColor } from '@/constants/purchaseStatus'
 import { type KpiKey, KPI_MODE, KPI_LABELS, KPI_EMPTY_REASONS, kpiItemMatches } from '@/constants/kpiMetrics'
-import { useAuthStore } from '@/stores/auth'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 
@@ -4733,13 +4780,14 @@ const router = useRouter()
 const route  = useRoute()
 
 // Владелец (2026-08-29): «превышение согласовывают только владельцы/финансисты,
-// у начальника отдела таких прав быть не может» — право plan_excess.decide проверяем
-// поверх «я назначен в шаге» (excessMyPendingStep), тот же паттерн, что и WishesView.vue.
-const authStore = useAuthStore()
-function can(action: string) {
-  return authStore.hasAction?.(action) ?? true
-}
-const canDecidePlanExcess = computed(() => can('plan_excess.decide'))
+// у начальника отдела таких прав быть не может». Раньше здесь стоял фронтовый
+// canDecidePlanExcess = can('plan_excess.decide') поверх «я назначен в шаге»
+// (excessMyPendingStep) — но can() читал НАСЛЕДУЮЩИЙ список прав с /api/users/me
+// (get_effective_actions), а реальный гейт POST /decide — НЕнаследующий
+// has_org_key. org_admin без гранта ВИДЕЛ кнопку «Одобрить» и получал 403 при
+// клике. Убрано — единственный источник истины теперь can_decide в ответе
+// GET /api/plan-excess (см. excessApprovalFor(node)?.can_decide ниже,
+// backend/app/routers/plan_excess.py _can_decide_plan_excess).
 
 interface SubsidyRow {
   id: number; name: string; year: number; budget: number
@@ -4763,6 +4811,14 @@ interface SubsidyRow {
   contracts: number
   delivered: number
   delivered_unpaid: number
+  // Владелец (2026-08-30): предупреждение «сумма заказанного приближается к
+  // потолку субсидии» — см. app/services/feo_plan.py calculate_ceiling_forecast*.
+  ceiling_warn_percent?: number | null
+  ceiling_total?: number | null
+  ceiling_committed_total?: number | null
+  ceiling_committed_percent?: number | null
+  ceiling_near_warning?: boolean
+  ceiling_exceeded?: boolean
 }
 
 interface FeoCategory {
@@ -4958,6 +5014,13 @@ interface PlanExcessApprovalDto {
   created_at: string | null; resolved_at: string | null; comment: string | null
   steps: PlanExcessStep[]
   self_approval?: boolean; warning?: string | null
+  // Правка 2026-08-29: сервер сам считает, реально ли пройдёт POST /decide для
+  // текущего пользователя (та же проверка has_org_key + «свой шаг» + запрет
+  // самосогласования, что и в гейте /decide — см. backend/app/routers/plan_excess.py
+  // _can_decide_plan_excess). Раньше кнопки судили по наследующему списку прав
+  // с /api/users/me (canDecidePlanExcess/can('plan_excess.decide')) — org_admin
+  // без гранта ВИДЕЛ кнопку «Одобрить» и получал 403 при клике.
+  can_decide?: boolean
 }
 const planExcessApprovals = ref<Record<number, PlanExcessApprovalDto>>({})
 // Закупки субсидии без категории ФЭО (ни у самой закупки, ни у одной позиции) — деньги
@@ -7395,7 +7458,7 @@ const toast = useToast()
 const contractors = ref<{ id: number; name: string; inn?: string }[]>([])
 
 const form = ref({ name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string })
-const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string, grantor_name: '' as string, ministry_name: '' as string, extra_contract_clause_1: null as string | null, extra_contract_clause_2: null as string | null, require_planned_dates: true as boolean })
+const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string, grantor_name: '' as string, ministry_name: '' as string, extra_contract_clause_1: null as string | null, extra_contract_clause_2: null as string | null, require_planned_dates: true as boolean, ceiling_warn_percent: 90 as number | null })
 // План zany-fluttering-mountain.md, п.1/п.5: planSource/manual_plan_amount — новый
 // переключатель «как считать план» (по плановым позициям / по вручную заданной
 // сумме), см. блок «Плановые показатели» в диалогах создания/редактирования ниже.
@@ -7518,6 +7581,7 @@ const subsidyTableHeaders = [
   { title: 'Оплачено', key: 'paid', align: 'end' as const },
   { title: 'Контрагент', key: 'contractor_name' },
   { title: 'ФЭО', key: 'feo_filled', align: 'center' as const },
+  { title: 'Потолок', key: 'ceiling_committed_percent', align: 'center' as const },
   { title: '', key: 'actions', sortable: false, align: 'end' as const },
 ]
 
@@ -9396,6 +9460,13 @@ async function loadAll() {
       contracts: s.total_contracts ?? 0,
       delivered: s.total_delivered ?? 0,
       delivered_unpaid: s.total_delivered_unpaid ?? 0,
+      // Владелец (2026-08-30): предупреждение о подходе к потолку субсидии
+      ceiling_warn_percent: s.ceiling_warn_percent ?? 90,
+      ceiling_total: s.ceiling_total ?? 0,
+      ceiling_committed_total: s.ceiling_committed_total ?? 0,
+      ceiling_committed_percent: s.ceiling_committed_percent ?? 0,
+      ceiling_near_warning: s.ceiling_near_warning ?? false,
+      ceiling_exceeded: s.ceiling_exceeded ?? false,
     }))
     const years = [...new Set(allSubsidies.value.map((s: SubsidyRow) => s.year))].sort((a, b) => b - a)
     if (years.length) selectedYear.value = years[0]  // always reset to most recent year
@@ -10073,6 +10144,7 @@ async function startEdit(s: SubsidyRow) {
     extra_contract_clause_1: full.extra_contract_clause_1 ?? null,
     extra_contract_clause_2: full.extra_contract_clause_2 ?? null,
     require_planned_dates: full.require_planned_dates ?? true,
+    ceiling_warn_percent: full.ceiling_warn_percent ?? 90,
   }
   showEditDialog.value = true
 }
@@ -10111,7 +10183,7 @@ async function updateSubsidy() {
   try {
     await apiFetch<any>(`/subsidies/${editForm.value.id}`, {
       method: 'PUT',
-      body: JSON.stringify({ name: editForm.value.name, year: editForm.value.year, budget: editForm.value.budget, description: editForm.value.description || null, contractor_id: editForm.value.contractor_id, agreement_text: editForm.value.agreement_text || null, basis_doc_number: editForm.value.basis_doc_number || null, basis_doc_date: editForm.value.basis_doc_date || null, grantor_name: editForm.value.grantor_name || null, ministry_name: editForm.value.ministry_name || null, extra_contract_clause_1: editForm.value.extra_contract_clause_1 || null, extra_contract_clause_2: editForm.value.extra_contract_clause_2 || null, require_planned_dates: editForm.value.require_planned_dates })
+      body: JSON.stringify({ name: editForm.value.name, year: editForm.value.year, budget: editForm.value.budget, description: editForm.value.description || null, contractor_id: editForm.value.contractor_id, agreement_text: editForm.value.agreement_text || null, basis_doc_number: editForm.value.basis_doc_number || null, basis_doc_date: editForm.value.basis_doc_date || null, grantor_name: editForm.value.grantor_name || null, ministry_name: editForm.value.ministry_name || null, extra_contract_clause_1: editForm.value.extra_contract_clause_1 || null, extra_contract_clause_2: editForm.value.extra_contract_clause_2 || null, require_planned_dates: editForm.value.require_planned_dates, ceiling_warn_percent: editForm.value.ceiling_warn_percent ?? null })
     })
     // После save перезагружаем весь список с backend — гарантированно свежие
     // данные (включая поля которые backend мог трансформировать). Spread-merge

@@ -43,6 +43,7 @@ from app.auth.jwt import get_current_user, require_role, get_org_filter, get_sin
 from app.auth.permissions import require_tab, require_action
 from app.models.user import User
 from app.services.fio import compose_fio
+from app.services.feo_plan import calculate_ceiling_forecasts_bulk, calculate_ceiling_forecast
 from typing import List, Optional
 from datetime import date
 from pydantic import BaseModel
@@ -287,6 +288,10 @@ async def list_subsidies(
     budgets = await calculate_budgets_bulk(db, sid_list)
     spent_map = await _calculate_spent_bulk(db, sid_list)
     planned_amounts = await _calculate_planned_amounts_bulk(db, sid_list)
+    # Владелец (2026-08-30): предупреждение «сумма заказанного приближается к
+    # потолку субсидии» — считаем батчем на список, не по одной (см. docstring
+    # calculate_ceiling_forecasts_bulk в app/services/feo_plan.py).
+    ceiling_forecasts = await calculate_ceiling_forecasts_bulk(db, sid_list)
     contractor_ids = {s.contractor_id for s in subsidies if s.contractor_id}
     contractors = {}
     if contractor_ids:
@@ -325,6 +330,7 @@ async def list_subsidies(
         d["contractor_inn"] = contractor.inn if contractor else None
         org = orgs.get(s.org_id) if s.org_id else None
         d["org_inn"] = org.inn if org else None
+        d.update(ceiling_forecasts.get(s.id, {}))
         out.append(d)
 
     await db.commit()
@@ -365,6 +371,7 @@ async def get_subsidy(
     else:
         d["contractor_name"] = None
         d["contractor_inn"] = None
+    d.update(await calculate_ceiling_forecast(db, subsidy.id))
     return d
 
 
@@ -643,6 +650,7 @@ async def create_subsidy(
     else:
         d["contractor_name"] = None
         d["contractor_inn"] = None
+    d.update(await calculate_ceiling_forecast(db, db_subsidy.id))
     return d
 
 @router.put("/{subsidy_id}", response_model=SubsidyOut)
@@ -780,6 +788,7 @@ async def update_subsidy(
     else:
         d["contractor_name"] = None
         d["contractor_inn"] = None
+    d.update(await calculate_ceiling_forecast(db, db_subsidy.id))
     return d
 
 @router.get("/{subsidy_id}/delete-impact")

@@ -119,6 +119,28 @@
       </div>
     </div>
 
+    <!-- ── Ceiling warning banner (владелец, 2026-08-30) ── -->
+    <div v-if="subsidiesNearCeiling.length > 0" class="ceiling-warning-banner"
+      :class="{ 'ceiling-warning-banner--critical': subsidiesNearCeiling.some(s => s.ceiling_exceeded) }"
+    >
+      <v-icon icon="mdi-gauge-full" size="28" color="white" class="mr-3 flex-shrink-0" />
+      <div class="overrun-content">
+        <div class="overrun-title">Субсидии у потолка финансирования</div>
+        <div v-for="s in subsidiesNearCeiling" :key="s.subsidy_id" class="overrun-row">
+          <strong>{{ s.name }}</strong>:
+          заказано {{ formatCurrency(s.ceiling_committed_total) }} из потолка {{ formatCurrency(s.ceiling_total) }}
+          — <strong>{{ s.ceiling_committed_percent }}%</strong>
+          (порог {{ s.ceiling_warn_percent }}%)
+          <span v-if="s.ceiling_exceeded"> — потолок превышен!</span>
+        </div>
+        <div class="overrun-hint">
+          В сумму заказанного входят разовые/авансовые/рамочные закупки в статусе «Заказано» и далее,
+          плюс ежемесячные платежи — весь график целиком.
+          <router-link to="/subsidies" class="ceiling-warning-link">Открыть субсидии →</router-link>
+        </div>
+      </div>
+    </div>
+
     <GridLayout
       :layout="effectiveLayout"
       :col-num="12"
@@ -1123,6 +1145,18 @@ const statusCounts    = ref<Record<string, number>>({})
 const breakdownMetric = ref('budget')
 const widgetsData     = ref<WidgetsData | null>(null)
 
+// Владелец (2026-08-30): «субсидии у потолка» — сумма заказанного (включая
+// ежемесячные платежи, весь график) приблизилась/превысила потолок ФЭО.
+// Приходит готовым списком с бэкенда (см. app/routers/dashboard.py
+// dashboard_charts → subsidies_near_ceiling), не пересчитывается на фронте.
+interface CeilingWarningRow {
+  subsidy_id: number; name: string
+  ceiling_total: number; ceiling_committed_total: number
+  ceiling_committed_percent: number; ceiling_warn_percent: number
+  ceiling_exceeded: boolean
+}
+const subsidiesNearCeiling = ref<CeilingWarningRow[]>([])
+
 // Dark mode aware colors for ApexCharts
 const isDark = computed(() => theme.global.name.value === 'dark')
 const chartText = computed(() => isDark.value ? '#CBD5E1' : '#374151')
@@ -1839,6 +1873,7 @@ async function loadAll() {
     }))
 
     statusCounts.value = chartsData.status_counts
+    subsidiesNearCeiling.value = chartsData.subsidies_near_ceiling ?? []
 
     // Store widgets data from backend
     if (chartsData.widgets) {
@@ -2316,6 +2351,24 @@ onMounted(() => {
 .overrun-title { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
 .overrun-row { font-size: 14px; margin-bottom: 4px; line-height: 1.5; opacity: 0.95; }
 .overrun-hint { font-size: 12px; opacity: 0.8; margin-top: 8px; font-style: italic; }
+
+/* ── Ceiling Warning Banner (владелец, 2026-08-30) ── */
+.ceiling-warning-banner {
+  display: flex;
+  align-items: flex-start;
+  background: linear-gradient(135deg, #F59E0B, #D97706);
+  color: white;
+  border-radius: 12px;
+  padding: 20px 24px;
+  margin-bottom: 20px;
+  box-shadow: 0 4px 20px rgba(245,158,11,0.4);
+}
+.ceiling-warning-banner--critical {
+  background: linear-gradient(135deg, #EF4444, #DC2626);
+  box-shadow: 0 4px 20px rgba(239,68,68,0.4);
+  animation: pulse-border 2s infinite;
+}
+.ceiling-warning-link { color: white; font-weight: 600; text-decoration: underline; margin-left: 6px; }
 
 /* ── Layout ── */
 .crm-dashboard {

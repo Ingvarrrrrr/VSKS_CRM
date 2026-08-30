@@ -225,6 +225,31 @@ class SubsidyCreate(BaseModel):
     require_planned_dates: bool = True
     # Fabrikant: номер соглашения о субсидии
     agreement_number: Optional[str] = None
+    # Р’Р»Р°РґРµР»РµС† (2026-08-30): РїСЂРµРґСѓРїСЂРµР¶РґРµРЅРёРµ В«СЃСѓРјРјР° Р·Р°РєР°Р·Р°РЅРЅРѕРіРѕ РїСЂРёР±Р»РёР¶Р°РµС‚СЃСЏ Рє
+    # РїРѕС‚РѕР»РєСѓ СЃСѓР±СЃРёРґРёРёВ». ceiling_warn_percent вЂ” РЅР°СЃС‚СЂР°РёРІР°РµРјС‹Р№ РїРѕСЂРѕРі (С…СЂР°РЅРёС‚СЃСЏ
+    # РІ Р‘Р”, СѓРјРѕР»С‡Р°РЅРёРµ 90 РїСЂРёРјРµРЅСЏРµС‚СЃСЏ РІ СЃРµСЂРІРёСЃРµ РµСЃР»Рё NULL). РћСЃС‚Р°Р»СЊРЅС‹Рµ РїРѕР»СЏ вЂ”
+    # СЂР°СЃС‡С‘С‚ РЅР° Р»РµС‚Сѓ, СЃРј. app.services.feo_plan.calculate_ceiling_forecast*:
+    #   ceiling_total            вЂ” РїРѕС‚РѕР»РѕРє (calculate_budget_from_categories,
+    #                              С‚РѕС‚ Р¶Рµ РёСЃС‚РѕС‡РЅРёРє, С‡С‚Рѕ Рё Р¶С‘СЃС‚РєРёР№ РіРµР№С‚
+    #                              PLAN_OVER_SUBSIDY_CEILING)
+    #   ceiling_committed_total  вЂ” В«СЃСѓРјРјР° Р·Р°РєР°Р·Р°РЅРЅРѕРіРѕВ»: СЂР°Р·РѕРІС‹Рµ/Р°РІР°РЅСЃРѕРІС‹Рµ/
+    #                              СЂР°РјРѕС‡РЅС‹Рµ Р·Р°РєСѓРїРєРё РІ СЃС‚Р°С‚СѓСЃР°С… Р—Р°РєР°Р·Р°РЅРѕ+, РџР›Р®РЎ
+    #                              РµР¶РµРјРµСЃСЏС‡РЅС‹Рµ РїР»Р°С‚РµР¶Рё Р’Р•РЎР¬ РіСЂР°С„РёРє С†РµР»РёРєРѕРј
+    #   ceiling_committed_percent вЂ” committed / ceiling * 100
+    #   ceiling_near_warning     вЂ” percent >= ceiling_warn_percent (Рё ceiling > 0)
+    #   ceiling_exceeded         вЂ” committed > ceiling (РїРѕС‚РѕР»РѕРє СѓР¶Рµ РїСЂРµРІС‹С€РµРЅ)
+    ceiling_warn_percent: Optional[float] = None
+    ceiling_total: Optional[float] = None
+    ceiling_committed_total: Optional[float] = None
+    ceiling_committed_one_off: Optional[float] = None   # СЂР°Р·РѕРІС‹Рµ/Р°РІР°РЅСЃРѕРІС‹Рµ/СЂР°РјРѕС‡РЅС‹Рµ (СЃС‚Р°С‚СѓСЃС‹ Р—Р°РєР°Р·Р°РЅРѕ+)
+    ceiling_committed_monthly: Optional[float] = None   # РµР¶РµРјРµСЃСЏС‡РЅС‹Рµ РїР»Р°С‚РµР¶Рё, РІРµСЃСЊ РіСЂР°С„РёРє С†РµР»РёРєРѕРј
+    ceiling_committed_percent: Optional[float] = None
+    ceiling_near_warning: bool = False
+    ceiling_exceeded: bool = False
+    # Р’Р»Р°РґРµР»РµС† (2026-08-30): РїРѕСЂРѕРі РїСЂРµРґСѓРїСЂРµР¶РґРµРЅРёСЏ Рѕ РїРѕРґС…РѕРґРµ Рє РїРѕС‚РѕР»РєСѓ СЃСѓР±СЃРёРґРёРё (%)
+    ceiling_warn_percent: Optional[float] = None
+    # Р’Р»Р°РґРµР»РµС† (2026-08-30): РїРѕСЂРѕРі РїСЂРµРґСѓРїСЂРµР¶РґРµРЅРёСЏ Рѕ РїРѕРґС…РѕРґРµ Рє РїРѕС‚РѕР»РєСѓ СЃСѓР±СЃРёРґРёРё (%)
+    ceiling_warn_percent: Optional[float] = None
 
     @field_validator('basis_doc_date', mode='before')
     @classmethod

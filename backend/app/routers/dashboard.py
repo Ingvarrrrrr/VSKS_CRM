@@ -15,6 +15,7 @@ from app.models.user import User
 from app.auth.jwt import get_current_user, get_org_filter
 from app.auth.visibility import get_visible_subsidy_ids
 from app.routers.subsidies import calculate_budgets_bulk, _calculate_spent_bulk, _calculate_planned_amounts_bulk, _calculate_feo_planned_tree_bulk
+from app.services.feo_plan import calculate_ceiling_forecasts_bulk
 from app.config import settings
 from decimal import Decimal
 
@@ -351,6 +352,10 @@ async def dashboard_charts(
     # Единый источник «Запланировано»: план дерева ФЭО = ручные позиции + позиции из заявок плана закупок.
     # Совпадает с KPI «Запланировано» на вкладке «Субсидии» (selectedPlannedTotal).
     planned_tree_map = await _calculate_feo_planned_tree_bulk(db, sid_list)
+    # Владелец (2026-08-30): предупреждение «сумма заказанного приближается к
+    # потолку субсидии» — батчем на весь список (см. app/services/feo_plan.py
+    # calculate_ceiling_forecasts_bulk).
+    ceiling_forecasts = await calculate_ceiling_forecasts_bulk(db, sid_list)
     sub_objs = {}
     if subsidy_rows:
         sub_objs = {
@@ -641,6 +646,10 @@ async def dashboard_charts(
                 },
             },
         })
+        # Владелец (2026-08-30): плашка «субсидии у потолка» — прокидываем расчёт
+        # прямо в subsidy_stats[i], чтобы карточка/список субсидий на дашборде
+        # могли показать предупреждение без второго запроса.
+        subsidy_stats[-1].update(ceiling_forecasts.get(row.id, {}))
 
     # ── Накопительные виджеты закупок ────────────────────────────────────────
     # Корзины: каждая закупка ровно в одной, по текущему статусу.
@@ -774,10 +783,32 @@ async def dashboard_charts(
         },
     }
 
+    # Владелец (2026-08-30): блок «субсидии у потолка» — субсидии, где сумма
+    # заказанного (включая ежемесячные — весь график) достигла/превысила
+    # настроенный порог (ceiling_warn_percent, умолчание 90%). Отсортировано
+    # по убыванию процента — сначала самые критичные (превышенные), затем
+    # ближе всего к порогу.
+    subsidies_near_ceiling = sorted(
+        (
+            {
+                "subsidy_id": s["id"], "name": s["name"],
+                "ceiling_total": s.get("ceiling_total", 0.0),
+                "ceiling_committed_total": s.get("ceiling_committed_total", 0.0),
+                "ceiling_committed_percent": s.get("ceiling_committed_percent", 0.0),
+                "ceiling_warn_percent": s.get("ceiling_warn_percent", 90.0),
+                "ceiling_exceeded": s.get("ceiling_exceeded", False),
+            }
+            for s in subsidy_stats
+            if s.get("ceiling_near_warning") or s.get("ceiling_exceeded")
+        ),
+        key=lambda x: x["ceiling_committed_percent"], reverse=True,
+    )
+
     return {
         "status_counts": status_counts,
         "subsidy_stats": subsidy_stats,
         "widgets": widgets,
+        "subsidies_near_ceiling": subsidies_near_ceiling,
     }
 
 

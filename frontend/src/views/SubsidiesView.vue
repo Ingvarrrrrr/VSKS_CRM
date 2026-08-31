@@ -1705,7 +1705,11 @@
                                     <tr style="background:rgba(245,158,11,0.14)">
                                       <td colspan="12" style="padding:4px 8px;font-weight:600;color:#B45309;font-size:11px">
                                         <v-icon icon="mdi-alert-circle-outline" size="14" color="warning" class="mr-1" />
-                                        Не привязаны к плану — требуется действие
+                                        <!-- Владелец (2026-08-31): отличать от плашки в самой закупке
+                                             («позиция закупки пока не привязана — человек в процессе»).
+                                             Здесь — про план: строка висит непривязанной и не попадает
+                                             в общий объём, пока её не привяжут. -->
+                                        В плане есть непривязанные позиции — не учитываются в общем объёме, нужно привязать
                                       </td>
                                     </tr>
                               <template v-for="actual in unplannedActualFor(node)" :key="`a-${actual.purchase_item_id}`">

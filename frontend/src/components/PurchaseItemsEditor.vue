@@ -3954,10 +3954,6 @@ function commitPreviewItems(resolved: ResolvedRow[]) {
       _photo_url: hasCatalog ? (cand!.photo_url ?? undefined) : undefined,
       _description: hasCatalog ? (cand!.description ?? undefined) : undefined,
       _description_44fz: undefined,
-        price_updated_at: cand!.price_updated_at ?? null,
-        price_source: cand!.price_source ?? null,
-        price_source_ref: cand!.price_source_ref ?? null,
-      } : null,
     }
     if (props.itemShape === 'purchase') {
       item.final_unit_price = null

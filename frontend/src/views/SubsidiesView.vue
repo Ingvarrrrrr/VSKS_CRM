@@ -7465,6 +7465,21 @@ const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 
 const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, feo_quantity: null as number | null, feo_unit: '' as string, description: '', feo_amount: '' as string | number, planSource: 'planned_items' as 'planned_items' | 'manual_sum', manual_plan_amount: null as number | null })
 const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, is_active: true, hasChildren: false, parent_id: null as number | null, feo_quantity: null as number | null, feo_unit: '' as string, description: '', feo_amount: '' as string | number, planSource: 'planned_items' as 'planned_items' | 'manual_sum', manual_plan_amount: null as number | null })
 
+// Дефект 2026-08-31 (владелец, форма «Редактировать направление ФЭО», тупик 409/422):
+// v-model.number на Vuetify НЕ приводит очищенное поле к null — Vue's looseToNumber
+// возвращает исходную строку '' как есть, если parseFloat('') === NaN. Наивное
+// `field ?? null` в PUT/POST-payload пропускало эту '' насквозь (?? срабатывает
+// только на null/undefined) → бэкенд получал '' в Optional[float]-поле → 422
+// «ожидается число» с техническим именем поля вместо русской подписи (feo_quantity
+// не было в field_labels в app/__init__.py — трогать этот файл в этой задаче
+// запрещено, поэтому чиним у источника, здесь). Пустая строка/null/undefined —
+// «поле не задано» = null; 0 — валидное число, НЕ схлопывается в null.
+function numOrNull(v: unknown): number | null {
+  if (v === '' || v === null || v === undefined) return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
 // Правило владельца (2026-08-09): «Плановое кол-во»/«Плановая стоимость за ед.» —
 // пара. Задана цена без количества (или наоборот) → сумма НЕ считается автоматически
 // и молча ломается (см. backend _validate_plan_pair в feo_categories.py, тот же порог
@@ -10244,18 +10259,18 @@ async function addFeoCategory() {
         code: feoForm.value.code || null,
         appendix: feoForm.value.appendix || null,
         is_active: true,
-        budget: feoForm.value.budgetAuto ? null : (feoForm.value.budget ?? null),
-        planned_quantity: feoForm.value.qtyAuto ? null : (feoForm.value.planned_quantity ?? null),
-        planned_amount: feoForm.value.amtAuto ? null : (feoForm.value.planned_amount ?? null),
+        budget: feoForm.value.budgetAuto ? null : numOrNull(feoForm.value.budget),
+        planned_quantity: feoForm.value.qtyAuto ? null : numOrNull(feoForm.value.planned_quantity),
+        planned_amount: feoForm.value.amtAuto ? null : numOrNull(feoForm.value.planned_amount),
         unit: feoForm.value.unit || null,
-        feo_quantity: feoForm.value.feo_quantity ?? null,
+        feo_quantity: numOrNull(feoForm.value.feo_quantity),
         feo_unit: feoForm.value.feo_unit || null,
         description: feoForm.value.description?.trim() || null,
-        feo_amount: feoForm.value.feo_amount === '' || feoForm.value.feo_amount == null ? null : Number(feoForm.value.feo_amount),
+        feo_amount: numOrNull(feoForm.value.feo_amount),
         // План zany-fluttering-mountain.md, п.1: способ расчёта плана — при 'manual_sum'
         // уходит введённая сумма, при 'planned_items' поле обнуляется (истина в позициях).
         plan_source: feoForm.value.planSource,
-        manual_plan_amount: feoForm.value.planSource === 'manual_sum' ? (feoForm.value.manual_plan_amount ?? null) : null,
+        manual_plan_amount: feoForm.value.planSource === 'manual_sum' ? numOrNull(feoForm.value.manual_plan_amount) : null,
       })
     })
     feoCategories.value.push(res)
@@ -10365,18 +10380,18 @@ async function updateFeoCategory() {
         code: feoEditForm.value.code || null,
         appendix: feoEditForm.value.appendix || null,
         is_active: feoEditForm.value.is_active,
-        budget: feoEditForm.value.budgetAuto ? null : (feoEditForm.value.budget ?? null),
-        planned_quantity: feoEditForm.value.qtyAuto ? null : (feoEditForm.value.planned_quantity ?? null),
-        planned_amount: feoEditForm.value.amtAuto ? null : (feoEditForm.value.planned_amount ?? null),
+        budget: feoEditForm.value.budgetAuto ? null : numOrNull(feoEditForm.value.budget),
+        planned_quantity: feoEditForm.value.qtyAuto ? null : numOrNull(feoEditForm.value.planned_quantity),
+        planned_amount: feoEditForm.value.amtAuto ? null : numOrNull(feoEditForm.value.planned_amount),
         unit: feoEditForm.value.unit || null,
-        feo_quantity: feoEditForm.value.feo_quantity ?? null,
+        feo_quantity: numOrNull(feoEditForm.value.feo_quantity),
         feo_unit: feoEditForm.value.feo_unit || null,
         description: feoEditForm.value.description?.trim() || null,
-        feo_amount: feoEditForm.value.feo_amount === '' || feoEditForm.value.feo_amount == null ? null : Number(feoEditForm.value.feo_amount),
+        feo_amount: numOrNull(feoEditForm.value.feo_amount),
         // План zany-fluttering-mountain.md, п.1: способ расчёта плана — см. комментарий
         // у того же поля в addFeoCategory выше.
         plan_source: feoEditForm.value.planSource,
-        manual_plan_amount: feoEditForm.value.planSource === 'manual_sum' ? (feoEditForm.value.manual_plan_amount ?? null) : null,
+        manual_plan_amount: feoEditForm.value.planSource === 'manual_sum' ? numOrNull(feoEditForm.value.manual_plan_amount) : null,
       })
     })
     showEditFeoDialog.value = false
@@ -10632,9 +10647,13 @@ const DOC_TYPE_RU: Record<string, string> = {
   contract: 'Договор',
   approval_sheet: 'Лист_согласования',
   order_purchase: 'Приказ_о_закупке',
+  contract_services: 'Договор_услуг',
+  // Алиасы — сохранены на бэке для старых закупок, оставлены и здесь на всякий случай
   contract_services_large: 'Договор_услуги_крупный',
   contract_services_small: 'Договор_услуги_малый',
   contract_services_food: 'Договор_услуги_питание',
+  methodology_large: 'Методические_рекомендации_большие',
+  methodology_small: 'Методические_рекомендации_малые',
   contract_goods_single: 'Договор_поставка_единственный',
   contract_gph_individual: 'Договор_ГПХ_физлицо',
   contract_gph_individual_rid: 'Договор_ГПХ_физлицо_РИД',

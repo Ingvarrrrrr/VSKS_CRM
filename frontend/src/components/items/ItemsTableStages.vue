@@ -317,6 +317,18 @@
                             @update:model-value="(v) => emit('item-planned-change', idx, v)"
                             @planned-item-created="emit('planned-item-created')"
                             @planned-item-deleted="emit('planned-item-deleted')" />
+                          <!-- Владелец (2026-08-26, заявка №45/Минтруд_2026): «уже запланировано по
+                               статье»/«остаток на статье» — ТОЛЬКО когда нет выбранной КОНКРЕТНОЙ
+                               плановой позиции (см. categoryResidualFor в PurchaseItemsEditor.vue). -->
+                          <div v-if="categoryResidualFor?.(item)" class="text-caption plan-hint mt-1" style="min-width:240px">
+                            <div class="text-medium-emphasis">
+                              Уже запланировано по статье {{ formatNumber(categoryResidualFor(item)!.alreadyPlanned) }} ₽
+                            </div>
+                            <div v-if="categoryResidualFor(item)!.residualBeforeItem != null"
+                              :class="categoryPlanResidualDisplay(item)?.cssClass || 'text-medium-emphasis'">
+                              {{ categoryPlanResidualDisplay(item)?.text }}
+                            </div>
+                          </div>
                         </div>
                         <!-- Тип -->
                         <v-select v-model="item.item_type"
@@ -522,6 +534,7 @@ import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
 import type { Contractor } from '@/components/items/types'
 import type { FeoNode } from '@/composables/useFeoLeaves'
 import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
+import { formatPlanResidual } from '@/utils/numberFormat'
 
 type EditorItem = any
 type StageTotals = { tz: number; dog: number; delivery: number }
@@ -582,6 +595,15 @@ const props = defineProps<{
   // проп в ItemsTableFlat.vue.
   planForItem?: (item: EditorItem) => FeoPlanPosition | null
   planExcessFor?: (item: EditorItem) => { plan: FeoPlanPosition; qtyOver: boolean; priceOver: boolean; totalOver: boolean } | null
+  // Владелец (2026-08-26, заявка №45/Минтруд_2026) — см. одноимённый проп в
+  // ItemsTableFlat.vue / categoryResidualFor в PurchaseItemsEditor.vue.
+  categoryResidualFor?: (item: EditorItem) => {
+    alreadyPlanned: number
+    feoBudget: number | null
+    residualBeforeItem: number | null
+    residualWithItem: number | null
+    hasItemTotal: boolean
+  } | null
   subsidyId?: number | null
   subsidyName?: string | null
   // mode flags (computed in parent)
@@ -642,6 +664,18 @@ function tzPlanExcessLabel(item: EditorItem): string {
 }
 function formatNumberSafe(v: number | null | undefined): string {
   return props.formatNumber(v)
+}
+
+// Владелец (2026-08-26): та же логика, что categoryPlanResidualDisplay в
+// ItemsTableFlat.vue/ItemsCardsView.vue — «Остаток на статье» до ввода суммы
+// позиции, «Остаток на статье с учётом данной закупки» после.
+function categoryPlanResidualDisplay(item: EditorItem) {
+  const info = props.categoryResidualFor?.(item)
+  if (!info || info.residualBeforeItem == null) return null
+  if (info.hasItemTotal) {
+    return formatPlanResidual(info.residualWithItem, { label: 'Остаток на статье с учётом данной закупки' })
+  }
+  return formatPlanResidual(info.residualBeforeItem, { label: 'Остаток на статье' })
 }
 
 const emit = defineEmits<{

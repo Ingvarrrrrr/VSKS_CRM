@@ -190,7 +190,17 @@
               <v-text-field :model-value="formatNumber(item.total_price)" readonly density="compact"
                 variant="outlined" label="Сумма, ₽" hide-details bg-color="grey-lighten-4"
                 :class="{ 'tz-over-plan': planExcessFor?.(item)?.totalOver }" />
-              <div v-if="planForItem?.(item)?.planned_amount != null" class="text-caption plan-hint"
+              <template v-if="categoryResidualFor?.(item)">
+                <div class="text-caption plan-hint text-medium-emphasis">
+                  Уже запланировано по статье {{ formatNumber(categoryResidualFor(item)!.alreadyPlanned) }} ₽
+                </div>
+                <div v-if="categoryResidualFor(item)!.residualBeforeItem != null"
+                  class="text-caption plan-hint"
+                  :class="categoryPlanResidualDisplay(item)?.cssClass || 'text-medium-emphasis'">
+                  {{ categoryPlanResidualDisplay(item)?.text }}
+                </div>
+              </template>
+              <div v-else-if="planForItem?.(item)?.planned_amount != null" class="text-caption plan-hint"
                 :class="planExcessFor?.(item)?.totalOver ? 'text-error font-weight-bold' : 'text-medium-emphasis'">
                 план: {{ formatNumber(planForItem!(item)!.planned_amount) }} ₽
               </div>
@@ -329,6 +339,15 @@ const props = defineProps<{
   // раньше сюда не передавались вовсе.
   planForItem?: (item: EditorItem) => FeoPlanPosition | null
   planExcessFor?: (item: EditorItem) => { plan: FeoPlanPosition; qtyOver: boolean; priceOver: boolean; totalOver: boolean } | null
+  // Владелец (2026-08-26, заявка №45/Минтруд_2026) — см. одноимённый проп в
+  // ItemsTableFlat.vue / categoryResidualFor в PurchaseItemsEditor.vue.
+  categoryResidualFor?: (item: EditorItem) => {
+    alreadyPlanned: number
+    feoBudget: number | null
+    residualBeforeItem: number | null
+    residualWithItem: number | null
+    hasItemTotal: boolean
+  } | null
   // Жалоба владельца (сессия 2026-08-19): «выбрано/остаток» должны учитывать переключатели,
   // включённые ПРЯМО СЕЙЧАС в этой форме — см. pendingByPlannedItem в
   // PurchaseItemsEditor.vue / одноимённый проп в ItemsTableFlat.vue.
@@ -393,6 +412,18 @@ function itemPlanResidualDisplay(item: EditorItem) {
   if (r == null) return null
   const d = formatPlanResidual(r)
   return d.negative ? d : null
+}
+
+// Владелец (2026-08-26): та же логика, что categoryPlanResidualDisplay в
+// ItemsTableFlat.vue/ItemsTableStages.vue — «Остаток на статье» до ввода суммы
+// позиции, «Остаток на статье с учётом данной закупки» после.
+function categoryPlanResidualDisplay(item: EditorItem) {
+  const info = props.categoryResidualFor?.(item)
+  if (!info || info.residualBeforeItem == null) return null
+  if (info.hasItemTotal) {
+    return formatPlanResidual(info.residualWithItem, { label: 'Остаток на статье с учётом данной закупки' })
+  }
+  return formatPlanResidual(info.residualBeforeItem, { label: 'Остаток на статье' })
 }
 
 const bodyRows = computed<ItemsDisplayRow[]>(() =>

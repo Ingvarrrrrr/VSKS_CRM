@@ -73,6 +73,27 @@ def _validate_plan_pair(planned_quantity: Optional[float], planned_amount: Optio
     raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
 
 
+def _plan_pair_unchanged(
+    old_quantity: Optional[float], old_amount: Optional[float],
+    new_quantity: Optional[float], new_amount: Optional[float],
+) -> bool:
+    """Дефект 2026-08-31 (владелец, «Редактировать направление ФЭО», тупик 409):
+    диалог редактирования категории НЕ даёт править planned_quantity/planned_amount
+    напрямую (см. комментарий у кнопки «Сохранить» в SubsidiesView.vue) — он молча
+    ретранслирует то, что пришло с GET. Если у категории УЖЕ есть унаследованный
+    из БД мисматч пары (старые данные/импорт), PUT с ЛЮБЫМ другим изменением
+    (например, только суммы финансирования) раньше падал 409 из _validate_plan_pair
+    навсегда, без способа сохраниться — комментарий в PUT-обработчике это допускал,
+    но сама проверка была безусловной. Правило владельца «пара обязана биться»
+    остаётся в силе ТОЛЬКО когда пользователь реально ЗАДАЁТ/МЕНЯЕТ одно из двух
+    полей этим запросом — если оба значения пришли ровно такими же, как в БД,
+    мисматч не новый, блокировать нечего.
+    """
+    def norm(v):
+        return None if v is None else float(v)
+    return norm(old_quantity) == norm(new_quantity) and norm(old_amount) == norm(new_amount)
+
+
 async def _has_feo_action(current_user, db: AsyncSession, action_key: str) -> bool:
     """Есть ли у пользователя один из feo_budget.* action-ключей (эффективно, с учётом
     ролевой матрицы + персональных/субсидийных оверрайдов). superadmin — всегда True.
@@ -3271,7 +3292,11 @@ async def update_category(
     cat = result.scalar_one_or_none()
     if not cat:
         raise HTTPException(status_code=404, detail="Категория не найдена")
-    _validate_plan_pair(category_data.planned_quantity, category_data.planned_amount)
+    if not _plan_pair_unchanged(
+        cat.planned_quantity, cat.planned_amount,
+        category_data.planned_quantity, category_data.planned_amount,
+    ):
+        _validate_plan_pair(category_data.planned_quantity, category_data.planned_amount)
     _old_plan = (
         cat.budget, cat.feo_quantity, cat.feo_amount, cat.planned_quantity, cat.planned_amount,
         cat.plan_source, cat.manual_plan_amount,

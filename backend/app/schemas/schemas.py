@@ -395,6 +395,27 @@ class SubsidyApproverOut(SubsidyApproverCreate):
 
 # FeoCategory
 class FeoCategoryCreate(BaseModel):
+    # Дефект 2026-08-31 (владелец, форма «Редактировать направление ФЭО»): фронт
+    # иногда шлёт пустую строку вместо null для очищенного числового поля (напр.
+    # v-model.number на Vuetify оставляет '' как есть, если поле не парсится в
+    # число) — pydantic валит это 422 «ожидается число» с техническим именем поля
+    # (fields без русской подписи в field_labels в app/__init__.py). Пустая строка
+    # для ЧИСЛОВОГО поля этой схемы = «не задано», а не ошибка — нормализуем в None
+    # ДО валидации типов, тем же паттерном, что и ContractorCreate.empty_strings_to_none
+    # ниже. Фронт всё равно должен слать null (см. SubsidiesView.vue), это —
+    # защита от повторения, не замена фикса на фронте.
+    @model_validator(mode='before')
+    @classmethod
+    def empty_numeric_strings_to_none(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            for key in (
+                'budget', 'feo_quantity', 'feo_amount',
+                'planned_quantity', 'planned_amount', 'manual_plan_amount',
+            ):
+                if data.get(key) == '':
+                    data[key] = None
+        return data
+
     parent_id: Optional[int] = None
     subsidy_id: int
     name: str

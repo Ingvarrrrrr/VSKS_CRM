@@ -181,6 +181,7 @@
           :wish-id="props.wishId"
           :plan-for-item="planForItem"
           :plan-excess-for="planExcessFor"
+          :category-residual-for="categoryResidualFor"
           :subsidy-id="props.subsidyId"
           :subsidy-name="props.subsidyName"
           :show-vat-columns-in-expand-row="showVatColumnsInExpandRow"
@@ -264,6 +265,7 @@
           :wish-id="props.wishId"
           :plan-for-item="planForItem"
           :plan-excess-for="planExcessFor"
+          :category-residual-for="categoryResidualFor"
           :show-contractor-column="showContractorColumn"
           :show-needed-date="props.showNeededDate"
           :contractors="contractors"
@@ -329,6 +331,7 @@
           :wish-id="props.wishId"
           :plan-for-item="planForItem"
           :plan-excess-for="planExcessFor"
+          :category-residual-for="categoryResidualFor"
           :show-contractor-column="showContractorColumn"
           :show-needed-date="props.showNeededDate"
           :contractors="contractors"
@@ -847,6 +850,13 @@ interface EditorItem {
   _photo_url?: string
   _description?: string
   _description_44fz?: string
+  // Владелец, 2026-08-29: штамп даты/источника актуализации цены товара —
+  // показывается под ценой за единицу в ItemsTableFlat/ItemsCardsView/
+  // ItemsTableStages. UI-only, вырезается перед сохранением наравне с
+    price_updated_at?: string | null
+    price_source?: string | null
+    price_source_ref?: string | null
+  } | null
 }
 
 interface Product {
@@ -862,6 +872,9 @@ interface Product {
   has_photo?: boolean
   contract_price?: number | null
   description_44fz?: string
+  price_updated_at?: string | null
+  price_source?: string | null
+  price_source_ref?: string | null
 }
 
 // Phase 17.1-08: prefer the bytea-backed /api/products/{id}/photo endpoint
@@ -2697,7 +2710,6 @@ function plannedAggregateForCategory(categoryId: number): FeoPlanPosition | null
     p => p.kind === 'planned_item' && p.category_id === categoryId
   )
   if (!rows.length) return null
-  const plannedQty = rows.reduce((s, r) => s + (r.planned_quantity ?? 0), 0)
   const plannedAmount = rows.reduce((s, r) => s + (r.planned_amount ?? 0), 0)
   const consumed = rows.reduce((s, r) => s + (r.consumed ?? 0), 0)
   const consumedQty = rows.reduce((s, r) => s + (r.consumed_quantity ?? 0), 0)
@@ -2709,16 +2721,75 @@ function plannedAggregateForCategory(categoryId: number): FeoPlanPosition | null
     path: rows[0].path,
     category_id: categoryId,
     kind: 'plan_position',
-    planned_quantity: plannedQty > 0 ? plannedQty : null,
+    // Владелец (2026-08-26, заявка №45/Минтруд_2026): этот агрегат складывает
+    // НЕСВЯЗАННЫЕ FeoPlannedItem внутри статьи (разные товары/цены/единицы) —
+    // planned_quantity/unit_price делением суммы на суммарное количество были бы
+    // ВЫДУМАННОЙ величиной (баг «план: 98 000,01 ₽» — цена, которой не существует,
+    // «Ты самостоятельно неправильно вычислил стоимость за единицу продукции путём
+    // деления уже запланированного на количество»). planned_amount — РЕАЛЬНАЯ сумма
+    // (Σ planned_amount уже существующих плановых позиций статьи), её оставляем и
+    // подписываем «Уже запланировано по статье» (см. categoryResidualFor ниже и
+    // ItemsTableFlat.vue/ItemsTableStages.vue/ItemsCardsView.vue). planned_quantity/
+    // unit_price = null убирают выдуманные подписи «план: N шт»/«план: N ₽» под
+    // количеством/ценой ЭТОГО фолбэка (guard `!= null` в шаблонах таблиц) — то, что
+    // не задано по-настоящему, не показываем.
+    planned_quantity: null,
     unit: rows[0].unit,
     planned_amount: plannedAmount,
-    unit_price: plannedQty > 0 ? plannedAmount / plannedQty : null,
+    unit_price: null,
     consumed,
     consumed_quantity: consumedQty,
     residual,
     residual_quantity: residualQty,
     key: `plan_position:${categoryId}`,
   }
+}
+
+// Владелец (2026-08-26): «Остаток на статье» под суммой позиции — ТОЛЬКО когда
+// planForItem вернулся из фолбэка plannedAggregateForCategory (нет ни конкретной
+// выбранной плановой позиции, ни собственной строки категории 'plan_position'/
+// 'feo_article' с сервера — см. planForItem выше). Для настоящей плановой позиции
+// (kind='planned_item' выбран построчно) старые подписи/проверка превышения не
+// трогаются (регресс запрещён владельцем).
+//
+// «Финансирование по ФЭО» статьи — поле FeoCategory.budget, уже загруженное для
+// формы через useFeoLeaves (см. feoLeaves ниже, GET /feo-categories/leaves,
+// budget = «собственная (ручная) сумма финансирования узла», единственное
+// доступное на клиенте число для этого понятия — ответ /feo-categories/plan-positions
+// его не отдаёт вовсе, там только planned_quantity/planned_amount конечных
+// категорий и Ур.5 FeoPlannedItem). Если категория не входит в feoLeaves (например,
+// план стоит не на листе, а на направлении/подкатегории) — feoBudget = null,
+// остаток статьи не считаем (не выдумываем число).
+interface CategoryResidualInfo {
+  /** Σ planned_amount уже существующих плановых позиций статьи (реальное число). */
+  alreadyPlanned: number
+  /** FeoCategory.budget («финансирование по ФЭО») либо null, если для категории его нет. */
+  feoBudget: number | null
+  /** feoBudget − alreadyPlanned, либо null если feoBudget неизвестен. */
+  residualBeforeItem: number | null
+  /** feoBudget − alreadyPlanned − сумма ЭТОЙ позиции, либо null если feoBudget неизвестен. */
+  residualWithItem: number | null
+  /** true — у позиции уже введена (посчитана) ненулевая сумма. */
+  hasItemTotal: boolean
+}
+
+function categoryResidualFor(item: EditorItem): CategoryResidualInfo | null {
+  if (item.feo_planned_item_id != null) return null
+  if (item.feo_category_id == null) return null
+  const sel = plannedSelectionFor(item)
+  if (sel) {
+    const row = (props.plannedItems || []).find(p => p.key === `${sel.kind}:${sel.id}`)
+    if (row) return null // настоящая строка категории 'plan_position'/'feo_article' с сервера — старые подписи
+  }
+  const agg = plannedAggregateForCategory(item.feo_category_id)
+  if (!agg) return null
+  const alreadyPlanned = agg.planned_amount ?? 0
+  const feoBudget = feoLeaves.value.find(l => l.id === item.feo_category_id)?.budget ?? null
+  const residualBeforeItem = feoBudget != null ? feoBudget - alreadyPlanned : null
+  const itemTotal = Number(item.total_price) || 0
+  const hasItemTotal = itemTotal > 0
+  const residualWithItem = residualBeforeItem != null ? residualBeforeItem - itemTotal : null
+  return { alreadyPlanned, feoBudget, residualBeforeItem, residualWithItem, hasItemTotal }
 }
 
 function planForItem(item: EditorItem): FeoPlanPosition | null {
@@ -2869,6 +2940,9 @@ function onItemProductSelect(idx: number, val: any) {
     photo_url: productPhotoSrc(val) ?? null,
     item_type: val.product_type ?? null,
     contract_price: val.contract_price ?? null,
+    price_updated_at: val.price_updated_at ?? null,
+    price_source: val.price_source ?? null,
+    price_source_ref: val.price_source_ref ?? null,
   })
   item._description_44fz = val.description_44fz || undefined
   emitUpdate()
@@ -3887,6 +3961,10 @@ function commitPreviewItems(resolved: ResolvedRow[]) {
       _photo_url: hasCatalog ? (cand!.photo_url ?? undefined) : undefined,
       _description: hasCatalog ? (cand!.description ?? undefined) : undefined,
       _description_44fz: undefined,
+        price_updated_at: cand!.price_updated_at ?? null,
+        price_source: cand!.price_source ?? null,
+        price_source_ref: cand!.price_source_ref ?? null,
+      } : null,
     }
     if (props.itemShape === 'purchase') {
       item.final_unit_price = null

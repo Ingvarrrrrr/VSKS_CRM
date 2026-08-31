@@ -134,7 +134,17 @@
             <v-text-field :model-value="formatNumber(item.total_price)" readonly density="compact"
               variant="outlined" hide-details bg-color="grey-lighten-4" class="my-1"
               :class="{ 'tz-over-plan': planExcessFor?.(item)?.totalOver }" />
-            <div v-if="planForItem?.(item)?.planned_amount != null" class="text-caption plan-hint"
+            <template v-if="categoryResidualFor?.(item)">
+              <div class="text-caption plan-hint text-medium-emphasis">
+                Уже запланировано по статье {{ formatNumber(categoryResidualFor(item)!.alreadyPlanned) }} ₽
+              </div>
+              <div v-if="categoryResidualFor(item)!.residualBeforeItem != null"
+                class="text-caption plan-hint"
+                :class="categoryPlanResidualDisplay(item)?.cssClass || 'text-medium-emphasis'">
+                {{ categoryPlanResidualDisplay(item)?.text }}
+              </div>
+            </template>
+            <div v-else-if="planForItem?.(item)?.planned_amount != null" class="text-caption plan-hint"
               :class="planExcessFor?.(item)?.totalOver ? 'text-error font-weight-bold' : 'text-medium-emphasis'">
               план: {{ formatNumber(planForItem!(item)!.planned_amount) }} ₽
             </div>
@@ -362,6 +372,19 @@ const props = defineProps<{
   // plannedSelectionFor выше.
   planForItem?: (item: EditorItem) => FeoPlanPosition | null
   planExcessFor?: (item: EditorItem) => { plan: FeoPlanPosition; qtyOver: boolean; priceOver: boolean; totalOver: boolean } | null
+  // Владелец (2026-08-26, заявка №45/Минтруд_2026): «уже запланировано по статье» +
+  // «остаток на статье (с учётом данной закупки)» под суммой позиции — ТОЛЬКО для
+  // фолбэка plannedAggregateForCategory (нет конкретной выбранной плановой позиции).
+  // Не путать с planForItem/planExcessFor — те продолжают работать по-старому для
+  // настоящей выбранной плановой позиции (kind='planned_item'). См. одноимённую
+  // функцию в PurchaseItemsEditor.vue.
+  categoryResidualFor?: (item: EditorItem) => {
+    alreadyPlanned: number
+    feoBudget: number | null
+    residualBeforeItem: number | null
+    residualWithItem: number | null
+    hasItemTotal: boolean
+  } | null
   showContractorColumn: boolean
   showNeededDate?: boolean
   contractors: Contractor[]
@@ -423,6 +446,19 @@ function itemPlanResidualDisplay(item: EditorItem) {
   if (r == null) return null
   const d = formatPlanResidual(r)
   return d.negative ? d : null
+}
+
+// Владелец (2026-08-26): «Остаток на статье» (ФЭО − уже запланировано) до ввода
+// суммы позиции, «Остаток на статье с учётом данной закупки» (тот же остаток минус
+// сумма ЭТОЙ позиции) — как только она введена. Тем же хелпером formatPlanResidual,
+// что и остальные места «остаток/превышение» в проекте (отрицательное — красным).
+function categoryPlanResidualDisplay(item: EditorItem) {
+  const info = props.categoryResidualFor?.(item)
+  if (!info || info.residualBeforeItem == null) return null
+  if (info.hasItemTotal) {
+    return formatPlanResidual(info.residualWithItem, { label: 'Остаток на статье с учётом данной закупки' })
+  }
+  return formatPlanResidual(info.residualBeforeItem, { label: 'Остаток на статье' })
 }
 
 const emit = defineEmits<{

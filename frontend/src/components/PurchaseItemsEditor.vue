@@ -850,13 +850,6 @@ interface EditorItem {
   _photo_url?: string
   _description?: string
   _description_44fz?: string
-  // Владелец, 2026-08-29: штамп даты/источника актуализации цены товара —
-  // показывается под ценой за единицу в ItemsTableFlat/ItemsCardsView/
-  // ItemsTableStages. UI-only, вырезается перед сохранением наравне с
-    price_updated_at?: string | null
-    price_source?: string | null
-    price_source_ref?: string | null
-  } | null
 }
 
 interface Product {

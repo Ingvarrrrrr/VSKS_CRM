@@ -19,6 +19,7 @@ sys.path.insert(0, str(_REPO_ROOT))
 from backend.templates.build.sources import SOURCES
 from backend.templates.build import docxedit
 from backend.templates.build import rules_order
+from backend.templates.build import rules_comments
 from backend.templates.build.rules_common import (
     RULES as COMMON_RULES,
     apply_common_rules,
@@ -128,6 +129,32 @@ def _build_methodology(
 
 _ORDER_DOC_TYPES = ("order_purchase",)
 
+# Семь форм договоров + приказ на закупку — единственные doc_type, на
+# которые реально ссылаются DOC_TYPES в app/routers/documents.py (owner,
+# 2026-08-31: пояснения нужны только там, где сотрудники реально видят
+# теги). contract_services_large/small — мёртвые legacy-алиасы (их файлы
+# не используются рантаймом, см. DOC_TYPES), методички — справочный текст,
+# комментарии Word к ним не подключаются.
+_COMMENT_DOC_TYPES = frozenset({
+    "contract_services",
+    "contract_services_food",
+    "contract_goods_single",
+    "contract_gph_individual",
+    "contract_gph_individual_rid",
+    "contract_repair_vehicle",
+    "contract_repair_framework",
+    "order_purchase",
+})
+
+
+def _apply_comments_and_report(doc_type: str, out_path: pathlib.Path) -> None:
+    if doc_type not in _COMMENT_DOC_TYPES:
+        return
+    n_comments, uncovered = rules_comments.apply_comments_to_file(out_path)
+    print(f"    комментариев Word повешено: {n_comments}")
+    for raw in uncovered:
+        print(f"    WARN тег без пояснения в comments_ru.py: {raw}")
+
 
 def _build_order_purchase(
     doc_type: str,
@@ -159,6 +186,7 @@ def _build_order_purchase(
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{doc_type}.docx"
     docxedit.save(zip_bytes, root, str(out_path))
+    _apply_comments_and_report(doc_type, out_path)
 
     all_rule_ids = ["O00_customer_full_name_header_cell"] + [
         r[0] for r in rules_order.RULES
@@ -398,6 +426,7 @@ def build_one(doc_type: str, out_dir: pathlib.Path) -> pathlib.Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{doc_type}.docx"
     docxedit.save(zip_bytes, root, str(out_path))
+    _apply_comments_and_report(doc_type, out_path)
 
     # Вывод срабатываний
     all_rule_ids = [r[0] for r in COMMON_RULES] + [

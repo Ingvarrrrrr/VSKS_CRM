@@ -314,6 +314,70 @@ async def plan_consumption_by_category(
     return result
 
 
+async def unlinked_actual_by_category(
+    db: AsyncSession,
+    subsidy_ids: list[int],
+    exclude_purchase_id: Optional[int] = None,
+    exclude_wish_id: Optional[int] = None,
+) -> dict[int, float]:
+    """{feo_category_id: Σ total_price} — НЕПРИВЯЗАННЫЕ фактические позиции закупок.
+
+    Задача владельца (сессия 2026-08-31, план ≠ факт продолжение): «Непривязанная
+    к плану позиция тоже вычитается из суммы ФЭО... То, что она не привязана к
+    плану — это отдельная история, но в категории ФЭО она уже находится» +
+    «считать надо всё-таки с плана закупок (черновиков может быть миллион). То,
+    что внесли в план закупок, могли забыть привязать — на это необходимо
+    указывать». Значит «занято по статье» = плановые позиции (kind='plan_position'/
+    'feo_article'/'planned_item', см. GET /api/feo-categories/plan-positions) +
+    эта сумма — позиции закупок категории, у которых feo_planned_item_id IS NULL
+    (не привязаны ни к одной плановой позиции), в PLANNED_STATUSES (от «План
+    закупок» и дальше — черновики НЕ считаются), Purchase.stopped_at IS NULL
+    (остановленные не считаются — то же правило, что и в plan_consumption_by_category),
+    БЕЗ over_plan=true (сверх-плановые уже учитываются отдельно в excess_over_feo/
+    over, здесь их считать было бы задвоением другого рода).
+
+    Категория — COALESCE(PurchaseItem.feo_category_id, Purchase.feo_category_id),
+    та же привязка, что и везде в этом модуле. Изоляция субсидий — как в
+    plan_consumption_by_category (Purchase.subsidy_id == FeoCategory.subsidy_id
+    категории, к которой отнесена позиция).
+
+    exclude_purchase_id/exclude_wish_id — та же исключающая логика (см.
+    apply_wish_item_exclusion): редактируемая сейчас закупка/заявка не должна
+    выглядеть «непривязанной сама к себе» — иначе её собственная позиция
+    задваивается (она сама и есть непривязанная).
+    """
+    result: dict[int, float] = {}
+    if not subsidy_ids:
+        return result
+
+    from app.routers.purchase_budget import PLANNED_STATUSES  # local: avoid router import cycle
+
+    cat_col = func.coalesce(PurchaseItem.feo_category_id, Purchase.feo_category_id)
+    stmt = (
+        select(
+            cat_col.label("cat_id"),
+            func.coalesce(func.sum(PurchaseItem.total_price), 0).label("amount"),
+        )
+        .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
+        .join(FeoCategory, FeoCategory.id == cat_col)
+        .where(Purchase.status.in_(list(PLANNED_STATUSES)))
+        .where(Purchase.stopped_at.is_(None))
+        .where(PurchaseItem.feo_planned_item_id.is_(None))
+        .where(PurchaseItem.over_plan.is_(False))
+        .where(FeoCategory.subsidy_id.in_(subsidy_ids))
+        .where(Purchase.subsidy_id == FeoCategory.subsidy_id)
+        .group_by(cat_col)
+    )
+    if exclude_purchase_id is not None:
+        stmt = stmt.where(PurchaseItem.purchase_id != exclude_purchase_id)
+    stmt = apply_wish_item_exclusion(stmt, exclude_wish_id)
+
+    rows = (await db.execute(stmt)).all()
+    for r in rows:
+        result[r.cat_id] = float(r.amount)
+    return result
+
+
 async def ordered_consumption_by_category(
     db: AsyncSession,
     subsidy_ids: list[int],

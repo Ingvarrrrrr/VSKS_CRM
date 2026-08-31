@@ -59,6 +59,14 @@ export interface FeoPlanPosition {
   ordered_residual?: number
   forecast?: number
   forecast_over?: number
+  /** Владелец (сессия 2026-08-31, «план ≠ факт» продолжение): Σ позиций закупок ЭТОЙ
+   *  категории БЕЗ привязки к плановой позиции (feo_planned_item_id IS NULL), из плана
+   *  закупок и дальше (не черновики) — см. backend app.services.feo_plan.
+   *  unlinked_actual_by_category. Одно и то же число повторено на КАЖДОЙ строке данной
+   *  категории (свойство категории целиком, не отдельной строки) — при агрегации НЕ
+   *  суммировать по нескольким строкам одной категории, брать с любой одной (см.
+   *  PurchaseItemsEditor.vue categoryResidualFor). */
+  unlinked_actual_amount?: number
 }
 
 /** @deprecated старое имя интерфейса (было завязано на /feo-planned-items/residuals) —

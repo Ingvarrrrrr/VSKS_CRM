@@ -2765,8 +2765,16 @@ function plannedAggregateForCategory(categoryId: number): FeoPlanPosition | null
 // план стоит не на листе, а на направлении/подкатегории) — feoBudget = null,
 // остаток статьи не считаем (не выдумываем число).
 interface CategoryResidualInfo {
-  /** Σ planned_amount уже существующих плановых позиций статьи (реальное число). */
+  /** «Занято по статье» (владелец, сессия 2026-08-31) = Σ planned_amount плановых
+   *  позиций статьи + unlinkedActual (см. ниже). Раньше — только плановые позиции;
+   *  переименовано вслед за подписью «Уже запланировано по статье» → «Занято по статье»,
+   *  т.к. теперь включает и непривязанные фактические позиции. */
   alreadyPlanned: number
+  /** Из alreadyPlanned выше — часть, НЕ привязанная ни к одной плановой позиции
+   *  (backend unlinked_actual_amount: позиции закупок статьи с feo_planned_item_id
+   *  IS NULL, из плана закупок и дальше). Показывается отдельной строкой, только
+   *  когда > 0 — владелец: «на это необходимо указывать» (стоит привязать к плану). */
+  unlinkedActual: number
   /** FeoCategory.budget («финансирование по ФЭО») либо null, если для категории его нет. */
   feoBudget: number | null
   /** feoBudget − alreadyPlanned, либо null если feoBudget неизвестен. */
@@ -2787,13 +2795,20 @@ function categoryResidualFor(item: EditorItem): CategoryResidualInfo | null {
   }
   const agg = plannedAggregateForCategory(item.feo_category_id)
   if (!agg) return null
-  const alreadyPlanned = agg.planned_amount ?? 0
+  // unlinked_actual_amount — свойство КАТЕГОРИИ целиком (не отдельной плановой позиции),
+  // бэкенд повторяет одно и то же число на каждой строке /plan-positions этой категории —
+  // берём с любой одной строки (первая, попавшаяся в agg.category_id), а НЕ суммируем по
+  // всем 'planned_item' строкам категории (иначе задвоили бы его столько раз, сколько
+  // плановых позиций в статье — см. комментарий у поля в useFeoPlannedResiduals.ts).
+  const unlinkedRow = (props.plannedItems || []).find(p => p.category_id === item.feo_category_id)
+  const unlinkedActual = unlinkedRow?.unlinked_actual_amount ?? 0
+  const alreadyPlanned = (agg.planned_amount ?? 0) + unlinkedActual
   const feoBudget = feoLeaves.value.find(l => l.id === item.feo_category_id)?.budget ?? null
   const residualBeforeItem = feoBudget != null ? feoBudget - alreadyPlanned : null
   const itemTotal = Number(item.total_price) || 0
   const hasItemTotal = itemTotal > 0
   const residualWithItem = residualBeforeItem != null ? residualBeforeItem - itemTotal : null
-  return { alreadyPlanned, feoBudget, residualBeforeItem, residualWithItem, hasItemTotal }
+  return { alreadyPlanned, unlinkedActual, feoBudget, residualBeforeItem, residualWithItem, hasItemTotal }
 }
 
 function planForItem(item: EditorItem): FeoPlanPosition | null {

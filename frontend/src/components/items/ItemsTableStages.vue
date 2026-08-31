@@ -322,7 +322,11 @@
                                плановой позиции (см. categoryResidualFor в PurchaseItemsEditor.vue). -->
                           <div v-if="categoryResidualFor?.(item)" class="text-caption plan-hint mt-1" style="min-width:240px">
                             <div class="text-medium-emphasis">
-                              Уже запланировано по статье {{ formatNumber(categoryResidualFor(item)!.alreadyPlanned) }} ₽
+                              Занято по статье: {{ formatNumber(categoryResidualFor(item)!.alreadyPlanned) }} ₽
+                            </div>
+                            <div v-if="categoryResidualFor(item)!.unlinkedActual > 0" class="text-medium-emphasis"
+                              title="Проверьте, не забыли ли привязать эти позиции к плановым — иначе сумма может задваиваться">
+                              в том числе не привязано к плану: {{ formatNumber(categoryResidualFor(item)!.unlinkedActual) }} ₽
                             </div>
                             <div v-if="categoryResidualFor(item)!.residualBeforeItem != null"
                               :class="categoryPlanResidualDisplay(item)?.cssClass || 'text-medium-emphasis'">
@@ -599,6 +603,7 @@ const props = defineProps<{
   // ItemsTableFlat.vue / categoryResidualFor в PurchaseItemsEditor.vue.
   categoryResidualFor?: (item: EditorItem) => {
     alreadyPlanned: number
+    unlinkedActual: number
     feoBudget: number | null
     residualBeforeItem: number | null
     residualWithItem: number | null

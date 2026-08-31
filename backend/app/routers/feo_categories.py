@@ -776,11 +776,25 @@ async def get_plan_positions(
     Поля `ordered_qty`/`ordered_sum`/`plan_manual`/`ordered_residual`/`forecast`/
     `forecast_over` приходят из compute_feo_plan_tree и исключение НЕ учитывают —
     это осознанно, в UI-подписи «не хватает» они не участвуют.
+
+    `unlinked_actual_amount` (владелец, сессия 2026-08-31, «план ≠ факт» продолжение)
+    — Σ позиций закупок ЭТОЙ категории (по COALESCE(PurchaseItem.feo_category_id,
+    Purchase.feo_category_id)), у которых feo_planned_item_id IS NULL (ни к одной
+    плановой позиции не привязаны), в PLANNED_STATUSES (от «План закупок» и дальше,
+    черновики не считаются), Purchase.stopped_at IS NULL, БЕЗ over_plan=true — см.
+    app.services.feo_plan.unlinked_actual_by_category. exclude_purchase_id/
+    exclude_wish_id применяются так же, как и к consumed/residual выше (редактируемый
+    документ не считает сам себя). Одно и то же число повторено на КАЖДОЙ строке
+    данной категории (и kind='plan_position'/'feo_article', и все её 'planned_item'),
+    т.к. это свойство категории целиком, а не отдельной плановой позиции — фронт
+    прибавляет его к Σ плановых позиций категории, получая «занято по статье»
+    (владелец: «занято = плановые позиции + непривязанные фактические, показывать
+    отдельно, сколько из этого не привязано»).
     """
     from app.models.feo_planned_item import FeoPlannedItem
     from app.services.feo_plan import (
         plan_consumption_by_category, planned_item_consumption, build_category_path,
-        build_ancestor_ids, compute_feo_plan_tree,
+        build_ancestor_ids, compute_feo_plan_tree, unlinked_actual_by_category,
     )
 
     all_cats = (await db.execute(
@@ -800,6 +814,13 @@ async def get_plan_positions(
         db, [subsidy_id], exclude_purchase_id=exclude_purchase_id, exclude_wish_id=exclude_wish_id
     )
     tree = await compute_feo_plan_tree(db, [subsidy_id])
+    # Владелец (сессия 2026-08-31): «занято по статье» = плановые позиции + непривязанные
+    # фактические (позиции закупок этой категории без своей плановой строки) — см.
+    # unlinked_actual_by_category. exclude_purchase_id/exclude_wish_id — та же логика,
+    # что и в consumption выше: редактируемый документ не должен считать сам себя.
+    unlinked_actual = await unlinked_actual_by_category(
+        db, [subsidy_id], exclude_purchase_id=exclude_purchase_id, exclude_wish_id=exclude_wish_id
+    )
 
     result = []
     for c in leaves:
@@ -838,6 +859,12 @@ async def get_plan_positions(
             "ordered_residual": node.get("residual", planned_total),
             "forecast": node.get("forecast", planned_total),
             "forecast_over": node.get("forecast_over", 0.0),
+            # Владелец (сессия 2026-08-31): непривязанные фактические позиции ЭТОЙ
+            # категории — см. unlinked_actual_by_category. Отдельно от plan_manual/
+            # consumed выше (те считают только сами плановые позиции) — фронт
+            # прибавляет это число к «уже запланировано» и показывает отдельной
+            # строкой «в том числе не привязано к плану».
+            "unlinked_actual_amount": unlinked_actual.get(c.id, 0.0),
         })
 
     # + FeoPlannedItem (Ур.5) — детализация внутри элементов. Владелец 2026-08-18:
@@ -883,6 +910,13 @@ async def get_plan_positions(
                     "consumed_quantity": consumed_qty,
                     "residual": planned_total - consumed,
                     "residual_quantity": qty - consumed_qty,
+                    # См. комментарий на строках kind='plan_position'/'feo_article' выше —
+                    # то же число (per-категория, не per-плановая-позиция), чтобы фронт
+                    # мог прочитать его с ЛЮБОЙ строки этой категории независимо от того,
+                    # план введён на листе целиком или отдельными Ур.5 позициями (именно
+                    # этот случай — контрольный пример владельца, категория без собственных
+                    # planned_quantity/planned_amount, план только в FeoPlannedItem).
+                    "unlinked_actual_amount": unlinked_actual.get(it.feo_category_id, 0.0),
                 })
 
     result.sort(key=lambda x: x["path"])

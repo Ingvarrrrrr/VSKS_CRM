@@ -4282,13 +4282,35 @@
           Добавить плановую позицию
         </v-card-title>
         <v-card-text>
-          <v-text-field
-            v-model="plannedItemForm.name"
-            label="Наименование товара/услуги"
-            variant="outlined" density="compact" class="mb-3"
-            placeholder="Например: Ноутбук HP 15 Intel i5"
-            autofocus
-          />
+          <!-- Владелец (2026-08-31): при добавлении плановой позиции можно написать
+               что угодно, но у нас есть большая база товаров/услуг — подсказки с
+               фильтром по вводу и картинкой. Переиспользует InlineProductMatch
+               (тот же компонент, что и в строках позиций закупки/заявок) — второй
+               такой же компонент не заводим. Свободный ввод обязателен: любое
+               набранное имя сохраняется как есть, ничего не дописывается в каталог
+               товаров (hideCreateNew скрывает «Создать новый товар…» — здесь это
+               только подсказки/визуализация, а не привязка к каталогу). -->
+          <div class="d-flex align-center ga-2 mb-3">
+            <v-tooltip v-if="addPlannedProductPhoto" location="right">
+              <template #activator="{ props: tip }">
+                <v-avatar v-bind="tip" size="36" rounded="sm" class="flex-shrink-0" style="cursor:pointer;overflow:hidden">
+                  <img :src="addPlannedProductPhoto" style="width:36px;height:36px;object-fit:cover;display:block" />
+                </v-avatar>
+              </template>
+              <img :src="addPlannedProductPhoto" style="width:200px;height:200px;object-fit:cover;border-radius:8px;display:block" />
+            </v-tooltip>
+            <v-icon v-else size="28" class="flex-shrink-0 text-medium-emphasis">mdi-package-variant</v-icon>
+            <InlineProductMatch
+              class="flex-grow-1"
+              :item-name="plannedItemForm.name"
+              :product-id="addPlannedProductId"
+              :match-confirmed="addPlannedMatchConfirmed"
+              hide-create-new
+              @update:search-text="plannedItemForm.name = $event"
+              @pick="onPlannedItemProductPick"
+              @clear="onPlannedItemProductClear"
+            />
+          </div>
           <v-row>
             <v-col cols="5">
               <v-text-field
@@ -4709,6 +4731,8 @@ import { useFeoLeaves } from '@/composables/useFeoLeaves'
 // теперь даёт выбрать плановую позицию явно, тот же компонент, что в
 // CreateOrderView.vue/WishesView.vue — см. reqItemEdit ниже.
 import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
+import InlineProductMatch from '@/components/items/InlineProductMatch.vue'
+import type { MatchCandidate } from '@/composables/useItemMatching'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
 import type { FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
 import { PURCHASE_STATUS_META, PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusIcon, purchaseStatusColor } from '@/constants/purchaseStatus'
@@ -5820,6 +5844,42 @@ const plannedItemForm = ref({
   months_count: null as number | null,
   monthly_amount: null as number | null,
 })
+// Владелец (2026-08-31): «Добавить плановую позицию» — подсказки/картинка из
+// каталога товаров через InlineProductMatch, но FeoPlannedItem (backend модель)
+// НЕ имеет product_id — это чисто UI-состояние диалога, ничего из этого не
+// уходит в POST /feo-planned-items/ (см. savePlannedItem ниже, шлёт только
+// name/quantity/unit/amount/...). Сбрасывается везде, где сбрасывается
+// plannedItemForm (openAddPlannedItem/openConvertManualPlanToItem/
+// openCreatePlannedFromActual) и при закрытии диалога любым способом.
+const addPlannedProductId = ref<number | null>(null)
+const addPlannedProductPhoto = ref<string | null>(null)
+const addPlannedMatchConfirmed = ref<boolean | undefined>(undefined)
+
+// InlineProductMatch @pick — пользователь выбрал кандидата из каталога. Имя
+// подставляется из кандидата (как и в обычных строках позиций), единицу
+// измерения не подставляем — у Product такого поля нет вовсе (backend
+// models/product.py), а сумму подставляем ТОЛЬКО как предзаполнение (поле
+// пустое), если у товара есть цена — пользователь свободно правит дальше.
+function onPlannedItemProductPick(c: MatchCandidate) {
+  plannedItemForm.value.name = c.name || plannedItemForm.value.name
+  addPlannedProductId.value = c.product_id
+  addPlannedProductPhoto.value = c.photo_url ?? null
+  addPlannedMatchConfirmed.value = true
+  if (plannedItemForm.value.amount == null) {
+    const price = c.contract_price ?? c.price
+    if (price != null) {
+      const qty = plannedItemForm.value.quantity
+      plannedItemForm.value.amount = qty != null && qty > 0 ? Math.round(Number(price) * qty * 100) / 100 : Number(price)
+    }
+  }
+}
+
+function onPlannedItemProductClear() {
+  addPlannedProductId.value = null
+  addPlannedProductPhoto.value = null
+  addPlannedMatchConfirmed.value = undefined
+  plannedItemForm.value.name = ''
+}
 
 async function toggleItemPanel(node: FeoNode) {
   const id = node.id
@@ -6858,14 +6918,25 @@ function openAddPlannedItem(categoryId: number) {
     payment_mode: 'one_time', planned_date: '', monthly_start_date: '',
     months_count: null, monthly_amount: null,
   }
+  addPlannedProductId.value = null
+  addPlannedProductPhoto.value = null
+  addPlannedMatchConfirmed.value = undefined
   showAddPlannedDialog.value = true
 }
 
 // Диалог showAddPlannedDialog закрывается разными путями (Отмена/backdrop/Esc, не
 // только через savePlannedItem) — сбрасываем convertFromCategoryPlanId/createPlannedFromActualId
 // при ЛЮБОМ закрытии, чтобы флаги не «протекли» в следующее открытие обычной кнопкой.
+// Заодно сбрасываем UI-состояние подбора по каталогу (addPlannedProductId и т.п.) —
+// та же причина, оно тоже не должно «протечь» в следующее открытие.
 watch(showAddPlannedDialog, (val) => {
-  if (!val) { convertFromCategoryPlanId.value = null; createPlannedFromActualId.value = null }
+  if (!val) {
+    convertFromCategoryPlanId.value = null
+    createPlannedFromActualId.value = null
+    addPlannedProductId.value = null
+    addPlannedProductPhoto.value = null
+    addPlannedMatchConfirmed.value = undefined
+  }
 })
 
 // «Завести плановую позицию» — задача владельца (2026-08-09, пункт 3): у категории
@@ -6902,6 +6973,9 @@ function openConvertManualPlanToItem(node: FeoNode) {
     payment_mode: 'one_time',
     planned_date: '', monthly_start_date: '', months_count: null, monthly_amount: null,
   }
+  addPlannedProductId.value = null
+  addPlannedProductPhoto.value = null
+  addPlannedMatchConfirmed.value = undefined
   showAddPlannedDialog.value = true
 }
 
@@ -6926,6 +7000,9 @@ function openCreatePlannedFromActual(node: FeoNode, actual: FeoActualItem) {
     payment_mode: 'one_time',
     planned_date: '', monthly_start_date: '', months_count: null, monthly_amount: null,
   }
+  addPlannedProductId.value = null
+  addPlannedProductPhoto.value = null
+  addPlannedMatchConfirmed.value = undefined
   showAddPlannedDialog.value = true
 }
 

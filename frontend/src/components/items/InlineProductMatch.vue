@@ -94,7 +94,7 @@
           </div>
         </v-list-item>
       </template>
-      <template #append-item>
+      <template v-if="!hideCreateNew" #append-item>
         <v-divider />
         <v-list-item link @click="emitCreateNew">
           <template #prepend>
@@ -127,12 +127,18 @@ const props = withDefaults(defineProps<{
   disabled?: boolean
   /** Debounce for re-querying matches while typing (ms). */
   debounce?: number
+  /** Hide the trailing "Создать новый товар…" menu entry (2026-09: диалог
+   *  «Добавить плановую позицию» на Субсидиях переиспользует этот компонент
+   *  только для подсказок/визуализации — свободный ввод обязателен, но
+   *  создавать товары в каталоге прямо из этого диалога не должен). */
+  hideCreateNew?: boolean
 }>(), {
   itemName: '',
   productId: null,
   matchConfirmed: undefined,
   disabled: false,
   debounce: 300,
+  hideCreateNew: false,
 })
 
 const emit = defineEmits<{
@@ -142,6 +148,12 @@ const emit = defineEmits<{
   'create-new': []
   /** User cleared the binding. */
   clear: []
+  /** Raw typed text on every keystroke (2026-09: диалог «Добавить плановую
+   *  позицию» на Субсидиях has no pre-existing item_name to fall back on — the
+   *  typed name IS the source of truth even when the user never picks a
+   *  candidate. Row-based consumers (ItemsTableFlat and friends, PurchaseItemsEditor)
+   *  already own item_name via pick/import and don't listen to this — additive only. */
+  'update:search-text': [text: string]
 }>()
 
 const { matching, matchOne } = useItemMatching()
@@ -253,8 +265,20 @@ async function runMatch(query: string) {
   }
 }
 
+// Because this component always renders a #selection slot, Vuetify's
+// VAutocomplete treats it as `hasSelectionSlot` and, per its own select()/
+// isFocused-watch logic, resets the internal `search` ref to '' on every
+// focus, blur AND right after a pick — not just when the user actually
+// clears the input. Those resets flow back out through v-model:search into
+// onSearch(''). A parent that treats `update:search-text` as the freeform
+// name source of truth (SubsidiesView's "Добавить плановую позицию", which
+// has no pre-existing item_name to fall back on) would otherwise see its
+// name wiped on every blur/focus/pick. Only forwarding NON-EMPTY text sidesteps
+// all three reset paths at once — the explicit `clear` event (X button) is
+// what a parent should use to actually blank the name.
 function onSearch(text: string) {
   searchText.value = text
+  if (text) emit('update:search-text', text)
   if (timer) clearTimeout(timer)
   timer = setTimeout(() => runMatch(text), props.debounce)
 }

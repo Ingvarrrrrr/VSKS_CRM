@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Text, Boolean, Numeric
+from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Text, Boolean, Numeric, DateTime, func
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -29,6 +29,15 @@ class Subsidy(Base):
     ceiling_warn_percent = Column(Numeric(5, 2), nullable=True)  # None → фактическое умолчание 90 применяется в сервисе
     # Fabrikant: номер соглашения о субсидии (для документов закупки)
     agreement_number = Column(String(200), nullable=True)
+    # Черновые субсидии (план C1/C2, владелец 2026-09-01): любой сотрудник может
+    # создать субсидию-черновик и работать над ней вместе с участниками, но к
+    # ней нельзя привязывать заявки/закупки/договоры, пока администратор её не
+    # утвердит. Один флаг состояния — 'draft' | 'approved', никаких цепочек
+    # согласования. Существующие субсидии backfill-нуты в 'approved' миграцией.
+    status = Column(String(20), nullable=False, server_default='draft')
+    created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True)
     contractor_id = Column(Integer, ForeignKey("contractors.id", ondelete="SET NULL"), nullable=True)
     contractor = relationship("Contractor", foreign_keys=[contractor_id])

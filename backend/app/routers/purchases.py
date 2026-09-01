@@ -27,6 +27,11 @@ from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_ove
 # закупок, созданных/меняемых в обход заявки (см. вызовы ниже в update_purchase
 # и patch_purchase_item). См. app/services/plan_autoassign.py.
 from app.services.plan_autoassign import auto_assign_planned_items, move_or_detach_planned_item, deactivate_if_orphaned
+# Правка прод-инцидента (сессия 2026-09-01): PUT ниже удаляет и пересоздаёт
+# ВСЕ PurchaseItem закупки — ON DELETE SET NULL рвёт ContractItem.source_item_id.
+# relink_contract_items восстанавливает связь после пересоздания, см. docstring
+# в app/services/contract_item_link.py — там же полный диагноз.
+from app.services.contract_item_link import relink_contract_items, build_purchase_item_id_map
 from app.product_matcher import find_matching_product
 from typing import List, Optional
 from pydantic import BaseModel
@@ -1529,6 +1534,11 @@ async def create_purchase(
             detail="Прямое создание закупки отключено. Создайте заявку в разделе «Заявки на закупку» и отправьте на согласование — после одобрения она автоматически станет закупкой в «Плане закупок». Исключения: авансовые отчёты и СЗ на выдачу."
         )
 
+    from app.services.subsidy_draft_guard import assert_subsidy_approved_for_binding
+    await assert_subsidy_approved_for_binding(db, data.subsidy_id)
+    for _alloc in (data.subsidy_allocations or []):
+        await assert_subsidy_approved_for_binding(db, _alloc.subsidy_id)
+
     items_data = data.items or []
     # Compute total_nmck from items
     total_nmck = sum((i.total_price or Decimal("0")) for i in items_data) or data.nmck
@@ -1731,6 +1741,11 @@ async def update_purchase(
     if admin_override and current_user.role not in ADMIN_ROLES:
         raise HTTPException(403, "Обход бюджетного ограничения доступен только администратору")
 
+    from app.services.subsidy_draft_guard import assert_subsidy_approved_for_binding
+    await assert_subsidy_approved_for_binding(db, data.subsidy_id)
+    for _alloc in (data.subsidy_allocations or []):
+        await assert_subsidy_approved_for_binding(db, _alloc.subsidy_id)
+
     items_data = data.items or []
     items_sum = sum((i.total_price or Decimal("0")) for i in items_data) or data.nmck
 
@@ -1894,6 +1909,17 @@ async def update_purchase(
     if not admin_override:
         await assert_tz_batch_not_over_plan(db, items_data, fallback_category_id=p.feo_category_id)
 
+    # Снимок старых плановых позиций ДО удаления (правка прод-инцидента,
+    # сессия 2026-09-01, см. app/services/contract_item_link.py): PUT ниже
+    # удаляет ВСЕ PurchaseItem и вставляет их заново под новыми id — это
+    # рвёт ContractItem.source_item_id (FK ON DELETE SET NULL). Снимок
+    # нужен, чтобы после вставки сопоставить старые/новые id и восстановить
+    # связь через relink_contract_items(id_map=...) ниже.
+    _old_items_snapshot = [
+        (it.id, it.item_name, it.quantity, it.unit_price)
+        for it in sorted(p.items, key=lambda x: x.id)
+    ]
+
     # Replace items (auto-link to catalog via fuzzy match if product_id missing)
     await db.execute(delete(PurchaseItem).where(PurchaseItem.purchase_id == pid))
     for item_d in items_data:
@@ -1949,6 +1975,20 @@ async def update_purchase(
     _flushed_items = (await db.execute(
         select(PurchaseItem).where(PurchaseItem.purchase_id == pid)
     )).scalars().all()
+
+    # Восстановление ContractItem.source_item_id (см. снимок выше и
+    # app/services/contract_item_link.py): сопоставляем старые/новые id
+    # плановых позиций, затем чиним договорные позиции этой закупки ДО
+    # commit — одной транзакцией с самим сохранением закупки.
+    _purchase_item_id_map = build_purchase_item_id_map(_old_items_snapshot, _flushed_items)
+    _relinked_count = await relink_contract_items(db, pid, id_map=_purchase_item_id_map)
+    if _relinked_count:
+        import logging as _log
+        _log.getLogger(__name__).info(
+            "relink_contract_items: восстановлено %d связей source_item_id для закупки #%s (update_purchase)",
+            _relinked_count, pid,
+        )
+
     for idx, pi in enumerate(_flushed_items):
         if pi.feo_planned_item_id is not None:
             continue  # already linked

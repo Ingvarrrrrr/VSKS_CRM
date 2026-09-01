@@ -43,6 +43,7 @@ class UserCreate(BaseModel):
     org_id: Optional[int] = None
     inn: Optional[str] = None
     exclude_from_directory: bool = False
+    all_orgs_access: bool = False  # доступ ко всем организациям аккаунта, роль не меняется
     # Дата трудоустройства (владелец, 2026-09-01): если указана при приёме
     # с отделом/должностью — первая dept_assigned_at/position_assigned_at
     # равна ей, а не «сегодня» (см. app/services/org_assignment_dates.py).
@@ -66,6 +67,7 @@ class UserUpdate(BaseModel):
     avatar: Optional[str] = None
     inn: Optional[str] = None
     exclude_from_directory: Optional[bool] = None
+    all_orgs_access: Optional[bool] = None  # доступ ко всем организациям аккаунта, роль не меняется
     superior_user_id: Optional[int] = None  # вышестоящий начальник (иерархия согласования)
     # Phase 29 D-04: driver fields
     can_drive: Optional[bool] = None
@@ -110,6 +112,7 @@ class UserOut(BaseModel):
     can_publish: bool = False
     inn: Optional[str] = None
     exclude_from_directory: bool = False
+    all_orgs_access: bool = False  # доступ ко всем организациям аккаунта, роль не меняется
     superior_user_id: Optional[int] = None
     # Phase 29 D-04 / 30: driver fields exposed to frontend
     can_drive: bool = False
@@ -161,6 +164,10 @@ class OrganizationCreate(BaseModel):
     head_user_id: Optional[int] = None
     # Fabrikant: город заключения договора
     contract_city: Optional[str] = None
+    # 2026-09-01: явный выбор аккаунта (головной организации) при создании —
+    # только superadmin; см. app/services/org_account_resolution.py. Для
+    # остальных ролей игнорируется бэкендом (аккаунт = свой контур).
+    root_org_id: Optional[int] = None
 
 class OrganizationOut(BaseModel):
     id: int
@@ -347,6 +354,12 @@ class SubsidyOut(BaseModel):
     ceiling_committed_percent: Optional[float] = None
     ceiling_near_warning: bool = False
     ceiling_exceeded: bool = False
+    # Черновые субсидии (план C1/C2): статус 'draft' | 'approved', автор,
+    # утвердивший и когда — чтобы фронт показал чип статуса и кнопку «Утвердить».
+    status: str = 'draft'
+    created_by: Optional[int] = None
+    approved_by: Optional[int] = None
+    approved_at: Optional[datetime] = None
     model_config = {"from_attributes": True}
 
 

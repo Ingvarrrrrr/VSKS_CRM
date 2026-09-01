@@ -23,6 +23,7 @@ from .routers import (
 )
 from .routers import wish_documents
 from .routers import wish_members as wish_members_router
+from .routers import subsidy_members as subsidy_members_router
 from .routers import wish_approvals as wish_approvals_router
 from .routers import user_addresses as user_addresses_router
 from .routers import org_config
@@ -41,6 +42,7 @@ from .routers import vehicles_dashboard, vehicles, vehicle_attachments, repair_a
 from .routers import vehicle_repairs, vehicle_odometer, fuel_logs, trips
 from .routers import external_drivers
 from .routers import vehicles_import as vehicles_import_router
+from .routers import vehicle_fields as vehicle_fields_router
 from .routers import vehicle_fines
 from .routers import fleet_documents as fleet_documents_router
 from .routers import checklists as checklists_router
@@ -1753,8 +1755,23 @@ async def lifespan(app_: FastAPI):
             )).scalars().all()
             for _cid in _cids:
                 _ctr = await _db_mat.get(_CtrMat, _cid)
-                if _ctr is not None:
-                    await _materialize_org_from_contractor(_db_mat, _ctr)
+                if _ctr is None:
+                    continue
+                try:
+                    # 2026-09-01: нет current_user (фон, не HTTP-запрос) — берём
+                    # аккаунт из org_id уже существующей субсидии этого
+                    # контрагента, чтобы новая org не осталась без root_org_id
+                    # (см. app/services/org_account_resolution.py).
+                    _sub_row = (await _db_mat.execute(
+                        _select_mat(_SubMat.org_id)
+                        .where(_SubMat.contractor_id == _cid, _SubMat.org_id.isnot(None))
+                        .limit(1)
+                    )).scalar_one_or_none()
+                    await _materialize_org_from_contractor(_db_mat, _ctr, _sub_row)
+                except Exception as _e_ctr:
+                    logging.getLogger(__name__).warning(
+                        f"subsidy-org materialize backfill: contractor_id={_cid} skipped ({_e_ctr})"
+                    )
         logging.getLogger(__name__).info(
             f"subsidy-org materialize backfill: {len(_cids)} контрагент(ов) обработано"
         )
@@ -1955,6 +1972,7 @@ app.include_router(plan_excess_router.router)
 app.include_router(settings_router.router)
 app.include_router(dashboard.router)
 app.include_router(subsidies.router)
+app.include_router(subsidy_members_router.router)
 app.include_router(products.router)
 app.include_router(purchase_files.router)
 app.include_router(documents.router)
@@ -2018,6 +2036,8 @@ app.include_router(vehicles_dashboard.router)          # /api/vehicles-dashboard
 app.include_router(external_drivers.drivers_router)    # /api/drivers/available
 app.include_router(external_drivers.router)            # /api/external-drivers
 app.include_router(vehicles_import_router.router)      # /api/vehicles-import (BEFORE vehicles catch-all)
+app.include_router(vehicles_import_router.vehicles_template_router)  # /api/vehicles/import-template (BEFORE vehicles catch-all)
+app.include_router(vehicle_fields_router.router)       # /api/vehicle-fields (Автоблок §4)
 app.include_router(vehicles.router)                    # /api/vehicles (catch-all /{vehicle_id:int})
 app.include_router(vehicle_attachments.router)         # /api/vehicle-attachments
 app.include_router(repair_attachments.router)          # /api/repair-attachments

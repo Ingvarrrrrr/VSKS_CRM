@@ -231,6 +231,11 @@ async def create_contract(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_tab('contracts')),
 ):
+    from app.services.subsidy_draft_guard import assert_subsidy_approved_for_binding
+    await assert_subsidy_approved_for_binding(db, data.subsidy_id)
+    for _sid in (data.extra_subsidy_ids or []):
+        await assert_subsidy_approved_for_binding(db, _sid)
+
     # Duplicate check: same number + contractor + subsidy (org) + date
     if data.contractor_id and data.number:
         dup_q = select(Contract).where(
@@ -284,6 +289,12 @@ async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Dep
     c = result.scalar_one_or_none()
     if not c:
         raise HTTPException(404, "Not found")
+
+    from app.services.subsidy_draft_guard import assert_subsidy_approved_for_binding
+    await assert_subsidy_approved_for_binding(db, data.subsidy_id)
+    for _sid in (data.extra_subsidy_ids or []):
+        await assert_subsidy_approved_for_binding(db, _sid)
+
     old_number = c.number
     old_date = c.date
     old_contractor_id = c.contractor_id

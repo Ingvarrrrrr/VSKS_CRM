@@ -66,3 +66,10 @@ from app.models.incident import Incident  # noqa: F401 — Phase 30
 from app.models.user_platform_credential import UserPlatformCredential  # noqa: F401 — Phase 31 Fabrikant per-user creds
 from app.models.okpd2_code import Okpd2Code  # noqa: F401 — ОКПД2 classifier
 from app.models.expense_code import ExpenseCode  # noqa: F401 — Этап 2 справочник КРЦС
+# Price freshness (владелец, 2026-08-29): актуализация цены товара
+from app.models.product_price_history import ProductPriceHistory  # noqa: F401
+from app.models.price_freshness_rule import PriceFreshnessRule  # noqa: F401
+from app.models.fx_rate import FxRate  # noqa: F401
+from app.models.commercial_request import CommercialRequestOffer  # noqa: F401
+# Черновые субсидии (план C1/C2, владелец 2026-09-01)
+from app.models.subsidy_member import SubsidyMember  # noqa: F401

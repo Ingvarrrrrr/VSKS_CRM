@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 from app.database import get_db, engine
 from app.models.subsidy import Subsidy
+from app.models.subsidy_member import SubsidyMember
 from app.models.feo_category import FeoCategory
 from app.models.feo_planned_item import FeoPlannedItem
 from app.models.purchase import Purchase
@@ -426,15 +427,22 @@ async def budget_check(
     }
 
 
-async def _materialize_org_from_contractor(db: AsyncSession, contractor):
+async def _materialize_org_from_contractor(db: AsyncSession, contractor, account_org_id: Optional[int] = None):
     """Find-or-create Organization, зеркалящую контрагента (получатель субсидии),
     чтобы он попадал в контур (Персонал/Иерархия). Матч по contractor_id, затем по ИНН.
     Идемпотентно. Возвращает Organization (или None) — вызывающие используют её как
     org_id субсидии: субсидия принадлежит организации-грантополучателю, а не активной
-    орг из свитчера (кейс ДНР_2026: владелец был ЦЕНТРПОИСК вместо Донецкого)."""
+    орг из свитчера (кейс ДНР_2026: владелец был ЦЕНТРПОИСК вместо Донецкого).
+
+    2026-09-01: новая org, созданная тут, тоже не должна остаться без аккаунта —
+    root_org_id берём из `account_org_id` (см. resolve_new_org_root_id), так же
+    как в organizations.py::create_organization. `account_org_id` — обычно
+    current_user.org_id вызывающего HTTP-эндпоинта; фоновый бэкафилл в
+    app/__init__.py передаёт org_id уже существующей субсидии этого контрагента."""
     if contractor is None:
         return None
     from app.models.organization import Organization
+    from app.services.org_account_resolution import resolve_new_org_root_id
     org = (await db.execute(
         select(Organization).where(Organization.contractor_id == contractor.id)
     )).scalars().first()
@@ -443,6 +451,7 @@ async def _materialize_org_from_contractor(db: AsyncSession, contractor):
             select(Organization).where(Organization.inn == contractor.inn)
         )).scalars().first()
     if org is None:
+        _root_org_id = await resolve_new_org_root_id(db, account_org_id, None)
         org = Organization(
             name=(contractor.name or "")[:255] or f"Контрагент #{contractor.id}",
             full_name=(contractor.full_name or None),
@@ -452,6 +461,7 @@ async def _materialize_org_from_contractor(db: AsyncSession, contractor):
             address=((contractor.address or "")[:500] or None),
             signatory=((contractor.signatory or "")[:500] or None),
             contractor_id=contractor.id,
+            root_org_id=_root_org_id,
             is_active=True,
         )
         db.add(org)
@@ -610,6 +620,32 @@ async def _merge_duplicate_orgs_by_inn(db: AsyncSession) -> None:
     )
 
 
+# ── Черновые субсидии (план C1/C2) ──────────────────────────────────────────
+# «Должна быть возможность у любого сотрудника создавать субсидию и вносить в
+# неё корректировки, так же подключать к этой субсидии других людей для
+# совместной работы... Но это будет черновая субсидия, которую надо будет
+# утвердить у администратора, чтобы она могла пойти в работу.» Один флаг
+# состояния (Subsidy.status), без цепочек согласования.
+
+async def _is_subsidy_member(subsidy_id: int, user_id: int, db: AsyncSession) -> bool:
+    return (await db.execute(
+        select(SubsidyMember.id).where(
+            SubsidyMember.subsidy_id == subsidy_id,
+            SubsidyMember.user_id == user_id,
+        ).limit(1)
+    )).scalar_one_or_none() is not None
+
+
+async def _can_edit_draft_subsidy(subsidy: Subsidy, user: User, db: AsyncSession) -> bool:
+    """Пока субсидия в черновике, её содержимое правят автор и участники
+    совместной работы (subsidy_members) — без выданного права subsidy.edit."""
+    if user.role in ("superadmin", "account_owner"):
+        return True
+    if subsidy.created_by is not None and subsidy.created_by == user.id:
+        return True
+    return await _is_subsidy_member(subsidy.id, user.id, db)
+
+
 @router.post("/", response_model=SubsidyOut)
 async def create_subsidy(
     subsidy: SubsidyCreate,
@@ -617,13 +653,17 @@ async def create_subsidy(
     current_user: User = Depends(require_tab('subsidies')),
 ):
     data = subsidy.dict()
+    # Новая субсидия всегда рождается черновиком — «в работу» она идёт только
+    # после явного утверждения администратором (POST /{id}/approve).
+    data['status'] = 'draft'
+    data['created_by'] = current_user.id
     # org_id субсидии = организация-грантополучатель (из контрагента), НЕ активная орг
     # из свитчера: иначе субсидия «уезжает» под чужую орг (кейс ДНР_2026 → ЦЕНТРПОИСК).
     _contractor = None
     _grantee_org = None
     if data.get('contractor_id'):
         _contractor = await db.get(Contractor, data['contractor_id'])
-        _grantee_org = await _materialize_org_from_contractor(db, _contractor)
+        _grantee_org = await _materialize_org_from_contractor(db, _contractor, current_user.org_id)
     if _grantee_org is not None:
         data['org_id'] = _grantee_org.id
     else:
@@ -653,26 +693,83 @@ async def create_subsidy(
     d.update(await calculate_ceiling_forecast(db, db_subsidy.id))
     return d
 
+
+@router.post("/{subsidy_id}/approve", response_model=SubsidyOut)
+async def approve_subsidy(
+    subsidy_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Утверждение черновой субсидии — «руководитель уполномоченный проверит и
+    запустит всё в работу». Требует subsidy.edit в орге ЭТОЙ субсидии (как и
+    обычная правка утверждённой субсидии — утверждение не слабее правки).
+    Повторное утверждение — не ошибка, просто ничего не меняет (идемпотентно)."""
+    result = await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))
+    db_subsidy = result.scalar_one_or_none()
+    if not db_subsidy:
+        raise HTTPException(status_code=404, detail="Subsidy not found")
+
+    from app.auth.permissions import has_org_key
+    if not await has_org_key(current_user, db, db_subsidy.org_id, 'subsidy.edit', subsidy_id=subsidy_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Нет права утвердить субсидию: право «Редактирование субсидий» не выдано для организации-грантополучателя",
+        )
+
+    if db_subsidy.status != 'approved':
+        from datetime import datetime, timezone
+        db_subsidy.status = 'approved'
+        db_subsidy.approved_by = current_user.id
+        db_subsidy.approved_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(db_subsidy)
+
+    calc = await calculate_budget_from_categories(db, subsidy_id)
+    d = {c.name: getattr(db_subsidy, c.name) for c in db_subsidy.__table__.columns}
+    d["calculated_budget"] = calc
+    d["feo_filled"] = calc > 0
+    d["feo_budget_total"] = calc
+    if db_subsidy.contractor_id:
+        contractor = await db.get(Contractor, db_subsidy.contractor_id)
+        d["contractor_name"] = contractor.name if contractor else None
+        d["contractor_inn"] = contractor.inn if contractor else None
+    else:
+        d["contractor_name"] = None
+        d["contractor_inn"] = None
+    d.update(await calculate_ceiling_forecast(db, db_subsidy.id))
+    return d
+
+
 @router.put("/{subsidy_id}", response_model=SubsidyOut)
 async def update_subsidy(
     subsidy_id: int,
     subsidy: SubsidyCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_action('subsidy.edit')),
+    current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))
     db_subsidy = result.scalar_one_or_none()
     if not db_subsidy:
         raise HTTPException(status_code=404, detail="Subsidy not found")
 
-    # Wave 3: орг-осознанная проверка — право subsidy.edit должно действовать
-    # именно в орге ЭТОЙ субсидии (орг-роль не даёт власти в чужих оргах).
-    from app.auth.permissions import has_org_key
-    if not await has_org_key(current_user, db, db_subsidy.org_id, 'subsidy.edit', subsidy_id=subsidy_id):
-        raise HTTPException(
-            status_code=403,
-            detail="Нет права редактировать субсидии этой организации: право «Редактирование субсидий» не выдано для организации-грантополучателя",
-        )
+    # Черновые субсидии (план C1/C2): в черновике правит автор/участник, без
+    # выданного subsidy.edit — «любой сотрудник» может вносить корректировки.
+    # После утверждения — прежний строгий орг-осознанный гейт subsidy.edit.
+    if db_subsidy.status == 'draft':
+        if not await _can_edit_draft_subsidy(db_subsidy, current_user, db):
+            raise HTTPException(
+                status_code=403,
+                detail="Черновик субсидии редактируют автор и участники совместной работы — попросите автора добавить вас участником",
+            )
+    else:
+        # Wave 3: орг-осознанная проверка — право subsidy.edit должно действовать
+        # именно в орге ЭТОЙ субсидии (орг-роль не даёт власти в чужих оргах).
+        from app.auth.permissions import has_org_key
+        if not await has_org_key(current_user, db, db_subsidy.org_id, 'subsidy.edit', subsidy_id=subsidy_id):
+            raise HTTPException(
+                status_code=403,
+                detail="Нет права редактировать субсидии этой организации: право «Редактирование субсидий» не выдано для организации-грантополучателя",
+            )
 
     old_budget = db_subsidy.budget  # capture BEFORE setattr loop
 
@@ -778,7 +875,7 @@ async def update_subsidy(
         contractor = await db.get(Contractor, db_subsidy.contractor_id)
         d["contractor_name"] = contractor.name if contractor else None
         d["contractor_inn"] = contractor.inn if contractor else None
-        grantee_org = await _materialize_org_from_contractor(db, contractor)
+        grantee_org = await _materialize_org_from_contractor(db, contractor, current_user.org_id)
         # Субсидия принадлежит организации-грантополучателю — перепривязываем
         # владельца при смене контрагента (expire_on_commit=False, доступ безопасен).
         if grantee_org is not None and db_subsidy.org_id != grantee_org.id:
@@ -826,21 +923,31 @@ async def subsidy_delete_impact(
 async def delete_subsidy(
     subsidy_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_tab('subsidies')),
+    current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))
     db_subsidy = result.scalar_one_or_none()
     if not db_subsidy:
         raise HTTPException(status_code=404, detail="Subsidy not found")
 
-    # Wave 3: удалять субсидию можно только при праве на вкладку «Субсидии»
-    # в орге ЭТОЙ субсидии (орг-роль не даёт власти в чужих оргах).
-    from app.auth.permissions import has_org_key
-    if not await has_org_key(current_user, db, db_subsidy.org_id, 'subsidies', subsidy_id=subsidy_id):
-        raise HTTPException(
-            status_code=403,
-            detail="Нет права удалить субсидию: доступ к субсидиям не выдан для организации-грантополучателя",
-        )
+    # Черновые субсидии (план C1/C2): то же расщепление, что и в PUT — раньше
+    # DELETE был гейтован слабее (просто 'subsidies' tab), чем правка
+    # ('subsidy.edit') — исправлено заодно.
+    if db_subsidy.status == 'draft':
+        if not await _can_edit_draft_subsidy(db_subsidy, current_user, db):
+            raise HTTPException(
+                status_code=403,
+                detail="Черновик субсидии удаляют автор и участники совместной работы",
+            )
+    else:
+        # Wave 3: удалять субсидию можно только при праве subsidy.edit
+        # в орге ЭТОЙ субсидии (орг-роль не даёт власти в чужих оргах).
+        from app.auth.permissions import has_org_key
+        if not await has_org_key(current_user, db, db_subsidy.org_id, 'subsidy.edit', subsidy_id=subsidy_id):
+            raise HTTPException(
+                status_code=403,
+                detail="Нет права удалить субсидию: право «Редактирование субсидий» не выдано для организации-грантополучателя",
+            )
 
     # Pre-check FK references to avoid 500 ForeignKeyViolationError
     # Superadmin bypasses this check — DB will SET NULL automatically (b7e1 migration).

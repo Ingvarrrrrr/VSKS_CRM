@@ -1871,6 +1871,9 @@ async def create_wish(
     current_user: User = Depends(get_current_user),
 ):
     """Create a new wish (all roles)."""
+    from app.services.subsidy_draft_guard import assert_subsidy_approved_for_binding
+    await assert_subsidy_approved_for_binding(db, body.subsidy_id)
+
     org_ids = get_org_filter(current_user)
     org_id = org_ids[0] if org_ids else current_user.org_id
 
@@ -2028,6 +2031,10 @@ async def update_wish(
         )
         for wi in (wish.items or [])
     }
+
+    if body.subsidy_id is not None:
+        from app.services.subsidy_draft_guard import assert_subsidy_approved_for_binding
+        await assert_subsidy_approved_for_binding(db, body.subsidy_id)
 
     update_data = body.model_dump(exclude_none=True, exclude={'items'})
     for field, value in update_data.items():

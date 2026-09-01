@@ -41,6 +41,7 @@ from .routers import vehicles_dashboard, vehicles, vehicle_attachments, repair_a
 from .routers import vehicle_repairs, vehicle_odometer, fuel_logs, trips
 from .routers import external_drivers
 from .routers import vehicles_import as vehicles_import_router
+from .routers import vehicle_fields as vehicle_fields_router
 from .routers import vehicle_fines
 from .routers import fleet_documents as fleet_documents_router
 from .routers import checklists as checklists_router
@@ -637,6 +638,34 @@ async def lifespan(app_: FastAPI):
         import logging
         logging.getLogger(__name__).warning(f"Phase 29 permission seed skipped (non-fatal): {e}")
 
+    # Автоблок: право vehicle.fields.manage — управление составом полей карточки ТС
+    # (идемпотентный сид, тем же стилем что Phase 29 выше, см. AUTOBLOCK_FIELDS_SPEC.md §5)
+    try:
+        from sqlalchemy import select as _selab
+        from .models.permission import PermissionAction as _PAab, RolePermission as _RPab
+        async with async_session() as db:
+            _ak_ab = 'vehicle.fields.manage'
+            ex = await db.execute(_selab(_PAab).where(_PAab.action_key == _ak_ab))
+            if not ex.scalar_one_or_none():
+                db.add(_PAab(action_key=_ak_ab, description='Управление составом полей карточки ТС'))
+            await db.commit()
+
+            _ROLE_PERMS_AB = [
+                *[(_ak_ab, r, True) for r in ['superadmin', 'account_owner', 'admin', 'org_admin']],
+                *[(_ak_ab, r, False) for r in ['manager', 'employee']],
+            ]
+            for _key_ab, _role_ab, _granted_ab in _ROLE_PERMS_AB:
+                ex = await db.execute(_selab(_RPab).where(
+                    _RPab.role_name == _role_ab,
+                    _RPab.key == _key_ab,
+                ))
+                if not ex.scalar_one_or_none():
+                    db.add(_RPab(role_name=_role_ab, key=_key_ab, granted=_granted_ab))
+            await db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Автоблок vehicle.fields.manage permission seed skipped (non-fatal): {e}")
+
     # Phase 26-QQ: idempotent dedup контрагентов по ИНН + UNIQUE constraint.
     # Объединяет дубли (одинаковый INN), перевешивает FK на keep_id (MIN id),
     # удаляет дубли. Затем создаёт partial unique index чтобы новые дубли не появлялись.
@@ -941,6 +970,60 @@ async def lifespan(app_: FastAPI):
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning(f"wish.edit_feo action seed skipped (non-fatal): {e}")
+
+    # Этап B1 (2026-09-01): отдельное action-право feo_category.edit на редактирование
+    # справочника категорий ФЭО (создание/правка/удаление/перенос/импорт), сегодня это
+    # управляется исключительно вкладкой feo_categories. Дефолты зеркалят нынешнюю
+    # выдачу таба: superadmin/account_owner/admin/org_admin=TRUE; manager/employee=FALSE.
+    # Гейты на эндпоинтах роутера feo_categories ставит следующий шаг — здесь только сид
+    # ключа + бэкфилл персональных выдач (см. ниже), чтобы никто не потерял доступ.
+    try:
+        from sqlalchemy import select as _sel
+        from .models.permission import PermissionAction, RolePermission, UserOrgPermissionOverride
+        async with async_session() as db:
+            ACTION_KEY = 'feo_category.edit'
+            ex = await db.execute(_sel(PermissionAction).where(PermissionAction.action_key == ACTION_KEY))
+            if not ex.scalar_one_or_none():
+                db.add(PermissionAction(
+                    action_key=ACTION_KEY,
+                    description='Редактирование справочника категорий ФЭО (создание, правка, удаление, перенос, импорт)',
+                ))
+                await db.commit()
+            ROLE_DEFAULTS = [
+                ('superadmin', True), ('account_owner', True), ('admin', True),
+                ('org_admin', True), ('manager', False), ('employee', False),
+            ]
+            for role_name, granted in ROLE_DEFAULTS:
+                ex = await db.execute(_sel(RolePermission).where(
+                    RolePermission.role_name == role_name,
+                    RolePermission.key == ACTION_KEY,
+                ))
+                if not ex.scalar_one_or_none():
+                    db.add(RolePermission(role_name=role_name, key=ACTION_KEY, granted=granted))
+            await db.commit()
+
+            # Бэкфилл персональных выдач: у кого была персональная галочка на таб
+            # feo_categories (granted=True), тот не должен потерять доступ, когда
+            # следующий шаг поставит гейты по feo_category.edit на эндпоинтах.
+            src_rows = (await db.execute(_sel(UserOrgPermissionOverride).where(
+                UserOrgPermissionOverride.key == 'feo_categories',
+                UserOrgPermissionOverride.granted == True,
+            ))).scalars().all()
+            for src in src_rows:
+                ex = await db.execute(_sel(UserOrgPermissionOverride).where(
+                    UserOrgPermissionOverride.user_org_access_id == src.user_org_access_id,
+                    UserOrgPermissionOverride.key == ACTION_KEY,
+                ))
+                if not ex.scalar_one_or_none():
+                    db.add(UserOrgPermissionOverride(
+                        user_org_access_id=src.user_org_access_id,
+                        key=ACTION_KEY,
+                        granted=True,
+                    ))
+            await db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"feo_category.edit action seed skipped (non-fatal): {e}")
 
     # Владелец (2026-08-29): «превышение не может согласовывать любой из цепочки
     # согласования… только определённые люди — например, только владельцы или
@@ -1754,6 +1837,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         "title": "Название", "category": "Категория", "description": "Описание",
         "quantity": "Количество", "unit": "Ед. изм.", "estimated_price": "Ориент. цена",
         "link": "Ссылка", "priority": "Приоритет", "desired_date": "Желаемая дата",
+        "last_name": "Фамилия", "first_name": "Имя", "middle_name": "Отчество",
         "justification": "Обоснование", "org_id": "Организация",
         "assigned_to": "Ответственный", "event_id": "Мероприятие",
         "execution_deadline": "Срок исполнения",
@@ -1935,6 +2019,8 @@ app.include_router(vehicles_dashboard.router)          # /api/vehicles-dashboard
 app.include_router(external_drivers.drivers_router)    # /api/drivers/available
 app.include_router(external_drivers.router)            # /api/external-drivers
 app.include_router(vehicles_import_router.router)      # /api/vehicles-import (BEFORE vehicles catch-all)
+app.include_router(vehicles_import_router.vehicles_template_router)  # /api/vehicles/import-template (BEFORE vehicles catch-all)
+app.include_router(vehicle_fields_router.router)       # /api/vehicle-fields (Автоблок §4)
 app.include_router(vehicles.router)                    # /api/vehicles (catch-all /{vehicle_id:int})
 app.include_router(vehicle_attachments.router)         # /api/vehicle-attachments
 app.include_router(repair_attachments.router)          # /api/repair-attachments

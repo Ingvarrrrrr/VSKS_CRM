@@ -382,20 +382,6 @@ async def match_products(
     top_k = max(1, min(body.limit, 200))
     results = bulk_match(body.queries, catalog, top_k=top_k, prefix_match=body.prefix)
 
-    # Актуализация цены (владелец, 2026-08-29): bulk_match не трогаем (сигнатура
-    # зафиксирована) — донабираем метаданные вторым проходом по product_id
-    # уже полученных кандидатов, одним SELECT + один контекст на весь запрос.
-    candidate_ids = {c.product_id for r in results for c in r.candidates}
-    freshness_by_id: dict[int, dict] = {}
-    meta_by_id: dict[int, Product] = {}
-    if candidate_ids:
-        meta_rows = (await db.execute(
-            select(Product).options(defer(Product.photo_data)).where(Product.id.in_(candidate_ids))
-        )).scalars().all()
-        freshness_ctx = await load_freshness_context(db, org_id)
-        for prod in meta_rows:
-            meta_by_id[prod.id] = prod
-            freshness_by_id[prod.id] = evaluate_freshness(prod, freshness_ctx)
 
     _log.info(
         "POST /api/products/match: %d queries, catalog_size=%d, "

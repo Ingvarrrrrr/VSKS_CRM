@@ -305,15 +305,16 @@ async def get_product_hint(
     последнюю единицу измерения, с которой товар фигурировал в позиции закупки
     (PurchaseItem.unit по product_id, самая свежая по id); null, если ни разу не
     покупался с явно указанной единицей — фронт тогда оставляет поле пустым."""
-    product = (await db.execute(
-        select(
-            Product.price,
-            Product.contract_price,
-            Product.price_updated_at,
-            Product.price_source,
-            Product.price_source_ref,
-        ).where(Product.id == product_id)
-    )).first()
+    # Колонки price_updated_at/price_source/price_source_ref появляются вместе с
+    # отдельной работой по свежести цен и на момент этого кода могут ещё не
+    # существовать ни в модели, ни в БД (прод отдавал 500: «type object 'Product'
+    # has no attribute 'price_updated_at'»). Поэтому выбираем их ТОЛЬКО если они
+    # реально объявлены в модели: цена и единица работают всегда, а дата/источник
+    # появятся сами, как только колонки приедут — без правок здесь.
+    _optional = [c for c in ("price_updated_at", "price_source", "price_source_ref")
+                 if hasattr(Product, c)]
+    _cols = [Product.price, Product.contract_price] + [getattr(Product, c) for c in _optional]
+    product = (await db.execute(select(*_cols).where(Product.id == product_id))).first()
 
     unit_row = (await db.execute(
         select(PurchaseItem.unit)
@@ -330,12 +331,13 @@ async def get_product_hint(
         return {"unit": unit_row, "price": None, "price_updated_at": None, "price_source": None, "price_source_ref": None}
 
     best_price = product.contract_price if product.contract_price is not None else product.price
+    _updated = getattr(product, "price_updated_at", None)
     return {
         "unit": unit_row,
         "price": float(best_price) if best_price is not None else None,
-        "price_updated_at": product.price_updated_at.isoformat() if product.price_updated_at else None,
-        "price_source": product.price_source,
-        "price_source_ref": product.price_source_ref,
+        "price_updated_at": _updated.isoformat() if _updated else None,
+        "price_source": getattr(product, "price_source", None),
+        "price_source_ref": getattr(product, "price_source_ref", None),
     }
 
 

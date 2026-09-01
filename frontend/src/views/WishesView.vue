@@ -760,7 +760,7 @@
 
     <!-- ── ALL WISHES TAB (manager/admin) ── -->
     <div v-if="isManagerOrAdmin && activeTab === 'all'">
-      <!-- Status filter chips -->
+      <!-- Status filter chips (накопительные — см. wish_tab_statuses на бэке) -->
       <div class="d-flex flex-wrap ga-2 mb-4">
         <v-chip
           v-for="f in allFilters"
@@ -770,8 +770,11 @@
           size="small"
           @click="allFilter = f.value; loadAllWishes()"
         >
-          {{ f.label }}
+          {{ f.label }}<template v-if="wishCounts[f.value] !== undefined"> ({{ wishCounts[f.value] }})</template>
         </v-chip>
+      </div>
+      <div v-if="allWishesTruncated" class="text-caption text-medium-emphasis mb-4">
+        Показаны первые {{ allWishes.length }} из {{ allWishesTruncated }} — уточните фильтры, чтобы увидеть остальные
       </div>
 
       <v-data-table
@@ -2671,11 +2674,18 @@ const incomingWishes = ref<Wish[]>([])
 const loadingIncoming = ref(false)
 const allFilters = [
   { value: 'all', label: 'Все' },
+  { value: 'draft', label: 'Черновики' },
   { value: 'submitted', label: 'Отправленные' },
   { value: 'approved', label: 'Одобренные' },
   { value: 'rejected', label: 'Отклонённые' },
   { value: 'converted', label: 'Конвертированные' },
 ]
+
+// Счётчики по вкладкам (GET /wishes/counts) — накопительные множества статусов,
+// см. app/services/wish_tabs.py на бэке. Владелец, сессия 2026-09-01: список
+// обрезан limit=50, сравнивать «сколько заявок» по длине ответа нельзя —
+// нужен отдельный точный счётчик рядом с названием каждой вкладки.
+const wishCounts = ref<Record<string, number>>({})
 
 // Reference data
 const subsidies = ref<Subsidy[]>([])
@@ -3659,14 +3669,38 @@ async function loadWishes() {
 async function loadAllWishes() {
   loadingAll.value = true
   try {
-    const statusParam = allFilter.value && allFilter.value !== 'all' ? { status: allFilter.value } : {}
-    allWishes.value = await apiFetch<Wish[]>('/wishes/' + buildFilterParams({ subordinates_only: true, ...statusParam }))
+    // Владелец, 2026-09-01: «Все» больше не значит «без статуса» (тот путь
+    // молча исключал converted на бэке для других потребителей эндпоинта) —
+    // передаём status ЯВНО всегда, включая 'all', которое сервер трактует как
+    // «действительно всё» (см. list_wishes / wish_tab_statuses на бэке).
+    allWishes.value = await apiFetch<Wish[]>('/wishes/' + buildFilterParams({ subordinates_only: true, status: allFilter.value }))
+    loadWishCounts()
   } catch (e: any) {
     showSnack(`Ошибка загрузки заявок: ${e?.message || e?.payload?.message || 'неизвестная ошибка'}`, 'error')
   } finally {
     loadingAll.value = false
   }
 }
+
+// Счётчики вкладок — тот же scope видимости (subordinates_only), что и
+// список выше, но COUNT()-ом на бэке, без ограничения limit=50.
+async function loadWishCounts() {
+  try {
+    wishCounts.value = await apiFetch<Record<string, number>>('/wishes/counts' + buildFilterParams({ subordinates_only: true }))
+  } catch {
+    // Счётчики — не критичны для работы списка, тихо оставляем прежние значения
+  }
+}
+
+// Активная вкладка чипов показала МЕНЬШЕ записей, чем реально есть (limit=50
+// на бэке) — «показаны первые N из M» вместо молчаливой обрезки (владелец,
+// 2026-09-01). Такой же приём, как «Показано X из Y» в PurchaseItemsEditor/
+// ContractorsView/ContractsView — переиспользуем формулировку, не плодим новую.
+const allWishesTruncated = computed(() => {
+  const total = wishCounts.value[allFilter.value]
+  if (total === undefined) return null
+  return allWishes.value.length < total ? total : null
+})
 
 async function loadIncoming() {
   loadingIncoming.value = true

@@ -39,6 +39,7 @@ from app.services.plan_autoassign import (
 )
 from app.models.feo_planned_item import FeoPlannedItem
 from decimal import Decimal
+from app.services.wish_tabs import WISH_TAB_STATUS_SETS, wish_tab_statuses
 
 
 def _is_saas(user: User) -> bool:
@@ -1396,9 +1397,11 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
     return created_purchase_ids
 
 
-@router.get("/", response_model=list[WishOut])
-async def list_wishes(
-    status: Optional[str] = None,
+async def _build_wishes_query(
+    q,
+    current_user: User,
+    db: AsyncSession,
+    *,
     mine_only: bool = False,
     assigned_to_me: bool = False,
     subordinates_only: bool = False,
@@ -1411,30 +1414,17 @@ async def list_wishes(
     created_to: Optional[date] = None,
     deadline_from: Optional[date] = None,
     deadline_to: Optional[date] = None,
-    skip: int = 0,
-    limit: int = Query(50, le=200),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ):
-    """List wishes with unified visibility (Phase 28 Bundle 2B).
-    assigned_to_me=true: wishes where current user is the assignee.
-    subordinates_only=true: wishes created by direct subordinates (not current user).
-    mine_only=true / role==employee: show only own wishes (shortcut filters).
+    """Общая видимость + доп. фильтры для GET /wishes/ и GET /wishes/counts.
+
+    Вынесено из list_wishes (сессия 2026-09-01, жалоба владельца на счётчики
+    вкладок), чтобы список и счётчики видели РОВНО одни и те же заявки — иначе
+    числа разъедутся между вкладкой и бейджем. НЕ накладывает статус-фильтр,
+    order_by, offset/limit — это решает вызывающий (у /counts своя логика
+    группировки, у списка — своя пагинация).
     """
     org_ids = get_org_filter(current_user)
     vis = await get_visible_subsidy_ids(current_user, db, "wishes")
-    q = select(Wish).options(
-        selectinload(Wish.creator),
-        selectinload(Wish.approver),
-        selectinload(Wish.assignee),
-        selectinload(Wish.subsidy),
-        selectinload(Wish.event),
-        selectinload(Wish.executor),
-        selectinload(Wish.items),
-        selectinload(Wish.stopped_by_user),
-        selectinload(Wish.contractor),
-        selectinload(Wish.rejected_by_user),
-    )
     if vis is not None:
         # Two-level gate: rows WITH subsidy → gate by vis; rows WITHOUT subsidy → org gate
         null_branch = (
@@ -1521,10 +1511,121 @@ async def list_wishes(
     if deadline_to is not None:
         q = q.where(Wish.desired_date <= deadline_to)
 
+    return q
+
+
+@router.get("/counts")
+async def wish_tab_counts(
+    mine_only: bool = False,
+    assigned_to_me: bool = False,
+    subordinates_only: bool = False,
+    creator_id: Optional[int] = None,
+    assigned_to_id: Optional[int] = None,
+    subsidy_id: Optional[int] = None,
+    org_id: Optional[int] = None,
+    account_org_id: Optional[int] = None,
+    created_from: Optional[date] = None,
+    created_to: Optional[date] = None,
+    deadline_from: Optional[date] = None,
+    deadline_to: Optional[date] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Счётчики по вкладкам «Заявки на закупку» — с теми же параметрами
+    видимости, что и GET /wishes/, но COUNT()-ом, а не выборкой записей.
+
+    Жалоба владельца (сессия 2026-09-01): список обрезан limit=50, поэтому
+    сравнивать «сколько заявок» по длине ответа списка нельзя в принципе —
+    нужен отдельный точный счётчик. Вкладки накопительные (см.
+    app/services/wish_tabs.py): «Отправленные» включает approved/rejected/
+    converted, «Одобренные» включает converted и т.д. — один GROUP BY по
+    точному статусу, накопление сумм в Python (без 6 отдельных COUNT-запросов).
+    """
+    q = await _build_wishes_query(
+        select(Wish.status, func.count(Wish.id)),
+        current_user, db,
+        mine_only=mine_only, assigned_to_me=assigned_to_me, subordinates_only=subordinates_only,
+        creator_id=creator_id, assigned_to_id=assigned_to_id, subsidy_id=subsidy_id,
+        org_id=org_id, account_org_id=account_org_id,
+        created_from=created_from, created_to=created_to,
+        deadline_from=deadline_from, deadline_to=deadline_to,
+    )
+    q = q.group_by(Wish.status)
+    result = await db.execute(q)
+    exact_counts: dict[str, int] = {row_status: cnt for row_status, cnt in result.all()}
+
+    return {
+        tab: sum(exact_counts.get(s, 0) for s in statuses)
+        for tab, statuses in WISH_TAB_STATUS_SETS.items()
+    }
+
+
+@router.get("/", response_model=list[WishOut])
+async def list_wishes(
+    status: Optional[str] = None,
+    mine_only: bool = False,
+    assigned_to_me: bool = False,
+    subordinates_only: bool = False,
+    creator_id: Optional[int] = None,
+    assigned_to_id: Optional[int] = None,
+    subsidy_id: Optional[int] = None,
+    org_id: Optional[int] = None,
+    account_org_id: Optional[int] = None,
+    created_from: Optional[date] = None,
+    created_to: Optional[date] = None,
+    deadline_from: Optional[date] = None,
+    deadline_to: Optional[date] = None,
+    skip: int = 0,
+    limit: int = Query(50, le=200),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """List wishes with unified visibility (Phase 28 Bundle 2B).
+    assigned_to_me=true: wishes where current user is the assignee.
+    subordinates_only=true: wishes created by direct subordinates (not current user).
+    mine_only=true / role==employee: show only own wishes (shortcut filters).
+
+    status: имя вкладки ('draft'/'submitted'/'approved'/'rejected'/'converted'/'all')
+    фильтрует НАКОПИТЕЛЬНО через wish_tab_statuses (сессия 2026-09-01, жалоба
+    владельца) — 'submitted' включает approved/rejected/converted и т.д.
+    Отсутствие параметра сохраняет ПРЕЖНЕЕ поведение (список без converted) —
+    на него рассчитывают другие потребители эндпоинта (см. wish_tab_statuses
+    докстринг и вызовы GET /wishes/ без status в useRiskScores.ts и
+    WishesView.vue::loadWishes/loadIncoming).
+    """
+    q = select(Wish).options(
+        selectinload(Wish.creator),
+        selectinload(Wish.approver),
+        selectinload(Wish.assignee),
+        selectinload(Wish.subsidy),
+        selectinload(Wish.event),
+        selectinload(Wish.executor),
+        selectinload(Wish.items),
+        selectinload(Wish.stopped_by_user),
+        selectinload(Wish.contractor),
+        selectinload(Wish.rejected_by_user),
+    )
+    q = await _build_wishes_query(
+        q, current_user, db,
+        mine_only=mine_only, assigned_to_me=assigned_to_me, subordinates_only=subordinates_only,
+        creator_id=creator_id, assigned_to_id=assigned_to_id, subsidy_id=subsidy_id,
+        org_id=org_id, account_org_id=account_org_id,
+        created_from=created_from, created_to=created_to,
+        deadline_from=deadline_from, deadline_to=deadline_to,
+    )
+
     if status and status != 'all':
-        q = q.where(Wish.status == status)
-    elif not status:
-        # По умолчанию «Заявки» = в работе; распределённые (converted) живут в «Закупках»
+        # Накопительная цепочка (владелец, 2026-09-01): именованная вкладка
+        # включает всё, что когда-либо прошло через это состояние.
+        q = q.where(Wish.status.in_(wish_tab_statuses(status)))
+    elif status == 'all':
+        # Явное «Все» — действительно всё, включая draft и converted.
+        pass
+    else:
+        # status отсутствует вовсе: ПРЕЖНЕЕ поведение не меняем — по умолчанию
+        # «Заявки» = в работе; распределённые (converted) живут в «Закупках».
+        # Другие экраны (useRiskScores.ts, WishesView.vue myWishes/incoming)
+        # зовут без status и рассчитывают именно на это.
         q = q.where(Wish.status != 'converted')
     q = q.order_by(Wish.created_at.desc()).offset(skip).limit(limit)
     result = await db.execute(q)

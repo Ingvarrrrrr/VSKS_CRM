@@ -25,6 +25,11 @@ from app.models.purchase_item import PurchaseItem
 from app.product_matcher import find_matching_product
 from app.routers.purchases import _recalc_contract_price_from_contract_items
 from app.schemas.schemas import ContractItemCreate, ContractItemOut, ContractItemUpdate
+# Правка прод-инцидента (сессия 2026-09-01, см. app/services/contract_item_link.py):
+# stale source_item_id, отброшенный ниже в replace_all_contract_items, не должен
+# оставлять позицию без ФЭО-категории навсегда — relink пытается найти ту же
+# плановую позицию по имени/цене/порядку среди позиций ЭТОЙ закупки.
+from app.services.contract_item_link import relink_contract_items
 
 router = APIRouter(prefix="/api/purchases/{pid}/contract-items", tags=["contract_items"])
 
@@ -82,12 +87,18 @@ async def replace_all_contract_items(pid: int, items: List[ContractItemCreate],
 
     # phase26-dd: validate source_item_id existence — фронт может слать ID
     # старых purchase_items, которые уже удалены в update_purchase bulk replace.
+    # ВАЖНО: фильтр по purchase_id == pid обязателен — без него id чужой
+    # закупки прошёл бы валидацию как «существующий» (прод-инцидент, сессия
+    # 2026-09-01, см. app/services/contract_item_link.py).
     from app.models.purchase_item import PurchaseItem
     src_ids = {it.source_item_id for it in items if getattr(it, 'source_item_id', None)}
     existing_src_ids: set = set()
     if src_ids:
         rows = await db.execute(
-            select(PurchaseItem.id).where(PurchaseItem.id.in_(src_ids))
+            select(PurchaseItem.id).where(
+                PurchaseItem.id.in_(src_ids),
+                PurchaseItem.purchase_id == pid,
+            )
         )
         existing_src_ids = {r[0] for r in rows.all()}
 
@@ -95,6 +106,9 @@ async def replace_all_contract_items(pid: int, items: List[ContractItemCreate],
     for it in items:
         payload = it.model_dump(exclude_none=True)
         # Drop stale source_item_id silently — purchase_item уже не существует
+        # (или принадлежит чужой закупке). Позиция не остаётся без категории
+        # навсегда — relink_contract_items ниже пытается найти замену по
+        # имени/цене/порядку среди позиций ЭТОЙ закупки.
         if payload.get("source_item_id") and payload["source_item_id"] not in existing_src_ids:
             payload.pop("source_item_id", None)
         if not payload.get("product_id") and payload.get("name"):
@@ -107,6 +121,14 @@ async def replace_all_contract_items(pid: int, items: List[ContractItemCreate],
         ci = ContractItem(purchase_id=pid, **payload)
         db.add(ci)
         created.append(ci)
+    await db.flush()
+    _relinked_count = await relink_contract_items(db, pid)
+    if _relinked_count:
+        import logging as _log
+        _log.getLogger(__name__).info(
+            "relink_contract_items: восстановлено %d связей source_item_id для закупки #%s (replace_all_contract_items)",
+            _relinked_count, pid,
+        )
     await db.commit()
     for ci in created:
         await db.refresh(ci)

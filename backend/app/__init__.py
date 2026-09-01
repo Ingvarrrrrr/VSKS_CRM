@@ -41,7 +41,6 @@ from .routers import vehicles_dashboard, vehicles, vehicle_attachments, repair_a
 from .routers import vehicle_repairs, vehicle_odometer, fuel_logs, trips
 from .routers import external_drivers
 from .routers import vehicles_import as vehicles_import_router
-from .routers import vehicle_fields as vehicle_fields_router
 from .routers import vehicle_fines
 from .routers import fleet_documents as fleet_documents_router
 from .routers import checklists as checklists_router
@@ -2020,7 +2019,6 @@ app.include_router(external_drivers.drivers_router)    # /api/drivers/available
 app.include_router(external_drivers.router)            # /api/external-drivers
 app.include_router(vehicles_import_router.router)      # /api/vehicles-import (BEFORE vehicles catch-all)
 app.include_router(vehicles_import_router.vehicles_template_router)  # /api/vehicles/import-template (BEFORE vehicles catch-all)
-app.include_router(vehicle_fields_router.router)       # /api/vehicle-fields (Автоблок §4)
 app.include_router(vehicles.router)                    # /api/vehicles (catch-all /{vehicle_id:int})
 app.include_router(vehicle_attachments.router)         # /api/vehicle-attachments
 app.include_router(repair_attachments.router)          # /api/repair-attachments

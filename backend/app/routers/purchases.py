@@ -1812,6 +1812,13 @@ async def update_purchase(
     ):
         payload_dict.pop('contractor_id')
 
+    # Владелец (2026-09-01): категория ФЭО после согласования — см.
+    # _guard_feo_category_change_after_approval.
+    if "feo_category_id" in payload_dict:
+        await _guard_feo_category_change_after_approval(
+            p, payload_dict["feo_category_id"], current_user, db
+        )
+
     for k, v in payload_dict.items():
         # Don't overwrite frozen total_nmck
         if is_contracted and k in ("total_nmck", "planned_total_price"):
@@ -2171,6 +2178,75 @@ async def _recalc_contract_price_from_contract_items(purchase_id: int, db: Async
         await db.commit()
 
 
+# Владелец (2026-09-01): «закупки после согласования есть возможность
+# поменять категорию ФЭО, но это неправильно... остальным пользователям не
+# должна предоставляться возможность менять после согласования» — с этого
+# момента смена feo_category_id на закупке с approval_status='approved'
+# запрещена обычным пользователям (422) и разрешена только суперадмину, но
+# с уведомлением согласовавших + ответственного/назначенного по закупке.
+# Вызывается и из PATCH (autosave — реальный вектор бага, фронт шлёт
+# feo_category_id в serializeFormForAutosave), и из PUT (явный Save).
+async def _guard_feo_category_change_after_approval(
+    p: Purchase,
+    new_feo_category_id,
+    current_user,
+    db: AsyncSession,
+) -> None:
+    if new_feo_category_id is None:
+        return
+    if new_feo_category_id == p.feo_category_id:
+        return
+    if p.approval_status != "approved":
+        return
+
+    if current_user.role != "superadmin":
+        raise HTTPException(
+            422,
+            detail={
+                "code": "FEO_CATEGORY_LOCKED_AFTER_APPROVAL",
+                "message": (
+                    "Закупка уже согласована — менять категорию ФЭО нельзя. "
+                    "Если нужно — снимите согласование или обратитесь к администратору."
+                ),
+            },
+        )
+
+    # Суперадмин: смена разрешена, но согласовавшие и ответственный должны узнать.
+    from app.notifications import notify_user, _esc, _purchase_url
+    from app.models.purchase_approval import PurchaseApproval
+
+    old_cat = await db.get(FeoCategory, p.feo_category_id) if p.feo_category_id else None
+    new_cat = await db.get(FeoCategory, new_feo_category_id)
+    old_name = old_cat.name if old_cat else "без категории"
+    new_name = new_cat.name if new_cat else "—"
+    actor_name = current_user.full_name or current_user.username
+    when = datetime.now().strftime("%d.%m.%Y %H:%M")
+    text = (
+        f"⚠️ <b>Категория ФЭО изменена после согласования</b>\n\n"
+        f"📌 Закупка №{p.purchase_number or p.id}\n"
+        f"👤 {_esc(actor_name)} изменил(а) {when}:\n"
+        f"«{_esc(old_name)}» → «{_esc(new_name)}»"
+    )
+
+    recipient_ids: set[int] = set()
+    result = await db.execute(
+        select(PurchaseApproval.user_id).where(
+            PurchaseApproval.purchase_id == p.id,
+            PurchaseApproval.status == "approved",
+            PurchaseApproval.user_id.isnot(None),
+        )
+    )
+    for uid in result.scalars().all():
+        recipient_ids.add(uid)
+    if p.assigned_user_id:
+        recipient_ids.add(p.assigned_user_id)
+
+    for uid in recipient_ids:
+        u = await db.get(User, uid)
+        if u:
+            await notify_user(u, text, button_url=_purchase_url(p.id), button_label="Открыть закупку")
+
+
 # Phase 26: автосохранение полей карточки закупки.
 # Принимает произвольный частичный JSON; обновляет только переданные поля.
 # Не пересчитывает items/НМЦК/contract_price (этим занимается PUT при явном Save).
@@ -2299,6 +2375,13 @@ async def patch_purchase(
     # пропадёт из его OrdersView.
     if p.assigned_user_id is None and "assigned_user_id" not in (body or {}):
         p.assigned_user_id = current_user.id
+
+    # Владелец (2026-09-01): категория ФЭО после согласования — см.
+    # _guard_feo_category_change_after_approval. autosave — реальный
+    # вектор бага (форма шлёт feo_category_id в каждом PATCH).
+    if "feo_category_id" in (body or {}):
+        _new_feo_cat = _coerce_patch_value("feo_category_id", body["feo_category_id"])
+        await _guard_feo_category_change_after_approval(p, _new_feo_cat, current_user, db)
 
     # phase26-j-1 (fix): запоминаем contract_id ДО setattr, чтобы sync вызвался
     # только при реальном изменении FK, а не на каждый autosave с тем же contract_id.

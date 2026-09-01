@@ -464,8 +464,10 @@
               </div>
               <div class="d-flex align-center ml-auto" style="gap:8px">
                 <v-btn size="small" variant="outlined" color="success" prepend-icon="mdi-file-excel-outline" @click="openExportVersionsDialog">Выгрузить ФЭО</v-btn>
-                <v-btn size="small" variant="outlined" prepend-icon="mdi-download-outline" @click="downloadFeoTemplate">Шаблон</v-btn>
-                <v-btn size="small" variant="outlined" color="secondary" prepend-icon="mdi-upload-outline" @click="feoImport.show = true">Импорт</v-btn>
+                <template v-if="canEditFeo">
+                  <v-btn size="small" variant="outlined" prepend-icon="mdi-download-outline" @click="downloadFeoTemplate">Шаблон</v-btn>
+                  <v-btn size="small" variant="outlined" color="secondary" prepend-icon="mdi-upload-outline" @click="feoImport.show = true">Импорт</v-btn>
+                </template>
                 <!-- 12-04: Version history -->
                 <v-btn size="small" variant="text" color="blue-grey" prepend-icon="mdi-history" @click="openVersionHistory">
                   История
@@ -510,7 +512,7 @@
                     </v-list-item>
                   </v-list>
                 </v-menu>
-                <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-plus" @click="feoForm.parentId = null; showAddFeoDialog = true">Добавить</v-btn>
+                <v-btn v-if="canEditFeo" size="small" variant="tonal" color="primary" prepend-icon="mdi-plus" @click="feoForm.parentId = null; showAddFeoDialog = true">Добавить</v-btn>
               </div>
             </div>
 
@@ -621,11 +623,11 @@
                         dragNodeId === node.id ? 'feo-dragging' : '',
                         kpiNodeClass(node),
                       ]"
-                      draggable="true"
-                      @dragstart="onDragStart($event, node)"
-                      @dragover.prevent="onDragOver($event, node)"
+                      :draggable="canEditFeo"
+                      @dragstart="canEditFeo && onDragStart($event, node)"
+                      @dragover.prevent="canEditFeo && onDragOver($event, node)"
                       @dragleave="onDragLeave"
-                      @drop="onDrop($event, node)"
+                      @drop="canEditFeo && onDrop($event, node)"
                       @dragend="onDragEnd"
                     >
                       <!-- Наименование -->
@@ -709,20 +711,22 @@
                             @keydown.esc="inlineBudgetId = null"
                           />
                         </div>
-                        <div v-else-if="isAutoNode(node)" class="feo-amount-cell text-right" @click="startInlineBudget(node)"
-                          title="Расчёт: ручное ФЭО дочерних; без ФЭО — факт (поставлено/оплачено), иначе план. Кликните, чтобы задать вручную"
+                        <div v-else-if="isAutoNode(node)" class="feo-amount-cell text-right" :class="{ 'feo-amount-cell--readonly': !canEditFeo }" @click="canEditFeo && startInlineBudget(node)"
+                          :title="canEditFeo ? 'Расчёт: ручное ФЭО дочерних; без ФЭО — факт (поставлено/оплачено), иначе план. Кликните, чтобы задать вручную' : 'Расчёт: ручное ФЭО дочерних; без ФЭО — факт (поставлено/оплачено), иначе план'"
                         >
                           <template v-if="feoEffectiveFor(node) > 0">
                             <span class="feo-amount text-medium-emphasis">{{ formatCurrency(feoEffectiveFor(node)) }}</span>
                             <v-chip size="x-small" color="blue-grey" variant="tonal" class="ml-1">расчёт</v-chip>
                           </template>
-                          <span v-else class="feo-set-hint">Задать</span>
+                          <span v-else-if="canEditFeo" class="feo-set-hint">Задать</span>
+                          <span v-else class="feo-set-hint">—</span>
                         </div>
-                        <div v-else class="feo-amount-cell" @click="startInlineBudget(node)">
+                        <div v-else class="feo-amount-cell" :class="{ 'feo-amount-cell--readonly': !canEditFeo }" @click="canEditFeo && startInlineBudget(node)">
                           <span v-if="feoBudgetFor(node) > 0" class="feo-amount"
                             :style="feoChildrenBudgetDiff(node) > 0.005 ? 'color:#EF4444;font-weight:700' : ''"
                           >{{ formatCurrency(feoBudgetFor(node)) }}</span>
-                          <span v-else class="feo-set-hint">Задать</span>
+                          <span v-else-if="canEditFeo" class="feo-set-hint">Задать</span>
+                          <span v-else class="feo-set-hint">—</span>
                         </div>
                         <template v-if="node.hasChildren && node.budget != null && node.budget > 0">
                           <div v-if="!hasManualChildFeo(node)"
@@ -780,7 +784,7 @@
                                ВЫНЕСЕНЫ из него сиблингами (как в колонке «Финансирование по ФЭО»,
                                см. td выше), иначе inline-flex склеивает их с суммой в одну строку без
                                пробела («204 услугав т.ч. из заявок 2», баг вёрстки 2026-08-07). -->
-                          <div class="feo-amount-cell" @click="startInlineQty(node)">
+                          <div class="feo-amount-cell" :class="{ 'feo-amount-cell--readonly': !canEditFeo }" @click="canEditFeo && startInlineQty(node)">
                             <span v-if="feoQtyDisplayFor(node) > 0" class="feo-amount">{{ feoQtyDisplayFor(node) }}{{ node.unit ? ` ${node.unit}` : '' }}</span>
                             <span v-else class="feo-set-hint">—</span>
                           </div>
@@ -1200,23 +1204,24 @@
                             :title="node.hasChildren ? 'Состав плана: позиции, привязанные к самому направлению (не к его подкатегориям)' : 'Показать плановые / фактические позиции'"
                             @click="toggleItemPanel(node)"
                           /></span>
-                          <!-- Стрелки — друг под другом -->
-                          <div class="feo-actions-col">
+                          <!-- Стрелки — друг под другом (B5: скрыты без feo_category.edit) -->
+                          <div v-if="canEditFeo" class="feo-actions-col">
                             <v-btn icon="mdi-chevron-up" variant="text" size="x-small" color="grey-darken-1"
                               title="Переместить выше" @click.stop="reorderFeoNode(node, 'up')" />
                             <v-btn icon="mdi-chevron-down" variant="text" size="x-small" color="grey-darken-1"
                               title="Переместить ниже" @click.stop="reorderFeoNode(node, 'down')" />
                           </div>
-                          <!-- Четыре значка — квадратом 2×2 -->
+                          <!-- Значки: добавить/редактировать/удалить скрыты без feo_category.edit;
+                               «показать закупки» — чтение, остаётся всегда -->
                           <div class="feo-actions-grid">
-                            <v-btn icon="mdi-plus-circle-outline" variant="text" size="x-small" color="success"
+                            <v-btn v-if="canEditFeo" icon="mdi-plus-circle-outline" variant="text" size="x-small" color="success"
                               title="Добавить дочернюю" @click="feoForm.parentId = node.id; showAddFeoDialog = true" />
                             <v-btn icon="mdi-cart-outline" variant="text" size="x-small" color="blue"
                               title="Показать закупки по этой категории"
                               @click.stop="router.push(`/orders?feo_category_id=${node.id}`)" />
-                            <v-btn icon="mdi-pencil-outline" variant="text" size="x-small" color="primary"
+                            <v-btn v-if="canEditFeo" icon="mdi-pencil-outline" variant="text" size="x-small" color="primary"
                               title="Редактировать" @click="startFeoEdit(node)" />
-                            <v-btn icon="mdi-delete-outline" variant="text" size="x-small" color="error"
+                            <v-btn v-if="canEditFeo" icon="mdi-delete-outline" variant="text" size="x-small" color="error"
                               title="Удалить" @click="confirmFeoDelete(node)" />
                           </div>
                         </div>
@@ -4322,30 +4327,32 @@
                только подсказки/визуализация, а не привязка к каталогу). -->
           <!-- Владелец (2026-09-01): «добавляется плановая позиция по одной штуке,
                соответственно картинку сделай раза в 3 больше, чтобы было видно» —
-               size 36 → 108 (ровно ×3). align-start, не align-center: c такой большой
-               картинкой центрирование по строке поиска смотрелось бы криво. -->
-          <div class="d-flex align-start ga-3 mb-3">
+               size 36 → 108 (ровно ×3). -->
+          <!-- Владелец (2026-09-01, повторно): картинку над полем наименования (не
+               сбоку) — сбоку она отжирала ширину и длинные названия вылезали за
+               пределы узкого поля. Поле — на всю ширину диалога (w-100), картинку
+               не уменьшаем. -->
+          <div class="mb-2">
             <v-tooltip v-if="addPlannedProductPhoto" location="right">
               <template #activator="{ props: tip }">
-                <v-avatar v-bind="tip" size="108" rounded="lg" class="flex-shrink-0" style="cursor:pointer;overflow:hidden">
+                <v-avatar v-bind="tip" size="108" rounded="lg" style="cursor:pointer;overflow:hidden">
                   <img :src="addPlannedProductPhoto" style="width:108px;height:108px;object-fit:cover;display:block" />
                 </v-avatar>
               </template>
               <img :src="addPlannedProductPhoto" style="width:240px;height:240px;object-fit:cover;border-radius:8px;display:block" />
             </v-tooltip>
-            <v-icon v-else size="64" class="flex-shrink-0 text-medium-emphasis" style="margin-top:6px">mdi-package-variant</v-icon>
-            <InlineProductMatch
-              class="flex-grow-1"
-              style="margin-top:6px"
-              :item-name="plannedItemForm.name"
-              :product-id="addPlannedProductId"
-              :match-confirmed="addPlannedMatchConfirmed"
-              hide-create-new
-              @update:search-text="plannedItemForm.name = $event"
-              @pick="onPlannedItemProductPick"
-              @clear="onPlannedItemProductClear"
-            />
+            <v-icon v-else size="64" class="text-medium-emphasis">mdi-package-variant</v-icon>
           </div>
+          <InlineProductMatch
+            class="w-100 mb-3"
+            :item-name="plannedItemForm.name"
+            :product-id="addPlannedProductId"
+            :match-confirmed="addPlannedMatchConfirmed"
+            hide-create-new
+            @update:search-text="plannedItemForm.name = $event"
+            @pick="onPlannedItemProductPick"
+            @clear="onPlannedItemProductClear"
+          />
           <v-row>
             <v-col cols="5">
               <v-text-field
@@ -4808,6 +4815,7 @@ import RegistryExportButton from '@/components/RegistryExportButton.vue'
 import { useRegistryExport } from '@/composables/useRegistryExport'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import { useFeoLeaves } from '@/composables/useFeoLeaves'
+import { useAuthStore } from '@/stores/auth'
 // Владелец (2026-08-18, прод-инцидент — «Огнетушитель ОУ-2» перенесён в новую
 // категорию, автоподбор не нашёл точное совпадение имени и молча завёл вторую
 // плановую позицию рядом с уже подходящей): диалог «Редактировать позицию»
@@ -7777,6 +7785,12 @@ const userRoleRaw = localStorage.getItem('user_role') || ''
 const isAdminLevel = ['superadmin', 'org_admin', 'admin'].includes(userRoleRaw)
 // 12-05: admin or account_owner can save a version
 const canSaveVersion = computed(() => ['superadmin', 'org_admin', 'admin', 'account_owner'].includes(userRoleRaw))
+// B5 (2026-09-01): право на запись в дерево категорий ФЭО (backend-гейт —
+// feo_category.edit, см. backend/app/routers/feo_categories.py). Экспорт и
+// просмотр остаются доступны без этого права — прячем только
+// create/edit/delete/import/reorder/drag редактора дерева ниже.
+const authStore = useAuthStore()
+const canEditFeo = computed(() => authStore.hasAction('feo_category.edit'))
 // SaaS-роли (как в WishesView.vue) — им доступен force-возврат заявки в черновик из диалога блокировки удаления
 const isSaas = computed(() => ['superadmin', 'account_owner'].includes(userRoleRaw))
 // Как в WishesView.vue — id текущего пользователя, чтобы определить «это назначенный
@@ -11696,6 +11710,8 @@ onMounted(() => {
 /* Inline budget edit */
 .feo-amount-cell { cursor: pointer; padding: 2px 4px; border-radius: 4px; display: inline-flex; align-items: center; }
 .feo-amount-cell:hover { background: rgba(59,130,246,0.07); }
+.feo-amount-cell--readonly { cursor: default; }
+.feo-amount-cell--readonly:hover { background: none; }
 .inline-input {
   border: 1px solid rgba(59,130,246,0.7); border-radius: 4px;
   padding: 2px 6px; width: 120px; text-align: right;

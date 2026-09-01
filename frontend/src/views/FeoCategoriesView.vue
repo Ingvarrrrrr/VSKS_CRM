@@ -80,11 +80,13 @@
               style="max-width:220px"
             />
             <v-btn size="small" variant="outlined" color="success" prepend-icon="mdi-file-excel-outline" @click="exportToExcel">Выгрузить</v-btn>
-            <v-btn size="small" variant="outlined" prepend-icon="mdi-download-outline" @click="downloadFeoTemplate">Шаблон</v-btn>
-            <v-btn size="small" variant="outlined" color="secondary" prepend-icon="mdi-upload-outline" @click="feoImport.show = true">Импорт</v-btn>
-            <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-plus" @click="openAddDialog(null)">
-              Добавить
-            </v-btn>
+            <template v-if="canEditFeo">
+              <v-btn size="small" variant="outlined" prepend-icon="mdi-download-outline" @click="downloadFeoTemplate">Шаблон</v-btn>
+              <v-btn size="small" variant="outlined" color="secondary" prepend-icon="mdi-upload-outline" @click="feoImport.show = true">Импорт</v-btn>
+              <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-plus" @click="openAddDialog(null)">
+                Добавить
+              </v-btn>
+            </template>
             <v-btn icon="mdi-close" size="x-small" variant="text" @click="selectedId = null" />
           </div>
         </div>
@@ -118,11 +120,11 @@
                       dragOverId === node.id ? 'feo-drop-target' : '',
                       dragNodeId === node.id ? 'feo-dragging' : '',
                     ]"
-                    draggable="true"
-                    @dragstart="onDragStart($event, node)"
-                    @dragover.prevent="onDragOver($event, node)"
+                    :draggable="canEditFeo"
+                    @dragstart="canEditFeo && onDragStart($event, node)"
+                    @dragover.prevent="canEditFeo && onDragOver($event, node)"
                     @dragleave="onDragLeave"
-                    @drop="onDrop($event, node)"
+                    @drop="canEditFeo && onDrop($event, node)"
                     @dragend="onDragEnd"
                   >
                     <!-- Наименование -->
@@ -164,21 +166,24 @@
                       </div>
                       <!-- Группа без ручной суммы: расчёт серым + чип, клик = задать вручную -->
                       <div v-else-if="isAutoNode(node)" class="feo-amount-cell d-flex align-center justify-end"
-                        title="Расчёт: ручное ФЭО дочерних, без него — факт закупок. Кликните, чтобы задать вручную"
-                        @click="startInlineBudget(node)"
+                        :class="{ 'feo-amount-cell--readonly': !canEditFeo }"
+                        :title="canEditFeo ? 'Расчёт: ручное ФЭО дочерних, без него — факт закупок. Кликните, чтобы задать вручную' : 'Расчёт: ручное ФЭО дочерних, без него — факт закупок'"
+                        @click="canEditFeo && startInlineBudget(node)"
                       >
                         <template v-if="feoEffectiveFor(node) > 0">
                           <span class="feo-amount text-medium-emphasis">{{ formatCurrency(feoEffectiveFor(node)) }}</span>
                           <v-chip size="x-small" color="blue-grey" variant="tonal" class="ml-2">расчёт</v-chip>
                         </template>
-                        <span v-else class="feo-empty-hint">Задать</span>
+                        <span v-else-if="canEditFeo" class="feo-empty-hint">Задать</span>
+                        <span v-else class="feo-empty-hint">—</span>
                       </div>
                       <!-- Ручной режим: значение или "Задать" -->
-                      <div v-else class="feo-amount-cell" @click="startInlineBudget(node)">
+                      <div v-else class="feo-amount-cell" :class="{ 'feo-amount-cell--readonly': !canEditFeo }" @click="canEditFeo && startInlineBudget(node)">
                         <span v-if="feoBudgetFor(node) !== null" class="feo-amount">
                           {{ formatCurrency(feoBudgetFor(node)!) }}
                         </span>
-                        <span v-else class="feo-empty-hint">Задать</span>
+                        <span v-else-if="canEditFeo" class="feo-empty-hint">Задать</span>
+                        <span v-else class="feo-empty-hint">—</span>
                       </div>
                     </td>
 
@@ -194,16 +199,18 @@
 
                     <!-- Действия -->
                     <td class="feo-td feo-th-actions">
-                      <v-btn icon="mdi-arrow-up" variant="text" size="small" color="grey-darken-1"
-                        title="Переместить вверх" @click="reorderNode(node, 'up')" />
-                      <v-btn icon="mdi-arrow-down" variant="text" size="small" color="grey-darken-1"
-                        title="Переместить вниз" @click="reorderNode(node, 'down')" />
-                      <v-btn icon="mdi-plus-circle-outline" variant="text" size="small" color="primary"
-                        title="Добавить дочернюю" @click="openAddDialog(node)" />
-                      <v-btn icon="mdi-pencil-outline" variant="text" size="small" color="secondary"
-                        title="Редактировать" @click="openEditDialog(node)" />
-                      <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
-                        title="Удалить" @click="openDeleteDialog(node)" />
+                      <template v-if="canEditFeo">
+                        <v-btn icon="mdi-arrow-up" variant="text" size="small" color="grey-darken-1"
+                          title="Переместить вверх" @click="reorderNode(node, 'up')" />
+                        <v-btn icon="mdi-arrow-down" variant="text" size="small" color="grey-darken-1"
+                          title="Переместить вниз" @click="reorderNode(node, 'down')" />
+                        <v-btn icon="mdi-plus-circle-outline" variant="text" size="small" color="primary"
+                          title="Добавить дочернюю" @click="openAddDialog(node)" />
+                        <v-btn icon="mdi-pencil-outline" variant="text" size="small" color="secondary"
+                          title="Редактировать" @click="openEditDialog(node)" />
+                        <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
+                          title="Удалить" @click="openDeleteDialog(node)" />
+                      </template>
                     </td>
                   </tr>
                 </template>
@@ -439,8 +446,15 @@ import { ref, computed, watch, reactive, nextTick } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { useToast, type ToastType } from '@/composables/useToast'
+import { useAuthStore } from '@/stores/auth'
 
 const { mobile } = useDisplay()
+const authStore = useAuthStore()
+// B5: право на запись в дерево ФЭО (backend-гейт — feo_category.edit, см.
+// backend/app/routers/feo_categories.py). Экспорт/просмотр остаются доступны
+// без этого права — прячем только create/edit/delete/import/reorder/drag,
+// а не саму вкладку (require_tab('feo_categories') отдельный, читающий).
+const canEditFeo = computed(() => authStore.hasAction('feo_category.edit'))
 
 interface SubsidyRow {
   id: number; name: string; year: number
@@ -1020,6 +1034,8 @@ loadSubsidies()
 .feo-empty-hint:hover { color: #3B82F6; }
 .feo-amount-cell { cursor: pointer; padding: 2px 4px; border-radius: 4px; display: inline-flex; align-items: center; }
 .feo-amount-cell:hover { background: rgba(59,130,246,0.07); }
+.feo-amount-cell--readonly { cursor: default; }
+.feo-amount-cell--readonly:hover { background: none; }
 .feo-tree-chevron { display: inline-flex; align-items: center; flex-shrink: 0; }
 .feo-empty { display: flex; flex-direction: column; align-items: center; padding: 40px 0; }
 

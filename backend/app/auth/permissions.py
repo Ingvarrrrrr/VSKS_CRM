@@ -58,6 +58,29 @@ async def remove_user_org_access(
         await db.delete(existing)
 
 
+# B4 (2026-09-01): экшен-ключи, которые ОПАСНО вливать из пер-субсидийного
+# гранта (user_subsidy_access) в ГЛОБАЛЬНЫЙ набор прав пользователя. Грант на
+# ОДНУ субсидию не должен превращаться во власть над write-действиями во ВСЕХ
+# организациях — раньше именно так и было: _subsidy_grant_keys() возвращал
+# ключ, а _has_key_in_any_org()/require_action() пропускали пользователя
+# в любой орге, где этот ключ вообще существовал в матрице.
+# Точечная проверка "есть грант ИМЕННО на эту субсидию" остаётся рабочей —
+# см. has_org_key(..., subsidy_id=...) и get_subsidy_effective(), они читают
+# грант напрямую и НЕ используют эту константу.
+# ВАЖНО: здесь только action-ключи (глаголы: .edit/.manage/.delete/.register).
+# Ключи-ВКЛАДКИ (feo_categories, subsidies, wishes, purchases, ...) сюда
+# добавлять НЕЛЬЗЯ — вкладка это ВИДИМОСТЬ, грант на субсидию обязан
+# по-прежнему открывать пользователю нужные разделы меню и данные,
+# иначе мы отбираем чтение вместо того, чтобы резать запись.
+SUBSIDY_GRANT_NON_GLOBAL = {
+    "feo_category.edit",
+    "subsidy.edit",
+    "user.manage",
+    "contract.delete",
+    "payment.register",
+}
+
+
 _ROLE_PRIORITY = {
     "superadmin": 6,
     "account_owner": 5,
@@ -146,7 +169,10 @@ async def _get_effective_simple(user: User, db: AsyncSession, org_id: Optional[i
     # ДАННЫМ субсидии, а не к данным всей орг по вкладке, и не должен перекрывать
     # орг-override (revoke вкладки для орг). Per-субсидийный scope считается отдельно.
     if include_subsidy_grants:
-        effective |= await _subsidy_grant_keys(user.id, db)
+        # B4: вычитаем SUBSIDY_GRANT_NON_GLOBAL — не даём точечному гранту на
+        # ОДНУ субсидию превращаться в ГЛОБАЛЬНОЕ право (все орги). Точечная
+        # проверка по subsidy_id (has_org_key) эту константу не трогает.
+        effective |= (await _subsidy_grant_keys(user.id, db)) - SUBSIDY_GRANT_NON_GLOBAL
 
     # Жёсткий потолок: genuine employee (роль не повышена членским UOA) НЕ может
     # получить орг-админ вкладки admin.* (billing/roles/settings) даже через

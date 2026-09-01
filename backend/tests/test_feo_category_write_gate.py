@@ -406,3 +406,89 @@ def test_unallocated_gate_superadmin_passes_without_touching_db():
     user = _mk_user("superadmin")
     db = _QueueDB()
     asyncio.run(fc._check_unallocated_write_access(user, db, 10, 111))  # не должно бросать
+
+
+# ---------------------------------------------------------------------------
+# B4 (2026-09-01): грант на КОНКРЕТНУЮ субсидию не должен вливаться в
+# ГЛОБАЛЬНЫЙ набор прав пользователя. До фикса _subsidy_grant_keys() вливал
+# ВСЕ ключи роли гранта (включая action-ключи типа feo_category.edit) прямо
+# в _get_effective_simple(), а _has_key_in_any_org()/require_action() потом
+# пропускали пользователя в ЛЮБОЙ орге. SUBSIDY_GRANT_NON_GLOBAL вычитает
+# такие action-ключи из глобального пути; ключи-вкладки (видимость) обязаны
+# остаться нетронутыми, иначе мы отбираем чтение, а не режем запись.
+# ---------------------------------------------------------------------------
+
+class _FakeExecResult:
+    """Минимальная заглушка Result для _get_effective_simple: пустые
+    RolePermission/override выборки (роль-матрица и org-overrides не
+    участвуют в этом тесте — интересует только union по субсидия-гранту)."""
+
+    def __init__(self, items=None):
+        self._items = items or []
+
+    def scalars(self):
+        return self
+
+    def __iter__(self):
+        return iter(self._items)
+
+    def all(self):
+        return self._items
+
+    def scalar_one_or_none(self):
+        return None
+
+
+class _FakeEmptyDB:
+    async def execute(self, stmt):
+        return _FakeExecResult([])
+
+
+def test_subsidy_grant_action_key_excluded_from_global_effective(monkeypatch):
+    """feo_category.edit, выданный ГРАНТОМ на субсидию, НЕ попадает в
+    глобальный набор _get_effective_simple(include_subsidy_grants=True)."""
+    async def _fake_subsidy_grant_keys(user_id, db):
+        return {"feo_category.edit", "feo_categories"}
+
+    monkeypatch.setattr(perm_module, "_subsidy_grant_keys", _fake_subsidy_grant_keys)
+
+    user = _mk_user("employee")
+    db = _FakeEmptyDB()
+    effective = asyncio.run(
+        perm_module._get_effective_simple(user, db, org_id=None, include_subsidy_grants=True)
+    )
+    assert "feo_category.edit" not in effective
+
+
+def test_subsidy_grant_tab_key_still_reaches_global_effective(monkeypatch):
+    """Ключ-ВКЛАДКА (видимость), выданный тем же грантом, В глобальный набор
+    попадает — иначе у грант-пользователей пропадают пункты меню/данные."""
+    async def _fake_subsidy_grant_keys(user_id, db):
+        return {"feo_category.edit", "feo_categories"}
+
+    monkeypatch.setattr(perm_module, "_subsidy_grant_keys", _fake_subsidy_grant_keys)
+
+    user = _mk_user("employee")
+    db = _FakeEmptyDB()
+    effective = asyncio.run(
+        perm_module._get_effective_simple(user, db, org_id=None, include_subsidy_grants=True)
+    )
+    assert "feo_categories" in effective
+
+
+def test_has_org_key_with_subsidy_id_still_passes_by_grant(monkeypatch):
+    """has_org_key(..., subsidy_id=...) обязан по-прежнему пропускать по
+    гранту на конкретную субсидию — SUBSIDY_GRANT_NON_GLOBAL действует ТОЛЬКО
+    на глобальный путь (_get_effective_simple), не на per-subsidy проверку."""
+    async def _fake_get_subsidy_effective(user_id, subsidy_id, db):
+        assert subsidy_id == 111
+        return {"feo_category.edit"}
+
+    monkeypatch.setattr(perm_module, "get_subsidy_effective", _fake_get_subsidy_effective)
+
+    user = _mk_user("employee")
+    db = _FakeEmptyDB()
+    allowed = asyncio.run(
+        perm_module.has_org_key(user, db, org_id=10, key="feo_category.edit", subsidy_id=111)
+    )
+    assert allowed is True

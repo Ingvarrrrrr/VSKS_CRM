@@ -1360,6 +1360,16 @@
                                       <v-chip v-if="node.hasChildren" size="x-small" color="grey" variant="tonal" class="ml-1" style="font-size:9px;height:16px"
                                         title="Позиция привязана к направлению, а не к конечной категории. Её можно перенести вниз, в подходящую категорию — суммы при этом не изменятся."
                                       >на направлении целиком</v-chip>
+                                      <!-- Происхождение (владелец, 2026-09-01) — компактные пометки, не мешающие
+                                           читать строку: жёсткая разбивка ФЭО против внутреннего плана (см.
+                                           докстринг is_feo_breakdown/is_internal_plan в feo_planned_item.py). Обе
+                                           могут стоять одновременно — независимые галочки, не переключатель. -->
+                                      <v-chip v-if="!planned.isManual && planned.is_feo_breakdown" size="x-small" color="green" variant="tonal" class="ml-1" style="font-size:9px;height:16px"
+                                        title="По ФЭО — жёсткая построчная разбивка ФЭО, покупать будут именно это, отчётность строгая"
+                                      >по ФЭО</v-chip>
+                                      <v-chip v-if="!planned.isManual && planned.is_internal_plan" size="x-small" color="amber-darken-3" variant="tonal" class="ml-1" style="font-size:9px;height:16px"
+                                        title="Внутренний план — в ФЭО была более широкая категория (или позиции не было вовсе), состав определили сами"
+                                      >внутренний план</v-chip>
                                     </div>
                                     <div v-if="planned.isManual" class="feo-plan-note text-medium-emphasis">
                                       <v-icon icon="mdi-pencil-ruler" size="11" class="mr-1" />ручной план ФЭО — подробного деления в ФЭО не было
@@ -4118,6 +4128,26 @@
             variant="outlined" density="compact"
             :class="editPlannedDialog.payment_mode === 'monthly' ? 'd-none' : 'mb-2'"
           />
+          <!-- Происхождение (владелец, 2026-09-01) — ДВЕ НЕЗАВИСИМЫЕ галочки, тот же
+               смысл, что и в диалоге создания. Правка доступна только тому, кто может
+               редактировать ФЭО — этот диалог уже за той же вкладкой (feo_categories). -->
+          <div class="text-caption text-medium-emphasis mb-1">Происхождение позиции</div>
+          <v-checkbox v-model="editPlannedDialog.is_feo_breakdown" density="compact" hide-details class="mb-1">
+            <template #label>
+              <div>
+                <div style="line-height:1.2">По ФЭО</div>
+                <div class="text-caption text-medium-emphasis" style="line-height:1.2">жёсткая разбивка ФЭО — покупать будут именно это, отчётность строгая</div>
+              </div>
+            </template>
+          </v-checkbox>
+          <v-checkbox v-model="editPlannedDialog.is_internal_plan" density="compact" hide-details class="mb-3">
+            <template #label>
+              <div>
+                <div style="line-height:1.2">Внутренний план</div>
+                <div class="text-caption text-medium-emphasis" style="line-height:1.2">в ФЭО была более широкая категория (или позиции не было) — разбивку придумали сами</div>
+              </div>
+            </template>
+          </v-checkbox>
           <!-- Тип платежа -->
           <div class="text-caption text-medium-emphasis mb-1">Тип платежа</div>
           <v-btn-toggle
@@ -4334,6 +4364,37 @@
             variant="outlined" density="compact" suffix="₽"
             :class="plannedItemForm.payment_mode === 'monthly' ? 'd-none' : 'mb-3'"
           />
+          <!-- Происхождение плановой позиции (владелец, 2026-09-01): «это плановая
+               позиция в соответствии с ФЭО, или только в соответствии с нашим
+               внутренним планом» — ДВЕ НЕЗАВИСИМЫЕ галочки, не переключатель, обе
+               можно поставить/снять независимо. Доступны только тому, кто может
+               редактировать ФЭО (вкладка feo_categories) — эта же панель уже целиком
+               ограничена ею, см. проверку доступа страницы. -->
+          <div class="text-caption text-medium-emphasis mb-1">Происхождение позиции</div>
+          <v-checkbox
+            v-model="plannedItemForm.is_feo_breakdown"
+            density="compact" hide-details
+            class="mb-1"
+          >
+            <template #label>
+              <div>
+                <div style="line-height:1.2">По ФЭО</div>
+                <div class="text-caption text-medium-emphasis" style="line-height:1.2">жёсткая разбивка ФЭО — покупать будут именно это, отчётность строгая</div>
+              </div>
+            </template>
+          </v-checkbox>
+          <v-checkbox
+            v-model="plannedItemForm.is_internal_plan"
+            density="compact" hide-details
+            class="mb-3"
+          >
+            <template #label>
+              <div>
+                <div style="line-height:1.2">Внутренний план</div>
+                <div class="text-caption text-medium-emphasis" style="line-height:1.2">в ФЭО была более широкая категория (или позиции не было) — разбивку придумали сами</div>
+              </div>
+            </template>
+          </v-checkbox>
           <!-- Тип платежа -->
           <div class="text-caption text-medium-emphasis mb-1">Тип платежа</div>
           <v-btn-toggle
@@ -5751,6 +5812,13 @@ interface FeoPlannedItem {
   // иначе null (GET /feo-planned-items/comparison, см. FeoPlannedItemOut в бэкенде).
   item_type_effective?: string | null
   item_type_inherited?: boolean
+  // Происхождение плановой позиции (владелец, 2026-09-01) — ДВЕ НЕЗАВИСИМЫЕ
+  // галочки, не переключатель: is_feo_breakdown — жёсткая построчная разбивка
+  // ФЭО реально есть (покупать будут именно это, отчётность строгая);
+  // is_internal_plan — в ФЭО была только более широкая категория (или позиции
+  // не было вовсе), состав придумали сами. См. backend/app/models/feo_planned_item.py.
+  is_feo_breakdown?: boolean
+  is_internal_plan?: boolean
 }
 // Стадия уточнения позиции (ФЭО → План → Что выставили на закупку → Номенклатура
 // подрядчика → Приняли) — справочная детализация, отдаётся бэкендом внутри FeoActualItem.stages.
@@ -5843,6 +5911,13 @@ const plannedItemForm = ref({
   monthly_start_date: '' as string,
   months_count: null as number | null,
   monthly_amount: null as number | null,
+  // Происхождение (владелец, 2026-09-01) — ДВЕ НЕЗАВИСИМЫЕ галочки, см. чекбоксы
+  // диалога выше. Дефолт «внутренний план» — по правилу бэкфилла (см. миграцию
+  // aa1b2c3d4e5f_feo_planned_item_origin.py): позиция, заводимая человеком через
+  // этот диалог, по умолчанию не является жёсткой построчной разбивкой ФЭО, пока
+  // человек явно не отметит обратное.
+  is_feo_breakdown: false,
+  is_internal_plan: true,
 })
 // Владелец (2026-08-31): «Добавить плановую позицию» — подсказки/картинка из
 // каталога товаров через InlineProductMatch, но FeoPlannedItem (backend модель)
@@ -6917,6 +6992,7 @@ function openAddPlannedItem(categoryId: number) {
     name: '', quantity: null, unit: '', amount: null,
     payment_mode: 'one_time', planned_date: '', monthly_start_date: '',
     months_count: null, monthly_amount: null,
+    is_feo_breakdown: false, is_internal_plan: true,
   }
   addPlannedProductId.value = null
   addPlannedProductPhoto.value = null
@@ -6972,6 +7048,10 @@ function openConvertManualPlanToItem(node: FeoNode) {
     amount,
     payment_mode: 'one_time',
     planned_date: '', monthly_start_date: '', months_count: null, monthly_amount: null,
+    // Ручной план ФЭО (planned_quantity/planned_amount на самой категории) по
+    // определению без построчной ФЭО-разбивки — та же строка панели уже
+    // подписана «подробного деления в ФЭО не было» (см. шаблон выше).
+    is_feo_breakdown: false, is_internal_plan: true,
   }
   addPlannedProductId.value = null
   addPlannedProductPhoto.value = null
@@ -6999,6 +7079,9 @@ function openCreatePlannedFromActual(node: FeoNode, actual: FeoActualItem) {
     amount: info.total ?? Number(actual.fact_amount ?? actual.total_price ?? 0),
     payment_mode: 'one_time',
     planned_date: '', monthly_start_date: '', months_count: null, monthly_amount: null,
+    // Заводится по факту закупки/заявки, без плана — та же семантика, что и
+    // auto_created в plan_autoassign.py (см. is_internal_plan там).
+    is_feo_breakdown: false, is_internal_plan: true,
   }
   addPlannedProductId.value = null
   addPlannedProductPhoto.value = null
@@ -7026,6 +7109,8 @@ async function savePlannedItem() {
         monthly_start_date: isMonthly && f.monthly_start_date ? f.monthly_start_date : null,
         months_count: isMonthly ? f.months_count : null,
         monthly_amount: isMonthly ? f.monthly_amount : null,
+        is_feo_breakdown: f.is_feo_breakdown,
+        is_internal_plan: f.is_internal_plan,
       }),
     })
     // Если позиция заводилась ИЗ конкретной закупки (openCreatePlannedFromActual выше) —
@@ -7330,6 +7415,13 @@ const editPlannedDialog = reactive({
   // «выбранное на предыдущем этапе не смеет меняться само»). Своего v-select
   // тут нет — правка типа только через диалог создания/импорт.
   item_type: null as string | null,
+  // Происхождение (владелец, 2026-09-01) — ДВЕ НЕЗАВИСИМЫЕ галочки, тот же
+  // смысл, что и в диалоге создания (plannedItemForm выше). Всегда шлются
+  // явно в PUT-payload (см. saveEditPlannedItem) — backend читает их через
+  // model_fields_set, поэтому «не трогать» здесь недостижимо и не нужно:
+  // это и есть штатное место правки признака (задача владельца, п.5).
+  is_feo_breakdown: false as boolean,
+  is_internal_plan: false as boolean,
 })
 
 function openEditPlannedItem(item: FeoPlannedItem) {
@@ -7345,6 +7437,8 @@ function openEditPlannedItem(item: FeoPlannedItem) {
   editPlannedDialog.item_type = item.item_type ?? null
   editPlannedDialog.months_count = item.months_count ?? null
   editPlannedDialog.monthly_amount = item.monthly_amount ?? null
+  editPlannedDialog.is_feo_breakdown = item.is_feo_breakdown ?? false
+  editPlannedDialog.is_internal_plan = item.is_internal_plan ?? false
   editPlannedDialog.show = true
 }
 
@@ -7369,6 +7463,8 @@ async function saveEditPlannedItem() {
         months_count: isMonthly ? d.months_count : null,
         monthly_amount: isMonthly ? d.monthly_amount : null,
         item_type: d.item_type,
+        is_feo_breakdown: d.is_feo_breakdown,
+        is_internal_plan: d.is_internal_plan,
       }),
     })
     editPlannedDialog.show = false

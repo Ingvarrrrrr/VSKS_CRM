@@ -262,6 +262,22 @@ async def _check_planned_item_write_access(current_user, db: AsyncSession, cat: 
         )
 
 
+async def _can_edit_feo_origin(current_user, db: AsyncSession) -> bool:
+    """Владелец (2026-09-01): «тот человек, который может править ФЭО, может
+    менять и статус происхождения» (is_feo_breakdown/is_internal_plan) —
+    ровно вкладка feo_categories (та же граница, что и у PUT/bulk/import в
+    этом файле и в feo_categories.py), а НЕ вся расширенная матрица
+    _check_planned_item_write_access (wish.edit_feo/wishes/purchases — те
+    дают право создать/удалить недостающую позицию, но не переставлять её
+    признак «по ФЭО»/«внутренний план»). Обычному автору заявки, у которого
+    нет вкладки ФЭО, менять признак не нужно — create_planned_item просто
+    тихо игнорирует эти два поля, если их прислали без права (не 403 —
+    остальная часть запроса, создание самой позиции, доступ имеет)."""
+    if current_user.role == "superadmin":
+        return True
+    return await _has_key_in_any_org(current_user, db, 'feo_categories')
+
+
 @router.get("/", response_model=List[FeoPlannedItemOut])
 async def list_planned_items(
     feo_category_id: int = Query(...),
@@ -355,6 +371,17 @@ async def create_planned_item(
         # existing_item is not None здесь означает allow_duplicate_name=True —
         # дедуп осознанно пропущен, ниже создаётся вторая позиция с тем же именем.
 
+    # Происхождение (is_feo_breakdown/is_internal_plan) — см. _can_edit_feo_origin:
+    # тот, кто заводит позицию без вкладки feo_categories (только через
+    # wish.edit_feo/wishes/purchases), не может проставить признак — поля
+    # тихо остаются дефолтным False/False колонки, а не 403 на весь запрос.
+    _origin_kwargs = {}
+    if await _can_edit_feo_origin(current_user, db):
+        _origin_kwargs = {
+            "is_feo_breakdown": data.is_feo_breakdown,
+            "is_internal_plan": data.is_internal_plan,
+        }
+
     item = FeoPlannedItem(
         feo_category_id=data.feo_category_id,
         name=data.name,
@@ -366,6 +393,7 @@ async def create_planned_item(
         item_type=normalize_item_type(data.item_type),
         # auto_created — НЕ принимается на вход (это точечное создание человеком
         # через UI), остаётся дефолтным False колонки.
+        **_origin_kwargs,
     )
     _apply_payment_fields(item, data)
     db.add(item)
@@ -475,6 +503,12 @@ async def create_planned_items_bulk(
             sort_order=sort_order,
             item_type=normalize_item_type(data.item_type),
             # auto_created — НЕ принимается на вход, см. докстринг эндпоинта.
+            # is_feo_breakdown/is_internal_plan — этот эндпоинт целиком за
+            # require_tab('feo_categories') (см. декоратор функции), поэтому,
+            # в отличие от одиночного create_planned_item, права проверять
+            # отдельно не нужно (см. _can_edit_feo_origin).
+            is_feo_breakdown=data.is_feo_breakdown,
+            is_internal_plan=data.is_internal_plan,
         )
         _apply_payment_fields(item, data)
         db.add(item)
@@ -528,6 +562,18 @@ async def update_planned_item(
     # запроса по-прежнему очищает поле — это осознанное действие.
     if "item_type" in data.model_fields_set:
         item.item_type = normalize_item_type(data.item_type)
+    # Происхождение (владелец, 2026-09-01) — тот же паттерн, что и у item_type
+    # чуть выше: PUT здесь полная замена, у роутера много вызывающих
+    # (movePlannedItemToCategory/savePlannedItemSortOrder/clearCategoryManualPlan
+    # в SubsidiesView.vue шлют существующие поля позиции, но про НОВЫЕ два поля
+    # ничего не знают) — без model_fields_set-guard любой такой вызов молча
+    # сбросил бы уже выставленный признак в False. Доступ уже ограничен целиком
+    # require_tab('feo_categories') у этого эндпоинта — отдельной проверки, как
+    # в create_planned_item (_can_edit_feo_origin), здесь не нужно.
+    if "is_feo_breakdown" in data.model_fields_set:
+        item.is_feo_breakdown = data.is_feo_breakdown
+    if "is_internal_plan" in data.model_fields_set:
+        item.is_internal_plan = data.is_internal_plan
     _apply_payment_fields(item, data)
 
     # БАГ (владелец, 2026-08-13): «нажал на кнопку переноса, выбрал категорию,

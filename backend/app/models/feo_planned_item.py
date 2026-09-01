@@ -28,6 +28,21 @@ class FeoPlannedItem(Base):
     # Порядок позиций внутри категории (владелец просил менять их местами);
     # выдача сортируется sort_order NULLS LAST, id — см. GET /feo-planned-items/.
     sort_order = Column(Integer, nullable=True)
+    # Происхождение плановой позиции (владелец, 2026-09-01): «это плановая позиция
+    # в соответствии с ФЭО, или только в соответствии с нашим внутренним планом, а
+    # в ФЭО разбивки не было» — ДВЕ НЕЗАВИСИМЫЕ галочки (не переключатель!), обе
+    # могут быть True/False одновременно, это осознанно (владелец явно просил
+    # «две галочки», не одно поле-enum). Смысл: is_feo_breakdown — жёсткая
+    # построчная разбивка ФЭО существует (напр. «карандаши»), покупать будут
+    # именно это, отчётность строгая; is_internal_plan — в ФЭО была только более
+    # широкая категория (напр. «канцтовары») или позиции вообще не было, состав
+    # придумали сами. Правка — та же матрица доступа, что и у остальных полей
+    # PUT /feo-planned-items/{id} (вкладка feo_categories либо wish.edit_feo, см.
+    # app/routers/feo_planned_items.py::_check_planned_item_write_access) — новых
+    # прав не заводим. Бэкфилл существующих строк — см. миграцию
+    # aa1b2c3d4e5f_feo_planned_item_origin.py.
+    is_feo_breakdown = Column(Boolean, nullable=False, default=False, server_default=text("FALSE"))
+    is_internal_plan = Column(Boolean, nullable=False, default=False, server_default=text("FALSE"))
 
     feo_category = relationship(
         "FeoCategory",

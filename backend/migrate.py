@@ -50,7 +50,18 @@ def main() -> None:
     if not has_alembic and has_schema:
         print("[migrate] existing runtime-DDL database detected -> adopting baseline", flush=True)
         _alembic("stamp", "head")
-    _alembic("upgrade", "head")
+    # "heads" (plural target), не "head" (2026-09-01): в общем случае с ОДНОЙ
+    # головой ведёт себя идентично "head" — ничего не меняет для обычного
+    # деплоя. Разница проявляется только в редком окне, когда в дереве
+    # временно сосуществуют две параллельные ветки миграций (несколько
+    # сессий/веток работают над схемой одновременно, ещё не смёрджены) —
+    # раньше "upgrade head" в этом окне падал с "Multiple head revisions...",
+    # роняя контейнер backend целиком до ручного вмешательства. "heads"
+    # применяет обе ветки (обе independent, DDL не пересекается) вместо
+    # падения. Настоящий конфликт (два ALTER на одну и ту же колонку с разной
+    # семантикой) всё равно будет виден — просто как ошибка конкретного DDL
+    # при apply, а не абстрактная ошибка выбора цели ДО применения.
+    _alembic("upgrade", "heads")
     print("[migrate] done", flush=True)
 
 

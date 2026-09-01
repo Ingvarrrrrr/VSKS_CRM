@@ -150,6 +150,11 @@ async def auto_assign_planned_items(
                 # позиция заведена автоматически (не человеком) — фронт помечает
                 # такие строки отдельно (см. auto_created в схеме FeoPlannedItemOut).
                 auto_created=True,
+                # Происхождение (владелец, 2026-09-01): автозаведённая позиция
+                # никогда не была построчной разбивкой ФЭО — родилась из
+                # реального расхода заявки/закупки, не из файла ФЭО (см.
+                # докстринг миграции aa1b2c3d4e5f_feo_planned_item_origin.py).
+                is_internal_plan=True,
             )
             db.add(new_fpi)
             await db.flush()

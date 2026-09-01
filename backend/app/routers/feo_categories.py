@@ -2484,6 +2484,12 @@ async def _do_feo_import(
                     )
                     if hasattr(FeoPlannedItem, "item_type"):
                         _fpi_kwargs["item_type"] = item_type
+                    # Происхождение (владелец, 2026-09-01): эта ветка — детальная
+                    # строка Ур.5 из файла ФЭО, жёсткая построчная разбивка есть
+                    # по построению (см. докстринг миграции
+                    # aa1b2c3d4e5f_feo_planned_item_origin.py) — is_feo_breakdown.
+                    if hasattr(FeoPlannedItem, "is_feo_breakdown"):
+                        _fpi_kwargs["is_feo_breakdown"] = True
                     pi = FeoPlannedItem(**_fpi_kwargs)
                     db.add(pi)
                     await db.flush()
@@ -2641,6 +2647,12 @@ async def _do_feo_import(
                     )
                     if hasattr(FeoPlannedItem, "item_type"):
                         _pi_kwargs["item_type"] = _pdata.get("item_type")
+                    # Происхождение (владелец, 2026-09-01): эта ветка — колонка
+                    # «Плановая» на категории целиком, БЕЗ построчной разбивки ФЭО
+                    # (см. докстринг миграции aa1b2c3d4e5f_feo_planned_item_origin.py) —
+                    # is_internal_plan, не is_feo_breakdown.
+                    if hasattr(FeoPlannedItem, "is_internal_plan"):
+                        _pi_kwargs["is_internal_plan"] = True
                     _pi = FeoPlannedItem(**_pi_kwargs)
                     db.add(_pi)
                     await db.flush()

@@ -353,6 +353,11 @@ async def main() -> int:
                 amount=product.quantize(CENTS),
                 is_active=True,
                 notes="перенесено из плана категории",
+                # Происхождение (владелец, 2026-09-01): план категории целиком,
+                # без построчной разбивки ФЭО — internal_plan, не breakdown (см.
+                # докстринг миграции aa1b2c3d4e5f_feo_planned_item_origin.py,
+                # которая опирается именно на этот notes при бэкфилле).
+                is_internal_plan=True,
             )
             db.add(new_item)
             cat.planned_quantity = None

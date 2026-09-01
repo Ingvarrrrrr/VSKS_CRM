@@ -1522,6 +1522,20 @@ class FeoPlannedItemCreate(BaseModel):
     # тем же именем» (напр. похожий товар с другим нанесением). Дефолт False —
     # прежнее поведение дедупа (но через 409, а не молча).
     allow_duplicate_name: bool = False
+    # Происхождение плановой позиции (владелец, 2026-09-01) — ДВЕ НЕЗАВИСИМЫЕ
+    # галочки, не переключатель (см. докстринг миграции
+    # aa1b2c3d4e5f_feo_planned_item_origin.py и модели FeoPlannedItem):
+    # is_feo_breakdown — жёсткая построчная разбивка ФЭО реально есть, покупать
+    # будут именно это; is_internal_plan — в ФЭО была только более широкая
+    # категория (или позиции не было вовсе), состав придумали сами. Менять
+    # может только тот, кто вправе править ФЭО (см. create_planned_item —
+    # тихо игнорирует эти поля без вкладки feo_categories; update_planned_item
+    # уже целиком за require_tab('feo_categories')). model_fields_set-паттерн,
+    # как у item_type: если поле не пришло в PUT-payload — не трогаем (иначе
+    # любой другой PUT этого роутера, не приславший поле явно, молча сбросил
+    # бы уже выставленный признак в False).
+    is_feo_breakdown: bool = False
+    is_internal_plan: bool = False
 
 class FeoPlannedItemOut(FeoPlannedItemCreate):
     id: int

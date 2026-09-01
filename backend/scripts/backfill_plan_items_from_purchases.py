@@ -319,6 +319,10 @@ async def main() -> int:
                             f"из {n} позици{'и' if n == 1 else ('й' if n >= 5 else 'ий')} закупок вне плана"
                         ),
                         auto_created=True,
+                        # Происхождение (владелец, 2026-09-01): бэкфилл из
+                        # закупок вне плана — internal_plan (см. докстринг
+                        # миграции aa1b2c3d4e5f_feo_planned_item_origin.py).
+                        is_internal_plan=True,
                     )
                     db.add(new_fpi)
                     await db.flush()

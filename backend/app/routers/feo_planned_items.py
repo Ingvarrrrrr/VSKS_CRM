@@ -278,6 +278,67 @@ async def _can_edit_feo_origin(current_user, db: AsyncSession) -> bool:
     return await _has_key_in_any_org(current_user, db, 'feo_categories')
 
 
+@router.get("/product-hint")
+async def get_product_hint(
+    product_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Подсказка для диалога «Добавить плановую позицию» (SubsidiesView.vue) при
+    выборе товара из каталога — единица измерения + цена/её происхождение,
+    ОДНИМ запросом.
+
+    Переименован из product-unit-hint (владелец, 2026-09-01): изначально отдавал
+    только unit, читая из истории закупок (см. ниже) — цену/дату/источник фронт
+    брал из кандидата POST /products/match (useItemMatching.ts::MatchCandidate).
+    НО те поля (price_updated_at/price_source/price_source_ref) в /products/match
+    добавила ПАРАЛЛЕЛЬНАЯ сессия и ещё НЕ закоммитила (backend/app/routers/products.py
+    — файл специально не трогаем, см. правила задачи) — на проде, где working tree
+    чистый, кандидат отдаёт только price/photo_url, и подпись о цене всегда молчала
+    бы («дата актуализации не указана»). Колонки price/price_updated_at/price_source/
+    price_source_ref НА САМОЙ МОДЕЛИ Product УЖЕ закоммичены (app/models/product.py:
+    25,40-42) — читаем их прямо оттуда, без зависимости от чужого незакоммиченного
+    кода. Фронт использует ЭТОТ эндпоинт как основной источник цены/даты/источника,
+    candidate.price — только запасной вариант на случай сетевой ошибки.
+
+    unit: у Product СВОЕГО поля unit нет (проверено по модели/схеме) — возвращаем
+    последнюю единицу измерения, с которой товар фигурировал в позиции закупки
+    (PurchaseItem.unit по product_id, самая свежая по id); null, если ни разу не
+    покупался с явно указанной единицей — фронт тогда оставляет поле пустым."""
+    product = (await db.execute(
+        select(
+            Product.price,
+            Product.contract_price,
+            Product.price_updated_at,
+            Product.price_source,
+            Product.price_source_ref,
+        ).where(Product.id == product_id)
+    )).first()
+
+    unit_row = (await db.execute(
+        select(PurchaseItem.unit)
+        .where(
+            PurchaseItem.product_id == product_id,
+            PurchaseItem.unit.isnot(None),
+            PurchaseItem.unit != "",
+        )
+        .order_by(PurchaseItem.id.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+
+    if product is None:
+        return {"unit": unit_row, "price": None, "price_updated_at": None, "price_source": None, "price_source_ref": None}
+
+    best_price = product.contract_price if product.contract_price is not None else product.price
+    return {
+        "unit": unit_row,
+        "price": float(best_price) if best_price is not None else None,
+        "price_updated_at": product.price_updated_at.isoformat() if product.price_updated_at else None,
+        "price_source": product.price_source,
+        "price_source_ref": product.price_source_ref,
+    }
+
+
 @router.get("/", response_model=List[FeoPlannedItemOut])
 async def list_planned_items(
     feo_category_id: int = Query(...),

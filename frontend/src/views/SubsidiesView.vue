@@ -4320,18 +4320,23 @@
                набранное имя сохраняется как есть, ничего не дописывается в каталог
                товаров (hideCreateNew скрывает «Создать новый товар…» — здесь это
                только подсказки/визуализация, а не привязка к каталогу). -->
-          <div class="d-flex align-center ga-2 mb-3">
+          <!-- Владелец (2026-09-01): «добавляется плановая позиция по одной штуке,
+               соответственно картинку сделай раза в 3 больше, чтобы было видно» —
+               size 36 → 108 (ровно ×3). align-start, не align-center: c такой большой
+               картинкой центрирование по строке поиска смотрелось бы криво. -->
+          <div class="d-flex align-start ga-3 mb-3">
             <v-tooltip v-if="addPlannedProductPhoto" location="right">
               <template #activator="{ props: tip }">
-                <v-avatar v-bind="tip" size="36" rounded="sm" class="flex-shrink-0" style="cursor:pointer;overflow:hidden">
-                  <img :src="addPlannedProductPhoto" style="width:36px;height:36px;object-fit:cover;display:block" />
+                <v-avatar v-bind="tip" size="108" rounded="lg" class="flex-shrink-0" style="cursor:pointer;overflow:hidden">
+                  <img :src="addPlannedProductPhoto" style="width:108px;height:108px;object-fit:cover;display:block" />
                 </v-avatar>
               </template>
-              <img :src="addPlannedProductPhoto" style="width:200px;height:200px;object-fit:cover;border-radius:8px;display:block" />
+              <img :src="addPlannedProductPhoto" style="width:240px;height:240px;object-fit:cover;border-radius:8px;display:block" />
             </v-tooltip>
-            <v-icon v-else size="28" class="flex-shrink-0 text-medium-emphasis">mdi-package-variant</v-icon>
+            <v-icon v-else size="64" class="flex-shrink-0 text-medium-emphasis" style="margin-top:6px">mdi-package-variant</v-icon>
             <InlineProductMatch
               class="flex-grow-1"
+              style="margin-top:6px"
               :item-name="plannedItemForm.name"
               :product-id="addPlannedProductId"
               :match-confirmed="addPlannedMatchConfirmed"
@@ -4358,10 +4363,27 @@
               />
             </v-col>
           </v-row>
+          <!-- Плановая стоимость за единицу (владелец, 2026-09-01): подставляется из
+               каталога при выборе товара (onPlannedItemProductPick), полностью
+               редактируема; пока задана и не равна 0 — «Плановая сумма» ниже считается
+               как количество × эта цена (см. watch на plannedItemForm.quantity/unitPrice). -->
+          <v-text-field
+            v-model.number="plannedItemForm.unitPrice"
+            label="Плановая стоимость за единицу, ₽" type="number"
+            variant="outlined" density="compact" suffix="₽"
+            class="mb-1"
+          />
+          <div v-if="addPlannedPriceCaption" class="text-caption text-medium-emphasis mb-2" style="line-height:1.35">
+            <v-icon icon="mdi-information-outline" size="13" style="margin-top:-2px" class="mr-1" />{{ addPlannedPriceCaption }}
+          </div>
           <v-text-field
             v-model.number="plannedItemForm.amount"
             label="Плановая сумма (₽)" type="number"
             variant="outlined" density="compact" suffix="₽"
+            :readonly="plannedItemAmountIsComputed"
+            :bg-color="plannedItemAmountIsComputed ? 'grey-lighten-4' : undefined"
+            :hint="plannedItemAmountIsComputed ? 'Считается автоматически: количество × стоимость за единицу' : ''"
+            :persistent-hint="plannedItemAmountIsComputed"
             :class="plannedItemForm.payment_mode === 'monthly' ? 'd-none' : 'mb-3'"
           />
           <!-- Происхождение плановой позиции (владелец, 2026-09-01): «это плановая
@@ -5905,6 +5927,12 @@ const plannedItemForm = ref({
   name: '',
   quantity: null as number | null,
   unit: '',
+  // Плановая стоимость за единицу, ₽ (владелец, 2026-09-01) — UI-поле, подставляется
+  // из каталога при выборе товара (см. onPlannedItemProductPick), полностью
+  // редактируемо. FeoPlannedItem (backend) СВОЕГО поля под цену за единицу не имеет
+  // (только amount — итоговая сумма), поэтому unitPrice в бэкенд не уходит: пока он
+  // задан и не равен 0, им лишь пересчитывается amount (см. watch ниже).
+  unitPrice: null as number | null,
   amount: null as number | null,
   payment_mode: 'one_time' as 'one_time' | 'monthly',
   planned_date: '' as string,
@@ -5929,31 +5957,148 @@ const plannedItemForm = ref({
 const addPlannedProductId = ref<number | null>(null)
 const addPlannedProductPhoto = ref<string | null>(null)
 const addPlannedMatchConfirmed = ref<boolean | undefined>(undefined)
+// Происхождение цены товара, подставленной при выборе из каталога (владелец,
+// 2026-09-01: «указывать информацию по дате стоимости за единицу — как при
+// формировании заявки, чтобы человек мог понять, насколько он адекватно
+// планирует»). MatchCandidate (POST /products/match) уже отдаёт эти поля —
+// см. useItemMatching.ts/backend/app/routers/products.py — читаем их отсюда
+// напрямую, БЕЗ импорта usePriceFreshness.ts/PriceFreshnessStamp.vue (эти два
+// файла ещё не в репозитории, параллельная незакоммиченная работа — импорт
+// уронит сборку на проде, см. правила задачи). Подпись строим сами, ниже.
+const addPlannedPriceMeta = ref<{
+  price_updated_at: string | null
+  price_source: string | null
+  price_source_ref: string | null
+} | null>(null)
 
-// InlineProductMatch @pick — пользователь выбрал кандидата из каталога. Имя
-// подставляется из кандидата (как и в обычных строках позиций), единицу
-// измерения не подставляем — у Product такого поля нет вовсе (backend
-// models/product.py), а сумму подставляем ТОЛЬКО как предзаполнение (поле
-// пустое), если у товара есть цена — пользователь свободно правит дальше.
+// Русские подписи источника цены — минимальная копия PRICE_SOURCE_LABELS
+// (usePriceFreshness.ts), намеренно НЕ импортированная (см. коммент выше у
+// addPlannedPriceMeta). Держать в синхроне вручную, если появятся новые источники.
+const PLANNED_PRICE_SOURCE_LABELS: Record<string, string> = {
+  contract: 'договор',
+  kp: 'КП',
+  manual: 'вручную',
+  import: 'импорт',
+  monitoring: 'мониторинг цен',
+}
+
+function formatRuDateShort(iso: string | null | undefined): string | null {
+  if (!iso) return null
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return null
+  return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
+// Подпись под полем «Плановая стоимость за единицу» — честно говорит, откуда цена
+// и когда актуализирована, либо что данных нет (требование владельца, п.4).
+const addPlannedPriceCaption = computed<string | null>(() => {
+  if (addPlannedProductId.value == null) return null
+  if (plannedItemForm.value.unitPrice == null) {
+    return 'У товара в каталоге не указана цена — введите стоимость за единицу вручную.'
+  }
+  const meta = addPlannedPriceMeta.value
+  const dateStr = meta ? formatRuDateShort(meta.price_updated_at) : null
+  const parts: string[] = [dateStr ? `цена из каталога от ${dateStr}` : 'цена из каталога, дата актуализации не указана']
+  const sourceLabel = meta?.price_source ? (PLANNED_PRICE_SOURCE_LABELS[meta.price_source] || meta.price_source) : null
+  if (sourceLabel) {
+    parts.push(`источник: ${sourceLabel}${meta?.price_source_ref ? ` · ${meta.price_source_ref}` : ''}`)
+  } else {
+    parts.push('источник не указан')
+  }
+  return parts.join(', ')
+})
+
+// Плановая сумма считается автоматически, пока стоимость за единицу задана и не
+// равна 0 (требование владельца, п.3); количество по умолчанию 1, если поле пусто —
+// «добавляется плановая позиция по одной штуке».
+const plannedItemAmountIsComputed = computed(() => {
+  const p = plannedItemForm.value.unitPrice
+  return p != null && Number(p) !== 0
+})
+
+function recalcPlannedAmountFromUnitPrice() {
+  if (!plannedItemAmountIsComputed.value) return
+  const price = Number(plannedItemForm.value.unitPrice)
+  const qtyRaw = plannedItemForm.value.quantity
+  const qty = qtyRaw != null && Number(qtyRaw) > 0 ? Number(qtyRaw) : 1
+  plannedItemForm.value.amount = Math.round(qty * price * 100) / 100
+}
+
+watch(
+  [() => plannedItemForm.value.quantity, () => plannedItemForm.value.unitPrice],
+  () => recalcPlannedAmountFromUnitPrice(),
+)
+
+// Единица измерения + цена/дата/источник товара каталога — ОДНИМ запросом
+// (GET /feo-planned-items/product-hint, добавлен рядом с этим диалогом — см.
+// докстринг эндпоинта). Координатор (2026-09-01) поймал зависимость от чужой
+// незакоммиченной работы: candidate.price_updated_at/price_source/price_source_ref
+// (MatchCandidate из POST /products/match) существуют только в РАБОЧЕМ ДЕРЕВЕ
+// параллельной сессии — в закоммиченном backend/app/routers/products.py (который
+// мы не трогаем) этих полей нет, и на проде подпись о цене всегда молчала бы.
+// product-hint читает price/price_updated_at/price_source/price_source_ref
+// напрямую из МОДЕЛИ Product — эти колонки уже закоммичены (app/models/product.py:
+// 25,40-42) — и потому не зависит от чужого незакоммиченного кода. Это ОСНОВНОЙ
+// источник цены/даты/источника; candidate.* (см. onPlannedItemProductPick) —
+// только запасной вариант на время, пока этот запрос не ответил/если он упал.
+// Гвард по product_id — пока запрос летал, пользователь мог выбрать другой товар.
+async function applyPlannedProductHint(productId: number) {
+  try {
+    const res = await apiFetch<{
+      unit: string | null
+      price: number | null
+      price_updated_at: string | null
+      price_source: string | null
+      price_source_ref: string | null
+    }>(`/feo-planned-items/product-hint?product_id=${productId}`)
+    if (addPlannedProductId.value !== productId) return
+    if (res?.unit) plannedItemForm.value.unit = res.unit
+    if (res && res.price != null) {
+      plannedItemForm.value.unitPrice = Number(res.price)
+    }
+    addPlannedPriceMeta.value = {
+      price_updated_at: res?.price_updated_at ?? null,
+      price_source: res?.price_source ?? null,
+      price_source_ref: res?.price_source_ref ?? null,
+    }
+    recalcPlannedAmountFromUnitPrice()
+  } catch {
+    // Запрос не удался — остаётся то, что уже подставлено из candidate (запасной
+    // вариант, см. onPlannedItemProductPick), поля остаются редактируемыми.
+  }
+}
+
+// InlineProductMatch @pick — пользователь выбрал кандидата из каталога. Имя —
+// сразу из кандидата; единица/цена/дата/источник — предзаполняются из
+// candidate как ЗАПАСНОЙ вариант (может не содержать price_updated_at/
+// price_source на проде, см. applyPlannedProductHint выше), а затем
+// перезаписываются авторитетным ответом product-hint. Оба поля (единица,
+// стоимость за единицу) остаются полностью редактируемыми. Перезаписываем
+// unitPrice/name/фото при КАЖДОМ выборе (не только если поле было пусто) —
+// это осознанный выбор другого товара, а не первичное предзаполнение.
 function onPlannedItemProductPick(c: MatchCandidate) {
   plannedItemForm.value.name = c.name || plannedItemForm.value.name
   addPlannedProductId.value = c.product_id
   addPlannedProductPhoto.value = c.photo_url ?? null
   addPlannedMatchConfirmed.value = true
-  if (plannedItemForm.value.amount == null) {
-    const price = c.contract_price ?? c.price
-    if (price != null) {
-      const qty = plannedItemForm.value.quantity
-      plannedItemForm.value.amount = qty != null && qty > 0 ? Math.round(Number(price) * qty * 100) / 100 : Number(price)
-    }
+  const price = c.contract_price ?? c.price
+  plannedItemForm.value.unitPrice = price != null ? Number(price) : null
+  addPlannedPriceMeta.value = {
+    price_updated_at: c.price_updated_at ?? null,
+    price_source: c.price_source ?? null,
+    price_source_ref: c.price_source_ref ?? null,
   }
+  recalcPlannedAmountFromUnitPrice()
+  void applyPlannedProductHint(c.product_id)
 }
 
 function onPlannedItemProductClear() {
   addPlannedProductId.value = null
   addPlannedProductPhoto.value = null
   addPlannedMatchConfirmed.value = undefined
+  addPlannedPriceMeta.value = null
   plannedItemForm.value.name = ''
+  plannedItemForm.value.unitPrice = null
 }
 
 async function toggleItemPanel(node: FeoNode) {
@@ -6989,7 +7134,9 @@ function openAddPlannedItem(categoryId: number) {
   convertFromCategoryPlanId.value = null
   createPlannedFromActualId.value = null
   plannedItemForm.value = {
-    name: '', quantity: null, unit: '', amount: null,
+    // Владелец (2026-09-01): «добавляется плановая позиция по одной штуке» —
+    // количество по умолчанию 1, а не пусто.
+    name: '', quantity: 1, unit: '', unitPrice: null, amount: null,
     payment_mode: 'one_time', planned_date: '', monthly_start_date: '',
     months_count: null, monthly_amount: null,
     is_feo_breakdown: false, is_internal_plan: true,
@@ -6997,6 +7144,7 @@ function openAddPlannedItem(categoryId: number) {
   addPlannedProductId.value = null
   addPlannedProductPhoto.value = null
   addPlannedMatchConfirmed.value = undefined
+  addPlannedPriceMeta.value = null
   showAddPlannedDialog.value = true
 }
 
@@ -7012,6 +7160,7 @@ watch(showAddPlannedDialog, (val) => {
     addPlannedProductId.value = null
     addPlannedProductPhoto.value = null
     addPlannedMatchConfirmed.value = undefined
+    addPlannedPriceMeta.value = null
   }
 })
 
@@ -7045,6 +7194,7 @@ function openConvertManualPlanToItem(node: FeoNode) {
     name: prefillName,
     quantity: qty,
     unit: node.unit || '',
+    unitPrice,
     amount,
     payment_mode: 'one_time',
     planned_date: '', monthly_start_date: '', months_count: null, monthly_amount: null,
@@ -7056,6 +7206,7 @@ function openConvertManualPlanToItem(node: FeoNode) {
   addPlannedProductId.value = null
   addPlannedProductPhoto.value = null
   addPlannedMatchConfirmed.value = undefined
+  addPlannedPriceMeta.value = null
   showAddPlannedDialog.value = true
 }
 
@@ -7076,6 +7227,7 @@ function openCreatePlannedFromActual(node: FeoNode, actual: FeoActualItem) {
     name: info.name || actual.item_name,
     quantity: info.quantity,
     unit: info.unit || '',
+    unitPrice: info.unitPrice ?? null,
     amount: info.total ?? Number(actual.fact_amount ?? actual.total_price ?? 0),
     payment_mode: 'one_time',
     planned_date: '', monthly_start_date: '', months_count: null, monthly_amount: null,
@@ -7086,6 +7238,7 @@ function openCreatePlannedFromActual(node: FeoNode, actual: FeoActualItem) {
   addPlannedProductId.value = null
   addPlannedProductPhoto.value = null
   addPlannedMatchConfirmed.value = undefined
+  addPlannedPriceMeta.value = null
   showAddPlannedDialog.value = true
 }
 
@@ -7095,12 +7248,15 @@ async function savePlannedItem() {
   try {
     const f = plannedItemForm.value
     const isMonthly = f.payment_mode === 'monthly'
+    // Владелец (2026-09-01): «добавляется плановая позиция по одной штуке» — если
+    // количество осталось пустым (в т.ч. стёрто вручную), по умолчанию 1.
+    const qtyOrDefault = (f.quantity == null || (f.quantity as unknown as string) === '') ? 1 : f.quantity
     const created = await apiFetch<FeoPlannedItem>('/feo-planned-items/', {
       method: 'POST',
       body: JSON.stringify({
         feo_category_id: addPlannedCategoryId.value,
         name: f.name.trim(),
-        quantity: f.quantity,
+        quantity: qtyOrDefault,
         unit: f.unit || null,
         amount: isMonthly ? null : f.amount,
         is_active: true,

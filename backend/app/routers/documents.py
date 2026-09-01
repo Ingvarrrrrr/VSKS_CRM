@@ -653,6 +653,58 @@ def _format_initials(full: str) -> str:
     return f"{surname} {''.join(initials)}".strip()
 
 
+_INITIALS_WORD_RE = re.compile(r'^([A-Za-zА-Яа-яЁё]\.){1,2}$')
+
+
+def _format_initials_safe(full: str) -> str:
+    """Сократить ФИО до «Фамилия И.О.», не ломая то, что сокращать не нужно.
+
+    В отличие от `_format_initials`, эта обёртка ИДЕМПОТЕНТНА и не трогает
+    строки, для которых сокращение не имеет смысла или уже выполнено.
+    Нужна потому, что `_format_initials` слепо берёт первую букву 2-го и
+    3-го «слова» — если на вход уже подать сокращённое имя, оно портится:
+
+        _format_initials("Иванов И.В.")  → "Иванов И."   # ⚠ отчество потеряно!
+
+    А ровно такой путь реален: для роли «Ответственный исполнитель»
+    (см. resolved_responsible выше) в `full_name` подставляется значение,
+    которое УЖЕ прошло через `_format_initials`. Повторное сокращение в
+    approvers_list не должно откусывать инициал отчества.
+
+    Правила:
+    - пустая строка / только пробелы → "" (как и `_format_initials`);
+    - строка без единой буквы (плейсхолдер вида «_________________»,
+      «RESPONSIBLE_PLACEHOLDER») → возвращается как есть, без изменений;
+    - уже сокращённая форма — все слова, кроме первого, выглядят как
+      инициалы (1-2 буквы с точкой на конце, например «И.», «И.О.», «В.»)
+      → возвращается как есть, повторно не сокращается;
+    - иначе — обычное полное ФИО → применяется `_format_initials`.
+
+    Примеры:
+        _format_initials_safe("Маркодеева Анастасия Олеговна") → "Маркодеева А.О."
+        _format_initials_safe("Борисов Александр Алексеевич")  → "Борисов А.А."
+        _format_initials_safe("Иванов И.В.")                   → "Иванов И.В." (без изменений)
+        _format_initials_safe("Иванов И.")                     → "Иванов И." (без изменений)
+        _format_initials_safe("_________________")             → "_________________" (без изменений)
+        _format_initials_safe("")                               → ""
+        _format_initials_safe("Иванов")                         → "Иванов"
+    """
+    if not full:
+        return ""
+    stripped = full.strip()
+    if not stripped:
+        return ""
+    if not any(ch.isalpha() for ch in stripped):
+        # Плейсхолдер без единой буквы (подчёркивания и т.п.) — не трогаем.
+        return full
+    parts = stripped.split()
+    if len(parts) > 1 and all(_INITIALS_WORD_RE.match(w) for w in parts[1:]):
+        # Уже в сокращённой форме «Фамилия И.О.» — повторное сокращение
+        # откусило бы инициал отчества, поэтому возвращаем как есть.
+        return full
+    return _format_initials(full)
+
+
 def _resolve_responsible_person_update(current_value: Optional[str], responsible_name: Optional[str]) -> Optional[str]:
     """Куда писать пришедший ?responsible_name= в Purchase.responsible_person.
 
@@ -1799,13 +1851,13 @@ async def generate_document(
 
     approvers_list = []
     for i, a in enumerate(selected_approvers):
-        full_name = a.full_name or ""
+        raw_full = a.full_name or ""
         # «Ответственный исполнитель» — роль-слот (app/services/responsible_role.py):
         # хранимое в subsidy_approvers ФИО для неё ИГНОРИРУЕТСЯ ВСЕГДА, даже если там
         # почему-то оказалось живое имя — источник истины только резолв по закупке.
         # Для остальных ролей подставляем резолв только если сохранённое ФИО пустое/плейсхолдер.
-        if is_responsible_role(a.role_name) or is_blank_person_name(full_name):
-            full_name = resolved_responsible or RESPONSIBLE_PLACEHOLDER
+        if is_responsible_role(a.role_name) or is_blank_person_name(raw_full):
+            raw_full = resolved_responsible_full or RESPONSIBLE_PLACEHOLDER
         if getattr(a, "show_feo_path", False) and item_feo_paths:
             note = "; ".join(f"{path} — {_fmt_money(total)} ₽" for path, total in item_feo_paths)
         elif getattr(a, "show_feo_path", False) and feo_path:
@@ -1826,12 +1878,20 @@ async def generate_document(
         approvers_list.append({
             "num": i + 1,
             "role_name": a.role_name,
-            "full_name": full_name,
+            # Владелец: «в листе согласования ФИО целиком, а фамилия должна быть
+            # целиком, имя-отчество инициалами» — печатаем сокращённую форму,
+            # полное ФИО остаётся под отдельным ключом для шаблонов, которым
+            # оно реально нужно (напр. текст договора).
+            "full_name": _format_initials_safe(raw_full),
+            "full_name_full": raw_full,
             "signature_img": signature_img,
             "decided_date": decided_date,
             "note": note,
-            # Phase 26-V: родительный падеж
-            "full_name_gen": _to_gen_fio(full_name),
+            # Phase 26-V: родительный падеж — ОБЯЗАТЕЛЬНО от полного ФИО:
+            # _to_gen_fio определяет пол по окончанию отчества
+            # (parts[2].endswith(('вна','чна'))), от сокращённого «А.О.»
+            # род не определится и склонение сломается.
+            "full_name_gen": _to_gen_fio(raw_full),
             "role_name_gen": _to_gen_phrase(a.role_name or ""),
         })
 
@@ -3820,7 +3880,8 @@ TEMPLATE_VARIABLES = [
     ("{%tr for a in approvers %} ... {%tr endfor %}", "Цикл по согласующим (в строке таблицы)", "{%tr for a in approvers %}<строка>{%tr endfor %}", "повторяется по числу согласующих"),
     ("{{a.num}}", "Порядковый номер (1, 2, 3...)", "{{a.num}}", "1"),
     ("{{a.role_name}}", "Должность согласующего", "{{a.role_name}}", "начальник отдела"),
-    ("{{a.full_name}}", "ФИО согласующего", "{{a.full_name}}", "Петров П.П."),
+    ("{{a.full_name}}", "ФИО согласующего (сокращённо: Фамилия И.О.)", "{{a.full_name}}", "Петров П.П."),
+    ("{{a.full_name_full}}", "ФИО согласующего целиком, без сокращения", "{{a.full_name_full}}", "Петров Пётр Петрович"),
     ("{{a.signature_img}}", "Электронная подпись (картинка)", "{{a.signature_img}}", "(изображение подписи)"),
     ("{{a.decided_date}}", "Дата подписания", "{{a.decided_date}}", "12.05.2026"),
     ("{{a.note}}", "Примечание (путь ФЭО)", "{{a.note}}", "Согласовано"),

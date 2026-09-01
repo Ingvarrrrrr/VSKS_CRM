@@ -755,6 +755,14 @@
           >
             Создать ежемесячные этапы
           </v-btn>
+          <v-btn
+            v-if="dialog.id && (dialog.form.contract_type === 'framework_cumulative' || dialog.form.contract_type === 'framework_with_amount')"
+            color="indigo" variant="tonal" prepend-icon="mdi-file-check-outline"
+            :loading="approvalPurchaseLoading"
+            @click="openApprovalPurchase"
+          >
+            Согласование и документы
+          </v-btn>
           <v-spacer />
           <v-btn variant="text" @click="dialog.show = false">Отмена</v-btn>
           <v-btn color="primary" variant="tonal" :loading="dialog.saving" @click="saveContract">Сохранить</v-btn>
@@ -1747,6 +1755,30 @@ function onMonthlyStagesCreated(res: any) {
   const created = res.created?.length ?? 0
   showSnack(`Создано ${created} этапов`)
   loadContracts()
+}
+
+// ── Согласование и документы (T-ContractApprovalPurchase) ──────────────────
+// Реестр «Договоры» не имеет своего согласования/печати — эта машинерия
+// живёт на закупке (Purchase). Для рамочного договора без «головной» закупки
+// эндпоинт /contracts/{id}/approval-purchase заводит её (или находит уже
+// существующую) и мы переходим в её карточку — там уже есть согласование
+// необходимости, печать договора и листа согласования.
+const approvalPurchaseLoading = ref(false)
+async function openApprovalPurchase() {
+  if (!dialog.id) return
+  approvalPurchaseLoading.value = true
+  try {
+    const res = await apiFetch<{ purchase_id: number; created: boolean }>(
+      `/contracts/${dialog.id}/approval-purchase`,
+      { method: 'POST' }
+    )
+    dialog.show = false
+    router.push(`/orders/${res.purchase_id}/edit`)
+  } catch (e: any) {
+    showSnack(e?.message || e?.detail || 'Не удалось открыть согласование и документы', 'error')
+  } finally {
+    approvalPurchaseLoading.value = false
+  }
 }
 
 const deleteDialog = reactive({ show: false, deleting: false, item: null as Contract | null })

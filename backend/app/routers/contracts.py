@@ -18,7 +18,7 @@ from io import BytesIO
 from datetime import date as date_type
 import calendar
 from pydantic import BaseModel, Field
-from app.routers.purchase_budget import _assign_framework_seq
+from app.routers.purchase_budget import _assign_framework_seq, FRAMEWORK_TYPES
 
 async def _enrich_contract_from_purchases(c: Contract, db: AsyncSession) -> int:
     """Auto-fill ПУСТЫЕ optional fields на Contract из любой связанной Purchase.
@@ -399,6 +399,94 @@ async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Dep
         n_updated_purchases=n_updated_purchases,
         warnings=warnings,
     )
+
+def _build_approval_purchase_fields(contract: Contract, assigned_user_id: int) -> dict:
+    """Собирает kwargs для Purchase() — «рамочная голова» из уже сохранённого
+    Contract. Чистая функция без обращений к БД — вынесена отдельно, чтобы
+    маппинг полей был юнит-тестируем без живой сессии
+    (см. tests/test_contract_approval_purchase.py).
+
+    Пустой contract.number (falsy) сознательно передаётся как None, а не
+    подменяется — при первом формировании документа сработает уже готовая
+    логика присвоения временного номера «ВРЕМ-…»
+    (is_framework_head + _generate_temp_contract_number в purchases.py).
+    """
+    return dict(
+        contract_id=contract.id,
+        contractor_id=contract.contractor_id,
+        subsidy_id=contract.subsidy_id,
+        subject=contract.subject,
+        contract_number=(contract.number or None),
+        contract_date=contract.date,
+        contract_price=contract.max_amount,
+        purchase_contract_type=contract.contract_type,
+        purchase_method=contract.purchase_method,
+        parent_purchase_id=None,
+        # Начальный статус — как у обычной новой закупки (Purchase.status /
+        # PurchaseCreate.status default в purchases.py).
+        status="wishes",
+        # Без явного владельца закупка невидима для рядового автора в списке
+        # (list_purchases фильтрует по visible_user_ids) — как в create_purchase.
+        assigned_user_id=assigned_user_id,
+    )
+
+
+@router.post("/{contract_id}/approval-purchase")
+async def get_or_create_approval_purchase(
+    contract_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_tab('contracts')),
+):
+    """Найти или создать «рамочную голову» — Purchase, привязанную к этому
+    рамочному договору — через которую уже доступны согласование
+    необходимости, печать договора и листа согласования.
+
+    Диагноз (2026-09-01): реестр «Договоры» (Contract) — отдельная сущность
+    без своего согласования/документооборота; вся эта машинерия живёт на
+    Purchase (см. /api/purchases/{pid}/documents/{doc_type},
+    purchase_transitions.py). У РАМОЧНЫХ договоров, созданных прямо в реестре
+    «Договоры», закупка не заводится автоматически — поэтому кнопок
+    согласования/печати у них нет. Этот эндпоинт закрывает разрыв, не
+    дублируя генерацию документов здесь.
+
+    Идемпотентно: если у договора уже есть привязанная рамочная голова —
+    возвращает её id, ничего не создавая. Проверка «голова ли это» —
+    is_framework_head() (purchases.py), единый источник истины, чтобы эта
+    проверка не разъехалась с documents.py / purchase_transitions.py.
+    """
+    # Локальный импорт: purchases.py импортирует ensure_contract_linked ИЗ
+    # этого модуля на уровне модуля — импорт is_framework_head сверху дал бы
+    # циклический импорт при старте приложения.
+    from app.routers.purchases import is_framework_head
+
+    contract = (await db.execute(select(Contract).where(Contract.id == contract_id))).scalar_one_or_none()
+    if not contract:
+        raise HTTPException(404, "Договор не найден")
+    if contract.contract_type not in FRAMEWORK_TYPES:
+        raise HTTPException(400, "Согласование и документы через договор доступны только для рамочных договоров")
+
+    linked = (await db.execute(
+        select(Purchase).where(Purchase.contract_id == contract_id).order_by(Purchase.id.asc())
+    )).scalars().all()
+    existing = next((p for p in linked if is_framework_head(p)), None)
+    if existing:
+        return {"purchase_id": existing.id, "created": False}
+
+    p = Purchase(**_build_approval_purchase_fields(contract, current_user.id))
+    db.add(p)
+    await db.flush()  # get p.id
+
+    if not p.registry_number:
+        p.registry_number = f"РЕЕ-{date_type.today().year}-{p.id:05d}"
+    if not p.purchase_number:
+        max_result = await db.execute(select(func.coalesce(func.max(Purchase.purchase_number), 0)))
+        p.purchase_number = max_result.scalar() + 1
+
+    await _assign_framework_seq(p, db)
+
+    await db.commit()
+    return {"purchase_id": p.id, "created": True}
+
 
 @router.delete("/{cid}")
 async def delete_contract(cid: int, db: AsyncSession = Depends(get_db), _=Depends(require_action('contract.delete'))):

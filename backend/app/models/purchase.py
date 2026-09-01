@@ -70,6 +70,14 @@ class Purchase(Base):
     payment_federal = Column(Numeric(15, 2))
     purchase_contract_type = Column(String(50), nullable=True)  # single / framework_cumulative / framework_with_amount
     framework_seq = Column(Integer, nullable=True)              # порядковый номер закупки в рамках рамочного договора
+    # Владелец (2026-08-31): для рамочной головы номер/дата договора могут
+    # быть ещё не известны на момент листа согласования — система присваивает
+    # технический номер вида «ВРЕМ-{№закупки}» (см. app/routers/purchases.py:
+    # _generate_temp_contract_number, вызывается при формировании договорного
+    # документа для рамочной головы без contract_number). Флаг снимается по
+    # POST /api/purchases/{pid}/actualize-contract-number — либо подтверждением
+    # текущего номера, либо заданием нового.
+    contract_number_is_temporary = Column(Boolean, nullable=False, server_default='false')
     purchase_basis = Column(String(50), nullable=True)  # 'plan_schedule' | 'service_note'
     responsible_person = Column(String(500), nullable=True)
     # Contract document generation fields

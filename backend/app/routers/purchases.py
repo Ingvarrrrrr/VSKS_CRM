@@ -83,6 +83,31 @@ async def _has_purchase_write_access(user: User, db: AsyncSession) -> bool:
     return user is not None
 
 
+def is_framework_head(p) -> bool:
+    """Истинно для рамочной ГОЛОВЫ договора: purchase_contract_type в
+    FRAMEWORK_TYPES (framework_cumulative / framework_with_amount) И
+    parent_purchase_id IS NULL (сама голова, не дочерняя закупка внутри
+    рамочного — у дочерних позиции договора обязательны как обычно).
+
+    Владелец (2026-08-31, «рамочные договора без закупок внутри должны
+    согласовываться и печататься»): у головы может ещё не быть закупок
+    внутри, но договор уже заключён на общую сумму (Purchase.contract_price) —
+    вместо списка ContractItem. Единый источник истины для этой проверки:
+    раньше purchases.py и purchase_transitions.py проверяли значение
+    'framework_limited', которого в реальных данных НЕТ ВООБЩЕ (framework_
+    cumulative — 11 закупок, framework_with_amount — 1, framework_limited —
+    0; фронт шлёт именно 'framework_with_amount') — из-за этого рамочная
+    голова нигде не распознавалась как рамочная, и её contract_price
+    затирался суммой позиций при переходе в «Заключён договор». Теперь оба
+    места (и documents.py) используют этот единственный хелпер, чтобы
+    значения больше не могли разъехаться.
+    """
+    return (
+        getattr(p, "purchase_contract_type", None) in FRAMEWORK_TYPES
+        and getattr(p, "parent_purchase_id", None) is None
+    )
+
+
 async def _auto_match_feo_item(
     item_name: str,
     purchase_subsidy_id: Optional[int],
@@ -2054,24 +2079,48 @@ async def update_purchase(
     return p
 
 
+async def _generate_temp_contract_number(p: Purchase, db: AsyncSession) -> str:
+    """Технический номер договора для рамочной головы, у которой на момент
+    формирования документа ещё не известны реальные номер/дата (владелец,
+    2026-08-31): «Надо присваивать какой-то технический номер на данный
+    момент времени и ставить примечание, что надо актуализировать номер».
+
+    Формат: «ВРЕМ-{№закупки}», если у закупки есть purchase_number, иначе
+    «ВРЕМ-{id закупки}». При коллизии с уже занятым contract_number другой
+    закупки — добавляется числовой суффикс «-2», «-3», ... до первого
+    свободного варианта.
+    """
+    base_num = p.purchase_number or p.id
+    base = f"ВРЕМ-{base_num}"
+    candidate = base
+    suffix = 1
+    while True:
+        taken = (await db.execute(
+            select(Purchase.id).where(
+                Purchase.contract_number == candidate,
+                Purchase.id != p.id,
+            )
+        )).scalar_one_or_none()
+        if taken is None:
+            return candidate
+        suffix += 1
+        candidate = f"{base}-{suffix}"
+
+
 # Phase 27.1 D-07: helper — авто-пересчёт purchase.contract_price = SUM(contract_items.total)
 async def _recalc_contract_price_from_contract_items(purchase_id: int, db: AsyncSession) -> None:
     """Phase 27.1 D-07: авто-пересчёт purchase.contract_price = SUM(contract_items.total).
 
     Применимо: разовая (purchase_contract_type='single' или NULL), авансовая
     (purchase_method='advance'), дочерняя рамочного (parent_purchase_id IS NOT NULL).
-    НЕ применимо для рамочного головного (framework_cumulative/framework_limited
-    AND parent_purchase_id IS NULL) — manual entry сохраняется.
+    НЕ применимо для рамочного головного (framework_cumulative/framework_with_amount
+    AND parent_purchase_id IS NULL) — manual entry сохраняется, см. is_framework_head().
     """
     from app.models.contract_item import ContractItem
     p = await db.get(Purchase, purchase_id)
     if not p:
         return
-    is_framework_head = (
-        p.purchase_contract_type in ('framework_cumulative', 'framework_limited')
-        and p.parent_purchase_id is None
-    )
-    if is_framework_head:
+    if is_framework_head(p):
         return
     result = await db.execute(
         select(func.sum(ContractItem.total)).where(ContractItem.purchase_id == purchase_id)
@@ -2089,6 +2138,7 @@ PATCHABLE_FIELDS = {
     "subject", "description", "contractor_id", "feo_category_id",
     "purchase_method", "competitive_form", "purchase_contract_type",
     "contract_number", "contract_date", "contract_price", "contract_end_date",
+    "contract_number_is_temporary",
     "nmck", "planned_total_price",
     "delivery_date", "delivery_location", "delivery_address",
     "delivery_region", "delivery_city", "delivery_street",
@@ -2252,6 +2302,48 @@ async def patch_purchase(
         await db.commit()
         await db.refresh(p)
     return {"id": p.id, "changed": changed}
+
+
+class _ActualizeContractNumberBody(BaseModel):
+    # Не передан/None — подтвердить ТЕКУЩИЙ (технический) номер как окончательный.
+    # Передан — записать его как новый номер договора.
+    contract_number: Optional[str] = None
+    contract_date: Optional[date] = None
+
+
+@router.post("/{pid}/actualize-contract-number")
+async def actualize_contract_number(
+    pid: int,
+    body: _ActualizeContractNumberBody,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Владелец (2026-08-31): актуализация технического номера договора
+    рамочной головы — «подтвердить проставленный тобой или задать новый».
+
+    body.contract_number передан → записывается как новый номер (+ дата, если
+    передана). body.contract_number пуст/не передан → текущий номер (в т.ч.
+    технический «ВРЕМ-...») подтверждается как окончательный без изменений.
+    В обоих случаях флаг contract_number_is_temporary снимается.
+    """
+    p = await db.get(Purchase, pid)
+    if not p:
+        raise HTTPException(404, "Закупка не найдена")
+    if not await _has_purchase_write_access(current_user, db):
+        raise HTTPException(403, "Нет прав на редактирование этой закупки. Обратитесь к администратору организации.")
+    if body.contract_number:
+        p.contract_number = body.contract_number.strip()
+        if body.contract_date:
+            p.contract_date = body.contract_date
+    p.contract_number_is_temporary = False
+    await db.commit()
+    await db.refresh(p)
+    return {
+        "id": p.id,
+        "contract_number": p.contract_number,
+        "contract_date": p.contract_date,
+        "contract_number_is_temporary": p.contract_number_is_temporary,
+    }
 
 
 class _SetProductBody(BaseModel):

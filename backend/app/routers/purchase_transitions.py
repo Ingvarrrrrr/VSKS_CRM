@@ -25,9 +25,13 @@ from app.auth.jwt import get_current_user, require_role, ADMIN_ROLES, MANAGER_RO
 from app.auth.permissions import require_action
 from app.routers.contracts import ensure_contract_linked
 from app.routers.purchase_budget import _check_budget, _assign_framework_seq, FRAMEWORK_TYPES
-from app.routers.purchases import _purchase_to_full, _item_to_out, STATUS_ORDER, _sync_purchase_from_contract
+from app.routers.purchases import (
+    _purchase_to_full, _item_to_out, STATUS_ORDER, _sync_purchase_from_contract,
+    is_framework_head,
+)
 from app.schemas.schemas import PurchaseOutFull
 from app.services.feo_plan import assert_no_unapproved_excess
+from app.services.price_actualization import actualize_product_price
 
 router = APIRouter(prefix="/api/purchases", tags=["purchase-transitions"])
 
@@ -353,12 +357,9 @@ async def transition_status(
                         "status_label": "Заключён договор",
                     },
                 )
-        # Phase 27.1 D-07: recompute contract_price (если не рамочный головной)
-        is_framework_head = (
-            p.purchase_contract_type in ('framework_cumulative', 'framework_limited')
-            and p.parent_purchase_id is None
-        )
-        if not is_framework_head:
+        # Phase 27.1 D-07: recompute contract_price (если не рамочный головной,
+        # см. is_framework_head() в purchases.py — единый хелпер для этой проверки)
+        if not is_framework_head(p):
             ci_sum_res = await db.execute(
                 select(func.sum(ContractItem.total)).where(ContractItem.purchase_id == pid)
             )
@@ -403,6 +404,9 @@ async def transition_status(
         await _autofill_accepted_fields(p, db)
 
     # При переходе в contracted — обновить цены в каталоге товаров
+    # (владелец 2026-08-29: заодно проставить метаданные актуализации —
+    # цена «по контракту» одно из двух легитимных оснований актуализации,
+    # см. app/services/price_actualization.py).
     if target_status == "contracted" and p.items:
         sub = await db.get(Subsidy, p.subsidy_id) if p.subsidy_id else None
         contract_org_id = sub.org_id if sub else None
@@ -414,10 +418,18 @@ async def transition_status(
                 continue
             item_price = item.unit_price
             product.contract_price = item_price
-            product.price = item_price
             product.contract_number = p.contract_number
             product.contract_date = p.contract_date
             product.contract_org_id = contract_org_id
+            await actualize_product_price(
+                db, product,
+                price=item_price,
+                source="contract",
+                source_ref=p.contract_number,
+                contractor_id=getattr(p, "contractor_id", None),
+                collected_at=p.contract_date,
+                user=current_user,
+            )
 
     # Auto-create/link contract record when moving to contracted status
     if target_status == "contracted":

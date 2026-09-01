@@ -745,6 +745,9 @@ class PurchaseCreate(BaseModel):
     total_nmck: Optional[Decimal] = None
     purchase_contract_type: Optional[str] = None
     framework_seq: Optional[int] = None          # порядковый номер в рамочном договоре
+    # Владелец (2026-08-31): технический номер договора (рамочная голова без
+    # известных номера/даты) — True, пока номер не актуализирован пользователем.
+    contract_number_is_temporary: Optional[bool] = False
     # Contract document generation fields
     vat_applicable: Optional[bool] = False
     vat_rate: Optional[int] = None
@@ -886,6 +889,9 @@ class PurchaseUpdate(BaseModel):
     total_nmck: Optional[Decimal] = None
     purchase_contract_type: Optional[str] = None
     framework_seq: Optional[int] = None
+    # Владелец (2026-08-31): технический номер договора (рамочная голова без
+    # известных номера/даты) — True, пока номер не актуализирован пользователем.
+    contract_number_is_temporary: Optional[bool] = None
     vat_applicable: Optional[bool] = None
     vat_rate: Optional[int] = None
     vat_exemption_article: Optional[str] = None

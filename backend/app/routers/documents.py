@@ -18,6 +18,7 @@ from app.models.subsidy_approver import SubsidyApprover
 from app.models.feo_category import FeoCategory
 from app.models.event import Event
 from app.auth.jwt import get_current_user
+from app.routers.purchases import is_framework_head, _generate_temp_contract_number
 from app.services.fio import compose_fio as _compose_fio
 from app.services.responsible_role import is_responsible_role, is_blank_person_name, RESPONSIBLE_PLACEHOLDER
 from typing import Optional
@@ -1014,8 +1015,19 @@ def _require_contract_items_for_doc(p, doc_type: str) -> None:
     Договор» (требование владельца). Код ошибки CONTRACT_ITEMS_REQUIRED тот
     же, что и в purchase_transitions.py (переход в «Заключён договор»), для
     единообразия обработки на фронте.
+
+    Рамочная ГОЛОВА договора (is_framework_head — framework_cumulative/
+    framework_with_amount, parent_purchase_id IS NULL) исключена: владелец
+    (2026-08-31), «рамочные договора без закупок внутри должны согласовываться
+    и печататься» — у головы может ещё не быть закупок внутри, а вместо
+    позиций договора у неё общая сумма (Purchase.contract_price, см.
+    _resolve_doc_amount). Дочерние закупки рамочного (parent_purchase_id
+    заполнен) под это исключение НЕ подпадают — для них позиции обязательны
+    как обычно.
     """
     if doc_type not in CONTRACT_FAMILY_DOC_TYPES:
+        return
+    if is_framework_head(p):
         return
     if getattr(p, "contract_items", None):
         return
@@ -1347,6 +1359,24 @@ async def generate_document(
     p = result.scalar_one_or_none()
     if not p:
         raise HTTPException(404, "Закупка не найдена")
+
+    # Владелец (2026-08-31): рамочная голова может подписываться («лист
+    # согласования») раньше, чем станут известны реальные номер и дата
+    # договора — при первом формировании договорного документа для такой
+    # закупки без contract_number система присваивает технический номер
+    # («ВРЕМ-{№закупки}») и сегодняшнюю дату, отмечая их флагом
+    # contract_number_is_temporary для последующей актуализации (см.
+    # POST /api/purchases/{pid}/actualize-contract-number). Уже заполненный
+    # пользователем contract_number НЕ трогаем.
+    if doc_type in CONTRACT_FAMILY_DOC_TYPES and is_framework_head(p) and not p.contract_number:
+        p.contract_number = await _generate_temp_contract_number(p, db)
+        p.contract_date = date.today()
+        p.contract_number_is_temporary = True
+        # async_session(expire_on_commit=False) — объект и его eager-loaded
+        # relationships (items/contract_items/...) остаются в памяти как есть,
+        # refresh() здесь не нужен и опасен (expire + возможный lazy-load вне
+        # async greenlet при последующем чтении relationship ниже по коду).
+        await db.commit()
 
     # Требование владельца («Плановые не равно Договор»): для договорных
     # типов документа позиции/суммы обязаны быть заполнены в ContractItem —

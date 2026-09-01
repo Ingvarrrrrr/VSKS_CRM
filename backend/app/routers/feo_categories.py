@@ -106,6 +106,73 @@ async def _has_feo_action(current_user, db: AsyncSession, action_key: str) -> bo
     return action_key in effective
 
 
+async def _require_feo_category_write(
+    current_user, db: AsyncSession, subsidy_id: Optional[int] = None,
+) -> None:
+    """Этап B2 (план владельца, 2026-09-01): настоящий гейт ЗАПИСИ дерева категорий
+    ФЭО — право feo_category.edit (заведено и засижено этапом B1, коммит 208d848),
+    а НЕ факт видимости вкладки. require_tab('feo_categories') на этих же ручках —
+    отдельный гейт ВИДИМОСТИ, остаётся как есть, этим хелпером НЕ заменяется.
+
+    has_org_key (а не _get_effective/_has_key_in_any_org) — сознательно: право
+    редактировать НЕ наследуется по иерархии «ставлю задачи» (решение 2026-07-06,
+    см. её докстринг в app.auth.permissions), проверяется для КОНКРЕТНОЙ орги
+    операции + персональный/субсидийный оверрайд по subsidy_id.
+
+    subsidy_id известен не всегда:
+      - create/PUT/DELETE/move/reorder — субсидия конкретной категории. ВАЖНО:
+        вызывающий код обязан передавать subsidy_id категории, ЗАГРУЖЕННОЙ ИЗ БД
+        (cat.subsidy_id), а не присланный в теле запроса — иначе право проверяется
+        не по той субсидии, что реально меняется (обход подменой поля).
+      - импорт файла БЕЗ единой субсидии назначения (построчный c_subsidy, файл
+        может касаться нескольких субсидий одновременно) — subsidy_id=None: право
+        проверяется по ЛЮБОЙ доступной пользователю орге (has_org_key на каждую
+        кандидатскую оргу активная+UOA, БЕЗ наследования по иерархии).
+    """
+    if current_user.role == "superadmin":
+        return
+
+    def _deny():
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "feo_category_edit_required",
+                "message": (
+                    "Нет права редактировать справочник категорий ФЭО. Просмотр "
+                    "остаётся доступен. За правом редактирования обратитесь к "
+                    "администратору."
+                ),
+            },
+        )
+
+    from app.models.subsidy import Subsidy
+    from app.auth.permissions import has_org_key, _active_org
+
+    if subsidy_id is not None:
+        sub = (await db.execute(
+            select(Subsidy).where(Subsidy.id == subsidy_id)
+        )).scalar_one_or_none()
+        org_id = sub.org_id if sub is not None else None
+        if await has_org_key(current_user, db, org_id, "feo_category.edit", subsidy_id=subsidy_id):
+            return
+        _deny()
+        return
+
+    candidates: list = []
+    active = _active_org(current_user)
+    if active:
+        candidates.append(active)
+    for oid in (getattr(current_user, "_uoa_org_ids", None) or []):
+        if oid not in candidates:
+            candidates.append(oid)
+    if not candidates:
+        candidates = [None]
+    for oid in candidates:
+        if await has_org_key(current_user, db, oid, "feo_category.edit"):
+            return
+    _deny()
+
+
 @router.get("/purchase-totals")
 async def get_purchase_totals(
     subsidy_id: int = Query(...),
@@ -1261,6 +1328,47 @@ class _UnallocatedBody(BaseModel):
     parent_id: Optional[int] = None
 
 
+async def _check_unallocated_write_access(
+    current_user, db: AsyncSession, org_id: Optional[int], subsidy_id: int,
+) -> None:
+    """Этап B3 (план владельца, 2026-09-01): гейт для POST /unallocated.
+
+    ЭТО НЕ гейт «редактирование дерева категорий» (feo_category.edit) — ручку
+    дёргает обычный сотрудник из формы заявки/закупки при выборе категории
+    «Не определена», у него обычно НЕТ доступа к справочнику ФЭО вовсе. По
+    образцу app.routers.feo_planned_items._check_planned_item_write_access:
+    пропускаем, если есть feo_category.edit ПО ЭТОЙ СУБСИДИИ, ИЛИ
+    wish.edit_feo ПО ЭТОЙ СУБСИДИИ, ИЛИ вкладка wishes/purchases (кто заводит
+    заявки/закупки, должен уметь завести недостающий узел «Не определена» под
+    них). has_org_key/has_org_key — ненаследующая по иерархии проверка права
+    (иерархия «ставлю задачи» не даёт права на чужую субсидию), а
+    _has_key_in_any_org для вкладок — та же логика видимости, что и у tab-гейтов.
+    """
+    if current_user.role == "superadmin":
+        return
+    from app.auth.permissions import has_org_key, _has_key_in_any_org
+
+    if await has_org_key(current_user, db, org_id, "feo_category.edit", subsidy_id=subsidy_id):
+        return
+    if await has_org_key(current_user, db, org_id, "wish.edit_feo", subsidy_id=subsidy_id):
+        return
+    if await _has_key_in_any_org(current_user, db, "wishes"):
+        return
+    if await _has_key_in_any_org(current_user, db, "purchases"):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "code": "unallocated_category_access_required",
+            "message": (
+                "Нет права заводить категорию «Не определена»: нет доступа к "
+                "справочнику ФЭО по этой субсидии, нет права на перераспределение "
+                "позиций заявки по категориям ФЭО и нет вкладки заявок/закупок."
+            ),
+        },
+    )
+
+
 @router.post("/unallocated")
 async def get_or_create_unallocated(
     body: _UnallocatedBody,
@@ -1270,7 +1378,9 @@ async def get_or_create_unallocated(
     """Найти или создать категорию «Не определена» (или «Нераспределённое») для субсидии.
 
     Доступна всем авторизованным пользователям с доступом к субсидии
-    (wishes / purchases / feo_categories). Не требует require_tab('feo_categories').
+    (wishes / purchases / feo_categories). Не требует require_tab('feo_categories'),
+    но требует _check_unallocated_write_access (B3) — своя, более мягкая матрица
+    прав, см. её докстринг.
 
     parent_id (опц.) — создать дочернюю «Не определена» под этим родителем.
 
@@ -1290,6 +1400,10 @@ async def get_or_create_unallocated(
         vis = vis | await get_visible_subsidy_ids(current_user, db, "wishes")
         if body.subsidy_id not in vis:
             raise HTTPException(status_code=403, detail="Нет доступа к этой субсидии")
+
+    # B3: право ЗАВЕСТИ узел «Не определена» — своя (мягкая) матрица, не
+    # feo_category.edit целиком (см. докстринг хелпера).
+    await _check_unallocated_write_access(current_user, db, sub.org_id, body.subsidy_id)
 
     # Загрузить родителя, если указан
     parent: Optional[FeoCategory] = None
@@ -1357,8 +1471,11 @@ async def get_or_create_unallocated(
 async def create_category(
     category_data: FeoCategoryCreate,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_tab('feo_categories')),
+    current_user=Depends(require_tab('feo_categories')),
 ):
+    # B2: создание новой категории — субсидия ещё не существует как объект, законно
+    # берём subsidy_id из тела (это и есть целевая субсидия операции).
+    await _require_feo_category_write(current_user, db, category_data.subsidy_id)
     _validate_plan_pair(category_data.planned_quantity, category_data.planned_amount)
 
     if category_data.parent_id:
@@ -1564,9 +1681,13 @@ async def download_feo_template(
 @router.post("/import-preview")
 async def feo_import_preview(
     file: UploadFile = File(...),
-    _=Depends(require_tab('feo_categories')),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_tab('feo_categories')),
 ):
     """Read Excel/DOCX file and return headers + sample rows for column mapping."""
+    # B2: файл ещё не связан с конкретной субсидией на этом шаге (маппинг колонок
+    # выбирается ПОСЛЕ) — subsidy_id=None, право проверяется по любой доступной орге.
+    await _require_feo_category_write(current_user, db, None)
     fname = (file.filename or "").lower()
     if not fname.endswith((".xlsx", ".xls", ".docx", ".doc", ".pdf")):
         raise HTTPException(400, "Поддерживаются файлы .xlsx, .xls, .docx, .pdf")
@@ -2933,6 +3054,10 @@ async def import_feo_from_excel(
     Переезд (remap) несопоставленных узлов и удаление опустевших старых узлов выполняются
     только при apply_remap=true; иначе выполняется только анализ (unmatched/new_paths).
     Возвращает {created, updated, skipped, errors, warnings}."""
+    # B2: субсидия — построчная колонка внутри файла (может касаться нескольких
+    # субсидий за один импорт), единого subsidy_id на уровне запроса нет —
+    # проверяем право по любой доступной пользователю орге.
+    await _require_feo_category_write(current_user, db, None)
     if load_workbook is None:
         raise HTTPException(500, "openpyxl не установлен")
     if not (file.filename or "").lower().endswith((".xlsx", ".xls")):
@@ -3117,6 +3242,13 @@ async def import_feo_mapped(
         raise HTTPException(400, "Не указан обязательный столбец: Уровень 2")
     if col_subsidy < 0 and default_subsidy_id <= 0:
         raise HTTPException(400, "Укажите столбец Субсидия или выберите субсидию назначения")
+
+    # B2: если субсидия назначения ОДНА на весь импорт (нет построчной колонки
+    # «Субсидия», задан только default_subsidy_id) — проверяем право именно по ней
+    # (строже и точнее). Если субсидия построчная (col_subsidy задан) — единого
+    # subsidy_id нет, гейт как в /import: любая доступная пользователю орга.
+    _gate_subsidy_id = default_subsidy_id if (col_subsidy < 0 and default_subsidy_id > 0) else None
+    await _require_feo_category_write(current_user, db, _gate_subsidy_id)
 
     fname = (file.filename or "").lower()
     content = await file.read()
@@ -3356,6 +3488,10 @@ async def update_category(
     cat = result.scalar_one_or_none()
     if not cat:
         raise HTTPException(status_code=404, detail="Категория не найдена")
+    # B2: субсидия берётся из УЖЕ ЗАГРУЖЕННОЙ категории (cat.subsidy_id), а не из
+    # тела запроса (category_data.subsidy_id) — иначе право можно обойти подменой
+    # поля в запросе, отправив subsidy_id чужой субсидии, где есть право.
+    await _require_feo_category_write(current_user, db, cat.subsidy_id)
     if not _plan_pair_unchanged(
         cat.planned_quantity, cat.planned_amount,
         category_data.planned_quantity, category_data.planned_amount,
@@ -3819,11 +3955,14 @@ async def get_category_subtree(
 async def delete_category(
     cat_id: int,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_tab('feo_categories')),
+    current_user=Depends(require_tab('feo_categories')),
 ):
     cat = (await db.execute(select(FeoCategory).where(FeoCategory.id == cat_id))).scalar_one_or_none()
     if not cat:
         raise HTTPException(status_code=404, detail="Категория не найдена")
+    # B2: субсидия удаляемой категории — из объекта, загруженного из БД, тело
+    # запроса у DELETE вообще отсутствует, подменить нечем, но источник тот же.
+    await _require_feo_category_write(current_user, db, cat.subsidy_id)
 
     # Collect entire subtree
     all_ids = await _collect_subtree_ids(cat_id, db)
@@ -3855,12 +3994,16 @@ async def move_category(
     cat_id: int,
     data: dict,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_tab('feo_categories')),
+    current_user=Depends(require_tab('feo_categories')),
 ):
     """Move category to a new parent. Set parent_id=null to make root."""
     cat = (await db.execute(select(FeoCategory).where(FeoCategory.id == cat_id))).scalar_one_or_none()
     if not cat:
         raise HTTPException(status_code=404, detail="Категория не найдена")
+    # B2: субсидия перемещаемой категории — из объекта, загруженного из БД (move
+    # запрещает менять субсидию, см. проверку ниже "Нельзя переместить в другую
+    # субсидию" — cat.subsidy_id остаётся тем же и после перемещения).
+    await _require_feo_category_write(current_user, db, cat.subsidy_id)
 
     new_parent_id = data.get("parent_id")
     warning = None
@@ -3919,7 +4062,7 @@ async def reorder_category(
     cat_id: int,
     data: dict,
     db: AsyncSession = Depends(get_db),
-    _=Depends(require_tab('feo_categories')),
+    current_user=Depends(require_tab('feo_categories')),
 ):
     """Move a category up/down among its siblings (same parent, same subsidy).
     Body: {"direction": "up"|"down"}. Swaps sort_order with the adjacent sibling."""
@@ -3929,6 +4072,8 @@ async def reorder_category(
     cat = (await db.execute(select(FeoCategory).where(FeoCategory.id == cat_id))).scalar_one_or_none()
     if not cat:
         raise HTTPException(status_code=404, detail="Категория не найдена")
+    # B2: субсидия — из объекта, загруженного из БД (тело содержит только direction).
+    await _require_feo_category_write(current_user, db, cat.subsidy_id)
     sib_filter = (
         FeoCategory.parent_id.is_(None) if cat.parent_id is None
         else FeoCategory.parent_id == cat.parent_id

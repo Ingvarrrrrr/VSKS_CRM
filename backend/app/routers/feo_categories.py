@@ -173,6 +173,59 @@ async def _require_feo_category_write(
     _deny()
 
 
+async def _require_feo_import_write(
+    current_user, db: AsyncSession, touched_subsidies, sub_rows,
+) -> None:
+    """Дыра импорта ФЭО, закрыта 2026-09-01 (владелец, после установки гейтов
+    B2): `_do_feo_import` (общий код /import и /import-mapped) определяет
+    субсидию-назначение НЕ единым subsidy_id запроса, а построчно — колонка
+    «Субсидия» файла (сопоставляется по имени через sub_by_name) с
+    default_subsidy_id как фолбэком для пустых ячеек. Один файл может
+    одновременно затрагивать НЕСКОЛЬКО субсидий, в т.ч. чужих организаций.
+
+    Раньше вызывающие ручки проверяли только
+    _require_feo_category_write(current_user, db, subsidy_id=None) — «право
+    есть в ЛЮБОЙ доступной пользователю организации» — вообще не глядя, какие
+    субсидии реально резолвятся при записи. Пользователь с feo_category.edit
+    только в организации A мог импортом записать категории в субсидию
+    организации B, если она была названа в колонке «Субсидия» (или задана
+    как default_subsidy_id) — тот же класс дыры, что и остальные B2-гейты.
+
+    Проверяет право ПО КАЖДОЙ субсидии из `touched_subsidies` (тот же набор,
+    что реально идёт на запись — см. вызывающий код, вычисляется ДО снимка
+    версии дерева и ДО основного цикла записи) через уже существующий
+    _require_feo_category_write(subsidy_id=...) — ту же проверку, что и для
+    create/PUT/DELETE/move/reorder одной категории. Порядок — по возрастанию
+    id (детерминированно для тестов/логов). При первой недоступной субсидии
+    отказывает ЦЕЛИКОМ (fail-fast, ничего ещё не записано), явно называя
+    субсидию в сообщении — не generic 403.
+
+    current_user=None пропускается молча (тот же контракт, что и снимок
+    версии дерева ниже, — на живых ручках user всегда реальный, т.к. обе
+    зависят от require_tab, который требует аутентификацию).
+    """
+    if current_user is None:
+        return
+    sub_name_by_id = {s.id: s.name for s in sub_rows}
+    for sid in sorted(touched_subsidies):
+        try:
+            await _require_feo_category_write(current_user, db, sid)
+        except HTTPException as e:
+            label = sub_name_by_id.get(sid, f"id={sid}")
+            inner = e.detail if isinstance(e.detail, dict) else {"message": str(e.detail)}
+            raise HTTPException(
+                status_code=e.status_code,
+                detail={
+                    **inner,
+                    "subsidy_id": sid,
+                    "message": (
+                        f"Нет права записывать категории ФЭО в субсидию «{label}» — "
+                        + str(inner.get("message") or "")
+                    ).strip(),
+                },
+            )
+
+
 @router.get("/purchase-totals")
 async def get_purchase_totals(
     subsidy_id: int = Query(...),
@@ -2170,6 +2223,13 @@ async def _do_feo_import(
         if _sid:
             touched_subsidies.add(_sid)
 
+    # --- B2 (дыра импорта, закрыта 2026-09-01): гейт ЗАПИСИ по КАЖДОЙ субсидии
+    # из touched_subsidies — ДО снимка версии дерева ниже (первая запись в БД
+    # этого импорта) и ДО основного цикла, а значит и ДО выдачи dry_run-превью
+    # (в dry_run обработка идёт точно так же, откат — только в самом конце).
+    # См. docstring _require_feo_import_write за картиной дыры.
+    await _require_feo_import_write(user, db, touched_subsidies, sub_rows)
+
     # --- N2б: снимок предыдущей редакции — ВСЕГДА и ДО основного цикла.
     # _create_plan_graph_version заново селектит FeoCategory, поэтому вызывать
     # её нужно именно здесь: после основного цикла дерево уже было бы изменено
@@ -3055,8 +3115,12 @@ async def import_feo_from_excel(
     только при apply_remap=true; иначе выполняется только анализ (unmatched/new_paths).
     Возвращает {created, updated, skipped, errors, warnings}."""
     # B2: субсидия — построчная колонка внутри файла (может касаться нескольких
-    # субсидий за один импорт), единого subsidy_id на уровне запроса нет —
-    # проверяем право по любой доступной пользователю орге.
+    # субсидий за один импорт), единого subsidy_id на уровне запроса нет.
+    # Это ТОЛЬКО дешёвый предварительный фильтр («есть ли право хоть где-то» —
+    # отсекает пользователей без feo_category.edit вообще, до чтения файла).
+    # Авторитетная проверка — ПО КАЖДОЙ реально резолвящейся субсидии файла —
+    # происходит внутри _do_feo_import (_require_feo_import_write, ДО первой
+    # записи в БД); дыра импорта была именно в отсутствии этой второй проверки.
     await _require_feo_category_write(current_user, db, None)
     if load_workbook is None:
         raise HTTPException(500, "openpyxl не установлен")
@@ -3245,8 +3309,13 @@ async def import_feo_mapped(
 
     # B2: если субсидия назначения ОДНА на весь импорт (нет построчной колонки
     # «Субсидия», задан только default_subsidy_id) — проверяем право именно по ней
-    # (строже и точнее). Если субсидия построчная (col_subsidy задан) — единого
-    # subsidy_id нет, гейт как в /import: любая доступная пользователю орга.
+    # уже здесь (строже и точнее, отказ до чтения файла). Если субсидия построчная
+    # (col_subsidy задан) — единого subsidy_id нет, здесь только дешёвый
+    # предварительный фильтр «право хоть где-то» (как в /import). В ОБОИХ случаях
+    # авторитетная проверка ПО КАЖДОЙ реально резолвящейся субсидии файла (включая
+    # default_subsidy_id как построчный фолбэк при заданном col_subsidy — именно
+    # тут была дыра) происходит внутри _do_feo_import (_require_feo_import_write),
+    # ДО первой записи в БД.
     _gate_subsidy_id = default_subsidy_id if (col_subsidy < 0 and default_subsidy_id > 0) else None
     await _require_feo_category_write(current_user, db, _gate_subsidy_id)
 

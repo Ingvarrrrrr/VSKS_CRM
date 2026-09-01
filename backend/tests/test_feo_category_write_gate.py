@@ -72,6 +72,10 @@ class _FakeResult:
         return self._obj
 
     def all(self):
+        # Список в очереди (например все Subsidy разом для .scalars().all())
+        # отдаётся как есть; одиночный объект — по-старому оборачивается в [obj].
+        if isinstance(self._obj, list):
+            return self._obj
         return [self._obj] if self._obj is not None else []
 
 
@@ -234,6 +238,91 @@ def test_reorder_category_gate_uses_loaded_category_subsidy(monkeypatch):
     with pytest.raises(HTTPException):
         asyncio.run(fc.reorder_category(5, {"direction": "up"}, db, user))
     assert calls == [444]
+
+
+# ---------------------------------------------------------------------------
+# B2: _require_feo_import_write — дыра импорта (закрыта 2026-09-01).
+# _do_feo_import (общий код /import и /import-mapped) определяет субсидию
+# НЕ единым subsidy_id запроса, а построчно (колонка «Субсидия» файла +
+# default_subsidy_id как фолбэк) — файл может затрагивать несколько субсидий
+# сразу. Раньше вызывающие ручки проверяли право только «в любой доступной
+# пользователю орге» (subsidy_id=None), вообще не глядя на субсидии, которые
+# реально резолвятся построчно, — пользователь с правом только в организации A
+# мог импортом писать категории в субсидию организации B. Ниже — прямая
+# проверка новой функции: она обязана проверить КАЖДУЮ субсидию из
+# touched_subsidies через уже существующий _require_feo_category_write
+# (subsidy_id=...), тот же код, что и для create/PUT/DELETE одной категории.
+# ---------------------------------------------------------------------------
+
+def _mk_subsidy_row(id, name, org_id):
+    return SimpleNamespace(id=id, name=name, org_id=org_id)
+
+
+def test_import_write_gate_org_a_right_subsidy_in_org_b_denied(monkeypatch):
+    """Право есть только в организации A (org_id=10); единственная целевая
+    субсидия файла (111) принадлежит организации B (org_id=20) → отказ."""
+    async def _fake_has_org_key(user, db, org_id, key, subsidy_id=None):
+        return key == "feo_category.edit" and org_id == 10  # право только в орге A
+    monkeypatch.setattr(perm_module, "has_org_key", _fake_has_org_key)
+
+    user = _mk_user("employee", active_org_id=10)
+    sub_111 = _mk_subsidy_row(id=111, name="Субсидия Б (орг. B)", org_id=20)
+    db = _QueueDB(sub_111)  # запрос Subsidy.id==111 внутри _require_feo_category_write
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(fc._require_feo_import_write(user, db, {111}, [sub_111]))
+    assert exc_info.value.status_code == 403
+    detail = exc_info.value.detail
+    assert detail["subsidy_id"] == 111
+    assert "Субсидия Б (орг. B)" in detail["message"]
+
+
+def test_import_write_gate_right_on_both_subsidies_passes(monkeypatch):
+    """Право есть по КАЖДОЙ из двух субсидий файла (111 в орге A, 222 в орге B) →
+    гейт пропускает молча, обе субсидии реально проверены."""
+    checked_subsidy_ids = []
+
+    async def _fake_has_org_key(user, db, org_id, key, subsidy_id=None):
+        checked_subsidy_ids.append(subsidy_id)
+        return key == "feo_category.edit"  # право есть в обеих организациях
+
+    monkeypatch.setattr(perm_module, "has_org_key", _fake_has_org_key)
+
+    user = _mk_user("employee", active_org_id=10, uoa_org_ids=[20])
+    sub_111 = _mk_subsidy_row(id=111, name="Субсидия А", org_id=10)
+    sub_222 = _mk_subsidy_row(id=222, name="Субсидия Б", org_id=20)
+    db = _QueueDB(sub_111, sub_222)  # по одному Subsidy-лукапу на каждую проверяемую субсидию
+
+    asyncio.run(fc._require_feo_import_write(user, db, {111, 222}, [sub_111, sub_222]))  # не должно бросать
+    assert checked_subsidy_ids == [111, 222]  # обе субсидии реально дошли до проверки права
+
+
+def test_import_write_gate_right_on_only_one_of_two_denied_names_it(monkeypatch):
+    """Право есть только по субсидии 111 (орг. A), но НЕ по 222 (орг. B) →
+    отказ с явным указанием, какая именно субсидия недоступна (222, орг. B)."""
+    async def _fake_has_org_key(user, db, org_id, key, subsidy_id=None):
+        return key == "feo_category.edit" and org_id == 10  # только орга A (субсидия 111)
+
+    monkeypatch.setattr(perm_module, "has_org_key", _fake_has_org_key)
+
+    user = _mk_user("employee", active_org_id=10, uoa_org_ids=[20])
+    sub_111 = _mk_subsidy_row(id=111, name="Субсидия А (доступна)", org_id=10)
+    sub_222 = _mk_subsidy_row(id=222, name="Субсидия Б (недоступна)", org_id=20)
+    db = _QueueDB(sub_111, sub_222)  # 111 проверится и пройдёт, 222 — проверится и упадёт
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(fc._require_feo_import_write(user, db, {111, 222}, [sub_111, sub_222]))
+    detail = exc_info.value.detail
+    assert detail["subsidy_id"] == 222
+    assert "Субсидия Б (недоступна)" in detail["message"]
+    assert "Субсидия А (доступна)" not in detail["message"]
+
+
+def test_import_write_gate_none_user_skips_silently():
+    """current_user=None (тот же контракт, что и снимок версии дерева в
+    _do_feo_import) — гейт не лезет в БД и не бросает."""
+    db = _QueueDB()  # пустая очередь — если бы код полез в БД, execute() отдал бы None
+    asyncio.run(fc._require_feo_import_write(None, db, {111, 222}, []))  # не должно бросать
 
 
 # ---------------------------------------------------------------------------

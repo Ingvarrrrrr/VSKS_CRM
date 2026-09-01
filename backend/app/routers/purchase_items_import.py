@@ -36,6 +36,7 @@ from app.routers.purchases import _has_purchase_write_access
 from app.models.user import User
 from app.services.product_matcher import score as _fuzzy_score, SCORE_AUTO as _SCORE_AUTO
 from app.services.feo_plan import assert_tz_not_over_plan
+from app.services.product_unit import backfill_product_unit
 
 try:
     from openpyxl import Workbook, load_workbook
@@ -420,6 +421,7 @@ async def _upsert_product_to_catalog(
     db, item_name: str, item_type: str, unit_price, description: str = "",
     category: str | None = None, product_type: str | None = None,
     import_note: str | None = None, updated_by: str | None = None,
+    unit: str | None = None,
 ) -> int:
     """Find or create a product in the global catalog. Returns product.id.
 
@@ -427,7 +429,12 @@ async def _upsert_product_to_catalog(
     - цена: обновляется из файла (файл — источник актуальной цены);
     - категория/вид: БД главнее — из файла берём только если в БД пусто
       (для категории дефолт «Прочее» считается пустым);
-    - import_note: кто/как/когда загрузил — перезаписывается свежим импортом.
+    - import_note: кто/как/когда загрузил — перезаписывается свежим импортом;
+    - ед. измерения (владелец, 2026-09-01): БД главнее — уже заполненную не
+      трогаем; иначе берём из САМОГО импорта (параметр `unit`, БЕЗ дефолтов
+      вида 'шт' — их проставляют вызывающие для PurchaseItem.unit отдельно);
+      если импорт её тоже не принёс — из истории закупок этого товара
+      (единственная встречавшаяся), см. app/services/product_unit.py.
     """
     from datetime import datetime as _dt
     norm = item_name.strip().lower()
@@ -447,6 +454,7 @@ async def _upsert_product_to_catalog(
             existing.updated_at = _dt.utcnow()
             if updated_by:
                 existing.updated_by = updated_by
+        await backfill_product_unit(db, existing, import_unit=unit)
         return existing.id
     p = Product(
         name=item_name.strip(),
@@ -454,6 +462,7 @@ async def _upsert_product_to_catalog(
         category=category or 'Прочее',
         product_type=product_type or item_type or "товар",
         item_kind=item_type or "товар",
+        unit=(unit or "").strip() or None,  # брэнд-новый товар — истории покупок ещё нет
         price=Decimal(str(unit_price)) if unit_price else Decimal("0"),
         is_active=True,
         import_note=import_note,
@@ -621,7 +630,8 @@ async def import_items_excel(
         item_type_raw = (_cell(row, 'item_type') or 'товар').lower().strip()
         item_type = TYPE_MAP.get(item_type_raw, 'товар')
         quantity = _to_dec(_cell(row, 'quantity')) or Decimal('1')
-        unit = _cell(row, 'unit') or 'шт'
+        unit_raw = _cell(row, 'unit')  # без дефолта — для бэкфилла Product.unit
+        unit = unit_raw or 'шт'
         unit_price = _to_dec(_cell(row, 'unit_price'))
         total_price = (quantity * unit_price) if unit_price else None
 
@@ -664,12 +674,15 @@ async def import_items_excel(
             if not unit_price and matched_product.price:
                 unit_price = matched_product.price
                 total_price = quantity * unit_price
+            if isinstance(matched_product, Product):
+                await backfill_product_unit(db, matched_product, import_unit=unit_raw)
         else:
             _uname = getattr(current_user, 'full_name', None) or getattr(current_user, 'username', '') or ''
             product_id = await _upsert_product_to_catalog(
                 db, item_name, item_type, unit_price, description or "",
                 import_note=f"Импорт из файла «{file.filename}» (шаблон), {_uname}, {datetime.now().strftime('%d.%m.%Y %H:%M')}",
                 updated_by=_uname,
+                unit=unit_raw,
             )
             product_by_name[item_name.lower().strip()] = type('_P', (), {'id': product_id, 'name': item_name, 'price': unit_price})()
             new_in_catalog += 1
@@ -1073,7 +1086,8 @@ async def import_items_mapped_nopid(
             quantity = Decimal('1')
         unit_price = _to_dec(_cell(row, col_unit_price)) if col_unit_price >= 0 else None
         total_price = _to_dec(_cell(row, col_total_price)) if col_total_price >= 0 else None
-        unit = (_cell(row, col_unit) if col_unit >= 0 else None) or 'шт'
+        unit_raw = _cell(row, col_unit) if col_unit >= 0 else None  # без дефолта — для бэкфилла Product.unit
+        unit = unit_raw or 'шт'
         if not total_price and unit_price:
             total_price = quantity * unit_price
         elif not unit_price and total_price and quantity:
@@ -1099,6 +1113,7 @@ async def import_items_mapped_nopid(
                 db, item_name, 'товар', unit_price, description or "",
                 category=row_category, product_type=row_product_type,
                 import_note=_import_note, updated_by=_user_name,
+                unit=unit_raw,
             )
             prod = await db.get(Product, product_id)
             if prod:
@@ -1343,7 +1358,8 @@ async def import_items_mapped(
                 quantity = Decimal('1')
             unit_price = _to_dec(_cell(row, col_unit_price)) if col_unit_price >= 0 else None
             total_price = _to_dec(_cell(row, col_total_price)) if col_total_price >= 0 else None
-            unit = (_cell(row, col_unit) if col_unit >= 0 else None) or 'шт'
+            unit_raw = _cell(row, col_unit) if col_unit >= 0 else None  # без дефолта — для бэкфилла Product.unit
+            unit = unit_raw or 'шт'
 
             # Calculate missing values
             if not total_price and unit_price:
@@ -1417,11 +1433,14 @@ async def import_items_mapped(
                         matched_product.category = row_category
                     if row_product_type and not matched_product.product_type:
                         matched_product.product_type = row_product_type
+                if isinstance(matched_product, Product):
+                    await backfill_product_unit(db, matched_product, import_unit=unit_raw)
             else:
                 product_id = await _upsert_product_to_catalog(
                     db, item_name, 'товар', unit_price, description or "",
                     category=row_category, product_type=row_product_type,
                     import_note=_import_note, updated_by=_user_name,
+                    unit=unit_raw,
                 )
                 product_by_name[item_name.lower().strip()] = type('_P', (), {'id': product_id, 'name': item_name, 'price': unit_price})()
                 new_in_catalog += 1
@@ -1783,7 +1802,8 @@ def _smart_import_xlsx_direct(content: bytes, fname: str = '') -> tuple[list[dic
         if total_price is None and unit_price is not None and qty:
             total_price = unit_price * qty
         unit_val = _get_cell(row, 'unit')
-        unit = str(unit_val).strip() if unit_val else 'шт'
+        unit_raw = str(unit_val).strip() if unit_val else None  # без дефолта — для бэкфилла Product.unit
+        unit = unit_raw or 'шт'
         type_val = _get_cell(row, 'item_type')
         item_type = TYPE_MAP.get(str(type_val).lower().strip() if type_val else '', 'товар')
         preview.append({
@@ -1791,6 +1811,7 @@ def _smart_import_xlsx_direct(content: bytes, fname: str = '') -> tuple[list[dic
             'item_type': item_type,
             'quantity': float(qty) if qty else None,
             'unit': unit,
+            'unit_raw': unit_raw,
             'unit_price': float(unit_price) if unit_price else None,
             'total_price': float(total_price) if total_price else None,
         })
@@ -1865,12 +1886,15 @@ async def _save_smart_preview_to_purchase(
                 if not unit_price and matched.price:
                     unit_price = matched.price
                     total_price = qty * unit_price
+                if isinstance(matched, Product):
+                    await backfill_product_unit(db, matched, import_unit=row_data.get("unit_raw"))
             else:
                 _uname = getattr(current_user, 'full_name', None) or getattr(current_user, 'username', '') or ''
                 product_id = await _upsert_product_to_catalog(
                     db, item_name, row_data["item_type"], unit_price,
                     import_note=f"Смарт-импорт из файла, {_uname}, {datetime.now().strftime('%d.%m.%Y %H:%M')}",
                     updated_by=_uname,
+                    unit=row_data.get("unit_raw"),
                 )
                 new_in_catalog += 1
         if total_price is None and unit_price:
@@ -2097,7 +2121,8 @@ async def import_items_smart(
             return None
         item_type = TYPE_MAP.get(_get("item_type").lower(), "товар")
         quantity = _to_dec(_get("quantity"))
-        unit = _get("unit") or "шт"
+        unit_raw = _get("unit") or None  # без дефолта — для бэкфилла Product.unit
+        unit = unit_raw or "шт"
         unit_price = _to_dec(_get("unit_price"))
         total_price = _to_dec(_get("total_price"))
         if unit_price is None and total_price is not None and quantity:
@@ -2112,6 +2137,7 @@ async def import_items_smart(
             "item_type": item_type,
             "quantity": float(quantity) if quantity else None,
             "unit": unit,
+            "unit_raw": unit_raw,
             "unit_price": float(unit_price) if unit_price else None,
             "total_price": float(total_price) if total_price else None,
         }

@@ -382,6 +382,21 @@ async def match_products(
     top_k = max(1, min(body.limit, 200))
     results = bulk_match(body.queries, catalog, top_k=top_k, prefix_match=body.prefix)
 
+    # Актуализация цены (владелец, 2026-08-29): bulk_match не трогаем (сигнатура
+    # зафиксирована) — донабираем метаданные вторым проходом по product_id
+    # уже полученных кандидатов, одним SELECT + один контекст на весь запрос.
+    candidate_ids = {c.product_id for r in results for c in r.candidates}
+    freshness_by_id: dict[int, dict] = {}
+    meta_by_id: dict[int, Product] = {}
+    if candidate_ids:
+        meta_rows = (await db.execute(
+            select(Product).options(defer(Product.photo_data)).where(Product.id.in_(candidate_ids))
+        )).scalars().all()
+        freshness_ctx = await load_freshness_context(db, org_id)
+        for prod in meta_rows:
+            meta_by_id[prod.id] = prod
+            freshness_by_id[prod.id] = evaluate_freshness(prod, freshness_ctx)
+
     _log.info(
         "POST /api/products/match: %d queries, catalog_size=%d, "
         "auto=%d suggest=%d create=%d",
@@ -417,7 +432,8 @@ async def match_products(
 @router.get("/{product_id}", response_model=ProductOut)
 async def get_product(
     product_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     # Phase 17.1-08 perf: defer photo_data — detail endpoint doesn't return
     # bytes; frontend uses GET /{product_id}/photo for raw image.
@@ -453,6 +469,13 @@ def _apply_price_links(data: dict, target: object) -> None:
     price = _calc_price_from_links(data.get("price_links") or [])
     if price is not None:
         data["price"] = price
+
+
+def _price_links_max_collected_at(links: list) -> Optional[str]:
+    """Владелец 2026-08-29: source_ref/collected_at для source='monitoring' —
+    самая свежая дата среди ссылок сравнения цен."""
+    dates = [l.get("collected_at") for l in (links or []) if l.get("collected_at")]
+    return max(dates) if dates else None
 
 @router.post("/", response_model=ProductOut)
 async def create_product(
@@ -499,13 +522,32 @@ async def update_product(
     db_product = result.scalar_one_or_none()
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
+    old_price = db_product.price
     data = product.model_dump()
+    had_links = bool(data.get("price_links"))
     _apply_price_links(data, db_product)
+    new_price = data.get("price")
     for key, value in data.items():
         setattr(db_product, key, value)
     from datetime import datetime
     db_product.updated_at = datetime.utcnow()
     db_product.updated_by = current_user.full_name or current_user.username
+
+    # Актуализация цены (владелец, 2026-08-29): price изменился — записать
+    # источник + историю. Если пришли price_links и из них посчиталась цена —
+    # это автомониторинг ссылок ('monitoring'), иначе ручной ввод ('manual').
+    if new_price is not None and new_price != old_price:
+        if had_links and _calc_price_from_links(data.get("price_links") or []) is not None:
+            collected = _price_links_max_collected_at(data.get("price_links") or [])
+            await actualize_product_price(
+                db, db_product, price=new_price, source="monitoring",
+                collected_at=collected, user=current_user,
+            )
+        else:
+            await actualize_product_price(
+                db, db_product, price=new_price, source="manual", user=current_user,
+            )
+
     await db.commit()
     await db.refresh(db_product)
     return db_product
@@ -517,11 +559,13 @@ async def patch_product(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Частичное обновление товара (цена, ссылки, категория, вид)."""
+    """Частичное обновление товара (цена, ссылки, категория, вид, ед. изм.)."""
     result = await db.execute(select(Product).where(Product.id == product_id))
     db_product = result.scalar_one_or_none()
     if not db_product:
         raise HTTPException(404, "Product not found")
+    if "unit" in data:
+        db_product.unit = (data["unit"] or "").strip() or None
     if "category" in data:
         cat = (data["category"] or "").strip()
         if not cat:
@@ -534,6 +578,7 @@ async def patch_product(
         from datetime import datetime
         db_product.updated_at = datetime.utcnow()
         db_product.updated_by = current_user.full_name or current_user.username
+    old_price = db_product.price
     if "price_links" in data:
         db_product.price_links = data["price_links"]
         from sqlalchemy.orm.attributes import flag_modified
@@ -542,9 +587,26 @@ async def patch_product(
         if "price" not in data:
             calc = _calc_price_from_links(data["price_links"])
             if calc is not None:
-                db_product.price = Decimal(str(calc))
+                new_price = Decimal(str(calc))
+                if new_price != old_price:
+                    # Актуализация цены (владелец, 2026-08-29): пересчёт из price_links
+                    # — это автомониторинг ('monitoring'), collected_at — самая свежая
+                    # дата среди ссылок.
+                    collected = _price_links_max_collected_at(data["price_links"])
+                    await actualize_product_price(
+                        db, db_product, price=new_price, source="monitoring",
+                        collected_at=collected, user=current_user,
+                    )
+                else:
+                    db_product.price = new_price
     if "price" in data:
-        db_product.price = Decimal(str(data["price"])) if data["price"] is not None else None
+        if data["price"] is not None:
+            # Явный ручной ввод цены ('manual') — актуализация с историей.
+            await actualize_product_price(
+                db, db_product, price=data["price"], source="manual", user=current_user,
+            )
+        else:
+            db_product.price = None
     await db.commit()
     await db.refresh(db_product)
     return db_product
@@ -661,7 +723,7 @@ async def download_products_template(
     ws = wb.active
     ws.title = "Товары"
     headers = [
-        "Наименование", "Описание", "Категория", "Вид",
+        "Наименование", "Описание", "Категория", "Вид", "Ед. изм.",
         "Цена", "Ссылка 1", "Цена ссылки 1", "Ссылка 2", "Цена ссылки 2", "Ссылка 3", "Цена ссылки 3",
         "Фото (URL)", "Многоразовое", "Активен", "Категория ФЭО",
     ]
@@ -672,11 +734,11 @@ async def download_products_template(
         cell.fill = fill; cell.font = font
         cell.alignment = Alignment(horizontal="center", vertical="center")
     ws.append([
-        "Компьютер Dell", "Core i5, 16GB RAM", "Оргтехника", "Рабочая станция",
+        "Компьютер Dell", "Core i5, 16GB RAM", "Оргтехника", "Рабочая станция", "шт",
         "85000", "https://market.yandex.ru/...", "83000", "https://dns-shop.ru/...", "87000", "", "",
         "", "да", "да", "Техническое оснащение",
     ])
-    for i, w in enumerate([30, 30, 20, 20, 12, 35, 14, 35, 14, 35, 14, 30, 12, 10, 30], 1):
+    for i, w in enumerate([30, 30, 20, 20, 10, 12, 35, 14, 35, 14, 35, 14, 30, 12, 10, 30], 1):
         ws.column_dimensions[ws.cell(1, i).column_letter].width = w
     ws.freeze_panes = "A2"
     buf = BytesIO(); wb.save(buf); buf.seek(0)
@@ -862,7 +924,8 @@ async def import_products_from_excel(
                 if prices: price = Decimal(str(round(sum(prices) / len(prices), 2)))
 
             qty_str = cell(row, "quantity")
-            unit_str = cell(row, "unit") or "шт."
+            unit_raw = cell(row, "unit")  # без дефолта — для бэкфилла Product.unit
+            unit_str = unit_raw or "шт."
             row_qty = None
             if qty_str:
                 try: row_qty = Decimal(str(qty_str).replace(',', '.').replace(' ', ''))
@@ -872,7 +935,12 @@ async def import_products_from_excel(
                 # Product already in catalog — update price + backfill empty fields
                 ep = existing_by_key[dedup_key]
                 if price and ep.price != price:
-                    ep.price = price
+                    # Актуализация цены (владелец, 2026-08-29): цена пришла из
+                    # импортируемого Excel-файла — source='import'.
+                    await actualize_product_price(
+                        db, ep, price=price, source="import",
+                        source_ref=file.filename, user=current_user,
+                    )
 
                 # Fill ONLY empty string-fields on existing product from this row
                 def _fill(attr, val):
@@ -900,6 +968,11 @@ async def import_products_from_excel(
                     ep.price_links = price_links
                     flag_modified(ep, "price_links")
 
+                # Единица измерения (владелец, 2026-09-01): не трогаем уже
+                # заполненную; иначе — из самого импорта, иначе — из истории
+                # закупок этого товара (единственная встречавшаяся).
+                await backfill_product_unit(db, ep, import_unit=unit_raw)
+
                 all_products.append(ep)
                 product_row_data.append({"qty": row_qty, "unit": unit_str, "price": price or ep.price})
                 skipped += 1
@@ -910,6 +983,7 @@ async def import_products_from_excel(
                 description=cell(row, "description"),
                 category=cell(row, "category"),
                 product_type=cell(row, "product_type"),
+                unit=(unit_raw or "").strip() or None,  # брэнд-новый товар — истории покупок ещё нет
                 price=price,
                 photo_link=cell(row, "photo_link"),
                 is_reusable=to_bool(cell(row, "is_reusable")),

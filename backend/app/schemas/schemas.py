@@ -43,6 +43,10 @@ class UserCreate(BaseModel):
     org_id: Optional[int] = None
     inn: Optional[str] = None
     exclude_from_directory: bool = False
+    # Дата трудоустройства (владелец, 2026-09-01): если указана при приёме
+    # с отделом/должностью — первая dept_assigned_at/position_assigned_at
+    # равна ей, а не «сегодня» (см. app/services/org_assignment_dates.py).
+    hired_at: Optional[datetime] = None
 
 class UserUpdate(BaseModel):
     last_name: Optional[str] = None
@@ -1086,6 +1090,7 @@ class ProductCreate(BaseModel):
     description_44fz: Optional[str] = None
     category: str = Field(..., min_length=1)
     product_type: Optional[str] = None
+    unit: Optional[str] = None  # Единица измерения (владелец, 2026-09-01)
     item_kind: Optional[str] = "товар"  # "товар" или "услуга"
     is_reusable: Optional[bool] = True
     photo_url: Optional[str] = None

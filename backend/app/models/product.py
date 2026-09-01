@@ -12,6 +12,11 @@ class Product(Base):
     description_44fz = Column(Text, nullable=True)  # Описание для 44-ФЗ (интервалы характеристик)
     category = Column(String(200), nullable=False, default='Прочее')  # Категория товара из таблицы
     product_type = Column(String(200), nullable=True)  # Вид
+    # Единица измерения (владелец, 2026-09-01): либо задана вручную в карточке,
+    # либо дозаполняется бэкфиллом/импортом по правилу — единственная ЕИ, с
+    # которой товар фигурировал в позициях закупок (см. app/services/product_unit.py);
+    # при разнобое единиц остаётся NULL.
+    unit = Column(String(50), nullable=True)
     item_kind = Column(String(20), default="товар")  # "товар" или "услуга"
     is_reusable = Column(Boolean, default=True)  # Многоразовое или одноразовое
     photo_url = Column(String(1000), nullable=True)  # Внешняя ссылка (маркетплейс) — источник правды для повторного скачивания
@@ -31,6 +36,11 @@ class Product(Base):
     contract_date = Column(Date, nullable=True)
     contract_org_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
     price_shared = Column(Boolean, default=False)  # делиться ценой с другими организациями
+
+    # Актуализация цены (владелец, 2026-08-29): когда и откуда пришла текущая
+    # цена товара. Используется для контроля устаревания (см.
+    # app/services/price_actualization.py::actualize_product_price — единая
+    # точка входа для ВСЕХ мест, где меняется product.price.
 
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True)
     country_origin = Column(String(100), nullable=True, default="РФ")  # Страна производства (Приложение №3, кол. P)

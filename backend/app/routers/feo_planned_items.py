@@ -301,10 +301,13 @@ async def get_product_hint(
     кода. Фронт использует ЭТОТ эндпоинт как основной источник цены/даты/источника,
     candidate.price — только запасной вариант на случай сетевой ошибки.
 
-    unit: у Product СВОЕГО поля unit нет (проверено по модели/схеме) — возвращаем
-    последнюю единицу измерения, с которой товар фигурировал в позиции закупки
-    (PurchaseItem.unit по product_id, самая свежая по id); null, если ни разу не
-    покупался с явно указанной единицей — фронт тогда оставляет поле пустым."""
+    unit (владелец, 2026-09-01): теперь у Product ЕСТЬ своё поле unit —
+    приоритет ему (заполняется бэкфиллом/импортом/карточкой товара, см.
+    app/services/product_unit.py). Если оно пусто — прежний фолбэк на
+    последнюю единицу измерения, с которой товар фигурировал в позиции
+    закупки (PurchaseItem.unit по product_id, самая свежая по id); null, если
+    ни разу не покупался с явно указанной единицей — фронт тогда оставляет
+    поле пустым."""
     # Колонки price_updated_at/price_source/price_source_ref появляются вместе с
     # отдельной работой по свежести цен и на момент этого кода могут ещё не
     # существовать ни в модели, ни в БД (прод отдавал 500: «type object 'Product'
@@ -313,27 +316,31 @@ async def get_product_hint(
     # появятся сами, как только колонки приедут — без правок здесь.
     _optional = [c for c in ("price_updated_at", "price_source", "price_source_ref")
                  if hasattr(Product, c)]
-    _cols = [Product.price, Product.contract_price] + [getattr(Product, c) for c in _optional]
+    _cols = [Product.price, Product.contract_price, Product.unit] + [getattr(Product, c) for c in _optional]
     product = (await db.execute(select(*_cols).where(Product.id == product_id))).first()
 
-    unit_row = (await db.execute(
-        select(PurchaseItem.unit)
-        .where(
-            PurchaseItem.product_id == product_id,
-            PurchaseItem.unit.isnot(None),
-            PurchaseItem.unit != "",
-        )
-        .order_by(PurchaseItem.id.desc())
-        .limit(1)
-    )).scalar_one_or_none()
+    # Приоритет (владелец, 2026-09-01): собственная Product.unit, если заполнена;
+    # иначе — прежний фолбэк на самую свежую единицу из истории закупок.
+    unit_val = (product.unit or None) if product is not None else None
+    if not unit_val:
+        unit_val = (await db.execute(
+            select(PurchaseItem.unit)
+            .where(
+                PurchaseItem.product_id == product_id,
+                PurchaseItem.unit.isnot(None),
+                PurchaseItem.unit != "",
+            )
+            .order_by(PurchaseItem.id.desc())
+            .limit(1)
+        )).scalar_one_or_none()
 
     if product is None:
-        return {"unit": unit_row, "price": None, "price_updated_at": None, "price_source": None, "price_source_ref": None}
+        return {"unit": unit_val, "price": None, "price_updated_at": None, "price_source": None, "price_source_ref": None}
 
     best_price = product.contract_price if product.contract_price is not None else product.price
     _updated = getattr(product, "price_updated_at", None)
     return {
-        "unit": unit_row,
+        "unit": unit_val,
         "price": float(best_price) if best_price is not None else None,
         "price_updated_at": _updated.isoformat() if _updated else None,
         "price_source": getattr(product, "price_source", None),

@@ -435,6 +435,13 @@
                 hint="Выберите или введите новую" persistent-hint />
             </v-col>
 
+            <!-- Единица измерения (владелец, 2026-09-01) -->
+            <v-col cols="12" md="3">
+              <v-text-field v-model="form.unit"
+                label="Ед. изм." variant="outlined" density="compact" clearable
+                hint="шт, компл., кг…" persistent-hint />
+            </v-col>
+
             <!-- Страна производства -->
             <v-col cols="12" md="6">
               <v-text-field v-model="form.country_origin"
@@ -882,7 +889,7 @@ import { useToast, type ToastType } from '@/composables/useToast'
 
 interface PriceLink { url: string; price: number | null }
 interface Product {
-  id: number; name: string; category?: string; product_type?: string; item_kind?: string
+  id: number; name: string; category?: string; product_type?: string; item_kind?: string; unit?: string
   price?: number; description?: string; description_44fz?: string; photo_url?: string
   photo_link?: string; clarification_link?: string
   is_active: boolean; is_reusable?: boolean; feo_category_id?: number
@@ -924,6 +931,8 @@ const filterCategory = ref<string[]>([])
 const filterActive   = ref<boolean | null>(null)
 const filterPriceMin = ref<number | null>(null)
 const filterPriceMax = ref<number | null>(null)
+// Владелец, сессия 2026-08-29: «подсвечивать требующие актуализации» — быстрый
+// фильтр + счётчик, сколько таких товаров в каталоге прямо сейчас.
 
 // Photo upload state
 const photoFile     = ref<File | null>(null)
@@ -1021,7 +1030,7 @@ async function unverifyTz(item: Product, tzType: 'standard' | '44fz') {
 }
 
 const emptyForm = () => ({
-  name: '', category: '', product_type: '', item_kind: 'товар' as string, price: null as number | null,
+  name: '', category: '', product_type: '', unit: '', item_kind: 'товар' as string, price: null as number | null,
   description: '', description_44fz: '', photo_url: '', photo_link: '', clarification_link: '',
   is_active: true, is_reusable: true, feo_category_id: null as number | null,
   priceLinks: [] as PriceLink[],
@@ -1225,7 +1234,7 @@ function onProductRowClick(_: any, { item }: { item: Product }) {
 
 function openEdit(p: Product) {
   Object.assign(form, {
-    name: p.name, category: p.category || '', product_type: p.product_type || '', item_kind: p.item_kind || 'товар',
+    name: p.name, category: p.category || '', product_type: p.product_type || '', unit: p.unit || '', item_kind: p.item_kind || 'товар',
     price: p.price ?? null, description: p.description || '', description_44fz: p.description_44fz || '',
     photo_url: p.photo_url || '', photo_link: p.photo_link || '',
     clarification_link: p.clarification_link || '',

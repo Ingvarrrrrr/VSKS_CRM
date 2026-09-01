@@ -2153,7 +2153,7 @@ PATCHABLE_FIELDS = {
     "acceptance_docs",
     "payment_doc_number", "payment_doc_date",
     "payment_amount", "country_origin", "purchase_basis",
-    "responsible_person_id", "initiator_id", "subject_kind", "execution_term",
+    "responsible_person", "initiator_id", "subject_kind", "execution_term",
     "event_id", "delivery_location_kind", "region",
     # Phase 24: stages + financial plan
     "is_likely_needed", "is_prepayment", "prepayment_date", "stage_label",

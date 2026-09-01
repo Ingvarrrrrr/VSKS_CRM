@@ -4769,7 +4769,7 @@ function serializeFormForAutosave() {
     payment_amount: f.payment_amount,
     country_origin: f.country_origin,
     purchase_basis: f.purchase_basis,
-    responsible_person_id: f.responsible_person_id,
+    responsible_person: f.responsible_person,
     initiator_id: f.initiator_id,
     subject_kind: f.subject_kind,
     delivery_address: f.delivery_address,

@@ -400,7 +400,9 @@ async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Dep
         warnings=warnings,
     )
 
-def _build_approval_purchase_fields(contract: Contract, assigned_user_id: int) -> dict:
+def _build_approval_purchase_fields(
+    contract: Contract, assigned_user_id: int, responsible_person: Optional[str] = None
+) -> dict:
     """Собирает kwargs для Purchase() — «рамочная голова» из уже сохранённого
     Contract. Чистая функция без обращений к БД — вынесена отдельно, чтобы
     маппинг полей был юнит-тестируем без живой сессии
@@ -410,8 +412,12 @@ def _build_approval_purchase_fields(contract: Contract, assigned_user_id: int) -
     подменяется — при первом формировании документа сработает уже готовая
     логика присвоения временного номера «ВРЕМ-…»
     (is_framework_head + _generate_temp_contract_number в purchases.py).
+
+    responsible_person — ФИО текущего пользователя (если не пусто):
+    предзаполняет «Ответственного исполнителя» листа согласования, чтобы у
+    свежесозданной рамочной головы клетка не оставалась пустой.
     """
-    return dict(
+    fields = dict(
         contract_id=contract.id,
         contractor_id=contract.contractor_id,
         subsidy_id=contract.subsidy_id,
@@ -429,6 +435,9 @@ def _build_approval_purchase_fields(contract: Contract, assigned_user_id: int) -
         # (list_purchases фильтрует по visible_user_ids) — как в create_purchase.
         assigned_user_id=assigned_user_id,
     )
+    if responsible_person:
+        fields["responsible_person"] = responsible_person
+    return fields
 
 
 @router.post("/{contract_id}/approval-purchase")
@@ -472,7 +481,9 @@ async def get_or_create_approval_purchase(
     if existing:
         return {"purchase_id": existing.id, "created": False}
 
-    p = Purchase(**_build_approval_purchase_fields(contract, current_user.id))
+    p = Purchase(**_build_approval_purchase_fields(
+        contract, current_user.id, responsible_person=(current_user.full_name or None)
+    ))
     db.add(p)
     await db.flush()  # get p.id
 

@@ -631,6 +631,51 @@ def _fio_to_genitive(name_full: str) -> str:
     return " ".join(_word(w) for w in name_full.split()) if name_full else name_full
 
 
+# B-dedup: формат ФИО → инициалы (используется для «Ответственного исполнителя»).
+# "Иванова Ирина Владиславовна"   → "Иванова И.В."
+# "Кулиев Гасан Валех оглы"        → "Кулиев Г.В." (4-я часть отбрасывается)
+# "Иванова-Петрова Анна Сергеевна" → "Иванова-Петрова А.С." (дефис = одна фамилия)
+# Phase (2026-09-01): вынесена из-под generate_document на уровень модуля —
+# была локальным замыканием без обращений к внешним переменным, extraction
+# не меняет поведение и даёт tests/test_responsible_person_persist.py
+# прямой доступ к функции, не дублируя алгоритм в тесте.
+def _format_initials(full: str) -> str:
+    if not full:
+        return ""
+    parts = (full or "").strip().split()
+    if not parts:
+        return ""
+    surname = parts[0]
+    initials = []
+    for p_word in parts[1:3]:  # только имя + отчество (3-я часть «оглы»/«кызы» отбрасывается)
+        if p_word and p_word[0].isalpha():
+            initials.append(p_word[0].upper() + ".")
+    return f"{surname} {''.join(initials)}".strip()
+
+
+def _resolve_responsible_person_update(current_value: Optional[str], responsible_name: Optional[str]) -> Optional[str]:
+    """Куда писать пришедший ?responsible_name= в Purchase.responsible_person.
+
+    Владелец: «из листа согласования договора почему-то самовольно исчез
+    ответственный исполнитель, хотя был определён» — выбор в диалоге
+    формирования документа раньше уходил только разовым query-параметром и
+    нигде не сохранялся, поэтому при следующей генерации подставлялся
+    другой человек. Теперь непустой параметр запоминается.
+
+    Возвращает новое значение для записи в БД, либо None если писать не
+    нужно: параметр пуст (пустой параметр НЕ должен затирать уже сохранённое
+    имя) или совпадает с уже сохранённым (не гонять лишний commit).
+    Чистая функция — вынесена отдельно ради юнит-теста без живой сессии
+    (см. tests/test_responsible_person_persist.py).
+    """
+    if not responsible_name or not responsible_name.strip():
+        return None
+    new_value = responsible_name.strip()
+    if new_value == (current_value or ""):
+        return None
+    return new_value
+
+
 def _fio_to_initials(name_full: str) -> str:
     """Return "Фамилия И.О." form; falls back to name_full when < 2 words."""
     words = name_full.split() if name_full else []
@@ -1360,6 +1405,13 @@ async def generate_document(
     if not p:
         raise HTTPException(404, "Закупка не найдена")
 
+    # Запоминаем выбранного ответственного (см. _resolve_responsible_person_update
+    # выше) — чтобы он подставлялся сам при следующей генерации и не «терялся».
+    _new_responsible_person = _resolve_responsible_person_update(p.responsible_person, responsible_name)
+    if _new_responsible_person is not None:
+        p.responsible_person = _new_responsible_person
+        await db.commit()
+
     # Владелец (2026-08-31): рамочная голова может подписываться («лист
     # согласования») раньше, чем станут известны реальные номер и дата
     # договора — при первом формировании договорного документа для такой
@@ -1568,23 +1620,6 @@ async def generate_document(
                 cat_path = " → ".join(n.name.strip() for n in _feo_path_nodes(cid))
                 if cat_path:
                     item_feo_paths.append((cat_path, cat_sums[cid]))
-
-    # B-dedup: формат ФИО → инициалы.
-    # "Иванова Ирина Владиславовна"   → "Иванова И.В."
-    # "Кулиев Гасан Валех оглы"        → "Кулиев Г.В." (4-я часть отбрасывается)
-    # "Иванова-Петрова Анна Сергеевна" → "Иванова-Петрова А.С." (дефис = одна фамилия)
-    def _format_initials(full: str) -> str:
-        if not full:
-            return ""
-        parts = (full or "").strip().split()
-        if not parts:
-            return ""
-        surname = parts[0]
-        initials = []
-        for p_word in parts[1:3]:  # только имя + отчество (3-я часть «оглы»/«кызы» отбрасывается)
-            if p_word and p_word[0].isalpha():
-                initials.append(p_word[0].upper() + ".")
-        return f"{surname} {''.join(initials)}".strip()
 
     # Resolved responsible person: priority = ?responsible_name → assigned_user.full_name
     # → p.responsible_person → автор служебной записки (последний фолбэк, чтобы клетка

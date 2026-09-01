@@ -23,6 +23,10 @@ from app.models.organization import Organization
 from app.models.user import User
 from app.models.user_hierarchy import UserHierarchy
 from app.models.user_organization import UserOrganization
+from app.services.org_assignment_dates import (
+    first_row_assignment_dates,
+    position_change_date,
+)
 
 router = APIRouter(tags=["hierarchy"])
 
@@ -611,6 +615,12 @@ async def add_user_to_organization(
         await db.commit()
         return {"id": existing.id, "ok": True}
     row = UserOrganization(user_id=uid, org_id=org_id, position=body.position)
+    if body.position:
+        # Первая-ЕВЕР строка пары (user, org) — дата назначения на должность
+        # равна дате приёма (hired_at ещё не известна тут → сегодня, см.
+        # org_assignment_dates.first_row_assignment_dates).
+        dates = first_row_assignment_dates(None, has_position=True, has_dept=False)
+        row.position_assigned_at = dates.get("position_assigned_at")
     db.add(row)
     await db.commit()
     await db.refresh(row)
@@ -782,7 +792,19 @@ async def patch_user_org_membership_row(
     if not row or row.user_id != uid:
         raise HTTPException(404, "Запись не найдена")
     if "position" in body:
-        row.position = body["position"] or None
+        new_position = body["position"] or None
+        position_changed = new_position != row.position
+        row.position = new_position
+        # Смена должности — если явную дату не прислали отдельным ключом,
+        # проставляем сегодня; если должность не менялась, дату не трогаем
+        # (владелец, 2026-09-01: «можно менять руками, а по умолчанию —
+        # проставляется автоматически»).
+        if "position_assigned_at" not in body:
+            row.position_assigned_at = position_change_date(
+                position_changed=position_changed,
+                current=row.position_assigned_at,
+                explicit=None,
+            )
     if "salary_amount" in body:
         row.salary_amount = body["salary_amount"]
     if "employment_percent" in body:
@@ -807,6 +829,20 @@ async def patch_user_org_membership_row(
             )
             .values(hired_at=new_hired_at)
         )
+    # Защитная сетка (владелец: «дата пуста, а поле заполнено — не молчать»):
+    # если после всех правок отдел/должность заполнены, а дата назначения
+    # так и осталась пустой (старая запись до появления этих полей, либо
+    # клиент явно прислал null не задумываясь) — подставляем по тем же
+    # правилам, что и при первой строке.
+    fallback = first_row_assignment_dates(
+        row.hired_at,
+        has_position=bool(row.position) and row.position_assigned_at is None,
+        has_dept=bool(row.dept_id) and row.dept_assigned_at is None,
+    )
+    if "dept_assigned_at" in fallback:
+        row.dept_assigned_at = fallback["dept_assigned_at"]
+    if "position_assigned_at" in fallback:
+        row.position_assigned_at = fallback["position_assigned_at"]
     await db.commit()
     # Должность в членстве → head/deputy отдела (двусторонняя синхронизация)
     if "position" in body and row.dept_id:

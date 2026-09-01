@@ -33,6 +33,10 @@ class User(Base):
     superior_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # вышестоящий начальник (ручной override иерархии)
     can_publish = Column(Boolean, default=False, nullable=False, server_default="false")  # Разрешение на публикацию закупок
     exclude_from_directory = Column(Boolean, default=False, nullable=False, server_default="false")  # Не включать в справочник сотрудников
+    # Доступ ко всем организациям аккаунта (root_org_id-дерево), БЕЗ смены роли.
+    # Замена ручному заведению user_org_access построчно на каждую организацию.
+    # См. app/auth/jwt.py::get_current_user/get_org_filter.
+    all_orgs_access = Column(Boolean, default=False, nullable=False, server_default="false")
 
     # Phase 29 D-04: водительские данные (раскрываются при can_drive=True)
     can_drive = Column(Boolean, default=False, nullable=False, server_default="false")  # Может водить ТС

@@ -138,23 +138,13 @@ async def list_overrides(
     return res.scalars().all()
 
 
-@router.put("/users/{user_id}/overrides")
-async def update_overrides(
-    user_id: int,
-    updates: List[PermissionUpdate],
-    org_id: int = Query(...),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_tab("staff")),
-):
-    # D-05.2 self-lockout on own user
-    if user_id == current_user.id:
-        for upd in updates:
-            if upd.key in SELF_LOCKOUT_PROTECTED_KEYS and not upd.granted:
-                raise HTTPException(
-                    403,
-                    f"Нельзя снять доступ к '{upd.key}' у себя (самоблокировка)",
-                )
-
+async def _apply_overrides_for_org(
+    user_id: int, org_id: int, updates: List[PermissionUpdate], db: AsyncSession
+) -> None:
+    """Upsert overrides for one (user, org) pair. Self-heals UOA from membership
+    if missing (superadmin's own contour org, added via all_orgs_access fan-out,
+    might not have a membership row — in that case ensure_user_org_access creates
+    the UOA directly, no user_organizations required, Модель A)."""
     uoa = await db.execute(
         select(UserOrgAccess).where(
             UserOrgAccess.user_id == user_id,
@@ -163,25 +153,9 @@ async def update_overrides(
     )
     uoa_obj = uoa.scalar_one_or_none()
     if uoa_obj is None:
-        # Self-heal: проверяем членство в user_organizations. Если есть —
-        # создаём запись user_org_access (идемпотентно), иначе — 404.
-        membership = (await db.execute(
-            select(UserOrganization).where(
-                UserOrganization.user_id == user_id,
-                UserOrganization.org_id == org_id,
-            )
-        )).scalar_one_or_none()
-        if membership is None:
-            raise HTTPException(
-                404,
-                f"Пользователь не состоит в организации id={org_id} — "
-                "сначала добавьте его в организацию",
-            )
-        # Берём роль из User.role как fallback
         user_obj = await db.get(User, user_id)
         role = user_obj.role if user_obj else None
         uoa_id = await ensure_user_org_access(user_id, org_id, role, db)
-        # После flush uoa_obj уже доступен через uoa_id
         uoa_obj = await db.get(UserOrgAccess, uoa_id)
 
     for upd in updates:
@@ -200,8 +174,70 @@ async def update_overrides(
                 key=upd.key,
                 granted=upd.granted,
             ))
+
+
+@router.put("/users/{user_id}/overrides")
+async def update_overrides(
+    user_id: int,
+    updates: List[PermissionUpdate],
+    org_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab("staff")),
+):
+    # D-05.2 self-lockout on own user
+    if user_id == current_user.id:
+        for upd in updates:
+            if upd.key in SELF_LOCKOUT_PROTECTED_KEYS and not upd.granted:
+                raise HTTPException(
+                    403,
+                    f"Нельзя снять доступ к '{upd.key}' у себя (самоблокировка)",
+                )
+
+    # Явную org_id (текущий выбор в UI) сначала self-heal'им через членство,
+    # как раньше: org_id из селектора обязан быть реальной оргой пользователя,
+    # а не просто любой оргой контура — иначе опечатка в query param молча
+    # создала бы UOA в чужой для юзера орге.
+    uoa = await db.execute(
+        select(UserOrgAccess).where(
+            UserOrgAccess.user_id == user_id,
+            UserOrgAccess.org_id == org_id,
+        )
+    )
+    if uoa.scalar_one_or_none() is None:
+        membership = (await db.execute(
+            select(UserOrganization).where(
+                UserOrganization.user_id == user_id,
+                UserOrganization.org_id == org_id,
+            )
+        )).scalar_one_or_none()
+        if membership is None:
+            raise HTTPException(
+                404,
+                f"Пользователь не состоит в организации id={org_id} — "
+                "сначала добавьте его в организацию",
+            )
+
+    await _apply_overrides_for_org(user_id, org_id, updates, db)
+
+    # Владелец 2026-09-01, п.4: «должна быть настройка прав по всем
+    # организациям сразу, если есть доступ ко всем организациям». Если у
+    # ЦЕЛЕВОГО (не текущего редактирующего) пользователя включён
+    # all_orgs_access — переключение галочки применяется одним действием
+    # ко ВСЕМ организациям его охвата, а не только к выбранной в селекторе.
+    # Роль при этом не трогаем (fan-out идёт только по overrides).
+    applied_org_ids = [org_id]
+    target_user = await db.get(User, user_id)
+    if target_user is not None and getattr(target_user, 'all_orgs_access', False):
+        from app.auth.visibility import get_all_orgs_access_org_ids
+        scope_org_ids = await get_all_orgs_access_org_ids(target_user, db)
+        for oid in scope_org_ids:
+            if oid == org_id:
+                continue
+            await _apply_overrides_for_org(user_id, oid, updates, db)
+            applied_org_ids.append(oid)
+
     await db.commit()
-    return {"status": "ok", "updated": len(updates)}
+    return {"status": "ok", "updated": len(updates), "applied_org_ids": applied_org_ids}
 
 
 @router.get("/users/{user_id}/org-roles")

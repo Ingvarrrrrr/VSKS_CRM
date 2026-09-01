@@ -433,7 +433,10 @@ function tierColor(tier: string) {
 async function loadOrgs() {
   loading.value = true
   try {
-    orgs.value = await apiFetch('/billing/')
+    // org_name приходит от backend напрямую из Organization.name (NOT NULL в БД) —
+    // никакого id-плейсхолдера тут не нужно (владелец, 2026-09-01: «никакой
+    // организации и номера», это касалось и мёртвого fallback здесь).
+    orgs.value = await apiFetch<any[]>('/billing/')
   } catch (e: any) {
     showSnack(e?.message || 'Ошибка загрузки биллинга', 'error')
   } finally {

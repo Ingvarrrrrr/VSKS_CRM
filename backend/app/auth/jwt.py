@@ -97,6 +97,22 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
             )
         )).scalars().all()
         user._managed_org_ids = list({int(x) for x in _mo_ids if x})
+    # users.all_orgs_access: сотруднику (роль НЕ меняется) доступны ВСЕ
+    # организации его аккаунта — root_org_id-дерево каждой орги, с которой он
+    # уже как-то связан (primary org_id / UOA / управляемые). Замена ручному
+    # заведению сотни строк user_org_access одной галочкой. Reuse — та же
+    # единственная реализация алгоритма контура, что и у _contour_org_ids
+    # (compute_account_contour_org_ids), просто применённая ко всем её якорным
+    # оргам, а не только к primary org_id — иначе флаг был бы бесполезен для
+    # чисто UOA-сотрудников без users.org_id (Модель A).
+    user._all_orgs_access_org_ids = []
+    if getattr(user, 'all_orgs_access', False) and user.role not in ('superadmin', 'account_owner'):
+        from app.auth.visibility import get_all_orgs_access_org_ids
+        user._all_orgs_access_org_ids = list(await get_all_orgs_access_org_ids(
+            user, db,
+            uoa_org_ids=set(user._uoa_org_ids),
+            managed_org_ids=set(user._managed_org_ids),
+        ))
     return user
 
 async def has_role_via_hierarchy(
@@ -184,13 +200,14 @@ def get_org_filter(current_user: User) -> Optional[List[int]]:
     uoa_ids = getattr(current_user, '_uoa_org_ids', None) or []
     contour_ids = getattr(current_user, '_contour_org_ids', None) or []
     managed_ids = getattr(current_user, '_managed_org_ids', None) or []
+    all_orgs_access_ids = getattr(current_user, '_all_orgs_access_org_ids', None) or []
     org_ids = getattr(current_user, '_active_org_ids', None)
     base = list(org_ids) if org_ids else []
     if not base:
         active_org_id = getattr(current_user, '_active_org_id', current_user.org_id)
         if active_org_id:
             base = [active_org_id]
-    merged = list({*base, *uoa_ids, *contour_ids, *managed_ids})
+    merged = list({*base, *uoa_ids, *contour_ids, *managed_ids, *all_orgs_access_ids})
     return merged or None
 
 def get_single_org_id(current_user: User) -> Optional[int]:

@@ -19,6 +19,11 @@ from app.models.department import Department, TaskEditDelegate
 from app.models.organization import Organization
 from app.models.user import User
 from app.models.user_organization import UserOrganization
+from app.services.org_assignment_dates import (
+    first_row_assignment_dates,
+    dept_transfer_date,
+    position_change_date,
+)
 
 router = APIRouter(prefix="/api/departments", tags=["departments"])
 
@@ -372,16 +377,19 @@ async def add_member(
             UserOrganization.dept_id.is_(None),
         )
     )).scalar_one_or_none()
-    assigned_date = data.dept_assigned_at or date.today()
     if uo_exact:
         # Row already correct — just sync position if needed
         old_position = uo_exact.position
+        position_changed = bool(data.position) and data.position != old_position
         if data.position:
             uo_exact.position = data.position
-            if data.position != old_position:
-                uo_exact.position_assigned_at = assigned_date
+        uo_exact.position_assigned_at = position_change_date(
+            position_changed=position_changed,
+            current=uo_exact.position_assigned_at,
+            explicit=None,
+        )
         if uo_exact.dept_assigned_at is None:
-            uo_exact.dept_assigned_at = assigned_date
+            uo_exact.dept_assigned_at = dept_transfer_date(data.dept_assigned_at)
         await db.commit()
         m = uo_exact
     else:
@@ -402,10 +410,30 @@ async def add_member(
         kwargs = dict(user_id=data.user_id, org_id=dept.org_id, dept_id=dept_id, position=new_pos)
         if base_row is not None and base_row.hired_at is not None:
             kwargs["hired_at"] = base_row.hired_at
-        kwargs["dept_assigned_at"] = assigned_date
-        prior_position = base_row.position if base_row is not None else None
-        if new_pos and new_pos != prior_position:
-            kwargs["position_assigned_at"] = assigned_date
+        if base_row is None:
+            # Первая-ЕВЕР строка user_organizations для этой пары (user, org) —
+            # это приём на работу, обе даты назначения = дате приёма (владелец,
+            # 2026-09-01), а не «сегодня».
+            kwargs.update(first_row_assignment_dates(
+                kwargs.get("hired_at"),
+                has_position=bool(new_pos),
+                has_dept=True,
+                explicit_dept_assigned_at=data.dept_assigned_at,
+            ))
+        else:
+            # Перевод в другой отдел уже трудоустроенного человека — дата
+            # перевода явная или сегодня; должность, если не менялась,
+            # наследует прежнюю дату назначения (не обнуляем её).
+            prior_position = base_row.position
+            position_changed = bool(new_pos) and new_pos != prior_position
+            kwargs["dept_assigned_at"] = dept_transfer_date(data.dept_assigned_at)
+            pos_date = position_change_date(
+                position_changed=position_changed,
+                current=base_row.position_assigned_at,
+                explicit=None,
+            )
+            if pos_date is not None:
+                kwargs["position_assigned_at"] = pos_date
         if base_row is not None:
             if base_row.salary_amount is not None:
                 kwargs["salary_amount"] = base_row.salary_amount
@@ -956,22 +984,52 @@ async def import_departments_excel(
                     UserOrganization.dept_id.is_(None),
                 )
             )).scalar_one_or_none()
-            new_uo = UserOrganization(
-                user_id=user.id, org_id=dept.org_id, dept_id=dept.id, position=position,
-                dept_assigned_at=date.today(),
-            )
+            base_row = null_row or (await db.execute(
+                select(UserOrganization)
+                .where(
+                    UserOrganization.user_id == user.id,
+                    UserOrganization.org_id == dept.org_id,
+                )
+                .order_by(UserOrganization.id.asc())
+                .limit(1)
+            )).scalars().first()
+            new_uo = UserOrganization(user_id=user.id, org_id=dept.org_id, dept_id=dept.id, position=position)
+            if base_row is not None and base_row.hired_at is not None:
+                new_uo.hired_at = base_row.hired_at
+            if base_row is None:
+                # Первая-ЕВЕР строка пары (user, org) — приём на работу, обе даты
+                # назначения = дате приёма (владелец, 2026-09-01).
+                dates = first_row_assignment_dates(
+                    new_uo.hired_at, has_position=bool(position), has_dept=True,
+                )
+                new_uo.dept_assigned_at = dates.get("dept_assigned_at")
+                new_uo.position_assigned_at = dates.get("position_assigned_at")
+            else:
+                # Уже трудоустроен — импорт добавляет его в новый отдел (перевод).
+                new_uo.dept_assigned_at = dept_transfer_date(None)
+                position_changed = bool(position) and position != base_row.position
+                new_uo.position_assigned_at = position_change_date(
+                    position_changed=position_changed,
+                    current=base_row.position_assigned_at,
+                    explicit=None,
+                )
+            if base_row is not None:
+                if base_row.salary_amount is not None:
+                    new_uo.salary_amount = base_row.salary_amount
+                if base_row.employment_percent is not None:
+                    new_uo.employment_percent = base_row.employment_percent
             if null_row is not None:
-                if null_row.hired_at is not None:
-                    new_uo.hired_at = null_row.hired_at
-                if null_row.salary_amount is not None:
-                    new_uo.salary_amount = null_row.salary_amount
-                if null_row.employment_percent is not None:
-                    new_uo.employment_percent = null_row.employment_percent
                 await db.delete(null_row)
             db.add(new_uo)
             created_members += 1
         elif position:
+            position_changed = position != existing_m.position
             existing_m.position = position
+            existing_m.position_assigned_at = position_change_date(
+                position_changed=position_changed,
+                current=existing_m.position_assigned_at,
+                explicit=None,
+            )
 
         if is_head_bool:
             dept.head_user_id = user.id

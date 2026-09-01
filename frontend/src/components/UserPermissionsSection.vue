@@ -13,6 +13,30 @@
     </v-card-title>
 
     <v-card-text class="pa-4 pt-0">
+      <v-switch
+        :model-value="allOrgsAccessLocal"
+        color="primary"
+        density="compact"
+        hide-details
+        class="mb-1"
+        label="Доступ ко всем организациям аккаунта"
+        @update:model-value="(v) => onAllOrgsAccessChange(!!v)"
+      />
+      <div class="text-caption text-medium-emphasis mb-3">
+        Роль сотрудника не меняется — расширяется только охват данных: он увидит
+        закупки/субсидии/персонал всех организаций своего аккаунта, а не только
+        выбранной ниже.
+      </div>
+      <div v-if="allOrgsAccessLocal" class="text-caption mb-3" style="color:#e65100">
+        <v-icon size="13" color="warning" class="mr-1">mdi-content-copy</v-icon>
+        Доступ ко всем организациям включён — галочки вкладок и критичных действий
+        ниже применяются <strong>сразу ко всем организациям охвата</strong>, а не
+        только к выбранной в списке. Роль в каждой организации настраивается отдельно.
+      </div>
+      <div v-else class="text-caption text-medium-emphasis mb-3">
+        Права по вкладкам и критичным действиям — личные для этой организации.
+      </div>
+
       <v-select
         v-model="selectedOrgId"
         :items="orgOptions"
@@ -21,10 +45,19 @@
         label="Организация"
         density="compact"
         variant="outlined"
-        class="mb-3"
+        class="mb-1"
         hide-details
         @update:model-value="onOrgChange"
       />
+      <div v-if="allOrgsAccessLocal" class="text-caption mb-3" style="color:#e65100">
+        <v-icon size="13" color="warning" class="mr-1">mdi-eye-check-outline</v-icon>
+        Доступ ко всем организациям включён — этот список нужен только чтобы
+        настроить роль/вкладки/действия для конкретной организации, видимость данных он не ограничивает.
+      </div>
+      <div v-else class="mb-3" />
+
+      <div v-if="allOrgsAccessSaving" class="text-caption text-info mb-2">Сохранение...</div>
+      <div v-if="allOrgsAccessSaved" class="text-caption text-success mb-2">Сохранено ✓</div>
 
       <v-select
         v-model="selectedRole"
@@ -149,7 +182,9 @@
       </v-window>
 
       <div v-if="saving" class="text-caption text-info mt-2">Сохранение...</div>
-      <div v-if="saved" class="text-caption text-success mt-2">Сохранено ✓</div>
+      <div v-if="saved" class="text-caption text-success mt-2">
+        Сохранено ✓<span v-if="savedOrgCount > 1"> — применено сразу в {{ savedOrgCount }} организациях</span>
+      </div>
     </v-card-text>
   </v-card>
 </template>
@@ -166,6 +201,11 @@ const props = defineProps<{
   currentUserId: number   // D-05.2: id of the viewer/editor
   userRole: string
   orgAccessList: { org_id: number; org_name: string; role: string }[]
+  allOrgsAccess?: boolean  // доступ ко всем организациям аккаунта (роль не меняется)
+}>()
+
+const emit = defineEmits<{
+  (e: 'update:allOrgsAccess', value: boolean): void
 }>()
 
 const tabs = ref<{ tab_key: string; title: string }[]>([])
@@ -190,9 +230,62 @@ const roleOptions = [
 
 const isRoleChangeBlocked = computed(() => props.userId === props.currentUserId)
 
-const orgOptions = computed(() =>
-  props.orgAccessList.map(o => ({ value: o.org_id, label: o.org_name }))
-)
+// Владелец, 2026-09-01: «никакой в пизду организации и номера — у каждой
+// организации есть название». Раньше при пустом org_name в переданном списке
+// подставлялся `Организация #<id>`. Теперь имя резолвится по каталогу
+// организаций (тот же общедоступный справочник, что и остальные орг-пикеры
+// в проекте — GET /organizations/, доступен любому залогиненному), НЕЗАВИСИМО
+// от того, что пришло в orgAccessList — компонент не полагается на чужой
+// (возможно урезанный/устаревший) список. Если организации нет и в каталоге
+// (недоступна текущему пользователю) — пункт не показываем вовсе, а не рисуем
+// голый номер.
+const orgCatalog = ref<{ id: number; name: string }[]>([])
+async function loadOrgCatalog() {
+  try {
+    orgCatalog.value = await apiFetch<{ id: number; name: string }[]>('/organizations/')
+  } catch (e) {
+    console.warn('[UserPermissionsSection] loadOrgCatalog failed', e)
+  }
+}
+
+const orgOptions = computed(() => {
+  const catalog = new Map(orgCatalog.value.map(o => [o.id, o.name]))
+  const options: { value: number; label: string }[] = []
+  for (const o of props.orgAccessList) {
+    const name = catalog.get(o.org_id) || (o.org_name && o.org_name.trim() ? o.org_name : '')
+    if (!name) continue  // организация без резолвимого имени — не показываем
+    options.push({ value: o.org_id, label: name })
+  }
+  return options
+})
+
+const allOrgsAccessLocal = ref<boolean>(!!props.allOrgsAccess)
+const allOrgsAccessSaving = ref(false)
+const allOrgsAccessSaved = ref(false)
+
+watch(() => props.allOrgsAccess, (v) => { allOrgsAccessLocal.value = !!v })
+
+async function onAllOrgsAccessChange(newVal: boolean) {
+  const prev = allOrgsAccessLocal.value
+  allOrgsAccessLocal.value = newVal
+  allOrgsAccessSaving.value = true
+  allOrgsAccessSaved.value = false
+  try {
+    await apiFetch(`/users/${props.userId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ all_orgs_access: newVal }),
+    })
+    emit('update:allOrgsAccess', newVal)
+    allOrgsAccessSaved.value = true
+    setTimeout(() => { allOrgsAccessSaved.value = false }, 1500)
+  } catch (e: any) {
+    allOrgsAccessLocal.value = prev
+    alert(`Не удалось изменить доступ ко всем организациям: ${e?.payload?.detail || e?.payload?.message || e?.message || e}`)
+  } finally {
+    allOrgsAccessSaving.value = false
+  }
+}
 
 const currentOrgRole = computed(() => {
   // Prefer the per-org role from the dedicated endpoint (fresh source of truth)
@@ -333,6 +426,8 @@ async function toggle(key: string, granted: boolean) {
   timer = setTimeout(flush, 300)
 }
 
+const savedOrgCount = ref(0)
+
 async function flush() {
   if (!selectedOrgId.value) return
   const updates = Object.entries(pending).map(([key, granted]) => ({ key, granted }))
@@ -341,11 +436,15 @@ async function flush() {
   saving.value = true
   saved.value = false
   try {
-    await apiFetch(`/permissions/users/${props.userId}/overrides?org_id=${selectedOrgId.value}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates),
-    })
+    const res = await apiFetch<{ applied_org_ids?: number[] }>(
+      `/permissions/users/${props.userId}/overrides?org_id=${selectedOrgId.value}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      }
+    )
+    savedOrgCount.value = res?.applied_org_ids?.length ?? 1
     saved.value = true
     setTimeout(() => { saved.value = false }, 1500)
   } catch (e: any) {
@@ -371,6 +470,7 @@ async function removeOverride(key: string) {
 }
 
 onMounted(async () => {
+  loadOrgCatalog()
   await loadCatalogs()
   await loadOrgRoles()
   if (selectedOrgId.value) await loadForOrg()
@@ -384,6 +484,31 @@ watch(() => props.userId, async () => {
   await loadOrgRoles()
   if (selectedOrgId.value) await loadForOrg()
 })
+
+// Владелец, 2026-09-01: баг «голый id 28 вместо названия организации» —
+// StaffView грузит orgAccessList для нового сотрудника АСИНХРОННО и позже,
+// чем меняется userId. Раньше selectedOrgId брался ОДИН РАЗ из userId-watcher
+// (см. выше) на момент, когда orgAccessList ещё принадлежал ПРЕДЫДУЩЕМУ
+// сотруднику, и больше никогда не пересчитывался — когда список наконец
+// приходил, org предыдущего сотрудника (напр. 28 «ХРО ВСКС») в нём не было,
+// и v-select рисовал сырое числовое значение вместо названия.
+// Фикс: следим за самим orgAccessList и, если текущий выбор в нём больше не
+// значится (или выбора ещё нет вовсе), переключаемся на первую доступную
+// организацию нового списка (или на null, если организаций нет).
+watch(
+  () => props.orgAccessList,
+  (list) => {
+    const ids = list.map(o => o.org_id)
+    const stillValid = selectedOrgId.value != null && ids.includes(selectedOrgId.value)
+    if (stillValid) return
+    const next = ids[0] ?? null
+    if (next === selectedOrgId.value) return
+    selectedOrgId.value = next
+    overrides.value = {}
+    if (next) loadForOrg()
+  },
+  { deep: true }
+)
 
 // Keep selectedRole in sync with the cached per-org role for the active org
 watch(

@@ -161,6 +161,22 @@
       <v-card class="org-dialog-card">
         <v-card-title class="pa-4">{{ editOrgItem.id ? 'Реквизиты организации' : 'Новая организация' }}</v-card-title>
         <v-card-text class="pa-4 pt-0" style="max-height:75vh">
+          <!-- 2026-09-01: суперадмин один вправе выбрать, в какой АККАУНТ уходит
+               новая организация — иначе она рискует остаться «ничейной» (см. баг
+               с региональными отделениями ВСКС). Обычный account_owner ничего
+               не видит: аккаунт и так его собственный. -->
+          <v-select
+            v-if="isSuperadmin && !editOrgItem.id"
+            v-model="editOrgItem.root_org_id"
+            :items="accountOptions"
+            item-title="name" item-value="id"
+            label="Аккаунт (головная организация)"
+            hint="Куда привязать новую организацию. Не выбрано — уйдёт в ваш собственный аккаунт."
+            persistent-hint
+            clearable
+            variant="outlined" density="compact" class="mb-4"
+            prepend-inner-icon="mdi-domain"
+          />
           <v-alert
             v-if="editOrgItem.contractor_id"
             type="info" density="compact" variant="tonal" class="mb-3"
@@ -379,6 +395,18 @@ const route = useRoute()
 const canCreateOrg = computed(() =>
   ['superadmin', 'account_owner'].includes(localStorage.getItem('user_role') || '')
 )
+const isSuperadmin = computed(() => localStorage.getItem('user_role') === 'superadmin')
+// 2026-09-01: список аккаунтов (головных организаций) для пикера superadmin —
+// GET /organizations/accounts, доступен только superadmin.
+const accountOptions = ref<{ id: number; name: string }[]>([])
+async function loadAccountOptions() {
+  if (!isSuperadmin.value) return
+  try {
+    accountOptions.value = await apiFetch<{ id: number; name: string }[]>('/organizations/accounts')
+  } catch {
+    accountOptions.value = []
+  }
+}
 const registryArea = ref<HTMLElement | null>(null)
 const orgs = ref<Org[]>([])
 const loading = ref(false)
@@ -409,6 +437,7 @@ const editOrgItem = ref({
   signatory_middle_name: '',
   signatory_position: '',
   contractor_id: null as number | null,
+  root_org_id: null as number | null,
 })
 const egrulLoading = ref(false)
 const egrulMessage = ref('')
@@ -509,9 +538,11 @@ function openCreateOrg() {
     signatory_middle_name: '',
     signatory_position: '',
     contractor_id: null,
+    root_org_id: null,
   }
   egrulMessage.value = ''
   editOrgDialog.value = true
+  loadAccountOptions()
 }
 
 async function openEditOrg(org: Org) {
@@ -528,6 +559,7 @@ async function openEditOrg(org: Org) {
     signatory_middle_name: (org as any).signatory_middle_name || '',
     signatory_position: (org as any).signatory_position || '',
     contractor_id: org.contractor_id ?? null,
+    root_org_id: null,
   }
   egrulMessage.value = ''
   editOrgDialog.value = true
@@ -582,8 +614,11 @@ async function saveOrg() {
       signatory_middle_name: editOrgItem.value.signatory_middle_name || null,
       signatory_position: editOrgItem.value.signatory_position || null,
       contractor_id: editOrgItem.value.contractor_id ?? null,
-    }
+    } as Record<string, unknown>
     if (isCreate) {
+      // Только superadmin реально видит поле — для остальных всегда null,
+      // бэкенд его в любом случае игнорирует не-superadmin ролям.
+      body.root_org_id = editOrgItem.value.root_org_id ?? null
       await apiFetch(`/organizations/`, { method: 'POST', body })
     } else {
       await apiFetch(`/organizations/${editOrgItem.value.id}`, { method: 'PUT', body })

@@ -13,7 +13,7 @@
       <v-btn v-if="isAdmin" color="primary" size="small" variant="outlined" prepend-icon="mdi-folder-plus" @click="openCreateDeptFromHeader">
         Добавить отдел
       </v-btn>
-      <v-btn v-if="isAdmin" color="primary" size="small" prepend-icon="mdi-account-plus" @click="openCreateUser">
+      <v-btn v-if="isAdmin" color="primary" size="small" prepend-icon="mdi-account-plus" @click="openCreateUser()">
         Добавить сотрудника
       </v-btn>
     </div>
@@ -532,7 +532,7 @@
           <v-text-field v-model="createDialog.password_confirm" label="Подтвердите пароль *" type="password" variant="outlined" density="compact" class="mb-3"
             :error="!!createDialog.password_confirm && createDialog.password !== createDialog.password_confirm"
             :error-messages="createDialog.password_confirm && createDialog.password !== createDialog.password_confirm ? 'Пароли не совпадают' : ''" />
-          <v-autocomplete v-if="canPickOrg" v-model="createDialog.org_id" :items="organizations" item-title="name" item-value="id"
+          <v-autocomplete v-if="canPickOrg" v-model="createDialog.org_id" :items="assignableOrganizations" item-title="name" item-value="id"
             label="Организация *" variant="outlined" density="compact" class="mb-3"
             prepend-inner-icon="mdi-domain" :rules="[v => !!v || 'Организация обязательна']" />
           <v-text-field v-else label="Организация" variant="outlined" density="compact" class="mb-3"
@@ -742,10 +742,27 @@
                       <v-text-field v-model.number="entry.employment_percent" label="% ставки" variant="outlined" density="compact" type="number" hide-details />
                     </v-col>
                     <v-col cols="6">
-                      <v-text-field v-model="entry.dept_assigned_at" label="Дата назначения в отдел" variant="outlined" density="compact" type="date" hide-details :disabled="!entry.dept_id" />
+                      <v-text-field
+                        v-model="entry.dept_assigned_at"
+                        label="Дата назначения в отдел"
+                        variant="outlined"
+                        density="compact"
+                        type="date"
+                        hide-details="auto"
+                        :disabled="!entry.dept_id"
+                        hint="Подставляется автоматически при переводе в отдел; можно поправить руками"
+                      />
                     </v-col>
                     <v-col cols="6">
-                      <v-text-field v-model="entry.position_assigned_at" label="Дата назначения на должность" variant="outlined" density="compact" type="date" hide-details />
+                      <v-text-field
+                        v-model="entry.position_assigned_at"
+                        label="Дата назначения на должность"
+                        variant="outlined"
+                        density="compact"
+                        type="date"
+                        hide-details="auto"
+                        hint="При приёме = дате трудоустройства; при смене должности — дате смены; можно поправить руками"
+                      />
                     </v-col>
                   </v-row>
                 </div>
@@ -906,10 +923,13 @@
           <!-- 17-08: «Доступ» section — per-user per-org permission overrides (D-04/D-05.2/D-08) -->
           <UserPermissionsSection
             v-if="editDialog.userId && allOrgEntries.length"
+            :key="editDialog.userId"
             :user-id="editDialog.userId"
             :current-user-id="currentUserId"
             :user-role="editDialog.role"
             :org-access-list="dedupOrgAccess(allOrgEntries)"
+            :all-orgs-access="editDialog.all_orgs_access"
+            @update:all-orgs-access="(v) => { editDialog.all_orgs_access = v }"
           />
           <UserSubsidyAccessSection
             v-if="editDialog.userId"
@@ -1687,7 +1707,18 @@ const createDialog = reactive({
 const createFormRef = ref<any>(null)
 // Pre-load dicts when superadmin picks an org in createDialog
 watch(() => createDialog.org_id, (id) => { if (id) loadDicts(id) })
+// Владелец, 2026-09-01: `organizations` — общий каталог ВСЕХ организаций
+// (GET /organizations/, доступен любому залогиненному) для отображения имён
+// (color-lookup, диагностика headedOrgs и т.д.) и для НЕ-create-dialog
+// пикеров (line 44/222/659). НЕ путать с `assignableOrganizations` — узкий
+// список «куда я реально могу создать/добавить сотрудника» (GET
+// /organizations/assignable), нужен ТОЛЬКО для пикера в диалоге создания.
+// Раньше это был ОДИН и тот же ref: openCreateUser() перезаписывал общий
+// каталог узким assignable-списком, и после этого резолв имени организации
+// по id ломался для орг вне assignable-скоупа текущего редактора (баг
+// «Организация #28» — ХРО ВСКС не входила в assignable конкретного admin'а).
 const organizations = ref<any[]>([])
+const assignableOrganizations = ref<any[]>([])
 const currentOrgId = parseInt(localStorage.getItem('user_org_id') || '0') || null
 const currentOrgName = localStorage.getItem('user_org_name') || ''
 const isSuperadmin = computed(() => currentRole === 'superadmin')
@@ -1695,7 +1726,7 @@ const isSuperadmin = computed(() => currentRole === 'superadmin')
 // Менеджер, управляющий >1 орг (напр. Маркодеева → ВСКС + Донецкое), тоже должен
 // выбирать целевую орг при добавлении сотрудника — иначе орг жёстко = его своя (баг).
 const canPickOrg = computed(() =>
-  ['superadmin', 'account_owner'].includes(currentRole) || organizations.value.length > 1
+  ['superadmin', 'account_owner'].includes(currentRole) || assignableOrganizations.value.length > 1
 )
 
 const editDialog = reactive({
@@ -1704,6 +1735,7 @@ const editDialog = reactive({
   telegram_id: '', max_chat_id: '',
   profile_photo: '',
   exclude_from_directory: false,
+  all_orgs_access: false,
   superior_user_id: null as number | null,
   org_id: null as number | null,
   extraOrgIds: [] as number[],
@@ -1791,18 +1823,19 @@ watch(
 // Используем Number() чтобы избежать несовпадения number vs string при Map.has()
 // Фикс-2: записи с id===null — несохранённые членства (optimistic push из watch extraOrgIds).
 // Их НЕ включаем в список для секции допусков: PUT overrides вернёт 404 до реального сохранения.
+// Владелец, 2026-09-01: имя резолвим по общему каталогу организаций (`organizations`,
+// GET /organizations/ — полный список, не урезанный assignable-скоуп редактора), а не
+// доверяем e.org_name «как есть» (мог не прийти из salary-эндпоинта). Если имени нет
+// НИГДЕ (организация недоступна) — пункт пропускаем, а не рисуем номер.
 function dedupOrgAccess(entries: typeof allOrgEntries.value) {
   const map = new Map<number, { org_id: number; org_name: string; role: string }>()
   for (const e of entries) {
     if (e.id === null) continue  // несохранённая org — допуски настраивать рано
     const key = Number(e.org_id)
-    if (!map.has(key)) {
-      map.set(key, {
-        org_id: key,
-        org_name: e.org_name || `Org ${key}`,
-        role: editDialog.role,
-      })
-    }
+    if (map.has(key)) continue
+    const name = organizations.value.find((o: any) => o.id === key)?.name || e.org_name || ''
+    if (!name) continue  // организация без резолвимого имени — не показываем
+    map.set(key, { org_id: key, org_name: name, role: editDialog.role })
   }
   return Array.from(map.values())
 }
@@ -1877,7 +1910,7 @@ watch(
           id: null,
           dept_id: null,
           org_id: orgId,
-          org_name: org?.name || `Org ${orgId}`,
+          org_name: org?.name || '',
           dept_name: '',
           position: '',
           salary_amount: null,
@@ -2124,7 +2157,13 @@ async function onHierarchyDataChanged() {
   } catch { /* silent */ }
 }
 
-function openCreateUser() {
+// Владелец, 2026-09-01: «плюсик» из отдела/орг-контекста (HierarchyView) обязан
+// предзаполнить организацию и отдел, а не открывать пустую форму — иначе
+// новый сотрудник (напр. Новичкова, добавленная через «+» в «Администрации»
+// ВСКС) создаётся без орг/отдела и требует ручной правки. ctx — опционален:
+// кнопка «Добавить сотрудника» в шапке StaffView/HierarchyView не привязана
+// ни к какому отделу, там предзаполнять нечем (остаётся currentOrgId/пусто).
+function openCreateUser(ctx?: { orgId?: number; departmentName?: string }) {
   createDialog.last_name = ''
   createDialog.first_name = ''
   createDialog.middle_name = ''
@@ -2133,21 +2172,21 @@ function openCreateUser() {
   createDialog.password_confirm = ''
   createDialog.role = 'employee'
   createDialog.city = ''
-  createDialog.department = ''
+  createDialog.department = ctx?.departmentName || ''
   createDialog.position = ''
   createDialog.phone = ''
   createDialog.work_phone = ''
   createDialog.telegram_id = ''
   createDialog.avatar = ''
-  createDialog.org_id = currentOrgId
+  createDialog.org_id = ctx?.orgId ?? currentOrgId
   createDialog.subsidy_id = null
   createDialog.saving = false
   createDialog.show = true
   // Грузим орг, в которые пользователь реально может создавать сотрудника
   // (assignable = свои + управляемые). Для менеджера с >1 орг это включит пикер
-  // (canPickOrg). Если протухший currentOrgId не входит в список — сбрасываем.
+  // (canPickOrg). Если протухший createDialog.org_id не входит в список — сбрасываем.
   apiFetch<any[]>('/organizations/assignable').then(r => {
-    organizations.value = r
+    assignableOrganizations.value = r
     if (createDialog.org_id && !r.some(o => o.id === createDialog.org_id)) {
       createDialog.org_id = r.length ? r[0].id : null
     }
@@ -2232,6 +2271,7 @@ async function openEditUser(item: UserItem) {
   editDialog.telegram_id = (item as any).telegram_id || ''
   editDialog.max_chat_id = (item as any).max_chat_id || ''
   editDialog.exclude_from_directory = !!(item as any).exclude_from_directory
+  editDialog.all_orgs_access = !!(item as any).all_orgs_access
   editDialog.superior_user_id = (item as any).superior_user_id ?? null
   // 29-15: водительские данные
   editDialog.can_drive = !!(item as any).can_drive
@@ -2408,6 +2448,7 @@ async function saveEditUser() {
       telegram_id: editDialog.telegram_id || null,
       max_chat_id: editDialog.max_chat_id || null,
       exclude_from_directory: editDialog.exclude_from_directory,
+      all_orgs_access: editDialog.all_orgs_access,
       superior_user_id: editDialog.superior_user_id,
       // 29-15: водительские данные
       can_drive: editDialog.can_drive,
@@ -2486,16 +2527,23 @@ async function saveEditUser() {
       if ((entry as any).is_new) continue // new rows already handled above
       if (entry.id) {
         try {
+          // dept_assigned_at/position_assigned_at отправляем ТОЛЬКО если поле
+          // реально заполнено (руками поправлено или подтянуто с бэка). Пустое
+          // поле не шлём явным null — иначе бэкенд теряет возможность сам
+          // проставить дату при смене должности (owner: «по умолчанию пусть
+          // меняется... а не перебивать каждый раз руками»); см.
+          // patch_user_org_membership_row / org_assignment_dates.py.
+          const patchBody: Record<string, unknown> = {
+            position: entry.position || null,
+            salary_amount: entry.salary_amount ?? null,
+            employment_percent: entry.employment_percent ?? null,
+            hired_at: entry.hired_at || null,
+          }
+          if (entry.dept_assigned_at) patchBody.dept_assigned_at = entry.dept_assigned_at
+          if (entry.position_assigned_at) patchBody.position_assigned_at = entry.position_assigned_at
           await apiFetch(`/users/${editDialog.userId}/org-memberships/${entry.id}`, {
             method: 'PATCH',
-            body: {
-              position: entry.position || null,
-              salary_amount: entry.salary_amount ?? null,
-              employment_percent: entry.employment_percent ?? null,
-              hired_at: entry.hired_at || null,
-              dept_assigned_at: entry.dept_assigned_at || null,
-              position_assigned_at: entry.position_assigned_at || null,
-            },
+            body: patchBody,
           })
         } catch (e: any) {
           showSnack(`Не удалось сохранить членство: ${e?.payload?.detail || e?.payload?.message || e?.message || ''}`, 'error')

@@ -261,6 +261,7 @@ async def create_user(
         is_email_confirmed=True,
         org_id=org_id,
         inn=data.inn,
+        all_orgs_access=data.all_orgs_access,
     )
     db.add(user)
     await db.commit()
@@ -271,7 +272,7 @@ async def create_user(
         await db.commit()
     # Sync to department if set
     if user.department:
-        await _sync_user_department(user, db)
+        await _sync_user_department(user, db, hired_at=data.hired_at)
     return user
 
 
@@ -553,11 +554,21 @@ async def update_user(
     return user
 
 
-async def _sync_user_department(user: User, db: AsyncSession):
-    """Sync user.department to user_organizations table and auto-set hierarchy."""
+async def _sync_user_department(user: User, db: AsyncSession, hired_at=None):
+    """Sync user.department to user_organizations table and auto-set hierarchy.
+
+    hired_at (дата приёма) — только для случая, когда это ПЕРВАЯ-ЕВЕР строка
+    user_organizations для пары (user_id, org_id): дата назначения в отдел
+    и на должность равна ей, а не «сегодня» (владелец, 2026-09-01, см.
+    app/services/org_assignment_dates.py). Для перевода/смены должности у
+    уже трудоустроенного человека hired_at не используется.
+    """
     from app.models.department import Department
     from app.models.user_organization import UserOrganization as _UO_sync
     from app.models.user_hierarchy import UserHierarchy
+    from app.services.org_assignment_dates import (
+        first_row_assignment_dates, dept_transfer_date, position_change_date,
+    )
 
     if not user.department or not user.org_id:
         return
@@ -583,9 +594,39 @@ async def _sync_user_department(user: User, db: AsyncSession):
         )
     )).scalar_one_or_none()
     if existing:
+        position_changed = bool(user.position) and user.position != existing.position
         existing.position = user.position
+        existing.position_assigned_at = position_change_date(
+            position_changed=position_changed, current=existing.position_assigned_at, explicit=None,
+        )
+        if existing.dept_assigned_at is None:
+            existing.dept_assigned_at = dept_transfer_date(None)
     else:
-        db.add(_UO_sync(user_id=user.id, org_id=user.org_id, dept_id=dept.id, position=user.position))
+        # Первая ли это строка вообще для пары (user_id, org_id)? Если да — это
+        # приём на работу, обе даты назначения = hired_at. Если нет — человек
+        # уже трудоустроен и это перевод в (ещё) один отдел той же пары.
+        any_prior = (await db.execute(
+            select(_UO_sync)
+            .where(_UO_sync.user_id == user.id, _UO_sync.org_id == user.org_id)
+            .order_by(_UO_sync.id.asc())
+            .limit(1)
+        )).scalar_one_or_none()
+        kwargs = dict(user_id=user.id, org_id=user.org_id, dept_id=dept.id, position=user.position)
+        if hired_at is not None:
+            kwargs["hired_at"] = hired_at
+        if any_prior is None:
+            kwargs.update(first_row_assignment_dates(
+                hired_at, has_position=bool(user.position), has_dept=True,
+            ))
+        else:
+            kwargs["dept_assigned_at"] = dept_transfer_date(None)
+            position_changed = bool(user.position) and user.position != any_prior.position
+            pos_date = position_change_date(
+                position_changed=position_changed, current=any_prior.position_assigned_at, explicit=None,
+            )
+            if pos_date is not None:
+                kwargs["position_assigned_at"] = pos_date
+        db.add(_UO_sync(**kwargs))
     await db.flush()
 
     # Должность в карточке пользователя → head/deputy отдела (двусторонняя синхронизация)

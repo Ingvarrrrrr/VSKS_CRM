@@ -173,23 +173,104 @@ async def get_visible_user_ids(user: User, db: AsyncSession) -> Optional[set[int
 
 
 async def compute_account_contour_org_ids(db: AsyncSession, org_id: Optional[int]) -> set[int]:
-    """КАНОНИЧЕСКИЙ расчёт контура аккаунта: корневая орга + все её дочерние.
+    """КАНОНИЧЕСКИЙ расчёт контура аккаунта: root_org_id-дерево ∪ owner_user_id-связь.
 
-    Единственная реализация алгоритма (root_org_id-дерево) — используется и в
-    jwt.get_current_user (кэш _contour_org_ids на логине), и здесь как fallback.
-    НЕ путать с billing._contour_org_ids: там контур ПЛАТЕЛЬЩИКА через
-    owner_user_id — другая семантика, намеренно отдельная."""
+    Единственная реализация алгоритма — используется и в jwt.get_current_user
+    (кэш _contour_org_ids на логине, а также all_orgs_access), и здесь как
+    fallback. НЕ путать с billing._contour_org_ids: там контур ПЛАТЕЛЬЩИКА
+    (для расчёта тарифа) — namеренно та же owner_user_id-связь, но БЕЗ
+    root_org_id-дерева (одному владельцу могут принадлежать несколько
+    независимых корневых орг, каждая — свой биллинг-юнит).
+
+    root_org_id-дерево одно даёт неполный контур там, где часть организаций
+    аккаунта заведена суперадмином как «standalone» (root_org_id NULL) — так
+    исторически появились орг-«сироты» вроде региональных отделений, которые
+    структурно относятся к тому же аккаунту, но синтаксически являются
+    отдельными «корнями». owner_user_id — второй независимый сигнал
+    принадлежности (self-service дочерняя орг от account_owner). Объединяем
+    оба через fix-point обход (≤5 итераций, граф маленький): для каждой орг
+    во frontier добавляем и root-дерево, и owner_user_id-сиблингов, пока не
+    перестанут появляться новые id.
+    """
     if not org_id:
         return set()
     from app.models.organization import Organization
-    org = await db.get(Organization, org_id)
-    if not org:
+
+    contour: set[int] = set()
+    frontier: set[int] = {int(org_id)}
+
+    for _ in range(5):
+        if not frontier:
+            break
+        new_ids: set[int] = set()
+        for oid in frontier:
+            org = await db.get(Organization, oid)
+            if not org:
+                continue
+            root_id = int(org.root_org_id or org.id)
+            new_ids.add(root_id)
+            tree_ids = (await db.execute(
+                select(Organization.id).where(Organization.root_org_id == root_id)
+            )).scalars().all()
+            new_ids.update(int(x) for x in tree_ids)
+            if org.owner_user_id:
+                owner_ids = (await db.execute(
+                    select(Organization.id).where(Organization.owner_user_id == org.owner_user_id)
+                )).scalars().all()
+                new_ids.update(int(x) for x in owner_ids)
+        frontier = new_ids - contour
+        contour.update(new_ids)
+
+    contour.add(int(org_id))
+    return contour
+
+
+async def get_all_orgs_access_org_ids(
+    user: User,
+    db: AsyncSession,
+    *,
+    uoa_org_ids: Optional[set[int]] = None,
+    managed_org_ids: Optional[set[int]] = None,
+) -> set[int]:
+    """Множество org_id, доступных пользователю через users.all_orgs_access.
+
+    Единственная реализация: вызывается и в jwt.get_current_user (кэш
+    _all_orgs_access_org_ids на логине — передаёт уже посчитанные
+    uoa_org_ids/managed_org_ids, чтобы не дублировать запросы), и в
+    permissions.py при массовом применении override сразу на все орг охвата
+    (Владелец 2026-09-01, п.4: «должна быть настройка прав по всем
+    организациям сразу»). Без флага или для SaaS-ролей — пустое множество.
+
+    anchor-орги (org_id, откуда считаем контур): primary org_id ∪ UOA-орги
+    ∪ управляемые орг — те же якоря, что и membership/полномочия пользователя
+    (иначе флаг бесполезен для UOA-only сотрудника без users.org_id, Модель A).
+    """
+    if not getattr(user, 'all_orgs_access', False) or user.role in ('superadmin', 'account_owner'):
         return set()
-    root_id = int(org.root_org_id or org.id)
-    kid_ids = (await db.execute(
-        select(Organization.id).where(Organization.root_org_id == root_id)
-    )).scalars().all()
-    return {root_id, *(int(x) for x in kid_ids)}
+
+    if uoa_org_ids is None:
+        from app.models.user_org_access import UserOrgAccess
+        uoa_rows = (await db.execute(
+            select(UserOrgAccess.org_id).where(UserOrgAccess.user_id == user.id)
+        )).scalars().all()
+        uoa_org_ids = {int(x) for x in uoa_rows if x}
+    if managed_org_ids is None:
+        from app.models.manager_organization import ManagerOrganization
+        mo_rows = (await db.execute(
+            select(ManagerOrganization.org_id).where(
+                ManagerOrganization.manager_user_id == user.id
+            )
+        )).scalars().all()
+        managed_org_ids = {int(x) for x in mo_rows if x}
+
+    anchor_org_ids: set[int] = set(uoa_org_ids) | set(managed_org_ids)
+    if user.org_id:
+        anchor_org_ids.add(int(user.org_id))
+
+    all_ids: set[int] = set()
+    for anchor in anchor_org_ids:
+        all_ids |= await compute_account_contour_org_ids(db, anchor)
+    return all_ids
 
 
 async def get_account_contour_org_ids(user: User, db: AsyncSession) -> set[int]:

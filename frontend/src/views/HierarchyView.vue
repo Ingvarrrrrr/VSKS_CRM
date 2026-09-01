@@ -43,7 +43,7 @@
       <v-btn size="small" variant="tonal" color="blue" prepend-icon="mdi-account-plus" @click="emit('create-user')" class="ml-2">
         Добавить сотрудника
       </v-btn>
-      <v-btn v-if="isSuperadmin || isAccountOwner" size="small" variant="tonal" color="purple" prepend-icon="mdi-domain" @click="newOrgDialog.show = true" class="ml-2">
+      <v-btn v-if="isSuperadmin || isAccountOwner" size="small" variant="tonal" color="purple" prepend-icon="mdi-domain" @click="openNewOrgDialog" class="ml-2">
         Организация
       </v-btn>
       <v-spacer />
@@ -214,7 +214,7 @@
             <div v-if="!userInfoDialog.orgs.length" class="text-medium-emphasis">Нет данных об организациях</div>
             <div v-for="o in userInfoDialog.orgs" :key="o.org_id" class="mb-3 pa-3 rounded" style="background:rgba(0,0,0,0.03)">
               <div class="d-flex align-center gap-2 mb-2">
-                <v-chip size="small" :color="o.is_primary ? 'primary' : 'grey'" variant="tonal">{{ o.org_name || `Орг #${o.org_id}` }}</v-chip>
+                <v-chip v-if="o.org_name" size="small" :color="o.is_primary ? 'primary' : 'grey'" variant="tonal">{{ o.org_name }}</v-chip>
                 <v-chip v-if="o.is_primary" size="x-small" color="blue" variant="flat">основная</v-chip>
               </div>
               <v-row dense>
@@ -432,7 +432,7 @@
           />
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
-          <v-btn variant="text" color="primary" prepend-icon="mdi-account-plus" @click="addMemberDialog.show = false; emit('create-user')">
+          <v-btn variant="text" color="primary" prepend-icon="mdi-account-plus" @click="onCreateFromAddMember">
             Создать нового
           </v-btn>
           <v-spacer />
@@ -584,6 +584,22 @@
           Новая организация
         </v-card-title>
         <v-card-text class="pa-4 pt-3" style="max-height:75vh">
+          <!-- 2026-09-01: суперадмин один вправе выбрать, в какой АККАУНТ уходит
+               новая организация — иначе она рискует остаться «ничейной» (см. баг
+               с региональными отделениями ВСКС). account_owner ничего не видит:
+               аккаунт и так его собственный. -->
+          <v-select
+            v-if="isSuperadmin"
+            v-model="newOrgAccountId"
+            :items="newOrgAccountOptions"
+            item-title="name" item-value="id"
+            label="Аккаунт (головная организация)"
+            hint="Куда привязать новую организацию. Не выбрано — уйдёт в ваш собственный аккаунт."
+            persistent-hint
+            clearable
+            variant="outlined" density="compact" class="mb-4"
+            prepend-inner-icon="mdi-domain"
+          />
           <v-autocomplete
             v-model="newOrgContractorId"
             :items="newOrgContractors"
@@ -696,7 +712,17 @@ import {
 } from '@vue-flow/core'
 
 const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
-const emit = defineEmits<{ 'edit-user': [id: number]; 'edit-dept': [id: number]; 'create-user': []; 'data-changed': [] }>()
+const emit = defineEmits<{
+  'edit-user': [id: number]
+  'edit-dept': [id: number]
+  // Владелец, 2026-09-01: «плюсик в отделе» обязан передать контекст (org_id +
+  // название отдела), иначе форма создания сотрудника открывается пустой и
+  // орг/отдел приходится проставлять руками. Опционален: кнопка в шапке (без
+  // выбранного отдела) по-прежнему шлёт без контекста — там объективно нечего
+  // передать (общий граф, ни одна орг/отдел не выбраны).
+  'create-user': [ctx?: { orgId?: number; departmentName?: string }]
+  'data-changed': []
+}>()
 
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
@@ -796,6 +822,19 @@ const isAccountOwner = localStorage.getItem('user_role') === 'account_owner'
 
 const newDeptDialog = ref({ show: false, name: '', orgId: null as number | null })
 const newOrgDialog = ref({ show: false, name: '', full_name: '', inn: '', kpp: '', ogrn: '', address: '', signatory_last_name: '', signatory_first_name: '', signatory_middle_name: '', signatory_position: '', loading: false })
+// 2026-09-01: аккаунт (головная организация) для новой org — только superadmin,
+// см. app/services/org_account_resolution.py на бэкенде.
+const newOrgAccountId = ref<number | null>(null)
+const newOrgAccountOptions = ref<{ id: number; name: string }[]>([])
+async function openNewOrgDialog() {
+  newOrgDialog.value.show = true
+  if (!isSuperadmin) return
+  try {
+    newOrgAccountOptions.value = await apiFetch<{ id: number; name: string }[]>('/organizations/accounts')
+  } catch {
+    newOrgAccountOptions.value = []
+  }
+}
 const newOrgEgrulLoading = ref(false)
 const newOrgEgrulMessage = ref('')
 const newOrgEgrulMessageType = ref<'success' | 'info' | 'error'>('info')
@@ -2192,6 +2231,19 @@ function openAddMemberDialog(deptId: number) {
   addMemberSelectedId.value = null
 }
 
+// Владелец, 2026-09-01: «Создать нового» из диалога «добавить в отдел» обязан
+// передать орг/отдел этого диалога дальше в форму создания сотрудника —
+// раньше уходил голый emit('create-user') без контекста, и оба поля
+// оставались пустыми, хотя отдел (и его орг) уже выбраны кликом по «+».
+function onCreateFromAddMember() {
+  const deptId = addMemberDialog.value.deptId
+  const dept = deptId != null
+    ? _lastGraphData.value?.departments.find(d => d.id === deptId)
+    : null
+  addMemberDialog.value.show = false
+  emit('create-user', dept ? { orgId: dept.org_id, departmentName: dept.name } : undefined)
+}
+
 async function confirmAddMember() {
   const { deptId } = addMemberDialog.value
   const userId = addMemberSelectedId.value
@@ -2229,6 +2281,7 @@ async function createNewOrg() {
       signatory_middle_name: d.signatory_middle_name.trim() || null,
       signatory_position: d.signatory_position.trim() || null,
       contractor_id: newOrgContractorId.value || null,
+      root_org_id: isSuperadmin ? (newOrgAccountId.value || null) : null,
     }
     await apiFetch('/organizations/', { method: 'POST', body })
     showSnack(`Организация "${name}" создана`)
@@ -2236,6 +2289,7 @@ async function createNewOrg() {
     newOrgContractorId.value = null
     newOrgContractors.value = []
     newOrgEgrulMessage.value = ''
+    newOrgAccountId.value = null
     await loadGraph()
   } catch (e: any) {
     showSnack(e?.message || 'Ошибка создания организации', 'error')

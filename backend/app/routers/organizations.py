@@ -203,6 +203,23 @@ async def my_organizations(
     return result
 
 
+@router.get("/api/organizations/accounts")
+async def list_accounts(
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_superadmin()),
+):
+    """2026-09-01: список аккаунтов (головных организаций, root_org_id IS NULL)
+    для выпадающего списка «Аккаунт» в форме создания организации суперадмином —
+    см. app/services/org_account_resolution.py. Только superadmin: обычный
+    account_owner создаёт org исключительно в своём контуре, без выбора."""
+    roots = (await db.execute(
+        select(Organization.id, Organization.name)
+        .where(Organization.root_org_id.is_(None))
+        .order_by(Organization.name)
+    )).all()
+    return [{"id": r.id, "name": r.name} for r in roots]
+
+
 @router.get("/api/organizations/assignable", response_model=List[OrganizationOut])
 async def assignable_organizations(
     db: AsyncSession = Depends(get_db),
@@ -269,43 +286,34 @@ async def create_organization(
             data.signatory_last_name, data.signatory_first_name, data.signatory_middle_name
         ) or data.signatory
 
-    if current_user.role == 'account_owner':
-        org = Organization(
-            name=data.name,
-            full_name=data.full_name,
-            inn=data.inn,
-            kpp=data.kpp,
-            ogrn=data.ogrn,
-            address=data.address,
-            signatory=_org_signatory,
-            signatory_position=data.signatory_position,
-            signatory_last_name=data.signatory_last_name,
-            signatory_first_name=data.signatory_first_name,
-            signatory_middle_name=data.signatory_middle_name,
-            is_active=True,
-            root_org_id=current_user.org_id,
-            owner_user_id=current_user.id,
-            contractor_id=data.contractor_id,
-            color=data.color,
-        )
-    else:
-        # superadmin — standalone org
-        org = Organization(
-            name=data.name,
-            full_name=data.full_name,
-            inn=data.inn,
-            kpp=data.kpp,
-            ogrn=data.ogrn,
-            address=data.address,
-            signatory=_org_signatory,
-            signatory_position=data.signatory_position,
-            signatory_last_name=data.signatory_last_name,
-            signatory_first_name=data.signatory_first_name,
-            signatory_middle_name=data.signatory_middle_name,
-            is_active=True,
-            contractor_id=data.contractor_id,
-            color=data.color,
-        )
+    # 2026-09-01: организация не может остаться без аккаунта. Единственный,
+    # кто вправе явно выбрать ЧУЖОЙ аккаунт для новой org — superadmin (форма
+    # даёт выпадающий список головных организаций); account_owner всегда
+    # привязывается к своему контуру, даже если что-то передал в
+    # data.root_org_id — иначе он мог бы привязать организацию к чужому
+    # аккаунту. См. app/services/org_account_resolution.py.
+    from app.services.org_account_resolution import resolve_new_org_root_id
+    _explicit_root_org_id = data.root_org_id if current_user.role == 'superadmin' else None
+    _root_org_id = await resolve_new_org_root_id(db, current_user.org_id, _explicit_root_org_id)
+
+    org = Organization(
+        name=data.name,
+        full_name=data.full_name,
+        inn=data.inn,
+        kpp=data.kpp,
+        ogrn=data.ogrn,
+        address=data.address,
+        signatory=_org_signatory,
+        signatory_position=data.signatory_position,
+        signatory_last_name=data.signatory_last_name,
+        signatory_first_name=data.signatory_first_name,
+        signatory_middle_name=data.signatory_middle_name,
+        is_active=True,
+        root_org_id=_root_org_id,
+        owner_user_id=current_user.id if current_user.role == 'account_owner' else None,
+        contractor_id=data.contractor_id,
+        color=data.color,
+    )
     db.add(org)
     await db.flush()  # get org.id so we can link a new Contractor back
     # Auto-link to Contractor by INN (or create minimal Contractor if missing)

@@ -14,6 +14,7 @@
     <v-text-field
       v-if="!active"
       :model-value="displayName"
+      :title="displayName || undefined"
       readonly
       density="compact"
       variant="outlined"
@@ -50,9 +51,16 @@
       @update:model-value="onSelect"
     >
       <template #selection="{ item: it }">
-        <span style="white-space:normal;word-break:break-word;line-height:1.3;font-size:12px">
-          {{ it?.raw?.name ?? itemName }}
-        </span>
+        <!-- 2026-09-01 (владелец, диалог «Добавить плановую позицию»): длинное
+             название заставляло эту строку выпускать текст за границы компактного
+             однострочного поля (white-space:normal без учёта фиксированной высоты
+             v-field), а поле при этом не расширялось. Однострочное усечение
+             многоточием ВНУТРИ поля + title для полного текста по наведению. -->
+        <span
+          class="d-block"
+          :title="it?.raw?.name ?? itemName"
+          style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;line-height:1.3;font-size:12px"
+        >{{ it?.raw?.name ?? itemName }}</span>
       </template>
       <template #item="{ item: it, props: ip }">
         <v-list-item v-bind="ip" :title="undefined">
@@ -167,7 +175,7 @@ const searchText = ref(props.itemName || '')
 // shown instead. Once activated for a row it stays active for the session — that
 // is intentional and keeps the logic simple while avoiding N mounted autocompletes.
 const active = ref(false)
-const autocompleteRef = ref<{ focus?: () => void } | null>(null)
+const autocompleteRef = ref<{ focus?: () => void; blur?: () => void } | null>(null)
 
 // Read-only display text for the lightweight (inactive) state. For both bound
 // (productId != null) and unbound rows the visible label is the row's item_name.
@@ -289,6 +297,15 @@ function onSelect(val: MatchCandidate | null) {
     return
   }
   emit('pick', val)
+  // 2026-09-01 (владелец, диалог «Добавить плановую позицию»): пока поле в
+  // фокусе, Vuetify рисует ОДНОВРЕМЕННО наш #selection (усечённое название) И
+  // свой родной <input> со значением — полным, НЕусечённым названием — второй
+  // строкой под первой. Компактное поле фиксированной высоты эту вторую строку
+  // не учитывает, и она выпускает текст за нижнюю границу поля. Снятие фокуса
+  // сразу после выбора схлопывает поле обратно к одной строке (только наш
+  // усечённый #selection) — ровно то поведение, которого просят: имя целиком
+  // внутри поля, ничего не вылезает.
+  void nextTick(() => { autocompleteRef.value?.blur?.() })
 }
 
 function emitCreateNew() {

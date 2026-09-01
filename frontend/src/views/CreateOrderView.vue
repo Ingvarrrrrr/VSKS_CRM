@@ -4187,7 +4187,7 @@ import ValidationArrows from '@/components/ValidationArrows.vue'
 import MonthlyStagesDialog from '@/components/MonthlyStagesDialog.vue'
 import PaymentsBlock from '@/components/PaymentsBlock.vue'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
-import { filterFundedNodes } from '@/composables/useFeoLeaves'
+import { useFeoTreeNodes } from '@/composables/useFeoTreeNodes'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
 import { decodeQrFromImageFile } from '@/utils/qrDecode'
 import { PURCHASE_STATUS_ORDER, purchaseStatusColor } from '@/constants/purchaseStatus'
@@ -6992,36 +6992,18 @@ const feoSaveAttempted = ref(false)
 // более глубокие уровни ФЭО можно не выбирать (закупка привяжется к промежуточной категории).
 const feoSkipLast = ref(false)
 
-// Узлы без заданных сумм финансирования (ни у себя, ни у потомков) — не уровень ФЭО,
-// к выбору не предлагаются. Используем ту же чистую функцию, что и остальные ФЭО-пикеры
-// в проекте (PurchaseItemsEditor и т.п.) — см. composables/useFeoLeaves.filterFundedNodes.
-const feoTreeNodes = computed(() => {
-  if (!form.subsidy_id) return []
-  const raw = allFeoCategories.value
-    .filter(c => c.subsidy_id === form.subsidy_id)
-    .map(c => ({
-      id: c.id, name: c.name, parent_id: c.parent_id, level: c.level, is_leaf: false,
-      budget: c.budget ?? null,
-      planned_quantity: (c as any).planned_quantity ?? null,
-      planned_amount: (c as any).planned_amount ?? null,
-    }))
-  const funded = filterFundedNodes(raw)
-  const selId = form.feo_category_id
-  if (selId == null) return funded
-  const fundedIds = new Set(funded.map(n => n.id))
-  if (fundedIds.has(selId)) return funded
-  // Выбранная категория не профинансирована (например «Не определена», см. onFeoPickUnallocated,
-  // или ранее сохранённая закупка на неё ссылается) — всё равно показываем её путь целиком,
-  // иначе дерево не сможет отрисовать выбранный узел и поле окажется пустым.
-  const byId = new Map(raw.map(n => [n.id, n]))
-  const chain: typeof raw = []
-  let cur = byId.get(selId)
-  while (cur) {
-    if (!fundedIds.has(cur.id)) chain.push({ ...cur, is_leaf: cur.id === selId })
-    cur = cur.parent_id != null ? byId.get(cur.parent_id) : undefined
-  }
-  return chain.length ? [...funded, ...chain] : funded
-})
+// Узлы дерева ФЭО для шапки — теперь через GET /feo-categories/flat (тот же эндпоинт,
+// что и построчный выбор в PurchaseItemsEditor/useFeoLeaves), а не через allFeoCategories
+// (GET /feo-categories/, не отдающий has_budget/has_plan). Раньше шапка считала «есть план»
+// только по числовым planned_quantity/planned_amount самой категории и не видела план,
+// заданный плановыми позициями или ручной суммой (plan_source='manual_sum') — категория
+// пропадала из дерева выбора в шапке, хотя оставалась выбираемой построчно. См.
+// composables/useFeoTreeNodes.ts (переиспользует filterFundedNodes + цепочку-фолбэк,
+// перенесённую отсюда без изменения поведения).
+const { feoTreeNodes, rawNodes: feoTreeRawNodes } = useFeoTreeNodes(
+  computed(() => form.subsidy_id),
+  computed(() => form.feo_category_id),
+)
 const feoNodeById = computed(() => new Map(feoTreeNodes.value.map(n => [n.id, n])))
 const feoSelectedIsLeaf = computed(() => (form.feo_category_id != null ? (feoNodeById.value.get(form.feo_category_id)?.is_leaf ?? false) : false))
 const feoSelectedLevel = computed(() => (form.feo_category_id != null ? (feoNodeById.value.get(form.feo_category_id)?.level ?? null) : null))
@@ -7092,6 +7074,20 @@ const onFeoPickUnallocated = async (parentId: number | null) => {
         ...allFeoCategories.value,
         { id: cat.id, name: cat.name, parent_id: cat.parent_id ?? parentId ?? null, level: parent ? parent.level + 1 : 1, subsidy_id: sid },
       ]
+    }
+    // Тот же псевдо-узел — в rawNodes composable'а useFeoTreeNodes (источник дерева шапки,
+    // :nodes="feoTreeNodes"): без этого дерево не знает о только что созданной категории
+    // «Не определена» и не может отрисовать её как выбранную (поле окажется пустым, см.
+    // useFeoTreeNodes.ts).
+    if (!feoTreeRawNodes.value.find(n => n.id === cat.id)) {
+      const parentRawNode = parentId != null ? feoTreeRawNodes.value.find(n => n.id === parentId) : undefined
+      const newRawNode = { id: cat.id, name: cat.name, parent_id: cat.parent_id ?? parentId ?? null, level: parentRawNode ? parentRawNode.level + 1 : 1, is_leaf: true } as any
+      const updatedRaw = [...feoTreeRawNodes.value, newRawNode]
+      if (parentId != null) {
+        const pi = updatedRaw.findIndex(n => n.id === parentId)
+        if (pi !== -1) updatedRaw[pi] = { ...updatedRaw[pi], is_leaf: false }
+      }
+      feoTreeRawNodes.value = updatedRaw
     }
     form.feo_category_id = cat.id
   } catch (e: any) {

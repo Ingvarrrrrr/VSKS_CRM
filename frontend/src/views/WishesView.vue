@@ -1302,7 +1302,7 @@
                     <template v-if="wishForm.subsidy_id && !(canEditWishFeo && !isWishEditable)">
                       <FeoTreeSelect
                         v-model="wishFeoSelected"
-                        :nodes="wishFeoNodes"
+                        :nodes="wishFeoTreeNodes"
                         :leaves="wishFeoLeaves"
                         :plan-positions="wishPlannedResiduals"
                         :node-amounts="wishNodeAmounts"
@@ -1479,7 +1479,7 @@
                   </v-alert>
                   <FeoTreeSelect
                     v-model="wishFeoSelected"
-                    :nodes="wishFeoNodes"
+                    :nodes="wishFeoTreeNodes"
                     :leaves="wishFeoLeaves"
                     :plan-positions="wishPlannedResiduals"
                     :node-amounts="wishNodeAmounts"
@@ -2300,6 +2300,7 @@ import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
 import ContractorPicker from '@/components/ContractorPicker.vue'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import { useFeoLeaves } from '@/composables/useFeoLeaves'
+import { useFeoTreeNodes } from '@/composables/useFeoTreeNodes'
 import { useFeoNodeAmounts } from '@/composables/useFeoNodeAmounts'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
 import WishDistributionKanban from '@/components/WishDistributionKanban.vue'
@@ -3076,6 +3077,17 @@ const { feoLeaves: wishFeoLeaves, feoNodes: wishFeoNodes } = useFeoLeaves({
   subsidyId: computed(() => wishForm.value.subsidy_id),
 })
 
+// Узлы дерева ФЭО для шапочного FeoTreeSelect (строки ~1303/~1480) — тот же общий
+// composable, что и в CreateOrderView (см. composables/useFeoTreeNodes.ts): помимо
+// filterFundedNodes добавляет цепочку-фолбэк для уже выбранной, но не профинансированной
+// категории (wishFeoSelected), иначе дерево не может отрисовать выбранный узел и поле
+// окажется пустым. wishFeoNodes (выше) не трогаем — он используется в других местах
+// (wishFeoStale, collectFeoDescendantIds), где нужен именно строго профинансированный набор.
+const { feoTreeNodes: wishFeoTreeNodes, rawNodes: wishFeoTreeRawNodes } = useFeoTreeNodes(
+  computed(() => wishForm.value.subsidy_id),
+  computed(() => wishFeoSelected.value),
+)
+
 // Задача владельца 2026-08-06: остаток по КАЖДОМУ узлу дерева ФЭО в шапке заявки
 // (per-item таблица позиций считает свою карту сама внутри PurchaseItemsEditor).
 const { nodeAmounts: wishNodeAmounts } = useFeoNodeAmounts({
@@ -3501,6 +3513,20 @@ async function pickWishUnallocated(parentId: number | null) {
         if (pi !== -1) updated[pi] = { ...updated[pi], is_leaf: false }
       }
       wishFeoNodes.value = updated
+    }
+    // Тот же псевдо-узел — в rawNodes composable'а useFeoTreeNodes (источник шапочного
+    // FeoTreeSelect, :nodes="wishFeoTreeNodes"): без этого дерево не знает о только что
+    // созданной категории «Не определена» и не может отрисовать её как выбранную (селект
+    // окажется пустым, см. useFeoTreeNodes.ts).
+    if (!wishFeoTreeRawNodes.value.find(n => n.id === cat.id)) {
+      const parentRawNode = cat.parent_id != null ? wishFeoTreeRawNodes.value.find(n => n.id === cat.parent_id) : null
+      const newRawNode = { id: cat.id, name: cat.name, parent_id: cat.parent_id ?? null, level: parentRawNode ? parentRawNode.level + 1 : 1, is_leaf: true } as any
+      const updatedRaw = [...wishFeoTreeRawNodes.value, newRawNode]
+      if (cat.parent_id != null) {
+        const pi = updatedRaw.findIndex(n => n.id === cat.parent_id)
+        if (pi !== -1) updatedRaw[pi] = { ...updatedRaw[pi], is_leaf: false }
+      }
+      wishFeoTreeRawNodes.value = updatedRaw
     }
     wishFeoSelected.value = cat.id
   } catch (e: any) {

@@ -1102,6 +1102,30 @@ async def list_categories(
     return result.scalars().all()
 
 
+def _category_has_plan(cat, cats_with_plan_items: set) -> bool:
+    """Структурный признак «у категории задан план» — вынесен из get_feo_flat в чистую
+    функцию, чтобы покрыть тестом на подставных объектах (без БД/async), см.
+    tests/test_feo_has_plan.py. Три независимых источника плана (любой > 0 → True):
+    1) planned_quantity × planned_amount категории (обычный CRM-план);
+    2) активная FeoPlannedItem с amount > 0 под категорией (cats_with_plan_items —
+       предвычисленный набор id, см. вызывающий код);
+    3) plan_source == 'manual_sum' и manual_plan_amount > 0 (план введён одной суммой,
+       без количества/цены за единицу — см. FeoCategory.plan_source/manual_plan_amount).
+    """
+    from_quantity_amount = bool(
+        cat.planned_quantity is not None
+        and cat.planned_amount is not None
+        and float(cat.planned_quantity) * float(cat.planned_amount) > 0
+    )
+    from_planned_items = cat.id in cats_with_plan_items
+    from_manual_sum = bool(
+        cat.plan_source == "manual_sum"
+        and cat.manual_plan_amount is not None
+        and float(cat.manual_plan_amount) > 0
+    )
+    return from_quantity_amount or from_planned_items or from_manual_sum
+
+
 @router.get("/flat")
 async def get_feo_flat(
     subsidy_id: int = Query(...),
@@ -1121,10 +1145,11 @@ async def get_feo_flat(
     has_budget/has_plan — СТРУКТУРНЫЕ булевы признаки (НЕ денежные величины, НЕ гейтятся
     правом): has_budget истинен, если у узла задан собственный budget > 0; has_plan истинен,
     если planned_quantity × planned_amount > 0, ЛИБО (фолбэк — план переехал в записи
-    внутри категории) у узла есть активная FeoPlannedItem с amount > 0. Без этого фолбэка
+    внутри категории) у узла есть активная FeoPlannedItem с amount > 0, ЛИБО (план введён
+    одной суммой) plan_source == 'manual_sum' и manual_plan_amount > 0. Без этих фолбэков
     мигрированные категории-листья (planned_quantity/planned_amount категории пусты, план
-    введён плановыми позициями) пропадают из дерева выбора категории ФЭО в заявке/закупке
-    — к ним нельзя привязать закупку, хотя план реально есть. Фронт (useFeoLeaves.filterFundedNodes)
+    введён плановыми позициями либо ручной суммой) пропадают из дерева выбора категории ФЭО
+    в заявке/закупке — к ним нельзя привязать закупку, хотя план реально есть. Фронт (useFeoLeaves.filterFundedNodes)
     считает узел значимым по has_budget ИЛИ has_plan (с фолбэком на числовые budget/
     planned_quantity/planned_amount, если бэкенд старый) — иначе такие категории
     вырезались из дерева выбора, хотя реально существуют и используются (баг «категория
@@ -1188,14 +1213,7 @@ async def get_feo_flat(
             "planned_amount": (float(c.planned_amount) if c.planned_amount is not None else None) if can_view_leaf else None,
             # Структурные признаки — НЕ гейтятся правом, см. docstring выше.
             "has_budget": bool(c.budget is not None and float(c.budget) > 0),
-            "has_plan": bool(
-                (
-                    c.planned_quantity is not None
-                    and c.planned_amount is not None
-                    and float(c.planned_quantity) * float(c.planned_amount) > 0
-                )
-                or c.id in cats_with_plan_items
-            ),
+            "has_plan": _category_has_plan(c, cats_with_plan_items),
         }
         for c in all_cats
     ]

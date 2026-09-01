@@ -179,6 +179,7 @@ async def seed_drivers_from_xlsx(db, xlsx_path: Optional[str] = None) -> dict:
     from sqlalchemy import select
     from app.models.user import User
     from app.auth.jwt import hash_password
+    from app.services.fio import resolve_user_name_input
 
     ws = wb[sheet_name]
     created, updated, skipped = 0, 0, 0
@@ -222,6 +223,8 @@ async def seed_drivers_from_xlsx(db, xlsx_path: Optional[str] = None) -> dict:
             select(User).where(User.username == username)
         )).scalars().first()
 
+        row_last, row_first, row_middle, row_full = resolve_user_name_input(None, None, None, full_name)
+
         if existing:
             existing.fleet_role = 'driver'
             existing.can_drive = True
@@ -230,7 +233,10 @@ async def seed_drivers_from_xlsx(db, xlsx_path: Optional[str] = None) -> dict:
             existing.license_categories = str(categories) if categories else ''
             existing.license_issued_at = license_date
             existing.driver_tab_number = str(tab_num) if tab_num else ''
-            existing.full_name = full_name
+            existing.last_name = row_last
+            existing.first_name = row_first
+            existing.middle_name = row_middle
+            existing.full_name = row_full
             updated += 1
         else:
             user = User(
@@ -238,7 +244,10 @@ async def seed_drivers_from_xlsx(db, xlsx_path: Optional[str] = None) -> dict:
                 password_hash=hash_password('driver123'),  # дефолтный пароль — TODO сменить
                 role='employee',
                 fleet_role='driver',
-                full_name=full_name,
+                last_name=row_last,
+                first_name=row_first,
+                middle_name=row_middle,
+                full_name=row_full,
                 can_drive=True,
                 license_series=vu_series,
                 license_number=vu_number,

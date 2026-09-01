@@ -701,6 +701,8 @@ async def get_user_salary(
             "salary_amount": float(r.salary_amount) if r.salary_amount else None,
             "employment_percent": r.employment_percent,
             "hired_at": r.hired_at.isoformat() if r.hired_at else None,
+            "dept_assigned_at": r.dept_assigned_at.isoformat() if r.dept_assigned_at else None,
+            "position_assigned_at": r.position_assigned_at.isoformat() if r.position_assigned_at else None,
         }
         for r in rows
     ]
@@ -718,6 +720,8 @@ async def get_user_salary(
             "salary_amount": None,
             "employment_percent": None,
             "hired_at": None,
+            "dept_assigned_at": None,
+            "position_assigned_at": None,
         })
     return result
 
@@ -770,7 +774,10 @@ async def patch_user_org_membership_row(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_tab('staff')),
 ):
-    """Обновить поля конкретной строки user_organizations (position, salary_amount, employment_percent)."""
+    """Обновить поля конкретной строки user_organizations (position, salary_amount, employment_percent,
+    dept_assigned_at, position_assigned_at). hired_at — дата трудоустройства, ОБЩАЯ на пару
+    (user_id, org_id) — пишется во ВСЕ строки этой пары, а не только в row_id (владелец,
+    2026-09-01: «дата трудоустройства общая по организации»)."""
     row = await db.get(UserOrganization, row_id)
     if not row or row.user_id != uid:
         raise HTTPException(404, "Запись не найдена")
@@ -780,10 +787,26 @@ async def patch_user_org_membership_row(
         row.salary_amount = body["salary_amount"]
     if "employment_percent" in body:
         row.employment_percent = body["employment_percent"]
+    if "dept_assigned_at" in body:
+        from datetime import date as _date
+        v = body["dept_assigned_at"]
+        row.dept_assigned_at = _date.fromisoformat(v) if v else None
+    if "position_assigned_at" in body:
+        from datetime import date as _date
+        v = body["position_assigned_at"]
+        row.position_assigned_at = _date.fromisoformat(v) if v else None
     if "hired_at" in body:
         from datetime import datetime
         v = body["hired_at"]
-        row.hired_at = datetime.fromisoformat(v) if v else None
+        new_hired_at = datetime.fromisoformat(v) if v else None
+        await db.execute(
+            sa_update(UserOrganization)
+            .where(
+                UserOrganization.user_id == row.user_id,
+                UserOrganization.org_id == row.org_id,
+            )
+            .values(hired_at=new_hired_at)
+        )
     await db.commit()
     # Должность в членстве → head/deputy отдела (двусторонняя синхронизация)
     if "position" in body and row.dept_id:

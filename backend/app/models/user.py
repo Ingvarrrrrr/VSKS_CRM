@@ -9,7 +9,10 @@ class User(Base):
     username = Column(String(100), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
     role = Column(String(20), nullable=False, default="employee")  # superadmin/account_owner/manager/employee
-    full_name = Column(String(255))
+    full_name = Column(String(255))  # ПРОИЗВОДНОЕ поле: пересобирается из last/first/middle_name через compose_fio (app/services/fio.py). Руками не писать.
+    last_name = Column(String(100), nullable=True)    # Фамилия — источник истины
+    first_name = Column(String(100), nullable=True)   # Имя — источник истины
+    middle_name = Column(String(100), nullable=True)  # Отчество — источник истины, необязательно
     city = Column(String(100))
     department = Column(String(200), nullable=True)  # Отдел (единый источник правды)
     position = Column(String(200), nullable=True)    # Должность (единый источник правды)

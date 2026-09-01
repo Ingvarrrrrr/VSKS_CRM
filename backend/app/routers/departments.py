@@ -1,3 +1,4 @@
+from datetime import date
 from io import BytesIO
 from typing import List, Optional
 from urllib.parse import quote as _url_quote
@@ -58,6 +59,7 @@ class DepartmentOut(BaseModel):
 class MemberAdd(BaseModel):
     user_id: int
     position: Optional[str] = None
+    dept_assigned_at: Optional[date] = None  # дата назначения в отдел; по умолчанию — сегодня
 
 class MemberOut(BaseModel):
     id: int
@@ -66,6 +68,8 @@ class MemberOut(BaseModel):
     user_name: Optional[str] = None
     user_role: Optional[str] = None
     position: Optional[str] = None
+    dept_assigned_at: Optional[date] = None
+    position_assigned_at: Optional[date] = None
     class Config:
         from_attributes = True
 
@@ -329,6 +333,8 @@ async def list_members(
             user_name=(u.full_name or u.username) if u else None,
             user_role=u.role if u else None,
             position=r.position or (u.position if u else None),
+            dept_assigned_at=r.dept_assigned_at,
+            position_assigned_at=r.position_assigned_at,
         ))
     return out
 
@@ -355,19 +361,64 @@ async def add_member(
             UserOrganization.dept_id == dept_id,
         )
     )).scalar_one_or_none()
+    # Строка-заглушка «Без отдела» для этой же пары (user, org) — источник hired_at/
+    # позиции/ставки для новой dept-строки, и то, что нужно удалить после успешного
+    # назначения (иначе она продолжает висеть в карточке как «Без отдела», хотя
+    # человек уже определён в отдел — баг owner 2026-09-01).
+    null_row = (await db.execute(
+        select(UserOrganization).where(
+            UserOrganization.user_id == data.user_id,
+            UserOrganization.org_id == dept.org_id,
+            UserOrganization.dept_id.is_(None),
+        )
+    )).scalar_one_or_none()
+    assigned_date = data.dept_assigned_at or date.today()
     if uo_exact:
         # Row already correct — just sync position if needed
+        old_position = uo_exact.position
         if data.position:
             uo_exact.position = data.position
+            if data.position != old_position:
+                uo_exact.position_assigned_at = assigned_date
+        if uo_exact.dept_assigned_at is None:
+            uo_exact.dept_assigned_at = assigned_date
         await db.commit()
         m = uo_exact
     else:
-        # No row for this dept yet — insert a new one (multi-dept allowed)
+        # No row for this dept yet — insert a new one (multi-dept allowed).
+        # hired_at (дата трудоустройства) ОБЩАЯ на пару (user, org) — переносим её
+        # из заглушки/любой другой строки этой пары, а НЕ ставим now() (баг owner:
+        # дата трудоустройства подменялась датой назначения в отдел).
         new_pos = data.position or (user.position if user else None)
-        m = UserOrganization(user_id=data.user_id, org_id=dept.org_id, dept_id=dept_id, position=new_pos)
+        base_row = null_row or (await db.execute(
+            select(UserOrganization)
+            .where(
+                UserOrganization.user_id == data.user_id,
+                UserOrganization.org_id == dept.org_id,
+            )
+            .order_by(UserOrganization.id.asc())
+            .limit(1)
+        )).scalars().first()
+        kwargs = dict(user_id=data.user_id, org_id=dept.org_id, dept_id=dept_id, position=new_pos)
+        if base_row is not None and base_row.hired_at is not None:
+            kwargs["hired_at"] = base_row.hired_at
+        kwargs["dept_assigned_at"] = assigned_date
+        prior_position = base_row.position if base_row is not None else None
+        if new_pos and new_pos != prior_position:
+            kwargs["position_assigned_at"] = assigned_date
+        if base_row is not None:
+            if base_row.salary_amount is not None:
+                kwargs["salary_amount"] = base_row.salary_amount
+            if base_row.employment_percent is not None:
+                kwargs["employment_percent"] = base_row.employment_percent
+        m = UserOrganization(**kwargs)
         db.add(m)
         await db.commit()
         await db.refresh(m)
+    # Заглушка «Без отдела» больше не нужна — человек определён в отдел.
+    if null_row is not None and null_row.id != m.id:
+        await db.delete(null_row)
+        await db.commit()
     # Должность члена → head/deputy отдела (двусторонняя синхронизация)
     from app.services.dept_role_sync import sync_head_from_position
     await sync_head_from_position(db, dept, data.user_id, m.position)
@@ -394,6 +445,8 @@ async def add_member(
         user_name=(u.full_name or u.username) if u else None,
         user_role=u.role if u else None,
         position=m.position or (u.position if u else None),
+        dept_assigned_at=m.dept_assigned_at,
+        position_assigned_at=m.position_assigned_at,
     )
 
 
@@ -479,10 +532,24 @@ async def remove_member(
             uo.position = None
 
     for uo in uo_rows:
-        # Check whether a dept_id=NULL row for (user, org) already exists.
-        # If it does, a simple SET dept_id=NULL would violate ux_user_org_dept —
-        # instead delete this redundant row (org membership preserved by the
-        # existing NULL-row with its salary/position data).
+        # Multi-dept: если у пары (user, org) остаётся ЕЩЁ хотя бы один отдел (не
+        # считая текущей строки) — человек не выпадает из организации, эта строка
+        # просто больше не нужна. Заглушку dept_id=NULL заводить НЕ надо — иначе
+        # ровно тот же баг, который эта миграция/фича лечит (лишняя «Без отдела»).
+        other_dept = (await db.execute(
+            select(UserOrganization.id).where(
+                UserOrganization.user_id == uo.user_id,
+                UserOrganization.org_id == uo.org_id,
+                UserOrganization.dept_id.isnot(None),
+                UserOrganization.id != uo.id,
+            )
+        )).first()
+        if other_dept is not None:
+            await db.delete(uo)
+            continue
+        # Это был последний отдел пары (user, org) — превращаем строку в «Без
+        # отдела», сохранив hired_at/должность/ставку (иначе человек выпадает
+        # из организации целиком).
         conflict = (await db.execute(
             select(UserOrganization).where(
                 UserOrganization.user_id == uo.user_id,
@@ -492,9 +559,13 @@ async def remove_member(
             )
         )).scalar_one_or_none()
         if conflict is not None:
+            # Заглушка уже существует (не должно происходить в норме, но на
+            # всякий случай) — удаляем дубль, членство сохранено в заглушке.
             await db.delete(uo)
         else:
             uo.dept_id = None
+            uo.dept_assigned_at = None
+            uo.position_assigned_at = None
 
     await db.commit()
     # Синк карточки: если поле «Отдел» указывало на снимаемый отдел —
@@ -875,7 +946,29 @@ async def import_departments_excel(
             )
         )).scalar_one_or_none()
         if not existing_m:
-            db.add(UserOrganization(user_id=user.id, org_id=dept.org_id, dept_id=dept.id, position=position))
+            # Заглушка «Без отдела» для этой же пары (user, org) — переносим её
+            # hired_at/ставку в новую dept-строку и удаляем саму заглушку (та же
+            # болезнь, что и в add_member: иначе остаётся висеть «Без отдела»).
+            null_row = (await db.execute(
+                select(UserOrganization).where(
+                    UserOrganization.user_id == user.id,
+                    UserOrganization.org_id == dept.org_id,
+                    UserOrganization.dept_id.is_(None),
+                )
+            )).scalar_one_or_none()
+            new_uo = UserOrganization(
+                user_id=user.id, org_id=dept.org_id, dept_id=dept.id, position=position,
+                dept_assigned_at=date.today(),
+            )
+            if null_row is not None:
+                if null_row.hired_at is not None:
+                    new_uo.hired_at = null_row.hired_at
+                if null_row.salary_amount is not None:
+                    new_uo.salary_amount = null_row.salary_amount
+                if null_row.employment_percent is not None:
+                    new_uo.employment_percent = null_row.employment_percent
+                await db.delete(null_row)
+            db.add(new_uo)
             created_members += 1
         elif position:
             existing_m.position = position

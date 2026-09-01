@@ -499,8 +499,12 @@
         <v-card-title class="pa-4">Добавить сотрудника</v-card-title>
         <v-card-text class="pa-4 pt-0">
           <v-form ref="createFormRef">
-          <v-text-field v-model="createDialog.full_name" label="ФИО *" variant="outlined" density="compact" class="mb-3"
-            prepend-inner-icon="mdi-account" :rules="[v => !!v || 'ФИО обязательно']" />
+          <v-text-field v-model="createDialog.last_name" label="Фамилия *" variant="outlined" density="compact" class="mb-3"
+            prepend-inner-icon="mdi-account" :rules="[v => !!v || 'Фамилия обязательна']" />
+          <v-text-field v-model="createDialog.first_name" label="Имя *" variant="outlined" density="compact" class="mb-3"
+            prepend-inner-icon="mdi-account" :rules="[v => !!v || 'Имя обязательно']" />
+          <v-text-field v-model="createDialog.middle_name" label="Отчество" variant="outlined" density="compact" class="mb-3"
+            prepend-inner-icon="mdi-account" hint="Необязательно — не у всех есть отчество" persistent-hint />
           <v-text-field v-model="createDialog.email" label="Email *" variant="outlined" density="compact" class="mb-3"
             hint="Используется для входа в систему" persistent-hint prepend-inner-icon="mdi-email-outline"
             type="email" :rules="[v => !!v || 'Email обязателен', v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) || 'Введите корректный email (например, ivanov@company.ru)']" />
@@ -597,7 +601,12 @@
           <ProfilePhotoUpload ref="staffPhotoUploadRef" format="rectangle" :user-id="editDialog.userId || undefined" @saved="onStaffPhotoSaved" />
           <v-text-field v-model="editDialog.email" label="Email (логин)" variant="outlined" density="compact" class="mb-3"
             prepend-inner-icon="mdi-email-outline" />
-          <v-text-field v-model="editDialog.full_name" label="ФИО" variant="outlined" density="compact" class="mb-3" />
+          <v-text-field v-model="editDialog.last_name" label="Фамилия *" variant="outlined" density="compact" class="mb-3"
+            :rules="[v => !!v || 'Фамилия обязательна']" />
+          <v-text-field v-model="editDialog.first_name" label="Имя *" variant="outlined" density="compact" class="mb-3"
+            :rules="[v => !!v || 'Имя обязательно']" />
+          <v-text-field v-model="editDialog.middle_name" label="Отчество" variant="outlined" density="compact" class="mb-3"
+            hint="Необязательно — не у всех есть отчество" persistent-hint />
           <v-select v-model="editDialog.role" :items="roleItems" item-title="label" item-value="value"
             label="Роль" variant="outlined" density="compact" class="mb-3" />
           <v-select v-model="editDialog.superior_user_id" :items="userDropdownItems" item-title="text" item-value="value"
@@ -670,9 +679,21 @@
               </div>
               <!-- Группировка по org: несколько отделов одной организации отображаются под одним заголовком -->
               <div v-for="group in groupedOrgEntries" :key="group.org_id" class="mb-4">
-                <div class="text-caption font-weight-medium mb-1 px-1" style="color:#7b1fa2">
+                <div class="text-caption font-weight-medium mb-1 px-1 d-flex align-center" style="color:#7b1fa2">
                   <v-icon size="12" class="mr-1">mdi-domain</v-icon>{{ group.org_name }}
                 </div>
+                <!-- Дата трудоустройства — ОБЩАЯ на организацию, не на отдел; правка уходит на все строки этой org -->
+                <v-text-field
+                  :model-value="group.hired_at"
+                  @update:model-value="v => setOrgHiredAt(group.org_id, v)"
+                  label="Дата трудоустройства"
+                  variant="outlined"
+                  density="compact"
+                  type="date"
+                  hide-details
+                  class="mb-2"
+                  prepend-inner-icon="mdi-calendar-account"
+                />
                 <div v-for="(entry, ei) in group.entries" :key="entry.id ?? 'new-' + ei" class="mb-2 pa-3 rounded-lg" :style="{ background: 'rgba(0,0,0,0.04)', position: 'relative', borderLeft: '4px solid ' + orgCssColor(group.org_id) }">
                   <div class="d-flex align-center mb-2">
                     <v-chip size="small" color="purple" variant="tonal">{{ entry.dept_name || 'Без отдела' }}</v-chip>
@@ -721,7 +742,10 @@
                       <v-text-field v-model.number="entry.employment_percent" label="% ставки" variant="outlined" density="compact" type="number" hide-details />
                     </v-col>
                     <v-col cols="6">
-                      <v-text-field v-model="entry.hired_at" label="Дата трудоустройства" variant="outlined" density="compact" type="date" hide-details />
+                      <v-text-field v-model="entry.dept_assigned_at" label="Дата назначения в отдел" variant="outlined" density="compact" type="date" hide-details :disabled="!entry.dept_id" />
+                    </v-col>
+                    <v-col cols="6">
+                      <v-text-field v-model="entry.position_assigned_at" label="Дата назначения на должность" variant="outlined" density="compact" type="date" hide-details />
                     </v-col>
                   </v-row>
                 </div>
@@ -921,7 +945,9 @@
           </v-btn>
           <v-spacer />
           <v-btn variant="text" @click="editDialog.show = false">Отмена</v-btn>
-          <v-btn color="primary" variant="flat" :loading="editDialog.saving" @click="saveEditUser">Сохранить</v-btn>
+          <v-btn color="primary" variant="flat" :loading="editDialog.saving"
+            :disabled="!editDialog.last_name || !editDialog.first_name"
+            @click="saveEditUser">Сохранить</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -1147,8 +1173,12 @@
 
           <!-- New user (inline creation) -->
           <template v-if="addMemberMode === 'new'">
-            <v-text-field v-model="newMemberForm.full_name" label="ФИО *" variant="outlined" density="compact" class="mb-2"
+            <v-text-field v-model="newMemberForm.last_name" label="Фамилия *" variant="outlined" density="compact" class="mb-2"
               prepend-inner-icon="mdi-account" />
+            <v-text-field v-model="newMemberForm.first_name" label="Имя *" variant="outlined" density="compact" class="mb-2"
+              prepend-inner-icon="mdi-account" />
+            <v-text-field v-model="newMemberForm.middle_name" label="Отчество" variant="outlined" density="compact" class="mb-2"
+              prepend-inner-icon="mdi-account" hint="Необязательно" persistent-hint />
             <v-text-field v-model="newMemberForm.email" label="Email *" variant="outlined" density="compact" class="mb-2"
               type="email" prepend-inner-icon="mdi-email-outline"
               :rules="[v => !!v || 'Обязательное поле', v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) || 'Введите корректный email (например, ivanov@company.ru)']" />
@@ -1176,7 +1206,7 @@
           <v-btn variant="text" @click="addMemberDialog = false">Отмена</v-btn>
           <v-btn v-if="addMemberMode === 'existing'" color="primary" :disabled="!memberForm.user_id" @click="addMember">Добавить</v-btn>
           <v-btn v-else color="primary"
-            :disabled="!newMemberForm.email || !newMemberForm.password || !newMemberForm.full_name || newMemberForm.password.length < 6 || newMemberForm.password !== newMemberForm.password_confirm || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newMemberForm.email)"
+            :disabled="!newMemberForm.email || !newMemberForm.password || !newMemberForm.last_name || !newMemberForm.first_name || newMemberForm.password.length < 6 || newMemberForm.password !== newMemberForm.password_confirm || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newMemberForm.email)"
             :loading="newMemberSaving" @click="createAndAddMember">Создать и добавить</v-btn>
         </v-card-actions>
       </v-card>
@@ -1394,6 +1424,9 @@ interface UserItem {
   id: number
   username: string
   full_name?: string
+  last_name?: string
+  first_name?: string
+  middle_name?: string
   role: string
   city?: string
   department?: string
@@ -1647,7 +1680,7 @@ async function onUserExpanded(expanded: number[]) {
 }
 
 const createDialog = reactive({
-  show: false, full_name: '', email: '', password: '', password_confirm: '',
+  show: false, last_name: '', first_name: '', middle_name: '', email: '', password: '', password_confirm: '',
   role: 'employee', city: '', department: '', position: '', phone: '', work_phone: '', telegram_id: '', avatar: '', saving: false,
   org_id: null as number | null, subsidy_id: null as number | null,
 })
@@ -1666,7 +1699,7 @@ const canPickOrg = computed(() =>
 )
 
 const editDialog = reactive({
-  show: false, userId: 0, username: '', full_name: '', role: 'employee', city: '',
+  show: false, userId: 0, username: '', full_name: '', last_name: '', first_name: '', middle_name: '', role: 'employee', city: '',
   department: '', position: '', phone: '', work_phone: '', email: '', password: '', avatar: '', saving: false, inn: '',
   telegram_id: '', max_chat_id: '',
   profile_photo: '',
@@ -1746,7 +1779,7 @@ const userImportDialog = reactive({
 })
 
 // All org entries from salary API (one per dept membership)
-const allOrgEntries = ref<{ id: number | null; dept_id: number | null; org_id: number; org_name: string; dept_name: string; position: string; salary_amount: number | null; employment_percent: number | null; hired_at: string | null; _idx: number }[]>([])
+const allOrgEntries = ref<{ id: number | null; dept_id: number | null; org_id: number; org_name: string; dept_name: string; position: string; salary_amount: number | null; employment_percent: number | null; hired_at: string | null; dept_assigned_at: string | null; position_assigned_at: string | null; _idx: number }[]>([])
 // Pre-load dicts whenever allOrgEntries changes (new orgs may appear in editDialog)
 watch(
   () => allOrgEntries.value.map(e => e.org_id),
@@ -1774,7 +1807,9 @@ function dedupOrgAccess(entries: typeof allOrgEntries.value) {
   return Array.from(map.values())
 }
 
-// Группировка allOrgEntries по org_id — для отображения нескольких отделов одной организации
+// Группировка allOrgEntries по org_id — для отображения нескольких отделов одной организации.
+// «Дата трудоустройства» — общая на организацию (владелец, 2026-09-01): берём её один раз из
+// первой строки группы, а не показываем/редактируем на каждой dept-строке отдельно.
 const groupedOrgEntries = computed(() => {
   const groups: Record<number, typeof allOrgEntries.value> = {}
   for (const e of allOrgEntries.value) {
@@ -1785,9 +1820,20 @@ const groupedOrgEntries = computed(() => {
   return Object.entries(groups).map(([org_id, entries]) => ({
     org_id: Number(org_id),
     org_name: entries[0]?.org_name || '',
+    hired_at: entries.find(e => e.hired_at)?.hired_at || null,
     entries,
   }))
 })
+
+// Правка общей на организацию «Даты трудоустройства» — уходит на ВСЕ строки этой организации
+// (бэкенд PATCH /users/{uid}/org-memberships/{id} тоже распространяет hired_at на всю пару
+// (user, org), это дублирующее локальное обновление — чтобы поле в UI сразу показывало новое
+// значение на всех dept-строках без перезагрузки).
+function setOrgHiredAt(org_id: number, value: string | null) {
+  for (const e of allOrgEntries.value) {
+    if (Number(e.org_id) === Number(org_id)) e.hired_at = value || null
+  }
+}
 
 // Список отделов для данной org (из deptTree, уже загруженного)
 function deptsForOrg(org_id: number) {
@@ -1799,6 +1845,7 @@ function deptsForOrg(org_id: number) {
 // Кнопка «+ ещё отдел в этой организации»: добавляет новую строку is_new=true
 function addDeptToOrg(org_id: number) {
   const org_name = allOrgEntries.value.find(e => e.org_id === org_id)?.org_name || ''
+  const sharedHiredAt = allOrgEntries.value.find(e => e.org_id === org_id && e.hired_at)?.hired_at || null
   allOrgEntries.value.push({
     id: null,
     dept_id: null,
@@ -1808,7 +1855,9 @@ function addDeptToOrg(org_id: number) {
     position: '',
     salary_amount: null,
     employment_percent: 100,
-    hired_at: null,
+    hired_at: sharedHiredAt,
+    dept_assigned_at: null,
+    position_assigned_at: null,
     _idx: allOrgEntries.value.length,
     is_new: true,
   } as any)
@@ -1834,6 +1883,8 @@ watch(
           salary_amount: null,
           employment_percent: 100,
           hired_at: null,
+          dept_assigned_at: null,
+          position_assigned_at: null,
           _idx: allOrgEntries.value.length,
         })
       }
@@ -1894,7 +1945,7 @@ const deptForm = ref({ name: '', subsidy_id: null as number | null, head_user_id
 const addMemberDialog = ref(false)
 const addMemberMode = ref<'existing' | 'new'>('existing')
 const memberForm = ref({ user_id: null as number | null, position: '' })
-const newMemberForm = ref({ email: '', full_name: '', password: '', password_confirm: '', phone: '', role: 'employee', position: '', city: '' })
+const newMemberForm = ref({ email: '', last_name: '', first_name: '', middle_name: '', password: '', password_confirm: '', phone: '', role: 'employee', position: '', city: '' })
 const newMemberSaving = ref(false)
 
 // Edit member position dialog
@@ -2074,7 +2125,9 @@ async function onHierarchyDataChanged() {
 }
 
 function openCreateUser() {
-  createDialog.full_name = ''
+  createDialog.last_name = ''
+  createDialog.first_name = ''
+  createDialog.middle_name = ''
   createDialog.email = ''
   createDialog.password = ''
   createDialog.password_confirm = ''
@@ -2127,7 +2180,9 @@ async function saveUser() {
       method: 'POST',
       body: {
         email: createDialog.email,
-        full_name: createDialog.full_name || null,
+        last_name: createDialog.last_name || null,
+        first_name: createDialog.first_name || null,
+        middle_name: createDialog.middle_name || null,
         password: createDialog.password,
         role: createDialog.role,
         city: createDialog.city || null,
@@ -2149,7 +2204,7 @@ async function saveUser() {
     }
     hierarchyRef.value?.refresh()
   } catch (e: any) {
-    showSnack(e.message || 'Ошибка', 'error')
+    showSnack(e?.payload?.detail || e?.payload?.message || e?.message || 'Ошибка', 'error')
   } finally {
     createDialog.saving = false
   }
@@ -2160,6 +2215,9 @@ async function openEditUser(item: UserItem) {
   editDialog.org_id = item.org_id ?? null
   editDialog.username = item.username
   editDialog.full_name = item.full_name || ''
+  editDialog.last_name = item.last_name || ''
+  editDialog.first_name = item.first_name || ''
+  editDialog.middle_name = item.middle_name || ''
   editDialog.role = item.role
   editDialog.city = item.city || ''
   editDialog.department = item.department || ''
@@ -2233,7 +2291,9 @@ async function openEditUser(item: UserItem) {
     allOrgEntries.value = (salaryRes || []).map((s: any, i: number) => ({
       id: s.id ?? null, dept_id: s.dept_id ?? null,
       org_id: Number(s.org_id), org_name: s.org_name || '', dept_name: s.dept_name || '',
-      position: s.position || '', salary_amount: s.salary_amount, employment_percent: s.employment_percent, hired_at: s.hired_at ? String(s.hired_at).slice(0, 10) : null, _idx: i,
+      position: s.position || '', salary_amount: s.salary_amount, employment_percent: s.employment_percent, hired_at: s.hired_at ? String(s.hired_at).slice(0, 10) : null,
+      dept_assigned_at: s.dept_assigned_at ? String(s.dept_assigned_at).slice(0, 10) : null,
+      position_assigned_at: s.position_assigned_at ? String(s.position_assigned_at).slice(0, 10) : null, _idx: i,
     }))
     editDialog.orgDepts = {}
     for (const s of (salaryRes || [])) {
@@ -2310,14 +2370,16 @@ async function confirmDeleteOrgEntry(entry: any) {
     allOrgEntries.value = (salaryRes || []).map((s: any, i: number) => ({
       id: s.id ?? null, dept_id: s.dept_id ?? null,
       org_id: Number(s.org_id), org_name: s.org_name || '', dept_name: s.dept_name || '',
-      position: s.position || '', salary_amount: s.salary_amount, employment_percent: s.employment_percent, hired_at: s.hired_at ? String(s.hired_at).slice(0, 10) : null, _idx: i,
+      position: s.position || '', salary_amount: s.salary_amount, employment_percent: s.employment_percent, hired_at: s.hired_at ? String(s.hired_at).slice(0, 10) : null,
+      dept_assigned_at: s.dept_assigned_at ? String(s.dept_assigned_at).slice(0, 10) : null,
+      position_assigned_at: s.position_assigned_at ? String(s.position_assigned_at).slice(0, 10) : null, _idx: i,
     }))
     // Also update extraOrgIds list to drop this org if no entries left
     if (!allOrgEntries.value.some(e => e.org_id === entry.org_id)) {
       editDialog.extraOrgIds = (editDialog.extraOrgIds || []).filter((id: number) => id !== entry.org_id)
     }
   } catch (e: any) {
-    showSnack('Не удалось удалить: ' + (e?.message || ''), 'error')
+    showSnack('Не удалось удалить: ' + (e?.payload?.detail || e?.payload?.message || e?.message || ''), 'error')
   }
 }
 
@@ -2332,7 +2394,9 @@ async function saveEditUser() {
 
     // PATCH user fields (NOT department text — managed via DepartmentMember API below)
     const body: any = {
-      full_name: editDialog.full_name || null,
+      last_name: editDialog.last_name || null,
+      first_name: editDialog.first_name || null,
+      middle_name: editDialog.middle_name || null,
       role: editDialog.role,
       city: editDialog.city || null,
       position: editDialog.position || null,
@@ -2401,17 +2465,23 @@ async function saveEditUser() {
         try {
           await apiFetch(`/departments/${entry.dept_id}/members`, {
             method: 'POST',
-            body: { user_id: editDialog.userId, position: entry.position || undefined },
+            body: {
+              user_id: editDialog.userId,
+              position: entry.position || undefined,
+              dept_assigned_at: entry.dept_assigned_at || undefined,
+            },
           })
           // Salary/percent on the new UO row will be synced by the org-membership PATCH loop below
         } catch (e: any) {
-          showSnack(`Не удалось добавить отдел: ${e?.message || ''}`, 'error')
+          showSnack(`Не удалось добавить отдел: ${e?.payload?.detail || e?.payload?.message || e?.message || ''}`, 'error')
         }
       }
     }
 
     // 7a: Sync per-row (per dept) position/salary/percent — NOT bulk-by-org
     // Each allOrgEntries row has its own id (user_organizations PK), save individually.
+    // hired_at распространяется бэкендом на ВСЕ строки пары (user, org) — достаточно
+    // отправлять его с любой строкой этой org, отправляем с каждой (идемпотентно).
     for (const entry of allOrgEntries.value) {
       if ((entry as any).is_new) continue // new rows already handled above
       if (entry.id) {
@@ -2423,9 +2493,13 @@ async function saveEditUser() {
               salary_amount: entry.salary_amount ?? null,
               employment_percent: entry.employment_percent ?? null,
               hired_at: entry.hired_at || null,
+              dept_assigned_at: entry.dept_assigned_at || null,
+              position_assigned_at: entry.position_assigned_at || null,
             },
           })
-        } catch { /* non-critical */ }
+        } catch (e: any) {
+          showSnack(`Не удалось сохранить членство: ${e?.payload?.detail || e?.payload?.message || e?.message || ''}`, 'error')
+        }
       }
     }
 
@@ -2482,7 +2556,7 @@ async function saveEditUser() {
     loadHierarchyTree()
     hierarchyRef.value?.refresh()
   } catch (e: any) {
-    showSnack(e?.detail || e?.message || 'Ошибка', 'error')
+    showSnack(e?.payload?.detail || e?.payload?.message || e?.message || 'Ошибка', 'error')
   } finally {
     editDialog.saving = false
   }
@@ -2776,7 +2850,9 @@ async function createAndAddMember() {
       body: JSON.stringify({
         email: newMemberForm.value.email,
         password: newMemberForm.value.password,
-        full_name: newMemberForm.value.full_name,
+        last_name: newMemberForm.value.last_name,
+        first_name: newMemberForm.value.first_name,
+        middle_name: newMemberForm.value.middle_name || null,
         role: newMemberForm.value.role,
         city: newMemberForm.value.city || null,
         phone: unformatPhone(newMemberForm.value.phone) || null,
@@ -2793,12 +2869,12 @@ async function createAndAddMember() {
       body: JSON.stringify({ user_id: user.id, position: newMemberForm.value.position || null }),
     })
     addMemberDialog.value = false
-    newMemberForm.value = { email: '', full_name: '', password: '', password_confirm: '', phone: '', role: 'employee', position: '', city: '' }
+    newMemberForm.value = { email: '', last_name: '', first_name: '', middle_name: '', password: '', password_confirm: '', phone: '', role: 'employee', position: '', city: '' }
     // Refresh all
     await Promise.all([loadUsers(), loadDeptMembers(selectedDept.value.id), loadDeptTree()])
     showSnack(`Сотрудник ${user.full_name || user.username} создан и добавлен в отдел`)
   } catch (e: any) {
-    showSnack(e?.detail || e?.message || 'Ошибка при создании сотрудника', 'error')
+    showSnack(e?.payload?.detail || e?.payload?.message || e?.message || 'Ошибка при создании сотрудника', 'error')
   } finally {
     newMemberSaving.value = false
   }
@@ -2817,7 +2893,7 @@ async function removeMember(userId: number) {
 function onAddMemberInline(dept: any) {
   selectedDept.value = dept
   memberForm.value = { user_id: null, position: '' }
-  newMemberForm.value = { email: '', full_name: '', password: '', role: 'employee', position: '', city: '' }
+  newMemberForm.value = { email: '', last_name: '', first_name: '', middle_name: '', password: '', role: 'employee', position: '', city: '' }
   addMemberMode.value = 'existing'
   addMemberDialog.value = true
 }

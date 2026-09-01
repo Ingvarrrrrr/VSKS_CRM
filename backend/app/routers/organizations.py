@@ -14,7 +14,7 @@ from app.models.contractor import Contractor
 from app.models.user import User
 from app.schemas.schemas import OrganizationCreate, OrganizationOut, RegisterRequest, UserOut
 from app.utils.email import send_verification_email
-from app.services.fio import compose_fio
+from app.services.fio import compose_fio, resolve_user_name_input
 
 router = APIRouter(tags=["organizations"])
 
@@ -138,11 +138,15 @@ async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
 
     # Create account_owner user
     token = str(uuid.uuid4())
+    _last_name, _first_name, _middle_name, _full_name = resolve_user_name_input(None, None, None, data.full_name)
     user = User(
         username=username,
         password_hash=hash_password(data.password),
         role="account_owner",
-        full_name=data.full_name,
+        last_name=_last_name,
+        first_name=_first_name,
+        middle_name=_middle_name,
+        full_name=_full_name,
         email=data.email,
         is_email_confirmed=False,
         email_verification_token=token,

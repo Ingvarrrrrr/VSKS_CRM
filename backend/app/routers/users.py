@@ -18,6 +18,7 @@ _DATE_FIELDS = {
 }
 from app.database import get_db
 from app.models.user import User
+from app.services.fio import resolve_user_name_input
 from app.auth.jwt import hash_password, require_role, get_current_user, get_org_filter, get_single_org_id, ADMIN_ROLES, ALL_ROLES
 from app.schemas.schemas import UserCreate, UserUpdate, UserOut, PermissionsOut, PlatformCredentialOut, PlatformCredentialUpsert
 from app.auth.permissions import (
@@ -233,12 +234,23 @@ async def create_user(
     if not await db.get(Organization, org_id):
         raise HTTPException(400, f"Организация (id={org_id}) не найдена — возможно, была объединена. Выберите организацию из списка.")
 
+    # ФИО: last_name/first_name — источник истины, full_name пересобирается
+    # (обратная совместимость со старыми клиентами — одна строка через split_fio).
+    last_name, first_name, middle_name, full_name = resolve_user_name_input(
+        data.last_name, data.first_name, data.middle_name, data.full_name
+    )
+    if not last_name or not first_name:
+        raise HTTPException(400, "Укажите фамилию и имя сотрудника")
+
     norm_dept = data.department.strip().title() if data.department else data.department
     user = User(
         username=username,
         password_hash=hash_password(data.password),
         role=data.role,
-        full_name=data.full_name,
+        last_name=last_name,
+        first_name=first_name,
+        middle_name=middle_name,
+        full_name=full_name,
         city=data.city,
         department=norm_dept,
         position=data.position,
@@ -482,6 +494,31 @@ async def update_user(
             if current_user.role not in ("superadmin", "account_owner"):
                 raise HTTPException(403, "Изменение пароля доступно только владельцу аккаунта и выше")
             user.password_hash = hash_password(pwd)
+
+    # ФИО: last_name/first_name/middle_name — источник истины, full_name всегда
+    # пересобирается (см. app/services/fio.py:resolve_user_name_input). PATCH
+    # частичный — недостающие части подтягиваем из текущего значения на user,
+    # чтобы правка одного поля (напр. только first_name) не затирала остальные.
+    explicit_parts = any(k in update_data for k in ("last_name", "first_name", "middle_name"))
+    explicit_full = "full_name" in update_data
+    if explicit_parts:
+        merged_last, merged_first, merged_middle, merged_full = resolve_user_name_input(
+            update_data.get("last_name", user.last_name),
+            update_data.get("first_name", user.first_name),
+            update_data.get("middle_name", user.middle_name),
+            None,
+        )
+    elif explicit_full:
+        merged_last, merged_first, merged_middle, merged_full = resolve_user_name_input(
+            None, None, None, update_data.get("full_name")
+        )
+    if explicit_parts or explicit_full:
+        if not merged_last or not merged_first:
+            raise HTTPException(400, "У сотрудника должны быть заполнены фамилия и имя")
+        update_data["last_name"] = merged_last
+        update_data["first_name"] = merged_first
+        update_data["middle_name"] = merged_middle
+        update_data["full_name"] = merged_full
 
     # Normalize department name to Title Case
     if "department" in update_data and update_data["department"]:
@@ -1477,11 +1514,15 @@ async def import_users_excel(
             skipped += 1
             continue
 
+        row_last, row_first, row_middle, row_full = resolve_user_name_input(None, None, None, full_name)
         user = User(
             username=username,
             password_hash=hash_password(password),
             role=role,
-            full_name=full_name,
+            last_name=row_last,
+            first_name=row_first,
+            middle_name=row_middle,
+            full_name=row_full,
             city=city,
             email=email,
             is_email_confirmed=True,

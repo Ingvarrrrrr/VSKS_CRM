@@ -28,7 +28,10 @@ class UserCreate(BaseModel):
     password: str
     username: Optional[str] = None
     role: str = "employee"
-    full_name: Optional[str] = None
+    last_name: Optional[str] = None
+    first_name: Optional[str] = None
+    middle_name: Optional[str] = None  # необязательно — не у всех есть отчество
+    full_name: Optional[str] = None  # deprecated: обратная совместимость (одна строка ФИО), разбирается на бэкенде через split_fio, если last/first_name не переданы
     city: Optional[str] = None
     department: Optional[str] = None
     position: Optional[str] = None
@@ -42,7 +45,10 @@ class UserCreate(BaseModel):
     exclude_from_directory: bool = False
 
 class UserUpdate(BaseModel):
-    full_name: Optional[str] = None
+    last_name: Optional[str] = None
+    first_name: Optional[str] = None
+    middle_name: Optional[str] = None  # необязательно — не у всех есть отчество
+    full_name: Optional[str] = None  # deprecated: обратная совместимость (одна строка ФИО), см. resolve_user_name_input
     role: Optional[str] = None
     city: Optional[str] = None
     department: Optional[str] = None
@@ -81,6 +87,9 @@ class UserOut(BaseModel):
     username: str
     role: str
     full_name: Optional[str] = None
+    last_name: Optional[str] = None
+    first_name: Optional[str] = None
+    middle_name: Optional[str] = None
     city: Optional[str] = None
     department: Optional[str] = None
     position: Optional[str] = None

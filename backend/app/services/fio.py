@@ -29,6 +29,39 @@ def split_fio(raw: str | None) -> tuple[str | None, str | None, str | None]:
     return (words[0], None, None)
 
 
+def resolve_user_name_input(
+    last_name: str | None,
+    first_name: str | None,
+    middle_name: str | None,
+    full_name: str | None,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Единая точка входа "ФИО одной строкой" → три поля, с full_name как
+    ПРОИЗВОДНЫМ (пересобирается через compose_fio). Используется при любом
+    создании/переименовании User (users.py create/update, Excel-импорт,
+    /api/register, fleet_seed) — единственное правило, чтобы full_name
+    никогда не расходился со структурированными полями.
+
+    Приоритет:
+      1. last_name и/или first_name переданы → они источник истины,
+         любой переданный full_name ИГНОРИРУЕТСЯ (пересобирается из частей).
+      2. Иначе, если дан только full_name (обратная совместимость со старыми
+         клиентами/формами) — разбираем его через split_fio.
+      3. Ничего не передано → (None, None, None, None).
+
+    Возвращает (last_name, first_name, middle_name, full_name) — всегда
+    синхронизированные между собой.
+    """
+    last = last_name.strip() if last_name and last_name.strip() else None
+    first = first_name.strip() if first_name and first_name.strip() else None
+    middle = middle_name.strip() if middle_name and middle_name.strip() else None
+    if last or first:
+        return (last, first, middle, compose_fio(last, first, middle))
+    if full_name and full_name.strip():
+        s_last, s_first, s_middle = split_fio(full_name)
+        return (s_last, s_first, s_middle, compose_fio(s_last, s_first, s_middle))
+    return (None, None, None, None)
+
+
 def split_position_and_fio(
     raw: str | None,
     position: str | None = None,

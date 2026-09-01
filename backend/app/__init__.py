@@ -2018,7 +2018,6 @@ app.include_router(vehicles_dashboard.router)          # /api/vehicles-dashboard
 app.include_router(external_drivers.drivers_router)    # /api/drivers/available
 app.include_router(external_drivers.router)            # /api/external-drivers
 app.include_router(vehicles_import_router.router)      # /api/vehicles-import (BEFORE vehicles catch-all)
-app.include_router(vehicles_import_router.vehicles_template_router)  # /api/vehicles/import-template (BEFORE vehicles catch-all)
 app.include_router(vehicles.router)                    # /api/vehicles (catch-all /{vehicle_id:int})
 app.include_router(vehicle_attachments.router)         # /api/vehicle-attachments
 app.include_router(repair_attachments.router)          # /api/repair-attachments

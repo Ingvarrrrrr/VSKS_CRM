@@ -13,11 +13,13 @@ Decisions covered: D-06, D-09
 """
 import logging
 import os
+import re
 import tempfile
 import uuid
 from datetime import datetime, timezone, timedelta
 from io import BytesIO
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote as _url_quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -30,6 +32,14 @@ from app.database import get_db
 from app.models.organization import Organization
 from app.models.user import User
 from app.models.vehicle import Vehicle
+from app.services.vehicle_enum_labels import FUEL_TYPE_LABELS, STATE_LABELS, TYPE_LABELS, label_to_code
+from app.services.vehicle_fields import get_hidden_field_keys
+from app.services.vehicle_import_template import build_vehicle_import_template
+from app.services.vehicle_org_matching import (
+    build_inn_index,
+    build_name_index,
+    resolve_org_for_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,16 +66,42 @@ def _cleanup_old_sessions() -> None:
 
 
 # ─────────────────────────── Column mapping (inline, DRY-able later) ─────────
+#
+# Автоблок (AUTOBLOCK_FIELDS_SPEC.md §6): лист «26.05.2026» (реестр Голичкова,
+# 71 колонка) содержит опечатки в заголовках («в соответи», «Исправнось»,
+# «возникнования») — приняты как есть, плюс добавлены исправленные варианты.
+# Ключи нормализуются: lower() + схлопывание любых пробелов до одного.
+#
+# Пять заголовков «Дата истечения пропуска» и один «Дата поверки» (без
+# уточнения) неоднозначны по имени — разрешаются ПОЗИЦИОННО в
+# _resolve_header_columns (ближайшая слева колонка `Пропуск X` / `Огнетушитель`).
+#
+# Дубликаты (значение уже занято более ранней колонкой в той же строке
+# заголовков) автоматически игнорируются через occupied-tracking в
+# _resolve_header_columns — так закрываются все "три дубля" из §6:
+# «Кузов в соответствии с ПТС» (дубль «Кузов»), второе «Состояние
+# лакокрасочного покрытия», «Наличие и исправность зеркал».
 
-# Maps XLSX column headers (lowercased, stripped) → Vehicle field name
+# Специальный маркер поля: колонка «Марка и модель ТС» разбирается по первому
+# пробелу на brand/model (§6).
+_BRAND_MODEL_SPLIT_FIELD = "__brand_model__"
+
+# Поля, чьё реальное хранилище — vehicles.props (JSONB), а не колонка.
+# Ключ словаря = ключ внутри props (совпадает с services/vehicle_fields.py).
+_PROPS_KEYS = {"tires_type", "branding", "paint_condition", "defect_description", "note"}
+
+# Maps XLSX column headers (lowercased, whitespace-collapsed) → Vehicle field name
+# (или ключ props, если он в _PROPS_KEYS).
 _COL_MAP: Dict[str, str] = {
     "гос. номер": "plate",
     "гос.номер": "plate",
     "госномер": "plate",
     "гос номер": "plate",
     "регистрационный знак": "plate",
+    "гос. рег. знак": "plate",
     "марка": "brand",
     "модель": "model",
+    "марка и модель тс": _BRAND_MODEL_SPLIT_FIELD,
     "цвет": "color",
     "vin": "vin",
     "тип": "type",
@@ -76,37 +112,259 @@ _COL_MAP: Dict[str, str] = {
     "норма зима": "fuel_norm_winter",
     "следующее то": "next_to_km",
     "у кого в эксплуатации": "assigned_text",
+    "у кого в эксплуатации (здесь пишется организация, а не город)": "assigned_text",
     "кому принадлежит": "owner_text",
+    "собственник": "owner_text",
+    "инн собственника": "owner_inn",
+    "инн эксплуатант": "assigned_inn",
+    "инн эксплуатанта": "assigned_inn",
     "дата регистрации": "registered_at",
     "страховка до": "insurance_until",
     "трекер": "has_tracker",
     "аккумулятор": "akb_ok",
     "рация": "has_radio",
+    "наличие радиостанции": "has_radio",
     "зеркала": "mirrors_ok",
+    "наличие зеркал": "has_mirrors",
+    "исправнось зеркал": "mirrors_ok",       # опечатка исходника
+    "исправность зеркал": "mirrors_ok",      # исправленный вариант
+    "наличие и исправность зеркал": "has_mirrors",  # дубль-комбо; occupied-skip если has_mirrors уже занято
     "ключи": "has_keys",
+    "наличие набора ключей": "has_keys",
     "аптечка": "has_first_aid_kit",
+    "наличие аптечки": "has_first_aid_kit",
     "запаска": "has_spare_wheel",
+    "наличие запасного колеса": "has_spare_wheel",
     "огнетушитель": "has_extinguisher",
+    # ── Автоблок: реестр Голичкова, лист «26.05.2026» (§1, §2, §6) ───────────
+    "кузов": "body_type",
+    "кузов в соответи": "body_type",                              # опечатка исходника, дубль → occupied-skip
+    "кузов в соответствии с птс": "body_type",                    # исправленный вариант
+    "категория тс в соответсвии с птс": "pts_category",           # опечатка исходника
+    "категория тс в соответствии с птс": "pts_category",          # исправленный вариант
+    "категория тс по птс": "pts_category",
+    "год вып.": "year_of_manufacture",
+    "год выпуска": "year_of_manufacture",
+    "номер страхового договора": "insurance_policy_number",
+    "страховая компания": "insurance_company",
+    "срок действия страховки (до каког числа включительно)": "insurance_until",   # опечатка исходника
+    "срок действия страховки (до какого числа включительно)": "insurance_until",  # исправленный вариант
+    "пробег на данный момент км": "current_odometer_km",
+    "основание возникновения собственности": "ownership_basis",
+    "№ документа основания возникнования собственности": "ownership_doc_number",   # опечатка исходника
+    "№ документа основания возникновения собственности": "ownership_doc_number",   # исправленный вариант
+    "дата документа основания возникнования собственности": "ownership_doc_date",  # опечатка исходника
+    "дата документа основания возникновения собственности": "ownership_doc_date",  # исправленный вариант
+    "место нахождения город": "location_city",
+    "место нахождения адрес": "location_address",
+    "основание возникновения права эксплуатации": "assignment_basis",
+    "кто субсидировал": "purchase_info",
+    "№ документа основания возникнования права эксплуатации": "assignment_doc_number",   # опечатка
+    "№ документа основания возникновения права эксплуатации": "assignment_doc_number",   # исправлено
+    "дата документа основания возникнования права эксплуатации": "assignment_doc_date",  # опечатка
+    "дата документа основания возникновения права эксплуатации": "assignment_doc_date",  # исправлено
+    "дата последнего планового то": "last_to_date",
+    "пробег на последнем плановом то": "last_to_mileage_km",
+    "обязательный техосмотр": "tech_inspection_status",
+    "дата последнего обязательного техосмотра": "tech_inspection_last_date",
+    "ответственный (фамилия имя отчество)": "responsible_name",
+    "птс": "pts_number",
+    "вид птс (бумажный/электронный)": "pts_kind",
+    "дата когда организация владелец стала собственником": "owner_since",   # исходный (без запятой)
+    "дата, когда организация владелец стала собственником": "owner_since",  # грамматически верный вариант (с запятой перед "когда")
+    "стс номер": "sts_number",
+    "стс дата выдачи": "sts_issued_at",
+    "состояние лакокрасочного покрытия": "paint_condition",  # props; 2-е вхождение → occupied-skip
+    "пропуск зо": "pass_zo",
+    "пропуск хо": "pass_ho",
+    "пропуск днр": "pass_dnr",
+    "пропуск лнр": "pass_lnr",
+    "пропуск москва": "pass_moscow",
+    "авторезина установленная на машине": "tires_type",   # props; исходный (без запятой)
+    "авторезина, установленная на машине": "tires_type",  # props; грамматически верный вариант (с запятой)
+    "наличие сменной резины": "has_spare_tires",
+    "состояние резины": "tires_condition",
+    "брендирование": "branding",  # props
+    "срок истечения срока использования": "first_aid_kit_until",
+    "дата поверки тахографа": "tachograph_check_date",
+    "дата оплаты трекера": "tracker_paid_until",
+    "тахограф": "has_tachograph",
+    "требуется ремонт/не требуется ремонт": "repair_required",
+    "неисправность": "defect_description",  # props
+    "примечание": "note",  # props
+    "сведения о техническом состоянии": "tech_condition_info",
+
+    # ── Алиасы под точный текст подписей реестра vehicle_fields.py (Автоблок:
+    # «шаблон импорта транспорта») — генератор шаблона (services/vehicle_import_template.py)
+    # пишет заголовки строго из FIELD_GROUPS[*]["label"], и каждый обязан тут резолвиться.
+    # Только ДОБАВЛЕНО: ни один существующий ключ выше не переписан и не удалён —
+    # старые файлы продолжают парситься как прежде.
+    "тип тс": "type",
+    "мощность двигателя, л.с.": "engine_power_hp",
+    "объём двигателя, л": "engine_volume_l",
+    "норма расхода топлива, лето": "fuel_norm_summer",
+    "норма расхода топлива, зима": "fuel_norm_winter",
+    # "Организация-собственник" резолвится в owner_text (тот же псевдо-ключ, что и
+    # "кому принадлежит"/"собственник" выше) — сопоставление с организацией по имени
+    # происходит на шаге commit_import, owner_org_id не заполняется из файла напрямую.
+    "организация-собственник": "owner_text",
+    "№ документа основания собственности": "ownership_doc_number",
+    "дата документа основания собственности": "ownership_doc_date",
+    "дата, когда организация стала собственником": "owner_since",
+    "у кого в эксплуатации (текст)": "assigned_text",
+    "№ документа основания права эксплуатации": "assignment_doc_number",
+    "дата документа основания права эксплуатации": "assignment_doc_date",
+    "место нахождения — город": "location_city",
+    "место нахождения — адрес": "location_address",
+    "ответственный (фио)": "responsible_name",
+    "номер птс": "pts_number",
+    "вид птс": "pts_kind",
+    "номер стс": "sts_number",
+    "стс — дата выдачи": "sts_issued_at",
+    "страховка действительна до": "insurance_until",
+    "текущий пробег, км": "current_odometer_km",
+    "дата последнего то": "last_to_date",
+    "пробег на последнем то": "last_to_mileage_km",
+    "километраж следующего то": "next_to_km",
+    "техосмотр действителен до": "tech_inspection_until",
+    # "Дата истечения пропуска X" в реестре — с суффиксом, поэтому резолвится прямым
+    # алиасом, а не позиционной эвристикой _AMBIGUOUS_PASS_UNTIL_LABEL (та рассчитана
+    # на старые файлы без суффикса).
+    "дата истечения пропуска зо": "pass_zo_until",
+    "дата истечения пропуска хо": "pass_ho_until",
+    "дата истечения пропуска днр": "pass_dnr_until",
+    "дата истечения пропуска лнр": "pass_lnr_until",
+    "дата истечения пропуска москва": "pass_moscow_until",
+    "аккумулятор исправен": "akb_ok",
+    "аптечка — срок истечения использования": "first_aid_kit_until",
+    "огнетушитель — дата поверки": "extinguisher_check_date",
+    "трекер — дата оплаты": "tracker_paid_until",
+    "тахограф — дата поверки": "tachograph_check_date",
+    "требуется ремонт": "repair_required",
+}
+
+# Заголовки, разрешаемые ПОЗИЦИОННО (не через прямой словарь) — §6.
+_AMBIGUOUS_PASS_UNTIL_LABEL = "дата истечения пропуска"
+_AMBIGUOUS_CHECK_DATE_LABEL = "дата поверки"  # без уточнения → к ближайшему слева «Огнетушитель»
+
+_PASS_BOOL_FIELDS = {"pass_zo", "pass_ho", "pass_dnr", "pass_lnr", "pass_moscow"}
+_PASS_UNTIL_MAP = {
+    "pass_zo": "pass_zo_until", "pass_ho": "pass_ho_until", "pass_dnr": "pass_dnr_until",
+    "pass_lnr": "pass_lnr_until", "pass_moscow": "pass_moscow_until",
 }
 
 _BOOL_COLS = {
     "has_tracker", "akb_ok", "has_radio", "mirrors_ok",
     "has_keys", "has_first_aid_kit", "has_spare_wheel", "has_extinguisher",
+    # Автоблок
+    "has_spare_tires", "has_mirrors", "has_tachograph",
 }
-_DATE_COLS = {"registered_at", "insurance_until"}
-_FLOAT_COLS = {"fuel_norm_summer", "fuel_norm_winter"}
-_INT_COLS = {"next_to_km"}
+# repair_required коэрсится отдельно (_coerce_repair_required) — presence-based эвристика
+_REPAIR_REQUIRED_FIELD = "repair_required"
+
+def _load_date_columns_from_registry() -> set:
+    """Источник правды по датам — реестр app/services/vehicle_fields.py (type="date").
+
+    Lesson (coordinator review 2026-08-31): раньше _DATE_COLS поддерживался руками
+    и разошёлся с моделью Vehicle — last_to_date/assignment_doc_date/tech_inspection_until
+    были Date-колонками в модели и уже маппились из _COL_MAP, но отсутствовали здесь,
+    из-за чего нераспознанный текст ("3 000км до ТО") не проходил через _coerce_date
+    и уезжал в поле сырой строкой. Теперь множество собирается программно, чтобы то
+    же самое не повторилось при добавлении следующего date-поля.
+    """
+    try:
+        from app.services.vehicle_fields import get_all_fields
+        return {f["key"] for f in get_all_fields() if f.get("type") == "date" and f.get("storage") == "column"}
+    except Exception:
+        # Не должно случиться в норме — реестр всегда доступен; safety-net на случай
+        # проблем импорта не должен ронять весь модуль импорта.
+        logging.getLogger(__name__).exception("Не удалось загрузить date-поля из реестра vehicle_fields")
+        return {"registered_at", "insurance_until"}
+
+
+_DATE_COLS = _load_date_columns_from_registry()
+# engine_power_hp/engine_volume_l добавлены вместе с колонками шаблона импорта
+# (Автоблок: «шаблон импорта транспорта») — раньше эти заголовки не резолвились
+# вообще ни одним алиасом _COL_MAP, поэтому и не требовали коэрсии.
+_FLOAT_COLS = {"fuel_norm_summer", "fuel_norm_winter", "engine_volume_l"}
+_INT_COLS = {
+    "next_to_km", "year_of_manufacture", "current_odometer_km", "last_to_mileage_km",
+    "engine_power_hp",
+}
+
+# Ограничения длины VARCHAR-колонок — защита от "value too long for type
+# character varying(N)" при коммите разнородных реальных данных (см. Lesson:
+# реальные значения "Состояние" превышают 20 симв.). Раньше был захардкожен
+# руками и рисковал разъехаться с моделью (тот же класс бага, что уже был у
+# _DATE_COLS) — coordinator review 2026-08-31 попросил свести к одному
+# программному источнику вместе с валидацией в routers/vehicles.py.
+def _load_string_column_limits() -> Dict[str, int]:
+    try:
+        from app.services.vehicle_fields import get_string_column_limits
+        return get_string_column_limits()
+    except Exception:
+        logging.getLogger(__name__).exception("Не удалось загрузить лимиты длины из реестра vehicle_fields")
+        return {"plate": 20, "vin": 17}
+
+
+_MAX_LEN: Dict[str, int] = _load_string_column_limits()
 
 
 def _coerce_bool(val: Any) -> Optional[bool]:
     if val is None:
         return None
     s = str(val).strip().lower()
-    if s in ("1", "да", "yes", "true", "+"):
+    if s in ("1", "да", "yes", "true", "+", "есть", "имеется", "имеются", "исправно", "имеются в наличии"):
         return True
-    if s in ("0", "нет", "no", "false", "-"):
+    if s in ("0", "нет", "no", "false", "-", "отсутствует", "отсуствует", "неисправно"):  # "отсуствует" — опечатка исходника
         return False
     return None
+
+
+def _coerce_repair_required(val: Any) -> Optional[bool]:
+    """Требуется ремонт: реальные данные — не "да/нет", а текст описания
+    неисправности ("Необходим кузовной ремонт" и т.п.). Presence-эвристика:
+    известное да/нет-слово имеет приоритет, иначе непустой текст = True."""
+    if val is None:
+        return None
+    known = _coerce_bool(val)
+    if known is not None:
+        return known
+    return bool(str(val).strip())
+
+
+def _coerce_pts_kind(val: Any) -> Optional[str]:
+    if val is None:
+        return None
+    s = str(val).strip().lower()
+    if s.startswith("бумаж"):
+        return "paper"
+    if s.startswith("электрон"):
+        return "electronic"
+    return None
+
+
+# Обратное сопоставление подпись→код для полей типа/состояния/топлива (Автоблок:
+# «шаблон импорта транспорта»). Раньше эти поля попадали в общий "else"-текстовый
+# путь и сохранялись как есть — если бы пользователь выбрал русскую подпись из
+# выпадающего списка шаблона ("Легковой"), в БД лёг бы сырой текст вместо кода
+# ("car_light"), которого ждут фильтры/экспорт (_EXPORT_TYPE_LABEL и т.п. в
+# vehicles.py). label_to_code регистронезависим и не блокирует нестандартный
+# ввод — если подпись не распознана, возвращает исходный текст как есть.
+_ENUM_LABEL_FIELDS = {
+    "type": TYPE_LABELS,
+    "state": STATE_LABELS,
+    "fuel_type": FUEL_TYPE_LABELS,
+}
+
+
+def _coerce_enum_label(field: str, val: Any) -> Optional[str]:
+    labels = _ENUM_LABEL_FIELDS[field]
+    coerced = label_to_code(labels, val)
+    max_len = _MAX_LEN.get(field)
+    if coerced and max_len:
+        coerced = coerced[:max_len]
+    return coerced
 
 
 def _coerce_date(val: Any) -> Optional[str]:
@@ -124,10 +382,95 @@ def _coerce_date(val: Any) -> Optional[str]:
     return None
 
 
+def _normalize_header(cell: Any) -> str:
+    """lower() + схлопывание любых пробельных последовательностей до одного."""
+    return re.sub(r"\s+", " ", str(cell).strip()).strip().lower()
+
+
+def _resolve_header_columns(header_raw: tuple) -> tuple[Dict[int, str], list[str]]:
+    """Разрешает заголовки листа в {col_index: field_or_props_key} (§6).
+
+    Возвращает (col_field, unresolved_headers). unresolved_headers — исходный
+    (не нормализованный) текст заголовков, которые не удалось сопоставить ни
+    с одним полем (ожидаемо: «№ п/п» — не несёт данных; плюс три дубля,
+    автоматически поглощённые occupied-tracking'ом).
+
+    «ИНН собственника» / «ИНН эксплуатант» РАЗРЕШАЮТСЯ (owner_inn/assigned_inn,
+    см. _COL_MAP ниже) — используются в app.services.vehicle_org_matching для
+    приоритетного сопоставления организации по ИНН (owner/assigned_text —
+    fallback по названию). Сами по себе в колонки Vehicle не пишутся (не входят
+    в _VEHICLE_FIELDS), это чисто ключи сопоставления на этапе preview/commit.
+
+    Ambiguous заголовки («Дата истечения пропуска» x5, «Дата поверки» без
+    уточнения) разрешаются позиционно — по ближайшей слева колонке
+    `Пропуск X` / `Огнетушитель`. Настоящие дубли (значение, для которого
+    поле уже занято более ранней колонкой) автоматически пропускаются.
+    """
+    col_field: Dict[int, str] = {}
+    unresolved: list[str] = []
+    occupied: set[str] = set()
+
+    last_pass_field: Optional[str] = None
+    last_was_extinguisher = False
+
+    for ci, cell in enumerate(header_raw):
+        if cell is None:
+            continue
+        raw_text = str(cell).strip()
+        if not raw_text:
+            continue
+        key = _normalize_header(cell)
+
+        field: Optional[str] = None
+
+        if key == _AMBIGUOUS_PASS_UNTIL_LABEL:
+            if last_pass_field:
+                field = _PASS_UNTIL_MAP.get(last_pass_field)
+            last_pass_field = None
+            last_was_extinguisher = False
+        elif key == _AMBIGUOUS_CHECK_DATE_LABEL:
+            if last_was_extinguisher:
+                field = "extinguisher_check_date"
+            last_was_extinguisher = False
+        elif key in _COL_MAP:
+            field = _COL_MAP[key]
+            last_pass_field = field if field in _PASS_BOOL_FIELDS else None
+            last_was_extinguisher = (field == "has_extinguisher")
+        else:
+            last_pass_field = None
+            last_was_extinguisher = False
+
+        if field is None:
+            unresolved.append(raw_text)
+            continue
+
+        occ_key = f"props:{field}" if field in _PROPS_KEYS else field
+        if occ_key in occupied:
+            unresolved.append(raw_text)
+            continue
+
+        occupied.add(occ_key)
+        col_field[ci] = field
+
+    return col_field, unresolved
+
+
+def _split_brand_model(val: str) -> tuple[Optional[str], Optional[str]]:
+    """«CFMOTO CFORCE 600 EPS» → ('CFMOTO', 'CFORCE 600 EPS') — по первому пробелу (§6)."""
+    s = val.strip()
+    if not s:
+        return None, None
+    parts = s.split(None, 1)
+    if len(parts) == 1:
+        return parts[0], None
+    return parts[0], parts[1]
+
+
 def _parse_xlsx_to_rows(file_bytes: bytes) -> tuple[list[dict], list[str]]:
     """Parse xlsx bytes into list of row-dicts and list of warnings.
 
-    Returns (rows, warnings). rows: list of dicts with Vehicle field names.
+    Returns (rows, warnings). rows: list of dicts with Vehicle field names
+    (плюс вложенный "props" dict для props-хранимых полей, см. _PROPS_KEYS).
     """
     try:
         from openpyxl import load_workbook as _lw
@@ -153,14 +496,16 @@ def _parse_xlsx_to_rows(file_bytes: bytes) -> tuple[list[dict], list[str]]:
     if header_raw is None:
         return [], ["Файл не содержит данных"]
 
-    # Build col_index → field_name mapping
-    col_field: Dict[int, str] = {}
-    for ci, cell in enumerate(header_raw):
-        if cell is None:
-            continue
-        key = str(cell).strip().lower()
-        if key in _COL_MAP:
-            col_field[ci] = _COL_MAP[key]
+    # Build col_index → field_name mapping (позиционное разрешение неоднозначных
+    # заголовков + occupied-tracking дублей, см. _resolve_header_columns).
+    col_field, _unresolved_headers = _resolve_header_columns(header_raw)
+
+    # Исходный текст заголовка по индексу колонки — для предупреждений о нераспознанных
+    # значениях (coordinator review 2026-08-31): пользователь должен видеть, В КАКОЙ
+    # колонке потерялось значение, а не только номер строки.
+    col_header_label: Dict[int, str] = {
+        ci: str(cell).strip() for ci, cell in enumerate(header_raw) if cell is not None
+    }
 
     parsed_rows: list[dict] = []
     warnings: list[str] = []
@@ -172,24 +517,63 @@ def _parse_xlsx_to_rows(file_bytes: bytes) -> tuple[list[dict], list[str]]:
             continue  # skip fully empty rows
 
         row_data: dict[str, Any] = {"_row_n": row_n}
+        props_data: dict[str, Any] = {}
+
         for ci, field in col_field.items():
             val = raw_row[ci] if ci < len(raw_row) else None
+
+            if field == _BRAND_MODEL_SPLIT_FIELD:
+                if val is not None and str(val).strip():
+                    brand, model = _split_brand_model(str(val))
+                    # Не перезаписываем, если отдельные колонки "Марка"/"Модель" уже есть
+                    row_data.setdefault("brand", brand)
+                    row_data.setdefault("model", model)
+                continue
+
+            if field == _REPAIR_REQUIRED_FIELD:
+                row_data[field] = _coerce_repair_required(val)
+                continue
+
+            if field == "pts_kind":
+                row_data[field] = _coerce_pts_kind(val)
+                continue
+
+            if field in _ENUM_LABEL_FIELDS:
+                row_data[field] = _coerce_enum_label(field, val)
+                continue
+
+            target_dict = props_data if field in _PROPS_KEYS else row_data
+
             if field in _BOOL_COLS:
-                row_data[field] = _coerce_bool(val)
+                target_dict[field] = _coerce_bool(val)
             elif field in _DATE_COLS:
-                row_data[field] = _coerce_date(val)
+                coerced_date = _coerce_date(val)
+                if coerced_date is None and val is not None and str(val).strip():
+                    label = col_header_label.get(ci, field)
+                    warnings.append(
+                        f"Строка {row_n}: «{label}» — значение «{str(val).strip()}» "
+                        f"не распознано как дата, поле оставлено пустым"
+                    )
+                target_dict[field] = coerced_date
             elif field in _FLOAT_COLS:
                 try:
-                    row_data[field] = float(val) if val is not None else None
+                    target_dict[field] = float(val) if val is not None else None
                 except (TypeError, ValueError):
-                    row_data[field] = None
+                    target_dict[field] = None
             elif field in _INT_COLS:
                 try:
-                    row_data[field] = int(float(val)) if val is not None else None
+                    target_dict[field] = int(float(val)) if val is not None else None
                 except (TypeError, ValueError):
-                    row_data[field] = None
+                    target_dict[field] = None
             else:
-                row_data[field] = str(val).strip() if val is not None else None
+                text_val = str(val).strip() if val is not None else None
+                max_len = _MAX_LEN.get(field)
+                if text_val and max_len:
+                    text_val = text_val[:max_len]
+                target_dict[field] = text_val
+
+        if props_data:
+            row_data["props"] = props_data
 
         # plate is mandatory
         plate = row_data.get("plate")
@@ -204,17 +588,109 @@ def _parse_xlsx_to_rows(file_bytes: bytes) -> tuple[list[dict], list[str]]:
 
 
 # ─────────────────────────── Org lookup cache ────────────────────────────────
+#
+# Сопоставление организации-собственника/эксплуатанта — ИНН приоритетнее
+# названия (app.services.vehicle_org_matching, не дублируем логику здесь).
 
-async def _build_org_lookup(db: AsyncSession) -> Dict[str, int]:
-    """Return dict {lowercased org name → org_id}."""
-    result = await db.execute(select(Organization.id, Organization.name))
-    return {row.name.strip().lower(): row.id for row in result.all() if row.name}
+async def _build_org_indexes(db: AsyncSession) -> tuple[Dict[str, int], Dict[str, int]]:
+    """Возвращает (inn_index, name_index) по всем организациям в БД."""
+    result = await db.execute(select(Organization.id, Organization.name, Organization.inn))
+    org_rows = [(row.id, row.name, row.inn) for row in result.all()]
+    return build_inn_index(org_rows), build_name_index(org_rows)
 
 
-def _match_org(text_val: Optional[str], lookup: Dict[str, int]) -> Optional[int]:
-    if not text_val:
-        return None
-    return lookup.get(text_val.strip().lower())
+def _classify_rows_by_org(
+    valid_rows: list[dict],
+    text_key: str,
+    inn_key: str,
+    inn_index: Dict[str, int],
+    name_index: Dict[str, int],
+) -> tuple[Dict[str, dict], list[dict]]:
+    """Группирует строки по значению text_key и определяет org_id (ИНН → название).
+
+    Возвращает (matched, unmapped):
+      matched  — {raw_text: {"raw_text", "org_id", "org_name" (== raw_text отображаемо), "method"}}
+      unmapped — [{"raw_text", "occurrences"}] — то, что не сопоставилось ни по
+                 ИНН, ни по названию; строка ОБЯЗАНА попасть сюда, а не
+                 получить организацию по умолчанию молча.
+    """
+    counter: Dict[str, int] = {}
+    matched: Dict[str, dict] = {}
+    for row in valid_rows:
+        txt = row.get(text_key) or ""
+        if not txt:
+            continue
+        counter[txt] = counter.get(txt, 0) + 1
+        if txt not in matched:
+            org_id, method = resolve_org_for_text(txt, row.get(inn_key), inn_index, name_index)
+            if org_id is not None:
+                matched[txt] = {"raw_text": txt, "org_id": org_id, "org_name": txt, "method": method}
+
+    unmapped = [
+        {"raw_text": txt, "occurrences": cnt}
+        for txt, cnt in counter.items()
+        if txt not in matched
+    ]
+    return matched, unmapped
+
+
+def _build_preview_payload(
+    parsed_rows: list[dict],
+    inn_index: Dict[str, int],
+    name_index: Dict[str, int],
+) -> dict:
+    """Общая сборка ответа preview — переиспользуется POST /preview и GET /preview/{sid},
+    чтобы не разъезжаться логикой (было продублировано до правки)."""
+    valid_rows = [r for r in parsed_rows if not r.get("_skip")]
+    invalid_rows = [r for r in parsed_rows if r.get("_skip")]
+
+    matched_owners, unmapped_owners = _classify_rows_by_org(
+        valid_rows, "owner_text", "owner_inn", inn_index, name_index
+    )
+    matched_orgs, unmapped_regions = _classify_rows_by_org(
+        valid_rows, "assigned_text", "assigned_inn", inn_index, name_index
+    )
+
+    preview_items = []
+    for row in valid_rows[:10]:
+        owner_txt = row.get("owner_text") or ""
+        assigned_txt = row.get("assigned_text") or ""
+        owner_match = matched_owners.get(owner_txt)
+        assigned_match = matched_orgs.get(assigned_txt)
+        preview_items.append({
+            "row_n": row["_row_n"],
+            "plate": row.get("plate"),
+            "brand": row.get("brand"),
+            "model": row.get("model"),
+            "owner_text": row.get("owner_text"),
+            "owner_org_id": owner_match["org_id"] if owner_match else None,
+            "owner_match_method": owner_match["method"] if owner_match else None,
+            "assigned_text": row.get("assigned_text"),
+            "assigned_org_id": assigned_match["org_id"] if assigned_match else None,
+            "assigned_match_method": assigned_match["method"] if assigned_match else None,
+            "type": row.get("type"),
+            "state": row.get("state"),
+            "fuel_type": row.get("fuel_type"),
+        })
+
+    def _stats(matched: Dict[str, dict]) -> dict:
+        return {
+            "matched_by_inn": sum(1 for m in matched.values() if m["method"] == "inn"),
+            "matched_by_name": sum(1 for m in matched.values() if m["method"] == "name"),
+        }
+
+    return {
+        "rows_total": len(parsed_rows),
+        "rows_valid": len(valid_rows),
+        "rows_invalid": len(invalid_rows),
+        "unmapped_regions": unmapped_regions,
+        "matched_orgs": list(matched_orgs.values()),
+        "unmapped_owners": unmapped_owners,
+        "matched_owners": list(matched_owners.values()),
+        "owner_stats": _stats(matched_owners),
+        "assigned_stats": _stats(matched_orgs),
+        "preview_items": preview_items,
+    }
 
 
 # ─────────────────────────── POST /preview ───────────────────────────────────
@@ -251,43 +727,7 @@ async def preview_import(
         tmp_file.close()
 
     parsed_rows, warnings = _parse_xlsx_to_rows(raw_bytes)
-    org_lookup = await _build_org_lookup(db)
-
-    valid_rows = [r for r in parsed_rows if not r.get("_skip")]
-    invalid_rows = [r for r in parsed_rows if r.get("_skip")]
-
-    # Collect region texts
-    assigned_counter: Dict[str, int] = {}
-    matched_orgs: Dict[str, dict] = {}
-    for row in valid_rows:
-        txt = row.get("assigned_text") or ""
-        if txt:
-            assigned_counter[txt] = assigned_counter.get(txt, 0) + 1
-            if txt not in matched_orgs:
-                oid = _match_org(txt, org_lookup)
-                if oid is not None:
-                    matched_orgs[txt] = {"raw_text": txt, "org_id": oid, "org_name": txt}
-
-    unmapped_regions = [
-        {"raw_text": txt, "occurrences": cnt}
-        for txt, cnt in assigned_counter.items()
-        if txt not in matched_orgs
-    ]
-    matched_list = list(matched_orgs.values())
-
-    preview_items = []
-    for row in valid_rows[:10]:
-        preview_items.append({
-            "row_n": row["_row_n"],
-            "plate": row.get("plate"),
-            "brand": row.get("brand"),
-            "model": row.get("model"),
-            "owner_text": row.get("owner_text"),
-            "assigned_text": row.get("assigned_text"),
-            "type": row.get("type"),
-            "state": row.get("state"),
-            "fuel_type": row.get("fuel_type"),
-        })
+    inn_index, name_index = await _build_org_indexes(db)
 
     session_id = str(uuid.uuid4())
     _IMPORT_SESSIONS[session_id] = {
@@ -297,16 +737,10 @@ async def preview_import(
         "user_id": current_user.id,
     }
 
-    return {
-        "session_id": session_id,
-        "rows_total": len(parsed_rows),
-        "rows_valid": len(valid_rows),
-        "rows_invalid": len(invalid_rows),
-        "unmapped_regions": unmapped_regions,
-        "matched_orgs": matched_list,
-        "preview_items": preview_items,
-        "warnings": warnings,
-    }
+    payload = _build_preview_payload(parsed_rows, inn_index, name_index)
+    payload["session_id"] = session_id
+    payload["warnings"] = warnings
+    return payload
 
 
 # ─────────────────────────── GET /preview/{session_id} ───────────────────────
@@ -331,48 +765,12 @@ async def get_preview(
             detail={"msg": "Сессия принадлежит другому пользователю", "code": "session_forbidden"},
         )
 
-    org_lookup = await _build_org_lookup(db)
+    inn_index, name_index = await _build_org_indexes(db)
     parsed_rows = session["parsed_rows"]
-    valid_rows = [r for r in parsed_rows if not r.get("_skip")]
-    invalid_rows = [r for r in parsed_rows if r.get("_skip")]
 
-    assigned_counter: Dict[str, int] = {}
-    matched_orgs: Dict[str, dict] = {}
-    for row in valid_rows:
-        txt = row.get("assigned_text") or ""
-        if txt:
-            assigned_counter[txt] = assigned_counter.get(txt, 0) + 1
-            if txt not in matched_orgs:
-                oid = _match_org(txt, org_lookup)
-                if oid is not None:
-                    matched_orgs[txt] = {"raw_text": txt, "org_id": oid, "org_name": txt}
-
-    unmapped_regions = [
-        {"raw_text": txt, "occurrences": cnt}
-        for txt, cnt in assigned_counter.items()
-        if txt not in matched_orgs
-    ]
-
-    preview_items = []
-    for row in valid_rows[:10]:
-        preview_items.append({
-            "row_n": row["_row_n"],
-            "plate": row.get("plate"),
-            "brand": row.get("brand"),
-            "model": row.get("model"),
-            "owner_text": row.get("owner_text"),
-            "assigned_text": row.get("assigned_text"),
-        })
-
-    return {
-        "session_id": session_id,
-        "rows_total": len(parsed_rows),
-        "rows_valid": len(valid_rows),
-        "rows_invalid": len(invalid_rows),
-        "unmapped_regions": unmapped_regions,
-        "matched_orgs": list(matched_orgs.values()),
-        "preview_items": preview_items,
-    }
+    payload = _build_preview_payload(parsed_rows, inn_index, name_index)
+    payload["session_id"] = session_id
+    return payload
 
 
 # ─────────────────────────── POST /commit ────────────────────────────────────
@@ -412,7 +810,7 @@ async def commit_import(
             detail={"msg": "conflict_strategy должна быть 'skip' или 'update'", "code": "bad_strategy"},
         )
 
-    org_lookup = await _build_org_lookup(db)
+    inn_index, name_index = await _build_org_indexes(db)
     parsed_rows = session["parsed_rows"]
     valid_rows = [r for r in parsed_rows if not r.get("_skip")]
 
@@ -431,29 +829,70 @@ async def commit_import(
         "has_tracker", "akb_ok", "has_radio", "mirrors_ok",
         "has_keys", "has_first_aid_kit", "has_spare_wheel", "has_extinguisher",
         "registered_at", "insurance_until",
+        # Автоблок: полный реестр полей ТС (AUTOBLOCK_FIELDS_SPEC.md §1) —
+        # только "column"-хранимые; props-хранимые (_PROPS_KEYS) собираются
+        # отдельно в row["props"] и мержатся в vehicles.props ниже.
+        "year_of_manufacture", "last_to_mileage_km", "last_to_date",
+        "pts_number", "sts_number", "tech_inspection_until", "purchase_info",
+        "assignment_basis", "assignment_doc_number", "assignment_doc_date",
+        "engine_power_hp", "engine_volume_l",
+        "body_type", "pts_category",
+        "insurance_company", "insurance_policy_number",
+        "ownership_basis", "ownership_doc_number", "ownership_doc_date", "owner_since",
+        "location_city", "location_address", "responsible_name",
+        "pts_kind", "sts_issued_at",
+        "tech_inspection_status", "tech_inspection_last_date",
+        "pass_zo", "pass_zo_until", "pass_ho", "pass_ho_until",
+        "pass_dnr", "pass_dnr_until", "pass_lnr", "pass_lnr_until",
+        "pass_moscow", "pass_moscow_until",
+        "has_spare_tires", "tires_condition", "has_mirrors",
+        "first_aid_kit_until", "extinguisher_check_date", "tracker_paid_until",
+        "has_tachograph", "tachograph_check_date",
+        "repair_required", "tech_condition_info",
+        "current_odometer_km",
     }
+
+    # Автоблок: полный набор date-полей (для конвертации ISO-строки → date).
+    # Тот же реестр-производный набор, что и _DATE_COLS модуля — единый источник
+    # правды, чтобы не разъезжаться руками (см. _load_date_columns_from_registry).
+    _ALL_DATE_FIELDS = _DATE_COLS
 
     for row in valid_rows:
         plate = row.get("plate")
         row_n = row.get("_row_n", "?")
 
         try:
-            # Resolve owner_org_id
+            # Resolve owner_org_id: приоритет — ручной выбор пользователя из
+            # диалога (owner_mapping, для строк, которые не сопоставились
+            # автоматически), затем автоопределение по ИНН/названию. НИКОГДА
+            # не подставляем организацию текущего пользователя молча — если
+            # ничего не подошло и default_owner_org_id не задан явно, строка
+            # уходит в errors (владелец должен доопределить её в диалоге).
             owner_text = row.get("owner_text") or ""
+            auto_owner_id, _owner_method = resolve_org_for_text(
+                owner_text, row.get("owner_inn"), inn_index, name_index
+            )
             owner_org_id: Optional[int] = (
                 combined_owner_map.get(owner_text)
-                or _match_org(owner_text, org_lookup)
+                or auto_owner_id
                 or body.default_owner_org_id
             )
             if owner_org_id is None:
-                errors.append({"row": row_n, "plate": plate, "msg": "owner_org_id не определён — укажите default_owner_org_id"})
+                errors.append({
+                    "row": row_n, "plate": plate,
+                    "msg": f"Организация-собственник не определена для «{owner_text or '(пусто)'}» — сопоставьте вручную",
+                })
                 continue
 
-            # Resolve assigned_org_id
+            # Resolve assigned_org_id — та же логика (ИНН приоритетнее названия),
+            # но None допустим (assigned_org_id nullable, остаётся текстовый fallback).
             assigned_text = row.get("assigned_text") or ""
+            auto_assigned_id, _assigned_method = resolve_org_for_text(
+                assigned_text, row.get("assigned_inn"), inn_index, name_index
+            )
             assigned_org_id: Optional[int] = (
                 combined_region_map.get(assigned_text)
-                or _match_org(assigned_text, org_lookup)
+                or auto_assigned_id
             )
 
             # Build field dict for Vehicle
@@ -468,8 +907,7 @@ async def commit_import(
             fields["assigned_text"] = assigned_text if assigned_text else None
 
             # Convert date strings to date objects
-            from datetime import date as _date
-            for dcol in ("registered_at", "insurance_until"):
+            for dcol in _ALL_DATE_FIELDS:
                 v = fields.get(dcol)
                 if isinstance(v, str) and v:
                     try:
@@ -478,6 +916,11 @@ async def commit_import(
                     except ValueError:
                         fields.pop(dcol, None)
 
+            # props-хранимые поля (Автоблок §2: tires_type/branding/paint_condition/
+            # defect_description/note) — собраны парсером в row["props"], сюда не входят
+            # через _VEHICLE_FIELDS (это не колонки Vehicle).
+            row_props: dict = row.get("props") or {}
+
             # Check existing
             existing_result = await db.execute(
                 select(Vehicle).where(Vehicle.plate == plate)
@@ -485,12 +928,18 @@ async def commit_import(
             existing: Optional[Vehicle] = existing_result.scalar_one_or_none()
 
             if existing is None:
+                if row_props:
+                    fields["props"] = row_props
                 vehicle = Vehicle(**fields)
                 db.add(vehicle)
                 inserted += 1
             elif body.conflict_strategy == "update":
                 for k, v in fields.items():
                     setattr(existing, k, v)
+                if row_props:
+                    from sqlalchemy.orm.attributes import flag_modified
+                    existing.props = {**(existing.props or {}), **row_props}
+                    flag_modified(existing, "props")
                 updated += 1
             else:
                 skipped += 1
@@ -539,3 +988,41 @@ async def get_unmapped_regions(
     )
     rows = result.scalars().all()
     return {"unmapped_regions": [{"raw_text": r} for r in rows], "count": len(rows)}
+
+
+# ─────────────────────── GET /api/vehicles/import-template ──────────────────
+#
+# Отдельный router с prefix="/api/vehicles" (а не "/api/vehicles-import" как у
+# основного router этого файла) — так просил владелец задания: путь должен
+# жить рядом с остальными /api/vehicles/* эндпоинтами. Регистрируется в
+# app/__init__.py ДО vehicles.router — иначе его перехватил бы catch-all
+# GET /api/vehicles/{vehicle_id} (там нет `:int`-констрейнта на путь).
+
+vehicles_template_router = APIRouter(prefix="/api/vehicles", tags=["vehicles-import"])
+
+
+@vehicles_template_router.get("/import-template")
+async def download_vehicle_import_template(
+    current_user: User = Depends(require_action("vehicle.import")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Скачать шаблон Excel для импорта реестра транспорта (лист «Транспорт» +
+    «Инструкция» + «Справочники»). Состав колонок — реестр services/vehicle_fields.py
+    за вычетом полей, скрытых для организации текущего пользователя."""
+    from fastapi.responses import StreamingResponse
+
+    hidden_keys = await get_hidden_field_keys(db, current_user.org_id)
+    try:
+        buf = build_vehicle_import_template(hidden_keys)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename*=UTF-8''{_url_quote('Шаблон_импорта_транспорта.xlsx', safe='-_.~')}"
+            )
+        },
+    )

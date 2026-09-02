@@ -4,6 +4,31 @@ LOG=/var/log/vsks-deploy.log
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 echo "===== $(ts) deploy start =====" >> "$LOG"
 
+# Serialize concurrent deploys. webhook.py запускает нас через Popen
+# откреплённо и НЕ ждёт завершения — два push с разницей в пару минут
+# порождают два ОДНОВРЕМЕННЫХ autodeploy.sh. Второй экземпляр раньше мог
+# собрать docker-образ, пока первый ещё делал `git pull`, — Docker кешировал
+# COPY . . / npm run build на ЕЩЁ НЕ обновлённом дереве, и в проде оседал
+# бандл от предыдущего коммита (владелец видел это как «нужен hard refresh»).
+# Лок-файл ВНЕ git-дерева (git clean -fd ниже чистит /opt/vsks-crm — если бы
+# лок лежал внутри репозитория, clean мог бы удалить и пересоздать файл, а
+# flock завязан на inode: новый файл = новый, независимый лок, взаимная
+# исключительность сломается).
+# Поведение при занятой блокировке: ЖДАТЬ, а не выходить сразу. Именно уход
+# «на выход» и был бы той самой болезнью — самый свежий push потерялся бы.
+# Раз сборка дольше, чем интервал между обычными push (десятки секунд –
+# единицы минут), второй экземпляр просто встаёт в очередь и полноценно
+# деплоит уже обновлённое дерево следующим шагом. Таймаут 30 минут — защита
+# от вечного зависания, а не обычный режим работы.
+LOCKFILE=/tmp/vsks-deploy.lock
+exec 200>"$LOCKFILE"
+echo "[$(ts)] waiting for deploy lock (held by another autodeploy.sh run, if any)..." >> "$LOG"
+if ! flock -w 1800 200; then
+    echo "[$(ts)] FAILED to acquire deploy lock within 30 min; another run appears stuck. Exiting without deploying." >> "$LOG"
+    exit 1
+fi
+echo "[$(ts)] deploy lock acquired" >> "$LOG"
+
 cd /opt/vsks-crm || { echo "[$(ts)] cd /opt/vsks-crm FAILED" >> "$LOG"; exit 1; }
 
 # Track webhook.py hash before pull so we know whether to restart the webhook service
@@ -20,6 +45,11 @@ git pull origin claude >> "$LOG" 2>&1
 
 WEBHOOK_HASH_AFTER=$(sha256sum webhook.py 2>/dev/null | cut -d' ' -f1)
 NGINX_HASH_AFTER=$(cat nginx/nginx.conf docker-compose.yml 2>/dev/null | sha256sum | cut -d' ' -f1)
+
+# Текущий коммит — build-arg для фронта, чтобы Dockerfile детерминированно
+# сбрасывал кеш шага сборки (COPY . . / npm run build) на каждый новый
+# коммит, но не трогал кеш `npm ci` (см. frontend/Dockerfile).
+GIT_SHA=$(git rev-parse HEAD 2>/dev/null || echo unknown)
 
 # Rebuild backend image (picks up code + model changes)
 docker compose build backend >> "$LOG" 2>&1
@@ -39,8 +69,9 @@ docker compose run --rm --no-deps backend python /app/check_schema.py --apply >>
 docker compose up -d backend >> "$LOG" 2>&1
 sleep 8
 
-# Rebuild & restart frontend
-docker compose build frontend >> "$LOG" 2>&1
+# Rebuild & restart frontend. --build-arg GIT_SHA пробивает кеш шага сборки
+# приложения в frontend/Dockerfile на каждый коммит, npm ci остаётся кешированным.
+docker compose build --build-arg GIT_SHA="$GIT_SHA" frontend >> "$LOG" 2>&1
 docker compose up -d frontend >> "$LOG" 2>&1
 
 # Conditional nginx rebuild — только если nginx.conf или docker-compose.yml изменились.
@@ -68,6 +99,15 @@ if [ "$WEBHOOK_HASH_BEFORE" != "$WEBHOOK_HASH_AFTER" ]; then
 else
     echo "[$(ts)] restarting vsks-deploy.service (routine hang prevention)" >> "$LOG"
 fi
+# Явно снимаем лок и закрываем fd ДО того, как уйти в фон: подпроцесс `&`
+# наследует открытые дескрипторы, и если оставить fd 200 открытым, он держал
+# бы лок ещё как минимум 2 секунды (sleep) — а то и дольше, пока
+# systemctl restart не завершится. Из-за этого следующий деплой в очереди
+# ждал бы без необходимости. Явный unlock+close делает освобождение лока
+# синхронным с концом фактической работы деплоя, а не с концом этого скрипта.
+flock -u 200
+exec 200>&-
+
 ( sleep 2 && systemctl restart vsks-deploy.service ) &
 
 echo "[$(ts)] deploy complete" >> "$LOG"

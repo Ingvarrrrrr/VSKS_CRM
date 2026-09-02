@@ -802,6 +802,7 @@ import { useFeoNodeAmounts } from '@/composables/useFeoNodeAmounts'
 import type { FeoPlanPosition, FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
 import { useItemMatching, type MatchCandidate } from '@/composables/useItemMatching'
 import { useToast, type ToastType } from '@/composables/useToast'
+import type { PriceFreshness } from '@/composables/usePriceFreshness'
 import {
   VAT_RATE_OPTIONS,
   parseVatRatePercent,
@@ -861,6 +862,12 @@ interface EditorItem {
   // показывается под ценой за единицу в ItemsTableFlat/ItemsCardsView/
   // ItemsTableStages. UI-only, вырезается перед сохранением наравне с
   // _selectedProduct/_photo_url/_description (см. useItemMatching.applyCandidate).
+  _price_meta?: {
+    price_updated_at?: string | null
+    price_source?: string | null
+    price_source_ref?: string | null
+    price_freshness?: PriceFreshness | null
+  } | null
 }
 
 interface Product {
@@ -879,6 +886,7 @@ interface Product {
   price_updated_at?: string | null
   price_source?: string | null
   price_source_ref?: string | null
+  price_freshness?: PriceFreshness | null
 }
 
 // Phase 17.1-08: prefer the bytea-backed /api/products/{id}/photo endpoint
@@ -2021,6 +2029,7 @@ function clearItem(idx: number) {
   localItems.value[idx]._photo_url = undefined
   localItems.value[idx]._description = undefined
   localItems.value[idx]._description_44fz = undefined
+  localItems.value[idx]._price_meta = null
   emitUpdate()
 }
 
@@ -2358,7 +2367,16 @@ interface PlanCreateRow {
   duplicateOf: { id: number; name: string } | null
 }
 
+// Этап 1 (владелец, 2026-09-02): «сейчас на закупке без per-item категорий
+// кнопка "Создать в плане закупок" гаснет, и расхождение нечем исправить» —
+// когда режим «разные категории ФЭО для каждого товара» (feoPerItem) ВЫКЛЮЧЕН,
+// эффективная категория позиции обязана быть категорией шапки (defaultFeoCategoryId),
+// а не собственным feo_category_id позиции (в этом режиме позиции вообще не
+// должны иметь свою категорию — см. backend _item_feo_mismatch reason="header",
+// который как раз и алярмит расхождение, если она вдруг есть). Когда feoPerItem
+// ВКЛЮЧЁН — прежнее поведение (своя категория позиции).
 function _effectiveFeoCategoryId(it: EditorItem): number | null {
+  if (!props.feoPerItem) return props.defaultFeoCategoryId ?? null
   return it.feo_node_id ?? it.feo_category_id ?? null
 }
 
@@ -2945,6 +2963,7 @@ function onItemProductSelect(idx: number, val: any) {
     item._photo_url = undefined
     item._description = undefined
     item._description_44fz = undefined
+    item._price_meta = null
     ;(item as any).match_confirmed = true
     emitUpdate()
     return
@@ -2962,6 +2981,7 @@ function onItemProductSelect(idx: number, val: any) {
     price_updated_at: val.price_updated_at ?? null,
     price_source: val.price_source ?? null,
     price_source_ref: val.price_source_ref ?? null,
+    price_freshness: val.price_freshness ?? null,
   })
   item._description_44fz = val.description_44fz || undefined
   emitUpdate()
@@ -3980,6 +4000,12 @@ function commitPreviewItems(resolved: ResolvedRow[]) {
       _photo_url: hasCatalog ? (cand!.photo_url ?? undefined) : undefined,
       _description: hasCatalog ? (cand!.description ?? undefined) : undefined,
       _description_44fz: undefined,
+      _price_meta: hasCatalog ? {
+        price_updated_at: cand!.price_updated_at ?? null,
+        price_source: cand!.price_source ?? null,
+        price_source_ref: cand!.price_source_ref ?? null,
+        price_freshness: cand!.price_freshness ?? null,
+      } : null,
     }
     if (props.itemShape === 'purchase') {
       item.final_unit_price = null

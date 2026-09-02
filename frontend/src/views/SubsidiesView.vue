@@ -100,9 +100,18 @@
           </template>
           <template #item.name="{ item }">
             <span class="font-weight-medium cursor-pointer" @click="toggleSelect(item.id)">{{ item.name }}</span>
+            <v-chip v-if="item.status === 'draft'" size="x-small" color="warning" variant="flat" class="ml-2">Черновик</v-chip>
           </template>
           <template #item.actions="{ item }">
             <div class="d-flex align-center justify-end" style="gap:2px">
+              <v-btn
+                v-if="canApproveSubsidy(item)"
+                icon="mdi-check-decagram" size="x-small" variant="text" color="success"
+                title="Утвердить черновик субсидии"
+                :loading="approvingSubsidyId === item.id"
+                @click.stop="approveSubsidy(item)"
+              />
+              <v-btn icon="mdi-account-group" size="x-small" variant="text" color="deep-purple" title="Участники (соредакторы)" @click.stop="openMembersDialog(item)" />
               <v-btn
                 icon="mdi-file-document-multiple-outline"
                 size="x-small" variant="text"
@@ -134,7 +143,16 @@
           >
             <div class="sc-title-band">
               <div v-fit-text class="sc-name" :title="s.name">{{ s.name }}</div>
+              <v-chip v-if="s.status === 'draft'" size="x-small" color="warning" variant="flat" class="ml-2">Черновик</v-chip>
               <div class="sc-actions">
+                <v-btn
+                  v-if="canApproveSubsidy(s)"
+                  icon="mdi-check-decagram" size="x-small" variant="text" color="success"
+                  title="Утвердить черновик субсидии"
+                  :loading="approvingSubsidyId === s.id"
+                  @click.stop="approveSubsidy(s)"
+                />
+                <v-btn icon="mdi-account-group" size="x-small" variant="text" color="deep-purple" title="Участники (соредакторы)" @click.stop="openMembersDialog(s)" />
                 <v-btn
                   icon="mdi-file-document-multiple-outline"
                   size="x-small" variant="text"
@@ -290,6 +308,14 @@
           <div class="detail-header">
             <v-icon icon="mdi-folder-open-outline" size="20" color="#3B82F6" class="mr-2" />
             <span class="detail-title">{{ selectedSubsidy.name }} — направления ФЭО</span>
+            <v-chip v-if="selectedSubsidy.status === 'draft'" size="x-small" color="warning" variant="flat" class="ml-2">Черновик</v-chip>
+            <v-btn
+              v-if="canApproveSubsidy(selectedSubsidy)"
+              size="small" variant="tonal" color="success" prepend-icon="mdi-check-decagram"
+              class="ml-3"
+              :loading="approvingSubsidyId === selectedSubsidy.id"
+              @click="approveSubsidy(selectedSubsidy)"
+            >Утвердить</v-btn>
             <v-btn icon="mdi-close" size="x-small" variant="text" class="ml-auto" @click="selectedId = null" />
           </div>
 
@@ -3262,6 +3288,58 @@
       </v-card>
     </v-dialog>
 
+    <!-- ── Members (co-editors) Dialog ── -->
+    <v-dialog v-model="showMembersDialog" max-width="520" scrollable :fullscreen="mobile">
+      <v-card class="dialog-card">
+        <v-card-title class="dialog-title">
+          <v-icon icon="mdi-account-group" color="deep-purple" class="mr-2" />
+          Участники: {{ membersSubsidy?.name }}
+          <v-chip class="ml-2" size="x-small" variant="tonal">{{ membersList.length }}</v-chip>
+          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showMembersDialog = false" />
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pa-4">
+          <v-autocomplete
+            v-if="canManageMembers"
+            v-model="memberToAdd"
+            :items="memberUsersList"
+            item-title="full_name"
+            item-value="id"
+            label="Добавить участника"
+            variant="outlined"
+            density="compact"
+            clearable
+            hide-details
+            :loading="addingMember"
+            class="mb-3"
+            @update:model-value="(val) => { if (val) addSubsidyMember(val) }"
+          />
+          <div v-else class="text-caption text-medium-emphasis mb-3">
+            Добавлять/удалять участников может автор субсидии или сотрудник с правом «Редактирование субсидий».
+          </div>
+          <div v-if="loadingMembers" class="d-flex justify-center py-4">
+            <v-progress-circular indeterminate color="primary" size="28" />
+          </div>
+          <div v-else-if="!membersList.length" class="text-caption text-medium-emphasis">Пока нет участников.</div>
+          <div v-else class="d-flex flex-wrap" style="gap:8px">
+            <v-chip
+              v-for="m in membersList"
+              :key="m.user_id"
+              :closable="canManageMembers"
+              @click:close="removeSubsidyMember(m.user_id)"
+            >
+              {{ m.full_name || m.username || '—' }}
+            </v-chip>
+          </div>
+        </v-card-text>
+        <v-divider />
+        <v-card-actions class="px-4 py-3">
+          <v-spacer />
+          <v-btn variant="text" @click="showMembersDialog = false">Закрыть</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- ── Copy Approvers Sub-dialog ── -->
     <v-dialog v-model="showCopyApproversDialog" max-width="520" :fullscreen="mobile">
       <v-card>
@@ -4938,6 +5016,26 @@ interface SubsidyRow {
   ceiling_committed_percent?: number | null
   ceiling_near_warning?: boolean
   ceiling_exceeded?: boolean
+  // C4: черновые субсидии — статус/автор/утвердивший. dashboard/charts их не
+  // отдаёт, подтягиваются отдельным вызовом GET /subsidies/ в loadAll() и
+  // мёрджатся по id (см. ниже).
+  status?: string
+  created_by?: number | null
+  approved_by?: number | null
+  approved_at?: string | null
+}
+
+// C4: участник (соредактор) черновой субсидии — калька wish_member без
+// consent-флоу, см. backend/app/routers/subsidy_members.py.
+interface SubsidyMember {
+  id: number
+  subsidy_id: number
+  user_id: number
+  added_by_id: number | null
+  username?: string | null
+  full_name?: string | null
+  added_by_name?: string | null
+  created_at?: string | null
 }
 
 interface FeoCategory {
@@ -5317,6 +5415,27 @@ const approverForm = ref<{
 }>({ role_name: '', full_name: '', order_num: 0, is_default: true, can_initiate: false, show_feo_path: false, user_id: null, selectedUser: null })
 
 const approverUsersList = ref<Array<{ id: number; full_name: string }>>([])
+
+// C4: черновые субсидии — approve + members state
+const approvingSubsidyId = ref<number | null>(null)
+const showMembersDialog = ref(false)
+const membersSubsidy = ref<SubsidyRow | null>(null)
+const membersList = ref<SubsidyMember[]>([])
+const loadingMembers = ref(false)
+const addingMember = ref(false)
+const memberToAdd = ref<number | null>(null)
+const memberUsersList = ref<Array<{ id: number; full_name: string }>>([])
+// Тот же гейт, что на бэкенде (_can_manage_subsidy_members): автор субсидии
+// или обладатель subsidy.edit. hasAction() читает /users/me permissions
+// (тот же механизм, что canEditFeo выше) — orgId-скоуп на бэкенд-стороне
+// гейта per-subsidy (has_org_key), фронт для UI-показа кнопок довольствуется
+// плоским правом, сервер всё равно перепроверит per-subsidy при запросе.
+const canManageMembers = computed(() => {
+  const s = membersSubsidy.value
+  if (!s) return false
+  if (authStore.hasAction('subsidy.edit')) return true
+  return s.created_by != null && s.created_by === currentUserId
+})
 
 // ── Copy Approvers state ──────────────────────────
 const showCopyApproversDialog = ref(false)
@@ -7132,6 +7251,14 @@ async function applyMapping(plannedItemId: number | null) {
       delete comparisonData.value[movedToCategoryId]
       await ensureComparison(movedToCategoryId)
     }
+  } catch (e: any) {
+    // Этап 3 (владелец, 2026-09-02): раньше здесь не было catch вовсе — ошибка
+    // (в т.ч. новая 409 PLANNED_ITEM_CATEGORY_MISMATCH при несовпадении категорий,
+    // см. app/services/plan_autoassign.py) улетала необработанной, диалог оставался
+    // открытым без единого объяснения пользователю. Распаковываем detail.message
+    // (правило проекта — не глотать generic-снэкбаром), диалог намеренно НЕ
+    // закрываем — пусть человек попробует другую плановую позицию.
+    showSnack(e?.payload?.message || e?.detail || e?.message || 'Не удалось сопоставить с плановой позицией', 'error')
   } finally {
     mappingInProgress.value = false
   }
@@ -9829,7 +9956,28 @@ async function loadAll() {
       ceiling_committed_percent: s.ceiling_committed_percent ?? 0,
       ceiling_near_warning: s.ceiling_near_warning ?? false,
       ceiling_exceeded: s.ceiling_exceeded ?? false,
+      status: 'approved', // fallback, перезаписывается ниже реальным значением
     }))
+    // C4: dashboard/charts не отдаёт status/created_by/approved_by/approved_at
+    // (это отдельная сводка бюджетов). Статус черновика подтягиваем отдельным
+    // вызовом уже существующего списочного эндпоинта и мёрджим по id — без
+    // изменений на бэкенде. Ошибка здесь не должна ломать страницу (fallback
+    // 'approved' — чипы просто не появятся).
+    try {
+      const statusRows = await apiFetch<Array<{ id: number; status?: string; created_by?: number | null; approved_by?: number | null; approved_at?: string | null }>>('/subsidies/')
+      const byId = new Map(statusRows.map(r => [r.id, r]))
+      for (const row of allSubsidies.value) {
+        const found = byId.get(row.id)
+        if (found) {
+          row.status = found.status ?? 'approved'
+          row.created_by = found.created_by ?? null
+          row.approved_by = found.approved_by ?? null
+          row.approved_at = found.approved_at ?? null
+        }
+      }
+    } catch (e) {
+      console.warn('[subsidies] status load failed:', e)
+    }
     const years = [...new Set(allSubsidies.value.map((s: SubsidyRow) => s.year))].sort((a, b) => b - a)
     if (years.length) selectedYear.value = years[0]  // always reset to most recent year
 
@@ -10785,6 +10933,91 @@ async function deleteFeoCategory() {
 // ── Budget history ────────────────────────────────
 function openHistoryDialog(s: any) {
   historyDialogRef.value?.open(s.id, s.name)
+}
+
+// ── C4: Draft subsidies — approve + members ────────
+// Кнопка видна только для черновика и только тому, у кого есть право
+// subsidy.edit — тот же hasAction(), которым уже проверяется canEditFeo
+// (feo_category.edit) в этом файле. Сервер (POST /approve) перепроверяет
+// require_action('subsidy.edit') сам — фронт лишь скрывает лишнее.
+function canApproveSubsidy(s: SubsidyRow | null): boolean {
+  if (!s) return false
+  return s.status === 'draft' && authStore.hasAction('subsidy.edit')
+}
+
+async function approveSubsidy(s: SubsidyRow) {
+  approvingSubsidyId.value = s.id
+  try {
+    const updated = await apiFetch<{ status?: string; approved_by?: number | null; approved_at?: string | null }>(
+      `/subsidies/${s.id}/approve`, { method: 'POST' }
+    )
+    const idx = allSubsidies.value.findIndex(x => x.id === s.id)
+    if (idx >= 0) {
+      allSubsidies.value[idx] = {
+        ...allSubsidies.value[idx],
+        status: updated.status ?? 'approved',
+        approved_by: updated.approved_by ?? null,
+        approved_at: updated.approved_at ?? null,
+      }
+    }
+    showSnack('Субсидия утверждена')
+  } catch (e: any) {
+    showSnack(e.detail || 'Ошибка утверждения субсидии', 'error')
+  } finally {
+    approvingSubsidyId.value = null
+  }
+}
+
+let _memberUsersSubsidyId: number | null = null
+async function loadMemberUsers(sid: number) {
+  if (memberUsersList.value.length && _memberUsersSubsidyId === sid) return
+  try {
+    memberUsersList.value = await apiFetch<any[]>(`/users/?subsidy_id=${sid}`)
+    _memberUsersSubsidyId = sid
+  } catch { memberUsersList.value = [] }
+}
+
+async function openMembersDialog(s: SubsidyRow) {
+  membersSubsidy.value = s
+  showMembersDialog.value = true
+  loadingMembers.value = true
+  try {
+    membersList.value = await apiFetch<SubsidyMember[]>(`/subsidies/${s.id}/members`)
+  } catch (e: any) {
+    showSnack(e.detail || 'Ошибка загрузки участников', 'error')
+  } finally {
+    loadingMembers.value = false
+  }
+  loadMemberUsers(s.id)
+}
+
+async function addSubsidyMember(userId: number | null) {
+  if (!userId || !membersSubsidy.value) { memberToAdd.value = null; return }
+  if (membersList.value.some(m => m.user_id === userId)) { memberToAdd.value = null; return }
+  addingMember.value = true
+  try {
+    const created = await apiFetch<SubsidyMember>(`/subsidies/${membersSubsidy.value.id}/members`, {
+      method: 'POST', body: JSON.stringify({ user_id: userId }),
+    })
+    membersList.value.push(created)
+    showSnack('Участник добавлен')
+  } catch (e: any) {
+    showSnack(e.detail || 'Ошибка добавления участника', 'error')
+  } finally {
+    addingMember.value = false
+    memberToAdd.value = null
+  }
+}
+
+async function removeSubsidyMember(userId: number) {
+  if (!membersSubsidy.value) return
+  try {
+    await apiFetch(`/subsidies/${membersSubsidy.value.id}/members/${userId}`, { method: 'DELETE' })
+    membersList.value = membersList.value.filter(m => m.user_id !== userId)
+    showSnack('Участник удалён', 'warning')
+  } catch (e: any) {
+    showSnack(e.detail || 'Ошибка удаления участника', 'error')
+  }
 }
 
 // ── Approvers CRUD ────────────────────────────────

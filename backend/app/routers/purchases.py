@@ -2980,21 +2980,24 @@ async def patch_purchase_item(
                     f"Плановая позиция «{_chosen_fpi.name}» деактивирована (удалена из плана), "
                     f"привязка к ней невозможна — выберите действующую или создайте новую.",
                 )
-            if it.feo_category_id is None or _chosen_fpi.feo_category_id != it.feo_category_id:
-                _chosen_cat_name = (await db.execute(
-                    select(FeoCategory.name).where(FeoCategory.id == _chosen_fpi.feo_category_id)
-                )).scalar_one_or_none() or f"#{_chosen_fpi.feo_category_id}"
-                if it.feo_category_id is not None:
-                    _target_cat_name = (await db.execute(
-                        select(FeoCategory.name).where(FeoCategory.id == it.feo_category_id)
-                    )).scalar_one_or_none() or f"#{it.feo_category_id}"
-                else:
-                    _target_cat_name = "без категории ФЭО"
-                raise HTTPException(
-                    409,
-                    f"Плановая позиция «{_chosen_fpi.name}» относится к категории «{_chosen_cat_name}», "
-                    f"а позиция закупки — к категории «{_target_cat_name}». Выберите плановую позицию той же категории.",
-                )
+            # Этапы 2-3 (владелец, 2026-09-02): проверка совпадения категорий (или
+            # потомка) + разрешение суперадмину с уведомлением вынесены в общий
+            # хелпер — тот же, что зовёт POST /feo-planned-items/map (см.
+            # app/services/plan_autoassign.py::check_planned_item_category_link),
+            # чтобы правило не разъезжалось по двум копиям. Эффективная категория
+            # позиции — своя (it.feo_category_id), а если её нет — категория шапки
+            # (тот же фолбэк, что использует _item_feo_mismatch).
+            from app.services.plan_autoassign import check_planned_item_category_link
+            _effective_item_cat_id = it.feo_category_id or p.feo_category_id
+            await check_planned_item_category_link(
+                db,
+                purchase=p,
+                item=it,
+                item_category_id=_effective_item_cat_id,
+                planned_category_id=_chosen_fpi.feo_category_id,
+                planned_item_name=_chosen_fpi.name,
+                current_user=current_user,
+            )
             it.feo_planned_item_id = body.feo_planned_item_id
             it.over_plan = False
         else:

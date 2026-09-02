@@ -14,8 +14,10 @@ Owner-решение: закупка сама становится планом 
 Поведение и текст докстринга ФУНКЦИИ НЕ ИЗМЕНЕНЫ относительно оригинала в
 wishes.py — путь заявки не должен измениться ни на йоту при переносе.
 """
+from datetime import datetime
 from typing import Optional
 
+from fastapi import HTTPException
 from sqlalchemy import select, func, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -385,3 +387,120 @@ async def move_or_detach_planned_item(db: AsyncSession, item, new_category_id: i
         f"Плановая позиция «{fpi.name}» используется ещё и другими закупками/заявками — "
         f"привязка снята, сама плановая позиция осталась в категории «{old_cat_name or '—'}»."
     )
+
+
+# ---------------------------------------------------------------------------
+# Расхождение категорий при явной привязке к плановой позиции (владелец,
+# 2026-09-02, этапы 2-3 плана исправления расхождения категорий ФЭО): ОДИН
+# общий хелпер для двух путей, которыми человек привязывает PurchaseItem к
+# конкретной FeoPlannedItem —
+#   - PATCH /purchases/{pid}/items/{item_id} (явный выбор плановой позиции в
+#     диалоге «Редактировать позицию», см. app/routers/purchases.py::patch_purchase_item);
+#   - POST /feo-planned-items/map (сопоставление факта с планом на дашборде
+#     ФЭО, см. app/routers/feo_planned_items.py::map_purchase_item_to_planned) —
+#     раньше этот путь молча ПЕРЕНОСИЛ позицию закупки в категорию плановой
+#     позиции, создавая расхождение с шапкой закупки (feo_per_item=False),
+#     которое PATCH выше как раз запрещает — правило разъезжалось.
+# Копировать правило по обоим местам нельзя (см. правило проекта) — обе точки
+# теперь зовут ЭТУ функцию.
+# ---------------------------------------------------------------------------
+
+async def check_planned_item_category_link(
+    db: AsyncSession,
+    *,
+    purchase,
+    item,
+    item_category_id: Optional[int],
+    planned_category_id: Optional[int],
+    planned_item_name: str,
+    current_user,
+) -> None:
+    """Проверка соответствия категорий при привязке PurchaseItem к FeoPlannedItem.
+
+    Совпадение — planned_category_id равен item_category_id ИЛИ является его
+    потомком (см. app.routers.purchases._category_within, тот же обход дерева
+    вверх по parent_id; здесь не дублируется, импортируется лениво).
+
+    При несовпадении:
+      - обычному пользователю — HTTPException 409 с detail={code, message},
+        сообщение ведёт к решению, а не просто сообщает о проблеме: выбрать
+        плановую позицию из категории закупки либо создать её кнопкой
+        «Создать в плане закупок»;
+      - суперадмину — привязка разрешена, но уведомление уходит согласовавшим
+        закупку (PurchaseApproval.status == 'approved') и ответственному/
+        назначенному (purchase.assigned_user_id) — тот же паттерн получателей,
+        что и app.routers.purchases._guard_feo_category_change_after_approval,
+        без дублей (set по user_id).
+
+    item_category_id=None (у закупки нет ни своей, ни шапочной категории) —
+    сравнивать не с чем, пропускаем без 409 (пустая категория — отдельная
+    проблема, не эта проверка). planned_category_id=None — тоже пропуск
+    (снятие привязки идёт другим путём, сюда не попадает).
+
+    Ничего не пишет в БД, не коммитит — только проверка + отправка
+    уведомления (у notify_user свой commit внутри, как и у остальных мест,
+    использующих этот паттерн)."""
+    if planned_category_id is None or item_category_id is None:
+        return
+    from app.routers.purchases import _category_within  # lazy — против цикла импорта модулей на старте
+    if await _category_within(db, planned_category_id, item_category_id):
+        return
+
+    from app.models.feo_category import FeoCategory
+
+    async def _cat_name(cid: Optional[int]) -> str:
+        if cid is None:
+            return "без категории ФЭО"
+        cat = await db.get(FeoCategory, cid)
+        return (cat.name if cat else None) or f"#{cid}"
+
+    item_cat_name = await _cat_name(item_category_id)
+    planned_cat_name = await _cat_name(planned_category_id)
+
+    if current_user.role != "superadmin":
+        raise HTTPException(
+            409,
+            detail={
+                "code": "PLANNED_ITEM_CATEGORY_MISMATCH",
+                "message": (
+                    f"Плановая позиция «{planned_item_name}» относится к категории «{planned_cat_name}», "
+                    f"а позиция закупки — к категории «{item_cat_name}». Выберите плановую позицию из "
+                    f"категории закупки, либо создайте новую кнопкой «Создать в плане закупок»."
+                ),
+            },
+        )
+
+    # Суперадмин: привязка разрешена, но согласовавшие и ответственный должны узнать.
+    from app.notifications import notify_user, _esc, _purchase_url
+    from app.models.purchase_approval import PurchaseApproval
+    from app.models.user import User
+
+    actor_name = current_user.full_name or current_user.username
+    when = datetime.now().strftime("%d.%m.%Y %H:%M")
+    item_name = getattr(item, "item_name", None) or "Без названия"
+    purchase_label = getattr(purchase, "purchase_number", None) or getattr(purchase, "id", None)
+    text = (
+        f"⚠️ <b>Плановая позиция чужой категории привязана к закупке</b>\n\n"
+        f"📌 Закупка №{purchase_label}\n"
+        f"👤 {_esc(actor_name)} привязал(а) {when} позицию «{_esc(item_name)}» "
+        f"к плановой позиции «{_esc(planned_item_name)}» категории «{_esc(planned_cat_name)}», "
+        f"хотя категория самой позиции закупки — «{_esc(item_cat_name)}»."
+    )
+
+    recipient_ids: set = set()
+    result = await db.execute(
+        select(PurchaseApproval.user_id).where(
+            PurchaseApproval.purchase_id == purchase.id,
+            PurchaseApproval.status == "approved",
+            PurchaseApproval.user_id.isnot(None),
+        )
+    )
+    for uid in result.scalars().all():
+        recipient_ids.add(uid)
+    if getattr(purchase, "assigned_user_id", None):
+        recipient_ids.add(purchase.assigned_user_id)
+
+    for uid in recipient_ids:
+        u = await db.get(User, uid)
+        if u:
+            await notify_user(u, text, button_url=_purchase_url(purchase.id), button_label="Открыть закупку")

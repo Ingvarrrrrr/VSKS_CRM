@@ -4345,7 +4345,11 @@ async function applyFeoMatch(itemIndex: number, feoItemId: number) {
     feoMatchSuggestions.value = feoMatchSuggestions.value.filter(m => m.item_index !== itemIndex)
     showSnack('Позиция привязана к плану ФЭО')
   } catch (e: any) {
-    showSnack(e?.message || 'Ошибка привязки', 'error')
+    // Этап 3 (владелец, 2026-09-02): POST /feo-planned-items/map теперь может
+    // отклонить привязку 409-кой PLANNED_ITEM_CATEGORY_MISMATCH с понятным
+    // detail.message (см. app/services/plan_autoassign.py) — распаковываем его,
+    // а не глотаем generic-текстом (правило проекта, не общий снэкбар).
+    showSnack(e?.payload?.message || e?.detail || e?.message || 'Ошибка привязки', 'error')
   }
 }
 

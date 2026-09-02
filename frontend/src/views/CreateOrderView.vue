@@ -4815,6 +4815,26 @@ function serializeFormForAutosave() {
   })
 }
 
+// Владелец (2026-09-02), прод-баг: суперадмин поменял категорию ФЭО в шапке
+// закупки, но плановая позиция товара (feo_planned_item_id) осталась от
+// старой категории — лист согласования печатал путь ФЭО от плановой позиции,
+// показывая ветку, противоречащую шапке. Бэкенд теперь сам сбрасывает такие
+// привязки при смене категории (см. _reset_incompatible_item_feo_links) и
+// сообщает, сколько штук сброшено — здесь заметно предупреждаем пользователя
+// и перезагружаем позиции с сервера, чтобы локальный UI не «воскресил»
+// сброшенную привязку следующим же автосохранением (items.feo_planned_item_id
+// в форме иначе остался бы старым и снова уехал бы на сервер как есть).
+async function handleFeoLinksReset(count: number | undefined | null) {
+  if (!count) return
+  showSnack(
+    `Категория ФЭО изменена: ${count} ${count === 1 ? 'позиция отвязана' : 'позиций отвязано'} от плановых позиций старой категории. Выберите плановую позицию заново для каждой отмеченной позиции.`,
+    'warning',
+    { actionText: 'Показать позиции', onAction: () => guideArrowTo('items') },
+  )
+  guideArrowTo('items')
+  if (isEdit.value) await loadPurchase()
+}
+
 async function performAutosave() {
   if (!isEdit.value || !purchaseId.value) return
   const current = serializeFormForAutosave()
@@ -4822,12 +4842,13 @@ async function performAutosave() {
   autosaveState.value = 'saving'
   try {
     const body = JSON.parse(current)
-    await apiFetch(`/purchases/${purchaseId.value}`, { method: 'PATCH', body })
+    const resp = await apiFetch<any>(`/purchases/${purchaseId.value}`, { method: 'PATCH', body })
     autosaveBaseline = current
     autosaveState.value = 'saved'
     setTimeout(() => {
       if (autosaveState.value === 'saved') autosaveState.value = 'idle'
     }, 2000)
+    if (resp?.feo_links_reset) await handleFeoLinksReset(resp.feo_links_reset)
   } catch (e: any) {
     autosaveState.value = 'error'
     autosaveError.value = e?.message || 'Не удалось сохранить'
@@ -8442,6 +8463,9 @@ const doSave = async (adminOverride: boolean) => {
       if (updated.suggested_feo_matches?.length) {
         feoMatchSuggestions.value = updated.suggested_feo_matches
       }
+      // Владелец (2026-09-02): смена категории ФЭО шапки сбросила привязки
+      // позиций к плановым позициям старой категории — см. handleFeoLinksReset.
+      if (updated.feo_links_reset) await handleFeoLinksReset(updated.feo_links_reset)
       if (updated.registry_number) form.registry_number = updated.registry_number
       if (updated.contract_number) form.contract_number = updated.contract_number
       if (updated.purchase_number) form.purchase_number = updated.purchase_number

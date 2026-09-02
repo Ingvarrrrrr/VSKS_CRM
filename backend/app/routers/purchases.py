@@ -1814,6 +1814,7 @@ async def update_purchase(
 
     # Владелец (2026-09-01): категория ФЭО после согласования — см.
     # _guard_feo_category_change_after_approval.
+    _old_feo_category_id_put = p.feo_category_id
     if "feo_category_id" in payload_dict:
         await _guard_feo_category_change_after_approval(
             p, payload_dict["feo_category_id"], current_user, db
@@ -1983,6 +1984,15 @@ async def update_purchase(
         select(PurchaseItem).where(PurchaseItem.purchase_id == pid)
     )).scalars().all()
 
+    # Владелец (2026-09-02): смена категории ФЭО шапки закупки — см.
+    # _reset_incompatible_item_feo_links. ДО авто-подбора ниже, чтобы только
+    # что сброшенные позиции сразу попали в suggested_feo_matches (новый
+    # подбор по НОВОЙ категории), а не остались молча указывать на старую.
+    _feo_links_reset = await _reset_incompatible_item_feo_links(
+        _flushed_items, _old_feo_category_id_put, p.feo_category_id,
+        bool(p.feo_per_item), db,
+    )
+
     # Восстановление ContractItem.source_item_id (см. снимок выше и
     # app/services/contract_item_link.py): сопоставляем старые/новые id
     # плановых позиций, затем чиним договорные позиции этой закупки ДО
@@ -2117,11 +2127,16 @@ async def update_purchase(
         import logging as _log
         _log.getLogger(__name__).warning("entity_change record failed: %s", _exc)
 
-    # 12-02: Return suggestions if any
-    if suggested_feo_matches:
+    # 12-02: Return suggestions if any + Владелец (2026-09-02): сообщить фронту,
+    # сколько привязок feo_planned_item_id сброшено сменой категории шапки
+    # (см. _reset_incompatible_item_feo_links) — чтобы показать предупреждение
+    # "переопределите плановые позиции заново".
+    if suggested_feo_matches or _feo_links_reset:
         from app.schemas.schemas import PurchaseOut as _POut
         base = _POut.model_validate(p).model_dump()
-        base["suggested_feo_matches"] = suggested_feo_matches
+        if suggested_feo_matches:
+            base["suggested_feo_matches"] = suggested_feo_matches
+        base["feo_links_reset"] = _feo_links_reset
         return base
     return p
 
@@ -2245,6 +2260,79 @@ async def _guard_feo_category_change_after_approval(
         u = await db.get(User, uid)
         if u:
             await notify_user(u, text, button_url=_purchase_url(p.id), button_label="Открыть закупку")
+
+
+async def _category_within(db: AsyncSession, cat_id, root_id) -> bool:
+    """True, если категория cat_id — это сама root_id либо её потомок (обход
+    дерева ФЭО вверх по parent_id; дерево обычно 2-3 уровня, короткий путь).
+    None на любой стороне — не совпадает. Предок root_id (не потомок) —
+    тоже НЕ within: «новая категория или её потомок» не выполняется."""
+    if cat_id is None or root_id is None:
+        return False
+    if cat_id == root_id:
+        return True
+    seen: set = set()
+    cur_id = cat_id
+    for _ in range(30):  # защита от циклов в данных
+        if cur_id in seen:
+            return False
+        seen.add(cur_id)
+        cat = await db.get(FeoCategory, cur_id)
+        if cat is None or cat.parent_id is None:
+            return False
+        cur_id = cat.parent_id
+        if cur_id == root_id:
+            return True
+    return False
+
+
+async def _reset_incompatible_item_feo_links(
+    items,
+    old_category_id,
+    new_category_id,
+    per_item_mode: bool,
+    db: AsyncSession,
+) -> int:
+    """Владелец (2026-09-02), прод-баг: суперадмин сменил категорию ФЭО в
+    шапке закупки, но PurchaseItem.feo_planned_item_id остался указывать на
+    плановую позицию СТАРОЙ категории — лист согласования печатает путь ФЭО
+    от плановой позиции и показывает ветку, противоречащую шапке. «При
+    изменении категории ФЭО выше привязка позиций должна сбрасываться и
+    требовать заново переопределения».
+
+    - feo_per_item выключен (общая категория на закупку) — feo_category_id
+      каждой позиции подтягивается к новой категории шапки (следует за ней).
+    - feo_per_item включён (своя категория на позицию) — feo_category_id
+      позиции НЕ трогаем.
+    - В обоих случаях: feo_planned_item_id сбрасывается, если привязанная
+      плановая позиция не принадлежит ЭФФЕКТИВНОЙ категории самой позиции
+      (item.feo_category_id, если задана; иначе — новая категория шапки) и
+      не её потомку — см. _category_within.
+
+    Не вызывается, если категория шапки не менялась (old_category_id ==
+    new_category_id) — тогда возвращает 0, в БД не лезет.
+    Возвращает число позиций, у которых что-то изменилось (для ответа
+    эндпоинта фронту — предупредить пользователя)."""
+    if old_category_id == new_category_id:
+        return 0
+    from app.models.feo_planned_item import FeoPlannedItem
+
+    reset_count = 0
+    for item in items:
+        changed = False
+        if not per_item_mode and item.feo_category_id != new_category_id:
+            item.feo_category_id = new_category_id
+            changed = True
+        effective_cat_id = item.feo_category_id or new_category_id
+        if item.feo_planned_item_id and effective_cat_id:
+            planned = await db.get(FeoPlannedItem, item.feo_planned_item_id)
+            planned_cat_id = planned.feo_category_id if planned else None
+            if not await _category_within(db, planned_cat_id, effective_cat_id):
+                item.feo_planned_item_id = None
+                changed = True
+        if changed:
+            reset_count += 1
+    return reset_count
 
 
 # Phase 26: автосохранение полей карточки закупки.
@@ -2379,6 +2467,7 @@ async def patch_purchase(
     # Владелец (2026-09-01): категория ФЭО после согласования — см.
     # _guard_feo_category_change_after_approval. autosave — реальный
     # вектор бага (форма шлёт feo_category_id в каждом PATCH).
+    _old_feo_category_id_patch = p.feo_category_id
     if "feo_category_id" in (body or {}):
         _new_feo_cat = _coerce_patch_value("feo_category_id", body["feo_category_id"])
         await _guard_feo_category_change_after_approval(p, _new_feo_cat, current_user, db)
@@ -2421,10 +2510,26 @@ async def patch_purchase(
                 it.contractor_id = c_row.id
                 it.contractor_inn = c_row.inn
                 it.contractor_name = c_row.name
+
+    # Владелец (2026-09-02): смена категории ФЭО шапки закупки — см.
+    # _reset_incompatible_item_feo_links. autosave (этот PATCH) — основной
+    # вектор бага, форма не шлёт items, поэтому чиним привязки уже
+    # существующих PurchaseItem напрямую.
+    _feo_links_reset = 0
+    if "feo_category_id" in changed:
+        from app.models.purchase_item import PurchaseItem as _PIFeo
+        _items_for_feo_reset = (await db.execute(
+            select(_PIFeo).where(_PIFeo.purchase_id == p.id)
+        )).scalars().all()
+        _feo_links_reset = await _reset_incompatible_item_feo_links(
+            _items_for_feo_reset, _old_feo_category_id_patch, p.feo_category_id,
+            bool(p.feo_per_item), db,
+        )
+
     if changed:
         await db.commit()
         await db.refresh(p)
-    return {"id": p.id, "changed": changed}
+    return {"id": p.id, "changed": changed, "feo_links_reset": _feo_links_reset}
 
 
 class _ActualizeContractNumberBody(BaseModel):

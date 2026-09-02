@@ -457,6 +457,10 @@ async def create_planned_item(
         name=data.name,
         quantity=data.quantity,
         unit=data.unit,
+        # Цена за единицу (владелец, 2026-09-02) — см. докстринг
+        # FeoPlannedItem.unit_price / assert_tz_not_over_plan. NULL = не задана,
+        # amount тогда сам по себе итоговая сумма (не делим на quantity).
+        unit_price=data.unit_price,
         notes=data.notes,
         is_active=data.is_active,
         sort_order=data.sort_order,
@@ -568,6 +572,7 @@ async def create_planned_items_bulk(
             name=data.name,
             quantity=data.quantity,
             unit=data.unit,
+            unit_price=data.unit_price,
             notes=data.notes,
             is_active=data.is_active,
             sort_order=sort_order,
@@ -621,6 +626,12 @@ async def update_planned_item(
     item.name = data.name
     item.quantity = data.quantity
     item.unit = data.unit
+    # PUT здесь — ПОЛНАЯ замена, как и у quantity/amount/unit выше (см. докстринг
+    # PATCHABLE-паттерна ниже у item_type/is_feo_breakdown) — любой вызывающий код
+    # (movePlannedItemToCategory/savePlannedItemSortOrder/saveEditPlannedItem в
+    # SubsidiesView.vue) обязан слать unit_price существующей позиции явно, иначе
+    # он молча обнулится. Все три места фронта обновлены вместе с этим полем.
+    item.unit_price = data.unit_price
     item.notes = data.notes
     item.is_active = data.is_active
     item.sort_order = data.sort_order

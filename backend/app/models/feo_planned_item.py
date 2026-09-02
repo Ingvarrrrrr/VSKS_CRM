@@ -13,6 +13,20 @@ class FeoPlannedItem(Base):
     unit = Column(String(50), nullable=True)
     item_type = Column(String(20), nullable=True)  # товар / услуга / работа
     amount = Column(Numeric(15, 2), nullable=True)
+    # Цена ЗА ЕДИНИЦУ (владелец, 2026-09-02): «Я не хочу указывать количество
+    # услуг точно, я знаю сумму (200 000) и знаю, что это примерно 20 услуг —
+    # не надо автоматически делить сумму на количество и препятствовать
+    # закупке 21-й услуги». Если заполнена — план полноценный: итог = quantity
+    # × unit_price, контроль превышения (assert_tz_not_over_plan, feo_plan.py)
+    # проверяет и количество, и цену за единицу, и сумму, как раньше. Если
+    # NULL — amount является ИТОГОВОЙ суммой сама по себе, quantity считается
+    # ОРИЕНТИРОВОЧНЫМ и НЕ ограничивается; единственное ограничение — сумма.
+    # ПОСЛАБЛЕНИЕ (осознанное, не регресс): позиции, заведённые ДО появления
+    # этого поля, имеют unit_price=NULL и автоматически попадают в этот же
+    # «мягкий» режим — раньше по ним assert_tz_not_over_plan вычисляла цену за
+    # единицу как amount/quantity и ограничивала её. См. миграцию
+    # z1a2b3c4d5e6_feo_planned_item_unit_price.py.
+    unit_price = Column(Numeric(15, 2), nullable=True)
     notes = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=func.now())

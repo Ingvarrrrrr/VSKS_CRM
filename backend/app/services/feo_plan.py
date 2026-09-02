@@ -1773,9 +1773,26 @@ async def assert_tz_not_over_plan(
     ни по количеству, ни по цене за единицу, ни по сумме».
 
     Источник плана — РОВНО один из двух (не смешиваются между собой):
-      1. feo_planned_item_id задан → FeoPlannedItem.quantity / .amount (amount —
-         ВСЯ плановая сумма позиции, не цена за единицу; цена за единицу =
-         amount / quantity, только если quantity > 0).
+      1. feo_planned_item_id задан → FeoPlannedItem.quantity / .amount / .unit_price.
+         Владелец (2026-09-02, «Логистические услуги»): unit_price — ОТДЕЛЬНОЕ
+         поле цены за единицу (см. докстринг модели и миграцию
+         z1a2b3c4d5e6_feo_planned_item_unit_price.py), а не производная от
+         amount/quantity:
+           - unit_price задана → план полноценный, amount = ИТОГОВАЯ сумма
+             (используется как есть, либо quantity × unit_price, если amount
+             почему-то пуст); количество/цена за единицу/сумма проверяются
+             все три, как раньше.
+           - unit_price NULL (в т.ч. ВСЕ позиции, заведённые до появления
+             этого поля, — осознанное послабление, не регресс) → amount сама
+             по себе ИТОГОВАЯ сумма, quantity — ОРИЕНТИРОВОЧНОЕ количество:
+             деление amount/quantity НЕ выполняется, planned_unit_price
+             остаётся None (цена за единицу не ограничивается), planned_qty
+             тоже остаётся None (количество не ограничивается) — единственное
+             ограничение ниже — сумма (planned_total = amount). Раньше здесь
+             ВСЕГДА делили amount на quantity, из-за чего сценарий «сумма
+             200 000, услуг примерно 20» неявно превращался в потолок цены
+             10 000/услуга и блокировал закупку 21-й услуги в пределах той же
+             суммы — ровно то, что владелец просил прекратить.
       2. Иначе, если задан feo_category_id → FeoCategory.planned_quantity /
          .planned_amount листа (planned_amount там УЖЕ цена за единицу, см.
          модель); плановая сумма = planned_quantity × planned_amount.
@@ -1828,12 +1845,26 @@ async def assert_tz_not_over_plan(
     if feo_planned_item_id:
         fpi = await db.get(FeoPlannedItem, feo_planned_item_id)
         if fpi is not None:
-            if fpi.quantity is not None:
-                planned_qty = Decimal(str(fpi.quantity))
-            if fpi.amount is not None:
-                planned_total = Decimal(str(fpi.amount))
-                if planned_qty is not None and planned_qty > 0:
-                    planned_unit_price = planned_total / planned_qty
+            if fpi.unit_price is not None:
+                # Цена за единицу задана явно — план полноценный (см. докстринг
+                # выше): количество, цена за единицу И сумма проверяются все.
+                planned_unit_price = Decimal(str(fpi.unit_price))
+                if fpi.quantity is not None:
+                    planned_qty = Decimal(str(fpi.quantity))
+                if fpi.amount is not None:
+                    planned_total = Decimal(str(fpi.amount))
+                elif planned_qty is not None:
+                    planned_total = planned_qty * planned_unit_price
+            else:
+                # unit_price НЕ задана (владелец, 2026-09-02) — amount является
+                # ИТОГОВОЙ суммой сама по себе, quantity ОРИЕНТИРОВОЧНОЕ.
+                # planned_qty/planned_unit_price сознательно остаются None —
+                # НЕ делим amount на quantity и НЕ ограничиваем ни количество,
+                # ни цену за единицу. Единственное ограничение — сумма.
+                # Затрагивает и ВСЕ позиции, заведённые до появления unit_price
+                # (у них он тоже NULL) — осознанное послабление, см. докстринг.
+                if fpi.amount is not None:
+                    planned_total = Decimal(str(fpi.amount))
     elif feo_category_id:
         cat = await db.get(FeoCategory, feo_category_id)
         if cat is not None:

@@ -5944,6 +5944,15 @@ interface FeoPlannedItem {
   quantity: number | null
   unit: string | null
   amount: number | null
+  // Цена ЗА ЕДИНИЦУ (владелец, 2026-09-02) — необязательное поле, см. докстринг
+  // FeoPlannedItem.unit_price (backend/app/models/feo_planned_item.py) и
+  // assert_tz_not_over_plan (backend/app/services/feo_plan.py): задана → план
+  // полноценный (кол-во/цена/сумма проверяются); NULL → amount сама по себе
+  // итоговая сумма, quantity ориентировочное. PUT здесь — ПОЛНАЯ замена (см.
+  // остальные PATCHABLE-комментарии в файле) — все места, шлющие PUT
+  // /feo-planned-items/{id}, обязаны передавать unit_price существующей
+  // позиции явно, иначе он молча обнулится.
+  unit_price?: number | null
   notes: string | null
   is_active: boolean
   payment_mode?: 'one_time' | 'monthly'

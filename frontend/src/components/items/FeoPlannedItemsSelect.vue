@@ -318,6 +318,18 @@
             hide-details="auto"
             class="mb-2"
           />
+          <!-- Цена за единицу (владелец, 2026-09-02) — необязательное поле, см. коммент
+               у createForm.unitPrice выше. Задана — «Сумма плана» ниже считается сама
+               (кол-во × цена) и недоступна для ручного ввода; не задана — обычное поле. -->
+          <v-text-field
+            v-model.number="createForm.unitPrice"
+            type="number"
+            label="Цена за единицу, ₽ (необязательно)"
+            variant="outlined"
+            density="compact"
+            hide-details="auto"
+            class="mb-1"
+          />
           <v-text-field
             v-model.number="createForm.amount"
             type="number"
@@ -325,8 +337,13 @@
             variant="outlined"
             density="compact"
             hide-details="auto"
-            class="mb-2"
+            :readonly="createAmountIsComputed"
+            :bg-color="createAmountIsComputed ? 'grey-lighten-4' : undefined"
+            class="mb-1"
           />
+          <div class="text-caption text-medium-emphasis mb-2" style="line-height:1.35">
+            <v-icon icon="mdi-information-outline" size="13" style="margin-top:-2px" class="mr-1" />{{ createPriceCaption }}
+          </div>
           <!-- Блок 1 (план zany-fluttering-mountain.md, 2026-08-14): товар/услуга/работа —
                необязательно, как и у остальных полей этого диалога. -->
           <v-select
@@ -634,7 +651,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { apiFetch } from '@/api'
 import type { FeoNode } from '@/composables/useFeoLeaves'
 import type { FeoPlanPosition, FeoPlanSelection, FeoPlanKind } from '@/composables/useFeoPlannedResiduals'
@@ -1078,9 +1095,37 @@ const ITEM_TYPE_OPTIONS = [
   { title: 'Услуга', value: 'услуга' },
   { title: 'Работа', value: 'работа' },
 ]
-const createForm = reactive<{ name: string; quantity: number | null; unit: string; amount: number | null; item_type: string | null }>({
-  name: '', quantity: null, unit: '', amount: null, item_type: null,
+const createForm = reactive<{ name: string; quantity: number | null; unit: string; unitPrice: number | null; amount: number | null; item_type: string | null }>({
+  name: '', quantity: null, unit: '', unitPrice: null, amount: null, item_type: null,
 })
+// Цена за единицу (владелец, 2026-09-02, дословно): «Я на самом деле не хочу
+// здесь указывать количество услуг, я её знаю примерно. Я знаю сумму, которая
+// у меня на это есть, это 200 000, я хочу ввести, что это примерно 20 услуг.
+// При этом тогда не надо автоматически делить сумму на количество и
+// препятствовать дальнейшему продвижению... Должно быть поле с ценой за
+// ед. — если её вводят, тогда сумма считается путём умножения; если не
+// ввели, то сумма и есть сумма, не надо делить и блокировать.»
+// Пока цена задана (и не равна 0) — «Сумма плана» считается сама (кол-во ×
+// цена) и недоступна для ручного ввода; иначе сумма — обычное ручное поле, как
+// раньше. См. backend/app/models/feo_planned_item.py::unit_price и
+// assert_tz_not_over_plan (backend/app/services/feo_plan.py) — контроль
+// превышения плана следует ровно этой же семантике.
+const createAmountIsComputed = computed(() => createForm.unitPrice != null && Number(createForm.unitPrice) !== 0)
+function recalcCreateAmountFromUnitPrice() {
+  if (!createAmountIsComputed.value) return
+  const price = Number(createForm.unitPrice)
+  const qty = createForm.quantity != null && Number(createForm.quantity) > 0 ? Number(createForm.quantity) : 1
+  createForm.amount = Math.round(qty * price * 100) / 100
+}
+watch([() => createForm.quantity, () => createForm.unitPrice], () => recalcCreateAmountFromUnitPrice())
+// Пояснение прямо в диалоге (владелец просил объяснить оба режима и
+// последствия — «должен быть комментарий, чтобы человек понял, что он
+// вводит и к чему это приведёт»), без терминов из кода.
+const createPriceCaption = computed((): string =>
+  createAmountIsComputed.value
+    ? 'С ценой за единицу закупка по этой позиции проверяется и по цене, и по количеству, и по сумме — превысить нельзя ничего из трёх.'
+    : 'Без цены за единицу количество считается ориентировочным и не ограничивает закупку — под контролем только общая сумма плана.'
+)
 const createSaving = ref(false)
 // Snackbar — единый механизм (useToast + ToastContainer, смонтирован в App.vue).
 const toast = useToast()
@@ -1095,6 +1140,7 @@ function openCreateDialog() {
   createForm.name = props.prefill?.name ?? ''
   createForm.quantity = props.prefill?.quantity ?? null
   createForm.unit = props.prefill?.unit ?? ''
+  createForm.unitPrice = null
   createForm.amount = props.prefill?.amount ?? null
   createForm.item_type = null
   createDialog.value = true
@@ -1272,6 +1318,7 @@ function buildCreatePayload(allowDuplicate: boolean) {
     name: createForm.name.trim(),
     quantity: createForm.quantity,
     unit: createForm.unit.trim() || null,
+    unit_price: createForm.unitPrice,
     amount: createForm.amount,
     item_type: createForm.item_type,
     allow_duplicate_name: allowDuplicate,

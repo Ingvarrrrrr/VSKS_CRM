@@ -1564,6 +1564,12 @@ class FeoPlannedItemCreate(BaseModel):
     quantity: Optional[Decimal] = None
     unit: Optional[str] = None
     amount: Optional[Decimal] = None
+    # Цена ЗА ЕДИНИЦУ (владелец, 2026-09-02) — см. докстринг FeoPlannedItem.unit_price
+    # (app/models/feo_planned_item.py) и assert_tz_not_over_plan (app/services/
+    # feo_plan.py): задана → amount = quantity × unit_price, план полноценный
+    # (кол-во/цена/сумма проверяются); NULL → amount сама по себе итоговая сумма,
+    # quantity ориентировочное, деление не выполняется.
+    unit_price: Optional[Decimal] = None
     notes: Optional[str] = None
     is_active: bool = True
     # Блок 1 (план zany-fluttering-mountain.md): товар / услуга / работа —

@@ -52,39 +52,64 @@ NGINX_HASH_AFTER=$(cat nginx/nginx.conf docker-compose.yml 2>/dev/null | sha256s
 GIT_SHA=$(git rev-parse HEAD 2>/dev/null || echo unknown)
 
 # Rebuild backend image (picks up code + model changes)
+# Код возврата ОБЯЗАТЕЛЬНО проверяем: раньше упавшая сборка молча
+# «проглатывалась», docker compose up -d поднимал СТАРЫЙ образ, а лог
+# всё равно заканчивался строкой "deploy complete" — провал выглядел
+# как успех (владелец получал 502 или требовал hard refresh без объяснений).
 docker compose build backend >> "$LOG" 2>&1
+BACKEND_BUILD_OK=$?
+FRONTEND_BUILD_OK=0
+NGINX_BUILD_OK=0
 
-# Apply schema migrations BEFORE starting backend container.
-# Reason: if a migration adds a column, SQLAlchemy first request will
-# crash with UndefinedColumn → backend Exited → docker exec fails →
-# `|| true` swallows the error → site stays 502.
-# Use `docker compose run --rm` to spawn an ephemeral container on the
-# fresh image, apply schema, then exit. Only after that we start the
-# long-running backend container.
-echo "[$(ts)] applying schema migrations (pre-start)" >> "$LOG"
-docker compose run --rm --no-deps backend python /app/check_schema.py --apply >> "$LOG" 2>&1 || \
-    echo "[$(ts)] WARN: check_schema.py --apply failed (see above)" >> "$LOG"
+if [ "$BACKEND_BUILD_OK" -ne 0 ]; then
+    echo "[$(ts)] !!!!! СБОРКА ОБРАЗА backend ПРОВАЛИЛАСЬ (exit $BACKEND_BUILD_OK) — деплой ПРЕРВАН ДО миграций и ДО перезапуска backend, на проде остаётся ПРЕДЫДУЩАЯ версия !!!!!" >> "$LOG"
+else
+    # Apply schema migrations BEFORE starting backend container.
+    # Reason: if a migration adds a column, SQLAlchemy first request will
+    # crash with UndefinedColumn → backend Exited → docker exec fails →
+    # `|| true` swallows the error → site stays 502.
+    # Use `docker compose run --rm` to spawn an ephemeral container on the
+    # fresh image, apply schema, then exit. Only after that we start the
+    # long-running backend container.
+    echo "[$(ts)] applying schema migrations (pre-start)" >> "$LOG"
+    docker compose run --rm --no-deps backend python /app/check_schema.py --apply >> "$LOG" 2>&1 || \
+        echo "[$(ts)] WARN: check_schema.py --apply failed (see above)" >> "$LOG"
 
-# Now safe to start backend
-docker compose up -d backend >> "$LOG" 2>&1
-sleep 8
+    # Now safe to start backend
+    docker compose up -d backend >> "$LOG" 2>&1
+    sleep 8
 
-# Rebuild & restart frontend. --build-arg GIT_SHA пробивает кеш шага сборки
-# приложения в frontend/Dockerfile на каждый коммит, npm ci остаётся кешированным.
-docker compose build --build-arg GIT_SHA="$GIT_SHA" frontend >> "$LOG" 2>&1
-docker compose up -d frontend >> "$LOG" 2>&1
+    # Rebuild & restart frontend. --build-arg GIT_SHA пробивает кеш шага сборки
+    # приложения в frontend/Dockerfile на каждый коммит, npm ci остаётся кешированным.
+    docker compose build --build-arg GIT_SHA="$GIT_SHA" frontend >> "$LOG" 2>&1
+    FRONTEND_BUILD_OK=$?
 
-# Conditional nginx rebuild — только если nginx.conf или docker-compose.yml изменились.
-# Это закрывает старый TODO от 2026-04-05: websocket-fix в nginx.conf не применялся
-# на проде, т.к. autodeploy не трогал nginx-контейнер. Теперь ws/cache/proxy-tweaks
-# доходят, но мы не дёргаем nginx без нужды.
-if [ "$NGINX_HASH_BEFORE" != "$NGINX_HASH_AFTER" ]; then
-    echo "[$(ts)] nginx config changed; rebuilding & restarting nginx" >> "$LOG"
-    docker compose build nginx >> "$LOG" 2>&1
-    docker compose up -d --force-recreate nginx >> "$LOG" 2>&1
+    if [ "$FRONTEND_BUILD_OK" -ne 0 ]; then
+        # backend к этому моменту УЖЕ пересобран и перезапущен на новом образе —
+        # откатывать его не нужно, просто честно фиксируем в логе, что backend
+        # обновился, а frontend остался на предыдущей версии.
+        echo "[$(ts)] !!!!! СБОРКА ОБРАЗА frontend ПРОВАЛИЛАСЬ (exit $FRONTEND_BUILD_OK) — backend уже обновлён и работает, frontend остаётся на ПРЕДЫДУЩЕЙ версии, деплой считается неуспешным !!!!!" >> "$LOG"
+    else
+        docker compose up -d frontend >> "$LOG" 2>&1
+
+        # Conditional nginx rebuild — только если nginx.conf или docker-compose.yml изменились.
+        # Это закрывает старый TODO от 2026-04-05: websocket-fix в nginx.conf не применялся
+        # на проде, т.к. autodeploy не трогал nginx-контейнер. Теперь ws/cache/proxy-tweaks
+        # доходят, но мы не дёргаем nginx без нужды.
+        if [ "$NGINX_HASH_BEFORE" != "$NGINX_HASH_AFTER" ]; then
+            echo "[$(ts)] nginx config changed; rebuilding & restarting nginx" >> "$LOG"
+            docker compose build nginx >> "$LOG" 2>&1
+            NGINX_BUILD_OK=$?
+            if [ "$NGINX_BUILD_OK" -ne 0 ]; then
+                echo "[$(ts)] !!!!! СБОРКА ОБРАЗА nginx ПРОВАЛИЛАСЬ (exit $NGINX_BUILD_OK) — backend и frontend уже обновлены, nginx остаётся на ПРЕДЫДУЩЕЙ версии, деплой считается неуспешным !!!!!" >> "$LOG"
+            else
+                docker compose up -d --force-recreate nginx >> "$LOG" 2>&1
+            fi
+        fi
+
+        docker image prune -f >> "$LOG" 2>&1
+    fi
 fi
-
-docker image prune -f >> "$LOG" 2>&1
 
 # Always restart the webhook service at the end of a deploy. Two reasons:
 #  (1) picks up any webhook.py changes (see WEBHOOK_HASH_BEFORE/AFTER above);
@@ -110,4 +135,12 @@ exec 200>&-
 
 ( sleep 2 && systemctl restart vsks-deploy.service ) &
 
-echo "[$(ts)] deploy complete" >> "$LOG"
+# "deploy complete" печатаем ТОЛЬКО если все сборки (backend/frontend и,
+# при необходимости, nginx) реально прошли успешно — иначе лог должен
+# честно показывать провал, а не создавать иллюзию завершённого деплоя.
+if [ "$BACKEND_BUILD_OK" -eq 0 ] && [ "$FRONTEND_BUILD_OK" -eq 0 ] && [ "$NGINX_BUILD_OK" -eq 0 ]; then
+    echo "[$(ts)] deploy complete" >> "$LOG"
+else
+    echo "[$(ts)] deploy FAILED — см. выше, какой образ не собрался; vsks-deploy.service всё равно перезапущен, чтобы вебхук не завис" >> "$LOG"
+    exit 1
+fi

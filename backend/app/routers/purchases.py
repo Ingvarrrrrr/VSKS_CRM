@@ -22,6 +22,15 @@ from app.models.user_org_access import UserOrgAccess
 from app.routers.contracts import ensure_contract_linked
 from app.routers.purchase_budget import _check_budget, _assign_framework_seq, FRAMEWORK_TYPES
 from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_over_plan, assert_tz_batch_not_over_plan, compute_feo_plan_tree
+# Владелец (2026-09-02): превышение ТЗ над её КОНКРЕТНОЙ плановой позицией — на
+# путях «заявка/авансовый отчёт/СЗ создаёт закупку» (create_purchase) и «прямое
+# редактирование закупки» (update_purchase, PUT) — больше не 409, регистрируется
+# как запрос на согласование (см. докстринг app/services/tz_excess_approval.py).
+# patch_purchase_item (точечная правка ОДНОЙ позиции) и split (разбивка позиции)
+# ниже по файлу НЕ тронуты — там жёсткий отказ, как и раньше (см. отчёт задачи).
+from app.services.tz_excess_approval import (
+    collect_tz_over_plan_violations, register_tz_excess_approvals, assert_no_pending_tz_excess,
+)
 # Владелец (2026-08-12, «закупка сама становится планом»): та же логика
 # автозаведения плановой позиции, что и в wishes.py, нужна и здесь — для
 # закупок, созданных/меняемых в обход заявки (см. вызовы ниже в update_purchase
@@ -1893,10 +1902,17 @@ async def create_purchase(
     # сверх плана и уже проходит через assert_no_unapproved_excess выше.
     # Владелец (2026-08-17, прод-инцидент РЕЕ-2026-00887): позиции, привязанные
     # к ОДНОЙ и той же плановой позиции, накапливаются в пределах ЭТОЙ закупки
-    # (assert_tz_batch_not_over_plan), а не проверяются поштучно против ПОЛНОГО
-    # плана — иначе две строки в сумме превышают план, каждая проходя поодиночке.
+    # (та же группировка, что у assert_tz_batch_not_over_plan) — иначе две строки
+    # в сумме превышают план, каждая проходя поодиночке.
+    # Владелец (2026-09-02): больше НЕ 409 здесь — этот путь тоже создаёт закупку
+    # автоматически (авансовый отчёт/СЗ, см. is_advance/is_sn выше), симметрично
+    # заявке. Собираем нарушения, регистрируем запрос на согласование ПОСЛЕ
+    # создания закупки ниже (см. app.services.tz_excess_approval).
+    _tz_violations: list[dict] = []
     if not admin_override:
-        await assert_tz_batch_not_over_plan(db, items_data, fallback_category_id=data.feo_category_id)
+        _tz_violations = await collect_tz_over_plan_violations(
+            db, items_data, fallback_category_id=data.feo_category_id,
+        )
 
     if not data.purchase_number:
         max_result = await db.execute(select(func.coalesce(func.max(Purchase.purchase_number), 0)))
@@ -2029,6 +2045,15 @@ async def create_purchase(
             changed_by_name=getattr(current_user, 'full_name', None) or current_user.username,
             reason=None,
         ))
+
+    # Владелец (2026-09-02): регистрируем запрос(ы) на согласование превышения ТЗ
+    # над плановой позицией ПОСЛЕ создания закупки/позиций (собраны выше, до
+    # мутаций, см. _tz_violations) — reuse app.services.tz_excess_approval.
+    if _tz_violations:
+        await register_tz_excess_approvals(
+            db, _tz_violations, subsidy_id=data.subsidy_id, current_user=current_user,
+            context_label=f"создание закупки №{p.purchase_number or p.id}",
+        )
 
     await db.commit()
     await db.refresh(p)
@@ -2222,6 +2247,13 @@ async def update_purchase(
             _gate_cat_ids.add(p.feo_category_id)
         for _cid in _gate_cat_ids:
             await assert_no_unapproved_excess(db, _cid)
+        # Владелец (2026-09-02): тот же момент («Договор» — превентивная точка
+        # контроля) обязан видеть и item-level превышение ТЗ над плановой позицией
+        # (см. app.services.tz_excess_approval — assert_no_unapproved_excess из
+        # feo_plan.py его не видит). Проверяем items_data — то, что РЕАЛЬНО будет
+        # сохранено (PUT заменяет все позиции целиком, старый p.items не годится
+        # для этой проверки — см. комментарий у assert_tz_batch_not_over_plan ниже).
+        await assert_no_pending_tz_excess(db, items_data, fallback_category_id=p.feo_category_id)
 
     # Contract price: авто-пересчёт из items для ВСЕХ типов закупок (phase26-l-1).
     # Рамочный (framework_cumulative / framework_with_amount) тоже должен суммироваться в total_ordered контракта.
@@ -2240,9 +2272,25 @@ async def update_purchase(
     # старых строк тут не помогут, проверяем именно то, что придёт в базу).
     # over_plan=true пропускаем — сознательно сверх плана, см. create_purchase выше.
     # Владелец (2026-08-17, прод-инцидент РЕЕ-2026-00887): накопление по общей
-    # плановой позиции в пределах ЭТОЙ закупки — см. assert_tz_batch_not_over_plan.
+    # плановой позиции в пределах ЭТОЙ закупки (та же группировка, что у
+    # assert_tz_batch_not_over_plan).
+    # Владелец (2026-09-02): больше НЕ 409 здесь. Причина смены решения именно
+    # здесь, а не только в create_purchase/wishes.py: PUT — ЕДИНСТВЕННЫЙ путь
+    # сохранить закупку целиком (пересылает ВСЕ позиции при КАЖДОМ сохранении, в
+    # т.ч. правку поля, никак не связанного с ТЗ) — оставь здесь жёсткий отказ, и
+    # закупка, попавшая в План закупок с превышением ТЗ (заявка/аванс/СЗ выше),
+    # стала бы НЕРЕДАКТИРУЕМОЙ вообще (кроме admin_override) до момента, пока
+    # кто-то не решит превышение — то есть блокировка «дальше двигаться нельзя»
+    # молча расползлась бы и на «сохранить дату доставки», а этого владелец не
+    # просил. Собираем нарушения, регистрируем запрос ПОСЛЕ сохранения позиций
+    # (см. _tz_violations_put ниже) — реальную блокировку ДВИЖЕНИЯ обеспечивает
+    # assert_no_pending_tz_excess (см. выше, у входа в «Договор») и
+    # purchase_transitions.py (см. её докстринг).
+    _tz_violations_put: list[dict] = []
     if not admin_override:
-        await assert_tz_batch_not_over_plan(db, items_data, fallback_category_id=p.feo_category_id)
+        _tz_violations_put = await collect_tz_over_plan_violations(
+            db, items_data, fallback_category_id=p.feo_category_id,
+        )
 
     # Снимок старых плановых позиций ДО удаления (правка прод-инцидента,
     # сессия 2026-09-01, см. app/services/contract_item_link.py): PUT ниже
@@ -2422,6 +2470,14 @@ async def update_purchase(
         else:
             _pgv_note = f"Авто-версия при сохранении закупки #{p.purchase_number or p.id}"
         await _create_plan_graph_version(subsidy_id=p.subsidy_id, db=db, user=current_user, note=_pgv_note)
+
+    # Владелец (2026-09-02): регистрируем запрос(ы) на согласование превышения ТЗ
+    # над плановой позицией (собраны выше до мутаций, см. _tz_violations_put).
+    if _tz_violations_put:
+        await register_tz_excess_approvals(
+            db, _tz_violations_put, subsidy_id=(data.subsidy_id or p.subsidy_id), current_user=current_user,
+            context_label=f"сохранение закупки №{p.purchase_number or p.id}",
+        )
 
     await db.commit()
     await db.refresh(p)

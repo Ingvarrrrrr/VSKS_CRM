@@ -25,7 +25,12 @@ from app.services.text_match import normalize as _normalize_name
 from app.models.purchase_event import PurchaseMember
 from app.routers.purchase_members import _create_assignment_chat_room
 from app.models.chat_message import ChatMessage
-from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_over_plan, assert_tz_batch_not_over_plan, compute_feo_plan_tree
+from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_over_plan, compute_feo_plan_tree
+# Владелец (2026-09-02): превышение ТЗ над её КОНКРЕТНОЙ плановой позицией на
+# пути «заявка согласуется → закупка создаётся» больше не 409 — вместо отказа
+# регистрируется запрос на согласование (см. докстринг модуля, ПОЧЕМУ это не
+# правка feo_plan.py и не второй параллельный механизм превышения).
+from app.services.tz_excess_approval import collect_tz_over_plan_violations, register_tz_excess_approvals
 # _auto_assign_planned_items вынесена в app.services.plan_autoassign (владелец,
 # 2026-08-12, «закупка сама становится планом»): нужна ТАКЖЕ из purchases.py для
 # закупок, созданных/меняемых в обход заявки. Поведение НЕ менялось при переносе —
@@ -868,7 +873,15 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
     await _auto_assign_planned_items(
         wish_items, wish.feo_category_id, db, note=f"повторным согласованием заявки №{wish.id}",
     )
-    await assert_tz_batch_not_over_plan(db, wish_items)
+    # Владелец (2026-09-02): ТЗ дороже своей плановой позиции больше НЕ 409 здесь —
+    # согласование заявки не блокируется, превышение регистрируется как запрос на
+    # согласование уполномоченным (см. app.services.tz_excess_approval и вызывающий
+    # код ниже — _distribute_wish_to_purchases/convert_wish регистрируют запрос
+    # ПОСЛЕ этого вызова, используя _tz_excess_violations_sync, ту же схему, что
+    # у purchase_sync/excess_warnings). Собранное здесь — НЕ бросает, только копит.
+    wish._tz_excess_violations_sync = await collect_tz_over_plan_violations(
+        db, wish_items, fallback_category_id=wish.feo_category_id,
+    )
 
     pitems_res = await db.execute(
         select(PurchaseItem).where(PurchaseItem.purchase_id == p.id)
@@ -1136,6 +1149,11 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
         # согласования — только в закупке»: она реагирует именно на легитимную
         # правку, сделанную, пока заявка была НЕ converted.
         wish._purchase_sync = await _sync_purchase_from_wish(wish, existing, db)
+        wish._tz_excess_approvals = await register_tz_excess_approvals(
+            db, getattr(wish, "_tz_excess_violations_sync", []) or [],
+            subsidy_id=wish.subsidy_id, current_user=current_user,
+            context_label=f"повторное согласование заявки №{wish.id}",
+        )
         return [p.id for p in existing]
 
     # Preload wish items with products for category resolution
@@ -1237,9 +1255,16 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
     # _sync_wish_items_to_purchases/update_wish/purchases.py) — пропускаем.
     # Владелец (2026-08-17, прод-инцидент РЕЕ-2026-00887): позиции, привязанные
     # к ОДНОЙ и той же плановой позиции, накапливаются в пределах ЭТОЙ заявки
-    # (assert_tz_batch_not_over_plan), а не проверяются поштучно против ПОЛНОГО
-    # плана — иначе две строки в сумме превышают план, каждая проходя поодиночке.
-    await assert_tz_batch_not_over_plan(db, items_full)
+    # (та же группировка, что у assert_tz_batch_not_over_plan) — иначе две строки
+    # в сумме превышают план, каждая проходя поодиночке.
+    # Владелец (2026-09-02): больше НЕ 409 здесь — «это же заявка согласуется, это
+    # согласуется её необходимость... финансист видит, что люди просят, и решает».
+    # Собираем нарушения (не бросаем), регистрируем запрос на согласование ПОСЛЕ
+    # фактического создания закупок ниже (см. wish._tz_excess_approvals) — тот же
+    # порядок, что и у excess_warnings (см. _collect_excess_warnings).
+    _tz_violations = await collect_tz_over_plan_violations(
+        db, items_full, fallback_category_id=wish.feo_category_id,
+    )
 
     # Владелец (2026-08-12): «Когда заявка идёт с превышением, ... она должна
     # уходить [в закупку], но на закупке должен быть значок, что она заблокирована
@@ -1393,6 +1418,13 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
     # После создания закупок (план уже вырос) — собрать предупреждения о
     # превышении вместо блокировки, см. комментарий у _cat_items выше.
     wish._excess_warnings = await _collect_excess_warnings(db, wish.subsidy_id, _cat_items)
+    # Владелец (2026-09-02): регистрируем запрос(ы) на согласование превышения ТЗ
+    # над плановой позицией (см. _tz_violations выше и app.services.tz_excess_approval) —
+    # ПОСЛЕ создания закупок, чтобы список запросов был виден сразу в ответе API.
+    wish._tz_excess_approvals = await register_tz_excess_approvals(
+        db, _tz_violations, subsidy_id=wish.subsidy_id, current_user=current_user,
+        context_label=f"согласование заявки №{wish.id}",
+    )
 
     return created_purchase_ids
 
@@ -2503,6 +2535,7 @@ async def approve_wish(
         wish.status = "converted"
     warning = getattr(wish, "_convert_warning", None)
     excess_warnings = getattr(wish, "_excess_warnings", [])
+    tz_excess_approvals = getattr(wish, "_tz_excess_approvals", [])
     purchase_sync = getattr(wish, "_purchase_sync", None)
     await db.commit()
     await db.refresh(wish)
@@ -2511,6 +2544,7 @@ async def approve_wish(
     out.convert_warning = warning
     out.purchase_ids = created_ids
     out.excess_warnings = excess_warnings
+    out.tz_excess_approvals = tz_excess_approvals
     out.purchase_sync = purchase_sync
     # Владелец (2026-08-20): быстрое одобрение тоже создаёт закупку сразу здесь
     # (см. wish.status = "converted" выше) — отдаём номер закупки в этом же ответе,
@@ -2925,12 +2959,18 @@ async def convert_wish(
         _purchase_sync = await _sync_purchase_from_wish(wish, existing, db)
         await db.flush()
         _excess_warnings = await _collect_excess_warnings(db, wish.subsidy_id, _cat_items)
+        _tz_excess_approvals = await register_tz_excess_approvals(
+            db, getattr(wish, "_tz_excess_violations_sync", []) or [],
+            subsidy_id=wish.subsidy_id, current_user=current_user,
+            context_label=f"повторное согласование заявки №{wish.id} (/convert)",
+        )
         await db.commit()
         return {
             "wish_id": wish.id, "purchase_id": existing[0].id, "status": "converted",
             "registry_number": existing[0].registry_number,
             "already_converted": _was_already_converted,
             "excess_warnings": _excess_warnings,
+            "tz_excess_approvals": _tz_excess_approvals,
             "purchase_sync": _purchase_sync,
         }
 
@@ -2972,8 +3012,14 @@ async def convert_wish(
         items_full, wish.feo_category_id, db, note=f"заявкой №{wish.id} (/convert)",
     )
     # Владелец (2026-08-17, прод-инцидент РЕЕ-2026-00887): накопление по общей
-    # плановой позиции в пределах ЭТОЙ заявки — см. assert_tz_batch_not_over_plan.
-    await assert_tz_batch_not_over_plan(db, items_full)
+    # плановой позиции в пределах ЭТОЙ заявки — та же группировка, что у
+    # assert_tz_batch_not_over_plan.
+    # Владелец (2026-09-02): больше НЕ 409 здесь — собираем нарушения, регистрируем
+    # запрос на согласование ПОСЛЕ создания закупки (см. app.services.tz_excess_approval
+    # и комментарий у аналогичного места в _distribute_wish_to_purchases выше).
+    _tz_violations = await collect_tz_over_plan_violations(
+        db, items_full, fallback_category_id=wish.feo_category_id,
+    )
     # Владелец (2026-08-12): /convert больше не блокируется несогласованным
     # превышением ФЭО — assert_no_unapproved_excess убран, вместо отказа собираем
     # excess_warnings ПОСЛЕ создания закупки (см. вызов _collect_excess_warnings
@@ -3075,6 +3121,12 @@ async def convert_wish(
     wish.approved_by = current_user.id
 
     _excess_warnings = await _collect_excess_warnings(db, wish.subsidy_id, _conv_cat_items)
+    # Владелец (2026-09-02): регистрируем запрос(ы) на согласование превышения ТЗ
+    # над плановой позицией ПОСЛЕ создания закупки (см. _tz_violations выше).
+    _tz_excess_approvals = await register_tz_excess_approvals(
+        db, _tz_violations, subsidy_id=wish.subsidy_id, current_user=current_user,
+        context_label=f"согласование заявки №{wish.id} (/convert)",
+    )
     await db.commit()
 
     return {
@@ -3082,6 +3134,7 @@ async def convert_wish(
         "registry_number": p.registry_number,
         "already_converted": False,
         "excess_warnings": _excess_warnings,
+        "tz_excess_approvals": _tz_excess_approvals,
         # Первое создание закупки — синхронизировать нечего (см. purchase_sync
         # в ветке «существующая закупка» выше).
         "purchase_sync": None,
@@ -3186,6 +3239,7 @@ async def approve_distribution(
         "status": "converted",
         "warning": getattr(wish, "_convert_warning", None),
         "excess_warnings": getattr(wish, "_excess_warnings", []),
+        "tz_excess_approvals": getattr(wish, "_tz_excess_approvals", []),
     }
 
 

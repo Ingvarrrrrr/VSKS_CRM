@@ -31,6 +31,7 @@ from app.routers.purchases import (
 )
 from app.schemas.schemas import PurchaseOutFull
 from app.services.feo_plan import assert_no_unapproved_excess
+from app.services.tz_excess_approval import assert_no_pending_tz_excess
 from app.services.price_actualization import actualize_product_price
 
 router = APIRouter(prefix="/api/purchases", tags=["purchase-transitions"])
@@ -395,6 +396,16 @@ async def transition_status(
             _gate_cat_ids.add(p.feo_category_id)
         for _cid in _gate_cat_ids:
             await assert_no_unapproved_excess(db, _cid)
+        # Владелец (2026-09-02): «попасть должно в План-закупок... но дальше
+        # двигаться нельзя по закупке без его согласования» — ТЗ позиции дороже
+        # её КОНКРЕТНОЙ плановой позиции (feo_category_id) больше не 409 при
+        # согласовании заявки (см. app.routers.wishes/purchases.create_purchase),
+        # но assert_no_unapproved_excess ЭТОТ вид превышения не видит (см.
+        # докстринг app/services/tz_excess_approval.py — компонент дерева ФЭО,
+        # excess_fact_over_plan, включается только на «Ведётся работа» с уже
+        # заполненной ценой договора, т.е. ПОЗЖЕ самого первого форвард-перехода).
+        # Отдельный, независимый гейт закрывает именно этот момент.
+        await assert_no_pending_tz_excess(db, p.items, fallback_category_id=p.feo_category_id)
 
     old_status = p.status
     p.status = target_status

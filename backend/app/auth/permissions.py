@@ -90,6 +90,15 @@ _ROLE_PRIORITY = {
     "employee": 1,
 }
 
+ROLE_LABELS_RU = {
+    "superadmin": "Суперадмин",
+    "account_owner": "Хозяин аккаунта",
+    "admin": "Администратор аккаунта",
+    "org_admin": "Администратор организации",
+    "manager": "Менеджер",
+    "employee": "Сотрудник",
+}
+
 
 async def _get_effective_simple(user: User, db: AsyncSession, org_id: Optional[int], include_subsidy_grants: bool = True) -> set:
     """Return effective key set for a single user WITHOUT hierarchy inheritance.
@@ -216,6 +225,92 @@ async def _subsidy_grant_keys(user_id: int, db: AsyncSession) -> set:
                 eff.discard(k)
         keys |= eff
     return keys
+
+
+# --- Phase: privilege-escalation guard (владелец, 2026-09-02) -------------
+# Цыганов (org_admin) мог сам себе выдавать/запрещать допуски и даже
+# назначить себе роль account_owner — эндпоинты permissions.py проверяли
+# только require_tab("staff"), без иерархии «кто кого настраивает».
+# Правило: настраивать допуски/роль пользователю можно, только если ты
+# СТРОГО выше него по лестнице employee < manager < org_admin < admin <
+# account_owner < superadmin, и НИКОГДА нельзя менять допуски самому себе
+# (кроме superadmin — техническая SaaS-роль). Роль account_owner отдельно
+# разрешено назначать только superadmin/account_owner (см. вызов в роутере).
+
+
+async def _resolve_role_for_rank(user: User, db: AsyncSession, org_id: Optional[int]) -> str:
+    """Resolve a user's role for rank-comparison purposes only.
+
+    Mirrors the role-resolution used by _get_effective_simple's Step 0/0b:
+    per-org UOA role wins if set for org_id, else global user.role, else the
+    highest-priority role among any UOA row the user holds (N-10 fallback).
+    Defaults to 'employee' (lowest rank) if nothing resolves — a user with no
+    role anywhere must never be treated as unranked/unmanageable.
+    """
+    role = user.role
+    if org_id:
+        uoa = (await db.execute(
+            select(UserOrgAccess).where(
+                UserOrgAccess.user_id == user.id,
+                UserOrgAccess.org_id == org_id,
+            )
+        )).scalar_one_or_none()
+        if uoa and uoa.role:
+            role = uoa.role
+    if not role:
+        uoa_rows = (await db.execute(
+            select(UserOrgAccess.role).where(
+                UserOrgAccess.user_id == user.id,
+                UserOrgAccess.role.isnot(None),
+            )
+        )).scalars().all()
+        if uoa_rows:
+            role = max(uoa_rows, key=lambda r: _ROLE_PRIORITY.get(r, 0))
+    return role or "employee"
+
+
+async def get_user_rank(user: User, db: AsyncSession, org_id: Optional[int] = None) -> int:
+    """Numeric rank (see _ROLE_PRIORITY) used to decide 'who can configure whom'."""
+    role = await _resolve_role_for_rank(user, db, org_id)
+    return _ROLE_PRIORITY.get(role, 1)
+
+
+async def assert_can_manage_user_access(
+    current_user: User,
+    target_user_id: int,
+    db: AsyncSession,
+    org_id: Optional[int] = None,
+) -> None:
+    """403 if current_user is not allowed to edit target_user's permissions/role.
+
+    - superadmin bypasses (technical SaaS role).
+    - Editing your own access is always forbidden (self-escalation/self-lockout
+      guard, in BOTH directions — see SELF_LOCKOUT_PROTECTED_KEYS in
+      permissions.py router for the narrower legacy check this supersedes).
+    - Otherwise the actor's rank must be STRICTLY greater than the target's.
+    """
+    if current_user.role == "superadmin":
+        return
+    if target_user_id == current_user.id:
+        raise HTTPException(
+            403,
+            "Нельзя менять свои собственные допуски — это может сделать только "
+            "хозяин аккаунта (владелец) или суперадмин. Попросите его.",
+        )
+    target_user = await db.get(User, target_user_id)
+    if target_user is None:
+        raise HTTPException(404, "Пользователь не найден")
+    actor_rank = await get_user_rank(current_user, db, org_id)
+    target_role_name = await _resolve_role_for_rank(target_user, db, org_id)
+    target_rank = _ROLE_PRIORITY.get(target_role_name, 1)
+    if actor_rank <= target_rank:
+        target_label = ROLE_LABELS_RU.get(target_role_name, target_role_name)
+        raise HTTPException(
+            403,
+            f"Недостаточно прав: настраивать допуски пользователя с ролью "
+            f"«{target_label}» может только хозяин аккаунта (владелец) или "
+            "суперадмин — эта роль равна вашей или выше.",
+        )
 
 
 async def get_subsidy_effective(user_id: int, subsidy_id: int, db: AsyncSession) -> Optional[set]:

@@ -61,7 +61,7 @@
 
       <v-select
         v-model="selectedRole"
-        :items="roleOptions"
+        :items="roleOptionsAvailable"
         item-title="label"
         item-value="value"
         label="Роль в этой организации"
@@ -72,8 +72,9 @@
         class="mb-3"
         @update:model-value="onRoleChange"
       />
-      <div v-if="isRoleChangeBlocked" class="text-caption text-medium-emphasis mb-2">
-        Нельзя менять собственную роль в своей организации.
+      <div v-if="manageBlockedReason" class="text-caption mb-2" style="color:#b71c1c">
+        <v-icon size="13" color="error" class="mr-1">mdi-lock-outline</v-icon>
+        {{ manageBlockedReason }}
       </div>
 
       <v-tabs v-model="activeTab" density="compact" class="mb-2">
@@ -94,7 +95,7 @@
               class="d-flex align-center py-1"
             >
               <v-tooltip
-                :text="isLocked(t.tab_key) ? 'Нельзя снять с себя доступ к Ролям/Персоналу' : ''"
+                :text="isLocked(t.tab_key) ? manageBlockedReason : ''"
                 location="top"
                 :disabled="!isLocked(t.tab_key)"
               >
@@ -116,7 +117,7 @@
                 color="success"
                 size="x-small"
                 class="ml-2"
-                closable
+                :closable="!isManageBlocked"
                 @click:close="removeOverride(t.tab_key)"
               >+ добавлено</v-chip>
               <v-chip
@@ -124,7 +125,7 @@
                 color="error"
                 size="x-small"
                 class="ml-2"
-                closable
+                :closable="!isManageBlocked"
                 @click:close="removeOverride(t.tab_key)"
               >− убрано</v-chip>
             </div>
@@ -143,7 +144,7 @@
               class="d-flex align-center py-1"
             >
               <v-tooltip
-                :text="isLocked(a.action_key) ? 'Нельзя снять с себя критичное действие' : ''"
+                :text="isLocked(a.action_key) ? manageBlockedReason : ''"
                 location="top"
                 :disabled="!isLocked(a.action_key)"
               >
@@ -165,7 +166,7 @@
                 color="success"
                 size="x-small"
                 class="ml-2"
-                closable
+                :closable="!isManageBlocked"
                 @click:close="removeOverride(a.action_key)"
               >+ добавлено</v-chip>
               <v-chip
@@ -173,7 +174,7 @@
                 color="error"
                 size="x-small"
                 class="ml-2"
-                closable
+                :closable="!isManageBlocked"
                 @click:close="removeOverride(a.action_key)"
               >− убрано</v-chip>
             </div>
@@ -193,8 +194,15 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { apiFetch } from '../api'
 
-// D-05.2 frontend self-lockout — mirror the backend SELF_LOCKOUT_PROTECTED_KEYS
-const SELF_LOCKOUT_PROTECTED_KEYS = ['admin.roles', 'staff']
+// Владелец 2026-09-02: закрытие эскалации привилегий — org_admin мог сам себе
+// назначать/снимать допуски и даже роль account_owner. Бэкенд теперь жёстко
+// это блокирует (см. backend/app/auth/permissions.py assert_can_manage_user_access);
+// здесь то же правило зеркалим на UI, чтобы переключатели были недоступны
+// заранее, а не падали с ошибкой после клика.
+// Лестница ролей — 1:1 с _ROLE_PRIORITY в backend/app/auth/permissions.py.
+const ROLE_RANK: Record<string, number> = {
+  superadmin: 6, account_owner: 5, admin: 4, org_admin: 3, manager: 2, employee: 1,
+}
 
 const props = defineProps<{
   userId: number
@@ -213,6 +221,11 @@ const actions = ref<{ action_key: string; description: string }[]>([])
 const roleDefaults = ref<Record<string, Set<string>>>({})
 const overrides = ref<Record<string, boolean>>({})
 const orgRoles = ref<Record<number, string | null>>({})
+// Роль ТЕКУЩЕГО (редактирующего) пользователя per-org — нужна, чтобы сравнить
+// его ранг с рангом редактируемого и вперёд отключить переключатели, если
+// бэкенд всё равно откажет (assert_can_manage_user_access).
+const currentUserOrgRoles = ref<Record<number, string | null>>({})
+const currentUserGlobalRole = localStorage.getItem('user_role') || ''
 const selectedOrgId = ref<number | null>(props.orgAccessList[0]?.org_id ?? null)
 const selectedRole = ref<string>('')
 const activeTab = ref('tabs')
@@ -228,7 +241,64 @@ const roleOptions = [
   { value: 'employee',      label: 'Сотрудник' },
 ]
 
-const isRoleChangeBlocked = computed(() => props.userId === props.currentUserId)
+// Владелец 2026-09-02, п.3: роль «Владелец аккаунта» вправе выдавать только
+// суперадмин или действующий владелец — не показываем опцию остальным,
+// зеркалит backend-проверку в PATCH /users/{id}/role.
+const roleOptionsAvailable = computed(() => {
+  if (['superadmin', 'account_owner'].includes(currentUserGlobalRole)) return roleOptions
+  return roleOptions.filter(o => o.value !== 'account_owner')
+})
+
+const isSelfEdit = computed(() => props.userId === props.currentUserId)
+
+// Эффективная роль редактирующего для выбранной организации: сначала
+// per-org (UOA), иначе глобальная — то же правило, что и для currentOrgRole
+// (target) ниже, и что и в backend _resolve_role_for_rank.
+const currentUserEffectiveRole = computed(() => {
+  if (selectedOrgId.value != null && currentUserOrgRoles.value[selectedOrgId.value] != null) {
+    return currentUserOrgRoles.value[selectedOrgId.value] as string
+  }
+  return currentUserGlobalRole
+})
+
+const isHierarchyBlocked = computed(() => {
+  if (isSelfEdit.value) return false
+  if (currentUserEffectiveRole.value === 'superadmin') return false
+  const actorRank = ROLE_RANK[currentUserEffectiveRole.value] ?? 0
+  const targetRank = ROLE_RANK[currentOrgRole.value] ?? 0
+  return actorRank <= targetRank
+})
+
+// Общий гейт: свои допуски не трогает никто (кроме суперадмина), чужие —
+// только если ты строго выше по лестнице ролей. Зеркалит
+// assert_can_manage_user_access на бэкенде.
+const isManageBlocked = computed(() => isSelfEdit.value || isHierarchyBlocked.value)
+
+const manageBlockedReason = computed(() => {
+  if (currentUserGlobalRole === 'superadmin') return ''
+  if (isSelfEdit.value) {
+    return 'Нельзя менять свои собственные допуски — попросите хозяина аккаунта (владельца) или суперадмина.'
+  }
+  if (isHierarchyBlocked.value) {
+    return `Недостаточно прав: настраивать допуски пользователя с ролью «${roleLabel(currentOrgRole.value)}» может только хозяин аккаунта (владелец) или суперадмин.`
+  }
+  return ''
+})
+
+const isRoleChangeBlocked = computed(() => isManageBlocked.value)
+
+async function loadCurrentUserOrgRoles() {
+  try {
+    const rows = await apiFetch<{ org_id: number; role: string | null }[]>(
+      `/permissions/users/${props.currentUserId}/org-roles`
+    )
+    const map: Record<number, string | null> = {}
+    for (const r of rows) map[r.org_id] = r.role
+    currentUserOrgRoles.value = map
+  } catch (e) {
+    console.warn('[UserPermissionsSection] loadCurrentUserOrgRoles failed', e)
+  }
+}
 
 // Владелец, 2026-09-01: «никакой в пизду организации и номера — у каждой
 // организации есть название». Раньше при пустом org_name в переданном списке
@@ -310,9 +380,11 @@ function overrideState(key: string): string | null {
   return overrides.value[key] === roleHas ? null : (overrides.value[key] ? 'grant' : 'revoke')
 }
 
-// D-05.2: frontend self-lockout — if editing your own card, cannot toggle protected keys
-function isLocked(key: string): boolean {
-  return props.userId === props.currentUserId && SELF_LOCKOUT_PROTECTED_KEYS.includes(key)
+// Владелец 2026-09-02: раньше блокировались только SELF_LOCKOUT_PROTECTED_KEYS
+// у себя. Теперь бэкенд запрещает менять СВОИ допуски целиком и допуски
+// равных/старших по роли — зеркалим isManageBlocked на каждый чекбокс.
+function isLocked(_key: string): boolean {
+  return isManageBlocked.value
 }
 
 function roleLabel(role: string): string {
@@ -342,6 +414,7 @@ async function loadOrgRoles() {
 
 async function onRoleChange(newRole: string) {
   if (!selectedOrgId.value) return
+  if (isManageBlocked.value) return  // defensive — select is disabled when blocked
   saving.value = true
   saved.value = false
   try {
@@ -457,6 +530,7 @@ async function flush() {
 
 async function removeOverride(key: string) {
   if (!selectedOrgId.value) return
+  if (isManageBlocked.value) return  // defensive — chip's close button should already be hidden
   try {
     await apiFetch(
       `/permissions/users/${props.userId}/overrides/${encodeURIComponent(key)}?org_id=${selectedOrgId.value}`,
@@ -471,6 +545,7 @@ async function removeOverride(key: string) {
 
 onMounted(async () => {
   loadOrgCatalog()
+  loadCurrentUserOrgRoles()
   await loadCatalogs()
   await loadOrgRoles()
   if (selectedOrgId.value) await loadForOrg()

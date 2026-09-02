@@ -20,7 +20,10 @@ from app.models.permission import (
     PermissionTab, PermissionAction, RolePermission, UserOrgPermissionOverride,
 )
 from app.auth.jwt import get_current_user
-from app.auth.permissions import require_tab, ensure_user_org_access
+from app.auth.permissions import (
+    require_tab, ensure_user_org_access,
+    assert_can_manage_user_access, get_user_rank, ROLE_LABELS_RU, _ROLE_PRIORITY,
+)
 from app.schemas.schemas import (
     PermissionTabOut, PermissionActionOut, RoleMatrixRow,
     PermissionUpdate, OverrideOut, RoleUpdate,
@@ -87,6 +90,23 @@ async def update_role_matrix(
 ):
     if role_name not in ROLES or role_name == "superadmin":
         raise HTTPException(400, "Недопустимая роль")
+
+    # Владелец 2026-09-02: эскалация через матрицу — org_admin мог сам себе
+    # (или роли выше) добавить допуск, правя дефолты роли, а не только свои
+    # персональные overrides. Правило то же: править дефолты роли можно
+    # только СТРОГО ниже своей — своя роль и роли выше недоступны никому,
+    # кроме superadmin.
+    if current_user.role != "superadmin":
+        actor_rank = await get_user_rank(current_user, db, None)
+        target_rank = _ROLE_PRIORITY.get(role_name, 0)
+        if actor_rank <= target_rank:
+            role_label = ROLE_LABELS_RU.get(role_name, role_name)
+            raise HTTPException(
+                403,
+                f"Недостаточно прав: менять набор допусков по умолчанию для роли "
+                f"«{role_label}» может только хозяин аккаунта (владелец) или "
+                "суперадмин — эта роль равна вашей или выше.",
+            )
 
     # D-05.2 self-lockout protection
     if role_name == current_user.role:
@@ -184,7 +204,14 @@ async def update_overrides(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_tab("staff")),
 ):
-    # D-05.2 self-lockout on own user
+    # Владелец 2026-09-02: эскалация — правил и запрещал себе допуски кто угодно
+    # со вкладкой staff. Никто не правит свои допуски; настраивать чужие можно
+    # только строго сверху вниз по лестнице ролей.
+    await assert_can_manage_user_access(current_user, user_id, db, org_id)
+
+    # D-05.2 self-lockout on own user (легаси-проверка более узкого случая —
+    # теперь недостижима для не-superadmin: строка выше уже блокирует ЛЮБУЮ
+    # правку собственных допуски. Оставлена как есть по требованию не ломать.)
     if user_id == current_user.id:
         for upd in updates:
             if upd.key in SELF_LOCKOUT_PROTECTED_KEYS and not upd.granted:
@@ -270,7 +297,26 @@ async def update_user_org_role(
     if body.role not in ("account_owner", "admin", "org_admin", "manager", "employee"):
         raise HTTPException(400, "Недопустимая роль")
 
+    # Владелец 2026-09-02, п.3: главный путь эскалации — org_admin назначал
+    # СЕБЕ (или кому угодно) роль account_owner через этот эндпоинт. Роль
+    # «Хозяин аккаунта» вправе выдавать только superadmin или действующий
+    # account_owner.
+    if body.role == "account_owner" and current_user.role not in ("superadmin", "account_owner"):
+        raise HTTPException(
+            403,
+            "Роль «Хозяин аккаунта» может назначить только суперадмин или "
+            "действующий хозяин аккаунта.",
+        )
+
+    # Владелец 2026-09-02, п.1-2: никто не правит свою роль (в обе стороны —
+    # раньше блокировалось только понижение), настраивать чужую роль можно
+    # только строго сверху вниз по лестнице ролей.
+    await assert_can_manage_user_access(current_user, user_id, db, org_id)
+
     # D-05.2: self-lockout — cannot demote self below admin-level in own org
+    # (легаси-проверка более узкого случая — теперь недостижима для
+    # не-superadmin: строка выше уже блокирует ЛЮБУЮ правку своей роли.
+    # Оставлена как есть по требованию не ломать существующую защиту.)
     if user_id == current_user.id:
         res = await db.execute(
             select(RolePermission.key).where(
@@ -300,9 +346,10 @@ async def delete_override(
     key: str,
     org_id: int = Query(...),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_tab("staff")),
+    current_user: User = Depends(require_tab("staff")),
 ):
     """Remove an override — effective reverts to role-default."""
+    await assert_can_manage_user_access(current_user, user_id, db, org_id)
     uoa = await db.execute(
         select(UserOrgAccess).where(
             UserOrgAccess.user_id == user_id,
@@ -343,8 +390,9 @@ async def upsert_user_subsidy_access(
     user_id: int,
     body: dict,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_tab("staff")),
+    current_user: User = Depends(require_tab("staff")),
 ):
+    await assert_can_manage_user_access(current_user, user_id, db, None)
     subsidy_id = body.get("subsidy_id")
     role = body.get("role") or "employee"
     if not subsidy_id:
@@ -370,8 +418,9 @@ async def delete_user_subsidy_access(
     user_id: int,
     subsidy_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_tab("staff")),
+    current_user: User = Depends(require_tab("staff")),
 ):
+    await assert_can_manage_user_access(current_user, user_id, db, None)
     row = (await db.execute(
         select(UserSubsidyAccess).where(
             UserSubsidyAccess.user_id == user_id,
@@ -415,8 +464,9 @@ async def update_subsidy_overrides(
     subsidy_id: int,
     updates: List[PermissionUpdate],
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_tab("staff")),
+    current_user: User = Depends(require_tab("staff")),
 ):
+    await assert_can_manage_user_access(current_user, user_id, db, None)
     grant = (await db.execute(
         select(UserSubsidyAccess).where(
             UserSubsidyAccess.user_id == user_id,
@@ -450,8 +500,9 @@ async def delete_subsidy_override(
     subsidy_id: int,
     key: str,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_tab("staff")),
+    current_user: User = Depends(require_tab("staff")),
 ):
+    await assert_can_manage_user_access(current_user, user_id, db, None)
     grant = (await db.execute(
         select(UserSubsidyAccess).where(
             UserSubsidyAccess.user_id == user_id,

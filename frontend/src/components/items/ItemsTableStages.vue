@@ -81,6 +81,7 @@
                   />
                 </template>
               </v-tooltip>
+              <PriceFreshnessStamp :price-meta="item._price_meta" />
             </td>
             <td class="font-weight-medium" style="font-size:12px;white-space:nowrap">
               {{ fmtRub(totalWithVat(item)) }}
@@ -220,6 +221,7 @@
                         :class="planExcessFor?.(item)?.priceOver ? 'text-error font-weight-bold' : 'text-medium-emphasis'">
                         план: {{ formatNumber(planForItem!(item)!.unit_price) }} ₽
                       </div>
+                      <PriceFreshnessStamp :price-meta="item._price_meta" />
                     </td>
                     <!-- Fix 4/5: НДС % column -->
                     <td v-if="showVatColumnsInExpandRow">
@@ -306,7 +308,7 @@
                           <FeoPlannedItemsSelect
                             v-if="feoPlannedPerItem || allowPerItemPlan"
                             :model-value="plannedSelectionFor ? plannedSelectionFor(item) : null"
-                            :category-id="item.feo_node_id ?? item.feo_category_id ?? defaultFeoCategoryId ?? null"
+                            :category-id="effectiveCategoryId(item)"
                             :nodes="feoNodes" :items="plannedItems || []"
                             :amount="item.total_price" :readonly="feoReadonly" dense class="mt-1"
                             :pending-by-planned-item="pendingByPlannedItem"
@@ -535,6 +537,7 @@
 import { computed } from 'vue'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
+import PriceFreshnessStamp from '@/components/items/PriceFreshnessStamp.vue'
 import type { Contractor } from '@/components/items/types'
 import type { FeoNode } from '@/composables/useFeoLeaves'
 import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
@@ -654,6 +657,17 @@ const tzFrozenTooltip = 'Закупка объявлена — кол-во и ц
 // См. feoAttrsEditable в defineProps выше — построчные ФЭО-контролы остаются
 // кликабельными даже при readonly=true, если родитель явно это разрешил.
 const feoReadonly = computed(() => props.readonly && !props.feoAttrsEditable)
+
+// Дефект «РЕЕ-2026-00904» (владелец, 2026-09-02): протухший собственный feo_node_id
+// позиции (от старой категории ФЭО) при ВЫКЛЮЧЕННОМ feoPerItem скоупил дерево
+// плановых позиций на мёртвую категорию и закрывал единственный путь исправить
+// расхождение. Правило обязано совпадать с _effectiveFeoCategoryId в
+// PurchaseItemsEditor.vue: feoPerItem выключен → категория ШАПКИ, включён → своя
+// категория позиции (с фолбэком на шапку).
+function effectiveCategoryId(item: EditorItem): number | null {
+  if (!props.feoPerItem) return props.defaultFeoCategoryId ?? null
+  return item.feo_node_id ?? item.feo_category_id ?? props.defaultFeoCategoryId ?? null
+}
 
 // Шаг 5 «ТЗ не дороже и не больше плана» (владелец, 2026-08-07): краткая
 // подсказка для tooltip на summary-row (свёрнутая строка — там нет места на

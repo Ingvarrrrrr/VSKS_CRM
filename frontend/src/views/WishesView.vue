@@ -356,6 +356,11 @@
                 <v-list-item prepend-icon="mdi-image-off" title="Без фото" @click="downloadWishExcel(item, false)" />
               </v-list>
             </v-menu>
+            <!-- Владелец (2026-09-02): «раньше суперадмин мог двигать заявки по статусам
+                 самостоятельно, куда делось» — принудительная смена статуса прямо из
+                 списка, без диалога правки. См. openRowForceStatus/rowForceStatusWish. -->
+            <v-btn v-if="isSaas" icon="mdi-shield-crown" size="x-small" variant="text" color="red-darken-2"
+              title="Принудительно сменить статус (SaaS-admin)" @click="openRowForceStatus(item)" />
             <template v-if="item.status === 'draft'">
               <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click="openEditDialog(item)" />
               <v-btn
@@ -479,6 +484,10 @@
                     <v-list-item prepend-icon="mdi-image-off" title="Без фото" @click="downloadWishExcel(w, false)" />
                   </v-list>
                 </v-menu>
+                <!-- Владелец (2026-09-02): та же принудительная смена статуса, что и в
+                     табличном виде (#item.actions выше) — см. openRowForceStatus. -->
+                <v-btn v-if="isSaas" icon="mdi-shield-crown" size="x-small" variant="text" color="red-darken-2"
+                  title="Принудительно сменить статус (SaaS-admin)" @click.stop="openRowForceStatus(w)" />
                 <template v-if="w.status === 'draft'">
                   <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click.stop="openEditDialog(w)" />
                   <v-btn
@@ -1884,13 +1893,7 @@
                   <v-col cols="12" md="8">
                     <v-select
                       v-model="forceStatusValue"
-                      :items="[
-                        { value: 'draft', title: 'Черновик' },
-                        { value: 'submitted', title: 'Отправлена' },
-                        { value: 'approved', title: 'Одобрена' },
-                        { value: 'rejected', title: 'Отклонена' },
-                        { value: 'converted', title: 'Конвертирована' },
-                      ]"
+                      :items="WISH_FORCE_STATUS_OPTIONS"
                       label="Новый статус"
                       variant="outlined"
                       density="compact"
@@ -1898,7 +1901,8 @@
                     />
                   </v-col>
                   <v-col cols="12" md="4">
-                    <v-btn color="red-darken-2" variant="flat" block prepend-icon="mdi-flash" :loading="forcingStatus" @click="forceStatus">
+                    <v-btn color="red-darken-2" variant="flat" block prepend-icon="mdi-flash" :loading="forcingStatus"
+                      @click="async () => { if (await forceStatus()) wishDialog = false }">
                       Применить
                     </v-btn>
                   </v-col>
@@ -2177,6 +2181,36 @@
           <v-btn variant="text" @click="rejectDialog = false">Отмена</v-btn>
           <v-btn variant="flat" color="error" :loading="rejectingWish" :disabled="!rejectionReason.trim()" @click="rejectWish">
             Отклонить
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── ПРИНУДИТЕЛЬНАЯ СМЕНА СТАТУСА ИЗ СПИСКА (владелец, 2026-09-02, SaaS-admin) ── -->
+    <v-dialog :model-value="!!rowForceStatusWish" max-width="440" :fullscreen="mobile" @update:model-value="(v: boolean) => { if (!v) rowForceStatusWish = null }">
+      <v-card v-if="rowForceStatusWish">
+        <v-card-title class="pa-4 pb-2 d-flex align-center ga-2">
+          <v-icon color="red-darken-2">mdi-shield-crown</v-icon>
+          Сменить статус заявки №{{ rowForceStatusWish.id }}
+        </v-card-title>
+        <v-card-text class="pa-4 pt-2">
+          <v-select
+            v-model="forceStatusValue"
+            :items="WISH_FORCE_STATUS_OPTIONS"
+            label="Новый статус"
+            variant="outlined"
+            density="compact"
+            hide-details
+          />
+          <div class="text-body-2 text-medium-emphasis mt-2">
+            Минуя все workflow-проверки. Доступно только SaaS-роли.
+          </div>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="rowForceStatusWish = null">Отмена</v-btn>
+          <v-btn color="red-darken-2" variant="flat" prepend-icon="mdi-flash" :loading="forcingStatus" @click="applyRowForceStatus">
+            Применить
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -3911,26 +3945,53 @@ async function openEditDialog(wish: Wish) {
   }
 }
 
-// Superadmin: force-смена статуса
+// Superadmin: force-смена статуса. Список статусов вынесен в константу — используется
+// и блоком в диалоге правки, и мини-диалогом прямо из списка (rowForceStatusWish ниже).
+const WISH_FORCE_STATUS_OPTIONS = [
+  { value: 'draft', title: 'Черновик' },
+  { value: 'submitted', title: 'Отправлена' },
+  { value: 'approved', title: 'Одобрена' },
+  { value: 'rejected', title: 'Отклонена' },
+  { value: 'converted', title: 'Конвертирована' },
+]
 const forceStatusValue = ref<string>('draft')
 const forcingStatus = ref(false)
-async function forceStatus() {
-  if (!editingWishId.value) { showSnack('Сначала откройте заявку', 'warning'); return }
-  if (!confirm(`Принудительно установить статус «${forceStatusValue.value}»? Workflow-проверки будут пропущены.`)) return
+// Владелец (2026-09-02): «раньше суперадмин мог двигать заявки по статусам
+// самостоятельно» — теперь доступно ещё и прямо из списка, без открытия диалога
+// правки (см. rowForceStatusWish/openRowForceStatus ниже). wishId параметром —
+// без него берётся заявка, открытая в диалоге (прежнее поведение). Возвращает
+// true при успехе, чтобы вызывающая сторона сама решила, что закрыть.
+async function forceStatus(wishId?: number): Promise<boolean> {
+  const targetId = wishId ?? editingWishId.value
+  if (!targetId) { showSnack('Сначала откройте заявку', 'warning'); return false }
+  const label = WISH_FORCE_STATUS_OPTIONS.find(o => o.value === forceStatusValue.value)?.title || forceStatusValue.value
+  if (!confirm(`Принудительно установить статус «${label}»? Workflow-проверки будут пропущены.`)) return false
   forcingStatus.value = true
   try {
-    await apiFetch(`/wishes/${editingWishId.value}/status`, {
+    await apiFetch(`/wishes/${targetId}/status`, {
       method: 'POST',
       body: JSON.stringify({ status: forceStatusValue.value }),
     })
-    showSnack(`Статус принудительно изменён на «${forceStatusValue.value}»`)
-    wishDialog.value = false
+    showSnack(`Статус принудительно изменён на «${label}»`)
     await reloadActiveTab()
+    return true
   } catch (e: any) {
-    showSnack(`Ошибка force-status: ${e?.message || e?.payload?.message || 'не удалось'}`, 'error')
+    showSnack(`Ошибка force-status: ${e?.detail || e?.payload?.message || e?.message || 'не удалось'}`, 'error')
+    return false
   } finally {
     forcingStatus.value = false
   }
+}
+
+// Мини-диалог смены статуса прямо из списка (не открывая полный диалог правки заявки).
+const rowForceStatusWish = ref<Wish | null>(null)
+function openRowForceStatus(wish: Wish) {
+  forceStatusValue.value = wish.status || 'draft'
+  rowForceStatusWish.value = wish
+}
+async function applyRowForceStatus() {
+  if (!rowForceStatusWish.value) return
+  if (await forceStatus(rowForceStatusWish.value.id)) rowForceStatusWish.value = null
 }
 
 const savingExecution = ref(false)

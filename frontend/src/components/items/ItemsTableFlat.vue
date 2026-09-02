@@ -129,6 +129,7 @@
               :class="planExcessFor?.(item)?.priceOver ? 'text-error font-weight-bold' : 'text-medium-emphasis'">
               план: {{ formatNumber(planForItem!(item)!.unit_price) }} ₽
             </div>
+            <PriceFreshnessStamp :price-meta="item._price_meta" />
           </td>
           <td>
             <v-text-field :model-value="formatNumber(item.total_price)" readonly density="compact"
@@ -266,7 +267,7 @@
               <FeoPlannedItemsSelect
                 v-if="feoPlannedPerItem || allowPerItemPlan"
                 :model-value="plannedSelectionFor ? plannedSelectionFor(item) : null"
-                :category-id="item.feo_node_id ?? item.feo_category_id ?? defaultFeoCategoryId ?? null"
+                :category-id="effectiveCategoryId(item)"
                 :nodes="feoNodes" :items="plannedItems || []"
                 :amount="item.total_price" :readonly="feoReadonly" dense
                 :pending-by-planned-item="pendingByPlannedItem"
@@ -308,6 +309,7 @@ import { computed } from 'vue'
 import InlineProductMatch from '@/components/items/InlineProductMatch.vue'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
+import PriceFreshnessStamp from '@/components/items/PriceFreshnessStamp.vue'
 import type { MatchCandidate } from '@/composables/useItemMatching'
 import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import type { Contractor, ProductLike, ItemsDisplayRow } from '@/components/items/types'
@@ -431,6 +433,17 @@ const tzFrozenTooltip = 'Закупка объявлена — кол-во и ц
 // См. feoAttrsEditable выше — построчные ФЭО-контролы остаются кликабельными
 // даже при readonly=true, если родитель явно это разрешил.
 const feoReadonly = computed(() => props.readonly && !props.feoAttrsEditable)
+
+// Дефект «РЕЕ-2026-00904» (владелец, 2026-09-02): протухший собственный feo_node_id
+// позиции (от старой категории ФЭО) при ВЫКЛЮЧЕННОМ feoPerItem скоупил дерево
+// плановых позиций на мёртвую категорию и закрывал единственный путь исправить
+// расхождение. Правило обязано совпадать с _effectiveFeoCategoryId в
+// PurchaseItemsEditor.vue: feoPerItem выключен → категория ШАПКИ, включён → своя
+// категория позиции (с фолбэком на шапку).
+function effectiveCategoryId(item: EditorItem): number | null {
+  if (!props.feoPerItem) return props.defaultFeoCategoryId ?? null
+  return item.feo_node_id ?? item.feo_category_id ?? props.defaultFeoCategoryId ?? null
+}
 
 const bodyRows = computed<ItemsDisplayRow[]>(() =>
   props.displayRows ?? props.items.map((_, i) => ({ idx: i }))

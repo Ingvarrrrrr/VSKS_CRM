@@ -10,6 +10,23 @@
           <v-chip v-if="isEdit && form.status" :color="STATUS_COLOR[form.status]" size="small" variant="tonal">
             {{ STATUS_LABEL[form.status] }}
           </v-chip>
+          <!-- Владелец (2026-09-02, закупка РЕЕ-2026-00904): «раньше суперадмин мог
+               двигать закупки по статусам самостоятельно, куда делось это поле» —
+               в карточке закупки такого управления не было вообще (было только в
+               списке, OrdersView.vue). Минует workflow-проверки, доступно только
+               SaaS-роли. -->
+          <v-menu v-if="isSaas && isEdit && purchaseId">
+            <template #activator="{ props: menuProps }">
+              <v-btn v-bind="menuProps" icon="mdi-shield-crown" size="x-small" variant="text" color="red-darken-2"
+                :loading="forcingOrderStatus" title="Принудительно сменить статус (SaaS-admin)" />
+            </template>
+            <v-list density="compact">
+              <v-list-item v-for="s in STATUS_ORDER" :key="s" :disabled="s === form.status" @click="forceOrderStatus(s)">
+                <template #prepend><v-icon :color="STATUS_COLOR[s]" icon="mdi-circle-medium" /></template>
+                <v-list-item-title>{{ STATUS_LABEL[s] }}</v-list-item-title>
+              </v-list-item>
+            </v-list>
+          </v-menu>
           <v-chip v-if="form.substatus" size="x-small" variant="outlined" color="teal">
             {{ SUBSTATUS_OPTIONS.find(o => o.value === form.substatus)?.title || form.substatus }}
           </v-chip>
@@ -4372,6 +4389,9 @@ const isEmployee = computed(() => userRole === 'employee')
 const isManager = computed(() => userRole === 'manager')
 const isAdminLevel = computed(() => ['superadmin', 'org_admin', 'admin'].includes(userRole))
 const isSuperadmin = computed(() => userRole === 'superadmin')
+// Владелец (2026-09-02): «раньше суперадмин мог двигать закупки по статусам
+// самостоятельно, куда делось это поле» — то же правило, что isSaas в WishesView.vue.
+const isSaas = computed(() => ['superadmin', 'account_owner'].includes(userRole))
 const isManagerLevel = computed(() => ['superadmin', 'org_admin', 'admin', 'manager'].includes(userRole))
 const canPublish = computed(() =>
   isAdminLevel.value ||
@@ -8653,6 +8673,31 @@ const doTransition = async () => {
     showSnack(e?.detail || 'Ошибка смены статуса', 'error')
   } finally {
     transitioning.value = false
+  }
+}
+
+// Владелец (2026-09-02, закупка РЕЕ-2026-00904): «раньше суперадмин мог двигать
+// закупки по статусам самостоятельно, куда делось это поле» — в списке (OrdersView)
+// такое меню есть, в карточке закупки не было вообще. Список статусов и подписи те
+// же, что и в шапке этой формы (STATUS_ORDER/STATUS_LABEL/STATUS_COLOR выше) —
+// именно они, в свою очередь, единый источник из constants/purchaseStatus.ts,
+// которым пользуется и OrdersView.vue (statusItems/statusLabelFor/STATUS_COLOR).
+// В отличие от обычного doTransition — минует все workflow-проверки, на любой
+// статус, в обе стороны.
+const forcingOrderStatus = ref(false)
+async function forceOrderStatus(status: string) {
+  if (!purchaseId.value || status === form.status) return
+  if (!confirm(`Принудительно установить статус «${STATUS_LABEL.value[status]}»? Workflow-проверки будут пропущены.`)) return
+  forcingOrderStatus.value = true
+  try {
+    const updated = await apiFetch<any>(`/purchases/${purchaseId.value}/transition?status=${status}`, { method: 'POST' })
+    form.status = updated.status
+    showSnack(`Статус принудительно изменён → ${STATUS_LABEL.value[updated.status]}`)
+    await loadPurchase()
+  } catch (e: any) {
+    showSnack(e?.detail || e?.payload?.message || e?.message || 'Ошибка изменения статуса', 'error')
+  } finally {
+    forcingOrderStatus.value = false
   }
 }
 

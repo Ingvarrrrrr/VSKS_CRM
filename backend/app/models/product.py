@@ -39,8 +39,14 @@ class Product(Base):
 
     # Актуализация цены (владелец, 2026-08-29): когда и откуда пришла текущая
     # цена товара. Используется для контроля устаревания (см.
+    # app/services/price_freshness.py). Пишется через
     # app/services/price_actualization.py::actualize_product_price — единая
     # точка входа для ВСЕХ мест, где меняется product.price.
+    price_updated_at = Column(DateTime, nullable=True)
+    price_source = Column(String(20), nullable=True)  # 'contract' | 'kp' | 'manual' | 'import' | 'monitoring'
+    price_source_ref = Column(String(300), nullable=True)  # № договора / «Запрос КП №N» / ссылка
+    price_source_contractor_id = Column(Integer, ForeignKey("contractors.id", ondelete="SET NULL"), nullable=True)
+    price_ttl_days = Column(Integer, nullable=True)  # персональный override срока актуальности (дней)
 
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True)
     country_origin = Column(String(100), nullable=True, default="РФ")  # Страна производства (Приложение №3, кол. P)

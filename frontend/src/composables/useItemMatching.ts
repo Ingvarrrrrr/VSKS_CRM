@@ -5,6 +5,7 @@
 // mutation that applies a chosen candidate to a row.
 import { ref } from 'vue'
 import { apiFetch } from '@/api'
+import type { PriceFreshness } from '@/composables/usePriceFreshness'
 
 export interface MatchCandidate {
   product_id: number
@@ -17,6 +18,12 @@ export interface MatchCandidate {
   category?: string | null
   /** Optional contract price; preferred over price when applying. */
   contract_price?: number | null
+  // Price actualization provenance (POST /products/match candidates) — see
+  // usePriceFreshness.ts, the single source of truth for displaying these.
+  price_updated_at?: string | null
+  price_source?: string | null
+  price_source_ref?: string | null
+  price_freshness?: PriceFreshness | null
 }
 
 export type MatchStatus = 'auto' | 'suggest' | 'create'
@@ -39,6 +46,14 @@ export interface MatchableRow {
   _selectedProduct?: any
   _photo_url?: string
   _description?: string
+  // UI-only price actualization stamp (дата + источник) — см. usePriceFreshness.ts.
+  // Служебное поле, вырезается перед сохранением (как _selectedProduct и т.п.).
+  _price_meta?: {
+    price_updated_at?: string | null
+    price_source?: string | null
+    price_source_ref?: string | null
+    price_freshness?: PriceFreshness | null
+  } | null
   [k: string]: any
 }
 
@@ -93,6 +108,14 @@ export function useItemMatching() {
     row._selectedProduct = cand
     row._photo_url = cand.photo_url ?? undefined
     row._description = cand.description ?? undefined
+    // Владелец, 2026-08-29: штамп даты/источника актуализации цены едет вместе
+    // с товаром, откуда бы он ни попал в строку (пикер, инлайн-матчинг, репик).
+    row._price_meta = {
+      price_updated_at: cand.price_updated_at ?? null,
+      price_source: cand.price_source ?? null,
+      price_source_ref: cand.price_source_ref ?? null,
+      price_freshness: cand.price_freshness ?? null,
+    }
     if (cand.item_type && !row.item_type) row.item_type = cand.item_type
     if (row.unit_price == null) {
       const best = cand.contract_price ?? cand.price
@@ -113,6 +136,7 @@ export function useItemMatching() {
     row._selectedProduct = null
     row._photo_url = undefined
     row._description = undefined
+    row._price_meta = null
   }
 
   return { matching, matchQueries, matchOne, applyCandidate, clearBinding }

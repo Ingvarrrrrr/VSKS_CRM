@@ -61,10 +61,20 @@
             variant="outlined" density="compact" clearable hide-details
             style="min-width:120px;max-width:140px"
           />
+          <v-switch
+            v-model="filterStaleOnly"
+            color="warning" density="compact" hide-details
+            class="flex-shrink-0"
+          >
+            <template #label>
+              <span class="text-body-2">Только требующие актуализации</span>
+              <v-chip v-if="staleProductsCount" size="x-small" color="warning" variant="tonal" class="ml-2">{{ staleProductsCount }}</v-chip>
+            </template>
+          </v-switch>
           <v-btn
-            v-if="filterType.length || filterCategory.length || filterActive !== null || filterPriceMin || filterPriceMax"
+            v-if="filterType.length || filterCategory.length || filterActive !== null || filterPriceMin || filterPriceMax || filterStaleOnly"
             variant="text" size="small" prepend-icon="mdi-filter-off" color="grey-darken-1"
-            @click="filterType = []; filterCategory = []; filterActive = null; filterPriceMin = null; filterPriceMax = null"
+            @click="filterType = []; filterCategory = []; filterActive = null; filterPriceMin = null; filterPriceMax = null; filterStaleOnly = false"
           >Сбросить</v-btn>
         </div>
       </v-card-text>
@@ -159,6 +169,15 @@
             {{ item.price_links.length }} ист.
           </div>
           <span v-if="!item.price" class="text-medium-emphasis">—</span>
+          <!-- Владелец, сессия 2026-08-29: штамп даты/источника актуализации мелким
+               шрифтом под ценой; устаревшее — оранжевым с иконкой предупреждения. -->
+          <v-tooltip v-if="item.price" :disabled="!item.price_freshness?.is_stale" :text="freshnessTooltip(item.price_freshness)" location="top" max-width="320">
+            <template #activator="{ props: tip }">
+              <div v-bind="tip" class="text-caption" :class="freshnessColor(item.price_freshness) === 'warning' ? PRICE_STALE_CLASS : 'text-medium-emphasis'">
+                <v-icon v-if="item.price_freshness?.is_stale" :icon="freshnessIcon(item.price_freshness)" size="12" class="mr-1" />{{ formatPriceStamp(item.price_updated_at, item.price_source, item.price_source_ref) }}
+              </div>
+            </template>
+          </v-tooltip>
         </template>
 
         <!-- Contract Price -->
@@ -179,6 +198,23 @@
               </template>
             </v-tooltip>
           </template>
+          <span v-else class="text-medium-emphasis">—</span>
+        </template>
+
+        <!-- Price freshness -->
+        <template #item.price_freshness="{ item }">
+          <v-tooltip v-if="item.price" :disabled="!item.price_freshness" :text="freshnessTooltip(item.price_freshness)" location="top" max-width="320">
+            <template #activator="{ props: tip }">
+              <div v-bind="tip">
+                <v-chip v-if="item.price_freshness?.is_stale" size="x-small" color="warning" variant="tonal" class="mb-1">
+                  <v-icon start icon="mdi-alert-outline" size="14" />{{ item.price_freshness?.reason === 'fx' ? 'Курс — проверить цену' : 'Требует актуализации' }}
+                </v-chip>
+                <div class="text-caption" :class="item.price_freshness?.is_stale ? PRICE_STALE_CLASS : 'text-medium-emphasis'">
+                  {{ formatPriceStamp(item.price_updated_at, item.price_source, item.price_source_ref) }}
+                </div>
+              </div>
+            </template>
+          </v-tooltip>
           <span v-else class="text-medium-emphasis">—</span>
         </template>
 
@@ -259,6 +295,13 @@
         <!-- Actions -->
         <template #item.actions="{ item }">
           <div class="d-flex gap-1" @click.stop>
+            <v-tooltip text="Актуализировать цену" location="top">
+              <template #activator="{ props: tip }">
+                <v-btn v-bind="tip" icon="mdi-cash-refresh" variant="text" size="small"
+                  :color="item.price_freshness?.is_stale ? 'warning' : 'teal'"
+                  @click.stop="openActualizeDialog(item)" />
+              </template>
+            </v-tooltip>
             <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
               @click.stop="confirmDelete(item)" />
           </div>
@@ -460,6 +503,15 @@
                 :readonly="avgPrice !== null"
                 :hint="avgPrice !== null ? 'Среднее из ссылок — ' + avgPrice.toLocaleString('ru-RU') + ' ₽' : 'Можно задать вручную или через ссылки ниже'"
                 persistent-hint />
+            </v-col>
+
+            <!-- Владелец, сессия 2026-08-29: срок актуальности не константа —
+                 по умолчанию считается по категории (+ поправка на курс доллара),
+                 но можно переопределить персонально для этого товара. -->
+            <v-col cols="12" md="6">
+              <v-text-field v-model.number="form.price_ttl_days" label="Свой срок актуальности, дней" type="number"
+                variant="outlined" density="compact" clearable
+                hint="Пусто — берётся из настроек по категории" persistent-hint />
             </v-col>
 
             <v-col cols="12" md="6">
@@ -878,6 +930,79 @@
       </v-card>
     </v-dialog>
 
+    <!-- Актуализация цены (владелец, сессия 2026-08-29: «цена может быть уже
+         неактуальна, надо показывать дату актуализации и уметь её обновить») -->
+    <v-dialog v-model="actualizeDialog.show" max-width="560" scrollable :fullscreen="mobile">
+      <v-card>
+        <v-card-title class="text-h6 pt-4 px-6">
+          Актуализация цены
+          <div v-if="actualizeDialog.product" class="text-caption text-medium-emphasis mt-1" style="white-space:normal">
+            {{ actualizeDialog.product.name }}
+          </div>
+        </v-card-title>
+        <v-card-text class="px-6">
+          <v-alert v-if="actualizeDialog.product?.price_freshness" type="info" variant="tonal" density="compact" class="mb-3">
+            Текущий статус: {{ actualizeDialog.product.price_freshness.label }}
+          </v-alert>
+          <v-row dense>
+            <v-col cols="12" sm="6">
+              <v-text-field v-model.number="actualizeForm.price" label="Цена, ₽ *" type="number"
+                variant="outlined" density="compact" />
+            </v-col>
+            <v-col cols="12" sm="6">
+              <v-text-field v-model="actualizeForm.collected_at" label="Дата актуализации" type="date"
+                variant="outlined" density="compact" />
+            </v-col>
+            <v-col cols="12" sm="6">
+              <v-select v-model="actualizeForm.source" :items="priceSourceOptions"
+                label="Источник *" variant="outlined" density="compact" />
+            </v-col>
+            <v-col cols="12" sm="6">
+              <v-text-field v-model="actualizeForm.source_ref" label="Номер/ссылка"
+                placeholder="напр. 123-ОК или Запрос КП №7"
+                variant="outlined" density="compact" />
+            </v-col>
+            <v-col cols="12">
+              <ContractorPicker v-model="actualizeForm.contractor_id" label="Контрагент (поставщик)" />
+            </v-col>
+            <v-col cols="12">
+              <v-textarea v-model="actualizeForm.note" label="Примечание" rows="2" auto-grow
+                variant="outlined" density="compact" />
+            </v-col>
+          </v-row>
+
+          <v-divider class="my-3" />
+          <div class="d-flex align-center justify-space-between mb-2">
+            <span class="text-subtitle-2">История актуализаций</span>
+            <v-progress-circular v-if="actualizeDialog.historyLoading" indeterminate size="16" width="2" />
+          </div>
+          <div v-if="!actualizeDialog.historyLoading && !actualizeDialog.history.length" class="text-caption text-medium-emphasis">
+            Актуализаций ещё не было.
+          </div>
+          <v-table v-else density="compact">
+            <thead>
+              <tr><th>Дата</th><th>Цена</th><th>Источник</th><th>Кто</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="h in actualizeDialog.history" :key="h.id">
+                <td>{{ formatDateDDMMYYYY(h.collected_at || h.created_at) || '—' }}</td>
+                <td>{{ Number(h.price).toLocaleString('ru-RU') }} ₽</td>
+                <td>{{ PRICE_SOURCE_LABELS[h.source] || h.source }}{{ h.source_ref ? ` · ${h.source_ref}` : '' }}</td>
+                <td>{{ h.created_by || '—' }}</td>
+              </tr>
+            </tbody>
+          </v-table>
+        </v-card-text>
+        <v-card-actions class="px-6 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="actualizeDialog.show = false">Отмена</v-btn>
+          <v-btn color="primary" :loading="actualizeDialog.saving" :disabled="!actualizeForm.price || !actualizeForm.source" @click="saveActualization">
+            Сохранить
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
   </v-container>
 </template>
 
@@ -886,10 +1011,22 @@ import { ref, computed, onMounted, nextTick, reactive, watch } from 'vue'
 import { apiFetch } from '@/api'
 import { useCardView } from '@/composables/useCardView'
 import { useToast, type ToastType } from '@/composables/useToast'
+import ContractorPicker from '@/components/ContractorPicker.vue'
+import {
+  type PriceFreshness,
+  PRICE_SOURCE_LABELS,
+  PRICE_STALE_CLASS,
+  formatPriceStamp,
+  formatDateDDMMYYYY,
+  freshnessColor,
+  freshnessIcon,
+  freshnessTooltip,
+} from '@/composables/usePriceFreshness'
 
 interface PriceLink { url: string; price: number | null }
 interface Product {
-  id: number; name: string; category?: string; product_type?: string; item_kind?: string; unit?: string
+  id: number; name: string; category?: string; product_type?: string; item_kind?: string
+  unit?: string | null  // Единица измерения (владелец, 2026-09-01)
   price?: number; description?: string; description_44fz?: string; photo_url?: string
   photo_link?: string; clarification_link?: string
   is_active: boolean; is_reusable?: boolean; feo_category_id?: number
@@ -899,6 +1036,20 @@ interface Product {
   tz_44fz_verified_at?: string; tz_44fz_verified_by?: string
   has_photo?: boolean; photo_size?: number; photo_mime?: string
   country_origin?: string
+  // Владелец, сессия 2026-08-29: «показывать дату последней актуализации цены,
+  // устаревшее — подсвечивать». Backend считает всю TTL/FX-логику (см. ProductOut).
+  price_updated_at?: string | null
+  price_source?: string | null
+  price_source_ref?: string | null
+  price_source_contractor_id?: number | null
+  price_ttl_days?: number | null
+  price_freshness?: PriceFreshness | null
+}
+
+interface PriceHistoryEntry {
+  id: number; price: number; source: string; source_ref?: string | null
+  contractor_id?: number | null; collected_at?: string | null; note?: string | null
+  created_by?: string | null; created_at?: string
 }
 
 // «РФ» — актуальный формат; «Россия» остаётся у старых записей до миграции/повторного сохранения.
@@ -933,6 +1084,7 @@ const filterPriceMin = ref<number | null>(null)
 const filterPriceMax = ref<number | null>(null)
 // Владелец, сессия 2026-08-29: «подсвечивать требующие актуализации» — быстрый
 // фильтр + счётчик, сколько таких товаров в каталоге прямо сейчас.
+const filterStaleOnly = ref(false)
 
 // Photo upload state
 const photoFile     = ref<File | null>(null)
@@ -1029,13 +1181,81 @@ async function unverifyTz(item: Product, tzType: 'standard' | '44fz') {
   }
 }
 
+// ── Price actualization (владелец, сессия 2026-08-29) ───────────────────────
+const priceSourceOptions = Object.entries(PRICE_SOURCE_LABELS).map(([value, title]) => ({ value, title }))
+
+const actualizeDialog = reactive({
+  show: false,
+  product: null as Product | null,
+  history: [] as PriceHistoryEntry[],
+  historyLoading: false,
+  saving: false,
+})
+const actualizeForm = reactive({
+  price: null as number | null,
+  collected_at: new Date().toISOString().slice(0, 10),
+  source: 'manual' as string,
+  source_ref: '',
+  contractor_id: null as number | null,
+  note: '',
+})
+
+async function openActualizeDialog(p: Product) {
+  actualizeDialog.product = p
+  actualizeDialog.history = []
+  actualizeForm.price = p.price ?? null
+  actualizeForm.collected_at = new Date().toISOString().slice(0, 10)
+  actualizeForm.source = 'manual'
+  actualizeForm.source_ref = ''
+  actualizeForm.contractor_id = p.price_source_contractor_id ?? null
+  actualizeForm.note = ''
+  actualizeDialog.show = true
+
+  actualizeDialog.historyLoading = true
+  try {
+    actualizeDialog.history = await apiFetch<PriceHistoryEntry[]>(`/products/${p.id}/price-history`)
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.detail || 'Не удалось загрузить историю актуализаций', 'error')
+  } finally {
+    actualizeDialog.historyLoading = false
+  }
+}
+
+async function saveActualization() {
+  const p = actualizeDialog.product
+  if (!p || !actualizeForm.price || !actualizeForm.source) return
+  actualizeDialog.saving = true
+  try {
+    const updated = await apiFetch<Product>(`/products/${p.id}/price-actualization`, {
+      method: 'POST',
+      body: {
+        price: actualizeForm.price,
+        source: actualizeForm.source,
+        source_ref: actualizeForm.source_ref?.trim() || null,
+        contractor_id: actualizeForm.contractor_id || null,
+        collected_at: actualizeForm.collected_at || null,
+        note: actualizeForm.note?.trim() || null,
+      },
+    })
+    const idx = products.value.findIndex(x => x.id === p.id)
+    if (idx !== -1) products.value[idx] = { ...products.value[idx], ...updated }
+    showSnack('Цена актуализирована')
+    actualizeDialog.show = false
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.detail || `Ошибка актуализации цены (HTTP ${e?.status ?? '?'})`, 'error')
+  } finally {
+    actualizeDialog.saving = false
+  }
+}
+
 const emptyForm = () => ({
-  name: '', category: '', product_type: '', unit: '', item_kind: 'товар' as string, price: null as number | null,
+  name: '', category: '', product_type: '', unit: '' as string, item_kind: 'товар' as string, price: null as number | null,
   description: '', description_44fz: '', photo_url: '', photo_link: '', clarification_link: '',
   is_active: true, is_reusable: true, feo_category_id: null as number | null,
   priceLinks: [] as PriceLink[],
   country_origin: 'РФ' as string,
   has_photo: false as boolean,
+  price_ttl_days: null as number | null,
 })
 const form = reactive(emptyForm())
 // Bumped when we re-download / re-upload so the <img> bypasses browser cache.
@@ -1089,6 +1309,7 @@ const ALL_COLUMNS = [
   { title: 'Категория', key: 'category',           minWidth: 140 },
   { title: 'Цена',      key: 'price',              width: 130, align: 'end' as const },
   { title: 'Цена по договору', key: 'contract_price', width: 180, align: 'end' as const },
+  { title: 'Актуальность цены', key: 'price_freshness', width: 200 },
   { title: 'Страна',    key: 'country_origin',     width: 120 },
   { title: 'Статус',    key: 'is_active',          width: 110 },
   { title: 'Действия',  key: 'actions',            width: 100, sortable: false },
@@ -1150,6 +1371,8 @@ function resetColOrder() {
   saveColOrder()
 }
 
+const staleProductsCount = computed(() => products.value.filter(p => p.price_freshness?.is_stale).length)
+
 const filteredProducts = computed(() => {
   let r = products.value
   if (filterType.value.length)     r = r.filter(p => filterType.value.includes(p.product_type || ''))
@@ -1157,6 +1380,7 @@ const filteredProducts = computed(() => {
   if (filterActive.value !== null) r = r.filter(p => p.is_active === filterActive.value)
   if (filterPriceMin.value !== null) r = r.filter(p => p.price != null && Number(p.price) >= filterPriceMin.value!)
   if (filterPriceMax.value !== null) r = r.filter(p => p.price != null && Number(p.price) <= filterPriceMax.value!)
+  if (filterStaleOnly.value) r = r.filter(p => p.price_freshness?.is_stale)
   return r
 })
 
@@ -1243,6 +1467,7 @@ function openEdit(p: Product) {
     priceLinks: (p.price_links || []).map(l => ({ url: l.url, price: l.price ?? null })),
     country_origin: p.country_origin || 'РФ',
     has_photo: !!p.has_photo,
+    price_ttl_days: p.price_ttl_days ?? null,
   })
   photoCacheBuster.value = Date.now()
   resetPhotoState()

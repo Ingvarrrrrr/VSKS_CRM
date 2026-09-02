@@ -16,8 +16,11 @@ from app.auth.jwt import get_current_user, require_role, MANAGER_ROLES, ALL_ROLE
 from app.auth.permissions import require_tab
 from app.auth.visibility import get_visible_subsidy_ids
 from app.database import get_db
-from app.models.commercial_request import CommercialRequest, CommercialRequestRecipient
+from app.models.commercial_request import (
+    CommercialRequest, CommercialRequestRecipient, CommercialRequestOffer,
+)
 from app.models.contractor import Contractor
+from app.models.product import Product
 from app.models.purchase import Purchase
 from app.schemas.schemas import (
     CommercialRequestCreate,
@@ -27,7 +30,11 @@ from app.schemas.schemas import (
     CommercialRequestStatusUpdate,
     CommercialRequestRecipientStatusUpdate,
     FreeRecipient,
+    CommercialRequestOfferIn,
+    CommercialRequestOfferOut,
 )
+from app.services.price_actualization import actualize_product_price
+from datetime import date as _date
 
 router = APIRouter(prefix="/api/commercial-requests", tags=["commercial_requests"])
 
@@ -240,6 +247,164 @@ async def send_kp_emails(
         raise HTTPException(400, f"Ошибка подключения к SMTP: {str(e)}")
 
     return {"sent": sent, "failed": failed}
+
+
+# ── Offers (владелец, 2026-08-29): цены, полученные от получателей запроса КП ──
+
+def _offer_to_out(o: CommercialRequestOffer) -> CommercialRequestOfferOut:
+    return CommercialRequestOfferOut(
+        id=o.id,
+        request_id=o.request_id,
+        recipient_id=o.recipient_id,
+        product_id=o.product_id,
+        item_name=o.item_name,
+        unit=o.unit,
+        unit_price=o.unit_price,
+        is_accepted=o.is_accepted,
+        note=o.note,
+        created_at=o.created_at,
+    )
+
+
+@router.get("/{request_id}/offers", response_model=List[CommercialRequestOfferOut])
+async def list_offers(
+    request_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    req = await db.get(CommercialRequest, request_id)
+    if not req:
+        raise HTTPException(404, "Запрос КП не найден")
+    rows = (await db.execute(
+        select(CommercialRequestOffer)
+        .where(CommercialRequestOffer.request_id == request_id)
+        .order_by(CommercialRequestOffer.id)
+    )).scalars().all()
+    return [_offer_to_out(o) for o in rows]
+
+
+@router.put("/{request_id}/offers", response_model=List[CommercialRequestOfferOut])
+async def replace_offers(
+    request_id: int,
+    offers: List[CommercialRequestOfferIn],
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_tab('commercial_requests')),
+):
+    """Заменить набор предложений (позиции × получатели) запроса КП.
+
+    Строки с `id`, отсутствующим в новом наборе, удаляются (diff-sync — как и
+    другие списки в проекте); строки с `id` обновляются на месте; строки без
+    `id` создаются заново.
+    """
+    req = await db.get(CommercialRequest, request_id)
+    if not req:
+        raise HTTPException(404, "Запрос КП не найден")
+
+    existing_rows = (await db.execute(
+        select(CommercialRequestOffer).where(CommercialRequestOffer.request_id == request_id)
+    )).scalars().all()
+    existing_by_id = {o.id: o for o in existing_rows}
+
+    kept_ids: set = set()
+    result_rows: List[CommercialRequestOffer] = []
+    for item in offers:
+        if item.id is not None and item.id in existing_by_id:
+            o = existing_by_id[item.id]
+            o.recipient_id = item.recipient_id
+            o.product_id = item.product_id
+            o.item_name = item.item_name
+            o.unit = item.unit
+            o.unit_price = item.unit_price
+            o.note = item.note
+            kept_ids.add(o.id)
+            result_rows.append(o)
+        else:
+            o = CommercialRequestOffer(
+                request_id=request_id,
+                recipient_id=item.recipient_id,
+                product_id=item.product_id,
+                item_name=item.item_name,
+                unit=item.unit,
+                unit_price=item.unit_price,
+                note=item.note,
+            )
+            db.add(o)
+            result_rows.append(o)
+
+    for o in existing_rows:
+        if o.id not in kept_ids:
+            await db.delete(o)
+
+    await db.commit()
+    for o in result_rows:
+        await db.refresh(o)
+    return [_offer_to_out(o) for o in result_rows]
+
+
+@router.post("/{request_id}/offers/{offer_id}/accept", response_model=CommercialRequestOfferOut)
+async def accept_offer(
+    request_id: int,
+    offer_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(require_tab('commercial_requests')),
+):
+    """Принять предложение — снимает флаг с остальных предложений на тот же
+    товар в этом запросе КП и актуализирует цену товара в каталоге
+    (source='kp'), см. app/services/price_actualization.py."""
+    offer = (await db.execute(
+        select(CommercialRequestOffer).where(
+            CommercialRequestOffer.id == offer_id,
+            CommercialRequestOffer.request_id == request_id,
+        )
+    )).scalar_one_or_none()
+    if not offer:
+        raise HTTPException(404, "Предложение не найдено")
+    if offer.product_id is None:
+        raise HTTPException(400, {
+            "code": "offer_not_linked_to_product",
+            "message": "Предложение не привязано к товару каталога — сначала сопоставьте позицию с товаром",
+        })
+    if offer.unit_price is None:
+        raise HTTPException(400, {
+            "code": "offer_missing_price",
+            "message": "У предложения не заполнена цена",
+        })
+
+    product = await db.get(Product, offer.product_id)
+    if not product:
+        raise HTTPException(404, "Товар каталога не найден")
+
+    # Снять принятие с остальных предложений на тот же товар в этом запросе
+    siblings = (await db.execute(
+        select(CommercialRequestOffer).where(
+            CommercialRequestOffer.request_id == request_id,
+            CommercialRequestOffer.product_id == offer.product_id,
+            CommercialRequestOffer.id != offer.id,
+        )
+    )).scalars().all()
+    for s in siblings:
+        s.is_accepted = False
+    offer.is_accepted = True
+
+    contractor_id = None
+    if offer.recipient_id:
+        recipient = await db.get(CommercialRequestRecipient, offer.recipient_id)
+        if recipient:
+            contractor_id = recipient.contractor_id
+
+    await actualize_product_price(
+        db, product,
+        price=offer.unit_price,
+        source="kp",
+        source_ref=f"Запрос КП №{request_id}",
+        contractor_id=contractor_id,
+        collected_at=_date.today(),
+        user=current_user,
+    )
+
+    await db.commit()
+    await db.refresh(offer)
+    return _offer_to_out(offer)
 
 
 def _to_out(r: CommercialRequest) -> CommercialRequestOut:

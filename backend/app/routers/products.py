@@ -13,9 +13,16 @@ from app.auth.visibility import get_visible_subsidy_ids
 from app.auth.permissions import require_tab
 from app.database import get_db
 from app.models.product import Product
+from app.models.product_price_history import ProductPriceHistory
 from app.models.user import User
-from app.schemas.schemas import ProductCreate, ProductOut, ProductSummaryGroup, ProductSummaryItem
+from app.schemas.schemas import (
+    ProductCreate, ProductOut, ProductSummaryGroup, ProductSummaryItem,
+    PriceFreshnessOut, PriceActualizationIn, ProductPriceHistoryOut,
+)
 from app.services.product_matcher import bulk_match, SCORE_AUTO, SCORE_SUGGEST
+from app.services.price_freshness import load_context as load_freshness_context, evaluate as evaluate_freshness
+from app.services.price_actualization import actualize_product_price, VALID_PRICE_SOURCES
+from app.services.product_unit import backfill_product_unit
 from typing import List, Optional
 from decimal import Decimal
 from io import BytesIO
@@ -107,6 +114,13 @@ async def list_products(
                 p.contract_number = None
                 p.contract_date = None
                 p.contract_org_id = None
+
+    # Актуализация цены (владелец, 2026-08-29): контекст правил + курс USD
+    # грузится ОДИН раз на весь список, не в цикле по товарам.
+    org_id = get_single_org_id(current_user)
+    freshness_ctx = await load_freshness_context(db, org_id)
+    for p in products:
+        p.price_freshness = evaluate_freshness(p, freshness_ctx)
 
     return products
 
@@ -315,6 +329,11 @@ class _MatchCandidate(BaseModel):
     photo_url: Optional[str] = None
     item_type: Optional[str] = None
     category: Optional[str] = None
+    # Актуализация цены (владелец, 2026-08-29)
+    price_updated_at: Optional[str] = None
+    price_source: Optional[str] = None
+    price_source_ref: Optional[str] = None
+    price_freshness: Optional[PriceFreshnessOut] = None
 
 
 class _MatchResultItem(BaseModel):
@@ -382,6 +401,20 @@ async def match_products(
     top_k = max(1, min(body.limit, 200))
     results = bulk_match(body.queries, catalog, top_k=top_k, prefix_match=body.prefix)
 
+    # Актуализация цены (владелец, 2026-08-29): bulk_match не трогаем (сигнатура
+    # зафиксирована) — донабираем метаданные вторым проходом по product_id
+    # уже полученных кандидатов, одним SELECT + один контекст на весь запрос.
+    candidate_ids = {c.product_id for r in results for c in r.candidates}
+    freshness_by_id: dict[int, dict] = {}
+    meta_by_id: dict[int, Product] = {}
+    if candidate_ids:
+        meta_rows = (await db.execute(
+            select(Product).options(defer(Product.photo_data)).where(Product.id.in_(candidate_ids))
+        )).scalars().all()
+        freshness_ctx = await load_freshness_context(db, org_id)
+        for prod in meta_rows:
+            meta_by_id[prod.id] = prod
+            freshness_by_id[prod.id] = evaluate_freshness(prod, freshness_ctx)
 
     _log.info(
         "POST /api/products/match: %d queries, catalog_size=%d, "
@@ -407,6 +440,14 @@ async def match_products(
                     photo_url=c.photo_url,
                     item_type=c.item_type,
                     category=c.category,
+                    price_updated_at=(
+                        meta_by_id[c.product_id].price_updated_at.isoformat()
+                        if meta_by_id.get(c.product_id) and meta_by_id[c.product_id].price_updated_at
+                        else None
+                    ),
+                    price_source=meta_by_id[c.product_id].price_source if meta_by_id.get(c.product_id) else None,
+                    price_source_ref=meta_by_id[c.product_id].price_source_ref if meta_by_id.get(c.product_id) else None,
+                    price_freshness=freshness_by_id.get(c.product_id),
                 )
                 for c in r.candidates
             ],
@@ -431,6 +472,10 @@ async def get_product(
     product = result.scalar_one_or_none()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
+
+    org_id = get_single_org_id(current_user)
+    freshness_ctx = await load_freshness_context(db, org_id)
+    product.price_freshness = evaluate_freshness(product, freshness_ctx)
     return product
 
 def _calc_price_from_links(links: list) -> float | None:
@@ -618,6 +663,61 @@ async def toggle_price_sharing(
     await db.commit()
     await db.refresh(product)
     return product
+
+
+@router.post("/{product_id}/price-actualization", response_model=ProductOut)
+async def actualize_price(
+    product_id: int,
+    data: PriceActualizationIn,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab('products')),
+):
+    """Ручная актуализация цены товара (владелец, 2026-08-29) — например,
+    когда пришёл ответ на запрос КП вне модуля «Запросы КП», или менеджер
+    подтвердил цену по телефону/прайс-листу."""
+    if data.source not in VALID_PRICE_SOURCES:
+        raise HTTPException(422, {
+            "code": "invalid_price_source",
+            "message": f"Недопустимый источник цены: {data.source}. Допустимо: {', '.join(VALID_PRICE_SOURCES)}",
+        })
+    product = await db.get(Product, product_id)
+    if not product:
+        raise HTTPException(404, "Товар не найден")
+    await actualize_product_price(
+        db, product,
+        price=data.price,
+        source=data.source,
+        source_ref=data.source_ref,
+        contractor_id=data.contractor_id,
+        collected_at=data.collected_at,
+        note=data.note,
+        user=current_user,
+    )
+    await db.commit()
+    await db.refresh(product)
+
+    org_id = get_single_org_id(current_user)
+    freshness_ctx = await load_freshness_context(db, org_id)
+    product.price_freshness = evaluate_freshness(product, freshness_ctx)
+    return product
+
+
+@router.get("/{product_id}/price-history", response_model=List[ProductPriceHistoryOut])
+async def get_price_history(
+    product_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """История актуализации цены товара, новые сверху."""
+    product = await db.get(Product, product_id)
+    if not product:
+        raise HTTPException(404, "Товар не найден")
+    rows = (await db.execute(
+        select(ProductPriceHistory)
+        .where(ProductPriceHistory.product_id == product_id)
+        .order_by(ProductPriceHistory.created_at.desc())
+    )).scalars().all()
+    return rows
 
 
 @router.patch("/{product_id}/verify-tz", response_model=ProductOut)

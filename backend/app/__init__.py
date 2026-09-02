@@ -1974,6 +1974,8 @@ app.include_router(dashboard.router)
 app.include_router(subsidies.router)
 app.include_router(subsidy_members_router.router)
 app.include_router(products.router)
+from .routers import price_freshness as price_freshness_router
+app.include_router(price_freshness_router.router)
 app.include_router(purchase_files.router)
 app.include_router(documents.router)
 app.include_router(documents_guide_router)

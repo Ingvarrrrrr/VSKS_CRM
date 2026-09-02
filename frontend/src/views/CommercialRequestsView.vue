@@ -422,6 +422,78 @@
               </tr>
             </tbody>
           </v-table>
+
+          <!-- Полученные предложения (владелец, сессия 2026-08-29: «цену из КП можно
+               завести через таблицу полученных предложений в карточке запроса КП») —
+               позиции закупки × получатели, ввод цены, принятие лучшей → цена уходит
+               в каталог товара. -->
+          <template v-if="detailDialog.item.recipients.length">
+            <v-divider class="my-3" />
+            <div class="d-flex align-center justify-space-between mb-2">
+              <span class="text-body-2 font-weight-medium">Полученные предложения</span>
+              <v-btn size="small" variant="text" density="compact"
+                :icon="offersExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down'"
+                @click="offersExpanded = !offersExpanded" />
+            </div>
+            <v-expand-transition>
+              <div v-show="offersExpanded">
+                <v-progress-linear v-if="offersState.loading" indeterminate class="mb-2" />
+                <div v-else-if="!offersGrid.length" class="text-caption text-medium-emphasis mb-2">
+                  Нет позиций закупки для сравнения цен.
+                </div>
+                <div v-else class="overflow-x-auto">
+                  <v-table density="compact">
+                    <thead>
+                      <tr>
+                        <th style="min-width:200px">Позиция</th>
+                        <th v-for="r in detailDialog.item.recipients" :key="r.id" style="min-width:170px">
+                          {{ r.contractor_name || r.email || '—' }}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="row in offersGrid" :key="row.product_id ?? row.item_name">
+                        <td>
+                          {{ row.item_name }}
+                          <span v-if="row.unit" class="text-caption text-medium-emphasis"> · {{ row.unit }}</span>
+                        </td>
+                        <td v-for="r in detailDialog.item.recipients" :key="r.id">
+                          <div class="d-flex align-center ga-1">
+                            <v-text-field
+                              v-model.number="row.cells[r.id].unit_price"
+                              type="number" density="compact" variant="outlined" hide-details
+                              placeholder="Цена, ₽"
+                              style="max-width:120px"
+                              :class="{ 'font-weight-bold text-success': bestRecipientId(row) === r.id && row.cells[r.id].unit_price != null }"
+                            />
+                            <v-tooltip v-if="row.cells[r.id].is_accepted" text="Принято — цена ушла в каталог" location="top">
+                              <template #activator="{ props: tip }">
+                                <v-icon v-bind="tip" icon="mdi-check-decagram" color="success" size="18" />
+                              </template>
+                            </v-tooltip>
+                            <v-tooltip v-else :text="row.cells[r.id].offer_id ? 'Принять эту цену' : 'Сначала сохраните предложения'" location="top">
+                              <template #activator="{ props: tip }">
+                                <v-btn v-bind="tip" icon="mdi-check-bold" size="x-small" variant="tonal" color="primary"
+                                  :disabled="!row.cells[r.id].offer_id || row.cells[r.id].unit_price == null"
+                                  :loading="acceptingOfferId === row.cells[r.id].offer_id"
+                                  @click="acceptOffer(row, r.id)" />
+                              </template>
+                            </v-tooltip>
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </v-table>
+                  <div class="d-flex justify-end mt-2">
+                    <v-btn size="small" color="primary" variant="flat" prepend-icon="mdi-content-save"
+                      :loading="offersState.saving" @click="saveOffers">
+                      Сохранить предложения
+                    </v-btn>
+                  </div>
+                </div>
+              </div>
+            </v-expand-transition>
+          </template>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <template v-if="detailDialog.editing">
@@ -466,6 +538,14 @@ interface CommercialRequest {
 }
 interface Purchase { id: number; item_name?: string; purchase_number?: number; display_name?: string }
 interface Contractor { id: number; name: string; email?: string }
+
+// Полученные предложения — таблица позиция × получатель (владелец, сессия 2026-08-29).
+interface Offer {
+  id: number; recipient_id: number; product_id: number | null; item_name: string
+  unit: string; unit_price: number | null; is_accepted?: boolean; note?: string | null
+}
+interface OfferCell { offer_id: number | null; unit_price: number | null; note: string; is_accepted: boolean }
+interface OfferRow { product_id: number | null; item_name: string; unit: string; cells: Record<number, OfferCell> }
 
 const REQUEST_STATUSES: Record<string, { label: string; color: string }> = {
   prepared: { label: 'Подготовлен',  color: 'blue-grey' },
@@ -545,6 +625,98 @@ const detailDialog = reactive({
   editIntroText: '',
   editDeliveryDate: '',
 })
+
+// ── Полученные предложения (владелец, сессия 2026-08-29) ────────────────────
+const offersState = reactive({ loading: false, saving: false })
+const offersGrid = ref<OfferRow[]>([])
+const offersExpanded = ref(false)
+const acceptingOfferId = ref<number | null>(null)
+
+/** Строка с наилучшей (минимальной) ценой среди введённых предложений — подсвечивается в таблице. */
+function bestRecipientId(row: OfferRow): number | null {
+  let best: number | null = null
+  let bestPrice = Infinity
+  for (const [rid, cell] of Object.entries(row.cells)) {
+    if (cell.unit_price != null && cell.unit_price < bestPrice) {
+      bestPrice = cell.unit_price
+      best = Number(rid)
+    }
+  }
+  return best
+}
+
+async function loadOffersGrid(item: CommercialRequest) {
+  if (!item.recipients?.length) { offersGrid.value = []; return }
+  offersState.loading = true
+  try {
+    const [purchase, offers] = await Promise.all([
+      apiFetch<any>(`/purchases/${item.purchase_id}`),
+      apiFetch<Offer[]>(`/commercial-requests/${item.id}/offers`),
+    ])
+    const purchaseItems: any[] = purchase?.items || []
+    offersGrid.value = purchaseItems.map((pi: any) => {
+      const cells: Record<number, OfferCell> = {}
+      for (const r of item.recipients) {
+        const match = offers.find(o => o.recipient_id === r.id && (
+          (pi.product_id != null && o.product_id === pi.product_id) ||
+          (pi.product_id == null && o.item_name === pi.item_name)
+        ))
+        cells[r.id] = match
+          ? { offer_id: match.id, unit_price: match.unit_price ?? null, note: match.note || '', is_accepted: !!match.is_accepted }
+          : { offer_id: null, unit_price: null, note: '', is_accepted: false }
+      }
+      return { product_id: pi.product_id ?? null, item_name: pi.item_name || '', unit: pi.unit || '', cells }
+    })
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.detail || e?.message || `Ошибка загрузки предложений (HTTP ${e?.status ?? '?'})`, 'error')
+  } finally {
+    offersState.loading = false
+  }
+}
+
+async function saveOffers() {
+  if (!detailDialog.item) return
+  offersState.saving = true
+  try {
+    const body: any[] = []
+    for (const row of offersGrid.value) {
+      for (const r of detailDialog.item.recipients) {
+        const cell = row.cells[r.id]
+        if (cell.unit_price == null) continue
+        body.push({
+          recipient_id: r.id,
+          product_id: row.product_id,
+          item_name: row.item_name,
+          unit: row.unit,
+          unit_price: cell.unit_price,
+          note: cell.note || null,
+        })
+      }
+    }
+    await apiFetch(`/commercial-requests/${detailDialog.item.id}/offers`, { method: 'PUT', body })
+    showSnack('Предложения сохранены')
+    await loadOffersGrid(detailDialog.item)
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.detail || e?.message || `Ошибка сохранения предложений (HTTP ${e?.status ?? '?'})`, 'error')
+  } finally {
+    offersState.saving = false
+  }
+}
+
+async function acceptOffer(row: OfferRow, recipientId: number) {
+  const cell = row.cells[recipientId]
+  if (!detailDialog.item || !cell.offer_id) return
+  acceptingOfferId.value = cell.offer_id
+  try {
+    await apiFetch(`/commercial-requests/${detailDialog.item.id}/offers/${cell.offer_id}/accept`, { method: 'POST' })
+    showSnack(`Цена товара «${row.item_name}» актуализирована`)
+    await loadOffersGrid(detailDialog.item)
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.detail || e?.message || `Ошибка принятия предложения (HTTP ${e?.status ?? '?'})`, 'error')
+  } finally {
+    acceptingOfferId.value = null
+  }
+}
 
 const editEmailId = ref<number | null>(null)
 const editEmailValue = ref('')
@@ -741,6 +913,10 @@ function openDetailDialog(item: CommercialRequest) {
   detailDialog.item = item
   detailDialog.editing = false
   detailDialog.show = true
+  // Владелец, сессия 2026-08-29: «при статусе "Получены ответы" — раскрытым».
+  offersExpanded.value = item.status === 'received'
+  offersGrid.value = []
+  if (item.recipients?.length) loadOffersGrid(item)
 }
 
 function startEdit() {

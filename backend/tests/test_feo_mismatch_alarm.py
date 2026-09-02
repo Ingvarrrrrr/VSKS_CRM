@@ -152,7 +152,15 @@ def test_per_item_off_own_category_diverges_from_header_is_mismatch():
     assert result is not None
     assert result["reason"] == "header"
     assert result["header_category_id"] == 11
-    assert result["item_category_id"] == 21
+    # Владелец (2026-09-02, закупка РЕЕ-2026-00884, «Нашивка на спину ВСКС»):
+    # при выключенном feo_per_item эффективная категория ВСЕГДА категория
+    # шапки (11), а не протухшая своя (21) — см. правку effective_cat_id в
+    # _item_feo_mismatch. item_category_id/item_category_name отражают
+    # именно эффективную категорию (ей и мерится "planned"-проверка выше),
+    # own_name/собственная категория позиции видна в тексте message.
+    assert result["item_category_id"] == 11
+    assert "«Закупка канцелярских принадлежностей»" in result["message"]
+    assert "убер" in result["message"]  # "уберите её" — конкретное действие, не «шапки или позиции»
 
 
 # ---------------------------------------------------------------------------
@@ -208,3 +216,44 @@ def test_no_planned_link_per_item_on_own_category_diverges_no_mismatch():
     result = _run_mismatch(purchase, item)
 
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Кейс 6 (владелец, закупка РЕЕ-2026-00884, «Нашивка на спину ВСКС», 2026-09-02):
+# тумблер выключен, у позиции протухшая СВОЯ категория (21, «Закупка канцелярских
+# принадлежностей», ветка «Техническое оснащение штаба»), а привязанная плановая
+# позиция лежит РОВНО в категории шапки (11) — план в порядке, дело только в
+# протухшей своей категории. Раньше (effective_cat_id = item.feo_category_id или
+# purchase.feo_category_id, СНАЧАЛА своя) planned-проверка мерилась от чужой (21)
+# категории и планово-корректная позиция 11 ложно считалась расхождением
+# (reason="both", хотя «выберите плановую позицию» — неправда). Теперь
+# effective_cat_id при выключенном тумблере — ВСЕГДА категория шапки: planned
+# НЕ должен срабатывать, header — должен (см. текст правки над effective_cat_id
+# в app.routers.purchases._item_feo_mismatch).
+# ---------------------------------------------------------------------------
+
+def test_per_item_off_stale_own_category_but_planned_matches_header_only_header_reason():
+    purchase = _mk_purchase(feo_category_id=11, feo_per_item=False)
+    item = _mk_item(feo_category_id=21, feo_planned_item_id=2)  # план 2 -> категория 11 (= шапка)
+
+    result = _run_mismatch(purchase, item)
+
+    assert result is not None
+    assert result["reason"] == "header"  # НЕ "planned" и НЕ "both"
+    assert "выберите плановую позицию" not in result["message"]
+    assert "шапки закупки" in result["message"]
+
+
+def test_per_item_off_stale_own_category_and_planned_also_foreign_is_both():
+    """Контрольная проверка обратного: план по-настоящему в чужой категории
+    (21, той же ветке, что и протухшая своя) — расхождение остаётся ПРАВДИВЫМ
+    "both", planned-часть меряется от категории шапки (11), а не от своей."""
+    purchase = _mk_purchase(feo_category_id=11, feo_per_item=False)
+    item = _mk_item(feo_category_id=21, feo_planned_item_id=1)  # план 1 -> категория 21 (чужая, не 11 и не потомок)
+
+    result = _run_mismatch(purchase, item)
+
+    assert result is not None
+    assert result["reason"] == "both"
+    assert "категория шапки закупки" in result["message"]  # planned-часть, не "категория самой позиции"
+    assert "уберите её" in result["message"]  # header-часть — конкретное действие

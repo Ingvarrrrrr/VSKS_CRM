@@ -82,6 +82,14 @@
           {{ mi.message }}
         </li>
       </ul>
+      <!-- Владелец (2026-09-02): чинит ровно то, что описывает reason='header'/'both' —
+           видна только пока «разные категории для каждого товара» выключены и есть
+           хоть одна позиция со своей (протухшей) категорией. См. fixFeoMismatchOwnCategories. -->
+      <v-btn v-if="feoMismatchFixableItems.length" size="small" variant="tonal" color="warning"
+        prepend-icon="mdi-broom" :loading="fixingFeoMismatch" class="mt-2"
+        @click="fixFeoMismatchOwnCategories">
+        Убрать свои категории у позиций ({{ feoMismatchFixableItems.length }})
+      </v-btn>
     </div>
     <div v-if="isEdit && purchaseData?.wish_id" class="text-caption text-medium-emphasis mb-3 d-flex align-center ga-1 flex-wrap">
       <v-icon size="14" icon="mdi-file-document-outline" />
@@ -7952,6 +7960,58 @@ const loadPurchase = async () => {
   entityChanges.syncFromEntity(data.unseen_fields ?? [])
   // Phase 31-07: clear undo stack when a new purchase record is loaded
   _undoRedo?.clear()
+}
+
+// ---------------------------------------------------------------------------
+// Владелец (2026-09-02, закупка РЕЕ-2026-00904): «это неверное утверждение, я
+// выбрал категорию ФЭО шапки верно, а у "Нашивки на спину" осталась протухшая
+// своя категория — надо это менять» — кнопка чинит ровно то, что баннер
+// описывает при reason='header'/'both': режим «разные категории для каждого
+// товара» выключен (form.feo_per_item === false), но у части позиций всё ещё
+// висит собственная feo_category_id. См. backend app.routers.purchases.
+// _item_feo_mismatch (эффективная категория при выключенном тумблере теперь
+// ВСЕГДА категория шапки) — здесь просто убираем источник расхождения.
+// ---------------------------------------------------------------------------
+const fixingFeoMismatch = ref(false)
+const feoMismatchFixableItems = computed(() => {
+  if (form.feo_per_item) return []
+  return (purchaseData.value?.feo_mismatch_items || []).filter(
+    (mi: any) => mi.reason === 'header' || mi.reason === 'both',
+  )
+})
+
+async function fixFeoMismatchOwnCategories() {
+  const targets = feoMismatchFixableItems.value
+  if (!targets.length || !purchaseId.value) return
+  if (!confirm(
+    `Убрать свою категорию ФЭО у ${targets.length} ` +
+    `${targets.length === 1 ? 'позиции' : 'позиций'}? Они станут следовать за категорией шапки закупки.`,
+  )) return
+  fixingFeoMismatch.value = true
+  let fixed = 0
+  try {
+    for (const mi of targets) {
+      try {
+        await apiFetch(`/purchases/${purchaseId.value}/items/${mi.item_id}`, {
+          method: 'PATCH',
+          body: { clear_feo_category: true },
+          suppressErrorDialog: true,
+        })
+        fixed += 1
+      } catch (e: any) {
+        showSnack(
+          `«${mi.item_name || mi.item_id}»: ${e?.detail || e?.payload?.message || e?.message || 'не удалось убрать категорию'}`,
+          'error',
+        )
+      }
+    }
+    if (fixed) {
+      await loadPurchase()
+      showSnack(`Категория убрана у позиций: ${fixed} из ${targets.length}`)
+    }
+  } finally {
+    fixingFeoMismatch.value = false
+  }
 }
 
 // ---------------------------------------------------------------------------

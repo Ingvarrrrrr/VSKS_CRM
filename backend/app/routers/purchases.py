@@ -560,7 +560,22 @@ async def _item_feo_mismatch(
             return None
         return cat_names.get(cid, f"#{cid}")
 
-    effective_cat_id = item.feo_category_id or purchase.feo_category_id
+    # Владелец (2026-09-02): при ВЫКЛЮЧЕННОМ purchase.feo_per_item собственная
+    # категория позиции не имеет смысла (позиции обязаны следовать за шапкой) —
+    # эффективная категория ВСЕГДА категория шапки, даже если у позиции осталась
+    # протухшая своя. Иначе "planned"-проверка ниже мерит привязанную плановую
+    # позицию от мусора и ложно требует "выберите плановую позицию", хотя
+    # пользователь уже выбрал верную категорию в шапке. Это то же правило, что
+    # на фронте — эталон _effectiveFeoCategoryId в
+    # frontend/src/components/PurchaseItemsEditor.vue (~2378) и
+    # effectiveCategoryId в ItemsCardsView.vue/ItemsTableFlat.vue/
+    # ItemsTableStages.vue/ItemsTableWish.vue — держать в синхроне, дублирование
+    # этого правила уже стоило прод-инцидента.
+    effective_cat_id = (
+        purchase.feo_category_id
+        if not purchase.feo_per_item
+        else (item.feo_category_id or purchase.feo_category_id)
+    )
     reasons: list[str] = []
 
     planned = None
@@ -583,21 +598,44 @@ async def _item_feo_mismatch(
     effective_name = _name(effective_cat_id)
     header_name = _name(purchase.feo_category_id)
     planned_cat_name = _name(planned_cat_id)
+    # Собственная (возможно протухшая) категория позиции — ОТДЕЛЬНО от
+    # effective_cat_id, который при выключенном тумблере теперь всегда равен
+    # категории шапки (см. правку выше). Для reason="header" в тексте нужно
+    # показать именно то, что реально висит на позиции, а не то, от чего
+    # считается расхождение.
+    own_cat_id = item.feo_category_id
+    own_name = _name(own_cat_id)
     item_name = item.item_name or "Без названия"
 
     parts: list[str] = []
     if "planned" in reasons:
+        # Владелец (2026-09-02): текст не должен врать про «категорию самой
+        # позиции» — при выключенном тумблере позиция вообще не имеет своей
+        # категории, расхождение меряется от категории ШАПКИ.
+        source_label = (
+            "категория шапки закупки" if not purchase.feo_per_item else "своя категория позиции"
+        )
+        fix_hint = (
+            f"выберите плановую позицию из категории «{effective_name or '—'}» "
+            f"либо смените категорию шапки закупки"
+            if not purchase.feo_per_item
+            else
+            f"выберите плановую позицию из нужной категории либо исправьте "
+            f"категорию позиции"
+        )
         parts.append(
             f"привязана к плановой позиции «{planned.name if planned else '?'}» "
-            f"категории «{planned_cat_name or '—'}», а категория самой позиции — "
-            f"«{effective_name or '—'}» — выберите плановую позицию из нужной "
-            f"категории либо исправьте категорию"
+            f"категории «{planned_cat_name or '—'}», а {source_label} — "
+            f"«{effective_name or '—'}» — {fix_hint}"
         )
     if "header" in reasons:
+        # reason="header" срабатывает только когда purchase.feo_per_item
+        # выключен (см. условие выше) — шапка тут источник истины, «исправить
+        # шапку» не предлагаем, предлагаем убрать протухшую свою категорию.
         parts.append(
-            f"своя категория «{effective_name or '—'}» отличается от категории "
-            f"шапки закупки «{header_name or '—'}», хотя «разные категории для "
-            f"каждого товара» выключены — исправьте категорию позиции или шапки"
+            f"своя категория «{own_name or '—'}» осталась у позиции, хотя режим "
+            f"«разные категории для каждого товара» выключен — уберите её, чтобы "
+            f"позиция следовала за категорией шапки закупки «{header_name or '—'}»"
         )
     message = f"«{item_name}»: " + "; ".join(parts)
 

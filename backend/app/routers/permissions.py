@@ -201,6 +201,7 @@ async def update_overrides(
     user_id: int,
     updates: List[PermissionUpdate],
     org_id: int = Query(...),
+    apply_to_all: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_tab("staff")),
 ):
@@ -246,22 +247,31 @@ async def update_overrides(
 
     await _apply_overrides_for_org(user_id, org_id, updates, db)
 
-    # Владелец 2026-09-01, п.4: «должна быть настройка прав по всем
-    # организациям сразу, если есть доступ ко всем организациям». Если у
-    # ЦЕЛЕВОГО (не текущего редактирующего) пользователя включён
-    # all_orgs_access — переключение галочки применяется одним действием
-    # ко ВСЕМ организациям его охвата, а не только к выбранной в селекторе.
+    # Владелец 2026-09-01, п.4, ЗАТЕМ уточнено владельцем 2026-09-02:
+    # изначально («должна быть настройка прав по всем организациям сразу,
+    # если есть доступ ко всем организациям») это било веером по всем
+    # организациям охвата ЦЕЛЕВОГО пользователя автоматически, всегда, как
+    # только у него включён all_orgs_access. Владелец уточнил 2026-09-02:
+    # «нужно чтобы при доступе ко всем организациям были разные настройки
+    # именно для всех организаций» — то есть автоматический веер делал
+    # именно то, что запрещал сам запрос: разные организации настроить
+    # по-разному было невозможно. Это НЕ отмена требования от 1 сентября,
+    # а явное включение — массовое применение остаётся доступным, но по
+    # запросу (apply_to_all=true), а не как побочный эффект наличия
+    # all_orgs_access у пользователя. По умолчанию правка задевает только
+    # org_id из селектора, даже если у пользователя включён охват.
     # Роль при этом не трогаем (fan-out идёт только по overrides).
     applied_org_ids = [org_id]
-    target_user = await db.get(User, user_id)
-    if target_user is not None and getattr(target_user, 'all_orgs_access', False):
-        from app.auth.visibility import get_all_orgs_access_org_ids
-        scope_org_ids = await get_all_orgs_access_org_ids(target_user, db)
-        for oid in scope_org_ids:
-            if oid == org_id:
-                continue
-            await _apply_overrides_for_org(user_id, oid, updates, db)
-            applied_org_ids.append(oid)
+    if apply_to_all:
+        target_user = await db.get(User, user_id)
+        if target_user is not None and getattr(target_user, 'all_orgs_access', False):
+            from app.auth.visibility import get_all_orgs_access_org_ids
+            scope_org_ids = await get_all_orgs_access_org_ids(target_user, db)
+            for oid in scope_org_ids:
+                if oid == org_id:
+                    continue
+                await _apply_overrides_for_org(user_id, oid, updates, db)
+                applied_org_ids.append(oid)
 
     await db.commit()
     return {"status": "ok", "updated": len(updates), "applied_org_ids": applied_org_ids}

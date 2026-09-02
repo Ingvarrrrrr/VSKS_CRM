@@ -24,11 +24,21 @@
         Роль сотрудника не меняется — расширяется только охват данных: он увидит
         закупки/субсидии/персонал всех организаций своего аккаунта.
       </div>
+      <!-- Владелец, 2026-09-02: бэкенд перестал молча применять галочки ко всем
+           организациям — PUT /users/{id}/overrides теперь по умолчанию
+           (apply_to_all=false) задевает ТОЛЬКО выбранную организацию, даже при
+           включённом доступе ко всем. Старый текст ниже утверждал обратное —
+           это стало ложью, переписан честно; применение ко всем — теперь
+           отдельное явное действие (галочка «Применить ко всем организациям»
+           рядом с сохранением). -->
       <div v-if="allOrgsAccessLocal" class="text-caption" style="color:#e65100">
         <v-icon size="13" color="warning" class="mr-1">mdi-content-copy</v-icon>
-        Доступ ко всем организациям включён — галочки вкладок и критичных действий
-        ниже применяются <strong>сразу ко всем организациям охвата</strong>, а не
-        только к выбранной в списке. Роль в каждой организации настраивается отдельно.
+        Доступ ко всем организациям включён, но вкладки и действия ниже по
+        умолчанию сохраняются <strong>только для выбранной организации</strong>,
+        даже при этом включённом доступе. Чтобы применить настройки сразу ко
+        всем организациям охвата — включите галочку «Применить ко всем
+        организациям» рядом с сохранением. Роль в каждой организации
+        настраивается отдельно.
       </div>
       <div v-else class="text-caption text-medium-emphasis">
         Выключено — права по вкладкам и критичным действиям ниже личные для
@@ -90,114 +100,147 @@
         {{ manageBlockedReason }}
       </div>
 
-      <v-tabs v-model="activeTab" density="compact" class="mb-2">
-        <v-tab value="tabs">Листы ({{ tabs.length }})</v-tab>
-        <v-tab value="actions">Критичные действия ({{ actions.length }})</v-tab>
-      </v-tabs>
-
-      <v-window v-model="activeTab">
-        <!-- Tabs (page visibility) -->
-        <v-window-item value="tabs">
-          <div v-if="loading" class="d-flex justify-center py-4">
-            <v-progress-circular indeterminate size="24" />
-          </div>
-          <div v-else>
-            <div
-              v-for="t in tabs"
-              :key="t.tab_key"
-              class="d-flex align-center py-1"
-            >
-              <v-tooltip
-                :text="isLocked(t.tab_key) ? manageBlockedReason : ''"
-                location="top"
-                :disabled="!isLocked(t.tab_key)"
-              >
-                <template #activator="{ props: tipProps }">
-                  <div v-bind="tipProps" style="display:inline-flex;align-items:center;">
-                    <v-checkbox
-                      :model-value="isGranted(t.tab_key)"
-                      :label="t.title"
-                      :disabled="isLocked(t.tab_key)"
-                      density="compact"
-                      hide-details
-                      @update:model-value="(v) => toggle(t.tab_key, !!v)"
-                    />
+      <!-- Владелец, 2026-09-02: раньше вкладки и действия рисовались двумя
+           НЕСВЯЗАННЫМИ списками (27 вкладок отдельно, 28 действий отдельно) —
+           сопоставить глазами, какое действие относится к какому разделу, было
+           невозможно. Теперь одна таблица по функциональным областям: строка —
+           область (title вкладки — с сервера, не хардкод), колонка «Только
+           просмотр» — галочка вкладки, колонка «Редактирование» — галочки
+           действий этой области. Область для действия определяется СТРУКТУРНО
+           по префиксу action_key (см. resolveTabKeyForAction в <script>) —
+           новый action_key с неизвестным префиксом не потеряется молча, а
+           уйдёт в строку «Прочее» в конце таблицы. -->
+      <div v-if="loading" class="d-flex justify-center py-4">
+        <v-progress-circular indeterminate size="24" />
+      </div>
+      <div v-else style="overflow-x:auto">
+        <v-table density="compact" class="permissions-table">
+          <thead>
+            <tr>
+              <th style="min-width:200px">Область</th>
+              <th style="min-width:220px">Только просмотр</th>
+              <th style="min-width:260px">Редактирование</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="g in permGroups" :key="g.key">
+              <td class="font-weight-medium">{{ g.title }}</td>
+              <td>
+                <div v-if="g.tab" class="d-flex align-center">
+                  <v-tooltip
+                    :text="isLocked(g.tab.tab_key) ? manageBlockedReason : ''"
+                    location="top"
+                    :disabled="!isLocked(g.tab.tab_key)"
+                  >
+                    <template #activator="{ props: tipProps }">
+                      <div v-bind="tipProps" style="display:inline-flex;align-items:center;">
+                        <v-checkbox
+                          :model-value="isGranted(g.tab.tab_key)"
+                          :disabled="isLocked(g.tab.tab_key)"
+                          density="compact"
+                          hide-details
+                          @update:model-value="(v) => toggle(g.tab!.tab_key, !!v)"
+                        />
+                      </div>
+                    </template>
+                  </v-tooltip>
+                  <v-chip
+                    v-if="overrideState(g.tab.tab_key) === 'grant'"
+                    color="success"
+                    size="x-small"
+                    class="ml-1"
+                    :closable="!isManageBlocked"
+                    @click:close="removeOverride(g.tab!.tab_key)"
+                  >+</v-chip>
+                  <v-chip
+                    v-if="overrideState(g.tab.tab_key) === 'revoke'"
+                    color="error"
+                    size="x-small"
+                    class="ml-1"
+                    :closable="!isManageBlocked"
+                    @click:close="removeOverride(g.tab!.tab_key)"
+                  >−</v-chip>
+                </div>
+                <span v-else class="text-medium-emphasis">—</span>
+              </td>
+              <td class="py-2">
+                <template v-if="g.groupActions.length">
+                  <div
+                    v-for="a in g.groupActions"
+                    :key="a.action_key"
+                    class="d-flex align-center"
+                  >
+                    <v-tooltip
+                      :text="isLocked(a.action_key) ? manageBlockedReason : ''"
+                      location="top"
+                      :disabled="!isLocked(a.action_key)"
+                    >
+                      <template #activator="{ props: tipProps }">
+                        <div v-bind="tipProps" style="display:inline-flex;align-items:center;">
+                          <v-checkbox
+                            :model-value="isGranted(a.action_key)"
+                            :label="a.description ?? a.action_key"
+                            :disabled="isLocked(a.action_key)"
+                            density="compact"
+                            hide-details
+                            @update:model-value="(v) => toggle(a.action_key, !!v)"
+                          />
+                        </div>
+                      </template>
+                    </v-tooltip>
+                    <v-chip
+                      v-if="overrideState(a.action_key) === 'grant'"
+                      color="success"
+                      size="x-small"
+                      class="ml-1"
+                      :closable="!isManageBlocked"
+                      @click:close="removeOverride(a.action_key)"
+                    >+</v-chip>
+                    <v-chip
+                      v-if="overrideState(a.action_key) === 'revoke'"
+                      color="error"
+                      size="x-small"
+                      class="ml-1"
+                      :closable="!isManageBlocked"
+                      @click:close="removeOverride(a.action_key)"
+                    >−</v-chip>
                   </div>
                 </template>
-              </v-tooltip>
-              <v-chip
-                v-if="overrideState(t.tab_key) === 'grant'"
-                color="success"
-                size="x-small"
-                class="ml-2"
-                :closable="!isManageBlocked"
-                @click:close="removeOverride(t.tab_key)"
-              >+ добавлено</v-chip>
-              <v-chip
-                v-if="overrideState(t.tab_key) === 'revoke'"
-                color="error"
-                size="x-small"
-                class="ml-2"
-                :closable="!isManageBlocked"
-                @click:close="removeOverride(t.tab_key)"
-              >− убрано</v-chip>
-            </div>
-          </div>
-        </v-window-item>
+                <span v-else class="text-medium-emphasis">—</span>
+              </td>
+            </tr>
+          </tbody>
+        </v-table>
+        <div class="text-caption text-medium-emphasis mt-1">
+          Вкладок: {{ tabs.length }} · Действий: {{ actions.length }} — все учтены в таблице выше.
+        </div>
+      </div>
 
-        <!-- Actions (critical operations) -->
-        <v-window-item value="actions">
-          <div v-if="loading" class="d-flex justify-center py-4">
-            <v-progress-circular indeterminate size="24" />
-          </div>
-          <div v-else>
-            <div
-              v-for="a in actions"
-              :key="a.action_key"
-              class="d-flex align-center py-1"
-            >
-              <v-tooltip
-                :text="isLocked(a.action_key) ? manageBlockedReason : ''"
-                location="top"
-                :disabled="!isLocked(a.action_key)"
-              >
-                <template #activator="{ props: tipProps }">
-                  <div v-bind="tipProps" style="display:inline-flex;align-items:center;">
-                    <v-checkbox
-                      :model-value="isGranted(a.action_key)"
-                      :label="a.description ?? a.action_key"
-                      :disabled="isLocked(a.action_key)"
-                      density="compact"
-                      hide-details
-                      @update:model-value="(v) => toggle(a.action_key, !!v)"
-                    />
-                  </div>
-                </template>
-              </v-tooltip>
-              <v-chip
-                v-if="overrideState(a.action_key) === 'grant'"
-                color="success"
-                size="x-small"
-                class="ml-2"
-                :closable="!isManageBlocked"
-                @click:close="removeOverride(a.action_key)"
-              >+ добавлено</v-chip>
-              <v-chip
-                v-if="overrideState(a.action_key) === 'revoke'"
-                color="error"
-                size="x-small"
-                class="ml-2"
-                :closable="!isManageBlocked"
-                @click:close="removeOverride(a.action_key)"
-              >− убрано</v-chip>
-            </div>
-          </div>
-        </v-window-item>
-      </v-window>
+      <!-- Владелец, 2026-09-02: явное применение ко всем организациям вместо
+           неявного (было: включённый «Доступ ко всем организациям» тихо
+           расширял охват PUT-запроса). Бэкенд: PUT /users/{id}/overrides
+           принимает apply_to_all (default false). -->
+      <v-divider class="my-3" />
+      <v-checkbox
+        v-model="applyToAllOrgs"
+        color="warning"
+        density="compact"
+        hide-details
+        class="mb-1"
+      >
+        <template #label>
+          <span class="text-body-2">Применить ко всем организациям</span>
+        </template>
+      </v-checkbox>
+      <div class="text-caption text-medium-emphasis mb-2">
+        По умолчанию изменения сохраняются только для организации
+        «{{ selectedOrgLabel }}». Включите галочку, чтобы следующее изменение
+        применилось сразу ко всем организациям охвата.
+      </div>
 
       <div v-if="saving" class="text-caption text-info mt-2">Сохранение...</div>
       <div v-if="saved" class="text-caption text-success mt-2">
-        Сохранено ✓<span v-if="savedOrgCount > 1"> — применено сразу в {{ savedOrgCount }} организациях</span>
+        Сохранено ✓ — применено в {{ savedOrgCount }} {{ savedOrgCount === 1 ? 'организации' : 'организациях' }}
       </div>
     </v-card-text>
   </v-card>
@@ -241,10 +284,13 @@ const currentUserOrgRoles = ref<Record<number, string | null>>({})
 const currentUserGlobalRole = localStorage.getItem('user_role') || ''
 const selectedOrgId = ref<number | null>(props.orgAccessList[0]?.org_id ?? null)
 const selectedRole = ref<string>('')
-const activeTab = ref('tabs')
 const loading = ref(false)
 const saving = ref(false)
 const saved = ref(false)
+// Владелец, 2026-09-02: явное применение изменений ко всем организациям
+// охвата — по умолчанию выключено, PUT /overrides задевает только выбранную
+// организацию (apply_to_all=false на бэкенде).
+const applyToAllOrgs = ref(false)
 
 const roleOptions = [
   { value: 'account_owner', label: 'Владелец аккаунта' },
@@ -342,6 +388,12 @@ const orgOptions = computed(() => {
   return options
 })
 
+// Владелец, 2026-09-02: подпись выбранной организации для текста рядом с
+// галочкой «Применить ко всем организациям» (задача 2).
+const selectedOrgLabel = computed(() =>
+  orgOptions.value.find(o => o.value === selectedOrgId.value)?.label ?? ''
+)
+
 const allOrgsAccessLocal = ref<boolean>(!!props.allOrgsAccess)
 const allOrgsAccessSaving = ref(false)
 const allOrgsAccessSaved = ref(false)
@@ -411,6 +463,91 @@ function roleLabel(role: string): string {
   }
   return labels[role] ?? role
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Владелец, 2026-09-02, задача 1: «сопоставить два несвязанных списка (27
+// вкладок / 28 действий) глазами невозможно». Группируем действия по вкладке
+// СТРУКТУРНО по префиксу action_key (часть до первой точки), а не
+// перечислением каждого из 28 ключей вручную — иначе новый action_key в
+// будущем потеряется молча. Порядок разрешения:
+//   1) точное совпадение префикса с tab_key,
+//   2) простые singular/plural вариации (vehicle → vehicles),
+//   3) явные семантические алиасы для неочевидных префиксов, где префикс не
+//      совпадает с tab_key ни напрямую, ни по множественному числу
+//      (subsidy→subsidies, wish→wishes, purchase_files→purchases,
+//      feo_category/feo_budget→feo_categories, user→staff,
+//      report_config→reports, plan_excess→plan, publication→purchases,
+//      payment→payment_registry).
+// Всё, что не нашло вкладку (напр. documents.view_all_in_org — намеренно
+// неоднозначен, может относиться и к закупкам, и к договорам) — уходит в
+// строку «Прочее» в конце таблицы, а не пропадает с экрана.
+const PREFIX_ALIASES: Record<string, string> = {
+  vehicle: 'vehicles',
+  purchase: 'purchases',
+  purchase_files: 'purchases',
+  contract: 'contracts',
+  subsidy: 'subsidies',
+  wish: 'wishes',
+  feo_category: 'feo_categories',
+  feo_budget: 'feo_categories',
+  user: 'staff',
+  report_config: 'reports',
+  plan_excess: 'plan',
+  publication: 'purchases',
+  payment: 'payment_registry',
+}
+
+function actionPrefix(actionKey: string): string {
+  const idx = actionKey.indexOf('.')
+  return idx === -1 ? actionKey : actionKey.slice(0, idx)
+}
+
+function resolveTabKeyForAction(actionKey: string, tabKeySet: Set<string>): string | null {
+  const prefix = actionPrefix(actionKey)
+  if (tabKeySet.has(prefix)) return prefix
+  if (tabKeySet.has(prefix + 's')) return prefix + 's'
+  if (prefix.endsWith('s') && tabKeySet.has(prefix.slice(0, -1))) return prefix.slice(0, -1)
+  const alias = PREFIX_ALIASES[prefix]
+  if (alias && tabKeySet.has(alias)) return alias
+  return null
+}
+
+interface PermGroup {
+  key: string
+  title: string
+  tab: { tab_key: string; title: string } | null
+  groupActions: { action_key: string; description: string }[]
+}
+
+const OTHER_GROUP_KEY = '__other__'
+
+// Каждая вкладка — своя строка (даже без действий, колонка «Редактирование»
+// будет пустой — так задумано). Действия без совпадения уходят в «Прочее».
+const permGroups = computed<PermGroup[]>(() => {
+  const tabKeySet = new Set(tabs.value.map(t => t.tab_key))
+  const actionsByTab = new Map<string, { action_key: string; description: string }[]>()
+  const otherActions: { action_key: string; description: string }[] = []
+  for (const a of actions.value) {
+    const tabKey = resolveTabKeyForAction(a.action_key, tabKeySet)
+    if (tabKey) {
+      if (!actionsByTab.has(tabKey)) actionsByTab.set(tabKey, [])
+      actionsByTab.get(tabKey)!.push(a)
+    } else {
+      otherActions.push(a)
+    }
+  }
+  const groups: PermGroup[] = tabs.value.map(t => ({
+    key: t.tab_key,
+    title: t.title,
+    tab: t,
+    groupActions: actionsByTab.get(t.tab_key) ?? [],
+  }))
+  if (otherActions.length > 0) {
+    groups.push({ key: OTHER_GROUP_KEY, title: 'Прочее', tab: null, groupActions: otherActions })
+  }
+  return groups
+})
+// ─────────────────────────────────────────────────────────────────────────
 
 async function loadOrgRoles() {
   try {
@@ -497,6 +634,9 @@ async function loadForOrg() {
 
 function onOrgChange() {
   overrides.value = {}
+  // Владелец, 2026-09-02: «применить ко всем» — намеренно НЕ переживает смену
+  // выбранной организации, чтобы случайно не разнести правку на чужой охват.
+  applyToAllOrgs.value = false
   loadForOrg()
 }
 
@@ -522,8 +662,12 @@ async function flush() {
   saving.value = true
   saved.value = false
   try {
+    // Владелец, 2026-09-02, задача 2: apply_to_all теперь ЯВНЫЙ выбор
+    // пользователя, а не побочный эффект включённого «доступа ко всем
+    // организациям». По умолчанию false — бэкенд задевает только org_id.
+    const applyParam = applyToAllOrgs.value ? '&apply_to_all=true' : ''
     const res = await apiFetch<{ applied_org_ids?: number[] }>(
-      `/permissions/users/${props.userId}/overrides?org_id=${selectedOrgId.value}`,
+      `/permissions/users/${props.userId}/overrides?org_id=${selectedOrgId.value}${applyParam}`,
       {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -569,6 +713,7 @@ watch(() => props.userId, async () => {
   overrides.value = {}
   orgRoles.value = {}
   selectedOrgId.value = props.orgAccessList[0]?.org_id ?? null
+  applyToAllOrgs.value = false  // не переносим «применить ко всем» на другого пользователя
   await loadOrgRoles()
   if (selectedOrgId.value) await loadForOrg()
 })

@@ -75,6 +75,9 @@
       <v-btn variant="tonal" color="primary" size="small" prepend-icon="mdi-refresh" :loading="loading" @click="reloadActiveTab">
         Обновить
       </v-btn>
+      <v-btn variant="tonal" size="small" prepend-icon="mdi-view-column" @click="showWishColumnPicker = true">
+        Колонки
+      </v-btn>
     </div>
 
     <!-- Tabs (visible to all authenticated users) -->
@@ -320,6 +323,18 @@
             :sort-by="colSort.event_name"
             @update:model-value="v => colFilters.event_name = v"
             @sort="dir => colSort.event_name = dir" />
+        </template>
+        <!-- Владелец, 2026-09-02: колонка «Субсидия» — subsidy_name уже приходит в WishOut -->
+        <template #item.subsidy_name="{ item }">
+          {{ (item as any).subsidy_name || '—' }}
+        </template>
+        <template #header.subsidy_name="{ column }">
+          <ColumnHeaderMenu col-key="subsidy_name" :title="column.title" col-type="enum"
+            :items="wishSubsidyNameOptions"
+            :model-value="colFilters.subsidy_name"
+            :sort-by="colSort.subsidy_name"
+            @update:model-value="v => colFilters.subsidy_name = v"
+            @sort="dir => colSort.subsidy_name = dir" />
         </template>
         <!-- Владелец, 2026-08-13: сумма заявки (Σ total_price позиций) -->
         <template #item.wish_total="{ item }">
@@ -700,6 +715,18 @@
             @update:model-value="v => colFilters.event_name = v"
             @sort="dir => colSort.event_name = dir" />
         </template>
+        <!-- Владелец, 2026-09-02: колонка «Субсидия» — subsidy_name уже приходит в WishOut -->
+        <template #item.subsidy_name="{ item }">
+          {{ (item as any).subsidy_name || '—' }}
+        </template>
+        <template #header.subsidy_name="{ column }">
+          <ColumnHeaderMenu col-key="subsidy_name" :title="column.title" col-type="enum"
+            :items="wishSubsidyNameOptions"
+            :model-value="colFilters.subsidy_name"
+            :sort-by="colSort.subsidy_name"
+            @update:model-value="v => colFilters.subsidy_name = v"
+            @sort="dir => colSort.subsidy_name = dir" />
+        </template>
         <!-- Владелец, 2026-08-13: сумма заявки (Σ total_price позиций) -->
         <template #item.wish_total="{ item }">
           {{ wishItemsTotal(item) != null ? formatPrice(wishItemsTotal(item)!) : '—' }}
@@ -905,6 +932,18 @@
             :sort-by="colSort.event_name"
             @update:model-value="v => colFilters.event_name = v"
             @sort="dir => colSort.event_name = dir" />
+        </template>
+        <!-- Владелец, 2026-09-02: колонка «Субсидия» — subsidy_name уже приходит в WishOut -->
+        <template #item.subsidy_name="{ item }">
+          {{ (item as any).subsidy_name || '—' }}
+        </template>
+        <template #header.subsidy_name="{ column }">
+          <ColumnHeaderMenu col-key="subsidy_name" :title="column.title" col-type="enum"
+            :items="wishSubsidyNameOptions"
+            :model-value="colFilters.subsidy_name"
+            :sort-by="colSort.subsidy_name"
+            @update:model-value="v => colFilters.subsidy_name = v"
+            @sort="dir => colSort.subsidy_name = dir" />
         </template>
         <!-- Владелец, 2026-08-13: сумма заявки (Σ total_price позиций) -->
         <template #item.wish_total="{ item }">
@@ -2318,6 +2357,21 @@
       </v-card>
     </v-dialog>
 
+    <!-- Владелец, 2026-09-02: редактор колонок ОДИН на все три вкладки заявок
+         («Мои» / «На согласование мне» / «Заявки сотрудников») — набор колонок
+         у них одинаковый, раздельная настройка заставила бы настраивать
+         одно и то же трижды. -->
+    <ColumnConfigDialog
+      v-model="showWishColumnPicker"
+      :all-columns="allWishColumns"
+      :state="wishColState"
+      :show-width="true"
+      :toggle-visible="wishToggleVisible"
+      :set-position="wishSetPosition"
+      :set-width="wishSetWidth"
+      :reset="wishResetColumns"
+    />
+
   </v-container>
 </template>
 
@@ -2342,6 +2396,8 @@ import { useFeoNodeAmounts } from '@/composables/useFeoNodeAmounts'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
 import WishDistributionKanban from '@/components/WishDistributionKanban.vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
+import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
+import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import ValidationArrows from '@/components/ValidationArrows.vue'
 import { useCardView } from '@/composables/useCardView'
 import RegistryExportButton from '@/components/RegistryExportButton.vue'
@@ -2590,7 +2646,7 @@ const priorityOptions = [
 ]
 
 // Table headers
-const wishHeaders = [
+const allWishColumns: ColumnDef[] = [
   { title: 'Статус', key: 'status', width: 110, sortable: true },
   // Явный width (не только «резиновая» колонка без width): «Заявка» — единственная
   // колонка без фикс. width, при добавлении «Суммы» ниже сумма фикс. width колонок
@@ -2603,6 +2659,9 @@ const wishHeaders = [
   // «Кому» = назначенный (assigned_to) или цепочка согласующих — одно понятие
   { title: 'Кому', key: 'approver_names', width: 180, sortable: false },
   { title: 'Мероприятие', key: 'event_name', width: 180, sortable: true },
+  // Владелец, 2026-09-02: subsidy_name уже приходит в WishOut (backend/app/schemas/wishes.py) —
+  // просто вывести колонку.
+  { title: 'Субсидия', key: 'subsidy_name', width: 180, sortable: true },
   // Владелец, 2026-08-13: сумма заявки (Σ total_price позиций) — как денежные колонки
   // в закупках (formatPrice), с сортировкой (соседние колонки тоже sortable).
   { title: 'Сумма', key: 'wish_total', width: 120, align: 'end' as const, sortable: true },
@@ -2613,11 +2672,30 @@ const wishHeaders = [
   { title: 'Действия', key: 'actions', width: 160, sortable: false },
 ]
 
+// Владелец, 2026-09-02: редактор колонок (выбор видимых + порядок + ширина) — ОДИН
+// набор настроек на все три вкладки заявок («Мои» / «На согласование мне» /
+// «Заявки сотрудников»): колонки везде одни и те же, раздельная настройка заставила
+// бы настраивать одно и то же трижды. Ключ localStorage 'wishes' (в паре с
+// v-resizable-columns, у которого свои ключи per-таб 'wishes-my' и т.п. — это
+// отдельный механизм ширины колонок при live-резайзе, не конфликтует).
+const {
+  state: wishColState,
+  visibleHeaders: wishVisibleHeaders,
+  toggleVisible: wishToggleVisible,
+  setPosition: wishSetPosition,
+  setWidth: wishSetWidth,
+  reset: wishResetColumns,
+} = useColumnConfig('wishes', allWishColumns)
+const showWishColumnPicker = ref(false)
+
+const wishHeaders = computed(() => wishVisibleHeaders.value)
 const wishHeadersAll = wishHeaders
 
 const EXCLUDED_WISH_KEYS = new Set(['actions', 'data-table-expand'])
 function getWishExportColumns() {
-  return wishHeaders
+  // Экспорт не зависит от того, что пользователь скрыл в редакторе колонок —
+  // как и раньше, выгружаем полный набор.
+  return allWishColumns
     .filter(h => !EXCLUDED_WISH_KEYS.has(h.key) && h.title)
     .map(h => ({ key: h.key, title: h.title, align: (h as any).align }))
 }
@@ -5330,6 +5408,7 @@ const colFilters = ref<Record<string, any>>({
   creator_name: null,
   approver_names: null,
   event_name: null,
+  subsidy_name: null,
   wish_total: null,
   created_at: null,
   desired_date: null,
@@ -5342,12 +5421,20 @@ const colSort = ref<Record<string, 'asc' | 'desc' | null>>({
   creator_name: null,
   approver_names: null,
   event_name: null,
+  subsidy_name: null,
   wish_total: null,
   created_at: null,
   desired_date: null,
   executor_name: null,
   execution_deadline: null,
 })
+
+// Владелец, 2026-09-02: список значений для enum-фильтра колонки «Субсидия» — образец OrdersView.vue.
+function uniqWishValues(rows: Wish[], key: string): (string | number | null)[] {
+  const set = new Set<any>()
+  rows.forEach(r => set.add((r as any)?.[key] ?? null))
+  return [...set].sort((a, b) => String(a ?? '').localeCompare(String(b ?? '')))
+}
 
 function applyColFilters(rows: Wish[]): Wish[] {
   let result = [...rows]
@@ -5366,6 +5453,9 @@ function applyColFilters(rows: Wish[]): Wish[] {
   // enum filter for status
   if (colFilters.value.status?.type === 'enum' && Array.isArray(colFilters.value.status.values) && colFilters.value.status.values.length)
     result = result.filter(r => colFilters.value.status.values.includes(r.status))
+  // enum filter for subsidy_name
+  if (colFilters.value.subsidy_name?.type === 'enum' && Array.isArray(colFilters.value.subsidy_name.values) && colFilters.value.subsidy_name.values.length)
+    result = result.filter(r => colFilters.value.subsidy_name.values.includes((r as any).subsidy_name ?? null))
   // number filter for wish_total (сумма заявки)
   if (colFilters.value.wish_total?.type === 'number') {
     const { min, max } = colFilters.value.wish_total
@@ -5403,6 +5493,15 @@ function applyColFilters(rows: Wish[]): Wish[] {
 const myWishesFiltered = computed(() => applyColFilters(myWishes.value))
 const incomingWishesFiltered = computed(() => applyColFilters(incomingWishes.value))
 const allWishesFiltered = computed(() => applyColFilters(allWishes.value))
+
+// Владелец, 2026-09-02: варианты для enum-фильтра «Субсидия» — по данным активной вкладки
+// (colFilters/colSort общие на все три таба, шаблон ColumnHeaderMenu тоже один и тот же).
+const wishSubsidyNameOptions = computed(() => uniqWishValues(
+  activeTab.value === 'my' ? myWishesFiltered.value
+    : activeTab.value === 'incoming' ? incomingWishesFiltered.value
+    : allWishesFiltered.value,
+  'subsidy_name',
+))
 
 // ── Card/table view toggle (primary "my" tab only) ──
 const {

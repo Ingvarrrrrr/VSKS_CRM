@@ -867,7 +867,7 @@
           <v-row>
             <v-col cols="12" md="4">
               <v-select v-model="form.purchase_basis" clearable
-                :items="[{value:'plan_schedule',title:'План закупок'},{value:'service_note',title:'Служебная записка'},{value:'work_order',title:'Заказ-наряд'}]"
+                :items="[{value:'plan_schedule',title:'План закупок'},{value:'service_note',title:'Служебная записка'}]"
                 item-title="title" item-value="value" label="Основание закупки" variant="outlined" density="compact"
                 hint="Документ-основание для закупки" persistent-hint />
             </v-col>

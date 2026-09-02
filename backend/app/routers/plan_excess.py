@@ -47,6 +47,7 @@ from app.models.user import User
 from app.models.user_organization import UserOrganization
 from app.models.user_org_access import UserOrgAccess
 from app.models.user_subsidy_access import UserSubsidyAccess
+from app.models.organization import Organization
 from app.models.feo_category import FeoCategory
 from app.models.subsidy import Subsidy
 from app.models.plan_excess_approval import PlanExcessApproval, PlanExcessApprovalStep
@@ -69,11 +70,29 @@ async def _authorized_plan_excess_approvers(
     же проверка, что и в гейте /decide — app.auth.permissions.has_org_key, — не
     дублируем логику).
 
-    Кандидаты собираются из трёх источников (кто ВООБЩЕ может иметь это право):
-    членство в организации (UserOrganization), явная орг-роль (UserOrgAccess) и
-    персональный грант на саму субсидию (UserSubsidyAccess). Из них has_org_key
-    отбирает тех, у кого право реально включено (по роли, орг-override или
-    субсидийному гранту).
+    Кандидаты собираются из ЧЕТЫРЁХ источников (кто ВООБЩЕ может иметь это право):
+    членство в организации (UserOrganization), явная орг-роль (UserOrgAccess),
+    персональный грант на саму субсидию (UserSubsidyAccess) и владелец организации
+    (Organization.owner_user_id). Из них has_org_key отбирает тех, у кого право
+    реально включено (по роли, орг-override или субсидийному гранту).
+
+    Правка 2026-09-02 (баг владельца продукта): у «АНО ЦЕНТРПОИСК» все участники —
+    employee, право по роли им не положено, а владелец организации (account_owner)
+    не числился УЧАСТНИКОМ этой организации — доступ у него ЕСТЬ (has_org_key
+    возвращает True для account_owner/superadmin сразу, см. permissions.py),
+    но в пул кандидатов он не попадал, и согласовывать было некому. Четвёртый
+    источник чинит именно эту дыру: владелец org.owner_user_id ВСЕГДА кандидат,
+    попадёт в итог, если has_org_key подтвердит право (для account_owner — всегда).
+
+    Сознательно НЕ добавляем сюда:
+    — всех пользователей с ролью account_owner огулом (не только владельца ЭТОЙ
+      организации): has_org_key пропускает account_owner без проверки org_id,
+      поэтому это раскрыло бы хозяев ЧУЖИХ SaaS-аккаунтов как «согласующих»
+      в организации, к которой они не имеют отношения — грубая утечка между
+      контурами в мультитенантной модели;
+    — superadmin: техническая роль поддержки SaaS, не сотрудник клиента; её и
+      так не дают выбирать согласующим руками (см. subsidy_approvers.py —
+      «Суперадмина нельзя назначить согласующим»), здесь та же логика.
 
     Автор запроса (exclude_user_id) исключается — самосогласование запрещено
     (владелец, 2026-08-29: «согласование — это не согласование превышения»
@@ -89,6 +108,12 @@ async def _authorized_plan_excess_approvers(
         select(UserSubsidyAccess.user_id).where(UserSubsidyAccess.subsidy_id == subsidy_id),
     ):
         candidate_ids.update((await db.execute(stmt)).scalars().all())
+
+    owner_id = (await db.execute(
+        select(Organization.owner_user_id).where(Organization.id == org_id)
+    )).scalar_one_or_none()
+    if owner_id is not None:
+        candidate_ids.add(owner_id)
 
     if exclude_user_id is not None:
         candidate_ids.discard(exclude_user_id)

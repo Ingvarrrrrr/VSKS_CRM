@@ -1,7 +1,47 @@
 <template>
+  <!-- Владелец продукта, 2026-09-02: «мне ввело в заблуждение, что "Доступ ко
+       всем организациям аккаунта" находится в одной рамке вместе с ВСКС» —
+       переключатель читался как настройка ВЫБРАННОЙ организации. Вынесен в
+       отдельную карточку НАД списком организаций, чтобы было однозначно видно:
+       это настройка уровня АККАУНТА, не привязанная к организации ниже. -->
+  <v-card variant="outlined" class="mt-4" color="primary">
+    <v-card-title class="d-flex align-center pa-4 pb-2">
+      <v-icon size="18" class="mr-2">mdi-account-key-outline</v-icon>
+      <span>Доступ ко всем организациям аккаунта</span>
+    </v-card-title>
+    <v-card-text class="pa-4 pt-0">
+      <v-switch
+        :model-value="allOrgsAccessLocal"
+        color="primary"
+        density="compact"
+        hide-details
+        class="mb-1"
+        label="Включить доступ ко всем организациям аккаунта"
+        @update:model-value="(v) => onAllOrgsAccessChange(!!v)"
+      />
+      <div class="text-caption text-medium-emphasis mb-1">
+        Это настройка уровня АККАУНТА целиком, а не организации, выбранной ниже.
+        Роль сотрудника не меняется — расширяется только охват данных: он увидит
+        закупки/субсидии/персонал всех организаций своего аккаунта.
+      </div>
+      <div v-if="allOrgsAccessLocal" class="text-caption" style="color:#e65100">
+        <v-icon size="13" color="warning" class="mr-1">mdi-content-copy</v-icon>
+        Доступ ко всем организациям включён — галочки вкладок и критичных действий
+        ниже применяются <strong>сразу ко всем организациям охвата</strong>, а не
+        только к выбранной в списке. Роль в каждой организации настраивается отдельно.
+      </div>
+      <div v-else class="text-caption text-medium-emphasis">
+        Выключено — права по вкладкам и критичным действиям ниже личные для
+        выбранной организации.
+      </div>
+      <div v-if="allOrgsAccessSaving" class="text-caption text-info mt-2">Сохранение...</div>
+      <div v-if="allOrgsAccessSaved" class="text-caption text-success mt-2">Сохранено ✓</div>
+    </v-card-text>
+  </v-card>
+
   <v-card variant="outlined" class="mt-4">
     <v-card-title class="d-flex align-center pa-4">
-      <span>Доступ</span>
+      <span>Доступ в организации</span>
       <v-spacer />
       <v-chip
         v-if="hasOverrides"
@@ -13,30 +53,6 @@
     </v-card-title>
 
     <v-card-text class="pa-4 pt-0">
-      <v-switch
-        :model-value="allOrgsAccessLocal"
-        color="primary"
-        density="compact"
-        hide-details
-        class="mb-1"
-        label="Доступ ко всем организациям аккаунта"
-        @update:model-value="(v) => onAllOrgsAccessChange(!!v)"
-      />
-      <div class="text-caption text-medium-emphasis mb-3">
-        Роль сотрудника не меняется — расширяется только охват данных: он увидит
-        закупки/субсидии/персонал всех организаций своего аккаунта, а не только
-        выбранной ниже.
-      </div>
-      <div v-if="allOrgsAccessLocal" class="text-caption mb-3" style="color:#e65100">
-        <v-icon size="13" color="warning" class="mr-1">mdi-content-copy</v-icon>
-        Доступ ко всем организациям включён — галочки вкладок и критичных действий
-        ниже применяются <strong>сразу ко всем организациям охвата</strong>, а не
-        только к выбранной в списке. Роль в каждой организации настраивается отдельно.
-      </div>
-      <div v-else class="text-caption text-medium-emphasis mb-3">
-        Права по вкладкам и критичным действиям — личные для этой организации.
-      </div>
-
       <v-select
         v-model="selectedOrgId"
         :items="orgOptions"
@@ -55,9 +71,6 @@
         настроить роль/вкладки/действия для конкретной организации, видимость данных он не ограничивает.
       </div>
       <div v-else class="mb-3" />
-
-      <div v-if="allOrgsAccessSaving" class="text-caption text-info mb-2">Сохранение...</div>
-      <div v-if="allOrgsAccessSaved" class="text-caption text-success mb-2">Сохранено ✓</div>
 
       <v-select
         v-model="selectedRole"

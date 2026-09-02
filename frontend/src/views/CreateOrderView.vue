@@ -5674,6 +5674,15 @@ const approvalPanelRef = ref<InstanceType<typeof ApprovalPanel> | null>(null)
 
 const showApprovalSection = computed(() => {
   if (!isEdit.value) return false
+  // Владелец (2026-09-02): рамочная голова договора получает цепочку
+  // согласующих СРАЗУ при создании (см. contracts.py::_build_framework_chain_approvals),
+  // но её Purchase.status при этом остаётся 'wishes' — статусный гейт ниже иначе
+  // прятал бы панель, и согласующие не увидели бы, что нужно принять решение.
+  // approval_status уже != null только если цепочка реально запущена (этим же
+  // гейтом «Запустить согласование» кнопка внутри ApprovalPanel и раньше была
+  // достижима лишь начиная с work_in_progress — обычные закупки этот путь не
+  // затрагивает).
+  if (form.approval_status) return true
   const idx = STATUS_ORDER.indexOf(form.status)
   return idx >= STATUS_ORDER.indexOf('work_in_progress')
 })

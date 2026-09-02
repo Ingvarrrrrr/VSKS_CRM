@@ -405,6 +405,15 @@
         </div>
       </template>
       <template #item.subject="{ item }">
+        <!-- Владелец, 2026-09-02: рамочная голова без согласования — затемнение
+             строки + плашка «ТРЕБУЕТСЯ СОГЛАСОВАНИЕ», по образцу
+             .purchase-stopped-banner из OrdersView.vue (тот же приём, тот же
+             принцип наложения — не блюр). -->
+        <div v-if="item.approval_state === 'pending'" class="contract-approval-pending-banner">
+          <v-icon icon="mdi-shield-alert-outline" size="18" class="mr-1" />
+          <span class="contract-approval-pending-banner__title">ТРЕБУЕТСЯ СОГЛАСОВАНИЕ</span>
+          <span class="contract-approval-pending-banner__meta">Рамочный договор ждёт согласования по цепочке руководителей</span>
+        </div>
         <span class="text-caption" :title="item.subject">{{ item.subject ? (item.subject.length > 60 ? item.subject.slice(0, 60) + '...' : item.subject) : '—' }}</span>
       </template>
       <template #item.item_type="{ item }">
@@ -533,6 +542,12 @@
       <v-row dense>
         <v-col v-for="c in pagedCards" :key="c.id" cols="12" sm="6" lg="4">
           <v-card variant="outlined" class="h-100 d-flex flex-column" hover @click="openEdit(c)">
+            <!-- Владелец, 2026-09-02: та же плашка, что и в табличном виде — см. #item.subject -->
+            <div v-if="c.approval_state === 'pending'" class="contract-approval-pending-banner ma-2 mb-0">
+              <v-icon icon="mdi-shield-alert-outline" size="18" class="mr-1" />
+              <span class="contract-approval-pending-banner__title">ТРЕБУЕТСЯ СОГЛАСОВАНИЕ</span>
+              <span class="contract-approval-pending-banner__meta">Ждёт согласования по цепочке руководителей</span>
+            </div>
             <v-card-item class="pb-1">
               <v-card-title class="text-body-2 d-flex align-center ga-2 flex-wrap">
                 <span class="font-weight-bold">{{ c.number || ('#' + c.id) }}</span>
@@ -1005,6 +1020,9 @@ interface Contract {
   status?: string
   notes?: string
   planned_monthly?: number
+  // Владелец, 2026-09-02: состояние согласования рамочной ГОЛОВЫ (см. contracts.py::list_contracts) —
+  // 'pending' | 'approved' | null. Затемняем строку/карточку только при 'pending'.
+  approval_state?: string | null
 }
 interface Subsidy { id: number; name: string; year: number }
 interface Contractor { id: number; name: string; inn?: string }
@@ -2026,5 +2044,35 @@ onMounted(async () => {
   outline: 2px dashed rgb(var(--v-theme-info));
   outline-offset: 2px;
   background: rgba(var(--v-theme-info), 0.08) !important;
+}
+
+/* Владелец, 2026-09-02: рамочная голова без согласования — «не блюр, а
+   затемнение» + надпись поверх, по аналогии с .purchase-stopped-banner
+   (OrdersView.vue) — тот же приём (плашка, prepend'ится перед обычным
+   содержимым ячейки/карточки, строка остаётся кликабельной), но тёмная
+   заливка вместо красной рамки — здесь именно «требуется действие», а не
+   «остановлено». */
+.contract-approval-pending-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  column-gap: 10px;
+  row-gap: 2px;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(15, 23, 42, 0.92);
+  color: #fff;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+}
+.contract-approval-pending-banner__title {
+  font-weight: 800;
+  font-size: 0.92rem;
+  letter-spacing: 0.02em;
+}
+.contract-approval-pending-banner__meta {
+  font-size: 0.78rem;
+  font-weight: 500;
+  opacity: 0.85;
 }
 </style>

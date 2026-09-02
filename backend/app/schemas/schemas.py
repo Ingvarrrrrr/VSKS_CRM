@@ -599,6 +599,12 @@ class ContractOut(ContractCreate):
     contractor_inn: Optional[str] = None
     subsidy_name: Optional[str] = None
     extra_subsidies: List[ContractSubsidyOut] = []
+    # Владелец (2026-09-02): состояние согласования рамочной ГОЛОВЫ договора —
+    # вычисляется из Purchase.approval_status привязанной рамочной головы, не
+    # хранится отдельной колонкой (см. contracts.py::list_contracts).
+    # pending — голова ждёт согласования по цепочке руководителей, approved —
+    # согласована, None — головы нет или цепочка не строилась (историческая).
+    approval_state: Optional[str] = None
     model_config = {"from_attributes": True}
 
 # Phase 31-04: contract cascade response

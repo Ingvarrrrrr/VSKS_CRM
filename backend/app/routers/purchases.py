@@ -113,6 +113,111 @@ def is_framework_head(p) -> bool:
     )
 
 
+async def _build_framework_chain_approvals(
+    p: Purchase, db: AsyncSession, current_user: User,
+) -> Optional[str]:
+    """Строит восходящую цепочку согласующих рамочной ГОЛОВЫ договора — ТЕМ ЖЕ
+    механизмом, что и у заявок (app.services.approval_chain.build_ascending_chain,
+    см. app/routers/wish_approvals.py::cascade_wish_approvers), чтобы правило
+    подчинения не разъезжалось по двум местам (см. историю framework_limited/
+    framework_with_amount выше — дублирование уже один раз стоило прод-инцидента).
+
+    Владелец (2026-09-02): «рамочный договор, при его создании, должен пройти
+    путь как Заявка» — до сих пор рамочная голова, заведённая прямо в реестре
+    «Договоры» (POST /api/contracts/{id}/approval-purchase), не проходила вообще
+    никакого согласования.
+
+    В отличие от заявки, у рамочной головы нет отдельного экрана, где автор бы
+    выбирал верхнего согласующего — верхом цепочки берём руководителя
+    организации (Organization.head_user_id) автоматически. Если он не задан —
+    цепочку строить не из чего, согласование не запускается (approval_status
+    остаётся NULL), чтобы не создать пустую/бессмысленную цепочку.
+
+    Результат сохраняется в PurchaseApproval — той же таблице, тем же
+    решением (POST /purchases/{pid}/approvals/{aid}/decide), что уже
+    используется для обычного (SubsidyApprover-based) согласования закупок:
+    второй параллельный движок согласования не заводится.
+
+    Возвращает warning от build_ascending_chain (см. её docstring) или None.
+    """
+    if not is_framework_head(p):
+        return None
+
+    from app.services.approval_chain import build_ascending_chain
+    from app.routers.purchase_approvals import _resolve_purchase_org_id
+    from app.models.organization import Organization
+    from app.models.purchase_approval import PurchaseApproval
+
+    org_id = await _resolve_purchase_org_id(db, p, current_user)
+    if not org_id:
+        return None
+    org = await db.get(Organization, org_id)
+    top_user_id = getattr(org, "head_user_id", None) if org else None
+    if not top_user_id:
+        return None
+
+    author_id = p.assigned_user_id or p.service_note_by or current_user.id
+    chain, warning = await build_ascending_chain(db, author_id, top_user_id, org_id)
+    if not chain:
+        return warning
+
+    # Идемпотентно — как start_approval() при повторном запуске (purchase_approvals.py).
+    old = (await db.execute(
+        select(PurchaseApproval).where(PurchaseApproval.purchase_id == p.id)
+    )).scalars().all()
+    for row in old:
+        await db.delete(row)
+    await db.flush()
+
+    for step in chain:
+        db.add(PurchaseApproval(
+            purchase_id=p.id,
+            order_num=step["order_num"],
+            role_name=step["role_name"],
+            approver_full_name=step["full_name"] or "",
+            user_id=step["user_id"],
+            status="pending",
+        ))
+    p.approval_status = "in_progress"
+    p.approval_mode = p.approval_mode or "sequential"
+    return warning
+
+
+@router.post("/{pid}/approvers/cascade")
+async def cascade_purchase_approvers(
+    pid: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Пересобрать цепочку согласующих рамочной ГОЛОВЫ договора — по аналогии с
+    POST /wishes/{wid}/approvers/cascade, тем же общим механизмом
+    (build_ascending_chain). Вызывается автоматически при заведении рамочной
+    головы (см. contracts.py::get_or_create_approval_purchase), а также доступен
+    отдельно — например, чтобы перестроить цепочку после смены руководителя
+    организации.
+    """
+    p = await db.get(Purchase, pid)
+    if not p:
+        raise HTTPException(404, "Закупка не найдена")
+    if not is_framework_head(p):
+        raise HTTPException(400, "Цепочка согласующих по этому механизму доступна только для рамочной головы договора")
+
+    warning = await _build_framework_chain_approvals(p, db, current_user)
+    await db.commit()
+
+    from app.models.purchase_approval import PurchaseApproval
+    from app.routers.purchase_approvals import _to_out
+    rows = (await db.execute(
+        select(PurchaseApproval).where(PurchaseApproval.purchase_id == pid).order_by(PurchaseApproval.order_num)
+    )).scalars().all()
+    return {
+        "approval_mode": p.approval_mode,
+        "approval_status": p.approval_status,
+        "approvers": [_to_out(a) for a in rows],
+        "warning": warning,
+    }
+
+
 async def _auto_match_feo_item(
     item_name: str,
     purchase_subsidy_id: Optional[int],

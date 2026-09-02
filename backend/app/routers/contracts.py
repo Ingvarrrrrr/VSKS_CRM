@@ -79,6 +79,20 @@ async def _enrich_contract_from_purchases(c: Contract, db: AsyncSession) -> int:
     return filled
 
 
+def _framework_approval_state(approval_status: Optional[str]) -> Optional[str]:
+    """Purchase.approval_status рамочной ГОЛОВЫ → упрощённое состояние для
+    реестра договоров (ContractOut.approval_state), которым фронт решает,
+    затемнять ли строку. approved — согласовано; pending — в работе или
+    отклонено (ждёт повторного согласования); None — головы ещё нет или
+    цепочка не строилась (нет руководителя организации, см.
+    purchases.py::_build_framework_chain_approvals) — тогда фронт не затемняет."""
+    if approval_status == "approved":
+        return "approved"
+    if approval_status in ("in_progress", "rejected"):
+        return "pending"
+    return None
+
+
 RU_MONTHS_GEN = [
     "января", "февраля", "марта", "апреля", "мая", "июня",
     "июля", "августа", "сентября", "октября", "ноября", "декабря",
@@ -222,6 +236,19 @@ async def list_contracts(
             ContractSubsidyOut(id=es.id, subsidy_id=es.subsidy_id, subsidy_name=es.subsidy.name if es.subsidy else None)
             for es in (c.extra_subsidies or [])
         ]
+        # Владелец (2026-09-02): «рамочный договор без закупок внутри должен быть
+        # визуально помечен, пока не согласован» — approval_state вычисляется из
+        # Purchase.approval_status привязанной рамочной ГОЛОВЫ (is_framework_head,
+        # см. purchases.py), отдельной колонки на Contract не заводим.
+        if c.contract_type in FRAMEWORK_TYPES:
+            head_status = (await db.execute(
+                select(Purchase.approval_status).where(
+                    Purchase.contract_id == c.id,
+                    Purchase.parent_purchase_id.is_(None),
+                    Purchase.purchase_contract_type.in_(FRAMEWORK_TYPES),
+                ).limit(1)
+            )).scalar_one_or_none()
+            d.approval_state = _framework_approval_state(head_status)
         out.append(d)
     return out
 
@@ -477,7 +504,7 @@ async def get_or_create_approval_purchase(
     # Локальный импорт: purchases.py импортирует ensure_contract_linked ИЗ
     # этого модуля на уровне модуля — импорт is_framework_head сверху дал бы
     # циклический импорт при старте приложения.
-    from app.routers.purchases import is_framework_head
+    from app.routers.purchases import is_framework_head, _build_framework_chain_approvals
 
     contract = (await db.execute(select(Contract).where(Contract.id == contract_id))).scalar_one_or_none()
     if not contract:
@@ -505,6 +532,13 @@ async def get_or_create_approval_purchase(
         p.purchase_number = max_result.scalar() + 1
 
     await _assign_framework_seq(p, db)
+
+    # Владелец (2026-09-02): «рамочный договор, при его создании, должен пройти
+    # путь как Заявка» — свежезаведённая рамочная голова сразу уходит на
+    # согласование по восходящей цепочке руководителей (тем же механизмом,
+    # что и у заявок), а не остаётся неотслеживаемой. См. docstring
+    # _build_framework_chain_approvals в purchases.py.
+    await _build_framework_chain_approvals(p, db, current_user)
 
     await db.commit()
     return {"purchase_id": p.id, "created": True}

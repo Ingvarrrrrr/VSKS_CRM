@@ -536,6 +536,19 @@
             >
               <v-icon icon="mdi-alert-decagram" size="12" class="mr-1" />{{ feoExcessChip(item).text }}
             </v-chip>
+            <!-- Владелец (2026-09-02): категория ФЭО шапки/товара/плановой позиции
+                 разъехались — метка видна прямо в реестре, без открытия карточки. -->
+            <v-tooltip v-if="item.feo_mismatch" location="top" max-width="380">
+              <template #activator="{ props: mmTp }">
+                <v-chip v-bind="mmTp" size="x-small" color="amber-darken-3" variant="flat">
+                  <v-icon icon="mdi-alert" size="12" class="mr-1" />Расхождение ФЭО
+                </v-chip>
+              </template>
+              <div class="text-caption font-weight-bold mb-1">Расхождение категории ФЭО</div>
+              <ul class="text-caption ml-4 mb-0">
+                <li v-for="mi in (item.feo_mismatch_items || [])" :key="mi.item_id">{{ mi.message }}</li>
+              </ul>
+            </v-tooltip>
           </div>
         </template>
 
@@ -742,6 +755,11 @@
                   :title="feoExcessChip(item).title"
                 >
                   <v-icon icon="mdi-alert-decagram" size="12" class="mr-1" />{{ feoExcessChip(item).text }}
+                </v-chip>
+                <v-chip v-if="item.feo_mismatch" size="x-small" color="amber-darken-3" variant="flat"
+                  :title="(item.feo_mismatch_items || []).map(mi => mi.message).join(' | ')"
+                >
+                  <v-icon icon="mdi-alert" size="12" class="mr-1" />Расхождение ФЭО
                 </v-chip>
               </div>
               <div class="text-caption text-medium-emphasis">Контрагент</div>
@@ -1706,6 +1724,12 @@ interface Purchase {
   stopped_by?: number | null
   stopped_by_name?: string | null
   stopped_wish_id?: number | null
+  // Владелец (2026-09-02): «уведомление глобально, если позиция категории ФЭО
+  // вверху и в каждом товаре не соответствует друг другу — об этом должен быть
+  // алярм прям стоять». Считается ВСЕГДА бэкендом (не под флагом, в отличие от
+  // feo_excess) — см. app.routers.purchases._compute_purchase_feo_mismatch.
+  feo_mismatch?: boolean
+  feo_mismatch_items?: { item_id: number; item_name: string; message: string; reason: string }[]
 }
 
 const FRAMEWORK_TYPES = new Set(['framework_cumulative', 'framework_with_amount'])

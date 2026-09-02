@@ -526,6 +526,166 @@ async def _compute_purchase_feo_excess(db: AsyncSession, purchases: list) -> dic
     return result
 
 
+async def _item_feo_mismatch(
+    db: AsyncSession, purchase: "Purchase", item: PurchaseItem,
+    cat_names: dict | None = None, planned_map: dict | None = None,
+) -> dict | None:
+    """Владелец (2026-09-02): «уведомление глобально, если позиция категории ФЭО
+    вверху и в каждом товаре не соответствует друг другу — об этом должен быть
+    алярм прям стоять». Это ПРО ДРУГОЕ, чем _reset_incompatible_item_feo_links —
+    тот сбрасывает несогласованные привязки ПРИ смене категории шапки; здесь
+    считаем расхождения, которые УЖЕ накоплены (никто категорию не менял, но
+    данные разъехались — например, руками поправили feo_category_id позиции
+    в обход шапки).
+
+    Расхождение по позиции — любое из:
+    1) у позиции есть feo_planned_item_id, а категория привязанной плановой
+       позиции НЕ равна эффективной категории позиции (item.feo_category_id,
+       если задана; иначе — категория шапки) и не её потомок — см.
+       _category_within (тот же обход дерева, второй не пишем);
+    2) purchase.feo_per_item ВЫКЛЮЧЕН (общая категория на закупку), а у позиции
+       задан feo_category_id, отличный от категории шапки — в этом режиме
+       позиции обязаны следовать за шапкой.
+
+    Возвращает None, если расхождений нет, иначе — словарь с человекочитаемыми
+    полями (название позиции, что стоит у позиции, что стоит у плановой) для
+    ответа API (см. FeoMismatchItemOut в schemas.py) — НЕ голый булев флаг,
+    пользователь должен понять, что именно разошлось."""
+    from app.models.feo_planned_item import FeoPlannedItem
+
+    cat_names = cat_names or {}
+
+    def _name(cid):
+        if cid is None:
+            return None
+        return cat_names.get(cid, f"#{cid}")
+
+    effective_cat_id = item.feo_category_id or purchase.feo_category_id
+    reasons: list[str] = []
+
+    planned = None
+    planned_cat_id = None
+    if item.feo_planned_item_id:
+        planned = (planned_map or {}).get(item.feo_planned_item_id)
+        if planned is None:
+            planned = await db.get(FeoPlannedItem, item.feo_planned_item_id)
+        planned_cat_id = planned.feo_category_id if planned else None
+        if effective_cat_id and not await _category_within(db, planned_cat_id, effective_cat_id):
+            reasons.append("planned")
+
+    if not purchase.feo_per_item and item.feo_category_id and item.feo_category_id != purchase.feo_category_id:
+        reasons.append("header")
+
+    if not reasons:
+        return None
+
+    reason = "both" if len(reasons) == 2 else reasons[0]
+    effective_name = _name(effective_cat_id)
+    header_name = _name(purchase.feo_category_id)
+    planned_cat_name = _name(planned_cat_id)
+    item_name = item.item_name or "Без названия"
+
+    parts: list[str] = []
+    if "planned" in reasons:
+        parts.append(
+            f"привязана к плановой позиции «{planned.name if planned else '?'}» "
+            f"категории «{planned_cat_name or '—'}», а категория самой позиции — "
+            f"«{effective_name or '—'}» — выберите плановую позицию из нужной "
+            f"категории либо исправьте категорию"
+        )
+    if "header" in reasons:
+        parts.append(
+            f"своя категория «{effective_name or '—'}» отличается от категории "
+            f"шапки закупки «{header_name or '—'}», хотя «разные категории для "
+            f"каждого товара» выключены — исправьте категорию позиции или шапки"
+        )
+    message = f"«{item_name}»: " + "; ".join(parts)
+
+    return {
+        "item_id": item.id,
+        "item_name": item_name,
+        "reason": reason,
+        "message": message,
+        "item_category_id": effective_cat_id,
+        "item_category_name": effective_name,
+        "header_category_id": purchase.feo_category_id,
+        "header_category_name": header_name,
+        "planned_item_id": item.feo_planned_item_id,
+        "planned_item_name": planned.name if planned else None,
+        "planned_category_id": planned_cat_id,
+        "planned_category_name": planned_cat_name,
+    }
+
+
+async def _compute_purchase_feo_mismatch(db: AsyncSession, purchases: list) -> dict:
+    """Батч-версия _item_feo_mismatch на весь список закупок ОДНИМ проходом
+    (реестр закупок большой — не считаем по закупке за раз). Владелец
+    (2026-09-02): «уведомление глобально, если позиция категории ФЭО вверху и
+    в каждом товаре не соответствует друг другу — об этом должен быть алярм
+    прям стоять».
+
+    Батчинг: один SELECT забирает ВСЕ FeoPlannedItem, на которые ссылаются
+    позиции переданных закупок (вместо db.get() по одной на каждую позицию);
+    следом несколько SELECT'ов прогревают identity map категориями ФЭО
+    (собственные категории позиций/шапок + категории плановых позиций + их
+    предки, обычно 2-3 уровня) — так _category_within(db, ...) ниже резолвит
+    db.get() из кэша сессии, а не шлёт отдельный запрос на каждую позицию
+    каждой закупки. Возвращает {purchase_id: {feo_mismatch, feo_mismatch_items}}
+    на КАЖДУЮ закупку из `purchases` (пусто/False, если расхождений нет).
+    `purchases` обязаны иметь загруженные `.items` (selectinload/joinedload)."""
+    from app.models.feo_planned_item import FeoPlannedItem
+
+    result: dict = {p.id: {"feo_mismatch": False, "feo_mismatch_items": []} for p in purchases}
+    all_pairs = [(p, it) for p in purchases for it in (p.items or [])]
+    if not all_pairs:
+        return result
+
+    fpi_ids = {it.feo_planned_item_id for _, it in all_pairs if it.feo_planned_item_id}
+    planned_map: dict = {}
+    if fpi_ids:
+        rows = (await db.execute(
+            select(FeoPlannedItem).where(FeoPlannedItem.id.in_(fpi_ids))
+        )).scalars().all()
+        planned_map = {r.id: r for r in rows}
+
+    seed_ids = set()
+    for p, it in all_pairs:
+        if p.feo_category_id:
+            seed_ids.add(p.feo_category_id)
+        if it.feo_category_id:
+            seed_ids.add(it.feo_category_id)
+    for fpi in planned_map.values():
+        if fpi.feo_category_id:
+            seed_ids.add(fpi.feo_category_id)
+
+    known_ids: set = set()
+    frontier = set(seed_ids)
+    for _ in range(6):  # дерево ФЭО обычно 2-3 уровня, защита от глубоких данных
+        frontier = {cid for cid in frontier if cid not in known_ids}
+        if not frontier:
+            break
+        rows = (await db.execute(select(FeoCategory).where(FeoCategory.id.in_(frontier)))).scalars().all()
+        known_ids |= frontier
+        for r in rows:
+            if r.parent_id:
+                frontier.add(r.parent_id)
+
+    cat_names: dict = {}
+    if known_ids:
+        names_r = await db.execute(select(FeoCategory.id, FeoCategory.name).where(FeoCategory.id.in_(known_ids)))
+        cat_names = {row[0]: row[1] for row in names_r.all()}
+
+    for p in purchases:
+        mismatches = []
+        for it in (p.items or []):
+            m = await _item_feo_mismatch(db, p, it, cat_names=cat_names, planned_map=planned_map)
+            if m:
+                mismatches.append(m)
+        if mismatches:
+            result[p.id] = {"feo_mismatch": True, "feo_mismatch_items": mismatches}
+    return result
+
+
 def _item_to_out(item: PurchaseItem, plan_residual=None, plan_planned_amount=None) -> PurchaseItemOut:
     product_name = None
     product_photo_url = None
@@ -583,6 +743,7 @@ def _purchase_to_full(
     contractor_inns: dict | None = None, receipt_map: dict | None = None, ru_map: dict | None = None,
     su_map: dict | None = None, feo_excess_map: dict | None = None, item_plan_map: dict | None = None,
     wish_title_map: dict | None = None, wish_status_map: dict | None = None,
+    feo_mismatch_map: dict | None = None,
 ) -> PurchaseOutFull:
     data = {c.name: getattr(p, c.name) for c in Purchase.__table__.columns}
     _ipm = item_plan_map or {}
@@ -627,6 +788,7 @@ def _purchase_to_full(
             multi_contractor_label = next(iter(unique_names))
 
     _excess = (feo_excess_map or {}).get(p.id) or {}
+    _mismatch = (feo_mismatch_map or {}).get(p.id) or {}
     return PurchaseOutFull(
         **data,
         items=items,
@@ -660,6 +822,13 @@ def _purchase_to_full(
         # Статус заявки — карточке закупки в статусе 'wishes' нужно объяснить,
         # ждёт она одобрения или отцеплена (владелец, 2026-08-21, дефект 1).
         wish_status=(wish_status_map or {}).get(p.wish_id) if p.wish_id else None,
+        # Владелец (2026-09-02): «уведомление глобально, если позиция категории
+        # ФЭО вверху и в каждом товаре не соответствует друг другу» — см.
+        # _compute_purchase_feo_mismatch. Считается ВСЕГДА (не опционально, в
+        # отличие от feo_excess) — расхождение редкое (страховка на будущее),
+        # дешевле проверять всегда, чем прятать за флагом.
+        feo_mismatch=_mismatch.get("feo_mismatch", False),
+        feo_mismatch_items=_mismatch.get("feo_mismatch_items", []),
     )
 
 
@@ -1095,11 +1264,21 @@ async def list_purchases(
     if with_feo_excess and purchases:
         _feo_excess_map = await _compute_purchase_feo_excess(db, purchases)
 
+    # Владелец (2026-09-02): «уведомление глобально, если позиция категории ФЭО
+    # вверху и в каждом товаре не соответствует друг другу — об этом должен быть
+    # алярм прям стоять». В отличие от feo_excess — считается ВСЕГДА (не под
+    # флагом), одним батч-проходом на весь список (_compute_purchase_feo_mismatch),
+    # чтобы в реестре можно было пометить строку без открытия карточки.
+    _feo_mismatch_map: dict = {}
+    if purchases:
+        _feo_mismatch_map = await _compute_purchase_feo_mismatch(db, purchases)
+
     result_rows = []
     for p in purchases:
         out = _purchase_to_full(
             p, contractors, subsidies, contractor_inns=contractor_inns, receipt_map=receipt_map,
             ru_map=ru_map, su_map=su_map, feo_excess_map=_feo_excess_map,
+            feo_mismatch_map=_feo_mismatch_map,
         )
         if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):
             out.framework_contract_total = display_total_by_contract.get(p.contract_id)
@@ -1424,6 +1603,11 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
     # Общий код с list_purchases — см. _compute_purchase_feo_excess.
     _single_feo_excess_map = await _compute_purchase_feo_excess(db, [p])
 
+    # Расхождение категории ФЭО между шапкой/позицией/плановой позицией
+    # (владелец, 2026-09-02) — см. _compute_purchase_feo_mismatch, тот же код
+    # для списка и карточки.
+    _single_feo_mismatch_map = await _compute_purchase_feo_mismatch(db, [p])
+
     # Остаток плановой позиции на КАЖДУЮ строку закупки (план п.4, «по позициям
     # отдавать остаток их плановой позиции, чтобы строку можно было подсветить»):
     #   - позиция привязана к FeoPlannedItem (Ур.5) — остаток берём с точностью
@@ -1473,7 +1657,7 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
     out = _purchase_to_full(
         p, contractors, subsidies, allocations=allocations, ru_map=single_ru_map, su_map=single_su_map,
         feo_excess_map=_single_feo_excess_map, item_plan_map=_item_plan_map, wish_title_map=_wish_title_map,
-        wish_status_map=_wish_status_map,
+        wish_status_map=_wish_status_map, feo_mismatch_map=_single_feo_mismatch_map,
     )
     # phase26-m: populate framework_contract_total for single purchase view
     if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):

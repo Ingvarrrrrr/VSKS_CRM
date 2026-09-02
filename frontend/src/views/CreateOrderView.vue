@@ -42,6 +42,30 @@
         {{ purchaseExcessStateText }}
       </v-chip>
     </div>
+
+    <!-- Владелец (2026-09-02): «уведомление глобально, если позиция категории
+         ФЭО вверху и в каждом товаре не соответствует друг другу — об этом
+         должен быть алярм прям стоять». По образцу .purchase-stopped-banner
+         (OrdersView.vue) — крупная рамка на всю ширину, держится, пока
+         расхождение есть (не таймаут-снэкбар). Красный занят остановкой
+         закупки — здесь предупреждающий (амбер) цвет. См. GET /api/purchases/{id}
+         → feo_mismatch/feo_mismatch_items (app.routers.purchases._compute_purchase_feo_mismatch). -->
+    <div v-if="isEdit && purchaseData?.feo_mismatch" class="feo-mismatch-banner mb-3">
+      <div class="feo-mismatch-banner__head">
+        <v-icon icon="mdi-alert" size="18" class="mr-1" />
+        <span class="feo-mismatch-banner__title">РАСХОЖДЕНИЕ КАТЕГОРИИ ФЭО</span>
+      </div>
+      <div class="feo-mismatch-banner__hint">
+        Категория ФЭО у закупки и у товаров не совпадает. Выберите плановую позицию
+        из нужной категории либо исправьте категорию — иначе лист согласования и
+        план ФЭО разъедутся.
+      </div>
+      <ul class="feo-mismatch-banner__list">
+        <li v-for="mi in (purchaseData?.feo_mismatch_items || [])" :key="mi.item_id">
+          {{ mi.message }}
+        </li>
+      </ul>
+    </div>
     <div v-if="isEdit && purchaseData?.wish_id" class="text-caption text-medium-emphasis mb-3 d-flex align-center ga-1 flex-wrap">
       <v-icon size="14" icon="mdi-file-document-outline" />
       <span>Создана из заявки №{{ purchaseData.wish_id }}{{ purchaseData.wish_title ? ` «${purchaseData.wish_title}»` : '' }}</span>
@@ -9329,6 +9353,43 @@ async function downloadKpXlsx() {
   font-size: 13px; font-weight: 700; line-height: 1.4; white-space: normal;
   color: #7f1d1d; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.45);
   border-radius: 6px; padding: 6px 10px; max-width: 100%;
+}
+
+/* Владелец (2026-09-02): «алярм» расхождения категории ФЭО шапка/товар/план —
+   по образцу .purchase-stopped-banner (OrdersView.vue), но предупреждающий
+   (амбер), т.к. красный там занят остановкой закупки. Держится, пока
+   purchaseData.feo_mismatch=true — не самозакрывающийся снэкбар. */
+.feo-mismatch-banner {
+  width: 100%;
+  border: 2px solid #b45309;
+  background: #fffbeb;
+  color: #7c2d12;
+  border-radius: 6px;
+  padding: 10px 14px;
+}
+.feo-mismatch-banner__head {
+  display: flex;
+  align-items: center;
+}
+.feo-mismatch-banner__title {
+  font-weight: 800;
+  font-size: 0.92rem;
+  letter-spacing: 0.02em;
+}
+.feo-mismatch-banner__hint {
+  font-size: 0.8rem;
+  font-weight: 500;
+  margin-top: 2px;
+  opacity: 0.92;
+}
+.feo-mismatch-banner__list {
+  margin: 6px 0 0;
+  padding-left: 20px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.feo-mismatch-banner__list li {
+  margin-bottom: 2px;
 }
 .doc-upload-grid {
   display: grid;

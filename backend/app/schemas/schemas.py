@@ -986,6 +986,25 @@ class PurchaseUpdate(BaseModel):
     applications_review_date: Optional[date] = None
 
 
+# Владелец (2026-09-02): «уведомление глобально, если позиция категории ФЭО
+# вверху и в каждом товаре не соответствует друг другу — об этом должен быть
+# алярм прям стоять» — см. app.routers.purchases._compute_purchase_feo_mismatch.
+# НЕ голый булев флаг: пользователь должен понять, ЧТО именно расходится.
+class FeoMismatchItemOut(BaseModel):
+    item_id: Optional[int] = None
+    item_name: Optional[str] = None
+    reason: str  # 'planned' | 'header' | 'both'
+    message: str
+    item_category_id: Optional[int] = None
+    item_category_name: Optional[str] = None
+    header_category_id: Optional[int] = None
+    header_category_name: Optional[str] = None
+    planned_item_id: Optional[int] = None
+    planned_item_name: Optional[str] = None
+    planned_category_id: Optional[int] = None
+    planned_category_name: Optional[str] = None
+
+
 class PurchaseOut(PurchaseCreate):
     id: int
     # Заявка-источник (конвертация заявки в закупки)
@@ -1033,6 +1052,11 @@ class PurchaseOut(PurchaseCreate):
     stopped_by: Optional[int] = None
     stopped_by_name: Optional[str] = None
     stopped_wish_id: Optional[int] = None
+    # Владелец (2026-09-02): расхождение категории ФЭО шапки/позиции/плановой
+    # позиции — считается ВСЕГДА (см. _compute_purchase_feo_mismatch), в списке
+    # достаточно признака для метки строки, в карточке нужен разбор по позициям.
+    feo_mismatch: bool = False
+    feo_mismatch_items: List[FeoMismatchItemOut] = []
     model_config = {"from_attributes": True}
 
 class PurchaseOutFull(PurchaseOut):

@@ -600,15 +600,25 @@ async def _compute_purchase_feo_excess(db: AsyncSession, purchases: list) -> dic
     вторая копия чтения approval не заводится).
 
     Возвращает {purchase_id: {feo_excess, feo_excess_hint, feo_excess_amount,
-    feo_excess_category, feo_excess_state, feo_excess_approved_by,
-    feo_excess_approved_at}} — на КАЖДУЮ закупку из `purchases` (нули/None/"none",
-    если превышения нет или у закупки вовсе нет субсидии/категории).
-    `purchases` обязаны иметь загруженные `.items` (selectinload/joinedload) — по
-    ним ищется категория-виновник, если сама закупка без feo_category_id.
+    feo_excess_category, feo_excess_category_id, feo_excess_state,
+    feo_excess_approved_by, feo_excess_approved_at}} — на КАЖДУЮ закупку из
+    `purchases` (нули/None/"none", если превышения нет или у закупки вовсе нет
+    субсидии/категории). `purchases` обязаны иметь загруженные `.items`
+    (selectinload/joinedload) — по ним ищется категория-виновник, если сама
+    закупка без feo_category_id.
+
+    feo_excess_category_id (владелец, 2026-09-03, «подсказка о превышении должна
+    быть понятной») — id категории-виновника (= hit_cid ниже), НЕ гейтится правом
+    feo_budget.view_leaf (в отличие от FeoCategory.budget на /feo-categories/leaves,
+    /flat) — превышение уже посчитано на сервере независимо от того, кто спрашивает,
+    и не является бюджетной цифрой. Фронт использует его, чтобы у пользователя БЕЗ
+    feo_budget.view_leaf показать в позиции закупки только сам факт и размер
+    превышения статьи (без «занято»/финансирования, из которых можно было бы
+    вычислить бюджет) — см. categoryResidualFor в PurchaseItemsEditor.vue.
     """
     _empty = {
         "feo_excess": False, "feo_excess_hint": None, "feo_excess_amount": None,
-        "feo_excess_category": None, "feo_excess_state": "none",
+        "feo_excess_category": None, "feo_excess_category_id": None, "feo_excess_state": "none",
         "feo_excess_approved_by": None, "feo_excess_approved_at": None,
     }
     result: dict = {p.id: dict(_empty) for p in purchases}
@@ -650,6 +660,7 @@ async def _compute_purchase_feo_excess(db: AsyncSession, purchases: list) -> dic
             "feo_excess_hint": f"Категория «{name}»: план превышает ФЭО на {excess:,.2f} ₽",
             "feo_excess_amount": excess,
             "feo_excess_category": name,
+            "feo_excess_category_id": hit_cid,
             "feo_excess_state": state,
             "feo_excess_approved_by": node.get("excess_approval_by_name"),
             "feo_excess_approved_at": node.get("excess_approval_at"),
@@ -982,6 +993,7 @@ def _purchase_to_full(
         feo_excess_hint=_excess.get("feo_excess_hint"),
         feo_excess_amount=_excess.get("feo_excess_amount"),
         feo_excess_category=_excess.get("feo_excess_category"),
+        feo_excess_category_id=_excess.get("feo_excess_category_id"),
         feo_excess_state=_excess.get("feo_excess_state", "none"),
         feo_excess_approved_by=_excess.get("feo_excess_approved_by"),
         feo_excess_approved_at=_excess.get("feo_excess_approved_at"),

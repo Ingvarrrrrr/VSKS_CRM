@@ -1022,6 +1022,8 @@
             :feo-planned-per-item="form.feo_per_item"
             :allow-per-item-plan="!!form.feo_category_id"
             :planned-items="purchasePlannedResiduals"
+            :feo-excess-amount="purchaseData?.feo_excess_amount ?? null"
+            :feo-excess-category-id="purchaseData?.feo_excess_category_id ?? null"
             @update:vat-mode="(v: string) => { form.vat_mode = v; onVatModeChange(v) }"
             @items-changed="syncContractPriceIfSingle"
             @reload-requested="loadPurchase"

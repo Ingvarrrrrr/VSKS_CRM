@@ -138,13 +138,18 @@
             <v-text-field :model-value="formatNumber(item.total_price)" readonly density="compact"
               variant="outlined" hide-details bg-color="grey-lighten-4" class="my-1"
               :class="{ 'tz-over-plan': planExcessFor?.(item)?.totalOver }" />
-            <template v-if="categoryResidualFor?.(item)">
+            <template v-if="categoryResidualFor?.(item)?.canViewBudget">
               <div class="text-caption plan-hint text-medium-emphasis">
                 Занято по статье: {{ formatNumber(categoryResidualFor(item)!.alreadyPlanned) }} ₽
               </div>
-              <div v-if="categoryResidualFor(item)!.unlinkedActual > 0"
+              <div v-if="(categoryResidualFor(item)!.unlinkedActual ?? 0) > 0"
                 class="text-caption plan-hint text-medium-emphasis" title="Проверьте, не забыли ли привязать эти позиции к плановым — иначе сумма может задваиваться">
                 в том числе не привязано к плану: {{ formatNumber(categoryResidualFor(item)!.unlinkedActual) }} ₽
+              </div>
+              <!-- Владелец (2026-09-03): база превышения — сколько заложено ПО ФЭО,
+                   иначе подсказка «превышение на N ₽» ниже не говорит, от чего. -->
+              <div v-if="categoryResidualFor(item)!.feoBudget != null" class="text-caption plan-hint text-medium-emphasis">
+                Финансирование по ФЭО: {{ formatNumber(categoryResidualFor(item)!.feoBudget) }} ₽
               </div>
               <div v-if="categoryResidualFor(item)!.residualBeforeItem != null"
                 class="text-caption plan-hint"
@@ -152,6 +157,13 @@
                 {{ categoryPlanResidualDisplay(item)?.text }}
               </div>
             </template>
+            <!-- Владелец (2026-09-03): у пользователя без права feo_budget.view_leaf —
+                 ТОЛЬКО факт и размер превышения, без «занято»/финансирования (из их
+                 пары можно вычислить бюджет организации, см. CategoryResidualInfo). -->
+            <div v-else-if="categoryExcessOnlyDisplay(item)" class="text-caption plan-hint"
+              :class="categoryExcessOnlyDisplay(item)!.cssClass">
+              {{ categoryExcessOnlyDisplay(item)!.text }}
+            </div>
             <div v-else-if="planForItem?.(item)?.planned_amount != null" class="text-caption plan-hint"
               :class="planExcessFor?.(item)?.totalOver ? 'text-error font-weight-bold' : 'text-medium-emphasis'">
               план: {{ formatNumber(planForItem!(item)!.planned_amount) }} ₽
@@ -389,12 +401,14 @@ const props = defineProps<{
   // настоящей выбранной плановой позиции (kind='planned_item'). См. одноимённую
   // функцию в PurchaseItemsEditor.vue.
   categoryResidualFor?: (item: EditorItem) => {
-    alreadyPlanned: number
-    unlinkedActual: number
+    canViewBudget: boolean
+    alreadyPlanned: number | null
+    unlinkedActual: number | null
     feoBudget: number | null
     residualBeforeItem: number | null
     residualWithItem: number | null
     hasItemTotal: boolean
+    excessAmount: number | null
   } | null
   showContractorColumn: boolean
   showNeededDate?: boolean
@@ -478,9 +492,26 @@ function categoryPlanResidualDisplay(item: EditorItem) {
   const info = props.categoryResidualFor?.(item)
   if (!info || info.residualBeforeItem == null) return null
   if (info.hasItemTotal) {
-    return formatPlanResidual(info.residualWithItem, { label: 'Остаток на статье с учётом данной закупки' })
+    return formatPlanResidual(info.residualWithItem, {
+      label: 'Остаток от финансирования по ФЭО с учётом этой закупки',
+      negativeLabel: 'Превышение над финансированием по ФЭО с учётом этой закупки',
+    })
   }
-  return formatPlanResidual(info.residualBeforeItem, { label: 'Остаток на статье' })
+  return formatPlanResidual(info.residualBeforeItem, {
+    label: 'Остаток от финансирования по ФЭО',
+    negativeLabel: 'Превышение над финансированием по ФЭО',
+  })
+}
+
+// Владелец (2026-09-03, «подсказка о превышении должна быть понятной»): у
+// пользователя БЕЗ feo_budget.view_leaf categoryResidualFor отдаёт ТОЛЬКО
+// excessAmount (см. CategoryResidualInfo в PurchaseItemsEditor.vue) — единственная
+// цифра, которую можно показать. Тем же форматером, что и остальные «остаток/
+// превышение» в проекте, всегда отрицательная ветка (превышение по определению).
+function categoryExcessOnlyDisplay(item: EditorItem) {
+  const info = props.categoryResidualFor?.(item)
+  if (!info || info.canViewBudget || info.excessAmount == null) return null
+  return formatPlanResidual(-info.excessAmount, { negativeLabel: 'Превышение по статье' })
 }
 
 const emit = defineEmits<{

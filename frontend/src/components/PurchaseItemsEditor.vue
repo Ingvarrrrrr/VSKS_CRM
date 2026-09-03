@@ -802,6 +802,7 @@ import { useFeoNodeAmounts } from '@/composables/useFeoNodeAmounts'
 import type { FeoPlanPosition, FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
 import { useItemMatching, type MatchCandidate } from '@/composables/useItemMatching'
 import { useToast, type ToastType } from '@/composables/useToast'
+import { useAuthStore } from '@/stores/auth'
 import type { PriceFreshness } from '@/composables/usePriceFreshness'
 import {
   VAT_RATE_OPTIONS,
@@ -1038,6 +1039,19 @@ const props = withDefaults(defineProps<{
   itemsTitle?: string
   // Per-item delivery date column (only shown when explicitly enabled)
   showNeededDate?: boolean
+  // Владелец (2026-09-03, «подсказка о превышении должна быть понятной»): размер
+  // превышения плана категории над финансированием по ФЭО и id категории-виновника —
+  // ОДИН И ТОТ ЖЕ канал, что уже питает плашку «Превышение плана ФЭО» на карточке
+  // закупки (GET /api/purchases/{id}.feo_excess_amount/feo_excess_category_id, см.
+  // app.routers.purchases._compute_purchase_feo_excess). НЕ гейтится правом
+  // feo_budget.view_leaf — используется в categoryResidualFor ниже, чтобы у
+  // пользователя без права показать в позиции только факт и размер превышения
+  // статьи (без «занято»/финансирования, из которых можно вычислить бюджет).
+  // CreateOrderView.vue прокидывает purchaseData.feo_excess_amount/_category_id;
+  // WishesView.vue (у заявки закупки ещё нет) их не передаёт — там блок тихо не
+  // рендерится для пользователя без права (нет придуманных чисел).
+  feoExcessAmount?: number | null
+  feoExcessCategoryId?: number | null
 }>(), {
   contractItems: () => [],
   showContractColumns: false,
@@ -1070,7 +1084,17 @@ const props = withDefaults(defineProps<{
   plannedItems: () => [],
   itemsTitle: undefined,
   showNeededDate: false,
+  feoExcessAmount: null,
+  feoExcessCategoryId: null,
 })
+
+// Владелец (2026-09-03): «обычному пользователю не надо знать, сколько денег
+// осталось в организации» — то же право, что гейтит денежные поля на
+// GET /feo-categories/leaves (feoLeaves ниже) и /flat (feoNodes), см.
+// categoryResidualFor. Считаем локально (authStore), а не ждём проп сверху — тот
+// же паттерн, что canViewLeafBudget в CreateOrderView.vue.
+const authStore = useAuthStore()
+const canViewLeafBudget = computed(() => authStore.hasAction('feo_budget.view_leaf'))
 
 // Phase 27.1.1: stagesEnabled — either the new prop or backward-compat alias
 const stagesEnabled = computed(() => props.unifiedStagesView || props.showContractColumns)
@@ -2783,17 +2807,25 @@ function plannedAggregateForCategory(categoryId: number): FeoPlanPosition | null
 // план стоит не на листе, а на направлении/подкатегории) — feoBudget = null,
 // остаток статьи не считаем (не выдумываем число).
 interface CategoryResidualInfo {
+  /** true — у текущего пользователя есть feo_budget.view_leaf, ниже заполнены
+   *  «занято»/финансирование/остаток. false — их НЕЛЬЗЯ показывать (владелец,
+   *  2026-09-03: «обычному пользователю не надо знать, сколько денег осталось в
+   *  организации»); заполнено только excessAmount, из него одного бюджет не
+   *  вычислить. */
+  canViewBudget: boolean
   /** «Занято по статье» (владелец, сессия 2026-08-31) = Σ planned_amount плановых
    *  позиций статьи + unlinkedActual (см. ниже). Раньше — только плановые позиции;
    *  переименовано вслед за подписью «Уже запланировано по статье» → «Занято по статье»,
-   *  т.к. теперь включает и непривязанные фактические позиции. */
-  alreadyPlanned: number
+   *  т.к. теперь включает и непривязанные фактические позиции. null, если canViewBudget=false. */
+  alreadyPlanned: number | null
   /** Из alreadyPlanned выше — часть, НЕ привязанная ни к одной плановой позиции
    *  (backend unlinked_actual_amount: позиции закупок статьи с feo_planned_item_id
    *  IS NULL, из плана закупок и дальше). Показывается отдельной строкой, только
-   *  когда > 0 — владелец: «на это необходимо указывать» (стоит привязать к плану). */
-  unlinkedActual: number
-  /** FeoCategory.budget («финансирование по ФЭО») либо null, если для категории его нет. */
+   *  когда > 0 — владелец: «на это необходимо указывать» (стоит привязать к плану).
+   *  null, если canViewBudget=false. */
+  unlinkedActual: number | null
+  /** FeoCategory.budget («финансирование по ФЭО») либо null, если для категории его
+   *  нет ИЛИ canViewBudget=false. */
   feoBudget: number | null
   /** feoBudget − alreadyPlanned, либо null если feoBudget неизвестен. */
   residualBeforeItem: number | null
@@ -2801,6 +2833,13 @@ interface CategoryResidualInfo {
   residualWithItem: number | null
   /** true — у позиции уже введена (посчитана) ненулевая сумма. */
   hasItemTotal: boolean
+  /** Размер превышения статьи над финансированием по ФЭО — заполнен ТОЛЬКО когда
+   *  canViewBudget=false И у пользователя реально есть право на просмотр этого
+   *  факта (см. ниже): источник — props.feoExcessAmount/feoExcessCategoryId,
+   *  канал app.routers.purchases._compute_purchase_feo_excess, НЕ гейтится правом
+   *  feo_budget.view_leaf (превышение — не бюджетная цифра). null — превышения
+   *  нет либо данных о нём нет (напр. форма заявки без покупки, WishesView.vue). */
+  excessAmount: number | null
 }
 
 function categoryResidualFor(item: EditorItem): CategoryResidualInfo | null {
@@ -2813,6 +2852,33 @@ function categoryResidualFor(item: EditorItem): CategoryResidualInfo | null {
   }
   const agg = plannedAggregateForCategory(item.feo_category_id)
   if (!agg) return null
+  const itemTotal = Number(item.total_price) || 0
+  const hasItemTotal = itemTotal > 0
+
+  if (!canViewLeafBudget.value) {
+    // Владелец (2026-09-03): без feo_budget.view_leaf нельзя показывать «занято»
+    // ОДНОВРЕМЕННО с превышением — из этой пары можно вычислить финансирование
+    // (занято − превышение = бюджет). Показываем ТОЛЬКО факт и размер превышения,
+    // из независимого от права канала (см. CategoryResidualInfo.excessAmount выше);
+    // если этот канал не совпадает с категорией позиции или превышения нет — ничего
+    // не показываем (не выдумываем число).
+    const excessAmount =
+      props.feoExcessCategoryId != null && props.feoExcessCategoryId === item.feo_category_id
+        ? props.feoExcessAmount ?? null
+        : null
+    if (excessAmount == null || excessAmount <= 0.005) return null
+    return {
+      canViewBudget: false,
+      alreadyPlanned: null,
+      unlinkedActual: null,
+      feoBudget: null,
+      residualBeforeItem: null,
+      residualWithItem: null,
+      hasItemTotal,
+      excessAmount,
+    }
+  }
+
   // unlinked_actual_amount — свойство КАТЕГОРИИ целиком (не отдельной плановой позиции),
   // бэкенд повторяет одно и то же число на каждой строке /plan-positions этой категории —
   // берём с любой одной строки (первая, попавшаяся в agg.category_id), а НЕ суммируем по
@@ -2823,10 +2889,12 @@ function categoryResidualFor(item: EditorItem): CategoryResidualInfo | null {
   const alreadyPlanned = (agg.planned_amount ?? 0) + unlinkedActual
   const feoBudget = feoLeaves.value.find(l => l.id === item.feo_category_id)?.budget ?? null
   const residualBeforeItem = feoBudget != null ? feoBudget - alreadyPlanned : null
-  const itemTotal = Number(item.total_price) || 0
-  const hasItemTotal = itemTotal > 0
   const residualWithItem = residualBeforeItem != null ? residualBeforeItem - itemTotal : null
-  return { alreadyPlanned, unlinkedActual, feoBudget, residualBeforeItem, residualWithItem, hasItemTotal }
+  return {
+    canViewBudget: true,
+    alreadyPlanned, unlinkedActual, feoBudget, residualBeforeItem, residualWithItem,
+    hasItemTotal, excessAmount: null,
+  }
 }
 
 function planForItem(item: EditorItem): FeoPlanPosition | null {

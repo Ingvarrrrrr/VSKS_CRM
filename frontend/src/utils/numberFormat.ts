@@ -68,15 +68,21 @@ const PLAN_RESIDUAL_EPSILON = 0.005
 
 export function formatPlanResidual(
   residual: number | null | undefined,
-  opts?: { label?: string; money?: (n: number) => string }
+  opts?: { label?: string; negativeLabel?: string; money?: (n: number) => string }
 ): PlanResidualDisplay {
   const label = opts?.label ?? 'остаток'
+  // Владелец (2026-09-03, «подсказка о превышении должна быть понятной»): подпись
+  // отрицательной ветки раньше была намертво «превышение на» — не говорила, ОТ ЧЕГО
+  // отсчитывается (плана? ФЭО-финансирования?). negativeLabel позволяет вызывающему
+  // месту назвать базу явно («Превышение над финансированием по ФЭО» и т.п.), не трогая
+  // остальные вызовы formatPlanResidual (дефолт — прежний текст, регресс не допущен).
+  const negativeLabel = opts?.negativeLabel ?? 'превышение на'
   const money = opts?.money ?? fmtRub
   const n = residual == null ? 0 : Number(residual)
   const negative = n < -PLAN_RESIDUAL_EPSILON
   return {
     negative,
-    text: negative ? `превышение на ${money(-n)}` : `${label} ${money(n)}`,
+    text: negative ? `${negativeLabel} ${money(-n)}` : `${label} ${money(n)}`,
     cssClass: negative ? 'plan-residual--negative' : '',
   }
 }

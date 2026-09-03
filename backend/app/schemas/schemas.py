@@ -1034,6 +1034,11 @@ class PurchaseOut(PurchaseCreate):
     feo_excess_hint: Optional[str] = None
     feo_excess_amount: Optional[Decimal] = None
     feo_excess_category: Optional[str] = None
+    # Владелец (2026-09-03): id категории-виновника — НЕ гейтится правом
+    # feo_budget.view_leaf (в отличие от FeoCategory.budget), см. докстринг
+    # _compute_purchase_feo_excess. Фронт сверяет его с item.feo_category_id, чтобы
+    # без права показать в позиции закупки только факт и размер превышения статьи.
+    feo_excess_category_id: Optional[int] = None
     # "none" — превышения нет; "not_requested" — есть, согласование не запрошено;
     # "pending" — запрос на согласование превышения ФЭО на рассмотрении;
     # "approved" — согласовано (feo_excess при этом остаётся True — согласование

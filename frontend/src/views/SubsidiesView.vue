@@ -4205,12 +4205,34 @@
               <v-text-field v-model="editPlannedDialog.unit" label="Ед. изм." variant="outlined" density="compact" />
             </v-col>
           </v-row>
+          <!-- Цена за единицу (владелец, 2026-09-02) — необязательное поле, то же
+               поведение, что в диалоге создания (FeoPlannedItemsSelect.vue): задана —
+               «Сумма (план)» ниже считается сама (кол-во × цена) и недоступна для
+               ручного ввода; не задана — обычное поле, сумма вводится руками. -->
+          <v-text-field
+            v-if="editPlannedDialog.payment_mode !== 'monthly'"
+            v-model.number="editPlannedDialog.unitPrice"
+            type="number"
+            label="Цена за единицу, ₽ (необязательно)"
+            variant="outlined"
+            density="compact"
+            class="mb-1"
+          />
           <v-text-field
             v-model="editPlannedDialog.amount"
             label="Сумма (план), ₽" type="number"
             variant="outlined" density="compact"
-            :class="editPlannedDialog.payment_mode === 'monthly' ? 'd-none' : 'mb-2'"
+            :readonly="editAmountIsComputed"
+            :bg-color="editAmountIsComputed ? 'grey-lighten-4' : undefined"
+            :class="editPlannedDialog.payment_mode === 'monthly' ? 'd-none' : 'mb-1'"
           />
+          <div
+            v-if="editPlannedDialog.payment_mode !== 'monthly'"
+            class="text-caption text-medium-emphasis mb-2"
+            style="line-height:1.35"
+          >
+            <v-icon icon="mdi-information-outline" size="13" style="margin-top:-2px" class="mr-1" />{{ editPriceCaption }}
+          </div>
           <!-- Происхождение (владелец, 2026-09-01) — ДВЕ НЕЗАВИСИМЫЕ галочки, тот же
                смысл, что и в диалоге создания. Правка доступна только тому, кто может
                редактировать ФЭО — этот диалог уже за той же вкладкой (feo_categories). -->
@@ -7704,6 +7726,12 @@ const editPlannedDialog = reactive({
   show: false, saving: false,
   id: 0, feo_category_id: 0,
   name: '', quantity: '' as string | number, unit: '', amount: '' as string | number,
+  // Цена за единицу (владелец, 2026-09-02) — то же необязательное поле, что и в
+  // диалоге создания (FeoPlannedItemsSelect.vue::createForm.unitPrice). ПРОБЕЛ,
+  // из-за которого владелец видел «опять делит»: это окно правки поля не имело
+  // вовсе, а PUT ниже — полная замена, так что при сохранении любой другой правки
+  // цена молча обнулялась бы, даже если была задана. См. editAmountIsComputed.
+  unitPrice: '' as string | number,
   payment_mode: 'one_time' as 'one_time' | 'monthly',
   planned_date: '' as string,
   monthly_start_date: '' as string,
@@ -7724,6 +7752,24 @@ const editPlannedDialog = reactive({
   is_internal_plan: false as boolean,
 })
 
+// Тот же режим «цена задана → сумма считается сама», что и в диалоге создания
+// (FeoPlannedItemsSelect.vue::createAmountIsComputed/recalcCreateAmountFromUnitPrice/
+// createPriceCaption) — формулировки специально СЛОВО В СЛОВО те же, чтобы не
+// разъезжались между двумя окнами правки одной и той же сущности.
+const editAmountIsComputed = computed(() => editPlannedDialog.unitPrice !== '' && editPlannedDialog.unitPrice != null && Number(editPlannedDialog.unitPrice) !== 0)
+function recalcEditAmountFromUnitPrice() {
+  if (!editAmountIsComputed.value) return
+  const price = Number(editPlannedDialog.unitPrice)
+  const qty = editPlannedDialog.quantity !== '' && Number(editPlannedDialog.quantity) > 0 ? Number(editPlannedDialog.quantity) : 1
+  editPlannedDialog.amount = Math.round(qty * price * 100) / 100
+}
+watch([() => editPlannedDialog.quantity, () => editPlannedDialog.unitPrice], () => recalcEditAmountFromUnitPrice())
+const editPriceCaption = computed((): string =>
+  editAmountIsComputed.value
+    ? 'С ценой за единицу закупка по этой позиции проверяется и по цене, и по количеству, и по сумме — превысить нельзя ничего из трёх.'
+    : 'Без цены за единицу количество считается ориентировочным и не ограничивает закупку — под контролем только общая сумма плана.'
+)
+
 function openEditPlannedItem(item: FeoPlannedItem) {
   editPlannedDialog.id = item.id
   editPlannedDialog.feo_category_id = item.feo_category_id
@@ -7731,6 +7777,7 @@ function openEditPlannedItem(item: FeoPlannedItem) {
   editPlannedDialog.quantity = item.quantity != null ? parseFloat(String(item.quantity)) : ''
   editPlannedDialog.unit = item.unit || ''
   editPlannedDialog.amount = item.amount != null ? parseFloat(String(item.amount)) : ''
+  editPlannedDialog.unitPrice = item.unit_price != null ? parseFloat(String(item.unit_price)) : ''
   editPlannedDialog.payment_mode = item.payment_mode ?? 'one_time'
   editPlannedDialog.planned_date = item.planned_date ?? ''
   editPlannedDialog.monthly_start_date = item.monthly_start_date ?? ''
@@ -7755,6 +7802,10 @@ async function saveEditPlannedItem() {
         quantity: d.quantity !== '' ? Number(d.quantity) : null,
         unit: d.unit || null,
         amount: isMonthly ? null : (d.amount !== '' ? Number(d.amount) : null),
+        // PUT — полная замена (см. коммент у editPlannedDialog.unitPrice выше и
+        // у item.unit_price = data.unit_price в feo_planned_items.py) — без явной
+        // передачи цена за единицу молча обнулится, даже если правили что-то другое.
+        unit_price: d.unitPrice !== '' && d.unitPrice != null ? Number(d.unitPrice) : null,
         notes: null,
         is_active: true,
         payment_mode: d.payment_mode,

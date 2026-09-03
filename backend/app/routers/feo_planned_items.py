@@ -112,7 +112,11 @@ def _build_item_stages(
             name=fpi.name,
             quantity=fpi.quantity,
             unit=fpi.unit,
-            unit_price=_safe_div(fpi.amount, fpi.quantity),
+            # Владелец (2026-09-02, см. FeoPlannedItem.unit_price): цена за единицу —
+            # самостоятельное поле, НЕ amount/quantity. Раньше здесь тем же способом,
+            # что и в /plan-positions, фабриковалась цифра из деления — тот же баг,
+            # только в другой выдаче (стадия «План» карточки сравнения).
+            unit_price=fpi.unit_price,
             total=fpi.amount,
         ))
     elif cat is not None and (cat.planned_quantity is not None or cat.planned_amount is not None):

@@ -2860,7 +2860,15 @@ function planExcessFor(item: EditorItem): TzPlanExcess | null {
   const qty = Number(item.quantity) || 0
   const price = Number(item.unit_price) || 0
   const total = item.total_price != null ? Number(item.total_price) : qty * price
-  const qtyOver = plan.planned_quantity != null && qty > plan.planned_quantity
+  // Владелец (2026-09-02, «Логистические услуги»): для kind='planned_item' без
+  // unit_price количество ОРИЕНТИРОВОЧНОЕ и НЕ ограничивает закупку (см.
+  // assert_tz_not_over_plan / feo_plan.py — planned_qty там сознательно остаётся
+  // None в этой ветке). У 'plan_position'/'feo_article' (FeoCategory) такой
+  // семантики нет — там planned_quantity всегда жёсткий предел. Без этого условия
+  // фронт подсвечивал бы «превышение по количеству», которого бэкенд не блокирует —
+  // тот же класс бага, что был с ценой за единицу.
+  const qtyLimited = plan.kind !== 'planned_item' || plan.unit_price != null
+  const qtyOver = qtyLimited && plan.planned_quantity != null && qty > plan.planned_quantity
   const priceOver = plan.unit_price != null && price > plan.unit_price
   const totalOver = plan.planned_amount != null && total > plan.planned_amount
   if (!qtyOver && !priceOver && !totalOver) return null

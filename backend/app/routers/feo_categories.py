@@ -1025,7 +1025,13 @@ async def get_plan_positions(
                     "planned_quantity": qty,
                     "unit": it.unit,
                     "planned_amount": planned_total,
-                    "unit_price": (planned_total / qty) if qty else None,
+                    # Владелец (2026-09-02, см. модель FeoPlannedItem.unit_price): цена за
+                    # единицу — САМОСТОЯТЕЛЬНОЕ поле, не деление суммы на количество. Если
+                    # оно NULL, план «мягкий» — количество ориентировочное, делить нельзя
+                    # (получалось бы выдуманное число вроде «200000/50=4000», которое потом
+                    # ошибочно ограничивало закупку). Отдаём None — фронт обязан не
+                    # подставлять его как факт (см. PurchaseItemsEditor.vue).
+                    "unit_price": float(it.unit_price) if it.unit_price is not None else None,
                     "consumed": consumed,
                     "consumed_quantity": consumed_qty,
                     "residual": planned_total - consumed,

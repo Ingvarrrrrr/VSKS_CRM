@@ -1910,6 +1910,13 @@ async def create_purchase(
     # ФЭО»: создание закупки — увеличивающее план действие. Проверяем по КАЖДОЙ
     # категории ФЭО, к которой отнесены позиции (per-item feo_category_id,
     # fallback — категория закупки целиком).
+    # Владелец (2026-09-03): «перекос ветки — предупреждение, не блокировка» —
+    # assert_no_unapproved_excess больше не бросает 409 за перекос ОТДЕЛЬНОЙ
+    # категории (excess_amount), возвращает список предупреждений вместо этого
+    # (см. её docstring в feo_plan.py). Собираем их сюда для немедленного
+    # ответа (excess_warnings в PurchaseOut) — тот же паттерн, что уже применён
+    # в app.routers.wishes._collect_excess_warnings.
+    _excess_warnings: list[dict] = []
     if not admin_override:
         _cat_amounts: dict[int, Decimal] = {}
         for _i in items_data:
@@ -1919,7 +1926,7 @@ async def create_purchase(
         if not _cat_amounts and data.feo_category_id:
             _cat_amounts[data.feo_category_id] = total_nmck or Decimal("0")
         for _cid, _amt in _cat_amounts.items():
-            await assert_no_unapproved_excess(db, _cid, adding_amount=_amt)
+            _excess_warnings.extend(await assert_no_unapproved_excess(db, _cid, adding_amount=_amt))
 
     # Шаг 5 «цена ТЗ не выше плановой» (владелец, 2026-08-07): по каждой позиции,
     # ДО создания закупки. over_plan=true пропускаем — такая позиция сознательно
@@ -2081,6 +2088,8 @@ async def create_purchase(
 
     await db.commit()
     await db.refresh(p)
+    if _excess_warnings:
+        p.excess_warnings = _excess_warnings
     return p
 
 
@@ -2236,6 +2245,10 @@ async def update_purchase(
     # роста; категории, чья сумма НЕ выросла (уменьшилась/не изменилась), не трогаем —
     # это путь возврата в рамки плана, блокировать нельзя (см. assert_no_unapproved_excess
     # docstring).
+    # Владелец (2026-09-03): «перекос ветки — предупреждение, не блокировка» —
+    # см. комментарий у create_purchase выше. Копится за весь PUT (обе точки
+    # вызова ниже) и отдаётся в ответе как excess_warnings.
+    _excess_warnings: list[dict] = []
     if not admin_override:
         _new_item_cat_amounts: dict[int, Decimal] = {}
         for _i in items_data:
@@ -2249,7 +2262,9 @@ async def update_purchase(
             _new_amt = _new_item_cat_amounts.get(_cid, Decimal("0"))
             _old_amt = old_item_cat_amounts.get(_cid, Decimal("0"))
             if _new_amt > _old_amt:
-                await assert_no_unapproved_excess(db, _cid, adding_amount=_new_amt - _old_amt)
+                _excess_warnings.extend(
+                    await assert_no_unapproved_excess(db, _cid, adding_amount=_new_amt - _old_amt)
+                )
 
     # Задача владельца «план ≠ факт» (шаг C, сессия 2026-08-06): переход закупки
     # в «Договор» — превентивная точка контроля. С этого момента итог закупки
@@ -2270,7 +2285,7 @@ async def update_purchase(
         if not _gate_cat_ids and p.feo_category_id:
             _gate_cat_ids.add(p.feo_category_id)
         for _cid in _gate_cat_ids:
-            await assert_no_unapproved_excess(db, _cid)
+            _excess_warnings.extend(await assert_no_unapproved_excess(db, _cid))
         # Владелец (2026-09-02): тот же момент («Договор» — превентивная точка
         # контроля) обязан видеть и item-level превышение ТЗ над плановой позицией
         # (см. app.services.tz_excess_approval — assert_no_unapproved_excess из
@@ -2538,12 +2553,18 @@ async def update_purchase(
     # сколько привязок feo_planned_item_id сброшено сменой категории шапки
     # (см. _reset_incompatible_item_feo_links) — чтобы показать предупреждение
     # "переопределите плановые позиции заново".
-    if suggested_feo_matches or _feo_links_reset:
+    # Владелец (2026-09-03): «перекос ветки — предупреждение, не блокировка» —
+    # _excess_warnings (собраны выше у обеих точек assert_no_unapproved_excess
+    # этого PUT) тоже требует явной сериализации через PurchaseOut, как и
+    # suggested_feo_matches/_feo_links_reset — см. комментарий у create_purchase.
+    if suggested_feo_matches or _feo_links_reset or _excess_warnings:
         from app.schemas.schemas import PurchaseOut as _POut
         base = _POut.model_validate(p).model_dump()
         if suggested_feo_matches:
             base["suggested_feo_matches"] = suggested_feo_matches
         base["feo_links_reset"] = _feo_links_reset
+        if _excess_warnings:
+            base["excess_warnings"] = _excess_warnings
         return base
     return p
 
@@ -3288,6 +3309,10 @@ async def patch_purchase_item(
     # пройти гейт, а _wants_tz_change в этом случае False. Старая категория —
     # _cat_id_before_patch (снята ДО применения категории выше), новая — it.feo_category_id
     # (уже финальная).
+    # Владелец (2026-09-03): «перекос ветки — предупреждение, не блокировка» —
+    # см. комментарий у create_purchase. Отдаётся в ответе как excess_warnings
+    # (этот эндпоинт возвращает plain dict, не PurchaseOut — см. return ниже).
+    _excess_warnings: list[dict] = []
     if not (body.admin_override and current_user.role in ADMIN_ROLES):
         _old_item_cat_id = _cat_id_before_patch
         _old_item_total = Decimal(str(it.total_price or 0))
@@ -3302,7 +3327,9 @@ async def patch_purchase_item(
             _item_delta = _new_item_total - _old_item_total
             if _new_item_cat_id == _old_item_cat_id:
                 if _item_delta > 0:
-                    await assert_no_unapproved_excess(db, _new_item_cat_id, adding_amount=_item_delta)
+                    _excess_warnings.extend(
+                        await assert_no_unapproved_excess(db, _new_item_cat_id, adding_amount=_item_delta)
+                    )
             else:
                 # Владелец (2026-08-12): «Когда заявка идёт с превышением ... должна
                 # быть возможность передвижки, уменьшения». Боевой случай — позиции
@@ -3316,7 +3343,9 @@ async def patch_purchase_item(
                 # переездом ещё и подорожала) — против НОВОЙ категории, а не всю сумму
                 # позиции целиком.
                 if _item_delta > 0:
-                    await assert_no_unapproved_excess(db, _new_item_cat_id, adding_amount=_item_delta)
+                    _excess_warnings.extend(
+                        await assert_no_unapproved_excess(db, _new_item_cat_id, adding_amount=_item_delta)
+                    )
     if body.item_name is not None:
         name = body.item_name.strip()
         if not name:
@@ -3418,6 +3447,9 @@ async def patch_purchase_item(
         # отвязать вместо переезда (см. move_or_detach_planned_item) — фронт
         # обязан показать это пользователю, а не проглатывать молча.
         "plan_transfer_warning": _plan_transfer_warning,
+        # Владелец (2026-09-03): «перекос ветки — предупреждение, не блокировка» —
+        # см. assert_no_unapproved_excess (feo_plan.py) и комментарий у вызовов выше.
+        "excess_warnings": _excess_warnings,
     }
 
 

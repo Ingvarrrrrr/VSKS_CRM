@@ -4893,6 +4893,19 @@ async function handleFeoLinksReset(count: number | undefined | null) {
   if (isEdit.value) await loadPurchase()
 }
 
+// Владелец (2026-09-03): «перекос ветки — предупреждение, не блокировка» —
+// app.services.feo_plan.assert_no_unapproved_excess больше не бросает 409 за
+// перекос ОТДЕЛЬНОЙ категории ФЭО (план узла > его финансирования), а
+// возвращает список предупреждений — бэкенд отдаёт его ключом excess_warnings
+// в ответе POST/PUT /api/purchases и PATCH .../items/{id} (тот же паттерн, что
+// excess_warnings у заявок в WishesView.vue). Пусто/undefined — превышения нет,
+// уведомление не показываем (тихая деградация).
+interface PurchaseExcessWarning { message: string; feo_category_id?: number; feo_category_name?: string }
+function showExcessWarnings(warnings: PurchaseExcessWarning[] | null | undefined) {
+  if (!warnings || !warnings.length) return
+  showSnack(warnings.map(w => w.message).join(' '), 'warning')
+}
+
 async function performAutosave() {
   if (!isEdit.value || !purchaseId.value) return
   const current = serializeFormForAutosave()
@@ -8586,6 +8599,7 @@ const doSave = async (adminOverride: boolean) => {
       // Владелец (2026-09-02): смена категории ФЭО шапки сбросила привязки
       // позиций к плановым позициям старой категории — см. handleFeoLinksReset.
       if (updated.feo_links_reset) await handleFeoLinksReset(updated.feo_links_reset)
+      showExcessWarnings(updated.excess_warnings)
       if (updated.registry_number) form.registry_number = updated.registry_number
       if (updated.contract_number) form.contract_number = updated.contract_number
       if (updated.purchase_number) form.purchase_number = updated.purchase_number
@@ -8621,6 +8635,7 @@ const doSave = async (adminOverride: boolean) => {
     } else {
       const created = await apiFetch<any>(`/purchases/${qs}`, { method: 'POST', body: payload, suppressErrorDialog: true })
       clearDraft()
+      showExcessWarnings(created.excess_warnings)
       const hasPostSaveAction = !!sessionStorage.getItem(POST_SAVE_ACTION_KEY)
       if (!hasPostSaveAction) {
         if (form.vehicle_id) {
@@ -8736,7 +8751,12 @@ const doTransition = async () => {
       { method: 'POST' }
     )
     form.status = updated.status
-    showSnack(`Статус → ${STATUS_LABEL.value[updated.status]}`)
+    // Владелец (2026-09-03): «перекос ветки — предупреждение, не блокировка» — см. OrdersView.vue::doTransition.
+    if (updated.excess_warnings?.length) {
+      showSnack(`Статус → ${STATUS_LABEL.value[updated.status]}. ` + updated.excess_warnings.map((w: any) => w.message).join(' '), 'warning')
+    } else {
+      showSnack(`Статус → ${STATUS_LABEL.value[updated.status]}`)
+    }
   } catch (e: any) {
     const missing = e?.payload?.details?.missing_fields
     if (Array.isArray(missing) && missing.length) {
@@ -8764,7 +8784,11 @@ async function forceOrderStatus(status: string) {
   try {
     const updated = await apiFetch<any>(`/purchases/${purchaseId.value}/transition?status=${status}`, { method: 'POST' })
     form.status = updated.status
-    showSnack(`Статус принудительно изменён → ${STATUS_LABEL.value[updated.status]}`)
+    if (updated.excess_warnings?.length) {
+      showSnack(`Статус принудительно изменён → ${STATUS_LABEL.value[updated.status]}. ` + updated.excess_warnings.map((w: any) => w.message).join(' '), 'warning')
+    } else {
+      showSnack(`Статус принудительно изменён → ${STATUS_LABEL.value[updated.status]}`)
+    }
     await loadPurchase()
   } catch (e: any) {
     showSnack(e?.detail || e?.payload?.message || e?.message || 'Ошибка изменения статуса', 'error')

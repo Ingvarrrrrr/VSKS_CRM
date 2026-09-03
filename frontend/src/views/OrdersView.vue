@@ -1764,9 +1764,15 @@ function advancePersonLabel(item: Purchase): string {
 // и грозил блокировкой для ЛЮБОГО item.feo_excess — но с тех пор как согласованное
 // превышение перестало гасить сам feo_excess (владелец, п.4 в _compute_purchase_feo_excess),
 // это стало вводить в заблуждение: уже согласованное превышение никого не блокирует.
-// Различаем по feo_excess_state: not_requested — как раньше (красный, «блокирует»);
-// pending — на согласовании (жёлтый, без утверждения про блокировку); approved —
-// согласовано (спокойный серый/зелёный, без утверждения про блокировку).
+// Правка владельца (2026-09-03, «перекос ветки — предупреждение, не блокировка»):
+// текст «закупка не пойдёт дальше "Ведётся работа"» тоже стал неправдой —
+// assert_no_unapproved_excess (feo_plan.py) больше НЕ блокирует движение закупки
+// перекосом ОТДЕЛЬНОЙ категории (excess_amount/excess_over_feo), только жёсткий
+// потолок ФЭО в целом (PLAN_OVER_SUBSIDY_CEILING) остаётся непроходимым. Чип
+// остаётся видимым (перекос обязан быть виден), но текст больше не обещает
+// несуществующую блокировку. Различаем по feo_excess_state: not_requested —
+// красный (заметно, но без утверждения про блокировку); pending — на согласовании
+// (жёлтый); approved — согласовано (спокойный зелёный).
 function feoExcessChip(item: Purchase): { color: string; text: string; title: string } {
   const hint = item.feo_excess_hint ? item.feo_excess_hint + ' — ' : ''
   const state = item.feo_excess_state || 'not_requested'
@@ -1787,7 +1793,7 @@ function feoExcessChip(item: Purchase): { color: string; text: string; title: st
   return {
     color: 'red',
     text: 'Превышение ФЭО',
-    title: `${hint}закупка не пойдёт дальше «Ведётся работа», пока превышение не убрано или не согласовано`,
+    title: `${hint}план по этой категории ФЭО превышает её финансирование — ориентир, не блокировка; при желании перенесите позиции в другую категорию или согласуйте превышение`,
   }
 }
 
@@ -2552,8 +2558,16 @@ const doTransition = async (item: Purchase) => {
   }
   transitioning.value = item.id
   try {
-    await apiFetch(`/purchases/${item.id}/transition?status=${target}`, { method: 'POST' })
-    showSnack(`Статус изменён → ${statusLabelFor(item, target)}`)
+    const res = await apiFetch<any>(`/purchases/${item.id}/transition?status=${target}`, { method: 'POST' })
+    // Владелец (2026-09-03): «перекос ветки — предупреждение, не блокировка» — см.
+    // app.services.feo_plan.assert_no_unapproved_excess. Форвард-переход больше не
+    // блокируется превышением плана ОТДЕЛЬНОЙ категории ФЭО над её финансированием,
+    // но факт перекоса обязан быть виден — excess_warnings в ответе.
+    if (res?.excess_warnings?.length) {
+      showSnack(`Статус изменён → ${statusLabelFor(item, target)}. ` + res.excess_warnings.map((w: any) => w.message).join(' '), 'warning')
+    } else {
+      showSnack(`Статус изменён → ${statusLabelFor(item, target)}`)
+    }
     await loadOrders()
   } catch (e: any) {
     showSnack(e?.detail || e?.message || 'Ошибка перехода', 'error')
@@ -2566,8 +2580,12 @@ const doForceStatus = async (item: Purchase, status: string) => {
   if (item.status === status) return
   transitioning.value = item.id
   try {
-    await apiFetch(`/purchases/${item.id}/transition?status=${status}`, { method: 'POST' })
-    showSnack(`Статус изменён → ${statusLabelFor(item, status)}`)
+    const res = await apiFetch<any>(`/purchases/${item.id}/transition?status=${status}`, { method: 'POST' })
+    if (res?.excess_warnings?.length) {
+      showSnack(`Статус изменён → ${statusLabelFor(item, status)}. ` + res.excess_warnings.map((w: any) => w.message).join(' '), 'warning')
+    } else {
+      showSnack(`Статус изменён → ${statusLabelFor(item, status)}`)
+    }
     await loadOrders()
   } catch (e: any) {
     showSnack(e?.detail || e?.message || 'Ошибка изменения статуса', 'error')

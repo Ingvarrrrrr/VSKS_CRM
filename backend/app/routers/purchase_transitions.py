@@ -120,6 +120,13 @@ async def transition_status(
     if target_status not in STATUS_ORDER:
         raise HTTPException(422, f"Недопустимый статус: {target_status}")
 
+    # Владелец (2026-09-03): «перекос ветки — предупреждение, не блокировка» —
+    # assert_no_unapproved_excess ниже больше не бросает 409 за перекос
+    # ОТДЕЛЬНОЙ категории (excess_amount), возвращает список предупреждений —
+    # копим сюда, отдаём в ответе (excess_warnings, см. конец функции). Тот же
+    # паттерн, что уже применён в app.routers.wishes/purchases.py.
+    _excess_warnings: list[dict] = []
+
     result = await db.execute(
         select(Purchase)
         .options(
@@ -395,7 +402,7 @@ async def transition_status(
         if not _gate_cat_ids and p.feo_category_id:
             _gate_cat_ids.add(p.feo_category_id)
         for _cid in _gate_cat_ids:
-            await assert_no_unapproved_excess(db, _cid)
+            _excess_warnings.extend(await assert_no_unapproved_excess(db, _cid))
         # Владелец (2026-09-02): «попасть должно в План-закупок... но дальше
         # двигаться нельзя по закупке без его согласования» — ТЗ позиции дороже
         # её КОНКРЕТНОЙ плановой позиции (feo_category_id) больше не 409 при
@@ -528,7 +535,10 @@ async def transition_status(
     subsidies = {s.id: s.name for s in subsidies_r.scalars().all()}
     contractors_r = await db.execute(select(Contractor))
     contractors = {c.id: c.name for c in contractors_r.scalars().all()}
-    return _purchase_to_full(p, contractors, subsidies)
+    out = _purchase_to_full(p, contractors, subsidies)
+    if _excess_warnings:
+        out.excess_warnings = _excess_warnings
+    return out
 
 
 @router.post("/{pid}/convert-to-order", response_model=PurchaseOutFull)

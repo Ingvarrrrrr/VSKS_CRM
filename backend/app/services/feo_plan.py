@@ -1642,21 +1642,63 @@ async def find_excess_culprit(
 
 async def assert_no_unapproved_excess(
     db: AsyncSession, feo_category_id: int, adding_amount: Decimal = Decimal("0")
-) -> None:
-    """Бросает HTTPException 409, если узел ФЭО feo_category_id или любой его
-    ПРЕДОК имеет несогласованное превышение — ЛИБО плана над финансированием ФЭО
-    (excess_over_feo/excess_amount > 0 и НЕ excess_approved), ЛИБО факта над
-    планом (excess_fact_over_plan > 0 и НЕ excess_fact_approved — задача
-    владельца «план ≠ факт», шаг C, сессия 2026-08-06). См. compute_feo_plan_tree
-    и app.models.plan_excess_approval.
+) -> list[dict]:
+    """Бросает HTTPException 409 ТОЛЬКО в ДВУХ случаях теперь (см. правку
+    владельца 2026-09-03 ниже) — ЛИБО жёсткий потолок субсидии в целом
+    (PLAN_OVER_SUBSIDY_CEILING, см. ниже), ЛИБО факт дороже плана узла
+    (excess_fact_over_plan > 0 и НЕ excess_fact_approved — задача владельца
+    «план ≠ факт», шаг C, сессия 2026-08-06), ЛИБО Σ плановых позиций дороже
+    вручную заданного плана узла (excess_plan_over_manual, задача владельца
+    п.2, 2026-08-12). См. compute_feo_plan_tree и app.models.plan_excess_approval.
 
-    Требование владельца (2026-08-05): «Если где-то превысил план ФЭО, значит
-    где-то надо снимать — должны быть заблокированы действия, пока план закупок
-    не загонять обратно в размеры ФЭО». Требование владельца (2026-08-06,
-    превентивность): контроль факт-над-планом включается уже на «Ведётся
-    работа» (см. FACT_PRICED_STATUSES) — переход закупки в «Договор» и
-    увеличение договорных позиций блокируются ДО подписания, пока превышение
-    итога закупки над планом не согласовано.
+    ═══ Владелец продукта (2026-09-03), дословно: «я просил не с отдельной
+    категорией жёсткий предел делать, который требовал перераспределения, а со
+    всем ФЭО суммарно». Уточнение на вопрос «что делать с переизбытком в одной
+    ветке, если суммарно по ФЭО есть место» — «Суммарно, но с предупреждением:
+    перебор в ветке не блокирует, но виден как пометка». ═══
+
+    ПОСЛЕДСТВИЕ (осознанное, зафиксировано в коде): план в ОТДЕЛЬНОЙ ветке/
+    категории теперь МОЖЕТ превышать её собственное финансирование по ФЭО
+    (excess_over_feo/excess_amount) без остановки работы — эта ветка больше НЕ
+    проверяется здесь как блокирующая, дальше по коду (цикл по цепочке
+    предков) для неё СОБИРАЕТСЯ ПРЕДУПРЕЖДЕНИЕ (возвращается вызывающему списком,
+    см. return ниже), а не бросается 409. Единственный обязательный, непроходимый
+    контроль — суммарный потолок субсидии целиком (PLAN_OVER_SUBSIDY_CEILING).
+    Ветка становится ОРИЕНТИРОМ, не жёстким лимитом.
+
+    Видимость перекоса ветки (владелец: «виден как пометка», НЕ должен исчезать
+    молча) обеспечена ДВУМЯ независимыми, уже существующими каналами, ни один
+    из которых не требует правки этой функции:
+      1. Возврат СПИСКОМ warnings из этой функции — вызывающий код (purchases.py/
+         purchase_transitions.py) присоединяет его к ответу как поле
+         `excess_warnings` (тот же формат/паттерн, что уже применён в
+         app.routers.wishes._collect_excess_warnings — «второй механизм не
+         изобретать», задача владельца).
+      2. Persistent-бейдж `feo_excess`/`feo_excess_hint`/`feo_excess_state` на
+         КАЖДОЙ закупке (app.routers.purchases._compute_purchase_feo_excess) —
+         считается заново на КАЖДОМ GET (список/карточка) НАПРЯМУЮ из
+         compute_feo_plan_tree (excess_over_feo/excess_amount), полностью
+         НЕЗАВИСИМО от того, блокирует эта функция или нет — раз
+         compute_feo_plan_tree не менялся, канал продолжает работать
+         автоматически и после этой правки.
+
+    Раньше (ДО 2026-08-05 не было вообще, ДО 2026-09-03 БЛОКИРОВАЛО): «Если
+    где-то превысил план ФЭО, значит где-то надо снимать — должны быть
+    заблокированы действия, пока план закупок не загонять обратно в размеры
+    ФЭО» — это правило породило жалобу владельца выше (перебор 50 тыс. в одной
+    ветке блокировал действие, даже если в соседней ветке свободно 300 тыс. —
+    единственный выход был вручную «перераспределять» между категориями,
+    точно то, от чего владелец отказался 2026-09-03).
+
+    Контроль факт-над-планом (excess_fact_over_plan) НЕ ЗАТРОНУТ этой правкой
+    и остаётся блокирующим как раньше — это про другое (договор дороже плана
+    закупки), не про перекос между ветками. Контроль
+    excess_plan_over_manual (Σ автозаведённых плановых позиций дороже вручную
+    заданного числа той же категории) ТОЖЕ НЕ ЗАТРОНУТ — это конфликт внутри
+    ОДНОЙ категории между двумя её собственными числами, чинится своими же
+    данными (поднять вручную заданный план или убрать лишние позиции), а не
+    перераспределением между ветками ФЭО — другая природа, вне жалобы
+    владельца от 2026-09-03.
 
     Вызывается ПЕРЕД действиями, УВЕЛИЧИВАЮЩИМИ план (создание закупки,
     увеличение суммы/смена категории ФЭО при PUT, согласование заявки →
@@ -1669,17 +1711,15 @@ async def assert_no_unapproved_excess(
     (ordered → delivered → paid), уменьшений сумм, удаления позиций, отката
     заявок — это путь ВОЗВРАТА в рамки плана, его блокировать нельзя.
 
-    adding_amount — необязательная сумма добавляемого действия. Для ДВУХ
-    существующих видов превышения (план>ФЭО узла, факт>план узла) используется
-    ТОЛЬКО для текста отказа (сколько ещё пытаются добавить сверху уже
-    несогласованного превышения); на решение блокировать/не блокировать не
-    влияет — блокирует сам факт СУЩЕСТВУЮЩЕГО несогласованного превышения на
-    узле или предке (см. сценарий владельца: первая закупка, создавшая
-    превышение, не блокируется — блокируется каждая СЛЕДУЮЩАЯ, пока
-    превышение не согласовано или не убрано). ИСКЛЮЧЕНИЕ — жёсткий потолок
-    субсидии (см. ниже, задача владельца п.3): там adding_amount ДЕЙСТВИТЕЛЬНО
-    участвует в решении блокировать, т.к. это правило не про «уже случившееся»,
-    а про «это конкретное действие не должно случиться».
+    adding_amount — необязательная сумма добавляемого действия. Для ОБОИХ
+    ОСТАВШИХСЯ блокирующих узловых видов превышения (факт>план узла, позиции>
+    ручной план узла) используется ТОЛЬКО для текста отказа (сколько ещё
+    пытаются добавить сверху уже несогласованного превышения); на решение
+    блокировать/не блокировать не влияет — блокирует сам факт СУЩЕСТВУЮЩЕГО
+    несогласованного превышения на узле или предке. ИСКЛЮЧЕНИЕ — жёсткий
+    потолок субсидии (см. ниже, задача владельца п.3): там adding_amount
+    ДЕЙСТВИТЕЛЬНО участвует в решении блокировать, т.к. это правило не про
+    «уже случившееся», а про «это конкретное действие не должно случиться».
 
     Задача владельца п.3 (2026-08-12, «жёсткий потолок»): «общий план по всем
     подкатегориям не должен превышать общую сумму ФЭО — критично, ни при каких
@@ -1688,17 +1728,28 @@ async def assert_no_unapproved_excess(
     ни обход для OWNER_ROLES: если план (с учётом adding_amount) выходит за
     потолок финансирования по ФЭО субсидии (calculate_budget_from_categories,
     тот же источник, что и feo_budget_total у субсидии, см. app.routers.
-    subsidies) — действие безусловно отклоняется.
+    subsidies) — действие безусловно отклоняется. ЭТО и есть суммарный контроль,
+    которого хотел владелец 2026-09-03 — остаётся непроходимым, эта правка его
+    не трогает.
+
+    Возвращает список предупреждений о перекосе ОТДЕЛЬНОЙ ветки/категории
+    (план узла > её финансирования по ФЭО, несогласовано) — по одному словарю
+    на КАЖДЫЙ узел цепочки предков с таким перекосом (может быть пусто, может
+    быть несколько на разных уровнях цепочки сразу). Формат словаря — см.
+    внутри цикла ниже (то же содержимое, что раньше уходило в detail 409
+    PLAN_EXCESS_OVER_FEO).
     """
     from fastapi import HTTPException
 
+    warnings: list[dict] = []
+
     cat = await db.get(FeoCategory, feo_category_id)
     if cat is None:
-        return
+        return warnings
 
     tree = await compute_feo_plan_tree(db, [cat.subsidy_id])
     if not tree or feo_category_id not in tree:
-        return
+        return warnings
 
     # ── Жёсткий потолок субсидии (задача владельца п.3) — см. docstring выше. ──
     from app.routers.subsidies import calculate_budget_from_categories  # local: avoid router import cycle
@@ -1755,8 +1806,14 @@ async def assert_no_unapproved_excess(
             excess_d = Decimal(str(excess))
             # Владелец, план zany-fluttering-mountain.md п.4 (2026-08-10): «должна
             # отображаться данная закупка и показать, что из-за неё всё превысило» —
-            # находим виновника (см. find_excess_culprit) и называем его в отказе,
-            # а не только абстрактную сумму превышения.
+            # находим виновника (см. find_excess_culprit) и называем его в
+            # предупреждении, а не только абстрактную сумму превышения. Правка
+            # владельца 2026-09-03: раньше здесь был raise HTTPException(409,
+            # {"code": "PLAN_EXCESS_OVER_FEO", ...}) — «перебор в одной ветке
+            # блокирует, даже если суммарно по ФЭО есть место». Теперь — ТОЛЬКО
+            # предупреждение (см. docstring функции выше), 409 не бросается,
+            # цикл продолжается (проверяет остальных предков/остальные виды
+            # превышения того же узла ниже).
             culprit = await find_excess_culprit(db, cid, node.get("budget"))
             culprit_txt = ""
             culprit_fields: dict = {
@@ -1785,24 +1842,23 @@ async def assert_no_unapproved_excess(
                     "culprit_item_name": culprit["item_name"],
                     "culprit_amount_before": culprit["amount_before"],
                 })
-            raise HTTPException(
-                409,
-                {
-                    "code": "PLAN_EXCESS_OVER_FEO",
-                    "message": (
-                        f"Превышение плана по категории ФЭО «{name}»: финансирование по ФЭО "
-                        f"{budget_d:,.2f} ₽, текущая плановая сумма {full_plan_d:,.2f} ₽, превышение "
-                        f"{excess_d:,.2f} ₽.{culprit_txt}{extra} Снимите позиции на {excess_d:,.2f} ₽ "
-                        f"или согласуйте превышение (запрос согласования превышения плана ФЭО по "
-                        f"категории «{name}»)."
-                    ),
-                    "feo_category_id": cid,
-                    "excess_amount": float(excess_d),
-                    "budget": float(budget_d),
-                    "plan_amount": float(full_plan_d),
-                    **culprit_fields,
-                },
-            )
+            warnings.append({
+                "code": "PLAN_EXCESS_OVER_FEO",
+                "message": (
+                    f"Категория ФЭО «{name}»: финансирование по ФЭО {budget_d:,.2f} ₽, "
+                    f"текущая плановая сумма {full_plan_d:,.2f} ₽, превышение "
+                    f"{excess_d:,.2f} ₽.{culprit_txt}{extra} Действие НЕ заблокировано (суммарно "
+                    f"по ФЭО контролируется общий потолок) — при желании можно перенести позиции "
+                    f"в другую категорию или согласовать превышение (запрос согласования превышения "
+                    f"плана ФЭО по категории «{name}»)."
+                ),
+                "feo_category_id": cid,
+                "feo_category_name": name,
+                "excess_amount": float(excess_d),
+                "budget": float(budget_d),
+                "plan_amount": float(full_plan_d),
+                **culprit_fields,
+            })
 
         excess_fact = node.get("excess_fact_over_plan") or 0.0
         if excess_fact > 0.005 and not node.get("excess_fact_approved"):
@@ -1859,6 +1915,8 @@ async def assert_no_unapproved_excess(
                     "items": items,
                 },
             )
+
+    return warnings
 
 
 def _fmt_qty(d: Decimal) -> str:
@@ -1983,7 +2041,69 @@ async def assert_tz_not_over_plan(
                     planned_total = Decimal(str(fpi.amount))
     elif feo_category_id:
         cat = await db.get(FeoCategory, feo_category_id)
-        if cat is not None:
+        if cat is not None and (cat.plan_source or "planned_items") == "manual_sum":
+            # Задача 6 (владелец, сессия 2026-09-03, отчёт): ДО этой правки здесь
+            # безусловно брали planned_quantity×planned_amount, не глядя на
+            # plan_source/manual_plan_amount — расходится с compute_feo_plan_tree/
+            # find_excess_culprit, которые читают план узла через _leaf_plan_manual
+            # (переключатель FeoCategory.plan_source). Для категорий в режиме
+            # 'manual_sum' план теперь читается ТОЙ ЖЕ точкой.
+            #
+            # Проверено на живых данных (сессия 2026-09-03): у ВСЕХ 214 категорий
+            # с plan_source='manual_sum' manual_plan_amount ЧИСЛЕННО совпадает со
+            # старым planned_quantity×planned_amount, и активных FeoPlannedItem
+            # под ними сейчас 0 — то есть СЕГОДНЯ эта ветка не меняет НИ ОДНОЙ
+            # цифры ни у одной живой категории. Меняется только поведение ПОСЛЕ
+            # согласования превышения плана (excess_plan_over_manual approved) —
+            # раньше assert_tz_not_over_plan держал потолок на старом ручном числе
+            # НАВСЕГДА, полностью игнорируя факт согласования; теперь видит
+            # выросший items_total, как и дерево плана/find_excess_culprit.
+            #
+            # planned_qty/planned_unit_price (количество/цена за единицу)
+            # СОЗНАТЕЛЬНО остаются от старых полей категории, НЕ пересчитываются
+            # через _leaf_plan_manual — у 'manual_sum' нет отдельного понятия
+            # «количество» (только суммарная цифра), а замена этих двух лимитов
+            # не запрошена владельцем и несёт свой отдельный риск регрессии.
+            if cat.planned_quantity is not None:
+                planned_qty = Decimal(str(cat.planned_quantity))
+            if cat.planned_amount is not None:
+                planned_unit_price = Decimal(str(cat.planned_amount))
+
+            _fpi_amt_q = (
+                select(func.coalesce(
+                    func.sum(case((FeoPlannedItem.amount > 0, FeoPlannedItem.amount), else_=0)), 0,
+                ))
+                .where(FeoPlannedItem.feo_category_id == feo_category_id)
+                .where(FeoPlannedItem.is_active.is_(True))
+            )
+            _items_total = float((await db.execute(_fpi_amt_q)).scalar() or 0)
+
+            from app.models.plan_excess_approval import PlanExcessApproval as _PEA
+            _latest_status = (await db.execute(
+                select(_PEA.status)
+                .where(_PEA.feo_category_id == feo_category_id)
+                .order_by(_PEA.created_at.desc())
+                .limit(1)
+            )).scalar_one_or_none()
+            _excess_approved = (_latest_status == "approved")
+
+            _, _plan_manual, _ = _leaf_plan_manual(
+                cat.plan_source, cat.manual_plan_amount, _items_total, _excess_approved,
+            )
+            planned_total = Decimal(str(_plan_manual))
+        elif cat is not None:
+            # plan_source='planned_items' (умолчание) — формулу СОЗНАТЕЛЬНО НЕ
+            # трогаем (см. анализ задачи 6, отчёт сессии 2026-09-03): на живых
+            # данных нашлось 53 категории с plan_source='planned_items', но
+            # НЕНУЛЕВЫМИ planned_quantity/planned_amount при 0 активных
+            # FeoPlannedItem — перевод их на Σ FeoPlannedItem (=0) обрушил бы
+            # допустимый план этих категорий (местами многомиллионный) до нуля и
+            # заблокировал бы ЛЮБУЮ позицию ТЗ по ним, чего никто не просил.
+            # Раз compute_feo_plan_tree (после f8d68bc) уже игнорирует эти поля
+            # для 'planned_items' — расхождение между ним и этой функцией у ЭТИХ
+            # 53 категорий было и остаётся; чинить его — отдельная задача владельца
+            # (например, домигрировать их в 'manual_sum', как остальные 214), не
+            # эта.
             if cat.planned_quantity is not None:
                 planned_qty = Decimal(str(cat.planned_quantity))
             if cat.planned_amount is not None:

@@ -1063,6 +1063,16 @@ class PurchaseOut(PurchaseCreate):
     # достаточно признака для метки строки, в карточке нужен разбор по позициям.
     feo_mismatch: bool = False
     feo_mismatch_items: List[FeoMismatchItemOut] = []
+    # Владелец (2026-09-03): «перекос ветки — предупреждение, не блокировка» —
+    # см. app.services.feo_plan.assert_no_unapproved_excess. Список предупреждений
+    # о превышении плана ФЭО узла над его финансированием, собранных ИМЕННО этим
+    # действием (создание/правка закупки, форвард-переход стадии) — для НЕМЕДЛЕННОЙ
+    # обратной связи (тост), тот же паттерн, что excess_warnings в ответах
+    # app.routers.wishes (decide/approve/convert). Пусто, если превышения нет —
+    # persistent-источник истины на будущее остаётся feo_excess/feo_excess_* выше
+    # (считается заново на КАЖДОМ GET независимо от того, кто и когда создал
+    # превышение).
+    excess_warnings: List[dict] = []
     model_config = {"from_attributes": True}
 
 class PurchaseOutFull(PurchaseOut):

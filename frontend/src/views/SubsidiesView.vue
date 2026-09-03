@@ -7083,7 +7083,7 @@ async function saveReqItemEdit() {
       showSnack('Изменений нет')
       return
     }
-    await apiFetch(`/purchases/${reqItemEdit.purchaseId}/items/${reqItemEdit.itemId}`, {
+    const _patchRes = await apiFetch<any>(`/purchases/${reqItemEdit.purchaseId}/items/${reqItemEdit.itemId}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
     })
@@ -7093,7 +7093,14 @@ async function saveReqItemEdit() {
       delete comparisonData.value[reqItemEdit.form.feo_category_id]
       await ensureComparison(reqItemEdit.form.feo_category_id)
     }
-    showSnack('Позиция обновлена')
+    // Владелец (2026-09-03): «перекос ветки — предупреждение, не блокировка» —
+    // см. app.services.feo_plan.assert_no_unapproved_excess. excess_warnings —
+    // тот же паттерн, что и у заявок (WishesView.vue).
+    if (_patchRes?.excess_warnings?.length) {
+      showSnack(_patchRes.excess_warnings.map((w: any) => w.message).join(' '), 'warning')
+    } else {
+      showSnack('Позиция обновлена')
+    }
   } catch (e: any) {
     showSnack(e?.payload?.message || e?.detail || 'Не удалось сохранить позицию', 'error')
   } finally {
@@ -7209,13 +7216,18 @@ async function saveWishItemFeo() {
   if (!wishItemFeoEdit.itemId || !wishItemFeoEdit.purchaseId || wishItemFeoEdit.selectedCatId == null) return
   wishItemFeoEdit.saving = true
   try {
-    await apiFetch(`/purchases/${wishItemFeoEdit.purchaseId}/items/${wishItemFeoEdit.itemId}`, {
+    const _feoRes = await apiFetch<any>(`/purchases/${wishItemFeoEdit.purchaseId}/items/${wishItemFeoEdit.itemId}`, {
       method: 'PATCH',
       body: JSON.stringify({ feo_category_id: wishItemFeoEdit.selectedCatId }),
     })
     wishItemFeoEdit.show = false
     await refreshReqData(wishItemFeoEdit.catId ?? undefined)
-    showSnack('Категория ФЭО обновлена')
+    // Владелец (2026-09-03): «перекос ветки — предупреждение, не блокировка» — см. saveReqItemEdit выше.
+    if (_feoRes?.excess_warnings?.length) {
+      showSnack(_feoRes.excess_warnings.map((w: any) => w.message).join(' '), 'warning')
+    } else {
+      showSnack('Категория ФЭО обновлена')
+    }
   } catch (e: any) {
     showSnack(e?.payload?.message || e?.message || 'Не удалось сменить категорию ФЭО', 'error')
   } finally {

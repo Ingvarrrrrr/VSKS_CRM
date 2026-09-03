@@ -466,12 +466,14 @@ function categoryPlanResidualDisplay(item: EditorItem) {
   })
 }
 
-// Владелец (2026-09-03, «подсказка о превышении должна быть понятной»): та же
-// логика, что categoryExcessOnlyDisplay в ItemsTableFlat.vue/ItemsTableStages.vue.
+// Владелец (2026-09-03, повторно — «без прав видит только на сколько превысило
+// статью его хотелка», НЕ состояние статьи целиком): та же логика, что
+// categoryExcessOnlyDisplay в ItemsTableFlat.vue/ItemsTableStages.vue — excessAmount
+// уже клипован суммой ЭТОЙ позиции, подпись явно называет «эту позицию».
 function categoryExcessOnlyDisplay(item: EditorItem) {
   const info = props.categoryResidualFor?.(item)
   if (!info || info.canViewBudget || info.excessAmount == null) return null
-  return formatPlanResidual(-info.excessAmount, { negativeLabel: 'Превышение по статье' })
+  return formatPlanResidual(-info.excessAmount, { negativeLabel: 'Эта позиция выходит за статью на' })
 }
 
 const bodyRows = computed<ItemsDisplayRow[]>(() =>

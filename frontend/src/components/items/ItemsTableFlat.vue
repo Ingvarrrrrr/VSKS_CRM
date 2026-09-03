@@ -503,15 +503,17 @@ function categoryPlanResidualDisplay(item: EditorItem) {
   })
 }
 
-// Владелец (2026-09-03, «подсказка о превышении должна быть понятной»): у
-// пользователя БЕЗ feo_budget.view_leaf categoryResidualFor отдаёт ТОЛЬКО
-// excessAmount (см. CategoryResidualInfo в PurchaseItemsEditor.vue) — единственная
-// цифра, которую можно показать. Тем же форматером, что и остальные «остаток/
-// превышение» в проекте, всегда отрицательная ветка (превышение по определению).
+// Владелец (2026-09-03, повторно — «без прав видит только на сколько превысило
+// статью его хотелка», НЕ состояние статьи целиком): у пользователя БЕЗ
+// feo_budget.view_leaf categoryResidualFor отдаёт ТОЛЬКО excessAmount — уже
+// клипованный суммой ЭТОЙ позиции (см. CategoryResidualInfo.excessAmount в
+// PurchaseItemsEditor.vue) — единственная цифра, которую можно показать.
+// Подпись сознательно называет «эту позицию», а не статью, — человек не должен
+// принять число за состояние статьи целиком.
 function categoryExcessOnlyDisplay(item: EditorItem) {
   const info = props.categoryResidualFor?.(item)
   if (!info || info.canViewBudget || info.excessAmount == null) return null
-  return formatPlanResidual(-info.excessAmount, { negativeLabel: 'Превышение по статье' })
+  return formatPlanResidual(-info.excessAmount, { negativeLabel: 'Эта позиция выходит за статью на' })
 }
 
 const emit = defineEmits<{

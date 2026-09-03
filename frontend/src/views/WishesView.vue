@@ -4424,33 +4424,28 @@ async function runCascade() {
     cascadeLoading.value = false
   }
 }
-// Молчаливый фолбэк для отправки на согласование: пользователь выбрал
-// «Верхнего согласующего», но не нажал «Построить цепочку» — строим её сами,
-// чтобы не ругать снэкбаром на пустой список согласующих.
+// Владелец (2026-09-03), дословно: «когда выбираешь согласующего, предлагает
+// "Построить цепочку", даже если эту кнопку не нажимаешь, то цепочка всё
+// равно строится» — раньше здесь при отправке на согласование МОЛЧА вызывался
+// callCascadeApi (build_ascending_chain), который достраивал ПРОМЕЖУТОЧНЫЕ
+// звенья между автором и выбранным «верхним согласующим», даже если кнопку
+// «Построить цепочку» никто не нажимал. Теперь: не нажал кнопку — цепочка НЕ
+// строится вообще, согласующим становится РОВНО тот человек, что выбран в
+// поле «Верхний согласующий» (без каскада). Кнопка «Построить цепочку» —
+// единственный способ реально построить цепочку (см. runCascade выше).
 async function ensureApprovers(wishId: number): Promise<boolean> {
   if (wishApprovers.value.length > 0) return true
   if (!approverTopUser.value) return false
   try {
-    const res = await callCascadeApi(wishId, approverTopUser.value)
-    if (res.approvers.length > 0) {
-      wishApprovers.value = res.approvers
-    } else {
-      // Цепочка не построилась (например, у выбранного нет руководителей) —
-      // добавляем хотя бы его самого вручную и перечитываем список.
-      await apiFetch(`/wishes/${wishId}/approvers`, {
-        method: 'POST', body: JSON.stringify({ user_id: approverTopUser.value }),
-      })
-      await loadWishApprovers()
-    }
+    await apiFetch(`/wishes/${wishId}/approvers`, {
+      method: 'POST', body: JSON.stringify({ user_id: approverTopUser.value }),
+    })
+    await loadWishApprovers()
     approverTopUser.value = null
-    if (res.warning) {
-      showSnack(`Цепочка построена автоматически. Внимание: ${res.warning}`, 'warning')
-    } else {
-      showSnack('Цепочка согласования построена автоматически')
-    }
+    showSnack('Согласующий добавлен')
     return wishApprovers.value.length > 0
   } catch (e: any) {
-    showSnack(e?.payload?.message || e?.message || 'Не удалось построить цепочку согласования', 'error')
+    showSnack(e?.payload?.message || e?.message || 'Не удалось добавить согласующего', 'error')
     return false
   }
 }

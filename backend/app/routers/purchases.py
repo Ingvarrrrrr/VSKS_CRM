@@ -123,7 +123,7 @@ def is_framework_head(p) -> bool:
 
 
 async def _build_framework_chain_approvals(
-    p: Purchase, db: AsyncSession, current_user: User,
+    p: Purchase, db: AsyncSession, current_user: User, mode: Optional[str] = None,
 ) -> Optional[str]:
     """Строит восходящую цепочку согласующих рамочной ГОЛОВЫ договора — ТЕМ ЖЕ
     механизмом, что и у заявок (app.services.approval_chain.build_ascending_chain,
@@ -131,16 +131,26 @@ async def _build_framework_chain_approvals(
     подчинения не разъезжалось по двум местам (см. историю framework_limited/
     framework_with_amount выше — дублирование уже один раз стоило прод-инцидента).
 
-    Владелец (2026-09-02): «рамочный договор, при его создании, должен пройти
-    путь как Заявка» — до сих пор рамочная голова, заведённая прямо в реестре
-    «Договоры» (POST /api/contracts/{id}/approval-purchase), не проходила вообще
-    никакого согласования.
+    Владелец (2026-09-03): «выбирают при создании рамочного договора, надо
+    выбрать, кто будет согласовывать то, что этот договор вообще нужен» —
+    эта функция БОЛЬШЕ НЕ вызывается автоматически при создании рамочной
+    головы (было так 2026-09-02 — контракт.py::get_or_create_approval_purchase
+    вызывал её сама, никого не спрашивая; владелец это прямо отменил). Теперь
+    она вызывается ТОЛЬКО явным действием пользователя — кнопкой «Построить
+    цепочку» (POST /purchases/{pid}/approvers/cascade ниже). Основной путь —
+    автор добавляет согласующих вручную по одному (POST /purchases/{pid}/
+    approvals/add, см. purchase_approvals.py::add_approver — как и у заявки).
 
-    В отличие от заявки, у рамочной головы нет отдельного экрана, где автор бы
-    выбирал верхнего согласующего — верхом цепочки берём руководителя
-    организации (Organization.head_user_id) автоматически. Если он не задан —
-    цепочку строить не из чего, согласование не запускается (approval_status
-    остаётся NULL), чтобы не создать пустую/бессмысленную цепочку.
+    Верхом цепочки берём руководителя организации (Organization.head_user_id)
+    автоматически — у рамочной головы нет отдельного экрана выбора «верхнего
+    согласующего», как у заявки. Если он не задан — цепочку строить не из
+    чего, согласование не запускается (approval_status остаётся NULL), чтобы
+    не создать пустую/бессмысленную цепочку.
+
+    mode — 'sequential' (по умолчанию) или 'parallel'; передаётся явно, когда
+    вызывающий (cascade-эндпоинт) уже знает выбор пользователя. Не путать с
+    p.approval_mode, если он уже был выставлен раньше (например, добавлением
+    первого согласующего вручную) — новый mode, если передан, имеет приоритет.
 
     Результат сохраняется в PurchaseApproval — той же таблице, тем же
     решением (POST /purchases/{pid}/approvals/{aid}/decide), что уже
@@ -188,22 +198,28 @@ async def _build_framework_chain_approvals(
             status="pending",
         ))
     p.approval_status = "in_progress"
-    p.approval_mode = p.approval_mode or "sequential"
+    _valid_mode = mode if mode in ("sequential", "parallel") else None
+    p.approval_mode = _valid_mode or p.approval_mode or "sequential"
     return warning
 
 
 @router.post("/{pid}/approvers/cascade")
 async def cascade_purchase_approvers(
     pid: int,
+    body: dict = Body(default={}),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Пересобрать цепочку согласующих рамочной ГОЛОВЫ договора — по аналогии с
+    """Построить цепочку согласующих рамочной ГОЛОВЫ договора — по аналогии с
     POST /wishes/{wid}/approvers/cascade, тем же общим механизмом
-    (build_ascending_chain). Вызывается автоматически при заведении рамочной
-    головы (см. contracts.py::get_or_create_approval_purchase), а также доступен
-    отдельно — например, чтобы перестроить цепочку после смены руководителя
-    организации.
+    (build_ascending_chain). Владелец (2026-09-03): вызывается ТОЛЬКО явным
+    нажатием кнопки «Построить цепочку» — автозапуска при заведении рамочной
+    головы больше нет (см. contracts.py::get_or_create_approval_purchase).
+    Также доступен, чтобы перестроить цепочку — например, после смены
+    руководителя организации.
+
+    body.mode — необязательный 'sequential'/'parallel', выбранный пользователем
+    в блоке согласования (см. ApprovalPanel.vue); по умолчанию 'sequential'.
     """
     p = await db.get(Purchase, pid)
     if not p:
@@ -211,7 +227,8 @@ async def cascade_purchase_approvers(
     if not is_framework_head(p):
         raise HTTPException(400, "Цепочка согласующих по этому механизму доступна только для рамочной головы договора")
 
-    warning = await _build_framework_chain_approvals(p, db, current_user)
+    mode = (body or {}).get("mode")
+    warning = await _build_framework_chain_approvals(p, db, current_user, mode=mode)
     await db.commit()
 
     from app.models.purchase_approval import PurchaseApproval
@@ -981,6 +998,13 @@ def _purchase_to_full(
         # дешевле проверять всегда, чем прятать за флагом.
         feo_mismatch=_mismatch.get("feo_mismatch", False),
         feo_mismatch_items=_mismatch.get("feo_mismatch_items", []),
+        # Владелец (2026-09-03): фронту нужно отличать рамочную ГОЛОВУ
+        # (согласование необходимости договора — ApprovalPanel в спец-режиме)
+        # от дочерних закупок внутри того же рамочного контракта (те
+        # согласуются как обычная закупка, purchase_contract_type у них тоже
+        # framework_* — одного этого поля недостаточно). Единый источник
+        # истины — is_framework_head() выше в этом файле.
+        is_framework_head=is_framework_head(p),
     )
 
 

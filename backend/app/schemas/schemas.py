@@ -1076,6 +1076,12 @@ class PurchaseOutFull(PurchaseOut):
     multi_contractor_label: Optional[str] = None
     # phase26-m: для рамочных закупок — max_amount договора или SUM(contract_price) всех закупок по нему
     framework_contract_total: Optional[Decimal] = None
+    # Владелец (2026-09-03): True только для рамочной ГОЛОВЫ договора (см.
+    # app/routers/purchases.py::is_framework_head) — фронт использует это,
+    # чтобы показать блок «Согласование необходимости договора» независимо
+    # от статуса закупки/approval_status (см. CreateOrderView.vue::
+    # showApprovalSection).
+    is_framework_head: bool = False
 
 # Payment
 class PaymentCreate(BaseModel):

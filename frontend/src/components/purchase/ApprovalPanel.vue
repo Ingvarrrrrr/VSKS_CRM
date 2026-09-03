@@ -3,7 +3,7 @@
     <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-3 d-flex align-center justify-space-between">
       <span class="d-flex align-center gap-2">
         <v-icon icon="mdi-check-decagram" color="green-darken-2" size="20" />
-        Согласование
+        {{ panelTitle }}
       </span>
       <div class="d-flex align-center ga-2">
         <v-chip v-if="approvalStatus" :color="APPROVAL_STATUS_COLOR[approvalStatus]" size="small" variant="tonal">
@@ -16,9 +16,16 @@
           size="small" variant="tonal" color="blue" prepend-icon="mdi-account-group">
           параллельно
         </v-chip>
-        <v-btn v-if="!approvalStatus && canStart" color="green-darken-2" variant="tonal" size="small"
+        <!-- Рамочная голова: денежный «Запустить согласование» (SubsidyApprover,
+             требует статус work_in_progress) сюда не подходит — необходимость
+             договора согласуют вручную добавленные/построенные цепочкой люди. -->
+        <v-btn v-if="!approvalStatus && canStart && !props.isFrameworkHead" color="green-darken-2" variant="tonal" size="small"
           prepend-icon="mdi-play-circle-outline" :loading="startingApproval" @click="startDialog = true">
           Запустить согласование
+        </v-btn>
+        <v-btn v-if="props.isFrameworkHead" color="teal-darken-1" variant="tonal" size="small"
+          prepend-icon="mdi-source-branch" :loading="fhCascadeLoading" @click="runFrameworkCascade">
+          Построить цепочку
         </v-btn>
         <v-btn v-if="approvalStatus === 'rejected' && isAdmin" color="warning" variant="tonal" size="small"
           prepend-icon="mdi-refresh" @click="resetApproval">
@@ -30,6 +37,18 @@
         </v-btn>
       </div>
     </v-card-title>
+
+    <!-- Рамочная голова, согласование ещё не начато: выбор режима ДО того как
+         добавлен первый согласующий (первый add/cascade фиксирует режим). -->
+    <v-card-text v-if="props.isFrameworkHead && !approvalStatus" class="px-4 pt-0 pb-2">
+      <div class="text-caption text-medium-emphasis mb-1">
+        Порядок согласования (учитывается при добавлении первого согласующего)
+      </div>
+      <v-btn-toggle v-model="fhMode" mandatory density="compact" color="teal" size="small">
+        <v-btn value="sequential" size="small">Последовательно</v-btn>
+        <v-btn value="parallel" size="small">Параллельно</v-btn>
+      </v-btn-toggle>
+    </v-card-text>
 
     <v-card-text class="px-4 pb-3">
       <v-timeline v-if="approvals.length" density="compact" side="end">
@@ -71,6 +90,9 @@
           </div>
         </v-timeline-item>
       </v-timeline>
+      <div v-else-if="props.isFrameworkHead" class="text-medium-emphasis text-caption">
+        Согласующие ещё не выбраны. Добавьте их по одному кнопкой «Добавить» или нажмите «Построить цепочку».
+      </div>
       <div v-else class="text-medium-emphasis text-caption">
         Согласование ещё не запущено. Нажмите «Запустить согласование» для начала процесса.
       </div>
@@ -308,12 +330,54 @@ const props = defineProps<{
   isAdmin: boolean
   visible: boolean
   subsidyId?: number | null
+  // Владелец (2026-09-03): рамочная ГОЛОВА договора согласуется как заявка —
+  // вручную добавленными согласующими необходимости, а не денежным
+  // SubsidyApprover-потоком (см. CreateOrderView.vue::isFrameworkHeadPurchase,
+  // источник — Purchase.is_framework_head с бэкенда).
+  isFrameworkHead?: boolean
 }>()
 
 const emit = defineEmits<{
   'update:approvalStatus': [status: string | null]
+  'update:approvalMode': [mode: string | null]
   'snack': [message: string, color?: string]
 }>()
+
+// Панель у рамочной головы — про необходимость самого договора, не про сумму
+// (владелец: «Смысл согласования у рамочной головы — нужен ли вообще этот
+// договор... а не согласование суммы»).
+const panelTitle = computed(() => props.isFrameworkHead ? 'Согласование необходимости договора' : 'Согласование')
+
+// Режим (последовательно/параллельно), выбираемый ДО первого согласующего —
+// фиксируется на сервере первым же add/cascade (см. add_approver,
+// cascade_purchase_approvers). После этого момента approvalStatus уже не
+// null, и переключатель в шаблоне скрывается сам.
+const fhMode = ref<'sequential' | 'parallel'>('sequential')
+const fhCascadeLoading = ref(false)
+
+async function runFrameworkCascade() {
+  fhCascadeLoading.value = true
+  try {
+    const res = await apiFetch<{ approval_mode: string; approval_status: string | null; approvers: Approval[]; warning?: string | null }>(
+      `/purchases/${props.purchaseId}/approvers/cascade`,
+      { method: 'POST', body: { mode: fhMode.value } },
+    )
+    approvals.value = res.approvers
+    emit('update:approvalStatus', res.approval_status)
+    emit('update:approvalMode', res.approval_mode)
+    if (res.warning) {
+      emit('snack', `Цепочка построена. Внимание: ${res.warning}`, 'warning')
+    } else if (res.approvers.length) {
+      emit('snack', 'Цепочка построена')
+    } else {
+      emit('snack', 'Не удалось построить цепочку — у организации не задан руководитель', 'warning')
+    }
+  } catch (e: any) {
+    emit('snack', e?.detail || e?.message || 'Не удалось построить цепочку', 'error')
+  } finally {
+    fhCascadeLoading.value = false
+  }
+}
 
 const APPROVAL_STATUS_COLOR: Record<string, string> = {
   in_progress: 'orange', approved: 'green', rejected: 'error',
@@ -372,17 +436,28 @@ async function submitAddApprover() {
   if (!user || !addApproverForm.value.role_name.trim()) return
   addingApprover.value = true
   try {
-    await apiFetch(`/purchases/${props.purchaseId}/approvals/add`, {
+    const res = await apiFetch<any>(`/purchases/${props.purchaseId}/approvals/add`, {
       method: 'POST',
       body: {
         user_id: user.id,
         full_name: user.full_name,
         role_name: addApproverForm.value.role_name.trim(),
+        // Учитывается бэкендом только на самом ПЕРВОМ согласующем рамочной
+        // головы — им она уходит на согласование (см. add_approver docstring).
+        ...(props.isFrameworkHead ? { mode: fhMode.value } : {}),
       },
     })
     await loadApprovals()
     addApproverDialog.value = false
     emit('snack', `${user.full_name} добавлен как согласующий`, 'success')
+    // Рамочная голова: первый добавленный согласующий сразу включает
+    // согласование необходимости на сервере (purchase.approval_status —
+    // см. add_approver) — синхронизируем родителя, иначе кнопки
+    // «Согласовать/Отклонить» не появятся до перезагрузки страницы.
+    if (props.isFrameworkHead) {
+      if (res?.purchase_approval_status) emit('update:approvalStatus', res.purchase_approval_status)
+      if (res?.purchase_approval_mode) emit('update:approvalMode', res.purchase_approval_mode)
+    }
   } catch (e: any) {
     emit('snack', e?.detail || e?.message || 'Ошибка добавления', 'error')
   } finally {

@@ -1611,6 +1611,37 @@ async def generate_document(
         )
         selected_approvers = res.scalars().all()
 
+    # Владелец (2026-09-03): «у рамочного договора тоже должен быть лист
+    # согласования» — с реальными согласующими. Диагноз: до этой правки лист
+    # для рамочной ГОЛОВЫ печатал selected_approvers из SubsidyApprover (выше)
+    # — конфигурацию ДЕНЕЖНОГО согласования субсидии, никак не связанную с
+    # цепочкой согласования НЕОБХОДИМОСТИ договора (PurchaseApproval-строки,
+    # которые строит purchases.py::_build_framework_chain_approvals или
+    # добавляет вручную purchase_approvals.py::add_approver — у них
+    # subsidy_approver_id всегда NULL, поэтому approval_map по нему их вообще
+    # не находил). Печатаем именно эту, реальную цепочку — approver_ids
+    # (пикер по субсидии) и default-согласующие субсидии для рамочной головы
+    # смысла не имеют.
+    _fh_approval_rows: list = []
+    _fh_pa_by_synth_id: dict = {}
+    if doc_type == "approval_sheet" and is_framework_head(p):
+        from app.models.purchase_approval import PurchaseApproval as _FhPA
+        from types import SimpleNamespace as _FhNS
+        fh_res = await db.execute(
+            select(_FhPA).where(_FhPA.purchase_id == pid).order_by(_FhPA.order_num)
+        )
+        _fh_approval_rows = fh_res.scalars().all()
+        selected_approvers = [
+            _FhNS(
+                id=f"fh-{row.id}",
+                full_name=row.approver_full_name,
+                role_name=row.role_name,
+                show_feo_path=False,
+            )
+            for row in _fh_approval_rows
+        ]
+        _fh_pa_by_synth_id = {f"fh-{row.id}": row for row in _fh_approval_rows}
+
     # Build FEO category path (root → ... → selected) + individual levels
     feo_path = ""
     feo_level_1 = ""
@@ -1866,8 +1897,10 @@ async def generate_document(
         else:
             note = ""
 
-        # Electronic signature
-        pa = approval_map.get(a.id)
+        # Electronic signature — approval_map keyed by SubsidyApprover.id (денежное
+        # согласование); _fh_pa_by_synth_id — своя карта для цепочки необходимости
+        # рамочной головы (см. блок выше, у тех строк subsidy_approver_id всегда NULL).
+        pa = approval_map.get(a.id) or _fh_pa_by_synth_id.get(a.id)
         signature_img = ""
         decided_date = ""
         if pa and pa.signature_data and pa.signature_algorithm == "visual":

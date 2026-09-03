@@ -504,7 +504,7 @@ async def get_or_create_approval_purchase(
     # Локальный импорт: purchases.py импортирует ensure_contract_linked ИЗ
     # этого модуля на уровне модуля — импорт is_framework_head сверху дал бы
     # циклический импорт при старте приложения.
-    from app.routers.purchases import is_framework_head, _build_framework_chain_approvals
+    from app.routers.purchases import is_framework_head
 
     contract = (await db.execute(select(Contract).where(Contract.id == contract_id))).scalar_one_or_none()
     if not contract:
@@ -533,13 +533,17 @@ async def get_or_create_approval_purchase(
 
     await _assign_framework_seq(p, db)
 
-    # Владелец (2026-09-02): «рамочный договор, при его создании, должен пройти
-    # путь как Заявка» — свежезаведённая рамочная голова сразу уходит на
-    # согласование по восходящей цепочке руководителей (тем же механизмом,
-    # что и у заявок), а не остаётся неотслеживаемой. См. docstring
-    # _build_framework_chain_approvals в purchases.py.
-    await _build_framework_chain_approvals(p, db, current_user)
-
+    # Владелец (2026-09-03), дословно: «просил же сделать по аналогии с
+    # Заявкой. То есть выбирают при создании рамочного договора, надо
+    # выбрать, кто будет согласовывать то, что этот договор вообще нужен» —
+    # раньше здесь (2026-09-02) цепочка согласующих строилась АВТОМАТИЧЕСКИ от
+    # руководителя организации, никого не спрашивая. Теперь голова заводится
+    # БЕЗ согласующих (approval_status остаётся None) — автор сам добавляет их
+    # вручную (POST /purchases/{pid}/approvals/add — доступно всем ролям, как
+    # у заявки) или явно жмёт «Построить цепочку»
+    # (POST /purchases/{pid}/approvers/cascade, см. purchases.py::
+    # _build_framework_chain_approvals — функция осталась, вызывается только
+    # по явному действию).
     await db.commit()
     return {"purchase_id": p.id, "created": True}
 

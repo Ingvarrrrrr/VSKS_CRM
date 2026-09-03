@@ -1,30 +1,39 @@
 # -*- coding: utf-8 -*-
 """Согласование рамочной ГОЛОВЫ договора цепочкой вышестоящих (Этап D).
 
-Владелец дословно: «рамочный договор, при его создании, должен пройти путь
-как Заявка» (цепочка вышестоящих руководителей), а до согласования — быть
-визуально помечен в реестре договоров.
-
-До этой правки рамочная голова, заведённая прямо в реестре «Договоры»
-(POST /api/contracts/{id}/approval-purchase, см. test_contract_approval_purchase.py),
-не проходила вообще никакого согласования — approval_status оставался NULL
-навсегда, никто не узнавал о новом договоре на крупную сумму.
+Владелец (2026-08-xx, первая версия задачи) дословно: «рамочный договор, при
+его создании, должен пройти путь как Заявка» — из этого 2026-09-02 сделали
+АВТОЗАПУСК цепочки при создании рамочной головы. Владелец (2026-09-03) это
+прямо отменил: «блядь, просил же сделать по аналогии с Заявкой. То есть
+выбирают при создании рамочного договора, надо выбрать, кто будет
+согласовывать» — «по аналогии с Заявкой» означает, что СОГЛАСУЮЩИХ ВЫБИРАЕТ
+АВТОР (вручную, по одному, или явной кнопкой «Построить цепочку»), а не что
+система выбирает их сама при создании. Заявка тоже не уходит на согласование
+сама по себе при создании — обязателен явный выбор согласующих.
 
 Решение переиспользует ТОТ ЖЕ механизм построения цепочки, что и у заявок
 (app.services.approval_chain.build_ascending_chain, см.
 app/routers/wish_approvals.py), а не заводит второй параллельный движок —
 именно так уже один раз разъехались framework_limited/framework_with_amount
-(см. purchases.py::is_framework_head).
+(см. purchases.py::is_framework_head). Но вызывается он теперь ТОЛЬКО явным
+действием — кнопкой «Построить цепочку» (POST /purchases/{pid}/approvers/
+cascade) — либо согласующих набирают вручную по одному (POST /purchases/
+{pid}/approvals/add, см. purchase_approvals.py::add_approver).
 
 Покрытие:
   1. _framework_approval_state — чистая функция-маппер (contracts.py).
   2. _build_framework_chain_approvals — строит цепочку в PurchaseApproval,
      сама идемпотентна, не строит цепочку без руководителя организации и не
-     трогает закупки, не являющиеся рамочной головой.
-  3. POST /api/purchases/{pid}/approvers/cascade — HTTP-обёртка над (2).
-  4. POST /api/contracts/{id}/approval-purchase — автозапуск цепочки при
-     заведении рамочной головы (то самое «при создании»).
-  5. GET /api/contracts/ — approval_state в выдаче реестра договоров.
+     трогает закупки, не являющиеся рамочной головой; принимает mode.
+  3. POST /api/purchases/{pid}/approvers/cascade — HTTP-обёртка над (2),
+     вызывается ТОЛЬКО явно (не автоматически).
+  4. POST /api/contracts/{id}/approval-purchase — рамочная голова заводится
+     БЕЗ согласующих (approval_status остаётся None) — автозапуска нет.
+  5. POST /api/purchases/{pid}/approvals/add — ручное добавление согласующего
+     рамочной голове САМО включает согласование (approval_status: None →
+     in_progress) на первом же добавленном — по аналогии с тем, что у заявки
+     согласование фактически начинается с первого согласующего в списке.
+  6. GET /api/contracts/ — approval_state в выдаче реестра договоров.
 """
 import pytest
 from decimal import Decimal
@@ -219,15 +228,21 @@ async def test_cascade_endpoint_rejects_non_framework_purchase(
 
 
 # ---------------------------------------------------------------------------
-# 4. POST /api/contracts/{id}/approval-purchase — автозапуск при создании
+# 4. POST /api/contracts/{id}/approval-purchase — БЕЗ автозапуска (владелец,
+#    2026-09-03, отменил поведение из предыдущей версии этого теста)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_approval_purchase_endpoint_starts_chain_automatically(
+async def test_approval_purchase_endpoint_does_not_start_chain_automatically(
     client, db_session, test_org, make_user, superadmin_headers,
 ):
-    """Сценарий владельца: рамочный договор заведён прямо в реестре «Договоры» —
-    рамочная голова должна СРАЗУ уйти на согласование, без отдельного клика."""
+    """Владелец дословно (2026-09-03): «выбирают при создании рамочного
+    договора, надо выбрать, кто будет согласовывать то, что этот договор
+    вообще нужен» — рамочная голова, заведённая прямо в реестре «Договоры»,
+    НЕ должна автоматически получать цепочку согласующих. approval_status
+    остаётся None и PurchaseApproval не создаётся, пока автор сам не выберет
+    согласующих (вручную или кнопкой «Построить цепочку» — см. следующий тест
+    и test_cascade_endpoint_builds_chain выше)."""
     from app.models.contract import Contract
 
     org_head = await make_user(role="manager", org_id=test_org.id)
@@ -255,17 +270,85 @@ async def test_approval_purchase_endpoint_starts_chain_automatically(
     from app.models.purchase import Purchase
     p = await db_session.get(Purchase, purchase_id)
     assert p is not None
-    assert p.approval_status == "in_progress"
+    # approval_status — единственный реальный индикатор «согласование идёт»;
+    # approval_mode='sequential' здесь — это Purchase.approval_mode's own
+    # column default (см. models/purchase.py), а НЕ след автозапуска цепочки.
+    assert p.approval_status is None
 
     rows = (await db_session.execute(
         select(PurchaseApproval).where(PurchaseApproval.purchase_id == purchase_id)
     )).scalars().all()
-    assert len(rows) == 1
-    assert rows[0].user_id == org_head.id
+    assert rows == []
 
 
 # ---------------------------------------------------------------------------
-# 5. GET /api/contracts/ — approval_state в реестре
+# 5. POST /api/purchases/{pid}/approvals/add — ручное добавление согласующего
+#    рамочной голове (по аналогии с заявкой) само включает согласование
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_manual_add_approver_starts_framework_head_approval(
+    client, db_session, test_org, make_purchase, make_user, superadmin_headers,
+):
+    """Владелец (2026-09-03): «дать рамочной ГОЛОВЕ тот же порядок работы, что
+    у заявки: автор выбирает согласующих вручную (по одному)». Первый ручной
+    POST /approvals/add на рамочной голове обязан выставить approval_status=
+    'in_progress' и зафиксировать approval_mode (по умолчанию 'sequential',
+    либо переданный явно в body.mode) — иначе кнопки «Согласовать/Отклонить»
+    не появятся на фронте (гейт по approvalStatus === 'in_progress')."""
+    approver = await make_user(role="manager", org_id=test_org.id, full_name="Петров Пётр Петрович")
+    p = await make_purchase(
+        assigned_user_id=approver.id,
+        purchase_contract_type="framework_with_amount",
+        parent_purchase_id=None,
+    )
+    assert is_framework_head(p)
+    assert p.approval_status is None
+
+    resp = await client.post(
+        f"/api/purchases/{p.id}/approvals/add",
+        headers=superadmin_headers,
+        json={"user_id": approver.id, "full_name": approver.full_name, "role_name": "Руководитель", "mode": "parallel"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["purchase_approval_status"] == "in_progress"
+    assert body["purchase_approval_mode"] == "parallel"
+
+    await db_session.refresh(p)
+    assert p.approval_status == "in_progress"
+    assert p.approval_mode == "parallel"
+
+    rows = (await db_session.execute(
+        select(PurchaseApproval).where(PurchaseApproval.purchase_id == p.id)
+    )).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].user_id == approver.id
+
+
+@pytest.mark.asyncio
+async def test_manual_add_approver_does_not_affect_regular_purchase(
+    client, make_purchase, make_user, superadmin_headers,
+):
+    """Контроль: обычная (не рамочная) закупка НЕ должна получать эту
+    авто-активацию — денежное согласование там по-прежнему запускается
+    только явным POST /approvals/start (см. purchase_approvals.py)."""
+    approver = await make_user(role="manager", full_name="Сидоров Сидор Сидорович")
+    p = await make_purchase(purchase_contract_type="single")
+    assert not is_framework_head(p)
+
+    resp = await client.post(
+        f"/api/purchases/{p.id}/approvals/add",
+        headers=superadmin_headers,
+        json={"user_id": approver.id, "full_name": approver.full_name, "role_name": "Руководитель"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["purchase_approval_status"] is None
+
+
+# ---------------------------------------------------------------------------
+# 6. GET /api/contracts/ — approval_state в реестре
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -317,3 +400,77 @@ async def test_list_contracts_reports_approval_state(
     assert by_number["Д-201"]["approval_state"] == "pending"
     assert by_number["Д-202"]["approval_state"] == "approved"
     assert by_number["Д-203"]["approval_state"] is None
+
+
+# ---------------------------------------------------------------------------
+# 7. Лист согласования (approval_sheet) рамочной ГОЛОВЫ — Задача 3 (владелец,
+#    2026-09-03): «у рамочного договора тоже должен быть лист согласования».
+#    Диагноз: до этой правки documents.py::generate_document печатал в
+#    approval_sheet список SubsidyApprover (денежное согласование субсидии),
+#    никак не связанный с цепочкой согласования НЕОБХОДИМОСТИ договора
+#    (PurchaseApproval-строки без subsidy_approver_id) — лист либо был пуст,
+#    либо показывал посторонних людей. Теперь approval_sheet для рамочной
+#    головы печатает именно реальных, выбранных согласующих.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_approval_sheet_prints_framework_head_approvers(
+    client, db_session, test_org, make_user, superadmin_headers,
+):
+    from io import BytesIO
+    from app.models.contract import Contract
+
+    org_head = await make_user(role="manager", org_id=test_org.id, full_name="Головин Глеб Глебович")
+    test_org.head_user_id = org_head.id
+    await db_session.commit()
+
+    subsidy = Subsidy(name="Test subsidy 6", year=2026, budget=1_000_000.0, org_id=test_org.id)
+    db_session.add(subsidy)
+    await db_session.commit()
+    await db_session.refresh(subsidy)
+
+    c = Contract(
+        number="Д-300", contract_type="framework_cumulative",
+        subsidy_id=subsidy.id, subject="Тест листа согласования", max_amount=Decimal("600000"),
+    )
+    db_session.add(c)
+    await db_session.commit()
+    await db_session.refresh(c)
+
+    resp = await client.post(f"/api/contracts/{c.id}/approval-purchase", headers=superadmin_headers)
+    assert resp.status_code == 200, resp.text
+    purchase_id = resp.json()["purchase_id"]
+
+    approver = await make_user(role="manager", org_id=test_org.id, full_name="Уточкин Юрий Юрьевич")
+    add_resp = await client.post(
+        f"/api/purchases/{purchase_id}/approvals/add",
+        headers=superadmin_headers,
+        json={"user_id": approver.id, "full_name": approver.full_name, "role_name": "Согласующий-тест"},
+    )
+    assert add_resp.status_code == 200, add_resp.text
+
+    # approval_sheet требует заполненный способ закупки (гейт
+    # PURCHASE_METHOD_REQUIRED_DOC_TYPES, не связан с этой задачей).
+    patch_resp = await client.patch(
+        f"/api/purchases/{purchase_id}",
+        headers=superadmin_headers,
+        json={"purchase_method": "single"},
+    )
+    assert patch_resp.status_code == 200, patch_resp.text
+
+    doc_resp = await client.get(
+        f"/api/purchases/{purchase_id}/documents/approval_sheet",
+        headers=superadmin_headers,
+    )
+    assert doc_resp.status_code == 200, doc_resp.text
+
+    from docx import Document as _DocxDoc
+    doc = _DocxDoc(BytesIO(doc_resp.content))
+    full_text = "\n".join(p.text for p in doc.paragraphs)
+    for t in doc.tables:
+        for row in t.rows:
+            for cell in row.cells:
+                full_text += "\n" + cell.text
+
+    assert "Уточкин" in full_text, "Согласующий рамочной головы не найден в тексте листа согласования"
+    assert "Согласующий-тест" in full_text

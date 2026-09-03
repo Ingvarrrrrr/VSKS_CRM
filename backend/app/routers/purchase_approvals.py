@@ -702,7 +702,23 @@ async def add_approver(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Add an approver to the purchase approval chain. Available to all roles."""
+    """Add an approver to the purchase approval chain. Available to all roles.
+
+    Владелец (2026-09-03), «рамочный договор согласуется как Заявка»: для
+    рамочной ГОЛОВЫ договора (is_framework_head) этот эндпоинт — основной
+    способ набрать список согласующих необходимости (по аналогии с
+    POST /wishes/{wid}/approvers у заявки). У обычной закупки/этой же головы
+    после старта денежного согласования (start_approval) он остаётся тем же,
+    чем был — точечным добавлением ещё одного согласующего.
+
+    Для рамочной головы первый добавленный согласующий сразу «включает»
+    согласование необходимости (purchase.approval_status: None → in_progress)
+    — отдельного действия «Отправить на согласование», как у заявки (там оно
+    развязано с наполнением заявки содержимым), здесь не нужно: у головы
+    нечего доредактировать кроме списка согласующих. body.mode
+    ('sequential'/'parallel', по умолчанию 'sequential') учитывается только
+    на этом самом первом вызове — дальше режим уже зафиксирован.
+    """
     purchase = await db.get(Purchase, pid)
     if not purchase:
         raise HTTPException(404, "Закупка не найдена")
@@ -742,6 +758,18 @@ async def add_approver(
         data={"role_name": role_name, "full_name": full_name},
     ))
 
+    # Локальный импорт — см. purchases.py::_build_framework_chain_approvals
+    # (тот же приём: нет module-level импорта purchase_approvals<->purchases,
+    # чтобы не завести цикл).
+    from app.routers.purchases import is_framework_head
+    if is_framework_head(purchase) and purchase.approval_status is None:
+        _mode = body.get("mode")
+        purchase.approval_status = "in_progress"
+        purchase.approval_mode = _mode if _mode in ("sequential", "parallel") else "sequential"
+
     await db.commit()
     await db.refresh(new_approval)
-    return _to_out(new_approval)
+    out = _to_out(new_approval)
+    out["purchase_approval_status"] = purchase.approval_status
+    out["purchase_approval_mode"] = purchase.approval_mode
+    return out

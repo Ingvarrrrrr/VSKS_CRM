@@ -2623,7 +2623,9 @@
         :is-admin="isAdminLevel"
         :visible="isEdit && showApprovalSection"
         :subsidy-id="form.subsidy_id"
+        :is-framework-head="isFrameworkHeadPurchase"
         @update:approval-status="form.approval_status = $event"
+        @update:approval-mode="form.approval_mode = $event"
         @snack="showSnack($event, arguments[1])"
       />
 
@@ -5672,16 +5674,17 @@ const isAdmin = computed(() => ['superadmin', 'org_admin', 'admin'].includes(use
 // ── Approval (Согласование) — extracted to ApprovalPanel.vue ─────────────────
 const approvalPanelRef = ref<InstanceType<typeof ApprovalPanel> | null>(null)
 
+// Владелец (2026-09-03): рамочная ГОЛОВА договора (Purchase.is_framework_head,
+// см. purchases.py::is_framework_head) видит блок согласования ВСЕГДА, независимо
+// от статуса закупки (у свежесозданной головы Purchase.status='wishes') — автор
+// должен иметь возможность добавить согласующих необходимости сразу, до того как
+// approval_status вообще выставлен (до 2026-09-03 согласование строилось само при
+// создании; теперь строит его человек — см. contracts.py::get_or_create_approval_purchase).
+const isFrameworkHeadPurchase = computed(() => !!purchaseData.value?.is_framework_head)
+
 const showApprovalSection = computed(() => {
   if (!isEdit.value) return false
-  // Владелец (2026-09-02): рамочная голова договора получает цепочку
-  // согласующих СРАЗУ при создании (см. contracts.py::_build_framework_chain_approvals),
-  // но её Purchase.status при этом остаётся 'wishes' — статусный гейт ниже иначе
-  // прятал бы панель, и согласующие не увидели бы, что нужно принять решение.
-  // approval_status уже != null только если цепочка реально запущена (этим же
-  // гейтом «Запустить согласование» кнопка внутри ApprovalPanel и раньше была
-  // достижима лишь начиная с work_in_progress — обычные закупки этот путь не
-  // затрагивает).
+  if (isFrameworkHeadPurchase.value) return true
   if (form.approval_status) return true
   const idx = STATUS_ORDER.indexOf(form.status)
   return idx >= STATUS_ORDER.indexOf('work_in_progress')

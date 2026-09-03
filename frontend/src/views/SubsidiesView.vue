@@ -1417,7 +1417,12 @@
                                        («Количество и финансирование по ФЭО») основной таблицы, поэтому она
                                        ЛЕВЕЕ «Кол-во плана» (qty) ниже — порядок задан выравниванием колонок. -->
                                   <td :style="feoResize.resizeStyle('budget')" style="padding:4px 8px;text-align:right;color:#64748b">
-                                    <span v-if="planned.amount && Number(planned.quantity) > 0">{{ formatCurrency(Number(planned.amount) / Number(planned.quantity)) }}</span>
+                                    <!-- Правка 2026-09-03: раньше здесь ДЕЛИЛИ amount/quantity — выдуманное
+                                         частное, а не реальная цена (planned.unit_price вообще не читался).
+                                         Теперь — только честное поле; пусто, но сумма плана задана → серая
+                                         подпись вместо подставного числа. -->
+                                    <span v-if="planned.unit_price != null">{{ formatCurrency(Number(planned.unit_price)) }}</span>
+                                    <span v-else-if="planned.amount != null" class="text-medium-emphasis" style="font-size:10px;line-height:1.3">{{ UNIT_PRICE_NOT_FIXED_HINT }}</span>
                                   </td>
                                   <td :style="feoResize.resizeStyle('qty')" style="padding:4px 8px;text-align:right;color:#64748b">
                                     <span v-if="planned.quantity">{{ parseFloat(String(planned.quantity)) }} {{ planned.unit || '' }}</span>
@@ -4217,6 +4222,8 @@
             variant="outlined"
             density="compact"
             class="mb-1"
+            :hint="editPlannedDialog.unitPrice === '' || editPlannedDialog.unitPrice == null ? UNIT_PRICE_NOT_FIXED_HINT : ''"
+            :persistent-hint="editPlannedDialog.unitPrice === '' || editPlannedDialog.unitPrice == null"
           />
           <v-text-field
             v-model="editPlannedDialog.amount"
@@ -4479,6 +4486,8 @@
             label="Плановая стоимость за единицу, ₽" type="number"
             variant="outlined" density="compact" suffix="₽"
             class="mb-1"
+            :hint="plannedItemForm.unitPrice == null ? UNIT_PRICE_NOT_FIXED_HINT : ''"
+            :persistent-hint="plannedItemForm.unitPrice == null"
           />
           <div v-if="addPlannedPriceCaption" class="text-caption text-medium-emphasis mb-2" style="line-height:1.35">
             <v-icon icon="mdi-information-outline" size="13" style="margin-top:-2px" class="mr-1" />{{ addPlannedPriceCaption }}
@@ -4926,6 +4935,7 @@ import InlineProductMatch from '@/components/items/InlineProductMatch.vue'
 import type { MatchCandidate } from '@/composables/useItemMatching'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
 import type { FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
+import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
 import { PURCHASE_STATUS_META, PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusIcon, purchaseStatusColor } from '@/constants/purchaseStatus'
 import { type KpiKey, KPI_MODE, KPI_LABELS, KPI_EMPTY_REASONS, kpiItemMatches } from '@/constants/kpiMetrics'
 
@@ -6087,9 +6097,9 @@ const plannedItemForm = ref({
   unit: '',
   // Плановая стоимость за единицу, ₽ (владелец, 2026-09-01) — UI-поле, подставляется
   // из каталога при выборе товара (см. onPlannedItemProductPick), полностью
-  // редактируемо. FeoPlannedItem (backend) СВОЕГО поля под цену за единицу не имеет
-  // (только amount — итоговая сумма), поэтому unitPrice в бэкенд не уходит: пока он
-  // задан и не равен 0, им лишь пересчитывается amount (см. watch ниже).
+  // редактируемо. С 2026-09-02 FeoPlannedItem.unit_price — реальное поле бэкенда
+  // (backend/app/models/feo_planned_item.py), savePlannedItem шлёт его в POST явно;
+  // пока задан и не равен 0, им ещё и пересчитывается amount (см. watch ниже).
   unitPrice: null as number | null,
   amount: null as number | null,
   payment_mode: 'one_time' as 'one_time' | 'monthly',
@@ -7425,6 +7435,11 @@ async function savePlannedItem() {
         quantity: qtyOrDefault,
         unit: f.unit || null,
         amount: isMonthly ? null : f.amount,
+        // Цена за единицу (правка 2026-09-03) — раньше здесь не отправлялась
+        // вовсе, введённая в поле «Плановая стоимость за единицу» цена молча
+        // терялась (амаунт уже посчитан watch'ем из неё, а сама цена — нет).
+        // См. FeoPlannedItem.unit_price / assert_tz_not_over_plan.
+        unit_price: isMonthly ? null : (f.unitPrice ?? null),
         is_active: true,
         payment_mode: f.payment_mode,
         planned_date: !isMonthly && f.planned_date ? f.planned_date : null,
@@ -7553,7 +7568,9 @@ function descendantCategoriesFor(node: FeoNode): FeoNode[] {
 // прямо к направлению, в одну из его конечных (или промежуточных) категорий.
 // PUT /feo-planned-items/{id} — та же ПОЛНАЯ замена, что и у saveEditPlannedItem/
 // reorderPlannedItem выше (неполный payload обнулил бы остальные поля позиции),
-// меняется только feo_category_id.
+// меняется только feo_category_id. unit_price (правка 2026-09-03, найдено при
+// ревизии всех PUT feo-planned-items без unit_price) обязан идти тем же явным
+// образом, что и amount/quantity — иначе перенос молча обнулял цену за единицу.
 const movingPlannedItemId = ref<number | null>(null)
 async function movePlannedItemToCategory(item: FeoPlannedItem, targetCategoryId: number) {
   if (item.feo_category_id === targetCategoryId) return
@@ -7568,6 +7585,7 @@ async function movePlannedItemToCategory(item: FeoPlannedItem, targetCategoryId:
         quantity: item.quantity,
         unit: item.unit,
         amount: item.amount,
+        unit_price: item.unit_price ?? null,
         notes: item.notes,
         is_active: item.is_active,
         payment_mode: item.payment_mode ?? 'one_time',
@@ -7601,6 +7619,9 @@ async function movePlannedItemToCategory(item: FeoPlannedItem, targetCategoryId:
 // категорий ФЭО, см. reorderFeoNode выше). PUT там — ПОЛНАЯ замена (см. её же
 // докстринг/паттерн saveEditPlannedItem/clearCategoryManualPlan) — неполный payload
 // обнулил бы amount/quantity/notes и т.д., поэтому отправляем ВСЕ поля позиции как есть.
+// unit_price (правка 2026-09-03) — тем же payload'ом, иначе перестановка стрелками
+// молча обнуляла цену за единицу существующей позиции (та же ловушка, что и у
+// остальных PUT в этом файле — см. коммент у FeoPlannedItem.unit_price выше).
 const reorderingPlannedItemId = ref<number | null>(null)
 async function savePlannedItemSortOrder(item: FeoPlannedItem, newOrder: number) {
   await apiFetch(`/feo-planned-items/${item.id}`, {
@@ -7611,6 +7632,7 @@ async function savePlannedItemSortOrder(item: FeoPlannedItem, newOrder: number) 
       quantity: item.quantity,
       unit: item.unit,
       amount: item.amount,
+      unit_price: item.unit_price ?? null,
       notes: item.notes,
       is_active: item.is_active,
       payment_mode: item.payment_mode ?? 'one_time',
@@ -9416,6 +9438,11 @@ function displayPlannedRowsFor(node: FeoNode): (FeoPlannedItem & { isManual?: bo
     quantity: qty,
     unit: node.unit || null,
     amount,
+    // Тот же qty/unitPrice, что уже проверены выше для amount — здесь это НЕ
+    // деление задним числом (как было раньше в колонке «Плановая цена за
+    // единицу», см. правку 2026-09-03), а честная цена, из которой amount и
+    // посчитан. amount == null (условие не выполнено) → и unit_price null.
+    unit_price: amount != null ? unitPrice : null,
     notes: null,
     is_active: true,
     isManual: true,

@@ -221,6 +221,9 @@
                         :class="planExcessFor?.(item)?.priceOver ? 'text-error font-weight-bold' : 'text-medium-emphasis'">
                         план: {{ formatNumber(planForItem!(item)!.unit_price) }} ₽
                       </div>
+                      <div v-else-if="planForItem?.(item)" class="text-caption plan-hint text-medium-emphasis">
+                        {{ UNIT_PRICE_NOT_FIXED_HINT }}
+                      </div>
                       <PriceFreshnessStamp :price-meta="item._price_meta" />
                     </td>
                     <!-- Fix 4/5: НДС % column -->
@@ -542,6 +545,7 @@ import type { Contractor } from '@/components/items/types'
 import type { FeoNode } from '@/composables/useFeoLeaves'
 import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import { formatPlanResidual } from '@/utils/numberFormat'
+import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
 
 type EditorItem = any
 type StageTotals = { tz: number; dog: number; delivery: number }

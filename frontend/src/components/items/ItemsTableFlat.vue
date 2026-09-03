@@ -129,6 +129,9 @@
               :class="planExcessFor?.(item)?.priceOver ? 'text-error font-weight-bold' : 'text-medium-emphasis'">
               план: {{ formatNumber(planForItem!(item)!.unit_price) }} ₽
             </div>
+            <div v-else-if="planForItem?.(item)" class="text-caption plan-hint text-medium-emphasis">
+              {{ UNIT_PRICE_NOT_FIXED_HINT }}
+            </div>
             <PriceFreshnessStamp :price-meta="item._price_meta" />
           </td>
           <td>
@@ -315,6 +318,7 @@ import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlan
 import type { Contractor, ProductLike, ItemsDisplayRow } from '@/components/items/types'
 import type { FeoNode } from '@/composables/useFeoLeaves'
 import { formatPlanResidual } from '@/utils/numberFormat'
+import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
 
 // EditorItem is structurally identical to the parent's; kept loose here since the
 // parent owns the canonical definition and passes its own objects through.

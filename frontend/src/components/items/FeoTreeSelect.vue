@@ -372,7 +372,13 @@ const planByCategory = computed((): Map<number, FeoPlanPosition> => {
       planned_quantity: plannedQty > 0 ? plannedQty : null,
       unit: rows[0].unit,
       planned_amount: plannedAmount,
-      unit_price: plannedQty > 0 ? plannedAmount / plannedQty : null,
+      // НЕ вычислять как plannedAmount / plannedQty (было так до 2026-09-03) —
+      // это было бы выдуманное частное поверх суммы нескольких planned_item,
+      // ни один из которых не подтверждает, что у них РОВНО одна цена за
+      // единицу. planNoteFor (ниже) читает у этой синтетической строки только
+      // budget/residual, unit_price здесь никем не используется — оставлен
+      // честным null, а не подставным числом.
+      unit_price: null,
       consumed,
       consumed_quantity: consumedQty,
       residual,

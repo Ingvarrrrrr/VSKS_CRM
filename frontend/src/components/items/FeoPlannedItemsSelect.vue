@@ -329,6 +329,8 @@
             density="compact"
             hide-details="auto"
             class="mb-1"
+            :hint="createForm.unitPrice == null ? UNIT_PRICE_NOT_FIXED_HINT : ''"
+            :persistent-hint="createForm.unitPrice == null"
           />
           <v-text-field
             v-model.number="createForm.amount"
@@ -658,6 +660,7 @@ import type { FeoPlanPosition, FeoPlanSelection, FeoPlanKind } from '@/composabl
 import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { formatPlanResidual } from '@/utils/numberFormat'
+import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
 
 const props = defineProps<{
   modelValue: FeoPlanSelection | null

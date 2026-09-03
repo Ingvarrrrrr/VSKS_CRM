@@ -658,26 +658,44 @@ async def compute_feo_plan_tree(
     формат) как НЕ учитывались, так и не учитываются — см. предупреждение там же.
 
     Для каждой категории cat_id (и листа, и группы — не только листьев) считается:
-      plan_manual — «сколько сами запланировали»:
-        лист:  planned_quantity × planned_amount (planned_amount — цена за
-               единицу); если произведение = 0, а активные FeoPlannedItem (Ур.5)
-               есть — fallback на Σ FeoPlannedItem.amount (план введён по
-               позициям, а не по листу целиком). Количество (qty), участвующее
-               в этой формуле и далее в plan/qty_plan, — тоже с fallback'ом:
-               planned_quantity листа, а если оно не задано (0) — Σ quantity
-               тех же активных FeoPlannedItem (симметрично fallback'у по сумме,
-               иначе plan_manual посчитается по позициям, а qty_plan всё равно
-               уйдёт в 0 и замещение «заказ вместо плана» не сработает);
-        группа: Σ plan_manual прямых детей ПЛЮС собственные активные FeoPlannedItem
-                узла (Ур.5), заведённые прямо на направлении, а не на листе —
-                задача владельца «направление со временем может наполниться,
+      plan_manual — «сколько сами запланировали». Способ расчёта задаётся
+        ЯВНЫМ переключателем FeoCategory.plan_source, а НЕ угадывается по тому,
+        пустые ли числовые поля (задача владельца, план
+        zany-fluttering-mountain.md, сессия 2026-08-13, см. _manual_plan_for
+        ниже и ФОРМУЛА «п.2» в блоке «ТРИ НЕЗАВИСИМЫХ вида превышения» ниже):
+          лист:  'planned_items' (умолчание) — plan_manual = Σ активных
+                 FeoPlannedItem.amount узла (leaf_item_amt — план введён
+                 плановыми позициями внутри категории, панель «Добавить
+                 плановую»); 'manual_sum' — plan_manual = FeoCategory.
+                 manual_plan_amount (ОДНО число, введённое вручную), ПОКА
+                 накопленное превышение над ним не согласовано (после
+                 согласования — тоже становится Σ позиций, см.
+                 excess_plan_over_manual ниже). ⚠️ Поля FeoCategory.
+                 planned_quantity/planned_amount (старый формат «кол-во × цена
+                 за единицу листа») В РАСЧЁТЕ plan_manual БОЛЬШЕ НЕ УЧАСТВУЮТ
+                 ВООБЩЕ — формула «лист: planned_quantity × planned_amount,
+                 fallback на Σ FeoPlannedItem.amount при произведении = 0»
+                 (документированная здесь ДО 2026-08-13) была УДАЛЕНА
+                 коммитом f8d68bc: старая формула ложно срабатывала на
+                 категориях без единого введённого владельцем числа (пример —
+                 3710 «Расходные материалы для проведения окружных
+                 полуфиналов», поля были NULL). planned_quantity листа
+                 по-прежнему читается — но ТОЛЬКО как qty (количество) для
+                 замещения «заказ вместо плана» в plan/qty_plan ниже, суммы
+                 (amt/planned_amount) эта ветка больше не касается; если qty не
+                 задано (0) — Σ quantity тех же активных FeoPlannedItem
+                 (симметричный fallback по количеству, иначе qty_plan всё
+                 равно уйдёт в 0 и замещение не сработает).
+        группа: Σ plan_manual прямых детей ПЛЮС собственная часть узла,
+                посчитанная ТЕМ ЖЕ переключателем plan_source/manual_plan_amount
+                САМОЙ группы (не старыми полями planned_quantity/planned_amount
+                — те по-прежнему НЕ учитываются, так же, как feoPlannedTotalFor
+                во фронте, иначе формулы разойдутся; на этом поле уже была
+                боевая поломка — категория «Микроавтобус» после пропажи
+                подкатегории показала цену 10 130 000 за штуку) — задача
+                владельца «направление со временем может наполниться,
                 соответственно должно считаться и оно» (сессия 2026-08-12,
-                см. ФОРМУЛА v3 ниже). Собственные ПОЛЯ группы (planned_quantity×
-                planned_amount, старый формат) по-прежнему НЕ учитываются —
-                так же, как feoPlannedTotalFor во фронте, иначе формулы
-                разойдутся; на этом поле уже была боевая поломка (категория
-                «Микроавтобус» после пропажи подкатегории показала цену
-                10 130 000 за штуку).
+                см. ФОРМУЛА v3 ниже).
       ordered / ordered_quantity — Σ фактической суммы/количества позиций в
         статусах «Заказано»/«Поставлено»/«Оплачено» (ORDERED_STATUSES,
         см. ordered_consumption_by_category), БЕЗ over_plan=true и БЕЗ
@@ -1344,6 +1362,55 @@ async def compute_feo_plan_tree(
     return result
 
 
+def _leaf_plan_manual(
+    plan_source: Optional[str], manual_plan_amount, items_total: float, excess_approved: bool,
+) -> tuple:
+    """Общая точка с compute_feo_plan_tree._manual_plan_for (тот же переключатель
+    FeoCategory.plan_source, ОДИН узел) — задача 2, отчёт сессии 2026-09-03.
+
+    _manual_plan_for — приватный closure ВНУТРИ compute_feo_plan_tree (завязан на
+    батчевые словари всей субсидии: leaf_item_amt/own_manual_excess/
+    latest_approval_by_cat), поэтому find_excess_culprit не может вызвать его
+    напрямую — вместо этого воспроизводит ЕЁ ЖЕ формулу здесь, как отдельную
+    независимо тестируемую точку (без доступа к closure-словарям, только на
+    переданных аргументах). compute_feo_plan_tree._manual_plan_for сознательно
+    НЕ трогалась при этом рефакторинге (следующая задача правит
+    assert_no_unapproved_excess/эту область отдельно) — идентичность формул
+    доказывается тестом test_find_excess_culprit_uses_same_plan_source_formula
+    в test_feo_plan_tree_scenarios.py, сравнивающим числа обеих функций на одних
+    данных, а не совместным вызовом кода.
+
+    ДО задачи 2 find_excess_culprit вообще не знал о plan_source — использовал
+    REMOVED-формулу «оба поля planned_quantity и planned_amount не пустые →
+    qty×amt, иначе Σ FeoPlannedItem» (угадывание по пустым полям), удалённую из
+    compute_feo_plan_tree коммитом f8d68bc (2026-08-13, «способ расчёта плана
+    задаётся переключателем, а не угадывается по пустым полям»). Из-за этого
+    расхождения find_excess_culprit мог назвать пользователю цифру плана, НЕ
+    совпадающую с той, из-за которой реально сработала блокировка.
+
+    Формула (см. FeoCategory.plan_source, docstring compute_feo_plan_tree):
+      'planned_items' (умолчание) — план узла = items_total (Σ активных
+        FeoPlannedItem, считает вызывающий код), excess_plan_over_manual = 0.
+      'manual_sum' — план узла = manual_plan_amount, ПОКА накопленное
+        превышение (items_total − manual_plan_amount) не согласовано; когда
+        excess_approved=True (последний PlanExcessApproval ИМЕННО этого узла
+        approved) — план узла становится items_total.
+
+    Возвращает (manual_plan_entered, plan_manual, excess_plan_over_manual) — те
+    же три величины, что и первые три элемента кортежа _manual_plan_for."""
+    items_total = float(items_total)
+    if (plan_source or "planned_items") != "manual_sum":
+        return 0.0, items_total, 0.0
+    manual_amt = float(manual_plan_amount) if manual_plan_amount is not None else 0.0
+    excess = items_total - manual_amt
+    if excess <= 0.005:
+        excess = 0.0
+    plan_manual = manual_amt
+    if excess > 0.005 and excess_approved:
+        plan_manual = items_total
+    return manual_amt, plan_manual, excess
+
+
 async def find_excess_culprit(
     db: AsyncSession, feo_category_id: int, budget: Optional[float]
 ) -> Optional[dict]:
@@ -1356,37 +1423,42 @@ async def find_excess_culprit(
     сравнивается budget в compute_feo_plan_tree._visit (см. её docstring), и
     почему виновник ищется именно там, а не в сумме позиций закупок «в лоб»:
       «Плановая сумма» листа (plan_manual) — это НЕ сумма позиций закупок этой
-      категории, а РУЧНОЙ план: либо planned_quantity×planned_amount самой
-      FeoCategory (одно число, без разбивки — плановые позиции тут ни при чём),
-      либо, если эти поля не заданы, Σ amount активных FeoPlannedItem (Ур.5,
-      «плановые позиции» — как раз панель «Добавить плановую», из примера
-      владельца «Great Wall POER · план 2 шт × 4 000 000»). Плюс `over` —
-      Σ сумм PurchaseItem с over_plan=true (сознательно сверх плана),
-      прибавляется БЕЗУСЛОВНО поверх — вот это уже реальные позиции закупок.
+      категории, а вычисляется ТЕМ ЖЕ переключателем FeoCategory.plan_source,
+      что и в дереве (см. _leaf_plan_manual выше, зеркалит
+      compute_feo_plan_tree._manual_plan_for): 'planned_items' (умолчание) —
+      Σ amount активных FeoPlannedItem (Ур.5, «плановые позиции» — панель
+      «Добавить плановую», из примера владельца «Great Wall POER · план
+      2 шт × 4 000 000»); 'manual_sum' — ОДНО число FeoCategory.manual_plan_amount,
+      пока накопленное превышение над ним не согласовано (после согласования —
+      тоже Σ позиций). Плюс `over` — Σ сумм PurchaseItem с over_plan=true
+      (сознательно сверх плана), прибавляется БЕЗУСЛОВНО поверх — вот это уже
+      реальные позиции закупок.
 
     Поэтому виновник ищется как ПЕРВЫЙ элемент, на котором нарастающая сумма по
     ДВУМ источникам (в порядке их вклада в формулу — сначала «план», потом
     «сверх плана») впервые пересекла budget:
-      1) активные FeoPlannedItem узла/его листьев-потомков, по возрастанию
-         `created_at` (у FeoPlannedItem ЕСТЬ created_at — реальное время
-         появления плановой позиции, самый честный источник «времени попадания
-         в план», который вообще есть в модели данных), tie-break — id.
-         Каждая плановая позиция резолвится к закупке, которая на неё
-         ссылается (PurchaseItem.feo_planned_item_id) — берётся САМАЯ РАННЯЯ
-         (min Purchase.id), т.к. обычно именно она породила эту плановую
-         позицию автозаведением (_auto_assign_planned_items, wishes.py); если
-         ни одна закупка ещё не привязана — виновник этой строки безымянный
-         (purchase_id=None, названа сама плановая позиция).
+      1) для листьев в режиме 'planned_items' (и листьев 'manual_sum',
+         согласованное превышение которых уже «влилось» в план, см.
+         _leaf_plan_manual) — активные FeoPlannedItem узла/его листьев-
+         потомков, по возрастанию `created_at` (у FeoPlannedItem ЕСТЬ
+         created_at — реальное время появления плановой позиции, самый честный
+         источник «времени попадания в план», который вообще есть в модели
+         данных), tie-break — id. Каждая плановая позиция резолвится к
+         закупке, которая на неё ссылается (PurchaseItem.feo_planned_item_id)
+         — берётся САМАЯ РАННЯЯ (min Purchase.id), т.к. обычно именно она
+         породила эту плановую позицию автозаведением
+         (_auto_assign_planned_items, wishes.py); если ни одна закупка ещё не
+         привязана — виновник этой строки безымянный (purchase_id=None,
+         названа сама плановая позиция).
       2) позиции закупок (PurchaseItem) с over_plan=true в PLANNED_STATUSES,
          по возрастанию Purchase.id (у Purchase НЕТ created_at — id это PK
          IDENTITY/serial, монотонно растёт при INSERT, надёжный прокси
          времени), tie-break — id позиции.
-    Если категория имеет СОБСТВЕННЫЙ planned_quantity×planned_amount (не 0) —
-    Ур.5-фолбэк формулой не используется вовсе (см. compute_feo_plan_tree), и
-    разбить это ОДНО число на закупки нельзя: в качестве первого «контрибьютора»
-    подставляется синтетическая запись «плановое значение категории» без
-    purchase_id — так превышение всё равно объясняется числом, даже если
-    конкретной закупки-виновника формально не существует.
+    Для листьев в режиме 'manual_sum' с ЕЩЁ НЕ согласованным превышением —
+    план ОДНО число (manual_plan_amount), разбить его на закупки нельзя: в
+    качестве «контрибьютора» подставляется синтетическая запись «плановое
+    значение категории» без purchase_id — так превышение всё равно объясняется
+    числом, даже если конкретной закупки-виновника формально не существует.
 
     Если превышение набралось несколькими контрибьюторами — виновником назван
     именно тот, кто пересёк границу budget (не последний/крупнейший).
@@ -1404,7 +1476,7 @@ async def find_excess_culprit(
     all_cats = (await db.execute(
         select(
             FeoCategory.id, FeoCategory.parent_id,
-            FeoCategory.planned_quantity, FeoCategory.planned_amount,
+            FeoCategory.plan_source, FeoCategory.manual_plan_amount,
         ).where(FeoCategory.subsidy_id == cat.subsidy_id)
     )).all()
     by_id = {r.id: r for r in all_cats}
@@ -1425,34 +1497,78 @@ async def find_excess_culprit(
         return None
 
     from app.models.feo_planned_item import FeoPlannedItem
+    from app.models.plan_excess_approval import PlanExcessApproval
     from app.routers.purchase_budget import PLANNED_STATUSES  # local: avoid router import cycle
 
-    # ── Источник №1: «план» — собственные qty×amount листа, ИЛИ (fallback)
-    # Σ активных FeoPlannedItem ────────────────────────────────────────────
+    # ── Источник №1: «план» — ТА ЖЕ формула, что и compute_feo_plan_tree.
+    # _manual_plan_for, воспроизведена через _leaf_plan_manual (см. её docstring
+    # выше — задача 2, была: план>ФЭО объяснялся другой формулой, чем реально
+    # считало дерево) ───────────────────────────────────────────────────────
     contributors: list[dict] = []
 
-    fallback_leaf_ids = [
-        lid for lid in leaf_ids
-        if not (by_id[lid].planned_quantity and by_id[lid].planned_amount
-                and float(by_id[lid].planned_quantity) > 0 and float(by_id[lid].planned_amount) > 0)
-    ]
-    direct_leaf_ids = [lid for lid in leaf_ids if lid not in fallback_leaf_ids]
+    # Σ amount активных FeoPlannedItem по каждому листу — items_total для
+    # _leaf_plan_manual, тот же расчёт, что leaf_item_amt в compute_feo_plan_tree
+    # (то же условие is_active=True).
+    items_total_by_leaf: dict[int, float] = {}
+    if leaf_ids:
+        items_total_q = (
+            select(
+                FeoPlannedItem.feo_category_id,
+                func.coalesce(func.sum(FeoPlannedItem.amount), 0).label("amt"),
+            )
+            .where(FeoPlannedItem.feo_category_id.in_(leaf_ids))
+            .where(FeoPlannedItem.is_active.is_(True))
+            .group_by(FeoPlannedItem.feo_category_id)
+        )
+        for r in (await db.execute(items_total_q)).all():
+            items_total_by_leaf[r.feo_category_id] = float(r.amt)
 
-    for lid in direct_leaf_ids:
+    # ПОСЛЕДНИЙ (по created_at) PlanExcessApproval КАЖДОГО листа — approval
+    # привязан к КОНКРЕТНОЙ категории (feo_category_id), не к переданному сюда
+    # feo_category_id узла с бюджетом (тот может быть предком-группой) — та же
+    # семантика, что latest_approval_by_cat в compute_feo_plan_tree. Нужен
+    # только для листьев в режиме 'manual_sum', но считаем батчем на все —
+    # дешевле одного запроса, чем N.
+    leaf_approved: dict[int, bool] = {}
+    if leaf_ids:
+        appr_rows = (await db.execute(
+            select(PlanExcessApproval.feo_category_id, PlanExcessApproval.status)
+            .where(PlanExcessApproval.feo_category_id.in_(leaf_ids))
+            .order_by(PlanExcessApproval.feo_category_id, PlanExcessApproval.created_at.desc())
+        )).all()
+        seen_appr: set = set()
+        for ar in appr_rows:
+            if ar.feo_category_id in seen_appr:
+                continue
+            seen_appr.add(ar.feo_category_id)
+            leaf_approved[ar.feo_category_id] = (ar.status == "approved")
+
+    # Лист попадает в itemized_leaf_ids, когда его план_manual == items_total
+    # (режим 'planned_items' — всегда; режим 'manual_sum' — только когда
+    # согласованное превышение уже «влило» план в Σ позиций) — тогда его можно
+    # разложить на реальные FeoPlannedItem-строки. Иначе (manual_sum, план ==
+    # ОДНО число manual_plan_amount) — единственный синтетический контрибьютор.
+    itemized_leaf_ids: list[int] = []
+    for lid in leaf_ids:
         r = by_id[lid]
-        amt = Decimal(str(r.planned_quantity)) * Decimal(str(r.planned_amount))
-        if amt > 0:
+        items_total = items_total_by_leaf.get(lid, 0.0)
+        _, plan_manual, _ = _leaf_plan_manual(
+            r.plan_source, r.manual_plan_amount, items_total, leaf_approved.get(lid, False),
+        )
+        if abs(plan_manual - items_total) <= 0.005:
+            itemized_leaf_ids.append(lid)
+        elif plan_manual > 0:
             cat_row = await db.get(FeoCategory, lid)
             contributors.append({
-                "amount": amt, "purchase_id": None, "purchase_number": None,
+                "amount": Decimal(str(plan_manual)), "purchase_id": None, "purchase_number": None,
                 "item_name": f"плановое значение категории «{cat_row.name if cat_row else lid}»",
                 "created_at": None, "sort_key": (0, lid),
             })
 
-    if fallback_leaf_ids:
+    if itemized_leaf_ids:
         fpi_rows = (await db.execute(
             select(FeoPlannedItem.id, FeoPlannedItem.name, FeoPlannedItem.amount, FeoPlannedItem.created_at)
-            .where(FeoPlannedItem.feo_category_id.in_(fallback_leaf_ids))
+            .where(FeoPlannedItem.feo_category_id.in_(itemized_leaf_ids))
             .where(FeoPlannedItem.is_active.is_(True))
             .order_by(FeoPlannedItem.created_at.asc(), FeoPlannedItem.id.asc())
         )).all()

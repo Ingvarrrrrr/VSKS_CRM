@@ -178,19 +178,50 @@ async def test_baseline_plan_unaffected_by_linked_item_price(db_session, test_or
 
 @pytest.mark.asyncio
 async def test_k1_sum_stored_in_per_unit_price_field(db_session, test_org):
-    """К1: feo_categories.planned_amount хранит СУММУ (8 380 000) вместо цены за
-    единицу при planned_quantity=2 → display = 2 × 8 380 000 = 16 760 000
-    (точное совпадение с боевым скриншотом владельца)."""
+    """К1 — ПЕРЕПИСАН 2026-09-03 под действующую модель (см. задача 1, отчёт
+    сессии). Что проверялось раньше: тест написан 2026-08-07 (коммит a8b6557)
+    и до сих пор был построен на формуле «лист: plan_manual = planned_quantity ×
+    planned_amount» — сценарий: feo_categories.planned_amount хранит СУММУ
+    (8 380 000) вместо цены за единицу при planned_quantity=2, из-за чего
+    произведение задваивало план: 2 × 8 380 000 = 16 760 000.
+
+    Почему формула изменилась: коммитом f8d68bc (2026-08-13, «способ расчёта
+    задаётся переключателем, а не угадывается по пустым полям») эта
+    qty×amount-формула УДАЛЕНА из compute_feo_plan_tree. Поля
+    planned_quantity/planned_amount листа больше НЕ участвуют в расчёте
+    plan_manual вообще (planned_quantity используется только как ориентир
+    количества для замещения «заказ вместо плана», сумма — никогда). Способ
+    расчёта плана листа теперь задаётся явным полем FeoCategory.plan_source:
+    'planned_items' (умолчание) — Σ активных FeoPlannedItem, 'manual_sum' —
+    ОДНО число FeoCategory.manual_plan_amount (см. _manual_plan_for в
+    feo_plan.py). Живых данных под старый сценарий (qty×amount с обоими
+    непустыми полями при отсутствии FeoPlannedItem) в базе не осталось —
+    миграция q5r6s7t8u9v0 перевела все 214 похожих листьев в 'manual_sum' с
+    manual_plan_amount, совпадающим с planned_quantity×planned_amount до
+    копейки (проверено отдельно, см. отчёт задачи 1).
+
+    Что проверяется теперь: тот же смысл сценария владельца («число, которое
+    должно было означать одно, по ошибке легло как весь план целиком, и план
+    раздулся мимо бюджета») выражен ЧЕРЕЗ ДЕЙСТВУЮЩИЙ переключатель —
+    plan_source='manual_sum' с manual_plan_amount, В КОТОРОЕ по ошибке внесли
+    итоговую сумму 16 760 000 (а не то меньшее число, которое соответствовало
+    бы плану 2×4 000 000). Числа боевого скриншота владельца (display
+    16 760 000, excess_amount 8 760 000 при budget 8 000 000) сохранены как
+    контрольные — 'manual_sum' без активных FeoPlannedItem не участвует в
+    отдельном механизме excess_plan_over_manual (тот сравнивает Σ позиций с
+    manual_plan_amount, тут позиций нет вовсе), поэтому раздувание плана
+    проверяется тем же способом, что и раньше — excess_amount (план > budget
+    узла)."""
     subsidy = await _make_subsidy(db_session, test_org.id)
     group = await _make_category(db_session, subsidy.id, name="Внедорожник повышенной проходимости")
     leaf = await _make_category(
         db_session, subsidy.id, parent_id=group.id,
-        name="K1 — сумма в поле цены за ед.",
+        name="K1 — сумма вручную введена в manual_plan_amount по ошибке",
         budget=Decimal("8000000"),
         feo_quantity=Decimal("2"),
         feo_amount=Decimal("4000000"),
-        planned_quantity=Decimal("2"),
-        planned_amount=Decimal("8380000"),  # БАГ: сюда записали сумму, а не цену за ед.
+        plan_source="manual_sum",
+        manual_plan_amount=Decimal("16760000"),  # БАГ: по ошибке весь итог, а не план 2×4 000 000
         unit="шт",
     )
 
@@ -229,3 +260,84 @@ async def test_k2_duplicate_planned_items(db_session, test_org):
     assert node["display"] == 16_760_000.0
     assert node["budget"] == 8_000_000.0
     assert node["excess_amount"] == 8_760_000.0
+
+
+@pytest.mark.asyncio
+async def test_find_excess_culprit_matches_compute_feo_plan_tree_planned_items(db_session, test_org):
+    """Задача 2 (2026-09-03, отчёт сессии): find_excess_culprit (объясняет
+    пользователю ПРИЧИНУ блокировки excess_amount — «вот эта закупка/позиция
+    вывела план за рамки ФЭО») ДО этой задачи считал план листа СВОЕЙ
+    собственной REMOVED-формулой (planned_quantity×planned_amount с фолбэком на
+    Σ FeoPlannedItem по пустоте полей — та же формула, что убрали из
+    compute_feo_plan_tree коммитом f8d68bc, см. докстринг test_k1_* выше) — то
+    есть мог назвать пользователю цифру плана, НЕ совпадающую с той, из-за
+    которой реально сработала блокировка в compute_feo_plan_tree/
+    assert_no_unapproved_excess. Теперь обе функции читают план листа одной и
+    той же формулой (feo_plan.py._leaf_plan_manual зеркалит
+    compute_feo_plan_tree._manual_plan_for — прямой вызов последней невозможен,
+    это closure внутри compute_feo_plan_tree, завязанный на батчевые словари
+    всей субсидии).
+
+    Этот тест — режим 'planned_items' (умолчание, план = Σ активных
+    FeoPlannedItem): budget листа занижен настолько, что единственная плановая
+    позиция сразу пересекает границу. Виновник ОБЯЗАН объяснить превышение ТОЙ
+    ЖЕ суммой (cumulative_after), что compute_feo_plan_tree называет
+    plan_manual — это и есть критерий приёмки задачи 2."""
+    from app.services.feo_plan import find_excess_culprit
+
+    subsidy = await _make_subsidy(db_session, test_org.id)
+    leaf = await _make_category(
+        db_session, subsidy.id,
+        name="Лист — план позициями (Ур.5)",
+        budget=Decimal("1000000"),  # ниже плана — гарантирует пересечение первой же позицией
+        unit="шт",
+    )
+    await _make_planned_item(db_session, leaf.id, "Позиция плана", 2, 4_000_000)
+
+    tree = await compute_feo_plan_tree(db_session, [subsidy.id])
+    node = tree[leaf.id]
+    assert node["plan_manual"] == 4_000_000.0
+    assert node["excess_amount"] > 0
+
+    culprit = await find_excess_culprit(db_session, leaf.id, node["budget"])
+    assert culprit is not None
+    assert culprit["cumulative_after"] == node["plan_manual"], (
+        "find_excess_culprit обязан объяснять превышение ТОЙ ЖЕ суммой плана, "
+        "что compute_feo_plan_tree.plan_manual — иначе виновник называет "
+        "число, не совпадающее с тем, из-за которого реально сработала блокировка"
+    )
+
+
+@pytest.mark.asyncio
+async def test_find_excess_culprit_matches_compute_feo_plan_tree_manual_sum(db_session, test_org):
+    """Тот же критерий, что и в тесте выше (см. его докстринг) — режим
+    'manual_sum' БЕЗ активных FeoPlannedItem и БЕЗ согласованного превышения:
+    план листа — ОДНО ручное число (manual_plan_amount), find_excess_culprit
+    обязан подставить синтетический контрибьютор «плановое значение категории»
+    РОВНО с этой суммой (у него нет закупки-источника — само число не
+    раскладывается на позиции), совпадающей с compute_feo_plan_tree.plan_manual."""
+    from app.services.feo_plan import find_excess_culprit
+
+    subsidy = await _make_subsidy(db_session, test_org.id)
+    leaf = await _make_category(
+        db_session, subsidy.id,
+        name="Лист — ручная сумма (Ур.5 нет)",
+        budget=Decimal("1000000"),
+        plan_source="manual_sum",
+        manual_plan_amount=Decimal("16760000"),
+        unit="шт",
+    )
+
+    tree = await compute_feo_plan_tree(db_session, [subsidy.id])
+    node = tree[leaf.id]
+    assert node["plan_manual"] == 16_760_000.0
+    assert node["excess_amount"] > 0
+
+    culprit = await find_excess_culprit(db_session, leaf.id, node["budget"])
+    assert culprit is not None
+    assert culprit["purchase_id"] is None, "manual_sum без items не раскладывается на закупки"
+    assert culprit["cumulative_after"] == node["plan_manual"], (
+        "find_excess_culprit обязан объяснять превышение ТОЙ ЖЕ суммой плана, "
+        "что compute_feo_plan_tree.plan_manual — иначе виновник называет "
+        "число, не совпадающее с тем, из-за которого реально сработала блокировка"
+    )

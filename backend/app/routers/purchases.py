@@ -3130,7 +3130,15 @@ async def patch_purchase_item(
     # Здесь — отдельная проверка для позиций БЕЗ привязки к заявке (созданных
     # прямо в закупке) и как страховка на случай снятия W3 в будущем.
     _old_qty = _old_price = None
-    _wants_tz_change = body.quantity is not None or body.unit_price is not None
+    # Владелец (2026-09-04): «если человек всё удалил из поля и там пусто — значит
+    # ничего нет в этом поле». Optional[...]=None НЕ отличает «поле не прислали» от
+    # «прислали null» — различаем через body.model_fields_set (тот же приём уже
+    # применён для feo_planned_item_id ниже, см. _explicit_planned_item_chosen). Не
+    # прислали → не трогаем; прислали null → явная очистка (запись NULL).
+    _qty_set = "quantity" in body.model_fields_set
+    _price_set = "unit_price" in body.model_fields_set
+    _unit_set = "unit" in body.model_fields_set
+    _wants_tz_change = _qty_set or _price_set
     if _wants_tz_change and p.status in TZ_FROZEN_STATUSES:
         if body.admin_override and current_user.role in ADMIN_ROLES:
             _old_qty, _old_price = it.quantity, it.unit_price
@@ -3273,8 +3281,8 @@ async def patch_purchase_item(
     # feo_planned_item_id/feo_category_id берём УЖЕ ФИНАЛЬНЫМИ с it (категория и
     # автозаведение применены выше).
     if _wants_tz_change and not (body.admin_override and current_user.role in ADMIN_ROLES):
-        _prospective_qty = body.quantity if body.quantity is not None else it.quantity
-        _prospective_price = body.unit_price if body.unit_price is not None else it.unit_price
+        _prospective_qty = body.quantity if _qty_set else it.quantity
+        _prospective_price = body.unit_price if _price_set else it.unit_price
         _prospective_total = (_prospective_qty or Decimal("0")) * (_prospective_price or Decimal("0"))
         # Владелец (2026-08-17, прод-инцидент РЕЕ-2026-00887): PATCH правит ОДНУ
         # позицию — «братья» (другие строки ЭТОЙ ЖЕ закупки на ту же плановую
@@ -3329,9 +3337,9 @@ async def patch_purchase_item(
         _old_item_cat_id = _cat_id_before_patch
         _old_item_total = Decimal(str(it.total_price or 0))
         _new_item_cat_id = it.feo_category_id
-        if body.quantity is not None or body.unit_price is not None:
-            _new_qty_g = body.quantity if body.quantity is not None else it.quantity
-            _new_price_g = body.unit_price if body.unit_price is not None else it.unit_price
+        if _qty_set or _price_set:
+            _new_qty_g = body.quantity if _qty_set else it.quantity
+            _new_price_g = body.unit_price if _price_set else it.unit_price
             _new_item_total = (_new_qty_g or Decimal("0")) * (_new_price_g or Decimal("0"))
         else:
             _new_item_total = _old_item_total
@@ -3363,13 +3371,13 @@ async def patch_purchase_item(
         if not name:
             raise HTTPException(422, "Название позиции не может быть пустым")
         it.item_name = name
-    if body.quantity is not None:
+    if _qty_set:
         it.quantity = body.quantity
-    if body.unit is not None:
-        it.unit = body.unit.strip() or None
-    if body.unit_price is not None:
+    if _unit_set:
+        it.unit = (body.unit.strip() or None) if body.unit is not None else None
+    if _price_set:
         it.unit_price = body.unit_price
-    if body.quantity is not None or body.unit_price is not None:
+    if _qty_set or _price_set:
         qty = it.quantity or Decimal("0")
         price = it.unit_price or Decimal("0")
         it.total_price = qty * price

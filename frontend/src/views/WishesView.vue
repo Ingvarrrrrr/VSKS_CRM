@@ -2417,7 +2417,7 @@ import { useWishLive } from '@/composables/useWishLive'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import { formatMoney } from '@/utils/formatMoney'
-import { numOrNull } from '@/utils/numberFormat'
+import { numOrNullZeroEmpty } from '@/utils/numberFormat'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
 // Task 2 (сессия 2026-08-17): переиспользуем существующий пикер контрагентов (уже
 // применяется в SubsidiesView/ContractsView; server-search по всей базе, RU ИНН выше) —
@@ -4833,11 +4833,11 @@ function buildWishPayload() {
         // кладёт '', не null), unit_price/total_price могут быть очищены через parseNumber
         // (уже даёт null) либо остаться нетронутым '' на свежесозданной строке. items —
         // Optional[list] без вложенной pydantic-схемы (см. WishCreate/WishUpdate), поэтому
-        // '' не ловится 422-м — падает ниже при записи в Numeric-колонку. numOrNull —
-        // единый хелпер (2026-09-04).
-        quantity: numOrNull((rest as any).quantity),
-        unit_price: numOrNull((rest as any).unit_price),
-        total_price: numOrNull((rest as any).total_price),
+        // '' не ловится 422-м — падает ниже при записи в Numeric-колонку. numOrNullZeroEmpty —
+        // количество/цена/сумма позиции в группе «ноль бессмыслен» (владелец, 2026-09-04).
+        quantity: numOrNullZeroEmpty((rest as any).quantity),
+        unit_price: numOrNullZeroEmpty((rest as any).unit_price),
+        total_price: numOrNullZeroEmpty((rest as any).total_price),
         // Владелец, 2026-08-19: тумблер вернули — режим снова определяет, чья категория
         // «главная». feo_per_item=false («одна на всех», общий выбор в карточке «Позиции»):
         // ВСЯ заявка получает ОДНУ категорию — построчное значение (даже если где-то осталось
@@ -5499,10 +5499,11 @@ async function convertWish() {
   convertingWishLoading.value = true
   try {
     // approved_quantity/approved_price — v-model.number; `!= null` не ловит ''
-    // после очистки поля (не null/undefined). numOrNull — единый хелпер (2026-09-04).
+    // после очистки поля (не null/undefined). numOrNullZeroEmpty — количество/цена
+    // в группе «ноль бессмыслен» (владелец, 2026-09-04).
     const body: any = {}
-    const approvedQty = numOrNull(convertForm.value.approved_quantity)
-    const approvedPrice = numOrNull(convertForm.value.approved_price)
+    const approvedQty = numOrNullZeroEmpty(convertForm.value.approved_quantity)
+    const approvedPrice = numOrNullZeroEmpty(convertForm.value.approved_price)
     if (approvedQty != null) body.approved_quantity = approvedQty
     if (approvedPrice != null) body.approved_price = approvedPrice
     if (convertForm.value.subsidy_id != null) body.subsidy_id = convertForm.value.subsidy_id

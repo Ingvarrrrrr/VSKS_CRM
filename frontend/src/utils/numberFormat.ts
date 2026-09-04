@@ -43,6 +43,19 @@ export function numOrNull(v: unknown): number | null {
 }
 
 /**
+ * Вариант numOrNull для полей, где 0 семантически неотличим от «поле не заполнено»
+ * (владелец, 2026-09-04: «если человек всё удалил из поля и там пусто — значит ничего
+ * нет в этом поле. 0 тоже значит, что ничего нет» — но ТОЛЬКО там, где ноль бессмыслен:
+ * деньги и количества — цена, сумма, кол-во, НМЦК и т.п.). '' / null / undefined / 0 → null.
+ * НЕ применять к полям, где 0 — реальное значение (ставка НДС 0%, пеня, аванс, сроки
+ * в днях, проценты, оклад) — там 0 обязан остаться числом, используй numOrNull.
+ */
+export function numOrNullZeroEmpty(v: unknown): number | null {
+  const n = numOrNull(v)
+  return n === 0 ? null : n
+}
+
+/**
  * Format a number as ru-RU rubles with 2 decimals. Null / NaN → '—'.
  * Thin wrapper around formatMoney to keep the historical '—' behaviour and
  * the explicit ' ₽' suffix used by the item editor.

@@ -1022,7 +1022,7 @@ import {
   freshnessIcon,
   freshnessTooltip,
 } from '@/composables/usePriceFreshness'
-import { numOrNull } from '@/utils/numberFormat'
+import { numOrNullZeroEmpty } from '@/utils/numberFormat'
 
 interface PriceLink { url: string; price: number | null }
 interface Product {
@@ -1487,11 +1487,12 @@ async function save() {
     // price/link.price — v-model.number. `form.price || null` попутно ловит '',
     // но и валидный 0 тоже схлопывает в null; `l.price ?? null` вообще не ловит ''
     // (не null/undefined) — та самая ловушка, найденная владельцем 2026-09-04.
-    // numOrNull — единый хелпер: '' → null, 0 остаётся 0.
+    // numOrNullZeroEmpty — цена товара в группе «ноль бессмыслен» (владелец,
+    // 2026-09-04): '' и 0 обе → null.
     const payload = {
       ...form,
-      price: numOrNull(form.price),
-      price_links: form.priceLinks.filter(l => l.url.trim()).map(l => ({ url: l.url, price: numOrNull(l.price) })),
+      price: numOrNullZeroEmpty(form.price),
+      price_links: form.priceLinks.filter(l => l.url.trim()).map(l => ({ url: l.url, price: numOrNullZeroEmpty(l.price) })),
     }
     let savedId: number
     if (editingId.value) {

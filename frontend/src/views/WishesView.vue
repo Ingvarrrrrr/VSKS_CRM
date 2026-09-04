@@ -2178,6 +2178,12 @@
     />
 
     <!-- ── KANBAN DISTRIBUTION DIALOG (Phase 13) ── -->
+    <!-- Владелец (2026-09-04, заявка №55): readonly раньше стоял на статусе
+         'approved', хотя сервер (POST /approve-distribution, PATCH /items/{id})
+         на этом статусе распределение ещё разрешает — кнопка "Распределить и
+         одобрить" была, а перетащить карточку нельзя. Заблокировано распределение
+         по-настоящему только когда заявка УЖЕ распределена ('converted' — закупки
+         созданы), гейт приведён в соответствие с бэкендом. -->
     <v-dialog v-model="kanbanDialog" max-width="1200" scrollable :fullscreen="mobile">
       <v-card>
         <v-card-title class="pa-4 pb-2">
@@ -2192,7 +2198,7 @@
             v-if="kanbanWish"
             :wish-id="kanbanWish.id"
             :items="kanbanItems"
-            :readonly="kanbanWish.status === 'approved'"
+            :readonly="kanbanWish.status === 'converted'"
             @approved="onKanbanApproved"
             @cancel="kanbanDialog = false"
             @error="(m) => showSnack(m, 'error')"

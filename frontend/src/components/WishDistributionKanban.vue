@@ -42,7 +42,18 @@
       </div>
     </div>
 
-    <div v-if="!readonly" class="wish-kanban-actions mt-4 d-flex ga-2 justify-end">
+    <div v-if="!readonly" class="wish-kanban-actions mt-4 d-flex ga-2 align-center">
+      <v-btn
+        variant="outlined"
+        color="primary"
+        prepend-icon="mdi-arrow-collapse-horizontal"
+        :loading="merging"
+        :disabled="merging || totalItems === 0 || nonEmptyColumnCount <= 1"
+        @click="onMergeAll"
+      >
+        Объединить всё в одну закупку
+      </v-btn>
+      <v-spacer />
       <v-btn
         variant="tonal"
         color="default"
@@ -71,7 +82,7 @@
       class="mt-3"
       icon="mdi-check-decagram"
     >
-      Заявка одобрена — распределение зафиксировано.
+      Заявка уже распределена — состав закупок зафиксирован, изменить нельзя.
     </v-alert>
   </div>
 </template>
@@ -176,6 +187,54 @@ async function onDragEnd(ev: any, colKey: string) {
   } catch (e: any) {
     item.target_column_key = prev ?? null
     emit('error', e?.message || 'Не удалось сохранить позицию')
+  }
+}
+
+// Владелец (2026-09-04, заявка №55): «покупаться-то планируется всё в одной
+// фирме — нужна кнопка, которая при распределении все товары в одну закупку
+// объединяет». Распределение группирует позиции ПО КОЛОНКАМ (target_column_key),
+// одна закупка на непустую колонку (см. _distribute_wish_to_purchases в
+// wishes.py) — значит «объединить» = «свести все позиции в одну колонку».
+// Целевая колонка — первая НЕПУСТАЯ настоящая категория (не «Не определено»):
+// это предсказуемо (совпадает с тем, что пользователь видит крайним слева) и не
+// прячет результат в «Не определено» без надобности. Отдельного серверного
+// режима нет и не нужен: каждая позиция уходит тем же PATCH /items/{id}, что и
+// обычное перетаскивание, поэтому действие полностью обратимо руками (перетащить
+// назад) и ничего не отправляет на сервер сверх обычных перемещений.
+function pickMergeTargetKey(): string | null {
+  const nonEmpty = columns.value.filter(c => c.items.length > 0)
+  if (nonEmpty.length === 0) return null
+  const realCategory = nonEmpty.find(c => c.key !== UNCAT_KEY)
+  return (realCategory || nonEmpty[0]).key
+}
+
+const merging = ref(false)
+async function onMergeAll() {
+  if (props.readonly || merging.value) return
+  const targetKey = pickMergeTargetKey()
+  if (!targetKey) return
+  merging.value = true
+  try {
+    const toMove = props.items.filter(it => resolveKey(it) !== targetKey)
+    let failCount = 0
+    for (const item of toMove) {
+      const prev = item.target_column_key
+      item.target_column_key = targetKey
+      try {
+        await apiFetch(`/wishes/${props.wishId}/items/${item.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ target_column_key: targetKey }),
+        })
+      } catch (e: any) {
+        item.target_column_key = prev ?? null
+        failCount += 1
+      }
+    }
+    if (failCount > 0) {
+      emit('error', `Не удалось объединить ${failCount} ${failCount === 1 ? 'позицию' : 'позиций'}`)
+    }
+  } finally {
+    merging.value = false
   }
 }
 

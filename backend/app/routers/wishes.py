@@ -3174,12 +3174,20 @@ async def patch_wish_item(
 ):
     """D-04: Drag-drop target update. Scoped to wish — cannot move items between wishes.
 
-    Returns 409 if wish is approved (read-only).
+    Returns 409 if wish уже распределена (converted) — read-only.
     Returns 404 if item does not belong to wish_id.
+
+    Владелец (2026-09-04, заявка №55): гейт раньше блокировал перенос уже на статусе
+    'approved', хотя /approve-distribution (ниже) на этом статусе распределение ещё
+    РАЗРЕШАЕТ — пользователь видел кнопку «Распределить и одобрить», но перетащить
+    ничего не мог (409 «уже одобрена»). Статус, после которого распределение
+    зафиксировано и правда нельзя менять — 'converted' (создались закупки), поэтому
+    гейт здесь приведён в соответствие с approve_distribution ниже: draft/submitted/
+    approved — редактируемо, converted — только чтение.
     """
     wish = await _load_wish(wish_id, db)
-    if not _is_saas(current_user) and wish.status not in ("draft", "submitted"):
-        raise HTTPException(status_code=409, detail="Заявка уже одобрена — редактирование запрещено")
+    if not _is_saas(current_user) and wish.status not in ("draft", "submitted", "approved"):
+        raise HTTPException(status_code=409, detail="Заявка уже распределена — редактирование запрещено")
     # Find item BELONGING TO THIS WISH
     item = next((i for i in wish.items if i.id == item_id), None)
     if item is None:

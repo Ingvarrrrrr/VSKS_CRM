@@ -3513,6 +3513,25 @@ function showSnack(text: string, color: ToastType = 'success', opts?: { duration
   toast.addToast(text, color, opts)
 }
 
+// Владелец (2026-09-04, п.5 задачи заявки №54): «уведомления от предыдущей заявки
+// остаются на экране и читаются как отчёт о текущей» — успех «Заявка согласована и
+// перенесена в закупку РЕЕ-2026-00906» (заявка №51) провисел рядом с ошибкой по
+// уже ОТКРЫТОЙ заявке №54 и создал впечатление, что это про неё. Тосты — общий
+// модульный стек (composables/useToast.ts), рассчитанный на то, что результат
+// действия читают, поэтому он НЕ исчезает сам (duration=0) — трогать сам механизм
+// не будем (общий для всего приложения, риск задеть другие экраны). Вместо этого
+// локально для WishesView: при открытии ЛЮБОЙ карточки заявки (в т.ч. повторном
+// открытии той же) убираем уже прочитанные/непрочитанные success-тосты — они
+// однозначно относятся к ДРУГОМУ, уже завершённому действию, а не к тому, что
+// пользователь сейчас видит в открывшейся карточке. Ошибки/предупреждения не
+// трогаем — они могли быть от действия, которое пользователь как раз хочет
+// разобрать, открыв заявку.
+function clearStaleSuccessToasts() {
+  for (const t of [...toast.toasts.value]) {
+    if (t.type === 'success') toast.removeToast(t.id)
+  }
+}
+
 // Предупреждение о превышении ФЭО (задача владельца 2026-08-12: «согласовали —
 // всё равно конвертировать в закупку, но заметно показать, из-за чего
 // превышение»). Бэкенд отдаёт его ключом excess_warnings в ответе эндпоинтов
@@ -3865,6 +3884,7 @@ function resetForm() {
 }
 
 function openCreateDialog() {
+  clearStaleSuccessToasts()
   editingWishId.value = null
   editingWish.value = null
   wishMembers.value = []
@@ -3878,6 +3898,7 @@ function openCreateDialog() {
 }
 
 async function openEditDialog(wish: Wish) {
+  clearStaleSuccessToasts()
   undoRedoWish.clear() // Phase 31-07: fresh stack per dialog open
   editingWishId.value = wish.id
   editingWish.value = wish
@@ -4164,6 +4185,65 @@ const feoAutosaveApplicable = computed(() =>
   !!editingWishId.value && ['submitted', 'approved'].includes((wishForm.value as any).status)
 )
 
+// Заявка №54 (владелец, 2026-09-04, дословно): «какого хуя ... автосохранение не
+// удалось, с хуяли оно не удалось, если я везде поменял категорию ФЭО» — согласующий
+// поменял категорию ФЭО в панели «Категория ФЭО (согласующий)» (wishFeoSelected), но
+// не нажал «Сохранить ФЭО». wishForm.value.feo_category_id — категория, реально
+// подтверждённая сервером (обновляется ТОЛЬКО после успешного PATCH /execution, см.
+// applyFeoExecutionSuccess ниже и openEditDialog). Пока wishFeoSelected от неё
+// отличается — шапка «грязная»: сервер всё ещё думает, что категория старая, а
+// построчные правки (feoExecutionItemsPayload ниже), отправленные БЕЗ неё, будут
+// сверяться с категорией позиции, которую сервер тоже не обновил, и 409-ить.
+// Только для режима «одна категория на всех» — в feo_per_item=true у шапки вообще
+// нет роли источника категории (см. buildWishPayload).
+const wishFeoHeaderDirty = computed(() =>
+  !!editingWishId.value &&
+  !wishForm.value.feo_per_item &&
+  (wishFeoSelected.value ?? null) !== (wishForm.value.feo_category_id ?? null)
+)
+
+// Единая формула категории позиции для PATCH /execution — ТА ЖЕ, что buildWishPayload
+// использует для полного PUT-сохранения (см. feo_category_id: wishForm.value.feo_per_item
+// ? ... : (feo ?? null) там): в режиме «одна на всех» эффективная категория КАЖДОЙ
+// позиции — категория шапки (wishFeoSelected), а не собственное (возможно устаревшее)
+// поле позиции — оно в этом режиме вообще не должно быть источником истины (см.
+// комментарий у _effectiveFeoCategoryId в PurchaseItemsEditor.vue). Без этой единой
+// точки построчный автосейв и кнопка «Сохранить ФЭО» слали РАЗНОЕ значение категории
+// позиции, хотя категория заявки к этому моменту уже могла обновиться — и итог
+// расходился с тем, что видит пользователь на экране (заявка №54).
+function feoExecutionItemsPayload(): { id: number; feo_category_id: number | null; feo_planned_item_id: number | null }[] {
+  return wishItemsFeoDirtyList.value.map(it => ({
+    id: it.id,
+    feo_category_id: wishForm.value.feo_per_item ? it.feo_category_id : (wishFeoSelected.value ?? null),
+    feo_planned_item_id: it.feo_planned_item_id,
+  }))
+}
+
+// Общий постобработчик успешного PATCH /execution — держит wishForm.value.feo_category_id
+// (снимок «что реально на сервере», см. wishFeoHeaderDirty выше) синхронным с тем, что
+// реально ушло в body.feo_category_id. Без этого поле оставалось замороженным на значении
+// с момента открытия карточки (openEditDialog) НАВСЕГДА — ни ручное «Сохранить ФЭО», ни
+// автосейв его не обновляли, и wishFeoHeaderDirty видел бы «грязную» шапку даже сразу
+// после успешного сохранения.
+function applyFeoExecutionSuccess(sentFeoCategoryId: number | null | undefined) {
+  if (sentFeoCategoryId != null) wishForm.value.feo_category_id = sentFeoCategoryId
+  snapshotWishItemsFeo()
+  wishFormSavedSnapshot.value = wishPayloadSnapshotJson()
+}
+
+// Человекочитаемое сообщение об ошибке PATCH /execution. Пункт 3 задачи 2026-09-04
+// (заявка №54): само по себе «категория А, а плановая категория Б» верно описывает
+// сервер, но не говорит пользователю, что делать — теперь явно называем, что смена
+// категории НЕ сохранилась, и что нажать.
+function describeFeoExecutionError(e: any, headerWasDirty: boolean): string {
+  const msg = e?.payload?.message ?? e?.detail ?? e?.message ?? 'не удалось сохранить'
+  const status = e?.status != null ? ` (HTTP ${e.status})` : ''
+  const hint = headerWasDirty
+    ? ' Смена категории ФЭО заявки НЕ сохранена — категория позиции и выбранная категория заявки разошлись. Проверьте категорию/плановую позицию у товара и нажмите «Сохранить ФЭО» ещё раз.'
+    : ''
+  return `${msg}${status}.${hint}`
+}
+
 function scheduleFeoAutosave() {
   feoAutosavePending.value = true
   if (feoAutosaveTimer) clearTimeout(feoAutosaveTimer)
@@ -4214,31 +4294,39 @@ async function runFeoAutosave(): Promise<boolean> {
   // flushFeoAutosave (п. задачи) не блокировал вызывающих там, где автосейв неприменим.
   if (!feoAutosaveApplicable.value) return true
   if (!editingWishId.value || wishItemsFeoDirtyList.value.length === 0) return true
-  const items = wishItemsFeoDirtyList.value
+  const items = feoExecutionItemsPayload()
+  // Заявка №54 (п.1 задачи 2026-09-04): автосейв построчных правок — единственный
+  // МОЛЧАЛИВЫЙ путь на сервер (кнопка «Сохранить ФЭО» рядом требует ручного клика).
+  // Если к моменту срабатывания шапочная категория ФЭО ещё не сохранена
+  // (wishFeoHeaderDirty), включаем её в ТОТ ЖЕ PATCH — иначе позиции уедут со
+  // старой категорией заявки на сервере и 409-нут против уже выбранной пользователем
+  // (см. описание бага выше и describeFeoExecutionError). Ручная кнопка «Сохранить
+  // ФЭО» остаётся — это не второй путь сохранения, а тот же самый apiFetch-вызов,
+  // просто включённый в тело автосейва вместо отдельного клика.
+  const headerDirty = wishFeoHeaderDirty.value
+  const body: any = { items }
+  if (headerDirty) body.feo_category_id = wishFeoSelected.value
   feoAutosaveSaving.value = true
   const p = (async (): Promise<boolean> => {
     try {
       await apiFetch(`/wishes/${editingWishId.value}/execution`, {
         method: 'PATCH',
-        body: JSON.stringify({ items }),
+        body: JSON.stringify(body),
         suppressErrorDialog: true,
       })
-      snapshotWishItemsFeo()
       // Дефект 1 (владелец, 2026-08-20): buildWishPayload() включает feo_category_id/
       // feo_planned_item_id позиций — без обновления снимка здесь decideApprover/
       // approveWish видели бы ВЕЧНЫЙ ложный diff со снимком, взятым при открытии
       // карточки (wishFormSavedSnapshot обновлялся раньше только после PUT), и звали
       // saveWish там, где он не нужен и не должен вызываться.
-      wishFormSavedSnapshot.value = wishPayloadSnapshotJson()
+      applyFeoExecutionSuccess(headerDirty ? body.feo_category_id : undefined)
       // Тихое подтверждение — короткий самоисчезающий тост (composables/useToast.ts
       // явно разрешает duration только для фонового автосейва, не для результата
       // ручного действия пользователя).
-      showSnack('ФЭО сохранено', 'success', { duration: 2000 })
+      showSnack(headerDirty ? 'ФЭО заявки и позиций сохранено' : 'ФЭО сохранено', 'success', { duration: 2000 })
       return true
     } catch (e: any) {
-      const msg = e?.payload?.message ?? e?.detail ?? e?.message ?? 'не удалось сохранить'
-      const status = e?.status != null ? ` (HTTP ${e.status})` : ''
-      showSnack(`Автосохранение ФЭО не удалось${status}: ${msg}`, 'error')
+      showSnack(`Автосохранение ФЭО не удалось: ${describeFeoExecutionError(e, headerDirty)}`, 'error')
       return false
     } finally {
       feoAutosaveSaving.value = false
@@ -4315,20 +4403,24 @@ async function saveExecution() {
       assigned_to: wishForm.value.assigned_to,
     }
     if (wishItemsFeoDirtyList.value.length > 0) {
-      body.items = wishItemsFeoDirtyList.value
+      // Заявка №54 (п.4 задачи 2026-09-04): та же формула категории позиции, что и
+      // автосейв (feoExecutionItemsPayload) — раньше кнопка слала item.feo_category_id
+      // «как есть» (возможно устаревшее в режиме «одна категория на всех»), и ручное
+      // «Сохранить ФЭО» могло 409-ить по той же причине, что и автосейв.
+      body.items = feoExecutionItemsPayload()
     }
     await apiFetch(`/wishes/${editingWishId.value}/execution`, {
       method: 'PATCH',
       body: JSON.stringify(body),
     })
     showSnack('Сохранено: исполнитель / срок / мероприятие / ФЭО / получатель')
-    snapshotWishItemsFeo()
     // Дефект 1 (владелец, 2026-08-20): см. тот же комментарий в runFeoAutosave — без
-    // этого diff со снимком «как загружено» оставался бы вечным и ложным.
-    wishFormSavedSnapshot.value = wishPayloadSnapshotJson()
+    // этого diff со снимком «как загружено» оставался бы вечным и ложным. Плюс держит
+    // wishForm.value.feo_category_id синхронным с сервером (wishFeoHeaderDirty выше).
+    applyFeoExecutionSuccess(body.feo_category_id)
     await reloadActiveTab()
   } catch (e: any) {
-    showSnack(`Ошибка: ${e?.payload?.message ?? e?.detail ?? e?.message ?? 'не удалось сохранить'}`, 'error')
+    showSnack(`Ошибка: ${describeFeoExecutionError(e, wishFeoHeaderDirty.value)}`, 'error')
   } finally {
     savingExecution.value = false
   }

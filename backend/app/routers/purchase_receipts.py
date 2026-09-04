@@ -199,6 +199,43 @@ def _items_match_score(item_a, item_b) -> int:
     return score
 
 
+async def _raise_receipt_duplicate_detail(
+    other_purchase_id: int,
+    current_purchase_id: int,
+    receipt_id,
+    db: AsyncSession,
+):
+    """Поднять structured 409: чек уже есть в другом документе.
+
+    Формулировка зависит от того, авансовый ли это отчёт (Purchase.purchase_method
+    == 'advance') — раньше сообщение всегда говорило «закупка», из-за чего
+    пользователь пытался найти авансовый отчёт в реестре закупок. Признак
+    is_advance отдаётся в detail, чтобы фронт не угадывал вид документа по тексту.
+    """
+    other = await db.get(Purchase, other_purchase_id)
+    ref = (other and (other.registry_number or other.purchase_number)) or f"#{other_purchase_id}"
+    is_advance = bool(other and other.purchase_method == 'advance')
+    same = other_purchase_id == current_purchase_id
+    if same:
+        message = (
+            "Этот чек уже добавлен в текущий авансовый отчёт." if is_advance
+            else "Этот чек уже добавлен в текущую закупку."
+        )
+    elif is_advance:
+        message = f"Такой авансовый отчёт уже есть — № {ref}. Этот чек уже был загружен в него."
+    else:
+        message = f"Чек был загружен ранее в закупку № {ref}."
+    raise HTTPException(409, detail={
+        "code": "RECEIPT_DUPLICATE",
+        "message": message,
+        "purchase_id": other_purchase_id,
+        "purchase_ref": ref,
+        "receipt_id": receipt_id,
+        "same_purchase": same,
+        "is_advance": is_advance,
+    })
+
+
 async def _create_receipt_with_items(
     purchase_id: int,
     data: dict,
@@ -225,12 +262,7 @@ async def _create_receipt_with_items(
         if existing:
             if existing.purchase_id == purchase_id:
                 return existing
-            other = await db.get(Purchase, existing.purchase_id)
-            ref = (other and (other.registry_number or other.purchase_number)) or f"#{existing.purchase_id}"
-            raise HTTPException(
-                409,
-                f"Этот чек уже привязан к авансовому отчёту {ref}. Добавьте другой чек.",
-            )
+            await _raise_receipt_duplicate_detail(existing.purchase_id, purchase_id, existing.id, db)
 
     # Soft duplicate check для ручного ввода (без фискальной тройки).
     # Связка (seller_inn + receipt_datetime + total_sum) — если уже есть
@@ -246,12 +278,7 @@ async def _create_receipt_with_items(
         )
         dup = (await db.execute(dup_q)).scalar_one_or_none()
         if dup:
-            other = await db.get(Purchase, dup.purchase_id)
-            ref = (other and (other.registry_number or other.purchase_number)) or f"#{dup.purchase_id}"
-            raise HTTPException(
-                409,
-                f"Чек с такой же датой, ИНН продавца и суммой уже заведён в авансовом отчёте {ref}.",
-            )
+            await _raise_receipt_duplicate_detail(dup.purchase_id, purchase_id, dup.id, db)
 
     items_data = data.pop('items', None) or []
 
@@ -1282,7 +1309,7 @@ async def import_receipt_json(
         payload = [payload]
 
     results: List[PurchaseReceipt] = []
-    conflicts: List[str] = []
+    conflicts: List = []
     for entry in payload:
         if not isinstance(entry, dict):
             continue
@@ -1294,15 +1321,17 @@ async def import_receipt_json(
             results.append(r)
         except HTTPException as he:
             # Conflict (409) = receipt linked to another purchase — surface to user.
+            # detail — структурированный dict (code RECEIPT_DUPLICATE, is_advance, ...),
+            # его нельзя str()-ить: фронт ждёт объект, а не Python repr словаря.
             if he.status_code == 409:
-                conflicts.append(str(he.detail))
+                conflicts.append(he.detail)
             # Other HTTP errors and malformed entries are skipped.
             continue
         except Exception:
             continue
     if not results and conflicts:
         # All entries conflicted — bubble first message up so the user sees it.
-        raise HTTPException(409, conflicts[0])
+        raise HTTPException(409, detail=conflicts[0])
     return results
 
 
@@ -1425,22 +1454,11 @@ async def import_receipt_qr_fetch(
         return None
 
     async def _raise_receipt_duplicate(existing_row):
-        """Поднять structured 409 со ссылкой на закупку, где этот чек уже есть."""
-        other = await db.get(Purchase, existing_row.purchase_id)
-        ref = (other and (other.registry_number or other.purchase_number)) or f"#{existing_row.purchase_id}"
-        same = existing_row.purchase_id == purchase_id
-        if same:
-            message = "Этот чек уже добавлен в текущую закупку."
-        else:
-            message = f"Чек был загружен ранее в закупку № {ref}."
-        raise HTTPException(409, detail={
-            "code": "RECEIPT_DUPLICATE",
-            "message": message,
-            "purchase_id": existing_row.purchase_id,
-            "purchase_ref": ref,
-            "receipt_id": existing_row.id,
-            "same_purchase": same,
-        })
+        """Поднять structured 409 со ссылкой на документ (закупку/авансовый отчёт),
+        где этот чек уже есть. Формулировка — в общем хелпере
+        _raise_receipt_duplicate_detail, чтобы все точки входа (QR, JSON-импорт,
+        ручной ввод) говорили одно и то же."""
+        await _raise_receipt_duplicate_detail(existing_row.purchase_id, purchase_id, existing_row.id, db)
 
     pre_existing = await _find_existing_by_qr() or await _find_existing_loose()
     if pre_existing:

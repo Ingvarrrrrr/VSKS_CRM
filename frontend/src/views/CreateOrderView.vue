@@ -8197,6 +8197,21 @@ function consumePostSaveAction() {
   else if (pending === 'manual_receipt') openManualReceiptDialog()
 }
 
+// Дубликат чека может лежать в обычной закупке или в авансовом отчёте — это
+// разные документы с разными карточками. Бэкенд отдаёт признак is_advance в
+// detail (RECEIPT_DUPLICATE), чтобы не угадывать вид документа по тексту.
+function receiptDuplicateOpenAction(det: any) {
+  const ref = det.purchase_ref || `#${det.purchase_id}`
+  const pid = det.purchase_id
+  const isAdvance = !!det.is_advance
+  const path = isAdvance ? `/advance-reports/${pid}/edit` : `/orders/${pid}`
+  const fallbackMessage = isAdvance
+    ? `Такой авансовый отчёт уже есть — № ${ref}. Этот чек уже был загружен в него.`
+    : `Чек был загружен ранее в закупку № ${ref}.`
+  const actionText = isAdvance ? `Открыть авансовый отчёт № ${ref}` : `Открыть закупку № ${ref}`
+  return { fallbackMessage, actionText, onAction: () => window.open(path, '_blank') }
+}
+
 async function onQrDetected(qr: string) {
   qrScanShow.value = false
   if (!purchaseId.value) {
@@ -8225,13 +8240,8 @@ async function onQrDetected(qr: string) {
     const code = p?.code
     const det = (p?.details && typeof p.details === 'object') ? p.details : null
     if (code === 'RECEIPT_DUPLICATE' && det?.purchase_id) {
-      const ref = det.purchase_ref || `#${det.purchase_id}`
-      const pid = det.purchase_id
-      showSnack(
-        p.message || `Чек был загружен ранее в закупку № ${ref}.`,
-        'warning',
-        { actionText: `Открыть закупку № ${ref}`, onAction: () => window.open(`/orders/${pid}`, '_blank') },
-      )
+      const { fallbackMessage, actionText, onAction } = receiptDuplicateOpenAction(det)
+      showSnack(p.message || fallbackMessage, 'warning', { actionText, onAction })
     } else if (code === 'FNS_RATE_LIMIT') {
       showSnack(p?.message || 'ФНС временно ограничила запросы', 'warning')
     } else {
@@ -8282,13 +8292,8 @@ async function onJsonReceiptUpload(e: Event) {
       const code2 = p2?.code
       const det2 = (p2?.details && typeof p2.details === 'object') ? p2.details : null
       if (code2 === 'RECEIPT_DUPLICATE' && det2?.purchase_id) {
-        const ref2 = det2.purchase_ref || `#${det2.purchase_id}`
-        const pid2 = det2.purchase_id
-        showSnack(
-          p2.message || `Чек был загружен ранее в закупку № ${ref2}.`,
-          'warning',
-          { actionText: `Открыть закупку № ${ref2}`, onAction: () => window.open(`/orders/${pid2}`, '_blank') },
-        )
+        const { fallbackMessage, actionText, onAction } = receiptDuplicateOpenAction(det2)
+        showSnack(p2.message || fallbackMessage, 'warning', { actionText, onAction })
       } else if (code2 === 'FNS_RATE_LIMIT') {
         showSnack(p2?.message || 'ФНС временно ограничила запросы', 'warning')
       } else {

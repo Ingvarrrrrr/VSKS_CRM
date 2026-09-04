@@ -293,7 +293,7 @@
         <v-card-text>
           <v-row>
             <v-col cols="12" md="3">
-              <div :class="entityChanges.isFieldUnseen('subsidy_id') ? 'field-changed' : ''"
+              <div id="pub-target-subsidy" :class="entityChanges.isFieldUnseen('subsidy_id') ? 'field-changed' : ''"
                 @click="entityChanges.dismissField('subsidy_id')">
                 <v-select v-model="form.subsidy_id" :items="subsidies" item-title="name" item-value="id"
                   :label="formMode === 'advance_report' ? 'Субсидия' : 'Субсидия *'" variant="outlined" density="compact"
@@ -4554,6 +4554,10 @@ interface OrderItem {
   // UI-only: not sent to backend
   _selectedProduct?: Product | null
   _photo_url?: string
+  // Стабильный id строки, проставляется PurchaseItemsEditor (см. EditorItem._uid) —
+  // используется guideArrowTo('item:'+uid) чтобы стрелка вела к КОНКРЕТНОЙ позиции,
+  // а не к блоку позиций целиком (владелец, 2026-09-04: «я не понимаю, что надо сделать»).
+  _uid?: string | number
   _description?: string
   _description_44fz?: string
   // Владелец, 2026-08-29: штамп даты/источника актуализации цены — см. usePriceFreshness.ts.
@@ -5940,6 +5944,11 @@ async function guideArrowTo(target: string) {
   clearGuideArrow()
 
   const IN_DIALOG_TARGETS = new Set(['auction-date', 'auction-bet', 'okpd2'])
+  // Наведение на КОНКРЕТНУЮ строку позиций: target вида 'item:<uid>'. id='item-row-<uid>'
+  // уже проставлен на карточку/строку во всех трёх видах (ItemsCardsView/ItemsTableFlat/
+  // ItemsTableStages, см. эти файлы) — тот же приём, что highlightMissingCategoryForPlan
+  // в PurchaseItemsEditor.vue. Работает и на мобильных карточках, и в десктоп-таблице.
+  const itemUid = target.startsWith('item:') ? target.slice(5) : null
 
   // Для out-of-dialog полей: закрыть диалог сначала
   if (!IN_DIALOG_TARGETS.has(target)) {
@@ -5949,7 +5958,9 @@ async function guideArrowTo(target: string) {
 
   await nextTick()
 
-  const el = document.getElementById('pub-target-' + target)
+  const el = itemUid != null
+    ? document.getElementById('item-row-' + itemUid)
+    : document.getElementById('pub-target-' + target)
   if (!el) return
 
   // Старт: правый верхний угол вьюпорта (где снэкбар)
@@ -5964,7 +5975,14 @@ async function guideArrowTo(target: string) {
   el.scrollIntoView({ behavior: 'smooth', block: 'center' })
 
   // Также выставить glow
-  if (AUCTION_TARGETS.has(target)) {
+  if (itemUid != null) {
+    // Строка позиций не обёрнута pub-glow div'ом (живёт в дочернем компоненте) —
+    // подсвечиваем напрямую тем же глобальным pulse-классом, что и
+    // highlightMissingCategoryForPlan в PurchaseItemsEditor.vue (.plan-bulk-row-pulse,
+    // стиль объявлен там же, global, не scoped).
+    el.classList.add('plan-bulk-row-pulse')
+    setTimeout(() => el.classList.remove('plan-bulk-row-pulse'), 3000)
+  } else if (AUCTION_TARGETS.has(target)) {
     if (_auctionPointerTimer) clearTimeout(_auctionPointerTimer)
     auctionPointerTarget.value = target
   } else if (target === 'okpd2') {
@@ -8099,7 +8117,11 @@ const POST_SAVE_ACTION_KEY = 'advance_report_post_save_action'
 async function ensureSavedThen(action: 'scan_qr' | 'upload_json' | 'manual_receipt') {
   if (purchaseId.value) return true
   if (!form.subsidy_id && formMode.value !== 'advance_report') {
-    showSnack('Сначала выберите субсидию (вверху страницы)', 'warning')
+    showSnack('Сначала выберите субсидию (вверху страницы)', 'warning', {
+      actionText: 'Показать поле',
+      onAction: () => guideArrowTo('subsidy'),
+    })
+    guideArrowTo('subsidy')
     return false
   }
   sessionStorage.setItem(POST_SAVE_ACTION_KEY, action)
@@ -8459,7 +8481,15 @@ const save = async () => {
   if (form.item_type === 'mixed') {
     const missingType = items.value.filter(i => i.item_name?.trim() && !i.item_type)
     if (missingType.length) {
-      showSnack(`Укажите тип для ${missingType.length} позиции(й) перед сохранением`, 'error')
+      // Владелец (2026-09-04): «стрелка должна идти к полям» — ведём к КОНКРЕТНОЙ
+      // первой незаполненной позиции (item-row-<uid>), не к блоку целиком.
+      const firstUid = missingType[0]._uid
+      showSnack(`Укажите тип для ${missingType.length} позиции(й) перед сохранением`, 'error', {
+        actionText: 'Показать позицию',
+        onAction: () => guideArrowTo(firstUid != null ? 'item:' + firstUid : 'items'),
+      })
+      await nextTick()
+      guideArrowTo(firstUid != null ? 'item:' + firstUid : 'items')
       return
     }
   }
@@ -8468,10 +8498,19 @@ const save = async () => {
     // каждый раз чуть отличаются, форсировать каталог нельзя (решение 2026-07-06).
     const unconfirmed = items.value.filter(i => i.item_name?.trim() && i.match_confirmed === false)
     if (unconfirmed.length) {
+      // Владелец (2026-09-04): именно эта проверка молчала «куда смотреть» — ведём
+      // к первой неподтверждённой позиции из чека.
+      const firstUid = unconfirmed[0]._uid
       showSnack(
         `Подтвердите ${unconfirmed.length} позицию(й) из чека: товар, тип и категория должны быть проверены вручную.`,
         'error',
+        {
+          actionText: 'Показать позицию',
+          onAction: () => guideArrowTo(firstUid != null ? 'item:' + firstUid : 'items'),
+        },
       )
+      await nextTick()
+      guideArrowTo(firstUid != null ? 'item:' + firstUid : 'items')
       return
     }
   }
@@ -8492,10 +8531,17 @@ const doSave = async (adminOverride: boolean) => {
   if (form.feo_per_item) {
     const missingCount = itemsEditorRef.value?.missingFeoRowsCount?.() ?? 0
     if (missingCount > 0) {
+      const firstUid = itemsEditorRef.value?.firstMissingFeoRowUid?.() ?? null
       showSnack(
         `Не сохранено: у ${missingCount} ${missingCount === 1 ? 'позиции' : 'позиций'} не указана ФЭО позиция. Включите режим «Одинаковый на всю закупку» или укажите ФЭО для каждой.`,
         'error',
+        {
+          actionText: 'Показать позицию',
+          onAction: () => guideArrowTo(firstUid != null ? 'item:' + firstUid : 'items'),
+        },
       )
+      await nextTick()
+      guideArrowTo(firstUid != null ? 'item:' + firstUid : 'items')
       return
     }
   }

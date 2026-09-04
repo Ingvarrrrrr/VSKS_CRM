@@ -4342,6 +4342,14 @@ defineExpose({
     if (!props.feoPerItem) return 0
     return localItems.value.filter(it => !it.feo_category_id).length
   },
+  // Владелец (2026-09-04): «стрелка должна вести к полю» — родителю (CreateOrderView)
+  // нужен _uid первой проблемной строки, чтобы guideArrowTo('item:'+uid) навёлся на
+  // КОНКРЕТНУЮ позицию (id="item-row-<uid>" уже проставлен в ItemsTableFlat/
+  // ItemsCardsView/ItemsTableStages), а не на весь блок позиций.
+  firstMissingFeoRowUid() {
+    if (!props.feoPerItem) return null
+    return localItems.value.find(it => !it.feo_category_id)?._uid ?? null
+  },
 })
 </script>
 

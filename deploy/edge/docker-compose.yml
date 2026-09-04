@@ -1,0 +1,74 @@
+# EDGE — отдельный compose-проект, установлен на сервере в /opt/edge-nginx/
+# (вне git-дерева VSKS, install.sh копирует сюда файлы из deploy/edge/ этого
+# репозитория при каждом запуске). Держит 0.0.0.0:80/443 и TLS для ВСЕХ
+# доменов сервера. autodeploy.sh VSKS НИКОГДА не запускается здесь и не
+# видит этот каталог — они физически не пересекаются (/opt/edge-nginx vs
+# /opt/vsks-crm). Правится ТОЛЬКО через install.sh (см. install.sh и
+# README.md в этой же папке).
+#
+# ⚠️ Компоуз указывает project name явно (`name: edge`), чтобы сеть и
+# контейнер имели стабильные, предсказуемые имена (edge_edge-nginx_1 /
+# edge-nginx-... в зависимости от версии compose) независимо от того, из
+# какого каталога он запущен — install.sh полагается на конкретное имя
+# контейнера (edge-nginx) для healthcheck/логов/rollback.
+name: edge
+
+services:
+  edge-nginx:
+    image: nginx:alpine
+    container_name: edge-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./secrets:/etc/nginx/secrets:ro
+      # Только на чтение — сертификат продлевает certbot ВНУТРИ compose
+      # VSKS (/opt/vsks-crm, сервис certbot, НЕ переехал с этим разрезом,
+      # см. README.md «Известные риски»); edge лишь читает те же файлы на
+      # хосте и периодически перечитывает конфиг (command ниже), чтобы
+      # подхватить обновление после renew.
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    # host.docker.internal — для соседей на хостовых портах (GALA:8079,
+    # uniform:8090, sunduk:8081, sizo:8091, nemakh:6080, trading:8002,
+    # halliem:4100 — все, как раньше проксировал единый nginx VSKS).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Вторая сеть — ТОЛЬКО чтобы резолвить n8n/adminer по имени сервиса
+    # (см. обоснование в nginx.conf). Эта сеть должна уже существовать —
+    # её создаёт `docker compose up` в /opt/vsks-crm (проект `vsks-crm`,
+    # сервисы n8n/adminer/nginx и т.д. в нём же). install.sh проверяет
+    # существование сети ПЕРЕД стартом edge и явно падает с понятной
+    # ошибкой, если VSKS ещё ни разу не поднимался.
+    networks:
+      - default
+      - vsks_default
+    # Конфиг сам себе не перечитывается на изменение файла — nginx:alpine
+    # грузит его один раз при старте. Reload раз в 6 часов подхватывает
+    # обновлённый сертификат после certbot renew (тот же паттерн, что был
+    # у единого nginx VSKS до разреза, см. история в docker-compose.yml
+    # VSKS). Между reload'ами `nginx -t` в healthcheck ниже — если конфиг
+    # почему-то стал невалиден (например кто-то руками поломал секрет),
+    # это будет видно в `docker ps`/`docker compose ps` как unhealthy, а не
+    # тихо всплывёт только при следующей попытке reload.
+    command: >
+      sh -c "(while :; do sleep 6h & wait $${!}; nginx -s reload; done &) ; nginx -g 'daemon off;'"
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+networks:
+  # external: true — эта сеть НЕ принадлежит проекту edge, им не
+  # управляется (docker compose down в /opt/edge-nginx НИКОГДА её не
+  # удалит). Имя `vsks-crm_default` — реальное имя сети, которое создаёт
+  # compose-проект VSKS (project name `vsks-crm` — имя каталога
+  # /opt/vsks-crm, docker compose default naming). Если VSKS когда-нибудь
+  # переименуют (другой каталог/COMPOSE_PROJECT_NAME) — поменять здесь И
+  # только здесь (правило №6: имя сети — одна точка истины).
+  vsks_default:
+    name: vsks-crm_default
+    external: true

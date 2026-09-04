@@ -1221,6 +1221,15 @@
                   </v-col>
                   <v-col cols="12" md="6">
                     <div class="text-caption font-weight-medium mb-1">Дата поставки</div>
+                    <!-- Мобильный фикс (владелец, 2026-09-04, «прокручиваемых вбок таблиц быть
+                         не должно»): divided v-btn-toggle держит intrinsic ширину кнопок —
+                         на узком экране «На каждую позицию» обрезалось за краем диалога.
+                         .mobile-toggle-wrap (см. <style scoped> ниже) тянет тумблер на всю
+                         ширину, делит кнопки поровну и переносит текст внутри кнопки на
+                         вторую строку через :deep(.v-btn__content) — простого inline
+                         white-space:normal на <v-btn> недостаточно, Vuetify держит nowrap
+                         на внутреннем .v-btn__content с более высоким приоритетом. Десктоп
+                         не тронут — класс только когда mobile. -->
                     <v-btn-toggle
                       v-model="wishDateMode"
                       color="primary"
@@ -1229,6 +1238,7 @@
                       divided
                       mandatory
                       :disabled="!isWishEditable"
+                      :class="{ 'mobile-toggle-wrap': mobile }"
                     >
                       <v-btn value="common" size="small" prepend-icon="mdi-calendar">Одна на заявку</v-btn>
                       <v-btn value="per_item" size="small" prepend-icon="mdi-calendar-multiple">На каждую позицию</v-btn>
@@ -1691,7 +1701,9 @@
                  Владелец, 2026-08-29: развести название с согласованием ПРЕВЫШЕНИЯ плана ФЭО
                  (см. SubsidiesView.vue) — это два разных контура, пользователь их путал. -->
             <v-card v-if="isWishEditable || editingWishId" variant="outlined" class="mb-4">
-              <v-card-title class="text-subtitle-1 pa-4 pb-2">
+              <!-- Мобильный фикс (владелец, 2026-09-04): flex-wrap — без него правый чип
+                   («Последовательно»/«Параллельно») уезжал за край на узком экране. -->
+              <v-card-title class="text-subtitle-1 pa-4 pb-2 d-flex flex-wrap align-center ga-1">
                 <v-icon class="mr-2" color="primary">mdi-account-check</v-icon>
                 Согласующие необходимости закупки
                 <v-chip class="ml-2" size="x-small" variant="tonal">{{ wishApprovers.length }}</v-chip>
@@ -5685,6 +5697,28 @@ onMounted(async () => {
 <style scoped>
 .wish-dialog.v-theme--light :deep(.text-medium-emphasis) {
   color: rgba(0, 0, 0, 0.72) !important;
+}
+
+/* Мобильный фикс (владелец, 2026-09-04, «прокручиваемых вбок таблиц быть не должно»):
+   растягивает v-btn-toggle на всю ширину контейнера и переносит текст кнопок на
+   вторую строку вместо обрезки за правым краем экрана. Vuetify держит white-space:nowrap
+   на внутреннем .v-btn__content с приоритетом выше inline-стиля родителя — нужен
+   :deep() именно по этому классу. Применяется только через :class="{ 'mobile-toggle-wrap': mobile }",
+   на десктоп не влияет. */
+.mobile-toggle-wrap {
+  width: 100%;
+}
+.mobile-toggle-wrap :deep(.v-btn) {
+  flex: 1 1 0;
+  height: auto !important;
+  min-height: 36px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.mobile-toggle-wrap :deep(.v-btn__content) {
+  white-space: normal;
+  text-align: center;
+  line-height: 1.2;
 }
 
 /* Владелец, 2026-08-13: «остановка заявки/закупки» — крупный алерт в красной

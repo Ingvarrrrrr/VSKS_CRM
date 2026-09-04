@@ -115,11 +115,19 @@
     </div>
 
     <!-- Phase 27.1.2: НДС режим toggle (всегда виден над таблицей, не зависит от секции «Параметры договора») -->
+    <!-- Мобильный фикс (владелец, 2026-09-04, «прокручиваемых вбок таблиц быть не должно»):
+         border-variant v-btn-toggle держит intrinsic ширину кнопок и на узком экране обрезался
+         за краем диалога («ОДИНАКОВЫЙ НА ВСЮ ЗАКУПКУ | ДЛЯ КАЖДОЙ ПОЗИЦ…» — правый край текста
+         был не виден). .mobile-toggle-wrap (см. <style scoped> внизу файла) тянет тумблер на
+         всю ширину и делит кнопки поровну с переносом текста внутри кнопки — вместо обрезки
+         вбок текст уходит на вторую строку. Тот же фикс — у группировки ниже. Десктоп не тронут,
+         класс навешивается только когда mobile. -->
     <div v-if="itemShape === 'purchase' && !props.readonly" class="d-flex ga-2 mb-2 align-center flex-wrap">
       <span class="text-caption text-medium-emphasis">НДС:</span>
       <v-btn-toggle
         :model-value="props.vatMode || 'uniform'"
         density="compact" rounded="lg" color="primary" border mandatory
+        :class="{ 'mobile-toggle-wrap': mobile }"
         @update:model-value="(v: string) => emit('update:vatMode', v)"
       >
         <v-btn value="uniform" size="x-small">Одинаковый на всю закупку</v-btn>
@@ -131,7 +139,8 @@
     <div v-if="itemShape === 'purchase' && !stagesEnabled && localItems.length > 1"
       class="d-flex ga-2 mb-2 align-center flex-wrap">
       <span class="text-caption text-medium-emphasis">Группировка:</span>
-      <v-btn-toggle v-model="itemsGroupBy" density="compact" rounded="lg" color="primary" border mandatory>
+      <v-btn-toggle v-model="itemsGroupBy" density="compact" rounded="lg" color="primary" border mandatory
+        :class="{ 'mobile-toggle-wrap': mobile }">
         <v-btn value="none" size="x-small">Нет</v-btn>
         <v-btn value="category" size="x-small">По категориям</v-btn>
         <v-btn value="category_type" size="x-small">Категории + виды</v-btn>
@@ -4354,6 +4363,28 @@ defineExpose({
 </script>
 
 <style scoped>
+/* Мобильный фикс (владелец, 2026-09-04, «прокручиваемых вбок таблиц быть не должно»):
+   растягивает v-btn-toggle (НДС / группировка) на всю ширину контейнера и переносит
+   текст кнопок на вторую строку вместо обрезки за правым краем экрана. Vuetify держит
+   white-space:nowrap на внутреннем .v-btn__content с приоритетом выше inline-стиля
+   родителя — нужен :deep() именно по этому классу. Применяется только через
+   :class="{ 'mobile-toggle-wrap': mobile }", на десктоп не влияет. */
+.mobile-toggle-wrap {
+  width: 100%;
+}
+.mobile-toggle-wrap :deep(.v-btn) {
+  flex: 1 1 0;
+  height: auto !important;
+  min-height: 32px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.mobile-toggle-wrap :deep(.v-btn__content) {
+  white-space: normal;
+  text-align: center;
+  line-height: 1.2;
+}
+
 /* Владелец 2026-08-18: карточки частей в диалоге разбивки позиции */
 .split-part-block {
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));

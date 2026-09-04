@@ -2112,7 +2112,12 @@
 
       <!-- 5. Закрывающие документы (admin+) -->
       <v-card v-if="isSectionVisible('acceptance')" variant="outlined" class="mb-4">
-        <v-card-title class="d-flex align-center text-subtitle-1 font-weight-bold px-4 pt-4">
+        <!-- Мобильный фикс (владелец, 2026-09-04, «прокручиваемых вбок таблиц быть не должно»):
+             заголовок + кнопка без flex-wrap уезжали за правый край на узком экране, кнопка
+             «Добавить закрывающий документ» обрезалась. flex-wrap ga-2 — тот же приём, что уже
+             применён у заголовков «Загрузите чеки»/«Чеки» выше в этом файле: на десктопе места
+             хватает и перенос не срабатывает, на мобильном кнопка уходит на вторую строку. -->
+        <v-card-title class="d-flex flex-wrap align-center ga-2 text-subtitle-1 font-weight-bold px-4 pt-4">
           Закрывающие документы
           <v-spacer />
           <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-plus" @click="addAcceptanceDoc">Добавить закрывающий документ</v-btn>

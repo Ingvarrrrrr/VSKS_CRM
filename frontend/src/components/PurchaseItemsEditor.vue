@@ -50,11 +50,19 @@
              кнопка должны быть доступны и там — см. allow-per-item-plan у ItemsTableFlat/
              ItemsCardsView/ItemsTableStages, тот же паттерн. Видна, когда есть хоть одна
              непривязанная к плановой позиция (с категорией или без — без категории кнопка
-             ниже просто заблокирована с объяснением, а не спрятана молча). -->
+             ниже просто заблокирована с объяснением, а не спрятана молча).
+             Владелец (2026-09-04, заявка №55): «согласующий может создавать плановые
+             позиции, куда делась общая кнопка "создать плановые для всех позиций сразу"?» —
+             у заявки readonly=true (состав закупки не его дело), но feoAttrsEditable=true
+             (право wish.edit_feo + он в цепочке согласования) даёт ему ФЭО-распределение,
+             а кнопка проверяла только !props.readonly и гасла. Условие теперь пускает по
+             readonly ИЛИ feoAttrsEditable — тот же режим, что уже разрешён построчным
+             FeoTreeSelect/FeoPlannedItemsSelect (см. комментарий у feoAttrsEditable в
+             defineProps ниже). -->
         <v-tooltip :disabled="itemsMissingCategoryForPlan.length === 0" location="top" max-width="360">
           <template #activator="{ props: tip }">
             <span v-bind="tip">
-              <v-btn v-if="!props.readonly && (props.feoPlannedPerItem || props.allowPerItemPlan) && (needPlanCount > 0 || itemsMissingCategoryForPlan.length > 0)"
+              <v-btn v-if="(!props.readonly || props.feoAttrsEditable) && (props.feoPlannedPerItem || props.allowPerItemPlan) && (needPlanCount > 0 || itemsMissingCategoryForPlan.length > 0)"
                 variant="tonal" prepend-icon="mdi-clipboard-plus-outline" size="small" color="primary"
                 :class="{ 'plan-bulk-btn-blocked': itemsMissingCategoryForPlan.length > 0 }"
                 @click="itemsMissingCategoryForPlan.length > 0 ? highlightMissingCategoryForPlan() : openCreatePlannedBulkDialog()">
@@ -998,10 +1006,13 @@ const props = withDefaults(defineProps<{
   // кол-во/цену/ед./страну) заблокированным через readonly=true — состав это
   // предмет закупки, менять его не его дело. Но перераспределить позиции по
   // категориям/плановым позициям ФЭО он должен мочь — это его специфика. Когда
-  // readonly=true И feoAttrsEditable=true, ТОЛЬКО построчные FeoTreeSelect/
-  // FeoPlannedItemsSelect (и кнопка «Создать в плане закупок» внутри последнего)
-  // остаются кликабельными — см. feoReadonly в ItemsTableFlat/ItemsTableStages/
-  // ItemsCardsView.vue. Остальные поля строки и add/remove-позиция не трогает.
+  // readonly=true И feoAttrsEditable=true, кликабельны построчные FeoTreeSelect/
+  // FeoPlannedItemsSelect (и кнопка «Создать в плане закупок» внутри последнего) —
+  // см. feoReadonly в ItemsTableFlat/ItemsTableStages/ItemsCardsView.vue — а также
+  // (владелец, заявка №55, 2026-09-04) общая кнопка «Создать в плане закупок» в
+  // тулбаре выше (создаёт плановые сразу для всех непривязанных позиций разом —
+  // раньше проверяла только !props.readonly и гасла у согласующего). Остальные
+  // поля строки и add/remove-позиция по-прежнему не трогает.
   feoAttrsEditable?: boolean
   vatMode?: 'uniform' | 'per_item'          // Phase 26-U-3: НДС режим
   uniformVatRate?: string | null             // Phase 26-U-3: ставка для uniform режима

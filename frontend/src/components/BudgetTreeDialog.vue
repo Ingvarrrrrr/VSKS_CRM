@@ -169,6 +169,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useDisplay } from 'vuetify'
+import { safeDiv } from '@/utils/numberFormat'
 
 const { mobile } = useDisplay()
 
@@ -376,9 +377,9 @@ const summaryMetrics = computed(() => {
   
   return [
     { label: 'Общий бюджет', value: totalBudget, percent: 100, color: 'primary' },
-    { label: 'Распределено', value: totalAllocated, percent: Math.round((totalAllocated / totalBudget) * 100), color: 'info' },
-    { label: 'Использовано', value: totalUsed, percent: Math.round((totalUsed / totalAllocated) * 100), color: 'success' },
-    { label: 'Не распределено', value: remaining, percent: Math.round((remaining / totalBudget) * 100), color: 'warning' }
+    { label: 'Распределено', value: totalAllocated, percent: Math.round(safeDiv(totalAllocated, totalBudget) * 100), color: 'info' },
+    { label: 'Использовано', value: totalUsed, percent: Math.round(safeDiv(totalUsed, totalAllocated) * 100), color: 'success' },
+    { label: 'Не распределено', value: remaining, percent: Math.round(safeDiv(remaining, totalBudget) * 100), color: 'warning' }
   ]
 })
 

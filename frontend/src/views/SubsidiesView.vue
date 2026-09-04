@@ -4944,7 +4944,7 @@ import type { MatchCandidate } from '@/composables/useItemMatching'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
 import type { FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
-import { numOrNull, numOrNullZeroEmpty } from '@/utils/numberFormat'
+import { numOrNull } from '@/utils/numberFormat'
 import { PURCHASE_STATUS_META, PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusIcon, purchaseStatusColor } from '@/constants/purchaseStatus'
 import { type KpiKey, KPI_MODE, KPI_LABELS, KPI_EMPTY_REASONS, kpiItemMatches } from '@/constants/kpiMetrics'
 
@@ -7069,18 +7069,17 @@ async function saveReqItemEdit() {
     // quantity/unit_price приходят из v-model.number — при очистке поля Vue даёт
     // '' (не null), сырое сравнение с original (числом/null) ловит ложные "изменения"
     // ('' !== null) и шлёт '' на сервер → 422. Сравниваем и шлём нормализованные
-    // через numOrNullZeroEmpty (2026-09-04, тот же хелпер, что и в savePlannedItem/
-    // FEO-форме) — количество/цена за единицу в группе «ноль бессмыслен» (владелец:
-    // «0 тоже значит, что ничего нет»).
-    const normQuantity = numOrNullZeroEmpty(reqItemEdit.form.quantity)
-    if (normQuantity !== numOrNullZeroEmpty(reqItemEdit.original.quantity)) {
+    // через numOrNull (2026-09-04, тот же хелпер, что и в savePlannedItem/FEO-форме):
+    // '' → null, 0 сохраняется как число.
+    const normQuantity = numOrNull(reqItemEdit.form.quantity)
+    if (normQuantity !== numOrNull(reqItemEdit.original.quantity)) {
       body.quantity = normQuantity
     }
     if ((reqItemEdit.form.unit || '') !== (reqItemEdit.original.unit || '')) {
       body.unit = reqItemEdit.form.unit || null
     }
-    const normUnitPrice = numOrNullZeroEmpty(reqItemEdit.form.unit_price)
-    if (normUnitPrice !== numOrNullZeroEmpty(reqItemEdit.original.unit_price)) {
+    const normUnitPrice = numOrNull(reqItemEdit.form.unit_price)
+    if (normUnitPrice !== numOrNull(reqItemEdit.original.unit_price)) {
       body.unit_price = normUnitPrice
     }
     // Категорию отправляем ТОЛЬКО если пользователь её реально сменил (catId —
@@ -7463,27 +7462,23 @@ async function savePlannedItem() {
         name: f.name.trim(),
         quantity: qtyOrDefault,
         unit: f.unit || null,
-        amount: isMonthly ? null : numOrNullZeroEmpty(f.amount),
+        amount: isMonthly ? null : numOrNull(f.amount),
         // Цена за единицу (правка 2026-09-03) — раньше здесь не отправлялась
         // вовсе, введённая в поле «Плановая стоимость за единицу» цена молча
         // терялась (амаунт уже посчитан watch'ем из неё, а сама цена — нет).
         // См. FeoPlannedItem.unit_price / assert_tz_not_over_plan.
-        // numOrNullZeroEmpty (не `f.unitPrice ?? null` — правка 2026-09-04, жалоба
-        // владельца «да какого хуя тут ожидается число, может быть пусто, может быть 0»,
-        // уточнение того же дня: «0 тоже значит, что ничего нет» для цены/суммы):
+        // numOrNull (не `f.unitPrice ?? null` — правка 2026-09-04, жалоба
+        // владельца «да какого хуя тут ожидается число, может быть пусто, может быть 0»):
         // `??` пустую строку от v-model.number НЕ ловит, только null/undefined —
-        // очищенное поле уходило на сервер как '' и валило 422. См. numOrNullZeroEmpty
+        // очищенное поле уходило на сервер как '' и валило 422. См. numOrNull
         // в @/utils/numberFormat.ts.
-        unit_price: isMonthly ? null : numOrNullZeroEmpty(f.unitPrice),
+        unit_price: isMonthly ? null : numOrNull(f.unitPrice),
         is_active: true,
         payment_mode: f.payment_mode,
         planned_date: !isMonthly && f.planned_date ? f.planned_date : null,
         monthly_start_date: isMonthly && f.monthly_start_date ? f.monthly_start_date : null,
-        // months_count — «число месяцев» рассрочки: 0 не бывает содержательным, но это
-        // счётчик периодов, а не сумма/количество товара — из явного списка владельца
-        // «НЕ трогать» (число месяцев) → остаётся numOrNull.
         months_count: isMonthly ? numOrNull(f.months_count) : null,
-        monthly_amount: isMonthly ? numOrNullZeroEmpty(f.monthly_amount) : null,
+        monthly_amount: isMonthly ? numOrNull(f.monthly_amount) : null,
         is_feo_breakdown: f.is_feo_breakdown,
         is_internal_plan: f.is_internal_plan,
       }),
@@ -7859,23 +7854,22 @@ async function saveEditPlannedItem() {
       body: JSON.stringify({
         feo_category_id: d.feo_category_id,
         name: d.name,
-        quantity: numOrNullZeroEmpty(d.quantity),
+        quantity: numOrNull(d.quantity),
         unit: d.unit || null,
-        amount: isMonthly ? null : numOrNullZeroEmpty(d.amount),
+        amount: isMonthly ? null : numOrNull(d.amount),
         // PUT — полная замена (см. коммент у editPlannedDialog.unitPrice выше и
         // у item.unit_price = data.unit_price в feo_planned_items.py) — без явной
         // передачи цена за единицу молча обнулится, даже если правили что-то другое.
-        // numOrNullZeroEmpty — тот же хелпер, что и в savePlannedItem выше (см. @/utils/
+        // numOrNull — тот же хелпер, что и в savePlannedItem выше (см. @/utils/
         // numberFormat.ts) — было три места, каждое приводило '' к null по-своему.
-        unit_price: numOrNullZeroEmpty(d.unitPrice),
+        unit_price: numOrNull(d.unitPrice),
         notes: null,
         is_active: true,
         payment_mode: d.payment_mode,
         planned_date: !isMonthly && d.planned_date ? d.planned_date : null,
         monthly_start_date: isMonthly && d.monthly_start_date ? d.monthly_start_date : null,
-        // months_count — «число месяцев» (не трогать, см. комментарий в savePlannedItem).
         months_count: isMonthly ? numOrNull(d.months_count) : null,
-        monthly_amount: isMonthly ? numOrNullZeroEmpty(d.monthly_amount) : null,
+        monthly_amount: isMonthly ? numOrNull(d.monthly_amount) : null,
         item_type: d.item_type,
         is_feo_breakdown: d.is_feo_breakdown,
         is_internal_plan: d.is_internal_plan,
@@ -10885,19 +10879,19 @@ async function addFeoCategory() {
         appendix: feoForm.value.appendix || null,
         is_active: true,
         // budget/planned_quantity/planned_amount/feo_quantity/feo_amount/manual_plan_amount —
-        // деньги и количества, группа «ноль бессмыслен» (владелец, 2026-09-04) → numOrNullZeroEmpty.
-        budget: feoForm.value.budgetAuto ? null : numOrNullZeroEmpty(feoForm.value.budget),
-        planned_quantity: feoForm.value.qtyAuto ? null : numOrNullZeroEmpty(feoForm.value.planned_quantity),
-        planned_amount: feoForm.value.amtAuto ? null : numOrNullZeroEmpty(feoForm.value.planned_amount),
+        // numOrNull (2026-09-04): '' → null, 0 сохраняется как число.
+        budget: feoForm.value.budgetAuto ? null : numOrNull(feoForm.value.budget),
+        planned_quantity: feoForm.value.qtyAuto ? null : numOrNull(feoForm.value.planned_quantity),
+        planned_amount: feoForm.value.amtAuto ? null : numOrNull(feoForm.value.planned_amount),
         unit: feoForm.value.unit || null,
-        feo_quantity: numOrNullZeroEmpty(feoForm.value.feo_quantity),
+        feo_quantity: numOrNull(feoForm.value.feo_quantity),
         feo_unit: feoForm.value.feo_unit || null,
         description: feoForm.value.description?.trim() || null,
-        feo_amount: numOrNullZeroEmpty(feoForm.value.feo_amount),
+        feo_amount: numOrNull(feoForm.value.feo_amount),
         // План zany-fluttering-mountain.md, п.1: способ расчёта плана — при 'manual_sum'
         // уходит введённая сумма, при 'planned_items' поле обнуляется (истина в позициях).
         plan_source: feoForm.value.planSource,
-        manual_plan_amount: feoForm.value.planSource === 'manual_sum' ? numOrNullZeroEmpty(feoForm.value.manual_plan_amount) : null,
+        manual_plan_amount: feoForm.value.planSource === 'manual_sum' ? numOrNull(feoForm.value.manual_plan_amount) : null,
       })
     })
     feoCategories.value.push(res)
@@ -11007,18 +11001,18 @@ async function updateFeoCategory() {
         code: feoEditForm.value.code || null,
         appendix: feoEditForm.value.appendix || null,
         is_active: feoEditForm.value.is_active,
-        budget: feoEditForm.value.budgetAuto ? null : numOrNullZeroEmpty(feoEditForm.value.budget),
-        planned_quantity: feoEditForm.value.qtyAuto ? null : numOrNullZeroEmpty(feoEditForm.value.planned_quantity),
-        planned_amount: feoEditForm.value.amtAuto ? null : numOrNullZeroEmpty(feoEditForm.value.planned_amount),
+        budget: feoEditForm.value.budgetAuto ? null : numOrNull(feoEditForm.value.budget),
+        planned_quantity: feoEditForm.value.qtyAuto ? null : numOrNull(feoEditForm.value.planned_quantity),
+        planned_amount: feoEditForm.value.amtAuto ? null : numOrNull(feoEditForm.value.planned_amount),
         unit: feoEditForm.value.unit || null,
-        feo_quantity: numOrNullZeroEmpty(feoEditForm.value.feo_quantity),
+        feo_quantity: numOrNull(feoEditForm.value.feo_quantity),
         feo_unit: feoEditForm.value.feo_unit || null,
         description: feoEditForm.value.description?.trim() || null,
-        feo_amount: numOrNullZeroEmpty(feoEditForm.value.feo_amount),
+        feo_amount: numOrNull(feoEditForm.value.feo_amount),
         // План zany-fluttering-mountain.md, п.1: способ расчёта плана — см. комментарий
         // у того же поля в addFeoCategory выше.
         plan_source: feoEditForm.value.planSource,
-        manual_plan_amount: feoEditForm.value.planSource === 'manual_sum' ? numOrNullZeroEmpty(feoEditForm.value.manual_plan_amount) : null,
+        manual_plan_amount: feoEditForm.value.planSource === 'manual_sum' ? numOrNull(feoEditForm.value.manual_plan_amount) : null,
       })
     })
     showEditFeoDialog.value = false

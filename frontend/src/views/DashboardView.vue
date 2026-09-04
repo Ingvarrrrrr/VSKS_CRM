@@ -1049,6 +1049,7 @@ import { GridLayout, GridItem } from 'grid-layout-plus'
 import { useDashboardLayout, type LayoutItem } from '@/composables/useDashboardLayout'
 import { useDashboardMode } from '@/composables/useDashboardMode'
 import { PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusColor } from '@/constants/purchaseStatus'
+import { safeDiv } from '@/utils/numberFormat'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 const { layout, isEditing, toggleEditing, resetLayout, onLayoutUpdated, DEFAULT_SUMMARY_LAYOUT } = useDashboardLayout()
@@ -2057,15 +2058,18 @@ const analyticsTotalPaid = computed(() => {
 const analyticsMaxFunnel = computed(() =>
   analyticsData.value ? Math.max(...analyticsData.value.funnel.map(i => i.total), 1) : 1
 )
-const analyticsFunnelPct = (count: number) => (count / analyticsMaxFunnel.value) * 100
+const analyticsFunnelPct = (count: number) => safeDiv(count, analyticsMaxFunnel.value) * 100
 const analyticsMaxContractor = computed(() =>
   analyticsData.value?.top_contractors?.length ? analyticsData.value.top_contractors[0].total : 1
 )
-const analyticsTopPct = (total: number) => (total / analyticsMaxContractor.value) * 100
+const analyticsTopPct = (total: number) => safeDiv(total, analyticsMaxContractor.value) * 100
 const analyticsMaxMonthly = computed(() =>
-  analyticsData.value?.monthly_payments?.length ? Math.max(...analyticsData.value.monthly_payments.map(m => m.total)) : 1
+  // Math.max(...totals, 1) — floor на 1 даже когда список не пуст, но все месяцы
+  // «оплачено 0» (иначе Math.max вернул бы 0 и analyticsBarHeight делил бы на
+  // ноль — владелец, 2026-09-04: деление на ноль не должно ломать интерфейс).
+  analyticsData.value?.monthly_payments?.length ? Math.max(...analyticsData.value.monthly_payments.map(m => m.total), 1) : 1
 )
-const analyticsBarHeight = (total: number) => Math.max((total / analyticsMaxMonthly.value) * 100, 4)
+const analyticsBarHeight = (total: number) => Math.max(safeDiv(total, analyticsMaxMonthly.value) * 100, 4)
 
 function analyticsFormatDate(d: string): string {
   if (!d) return ''

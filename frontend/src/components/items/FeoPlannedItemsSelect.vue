@@ -659,7 +659,7 @@ import type { FeoNode } from '@/composables/useFeoLeaves'
 import type { FeoPlanPosition, FeoPlanSelection, FeoPlanKind } from '@/composables/useFeoPlannedResiduals'
 import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
 import { useToast, type ToastType } from '@/composables/useToast'
-import { formatPlanResidual, numOrNullZeroEmpty } from '@/utils/numberFormat'
+import { formatPlanResidual, numOrNull } from '@/utils/numberFormat'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
 
 const props = defineProps<{
@@ -1319,17 +1319,16 @@ const attachDisabled = computed((): boolean => attachBlockedReason.value != null
 // оставляли пустой → 422 «ожидается число». createForm.* типизирован number|null,
 // но v-model.number на очищенном поле реально кладёт туда '' (Vue's looseToNumber,
 // не NaN/null) — quantity/unitPrice/amount без явного приведения уходили на сервер
-// как есть. numOrNullZeroEmpty — общий хелпер (см. @/utils/numberFormat.ts) для полей
-// группы «ноль бессмыслен» (количество/цена/сумма — владелец, 2026-09-04: «0 тоже
-// значит, что ничего нет») — '' и 0 обе → null.
+// как есть. numOrNull — общий хелпер (см. @/utils/numberFormat.ts): '' → null,
+// 0 сохраняется как число.
 function buildCreatePayload(allowDuplicate: boolean) {
   return {
     feo_category_id: props.categoryId,
     name: createForm.name.trim(),
-    quantity: numOrNullZeroEmpty(createForm.quantity),
+    quantity: numOrNull(createForm.quantity),
     unit: createForm.unit.trim() || null,
-    unit_price: numOrNullZeroEmpty(createForm.unitPrice),
-    amount: numOrNullZeroEmpty(createForm.amount),
+    unit_price: numOrNull(createForm.unitPrice),
+    amount: numOrNull(createForm.amount),
     item_type: createForm.item_type,
     allow_duplicate_name: allowDuplicate,
   }

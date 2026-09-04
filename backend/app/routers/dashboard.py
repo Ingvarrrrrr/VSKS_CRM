@@ -864,15 +864,25 @@ async def analytics(
     monthly = [{"year": int(r.y), "month": int(r.m), "total": float(r.total)} for r in monthly_result]
 
     # 3. Top 10 contractors by total purchase value
+    # ORDER BY must sort on the SAME coalesced expression as the selected "total" —
+    # sorting on the raw (non-coalesced) SUM sent contractors whose sole purchase has
+    # planned_total_price=NULL to the TOP of a DESC order (Postgres default: NULLS
+    # FIRST for DESC), even though they display as "0" — found live (2026-09-04) via
+    # /api/dashboard/analytics: top_contractors[0].total was 0 while real top spenders
+    # (13.9M+) were pushed down. Frontend uses top_contractors[0] as the 100%-bar
+    # reference (analyticsMaxContractor/maxContractor) — a 0 there divided every other
+    # contractor's bar by zero (now also hardened with safeDiv, but the ranking itself
+    # was simply wrong).
+    top_contractors_total = func.coalesce(func.sum(Purchase.planned_total_price), 0)
     top_result = await db.execute(_pf(
         select(
             Contractor.name,
             func.count(Purchase.id).label("cnt"),
-            func.coalesce(func.sum(Purchase.planned_total_price), 0).label("total"),
+            top_contractors_total.label("total"),
         )
         .join(Contractor, Purchase.contractor_id == Contractor.id)
         .group_by(Contractor.name)
-        .order_by(func.sum(Purchase.planned_total_price).desc())
+        .order_by(top_contractors_total.desc())
         .limit(10)
     ))
     top_contractors = [{"name": r.name, "count": r.cnt, "total": float(r.total)} for r in top_result]

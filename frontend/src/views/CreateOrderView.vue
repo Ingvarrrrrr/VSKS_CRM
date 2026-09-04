@@ -4248,7 +4248,7 @@ import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import { useFeoTreeNodes } from '@/composables/useFeoTreeNodes'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
 import { decodeQrFromImageFile } from '@/utils/qrDecode'
-import { numOrNull, numOrNullZeroEmpty } from '@/utils/numberFormat'
+import { numOrNull } from '@/utils/numberFormat'
 import { PURCHASE_STATUS_ORDER, purchaseStatusColor } from '@/constants/purchaseStatus'
 
 const monthlyStagesDialogShow = ref(false)
@@ -4815,13 +4815,11 @@ function serializeFormForAutosave() {
     // contract_price/vat_rate/payment_amount/service_term_days/acceptance_term_days/
     // penalty_rate/advance_amount/warranty_period_days — v-model.number; при очистке
     // Vue кладёт '' (не null), PurchaseUpdate ждёт Optional[Decimal]/Optional[int] →
-    // автосохранение валило 422 прямо на blur. numOrNull — единый хелпер (2026-09-04);
-    // деньги/суммы (contract_price/nmck/planned_total_price/payment_amount) переведены
-    // на numOrNullZeroEmpty — там 0 бессмыслен (владелец, 2026-09-04, «0 тоже значит,
-    // что ничего нет»); сроки в днях и ставка НДС ниже остаются numOrNull — там 0 реален.
-    contract_price: numOrNullZeroEmpty(f.contract_price),
-    nmck: numOrNullZeroEmpty(f.nmck),
-    planned_total_price: numOrNullZeroEmpty(f.planned_total_price),
+    // автосохранение валило 422 прямо на blur. numOrNull — единый хелпер (2026-09-04):
+    // '' → null, 0 сохраняется как число во всех полях без исключения.
+    contract_price: numOrNull(f.contract_price),
+    nmck: numOrNull(f.nmck),
+    planned_total_price: numOrNull(f.planned_total_price),
     delivery_date: f.delivery_date,
     delivery_location: f.delivery_location,
     delivery_location_kind: f.delivery_location_kind,
@@ -4843,7 +4841,7 @@ function serializeFormForAutosave() {
     acceptance_doc_amount: f.acceptance_doc_amount,
     payment_doc_number: f.payment_doc_number,
     payment_doc_date: f.payment_doc_date,
-    payment_amount: numOrNullZeroEmpty(f.payment_amount),
+    payment_amount: numOrNull(f.payment_amount),
     country_origin: f.country_origin,
     purchase_basis: f.purchase_basis,
     responsible_person: f.responsible_person,
@@ -6103,11 +6101,6 @@ function checkPublishReady(): {text: string; target: PublishTarget}[] {
     if (!fabrikantAuctionDateStart.value) errors.push({ text: 'Укажите дату и время начала редукциона', target: 'auction-date' })
     // numOrNull ловит и null, и '' (Vue кладёт '' при очистке v-model.number-поля,
     // голое === null это пропускало — редукцион на Фабрикант ушёл бы с auction_bet_limit_from: '').
-    // ПРАВКА 2026-09-04 «0=пусто для денег/количеств»: auction_bet_limit_from/to (границы
-    // ставки редукциона) НЕ переведены на numOrNullZeroEmpty — не входят в явный список
-    // владельца (цена/сумма/кол-во/НМЦК/...), не однозначно деньги или ставка/шаг в
-    // процентах, поле обязательное (см. error-check ниже). Оставлено на numOrNull —
-    // требует отдельного решения владельца.
     if (numOrNull(fabrikantAuctionBetFrom.value) === null || numOrNull(fabrikantAuctionBetTo.value) === null) errors.push({ text: 'Укажите границы ставки редукциона (от / до)', target: 'auction-bet' })
   }
   return errors
@@ -7003,10 +6996,9 @@ async function saveNewFrameworkContract() {
         contractor_id: newFrameworkForm.contractor_id || null,
         subsidy_id: form.subsidy_id || null,
         subject: newFrameworkForm.subject || null,
-        // `|| null` уже ловил '' (не было 422), но заменено на numOrNullZeroEmpty ради
-        // единого источника истины (ПРАВИЛО №6) — предельная сумма рамочного договора
-        // в группе «ноль бессмыслен» (владелец, 2026-09-04): '' и 0 обе → null.
-        max_amount: numOrNullZeroEmpty(newFrameworkForm.max_amount),
+        // `|| null` уже ловил '' (не было 422), но заменено на numOrNull ради
+        // единого источника истины (ПРАВИЛО №6): '' → null, 0 сохраняется как число.
+        max_amount: numOrNull(newFrameworkForm.max_amount),
         status: 'active',
       },
     })
@@ -8343,16 +8335,13 @@ async function saveManualReceipt() {
     if (f.fiscal_drive_number) payload.fiscal_drive_number = f.fiscal_drive_number
     // fiscal_document_number/total_sum — v-model.number; `!= null` не ловит '' после
     // очистки поля. При null поле в payload не попадает вовсе (как и раньше для
-    // остальных необязательных полей формы). fiscal_document_number — номер документа
-    // чека, не сумма/количество (0 в номере документа не встречается на практике, но
-    // это не из явного списка «ноль бессмыслен» владельца) — оставлен на numOrNull.
-    // total_sum — итоговая сумма чека (деньги) → numOrNullZeroEmpty (2026-09-04,
-    // владелец: «0 тоже значит, что ничего нет»).
+    // остальных необязательных полей формы). numOrNull: '' → null, 0 сохраняется
+    // как число.
     const fiscalDocNumber = numOrNull(f.fiscal_document_number)
     if (fiscalDocNumber != null) payload.fiscal_document_number = fiscalDocNumber
     if (f.fiscal_sign) payload.fiscal_sign = f.fiscal_sign
     if (f.receipt_datetime) payload.receipt_datetime = f.receipt_datetime
-    const totalSum = numOrNullZeroEmpty(f.total_sum)
+    const totalSum = numOrNull(f.total_sum)
     if (totalSum != null) payload.total_sum = totalSum
     if (f.seller_name) payload.seller_name = f.seller_name
     if (f.seller_inn) payload.seller_inn = f.seller_inn
@@ -8604,11 +8593,10 @@ const doSave = async (adminOverride: boolean) => {
       .filter(i => i.item_name?.trim())
       .map(({ _selectedProduct, _photo_url, _description, _description_44fz, _price_meta, feo_node_id: _feoNodeId, ...rest }) => ({
         ...rest,
-        // numOrNullZeroEmpty (2026-09-04, владелец: «0 тоже значит, что ничего нет» —
-        // цена за единицу и количество в группе «ноль бессмыслен»), заменил локальную
-        // проверку `!== '' && != null ? v : null` (ПРАВИЛО №6, один источник истины).
-        unit_price: numOrNullZeroEmpty(rest.unit_price),
-        quantity: numOrNullZeroEmpty(rest.quantity),
+        // numOrNull (2026-09-04) заменил локальную проверку `!== '' && != null ? v : null`
+        // (ПРАВИЛО №6, один источник истины): '' → null, 0 сохраняется как число.
+        unit_price: numOrNull(rest.unit_price),
+        quantity: numOrNull(rest.quantity),
         // Возвращено из отката e0db76a (КОРЕНЬ ПРОБЛЕМЫ): раньше здесь ОБА поля
         // принудительно писались как null в режиме single — позиция пересоздавалась
         // и ЛЮБАЯ привязка стиралась первым же сохранением (id 2871 → 2872 на проде,
@@ -8630,22 +8618,19 @@ const doSave = async (adminOverride: boolean) => {
       // monthly_payment_count/monthly_payment_amount — v-model.number-поля формы,
       // ...form выше протаскивает их СЫРЫМИ: при очистке поля Vue кладёт '', а
       // PurchaseUpdate ждёт Optional[Decimal]/Optional[int] → 422 прямо на «Сохранить».
-      // numOrNull — единый хелпер (2026-09-04); деньги/суммы (contract_price/
-      // payment_amount/payment_federal/monthly_payment_amount) переведены на
-      // numOrNullZeroEmpty — 0 там бессмыслен (владелец, 2026-09-04, «0 тоже значит,
-      // что ничего нет»). vat_rate/price_increase/сроки в днях/пеня/аванс/monthly_
-      // payment_count остаются numOrNull — там 0 реальное значение.
-      contract_price: numOrNullZeroEmpty(form.contract_price),
+      // numOrNull — единый хелпер (2026-09-04): '' → null, 0 сохраняется как число
+      // во всех полях без исключения.
+      contract_price: numOrNull(form.contract_price),
       vat_rate: numOrNull(form.vat_rate),
-      payment_amount: numOrNullZeroEmpty(form.payment_amount),
-      payment_federal: numOrNullZeroEmpty(form.payment_federal),
+      payment_amount: numOrNull(form.payment_amount),
+      payment_federal: numOrNull(form.payment_federal),
       price_increase: numOrNull(form.price_increase),
       acceptance_term_days: numOrNull(form.acceptance_term_days),
       penalty_rate: numOrNull(form.penalty_rate),
       advance_amount: numOrNull(form.advance_amount),
       warranty_period_days: numOrNull(form.warranty_period_days),
       monthly_payment_count: numOrNull(form.monthly_payment_count),
-      monthly_payment_amount: numOrNullZeroEmpty(form.monthly_payment_amount),
+      monthly_payment_amount: numOrNull(form.monthly_payment_amount),
       planned_total_price: displayNmck.value || null,
       total_nmck: displayNmck.value || null,
       framework_seq: form.framework_seq || null,
@@ -8686,11 +8671,11 @@ const doSave = async (adminOverride: boolean) => {
       acceptance_doc_date: form.acceptance_doc_date || null,
       // doc.amount — v-model.number (2181): при очистке даёт '', уходит в JSONB-колонку
       // acceptance_docs как есть (не 422 — JSONB грязных строк не валит, но дальше
-      // арифметика по amount ловит NaN/'0'). Сумма документа приёмки — деньги, группа
-      // «ноль бессмыслен» (владелец, 2026-09-04) → numOrNullZeroEmpty приводит перед отправкой.
+      // арифметика по amount ловит NaN/'0'). numOrNull приводит перед отправкой:
+      // '' → null, 0 сохраняется как число.
       acceptance_docs: acceptanceDocs.value
         .filter(d => d.name?.trim() || d.number?.trim() || d.date?.trim() || (d.amount !== null && d.amount !== undefined))
-        .map(d => ({ ...d, amount: numOrNullZeroEmpty(d.amount) })),
+        .map(d => ({ ...d, amount: numOrNull(d.amount) })),
       payment_doc_date: form.payment_doc_date || null,
       // SN-UX: бэкенд ждёт datetime (YYYY-MM-DDTHH:MM:SS), фронт хранит YYYY-MM-DD → дополним
       service_note_at: form.service_note_at ? (String(form.service_note_at).length === 10 ? `${form.service_note_at}T00:00:00` : form.service_note_at) : null,

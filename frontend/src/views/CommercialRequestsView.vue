@@ -530,7 +530,7 @@ import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import { useCardView } from '@/composables/useCardView'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import { useToast, type ToastType } from '@/composables/useToast'
-import { numOrNullZeroEmpty } from '@/utils/numberFormat'
+import { numOrNull } from '@/utils/numberFormat'
 
 interface Recipient { id: number; contractor_id?: number; contractor_name?: string; email?: string; status: string }
 interface CommercialRequest {
@@ -686,9 +686,8 @@ async function saveOffers() {
         // cell.unit_price приходит из v-model.number — при очистке поля Vue кладёт
         // '' (не null), а `== null` её не ловит ('' == null → false в JS). Пустая
         // строка уходила бы на сервер и валила 422 (unit_price: Optional[Decimal]).
-        // numOrNullZeroEmpty (2026-09-04, владелец: «0 тоже значит, что ничего нет» —
-        // цена за единицу входит в группу «ноль бессмыслен»): '' и 0 обе → null.
-        const cellPrice = numOrNullZeroEmpty(cell.unit_price)
+        // numOrNull (2026-09-04): '' → null, 0 сохраняется как число (валидная цена).
+        const cellPrice = numOrNull(cell.unit_price)
         if (cellPrice == null) continue
         body.push({
           recipient_id: r.id,

@@ -84,7 +84,7 @@
                 <span class="text-body-2 font-weight-medium">{{ cnt }}</span>
               </div>
               <v-progress-linear
-                :model-value="(cnt / totalPurchases) * 100"
+                :model-value="safeDiv(cnt, totalPurchases) * 100"
                 :color="METHOD_COLORS[method] || 'blue-grey'"
                 rounded height="14"
                 bg-color="grey-lighten-3"
@@ -209,6 +209,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { apiFetch } from '@/api'
 import { PURCHASE_STATUS_ORDER, purchaseStatusColor } from '@/constants/purchaseStatus'
+import { safeDiv } from '@/utils/numberFormat'
 
 interface FunnelItem { status: string; count: number; total: number }
 interface MonthItem { year: number; month: number; total: number }
@@ -262,17 +263,20 @@ const totalPaid = computed(() => {
 const maxFunnelCount = computed(() =>
   data.value ? Math.max(...data.value.funnel.map(i => i.count), 1) : 1
 )
-const funnelPct = (count: number) => (count / maxFunnelCount.value) * 100
+const funnelPct = (count: number) => safeDiv(count, maxFunnelCount.value) * 100
 
 const maxContractor = computed(() =>
   data.value && data.value.top_contractors.length ? data.value.top_contractors[0].total : 1
 )
-const topContractorPct = (total: number) => (total / maxContractor.value) * 100
+const topContractorPct = (total: number) => safeDiv(total, maxContractor.value) * 100
 
 const maxMonthly = computed(() =>
-  data.value && data.value.monthly_paid.length ? Math.max(...data.value.monthly_paid.map(m => m.total)) : 1
+  // Math.max(...totals, 1) — floor на 1, а не только на пустой список: если все
+  // месяцы «оплачено 0», Math.max(...[0,0]) вернул бы 0 и barHeight делил бы на
+  // ноль (владелец, 2026-09-04: деление на ноль не должно ломать интерфейс).
+  data.value && data.value.monthly_paid.length ? Math.max(...data.value.monthly_paid.map(m => m.total), 1) : 1
 )
-const barHeight = (total: number) => Math.max((total / maxMonthly.value) * 100, 4)
+const barHeight = (total: number) => Math.max(safeDiv(total, maxMonthly.value) * 100, 4)
 
 function formatMoney(v?: number): string {
   if (!v) return '0 ₽'

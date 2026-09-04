@@ -447,7 +447,7 @@ import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
-import { numOrNullZeroEmpty } from '@/utils/numberFormat'
+import { numOrNull } from '@/utils/numberFormat'
 
 const { mobile } = useDisplay()
 const authStore = useAuthStore()
@@ -678,9 +678,8 @@ const submitAdd = async () => {
       body: JSON.stringify({ name: addForm.name, code: addForm.code || null,
         // budget — v-model.number: `?? null` не ловит '' после очистки поля (backend
         // страхует пустую строку в FeoCategoryCreate, но фронт должен слать null сам —
-        // см. комментарий там же). numOrNullZeroEmpty — бюджет в группе «ноль
-        // бессмыслен» (владелец, 2026-09-04): '' и 0 обе → null.
-        appendix: addForm.appendix || null, budget: numOrNullZeroEmpty(addForm.budget),
+        // см. комментарий там же). numOrNull: '' → null, 0 сохраняется как число.
+        appendix: addForm.appendix || null, budget: numOrNull(addForm.budget),
         is_active: addForm.is_active, subsidy_id: selectedId.value, parent_id: addForm.parent_id }),
     })
     addDialog.value = false; showSnack('Категория добавлена')
@@ -716,7 +715,7 @@ const submitEdit = async () => {
     await apiFetch(`/feo-categories/${editTarget.value.id}`, {
       method: 'PUT',
       body: JSON.stringify({ name: editForm.name, code: editForm.code || null,
-        appendix: editForm.appendix || null, budget: numOrNullZeroEmpty(editForm.budget),
+        appendix: editForm.appendix || null, budget: numOrNull(editForm.budget),
         is_active: editForm.is_active, subsidy_id: selectedId.value }),
     })
     editDialog.value = false; showSnack('Сохранено')

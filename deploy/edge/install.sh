@@ -91,7 +91,11 @@ require_cmd() { command -v "$1" >/dev/null 2>&1 || die "требуется '$1',
 
 systemd_stop() {
     [ "$SKIP_SYSTEMD" = "1" ] && { log "SKIP_SYSTEMD=1 — не трогаю vsks-deploy.service"; return 0; }
-    if systemctl list-unit-files 2>/dev/null | grep -q '^vsks-deploy.service'; then
+    # `systemctl cat`, а не grep по list-unit-files: на проде 2026-09-05
+    # grep не нашёл существующий и включённый юнит, скрипт решил «локальный
+    # стенд», и вебхук после переключения остался остановленным — автодеплой
+    # был мёртв, пока не запустили руками.
+    if systemctl cat vsks-deploy.service >/dev/null 2>&1; then
         log "останавливаю vsks-deploy.service (вебхук автодеплоя) — чтобы push/webhook не влез в середину переключения"
         systemctl stop vsks-deploy.service || log "WARN: не удалось остановить vsks-deploy.service (возможно уже остановлен)"
     else
@@ -101,7 +105,11 @@ systemd_stop() {
 
 systemd_start() {
     [ "$SKIP_SYSTEMD" = "1" ] && { log "SKIP_SYSTEMD=1 — не трогаю vsks-deploy.service"; return 0; }
-    if systemctl list-unit-files 2>/dev/null | grep -q '^vsks-deploy.service'; then
+    # `systemctl cat`, а не grep по list-unit-files: на проде 2026-09-05
+    # grep не нашёл существующий и включённый юнит, скрипт решил «локальный
+    # стенд», и вебхук после переключения остался остановленным — автодеплой
+    # был мёртв, пока не запустили руками.
+    if systemctl cat vsks-deploy.service >/dev/null 2>&1; then
         log "запускаю vsks-deploy.service обратно"
         systemctl start vsks-deploy.service || log "WARN: не удалось запустить vsks-deploy.service — запусти вручную"
     fi

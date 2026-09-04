@@ -22,7 +22,14 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      # ⚠️ КАТАЛОГ, НЕ ФАЙЛ. Монтирование одиночного файла держится за
+      # конкретный inode: scp/sed/git подменяют файл целиком, и контейнер
+      # продолжает видеть старое содержимое, пока его не пересоздать.
+      # Это положило GALA дважды за 2026-09-04/05 (сначала в VSKS-nginx,
+      # потом здесь: правка nginx.conf на хосте, «успешный» reload — и
+      # 502, потому что перезагружался прежний файл). Каталог такой
+      # ловушки не имеет: имя ищется заново при каждом открытии.
+      - .:/etc/nginx-src:ro
       - ./secrets:/etc/nginx/secrets:ro
       # Только на чтение — сертификат продлевает certbot ВНУТРИ compose
       # VSKS (/opt/vsks-crm, сервис certbot, НЕ переехал с этим разрезом,
@@ -52,10 +59,13 @@ services:
     # почему-то стал невалиден (например кто-то руками поломал секрет),
     # это будет видно в `docker ps`/`docker compose ps` как unhealthy, а не
     # тихо всплывёт только при следующей попытке reload.
+    # Конфиг — явным -c из смонтированного каталога (см. volumes). Любой
+    # `nginx -t` на этом контейнере обязан указывать тот же путь, иначе он
+    # проверит стоковый /etc/nginx/nginx.conf образа и молча пройдёт.
     command: >
-      sh -c "(while :; do sleep 6h & wait $${!}; nginx -s reload; done &) ; nginx -g 'daemon off;'"
+      sh -c "(while :; do sleep 6h & wait $${!}; nginx -s reload; done &) ; nginx -c /etc/nginx-src/nginx.conf -g 'daemon off;'"
     healthcheck:
-      test: ["CMD", "nginx", "-t"]
+      test: ["CMD", "nginx", "-t", "-c", "/etc/nginx-src/nginx.conf"]
       interval: 30s
       timeout: 5s
       retries: 3

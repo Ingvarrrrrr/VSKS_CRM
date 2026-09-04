@@ -2118,6 +2118,27 @@
                  prepend-icon="mdi-stop-circle-outline" @click="openStopDialog(editingWish)">
             Остановить заявку
           </v-btn>
+          <!-- Владелец, 2026-09-04: «человек может по ошибке заводить Авансовый через
+               заявку ... надо дать возможность завести эту заявку как авансовый отчёт»
+               (кейс: Любарец завела кабель как обычную заявку). Скрыта, если заявка уже
+               авансовая (source) или дошла до договора/оплаты (contracted_locked —
+               тот же признак, что блокирует правку заявки, backend/app/routers/wishes.py
+               ::_wish_locked_descr, ПРАВИЛО №6: не второй расчёт «можно ли»). -->
+          <v-tooltip v-if="editingWishId && editingWish && editingWish.source !== 'advance_report' && editingWish.contracted_locked"
+                     location="top" :text="`Нельзя: ${editingWish.contracted_locked_reason || 'заявка уже на этапе договора или позже'}`">
+            <template #activator="{ props: tipProps }">
+              <span v-bind="tipProps">
+                <v-btn variant="tonal" color="orange-darken-2" prepend-icon="mdi-cash-refund" disabled>
+                  Оформить как авансовый отчёт
+                </v-btn>
+              </span>
+            </template>
+          </v-tooltip>
+          <v-btn v-else-if="editingWishId && editingWish && editingWish.source !== 'advance_report'"
+                 variant="tonal" color="orange-darken-2" prepend-icon="mdi-cash-refund"
+                 @click="openConvertToAdvanceDialog(editingWish)">
+            Оформить как авансовый отчёт
+          </v-btn>
           <v-spacer />
           <!-- draft/rejected или новая заявка: черновик + отправить -->
           <template v-if="isWishEditable && (!editingWishId || ['draft', 'rejected'].includes((wishForm as any).status))">
@@ -2330,6 +2351,36 @@
           <v-btn variant="text" @click="stopDialog = false">Отмена</v-btn>
           <v-btn variant="flat" color="error" :loading="stoppingWish" @click="confirmStopWish">
             Остановить заявку
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ── CONVERT TO ADVANCE REPORT DIALOG (владелец, 2026-09-04) ── -->
+    <v-dialog v-model="convertToAdvanceDialog" max-width="560" :fullscreen="mobile">
+      <v-card>
+        <v-card-title class="pa-4 pb-2 d-flex align-center ga-2">
+          <v-icon color="orange-darken-2">mdi-cash-refund</v-icon>
+          Оформить как авансовый отчёт
+        </v-card-title>
+        <v-card-text class="pa-4">
+          <v-alert type="warning" variant="tonal" density="compact" class="mb-3">
+            Заявка «{{ convertingToAdvanceWish?.title }}» перестанет быть заявкой на закупку и
+            станет авансовым отчётом — появится в реестре «Авансовые отчёты» с теми же позициями,
+            суммами, субсидией и категорией ФЭО. Если по заявке уже есть закупка в плане закупок
+            (ещё не на этапе договора) — она будет отменена, новая закупка станет авансовой.
+            Действие необратимо через интерфейс — вернуть обратно в обычную заявку нельзя.
+          </v-alert>
+          <div class="text-body-2">
+            Позиций: {{ (convertingToAdvanceWish?.items || []).length }},
+            сумма: {{ formatPrice(convertingToAdvanceWish?.total_amount ?? convertingToAdvanceWish?.estimated_price ?? 0) }}
+          </div>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="convertToAdvanceDialog = false">Отмена</v-btn>
+          <v-btn variant="flat" color="orange-darken-2" :loading="convertingToAdvanceLoading" @click="confirmConvertToAdvance">
+            Оформить как авансовый отчёт
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -2555,6 +2606,10 @@ interface Wish {
   // Владелец, 2026-08-19: тумблер вернули — режим «одна на всех» / «каждой позиции своя»,
   // NOT NULL колонка бэкенда (см. backend/app/schemas/wishes.py::WishOut.feo_per_item).
   feo_per_item?: boolean
+  // Владелец, 2026-09-04: 'advance_report' — заявка уже переоформлена в авансовый
+  // отчёт (см. backend app/models/wish.py::Wish.source) — либо это авто-компаньон
+  // прямого создания авансового, либо результат «Оформить как авансовый отчёт».
+  source?: string | null
 }
 
 // «От кого»: Фамилия И.О. вместо полного ФИО
@@ -3980,6 +4035,19 @@ async function openEditDialog(wish: Wish) {
     try {
       const fresh = await apiFetch<any>(`/wishes/${wish.id}`)
       if (Array.isArray(fresh?.items)) rawItems = fresh.items
+      // Владелец, 2026-09-04: contracted_locked/source считаются только в этом,
+      // «дорогом» одиночном GET (не в списке) — тот же вызов, что уже идёт за
+      // items, донасыщаем editingWish этими полями заодно (без второго запроса),
+      // иначе кнопка «Оформить как авансовый отчёт» решает по строке из списка,
+      // где это поле никогда не приходит (см. её v-if в шаблоне).
+      if (editingWish.value && editingWish.value.id === wish.id) {
+        editingWish.value = {
+          ...editingWish.value,
+          contracted_locked: fresh?.contracted_locked,
+          contracted_locked_reason: fresh?.contracted_locked_reason,
+          source: fresh?.source,
+        }
+      }
     } catch {}
     if (!rawItems.length && Array.isArray((wish as any).items) && (wish as any).items.length > 0) {
       rawItems = (wish as any).items
@@ -5471,6 +5539,54 @@ async function copyWish(wish: Wish) {
     showSnack(`Не удалось скопировать заявку: ${e?.payload?.message || e?.message || 'неизвестная ошибка'}`, 'error')
   } finally {
     copyingId.value = null
+  }
+}
+
+// ── «Оформить как авансовый отчёт» (владелец, 2026-09-04): переоформление
+// ошибочно заведённой заявки в авансовый отчёт — POST /wishes/{id}/convert-to-
+// advance-report (backend: app/services/wish_advance_conversion.py). Отказ (409)
+// приходит с ДОСЛОВНОЙ причиной от сервера (стадия договора/оплаты, уже
+// авансовая, нет позиций) — показываем e.payload.message как есть, не generic
+// «ошибка» (владелец: «объяснять причину блокировки»).
+const convertToAdvanceDialog = ref(false)
+const convertingToAdvanceWish = ref<Wish | null>(null)
+const convertingToAdvanceLoading = ref(false)
+
+function openConvertToAdvanceDialog(wish: Wish) {
+  convertingToAdvanceWish.value = wish
+  convertToAdvanceDialog.value = true
+}
+
+async function confirmConvertToAdvance() {
+  if (!convertingToAdvanceWish.value) return
+  convertingToAdvanceLoading.value = true
+  try {
+    const result = await apiFetch<{
+      wish_id: number
+      purchase_id: number
+      registry_number?: string | null
+      purchase_method?: string
+      status: string
+      cancelled_purchases?: string[]
+    }>(`/wishes/${convertingToAdvanceWish.value.id}/convert-to-advance-report`, { method: 'POST' })
+    convertToAdvanceDialog.value = false
+    wishDialog.value = false
+    const cancelledNote = result.cancelled_purchases?.length
+      ? ` Старая закупка ${result.cancelled_purchases.join(', ')} отменена.`
+      : ''
+    showSnack(`Авансовый отчёт ${result.registry_number || `№${result.purchase_id}`} создан.${cancelledNote}`, 'success')
+    await reloadActiveTab()
+    router.push(`/advance-reports/${result.purchase_id}/edit`)
+  } catch (e: any) {
+    // Не generic снэкбар: разворачиваем e.payload.message (HTTPException.detail
+    // с сервера) — там уже готовая человекочитаемая причина (см. wish_advance_
+    // conversion.py: стадия договора/уже авансовая/нет позиций).
+    showSnack(
+      `Не удалось оформить авансовый отчёт: ${e?.payload?.message || e?.message || 'неизвестная ошибка'}`,
+      'error',
+    )
+  } finally {
+    convertingToAdvanceLoading.value = false
   }
 }
 

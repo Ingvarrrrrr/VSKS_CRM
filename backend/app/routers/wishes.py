@@ -1211,8 +1211,17 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
     if not groups:
         raise HTTPException(status_code=400, detail="Нет позиций для распределения")
 
-    # W2: Гейт обязательности дат потребности при переносе в План закупок
-    await _ensure_needed_dates(wish, db, items_full)
+    # W2: Гейт обязательности дат потребности при переносе в План закупок.
+    # Авансовые пропускаются (тот же принцип, что и в submit_wish/update_wish,
+    # см. их комментарии «W2: проверяем плановые даты (авансовые пропускаем)») —
+    # раньше эта функция сюда доходила ТОЛЬКО для НЕ-авансовых заявок (авансовый
+    # авто-companion всегда имел готовую закупку и уходил в ветку «existing» выше
+    # до этой строки); реформация заявки в авансовый отчёт (services/wish_advance_conversion.py)
+    # — первый путь, где source == 'advance_report' реально доходит досюда без
+    # существующей закупки, и без этого исключения ловил бы гейт, которого для
+    # авансовых отчётов нигде больше нет.
+    if getattr(wish, 'source', None) != 'advance_report':
+        await _ensure_needed_dates(wish, db, items_full)
 
     # Инвариант «закупки вне плана не бывает» (владелец, 2026-08-07, план
     # zany-fluttering-mountain.md шаг 3): раньше автозаведение плановой позиции
@@ -3138,6 +3147,74 @@ async def convert_wish(
         # Первое создание закупки — синхронизировать нечего (см. purchase_sync
         # в ветке «существующая закупка» выше).
         "purchase_sync": None,
+    }
+
+
+@router.post("/{wish_id}/convert-to-advance-report")
+async def convert_wish_to_advance_report_endpoint(
+    wish_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """«Оформить как авансовый отчёт» (владелец, 2026-09-04, дословно): «человек
+    может по ошибке заводить Авансовый через заявку ... надо дать возможность
+    завести эту заявку как авансовый отчёт» — реальный случай: Любарец завела
+    кабель как обычную заявку на закупку, хотя деньги уже потрачены и это
+    авансовый отчёт.
+
+    Логика переноса — в app.services.wish_advance_conversion (ПРАВИЛО №6: не
+    вторая копия «заявка → закупка», а переиспользование
+    _distribute_wish_to_purchases с wish.source == 'advance_report').
+
+    Права: автор заявки, участник (WishMember), назначенный исполнитель/
+    ответственный, согласующий из цепочки, либо менеджер+/SaaS — тот же круг,
+    что уже может влиять на заявку (submit/stop), без отдельной галочки
+    доступа (действие узкое и срочное, не отдельная фича с ролевой матрицей).
+    """
+    wish = await _load_wish(wish_id, db)
+
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None and wish.org_id not in org_ids:
+        raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
+
+    is_privileged = _is_saas(current_user) or current_user.role in MANAGER_ROLES
+    if not is_privileged:
+        allowed = (
+            wish.created_by == current_user.id
+            or wish.assigned_to == current_user.id
+            or wish.executor_id == current_user.id
+            or await _is_wish_member(wish_id, current_user.id, db)
+        )
+        if not allowed:
+            from app.models.wish_approval import WishApproval
+            appr = await db.execute(
+                select(WishApproval.id).where(
+                    WishApproval.wish_id == wish_id,
+                    WishApproval.user_id == current_user.id,
+                ).limit(1)
+            )
+            allowed = appr.scalar_one_or_none() is not None
+        if not allowed:
+            raise HTTPException(
+                status_code=403,
+                detail="Переоформить заявку в авансовый отчёт может автор, участник, "
+                       "ответственный/согласующий заявки или менеджер+.",
+            )
+
+    from app.services.wish_advance_conversion import convert_wish_to_advance_report
+
+    purchase = await convert_wish_to_advance_report(wish, db, current_user)
+    cancelled = getattr(wish, "_advance_conversion_cancelled_purchases", [])
+    await db.commit()
+
+    wish = await _load_wish(wish_id, db)
+    return {
+        "wish_id": wish.id,
+        "purchase_id": purchase.id,
+        "registry_number": purchase.registry_number,
+        "purchase_method": purchase.purchase_method,
+        "status": wish.status,
+        "cancelled_purchases": cancelled,
     }
 
 

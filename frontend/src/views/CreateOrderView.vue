@@ -1684,9 +1684,14 @@
             <v-col v-if="!form.vat_applicable" cols="12" md="6">
               <v-text-field
                 v-model="form.vat_exemption_article"
-                label="Основание освобождения от НДС (статья НК РФ)"
+                :label="vatExemptionAutoBasis ? 'Статья НК РФ (основание определено автоматически)' : 'Статья НК РФ *'"
                 variant="outlined" density="compact"
-                placeholder="напр. п.2 ст.346.11 НК РФ (УСН)"
+                :placeholder="vatExemptionAutoBasis ? '' : 'напр. п.2 ст.346.11 НК РФ (УСН)'"
+                :rules="vatExemptionAutoBasis ? [] : [(v: string) => !!(v && v.trim()) || 'Без основания документы с НДС не сформируются']"
+                :hint="vatExemptionAutoBasis
+                  ? `Основание найдено автоматически: ${vatExemptionAutoBasis}. Можно ввести своё — оно заменит автоматическое.`
+                  : 'Обязательно для печати документов: без статьи НК РФ система откажет в формировании договора/приказа/листа согласования. Не требуется для самозанятых исполнителей и договоров ГПХ с физлицом — там основание определяется само.'"
+                persistent-hint
               />
             </v-col>
             <!-- U-3: НДС режим toggle -->
@@ -7395,6 +7400,26 @@ const needsAcceptance = computed(() => form.status === 'contracted')
 const needsPayment = computed(() => form.status === 'delivered')
 
 const contractorsStore = useContractorsStore()
+
+// НДС «не облагается»: основание освобождения система определяет сама для
+// двух случаев — самозанятый исполнитель и договор ГПХ с физлицом (владелец,
+// 2026-09-04: «самозанятые не облагаются НДС и ГПХ, у остальных должно
+// быть [указано]»). Тексты и сама логика — на бэкенде, единственный источник
+// истины: backend/app/routers/documents.py::_resolve_vat_exemption_basis.
+// Здесь только читаем контекст (контрагент/форма договора), чтобы решить,
+// требовать ли поле «Статья НК РФ» от пользователя.
+const GPH_INDIVIDUAL_CONTRACT_FORMS = ['gph_individual', 'gph_individual_rid']
+const vatExemptionAutoBasis = computed<string | null>(() => {
+  if (form.vat_applicable) return null
+  const contractor = form.contractor_id ? contractorsStore.getById(form.contractor_id) : null
+  if (contractor?.org_type === 'Самозанятый') {
+    return 'исполнитель — самозанятый, ч. 9 ст. 2 Федерального закона от 27.11.2018 № 422-ФЗ'
+  }
+  if (form.contract_form && GPH_INDIVIDUAL_CONTRACT_FORMS.includes(form.contract_form)) {
+    return 'договор ГПХ с физическим лицом, ст. 143 НК РФ'
+  }
+  return null
+})
 
 const loadRefs = async () => {
   // Phase 26-ZZ: контрагенты через server-search (см. onContractorSearch).

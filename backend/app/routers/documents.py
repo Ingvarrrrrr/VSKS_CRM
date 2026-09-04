@@ -513,6 +513,181 @@ def _purchase_method_label(p) -> str:
 PURCHASE_METHOD_REQUIRED_DOC_TYPES = {"order_purchase", "approval_sheet"}
 
 
+# doc_type, чьи .docx-шаблоны реально печатают ставку НДС ({{vat_rate}} и/или
+# {{vat_info_line}}) — установлено сканом backend/templates/*.docx на предмет
+# этих плейсхолдеров (2026-09-04). Остальные doc_type (contract_tz,
+# contract_gph_individual[_rid], contract_repair_vehicle, order_purchase,
+# service_note_delivery/procurement/advance, tech_spec_request и т.д.) ставку
+# НДС в тексте не показывают вовсе — для них требовать заполненную ставку
+# было бы избыточным блоком, никак не защищающим от реальной ошибки в тексте.
+VAT_RATE_PRINTED_DOC_TYPES = {
+    "contract",
+    "contract_services",
+    "contract_services_large",
+    "contract_services_small",
+    "contract_services_food",
+    "contract_goods_single",
+    "contract_repair_framework",
+    "tech_spec_contract",
+    "approval_sheet",
+    "service_note_payment",
+}
+
+
+# Тексты оснований освобождения от НДС, подставляемые автоматически, когда
+# основание системе уже известно из данных закупки — владелец (2026-09-04):
+# «самозанятые не облагаются НДС и ГПХ, у остальных должно быть [заполнено]».
+# Единственное место с этими текстами — держим их здесь константами, не
+# размазывая по коду (см. _resolve_vat_exemption_basis).
+VAT_EXEMPTION_ARTICLE_NPD = (
+    "ч. 9 ст. 2 Федерального закона от 27.11.2018 № 422-ФЗ "
+    "(исполнитель применяет специальный налоговый режим "
+    "«Налог на профессиональный доход»)"
+)
+VAT_EXEMPTION_ARTICLE_GPH_INDIVIDUAL = (
+    "ст. 143 НК РФ (физическое лицо, с которым заключён договор ГПХ, "
+    "не признаётся налогоплательщиком НДС)"
+)
+
+# contract_form (Purchase.contract_form, см. app/models/purchase.py) — формы
+# договора с физическим лицом, для которых основание освобождения от НДС
+# определено самим фактом такого договора и не требует ввода вручную.
+_GPH_INDIVIDUAL_CONTRACT_FORMS = {"gph_individual", "gph_individual_rid"}
+
+
+def _resolve_vat_exemption_basis(p) -> str:
+    """Основание «НДС не облагается» — введённое человеком ИЛИ определённое
+    автоматически по данным закупки. Возвращает "" если основания нет вовсе.
+
+    Приоритет: то, что ввёл человек в поле «Статья НК РФ» (p.vat_exemption_article),
+    ВСЕГДА побеждает автоподстановку — автоматика не имеет права затирать
+    ручной ввод.
+
+    Автоопределение — только для двух случаев, где основание системе уже
+    известно из самих данных закупки:
+      - контрагент — самозанятый (Contractor.org_type == 'Самозанятый',
+        это уже существующий в проекте, поддерживаемый признак: его
+        выставляют вручную в карточке контрагента и автоматически по ответу
+        реестра ФНС npd.nalog.ru при проверке ИНН, см. contractors.py::
+        _check_npd_status). ИНН длиной 12 цифр сюда НЕ годится — так же
+        выглядит и ИП, у которого своего освобождения от НДС может не быть;
+      - договор ГПХ с физлицом (Purchase.contract_form in
+        _GPH_INDIVIDUAL_CONTRACT_FORMS) — физлицо не является плательщиком НДС.
+
+    Для всех остальных контрагентов (юрлицо/ИП без явно введённой статьи)
+    возвращает "" — вызывающий код (см. _require_vat_rate_for_doc) обязан
+    расценивать это как «основание не указано» и отказать в генерации.
+    """
+    manual = (getattr(p, "vat_exemption_article", None) or "").strip()
+    if manual:
+        return manual
+    contractor = getattr(p, "contractor", None)
+    if contractor is not None and (getattr(contractor, "org_type", None) or "") == "Самозанятый":
+        return VAT_EXEMPTION_ARTICLE_NPD
+    if (getattr(p, "contract_form", None) or "") in _GPH_INDIVIDUAL_CONTRACT_FORMS:
+        return VAT_EXEMPTION_ARTICLE_GPH_INDIVIDUAL
+    return ""
+
+
+def _require_vat_rate_for_doc(p, doc_type: str) -> None:
+    """422, если документ печатает данные о НДС, а они противоречивы или не
+    заполнены — единая проверка на оба случая (владелец, 2026-09-04, «вторая
+    половина правила»):
+
+      1) НДС облагается (vat_applicable=True), а ставка не указана — раньше
+         тихо подставлялась как 20% (`p.vat_rate or 20`, тот же `or` заодно
+         подменял и явный 0% на 20%). Ноль — валидная ставка и НЕ считается
+         «не указана»; «не указана» — это None.
+      2) НДС НЕ облагается (vat_applicable=False, в модели это ещё и default,
+         см. Purchase.vat_applicable), а основание освобождения не указано и
+         не может быть определено автоматически (см. _resolve_vat_exemption_basis).
+         На проде это оказалось массовым: vat_applicable=False почти нигде не
+         выставляли осознанно, а документ печатал «НДС не облагается» без
+         всякого основания — то же самое «система придумывает за пользователя»,
+         только не про ставку, а про сам факт освобождения.
+
+    Оба случая — один и тот же принцип («система ничего не придумывает про
+    НДС сама»), поэтому проверка одна, не заводим второй механизм — только
+    расширяем эту функцию.
+    """
+    if doc_type not in VAT_RATE_PRINTED_DOC_TYPES:
+        return
+    if p.vat_applicable:
+        if p.vat_rate is not None:
+            return
+        raise HTTPException(
+            422,
+            detail={
+                "code": "VAT_RATE_REQUIRED",
+                "message": "Не указана ставка НДС",
+                "hint": (
+                    "Закупка отмечена как облагаемая НДС, но ставка НДС не заполнена. "
+                    "Система не вправе подставлять её сама — ставка НДС разная у "
+                    "разных поставщиков и договоров, а не всегда 20%.\n\n"
+                    "Откройте карточку закупки и заполните поле «Ставка НДС» "
+                    "(0, 10 или 20 — как указано у поставщика). Если НДС на самом "
+                    "деле не облагается — снимите отметку «Облагается НДС» и "
+                    "укажите статью НК РФ."
+                ),
+                "missing_fields": ["vat_rate"],
+                "doc_type": doc_type,
+            },
+        )
+    if _resolve_vat_exemption_basis(p):
+        return
+    raise HTTPException(
+        422,
+        detail={
+            "code": "VAT_EXEMPTION_ARTICLE_REQUIRED",
+            "message": "НДС отмечен как «не облагается», но не указано основание",
+            "hint": _vat_exemption_missing_hint(p),
+            "missing_fields": ["vat_exemption_article"],
+            "doc_type": doc_type,
+        },
+    )
+
+
+def _vat_exemption_missing_hint(p) -> str:
+    """Текст подсказки для отказа VAT_EXEMPTION_ARTICLE_REQUIRED — единое
+    место, используется и в _require_vat_rate_for_doc, и в per-doc проверке
+    fabrikant_contract_project (см. render_fabrikant_package_files), чтобы
+    формулировка не разъезжалась по двум местам.
+
+    Владелец (2026-09-04): «человек должен из текста понять, что делать, а
+    не искать» — если у контрагента закупки ИНН из 12 цифр, а тип не
+    отмечен «Самозанятый», подсказка прямо называет вероятную причину и
+    конкретное действие (карточка контрагента → «Проверить в реестре
+    самозанятых»), а не просто «заполните поле».
+    """
+    parts = [
+        "Закупка отмечена как НЕ облагаемая НДС, но основание освобождения "
+        "не заполнено — система не вправе печатать «НДС не облагается» без "
+        "основания. Для самозанятых исполнителей и договоров ГПХ с физлицом "
+        "основание подставляется автоматически; для остальных — нужно указать "
+        "его самим."
+    ]
+    contractor = getattr(p, "contractor", None)
+    contractor_inn = (getattr(contractor, "inn", None) or "").strip() if contractor else ""
+    contractor_org_type = (getattr(contractor, "org_type", None) or "").strip() if contractor else ""
+    if len(contractor_inn) == 12 and contractor_org_type != "Самозанятый":
+        parts.append(
+            "У контрагента этой закупки ИНН из 12 цифр, а тип организации не "
+            "отмечен как «Самозанятый» — это похоже на самозанятого или на ИП. "
+            "Если это самозанятый: откройте карточку контрагента и нажмите "
+            "«Проверить в реестре самозанятых» (или вручную выберите тип "
+            "«Самозанятый» в поле «Форма организации») — основание для документа "
+            "подставится само. Если это ИП на общей системе налогообложения — он "
+            "вправе быть плательщиком НДС, тогда отметьте «Облагается НДС» и "
+            "укажите ставку."
+        )
+    parts.append(
+        "Выберите один из двух вариантов в карточке закупки:\n"
+        "— укажите статью НК РФ, дающую освобождение от НДС, в поле «Статья НК РФ»;\n"
+        "— либо отметьте «Облагается НДС» и заполните ставку (0, 10 или 20)."
+    )
+    return "\n\n".join(parts)
+
+
 def _require_purchase_method_for_doc(p, doc_type: str) -> None:
     """422, если запрошен приказ о закупке/лист согласования, а способ закупки не выбран."""
     if doc_type not in PURCHASE_METHOD_REQUIRED_DOC_TYPES:
@@ -1488,6 +1663,7 @@ async def generate_document(
     # до тяжёлых запросов ниже.
     _require_contract_items_for_doc(p, doc_type)
     _require_purchase_method_for_doc(p, doc_type)
+    _require_vat_rate_for_doc(p, doc_type)
 
     # Override template path with subsidy-specific template if available
     template_path, template_file, filename_base = _resolve_doc_template_path(doc_type, p.subsidy_id)
@@ -1967,11 +2143,19 @@ async def generate_document(
     items_sum_val = float(sum(Decimal(str(it.total_price or 0)) for it in (p.items or [])))
     doc_amount_val, amount_is_planned = _resolve_doc_amount(p, doc_type)
 
-    # VAT calculations
+    # VAT calculations.
+    # Ставка берётся ТОЛЬКО из того, что ввёл пользователь — никаких
+    # придуманных значений по умолчанию (владелец, 2026-09-04: «нет НДС
+    # 20 — сами ставим процент НДС, он у всех разный»). None означает
+    # «не указана», 0 — валидная ставка НДС 0%; `or 20` раньше путал эти
+    # два случая. Для doc_type, которые реально печатают ставку,
+    # None+vat_applicable уже отбит выше в _require_vat_rate_for_doc —
+    # сюда с таким сочетанием можно дойти только для остальных doc_type,
+    # где vat_rate/vat_info_line в шаблоне не используются.
     vat_app = bool(p.vat_applicable)
-    vat_rate_val = p.vat_rate or 20
+    vat_rate_val = p.vat_rate
     price_val = doc_amount_val
-    if vat_app and price_val:
+    if vat_app and price_val and vat_rate_val is not None:
         vat_amount_val = price_val * vat_rate_val / (100 + vat_rate_val)
     else:
         vat_amount_val = 0.0
@@ -1983,7 +2167,13 @@ async def generate_document(
     items_with_vat = [it for it in (p.items or []) if getattr(it, 'vat_rate', None)]
 
     if vat_app:
-        vat_info_line = f"В том числе НДС {vat_rate_val}%: {_fmt_money_plain(vat_amount_val)} руб."
+        if vat_rate_val is not None:
+            vat_info_line = f"В том числе НДС {vat_rate_val}%: {_fmt_money_plain(vat_amount_val)} руб."
+        else:
+            # doc_type, печатающие ставку, уже отбиты раньше в
+            # _require_vat_rate_for_doc — сюда попадают только те, где
+            # vat_info_line в шаблоне не используется; не выдумываем число.
+            vat_info_line = "НДС (ставка не указана)"
     elif is_advance:
         # Авансовый: данные из чеков ФНС; если в чеке нет НДС — не пишем ничего лишнего.
         if items_with_vat:
@@ -1993,7 +2183,12 @@ async def generate_document(
         else:
             vat_info_line = ""  # пусто — не придумываем
     else:
-        art = (p.vat_exemption_article or "").strip()
+        # Основание — введённое человеком ИЛИ определённое автоматически
+        # (самозанятый контрагент / договор ГПХ с физлицом), см.
+        # _resolve_vat_exemption_basis. Для doc_type из VAT_RATE_PRINTED_DOC_TYPES
+        # пустое основание уже отбито раньше в _require_vat_rate_for_doc —
+        # сюда с пустым основанием можно дойти только для остальных doc_type.
+        art = _resolve_vat_exemption_basis(p)
         vat_info_line = f"НДС не облагается" + (f" ({art})" if art else "")
 
     context = {
@@ -2152,7 +2347,7 @@ async def generate_document(
         "vat_rate":              vat_rate_val,
         "vat_amount_num":        _fmt_money_plain(vat_amount_val),
         "vat_amount_words":      _rubles_to_words(vat_amount_val),
-        "vat_exemption_article": p.vat_exemption_article or "",
+        "vat_exemption_article": ("" if vat_app else art),
         "vat_info_line":         vat_info_line,
         # Цена прописью (фолбэк на doc_amount_val, если договор ещё не заключён)
         "contract_price_num":   _fmt_money_plain(p.contract_price or doc_amount_val),
@@ -3219,14 +3414,33 @@ async def render_fabrikant_package_files(
             "norm_hours": "",
         })
 
+    # Ставка НДС — только из введённого пользователем, без придуманного
+    # значения по умолчанию (см. подробный комментарий у generate_document /
+    # _require_vat_rate_for_doc). None = не указана, 0 = валидная ставка 0%.
+    # Этот пакет из 5 документов рендерится «по-доброму» — сбой одного
+    # шаблона не должен ронять остальные (см. try/except в цикле ниже),
+    # поэтому здесь НЕ бросаем HTTPException на весь пакет; вместо этого
+    # единственный шаблон, который реально печатает ставку
+    # (fabrikant_contract_project.docx), отдельно проверяется прямо перед
+    # рендером — см. чуть ниже по циклу.
     vat_app = bool(p.vat_applicable)
-    vat_rate_val = p.vat_rate or 20
+    vat_rate_val = p.vat_rate
     price_val = float(p.contract_price or 0)
-    vat_amount_val = price_val * vat_rate_val / (100 + vat_rate_val) if (vat_app and price_val) else 0.0
+    vat_amount_val = (
+        price_val * vat_rate_val / (100 + vat_rate_val)
+        if (vat_app and price_val and vat_rate_val is not None) else 0.0
+    )
     if vat_app:
-        vat_info_line = f"В том числе НДС {vat_rate_val}%: {_fmt_money_plain(vat_amount_val)} руб."
+        if vat_rate_val is not None:
+            vat_info_line = f"В том числе НДС {vat_rate_val}%: {_fmt_money_plain(vat_amount_val)} руб."
+        else:
+            vat_info_line = "НДС (ставка не указана)"
     else:
-        art = (p.vat_exemption_article or "").strip()
+        # Основание — введённое человеком ИЛИ автоопределённое (самозанятый /
+        # ГПХ с физлицом), см. _resolve_vat_exemption_basis. Пустое основание
+        # для fabrikant_contract_project отдельно отбито ниже, прямо перед
+        # рендером этого шаблона (см. try/except-цикл).
+        art = _resolve_vat_exemption_basis(p)
         vat_info_line = "НДС не облагается" + (f" ({art})" if art else "")
 
     def _cd_parts():
@@ -3396,7 +3610,7 @@ async def render_fabrikant_package_files(
         "vat_rate": vat_rate_val,
         "vat_amount_num": _fmt_money_plain(vat_amount_val),
         "vat_amount_words": _rubles_to_words(vat_amount_val),
-        "vat_exemption_article": p.vat_exemption_article or "",
+        "vat_exemption_article": ("" if vat_app else art),
         "vat_info_line": vat_info_line,
         "contract_price_num": _fmt_money_plain(p.contract_price),
         "contract_price_words": _rubles_to_words(p.contract_price),
@@ -3580,6 +3794,21 @@ async def render_fabrikant_package_files(
             continue
 
         try:
+            # fabrikant_contract_project.docx — единственный шаблон в этом
+            # пакете, реально печатающий данные о НДС ({{vat_rate}} /
+            # {{vat_exemption_article}}). Оба случая («ставка не указана» и
+            # «основание освобождения не указано») — печатать выдуманное
+            # значение нельзя, отказываем именно по этому документу (остальные
+            # 4 рендерятся дальше как обычно, см. try/except-цикл).
+            if doc_key == "fabrikant_contract_project" and vat_app and vat_rate_val is None:
+                raise ValueError(
+                    "Не указана ставка НДС: закупка отмечена как облагаемая НДС, "
+                    "но поле «Ставка НДС» в карточке закупки пустое. Заполните "
+                    "ставку (0, 10 или 20 — как у поставщика), либо снимите "
+                    "отметку «Облагается НДС», если это верно."
+                )
+            if doc_key == "fabrikant_contract_project" and not vat_app and not _resolve_vat_exemption_basis(p):
+                raise ValueError("Не указано основание освобождения от НДС. " + _vat_exemption_missing_hint(p))
             _tpl = _DxTpl(tpl_path)
             _tpl.render(context)
             _buf = BytesIO()

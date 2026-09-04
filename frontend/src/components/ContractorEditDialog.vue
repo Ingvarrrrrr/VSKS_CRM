@@ -83,8 +83,26 @@
             density="compact"
             clearable
             hide-details
-            class="mb-3"
+            class="mb-2"
           />
+          <template v-if="isInn12 && editId">
+            <v-btn
+              variant="tonal" color="primary" size="small" class="mb-2"
+              prepend-icon="mdi-account-search-outline"
+              :loading="npdCheckLoading"
+              @click="checkNpdStatus"
+            >
+              Проверить в реестре самозанятых
+            </v-btn>
+            <div class="text-caption text-medium-emphasis mb-2">
+              ИНН из 12 цифр — может быть ИП или самозанятым. Для самозанятых
+              документы печатают освобождение от НДС автоматически, если тип
+              организации отмечен «Самозанятый».
+            </div>
+          </template>
+          <v-alert v-if="npdCheckMessage" :type="npdCheckMessageType" variant="tonal" density="compact" class="mb-2 text-caption" closable @click:close="npdCheckMessage = ''">
+            {{ npdCheckMessage }}
+          </v-alert>
           <v-text-field
             v-model="form.name"
             label="Краткое наименование *"
@@ -397,6 +415,42 @@ const existingContractor = ref<{ id: number; name: string } | null>(null)
 const loadingContractor = ref(false)
 const formRef     = ref()
 const editId      = ref<number | null>(null)
+
+// Проверка в реестре самозанятых (НПД) — владелец, 2026-09-04: основание
+// «НДС не облагается» в документах подставляется автоматически для
+// контрагентов с org_type === 'Самозанятый' (см. backend
+// documents.py::_resolve_vat_exemption_basis). На боевой базе этот признак
+// почти нигде не проставлен — точечная проверка по кнопке, переиспользует
+// уже существующий backend _check_npd_status (через новый тонкий эндпоинт
+// POST /contractors/{id}/check-npd-status), второго механизма не заводим.
+const npdCheckLoading = ref(false)
+const npdCheckMessage = ref('')
+const npdCheckMessageType = ref<'success' | 'info' | 'error' | 'warning'>('info')
+const isInn12 = computed(() => (form.value.inn || '').replace(/\D/g, '').length === 12)
+
+async function checkNpdStatus() {
+  if (!editId.value) return
+  npdCheckLoading.value = true
+  npdCheckMessage.value = ''
+  try {
+    const data = await apiFetch<{ ok: boolean; found: boolean; org_type: string | null; message: string }>(
+      `/contractors/${editId.value}/check-npd-status`,
+      { method: 'POST' }
+    )
+    if (data.found && data.org_type) {
+      form.value.org_type = data.org_type
+    }
+    npdCheckMessage.value = data.message
+    npdCheckMessageType.value = data.found ? 'success' : 'info'
+  } catch (e: any) {
+    // 503 NPD_REGISTRY_UNAVAILABLE (лимит запросов с одного IP / сервис недоступен)
+    // и прочие структурированные отказы — показываем текст из backend, не generic.
+    npdCheckMessage.value = e?.payload?.hint || e?.payload?.message || e?.message || 'Ошибка проверки реестра самозанятых'
+    npdCheckMessageType.value = 'error'
+  } finally {
+    npdCheckLoading.value = false
+  }
+}
 
 const toast = useToast()
 function showSnack(text: string, color: ToastType = 'success') {

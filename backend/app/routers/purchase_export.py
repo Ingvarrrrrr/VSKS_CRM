@@ -3209,7 +3209,15 @@ async def _parse_and_group(
             etp_url=first.get("etp_url"),
             # НДС
             vat_applicable=first.get("vat_applicable") or False,
-            vat_rate=int(first["vat_rate"]) if first.get("vat_rate") and str(first["vat_rate"]).isdigit() else None,
+            # `first.get("vat_rate") and ...` терял явный 0 (falsy int/float)
+            # — та же ошибка, что и «or 20» в documents.py: ставка 0%
+            # молчаливо превращалась в «не указана». None-check сохраняет 0.
+            vat_rate=(
+                int(first["vat_rate"])
+                if (first.get("vat_rate") is not None and str(first["vat_rate"]).strip() != ""
+                    and str(first["vat_rate"]).isdigit())
+                else None
+            ),
             vat_exemption_article=first.get("vat_exemption_article"),
             # Closing document — JSONB-first + legacy write-through
             acceptance_docs=acceptance_docs_val if acceptance_docs_val else [],
@@ -3276,7 +3284,8 @@ async def _parse_and_group(
                 contractor_id=pr["cont_id"] if (pr["cont_id"] and pr["cont_id"] != -1) else None,
                 contractor_inn=pr["cont_inn"],
                 contractor_name=pr["cont_name"],
-                vat_rate=str(pr["vat_rate"]) if pr["vat_rate"] else None,
+                # Аналогично Purchase.vat_rate выше: truthy-check терял 0.
+                vat_rate=str(pr["vat_rate"]) if pr["vat_rate"] not in (None, "") else None,
             )
             items.append(pi)
 

@@ -4944,6 +4944,7 @@ import type { MatchCandidate } from '@/composables/useItemMatching'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
 import type { FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
+import { numOrNull } from '@/utils/numberFormat'
 import { PURCHASE_STATUS_META, PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusIcon, purchaseStatusColor } from '@/constants/purchaseStatus'
 import { type KpiKey, KPI_MODE, KPI_LABELS, KPI_EMPTY_REASONS, kpiItemMatches } from '@/constants/kpiMetrics'
 
@@ -7454,18 +7455,23 @@ async function savePlannedItem() {
         name: f.name.trim(),
         quantity: qtyOrDefault,
         unit: f.unit || null,
-        amount: isMonthly ? null : f.amount,
+        amount: isMonthly ? null : numOrNull(f.amount),
         // Цена за единицу (правка 2026-09-03) — раньше здесь не отправлялась
         // вовсе, введённая в поле «Плановая стоимость за единицу» цена молча
         // терялась (амаунт уже посчитан watch'ем из неё, а сама цена — нет).
         // См. FeoPlannedItem.unit_price / assert_tz_not_over_plan.
-        unit_price: isMonthly ? null : (f.unitPrice ?? null),
+        // numOrNull (не `f.unitPrice ?? null` — правка 2026-09-04, жалоба владельца
+        // «да какого хуя тут ожидается число, может быть пусто, может быть 0»):
+        // `??` пустую строку от v-model.number НЕ ловит, только null/undefined —
+        // очищенное поле уходило на сервер как '' и валило 422. См. numOrNull
+        // в @/utils/numberFormat.ts.
+        unit_price: isMonthly ? null : numOrNull(f.unitPrice),
         is_active: true,
         payment_mode: f.payment_mode,
         planned_date: !isMonthly && f.planned_date ? f.planned_date : null,
         monthly_start_date: isMonthly && f.monthly_start_date ? f.monthly_start_date : null,
-        months_count: isMonthly ? f.months_count : null,
-        monthly_amount: isMonthly ? f.monthly_amount : null,
+        months_count: isMonthly ? numOrNull(f.months_count) : null,
+        monthly_amount: isMonthly ? numOrNull(f.monthly_amount) : null,
         is_feo_breakdown: f.is_feo_breakdown,
         is_internal_plan: f.is_internal_plan,
       }),
@@ -7841,20 +7847,22 @@ async function saveEditPlannedItem() {
       body: JSON.stringify({
         feo_category_id: d.feo_category_id,
         name: d.name,
-        quantity: d.quantity !== '' ? Number(d.quantity) : null,
+        quantity: numOrNull(d.quantity),
         unit: d.unit || null,
-        amount: isMonthly ? null : (d.amount !== '' ? Number(d.amount) : null),
+        amount: isMonthly ? null : numOrNull(d.amount),
         // PUT — полная замена (см. коммент у editPlannedDialog.unitPrice выше и
         // у item.unit_price = data.unit_price в feo_planned_items.py) — без явной
         // передачи цена за единицу молча обнулится, даже если правили что-то другое.
-        unit_price: d.unitPrice !== '' && d.unitPrice != null ? Number(d.unitPrice) : null,
+        // numOrNull — тот же хелпер, что и в savePlannedItem выше (см. @/utils/
+        // numberFormat.ts) — было три места, каждое приводило '' к null по-своему.
+        unit_price: numOrNull(d.unitPrice),
         notes: null,
         is_active: true,
         payment_mode: d.payment_mode,
         planned_date: !isMonthly && d.planned_date ? d.planned_date : null,
         monthly_start_date: isMonthly && d.monthly_start_date ? d.monthly_start_date : null,
-        months_count: isMonthly ? d.months_count : null,
-        monthly_amount: isMonthly ? d.monthly_amount : null,
+        months_count: isMonthly ? numOrNull(d.months_count) : null,
+        monthly_amount: isMonthly ? numOrNull(d.monthly_amount) : null,
         item_type: d.item_type,
         is_feo_breakdown: d.is_feo_breakdown,
         is_internal_plan: d.is_internal_plan,
@@ -8046,15 +8054,12 @@ const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as numb
 // возвращает исходную строку '' как есть, если parseFloat('') === NaN. Наивное
 // `field ?? null` в PUT/POST-payload пропускало эту '' насквозь (?? срабатывает
 // только на null/undefined) → бэкенд получал '' в Optional[float]-поле → 422
-// «ожидается число» с техническим именем поля вместо русской подписи (feo_quantity
-// не было в field_labels в app/__init__.py — трогать этот файл в этой задаче
-// запрещено, поэтому чиним у источника, здесь). Пустая строка/null/undefined —
-// «поле не задано» = null; 0 — валидное число, НЕ схлопывается в null.
-function numOrNull(v: unknown): number | null {
-  if (v === '' || v === null || v === undefined) return null
-  const n = Number(v)
-  return Number.isFinite(n) ? n : null
-}
+// «ожидается число». numOrNull — единственный источник этого приведения в проекте
+// (правка 2026-09-04: раньше жила только здесь как локальная функция, найдена и
+// переиспользована для той же дыры в плановых позициях ФЭО — savePlannedItem/
+// saveEditPlannedItem ниже и FeoPlannedItemsSelect.vue — см. её докстринг в
+// @/utils/numberFormat.ts). Пустая строка/null/undefined — «поле не задано» = null;
+// 0 — валидное число, НЕ схлопывается в null.
 
 // Правило владельца (2026-08-09): «Плановое кол-во»/«Плановая стоимость за ед.» —
 // пара. Задана цена без количества (или наоборот) → сумма НЕ считается автоматически

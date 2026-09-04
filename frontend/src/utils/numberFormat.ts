@@ -21,9 +21,25 @@ export function formatNumber(v: number | null | undefined): string {
 export function parseNumber(s: string | number | null | undefined): number | null {
   if (s == null || s === ('' as any)) return null
   if (typeof s === 'number') return s
-  const cleaned = String(s).replace(/[\s\u00A0]/g, '').replace(',', '.')
+  const cleaned = String(s).replace(/[\s ]/g, '').replace(',', '.')
   const n = parseFloat(cleaned)
   return isNaN(n) ? null : n
+}
+
+/**
+ * Приведение значения v-model.number-поля к Optional[Decimal]/Optional[int]-совместимому
+ * числу для API-payload'а. Vue's looseToNumber возвращает очищенное поле как пустую строку
+ * '' (parseFloat('') === NaN не срабатывает), а не null — наивное `field ?? null` в теле
+ * запроса это НЕ ловит (`??` реагирует только на null/undefined), пустая строка утекает на
+ * сервер как есть, и Pydantic отвечает 422 «ожидается число». Единственный источник этого
+ * приведения (владелец, жалоба 2026-09-04, «может быть пусто, может быть 0») — раньше в
+ * проекте параллельно жила локальная копия (numOrNull в SubsidiesView.vue), теперь здесь.
+ * '' / null / undefined → null («поле не задано»); 0 — валидное число, НЕ схлопывается в null.
+ */
+export function numOrNull(v: unknown): number | null {
+  if (v === '' || v === null || v === undefined) return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
 }
 
 /**

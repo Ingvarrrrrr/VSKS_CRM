@@ -659,7 +659,7 @@ import type { FeoNode } from '@/composables/useFeoLeaves'
 import type { FeoPlanPosition, FeoPlanSelection, FeoPlanKind } from '@/composables/useFeoPlannedResiduals'
 import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
 import { useToast, type ToastType } from '@/composables/useToast'
-import { formatPlanResidual } from '@/utils/numberFormat'
+import { formatPlanResidual, numOrNull } from '@/utils/numberFormat'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
 
 const props = defineProps<{
@@ -1315,14 +1315,20 @@ const attachBlockedReason = computed((): string | null => {
 
 const attachDisabled = computed((): boolean => attachBlockedReason.value != null)
 
+// Владелец (жалоба 2026-09-04, скриншот): «Цена за единицу, ₽ (необязательно)»
+// оставляли пустой → 422 «ожидается число». createForm.* типизирован number|null,
+// но v-model.number на очищенном поле реально кладёт туда '' (Vue's looseToNumber,
+// не NaN/null) — quantity/unitPrice/amount без явного приведения уходили на сервер
+// как есть. numOrNull — общий хелпер (см. @/utils/numberFormat.ts, тот же, что и
+// в SubsidiesView.vue::savePlannedItem/saveEditPlannedItem) — '' → null, 0 остаётся 0.
 function buildCreatePayload(allowDuplicate: boolean) {
   return {
     feo_category_id: props.categoryId,
     name: createForm.name.trim(),
-    quantity: createForm.quantity,
+    quantity: numOrNull(createForm.quantity),
     unit: createForm.unit.trim() || null,
-    unit_price: createForm.unitPrice,
-    amount: createForm.amount,
+    unit_price: numOrNull(createForm.unitPrice),
+    amount: numOrNull(createForm.amount),
     item_type: createForm.item_type,
     allow_duplicate_name: allowDuplicate,
   }

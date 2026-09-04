@@ -1863,6 +1863,13 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         "justification": "Обоснование", "org_id": "Организация",
         "assigned_to": "Ответственный", "event_id": "Мероприятие",
         "execution_deadline": "Срок исполнения",
+        # Плановые позиции ФЭО (FeoPlannedItemCreate, app/schemas/schemas.py) — жалоба
+        # владельца 2026-09-04: пустая «Цена за единицу» отвечала сырым «Поле "unit_price":
+        # ожидается число», человек не обязан знать имя поля бэкенда.
+        "unit_price": "Цена за единицу", "amount": "Сумма", "name": "Наименование",
+        "feo_category_id": "Категория ФЭО", "months_count": "Количество месяцев",
+        "monthly_amount": "Сумма в месяц", "planned_date": "Плановая дата",
+        "monthly_start_date": "Дата начала выплат",
     }
     errors = []
     fields = []  # для фронта: подсветка/стрелочка к проблемному полю

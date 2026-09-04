@@ -1,9 +1,16 @@
 <template>
-  <div class="d-flex align-center gap-2">
+  <div>
+    <!-- Владелец, 2026-09-03: раньше здесь ещё был переключатель «по странице/по всей БД» —
+         корневой div нёс d-flex, чтобы уложить поле и переключатель в ряд. Переключатель убрали
+         (режим «по странице» нигде толком не работал), остался один child — flex больше не нужен.
+         Важно: d-flex было утилитой !important и конфликтовало с d-none/d-sm-flex, которые
+         AppBar.vue вешает на этот же корневой элемент, чтобы скрывать поиск на мобильных — из-за
+         одинаковой специфичности побеждал тот класс, что ниже в CSS, и поле вылезало на мобильном
+         поверх шапки независимо от viewport. Без d-flex это больше не проблема. -->
     <v-text-field
       v-model="appSearch"
       prepend-inner-icon="mdi-magnify"
-      :placeholder="appSearchScope === 'page' ? 'Поиск по странице...' : 'Поиск по всей базе...'"
+      placeholder="Поиск по всей базе..."
       variant="outlined"
       density="compact"
       hide-details
@@ -12,19 +19,8 @@
       style="width: 260px"
       @keydown.ctrl.k.prevent
     />
-    <v-btn-toggle
-      v-model="appSearchScope"
-      density="compact"
-      variant="outlined"
-      mandatory
-      rounded="lg"
-      class="search-scope-toggle"
-    >
-      <v-btn value="page" size="small">По странице</v-btn>
-      <v-btn value="global" size="small">По всей БД</v-btn>
-    </v-btn-toggle>
 
-    <!-- Global search results dialog (only when scope=global) -->
+    <!-- Global search results dialog -->
     <v-dialog v-model="globalDialog" max-width="600" :retain-focus="false" :fullscreen="mobile">
       <v-card>
         <v-card-text class="pa-2 pb-0">
@@ -79,7 +75,7 @@ import { useAppSearch } from '@/composables/useAppSearch'
 
 const router = useRouter()
 const { mobile } = useDisplay()
-const { appSearch, appSearchScope } = useAppSearch()
+const { appSearch } = useAppSearch()
 const globalDialog = ref(false)
 const loading = ref(false)
 
@@ -94,7 +90,6 @@ if (typeof window !== 'undefined') {
   window.addEventListener('keydown', (e: KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
       e.preventDefault()
-      appSearchScope.value = 'global'
       globalDialog.value = true
     }
   })
@@ -102,14 +97,13 @@ if (typeof window !== 'undefined') {
 
 let searchTimeout: ReturnType<typeof setTimeout> | null = null
 
-// Open global dialog when switching to global scope with existing query
-watch([appSearch, appSearchScope], ([q, scope]) => {
-  if (scope === 'global' && (q as string).length >= 2) {
+// Open the results dialog as soon as the query is long enough
+watch(appSearch, (q) => {
+  if (q.length >= 2) {
     globalDialog.value = true
     if (searchTimeout) clearTimeout(searchTimeout)
-    searchTimeout = setTimeout(() => doSearch(q as string), 300)
-  }
-  if (scope === 'page') {
+    searchTimeout = setTimeout(() => doSearch(q), 300)
+  } else {
     globalDialog.value = false
   }
 })
@@ -164,15 +158,6 @@ function navigate(item: SearchResult, type: string) {
 </script>
 
 <style scoped>
-.search-scope-toggle :deep(.v-btn) {
-  color: white !important;
-  border-color: rgba(255,255,255,0.5) !important;
-  font-size: 12px;
-}
-.search-scope-toggle :deep(.v-btn--active) {
-  background: rgba(255,255,255,0.25) !important;
-  color: white !important;
-}
 .search-input :deep(.v-field__input) { font-size: 16px; }
 .search-result-item { cursor: pointer; }
 .search-result-item:hover { background: var(--crm-surface-hover); }

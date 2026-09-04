@@ -26,9 +26,9 @@
           icon
           variant="text"
           color="primary"
-          :href="`/api/vehicle-attachments/${attachment.id}/download`"
-          target="_blank"
+          :loading="downloading"
           title="Скачать"
+          @click="downloadFile"
         >
           <v-icon size="16">mdi-download</v-icon>
         </v-btn>
@@ -148,6 +148,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import FileDropZone from '@/components/FileDropZone.vue'
+import { apiFetch } from '@/api'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -197,6 +198,7 @@ const ALLOWED_ACCEPT = '.pdf,.jpg,.jpeg,.png,.webp,.heic,.doc,.docx'
 
 const selectedFile = ref<File | null>(null)
 const uploading = ref(false)
+const downloading = ref(false)
 const uploadError = ref<ApiError | null>(null)
 const deleting = ref(false)
 const deleteDialog = ref(false)
@@ -266,11 +268,17 @@ function mimeIconColor(mime: string | null): string {
 }
 
 function parseApiError(err: unknown): ApiError {
-  if (err instanceof Response || (typeof err === 'object' && err !== null && 'status' in err)) {
-    return { message: 'Ошибка сети', code: 'NETWORK_ERROR' }
-  }
   if (typeof err === 'object' && err !== null) {
     const e = err as Record<string, unknown>
+    // apiFetch (frontend/src/api.ts) кидает Error с полем payload = {code, message, correlation_id}
+    const payload = e['payload'] as Record<string, unknown> | undefined
+    if (payload) {
+      return {
+        message: (payload['message'] as string) ?? 'Неизвестная ошибка',
+        code: payload['code'] as string | undefined,
+        correlation_id: payload['correlation_id'] as string | undefined,
+      }
+    }
     const detail = e['detail'] as Record<string, unknown> | undefined
     if (detail) {
       return {
@@ -282,6 +290,37 @@ function parseApiError(err: unknown): ApiError {
     return { message: (e['message'] as string) ?? String(err) }
   }
   return { message: String(err) }
+}
+
+// ── Download ──────────────────────────────────────────────────────────────────
+
+async function downloadFile() {
+  if (!props.attachment) return
+  downloading.value = true
+  try {
+    // Бинарный ответ — apiFetch тут не годится, ручной fetch с Bearer-токеном,
+    // как в VehicleDetailView.loadHeroPhoto(). Обычный <a href> не может передать
+    // заголовок Authorization, поэтому раньше скачивание уходило в 401.
+    const token = localStorage.getItem('auth_token')
+    const res = await fetch(`/api/vehicle-attachments/${props.attachment.id}/download`, {
+      credentials: 'include',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = props.attachment.name
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch (err) {
+    uploadError.value = parseApiError(err)
+  } finally {
+    downloading.value = false
+  }
 }
 
 // ── Upload ────────────────────────────────────────────────────────────────────
@@ -296,15 +335,13 @@ async function onFileSelected(file: File | null) {
     fd.append('kind', props.kind)
     fd.append('file', file)
 
-    const res = await fetch('/api/vehicle-attachments/upload', {
+    // apiFetch добавляет Authorization: Bearer автоматически (frontend/src/api.ts) —
+    // прямой fetch() без токена уходил в 401, авторизация в проекте не на cookie.
+    const att = await apiFetch<VehicleAttachment>('/vehicle-attachments/upload', {
       method: 'POST',
       body: fd,
+      suppressErrorDialog: true,
     })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      throw body
-    }
-    const att: VehicleAttachment = await res.json()
     emit('uploaded', att)
     selectedFile.value = null
   } catch (err) {
@@ -325,13 +362,10 @@ async function doDelete() {
   if (!props.attachment) return
   deleting.value = true
   try {
-    const res = await fetch(`/api/vehicle-attachments/${props.attachment.id}`, {
+    await apiFetch(`/vehicle-attachments/${props.attachment.id}`, {
       method: 'DELETE',
+      suppressErrorDialog: true,
     })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      throw body
-    }
     deleteDialog.value = false
     emit('deleted', props.attachment.id)
   } catch (err) {
@@ -362,15 +396,11 @@ async function savePolicyMeta() {
     // Nothing changed
     if (![...fd.entries()].length) return
 
-    const res = await fetch(`/api/vehicle-attachments/${props.attachment.id}`, {
+    const updated = await apiFetch<VehicleAttachment>(`/vehicle-attachments/${props.attachment.id}`, {
       method: 'PATCH',
       body: fd,
+      suppressErrorDialog: true,
     })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      throw body
-    }
-    const updated: VehicleAttachment = await res.json()
     emit('uploaded', updated)
   } catch (err) {
     patchError.value = parseApiError(err)

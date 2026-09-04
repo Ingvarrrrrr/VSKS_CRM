@@ -174,6 +174,7 @@
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useDisplay } from 'vuetify'
 import FileDropZone from '@/components/FileDropZone.vue'
+import { apiFetch } from '@/api'
 
 const { mobile } = useDisplay()
 
@@ -213,13 +214,11 @@ const deleting = ref(false)
 async function fetchPhotos() {
   loading.value = true
   try {
-    const res = await fetch(
-      `/api/vehicle-attachments?vehicle_id=${props.vehicleId}`,
-      { credentials: 'include' }
-    )
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const all: PhotoMeta[] = await res.json()
-    photos.value = all.filter(a => a.kind === 'photo')
+    // JSON GET — идёт через apiFetch, который сам добавляет Authorization: Bearer
+    // (см. frontend/src/api.ts). Прямой fetch() с credentials:'include' здесь не
+    // работал — авторизация в проекте на bearer-токене, сессионных cookie нет.
+    const all = await apiFetch<PhotoMeta[]>(`/vehicle-attachments?vehicle_id=${props.vehicleId}`)
+    photos.value = (all || []).filter(a => a.kind === 'photo')
     // Load blob URLs for new photos
     for (const p of photos.value) {
       if (!blobUrls.value[p.id]) {
@@ -235,8 +234,12 @@ async function fetchPhotos() {
 
 async function loadBlobUrl(photo: PhotoMeta) {
   try {
+    // Бинарный ответ (blob) — apiFetch тут не годится (он парсит JSON/текст),
+    // поэтому ручной fetch с Bearer-токеном, как в VehicleDetailView.loadHeroPhoto().
+    const token = localStorage.getItem('auth_token')
     const res = await fetch(`/api/vehicle-attachments/${photo.id}/download`, {
       credentials: 'include',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
     if (!res.ok) return
     const blob = await res.blob()
@@ -261,23 +264,18 @@ async function onFilesSelected(files: File[]) {
       fd.append('name', file.name)
       fd.append('file', file)
 
-      const res = await fetch('/api/vehicle-attachments/upload', {
+      // apiFetch поддерживает FormData (не сериализует в JSON) и сам ставит
+      // Authorization: Bearer — тот же подход, что в RepairAttachmentSlot.vue.
+      const created = await apiFetch<PhotoMeta>('/vehicle-attachments/upload', {
         method: 'POST',
-        credentials: 'include',
         body: fd,
+        suppressErrorDialog: true, // ошибка уже показана локально в uploadErrors
       })
-
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        const msg = body?.detail?.message ?? body?.detail ?? `Ошибка HTTP ${res.status}`
-        uploadErrors.value = [...uploadErrors.value, `${file.name}: ${msg}`]
-      } else {
-        const created: PhotoMeta = await res.json()
-        photos.value = [...photos.value, created]
-        loadBlobUrl(created)
-      }
-    } catch {
-      uploadErrors.value = [...uploadErrors.value, `${file.name}: сетевая ошибка`]
+      photos.value = [...photos.value, created]
+      loadBlobUrl(created)
+    } catch (err: any) {
+      const msg = err?.payload?.message ?? err?.message ?? 'сетевая ошибка'
+      uploadErrors.value = [...uploadErrors.value, `${file.name}: ${msg}`]
     }
     uploadProgress.value.done++
   }
@@ -302,16 +300,10 @@ async function doDelete() {
   if (!deleteTarget.value) return
   deleting.value = true
   try {
-    const res = await fetch(`/api/vehicle-attachments/${deleteTarget.value.id}`, {
+    await apiFetch(`/vehicle-attachments/${deleteTarget.value.id}`, {
       method: 'DELETE',
-      credentials: 'include',
+      suppressErrorDialog: true,
     })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      const msg = body?.detail?.message ?? `HTTP ${res.status}`
-      uploadErrors.value = [...uploadErrors.value, `Удаление: ${msg}`]
-      return
-    }
     // Revoke blob URL
     const url = blobUrls.value[deleteTarget.value.id]
     if (url) URL.revokeObjectURL(url)
@@ -331,6 +323,9 @@ async function doDelete() {
     }
     deleteDialog.value = false
     deleteTarget.value = null
+  } catch (err: any) {
+    const msg = err?.payload?.message ?? err?.message ?? 'ошибка удаления'
+    uploadErrors.value = [...uploadErrors.value, `Удаление: ${msg}`]
   } finally {
     deleting.value = false
   }

@@ -7,21 +7,80 @@
         <div class="rv-crumbs">
           <router-link to="/fleet">Автопарк</router-link>
           <span class="rv-crumbs__sep">/</span>
-          <b>Регионы и филиалы</b>
+          <b>Регионы и места нахождения</b>
         </div>
         <h1 class="rv-h1">География парка</h1>
         <p class="rv-lead">
           Распределение
           <b>{{ totalVehicles }}</b> единиц техники по
-          <b>{{ orgs.length }}</b> филиалам и регионам · клик по филиалу — его машины и ответственные
+          <b>{{ sortedLocations.length }}</b> местам нахождения ·
+          клик по месту нахождения — список машин
         </p>
       </div>
+
+      <!-- 2026-09 (владелец: «нужен поиск по автомобилю... как в Иерархии»):
+           поиск по гос.№/марке/модели/VIN — сервер уже умеет это в GET /vehicles?q=
+           (см. VehicleListView.vue), здесь просто переиспользуем эндпоинт. Найденные
+           машины подсвечивают на карте кружок своего места нахождения (тот же приём,
+           что hv-node-match/hv-node-dim в HierarchyView.vue) — см. vehicleSearch* ниже. -->
+      <div class="rv-vsearch">
+        <div class="rv-vsearch__box">
+          <span class="rv-vsearch__ic">⌕</span>
+          <input
+            v-model="vehicleSearchQuery"
+            type="text"
+            class="rv-vsearch__input"
+            placeholder="Поиск ТС: гос.№, марка, модель, VIN…"
+          />
+          <button
+            v-if="vehicleSearchQuery"
+            class="rv-vsearch__clear"
+            title="Очистить"
+            @click="vehicleSearchQuery = ''"
+          >✕</button>
+          <span
+            v-if="vehicleSearchActive"
+            class="rv-vsearch__count"
+            :class="vehicleSearchMatchCount ? 'rv-vsearch__count--ok' : 'rv-vsearch__count--zero'"
+          >{{ vehicleSearchLoading ? '…' : (vehicleSearchMatchCount || 0) }}</span>
+        </div>
+
+        <!-- Результаты — краткий текстовый список, клик открывает попап места -->
+        <div v-if="vehicleSearchActive" class="rv-vsearch__results">
+          <div v-if="vehicleSearchLoading" class="rv-vsearch__hint">Ищем…</div>
+          <template v-else-if="vehicleSearchResults.length">
+            <div
+              v-for="v in vehicleSearchResults"
+              :key="v.id"
+              class="rv-vsearch__row"
+              @click="openLocationDrill(vehicleLocationRegion(v))"
+            >
+              <LicensePlate :modelValue="v.plate" size="sm" />
+              <span class="rv-vsearch__row-nm">{{ [v.brand, v.model].filter(Boolean).join(' ') || '—' }}</span>
+              <span class="rv-vsearch__row-sep">·</span>
+              <span class="rv-vsearch__row-loc">{{ vehicleLocationRegion(v) }}</span>
+            </div>
+            <div v-if="vehicleSearchHasMore" class="rv-vsearch__hint">
+              показаны первые {{ vehicleSearchResults.length }} из {{ vehicleSearchTotal }} — уточните запрос
+            </div>
+          </template>
+          <div v-else class="rv-vsearch__hint rv-vsearch__hint--empty">
+            Ничего не найдено по «{{ vehicleSearchQuery.trim() }}»
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Data notice ── -->
+    <div v-if="unspecifiedCount > 0" class="rv-notice">
+      У <b>{{ unspecifiedCount }}</b> ед. техники не заполнено «Место нахождения» —
+      они показаны отдельной группой «Место не указано» и не попадают на карту.
     </div>
 
     <!-- ── KPI strip ── -->
     <div class="rv-kpi-row">
       <KpiCard label="Всего ТС" :value="totalVehicles" variant="default" />
-      <KpiCard label="Филиалов" :value="orgs.length" variant="info" />
+      <KpiCard label="Мест нахождения" :value="sortedLocations.length" variant="info" />
       <KpiCard label="В работе" :value="totalWorking" variant="ok" />
       <KpiCard label="В ремонте" :value="totalRepair" variant="warn" />
       <KpiCard label="Сломано" :value="totalBroken" variant="alert" />
@@ -32,109 +91,119 @@
       <!-- Map -->
       <div class="rv-panel rv-map-box">
         <div class="rv-panel__head">
-          <span>Карта филиалов</span>
+          <span>Карта по месту нахождения</span>
           <small>размер кружка ∝ количеству ТС</small>
         </div>
-        <div v-if="loadingOrgs" class="rv-loading">
+        <div v-if="loadingRegions" class="rv-loading">
           <div class="rv-spinner"></div>
         </div>
         <RussiaMapSvg
-          v-else
+          v-else-if="mapPins.length"
           :pins="mapPins"
-          :connections="mapConnections"
+          :search-active="vehicleSearchActive"
+          :matched-ids="vehicleSearchMatchedRegionsArray"
           @pin-click="onPinClick"
         />
+        <div v-else class="rv-empty">
+          Нет координат для отображения — известные города/регионы не заполнены
+          в «Месте нахождения» ни у одной машины
+        </div>
       </div>
 
-      <!-- Top-8 orgs list -->
+      <!-- Top-8 locations list -->
       <div class="rv-panel rv-top-list">
         <div class="rv-panel__head">
-          <span>Топ филиалов</span>
+          <span>Топ мест нахождения</span>
           <small>по количеству ТС</small>
         </div>
-        <div v-if="loadingOrgs" class="rv-loading">
+        <div v-if="loadingRegions" class="rv-loading">
           <div class="rv-spinner"></div>
         </div>
         <template v-else>
           <div
-            v-for="(org, idx) in topOrgs"
-            :key="org.id"
+            v-for="(loc, idx) in topLocations"
+            :key="loc.region"
             class="rv-reg-row"
-            @click="goToOrg(org.id)"
+            @click="openLocationDrill(loc.region)"
           >
-            <div class="rv-reg-row__ic" :style="{ background: orgBadgeBg(org, idx), color: orgBadgeColor(org, idx) }">
-              {{ orgAbbr(org.name) }}
+            <div class="rv-reg-row__ic" :style="{ background: locationBadgeBg(idx), color: locationBadgeColor(idx) }">
+              {{ locationAbbr(loc.region) }}
             </div>
             <div class="rv-reg-row__info">
-              <div class="rv-reg-row__nm">{{ org.name }}</div>
-              <div class="rv-reg-row__ds">{{ org.region || 'регион не указан' }}</div>
+              <div class="rv-reg-row__nm" :title="loc.region">{{ loc.region }}</div>
+              <div v-if="locationSubtitle(loc.region)" class="rv-reg-row__ds">{{ locationSubtitle(loc.region) }}</div>
             </div>
             <div class="rv-reg-row__cnt">
-              {{ orgVehicleCount(org) }}
+              {{ loc.count }}
               <small>ТС</small>
             </div>
           </div>
-          <div v-if="!topOrgs.length" class="rv-empty">Нет данных</div>
+          <div v-if="!topLocations.length" class="rv-empty">Нет данных</div>
         </template>
       </div>
     </section>
 
-    <!-- ── Region cards grid ── -->
+    <!-- ── Location cards grid ── -->
     <h2 class="rv-section-title">
-      Карточки филиалов
-      <span class="rv-section-title__sub">— основные данные, ответственные, состояние парка</span>
+      Карточки по месту нахождения
+      <span class="rv-section-title__sub">— распределение техники по месту нахождения, состояние парка</span>
     </h2>
     <section class="rv-cards-grid">
-      <div v-if="loadingOrgs" class="rv-loading" style="grid-column:1/-1">
+      <div v-if="loadingRegions" class="rv-loading" style="grid-column:1/-1">
         <div class="rv-spinner"></div>
       </div>
       <article
         v-else
-        v-for="org in sortedOrgs"
-        :key="org.id"
+        v-for="(loc, idx) in sortedLocations"
+        :key="loc.region"
         class="rv-card"
-        :class="cardColorClass(org)"
+        :class="[
+          cardColorClassForLocation(idx),
+          {
+            'rv-card--match': vehicleSearchActive && vehicleSearchMatchedRegions.has(loc.region),
+            'rv-card--dim':   vehicleSearchActive && !vehicleSearchMatchedRegions.has(loc.region),
+          },
+        ]"
       >
         <div class="rv-card__head">
-          <div class="rv-card__flag" :class="cardColorClass(org)">
-            {{ orgAbbr(org.name) }}
+          <div class="rv-card__flag" :class="cardColorClassForLocation(idx)">
+            {{ locationAbbr(loc.region) }}
           </div>
           <div class="rv-card__title">
-            <div class="rv-card__nm">{{ org.name }}</div>
-            <div class="rv-card__ds">{{ org.region || 'регион не указан' }}</div>
+            <div class="rv-card__nm" :title="loc.region">{{ loc.region }}</div>
+            <div v-if="locationSubtitle(loc.region)" class="rv-card__ds" :title="locationSubtitle(loc.region)">{{ locationSubtitle(loc.region) }}</div>
           </div>
           <div class="rv-card__big">
-            {{ orgVehicleCount(org) }}
+            {{ loc.count }}
             <small>единиц</small>
           </div>
         </div>
 
-        <!-- Status chips -->
+        <!-- Status chips. 2026-09 (владелец, дефект «сумма не сходится»): машины
+             без заполненного Vehicle.state (у большинства мест — почти все,
+             кроме донецких/курских) не попадали ни в один из трёх чипов и
+             молча выпадали из подсчёта — 4-й чип делает их видимой категорией,
+             а не «потерянными» машинами. Backend отдаёт их как by_state.unknown
+             (см. vehicles_dashboard.py). -->
         <div class="rv-card__chips">
           <span class="rv-chip rv-chip--ok">
-            {{ orgByState(org, 'working') }} в работе
+            {{ loc.by_state.working || 0 }} в работе
           </span>
           <span class="rv-chip rv-chip--warn">
-            {{ orgByState(org, 'in_repair') + orgByState(org, 'needs_repair') }} в ремонте
+            {{ (loc.by_state.in_repair || 0) + (loc.by_state.needs_repair || 0) }} в ремонте
           </span>
           <span class="rv-chip rv-chip--alert">
-            {{ orgByState(org, 'broken') }} сломано
+            {{ loc.by_state.broken || 0 }} сломано
+          </span>
+          <span class="rv-chip rv-chip--muted">
+            {{ loc.by_state.unknown || 0 }} без состояния
           </span>
         </div>
 
-        <!-- Head avatar + details button -->
+        <!-- Details button -->
         <div class="rv-card__footer">
-          <GradientAvatar
-            v-if="org.head_user_name"
-            :fullName="org.head_user_name"
-            size="sm"
-          />
-          <div v-if="org.head_user_name" class="rv-card__head-name">
-            <div class="rv-card__head-nm">{{ org.head_user_name }}</div>
-            <div class="rv-card__head-ro">ст. ответственный</div>
-          </div>
-          <button class="rv-btn rv-btn--sm" style="margin-left:auto" @click.stop="goToOrg(org.id)">
-            Подробнее →
+          <button class="rv-btn rv-btn--sm" style="margin-left:auto" @click.stop="openLocationDrill(loc.region)">
+            Показать машины →
           </button>
         </div>
       </article>
@@ -143,7 +212,7 @@
     <!-- ── Transfer log ── -->
     <section class="rv-panel rv-transfers" style="margin-top:22px">
       <div class="rv-panel__head">
-        <span>Журнал передач между филиалами</span>
+        <span>Журнал передач между организациями</span>
         <small>последние перемещения</small>
       </div>
       <div v-if="loadingTransfers" class="rv-loading">
@@ -159,15 +228,19 @@
           class="rv-tx"
           @click="goToVehicle(tx.vehicle_id)"
         >
+          <!-- 2026-09 (правка после ревью #2): у tx НЕТ полей from_type/to_type —
+               backend (/vehicles-dashboard/transfer-history-recent) их не отдаёт,
+               поэтому здесь всегда рендерился один и тот же фейковый фолбэк
+               «филиал» под КАЖДОЙ записью независимо от реальных данных. Раз
+               реальных данных нет — строку просто не показываем, а не подставляем
+               выдуманную. -->
           <LicensePlate :modelValue="tx.plate" size="sm" />
           <div class="rv-tx__from">
             <div class="rv-tx__nm">{{ tx.from_org_name || tx.from_assigned_text || '—' }}</div>
-            <div class="rv-tx__ds">{{ tx.from_type || 'филиал' }}</div>
           </div>
           <div class="rv-tx__arr">→</div>
           <div class="rv-tx__to">
             <div class="rv-tx__nm">{{ tx.to_org_name || tx.to_assigned_text || '—' }}</div>
-            <div class="rv-tx__ds">{{ tx.to_type || 'филиал' }}</div>
           </div>
           <div class="rv-tx__detail">
             <span>{{ tx.brand_model || '' }}</span>
@@ -178,39 +251,70 @@
       </div>
     </section>
 
-    <!-- ── Pin popup ── -->
+    <!-- ── Location drill popup ── -->
+    <!-- 2026-09: раньше попап показывал организацию (по названию), к которой якобы
+         привязан пин; теперь пин/карточка = место нахождения, попап показывает
+         реальный список машин в этом месте (GET /vehicles-dashboard/drill?dimension=region). -->
     <teleport to="body">
       <transition name="rv-popup-fade">
-        <div v-if="selectedPin" class="rv-popup-overlay" @click.self="selectedPin = null">
+        <div v-if="selectedLocation" class="rv-popup-overlay" @click.self="closeLocationDrill">
           <div class="rv-popup" :class="{ 'rv-popup--light': !isDark }">
             <div class="rv-popup__head">
-              <div class="rv-popup__abbr" :style="{ background: selectedPin.color }">{{ orgAbbr(selectedPin.name || '') }}</div>
+              <div class="rv-popup__abbr" :style="{ background: '#6aa6ff' }">{{ locationAbbr(selectedLocation) }}</div>
               <div>
-                <div class="rv-popup__nm">{{ selectedPin.name }}</div>
-                <div class="rv-popup__sub">{{ selectedPin.sub }}</div>
+                <div class="rv-popup__nm">{{ selectedLocation }}</div>
+                <div v-if="selectedLocation && locationSubtitle(selectedLocation)" class="rv-popup__sub">{{ locationSubtitle(selectedLocation) }}</div>
               </div>
-              <button class="rv-popup__close" @click="selectedPin = null">✕</button>
+              <button class="rv-popup__close" @click="closeLocationDrill">✕</button>
             </div>
             <div class="rv-popup__body">
               <div class="rv-popup__stat">
                 <span class="rv-popup__stat-l">ТС всего</span>
-                <span class="rv-popup__stat-v">{{ selectedPin.count }}</span>
+                <span class="rv-popup__stat-v">{{ selectedLocationItem?.count ?? 0 }}</span>
               </div>
-              <div v-if="selectedPinOrg">
-                <div class="rv-popup__stat">
-                  <span class="rv-popup__stat-l">Регион</span>
-                  <span class="rv-popup__stat-v">{{ selectedPinOrg.region || '—' }}</span>
-                </div>
-                <div v-if="selectedPinOrg.head_user_name" class="rv-popup__stat">
-                  <span class="rv-popup__stat-l">Ответственный</span>
-                  <span class="rv-popup__stat-v">{{ selectedPinOrg.head_user_name }}</span>
-                </div>
+              <div v-if="drillLoading" class="rv-loading" style="min-height:60px">
+                <div class="rv-spinner"></div>
               </div>
-            </div>
-            <div class="rv-popup__footer">
-              <button class="rv-btn rv-btn--primary" @click="goToOrg(selectedPinOrgId)">
-                Перейти к филиалу →
-              </button>
+              <template v-else>
+                <!-- 2026-09 (владелец: «в попапе нужен поиск, иначе трудно найти
+                     машину») — фильтр по гос.№/марке/модели прямо по загруженному
+                     списку (он уже маленький — конкретное место нахождения). -->
+                <div v-if="drillVehicles.length" class="rv-popup__filter">
+                  <span class="rv-popup__filter-ic">⌕</span>
+                  <input
+                    v-model="drillFilterQuery"
+                    type="text"
+                    class="rv-popup__filter-input"
+                    placeholder="Фильтр: гос.№, марка, модель…"
+                  />
+                  <button
+                    v-if="drillFilterQuery"
+                    class="rv-popup__filter-clear"
+                    title="Очистить"
+                    @click="drillFilterQuery = ''"
+                  >✕</button>
+                </div>
+                <div v-if="drillVehicles.length" class="rv-popup__filter-count">
+                  {{ filteredDrillVehicles.length }} из {{ drillVehicles.length }}
+                </div>
+                <div class="rv-popup__vehicles">
+                  <div
+                    v-for="v in filteredDrillVehicles"
+                    :key="v.vehicle_id"
+                    class="rv-popup__veh"
+                    @click="goToVehicle(v.vehicle_id)"
+                  >
+                    <!-- 2026-09: иконка по «Кузову» — единое правило (см. VehicleCard.vue) -->
+                    <VehicleTypeIcon :body-type="v.body_type" :size="22" class="rv-popup__veh-ic" />
+                    <LicensePlate :modelValue="v.plate" size="sm" />
+                    <span class="rv-popup__veh-nm">{{ v.brand_model || '—' }}</span>
+                  </div>
+                  <div v-if="!drillVehicles.length" class="rv-empty">Нет машин</div>
+                  <div v-else-if="!filteredDrillVehicles.length" class="rv-empty">
+                    Нет машин по запросу «{{ drillFilterQuery.trim() }}»
+                  </div>
+                </div>
+              </template>
             </div>
           </div>
         </div>
@@ -221,16 +325,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTheme } from 'vuetify'
 import { apiFetch } from '@/api'
 
 import RussiaMapSvg from '@/components/fleet/RussiaMapSvg.vue'
-import { type MapPin, type MapConnection, DEFAULT_PINS } from '@/components/fleet/russiaMapPins'
+import { type MapPin, projectLatLonToSvg } from '@/components/fleet/russiaMapPins'
+import { HALO_GAP } from '@/components/fleet/mapLabelLayout'
+import { loadCitiesCatalog, citiesCatalogReady, findCityInCatalog } from '@/components/fleet/russiaCitiesCatalog'
 import KpiCard from '@/components/fleet/KpiCard.vue'
-import GradientAvatar from '@/components/fleet/GradientAvatar.vue'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
+import VehicleTypeIcon from '@/components/vehicles/VehicleTypeIcon.vue'
 
 // ─── Theme ───────────────────────────────────────────────────────────────────
 
@@ -240,17 +346,8 @@ const router = useRouter()
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-interface OrgFull {
-  id: number
-  name: string
-  region: string | null
-  lat: number | null
-  lon: number | null
-  color: string | null
-  head_user_id: number | null
-  head_user_name?: string | null
-}
-
+// RegionItem = «место нахождения» (Vehicle.location_city), а не организация.
+// region: сам город/место ("ДНР г. Донецк") либо "Место не указано".
 interface RegionItem {
   region: string
   count: number
@@ -269,8 +366,6 @@ interface TransferRow {
   to_org_name: string | null
   from_assigned_text: string | null
   to_assigned_text: string | null
-  from_type?: string | null
-  to_type?: string | null
   basis: string | null
   doc_number: string | null
   changed_at: string
@@ -279,128 +374,312 @@ interface TransferRow {
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
-const orgs              = ref<OrgFull[]>([])
 const regionData        = ref<RegionItem[]>([])
 const transfers         = ref<TransferRow[]>([])
-const loadingOrgs       = ref(false)
+const loadingRegions       = ref(false)
 const loadingTransfers  = ref(false)
-const selectedPin       = ref<MapPin | null>(null)
+
+// Location drill (клик по пину / карточке / строке списка)
+const selectedLocation  = ref<string | null>(null)
+const drillLoading      = ref(false)
+const drillVehicles     = ref<any[]>([])
+// Фильтр ВНУТРИ попапа (владелец: «в попапе трудно найти нужный автомобиль») —
+// работает по уже загруженному drillVehicles, без похода на сервер.
+const drillFilterQuery  = ref('')
+
+// ─── Vehicle search (владелец: «поиск по автомобилю, как в Иерархии») ────────
+// Сервер уже умеет искать по гос.№/марке/модели/VIN одним параметром — см.
+// GET /vehicles?q= (переиспользуется тот же параметр, что и реестр ТС,
+// VehicleListView.vue). Ограничение лимитом — страница рассчитана на рост
+// парка далеко за нынешние 53 машины, тянуть весь список на клиент нельзя.
+interface VehicleSearchItem {
+  id: number
+  plate: string
+  brand: string | null
+  model: string | null
+  location_city: string | null
+}
+const VEHICLE_SEARCH_LIMIT = 50
+const vehicleSearchQuery    = ref('')
+const vehicleSearchResults  = ref<VehicleSearchItem[]>([])
+const vehicleSearchTotal    = ref(0)
+const vehicleSearchLoading  = ref(false)
+let vehicleSearchDebounce: ReturnType<typeof setTimeout> | null = null
 
 // ─── Computed helpers ────────────────────────────────────────────────────────
 
-// Map org id → regionData item by matching name/shtab_label
-function regionForOrg(org: OrgFull): RegionItem | undefined {
-  return regionData.value.find(r =>
-    r.shtab_label === org.name ||
-    r.region === org.name ||
-    (org.region && r.region === org.region)
-  )
-}
-
-function orgVehicleCount(org: OrgFull): number {
-  return regionForOrg(org)?.count ?? 0
-}
-
-function orgByState(org: OrgFull, state: string): number {
-  return regionForOrg(org)?.by_state?.[state] ?? 0
-}
-
-const sortedOrgs = computed(() =>
-  [...orgs.value].sort((a, b) => orgVehicleCount(b) - orgVehicleCount(a))
+const sortedLocations = computed(() =>
+  [...regionData.value].sort((a, b) => b.count - a.count)
 )
 
-const topOrgs = computed(() => sortedOrgs.value.slice(0, 8))
+const topLocations = computed(() => sortedLocations.value.slice(0, 8))
+
+// 2026-09: доля машин без заполненного «Место нахождения» — показывается
+// пользователю явно, а не прячется тихим фолбэком.
+const unspecifiedCount = computed(() =>
+  regionData.value.find(r => r.region === 'Место не указано')?.count ?? 0
+)
 
 const totalVehicles = computed(() => regionData.value.reduce((s, r) => s + r.count, 0))
 const totalWorking  = computed(() => regionData.value.reduce((s, r) => s + (r.by_state?.working || 0), 0))
 const totalRepair   = computed(() => regionData.value.reduce((s, r) => s + (r.by_state?.in_repair || 0) + (r.by_state?.needs_repair || 0), 0))
 const totalBroken   = computed(() => regionData.value.reduce((s, r) => s + (r.by_state?.broken || 0), 0))
 
+// ─── Vehicle search — computed ────────────────────────────────────────────────
+
+const vehicleSearchActive = computed(() => vehicleSearchQuery.value.trim().length > 0)
+
+// «Место нахождения» пусто/NULL → группа "Место не указано" — та же логика,
+// что normalize_city()+фолбэк на бэкенде (backend/app/services/geo_normalize.py,
+// используется в GET /vehicles-dashboard/by-region). Ключ обязан совпасть с
+// loc.region 1-в-1, иначе подсветка не найдёт свою карточку/пин.
+function vehicleLocationRegion(v: VehicleSearchItem): string {
+  return (v.location_city || '').trim() || 'Место не указано'
+}
+
+const vehicleSearchMatchedRegions = computed(() => {
+  const set = new Set<string>()
+  for (const v of vehicleSearchResults.value) set.add(vehicleLocationRegion(v))
+  return set
+})
+const vehicleSearchMatchedRegionsArray = computed(() => Array.from(vehicleSearchMatchedRegions.value))
+const vehicleSearchMatchCount = computed(() => vehicleSearchResults.value.length)
+const vehicleSearchHasMore = computed(() => vehicleSearchTotal.value > vehicleSearchResults.value.length)
+
+// ─── Popup filter (фильтр внутри всплывающего списка машин места) ────────────
+
+const filteredDrillVehicles = computed(() => {
+  const q = drillFilterQuery.value.trim().toLowerCase()
+  if (!q) return drillVehicles.value
+  return drillVehicles.value.filter((v: any) =>
+    String(v.plate || '').toLowerCase().includes(q) ||
+    String(v.brand_model || '').toLowerCase().includes(q) ||
+    String(v.brand || '').toLowerCase().includes(q) ||
+    String(v.model || '').toLowerCase().includes(q)
+  )
+})
+
 // ─── Map pins ────────────────────────────────────────────────────────────────
+// 2026-09 (geo-fix #4): пины строятся из regionData (место нахождения ТС), а
+// НЕ из организаций (у которых к тому же lat/lon в БД не заполнены). Места,
+// для которых справочник городов (russiaCitiesCatalog.ts — OSM place=city/
+// town, см. fetch-russia-cities.mjs) не находит совпадения, на карту не
+// попадают — они по-прежнему видны в списке/карточках ниже как есть.
+//
+// Владелец (задача geo-fix #4, п.2): "Луганск над Донецком — вообще
+// непонятно". Причина — при равнопромежуточной проекции ВСЕЙ России соседние
+// города (Донецк/Луганск ~50км друг от друга) оказываются в считанных
+// пикселях, а старые кружки росли пропорционально числу машин ВПЛОТЬ до 43px
+// радиуса — крупный кружок физически накрывал соседний мелкий город и его
+// подпись. Теперь:
+//  - радиус кружка ограничен жёстким потолком (см. PIN_MIN_R/PIN_MAX_R —
+//    заметно меньше прежних 10..43) — кружок остаётся "бейджем с числом",
+//    а не разрастается до размера, способного перекрыть соседа;
+//  - declutterPins раздвигает центры не по сумме радиусов, а по сумме
+//    (радиус + HALO_GAP) — тот же запас, что использует mapLabelLayout.ts
+//    для проверки "подпись vs чужой маркер", поэтому даже полупрозрачный
+//    ореол (halo) одного пина не перекрывает круг соседнего;
+//  - у каждого пина сохраняется anchorX/anchorY (истинная гео-проекция ДО
+//    раздвижки) — RussiaMapSvg.vue рисует тонкую выноску к этой точке, если
+//    раздвижка сдвинула пин заметно, чтобы не терять привязку к географии.
+const PIN_MIN_R = 12
+const PIN_MAX_R = 20
+const PIN_COLORS = ['#6aa6ff', '#f6b34a', '#22c997', '#8b5cf6', '#5dd0ff', '#ff5b6a']
 
-// Russia bounding box for lat/lon → SVG coordinate mapping
-// SVG viewBox: 0 0 600 360
-// Russia approx: lon 27..190, lat 70..42 (top-left = west-north)
-const LON_MIN = 27, LON_MAX = 190
-const LAT_MIN = 42, LAT_MAX = 72
-
-function lonToX(lon: number): number {
-  return Math.round(((lon - LON_MIN) / (LON_MAX - LON_MIN)) * 560 + 20)
+// Раздвигаем так, чтобы не пересекались даже ореолы (halo) — HALO_GAP тот же,
+// что использует RussiaMapSvg.vue/mapLabelLayout.ts для самого рисования и
+// для раздвижки подписей (единая константа, не дублируем магическое число).
+function declutterPins(pins: MapPin[]): MapPin[] {
+  const MARGIN = 6
+  for (let pass = 0; pass < 30; pass++) {
+    let moved = false
+    for (let i = 0; i < pins.length; i++) {
+      for (let j = i + 1; j < pins.length; j++) {
+        const a = pins[i]
+        const b = pins[j]
+        const dx = b.x - a.x
+        const dy = b.y - a.y
+        const dist = Math.hypot(dx, dy) || 0.01
+        const minDist = (a.radius + HALO_GAP) + (b.radius + HALO_GAP) + MARGIN
+        if (dist < minDist) {
+          const push = (minDist - dist) / 2
+          const ux = dx / dist
+          const uy = dy / dist
+          a.x -= ux * push
+          a.y -= uy * push
+          b.x += ux * push
+          b.y += uy * push
+          moved = true
+        }
+      }
+    }
+    if (!moved) break
+  }
+  return pins
 }
 
-function latToY(lat: number): number {
-  // Lat increases upward, SVG Y increases downward
-  return Math.round(((LAT_MAX - lat) / (LAT_MAX - LAT_MIN)) * 300 + 30)
-}
-
-const PIN_MIN_R = 5
-const PIN_MAX_R = 22
-
-const maxOrgCount = computed(() => Math.max(...orgs.value.map(o => orgVehicleCount(o)), 1))
-
-function pinRadius(count: number): number {
-  const pct = count / maxOrgCount.value
-  return Math.round(PIN_MIN_R + pct * (PIN_MAX_R - PIN_MIN_R))
-}
-
-const ORG_COLORS = ['#6aa6ff', '#f6b34a', '#22c997', '#8b5cf6', '#5dd0ff', '#ff5b6a']
-
-function pinColor(org: OrgFull, idx: number): string {
-  if (org.color) return org.color
-  return ORG_COLORS[idx % ORG_COLORS.length]
+// 2026-09 (правка владельца): некоторые location_city в БД содержат регион,
+// дописанный в скобках при выборе города из справочника (например «Ростов-
+// на-Дону (Ростовская область)») — это часть сырых данных, её не трогаем ни
+// в списке, ни в карточках, ни в заголовке попапа (locationSubtitle там же
+// показывает регион отдельной строкой — вместе это не дублирование, а
+// уточнение для одноимённых городов). На самой КАРТЕ владелец попросил
+// оставить только имя города — карта и так однозначно показывает регион
+// географически. Отбрасываем ТОЛЬКО хвостовую скобочную группу для
+// отображения — raw region ("ДНР г. Донецк", без скобок) функцию не
+// затрагивает, id пина (используется для drill) остаётся сырым loc.region.
+function mapPinDisplayName(region: string): string {
+  const stripped = region.replace(/\s*\([^()]*\)\s*$/, '').trim()
+  return stripped || region
 }
 
 const mapPins = computed<MapPin[]>(() => {
-  const geoOrgs = orgs.value.filter(o => o.lat != null && o.lon != null)
-  if (!geoOrgs.length) return DEFAULT_PINS
+  // Зависимость от готовности каталога — computed пересчитается сам, когда
+  // fetch/import() догрузит справочник (см. onMounted ниже); до этого пины
+  // просто отсутствуют (каталог обычно грузится за десятки мс).
+  void citiesCatalogReady.value
 
-  return geoOrgs.map((org, idx) => {
-    const count = orgVehicleCount(org)
+  const geoLocations = sortedLocations.value
+    .map(loc => ({ loc, hit: findCityInCatalog(loc.region) }))
+    .filter((x): x is { loc: RegionItem; hit: NonNullable<ReturnType<typeof findCityInCatalog>> } => x.hit !== null)
+
+  if (!geoLocations.length) return []
+
+  const maxCount = Math.max(...geoLocations.map(g => g.loc.count), 1)
+
+  const pins = geoLocations.map(({ loc, hit }, idx) => {
+    const pct = loc.count / maxCount
+    const { x, y } = projectLatLonToSvg(hit.lat, hit.lon)
     return {
-      id:     org.id,
-      name:   org.name,
-      sub:    `${count} ТС`,
-      x:      lonToX(org.lon!),
-      y:      latToY(org.lat!),
-      radius: pinRadius(count),
-      count,
-      color:  pinColor(org, idx),
+      id:      loc.region,
+      // 2026-09 (доделка): раньше здесь ещё был sub: `${loc.count} ТС` —
+      // отдельная под-подпись под пином. Требование владельца: у пина ровно
+      // две вещи — кружок с числом ВНУТРИ (уже есть, см. RussiaMapSvg.vue
+      // <text>{{ pin.count }}</text>) и название города рядом. Отдельная
+      // под-подпись с тем же числом дублировала то, что уже написано в
+      // кружке, — убрана полностью (pin.sub не задаём).
+      // 2026-09 (правка владельца): на самой КАРТЕ — только название города,
+      // без региона в скобках (владелец: «карта это и так решает»). id
+      // остаётся сырым loc.region (используется для дриллдауна и должен
+      // точно совпадать с location_city в БД) — усечение только для name,
+      // т.е. только для того, что реально печатается на карте. Список «Топ
+      // мест нахождения», карточки и заголовок попапа регион не теряют —
+      // там он различает одноимённые города (см. locationSubtitle ниже).
+      name:    mapPinDisplayName(loc.region),
+      x, y,
+      anchorX: x,
+      anchorY: y,
+      // sqrt — differences менее экстремальны, чем линейный рост: 1 машина
+      // и 50 машин не должны давать 12px против 43px (см. геометрический разбор выше).
+      radius:  Math.round(PIN_MIN_R + Math.sqrt(pct) * (PIN_MAX_R - PIN_MIN_R)),
+      count:   loc.count,
+      color:   PIN_COLORS[idx % PIN_COLORS.length],
     }
   })
+
+  return declutterPins(pins)
 })
 
-// Connections: recent transfers draw lines between orgs
-const mapConnections = computed<MapConnection[]>(() => {
-  if (!transfers.value.length || mapPins.value === DEFAULT_PINS) return []
-  const pinMap = new Map(mapPins.value.map(p => [p.id as number, p]))
-  const seen   = new Set<string>()
-  const lines: MapConnection[] = []
+// ─── Pin/card click → popup drill ─────────────────────────────────────────────
 
-  for (const tx of transfers.value.slice(0, 15)) {
-    const from = tx.from_owner_org_id ? pinMap.get(tx.from_owner_org_id) : null
-    const to   = tx.to_owner_org_id   ? pinMap.get(tx.to_owner_org_id)   : null
-    if (!from || !to) continue
-    const key = [from.id, to.id].sort().join('-')
-    if (seen.has(key)) continue
-    seen.add(key)
-    lines.push({ from: { x: from.x, y: from.y }, to: { x: to.x, y: to.y } })
+const selectedLocationItem = computed(() =>
+  selectedLocation.value ? regionData.value.find(r => r.region === selectedLocation.value) ?? null : null
+)
+
+async function openLocationDrill(region: string) {
+  selectedLocation.value = region
+  drillVehicles.value = []
+  drillFilterQuery.value = ''
+  drillLoading.value = true
+  try {
+    const resp = await apiFetch<{ items: any[] }>(`/vehicles-dashboard/drill?dimension=region&value=${encodeURIComponent(region)}`)
+    drillVehicles.value = Array.isArray(resp?.items) ? resp.items : []
+  } catch (e) {
+    console.error('[FleetRegions] openLocationDrill', e)
+  } finally {
+    drillLoading.value = false
   }
-  return lines
-})
+}
 
-// ─── Pin click → popup ───────────────────────────────────────────────────────
-
-const selectedPinOrg = computed(() =>
-  selectedPin.value ? orgs.value.find(o => o.id === selectedPin.value?.id) ?? null : null
-)
-
-const selectedPinOrgId = computed(() =>
-  (selectedPin.value?.id as number | null) ?? null
-)
+function closeLocationDrill() {
+  selectedLocation.value = null
+  drillFilterQuery.value = ''
+}
 
 function onPinClick(pin: MapPin) {
-  selectedPin.value = pin
+  openLocationDrill(String(pin.id))
 }
+
+// ─── Vehicle search — загрузка ────────────────────────────────────────────────
+// Переиспользуем GET /vehicles?q= — тот же параметр и тот же эндпоинт, что и
+// реестр ТС (property/VehicleListView.vue, filterSearch → params.set('q', ...)),
+// сервер уже ищет по brand/model/plate/vin с учётом видимости организаций
+// (require_tab('vehicles') + _visibility_q) — своей серверной логики не
+// придумываем, дублировать не нужно. Дебаунс — чтобы не долбить бэкенд на
+// каждое нажатие клавиши.
+//
+// 2026-09 (правка после ручной проверки): q — простой SQL ilike '%q%' по
+// сырому Vehicle.plate, а в БД госномер хранится БЕЗ пробела между буквой и
+// цифрами ("Р937ХУ 180"). Задача владельца прямо требует, чтобы работали ОБА
+// варианта — «Р 937» и «Р937» — набранные с живого госномера на машине или
+// скопированные из документа. Раз это ограничение самого хранения (не
+// подключаем tokenized/trigram-поиск ради одной страницы), решаем на клиенте:
+// параллельно пробуем запрос как есть и «сжатый» (без пробелов), сливаем по id.
+async function searchVehicles() {
+  const q = vehicleSearchQuery.value.trim()
+  if (!q) {
+    vehicleSearchResults.value = []
+    vehicleSearchTotal.value = 0
+    vehicleSearchLoading.value = false
+    return
+  }
+  vehicleSearchLoading.value = true
+  try {
+    const qCompact = q.replace(/\s+/g, '')
+    const variants = qCompact !== q ? [q, qCompact] : [q]
+    const responses = await Promise.all(
+      variants.map(v =>
+        apiFetch<{ items: VehicleSearchItem[]; total: number }>(
+          `/vehicles?q=${encodeURIComponent(v)}&limit=${VEHICLE_SEARCH_LIMIT}`
+        ).catch((e) => {
+          console.error('[FleetRegions] searchVehicles variant failed', v, e)
+          return { items: [] as VehicleSearchItem[], total: 0 }
+        })
+      )
+    )
+    // Запрос мог устареть, пока летел (пользователь печатает быстрее ответа) —
+    // не затираем результат более свежего запроса более старым.
+    if (vehicleSearchQuery.value.trim() !== q) return
+    const byId = new Map<number, VehicleSearchItem>()
+    let totalMax = 0
+    for (const r of responses) {
+      totalMax = Math.max(totalMax, r?.total ?? 0)
+      for (const it of (r?.items ?? [])) byId.set(it.id, it)
+    }
+    vehicleSearchResults.value = Array.from(byId.values()).slice(0, VEHICLE_SEARCH_LIMIT)
+    vehicleSearchTotal.value = Math.max(totalMax, vehicleSearchResults.value.length)
+  } catch (e) {
+    console.error('[FleetRegions] searchVehicles', e)
+    vehicleSearchResults.value = []
+    vehicleSearchTotal.value = 0
+  } finally {
+    if (vehicleSearchQuery.value.trim() === q) vehicleSearchLoading.value = false
+  }
+}
+
+watch(vehicleSearchQuery, () => {
+  if (vehicleSearchDebounce) clearTimeout(vehicleSearchDebounce)
+  if (!vehicleSearchQuery.value.trim()) {
+    // Очистка — карта/карточки должны мгновенно вернуться в обычный вид,
+    // без ожидания дебаунса.
+    vehicleSearchResults.value = []
+    vehicleSearchTotal.value = 0
+    vehicleSearchLoading.value = false
+    return
+  }
+  vehicleSearchLoading.value = true
+  vehicleSearchDebounce = setTimeout(searchVehicles, 300)
+})
 
 // ─── Visual helpers ───────────────────────────────────────────────────────────
 
@@ -414,34 +693,55 @@ const BADGE_PALETTES = [
 ]
 
 const CARD_COLORS = ['blue', 'amber', 'green', 'purple', 'cyan', 'red'] as const
-type CardColor = typeof CARD_COLORS[number]
 
-function orgAbbr(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean)
-  if (words.length === 1) return words[0].slice(0, 3).toUpperCase()
-  return words.slice(0, 3).map(w => w[0]).join('').toUpperCase()
+// 2026-09: раньше абревиатура бралась из первых букв ВСЕХ слов подряд, включая
+// региональные префиксы ("ДНР г. Донецк" → "ДГД") — бессмысленный набор букв.
+// Теперь префиксы региона/административной единицы отбрасываются, а «Место не
+// указано» получает нейтральный прочерк вместо абревиатуры-мусора «МНУ».
+const ABBR_NOISE = new Set(['днр', 'лнр', 'г.', 'г', 'обл.', 'область', 'край', 'респ.', 'республика'])
+
+function locationAbbr(name: string): string {
+  const trimmed = name.trim()
+  if (!trimmed || trimmed === 'Место не указано') return '—'
+  const words = trimmed.split(/\s+/).filter(Boolean)
+  const meaningful = words.filter(w => !ABBR_NOISE.has(w.toLowerCase()))
+  const pick = meaningful.length ? meaningful : words
+  const lettersOnly = (w: string) => w.replace(/[^\p{L}]/gu, '')
+  if (pick.length === 1) {
+    const clean = lettersOnly(pick[0]) || pick[0]
+    return clean.slice(0, 3).toUpperCase()
+  }
+  return pick.slice(0, 3).map(w => (lettersOnly(w)[0] || w[0] || '')).join('').toUpperCase()
 }
 
-function orgBadgeBg(org: OrgFull, idx: number): string {
+function locationBadgeBg(idx: number): string {
   return BADGE_PALETTES[idx % BADGE_PALETTES.length].bg
 }
 
-function orgBadgeColor(org: OrgFull, idx: number): string {
+function locationBadgeColor(idx: number): string {
   return BADGE_PALETTES[idx % BADGE_PALETTES.length].color
 }
 
-function cardColorClass(org: OrgFull): string {
-  const idx = sortedOrgs.value.findIndex(o => o.id === org.id)
+function cardColorClassForLocation(idx: number): string {
   return `rv-card--${CARD_COLORS[idx % CARD_COLORS.length]}`
 }
 
-// ─── Navigation ──────────────────────────────────────────────────────────────
-
-function goToOrg(id: number | null) {
-  if (!id) return
-  selectedPin.value = null
-  router.push({ path: '/fleet/vehicles', query: { owner_org_id: id } })
+// 2026-09 (geo-fix #4, п.1): раньше подпись под названием места нахождения
+// («ФПГ ДНР» / «филиал ЦУ» и т.п.) бралась из geo_normalize.shtab_label_for_city
+// — жёстко зашитый источник приобретения/штаб по кучке ключевых слов, не
+// связанный с реальными данными парка. Владелец: на карте эта подпись лишняя
+// (это не место нахождения, а справочная категория). В списке/карточках та же
+// подпись настолько же неинформативна («группа не определена» почти всегда),
+// поэтому здесь она тоже убрана — вместо неё показываем субъект РФ (регион),
+// в котором находится место, если справочник городов (russiaCitiesCatalog.ts)
+// смог его определить. Пусто — subtitle не рендерится (см. v-if в шаблоне).
+function locationSubtitle(region: string): string {
+  if (!region || region === 'Место не указано') return ''
+  const hit = findCityInCatalog(region)
+  return hit ? hit.region : ''
 }
+
+// ─── Navigation ──────────────────────────────────────────────────────────────
 
 function goToVehicle(id: number) {
   router.push(`/fleet/vehicles/${id}`)
@@ -458,19 +758,21 @@ function formatDate(iso: string): string {
 
 // ─── Data loading ─────────────────────────────────────────────────────────────
 
-async function fetchOrgs() {
-  loadingOrgs.value = true
+async function fetchRegions() {
+  // 2026-09: раньше сюда же грузился /organizations/?limit=500 для счётчика
+  // «Филиалов» — этот эндпоинт требует superadmin и админу отдавал пустой
+  // список, поэтому счётчик всегда показывал 0 (см. тот же комментарий в
+  // VehicleListView.vue про /auth/my-orgs). Раз речь теперь идёт о месте
+  // нахождения ТС, а не об организации-владельце, KPI и подписи строятся из
+  // regionData — отдельный список организаций странице больше не нужен.
+  loadingRegions.value = true
   try {
-    const [orgData, regionResp] = await Promise.all([
-      apiFetch<{ items: OrgFull[] }>('/organizations/?limit=500'),
-      apiFetch<{ items: RegionItem[]; mock_demo?: boolean }>('/vehicles-dashboard/by-region'),
-    ])
-    orgs.value       = Array.isArray(orgData.items) ? orgData.items : []
+    const regionResp = await apiFetch<{ items: RegionItem[]; mock_demo?: boolean }>('/vehicles-dashboard/by-region')
     regionData.value = Array.isArray(regionResp.items) ? regionResp.items : []
   } catch (e) {
-    console.error('[FleetRegions] fetchOrgs', e)
+    console.error('[FleetRegions] fetchRegions', e)
   } finally {
-    loadingOrgs.value = false
+    loadingRegions.value = false
   }
 }
 
@@ -523,8 +825,9 @@ async function fetchTransfers() {
 // ─── Init ────────────────────────────────────────────────────────────────────
 
 onMounted(() => {
-  fetchOrgs()
+  fetchRegions()
   fetchTransfers()
+  loadCitiesCatalog()
 })
 </script>
 
@@ -572,6 +875,11 @@ onMounted(() => {
   justify-content: space-between;
   margin-bottom: 18px;
 }
+/* Мобильный вьюпорт (владелец, задача про поиск, п.6): поле поиска — под
+   заголовком на всю ширину, а не сплющено рядом с ним. */
+@media (max-width: 720px) {
+  .rv-topbar { flex-direction: column; align-items: stretch; }
+}
 
 .rv-crumbs {
   color: var(--rv-muted);
@@ -594,6 +902,107 @@ onMounted(() => {
   color: var(--rv-muted);
   margin: 0;
   font-size: 13px;
+}
+
+/* ── Vehicle search (владелец: «поиск по автомобилю, как в Иерархии») ─────── */
+.rv-vsearch {
+  position: relative;
+  width: 320px;
+  flex-shrink: 0;
+}
+@media (max-width: 720px) { .rv-vsearch { width: 100%; } }
+
+.rv-vsearch__box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--rv-panel);
+  border: 1px solid var(--rv-line2);
+  border-radius: 999px;
+  padding: 8px 12px;
+}
+.rv-vsearch__box:focus-within { border-color: var(--rv-accent); }
+.rv-vsearch__ic { color: var(--rv-muted); font-size: 15px; flex-shrink: 0; }
+.rv-vsearch__input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--rv-text);
+  font-size: 13px;
+  font-family: inherit;
+}
+.rv-vsearch__input::placeholder { color: var(--rv-muted2); }
+.rv-vsearch__clear {
+  border: none;
+  background: none;
+  color: var(--rv-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+  flex-shrink: 0;
+}
+.rv-vsearch__clear:hover { color: var(--rv-text); }
+/* Счётчик совпадений — тот же приём, что в Иерархии (зелёный/красный чип) */
+.rv-vsearch__count {
+  flex-shrink: 0;
+  min-width: 20px;
+  text-align: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  font-family: 'JetBrains Mono', monospace;
+}
+.rv-vsearch__count--ok   { background: rgba(34,201,151,.16); color: #22c997; }
+.rv-vsearch__count--zero { background: rgba(255,91,106,.16); color: #ff5b6a; }
+
+.rv-vsearch__results {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  background: var(--rv-panel);
+  border: 1px solid var(--rv-line2);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.25);
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+}
+.rv-vsearch__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.rv-vsearch__row:hover { background: rgba(255,255,255,.05); }
+.regions-view--light .rv-vsearch__row:hover { background: rgba(0,0,0,.04); }
+.rv-vsearch__row-nm { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-vsearch__row-sep { color: var(--rv-muted2); }
+.rv-vsearch__row-loc { color: var(--rv-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-vsearch__hint {
+  padding: 10px 8px;
+  color: var(--rv-muted);
+  font-size: 12px;
+  text-align: center;
+}
+.rv-vsearch__hint--empty { color: var(--rv-text); }
+
+/* ── Data notice ────────────────────────────────────────────────────────── */
+.rv-notice {
+  background: rgba(246,179,74,.08);
+  border: 1px solid rgba(246,179,74,.25);
+  color: var(--rv-text);
+  border-radius: 12px;
+  padding: 10px 16px;
+  font-size: 12.5px;
+  margin-bottom: 16px;
 }
 
 /* ── KPI strip ──────────────────────────────────────────────────────────── */
@@ -674,8 +1083,20 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
-.rv-reg-row__nm { font-weight: 700; font-size: 13.5px; }
-.rv-reg-row__ds { color: var(--rv-muted); font-size: 11.5px; margin-top: 2px; }
+/* min-width:0 — тот же приём, что и в .rv-card__title (см. комментарий там):
+   без него длинное название («Петропавловск-Камчатский (Камчатский край)»)
+   расталкивает grid-колонку и заезжает под число справа. */
+.rv-reg-row__info { min-width: 0; }
+.rv-reg-row__nm {
+  font-weight: 700;
+  font-size: 13.5px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.rv-reg-row__ds { color: var(--rv-muted); font-size: 11.5px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .rv-reg-row__cnt {
   text-align: right;
@@ -683,6 +1104,7 @@ onMounted(() => {
   font-size: 18px;
   letter-spacing: -0.3px;
   font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
 }
 .rv-reg-row__cnt small {
   display: block;
@@ -716,6 +1138,13 @@ onMounted(() => {
   gap: 16px;
   margin-bottom: 4px;
 }
+/* На узких экранах (мобильный вьюпорт) minmax(340px,...) шире доступной
+   ширины (даже с учётом padding .regions-view) — одна колонка вместо
+   вынужденного горизонтального скролла. */
+@media (max-width: 420px) {
+  .regions-view { padding: 16px 14px 48px; }
+  .rv-cards-grid { grid-template-columns: 1fr; }
+}
 
 .rv-card {
   --rc-color: rgba(106,166,255,.15);
@@ -748,12 +1177,19 @@ onMounted(() => {
 .rv-card--red    { --rc-color: rgba(255,91,106,.16); }
 .rv-card--cyan   { --rc-color: rgba(93,208,255,.18); }
 
+/* 2026-09 (правка владельца, «адрес не должен наезжать на количество»):
+   раньше .rv-card__big был position:absolute поверх .rv-card__head — flex-раскладка
+   .rv-card__title вычисляла себе ширину БЕЗ учёта числа (оно вне потока), поэтому
+   при длинном названии («Подольск (Московская область)») текст реально доходил до
+   правого края карточки и накладывался на число сверху. Теперь три колонки —
+   бейдж/название/число — свои, число всегда в собственной колонке фиксированной
+   ширины, название переносится в своей и никогда под него не заезжает. */
 .rv-card__head {
-  display: flex;
+  display: grid;
+  grid-template-columns: 50px minmax(0, 1fr) auto;
   align-items: flex-start;
   gap: 14px;
   margin-bottom: 14px;
-  position: relative;
 }
 
 .rv-card__flag {
@@ -776,20 +1212,60 @@ onMounted(() => {
 .rv-card--red    .rv-card__flag { background: rgba(255,91,106,.1);  color: var(--rv-alert); border-color: rgba(255,91,106,.25); }
 .rv-card--cyan   .rv-card__flag { background: rgba(93,208,255,.1);  color: var(--rv-info);  border-color: rgba(93,208,255,.25); }
 
-.rv-card__title { flex: 1; }
-.rv-card__nm { font-weight: 800; font-size: 17px; }
-.rv-card__ds { color: var(--rv-muted); font-size: 12.5px; margin-top: 2px; }
+/* 2026-09 (поиск по машине, «как в Иерархии») — та же подсветка, что у пинов
+   карты (RussiaMapSvg.vue) и у узлов графа (HierarchyView.vue): совпавшая
+   карточка пульсирует оранжевым, остальные гаснут. Карточки — единственное
+   место, где видна группа «Место не указано» (на карте у неё нет кружка). */
+.rv-card--dim {
+  opacity: 0.35;
+  filter: grayscale(0.4);
+  transition: opacity 0.3s, filter 0.3s;
+}
+.rv-card--match {
+  outline: 3px solid #fb923c;
+  outline-offset: 2px;
+  animation: rv-card-match-glow 1.3s ease-in-out infinite;
+}
+@keyframes rv-card-match-glow {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(251,146,60,.20), 0 0 16px 2px rgba(251,146,60,.45); }
+  50%      { box-shadow: 0 0 0 6px rgba(251,146,60,.35), 0 0 30px 8px rgba(251,146,60,.75); }
+}
+
+/* min-width:0 обязателен — без него grid-колонка не сжимается под длинный
+   безразрывный текст и всё равно расталкивает соседние колонки (стандартная
+   ловушка grid/flex, дефолт min-width:auto). */
+.rv-card__title { min-width: 0; }
+/* Две строки — нормальный случай для длинных названий («Петропавловск-
+   Камчатский», «Анадырь (Чукотский автономный округ)»), карточки не должны
+   при этом расползаться по высоте бесконечно — дальше многоточие, полное
+   имя остаётся в title="" (см. шаблон) по наведению. */
+.rv-card__nm {
+  font-weight: 800;
+  font-size: 17px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.rv-card__ds {
+  color: var(--rv-muted);
+  font-size: 12.5px;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .rv-card__big {
-  position: absolute;
-  top: 0;
-  right: 0;
   font-size: 32px;
   font-weight: 800;
   letter-spacing: -0.6px;
   color: var(--rv-text);
   line-height: 1;
   font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+  text-align: right;
 }
 .rv-card__big small {
   display: block;
@@ -817,6 +1293,9 @@ onMounted(() => {
 .rv-chip--ok    { background: rgba(34,201,151,.12);  color: #22c997; border-color: rgba(34,201,151,.2); }
 .rv-chip--warn  { background: rgba(246,179,74,.12);  color: #f6b34a; border-color: rgba(246,179,74,.2); }
 .rv-chip--alert { background: rgba(255,91,106,.12);  color: #ff5b6a; border-color: rgba(255,91,106,.2); }
+/* Нейтральный — «без состояния» это не оценка парка (не тревога, не ОК),
+   поэтому сознательно НЕ зелёный/жёлтый/красный, как остальные три чипа. */
+.rv-chip--muted { background: rgba(148,163,184,.12); color: #94a3b8; border-color: rgba(148,163,184,.2); }
 
 /* Footer */
 .rv-card__footer {
@@ -907,6 +1386,16 @@ onMounted(() => {
   width: 90%;
   z-index: 9999;
   box-shadow: 0 20px 60px rgba(0,0,0,.5);
+  /* 2026-09 (правка владельца, «10 машин без прокрутки»): попап растёт вместе
+     со списком (см. .rv-popup__vehicles ниже), но не дальше 90% высоты
+     окна — иначе на ноутбучном/мобильном экране он вылезал бы за край.
+     display:flex + overflow:hidden здесь и min-height:0 на детях — стандартный
+     паттерн «шапка фиксирована, скроллится только внутренний список»: сам
+     .rv-popup не скроллится, скроллится только .rv-popup__vehicles. */
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .rv-popup--light { background: #fff; border-color: #e2e6f0; }
 
@@ -915,6 +1404,7 @@ onMounted(() => {
   align-items: center;
   gap: 12px;
   margin-bottom: 16px;
+  flex-shrink: 0;
 }
 
 .rv-popup__abbr {
@@ -946,7 +1436,17 @@ onMounted(() => {
 }
 .rv-popup__close:hover { color: var(--rv-text); }
 
-.rv-popup__body { display: grid; gap: 8px; margin-bottom: 16px; }
+.rv-popup__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* flex:1 + min-height:0 — тело растёт до max-height родителя, отдавая
+     освободившееся место списку машин, но не выталкивает попап за экран
+     (min-height:0 обязателен — без него flex-элемент не хочет сжиматься
+     ниже контента, и внутренний скролл .rv-popup__vehicles не срабатывает). */
+  flex: 1 1 auto;
+  min-height: 0;
+}
 
 .rv-popup__stat {
   display: flex;
@@ -956,11 +1456,97 @@ onMounted(() => {
   border-radius: 10px;
   background: rgba(255,255,255,.03);
   border: 1px solid var(--rv-line);
+  flex-shrink: 0;
 }
 .rv-popup--light .rv-popup__stat { background: #f4f6fb; border-color: #e2e6f0; }
 
 .rv-popup__stat-l { color: var(--rv-muted); font-size: 12px; }
 .rv-popup__stat-v { font-weight: 700; font-size: 13px; }
+
+/* 2026-09 (владелец: «в попапе нужен поиск») — фильтр по уже загруженному
+   списку машин конкретного места (список маленький, серверный запрос не нужен). */
+.rv-popup__filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255,255,255,.03);
+  border: 1px solid var(--rv-line);
+  border-radius: 10px;
+  padding: 7px 10px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+.rv-popup--light .rv-popup__filter { background: #f4f6fb; border-color: #e2e6f0; }
+.rv-popup__filter-ic { color: var(--rv-muted); font-size: 13px; flex-shrink: 0; }
+.rv-popup__filter-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--rv-text);
+  font-size: 12.5px;
+  font-family: inherit;
+}
+.rv-popup__filter-input::placeholder { color: var(--rv-muted2); }
+.rv-popup__filter-clear {
+  border: none;
+  background: none;
+  color: var(--rv-muted);
+  cursor: pointer;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.rv-popup__filter-clear:hover { color: var(--rv-text); }
+.rv-popup__filter-count {
+  color: var(--rv-muted);
+  font-size: 11.5px;
+  margin: -2px 0 8px 2px;
+  flex-shrink: 0;
+}
+
+.rv-popup__vehicles {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  /* 2026-09 (правка владельца, «10 машин без прокрутки»): было фиксированных
+     260px (~5 строк) — вдвое мало. flex:1 (родитель .rv-popup__body — flex-
+     column) отдаёт этому блоку всё место, оставшееся внутри .rv-popup
+     max-height:90vh после шапки и строки «ТС всего»; на типичном
+     ноутбучном/десктопном окне это ~550-650px (≈10-13 строк по ~44px),
+     на мобильном 90vh даёт пропорционально меньше, но всё равно больше
+     исходных 260px. min-height задаёт лишь запасной вариант на случай,
+     если flex-родитель почему-то не растянулся (не должно случаться) —
+     без него список выглядел бы куце даже при малом числе машин. Скролл
+     остаётся для случаев, когда список не помещается целиком.
+     Watch out: min-height:0 обязателен вместе с flex:1 — иначе flex-item
+     не сжимается ниже своего контента и overflow-y:auto не срабатывает. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.rv-popup__veh {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255,255,255,.03);
+  border: 1px solid var(--rv-line);
+  cursor: pointer;
+  font-size: 12.5px;
+  transition: border-color 0.12s;
+}
+.rv-popup__veh:hover { border-color: var(--rv-accent); }
+.rv-popup--light .rv-popup__veh { background: #f4f6fb; }
+.rv-popup__veh-ic { flex-shrink: 0; opacity: 0.9; }
+.rv-popup__veh-nm {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .rv-popup__footer { display: flex; justify-content: flex-end; }
 

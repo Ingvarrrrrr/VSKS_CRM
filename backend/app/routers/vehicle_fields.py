@@ -26,6 +26,7 @@ from app.services.vehicle_fields import (
     get_all_field_keys,
     get_field_label,
     get_hidden_field_keys,
+    get_related_blocks,
     is_lockable,
 )
 
@@ -58,6 +59,9 @@ async def get_vehicle_fields(
         "can_manage": can_manage,
         "groups": build_catalog(hidden_keys),
         "hidden_keys": sorted(hidden_keys),
+        # §4 (2026-09): вкладки карточки, не входящие в поля реестра, с пояснением
+        # "откуда данные" — см. app/services/vehicle_fields.get_related_blocks().
+        "related_blocks": get_related_blocks(),
     }
 
 

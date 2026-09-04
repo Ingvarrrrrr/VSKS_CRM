@@ -46,9 +46,9 @@
             icon
             size="x-small"
             variant="text"
-            :href="`/api/repair-attachments/${att.id}/download`"
-            target="_blank"
+            :loading="downloadingId === att.id"
             title="Скачать"
+            @click="downloadFile(att)"
           >
             <v-icon size="14">mdi-download</v-icon>
           </v-btn>
@@ -119,9 +119,38 @@ const uploading = ref(false)
 const deleteDialog = ref(false)
 const deleting = ref(false)
 const pendingDelete = ref<RepairAttachment | null>(null)
+const downloadingId = ref<number | null>(null)
 
 function openPicker() {
   fileInputRef.value?.click()
+}
+
+async function downloadFile(att: RepairAttachment) {
+  downloadingId.value = att.id
+  try {
+    // Бинарный ответ — apiFetch тут не годится, ручной fetch с Bearer-токеном
+    // (тот же паттерн, что и в VehiclePhotosTab.vue / VehicleAttachmentSlot.vue).
+    // Обычный <a href> не может передать заголовок Authorization → раньше 401.
+    const token = localStorage.getItem('auth_token')
+    const res = await fetch(`/api/repair-attachments/${att.id}/download`, {
+      credentials: 'include',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = att.name
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch (err: any) {
+    toastError('Не удалось скачать файл', 0)
+  } finally {
+    downloadingId.value = null
+  }
 }
 
 async function onFileSelected(e: Event) {

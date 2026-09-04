@@ -756,6 +756,7 @@ async def top_expenses(
         select(
             Vehicle.id,
             Vehicle.plate,
+            Vehicle.vin,
             Vehicle.brand,
             Vehicle.model,
             func.coalesce(fuel_sq.c.fuel_cost, 0).label("fuel_cost"),
@@ -788,7 +789,14 @@ async def top_expenses(
         {
             "vehicle_id": r.id,
             "plate": r.plate,
-            "brand_model": f"{r.brand or ''} {r.model or ''}".strip() or r.plate,
+            # Автоблок (2026-09): гос. номер необязателен — если его нет, а марка/модель
+            # тоже пусты, опознаём машину по VIN, и только в крайнем случае — заглушкой.
+            "brand_model": (
+                f"{r.brand or ''} {r.model or ''}".strip()
+                or r.plate
+                or r.vin
+                or "Без номера"
+            ),
             "fuel_cost": float(r.fuel_cost or 0),
             "repair_cost": float(r.repair_cost or 0),
             "total_cost": float(r.total_cost or 0),
@@ -807,6 +815,14 @@ def _vehicle_item(r, fuel_cost: float = 0.0, repair_cost: float = 0.0) -> dict:
         "model": r.model or "",
         "brand_model": f"{r.brand or ''} {r.model or ''}".strip() or (r.plate or ""),
         "state": r.state or "unknown",
+        # 2026-09 (fleet/regions defect #3): попап списка машин по месту нахождения
+        # показывает иконку типа ТС (VehicleTypeIcon.vue) — нужен сам тип, раньше
+        # эндпоинт его не отдавал вовсе.
+        "type": r.type if hasattr(r, "type") else None,
+        # 2026-09: «Кузов» — попап на карте (/fleet/regions) должен рисовать ту же
+        # иконку, что и остальной интерфейс (по кузову, не по типу); раньше эндпоинт
+        # отдавал только type (см. комментарий выше про #3), body_type не было вовсе.
+        "body_type": r.body_type if hasattr(r, "body_type") else None,
         "owner_org_name": r.owner_org_name if hasattr(r, "owner_org_name") else "",
         "fuel_cost": round(fuel_cost, 2),
         "repair_cost": round(repair_cost, 2),
@@ -839,6 +855,8 @@ async def drill_vehicles(
             Vehicle.model,
             Vehicle.state,
             Vehicle.owner_org_id,
+            Vehicle.type,
+            Vehicle.body_type,
         )
     )
     base_q = _apply_visibility(base_q, current_user)
@@ -970,13 +988,18 @@ async def drill_vehicles(
         ]
 
     elif dimension == "region":
-        # value = assigned_text string → vehicles WHERE assigned_text = value
+        # value = location_city (место нахождения ТС) → vehicles WHERE location_city = value.
+        # 2026-09: география больше не берётся из assigned_text (кто эксплуатирует) —
+        # только из места нахождения самой машины. "Место не указано" = NULL/пусто.
         q = (
             base_q
             .outerjoin(Organization, Organization.id == Vehicle.owner_org_id)
             .add_columns(Organization.name.label("owner_org_name"))
-            .where(Vehicle.assigned_text == value)
         )
+        if value == "Место не указано":
+            q = q.where(or_(Vehicle.location_city.is_(None), Vehicle.location_city == ""))
+        else:
+            q = q.where(Vehicle.location_city == value)
         rows = (await db.execute(q)).all()
         items = [_vehicle_item(r) for r in rows]
 
@@ -1200,6 +1223,7 @@ async def all_vehicles_summary(
             Vehicle.state,
             Vehicle.insurance_until,
             Vehicle.assigned_text,
+            Vehicle.location_city,
             Organization.name.label("owner_org_name"),
             func.coalesce(fuel_sq.c.fuel_cost, 0).label("fuel_cost"),
             func.coalesce(repair_sq.c.repair_cost, 0).label("repair_cost"),
@@ -1228,6 +1252,7 @@ async def all_vehicles_summary(
             "state": r.state or "unknown",
             "owner_org_name": r.owner_org_name or "",
             "assigned_text": r.assigned_text or "",
+            "location_city": r.location_city or "",
             "fuel_cost": float(r.fuel_cost or 0),
             "repair_cost": float(r.repair_cost or 0),
             "mileage_km": int(r.mileage_km or 0),
@@ -1237,16 +1262,18 @@ async def all_vehicles_summary(
             "insurance_until": r.insurance_until.isoformat() if r.insurance_until else None,
         }
         prev = seen.get(norm)
-        # Phase 29.3-R3 (pt-tie): при равном state_rank — выигрывает запись с non-empty assigned_text
-        # (это устраняет mismatch между /by-region (по assigned_text) и /all-vehicles-summary).
+        # Phase 29.3-R3 (pt-tie), обновлено 2026-09: при равном state_rank — выигрывает запись
+        # с non-empty location_city (это устраняет mismatch между /by-region, теперь по
+        # location_city — месту нахождения машины, а не assigned_text/организации — и
+        # /all-vehicles-summary).
         if not prev:
             seen[norm] = item
         else:
             cur_rank = _state_rank(item["state"])
             prev_rank = _state_rank(prev["state"])
-            cur_has_region = bool(item.get("assigned_text"))
-            prev_has_region = bool(prev.get("assigned_text"))
-            if cur_rank > prev_rank or (cur_rank == prev_rank and cur_has_region and not prev_has_region):
+            cur_has_location = bool(item.get("location_city"))
+            prev_has_location = bool(prev.get("location_city"))
+            if cur_rank > prev_rank or (cur_rank == prev_rank and cur_has_location and not prev_has_location):
                 seen[norm] = item
     return list(seen.values())
 
@@ -1259,13 +1286,21 @@ async def by_region(
     current_user: User = Depends(require_tab("vehicles")),
 ):
     """
-    Phase 29.1: Fleet geography — group vehicles by assigned_text (region string).
-    Returns list sorted by count desc.
-    If fewer than 5 vehicles visible, adds mock_demo flag.
+    Fleet geography — group vehicles by Vehicle.location_city (место нахождения машины).
+
+    2026-09 (распоряжение владельца): география эксплуатации привязана к месту
+    нахождения ТС, а НЕ к тому, кто им пользуется/владеет — раньше группировка шла
+    по assigned_text ("у кого в эксплуатации"), что фактически подменяло географию
+    организацией. Тихого фолбэка на assigned_text нет: пустой location_city → группа
+    «Место не указано».
+
+    Returns list sorted by count desc. If fewer than 5 vehicles visible, adds mock_demo flag.
     """
+    from app.services.geo_normalize import normalize_city, shtab_label_for_city
+
     # Phase 29.3-R3: дедубликация по VIN→plate→id
     q = (
-        select(Vehicle.id, Vehicle.vin, Vehicle.plate, Vehicle.state, Vehicle.assigned_text)
+        select(Vehicle.id, Vehicle.vin, Vehicle.plate, Vehicle.state, Vehicle.location_city)
     )
     q = _apply_visibility(q, current_user)
     raw_rows = (await db.execute(q)).all()
@@ -1273,7 +1308,8 @@ async def by_region(
     seen_v: dict[str, dict] = {}
     for r in raw_rows:
         norm = _dedup_key(r.vin, r.plate, r.id)
-        cur = {"region": (r.assigned_text or "Не указан").strip(), "state": r.state or "unknown"}
+        city = normalize_city(r.location_city)
+        cur = {"region": city or "Место не указано", "state": r.state or "unknown"}
         prev = seen_v.get(norm)
         if not prev or _state_rank(cur["state"]) > _state_rank(prev["state"]):
             seen_v[norm] = cur
@@ -1289,17 +1325,8 @@ async def by_region(
 
     result = sorted(region_map.values(), key=lambda x: x["count"], reverse=True)
 
-    # штаб_label heuristic — map common region strings
-    _SHTAB = {
-        "Ростов-на-Дону": "филиал РНД, СТО",
-        "ЦУ Москва": "филиал ЦУ",
-        "Луганск": "ФПГ ЛНР",
-        "Донецк": "ФПГ ДНР",
-        "Запорожье": "ФПГ Запорожье",
-        "Иркутск": "ФПГ Иркутск",
-    }
     for item in result:
-        item["shtab_label"] = _SHTAB.get(item["region"], "")
+        item["shtab_label"] = shtab_label_for_city(item["region"])
 
     total = sum(item["count"] for item in result)
     mock_demo = total < 5

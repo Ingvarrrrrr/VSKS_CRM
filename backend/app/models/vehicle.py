@@ -46,7 +46,11 @@ class Vehicle(Base):
     model = Column(String(100), nullable=True)
     color = Column(String(50), nullable=True)
     vin = Column(String(17), nullable=True, index=True)
-    plate = Column(String(20), nullable=False, unique=True, index=True)
+    # Автоблок (2026-09): гос. номер необязателен — машина может быть куплена, но
+    # ещё не поставлена на учёт. unique=True сохранён — в Postgres несколько NULL
+    # не конфликтуют друг с другом. Опознавание такой машины — по VIN (см.
+    # app/routers/vehicles_dashboard.py _dedup_key: vin → plate → id).
+    plate = Column(String(20), nullable=True, unique=True, index=True)
 
     # Registration & docs
     registered_at = Column(Date, nullable=True)       # DATE — add to _DATE_FIELDS in 29-04
@@ -103,6 +107,62 @@ class Vehicle(Base):
     # server_default='{}' to avoid mutable-default trap
     props = Column(JSONB, nullable=False, server_default="{}")
 
+    # ── Автоблок: полный реестр полей ТС (35 колонок) — лист «26.05.2026» ──────
+    # см. AUTOBLOCK_FIELDS_SPEC.md §1. Все nullable. Даты — в _DATE_FIELDS routers/vehicles.py.
+    body_type = Column(String(50), nullable=True)                       # Кузов
+    pts_category = Column(String(10), nullable=True)                    # Категория ТС по ПТС
+    insurance_company = Column(String(150), nullable=True)              # Страховая компания
+    insurance_policy_number = Column(String(100), nullable=True)        # Номер страхового договора
+    ownership_basis = Column(String(200), nullable=True)                # Основание возникновения собственности
+    ownership_doc_number = Column(String(100), nullable=True)           # № документа основания собственности
+    ownership_doc_date = Column(Date, nullable=True)                    # Дата документа основания собственности
+    owner_since = Column(Date, nullable=True)                           # Дата, когда организация стала собственником
+    location_city = Column(String(100), nullable=True)                  # Текущее место нахождения — город
+    location_address = Column(String(300), nullable=True)               # Текущее место нахождения — адрес
+    home_base_city = Column(String(100), nullable=True)                 # Место постоянной приписки ТС
+    responsible_name = Column(String(150), nullable=True)               # Ответственный (ФИО)
+    pts_kind = Column(String(20), nullable=True)                        # Вид ПТС: paper / electronic
+    sts_issued_at = Column(Date, nullable=True)                         # СТС — дата выдачи
+    tech_inspection_status = Column(String(100), nullable=True)         # Обязательный техосмотр (текст)
+    tech_inspection_last_date = Column(Date, nullable=True)             # Дата последнего обязательного техосмотра
+    pass_zo = Column(String(100), nullable=True)                        # Пропуск ЗО
+    pass_zo_until = Column(Date, nullable=True)                         # Дата истечения пропуска ЗО
+    pass_ho = Column(String(100), nullable=True)                        # Пропуск ХО
+    pass_ho_until = Column(Date, nullable=True)                         # Дата истечения пропуска ХО
+    pass_dnr = Column(String(100), nullable=True)                       # Пропуск ДНР
+    pass_dnr_until = Column(Date, nullable=True)                        # Дата истечения пропуска ДНР
+    pass_lnr = Column(String(100), nullable=True)                       # Пропуск ЛНР
+    pass_lnr_until = Column(Date, nullable=True)                        # Дата истечения пропуска ЛНР
+    pass_moscow = Column(String(100), nullable=True)                    # Пропуск Москва
+    pass_moscow_until = Column(Date, nullable=True)                     # Дата истечения пропуска Москва
+    has_spare_tires = Column(Boolean, nullable=True)                    # Наличие сменной резины
+    tires_condition = Column(String(100), nullable=True)                # Состояние резины
+    has_mirrors = Column(Boolean, nullable=True)                        # Наличие зеркал
+    first_aid_kit_until = Column(Date, nullable=True)                   # Аптечка — срок истечения использования
+    extinguisher_check_date = Column(Date, nullable=True)               # Огнетушитель — дата поверки
+    tracker_paid_until = Column(Date, nullable=True)                    # Трекер — дата оплаты
+    has_tachograph = Column(Boolean, nullable=True)                     # Тахограф
+    tachograph_check_date = Column(Date, nullable=True)                 # Тахограф — дата поверки
+    repair_required = Column(Boolean, nullable=True)                    # Требуется ремонт
+    tech_condition_info = Column(Text, nullable=True)                   # Сведения о техническом состоянии
+
+    # ── Брендирование: признак Да/Нет отдельно от состояния (2026-09) ──────────
+    # props.branding хранит ТЕКСТ состояния брендирования (переиспользован —
+    # раньше был просто "брендирование" свободным текстом); has_branding — новый
+    # типизированный признак наличия, проставлен миграцией по факту непустого текста.
+    has_branding = Column(Boolean, nullable=True)                       # Брендирование (Да/Нет)
+
+    # ── Резина: летний/зимний комплект отдельно (2026-09) ───────────────────────
+    # tires_type (props) — какой комплект СЕЙЧАС установлен (Зимняя/Летняя/Нет
+    # данных); tires_condition (колонка выше) — устаревшее общее поле, оставлено
+    # как есть, данные перенесены миграцией в один из комплектов ниже.
+    tires_summer_radius = Column(String(20), nullable=True)             # Летняя резина — радиус
+    tires_summer_profile = Column(String(20), nullable=True)            # Летняя резина — профиль
+    tires_summer_condition = Column(String(100), nullable=True)         # Летняя резина — состояние
+    tires_winter_radius = Column(String(20), nullable=True)             # Зимняя резина — радиус
+    tires_winter_profile = Column(String(20), nullable=True)            # Зимняя резина — профиль
+    tires_winter_condition = Column(String(100), nullable=True)         # Зимняя резина — состояние
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
@@ -157,4 +217,10 @@ class Vehicle(Base):
         "FleetDocument", back_populates="vehicle",
         cascade="all, delete-orphan", lazy="selectin",
         order_by="FleetDocument.expires_at.desc().nullslast()"
+    )
+    # 2026-09: произвольный набор пропусков (заменяет 10 фиксированных колонок pass_*)
+    passes = relationship(
+        "VehiclePass", back_populates="vehicle",
+        cascade="all, delete-orphan", lazy="selectin",
+        order_by="VehiclePass.name"
     )

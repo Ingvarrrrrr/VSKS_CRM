@@ -222,7 +222,8 @@
             <!-- ТС -->
             <td>
               <div class="fdocs-veh">
-                <VehicleTypeIcon :type="doc.vehicle_type" :size="32" />
+                <!-- 2026-09: иконка по «Кузову» — единое правило (см. VehicleCard.vue) -->
+                <VehicleTypeIcon :body-type="doc.vehicle_body_type" :size="32" />
                 <div class="fdocs-veh__info">
                   <LicensePlate :model-value="doc.vehicle_plate || '—'" size="sm" />
                   <div class="fdocs-veh__model">{{ doc.vehicle_model || '' }}</div>
@@ -484,6 +485,7 @@ interface FleetDocument {
   vehicle_plate?: string
   vehicle_model?: string
   vehicle_type?: string
+  vehicle_body_type?: string | null  // 2026-09 — для единой иконки ТС по кузову
   operator_org_name?: string   // Phase 29.3-R3 (Д-2) — Эксплуатант
   type: string
   number?: string

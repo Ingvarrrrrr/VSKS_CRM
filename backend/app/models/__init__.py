@@ -60,6 +60,7 @@ from app.models.trip import Trip  # noqa: F401
 from app.models.vehicle_transfer_history import VehicleTransferHistory  # noqa: F401 — Phase 29.3
 from app.models.vehicle_fine import VehicleFine  # noqa: F401 — Phase 29.3 fines
 from app.models.fleet_document import FleetDocument  # noqa: F401 — Phase 30 vehicle documents
+from app.models.vehicle_pass import VehiclePass  # noqa: F401 — 2026-09 произвольный набор пропусков
 from app.models.waybill_children import RouteStop, OdometerReading, FuelRefill  # noqa: F401 — Phase 30
 from app.models.checklist import Checklist, ChecklistItem  # noqa: F401 — Phase 30
 from app.models.incident import Incident  # noqa: F401 — Phase 30
@@ -73,3 +74,5 @@ from app.models.fx_rate import FxRate  # noqa: F401
 from app.models.commercial_request import CommercialRequestOffer  # noqa: F401
 # Черновые субсидии (план C1/C2, владелец 2026-09-01)
 from app.models.subsidy_member import SubsidyMember  # noqa: F401
+# Редактор значков кузова ТС (владелец, 2026-09): переопределения по организации
+from app.models.body_type_icon_override import BodyTypeIconOverride  # noqa: F401

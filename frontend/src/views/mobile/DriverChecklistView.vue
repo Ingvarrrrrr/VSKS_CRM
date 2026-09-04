@@ -16,7 +16,10 @@
       <!-- Compact vehicle row -->
       <div v-if="vehicle" class="d-flex align-center gap-3 mb-1">
         <div class="checklist__veh-thumb rounded-lg d-flex align-center justify-center">
-          <VehicleTypeIcon :type="vehicle.vehicle_type" :size="40" />
+          <!-- 2026-09: реальное поле — body_type (не vehicle_type, которого API не
+               отдаёт) — тот же дефект, что и в DriverHomeView.vue. Заодно переведено
+               на «Кузов» — единое правило с остальным интерфейсом. -->
+          <VehicleTypeIcon :body-type="vehicle.body_type" :size="40" />
         </div>
         <div>
           <LicensePlate :model-value="vehicle.license_plate || ''" size="sm" />

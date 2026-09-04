@@ -765,8 +765,12 @@ async function loadWaybill() {
 
 async function loadVehicles() {
   try {
-    const data = await apiFetch<Vehicle[]>('/vehicles/')
-    vehicles.value = data
+    // GET /api/vehicles отдаёт { items, total } (пагинация), а не голый массив —
+    // найдено при проверке консоли на этой странице (2026-09-03): vehicles.value
+    // становился объектом, и .find() валился с "is not a function", ломая
+    // выбор ТС и подстановку в шапку путевого листа.
+    const data = await apiFetch<Vehicle[] | { items: Vehicle[] }>('/vehicles/')
+    vehicles.value = Array.isArray(data) ? data : (data?.items ?? [])
   } catch (e) {
     console.warn('[wbf] vehicles error', e)
   }
@@ -1152,11 +1156,35 @@ function onPrint() {
 }
 .wbf-topbar-actions { display: flex; gap: 8px; flex-shrink: 0; }
 
+/* Mobile: 3-колоночный grid (крошки / заголовок / кнопки) на 390px не
+   помещается и вылезает за экран горизонтально — владелец пожаловался,
+   что «всё съехало». Складываем topbar в столбец и даём кнопкам
+   переноситься на новую строку вместо overflow. */
+@media (max-width: 640px) {
+  .wbf-topbar {
+    grid-template-columns: 1fr;
+    padding: 10px 16px;
+    gap: 8px;
+  }
+  .wbf-crumbs { white-space: normal; }
+  .wbf-topbar-center { flex-wrap: wrap; }
+  .wbf-title {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+    font-size: 16px;
+  }
+  .wbf-topbar-actions { flex-wrap: wrap; }
+}
+
 /* Stage stepper */
 .wbf-stepper-wrap {
   padding: 6px 28px;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
+}
+@media (max-width: 640px) {
+  .wbf-stepper-wrap { padding: 6px 12px; }
 }
 
 /* Loading */
@@ -1290,30 +1318,37 @@ function onPrint() {
 }
 
 /* ─── Phase 30.2: Print styles ────────────────────────────────────────────── */
-/* Скрыть всё UI-«обёрточное», показать только форму */
-.no-print { display: none !important; }
+/* Эти правила должны действовать ТОЛЬКО при печати (window.print()) — раньше
+   были объявлены без @media print и ломали экранную вёрстку целиком:
+   .no-print гасил topbar/stepper/aside на экране, а .wbf-print-area делал
+   .wbf-layout position:absolute поверх сайдбара. Баг найден при жалобе
+   владельца «всё съехало» на /fleet/waybills/new (2026-09-03). */
+@media print {
+  /* Скрыть всё UI-«обёрточное», показать только форму */
+  .no-print { display: none !important; }
 
-/* Wrapper */
-.wbf-print-area {
-  position: absolute;
-  left: 0; top: 0;
-  width: 100%;
+  /* Wrapper */
+  .wbf-print-area {
+    position: absolute;
+    left: 0; top: 0;
+    width: 100%;
+  }
+
+  /* Убрать тени, оставить рамки */
+  .wbf-print-area .v-card {
+    box-shadow: none !important;
+    border: 1px solid #000 !important;
+    page-break-inside: avoid;
+  }
+
+  /* Сжать отступы */
+  .wbf-print-area .v-card { margin-bottom: 6mm; padding: 4mm; }
+  .wbf-print-area .v-text-field { margin-bottom: 3px; }
+  .wbf-print-area .v-input__details { display: none; }
+
+  /* Послерейсовые осмотры начинаются с новой страницы (оборотная сторона) */
+  .wbf-section-posttrip { page-break-before: always; }
 }
-
-/* Убрать тени, оставить рамки */
-.wbf-print-area .v-card {
-  box-shadow: none !important;
-  border: 1px solid #000 !important;
-  page-break-inside: avoid;
-}
-
-/* Сжать отступы */
-.wbf-print-area .v-card { margin-bottom: 6mm; padding: 4mm; }
-.wbf-print-area .v-text-field { margin-bottom: 3px; }
-.wbf-print-area .v-input__details { display: none; }
-
-/* Послерейсовые осмотры начинаются с новой страницы (оборотная сторона) */
-.wbf-section-posttrip { page-break-before: always; }
 
 /* Light theme */
 .v-theme--light .wbf-topbar { background: rgba(255,255,255,0.95); }

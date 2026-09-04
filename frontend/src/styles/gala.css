@@ -89,3 +89,18 @@ body {
   color: var(--gala-error, #ef4444);
   font-weight: 700;
 }
+
+/* Подсветка устаревшей цены товара (владелец, сессия 2026-08-29: «показывать
+   дату актуализации, устаревшее — подсвечивать») — единый глобальный класс
+   для ProductsView / PurchaseItemsEditor / ItemsTableFlat / ItemsCardsView /
+   ItemsTableStages, не per-component CSS. Тёмный фон → --gala-orange (ярче),
+   светлый фон → --gala-orange-dark (контрастнее) — тот же паттерн, что у
+   .gala-logo в AppBar.vue, чтобы не повторить прошлую ошибку с нечитаемым
+   оранжевым на белом фоне в тёмной теме. */
+.price-freshness-stale {
+  color: var(--gala-orange);
+  font-weight: 600;
+}
+.v-theme--light .price-freshness-stale {
+  color: var(--gala-orange-dark);
+}

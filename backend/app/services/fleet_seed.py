@@ -266,7 +266,9 @@ async def seed_drivers_from_xlsx(db, xlsx_path: Optional[str] = None) -> dict:
     return result
 
 
-async def seed_fuel_norms_from_xlsx(db, xlsx_path: Optional[str] = None) -> dict:
+async def seed_fuel_norms_from_xlsx(
+    db, xlsx_path: Optional[str] = None, *, force: bool = False
+) -> dict:
     """
     Парсит лист 'Авто' и обновляет Vehicle.fuel_norm_summer/winter
     + Vehicle.props['fuel_norm_details'] (база, коэффициенты, формула).
@@ -279,8 +281,28 @@ async def seed_fuel_norms_from_xlsx(db, xlsx_path: Optional[str] = None) -> dict
                               коэф1, летняя норма, зимняя норма
           row[i+1] — гос.номер в col[1] если его нет в row[i]; коэф2; формула в col[5]
           row[i+2] — коэф3
+
+    Guard (2026-09-02, симметрично vehicles_seed.py): в отличие от
+    seed_vehicles_from_xlsx, эта функция не защищена ON CONFLICT — она UPDATE'ит
+    уже существующие строки Vehicle безусловно (fuel_norm_summer/winter,
+    props['fuel_norm_details']), перезаписывая ручные правки при каждом
+    рестарте. Как только реестр `vehicles` наполнен (хотя бы одна запись —
+    значит, реестр уже вручную курирован), сидер норм расхода больше не
+    запускается, если явно не передан force=True.
     """
     import re
+
+    if not force:
+        from sqlalchemy import text as _text
+        existing_count = (
+            await db.execute(_text("SELECT COUNT(*) FROM vehicles"))
+        ).scalar_one()
+        if existing_count and existing_count > 0:
+            log.info(
+                f"fuel_norms_seed: реестр уже содержит {existing_count} записей, "
+                f"обновление норм пропущено"
+            )
+            return {'updated': 0, 'reason': 'already_seeded', 'existing': existing_count}
 
     path = xlsx_path or WAYBILL_XLSX_PATH
     if not os.path.exists(path):

@@ -135,20 +135,34 @@ async def my_orgs(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List organizations accessible to the current user."""
+    """List organizations accessible to the current user.
+
+    2026-09-03: добавлены inn/contractor_id (без ломки старых потребителей —
+    поля новые, старые читают только id/name). Нужны для автозаполнения
+    ИНН⇄название в карточке ТС (owner_org_id/assigned_org_id) через
+    useOrgContractorAutofill — там же дедуп с результатами поиска контрагентов
+    по Organization.contractor_id.
+    """
     from app.models.user_org_access import UserOrgAccess
+
+    def _org_dict(o: Organization) -> dict:
+        return {
+            "id": o.id, "name": o.name, "is_active": o.is_active, "color": o.color,
+            "inn": o.inn, "contractor_id": o.contractor_id,
+        }
+
     if user.role == 'superadmin':
         q = select(Organization).where(Organization.is_active == True).order_by(Organization.name)
         if search:
             q = q.where(Organization.name.ilike(f"%{search}%") | Organization.inn.ilike(f"%{search}%"))
         result = await db.execute(q)
-        return [{"id": o.id, "name": o.name, "is_active": o.is_active, "color": o.color} for o in result.scalars().all()]
+        return [_org_dict(o) for o in result.scalars().all()]
 
     if user.role == 'account_owner':
         # All orgs in contour (where owner_user_id = me)
         q = select(Organization).where(Organization.owner_user_id == user.id).order_by(Organization.name)
         result = await db.execute(q)
-        return [{"id": o.id, "name": o.name, "is_active": o.is_active, "color": o.color} for o in result.scalars().all()]
+        return [_org_dict(o) for o in result.scalars().all()]
 
     result = await db.execute(
         select(Organization)
@@ -156,12 +170,12 @@ async def my_orgs(
         .where(UserOrgAccess.user_id == user.id)
         .order_by(Organization.name)
     )
-    orgs = [{"id": o.id, "name": o.name, "is_active": o.is_active, "color": o.color} for o in result.scalars().all()]
+    orgs = [_org_dict(o) for o in result.scalars().all()]
     # Ensure current org is included
     if user.org_id and not any(o["id"] == user.org_id for o in orgs):
         org = await db.get(Organization, user.org_id)
         if org:
-            orgs.insert(0, {"id": org.id, "name": org.name, "is_active": org.is_active, "color": org.color})
+            orgs.insert(0, _org_dict(org))
     return orgs
 
 

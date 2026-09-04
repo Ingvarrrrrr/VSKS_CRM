@@ -2,8 +2,14 @@
 vehicles_seed.py — Idempotent UPSERT of vehicles from xlsx Голичкова.
 
 Reads seed_data/vehicles_golichkov.xlsx, sheet '09.04.2026' (52 ТС, header row 1).
-Uses ON CONFLICT (plate) DO UPDATE SET ... COALESCE — safe to run on every restart,
-only fills NULL columns, never overwrites admin edits.
+Uses ON CONFLICT (plate) DO UPDATE SET ... COALESCE — fills NULL columns, never
+overwrites admin edits.
+
+Guard (2026-09-02): runs ONLY on a truly empty `vehicles` table (primary
+initialization of a clean DB). Once the registry has at least one row —
+including a hand-curated registry with rows deliberately deleted — the
+seeder no longer runs, because ON CONFLICT can't protect a *deleted* plate:
+with no row left to conflict against, a restart would silently re-insert it.
 
 Plan 29-3a2. Decision D-09.
 """
@@ -360,6 +366,32 @@ async def seed_vehicles_from_xlsx(
           'reason': 'ok' | 'xlsx_not_found' | 'no_sheet',
         }
     """
+    # ------------------------------------------------------------------
+    # Guard: only ever run on a truly empty registry (primary init).
+    # ON CONFLICT (plate) DO NOTHING/UPDATE prevents duplicate rows, but a
+    # vehicle deleted on purpose simply has no row/plate left to conflict
+    # with — so on every restart the seeder would silently resurrect it.
+    # A non-empty `vehicles` table means the registry has already been
+    # curated by hand; the xlsx must not be touched again after that,
+    # unless the caller explicitly passes force=True.
+    # ------------------------------------------------------------------
+    if not force:
+        existing_count = (
+            await db.execute(text("SELECT COUNT(*) FROM vehicles"))
+        ).scalar_one()
+        if existing_count and existing_count > 0:
+            log.info(
+                f"vehicles_seed: реестр уже содержит {existing_count} записей, "
+                f"первичное наполнение пропущено"
+            )
+            return {
+                'total_in_xlsx': 0,
+                'inserted': 0,
+                'updated': 0,
+                'errors': [],
+                'reason': 'already_seeded',
+            }
+
     if xlsx_path is None:
         # In Docker container: /app/seed_data/vehicles_golichkov.xlsx
         # Local dev: backend/seed_data/vehicles_golichkov.xlsx

@@ -78,6 +78,16 @@
         </div>
         <div class="d-flex flex-wrap gap-2">
 
+          <!-- Поиск по договорам (номер, контрагент, ИНН, субсидия, предмет, примечания) -->
+          <v-text-field
+            v-model="search"
+            label="Поиск"
+            prepend-inner-icon="mdi-magnify"
+            variant="outlined" density="compact" hide-details clearable
+            style="min-width:220px; max-width:300px"
+            placeholder="Номер, контрагент, ИНН, предмет..."
+          />
+
           <!-- Субсидия -->
           <v-autocomplete
             v-model="fSubsidy"
@@ -953,7 +963,6 @@
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
-import { useAppSearch } from '@/composables/useAppSearch'
 import FileDropZone from '@/components/FileDropZone.vue'
 import MonthlyStagesDialog from '@/components/MonthlyStagesDialog.vue'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
@@ -989,7 +998,10 @@ function onButtonDrop(e: DragEvent) {
   }
 }
 
-const { appSearch, appSearchScope } = useAppSearch()
+// Локальный поиск по реестру договоров (независим от глобального поиска в шапке —
+// владелец отказался от режима «по странице» у глобального поиска 2026-09-03,
+// поэтому у страницы своё поле).
+const search = ref('')
 
 const userRole = localStorage.getItem('user_role') || ''
 const isAdmin = ['admin', 'superadmin', 'org_admin'].includes(userRole)
@@ -1389,11 +1401,6 @@ watch(productMatchContractIds, (ids) => {
 })
 
 const filtered = computed(() => {
-  const q = appSearch.value.trim()
-
-  // "По всей БД" — global search handled by GlobalSearch dialog, page shows all
-  if (q && appSearchScope.value === 'global') return contracts.value
-
   let list = contracts.value
   if (fSubsidy.value.length)    list = list.filter(c => c.subsidy_id != null && fSubsidy.value.includes(c.subsidy_id))
   if (fType.value.length)       list = list.filter(c => fType.value.includes(c.contract_type))
@@ -1411,8 +1418,9 @@ const filtered = computed(() => {
   if (fDateTo.value)            list = list.filter(c => !c.date || c.date <= fDateTo.value)
   // Product filter
   if (productMatchContractIds.value) list = list.filter(c => productMatchContractIds.value!.has(c.id))
-  // "По странице" — filter current list by search query
-  if (q && appSearchScope.value === 'page') list = list.filter(c => matchesSearch(c, q))
+  // Локальный поиск страницы
+  const q = search.value.trim()
+  if (q) list = list.filter(c => matchesSearch(c, q))
   return list
 })
 

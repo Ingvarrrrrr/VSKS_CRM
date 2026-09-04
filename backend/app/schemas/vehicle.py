@@ -334,6 +334,40 @@ class TripOut(BaseModel):
     driver_signed_at: Optional[datetime] = None
 
 
+# ─────────────────────── VehiclePass (2026-09) ───────────────────────
+
+class VehiclePassOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    vehicle_id: int
+    name: str
+    status: Optional[str] = None
+    expires_at: Optional[date] = None
+    note: Optional[str] = None
+
+
+class VehiclePassCreate(BaseModel):
+    vehicle_id: int
+    name: str
+    status: Optional[str] = None
+    expires_at: Optional[date] = None
+    note: Optional[str] = None
+
+
+class VehiclePassPatch(BaseModel):
+    name: Optional[str] = None
+    status: Optional[str] = None
+    expires_at: Optional[date] = None
+    note: Optional[str] = None
+
+
+class VehiclePassCopyRequest(BaseModel):
+    source_vehicle_id: int
+    target_vehicle_id: int
+    replace: bool = False  # False (по умолчанию) = merge по имени, True = заменить набор цели целиком
+
+
 # ─────────────────────── Vehicle ───────────────────────
 
 class VehicleTransferHistoryOut(BaseModel):
@@ -364,7 +398,9 @@ class VehicleCreate(BaseModel):
     model: Optional[str] = None
     color: Optional[str] = None
     vin: Optional[str] = None
-    plate: str
+    # Автоблок (2026-09): гос. номер необязателен — машина может быть куплена, но
+    # ещё не поставлена на учёт. Опознаётся по VIN, если номера нет.
+    plate: Optional[str] = None
     force: bool = False  # позволяет создать ТС с дублирующим VIN после подтверждения
     registered_at: Optional[date] = None
     insurance_until: Optional[date] = None
@@ -398,6 +434,52 @@ class VehicleCreate(BaseModel):
     assignment_doc_date: Optional[date] = None
     engine_power_hp: Optional[int] = None
     engine_volume_l: Optional[float] = None
+    # Автоблок: полный реестр полей ТС (см. AUTOBLOCK_FIELDS_SPEC.md §1)
+    body_type: Optional[str] = None
+    pts_category: Optional[str] = None
+    insurance_company: Optional[str] = None
+    insurance_policy_number: Optional[str] = None
+    ownership_basis: Optional[str] = None
+    ownership_doc_number: Optional[str] = None
+    ownership_doc_date: Optional[date] = None
+    owner_since: Optional[date] = None
+    location_city: Optional[str] = None
+    location_address: Optional[str] = None
+    home_base_city: Optional[str] = None
+    responsible_name: Optional[str] = None
+    pts_kind: Optional[str] = None
+    sts_issued_at: Optional[date] = None
+    tech_inspection_status: Optional[str] = None
+    tech_inspection_last_date: Optional[date] = None
+    pass_zo: Optional[str] = None
+    pass_zo_until: Optional[date] = None
+    pass_ho: Optional[str] = None
+    pass_ho_until: Optional[date] = None
+    pass_dnr: Optional[str] = None
+    pass_dnr_until: Optional[date] = None
+    pass_lnr: Optional[str] = None
+    pass_lnr_until: Optional[date] = None
+    pass_moscow: Optional[str] = None
+    pass_moscow_until: Optional[date] = None
+    has_spare_tires: Optional[bool] = None
+    tires_condition: Optional[str] = None
+    has_mirrors: Optional[bool] = None
+    first_aid_kit_until: Optional[date] = None
+    extinguisher_check_date: Optional[date] = None
+    tracker_paid_until: Optional[date] = None
+    has_tachograph: Optional[bool] = None
+    tachograph_check_date: Optional[date] = None
+    repair_required: Optional[bool] = None
+    tech_condition_info: Optional[str] = None
+    # 2026-09: брендирование — признак Да/Нет отдельно от состояния (props.branding)
+    has_branding: Optional[bool] = None
+    # 2026-09: резина — летний/зимний комплект (радиус/профиль/состояние)
+    tires_summer_radius: Optional[str] = None
+    tires_summer_profile: Optional[str] = None
+    tires_summer_condition: Optional[str] = None
+    tires_winter_radius: Optional[str] = None
+    tires_winter_profile: Optional[str] = None
+    tires_winter_condition: Optional[str] = None
 
     @field_validator('plate', mode='before')
     @classmethod
@@ -460,6 +542,52 @@ class VehiclePatch(BaseModel):
     assignment_doc_date: Optional[date] = None
     engine_power_hp: Optional[int] = None
     engine_volume_l: Optional[float] = None
+    # Автоблок: полный реестр полей ТС (см. AUTOBLOCK_FIELDS_SPEC.md §1)
+    body_type: Optional[str] = None
+    pts_category: Optional[str] = None
+    insurance_company: Optional[str] = None
+    insurance_policy_number: Optional[str] = None
+    ownership_basis: Optional[str] = None
+    ownership_doc_number: Optional[str] = None
+    ownership_doc_date: Optional[date] = None
+    owner_since: Optional[date] = None
+    location_city: Optional[str] = None
+    location_address: Optional[str] = None
+    home_base_city: Optional[str] = None
+    responsible_name: Optional[str] = None
+    pts_kind: Optional[str] = None
+    sts_issued_at: Optional[date] = None
+    tech_inspection_status: Optional[str] = None
+    tech_inspection_last_date: Optional[date] = None
+    pass_zo: Optional[str] = None
+    pass_zo_until: Optional[date] = None
+    pass_ho: Optional[str] = None
+    pass_ho_until: Optional[date] = None
+    pass_dnr: Optional[str] = None
+    pass_dnr_until: Optional[date] = None
+    pass_lnr: Optional[str] = None
+    pass_lnr_until: Optional[date] = None
+    pass_moscow: Optional[str] = None
+    pass_moscow_until: Optional[date] = None
+    has_spare_tires: Optional[bool] = None
+    tires_condition: Optional[str] = None
+    has_mirrors: Optional[bool] = None
+    first_aid_kit_until: Optional[date] = None
+    extinguisher_check_date: Optional[date] = None
+    tracker_paid_until: Optional[date] = None
+    has_tachograph: Optional[bool] = None
+    tachograph_check_date: Optional[date] = None
+    repair_required: Optional[bool] = None
+    tech_condition_info: Optional[str] = None
+    # 2026-09: брендирование — признак Да/Нет отдельно от состояния (props.branding)
+    has_branding: Optional[bool] = None
+    # 2026-09: резина — летний/зимний комплект (радиус/профиль/состояние)
+    tires_summer_radius: Optional[str] = None
+    tires_summer_profile: Optional[str] = None
+    tires_summer_condition: Optional[str] = None
+    tires_winter_radius: Optional[str] = None
+    tires_winter_profile: Optional[str] = None
+    tires_winter_condition: Optional[str] = None
 
     @field_validator('plate', mode='before')
     @classmethod
@@ -496,7 +624,7 @@ class VehicleOut(BaseModel):
     model: Optional[str] = None
     color: Optional[str] = None
     vin: Optional[str] = None
-    plate: str
+    plate: Optional[str] = None  # 2026-09: гос. номер необязателен
     registered_at: Optional[date] = None
     insurance_until: Optional[date] = None
     type: Optional[str] = None
@@ -529,6 +657,55 @@ class VehicleOut(BaseModel):
     assignment_doc_date: Optional[date] = None
     engine_power_hp: Optional[int] = None
     engine_volume_l: Optional[float] = None
+    # Автоблок: полный реестр полей ТС (см. AUTOBLOCK_FIELDS_SPEC.md §1)
+    body_type: Optional[str] = None
+    pts_category: Optional[str] = None
+    insurance_company: Optional[str] = None
+    insurance_policy_number: Optional[str] = None
+    ownership_basis: Optional[str] = None
+    ownership_doc_number: Optional[str] = None
+    ownership_doc_date: Optional[date] = None
+    owner_since: Optional[date] = None
+    location_city: Optional[str] = None
+    location_address: Optional[str] = None
+    home_base_city: Optional[str] = None
+    responsible_name: Optional[str] = None
+    pts_kind: Optional[str] = None
+    sts_issued_at: Optional[date] = None
+    tech_inspection_status: Optional[str] = None
+    tech_inspection_last_date: Optional[date] = None
+    pass_zo: Optional[str] = None
+    pass_zo_until: Optional[date] = None
+    pass_ho: Optional[str] = None
+    pass_ho_until: Optional[date] = None
+    pass_dnr: Optional[str] = None
+    pass_dnr_until: Optional[date] = None
+    pass_lnr: Optional[str] = None
+    pass_lnr_until: Optional[date] = None
+    pass_moscow: Optional[str] = None
+    pass_moscow_until: Optional[date] = None
+    has_spare_tires: Optional[bool] = None
+    tires_condition: Optional[str] = None
+    has_mirrors: Optional[bool] = None
+    first_aid_kit_until: Optional[date] = None
+    extinguisher_check_date: Optional[date] = None
+    tracker_paid_until: Optional[date] = None
+    has_tachograph: Optional[bool] = None
+    tachograph_check_date: Optional[date] = None
+    repair_required: Optional[bool] = None
+    tech_condition_info: Optional[str] = None
+    # 2026-09: брендирование — признак Да/Нет отдельно от состояния (props.branding)
+    has_branding: Optional[bool] = None
+    # 2026-09: резина — летний/зимний комплект (радиус/профиль/состояние)
+    tires_summer_radius: Optional[str] = None
+    tires_summer_profile: Optional[str] = None
+    tires_summer_condition: Optional[str] = None
+    tires_winter_radius: Optional[str] = None
+    tires_winter_profile: Optional[str] = None
+    tires_winter_condition: Optional[str] = None
+    # Автоблок: вычисляемые read-only поля (не колонки) — ИНН собственника/эксплуатанта
+    owner_inn: Optional[str] = None
+    operator_inn: Optional[str] = None
     # Phase 30: computed station fields
     current_station_id: Optional[int] = None
     current_station_name: Optional[str] = None
@@ -541,6 +718,7 @@ class VehicleOut(BaseModel):
     trips: List[TripOut] = []
     field_history: List[FieldHistoryOut] = []
     transfer_history: List["VehicleTransferHistoryOut"] = []
+    passes: List["VehiclePassOut"] = []
 
 
 class VehicleListItem(BaseModel):
@@ -555,11 +733,18 @@ class VehicleListItem(BaseModel):
     assigned_org_name: Optional[str] = None
     assigned_org_color: Optional[str] = None
     assigned_text: Optional[str] = None
+    # 2026-09: место нахождения ТС (география) — не путать с assigned_text (кто эксплуатирует)
+    location_city: Optional[str] = None
     brand: Optional[str] = None
     model: Optional[str] = None
     color: Optional[str] = None
-    plate: str
+    plate: Optional[str] = None  # 2026-09: гос. номер необязателен
     type: Optional[str] = None
+    # 2026-09: «Кузов» — тем же образом, что и location_city выше: список ТС
+    # раньше не отдавал это поле вовсе, из-за чего иконка ТС в карточках
+    # дашборда (VehicleCard.vue) рисовалась по «Типу ТС», а не по «Кузову»,
+    # как в карточке ТС (VehicleDetailView.vue) — разъезд иконок одной машины.
+    body_type: Optional[str] = None
     state: Optional[str] = None
     fuel_type: Optional[str] = None
     current_odometer_km: Optional[int] = None

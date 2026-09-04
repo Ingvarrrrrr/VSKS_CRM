@@ -520,7 +520,15 @@ const VEHICLE_TYPE_LABELS: Record<string, string> = {
   trailer: 'Прицеп',
   other: 'Другое',
 }
-const VEHICLE_TYPE_OPTIONS = Object.entries(VEHICLE_TYPE_LABELS).map(([value, label]) => ({ value, label }))
+// Отсортировано по алфавиту (владелец, 2026-09). NB: подписи в VEHICLE_TYPE_LABELS
+// выше — своя, отличная от frontend/src/utils/vehicleLabels.ts копия (например,
+// «Грузовой фургон» вместо «Фургон») — не объединено с общим источником задачей
+// сортировки (задание запрещает менять тексты подписей, а объединение сейчас
+// изменило бы видимый текст в этом дашборде); сортируется по её собственным
+// значениям, коды (car_light, suv, ...) не меняются.
+const VEHICLE_TYPE_OPTIONS = Object.entries(VEHICLE_TYPE_LABELS)
+  .map(([value, label]) => ({ value, label }))
+  .sort((a, b) => a.label.localeCompare(b.label, 'ru'))
 
 // ── Design constants ─────────────────────────────────────────────────────────
 const IC_ICONS: Record<string, string> = {

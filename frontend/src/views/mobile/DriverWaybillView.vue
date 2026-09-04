@@ -62,7 +62,15 @@
             <div class="dwv__card-title">Транспорт</div>
             <div class="dwv__veh">
               <div class="dwv__veh-icon">
-                <VehicleTypeIcon :type="waybill.vehicle.vehicle_type" :size="56" />
+                <!-- 2026-09: переведено на «Кузов» для единообразия с остальным
+                     интерфейсом (см. VehicleCard.vue). ПРИМЕЧАНИЕ: этот блок сейчас
+                     не рендерится ни при каком ответе GET /api/trips/{id} — эндпоинт
+                     не отдаёт вложенный объект `vehicle` вовсе (см. _trip_to_dict в
+                     trips.py, там только плоские vehicle_brand_model/vehicle_brand/...),
+                     поэтому `v-if="waybill.vehicle"` выше всегда ложен. Отдельный
+                     предсуществующий дефект, не относится к задаче про иконки —
+                     чинить его значит переписывать формат ответа /api/trips/{id}. -->
+                <VehicleTypeIcon :body-type="waybill.vehicle.body_type" :size="56" />
               </div>
               <div class="dwv__veh-info">
                 <LicensePlate :modelValue="waybill.vehicle.license_plate ?? ''" />
@@ -507,6 +515,7 @@ interface Vehicle {
   brand_model?: string | null
   year?: number | null
   vehicle_type?: string | null
+  body_type?: string | null
   fuel_norm?: number | null
 }
 

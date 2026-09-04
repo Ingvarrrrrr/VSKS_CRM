@@ -120,6 +120,7 @@
               :disabled="readonly"
               @update:model-value="(v: string) => { item.unit_price = parseNumber(v) as any; emit('calc-item-total', idx) }"
             />
+            <PriceFreshnessStamp :price-meta="item._price_meta" />
           </td>
           <td>
             <v-text-field :model-value="formatNumber(item.total_price)" readonly density="compact"
@@ -153,6 +154,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import InlineProductMatch from '@/components/items/InlineProductMatch.vue'
+import PriceFreshnessStamp from '@/components/items/PriceFreshnessStamp.vue'
 import type { MatchCandidate } from '@/composables/useItemMatching'
 import type { Contractor } from '@/components/items/types'
 

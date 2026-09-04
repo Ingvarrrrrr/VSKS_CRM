@@ -33,12 +33,39 @@
         </v-btn-toggle>
         <v-btn variant="outlined" size="small" prepend-icon="mdi-view-dashboard"
           @click="router.push('/property/vehicles/dashboard')">Дашборд</v-btn>
+        <!-- Раньше шаблон можно было скачать только из первого шага диалога импорта —
+             владелец жаловался, что не может найти, откуда скачать пустой шаблон
+             для заполнения. Кнопка вынесена в шапку реестра, диалог импорта её тоже
+             сохраняет (уместна на своём первом шаге). Desktop — обычная кнопка,
+             мобильный — пункт меню «Ещё», иначе кнопки не помещаются в один ряд. -->
         <v-btn
-          v-if="authStore.hasAction('vehicle.import')"
+          v-if="!mobile && authStore.hasAction('vehicle.import')"
+          variant="outlined" prepend-icon="mdi-file-download-outline" color="primary"
+          :loading="loadingTemplate"
+          @click="downloadTemplate">
+          Шаблон Excel
+        </v-btn>
+        <v-btn
+          v-if="!mobile && authStore.hasAction('vehicle.import')"
           variant="outlined" prepend-icon="mdi-file-excel" color="green"
           @click="importDialogShow = true">
           Импорт Excel
         </v-btn>
+        <v-menu v-if="mobile && authStore.hasAction('vehicle.import')">
+          <template #activator="{ props: menuProps }">
+            <v-btn v-bind="menuProps" variant="outlined" size="small" icon="mdi-dots-vertical" />
+          </template>
+          <v-list density="compact">
+            <v-list-item :disabled="loadingTemplate" @click="downloadTemplate">
+              <template #prepend><v-icon icon="mdi-file-download-outline" /></template>
+              <v-list-item-title>Шаблон Excel</v-list-item-title>
+            </v-list-item>
+            <v-list-item @click="importDialogShow = true">
+              <template #prepend><v-icon icon="mdi-file-excel" color="green" /></template>
+              <v-list-item-title>Импорт Excel</v-list-item-title>
+            </v-list-item>
+          </v-list>
+        </v-menu>
         <v-btn color="primary" prepend-icon="mdi-plus" @click="createDialog.show = true">Добавить ТС</v-btn>
       </div>
     </div>
@@ -302,14 +329,27 @@
         </v-chip>
       </template>
 
-      <!-- owner_org_name -->
+      <!-- owner_org_name — 2026-09 (правка после ревью #2): полное юрлицо-название
+           («ДОНЕЦКОЕ РЕГИОНАЛЬНОЕ ОТДЕЛЕНИЕ ВСЕРОССИЙСКОЙ ОБЩЕСТВЕННОЙ МОЛОДЕЖНОЙ
+           ОРГАНИЗАЦИИ "...") раньше выводилось целиком и переносилось на 8 строк,
+           раздувая высоту строки таблицы (242px вместо обычных ~40px). Короткой
+           формы у организации в модели нет (нет short_name) — обрезаем визуально
+           до 2 строк с многоточием, полное название — во всплывающей подсказке. -->
       <template #item.owner_org_name="{ item }">
-        <span class="text-body-2">{{ item.owner_org_name || '—' }}</span>
+        <v-tooltip :text="item.owner_org_name || '—'" location="top" :disabled="!item.owner_org_name">
+          <template #activator="{ props: tip }">
+            <span v-bind="tip" class="text-body-2 vl-clamp-2">{{ item.owner_org_name || '—' }}</span>
+          </template>
+        </v-tooltip>
       </template>
 
-      <!-- assigned_label: org name OR text -->
+      <!-- assigned_label: org name OR text — та же проблема раздувания строки -->
       <template #item.assigned_label="{ item }">
-        <span class="text-body-2">{{ item.assigned_org_name || item.assigned_text || '—' }}</span>
+        <v-tooltip :text="item.assigned_org_name || item.assigned_text || '—'" location="top" :disabled="!(item.assigned_org_name || item.assigned_text)">
+          <template #activator="{ props: tip }">
+            <span v-bind="tip" class="text-body-2 vl-clamp-2">{{ item.assigned_org_name || item.assigned_text || '—' }}</span>
+          </template>
+        </v-tooltip>
       </template>
 
       <!-- insurance_until with color warning -->
@@ -637,6 +677,7 @@ import { ref, computed, onMounted, reactive, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useAuthStore } from '@/stores/auth'
+import { VEHICLE_TYPE_LABEL, VEHICLE_TYPE_OPTIONS } from '@/utils/vehicleLabels'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
@@ -731,24 +772,10 @@ const dtHeaders = computed(() => Array.from(cfg.visibleHeaders.value ?? []))
 
 // ─────────────── Lookup Maps ───────────────
 
-const TYPE_LABEL: Record<string, string> = {
-  car_light:   'Легковой',
-  suv:         'Внедорожник',
-  pickup:      'Пикап',
-  minivan:     'Минивэн',
-  truck_van:   'Фургон',
-  truck_board: 'Грузовой',
-  truck_tank:  'Цистерна',
-  truck_metal: 'Металловоз',
-  bus:         'Автобус',
-  special:     'Спецтехника',
-  snowmobile:  'Снегоход',
-  boat:        'Лодка',
-  boat_motor:  'Лодка (мотор)',
-  quadbike:    'Квадроцикл',
-  trailer:     'Прицеп',
-  other:       'Другой',
-}
+// Единый источник — frontend/src/utils/vehicleLabels.ts (Правило №5: раньше
+// здесь была отдельная копия этой карты; убрана 2026-09 при сортировке «Тип
+// ТС» по алфавиту, чтобы не держать два места с порядком/подписями).
+const TYPE_LABEL = VEHICLE_TYPE_LABEL
 
 const STATE_LABEL: Record<string, string> = {
   working:      'Рабочее',
@@ -780,7 +807,8 @@ const STATE_COLOR: Record<string, string> = {
   needs_repair: 'orange', destroyed: 'grey', utilized: 'grey',
 }
 
-const typeOptions = Object.entries(TYPE_LABEL).map(([value, label]) => ({ value, label }))
+// Отсортировано по алфавиту (владелец, 2026-09) — см. VEHICLE_TYPE_OPTIONS.
+const typeOptions = VEHICLE_TYPE_OPTIONS
 const stateOptions = Object.entries(STATE_LABEL).map(([value, label]) => ({ value, label }))
 const fuelTypeOptions = Object.entries(FUEL_TYPE_LABEL).map(([value, label]) => ({ value, label }))
 
@@ -1077,6 +1105,57 @@ function onImported() {
   loadVehicles()
 }
 
+// ─────────────── Template download (шапка реестра) ───────────────
+// Тот же подход, что в VehicleImportDialog.vue (downloadTemplate): обычный
+// fetch + blob, а не apiFetch — apiFetch не умеет бинарные ответы. Логика не
+// продублирована один-в-один по коду, но использует тот же эндпоинт и тот же
+// разбор Content-Disposition — переиспользуем идею, а не плодим третий вариант.
+const loadingTemplate = ref(false)
+
+async function downloadTemplate() {
+  loadingTemplate.value = true
+  try {
+    const token = localStorage.getItem('auth_token')
+    const res = await fetch('/api/vehicles/import-template', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`
+      try {
+        const errBody = await res.json()
+        detail = errBody?.detail || errBody?.message || errBody?.payload?.message || detail
+      } catch {
+        // тело ответа не JSON — оставляем причину по умолчанию (HTTP-статус)
+      }
+      throw new Error(detail)
+    }
+    const blob = await res.blob()
+
+    let filename = 'Шаблон_импорта_транспорта.xlsx'
+    const cd = res.headers.get('Content-Disposition') || ''
+    const utf8Match = cd.match(/filename\*=UTF-8''([^;]+)/i)
+    const plainMatch = cd.match(/filename="?([^";]+)"?/i)
+    if (utf8Match) {
+      try { filename = decodeURIComponent(utf8Match[1]) } catch { /* оставляем дефолт */ }
+    } else if (plainMatch) {
+      filename = plainMatch[1]
+    }
+
+    const blobUrl = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = blobUrl
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    window.URL.revokeObjectURL(blobUrl)
+  } catch (err: any) {
+    showError(new Error(err?.message || 'Не удалось скачать шаблон'))
+  } finally {
+    loadingTemplate.value = false
+  }
+}
+
 // ─────────────── Date helpers ───────────────
 
 function formatDate(d?: string | null): string {
@@ -1177,5 +1256,18 @@ defineExpose({ showSnack })
 <style scoped>
 .vehicles-clickable :deep(tbody tr) {
   cursor: pointer;
+}
+
+/* Владелец/Эксплуатант: полные юрлица-названия могут быть очень длинными
+   ("ДОНЕЦКОЕ РЕГИОНАЛЬНОЕ ОТДЕЛЕНИЕ ВСЕРОССИЙСКОЙ ОБЩЕСТВЕННОЙ МОЛОДЕЖНОЙ
+   ОРГАНИЗАЦИИ ...") — без ограничения строка таблицы раздувалась на весь экран.
+   Зажимаем визуально до 2 строк с многоточием, полный текст — в v-tooltip. */
+.vl-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.3;
+  max-height: 2.6em;
 }
 </style>

@@ -55,6 +55,9 @@ class FleetDocumentOut(BaseModel):
     vehicle_plate: Optional[str] = None
     vehicle_model: Optional[str] = None
     vehicle_type: Optional[str] = None
+    # 2026-09: «Кузов» — та же денормализация, что и vehicle_type выше; нужен
+    # для единой иконки ТС (по кузову, не по типу) в реестре документов парка.
+    vehicle_body_type: Optional[str] = None
     operator_org_name: Optional[str] = None  # Эксплуатант = Vehicle.assigned_org.name
     has_file: bool = False
 

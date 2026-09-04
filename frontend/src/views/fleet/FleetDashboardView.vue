@@ -88,9 +88,9 @@
         <div class="fd-panel__head">
           <span class="fd-panel__title">
             <v-icon size="16" icon="mdi-map-marker-multiple-outline" class="mr-1" />
-            География эксплуатации
+            Состояние парка по месту нахождения
           </span>
-          <span class="fd-panel__sub">{{ regions.length }} регионов</span>
+          <span class="fd-panel__sub">{{ regions.length }} мест</span>
         </div>
         <div v-if="regionLoading" class="fd-panel__loading">
           <v-progress-circular indeterminate size="28" color="primary" />
@@ -112,6 +112,7 @@
               :needs-repair="allRegionsBy.needs_repair"
               :destroyed="allRegionsBy.destroyed"
               :utilized="allRegionsBy.utilized"
+              :unspecified="allRegionsBy.unknown"
               @segment-click="onTotalSegmentClick"
             />
           </div>
@@ -135,18 +136,26 @@
               :needs-repair="row.by_state.needs_repair || 0"
               :destroyed="row.by_state.destroyed || 0"
               :utilized="row.by_state.utilized || 0"
+              :unspecified="row.by_state.unknown || 0"
               @segment-click="onRegionSegmentClick"
             />
           </div>
 
-          <!-- 6-я строка «Прочее» — collapsible, persistent -->
+          <!-- 6-я строка «Прочее» — collapsible, persistent.
+               Два раздельных действия на одном элементе (владелец: клик по «Прочее» не
+               фильтровал машины — фильтровало только раскрытие вложенного списка):
+               - шеврон (▶/▼, @click.stop) — раскрывает/сворачивает вложенный список мест;
+               - остальная область строки (название/полоса) — фильтрует карточки ниже по
+                 ВСЕМ местам из otherRegions разом, тем же паттерном что и обычные строки
+                 (fd-region-row: click → selectedRegion, selectedFilter=''). Разделение
+                 через .stop на шевроне — минимально ломает текущее раскрытие. -->
           <template v-if="otherRegions.length">
             <div
               class="fd-other-header"
-              :class="{ 'fd-other-header--expanded': showOtherRegions }"
-              @click="showOtherRegions = !showOtherRegions"
+              :class="{ 'fd-other-header--expanded': showOtherRegions, 'fd-region-row--active': selectedRegion === OTHER_REGIONS_KEY }"
+              @click="toggleOtherRegionsFilter"
             >
-              <span class="fd-other-caret">{{ showOtherRegions ? '▼' : '▶' }}</span>
+              <span class="fd-other-caret" @click.stop="showOtherRegions = !showOtherRegions">{{ showOtherRegions ? '▼' : '▶' }}</span>
               <StackedRegionBar
                 :region="`Прочее (${otherRegions.length})`"
                 :shtab="''"
@@ -158,7 +167,9 @@
                 :needs-repair="otherRegionsBy.needs_repair"
                 :destroyed="otherRegionsBy.destroyed"
                 :utilized="otherRegionsBy.utilized"
+                :unspecified="otherRegionsBy.unknown"
                 style="flex:1"
+                @segment-click="onOtherAggregateSegmentClick"
               />
             </div>
 
@@ -181,6 +192,7 @@
                   :needs-repair="row.by_state.needs_repair || 0"
                   :destroyed="row.by_state.destroyed || 0"
                   :utilized="row.by_state.utilized || 0"
+                  :unspecified="row.by_state.unknown || 0"
                   @segment-click="onRegionSegmentClick"
                 />
               </div>
@@ -191,6 +203,7 @@
           <span class="fleg fleg--working">Рабочих</span>
           <span class="fleg fleg--repair">В ремонте</span>
           <span class="fleg fleg--broken">Не на ходу</span>
+          <span class="fleg fleg--unspecified">Состояние не указано</span>
         </div>
       </div>
 
@@ -217,7 +230,7 @@
             {{ filterLabel }} &times;
           </span>
           <span v-if="selectedRegion" class="fd-filter-badge fd-filter-badge--region" @click="selectedRegion = ''">
-            {{ selectedRegion }} &times;
+            {{ regionBadgeLabel }} &times;
           </span>
         </span>
         <router-link to="/fleet/vehicles" class="fd-panel__link">
@@ -241,10 +254,16 @@
     </div>
 
     <!-- Footer stat -->
+    <!-- 2026-09 (владелец, дефект #дашборд): было `kpi.total - kpi.working`
+         подписано «в ремонте/неподвижны» — арифметически верно, но ЛОЖНО по
+         смыслу: у 46 из 53 машин state вообще не заполнен (не «в ремонте»,
+         а неизвестно), их закидывало в эту фразу как будто все они сломаны.
+         Явно выделяем «без указанного состояния» отдельной цифрой. -->
     <div class="fleet-dash__footer">
       <span v-if="!kpiLoading">
         <b>{{ kpi.working }}</b> ТС в работе &nbsp;·&nbsp;
-        <b>{{ kpi.total - kpi.working }}</b> в ремонте/неподвижны &nbsp;·&nbsp;
+        <b>{{ kpi.in_repair + kpi.broken }}</b> в ремонте/неподвижны &nbsp;·&nbsp;
+        <b>{{ kpiUnspecified }}</b> без указанного состояния &nbsp;·&nbsp;
         Обновлено: {{ nowStr }}
       </span>
     </div>
@@ -286,6 +305,9 @@ interface RegionRow {
     needs_repair?: number
     destroyed?: number
     utilized?: number
+    // Backend (vehicles_dashboard.py by-region): r.state or "unknown" — машины
+    // без заполненного Vehicle.state. Раньше фронт этот ключ не читал вовсе.
+    unknown?: number
   }
 }
 
@@ -306,6 +328,10 @@ const cards   = ref<any[]>([])
 const selectedFilter = ref('')
 // Phase 29.3-R3 (pt8): region drill on-page
 const selectedRegion = ref('')
+// 2026-09 (владелец: клик по «Прочее (N)» не переключал машины) — sentinel-значение
+// selectedRegion, означающее «фильтр по ВСЕМ местам из otherRegions разом», а не по
+// одному региону. Строка заведомо не совпадает ни с одним реальным location_city.
+const OTHER_REGIONS_KEY = '__OTHER_REGIONS__'
 // Phase 29.3-R3 (pt9): drill штрафов конкретного водителя
 const selectedDriver = ref<{ driver_key: string; driver_name: string | null; driver_kind: string } | null>(null)
 
@@ -331,6 +357,13 @@ const repairPct = computed(() =>
 const brokenPct = computed(() =>
   kpi.value.total > 0 ? Math.round((kpi.value.broken / kpi.value.total) * 100) : 0
 )
+// 2026-09: /filter-counts (kpi.working/in_repair/broken) считает только машины
+// с ЗАПОЛНЕННЫМ state — остаток (kpi.total минус все три) не «в ремонте», а
+// без указанного состояния вовсе. Используется в footer, чтобы не приписывать
+// эти машины к «в ремонте/неподвижны» (см. комментарий у footer в template).
+const kpiUnspecified = computed(() =>
+  Math.max(0, kpi.value.total - kpi.value.working - kpi.value.in_repair - kpi.value.broken)
+)
 
 // Phase 29.3-R3: фильтрация регионов с пустым именем (assigned_text=null/empty) —
 // они идут в строку «ВСЕГО» / агрегат, но не как отдельная анонимная строка
@@ -350,15 +383,18 @@ const otherRegionsTotalCount = computed(() => otherRegions.value.reduce((sum, r)
 
 // Phase 29.3-R3: первая строка «ВСЕГО» — сумма всех регионов (включая безымянные, для total)
 const allRegionsTotalCount = computed(() => regions.value.reduce((sum, r) => sum + r.count, 0))
+// 2026-09 (владелец: «сумма сегментов должна равняться числу справа»): 'unknown'
+// добавлен в аккумулятор — иначе строка «ВСЕГО» и агрегат «Прочее» продолжали бы
+// терять машины без state точно так же, как терял их каждый регион по отдельности.
 const allRegionsBy = computed(() => {
-  const acc: Record<string, number> = { working: 0, in_repair: 0, broken: 0, needs_repair: 0, destroyed: 0, utilized: 0 }
+  const acc: Record<string, number> = { working: 0, in_repair: 0, broken: 0, needs_repair: 0, destroyed: 0, utilized: 0, unknown: 0 }
   for (const r of regions.value) {
     for (const k of Object.keys(acc)) acc[k] += (r.by_state as any)[k] || 0
   }
   return acc
 })
 const otherRegionsBy = computed(() => {
-  const acc: Record<string, number> = { working: 0, in_repair: 0, broken: 0, needs_repair: 0, destroyed: 0, utilized: 0 }
+  const acc: Record<string, number> = { working: 0, in_repair: 0, broken: 0, needs_repair: 0, destroyed: 0, utilized: 0, unknown: 0 }
   for (const r of otherRegions.value) {
     for (const k of Object.keys(acc)) acc[k] += (r.by_state as any)[k] || 0
   }
@@ -369,6 +405,14 @@ const regionMax = computed(() =>
   regionRowsSorted.value.length > 0 ? regionRowsSorted.value[0].count : 1
 )
 
+// 2026-09: подпись плашки активного фильтра места — для агрегата «Прочее» показываем
+// человекочитаемое «Прочее (N)», а не служебный sentinel-ключ OTHER_REGIONS_KEY.
+const regionBadgeLabel = computed(() =>
+  selectedRegion.value === OTHER_REGIONS_KEY
+    ? `Прочее (${otherRegions.value.length})`
+    : selectedRegion.value
+)
+
 const filterLabel = computed(() => {
   const map: Record<string, string> = {
     all: 'Все ТС',
@@ -376,6 +420,7 @@ const filterLabel = computed(() => {
     in_repair: 'В ремонте',
     broken: 'Не на ходу',
     docs_expiring: 'Документы истекают',
+    unspecified: 'Состояние не указано',
   }
   return map[selectedFilter.value] ?? selectedFilter.value
 })
@@ -393,10 +438,26 @@ const docsExpiringIds = ref<Set<number>>(new Set())
 const visibleCards = computed(() => {
   let list = cards.value as any[]
 
-  // Region filter (drill from geography) — нормализованное сравнение (trim+lower)
+  // Region filter (drill from geography) — нормализованное сравнение (trim+lower).
+  // 2026-09: регион = Vehicle.location_city (место нахождения ТС), НЕ assigned_text
+  // (кто эксплуатирует) — иначе клик по строке географии фильтровал бы по чужому полю.
   if (selectedRegion.value) {
-    const reg = selectedRegion.value.trim().toLowerCase()
-    list = list.filter((v: any) => (v.assigned_text || '').trim().toLowerCase() === reg)
+    if (selectedRegion.value === OTHER_REGIONS_KEY) {
+      // 2026-09 (владелец): клик по «Прочее (N)» — фильтр по ВСЕМ местам из
+      // otherRegions разом (не по одному), тем же ключом, что использует backend
+      // для места без city ("Место не указано" — см. vehicles_dashboard.py).
+      const names = new Set(otherRegions.value.map(r => r.region.trim().toLowerCase()))
+      list = list.filter((v: any) => {
+        const loc = (v.location_city || '').trim()
+        const key = (loc || 'Место не указано').toLowerCase()
+        return names.has(key)
+      })
+    } else if (selectedRegion.value === 'Место не указано') {
+      list = list.filter((v: any) => !(v.location_city || '').trim())
+    } else {
+      const reg = selectedRegion.value.trim().toLowerCase()
+      list = list.filter((v: any) => (v.location_city || '').trim().toLowerCase() === reg)
+    }
   }
 
   // State / docs_expiring filter
@@ -409,6 +470,12 @@ const visibleCards = computed(() => {
   }
   if (selectedFilter.value === 'docs_expiring') {
     return list.filter((v: any) => docsExpiringIds.value.has(v.vehicle_id))
+  }
+  // 2026-09 (владелец: «состояние не указано» — видимая категория): клик по
+  // серому сегменту полосы фильтрует машины с пустым/отсутствующим state —
+  // не строкой 'unspecified' (её ни у одной машины никогда не будет в v.state).
+  if (selectedFilter.value === 'unspecified') {
+    return list.filter((v: any) => !v.state)
   }
   const allowed = STATE_FILTER_MAP[selectedFilter.value] || [selectedFilter.value]
   return list.filter((v: any) => allowed.includes(v.state))
@@ -488,9 +555,11 @@ async function loadCards() {
       if (!prev) dedup.set(k, v)
       else {
         const curR = rank(v.state), prevR = rank(prev.state)
-        const curHasRegion = !!(v.assigned_text && String(v.assigned_text).trim())
-        const prevHasRegion = !!(prev.assigned_text && String(prev.assigned_text).trim())
-        if (curR > prevR || (curR === prevR && curHasRegion && !prevHasRegion)) dedup.set(k, v)
+        // 2026-09: тай-брейк по location_city (место нахождения), а не assigned_text —
+        // согласовано с backend /by-region (см. vehicles_dashboard.py _dedup tie-break).
+        const curHasLocation = !!(v.location_city && String(v.location_city).trim())
+        const prevHasLocation = !!(prev.location_city && String(prev.location_city).trim())
+        if (curR > prevR || (curR === prevR && curHasLocation && !prevHasLocation)) dedup.set(k, v)
       }
     }
     cards.value = Array.from(dedup.values())
@@ -516,6 +585,22 @@ function onRegionSegmentClick({ region, state }: { region: string; state: string
 // Phase 29.3-R3 (pt10): клик по сегменту строки «ВСЕГО» — фильтр по state без региона
 function onTotalSegmentClick({ state }: { region: string; state: string }) {
   selectedRegion.value = ''
+  selectedFilter.value = state
+}
+
+// 2026-09 (владелец: клик по «Прочее» не фильтровал машины): клик по не-шевронной
+// части строки-агрегата «Прочее» — toggle фильтра по ВСЕМ местам из otherRegions,
+// симметрично обычным строкам (fd-region-row click). Раскрытие/сворачивание
+// вложенного списка остаётся отдельным действием — на шевроне (@click.stop).
+function toggleOtherRegionsFilter() {
+  selectedRegion.value = (selectedRegion.value === OTHER_REGIONS_KEY ? '' : OTHER_REGIONS_KEY)
+  selectedFilter.value = ''
+}
+
+// Клик по цветному сегменту внутри полосы «Прочее» — тот же агрегат мест, но с
+// доп. фильтром по state (симметрично onRegionSegmentClick для обычных строк).
+function onOtherAggregateSegmentClick({ state }: { region: string; state: string }) {
+  selectedRegion.value = OTHER_REGIONS_KEY
   selectedFilter.value = state
 }
 
@@ -743,6 +828,13 @@ onMounted(() => {
 .fleg--working::before { background: linear-gradient(90deg, #22c997, #5dd0ff); }
 .fleg--repair::before  { background: linear-gradient(90deg, #f6b34a, #ff8a4a); }
 .fleg--broken::before  { background: linear-gradient(90deg, #ff5b6a, #ff3b8b); }
+.fleg--unspecified::before {
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(148, 163, 184, 0.65) 0px, rgba(148, 163, 184, 0.65) 3px,
+    rgba(148, 163, 184, 0.4) 3px, rgba(148, 163, 184, 0.4) 6px
+  );
+}
 
 /* ── Cards section ─────────────────────────────────────────────────────────── */
 .fd-panel--cards {

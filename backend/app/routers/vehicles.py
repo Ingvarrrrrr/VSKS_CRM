@@ -38,6 +38,7 @@ from app.schemas.vehicle import (
     FieldHistoryOut,
     VehicleTransferHistoryOut,
 )
+from app.services.vehicle_fields import get_field_label, get_string_column_limits
 
 router = APIRouter(prefix="/api/vehicles", tags=["vehicles"])
 
@@ -46,11 +47,21 @@ router = APIRouter(prefix="/api/vehicles", tags=["vehicles"])
 _DATE_FIELDS = {
     "registered_at", "insurance_until", "last_to_date", "tech_inspection_until",
     "assignment_doc_date",  # Phase 29.3
+    # Автоблок: новые date-колонки (AUTOBLOCK_FIELDS_SPEC.md §1)
+    "ownership_doc_date", "owner_since", "sts_issued_at",
+    "tech_inspection_last_date",
+    # 2026-09: pass_*_until убраны — пропуска теперь отдельная таблица/API
+    # (app/models/vehicle_pass.py, app/routers/vehicle_passes.py), эти колонки
+    # больше не пишутся через PATCH /api/vehicles.
+    "first_aid_kit_until", "extinguisher_check_date", "tracker_paid_until", "tachograph_check_date",
 }
 _DATETIME_FIELDS: set = set()
 _BOOL_FIELDS = {
     "has_tracker", "akb_ok", "has_radio", "mirrors_ok",
     "has_keys", "has_first_aid_kit", "has_spare_wheel", "has_extinguisher",
+    # Автоблок
+    "has_spare_tires", "has_mirrors", "has_tachograph", "repair_required",
+    "has_branding",  # 2026-09
 }
 _JSONB_FIELDS = {"props"}
 
@@ -81,10 +92,71 @@ _PATCHABLE_FIELDS = {
     # Phase 29.3: assignment + engine
     "assignment_basis", "assignment_doc_number", "assignment_doc_date",
     "engine_power_hp", "engine_volume_l",
+    # Автоблок: полный реестр полей ТС (AUTOBLOCK_FIELDS_SPEC.md §1)
+    "body_type", "pts_category",
+    "insurance_company", "insurance_policy_number",
+    "ownership_basis", "ownership_doc_number", "ownership_doc_date", "owner_since",
+    "location_city", "location_address", "home_base_city", "responsible_name",
+    "pts_kind", "sts_issued_at",
+    "tech_inspection_status", "tech_inspection_last_date",
+    # 2026-09: pass_* убраны из белого списка — единственный источник правды
+    # теперь vehicle_passes (app/routers/vehicle_passes.py). Колонки в БД
+    # остались (данные перенесены миграцией), но PATCH /api/vehicles их больше
+    # не принимает — чтобы не появилось два места записи одних и тех же данных.
+    "has_spare_tires", "tires_condition", "has_mirrors",
+    "first_aid_kit_until", "extinguisher_check_date", "tracker_paid_until",
+    "has_tachograph", "tachograph_check_date",
+    "repair_required", "tech_condition_info",
+    # 2026-09: брендирование — признак + резина по сезонным комплектам
+    "has_branding",
+    "tires_summer_radius", "tires_summer_profile", "tires_summer_condition",
+    "tires_winter_radius", "tires_winter_profile", "tires_winter_condition",
 }
 
 
 # ─────────────────────────── Helpers ────────────────────────────────────────
+
+_STRING_COLUMN_LIMITS = get_string_column_limits()
+
+
+def _check_string_length(field: str, value: Any) -> None:
+    """HTTP 400 с внятной причиной, если строковое значение превышает лимит
+    VARCHAR-колонки Vehicle (coordinator review 2026-08-31).
+
+    Раньше проверки не было вовсе: значение долетало до asyncpg и падало
+    500-кой с полным traceback в теле ответа (StringDataRightTruncationError).
+    Лимиты — программно из модели (_STRING_COLUMN_LIMITS), подпись поля — из
+    реестра app/services/vehicle_fields.py.
+    """
+    if not isinstance(value, str):
+        return
+    limit = _STRING_COLUMN_LIMITS.get(field)
+    if limit is not None and len(value) > limit:
+        label = get_field_label(field) or field
+        raise HTTPException(
+            status_code=400,
+            detail=f"Поле «{label}» — не больше {limit} символов, введено {len(value)}.",
+        )
+
+
+def _validate_doc_dates(ownership_doc_date: Any, assignment_doc_date: Any) -> None:
+    """Пункт 6 задания (2026-09): дата документа основания права ЭКСПЛУАТАЦИИ не
+    может быть раньше даты документа основания права СОБСТВЕННОСТИ — нельзя было
+    начать эксплуатировать по документу до того, как появилось само право
+    собственности. Проверяем только когда обе даты заданы; текст ошибки — по-русски,
+    с обеими датами (owner should see cause, not a generic 400)."""
+    if not ownership_doc_date or not assignment_doc_date:
+        return
+    if assignment_doc_date < ownership_doc_date:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Дата документа основания права эксплуатации ({assignment_doc_date.strftime('%d.%m.%Y')}) "
+                f"не может быть раньше даты документа основания права собственности "
+                f"({ownership_doc_date.strftime('%d.%m.%Y')})."
+            ),
+        )
+
 
 def _coerce_patch_value(field: str, value: Any) -> Any:
     """Convert ISO string to date for DATE columns; empty string → None.
@@ -186,14 +258,18 @@ async def _fetch_org_names(db: AsyncSession, org_ids: list[int]) -> dict[int, st
 
 
 async def _fetch_org_data(db: AsyncSession, org_ids: list[int]) -> dict[int, dict]:
-    """Fetch {org_id: {name, color}} for given ids. Empty ids → empty dict."""
+    """Fetch {org_id: {name, color, inn}} for given ids. Empty ids → empty dict.
+
+    Автоблок: inn добавлен для вычисляемых полей owner_inn/operator_inn (§1).
+    """
     unique = [i for i in set(org_ids) if i is not None]
     if not unique:
         return {}
     rows = (await db.execute(
-        select(Organization.id, Organization.name, Organization.color).where(Organization.id.in_(unique))
+        select(Organization.id, Organization.name, Organization.color, Organization.inn)
+        .where(Organization.id.in_(unique))
     )).all()
-    return {r.id: {"name": r.name, "color": r.color} for r in rows}
+    return {r.id: {"name": r.name, "color": r.color, "inn": r.inn} for r in rows}
 
 
 def _enrich_vehicle_out(vehicle: Vehicle, org_map: dict[int, str], org_data: Optional[dict[int, dict]] = None) -> VehicleOut:
@@ -204,6 +280,9 @@ def _enrich_vehicle_out(vehicle: Vehicle, org_map: dict[int, str], org_data: Opt
     if org_data:
         out.owner_org_color = (org_data.get(vehicle.owner_org_id) or {}).get("color")
         out.assigned_org_color = (org_data.get(vehicle.assigned_org_id) or {}).get("color") if vehicle.assigned_org_id else None
+        # Автоблок: owner_inn/operator_inn — вычисляемые read-only поля (§1)
+        out.owner_inn = (org_data.get(vehicle.owner_org_id) or {}).get("inn")
+        out.operator_inn = (org_data.get(vehicle.assigned_org_id) or {}).get("inn") if vehicle.assigned_org_id else None
     # Phase 30: current_station = assigned_org если есть, иначе owner_org
     out.current_station_id = vehicle.assigned_org_id or vehicle.owner_org_id
     out.current_station_name = (
@@ -299,6 +378,61 @@ async def list_vehicles(
     }
 
 
+_EXPORT_TYPE_LABEL = {
+    'car_light': 'Легковой', 'suv': 'Внедорожник', 'pickup': 'Пикап',
+    'minivan': 'Минивэн', 'truck_van': 'Фургон', 'truck_board': 'Грузовой',
+    'truck_tank': 'Цистерна', 'truck_metal': 'Металловоз', 'bus': 'Автобус',
+    'special': 'Спецтехника', 'quadbike': 'Квадроцикл', 'snowmobile': 'Снегоход',
+    'boat': 'Лодка', 'boat_motor': 'Лод. мотор', 'trailer': 'Прицеп', 'other': 'Другой',
+}
+_EXPORT_STATE_LABEL = {
+    'working': 'Рабочее', 'in_repair': 'В ремонте', 'broken': 'Сломан',
+    'needs_repair': 'Требует ремонта', 'destroyed': 'Уничтожен', 'utilized': 'Утилизирован',
+}
+_EXPORT_PTS_KIND_LABEL = {'paper': 'Бумажный', 'electronic': 'Электронный'}
+
+
+def _export_field_value(field: dict, vehicle: Vehicle, org_map: dict, org_inn_map: dict):
+    """Автоблок §7: значение одного поля реестра для строки Excel-экспорта."""
+    key = field["key"]
+    storage = field["storage"]
+    ftype = field["type"]
+
+    if storage == "computed":
+        if key == "owner_inn":
+            return org_inn_map.get(vehicle.owner_org_id) or ''
+        if key == "operator_inn":
+            return (org_inn_map.get(vehicle.assigned_org_id) or '') if vehicle.assigned_org_id else ''
+        return ''
+
+    if storage == "props":
+        return (vehicle.props or {}).get(field["props_key"]) or ''
+
+    if key == "owner_org_id":
+        return org_map.get(vehicle.owner_org_id) or ''
+    if key == "assigned_org_id":
+        return (org_map.get(vehicle.assigned_org_id) or '') if vehicle.assigned_org_id else ''
+
+    val = getattr(vehicle, key, None)
+    if val is None or val == '':
+        # Автоблок (2026-09): гос. номер необязателен — понятная заглушка вместо
+        # пустой ячейки в выгрузке, чтобы строка не выглядела как ошибка/пропуск.
+        if key == "plate":
+            return 'Без номера'
+        return ''
+    if key == "type":
+        return _EXPORT_TYPE_LABEL.get(val, val)
+    if key == "state":
+        return _EXPORT_STATE_LABEL.get(val, val)
+    if key == "pts_kind":
+        return _EXPORT_PTS_KIND_LABEL.get(val, val)
+    if ftype == "date" and hasattr(val, "strftime"):
+        return val.strftime('%d.%m.%Y')
+    if ftype == "bool":
+        return 'Да' if val else 'Нет'
+    return val
+
+
 @router.get("/export/excel")
 async def export_excel(
     state: Optional[str] = Query(None),
@@ -306,11 +440,17 @@ async def export_excel(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_tab("vehicles")),
 ):
-    """Excel-выгрузка списка ТС. Применяет те же фильтры что list endpoint."""
+    """Excel-выгрузка списка ТС.
+
+    Автоблок §7: выгружает все поля реестра (services/vehicle_fields) в порядке
+    групп, пропуская поля, скрытые для организации текущего пользователя.
+    """
     from io import BytesIO
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
     from fastapi.responses import StreamingResponse
+    from app.services.vehicle_fields import FIELD_GROUPS, get_hidden_field_keys
 
     q = select(Vehicle).options(
         selectinload(Vehicle.owner_org),
@@ -331,17 +471,32 @@ async def export_excel(
 
     vehicles = (await db.execute(q.order_by(Vehicle.plate))).scalars().all()
 
+    hidden_keys = await get_hidden_field_keys(db, user.org_id)
+    visible_fields = [f for g in FIELD_GROUPS for f in g["fields"] if f["key"] not in hidden_keys]
+
+    # org name map (из уже загруженных relationship'ов) + inn map (§1 owner_inn/operator_inn)
+    org_map: dict[int, str] = {}
+    org_ids_for_inn: set[int] = set()
+    for v in vehicles:
+        if v.owner_org:
+            org_map[v.owner_org_id] = v.owner_org.name
+        if v.assigned_org:
+            org_map[v.assigned_org_id] = v.assigned_org.name
+        org_ids_for_inn.add(v.owner_org_id)
+        if v.assigned_org_id:
+            org_ids_for_inn.add(v.assigned_org_id)
+    org_inn_map: dict[int, str] = {}
+    if org_ids_for_inn:
+        inn_rows = (await db.execute(
+            select(Organization.id, Organization.inn).where(Organization.id.in_(org_ids_for_inn))
+        )).all()
+        org_inn_map = {r.id: r.inn for r in inn_rows if r.inn}
+
     wb = Workbook()
     ws = wb.active
     ws.title = "Автотранспорт"
-    headers = [
-        '№', 'Гос. №', 'Марка', 'Модель', 'Год вып.', 'Цвет', 'VIN',
-        'Тип', 'Состояние', 'Владелец', 'Эксплуатат',
-        'ПТС', 'СТС', 'ОСАГО до', 'Тех.осмотр до',
-        'Топливо', 'Текущий пробег, км', 'Последнее ТО, км', 'Дата ТО',
-        'Следующее ТО, км', 'Мощность, л.с.', 'Объём, л',
-        'Основание', '№ dok', 'Дата dok',
-    ]
+    headers = ['№'] + [f["label"] for f in visible_fields]
+
     bold = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill(start_color="1976D2", end_color="1976D2", fill_type="solid")
     for c, h in enumerate(headers, 1):
@@ -350,48 +505,13 @@ async def export_excel(
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    TYPE_LABEL = {
-        'car_light': 'Легковой', 'suv': 'Внедорожник', 'pickup': 'Пикап',
-        'minivan': 'Минивэн', 'truck_van': 'Фургон', 'truck_board': 'Грузовой',
-        'truck_tank': 'Цистерна', 'truck_metal': 'Металловоз', 'bus': 'Автобус',
-        'special': 'Спецтехника', 'quadbike': 'Квадроцикл', 'snowmobile': 'Снегоход',
-        'boat': 'Лодка', 'boat_motor': 'Лод. мотор', 'trailer': 'Прицеп', 'other': 'Другой',
-    }
-    STATE_LABEL = {
-        'working': 'Рабочее', 'in_repair': 'В ремонте', 'broken': 'Сломан',
-        'needs_repair': 'Требует ремонта', 'destroyed': 'Уничтожен', 'utilized': 'Утилизирован',
-    }
-
     for r, v in enumerate(vehicles, 2):
-        owner = v.owner_org.name if v.owner_org else ''
-        assigned = (v.assigned_org.name if v.assigned_org else None) or v.assigned_text or ''
-        row = [
-            r - 1,
-            v.plate or '',
-            v.brand or '', v.model or '', v.year_of_manufacture or '',
-            v.color or '', v.vin or '',
-            TYPE_LABEL.get(v.type, v.type or ''),
-            STATE_LABEL.get(v.state, v.state or ''),
-            owner, assigned,
-            v.pts_number or '', v.sts_number or '',
-            v.insurance_until.strftime('%d.%m.%Y') if v.insurance_until else '',
-            v.tech_inspection_until.strftime('%d.%m.%Y') if v.tech_inspection_until else '',
-            v.fuel_type or '',
-            v.current_odometer_km or '',
-            v.last_to_mileage_km or '',
-            v.last_to_date.strftime('%d.%m.%Y') if v.last_to_date else '',
-            v.next_to_km or '',
-            v.engine_power_hp or '',
-            v.engine_volume_l or '',
-            v.assignment_basis or '',
-            v.assignment_doc_number or '',
-            v.assignment_doc_date.strftime('%d.%m.%Y') if v.assignment_doc_date else '',
-        ]
+        row = [r - 1] + [_export_field_value(f, v, org_map, org_inn_map) for f in visible_fields]
         for c, val in enumerate(row, 1):
             ws.cell(r, c, val)
 
-    for col_letter, header in zip('ABCDEFGHIJKLMNOPQRSTUVWXY', headers):
-        ws.column_dimensions[col_letter].width = max(12, min(len(header) + 2, 30))
+    for idx, header in enumerate(headers, 1):
+        ws.column_dimensions[get_column_letter(idx)].width = max(12, min(len(header) + 2, 30))
     ws.freeze_panes = 'A2'
 
     buf = BytesIO()
@@ -441,7 +561,12 @@ async def create_vehicle(
                 }
             )
 
-    vehicle = Vehicle(**body.model_dump(exclude={"force"}))
+    vehicle_data = body.model_dump(exclude={"force"})
+    for _field, _value in vehicle_data.items():
+        _check_string_length(_field, _value)
+    _validate_doc_dates(vehicle_data.get("ownership_doc_date"), vehicle_data.get("assignment_doc_date"))
+
+    vehicle = Vehicle(**vehicle_data)
     db.add(vehicle)
     try:
         await db.commit()
@@ -493,7 +618,11 @@ async def patch_vehicle(
         if hasattr(vehicle, f)
     }
 
+    # Первый проход: коэрсим и ВАЛИДИРУЕМ длину строк ДО единого setattr (coordinator
+    # review 2026-08-31) — если поле №3 превышает лимит, поля №1-2 не должны успеть
+    # замутировать ORM-объект перед тем, как запрос упадёт в 400.
     props_mutated = False
+    coerced_items: list[tuple[str, Any]] = []
     for k, v in (body or {}).items():
         # Skip internal meta keys and non-patchable fields
         if k.startswith("_") or k not in _PATCHABLE_FIELDS:
@@ -505,6 +634,26 @@ async def patch_vehicle(
             continue
 
         v = _coerce_patch_value(k, v)
+        _check_string_length(k, v)
+        coerced_items.append((k, v))
+
+    # Пункт 6 задания (2026-09): проверяем ЭФФЕКТИВНЫЕ значения обеих дат (тело
+    # запроса могло менять только одну из двух — вторая берётся из уже
+    # сохранённого значения), ДО единого setattr — та же логика, что и у
+    # _check_string_length выше: невалидный PATCH не должен успеть замутировать
+    # ORM-объект перед тем, как запрос упадёт в 400.
+    _coerced_map = dict(coerced_items)
+    _eff_ownership_date = (
+        _coerced_map["ownership_doc_date"] if "ownership_doc_date" in _coerced_map
+        else vehicle.ownership_doc_date
+    )
+    _eff_assignment_date = (
+        _coerced_map["assignment_doc_date"] if "assignment_doc_date" in _coerced_map
+        else vehicle.assignment_doc_date
+    )
+    _validate_doc_dates(_eff_ownership_date, _eff_assignment_date)
+
+    for k, v in coerced_items:
         if getattr(vehicle, k) != v:
             setattr(vehicle, k, v)
             if k in _JSONB_FIELDS:

@@ -27,7 +27,10 @@ FIELD_GROUPS: List[Dict[str, Any]] = [
     {
         "key": "identity", "title": "Идентификация",
         "fields": [
-            {"key": "plate", "label": "Гос. рег. знак", "type": "string", "storage": "column", "required": True},
+            # Автоблок (2026-09): гос. номер больше НЕ обязателен — машина может быть
+            # куплена, но ещё не поставлена на учёт (владелец). Поле остаётся
+            # незакрываемым (LOCKED_KEYS) — не required.
+            {"key": "plate", "label": "Гос. рег. знак", "type": "string", "storage": "column"},
             {"key": "brand", "label": "Марка", "type": "string", "storage": "column"},
             {"key": "model", "label": "Модель", "type": "string", "storage": "column"},
             {"key": "year_of_manufacture", "label": "Год выпуска", "type": "int", "storage": "column"},
@@ -47,7 +50,8 @@ FIELD_GROUPS: List[Dict[str, Any]] = [
         "key": "ownership", "title": "Собственность",
         "fields": [
             {"key": "owner_org_id", "label": "Организация-собственник", "type": "org", "storage": "column", "required": True},
-            {"key": "owner_inn", "label": "ИНН собственника", "type": "readonly", "storage": "computed"},
+            {"key": "owner_inn", "label": "ИНН собственника", "type": "readonly", "storage": "computed",
+             "source_hint": "Заполняется автоматически из карточки организации-собственника (поле ИНН там же)"},
             {"key": "ownership_basis", "label": "Основание возникновения собственности", "type": "string", "storage": "column"},
             {"key": "ownership_doc_number", "label": "№ документа основания собственности", "type": "string", "storage": "column"},
             {"key": "ownership_doc_date", "label": "Дата документа основания собственности", "type": "date", "storage": "column"},
@@ -60,12 +64,14 @@ FIELD_GROUPS: List[Dict[str, Any]] = [
         "fields": [
             {"key": "assigned_org_id", "label": "Организация-эксплуатант", "type": "org", "storage": "column"},
             {"key": "assigned_text", "label": "У кого в эксплуатации (текст)", "type": "string", "storage": "column"},
-            {"key": "operator_inn", "label": "ИНН эксплуатанта", "type": "readonly", "storage": "computed"},
+            {"key": "operator_inn", "label": "ИНН эксплуатанта", "type": "readonly", "storage": "computed",
+             "source_hint": "Заполняется автоматически из карточки организации-эксплуатанта (поле ИНН там же)"},
             {"key": "assignment_basis", "label": "Основание возникновения права эксплуатации", "type": "string", "storage": "column"},
             {"key": "assignment_doc_number", "label": "№ документа основания права эксплуатации", "type": "string", "storage": "column"},
             {"key": "assignment_doc_date", "label": "Дата документа основания права эксплуатации", "type": "date", "storage": "column"},
-            {"key": "location_city", "label": "Место нахождения — город", "type": "string", "storage": "column"},
-            {"key": "location_address", "label": "Место нахождения — адрес", "type": "string", "storage": "column"},
+            {"key": "location_city", "label": "Текущее место нахождения, город", "type": "string", "storage": "column"},
+            {"key": "location_address", "label": "Текущее место нахождения, адрес", "type": "string", "storage": "column"},
+            {"key": "home_base_city", "label": "Место постоянной приписки ТС", "type": "string", "storage": "column"},
             {"key": "responsible_name", "label": "Ответственный (ФИО)", "type": "string", "storage": "column"},
         ],
     },
@@ -85,7 +91,9 @@ FIELD_GROUPS: List[Dict[str, Any]] = [
     {
         "key": "maintenance", "title": "ТО и техосмотр",
         "fields": [
-            {"key": "current_odometer_km", "label": "Текущий пробег, км", "type": "int", "storage": "column"},
+            {"key": "current_odometer_km", "label": "Текущий пробег, км", "type": "int", "storage": "column",
+             "source_hint": "Не редактируется напрямую — берётся из самой свежей записи одометра "
+                             "(вкладка «Одометр» карточки ТС / POST /api/vehicle-odometer)"},
             {"key": "last_to_date", "label": "Дата последнего ТО", "type": "date", "storage": "column"},
             {"key": "last_to_mileage_km", "label": "Пробег на последнем ТО", "type": "int", "storage": "column"},
             {"key": "next_to_km", "label": "Километраж следующего ТО", "type": "int", "storage": "column"},
@@ -95,31 +103,28 @@ FIELD_GROUPS: List[Dict[str, Any]] = [
         ],
     },
     {
-        "key": "passes", "title": "Пропуска",
-        "fields": [
-            {"key": "pass_zo", "label": "Пропуск ЗО", "type": "string", "storage": "column"},
-            {"key": "pass_zo_until", "label": "Дата истечения пропуска ЗО", "type": "date", "storage": "column"},
-            {"key": "pass_ho", "label": "Пропуск ХО", "type": "string", "storage": "column"},
-            {"key": "pass_ho_until", "label": "Дата истечения пропуска ХО", "type": "date", "storage": "column"},
-            {"key": "pass_dnr", "label": "Пропуск ДНР", "type": "string", "storage": "column"},
-            {"key": "pass_dnr_until", "label": "Дата истечения пропуска ДНР", "type": "date", "storage": "column"},
-            {"key": "pass_lnr", "label": "Пропуск ЛНР", "type": "string", "storage": "column"},
-            {"key": "pass_lnr_until", "label": "Дата истечения пропуска ЛНР", "type": "date", "storage": "column"},
-            {"key": "pass_moscow", "label": "Пропуск Москва", "type": "string", "storage": "column"},
-            {"key": "pass_moscow_until", "label": "Дата истечения пропуска Москва", "type": "date", "storage": "column"},
-        ],
-    },
-    {
+        # Автоблок (2026-09): 10 фиксированных колонок pass_* убраны из реестра —
+        # владелец потребовал произвольный набор пропусков на машину (разные
+        # организации заводят разные зоны). Новый источник правды —
+        # app/models/vehicle_pass.py (таблица vehicle_passes) + отдельный
+        # роутер app/routers/vehicle_passes.py (CRUD + копирование набора между
+        # машинами). Сами колонки vehicles.pass_* НЕ удалены из БД (данные
+        # перенесены миграцией), но реестр/шаблон импорта/импорт их больше не
+        # видят — см. get_related_blocks() ниже для описания нового места.
         "key": "equipment", "title": "Оснащение",
         "fields": [
-            {"key": "tires_type", "label": "Авторезина, установленная на машине", "type": "string", "storage": "props", "props_key": "tires_type"},
+            {"key": "tires_type", "label": "Авторезина, установленная на автомобиле", "type": "string", "storage": "props", "props_key": "tires_type",
+             "source_hint": "Значение — какой из двух комплектов (Летний/Зимний, см. группу «Резина — комплекты») сейчас на машине"},
             {"key": "has_spare_tires", "label": "Наличие сменной резины", "type": "bool", "storage": "column"},
-            {"key": "tires_condition", "label": "Состояние резины", "type": "string", "storage": "column"},
             {"key": "has_radio", "label": "Наличие радиостанции", "type": "bool", "storage": "column"},
             {"key": "has_mirrors", "label": "Наличие зеркал", "type": "bool", "storage": "column"},
             {"key": "mirrors_ok", "label": "Исправность зеркал", "type": "bool", "storage": "column"},
             {"key": "akb_ok", "label": "Аккумулятор исправен", "type": "bool", "storage": "column"},
-            {"key": "branding", "label": "Брендирование", "type": "string", "storage": "props", "props_key": "branding"},
+            # Отдельная подпись от "Состояние брендирования" (props.branding) НАМЕРЕННО:
+            # "Брендирование" — уже занятый заголовок старых файлов владельца (алиас
+            # в _COL_MAP резолвится в props.branding, менять нельзя — сломает их разбор).
+            {"key": "has_branding", "label": "Брендирование (Да/Нет)", "type": "bool", "storage": "column"},
+            {"key": "branding", "label": "Состояние брендирования", "type": "string", "storage": "props", "props_key": "branding"},
             {"key": "has_keys", "label": "Наличие набора ключей", "type": "bool", "storage": "column"},
             {"key": "has_first_aid_kit", "label": "Наличие аптечки", "type": "bool", "storage": "column"},
             {"key": "first_aid_kit_until", "label": "Аптечка — срок истечения использования", "type": "date", "storage": "column"},
@@ -130,6 +135,21 @@ FIELD_GROUPS: List[Dict[str, Any]] = [
             {"key": "tracker_paid_until", "label": "Трекер — дата оплаты", "type": "date", "storage": "column"},
             {"key": "has_tachograph", "label": "Тахограф", "type": "bool", "storage": "column"},
             {"key": "tachograph_check_date", "label": "Тахограф — дата поверки", "type": "date", "storage": "column"},
+        ],
+    },
+    {
+        # Автоблок (2026-09): "Куда-то пропали данные о сменной резине" — раньше
+        # было одно общее tires_condition без разбивки на сезон. Теперь два
+        # именованных комплекта; equipment.tires_type выше указывает, какой из
+        # них сейчас установлен на машине.
+        "key": "tires", "title": "Резина — комплекты",
+        "fields": [
+            {"key": "tires_summer_radius", "label": "Летняя резина — радиус", "type": "string", "storage": "column"},
+            {"key": "tires_summer_profile", "label": "Летняя резина — профиль", "type": "string", "storage": "column"},
+            {"key": "tires_summer_condition", "label": "Летняя резина — состояние", "type": "string", "storage": "column"},
+            {"key": "tires_winter_radius", "label": "Зимняя резина — радиус", "type": "string", "storage": "column"},
+            {"key": "tires_winter_profile", "label": "Зимняя резина — профиль", "type": "string", "storage": "column"},
+            {"key": "tires_winter_condition", "label": "Зимняя резина — состояние", "type": "string", "storage": "column"},
         ],
     },
     {
@@ -168,19 +188,46 @@ def get_field_label(key: str) -> Optional[str]:
 
 
 def build_catalog(hidden_keys: Set[str]) -> List[Dict[str, Any]]:
-    """Собрать группы полей с флагами hidden/lockable/required для ответа GET /api/vehicle-fields."""
+    """Собрать группы полей с флагами hidden/lockable/required для ответа GET /api/vehicle-fields.
+
+    Автоблок (актуализация 2026-08-31): поля, ограниченные набором значений из
+    правил проверки данных листа владельца (app.services.vehicle_sheet_dictionaries),
+    получают "options" — список допустимых значений. Единственный источник
+    правды для выпадающих списков карточки ТС на фронте — там вторая копия
+    списков не хранится, а берётся отсюда.
+
+    Поле "type" («Тип ТС») — отдельный случай: набор значений живёт не в
+    vehicle_sheet_dictionaries (это код→подпись пара, TYPE_LABELS из
+    app.services.vehicle_enum_labels — колонка Vehicle.type хранит КОД, не
+    подпись, в отличие от body_type/paint_condition и т.п., где options —
+    сами хранимые строки). "options" для "type" здесь — только отсортированные
+    ПОДПИСИ (владелец, 2026-09: «Тип ТС» отсортировать по алфавиту) для показа/
+    сверки; сопоставление подпись→код на фронте не завязано на этот список
+    (см. frontend/src/utils/vehicleLabels.ts).
+    """
+    from app.services.vehicle_enum_labels import TYPE_LABELS, as_dd_list
+    from app.services.vehicle_sheet_dictionaries import FIELD_OPTIONS as _dict_options
+
+    type_labels_sorted = [label for label, code in as_dd_list(TYPE_LABELS, sort_alpha=True) if code is not None]
+
     groups = []
     for g in FIELD_GROUPS:
         fields = []
         for f in g["fields"]:
             lockable = is_lockable(f["key"])
-            fields.append({
+            item = {
                 **f,
                 "lockable": lockable,
                 "required": bool(f.get("required", False)),
                 # locked-поля нельзя скрыть даже если в конфиге завалялась запись
                 "hidden": bool(lockable and f["key"] in hidden_keys),
-            })
+            }
+            options = _dict_options.get(f["key"])
+            if options:
+                item["options"] = list(options)
+            elif f["key"] == "type":
+                item["options"] = list(type_labels_sorted)
+            fields.append(item)
         groups.append({"key": g["key"], "title": g["title"], "fields": fields})
     return groups
 
@@ -231,3 +278,89 @@ def get_string_column_limits() -> Dict[str, int]:
         if isinstance(length, int):
             limits[col_name] = length
     return limits
+
+
+# ─────────────────────────── §4 (2026-09): "откуда берутся данные" ───────────
+#
+# Владелец: «Как заполнять "История передач" — откуда она берётся? Те поля в
+# карточке ТС, которые напрямую не заполняются, должны иметь комментарий, на
+# основании чего формируются данные». Часть таких мест — обычные поля реестра
+# (получили "source_hint" прямо в FIELD_GROUPS выше: owner_inn, operator_inn,
+# current_odometer_km). Остальное — не поля, а целые ВКЛАДКИ/блоки карточки ТС,
+# не входящие в FIELD_GROUPS вовсе (это отдельные relationship'ы модели Vehicle,
+# каждый со своим CRUD-роутером) — они перечислены здесь и отдаются вместе с
+# каталогом полей в GET /api/vehicle-fields (ключ "related_blocks"), чтобы
+# фронт мог показать ту же подсказку и для них.
+#
+# Проверено по коду (app/routers/vehicles.py ~стр.645, app/models/vehicle_fine.py,
+# app/routers/trips.py, app/routers/fuel_logs.py, app/routers/vehicle_repairs.py):
+#   - next_to_km (реестр, группа "Оснащение и ТО") — ПРОВЕРЕНО и сознательно НЕ
+#     включён сюда: несмотря на то, что владелец упомянул "следующее ТО" в одном
+#     ряду с автоматическими полями, этот столбец пишется вручную через обычный
+#     PATCH /api/vehicles (см. _PATCHABLE_FIELDS в routers/vehicles.py) — авто-
+#     расчёта от last_to_mileage_km в коде нет. Помечать его как "формируется
+#     автоматически" было бы неверным утверждением.
+RELATED_BLOCKS: List[Dict[str, str]] = [
+    {
+        "key": "transfer_history",
+        "title": "История передач",
+        "source_hint": (
+            "Формируется автоматически: новая запись создаётся при каждом сохранении "
+            "карточки, если изменилась организация-собственник, организация-эксплуатант "
+            "или текстовое поле «У кого в эксплуатации» (app/routers/vehicles.py, PATCH)."
+        ),
+    },
+    {
+        "key": "field_history",
+        "title": "История изменений полей",
+        "source_hint": (
+            "Формируется автоматически: строка добавляется при каждом сохранении "
+            "карточки для каждого отслеживаемого поля, если его значение изменилось "
+            "(состояние, номер, VIN, топливо, нормы расхода, страховка, пробег до "
+            "следующего ТО, организации, марка/модель/цвет, дата регистрации, тип)."
+        ),
+    },
+    {
+        "key": "fines",
+        "title": "Штрафы",
+        "source_hint": (
+            "Сами штрафы вносятся вручную (по данным ГИБДД). Водитель по каждому "
+            "штрафу подбирается автоматически: система ищет путевой лист этой машины "
+            "на дату нарушения и берёт водителя оттуда — если путевой лист не найден, "
+            "поле водителя остаётся пустым."
+        ),
+    },
+    {
+        "key": "trips",
+        "title": "Путевые листы",
+        "source_hint": "Ведутся вручную, отдельная вкладка карточки ТС (не часть общей формы).",
+    },
+    {
+        "key": "repairs",
+        "title": "Ремонты",
+        "source_hint": "Вносятся вручную, отдельная вкладка карточки ТС (не часть общей формы).",
+    },
+    {
+        "key": "fuel_logs",
+        "title": "Заправки",
+        "source_hint": (
+            "Вносятся вручную, отдельная вкладка карточки ТС. Итоговая сумма заправки "
+            "рассчитывается автоматически (литры × цена за литр), если сумма не введена "
+            "напрямую."
+        ),
+    },
+    {
+        "key": "vehicle_passes",
+        "title": "Пропуска",
+        "source_hint": (
+            "Отдельная сущность (не колонки карточки): произвольный набор пропусков на "
+            "машину, управляется через /api/vehicle-passes (список, добавление, "
+            "изменение, удаление, копирование набора с другой машины)."
+        ),
+    },
+]
+
+
+def get_related_blocks() -> List[Dict[str, str]]:
+    """Список НЕ-полевых блоков карточки ТС с пояснением источника данных (§4)."""
+    return list(RELATED_BLOCKS)

@@ -36,7 +36,11 @@
 
         <!-- Silhouette -->
         <div class="driver-home__silhouette">
-          <VehicleTypeIcon :type="vehicle.vehicle_type" :size="130" />
+          <!-- 2026-09: /api/vehicles/{id} отдаёт поля type/body_type (не vehicle_type) —
+               прежний биндинг никогда не совпадал с реальным полем, иконка молча
+               уходила на нейтральную заглушку. Заодно переведено на «Кузов» —
+               единое правило с остальным интерфейсом (см. VehicleCard.vue). -->
+          <VehicleTypeIcon :body-type="vehicle.body_type" :size="130" />
         </div>
 
         <!-- Plate + model -->
@@ -264,6 +268,7 @@ import { useRouter } from 'vue-router'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 import VehicleTypeIcon from '@/components/vehicles/VehicleTypeIcon.vue'
 import StatusPill from '@/components/fleet/StatusPill.vue'
+import { vehicleTypeLabel } from '@/utils/vehicleLabels'
 import { useAuthStore } from '@/stores/auth'
 import { useToast, type ToastType } from '@/composables/useToast'
 
@@ -333,9 +338,11 @@ const vehicleTitle = computed(() => {
 const vehicleSubtitle = computed(() => {
   if (!vehicle.value) return ''
   const parts = []
-  if (vehicle.value.vehicle_type_display || vehicle.value.vehicle_type) {
-    parts.push(vehicle.value.vehicle_type_display || vehicle.value.vehicle_type)
-  }
+  // 2026-09: поле называется `type` (не `vehicle_type`/`vehicle_type_display` —
+  // тех полей API не отдаёт), и его нужно переводить в подпись, а не выводить
+  // код "truck_board" как есть.
+  const typeLbl = vehicleTypeLabel(vehicle.value.type)
+  if (typeLbl) parts.push(typeLbl)
   if (vehicle.value.color) parts.push(vehicle.value.color)
   if (vehicle.value.current_station_name) parts.push(vehicle.value.current_station_name)
   return parts.join(' · ')

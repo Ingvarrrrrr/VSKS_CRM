@@ -64,6 +64,15 @@
             К списку
           </v-btn>
           <v-btn
+            v-if="canManageFields"
+            variant="outlined"
+            prepend-icon="mdi-tune-variant"
+            size="small"
+            @click="fieldsDialogOpen = true"
+          >
+            Состав полей
+          </v-btn>
+          <v-btn
             color="primary"
             variant="tonal"
             prepend-icon="mdi-clipboard-edit-outline"
@@ -105,12 +114,12 @@
           <v-icon start>mdi-clipboard-check</v-icon>
           Чек-листы
         </v-tab>
-        <v-tab value="repairs">Ремонты</v-tab>
+        <v-tab value="repairs">Ремонты<BlockHint block-key="repairs" /></v-tab>
         <v-tab value="odometer">Пробег</v-tab>
-        <v-tab value="fuel">Заправки</v-tab>
-        <v-tab value="trips">Путёвки</v-tab>
-        <v-tab value="fines" prepend-icon="mdi-alert-octagon-outline">Штрафы</v-tab>
-        <v-tab value="history">История</v-tab>
+        <v-tab value="fuel">Заправки<BlockHint block-key="fuel_logs" /></v-tab>
+        <v-tab value="trips">Путёвки<BlockHint block-key="trips" /></v-tab>
+        <v-tab value="fines" prepend-icon="mdi-alert-octagon-outline">Штрафы<BlockHint block-key="fines" /></v-tab>
+        <v-tab value="history">История<BlockHint block-key="field_history" /></v-tab>
         <v-tab value="purchases">Связанные закупки</v-tab>
       </v-tabs>
       <v-divider class="mb-4" />
@@ -122,9 +131,27 @@
 
           <!-- ── Hero banner ── -->
           <div class="vp-hero mb-4">
-            <!-- Photo placeholder -->
-            <div class="vp-hero__photo">
-              <v-icon icon="mdi-camera" size="36" class="vp-hero__photo-icon" />
+            <!-- Photo / silhouette / placeholder — приоритет: реальное фото → силуэт по кузову (form.body_type, живьём до сохранения) → заглушка-камера.
+                 «Тип ТС» — характеристика из ПТС, на картинку не влияет (запрос владельца, 2026-09). -->
+            <div
+              class="vp-hero__photo"
+              :class="{ 'vp-hero__photo--clickable': true }"
+              role="button"
+              :title="heroPhotoUrl ? 'Открыть фото' : 'Перейти к фотографиям'"
+              @click="activeTab = 'photos'"
+            >
+              <img
+                v-if="heroPhotoUrl"
+                :src="heroPhotoUrl"
+                alt="Фото ТС"
+                class="vp-hero__photo-img"
+              />
+              <VehicleTypeIcon
+                v-else-if="heroHasSilhouette"
+                :body-type="heroBodyType"
+                :size="52"
+              />
+              <v-icon v-else icon="mdi-camera" size="36" class="vp-hero__photo-icon" />
             </div>
 
             <!-- Info block -->
@@ -180,13 +207,16 @@
           <!-- ── Quick-stats strip ── -->
           <div class="vp-qstats mb-4">
             <!-- Пробег -->
-            <div class="vp-qs">
-              <div class="vp-qs__label">Пробег</div>
+            <div class="vp-qs vp-qs--clickable" title="Перейти на вкладку «Пробег»" @click="activeTab = 'odometer'">
+              <div class="vp-qs__label d-flex align-center">
+                <span>Пробег</span>
+                <FieldHint field-key="current_odometer_km" />
+              </div>
               <div class="vp-qs__value">
                 {{ vehicle.current_odometer_km != null ? vehicle.current_odometer_km.toLocaleString('ru-RU') : '—' }}
                 <span class="vp-qs__unit" v-if="vehicle.current_odometer_km != null">км</span>
               </div>
-              <div class="vp-qs__sub">текущий одометр</div>
+              <div class="vp-qs__sub">текущий одометр — вкладка «Пробег»</div>
             </div>
             <!-- Последнее ТО -->
             <div class="vp-qs">
@@ -230,7 +260,7 @@
                 <v-card-text class="pa-0">
                   <div class="vp-data-grid">
                     <!-- Гос. номер -->
-                    <div class="vp-data-row">
+                    <div class="vp-data-row" v-if="isFieldVisible('plate')">
                       <span class="vp-data-key">
                         <FieldLabel label="Гос. номер" field-key="plate" :vehicle-id="vehicle.id" />
                       </span>
@@ -239,7 +269,7 @@
                       </span>
                     </div>
                     <!-- VIN -->
-                    <div class="vp-data-row">
+                    <div class="vp-data-row" v-if="isFieldVisible('vin')">
                       <span class="vp-data-key">
                         <FieldLabel label="VIN" field-key="vin" :vehicle-id="vehicle.id" />
                       </span>
@@ -248,7 +278,7 @@
                       </span>
                     </div>
                     <!-- Марка -->
-                    <div class="vp-data-row">
+                    <div class="vp-data-row" v-if="isFieldVisible('brand')">
                       <span class="vp-data-key">
                         <FieldLabel label="Марка" field-key="brand" :vehicle-id="vehicle.id" />
                       </span>
@@ -257,7 +287,7 @@
                       </span>
                     </div>
                     <!-- Модель -->
-                    <div class="vp-data-row">
+                    <div class="vp-data-row" v-if="isFieldVisible('model')">
                       <span class="vp-data-key">
                         <FieldLabel label="Модель" field-key="model" :vehicle-id="vehicle.id" />
                       </span>
@@ -266,7 +296,7 @@
                       </span>
                     </div>
                     <!-- Год -->
-                    <div class="vp-data-row">
+                    <div class="vp-data-row" v-if="isFieldVisible('year_of_manufacture')">
                       <span class="vp-data-key">
                         <FieldLabel label="Год выпуска" field-key="year_of_manufacture" :vehicle-id="vehicle.id" />
                       </span>
@@ -275,7 +305,7 @@
                       </span>
                     </div>
                     <!-- Цвет -->
-                    <div class="vp-data-row">
+                    <div class="vp-data-row" v-if="isFieldVisible('color')">
                       <span class="vp-data-key">
                         <FieldLabel label="Цвет" field-key="color" :vehicle-id="vehicle.id" />
                       </span>
@@ -284,7 +314,7 @@
                       </span>
                     </div>
                     <!-- Тип ТС -->
-                    <div class="vp-data-row">
+                    <div class="vp-data-row" v-if="isFieldVisible('type')">
                       <span class="vp-data-key">
                         <FieldLabel label="Тип ТС" field-key="type" :vehicle-id="vehicle.id" />
                       </span>
@@ -292,8 +322,26 @@
                         <v-select v-model="form.type" :items="typeOptions" item-title="label" item-value="value" variant="underlined" density="compact" hide-details clearable class="vp-inline-field" placeholder="—" />
                       </span>
                     </div>
+                    <!-- Кузов -->
+                    <div class="vp-data-row" v-if="isFieldVisible('body_type')">
+                      <span class="vp-data-key">
+                        <FieldLabel label="Кузов" field-key="body_type" :vehicle-id="vehicle.id" />
+                      </span>
+                      <span class="vp-data-val">
+                        <v-select v-model="form.body_type" :items="bodyTypeOptions" variant="underlined" density="compact" hide-details clearable class="vp-inline-field" placeholder="—" />
+                      </span>
+                    </div>
+                    <!-- Категория ТС по ПТС -->
+                    <div class="vp-data-row" v-if="isFieldVisible('pts_category')">
+                      <span class="vp-data-key">
+                        <FieldLabel label="Категория ТС по ПТС" field-key="pts_category" :vehicle-id="vehicle.id" />
+                      </span>
+                      <span class="vp-data-val">
+                        <v-combobox v-model="form.pts_category" :items="ptsCategoryOptions" variant="underlined" density="compact" hide-details clearable auto-select-first :return-object="false" class="vp-inline-field" placeholder="—" />
+                      </span>
+                    </div>
                     <!-- Состояние -->
-                    <div class="vp-data-row">
+                    <div class="vp-data-row" v-if="isFieldVisible('state')">
                       <span class="vp-data-key">
                         <FieldLabel label="Состояние" field-key="state" :vehicle-id="vehicle.id" />
                       </span>
@@ -301,27 +349,88 @@
                         <v-select v-model="form.state" :items="stateOptions" item-title="label" item-value="value" variant="underlined" density="compact" hide-details clearable class="vp-inline-field" placeholder="—" />
                       </span>
                     </div>
-                    <!-- Организация-владелец -->
-                    <div class="vp-data-row">
+                    <!-- Организация-владелец. Длинные юрлица-названия (Донецкое
+                         региональное отделение...) зажимаем в 2 строки —
+                         тот же приём, что и в VehicleListView.vue (.vl-clamp-2),
+                         полное название — во всплывающей подсказке. -->
+                    <div class="vp-data-row" v-if="isFieldVisible('owner_org_id')">
                       <span class="vp-data-key">
                         <FieldLabel label="Владелец" field-key="owner_org_id" :vehicle-id="vehicle.id" />
                       </span>
                       <span class="vp-data-val">
-                        <v-autocomplete v-model="form.owner_org_id" :items="orgsList" item-title="name" item-value="id" variant="underlined" density="compact" hide-details clearable class="vp-inline-field" placeholder="—" />
+                        <v-tooltip :text="ownerOrgFullName" location="top" :disabled="!ownerOrgFullName">
+                          <template #activator="{ props: tip }">
+                            <v-autocomplete
+                              v-bind="tip"
+                              :model-value="ownerOrgUid"
+                              :items="ownerOrgOptions"
+                              item-title="name" item-value="uid"
+                              :custom-filter="ownerAutofill.customFilter"
+                              :loading="contractorsStore.searching"
+                              variant="underlined" density="compact" hide-details clearable
+                              class="vp-inline-field vp-org-field" placeholder="—"
+                              @update:search="ownerAutofill.search"
+                              @update:model-value="onOwnerOrgSelect"
+                            >
+                              <template #item="{ item, props: itemProps }">
+                                <v-list-item v-bind="itemProps" :title="undefined">
+                                  <template #title>
+                                    <span style="white-space:normal;word-break:break-word;line-height:1.4">{{ item.raw.name }}</span>
+                                  </template>
+                                  <template #subtitle>
+                                    <span class="text-caption">
+                                      <template v-if="item.raw.inn">ИНН: {{ item.raw.inn }}</template>
+                                      <template v-if="item.raw.kind === 'contractor'">{{ item.raw.inn ? ' · ' : '' }}контрагент{{ item.raw.inn ? '' : ' (без организации в аккаунте)' }}</template>
+                                    </span>
+                                  </template>
+                                </v-list-item>
+                              </template>
+                            </v-autocomplete>
+                          </template>
+                        </v-tooltip>
                       </span>
                     </div>
                     <!-- Эксплуатант -->
-                    <div class="vp-data-row">
+                    <div class="vp-data-row" v-if="isFieldVisible('assigned_org_id')">
                       <span class="vp-data-key">
                         <FieldLabel label="Эксплуатант" field-key="assigned_org_id" :vehicle-id="vehicle.id" />
                       </span>
                       <span class="vp-data-val">
-                        <v-autocomplete v-if="form.assigned_org_id || orgsList.length > 0" v-model="form.assigned_org_id" :items="orgsList" item-title="name" item-value="id" variant="underlined" density="compact" hide-details clearable class="vp-inline-field" placeholder="—" />
+                        <v-tooltip v-if="form.assigned_org_id || assignedOrgItems.length > 0" :text="assignedOrgFullName" location="top" :disabled="!assignedOrgFullName">
+                          <template #activator="{ props: tip }">
+                            <v-autocomplete
+                              v-bind="tip"
+                              :model-value="assignedOrgUid"
+                              :items="assignedOrgOptions"
+                              item-title="name" item-value="uid"
+                              :custom-filter="assignedAutofill.customFilter"
+                              :loading="contractorsStore.searching"
+                              variant="underlined" density="compact" hide-details clearable
+                              class="vp-inline-field vp-org-field" placeholder="—"
+                              @update:search="assignedAutofill.search"
+                              @update:model-value="onAssignedOrgSelect"
+                            >
+                              <template #item="{ item, props: itemProps }">
+                                <v-list-item v-bind="itemProps" :title="undefined">
+                                  <template #title>
+                                    <span style="white-space:normal;word-break:break-word;line-height:1.4">{{ item.raw.name }}</span>
+                                  </template>
+                                  <template #subtitle>
+                                    <span class="text-caption">
+                                      <template v-if="item.raw.inn">ИНН: {{ item.raw.inn }}</template>
+                                      <template v-if="item.raw.kind === 'contractor'">{{ item.raw.inn ? ' · ' : '' }}контрагент{{ item.raw.inn ? '' : ' (без организации в аккаунте)' }}</template>
+                                    </span>
+                                  </template>
+                                </v-list-item>
+                              </template>
+                            </v-autocomplete>
+                          </template>
+                        </v-tooltip>
                         <v-combobox v-else v-model="form.assigned_text" :items="assignedTextSuggestions" variant="underlined" density="compact" hide-details clearable auto-select-first :return-object="false" class="vp-inline-field" placeholder="—" />
                       </span>
                     </div>
                     <!-- Эксплуатант текст если нет org_id -->
-                    <div class="vp-data-row" v-if="!form.assigned_org_id">
+                    <div class="vp-data-row" v-if="isFieldVisible('assigned_org_id') && !form.assigned_org_id">
                       <span class="vp-data-key">
                         <span class="text-caption text-medium-emphasis">Эксплуатант (текст)</span>
                       </span>
@@ -329,8 +438,73 @@
                         <v-combobox v-model="form.assigned_text" :items="assignedTextSuggestions" variant="underlined" density="compact" hide-details clearable auto-select-first :return-object="false" class="vp-inline-field" placeholder="—" />
                       </span>
                     </div>
+                    <!-- ИНН эксплуатанта (computed, readonly) -->
+                    <div class="vp-data-row" v-if="isFieldVisible('operator_inn')">
+                      <span class="vp-data-key">
+                        <span class="text-caption text-medium-emphasis d-flex align-center">
+                          ИНН эксплуатанта
+                          <FieldHint field-key="operator_inn" />
+                          <v-chip size="x-small" variant="tonal" color="grey" class="ml-2">не редактируется</v-chip>
+                        </span>
+                      </span>
+                      <span class="vp-data-val">
+                        <v-text-field :model-value="operatorInnDisplay || '—'" variant="underlined" density="compact" hide-details readonly class="vp-inline-field text-medium-emphasis" />
+                      </span>
+                    </div>
+                    <!-- Место нахождения — город -->
+                    <div class="vp-data-row" v-if="isFieldVisible('location_city')">
+                      <span class="vp-data-key">
+                        <FieldLabel label="Место нахождения, город" field-key="location_city" :vehicle-id="vehicle.id" />
+                      </span>
+                      <span class="vp-data-val">
+                        <v-combobox
+                          v-model="form.location_city"
+                          :items="locationCityItems"
+                          no-filter
+                          @update:search="locationCitySearch = $event"
+                          variant="underlined" density="compact" hide-details clearable
+                          :return-object="false" class="vp-inline-field" placeholder="—"
+                        />
+                      </span>
+                    </div>
+                    <!-- Место нахождения — адрес -->
+                    <div class="vp-data-row" v-if="isFieldVisible('location_address')">
+                      <span class="vp-data-key">
+                        <FieldLabel label="Место нахождения, адрес" field-key="location_address" :vehicle-id="vehicle.id" />
+                      </span>
+                      <span class="vp-data-val">
+                        <v-text-field v-model="form.location_address" variant="underlined" density="compact" hide-details class="vp-inline-field" placeholder="—" />
+                      </span>
+                    </div>
+                    <!-- Место постоянной приписки ТС (доделка 2026-09) — то же
+                         автодополнение по справочнику городов, что и «Текущее
+                         место нахождения» выше; свободный ввод разрешён. -->
+                    <div class="vp-data-row" v-if="isFieldVisible('home_base_city')">
+                      <span class="vp-data-key">
+                        <FieldLabel label="Место постоянной приписки ТС" field-key="home_base_city" :vehicle-id="vehicle.id" />
+                      </span>
+                      <span class="vp-data-val">
+                        <v-combobox
+                          v-model="form.home_base_city"
+                          :items="homeBaseCityItems"
+                          no-filter
+                          @update:search="homeBaseCitySearch = $event"
+                          variant="underlined" density="compact" hide-details clearable
+                          :return-object="false" class="vp-inline-field" placeholder="—"
+                        />
+                      </span>
+                    </div>
+                    <!-- Ответственный (ФИО) -->
+                    <div class="vp-data-row" v-if="isFieldVisible('responsible_name')">
+                      <span class="vp-data-key">
+                        <FieldLabel label="Ответственный (ФИО)" field-key="responsible_name" :vehicle-id="vehicle.id" />
+                      </span>
+                      <span class="vp-data-val">
+                        <v-text-field v-model="form.responsible_name" variant="underlined" density="compact" hide-details class="vp-inline-field" placeholder="—" />
+                      </span>
+                    </div>
                     <!-- Основание -->
-                    <div class="vp-data-row">
+                    <div class="vp-data-row" v-if="isFieldVisible('assignment_basis')">
                       <span class="vp-data-key">
                         <FieldLabel label="Основание" field-key="assignment_basis" :vehicle-id="vehicle.id" />
                       </span>
@@ -338,8 +512,26 @@
                         <v-combobox v-model="form.assignment_basis" :items="basisSuggestions" variant="underlined" density="compact" hide-details clearable auto-select-first :return-object="false" class="vp-inline-field" placeholder="Договор аренды, акт п/п..." />
                       </span>
                     </div>
+                    <!-- № документа основания права эксплуатации -->
+                    <div class="vp-data-row" v-if="isFieldVisible('assignment_doc_number')">
+                      <span class="vp-data-key">
+                        <FieldLabel label="№ документа основания" field-key="assignment_doc_number" :vehicle-id="vehicle.id" />
+                      </span>
+                      <span class="vp-data-val">
+                        <v-text-field v-model="form.assignment_doc_number" variant="underlined" density="compact" hide-details class="vp-inline-field" placeholder="—" />
+                      </span>
+                    </div>
+                    <!-- Дата документа основания права эксплуатации -->
+                    <div class="vp-data-row" v-if="isFieldVisible('assignment_doc_date')">
+                      <span class="vp-data-key">
+                        <FieldLabel label="Дата документа основания" field-key="assignment_doc_date" :vehicle-id="vehicle.id" />
+                      </span>
+                      <span class="vp-data-val">
+                        <v-text-field v-model="form.assignment_doc_date" type="date" variant="underlined" density="compact" hide-details class="vp-inline-field" />
+                      </span>
+                    </div>
                     <!-- Дата регистрации -->
-                    <div class="vp-data-row">
+                    <div class="vp-data-row" v-if="isFieldVisible('registered_at')">
                       <span class="vp-data-key">
                         <FieldLabel label="Дата регистрации" field-key="registered_at" :vehicle-id="vehicle.id" />
                       </span>
@@ -364,6 +556,76 @@
                 </v-card-text>
               </v-card>
 
+              <!-- Собственность (Autoblock §2) -->
+              <v-card v-if="isGroupVisible('ownership')" class="vp-box mb-4">
+                <v-card-title class="vp-box__title">
+                  <v-icon icon="mdi-file-certificate-outline" size="small" class="mr-2" />
+                  Собственность
+                </v-card-title>
+                <v-card-text class="pa-0">
+                  <div class="vp-data-grid">
+                    <!-- ИНН собственника (computed, readonly) -->
+                    <div class="vp-data-row" v-if="isFieldVisible('owner_inn')">
+                      <span class="vp-data-key">
+                        <span class="text-caption text-medium-emphasis d-flex align-center">
+                          ИНН собственника
+                          <FieldHint field-key="owner_inn" />
+                          <v-chip size="x-small" variant="tonal" color="grey" class="ml-2">не редактируется</v-chip>
+                        </span>
+                      </span>
+                      <span class="vp-data-val">
+                        <v-text-field :model-value="ownerInnDisplay || '—'" variant="underlined" density="compact" hide-details readonly class="vp-inline-field text-medium-emphasis" />
+                      </span>
+                    </div>
+                    <!-- Основание возникновения собственности -->
+                    <div class="vp-data-row" v-if="isFieldVisible('ownership_basis')">
+                      <span class="vp-data-key">
+                        <FieldLabel label="Основание возникновения собственности" field-key="ownership_basis" :vehicle-id="vehicle.id" />
+                      </span>
+                      <span class="vp-data-val">
+                        <v-combobox v-model="form.ownership_basis" :items="ownershipBasisOptions" variant="underlined" density="compact" hide-details clearable auto-select-first :return-object="false" class="vp-inline-field" placeholder="—" />
+                      </span>
+                    </div>
+                    <!-- № документа основания собственности -->
+                    <div class="vp-data-row" v-if="isFieldVisible('ownership_doc_number')">
+                      <span class="vp-data-key">
+                        <FieldLabel label="№ документа основания собственности" field-key="ownership_doc_number" :vehicle-id="vehicle.id" />
+                      </span>
+                      <span class="vp-data-val">
+                        <v-text-field v-model="form.ownership_doc_number" variant="underlined" density="compact" hide-details class="vp-inline-field" placeholder="—" />
+                      </span>
+                    </div>
+                    <!-- Дата документа основания собственности -->
+                    <div class="vp-data-row" v-if="isFieldVisible('ownership_doc_date')">
+                      <span class="vp-data-key">
+                        <FieldLabel label="Дата документа основания собственности" field-key="ownership_doc_date" :vehicle-id="vehicle.id" />
+                      </span>
+                      <span class="vp-data-val">
+                        <v-text-field v-model="form.ownership_doc_date" type="date" variant="underlined" density="compact" hide-details class="vp-inline-field" />
+                      </span>
+                    </div>
+                    <!-- Дата, когда организация стала собственником -->
+                    <div class="vp-data-row" v-if="isFieldVisible('owner_since')">
+                      <span class="vp-data-key">
+                        <FieldLabel label="Собственник с" field-key="owner_since" :vehicle-id="vehicle.id" />
+                      </span>
+                      <span class="vp-data-val">
+                        <v-text-field v-model="form.owner_since" type="date" variant="underlined" density="compact" hide-details class="vp-inline-field" />
+                      </span>
+                    </div>
+                    <!-- Кто субсидировал -->
+                    <div class="vp-data-row" v-if="isFieldVisible('purchase_info')">
+                      <span class="vp-data-key">
+                        <FieldLabel label="Кто субсидировал" field-key="purchase_info" :vehicle-id="vehicle.id" />
+                      </span>
+                      <span class="vp-data-val">
+                        <v-text-field v-model="form.purchase_info" variant="underlined" density="compact" hide-details class="vp-inline-field" placeholder="—" />
+                      </span>
+                    </div>
+                  </div>
+                </v-card-text>
+              </v-card>
+
               <!-- Чек-лист оборудования -->
               <v-card class="vp-box mb-4">
                 <v-card-title class="vp-box__title">
@@ -372,29 +634,41 @@
                 </v-card-title>
                 <v-card-text>
                   <div class="vp-check-grid">
-                    <div class="vp-check-item" :class="form.has_tracker ? 'vp-check-item--ok' : 'vp-check-item--off'">
+                    <div v-if="isFieldVisible('has_tracker')" class="vp-check-item" :class="form.has_tracker ? 'vp-check-item--ok' : 'vp-check-item--off'">
                       <v-checkbox v-model="form.has_tracker" label="Трекер" density="compact" hide-details color="success" />
                     </div>
-                    <div class="vp-check-item" :class="form.akb_ok ? 'vp-check-item--ok' : 'vp-check-item--off'">
+                    <div v-if="isFieldVisible('akb_ok')" class="vp-check-item" :class="form.akb_ok ? 'vp-check-item--ok' : 'vp-check-item--off'">
                       <v-checkbox v-model="form.akb_ok" label="АКБ исправен" density="compact" hide-details color="success" />
                     </div>
-                    <div class="vp-check-item" :class="form.has_radio ? 'vp-check-item--ok' : 'vp-check-item--off'">
+                    <div v-if="isFieldVisible('has_radio')" class="vp-check-item" :class="form.has_radio ? 'vp-check-item--ok' : 'vp-check-item--off'">
                       <v-checkbox v-model="form.has_radio" label="Радиостанция" density="compact" hide-details color="success" />
                     </div>
-                    <div class="vp-check-item" :class="form.mirrors_ok ? 'vp-check-item--ok' : 'vp-check-item--off'">
+                    <div v-if="isFieldVisible('mirrors_ok')" class="vp-check-item" :class="form.mirrors_ok ? 'vp-check-item--ok' : 'vp-check-item--off'">
                       <v-checkbox v-model="form.mirrors_ok" label="Зеркала OK" density="compact" hide-details color="success" />
                     </div>
-                    <div class="vp-check-item" :class="form.has_keys ? 'vp-check-item--ok' : 'vp-check-item--off'">
+                    <div v-if="isFieldVisible('has_mirrors')" class="vp-check-item" :class="form.has_mirrors ? 'vp-check-item--ok' : 'vp-check-item--off'">
+                      <v-checkbox v-model="form.has_mirrors" label="Наличие зеркал" density="compact" hide-details color="success" />
+                    </div>
+                    <div v-if="isFieldVisible('has_keys')" class="vp-check-item" :class="form.has_keys ? 'vp-check-item--ok' : 'vp-check-item--off'">
                       <v-checkbox v-model="form.has_keys" label="Ключи" density="compact" hide-details color="success" />
                     </div>
-                    <div class="vp-check-item" :class="form.has_first_aid_kit ? 'vp-check-item--ok' : 'vp-check-item--off'">
+                    <div v-if="isFieldVisible('has_first_aid_kit')" class="vp-check-item" :class="form.has_first_aid_kit ? 'vp-check-item--ok' : 'vp-check-item--off'">
                       <v-checkbox v-model="form.has_first_aid_kit" label="Аптечка" density="compact" hide-details color="success" />
                     </div>
-                    <div class="vp-check-item" :class="form.has_spare_wheel ? 'vp-check-item--ok' : 'vp-check-item--off'">
+                    <div v-if="isFieldVisible('has_spare_wheel')" class="vp-check-item" :class="form.has_spare_wheel ? 'vp-check-item--ok' : 'vp-check-item--off'">
                       <v-checkbox v-model="form.has_spare_wheel" label="Зап. колесо" density="compact" hide-details color="success" />
                     </div>
-                    <div class="vp-check-item" :class="form.has_extinguisher ? 'vp-check-item--ok' : 'vp-check-item--off'">
+                    <div v-if="isFieldVisible('has_spare_tires')" class="vp-check-item" :class="form.has_spare_tires ? 'vp-check-item--ok' : 'vp-check-item--off'">
+                      <v-checkbox v-model="form.has_spare_tires" label="Сменная резина" density="compact" hide-details color="success" />
+                    </div>
+                    <div v-if="isFieldVisible('has_extinguisher')" class="vp-check-item" :class="form.has_extinguisher ? 'vp-check-item--ok' : 'vp-check-item--off'">
                       <v-checkbox v-model="form.has_extinguisher" label="Огнетушитель" density="compact" hide-details color="success" />
+                    </div>
+                    <div v-if="isFieldVisible('has_tachograph')" class="vp-check-item" :class="form.has_tachograph ? 'vp-check-item--ok' : 'vp-check-item--off'">
+                      <v-checkbox v-model="form.has_tachograph" label="Тахограф" density="compact" hide-details color="success" />
+                    </div>
+                    <div v-if="isFieldVisible('repair_required')" class="vp-check-item" :class="form.repair_required ? 'vp-check-item--off' : 'vp-check-item--ok'">
+                      <v-checkbox v-model="form.repair_required" label="Требуется ремонт" density="compact" hide-details color="error" />
                     </div>
                   </div>
 
@@ -402,23 +676,50 @@
                   <v-divider class="my-3" />
                   <div class="text-subtitle-2 font-weight-bold mb-2">Доп. параметры</div>
                   <v-row dense>
-                    <v-col cols="6">
-                      <div class="text-caption text-medium-emphasis mb-1">Авторезина</div>
-                      <v-combobox v-model="form.props_tires_type" :items="tiresTypeOptions" variant="outlined" density="compact" hide-details clearable auto-select-first :return-object="false" />
+                    <v-col v-if="isFieldVisible('props_tires_type')" cols="6">
+                      <div class="text-caption text-medium-emphasis mb-1 d-flex align-center">
+                        <span>Авторезина</span>
+                        <FieldHint field-key="tires_type" />
+                      </div>
+                      <v-select v-model="form.props_tires_type" :items="tiresTypeOptions" variant="outlined" density="compact" hide-details clearable />
                     </v-col>
-                    <v-col cols="6">
+                    <v-col v-if="isFieldVisible('tires_condition')" cols="6">
+                      <div class="text-caption text-medium-emphasis mb-1">Состояние резины</div>
+                      <v-select v-model="form.tires_condition" :items="tiresConditionOptions" variant="outlined" density="compact" hide-details clearable />
+                    </v-col>
+                    <v-col v-if="isFieldVisible('props_branding')" cols="6">
                       <div class="text-caption text-medium-emphasis mb-1">Брендирование</div>
                       <v-combobox v-model="form.props_branding" :items="brandSuggestions" variant="outlined" density="compact" hide-details clearable auto-select-first :return-object="false" />
                     </v-col>
-                    <v-col cols="6">
+                    <v-col v-if="isFieldVisible('props_paint_condition')" cols="6">
                       <div class="text-caption text-medium-emphasis mb-1">ЛКП (состояние)</div>
                       <v-select v-model="form.props_paint_condition" :items="paintConditionOptions" variant="outlined" density="compact" hide-details clearable />
                     </v-col>
-                    <v-col cols="6">
+                    <v-col v-if="isFieldVisible('first_aid_kit_until')" cols="6">
+                      <div class="text-caption text-medium-emphasis mb-1">Аптечка — срок использования до</div>
+                      <v-text-field v-model="form.first_aid_kit_until" type="date" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col v-if="isFieldVisible('extinguisher_check_date')" cols="6">
+                      <div class="text-caption text-medium-emphasis mb-1">Огнетушитель — дата поверки</div>
+                      <v-text-field v-model="form.extinguisher_check_date" type="date" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col v-if="isFieldVisible('tracker_paid_until')" cols="6">
+                      <div class="text-caption text-medium-emphasis mb-1">Трекер — оплачен до</div>
+                      <v-text-field v-model="form.tracker_paid_until" type="date" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col v-if="isFieldVisible('tachograph_check_date')" cols="6">
+                      <div class="text-caption text-medium-emphasis mb-1">Тахограф — дата поверки</div>
+                      <v-text-field v-model="form.tachograph_check_date" type="date" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col v-if="isFieldVisible('props_defect_description')" cols="6">
                       <div class="text-caption text-medium-emphasis mb-1">Неисправности</div>
                       <v-textarea v-model="form.props_defect_description" variant="outlined" density="compact" hide-details rows="2" auto-grow />
                     </v-col>
-                    <v-col cols="12">
+                    <v-col v-if="isFieldVisible('tech_condition_info')" cols="12">
+                      <div class="text-caption text-medium-emphasis mb-1">Сведения о техническом состоянии</div>
+                      <v-textarea v-model="form.tech_condition_info" variant="outlined" density="compact" hide-details rows="2" auto-grow />
+                    </v-col>
+                    <v-col v-if="isFieldVisible('props_note')" cols="12">
                       <div class="text-caption text-medium-emphasis mb-1">Примечание</div>
                       <v-textarea v-model="form.props_note" variant="outlined" density="compact" hide-details rows="2" auto-grow />
                     </v-col>
@@ -431,6 +732,7 @@
                 <v-card-title class="vp-box__title">
                   <v-icon icon="mdi-swap-horizontal" size="small" class="mr-2" />
                   История передач
+                  <BlockHint block-key="transfer_history" />
                 </v-card-title>
                 <v-card-text>
                   <div v-if="loadingTransferHistory" class="text-center py-4">
@@ -690,58 +992,117 @@
                 </v-card-title>
                 <v-card-text>
                   <v-row dense>
-                    <v-col cols="6">
+                    <v-col v-if="isFieldVisible('pts_number')" cols="6">
                       <FieldLabel label="ПТС" field-key="pts_number" :vehicle-id="vehicle.id" />
                       <v-text-field v-model="form.pts_number" variant="outlined" density="compact" hide-details />
                     </v-col>
-                    <v-col cols="6">
+                    <v-col v-if="isFieldVisible('pts_kind')" cols="6">
+                      <FieldLabel label="Вид ПТС" field-key="pts_kind" :vehicle-id="vehicle.id" />
+                      <v-select v-model="form.pts_kind" :items="ptsKindOptions" item-title="title" item-value="value" variant="outlined" density="compact" hide-details clearable />
+                    </v-col>
+                    <v-col v-if="isFieldVisible('sts_number')" cols="6">
                       <FieldLabel label="СТС" field-key="sts_number" :vehicle-id="vehicle.id" />
                       <v-text-field v-model="form.sts_number" variant="outlined" density="compact" hide-details />
                     </v-col>
-                    <v-col cols="6">
+                    <v-col v-if="isFieldVisible('sts_issued_at')" cols="6">
+                      <FieldLabel label="СТС — дата выдачи" field-key="sts_issued_at" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model="form.sts_issued_at" type="date" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col v-if="isFieldVisible('insurance_company')" cols="6">
+                      <FieldLabel label="Страховая компания" field-key="insurance_company" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model="form.insurance_company" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col v-if="isFieldVisible('insurance_policy_number')" cols="6">
+                      <FieldLabel label="Номер страхового договора" field-key="insurance_policy_number" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model="form.insurance_policy_number" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col v-if="isFieldVisible('insurance_until')" cols="6">
                       <FieldLabel label="ОСАГО до" field-key="insurance_until" :vehicle-id="vehicle.id" />
                       <v-text-field v-model="form.insurance_until" type="date" variant="outlined" density="compact" hide-details />
                     </v-col>
-                    <v-col cols="6">
+                    <v-col v-if="isFieldVisible('tech_inspection_status')" cols="6">
+                      <FieldLabel label="Обязательный техосмотр" field-key="tech_inspection_status" :vehicle-id="vehicle.id" />
+                      <v-select v-model="form.tech_inspection_status" :items="techInspectionStatusOptions" variant="outlined" density="compact" hide-details clearable />
+                    </v-col>
+                    <v-col v-if="isFieldVisible('tech_inspection_last_date')" cols="6">
+                      <FieldLabel label="Дата последнего техосмотра" field-key="tech_inspection_last_date" :vehicle-id="vehicle.id" />
+                      <v-text-field v-model="form.tech_inspection_last_date" type="date" variant="outlined" density="compact" hide-details />
+                    </v-col>
+                    <v-col v-if="isFieldVisible('tech_inspection_until')" cols="6">
                       <FieldLabel label="Техосмотр до" field-key="tech_inspection_until" :vehicle-id="vehicle.id" />
                       <v-text-field v-model="form.tech_inspection_until" type="date" variant="outlined" density="compact" hide-details />
                     </v-col>
-                    <v-col cols="6">
+                    <v-col v-if="isFieldVisible('fuel_type')" cols="6">
                       <FieldLabel label="Тип топлива" field-key="fuel_type" :vehicle-id="vehicle.id" />
                       <v-select v-model="form.fuel_type" :items="fuelTypeSelectItems" item-title="title" item-value="value" variant="outlined" density="compact" hide-details clearable />
                     </v-col>
-                    <v-col cols="6">
-                      <div class="text-caption text-medium-emphasis mb-1">Текущий пробег, км</div>
+                    <v-col v-if="isFieldVisible('current_odometer_km')" cols="6">
+                      <div class="text-caption text-medium-emphasis mb-1 d-flex align-center flex-wrap">
+                        <span>Текущий пробег, км</span>
+                        <FieldHint field-key="current_odometer_km" />
+                        <v-chip size="x-small" variant="tonal" color="grey" class="ml-2">не редактируется</v-chip>
+                        <v-btn
+                          size="x-small"
+                          variant="text"
+                          color="primary"
+                          class="ml-1 px-1"
+                          prepend-icon="mdi-arrow-right-circle-outline"
+                          @click="activeTab = 'odometer'"
+                        >Внести пробег</v-btn>
+                      </div>
                       <v-text-field :model-value="vehicle.current_odometer_km ?? '—'" variant="outlined" density="compact" hide-details readonly class="text-medium-emphasis" />
                     </v-col>
-                    <v-col cols="6">
+                    <v-col v-if="isFieldVisible('last_to_mileage_km')" cols="6">
                       <FieldLabel label="Последнее ТО, км" field-key="last_to_mileage_km" :vehicle-id="vehicle.id" />
                       <v-text-field v-model.number="form.last_to_mileage_km" type="number" variant="outlined" density="compact" hide-details />
                     </v-col>
-                    <v-col cols="6">
+                    <v-col v-if="isFieldVisible('last_to_date')" cols="6">
                       <FieldLabel label="Дата последнего ТО" field-key="last_to_date" :vehicle-id="vehicle.id" />
                       <v-text-field v-model="form.last_to_date" type="date" variant="outlined" density="compact" hide-details />
                     </v-col>
-                    <v-col cols="6">
+                    <v-col v-if="isFieldVisible('next_to_km')" cols="6">
                       <FieldLabel label="Следующее ТО, км" field-key="next_to_km" :vehicle-id="vehicle.id" />
                       <v-text-field v-model.number="form.next_to_km" type="number" variant="outlined" density="compact" hide-details />
                     </v-col>
-                    <v-col cols="6">
+                    <v-col v-if="isFieldVisible('engine_power_hp')" cols="6">
                       <FieldLabel label="Мощность, л.с." field-key="engine_power_hp" :vehicle-id="vehicle.id" />
                       <v-text-field v-model.number="form.engine_power_hp" type="number" variant="outlined" density="compact" hide-details />
                     </v-col>
-                    <v-col cols="6">
+                    <v-col v-if="isFieldVisible('engine_volume_l')" cols="6">
                       <FieldLabel label="Объём двигателя, л" field-key="engine_volume_l" :vehicle-id="vehicle.id" />
                       <v-text-field v-model.number="form.engine_volume_l" type="number" step="0.1" variant="outlined" density="compact" hide-details />
                     </v-col>
-                    <v-col cols="6">
+                    <v-col v-if="isFieldVisible('fuel_norm_summer')" cols="6">
                       <FieldLabel label="Норма расхода (лето)" field-key="fuel_norm_summer" :vehicle-id="vehicle.id" />
                       <v-text-field v-model.number="form.fuel_norm_summer" type="number" step="0.1" suffix="л/100км" variant="outlined" density="compact" hide-details />
                     </v-col>
-                    <v-col cols="6">
+                    <v-col v-if="isFieldVisible('fuel_norm_winter')" cols="6">
                       <FieldLabel label="Норма расхода (зима)" field-key="fuel_norm_winter" :vehicle-id="vehicle.id" />
                       <v-text-field v-model.number="form.fuel_norm_winter" type="number" step="0.1" suffix="л/100км" variant="outlined" density="compact" hide-details />
                     </v-col>
+                  </v-row>
+                </v-card-text>
+              </v-card>
+
+              <!-- Пропуска (Autoblock §2) -->
+              <v-card v-if="isGroupVisible('passes')" class="vp-box mb-4">
+                <v-card-title class="vp-box__title">
+                  <v-icon icon="mdi-badge-account-horizontal-outline" size="small" class="mr-2" />
+                  Пропуска
+                  <BlockHint block-key="vehicle_passes" />
+                </v-card-title>
+                <v-card-text>
+                  <v-row dense>
+                    <template v-for="p in passFieldDefs" :key="p.key">
+                      <v-col v-if="isFieldVisible(p.key)" cols="12" sm="6">
+                        <FieldLabel :label="p.label" :field-key="p.key" :vehicle-id="vehicle.id" />
+                        <v-select v-model="(form as any)[p.key]" :items="passStatusOptions" variant="outlined" density="compact" hide-details clearable />
+                      </v-col>
+                      <v-col v-if="isFieldVisible(p.untilKey)" cols="12" sm="6">
+                        <FieldLabel label="Действует до" :field-key="p.untilKey" :vehicle-id="vehicle.id" />
+                        <v-text-field v-model="(form as any)[p.untilKey]" type="date" variant="outlined" density="compact" hide-details />
+                      </v-col>
+                    </template>
                   </v-row>
                 </v-card-text>
               </v-card>
@@ -820,7 +1181,7 @@
           </v-row>
 
           <!-- Save bar -->
-          <div class="d-flex justify-end gap-3 pb-6">
+          <div class="d-flex justify-end gap-3 pb-6 vp-save-bar">
             <v-btn variant="text" :disabled="!isDirty || saving" @click="resetForm">Сбросить</v-btn>
             <v-btn
               color="primary"
@@ -916,6 +1277,9 @@
       </v-card>
     </v-dialog>
 
+    <!-- ── Состав полей карточки ТС ── -->
+    <VehicleFieldsDialog v-model="fieldsDialogOpen" />
+
     <!-- ── Error dialog ── -->
     <v-dialog v-model="errorDialogShow" max-width="520">
       <v-card>
@@ -942,11 +1306,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, reactive, defineComponent, h } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, reactive, defineComponent, h, resolveComponent } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import FieldHistoryPopover from '@/components/vehicles/FieldHistoryPopover.vue'
+import VehicleTypeIcon from '@/components/vehicles/VehicleTypeIcon.vue'
+import { resolveBodyTypeIcon } from '@/components/vehicles/bodyTypeIcon'
+import { VEHICLE_TYPE_LABEL, VEHICLE_TYPE_OPTIONS } from '@/utils/vehicleLabels'
 import VehicleDocumentsTab from '@/components/vehicles/VehicleDocumentsTab.vue'
 import VehiclePhotosTab from '@/components/vehicles/VehiclePhotosTab.vue'
 import VehicleRepairsTab from '@/components/vehicles/VehicleRepairsTab.vue'
@@ -958,7 +1325,12 @@ import VehicleHistoryTab from '@/components/vehicles/VehicleHistoryTab.vue'
 import VehicleRelatedPurchasesTab from '@/components/vehicles/VehicleRelatedPurchasesTab.vue'
 import VehicleChecklistsTab from '@/components/vehicles/VehicleChecklistsTab.vue'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
+import VehicleFieldsDialog from '@/components/vehicles/VehicleFieldsDialog.vue'
 import { useToast, type ToastType } from '@/composables/useToast'
+import { useVehicleFields } from '@/composables/useVehicleFields'
+import { loadCitiesCatalog, searchCities, cityDisplayLabel } from '@/components/fleet/russiaCitiesCatalog'
+import { useOrgContractorAutofill } from '@/composables/useOrgContractorAutofill'
+import { useContractorsStore } from '@/stores/contractors'
 
 // ─────────────── Types ───────────────
 
@@ -1006,6 +1378,8 @@ interface TimelineEvent {
 interface OrgItem {
   id: number
   name: string
+  inn?: string | null
+  contractor_id?: number | null
 }
 
 interface Vehicle {
@@ -1052,6 +1426,48 @@ interface Vehicle {
   props: Record<string, string> | null
   created_at: string
   updated_at: string
+
+  // ── Autoblock: полный реестр полей ТС (§1 контракта) ──
+  body_type: string | null
+  pts_category: string | null
+  insurance_company: string | null
+  insurance_policy_number: string | null
+  ownership_basis: string | null
+  ownership_doc_number: string | null
+  ownership_doc_date: string | null
+  owner_since: string | null
+  location_city: string | null
+  location_address: string | null
+  home_base_city: string | null
+  responsible_name: string | null
+  pts_kind: string | null
+  sts_issued_at: string | null
+  tech_inspection_status: string | null
+  tech_inspection_last_date: string | null
+  pass_zo: string | null
+  pass_zo_until: string | null
+  pass_ho: string | null
+  pass_ho_until: string | null
+  pass_dnr: string | null
+  pass_dnr_until: string | null
+  pass_lnr: string | null
+  pass_lnr_until: string | null
+  pass_moscow: string | null
+  pass_moscow_until: string | null
+  has_spare_tires: boolean
+  tires_condition: string | null
+  has_mirrors: boolean
+  first_aid_kit_until: string | null
+  extinguisher_check_date: string | null
+  tracker_paid_until: string | null
+  has_tachograph: boolean
+  tachograph_check_date: string | null
+  repair_required: boolean
+  tech_condition_info: string | null
+
+  // ── Вычисляемые read-only (не колонки) ──
+  owner_inn?: string | null
+  operator_inn?: string | null
 }
 
 interface TransferHistoryItem {
@@ -1073,24 +1489,9 @@ interface TransferHistoryItem {
 
 // ─────────────── Lookup Maps ───────────────
 
-const TYPE_LABEL: Record<string, string> = {
-  car_light:   'Легковой',
-  suv:         'Внедорожник',
-  pickup:      'Пикап',
-  minivan:     'Минивэн',
-  truck_van:   'Фургон',
-  truck_board: 'Грузовой',
-  truck_tank:  'Цистерна',
-  truck_metal: 'Металловоз',
-  bus:         'Автобус',
-  special:     'Спецтехника',
-  snowmobile:  'Снегоход',
-  boat:        'Лодка',
-  boat_motor:  'Лодка (мотор)',
-  quadbike:    'Квадроцикл',
-  trailer:     'Прицеп',
-  other:       'Другой',
-}
+// Единый источник подписей типа ТС — frontend/src/utils/vehicleLabels.ts
+// (Правило №5: не держим отдельную копию карты рядом с уже существующей).
+const TYPE_LABEL = VEHICLE_TYPE_LABEL
 
 const STATE_LABEL: Record<string, string> = {
   working:      'Рабочее',
@@ -1130,7 +1531,9 @@ const STATE_COLOR: Record<string, string> = {
   utilized:     'grey',
 }
 
-const typeOptions = Object.entries(TYPE_LABEL).map(([value, label]) => ({ value, label }))
+// Отсортировано по алфавиту (владелец, 2026-09) — см. VEHICLE_TYPE_OPTIONS
+// в frontend/src/utils/vehicleLabels.ts (единый источник, коды не меняются).
+const typeOptions = VEHICLE_TYPE_OPTIONS
 const stateOptions = Object.entries(STATE_LABEL).map(([value, label]) => ({ value, label }))
 const fuelTypeOptions = Object.entries(FUEL_TYPE_LABEL).map(([value, label]) => ({ value, label }))
 
@@ -1145,28 +1548,118 @@ const fuelTypeSelectItems = [
   { value: 'other',  title: 'Другое' },
 ]
 
-// Опции состояния ЛКП для v-select
-const paintConditionOptions = [
-  'Отличное',
-  'Хорошее',
-  'Удовлетворительное',
-  'Незначительные повреждения',
-  'Значительные повреждения',
-  'Среднее',
-  'Требует покраски',
+// ── Автоблок (актуализация 2026-08-31): списки ниже ограничены правилами
+// проверки данных листа владельца — единственный источник значений теперь
+// backend (GET /api/vehicle-fields → options), см. useVehicleFields.getFieldOptions.
+// Вторую копию списков здесь не держим: если backend ещё не загрузил реестр,
+// список временно пуст (а не устаревший хардкод).
+const paintConditionOptions = computed(() => getFieldOptions('paint_condition') ?? [])
+const tiresTypeOptions = computed(() => getFieldOptions('tires_type') ?? [])
+const bodyTypeOptions = computed(() => getFieldOptions('body_type') ?? [])
+const tiresConditionOptions = computed(() => getFieldOptions('tires_condition') ?? [])
+const techInspectionStatusOptions = computed(() => getFieldOptions('tech_inspection_status') ?? [])
+// Пять полей «Пропуск X» делят один набор значений (Да/Нет/Не требуется/Не выпускался).
+const passStatusOptions = computed(() => getFieldOptions('pass_zo') ?? [])
+
+const ptsCategoryOptions = ['A', 'B', 'BE', 'C', 'CE', 'D', 'DE', 'M', 'Tb', 'Tm']
+
+const ownershipBasisOptions = [
+  'Договор купли-продажи',
+  'Договор дарения',
+  'Свидетельство о праве на наследство',
+  'Судебное решение',
+  'Договор пожертвования',
+  'Передача из другой организации',
 ]
 
-// Опции авторезины для v-combobox
-const tiresTypeOptions = [
-  'Летняя',
-  'Зимняя',
-  'Всесезонная',
-  'Смешанная (зима/лето)',
+const ptsKindOptions = [
+  { value: 'paper', title: 'Бумажный' },
+  { value: 'electronic', title: 'Электронный' },
 ]
+
+// Пропуска — 5 пар (номер + дата истечения), рендерятся в цикле в секции «Пропуска»
+const passFieldDefs: { key: string; untilKey: string; label: string }[] = [
+  { key: 'pass_zo', untilKey: 'pass_zo_until', label: 'Пропуск ЗО' },
+  { key: 'pass_ho', untilKey: 'pass_ho_until', label: 'Пропуск ХО' },
+  { key: 'pass_dnr', untilKey: 'pass_dnr_until', label: 'Пропуск ДНР' },
+  { key: 'pass_lnr', untilKey: 'pass_lnr_until', label: 'Пропуск ЛНР' },
+  { key: 'pass_moscow', untilKey: 'pass_moscow_until', label: 'Пропуск Москва' },
+]
+
+// ─────────────── Inline component: FieldHint ───────────────
+
+// Значок-вопрос с всплывающей подсказкой "откуда берётся значение" —
+// source_hint из реестра (backend/app/services/vehicle_fields.py, §4).
+// Рендерится в DOM, ТОЛЬКО если у поля есть подсказка — большая часть полей
+// заполняется вручную и в пояснении не нуждается.
+//
+// Жалоба владельца (2026-09): «Текущий пробег нельзя заполнить, но и не
+// указано, откуда он берётся» — пояснения уже были в ответе GET
+// /api/vehicle-fields, но фронт их нигде не показывал. Значок сделан цветным
+// (не серым, как история изменений) — чтобы не потеряться рядом с ней.
+const FieldHint = defineComponent({
+  props: {
+    fieldKey: { type: String, required: true },
+  },
+  setup(props) {
+    const VIcon = resolveComponent('VIcon') as any
+    const VTooltip = resolveComponent('VTooltip') as any
+    return () => {
+      const hint = getFieldSourceHint(props.fieldKey)
+      if (!hint) return null
+      return h(VTooltip, { text: hint, location: 'top', maxWidth: 320 }, {
+        activator: ({ props: activatorProps }: any) => h(VIcon, {
+          ...activatorProps,
+          icon: 'mdi-help-circle-outline',
+          size: 16,
+          color: 'primary',
+          class: 'ml-1 field-hint-icon',
+        }),
+      })
+    }
+  },
+})
+
+// ─────────────── Inline component: BlockHint ───────────────
+
+// То же самое, что FieldHint, но для целых НЕ-полевых блоков карточки
+// (история передач/изменений, штрафы, путевые листы, ремонты, заправки,
+// пропуска) — подсказка берётся из RELATED_BLOCKS
+// (backend/app/services/vehicle_fields.get_related_blocks(), §4) через
+// useVehicleFields.getRelatedBlockHint(blockKey).
+const BlockHint = defineComponent({
+  props: {
+    blockKey: { type: String, required: true },
+  },
+  setup(props) {
+    const VIcon = resolveComponent('VIcon') as any
+    const VTooltip = resolveComponent('VTooltip') as any
+    return () => {
+      const hint = getRelatedBlockHint(props.blockKey)
+      if (!hint) return null
+      return h(VTooltip, { text: hint, location: 'top', maxWidth: 340 }, {
+        activator: ({ props: activatorProps }: any) => h(VIcon, {
+          ...activatorProps,
+          icon: 'mdi-help-circle-outline',
+          size: 16,
+          color: 'primary',
+          class: 'ml-1 field-hint-icon',
+        }),
+      })
+    }
+  },
+})
 
 // ─────────────── Inline component: FieldLabel ───────────────
 
-// Renders "<label text> + FieldHistoryPopover icon" as a compact label row
+// Renders "<label text> + FieldHint icon + FieldHistoryPopover icon" as a
+// compact label row.
+// 2026-09 (правка после ревью): подпись поля берётся из реестра
+// (GET /api/vehicle-fields → useVehicleFields.getFieldLabel), проп `label` —
+// только запасной вариант на случай, если реестр ещё не загрузился или в нём
+// нет такого ключа. Раньше подписи были захардкожены в шаблоне и расходились
+// с backend/app/services/vehicle_fields.py (например, «Место нахождения» вместо
+// «Текущее место нахождения») — теперь реестр всегда побеждает.
 const FieldLabel = defineComponent({
   props: {
     label: { type: String, required: true },
@@ -1174,14 +1667,18 @@ const FieldLabel = defineComponent({
     vehicleId: { type: Number, required: true },
   },
   setup(props) {
-    return () => h('div', { class: 'text-caption text-medium-emphasis mb-1 d-flex align-center' }, [
-      h('span', props.label),
-      h(FieldHistoryPopover, {
-        vehicleId: props.vehicleId,
-        fieldKey: props.fieldKey,
-        fieldLabel: props.label,
-      }),
-    ])
+    return () => {
+      const effectiveLabel = getFieldLabel(props.fieldKey) ?? props.label
+      return h('div', { class: 'text-caption text-medium-emphasis mb-1 d-flex align-center' }, [
+        h('span', effectiveLabel),
+        h(FieldHint, { fieldKey: props.fieldKey }),
+        h(FieldHistoryPopover, {
+          vehicleId: props.vehicleId,
+          fieldKey: props.fieldKey,
+          fieldLabel: effectiveLabel,
+        }),
+      ])
+    }
   },
 })
 
@@ -1207,6 +1704,92 @@ const activeTab = ref('general')
 const orgsList = ref<OrgItem[]>([])
 const historyComment = ref('')
 
+// ─────────────── Владелец / Эксплуатант — списки организаций ───────────────
+// 2026-09 (дефект «Владелец показывает id вместо названия»): даже после
+// перехода loadOrgs() на /auth/my-orgs список может не содержать организацию
+// текущего ТС (например, она деактивирована или доступ пользователя её не
+// покрывает) — тогда v-autocomplete без соответствующего id в :items выводит
+// сырое числовое значение. Подмешиваем текущую организацию по имени из самой
+// машины (vehicle.owner_org_name / assigned_org_name, уже приходит в
+// GET /api/vehicles/{id}), чтобы поле ВСЕГДА показывало название, а не id.
+const ownerOrgItems = computed<OrgItem[]>(() => {
+  const items = orgsList.value
+  const id = form.owner_org_id
+  const name = vehicle.value?.owner_org_name
+  if (id != null && name && !items.some(o => o.id === id)) {
+    return [...items, { id, name }]
+  }
+  return items
+})
+const assignedOrgItems = computed<OrgItem[]>(() => {
+  const items = orgsList.value
+  const id = form.assigned_org_id
+  const name = vehicle.value?.assigned_org_name
+  if (id != null && name && !items.some(o => o.id === id)) {
+    return [...items, { id, name }]
+  }
+  return items
+})
+// Полное название — для v-tooltip над клампнутым в 2 строки полем.
+const ownerOrgFullName = computed(() =>
+  ownerOrgItems.value.find(o => o.id === form.owner_org_id)?.name || vehicle.value?.owner_org_name || ''
+)
+const assignedOrgFullName = computed(() =>
+  assignedOrgItems.value.find(o => o.id === form.assigned_org_id)?.name || vehicle.value?.assigned_org_name || ''
+)
+
+// ─────────────── Владелец/Эксплуатант — автозаполнение из контрагентов ───────────────
+// Жалоба владельца (2026-09-03): поиск по «Владельцу»/«Эксплуатанту» шёл только
+// среди ~27 внутренних организаций аккаунта, ИНН не подставлялся ни в одну
+// сторону. См. composables/useOrgContractorAutofill.ts — там же решение по
+// случаю «выбран контрагент без внутренней организации».
+const contractorsStore = useContractorsStore()
+const ownerAutofill = useOrgContractorAutofill(orgsList)
+const assignedAutofill = useOrgContractorAutofill(orgsList)
+
+const ownerOrgUid = computed<string | null>(() => form.owner_org_id != null ? `org-${form.owner_org_id}` : null)
+const assignedOrgUid = computed<string | null>(() => form.assigned_org_id != null ? `org-${form.assigned_org_id}` : null)
+
+const ownerOrgOptions = computed(() => ownerAutofill.buildOptions(form.owner_org_id, vehicle.value?.owner_org_name))
+const assignedOrgOptions = computed(() => assignedAutofill.buildOptions(form.assigned_org_id, vehicle.value?.assigned_org_name))
+
+// Живой предпросмотр ИНН — сразу после выбора, без сохранения/перезагрузки
+// карточки (в отличие от vehicle.owner_inn/operator_inn — those придут только
+// после PATCH и повторного GET).
+const ownerInnDisplay = computed(() => {
+  const org = orgsList.value.find(o => o.id === form.owner_org_id)
+  return (org?.inn ?? null) || vehicle.value?.owner_inn || null
+})
+const operatorInnDisplay = computed(() => {
+  if (!form.assigned_org_id) return null
+  const org = orgsList.value.find(o => o.id === form.assigned_org_id)
+  return (org?.inn ?? null) || vehicle.value?.operator_inn || null
+})
+
+async function onOwnerOrgSelect(uid: string | null) {
+  if (!uid) { form.owner_org_id = null; return }
+  const res = await ownerAutofill.resolveSelection(uid)
+  if (res.error) { showSnack(res.error, 'error'); return }
+  if (res.orgId == null) return
+  form.owner_org_id = res.orgId
+  if (res.createdOrg && !orgsList.value.some(o => o.id === res.createdOrg!.id)) {
+    orgsList.value = [...orgsList.value, res.createdOrg]
+  }
+  if (res.message) showSnack(res.message)
+}
+
+async function onAssignedOrgSelect(uid: string | null) {
+  if (!uid) { form.assigned_org_id = null; return }
+  const res = await assignedAutofill.resolveSelection(uid)
+  if (res.error) { showSnack(res.error, 'error'); return }
+  if (res.orgId == null) return
+  form.assigned_org_id = res.orgId
+  if (res.createdOrg && !orgsList.value.some(o => o.id === res.createdOrg!.id)) {
+    orgsList.value = [...orgsList.value, res.createdOrg]
+  }
+  if (res.message) showSnack(res.message)
+}
+
 // ─────────────── Autocomplete suggestions ───────────────
 
 const brandSuggestions = ref<string[]>([])
@@ -1215,12 +1798,45 @@ const colorSuggestions = ref<string[]>([])
 const assignedTextSuggestions = ref<string[]>([])
 const basisSuggestions = ref<string[]>([])
 
+// 2026-09 (geo-fix #4): автодополнение «Место нахождения, город» по
+// справочнику населённых пунктов России (russiaCitiesCatalog.ts). Свободный
+// ввод не запрещён (v-combobox, не v-select) — в базе уже есть значения вроде
+// "ДНР г. Донецк", ломать их нельзя. Список подсказок считается от текста,
+// который печатает пользователь (locationCitySearch, см. @update:search в
+// шаблоне), а не от полного каталога (~3 тыс. записей) — no-filter на
+// v-combobox отключает встроенную фильтрацию Vuetify, чтобы не фильтровать
+// уже отфильтрованный (и уже ограниченный по количеству) список повторно.
+const locationCitySearch = ref('')
+const locationCityItems = computed(() =>
+  searchCities(locationCitySearch.value || '', 30).map(cityDisplayLabel)
+)
+
+// Отдельное поле-справочник «Место постоянной приписки ТС» (home_base_city,
+// доделка 2026-09) — тот же каталог/поиск, но независимый ref для search-текста,
+// иначе ввод в одном автодополнении сбрасывал бы список подсказок другого.
+const homeBaseCitySearch = ref('')
+const homeBaseCityItems = computed(() =>
+  searchCities(homeBaseCitySearch.value || '', 30).map(cityDisplayLabel)
+)
+
 // ─────────────── Slice-2 widget state ───────────────
 
 const odometerRows = ref<OdometerRow[]>([])
 const lastChecklist = ref<Checklist | null>(null)
 const fieldHistory = ref<FieldHistoryItem[]>([])
 const photoCount = ref<number | null>(null)
+// Hero banner: превью самого свежего загруженного фото (kind='photo'), если оно есть.
+const heroPhotoUrl = ref<string | null>(null)
+// Текущее значение «Кузов» для картинки в hero-плашке — смотрим на форму
+// (реактивные несохранённые правки пользователя), а не на уже сохранённый
+// vehicle. Пока форма не проинициализирована (fillForm ещё не отработал) —
+// запасной вариант vehicle.body_type. «Тип ТС» на картинку больше не влияет:
+// это характеристика из ПТС, а не источник силуэта (запрос владельца, 2026-09).
+const heroBodyType = computed(() => form.body_type || vehicle.value?.body_type || null)
+
+// Есть ли что показать силуэтом по кузову — иначе заглушка-камера.
+// resolveBodyTypeIcon сам отсеивает пустое значение и NO_DATA_LABEL.
+const heroHasSilhouette = computed(() => !!resolveBodyTypeIcon(heroBodyType.value))
 
 // Sparkline computed — last 12 odometer records sorted asc by date
 const sparkPoints = computed(() => {
@@ -1443,6 +2059,44 @@ interface VehicleForm {
   props_paint_condition: string
   props_defect_description: string
   props_note: string
+
+  // ── Autoblock: новые поля (§1 контракта) ──
+  body_type: string
+  pts_category: string
+  insurance_company: string
+  insurance_policy_number: string
+  ownership_basis: string
+  ownership_doc_number: string
+  ownership_doc_date: string
+  owner_since: string
+  location_city: string
+  location_address: string
+  home_base_city: string
+  responsible_name: string
+  pts_kind: string | null
+  sts_issued_at: string
+  tech_inspection_status: string
+  tech_inspection_last_date: string
+  pass_zo: string
+  pass_zo_until: string
+  pass_ho: string
+  pass_ho_until: string
+  pass_dnr: string
+  pass_dnr_until: string
+  pass_lnr: string
+  pass_lnr_until: string
+  pass_moscow: string
+  pass_moscow_until: string
+  has_spare_tires: boolean
+  tires_condition: string
+  has_mirrors: boolean
+  first_aid_kit_until: string
+  extinguisher_check_date: string
+  tracker_paid_until: string
+  has_tachograph: boolean
+  tachograph_check_date: string
+  repair_required: boolean
+  tech_condition_info: string
 }
 
 const form = reactive<VehicleForm>({
@@ -1487,6 +2141,43 @@ const form = reactive<VehicleForm>({
   props_paint_condition: '',
   props_defect_description: '',
   props_note: '',
+
+  body_type: '',
+  pts_category: '',
+  insurance_company: '',
+  insurance_policy_number: '',
+  ownership_basis: '',
+  ownership_doc_number: '',
+  ownership_doc_date: '',
+  owner_since: '',
+  location_city: '',
+  location_address: '',
+  home_base_city: '',
+  responsible_name: '',
+  pts_kind: null,
+  sts_issued_at: '',
+  tech_inspection_status: '',
+  tech_inspection_last_date: '',
+  pass_zo: '',
+  pass_zo_until: '',
+  pass_ho: '',
+  pass_ho_until: '',
+  pass_dnr: '',
+  pass_dnr_until: '',
+  pass_lnr: '',
+  pass_lnr_until: '',
+  pass_moscow: '',
+  pass_moscow_until: '',
+  has_spare_tires: false,
+  tires_condition: '',
+  has_mirrors: false,
+  first_aid_kit_until: '',
+  extinguisher_check_date: '',
+  tracker_paid_until: '',
+  has_tachograph: false,
+  tachograph_check_date: '',
+  repair_required: false,
+  tech_condition_info: '',
 })
 
 // ─────────────── isDirty ───────────────
@@ -1551,6 +2242,44 @@ function fillForm(v: Vehicle) {
   form.props_paint_condition   = v.props?.paint_condition ?? ''
   form.props_defect_description = v.props?.defect_description ?? ''
   form.props_note              = v.props?.note ?? ''
+
+  form.body_type               = v.body_type ?? ''
+  form.pts_category            = v.pts_category ?? ''
+  form.insurance_company       = v.insurance_company ?? ''
+  form.insurance_policy_number = v.insurance_policy_number ?? ''
+  form.ownership_basis         = v.ownership_basis ?? ''
+  form.ownership_doc_number    = v.ownership_doc_number ?? ''
+  form.ownership_doc_date      = toDateInput(v.ownership_doc_date)
+  form.owner_since             = toDateInput(v.owner_since)
+  form.location_city           = v.location_city ?? ''
+  form.location_address        = v.location_address ?? ''
+  form.home_base_city          = v.home_base_city ?? ''
+  form.responsible_name        = v.responsible_name ?? ''
+  form.pts_kind                = v.pts_kind ?? null
+  form.sts_issued_at           = toDateInput(v.sts_issued_at)
+  form.tech_inspection_status  = v.tech_inspection_status ?? ''
+  form.tech_inspection_last_date = toDateInput(v.tech_inspection_last_date)
+  form.pass_zo                 = v.pass_zo ?? ''
+  form.pass_zo_until           = toDateInput(v.pass_zo_until)
+  form.pass_ho                 = v.pass_ho ?? ''
+  form.pass_ho_until           = toDateInput(v.pass_ho_until)
+  form.pass_dnr                = v.pass_dnr ?? ''
+  form.pass_dnr_until          = toDateInput(v.pass_dnr_until)
+  form.pass_lnr                = v.pass_lnr ?? ''
+  form.pass_lnr_until          = toDateInput(v.pass_lnr_until)
+  form.pass_moscow             = v.pass_moscow ?? ''
+  form.pass_moscow_until       = toDateInput(v.pass_moscow_until)
+  form.has_spare_tires         = !!v.has_spare_tires
+  form.tires_condition         = v.tires_condition ?? ''
+  form.has_mirrors             = !!v.has_mirrors
+  form.first_aid_kit_until     = toDateInput(v.first_aid_kit_until)
+  form.extinguisher_check_date = toDateInput(v.extinguisher_check_date)
+  form.tracker_paid_until      = toDateInput(v.tracker_paid_until)
+  form.has_tachograph          = !!v.has_tachograph
+  form.tachograph_check_date   = toDateInput(v.tachograph_check_date)
+  form.repair_required         = !!v.repair_required
+  form.tech_condition_info     = v.tech_condition_info ?? ''
+
   originalSnapshot.value = formSnapshot()
 }
 
@@ -1620,6 +2349,47 @@ function buildDelta(): Record<string, any> {
   boolField('has_first_aid_kit', v.has_first_aid_kit)
   boolField('has_spare_wheel', v.has_spare_wheel)
   boolField('has_extinguisher', v.has_extinguisher)
+
+  // ── Autoblock: новые поля (§1 контракта) ──
+  strField('purchase_info', v.purchase_info)
+  strField('assignment_doc_number', v.assignment_doc_number)
+  dateField('assignment_doc_date', v.assignment_doc_date)
+  strField('body_type', v.body_type)
+  strField('pts_category', v.pts_category)
+  strField('insurance_company', v.insurance_company)
+  strField('insurance_policy_number', v.insurance_policy_number)
+  strField('ownership_basis', v.ownership_basis)
+  strField('ownership_doc_number', v.ownership_doc_number)
+  dateField('ownership_doc_date', v.ownership_doc_date)
+  dateField('owner_since', v.owner_since)
+  strField('location_city', v.location_city)
+  strField('location_address', v.location_address)
+  strField('home_base_city', v.home_base_city)
+  strField('responsible_name', v.responsible_name)
+  strField('pts_kind', v.pts_kind)
+  dateField('sts_issued_at', v.sts_issued_at)
+  strField('tech_inspection_status', v.tech_inspection_status)
+  dateField('tech_inspection_last_date', v.tech_inspection_last_date)
+  strField('pass_zo', v.pass_zo)
+  dateField('pass_zo_until', v.pass_zo_until)
+  strField('pass_ho', v.pass_ho)
+  dateField('pass_ho_until', v.pass_ho_until)
+  strField('pass_dnr', v.pass_dnr)
+  dateField('pass_dnr_until', v.pass_dnr_until)
+  strField('pass_lnr', v.pass_lnr)
+  dateField('pass_lnr_until', v.pass_lnr_until)
+  strField('pass_moscow', v.pass_moscow)
+  dateField('pass_moscow_until', v.pass_moscow_until)
+  boolField('has_spare_tires', v.has_spare_tires)
+  strField('tires_condition', v.tires_condition)
+  boolField('has_mirrors', v.has_mirrors)
+  dateField('first_aid_kit_until', v.first_aid_kit_until)
+  dateField('extinguisher_check_date', v.extinguisher_check_date)
+  dateField('tracker_paid_until', v.tracker_paid_until)
+  boolField('has_tachograph', v.has_tachograph)
+  dateField('tachograph_check_date', v.tachograph_check_date)
+  boolField('repair_required', v.repair_required)
+  strField('tech_condition_info', v.tech_condition_info)
 
   // JSONB props — send full object if any prop field changed
   const origProps = v.props ?? {}
@@ -1784,9 +2554,15 @@ async function loadVehicle(id: number) {
 }
 
 async function loadOrgs() {
+  // /organizations/ требует superadmin — обычному admin отдаёт пустой список,
+  // и v-autocomplete тогда показывает "сырой" id вместо названия организации
+  // (баг подтверждён на карточке ТС: «Владелец» = «1»). Используем /auth/my-orgs
+  // — тот же обход, что и в VehicleListView.vue::loadOrgs(): admin получает
+  // свои организации через UserOrgAccess, superadmin — все. Ответ — массив
+  // объектов [{id,name,is_active}], не {items:[]}.
   try {
-    const data = await apiFetch<{ items: OrgItem[] }>('/organizations/?limit=500')
-    orgsList.value = data.items ?? []
+    const data = await apiFetch<OrgItem[] | { items: OrgItem[] }>('/auth/my-orgs')
+    orgsList.value = Array.isArray(data) ? data : (data?.items ?? [])
   } catch {}
 }
 
@@ -1859,10 +2635,38 @@ async function loadFieldHistory(id: number) {
 
 async function loadPhotoCount(id: number) {
   try {
-    const data = await apiFetch<unknown[]>(`/vehicle-attachments/?vehicle_id=${id}`)
-    photoCount.value = Array.isArray(data) ? data.length : null
+    const data = await apiFetch<Array<{ id: number; kind?: string }>>(`/vehicle-attachments/?vehicle_id=${id}`)
+    const list = Array.isArray(data) ? data : []
+    photoCount.value = list.length
+    // Список приходит уже отсортированным backend'ом: kind asc, uploaded_at desc —
+    // тот же порядок, что использует вкладка «Фото» (VehiclePhotosTab.vue) после
+    // клиентской фильтрации по kind==='photo'. Первый элемент после фильтра — самое
+    // свежее загруженное фото.
+    const firstPhoto = list.find((a) => a.kind === 'photo') ?? null
+    if (firstPhoto) {
+      loadHeroPhoto(firstPhoto.id)
+    } else {
+      if (heroPhotoUrl.value) URL.revokeObjectURL(heroPhotoUrl.value)
+      heroPhotoUrl.value = null
+    }
   } catch {
     photoCount.value = null
+  }
+}
+
+async function loadHeroPhoto(attId: number) {
+  try {
+    const token = localStorage.getItem('auth_token')
+    const res = await fetch(`/api/vehicle-attachments/${attId}/download`, {
+      credentials: 'include',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) return
+    const blob = await res.blob()
+    if (heroPhotoUrl.value) URL.revokeObjectURL(heroPhotoUrl.value)
+    heroPhotoUrl.value = URL.createObjectURL(blob)
+  } catch {
+    // тихо — плашка откатится на силуэт/заглушку по приоритету в шаблоне
   }
 }
 
@@ -1939,6 +2743,11 @@ function showSnack(text: string, color: ToastType = 'success') {
   toast.addToast(text, color)
 }
 
+// ─────────────── Состав полей карточки (Autoblock) ───────────────
+
+const { canManage: canManageFields, isFieldVisible, isGroupVisible, getFieldOptions, getFieldLabel, getFieldSourceHint, getRelatedBlockHint, loadFields: loadVehicleFieldsConfig } = useVehicleFields()
+const fieldsDialogOpen = ref(false)
+
 // ─────────────── Helpers ───────────────
 
 function formatDate(d?: string | null): string {
@@ -1955,17 +2764,30 @@ onMounted(() => {
     loadOrgs()
     loadTransferHistory(id)
     loadSuggestions()
+    loadCitiesCatalog()
     // Slice-2 widget loaders
     loadOdometer(id)
     loadLastChecklist(id)
     loadFieldHistory(id)
     loadPhotoCount(id)
+    loadVehicleFieldsConfig()
   }
 })
 
 watch(() => route.params.id, (newId) => {
   const id = Number(newId)
   if (id) loadVehicle(id)
+})
+
+// Ушли с вкладки «Фото» — там могли загрузить/удалить фото, обновляем превью в hero-плашке.
+watch(activeTab, (val, oldVal) => {
+  if (oldVal === 'photos' && val !== 'photos' && vehicleId.value) {
+    loadPhotoCount(vehicleId.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (heroPhotoUrl.value) URL.revokeObjectURL(heroPhotoUrl.value)
 })
 </script>
 
@@ -1991,6 +2813,19 @@ watch(() => route.params.id, (newId) => {
   .vp-hero__status { text-align: left; }
 }
 
+/* ─── Save bar ─────────────────────────────────────────────────
+   На узких экранах глобальный чат-FAB (App.vue, fixed bottom:90px right:24px,
+   48×48) перекрывает правый край кнопки «Сохранить изменения». FAB общий для
+   всего приложения — трогать его нельзя, поэтому здесь просто резервируем
+   справа зону шире самого FAB (48px + отступ 24px + запас), чтобы кнопка не
+   заходила под него. */
+@media (max-width: 768px) {
+  .vp-save-bar {
+    padding-right: 80px;
+    flex-wrap: wrap;
+  }
+}
+
 .vp-hero__photo {
   width: 120px;
   height: 80px;
@@ -2001,8 +2836,17 @@ watch(() => route.params.id, (newId) => {
   justify-content: center;
   background: rgba(0,0,0,0.04);
   flex-shrink: 0;
+  overflow: hidden;
 }
+.vp-hero__photo--clickable { cursor: pointer; }
+.vp-hero__photo--clickable:hover { filter: brightness(0.96); }
 .vp-hero__photo-icon { opacity: 0.35; }
+.vp-hero__photo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
 
 .vp-hero__title {
   font-size: 1.3rem;
@@ -2080,6 +2924,10 @@ watch(() => route.params.id, (newId) => {
   background: rgba(0,0,0,0.02);
 }
 .vp-qs--warn { box-shadow: inset 0 0 0 1px rgba(246,179,74,0.4); }
+.vp-qs--clickable { cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+.vp-qs--clickable:hover { background: rgba(0,0,0,0.05); border-color: rgba(0,0,0,0.16); }
+
+.field-hint-icon { cursor: help; opacity: 0.9; vertical-align: middle; }
 
 .vp-qs__label {
   font-size: 11px;
@@ -2149,6 +2997,41 @@ watch(() => route.params.id, (newId) => {
 .vp-mono-field :deep(.v-field__input) {
   font-family: 'JetBrains Mono', 'Courier New', monospace;
   font-size: 12px;
+}
+/* Владелец/Эксплуатант: полные юрлица-названия ("ДОНЕЦКОЕ РЕГИОНАЛЬНОЕ
+   ОТДЕЛЕНИЕ ВСЕРОССИЙСКОЙ ОБЩЕСТВЕННОЙ МОЛОДЕЖНОЙ ОРГАНИЗАЦИИ...") могут
+   растянуть строку карточки на весь экран — зажимаем визуально до 2 строк
+   с многоточием (тот же приём, что .vl-clamp-2 в VehicleListView.vue),
+   полный текст — во всплывающей подсказке (v-tooltip в шаблоне). Vuetify
+   рендерит выбранное значение внутри .v-autocomplete__selection-text —
+   именно этот узел (а не .v-field__input, он лишь flex-обёртка) нужно
+   клампить, иначе побеждает встроенный однострочный white-space:nowrap. */
+.vp-org-field :deep(.v-field__input) {
+  align-items: flex-start;
+  height: auto;
+  min-height: 28px !important;
+}
+.vp-org-field :deep(.v-autocomplete__selection) {
+  max-width: 100%;
+}
+.vp-org-field :deep(.v-autocomplete__selection-text) {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal;
+  line-height: 1.3;
+  max-height: 2.6em;
+  text-align: right;
+}
+/* Скрыть невидимый текстовый input рядом с выбранным значением — при двух
+   строках текста он занимал бы отдельное место во flex-строке и портил
+   выравнивание по правому краю. */
+.vp-org-field :deep(.v-autocomplete__selection) + input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
 }
 
 /* ─── Check grid ───────────────────────────────────────────── */
@@ -2369,6 +3252,7 @@ watch(() => route.params.id, (newId) => {
   border-color: rgba(255,255,255,0.08);
 }
 .v-theme--dark .vp-qs--warn { box-shadow: inset 0 0 0 1px rgba(246,179,74,0.35); }
+.v-theme--dark .vp-qs--clickable:hover { background: rgba(255,255,255,0.07); border-color: rgba(255,255,255,0.16); }
 
 .v-theme--dark .vp-box { background: rgba(255,255,255,0.03) !important; }
 

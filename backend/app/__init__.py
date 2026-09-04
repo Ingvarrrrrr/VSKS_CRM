@@ -43,10 +43,12 @@ from .routers import vehicle_repairs, vehicle_odometer, fuel_logs, trips
 from .routers import external_drivers
 from .routers import vehicles_import as vehicles_import_router
 from .routers import vehicle_fields as vehicle_fields_router
+from .routers import body_type_icons as body_type_icons_router
 from .routers import vehicle_fines
 from .routers import fleet_documents as fleet_documents_router
 from .routers import checklists as checklists_router
 from .routers import incidents as incidents_router
+from .routers import vehicle_passes as vehicle_passes_router
 from .models import platform_publication  # ensure table is registered
 from .models import subsidy_allocation    # ensure purchase_subsidy_allocations table is created
 from .models import contract_subsidy      # ensure contract_subsidies table is created
@@ -232,10 +234,13 @@ async def _create_vehicle_alert_tasks(db) -> None:
             select(Task).where(Task.system_tag == tag, Task.status.in_(OPEN_STATUSES))
         )).scalar_one_or_none()
         if not exists:
+            # Автоблок (2026-09): гос. номер необязателен — заголовок/описание задачи
+            # не должны показывать "None", если у машины его нет (опознаём по VIN).
+            _v_ident = v.plate or v.vin or f"ТС #{v.id}"
             db.add(Task(
-                title=f"Продлить ОСАГО {v.plate}",
+                title=f"Продлить ОСАГО {_v_ident}",
                 description=(
-                    f"ОСАГО на {v.brand or ''} {v.model or ''} ({v.plate}) "
+                    f"ОСАГО на {v.brand or ''} {v.model or ''} ({_v_ident}) "
                     f"истекает {v.insurance_until.isoformat()}"
                 ),
                 category="Автотранспорт",
@@ -265,10 +270,11 @@ async def _create_vehicle_alert_tasks(db) -> None:
         if not exists:
             km_left = (v.next_to_km or 0) - (v.current_odometer_km or 0)
             due = today + timedelta(days=14)
+            _v_ident = v.plate or v.vin or f"ТС #{v.id}"
             db.add(Task(
-                title=f"Пройти ТО {v.plate}",
+                title=f"Пройти ТО {_v_ident}",
                 description=(
-                    f"ТО для {v.brand or ''} {v.model or ''} ({v.plate}) "
+                    f"ТО для {v.brand or ''} {v.model or ''} ({_v_ident}) "
                     f"через {km_left} км (next_to_km={v.next_to_km}, текущий пробег={v.current_odometer_km})"
                 ),
                 category="Автотранспорт",
@@ -2040,6 +2046,7 @@ app.include_router(external_drivers.router)            # /api/external-drivers
 app.include_router(vehicles_import_router.router)      # /api/vehicles-import (BEFORE vehicles catch-all)
 app.include_router(vehicles_import_router.vehicles_template_router)  # /api/vehicles/import-template (BEFORE vehicles catch-all)
 app.include_router(vehicle_fields_router.router)       # /api/vehicle-fields (Автоблок §4)
+app.include_router(body_type_icons_router.router)      # /api/body-type-icons (редактор значков кузова, 2026-09)
 app.include_router(vehicles.router)                    # /api/vehicles (catch-all /{vehicle_id:int})
 app.include_router(vehicle_attachments.router)         # /api/vehicle-attachments
 app.include_router(repair_attachments.router)          # /api/repair-attachments
@@ -2048,6 +2055,7 @@ app.include_router(vehicle_odometer.router)            # /api/vehicle-odometer
 app.include_router(fuel_logs.router)                   # /api/fuel-logs
 app.include_router(trips.router)                       # /api/trips
 app.include_router(vehicle_fines.router)               # /api/vehicle-fines
+app.include_router(vehicle_passes_router.router)       # /api/vehicle-passes (2026-09)
 app.include_router(fleet_documents_router.router)      # /api/fleet-documents
 app.include_router(checklists_router.router)           # /api/checklists
 app.include_router(incidents_router.router)            # /api/incidents

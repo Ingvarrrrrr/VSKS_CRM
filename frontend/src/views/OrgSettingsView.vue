@@ -121,6 +121,105 @@
       </v-card-actions>
     </v-card>
 
+    <!-- Актуальность цен (владелец, сессия 2026-08-29: «срок актуальности настраивается
+         по категориям + поправка на курс доллара» — вся логика на backend, здесь только
+         настройка правил). -->
+    <v-card variant="outlined" class="mt-6">
+      <v-card-title class="text-subtitle-1 font-weight-bold px-6 pt-5 pb-3 d-flex align-center gap-2">
+        <v-icon icon="mdi-cash-clock" color="primary" />
+        Актуальность цен
+      </v-card-title>
+      <v-divider />
+      <v-card-text class="px-6 py-4">
+        <v-alert type="info" variant="tonal" density="compact" class="mb-4">
+          Если курс доллара к рублю изменился более чем на 10% с даты актуализации — срок автоматически сокращается до 30 дней.
+        </v-alert>
+        <v-text-field
+          v-model.number="priceFreshnessForm.default_ttl_days"
+          label="Срок по умолчанию, дней" type="number"
+          variant="outlined" density="compact" style="max-width:260px" class="mb-4"
+        />
+
+        <div class="text-body-2 font-weight-medium mb-2">Правила по категориям / видам товара</div>
+        <div v-if="!priceFreshnessForm.rules.length" class="text-caption text-medium-emphasis mb-2">
+          Правил пока нет — используется срок по умолчанию для всех товаров.
+        </div>
+        <div v-for="(rule, i) in priceFreshnessForm.rules" :key="i" class="d-flex gap-2 mb-2 align-center flex-wrap">
+          <v-select
+            v-model="rule.scope_kind" :items="scopeKindOptions"
+            label="Область" variant="outlined" density="compact" hide-details
+            style="min-width:170px"
+          />
+          <v-text-field
+            v-model="rule.scope_key"
+            label="Значение" variant="outlined" density="compact" hide-details
+            placeholder="напр. Продукты питания"
+            class="flex-grow-1" style="min-width:200px"
+          />
+          <v-text-field
+            v-model.number="rule.ttl_days"
+            label="Срок, дней" type="number" variant="outlined" density="compact" hide-details
+            style="max-width:140px"
+          />
+          <v-btn icon="mdi-minus-circle" variant="text" size="small" color="error"
+            @click="priceFreshnessForm.rules.splice(i, 1)" />
+        </div>
+        <v-btn prepend-icon="mdi-plus" variant="tonal" size="small" color="primary" @click="addPriceFreshnessRule">
+          Добавить правило
+        </v-btn>
+      </v-card-text>
+      <v-card-actions class="px-6 pb-4">
+        <v-btn color="primary" variant="flat" prepend-icon="mdi-content-save"
+          :loading="priceFreshnessSaving" @click="savePriceFreshnessRules">
+          Сохранить настройки актуальности цен
+        </v-btn>
+      </v-card-actions>
+    </v-card>
+
+    <!-- Поля карточки ТС -->
+    <v-card variant="outlined" class="mt-6">
+      <v-card-title class="text-subtitle-1 font-weight-bold px-6 pt-5 pb-3 d-flex align-center gap-2">
+        <v-icon icon="mdi-tune-variant" color="primary" />
+        Поля карточки ТС
+      </v-card-title>
+      <v-divider />
+      <v-card-text class="px-6 py-4">
+        <p class="text-body-2 text-medium-emphasis mb-0">
+          Полный реестр полей карточки транспортного средства (документы, пропуска, оснащение и т.д.) —
+          выберите, какие из них нужны вашей организации. Скрытые поля не удаляются, данные сохраняются в базе.
+        </p>
+      </v-card-text>
+      <v-card-actions class="px-6 pb-4">
+        <v-btn color="primary" variant="tonal" prepend-icon="mdi-tune-variant" @click="vehicleFieldsDialog = true">
+          Настроить состав полей
+        </v-btn>
+      </v-card-actions>
+    </v-card>
+
+    <VehicleFieldsDialog v-model="vehicleFieldsDialog" />
+
+    <!-- Значки кузова ТС -->
+    <v-card variant="outlined" class="mt-6">
+      <v-card-title class="text-subtitle-1 font-weight-bold px-6 pt-5 pb-3 d-flex align-center gap-2">
+        <v-icon icon="mdi-image-multiple-outline" color="primary" />
+        Значки кузова ТС
+      </v-card-title>
+      <v-divider />
+      <v-card-text class="px-6 py-4">
+        <p class="text-body-2 text-medium-emphasis mb-0">
+          Значок, который показывается в плашке карточки ТС для каждого значения поля «Кузов» —
+          можно посмотреть весь список и заменить любой значок на другой.
+        </p>
+      </v-card-text>
+      <v-card-actions class="px-6 pb-4">
+        <v-btn color="primary" variant="tonal" prepend-icon="mdi-image-multiple-outline" @click="bodyIconsDialog = true">
+          Настроить значки кузова
+        </v-btn>
+      </v-card-actions>
+    </v-card>
+
+    <VehicleBodyIconsDialog v-model="bodyIconsDialog" />
+
     <!-- Warning dialog -->
     <v-dialog v-model="warnDialog.show" max-width="480" persistent>
       <v-card>
@@ -152,8 +251,12 @@ import { ref, reactive, onMounted } from 'vue'
 import { useOrgConfig } from '@/composables/useOrgConfig'
 import { apiFetch } from '@/api'
 import { useToast, type ToastType } from '@/composables/useToast'
+import VehicleFieldsDialog from '@/components/vehicles/VehicleFieldsDialog.vue'
+import VehicleBodyIconsDialog from '@/components/vehicles/VehicleBodyIconsDialog.vue'
 
 const { hiddenSections, loadConfig, updateConfig, loading: configLoading } = useOrgConfig()
+const vehicleFieldsDialog = ref(false)
+const bodyIconsDialog = ref(false)
 
 interface Section {
   key: string
@@ -320,9 +423,53 @@ async function testSmtp() {
   }
 }
 
+// ── Актуальность цен (владелец, сессия 2026-08-29) ───────────────────────────
+interface PriceFreshnessRule { id?: number; scope_kind: 'default' | 'category' | 'product_type' | 'item_kind'; scope_key: string; ttl_days: number }
+const scopeKindOptions = [
+  { title: 'Категория', value: 'category' },
+  { title: 'Вид товара', value: 'product_type' },
+  { title: 'Товар/услуга', value: 'item_kind' },
+]
+const priceFreshnessForm = reactive({ default_ttl_days: 60 as number, rules: [] as PriceFreshnessRule[] })
+const priceFreshnessSaving = ref(false)
+
+function addPriceFreshnessRule() {
+  priceFreshnessForm.rules.push({ scope_kind: 'category', scope_key: '', ttl_days: priceFreshnessForm.default_ttl_days })
+}
+
+async function loadPriceFreshnessRules() {
+  try {
+    const data = await apiFetch<{ default_ttl_days: number; rules: PriceFreshnessRule[] }>('/price-freshness/rules')
+    priceFreshnessForm.default_ttl_days = data?.default_ttl_days ?? 60
+    priceFreshnessForm.rules = (data?.rules || []).filter(r => r.scope_kind !== 'default').map(r => ({ ...r }))
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.message || 'Ошибка загрузки настроек актуальности цен', 'error')
+  }
+}
+
+async function savePriceFreshnessRules() {
+  priceFreshnessSaving.value = true
+  try {
+    const rules: PriceFreshnessRule[] = [
+      { scope_kind: 'default', scope_key: '', ttl_days: priceFreshnessForm.default_ttl_days },
+      ...priceFreshnessForm.rules
+        .filter(r => r.scope_key?.trim() && r.ttl_days)
+        .map(r => ({ id: r.id, scope_kind: r.scope_kind, scope_key: r.scope_key.trim(), ttl_days: r.ttl_days })),
+    ]
+    await apiFetch('/price-freshness/rules', { method: 'PUT', body: { rules } })
+    showSnack('Настройки актуальности цен сохранены')
+    await loadPriceFreshnessRules()
+  } catch (e: any) {
+    showSnack(e?.payload?.message || e?.detail || `Ошибка сохранения (HTTP ${e?.status ?? '?'})`, 'error')
+  } finally {
+    priceFreshnessSaving.value = false
+  }
+}
+
 onMounted(async () => {
   await loadConfig()
   localHidden.value = new Set(hiddenSections.value)
   await loadSmtp()
+  await loadPriceFreshnessRules()
 })
 </script>

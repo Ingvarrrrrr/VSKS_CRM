@@ -108,7 +108,10 @@ async def list_fleet_documents(
 
     AssignedOrg = aliased(Organization)
     q = (
-        select(FleetDocument, Vehicle.plate, Vehicle.brand, Vehicle.model, Vehicle.type, AssignedOrg.name.label("op_name"))
+        select(
+            FleetDocument, Vehicle.plate, Vehicle.brand, Vehicle.model, Vehicle.type,
+            AssignedOrg.name.label("op_name"), Vehicle.body_type,
+        )
         .outerjoin(Vehicle, Vehicle.id == FleetDocument.vehicle_id)
         .outerjoin(AssignedOrg, AssignedOrg.id == Vehicle.assigned_org_id)
     )
@@ -142,6 +145,7 @@ async def list_fleet_documents(
         out.vehicle_model = f"{row[2] or ''} {row[3] or ''}".strip() or None
         out.vehicle_type = row[4]
         out.operator_org_name = row[5]
+        out.vehicle_body_type = row[6]
         out.has_file = bool(doc.file_url or doc.file_name)
         result.append(out)
     return result

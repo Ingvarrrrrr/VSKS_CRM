@@ -36,6 +36,21 @@
         >
           <span v-if="brokenPct >= 12">{{ segs.broken }}</span>
         </div>
+        <!-- 2026-09 (владелец: «сумма сегментов должна равняться числу справа»):
+             машины без заполненного Vehicle.state не попадали НИ В ОДИН сегмент —
+             у мест, где нет донецких/курских машин, полоса была почти пустой, хотя
+             count справа показывал реальное число (владелец: «Место не указано» 34
+             машины — полоса должна быть заполнена целиком). Backend уже кладёт их в
+             by_state.unknown (см. vehicles_dashboard.py: r.state or "unknown") —
+             фронт просто не читал этот ключ. Нейтральный серый — не путать с in_repair/broken. -->
+        <div
+          v-if="segs.unspecified > 0"
+          class="seg seg--unspecified"
+          :style="{ flex: segs.unspecified }"
+          @click.stop="$emit('segment-click', { region, state: 'unspecified' })"
+        >
+          <span v-if="unspecifiedPct >= 12">{{ segs.unspecified }} не указ.</span>
+        </div>
       </div>
     </div>
     <div class="stacked-region__count">{{ count }}</div>
@@ -56,6 +71,9 @@ const props = defineProps<{
   needsRepair: number
   destroyed: number
   utilized: number
+  // 2026-09: машины с пустым/неизвестным Vehicle.state (см. комментарий у сегмента
+  // выше) — раньше молча выпадали из полосы, сумма сегментов не сходилась с count.
+  unspecified?: number
 }>()
 
 defineEmits<{
@@ -66,21 +84,24 @@ const segs = computed(() => ({
   working: props.working,
   repair: props.inRepair + props.needsRepair,
   broken: props.broken + props.destroyed + props.utilized,
+  unspecified: props.unspecified || 0,
 }))
 
 const trackPct = computed(() =>
   props.maxCount > 0 ? Math.max(6, Math.round((props.count / props.maxCount) * 100)) : 6
 )
 
-const total = computed(() => segs.value.working + segs.value.repair + segs.value.broken || 1)
-const workingPct = computed(() => (segs.value.working / total.value) * 100)
-const repairPct  = computed(() => (segs.value.repair  / total.value) * 100)
-const brokenPct  = computed(() => (segs.value.broken  / total.value) * 100)
+const total = computed(() => segs.value.working + segs.value.repair + segs.value.broken + segs.value.unspecified || 1)
+const workingPct     = computed(() => (segs.value.working     / total.value) * 100)
+const repairPct      = computed(() => (segs.value.repair      / total.value) * 100)
+const brokenPct      = computed(() => (segs.value.broken      / total.value) * 100)
+const unspecifiedPct = computed(() => (segs.value.unspecified / total.value) * 100)
 
 const tooltip = computed(() =>
   `Рабочих: ${segs.value.working}` +
   ` · В ремонте / требует ремонта: ${segs.value.repair}` +
-  ` · Не на ходу / списано: ${segs.value.broken}`
+  ` · Не на ходу / списано: ${segs.value.broken}` +
+  ` · Состояние не указано: ${segs.value.unspecified}`
 )
 </script>
 
@@ -150,6 +171,16 @@ const tooltip = computed(() =>
 }
 .seg--broken {
   background: linear-gradient(90deg, #ff5b6a, #ff3b8b);
+}
+/* Нейтральный приглушённый серый — сознательно НЕ похож на working/repair/broken,
+   чтобы «состояние не указано» не читалось как ещё одна оценка состояния парка. */
+.seg--unspecified {
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(148, 163, 184, 0.55) 0px, rgba(148, 163, 184, 0.55) 6px,
+    rgba(148, 163, 184, 0.35) 6px, rgba(148, 163, 184, 0.35) 12px
+  );
+  color: rgba(15, 18, 26, 0.85);
 }
 
 .stacked-region__count {

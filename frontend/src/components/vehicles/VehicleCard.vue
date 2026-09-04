@@ -3,7 +3,20 @@
     <!-- Hero: icon + status -->
     <div class="fleet-card__hero">
       <div class="fleet-card__veh-icon">
-        <VehicleTypeIcon :type="vehicleType" :size="60" :style="{ color: vehicleColor }" />
+        <!-- 2026-09: иконка рисуется по «Кузову» (body_type), а не по «Типу ТС» —
+             единое правило с карточкой ТС (VehicleDetailView.vue hero-плашка).
+             `type` намеренно не передаётся: если кузов не заполнен/не распознан,
+             VehicleTypeIcon откатывается на нейтральный силуэт «other», а не на
+             силуэт по типу — иначе одна и та же машина снова выглядела бы по-разному
+             в разных экранах в зависимости от того, какое поле заполнено.
+             Раскраска по состоянию (:style color) убрана — она красила ТОЛЬКО
+             MDI-иконки (v-icon умеет currentColor), а силуэты-PNG (большинство
+             «Кузовов») её игнорировали как img — та же машина оказывалась то
+             цветной, то серой в зависимости от того, нашёлся ли PNG-силуэт.
+             Состояние уже читается рядом по statusLabel/statusClass (плашка
+             «Рабочее»/«В ремонте»/...) — второй, непоследовательный сигнал
+             цветом на самой иконке был лишним. -->
+        <VehicleTypeIcon :body-type="vehicle.body_type" :size="60" />
       </div>
       <div class="fleet-card__hero-right">
         <div class="fleet-status" :class="statusClass">
@@ -229,6 +242,7 @@ const { mobile } = useDisplay()
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 import VehicleTypeIcon from '@/components/vehicles/VehicleTypeIcon.vue'
 import { vehicleCategory, CATEGORY_LABEL } from '@/utils/vehicleCategory'
+import { vehicleTypeLabel } from '@/utils/vehicleLabels'
 
 interface VehicleCardData {
   id?: number
@@ -238,6 +252,7 @@ interface VehicleCardData {
   year?: number
   color?: string
   type?: string
+  body_type?: string | null
   state?: string
   vin?: string
   owner_org_name?: string
@@ -380,20 +395,7 @@ function fmtDateTime(value: string): string {
 }
 
 // ── Vehicle type helpers ─────────────────────────────────────────────────────
-const vehicleType = computed(() => props.vehicle.type || '')
 const category = computed(() => vehicleCategory(props.vehicle.type))
-
-const vehicleColor = computed(() => {
-  switch (props.vehicle.state) {
-    case 'working': return '#22c997'
-    case 'in_repair':
-    case 'needs_repair': return '#f6b34a'
-    case 'broken':
-    case 'destroyed':
-    case 'utilized': return '#ff5b6a'
-    default: return '#6aa6ff'
-  }
-})
 
 const orgColor = computed<string | null>(() =>
   props.vehicle.assigned_org_color || props.vehicle.owner_org_color || null
@@ -424,8 +426,11 @@ const modelYear = computed(() => {
 })
 
 const metaLine = computed(() => {
+  // 2026-09: раньше сюда подставлялся сырой код поля type (напр. "truck_board")
+  // вместо русской подписи — единственное место, где это поле выводится текстом
+  // (иконка теперь берётся из body_type, см. выше).
   const parts = [
-    props.vehicle.type,
+    vehicleTypeLabel(props.vehicle.type),
     props.vehicle.color,
     props.vehicle.owner_org_name,
     props.vehicle.assigned_text,

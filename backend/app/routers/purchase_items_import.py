@@ -938,9 +938,11 @@ async def import_items_mapped_nopid(
 ):
     """Like import-mapped but for new-purchase/wish context.
 
-    Returns parsed items (не создаёт PurchaseItem), но товары upsert'ится в каталог:
-    цена обновляется из файла, категория/вид берутся из файла только если в БД пусто
-    (БД главнее), пишется import_note кто/как/когда загрузил."""
+    Returns parsed items (не создаёт PurchaseItem). Владелец (2026-09-04): пока
+    закупка/заявка не одобрена, в каталог товаров НИЧЕГО не пишем — ни новых
+    карточек, ни обновления цены/категории существующих. product_id всегда
+    null; категория и вид — как есть в файле (сопоставление с каталогом на
+    этом этапе не делается)."""
     if col_item_name < 0:
         raise HTTPException(400, "Не указан столбец Наименование")
 
@@ -1066,12 +1068,6 @@ async def import_items_mapped_nopid(
     skipped_empty = 0
     skipped_junk = 0
 
-    _user_name = getattr(current_user, 'full_name', None) or getattr(current_user, 'username', '') or ''
-    _import_note = (
-        f"Импорт из файла «{file.filename}» (маппинг столбцов), "
-        f"{_user_name}, {datetime.now().strftime('%d.%m.%Y %H:%M')}"
-    )
-
     for row in data_iter:
         item_name = _cell(row, col_item_name)
         if not item_name:
@@ -1105,22 +1101,15 @@ async def import_items_mapped_nopid(
         row_category = _cell(row, col_category) if (col_category is not None and col_category >= 0) else None
         row_product_type = _cell(row, col_product_type) if (col_product_type is not None and col_product_type >= 0) else None
 
-        # Upsert в каталог: цена из файла, категория/вид — БД главнее, примечание об импорте
+        # Владелец (2026-09-04): «на этапе заявки действительно нет смысла вносить
+        # в БД. Вдруг не одобрят». На этом пути закупки/заявки ЕЩЁ НЕТ — в каталог
+        # ничего не пишем (ни новых карточек, ни обновления цены/категории у
+        # существующих). Позиция возвращается с пустым product_id; категория и
+        # вид берутся из файла — БД как источник тут недоступна (сопоставления
+        # с каталогом на этом этапе не делаем вовсе, в отличие от Smart-импорта,
+        # который матчит по имени, но тоже не пишет при отсутствии закупки).
         product_id = None
         eff_category, eff_product_type = row_category, row_product_type
-        try:
-            product_id = await _upsert_product_to_catalog(
-                db, item_name, 'товар', unit_price, description or "",
-                category=row_category, product_type=row_product_type,
-                import_note=_import_note, updated_by=_user_name,
-                unit=unit_raw,
-            )
-            prod = await db.get(Product, product_id)
-            if prod:
-                eff_category = prod.category
-                eff_product_type = prod.product_type
-        except Exception:
-            logging.getLogger(__name__).warning("nopid import: upsert to catalog failed for %r", item_name, exc_info=True)
 
         items_out.append({
             'item_name': item_name[:500],

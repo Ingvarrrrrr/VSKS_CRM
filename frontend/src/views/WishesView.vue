@@ -4293,7 +4293,14 @@ async function runFeoAutosave(): Promise<boolean> {
   // считаем это ошибкой: правка жива в форме, уйдёт обычным сохранением. true — чтобы
   // flushFeoAutosave (п. задачи) не блокировал вызывающих там, где автосейв неприменим.
   if (!feoAutosaveApplicable.value) return true
-  if (!editingWishId.value || wishItemsFeoDirtyList.value.length === 0) return true
+  if (!editingWishId.value) return true
+  // Заявка №54, п.2 (владелец, 2026-09-04): раньше здесь был ранний выход при пустом
+  // wishItemsFeoDirtyList — сценарий «поменял ТОЛЬКО категорию шапки, позиции не
+  // трогал» тихо терял правку: PATCH вообще не уходил. headerDirty теперь тоже
+  // держит запрос живым — существующий путь ниже прекрасно шлёт пустой items: []
+  // (сервер его просто не итерирует) вместе с feo_category_id шапки.
+  const headerDirty = wishFeoHeaderDirty.value
+  if (wishItemsFeoDirtyList.value.length === 0 && !headerDirty) return true
   const items = feoExecutionItemsPayload()
   // Заявка №54 (п.1 задачи 2026-09-04): автосейв построчных правок — единственный
   // МОЛЧАЛИВЫЙ путь на сервер (кнопка «Сохранить ФЭО» рядом требует ручного клика).
@@ -4303,7 +4310,6 @@ async function runFeoAutosave(): Promise<boolean> {
   // (см. описание бага выше и describeFeoExecutionError). Ручная кнопка «Сохранить
   // ФЭО» остаётся — это не второй путь сохранения, а тот же самый apiFetch-вызов,
   // просто включённый в тело автосейва вместо отдельного клика.
-  const headerDirty = wishFeoHeaderDirty.value
   const body: any = { items }
   if (headerDirty) body.feo_category_id = wishFeoSelected.value
   feoAutosaveSaving.value = true
@@ -4354,7 +4360,11 @@ async function flushFeoAutosave(): Promise<boolean> {
     const ok = await feoAutosaveInFlight
     if (!ok) return false
   }
-  if (wishItemsFeoDirtyList.value.length === 0) return true
+  // Заявка №54, п.2: пустой список построчных правок — не повод молчать, если
+  // «грязна» только категория шапки (wishFeoHeaderDirty) — см. runFeoAutosave выше,
+  // он теперь сам умеет отправлять headerDirty с пустым items. Выходим без запроса,
+  // только если не «грязно» вообще ничего.
+  if (wishItemsFeoDirtyList.value.length === 0 && !wishFeoHeaderDirty.value) return true
   return runFeoAutosave()
 }
 

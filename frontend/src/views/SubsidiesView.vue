@@ -29,6 +29,14 @@
           class="mr-2"
           @error="(m) => showSnack(m, 'error')"
         />
+        <v-btn
+          v-if="canEditFeo"
+          variant="outlined" prepend-icon="mdi-download-outline" class="mr-2"
+          title="Шаблон импорта направлений ФЭО (без выбранной субсидии — общий, с нейтральными примерами)"
+          @click="downloadFeoTemplate()"
+        >
+          Шаблон ФЭО
+        </v-btn>
         <v-btn color="primary" prepend-icon="mdi-plus" @click="showAddDialog = true">
           Добавить
         </v-btn>
@@ -491,7 +499,7 @@
               <div class="d-flex align-center ml-auto" style="gap:8px">
                 <v-btn size="small" variant="outlined" color="success" prepend-icon="mdi-file-excel-outline" @click="openExportVersionsDialog">Выгрузить ФЭО</v-btn>
                 <template v-if="canEditFeo">
-                  <v-btn size="small" variant="outlined" prepend-icon="mdi-download-outline" @click="downloadFeoTemplate">Шаблон</v-btn>
+                  <v-btn size="small" variant="outlined" prepend-icon="mdi-download-outline" @click="downloadFeoTemplate(selectedSubsidy?.id, selectedSubsidy?.name)">Шаблон</v-btn>
                   <v-btn size="small" variant="outlined" color="secondary" prepend-icon="mdi-upload-outline" @click="feoImport.show = true">Импорт</v-btn>
                 </template>
                 <!-- 12-04: Version history -->
@@ -10137,15 +10145,20 @@ async function exportFeoToExcel() {
   URL.revokeObjectURL(url)
 }
 
-async function downloadFeoTemplate() {
+async function downloadFeoTemplate(subsidyId?: number, subsidyName?: string) {
   const token = localStorage.getItem('auth_token')
-  const res = await fetch('/api/feo-categories/import/template', {
+  const qs = subsidyId ? `?subsidy_id=${subsidyId}` : ''
+  const res = await fetch(`/api/feo-categories/import/template${qs}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
   if (!res.ok) { showSnack('Ошибка загрузки шаблона', 'error'); return }
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
-  const a = document.createElement('a'); a.href = url; a.download = 'Шаблон_импорта_направлений_ФЭО.xlsx'; a.click()
+  const safeName = subsidyName ? subsidyName.replace(/[\\/:*?"<>|]/g, '_').trim() : ''
+  const fname = safeName
+    ? `Шаблон_импорта_направлений_ФЭО_${safeName}.xlsx`
+    : 'Шаблон_импорта_направлений_ФЭО.xlsx'
+  const a = document.createElement('a'); a.href = url; a.download = fname; a.click()
   URL.revokeObjectURL(url)
 }
 

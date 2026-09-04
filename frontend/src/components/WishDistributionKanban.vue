@@ -257,47 +257,71 @@ async function onApprove() {
 </script>
 
 <style scoped>
+/* Владелец (2026-09-04): окно распределения должно быть шире, карточки —
+   компактнее, а колонки — со СВОЕЙ вертикальной прокруткой (не всего окна),
+   чтобы при resize диалога (см. WishesView.vue) doска вела себя предсказуемо.
+   Цепочка высот: .wish-kanban (100% высоты диалога) → .wish-kanban-columns
+   (flex:1, тянется на всё оставшееся место) → .wish-kanban-col (flex-колонка)
+   → .wish-kanban-drop (flex:1 + overflow-y:auto — здесь и скроллится список
+   карточек колонки, независимо от соседних колонок). */
 .wish-kanban {
   width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.wish-kanban-header {
+  flex: 0 0 auto;
 }
 .wish-kanban-columns {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   overflow-x: auto;
+  overflow-y: hidden;
+  flex: 1 1 auto;
+  min-height: 0;
   padding-bottom: 8px;
 }
 .wish-kanban-col {
-  flex: 0 0 280px;
+  flex: 0 0 220px;
   display: flex;
   flex-direction: column;
+  min-height: 0;
   background: rgba(var(--v-theme-surface-variant), 0.35);
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   border-radius: 8px;
-  padding: 10px;
+  padding: 8px;
 }
 .wish-kanban-col-head {
-  margin-bottom: 8px;
+  flex: 0 0 auto;
+  margin-bottom: 6px;
   padding-bottom: 6px;
   border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
 }
 .wish-kanban-col-title {
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   display: flex;
   align-items: center;
 }
 .wish-kanban-col-meta {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   color: rgba(var(--v-theme-on-surface), 0.65);
   margin-top: 2px;
 }
 .wish-kanban-drop {
-  min-height: 80px;
+  flex: 1 1 auto;
+  min-height: 60px;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 .wish-kanban-ghost {
   opacity: 0.4;
+}
+.wish-kanban-actions {
+  flex: 0 0 auto;
 }
 </style>

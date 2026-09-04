@@ -2,7 +2,7 @@
   <div class="wish-card" :class="{ 'readonly': readonly, 'wish-card-unseen': hasUnseenChanges }">
     <div class="wish-card-photo">
       <img v-if="item._photo_url" :src="item._photo_url" alt="" />
-      <v-icon v-else color="grey-lighten-1" size="32">mdi-package-variant</v-icon>
+      <v-icon v-else color="grey-lighten-1" size="20">mdi-package-variant</v-icon>
     </div>
     <div class="wish-card-body">
       <div class="wish-card-name" :title="item.item_name">{{ item.item_name }}</div>
@@ -60,8 +60,8 @@ function formatMoney(v: number | null | undefined): string {
 <style scoped>
 .wish-card {
   display: flex;
-  gap: 8px;
-  padding: 8px 10px;
+  gap: 6px;
+  padding: 6px 8px;
   background: rgb(var(--v-theme-surface));
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   border-radius: 6px;
@@ -92,8 +92,8 @@ function formatMoney(v: number | null | undefined): string {
   right: 4px;
 }
 .wish-card-photo {
-  width: 48px;
-  height: 48px;
+  width: 34px;
+  height: 34px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -110,19 +110,29 @@ function formatMoney(v: number | null | undefined): string {
   flex: 1;
   min-width: 0;
 }
+/* Владелец (2026-09-04): «названия не переносятся, всё в одну строчку» —
+   было white-space: nowrap + ellipsis (одна строка, обрезано). Раньше это же
+   растягивало карточку по ширине текста внутри flex-строки и приводило к
+   горизонтальной прокрутке доски. Перенос в 2 строки с line-clamp — тот же
+   паттерн, что уже используют другие канбаны в проекте (PurchasesKanban.vue,
+   TasksKanban.vue): полное имя остаётся в title (см. шаблон). */
 .wish-card-name {
   font-weight: 500;
-  font-size: 0.875rem;
+  font-size: 0.75rem;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-word;
 }
 .wish-card-meta {
   display: flex;
   justify-content: space-between;
-  font-size: 0.75rem;
+  font-size: 0.68rem;
   color: rgba(var(--v-theme-on-surface), 0.7);
   margin-top: 2px;
+  gap: 6px;
 }
 .wish-card-price {
   font-weight: 600;

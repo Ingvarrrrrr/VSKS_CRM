@@ -2184,8 +2184,23 @@
          одобрить" была, а перетащить карточку нельзя. Заблокировано распределение
          по-настоящему только когда заявка УЖЕ распределена ('converted' — закупки
          созданы), гейт приведён в соответствие с бэкендом. -->
-    <v-dialog v-model="kanbanDialog" max-width="1200" scrollable :fullscreen="mobile">
-      <v-card>
+    <!-- Владелец (2026-09-04): «окно у меня большое, а окно перераспределения
+         маленькое» — было max-width 1200 (фиксированный потолок, не использует
+         широкий экран). Теперь ширина в vw с потолком (как у wishDialog чуть
+         выше, только просторнее — колонкам канбана нужно больше места) +
+         content-class на .v-overlay__content для CSS resize мышью (см. global
+         <style> внизу файла: Vuetify-диалог сам по себе resize не умеет,
+         но .v-overlay__content — обычный блочный элемент, resize на нём
+         работает "из коробки"). -->
+    <v-dialog
+      v-model="kanbanDialog"
+      width="95vw"
+      max-width="1800"
+      scrollable
+      content-class="wish-kanban-dialog-content"
+      :fullscreen="mobile"
+    >
+      <v-card class="wish-kanban-dialog-card">
         <v-card-title class="pa-4 pb-2">
           <v-icon class="mr-2" color="primary">mdi-view-column-outline</v-icon>
           Распределение позиций по закупкам
@@ -2193,7 +2208,7 @@
             · {{ kanbanWish.title || `Заявка #${kanbanWish.id}` }}
           </span>
         </v-card-title>
-        <v-card-text class="pa-4">
+        <v-card-text class="pa-4 wish-kanban-dialog-cardtext">
           <WishDistributionKanban
             v-if="kanbanWish"
             :wish-id="kanbanWish.id"
@@ -5728,5 +5743,54 @@ onMounted(async () => {
 .wish-btn-blocked {
   opacity: 0.55;
   filter: grayscale(0.35);
+}
+
+/* Владелец (2026-09-04): окно «Распределение позиций по закупкам» —
+   шире, компактнее, с изменяемым мышью размером (см. v-dialog в шаблоне
+   и WishDistributionKanban.vue / WishDistributionCard.vue).
+   content-class на v-dialog применяется к .v-overlay__content, который
+   Vuetify телепортирует в <body> — эти правила намеренно НЕ scoped,
+   иначе data-v-атрибут компонента до телепортированного узла не достаёт. */
+.wish-kanban-dialog-content {
+  width: 95vw;
+  max-width: 1800px;
+  height: 88vh;
+  max-height: 92vh;
+  min-width: 760px;
+  min-height: 420px;
+  /* CSS resize — самый простой рабочий вариант: Vuetify-диалог сам по себе
+     resize не поддерживает, а .v-overlay__content — обычный блочный элемент
+     с overflow != visible, resize работает на нём нативно, без JS. */
+  resize: both;
+  overflow: hidden;
+}
+/* На телефоне диалог :fullscreen="mobile" — resize/потолки ширины тут не нужны
+   и не должны мешать нативному fullscreen-размеру Vuetify. */
+.v-overlay--fullscreen .wish-kanban-dialog-content {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  resize: none !important;
+}
+.wish-kanban-dialog-card {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.wish-kanban-dialog-cardtext {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+}
+.wish-kanban-dialog-cardtext > * {
+  min-height: 0;
+  width: 100%;
 }
 </style>

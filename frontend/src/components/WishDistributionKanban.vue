@@ -43,16 +43,29 @@
     </div>
 
     <div v-if="!readonly" class="wish-kanban-actions mt-4 d-flex ga-2 align-center">
-      <v-btn
-        variant="outlined"
-        color="primary"
-        prepend-icon="mdi-arrow-collapse-horizontal"
-        :loading="merging"
-        :disabled="merging || totalItems === 0 || nonEmptyColumnCount <= 1"
-        @click="onMergeAll"
-      >
-        Объединить всё в одну закупку
-      </v-btn>
+      <div class="d-flex ga-2 align-center">
+        <v-btn
+          variant="outlined"
+          color="primary"
+          prepend-icon="mdi-arrow-collapse-horizontal"
+          :loading="merging"
+          :disabled="merging || totalItems === 0 || nonEmptyColumnCount <= 1"
+          @click="onMergeAll"
+        >
+          Объединить всё в одну закупку
+        </v-btn>
+        <v-btn
+          v-if="naturalColumnCount > 1"
+          variant="outlined"
+          color="primary"
+          prepend-icon="mdi-arrow-expand-horizontal"
+          :loading="splitting"
+          :disabled="splitting || totalItems === 0"
+          @click="onSplitAll"
+        >
+          Разложить обратно по категориям
+        </v-btn>
+      </div>
       <v-spacer />
       <v-btn
         variant="tonal"
@@ -159,6 +172,23 @@ const totalItems = computed(() => props.items.length)
 const totalAmount = computed(() => sumOf(props.items))
 const nonEmptyColumnCount = computed(() => columns.value.filter(c => c.items.length > 0).length)
 
+// Естественная колонка позиции БЕЗ учёта ручного/объединённого target_column_key —
+// то, куда позиция попала бы после сброса. Используется, чтобы решить, показывать
+// ли кнопку «разложить обратно»: если у всех позиций и так одна и та же реальная
+// категория, разложить — значит вернуть их всё в ту же единственную колонку, то
+// есть кнопка ничего не изменит и создаст ложное ожидание. В этом случае кнопку
+// не показываем вовсе (не просто disabled — чтобы не провоцировать вопрос
+// «почему не работает»).
+function naturalKey(it: WishItem): string {
+  if (it._product_category && it._product_category.trim()) return it._product_category
+  return UNCAT_KEY
+}
+const naturalColumnCount = computed(() => {
+  const keys = new Set<string>()
+  for (const it of props.items) keys.add(naturalKey(it))
+  return keys.size
+})
+
 function formatMoney(v: number | null | undefined): string {
   if (v == null) return '0 ₽'
   return new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 }).format(v)
@@ -235,6 +265,42 @@ async function onMergeAll() {
     }
   } finally {
     merging.value = false
+  }
+}
+
+// Обратное действие к onMergeAll (владелец, заявка №55, 2026-09-04): «где кнопка,
+// чтобы обратно по разным закупкам разобрать?». Разложить обратно = сбросить
+// target_column_key в null у всех позиций — тем же PATCH /items/{id}, что и
+// обычное перетаскивание и onMergeAll (второй механизм не заводим, см. ПРАВИЛО
+// №5/№6). После сброса позиции сами расходятся по колонкам через resolveKey()
+// (fallback на _product_category), поэтому никакой отдельной серверной логики
+// не нужно. Действие полностью обратимо: после «разложить» снова доступно
+// «объединить», и наоборот.
+const splitting = ref(false)
+async function onSplitAll() {
+  if (props.readonly || splitting.value) return
+  splitting.value = true
+  try {
+    const toReset = props.items.filter(it => it.target_column_key != null && it.target_column_key.trim() !== '')
+    let failCount = 0
+    for (const item of toReset) {
+      const prev = item.target_column_key
+      item.target_column_key = null
+      try {
+        await apiFetch(`/wishes/${props.wishId}/items/${item.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ target_column_key: null }),
+        })
+      } catch (e: any) {
+        item.target_column_key = prev ?? null
+        failCount += 1
+      }
+    }
+    if (failCount > 0) {
+      emit('error', `Не удалось разложить ${failCount} ${failCount === 1 ? 'позицию' : 'позиций'}`)
+    }
+  } finally {
+    splitting.value = false
   }
 }
 

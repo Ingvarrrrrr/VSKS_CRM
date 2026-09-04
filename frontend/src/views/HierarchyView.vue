@@ -740,6 +740,7 @@ import { useDisplay } from 'vuetify'
 const { mobile } = useDisplay()
 import ContractorEditDialog from '@/components/ContractorEditDialog.vue'
 import { useToast, type ToastType } from '@/composables/useToast'
+import { numOrNull } from '@/utils/numberFormat'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const DEPT_W = 268     // dept container width in px
@@ -1187,7 +1188,9 @@ async function saveUserOrgSalary(orgId: number) {
   try {
     await apiFetch(`/users/${userInfoDialog.value.userId}/organizations/${orgId}`, {
       method: 'PATCH',
-      body: { position: o.position, salary_amount: o.salary_amount, employment_percent: o.employment_percent },
+      // salary_amount/employment_percent — v-model.number; при очистке Vue кладёт '',
+      // OrgMembershipBody ждёт Optional[float]/Optional[int] → 422. numOrNull (2026-09-04).
+      body: { position: o.position, salary_amount: numOrNull(o.salary_amount), employment_percent: numOrNull(o.employment_percent) },
     })
   } catch {}
   userInfoDialog.value.saving = false

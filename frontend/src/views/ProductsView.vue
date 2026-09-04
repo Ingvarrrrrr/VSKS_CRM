@@ -1022,6 +1022,7 @@ import {
   freshnessIcon,
   freshnessTooltip,
 } from '@/composables/usePriceFreshness'
+import { numOrNull } from '@/utils/numberFormat'
 
 interface PriceLink { url: string; price: number | null }
 interface Product {
@@ -1483,10 +1484,14 @@ async function save() {
   if (!form.country_origin?.trim()) { showSnack('Укажите страну производства', 'error'); return }
   saving.value = true
   try {
+    // price/link.price — v-model.number. `form.price || null` попутно ловит '',
+    // но и валидный 0 тоже схлопывает в null; `l.price ?? null` вообще не ловит ''
+    // (не null/undefined) — та самая ловушка, найденная владельцем 2026-09-04.
+    // numOrNull — единый хелпер: '' → null, 0 остаётся 0.
     const payload = {
       ...form,
-      price: form.price || null,
-      price_links: form.priceLinks.filter(l => l.url.trim()).map(l => ({ url: l.url, price: l.price ?? null })),
+      price: numOrNull(form.price),
+      price_links: form.priceLinks.filter(l => l.url.trim()).map(l => ({ url: l.url, price: numOrNull(l.price) })),
     }
     let savedId: number
     if (editingId.value) {

@@ -969,6 +969,7 @@ import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import { formatMoney as formatMoneyUtil } from '@/utils/formatMoney'
+import { numOrNull } from '@/utils/numberFormat'
 import { useContractorsStore } from '@/stores/contractors'
 import ContractorPicker from '@/components/ContractorPicker.vue'
 import { useCardView } from '@/composables/useCardView'
@@ -1727,7 +1728,16 @@ const openEdit = async (c: Contract) => {
 const saveContract = async () => {
   dialog.saving = true
   try {
-    const body = { ...dialog.form, date: dialog.form.date || null, start_date: dialog.form.start_date || null, end_date: dialog.form.end_date || null }
+    // max_amount/planned_monthly — v-model.number; при очистке Vue кладёт '' (не null),
+    // `...dialog.form` слал бы её как есть на Optional[Decimal] → 422. numOrNull (2026-09-04).
+    const body = {
+      ...dialog.form,
+      date: dialog.form.date || null,
+      start_date: dialog.form.start_date || null,
+      end_date: dialog.form.end_date || null,
+      max_amount: numOrNull(dialog.form.max_amount),
+      planned_monthly: numOrNull(dialog.form.planned_monthly),
+    }
     if (dialog.id) {
       const res = await apiFetch<any>(`/contracts/${dialog.id}`, { method: 'PUT', body: JSON.stringify(body) })
       // Phase 31-04: response is now ContractUpdateResponse {contract, n_updated_purchases, warnings}

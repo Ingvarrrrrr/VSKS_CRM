@@ -2473,7 +2473,7 @@
         <v-card-actions class="px-4 pb-4">
           <v-spacer />
           <v-btn variant="text" @click="showAddDialog = false">Отмена</v-btn>
-          <v-btn color="primary" :loading="saving" :disabled="!form.name || !form.budget" @click="addSubsidy">
+          <v-btn color="primary" :loading="saving" :disabled="!form.name || !form.budget || !form.year" @click="addSubsidy">
             Добавить
           </v-btn>
         </v-card-actions>
@@ -2606,7 +2606,7 @@
         <v-card-actions class="px-4 pb-4">
           <v-spacer />
           <v-btn variant="text" @click="showEditDialog = false">Отмена</v-btn>
-          <v-btn color="primary" :loading="saving" :disabled="!editForm.name || !editForm.budget" @click="updateSubsidy">
+          <v-btn color="primary" :loading="saving" :disabled="!editForm.name || !editForm.budget || !editForm.year" @click="updateSubsidy">
             Сохранить
           </v-btn>
         </v-card-actions>
@@ -7066,14 +7066,20 @@ async function saveReqItemEdit() {
     if (reqItemEdit.form.item_name !== reqItemEdit.original.item_name) {
       body.item_name = reqItemEdit.form.item_name
     }
-    if (reqItemEdit.form.quantity !== reqItemEdit.original.quantity) {
-      body.quantity = reqItemEdit.form.quantity
+    // quantity/unit_price приходят из v-model.number — при очистке поля Vue даёт
+    // '' (не null), сырое сравнение с original (числом/null) ловит ложные "изменения"
+    // ('' !== null) и шлёт '' на сервер → 422. Сравниваем и шлём нормализованные
+    // через numOrNull (2026-09-04, тот же хелпер, что и в savePlannedItem/FEO-форме).
+    const normQuantity = numOrNull(reqItemEdit.form.quantity)
+    if (normQuantity !== numOrNull(reqItemEdit.original.quantity)) {
+      body.quantity = normQuantity
     }
     if ((reqItemEdit.form.unit || '') !== (reqItemEdit.original.unit || '')) {
       body.unit = reqItemEdit.form.unit || null
     }
-    if (reqItemEdit.form.unit_price !== reqItemEdit.original.unit_price) {
-      body.unit_price = reqItemEdit.form.unit_price
+    const normUnitPrice = numOrNull(reqItemEdit.form.unit_price)
+    if (normUnitPrice !== numOrNull(reqItemEdit.original.unit_price)) {
+      body.unit_price = normUnitPrice
     }
     // Категорию отправляем ТОЛЬКО если пользователь её реально сменил (catId —
     // категория, под которой позиция открыта в дереве, т.е. текущая) — не
@@ -10810,7 +10816,7 @@ async function updateSubsidy() {
   try {
     await apiFetch<any>(`/subsidies/${editForm.value.id}`, {
       method: 'PUT',
-      body: JSON.stringify({ name: editForm.value.name, year: editForm.value.year, budget: editForm.value.budget, description: editForm.value.description || null, contractor_id: editForm.value.contractor_id, agreement_text: editForm.value.agreement_text || null, basis_doc_number: editForm.value.basis_doc_number || null, basis_doc_date: editForm.value.basis_doc_date || null, grantor_name: editForm.value.grantor_name || null, ministry_name: editForm.value.ministry_name || null, extra_contract_clause_1: editForm.value.extra_contract_clause_1 || null, extra_contract_clause_2: editForm.value.extra_contract_clause_2 || null, require_planned_dates: editForm.value.require_planned_dates, ceiling_warn_percent: editForm.value.ceiling_warn_percent ?? null })
+      body: JSON.stringify({ name: editForm.value.name, year: editForm.value.year, budget: editForm.value.budget, description: editForm.value.description || null, contractor_id: editForm.value.contractor_id, agreement_text: editForm.value.agreement_text || null, basis_doc_number: editForm.value.basis_doc_number || null, basis_doc_date: editForm.value.basis_doc_date || null, grantor_name: editForm.value.grantor_name || null, ministry_name: editForm.value.ministry_name || null, extra_contract_clause_1: editForm.value.extra_contract_clause_1 || null, extra_contract_clause_2: editForm.value.extra_contract_clause_2 || null, require_planned_dates: editForm.value.require_planned_dates, ceiling_warn_percent: numOrNull(editForm.value.ceiling_warn_percent) })
     })
     // После save перезагружаем весь список с backend — гарантированно свежие
     // данные (включая поля которые backend мог трансформировать). Spread-merge

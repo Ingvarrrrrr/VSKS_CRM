@@ -127,7 +127,7 @@
         <v-btn
           color="primary" variant="tonal"
           :loading="saving"
-          :disabled="!form.amountPerStage || form.count < 1"
+          :disabled="!form.amountPerStage || form.count < 1 || !form.startYear || (form.deadlineKind === 'specific_day' && !form.deadlineDay)"
           @click="doCreate"
         >
           Создать {{ form.count }} этапов

@@ -2417,6 +2417,7 @@ import { useWishLive } from '@/composables/useWishLive'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import { formatMoney } from '@/utils/formatMoney'
+import { numOrNull } from '@/utils/numberFormat'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
 // Task 2 (сессия 2026-08-17): переиспользуем существующий пикер контрагентов (уже
 // применяется в SubsidiesView/ContractsView; server-search по всей базе, RU ИНН выше) —
@@ -4827,6 +4828,16 @@ function buildWishPayload() {
       .filter((it: any) => (it.item_name || '').toString().trim() || Number(it.total_price) || Number(it.quantity))
       .map(({ _selectedProduct, _photo_url, _description, _description_44fz, _price_meta, ...rest }) => ({
         ...rest,
+        // quantity/unit_price/total_price приходят из полей ItemsTableFlat/ItemsCardsView/
+        // ItemsTableStages/ItemsTableWish — quantity через v-model.number (при очистке Vue
+        // кладёт '', не null), unit_price/total_price могут быть очищены через parseNumber
+        // (уже даёт null) либо остаться нетронутым '' на свежесозданной строке. items —
+        // Optional[list] без вложенной pydantic-схемы (см. WishCreate/WishUpdate), поэтому
+        // '' не ловится 422-м — падает ниже при записи в Numeric-колонку. numOrNull —
+        // единый хелпер (2026-09-04).
+        quantity: numOrNull((rest as any).quantity),
+        unit_price: numOrNull((rest as any).unit_price),
+        total_price: numOrNull((rest as any).total_price),
         // Владелец, 2026-08-19: тумблер вернули — режим снова определяет, чья категория
         // «главная». feo_per_item=false («одна на всех», общий выбор в карточке «Позиции»):
         // ВСЯ заявка получает ОДНУ категорию — построчное значение (даже если где-то осталось
@@ -5487,9 +5498,13 @@ async function convertWish() {
   if (!convertingWish.value) return
   convertingWishLoading.value = true
   try {
+    // approved_quantity/approved_price — v-model.number; `!= null` не ловит ''
+    // после очистки поля (не null/undefined). numOrNull — единый хелпер (2026-09-04).
     const body: any = {}
-    if (convertForm.value.approved_quantity != null) body.approved_quantity = convertForm.value.approved_quantity
-    if (convertForm.value.approved_price != null) body.approved_price = convertForm.value.approved_price
+    const approvedQty = numOrNull(convertForm.value.approved_quantity)
+    const approvedPrice = numOrNull(convertForm.value.approved_price)
+    if (approvedQty != null) body.approved_quantity = approvedQty
+    if (approvedPrice != null) body.approved_price = approvedPrice
     if (convertForm.value.subsidy_id != null) body.subsidy_id = convertForm.value.subsidy_id
     const result = await apiFetch<{
       wish_id: number

@@ -1387,6 +1387,7 @@ import RegistryExportButton from '@/components/RegistryExportButton.vue'
 import { useCardView } from '@/composables/useCardView'
 import { useDisplay } from 'vuetify'
 import { useToast, type ToastType } from '@/composables/useToast'
+import { numOrNull } from '@/utils/numberFormat'
 
 // ── Hierarchy ref ──
 const hierarchyRef = ref<InstanceType<typeof HierarchyView> | null>(null)
@@ -2533,10 +2534,14 @@ async function saveEditUser() {
           // проставить дату при смене должности (owner: «по умолчанию пусть
           // меняется... а не перебивать каждый раз руками»); см.
           // patch_user_org_membership_row / org_assignment_dates.py.
+          // salary_amount/employment_percent — v-model.number; `?? null` не ловит ''
+          // после очистки поля. Роутер пишет body[key] напрямую в Numeric/Integer-колонку
+          // без Pydantic-типизации (body: dict) — '' там не 422, а падение на commit.
+          // numOrNull — единый хелпер (2026-09-04).
           const patchBody: Record<string, unknown> = {
             position: entry.position || null,
-            salary_amount: entry.salary_amount ?? null,
-            employment_percent: entry.employment_percent ?? null,
+            salary_amount: numOrNull(entry.salary_amount),
+            employment_percent: numOrNull(entry.employment_percent),
             hired_at: entry.hired_at || null,
           }
           if (entry.dept_assigned_at) patchBody.dept_assigned_at = entry.dept_assigned_at

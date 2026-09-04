@@ -530,6 +530,7 @@ import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import { useCardView } from '@/composables/useCardView'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import { useToast, type ToastType } from '@/composables/useToast'
+import { numOrNull } from '@/utils/numberFormat'
 
 interface Recipient { id: number; contractor_id?: number; contractor_name?: string; email?: string; status: string }
 interface CommercialRequest {
@@ -682,13 +683,18 @@ async function saveOffers() {
     for (const row of offersGrid.value) {
       for (const r of detailDialog.item.recipients) {
         const cell = row.cells[r.id]
-        if (cell.unit_price == null) continue
+        // cell.unit_price приходит из v-model.number — при очистке поля Vue кладёт
+        // '' (не null), а `== null` её не ловит ('' == null → false в JS). Пустая
+        // строка уходила бы на сервер и валила 422 (unit_price: Optional[Decimal]).
+        // numOrNull — тот же хелпер, что и везде в проекте (2026-09-04).
+        const cellPrice = numOrNull(cell.unit_price)
+        if (cellPrice == null) continue
         body.push({
           recipient_id: r.id,
           product_id: row.product_id,
           item_name: row.item_name,
           unit: row.unit,
-          unit_price: cell.unit_price,
+          unit_price: cellPrice,
           note: cell.note || null,
         })
       }

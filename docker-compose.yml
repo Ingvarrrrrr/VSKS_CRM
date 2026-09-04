@@ -1,5 +1,87 @@
 version: '3.8'
 
+# ──────────────────────────────────────────────────────────────────────────
+# Phase «бесшовный деплой» (2026-09-04): backend и frontend раньше были
+# ОДНИМ контейнером каждый. `docker compose up -d backend` при деплое
+# останавливал единственную реплику, пока новая поднималась (миграции +
+# инициализация — десятки секунд) — все запросы получали 502. Теперь у
+# каждого по ДВЕ реплики (_a/_b) за общим DNS-именем сервиса не работает
+# (nginx у нас резолвит по прямому имени контейнера, см. nginx/nginx.conf
+# upstream backend_pool/frontend_pool) — autodeploy.sh перезапускает их
+# ПООЧЕРЁДНО: пока одна реплика пересоздаётся, вторая продолжает отвечать,
+# а nginx (proxy_next_upstream) уводит запросы с недоступной реплики на
+# живую. Оба сервиса в паре используют ОДИН собранный образ (одинаковый
+# `image:`, но `build:` есть только у _a — иначе `docker compose build`
+# собирал бы дважды): autodeploy.sh собирает только *_a, *_b просто
+# использует уже готовый локальный тег.
+# ──────────────────────────────────────────────────────────────────────────
+
+x-backend-common: &backend-common
+  image: vsks-crm-backend:latest
+  environment:
+    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-vsks}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-vsks_crm}
+    SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+    SUBSIDY_LIMIT: "26128070"
+    SMTP_HOST: smtp.yandex.ru
+    SMTP_PORT: "587"
+    SMTP_USER: z@vsks.ru
+    SMTP_PASSWORD: ${SMTP_PASSWORD:?Set SMTP_PASSWORD in .env}
+    SMTP_FROM: z@vsks.ru
+    # Захардкожено: на хосте .env держит устаревший http://85.239.53.155 и
+    # перебивал бы ${BASE_URL:-...}; ссылки в письмах должны вести на домен.
+    BASE_URL: https://gaaala.duckdns.org
+    TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    MAX_BOT_TOKEN: ${MAX_BOT_TOKEN:-}
+    VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+    VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+    PROVERKACHEKA_TOKEN: ${PROVERKACHEKA_TOKEN:-}
+    FABRIKANT_LOGIN: ${FABRIKANT_LOGIN:-}
+    FABRIKANT_PASSWORD: ${FABRIKANT_PASSWORD:-}
+    PLATFORM_CRED_KEY: ${PLATFORM_CRED_KEY:-}
+  # backend доступен через nginx по http://localhost/api/ — наружу не открываем
+  volumes:
+    - uploads:/app/uploads
+    - ./backend/app:/app/app
+    - ./backend/templates:/app/templates
+    - ./backend/check_schema.py:/app/check_schema.py
+    - ./backend/seed_data:/app/seed_data:ro
+  # Реальная готовность, а не факт запуска процесса: GET /docs у FastAPI
+  # отвечает 200 ТОЛЬКО когда ASGI-приложение полностью поднято (lifespan
+  # startup завершён) — а до этого момента процесс уже пережил `migrate.py &&
+  # init_db.py` (см. backend/Dockerfile CMD), т.е. миграции к этому моменту
+  # уже применены. Не заводили отдельный /api/health, чтобы не трогать
+  # backend/app/** без необходимости — /docs встроен во FastAPI из коробки.
+  #
+  # start_period/retries подобраны ПОД ХОЛОДНЫЙ СТАРТ, не только под рутинный
+  # rolling-редеплой: при `docker compose down && up -d` backend_a стартует
+  # ОДНОВРЕМЕННО с db/frontend/nginx/n8n/adminer — на нагруженной машине
+  # (замечено эмпирически на локальном стенде 2026-09-04: миграции+init_db
+  # заняли ~35с вместо обычных 10-15с) реальная готовность может занять
+  # заметно дольше, чем при точечном rolling-редеплое одной реплики. Старое
+  # значение (start_period 10s, retries 5×3s = 25s общего окна) в этом
+  # сценарии проехало мимо: Docker пометил контейнер unhealthy ДО того, как
+  # он реально ожил, и `depends_on: condition: service_healthy` у backend_b
+  # (см. ниже) НАВСЕГДА оборвал холодный старт ("dependency failed to
+  # start: ... is unhealthy" — compose не переспрашивает после unhealthy).
+  # 75s общего окна (15s+20×3s) — с большим запасом под пиковую нагрузку.
+  healthcheck:
+    test: ["CMD", "python3", "-c", "import urllib.request as u, sys; sys.exit(0 if u.urlopen('http://localhost:8000/docs', timeout=2).getcode()==200 else 1)"]
+    interval: 3s
+    timeout: 2s
+    retries: 20
+    start_period: 15s
+
+x-frontend-common: &frontend-common
+  image: vsks-crm-frontend:latest
+  # server.mjs всегда отдаёт 200 на "/" (index.html, в т.ч. SPA-фолбэк) —
+  # значит node-процесс поднят и реально слушает порт.
+  healthcheck:
+    test: ["CMD", "node", "-e", "require('http').get('http://localhost:3080/', r => process.exit(r.statusCode===200?0:1)).on('error', () => process.exit(1))"]
+    interval: 3s
+    timeout: 2s
+    retries: 5
+    start_period: 5s
+
 services:
   db:
     image: postgres:15
@@ -15,43 +97,39 @@ services:
       timeout: 3s
       retries: 10
 
-  backend:
+  backend_a:
+    <<: *backend-common
     build: ./backend
-    environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-vsks}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-vsks_crm}
-      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
-      SUBSIDY_LIMIT: "26128070"
-      SMTP_HOST: smtp.yandex.ru
-      SMTP_PORT: "587"
-      SMTP_USER: z@vsks.ru
-      SMTP_PASSWORD: ${SMTP_PASSWORD:?Set SMTP_PASSWORD in .env}
-      SMTP_FROM: z@vsks.ru
-      # Захардкожено: на хосте .env держит устаревший http://85.239.53.155 и
-      # перебивал бы ${BASE_URL:-...}; ссылки в письмах должны вести на домен.
-      BASE_URL: https://gaaala.duckdns.org
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      MAX_BOT_TOKEN: ${MAX_BOT_TOKEN:-}
-      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
-      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
-      PROVERKACHEKA_TOKEN: ${PROVERKACHEKA_TOKEN:-}
-      FABRIKANT_LOGIN: ${FABRIKANT_LOGIN:-}
-      FABRIKANT_PASSWORD: ${FABRIKANT_PASSWORD:-}
-      PLATFORM_CRED_KEY: ${PLATFORM_CRED_KEY:-}
     depends_on:
       db:
         condition: service_healthy
-    # backend доступен через nginx по http://localhost/api/ — наружу не открываем
-    volumes:
-      - uploads:/app/uploads
-      - ./backend/app:/app/app
-      - ./backend/templates:/app/templates
-      - ./backend/check_schema.py:/app/check_schema.py
-      - ./backend/seed_data:/app/seed_data:ro
 
-  frontend:
+  backend_b:
+    <<: *backend-common
+    # НЕ строит образ (использует тот же тег, что уже собрал backend_a) и
+    # ждёт, пока backend_a реально поднимется (healthy), ПРЕЖДЕ чем стартовать
+    # сам. Это гарантирует отсутствие параллельных миграций не только во
+    # время rolling-деплоя (autodeploy.sh обновляет реплики строго по одной),
+    # но и на холодном `docker compose up` с нуля — backend_b просто не
+    # запустит свой `migrate.py`, пока alembic не завершится у backend_a.
+    depends_on:
+      db:
+        condition: service_healthy
+      backend_a:
+        condition: service_healthy
+
+  frontend_a:
+    <<: *frontend-common
     build: ./frontend
     depends_on:
-      - backend
+      - backend_a
+      - backend_b
+
+  frontend_b:
+    <<: *frontend-common
+    depends_on:
+      - backend_a
+      - backend_b
 
   n8n:
     image: n8nio/n8n:latest
@@ -77,7 +155,7 @@ services:
     volumes:
       - n8n_data:/home/node/.n8n
     depends_on:
-      - backend
+      - backend_a
 
   nginx:
     image: nginx:alpine
@@ -100,8 +178,10 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      - backend
-      - frontend
+      - backend_a
+      - backend_b
+      - frontend_a
+      - frontend_b
     # entrypoint.d-скрипт создаёт self-signed placeholder если LE-сертификата нет
     # и собирает adminer.htpasswd из ADMINER_HTPASSWD — чтобы nginx стартовал.
     # Реальный cert заменит placeholder после setup-ssl.sh.
@@ -114,7 +194,14 @@ services:
     # маскировалось тем, что реальный LE-cert уже существовал).
     #
     # Затем nginx перечитывает конфиг каждые 6 часов — подхватит обновлённые
-    # сертификаты после certbot renew.
+    # сертификаты после certbot renew. autodeploy.sh вызывает `nginx -t &&
+    # nginx -s reload` (graceful) после каждой обновлённой реплики backend/
+    # frontend — ЭТОТ контейнер autodeploy.sh НИКОГДА не пересоздаёт: он
+    # держит 80/443 для ВСЕХ доменов на сервере (не только GALA), а не
+    # только для этого проекта — `--force-recreate nginx` уронил бы их все
+    # разом на время пересоздания. Разрез на отдельный edge-nginx (см.
+    # deploy/edge-nginx.conf, ПОКА не применяется — следующий шаг) со временем
+    # уберёт эту связанность; до тех пор роль nginx прежняя.
     command: >
       sh -c "/docker-entrypoint.d/00-ensure-cert.sh && (while :; do sleep 6h & wait $${!}; nginx -s reload; done &) ; nginx -g 'daemon off;'"
 

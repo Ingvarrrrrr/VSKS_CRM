@@ -42,11 +42,11 @@ goto :eof
 echo === [VSKS_CRM local] restart backend (after Python changes) ===
 docker compose restart backend
 timeout /t 3 /nobreak >nul
-docker logs vsks_crm-backend-1 --tail 10
+docker logs vsks_crm-backend_a-1 --tail 10
 goto :eof
 
 :logs
-docker logs vsks_crm-backend-1 -f --tail 50
+docker logs vsks_crm-backend_a-1 -f --tail 50
 goto :eof
 
 :psql

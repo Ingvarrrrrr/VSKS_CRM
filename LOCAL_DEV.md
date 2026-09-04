@@ -32,7 +32,7 @@ docker compose up -d db backend
 ```powershell
 docker ps --filter "name=vsks" --format "table {{.Names}}\t{{.Status}}"
 # vsks_crm-db-1        Up (healthy)
-# vsks_crm-backend-1   Up
+# vsks_crm-backend_a-1   Up
 
 curl http://localhost:8000/docs
 # Должна открыться Swagger UI
@@ -70,7 +70,7 @@ ON CONFLICT (username) DO NOTHING;
 ```powershell
 # В первом терминале (backend):
 docker compose up -d db backend
-docker logs vsks_crm-backend-1 -f
+docker logs vsks_crm-backend_a-1 -f
 # Ctrl+C — выйти из логов (backend продолжит работать)
 
 # Во втором терминале (frontend):
@@ -106,7 +106,7 @@ cd frontend && npm run build
 #    - Сам функционал работает как ожидалось
 
 # 4. Если изменения backend — посмотреть docker logs
-docker logs vsks_crm-backend-1 --tail 30
+docker logs vsks_crm-backend_a-1 --tail 30
 # Не должно быть Tracebacks при штатной работе
 ```
 
@@ -171,7 +171,7 @@ Remove-Item prod-dump.sql
 
 ```powershell
 # Логи backend в реальном времени
-docker logs vsks_crm-backend-1 -f
+docker logs vsks_crm-backend_a-1 -f
 
 # Backend быстрый restart после правки Python
 docker compose restart backend

@@ -153,3 +153,12 @@ backend/test_topic.py
 docker-compose.override.yml
 .tmp_diag/
 .tmp_docx_media/
+
+# Рабочий мусор сессий (2026-09-05): временные файлы, скриншоты, бэкапы, презентации
+_tmp_*
+.tmp_*
+backups/
+*.pptx
+.codex/
+frontend/.tmp_test/
+e2e/_tmp_*

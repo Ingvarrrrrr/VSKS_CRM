@@ -1,0 +1,180 @@
+"""Регистрация всех APIRouter'ов на приложении, в фиксированном порядке.
+
+Перенесено из app/__init__.py при разрезании монолитного файла на модули
+(Правило №5). Порядок app.include_router(...) сохранён БАЙТ-В-БАЙТ —
+многие специфичные суб-роутеры обязаны регистрироваться ДО роутеров с
+catch-all путями (`/{id}`), иначе FastAPI отдаёт специфичный путь
+catch-all'у. Комментарии про это сохранены на своих местах.
+"""
+from fastapi import FastAPI
+
+from app.routers import (
+    auth, users, contractors, contracts, purchases, payments,
+    feo_categories, dashboard, subsidies, products, purchase_files,
+    documents, publications, subsidy_approvers, responsible_persons,
+    commercial_requests, suppliers, purchase_events, user_hierarchy,
+    system_incidents, organizations, reports, events, purchase_approvals,
+    tasks, departments, delivery_addresses, hierarchy, billing,
+    wishes, purchase_export, purchase_items_import, purchase_members,
+    permissions as permissions_router,
+    staff_directory,
+)
+from app.routers import wish_documents
+from app.routers import wish_members as wish_members_router
+from app.routers import subsidy_members as subsidy_members_router
+from app.routers import wish_approvals as wish_approvals_router
+from app.routers import user_addresses as user_addresses_router
+from app.routers import org_config
+from app.routers import purchase_transitions
+from app.routers import feo_planned_items
+from app.routers import plan_excess as plan_excess_router
+from app.routers import telegram_webhook
+# Отслеживание местоположения сотрудников (владелец, 2026-09): смены/точки +
+# разовый запрос местоположения через мессенджер. Второй роутер тоже висит на
+# префиксе /api/staff-location (см. staff_location_requests.py) — это отдельный
+# APIRouter в отдельном файле (Правило модульности), не расширение первого.
+from app.routers import staff_location as staff_location_router
+from app.routers import staff_location_requests as staff_location_requests_router
+from app.routers import settings as settings_router
+from app.routers import chat as chat_router
+from app.routers import push as push_router
+from app.routers import purchase_receipts
+from app.routers import install as install_router
+from app.routers import analytics as analytics_router
+from app.routers import report_configs as report_configs_router
+from app.routers import vehicles_dashboard, vehicles, vehicle_attachments, repair_attachments
+from app.routers import vehicle_repairs, vehicle_odometer, fuel_logs, trips
+from app.routers import external_drivers
+from app.routers import vehicles_import as vehicles_import_router
+from app.routers import vehicle_fields as vehicle_fields_router
+from app.routers import body_type_icons as body_type_icons_router
+from app.routers import vehicle_fines
+from app.routers import fleet_documents as fleet_documents_router
+from app.routers import checklists as checklists_router
+from app.routers import incidents as incidents_router
+from app.routers import vehicle_passes as vehicle_passes_router
+from app.routers.documents import guide_router as documents_guide_router
+# Phase 27.1: contract_items MUST be registered BEFORE purchases.router
+# because purchases has catch-all /{purchase_id} that would intercept /contract-items
+from app.routers import contract_items as contract_items_router
+# bank_statements MUST be registered BEFORE payments.router:
+# /imports and /registry/{id}/... must resolve before payments' catch-all /{pid}
+from app.routers import bank_statements
+from app.routers import price_freshness as price_freshness_router
+# Специфичные суб-роутеры /api/tasks/* регистрируются ДО tasks.router,
+# иначе catch-all `/{task_id}` ловит `/badges`, `/pending-consent`, `/report/*`
+from app.routers import entity_changes as entity_changes_router
+from app.routers import task_badges, task_delegation, task_reports, task_comments
+from app.routers import exports as exports_router
+from app.routers import okpd2 as okpd2_router
+from app.routers import expense_codes as expense_codes_router
+from app.routers import diag as diag_router
+
+
+def register_routes(app: FastAPI) -> None:
+    app.include_router(auth.router)
+    app.include_router(users.router)
+    app.include_router(staff_directory.router)
+    app.include_router(contractors.router)
+    app.include_router(contracts.router)
+    # Phase 27.1: contract_items MUST be registered BEFORE purchases.router
+    # because purchases has catch-all /{purchase_id} that would intercept /contract-items
+    app.include_router(contract_items_router.router)
+    app.include_router(purchases.router)
+    app.include_router(purchase_receipts.router)
+    app.include_router(install_router.router, prefix="/api")
+    # bank_statements MUST be registered BEFORE payments.router:
+    # /imports and /registry/{id}/... must resolve before payments' catch-all /{pid}
+    app.include_router(bank_statements.router)
+    app.include_router(payments.router)
+    app.include_router(feo_categories.router)
+    app.include_router(feo_planned_items.router)
+    app.include_router(plan_excess_router.router)
+    app.include_router(settings_router.router)
+    app.include_router(dashboard.router)
+    app.include_router(subsidies.router)
+    app.include_router(subsidy_members_router.router)
+    app.include_router(products.router)
+    app.include_router(price_freshness_router.router)
+    app.include_router(purchase_files.router)
+    app.include_router(documents.router)
+    app.include_router(documents_guide_router)
+    app.include_router(publications.router)
+    app.include_router(subsidy_approvers.router)
+    app.include_router(responsible_persons.router)
+    app.include_router(commercial_requests.router)
+    app.include_router(suppliers.router)
+    app.include_router(purchase_events.router)
+    app.include_router(user_hierarchy.router)
+    app.include_router(system_incidents.router)
+    app.include_router(organizations.router)
+    app.include_router(reports.router)
+    app.include_router(events.router)
+    app.include_router(purchase_approvals.router)
+    app.include_router(purchase_export.router)
+    app.include_router(purchase_items_import.router)
+    app.include_router(purchase_members.router)
+    app.include_router(purchase_transitions.router)
+    # Специфичные суб-роутеры /api/tasks/* регистрируются ДО tasks.router,
+    # иначе catch-all `/{task_id}` ловит `/badges`, `/pending-consent`, `/report/*`
+    app.include_router(entity_changes_router.router)  # /api/entity-changes (Phase 31 diff-tracking)
+    app.include_router(task_badges.router)
+    app.include_router(task_delegation.router)
+    app.include_router(task_reports.router)
+    app.include_router(task_comments.router)
+    app.include_router(tasks.router)
+    app.include_router(departments.router)
+    app.include_router(delivery_addresses.router)
+    app.include_router(org_config.router)
+    app.include_router(hierarchy.router)
+    app.include_router(billing.router)
+    app.include_router(telegram_webhook.router)
+    app.include_router(staff_location_router.router)           # /api/staff-location (смены, точки, трек)
+    app.include_router(staff_location_requests_router.router)  # /api/staff-location/requests, /roster
+    app.include_router(chat_router.router)    # REST: /api/chat/...
+    app.include_router(chat_router.ws_router)  # WS: /api/ws/chat
+    # Specific sub-router /api/wishes/*/documents/* registered BEFORE wishes.router
+    # so the specific path resolves before the catch-all /{wish_id} in wishes.router
+    # (same ordering principle as task_badges/task_delegation before tasks.router, commit 3d37cf9)
+    app.include_router(wish_documents.router)
+    # wish_members.pending_router (/api/wishes/members/pending-consent) MUST be before wishes.router
+    # to avoid /{wish_id:int} swallowing the static "members" segment.
+    app.include_router(wish_members_router.pending_router)
+    app.include_router(wish_members_router.router)
+    # wish_approvals (/api/wishes/{wid}/approvers/*) MUST be before wishes.router
+    # so static "approvers" segment resolves before the catch-all /{wish_id:int}.
+    app.include_router(wish_approvals_router.router)
+    app.include_router(wishes.router)
+    app.include_router(push_router.router)
+    app.include_router(permissions_router.router)
+    app.include_router(user_addresses_router.router)
+    app.include_router(analytics_router.router)
+    app.include_router(report_configs_router.router)
+
+    # Phase 29: vehicle fleet routers
+    # vehicles_dashboard (/api/vehicles-dashboard) и external_drivers.drivers_router (/api/drivers)
+    # регистрируются ПЕРЕД vehicles.router (/api/vehicles/{vehicle_id:int}) — Gotcha 2026-04-20 FastAPI routing
+    app.include_router(vehicles_dashboard.router)          # /api/vehicles-dashboard
+    app.include_router(external_drivers.drivers_router)    # /api/drivers/available
+    app.include_router(external_drivers.router)            # /api/external-drivers
+    app.include_router(vehicles_import_router.router)      # /api/vehicles-import (BEFORE vehicles catch-all)
+    app.include_router(vehicles_import_router.vehicles_template_router)  # /api/vehicles/import-template (BEFORE vehicles catch-all)
+    app.include_router(vehicle_fields_router.router)       # /api/vehicle-fields (Автоблок §4)
+    app.include_router(body_type_icons_router.router)      # /api/body-type-icons (редактор значков кузова, 2026-09)
+    app.include_router(vehicles.router)                    # /api/vehicles (catch-all /{vehicle_id:int})
+    app.include_router(vehicle_attachments.router)         # /api/vehicle-attachments
+    app.include_router(repair_attachments.router)          # /api/repair-attachments
+    app.include_router(vehicle_repairs.router)             # /api/vehicle-repairs
+    app.include_router(vehicle_odometer.router)            # /api/vehicle-odometer
+    app.include_router(fuel_logs.router)                   # /api/fuel-logs
+    app.include_router(trips.router)                       # /api/trips
+    app.include_router(vehicle_fines.router)               # /api/vehicle-fines
+    app.include_router(vehicle_passes_router.router)       # /api/vehicle-passes (2026-09)
+    app.include_router(fleet_documents_router.router)      # /api/fleet-documents
+    app.include_router(checklists_router.router)           # /api/checklists
+    app.include_router(incidents_router.router)            # /api/incidents
+    app.include_router(exports_router.router)              # /api/exports
+    app.include_router(okpd2_router.router)                # /api/okpd2
+    app.include_router(expense_codes_router.router)         # /api/expense-codes
+
+    app.include_router(diag_router.router)                 # /api/diag/*

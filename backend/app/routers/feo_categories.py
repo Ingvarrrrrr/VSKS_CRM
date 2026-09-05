@@ -9,6 +9,8 @@ from app.schemas.schemas import FeoCategoryOut, FeoCategoryCreate
 from app.auth.jwt import get_current_user, require_role, get_org_filter, ADMIN_ROLES, ALL_ROLES
 from app.auth.permissions import require_tab
 from app.auth.visibility import get_visible_subsidy_ids
+from app.utils.http import content_disposition
+from app.utils.text import normalize_feo_name
 from typing import List, Optional
 from decimal import Decimal
 from io import BytesIO
@@ -26,11 +28,7 @@ except ImportError:
 router = APIRouter(prefix="/api/feo-categories", tags=["feo_categories"])
 
 
-def _content_disposition(filename: str) -> str:
-    """RFC 5987 — кириллица в имени файла недопустима в latin-1 заголовке."""
-    from urllib.parse import quote
-    ascii_fallback = filename.encode('ascii', 'ignore').decode('ascii').strip() or 'export'
-    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename)}"
+_content_disposition = content_disposition
 
 
 def _validate_plan_pair(planned_quantity: Optional[float], planned_amount: Optional[float]) -> None:
@@ -2164,9 +2162,7 @@ async def _do_feo_import(
 
     def _norm(s: str) -> str:
         """Нормализация имени уровня для сравнения."""
-        s2 = _re.sub(r'^\s*\d+([.\)]\d+)*[.\)]?\s*', '', s)
-        s2 = s2.lower().strip()
-        return _re.sub(r'\s+', ' ', s2)
+        return normalize_feo_name(s)
 
     ZERO = Decimal("0")
     QUANT = Decimal("0.01")

@@ -25,6 +25,7 @@ from typing import Any, List, Optional
 from app.database import get_db
 from app.auth.jwt import get_current_user, get_org_filter, ADMIN_ROLES
 from app.auth.permissions import require_tab, require_action
+from app.utils.coerce import coerce_patch_value
 from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.models.vehicle_field_history import VehicleFieldHistory
@@ -163,22 +164,7 @@ def _coerce_patch_value(field: str, value: Any) -> Any:
 
     Lesson 2026-05-13: per-router _DATE_FIELDS (not global), copy from purchases.py.
     """
-    if value == "" or value is None:
-        return None
-    if field in _DATE_FIELDS and isinstance(value, str):
-        try:
-            return date.fromisoformat(value[:10])
-        except Exception:
-            return None
-    if field in _DATETIME_FIELDS and isinstance(value, str):
-        try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except Exception:
-            try:
-                return date.fromisoformat(value[:10])
-            except Exception:
-                return None
-    return value
+    return coerce_patch_value(field, value, date_fields=_DATE_FIELDS, datetime_fields=_DATETIME_FIELDS)
 
 
 def _visibility_q(user: User):

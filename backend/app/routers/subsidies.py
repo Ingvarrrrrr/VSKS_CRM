@@ -3,15 +3,11 @@ import os
 import re
 import shutil
 import logging
-from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
+from app.utils.http import content_disposition
 
-
-def _content_disposition(filename: str) -> str:
-    """RFC 5987 — кириллица в имени файла недопустима в latin-1 заголовке."""
-    ascii_fallback = filename.encode('ascii', 'ignore').decode('ascii').strip() or 'export'
-    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename)}"
+_content_disposition = content_disposition
 
 try:
     import openpyxl

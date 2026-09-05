@@ -737,11 +737,9 @@ def _fmt_money(v) -> str:
     return f"{float(v):,.2f}".replace(",", " ").replace(".", ",")
 
 
-def _fmt_money_plain(v) -> str:
-    """Money without currency symbol, with space thousand separator, comma decimal."""
-    if v is None:
-        return ""
-    return f"{float(v):,.2f}".replace(",", " ").replace(".", ",")
+# Money without currency symbol, with space thousand separator, comma decimal —
+# byte-identical to _fmt_money (Правило №6): kept as an alias, not a copy.
+_fmt_money_plain = _fmt_money
 
 
 def _merge_identical_items(items):

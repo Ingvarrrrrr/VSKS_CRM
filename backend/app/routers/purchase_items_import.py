@@ -33,6 +33,7 @@ from app.models.subsidy import Subsidy
 from app.auth.jwt import get_current_user, require_role, get_single_org_id, MANAGER_ROLES
 from app.auth.permissions import require_tab, has_org_key
 from app.routers.purchases import _has_purchase_write_access
+from app.utils.numbers import to_decimal
 from app.models.user import User
 from app.services.product_matcher import score as _fuzzy_score, SCORE_AUTO as _SCORE_AUTO
 from app.services.feo_plan import assert_tz_not_over_plan
@@ -2439,12 +2440,7 @@ async def import_feo_format(
         return s if s and s.lower() not in ("none", "null", "-", "—", "") else None
 
     def _to_dec(v) -> Optional[Decimal]:
-        if v is None:
-            return None
-        try:
-            return Decimal(str(v).replace(",", ".").replace(" ", "").replace("\xa0", ""))
-        except Exception:
-            return None
+        return to_decimal(v)
 
     def _to_date(v) -> Optional[date]:
         if v is None:

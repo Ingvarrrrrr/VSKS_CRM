@@ -17,6 +17,7 @@ from app.models.subsidy_allocation import PurchaseSubsidyAllocation
 from app.auth.jwt import get_current_user, require_role, get_org_filter, get_single_org_id, ADMIN_ROLES, MANAGER_ROLES, ALL_ROLES
 from app.auth.visibility import build_visibility_clause, get_visible_user_ids, get_visible_subsidy_ids
 from app.auth.permissions import require_tab, require_action, has_org_key
+from app.utils.coerce import coerce_patch_value
 from app.models.user import User
 from app.models.user_org_access import UserOrgAccess
 from app.routers.contracts import ensure_contract_linked
@@ -2855,25 +2856,7 @@ _DATETIME_FIELDS = {"submission_deadline", "service_note_at"}
 
 def _coerce_patch_value(field: str, value):
     """Конвертирует ISO-строку в date/datetime для DATE-полей; пустые строки → None."""
-    if value == "":
-        return None
-    if value is None:
-        return None
-    if field in _DATE_FIELDS and isinstance(value, str):
-        try:
-            return date.fromisoformat(value[:10])
-        except Exception:
-            return None
-    if field in _DATETIME_FIELDS and isinstance(value, str):
-        try:
-            # Поддержка и 'YYYY-MM-DD', и 'YYYY-MM-DDTHH:MM[:SS]'
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except Exception:
-            try:
-                return date.fromisoformat(value[:10])
-            except Exception:
-                return None
-    return value
+    return coerce_patch_value(field, value, date_fields=_DATE_FIELDS, datetime_fields=_DATETIME_FIELDS)
 
 
 @router.patch("/{pid}")

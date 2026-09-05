@@ -29,6 +29,7 @@ from app.models.purchase import Purchase
 from app.auth.jwt import get_current_user, get_org_filter
 from app.auth.permissions import require_tab, require_action
 from app.schemas.vehicle import RepairCreate, RepairOut
+from app.utils.coerce import coerce_patch_value
 
 router = APIRouter(prefix="/api/vehicle-repairs", tags=["vehicles"])
 
@@ -47,22 +48,7 @@ VALID_STATUSES = {"planned", "in_progress", "done", "cancelled"}
 
 def _coerce_patch_value(field: str, value):
     """Конвертирует ISO-строку в date для DATE-полей; пустые строки → None."""
-    if value == "" or value is None:
-        return None
-    if field in _REPAIR_DATE_FIELDS and isinstance(value, str):
-        try:
-            return date.fromisoformat(value[:10])
-        except Exception:
-            return None
-    if field in _REPAIR_DATETIME_FIELDS and isinstance(value, str):
-        try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except Exception:
-            try:
-                return date.fromisoformat(value[:10])
-            except Exception:
-                return None
-    return value
+    return coerce_patch_value(field, value, date_fields=_REPAIR_DATE_FIELDS, datetime_fields=_REPAIR_DATETIME_FIELDS)
 
 
 # ─────────────────────── Visibility helpers ───────────────────────

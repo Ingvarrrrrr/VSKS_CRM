@@ -1,7 +1,6 @@
 import io
 import os
 import zipfile
-from urllib.parse import quote
 from fastapi import APIRouter, Body, Depends, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +8,7 @@ from app.auth.jwt import get_current_user
 from app.database import get_db
 from app.models.user import User
 from app.services import report_excel, report_pdf
+from app.utils.http import content_disposition
 from datetime import datetime
 from openpyxl import load_workbook
 from openpyxl.styles import Font
@@ -16,11 +16,7 @@ from openpyxl.utils import get_column_letter
 
 router = APIRouter(prefix='/api/exports', tags=['exports'])
 
-
-def _content_disposition(filename: str) -> str:
-    """RFC 5987 — кириллица в имени файла недопустима в latin-1 заголовке."""
-    ascii_fallback = filename.encode('ascii', 'ignore').decode('ascii').strip() or 'export'
-    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename)}"
+_content_disposition = content_disposition
 
 
 @router.post('/table.xlsx')

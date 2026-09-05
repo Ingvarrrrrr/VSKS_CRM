@@ -21,12 +21,9 @@ from app.models.chat_room import ChatRoom, ChatParticipant
 from app.models.chat_message import ChatMessage
 from app.auth.jwt import get_current_user, MANAGER_ROLES
 from app.chat_manager import manager as chat_manager
-from app.routers.purchases import _purchase_to_full, STATUS_ORDER
+from app.routers.purchases import _purchase_to_full, STATUS_ORDER, VALID_SUBSTATUSES
 
 router = APIRouter(prefix="/api/purchases", tags=["purchase-members"])
-
-# Mirror VALID_SUBSTATUSES from purchases.py (same constant, used locally)
-VALID_SUBSTATUSES = ("tz_forming", "kp_collecting", "on_platform", "contractor_negotiations", "contract_signing")
 
 
 # ---------------------------------------------------------------------------

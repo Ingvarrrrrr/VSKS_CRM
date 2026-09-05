@@ -35,6 +35,7 @@ from app.models.subsidy_approver import SubsidyApprover
 # Reuse formatters from documents.py — avoids duplicating money/date formatting logic
 from app.routers.documents import (
     _fmt_date, _fmt_money, TEMPLATES_DIR,
+    _format_initials,
     _resolve_user_dept as _resolve_user_dept_for_wish,
     _resolve_user_position as _resolve_user_position_for_wish,
 )
@@ -233,19 +234,6 @@ async def generate_wish_service_note(
     )
 
     # B-dedup: ФИО → инициалы для responsible_person в шаблоне
-    def _format_initials(full: str) -> str:
-        if not full:
-            return ""
-        parts = (full or "").strip().split()
-        if not parts:
-            return ""
-        surname = parts[0]
-        initials = []
-        for p_word in parts[1:3]:
-            if p_word and p_word[0].isalpha():
-                initials.append(p_word[0].upper() + ".")
-        return f"{surname} {''.join(initials)}".strip()
-
     executor_full = (w.executor.full_name if getattr(w, 'executor', None) else "") or ""
     responsible_raw = responsible_name or executor_full or creator_full
     responsible_initials = _format_initials(responsible_raw)

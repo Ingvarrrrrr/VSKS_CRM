@@ -27,6 +27,7 @@ from app.auth.jwt import get_current_user, get_org_filter, ADMIN_ROLES
 from app.auth.permissions import require_tab, require_action
 from app.models.user import User
 from app.models.external_driver import ExternalDriver
+from app.utils.coerce import coerce_patch_value
 
 router = APIRouter(prefix="/api/external-drivers", tags=["vehicles"])
 drivers_router = APIRouter(prefix="/api/drivers", tags=["vehicles"])
@@ -51,14 +52,7 @@ _PATCHABLE_FIELDS = {
 
 def _coerce_patch_value(field: str, value: Any) -> Any:
     """Convert ISO string to date for DATE columns; empty string → None."""
-    if value == "" or value is None:
-        return None
-    if field in _DATE_FIELDS and isinstance(value, str):
-        try:
-            return date.fromisoformat(value[:10])
-        except Exception:
-            return None
-    return value
+    return coerce_patch_value(field, value, date_fields=_DATE_FIELDS, datetime_fields=set())
 
 
 def _visibility_q(user: User):

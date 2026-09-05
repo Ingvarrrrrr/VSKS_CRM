@@ -28,6 +28,8 @@ from app.models.payment import Payment
 from app.services.purchase_payments import recompute_purchase_payments
 from app.models.event import Event
 from app.routers.events import normalize_event_name
+from app.utils.text import normalize_feo_name
+from app.utils.numbers import to_decimal
 from app.auth.jwt import get_current_user
 from app.auth.permissions import has_org_key
 from app.auth.visibility import get_visible_subsidy_ids
@@ -2332,13 +2334,7 @@ def _make_cell_helper(col_idx: Dict[str, int]):
     return cell
 
 
-def _to_dec(v) -> Optional[Decimal]:
-    if v is None:
-        return None
-    try:
-        return Decimal(str(v).replace(" ", "").replace(",", ".").replace("\xa0", ""))
-    except Exception:
-        return None
+_to_dec = to_decimal
 
 
 def _to_date_val(v):
@@ -2361,16 +2357,7 @@ def _build_feo_index(feo_rows: List[FeoCategory], sid: int) -> Dict[int, FeoCate
 
 import re as _re
 
-def _norm_feo(s: str) -> str:
-    """Нормализовать имя ФЭО для матчинга: срезать ведущий числовой префикс, lower+strip."""
-    if not s:
-        return ""
-    # Срезаем «1. », «2.1 », «3) », «1.2.3. » и т.п.
-    s2 = _re.sub(r'^\s*\d+([.\)]\d+)*[.\)]?\s*', '', s)
-    s2 = s2.lower().strip()
-    # Схлопываем повторяющиеся пробелы
-    s2 = _re.sub(r'\s+', ' ', s2)
-    return s2
+_norm_feo = normalize_feo_name
 
 
 async def _resolve_feo_levels(

@@ -3,6 +3,10 @@
   "compilerOptions": {
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
     "types": ["vite/client"],
+    /* Алиас @ → src: Vite резолвит его через vite.config.ts, а vue-tsc — только отсюда.
+       Без этого 605 из 1702 ошибок baseline (2026-09-05) были ложными TS2307. */
+    "baseUrl": ".",
+    "paths": { "@/*": ["./src/*"] },
 
     /* Linting */
     "strict": true,

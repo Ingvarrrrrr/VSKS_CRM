@@ -22,13 +22,17 @@ self.addEventListener('activate', function(event) {
 self.addEventListener('push', function(event) {
   const data = event.data ? event.data.json() : {}
   const title = data.title || 'VSKS CRM'
+  // 2026-09: url/tag теперь читаются из payload (см. app/services/push_sender.py),
+  // а не жёстко зашиты — нужно разным событиям (чат, запрос местоположения,
+  // в будущем — задачи/добавления в чаты) открывать разные экраны по клику.
+  // Дефолты — СТАРОЕ поведение чата (чат url/tag явно не передаёт).
   const options = {
     body: data.body || 'Новое сообщение',
     icon: '/pwa-192x192.png',
     badge: '/pwa-192x192.png',
-    tag: 'vsks-chat',
+    tag: data.tag || 'vsks-chat',
     renotify: true,
-    data: { url: '/chat' },
+    data: { url: data.url || '/chat' },
   }
 
   // phase26-bb: Set app badge with actual unread count from payload (iOS PWA 16.4+)

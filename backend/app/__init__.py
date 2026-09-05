@@ -31,6 +31,12 @@ from .routers import purchase_transitions
 from .routers import feo_planned_items
 from .routers import plan_excess as plan_excess_router
 from .routers import telegram_webhook
+# Отслеживание местоположения сотрудников (владелец, 2026-09): смены/точки +
+# разовый запрос местоположения через мессенджер. Второй роутер тоже висит на
+# префиксе /api/staff-location (см. staff_location_requests.py) — это отдельный
+# APIRouter в отдельном файле (Правило модульности), не расширение первого.
+from .routers import staff_location as staff_location_router
+from .routers import staff_location_requests as staff_location_requests_router
 from .routers import settings as settings_router
 from .routers import chat as chat_router
 from .routers import push as push_router
@@ -2024,6 +2030,8 @@ app.include_router(org_config.router)
 app.include_router(hierarchy.router)
 app.include_router(billing.router)
 app.include_router(telegram_webhook.router)
+app.include_router(staff_location_router.router)           # /api/staff-location (смены, точки, трек)
+app.include_router(staff_location_requests_router.router)  # /api/staff-location/requests, /roster
 app.include_router(chat_router.router)    # REST: /api/chat/...
 app.include_router(chat_router.ws_router)  # WS: /api/ws/chat
 # Specific sub-router /api/wishes/*/documents/* registered BEFORE wishes.router

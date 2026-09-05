@@ -76,30 +76,42 @@ async function sendSubToBackend(sub: globalThis.PushSubscription) {
   }).catch(() => {})
 }
 
-async function subscribeToPush() {
+// 2026-09: экспортирована, чтобы MyLocationView.vue могла предложить явную
+// кнопку «Включить уведомления» — requestPermission() программно (не по
+// клику) многие браузеры молча блокируют, а автоматический вызов при
+// WS-подключении (см. connect() ниже) на такое как раз и напарывается.
+// Кнопка = настоящий user gesture, который requestPermission() требует.
+export type PushSubscribeResult = 'subscribed' | 'denied' | 'unsupported' | 'error'
+
+export async function subscribeToPush(): Promise<PushSubscribeResult> {
   try {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return 'unsupported'
+    // getRegistration() вместо .ready — .ready виснет НАВСЕГДА, если ни один
+    // SW не зарегистрирован (на localhost main.ts намеренно выключает SW для
+    // разработки — см. main.ts). Явная проверка вместо зависшей кнопки.
+    const existingReg = await navigator.serviceWorker.getRegistration()
+    if (!existingReg) return 'unsupported'
     const reg = await navigator.serviceWorker.ready
     // Check if already subscribed
     let sub = await reg.pushManager.getSubscription()
     if (sub) {
       // Already subscribed — send to backend in case token changed
       await sendSubToBackend(sub)
-      return
+      return 'subscribed'
     }
     // Request notification permission first
     if (typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
       const perm = await Notification.requestPermission()
-      if (perm !== 'granted') return
+      if (perm !== 'granted') return 'denied'
     }
     // Get VAPID public key from backend
     const token = localStorage.getItem('auth_token') ?? ''
     const res = await fetch('/api/push/vapid-key', {
       headers: { Authorization: `Bearer ${token}` },
     })
-    if (!res.ok) return
+    if (!res.ok) return 'error'
     const { key } = await res.json()
-    if (!key) return
+    if (!key) return 'error'
     // Convert VAPID key and subscribe
     const vapidKey = urlBase64ToUint8Array(key)
     sub = await reg.pushManager.subscribe({
@@ -107,8 +119,25 @@ async function subscribeToPush() {
       applicationServerKey: vapidKey,
     })
     await sendSubToBackend(sub)
+    return 'subscribed'
   } catch (e) {
     console.warn('Push subscription failed:', e)
+    return 'error'
+  }
+}
+
+// 2026-09: статус для UI (карточка «Push-уведомления» в MyLocationView.vue) —
+// без попытки что-либо запросить/подписать, только текущее состояние.
+export async function getPushSubscriptionStatus(): Promise<'subscribed' | 'unsubscribed' | 'denied' | 'unsupported'> {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return 'unsupported'
+  if (typeof Notification !== 'undefined' && Notification.permission === 'denied') return 'denied'
+  try {
+    const reg = await navigator.serviceWorker.getRegistration()
+    if (!reg) return 'unsupported'
+    const sub = await reg.pushManager.getSubscription()
+    return sub ? 'subscribed' : 'unsubscribed'
+  } catch {
+    return 'unsupported'
   }
 }
 

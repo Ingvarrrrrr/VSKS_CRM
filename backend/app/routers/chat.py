@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import io
-import json
 import os
 import re
 import uuid
@@ -46,60 +45,30 @@ async def _send_push_notifications(
 
     Phase 26-BB: payload теперь содержит per-recipient unread_count → SW
     может корректно вызвать navigator.setAppBadge(N) для iOS PWA badge.
+
+    2026-09: сама отправка вынесена в app.services.push_sender (Правило
+    модульности — запрос местоположения переиспользует тот же код, не копию).
+    Эта функция — тонкая обёртка, СОХРАНЯЮЩАЯ прежний контракт и payload чата
+    (title/body/badge/icon/unread_count, тот же VAPID sub) — поведение чата
+    менять было явно запрещено заданием. Единственное отличие внутри сервиса:
+    мёртвая подписка (HTTP 404/410 от push-сервиса) удаляется точечно, а не
+    "любая ошибка = удалить" как было раньше — это точнее, не искажает то,
+    что видит пользователь чата (push всё так же приходит офлайн-участникам).
     """
-    try:
-        from pywebpush import webpush, WebPushException  # type: ignore
-    except ImportError:
-        return
+    from app.services.push_sender import send_push_notifications
 
-    vapid_private = os.environ.get("VAPID_PRIVATE_KEY", "")
-    vapid_public = os.environ.get("VAPID_PUBLIC_KEY", "")
-    if not vapid_private or not vapid_public:
-        return
-
-    from app.models.push_subscription import PushSubscription
-    from sqlalchemy import delete
-
-    result = await db.execute(
-        select(PushSubscription).where(PushSubscription.user_id.in_(participant_ids))
-    )
-    subs = result.scalars().all()
-
-    # Phase 26-BB: per-user unread_count кэш — _compute_unread_total один раз на user
-    unread_by_user: dict[int, int] = {}
+    per_user_extra: dict[int, dict] = {}
     for uid in participant_ids:
-        unread_by_user[uid] = await _compute_unread_total(uid, db)
+        per_user_extra[uid] = {"unread_count": await _compute_unread_total(uid, db)}
 
-    expired_ids: list[int] = []
-    for sub in subs:
-        unread = unread_by_user.get(sub.user_id, 0)
-        payload = json.dumps({
-            "title": title,
-            "body": body,
-            "badge": "/pwa-192x192.png",
-            "icon": "/pwa-192x192.png",
-            "unread_count": unread,
-        })
-        try:
-            await asyncio.to_thread(
-                webpush,
-                subscription_info={
-                    "endpoint": sub.endpoint,
-                    "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
-                },
-                data=payload,
-                vapid_private_key=vapid_private,
-                vapid_claims={"sub": "mailto:z@vsks.ru"},
-            )
-        except Exception:
-            # Subscription expired or invalid — mark for deletion
-            expired_ids.append(sub.id)
-
-    if expired_ids:
-        await db.execute(
-            delete(PushSubscription).where(PushSubscription.id.in_(expired_ids))
-        )
-        await db.commit()
+    await send_push_notifications(
+        db=db,
+        user_ids=participant_ids,
+        title=title,
+        body=body,
+        url="/chat",
+        per_user_extra=per_user_extra,
+    )
 
 
 # ────────────────────────────── Constants ──────────────────────────────────

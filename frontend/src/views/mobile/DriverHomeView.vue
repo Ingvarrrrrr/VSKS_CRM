@@ -6,6 +6,13 @@
       <div class="text-body-2 mt-1" style="opacity: 0.6">{{ todayStr }}</div>
     </div>
 
+    <!-- Отслеживание местоположения (владелец, 2026-09): «нужен всем сотрудникам,
+         не только водителям» — но именно у водителей это МОБИЛЬНЫЙ домашний
+         экран, самое заметное место для этой функции. -->
+    <div class="pa-4 pt-2 pb-0">
+      <ShiftToggleButton />
+    </div>
+
     <!-- Vehicle selector (if no vehicle selected) -->
     <div v-if="!selectedVehicleId" class="pa-4">
       <v-card variant="outlined" class="rounded-xl pa-4">
@@ -268,6 +275,7 @@ import { useRouter } from 'vue-router'
 import LicensePlate from '@/components/vehicles/LicensePlate.vue'
 import VehicleTypeIcon from '@/components/vehicles/VehicleTypeIcon.vue'
 import StatusPill from '@/components/fleet/StatusPill.vue'
+import ShiftToggleButton from '@/components/staff/ShiftToggleButton.vue'
 import { vehicleTypeLabel } from '@/utils/vehicleLabels'
 import { useAuthStore } from '@/stores/auth'
 import { useToast, type ToastType } from '@/composables/useToast'

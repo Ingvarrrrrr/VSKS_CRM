@@ -97,6 +97,10 @@
         :transform="`translate(${pin.x},${pin.y})`"
         @click="onPinClick(pin)"
       >
+        <!-- 2026-09 (отслеживание местоположения сотрудников): нативная SVG-подсказка
+             при наведении — напр. точное время последней точки. Необязательное поле,
+             пины ТС его не задают, поведение для них не меняется. -->
+        <title v-if="pin.hint">{{ pin.hint }}</title>
         <!-- 2026-09 (владелец: «можно приблизить карту?») — контрмасштаб
              1/zoomLevel: viewBox сжимается при зуме и увеличивает ВСЁ внутри
              него, а кружок/цифра/подпись должны остаться тем же числом
@@ -113,11 +117,26 @@
              scale (та же ловушка, что уже была с translate, см. комментарий выше). -->
         <g class="pin-zoom-counter" :transform="`scale(${counterScale})`">
           <g class="pin-marker">
-            <!-- Halo -->
-            <circle :r="pin.radius + HALO_GAP" :fill="pin.color" opacity="0.2"/>
-            <!-- Main circle -->
-            <circle :r="pin.radius" :fill="pin.color" :stroke="pinStroke" stroke-width="3"/>
-            <!-- Count inside -->
+            <!-- 2026-09 (отслеживание местоположения сотрудников): shape='person' рисует
+                 скруглённый квадрат вместо кружка — люди на карте физически другой формы,
+                 не только другого цвета (владелец: «люди отличаются от машин визуально»).
+                 Пины ТС shape не задают → circle, поведение не меняется. -->
+            <template v-if="pin.shape === 'person'">
+              <!-- Halo -->
+              <rect :x="-(pin.radius + HALO_GAP)" :y="-(pin.radius + HALO_GAP)"
+                    :width="(pin.radius + HALO_GAP) * 2" :height="(pin.radius + HALO_GAP) * 2"
+                    :rx="(pin.radius + HALO_GAP) * 0.35" :fill="pin.color" opacity="0.2"/>
+              <!-- Main square -->
+              <rect :x="-pin.radius" :y="-pin.radius" :width="pin.radius * 2" :height="pin.radius * 2"
+                    :rx="pin.radius * 0.35" :fill="pin.color" :stroke="pinStroke" stroke-width="3"/>
+            </template>
+            <template v-else>
+              <!-- Halo -->
+              <circle :r="pin.radius + HALO_GAP" :fill="pin.color" opacity="0.2"/>
+              <!-- Main circle -->
+              <circle :r="pin.radius" :fill="pin.color" :stroke="pinStroke" stroke-width="3"/>
+            </template>
+            <!-- Count inside (или pin.glyph, если задан — см. пины-люди выше) -->
             <text
               text-anchor="middle"
               dominant-baseline="central"
@@ -125,7 +144,7 @@
               :font-size="Math.max(10, Math.min(15, pin.radius * 0.85))"
               font-weight="700"
               font-family="JetBrains Mono, monospace"
-            >{{ pin.count }}</text>
+            >{{ pin.glyph ?? pin.count }}</text>
           </g>
           <!-- Label — два взаимоисключающих способа рисовать имя города, см.
                LABEL_RENDER_MODE выше (эксперимент владельца: «название по

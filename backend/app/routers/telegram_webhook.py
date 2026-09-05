@@ -8,11 +8,28 @@ from app.models.user import User
 from app.models.task_comment import TaskComment
 from app.models.task import TelegramMessageMap
 from app.notifications import TELEGRAM_BOT_TOKEN
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["telegram"])
+
+
+@router.post("/api/telegram/webhook")
+async def telegram_webhook_endpoint(request: Request) -> dict:
+    """HTTP-приёмник обновлений Telegram (setWebhook), НЕ используется в проде —
+    боевой бот работает через long-polling (см. _poll_loop ниже, запускается
+    из app/__init__.py::start_polling). Роут существует для двух целей:
+    (1) ручная/тестовая проверка обработки обновлений без реального polling
+    (см. app/services/staff_location_requests.py — приём геопозиции нельзя
+    протестировать иначе, не отправляя боевому боту настоящее сообщение);
+    (2) готовность переключиться на webhook-режим в будущем без переписывания
+    _process_update. Безопасно даже если Telegram НИКОГДА не настроен слать
+    сюда обновления — тогда этот путь просто не вызывается извне.
+    """
+    update = await request.json()
+    await _process_update(update)
+    return {"ok": True}
 
 _last_update_id = 0
 _polling_started = False
@@ -54,6 +71,76 @@ async def _send_force_reply(chat_id: str, prompt: str, task_id: int = None, purc
                         _purchase_msg_map[(chat_id, msg_id)] = purchase_id
     except Exception as e:
         logger.warning("ForceReply send failed: %s", e)
+
+
+async def _send_plain(chat_id: str, text: str, remove_keyboard: bool = False) -> None:
+    """Простое сообщение-подтверждение, опционально убирающее reply-клавиатуру
+    (задание: после ответа на запрос местоположения клавиатуру нужно убрать —
+    Telegram Bot API ReplyKeyboardRemove)."""
+    if not TELEGRAM_BOT_TOKEN or not chat_id:
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload: dict = {"chat_id": chat_id, "text": text}
+    if remove_keyboard:
+        payload["reply_markup"] = {"remove_keyboard": True}
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(url, json=payload)
+    except Exception as e:
+        logger.warning("TG plain send failed: %s", e)
+
+
+async def _handle_location_response(message: dict, location: dict) -> None:
+    """Ответ сотрудника на разовый запрос местоположения (staff_location_request.py).
+
+    Ищем пользователя по chat_id (from.id — тот же принцип, что везде в этом
+    файле), находим его активный запрос, пишем точку через сервис (минуя
+    проверку активной смены — задание явно требует отдельного пути записи),
+    убираем клавиатуру и подтверждаем.
+
+    ПЕРСОНАЛЬНЫЕ ДАННЫЕ: lat/lon НЕ логируются — см. record_location_response.
+    """
+    chat_id = str(message.get("from", {}).get("id", ""))
+    if not chat_id:
+        return
+    lat = location.get("latitude")
+    lon = location.get("longitude")
+    if lat is None or lon is None:
+        return
+    accuracy = location.get("horizontal_accuracy")
+
+    try:
+        async with async_session() as db:
+            user = (await db.execute(
+                select(User).where(User.telegram_id == chat_id)
+            )).scalars().first()
+            if not user:
+                logger.info("TG location update from unknown chat_id — ignored")
+                return
+
+            from app.services.staff_location_requests import find_active_request, record_location_response
+            req = await find_active_request(db, user.id)
+            if not req:
+                await db.commit()  # фиксируем возможную ленивую пометку "истёк"
+                await _send_plain(
+                    chat_id,
+                    "Активный запрос местоположения не найден (истёк или его не было) — "
+                    "попросите диспетчера отправить запрос ещё раз.",
+                    remove_keyboard=True,
+                )
+                return
+
+            await record_location_response(
+                db, req, lat=lat, lon=lon, accuracy_m=accuracy, source="telegram",
+            )
+            await db.commit()
+            logger.info(
+                "TG location response accepted user_id=%s request_id=%s",
+                user.id, req.id,
+            )
+        await _send_plain(chat_id, "✅ Спасибо! Ваше местоположение получено.", remove_keyboard=True)
+    except Exception as e:
+        logger.error("TG location handling error: %s", e)
 
 
 async def _handle_callback(cq: dict) -> None:
@@ -259,7 +346,15 @@ async def _process_update(update: dict) -> None:
         await _handle_callback(callback_query)
         return
 
-    message = update.get("message", {})
+    # message ИЛИ edited_message — live location (задание, бонус: live_period)
+    # шлёт обновления как edited_message с тем же message_id, а не новое message.
+    message = update.get("message") or update.get("edited_message") or {}
+
+    location = message.get("location")
+    if location:
+        await _handle_location_response(message, location)
+        return
+
     text = message.get("text", "").strip()
     if not text:
         return

@@ -22,6 +22,7 @@ import ServiceNotesView from '../views/ServiceNotesView.vue'
 import AdvanceReportsView from '../views/AdvanceReportsView.vue'
 import OrgSettingsView from '../views/OrgSettingsView.vue'
 import { useAuthStore } from '../stores/auth'
+import { useToast } from '../composables/useToast'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -415,6 +416,47 @@ const router = createRouter({
       name: 'fleet-waybill-form',
       component: () => import('../views/fleet/FleetWaybillFormView.vue'),
       meta: { requiresAuth: true, title: 'Путевой лист', tab_key: 'vehicles' },
+    },
+    // Отслеживание местоположения сотрудников (владелец, 2026-09).
+    // Диспетчерская карта «Где люди» — доступ по ДЕЙСТВИЮ (staff.location.view),
+    // а не по tab_key: право отдельное от общей матрицы вкладок (см.
+    // backend/app/routers/staff_location.py). Router-guard tab_key ниже (D-01a)
+    // такие маршруты не проверяет вовсе — гейт ставим отдельным beforeEnter,
+    // тем же принципом («не показывать вовсе», задание п.3): без права —
+    // редирект, а не пустая страница.
+    {
+      path: '/staff-location',
+      name: 'staff-location-map',
+      component: () => import('../views/fleet/StaffLocationMapView.vue'),
+      meta: { requiresAuth: true, title: 'Где люди' },
+      beforeEnter: (_to, _from, next) => {
+        const role = localStorage.getItem('user_role')
+        if (role === 'superadmin' || role === 'admin') return next()
+        const authStore = useAuthStore()
+        if (authStore.hasAction('staff.location.view')) return next()
+        useToast().warning('Нет права «Просмотр местоположения сотрудников» — обратитесь к администратору организации.')
+        next('/dashboard')
+      },
+    },
+    // Своя позиция/трек — доступно ВСЕМ без права staff.location.view (это
+    // собственные данные пользователя, см. GET /staff-location/mine/last и
+    // /staff-location/track/{self}).
+    {
+      path: '/my-location',
+      name: 'my-location',
+      component: () => import('../views/MyLocationView.vue'),
+      meta: { requiresAuth: true, title: 'Моё местоположение' },
+    },
+    // Экран подтверждения отправки геопозиции — открывается по клику на push
+    // (см. app/services/push_sender.py url=/location-request/{id}) или из
+    // MAX/Telegram fallback-сообщения при желании. Доступен без права
+    // staff.location.view — это ответ на СВОЙ запрос (backend проверяет
+    // req.user_id == current_user.id, см. staff_location_requests.py).
+    {
+      path: '/location-request/:id(\\d+)',
+      name: 'location-request-respond',
+      component: () => import('../views/staff/LocationRequestRespondView.vue'),
+      meta: { requiresAuth: true, title: 'Запрос местоположения' },
     },
 
     // Property / Vehicle fleet (Phase 29) — kept for backward-compat (redirected above)

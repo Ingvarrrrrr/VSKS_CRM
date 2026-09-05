@@ -76,3 +76,8 @@ from app.models.commercial_request import CommercialRequestOffer  # noqa: F401
 from app.models.subsidy_member import SubsidyMember  # noqa: F401
 # Редактор значков кузова ТС (владелец, 2026-09): переопределения по организации
 from app.models.body_type_icon_override import BodyTypeIconOverride  # noqa: F401
+# Отслеживание местоположения сотрудников (владелец, 2026-09): смены + точки GPS
+from app.models.staff_shift import StaffShift  # noqa: F401
+from app.models.staff_location import StaffLocationPoint  # noqa: F401
+# Разовый запрос местоположения через мессенджер (владелец, 2026-09)
+from app.models.staff_location_request import StaffLocationRequest  # noqa: F401

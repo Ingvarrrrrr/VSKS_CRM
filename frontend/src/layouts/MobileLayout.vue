@@ -55,10 +55,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { initStaffLocationTracking } from '@/composables/useStaffLocationTracking'
 
 const route = useRoute()
+
+// Отслеживание местоположения (владелец, 2026-09): водителей роутер сразу
+// уводит в /m/driver, минуя десктопный AppBar.vue (там же обычно живёт
+// initStaffLocationTracking) — без этого вызова у водителей передача вообще
+// никогда бы не стартовала. initStaffLocationTracking() идемпотентен (см.
+// composable) — повторный вызов при переключении раскладок безопасен.
+onMounted(() => {
+  initStaffLocationTracking()
+})
 
 const pageTitle = computed(() => (route.meta?.title as string) || 'FleetOps')
 

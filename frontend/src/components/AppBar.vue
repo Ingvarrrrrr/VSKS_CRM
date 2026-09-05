@@ -74,6 +74,12 @@
             title="Путевые листы"
           />
           <v-list-item
+            v-if="authStore.hasAction('staff.location.view')"
+            :to="'/staff-location'"
+            prepend-icon="mdi-map-marker-account"
+            title="Где люди"
+          />
+          <v-list-item
             :to="'/m/driver'"
             prepend-icon="mdi-cellphone"
             title="Мобильный кабинет водителя"
@@ -107,6 +113,11 @@
     />
 
     <v-spacer />
+
+    <!-- Отслеживание местоположения (владелец, 2026-09): нужно всем сотрудникам,
+         не только водителям — компактный индикатор+переключатель в общей шапке.
+         См. ShiftToggleButton.vue / useStaffLocationTracking.ts. -->
+    <ShiftToggleButton compact class="mr-1" />
 
     <!-- Тёмная тема — приоритет перед остальными иконками, чтобы не обрезалась на узких экранах -->
     <v-btn
@@ -184,6 +195,11 @@
             <v-icon icon="mdi-draw" class="mr-2" />Моя подпись
             <v-chip v-if="hasSignature" size="x-small" color="success" variant="tonal" class="ml-2">есть</v-chip>
             <v-chip v-else size="x-small" color="warning" variant="tonal" class="ml-2">нет</v-chip>
+          </v-list-item-title>
+        </v-list-item>
+        <v-list-item :to="'/my-location'">
+          <v-list-item-title class="d-flex align-center">
+            <v-icon icon="mdi-map-marker-radius-outline" class="mr-2" />Моё местоположение
           </v-list-item-title>
         </v-list-item>
         <v-divider />
@@ -347,6 +363,10 @@
         <v-list-item to="/fleet/regions"      prepend-icon="mdi-map"                     title="Регионы и филиалы"            active-class="bg-primary text-white" />
         <v-list-item to="/fleet/fines"        prepend-icon="mdi-alert-octagon"           title="Штрафы"                     active-class="bg-primary text-white" />
         <v-list-item to="/fleet/waybills"     prepend-icon="mdi-clipboard-list"          title="Путевые листы"              active-class="bg-primary text-white" />
+        <v-list-item
+          v-if="authStore.hasAction('staff.location.view')"
+          to="/staff-location" prepend-icon="mdi-map-marker-account" title="Где люди" active-class="bg-primary text-white"
+        />
         <v-list-item to="/m/driver"           prepend-icon="mdi-cellphone"               title="Мобильный кабинет водителя" active-class="bg-primary text-white" />
       </v-list-group>
     </v-list>
@@ -479,6 +499,8 @@ import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { apiFetch, forceClearCacheAndReload } from '@/api'
 import { totalUnread, initChat, destroyChat } from '@/composables/useChat'
 import { myPendingApprovalsCount, initApprovalsBadge, destroyApprovalsBadge } from '@/composables/useApprovalsBadge'
+import { initStaffLocationTracking, destroyStaffLocationTracking } from '@/composables/useStaffLocationTracking'
+import ShiftToggleButton from '@/components/staff/ShiftToggleButton.vue'
 import { useAuthStore } from '../stores/auth'
 
 const { globalSubsidyId } = useGlobalSubsidy()
@@ -768,6 +790,7 @@ function onPhotoSaved(photoUrl: string | null) {
 }
 
 const logout = () => {
+  destroyStaffLocationTracking()  // прекратить передачу местоположения при выходе из аккаунта
   authStore.clear()
   localStorage.removeItem('auth_token')
   localStorage.removeItem('user_role')
@@ -990,6 +1013,7 @@ onMounted(async () => {
   _badgeInterval = setInterval(loadBadges, 60_000)  // refresh every 60s
   initChat()  // start WS connection for chat badge updates
   initApprovalsBadge()  // счётчик «мои согласования» (закупки + заявки + превышения плана ФЭО)
+  initStaffLocationTracking()  // отслеживание местоположения — продолжает идти, пока пользователь в системе
 
   // Superadmin: auto-open org picker if no orgs selected
   if (isSuperadmin.value && selectedOrgIds.value.length === 0 && myOrgs.value.length > 0) {

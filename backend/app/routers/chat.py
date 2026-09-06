@@ -18,7 +18,7 @@ from PIL import Image
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
-from jose import JWTError, jwt
+import jwt
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -877,7 +877,7 @@ async def download_file(
         current_user = result.scalar_one_or_none()
         if not current_user:
             raise HTTPException(status_code=401, detail="Not authenticated")
-    except JWTError:
+    except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     await _check_room_participant(room_id, current_user.id, db)
@@ -924,7 +924,7 @@ async def chat_ws(
         if not username:
             await ws.close(code=4001)
             return
-    except JWTError:
+    except jwt.PyJWTError:
         await ws.close(code=4001)
         return
 

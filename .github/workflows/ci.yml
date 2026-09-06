@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [claude, main]
+  pull_request:
+    branches: [claude, main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Install lint/audit tools
+        # ruff и pip-audit — только для CI, в прод-образ (backend/requirements.txt)
+        # намеренно не добавлены, чтобы не тянуть лишнее в рантайм-контейнер.
+        run: pip install ruff pip-audit
+
+      - name: Lint (ruff — syntax errors / undefined names only)
+        run: ruff check backend/app --select E9,F63,F7,F82
+
+      - name: Alembic single-head check
+        # Статическая проверка графа ревизий (без подключения к БД) — ловит
+        # "две головы" ДО деплоя, а не когда `alembic upgrade head` падает на
+        # проде (см. Lessons: "Alembic: проверять multiple heads перед миграцией").
+        run: python backend/scripts/check_alembic_single_head.py
+
+      - name: Dependency audit (informational)
+        run: pip-audit -r backend/requirements.txt
+        continue-on-error: true
+
+      # pytest НЕ запускается в CI: тесты требуют живую Postgres в docker-сети
+      # (см. backend/tests/conftest.py — db_session бьёт в app.database.engine
+      # напрямую, отдельной тестовой БД/схемы для CI пока нет). Отдельная задача.
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: TypeScript check (vue-tsc, error-count baseline gate)
+        # frontend/.vue-tsc-baseline снят с текущего состояния репозитория
+        # (826 ошибок на 2026-09-05) — существующий долг не блокирует CI, но
+        # рост числа ошибок относительно baseline проваливает job.
+        working-directory: frontend
+        run: |
+          set +e
+          npx vue-tsc --noEmit -p tsconfig.app.json > /tmp/vue-tsc-output.txt 2>&1
+          set -e
+          count=$(grep -c "error TS" /tmp/vue-tsc-output.txt || true)
+          baseline=$(cat .vue-tsc-baseline)
+          echo "vue-tsc errors: $count (baseline: $baseline)"
+          if [ "$count" -gt "$baseline" ]; then
+            echo "::error::vue-tsc error count ($count) exceeds baseline ($baseline)"
+            tail -n 200 /tmp/vue-tsc-output.txt
+            exit 1
+          fi
+
+      - name: Regions dictionary in sync (Правило №6)
+        # frontend/src/data/ru_regions.json — генерируемая копия единого источника
+        # backend/app/data/ru_regions.json (образ фронта собирается из ./frontend и
+        # backend/ не видит). Падает, если источник поменяли, а копию не пересоздали
+        # (`npm run sync:regions`).
+        working-directory: frontend
+        run: node scripts/sync-ru-regions.mjs --check
+
+      - name: Build (vite)
+        working-directory: frontend
+        run: npx vite build
+
+      - name: Dependency audit (informational)
+        working-directory: frontend
+        run: npm audit --audit-level=high
+        continue-on-error: true

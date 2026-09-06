@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import select, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +11,9 @@ from app.database import get_db
 from app.models.user import User
 from app.models.organization import Organization
 from app.auth.jwt import verify_password, create_access_token, get_current_user, hash_password
+from app.auth.rate_limit import (
+    rate_limit_response, record_failed_login, reset_login_rate_limit, resolve_client_ip,
+)
 from app.schemas.schemas import LoginRequest, Token, UserOut
 from app.utils.email import send_password_reset_email
 
@@ -18,7 +21,15 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=Token)
-async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    # 10 попыток/60с на IP (backend/app/auth/rate_limit.py) — раньше логин
+    # был открыт для неограниченного перебора пароля. JSONResponse (а не
+    # HTTPException) — иначе общий exception_handler (app/errors.py) съедает
+    # заголовок Retry-After, см. docstring rate_limit.py.
+    ip = resolve_client_ip(request)
+    limited = rate_limit_response(ip)
+    if limited is not None:
+        return limited
     # Try email first (case-insensitive), then username
     login_lower = req.username.lower()
     result = await db.execute(select(User).where(func.lower(User.email) == login_lower))
@@ -27,8 +38,10 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
         result = await db.execute(select(User).where(func.lower(User.username) == login_lower))
         user = result.scalar_one_or_none()
     if not user or not verify_password(req.password, user.password_hash):
+        record_failed_login(ip)
         raise HTTPException(status_code=401, detail="Неверный email или пароль")
     if not user.is_email_confirmed:
+        record_failed_login(ip)
         raise HTTPException(status_code=403, detail="Подтвердите email перед входом")
     org_name = None
     # Filippov fix (02.06): пользователь с user.org_id=NULL, но членством в орг
@@ -59,6 +72,7 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
         org = await db.get(Organization, effective_org_id)
         if org:
             if not org.is_active and user.role not in ('superadmin', 'account_owner'):
+                record_failed_login(ip)
                 raise HTTPException(status_code=403, detail="Подписка организации неактивна")
             org_name = org.name
     # 27.4-08: контурную видимость (root_org_id == user.org_id → все child orgs)
@@ -79,6 +93,7 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
         if len(contour_ids) > 1:
             jwt_payload["org_ids"] = contour_ids
     token = create_access_token(jwt_payload)
+    reset_login_rate_limit(ip)
     return Token(access_token=token, role=user.role, full_name=user.full_name,
                  org_id=effective_org_id, org_name=org_name, user_id=user.id,
                  can_publish=user.can_publish or False)

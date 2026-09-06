@@ -759,8 +759,15 @@ async def can_edit_task_of_user(
     if md_check.first():
         return True
     # ManagerOrganization: editor manages entire org that task_owner belongs to?
+    # UserOrganization уже импортирован на уровне модуля (строка 21) — локальный
+    # импорт здесь раньше делал имя ЛОКАЛЬНЫМ для всей функции (правило области
+    # видимости Python: имя, которому есть присваивание/import где-либо в теле
+    # функции, локально везде в функции), из-за чего использование
+    # `UserOrganization` в head_check ВЫШЕ по коду (строка ~732, до этого
+    # импорта) падало с UnboundLocalError на КАЖДОМ вызове can_edit_task_of_user
+    # (ruff F823). Затронутый путь — tasks.py:337, редактирование чужой задачи
+    # не-админом/не-владельцем.
     from app.models.manager_organization import ManagerOrganization
-    from app.models.user_organization import UserOrganization
     task_owner = await db.get(User, task_owner_id)
     if task_owner:
         mo_check = await db.execute(

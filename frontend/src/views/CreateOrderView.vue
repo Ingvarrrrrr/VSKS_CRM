@@ -2409,62 +2409,26 @@
         </v-card-text>
       </v-card>
 
-      <!-- Диалог загрузки файла -->
-      <v-dialog v-model="uploadDialog" max-width="420" persistent :fullscreen="mobile">
-        <v-card>
-          <v-card-title class="text-subtitle-1 pt-4 px-4">Загрузить файл</v-card-title>
-          <v-card-text class="pb-0">
-            <v-select v-model="uploadFileType"
-              :items="FILE_TYPE_OPTIONS" item-title="title" item-value="value"
-              label="Тип документа" variant="outlined" density="compact" class="mb-3" />
-            <div class="text-body-2 mb-2">Формат файла</div>
-            <v-btn-toggle v-model="uploadDocFormat" mandatory density="compact" color="primary" class="mb-1">
-              <v-btn value="scan" prepend-icon="mdi-scanner">Скан</v-btn>
-              <v-btn value="editable" prepend-icon="mdi-file-edit-outline">Редактируемый</v-btn>
-            </v-btn-toggle>
-            <div class="text-caption text-medium-emphasis mb-2">
-              Редактируемый — только Word и Excel. PDF и изображения всегда скан.
-            </div>
-            <div class="text-caption text-medium-emphasis">PDF, Word, Excel, JPEG, PNG</div>
-          </v-card-text>
-          <v-card-actions>
-            <v-spacer />
-            <v-btn variant="text" @click="uploadDialog = false">Отмена</v-btn>
-            <v-btn color="primary" variant="tonal" @click="fileInputEl?.click()">
-              Выбрать файл
-            </v-btn>
-          </v-card-actions>
-        </v-card>
-      </v-dialog>
-
-      <!-- Диалог смены типа файла -->
-      <v-dialog v-model="fileTypeEditDialog" max-width="380">
-        <v-card>
-          <v-card-title class="text-subtitle-1 pt-4 px-4">Тип документа</v-card-title>
-          <v-card-text>
-            <v-select v-model="fileTypeEditValue"
-              :items="FILE_TYPE_OPTIONS" item-title="title" item-value="value"
-              label="Тип" variant="outlined" density="compact" class="mb-3" />
-            <div class="text-body-2 mb-2">Формат файла</div>
-            <v-btn-toggle v-model="fileDocFormatEditValue" mandatory density="compact" color="primary">
-              <v-btn value="scan" prepend-icon="mdi-scanner">Скан</v-btn>
-              <v-btn value="editable" prepend-icon="mdi-file-edit-outline"
-                :disabled="fileTypeEditTarget ? !EDITABLE_MIME.has(fileTypeEditTarget.mime_type || '') : false">
-                Редактируемый
-              </v-btn>
-            </v-btn-toggle>
-            <div v-if="fileTypeEditTarget && !EDITABLE_MIME.has(fileTypeEditTarget.mime_type || '')"
-              class="text-caption text-orange mt-1">
-              Только Word/Excel могут быть редактируемыми
-            </div>
-          </v-card-text>
-          <v-card-actions>
-            <v-spacer />
-            <v-btn variant="text" @click="fileTypeEditDialog = false">Отмена</v-btn>
-            <v-btn color="primary" variant="tonal" :loading="savingFileType" @click="saveFileType">Сохранить</v-btn>
-          </v-card-actions>
-        </v-card>
-      </v-dialog>
+      <!-- Диалоги файлов (загрузка / смена типа / предпросмотр) -->
+      <PurchaseFileDialogs
+        v-model:upload-open="uploadDialog"
+        v-model:file-type-edit-open="fileTypeEditDialog"
+        v-model:preview-open="previewDialog"
+        v-model:upload-file-type="uploadFileType"
+        v-model:upload-doc-format="uploadDocFormat"
+        v-model:file-type-edit-value="fileTypeEditValue"
+        v-model:file-doc-format-edit-value="fileDocFormatEditValue"
+        :file-type-options="FILE_TYPE_OPTIONS"
+        :file-type-edit-target="fileTypeEditTarget"
+        :editable-mime="EDITABLE_MIME"
+        :saving-file-type="savingFileType"
+        :preview-file="previewFile"
+        :preview-url="previewUrl"
+        :file-icon="fileIcon"
+        @choose-file="fileInputEl?.click()"
+        @save-file-type="saveFileType"
+        @download="(id, filename) => downloadFile(id, filename)"
+      />
 
       <!-- 8. Формирование документов -->
       <v-card v-if="isEdit" variant="outlined" class="mb-4">
@@ -2875,263 +2839,39 @@
       </div>
     </v-form>
 
-    <!-- Publish dialog -->
-    <v-dialog v-model="publishDialog" max-width="480" :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="text-h6 pt-4 px-6 d-flex align-center gap-2">
-          <v-icon color="deep-purple">mdi-broadcast</v-icon>
-          Опубликовать закупку
-        </v-card-title>
-        <v-card-text class="px-6">
-
-          <!-- Ошибки валидации -->
-          <v-alert v-if="publishErrors.length" type="error" variant="tonal" density="compact" class="mb-4">
-            <div class="text-subtitle-2 mb-1">Заполните обязательные поля:</div>
-            <ul class="pl-4 mb-0">
-              <li v-for="e in publishErrors" :key="e.target" class="text-body-2"
-                style="cursor:pointer" @click="revealField(e.target)">
-                <v-icon size="14" class="mr-1">mdi-arrow-right-circle</v-icon>{{ e.text }}
-              </li>
-            </ul>
-          </v-alert>
-
-            <p class="text-body-2 text-medium-emphasis mb-4">
-              Выберите площадку. Данные закупки будут отправлены автоматически.
-            </p>
-            <v-list density="compact" class="border rounded">
-              <v-list-item
-                v-for="pl in AVAILABLE_PLATFORMS" :key="pl.value"
-                :title="pl.title"
-                :subtitle="pl.subtitle"
-                class="py-3"
-              >
-                <template #prepend>
-                  <v-avatar :color="pl.color" size="36" class="mr-3">
-                    <v-icon size="18" color="white">{{ pl.icon }}</v-icon>
-                  </v-avatar>
-                </template>
-                <template #append>
-                  <v-btn
-                    color="deep-purple" variant="tonal" size="small"
-                    :loading="publishingPlatform === pl.value"
-                    :disabled="isPlatformPublished(pl.value)"
-                    @click="pendingPlatform = pl.value; if (pl.value === 'fabrikant') { initFabrikantDates(); fabrikantNoNmcd = !(publishNmck > 0) }"
-                  >
-                    {{ publications.some(p => p.platform === pl.value && p.status === 'draft') ? 'Черновик на ЭТП' : isPlatformPublished(pl.value) ? 'Опубликовано' : 'Опубликовать' }}
-                  </v-btn>
-                </template>
-              </v-list-item>
-            </v-list>
-
-            <!-- Настройки Фабрикант: даты -->
-            <v-expand-transition>
-              <div v-if="pendingPlatform === 'fabrikant'" class="mt-3 px-1">
-                <v-divider class="mb-3" />
-                <div class="text-subtitle-2 mb-3">Параметры публикации на Фабрикант</div>
-                <v-alert v-if="!currentSubsidyOrgInn" type="warning" variant="tonal" density="compact" class="mb-3 text-caption">
-                  Не заполнен ИНН организации-заказчика. Перейдите в раздел <strong>Организации</strong> → нажмите карандаш → укажите ИНН.
-                </v-alert>
-
-                <!-- Тип процедуры -->
-                <v-select
-                  v-model="fabrikantProcedureType"
-                  :items="FABRIKANT_PROCEDURE_TYPES"
-                  item-title="title"
-                  item-value="value"
-                  label="Тип процедуры"
-                  variant="outlined"
-                  density="compact"
-                  hide-details
-                  class="mb-3"
-                />
-
-                <!-- Подсказка для Мониторинга цен -->
-                <v-alert v-if="fabrikantProcedureType === 'price_monitoring'" type="info" variant="tonal" density="compact" class="mb-3 text-caption">
-                  Сбор ценовых предложений без объявления цены и позиций. НМЦД не требуется.
-                </v-alert>
-
-                <div id="pub-target-okpd2" style="position:relative">
-                  <v-autocomplete
-                    v-model="fabrikantOkpd2"
-                    :items="okpd2Items"
-                    :item-value="(i: {code: string}) => i.code"
-                    :item-title="(i: {code: string; name: string}) => okpd2ItemTitle(i)"
-                    :no-filter="true"
-                    :loading="okpd2Loading"
-                    clearable
-                    label="Код ОКПД2 (обязательно)"
-                    variant="outlined"
-                    density="compact"
-                    class="mb-3"
-                    :error="okpd2Pointer && !fabrikantOkpd2"
-                    @update:search="searchOkpd2"
-                    @update:model-value="okpd2Pointer = false; clearGuideArrow()"
-                  >
-                    <template #no-data>
-                      <v-list-item>
-                        <v-list-item-title class="text-caption" :class="okpd2Error ? 'text-error' : 'text-medium-emphasis'">
-                          {{ okpd2Error || 'Ничего не найдено' }}
-                        </v-list-item-title>
-                      </v-list-item>
-                    </template>
-                  </v-autocomplete>
-                  <div v-if="okpd2Pointer" class="pub-pointer"><span class="mdi mdi-arrow-down-bold" /></div>
-                </div>
-
-                <!-- НМЦД — скрыт для Мониторинга цен -->
-                <div v-if="fabrikantProcedureType !== 'price_monitoring'" class="mb-3">
-                  <div v-if="publishNmck > 0" class="text-body-2 mb-1">
-                    НМЦД: <strong>{{ formatMoney(publishNmck) }}</strong>
-                  </div>
-                  <v-checkbox
-                    v-model="fabrikantNoNmcd"
-                    label="Опубликовать без НМЦД"
-                    density="compact"
-                    hide-details
-                    color="orange-darken-2"
-                  />
-                  <div v-if="publishNmck === 0" class="text-caption text-medium-emphasis mt-1">
-                    НМЦД не найдена в закупке — будет опубликовано без НМЦД. Чтобы указать цену, заполните НМЦД в карточке.
-                    <v-btn variant="text" size="x-small" class="ml-1" @click="revealField('nmck')">Показать поле НМЦД</v-btn>
-                  </div>
-                </div>
-
-                <v-row dense>
-                  <v-col cols="12" sm="6">
-                    <v-text-field
-                      v-model="fabrikantDates.proposal_start"
-                      type="datetime-local"
-                      label="Начало приёма предложений"
-                      variant="outlined" density="compact"
-                    />
-                  </v-col>
-                  <v-col cols="12" sm="6">
-                    <v-text-field
-                      v-model="fabrikantDates.proposal_end"
-                      type="datetime-local"
-                      label="Конец приёма предложений"
-                      variant="outlined" density="compact"
-                    />
-                  </v-col>
-                  <!-- Определение победителя — только для ЗП -->
-                  <v-col v-if="fabrikantProcedureType === 'zp'" cols="12" sm="6">
-                    <v-text-field
-                      v-model="fabrikantDates.determination_date"
-                      type="datetime-local"
-                      label="Определение победителя"
-                      variant="outlined" density="compact"
-                    />
-                  </v-col>
-                  <v-col cols="12" sm="6">
-                    <v-text-field
-                      v-model="fabrikantDates.summing_up_date"
-                      type="datetime-local"
-                      label="Подведение итогов"
-                      variant="outlined" density="compact"
-                    />
-                  </v-col>
-                </v-row>
-
-                <!-- Поля редукциона -->
-                <template v-if="fabrikantProcedureType === 'reduction'">
-                  <v-divider class="my-2" />
-                  <div class="text-caption text-medium-emphasis mb-2">Параметры редукциона</div>
-                  <v-row dense>
-                    <v-col cols="12">
-                      <div id="pub-target-auction-date" style="position:relative">
-                        <div v-if="auctionPointerTarget === 'auction-date'" class="pub-pointer"><span class="mdi mdi-arrow-down-bold" /></div>
-                        <div :class="auctionPointerTarget === 'auction-date' ? 'pub-glow' : ''">
-                          <v-text-field
-                            v-model="fabrikantAuctionDateStart"
-                            type="datetime-local"
-                            label="Дата и время начала редукциона *"
-                            variant="outlined" density="compact"
-                            :error="!fabrikantAuctionDateStart"
-                            @update:model-value="auctionPointerTarget = null; clearGuideArrow()"
-                          />
-                        </div>
-                      </div>
-                    </v-col>
-                    <v-col cols="12" sm="6">
-                      <div id="pub-target-auction-bet" style="position:relative">
-                        <div v-if="auctionPointerTarget === 'auction-bet'" class="pub-pointer"><span class="mdi mdi-arrow-down-bold" /></div>
-                        <div :class="auctionPointerTarget === 'auction-bet' ? 'pub-glow' : ''">
-                          <v-text-field
-                            v-model.number="fabrikantAuctionBetFrom"
-                            type="number"
-                            label="Граница ставки от *"
-                            variant="outlined" density="compact"
-                            :error="numOrNull(fabrikantAuctionBetFrom) === null"
-                            @update:model-value="auctionPointerTarget = null; clearGuideArrow()"
-                          />
-                        </div>
-                      </div>
-                    </v-col>
-                    <v-col cols="12" sm="6">
-                      <v-text-field
-                        v-model.number="fabrikantAuctionBetTo"
-                        type="number"
-                        label="Граница ставки до *"
-                        variant="outlined" density="compact"
-                        :error="numOrNull(fabrikantAuctionBetTo) === null"
-                        @update:model-value="auctionPointerTarget = null"
-                      />
-                    </v-col>
-                  </v-row>
-                </template>
-
-                <v-checkbox
-                  v-model="fabrikantAttachDocs"
-                  label="Прикрепить пакет документов (5 файлов)"
-                  density="compact"
-                  hide-details
-                  color="orange-darken-2"
-                  class="mb-2"
-                />
-                <div class="d-flex gap-2 mt-1">
-                  <v-btn variant="text" @click="pendingPlatform = null">Назад</v-btn>
-                  <v-btn color="orange-darken-2"
-                    :loading="publishingPlatform === 'fabrikant'"
-                    :disabled="!fabrikantOkpd2 || !fabrikantDates.proposal_start || !fabrikantDates.proposal_end || !currentSubsidyOrgInn"
-                    @click="() => { publishErrors = checkPublishReady(); if (!publishErrors.length) doPublish('fabrikant'); else revealField(publishErrors[0].target) }"
-                  >Опубликовать на Фабрикант</v-btn>
-                </div>
-              </div>
-            </v-expand-transition>
-
-            <!-- Выбор типа процедуры для Росэлторг -->
-            <v-expand-transition>
-              <div v-if="pendingPlatform === 'roseltorg_rb'" class="mt-3 px-1">
-                <v-divider class="mb-3" />
-                <div class="text-subtitle-2 mb-2">Тип процедуры Росэлторг.Бизнес</div>
-                <v-select
-                  v-model="roseltorgProcedureType"
-                  :items="ROSELTORG_PROCEDURE_TYPES"
-                  item-title="title"
-                  item-value="value"
-                  label="Выберите тип процедуры"
-                  variant="outlined"
-                  density="compact"
-                  hide-details
-                />
-                <div class="d-flex gap-2 mt-3">
-                  <v-btn variant="text" @click="pendingPlatform = null; roseltorgProcedureType = null">Назад</v-btn>
-                  <v-btn
-                    color="deep-purple"
-                    :disabled="!roseltorgProcedureType"
-                    :loading="publishingPlatform === 'roseltorg_rb'"
-                    @click="doPublish('roseltorg_rb', roseltorgProcedureType)"
-                  >Опубликовать на Росэлторг</v-btn>
-                </div>
-              </div>
-            </v-expand-transition>
-        </v-card-text>
-        <v-card-actions class="px-6 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="publishDialog = false; pendingPlatform = null; roseltorgProcedureType = null; publishErrors = []">Закрыть</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- Диалог публикации на площадках -->
+    <PurchasePublishDialog
+      v-model:open="publishDialog"
+      v-model:pending-platform="pendingPlatform"
+      v-model:roseltorg-procedure-type="roseltorgProcedureType"
+      v-model:fabrikant-procedure-type="fabrikantProcedureType"
+      v-model:fabrikant-okpd2="fabrikantOkpd2"
+      v-model:fabrikant-no-nmcd="fabrikantNoNmcd"
+      v-model:fabrikant-attach-docs="fabrikantAttachDocs"
+      v-model:fabrikant-auction-date-start="fabrikantAuctionDateStart"
+      v-model:fabrikant-auction-bet-from="fabrikantAuctionBetFrom"
+      v-model:fabrikant-auction-bet-to="fabrikantAuctionBetTo"
+      v-model:publish-errors="publishErrors"
+      v-model:okpd2-pointer="okpd2Pointer"
+      v-model:auction-pointer-target="auctionPointerTarget"
+      :publishing-platform="publishingPlatform"
+      :publications="publications"
+      :current-subsidy-org-inn="currentSubsidyOrgInn"
+      :publish-nmck="publishNmck"
+      :okpd2-items="okpd2Items"
+      :okpd2-loading="okpd2Loading"
+      :okpd2-error="okpd2Error"
+      :fabrikant-dates="fabrikantDates"
+      :format-money="formatMoney"
+      :is-platform-published="isPlatformPublished"
+      :check-publish-ready="checkPublishReady"
+      :okpd2-item-title="okpd2ItemTitle"
+      :search-okpd2="searchOkpd2"
+      :do-publish="doPublish"
+      :reveal-field="revealField"
+      :clear-guide-arrow="clearGuideArrow"
+      :init-fabrikant-dates="initFabrikantDates"
+    />
 
     <!-- Диалог подтверждения превышения бюджета -->
     <!-- Диалоги подтверждения (превышение бюджета / отключение per-item ФЭО /
@@ -3182,392 +2922,66 @@
       @error="(m: string) => showSnack(m, 'error')"
     />
 
-    <!-- File preview dialog -->
-    <v-dialog v-model="previewDialog" max-width="900" scrollable :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="d-flex align-center pa-4">
-          <v-icon :icon="fileIcon(previewFile?.mime_type)" class="mr-2" />
-          {{ previewFile?.filename }}
-          <v-spacer />
-          <v-btn icon="mdi-download" variant="text" size="small" @click="previewFile && downloadFile(previewFile.id, previewFile.filename)" />
-          <v-btn icon="mdi-close" variant="text" size="small" @click="previewDialog = false" />
-        </v-card-title>
-        <v-divider />
-        <v-card-text class="pa-0" style="min-height:500px">
-          <iframe v-if="previewFile?.mime_type === 'application/pdf'"
-            :src="previewUrl" style="width:100%;height:600px;border:none" />
-          <div v-else-if="previewFile?.mime_type?.startsWith('image/')" class="d-flex justify-center pa-4">
-            <img :src="previewUrl" style="max-width:100%;max-height:600px;object-fit:contain" />
-          </div>
-        </v-card-text>
-      </v-card>
-    </v-dialog>
-
     <!-- Add contractor inline dialog -->
-    <v-dialog v-model="addContractorDialog" max-width="700" scrollable :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="pa-4">
-          <v-icon icon="mdi-account-plus" class="mr-2" />Новый контрагент
-        </v-card-title>
-        <v-card-text class="pa-4 pt-0">
-          <!-- Import from file -->
-          <div class="mb-4 pa-3 rounded" style="background:rgba(0,0,0,0.03)">
-            <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-information-outline">
-              <div class="text-body-2">
-                <strong>Форматы:</strong> Excel (.xlsx, .xls), Word (.docx), PDF<br>
-                <strong>Данные:</strong> система автоматически извлечёт реквизиты из карточки контрагента
-              </div>
-            </v-alert>
-            <FileDropZone v-model="addContractorFile" accept=".xlsx,.xls,.pdf,.docx,.doc"
-              hint="Excel, Word, PDF — перетащите или нажмите" class="mb-2" />
-            <v-btn v-if="addContractorFile" variant="tonal" color="primary" size="small" :loading="addContractorImporting"
-              @click="importContractorFromFile">Заполнить поля из файла</v-btn>
-          </div>
-          <v-select v-model="addContractorForm.org_type" :items="['Юридическое лицо', 'ИП', 'Самозанятый', 'Физическое лицо']"
-            label="Тип организации" variant="outlined" density="compact" class="mb-3" />
-          <v-text-field v-model="addContractorForm.name" label="Наименование организации *" variant="outlined" density="compact" class="mb-3"
-            :rules="[v => !!v || 'Обязательное поле']" />
-          <v-row dense>
-            <v-col cols="4">
-              <v-text-field v-model="addContractorForm.inn" label="ИНН" variant="outlined" density="compact" hide-details
-                @update:model-value="onAddContractorInnChange">
-                <template #append-inner>
-                  <v-btn icon="mdi-database-search" size="x-small" variant="text" color="blue" :disabled="!addContractorForm.inn || addContractorForm.inn.length < 10" @click="lookupContractorInn" title="Заполнить из ЕГРЮЛ (nalog.ru)" />
-                </template>
-              </v-text-field>
-            </v-col>
-            <v-col cols="4">
-              <v-text-field v-model="addContractorForm.kpp" label="КПП" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="4">
-              <v-text-field v-model="addContractorForm.ogrn" label="ОГРН" variant="outlined" density="compact" hide-details />
-            </v-col>
-          </v-row>
-          <v-textarea v-model="addContractorForm.address" label="Адрес местонахождения" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
-          <div class="text-caption text-medium-emphasis mt-4 mb-1">Подписант</div>
-          <v-text-field v-model="addContractorForm.signatory_position" label="Должность подписанта" variant="outlined" density="compact" class="mb-2" hide-details />
-          <v-row dense class="mb-3">
-            <v-col cols="4">
-              <v-text-field v-model="addContractorForm.signatory_last_name" label="Фамилия" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="4">
-              <v-text-field v-model="addContractorForm.signatory_first_name" label="Имя" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="4">
-              <v-text-field v-model="addContractorForm.signatory_middle_name" label="Отчество" variant="outlined" density="compact" hide-details />
-            </v-col>
-          </v-row>
-          <div class="text-caption text-medium-emphasis mt-3 mb-1">Контакты</div>
-          <v-row dense>
-            <v-col cols="6">
-              <v-text-field v-model="addContractorForm.phone" label="Телефон контактного лица" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="6">
-              <v-text-field v-model="addContractorForm.email" label="Email контактного лица" variant="outlined" density="compact" hide-details />
-            </v-col>
-          </v-row>
-          <v-text-field v-model="addContractorForm.contact_person" label="Контактное лицо" variant="outlined" density="compact" class="mt-3" hide-details />
-          <div class="text-caption text-medium-emphasis mt-4 mb-1">Банковские реквизиты</div>
-          <v-text-field v-model="addContractorForm.settlement_account" label="Расчётный счёт (р/с)" variant="outlined" density="compact" class="mb-3" hide-details />
-          <v-text-field v-model="addContractorForm.bank_name" label="Банк (наименование)" variant="outlined" density="compact" class="mb-3" hide-details />
-          <v-row dense>
-            <v-col cols="6">
-              <v-text-field v-model="addContractorForm.bik" label="БИК" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="6">
-              <v-text-field v-model="addContractorForm.correspondent_account" label="Корр. счёт (к/с)" variant="outlined" density="compact" hide-details />
-            </v-col>
-          </v-row>
-        </v-card-text>
-        <v-card-actions class="pa-4 pt-0">
-          <v-spacer />
-          <v-btn variant="text" @click="addContractorDialog = false">Отмена</v-btn>
-          <v-btn color="primary" variant="flat" :loading="addContractorSaving" :disabled="!addContractorForm.name.trim()" @click="saveNewContractor">Добавить</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <AddContractorDialog
+      v-model="addContractorDialog"
+      v-model:file="addContractorFile"
+      :form="addContractorForm"
+      :saving="addContractorSaving"
+      :importing="addContractorImporting"
+      @save="saveNewContractor"
+      @import-from-file="importContractorFromFile"
+      @lookup-inn="lookupContractorInn"
+      @inn-change="onAddContractorInnChange"
+    />
 
     <!-- ЕГРЮЛ diff dialog -->
-    <v-dialog v-model="egrulDiffDialog" max-width="640" persistent :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="pa-4">
-          <v-icon icon="mdi-database-sync-outline" color="primary" class="mr-2" />
-          Данные из ЕГРЮЛ отличаются
-        </v-card-title>
-        <v-card-text class="pa-4 pt-0">
-          <p class="text-body-2 text-medium-emphasis mb-3">
-            По каждому полю выберите — обновить значение или оставить текущее.
-          </p>
-          <v-table density="compact">
-            <thead>
-              <tr><th>Поле</th><th>Сейчас</th><th>Из ЕГРЮЛ</th><th style="width:90px">Обновить</th></tr>
-            </thead>
-            <tbody>
-              <tr v-for="d in egrulDiffItems" :key="d.key">
-                <td class="text-caption font-weight-medium">{{ d.label }}</td>
-                <td class="text-caption text-medium-emphasis" style="max-width:200px;word-break:break-word">{{ d.old }}</td>
-                <td class="text-caption" style="color:#4caf50;max-width:200px;word-break:break-word">{{ d.new }}</td>
-                <td>
-                  <v-checkbox
-                    :model-value="egrulDiffPending[d.key] !== undefined"
-                    density="compact" hide-details
-                    @update:model-value="(v) => v ? (egrulDiffPending[d.key] = d.new) : (delete egrulDiffPending[d.key])"
-                  />
-                </td>
-              </tr>
-            </tbody>
-          </v-table>
-        </v-card-text>
-        <v-card-actions class="pa-4 pt-0">
-          <v-spacer />
-          <v-btn variant="text" @click="egrulDiffDialog = false">Отмена</v-btn>
-          <v-btn color="primary" variant="flat" @click="applyEgrulDiff" :disabled="Object.keys(egrulDiffPending).length === 0">
-            Применить
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <EgrulDiffDialog
+      v-model="egrulDiffDialog"
+      :items="egrulDiffItems"
+      :pending="egrulDiffPending"
+      @apply="applyEgrulDiff"
+    />
 
-    <!-- Framework contracts dialog -->
-    <v-dialog v-model="frameworkDialog" max-width="860" scrollable :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="text-h6 pt-4 px-6 d-flex align-center justify-space-between">
-          <span>Рамочные договоры</span>
-          <v-btn color="primary" prepend-icon="mdi-plus" size="small"
-            @click="newFrameworkDialog = true">
-            Создать новый
-          </v-btn>
-        </v-card-title>
-        <v-card-text class="px-6">
-          <v-text-field v-model="frameworkSearch" prepend-inner-icon="mdi-magnify"
-            label="Поиск по номеру, контрагенту, ИНН, предмету"
-            variant="outlined" density="compact" clearable hide-details class="mb-4" />
-          <v-progress-linear v-if="frameworkLoading" indeterminate color="primary" class="mb-3" />
-          <div v-if="!frameworkLoading && !filteredFrameworkContracts.length" class="text-center text-medium-emphasis py-6">
-            Рамочных договоров по данной субсидии не найдено
-          </div>
-          <v-table v-else density="compact">
-            <thead>
-              <tr>
-                <th>Номер</th>
-                <th>Дата</th>
-                <th>Контрагент</th>
-                <th>ИНН</th>
-                <th>Предмет договора</th>
-                <th>Макс. сумма</th>
-                <th>Остаток</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="c in filteredFrameworkContracts" :key="c.id"
-                :class="{ 'bg-blue-lighten-5': selectedFrameworkContract?.id === c.id }"
-                style="cursor:pointer" @click="selectFrameworkContract(c)">
-                <td class="font-weight-medium">{{ c.number }}</td>
-                <td>{{ c.date || '—' }}</td>
-                <td>{{ c.contractor_name || '—' }}</td>
-                <td class="text-caption">{{ c.contractor_inn || '—' }}</td>
-                <td style="max-width:220px;white-space:normal;font-size:12px">{{ c.subject || '—' }}</td>
-                <td class="text-right">{{ c.max_amount ? Number(c.max_amount).toLocaleString('ru-RU') + ' ₽' : '—' }}</td>
-                <td class="text-right" :class="c.remaining_ordered != null && c.remaining_ordered < 0 ? 'text-error' : 'text-success'">
-                  {{ c.remaining_ordered != null ? Number(c.remaining_ordered).toLocaleString('ru-RU') + ' ₽' : '—' }}
-                </td>
-                <td>
-                  <v-btn variant="tonal" color="primary" size="x-small"
-                    @click.stop="selectFrameworkContract(c)">Выбрать</v-btn>
-                </td>
-              </tr>
-            </tbody>
-          </v-table>
-        </v-card-text>
-        <v-card-actions class="px-6 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="frameworkDialog = false">Закрыть</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- Диалоги рамочного договора (выбор существующего / создание нового) -->
+    <FrameworkDialogs
+      v-model:framework-open="frameworkDialog"
+      v-model:new-framework-open="newFrameworkDialog"
+      v-model:framework-search="frameworkSearch"
+      :framework-loading="frameworkLoading"
+      :filtered-framework-contracts="filteredFrameworkContracts"
+      :selected-framework-contract="selectedFrameworkContract"
+      :new-framework-form="newFrameworkForm"
+      :new-framework-saving="newFrameworkSaving"
+      :contractors="contractors"
+      :contractor-filter="contractorFilter"
+      :contractors-no-data-text="contractorsNoDataText"
+      @select="selectFrameworkContract"
+      @save-new="saveNewFrameworkContract"
+    />
 
     <!-- КП dialog -->
     <KpDialog ref="kpDialogRef" :purchase-id="purchaseId" :form="form" />
 
-    <!-- New framework contract dialog -->
-    <v-dialog v-model="newFrameworkDialog" max-width="520" @after-enter="focusNewContractNumber" :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="text-h6 pt-4 px-6">Новый рамочный договор</v-card-title>
-        <v-card-text class="px-6 pb-2">
-          <v-text-field ref="newContractNumberRef" v-model="newFrameworkForm.number" label="Номер договора *" variant="outlined"
-            density="compact" class="mb-3" />
-          <v-text-field v-model="newFrameworkForm.date" label="Дата договора" variant="outlined"
-            density="compact" type="date" class="mb-3" />
-          <v-autocomplete v-model="newFrameworkForm.contractor_id"
-            :items="contractors" item-title="name" item-value="id"
-            label="Контрагент" variant="outlined" density="compact" clearable
-            :custom-filter="contractorFilter" :no-data-text="contractorsNoDataText" class="mb-3">
-            <template #item="{ item, props }">
-              <v-list-item v-bind="props">
-                <template #subtitle>
-                  <span v-if="item.raw.inn" class="text-caption">ИНН: {{ item.raw.inn }}</span>
-                </template>
-              </v-list-item>
-            </template>
-          </v-autocomplete>
-          <v-textarea v-model="newFrameworkForm.subject" label="Предмет договора" variant="outlined"
-            density="compact" rows="2" auto-grow class="mb-3" />
-          <v-text-field v-model.number="newFrameworkForm.max_amount" label="Максимальная сумма, ₽"
-            variant="outlined" density="compact" type="number" />
-        </v-card-text>
-        <v-card-actions class="px-6 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="newFrameworkDialog = false">Отмена</v-btn>
-          <v-btn color="primary" :loading="newFrameworkSaving" @click="saveNewFrameworkContract">Создать</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- ── Approver Picker Dialog ── -->
-    <v-dialog v-model="docPickerDialog" max-width="560" scrollable :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="d-flex align-center pa-4">
-          <v-icon icon="mdi-account-check-outline" color="teal" class="mr-2" />
-          {{ docPickerType.startsWith('service_note') ? 'Служебная записка — выбор инициатора' : 'Лист согласования — выбор согласующих' }}
-          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="docPickerDialog = false" />
-        </v-card-title>
-        <v-divider />
-        <v-card-text>
-          <div v-if="loadingDocApprovers" class="d-flex justify-center py-4">
-            <v-progress-circular indeterminate color="teal" />
-          </div>
-          <div v-else-if="!docApprovers.length" class="text-center text-medium-emphasis py-4">
-            Для этой субсидии не настроены согласующие.<br>
-            Откройте страницу Субсидии → кнопка «Согласующие».
-          </div>
-          <!-- service_note: autocomplete только из подчинённых + сам пользователь
-               (бизнес-правило: за другого может делать только его руководитель) -->
-          <div v-else-if="docPickerType.startsWith('service_note')" class="mt-1">
-            <v-autocomplete
-              v-model="pickerInitiatorId"
-              :items="actAsList"
-              item-title="full_name"
-              item-value="id"
-              label="Специалист (инициатор)"
-              variant="outlined"
-              density="compact"
-              clearable
-              hide-details
-              :hint="'Доступны: вы и сотрудники, кому вы можете ставить задачи'"
-              persistent-hint
-              :no-data-text="loadingDocApprovers ? 'Загрузка...' : 'Нет сотрудников'"
-            >
-              <template #item="{ item, props }">
-                <v-list-item v-bind="props">
-                  <template #subtitle>
-                    <span v-if="item.raw.position" class="text-caption text-medium-emphasis">{{ item.raw.position }}</span>
-                  </template>
-                </v-list-item>
-              </template>
-            </v-autocomplete>
-          </div>
-          <!-- approval_sheet: responsible person + checkboxes -->
-          <div v-else>
-            <!-- Ответственный исполнитель -->
-            <div class="d-flex align-start gap-2 mb-4">
-              <v-autocomplete
-                v-model="pickerResponsibleName"
-                :items="responsibleOptions"
-                item-title="display"
-                item-value="full_name"
-                label="Ответственный исполнитель"
-                variant="outlined"
-                density="compact"
-                clearable
-                class="flex-grow-1"
-                :return-object="false"
-                autocomplete="off"
-                hint="По умолчанию — ответственный исполнитель этой закупки. Можно выбрать другого сотрудника или запись справочника."
-                persistent-hint
-              />
-              <v-tooltip text="Добавить в справочник" location="top">
-                <template #activator="{ props: tip }">
-                  <v-btn v-bind="tip" icon="mdi-account-plus-outline" size="small"
-                    variant="tonal" color="teal" class="mt-1" @click="addResponsibleDialog = true" />
-                </template>
-              </v-tooltip>
-            </div>
-            <v-divider class="mb-3" />
-            <div class="text-body-2 font-weight-medium mb-2">Согласующие</div>
-            <v-checkbox
-              v-for="a in docApprovers"
-              :key="a.id"
-              v-model="pickerApproverIds"
-              :value="a.id"
-              :label="`${a.order_num}. ${a.role_name} — ${a.full_name}`"
-              density="compact"
-              hide-details
-            />
-          </div>
-        </v-card-text>
-        <v-divider />
-        <v-card-actions class="pa-4">
-          <v-spacer />
-          <v-btn variant="text" @click="docPickerDialog = false">Отмена</v-btn>
-          <v-btn
-            color="teal"
-            variant="tonal"
-            prepend-icon="mdi-download"
-            :loading="docLoading === docPickerType"
-            :disabled="docPickerType.startsWith('service_note') ? !pickerInitiatorId : !pickerApproverIds.length"
-            @click="confirmDocDownload"
-          >
-            Скачать
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- Phase 27.2-02: Диалог выбора закрывающих документов перед скачиванием СЗ -->
-    <v-dialog v-model="acceptanceDocPickerDialog" max-width="520" scrollable :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="d-flex align-center pa-4">
-          <v-icon icon="mdi-file-check-outline" color="teal" class="mr-2" />
-          Выберите закрывающие документы
-          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="acceptanceDocPickerDialog = false" />
-        </v-card-title>
-        <v-divider />
-        <v-card-text>
-          <p class="text-body-2 text-medium-emphasis mb-3">
-            Отметьте документы, по которым формируется служебная записка на оплату.
-            Сумма будет сложена автоматически.
-          </p>
-          <v-list density="compact">
-            <v-list-item v-for="(doc, idx) in acceptanceDocs" :key="idx">
-              <template #prepend>
-                <v-checkbox-btn v-model="acceptanceDocPickerSelected" :value="idx" />
-              </template>
-              <v-list-item-title class="text-body-2">
-                {{ doc.name }} {{ doc.number }} от {{ doc.date || '—' }}
-              </v-list-item-title>
-              <v-list-item-subtitle v-if="doc.amount != null">
-                {{ Number(doc.amount).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} ₽
-              </v-list-item-subtitle>
-            </v-list-item>
-          </v-list>
-        </v-card-text>
-        <v-divider />
-        <v-card-actions class="pa-4">
-          <v-spacer />
-          <v-btn variant="text" @click="acceptanceDocPickerDialog = false">Отмена</v-btn>
-          <v-btn
-            color="teal"
-            variant="tonal"
-            prepend-icon="mdi-download"
-            :disabled="!acceptanceDocPickerSelected.length"
-            @click="confirmAcceptanceDocDownload"
-          >
-            Скачать
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- Диалоги перед скачиванием документов (согласующие/закрывающие) -->
+    <DocPickerDialogs
+      v-model:doc-picker-open="docPickerDialog"
+      v-model:acceptance-open="acceptanceDocPickerDialog"
+      v-model:picker-initiator-id="pickerInitiatorId"
+      v-model:picker-responsible-name="pickerResponsibleName"
+      v-model:picker-approver-ids="pickerApproverIds"
+      v-model:acceptance-selected="acceptanceDocPickerSelected"
+      :doc-picker-type="docPickerType"
+      :loading-doc-approvers="loadingDocApprovers"
+      :doc-approvers="docApprovers"
+      :act-as-list="actAsList"
+      :responsible-options="responsibleOptions"
+      :doc-loading="docLoading"
+      :acceptance-docs="acceptanceDocs"
+      @download="confirmDocDownload"
+      @confirm-acceptance="confirmAcceptanceDocDownload"
+      @add-responsible="addResponsibleDialog = true"
+    />
 
     <!-- Диалог добавления ответственного исполнителя -->
     <AddResponsibleDialog
@@ -3671,6 +3085,8 @@ import { usePurchaseSplit } from '@/composables/purchase/usePurchaseSplit'
 import SplitKanbanDialog from '@/components/purchase/SplitKanbanDialog.vue'
 import { usePurchaseChat } from '@/composables/purchase/usePurchaseChat'
 import { useFrameworkSiblings } from '@/composables/purchase/useFrameworkSiblings'
+import { useFrameworkContracts } from '@/composables/purchase/useFrameworkContracts'
+import FrameworkDialogs from '@/components/purchase/FrameworkDialogs.vue'
 import PlaceholdersDialog from '@/components/purchase/PlaceholdersDialog.vue'
 import DocErrorDialog from '@/components/purchase/DocErrorDialog.vue'
 import { useManualReceipt } from '@/composables/purchase/useManualReceipt'
@@ -3678,6 +3094,17 @@ import ManualReceiptDialog from '@/components/purchase/ManualReceiptDialog.vue'
 import { useFabrikantPackage } from '@/composables/purchase/useFabrikantPackage'
 import PurchaseConfirmDialogs from '@/components/purchase/PurchaseConfirmDialogs.vue'
 import KpDialog from '@/components/purchase/KpDialog.vue'
+import { useContractorLookup } from '@/composables/purchase/useContractorLookup'
+import AddContractorDialog from '@/components/purchase/AddContractorDialog.vue'
+import EgrulDiffDialog from '@/components/purchase/EgrulDiffDialog.vue'
+import { useDocPickerDialogs } from '@/composables/purchase/useDocPickerDialogs'
+import DocPickerDialogs from '@/components/purchase/DocPickerDialogs.vue'
+import { usePurchaseFiles } from '@/composables/purchase/usePurchaseFiles'
+import PurchaseFileDialogs from '@/components/purchase/PurchaseFileDialogs.vue'
+import {
+  usePurchasePublications, PLATFORM_LABELS, PUB_STATUS_COLOR, PUB_STATUS_LABEL,
+} from '@/composables/purchase/usePurchasePublications'
+import PurchasePublishDialog from '@/components/purchase/PurchasePublishDialog.vue'
 import FileDropZone from '@/components/FileDropZone.vue'
 import ChatEmbed from '@/components/ChatEmbed.vue'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
@@ -3702,11 +3129,8 @@ function onMonthlyStagesCreated(res: any) {
 import AddressAutocomplete from '@/components/AddressAutocomplete.vue'
 import { RUSSIAN_REGIONS, DELIVERY_REGIONS } from '@/constants/russian_regions'
 import { RU_REGION_OKATO, resolveRegionOkato } from '@/constants/ru_region_okato'
-import { useDisplay } from 'vuetify'
 import { useEntityChanges } from '@/composables/useEntityChanges'
 import { useUndoRedo } from '@/composables/useUndoRedo'
-
-const { mobile } = useDisplay()
 
 const route = useRoute()
 const router = useRouter()
@@ -4021,25 +3445,8 @@ interface OrderItem {
     price_freshness?: import('@/composables/usePriceFreshness').PriceFreshness | null
   } | null
 }
-interface UploadedFile { id: number; purchase_id: number; filename: string; mime_type?: string; size?: number; file_type?: string; doc_format?: string; is_active?: boolean; uploaded_by_name?: string | null; created_at?: string | null }
-
-const FILE_TYPE_LABELS_BASE: Record<string, string> = {
-  kp:                         'КП',
-  service_note:               'Служебная записка',
-  protocol:                   'Протокол закупки',
-  invoice:                    'Счёт',
-  order:                      'Приказ',
-  upd:                        'УПД',
-  contract:                   'Договор',
-  act:                        'Закрывающий документ',
-  other:                      'Прочее',
-  fabrikant_instruction:      'Фабрикант: Инструкция',
-  fabrikant_application_form: 'Фабрикант: Форма заявки',
-  fabrikant_documentation:    'Фабрикант: Документация',
-  fabrikant_contract_project: 'Фабрикант: Проект договора',
-  fabrikant_tech_spec:        'Фабрикант: ТЗ',
-}
-
+// UploadedFile, FILE_TYPE_LABELS(_BASE)/FILE_TYPE_OPTIONS/fileTypeColor — вынесены в
+// composables/purchase/usePurchaseFiles.ts (см. вызов usePurchaseFiles() ниже по файлу).
 const FABRIKANT_PKG_DOCS = [
   { ft: 'fabrikant_instruction',      label: 'Инструкция' },
   { ft: 'fabrikant_application_form', label: 'Форма заявки' },
@@ -4047,20 +3454,6 @@ const FABRIKANT_PKG_DOCS = [
   { ft: 'fabrikant_contract_project', label: 'Проект договора' },
   { ft: 'fabrikant_tech_spec',        label: 'ТЗ' },
 ] as const
-const FILE_TYPE_LABELS = computed<Record<string, string>>(() => ({
-  ...FILE_TYPE_LABELS_BASE,
-  contract: contractWord.value,
-}))
-const FILE_TYPE_OPTIONS = computed(() => Object.entries(FILE_TYPE_LABELS.value).map(([value, title]) => ({ value, title })))
-
-function fileTypeColor(t?: string): string {
-  const map: Record<string, string> = {
-    kp: 'teal', service_note: 'blue', protocol: 'deep-purple',
-    invoice: 'orange', order: 'brown', upd: 'green',
-    contract: 'indigo', act: 'cyan', other: 'grey',
-  }
-  return map[t || 'other'] || 'grey'
-}
 
 const form = reactive({
   purchase_method: '',
@@ -4651,55 +4044,8 @@ const {
 } = useEndOfMonthFill(form)
 const transitioning = ref(false)
 const converting = ref(false)
-const uploading = ref(false)
+// uploading — владеет composables/purchase/usePurchaseFiles.ts (вызов ниже по файлу)
 const docLoading = ref<string | null>(null)
-
-// ── Phase 27.2-02: Acceptance doc picker (select closing docs before СЗ download) ──
-const acceptanceDocPickerDialog   = ref(false)
-const acceptanceDocPickerDocType  = ref<'service_note_payment' | 'service_note_advance'>('service_note_payment')
-const acceptanceDocPickerSelected = ref<number[]>([])
-// pending initiator_id to append after acceptance doc selection
-const acceptanceDocPickerInitiatorId = ref<number | null>(null)
-
-async function openAcceptanceDocPicker(
-  type: 'service_note_payment' | 'service_note_advance',
-  initiatorId: number | null,
-) {
-  if (acceptanceDocs.value.length > 1) {
-    acceptanceDocPickerDocType.value = type
-    acceptanceDocPickerInitiatorId.value = initiatorId
-    // Default: all selected
-    acceptanceDocPickerSelected.value = acceptanceDocs.value.map((_, i) => i)
-    acceptanceDocPickerDialog.value = true
-  } else {
-    // Single or zero docs — skip picker, download directly
-    const params = initiatorId ? `?initiator_id=${initiatorId}` : ''
-    await downloadDoc(type, params)
-  }
-}
-
-async function confirmAcceptanceDocDownload() {
-  acceptanceDocPickerDialog.value = false
-  const type = acceptanceDocPickerDocType.value
-  const initiatorId = acceptanceDocPickerInitiatorId.value
-  const indices = [...acceptanceDocPickerSelected.value].sort((a, b) => a - b)
-  const parts: string[] = []
-  if (initiatorId) parts.push(`initiator_id=${initiatorId}`)
-  if (indices.length && indices.length < acceptanceDocs.value.length) {
-    parts.push(`doc_indices=${indices.join(',')}`)
-  }
-  await downloadDoc(type, parts.length ? `?${parts.join('&')}` : '')
-}
-
-// ── Doc picker (approver selection before download) ──
-interface DocApprover { id: number; role_name: string; full_name: string; order_num: number; is_default: boolean; can_initiate: boolean }
-const docPickerDialog      = ref(false)
-const docPickerType        = ref<'service_note_procurement' | 'service_note_delivery' | 'service_note_payment' | 'service_note_advance' | 'approval_sheet'>('approval_sheet')
-const loadingDocApprovers  = ref(false)
-const docApprovers         = ref<DocApprover[]>([])
-const pickerApproverIds    = ref<number[]>([])
-const pickerInitiatorId    = ref<number | null>(null)
-const docApproversInitiators = computed(() => docApprovers.value.filter(a => a.can_initiate))
 
 // ── Org users list for executor dropdown ──
 function toShortName(fullName: string): string {
@@ -4720,19 +4066,6 @@ async function loadOrgUsers() {
       .filter(u => u.full_name)
       .map(u => ({ id: u.id, full_name: u.full_name, short_name: toShortName(u.full_name), position: u.position }))
   } catch { orgUsersList.value = [] }
-}
-
-// Список «за кого можно делать служебку»: сам + подчинённые (видимые через
-// _get_visible_user_ids на бэке). Бизнес-правило: за другого человека делать
-// СЗ может только его руководитель/тот кому он подчинён.
-const actAsList = ref<OrgUser[]>([])
-async function loadActAsUsers() {
-  try {
-    const users = await apiFetch<any[]>('/users/i-can-act-for')
-    actAsList.value = users
-      .filter(u => u.full_name)
-      .map(u => ({ id: u.id, full_name: u.full_name, short_name: toShortName(u.full_name), position: u.position }))
-  } catch { actAsList.value = [] }
 }
 
 // Кому возмещать — список сотрудников из orgUsersList
@@ -4761,72 +4094,23 @@ const {
   loadResponsiblePersonsList, responsibleOptions, saveNewResponsible,
 } = useResponsiblePersons(form, orgUsersList)
 
-async function openDocPicker(type: 'service_note_procurement' | 'service_note_delivery' | 'service_note_payment' | 'service_note_advance' | 'approval_sheet') {
-  if (!purchaseId.value || !form.subsidy_id) {
-    downloadDoc(type)
-    return
-  }
-  docPickerType.value = type
-  docPickerDialog.value = true
-  loadingDocApprovers.value = true
-  // Pre-fill responsible person from the purchase form.
-  // Приоритет: form.responsible_person (legacy строковое поле) → ФИО юзера из form.assigned_user_id.
-  let prefillName = (form.responsible_person || '').trim()
-  if (!prefillName && form.assigned_user_id) {
-    const u = orgUsersList.value.find((x: any) => x.id === form.assigned_user_id)
-    prefillName = (u?.full_name || u?.name || '').trim()
-  }
-  pickerResponsibleName.value = prefillName
-  try {
-    const [list] = await Promise.all([
-      apiFetch<DocApprover[]>(`/subsidies/${form.subsidy_id}/approvers`),
-      loadResponsiblePersonsList(),
-      orgUsersList.value.length ? Promise.resolve() : loadOrgUsers(),
-    ])
-    docApprovers.value = list
-    if (type === 'approval_sheet') {
-      pickerApproverIds.value = list.filter(a => a.is_default).map(a => a.id)
-    } else {
-      // Бизнес-правило: за другого человека делать СЗ может только тот, кому
-      // подчинён этот человек. Грузим scope «я + мои подчинённые».
-      await loadActAsUsers()
-      // Default: current logged-in user
-      if (currentUserId && actAsList.value.find(u => u.id === currentUserId)) {
-        pickerInitiatorId.value = currentUserId
-      } else {
-        const def = list.find(a => a.can_initiate && a.is_default) || list.find(a => a.can_initiate)
-        pickerInitiatorId.value = def?.id ?? null
-      }
-    }
-  } catch {
-    docApprovers.value = []
-  } finally {
-    loadingDocApprovers.value = false
-  }
-}
-
-async function confirmDocDownload() {
-  // Capture values BEFORE closing dialog
-  const type = docPickerType.value
-  const approverIds = [...pickerApproverIds.value]
-  const responsibleName = pickerResponsibleName.value
-  const initiatorId = pickerInitiatorId.value
-  docPickerDialog.value = false
-
-  if (type === 'service_note_payment' || type === 'service_note_advance') {
-    // Phase 27.2-02: если несколько закр.документов — показать picker
-    await openAcceptanceDocPicker(type, initiatorId)
-  } else if (type.startsWith('service_note')) {
-    const params = initiatorId ? `?initiator_id=${initiatorId}` : ''
-    await downloadDoc(type, params)
-  } else {
-    const parts: string[] = []
-    if (approverIds.length) parts.push(`approver_ids=${approverIds.join(',')}`)
-    if (responsibleName) parts.push(`responsible_name=${encodeURIComponent(responsibleName)}`)
-    console.log('[DOC] approval_sheet params:', parts, 'approverIds:', approverIds)
-    await downloadDoc('approval_sheet', parts.length ? `?${parts.join('&')}` : '')
-  }
-}
+// ── Диалоги перед скачиванием документов (закрывающие/согласующие) — вынесено
+// в composables/purchase/useDocPickerDialogs.ts + components/purchase/DocPickerDialogs.vue.
+// downloadDoc определена ниже по файлу — передаём лениво вызывающей обёрткой,
+// чтобы не читать идентификатор до его объявления (TDZ). ──
+const {
+  acceptanceDocPickerDialog, acceptanceDocPickerSelected,
+  // openAcceptanceDocPicker не деструктурируется — вызывается только изнутри
+  // confirmDocDownload (тот же composable), view её напрямую не дёргает.
+  confirmAcceptanceDocDownload,
+  docPickerDialog, docPickerType, loadingDocApprovers, docApprovers, pickerApproverIds, pickerInitiatorId,
+  actAsList, openDocPicker, confirmDocDownload,
+} = useDocPickerDialogs(
+  form, purchaseId, acceptanceDocs, orgUsersList, loadOrgUsers, currentUserId,
+  pickerResponsibleName, loadResponsiblePersonsList,
+  (docType, extraParams, loadingKey) => downloadDoc(docType, extraParams, loadingKey),
+  toShortName,
+)
 // Snackbar — единый механизм (useToast + ToastContainer, смонтирован в App.vue).
 // duration=0 по умолчанию: результат действия (смена статуса, сохранение,
 // ошибка) не должен исчезать сам, пока пользователь не прочитал и не закрыл.
@@ -4920,201 +4204,13 @@ const showApprovalSection = computed(() => {
 })
 
 const contractorInn = ref('')
-const fileInputEl = ref<HTMLInputElement | null>(null)
-const sectionFileInputEl = ref<HTMLInputElement | null>(null)
-const pendingSectionUpload = ref<string | null>(null)
-const uploadedFiles = ref<UploadedFile[]>([])
-const uploadDialog = ref(false)
-const uploadFileType = ref('other')
-const uploadDocFormat = ref('scan')
-const closingFiles = computed(() => uploadedFiles.value.filter(f => ['act', 'upd', 'contract'].includes(f.file_type || '')))
-const paymentFiles = computed(() => uploadedFiles.value.filter(f => f.file_type === 'invoice'))
+// Файлы к закупке (uploadedFiles, диалоги загрузки/типа/предпросмотра) — вынесены
+// в composables/purchase/usePurchaseFiles.ts, вызов ниже по файлу (после contractWord).
 
-const DOC_UPLOAD_SECTIONS = computed(() => [
-  { type: 'contract' as const, label: contractWord.value, icon: 'mdi-file-sign', color: 'indigo' },
-  { type: 'act' as const, label: 'Акт', icon: 'mdi-file-check', color: 'cyan' },
-  { type: 'upd' as const, label: 'УПД', icon: 'mdi-file-document-check', color: 'green' },
-  { type: 'invoice' as const, label: 'Счёт', icon: 'mdi-receipt-text', color: 'orange' },
-  { type: 'kp' as const, label: 'КП', icon: 'mdi-file-compare', color: 'teal' },
-  { type: 'service_note' as const, label: 'Служебная записка', icon: 'mdi-file-document-edit', color: 'blue' },
-  { type: 'protocol' as const, label: 'Протокол закупки', icon: 'mdi-file-certificate', color: 'deep-purple' },
-  { type: 'order' as const, label: 'Приказ', icon: 'mdi-file-star', color: 'brown' },
-  { type: 'other' as const, label: 'Прочее', icon: 'mdi-file-outline', color: 'grey' },
-])
-
-function filesByType(type: string) {
-  return uploadedFiles.value.filter(f => f.file_type === type)
-}
-const fileTypeEditDialog = ref(false)
-const fileTypeEditValue = ref('other')
-const fileDocFormatEditValue = ref('scan')
-const fileTypeEditTarget = ref<UploadedFile | null>(null)
-const savingFileType = ref(false)
-
-function openUploadDialog() {
-  uploadFileType.value = 'other'
-  uploadDocFormat.value = 'scan'
-  uploadDialog.value = true
-}
-
-function openFileTypeEdit(f: UploadedFile) {
-  fileTypeEditTarget.value = f
-  fileTypeEditValue.value = f.file_type || 'other'
-  fileDocFormatEditValue.value = f.doc_format || 'scan'
-  fileTypeEditDialog.value = true
-}
-
-async function toggleDocFormat(f: UploadedFile) {
-  if (!purchaseId.value) return
-  const newFormat = f.doc_format === 'editable' ? 'scan' : 'editable'
-  const token = localStorage.getItem('auth_token')
-  const fd = new FormData()
-  fd.append('doc_format', newFormat)
-  const res = await fetch(`/api/purchases/${purchaseId.value}/files/${f.id}`, {
-    method: 'PATCH',
-    headers: { Authorization: `Bearer ${token}` },
-    body: fd,
-  })
-  if (res.ok) {
-    const updated = await res.json()
-    const idx = uploadedFiles.value.findIndex(x => x.id === updated.id)
-    if (idx !== -1) uploadedFiles.value[idx] = updated
-  }
-}
-
-async function saveFileType() {
-  if (!fileTypeEditTarget.value || !purchaseId.value) return
-  savingFileType.value = true
-  try {
-    const token = localStorage.getItem('auth_token')
-    const fd = new FormData()
-    fd.append('file_type', fileTypeEditValue.value)
-    fd.append('doc_format', fileDocFormatEditValue.value)
-    const res = await fetch(`/api/purchases/${purchaseId.value}/files/${fileTypeEditTarget.value.id}`, {
-      method: 'PATCH',
-      headers: { Authorization: `Bearer ${token}` },
-      body: fd,
-    })
-    if (res.ok) {
-      const updated = await res.json()
-      const idx = uploadedFiles.value.findIndex(f => f.id === updated.id)
-      if (idx !== -1) uploadedFiles.value[idx] = updated
-      fileTypeEditDialog.value = false
-    }
-  } finally {
-    savingFileType.value = false
-  }
-}
-
-// ── Publications ──────────────────────────────────────────────────
-interface Publication {
-  id: number; purchase_id: number; platform: string; status: string
-  external_id?: string; external_url?: string; error_text?: string
-  published_at?: string; created_at?: string
-  platform_number?: string; platform_state?: string
-}
-
-const AVAILABLE_PLATFORMS = [
-  { value: 'fabrikant',    title: 'Фабрикант',          subtitle: 'fabrikant.ru — коммерческие и 223-ФЗ', color: 'orange-darken-2', icon: 'mdi-factory' },
-  { value: 'roseltorg_rb', title: 'Росэлторг.Бизнес',   subtitle: 'rb.roseltorg.ru — коммерческие закупки', color: 'blue-darken-2',   icon: 'mdi-domain' },
-]
-
-const PLATFORM_LABELS: Record<string, string> = {
-  fabrikant:    'Фабрикант',
-  roseltorg_rb: 'Росэлторг.Бизнес',
-}
-
-const PUB_STATUS_COLOR: Record<string, string> = {
-  pending:    'grey',
-  publishing: 'blue',
-  published:  'success',
-  draft:      'orange',
-  error:      'error',
-}
-
-const PUB_STATUS_LABEL: Record<string, string> = {
-  pending:    'Ожидает',
-  publishing: 'Публикуется...',
-  published:  'Опубликовано',
-  draft:      'Черновик на ЭТП',
-  error:      'Ошибка',
-}
-
-const ROSELTORG_PROCEDURE_TYPES = [
-  { value: 'request_quotations', title: 'Запрос котировок' },
-  { value: 'request_proposals',  title: 'Запрос предложений' },
-  { value: 'competition',        title: 'Конкурс' },
-  { value: 'auction',            title: 'Аукцион' },
-]
-
-const publications = ref<Publication[]>([])
-const publishDialog = ref(false)
-const publishingPlatform = ref<string | null>(null)
-const pendingPlatform = ref<string | null>(null)
-const roseltorgProcedureType = ref<string | null>(null)
-type PublishTarget = 'subject' | 'items' | 'nmck' | 'auction-date' | 'auction-bet' | 'region' | 'address'
-const publishErrors = ref<{text: string; target: PublishTarget}[]>([])
-
-const fabrikantDates = ref({ proposal_start: '', proposal_end: '', determination_date: '', summing_up_date: '' })
-const fabrikantOkpd2 = ref('')
-// ОКПД2 autocomplete state
-const okpd2Items = ref<{code: string; name: string; section: string | null}[]>([])
-const okpd2Loading = ref(false)
-const okpd2Error = ref('')
-let _okpd2SearchTimer: ReturnType<typeof setTimeout> | null = null
-
-function okpd2ItemTitle(item: {code: string; name: string}): string {
-  return `${item.code} — ${item.name}`
-}
-
-async function searchOkpd2(q: string | undefined) {
-  if (_okpd2SearchTimer) clearTimeout(_okpd2SearchTimer)
-  if (!q || q.length < 2) {
-    okpd2Items.value = []
-    okpd2Error.value = ''
-    return
-  }
-  _okpd2SearchTimer = setTimeout(async () => {
-    okpd2Loading.value = true
-    try {
-      const token = localStorage.getItem('auth_token')
-      const res = await fetch(`/api/okpd2?q=${encodeURIComponent(q)}&limit=50`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (res.ok) {
-        okpd2Error.value = ''
-        const data = await res.json()
-        // Ensure current value stays in the list if it was previously selected
-        if (fabrikantOkpd2.value && !data.find((d: {code: string}) => d.code === fabrikantOkpd2.value)) {
-          // keep existing items that include the current selection
-          const existing = okpd2Items.value.filter(i => i.code === fabrikantOkpd2.value)
-          okpd2Items.value = [...existing, ...data]
-        } else {
-          okpd2Items.value = data
-        }
-      } else {
-        okpd2Error.value = `Ошибка загрузки справочника (${res.status})`
-      }
-    } catch (_e) {
-      okpd2Error.value = 'Не удалось загрузить справочник ОКПД2'
-    } finally {
-      okpd2Loading.value = false
-    }
-  }, 300)
-}
-
-const fabrikantAttachDocs = ref(true)
-const fabrikantNoNmcd = ref(false)
-const fabrikantProcedureType = ref<'zp' | 'reduction' | 'price_monitoring'>('zp')
-const fabrikantAuctionDateStart = ref('')
-const fabrikantAuctionBetFrom = ref<number | null>(null)
-const fabrikantAuctionBetTo = ref<number | null>(null)
-
-const FABRIKANT_PROCEDURE_TYPES = [
-  { value: 'zp',               title: 'Запрос предложений' },
-  { value: 'reduction',        title: 'Редукцион (аукцион на понижение)' },
-  { value: 'price_monitoring', title: 'Мониторинг цен' },
-]
+// ── Publications (список публикаций, диалог настроек, поллинг статуса) —
+// вынесено в composables/purchase/usePurchasePublications.ts + components/purchase/
+// PurchasePublishDialog.vue. Вызов usePurchasePublications() ниже по файлу — после
+// displayNmck/savedNmck (publishNmck от них зависит), иначе TDZ. ──
 
 // ── Guide arrow (летящая стрелка с пунктирным следом) — вынесено в
 // composables/purchase/useGuideArrow.ts. onBeforeNavigate закрывает диалог
@@ -5132,242 +4228,6 @@ const {
 
 function revealField(target: string) {
   guideArrowTo(target)
-}
-
-const publishNmck = computed(() => displayNmck.value || savedNmck.value || 0)
-
-function initFabrikantDates() {
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const fmt = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-  const now = new Date()
-  const end = new Date(now.getTime() + 7*24*60*60*1000)
-  fabrikantDates.value = {
-    proposal_start: fmt(new Date(now.getTime() + 60*60*1000)),
-    proposal_end: fmt(end),
-    determination_date: fmt(new Date(end.getTime() + 24*60*60*1000)),
-    summing_up_date: fmt(new Date(end.getTime() + 2*24*60*60*1000)),
-  }
-  // Preload current ОКПД2 selection so v-autocomplete can display the label
-  if (fabrikantOkpd2.value && !okpd2Items.value.find(i => i.code === fabrikantOkpd2.value)) {
-    void searchOkpd2(fabrikantOkpd2.value)
-  }
-}
-
-function checkPublishReady(): {text: string; target: PublishTarget}[] {
-  const errors: {text: string; target: PublishTarget}[] = []
-  if (!form.subject?.trim()) errors.push({ text: 'Не заполнено наименование закупки', target: 'subject' })
-  // Мониторинг цен не требует позиций (и deliveryPlace там опционален)
-  if (fabrikantProcedureType.value !== 'price_monitoring') {
-    if (!items.value.some(i => i.item_name?.trim())) errors.push({ text: 'Нет позиций в закупке (добавьте хотя бы одну)', target: 'items' })
-    // Фабрикант требует lot_delivery_place.state/region/okato — нужен реальный субъект РФ (поле доставки, не мероприятия)
-    if (!form.delivery_region || !resolveRegionOkato(form.delivery_region)) {
-      errors.push({ text: 'Укажите субъект РФ (для места поставки)', target: 'region' })
-    }
-    // Адрес поставки: структурный → свободная строка → место оказания услуг → адрес организации субсидии
-    const hasAddress = !!String(form.delivery_city || form.delivery_street || form.delivery_address || '').trim()
-      || !!String(form.delivery_location || '').trim()
-      || !!String(customerPreview.value?.address || '').trim()
-    if (!hasAddress) errors.push({ text: 'Укажите адрес доставки', target: 'address' })
-  }
-  // Поля редукциона
-  if (fabrikantProcedureType.value === 'reduction') {
-    if (!fabrikantAuctionDateStart.value) errors.push({ text: 'Укажите дату и время начала редукциона', target: 'auction-date' })
-    // numOrNull ловит и null, и '' (Vue кладёт '' при очистке v-model.number-поля,
-    // голое === null это пропускало — редукцион на Фабрикант ушёл бы с auction_bet_limit_from: '').
-    if (numOrNull(fabrikantAuctionBetFrom.value) === null || numOrNull(fabrikantAuctionBetTo.value) === null) errors.push({ text: 'Укажите границы ставки редукциона (от / до)', target: 'auction-bet' })
-  }
-  return errors
-}
-
-const currentSubsidyOrgInn = computed(() =>
-  subsidies.value.find(s => s.id === form.subsidy_id)?.org_inn ?? null
-)
-
-const isPlatformPublished = (platform: string) =>
-  publications.value.some(p => p.platform === platform && (p.status === 'published' || p.status === 'draft'))
-
-const refreshingPubId = ref<number | null>(null)
-
-async function loadPublications() {
-  if (!purchaseId.value) return
-  try {
-    publications.value = await apiFetch<Publication[]>(`/publications/purchases/${purchaseId.value}`)
-  } catch {}
-}
-
-async function refreshPubStatus(pub: Publication) {
-  refreshingPubId.value = pub.id
-  try {
-    const updated = await apiFetch<Publication>(`/publications/${pub.id}/refresh`, { method: 'POST' })
-    const idx = publications.value.findIndex(p => p.id === pub.id)
-    if (idx !== -1) publications.value[idx] = updated
-    if (updated.status === 'published') {
-      showSnack(`Процедура размещена на ${PLATFORM_LABELS[updated.platform] || updated.platform}`, 'success')
-    } else if (updated.status === 'draft') {
-      showSnack(`Статус обновлён: черновик${updated.platform_number ? ' №' + updated.platform_number : ''} на Фабриканте`)
-    }
-  } catch (e: any) {
-    const msg = e?.payload?.message || e?.detail || e?.message || 'Не удалось обновить статус'
-    showSnack(msg, 'error')
-  } finally {
-    refreshingPubId.value = null
-  }
-}
-
-async function doPublish(platform: string, procedureType?: string | null) {
-  publishingPlatform.value = platform
-  // Сначала сбрасываем несохранённые изменения в БД, иначе бэкенд читает устаревший delivery_region
-  if (isEdit.value && purchaseId.value) {
-    await performAutosave()
-    if (autosaveState.value === 'error') {
-      showSnack('Не удалось сохранить изменения карточки — публикация отменена', 'error')
-      publishingPlatform.value = null
-      return
-    }
-  }
-  try {
-    const body: Record<string, any> = { platform }
-    if (procedureType) body.procedure_type = procedureType
-    if (platform === 'fabrikant') {
-      body.procedure_type = fabrikantProcedureType.value
-      body.okpd2_code = fabrikantOkpd2.value
-      body.proposal_start = fabrikantDates.value.proposal_start
-      body.proposal_end = fabrikantDates.value.proposal_end
-      body.summing_up_date = fabrikantDates.value.summing_up_date
-      body.attach_documents = fabrikantAttachDocs.value
-      if (fabrikantProcedureType.value === 'zp') {
-        body.determination_date = fabrikantDates.value.determination_date
-        body.no_nmcd = fabrikantNoNmcd.value
-      } else if (fabrikantProcedureType.value === 'reduction') {
-        body.no_nmcd = fabrikantNoNmcd.value
-        body.auction_date_start = fabrikantAuctionDateStart.value
-        body.auction_bet_limit_from = numOrNull(fabrikantAuctionBetFrom.value)
-        body.auction_bet_limit_to = numOrNull(fabrikantAuctionBetTo.value)
-      }
-      // price_monitoring: no no_nmcd, no determination_date, no auction fields
-    }
-    const pub = await apiFetch<Publication>(`/publications/purchases/${purchaseId.value}`, {
-      method: 'POST',
-      body,
-    })
-    publications.value.unshift(pub)
-    showSnack(`Отправлено на публикацию: ${PLATFORM_LABELS[platform]}`)
-    publishDialog.value = false
-    pendingPlatform.value = null
-    roseltorgProcedureType.value = null
-    // Poll status for 30s
-    pollPublication(pub.id)
-  } catch (e: any) {
-    const errText = e?.detail || e?.payload?.message || e?.message || 'Ошибка при отправке на публикацию'
-    if (platform === 'fabrikant') {
-      const errTarget = fabrikantErrorTarget(errText)
-      if (errTarget === 'okpd2') {
-        showSnack(errText, 'error', {
-          actionText: 'Показать поле',
-          onAction: () => guideArrowTo(errTarget),
-        })
-        guideArrowTo(errTarget)
-      } else if (errTarget === 'region' || errTarget === 'address') {
-        showSnack(errText, 'error', {
-          actionText: 'Показать поле',
-          onAction: () => guideArrowTo(errTarget),
-        })
-        guideArrowTo(errTarget)
-      } else {
-        showSnack(errText, 'error')
-      }
-    } else {
-      showSnack(errText, 'error')
-    }
-  } finally {
-    publishingPlatform.value = null
-  }
-}
-
-async function retryPublish(platform: string) {
-  if (platform === 'fabrikant') {
-    openFabrikantRetry(platform)
-  } else {
-    await doPublish(platform)
-  }
-}
-
-// Маппинг бизнес-ошибок Фабриканта → поле карточки (одна точка правды:
-// используется и в openFabrikantRetry, и в снэкбаре поллинга)
-function fabrikantErrorTarget(errorText?: string | null): 'okpd2' | 'region' | 'address' | null {
-  const t = (errorText || '').toLowerCase()
-  if (!t) return null
-  if (t.includes('окпд') || t.includes('okpd')) return 'okpd2'
-  const isDeliveryPlace = /delivery_place|deliveryplace|место поставки/.test(t)
-  // lot_delivery_place.okato / .state / .region → поле «Субъект РФ»
-  if (/okato|окато|\bregion\b|\bstate\b|субъект/.test(t)) return 'region'
-  // адрес внутри места поставки → поле адреса
-  if (isDeliveryPlace && /adress|address|адрес/.test(t)) return 'address'
-  if (isDeliveryPlace) return 'region'
-  return null
-}
-
-function openFabrikantRetry(platform: string) {
-  const lastPub = publications.value.find(p => p.platform === platform && p.status === 'error')
-  publishErrors.value = checkPublishReady()
-  publishDialog.value = true
-  pendingPlatform.value = 'fabrikant'
-  initFabrikantDates()
-  // Сохраняем выбранный тип процедуры при повторе (fabrikantProcedureType не сбрасываем)
-  if (fabrikantProcedureType.value !== 'price_monitoring') {
-    fabrikantNoNmcd.value = !(publishNmck.value > 0)
-  }
-  const errTarget = fabrikantErrorTarget(lastPub?.error_text)
-  if (errTarget === 'okpd2') {
-    nextTick(() => guideArrowTo('okpd2'))
-  } else if (errTarget === 'region' || errTarget === 'address') {
-    // Показать блокер в списке ошибок диалога; клик → закрыть диалог → стрелка к полю
-    if (!publishErrors.value.some(e => e.target === errTarget)) {
-      publishErrors.value.push({
-        text: errTarget === 'region' ? 'Укажите субъект РФ (для места поставки)' : 'Укажите адрес доставки',
-        target: errTarget,
-      })
-    }
-  }
-}
-
-function pollPublication(pubId: number, attempts = 0) {
-  if (attempts > 60) return
-  // Первые 15 попыток — каждые 2с (быстрый отклик), дальше — каждые 5с (не долбим сервер)
-  const delay = attempts < 15 ? 2000 : 5000
-  setTimeout(async () => {
-    await loadPublications()
-    const pub = publications.value.find(p => p.id === pubId)
-    if (pub && pub.status === 'error') {
-      const errTarget = pub.platform === 'fabrikant' ? fabrikantErrorTarget(pub.error_text) : null
-      if (errTarget === 'region' || errTarget === 'address') {
-        // АВТОМАТИЧЕСКИ запускаем стрелку без ожидания клика
-        guideArrowTo(errTarget)
-        showSnack(pub.error_text || 'Ошибка публикации', 'error', {
-          actionText: 'Показать поле',
-          onAction: () => guideArrowTo(errTarget),
-        })
-      } else if (errTarget === 'okpd2') {
-        // Поле ОКПД2 находится в диалоге публикации — открываем диалог со стрелкой
-        openFabrikantRetry('fabrikant')
-        showSnack(pub.error_text || 'Ошибка публикации', 'error', {
-          actionText: 'Показать поле',
-          onAction: () => openFabrikantRetry('fabrikant'),
-        })
-      } else {
-        showSnack(pub.error_text || 'Ошибка публикации', 'error')
-      }
-    } else if (pub && pub.status === 'published') {
-      showSnack(`Закупка опубликована на ${PLATFORM_LABELS[pub.platform] || pub.platform}`, 'success')
-    } else if (pub && pub.status === 'draft') {
-      showSnack(
-        `Черновик процедуры${pub.platform_number ? ' №' + pub.platform_number : ''} создан на Фабриканте. Разместите его в личном кабинете площадки.`,
-        'warning',
-      )
-    } else if (pub && (pub.status === 'publishing' || pub.status === 'pending')) {
-      pollPublication(pubId, attempts + 1)
-    }
-  }, delay)
 }
 
 // ── Linked tasks / Link existing task — вынесено в
@@ -5471,26 +4331,19 @@ watch(() => form.item_type, (newType) => {
     form.contract_form = 'goods_single'
   }
 })
-const frameworkContracts = ref<FrameworkContract[]>([])
-const frameworkDialog = ref(false)
-const frameworkLoading = ref(false)
-const frameworkSearch = ref('')
-const selectedFrameworkContract = ref<FrameworkContract | null>(null)
-const newFrameworkDialog = ref(false)
-const newFrameworkSaving = ref(false)
-const newContractNumberRef = ref<any>(null)
-function focusNewContractNumber() {
-  nextTick(() => newContractNumberRef.value?.focus())
-}
-const newFrameworkForm = reactive({
-  number: '', date: '', contractor_id: null as number | null, subject: '', max_amount: null as number | null,
-})
-
 const isFramework = computed(() => form.purchase_contract_type === 'framework_cumulative' || form.purchase_contract_type === 'framework_with_amount')
 const isFrameworkCumulative = computed(() => form.purchase_contract_type === 'framework_cumulative')
 const contractWord = computed(() => isFramework.value ? 'Заказ' : 'Договор')
 const contractWordLower = computed(() => isFramework.value ? 'заказ' : 'договор')
 const contractWordGen = computed(() => isFramework.value ? 'заказа' : 'договора')
+
+// ── Диалоги выбора/создания рамочного договора — вынесено в
+// composables/purchase/useFrameworkContracts.ts + components/purchase/FrameworkDialogs.vue ──
+const {
+  frameworkContracts, frameworkDialog, frameworkLoading, frameworkSearch, selectedFrameworkContract,
+  newFrameworkDialog, newFrameworkSaving, newFrameworkForm,
+  openFrameworkDialog, selectFrameworkContract, clearFrameworkContract, saveNewFrameworkContract,
+} = useFrameworkContracts(form, contractWord, contractors, showSnack)
 
 // ── Framework sibling purchases / Счёт по РД — вынесено в
 // composables/purchase/useFrameworkSiblings.ts ──
@@ -5501,6 +4354,9 @@ const {
 } = useFrameworkSiblings(form, isFramework, frameworkContracts, frameworkSearch)
 
 // ── Со-финансирование (cofinancing subsidies) ────────────────────────────────
+// Найдено при рефакторинге 2026-09: computed нигде не используется (мёртвый
+// код, ни в template, ни в других composables) — оставлено без изменений
+// (не в скоупе этого рефакторинга, поведение не трогаем), см. отчёт.
 const cofinancingSubsidies = computed(() => {
   if (!form.subsidy_id) return []
   const primary = subsidies.value.find(s => s.id === form.subsidy_id)
@@ -5508,33 +4364,23 @@ const cofinancingSubsidies = computed(() => {
   return subsidies.value.filter(s => s.id !== form.subsidy_id && s.org_id === primary.org_id)
 })
 
-async function openFrameworkDialog() {
-  frameworkDialog.value = true
-  frameworkSearch.value = ''
-  frameworkLoading.value = true
-  try {
-    const types = [form.purchase_contract_type]
-    const params = new URLSearchParams()
-    if (form.subsidy_id) params.set('subsidy_id', String(form.subsidy_id))
-    types.forEach(t => params.append('contract_type', t))
-    frameworkContracts.value = await apiFetch<FrameworkContract[]>(`/contracts/?${params}`)
-  } catch {
-    showSnack('Ошибка загрузки договоров', 'error')
-  } finally {
-    frameworkLoading.value = false
-  }
-}
-
-function selectFrameworkContract(c: FrameworkContract) {
-  selectedFrameworkContract.value = c
-  form.contract_id = c.id
-  frameworkDialog.value = false
-}
-
-function clearFrameworkContract() {
-  selectedFrameworkContract.value = null
-  form.contract_id = null
-}
+// ── Файлы к закупке — вынесено в composables/purchase/usePurchaseFiles.ts.
+// Требует contractWord (DOC_UPLOAD_SECTIONS/FILE_TYPE_LABELS используют подпись
+// «Договор»/«Заказ») — вызывается здесь, после её объявления выше, иначе TDZ. ──
+const {
+  EDITABLE_MIME, FILE_TYPE_LABELS, FILE_TYPE_OPTIONS, fileTypeColor,
+  fileInputEl, sectionFileInputEl, pendingSectionUpload,
+  uploadedFiles, uploadDialog, uploadFileType, uploadDocFormat, paymentFiles,
+  DOC_UPLOAD_SECTIONS, filesByType,
+  fileTypeEditDialog, fileTypeEditValue, fileDocFormatEditValue, fileTypeEditTarget, savingFileType,
+  // openUploadDialog не деструктурируется — как и в оригинале, ни одна кнопка её не
+  // вызывает (мёртвый код ещё до рефакторинга, см. отчёт), не тащим её в view.
+  openFileTypeEdit, toggleDocFormat, saveFileType,
+  uploading, uploadFile, uploadFilesForType, onAcceptanceDocFilesDropped, uploadForSection, toggleFileActive, uploadSectionFile,
+  downloadFile, deleteFile,
+  previewDialog, previewFile, previewUrl, isPreviewable, openPreview,
+  fileIcon, formatSize, formatDate,
+} = usePurchaseFiles(purchaseId, showSnack, contractWord, isEdit)
 
 const contractNumberEditEnabled = ref(false)
 
@@ -5595,47 +4441,6 @@ function onContractTypeChange() {
   }
 }
 
-async function saveNewFrameworkContract() {
-  if (!newFrameworkForm.number.trim()) return
-  newFrameworkSaving.value = true
-  try {
-    const created = await apiFetch<FrameworkContract>('/contracts/', {
-      method: 'POST',
-      body: {
-        number: newFrameworkForm.number,
-        date: newFrameworkForm.date || null,
-        contract_type: form.purchase_contract_type,
-        contractor_id: newFrameworkForm.contractor_id || null,
-        subsidy_id: form.subsidy_id || null,
-        subject: newFrameworkForm.subject || null,
-        // `|| null` уже ловил '' (не было 422), но заменено на numOrNull ради
-        // единого источника истины (ПРАВИЛО №6): '' → null, 0 сохраняется как число.
-        max_amount: numOrNull(newFrameworkForm.max_amount),
-        status: 'active',
-      },
-    })
-    // Add contractor display info
-    const ctrs = contractors.value.find(c => c.id === created.contractor_id)
-    if (ctrs) { created.contractor_name = ctrs.name; created.contractor_inn = ctrs.inn }
-    newFrameworkDialog.value = false
-    selectFrameworkContract(created)
-    newFrameworkForm.number = ''
-    newFrameworkForm.date = ''
-    newFrameworkForm.contractor_id = null
-    newFrameworkForm.subject = ''
-    newFrameworkForm.max_amount = null
-  } catch (err: any) {
-    const msg = err?.body?.message || err?.message || ''
-    if (msg.includes('уже существует') || err?.status === 409) {
-      showSnack(`${contractWord.value} с таким номером, контрагентом и датой уже существует`, 'warning')
-    } else {
-      showSnack('Ошибка создания договора', 'error')
-    }
-  } finally {
-    newFrameworkSaving.value = false
-  }
-}
-
 const totalNmck = computed(() =>
   items.value.reduce((s, i) => s + (i.total_price || 0), 0)
 )
@@ -5664,6 +4469,24 @@ const displayNmck = computed(() => {
   if (isContracted.value && savedNmck.value != null) return savedNmck.value
   return totalNmck.value
 })
+
+// ── Публикация на площадках — вынесено в composables/purchase/usePurchasePublications.ts +
+// components/purchase/PurchasePublishDialog.vue. Вызывается здесь (после displayNmck/
+// savedNmck, от которых зависит publishNmck) — раньше по файлу словил бы TDZ. ──
+const {
+  publications, publishDialog, publishingPlatform, pendingPlatform, roseltorgProcedureType, publishErrors,
+  fabrikantDates, fabrikantOkpd2, okpd2Items, okpd2Loading, okpd2Error, okpd2ItemTitle, searchOkpd2,
+  fabrikantAttachDocs, fabrikantNoNmcd, fabrikantProcedureType,
+  fabrikantAuctionDateStart, fabrikantAuctionBetFrom, fabrikantAuctionBetTo,
+  publishNmck, initFabrikantDates, checkPublishReady, currentSubsidyOrgInn, isPlatformPublished,
+  refreshingPubId, loadPublications, refreshPubStatus, doPublish, retryPublish,
+  // fabrikantErrorTarget/pollPublication не деструктурируются — используются только
+  // внутри самого composable (doPublish/openFabrikantRetry/поллинг), view их не вызывает.
+  openFabrikantRetry,
+} = usePurchasePublications(
+  purchaseId, showSnack, form, items, subsidies, isEdit, performAutosave, autosaveState,
+  resolveRegionOkato, customerPreview, displayNmck, savedNmck, guideArrowTo,
+)
 
 const nmckHint = computed(() => {
   if (isContracted.value && savedNmck.value != null) {
@@ -5720,16 +4543,7 @@ const monthlyTotal = computed(() => {
 const calcMonthlyTotal = () => { /* reactivity trigger — monthlyTotal is computed */ }
 
 const formatMoney = (v: number) => v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽'
-const formatSize = (bytes?: number) => !bytes ? '' : bytes > 1048576 ? (bytes / 1048576).toFixed(1) + ' МБ' : (bytes / 1024).toFixed(0) + ' КБ'
-const formatDate = (dt?: string | null) => dt ? new Date(dt).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }) : ''
-
-const fileIcon = (mime?: string) => {
-  if (!mime) return 'mdi-file'
-  if (mime === 'application/pdf') return 'mdi-file-pdf-box'
-  if (mime.startsWith('image/')) return 'mdi-file-image'
-  if (mime.includes('word')) return 'mdi-file-word'
-  return 'mdi-file'
-}
+// fileIcon/formatSize/formatDate — вынесены в composables/purchase/usePurchaseFiles.ts
 
 // FEO — дерево категорий (заменяет трёхуровневый каскад selectedFeo1/2/3; form.feo_category_id
 // теперь ЕДИНСТВЕННЫЙ источник истины и хранит id любого выбранного узла, лист или папку).
@@ -6071,149 +4885,14 @@ const contractorsNoDataText = computed(() => {
   return 'Ничего не найдено'
 })
 
-const addContractorDialog = ref(false)
-const addContractorForm = reactive({
-  name: '', inn: '', kpp: '', ogrn: '', address: '', phone: '', email: '',
-  contact_person: '', signatory_last_name: '', signatory_first_name: '', signatory_middle_name: '', signatory_position: '', org_type: '' as string,
-  bank_name: '', bik: '', settlement_account: '', correspondent_account: '',
-})
-const addContractorSaving = ref(false)
-const addContractorFile = ref<File | null>(null)
-const addContractorImporting = ref(false)
-const egrulDiffDialog = ref(false)
-const egrulDiffItems = ref<{ key: string; label: string; old: string; new: string }[]>([])
-const egrulDiffPending = ref<Record<string, string>>({})
-
-function openAddContractor() {
-  Object.assign(addContractorForm, { name: '', inn: '', kpp: '', ogrn: '', address: '', phone: '', email: '', contact_person: '', signatory_last_name: '', signatory_first_name: '', signatory_middle_name: '', signatory_position: '', org_type: 'Юридическое лицо', bank_name: '', bik: '', settlement_account: '', correspondent_account: '' })
-  addContractorFile.value = null
-  addContractorDialog.value = true
-}
-
-async function saveNewContractor() {
-  if (!addContractorForm.name.trim()) return
-  addContractorSaving.value = true
-  try {
-    const created = await apiFetch<Contractor>('/contractors/', { method: 'POST', body: { ...addContractorForm } })
-    contractors.value.push(created)
-    contractorsStore.putToCache(created)  // Phase 26-ZZ: и в Pinia cache для глобального resolve
-    form.contractor_id = created.id
-    contractorInn.value = created.inn || ''
-    addContractorDialog.value = false
-    showSnack('Контрагент добавлен')
-  } catch (e: any) {
-    showSnack(e.message || 'Ошибка', 'error')
-  } finally {
-    addContractorSaving.value = false
-  }
-}
-
-async function importContractorFromFile() {
-  if (!addContractorFile.value) return
-  addContractorImporting.value = true
-  try {
-    const fd = new FormData()
-    fd.append('file', addContractorFile.value)
-    const res = await fetch('/api/contractors/import/preview', { method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('auth_token')}` }, body: fd })
-    if (!res.ok) throw new Error(await res.text())
-    const data = await res.json()
-    // Take first data row and try to fill form
-    const headers = data.headers || []
-    const sample = data.sample?.[0] || []
-    const hints: Record<string, string[]> = {
-      name: ['назван', 'наимен', 'name', 'органи'], inn: ['инн', 'inn'], kpp: ['кпп', 'kpp'],
-      ogrn: ['огрн', 'ogrn'], address: ['адрес', 'address'], phone: ['телефон', 'phone'],
-      email: ['email', 'mail'], contact_person: ['контакт', 'лицо'], signatory: ['подписант', 'директор'],
-      bank_name: ['банк', 'bank'], bik: ['бик', 'bik'], settlement_account: ['расч', 'р/с'],
-      correspondent_account: ['корр', 'к/с'],
-    }
-    for (const [field, kws] of Object.entries(hints)) {
-      for (let i = 0; i < headers.length; i++) {
-        const h = (headers[i] || '').toLowerCase()
-        if (kws.some(k => h.includes(k)) && sample[i]) {
-          (addContractorForm as any)[field] = String(sample[i]).trim()
-          break
-        }
-      }
-    }
-    showSnack('Данные подтянуты из файла', 'info')
-  } catch (e: any) {
-    showSnack(e.message || 'Ошибка чтения файла', 'error')
-  } finally {
-    addContractorImporting.value = false
-  }
-}
-
-async function lookupContractorInn() {
-  const inn = addContractorForm.inn?.trim()
-  if (!inn || inn.length < 10) return
-  try {
-    const data = await apiFetch<any>(`/contractors/lookup-inn/${inn}?force_egrul=1`)
-    // Самозанятый: в ЕГРЮЛ/ЕГРИП его нет, реестр НПД отдаёт только статус
-    if (data?._source === 'npd') {
-      if (!addContractorForm.org_type) addContractorForm.org_type = 'Самозанятый'
-      showSnack(data._notice || `ИНН ${inn} — самозанятый, данных в ЕГРЮЛ нет`, 'warning')
-      return
-    }
-    const FIELDS = [
-      { key: 'name', label: 'Наименование' },
-      { key: 'full_name', label: 'Полное наименование' },
-      { key: 'kpp', label: 'КПП' },
-      { key: 'ogrn', label: 'ОГРН' },
-      { key: 'address', label: 'Адрес' },
-      { key: 'signatory_last_name', label: 'Фамилия подписанта' },
-      { key: 'signatory_first_name', label: 'Имя подписанта' },
-      { key: 'signatory_middle_name', label: 'Отчество подписанта' },
-      { key: 'signatory_position', label: 'Должность подписанта' },
-      { key: 'phone', label: 'Телефон' },
-      { key: 'email', label: 'Email' },
-      { key: 'bank_name', label: 'Банк' },
-      { key: 'bik', label: 'БИК' },
-      { key: 'settlement_account', label: 'Расчётный счёт' },
-      { key: 'correspondent_account', label: 'Корр. счёт' },
-    ]
-    const diffs: { key: string; label: string; old: string; new: string }[] = []
-    const pending: Record<string, string> = {}
-    for (const f of FIELDS) {
-      const newVal = (data?.[f.key] || '').toString().trim()
-      const curVal = ((addContractorForm as any)[f.key] || '').toString().trim()
-      if (newVal && newVal !== curVal) {
-        diffs.push({ key: f.key, label: f.label, old: curVal || '—', new: newVal })
-        pending[f.key] = newVal
-      }
-    }
-    if (diffs.length === 0) {
-      showSnack('Данные ЕГРЮЛ совпадают с текущими', 'info')
-      return
-    }
-    egrulDiffItems.value = diffs
-    egrulDiffPending.value = pending
-    egrulDiffDialog.value = true
-  } catch (e: any) {
-    if (e?.payload?.code === 'INN_NOT_FOUND') {
-      showSnack(e.payload.message, 'warning')
-    } else {
-      showSnack(e?.message || 'Ошибка запроса к ФНС', 'error')
-    }
-  }
-}
-
-function applyEgrulDiff() {
-  for (const k of Object.keys(egrulDiffPending.value)) {
-    (addContractorForm as any)[k] = egrulDiffPending.value[k]
-  }
-  egrulDiffDialog.value = false
-  showSnack('Данные обновлены из ЕГРЮЛ', 'success')
-}
-
-let _addContractorInnTimeout: any = null
-function onAddContractorInnChange(val: string) {
-  clearTimeout(_addContractorInnTimeout)
-  const inn = (val || '').replace(/\D/g, '')
-  if (inn.length === 10 || inn.length === 12) {
-    _addContractorInnTimeout = setTimeout(() => lookupContractorInn(), 400)
-  }
-}
+// ── Новый контрагент (диалог) + ЕГРЮЛ lookup — вынесено в
+// composables/purchase/useContractorLookup.ts + components/purchase/AddContractorDialog.vue,
+// EgrulDiffDialog.vue ──
+const {
+  addContractorDialog, addContractorForm, addContractorSaving, addContractorFile, addContractorImporting,
+  egrulDiffDialog, egrulDiffItems, egrulDiffPending,
+  openAddContractor, saveNewContractor, importContractorFromFile, lookupContractorInn, applyEgrulDiff, onAddContractorInnChange,
+} = useContractorLookup(form, contractors, contractorInn, contractorsStore, showSnack)
 
 const contractorSearchLoading = computed(() => contractorsStore.searching)
 let _contractorSearchTimeout: any = null
@@ -7493,167 +6172,9 @@ const saveSubstatus = async (val: string | null) => {
   }
 }
 
-const EDITABLE_MIME = new Set([
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-])
-
-// File upload
-const uploadFile = async (event: Event) => {
-  const input = event.target as HTMLInputElement
-  if (!input.files?.length || !purchaseId.value) return
-  uploadDialog.value = false
-  uploading.value = true
-  try {
-    const file = input.files[0]
-    // Auto-detect doc_format: only Word/Excel can be editable
-    const resolvedFormat = EDITABLE_MIME.has(file.type) ? uploadDocFormat.value : 'scan'
-    const fd = new FormData()
-    fd.append('file', file)
-    fd.append('file_type', uploadFileType.value)
-    fd.append('doc_format', resolvedFormat)
-    const token = localStorage.getItem('auth_token')
-    const res = await fetch(`/api/purchases/${purchaseId.value}/files`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      body: fd,
-    })
-    if (!res.ok) {
-      let detail = `Ошибка загрузки (${res.status})`
-      try { const err = await res.json(); detail = err.detail || err.message || detail } catch {}
-      showSnack(detail, 'error')
-      return
-    }
-    const uploaded = await res.json()
-    uploadedFiles.value.push(uploaded)
-    showSnack('Файл загружен')
-  } catch (e: any) {
-    showSnack(e?.message || 'Ошибка загрузки файла', 'error')
-  } finally {
-    uploading.value = false
-    if (fileInputEl.value) fileInputEl.value.value = ''
-  }
-}
-
-// Единая точка загрузки файлов закупки с заданным file_type — используется и
-// плитками drag-n-drop (Документы к закупке), и кнопкой «Загрузить» в разделе
-// «Платёж», и кликом по плитке (открывает системный выбор файла с тем же типом).
-async function uploadFilesForType(files: File[], fileType: string) {
-  if (!purchaseId.value || !files.length) return
-  uploading.value = true
-  pendingSectionUpload.value = fileType
-  try {
-    for (const file of files) {
-      const resolvedFormat = EDITABLE_MIME.has(file.type) ? 'editable' : 'scan'
-      const fd = new FormData()
-      fd.append('file', file)
-      fd.append('file_type', fileType)
-      fd.append('doc_format', resolvedFormat)
-      const token = localStorage.getItem('auth_token')
-      const res = await fetch(`/api/purchases/${purchaseId.value}/files`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: fd,
-      })
-      if (!res.ok) {
-        let detail = `Ошибка загрузки (${res.status})`
-        try { const err = await res.json(); detail = err.detail || err.message || detail } catch {}
-        showSnack(`${file.name}: ${detail}`, 'error')
-        continue
-      }
-      const uploaded = await res.json()
-      // Backend деактивирует прежние файлы того же типа при загрузке — синхронизируем оптимистично
-      const ft = uploaded.file_type
-      uploadedFiles.value.forEach(f => { if (f.file_type === ft) f.is_active = false })
-      uploadedFiles.value.push(uploaded)
-    }
-    showSnack(files.length > 1 ? `Загружено файлов: ${files.length}` : 'Файл загружен')
-  } catch (e: any) {
-    showSnack(e?.message || 'Ошибка загрузки файлов', 'error')
-  } finally {
-    uploading.value = false
-    pendingSectionUpload.value = null
-  }
-}
-
-async function onAcceptanceDocFilesDropped(files: File[]) {
-  if (!isEdit.value) return
-  await uploadFilesForType(files, 'other')
-}
-
-function uploadForSection(section: string) {
-  pendingSectionUpload.value = section as any
-  sectionFileInputEl.value?.click()
-}
-
-async function toggleFileActive(f: UploadedFile) {
-  const newActive = !(f.is_active ?? true)
-  const token = localStorage.getItem('auth_token')
-  const fd = new FormData()
-  fd.append('is_active', String(newActive))
-  try {
-    const res = await fetch(`/api/purchases/${f.purchase_id}/files/${f.id}`, {
-      method: 'PATCH', headers: { Authorization: `Bearer ${token}` }, body: fd,
-    })
-    if (res.ok) {
-      f.is_active = newActive
-    }
-  } catch { /* skip */ }
-}
-
-const uploadSectionFile = async (event: Event) => {
-  const input = event.target as HTMLInputElement
-  if (!input.files?.length || !purchaseId.value) return
-  const file = input.files[0]
-  const fileType = pendingSectionUpload.value || 'other'
-  input.value = ''
-  await uploadFilesForType([file], fileType)
-}
-
-const downloadFile = async (fid: number, filename: string) => {
-  const token = localStorage.getItem('auth_token')
-  const res = await fetch(`/api/purchases/${purchaseId.value}/files/${fid}/download`, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  if (!res.ok) { showSnack('Ошибка скачивания', 'error'); return }
-  const blob = await res.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url; a.download = filename; a.click()
-  URL.revokeObjectURL(url)
-}
-
-// File preview
-const previewDialog = ref(false)
-const previewFile = ref<UploadedFile | null>(null)
-const previewUrl = ref('')
-
-const isPreviewable = (mime?: string) => mime === 'application/pdf' || !!mime?.startsWith('image/')
-
-const openPreview = async (f: UploadedFile) => {
-  const token = localStorage.getItem('auth_token')
-  const res = await fetch(`/api/purchases/${purchaseId.value}/files/${f.id}/view`, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  if (!res.ok) { showSnack('Ошибка открытия файла', 'error'); return }
-  const blob = await res.blob()
-  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
-  previewUrl.value = URL.createObjectURL(blob)
-  previewFile.value = f
-  previewDialog.value = true
-}
-
-const deleteFile = async (fid: number) => {
-  try {
-    await apiFetch(`/purchases/${purchaseId.value}/files/${fid}`, { method: 'DELETE' })
-    uploadedFiles.value = uploadedFiles.value.filter(f => f.id !== fid)
-    showSnack('Файл удалён')
-  } catch {
-    showSnack('Ошибка удаления', 'error')
-  }
-}
+// EDITABLE_MIME, uploadFile/uploadFilesForType/onAcceptanceDocFilesDropped/uploadForSection/
+// uploadSectionFile/toggleFileActive/downloadFile/deleteFile, previewDialog/openPreview —
+// вынесены в composables/purchase/usePurchaseFiles.ts (вызов usePurchaseFiles() выше по файлу).
 
 // copyDocError — вынесена в components/purchase/DocErrorDialog.vue (использовалась только там).
 

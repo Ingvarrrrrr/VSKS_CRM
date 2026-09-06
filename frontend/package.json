@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/sync-ru-regions.mjs",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "sync:regions": "node scripts/sync-ru-regions.mjs"
   },
   "dependencies": {
     "@dagrejs/dagre": "^2.0.4",

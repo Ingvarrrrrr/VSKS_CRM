@@ -546,7 +546,7 @@
                     </v-list-item>
                   </v-list>
                 </v-menu>
-                <v-btn v-if="canEditFeo" size="small" variant="tonal" color="primary" prepend-icon="mdi-plus" @click="feoForm.parentId = null; showAddFeoDialog = true">Добавить</v-btn>
+                <v-btn v-if="canEditFeo" size="small" variant="tonal" color="primary" prepend-icon="mdi-plus" @click="openAddFeoDialog(null)">Добавить</v-btn>
               </div>
             </div>
 
@@ -1249,7 +1249,7 @@
                                «показать закупки» — чтение, остаётся всегда -->
                           <div class="feo-actions-grid">
                             <v-btn v-if="canEditFeo" icon="mdi-plus-circle-outline" variant="text" size="x-small" color="success"
-                              title="Добавить дочернюю" @click="feoForm.parentId = node.id; showAddFeoDialog = true" />
+                              title="Добавить дочернюю" @click="openAddFeoDialog(node.id)" />
                             <v-btn icon="mdi-cart-outline" variant="text" size="x-small" color="blue"
                               title="Показать закупки по этой категории"
                               @click.stop="router.push(`/orders?feo_category_id=${node.id}`)" />
@@ -2310,735 +2310,16 @@
             </div>
           </div>
 
-          <!-- ── Мероприятия ── -->
-          <div class="mt-4">
-            <div class="detail-feo-header">
-              <span class="chart-card-title">Мероприятия</span>
-              <div class="d-flex gap-2">
-                <v-btn v-if="selectedId" size="small" variant="tonal" color="success" prepend-icon="mdi-microsoft-excel"
-                  @click="downloadReport(selectedId)">
-                  Приложение №3
-                </v-btn>
-                <v-btn v-if="isAdminLevel" size="small" variant="tonal" prepend-icon="mdi-plus" @click="showAddEventDialog = true">
-                  Добавить
-                </v-btn>
-              </div>
-            </div>
-            <div v-if="subsidyEvents.length === 0" class="feo-empty">
-              <v-icon icon="mdi-calendar-blank" size="40" color="grey-lighten-2" />
-              <div class="text-caption text-medium-emphasis mt-2">Нет мероприятий</div>
-            </div>
-            <v-list v-else density="compact" class="pa-0">
-              <v-list-item v-for="ev in subsidyEvents" :key="ev.id" class="px-2">
-                <template #prepend>
-                  <v-icon :icon="ev.is_active ? 'mdi-calendar-check' : 'mdi-calendar-remove'" :color="ev.is_active ? 'success' : 'grey'" size="18" />
-                </template>
-                <v-list-item-title class="text-body-2">{{ ev.name }}</v-list-item-title>
-                <v-list-item-subtitle v-if="ev.region || ev.date_from" class="text-caption">
-                  <span v-if="ev.region">{{ ev.region }}</span>
-                  <span v-if="ev.region && ev.date_from"> · </span>
-                  <span v-if="ev.date_from">{{ ev.date_from }} — {{ ev.date_to }}</span>
-                </v-list-item-subtitle>
-                <template v-if="isAdminLevel" #append>
-                  <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click="openEditEventDialog(ev)" />
-                  <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click="deleteEvent(ev.id)" />
-                </template>
-              </v-list-item>
-            </v-list>
-          </div>
+          <SubsidyEventsPanel ref="eventsPanelRef" :subsidy-id="selectedId" />
         </div>
 
       </template>
     </template>
 
-    <!-- ── Add Event Dialog ── -->
-    <v-dialog v-model="showAddEventDialog" max-width="640" :fullscreen="mobile">
-      <v-card class="dialog-card">
-        <v-card-title class="dialog-title">
-          <v-icon icon="mdi-calendar-plus" color="primary" class="mr-2" />
-          Добавить мероприятие
-          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showAddEventDialog = false" />
-        </v-card-title>
-        <v-divider />
-        <v-card-text class="pa-4">
-          <v-alert type="info" variant="tonal" density="compact" class="mb-3">
-            Это единственное место, где заводятся мероприятия. В заявках, закупках и импорте
-            они только выбираются из этого списка — не создавайте копию с другим написанием.
-          </v-alert>
-          <v-text-field v-model="newEventName" label="Название мероприятия *" variant="outlined" density="compact" class="mb-3" />
-          <v-row dense>
-            <v-col cols="12" md="6">
-              <v-text-field v-model="newEventRegion" label="Регион проведения" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field v-model="newEventDateFrom" label="Дата начала" type="date" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field v-model="newEventDateTo" label="Дата окончания" type="date" variant="outlined" density="compact" hide-details />
-            </v-col>
-          </v-row>
-          <v-text-field v-model="newEventOrderDecree" label="Реквизиты приказа" variant="outlined" density="compact" class="mt-3" hide-details />
-          <v-textarea v-model="newEventPlannedIndicators" label="Плановые показатели (KPI)" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
-          <v-textarea v-model="newEventActualIndicators" label="Фактически достигнутые показатели" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
-          <v-text-field v-model="newEventMediaLink1" label="Ссылка на СМИ 1" variant="outlined" density="compact" class="mt-3" hide-details />
-          <v-text-field v-model="newEventMediaLink2" label="Ссылка на СМИ 2" variant="outlined" density="compact" class="mt-2" hide-details />
-          <v-text-field v-model="newEventMediaLink3" label="Ссылка на СМИ 3" variant="outlined" density="compact" class="mt-2" hide-details />
-        </v-card-text>
-        <v-card-actions class="pa-4 pt-0">
-          <v-spacer />
-          <v-btn variant="text" @click="showAddEventDialog = false">Отмена</v-btn>
-          <v-btn color="primary" variant="flat" :disabled="!newEventName.trim()" @click="addEvent">Добавить</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- ── Edit Event Dialog ── -->
-    <v-dialog v-model="showEditEventDialog" max-width="640" :fullscreen="mobile">
-      <v-card class="dialog-card">
-        <v-card-title class="dialog-title">
-          <v-icon icon="mdi-calendar-edit" color="primary" class="mr-2" />
-          Редактировать мероприятие
-          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showEditEventDialog = false" />
-        </v-card-title>
-        <v-divider />
-        <v-card-text class="pa-4">
-          <v-text-field v-model="editEventForm.name" label="Название *" variant="outlined" density="compact" class="mb-3" />
-          <v-row>
-            <v-col cols="12" md="6">
-              <v-text-field v-model="editEventForm.region" label="Регион проведения" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field v-model="editEventForm.date_from" label="Дата начала" type="date" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field v-model="editEventForm.date_to" label="Дата окончания" type="date" variant="outlined" density="compact" hide-details />
-            </v-col>
-          </v-row>
-          <v-text-field v-model="editEventForm.order_decree" label="Реквизиты приказа (номер, дата)" variant="outlined" density="compact" class="mt-3" hide-details />
-          <v-textarea v-model="editEventForm.planned_indicators" label="Плановые показатели (KPI)" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
-          <v-textarea v-model="editEventForm.actual_indicators" label="Фактически достигнутые показатели" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
-          <v-text-field v-model="editEventForm.media_link_1" label="Ссылка на СМИ 1" variant="outlined" density="compact" class="mt-3" hide-details />
-          <v-text-field v-model="editEventForm.media_link_2" label="Ссылка на СМИ 2" variant="outlined" density="compact" class="mt-2" hide-details />
-          <v-text-field v-model="editEventForm.media_link_3" label="Ссылка на СМИ 3" variant="outlined" density="compact" class="mt-2" hide-details />
-        </v-card-text>
-        <v-card-actions class="pa-4 pt-0">
-          <v-spacer />
-          <v-btn variant="text" @click="showEditEventDialog = false">Отмена</v-btn>
-          <v-btn color="primary" variant="flat" :loading="savingEvent" @click="saveEditEvent">Сохранить</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- ── Add Subsidy Dialog ── -->
-    <v-dialog v-model="showAddDialog" max-width="520" :fullscreen="mobile">
-      <v-card class="dialog-card">
-        <v-card-title class="dialog-title">
-          <v-icon icon="mdi-plus-circle-outline" color="primary" class="mr-2" />
-          Добавить субсидию
-          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showAddDialog = false" />
-        </v-card-title>
-        <v-divider />
-        <v-card-text class="pt-4">
-          <v-text-field v-model="form.name" label="Название *" variant="outlined" density="compact" class="mb-3" hide-details />
-          <v-row>
-            <v-col cols="6">
-              <v-text-field v-model.number="form.year" label="Год *" variant="outlined" density="compact" type="number" hide-details />
-            </v-col>
-            <v-col cols="6">
-              <v-text-field v-model.number="form.budget" label="Бюджет, ₽ *" variant="outlined" density="compact" type="number" hide-details />
-            </v-col>
-          </v-row>
-          <ContractorPicker v-model="form.contractor_id" class="mt-3" />
-          <v-textarea v-model="form.description" label="Описание" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
-          <v-row dense class="mt-3">
-            <v-col cols="12" md="6">
-              <v-text-field
-                v-model="form.basis_doc_number"
-                label="Номер документа-основания"
-                hint="№ соглашения о субсидии (например, 831-2025-ВСКС). Используется для авто-связки банковских платежей."
-                persistent-hint
-                variant="outlined" density="compact"
-              />
-            </v-col>
-            <v-col cols="12" md="6">
-              <v-text-field
-                v-model="form.basis_doc_date"
-                label="Дата документа-основания"
-                type="date"
-                variant="outlined" density="compact"
-              />
-            </v-col>
-          </v-row>
-        </v-card-text>
-        <v-card-actions class="px-4 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="showAddDialog = false">Отмена</v-btn>
-          <v-btn color="primary" :loading="saving" :disabled="!form.name || !form.budget || !form.year" @click="addSubsidy">
-            Добавить
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- ── Edit Subsidy Dialog ── -->
-    <v-dialog v-model="showEditDialog" max-width="520" :fullscreen="mobile">
-      <v-card class="dialog-card">
-        <v-card-title class="dialog-title">
-          <v-icon icon="mdi-pencil-outline" color="primary" class="mr-2" />
-          Редактировать субсидию
-          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showEditDialog = false" />
-        </v-card-title>
-        <v-divider />
-        <v-card-text class="pt-4">
-          <v-text-field v-model="editForm.name" label="Название *" variant="outlined" density="compact" class="mb-3" hide-details />
-          <v-row>
-            <v-col cols="6">
-              <v-text-field v-model.number="editForm.year" label="Год *" variant="outlined" density="compact" type="number" hide-details />
-            </v-col>
-            <v-col cols="6">
-              <v-text-field v-model.number="editForm.budget" label="Бюджет, ₽ *" variant="outlined" density="compact" type="number" hide-details />
-            </v-col>
-          </v-row>
-          <ContractorPicker v-model="editForm.contractor_id" :initial-contractor="editInitialContractor" class="mt-3" />
-          <v-textarea v-model="editForm.description" label="Описание" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
-          <v-textarea
-            v-model="editForm.agreement_text"
-            label="Текст соглашения о субсидии (для шаблонов)"
-            variant="outlined" density="compact"
-            rows="4" auto-grow
-            class="mt-3"
-            placeholder="Например: Финансирование договора осуществляется в рамках соглашения…"
-            hint="Переменная шаблона {{subsidy_agreement_text}}"
-            persistent-hint
-          />
-          <v-row dense class="mt-3">
-            <v-col cols="12" md="6">
-              <v-text-field
-                v-model="editForm.basis_doc_number"
-                label="Номер документа-основания"
-                hint="№ соглашения о субсидии (например, 831-2025-ВСКС). Используется для авто-связки банковских платежей."
-                persistent-hint
-                variant="outlined" density="compact"
-              />
-            </v-col>
-            <v-col cols="12" md="6">
-              <v-text-field
-                v-model="editForm.basis_doc_date"
-                label="Дата документа-основания"
-                type="date"
-                variant="outlined" density="compact"
-              />
-            </v-col>
-          </v-row>
-          <v-divider class="mt-4 mb-3" />
-          <div class="text-caption text-medium-emphasis mb-2">Реквизиты для шаблонов договоров</div>
-          <v-text-field
-            v-model="editForm.grantor_name"
-            label="Грантодатель (для договоров)"
-            hint="Напр. «Российская Федерация» или «Тверская область». Переменная {{subsidy_grantor_name}}"
-            persistent-hint
-            variant="outlined" density="compact"
-            class="mb-3"
-          />
-          <v-text-field
-            v-model="editForm.ministry_name"
-            label="Министерство-грантодатель (для договоров)"
-            hint="Напр. «МИНИСТЕРСТВОМ МОЛОДЕЖНОЙ ПОЛИТИКИ РФ» (как пишется в тексте договора). Переменная {{subsidy_ministry_name}}"
-            persistent-hint
-            variant="outlined" density="compact"
-            class="mb-3"
-          />
-          <v-textarea
-            v-model="editForm.extra_contract_clause_1"
-            label="Доп. пункт договора 1 (зависит от субсидии)"
-            hint="Например пункт о раздельном учёте расходов. Вставляется в шаблон как {{subsidy_extra_clause_1}}. Если пусто — пункт пропускается."
-            persistent-hint
-            rows="3"
-            auto-grow
-            variant="outlined"
-            density="compact"
-            class="mb-3"
-          />
-          <v-textarea
-            v-model="editForm.extra_contract_clause_2"
-            label="Доп. пункт договора 2 (зависит от субсидии)"
-            hint="{{subsidy_extra_clause_2}}. Если пусто — пункт пропускается."
-            persistent-hint
-            rows="3"
-            auto-grow
-            variant="outlined"
-            density="compact"
-          />
-          <!-- Настройки плана закупок (только для admin+) -->
-          <template v-if="canSaveVersion">
-            <v-divider class="mt-4 mb-3" />
-            <div class="text-caption text-medium-emphasis mb-2">Настройки плана закупок</div>
-            <v-switch
-              v-model="editForm.require_planned_dates"
-              label="Требовать дату потребности у позиций (для помесячного плана)"
-              density="compact"
-              color="primary"
-              hide-details
-              class="mb-2"
-            />
-            <v-alert
-              v-if="!editForm.require_planned_dates"
-              type="warning"
-              density="compact"
-              variant="tonal"
-              class="mt-2"
-            >
-              Без дат плановые траты по месяцам считаться не будут
-            </v-alert>
-          </template>
-          <v-divider class="mt-4 mb-3" />
-          <v-text-field
-            v-model.number="editForm.ceiling_warn_percent"
-            label="Порог предупреждения о подходе к потолку субсидии, %"
-            hint="Когда сумма заказанного (включая ежемесячные платежи — весь график) достигнет этого процента от потолка ФЭО, появится предупреждение в карточке субсидии, списке и на дашборде. По умолчанию 90%."
-            persistent-hint
-            type="number"
-            min="1" max="100"
-            variant="outlined" density="compact"
-            class="mt-1"
-          />
-        </v-card-text>
-        <v-card-actions class="px-4 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="showEditDialog = false">Отмена</v-btn>
-          <v-btn color="primary" :loading="saving" :disabled="!editForm.name || !editForm.budget || !editForm.year" @click="updateSubsidy">
-            Сохранить
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- ── Delete confirm ── -->
-    <v-dialog v-model="showDeleteDialog" max-width="420">
-      <v-card class="dialog-card">
-        <v-card-title class="dialog-title">
-          <v-icon icon="mdi-alert-circle-outline" color="error" class="mr-2" />
-          Удалить субсидию
-        </v-card-title>
-        <v-divider />
-        <v-card-text class="pt-4">
-          <template v-if="deleteErrorLinked">
-            <v-alert type="error" variant="tonal" class="mb-3" style="white-space:pre-line">
-              {{ deleteErrorMsg || 'Нельзя удалить субсидию: есть связанные записи. Сначала удалите или перепривяжите их.' }}
-            </v-alert>
-            <v-btn v-if="(deleteImpact?.purchases ?? 0) > 0" block color="primary" variant="tonal"
-              prepend-icon="mdi-cart-outline" class="mb-2" @click="goToLinkedPurchases">
-              Перейти к закупкам ({{ deleteImpact?.purchases }})
-            </v-btn>
-            <v-btn v-if="(deleteImpact?.contracts ?? 0) > 0" block color="primary" variant="tonal"
-              prepend-icon="mdi-file-document-outline" @click="goToLinkedContracts">
-              Перейти к договорам ({{ deleteImpact?.contracts }})
-            </v-btn>
-          </template>
-          <template v-else>
-            <div class="mb-2">Удалить <strong>{{ deleteTarget?.name }}</strong>? Действие нельзя отменить.</div>
-            <v-alert v-if="deleteImpact && (deleteImpact.feo_categories > 0 || deleteImpact.planned_items > 0)"
-              type="warning" variant="tonal" density="compact">
-              Вместе с субсидией будет безвозвратно удалено:
-              <ul class="mt-1 mb-0" style="padding-left:18px;">
-                <li v-if="deleteImpact.feo_categories > 0">{{ deleteImpact.feo_categories }} категорий ФЭО</li>
-                <li v-if="deleteImpact.planned_items > 0">{{ deleteImpact.planned_items }} плановых позиций</li>
-              </ul>
-            </v-alert>
-          </template>
-        </v-card-text>
-        <v-card-actions class="px-4 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="showDeleteDialog = false">Отмена</v-btn>
-          <v-btn v-if="!deleteErrorLinked" color="error" :loading="saving" @click="deleteSubsidy">Удалить</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- ── Add FEO category dialog ── -->
-    <v-dialog v-model="showAddFeoDialog" max-width="520" :fullscreen="mobile">
-      <v-card class="dialog-card">
-        <v-card-title class="dialog-title">
-          <v-icon icon="mdi-folder-plus-outline" color="primary" class="mr-2" />
-          Добавить направление ФЭО
-          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showAddFeoDialog = false" />
-        </v-card-title>
-        <v-divider />
-        <v-card-text class="pt-4">
-          <v-autocomplete
-            v-model="feoForm.parentId"
-            :items="feoCategories.filter(c => c.level < 3)"
-            item-title="name" item-value="id"
-            label="Родительская категория (необязательно)"
-            variant="outlined" density="compact" clearable class="mb-3" hide-details
-          />
-          <v-text-field v-model="feoForm.name" label="Название *" variant="outlined" density="compact" class="mb-3" hide-details />
-          <v-row>
-            <v-col cols="6">
-              <v-text-field v-model="feoForm.code" label="Код" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="6">
-              <v-text-field v-model="feoForm.appendix" label="Приложение" variant="outlined" density="compact" hide-details />
-            </v-col>
-          </v-row>
-          <v-textarea
-            v-model="feoForm.description"
-            label="Пояснение (что входит в направление)"
-            variant="outlined" density="compact" rows="2" auto-grow hide-details class="mt-3"
-          />
-          <v-divider class="my-3" />
-          <!-- Блок: По документу ФЭО -->
-          <div style="border:1px solid rgba(var(--v-border-color),var(--v-border-opacity));border-radius:8px;padding:12px" class="mb-3">
-            <div class="text-body-2 font-weight-medium mb-3">По документу ФЭО</div>
-            <!-- Финансирование по ФЭО -->
-            <div class="d-flex align-center mb-2">
-              <span class="text-body-2">Финансирование по ФЭО</span>
-              <v-btn-toggle
-                v-model="feoForm.budgetAuto"
-                mandatory
-                density="compact"
-                class="ml-4"
-                color="primary"
-              >
-                <v-btn :value="false" size="x-small">Вручную</v-btn>
-                <v-btn :value="true" size="x-small">Авто из детей</v-btn>
-              </v-btn-toggle>
-            </div>
-            <v-text-field
-              v-if="!feoForm.budgetAuto"
-              v-model.number="feoForm.budget"
-              label="Сумма финансирования, ₽"
-              variant="outlined" density="compact" type="number" hide-details class="mb-3"
-            />
-            <!-- Кол-во, ед. изм. и стоимость за ед. по ФЭО -->
-            <v-row dense>
-              <v-col cols="4">
-                <v-text-field
-                  v-model.number="feoForm.feo_quantity"
-                  label="Кол-во по ФЭО"
-                  variant="outlined" density="compact" type="number" hide-details
-                />
-              </v-col>
-              <v-col cols="4">
-                <v-combobox
-                  v-model="feoForm.feo_unit"
-                  :items="['шт', 'компл', 'кг', 'л', 'м', 'услуга', 'чел.', 'рейс']"
-                  label="Ед. изм. по ФЭО"
-                  variant="outlined" density="compact" hide-details
-                />
-              </v-col>
-              <v-col cols="4">
-                <v-text-field
-                  v-model="feoForm.feo_amount"
-                  label="Стоимость за ед. по ФЭО"
-                  variant="outlined" density="compact" type="number" hide-details
-                  suffix="₽"
-                />
-              </v-col>
-            </v-row>
-          </div>
-          <!-- Блок: Плановые показатели (CRM) — задача владельца (2026-08-11, Правка 2):
-               план вводится именованной плановой позицией внутри категории, а не
-               голыми числами на самой категории (planned_quantity/planned_amount) — иначе
-               план виден как безымянное число без ответа на вопрос «что именно планируем
-               купить». Поля planned_quantity/planned_amount по-прежнему не редактируются
-               при создании (см. addFeoCategory) — «Ед. изм.» ниже это единица измерения
-               САМОЙ КАТЕГОРИИ (для отображения), а не план.
-
-               План zany-fluttering-mountain.md, п.1/п.5 (2026-08-13): добавлен переключатель
-               «Как считать план» — способ теперь ЗАДАЁТСЯ явно, а не угадывается по тому,
-               пустые ли поля (это угадывание билось само с собой — см. контекст плана).
-               «По плановым позициям» (по умолчанию) — план = Σ позиций категории. «По
-               вручную заданной сумме» — ОДНО поле manual_plan_amount, без кол-ва/цены за
-               ед. (владелец прямо выбрал одно поле, не количество × цена). -->
-          <div style="border:1px solid rgba(var(--v-border-color),var(--v-border-opacity));border-radius:8px;padding:12px">
-            <div class="text-body-2 font-weight-medium mb-1">Как считать план</div>
-            <v-btn-toggle
-              v-model="feoForm.planSource"
-              mandatory
-              density="compact"
-              color="primary"
-              class="mb-2"
-            >
-              <v-btn value="planned_items" size="x-small">По плановым позициям</v-btn>
-              <v-btn value="manual_sum" size="x-small">По вручную заданной сумме</v-btn>
-            </v-btn-toggle>
-            <div class="text-caption text-medium-emphasis mb-3">
-              «По плановым позициям» — план складывается из именованных позиций внутри категории (видно, что именно
-              планируем купить). «По вручную заданной сумме» — план это одно число; позиции можно вести отдельно,
-              но если их сумма превысит его — потребуется согласование.
-            </div>
-            <v-text-field
-              v-if="feoForm.planSource === 'manual_sum'"
-              v-model.number="feoForm.manual_plan_amount"
-              label="Плановая сумма, ₽"
-              variant="outlined" density="compact" type="number" hide-details class="mb-3"
-            />
-            <v-alert v-else type="info" variant="tonal" density="compact" class="mb-3 text-caption">
-              Создайте категорию и нажмите «Добавить плановую позицию» в панели.
-            </v-alert>
-            <v-combobox
-              v-model="feoForm.unit"
-              :items="['шт', 'компл', 'кг', 'л', 'м', 'услуга', 'чел.', 'рейс']"
-              label="Ед. изм. категории"
-              variant="outlined" density="compact" hide-details
-            />
-          </div>
-        </v-card-text>
-        <v-card-actions class="px-4 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="showAddFeoDialog = false">Отмена</v-btn>
-          <v-btn color="primary" :loading="savingFeo" :disabled="!feoForm.name || !!feoAddPlanPairError" @click="addFeoCategory">
-            Добавить
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- ── Edit FEO category dialog ── -->
-    <v-dialog v-model="showEditFeoDialog" max-width="520" :fullscreen="mobile">
-      <v-card class="dialog-card">
-        <v-card-title class="dialog-title">
-          <v-icon icon="mdi-pencil-outline" color="primary" class="mr-2" />
-          Редактировать направление ФЭО
-          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showEditFeoDialog = false" />
-        </v-card-title>
-        <v-divider />
-        <v-card-text class="pt-4">
-          <v-text-field v-model="feoEditForm.name" label="Название *" variant="outlined" density="compact" class="mb-3" hide-details />
-          <v-row>
-            <v-col cols="6">
-              <v-text-field v-model="feoEditForm.code" label="Код" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="6">
-              <v-text-field v-model="feoEditForm.appendix" label="Приложение" variant="outlined" density="compact" hide-details />
-            </v-col>
-          </v-row>
-          <v-autocomplete
-            v-model="feoEditForm.parent_id"
-            :items="feoParentOptions"
-            item-title="name"
-            item-value="id"
-            label="Родительская категория"
-            variant="outlined"
-            density="compact"
-            clearable
-            class="mt-3"
-            hint="Очистите для корневого уровня. Или перетащите в таблице."
-            persistent-hint
-          />
-          <v-textarea
-            v-model="feoEditForm.description"
-            label="Пояснение (что входит в направление)"
-            variant="outlined" density="compact" rows="2" auto-grow hide-details class="mt-3"
-          />
-          <v-divider class="my-3" />
-          <!-- Блок: По документу ФЭО -->
-          <div style="border:1px solid rgba(var(--v-border-color),var(--v-border-opacity));border-radius:8px;padding:12px" class="mb-3">
-            <div class="text-body-2 font-weight-medium mb-3">По документу ФЭО</div>
-            <!-- Финансирование по ФЭО -->
-            <div class="d-flex align-center mb-2">
-              <span class="text-body-2">Финансирование по ФЭО</span>
-              <v-btn-toggle
-                v-if="feoEditForm.hasChildren"
-                v-model="feoEditForm.budgetAuto"
-                mandatory
-                density="compact"
-                class="ml-4"
-                color="primary"
-              >
-                <v-btn :value="false" size="x-small">Вручную</v-btn>
-                <v-btn :value="true" size="x-small">Авто из детей</v-btn>
-              </v-btn-toggle>
-            </div>
-            <v-text-field
-              v-if="!feoEditForm.hasChildren || !feoEditForm.budgetAuto"
-              v-model.number="feoEditForm.budget"
-              label="Сумма финансирования, ₽"
-              variant="outlined" density="compact" type="number" hide-details class="mb-2"
-            />
-            <v-alert
-              v-if="feoEditForm.hasChildren && feoEditForm.budgetAuto"
-              type="info" variant="tonal" density="compact" class="mb-2 text-caption"
-            >
-              Сумма рассчитывается автоматически из дочерних направлений
-            </v-alert>
-            <!-- Кол-во, ед. изм. и стоимость за ед. по ФЭО -->
-            <v-row dense>
-              <v-col cols="4">
-                <v-text-field
-                  v-model.number="feoEditForm.feo_quantity"
-                  label="Кол-во по ФЭО"
-                  variant="outlined" density="compact" type="number" hide-details
-                />
-              </v-col>
-              <v-col cols="4">
-                <v-combobox
-                  v-model="feoEditForm.feo_unit"
-                  :items="['шт', 'компл', 'кг', 'л', 'м', 'услуга', 'чел.', 'рейс']"
-                  label="Ед. изм. по ФЭО"
-                  variant="outlined" density="compact" hide-details
-                />
-              </v-col>
-              <v-col cols="4">
-                <v-text-field
-                  v-model="feoEditForm.feo_amount"
-                  label="Стоимость за ед. по ФЭО"
-                  variant="outlined" density="compact" type="number" hide-details
-                  suffix="₽"
-                />
-              </v-col>
-            </v-row>
-          </div>
-          <!-- Блок: Как считать план — план zany-fluttering-mountain.md, п.1/п.5
-               (2026-08-13). Способ теперь ЗАДАЁТСЯ явно переключателем, а не угадывается
-               по тому, пустые ли поля planned_quantity/planned_amount (угадывание билось
-               само с собой — см. контекст плана, категория 3710). «По вручную заданной
-               сумме» — ОДНО поле manual_plan_amount (не количество × цена — владелец
-               прямо выбрал одно поле). Переключение на «ручную сумму» у категории, где
-               уже есть плановые позиции (feoEditPlanSourceSwitchWarning), сопровождается
-               предупреждением о последствиях: позиции останутся, но план будет считаться
-               от суммы, их превышение потребует согласования. -->
-          <div style="border:1px solid rgba(var(--v-border-color),var(--v-border-opacity));border-radius:8px;padding:12px" class="mb-3">
-            <div class="text-body-2 font-weight-medium mb-1">Как считать план</div>
-            <v-btn-toggle
-              v-model="feoEditForm.planSource"
-              mandatory
-              density="compact"
-              color="primary"
-              class="mb-2"
-            >
-              <v-btn value="planned_items" size="x-small">По плановым позициям</v-btn>
-              <v-btn value="manual_sum" size="x-small">По вручную заданной сумме</v-btn>
-            </v-btn-toggle>
-            <div class="text-caption text-medium-emphasis mb-3">
-              «По плановым позициям» — план складывается из именованных позиций внутри категории (видно, что именно
-              планируем купить). «По вручную заданной сумме» — план это одно число; позиции можно вести отдельно,
-              но если их сумма превысит его — потребуется согласование.
-            </div>
-
-            <v-alert
-              v-if="feoEditPlanSourceSwitchWarning"
-              type="warning" variant="tonal" density="compact" class="mb-3 text-caption"
-            >
-              У категории уже есть плановые позиции — они останутся на месте, но план будет считаться от введённой
-              суммы. Если сумма позиций превысит её, потребуется согласование превышения.
-            </v-alert>
-
-            <template v-if="feoEditForm.planSource === 'manual_sum'">
-              <v-text-field
-                v-model.number="feoEditForm.manual_plan_amount"
-                label="Плановая сумма, ₽"
-                variant="outlined" density="compact" type="number" hide-details
-              />
-            </template>
-
-            <!-- Правка 2Б (2026-08-11): три состояния старого способа отображения плана —
-                 (1) есть подкатегории — план считают они; (2) план не задан — подсказка
-                 завести плановую позицию; (3) план задан старыми полями категории — только
-                 для чтения + перенос в плановую позицию (openConvertManualPlanToItem). Всё
-                 показывается только в режиме «по плановым позициям» — режим «по сумме» выше
-                 уже закрыл вопрос одним полем. -->
-            <template v-else>
-              <v-alert
-                v-if="feoEditForm.hasChildren"
-                type="info" variant="tonal" density="compact" class="text-caption"
-              >
-                У категории есть подкатегории: план считается по ним, собственный план категории в расчёте не участвует.
-              </v-alert>
-
-              <template v-else-if="feoEditManualPlanSet">
-                <div class="d-flex align-center flex-wrap mb-2" style="gap:8px">
-                  <span class="text-body-2">
-                    Плановое количество: <strong>{{ feoEditForm.planned_quantity ?? '—' }} {{ feoEditForm.unit || 'ед.' }}</strong>
-                  </span>
-                  <v-chip size="x-small" color="orange" variant="tonal">старый формат</v-chip>
-                </div>
-                <div class="text-body-2 mb-2">
-                  Плановая цена за единицу: <strong>{{ feoEditForm.planned_amount != null ? formatCurrency(feoEditForm.planned_amount) : '—' }}</strong>
-                </div>
-                <div class="text-body-2 mb-3">
-                  Плановая сумма: {{ feoEditForm.planned_quantity ?? '—' }} × {{ feoEditForm.planned_amount != null ? formatCurrency(feoEditForm.planned_amount) : '—' }}
-                  <template v-if="feoEditForm.planned_quantity != null && feoEditForm.planned_amount != null">
-                    = <strong>{{ formatCurrency(Number(feoEditForm.planned_quantity) * Number(feoEditForm.planned_amount)) }}</strong>
-                  </template>
-                </div>
-                <v-alert
-                  v-if="feoEditPlanPairError"
-                  type="warning" variant="tonal" density="compact" class="mb-3 text-caption"
-                >
-                  {{ feoEditPlanPairError }}
-                </v-alert>
-                <div class="text-caption text-medium-emphasis mb-3">
-                  План записан полями самой категории, без названия. Перенесите его в плановую позицию — тогда будет
-                  видно, что именно запланировано, и позицию можно будет править.
-                </div>
-                <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-swap-horizontal" @click="convertCategoryEditPlanToItem">
-                  Перенести в плановую позицию
-                </v-btn>
-              </template>
-
-              <template v-else>
-                <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
-                  План задаётся плановой позицией внутри категории: нажмите «Добавить плановую позицию» ниже. Так у
-                  плана будет название (что именно планируем купить), а не просто число.
-                </v-alert>
-                <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-playlist-plus" @click="openAddPlannedItemFromCategoryEdit">
-                  Добавить плановую позицию
-                </v-btn>
-              </template>
-            </template>
-          </div>
-          <v-checkbox v-model="feoEditForm.is_active" label="Активна" density="compact" hide-details class="mt-2" />
-        </v-card-text>
-        <v-card-actions class="px-4 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="showEditFeoDialog = false">Отмена</v-btn>
-          <!-- feoEditPlanPairError НЕ гейтит кнопку (см. ответ в отчёте по Правке 2Б):
-               planned_quantity/planned_amount больше не редактируются в этом диалоге,
-               мисматч пары может быть только унаследован из БД — категория с таким
-               мисматчем обязана сохраняться (иначе «Сохранить» блокируется навсегда
-               без способа это поправить из этой формы). Предупреждение всё равно
-               показывается пользователю в блоке «старый формат» выше. -->
-          <v-btn color="primary" :loading="savingFeo" :disabled="!feoEditForm.name" @click="updateFeoCategory">
-            Сохранить
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- ── Delete FEO category dialog ── -->
-    <v-dialog v-model="showDeleteFeoDialog" max-width="440">
-      <v-card class="dialog-card">
-        <v-card-title class="dialog-title">
-          <v-icon icon="mdi-alert-circle-outline" color="error" class="mr-2" />
-          Удалить направление?
-          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showDeleteFeoDialog = false" />
-        </v-card-title>
-        <v-divider />
-        <v-card-text class="pt-4">
-          <div class="mb-2">«{{ feoDeleteTarget?.name }}»</div>
-          <v-alert v-if="feoDeleteChildrenCount > 0" type="warning" density="compact" variant="tonal" class="mb-3">
-            Будет удалено вместе с {{ feoDeleteChildrenCount }}
-            {{ feoDeleteChildrenCount === 1 ? 'дочерней категорией' : 'дочерними категориями' }}
-          </v-alert>
-          <v-alert v-if="feoDeleteError" type="error" variant="tonal" class="mb-3">
-            {{ feoDeleteError }}
-            <div class="mt-2">
-              <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-arrow-right"
-                @click="showDeleteFeoDialog = false; router.push(`/orders?feo_category_id=${feoDeleteTarget?.id}`)">
-                Перейти к закупкам этой категории
-              </v-btn>
-            </div>
-          </v-alert>
-        </v-card-text>
-        <v-card-actions class="px-4 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="showDeleteFeoDialog = false">Отмена</v-btn>
-          <v-btn v-if="!feoDeleteError" color="error" :loading="savingFeo" @click="deleteFeoCategory">Удалить</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <SubsidyEditDialog ref="subsidyEditDialogRef" v-model:add-open="showAddDialog" v-model:edit-open="showEditDialog" />
+    <SubsidyDeleteDialog ref="subsidyDeleteDialogRef" v-model="showDeleteDialog" @deleted="loadAll" />
+    <FeoCategoryDialog ref="feoCategoryDialogRef" v-model:add-open="showAddFeoDialog" v-model:edit-open="showEditFeoDialog" />
+    <FeoCategoryDeleteDialog ref="feoCategoryDeleteDialogRef" v-model="showDeleteFeoDialog" />
 
     <!-- ── «Приравнять ФЭО к плану» — подтверждение с текущими числами (замечание владельца п.3, 2026-08-12) ── -->
     <v-dialog v-model="alignBudgetDialog.show" max-width="440">
@@ -3241,498 +2522,13 @@
       </v-card>
     </v-dialog>
 
-    <!-- ── Approvers Dialog ── -->
-    <v-dialog v-model="showApproversDialog" max-width="700" scrollable :fullscreen="mobile">
-      <v-card class="dialog-card">
-        <v-card-title class="dialog-title">
-          <v-icon icon="mdi-account-multiple" color="teal" class="mr-2" />
-          Согласующие: {{ approversSubsidy?.name }}
-          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showApproversDialog = false" />
-        </v-card-title>
-        <v-divider />
-        <v-card-text class="pa-0">
-          <v-data-table
-            v-resizable-columns="'subsidies-approvers'"
-            :headers="approversHeaders"
-            :items="approversList"
-            :loading="loadingApprovers"
-            density="compact"
-            hide-default-footer
-            :items-per-page="-1"
-            no-data-text="Нет согласующих. Добавьте первого."
-          >
-            <template #item.is_default="{ item }">
-              <v-chip v-if="item.is_default" color="success" size="x-small">По умолчанию</v-chip>
-            </template>
-            <template #item.can_initiate="{ item }">
-              <v-chip v-if="item.can_initiate" color="blue" size="x-small">Инициатор</v-chip>
-              <v-chip v-if="item.show_feo_path" color="orange" size="x-small" class="ml-1">ФЭО путь</v-chip>
-            </template>
-            <template #item.order_num="{ item, index }">
-              <span class="text-caption text-medium-emphasis">{{ index + 1 }}</span>
-            </template>
-            <template #item.full_name="{ item }">
-              <span v-if="item.role_name === 'Ответственный исполнитель'" class="text-medium-emphasis font-italic">
-                — Исполнитель определяется для каждой закупки
-              </span>
-              <span v-else>{{ item.full_name }}</span>
-            </template>
-            <template #item.actions="{ item, index }">
-              <v-btn icon="mdi-arrow-up" size="x-small" variant="text" :disabled="index === 0" @click="moveApprover(index, -1)" />
-              <v-btn icon="mdi-arrow-down" size="x-small" variant="text" :disabled="index === approversList.length - 1" @click="moveApprover(index, 1)" />
-              <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click="startEditApprover(item)" />
-              <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click="deleteApprover(item)" />
-            </template>
-          </v-data-table>
-        </v-card-text>
-        <v-divider />
-        <v-card-actions class="px-4 py-3">
-          <v-btn variant="outlined" color="indigo" prepend-icon="mdi-content-copy"
-                 @click="openCopyApproversDialog">
-            Скопировать из другой субсидии
-          </v-btn>
-          <v-spacer />
-          <v-btn color="teal" variant="tonal" prepend-icon="mdi-plus" @click="startAddApprover">
-            Добавить
-          </v-btn>
-          <v-spacer />
-          <v-btn variant="text" @click="showApproversDialog = false">Закрыть</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- ── Members (co-editors) Dialog ── -->
-    <v-dialog v-model="showMembersDialog" max-width="520" scrollable :fullscreen="mobile">
-      <v-card class="dialog-card">
-        <v-card-title class="dialog-title">
-          <v-icon icon="mdi-account-group" color="deep-purple" class="mr-2" />
-          Участники: {{ membersSubsidy?.name }}
-          <v-chip class="ml-2" size="x-small" variant="tonal">{{ membersList.length }}</v-chip>
-          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showMembersDialog = false" />
-        </v-card-title>
-        <v-divider />
-        <v-card-text class="pa-4">
-          <v-autocomplete
-            v-if="canManageMembers"
-            v-model="memberToAdd"
-            :items="memberUsersList"
-            item-title="full_name"
-            item-value="id"
-            label="Добавить участника"
-            variant="outlined"
-            density="compact"
-            clearable
-            hide-details
-            :loading="addingMember"
-            class="mb-3"
-            @update:model-value="(val) => { if (val) addSubsidyMember(val) }"
-          />
-          <div v-else class="text-caption text-medium-emphasis mb-3">
-            Добавлять/удалять участников может автор субсидии или сотрудник с правом «Редактирование субсидий».
-          </div>
-          <div v-if="loadingMembers" class="d-flex justify-center py-4">
-            <v-progress-circular indeterminate color="primary" size="28" />
-          </div>
-          <div v-else-if="!membersList.length" class="text-caption text-medium-emphasis">Пока нет участников.</div>
-          <div v-else class="d-flex flex-wrap" style="gap:8px">
-            <v-chip
-              v-for="m in membersList"
-              :key="m.user_id"
-              :closable="canManageMembers"
-              @click:close="removeSubsidyMember(m.user_id)"
-            >
-              {{ m.full_name || m.username || '—' }}
-            </v-chip>
-          </div>
-        </v-card-text>
-        <v-divider />
-        <v-card-actions class="px-4 py-3">
-          <v-spacer />
-          <v-btn variant="text" @click="showMembersDialog = false">Закрыть</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- ── Copy Approvers Sub-dialog ── -->
-    <v-dialog v-model="showCopyApproversDialog" max-width="520" :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="d-flex align-center pa-4 pb-2">
-          <v-icon icon="mdi-content-copy" color="indigo" class="mr-2" />
-          Скопировать согласующих из другой субсидии
-          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showCopyApproversDialog = false" />
-        </v-card-title>
-        <v-card-text>
-          <v-autocomplete
-            v-model="copyApprovers.sourceId"
-            :items="copySourceSubsidies"
-            item-title="name"
-            item-value="id"
-            label="Источник (другая субсидия)"
-            variant="outlined" density="compact"
-          />
-          <v-checkbox
-            v-model="copyApprovers.replace"
-            label="Заменить существующих (иначе добавить в конец)"
-            hide-details density="compact"
-          />
-          <v-alert v-if="copyApprovers.error" type="error" variant="tonal" density="compact" class="mt-2">
-            {{ copyApprovers.error }}
-          </v-alert>
-        </v-card-text>
-        <v-card-actions class="pa-4 pt-0">
-          <v-spacer />
-          <v-btn variant="text" @click="showCopyApproversDialog = false">Отмена</v-btn>
-          <v-btn color="indigo" :loading="copyApprovers.loading"
-                 :disabled="!copyApprovers.sourceId"
-                 @click="confirmCopyApprovers">
-            Скопировать
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- ── Approver Add/Edit Dialog ── -->
-    <v-dialog v-model="showApproverFormDialog" max-width="480" :persistent="true" :fullscreen="mobile">
-      <v-card class="dialog-card">
-        <v-card-title class="dialog-title">
-          <v-icon :icon="approverEditTarget ? 'mdi-pencil-outline' : 'mdi-plus'" color="teal" class="mr-2" />
-          {{ approverEditTarget ? 'Редактировать' : 'Добавить' }} согласующего
-          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showApproverFormDialog = false" />
-        </v-card-title>
-        <v-divider />
-        <v-card-text class="pt-4">
-          <v-combobox
-            v-model="approverForm.role_name"
-            :items="ROLE_SUGGESTIONS"
-            label="Роль / Должность *"
-            variant="outlined"
-            density="compact"
-            class="mb-3"
-            hide-details
-            @update:model-value="onApproverRoleChange"
-          />
-          <v-alert
-            v-if="approverForm.role_name === 'Ответственный исполнитель'"
-            type="info"
-            variant="tonal"
-            density="compact"
-            class="mb-3"
-            text="Для роли «Ответственный исполнитель» ФИО не указывается — исполнитель определяется для каждой закупки из её данных. Конкретного человека можно выбрать при скачивании листа согласования — поле «Ответственный исполнитель» в диалоге документа."
-          />
-          <v-autocomplete
-            v-if="approverForm.role_name !== 'Ответственный исполнитель'"
-            v-model="approverForm.selectedUser"
-            :items="approverUsersList"
-            item-title="full_name"
-            item-value="id"
-            label="Сотрудник *"
-            variant="outlined"
-            density="compact"
-            class="mb-1"
-            clearable
-            return-object
-            @update:model-value="onApproverUserSelect"
-          />
-          <v-alert
-            v-if="approverEditTarget && !approverForm.selectedUser"
-            type="warning"
-            variant="tonal"
-            density="compact"
-            class="mb-3"
-            text="Старая запись без привязки к сотруднику. Выберите сотрудника для сохранения."
-          />
-          <div v-if="!approverEditTarget || approverForm.selectedUser" class="mb-3" />
-          <v-checkbox
-            v-model="approverForm.is_default"
-            label="Выбирать по умолчанию при генерации документов"
-            density="compact"
-            hide-details
-            class="mb-1"
-          />
-          <v-checkbox
-            v-model="approverForm.can_initiate"
-            label="Может быть инициатором служебной записки"
-            density="compact"
-            hide-details
-            class="mb-1"
-          />
-          <v-checkbox
-            v-model="approverForm.show_feo_path"
-            label="Показывать путь категории ФЭО в примечании"
-            density="compact"
-            hide-details
-          />
-        </v-card-text>
-        <v-card-actions class="px-4 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="showApproverFormDialog = false">Отмена</v-btn>
-          <v-btn
-            color="teal"
-            :loading="savingApprover"
-            :disabled="!approverForm.role_name || (approverForm.role_name !== 'Ответственный исполнитель' && !approverForm.selectedUser)"
-            @click="saveApprover"
-          >
-            {{ approverEditTarget ? 'Сохранить' : 'Добавить' }}
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- ── Templates Dialog (multi-type) ── -->
-    <v-dialog v-model="showTemplateDialog" max-width="1100" scrollable :fullscreen="mobile">
-      <v-card class="dialog-card">
-        <v-card-title class="dialog-title">
-          <v-icon icon="mdi-file-document-multiple-outline" color="indigo" class="mr-2" />
-          Шаблоны документов
-          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showTemplateDialog = false" />
-        </v-card-title>
-        <v-divider />
-        <v-card-text class="pt-3">
-          <div class="text-caption text-medium-emphasis mb-3">{{ templateSubsidy?.name }}</div>
-          <v-alert type="info" variant="tonal" density="compact" class="mb-4" text="Скачайте текущий шаблон (в нём уже расставлены переменные), отредактируйте в Word и загрузите обратно — он будет использоваться для этой субсидии вместо глобального. Список переменных с примерами — ниже, полное руководство — кнопка внизу." />
-
-          <v-list density="compact">
-            <v-list-item v-for="t in subsidyTemplatesList" :key="t.doc_type" class="px-0 mb-2">
-              <template #prepend>
-                <v-icon :color="t.has_custom ? 'green' : 'grey'" class="mr-2">
-                  {{ t.has_custom ? 'mdi-check-circle' : 'mdi-circle-outline' }}
-                </v-icon>
-              </template>
-              <template #title>
-                <span class="text-body-2 font-weight-medium">{{ t.label }}</span>
-                <v-chip v-if="t.has_custom" size="x-small" color="green" variant="tonal" class="ml-2">свой</v-chip>
-                <v-chip v-else-if="t.has_global" size="x-small" color="grey" variant="tonal" class="ml-2">глобальный</v-chip>
-                <v-chip v-else size="x-small" color="warning" variant="tonal" class="ml-2">нет шаблона</v-chip>
-                <v-tooltip v-if="t.has_custom && t.render_ok === false" location="top"
-                  text="Шаблон содержит синтаксическую ошибку docxtpl. Загрузите исправленную версию.">
-                  <template #activator="{ props: tipProps }">
-                    <v-chip v-bind="tipProps" size="x-small" variant="flat" prepend-icon="mdi-alert"
-                      class="ml-2" style="background-color:#fb923c; color:white; cursor:default">
-                      Шаблон не работает
-                    </v-chip>
-                  </template>
-                </v-tooltip>
-              </template>
-              <template #append>
-                <div class="d-flex gap-1">
-                  <v-btn
-                    v-if="t.has_custom || t.has_global"
-                    icon="mdi-download" variant="text" size="small" color="indigo"
-                    title="Скачать текущий шаблон"
-                    @click="downloadSubsidyTemplate(t.doc_type)"
-                  />
-                  <v-btn
-                    icon="mdi-upload" variant="text" size="small" color="primary"
-                    title="Загрузить свой шаблон"
-                    @click="triggerTemplateUpload(t.doc_type)"
-                  />
-                  <v-btn
-                    v-if="t.has_custom"
-                    icon="mdi-delete-outline" variant="text" size="small" color="error"
-                    title="Удалить — вернётся к глобальному"
-                    @click="deleteSubsidyTemplate(t.doc_type)"
-                  />
-                </div>
-              </template>
-            </v-list-item>
-          </v-list>
-
-          <!-- Template variables reference panel -->
-          <v-expansion-panels variant="accordion" class="mt-3">
-            <v-expansion-panel title="Доступные переменные шаблона">
-              <template #text>
-                <v-text-field
-                  v-model="varsSearch"
-                  prepend-inner-icon="mdi-magnify"
-                  label="Поиск по переменной или описанию..."
-                  density="compact"
-                  hide-details
-                  clearable
-                  class="mb-2"
-                />
-                <v-data-table
-                  v-resizable-columns="'subsidies-template-vars'"
-                  :headers="[
-                    { title: 'Переменная', key: 'var', width: '280px', minWidth: '280px' },
-                    { title: 'Описание', key: 'description' },
-                    { title: 'Пример записи в шаблоне', key: 'example_template', width: '22%' },
-                    { title: 'Что получится', key: 'example_result', width: '20%' },
-                  ]"
-                  :items="filteredVars"
-                  density="compact"
-                  :items-per-page="-1"
-                  hide-default-footer
-                  class="text-caption"
-                >
-                  <template #item.var="{ item }">
-                    <div class="d-flex align-center gap-1" style="white-space: nowrap; min-width: 260px;">
-                      <v-tooltip :text="item.var" location="top">
-                        <template #activator="{ props: tProps }">
-                          <code class="text-caption text-truncate" style="max-width: 210px; display: inline-block;" v-bind="tProps">{{ item.var }}</code>
-                        </template>
-                      </v-tooltip>
-                      <v-btn
-                        icon size="x-small" variant="text"
-                        :title="'Копировать ' + item.var"
-                        @click="copyVar(item.var)"
-                      >
-                        <v-icon size="x-small">mdi-content-copy</v-icon>
-                      </v-btn>
-                    </div>
-                  </template>
-                  <template #item.example_template="{ item }">
-                    <code class="text-caption">{{ item.example_template }}</code>
-                  </template>
-                </v-data-table>
-              </template>
-            </v-expansion-panel>
-          </v-expansion-panels>
-
-          <!-- Hidden file input for template upload -->
-          <input ref="templateFileInputRef" type="file" accept=".docx" style="display:none"
-            @change="onTemplateFileSelected" />
-        </v-card-text>
-        <v-card-actions class="px-4 pb-4">
-          <v-btn variant="outlined" prepend-icon="mdi-book-open-variant" color="indigo" @click="downloadMarkupGuide">
-            Руководство по переменным
-          </v-btn>
-          <v-spacer />
-          <v-btn variant="outlined" color="indigo" prepend-icon="mdi-content-copy"
-                 @click="openCopyTemplatesDialog">
-            Скопировать из другой субсидии
-          </v-btn>
-          <v-spacer />
-          <v-btn variant="text" @click="showTemplateDialog = false">Закрыть</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- ── Copy Templates Sub-dialog ── -->
-    <v-dialog v-model="showCopyTemplatesDialog" max-width="520" :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="d-flex align-center pa-4 pb-2">
-          <v-icon icon="mdi-content-copy" color="indigo" class="mr-2" />
-          Скопировать шаблоны из другой субсидии
-          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showCopyTemplatesDialog = false" />
-        </v-card-title>
-        <v-card-text>
-          <v-autocomplete
-            v-model="copyTemplates.sourceId"
-            :items="copySourceSubsidiesForTemplates"
-            item-title="name"
-            item-value="id"
-            label="Источник (другая субсидия)"
-            variant="outlined" density="compact"
-          />
-          <v-checkbox
-            v-model="copyTemplates.replace"
-            label="Перезаписать существующие шаблоны"
-            hide-details density="compact"
-          />
-          <v-alert v-if="copyTemplates.error" type="error" variant="tonal" density="compact" class="mt-2">
-            {{ copyTemplates.error }}
-          </v-alert>
-        </v-card-text>
-        <v-card-actions class="pa-4 pt-0">
-          <v-spacer />
-          <v-btn variant="text" @click="showCopyTemplatesDialog = false">Отмена</v-btn>
-          <v-btn color="indigo" :loading="copyTemplates.loading"
-                 :disabled="!copyTemplates.sourceId"
-                 @click="confirmCopyTemplates">
-            Скопировать
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- ── Contractor Override Dialog ── -->
-    <v-dialog v-model="showOverrideDialog" max-width="640" scrollable :fullscreen="mobile">
-      <v-card class="dialog-card">
-        <v-card-title class="dialog-title">
-          <v-icon icon="mdi-account-edit-outline" color="teal" class="mr-2" />
-          Реквизиты контрагента для субсидии
-          <v-btn icon="mdi-close" variant="text" size="small" class="ml-auto" @click="showOverrideDialog = false" />
-        </v-card-title>
-        <v-divider />
-        <v-card-text class="pt-4" style="max-height:75vh">
-          <v-alert type="info" variant="tonal" density="compact" class="mb-4">
-            Эти реквизиты будут использоваться при генерации документов для данной субсидии.
-            Если не заполнены — берутся из основной карточки контрагента.
-          </v-alert>
-
-          <div class="section-label">Основные данные</div>
-          <v-select v-model="overrideForm.org_type" :items="['Юр.лицо','ИП','Самозанятый','Физ.лицо']"
-            label="Форма организации" variant="outlined" density="compact" clearable hide-details class="mb-3" />
-          <v-row dense>
-            <v-col cols="4">
-              <v-text-field v-model="overrideForm.inn" label="ИНН" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="4">
-              <v-text-field v-model="overrideForm.kpp" label="КПП" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="4">
-              <v-text-field v-model="overrideForm.ogrn" label="ОГРН" variant="outlined" density="compact" hide-details />
-            </v-col>
-          </v-row>
-          <v-textarea v-model="overrideForm.address" label="Адрес местонахождения" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
-          <v-textarea v-model="overrideForm.postal_address" label="Почтовый адрес" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
-
-          <div class="section-label mt-4">Подписант</div>
-          <v-text-field v-model="overrideForm.signatory_position" label="Должность подписанта" variant="outlined" density="compact" class="mb-2" hide-details />
-          <v-row dense class="mb-3">
-            <v-col cols="4">
-              <v-text-field v-model="overrideForm.signatory_last_name" label="Фамилия" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="4">
-              <v-text-field v-model="overrideForm.signatory_first_name" label="Имя" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="4">
-              <v-text-field v-model="overrideForm.signatory_middle_name" label="Отчество" variant="outlined" density="compact" hide-details />
-            </v-col>
-          </v-row>
-          <v-text-field v-model="overrideForm.signatory_basis" label="На основании чего действует" variant="outlined" density="compact" hide-details
-            placeholder="Устава, доверенности №..." />
-
-          <div class="section-label mt-4">Контакты</div>
-          <v-row dense class="mb-3">
-            <v-col cols="6">
-              <v-text-field v-model="overrideForm.org_phone" label="Телефон организации" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="6">
-              <v-text-field v-model="overrideForm.org_email" label="Email организации" variant="outlined" density="compact" hide-details />
-            </v-col>
-          </v-row>
-          <v-text-field v-model="overrideForm.contact_person" label="Контактное лицо" variant="outlined" density="compact" class="mb-3" hide-details />
-          <v-row dense>
-            <v-col cols="6">
-              <v-text-field v-model="overrideForm.phone" label="Телефон контактного лица" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="6">
-              <v-text-field v-model="overrideForm.email" label="Email контактного лица" variant="outlined" density="compact" hide-details />
-            </v-col>
-          </v-row>
-
-          <div class="section-label mt-4">Банковские реквизиты</div>
-          <v-text-field v-model="overrideForm.settlement_account" label="Расчётный счёт (р/с)" variant="outlined" density="compact" class="mb-3" hide-details maxlength="20" />
-          <v-text-field v-model="overrideForm.bank_name" label="Банк (наименование)" variant="outlined" density="compact" class="mb-3" hide-details
-            placeholder="в ПАО «Сбербанк»..." />
-          <v-row dense>
-            <v-col cols="6">
-              <v-text-field v-model="overrideForm.bik" label="БИК" variant="outlined" density="compact" hide-details maxlength="9" />
-            </v-col>
-            <v-col cols="6">
-              <v-text-field v-model="overrideForm.correspondent_account" label="Корр. счёт (к/с)" variant="outlined" density="compact" hide-details maxlength="20" />
-            </v-col>
-          </v-row>
-          <v-textarea v-model="overrideForm.bank_details" label="Банковские реквизиты (свободное поле)" variant="outlined" density="compact" rows="2" class="mt-3" hide-details />
-        </v-card-text>
-        <v-card-actions class="px-4 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="showOverrideDialog = false">Отмена</v-btn>
-          <v-btn color="teal" :loading="savingOverride" @click="saveContractorOverride">Сохранить</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <SubsidyApproversDialog />
+    <SubsidyMembersDialog ref="subsidyMembersDialogRef" />
+    <SubsidyCopyApproversDialog />
+    <SubsidyApproverFormDialog />
+    <SubsidyTemplatesDialog />
+    <SubsidyCopyTemplatesDialog />
+    <SubsidyContractorOverrideDialog ref="contractorOverrideDialogRef" />
 
     <!-- ── Import FEO dialog ── -->
     <v-dialog v-model="feoImport.show" max-width="1400" persistent :fullscreen="mobile">
@@ -4926,7 +3722,6 @@ import { useResizableColumns } from '@/composables/useResizableColumns'
 import { useCardView } from '@/composables/useCardView'
 import { useToast, type ToastType } from '@/composables/useToast'
 import BudgetHistoryDialog from '@/components/BudgetHistoryDialog.vue'
-import ContractorPicker from '@/components/ContractorPicker.vue'
 import BudgetBar from '@/components/BudgetBar.vue'
 import RegistryExportButton from '@/components/RegistryExportButton.vue'
 import { useRegistryExport } from '@/composables/useRegistryExport'
@@ -4947,6 +3742,30 @@ import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
 import { numOrNull } from '@/utils/numberFormat'
 import { PURCHASE_STATUS_META, PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusIcon, purchaseStatusColor } from '@/constants/purchaseStatus'
 import { type KpiKey, KPI_MODE, KPI_LABELS, KPI_EMPTY_REASONS, kpiItemMatches } from '@/constants/kpiMetrics'
+import { formatCurrency } from '@/composables/subsidies/format'
+import SubsidyEventsPanel from '@/components/subsidies/SubsidyEventsPanel.vue'
+import SubsidyEditDialog from '@/components/subsidies/SubsidyEditDialog.vue'
+import SubsidyDeleteDialog from '@/components/subsidies/SubsidyDeleteDialog.vue'
+import FeoCategoryDialog from '@/components/subsidies/FeoCategoryDialog.vue'
+import FeoCategoryDeleteDialog from '@/components/subsidies/FeoCategoryDeleteDialog.vue'
+import SubsidyApproversDialog from '@/components/subsidies/SubsidyApproversDialog.vue'
+import SubsidyApproverFormDialog from '@/components/subsidies/SubsidyApproverFormDialog.vue'
+import SubsidyCopyApproversDialog from '@/components/subsidies/SubsidyCopyApproversDialog.vue'
+import SubsidyMembersDialog from '@/components/subsidies/SubsidyMembersDialog.vue'
+import SubsidyTemplatesDialog from '@/components/subsidies/SubsidyTemplatesDialog.vue'
+import SubsidyCopyTemplatesDialog from '@/components/subsidies/SubsidyCopyTemplatesDialog.vue'
+import SubsidyContractorOverrideDialog from '@/components/subsidies/SubsidyContractorOverrideDialog.vue'
+import { provideSubsidyDetail } from '@/composables/subsidies/useSubsidyDetail'
+import { useSubsidyApprovers } from '@/composables/subsidies/useSubsidyApprovers'
+import { useSubsidyTemplates } from '@/composables/subsidies/useSubsidyTemplates'
+// Относительный путь (не '@/...'), т.к. tsconfig.app.json не содержит paths-маппинга
+// для алиаса '@' (Vite резолвит его сам через vite.config.ts, но чистый tsc/vue-tsc —
+// нет) — с алиасом эти типы стабильно не резолвились бы во ВСЁМ файле (тысячи мест
+// используют их как аннотации), заваливая проверку implicit-any лавиной. У новых
+// компонентов (components/subsidies/*) та же проблема не бьёт так же сильно — там
+// использований единицы, поэтому там оставлен алиас '@/...' как и everywhere else.
+import type { SubsidyRow, FeoCategory, FeoNode } from '../composables/subsidies/types'
+import { collectSubtreeIds } from '@/composables/subsidies/feoCategoryUtils'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 
@@ -5027,117 +3846,18 @@ const route  = useRoute()
 // GET /api/plan-excess (см. excessApprovalFor(node)?.can_decide ниже,
 // backend/app/routers/plan_excess.py _can_decide_plan_excess).
 
-interface SubsidyRow {
-  id: number; name: string; year: number; budget: number
-  calculated_budget?: number
-  description?: string; planned: number; paid: number; contracted: number
-  plan_schedule: number; ordered: number
-  feo_filled?: boolean
-  feo_budget_total?: number
-  contractor_id?: number
-  contractor_name?: string
-  contractor_inn?: string
-  basis_doc_number?: string
-  basis_doc_date?: string
-  // Phase 31-05: canonical budget fields
-  remaining?: number | null
-  planned_amount?: number | null
-  budget_discrepancy?: number | null
-  require_planned_dates?: boolean
-  // Phase 32: dashboard KPI fields
-  work: number
-  contracts: number
-  delivered: number
-  delivered_unpaid: number
-  // Владелец (2026-08-30): предупреждение «сумма заказанного приближается к
-  // потолку субсидии» — см. app/services/feo_plan.py calculate_ceiling_forecast*.
-  ceiling_warn_percent?: number | null
-  ceiling_total?: number | null
-  ceiling_committed_total?: number | null
-  ceiling_committed_percent?: number | null
-  ceiling_near_warning?: boolean
-  ceiling_exceeded?: boolean
-  // C4: черновые субсидии — статус/автор/утвердивший. dashboard/charts их не
-  // отдаёт, подтягиваются отдельным вызовом GET /subsidies/ в loadAll() и
-  // мёрджатся по id (см. ниже).
-  status?: string
-  created_by?: number | null
-  approved_by?: number | null
-  approved_at?: string | null
-}
-
-// C4: участник (соредактор) черновой субсидии — калька wish_member без
-// consent-флоу, см. backend/app/routers/subsidy_members.py.
-interface SubsidyMember {
-  id: number
-  subsidy_id: number
-  user_id: number
-  added_by_id: number | null
-  username?: string | null
-  full_name?: string | null
-  added_by_name?: string | null
-  created_at?: string | null
-}
-
-interface FeoCategory {
-  id: number; parent_id: number | null; subsidy_id: number
-  level: number; name: string; code: string | null; appendix: string | null
-  is_active: boolean; budget: number | null; planned_quantity: number | null; planned_amount: number | null; unit: string | null
-  feo_quantity: number | null; feo_unit: string | null
-  description: string | null; feo_amount: number | null
-  // План zany-fluttering-mountain.md, п.1/п.5: способ расчёта плана — переключатель
-  // «по плановым позициям» / «по вручную заданной сумме», см. feoForm.planSource ниже.
-  // Опционально: старые категории на бэкенде без миграции отдают undefined — фронт
-  // трактует это как значение по умолчанию 'planned_items' (см. startFeoEdit).
-  plan_source?: 'planned_items' | 'manual_sum'
-  manual_plan_amount?: number | null
-}
-
-interface FeoNode extends FeoCategory {
-  depth: number
-  hasChildren: boolean
-  children: FeoNode[]
-}
-
-// ── Approvers types ───────────────────────────────
-interface SubsidyApprover {
-  id: number
-  subsidy_id: number
-  role_name: string
-  full_name: string
-  order_num: number
-  is_default: boolean
-  can_initiate: boolean
-  show_feo_path: boolean
-  user_id?: number | null
-}
-
-const ROLE_SUGGESTIONS = [
-  'Первый заместитель руководителя',
-  'Куратор проекта',
-  'Ответственный исполнитель',
-  'Юрист',
-  'Главный бухгалтер',
-  'Начальник отдела МТО',
-  'Заместитель руководителя по ФХД',
-]
-
-const approversHeaders = [
-  { title: '#', key: 'order_num', width: '60px', sortable: false },
-  { title: 'Роль / Должность', key: 'role_name', sortable: false },
-  { title: 'ФИО', key: 'full_name', sortable: false },
-  { title: '', key: 'is_default', width: '120px', sortable: false },
-  { title: '', key: 'can_initiate', width: '100px', sortable: false },
-  { title: '', key: 'actions', width: '110px', sortable: false },
-]
+// SubsidyRow/SubsidyMember/FeoCategory/FeoNode — см. composables/subsidies/types.ts
+// (единственный источник; раньше дублировались тут и во всех вынесенных
+// диалогах компонентах, Правило №6).
 
 // ── State ─────────────────────────────────────────
 const registryArea = ref<HTMLElement | null>(null)
 const feoTableArea = ref<HTMLElement | null>(null)
 const { exportScreenshotPdf: _exportFeoScreenshotPdf } = useRegistryExport()
 const loading    = ref(false)
-const saving     = ref(false)
-const savingFeo  = ref(false)
+// saving/savingFeo (диалоги субсидии/категории ФЭО) — теперь внутри
+// SubsidyEditDialog.vue/SubsidyDeleteDialog.vue/FeoCategoryDialog.vue/
+// FeoCategoryDeleteDialog.vue, каждый со своим независимым состоянием.
 const loadingFeo = ref(false)
 
 const allSubsidies    = ref<SubsidyRow[]>([])
@@ -5436,188 +4156,11 @@ const showDeleteFeoDialog = ref(false)
 // Budget history dialog ref
 const historyDialogRef = ref<InstanceType<typeof BudgetHistoryDialog> | null>(null)
 
-// Approvers state
-const showApproversDialog    = ref(false)
-const showApproverFormDialog = ref(false)
-const loadingApprovers       = ref(false)
-const savingApprover         = ref(false)
-const approversSubsidy       = ref<SubsidyRow | null>(null)
-const approversList          = ref<SubsidyApprover[]>([])
-const approverEditTarget     = ref<SubsidyApprover | null>(null)
-const approverForm = ref<{
-  role_name: string
-  full_name: string
-  order_num: number
-  is_default: boolean
-  can_initiate: boolean
-  show_feo_path: boolean
-  user_id: number | null
-  selectedUser: { id: number; full_name: string } | null
-}>({ role_name: '', full_name: '', order_num: 0, is_default: true, can_initiate: false, show_feo_path: false, user_id: null, selectedUser: null })
-
-const approverUsersList = ref<Array<{ id: number; full_name: string }>>([])
-
-// C4: черновые субсидии — approve + members state
+// Согласующие/участники/шаблоны/удаление субсидии и категорий ФЭО — состояние и
+// CRUD вынесены в components/subsidies/* + composables/subsidies/useSubsidyApprovers.ts
+// и useSubsidyTemplates.ts. approvingSubsidyId остаётся здесь — используется
+// approveSubsidy()/canApproveSubsidy() вне этой волны рефакторинга.
 const approvingSubsidyId = ref<number | null>(null)
-const showMembersDialog = ref(false)
-const membersSubsidy = ref<SubsidyRow | null>(null)
-const membersList = ref<SubsidyMember[]>([])
-const loadingMembers = ref(false)
-const addingMember = ref(false)
-const memberToAdd = ref<number | null>(null)
-const memberUsersList = ref<Array<{ id: number; full_name: string }>>([])
-// Тот же гейт, что на бэкенде (_can_manage_subsidy_members): автор субсидии
-// или обладатель subsidy.edit. hasAction() читает /users/me permissions
-// (тот же механизм, что canEditFeo выше) — orgId-скоуп на бэкенд-стороне
-// гейта per-subsidy (has_org_key), фронт для UI-показа кнопок довольствуется
-// плоским правом, сервер всё равно перепроверит per-subsidy при запросе.
-const canManageMembers = computed(() => {
-  const s = membersSubsidy.value
-  if (!s) return false
-  if (authStore.hasAction('subsidy.edit')) return true
-  return s.created_by != null && s.created_by === currentUserId
-})
-
-// ── Copy Approvers state ──────────────────────────
-const showCopyApproversDialog = ref(false)
-const copyApprovers = ref<{ sourceId: number | null; replace: boolean; loading: boolean; error: string }>({
-  sourceId: null, replace: false, loading: false, error: '',
-})
-const copySourceSubsidies = computed(() =>
-  (allSubsidies.value || []).filter(s => s.id !== approversSubsidy.value?.id)
-)
-function openCopyApproversDialog() {
-  copyApprovers.value = { sourceId: null, replace: false, loading: false, error: '' }
-  showCopyApproversDialog.value = true
-}
-async function confirmCopyApprovers() {
-  if (!approversSubsidy.value?.id || !copyApprovers.value.sourceId) return
-  copyApprovers.value.loading = true
-  copyApprovers.value.error = ''
-  try {
-    const result = await apiFetch<{ copied: number; replaced: boolean }>(
-      `/subsidies/${approversSubsidy.value.id}/approvers/copy-from/${copyApprovers.value.sourceId}?replace=${copyApprovers.value.replace}`,
-      { method: 'POST' }
-    )
-    showCopyApproversDialog.value = false
-    showSnack(`Скопировано: ${result.copied} согласующих${result.replaced ? ' (с заменой)' : ''}`, 'success')
-    const list = await apiFetch<SubsidyApprover[]>(`/subsidies/${approversSubsidy.value.id}/approvers`)
-    approversList.value = list
-  } catch (e: any) {
-    copyApprovers.value.error = e?.payload?.message || e?.message || 'Ошибка копирования'
-  } finally {
-    copyApprovers.value.loading = false
-  }
-}
-
-// ── Copy Templates state ──────────────────────────
-const showCopyTemplatesDialog = ref(false)
-const copyTemplates = ref<{ sourceId: number | null; replace: boolean; loading: boolean; error: string }>({
-  sourceId: null, replace: false, loading: false, error: '',
-})
-const copySourceSubsidiesForTemplates = computed(() =>
-  (allSubsidies.value || []).filter(s => s.id !== templateSubsidy.value?.id)
-)
-function openCopyTemplatesDialog() {
-  copyTemplates.value = { sourceId: null, replace: false, loading: false, error: '' }
-  showCopyTemplatesDialog.value = true
-}
-async function confirmCopyTemplates() {
-  if (!templateSubsidy.value?.id || !copyTemplates.value.sourceId) return
-  copyTemplates.value.loading = true
-  copyTemplates.value.error = ''
-  try {
-    const result = await apiFetch<{ copied: string[]; skipped: string[]; reason?: string }>(
-      `/subsidies/${templateSubsidy.value.id}/templates/copy-from/${copyTemplates.value.sourceId}?replace=${copyTemplates.value.replace}`,
-      { method: 'POST' }
-    )
-    showCopyTemplatesDialog.value = false
-    if (result.reason) {
-      showSnack(result.reason, 'error')
-    } else {
-      const skippedNote = result.skipped.length ? `, пропущено: ${result.skipped.length}` : ''
-      showSnack(`Скопировано шаблонов: ${result.copied.length}${skippedNote}`, 'success')
-    }
-    await openTemplateDialog(templateSubsidy.value)
-  } catch (e: any) {
-    copyTemplates.value.error = e?.payload?.message || e?.message || 'Ошибка копирования'
-  } finally {
-    copyTemplates.value.loading = false
-  }
-}
-
-let _approverUsersSubsidyId: number | null = null
-async function loadApproverUsers() {
-  // Согласующим может быть только сотрудник орг(а) субсидии или человек
-  // с персональным доступом к ней — не весь контур.
-  const sid = approversSubsidy.value?.id ?? null
-  if (approverUsersList.value.length && _approverUsersSubsidyId === sid) return
-  try {
-    const data = await apiFetch<any[]>(`/users/${sid ? `?subsidy_id=${sid}` : ''}`)
-    approverUsersList.value = data
-    _approverUsersSubsidyId = sid
-  } catch { approverUsersList.value = [] }
-}
-
-// Template variables panel state
-interface TemplateVar { var: string; description: string; example_template: string; example_result: string }
-const templateVars = ref<TemplateVar[]>([])
-const varsSearch = ref('')
-const filteredVars = computed(() => {
-  if (!varsSearch.value) return templateVars.value
-  const q = varsSearch.value.toLowerCase()
-  return templateVars.value.filter(v =>
-    v.var.toLowerCase().includes(q) ||
-    v.description.toLowerCase().includes(q) ||
-    v.example_template.toLowerCase().includes(q)
-  )
-})
-async function loadTemplateVars() {
-  try {
-    templateVars.value = await apiFetch<TemplateVar[]>('/documents/template-vars')
-  } catch (e) { console.error('loadTemplateVars:', e) }
-}
-async function copyVar(text: string) {
-  // phase26-mm: на HTTP-only проде navigator.clipboard undefined.
-  // Fallback на document.execCommand('copy') через временный textarea.
-  let ok = false
-  try {
-    if (window.isSecureContext && navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text)
-      ok = true
-    } else {
-      const ta = document.createElement('textarea')
-      ta.value = text
-      ta.style.position = 'fixed'
-      ta.style.opacity = '0'
-      ta.style.top = '0'
-      ta.style.left = '0'
-      document.body.appendChild(ta)
-      ta.focus()
-      ta.select()
-      try { ok = document.execCommand('copy') } catch { ok = false }
-      document.body.removeChild(ta)
-    }
-  } catch { ok = false }
-  if (ok) showSnack(`Скопировано: ${text}`, 'success', { duration: 2500 })
-  else showSnack(`Не удалось скопировать. Выделите и нажмите Ctrl+C: ${text}`, 'error')
-}
-
-// Template management state
-const showTemplateDialog  = ref(false)
-const templateSubsidy     = ref<SubsidyRow | null>(null)
-const contractTemplates   = ref<Record<number, boolean>>({})
-const subsidyTemplatesList = ref<Array<{ doc_type: string; label: string; has_custom: boolean; has_global: boolean; render_ok?: boolean | null }>>([])
-const templateFileInputRef = ref<HTMLInputElement | null>(null)
-const uploadingDocType     = ref<string | null>(null)
-const deleteTarget       = ref<SubsidyRow | null>(null)
-const deleteErrorLinked  = ref(false)
-const deleteErrorMsg     = ref('')
-const deleteImpact       = ref<{ feo_categories: number; planned_items: number; purchases: number; contracts: number } | null>(null)
-const feoEditTarget      = ref<FeoCategory | null>(null)
-const feoDeleteTarget    = ref<FeoCategory | null>(null)
-const feoDeleteError     = ref('')
-const feoDeleteLinkedIds = ref<number[]>([])
 
 // FEO search
 const feoSearch = ref('')
@@ -7986,47 +6529,11 @@ async function saveEditCategoryPlan() {
   }
 }
 
-// Contractor override state
-const showOverrideDialog = ref(false)
-const savingOverride = ref(false)
-const overrideSubsidyId = ref<number | null>(null)
-const overrideForm = ref({
-  org_type: '', inn: '', kpp: '', ogrn: '',
-  signatory_last_name: '', signatory_first_name: '', signatory_middle_name: '', signatory_position: '',
-  signatory_basis: '', address: '', postal_address: '',
-  contact_person: '', phone: '', email: '', org_phone: '', org_email: '',
-  bank_details: '', settlement_account: '', bank_name: '', bik: '', correspondent_account: '',
-})
-
-// Events (Мероприятия) state
-interface EventItem {
-  id: number; subsidy_id: number; name: string; is_active: boolean
-  region?: string; date_from?: string; date_to?: string
-  order_decree?: string; planned_indicators?: string; actual_indicators?: string
-  media_link_1?: string; media_link_2?: string; media_link_3?: string
-}
-const subsidyEvents = ref<EventItem[]>([])
-const showAddEventDialog = ref(false)
-const newEventName = ref('')
-const newEventRegion = ref('')
-const newEventDateFrom = ref('')
-const newEventDateTo = ref('')
-const newEventOrderDecree = ref('')
-const newEventPlannedIndicators = ref('')
-const newEventActualIndicators = ref('')
-const newEventMediaLink1 = ref('')
-const newEventMediaLink2 = ref('')
-const newEventMediaLink3 = ref('')
-const showEditEventDialog = ref(false)
-const savingEvent = ref(false)
-const editEventForm = ref<EventItem>({
-  id: 0, subsidy_id: 0, name: '', is_active: true,
-  region: '', date_from: '', date_to: '',
-  order_decree: '', planned_indicators: '', actual_indicators: '',
-  media_link_1: '', media_link_2: '', media_link_3: '',
-})
+// Contractor override state (showOverrideDialog/overrideForm/...) — вынесено
+// в SubsidyContractorOverrideDialog.vue целиком (видимость внутренняя, парент
+// вызывает через ref.open()).
+// Events (Мероприятия) state — вынесено в SubsidyEventsPanel.vue.
 const userRoleRaw = localStorage.getItem('user_role') || ''
-const isAdminLevel = ['superadmin', 'org_admin', 'admin'].includes(userRoleRaw)
 // 12-05: admin or account_owner can save a version
 const canSaveVersion = computed(() => ['superadmin', 'org_admin', 'admin', 'account_owner'].includes(userRoleRaw))
 // B5 (2026-09-01): право на запись в дерево категорий ФЭО (backend-гейт —
@@ -8046,94 +6553,15 @@ const currentUserId = Number(localStorage.getItem('user_id') || '0')
 // пользователя должен быть прочитан, а не пропасть за 3-4 секунды.
 const toast = useToast()
 
-const contractors = ref<{ id: number; name: string; inn?: string }[]>([])
-
-const form = ref({ name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string })
-const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string, grantor_name: '' as string, ministry_name: '' as string, extra_contract_clause_1: null as string | null, extra_contract_clause_2: null as string | null, require_planned_dates: true as boolean, ceiling_warn_percent: 90 as number | null })
-// План zany-fluttering-mountain.md, п.1/п.5: planSource/manual_plan_amount — новый
-// переключатель «как считать план» (по плановым позициям / по вручную заданной
-// сумме), см. блок «Плановые показатели» в диалогах создания/редактирования ниже.
-const feoForm  = ref({ parentId: null as number | null, name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, feo_quantity: null as number | null, feo_unit: '' as string, description: '', feo_amount: '' as string | number, planSource: 'planned_items' as 'planned_items' | 'manual_sum', manual_plan_amount: null as number | null })
-const feoEditForm = ref({ name: '', code: '', appendix: '', budget: null as number | null, budgetAuto: false, planned_quantity: null as number | null, qtyAuto: false, planned_amount: null as number | null, amtAuto: false, unit: '' as string, is_active: true, hasChildren: false, parent_id: null as number | null, feo_quantity: null as number | null, feo_unit: '' as string, description: '', feo_amount: '' as string | number, planSource: 'planned_items' as 'planned_items' | 'manual_sum', manual_plan_amount: null as number | null })
-
-// Дефект 2026-08-31 (владелец, форма «Редактировать направление ФЭО», тупик 409/422):
-// v-model.number на Vuetify НЕ приводит очищенное поле к null — Vue's looseToNumber
-// возвращает исходную строку '' как есть, если parseFloat('') === NaN. Наивное
-// `field ?? null` в PUT/POST-payload пропускало эту '' насквозь (?? срабатывает
-// только на null/undefined) → бэкенд получал '' в Optional[float]-поле → 422
-// «ожидается число». numOrNull — единственный источник этого приведения в проекте
-// (правка 2026-09-04: раньше жила только здесь как локальная функция, найдена и
-// переиспользована для той же дыры в плановых позициях ФЭО — savePlannedItem/
-// saveEditPlannedItem ниже и FeoPlannedItemsSelect.vue — см. её докстринг в
-// @/utils/numberFormat.ts). Пустая строка/null/undefined — «поле не задано» = null;
-// 0 — валидное число, НЕ схлопывается в null.
-
-// Правило владельца (2026-08-09): «Плановое кол-во»/«Плановая стоимость за ед.» —
-// пара. Задана цена без количества (или наоборот) → сумма НЕ считается автоматически
-// и молча ломается (см. backend _validate_plan_pair в feo_categories.py, тот же порог
-// >0). auto-режим («Авто из детей», отправляется как null) считается пустым полем —
-// зеркалит то, что реально уйдёт в payload PUT/POST.
-function feoPlanPairError(
-  qty: number | null, qtyAuto: boolean,
-  amt: number | null, amtAuto: boolean,
-): string {
-  const qFilled = !qtyAuto && qty != null && Number(qty) > 0
-  const aFilled = !amtAuto && amt != null && Number(amt) > 0
-  if (qFilled === aFilled) return ''
-  return qFilled
-    ? 'Задано количество, но не задана цена за ед. — заполните оба поля (сумма посчитается автоматически), либо очистите количество и задайте план общей суммой отдельной плановой позицией («Добавить плановую» в панели) без указания количества.'
-    : 'Задана цена за ед., но не задано количество — заполните оба поля (сумма посчитается автоматически), либо очистите цену и задайте план общей суммой отдельной плановой позицией («Добавить плановую» в панели) без указания количества.'
-}
-
-const feoAddPlanPairError = computed(() => feoPlanPairError(
-  feoForm.value.planned_quantity, feoForm.value.qtyAuto,
-  feoForm.value.planned_amount, feoForm.value.amtAuto,
-))
-const feoEditPlanPairError = computed(() => feoPlanPairError(
-  feoEditForm.value.planned_quantity, feoEditForm.value.qtyAuto,
-  feoEditForm.value.planned_amount, feoEditForm.value.amtAuto,
-))
-
-// Правка 2Б (2026-08-11): диалог редактирования категории решает, какую из трёх
-// подстрок «Плановых показателей» показать — «есть подкатегории» / «план не задан,
-// заведите позицию» / «старый формат, только для чтения». Категория без детей и
-// хотя бы с одним из двух полей — тот самый «старый формат»; ноль/пусто в обоих —
-// план ещё не задан вовсе.
-const feoEditManualPlanSet = computed(() => {
-  const f = feoEditForm.value
-  if (f.hasChildren) return false
-  const q = f.planned_quantity
-  const a = f.planned_amount
-  return (q != null && Number(q) > 0) || (a != null && Number(a) > 0)
-})
-
-// План zany-fluttering-mountain.md, п.1: «при переключении на ручную сумму у
-// категории, где уже есть плановые позиции, — предупреждение о последствиях»
-// (владелец: позиции останутся, план будет считаться от суммы, их превышение
-// потребует согласования). «Уже есть позиции» — категория до открытия диалога
-// была в режиме 'planned_items' (feoEditTarget — исходный, не мутируется формой)
-// и её Σ позиций (plan_manual из planTreeByCat, тот же сигнал, что и в
-// isManualPosLeaf выше) больше нуля.
-const feoEditPlanSourceSwitchWarning = computed(() => {
-  const target = feoEditTarget.value
-  if (!target) return false
-  const origSource = target.plan_source || 'planned_items'
-  if (origSource !== 'planned_items') return false
-  if (feoEditForm.value.planSource !== 'manual_sum') return false
-  const t = planTreeByCat.value[target.id]
-  return !!(t && Number(t.plan_manual || 0) > 0.005)
-})
+// form/editForm/contractors/editInitialContractor (диалог субсидии) и
+// feoForm/feoEditForm/feoPlanPairError/feoAddPlanPairError/feoEditPlanPairError/
+// feoEditManualPlanSet/feoEditPlanSourceSwitchWarning (диалог категории ФЭО) —
+// вынесены в SubsidyEditDialog.vue / FeoCategoryDialog.vue соответственно.
 
 // ── Computed ──────────────────────────────────────
 const availableYears = computed(() =>
   [...new Set(allSubsidies.value.map(s => s.year))].sort((a, b) => b - a)
 )
-
-const editInitialContractor = computed(() => {
-  if (!editForm.value.contractor_id) return null
-  const c = contractors.value.find((x: any) => x.id === editForm.value.contractor_id)
-  return c ? { id: c.id, name: c.name, inn: c.inn } : { id: editForm.value.contractor_id, name: `Контрагент #${editForm.value.contractor_id}`, inn: undefined }
-})
 
 const CARD_ORDER_KEY = 'subsidies_card_order'
 const cardDragIdx = ref(-1)
@@ -9619,31 +8047,6 @@ function toggleExpand(id: number) {
   }
 }
 
-// ── Subtree helpers ──────────────────────────────
-function collectSubtreeIds(nodeId: number): number[] {
-  const ids = [nodeId]
-  const find = (pid: number) => {
-    for (const c of feoCategories.value) {
-      if (c.parent_id === pid) { ids.push(c.id); find(c.id) }
-    }
-  }
-  find(nodeId)
-  return ids
-}
-
-const feoParentOptions = computed(() => {
-  if (!feoEditTarget.value) return []
-  const excludeIds = new Set(collectSubtreeIds(feoEditTarget.value.id))
-  return feoCategories.value
-    .filter(c => !excludeIds.has(c.id))
-    .map(c => ({ id: c.id, name: '  '.repeat(c.level - 1) + c.name }))
-})
-
-const feoDeleteChildrenCount = computed(() => {
-  if (!feoDeleteTarget.value) return 0
-  return collectSubtreeIds(feoDeleteTarget.value.id).length - 1
-})
-
 // ── Inline budget edit ───────────────────────────
 async function startInlineBudget(node: FeoNode) {
   inlineBudgetId.value = node.id
@@ -9993,7 +8396,7 @@ function onDragStart(e: DragEvent, node: FeoNode) {
 
 function onDragOver(e: DragEvent, node: FeoNode) {
   if (!dragNodeId.value || dragNodeId.value === node.id) return
-  const subtree = collectSubtreeIds(dragNodeId.value)
+  const subtree = collectSubtreeIds(feoCategories.value, dragNodeId.value)
   if (subtree.includes(node.id)) return
   dragOverId.value = node.id
 }
@@ -10007,7 +8410,7 @@ async function onDrop(e: DragEvent, targetNode: FeoNode) {
   const srcNode = visibleFeoNodes.value.find(n => n.id === srcId)
   dragOverId.value = null; dragNodeId.value = null
   if (!srcNode) return
-  const subtree = collectSubtreeIds(srcId)
+  const subtree = collectSubtreeIds(feoCategories.value, srcId)
   if (subtree.includes(targetNode.id)) { showSnack('Нельзя переместить в собственное поддерево', 'error'); return }
   if (srcNode.parent_id === targetNode.id) return
   try {
@@ -10755,156 +9158,24 @@ watch(globalSubsidyId, (id: number | null) => {
   }
 })
 
+// startEdit/confirmDelete — тонкие прокси в SubsidyEditDialog.vue/
+// SubsidyDeleteDialog.vue: сама форма, апи-вызовы и состояние диалога теперь
+// там, а вызовы из списка субсидий (@click.stop="startEdit(item)"/"confirmDelete(item)")
+// остаются текстуально теми же.
 async function startEdit(s: SubsidyRow) {
-  if (s.contractor_id && !contractors.value.find(c => c.id === s.contractor_id)) {
-    try { const f = await apiFetch<any>(`/contractors/${s.contractor_id}`); contractors.value.push(f) } catch {}
-  }
-  // /dashboard/charts не отдаёт agreement_text / basis_doc_*, тянем полную карточку
-  // через /api/subsidies/{id} — иначе при save поля перезатрутся в NULL.
-  let full: any = s
-  try { full = await apiFetch<any>(`/subsidies/${s.id}`) } catch { full = s }
-  editForm.value = {
-    id: full.id,
-    name: full.name,
-    year: full.year,
-    budget: full.budget,
-    description: full.description || '',
-    contractor_id: full.contractor_id ?? null,
-    agreement_text: full.agreement_text || '',
-    basis_doc_number: full.basis_doc_number || '',
-    basis_doc_date: full.basis_doc_date || '',
-    grantor_name: full.grantor_name || '',
-    ministry_name: full.ministry_name || '',
-    extra_contract_clause_1: full.extra_contract_clause_1 ?? null,
-    extra_contract_clause_2: full.extra_contract_clause_2 ?? null,
-    require_planned_dates: full.require_planned_dates ?? true,
-    ceiling_warn_percent: full.ceiling_warn_percent ?? 90,
-  }
-  showEditDialog.value = true
+  await subsidyEditDialogRef.value?.startEdit(s)
 }
 
 async function confirmDelete(s: SubsidyRow) {
-  deleteTarget.value = s
-  deleteErrorLinked.value = false
-  deleteErrorMsg.value = ''
-  deleteImpact.value = null
-  showDeleteDialog.value = true
-  try {
-    deleteImpact.value = await apiFetch<any>(`/subsidies/${s.id}/delete-impact`)
-  } catch { /* предупреждение опционально */ }
+  await subsidyDeleteDialogRef.value?.open(s)
 }
 
-async function addSubsidy() {
-  saving.value = true
-  try {
-    const res = await apiFetch<any>('/subsidies/', {
-      method: 'POST',
-      body: JSON.stringify({ name: form.value.name, year: form.value.year, budget: form.value.budget, description: form.value.description || null, contractor_id: form.value.contractor_id, agreement_text: form.value.agreement_text || null, basis_doc_number: form.value.basis_doc_number || null, basis_doc_date: form.value.basis_doc_date || null })
-    })
-    allSubsidies.value.push({ ...res, planned: 0, paid: 0, contracted: 0, plan_schedule: 0, ordered: 0, work: 0, contracts: 0, delivered: 0, delivered_unpaid: 0 })
-    showAddDialog.value = false
-    form.value = { name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null, agreement_text: '', basis_doc_number: '', basis_doc_date: '' }
-    showSnack('Субсидия добавлена')
-  } catch (e: any) {
-    showSnack(e?.detail || e?.payload?.message || 'Ошибка добавления', 'error')
-  } finally {
-    saving.value = false
-  }
-}
-
-async function updateSubsidy() {
-  saving.value = true
-  try {
-    await apiFetch<any>(`/subsidies/${editForm.value.id}`, {
-      method: 'PUT',
-      body: JSON.stringify({ name: editForm.value.name, year: editForm.value.year, budget: editForm.value.budget, description: editForm.value.description || null, contractor_id: editForm.value.contractor_id, agreement_text: editForm.value.agreement_text || null, basis_doc_number: editForm.value.basis_doc_number || null, basis_doc_date: editForm.value.basis_doc_date || null, grantor_name: editForm.value.grantor_name || null, ministry_name: editForm.value.ministry_name || null, extra_contract_clause_1: editForm.value.extra_contract_clause_1 || null, extra_contract_clause_2: editForm.value.extra_contract_clause_2 || null, require_planned_dates: editForm.value.require_planned_dates, ceiling_warn_percent: numOrNull(editForm.value.ceiling_warn_percent) })
-    })
-    // После save перезагружаем весь список с backend — гарантированно свежие
-    // данные (включая поля которые backend мог трансформировать). Spread-merge
-    // ответа PUT мог давать stale поля если SW кэшировал предыдущий GET.
-    await loadAll()
-    showEditDialog.value = false
-    showSnack('Субсидия обновлена')
-  } catch (e: any) {
-    console.error('updateSubsidy failed:', e)
-    showSnack(e?.detail || e?.payload?.message || 'Ошибка сохранения', 'error')
-  } finally {
-    saving.value = false
-  }
-}
-
-async function deleteSubsidy() {
-  if (!deleteTarget.value) return
-  saving.value = true
-  try {
-    await apiFetch(`/subsidies/${deleteTarget.value.id}`, { method: 'DELETE' })
-    allSubsidies.value = allSubsidies.value.filter(s => s.id !== deleteTarget.value!.id)
-    if (selectedId.value === deleteTarget.value.id) selectedId.value = null
-    showDeleteDialog.value = false
-    showSnack('Субсидия удалена', 'warning')
-  } catch (e: any) {
-    if (e?.status === 409) {
-      deleteErrorLinked.value = true
-      deleteErrorMsg.value = e?.detail || e?.payload?.message || ''
-    } else {
-      showSnack(e?.detail || e?.payload?.message || 'Ошибка удаления', 'error')
-    }
-  } finally {
-    saving.value = false
-  }
-}
-
-function goToLinkedPurchases() {
-  showDeleteDialog.value = false
-  router.push(`/orders?subsidy_id=${deleteTarget.value?.id}`)
-}
-
-function goToLinkedContracts() {
-  showDeleteDialog.value = false
-  router.push(`/contracts?subsidy_id=${deleteTarget.value?.id}`)
-}
-
-async function addFeoCategory() {
-  if (!selectedSubsidy.value) return
-  if (feoAddPlanPairError.value) { showSnack(feoAddPlanPairError.value, 'error'); return }
-  savingFeo.value = true
-  try {
-    const res = await apiFetch<FeoCategory>('/feo-categories/', {
-      method: 'POST',
-      body: JSON.stringify({
-        subsidy_id: selectedSubsidy.value.id,
-        parent_id: feoForm.value.parentId || null,
-        name: feoForm.value.name,
-        code: feoForm.value.code || null,
-        appendix: feoForm.value.appendix || null,
-        is_active: true,
-        // budget/planned_quantity/planned_amount/feo_quantity/feo_amount/manual_plan_amount —
-        // numOrNull (2026-09-04): '' → null, 0 сохраняется как число.
-        budget: feoForm.value.budgetAuto ? null : numOrNull(feoForm.value.budget),
-        planned_quantity: feoForm.value.qtyAuto ? null : numOrNull(feoForm.value.planned_quantity),
-        planned_amount: feoForm.value.amtAuto ? null : numOrNull(feoForm.value.planned_amount),
-        unit: feoForm.value.unit || null,
-        feo_quantity: numOrNull(feoForm.value.feo_quantity),
-        feo_unit: feoForm.value.feo_unit || null,
-        description: feoForm.value.description?.trim() || null,
-        feo_amount: numOrNull(feoForm.value.feo_amount),
-        // План zany-fluttering-mountain.md, п.1: способ расчёта плана — при 'manual_sum'
-        // уходит введённая сумма, при 'planned_items' поле обнуляется (истина в позициях).
-        plan_source: feoForm.value.planSource,
-        manual_plan_amount: feoForm.value.planSource === 'manual_sum' ? numOrNull(feoForm.value.manual_plan_amount) : null,
-      })
-    })
-    feoCategories.value.push(res)
-    showAddFeoDialog.value = false
-    feoForm.value = { parentId: null, name: '', code: '', appendix: '', budget: null, budgetAuto: false, planned_quantity: null, qtyAuto: false, planned_amount: null, amtAuto: false, unit: '', feo_quantity: null, feo_unit: '', description: '', feo_amount: '', planSource: 'planned_items', manual_plan_amount: null }
-    showSnack('Направление добавлено')
-    if (selectedId.value) await loadFeo(selectedId.value)
-    syncFeoFilled()
-  } catch (e: any) {
-    showSnack(e?.payload?.message || e?.detail || e?.message || 'Ошибка добавления направления', 'error')
-  } finally {
-    savingFeo.value = false
-  }
+// openAddFeoDialog/startFeoEdit/confirmFeoDelete — тонкие прокси в
+// FeoCategoryDialog.vue/FeoCategoryDeleteDialog.vue. addFeoCategory/updateFeoCategory/
+// deleteFeoCategory/openAddPlannedItemFromCategoryEdit/convertCategoryEditPlanToItem
+// переехали туда же вместе с формами feoForm/feoEditForm.
+function openAddFeoDialog(parentId: number | null) {
+  feoCategoryDialogRef.value?.openAdd(parentId)
 }
 
 // Update calculated_budget on the card after FEO budget changes (using tree logic)
@@ -10921,139 +9192,11 @@ function syncFeoFilled() {
 }
 
 function startFeoEdit(node: FeoNode) {
-  feoEditTarget.value = node
-  const autoMode = node.hasChildren && node.budget === null
-  const qtyAutoMode = node.hasChildren && node.planned_quantity === null
-  const amtAutoMode = node.hasChildren && node.planned_amount === null
-  feoEditForm.value = {
-    name: node.name,
-    code: node.code || '',
-    appendix: node.appendix || '',
-    budget: node.budget ?? null,
-    budgetAuto: autoMode,
-    planned_quantity: node.planned_quantity ?? null,
-    qtyAuto: qtyAutoMode,
-    planned_amount: node.planned_amount ?? null,
-    amtAuto: amtAutoMode,
-    unit: node.unit || '',
-    is_active: node.is_active,
-    hasChildren: node.hasChildren,
-    parent_id: node.parent_id ?? null,
-    feo_quantity: node.feo_quantity ?? null,
-    feo_unit: node.feo_unit || '',
-    description: node.description || '',
-    feo_amount: node.feo_amount ?? '',
-    planSource: node.plan_source || 'planned_items',
-    manual_plan_amount: node.manual_plan_amount ?? null,
-  }
-  showEditFeoDialog.value = true
-}
-
-// Правка 2Б (2026-08-11): из диалога редактирования категории — план не задан вовсе →
-// сразу открыть форму «Добавить плановую позицию» на той же категории (переиспользует
-// openAddPlannedItem, второй диалог не заводим).
-function openAddPlannedItemFromCategoryEdit() {
-  if (!feoEditTarget.value) return
-  const categoryId = feoEditTarget.value.id
-  showEditFeoDialog.value = false
-  openAddPlannedItem(categoryId)
-}
-
-// Правка 2Б: план уже задан старым способом (planned_quantity/planned_amount на самой
-// категории) → перенести его в именованную плановую позицию тем же путём, что и кнопка
-// в панели (openConvertManualPlanToItem уже переносит кол-во/цену и после сохранения
-// сам чистит эти поля категории, см. savePlannedItem/clearCategoryManualPlan выше).
-// Функции нужен FeoNode (с hasChildren/depth), а feoEditTarget — просто FeoCategory,
-// поэтому берём актуальный узел из дерева по id — так же, как это делает
-// openEditCategoryPlan для той же категории.
-function convertCategoryEditPlanToItem() {
-  if (!feoEditTarget.value) return
-  const node = flattenAll(feoTree.value).find(n => n.id === feoEditTarget.value!.id)
-  if (!node) return
-  showEditFeoDialog.value = false
-  openConvertManualPlanToItem(node)
-}
-
-async function updateFeoCategory() {
-  if (!feoEditTarget.value) return
-  // feoEditPlanPairError больше НЕ блокирует сохранение здесь (см. комментарий у кнопки
-  // «Сохранить» в шаблоне) — planned_quantity/planned_amount не редактируются в этом
-  // диалоге, мисматч пары может прийти только унаследованным из БД, и сохранение
-  // остальных полей категории (название, код и т.д.) обязано проходить в любом случае.
-  savingFeo.value = true
-  try {
-    // Если parent_id изменился — вызываем move endpoint
-    const oldParentId = feoEditTarget.value.parent_id ?? null
-    const newParentId = feoEditForm.value.parent_id ?? null
-    if (oldParentId !== newParentId) {
-      const moveRes = await apiFetch<any>(`/feo-categories/${feoEditTarget.value.id}/move`, {
-        method: 'PATCH', body: JSON.stringify({ parent_id: newParentId }),
-      })
-      if (moveRes?.warning) showSnack(moveRes.warning, 'warning')
-    }
-    // Обновляем остальные поля
-    await apiFetch<FeoCategory>(`/feo-categories/${feoEditTarget.value.id}`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        subsidy_id: feoEditTarget.value.subsidy_id,
-        parent_id: newParentId,
-        name: feoEditForm.value.name,
-        code: feoEditForm.value.code || null,
-        appendix: feoEditForm.value.appendix || null,
-        is_active: feoEditForm.value.is_active,
-        budget: feoEditForm.value.budgetAuto ? null : numOrNull(feoEditForm.value.budget),
-        planned_quantity: feoEditForm.value.qtyAuto ? null : numOrNull(feoEditForm.value.planned_quantity),
-        planned_amount: feoEditForm.value.amtAuto ? null : numOrNull(feoEditForm.value.planned_amount),
-        unit: feoEditForm.value.unit || null,
-        feo_quantity: numOrNull(feoEditForm.value.feo_quantity),
-        feo_unit: feoEditForm.value.feo_unit || null,
-        description: feoEditForm.value.description?.trim() || null,
-        feo_amount: numOrNull(feoEditForm.value.feo_amount),
-        // План zany-fluttering-mountain.md, п.1: способ расчёта плана — см. комментарий
-        // у того же поля в addFeoCategory выше.
-        plan_source: feoEditForm.value.planSource,
-        manual_plan_amount: feoEditForm.value.planSource === 'manual_sum' ? numOrNull(feoEditForm.value.manual_plan_amount) : null,
-      })
-    })
-    showEditFeoDialog.value = false
-    showSnack('Направление обновлено')
-    if (selectedId.value) await loadFeo(selectedId.value)
-    syncFeoFilled()
-  } catch (e: any) {
-    showSnack(e?.payload?.message || e?.detail || e?.message || 'Ошибка обновления', 'error')
-  } finally {
-    savingFeo.value = false
-  }
+  feoCategoryDialogRef.value?.openEdit(node)
 }
 
 function confirmFeoDelete(node: FeoCategory) {
-  feoDeleteTarget.value = node
-  feoDeleteError.value = ''
-  showDeleteFeoDialog.value = true
-}
-
-async function deleteFeoCategory() {
-  if (!feoDeleteTarget.value) return
-  savingFeo.value = true
-  feoDeleteError.value = ''
-  try {
-    await apiFetch(`/feo-categories/${feoDeleteTarget.value.id}`, { method: 'DELETE' })
-    showDeleteFeoDialog.value = false
-    showSnack('Направление удалено', 'warning')
-    if (selectedId.value) await loadFeo(selectedId.value)
-    syncFeoFilled()
-  } catch (e: any) {
-    const detail = e?.detail
-    if (detail && typeof detail === 'object' && detail.message) {
-      feoDeleteError.value = detail.message
-      feoDeleteLinkedIds.value = detail.feo_category_ids || []
-    } else {
-      feoDeleteError.value = typeof detail === 'string' ? detail : 'Ошибка удаления'
-      feoDeleteLinkedIds.value = []
-    }
-  } finally {
-    savingFeo.value = false
-  }
+  feoCategoryDeleteDialogRef.value?.open(node)
 }
 
 // ── Budget history ────────────────────────────────
@@ -11094,324 +9237,12 @@ async function approveSubsidy(s: SubsidyRow) {
   }
 }
 
-let _memberUsersSubsidyId: number | null = null
-async function loadMemberUsers(sid: number) {
-  if (memberUsersList.value.length && _memberUsersSubsidyId === sid) return
-  try {
-    memberUsersList.value = await apiFetch<any[]>(`/users/?subsidy_id=${sid}`)
-    _memberUsersSubsidyId = sid
-  } catch { memberUsersList.value = [] }
-}
-
+// openMembersDialog — тонкий прокси в SubsidyMembersDialog.vue (loadMemberUsers/
+// addSubsidyMember/removeSubsidyMember переехали туда же). openApproversDialog/
+// openTemplateDialog теперь берутся напрямую из useSubsidyApprovers()/
+// useSubsidyTemplates() (см. константы composables ниже, вызов деструктуризацией).
 async function openMembersDialog(s: SubsidyRow) {
-  membersSubsidy.value = s
-  showMembersDialog.value = true
-  loadingMembers.value = true
-  try {
-    membersList.value = await apiFetch<SubsidyMember[]>(`/subsidies/${s.id}/members`)
-  } catch (e: any) {
-    showSnack(e.detail || 'Ошибка загрузки участников', 'error')
-  } finally {
-    loadingMembers.value = false
-  }
-  loadMemberUsers(s.id)
-}
-
-async function addSubsidyMember(userId: number | null) {
-  if (!userId || !membersSubsidy.value) { memberToAdd.value = null; return }
-  if (membersList.value.some(m => m.user_id === userId)) { memberToAdd.value = null; return }
-  addingMember.value = true
-  try {
-    const created = await apiFetch<SubsidyMember>(`/subsidies/${membersSubsidy.value.id}/members`, {
-      method: 'POST', body: JSON.stringify({ user_id: userId }),
-    })
-    membersList.value.push(created)
-    showSnack('Участник добавлен')
-  } catch (e: any) {
-    showSnack(e.detail || 'Ошибка добавления участника', 'error')
-  } finally {
-    addingMember.value = false
-    memberToAdd.value = null
-  }
-}
-
-async function removeSubsidyMember(userId: number) {
-  if (!membersSubsidy.value) return
-  try {
-    await apiFetch(`/subsidies/${membersSubsidy.value.id}/members/${userId}`, { method: 'DELETE' })
-    membersList.value = membersList.value.filter(m => m.user_id !== userId)
-    showSnack('Участник удалён', 'warning')
-  } catch (e: any) {
-    showSnack(e.detail || 'Ошибка удаления участника', 'error')
-  }
-}
-
-// ── Approvers CRUD ────────────────────────────────
-async function openApproversDialog(s: SubsidyRow) {
-  approversSubsidy.value = s
-  showApproversDialog.value = true
-  loadingApprovers.value = true
-  try {
-    const list = await apiFetch<SubsidyApprover[]>(`/subsidies/${s.id}/approvers`)
-    approversList.value = list
-    // Fix any duplicate order_nums silently
-    const hasDuplicates = list.some((a, i) => a.order_num !== i + 1)
-    if (hasDuplicates) await _renumberApprovers()
-  } catch {
-    showSnack('Ошибка загрузки согласующих', 'error')
-  } finally {
-    loadingApprovers.value = false
-  }
-}
-
-const RESPONSIBLE_PLACEHOLDER = '_________________'
-
-function onApproverRoleChange(role: string) {
-  if (role === 'Ответственный исполнитель') {
-    approverForm.value.full_name = RESPONSIBLE_PLACEHOLDER
-    approverForm.value.selectedUser = null
-    approverForm.value.user_id = null
-  }
-}
-
-function onApproverUserSelect(user: { id: number; full_name: string } | null) {
-  if (user) {
-    approverForm.value.full_name = user.full_name
-    approverForm.value.user_id = user.id
-  } else {
-    approverForm.value.full_name = ''
-    approverForm.value.user_id = null
-  }
-}
-
-function startAddApprover() {
-  approverEditTarget.value = null
-  approverForm.value = { role_name: '', full_name: '', order_num: approversList.value.length + 1, is_default: true, can_initiate: false, show_feo_path: false, user_id: null, selectedUser: null }
-  loadApproverUsers()
-  showApproverFormDialog.value = true
-}
-
-function startEditApprover(a: SubsidyApprover) {
-  approverEditTarget.value = a
-  // «Ответственный исполнитель» — роль-слот: ФИО определяется по каждой
-  // закупке, а не хранится фиксированным в настройках субсидии. Даже если
-  // в БД у старой записи оказалось живое ФИО (баг, почищен миграцией
-  // g8h9i0j1k2l3), форма редактирования не должна его снова показывать и
-  // молча сохранять обратно — иначе правка любого другого поля этой строки
-  // (например order_num) вернула бы фиксированное ФИО.
-  const isResponsibleRole = a.role_name === 'Ответственный исполнитель'
-  const foundUser = (!isResponsibleRole && a.user_id)
-    ? (approverUsersList.value.find(u => u.id === a.user_id) ?? null)
-    : null
-  approverForm.value = {
-    role_name: a.role_name,
-    full_name: isResponsibleRole ? RESPONSIBLE_PLACEHOLDER : a.full_name,
-    order_num: a.order_num,
-    is_default: a.is_default,
-    can_initiate: a.can_initiate,
-    show_feo_path: a.show_feo_path ?? false,
-    user_id: isResponsibleRole ? null : (a.user_id ?? null),
-    selectedUser: foundUser,
-  }
-  loadApproverUsers().then(() => {
-    // re-resolve after load in case list was empty when dialog opened
-    if (!isResponsibleRole && a.user_id && !approverForm.value.selectedUser) {
-      approverForm.value.selectedUser = approverUsersList.value.find(u => u.id === a.user_id) ?? null
-    }
-  })
-  showApproverFormDialog.value = true
-}
-
-async function saveApprover() {
-  if (!approversSubsidy.value) return
-  savingApprover.value = true
-  const sid = approversSubsidy.value.id
-  const { selectedUser: _su, ...formData } = approverForm.value
-  try {
-    if (approverEditTarget.value) {
-      const updated = await apiFetch<SubsidyApprover>(`/subsidies/${sid}/approvers/${approverEditTarget.value.id}`, {
-        method: 'PUT',
-        body: JSON.stringify(formData),
-      })
-      const idx = approversList.value.findIndex(a => a.id === updated.id)
-      if (idx >= 0) approversList.value[idx] = updated
-    } else {
-      const created = await apiFetch<SubsidyApprover>(`/subsidies/${sid}/approvers`, {
-        method: 'POST',
-        body: JSON.stringify(formData),
-      })
-      approversList.value.push(created)
-    }
-    showApproverFormDialog.value = false
-    showSnack(approverEditTarget.value ? 'Обновлено' : 'Добавлено')
-  } catch (e: any) {
-    console.error('saveApprover failed:', e)
-    showSnack('Ошибка сохранения', 'error')
-  } finally {
-    savingApprover.value = false
-  }
-}
-
-async function deleteApprover(a: SubsidyApprover) {
-  if (!approversSubsidy.value) return
-  try {
-    await apiFetch(`/subsidies/${approversSubsidy.value.id}/approvers/${a.id}`, { method: 'DELETE' })
-    approversList.value = approversList.value.filter(x => x.id !== a.id)
-    await _renumberApprovers()
-    showSnack('Удалено', 'warning')
-  } catch {
-    showSnack('Ошибка удаления', 'error')
-  }
-}
-
-async function moveApprover(index: number, direction: -1 | 1) {
-  const list = approversList.value
-  const swapIdx = index + direction
-  if (swapIdx < 0 || swapIdx >= list.length) return
-  // Swap in local list
-  const tmp = list[index]
-  list[index] = list[swapIdx]
-  list[swapIdx] = tmp
-  approversList.value = [...list]
-  await _renumberApprovers()
-}
-
-async function _renumberApprovers() {
-  if (!approversSubsidy.value) return
-  const sid = approversSubsidy.value.id
-  for (let i = 0; i < approversList.value.length; i++) {
-    const a = approversList.value[i]
-    if (a.order_num !== i + 1) {
-      try {
-        const updated = await apiFetch<SubsidyApprover>(`/subsidies/${sid}/approvers/${a.id}`, {
-          method: 'PUT',
-          body: JSON.stringify({ ...a, order_num: i + 1 }),
-        })
-        approversList.value[i] = updated
-      } catch {}
-    }
-  }
-}
-
-// ── Template management (multi-type) ──────────────
-async function openTemplateDialog(s: SubsidyRow) {
-  templateSubsidy.value = s
-  showTemplateDialog.value = true
-  subsidyTemplatesList.value = []
-  try {
-    const list = await apiFetch<Array<{ doc_type: string; label: string; has_custom: boolean; has_global: boolean; render_ok?: boolean | null }>>(
-      `/subsidies/${s.id}/templates`
-    )
-    subsidyTemplatesList.value = list
-    contractTemplates.value[s.id] = list.some(t => t.has_custom)
-  } catch {
-    subsidyTemplatesList.value = []
-  }
-}
-
-function triggerTemplateUpload(docType: string) {
-  uploadingDocType.value = docType
-  templateFileInputRef.value?.click()
-}
-
-async function onTemplateFileSelected(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0]
-  if (!file || !templateSubsidy.value || !uploadingDocType.value) return
-  const token = localStorage.getItem('auth_token')
-  const fd = new FormData()
-  fd.append('file', file)
-  try {
-    const res = await fetch(`/api/subsidies/${templateSubsidy.value.id}/templates/${uploadingDocType.value}`, {
-      method: 'PUT',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      body: fd,
-    })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}))
-      const detail = err.detail || `Ошибка загрузки (HTTP ${res.status})`
-      throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail))
-    }
-    showSnack('Шаблон загружен')
-    await openTemplateDialog(templateSubsidy.value)
-  } catch (e: any) {
-    showSnack(e.message || 'Ошибка загрузки шаблона', 'error')
-  } finally {
-    uploadingDocType.value = null
-    ;(event.target as HTMLInputElement).value = ''
-  }
-}
-
-const DOC_TYPE_RU: Record<string, string> = {
-  service_note_delivery: 'Служебная_записка_выдача',
-  service_note_payment: 'Служебная_записка_оплата',
-  service_note_procurement: 'Служебная_записка_закупка',
-  service_note_advance: 'Служебная_записка_аванс',
-  contract_tz: 'Договор_с_ТЗ',
-  tech_spec: 'Техническое_задание',
-  tech_spec_request: 'ТЗ_запрос_цен',
-  tech_spec_contract: 'ТЗ_к_договору',
-  contract: 'Договор',
-  approval_sheet: 'Лист_согласования',
-  order_purchase: 'Приказ_о_закупке',
-  contract_services: 'Договор_услуг',
-  // Алиасы — сохранены на бэке для старых закупок, оставлены и здесь на всякий случай
-  contract_services_large: 'Договор_услуги_крупный',
-  contract_services_small: 'Договор_услуги_малый',
-  contract_services_food: 'Договор_услуги_питание',
-  methodology_large: 'Методические_рекомендации_большие',
-  methodology_small: 'Методические_рекомендации_малые',
-  contract_goods_single: 'Договор_поставка_единственный',
-  contract_gph_individual: 'Договор_ГПХ_физлицо',
-  contract_gph_individual_rid: 'Договор_ГПХ_физлицо_РИД',
-  contract_repair_vehicle: 'Договор_ремонт_ТС',
-  contract_repair_framework: 'Договор_ремонт_рамочный',
-  fabrikant_instruction: 'Фабрикант_инструкция',
-  fabrikant_application_form: 'Фабрикант_форма_заявки',
-  fabrikant_documentation: 'Фабрикант_документация',
-  fabrikant_contract_project: 'Фабрикант_проект_договора',
-}
-
-async function downloadSubsidyTemplate(docType: string) {
-  if (!templateSubsidy.value) return
-  const token = localStorage.getItem('auth_token')
-  const res = await fetch(`/api/subsidies/${templateSubsidy.value.id}/templates/${docType}/download?t=${Date.now()}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  })
-  if (!res.ok) { showSnack('Ошибка скачивания', 'error'); return }
-  const blob = await res.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  const ruName = DOC_TYPE_RU[docType] || docType
-  a.download = `Шаблон_${ruName}_субсидия_${templateSubsidy.value.id}.docx`
-  a.click()
-  URL.revokeObjectURL(url)
-}
-
-async function deleteSubsidyTemplate(docType: string) {
-  if (!templateSubsidy.value) return
-  try {
-    await apiFetch(`/subsidies/${templateSubsidy.value.id}/templates/${docType}`, { method: 'DELETE' })
-    showSnack('Шаблон удалён', 'warning')
-    await openTemplateDialog(templateSubsidy.value)
-  } catch {
-    showSnack('Ошибка удаления шаблона', 'error')
-  }
-}
-
-async function downloadMarkupGuide() {
-  const token = localStorage.getItem('auth_token')
-  const res = await fetch('/api/documents/template-guide', {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  })
-  if (!res.ok) { showSnack('Ошибка скачивания руководства', 'error'); return }
-  const blob = await res.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = 'Инструкция_по_шаблонам.docx'
-  a.click()
-  URL.revokeObjectURL(url)
+  await subsidyMembersDialogRef.value?.open(s)
 }
 
 // ── Helpers ───────────────────────────────────────
@@ -11423,12 +9254,6 @@ function progressColor(p: number) {
   if (p > 100) return '#EF4444'
   if (p >= 80) return '#F59E0B'
   return '#22C55E'
-}
-
-function formatCurrency(v: number | string) {
-  // API отдаёт Decimal строками — без Number() toLocaleString вернёт строку как есть, без пробелов-разрядов
-  const n = Number(v) || 0
-  return n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽'
 }
 
 function formatCurrencyRound(v: number | string) {
@@ -11458,185 +9283,59 @@ function showSnack(
 }
 
 // ── Contractor override ─────────────────────────
+// openContractorOverride — тонкий прокси в SubsidyContractorOverrideDialog.vue
+// (saveContractorOverride/overrideForm переехали туда же).
 async function openContractorOverride(s: SubsidyRow) {
-  if (!s.contractor_id) return
-  overrideSubsidyId.value = s.id
-  try {
-    const data = await apiFetch<any>(`/subsidies/${s.id}/contractor-override`)
-    overrideForm.value = {
-      org_type: data.org_type || '',
-      inn: data.inn || '',
-      kpp: data.kpp || '',
-      ogrn: data.ogrn || '',
-      signatory_last_name: data.signatory_last_name || '',
-      signatory_first_name: data.signatory_first_name || '',
-      signatory_middle_name: data.signatory_middle_name || '',
-      signatory_position: data.signatory_position || '',
-      signatory_basis: data.signatory_basis || '',
-      address: data.address || '',
-      postal_address: data.postal_address || '',
-      contact_person: data.contact_person || '',
-      phone: data.phone || '',
-      email: data.email || '',
-      org_phone: data.org_phone || '',
-      org_email: data.org_email || '',
-      bank_details: data.bank_details || '',
-      settlement_account: data.settlement_account || '',
-      bank_name: data.bank_name || '',
-      bik: data.bik || '',
-      correspondent_account: data.correspondent_account || '',
-    }
-    showOverrideDialog.value = true
-  } catch {
-    showSnack('Ошибка загрузки реквизитов', 'error')
-  }
+  await contractorOverrideDialogRef.value?.open(s)
 }
 
-async function saveContractorOverride() {
-  if (!overrideSubsidyId.value) return
-  savingOverride.value = true
-  try {
-    await apiFetch(`/subsidies/${overrideSubsidyId.value}/contractor-override`, {
-      method: 'PUT',
-      body: JSON.stringify(overrideForm.value),
-    })
-    showOverrideDialog.value = false
-    showSnack('Реквизиты сохранены')
-  } catch (e: any) {
-    console.error('upsertContractorOverride failed:', e)
-    showSnack('Ошибка сохранения', 'error')
-  } finally {
-    savingOverride.value = false
-  }
-}
-
-// ── Events (Мероприятия) CRUD ──
+// ── Events (Мероприятия) — состояние и loadEvents делегированы
+// SubsidyEventsPanel.vue через ref (addEvent/saveEditEvent/deleteEvent/
+// downloadReport переехали туда же); watcher'ы globalSubsidyId/toggleSelect
+// ниже по файлу продолжают вызывать loadEvents(id) текстуально без изменений.
 async function loadEvents(subsidyId: number) {
-  try {
-    subsidyEvents.value = await apiFetch<EventItem[]>(`/events/?subsidy_id=${subsidyId}`)
-  } catch {
-    subsidyEvents.value = []
-  }
+  await eventsPanelRef.value?.reload(subsidyId)
 }
 
-async function addEvent() {
-  if (!newEventName.value.trim() || !selectedId.value) return
-  try {
-    await apiFetch('/events/', {
-      method: 'POST',
-      body: JSON.stringify({
-        subsidy_id: selectedId.value,
-        name: newEventName.value.trim(),
-        is_active: true,
-        region: newEventRegion.value.trim() || null,
-        date_from: newEventDateFrom.value || null,
-        date_to: newEventDateTo.value || null,
-        order_decree: newEventOrderDecree.value.trim() || null,
-        planned_indicators: newEventPlannedIndicators.value.trim() || null,
-        actual_indicators: newEventActualIndicators.value.trim() || null,
-        media_link_1: newEventMediaLink1.value.trim() || null,
-        media_link_2: newEventMediaLink2.value.trim() || null,
-        media_link_3: newEventMediaLink3.value.trim() || null,
-      }),
-    })
-    showAddEventDialog.value = false
-    newEventName.value = ''
-    newEventRegion.value = ''
-    newEventDateFrom.value = ''
-    newEventDateTo.value = ''
-    newEventOrderDecree.value = ''
-    newEventPlannedIndicators.value = ''
-    newEventActualIndicators.value = ''
-    newEventMediaLink1.value = ''
-    newEventMediaLink2.value = ''
-    newEventMediaLink3.value = ''
-    await loadEvents(selectedId.value)
-    showSnack('Мероприятие добавлено')
-  } catch (e: any) {
-    showSnack(e?.payload?.detail || e?.payload?.message || e?.message || 'Ошибка', 'error')
-  }
-}
+// ── Ссылки на диалоги, вынесенные в components/subsidies/*: родитель дальше
+// не хранит их форм/состояния, только дёргает исключённые наружу open()-методы
+// (см. startEdit/confirmDelete/startFeoEdit/confirmFeoDelete/openMembersDialog/
+// openContractorOverride/loadEvents выше и openAddFeoDialog чуть выше) —
+// вызовы из внешнего списка субсидий/дерева ФЭО остаются текстуально теми же.
+const eventsPanelRef = ref<InstanceType<typeof SubsidyEventsPanel> | null>(null)
+const subsidyEditDialogRef = ref<InstanceType<typeof SubsidyEditDialog> | null>(null)
+const subsidyDeleteDialogRef = ref<InstanceType<typeof SubsidyDeleteDialog> | null>(null)
+const feoCategoryDialogRef = ref<InstanceType<typeof FeoCategoryDialog> | null>(null)
+const feoCategoryDeleteDialogRef = ref<InstanceType<typeof FeoCategoryDeleteDialog> | null>(null)
+const subsidyMembersDialogRef = ref<InstanceType<typeof SubsidyMembersDialog> | null>(null)
+const contractorOverrideDialogRef = ref<InstanceType<typeof SubsidyContractorOverrideDialog> | null>(null)
 
-function openEditEventDialog(ev: EventItem) {
-  editEventForm.value = {
-    id: ev.id,
-    subsidy_id: ev.subsidy_id,
-    name: ev.name,
-    is_active: ev.is_active,
-    region: ev.region || '',
-    date_from: ev.date_from || '',
-    date_to: ev.date_to || '',
-    order_decree: ev.order_decree || '',
-    planned_indicators: ev.planned_indicators || '',
-    actual_indicators: ev.actual_indicators || '',
-    media_link_1: ev.media_link_1 || '',
-    media_link_2: ev.media_link_2 || '',
-    media_link_3: ev.media_link_3 || '',
-  }
-  showEditEventDialog.value = true
-}
+// Согласующие/шаблоны — общие composables (module-level singleton state, см.
+// их докстринги): диалоги-компоненты вызывают useSubsidyApprovers()/
+// useSubsidyTemplates() сами, парент берёт отсюда только то, что нужно
+// внешним триггерам (кнопки в списке субсидий) и contractTemplates (единственный
+// источник признака «есть свои шаблоны» для иконки в списке).
+const { openApproversDialog } = useSubsidyApprovers()
+const { openTemplateDialog, contractTemplates, loadTemplateVars } = useSubsidyTemplates()
 
-async function saveEditEvent() {
-  if (!editEventForm.value.name.trim() || !selectedId.value) return
-  savingEvent.value = true
-  try {
-    const f = editEventForm.value
-    await apiFetch(`/events/${f.id}`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        subsidy_id: f.subsidy_id,
-        name: f.name.trim(),
-        is_active: f.is_active,
-        region: f.region || null,
-        date_from: f.date_from || null,
-        date_to: f.date_to || null,
-        order_decree: f.order_decree || null,
-        planned_indicators: f.planned_indicators || null,
-        actual_indicators: f.actual_indicators || null,
-        media_link_1: f.media_link_1 || null,
-        media_link_2: f.media_link_2 || null,
-        media_link_3: f.media_link_3 || null,
-      }),
-    })
-    showEditEventDialog.value = false
-    await loadEvents(selectedId.value)
-    showSnack('Мероприятие обновлено')
-  } catch (e: any) {
-    showSnack(e?.payload?.detail || e?.payload?.message || e?.message || 'Ошибка', 'error')
-  } finally {
-    savingEvent.value = false
-  }
-}
-
-async function downloadReport(subsidyId: number) {
-  try {
-    const token = localStorage.getItem('auth_token') || localStorage.getItem('access_token') || ''
-    const resp = await fetch(`/api/reports/subsidy/${subsidyId}/xlsx`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    if (!resp.ok) throw new Error(`Ошибка ${resp.status}`)
-    const blob = await resp.blob()
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `Приложение_3_субсидия_${subsidyId}.xlsx`
-    a.click()
-    URL.revokeObjectURL(url)
-  } catch (e: any) {
-    showSnack(e.message || 'Ошибка скачивания', 'error')
-  }
-}
-
-async function deleteEvent(eventId: number) {
-  if (!selectedId.value) return
-  try {
-    await apiFetch(`/events/${eventId}`, { method: 'DELETE' })
-    await loadEvents(selectedId.value)
-    showSnack('Мероприятие удалено')
-  } catch (e: any) {
-    showSnack(e?.payload?.detail || e?.payload?.message || e?.message || 'Ошибка', 'error')
-  }
-}
+// Контекст детали субсидии для вынесенных диалогов (provide/inject, см.
+// composables/subsidies/useSubsidyDetail.ts) — единственная точка, откуда они
+// читают/пишут состояние, оставшееся в родителе (список субсидий, дерево ФЭО).
+provideSubsidyDetail({
+  router,
+  allSubsidies,
+  loadAll,
+  selectedId,
+  selectedSubsidy,
+  feoCategories,
+  feoTree,
+  flattenAll,
+  loadFeo,
+  syncFeoFilled,
+  openAddPlannedItem,
+  openConvertManualPlanToItem,
+  getFeoPlanManual: (categoryId: number) => Number(planTreeByCat.value[categoryId]?.plan_manual || 0),
+})
 
 onMounted(() => {
   loadAll()

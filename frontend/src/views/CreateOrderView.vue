@@ -2310,41 +2310,16 @@
       </v-card>
 
       <!-- Purchase broadcast dialog -->
-      <v-dialog v-model="pBroadcastDialog" max-width="480" persistent :fullscreen="mobile">
-        <v-card>
-          <v-card-title class="d-flex align-center gap-2 pt-4">
-            <v-icon color="orange">mdi-bullhorn</v-icon>
-            Рассылка из закупки
-          </v-card-title>
-          <v-card-text>
-            <div class="text-caption text-medium-emphasis mb-3">
-              Сообщение будет отправлено каждому сотруднику индивидуально в Telegram
-            </div>
-            <v-radio-group v-model="pBroadcastScope" class="mb-3">
-              <v-radio value="department" label="Отдел" />
-              <v-radio value="organization" label="Организация" />
-              <v-radio v-if="pBroadcastOrgs.length > 1" value="all" label="Все организации" />
-            </v-radio-group>
-            <v-select v-if="pBroadcastScope === 'department'" v-model="pBroadcastScopeId"
-              :items="pBroadcastDepts" item-title="name" item-value="id"
-              label="Выберите отдел" variant="outlined" density="compact" class="mb-3" />
-            <v-select v-if="pBroadcastScope === 'organization'" v-model="pBroadcastScopeId"
-              :items="pBroadcastOrgs" item-title="name" item-value="id"
-              label="Выберите организацию" variant="outlined" density="compact" class="mb-3" />
-            <v-textarea v-model="pBroadcastText" label="Текст сообщения" variant="outlined"
-              density="compact" rows="3" autofocus />
-          </v-card-text>
-          <v-card-actions>
-            <v-spacer />
-            <v-btn variant="text" @click="pBroadcastDialog = false">Отмена</v-btn>
-            <v-btn color="orange" variant="tonal" :loading="pBroadcastSending"
-              :disabled="!pBroadcastText.trim() || (pBroadcastScope !== 'all' && !pBroadcastScopeId)"
-              @click="sendPurchaseBroadcast">
-              Отправить
-            </v-btn>
-          </v-card-actions>
-        </v-card>
-      </v-dialog>
+      <PurchaseBroadcastDialog
+        v-model="pBroadcastDialog"
+        v-model:scope="pBroadcastScope"
+        v-model:scope-id="pBroadcastScopeId"
+        v-model:text="pBroadcastText"
+        :sending="pBroadcastSending"
+        :orgs="pBroadcastOrgs"
+        :depts="pBroadcastDepts"
+        @send="sendPurchaseBroadcast"
+      />
 
       <!-- 7. Файлы (скрыто для employee, если нет права purchase_files.upload и не участник/согласующий) -->
       <v-card v-if="canSeePurchaseDocs" variant="outlined" class="mb-4">
@@ -2649,7 +2624,7 @@
             Запрос коммерческих предложений
           </span>
           <v-btn color="cyan-darken-2" variant="tonal" size="small" prepend-icon="mdi-email-multiple-outline"
-            @click="openKpDialog">
+            @click="kpDialogRef?.openKpDialog()">
             Разослать КП
           </v-btn>
         </v-card-title>
@@ -2832,79 +2807,20 @@
         </v-card-text>
       </v-card>
 
-      <!-- Диалог создания связанной задачи -->
-      <v-dialog v-model="linkedTaskDialog" max-width="560" persistent :fullscreen="mobile">
-        <v-card>
-          <v-card-title class="text-subtitle-1 pt-4 px-4">
-            <v-icon class="mr-1" size="20">mdi-clipboard-plus-outline</v-icon>
-            Задача по закупке
-          </v-card-title>
-          <v-card-text>
-            <v-text-field v-model="linkedTaskForm.title" label="Заголовок задачи" variant="outlined"
-              density="compact" class="mb-3" :rules="[v => !!v || 'Обязательно']" />
-            <v-textarea v-model="linkedTaskForm.description" label="Описание" variant="outlined"
-              density="compact" rows="2" class="mb-3" />
-            <div class="d-flex gap-3 mb-3">
-              <v-select v-model="linkedTaskForm.priority" :items="TASK_PRIORITIES"
-                item-title="title" item-value="value"
-                label="Приоритет" variant="outlined" density="compact" style="max-width:180px" />
-              <v-text-field v-model="linkedTaskForm.due_date" label="Срок" type="date"
-                variant="outlined" density="compact" />
-            </div>
-            <v-autocomplete v-model="linkedTaskForm.assignee_ids" :items="allUsers"
-              item-title="text" item-value="value" label="Исполнители" variant="outlined"
-              density="compact" multiple chips closable-chips />
-          </v-card-text>
-          <v-card-actions>
-            <v-spacer />
-            <v-btn variant="text" @click="linkedTaskDialog = false">Отмена</v-btn>
-            <v-btn color="primary" variant="tonal" :loading="linkedTaskSaving"
-              :disabled="!linkedTaskForm.title" @click="saveLinkedTask">
-              Создать
-            </v-btn>
-          </v-card-actions>
-        </v-card>
-      </v-dialog>
-
-      <!-- Диалог привязки существующей задачи -->
-      <v-dialog v-model="linkTaskDialog" max-width="520" :fullscreen="mobile">
-        <v-card>
-          <v-card-title class="text-subtitle-1 pt-4 px-4">
-            <v-icon class="mr-1" size="20">mdi-link-variant</v-icon>
-            Привязать задачу к закупке
-          </v-card-title>
-          <v-card-text>
-            <v-text-field v-model="linkTaskSearch" label="Поиск по названию задачи" variant="outlined"
-              density="compact" prepend-inner-icon="mdi-magnify" clearable autofocus
-              @update:model-value="searchUnlinkedTasks" />
-            <div v-if="linkTaskSearching" class="d-flex justify-center py-4"><v-progress-circular indeterminate size="24" /></div>
-            <v-list v-else-if="linkTaskResults.length" density="compact" class="border rounded" style="max-height:300px;overflow-y:auto">
-              <v-list-item v-for="t in linkTaskResults" :key="t.id" @click="linkExistingTask(t.id)">
-                <template #prepend>
-                  <v-icon :color="taskStatusColor(t.status)" size="18">
-                    {{ t.status === 'done' ? 'mdi-check-circle' : t.status === 'in_progress' ? 'mdi-progress-clock' : 'mdi-circle-outline' }}
-                  </v-icon>
-                </template>
-                <v-list-item-title class="text-body-2">{{ t.title }}</v-list-item-title>
-                <v-list-item-subtitle class="text-caption">
-                  {{ t.assignees?.map((a: any) => a.user_name).join(', ') || 'Без исполнителя' }}
-                  <span v-if="t.purchase_id" class="text-warning ml-1">(уже привязана)</span>
-                </v-list-item-subtitle>
-              </v-list-item>
-            </v-list>
-            <div v-else-if="linkTaskSearch" class="text-caption text-medium-emphasis text-center py-4">
-              Задачи не найдены
-            </div>
-            <div v-else class="text-caption text-medium-emphasis text-center py-4">
-              Введите текст для поиска задач
-            </div>
-          </v-card-text>
-          <v-card-actions>
-            <v-spacer />
-            <v-btn variant="text" @click="linkTaskDialog = false">Закрыть</v-btn>
-          </v-card-actions>
-        </v-card>
-      </v-dialog>
+      <!-- Диалоги задач закупки -->
+      <LinkedTaskDialogs
+        v-model:linked-task-open="linkedTaskDialog"
+        v-model:link-open="linkTaskDialog"
+        v-model:search-text="linkTaskSearch"
+        :form="linkedTaskForm"
+        :saving="linkedTaskSaving"
+        :all-users="allUsers"
+        :results="linkTaskResults"
+        :searching="linkTaskSearching"
+        @save="saveLinkedTask"
+        @search="searchUnlinkedTasks"
+        @link="linkExistingTask"
+      />
 
       <!-- Кнопки -->
       <div class="d-flex gap-3 mt-4 flex-wrap align-center">
@@ -3218,124 +3134,32 @@
     </v-dialog>
 
     <!-- Диалог подтверждения превышения бюджета -->
-    <v-dialog v-model="budgetOverrideDialog" max-width="480" :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="text-h6 d-flex align-center ga-2">
-          <v-icon color="warning">mdi-alert</v-icon>
-          Превышение бюджета субсидии
-        </v-card-title>
-        <v-card-text>
-          <v-alert type="warning" variant="tonal" class="mb-3">
-            Сумма закупки превышает остаток бюджета субсидии на
-            <strong>{{ budgetInfo ? formatMoney(budgetInfo.over) : '' }}</strong>.
-          </v-alert>
-          Как администратор вы можете сохранить закупку с превышением бюджета.
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="outlined" @click="budgetOverrideDialog = false">Отмена</v-btn>
-          <v-btn color="warning" variant="flat" :loading="saving" @click="doSave(true)">
-            Сохранить с превышением
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <v-dialog v-model="feoPerItemDisableDialog" max-width="480" :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="text-h6 d-flex align-center ga-2">
-          <v-icon color="warning">mdi-alert</v-icon>
-          Отключить разные ФЭО по позициям?
-        </v-card-title>
-        <v-card-text>
-          У {{ feoPerItemDisableCount }} {{ feoPerItemDisableCount === 1 ? 'позиции' : 'позиций' }} указана своя категория ФЭО — при отключении режима она будет очищена.
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="outlined" @click="cancelFeoPerItemDisable">Отмена</v-btn>
-          <v-btn color="warning" variant="flat" @click="confirmFeoPerItemDisable">Отключить</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <v-dialog v-model="duplicateDialog" max-width="560" :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="text-warning">Возможный повтор закупки</v-card-title>
-        <v-card-text>
-          <div class="mb-3">Уже есть разовые закупки с этим контрагентом и совпадающей суммой (НМЦК, цена договора или платёж). Возможно, это повтор:</div>
-          <v-list density="compact">
-            <v-list-item v-for="m in duplicateMatches" :key="m.id"
-              @click="$router.push(`/orders/${m.id}/edit`)" style="cursor:pointer;">
-              <v-list-item-title>№{{ m.purchase_number ?? m.id }} — {{ m.name || 'без названия' }}</v-list-item-title>
-              <v-list-item-subtitle>
-                {{ m.total_nmck != null ? Number(m.total_nmck).toLocaleString('ru-RU') + ' ₽' : '' }}
-                <span v-if="(m as any).match_reason"> · совпало по: {{ (m as any).match_reason }}</span>
-                <span v-if="m.contract_date"> · {{ m.contract_date }}</span>
-                · {{ m.status }}
-              </v-list-item-subtitle>
-              <template #append><v-icon size="small">mdi-open-in-new</v-icon></template>
-            </v-list-item>
-          </v-list>
-        </v-card-text>
-        <v-card-actions class="px-4 pb-4">
-          <v-spacer/>
-          <v-btn variant="text" @click="duplicateDialog = false">Отмена</v-btn>
-          <v-btn color="warning" variant="flat" @click="confirmDuplicateSave">Всё равно сохранить</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <!-- Владелец (2026-08-21, дефект «Цена договора пустая»): переход в «Договор»
-         молча подставлял сумму позиций (backend Phase 27.1 D-07) без единого
-         подтверждения — предлагаем проверить цену и перечень позиций (обычно
-         переносятся из ТЗ) перед заключением договора. -->
-    <v-dialog v-model="showContractedConfirm" max-width="560" :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="text-subtitle-1 font-weight-bold d-flex align-center ga-2">
-          <v-icon color="indigo">mdi-file-sign</v-icon>
-          Проверьте перед переходом в «Договор»
-        </v-card-title>
-        <v-card-text>
-          <div class="mb-3">
-            Цена договора = сумма позиций
-            <strong>{{ formatMoney(displayNmck) }}</strong>.
-            Проверьте перед заключением договора — при необходимости измените ниже.
-          </div>
-          <v-text-field
-            v-model.number="form.contract_price"
-            label="Цена договора" type="number" variant="outlined" density="compact"
-            suffix="₽" hide-details class="mb-3"
-            @update:model-value="contractPriceMode = 'manual'"
-          />
-          <div class="text-caption text-medium-emphasis mb-1">
-            В договор уйдут позиции ниже. Названия обычно переносятся из ТЗ — если что-то
-            нужно поправить, откройте редактор позиций.
-          </div>
-          <v-list density="compact" class="mb-2" style="max-height:260px;overflow-y:auto">
-            <v-list-item v-for="(it, idx) in contractedConfirmItems" :key="idx">
-              <v-list-item-title>{{ it.name }}</v-list-item-title>
-              <v-list-item-subtitle>
-                {{ it.qty ?? '—' }} {{ it.unit || '' }} × {{ it.price != null ? formatMoney(it.price) : '—' }}
-              </v-list-item-subtitle>
-            </v-list-item>
-            <v-list-item v-if="!contractedConfirmItems.length">
-              <v-list-item-title class="text-medium-emphasis">Позиции не заполнены</v-list-item-title>
-            </v-list-item>
-          </v-list>
-          <v-btn size="small" variant="text" color="primary" prepend-icon="mdi-pencil"
-            @click="editItemsBeforeContract">
-            Изменить позиции
-          </v-btn>
-        </v-card-text>
-        <v-card-actions class="px-4 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="showContractedConfirm = false">Отмена</v-btn>
-          <v-btn color="indigo" variant="flat" :loading="transitioning" @click="confirmContractedTransition">
-            Всё верно, перейти в «Договор»
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- Диалоги подтверждения (превышение бюджета / отключение per-item ФЭО /
+         повтор закупки / переход в «Договор») — сама логика (doSave, save/
+         transition) остаётся в этом файле, компонент только показывает и
+         эмитит намерение пользователя. -->
+    <PurchaseConfirmDialogs
+      v-model:budget-override-open="budgetOverrideDialog"
+      v-model:feo-per-item-disable-open="feoPerItemDisableDialog"
+      v-model:duplicate-open="duplicateDialog"
+      v-model:contracted-confirm-open="showContractedConfirm"
+      v-model:contract-price="form.contract_price"
+      :budget-info="budgetInfo"
+      :saving="saving"
+      :feo-per-item-disable-count="feoPerItemDisableCount"
+      :duplicate-matches="duplicateMatches"
+      :contracted-confirm-items="contractedConfirmItems"
+      :transitioning="transitioning"
+      :display-nmck="displayNmck"
+      :format-money="formatMoney"
+      @save-with-override="doSave(true)"
+      @cancel-feo-disable="cancelFeoPerItemDisable"
+      @confirm-feo-disable="confirmFeoPerItemDisable"
+      @confirm-duplicate-save="confirmDuplicateSave"
+      @edit-items-before-contract="editItemsBeforeContract"
+      @confirm-contracted-transition="confirmContractedTransition"
+      @contract-price-edited="contractPriceMode = 'manual'"
+    />
 
     <!-- Генератор ежемесячных этапов рамочного договора -->
     <MonthlyStagesDialog
@@ -3350,27 +3174,13 @@
     />
 
     <!-- Split purchase kanban dialog -->
-    <v-dialog v-model="splitKanbanDialog" max-width="1200" scrollable :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="pa-4 pb-2">
-          <v-icon class="mr-2" color="primary">mdi-call-split</v-icon>
-          Разбить закупку на несколько
-          <span class="text-caption text-medium-emphasis ml-3">
-            · Перетащите позиции по колонкам, затем «Разбить на N закупок»
-          </span>
-        </v-card-title>
-        <v-card-text class="pa-4">
-          <PurchaseSplitKanban
-            v-if="splitKanbanDialog && splitKanbanItems.length && purchaseId"
-            :purchase-id="purchaseId"
-            :items="splitKanbanItems"
-            @split="onPurchaseSplit"
-            @cancel="splitKanbanDialog = false"
-            @error="(m: string) => showSnack(m, 'error')"
-          />
-        </v-card-text>
-      </v-card>
-    </v-dialog>
+    <SplitKanbanDialog
+      v-model="splitKanbanDialog"
+      :purchase-id="purchaseId"
+      :items="splitKanbanItems"
+      @split="onPurchaseSplit"
+      @error="(m: string) => showSnack(m, 'error')"
+    />
 
     <!-- File preview dialog -->
     <v-dialog v-model="previewDialog" max-width="900" scrollable :fullscreen="mobile">
@@ -3578,256 +3388,7 @@
     </v-dialog>
 
     <!-- КП dialog -->
-    <v-dialog v-model="kpDialog" max-width="780" scrollable :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="text-h6 pt-4 px-6 d-flex align-center gap-2">
-          <v-icon color="cyan-darken-2">mdi-email-multiple-outline</v-icon>
-          Запрос коммерческих предложений
-          <v-progress-circular v-if="kpItemsLoading" size="18" indeterminate color="cyan-darken-2" class="ml-2" />
-        </v-card-title>
-        <v-card-text class="px-6 pb-2">
-
-          <!-- Intro text + delivery date -->
-          <v-row dense class="mb-1">
-            <v-col cols="8">
-              <div class="text-subtitle-2 mb-1">Вводный текст письма</div>
-              <v-textarea
-                v-model="kpIntroText"
-                variant="outlined" density="compact" rows="3" auto-grow hide-details
-                placeholder="Уважаемые коллеги, просим предоставить коммерческое предложение..."
-              />
-            </v-col>
-            <v-col cols="4">
-              <div class="text-subtitle-2 mb-1">Срок поставки</div>
-              <v-text-field
-                v-model="kpDeliveryDate"
-                variant="outlined" density="compact" hide-details
-                placeholder="до 31.12.2026"
-              />
-            </v-col>
-          </v-row>
-
-          <!-- Contractor selector -->
-          <div class="text-subtitle-2 mb-1 mt-3">Получатели</div>
-          <div class="d-flex align-center gap-2 mb-2">
-            <v-autocomplete
-              v-model="kpSelected"
-              :items="kpContractorOptions"
-              item-title="label"
-              item-value="id"
-              label="Найти контрагента"
-              variant="outlined" density="compact"
-              multiple hide-selected hide-details
-              class="flex-grow-1"
-              no-data-text="Не найдено"
-            />
-          </div>
-
-          <!-- Selected contractors list -->
-          <div v-if="kpSelected.length" class="mb-3">
-            <div
-              v-for="cid in kpSelected" :key="cid"
-              class="d-flex align-center gap-2 pa-2 rounded mb-1"
-              style="border: 1px solid rgba(0,0,0,0.12);"
-            >
-              <v-icon icon="mdi-domain" size="small" color="cyan-darken-2" />
-              <span class="text-body-2 font-weight-medium" style="min-width:140px">
-                {{ kpContractorList.find(c=>c.id===cid)?.name }}
-              </span>
-
-              <template v-if="kpEditEmailId !== cid">
-                <span v-if="kpContractorList.find(c=>c.id===cid)?.email" class="text-body-2 text-medium-emphasis flex-grow-1">
-                  {{ kpContractorList.find(c=>c.id===cid)?.email }}
-                </span>
-                <v-chip v-else color="warning" size="x-small" variant="tonal" class="flex-grow-1">
-                  <v-icon start icon="mdi-alert-circle-outline" />
-                  нет email
-                </v-chip>
-                <v-btn
-                  :icon="kpContractorList.find(c=>c.id===cid)?.email ? 'mdi-pencil-outline' : 'mdi-email-plus-outline'"
-                  size="x-small" variant="text"
-                  :color="kpContractorList.find(c=>c.id===cid)?.email ? 'grey' : 'warning'"
-                  title="Добавить/изменить email контрагента"
-                  @click="kpStartEditEmail(cid)"
-                />
-              </template>
-              <template v-else>
-                <v-text-field
-                  v-model="kpEditEmailValue"
-                  label="Email"
-                  type="email"
-                  variant="outlined" density="compact" hide-details
-                  class="flex-grow-1"
-                  autofocus
-                  @keyup.enter="kpSaveEmail(cid)"
-                  @keyup.esc="kpEditEmailId = null"
-                />
-                <v-btn icon="mdi-check" size="x-small" variant="tonal" color="success"
-                  :loading="kpSavingEmail" @click="kpSaveEmail(cid)" />
-                <v-btn icon="mdi-close" size="x-small" variant="text" @click="kpEditEmailId = null" />
-              </template>
-
-              <v-btn
-                icon="mdi-close" size="x-small" variant="text" color="error"
-                title="Убрать из списка"
-                @click="kpSelected = kpSelected.filter(id => id !== cid)"
-              />
-            </div>
-          </div>
-
-          <!-- Free email recipients -->
-          <div v-if="kpFreeRecipients.length" class="mb-2">
-            <div v-for="(fr, i) in kpFreeRecipients" :key="i"
-              class="d-flex align-center gap-2 pa-2 rounded mb-1"
-              style="border: 1px solid rgba(0,0,0,0.12);"
-            >
-              <v-icon icon="mdi-email-outline" size="small" color="cyan-darken-2" />
-              <v-text-field
-                v-model="fr.name"
-                label="Название / имя"
-                variant="outlined" density="compact" hide-details
-                style="max-width:170px"
-              />
-              <v-text-field
-                v-model="fr.email"
-                label="Email *"
-                type="email"
-                variant="outlined" density="compact" hide-details
-                class="flex-grow-1"
-              />
-              <v-btn
-                icon="mdi-email-outline" size="x-small" variant="tonal" color="cyan-darken-2"
-                :disabled="!fr.email"
-                title="Открыть в почтовом клиенте"
-                @click="openMailtoFree(fr)"
-              />
-              <v-btn
-                icon="mdi-content-copy" size="x-small" variant="text"
-                title="Скопировать текст письма"
-                @click="copyFreeEmail(fr)"
-              />
-              <v-btn icon="mdi-close" size="x-small" variant="text" color="error"
-                @click="kpFreeRecipients.splice(i, 1)" />
-            </div>
-          </div>
-          <v-btn
-            prepend-icon="mdi-email-plus-outline" size="small" variant="text" color="cyan-darken-2"
-            class="mb-3"
-            @click="kpFreeRecipients.push({ name: '', email: '' })"
-          >
-            Добавить email вручную
-          </v-btn>
-
-          <!-- Per-contractor preview -->
-          <template v-if="kpSelected.length > 0">
-            <v-divider class="mb-3" />
-            <div class="text-subtitle-2 mb-2">Индивидуальные запросы ({{ kpSelected.length }} конт.):</div>
-            <v-expansion-panels variant="accordion" class="mb-2">
-              <v-expansion-panel
-                v-for="cid in kpSelected"
-                :key="cid"
-              >
-                <v-expansion-panel-title>
-                  <div class="d-flex align-center gap-2 w-100">
-                    <v-icon size="16" :color="kpContractorList.find(c=>c.id===cid)?.email ? 'success' : 'warning'">
-                      {{ kpContractorList.find(c=>c.id===cid)?.email ? 'mdi-email-check' : 'mdi-email-off' }}
-                    </v-icon>
-                    <span class="font-weight-medium">{{ kpContractorList.find(c=>c.id===cid)?.name }}</span>
-                    <v-chip size="x-small" color="teal" variant="tonal" class="ml-1">
-                      {{ kpItemsForContractor(cid).length }} тов.
-                    </v-chip>
-                    <v-chip
-                      v-for="cat in kpContractorList.find(c=>c.id===cid)?.product_categories?.slice(0,2) ?? []"
-                      :key="cat" size="x-small" color="grey" variant="tonal" class="ml-1"
-                    >{{ cat }}</v-chip>
-                    <v-spacer />
-                    <v-btn
-                      size="x-small" color="cyan-darken-2" variant="tonal"
-                      prepend-icon="mdi-email-outline"
-                      :disabled="!kpContractorList.find(c=>c.id===cid)?.email"
-                      @click.stop="openMailtoForContractor(cid)"
-                    >В почту</v-btn>
-                    <v-btn size="x-small" variant="text" class="ml-1" @click.stop="copyContractorEmail(cid)">
-                      Копировать
-                    </v-btn>
-                  </div>
-                </v-expansion-panel-title>
-                <v-expansion-panel-text>
-                  <div v-if="kpItemsForContractor(cid).length === 0" class="text-caption text-medium-emphasis py-2">
-                    Нет товаров с подходящими категориями — будут отправлены все позиции
-                  </div>
-                  <v-table v-else density="compact">
-                    <thead>
-                      <tr>
-                        <th>Наименование</th>
-                        <th>Категория</th>
-                        <th class="text-right">Кол-во</th>
-                        <th class="text-right">Ед.</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="item in kpItemsForContractor(cid)" :key="item.id">
-                        <td class="text-sm">{{ item.item_name }}</td>
-                        <td><v-chip size="x-small" color="teal" variant="tonal">{{ item.category || '—' }}</v-chip></td>
-                        <td class="text-right text-sm">{{ item.quantity }}</td>
-                        <td class="text-right text-caption">{{ item.unit }}</td>
-                      </tr>
-                    </tbody>
-                  </v-table>
-                  <!-- Email preview -->
-                  <v-textarea
-                    :model-value="buildContractorEmail(cid)"
-                    variant="outlined" density="compact" rows="6" readonly
-                    class="mt-3" hide-details
-                    label="Предпросмотр письма"
-                  />
-                </v-expansion-panel-text>
-              </v-expansion-panel>
-            </v-expansion-panels>
-          </template>
-        </v-card-text>
-        <v-card-actions class="px-6 pb-4 gap-2">
-          <v-btn variant="text" @click="kpDialog = false">Закрыть</v-btn>
-          <v-spacer />
-          <v-btn
-            variant="outlined"
-            prepend-icon="mdi-file-excel-outline"
-            color="green-darken-1"
-            size="small"
-            :disabled="!purchaseId"
-            @click="downloadKpXlsx"
-          >
-            Скачать xlsx
-          </v-btn>
-          <v-btn
-            color="teal" variant="flat"
-            prepend-icon="mdi-send-outline"
-            :loading="kpSendingAll"
-            :disabled="kpAllEmails.length === 0"
-            @click="sendAllKpViaApi"
-          >
-            Отправить письма ({{ kpAllEmails.length }})
-          </v-btn>
-          <v-btn
-            variant="text" size="small"
-            prepend-icon="mdi-email-multiple-outline"
-            :disabled="kpAllEmails.length === 0"
-            @click="sendAllKp"
-          >
-            Открыть в почтовом клиенте
-          </v-btn>
-          <v-btn
-            color="primary" variant="flat"
-            prepend-icon="mdi-content-save-outline"
-            :loading="kpSaving"
-            :disabled="kpAllEmails.length === 0"
-            @click="saveKpRequest"
-          >
-            Сохранить запрос
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <KpDialog ref="kpDialogRef" :purchase-id="purchaseId" :form="form" />
 
     <!-- New framework contract dialog -->
     <v-dialog v-model="newFrameworkDialog" max-width="520" @after-enter="focusNewContractNumber" :fullscreen="mobile">
@@ -4009,175 +3570,30 @@
     </v-dialog>
 
     <!-- Диалог добавления ответственного исполнителя -->
-    <v-dialog v-model="addResponsibleDialog" max-width="400" :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="text-subtitle-1 pt-4 px-4">Добавить в справочник</v-card-title>
-        <v-card-text class="pb-0">
-          <v-text-field v-model="newResponsibleName" label="ФИО *" variant="outlined"
-            density="compact" class="mb-2" autofocus />
-          <v-text-field v-model="newResponsiblePosition" label="Должность (необязательно)"
-            variant="outlined" density="compact" />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="addResponsibleDialog = false">Отмена</v-btn>
-          <v-btn color="teal" variant="tonal" :loading="savingResponsible"
-            :disabled="!newResponsibleName.trim()" @click="saveNewResponsible">
-            Сохранить
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <AddResponsibleDialog
+      v-model="addResponsibleDialog"
+      v-model:name="newResponsibleName"
+      v-model:position="newResponsiblePosition"
+      :saving="savingResponsible"
+      @save="saveNewResponsible"
+    />
 
     <!-- Phase 21: Manual receipt dialog -->
-    <v-dialog v-model="manualReceiptDialog.show" max-width="700" :fullscreen="mobile">
-      <v-card>
-        <v-card-title>Чек — ручной ввод</v-card-title>
-        <v-card-text>
-          <v-row dense>
-            <v-col cols="12" md="6">
-              <v-text-field v-model="manualReceiptDialog.form.fiscal_drive_number"
-                label="ФН (fiscal_drive_number)" variant="outlined" density="compact" />
-            </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field v-model.number="manualReceiptDialog.form.fiscal_document_number"
-                label="ФД" type="number" variant="outlined" density="compact" />
-            </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field v-model="manualReceiptDialog.form.fiscal_sign"
-                label="ФП" variant="outlined" density="compact" />
-            </v-col>
-            <v-col cols="12" md="6">
-              <v-text-field v-model="manualReceiptDialog.form.receipt_datetime"
-                label="Дата/время" type="datetime-local" variant="outlined" density="compact" />
-            </v-col>
-            <v-col cols="12" md="6">
-              <v-text-field v-model.number="manualReceiptDialog.form.total_sum"
-                label="Сумма, ₽" type="number" variant="outlined" density="compact" suffix="₽" />
-            </v-col>
-            <v-col cols="12" md="8">
-              <v-text-field v-model="manualReceiptDialog.form.seller_name"
-                label="Продавец" variant="outlined" density="compact" />
-            </v-col>
-            <v-col cols="12" md="4">
-              <v-text-field v-model="manualReceiptDialog.form.seller_inn"
-                label="ИНН продавца" variant="outlined" density="compact" />
-            </v-col>
-            <v-col cols="12">
-              <v-text-field v-model="manualReceiptDialog.form.retail_place"
-                label="Место расчётов" variant="outlined" density="compact" />
-            </v-col>
-          </v-row>
-          <div v-if="manualReceiptDialog.error" class="text-error text-caption mt-2">
-            {{ manualReceiptDialog.error }}
-          </div>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn @click="manualReceiptDialog.show = false">Отмена</v-btn>
-          <v-btn color="primary" variant="tonal" :loading="manualReceiptDialog.saving"
-            @click="saveManualReceipt">Сохранить</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ManualReceiptDialog :dialog="manualReceiptDialog" @save="saveManualReceipt" />
 
     <QrScannerDialog v-model="qrScanShow" @detected="onQrDetected" />
 
     <!-- Phase 23: диалог «Доступные переменные шаблонов» -->
-    <v-dialog v-model="showPlaceholdersDialog" max-width="960" scrollable :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="pa-4 d-flex align-center">
-          <v-icon icon="mdi-code-braces" class="mr-2" />Доступные переменные шаблонов
-          <v-spacer />
-          <v-btn icon="mdi-close" variant="text" size="small" @click="showPlaceholdersDialog = false" />
-        </v-card-title>
-        <v-divider />
-        <v-card-text style="max-height:70vh">
-          <div v-for="grp in placeholderGroups" :key="grp.title" class="mb-5">
-            <div class="text-subtitle-2 font-weight-bold mb-2" style="color:#6200ea">{{ grp.title }}</div>
-            <v-table density="compact">
-              <thead>
-                <tr>
-                  <th style="width:260px">Переменная</th>
-                  <th>Описание</th>
-                  <th style="width:200px">Пример</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="item in grp.items" :key="item.var">
-                  <td><code style="font-size:11px">{{ formatPlaceholder(item.var) }}</code></td>
-                  <td class="text-body-2">{{ item.desc }}</td>
-                  <td class="text-caption text-medium-emphasis">{{ item.ex }}</td>
-                </tr>
-              </tbody>
-            </v-table>
-          </div>
-          <v-alert type="info" variant="tonal" density="compact" class="mt-3">
-            Полный справочник с примерами и условными блоками: <code>backend/templates/PLACEHOLDERS.md</code>
-          </v-alert>
-        </v-card-text>
-        <v-card-actions class="pa-4">
-          <v-spacer />
-          <v-btn @click="showPlaceholdersDialog = false">Закрыть</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <PlaceholdersDialog v-model="showPlaceholdersDialog" />
 
     <!-- Phase 23.2: диалог ошибки генерации документа -->
-    <v-dialog v-model="docErrorDialog" max-width="640">
-      <v-card>
-        <v-card-title class="d-flex align-center pa-4 bg-error-lighten-5">
-          <v-icon icon="mdi-alert-circle" color="error" class="mr-2" />
-          <span class="text-error">Ошибка генерации документа</span>
-          <v-spacer />
-          <v-btn icon="mdi-close" variant="text" size="small" @click="docErrorDialog = false" />
-        </v-card-title>
-        <v-card-text class="pt-4" v-if="docErrorInfo">
-          <div class="text-body-1 font-weight-medium mb-2">{{ docErrorInfo.message }}</div>
-          <div v-if="docErrorInfo.template" class="text-caption text-medium-emphasis mb-3">
-            <v-icon size="14" class="mr-1">mdi-file-document-outline</v-icon>
-            {{ docErrorInfo.template_source }}: <code>{{ docErrorInfo.template }}</code>
-          </div>
-          <div class="text-caption text-medium-emphasis mb-3">
-            <span v-if="docErrorInfo.code">Код: <code>{{ docErrorInfo.code }}</code></span>
-            <span v-if="docErrorInfo.code && docErrorInfo.correlation_id"> · </span>
-            <span v-if="docErrorInfo.correlation_id">ID: <code>{{ docErrorInfo.correlation_id }}</code></span>
-          </div>
-          <v-alert v-if="docErrorInfo.hint" type="info" variant="tonal" density="compact" class="mb-3">
-            <div class="text-body-2" style="white-space: pre-line">{{ docErrorInfo.hint }}</div>
-          </v-alert>
-          <v-expansion-panels v-if="docErrorInfo.error_raw || docErrorInfo.error_class" variant="accordion" :model-value="[]" class="mt-2">
-            <v-expansion-panel>
-              <v-expansion-panel-title class="text-caption">
-                Технические детали ({{ docErrorInfo.error_class }})
-              </v-expansion-panel-title>
-              <v-expansion-panel-text>
-                <pre class="text-caption" style="white-space: pre-wrap; max-height: 200px; overflow: auto">{{ docErrorInfo.error_raw }}</pre>
-              </v-expansion-panel-text>
-            </v-expansion-panel>
-          </v-expansion-panels>
-        </v-card-text>
-        <v-card-actions class="pa-4 flex-wrap">
-          <v-btn variant="tonal" color="primary" prepend-icon="mdi-content-copy"
-            @click="copyDocError">
-            Скопировать ошибку
-          </v-btn>
-          <v-btn variant="text" prepend-icon="mdi-file-document-edit-outline"
-            :href="form.subsidy_id ? `/subsidies?openTemplates=${form.subsidy_id}` : '/subsidies'"
-            target="_self" @click="docErrorDialog = false"
-            v-if="docErrorInfo?.template_source?.includes('субсидии') || docErrorInfo?.code === 'TEMPLATE_RENDER_ERROR'">
-            Редактор шаблонов субсидии
-          </v-btn>
-          <v-btn variant="tonal" color="primary" prepend-icon="mdi-format-list-bulleted"
-            @click="docErrorDialog = false; revealField('items')"
-            v-if="docErrorInfo?.code === 'CONTRACT_ITEMS_REQUIRED'">
-            Показать позиции
-          </v-btn>
-          <v-spacer />
-          <v-btn @click="docErrorDialog = false">Закрыть</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <DocErrorDialog
+      v-model="docErrorDialog"
+      :info="docErrorInfo"
+      :purchase-id="purchaseId"
+      :subsidy-id="form.subsidy_id"
+      @reveal-field="revealField"
+    />
     <ValidationArrows
       :active="validationArrowsActive"
       :from-el="validationArrowFrom"
@@ -4241,10 +3657,30 @@ import type { ContractItem } from '@/types/contractItem'
 import { useOrgConfig } from '@/composables/useOrgConfig'
 import PurchaseEventFeed from '@/components/PurchaseEventFeed.vue'
 import ApprovalPanel from '@/components/purchase/ApprovalPanel.vue'
+import PurchaseBroadcastDialog from '@/components/purchase/PurchaseBroadcastDialog.vue'
+import { usePurchaseBroadcast } from '@/composables/purchase/usePurchaseBroadcast'
+import { useEndOfMonthFill } from '@/composables/purchase/useEndOfMonthFill'
+import { useDeliveryAddress } from '@/composables/purchase/useDeliveryAddress'
+import { useResponsiblePersons } from '@/composables/purchase/useResponsiblePersons'
+import AddResponsibleDialog from '@/components/purchase/AddResponsibleDialog.vue'
+import { useGuideArrow } from '@/composables/purchase/useGuideArrow'
+import { usePurchaseMembers } from '@/composables/purchase/usePurchaseMembers'
+import { usePurchaseTasks, TASK_STATUS_LABEL, taskStatusColor, taskPriorityColor } from '@/composables/purchase/usePurchaseTasks'
+import LinkedTaskDialogs from '@/components/purchase/LinkedTaskDialogs.vue'
+import { usePurchaseSplit } from '@/composables/purchase/usePurchaseSplit'
+import SplitKanbanDialog from '@/components/purchase/SplitKanbanDialog.vue'
+import { usePurchaseChat } from '@/composables/purchase/usePurchaseChat'
+import { useFrameworkSiblings } from '@/composables/purchase/useFrameworkSiblings'
+import PlaceholdersDialog from '@/components/purchase/PlaceholdersDialog.vue'
+import DocErrorDialog from '@/components/purchase/DocErrorDialog.vue'
+import { useManualReceipt } from '@/composables/purchase/useManualReceipt'
+import ManualReceiptDialog from '@/components/purchase/ManualReceiptDialog.vue'
+import { useFabrikantPackage } from '@/composables/purchase/useFabrikantPackage'
+import PurchaseConfirmDialogs from '@/components/purchase/PurchaseConfirmDialogs.vue'
+import KpDialog from '@/components/purchase/KpDialog.vue'
 import FileDropZone from '@/components/FileDropZone.vue'
 import ChatEmbed from '@/components/ChatEmbed.vue'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
-import PurchaseSplitKanban from '@/components/PurchaseSplitKanban.vue'
 import QrScannerDialog from '@/components/QrScannerDialog.vue'
 import ValidationArrows from '@/components/ValidationArrows.vue'
 import MonthlyStagesDialog from '@/components/MonthlyStagesDialog.vue'
@@ -4274,6 +3710,12 @@ const { mobile } = useDisplay()
 
 const route = useRoute()
 const router = useRouter()
+// Phase 27/31: id текущего пользователя — читается один раз при инициализации формы,
+// используется как в этом файле (дефолты для reimbursement/assigned_user_id/service_note_by),
+// так и в composables/purchase/* (usePurchaseMembers, useResponsiblePersons/docPicker) —
+// объявлено здесь (а не рядом с первым использованием), чтобы не ловить TDZ на композаблах,
+// которые вызываются раньше, чем эта константа объявлялась исторически.
+const currentUserId = parseInt(localStorage.getItem('user_id') || '0')
 
 const isEdit = computed(() => !!route.params.id)
 const isNew = computed(() => !isEdit.value)
@@ -5167,126 +4609,8 @@ const showPlaceholdersDialog = ref(false)
 // Phase 23.2: диалог ошибки генерации документа
 const docErrorDialog = ref(false)
 const docErrorInfo = ref<any>(null)
-// Vue parser ломается на inline-выражении { '{{' + x + '}}' } (видит '}}' как конец интерполяции),
-// поэтому формирование плейсхолдер-строки вынесено в функцию.
-function formatPlaceholder(name: string): string {
-  return '{' + '{' + name + '}' + '}'
-}
-const placeholderGroups = [
-  {
-    title: '🎯 Универсальный договор (auto-switch)',
-    items: [
-      { var: 'subject_kind', desc: 'Тип договора: services (если все позиции услуги) | goods (если есть товары или нет позиций)', ex: 'goods' },
-      { var: '{% if subject_kind == \'goods\' %}', desc: 'Условный блок для договора поставки (Покупатель/Поставщик, Спецификация)', ex: 'Покупатель/Поставщик/Спецификация' },
-      { var: '{% else %}', desc: 'Альтернативная ветка — договор услуг (Заказчик/Исполнитель, ТЗ)', ex: 'Заказчик/Исполнитель/ТЗ' },
-    ],
-  },
-  {
-    title: '📑 Договор (общее)',
-    items: [
-      { var: 'contract_number', desc: 'Номер договора', ex: '2026/15' },
-      { var: 'contract_date', desc: 'Дата договора', ex: '28.04.2026' },
-      { var: 'contract_date_day', desc: 'День', ex: '28' },
-      { var: 'contract_date_month', desc: 'Месяц прописью', ex: 'апреля' },
-      { var: 'contract_date_year', desc: 'Год', ex: '2026' },
-      { var: 'contract_city', desc: 'Город заключения', ex: 'Москва' },
-      { var: 'contract_price_num', desc: 'Цена (без символа ₽)', ex: '130 000,00' },
-      { var: 'contract_price_words', desc: 'Цена прописью', ex: 'сто тридцать тысяч рублей 00 копеек' },
-    ],
-  },
-  {
-    title: '🏛 Заказчик (customer_*) — Phase 23',
-    items: [
-      { var: 'customer_full_name', desc: 'Полное наименование организации', ex: 'АНО «ВСКС»' },
-      { var: 'customer_short_name', desc: 'Краткое (из кавычек)', ex: 'ВСКС' },
-      { var: 'customer_inn', desc: 'ИНН', ex: '7700000001' },
-      { var: 'customer_kpp', desc: 'КПП', ex: '770001001' },
-      { var: 'customer_ogrn', desc: 'ОГРН', ex: '1027700000001' },
-      { var: 'customer_address', desc: 'Юридический адрес', ex: 'г. Москва, ул. Ленина, д. 1' },
-      { var: 'customer_bank_name', desc: 'Банк', ex: 'ПАО Сбербанк' },
-      { var: 'customer_bik', desc: 'БИК', ex: '044525225' },
-      { var: 'customer_settlement_account', desc: 'Расчётный счёт', ex: '40701810...' },
-      { var: 'customer_correspondent_account', desc: 'Корр. счёт', ex: '30101810...' },
-      { var: 'customer_signatory_position', desc: 'Должность подписанта', ex: 'Президент' },
-      { var: 'customer_signatory_name_genitive', desc: 'ФИО в родительном падеже', ex: 'Козеева Евгения Викторовича' },
-      { var: 'customer_signatory_initials', desc: 'Фамилия + инициалы', ex: 'Козеев Е.В.' },
-      { var: 'customer_signatory_basis', desc: 'Основание полномочий', ex: 'Устава' },
-    ],
-  },
-  {
-    title: '🏢 Исполнитель (contractor_*)',
-    items: [
-      { var: 'contractor_full_name', desc: 'Полное наименование', ex: 'ООО «Ромашка»' },
-      { var: 'contractor_short_name', desc: 'Краткое', ex: 'Ромашка' },
-      { var: 'contractor_org_type', desc: 'Тип организации', ex: 'Юр.лицо / ИП' },
-      { var: 'contractor_inn', desc: 'ИНН', ex: '7700000002' },
-      { var: 'contractor_ogrn', desc: 'ОГРН', ex: '1027700000002' },
-      { var: 'contractor_ogrnip', desc: 'ОГРНИП (только для ИП)', ex: '304770000000001' },
-      { var: 'contractor_address', desc: 'Адрес', ex: 'г. Москва, ул. Садовая, д. 5' },
-      { var: 'contractor_signatory_position', desc: 'Должность', ex: 'Директор' },
-      { var: 'contractor_signatory_name_genitive', desc: 'ФИО в родительном', ex: 'Сидорова Петра Павловича' },
-      { var: 'contractor_signatory_initials', desc: 'Инициалы', ex: 'Сидоров П.П.' },
-      { var: 'contractor_bank_name', desc: 'Банк', ex: 'ПАО Сбербанк' },
-      { var: 'contractor_settlement_account', desc: 'р/с', ex: '40702810...' },
-      { var: 'contractor_bik', desc: 'БИК', ex: '044525225' },
-    ],
-  },
-  {
-    title: '💰 Цена и НДС',
-    items: [
-      { var: 'vat_applicable', desc: 'НДС применяется?', ex: 'true / false' },
-      { var: 'vat_rate', desc: 'Ставка НДС, %', ex: '20' },
-      { var: 'vat_amount_num', desc: 'Сумма НДС цифрами', ex: '21 666,67' },
-      { var: 'vat_amount_words', desc: 'Сумма НДС прописью', ex: 'двадцать одна тысяча...' },
-      { var: 'vat_exemption_article', desc: 'Статья освобождения', ex: 'п.2 ст.346.11 НК РФ' },
-      { var: 'vat_info_line', desc: 'Готовая строка НДС', ex: 'В том числе НДС 20%: ...' },
-    ],
-  },
-  {
-    title: '📅 Сроки',
-    items: [
-      { var: 'service_term', desc: 'Готовая строка срока', ex: 'с 01.05.2026 по 31.05.2026' },
-      { var: 'service_term_mode', desc: 'Режим', ex: 'range / duration / deadline' },
-      { var: 'service_start_date', desc: 'Начало', ex: '01.05.2026' },
-      { var: 'service_end_date', desc: 'Окончание', ex: '31.05.2026' },
-      { var: 'service_deadline_date', desc: 'Крайняя дата', ex: '30.06.2026' },
-      { var: 'service_term_days', desc: 'Количество дней', ex: '30' },
-      { var: 'submission_deadline_datetime', desc: 'Дата+время завершения приёма заявок', ex: '25.04.2026 18:00' },
-      { var: 'delivery_location', desc: 'Место оказания услуг', ex: 'г. Москва, ул. Ленина, д. 1' },
-    ],
-  },
-  {
-    title: '✅ Условия',
-    items: [
-      { var: 'third_party_involved', desc: 'Привлечение третьих лиц', ex: 'true / false' },
-      { var: 'subsidy_agreement_text', desc: 'Текст соглашения Минтруда', ex: 'Соглашения № 149-2023...' },
-      { var: 'service_subject', desc: 'Предмет услуг (синоним subject)', ex: 'оказание полиграфических услуг' },
-    ],
-  },
-  {
-    title: '📦 Позиции (таблица)',
-    items: [
-      { var: 'item.num', desc: 'Номер строки', ex: '1' },
-      { var: 'item.name', desc: 'Наименование', ex: 'Ежедневник А5' },
-      { var: 'item.quantity', desc: 'Количество', ex: '50' },
-      { var: 'item.unit', desc: 'Единица измерения', ex: 'шт.' },
-      { var: 'item.unit_price', desc: 'Цена за единицу', ex: '500,00 ₽' },
-      { var: 'item.total_price', desc: 'Сумма строки', ex: '25 000,00 ₽' },
-      { var: 'items_count', desc: 'Общее количество позиций', ex: '3' },
-    ],
-  },
-  {
-    title: '⚙️ Технические',
-    items: [
-      { var: 'today', desc: 'Сегодняшняя дата', ex: '04.05.2026' },
-      { var: 'today_iso', desc: 'ISO-дата', ex: '2026-05-04' },
-      { var: 'purchase_number', desc: 'Номер закупки', ex: '42' },
-      { var: 'registry_number', desc: 'Реестровый номер', ex: 'РЕЕ-2026-00042' },
-      { var: 'subject', desc: 'Предмет закупки', ex: 'Поставка оборудования' },
-      { var: 'subsidy_name', desc: 'Субсидия', ex: 'ФАДМ_2026' },
-    ],
-  },
-]
+// formatPlaceholder/placeholderGroups — вынесены в components/purchase/PlaceholdersDialog.vue
+// (использовались только в этом диалоге).
 const products = ref<Product[]>([])
 const allFeoCategories = ref<FeoCategory[]>([])
 const formRef = ref()
@@ -5321,36 +4645,10 @@ function showValidationArrows() {
   validationArrowsTimer = window.setTimeout(dismissValidationArrows, 8000)
 }
 
-// ── Конец месяца quick-fill ───────────────────────────────────────────────
-const endOfMonthMenu = ref(false)
-const _now = new Date()
-const endOfMonthYear = ref(_now.getFullYear())
-const endOfMonthMonth = ref(_now.getMonth() + 1)
-const endOfMonthMonthItems = [
-  { value: 1, label: 'Январь' },
-  { value: 2, label: 'Февраль' },
-  { value: 3, label: 'Март' },
-  { value: 4, label: 'Апрель' },
-  { value: 5, label: 'Май' },
-  { value: 6, label: 'Июнь' },
-  { value: 7, label: 'Июль' },
-  { value: 8, label: 'Август' },
-  { value: 9, label: 'Сентябрь' },
-  { value: 10, label: 'Октябрь' },
-  { value: 11, label: 'Ноябрь' },
-  { value: 12, label: 'Декабрь' },
-]
-function applyEndOfMonth() {
-  // endOfMonthYear — v-model.number; при очистке поля Vue кладёт '', что уронило бы
-  // service_deadline_date в 'NaN-MM-DD'/'-MM-DD' (Optional[date] на бэке). numOrNull
-  // с фолбэком на текущий год — поле год всегда нужно, пустым смысла нет (2026-09-04).
-  const year = numOrNull(endOfMonthYear.value) ?? new Date().getFullYear()
-  const lastDay = new Date(year, endOfMonthMonth.value, 0).getDate()
-  const mm = String(endOfMonthMonth.value).padStart(2, '0')
-  const dd = String(lastDay).padStart(2, '0')
-  form.service_deadline_date = `${year}-${mm}-${dd}`
-  endOfMonthMenu.value = false
-}
+// ── Конец месяца quick-fill — вынесено в composables/purchase/useEndOfMonthFill.ts ──
+const {
+  endOfMonthMenu, endOfMonthYear, endOfMonthMonth, endOfMonthMonthItems, applyEndOfMonth,
+} = useEndOfMonthFill(form)
 const transitioning = ref(false)
 const converting = ref(false)
 const uploading = ref(false)
@@ -5440,61 +4738,11 @@ async function loadActAsUsers() {
 // Кому возмещать — список сотрудников из orgUsersList
 const reimbursementUserOptions = computed(() => orgUsersList.value)
 
-// ── Delivery address autocomplete ──
-const deliveryAddressSuggestions = ref<string[]>([])
-let _deliverySearchTimer: ReturnType<typeof setTimeout> | null = null
-async function loadDeliveryAddressHistory() {
-  try {
-    const orgId = currentSubsidyOrgId.value
-    if (!orgId) return
-    const results = await apiFetch<{ id: number; address: string }[]>(
-      `/delivery-addresses/?org_id=${orgId}&q=`
-    )
-    const addresses = results.map(r => r.address)
-    // Добавим адрес организации первым если его нет в истории
-    const subsidy = subsidies.value.find(s => s.id === form.subsidy_id)
-    if (subsidy?.org_id) {
-      try {
-        const orgs = await apiFetch<any[]>('/auth/my-orgs')
-        const org = orgs.find((o: any) => o.id === subsidy.org_id)
-        if (org?.address && !addresses.includes(org.address)) {
-          addresses.unshift(org.address)
-        }
-      } catch { /* silent */ }
-    }
-    deliveryAddressSuggestions.value = [...new Set(addresses)]
-  } catch { deliveryAddressSuggestions.value = [] }
-}
-async function onDeliveryAddressSearch(q: string) {
-  if (!q || q.length < 2) {
-    // При пустом поле показать историю
-    if (!deliveryAddressSuggestions.value.length) loadDeliveryAddressHistory()
-    return
-  }
-  if (_deliverySearchTimer) clearTimeout(_deliverySearchTimer)
-  _deliverySearchTimer = setTimeout(async () => {
-    try {
-      const orgId = currentSubsidyOrgId.value
-      if (!orgId) return
-      const results = await apiFetch<{ id: number; address: string }[]>(
-        `/delivery-addresses/?org_id=${orgId}&q=${encodeURIComponent(q)}`
-      )
-      deliveryAddressSuggestions.value = results.map(r => r.address)
-    } catch { deliveryAddressSuggestions.value = [] }
-  }, 300)
-}
-async function onDeliveryAddressSelect(val: string | null) {
-  // val is already a string (full_name), just set it
-  if (val) form.delivery_address = val
-}
-async function saveDeliveryAddressIfNew(address: string) {
-  if (!address?.trim()) return
-  try {
-    const orgId = currentSubsidyOrgId.value
-    if (!orgId) return
-    await apiFetch('/delivery-addresses/', { method: 'POST', body: { org_id: orgId, address: address.trim() } })
-  } catch { /* silent */ }
-}
+// ── Delivery address autocomplete — вынесено в composables/purchase/useDeliveryAddress.ts ──
+const {
+  deliveryAddressSuggestions,
+  loadDeliveryAddressHistory, onDeliveryAddressSearch, onDeliveryAddressSelect, saveDeliveryAddressIfNew,
+} = useDeliveryAddress(form, currentSubsidyOrgId, subsidies)
 
 // ── Responsible persons suggestions (order form combobox) ──
 const responsiblePersonSuggestions = ref<string[]>([])
@@ -5505,82 +4753,13 @@ async function loadResponsiblePersons() {
   } catch { responsiblePersonSuggestions.value = [] }
 }
 
-// ── Responsible persons directory (for approval sheet dialog) ──
-interface ResponsiblePerson { id: number; full_name: string; position?: string; display?: string }
-const responsiblePersonsList = ref<ResponsiblePerson[]>([])
-const pickerResponsibleName = ref<string>('')
-const addResponsibleDialog = ref(false)
-const newResponsibleName = ref('')
-const newResponsiblePosition = ref('')
-const savingResponsible = ref(false)
-
-async function loadResponsiblePersonsList() {
-  if (!form.subsidy_id) { responsiblePersonsList.value = []; return }
-  try {
-    const list = await apiFetch<ResponsiblePerson[]>(`/subsidies/${form.subsidy_id}/responsible-persons`)
-    responsiblePersonsList.value = list.map(p => ({
-      ...p,
-      display: p.position ? `${p.full_name} (${p.position})` : p.full_name,
-    }))
-  } catch { responsiblePersonsList.value = [] }
-}
-
-// Список для выбора «Ответственный исполнитель» в диалоге листа согласования:
-// сотрудники организации (orgUsersList) + справочник ответственных
-// (responsiblePersonsList), объединённые и дедуплицированные по ФИО.
-// При совпадении приоритет у записи справочника (там указана должность).
-// Плюс: текущее предзаполненное значение (pickerResponsibleName) добавляется
-// принудительно, если его нет ни в одном из наборов — иначе оно "исчезает"
-// из списка при открытии автокомплита (v-autocomplete показывает пусто для
-// значения, отсутствующего в items).
-const responsibleOptions = computed(() => {
-  const norm = (s: string) => s.trim().toLowerCase()
-  const byName = new Map<string, { full_name: string; position?: string | null; display: string; source: 'user' | 'directory' }>()
-
-  for (const u of orgUsersList.value) {
-    if (!u.full_name) continue
-    byName.set(norm(u.full_name), {
-      full_name: u.full_name,
-      position: u.position,
-      display: u.position ? `${u.full_name} (${u.position})` : u.full_name,
-      source: 'user',
-    })
-  }
-  // Справочник имеет приоритет — перезаписывает запись сотрудника с тем же ФИО.
-  for (const p of responsiblePersonsList.value) {
-    if (!p.full_name) continue
-    byName.set(norm(p.full_name), {
-      full_name: p.full_name,
-      position: p.position,
-      display: p.display || (p.position ? `${p.full_name} (${p.position})` : p.full_name),
-      source: 'directory',
-    })
-  }
-  const current = pickerResponsibleName.value?.trim()
-  if (current && !byName.has(norm(current))) {
-    byName.set(norm(current), { full_name: current, display: current, source: 'directory' })
-  }
-  return [...byName.values()].sort((a, b) => a.full_name.localeCompare(b.full_name, 'ru'))
-})
-
-async function saveNewResponsible() {
-  if (!newResponsibleName.value.trim() || !form.subsidy_id) return
-  savingResponsible.value = true
-  try {
-    const created = await apiFetch<ResponsiblePerson>(`/subsidies/${form.subsidy_id}/responsible-persons`, {
-      method: 'POST',
-      body: { full_name: newResponsibleName.value.trim(), position: newResponsiblePosition.value.trim() || null },
-    })
-    const entry = { ...created, display: created.position ? `${created.full_name} (${created.position})` : created.full_name }
-    responsiblePersonsList.value.push(entry)
-    responsiblePersonsList.value.sort((a, b) => a.full_name.localeCompare(b.full_name))
-    pickerResponsibleName.value = created.full_name
-    addResponsibleDialog.value = false
-    newResponsibleName.value = ''
-    newResponsiblePosition.value = ''
-  } catch { showSnack('Ошибка сохранения', 'error') }
-  finally { savingResponsible.value = false }
-}
+// ── Responsible persons directory (for approval sheet dialog) — вынесено в
+// composables/purchase/useResponsiblePersons.ts + components/purchase/AddResponsibleDialog.vue ──
+const {
+  pickerResponsibleName, addResponsibleDialog,
+  newResponsibleName, newResponsiblePosition, savingResponsible,
+  loadResponsiblePersonsList, responsibleOptions, saveNewResponsible,
+} = useResponsiblePersons(form, orgUsersList)
 
 async function openDocPicker(type: 'service_note_procurement' | 'service_note_delivery' | 'service_note_payment' | 'service_note_advance' | 'approval_sheet') {
   if (!purchaseId.value || !form.subsidy_id) {
@@ -5652,6 +4831,17 @@ async function confirmDocDownload() {
 // duration=0 по умолчанию: результат действия (смена статуса, сохранение,
 // ошибка) не должен исчезать сам, пока пользователь не прочитал и не закрыл.
 const toast = useToast()
+// showSnack объявлен здесь (а не рядом с formatMoney ниже, как было исторически) —
+// несколько composables/purchase/* вызываются раньше по файлу и получают showSnack
+// напрямую аргументом (не через собственный useToast()), поэтому объявление обязано
+// стоять до первого такого вызова, иначе — TDZ ReferenceError при монтировании.
+const showSnack = (
+  text: string,
+  color: ToastType = 'success',
+  opts?: { actionText?: string; onAction?: () => void; duration?: number },
+) => {
+  toast.addToast(text, color, opts)
+}
 const itemsEditorRef = ref<any>(null)
 const budgetInfo = ref<{ remaining: number; exceeded: boolean; over: number; limit?: number; spent?: number } | null>(null)
 // Остатки бюджета по ФЭО (по правам: лист всем с view_leaf, уровни выше — view_all_levels)
@@ -5926,140 +5116,18 @@ const FABRIKANT_PROCEDURE_TYPES = [
   { value: 'price_monitoring', title: 'Мониторинг цен' },
 ]
 
-// pointer / glow state
-const pointerTarget = ref<string | null>(null)
-const okpd2Pointer = ref(false)
-const auctionPointerTarget = ref<string | null>(null)
-let _pointerTimer: ReturnType<typeof setTimeout> | null = null
-let _okpd2Timer: ReturnType<typeof setTimeout> | null = null
-let _auctionPointerTimer: ReturnType<typeof setTimeout> | null = null
-
-const AUCTION_TARGETS = new Set(['auction-date', 'auction-bet'])
-
-// ── Guide arrow (летящая стрелка с пунктирным следом) ────────────────────────
-const guideArrowVisible = ref(false)
-const guideArrowPos = ref({ x: 0, y: 0 })
-const guideArrowAngle = ref(0)
-const guideArrowArrived = ref(false)
-const guideTrail = ref<{ x: number; y: number }[]>([])
-
-let _guideRafId: number | null = null
-let _guideSafetyTimer: ReturnType<typeof setTimeout> | null = null
-
-function _getDestCenter(el: HTMLElement): { x: number; y: number } {
-  const r = el.getBoundingClientRect()
-  return { x: r.left + r.width / 2, y: r.top - 30 }
-}
-
-function clearGuideArrow() {
-  guideArrowVisible.value = false
-  guideArrowArrived.value = false
-  guideTrail.value = []
-  if (_guideRafId !== null) { cancelAnimationFrame(_guideRafId); _guideRafId = null }
-  if (_guideSafetyTimer !== null) { clearTimeout(_guideSafetyTimer); _guideSafetyTimer = null }
-}
-
-async function guideArrowTo(target: string) {
-  // Отменить предыдущий
-  clearGuideArrow()
-
-  const IN_DIALOG_TARGETS = new Set(['auction-date', 'auction-bet', 'okpd2'])
-  // Наведение на КОНКРЕТНУЮ строку позиций: target вида 'item:<uid>'. id='item-row-<uid>'
-  // уже проставлен на карточку/строку во всех трёх видах (ItemsCardsView/ItemsTableFlat/
-  // ItemsTableStages, см. эти файлы) — тот же приём, что highlightMissingCategoryForPlan
-  // в PurchaseItemsEditor.vue. Работает и на мобильных карточках, и в десктоп-таблице.
-  const itemUid = target.startsWith('item:') ? target.slice(5) : null
-
-  // Для out-of-dialog полей: закрыть диалог сначала
-  if (!IN_DIALOG_TARGETS.has(target)) {
-    publishDialog.value = false
-    pendingPlatform.value = null
-  }
-
-  await nextTick()
-
-  const el = itemUid != null
-    ? document.getElementById('item-row-' + itemUid)
-    : document.getElementById('pub-target-' + target)
-  if (!el) return
-
-  // Старт: правый верхний угол вьюпорта (где снэкбар)
-  const startX = window.innerWidth - 100
-  const startY = 90
-  guideArrowPos.value = { x: startX, y: startY }
-  guideTrail.value = [{ x: startX, y: startY }]
-  guideArrowVisible.value = true
-  guideArrowArrived.value = false
-
-  // Инициировать плавный скролл к полю
-  el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-
-  // Также выставить glow
-  if (itemUid != null) {
-    // Строка позиций не обёрнута pub-glow div'ом (живёт в дочернем компоненте) —
-    // подсвечиваем напрямую тем же глобальным pulse-классом, что и
-    // highlightMissingCategoryForPlan в PurchaseItemsEditor.vue (.plan-bulk-row-pulse,
-    // стиль объявлен там же, global, не scoped).
-    el.classList.add('plan-bulk-row-pulse')
-    setTimeout(() => el.classList.remove('plan-bulk-row-pulse'), 3000)
-  } else if (AUCTION_TARGETS.has(target)) {
-    if (_auctionPointerTimer) clearTimeout(_auctionPointerTimer)
-    auctionPointerTarget.value = target
-  } else if (target === 'okpd2') {
-    if (_okpd2Timer) clearTimeout(_okpd2Timer)
-    okpd2Pointer.value = true
-  } else {
-    if (_pointerTimer) clearTimeout(_pointerTimer)
-    pointerTarget.value = target
-  }
-
-  const LERP = 0.07
-  const ARRIVE_DIST = 12
-  const TRAIL_MIN_DIST = 6
-  let arrived = false
-
-  function tick() {
-    const dest = _getDestCenter(el)
-    const cx = guideArrowPos.value.x
-    const cy = guideArrowPos.value.y
-
-    if (!arrived) {
-      const dx = dest.x - cx
-      const dy = dest.y - cy
-      const dist = Math.sqrt(dx * dx + dy * dy)
-      guideArrowAngle.value = (Math.atan2(dy, dx) * 180) / Math.PI + 90 // +90 т.к. стрелка вниз по умолчанию
-
-      const nx = cx + dx * LERP
-      const ny = cy + dy * LERP
-      guideArrowPos.value = { x: nx, y: ny }
-
-      // Добавить точку следа если сдвинулись достаточно
-      const last = guideTrail.value[guideTrail.value.length - 1]
-      const ldx = nx - (last?.x ?? nx)
-      const ldy = ny - (last?.y ?? ny)
-      if (Math.sqrt(ldx * ldx + ldy * ldy) > TRAIL_MIN_DIST) {
-        guideTrail.value.push({ x: nx, y: ny })
-        // Ограничим длину следа для производительности
-        if (guideTrail.value.length > 500) guideTrail.value.shift()
-      }
-
-      if (dist < ARRIVE_DIST) {
-        arrived = true
-        guideArrowArrived.value = true
-      }
-    } else {
-      // Прилипаем к полю (поле могло сдвинуться)
-      guideArrowPos.value = _getDestCenter(el)
-    }
-
-    _guideRafId = requestAnimationFrame(tick)
-  }
-
-  _guideRafId = requestAnimationFrame(tick)
-
-  // Safety: убираем через 3 минуты
-  _guideSafetyTimer = setTimeout(() => clearGuideArrow(), 3 * 60 * 1000)
-}
+// ── Guide arrow (летящая стрелка с пунктирным следом) — вынесено в
+// composables/purchase/useGuideArrow.ts. onBeforeNavigate закрывает диалог
+// публикации при наведении на цель вне диалога — то же поведение, что раньше
+// было зашито прямо в guideArrowTo. ──
+const {
+  guideArrowVisible, guideArrowPos, guideArrowAngle, guideArrowArrived, guideTrail,
+  pointerTarget, okpd2Pointer, auctionPointerTarget,
+  clearGuideArrow, guideArrowTo,
+} = useGuideArrow(() => {
+  publishDialog.value = false
+  pendingPlatform.value = null
+})
 // ── end guide arrow ────────────────────────────────────────────────────────────
 
 function revealField(target: string) {
@@ -6302,37 +5370,9 @@ function pollPublication(pubId: number, attempts = 0) {
   }, delay)
 }
 
-// ── Linked tasks ─────────────────────────────────────────────────────────────
-const TASK_STATUS_LABEL: Record<string, string> = {
-  todo: 'К выполнению', in_progress: 'В работе', done: 'Выполнена', cancelled: 'Отменена',
-}
-const TASK_PRIORITIES = [
-  { value: 'low', title: 'Низкий' }, { value: 'medium', title: 'Средний' },
-  { value: 'high', title: 'Высокий' }, { value: 'urgent', title: 'Срочный' },
-]
-function taskStatusColor(s: string) {
-  return s === 'done' ? 'success' : s === 'in_progress' ? 'info' : s === 'cancelled' ? 'grey' : 'default'
-}
-function taskPriorityColor(p: string) {
-  return p === 'urgent' ? 'error' : p === 'high' ? 'warning' : p === 'medium' ? 'info' : 'default'
-}
-
-const linkedTasks = ref<any[]>([])
-const linkedTaskDialog = ref(false)
-const linkedTaskSaving = ref(false)
+// ── Linked tasks / Link existing task — вынесено в
+// composables/purchase/usePurchaseTasks.ts + components/purchase/LinkedTaskDialogs.vue ──
 const allUsers = ref<{ value: number; text: string }[]>([])
-const linkedTaskForm = reactive({
-  title: '', description: '', priority: 'medium',
-  due_date: '', assignee_ids: [] as number[],
-})
-
-async function loadLinkedTasks() {
-  if (!purchaseId.value) return
-  try {
-    linkedTasks.value = await apiFetch<any[]>(`/purchases/${purchaseId.value}/tasks/`)
-  } catch { linkedTasks.value = [] }
-}
-
 async function loadAllUsers() {
   if (allUsers.value.length) return
   try {
@@ -6340,402 +5380,42 @@ async function loadAllUsers() {
     allUsers.value = users.map(u => ({ value: u.id, text: u.full_name || u.username }))
   } catch {}
 }
+const {
+  linkedTasks, linkedTaskDialog, linkedTaskSaving, linkedTaskForm,
+  loadLinkedTasks, openCreateLinkedTask, saveLinkedTask,
+  linkTaskDialog, linkTaskSearch, linkTaskResults, linkTaskSearching,
+  searchUnlinkedTasks, linkExistingTask, unlinkTask,
+} = usePurchaseTasks(purchaseId, loadAllUsers)
 
-function openCreateLinkedTask() {
-  Object.assign(linkedTaskForm, {
-    title: '', description: '', priority: 'medium', due_date: '', assignee_ids: [],
-  })
-  loadAllUsers()
-  linkedTaskDialog.value = true
-}
+// ── Purchase members — вынесено в composables/purchase/usePurchaseMembers.ts.
+// Фича добавления/удаления участников обсуждения (menu/buttons) в текущем шаблоне
+// не подключена (не было UI-триггера и до выноса — canSeePurchaseDocs единственное,
+// что реально используется видом); остальной API композабла сохранён на случай,
+// если UI появится, но здесь не деструктурируется, чтобы не тащить мёртвый код.
+const { canSeePurchaseDocs, loadPurchaseMembers, loadPurchaseApprovals } =
+  usePurchaseMembers(purchaseId, currentUserId, isEdit, isManagerLevel, authStore, allUsers, loadAllUsers)
 
-async function saveLinkedTask() {
-  if (!linkedTaskForm.title || !purchaseId.value) return
-  linkedTaskSaving.value = true
-  try {
-    const body: Record<string, any> = {
-      title: linkedTaskForm.title,
-      description: linkedTaskForm.description || undefined,
-      priority: linkedTaskForm.priority,
-      purchase_id: purchaseId.value,
-      assignee_ids: linkedTaskForm.assignee_ids,
-    }
-    if (linkedTaskForm.due_date) body.due_date = linkedTaskForm.due_date + 'T23:59:59'
-    await apiFetch('/tasks/', { method: 'POST', body })
-    linkedTaskDialog.value = false
-    showSnack('Задача создана')
-    await loadLinkedTasks()
-  } catch (e: any) {
-    showSnack(e?.detail || 'Ошибка при создании задачи', 'error')
-  } finally {
-    linkedTaskSaving.value = false
-  }
-}
+// ── Split purchase feature — вынесено в composables/purchase/usePurchaseSplit.ts +
+// components/purchase/SplitKanbanDialog.vue ──
+const {
+  splitKanbanDialog, splitKanbanItems, canSplitPurchase, onPurchaseSplit,
+  openSplitKanban: _openSplitKanban,
+} = usePurchaseSplit(router, isEdit, form, items, productPhotoSrc, showSnack)
+function openSplitKanban() { return _openSplitKanban(route.params.id) }
 
-// ── Link existing task ───────────────────────────────────────────────────────
-const linkTaskDialog = ref(false)
-const linkTaskSearch = ref('')
-const linkTaskResults = ref<any[]>([])
-const linkTaskSearching = ref(false)
-let _linkSearchTimer: ReturnType<typeof setTimeout> | null = null
+// ── Purchase chat — вынесено в composables/purchase/usePurchaseChat.ts. Собственный
+// UI этой реализации в шаблоне сейчас не подключён (заменён общим ChatEmbed.vue
+// в карточке «Обсуждение»), но loadPurchaseComments/pCommentText остаются нужны:
+// используются loadPurchase() и usePurchaseBroadcast — поэтому деструктурируем
+// только их, а не весь дохлый API (иначе TS ловит их как unused в этом файле). ──
+const { pCommentText, loadPurchaseComments } = usePurchaseChat(purchaseId, allUsers, loadAllUsers)
 
-function openLinkExistingTask() {
-  linkTaskSearch.value = ''
-  linkTaskResults.value = []
-  linkTaskDialog.value = true
-}
-
-function searchUnlinkedTasks(q: string | null) {
-  if (_linkSearchTimer) clearTimeout(_linkSearchTimer)
-  if (!q || q.length < 2) { linkTaskResults.value = []; return }
-  _linkSearchTimer = setTimeout(async () => {
-    linkTaskSearching.value = true
-    try {
-      linkTaskResults.value = await apiFetch<any[]>(`/tasks/?search=${encodeURIComponent(q)}`)
-    } catch { linkTaskResults.value = [] }
-    finally { linkTaskSearching.value = false }
-  }, 300)
-}
-
-async function linkExistingTask(taskId: number) {
-  try {
-    await apiFetch(`/tasks/${taskId}`, {
-      method: 'PATCH', body: JSON.stringify({ purchase_id: purchaseId.value }),
-    })
-    linkTaskDialog.value = false
-    showSnack('Задача привязана к закупке')
-    await loadLinkedTasks()
-  } catch (e: any) {
-    showSnack(e?.detail || 'Ошибка привязки', 'error')
-  }
-}
-
-async function unlinkTask(taskId: number) {
-  try {
-    await apiFetch(`/tasks/${taskId}`, {
-      method: 'PATCH', body: JSON.stringify({ purchase_id: null }),
-    })
-    showSnack('Задача отвязана')
-    await loadLinkedTasks()
-  } catch (e: any) {
-    showSnack(e?.detail || 'Ошибка', 'error')
-  }
-}
-
-// ── Purchase members ─────────────────────────────────────────────────────────
-const purchaseMembers = ref<any[]>([])
-const newMemberUserId = ref<number | null>(null)
-const memberMenuOpen = ref(false)
-const memberAdding = ref(false)
-
-const memberSubordinateIds = ref<Set<number>>(new Set())
-
-async function loadMemberSubordinates() {
-  try {
-    const subs = await apiFetch<any[]>(`/users/${currentUserId}/subordinates`)
-    memberSubordinateIds.value = new Set(subs.map((u: any) => u.id))
-  } catch {}
-}
-
-function memberNeedsConsent(userId: number): boolean {
-  // Discussion group: always show consent notice when adding someone else
-  if (userId === currentUserId) return false
-  return true
-}
-
-watch(memberMenuOpen, async (open) => {
-  if (open) {
-    await Promise.all([loadAllUsers(), loadPurchaseMembers(), loadMemberSubordinates()])
-    newMemberUserId.value = null
-  }
-})
-
-const memberSortedUsers = computed(() => {
-  const memberIds = new Set(purchaseMembers.value.map((m: any) => m.user_id))
-  const inGroup = allUsers.value
-    .filter(u => memberIds.has(u.value))
-    .sort((a, b) => a.text.localeCompare(b.text, 'ru'))
-  const others = allUsers.value
-    .filter(u => !memberIds.has(u.value))
-    .sort((a, b) => a.text.localeCompare(b.text, 'ru'))
-  return [...inGroup, ...others]
-})
-
-function isMemberOfGroup(userId: number): boolean {
-  return purchaseMembers.value.some((m: any) => m.user_id === userId)
-}
-
-async function loadPurchaseMembers() {
-  if (!purchaseId.value) return
-  try {
-    purchaseMembers.value = await apiFetch<any[]>(`/purchases/${purchaseId.value}/members`)
-  } catch { purchaseMembers.value = [] }
-}
-
-// Список user_id согласующих по текущей закупке (для canSeePurchaseDocs)
-const purchaseApprovalUserIds = ref<Set<number>>(new Set())
-
-async function loadPurchaseApprovals() {
-  if (!purchaseId.value) return
-  try {
-    const list = await apiFetch<any[]>(`/purchases/${purchaseId.value}/approvals`)
-    purchaseApprovalUserIds.value = new Set(list.map((a: any) => a.user_id).filter(Boolean))
-  } catch { purchaseApprovalUserIds.value = new Set() }
-}
-
-const isPurchaseApprover = computed(() =>
-  !!currentUserId && purchaseApprovalUserIds.value.has(currentUserId)
-)
-
-const canSeePurchaseDocs = computed(() =>
-  isEdit.value && (
-    isManagerLevel.value ||
-    authStore.hasAction('purchase_files.upload') ||
-    purchaseMembers.value.some((m: any) => m.user_id === currentUserId) ||
-    isPurchaseApprover.value
-  )
-)
-
-async function addPurchaseMember(userId: number | null) {
-  if (!userId || !purchaseId.value) return
-  try {
-    await apiFetch(`/purchases/${purchaseId.value}/members`, {
-      method: 'POST', body: { user_id: userId },
-    })
-    await loadPurchaseMembers()
-  } catch (e: any) {
-    showSnack(e?.detail || 'Ошибка', 'error')
-  }
-  newMemberUserId.value = null
-}
-
-async function addPurchaseMemberAndClose() {
-  memberAdding.value = true
-  await addPurchaseMember(newMemberUserId.value)
-  memberAdding.value = false
-  memberMenuOpen.value = false
-}
-
-async function removePurchaseMember(userId: number) {
-  if (!purchaseId.value) return
-  try {
-    await apiFetch(`/purchases/${purchaseId.value}/members/${userId}`, { method: 'DELETE' })
-    await loadPurchaseMembers()
-  } catch {}
-}
-
-// ── Split purchase feature ───────────────────────────────────────────────────
-const splitKanbanDialog = ref(false)
-const splitKanbanItems = ref<any[]>([])
-
-const ADMIN_ROLES_FE = ['superadmin', 'account_owner', 'org_admin', 'admin']
-const LOCKED_SPLIT_STATUSES = ['contracted', 'delivered', 'paid']
-
-const canSplitPurchase = computed(() => {
-  if (!isEdit.value) return false
-  const st = (form.status || '').toString()
-  if (st === 'split') return false
-  if ((items.value?.length || 0) < 2) return false
-  if (LOCKED_SPLIT_STATUSES.includes(st)) {
-    const role = localStorage.getItem('user_role') || ''
-    return ADMIN_ROLES_FE.includes(role)
-  }
-  return true
-})
-
-async function openSplitKanban() {
-  // items.value в CreateOrderView НЕ содержит item.id (см. mapping @4025),
-  // а канбану нужны настоящие pk для DnD и payload. Фетчим closedly.
-  const pid = Number(route.params.id)
-  let fresh: any = null
-  try { fresh = await apiFetch<any>(`/purchases/${pid}`) } catch {}
-  const rawItems: any[] = (fresh?.items || []).filter((it: any) => it && it.id != null)
-
-  let productsList: any[] = []
-  try { productsList = await apiFetch<any[]>('/products/?limit=10000') } catch {}
-  const byId = new Map<number, any>(productsList.map((p: any) => [p.id, p]))
-  const byName = new Map<string, any>(productsList.map((p: any) => [(p.name || '').trim().toLowerCase(), p]))
-
-  splitKanbanItems.value = rawItems.map((it: any) => {
-    let prod = it.product_id ? byId.get(it.product_id) : null
-    if (!prod && it.item_name) prod = byName.get(it.item_name.trim().toLowerCase()) || null
-    const category = (prod?.category || '').trim()
-    return {
-      id: it.id,
-      product_id: it.product_id ?? prod?.id ?? null,
-      item_name: it.item_name,
-      quantity: Number(it.quantity) || 0,
-      unit: it.unit || 'шт',
-      total_price: Number(it.total_price) || 0,
-      _photo_url: productPhotoSrc(prod) ?? null,
-      _product_category: category,
-      _column: category || '__uncategorized__',
-    }
-  })
-  splitKanbanDialog.value = true
-}
-
-async function onPurchaseSplit(result: { purchase_ids: number[]; count: number; source_purchase_id: number }) {
-  splitKanbanDialog.value = false
-  showSnack(`Создано ${result.count} закупок. Исходная разбита.`, 'success')
-  if (result.purchase_ids?.[0]) {
-    router.push(`/orders/${result.purchase_ids[0]}/edit`)
-  }
-}
-
-// ── Purchase chat ────────────────────────────────────────────────────────────
-const currentUserId = parseInt(localStorage.getItem('user_id') || '0')
-const purchaseChatContainer = ref<HTMLElement | null>(null)
-const purchaseCommentInput = ref<any>(null)
-const purchaseComments = ref<any[]>([])
-const pCommentText = ref('')
-const pCommentSaving = ref(false)
-const pEnterToSend = ref(localStorage.getItem('pchat_enter_to_send') !== 'false')
-const pMentionOpen = ref(false)
-const pMentionQuery = ref('')
-
-const pFilteredMentionUsers = computed(() => {
-  const q = pMentionQuery.value.toLowerCase()
-  if (!q) return allUsers.value.slice(0, 8)
-  return allUsers.value.filter(u => u.text.toLowerCase().includes(q)).slice(0, 6)
-})
-
-async function loadPurchaseComments() {
-  if (!purchaseId.value) return
-  try {
-    purchaseComments.value = await apiFetch<any[]>(`/purchases/${purchaseId.value}/comments`)
-    nextTick(() => {
-      if (purchaseChatContainer.value) purchaseChatContainer.value.scrollTop = purchaseChatContainer.value.scrollHeight
-    })
-  } catch { purchaseComments.value = [] }
-}
-
-async function addPurchaseComment() {
-  if (!purchaseId.value || !pCommentText.value.trim()) return
-  pCommentSaving.value = true
-  pMentionOpen.value = false
-  try {
-    await apiFetch(`/purchases/${purchaseId.value}/comments`, {
-      method: 'POST', body: JSON.stringify({ text: pCommentText.value.trim() }),
-    })
-    pCommentText.value = ''
-    await loadPurchaseComments()
-  } catch (e: any) {
-    showSnack(e?.detail || 'Ошибка', 'error')
-  } finally { pCommentSaving.value = false }
-}
-
-async function deletePurchaseComment(commentId: number) {
-  if (!purchaseId.value) return
-  try {
-    await apiFetch(`/purchases/${purchaseId.value}/comments/${commentId}`, { method: 'DELETE' })
-    await loadPurchaseComments()
-  } catch {}
-}
-
-function onPurchaseCommentInput() {
-  const text = pCommentText.value
-  const atIdx = text.lastIndexOf('@')
-  if (atIdx >= 0) {
-    const afterAt = text.slice(atIdx + 1)
-    if (!afterAt.includes('\n') && afterAt.length <= 30) {
-      pMentionQuery.value = afterAt
-      pMentionOpen.value = true
-      return
-    }
-  }
-  pMentionOpen.value = false
-}
-
-function onPurchaseCommentKeydown(e: KeyboardEvent) {
-  if (pMentionOpen.value) {
-    if (e.key === 'Escape') { pMentionOpen.value = false; e.preventDefault(); return }
-    if ((e.key === 'Tab' || e.key === 'Enter') && pFilteredMentionUsers.value.length > 0) {
-      e.preventDefault(); pInsertMention(pFilteredMentionUsers.value[0]); return
-    }
-  }
-  if (e.key === 'Enter') {
-    const ctrl = e.ctrlKey || e.metaKey
-    if (pEnterToSend.value) {
-      if (ctrl) {
-        e.preventDefault()
-        const ta = (purchaseCommentInput.value as any)?.$el?.querySelector('textarea')
-        if (ta) { const s = ta.selectionStart; pCommentText.value = pCommentText.value.slice(0, s) + '\n' + pCommentText.value.slice(ta.selectionEnd); nextTick(() => { ta.selectionStart = ta.selectionEnd = s + 1 }) }
-        return
-      }
-      if (!e.shiftKey) { e.preventDefault(); addPurchaseComment() }
-    } else {
-      if (ctrl) { e.preventDefault(); addPurchaseComment() }
-    }
-  }
-}
-
-function pOpenMentionPicker() {
-  pMentionQuery.value = ''
-  const text = pCommentText.value
-  if (!text.endsWith('@')) pCommentText.value = text + (text && !text.endsWith(' ') ? ' @' : '@')
-  pMentionOpen.value = true
-  loadAllUsers()
-}
-
-function pInsertMention(user: { text: string; value: number }) {
-  const text = pCommentText.value
-  const atIdx = text.lastIndexOf('@')
-  if (atIdx >= 0) pCommentText.value = text.slice(0, atIdx) + `@${user.text} `
-  pMentionOpen.value = false
-  nextTick(() => {
-    const el = (purchaseCommentInput.value as any)?.$el?.querySelector('textarea')
-    if (el) el.focus()
-  })
-}
-
-function renderPurchaseMentions(text: string): string {
-  if (!text) return ''
-  const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  return escaped.replace(/@([A-Za-zА-Яа-яёЁ\s]+?)(\s|$)/g, '<span style="color:#1976d2;font-weight:500">@$1</span>$2')
-}
-
-// ── Purchase broadcast ──
-const pBroadcastDialog = ref(false)
-const pBroadcastScope = ref<string>('organization')
-const pBroadcastScopeId = ref<number | null>(null)
-const pBroadcastText = ref('')
-const pBroadcastSending = ref(false)
-const pBroadcastOrgs = ref<{ id: number; name: string }[]>([])
-const pBroadcastDepts = ref<{ id: number; name: string }[]>([])
-
-async function openPurchaseBroadcast() {
-  pBroadcastText.value = pCommentText.value || ''
-  pBroadcastScopeId.value = null
-  pBroadcastDialog.value = true
-  try {
-    const data = await apiFetch<any>('/tasks/broadcast/scopes')
-    pBroadcastOrgs.value = data.organizations || []
-    pBroadcastDepts.value = data.departments || []
-    if (pBroadcastOrgs.value.length === 1) pBroadcastScopeId.value = pBroadcastOrgs.value[0].id
-  } catch {}
-}
-
-async function sendPurchaseBroadcast() {
-  if (!purchaseId.value || !pBroadcastText.value.trim()) return
-  pBroadcastSending.value = true
-  try {
-    const res = await apiFetch<any>(`/purchases/${purchaseId.value}/broadcast`, {
-      method: 'POST',
-      body: JSON.stringify({
-        text: pBroadcastText.value.trim(),
-        scope: pBroadcastScope.value,
-        scope_id: pBroadcastScope.value !== 'all' ? pBroadcastScopeId.value : undefined,
-      }),
-    })
-    pBroadcastDialog.value = false
-    pCommentText.value = ''
-    showSnack(`Отправлено: ${res.sent} из ${res.total_users} сотрудников`)
-    await loadPurchaseComments()
-  } catch (e: any) {
-    showSnack(e?.detail || 'Ошибка рассылки', 'error')
-  } finally { pBroadcastSending.value = false }
-}
+// ── Purchase broadcast — вынесено в composables/purchase/usePurchaseBroadcast.ts + components/purchase/PurchaseBroadcastDialog.vue ──
+const {
+  pBroadcastDialog, pBroadcastScope, pBroadcastScopeId, pBroadcastText,
+  pBroadcastSending, pBroadcastOrgs, pBroadcastDepts,
+  openPurchaseBroadcast, sendPurchaseBroadcast,
+} = usePurchaseBroadcast(purchaseId, pCommentText, loadPurchaseComments)
 
 // Framework contracts
 const CONTRACT_TYPES = [
@@ -6812,86 +5492,13 @@ const contractWord = computed(() => isFramework.value ? 'Заказ' : 'Дого
 const contractWordLower = computed(() => isFramework.value ? 'заказ' : 'договор')
 const contractWordGen = computed(() => isFramework.value ? 'заказа' : 'договора')
 
-// ── Framework sibling purchases ───────────────────────────────────────────────
-interface FrameworkSibling {
-  id: number; item_name?: string; subject?: string; status: string
-  framework_seq?: number; total_nmck?: number; contract_price?: number; payment_amount?: number
-}
-const frameworkSiblings = ref<FrameworkSibling[]>([])
-
-const frameworkTotals = computed(() => ({
-  nmck:  frameworkSiblings.value.reduce((s, x) => s + (Number(x.total_nmck) || 0), 0),
-  price: frameworkSiblings.value.reduce((s, x) => s + (Number(x.contract_price) || 0), 0),
-  paid:  frameworkSiblings.value.reduce((s, x) => s + (Number(x.payment_amount) || 0), 0),
-}))
-
-async function loadFrameworkSiblings(contractId: number) {
-  try {
-    frameworkSiblings.value = await apiFetch<FrameworkSibling[]>(`/purchases/by-contract/${contractId}`)
-  } catch {
-    frameworkSiblings.value = []
-  }
-}
-
-watch(() => form.contract_id, (cid) => {
-  if (cid && isFramework.value) loadFrameworkSiblings(cid)
-  else frameworkSiblings.value = []
-})
-
-const filteredFrameworkContracts = computed(() => {
-  const q = frameworkSearch.value.toLowerCase().trim()
-  if (!q) return frameworkContracts.value
-  return frameworkContracts.value.filter(c =>
-    (c.number || '').toLowerCase().includes(q) ||
-    (c.contractor_name || '').toLowerCase().includes(q) ||
-    (c.contractor_inn || '').toLowerCase().includes(q) ||
-    (c.subject || '').toLowerCase().includes(q)
-  )
-})
-
-// ── Счёт по РД (framework_invoice) ──────────────────────────────────────────
-const selectedFrameworkInvoiceContract = ref<FrameworkContract | null>(null)
-
-const frameworkContractsForInvoice = computed(() => {
-  if (!form.contractor_id) return frameworkContracts.value
-  return frameworkContracts.value.filter(c => c.contractor_id === form.contractor_id)
-})
-
-async function loadFrameworkContractsForInvoice() {
-  if (form.payment_basis_type !== 'framework_invoice') return
-  try {
-    const params = new URLSearchParams()
-    if (form.subsidy_id) params.set('subsidy_id', String(form.subsidy_id))
-    if (form.contractor_id) params.set('contractor_id', String(form.contractor_id))
-    params.append('contract_type', 'framework_cumulative')
-    params.append('contract_type', 'framework_with_amount')
-    frameworkContracts.value = await apiFetch<FrameworkContract[]>(`/contracts/?${params}`)
-  } catch { /* silent */ }
-}
-
-function onFrameworkInvoiceSelect(c: FrameworkContract | null) {
-  if (c) {
-    form.contract_id = c.id
-    // phase26-j-3: autofill denormalized fields from selected contract
-    if (c.number) form.contract_number = c.number
-    if (c.date) form.contract_date = c.date
-    if (c.contract_type) form.purchase_contract_type = c.contract_type
-  } else {
-    form.contract_id = null
-  }
-}
-
-watch(() => form.payment_basis_type, (newType) => {
-  if (newType === 'framework_invoice') {
-    loadFrameworkContractsForInvoice()
-  }
-})
-
-watch(() => form.contractor_id, () => {
-  if (form.payment_basis_type === 'framework_invoice') {
-    loadFrameworkContractsForInvoice()
-  }
-})
+// ── Framework sibling purchases / Счёт по РД — вынесено в
+// composables/purchase/useFrameworkSiblings.ts ──
+const {
+  frameworkSiblings, frameworkTotals, loadFrameworkSiblings, filteredFrameworkContracts,
+  selectedFrameworkInvoiceContract, frameworkContractsForInvoice,
+  loadFrameworkContractsForInvoice, onFrameworkInvoiceSelect,
+} = useFrameworkSiblings(form, isFramework, frameworkContracts, frameworkSearch)
 
 // ── Со-финансирование (cofinancing subsidies) ────────────────────────────────
 const cofinancingSubsidies = computed(() => {
@@ -7112,13 +5719,6 @@ const monthlyTotal = computed(() => {
 
 const calcMonthlyTotal = () => { /* reactivity trigger — monthlyTotal is computed */ }
 
-const showSnack = (
-  text: string,
-  color: ToastType = 'success',
-  opts?: { actionText?: string; onAction?: () => void; duration?: number },
-) => {
-  toast.addToast(text, color, opts)
-}
 const formatMoney = (v: number) => v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽'
 const formatSize = (bytes?: number) => !bytes ? '' : bytes > 1048576 ? (bytes / 1048576).toFixed(1) + ' МБ' : (bytes / 1024).toFixed(0) + ' КБ'
 const formatDate = (dt?: string | null) => dt ? new Date(dt).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }) : ''
@@ -8125,21 +6725,11 @@ interface Receipt {
 const receipts = ref<Receipt[]>([])
 const jsonReceiptInput = ref<HTMLInputElement | null>(null)
 
-const manualReceiptDialog = reactive({
-  show: false,
-  saving: false,
-  error: '',
-  form: {
-    fiscal_drive_number: '',
-    fiscal_document_number: null as number | null,
-    fiscal_sign: '',
-    receipt_datetime: '',
-    total_sum: null as number | null,
-    seller_name: '',
-    seller_inn: '',
-    retail_place: '',
-  },
-})
+// manualReceiptDialog — вынесен в composables/purchase/useManualReceipt.ts +
+// components/purchase/ManualReceiptDialog.vue (остальная фича «Чеки» — QR/JSON —
+// остаётся здесь, вне этой волны).
+const { manualReceiptDialog, openManualReceiptDialog, saveManualReceipt } =
+  useManualReceipt(purchaseId, showSnack, () => loadReceipts())
 
 function sourceLabel(s?: string | null) {
   if (!s) return '—'
@@ -8340,55 +6930,6 @@ async function onJsonReceiptUpload(e: Event) {
   if (parts.length) showSnack(parts.join(', '), qrFails && !added ? 'warning' : 'success')
 }
 
-function openManualReceiptDialog() {
-  manualReceiptDialog.error = ''
-  manualReceiptDialog.form = {
-    fiscal_drive_number: '',
-    fiscal_document_number: null,
-    fiscal_sign: '',
-    receipt_datetime: '',
-    total_sum: null,
-    seller_name: '',
-    seller_inn: '',
-    retail_place: '',
-  }
-  manualReceiptDialog.show = true
-}
-
-async function saveManualReceipt() {
-  if (!purchaseId.value) return
-  manualReceiptDialog.saving = true
-  manualReceiptDialog.error = ''
-  try {
-    const payload: any = { source: 'manual' }
-    const f = manualReceiptDialog.form
-    if (f.fiscal_drive_number) payload.fiscal_drive_number = f.fiscal_drive_number
-    // fiscal_document_number/total_sum — v-model.number; `!= null` не ловит '' после
-    // очистки поля. При null поле в payload не попадает вовсе (как и раньше для
-    // остальных необязательных полей формы). numOrNull: '' → null, 0 сохраняется
-    // как число.
-    const fiscalDocNumber = numOrNull(f.fiscal_document_number)
-    if (fiscalDocNumber != null) payload.fiscal_document_number = fiscalDocNumber
-    if (f.fiscal_sign) payload.fiscal_sign = f.fiscal_sign
-    if (f.receipt_datetime) payload.receipt_datetime = f.receipt_datetime
-    const totalSum = numOrNull(f.total_sum)
-    if (totalSum != null) payload.total_sum = totalSum
-    if (f.seller_name) payload.seller_name = f.seller_name
-    if (f.seller_inn) payload.seller_inn = f.seller_inn
-    if (f.retail_place) payload.retail_place = f.retail_place
-    await apiFetch(`/purchases/${purchaseId.value}/receipts`, {
-      method: 'POST',
-      body: JSON.stringify(payload) as any,
-    })
-    manualReceiptDialog.show = false
-    await loadReceipts()
-    showSnack('Чек добавлен')
-  } catch (e: any) {
-    manualReceiptDialog.error = e?.message || 'Ошибка сохранения'
-  } finally {
-    manualReceiptDialog.saving = false
-  }
-}
 
 async function deleteReceipt(id: number) {
   if (!purchaseId.value) return
@@ -9114,49 +7655,7 @@ const deleteFile = async (fid: number) => {
   }
 }
 
-const copyDocError = async () => {
-  if (!docErrorInfo.value) return
-  const i = docErrorInfo.value as any
-  const lines = [
-    'Ошибка генерации документа',
-    `Покупка: #${purchaseId.value} (субсидия id=${form.subsidy_id ?? '—'})`,
-    `Шаблон: ${i.template ?? ''} (${i.template_source ?? ''})`,
-    `Код: ${i.code ?? ''}${i.correlation_id ? ` · correlation_id=${i.correlation_id}` : ''}`,
-    `Класс: ${i.error_class ?? ''}`,
-    '',
-    'Сообщение:',
-    i.message ?? '',
-    '',
-    'Сырой текст:',
-    i.error_raw ?? '',
-  ]
-  if (i.hint) {
-    lines.push('', 'Подсказка:', i.hint)
-  }
-  if (i.traceback) {
-    lines.push('', 'Traceback:', String(i.traceback).slice(0, 4000))
-  }
-  const txt = lines.join('\n')
-  try {
-    await navigator.clipboard.writeText(txt)
-    showSnack('Текст ошибки скопирован в буфер обмена', 'success', { duration: 2500 })
-  } catch {
-    // Fallback для http-контекста или ограничений permission
-    try {
-      const ta = document.createElement('textarea')
-      ta.value = txt
-      ta.style.position = 'fixed'
-      ta.style.opacity = '0'
-      document.body.appendChild(ta)
-      ta.select()
-      document.execCommand('copy')
-      document.body.removeChild(ta)
-      showSnack('Текст ошибки скопирован', 'success', { duration: 2500 })
-    } catch {
-      showSnack('Не удалось скопировать. Выделите текст в блоке «Технические детали» и Ctrl+C', 'error')
-    }
-  }
-}
+// copyDocError — вынесена в components/purchase/DocErrorDialog.vue (использовалась только там).
 
 const downloadDoc = async (docType: string, extraParams = '', loadingKey?: string) => {
   if (!purchaseId.value) return
@@ -9210,410 +7709,17 @@ const downloadDoc = async (docType: string, extraParams = '', loadingKey?: strin
   }
 }
 
-// ── Фабрикант: пакет документов (ZIP) ────────────────────────────────────────
-async function downloadFabrikantPackage() {
-  if (!purchaseId.value) return
-  docLoading.value = 'fabrikant_package'
-  try {
-    const token = localStorage.getItem('auth_token')
-    const res = await fetch(`/api/purchases/${purchaseId.value}/fabrikant-package`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    if (!res.ok) {
-      const err = await res.json().catch(() => null)
-      const d = err?.details || err?.detail
-      if (err?.code) {
-        const info: any = {
-          code: err.code,
-          message: err.message || 'Ошибка формирования пакета документов',
-          correlation_id: err.correlation_id,
-        }
-        if (d && typeof d === 'object') Object.assign(info, d)
-        else if (typeof d === 'string') info.error_raw = d
-        docErrorInfo.value = info
-        docErrorDialog.value = true
-      } else {
-        showSnack(err?.message || 'Ошибка формирования пакета документов', 'error')
-      }
-      return
-    }
-    const blob = await res.blob()
-    const disposition = res.headers.get('Content-Disposition') || ''
-    let filename = `Фабрикант_закупка_${purchaseId.value}.zip`
-    const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i)
-    if (utf8Match) {
-      try { filename = decodeURIComponent(utf8Match[1]) } catch { filename = utf8Match[1] }
-    } else {
-      const plain = disposition.match(/filename="?([^";]+)"?/)
-      if (plain) filename = plain[1]
-    }
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url; a.download = filename; a.click()
-    URL.revokeObjectURL(url)
-  } catch {
-    showSnack('Ошибка скачивания пакета документов', 'error')
-  } finally {
-    docLoading.value = null
-  }
-}
+// ── Фабрикант: пакет документов (ZIP) + override-файлы — вынесено в
+// composables/purchase/useFabrikantPackage.ts ──
+const {
+  downloadFabrikantPackage,
+  fabrikantFileInputEl, fabrikantPendingFt, fabrikantOverride,
+  triggerFabrikantUpload, uploadFabrikantOverride, deleteFabrikantOverride,
+} = useFabrikantPackage(purchaseId, showSnack, docErrorInfo, docErrorDialog, docLoading, uploadedFiles, EDITABLE_MIME, uploading)
 
-// ── Фабрикант: override-файлы пакета ────────────────────────────────────────
-const fabrikantFileInputEl = ref<HTMLInputElement | null>(null)
-const fabrikantPendingFt = ref<string>('')
-
-function fabrikantOverride(ft: string): UploadedFile | undefined {
-  return uploadedFiles.value.find(f => f.file_type === ft && f.is_active !== false)
-}
-
-function triggerFabrikantUpload(ft: string) {
-  fabrikantPendingFt.value = ft
-  fabrikantFileInputEl.value?.click()
-}
-
-const uploadFabrikantOverride = async (event: Event) => {
-  const input = event.target as HTMLInputElement
-  if (!input.files?.length || !purchaseId.value) return
-  uploading.value = true
-  try {
-    const file = input.files[0]
-    const docFormat = EDITABLE_MIME.has(file.type) ? 'editable' : 'scan'
-    const fd = new FormData()
-    fd.append('file', file)
-    fd.append('file_type', fabrikantPendingFt.value)
-    fd.append('doc_format', docFormat)
-    const token = localStorage.getItem('auth_token')
-    const res = await fetch(`/api/purchases/${purchaseId.value}/files`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      body: fd,
-    })
-    if (!res.ok) {
-      let detail = `Ошибка загрузки (${res.status})`
-      try { const err = await res.json(); detail = err.detail || err.message || detail } catch {}
-      showSnack(detail, 'error')
-      return
-    }
-    const uploaded: UploadedFile = await res.json()
-    const ft = uploaded.file_type
-    uploadedFiles.value.forEach(f => { if (f.file_type === ft) f.is_active = false })
-    uploadedFiles.value.push(uploaded)
-    showSnack('Файл загружен — будет использован вместо шаблона')
-  } catch (e: any) {
-    showSnack(e?.message || 'Ошибка загрузки файла', 'error')
-  } finally {
-    uploading.value = false
-    fabrikantPendingFt.value = ''
-    if (input) input.value = ''
-  }
-}
-
-const deleteFabrikantOverride = async (fid: number) => {
-  try {
-    await apiFetch(`/purchases/${purchaseId.value}/files/${fid}`, { method: 'DELETE' })
-    uploadedFiles.value = uploadedFiles.value.filter(f => f.id !== fid)
-    showSnack('Override удалён — будет использоваться шаблон')
-  } catch (e: any) {
-    showSnack(e?.payload?.message || e?.message || 'Ошибка удаления', 'error')
-  }
-}
-
-// ── КП (Запрос коммерческих предложений) ─────────────────────────────────────
-const kpDialog      = ref(false)
-const kpSelected    = ref<number[]>([])
-const kpIntroText   = ref('')
-const kpDeliveryDate = ref('')
-const kpItemsLoading = ref(false)
-const kpFreeRecipients = ref<{ name: string; email: string }[]>([])
-const kpEditEmailId  = ref<number | null>(null)
-const kpEditEmailValue = ref('')
-const kpSavingEmail  = ref(false)
-const kpSaving       = ref(false)
-const kpSendingAll   = ref(false)
-
-const kpAllEmails = computed(() => {
-  const emails: string[] = []
-  for (const cid of kpSelected.value) {
-    const c = kpContractorList.value.find(c => c.id === cid)
-    if (c?.email) emails.push(c.email)
-  }
-  for (const fr of kpFreeRecipients.value) {
-    if (fr.email.trim()) emails.push(fr.email.trim())
-  }
-  return emails
-})
-
-interface ContractorKp {
-  id: number; name: string; email?: string
-  product_categories: string[]
-}
-interface KpItem {
-  id: number; item_name: string; quantity: number; unit: string
-  unit_price: number; category: string | null
-}
-
-const kpContractorList = ref<ContractorKp[]>([])
-const kpItems = ref<KpItem[]>([])
-
-const kpContractorOptions = computed(() =>
-  kpContractorList.value.map(c => ({
-    id: c.id,
-    label: c.email ? `${c.name} <${c.email}>` : `${c.name} (нет email)`,
-  }))
-)
-
-/** Items matching a contractor's categories. If contractor has no categories → all items. */
-function kpItemsForContractor(cid: number): KpItem[] {
-  const contractor = kpContractorList.value.find(c => c.id === cid)
-  if (!contractor) return kpItems.value
-  const cats = contractor.product_categories
-  if (!cats.length) return kpItems.value  // no categories known → send all
-  return kpItems.value.filter(item => item.category && cats.includes(item.category))
-}
-
-function buildContractorEmail(cid: number): string {
-  const contractor = kpContractorList.value.find(c => c.id === cid)
-  if (!contractor) return ''
-  const items = kpItemsForContractor(cid)
-  const subject = form.subject || form.item_name || '—'
-  const delivery = kpDeliveryDate.value || form.execution_term || '—'
-  const intro = kpIntroText.value || 'Просим Вас направить коммерческое предложение на поставку товаров.'
-
-  const itemLines = items.map((it, i) =>
-    `${i + 1}. ${it.item_name}${it.category ? ` [${it.category}]` : ''} — ${it.quantity} ${it.unit}`
-  ).join('\n')
-
-  return `Уважаемые коллеги,
-
-${intro}
-
-Закупка: ${subject}
-Срок поставки: ${delivery}
-
-Перечень товаров (${items.length} поз.):
-${itemLines || '— (товары не указаны)'}
-
-Просим указать в КП:
-— наименование и характеристики товара;
-— стоимость за единицу и общую стоимость;
-— срок поставки;
-— гарантийные обязательства.
-
-С уважением`
-}
-
-function kpStartEditEmail(cid: number) {
-  kpEditEmailId.value = cid
-  kpEditEmailValue.value = kpContractorList.value.find(c => c.id === cid)?.email || ''
-}
-
-async function kpSaveEmail(cid: number) {
-  if (!kpEditEmailValue.value.trim()) return
-  kpSavingEmail.value = true
-  try {
-    await apiFetch(`/contractors/${cid}/email`, {
-      method: 'PATCH',
-      body: { email: kpEditEmailValue.value.trim() },
-    })
-    const c = kpContractorList.value.find(c => c.id === cid)
-    if (c) c.email = kpEditEmailValue.value.trim()
-    kpEditEmailId.value = null
-    showSnack('Email контрагента сохранён')
-  } catch (e: any) {
-    showSnack('Ошибка сохранения email', 'error')
-  } finally {
-    kpSavingEmail.value = false
-  }
-}
-
-function openMailtoFree(fr: { name: string; email: string }) {
-  if (!fr.email) return
-  const subject = encodeURIComponent(`Запрос КП: ${form.subject || form.item_name || 'закупка'}`)
-  const body = encodeURIComponent(buildGenericEmail())
-  window.open(`mailto:${fr.email}?subject=${subject}&body=${body}`, '_blank')
-}
-
-function copyFreeEmail(fr: { name: string; email: string }) {
-  navigator.clipboard.writeText(buildGenericEmail()).then(
-    () => showSnack('Текст письма скопирован', 'success', { duration: 2500 }),
-    () => showSnack('Не удалось скопировать', 'error')
-  )
-}
-
-function buildGenericEmail(): string {
-  const subject = form.subject || form.item_name || '—'
-  const delivery = kpDeliveryDate.value || form.execution_term || '—'
-  const intro = kpIntroText.value || 'Просим Вас направить коммерческое предложение на поставку товаров.'
-  const itemLines = kpItems.value.map((it, i) =>
-    `${i + 1}. ${it.item_name} — ${it.quantity} ${it.unit}`
-  ).join('\n')
-  return `Уважаемые коллеги,\n\n${intro}\n\nЗакупка: ${subject}\nСрок поставки: ${delivery}\n\nПеречень товаров (${kpItems.value.length} поз.):\n${itemLines || '— (товары не указаны)'}\n\nС уважением`
-}
-
-async function openKpDialog() {
-  kpDialog.value = true
-  kpIntroText.value = ''
-  kpDeliveryDate.value = form.execution_term || ''
-  kpFreeRecipients.value = []
-  kpEditEmailId.value = null
-
-  // Load contractors with product categories
-  if (!kpContractorList.value.length) {
-    try {
-      const list = await apiFetch<any[]>('/contractors/with-stats')
-      kpContractorList.value = list.map((c: any) => ({
-        id: c.id, name: c.name, email: c.email || '',
-        product_categories: c.product_categories || [],
-      }))
-      if (form.contractor_id) kpSelected.value = [form.contractor_id]
-    } catch { showSnack('Ошибка загрузки контрагентов', 'error') }
-  }
-
-  // Load purchase items with categories
-  if (purchaseId.value && !kpItems.value.length) {
-    kpItemsLoading.value = true
-    try {
-      kpItems.value = await apiFetch<KpItem[]>(`/purchases/${purchaseId.value}/kp-items`)
-    } catch { showSnack('Ошибка загрузки позиций', 'error') }
-    finally { kpItemsLoading.value = false }
-  }
-}
-
-function openMailtoForContractor(cid: number) {
-  const contractor = kpContractorList.value.find(c => c.id === cid)
-  if (!contractor?.email) return
-  const subject = encodeURIComponent(`Запрос КП: ${form.subject || form.item_name || 'закупка'}`)
-  const body = encodeURIComponent(buildContractorEmail(cid))
-  window.open(`mailto:${contractor.email}?subject=${subject}&body=${body}`, '_blank')
-}
-
-function copyContractorEmail(cid: number) {
-  navigator.clipboard.writeText(buildContractorEmail(cid)).then(
-    () => showSnack('Текст письма скопирован', 'success', { duration: 2500 }),
-    () => showSnack('Не удалось скопировать', 'error')
-  )
-}
-
-function sendAllKp() {
-  // Opens mailto: as fallback
-  const emails = kpAllEmails.value
-  if (!emails.length) return
-  const subject = encodeURIComponent(`Запрос КП: ${form.subject || form.item_name || 'закупка'}`)
-  const body = encodeURIComponent(buildGenericEmail())
-  const [first, ...rest] = emails
-  const bcc = rest.length ? `&bcc=${encodeURIComponent(rest.join(','))}` : ''
-  window.open(`mailto:${first}?subject=${subject}${bcc}&body=${body}`, '_blank')
-}
-
-async function sendAllKpViaApi() {
-  kpSendingAll.value = true
-  try {
-    // Auto-save КП request before sending if purchase exists
-    if (purchaseId.value) {
-      const validFree = kpFreeRecipients.value.filter(r => r.email.trim())
-      try {
-        await apiFetch('/commercial-requests/', {
-          method: 'POST',
-          body: {
-            purchase_id: purchaseId.value,
-            subject: `Запрос КП: ${form.subject || form.item_name || ''}`.trim(),
-            intro_text: kpIntroText.value || null,
-            delivery_date: kpDeliveryDate.value || null,
-            recipient_ids: kpSelected.value,
-            free_recipients: validFree.length ? validFree.map(r => ({ name: r.name || null, email: r.email })) : null,
-          },
-        })
-      } catch { /* silent — save failure shouldn't block send */ }
-    }
-
-    // Build recipients list
-    const recipients: { name: string | null; email: string }[] = []
-    for (const cid of kpSelected.value) {
-      const c = kpContractorList.value.find(c => c.id === cid)
-      if (c?.email) recipients.push({ name: c.name, email: c.email })
-    }
-    for (const fr of kpFreeRecipients.value) {
-      if (fr.email.trim()) recipients.push({ name: fr.name || null, email: fr.email.trim() })
-    }
-    if (!recipients.length) {
-      showSnack('Нет получателей с email', 'warning')
-      return
-    }
-
-    const result = await apiFetch<{ sent: number; failed: { email: string; error: string }[] }>(
-      '/commercial-requests/send',
-      {
-        method: 'POST',
-        body: {
-          recipients,
-          subject: `Запрос КП: ${form.subject || form.item_name || 'закупка'}`,
-          body: buildGenericEmail(),
-        },
-      }
-    )
-
-    if (result.failed.length) {
-      showSnack(`Отправлено: ${result.sent}, ошибки: ${result.failed.length}`, 'warning')
-    } else {
-      showSnack(`Отправлено ${result.sent} письмо(а)`)
-      kpDialog.value = false
-    }
-  } catch (e: any) {
-    const msg = e.message || 'Ошибка отправки'
-    if (msg.includes('SMTP не настроен')) {
-      showSnack('SMTP не настроен. Перейдите в Настройки организации → Email.', 'error')
-    } else {
-      showSnack(msg, 'error')
-    }
-  } finally {
-    kpSendingAll.value = false
-  }
-}
-
-async function saveKpRequest() {
-  if (!purchaseId.value) return
-  kpSaving.value = true
-  try {
-    const validFree = kpFreeRecipients.value.filter(r => r.email.trim())
-    await apiFetch('/commercial-requests/', {
-      method: 'POST',
-      body: {
-        purchase_id: purchaseId.value,
-        subject: `Запрос КП: ${form.subject || form.item_name || ''}`.trim(),
-        intro_text: kpIntroText.value || null,
-        delivery_date: kpDeliveryDate.value || null,
-        recipient_ids: kpSelected.value,
-        free_recipients: validFree.length ? validFree.map(r => ({ name: r.name || null, email: r.email })) : null,
-      },
-    })
-    showSnack('Запрос КП сохранён в реестре')
-    kpDialog.value = false
-  } catch (e: any) {
-    showSnack(e.message || 'Ошибка сохранения', 'error')
-  } finally {
-    kpSaving.value = false
-  }
-}
-
-async function downloadKpXlsx() {
-  if (!purchaseId.value) return
-  try {
-    const token = localStorage.getItem('auth_token') || localStorage.getItem('access_token') || ''
-    const resp = await fetch(`/api/documents/purchases/${purchaseId.value}/kp-xlsx`, {
-      headers: { Authorization: `Bearer ${token}` }
-    })
-    if (!resp.ok) throw new Error('error')
-    const blob = await resp.blob()
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `Сравнение_КП_закупка_${purchaseId.value}.xlsx`
-    a.click()
-    URL.revokeObjectURL(url)
-  } catch {
-    showSnack('Ошибка загрузки xlsx', 'error')
-  }
-}
+// КП (Запрос коммерческих предложений) — вынесен в composables/purchase/usePurchaseKp.ts +
+// components/purchase/KpDialog.vue (самодостаточный, состояние внутри компонента).
+const kpDialogRef = ref<InstanceType<typeof KpDialog> | null>(null)
 </script>
 
 <style scoped>

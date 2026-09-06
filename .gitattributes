@@ -1,0 +1,14 @@
+# Нормализация окончаний строк (2026-09-06): агенты на Windows переписывают файлы целиком с CRLF,
+# репозиторий исторически на LF — без этого каждый такой файл даёт diff на весь файл.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.docx binary
+*.xlsx binary
+*.pdf binary
+*.pptx binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.7z binary
+*.zip binary

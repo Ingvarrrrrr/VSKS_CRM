@@ -99,3 +99,159 @@ export interface SubsidyDeleteImpact {
   purchases: number
   contracts: number
 }
+
+// ── Плановые/фактические позиции ФЭО (панель «План vs факт», волна 5a-2) ──────
+// Вынесены из SubsidiesView.vue при разбиении на PlannedItem*/PlanGraph*-диалоги —
+// единственный источник этих интерфейсов, парент и новые компоненты импортируют
+// отсюда (Правило №6).
+export interface FeoPlannedItem {
+  id: number
+  feo_category_id: number
+  name: string
+  quantity: number | null
+  unit: string | null
+  amount: number | null
+  // Цена ЗА ЕДИНИЦУ (владелец, 2026-09-02) — необязательное поле, см. докстринг
+  // FeoPlannedItem.unit_price (backend/app/models/feo_planned_item.py) и
+  // assert_tz_not_over_plan (backend/app/services/feo_plan.py): задана → план
+  // полноценный (кол-во/цена/сумма проверяются); NULL → amount сама по себе
+  // итоговая сумма, quantity ориентировочное. PUT здесь — ПОЛНАЯ замена (см.
+  // остальные PATCHABLE-комментарии в файле) — все места, шлющие PUT
+  // /feo-planned-items/{id}, обязаны передавать unit_price существующей
+  // позиции явно, иначе он молча обнулится.
+  unit_price?: number | null
+  notes: string | null
+  is_active: boolean
+  payment_mode?: 'one_time' | 'monthly'
+  planned_date?: string | null
+  monthly_start_date?: string | null
+  months_count?: number | null
+  monthly_amount?: number | null
+  // Владелец (2026-08-12, замечание 2): порядок позиций внутри категории —
+  // настраиваемый (стрелки вверх/вниз), см. reorderPlannedItem в SubsidiesView.vue.
+  sort_order?: number | null
+  // Блок 1 (план zany-fluttering-mountain.md, 2026-08-14): товар / услуга / работа.
+  item_type?: string | null
+  // Владелец (2026-08-18): «данные есть [у связанных позиций закупок], почему
+  // не подтягиваются?» — свой item_type, иначе унаследованный от purchase_items,
+  // иначе null (GET /feo-planned-items/comparison, см. FeoPlannedItemOut в бэкенде).
+  item_type_effective?: string | null
+  item_type_inherited?: boolean
+  // Происхождение плановой позиции (владелец, 2026-09-01) — ДВЕ НЕЗАВИСИМЫЕ
+  // галочки, не переключатель: is_feo_breakdown — жёсткая построчная разбивка
+  // ФЭО реально есть (покупать будут именно это, отчётность строгая);
+  // is_internal_plan — в ФЭО была только более широкая категория (или позиции
+  // не было вовсе), состав придумали сами. См. backend/app/models/feo_planned_item.py.
+  is_feo_breakdown?: boolean
+  is_internal_plan?: boolean
+}
+
+// Стадия уточнения позиции (ФЭО → План → Что выставили на закупку → Номенклатура
+// подрядчика → Приняли) — справочная детализация, отдаётся бэкендом внутри FeoActualItem.stages.
+export interface FeoStage {
+  key: string
+  label: string
+  name: string
+  quantity: number | null
+  unit: string | null
+  unit_price: number | null
+  total: number | null
+}
+
+export interface FeoActualItem {
+  purchase_item_id: number
+  item_name: string
+  quantity: number | null
+  unit: string | null
+  unit_price: number | null
+  total_price: number | null
+  feo_planned_item_id: number | null
+  purchase_id: number
+  purchase_number: number | null
+  registry_number: string | null
+  purchase_status: string | null
+  wish_id?: number | null
+  contract_number: string | null
+  contractor_name: string | null
+  product_photo?: string | null
+  // Требование владельца (2026-08-05): факт появляется с «Заказано», уточняется закрывающими
+  // документами при «Поставлено»/«Оплачено» — см. calcDiff/FACT_STATUSES в SubsidiesView.vue.
+  final_unit_price?: number | null
+  final_total?: number | null
+  acceptance_doc_amount?: number | null
+  contract_price?: number | null
+  purchase_items_count?: number | null
+  fact_amount?: number | null
+  fact_confirmed?: boolean
+  fact_allocated?: boolean
+  over_plan?: boolean
+  // Разворот по стадиям уточнения наименования/кол-ва (панель «план vs факт», см. FeoStage)
+  stages?: FeoStage[]
+  // Владелец, 2026-08-13: остановка закупки — read-only, системой проставляется в
+  // POST /api/wishes/{wish_id}/stop. ⚠️ /feo-planned-items/comparison пока не
+  // выбирает и не отдаёт эти поля на строке позиции (только Purchase.status) —
+  // поля опциональны и на практике сейчас всегда undefined, маркер «ЗАКУПКА
+  // ОСТАНОВЛЕНА» ниже по файлу не появится, пока бэкенд их не добавит.
+  stopped_at?: string | null
+  stopped_by_name?: string | null
+}
+
+// ── Левая группа колонок панели «план vs факт» (см. leftGroupInfo в feoCategoryUtils.ts) ──
+export interface FeoLeftGroupInfo {
+  name: string
+  quantity: number | null
+  unit: string | null
+  unitPrice: number | null
+  total: number | null
+  isContract: boolean
+}
+
+// ── Импорт ФЭО из Excel (FeoImportWizard.vue/useFeoImport.ts) ─────────────────
+export interface FeoWarning {
+  kind: 'level_gap' | 'level_duplicate' | 'sum_mismatch' | 'sum_without_qty' | 'parent_sum_mismatch'
+    | 'level_name_in_number_column' | 'item_promoted_to_level2' | 'item_type_unknown'
+    | 'column_shift' | 'group_plan_ignored' | 'plan_vs_items_mismatch' | 'plan_skipped_has_items'
+  row: number | null
+  name: string
+  message: string
+}
+export interface FeoUnmatchedNode {
+  id: number
+  path: string
+  kind: 'empty' | 'needs_mapping'
+  suggestion: string | null
+  suggestion_reason: string | null
+  load: {
+    purchases?: number
+    purchase_items?: number
+    wishes?: number
+    wish_items?: number
+    products?: number
+    feo_planned_items?: number
+  }
+  blocking_purchases: { id: number; purchase_number: number | null; subject: string; status: string; status_label: string }[]
+}
+export interface FeoRemapApplied {
+  old_path: string
+  new_path: string
+  counts: Record<string, number>
+}
+export interface FeoImportResult {
+  created: number
+  updated?: number
+  skipped: number
+  errors: { row: number; name: string; message: string }[]
+  updated_details?: { row: number; name: string; reason: string }[]
+  skipped_details?: { row: number; name: string; reason: string }[]
+  created_details?: { row: number; name: string; reason: string }[]
+  warnings?: FeoWarning[]
+  unmatched?: FeoUnmatchedNode[]
+  new_paths?: string[]
+  deleted_count?: number
+  relinked_count?: number
+  deleted_details?: { path: string; reason: string }[]
+  remap_applied?: FeoRemapApplied[]
+  remap_aborted_reason?: string | null
+  version_created?: boolean
+  deletes_applied?: boolean
+}

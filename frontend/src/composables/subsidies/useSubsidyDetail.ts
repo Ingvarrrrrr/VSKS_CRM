@@ -11,7 +11,7 @@
 // SubsidiesView.vue.
 import { inject, provide, type ComputedRef, type InjectionKey, type Ref } from 'vue'
 import type { Router } from 'vue-router'
-import type { FeoCategory, FeoNode, SubsidyRow } from './types'
+import type { FeoActualItem, FeoCategory, FeoNode, FeoPlannedItem, SubsidyRow } from './types'
 
 export interface SubsidyDetailContext {
   router: Router
@@ -31,6 +31,22 @@ export interface SubsidyDetailContext {
   // нужна только для предупреждения при переключении режима плана категории
   // на «ручную сумму» (feoEditPlanSourceSwitchWarning в FeoCategoryDialog).
   getFeoPlanManual: (categoryId: number) => number
+
+  // ── Волна 5a-2: панель «План vs факт» ФЭО — общие для PlannedItem*Dialog.vue/
+  // PlanGraphVersions*Dialog.vue/useFeoImport.ts/useSubsidyApprovers-подобных
+  // композаблов куски состояния, остающиеся в родителе (используются и деревом
+  // ФЭО напрямую). Один источник — не копия (Правило №6).
+  comparisonData: Ref<Record<number, { planned: FeoPlannedItem[]; actual: FeoActualItem[] }>>
+  refreshComparison: (categoryId: number) => Promise<void>
+  ensureComparison: (catId: number) => Promise<void>
+  refreshReqData: (catId?: number) => Promise<void>
+  // Позиции закупок категории, привязанные (plannedId>=0) или НЕ привязанные
+  // (plannedId<0, см. вызовы в SubsidiesView.vue) к плановой позиции.
+  factForPlanned: (catId: number, plannedId: number) => FeoActualItem[]
+  // Превью фото товара (несколько мест в дереве ФЭО открывают его напрямую) —
+  // вынесено в ProductPhotoPreviewDialog.vue, но ставится строками дерева,
+  // которое остаётся в родителе.
+  photoPreview: Ref<{ src: string; title: string } | null>
 }
 
 export const SUBSIDY_DETAIL_KEY: InjectionKey<SubsidyDetailContext> = Symbol('SubsidyDetailContext')

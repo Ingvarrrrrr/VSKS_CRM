@@ -154,7 +154,11 @@
             />
           </v-col>
           <v-col cols="6">
+            <!-- Владелец: при наличии позиций сумма закупки = сумма позиций
+                 (ПРАВИЛО №6 — один источник истины), поле не редактируется —
+                 меняется только через позиции заявки. -->
             <v-text-field
+              v-if="convertingWishItemsCount === 0"
               v-model.number="convertForm.approved_price"
               label="Утверждённая цена (₽)"
               type="number"
@@ -162,6 +166,10 @@
               density="compact"
               min="0"
             />
+            <div v-else class="text-caption text-medium-emphasis">
+              Сумма закупки = сумма позиций ({{ convertingWishItemsCount }} поз., {{ ctx.formatPrice(convertingWishItemsSum) }}).
+              Чтобы изменить — отредактируйте позиции заявки.
+            </div>
           </v-col>
         </v-row>
         <v-select
@@ -207,6 +215,8 @@ defineProps<{
   convertingToAdvanceLoading: boolean
   convertingWish: Wish | null
   convertingWishLoading: boolean
+  convertingWishItemsCount: number
+  convertingWishItemsSum: number
 }>()
 
 defineEmits<{

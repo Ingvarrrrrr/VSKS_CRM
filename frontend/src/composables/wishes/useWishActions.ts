@@ -337,6 +337,12 @@ export function useWishActions(deps: {
     approved_price: null as number | null,
     subsidy_id: null as number | null,
   })
+  // Владелец: при наличии позиций сумма закупки считается ИЗ позиций (как и
+  // везде в проекте, ПРАВИЛО №6 — один источник истины) — поле «Утверждённая
+  // цена» в этом случае скрывается в пользу подсказки, см. convertingWishItemsCount/
+  // convertingWishItemsSum ниже и WishActionDialogs.vue.
+  const convertingWishItemsCount = ref(0)
+  const convertingWishItemsSum = ref(0)
   async function openConvertDialog(wish: Wish) {
     convertingWish.value = wish
     let items: any[] = Array.isArray((wish as any).items) ? (wish as any).items : []
@@ -348,6 +354,8 @@ export function useWishActions(deps: {
     }
     const sumQty = items.reduce((s, i) => s + Number(i.quantity || 0), 0)
     const sumPrice = items.reduce((s, i) => s + Number(i.total_price || 0), 0)
+    convertingWishItemsCount.value = items.length
+    convertingWishItemsSum.value = sumPrice
     convertForm.value = {
       approved_quantity: sumQty > 0 ? sumQty : (wish.quantity != null ? Number(wish.quantity) : null),
       approved_price: sumPrice > 0 ? sumPrice : (wish.total_amount ?? (wish.estimated_price != null ? Number(wish.estimated_price) : null)),
@@ -363,7 +371,11 @@ export function useWishActions(deps: {
       const approvedQty = numOrNull(convertForm.value.approved_quantity)
       const approvedPrice = numOrNull(convertForm.value.approved_price)
       if (approvedQty != null) body.approved_quantity = approvedQty
-      if (approvedPrice != null) body.approved_price = approvedPrice
+      // Владелец: при наличии позиций сумма закупки = сумма позиций — поле
+      // «Утверждённая цена» скрыто в UI (см. WishActionDialogs.vue), а сюда
+      // approved_price не отправляем вовсе, чтобы не расходиться с бэкендом
+      // (он тоже игнорирует это поле при непустых items).
+      if (convertingWishItemsCount.value === 0 && approvedPrice != null) body.approved_price = approvedPrice
       if (convertForm.value.subsidy_id != null) body.subsidy_id = convertForm.value.subsidy_id
       const result = await apiFetch<{
         wish_id: number
@@ -412,7 +424,8 @@ export function useWishActions(deps: {
     copyingId, copyWish,
     convertToAdvanceDialog, convertingToAdvanceWish, convertingToAdvanceLoading,
     openConvertToAdvanceDialog, confirmConvertToAdvance,
-    convertDialog, convertingWishLoading, convertingWish, convertForm, openConvertDialog, convertWish,
+    convertDialog, convertingWishLoading, convertingWish, convertForm,
+    convertingWishItemsCount, convertingWishItemsSum, openConvertDialog, convertWish,
   }
 }
 

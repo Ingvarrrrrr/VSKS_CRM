@@ -1094,6 +1094,8 @@
     :converting-to-advance-loading="actions.convertingToAdvanceLoading.value"
     :converting-wish="actions.convertingWish.value"
     :converting-wish-loading="actions.convertingWishLoading.value"
+    :converting-wish-items-count="actions.convertingWishItemsCount.value"
+    :converting-wish-items-sum="actions.convertingWishItemsSum.value"
     @reject-confirm="actions.rejectWish"
     @apply-row-force-status="applyRowForceStatus"
     @confirm-feo-per-item-disable="confirmWishFeoPerItemDisable"

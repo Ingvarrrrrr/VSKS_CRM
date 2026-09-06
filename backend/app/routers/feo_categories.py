@@ -232,17 +232,32 @@ async def get_purchase_totals(
     db: AsyncSession = Depends(get_db),
     _=Depends(get_current_user),
 ):
-    """Фактическая сумма per feo_category_id: только поставленное/оплаченное (по актам)."""
+    """Фактическая сумма per feo_category_id: только поставленное/оплаченное (по актам).
+
+    ПРАВИЛО №6 (2026-09-05): единый расчёт суммы закупки —
+    app.services.purchase_amounts.effective_amount_expr() (та же формула,
+    что dashboard.py/GET /api/purchases/*), вместо отдельной COALESCE(final_
+    total_amount, planned_total_price) — final_total_amount не участвует ни в
+    одном другом расчёте суммы закупки в проекте.
+
+    Владелец (2026-09-06) — решение по рамочным договорам в итогах: голова с
+    предельной суммой несёт «законтрактовано» целиком (её effective уже =
+    Contract.max_amount), «заказано» — ТОЛЬКО по её детям; накопительная
+    голова (без предела) сама не несёт суммы. Чтобы GROUP BY feo_category_id
+    не задваивал голову и детей — доп. фильтр aggregate_scope_expr() (см. её
+    докстринг, тот же предикат применён в dashboard.py::subsidy_q и
+    subsidies.py::_calculate_spent(_bulk)).
+    """
     from app.models.purchase import Purchase
+    from app.services.purchase_amounts import effective_amount_expr, aggregate_scope_expr
     stmt = (
         select(
             Purchase.feo_category_id,
-            func.coalesce(
-                func.sum(func.coalesce(Purchase.final_total_amount, Purchase.planned_total_price)), 0
-            ).label("total_planned"),
+            func.coalesce(func.sum(effective_amount_expr()), 0).label("total_planned"),
         )
         .where(Purchase.subsidy_id == subsidy_id)
         .where(Purchase.feo_category_id.isnot(None))
+        .where(aggregate_scope_expr())
         .where(Purchase.status.in_(["delivered", "paid"]))
         .group_by(Purchase.feo_category_id)
     )

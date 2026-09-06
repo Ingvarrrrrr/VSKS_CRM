@@ -75,10 +75,16 @@ async def test_framework_head_manual_price(db_session, make_purchase, make_contr
 
 
 @pytest.mark.asyncio
-async def test_framework_limited_head_manual_price(db_session, make_purchase, make_contract_item):
-    """Рамочный ограниченный головной (framework_limited, parent IS NULL): manual price НЕ перезаписывается."""
+async def test_framework_with_amount_head_manual_price(db_session, make_purchase, make_contract_item):
+    """Рамочный «с предельной суммой» головной (framework_with_amount, parent IS
+    NULL): manual price НЕ перезаписывается.
+
+    До фикса (2026-08-31) код проверял 'framework_limited' — значение,
+    которого в реальных данных нет вообще (фронт шлёт 'framework_with_amount',
+    см. is_framework_head() в app/routers/purchases.py) — из-за чего этот
+    сценарий был сломан: contract_price затирался суммой ContractItem."""
     head = await make_purchase()
-    head.purchase_contract_type = "framework_limited"
+    head.purchase_contract_type = "framework_with_amount"
     head.parent_purchase_id = None
     manual_price = Decimal("888888")
     head.contract_price = manual_price

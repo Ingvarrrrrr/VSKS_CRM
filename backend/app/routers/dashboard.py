@@ -18,6 +18,21 @@ from app.routers.subsidies import calculate_budgets_bulk, _calculate_spent_bulk,
 from app.services.feo_plan import calculate_ceiling_forecasts_bulk
 from app.config import settings
 from decimal import Decimal
+# ПРАВИЛО №6 (2026-09-05): единый расчёт «суммы закупки» по стадии — заменяет
+# точечные COALESCE(contract_price, planned_total_price) / COALESCE(payment_
+# amount, contract_price, planned_total_price), разбросанные по этому файлу
+# (они не совпадали ни друг с другом по деталям, ни с purchase_amounts()).
+from app.services.purchase_amounts import effective_amount_expr, purchase_amounts
+
+
+def _effective_float(p: Purchase) -> float:
+    """Обёртка над purchase_amounts(p).effective для мест этого файла, где
+    сумма закупки читается в Python-цикле по ORM-объектам (без Σ по позициям —
+    те же ограничения, что и у effective_amount_expr(), но полная цепочка
+    фолбэков по сырым колонкам, включая payment_amount_declared и т.д.).
+    None -> 0.0 (эти места и раньше трактовали "нечего посчитать" как 0)."""
+    eff = purchase_amounts(p).effective
+    return float(eff) if eff is not None else 0.0
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -217,6 +232,17 @@ async def dashboard_charts(
     status_counts = {row.status: row.cnt for row in status_result}
 
     # Per-subsidy aggregated purchase data (filtered)
+    # Владелец (2026-09-06) — решение по рамочным договорам в итогах: голова
+    # с предельной суммой несёт «законтрактовано» целиком (её effective уже
+    # = Contract.max_amount, см. effective_amount_expr()), «заказано» — ТОЛЬКО
+    # по её детям; накопительная голова (без предела) сама не несёт суммы —
+    # только собирает детей. Чтобы Σ по субсидии не задваивала голову и её
+    # детей — исключение реализовано ЧЕРЕЗ JOIN-условие (не WHERE), иначе
+    # субсидии, у которых ВСЕ закупки внутри такого условия, пропали бы из
+    # результата целиком. См. app.services.purchase_amounts.aggregate_scope_expr
+    # (единый предикат, применяется тем же образом в subsidies.py::
+    # _calculate_spent(_bulk) и feo_categories.py::get_purchase_totals).
+    from app.services.purchase_amounts import aggregate_scope_expr as _aggregate_scope_expr
     subsidy_q = (
         select(
             Subsidy.id, Subsidy.name, Subsidy.year, Subsidy.budget,
@@ -245,7 +271,7 @@ async def dashboard_charts(
                             Purchase.status.in_(["ordered", "delivered", "paid"]),
                             Purchase.is_monthly_payment.isnot(True),
                         ),
-                        func.coalesce(Purchase.contract_price, Purchase.planned_total_price)
+                        effective_amount_expr()
                     ),
                     else_=None
                 )
@@ -254,7 +280,7 @@ async def dashboard_charts(
             func.coalesce(func.sum(
                 case(
                     (Purchase.status.in_(["contracted", "ordered"]),
-                     func.coalesce(Purchase.contract_price, Purchase.planned_total_price)),
+                     effective_amount_expr()),
                     else_=None
                 )
             ), 0).label("w_ordered"),
@@ -265,21 +291,21 @@ async def dashboard_charts(
             func.coalesce(func.sum(
                 case(
                     (Purchase.status == "ordered",
-                     func.coalesce(Purchase.contract_price, Purchase.planned_total_price)),
+                     effective_amount_expr()),
                     else_=None
                 )
             ), 0).label("w_ordered_strict"),
             func.coalesce(func.sum(
                 case(
                     (Purchase.status == "delivered",
-                     func.coalesce(Purchase.contract_price, Purchase.planned_total_price)),
+                     effective_amount_expr()),
                     else_=None
                 )
             ), 0).label("w_delivered"),
             func.coalesce(func.sum(
                 case(
                     (Purchase.status == "paid",
-                     func.coalesce(Purchase.payment_amount, Purchase.contract_price, Purchase.planned_total_price)),
+                     effective_amount_expr()),
                     else_=None
                 )
             ), 0).label("w_paid"),
@@ -307,7 +333,7 @@ async def dashboard_charts(
             ), 0).label("spd_cnt"),
         )
         .select_from(Subsidy)
-        .outerjoin(Purchase, Purchase.subsidy_id == Subsidy.id)
+        .outerjoin(Purchase, and_(Purchase.subsidy_id == Subsidy.id, _aggregate_scope_expr()))
         .group_by(Subsidy.id, Subsidy.name, Subsidy.year, Subsidy.budget)
         .order_by(Subsidy.year.desc(), Subsidy.name)
     )
@@ -417,7 +443,7 @@ async def dashboard_charts(
         select(
             Purchase.subsidy_id,
             func.coalesce(func.sum(
-                func.coalesce(Purchase.contract_price, Purchase.planned_total_price)
+                effective_amount_expr()
             ), 0).label("amt"),
             # count distinct contracts (not purchases)
             func.count(func.distinct(Purchase.contract_id)).label("cnt"),
@@ -674,7 +700,7 @@ async def dashboard_charts(
             func.coalesce(func.sum(
                 case(
                     (Purchase.status.in_(["contracted", "ordered"]),
-                     func.coalesce(Purchase.contract_price, Purchase.planned_total_price)),
+                     effective_amount_expr()),
                     else_=None
                 )
             ), 0).label("so_amt"),
@@ -687,7 +713,7 @@ async def dashboard_charts(
             func.coalesce(func.sum(
                 case(
                     (Purchase.status == "ordered",
-                     func.coalesce(Purchase.contract_price, Purchase.planned_total_price)),
+                     effective_amount_expr()),
                     else_=None
                 )
             ), 0).label("so_amt_strict"),
@@ -698,7 +724,7 @@ async def dashboard_charts(
             func.coalesce(func.sum(
                 case(
                     (Purchase.status == "delivered",
-                     func.coalesce(Purchase.contract_price, Purchase.planned_total_price)),
+                     effective_amount_expr()),
                     else_=None
                 )
             ), 0).label("sd_amt"),
@@ -709,7 +735,7 @@ async def dashboard_charts(
             func.coalesce(func.sum(
                 case(
                     (Purchase.status == "paid",
-                     func.coalesce(Purchase.payment_amount, Purchase.contract_price, Purchase.planned_total_price)),
+                     effective_amount_expr()),
                     else_=None
                 )
             ), 0).label("spd_amt"),
@@ -1032,7 +1058,7 @@ async def get_financial_plan(
         bkt[key]["items_count"] += 1
 
     for p in rows:
-        amount = float(p.contract_price or p.planned_total_price or 0)
+        amount = _effective_float(p)
         if amount == 0:
             continue
 
@@ -1209,7 +1235,7 @@ async def get_financial_plan_details(
             obl = obligation_date(p)
             if obl is not None:
                 continue
-            amount = float(p.contract_price or p.planned_total_price or 0)
+            amount = _effective_float(p)
             if amount == 0:
                 continue
             paid_amount = float(p.delivery_payment_amount or 0)
@@ -1258,7 +1284,7 @@ async def get_financial_plan_details(
             obl = obligation_date(p)
             if obl is None:
                 continue
-            amount = float(p.contract_price or p.planned_total_price or 0)
+            amount = _effective_float(p)
             if amount == 0:
                 continue
             paid_amount = float(p.delivery_payment_amount or 0)
@@ -1319,7 +1345,7 @@ async def get_financial_plan_details(
             if row_period != period:
                 continue
 
-            amount = float(p.contract_price or p.planned_total_price or 0)
+            amount = _effective_float(p)
             if amount == 0:
                 continue
             paid_amount = float(p.delivery_payment_amount or 0)
@@ -1392,7 +1418,7 @@ async def export_financial_plan_xlsx(
         d = _expected_payment_date(p)
         if not d:
             continue
-        amount = float(p.contract_price or p.planned_total_price or 0)
+        amount = _effective_float(p)
         if amount == 0:
             continue
         if granularity == "month":
@@ -1540,7 +1566,7 @@ async def export_financial_plan_details_xlsx(
             row_period = f"{d.year}-Q{(d.month - 1) // 3 + 1}"
         if row_period != period:
             continue
-        amount = float(p.contract_price or p.planned_total_price or 0)
+        amount = _effective_float(p)
         if amount == 0:
             continue
         items.append({

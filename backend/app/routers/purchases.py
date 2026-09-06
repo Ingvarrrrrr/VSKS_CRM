@@ -12,7 +12,7 @@ from app.models.contract import Contract
 from app.models.subsidy import Subsidy
 from app.models.product import Product
 from app.models.feo_category import FeoCategory
-from app.schemas.schemas import PurchaseCreate, PurchaseOut, PurchaseOutFull, PurchaseItemOut, PurchaseFileOut, SubsidyAllocationOut
+from app.schemas.schemas import PurchaseCreate, PurchaseOut, PurchaseOutFull, PurchaseItemOut, PurchaseFileOut, SubsidyAllocationOut, PurchaseAmountsOut
 from app.models.subsidy_allocation import PurchaseSubsidyAllocation
 from app.auth.jwt import get_current_user, require_role, get_org_filter, get_single_org_id, ADMIN_ROLES, MANAGER_ROLES, ALL_ROLES
 from app.auth.visibility import build_visibility_clause, get_visible_user_ids, get_visible_subsidy_ids
@@ -486,20 +486,31 @@ async def _create_plan_graph_version(
         return own + sum(_node_manual_plan(c) for c in children)
     manual_plan_total = sum(_node_manual_plan(n) for n in feo_tree)
 
-    # purchases_plan_total / purchases_calc_total — суммы закупок в статусах плана закупок
+    # purchases_plan_total / purchases_calc_total — суммы закупок в статусах плана закупок.
+    # ПРАВИЛО №6 (2026-09-06): раньше здесь была ТРЕТЬЯ по счёту копия цепочки
+    # «сумма закупки по стадии» (своя, отличная и от purchase_amounts(), и от
+    # effective_amount_expr() — например, для delivered/paid брала payment_amount
+    # ИЛИ contract_price ИЛИ plan, минуя acceptance_doc_amount вовсе). Заменена
+    # на bulk-загрузку app.services.purchase_amounts.load_purchase_amounts —
+    # без N+1 (один набор запросов на весь список закупок субсидии).
     _PLAN_STATUSES = ("plan_schedule", "work_in_progress", "contracted", "ordered", "delivered", "paid")
     purch_rows = (await db.execute(
-        select(_Purchase.id, _Purchase.status, _Purchase.planned_total_price, _Purchase.total_nmck, _Purchase.nmck, _Purchase.contract_price, _Purchase.payment_amount)
+        select(_Purchase.id, _Purchase.status)
         .where(_Purchase.subsidy_id == subsidy_id, _Purchase.status.in_(_PLAN_STATUSES))
     )).all()
-    purchases_calc_total = 0.0
-    for pr in purch_rows:
-        _plan = float(pr.planned_total_price or 0) or float(pr.total_nmck or 0) or float(pr.nmck or 0)
-        if pr.status in ("delivered", "paid"):
-            _calc = float(pr.payment_amount or 0) or float(pr.contract_price or 0) or _plan
-        else:
-            _calc = _plan
-        purchases_calc_total += _calc
+    from app.services.purchase_amounts import load_purchase_amounts as _load_purchase_amounts_snapshot
+    _snapshot_purch_ids = [pr.id for pr in purch_rows]
+    _snapshot_amounts = (
+        await _load_purchase_amounts_snapshot(db, _snapshot_purch_ids) if _snapshot_purch_ids else {}
+    )
+    purchases_calc_total = sum(
+        (
+            float(_snapshot_amounts[pid].effective)
+            if _snapshot_amounts.get(pid) and _snapshot_amounts[pid].effective is not None
+            else 0.0
+        )
+        for pid in _snapshot_purch_ids
+    )
     purchase_statuses = {str(pr.id): pr.status for pr in purch_rows}
 
     # purchases_plan_total — на уровне PurchaseItem (не Purchase.planned_total_price), чтобы
@@ -924,7 +935,7 @@ def _purchase_to_full(
     contractor_inns: dict | None = None, receipt_map: dict | None = None, ru_map: dict | None = None,
     su_map: dict | None = None, feo_excess_map: dict | None = None, item_plan_map: dict | None = None,
     wish_title_map: dict | None = None, wish_status_map: dict | None = None,
-    feo_mismatch_map: dict | None = None,
+    feo_mismatch_map: dict | None = None, amounts_map: dict | None = None,
 ) -> PurchaseOutFull:
     data = {c.name: getattr(p, c.name) for c in Purchase.__table__.columns}
     _ipm = item_plan_map or {}
@@ -970,8 +981,21 @@ def _purchase_to_full(
 
     _excess = (feo_excess_map or {}).get(p.id) or {}
     _mismatch = (feo_mismatch_map or {}).get(p.id) or {}
+    # ПРАВИЛО №6 (2026-09-05): amounts_map — bulk-загруженный
+    # app.services.purchase_amounts.load_purchase_amounts (без N+1, см. вызывающий
+    # код). Если карта не передана (путь ещё не переведён) — считаем на месте
+    # чистой функцией purchase_amounts() без item-фолбэков (contract_items_total/
+    # items_total/framework_max_amount не переданы), лучше приблизительное
+    # значение, чем совсем без amounts.
+    from app.services.purchase_amounts import PurchaseAmounts as _PurchaseAmounts, purchase_amounts as _purchase_amounts_fn
+    _pa: _PurchaseAmounts = (amounts_map or {}).get(p.id) or _purchase_amounts_fn(p)
+    amounts_out = PurchaseAmountsOut(
+        plan=_pa.plan, contract=_pa.contract, fact=_pa.fact, paid=_pa.paid,
+        effective=_pa.effective, effective_source=_pa.effective_source,
+    )
     return PurchaseOutFull(
         **data,
+        amounts=amounts_out,
         items=items,
         files=files,
         files_count=len(files),
@@ -1416,13 +1440,12 @@ async def list_purchases(
             if max_amount is not None:
                 display_total_by_contract[cid] = max_amount
             else:
+                # ПРАВИЛО №6 (2026-09-05): единый расчёт суммы закупки —
+                # effective_amount_expr() вместо отдельной COALESCE-цепочки
+                # (раньше не совпадала с purchase_amounts()/dashboard.py и т.д.).
+                from app.services.purchase_amounts import effective_amount_expr as _eff_expr
                 sum_r = await db.execute(
-                    select(func.coalesce(func.sum(func.coalesce(
-                        Purchase.contract_price,
-                        Purchase.planned_total_price,
-                        Purchase.total_nmck,
-                        Decimal("0"),
-                    )), Decimal("0"))).where(Purchase.contract_id == cid)
+                    select(func.coalesce(func.sum(_eff_expr()), Decimal("0"))).where(Purchase.contract_id == cid)
                 )
                 display_total_by_contract[cid] = sum_r.scalar() or Decimal("0")
 
@@ -1462,12 +1485,18 @@ async def list_purchases(
     if purchases:
         _feo_mismatch_map = await _compute_purchase_feo_mismatch(db, purchases)
 
+    # ПРАВИЛО №6 (2026-09-05): единый расчёт суммы закупки для всего списка —
+    # 1 bulk-загрузка (см. load_purchase_amounts, без N+1), не по одному запросу
+    # на закупку.
+    from app.services.purchase_amounts import load_purchase_amounts as _load_purchase_amounts
+    _amounts_map = await _load_purchase_amounts(db, purchase_ids) if purchase_ids else {}
+
     result_rows = []
     for p in purchases:
         out = _purchase_to_full(
             p, contractors, subsidies, contractor_inns=contractor_inns, receipt_map=receipt_map,
             ru_map=ru_map, su_map=su_map, feo_excess_map=_feo_excess_map,
-            feo_mismatch_map=_feo_mismatch_map,
+            feo_mismatch_map=_feo_mismatch_map, amounts_map=_amounts_map,
         )
         if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):
             out.framework_contract_total = display_total_by_contract.get(p.contract_id)
@@ -1843,10 +1872,17 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
             _wish_title_map[p.wish_id] = _w.title
             _wish_status_map[p.wish_id] = _w.status
 
+    # ПРАВИЛО №6 (2026-09-05): единый расчёт суммы закупки — одна закупка,
+    # load_purchase_amounts(db, [p.id]) переиспользует ту же bulk-функцию, что
+    # и список (без второй формулы для detail-view).
+    from app.services.purchase_amounts import load_purchase_amounts as _load_purchase_amounts_single
+    _single_amounts_map = await _load_purchase_amounts_single(db, [p.id])
+
     out = _purchase_to_full(
         p, contractors, subsidies, allocations=allocations, ru_map=single_ru_map, su_map=single_su_map,
         feo_excess_map=_single_feo_excess_map, item_plan_map=_item_plan_map, wish_title_map=_wish_title_map,
         wish_status_map=_wish_status_map, feo_mismatch_map=_single_feo_mismatch_map,
+        amounts_map=_single_amounts_map,
     )
     # phase26-m: populate framework_contract_total for single purchase view
     if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):
@@ -1855,13 +1891,9 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
             if c.max_amount is not None:
                 out.framework_contract_total = c.max_amount
             else:
+                from app.services.purchase_amounts import effective_amount_expr as _eff_expr_single
                 sum_r = await db.execute(
-                    select(func.coalesce(func.sum(func.coalesce(
-                        Purchase.contract_price,
-                        Purchase.planned_total_price,
-                        Purchase.total_nmck,
-                        Decimal("0"),
-                    )), Decimal("0"))).where(Purchase.contract_id == p.contract_id)
+                    select(func.coalesce(func.sum(_eff_expr_single()), Decimal("0"))).where(Purchase.contract_id == p.contract_id)
                 )
                 out.framework_contract_total = sum_r.scalar() or Decimal("0")
 
@@ -2070,11 +2102,17 @@ async def create_purchase(
                 amount=alloc.amount,
             ))
 
-    # Contract price: авто-пересчёт из items для ВСЕХ типов закупок (phase26-l-1).
-    # Рамочный (framework_cumulative / framework_with_amount) тоже должен суммироваться в total_ordered контракта.
-    _items_sum_create = sum((i.total_price or Decimal("0")) for i in items_data) or data.nmck
-    if _items_sum_create:
-        p.contract_price = _items_sum_create
+    # ПРАВИЛО №6 (2026-09-05): единственный писатель денежных колонок — раньше
+    # здесь была вторая копия «contract_price = Σ items» БЕЗ проверки статуса
+    # (писала цену договора даже для закупки на стадии `wishes`, до всякого
+    # договора — то самое «второе перо», конкурирующее с
+    # _recalc_contract_price_from_contract_items). recalc_purchase_money сам
+    # решает, писать ли contract_price, по стадии (см. purchase_money_writer.py).
+    from app.services.purchase_money_writer import recalc_purchase_money
+    _items_total_create = (
+        sum((i.total_price or Decimal("0")) for i in items_data) if items_data else None
+    )
+    await recalc_purchase_money(db, p, items_total=_items_total_create, contract_items_total=None)
 
     # Budget history write hook — record initial planned_total_price
     if p.subsidy_id and p.planned_total_price:
@@ -2165,21 +2203,27 @@ async def update_purchase(
         max_result = await db.execute(select(func.coalesce(func.max(Purchase.purchase_number), 0)))
         p.purchase_number = max_result.scalar() + 1
 
-    # НМЦК logic: frozen after "contracted" status
+    # НМЦК logic: frozen after "contracted" status.
+    # ПРАВИЛО №6 (2026-09-05): эта переменная (и статус, по которому она
+    # считается — ДО setattr-цикла ниже, т.е. ещё старый p.status) теперь
+    # используется ТОЛЬКО (a) для setattr-гейта payload'а ("не дать клиенту
+    # перезаписать замороженный total_nmck/planned_total_price напрямую из
+    # тела запроса", см. цикл ниже) и (b) для суммы бюджетной проверки здесь
+    # (p.total_nmck ещё хранит значение из БД — сам пересчёт полей делает
+    # ЕДИНСТВЕННЫЙ писатель денежных колонок, recalc_purchase_money, вызванный
+    # ниже ПОСЛЕ setattr-цикла — там уже актуальный, новый статус этого PUT).
+    # Раньше этот блок сам писал total_nmck/planned_total_price = items_sum —
+    # второй писатель наряду с recalc_purchase_money, устранён здесь.
     CONTRACTED_STATUSES = ("contracted", "ordered", "delivered", "paid")
     is_contracted = p.status in CONTRACTED_STATUSES
-
-    if is_contracted:
-        # НМЦК зафиксирована — НЕ пересчитываем, берём из БД
-        # Обновляем только цену договора из текущих цен позиций
-        pass
-    else:
-        # До стадии "Договор" — НМЦК = сумма позиций
-        p.total_nmck = items_sum
-        p.planned_total_price = items_sum or p.planned_total_price
+    # Локальная (не персистентная) величина для двух проверок ниже — ТОЧНО та
+    # же формула, что раньше физически записывалась в p.total_nmck на этом
+    # месте; здесь она больше НЕ пишется в модель (это и есть устранённый
+    # второй писатель), только используется как значение для гейтов.
+    _total_nmck_for_checks = p.total_nmck if is_contracted else items_sum
 
     if not admin_override and data.purchase_basis != 'service_note':
-        budget_amount = p.total_nmck if is_contracted else items_sum
+        budget_amount = _total_nmck_for_checks
         # 12-02: per-item FEO budget check
         _feo_check_items = [
             {"feo_planned_item_id": i.feo_planned_item_id, "amount": i.total_price}
@@ -2269,7 +2313,7 @@ async def update_purchase(
             if _ncid:
                 _new_item_cat_amounts[_ncid] = _new_item_cat_amounts.get(_ncid, Decimal("0")) + (_i.total_price or Decimal("0"))
         if not _new_item_cat_amounts and p.feo_category_id:
-            _new_item_cat_amounts[p.feo_category_id] = Decimal(str(p.total_nmck or 0))
+            _new_item_cat_amounts[p.feo_category_id] = Decimal(str(_total_nmck_for_checks or 0))
         _touched_cat_ids = set(_new_item_cat_amounts) | set(old_item_cat_amounts)
         for _cid in _touched_cat_ids:
             _new_amt = _new_item_cat_amounts.get(_cid, Decimal("0"))
@@ -2307,10 +2351,20 @@ async def update_purchase(
         # для этой проверки — см. комментарий у assert_tz_batch_not_over_plan ниже).
         await assert_no_pending_tz_excess(db, items_data, fallback_category_id=p.feo_category_id)
 
-    # Contract price: авто-пересчёт из items для ВСЕХ типов закупок (phase26-l-1).
-    # Рамочный (framework_cumulative / framework_with_amount) тоже должен суммироваться в total_ordered контракта.
-    if items_sum:
-        p.contract_price = items_sum
+    # ПРАВИЛО №6 (2026-09-05): единственный писатель денежных колонок — раньше
+    # здесь `contract_price = items_sum` писалось В ЛЮБОМ статусе (даже до
+    # договора, до единой строки ContractItem) — второе перо, конкурирующее с
+    # Σ contract_items.total (см. _recalc_contract_price_from_contract_items).
+    # Тем же вызовом пересчитываются total_nmck/planned_total_price/nmck по
+    # АКТУАЛЬНОМУ (уже применённому setattr-циклом выше) статусу — см.
+    # purchase_money_writer.py. items_sum выше посчитан с Python-truthy
+    # фолбэком на data.nmck (используется для бюджетной проверки, не трогаем
+    # его формулу) — сюда передаём чистую Σ purchase_items.total_price.
+    from app.services.purchase_money_writer import recalc_purchase_money
+    _items_total_put = (
+        sum((i.total_price or Decimal("0")) for i in items_data) if items_data else None
+    )
+    await recalc_purchase_money(db, p, items_total=_items_total_put)
     if (p.contract_id != old_contract_id or p.purchase_contract_type != old_type) and data.framework_seq is None:
         p.framework_seq = None  # force re-assignment below
     # phase26-j-1 (fix: hotfix после регрессии): sync только при ИЗМЕНЕНИИ contract_id,
@@ -2618,20 +2672,20 @@ async def _recalc_contract_price_from_contract_items(purchase_id: int, db: Async
     (purchase_method='advance'), дочерняя рамочного (parent_purchase_id IS NOT NULL).
     НЕ применимо для рамочного головного (framework_cumulative/framework_with_amount
     AND parent_purchase_id IS NULL) — manual entry сохраняется, см. is_framework_head().
+
+    ПРАВИЛО №6 (2026-09-05): имя/сигнатура сохранены (внешние импорты —
+    contract_items.py, тесты test_purchase_contract_price_recalc.py), тело —
+    тонкая обёртка над единственным писателем денежных колонок,
+    app.services.purchase_money_writer.recalc_purchase_money (та же логика
+    рамочной головы там — FRAMEWORK_TYPES/is_head, зеркало is_framework_head()
+    ниже в этом файле).
     """
-    from app.models.contract_item import ContractItem
+    from app.services.purchase_money_writer import recalc_purchase_money
     p = await db.get(Purchase, purchase_id)
     if not p:
         return
-    if is_framework_head(p):
-        return
-    result = await db.execute(
-        select(func.sum(ContractItem.total)).where(ContractItem.purchase_id == purchase_id)
-    )
-    ci_sum = result.scalar() or Decimal('0')
-    if ci_sum > 0:
-        p.contract_price = ci_sum
-        await db.commit()
+    await recalc_purchase_money(db, p)
+    await db.commit()
 
 
 # Владелец (2026-09-01): «закупки после согласования есть возможность
@@ -3057,16 +3111,19 @@ TZ_FROZEN_STATUSES = {"work_in_progress", "contracted", "ordered", "delivered", 
 
 
 async def _recalc_purchase_totals(p: Purchase, db: AsyncSession) -> None:
-    """Пересчёт сумм закупки из позиций (та же логика, что в update_purchase)."""
-    items_sum = (await db.execute(
-        select(func.coalesce(func.sum(PurchaseItem.total_price), 0))
-        .where(PurchaseItem.purchase_id == p.id)
-    )).scalar() or Decimal("0")
-    if p.status not in ("contracted", "ordered", "delivered", "paid"):
-        p.total_nmck = items_sum
-        p.planned_total_price = items_sum or p.planned_total_price
-    if items_sum:
-        p.contract_price = items_sum
+    """Пересчёт сумм закупки из позиций (та же логика, что в update_purchase).
+
+    ПРАВИЛО №6 (2026-09-05): тонкая обёртка над app.services.purchase_money_
+    writer.recalc_purchase_money — единственным писателем денежных колонок
+    закупки. Раньше эта функция сама писала `contract_price = Σ purchase_items`
+    в ЛЮБОМ статусе (в т.ч. до договора) — то самое «второе перо», конкурирующее
+    с `_recalc_contract_price_from_contract_items` (источник истины —
+    Σ contract_items.total). Новый писатель это устраняет: contract_price до
+    договора (нет ContractItem) больше не трогается — см. докстринг
+    purchase_money_writer.py.
+    """
+    from app.services.purchase_money_writer import recalc_purchase_money
+    await recalc_purchase_money(db, p)
 
 
 @router.patch("/{pid}/items/{item_id}")

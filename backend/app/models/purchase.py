@@ -43,7 +43,7 @@ class Purchase(Base):
     # Уточнение к purchase_method == 'competitive' (сама форма конкурентной
     # процедуры не отдельный способ закупки): 'price_request' | 'auction' | 'tender'
     competitive_form = Column(String(30), nullable=True)
-    nmck = Column(Numeric(15, 2))
+    nmck = Column(Numeric(15, 2))  # deprecated: = total_nmck (см. app/services/purchase_money_writer.py)
     contract_price = Column(Numeric(15, 2))
     economy = Column(Numeric(15, 2))
     price_increase = Column(Numeric(15, 2))
@@ -229,7 +229,7 @@ class Purchase(Base):
     reimbursement_user = relationship("User", foreign_keys=[reimbursement_user_id])
     service_note_to_user = relationship("User", foreign_keys=[service_note_to_user_id])
     event = relationship("Event")
-    total_nmck = Column(Numeric(15, 2))
+    total_nmck = Column(Numeric(15, 2))  # источник истины НМЦК; nmck выше — deprecated-алиас, всегда = total_nmck (см. purchase_money_writer.py)
     items = relationship("PurchaseItem", back_populates="purchase",
                          cascade="all, delete-orphan", lazy="selectin")
     contract_items = relationship(

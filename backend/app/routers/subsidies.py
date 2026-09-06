@@ -122,10 +122,26 @@ async def _calculate_spent(
     subsidy_id: int,
     exclude_purchase_id: Optional[int] = None,
 ) -> float:
-    """Σ planned_total_price по активным закупкам субсидии (кроме cancelled)."""
-    q = select(func.coalesce(func.sum(Purchase.planned_total_price), 0)).where(
+    """Σ effective (по стадии закупки) по активным закупкам субсидии (кроме
+    cancelled) — используется как «сколько уже занято» для бюджетного гейта
+    при создании/правке закупки (CreateOrderView.vue::budgetInfo, не выводится
+    пользователю отдельной подписью «Освоено» — только через remaining/over/
+    exceeded). ПРАВИЛО №6 (2026-09-05): раньше — Σ planned_total_price, что
+    не учитывало закупки, ушедшие дальше плана (Договор/Поставка/Оплата) —
+    единый расчёт суммы закупки, см. app/services/purchase_amounts.py.
+
+    Владелец (2026-09-06) — решение по рамочным договорам в итогах: голова с
+    предельной суммой несёт «законтрактовано» целиком (её effective уже =
+    Contract.max_amount), «заказано» — ТОЛЬКО по её детям; накопительная
+    голова (без предела) сама не несёт суммы. Чтобы Σ не задваивала голову
+    и детей — доп. фильтр aggregate_scope_expr() (см. её докстринг, тот же
+    предикат применён в dashboard.py::subsidy_q и feo_categories.py::
+    get_purchase_totals)."""
+    from app.services.purchase_amounts import effective_amount_expr, aggregate_scope_expr
+    q = select(func.coalesce(func.sum(effective_amount_expr()), 0)).where(
         Purchase.subsidy_id == subsidy_id,
         Purchase.status.notin_(_EXCLUDED_FROM_SPENT),
+        aggregate_scope_expr(),
     )
     if exclude_purchase_id:
         q = q.where(Purchase.id != exclude_purchase_id)
@@ -170,14 +186,20 @@ async def _calculate_planned_amounts_bulk(
 async def _calculate_spent_bulk(
     db: AsyncSession, subsidy_ids: list[int]
 ) -> dict[int, float]:
-    """Batch Σ planned_total_price для набора субсидий (кроме cancelled)."""
+    """Batch-версия _calculate_spent (см. её докстринг, включая решение
+    владельца про рамочные договоры и aggregate_scope_expr()) — Σ effective
+    для набора субсидий (кроме cancelled). ПРАВИЛО №6 (2026-09-05): та же
+    формула, не вторая копия — app/services/purchase_amounts.py::
+    effective_amount_expr."""
     if not subsidy_ids:
         return {}
+    from app.services.purchase_amounts import effective_amount_expr, aggregate_scope_expr
     q = (
-        select(Purchase.subsidy_id, func.coalesce(func.sum(Purchase.planned_total_price), 0).label("spent"))
+        select(Purchase.subsidy_id, func.coalesce(func.sum(effective_amount_expr()), 0).label("spent"))
         .where(
             Purchase.subsidy_id.in_(subsidy_ids),
             Purchase.status.notin_(_EXCLUDED_FROM_SPENT),
+            aggregate_scope_expr(),
         )
         .group_by(Purchase.subsidy_id)
     )

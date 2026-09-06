@@ -1118,17 +1118,6 @@ async def _build_contract_items_context(p, db) -> dict:
     }
 
 
-def _contract_items_total(p) -> float:
-    """Сумма ContractItem.total закупки (relationship должен быть eager-loaded)."""
-    total = 0.0
-    for ci in (getattr(p, "contract_items", None) or []):
-        try:
-            total += float(ci.total or 0)
-        except Exception:
-            pass
-    return total
-
-
 FEO_PATH_UNRESOLVED_LABEL = "Категория ФЭО не определена (позиция договора без привязки к плановой)"
 
 
@@ -1263,19 +1252,28 @@ def _resolve_doc_amount(p, doc_type: str) -> tuple[float, bool]:
     или суммы ContractItem, БЕЗ отката на НМЦК/план/сумму плановых позиций
     (требование владельца: «Плановые не равно Договор»). total_nmck/nmck
     сюда не входят — они остаются плановыми полями в контексте документа.
+    ПРАВИЛО №6 (2026-09-05): эта формула — app.services.purchase_amounts.
+    contract_amount(), не вторая копия («цена договора» — сознательно другой
+    показатель, чем effective, см. её докстринг).
 
-    Для остальных типов — старое поведение: контракт → НМЦК/план → сумма
-    плановых позиций.
+    Для остальных типов — ПРАВИЛО №6: единый расчёт эффективной суммы
+    закупки по стадии, app.services.purchase_amounts.purchase_amounts()
+    (раньше здесь была третья по счёту копия цепочки COALESCE/`or`).
     """
+    from app.services.purchase_amounts import contract_amount as _contract_amount, purchase_amounts as _purchase_amounts_fn
+
     if doc_type in CONTRACT_FAMILY_DOC_TYPES:
-        amount = float(p.contract_price or 0) or _contract_items_total(p)
-        return amount, False
-    items_sum_val = float(sum(Decimal(str(it.total_price or 0)) for it in (getattr(p, "items", None) or [])))
-    doc_amount_val = (float(p.contract_price or 0) or float(getattr(p, "total_nmck", None) or 0)
-                      or float(getattr(p, "nmck", None) or 0) or float(getattr(p, "planned_total_price", None) or 0)
-                      or items_sum_val)
-    amount_is_planned = not bool(p.contract_price)
-    return doc_amount_val, amount_is_planned
+        _ci = getattr(p, "contract_items", None) or []
+        _ci_total = Decimal(str(sum((ci.total or 0) for ci in _ci))) if _ci else None
+        amount = _contract_amount(p, contract_items_total=_ci_total)
+        return float(amount) if amount is not None else 0.0, False
+    _items = getattr(p, "items", None) or []
+    _items_total = Decimal(str(sum((it.total_price or 0) for it in _items))) if _items else None
+    _ci2 = getattr(p, "contract_items", None) or []
+    _ci2_total = Decimal(str(sum((ci.total or 0) for ci in _ci2))) if _ci2 else None
+    _amounts = _purchase_amounts_fn(p, contract_items_total=_ci2_total, items_total=_items_total)
+    amount_is_planned = _amounts.effective_source in ("planned_total_price", "sum(purchase_items.total_price)")
+    return float(_amounts.effective) if _amounts.effective is not None else 0.0, amount_is_planned
 
 
 def _require_contract_items_for_doc(p, doc_type: str) -> None:

@@ -277,7 +277,11 @@ def _get_cell_value(key: str, p: Purchase, ctx: dict):
     if key == "country_origin":          return p.country_origin or ""
     if key == "planned_unit_price":      return float(p.planned_unit_price) if p.planned_unit_price else ""
     if key == "planned_total_price":     return float(p.planned_total_price) if p.planned_total_price else ""
-    if key == "nmck":                    return float(p.nmck or p.planned_total_price or 0) or ""
+    # ПРАВИЛО №6 (2026-09-05): колонка «НМЦК» — total_nmck (источник истины;
+    # nmck — deprecated-алиас, всегда ему равен, см. purchase_money_writer.py).
+    # Раньше здесь читался nmck с Python-truthy фолбэком на planned_total_price —
+    # своя третья формула вместо одного из двух полей.
+    if key == "nmck":                    return float(p.total_nmck) if p.total_nmck else ""
     if key == "contract_price":          return float(p.contract_price) if p.contract_price else ""
     if key == "economy":                 return float(p.economy) if p.economy else ""
     if key == "price_increase":          return float(p.price_increase) if p.price_increase else ""

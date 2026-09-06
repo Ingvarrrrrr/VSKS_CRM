@@ -100,8 +100,17 @@ async def recompute_purchase_payments(db: AsyncSession, purchase_id: int) -> Pur
 
     # Auto-transition в paid: ТОЛЬКО подтверждённая казначейством сумма достигла
     # порога — ручное «отмечено человеком» само по себе закупку не закрывает.
-    threshold = p.contract_price or p.planned_total_price or Decimal(0)
-    if total_confirmed > 0 and threshold and total_confirmed >= Decimal(str(threshold)) and p.status == "delivered":
+    # ПРАВИЛО №6 (2026-09-05): порог = amounts.contract ?? amounts.plan — «сколько
+    # должны» (сырые колонки БЕЗ фолбэков на Σ ContractItem/Σ PurchaseItem), это
+    # НЕ то же самое, что purchase_amounts().effective (тот для закупки в статусе
+    # delivered/paid сам уже приоритетно смотрит на acceptance_doc_amount/payment_
+    # amount — здесь конкретно нужны «обязательства», а не «уже случившийся факт»).
+    # Раньше — `p.contract_price or p.planned_total_price or Decimal(0)`
+    # (Python-truthy: contract_price=0 ошибочно проваливался на planned_total_price).
+    from app.services.purchase_amounts import purchase_amounts as _purchase_amounts_fn
+    _pa = _purchase_amounts_fn(p)
+    threshold = _pa.contract if _pa.contract is not None else (_pa.plan if _pa.plan is not None else Decimal(0))
+    if total_confirmed > 0 and total_confirmed >= threshold and p.status == "delivered":
         p.status = "paid"
 
     await db.flush()

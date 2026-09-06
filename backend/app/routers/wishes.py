@@ -649,14 +649,13 @@ async def _sync_wish_items_to_purchases(wish, db: AsyncSession) -> None:
             p.feo_per_item = bool(getattr(wish, 'feo_per_item', False))
             p.vat_mode = getattr(wish, 'vat_mode', None) or 'uniform'
             await db.flush()
-            # Пересчёт сумм закупки
-            items_sum_res = await db.execute(
-                select(func.coalesce(func.sum(PurchaseItem.total_price), 0))
-                .where(PurchaseItem.purchase_id == p.id)
-            )
-            items_sum = items_sum_res.scalar() or 0
-            p.total_nmck = items_sum
-            p.planned_total_price = items_sum or p.planned_total_price
+            # ПРАВИЛО №6 (2026-09-05): пересчёт сумм закупки — единственный
+            # писатель денежных колонок (см. purchase_money_writer.py). p уже
+            # гарантированно не заморожена (проверка `p.status in
+            # _TZ_FROZEN_STATUSES: continue` в начале цикла выше), сумму
+            # передаём None — писатель сам посчитает Σ purchase_items.total_price.
+            from app.services.purchase_money_writer import recalc_purchase_money
+            await recalc_purchase_money(db, p)
             await db.flush()
 
 
@@ -1066,13 +1065,11 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
 
     await db.flush()
 
-    items_sum_res = await db.execute(
-        select(func.coalesce(func.sum(PurchaseItem.total_price), 0)).where(PurchaseItem.purchase_id == p.id)
-    )
-    items_sum = items_sum_res.scalar() or 0
-    p.total_nmck = items_sum
-    p.planned_total_price = items_sum
-    p.nmck = items_sum
+    # ПРАВИЛО №6 (2026-09-05): единственный писатель денежных колонок — p
+    # гарантированно не заморожена (ранний return выше по TZ_FROZEN_STATUSES),
+    # см. purchase_money_writer.py.
+    from app.services.purchase_money_writer import recalc_purchase_money
+    await recalc_purchase_money(db, p)
     await db.flush()
 
     return {
@@ -1391,6 +1388,15 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
             )
             db.add(pi)
         await db.flush()
+
+        # ПРАВИЛО №6 (2026-09-06): единственный писатель денежных колонок —
+        # planned_total_price/total_nmck/nmck выше уже посчитаны как Σ items_in_col
+        # (та же арифметика, что recalc_purchase_money даст из только что
+        # вставленных PurchaseItem), но проведены МИМО писателя — прогоняем
+        # через него, чтобы contract_price/будущие правила централизованно
+        # применялись и здесь, а не только там, где это явно вызывалось раньше.
+        from app.services.purchase_money_writer import recalc_purchase_money as _recalc_purchase_money_dwtp
+        await _recalc_purchase_money_dwtp(db, p)
 
         # Add wish author as purchase member (viewer role) so they can see the purchase
         if wish.created_by and wish.created_by != current_user.id:
@@ -3041,14 +3047,34 @@ async def convert_wish(
                 "name": _wi.item_name, "amount": float(_wi.total_price or 0),
             })
 
-    # B4: planned_total_price = SUM(items.total_price), fallback to body/wish
+    # B4: planned_total_price = SUM(items.total_price)
     total_nmck = sum(float(i.total_price or 0) for i in items_full)
-
-    # B9: pass feo_category_id from wish-level
-    # Backend pre-fill: если в body не пришло approved_quantity/price (= 0/None) — считаем из items
     total_qty = sum(float(i.quantity or 0) for i in items_full)
-    eff_qty = body.approved_quantity if (body.approved_quantity and float(body.approved_quantity) > 0) else (total_qty or wish.quantity)
-    eff_price = body.approved_price if (body.approved_price and float(body.approved_price) > 0) else (total_nmck or wish.estimated_price)
+
+    # Владелец (2026-09-06, QA раунд 2, п.2): «Утверждённая цена»
+    # (approved_price/approved_quantity) действует ТОЛЬКО для заявок БЕЗ
+    # позиций — там нечего скорректировать построчно, override — единственный
+    # способ задать сумму. У заявки С позициями согласующий правит количество/
+    # цену В САМИХ позициях (до конвертации) — сумма закупки строго = Σ
+    # позиций (пересчитает recalc_purchase_money ниже); approved_price/
+    # approved_quantity из тела запроса в этом случае ИГНОРИРУЮТСЯ (не 422 —
+    # заявка всё равно конвертируется, просто override не участвует).
+    _has_items = bool(items_full)
+    _approved_price_ignored = _has_items and body.approved_price is not None
+    _approved_quantity_ignored = _has_items and body.approved_quantity is not None
+    if _has_items:
+        eff_qty = total_qty or wish.quantity
+        eff_price = total_nmck
+    else:
+        eff_qty = body.approved_quantity if (body.approved_quantity and float(body.approved_quantity) > 0) else wish.quantity
+        eff_price = body.approved_price if (body.approved_price and float(body.approved_price) > 0) else wish.estimated_price
+    if _approved_price_ignored or _approved_quantity_ignored:
+        import logging as _logging_convert
+        _logging_convert.getLogger(__name__).info(
+            "convert_wish: заявка #%s имеет позиции — approved_price=%s/approved_quantity=%s "
+            "из тела запроса проигнорированы, сумма закупки = Σ позиций (%s)",
+            wish.id, body.approved_price, body.approved_quantity, total_nmck,
+        )
     conv_dates = {_eff_date(wish, wi) for wi in items_full}
     conv_dates.discard(None)
     conv_delivery_date = conv_dates.pop() if len(conv_dates) == 1 else None
@@ -3065,9 +3091,22 @@ async def convert_wish(
         item_name=wish.title,
         subject=wish.title,
         planned_quantity=eff_qty,
+        # ПРАВИЛО №6 (2026-09-06, уточнено QA раунд 2, п.2 — владелец):
+        # total_nmck/nmck зеркалят planned_total_price (eff_price) —
+        # раньше planned_total_price брал body.approved_price (одобренная
+        # цена, которую согласующий может ввести ВРУЧНУЮ на этом экране — см.
+        # WishConvert/convertForm), а total_nmck/nmck считали СВОЮ формулу
+        # (БЕЗ учёта approved_price) — при override два поля расходились
+        # сразу при создании. Решение владельца: approved_price/approved_
+        # quantity действуют ТОЛЬКО для заявок БЕЗ позиций (eff_price/eff_qty
+        # выше уже это учитывают — при наличии позиций override
+        # ИГНОРИРУЕТСЯ, eff_price = Σ items); ниже, после вставки
+        # PurchaseItem, recalc_purchase_money пересчитает все три поля из
+        # фактической Σ (для закупки с позициями — то же самое число, что и
+        # eff_price здесь; для headless — no-op, значения здесь остаются).
         planned_total_price=eff_price,
-        total_nmck=total_nmck or float(wish.estimated_price or 0),
-        nmck=total_nmck or float(wish.estimated_price or 0),
+        total_nmck=eff_price,
+        nmck=eff_price,
         status="plan_schedule",
         service_note_text=wish.justification,
         service_note_by=wish.created_by,
@@ -3125,6 +3164,15 @@ async def convert_wish(
         db.add(pi)
     await db.flush()
 
+    # ПРАВИЛО №6 (2026-09-06): единственный писатель денежных колонок — если у
+    # закупки есть только что вставленные PurchaseItem, их фактическая Σ
+    # становится planned_total_price/total_nmck/nmck (status="plan_schedule" —
+    # не заморожена); если позиций нет (headless-заявка) — no-op, значения
+    # выше (eff_price) остаются как есть. См. комментарий у конструктора
+    # Purchase(...) выше про approved_price/body.approved_price.
+    from app.services.purchase_money_writer import recalc_purchase_money as _recalc_purchase_money_convert
+    await _recalc_purchase_money_convert(db, p)
+
     wish.purchase_id = p.id
     wish.status = "converted"
     wish.approved_by = current_user.id
@@ -3147,6 +3195,12 @@ async def convert_wish(
         # Первое создание закупки — синхронизировать нечего (см. purchase_sync
         # в ветке «существующая закупка» выше).
         "purchase_sync": None,
+        # Владелец (2026-09-06, QA раунд 2, п.2): approved_price/approved_
+        # quantity игнорируются, если у заявки есть позиции (см. комментарий
+        # выше у _has_items) — фронт может показать это пользователю (скрытие
+        # самого поля — другая задача, не эта правка).
+        "approved_price_ignored": _approved_price_ignored,
+        "approved_quantity_ignored": _approved_quantity_ignored,
     }
 
 

@@ -1080,6 +1080,22 @@ class PurchaseOut(PurchaseCreate):
     excess_warnings: List[dict] = []
     model_config = {"from_attributes": True}
 
+class PurchaseAmountsOut(BaseModel):
+    """ПРАВИЛО №6 (2026-09-05): единственный расчёт «суммы закупки» — см.
+    app/services/purchase_amounts.py::purchase_amounts. plan/contract/fact/
+    paid — сырые колонки Purchase (planned_total_price/contract_price/
+    acceptance_doc_amount/payment_amount) БЕЗ фолбэков, для случаев, когда
+    фронту нужно показать именно исходное поле, а не итог. effective — сумма
+    по цепочке фолбэков владельца (см. докстринг purchase_amounts.py);
+    effective_source — имя поля/формулы, откуда взято effective (отладка)."""
+    plan: Optional[Decimal] = None
+    contract: Optional[Decimal] = None
+    fact: Optional[Decimal] = None
+    paid: Optional[Decimal] = None
+    effective: Optional[Decimal] = None
+    effective_source: str
+
+
 class PurchaseOutFull(PurchaseOut):
     contractor_name: Optional[str] = None
     contractor_inn: Optional[str] = None
@@ -1097,6 +1113,11 @@ class PurchaseOutFull(PurchaseOut):
     # от статуса закупки/approval_status (см. CreateOrderView.vue::
     # showApprovalSection).
     is_framework_head: bool = False
+    # ПРАВИЛО №6 (2026-09-05): единый расчёт суммы закупки — см. PurchaseAmountsOut.
+    # Optional/None только если вызывающий код не передал amounts_map (защита от
+    # регрессии на путях, которые ещё не переведены — не должно случаться на
+    # GET /api/purchases и GET /api/purchases/{id}, см. _purchase_to_full).
+    amounts: Optional[PurchaseAmountsOut] = None
 
 # Payment
 class PaymentCreate(BaseModel):

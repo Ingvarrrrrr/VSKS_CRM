@@ -27,7 +27,6 @@ from app.routers.contracts import ensure_contract_linked
 from app.routers.purchase_budget import _check_budget, _assign_framework_seq, FRAMEWORK_TYPES
 from app.routers.purchases import (
     _purchase_to_full, _item_to_out, STATUS_ORDER, _sync_purchase_from_contract,
-    is_framework_head,
 )
 from app.schemas.schemas import PurchaseOutFull
 from app.services.feo_plan import assert_no_unapproved_excess
@@ -365,15 +364,13 @@ async def transition_status(
                         "status_label": "Заключён договор",
                     },
                 )
-        # Phase 27.1 D-07: recompute contract_price (если не рамочный головной,
-        # см. is_framework_head() в purchases.py — единый хелпер для этой проверки)
-        if not is_framework_head(p):
-            ci_sum_res = await db.execute(
-                select(func.sum(ContractItem.total)).where(ContractItem.purchase_id == pid)
-            )
-            ci_sum = ci_sum_res.scalar() or Decimal('0')
-            if ci_sum > 0:
-                p.contract_price = ci_sum
+        # Phase 27.1 D-07 / ПРАВИЛО №6 (2026-09-05): пересчёт contract_price —
+        # через единственный писатель денежных колонок (не коммитит сам, как и
+        # раньше — единый db.commit() всей транзакции перехода ниже, см.
+        # purchase_money_writer.py). is_framework_head-исключение реализовано
+        # внутри recalc_purchase_money той же формулой (FRAMEWORK_TYPES).
+        from app.services.purchase_money_writer import recalc_purchase_money
+        await recalc_purchase_money(db, p)
 
     # Задача владельца, план zany-fluttering-mountain.md п.4 «Превышение: показать
     # виновника и заблокировать новые закупки» (2026-08-10), дословно: «дальнейшие
@@ -535,7 +532,10 @@ async def transition_status(
     subsidies = {s.id: s.name for s in subsidies_r.scalars().all()}
     contractors_r = await db.execute(select(Contractor))
     contractors = {c.id: c.name for c in contractors_r.scalars().all()}
-    out = _purchase_to_full(p, contractors, subsidies)
+    # ПРАВИЛО №6 (2026-09-05): единый расчёт суммы закупки — см. _purchase_to_full.
+    from app.services.purchase_amounts import load_purchase_amounts as _load_purchase_amounts
+    _amounts_map = await _load_purchase_amounts(db, [p.id])
+    out = _purchase_to_full(p, contractors, subsidies, amounts_map=_amounts_map)
     if _excess_warnings:
         out.excess_warnings = _excess_warnings
     return out
@@ -570,4 +570,7 @@ async def convert_service_note_to_order(
     subsidies = {s.id: s.name for s in subsidies_r.scalars().all()}
     contractors_r = await db.execute(select(Contractor))
     contractors = {c.id: c.name for c in contractors_r.scalars().all()}
-    return _purchase_to_full(p, contractors, subsidies)
+    # ПРАВИЛО №6 (2026-09-05): единый расчёт суммы закупки — см. _purchase_to_full.
+    from app.services.purchase_amounts import load_purchase_amounts as _load_purchase_amounts
+    _amounts_map = await _load_purchase_amounts(db, [p.id])
+    return _purchase_to_full(p, contractors, subsidies, amounts_map=_amounts_map)

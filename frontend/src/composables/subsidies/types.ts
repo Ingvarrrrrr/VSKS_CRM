@@ -206,6 +206,62 @@ export interface FeoLeftGroupInfo {
   isContract: boolean
 }
 
+// ── Позиции заявок «из закупок», привязанные к категории ФЭО (панель «План vs
+// факт», волна 5b) — вынесены из SubsidiesView.vue (interface FeoReqItem) при
+// разбиении useKpiDrilldown.ts: используется и деревом ФЭО (остаётся в
+// SubsidiesView.vue), и KPI drill-down (kpiItemMatches из constants/kpiMetrics.ts
+// принимает эту форму структурно). Единственный источник — не копия (Правило №6).
+export interface FeoReqItem {
+  id: number
+  item_name: string
+  quantity: number
+  unit: string | null
+  unit_price: number
+  total_price: number
+  purchase_id: number
+  purchase_number: number | null
+  registry_number: string | null
+  purchase_status: string
+  wish_id: number | null
+  category: string
+  product_type: string
+  product_photo?: string | null
+  // Phase KPI-drilldown: расширено бэкендом, старый бэк может не отдавать — все опциональны
+  contract_id?: number | null
+  purchase_contract_type?: string | null
+  contract_type?: string | null
+  contract_status?: string | null
+  contract_number?: string | null
+  // Anti-doublecount: позиция привязана к плановой позиции (feo_planned_items) — РАСХОДУЕТ
+  // её план, а не складывается с ним поверх. wish_item_id — исходная позиция заявки (справочно).
+  feo_planned_item_id?: number | null
+  wish_item_id?: number | null
+  // Задача владельца «план ≠ факт» (сессия 2026-08-06, шаг 5): снимок ТЗ — заморожен
+  // с момента объявления закупки (см. purchase_items.planned_*), фолбэк на текущие
+  // quantity/unit_price/total_price для старых записей без снимка — см. backend
+  // /feo-categories/planned-purchase-items.
+  planned_quantity?: number | null
+  planned_unit_price?: number | null
+  planned_total?: number | null
+  // Факт — та же формула, что и FeoActualItem.fact_amount (comparison-эндпоинт):
+  // точное сопоставление по ContractItem.source_item_id, иначе пропорция от
+  // purchases.contract_price. null — факта ещё нет (план_schedule/нет договорных данных).
+  fact_amount?: number | null
+  fact_quantity?: number | null
+  fact_unit_price?: number | null
+  fact_confirmed?: boolean
+  fact_allocated?: boolean
+  // Владелец, 2026-08-13: остановка закупки — см. аналогичный комментарий у
+  // FeoActualItem.stopped_at. /feo-categories/planned-purchase-items тоже пока
+  // не отдаёт эти поля — на практике всегда undefined.
+  stopped_at?: string | null
+  stopped_by_name?: string | null
+}
+
+// Режим базы для колонок «Плановое кол-во/сумма/остаток» дерева ФЭО — вынесен
+// сюда вместе с FeoReqItem (используется и useKpiDrilldown.ts, и деревом).
+export type PlannedBase = 'all' | 'manual' | 'requests' | 'purchases'
+
 // ── Импорт ФЭО из Excel (FeoImportWizard.vue/useFeoImport.ts) ─────────────────
 export interface FeoWarning {
   kind: 'level_gap' | 'level_duplicate' | 'sum_mismatch' | 'sum_without_qty' | 'parent_sum_mismatch'

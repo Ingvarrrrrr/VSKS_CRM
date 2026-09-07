@@ -2,46 +2,7 @@
   <div class="subsidies-page">
 
     <!-- ── Header ── -->
-    <div class="page-header">
-      <div class="page-header-left">
-        <v-icon icon="mdi-cash-multiple" size="32" color="#3B82F6" class="mr-3" />
-        <div>
-          <div class="page-title">Субсидии</div>
-          <div class="page-subtitle">Управление субсидиями и распределение бюджета · {{ selectedYear }}</div>
-        </div>
-      </div>
-      <div class="page-header-right">
-        <v-chip-group v-if="availableYears.length" v-model="selectedYear" mandatory class="year-chips mr-3">
-          <v-chip
-            v-for="year in availableYears" :key="year" :value="year"
-            filter variant="elevated" color="primary" size="small"
-          >{{ year }}</v-chip>
-        </v-chip-group>
-        <v-btn-toggle v-if="!mobile" v-model="viewMode" mandatory density="comfortable" variant="outlined" divided class="mr-2">
-          <v-btn value="table" size="small" icon="mdi-table" title="Таблица" />
-          <v-btn value="cards" size="small" icon="mdi-view-grid" title="Карточки" />
-        </v-btn-toggle>
-        <RegistryExportButton
-          title="Реестр субсидий"
-          :get-columns="getSubsidyExportColumns"
-          :get-rows="getSubsidyExportRows"
-          :get-capture-el="() => registryArea"
-          class="mr-2"
-          @error="(m) => showSnack(m, 'error')"
-        />
-        <v-btn
-          v-if="canEditFeo"
-          variant="outlined" prepend-icon="mdi-download-outline" class="mr-2"
-          title="Шаблон импорта направлений ФЭО (без выбранной субсидии — общий, с нейтральными примерами)"
-          @click="downloadFeoTemplate()"
-        >
-          Шаблон ФЭО
-        </v-btn>
-        <v-btn color="primary" prepend-icon="mdi-plus" @click="showAddDialog = true">
-          Добавить
-        </v-btn>
-      </div>
-    </div>
+    <SubsidyListHeader v-model:add-open="showAddDialog" :registry-area="registryArea" />
 
     <!-- ── Loading ── -->
     <div v-if="loading" class="d-flex justify-center py-16">
@@ -60,256 +21,12 @@
 
       <template v-else>
        <div ref="registryArea">
-        <!-- ── Table view ── -->
-        <v-data-table
-          v-if="effectiveView === 'table'"
-          :headers="subsidyTableHeaders"
-          :items="filteredSubsidies"
-          density="compact"
-          :items-per-page="25"
-          hover
-          class="subsidy-main-table mb-3"
-        >
-          <template #item.feo_budget_total="{ item }">
-            {{ formatCurrencyShort(item.feo_budget_total || item.budget) }}
-          </template>
-          <template #item.planned="{ item }">
-            <span style="color:#F59E0B">{{ formatCurrencyShort(item.planned) }}</span>
-          </template>
-          <template #item.ordered="{ item }">
-            <span style="color:#3B82F6">{{ formatCurrencyShort(item.ordered) }}</span>
-          </template>
-          <template #item.paid="{ item }">
-            <span style="color:var(--color-paid)">{{ formatCurrencyShort(item.paid) }}</span>
-          </template>
-          <template #item.contractor_name="{ item }">
-            <span v-if="item.contractor_name" class="d-flex align-center">
-              <v-icon icon="mdi-account-tie" size="13" class="mr-1" color="teal" />
-              {{ item.contractor_name }}
-            </span>
-            <span v-else class="text-medium-emphasis">—</span>
-          </template>
-          <template #item.feo_filled="{ item }">
-            <v-icon
-              :icon="item.feo_filled ? 'mdi-check-circle' : 'mdi-circle-outline'"
-              :color="item.feo_filled ? 'success' : 'grey-lighten-1'"
-              size="18"
-            />
-          </template>
-          <template #item.ceiling_committed_percent="{ item }">
-            <v-chip
-              v-if="item.ceiling_exceeded || item.ceiling_near_warning"
-              size="x-small"
-              :color="item.ceiling_exceeded ? 'error' : 'warning'"
-              variant="flat"
-              :title="`Заказано ${formatCurrency(item.ceiling_committed_total || 0)} из потолка ${formatCurrency(item.ceiling_total || 0)} — ${item.ceiling_committed_percent}% (порог предупреждения ${item.ceiling_warn_percent}%)`"
-            >{{ item.ceiling_committed_percent }}%</v-chip>
-            <span v-else class="text-medium-emphasis">—</span>
-          </template>
-          <template #item.name="{ item }">
-            <span class="font-weight-medium cursor-pointer" @click="toggleSelect(item.id)">{{ item.name }}</span>
-            <v-chip v-if="item.status === 'draft'" size="x-small" color="warning" variant="flat" class="ml-2">Черновик</v-chip>
-          </template>
-          <template #item.actions="{ item }">
-            <div class="d-flex align-center justify-end" style="gap:2px">
-              <v-btn
-                v-if="canApproveSubsidy(item)"
-                icon="mdi-check-decagram" size="x-small" variant="text" color="success"
-                title="Утвердить черновик субсидии"
-                :loading="approvingSubsidyId === item.id"
-                @click.stop="approveSubsidy(item)"
-              />
-              <v-btn icon="mdi-account-group" size="x-small" variant="text" color="deep-purple" title="Участники (соредакторы)" @click.stop="openMembersDialog(item)" />
-              <v-btn
-                icon="mdi-file-document-multiple-outline"
-                size="x-small" variant="text"
-                :color="contractTemplates[item.id] ? 'indigo' : 'grey-lighten-1'"
-                :title="contractTemplates[item.id] ? 'Шаблоны документов (договоры, СЗ, ТЗ, Фабрикант) — есть свои' : 'Шаблоны документов (договоры, СЗ, ТЗ, Фабрикант)'"
-                @click.stop="openTemplateDialog(item)"
-              />
-              <v-btn icon="mdi-account-multiple" size="x-small" variant="text" color="teal" title="Согласующие" @click.stop="openApproversDialog(item)" />
-              <v-btn icon="mdi-history" size="x-small" variant="text" color="blue-grey" title="История бюджета" @click.stop="openHistoryDialog(item)" />
-              <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click.stop="startEdit(item)" />
-              <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click.stop="confirmDelete(item)" />
-            </div>
-          </template>
-        </v-data-table>
-
-        <!-- ── Cards grid ── -->
-        <div v-else class="subsidies-grid">
-          <div
-            v-for="(s, idx) in subPaged" :key="s.id"
-            class="subsidy-card"
-            :class="{ 'subsidy-card--active': selectedId === s.id, 'subsidy-card--drag-over': cardDragOverIdx === idx, 'subsidy-card--dragging': cardDragIdx === idx }"
-            draggable="true"
-            @click="toggleSelect(s.id)"
-            @dragstart="onCardDragStart($event, idx)"
-            @dragover.prevent="onCardDragOver(idx)"
-            @dragleave="cardDragOverIdx = -1"
-            @drop.prevent="onCardDrop(idx)"
-            @dragend="cardDragIdx = -1; cardDragOverIdx = -1"
-          >
-            <div class="sc-title-band">
-              <div v-fit-text class="sc-name" :title="s.name">{{ s.name }}</div>
-              <v-chip v-if="s.status === 'draft'" size="x-small" color="warning" variant="flat" class="ml-2">Черновик</v-chip>
-              <div class="sc-actions">
-                <v-btn
-                  v-if="canApproveSubsidy(s)"
-                  icon="mdi-check-decagram" size="x-small" variant="text" color="success"
-                  title="Утвердить черновик субсидии"
-                  :loading="approvingSubsidyId === s.id"
-                  @click.stop="approveSubsidy(s)"
-                />
-                <v-btn icon="mdi-account-group" size="x-small" variant="text" color="deep-purple" title="Участники (соредакторы)" @click.stop="openMembersDialog(s)" />
-                <v-btn
-                  icon="mdi-file-document-multiple-outline"
-                  size="x-small" variant="text"
-                  :color="contractTemplates[s.id] ? 'indigo' : 'grey-lighten-1'"
-                  :title="contractTemplates[s.id] ? 'Шаблоны документов (договоры, СЗ, ТЗ, Фабрикант) — есть свои' : 'Шаблоны документов (договоры, СЗ, ТЗ, Фабрикант)'"
-                  @click.stop="openTemplateDialog(s)"
-                />
-                <v-btn icon="mdi-account-multiple" size="x-small" variant="text" color="teal" title="Согласующие" @click.stop="openApproversDialog(s)" />
-                <v-btn icon="mdi-history" size="x-small" variant="text" color="blue-grey" title="История бюджета" @click.stop="openHistoryDialog(s)" />
-                <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click.stop="startEdit(s)" />
-                <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click.stop="confirmDelete(s)" />
-              </div>
-            </div>
-
-            <div class="sc-budget">{{ formatCurrencyShort(s.feo_budget_total || s.budget) }}</div>
-            <div class="sc-budget-label">{{ (s.feo_budget_total || 0) > 0 ? 'Бюджет ФЭО (расчёт)' : 'Бюджет' }}</div>
-
-            <div class="sc-mini-row">
-              <div class="sc-mini" title="Запланировано (план ФЭО + заявки) — то же, что «Запланировано» на шкале ниже">
-                <div class="sc-mini-label">Запланировано</div>
-                <div class="sc-mini-val" style="color:#F59E0B">{{ formatCurrencyShort(s.planned) }}</div>
-              </div>
-              <div class="sc-mini" title="Закупки в статусе «Заказано» — заказ размещён, поставка не завершена">
-                <div class="sc-mini-label">Заказано</div>
-                <div class="sc-mini-val" style="color:#3B82F6">{{ formatCurrencyShort(s.ordered) }}</div>
-              </div>
-              <div class="sc-mini" title="Закупки в статусе «Оплачено» — фактически оплаченные суммы">
-                <div class="sc-mini-label">Оплачено</div>
-                <div class="sc-mini-val" style="color:var(--color-paid)">{{ formatCurrencyShort(s.paid) }}</div>
-              </div>
-            </div>
-
-            <v-progress-linear
-              :model-value="pct(s.planned, s.feo_budget_total || s.budget)"
-              :color="progressColor(pct(s.planned, s.feo_budget_total || s.budget))"
-              height="6" rounded class="mt-3"
-            />
-            <BudgetBar
-              class="mt-3"
-              hide-legend
-              hide-name
-              :subsidy="{
-                id: s.id,
-                name: s.name,
-                budget: s.feo_budget_total || s.budget,
-                planned: s.planned,
-                contracted: s.contracted,
-                paid: s.paid,
-              }"
-            />
-            <v-chip
-              v-if="Math.abs(cardDelta(s)) > 0.01"
-              :color="cardDelta(s) > 0 ? '#fb923c' : '#ef4444'"
-              size="small"
-              class="mt-1 sc-delta-chip"
-              prepend-icon="mdi-alert"
-              :title="cardDelta(s) > 0
-                ? `Бюджет ${Math.round(s.feo_budget_total || s.budget || 0).toLocaleString('ru-RU')} ₽ − запланировано (план ФЭО + заявки) ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ = можно допланировать ${Math.round(cardDelta(s)).toLocaleString('ru-RU')} ₽`
-                : `Запланировано (план ФЭО + заявки) ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ — больше бюджета ${Math.round(s.feo_budget_total || s.budget || 0).toLocaleString('ru-RU')} ₽ на ${Math.round(-cardDelta(s)).toLocaleString('ru-RU')} ₽`"
-            >ФЭО {{ cardDelta(s) > 0 ? '>' : '<' }} план: {{ cardDelta(s) > 0 ? 'допланировать' : 'урезать' }} {{ formatCurrencyShort(Math.abs(cardDelta(s))) }}</v-chip>
-            <v-chip
-              v-else-if="(s.feo_budget_total || s.budget || 0) > 0 && (s.planned || 0) > 0"
-              color="success"
-              size="small"
-              class="mt-1 sc-delta-chip"
-              prepend-icon="mdi-check"
-              :title="`Бюджет ФЭО и запланировано (план ФЭО + заявки) совпадают: ${Math.round(s.planned).toLocaleString('ru-RU')} ₽`"
-            >ФЭО = план</v-chip>
-            <v-chip
-              v-if="s.ceiling_exceeded || s.ceiling_near_warning"
-              :color="s.ceiling_exceeded ? '#ef4444' : '#f59e0b'"
-              size="small"
-              class="mt-1 sc-delta-chip"
-              prepend-icon="mdi-alert-octagon"
-              :title="`Заказано ${formatCurrencyShort(s.ceiling_committed_total || 0)} из потолка ${formatCurrencyShort(s.ceiling_total || 0)} — ${s.ceiling_committed_percent}% (порог предупреждения ${s.ceiling_warn_percent}%)`"
-            >{{ s.ceiling_exceeded ? 'Потолок превышен' : 'Близко к потолку' }}: {{ s.ceiling_committed_percent }}%</v-chip>
-            <div v-if="s.contractor_name" class="sc-contractor">
-              <v-icon icon="mdi-account-tie" size="13" class="mr-1" />
-              <span>{{ s.contractor_name }}</span>
-            </div>
-            <div class="sc-footer">
-              <div class="sc-pct">{{ pct(s.planned, s.feo_budget_total || s.budget) }}% запланировано</div>
-              <div class="sc-feo-badge" :class="s.feo_filled ? 'sc-feo-badge--ok' : 'sc-feo-badge--no'">
-                <v-icon :icon="s.feo_filled ? 'mdi-check-circle' : 'mdi-circle-outline'" size="14" class="mr-1" />
-                ФЭО
-              </div>
-            </div>
-          </div>
-        </div>
+        <SubsidyListTable v-if="effectiveView === 'table'" />
+        <SubsidyCardsGrid v-else />
        </div>
-        <!-- cards pagination -->
-        <div v-if="subTotalPages > 1" class="d-flex justify-center mt-3">
-          <v-pagination v-model="subPage" :length="subTotalPages" density="comfortable" />
-        </div>
 
         <!-- ── Summary bar ── -->
-        <div class="summary-bar">
-          <div class="summary-item">
-            <span class="summary-label">Субсидий</span>
-            <span class="summary-value">{{ filteredSubsidies.length }}</span>
-          </div>
-          <div class="summary-sep" />
-          <div class="summary-item summary-item--link" @click="router.push('/dashboard')">
-            <span class="summary-label">Бюджет ФЭО (итого)</span>
-            <span class="summary-value">{{ formatCurrency(totals.budget) }}</span>
-          </div>
-          <div class="summary-sep" />
-          <div class="summary-item summary-item--link" @click="router.push('/orders')">
-            <span class="summary-label">Запланировано</span>
-            <span class="summary-value" style="color:var(--color-planned)">{{ formatCurrency(totals.planned) }}</span>
-          </div>
-          <div class="summary-sep" />
-          <div class="summary-item summary-item--link" @click="router.push('/orders?status=work_in_progress')">
-            <span class="summary-label">Заказано</span>
-            <span class="summary-value" style="color:#3B82F6">{{ formatCurrency(totals.ordered) }}</span>
-          </div>
-          <div class="summary-sep" />
-          <div class="summary-item summary-item--link" @click="router.push('/orders?status=paid')">
-            <span class="summary-label">Оплачено</span>
-            <span class="summary-value" style="color:var(--color-paid)">{{ formatCurrency(totals.paid) }}</span>
-          </div>
-          <div class="summary-sep" />
-          <div class="summary-item summary-item--link" @click="router.push('/dashboard')">
-            <span class="summary-label">Свободно</span>
-            <span class="summary-value" :style="{ color: totals.budget - totals.planned < 0 ? '#EF4444' : '#3B82F6' }">
-              {{ formatCurrency(totals.budget - totals.planned) }}
-            </span>
-          </div>
-          <div class="summary-sep" />
-          <div class="summary-item summary-item--link" @click="router.push('/orders?status=work_in_progress')">
-            <span class="summary-label">Ведётся работа</span>
-            <span class="summary-value" style="color:#6366F1">{{ formatCurrency(totals.work) }}</span>
-          </div>
-          <div class="summary-sep" />
-          <div class="summary-item summary-item--link" @click="router.push('/contracts')">
-            <span class="summary-label">Заключено договоров</span>
-            <span class="summary-value" style="color:#0284C7">{{ formatCurrency(totals.contracts) }}</span>
-          </div>
-          <div class="summary-sep" />
-          <div class="summary-item summary-item--link" @click="router.push('/orders?status=delivered')">
-            <span class="summary-label">Поставлено</span>
-            <span class="summary-value" style="color:#14B8A6">{{ formatCurrency(totals.delivered) }}</span>
-          </div>
-          <div class="summary-sep" />
-          <div class="summary-item">
-            <span class="summary-label">Поставлено не оплачено</span>
-            <span class="summary-value" style="color:#EF4444">{{ formatCurrency(totals.delivered_unpaid) }}</span>
-          </div>
-        </div>
+        <SubsidySummaryBar />
 
         <!-- ── Detail panel ── -->
         <div v-if="selectedSubsidy" class="detail-panel">
@@ -328,157 +45,7 @@
           </div>
 
           <!-- KPI mini-cards for selected subsidy -->
-          <div class="detail-kpis">
-            <!-- 1. Бюджет (ФЭО) -->
-            <v-tooltip location="bottom" :disabled="true">
-              <template #activator="{ props: tip }">
-                <div v-bind="tip" class="kpi-card kpi-budget" :class="kpiCardClass('budget')" title="Живой расчёт по дереву ФЭО: ручное финансирование категорий, без него — факт, иначе план. Совпадает с ИТОГО дерева ниже" @click="onKpiCardClick('budget')">
-                  <div class="kpi-icon-box"><v-icon icon="mdi-wallet" size="26" /></div>
-                  <div class="kpi-body">
-                    <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_budget) }}</div>
-                    <div class="kpi-label">Бюджет (ФЭО)</div>
-                  </div>
-                </div>
-              </template>
-            </v-tooltip>
-            <!-- 2. Запланировано -->
-            <v-tooltip location="bottom" :disabled="true">
-              <template #activator="{ props: tip }">
-                <div v-bind="tip" class="kpi-card kpi-plan_schedule" :class="kpiCardClass('plan_schedule')" title="Плановая сумма дерева ФЭО: ручные позиции (импорт/создание в ФЭО) + заявки в плане закупок" @click="onKpiCardClick('plan_schedule')">
-                  <div class="kpi-icon-box"><v-icon icon="mdi-calendar-clock" size="26" /></div>
-                  <div class="kpi-body">
-                    <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_plan_schedule) }}</div>
-                    <div class="kpi-label">Запланировано</div>
-                  </div>
-                </div>
-              </template>
-            </v-tooltip>
-            <!-- 3. Ведётся работа -->
-            <v-tooltip location="bottom" text="включает заказанные, поставленные и оплаченные">
-              <template #activator="{ props: tip }">
-                <div v-bind="tip" class="kpi-card kpi-work" :class="kpiCardClass('work')" @click="onKpiCardClick('work')">
-                  <div class="kpi-icon-box"><v-icon icon="mdi-progress-wrench" size="26" /></div>
-                  <div class="kpi-body">
-                    <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_work) }}</div>
-                    <div class="kpi-label">Ведётся работа</div>
-                  </div>
-                </div>
-              </template>
-            </v-tooltip>
-            <!-- 4. Заказано -->
-            <v-tooltip location="bottom" text="включает поставленные и оплаченные">
-              <template #activator="{ props: tip }">
-                <div v-bind="tip" class="kpi-card kpi-ordered" :class="kpiCardClass('ordered')" @click="onKpiCardClick('ordered')">
-                  <div class="kpi-icon-box"><v-icon icon="mdi-cart-check" size="26" /></div>
-                  <div class="kpi-body">
-                    <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_ordered) }}</div>
-                    <div class="kpi-label">Заказано</div>
-                  </div>
-                </div>
-              </template>
-            </v-tooltip>
-            <!-- 5. Заключено договоров -->
-            <v-tooltip location="bottom" text="суммарная стоимость заключённых договоров">
-              <template #activator="{ props: tip }">
-                <div v-bind="tip" class="kpi-card kpi-contracts" :class="kpiCardClass('contracts')" @click="onKpiCardClick('contracts')">
-                  <div class="kpi-icon-box"><v-icon icon="mdi-file-sign" size="26" /></div>
-                  <div class="kpi-body">
-                    <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_contracts) }}</div>
-                    <div class="kpi-label">Заключено договоров</div>
-                  </div>
-                </div>
-              </template>
-            </v-tooltip>
-            <!-- 6. Поставлено -->
-            <v-tooltip location="bottom" text="включает оплаченные">
-              <template #activator="{ props: tip }">
-                <div v-bind="tip" class="kpi-card kpi-delivered" :class="kpiCardClass('delivered')" @click="onKpiCardClick('delivered')">
-                  <div class="kpi-icon-box"><v-icon icon="mdi-truck-check" size="26" /></div>
-                  <div class="kpi-body">
-                    <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_delivered) }}</div>
-                    <div class="kpi-label">Поставлено</div>
-                  </div>
-                </div>
-              </template>
-            </v-tooltip>
-            <!-- 7. Поставлено, не оплачено -->
-            <v-tooltip location="bottom" text="поставлено, но оплата ещё не прошла">
-              <template #activator="{ props: tip }">
-                <div v-bind="tip" class="kpi-card kpi-delivered_unpaid" :class="kpiCardClass('delivered_unpaid')" @click="onKpiCardClick('delivered_unpaid')">
-                  <div class="kpi-icon-box"><v-icon icon="mdi-truck-alert" size="26" /></div>
-                  <div class="kpi-body">
-                    <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_delivered_unpaid) }}</div>
-                    <div class="kpi-label">Поставлено, не оплачено</div>
-                  </div>
-                </div>
-              </template>
-            </v-tooltip>
-            <!-- 8. Оплачено -->
-            <v-tooltip location="bottom" :disabled="true">
-              <template #activator="{ props: tip }">
-                <div v-bind="tip" class="kpi-card kpi-paid" :class="kpiCardClass('paid')" @click="onKpiCardClick('paid')">
-                  <div class="kpi-icon-box"><v-icon icon="mdi-cash-check" size="26" /></div>
-                  <div class="kpi-body">
-                    <div class="kpi-value">{{ formatCurrencyRound(kpiSubAnim_paid) }}</div>
-                    <div class="kpi-label">Оплачено</div>
-                  </div>
-                </div>
-              </template>
-            </v-tooltip>
-            <!-- 9. Свободно -->
-            <v-tooltip location="bottom" :disabled="true">
-              <template #activator="{ props: tip }">
-                <div v-bind="tip" class="kpi-card kpi-free"
-                  :class="[selectedBudget - selectedPlannedTotal < 0 ? 'kpi-over' : '', kpiCardClass('free')]"
-                  @click="onKpiCardClick('free')"
-                >
-                  <div class="kpi-icon-box"><v-icon icon="mdi-cash-lock-open" size="26" /></div>
-                  <div class="kpi-body">
-                    <div class="kpi-value">{{ formatCurrencyRound(Math.abs(kpiSubAnim_free)) }}</div>
-                    <div class="kpi-label">{{ selectedBudget - selectedPlannedTotal < 0 ? 'Превышение' : 'Свободно' }}</div>
-                  </div>
-                </div>
-              </template>
-            </v-tooltip>
-          </div>
-          <!-- Владелец (2026-08-30): предупреждение «сумма заказанного приближается
-               к потолку субсидии» — потолок = calculate_budget_from_categories
-               (тот же источник, что и жёсткий гейт PLAN_OVER_SUBSIDY_CEILING),
-               заказано = разовые/авансовые/рамочные закупки в статусах Заказано+
-               И ежемесячные платежи ВЕСЬ график целиком (см. app/services/feo_plan.py). -->
-          <v-alert
-            v-if="selectedSubsidy.ceiling_exceeded || selectedSubsidy.ceiling_near_warning"
-            :type="selectedSubsidy.ceiling_exceeded ? 'error' : 'warning'"
-            density="compact"
-            variant="tonal"
-            class="mb-3"
-            icon="mdi-alert-octagon-outline"
-          >
-            {{ selectedSubsidy.ceiling_exceeded ? 'Потолок субсидии превышен: ' : 'Приближение к потолку субсидии: ' }}
-            заказано {{ formatCurrency(selectedSubsidy.ceiling_committed_total || 0) }}
-            из потолка {{ formatCurrency(selectedSubsidy.ceiling_total || 0) }}
-            — это {{ selectedSubsidy.ceiling_committed_percent }}%
-            (порог предупреждения {{ selectedSubsidy.ceiling_warn_percent }}%).
-          </v-alert>
-          <!-- Подсказка активной KPI-метрики -->
-          <div v-if="activeKpi" class="feo-kpi-banner">
-            <v-icon icon="mdi-filter-variant" size="16" color="#fb923c" />
-            <span v-if="!plannedItemsLoaded">загрузка состава…</span>
-            <span v-else-if="kpiHasMatches">{{ KPI_LABELS[activeKpi] }}</span>
-            <span v-else>в дереве ФЭО нечего подсвечивать: {{ KPI_EMPTY_REASONS[activeKpi] }}</span>
-            <v-btn size="x-small" variant="text" color="primary" class="ml-auto" @click="resetKpi">Сбросить</v-btn>
-          </div>
-          <!-- Контрагент -->
-          <div v-if="selectedSubsidy.contractor_name" class="detail-contractor mt-2 mb-3">
-            <v-icon icon="mdi-account-tie" size="16" color="teal" class="mr-1" />
-            <span class="text-body-2 font-weight-medium">{{ selectedSubsidy.contractor_name }}</span>
-            <span v-if="selectedSubsidy.contractor_inn" class="text-caption text-medium-emphasis ml-2">ИНН {{ selectedSubsidy.contractor_inn }}</span>
-            <v-btn
-              icon="mdi-pencil-outline" size="x-small" variant="text" color="teal" class="ml-2"
-              title="Реквизиты контрагента для этой субсидии"
-              @click="openContractorOverride(selectedSubsidy)"
-            />
-          </div>
+          <SubsidyKpiCards />
 
           <!-- FEO categories -->
           <div v-if="loadingFeo" class="d-flex justify-center py-8">
@@ -486,69 +53,7 @@
           </div>
 
           <div v-else>
-            <div class="detail-feo-header">
-              <span class="chart-card-title">Направления ФЭО</span>
-              <div class="d-flex align-center ml-4" style="gap:6px" title="Группировка позиций «из заявок» при раскрытии направления">
-                <span class="text-caption text-medium-emphasis">Позиции:</span>
-                <v-btn-toggle v-model="feoItemsGroupBy" density="compact" mandatory variant="outlined" color="teal" style="height:26px" :disabled="plannedBase === 'purchases'">
-                  <v-btn size="x-small" value="none">Нет</v-btn>
-                  <v-btn size="x-small" value="category">По категориям</v-btn>
-                  <v-btn size="x-small" value="category_type">Категории + виды</v-btn>
-                </v-btn-toggle>
-              </div>
-              <div class="d-flex align-center ml-auto" style="gap:8px">
-                <v-btn size="small" variant="outlined" color="success" prepend-icon="mdi-file-excel-outline" @click="openExportVersionsDialog">Выгрузить ФЭО</v-btn>
-                <template v-if="canEditFeo">
-                  <v-btn size="small" variant="outlined" prepend-icon="mdi-download-outline" @click="downloadFeoTemplate(selectedSubsidy?.id, selectedSubsidy?.name)">Шаблон</v-btn>
-                  <v-btn size="small" variant="outlined" color="secondary" prepend-icon="mdi-upload-outline" @click="feoImport.show = true">Импорт</v-btn>
-                </template>
-                <!-- 12-04: Version history -->
-                <v-btn size="small" variant="text" color="blue-grey" prepend-icon="mdi-history" @click="openVersionHistory">
-                  История
-                </v-btn>
-                <!-- 12-05: Save version -->
-                <v-btn
-                  v-if="canSaveVersion"
-                  size="small"
-                  variant="text"
-                  color="success"
-                  prepend-icon="mdi-content-save"
-                  @click="openSaveVersionDialog"
-                >
-                  Сохранить редакцию
-                </v-btn>
-                <!-- 12-04: Export dropdown -->
-                <v-menu>
-                  <template #activator="{ props: menuProps }">
-                    <v-btn size="small" variant="outlined" color="teal" prepend-icon="mdi-export" append-icon="mdi-chevron-down" v-bind="menuProps">
-                      Экспорт
-                    </v-btn>
-                  </template>
-                  <v-list density="compact">
-                    <v-list-item prepend-icon="mdi-microsoft-excel" @click="exportPlanGraphExcel">
-                      <v-list-item-title>Excel (.xlsx)</v-list-item-title>
-                    </v-list-item>
-                    <v-list-item prepend-icon="mdi-microsoft-word" @click="exportPlanGraphDocx">
-                      <v-list-item-title>Word (шаблон)</v-list-item-title>
-                    </v-list-item>
-                    <v-list-item prepend-icon="mdi-file-pdf-box" @click="exportFeoPdf">
-                      <v-list-item-title>PDF (как на экране)</v-list-item-title>
-                    </v-list-item>
-                    <v-divider />
-                    <v-list-item prepend-icon="mdi-upload-outline">
-                      <v-list-item-title>
-                        <label style="cursor:pointer">
-                          Загрузить шаблон .docx
-                          <input type="file" accept=".docx" style="display:none"
-                            @change="(e: any) => { if (e.target.files[0]) uploadTemplate(e.target.files[0]) }" />
-                        </label>
-                      </v-list-item-title>
-                    </v-list-item>
-                  </v-list>
-                </v-menu>
-                <v-btn v-if="canEditFeo" size="small" variant="tonal" color="primary" prepend-icon="mdi-plus" @click="openAddFeoDialog(null)">Добавить</v-btn>
-              </div>
-            </div>
+            <FeoTreeToolbar />
 
             <div v-if="feoCategories.length === 0" class="feo-empty">
               <v-icon icon="mdi-folder-off" size="40" color="grey-lighten-2" />
@@ -655,7 +160,7 @@
                         `feo-tr--l${node.level}`,
                         dragOverId === node.id ? 'feo-drop-target' : '',
                         dragNodeId === node.id ? 'feo-dragging' : '',
-                        kpiNodeClass(node),
+                        kpi.kpiNodeClass(node),
                       ]"
                       :draggable="canEditFeo"
                       @dragstart="canEditFeo && onDragStart($event, node)"
@@ -2551,18 +2056,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, reactive, nextTick } from 'vue'
 import { useDisplay } from 'vuetify'
-import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import { refreshMyPendingApprovals } from '@/composables/useApprovalsBadge'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { useResizableColumns } from '@/composables/useResizableColumns'
-import { useCardView } from '@/composables/useCardView'
 import { useToast, type ToastType } from '@/composables/useToast'
 import BudgetHistoryDialog from '@/components/BudgetHistoryDialog.vue'
-import BudgetBar from '@/components/BudgetBar.vue'
-import RegistryExportButton from '@/components/RegistryExportButton.vue'
-import { useRegistryExport } from '@/composables/useRegistryExport'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import { useFeoLeaves } from '@/composables/useFeoLeaves'
 import { useAuthStore } from '@/stores/auth'
@@ -2577,8 +2077,15 @@ import type { FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
 import { numOrNull } from '@/utils/numberFormat'
 import { PURCHASE_STATUS_META, PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusIcon, purchaseStatusColor } from '@/constants/purchaseStatus'
-import { type KpiKey, KPI_MODE, KPI_LABELS, KPI_EMPTY_REASONS, kpiItemMatches } from '@/constants/kpiMetrics'
-import { formatCurrency } from '@/composables/subsidies/format'
+import { formatCurrency, formatCurrencyRound } from '@/composables/subsidies/format'
+import SubsidyListHeader from '@/components/subsidies/SubsidyListHeader.vue'
+import SubsidyListTable from '@/components/subsidies/SubsidyListTable.vue'
+import SubsidyCardsGrid from '@/components/subsidies/SubsidyCardsGrid.vue'
+import SubsidySummaryBar from '@/components/subsidies/SubsidySummaryBar.vue'
+import SubsidyKpiCards from '@/components/subsidies/SubsidyKpiCards.vue'
+import FeoTreeToolbar from '@/components/subsidies/FeoTreeToolbar.vue'
+import { useSubsidyList } from '@/composables/subsidies/useSubsidyList'
+import { useKpiDrilldown } from '@/composables/subsidies/useKpiDrilldown'
 import SubsidyEventsPanel from '@/components/subsidies/SubsidyEventsPanel.vue'
 import SubsidyEditDialog from '@/components/subsidies/SubsidyEditDialog.vue'
 import SubsidyDeleteDialog from '@/components/subsidies/SubsidyDeleteDialog.vue'
@@ -2596,16 +2103,13 @@ import PlanGraphVersionHistoryDialog from '@/components/subsidies/PlanGraphVersi
 import PlanGraphExportVersionsDialog from '@/components/subsidies/PlanGraphExportVersionsDialog.vue'
 import PlanGraphSnapshotDialog from '@/components/subsidies/PlanGraphSnapshotDialog.vue'
 import PlanGraphSaveVersionDialog from '@/components/subsidies/PlanGraphSaveVersionDialog.vue'
-import { usePlanGraphVersions } from '@/composables/subsidies/usePlanGraphVersions'
 import PlannedItemAddDialog from '@/components/subsidies/PlannedItemAddDialog.vue'
 import PlannedItemEditDialog from '@/components/subsidies/PlannedItemEditDialog.vue'
 import CategoryPlanEditDialog from '@/components/subsidies/CategoryPlanEditDialog.vue'
 import PlannedItemMapDialog from '@/components/subsidies/PlannedItemMapDialog.vue'
 import { usePlannedItems } from '@/composables/subsidies/usePlannedItems'
 import FeoImportWizard from '@/components/subsidies/FeoImportWizard.vue'
-import { useFeoImport } from '@/composables/subsidies/useFeoImport'
 import { provideSubsidyDetail } from '@/composables/subsidies/useSubsidyDetail'
-import { useSubsidyApprovers } from '@/composables/subsidies/useSubsidyApprovers'
 import { useSubsidyTemplates } from '@/composables/subsidies/useSubsidyTemplates'
 // Относительный путь (не '@/...'), т.к. tsconfig.app.json не содержит paths-маппинга
 // для алиаса '@' (Vite резолвит его сам через vite.config.ts, но чистый tsc/vue-tsc —
@@ -2613,7 +2117,7 @@ import { useSubsidyTemplates } from '@/composables/subsidies/useSubsidyTemplates
 // используют их как аннотации), заваливая проверку implicit-any лавиной. У новых
 // компонентов (components/subsidies/*) та же проблема не бьёт так же сильно — там
 // использований единицы, поэтому там оставлен алиас '@/...' как и everywhere else.
-import type { SubsidyRow, FeoCategory, FeoNode, FeoPlannedItem, FeoStage, FeoActualItem } from '../composables/subsidies/types'
+import type { SubsidyRow, FeoCategory, FeoNode, FeoPlannedItem, FeoStage, FeoActualItem, FeoReqItem, PlannedBase } from '../composables/subsidies/types'
 import { collectSubtreeIds, leftGroupInfo } from '@/composables/subsidies/feoCategoryUtils'
 
 const { globalSubsidyId } = useGlobalSubsidy()
@@ -2650,20 +2154,6 @@ function loadFeoDisplayPrefs(): FeoDisplayPrefs {
   }
 }
 const feoDisplayPrefs = loadFeoDisplayPrefs()
-
-// Название карточки в одну строку: базовый крупный шрифт, ужимается пока не влезет
-function fitTextToWidth(el: HTMLElement) {
-  const base = 30
-  el.style.fontSize = `${base}px`
-  const cw = el.clientWidth
-  if (cw > 0 && el.scrollWidth > cw) {
-    el.style.fontSize = `${Math.max(13, Math.floor((base * cw) / el.scrollWidth))}px`
-  }
-}
-const vFitText = {
-  mounted: fitTextToWidth,
-  updated: fitTextToWidth,
-}
 
 // Правка владельца (2026-08-12, откат явных 180px — регресс): фиксированные
 // name/qty/planned/spent=180px сузили feo-table в узкую полосу по центру экрана
@@ -2702,7 +2192,6 @@ const route  = useRoute()
 // ── State ─────────────────────────────────────────
 const registryArea = ref<HTMLElement | null>(null)
 const feoTableArea = ref<HTMLElement | null>(null)
-const { exportScreenshotPdf: _exportFeoScreenshotPdf } = useRegistryExport()
 const loading    = ref(false)
 // saving/savingFeo (диалоги субсидии/категории ФЭО) — теперь внутри
 // SubsidyEditDialog.vue/SubsidyDeleteDialog.vue/FeoCategoryDialog.vue/
@@ -2889,7 +2378,12 @@ const excessRejectDialog = ref<{ show: boolean; node: FeoNode | null; comment: s
 })
 const expandedIds     = ref<number[]>(feoDisplayPrefs.expandedIds || [])
 const selectedId      = ref<number | null>(null)
-const selectedYear    = ref<number>(new Date().getFullYear())
+// Состояние списка субсидий (год/режим таблица-карточки/карточки/пагинация) —
+// вынесено в useSubsidyList.ts (волна 5b, SubsidyListHeader/Table/CardsGrid/
+// SummaryBar.vue). Этому файлу из него нужны только selectedYear (авто-выбор
+// последнего года при загрузке, ниже по файлу), filteredSubsidies/effectiveView
+// (условия v-if в шаблоне выше) и mobile (диалог reqItemEdit, :fullscreen="mobile").
+const { selectedYear, filteredSubsidies, effectiveView, mobile } = useSubsidyList({ allSubsidies })
 
 // Объявлен здесь (не ниже, у других computed из блока «панель субсидии»), потому что
 // reqItemEditSubsidyId (см. useFeoLeaves для диалога правки позиции) читает
@@ -3067,52 +2561,8 @@ async function refreshComparison(categoryId: number) {
 }
 
 // ── Позиции «из заявок» в дереве ФЭО (раскрытие листа-папки) ──
-interface FeoReqItem {
-  id: number
-  item_name: string
-  quantity: number
-  unit: string | null
-  unit_price: number
-  total_price: number
-  purchase_id: number
-  purchase_number: number | null
-  registry_number: string | null
-  purchase_status: string
-  wish_id: number | null
-  category: string
-  product_type: string
-  product_photo?: string | null
-  // Phase KPI-drilldown: расширено бэкендом, старый бэк может не отдавать — все опциональны
-  contract_id?: number | null
-  purchase_contract_type?: string | null
-  contract_type?: string | null
-  contract_status?: string | null
-  contract_number?: string | null
-  // Anti-doublecount: позиция привязана к плановой позиции (feo_planned_items) — РАСХОДУЕТ
-  // её план, а не складывается с ним поверх. wish_item_id — исходная позиция заявки (справочно).
-  feo_planned_item_id?: number | null
-  wish_item_id?: number | null
-  // Задача владельца «план ≠ факт» (сессия 2026-08-06, шаг 5): снимок ТЗ — заморожен
-  // с момента объявления закупки (см. purchase_items.planned_*), фолбэк на текущие
-  // quantity/unit_price/total_price для старых записей без снимка — см. backend
-  // /feo-categories/planned-purchase-items.
-  planned_quantity?: number | null
-  planned_unit_price?: number | null
-  planned_total?: number | null
-  // Факт — та же формула, что и FeoActualItem.fact_amount (comparison-эндпоинт):
-  // точное сопоставление по ContractItem.source_item_id, иначе пропорция от
-  // purchases.contract_price. null — факта ещё нет (план_schedule/нет договорных данных).
-  fact_amount?: number | null
-  fact_quantity?: number | null
-  fact_unit_price?: number | null
-  fact_confirmed?: boolean
-  fact_allocated?: boolean
-  // Владелец, 2026-08-13: остановка закупки — см. аналогичный комментарий у
-  // FeoActualItem.stopped_at. /feo-categories/planned-purchase-items тоже пока
-  // не отдаёт эти поля — на практике всегда undefined.
-  stopped_at?: string | null
-  stopped_by_name?: string | null
-}
+// FeoReqItem — теперь в composables/subsidies/types.ts (нужен и useKpiDrilldown.ts,
+// волна 5b) — единственный источник, импортирован сверху (Правило №6).
 interface FeoReqRow {
   key: string
   header: string
@@ -4281,71 +3731,10 @@ const toast = useToast()
 // вынесены в SubsidyEditDialog.vue / FeoCategoryDialog.vue соответственно.
 
 // ── Computed ──────────────────────────────────────
-const availableYears = computed(() =>
-  [...new Set(allSubsidies.value.map(s => s.year))].sort((a, b) => b - a)
-)
-
-const CARD_ORDER_KEY = 'subsidies_card_order'
-const cardDragIdx = ref(-1)
-const cardDragOverIdx = ref(-1)
-const subsidyOrder = ref<number[]>(JSON.parse(localStorage.getItem(CARD_ORDER_KEY) || '[]'))
-
-function onCardDragStart(e: DragEvent, idx: number) {
-  cardDragIdx.value = idx
-  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
-}
-function onCardDragOver(idx: number) {
-  cardDragOverIdx.value = idx
-}
-function onCardDrop(targetIdx: number) {
-  const srcIdx = cardDragIdx.value
-  if (srcIdx < 0 || srcIdx === targetIdx) return
-  const ids = filteredSubsidies.value.map(s => s.id)
-  const [moved] = ids.splice(srcIdx, 1)
-  ids.splice(targetIdx, 0, moved)
-  subsidyOrder.value = ids
-  localStorage.setItem(CARD_ORDER_KEY, JSON.stringify(ids))
-  cardDragOverIdx.value = -1
-  cardDragIdx.value = -1
-}
-
-const filteredSubsidies = computed(() => {
-  const yearFiltered = allSubsidies.value.filter(s => s.year === selectedYear.value)
-  if (subsidyOrder.value.length === 0) return yearFiltered
-  const orderMap = new Map(subsidyOrder.value.map((id, i) => [id, i]))
-  return [...yearFiltered].sort((a, b) => {
-    const ai = orderMap.get(a.id) ?? 9999
-    const bi = orderMap.get(b.id) ?? 9999
-    return ai - bi
-  })
-})
-
-// ── Table ↔ Cards toggle ──────────────────────────
-const { mobile, viewMode, effectiveView, page: subPage, totalPages: subTotalPages, paged: subPaged } = useCardView<SubsidyRow>({
-  storageKey: 'subsidies_view_mode',
-  source: () => filteredSubsidies.value,
-})
-
-const subsidyTableHeaders = [
-  { title: 'Название', key: 'name', minWidth: '200px' },
-  { title: 'Бюджет ФЭО', key: 'feo_budget_total', align: 'end' as const },
-  { title: 'Запланировано', key: 'planned', align: 'end' as const },
-  { title: 'Заказано', key: 'ordered', align: 'end' as const },
-  { title: 'Оплачено', key: 'paid', align: 'end' as const },
-  { title: 'Контрагент', key: 'contractor_name' },
-  { title: 'ФЭО', key: 'feo_filled', align: 'center' as const },
-  { title: 'Потолок', key: 'ceiling_committed_percent', align: 'center' as const },
-  { title: '', key: 'actions', sortable: false, align: 'end' as const },
-]
-
-function getSubsidyExportColumns() {
-  return subsidyTableHeaders
-    .filter(h => h.key !== 'actions' && h.title)
-    .map(h => ({ key: h.key, title: h.title, align: h.align }))
-}
-function getSubsidyExportRows() {
-  return filteredSubsidies.value
-}
+// availableYears/CARD_ORDER_KEY/cardDrag*/subsidyOrder/onCardDrag*/onCardDrop/
+// filteredSubsidies/useCardView/subsidyTableHeaders/getSubsidyExportColumns+Rows/
+// totals — вынесены в useSubsidyList.ts (волна 5b, см. `const { selectedYear,
+// filteredSubsidies, effectiveView, mobile } = useSubsidyList(...)` выше).
 
 const selectedBudget = computed(() => {
   if (!selectedSubsidy.value) return 0
@@ -4362,18 +3751,6 @@ const selectedPlannedTotal = computed(() => {
   }
   return selectedSubsidy.value?.planned || 0
 })
-
-const totals = computed(() => ({
-  budget:           filteredSubsidies.value.reduce((s, x) => s + (x.feo_budget_total || x.budget || 0), 0),
-  planned:          filteredSubsidies.value.reduce((s, x) => s + x.planned,            0),
-  ordered:          filteredSubsidies.value.reduce((s, x) => s + x.ordered,            0),
-  contracted:       filteredSubsidies.value.reduce((s, x) => s + (x.contracted || 0),  0),
-  paid:             filteredSubsidies.value.reduce((s, x) => s + x.paid,               0),
-  work:             filteredSubsidies.value.reduce((s, x) => s + x.work,               0),
-  contracts:        filteredSubsidies.value.reduce((s, x) => s + x.contracts,          0),
-  delivered:        filteredSubsidies.value.reduce((s, x) => s + x.delivered,          0),
-  delivered_unpaid: filteredSubsidies.value.reduce((s, x) => s + x.delivered_unpaid,   0),
-}))
 
 // ── FEO tree ──────────────────────────────────────
 // ФИКС (замер на проде 2026-08-13, жалоба владельца: «Приобретение футболок…» смещено
@@ -4466,316 +3843,28 @@ const totalFeoPurchased = computed(() => feoTree.value.reduce((a, r) => a + feoP
 // иначе строки показывают сумму по плану закупок, а ИТОГО — старую (только delivered/paid).
 const totalFeoInPlanSchedule = computed(() => feoTree.value.reduce((a, r) => a + feoInPlanScheduleFor(r), 0))
 
-// ── Animated KPI targets for the detail panel (9 cards) ──────────────
-const kpiSubTarget_budget            = computed(() => selectedBudget.value)
-const kpiSubTarget_plan_schedule     = computed(() => selectedPlannedTotal.value)
-const kpiSubTarget_work              = computed(() => selectedSubsidy.value?.work              ?? 0)
-const kpiSubTarget_ordered           = computed(() => selectedSubsidy.value?.ordered           ?? 0)
-const kpiSubTarget_contracts         = computed(() => selectedSubsidy.value?.contracts         ?? 0)
-const kpiSubTarget_delivered         = computed(() => selectedSubsidy.value?.delivered         ?? 0)
-const kpiSubTarget_delivered_unpaid  = computed(() => selectedSubsidy.value?.delivered_unpaid  ?? 0)
-const kpiSubTarget_paid              = computed(() => selectedSubsidy.value?.paid              ?? 0)
-const kpiSubTarget_free              = computed(() => selectedBudget.value - selectedPlannedTotal.value)
+// Animated KPI targets for the detail panel (9 cards) — вынесены в
+// SubsidyKpiCards.vue вместе с шаблоном карточек (волна 5b); selectedBudget/
+// selectedPlannedTotal остаются здесь (нужны формулам дерева ФЭО выше) и
+// экспортированы через ctx (см. provideSubsidyDetail ниже).
 
-const kpiSubAnim_budget            = useAnimatedNumber(kpiSubTarget_budget,           800)
-const kpiSubAnim_plan_schedule     = useAnimatedNumber(kpiSubTarget_plan_schedule,    800)
-const kpiSubAnim_work              = useAnimatedNumber(kpiSubTarget_work,             800)
-const kpiSubAnim_ordered           = useAnimatedNumber(kpiSubTarget_ordered,          800)
-const kpiSubAnim_contracts         = useAnimatedNumber(kpiSubTarget_contracts,        800)
-const kpiSubAnim_delivered         = useAnimatedNumber(kpiSubTarget_delivered,        800)
-const kpiSubAnim_delivered_unpaid  = useAnimatedNumber(kpiSubTarget_delivered_unpaid, 800)
-const kpiSubAnim_paid              = useAnimatedNumber(kpiSubTarget_paid,             800)
-const kpiSubAnim_free              = useAnimatedNumber(kpiSubTarget_free,             800)
-
-// ── KPI drill-down: клик по карточке подсвечивает в дереве ФЭО состав суммы ──────
-// Типы/константы/kpiItemMatches вынесены в @/constants/kpiMetrics.ts (см. import выше) —
-// логика покрыта тестом на паритет с backend/app/routers/dashboard.py.
-
-interface KpiSnapshot {
-  expandedIds: number[]
-  expandedReqItems: number[]
-  expandedPurchases: number[]
-  expandedItemPanels: number[]
-  expandedPlannedItems: number[]
-  plannedBase: PlannedBase
-  feoSearch: string
-}
-const activeKpi = ref<KpiKey | null>(null)
-const kpiSnapshot = ref<KpiSnapshot | null>(null)
-
-function feoHasChildren(id: number): boolean {
-  return feoCategories.value.some(c => c.parent_id === id)
-}
-
-const feoParentMap = computed<Record<number, number | null>>(() => {
-  const map: Record<number, number | null> = {}
-  for (const c of feoCategories.value) map[c.id] = c.parent_id
-  return map
-})
-
-// Строгие предки узла (без самого узла), до корня
-function feoAncestorIds(id: number): number[] {
-  const result: number[] = []
-  let pid = feoParentMap.value[id] ?? null
-  while (pid != null) {
-    result.push(pid)
-    pid = feoParentMap.value[pid] ?? null
-  }
-  return result
-}
-
-// Все id позиций (FeoReqItem.id), из которых складывается активная метрика
-// ('items' и 'mixed' считают позиции заявок; чистый 'nodes' — нет)
-const kpiItemIds = computed<Set<number>>(() => {
-  const key = activeKpi.value
-  const set = new Set<number>()
-  if (!key || KPI_MODE[key] === 'nodes') return set
-  for (const items of Object.values(plannedItemsByCat.value)) {
-    for (const it of items) if (kpiItemMatches(key, it)) set.add(it.id)
-  }
-  return set
-})
-
-// Закупки (purchase_id), содержащие подходящие позиции — для режима «по закупкам»
-const kpiPurchaseIds = computed<Set<number>>(() => {
-  const key = activeKpi.value
-  const set = new Set<number>()
-  if (!key || KPI_MODE[key] === 'nodes') return set
-  for (const items of Object.values(plannedItemsByCat.value)) {
-    for (const it of items) if (kpiItemMatches(key, it)) set.add(it.purchase_id)
-  }
-  return set
-})
-
-// Листья ФЭО, в которые слиты одноимённые позиции заявок (mergedReqByCat.matched)
-const kpiMatchedLeafIds = computed<Set<number>>(() => {
-  const key = activeKpi.value
-  const set = new Set<number>()
-  if (!key || KPI_MODE[key] === 'nodes') return set
-  for (const [leafIdStr, items] of Object.entries(mergedReqByCat.value.matched)) {
-    if (items.some(it => kpiItemMatches(key, it))) set.add(Number(leafIdStr))
-  }
-  return set
-})
-
-// Категории-владельцы «виртуальных» позиций заявок (не слитых в существующий лист)
-const kpiOwnerCatIds = computed<Set<number>>(() => {
-  const key = activeKpi.value
-  const set = new Set<number>()
-  if (!key || KPI_MODE[key] === 'nodes') return set
-  if (plannedBase.value === 'purchases') {
-    for (const [catIdStr, folders] of Object.entries(purchaseFoldersByCat.value)) {
-      if (folders.some(f => f.items.some(it => kpiItemMatches(key, it)))) set.add(Number(catIdStr))
-    }
-    return set
-  }
-  for (const [catIdStr, groups] of Object.entries(mergedReqByCat.value.virtualByCat)) {
-    if (groups.some(g => g.items.some(it => kpiItemMatches(key, it)))) set.add(Number(catIdStr))
-  }
-  return set
-})
-
-// Регресс владельца (2026-08-13): подсветка выше искала подходящие позиции ТОЛЬКО среди
-// mergedReqByCat (matched/virtualByCat) — а туда попадают лишь позиции БЕЗ привязки к плановой
-// позиции (feo_planned_item_id == null, см. фильтр в mergedReqByCat). После бэкфилла привязок
-// на проде (МИНПРОС_2026) все позиции категории оказались привязаны — mergedReqByCat опустел,
-// и плитке «Поставлено, не оплачено» стало нечего раскрывать, хотя сумма на плитке ненулевая.
-// plannedItemsByCat (см. её объявление выше) — источник истины: ВСЕ позиции закупок категории,
-// привязанные и нет, без исключений. Категория попадает сюда, если у неё директно (не у потомков —
-// ключ карты это feo_category_id самой позиции) есть хоть одна позиция под активную метрику —
-// не важно, лист это или направление (направления теперь тоже могут иметь свои плановые позиции,
-// см. hasOwnPlannedAmountFor выше).
-const kpiPlannedOwnerCatIds = computed<Set<number>>(() => {
-  const key = activeKpi.value
-  const set = new Set<number>()
-  if (!key || KPI_MODE[key] === 'nodes') return set
-  for (const [catIdStr, items] of Object.entries(plannedItemsByCat.value)) {
-    if (items.some(it => kpiItemMatches(key, it))) set.add(Number(catIdStr))
-  }
-  return set
-})
-
-// Плановые позиции (FeoPlannedItem.id), к которым привязана подходящая позиция закупки —
-// нужно раскрыть саму строку «Позиция плана» (expandedPlannedItems), иначе панель категории
-// откроется (см. kpiPlannedOwnerCatIds выше), а строка «План vs факт» под конкретной плановой
-// позицией останется свёрнутой, и позиция всё равно не будет видна. mergedReqByCat.linkedByPlanned
-// уже группирует ВСЕ привязанные позиции закупок по feo_planned_item_id — ровно то, что нужно.
-const kpiPlannedRowIds = computed<Set<number>>(() => {
-  const key = activeKpi.value
-  const set = new Set<number>()
-  if (!key || KPI_MODE[key] === 'nodes') return set
-  for (const [plannedIdStr, items] of Object.entries(mergedReqByCat.value.linkedByPlanned)) {
-    if (items.some(it => kpiItemMatches(key, it))) set.add(Number(plannedIdStr))
-  }
-  return set
-})
-
-// Узлы дерева ФЭО, попадающие в метрику напрямую: режим 'nodes' (budget/free)
-// и режим 'mixed' (plan_schedule — ручные листья ФЭО, которые эндпоинт planned-purchase-items
-// вообще не видит). Условие для plan_schedule — НЕ isManualPosLeaf (та проверяет != null через OR
-// и подсветила бы лист без фактического вклада в сумму, например с заданным только количеством).
-// feoPlannedTotalFor(n) — ровно та формула, что складывается в карточку «Запланировано»
-// (qty > 0 && unitPrice > 0), поэтому подсветка совпадает с суммой 1:1.
-const kpiNodeIds = computed<Set<number>>(() => {
-  const key = activeKpi.value
-  const set = new Set<number>()
-  if (!key || KPI_MODE[key] === 'items') return set
-  for (const n of flattenAll(feoTree.value)) {
-    if (key === 'budget' && n.budget != null) set.add(n.id)
-    if (key === 'free' && Math.abs(feoFinDiff(n)) > 0.005) set.add(n.id)
-    if (key === 'plan_schedule' && !n.hasChildren && feoPlannedTotalFor(n) > 0) set.add(n.id)
-  }
-  return set
-})
-
-// Что нужно раскрыть, чтобы показать состав активной метрики
-const kpiExpandTargets = computed<{ ids: Set<number>; reqItems: Set<number>; itemPanels: Set<number>; purchases: Set<number>; plannedItems: Set<number> }>(() => {
-  const ids = new Set<number>()
-  const reqItems = new Set<number>()
-  const itemPanels = new Set<number>()
-  const purchases = new Set<number>()
-  const plannedItems = new Set<number>()
-  if (!activeKpi.value) return { ids, reqItems, itemPanels, purchases, plannedItems }
-
-  for (const catId of kpiOwnerCatIds.value) {
-    for (const a of feoAncestorIds(catId)) ids.add(a)
-    if (feoHasChildren(catId)) ids.add(catId)
-    // ШАГ 1 (2026-08-07): у листа (!feoHasChildren) содержимое kpiOwnerCatIds теперь
-    // показывается ИСКЛЮЧИТЕЛЬНО через Таблицу A (expandedItemPanels) — Таблица B
-    // (expandedReqItems/reqOwnersAfter) для листьев больше не рендерится, см. reqOwnersAfter.
-    else itemPanels.add(catId)
-  }
-  // Охват для позиций, привязанных к плановой позиции (регресс 2026-08-13, см. комментарий
-  // у kpiPlannedOwnerCatIds выше) — панель категории (лист ИЛИ направление со своими позициями)
-  // открывается через Таблицу A так же, как и у kpiOwnerCatIds; сама подходящая позиция
-  // подсвечивается ВНУТРИ панели, под своей плановой строкой (см. kpiItemRowClass в шаблоне).
-  for (const catId of kpiPlannedOwnerCatIds.value) {
-    for (const a of feoAncestorIds(catId)) ids.add(a)
-    itemPanels.add(catId)
-    if (feoHasChildren(catId)) ids.add(catId)
-  }
-  for (const plannedId of kpiPlannedRowIds.value) plannedItems.add(plannedId)
-  for (const leafId of kpiMatchedLeafIds.value) {
-    for (const a of feoAncestorIds(leafId)) ids.add(a)
-  }
-  for (const nodeId of kpiNodeIds.value) {
-    for (const a of feoAncestorIds(nodeId)) ids.add(a)
-  }
-  if (plannedBase.value === 'purchases') {
-    for (const pid of kpiPurchaseIds.value) purchases.add(pid)
-  }
-  return { ids, reqItems, itemPanels, purchases, plannedItems }
-})
-
-// Одно присваивание на каждый ref — именно это даёт автосворачивание лишних папок
-function applyKpiExpansion() {
-  const t = kpiExpandTargets.value
-  expandedIds.value = [...t.ids]
-  expandedReqItems.value = new Set(t.reqItems)
-  expandedItemPanels.value = new Set(t.itemPanels)
-  expandedPurchases.value = new Set(t.purchases)
-  // Строки «Позиция плана», под которыми лежит подходящая позиция — раскрываются тем же
-  // приёмом (сплошное присваивание). collapsedPlannedItems (ручное сворачивание пользователем,
-  // см. комментарий у togglePlannedItemFolder) сюда НЕ подмешивается — эта запись читается
-  // только внутри applyDefaultPlannedExpansion, которую этот путь не вызывает; чистим её для
-  // раскрытых KPI id на всякий случай, чтобы более поздний ре-запрос comparison (после правки
-  // пользователем) не унаследовал стухшее «было свёрнуто вручную» от ДО клика по плитке.
-  expandedPlannedItems.value = new Set(t.plannedItems)
-  for (const pid of t.plannedItems) collapsedPlannedItems.value.delete(pid)
-  // Панели раскрыты напрямую присваиванием (не через toggleItemPanel) — данные для новых
-  // id надо подгрузить отдельно, иначе KPI-подсветка откроет пустую панель.
-  for (const id of t.itemPanels) {
-    if (!comparisonData.value[id] && !loadingComparison.value.has(id)) refreshComparison(id)
-  }
-}
-
-async function scrollToFirstKpiHighlight() {
-  await nextTick()
-  const el = feoTableArea.value?.querySelector('.feo-kpi-hl')
-  el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-}
-
-function onKpiCardClick(key: KpiKey) {
-  if (!selectedSubsidy.value) return
-  if (activeKpi.value === key) { resetKpi(); return }
-  if (activeKpi.value === null) {
-    kpiSnapshot.value = {
-      expandedIds: [...expandedIds.value],
-      expandedReqItems: [...expandedReqItems.value],
-      expandedPurchases: [...expandedPurchases.value],
-      expandedItemPanels: [...expandedItemPanels.value],
-      expandedPlannedItems: [...expandedPlannedItems.value],
-      plannedBase: plannedBase.value,
-      feoSearch: feoSearch.value,
-    }
-  }
-  activeKpi.value = key
-  feoSearch.value = '' // поиск ломает isNodeVisible (при поиске видно всё без учёта expandedIds)
-  if ((KPI_MODE[key] === 'items' || KPI_MODE[key] === 'mixed') && plannedBase.value !== 'all') {
-    plannedBase.value = 'all' // единственный режим, показывающий все позиции без утраты части
-  }
-  if (!plannedItemsLoaded.value) return // раскрытие применит watch(plannedItemsLoaded) после загрузки
-  applyKpiExpansion()
-  scrollToFirstKpiHighlight()
-}
-
-function resetKpi() {
-  const snap = kpiSnapshot.value
-  if (snap) {
-    expandedIds.value = [...snap.expandedIds]
-    expandedReqItems.value = new Set(snap.expandedReqItems)
-    expandedPurchases.value = new Set(snap.expandedPurchases)
-    expandedItemPanels.value = new Set(snap.expandedItemPanels)
-    expandedPlannedItems.value = new Set(snap.expandedPlannedItems)
-    plannedBase.value = snap.plannedBase
-    feoSearch.value = snap.feoSearch
-  }
-  activeKpi.value = null
-  kpiSnapshot.value = null
-}
-
-// watch(plannedBase, ...) вынесен ниже — plannedBase объявлен позже по файлу (TDZ)
-watch(plannedItemsLoaded, (v) => {
-  if (v && activeKpi.value) applyKpiExpansion()
-})
-watch(selectedId, () => {
-  // узлы другой субсидии — просто гасим kpi-режим, без восстановления снапшота
-  activeKpi.value = null
-  kpiSnapshot.value = null
-})
-watch(feoSearch, (v) => {
-  if (v && activeKpi.value) resetKpi()
-})
-
-function kpiCardClass(key: KpiKey): string {
-  return activeKpi.value === key ? 'kpi-card--active' : ''
-}
-
-const kpiHasMatches = computed(() => {
-  const key = activeKpi.value
-  if (!key) return false
-  const mode = KPI_MODE[key]
-  if (mode === 'nodes') return kpiNodeIds.value.size > 0
-  if (mode === 'mixed') return kpiNodeIds.value.size > 0 || kpiItemIds.value.size > 0
-  return kpiItemIds.value.size > 0
-})
-
-// Класс строки узла дерева ФЭО (feo-tr на 564): совпал / на пути к совпадению / ни при чём
-function kpiNodeClass(node: FeoNode): string {
-  if (!activeKpi.value) return ''
-  if (kpiNodeIds.value.has(node.id) || kpiMatchedLeafIds.value.has(node.id)) return 'feo-kpi-hl'
-  if (kpiOwnerCatIds.value.has(node.id) || kpiPlannedOwnerCatIds.value.has(node.id)) return 'feo-kpi-path'
-  const ancestors = feoAncestorIds(node.id)
-  if (ancestors.some(pid => kpiOwnerCatIds.value.has(pid) || kpiPlannedOwnerCatIds.value.has(pid) || kpiMatchedLeafIds.value.has(pid) || kpiNodeIds.value.has(pid))) {
-    return 'feo-kpi-path'
-  }
-  return 'feo-kpi-dim'
-}
-
+// ── KPI drill-down ── activeKpi/onKpiCardClick/resetKpi/applyKpiExpansion/
+// kpiNodeClass и все identification-computed'ы (kpiItemIds/kpiNodeIds/...) —
+// вынесены в composables/subsidies/useKpiDrilldown.ts (волна 5b, SubsidyKpiCards.vue).
+// `kpi` — тот же module-singleton экземпляр, что и в SubsidyKpiCards.vue (см.
+// объявление `const kpi = useKpiDrilldown(...)` в самом низу этого файла рядом с
+// provideSubsidyDetail — используется здесь ТОЛЬКО в функциях/watch, вызываемых
+// из шаблона или реактивности, т.е. уже после того, как весь скрипт отработает
+// и kpi будет присвоен; никакого obращения к kpi до его объявления не происходит).
+//
+// Три маленькие функции подсветки строк дерева остаются здесь — им нужны
+// локальные типы FeoReqRow/FeoPurchaseFolder, которых нет (и не должно быть) в
+// useKpiDrilldown.ts; они читают набор id оттуда напрямую (kpi.kpiItemIds), не
+// дублируя его (Правило №6).
 // Класс строки виртуальной позиции/заголовка группы (reqItemRowsFor)
 function kpiReqRowClass(row: FeoReqRow): string {
-  if (!activeKpi.value) return ''
-  const hit = row.items.some(it => kpiItemIds.value.has(it.id))
+  if (!kpi.activeKpi.value) return ''
+  const hit = row.items.some(it => kpi.kpiItemIds.value.has(it.id))
   if (!hit) return 'feo-kpi-dim'
   return row.group ? 'feo-kpi-hl' : 'feo-kpi-path'
 }
@@ -4786,15 +3875,15 @@ function kpiReqRowClass(row: FeoReqRow): string {
 // же набор id, kpiItemIds. Добавлено для строк «План vs факт» внутри панели плановой позиции
 // (регресс 2026-08-13: раньше у этих строк не было kpi-класса вовсе, см. правку у kpiPlannedOwnerCatIds).
 function kpiItemRowClass(it: FeoReqItem | FeoActualItem): string {
-  if (!activeKpi.value) return ''
+  if (!kpi.activeKpi.value) return ''
   const id = 'id' in it ? it.id : it.purchase_item_id
-  return kpiItemIds.value.has(id) ? 'feo-kpi-hl' : 'feo-kpi-dim'
+  return kpi.kpiItemIds.value.has(id) ? 'feo-kpi-hl' : 'feo-kpi-dim'
 }
 
 // Класс строки папки-закупки (режим «по закупкам»)
 function kpiFolderClass(f: FeoPurchaseFolder): string {
-  if (!activeKpi.value) return ''
-  return f.items.some(it => kpiItemIds.value.has(it.id)) ? 'feo-kpi-path' : 'feo-kpi-dim'
+  if (!kpi.activeKpi.value) return ''
+  return f.items.some(it => kpi.kpiItemIds.value.has(it.id)) ? 'feo-kpi-path' : 'feo-kpi-dim'
 }
 
 // Уникальные статусы товаров виртуальной группы, отсортированные по жизненному циклу закупки
@@ -4892,14 +3981,14 @@ function feoFactFor(node: FeoNode): number {
 // База остатка: от плановой суммы или от финансирования по ФЭО
 const residualBase = ref<'plan' | 'feo'>('plan')
 
-// Режим колонок «Плановая сумма»/«Плановое кол-во» — единый синхронный переключатель
-type PlannedBase = 'all' | 'manual' | 'requests' | 'purchases'
+// Режим колонок «Плановая сумма»/«Плановое кол-во» — единый синхронный переключатель.
+// Тип PlannedBase — в composables/subsidies/types.ts (общий с useKpiDrilldown.ts).
 const plannedBase = ref<PlannedBase>(feoDisplayPrefs.plannedBase || 'all')
 const plannedSumBase = plannedBase
 const plannedQtyBase = plannedBase
 
 watch(plannedBase, () => {
-  if (activeKpi.value && plannedItemsLoaded.value) applyKpiExpansion()
+  if (kpi.activeKpi.value && plannedItemsLoaded.value) kpi.applyKpiExpansion()
 })
 
 // Сохранение настроек отображения дерева ФЭО (см. FEO_DISPLAY_PREFS_KEY/feoDisplayPrefs
@@ -6204,23 +5293,8 @@ async function loadAll() {
   }
 }
 
-async function exportFeoPdf() {
-  if (!feoTableArea.value) { showSnack('Таблица ФЭО не готова', 'error'); return }
-  try {
-    const name = `ФЭО_${selectedSubsidy.value?.name ?? ''}`.trim()
-    await _exportFeoScreenshotPdf(feoTableArea.value, name, undefined, {
-      // Колонка «Действия» нефункциональна в PDF и съедает место — скрыть.
-      hideSelectors: ['.feo-th-actions', '.feo-td-actions'],
-      // С table-layout:fixed «Наименование» ужимается в столбик; auto + перенос по словам.
-      extraCss: '.feo-table{table-layout:auto!important;width:100%!important}'
-        + '.feo-th-name,.feo-td-name{min-width:280px!important;white-space:normal!important}'
-        + '.feo-name{word-break:normal!important;overflow-wrap:anywhere!important}',
-    })
-  } catch (e: any) {
-    showSnack(e?.message ?? 'Ошибка экспорта PDF', 'error')
-  }
-}
-
+// exportFeoPdf — вынесена в FeoTreeToolbar.vue (волна 5b, кнопка «Экспорт → PDF»
+// тулбара дерева ФЭО, использовалась только там).
 // exportFeoToExcel — вынесена в usePlanGraphVersions.ts (использовалась только
 // runVersionsExport, тоже там).
 
@@ -6399,53 +5473,8 @@ async function loadResiduals() {
 // getActualResidual/snapshotTotalActual/openSaveVersionDialog/saveVersion —
 // вынесены в usePlanGraphVersions.ts.
 
-function exportPlanGraphExcel() {
-  const token = localStorage.getItem('auth_token') || ''
-  const url = `/api/subsidies/${selectedId.value}/plan-graph/export`
-  fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-    .then(r => r.blob())
-    .then(blob => {
-      const bUrl = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = bUrl
-      a.click()
-      URL.revokeObjectURL(bUrl)
-    })
-}
-
-async function exportPlanGraphDocx() {
-  const token = localStorage.getItem('auth_token') || ''
-  const url = `/api/subsidies/${selectedId.value}/plan-graph/export-docx`
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({}))
-    showSnack(err.message || 'Шаблон не загружен', 'error')
-    return
-  }
-  const blob = await r.blob()
-  const bUrl = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = bUrl
-  a.click()
-  URL.revokeObjectURL(bUrl)
-}
-
-async function uploadTemplate(file: File) {
-  const fd = new FormData()
-  fd.append('file', file)
-  const token = localStorage.getItem('auth_token') || ''
-  const r = await fetch(`/api/subsidies/${selectedId.value}/plan-graph/template`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-    body: fd,
-  })
-  const data = await r.json()
-  if (r.ok) {
-    showSnack('Шаблон загружен')
-  } else {
-    showSnack(data.message || 'Ошибка загрузки', 'error')
-  }
-}
+// exportPlanGraphExcel/exportPlanGraphDocx/uploadTemplate — вынесены в
+// FeoTreeToolbar.vue (волна 5b, использовались только кнопками её тулбара).
 
 function toggleSelect(id: number) {
   if (selectedId.value === id) { selectedId.value = null; globalSubsidyId.value = null; return }
@@ -6557,33 +5586,9 @@ async function openMembersDialog(s: SubsidyRow) {
 }
 
 // ── Helpers ───────────────────────────────────────
-function pct(part: number, total: number) {
-  return total ? Math.round((part / total) * 100) : 0
-}
-
-function progressColor(p: number) {
-  if (p > 100) return '#EF4444'
-  if (p >= 80) return '#F59E0B'
-  return '#22C55E'
-}
-
-function formatCurrencyRound(v: number | string) {
-  const n = typeof v === 'string' ? parseFloat(v) : v
-  return (n || 0).toLocaleString('ru-RU', { maximumFractionDigits: 0 }) + ' ₽'
-}
-
-function cardDelta(s: SubsidyRow): number {
-  // Приоритет ручного бюджета субсидии (решение 14.07)
-  return (s.feo_budget_total || s.budget || 0) - (s.planned || 0)
-}
-
-function formatCurrencyShort(v: number) {
-  if (!v) return '0 ₽'
-  if (Math.abs(v) >= 1_000_000_000) return (v / 1_000_000_000).toFixed(1) + ' млрд ₽'
-  if (Math.abs(v) >= 1_000_000)     return (v / 1_000_000).toFixed(1)     + ' млн ₽'
-  if (Math.abs(v) >= 1_000)         return (v / 1_000).toFixed(0)         + ' тыс ₽'
-  return v.toLocaleString('ru-RU') + ' ₽'
-}
+// pct/progressColor/cardDelta — вынесены в useSubsidyList.ts (использовались только
+// в карточках списка, волна 5b). formatCurrencyRound/formatCurrencyShort — в
+// composables/subsidies/format.ts (импортированы сверху, Правило №6).
 
 function showSnack(
   text: string,
@@ -6621,17 +5626,13 @@ const feoCategoryDeleteDialogRef = ref<InstanceType<typeof FeoCategoryDeleteDial
 const subsidyMembersDialogRef = ref<InstanceType<typeof SubsidyMembersDialog> | null>(null)
 const contractorOverrideDialogRef = ref<InstanceType<typeof SubsidyContractorOverrideDialog> | null>(null)
 
-// Согласующие/шаблоны — общие composables (module-level singleton state, см.
-// их докстринги): диалоги-компоненты вызывают useSubsidyApprovers()/
-// useSubsidyTemplates() сами, парент берёт отсюда только то, что нужно
-// внешним триггерам (кнопки в списке субсидий) и contractTemplates (единственный
-// источник признака «есть свои шаблоны» для иконки в списке).
-const { openApproversDialog } = useSubsidyApprovers()
-const { openTemplateDialog, contractTemplates, loadTemplateVars } = useSubsidyTemplates()
-// Версии план-графика (usePlanGraphVersions.ts, тот же singleton-паттерн) —
-// паренту нужны только open*-функции для кнопок тулбара дерева ФЭО (см. шаблон
-// выше), само состояние читают/пишут вынесенные диалоги PlanGraph*Dialog.vue.
-const { openVersionHistory, openExportVersionsDialog, openSaveVersionDialog } = usePlanGraphVersions({ selectedId })
+// Шаблоны документов — module-level singleton (см. её докстринг): паренту нужен
+// только loadTemplateVars() для onMounted; openTemplateDialog/contractTemplates
+// (список субсидий) и openApproversDialog (useSubsidyApprovers.ts) теперь берутся
+// напрямую в SubsidyListTable.vue/SubsidyCardsGrid.vue, openVersionHistory/
+// openExportVersionsDialog/openSaveVersionDialog (usePlanGraphVersions.ts) — в
+// FeoTreeToolbar.vue, feoImport (useFeoImport.ts) — тоже там (волна 5b).
+const { loadTemplateVars } = useSubsidyTemplates()
 // Плановые позиции (usePlannedItems.ts, тот же singleton-паттерн) — паренту
 // нужны open*-функции: тройка openAddPlannedItem/openConvertManualPlanToItem/
 // openMapDialog вызывается прямо из дерева ФЭО (шаблон выше) и уходит в ctx
@@ -6647,15 +5648,14 @@ const {
   // showMapDialog).
   mapTarget, mapCategoryId, applyMapping,
 } = usePlannedItems({ selectedId, feoCategories, loadFeo, comparisonData, refreshComparison, ensureComparison, refreshReqData, factForPlanned })
-// Импорт ФЭО (useFeoImport.ts, тот же singleton-паттерн) — паренту нужен только
-// сам feoImport (реактивный объект) для кнопки «Импорт» в тулбаре дерева ФЭО
-// (`feoImport.show = true`, как и раньше — см. её докстринг в FeoImportWizard.vue).
-const { feoImport } = useFeoImport({ selectedId, allSubsidies, loadFeo, syncFeoFilled })
 
-// Контекст детали субсидии для вынесенных диалогов (provide/inject, см.
-// composables/subsidies/useSubsidyDetail.ts) — единственная точка, откуда они
+// Контекст детали субсидии для вынесенных диалогов/компонентов (provide/inject,
+// см. composables/subsidies/useSubsidyDetail.ts) — единственная точка, откуда они
 // читают/пишут состояние, оставшееся в родителе (список субсидий, дерево ФЭО).
-provideSubsidyDetail({
+// Волна 5b расширила его полями списка субсидий (toggleSelect/canApproveSubsidy/…)
+// и «сырыми» ссылками дерева, нужными useKpiDrilldown.ts (см. ниже) — не второй
+// контекст, а расширение существующего (Правило №6).
+const subsidyDetailCtx = {
   router,
   allSubsidies,
   loadAll,
@@ -6675,7 +5675,45 @@ provideSubsidyDetail({
   refreshReqData,
   factForPlanned,
   photoPreview,
-})
+  canEditFeo,
+  downloadFeoTemplate,
+  toggleSelect,
+  canApproveSubsidy,
+  approveSubsidy,
+  approvingSubsidyId,
+  startEdit,
+  confirmDelete,
+  openMembersDialog,
+  openHistoryDialog,
+  openContractorOverride,
+  openAddFeoDialog,
+  feoTableArea,
+  feoItemsGroupBy,
+  plannedBase,
+  selectedBudget,
+  selectedPlannedTotal,
+  plannedItemsByCat,
+  plannedItemsLoaded,
+  mergedReqByCat,
+  purchaseFoldersByCat,
+  expandedIds,
+  expandedReqItems,
+  expandedItemPanels,
+  expandedPurchases,
+  expandedPlannedItems,
+  collapsedPlannedItems,
+  feoSearch,
+  loadingComparison,
+  feoFinDiff,
+  feoPlannedTotalFor,
+}
+provideSubsidyDetail(subsidyDetailCtx)
+
+// kpiNodeClass/activeKpi нужны функциям подсветки строк дерева выше по файлу
+// (kpiReqRowClass/kpiItemRowClass/kpiFolderClass) и шаблону (kpi.kpiNodeClass(node))
+// — тот же module-singleton экземпляр, что получит SubsidyKpiCards.vue, вызвав
+// useKpiDrilldown(useSubsidyDetailCtx()) (см. докстринг композабла).
+const kpi = useKpiDrilldown(subsidyDetailCtx)
 
 onMounted(() => {
   loadAll()

@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Фидбек-кластер 2026-06-24 pushed (UAT pending)
-last_updated: "2026-07-07T08:51:05.974Z"
+status: Рефакторинг god-файлов + единый источник истины — 44 коммита не запушены (HEAD f1f5b6f); 4b-2d/D8/D9/6b-3/6d-3 закрыты, предпуш-проверки 2026-09-07 22:30; push по команде владельца
+last_updated: "2026-09-07T19:30:00Z"
 progress:
   total_phases: 22
   completed_phases: 12
@@ -13,6 +13,21 @@ progress:
 ---
 
 # STATE.md — VSKS_CRM
+
+## 2026-09-05/06 — Рефакторинг god-файлов + единый источник истины (в работе, НЕ запушено)
+
+План: `C:\Users\1\.claude\plans\dreamy-booping-piglet.md`. Все фазы ROADMAP закрыты ранее; это
+техдолг-милестон по ПРАВИЛАМ №5 и №6. Коммиты в `claude` (локально): c28d5c9 gitignore, 2b069f8 дедуп
+хелперов, 59cfc8a app/__init__.py → 14 модулей, 6275790 алиас @ vue-tsc, a00a6ef/828f5b1 SubsidiesView
+12 302→7341, 18a19fe LF, 409b04f регионы в один JSON, 8056a07 PyJWT+rate-limit+CI+фикс departments,
+8091b92 WishesView 5962→570, 21d3f63 утверждённая цена только без позиций, a4c9d6d единый источник
+сумм закупки (бэкенд), 533cc8e/4de6d98 CreateOrderView 9863→6490.
+Прод: 353 пустые закупки удалены 2026-09-06, бэкап purchases_deleted_20260905.
+В работе: волна 2 purchases.py, 3b documents.py (QA), 4b-2b фронт сумм (QA), 5b SubsidiesView панели.
+Осталось: 3a/3c/3d/3e роутеры, 5c дерево ФЭО, 6b секции формы закупки, 4b группы 2–10 (D1 реквизиты
+организации, D2 должность, D4 закрывающие документы, D7 шапка договора, C1 бюджет, K2/K3 справочники),
+4c доп. соглашения (новая фаза по правилам владельца), синк документации и графа.
+Перед push: пересобрать backend (PyJWT в requirements, миграция n7q9s1u3w5y7), ruff в purchases.py.
 
 ## 2026-07-29 — Phase 28 «Шаблоны договоров по субсидиям» ЗАКРЫТА ✅ (T1–T9)
 

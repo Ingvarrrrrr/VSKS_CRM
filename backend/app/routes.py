@@ -142,12 +142,32 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(staff_directory.router)
     app.include_router(contractors.router)
     app.include_router(contracts.router)
+# Разрезание contractors.py (Правило №5, сессия 2026-09-08): contractors_directory,
+# contractors_lookup, contractors_enrich, contractors_import несут доп. эндпоинты
+# на префиксе /api/contractors. contractors_directory ОБЯЗАН регистрироваться ДО
+# contractors.router — его GET /product-categories, /with-stats, /duplicates-by-inn
+# односегментные и совпадают по форме с GET /{cid} core-роутера (int-конвертация
+# {cid} происходит уже ПОСЛЕ того, как Starlette матчит маршрут по форме пути, а не
+# по типу параметра — регистрация раньше literal-путей обязательна, иначе 422).
+# contractors_lookup/contractors_enrich/contractors_import конфликтов по форме не
+# несут (минимум 2 сегмента либо другой метод), регистрируются рядом для единообразия.
+from app.routers import contractors_directory
+from app.routers import contractors_lookup
+from app.routers import contractors_enrich
+from app.routers import contractors_import
     # Phase 27.1: contract_items MUST be registered BEFORE purchases.router
     # because purchases has catch-all /{purchase_id} that would intercept /contract-items
     app.include_router(contract_items_router.router)
     # Статические литеральные пути /api/purchases/* — ДО purchases.router
     # (catch-all "/{pid}"), см. комментарий у импортов выше.
     app.include_router(purchase_duplicates.router)
+    # Статические/специфичные пути /api/contractors/* — ДО contractors.router
+    # (см. комментарий у импортов выше); contractors_directory обязателен здесь,
+    # остальные — для единообразия со всеми contractors_* siblings.
+    app.include_router(contractors_directory.router)
+    app.include_router(contractors_lookup.router)
+    app.include_router(contractors_enrich.router)
+    app.include_router(contractors_import.router)
     app.include_router(purchase_lists.router)
     app.include_router(purchase_payment_matching.router)
     app.include_router(purchase_ops.router)

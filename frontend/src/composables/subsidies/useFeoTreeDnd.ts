@@ -107,11 +107,27 @@ function buildFeoTreeDnd(ctx: FeoTreeDndCtx) {
     }
   }
 
+  // ── Отмена инлайн-редактирования по Escape ────────
+  // Баг (найден на приёмке волны 5c, был и в исходнике 828f5b1:743-745/810-812
+  // до разбиения на этот файл): @keydown.esc сбрасывал только inline*Id, но
+  // снятие <input> с DOM после этого всё равно вызывает нативный blur → save*
+  // берёт значение из _pending*Save (Escape его не трогал) и шлёт PUT —
+  // Escape «сохранял» вместо отмены. Общий хелпер: флаг «это поле отменено»,
+  // save* проверяет и гасит его ПЕРВЫМ действием, до единого запроса.
+  function useCancellableFlag() {
+    let cancelled = false
+    return {
+      cancel: () => { cancelled = true },
+      consume: () => { const was = cancelled; cancelled = false; return was },
+    }
+  }
+
   // ── Inline budget edit ───────────────────────────
   const inlineBudgetId = ref<number | null>(null)
   const inlineBudgetVal = ref('')
   const inlineInputEl = ref<HTMLInputElement | null>(null)
   let _pendingBudgetSave: { nodeId: number; node: FeoNode } | null = null
+  const budgetCancelFlag = useCancellableFlag()
 
   async function startInlineBudget(node: FeoNode) {
     inlineBudgetId.value = node.id
@@ -121,7 +137,13 @@ function buildFeoTreeDnd(ctx: FeoTreeDndCtx) {
     const el = Array.isArray(inlineInputEl.value) ? (inlineInputEl.value as any)[0] : inlineInputEl.value
     el?.focus?.()
   }
+  function cancelInlineBudget() {
+    _pendingBudgetSave = null
+    inlineBudgetId.value = null
+    budgetCancelFlag.cancel()
+  }
   async function saveInlineBudget(node: FeoNode) {
+    if (budgetCancelFlag.consume()) return
     const nodeId = _pendingBudgetSave?.nodeId ?? inlineBudgetId.value
     if (!nodeId) return
     const savedNode = _pendingBudgetSave?.node ?? node
@@ -149,6 +171,7 @@ function buildFeoTreeDnd(ctx: FeoTreeDndCtx) {
   const inlineQtyVal = ref('')
   const inlineQtyInputEl = ref<HTMLInputElement | null>(null)
   let _pendingQtySave: { nodeId: number; node: FeoNode } | null = null
+  const qtyCancelFlag = useCancellableFlag()
 
   async function startInlineQty(node: FeoNode) {
     inlineQtyId.value = node.id
@@ -158,7 +181,13 @@ function buildFeoTreeDnd(ctx: FeoTreeDndCtx) {
     const elQ = Array.isArray(inlineQtyInputEl.value) ? (inlineQtyInputEl.value as any)[0] : inlineQtyInputEl.value
     elQ?.focus?.()
   }
+  function cancelInlineQty() {
+    _pendingQtySave = null
+    inlineQtyId.value = null
+    qtyCancelFlag.cancel()
+  }
   async function saveInlineQty(node: FeoNode) {
+    if (qtyCancelFlag.consume()) return
     const nodeId = _pendingQtySave?.nodeId ?? inlineQtyId.value
     if (!nodeId) return
     const savedNode = _pendingQtySave?.node ?? node
@@ -219,8 +248,8 @@ function buildFeoTreeDnd(ctx: FeoTreeDndCtx) {
   return {
     dragNodeId, dragOverId, onDragStart, onDragOver, onDragLeave, onDrop, onDropToRoot, onDragEnd,
     reorderFeoNode,
-    inlineBudgetId, inlineBudgetVal, inlineInputEl, startInlineBudget, saveInlineBudget,
-    inlineQtyId, inlineQtyVal, inlineQtyInputEl, startInlineQty, saveInlineQty,
+    inlineBudgetId, inlineBudgetVal, inlineInputEl, startInlineBudget, saveInlineBudget, cancelInlineBudget,
+    inlineQtyId, inlineQtyVal, inlineQtyInputEl, startInlineQty, saveInlineQty, cancelInlineQty,
     inlineAmtId, inlineAmtVal, inlineAmtInputEl, startInlineAmt, saveInlineAmt,
   }
 }

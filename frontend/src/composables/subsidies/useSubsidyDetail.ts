@@ -260,11 +260,13 @@ export interface SubsidyDetailContext {
   inlineInputEl: Ref<HTMLInputElement | null>
   startInlineBudget: (node: FeoNode) => Promise<void>
   saveInlineBudget: (node: FeoNode) => Promise<void>
+  cancelInlineBudget: () => void
   inlineQtyId: Ref<number | null>
   inlineQtyVal: Ref<string>
   inlineQtyInputEl: Ref<HTMLInputElement | null>
   startInlineQty: (node: FeoNode) => Promise<void>
   saveInlineQty: (node: FeoNode) => Promise<void>
+  cancelInlineQty: () => void
   inlineAmtId: Ref<number | null>
   inlineAmtVal: Ref<string>
   inlineAmtInputEl: Ref<HTMLInputElement | null>

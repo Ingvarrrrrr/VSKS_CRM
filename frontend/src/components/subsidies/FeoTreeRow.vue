@@ -86,7 +86,7 @@
           class="inline-input"
           @blur="ctx.saveInlineBudget(node)"
           @keydown.enter="ctx.saveInlineBudget(node)"
-          @keydown.esc="ctx.inlineBudgetId.value = null"
+          @keydown.esc="ctx.cancelInlineBudget()"
         />
       </div>
       <div v-else-if="ctx.isAutoNode(node)" class="feo-amount-cell text-right" :class="{ 'feo-amount-cell--readonly': !ctx.canEditFeo.value }" @click="ctx.canEditFeo.value && ctx.startInlineBudget(node)"
@@ -153,7 +153,7 @@
           class="inline-input"
           @blur="ctx.saveInlineQty(node)"
           @keydown.enter="ctx.saveInlineQty(node)"
-          @keydown.esc="ctx.inlineQtyId.value = null"
+          @keydown.esc="ctx.cancelInlineQty()"
         />
       </div>
       <template v-else>

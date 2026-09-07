@@ -2510,6 +2510,7 @@ import EgrulDiffDialog from '@/components/purchase/EgrulDiffDialog.vue'
 import { useDocPickerDialogs } from '@/composables/purchase/useDocPickerDialogs'
 import DocPickerDialogs from '@/components/purchase/DocPickerDialogs.vue'
 import { usePurchaseFiles } from '@/composables/purchase/usePurchaseFiles'
+import { usePurchaseNmck } from '@/composables/purchase/usePurchaseNmck'
 import PurchaseFileDialogs from '@/components/purchase/PurchaseFileDialogs.vue'
 import {
   usePurchasePublications, PLATFORM_LABELS, PUB_STATUS_COLOR, PUB_STATUS_LABEL,
@@ -2713,11 +2714,8 @@ function toggleFeoRemains() {
   try { localStorage.setItem(FEO_REMAINS_COLLAPSE_KEY, feoRemainsCollapsed.value ? '1' : '0') } catch {}
 }
 
-// НМЦД mode: auto (from items) or manual (user enters directly)
-const nmckMode = ref<'auto' | 'manual'>('auto')
-const nmckManualValue = ref<number | null>(null)
-// Цена договора mode
-const contractPriceMode = ref<'auto' | 'manual'>('auto')
+// НМЦД mode/итоги — вынесено в composables/purchase/usePurchaseNmck.ts, вызов
+// ниже по файлу (после form/items/contractWordGen/isFramework, от которых зависит).
 
 // U-2: Alert о мульти-чеках для авансового
 const ADVANCE_ALERT_KEY = 'advance_multi_receipt_alert_closed'
@@ -3849,34 +3847,21 @@ function onContractTypeChange() {
   }
 }
 
-const totalNmck = computed(() =>
-  items.value.reduce((s, i) => s + (i.total_price || 0), 0)
-)
-
-// Single purchase = contract_price auto-filled from items
-const isSinglePurchase = computed(() =>
-  !form.purchase_contract_type || form.purchase_contract_type === 'single'
-)
-
-// Is purchase in contracted+ status (НМЦД frozen)
-const CONTRACTED_STATUSES = ['contracted', 'delivered', 'paid']
-const isContracted = computed(() => CONTRACTED_STATUSES.includes(form.status))
-
-// Saved НМЦД from DB (frozen value)
-const savedNmck = ref<number | null>(null)
+// ── НМЦД/итоги закупки — вынесено в composables/purchase/usePurchaseNmck.ts
+// (только чистые computed/refs, зависящие от form/items). syncContractPriceIfSingle/
+// calcEconomy и их watcher'ы остаются во view — они пишут в form, а form читается
+// напрямую в save() (ПРАВИЛО №6, один источник истины). ──
+const {
+  nmckMode, nmckManualValue, contractPriceMode, savedNmck,
+  totalNmck, isSinglePurchase, isContracted, displayNmck,
+  nmckHint, contractPriceHint, nmckExcessPct, nmckWarningLevel,
+} = usePurchaseNmck(form, items, contractWordGen, isFramework)
 
 // Предупреждение о возможном повторе разовой закупки
 const duplicateDialog = ref(false)
 const duplicateMatches = ref<any[]>([])
 let duplicateConfirmed = false
 let duplicatePendingOverride = false
-
-// Display НМЦД: manual override → frozen contracted value → live from items
-const displayNmck = computed(() => {
-  if (nmckMode.value === 'manual' && nmckManualValue.value != null) return nmckManualValue.value
-  if (isContracted.value && savedNmck.value != null) return savedNmck.value
-  return totalNmck.value
-})
 
 // ── Публикация на площадках — вынесено в composables/purchase/usePurchasePublications.ts +
 // components/purchase/PurchasePublishDialog.vue. Вызывается здесь (после displayNmck/
@@ -3904,23 +3889,6 @@ function openPublishDialog() {
   pendingPlatform.value = null
   fabrikantNoNmcd.value = !(publishNmck.value > 0)
 }
-
-const nmckHint = computed(() => {
-  if (isContracted.value && savedNmck.value != null) {
-    return `Зафиксирована при заключении ${contractWordGen.value}. Не пересчитывается.`
-  }
-  return `Сумма всех позиций. Пересчитывается автоматически. Фиксируется при заключении ${contractWordGen.value}.`
-})
-
-const contractPriceHint = computed(() => {
-  if (isSinglePurchase.value) {
-    if (isContracted.value) {
-      return 'Разовая закупка: = сумма текущих цен позиций (обновляется при изменении цен)'
-    }
-    return 'Разовая закупка: = сумма позиций (заполняется автоматически)'
-  }
-  return 'Рамочный договор: введите общую сумму договора вручную'
-})
 
 // Auto-sync contract_price when mode is auto
 function syncContractPriceIfSingle() {
@@ -4164,21 +4132,6 @@ const calcEconomy = () => {
     ? Math.round((nmck - form.contract_price) * 100) / 100
     : null
 }
-
-const nmckExcessPct = computed(() => {
-  const nmck = displayNmck.value
-  if (!nmck || !form.contract_price) return 0
-  return Math.round(((form.contract_price - nmck) / nmck) * 100)
-})
-
-const nmckWarningLevel = computed((): 'error' | 'warning' | null => {
-  // For framework contracts, don't compare contract_price vs NMCD (they're different things)
-  if (isFramework.value) return null
-  const pct = nmckExcessPct.value
-  if (pct > 10) return 'error'
-  if (pct > 0) return 'warning'
-  return null
-})
 
 // Phase 31-05: server-side remaining (D-17); replaces client-side calcBudget.
 // exclude_purchase_id excludes current purchase from spent on UPDATE (D-16 correct remaining).

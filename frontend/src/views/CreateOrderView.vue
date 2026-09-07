@@ -89,98 +89,21 @@
     <v-form ref="formRef" :class="{ 'compact-mobile': formMode === 'advance_report' }" @submit.prevent="save">
 
       <!-- Чеки вверху — только при создании авансового отчёта -->
-      <v-card
+      <PurchaseReceiptsBlock
         v-if="showReceiptsOnTop"
-        variant="outlined"
-        class="mb-4"
-        style="border: 2px solid var(--gala-accent, #fb923c); background: rgba(251,146,60,0.04);"
-      >
-        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex flex-wrap align-center ga-2">
-          <v-icon color="#fb923c" size="24" class="mr-2">mdi-receipt-text</v-icon>
-          <span class="d-flex align-center" style="color: #fb923c;">
-            <span>Загрузите чеки&nbsp;</span>
-            <v-chip size="x-small" color="#fb923c" variant="tonal" class="ml-1">{{ receipts.length }}</v-chip>
-          </span>
-          <v-spacer />
-          <v-btn size="small" variant="flat" color="#fb923c" @click="onScanQrClick">
-            <v-icon start>mdi-qrcode-scan</v-icon>Сканировать QR
-          </v-btn>
-          <v-btn size="small" variant="tonal" color="#fb923c" @click="onJsonBtnClick">
-            <v-icon start>mdi-file-upload</v-icon>Загрузить чек
-          </v-btn>
-          <input ref="advJsonReceiptInput" type="file" accept="image/*,.json" multiple
-            style="display:none" @change="onJsonReceiptUpload" />
-          <v-btn size="small" variant="tonal" @click="onManualBtnClick">
-            <v-icon start>mdi-plus</v-icon>Вручную
-          </v-btn>
-          <v-btn
-            v-if="isEdit && purchaseId"
-            size="small"
-            variant="tonal"
-            color="primary"
-            prepend-icon="mdi-refresh"
-            :loading="recomputeLoading"
-            @click="recomputeFromReceipts"
-          >
-            Пересчитать из чеков
-          </v-btn>
-        </v-card-title>
-        <v-card-text>
-          <v-alert type="warning" variant="tonal" density="compact" class="mb-3 text-caption" color="#fb923c">
-            Сначала загрузите все чеки — сканируйте QR или загрузите фото/JSON. После загрузки позиции и суммы подтянутся автоматически.
-          </v-alert>
-
-          <!-- Empty-state: нет чеков — крупный призыв -->
-          <div v-if="receipts.length === 0" class="text-center py-6">
-            <v-icon size="48" style="color: #ccc; margin-bottom: 8px;" class="d-block mx-auto">mdi-receipt-text-plus</v-icon>
-            <div class="text-subtitle-2 text-medium-emphasis mb-1">Пока нет чеков</div>
-            <div class="text-caption text-medium-emphasis mb-4">Нажмите «Сканировать QR» или «Загрузить чек» выше</div>
-            <div class="d-flex justify-center ga-2 flex-wrap">
-              <v-btn variant="flat" color="#fb923c" @click="onScanQrClick">
-                <v-icon start>mdi-qrcode-scan</v-icon>Сканировать QR
-              </v-btn>
-              <v-btn variant="tonal" color="#fb923c" @click="onJsonBtnClick">
-                <v-icon start>mdi-file-upload</v-icon>Загрузить чек
-              </v-btn>
-            </div>
-          </div>
-
-          <!-- Список загруженных чеков -->
-          <v-table v-else density="compact">
-            <thead>
-              <tr>
-                <th>Дата</th>
-                <th>Продавец</th>
-                <th>ИНН</th>
-                <th class="text-right">Сумма ₽</th>
-                <th>Источник</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="r in receipts" :key="r.id">
-                <td>{{ r.receipt_datetime ? new Date(r.receipt_datetime).toLocaleString('ru-RU') : '—' }}</td>
-                <td>{{ r.seller_name || '—' }}</td>
-                <td>{{ r.seller_inn || '—' }}</td>
-                <td class="text-right">{{ r.total_sum != null ? Number(r.total_sum).toLocaleString('ru-RU') : '—' }}</td>
-                <td><v-chip size="x-small">{{ sourceLabel(r.source) }}</v-chip></td>
-                <td>
-                  <v-btn size="x-small" variant="text" color="primary"
-                    icon="mdi-file-pdf-box"
-                    :href="`/api/purchases/${purchaseId}/receipts/${r.id}/pdf`"
-                    target="_blank" rel="noopener" />
-                  <v-btn size="x-small" variant="text" color="primary"
-                    icon="mdi-file-image"
-                    :href="`/api/purchases/${purchaseId}/receipts/${r.id}/png`"
-                    target="_blank" rel="noopener" />
-                  <v-btn size="x-small" variant="text" color="error"
-                    icon="mdi-delete" @click="deleteReceipt(r.id)" />
-                </td>
-              </tr>
-            </tbody>
-          </v-table>
-        </v-card-text>
-      </v-card>
+        variant="top"
+        :receipts="receipts"
+        :purchase-id="purchaseId"
+        :is-edit="isEdit"
+        :source-label="sourceLabel"
+        :recompute-loading="recomputeLoading"
+        :on-scan-qr-click="onScanQrClick"
+        :on-json-btn-click="onJsonBtnClick"
+        :on-manual-click="onManualBtnClick"
+        :on-recompute="recomputeFromReceipts"
+        :on-json-receipt-upload="onJsonReceiptUpload"
+        :on-delete-receipt="deleteReceipt"
+      />
 
       <!-- U-2: Подсказка про мульти-чеки (только для авансового, закрываемая) -->
       <v-alert
@@ -828,72 +751,19 @@
       </v-card>
 
       <!-- 1.7. Чеки (для авансовых отчётов и обычных закупок — позиции из чека добавляются в закупку) -->
-      <v-card v-if="!showReceiptsOnTop && showReceiptsBlock" variant="outlined" class="mb-4">
-        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex flex-wrap align-center ga-2">
-          <span class="d-flex align-center">
-            <v-icon start>mdi-receipt-text-outline</v-icon>
-            <span>Чеки ({{ receipts.length }})</span>
-          </span>
-          <v-spacer />
-          <v-btn size="small" variant="tonal" color="primary" @click="onScanQrClick">
-            <v-icon start>mdi-qrcode-scan</v-icon>Сканировать QR
-          </v-btn>
-          <v-btn size="small" variant="tonal" @click="onJsonBtnClick">
-            <v-icon start>mdi-file-upload</v-icon>Загрузить чек
-          </v-btn>
-          <input ref="advJsonReceiptInput" type="file" accept="image/*,.json" multiple
-            style="display:none" @change="onJsonReceiptUpload" />
-          <v-btn size="small" variant="tonal" @click="onManualBtnClick">
-            <v-icon start>mdi-plus</v-icon>Вручную
-          </v-btn>
-        </v-card-title>
-        <v-card-text>
-          <v-alert v-if="!isEdit || !purchaseId" type="info" variant="tonal" density="compact" class="mb-0 text-caption">
-            При сканировании QR или загрузке фото/JSON чека запись сохранится автоматически, позиции из чеков подтянутся в «Позиции закупки».
-          </v-alert>
-          <template v-else>
-            <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
-              Сканируйте QR с чека или загрузите его фото / JSON — данные подтянутся из ФНС, позиции попадут в «Позиции закупки» ниже. Для каждой позиции укажите товар из каталога (или создайте новый).
-            </v-alert>
-            <div v-if="receipts.length === 0" class="text-center text-medium-emphasis py-4 text-caption">
-              Чеков нет — отсканируйте QR, загрузите фото чека (PNG/JPG) или JSON
-            </div>
-            <v-table v-else density="compact">
-              <thead>
-                <tr>
-                  <th>Дата</th>
-                  <th>Продавец</th>
-                  <th>ИНН</th>
-                  <th class="text-right">Сумма ₽</th>
-                  <th>Источник</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="r in receipts" :key="r.id">
-                  <td>{{ r.receipt_datetime ? new Date(r.receipt_datetime).toLocaleString('ru-RU') : '—' }}</td>
-                  <td>{{ r.seller_name || '—' }}</td>
-                  <td>{{ r.seller_inn || '—' }}</td>
-                  <td class="text-right">{{ r.total_sum != null ? Number(r.total_sum).toLocaleString('ru-RU') : '—' }}</td>
-                  <td><v-chip size="x-small">{{ sourceLabel(r.source) }}</v-chip></td>
-                  <td>
-                    <v-btn size="x-small" variant="text" color="primary"
-                      icon="mdi-file-pdf-box"
-                      :href="`/api/purchases/${purchaseId}/receipts/${r.id}/pdf`"
-                      target="_blank" rel="noopener" />
-                    <v-btn size="x-small" variant="text" color="primary"
-                      icon="mdi-file-image"
-                      :href="`/api/purchases/${purchaseId}/receipts/${r.id}/png`"
-                      target="_blank" rel="noopener" />
-                    <v-btn size="x-small" variant="text" color="error"
-                      icon="mdi-delete" @click="deleteReceipt(r.id)" />
-                  </td>
-                </tr>
-              </tbody>
-            </v-table>
-          </template>
-        </v-card-text>
-      </v-card>
+      <PurchaseReceiptsBlock
+        v-if="!showReceiptsOnTop && showReceiptsBlock"
+        variant="block"
+        :receipts="receipts"
+        :purchase-id="purchaseId"
+        :is-edit="isEdit"
+        :source-label="sourceLabel"
+        :on-scan-qr-click="onScanQrClick"
+        :on-json-btn-click="onJsonBtnClick"
+        :on-manual-click="onManualBtnClick"
+        :on-json-receipt-upload="onJsonReceiptUpload"
+        :on-delete-receipt="deleteReceipt"
+      />
 
       <!-- 2. Позиции закупки -->
       <v-card id="pub-target-items" variant="outlined" class="mb-4" style="position:relative">
@@ -1361,57 +1231,16 @@
 
           <!-- Multi-receipts list (Phase 21) — shown only when purchase already saved -->
           <template v-if="(formMode === 'advance_report' || form.purchase_method === 'advance') && isEdit && purchaseId">
-            <v-card variant="outlined" class="mb-3">
-              <v-card-title class="d-flex align-center pa-3 text-subtitle-2">
-                <v-icon start>mdi-receipt-text-outline</v-icon>
-                <span>Чеки ({{ receipts.length }})</span>
-                <v-spacer />
-                <v-btn size="small" variant="tonal" @click="$refs.jsonReceiptInput.click()">
-                  <v-icon start>mdi-file-upload</v-icon>JSON чека
-                </v-btn>
-                <input ref="jsonReceiptInput" type="file" accept=".json" multiple
-                  style="display:none" @change="onJsonReceiptUpload" />
-                <v-btn size="small" variant="tonal" class="ml-2" @click="openManualReceiptDialog">
-                  <v-icon start>mdi-plus</v-icon>Вручную
-                </v-btn>
-              </v-card-title>
-              <v-card-text v-if="receipts.length === 0" class="text-center text-medium-emphasis py-4">
-                Чеков нет — загрузите JSON из приложения «Проверка чека» (ФНС) или введите данные вручную
-              </v-card-text>
-              <v-table v-else density="compact">
-                <thead>
-                  <tr>
-                    <th>Дата</th>
-                    <th>Продавец</th>
-                    <th>ИНН</th>
-                    <th class="text-right">Сумма ₽</th>
-                    <th>Источник</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="r in receipts" :key="r.id">
-                    <td>{{ r.receipt_datetime ? new Date(r.receipt_datetime).toLocaleString('ru-RU') : '—' }}</td>
-                    <td>{{ r.seller_name || '—' }}</td>
-                    <td>{{ r.seller_inn || '—' }}</td>
-                    <td class="text-right">{{ r.total_sum != null ? Number(r.total_sum).toLocaleString('ru-RU') : '—' }}</td>
-                    <td><v-chip size="x-small">{{ sourceLabel(r.source) }}</v-chip></td>
-                    <td>
-                      <v-btn size="x-small" variant="text" color="primary"
-                        icon="mdi-file-pdf-box"
-                        :href="`/api/purchases/${purchaseId}/receipts/${r.id}/pdf`"
-                        target="_blank" rel="noopener" />
-                      <v-btn size="x-small" variant="text" color="primary"
-                        icon="mdi-file-image"
-                        :href="`/api/purchases/${purchaseId}/receipts/${r.id}/png`"
-                        target="_blank" rel="noopener" />
-                      <v-btn size="x-small" variant="text" color="error"
-                        icon="mdi-delete" @click="deleteReceipt(r.id)" />
-                    </td>
-                  </tr>
-                </tbody>
-              </v-table>
-            </v-card>
+            <PurchaseReceiptsBlock
+              variant="tab"
+              :receipts="receipts"
+              :purchase-id="purchaseId"
+              :is-edit="isEdit"
+              :source-label="sourceLabel"
+              :on-manual-click="openManualReceiptDialog"
+              :on-json-receipt-upload="onJsonReceiptUpload"
+              :on-delete-receipt="deleteReceipt"
+            />
           </template>
           <v-alert
             v-else-if="(formMode === 'advance_report' || form.purchase_method === 'advance') && !isEdit"
@@ -2114,6 +1943,9 @@ import PlaceholdersDialog from '@/components/purchase/PlaceholdersDialog.vue'
 import DocErrorDialog from '@/components/purchase/DocErrorDialog.vue'
 import { useManualReceipt } from '@/composables/purchase/useManualReceipt'
 import ManualReceiptDialog from '@/components/purchase/ManualReceiptDialog.vue'
+import { usePurchaseReceipts, POST_SAVE_ACTION_KEY } from '@/composables/purchase/usePurchaseReceipts'
+import { useMonthlyPayments } from '@/composables/purchase/useMonthlyPayments'
+import PurchaseReceiptsBlock from '@/components/purchase/PurchaseReceiptsBlock.vue'
 import { useFabrikantPackage } from '@/composables/purchase/useFabrikantPackage'
 import PurchaseConfirmDialogs from '@/components/purchase/PurchaseConfirmDialogs.vue'
 import KpDialog from '@/components/purchase/KpDialog.vue'
@@ -2138,7 +1970,6 @@ import PaymentsBlock from '@/components/PaymentsBlock.vue'
 import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import { useFeoTreeNodes } from '@/composables/useFeoTreeNodes'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
-import { decodeQrFromImageFile } from '@/utils/qrDecode'
 import { numOrNull } from '@/utils/numberFormat'
 import { PURCHASE_STATUS_ORDER, purchaseStatusColor, purchaseStatusLabel, purchaseSubstatusLabel } from '@/constants/purchaseStatus'
 
@@ -3531,14 +3362,7 @@ function onProductCreatedFromEditor(product: Product) {
   }
 }
 
-const monthlyTotal = computed(() => {
-  if (form.monthly_payment_count && form.monthly_payment_amount) {
-    return form.monthly_payment_count * form.monthly_payment_amount
-  }
-  return null
-})
-
-const calcMonthlyTotal = () => { /* reactivity trigger — monthlyTotal is computed */ }
+const { monthlyTotal, calcMonthlyTotal } = useMonthlyPayments(form)
 
 const formatMoney = (v: number) => v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽'
 // fileIcon/formatSize/formatDate — вынесены в composables/purchase/usePurchaseFiles.ts
@@ -4366,243 +4190,24 @@ async function fixFeoMismatchOwnCategories() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 21: multi-receipts on advance report
+// Phase 21: multi-receipts on advance report — состояние и логика (QR/JSON,
+// удаление, пересчёт) вынесены в composables/purchase/usePurchaseReceipts.ts,
+// разметка (3 места использования) — в components/purchase/PurchaseReceiptsBlock.vue.
+// Ручной ввод чека остаётся в composables/purchase/useManualReceipt.ts (не дублируется).
 // ---------------------------------------------------------------------------
-interface Receipt {
-  id: number
-  purchase_id: number
-  fiscal_drive_number?: string | null
-  fiscal_document_number?: number | null
-  fiscal_sign?: string | null
-  receipt_datetime?: string | null
-  total_sum?: number | string | null
-  seller_name?: string | null
-  seller_inn?: string | null
-  retail_place?: string | null
-  operator?: string | null
-  source?: string | null
-  created_at?: string | null
-}
-
-const receipts = ref<Receipt[]>([])
-const jsonReceiptInput = ref<HTMLInputElement | null>(null)
-
-// manualReceiptDialog — вынесен в composables/purchase/useManualReceipt.ts +
-// components/purchase/ManualReceiptDialog.vue (остальная фича «Чеки» — QR/JSON —
-// остаётся здесь, вне этой волны).
 const { manualReceiptDialog, openManualReceiptDialog, saveManualReceipt } =
   useManualReceipt(purchaseId, showSnack, () => loadReceipts())
 
-function sourceLabel(s?: string | null) {
-  if (!s) return '—'
-  return ({ json_import: 'JSON', qr_scan: 'QR', manual: 'Вручную' } as Record<string, string>)[s] || s
-}
-
-async function loadReceipts() {
-  if (!purchaseId.value) return
-  try {
-    receipts.value = await apiFetch<Receipt[]>(`/purchases/${purchaseId.value}/receipts`)
-  } catch {
-    /* silent — no receipts is fine */
-  }
-}
-
-const qrScanShow = ref(false)
-const POST_SAVE_ACTION_KEY = 'advance_report_post_save_action'
-
-async function ensureSavedThen(action: 'scan_qr' | 'upload_json' | 'manual_receipt') {
-  if (purchaseId.value) return true
-  if (!form.subsidy_id && formMode.value !== 'advance_report') {
-    showSnack('Сначала выберите субсидию (вверху страницы)', 'warning', {
-      actionText: 'Показать поле',
-      onAction: () => guideArrowTo('subsidy'),
-    })
-    guideArrowTo('subsidy')
-    return false
-  }
-  sessionStorage.setItem(POST_SAVE_ACTION_KEY, action)
-  await save()
-  // save() либо успешно перенаправит (тогда после loadPurchase сработает action),
-  // либо покажет snack с ошибкой валидации (FEO/etc) — флаг останется до следующей попытки.
-  return false
-}
-
-async function onScanQrClick() {
-  if (!(await ensureSavedThen('scan_qr'))) return
-  qrScanShow.value = true
-}
-
-async function onJsonBtnClick() {
-  if (!(await ensureSavedThen('upload_json'))) return
-  document.querySelector<HTMLInputElement>('input[type=file][accept="image/*,.json"]')?.click()
-}
-
-async function onManualBtnClick() {
-  if (!(await ensureSavedThen('manual_receipt'))) return
-  openManualReceiptDialog()
-}
-
-const recomputeLoading = ref(false)
-async function recomputeFromReceipts() {
-  if (!purchaseId.value) return
-  recomputeLoading.value = true
-  try {
-    const result = await apiFetch<any>(
-      `/purchases/${purchaseId.value}/recompute-from-receipts`,
-      { method: 'POST' }
-    )
-    const msg = `Обновлено позиций: ${result.items_updated}, прикреплено файлов чеков: ${result.files_attached}, добавлено записей закр.документов: ${result.acceptance_docs_added}`
-    showSnack(msg, 'success')
-    await loadPurchase()
-  } catch (e: any) {
-    showSnack(e?.message || 'Не удалось пересчитать', 'error')
-  } finally {
-    recomputeLoading.value = false
-  }
-}
-
-function consumePostSaveAction() {
-  if (!purchaseId.value) return
-  if (formMode.value !== 'advance_report' && formMode.value !== 'order') return
-  const pending = sessionStorage.getItem(POST_SAVE_ACTION_KEY)
-  if (!pending) return
-  sessionStorage.removeItem(POST_SAVE_ACTION_KEY)
-  if (pending === 'scan_qr') qrScanShow.value = true
-  else if (pending === 'upload_json') {
-    document.querySelector<HTMLInputElement>('input[type=file][accept="image/*,.json"]')?.click()
-  }
-  else if (pending === 'manual_receipt') openManualReceiptDialog()
-}
-
-// Дубликат чека может лежать в обычной закупке или в авансовом отчёте — это
-// разные документы с разными карточками. Бэкенд отдаёт признак is_advance в
-// detail (RECEIPT_DUPLICATE), чтобы не угадывать вид документа по тексту.
-function receiptDuplicateOpenAction(det: any) {
-  const ref = det.purchase_ref || `#${det.purchase_id}`
-  const pid = det.purchase_id
-  const isAdvance = !!det.is_advance
-  const path = isAdvance ? `/advance-reports/${pid}/edit` : `/orders/${pid}`
-  const fallbackMessage = isAdvance
-    ? `Такой авансовый отчёт уже есть — № ${ref}. Этот чек уже был загружен в него.`
-    : `Чек был загружен ранее в закупку № ${ref}.`
-  const actionText = isAdvance ? `Открыть авансовый отчёт № ${ref}` : `Открыть закупку № ${ref}`
-  return { fallbackMessage, actionText, onAction: () => window.open(path, '_blank') }
-}
-
-async function onQrDetected(qr: string) {
-  qrScanShow.value = false
-  if (!purchaseId.value) {
-    showSnack('Сначала сохраните закупку', 'error')
-    return
-  }
-  try {
-    const existingIds = new Set(receipts.value.map(r => r.id))
-    const created = await apiFetch<{ id: number }>(
-      `/purchases/${purchaseId.value}/receipts/from-qr-fetch`,
-      { method: 'POST', body: { qr } as any },
-    )
-    await loadReceipts()
-    if (isEdit.value) {
-      await new Promise(r => setTimeout(r, 50))
-      await loadPurchase()
-      console.log(`[advance] items refetched: ${items.value.length}, acceptance_docs: ${acceptanceDocs.value.length}`)
-    }
-    if (created?.id && existingIds.has(created.id)) {
-      showSnack('Этот чек уже был загружен ранее', 'warning')
-    } else {
-      showSnack('Чек получен из ФНС, позиции добавлены')
-    }
-  } catch (e: any) {
-    const p = e?.payload
-    const code = p?.code
-    const det = (p?.details && typeof p.details === 'object') ? p.details : null
-    if (code === 'RECEIPT_DUPLICATE' && det?.purchase_id) {
-      const { fallbackMessage, actionText, onAction } = receiptDuplicateOpenAction(det)
-      showSnack(p.message || fallbackMessage, 'warning', { actionText, onAction })
-    } else if (code === 'FNS_RATE_LIMIT') {
-      showSnack(p?.message || 'ФНС временно ограничила запросы', 'warning')
-    } else {
-      showSnack(e?.message || 'Не удалось получить чек из ФНС', 'error')
-    }
-  }
-}
-
-async function onJsonReceiptUpload(e: Event) {
-  const input = e.target as HTMLInputElement
-  const files = Array.from(input.files || [])
-  if (!files.length || !purchaseId.value) {
-    if (input) input.value = ''
-    return
-  }
-  const existingIds = new Set(receipts.value.map(r => r.id))
-  let added = 0
-  let dups = 0
-  let qrFails = 0
-  for (const f of files) {
-    const isImage = (f.type || '').startsWith('image/') || /\.(png|jpe?g|webp|heic|heif)$/i.test(f.name)
-    try {
-      if (isImage) {
-        const qr = await decodeQrFromImageFile(f)
-        if (!qr) { qrFails++; continue }
-        const r = await apiFetch<Receipt>(
-          `/purchases/${purchaseId.value}/receipts/from-qr-fetch`,
-          { method: 'POST', body: { qr } as any },
-        )
-        if (r?.id != null) {
-          if (existingIds.has(r.id)) dups++
-          else { added++; existingIds.add(r.id) }
-        }
-      } else {
-        const fd = new FormData()
-        fd.append('file', f)
-        const res = await apiFetch<Receipt[]>(
-          `/purchases/${purchaseId.value}/receipts/import-json`,
-          { method: 'POST', body: fd as any }
-        )
-        for (const r of (res || [])) {
-          if (existingIds.has(r.id)) dups++
-          else { added++; existingIds.add(r.id) }
-        }
-      }
-    } catch (err: any) {
-      const p2 = err?.payload
-      const code2 = p2?.code
-      const det2 = (p2?.details && typeof p2.details === 'object') ? p2.details : null
-      if (code2 === 'RECEIPT_DUPLICATE' && det2?.purchase_id) {
-        const { fallbackMessage, actionText, onAction } = receiptDuplicateOpenAction(det2)
-        showSnack(p2.message || fallbackMessage, 'warning', { actionText, onAction })
-      } else if (code2 === 'FNS_RATE_LIMIT') {
-        showSnack(p2?.message || 'ФНС временно ограничила запросы', 'warning')
-      } else {
-        showSnack(err?.message || `Ошибка обработки ${f.name}`, 'error')
-      }
-    }
-  }
-  input.value = ''
-  await loadReceipts()
-  if (isEdit.value && purchaseId.value) {
-    await new Promise(r => setTimeout(r, 50))
-    await loadPurchase()
-    console.log(`[advance] items refetched: ${items.value.length}, acceptance_docs: ${acceptanceDocs.value.length}`)
-  }
-  const parts: string[] = []
-  if (added) parts.push(`добавлено: ${added}`)
-  if (dups) parts.push(`уже было: ${dups}`)
-  if (qrFails) parts.push(`QR не распознан: ${qrFails}`)
-  if (parts.length) showSnack(parts.join(', '), qrFails && !added ? 'warning' : 'success')
-}
-
-
-async function deleteReceipt(id: number) {
-  if (!purchaseId.value) return
-  if (!confirm('Удалить чек? Связанные позиции в закупке останутся.')) return
-  try {
-    await apiFetch(`/purchases/${purchaseId.value}/receipts/${id}`, { method: 'DELETE' })
-    await loadReceipts()
-  } catch (e: any) {
-    showSnack(e?.message || 'Ошибка удаления', 'error')
-  }
-}
+const {
+  receipts, sourceLabel, loadReceipts,
+  qrScanShow, onScanQrClick, onJsonBtnClick, onManualBtnClick,
+  recomputeLoading, recomputeFromReceipts,
+  consumePostSaveAction, onQrDetected, onJsonReceiptUpload, deleteReceipt,
+} = usePurchaseReceipts(
+  purchaseId, formMode, isEdit, form, showSnack, guideArrowTo,
+  () => save(), () => loadPurchase(), openManualReceiptDialog,
+  () => console.log(`[advance] items refetched: ${items.value.length}, acceptance_docs: ${acceptanceDocs.value.length}`),
+)
 
 // ---------------------------------------------------------------------------
 // Autosave draft for new purchases

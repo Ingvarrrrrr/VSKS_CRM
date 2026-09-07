@@ -22,6 +22,7 @@ from app.schemas.schemas import (
     FeoPlannedItemBulkCreate, FeoPlannedItemBulkCreateResult,
 )
 from app.services.text_match import normalize as _norm_text, tokenize, stem, generic_progressive_match
+from app.services.acceptance_docs import total_amount as _acceptance_total_amount
 
 
 def _safe_mul(a, b) -> Optional[Decimal]:
@@ -1397,7 +1398,7 @@ async def get_comparison(
             product_photo=product_photo,
             final_unit_price=pi.final_unit_price,
             final_total=pi.final_total,
-            acceptance_doc_amount=p.acceptance_doc_amount,
+            acceptance_doc_amount=_acceptance_total_amount(p),
             contract_price=p.contract_price,
             purchase_items_count=items_count,
             fact_amount=fact_amount,

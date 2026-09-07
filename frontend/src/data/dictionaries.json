@@ -1,0 +1,188 @@
+{
+  "statuses": [
+    {
+      "key": "wishes",
+      "label": "Желания сотрудников"
+    },
+    {
+      "key": "plan_schedule",
+      "label": "План закупок"
+    },
+    {
+      "key": "work_in_progress",
+      "label": "Ведётся работа"
+    },
+    {
+      "key": "contracted",
+      "label": "Заключён договор"
+    },
+    {
+      "key": "ordered",
+      "label": "Заказано"
+    },
+    {
+      "key": "delivered",
+      "label": "Поставлено"
+    },
+    {
+      "key": "paid",
+      "label": "Оплачено"
+    }
+  ],
+  "substatuses": [
+    {
+      "key": "contract_signing",
+      "label": "Подписание договора"
+    },
+    {
+      "key": "contractor_negotiations",
+      "label": "Переговоры с поставщиком"
+    },
+    {
+      "key": "kp_collecting",
+      "label": "Сбор КП"
+    },
+    {
+      "key": "on_platform",
+      "label": "Размещено на площадке"
+    },
+    {
+      "key": "tz_forming",
+      "label": "Формирование ТЗ"
+    }
+  ],
+  "contract_types": [
+    {
+      "key": "framework_cumulative",
+      "label": "Рамочный (нарастающий итог)"
+    },
+    {
+      "key": "framework_with_amount",
+      "label": "Рамочный (с указанием суммы)"
+    },
+    {
+      "key": "single",
+      "label": "Разовая поставка"
+    }
+  ],
+  "purchase_methods": [
+    {
+      "key": "advance",
+      "label": "Авансовый отчёт"
+    },
+    {
+      "key": "competitive",
+      "label": "Конкурентная процедура"
+    },
+    {
+      "key": "quote_request",
+      "label": "Запрос котировок"
+    },
+    {
+      "key": "single",
+      "label": "Единственный поставщик"
+    }
+  ],
+  "purchase_bases": [
+    {
+      "key": "plan_schedule",
+      "label": "план закупок"
+    },
+    {
+      "key": "service_note",
+      "label": "служебная записка"
+    }
+  ],
+  "permission_actions": [
+    {
+      "key": "documents.view_all_in_org",
+      "description": "Видеть все документы организации без фильтра по ответственному исполнителю"
+    },
+    {
+      "key": "feo_budget.view_all_levels",
+      "description": "Видеть остатки бюджета по всем уровням ФЭО (вышестоящие категории)"
+    },
+    {
+      "key": "feo_budget.view_leaf",
+      "description": "Видеть остаток бюджета по листовой (последней) категории ФЭО"
+    },
+    {
+      "key": "feo_budget.view_tree_amounts",
+      "description": "Видеть суммы по ФЭО (финансирование и свободный остаток) в дереве выбора категорий"
+    },
+    {
+      "key": "feo_category.edit",
+      "description": "Редактирование справочника категорий ФЭО (создание, правка, удаление, перенос, импорт)"
+    },
+    {
+      "key": "payment.confirm",
+      "description": "Подтверждение матча платежа"
+    },
+    {
+      "key": "payment.import",
+      "description": "Импорт банковских выписок"
+    },
+    {
+      "key": "payment.unbind",
+      "description": "Откат подтверждения платежа"
+    },
+    {
+      "key": "plan_excess.decide",
+      "description": "Согласование превышения плана ФЭО (только уполномоченные — финансисты, владельцы)"
+    },
+    {
+      "key": "purchase.status_change",
+      "description": "Изменение статуса закупки"
+    },
+    {
+      "key": "vehicle.delete",
+      "description": "Удаление ТС"
+    },
+    {
+      "key": "vehicle.edit",
+      "description": "Редактирование карточки ТС"
+    },
+    {
+      "key": "vehicle.fields.manage",
+      "description": "Управление составом полей карточки ТС"
+    },
+    {
+      "key": "vehicle.import",
+      "description": "Импорт Excel реестра ТС"
+    },
+    {
+      "key": "vehicle.odometer.write",
+      "description": "Ввод пробега"
+    },
+    {
+      "key": "vehicle.repair.write",
+      "description": "Добавление ремонтов"
+    },
+    {
+      "key": "vehicle.trip.create",
+      "description": "Создание путевых листов"
+    },
+    {
+      "key": "wish.edit_feo",
+      "description": "Перераспределение позиций заявки по категориям ФЭО и плановым позициям"
+    }
+  ],
+  "permission_tabs": [
+    {
+      "key": "advance_reports.create",
+      "title": "Авансовый отчёт (создание)"
+    },
+    {
+      "key": "payment_registry",
+      "title": "Реестр платежей"
+    },
+    {
+      "key": "staff_directory",
+      "title": "Справочник сотрудников"
+    },
+    {
+      "key": "vehicles",
+      "title": "Имущество"
+    }
+  ]
+}

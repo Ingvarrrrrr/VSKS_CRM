@@ -51,12 +51,15 @@ async def list_directory(
             org_rows = await db.execute(org_q)
             org_id_to_name = {r[0]: r[1] for r in org_rows.all()}
 
+    from app.services.user_position import resolve_user_position, bulk_load_memberships
+    memberships_map = await bulk_load_memberships(db, (u.id for u in users))
+
     out = []
     for u in users:
         out.append({
             "id": u.id,
             "full_name": u.full_name or u.username,
-            "position": u.position,
+            "position": resolve_user_position(u, memberships=memberships_map.get(u.id)),
             "department": u.department,
             "phone": u.phone,
             "work_phone": u.work_phone,

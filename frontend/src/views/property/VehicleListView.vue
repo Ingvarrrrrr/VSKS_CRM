@@ -39,19 +39,19 @@
              сохраняет (уместна на своём первом шаге). Desktop — обычная кнопка,
              мобильный — пункт меню «Ещё», иначе кнопки не помещаются в один ряд. -->
         <v-btn
-          v-if="!mobile && authStore.hasAction('vehicle.import')"
+          v-if="!mobile && authStore.hasAction(ACTIONS.VEHICLE_IMPORT!)"
           variant="outlined" prepend-icon="mdi-file-download-outline" color="primary"
           :loading="loadingTemplate"
           @click="downloadTemplate">
           Шаблон Excel
         </v-btn>
         <v-btn
-          v-if="!mobile && authStore.hasAction('vehicle.import')"
+          v-if="!mobile && authStore.hasAction(ACTIONS.VEHICLE_IMPORT!)"
           variant="outlined" prepend-icon="mdi-file-excel" color="green"
           @click="importDialogShow = true">
           Импорт Excel
         </v-btn>
-        <v-menu v-if="mobile && authStore.hasAction('vehicle.import')">
+        <v-menu v-if="mobile && authStore.hasAction(ACTIONS.VEHICLE_IMPORT!)">
           <template #activator="{ props: menuProps }">
             <v-btn v-bind="menuProps" variant="outlined" size="small" icon="mdi-dots-vertical" />
           </template>
@@ -677,6 +677,7 @@ import { ref, computed, onMounted, reactive, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useAuthStore } from '@/stores/auth'
+import { ACTIONS } from '@/constants/permissionActions'
 import { VEHICLE_TYPE_LABEL, VEHICLE_TYPE_OPTIONS } from '@/utils/vehicleLabels'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'

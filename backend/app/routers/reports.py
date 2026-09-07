@@ -14,6 +14,7 @@ from app.models.feo_category import FeoCategory
 from app.models.user import User
 from app.auth.jwt import get_current_user
 from app.auth.visibility import get_visible_subsidy_ids
+from app.services.acceptance_docs import derived_scalars as _acceptance_derived_scalars
 from typing import Optional
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
@@ -390,15 +391,18 @@ async def export_subsidy_report_xlsx(
             tz_str = "\n".join(descs[:3])
 
         # Act & payment
+        # ПРАВИЛО №6 (2026-09-07, группа D4): закрывающий документ — из JSONB
+        # acceptance_docs (первый документ), не напрямую из скаляров.
+        _acc = _acceptance_derived_scalars(p)
         act_str = ""
-        if p.acceptance_doc_name or p.acceptance_doc_number:
+        if _acc["name"] or _acc["number"]:
             parts = []
-            if p.acceptance_doc_name:
-                parts.append(p.acceptance_doc_name)
-            if p.acceptance_doc_number:
-                parts.append(f"№{p.acceptance_doc_number}")
-            if p.acceptance_doc_date:
-                parts.append(f"от {fmt_date(p.acceptance_doc_date)}")
+            if _acc["name"]:
+                parts.append(_acc["name"])
+            if _acc["number"]:
+                parts.append(f"№{_acc['number']}")
+            if _acc["date"]:
+                parts.append(f"от {fmt_date(_acc['date'])}")
             act_str = " ".join(parts)
 
         pay_str = ""

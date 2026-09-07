@@ -84,6 +84,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.contract_item import ContractItem
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
+from app.services.acceptance_docs import total_amount as _acceptance_total_amount
 
 # Критерий рамочной головы — ЗЕРКАЛО app.routers.purchases.is_framework_head
 # (не импортируется напрямую, чтобы не тянуть весь роутер как зависимость
@@ -189,7 +190,11 @@ def purchase_amounts(
     """
     plan = _dec(getattr(p, "planned_total_price", None))
     contract = _dec(getattr(p, "contract_price", None))
-    fact = _dec(getattr(p, "acceptance_doc_amount", None))
+    # ПРАВИЛО №6 (2026-09-07, группа D4): "фактическая сумма" больше не читается
+    # из скаляра acceptance_doc_amount напрямую — источник истины JSONB
+    # acceptance_docs (см. app.services.acceptance_docs.total_amount, которая
+    # сама фолбэчится на этот же скаляр для немигрированных закупок).
+    fact = _acceptance_total_amount(p)
     paid = _dec(getattr(p, "payment_amount", None))
     contract_items_total = _dec(contract_items_total)
     items_total = _dec(items_total)

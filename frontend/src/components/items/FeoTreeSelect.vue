@@ -236,6 +236,7 @@ import type { FeoNode, FeoLeaf } from '@/composables/useFeoLeaves'
 import type { FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import { useAuthStore } from '@/stores/auth'
 import { formatPlanResidual } from '@/utils/numberFormat'
+import { ACTIONS } from '@/constants/permissionActions'
 
 const props = defineProps<{
   modelValue: number | null
@@ -462,7 +463,7 @@ function planNoteFor(nodeId: number): { budget: number | null; residual: number 
 // и так возвращает budget/free=null без права feo_budget.view_tree_amounts) —
 // эффективные actions уже загружены authStore при старте сессии.
 const authStore = useAuthStore()
-const showNodeAmounts = computed(() => authStore.hasAction('feo_budget.view_tree_amounts'))
+const showNodeAmounts = computed(() => authStore.hasAction(ACTIONS.FEO_BUDGET_VIEW_TREE_AMOUNTS!))
 
 function nodeAmountDisplayFor(nodeId: number): { budget: number; free: number } | null {
   if (!showNodeAmounts.value || !props.nodeAmounts) return null

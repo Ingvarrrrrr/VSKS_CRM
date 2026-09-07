@@ -524,7 +524,7 @@
               {{ statusLabelFor(item) }}
             </v-chip>
             <v-chip v-if="item.substatus" size="x-small" variant="outlined" color="teal">
-              {{ SUBSTATUS_LABEL[item.substatus] || item.substatus }}
+              {{ purchaseSubstatusLabel(item.substatus) || item.substatus }}
             </v-chip>
             <v-icon v-if="item.is_monthly_payment" size="x-small" color="blue" title="Ежемесячный платёж">mdi-calendar-sync</v-icon>
             <!-- Задача владельца 2026-08-12: заявку согласовали — закупка всё равно
@@ -1636,7 +1636,7 @@ import { formatMoney } from '@/utils/formatMoney'
 import type { PurchaseAmounts } from '@/types/purchaseAmounts'
 import { toAmount } from '@/types/purchaseAmounts'
 import { useDisplay } from 'vuetify'
-import { PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusColor } from '@/constants/purchaseStatus'
+import { PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusColor, purchaseSubstatusLabel, purchaseMethodLabel as sharedMethodLabel } from '@/constants/purchaseStatus'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 const authStore = useAuthStore()
@@ -1750,10 +1750,9 @@ function purchaseTypeLabel(item: Purchase): string {
   return 'Разовый'
 }
 function purchaseMethodLabel(m?: string): string {
-  if (m === 'single') return 'Единственный поставщик'
-  if (m === 'competitive') return 'Конкурсная процедура'
-  if (m === 'advance') return 'Авансовый отчёт'
-  return m || '—'
+  // Единый источник подписи: frontend/src/constants/purchaseStatus.ts (Правило №6)
+  if (!m) return '—'
+  return sharedMethodLabel(m)
 }
 function purchaseTypeColor(item: Purchase): string {
   if (item.purchase_method === 'advance') return 'purple'
@@ -1816,13 +1815,6 @@ function statusLabelFor(item: Purchase, status?: string): string {
 const STATUS_COLOR: Record<string, string> = Object.fromEntries(
   PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusColor(s)])
 )
-const SUBSTATUS_LABEL: Record<string, string> = {
-  tz_forming: 'Формирование ТЗ',
-  kp_collecting: 'Сбор КП',
-  on_platform: 'На площадке',
-  contractor_negotiations: 'Переговоры с подрядчиком',
-  contract_signing: 'Договор на подписании',
-}
 const APPROVAL_STATUS_COLOR: Record<string, string> = {
   in_progress: 'orange', approved: 'green', rejected: 'error',
 }

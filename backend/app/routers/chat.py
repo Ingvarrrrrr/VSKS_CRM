@@ -263,15 +263,18 @@ async def _build_room_out(room: ChatRoom, user_id: int, db: AsyncSession) -> dic
         .join(User, User.id == ChatParticipant.user_id)
         .where(ChatParticipant.room_id == room.id)
     )
+    participant_rows = participants_result.all()
+    from app.services.user_position import resolve_user_position, bulk_load_memberships
+    _memberships_map = await bulk_load_memberships(db, (u.id for _, u in participant_rows))
     participants = []
-    for cp, u in participants_result.all():
+    for cp, u in participant_rows:
         participants.append({
             "id": u.id,
             "full_name": u.full_name,
             "username": u.username,
             "avatar": u.avatar,
             "department": u.department,
-            "position": u.position,
+            "position": resolve_user_position(u, memberships=_memberships_map.get(u.id)),
         })
 
     return {
@@ -796,6 +799,8 @@ async def get_staff(
         )
     )
     users = result.scalars().all()
+    from app.services.user_position import resolve_user_position, bulk_load_memberships
+    _memberships_map = await bulk_load_memberships(db, (u.id for u in users))
     return [
         {
             "id": u.id,
@@ -803,7 +808,7 @@ async def get_staff(
             "username": u.username,
             "avatar": u.avatar,
             "department": u.department,
-            "position": u.position,
+            "position": resolve_user_position(u, memberships=_memberships_map.get(u.id)),
         }
         for u in users
     ]

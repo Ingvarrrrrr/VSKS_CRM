@@ -30,6 +30,7 @@ from app.models.purchase_item import PurchaseItem
 from app.models.subsidy import Subsidy
 from app.routers.events import normalize_event_name
 from app.services.purchase_payments import recompute_purchase_payments
+from app.services import acceptance_docs as _acc_docs
 from app.utils.numbers import to_decimal
 from app.utils.text import normalize_feo_name
 
@@ -1189,12 +1190,11 @@ async def _parse_and_group(
                 else None
             ),
             vat_exemption_article=first.get("vat_exemption_article"),
-            # Closing document — JSONB-first + legacy write-through
-            acceptance_docs=acceptance_docs_val if acceptance_docs_val else [],
-            acceptance_doc_name=acc_name,
-            acceptance_doc_number=acc_number,
-            acceptance_doc_date=acc_date,
-            acceptance_doc_amount=acc_amount,
+            # ПРАВИЛО №6 (2026-09-07, группа D4): источник истины — JSONB
+            # acceptance_docs; скаляры acceptance_doc_name/number/date/amount
+            # НЕ передаются здесь напрямую — их пишет только sync_scalars()
+            # ниже (единственный писатель кэша, см. app.services.acceptance_docs).
+            acceptance_docs=_acc_docs.dedup(acceptance_docs_val) if acceptance_docs_val else [],
             # Flags
             is_prepayment=first.get("is_prepayment") or False,
             is_monthly_payment=first.get("is_monthly_payment") or False,
@@ -1225,6 +1225,12 @@ async def _parse_and_group(
             vat_mode=first.get("vat_mode") or "uniform",
             stage_label=first.get("stage_label"),
         )
+        # ПРАВИЛО №6 (2026-09-07): acceptance_doc_name/number/date/amount —
+        # производный кэш, пишется ТОЛЬКО через sync_scalars (единственный
+        # писатель, см. app.services.acceptance_docs) — здесь вызывается
+        # вручную, т.к. это ещё не персистентный ORM-объект (add_doc/
+        # replace_docs рассчитаны на уже существующую закупку).
+        _acc_docs.sync_scalars(p)
 
         # --- Create PurchaseItems (dedup by key within group) ---
         items = []

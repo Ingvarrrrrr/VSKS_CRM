@@ -447,6 +447,7 @@ import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
+import { ACTIONS } from '@/constants/permissionActions'
 import { numOrNull } from '@/utils/numberFormat'
 
 const { mobile } = useDisplay()
@@ -455,7 +456,7 @@ const authStore = useAuthStore()
 // backend/app/routers/feo_categories.py). Экспорт/просмотр остаются доступны
 // без этого права — прячем только create/edit/delete/import/reorder/drag,
 // а не саму вкладку (require_tab('feo_categories') отдельный, читающий).
-const canEditFeo = computed(() => authStore.hasAction('feo_category.edit'))
+const canEditFeo = computed(() => authStore.hasAction(ACTIONS.FEO_CATEGORY_EDIT!))
 
 interface SubsidyRow {
   id: number; name: string; year: number

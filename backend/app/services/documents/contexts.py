@@ -12,6 +12,10 @@ from fastapi import HTTPException
 
 from app.routers.purchases import is_framework_head
 from app.services.fio import compose_fio as _compose_fio
+from app.services.acceptance_docs import (
+    derived_scalars as _acceptance_derived_scalars,
+    total_amount as _acceptance_total_amount,
+)
 
 from .doc_types import CONTRACT_FAMILY_DOC_TYPES, FEO_PATH_UNRESOLVED_LABEL
 from .formatting import (
@@ -108,7 +112,7 @@ def _build_acceptance_doc_context(p, doc_type: str, doc_indices_csv: str | None)
 
     def _legacy_amount():
         return _fmt_money(
-            p.acceptance_doc_amount
+            _acceptance_total_amount(p)
             or p.contract_price
             or p.planned_total_price
             or p.total_nmck
@@ -148,13 +152,18 @@ def _build_acceptance_doc_context(p, doc_type: str, doc_indices_csv: str | None)
                 }
 
     # Legacy fallback (all other doc_types OR no JSONB data)
+    # ПРАВИЛО №6 (2026-09-07, группа D4): «одиночный» документ — из
+    # app.services.acceptance_docs.derived_scalars (первый JSONB-документ, с
+    # фолбэком на legacy-скаляры для немигрированных закупок), не напрямую
+    # из скаляров.
+    _acc = _acceptance_derived_scalars(p)
     return {
-        "acceptance_doc_name":   p.acceptance_doc_name or "",
-        "acceptance_doc_number": p.acceptance_doc_number or "",
-        "acceptance_doc_date":   _fmt_date(p.acceptance_doc_date) or "",
+        "acceptance_doc_name":   _acc["name"] or "",
+        "acceptance_doc_number": _acc["number"] or "",
+        "acceptance_doc_date":   _fmt_date(_acc["date"]) or "",
         "acceptance_doc_amount": (
-            _fmt_money(p.acceptance_doc_amount)
-            if p.acceptance_doc_amount
+            _fmt_money(_acc["amount"])
+            if _acc["amount"]
             else _legacy_amount()
         ),
     }
@@ -471,42 +480,28 @@ async def _resolve_user_dept(user, db, org_id: Optional[int] = None) -> str:
 async def _resolve_user_position(user, db, org_id: Optional[int] = None) -> str:
     """Возвращает должность пользователя для шаблона СЗ.
 
-    Приоритет:
-      1) user_organizations.position где org_id == org_id (если задан и не пустой)
-      2) user_organizations.position первая (любая org)
-      3) User.position (legacy)
-      4) "" если нет
+    Тонкая обёртка над app.services.user_position.resolve_user_position —
+    единственном источнике правил резолюции (Правило №6: не считать должность
+    заново в каждом месте). Приоритет см. в докстринге resolve_user_position:
+    UO.position по org_id → единственное/первое членство → User.position (legacy,
+    только когда членств нет вовсе).
     """
     if user is None:
         return ""
+    from app.services.user_position import resolve_user_position
     try:
         from app.models.user_organization import UserOrganization
         from sqlalchemy import select as _sel
-        if org_id is not None:
-            res = await db.execute(
-                _sel(UserOrganization.position)
-                .where(
-                    UserOrganization.user_id == user.id,
-                    UserOrganization.org_id == org_id,
-                )
+        rows = (
+            await db.execute(
+                _sel(UserOrganization)
+                .where(UserOrganization.user_id == user.id)
                 .order_by(UserOrganization.id)
-                .limit(1)
             )
-            pos = res.scalar_one_or_none()
-            if pos:
-                return pos
-        res = await db.execute(
-            _sel(UserOrganization.position)
-            .where(UserOrganization.user_id == user.id)
-            .order_by(UserOrganization.id)
-            .limit(1)
-        )
-        pos = res.scalar_one_or_none()
-        if pos:
-            return pos
+        ).scalars().all()
     except Exception:
-        pass
-    return getattr(user, "position", None) or ""
+        rows = []
+    return resolve_user_position(user, org_id=org_id, memberships=rows) or ""
 
 
 def _format_service_term(p) -> str:

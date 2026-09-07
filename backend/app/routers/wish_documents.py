@@ -147,9 +147,13 @@ async def generate_wish_service_note(
                 await db.execute(select(UserModel).where(UserModel.id == initiator_id))
             ).scalar_one_or_none()
             if u:
+                # Rule #6: не читаем u.position напрямую — единственный резолвер
+                # должности (org-aware, с legacy fallback внутри) уже здесь.
                 initiator = SimpleNamespace(
                     full_name=u.full_name or u.username,
-                    role_name=u.position or "",
+                    role_name=await _resolve_user_position_for_wish(
+                        u, db, getattr(w.subsidy, "org_id", None) if w.subsidy else None
+                    ),
                     user=u,
                 )
 

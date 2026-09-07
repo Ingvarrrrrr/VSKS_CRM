@@ -13,6 +13,7 @@ import { useUndoRedo } from '@/composables/useUndoRedo'
 import { useFeoLeaves } from '@/composables/useFeoLeaves'
 import { useFeoTreeNodes } from '@/composables/useFeoTreeNodes'
 import { useFeoNodeAmounts } from '@/composables/useFeoNodeAmounts'
+import { ACTIONS } from '@/constants/permissionActions'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
 import { numOrNull } from '@/utils/numberFormat'
 import type { WishesContext } from './useWishesContext'
@@ -526,7 +527,7 @@ export function useWishForm(deps: {
   function setIsChainApprover(v: boolean) { _isChainApproverRef.value = v }
 
   const canEditWishFeo = computed(() =>
-    can('wish.edit_feo')
+    can(ACTIONS.WISH_EDIT_FEO!)
     && (
       canAssigneeAct.value
       || (!!editingWish.value && editingWish.value.status === 'submitted' && isChainApprover.value)

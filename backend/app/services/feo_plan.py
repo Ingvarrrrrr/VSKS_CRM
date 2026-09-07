@@ -32,6 +32,7 @@ from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.subsidy import Subsidy
 from app.services.purchase_summary import purchase_summaries_by_id
+from app.services.acceptance_docs import total_amount as _acceptance_total_amount
 
 # «Заказано» и дальше — закупка уже реально размещена (в отличие от plan_schedule/
 # work_in_progress/contracted, которые ещё черновик плана закупок). FACT_CONFIRMED_STATUSES —
@@ -150,9 +151,11 @@ def purchase_item_fact_amount(
             return contract_item_total, False
         if pi.final_total is not None:
             return Decimal(str(pi.final_total)), False
-        if purchase.acceptance_doc_amount is not None:
-            doc_amount = Decimal(str(purchase.acceptance_doc_amount))
-            amt = (doc_amount * ratio).quantize(_CENTS) if items_count > 1 else doc_amount
+        # ПРАВИЛО №6 (2026-09-07, группа D4): источник истины — JSONB
+        # acceptance_docs (см. app.services.acceptance_docs.total_amount).
+        _doc_amount = _acceptance_total_amount(purchase)
+        if _doc_amount is not None:
+            amt = (_doc_amount * ratio).quantize(_CENTS) if items_count > 1 else _doc_amount
             return amt, items_count > 1
         return Decimal(str(pi.total_price or 0)), False
     # plan_schedule — это ещё ПЛАН, факта нет.

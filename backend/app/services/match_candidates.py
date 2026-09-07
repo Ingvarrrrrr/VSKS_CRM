@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.bank_statement import BankPayment
 from app.models.purchase import Purchase
 from app.models.payment import Payment
+from app.services.acceptance_docs import sum_docs_amount as _sum_docs_amount
 
 # Tolerance for sum match — копейки от округления
 AMOUNT_TOL = Decimal("0.02")
@@ -72,18 +73,20 @@ def _purchase_amount(p: Purchase) -> Optional[Decimal]:
 
 
 def _purchase_delivered_amount(p: Purchase) -> Decimal:
-    """SUM acceptance_docs[].amount (Phase 26-H JSONB) ИЛИ legacy."""
+    """SUM acceptance_docs[].amount (Phase 26-H JSONB) ИЛИ legacy.
+
+    ПРАВИЛО №6 (2026-09-07, группа D4): суммирование JSONB — общая функция
+    app.services.acceptance_docs.sum_docs_amount (та же, что и total_amount()
+    там использует внутри), не собственная копия цикла. Фолбэк на
+    delivery_payment_amount — ДРУГОЕ legacy-поле (не acceptance_doc_amount,
+    вне зоны этой волны, см. app/routers/contracts.py ~176), оставлен как есть.
+    """
     docs = p.acceptance_docs or []
-    total = Decimal(0)
-    if isinstance(docs, list):
-        for d in docs:
-            if isinstance(d, dict) and d.get('amount') is not None:
-                try:
-                    total += Decimal(str(d['amount']))
-                except Exception:
-                    pass
-    if total == 0 and p.delivery_payment_amount is not None:
-        total = Decimal(str(p.delivery_payment_amount))
+    total = _sum_docs_amount(docs if isinstance(docs, list) else [])
+    if total is None or total == 0:
+        if p.delivery_payment_amount is not None:
+            return Decimal(str(p.delivery_payment_amount))
+        return total if total is not None else Decimal(0)
     return total
 
 

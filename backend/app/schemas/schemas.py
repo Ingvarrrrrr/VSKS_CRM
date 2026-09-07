@@ -1080,6 +1080,24 @@ class PurchaseOut(PurchaseCreate):
     excess_warnings: List[dict] = []
     model_config = {"from_attributes": True}
 
+    @model_validator(mode='after')
+    def _derive_acceptance_doc_scalars(self):
+        """ПРАВИЛО №6 (2026-09-07, группа D4): acceptance_doc_name/date/number/
+        amount больше НЕ пишутся в БД (источник истины — JSONB acceptance_docs,
+        см. app.services.acceptance_docs) — но фронт продолжает их читать как
+        обычные поля закупки, поэтому сериализатор ВЫЧИСЛЯЕТ их здесь из
+        acceptance_docs (первый документ), с фолбэком на уже прочитанные из
+        ORM legacy-скаляры для немигрированных закупок (acceptance_docs пуст).
+        Единая логика с app.services.acceptance_docs.derived_scalars — не
+        вторая копия («первый документ»/фолбэк совпадают дословно)."""
+        from app.services.acceptance_docs import derived_scalars
+        derived = derived_scalars(self)
+        self.acceptance_doc_name = derived["name"]
+        self.acceptance_doc_number = derived["number"]
+        self.acceptance_doc_date = derived["date"]
+        self.acceptance_doc_amount = derived["amount"]
+        return self
+
 class PurchaseAmountsOut(BaseModel):
     """ПРАВИЛО №6 (2026-09-05): единственный расчёт «суммы закупки» — см.
     app/services/purchase_amounts.py::purchase_amounts. plan/contract/fact/

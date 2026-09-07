@@ -208,7 +208,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { apiFetch } from '@/api'
-import { PURCHASE_STATUS_ORDER, purchaseStatusColor } from '@/constants/purchaseStatus'
+import { PURCHASE_STATUS_ORDER, purchaseStatusColor, purchaseMethodLabel } from '@/constants/purchaseStatus'
 import { safeDiv } from '@/utils/numberFormat'
 
 interface FunnelItem { status: string; count: number; total: number }
@@ -239,9 +239,10 @@ const STATUS_COLORS: Record<string, string> = {
   planned: purchaseStatusColor('plan_schedule'),
   in_progress: purchaseStatusColor('work_in_progress'),
 }
+// Единый источник подписи способа закупки: frontend/src/constants/purchaseStatus.ts (Правило №6)
 const METHOD_LABELS: Record<string, string> = {
-  single: 'Единственный поставщик', competitive: 'Конкурсная процедура',
-  quote_request: 'Запрос котировок', unknown: 'Не указано',
+  single: purchaseMethodLabel('single'), competitive: purchaseMethodLabel('competitive'),
+  quote_request: purchaseMethodLabel('quote_request'), unknown: 'Не указано',
 }
 const METHOD_COLORS: Record<string, string> = {
   single: 'blue', competitive: 'teal', quote_request: 'purple', unknown: 'grey',

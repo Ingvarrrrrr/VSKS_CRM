@@ -31,6 +31,7 @@ from app.models.purchase_receipt import PurchaseReceipt
 from app.models.user import User
 from app.product_matcher import find_matching_product
 from app.schemas.schemas import ReceiptCreate, ReceiptOut
+from app.services import acceptance_docs as _acc_docs
 
 
 router = APIRouter(prefix="/api/purchases", tags=["receipts"])
@@ -460,7 +461,6 @@ async def _create_receipt_with_items(
     # First receipt sets the basis; bank_payment match will override later.
     p = await db.get(Purchase, purchase_id)
     if p and p.purchase_method == 'advance':
-        from sqlalchemy.orm import attributes as _orm_attrs
         changed = False
         rd = receipt.receipt_datetime
         if rd and not p.contract_date:
@@ -555,9 +555,9 @@ async def _create_receipt_with_items(
         amt = float(receipt.total_sum) if receipt.total_sum is not None else 0
 
         if not any(_is_same_receipt_doc(d, rcpt_id, fd_num, amt) for d in existing_docs):
-            existing_docs.append(new_doc)
-            p.acceptance_docs = existing_docs
-            _orm_attrs.flag_modified(p, "acceptance_docs")
+            # ПРАВИЛО №6: единственный писатель acceptance_docs —
+            # app.services.acceptance_docs (add_doc делает append + dedup + flag_modified).
+            _acc_docs.add_doc(p, new_doc)
             changed = True
         else:
             # Обновить file_id в уже существующей записи, если он был NULL
@@ -569,8 +569,7 @@ async def _create_receipt_with_items(
                     changed = True
                 updated_docs.append(d)
             if updated_docs != existing_docs:
-                p.acceptance_docs = updated_docs
-                _orm_attrs.flag_modified(p, "acceptance_docs")
+                _acc_docs.replace_docs(p, updated_docs)
 
         if changed:
             await db.commit()
@@ -681,7 +680,6 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
     force=True — байпасит snapshot-hash gate (нужно когда меняется внешняя
     логика парсинга, например НДС-маппинг в phase26-aaa-2, и старые позиции
     нужно перезаполнить из raw_json несмотря на неизменный hash items)."""
-    from sqlalchemy.orm import attributes as _orm_attrs
     p = await db.get(Purchase, purchase_id)
     if not p:
         return {"ok": False, "reason": "not_found", "items_updated": 0, "files_attached": 0, "acceptance_docs_added": 0}
@@ -902,21 +900,12 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
 
     # Phase 27.1.11 / Phase 27.1.12: cleanup pre-existing duplicates в acceptance_docs
     # (по type+number+amount), включая legacy format где type=None но name="Чек"
-    seen_keys: set = set()
-    deduped_docs = []
-    for d in existing_docs:
-        is_check = (
-            d.get("type") == "Чек"
-            or (d.get("type") is None and d.get("name") == "Чек")
-        )
-        if is_check:
-            key = (str(d.get("number") or ""), float(d.get("amount") or 0))
-            if key in seen_keys and key[0]:  # дубликат с непустым number
-                docs_changed = True
-                continue  # skip дубликат
-            seen_keys.add(key)
-        deduped_docs.append(d)
-    existing_docs = deduped_docs
+    # ПРАВИЛО №6 (2026-09-07): дедуп — та же функция, что и backfill 26-ooo
+    # (app.services.acceptance_docs.dedup), не собственная копия ключа.
+    _deduped_docs = _acc_docs.dedup(existing_docs)
+    if len(_deduped_docs) != len(existing_docs):
+        docs_changed = True
+    existing_docs = _deduped_docs
 
     # Phase 27.1.11 / Phase 27.1.12: helper — dedup не только по receipt_id,
     # но и по (type/name='Чек'+number+amount), включая legacy format без type
@@ -1042,8 +1031,7 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
         docs_changed = True
 
     if docs_changed:
-        p.acceptance_docs = existing_docs
-        _orm_attrs.flag_modified(p, "acceptance_docs")
+        _acc_docs.replace_docs(p, existing_docs)
 
     # Phase 26-II / Phase 27.1.12: ContractItem find-or-update вместо create-always
     # (устранение дублей для advance-закупок при повторном recompute)
@@ -1551,11 +1539,7 @@ async def delete_receipt(
     # U-4: при удалении чека — убрать запись из acceptance_docs (если авансовый)
     purchase = await db.get(Purchase, purchase_id)
     if purchase and purchase.purchase_method == 'advance' and purchase.acceptance_docs:
-        from sqlalchemy.orm import attributes as _orm_attrs
-        new_docs = [d for d in (purchase.acceptance_docs or []) if d.get("receipt_id") != receipt_id]
-        if len(new_docs) != len(purchase.acceptance_docs or []):
-            purchase.acceptance_docs = new_docs
-            _orm_attrs.flag_modified(purchase, "acceptance_docs")
+        _acc_docs.remove_doc(purchase, lambda d: d.get("receipt_id") == receipt_id)
 
     await db.delete(r)
     await db.commit()

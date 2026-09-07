@@ -52,6 +52,14 @@ class Purchase(Base):
     delivery_date = Column(Date)
     country_origin = Column(String(100))
     subject = Column(String(500))
+    # ПРАВИЛО №6 (2026-09-07, группа D4): производный КЭШ первого документа
+    # из JSONB acceptance_docs ниже — пишется ТОЛЬКО
+    # app.services.acceptance_docs.sync_scalars (вызывается изнутри
+    # add_doc/remove_doc/replace_docs). Нужен report-builder'у
+    # (field_registry.py/pivot_engine.py — читают сырые SQL-колонки, не могут
+    # звать Python derived_scalars() на лету). Любой другой читатель обязан
+    # использовать app.services.acceptance_docs.derived_scalars(p)/
+    # total_amount(p) напрямую, не эти колонки.
     acceptance_doc_name = Column(String(200))
     acceptance_doc_date = Column(Date)
     acceptance_doc_number = Column(String(100))

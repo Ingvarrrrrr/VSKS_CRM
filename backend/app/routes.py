@@ -124,6 +124,7 @@ from app.routers import exports as exports_router
 from app.routers import okpd2 as okpd2_router
 from app.routers import expense_codes as expense_codes_router
 from app.routers import diag as diag_router
+from app.routers import dictionaries as dictionaries_router
 
 
 def register_routes(app: FastAPI) -> None:
@@ -272,3 +273,4 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(expense_codes_router.router)         # /api/expense-codes
 
     app.include_router(diag_router.router)                 # /api/diag/*
+    app.include_router(dictionaries_router.router)         # /api/dictionaries/purchase (Правило №6)

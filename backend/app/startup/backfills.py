@@ -205,11 +205,17 @@ async def _phase26_ooo_acceptance_docs_dedup():
     # receipt_id давали 2 строки на один чек. Phase 26-ooo backend-фикс
     # усилил дедуп при auto-add, но исторические дубли уже в БД.
     # Идемпотентно: убирает дубли по ключу (type, number, amount).
+    #
+    # ПРАВИЛО №6 (2026-09-07, группа D4): алгоритм дедупа переехал в
+    # app.services.acceptance_docs.dedup — единственный писатель acceptance_docs
+    # (используется также purchase_receipts.py/purchases.py/purchase_import_parser.py).
+    # Этот backfill теперь просто зовёт его на исторических данных.
     try:
         from sqlalchemy import select as _sel
         from sqlalchemy.orm.attributes import flag_modified as _flag_mod
         from app.database import async_session as _async_session
         from app.models.purchase import Purchase as _Purchase
+        from app.services.acceptance_docs import dedup as _dedup_docs, sync_scalars as _sync_scalars
         async with _async_session() as _db:
             _q = await _db.execute(
                 _sel(_Purchase).where(_Purchase.acceptance_docs.is_not(None))
@@ -220,33 +226,13 @@ async def _phase26_ooo_acceptance_docs_dedup():
                 _docs = list(_p.acceptance_docs or [])
                 if len(_docs) <= 1:
                     continue
-                _seen = set()
-                _kept = []
-                for _d in _docs:
-                    _key = (
-                        _d.get("type") or "",
-                        str(_d.get("number") or ""),
-                        round(float(_d.get("amount") or 0), 2),
-                    )
-                    if _key in _seen and _key[1] != "":
-                        # дубликат — пропускаем, но если у дубля есть file_id
-                        # и в kept[i] нет — переносим
-                        if _d.get("file_id"):
-                            for _k in _kept:
-                                _kk = (
-                                    _k.get("type") or "",
-                                    str(_k.get("number") or ""),
-                                    round(float(_k.get("amount") or 0), 2),
-                                )
-                                if _kk == _key and not _k.get("file_id"):
-                                    _k["file_id"] = _d.get("file_id")
-                                    break
-                        continue
-                    _seen.add(_key)
-                    _kept.append(_d)
+                _kept = _dedup_docs(_docs)
                 if len(_kept) != len(_docs):
                     _p.acceptance_docs = _kept
                     _flag_mod(_p, "acceptance_docs")
+                    # ПРАВИЛО №6: дедуп мог поменять docs[0] — синхронизируем
+                    # кэш-скаляры (единственный писатель — sync_scalars).
+                    _sync_scalars(_p)
                     _dedup_total += len(_docs) - len(_kept)
             if _dedup_total:
                 await _db.commit()

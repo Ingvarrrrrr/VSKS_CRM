@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.department import Department
 from app.models.user_organization import UserOrganization
+from app.services.user_position import set_user_position
 
 POSITION_HEAD = "Начальник отдела"
 POSITION_DEPUTY = "Заместитель начальника отдела"
@@ -32,7 +33,7 @@ async def _membership(db: AsyncSession, dept: Department, user_id: int) -> UserO
 async def _set_member_position(db, dept, user_id, position):
     m = await _membership(db, dept, user_id)
     if m is not None:
-        m.position = position
+        await set_user_position(db, position, membership=m)
 
 
 async def _clear_member_position(db, dept, user_id, expected):
@@ -40,7 +41,7 @@ async def _clear_member_position(db, dept, user_id, expected):
     произвольные должности)."""
     m = await _membership(db, dept, user_id)
     if m is not None and m.position == expected:
-        m.position = None
+        await set_user_position(db, None, membership=m)
 
 
 async def sync_head_from_position(db: AsyncSession, dept: Department, user_id: int, position: str | None):

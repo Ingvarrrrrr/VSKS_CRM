@@ -2455,6 +2455,7 @@ import { ref, computed, onMounted, onUnmounted, reactive, watch, nextTick, shall
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useAuthStore } from '@/stores/auth'
+import { ACTIONS } from '@/constants/permissionActions'
 import { useContractorsStore } from '@/stores/contractors'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { listContractItems, replaceAllContractItems } from '@/api/contractItems'
@@ -2513,7 +2514,7 @@ import { useFeoTreeNodes } from '@/composables/useFeoTreeNodes'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
 import { decodeQrFromImageFile } from '@/utils/qrDecode'
 import { numOrNull } from '@/utils/numberFormat'
-import { PURCHASE_STATUS_ORDER, purchaseStatusColor } from '@/constants/purchaseStatus'
+import { PURCHASE_STATUS_ORDER, purchaseStatusColor, purchaseStatusLabel, purchaseSubstatusLabel } from '@/constants/purchaseStatus'
 
 const monthlyStagesDialogShow = ref(false)
 function onMonthlyStagesCreated(res: any) {
@@ -2774,28 +2775,18 @@ const backRoute = computed(() => {
 })
 
 const STATUS_ORDER = PURCHASE_STATUS_ORDER
-// Подписи здесь намеренно длиннее/другие по смыслу, чем в общем словаре
-// (заголовок формы закупки: «Желания сотрудников», «Заключён договор/заказ») — оставлены как есть.
-const STATUS_LABEL_BASE: Record<string, string> = {
-  wishes: 'Желания сотрудников', plan_schedule: 'План закупок',
-  work_in_progress: 'Ведётся работа',
-  contracted: 'Заключён договор', ordered: 'Заказано', delivered: 'Поставлено', paid: 'Оплачено',
-}
+// Единый источник подписи/цвета статуса закупки: frontend/src/constants/purchaseStatus.ts
+// (Правило №6; раньше здесь был отдельный STATUS_LABEL_BASE со своими текстами —
+// сведён к единому словарю, framework-переопределение 'contracted' оставлено).
 const STATUS_LABEL = computed<Record<string, string>>(() => ({
-  ...STATUS_LABEL_BASE,
-  contracted: isFramework.value ? 'Заключён заказ' : 'Заключён договор',
+  ...Object.fromEntries(PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusLabel(s)])),
+  contracted: isFramework.value ? 'Заключён заказ' : purchaseStatusLabel('contracted'),
 }))
-// Единый источник цвета статуса закупки: frontend/src/constants/purchaseStatus.ts
 const STATUS_COLOR: Record<string, string> = Object.fromEntries(
   PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusColor(s)])
 )
-const SUBSTATUS_OPTIONS = [
-  { value: 'tz_forming', title: 'Формирование ТЗ' },
-  { value: 'kp_collecting', title: 'Сбор КП' },
-  { value: 'on_platform', title: 'На площадке' },
-  { value: 'contractor_negotiations', title: 'Переговоры с подрядчиком' },
-  { value: 'contract_signing', title: 'Договор на подписании' },
-]
+const SUBSTATUS_OPTIONS = ['tz_forming', 'kp_collecting', 'on_platform', 'contractor_negotiations', 'contract_signing']
+  .map(value => ({ value, title: purchaseSubstatusLabel(value) }))
 interface FeoCategory { id: number; name: string; parent_id: number | null; level: number; subsidy_id: number; budget?: number | null }
 interface Contractor { id: number; name: string; inn?: string }
 interface Subsidy { id: number; name: string; year: number; budget: number; org_id?: number | null; org_inn?: string | null }
@@ -3525,8 +3516,8 @@ const itemsEditorRef = ref<any>(null)
 const budgetInfo = ref<{ remaining: number; exceeded: boolean; over: number; limit?: number; spent?: number } | null>(null)
 // Остатки бюджета по ФЭО (по правам: лист всем с view_leaf, уровни выше — view_all_levels)
 const authStore = useAuthStore()
-const canViewLeafBudget = computed(() => authStore.hasAction('feo_budget.view_leaf'))
-const canViewAllLevelsBudget = computed(() => authStore.hasAction('feo_budget.view_all_levels'))
+const canViewLeafBudget = computed(() => authStore.hasAction(ACTIONS.FEO_BUDGET_VIEW_LEAF!))
+const canViewAllLevelsBudget = computed(() => authStore.hasAction(ACTIONS.FEO_BUDGET_VIEW_ALL_LEVELS!))
 type FeoNode = { id: number; name: string; level: number; path: string; budget: number; used: number; residual: number; contracted_used: number; planned_used: number; uncontracted_remaining: number; spendable_remaining: number }
 type FeoLeaf = FeoNode & { ancestors: FeoNode[] }
 const feoDirections = ref<FeoNode[]>([])

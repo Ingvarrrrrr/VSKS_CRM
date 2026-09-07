@@ -45,6 +45,7 @@
 import { computed } from 'vue'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
+import { ACTIONS } from '@/constants/permissionActions'
 import RegistryExportButton from '@/components/RegistryExportButton.vue'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { useSubsidyList } from '@/composables/subsidies/useSubsidyList'
@@ -70,5 +71,5 @@ function showSnack(text: string, color: ToastType = 'success') {
 }
 
 const authStore = useAuthStore()
-const canEditFeo = computed(() => authStore.hasAction('feo_category.edit'))
+const canEditFeo = computed(() => authStore.hasAction(ACTIONS.FEO_CATEGORY_EDIT!))
 </script>

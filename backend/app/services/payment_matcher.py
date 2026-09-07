@@ -23,6 +23,7 @@ from app.models.subsidy import Subsidy
 # здесь, чтобы существующие импорты (`from app.services.payment_matcher import
 # normalize_doc_number`) не сломались.
 from app.services.payment_basis import normalize_doc_number  # noqa: F401
+from app.services.acceptance_docs import derived_scalars as _acceptance_derived_scalars
 
 
 async def resolve_subsidy(
@@ -183,7 +184,11 @@ async def auto_match(bp: BankPayment, db: AsyncSession) -> None:
             if not norm_act:
                 continue
             for p in purchases:
-                if p.acceptance_doc_number and normalize_doc_number(p.acceptance_doc_number) == norm_act:
+                # ПРАВИЛО №6 (2026-09-07, группа D4): номер закрывающего
+                # документа — из JSONB acceptance_docs (первый документ), не
+                # напрямую из скаляра, см. app.services.acceptance_docs.
+                _doc_number = _acceptance_derived_scalars(p)["number"]
+                if _doc_number and normalize_doc_number(_doc_number) == norm_act:
                     bp.matched_purchase_id = p.id
                     matched_purchase = True
                     break

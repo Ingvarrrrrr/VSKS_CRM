@@ -27,6 +27,7 @@ from app.services.org_assignment_dates import (
     first_row_assignment_dates,
     position_change_date,
 )
+from app.services.user_position import resolve_user_position
 
 router = APIRouter(tags=["hierarchy"])
 
@@ -175,7 +176,6 @@ async def get_hierarchy_graph(
 
     # Load dept members from user_organizations (single source of truth)
     members_map: dict[int, list[int]] = {d.id: [] for d in depts}
-    user_position_map: dict[int, str] = {}  # user_id -> position from UserOrganization
     if dept_ids:
         uo_dept_rows = (await db.execute(
             select(UserOrganization).where(
@@ -185,8 +185,6 @@ async def get_hierarchy_graph(
         for r in uo_dept_rows:
             if r.dept_id in members_map and r.user_id not in members_map[r.dept_id]:
                 members_map[r.dept_id].append(r.user_id)
-            if r.position and r.user_id not in user_position_map:
-                user_position_map[r.user_id] = r.position
 
     # Also ensure dept head is always in member_ids
     for d in depts:
@@ -220,12 +218,14 @@ async def get_hierarchy_graph(
     extra_orgs_map: dict[int, list[int]] = {}
     user_org_details: dict[int, list[dict]] = {}  # user_id -> [{org_id, org_name, position, salary, pct}]
     org_name_map = {o.id: o.name for o in orgs}
+    memberships_by_user: dict[int, list] = {}
     if user_ids:
         uo_rows = (await db.execute(
             select(UserOrganization).where(UserOrganization.user_id.in_(user_ids))
         )).scalars().all()
         dept_name_map = {d.id: d.name for d in depts}
         for r in uo_rows:
+            memberships_by_user.setdefault(r.user_id, []).append(r)
             extra_orgs_map.setdefault(r.user_id, []).append(r.org_id)
             user_org_details.setdefault(r.user_id, []).append({
                 "org": org_name_map.get(r.org_id, f"#{r.org_id}"),
@@ -327,7 +327,10 @@ async def get_hierarchy_graph(
                 "avatar": getattr(u, "avatar", None),
                 # Phase 30: фото профиля для аватара в иерархии (если загружено)
                 "photo_url": getattr(u, "profile_photo", None),
-                "position": user_position_map.get(u.id) or getattr(u, "position", None),
+                # Rule #6: единственный резолвер должности — org_id не задан
+                # (карточка юзера общая на весь граф) → единственное/первое
+                # членство, иначе legacy User.position (только когда членств нет).
+                "position": resolve_user_position(u, memberships=memberships_by_user.get(u.id)),
                 "user_orgs": (
                     [{"org": org_name_map.get(u.org_id, ""), "dept": "", "pos": u.position or "", "salary": None, "pct": None}]
                     if u.org_id and not any(d.get("org") == org_name_map.get(u.org_id) for d in user_org_details.get(u.id, []))
@@ -683,7 +686,10 @@ async def get_user_salary(
         can_view = True  # org admins can see their org members' salary
     if not can_view:
         # Check if current user is chief accountant (by position)
-        pos = (current_user.position or "").lower()
+        own_memberships = (await db.execute(
+            select(UserOrganization).where(UserOrganization.user_id == current_user.id)
+        )).scalars().all()
+        pos = (resolve_user_position(current_user, memberships=own_memberships) or "").lower()
         if "бухгалтер" in pos and "главн" in pos:
             can_view = True
     if not can_view:

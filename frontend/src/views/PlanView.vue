@@ -409,7 +409,7 @@ import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import * as XLSX from 'xlsx'
-import { PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusColor } from '@/constants/purchaseStatus'
+import { PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusColor, purchaseMethodLabel as sharedMethodLabel } from '@/constants/purchaseStatus'
 import { useToast, type ToastType } from '@/composables/useToast'
 import type { PurchaseAmounts } from '@/types/purchaseAmounts'
 import { toAmount } from '@/types/purchaseAmounts'
@@ -871,8 +871,9 @@ const STATUS_COLORS: Record<string, string> = {
 const statusLabel = (s: string) => STATUS_LABELS[s] ?? s
 const statusColor = (s: string) => STATUS_COLORS[s] ?? 'grey'
 
+// Единый источник подписи способа закупки: frontend/src/constants/purchaseStatus.ts (Правило №6)
 const methodLabel = (m?: string | null) =>
-  m === 'single' ? 'Единственный поставщик' : m === 'competitive' ? 'Конкурсная процедура' : ''
+  m === 'single' || m === 'competitive' ? sharedMethodLabel(m) : ''
 
 // ─── Excel export ──────────────────────────────────────────────────────────────
 const exportExcel = () => {

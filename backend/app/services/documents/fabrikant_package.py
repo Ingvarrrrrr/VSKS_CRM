@@ -37,6 +37,7 @@ from .templates import _resolve_vat_exemption_basis, _vat_exemption_missing_hint
 from .contexts import _signatory_split, _build_contract_items_context, _format_service_term
 from .morphology import _to_gen_fio, _inflect_phrase_genitive
 from .docx_post import _strip_tech_spec_legend
+from app.services.acceptance_docs import derived_scalars as _acceptance_derived_scalars
 
 import logging
 
@@ -274,6 +275,10 @@ async def render_fabrikant_package_files(
 
     ci_ctx_z = await _build_contract_items_context(p, db)
 
+    # ПРАВИЛО №6 (2026-09-07, группа D4): закрывающий документ — из JSONB
+    # acceptance_docs (первый документ), не напрямую из legacy-скаляров.
+    _acc = _acceptance_derived_scalars(p)
+
     context = {
         "purchase_number": p.purchase_number or "",
         "registry_number": p.registry_number or "",
@@ -365,10 +370,10 @@ async def render_fabrikant_package_files(
         # Дата окончания срока действия договора (п. 8.1) — поле Purchase.contract_end_date
         "contract_end_date": _fmt_date(p.contract_end_date),
         "third_party_involved": bool(p.third_party_involved),
-        "acceptance_doc_name": p.acceptance_doc_name or "",
-        "acceptance_doc_number": p.acceptance_doc_number or "",
-        "acceptance_doc_date": _fmt_date(p.acceptance_doc_date) or "",
-        "acceptance_doc_amount": _fmt_money(p.acceptance_doc_amount) if p.acceptance_doc_amount else "",
+        "acceptance_doc_name": _acc["name"] or "",
+        "acceptance_doc_number": _acc["number"] or "",
+        "acceptance_doc_date": _fmt_date(_acc["date"]) or "",
+        "acceptance_doc_amount": _fmt_money(_acc["amount"]) if _acc["amount"] else "",
         "receipts": [],
         "receipt_images": [],
         "receipts_small": [],

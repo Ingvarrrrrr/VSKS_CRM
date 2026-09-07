@@ -1,6 +1,5 @@
 import difflib
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
-from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import select, func, delete, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,6 +36,7 @@ from app.services.tz_excess_approval import (
 # patch_purchase_item использует свою копию импорта в
 # app/routers/purchase_items_edit.py). См. app/services/plan_autoassign.py.
 from app.services.plan_autoassign import auto_assign_planned_items
+from app.services import acceptance_docs as _acc_docs
 # Правка прод-инцидента (сессия 2026-09-01): PUT ниже удаляет и пересоздаёт
 # ВСЕ PurchaseItem закупки — ON DELETE SET NULL рвёт ContractItem.source_item_id.
 # relink_contract_items восстанавливает связь после пересоздания, см. docstring
@@ -994,6 +994,14 @@ async def update_purchase(
     old_contract_id = p.contract_id
     old_type = p.purchase_contract_type
     payload_dict = data.model_dump(exclude={"items", "subsidy_allocations"}, exclude_unset=True)
+    # ПРАВИЛО №6 (2026-09-07, группа D4): acceptance_doc_name/date/number/
+    # amount — производный кэш JSONB acceptance_docs, пишет его ТОЛЬКО
+    # app.services.acceptance_docs.sync_scalars (вызывается из replace_docs()
+    # ниже) — прямая правка этих 4 полей через payload запрещена, значения
+    # из payload игнорируются (схема их всё ещё принимает для обратной
+    # совместимости старых клиентов/скриптов).
+    for _legacy_key in ("acceptance_doc_name", "acceptance_doc_date", "acceptance_doc_number", "acceptance_doc_amount"):
+        payload_dict.pop(_legacy_key, None)
     # Phase 27.1.4: race-defence — если payload приходит с contractor_id=None,
     # а в БД он был установлен И contract_id не меняется → игнорируем stale null.
     # Это защищает от race в editFrameworkSeq: форма шлёт PUT до завершения async fetch контрагента.
@@ -1017,10 +1025,13 @@ async def update_purchase(
         # Don't overwrite frozen total_nmck
         if is_contracted and k in ("total_nmck", "planned_total_price"):
             continue
+        # ПРАВИЛО №6: acceptance_docs — единственный писатель app.services.
+        # acceptance_docs.replace_docs (dedup + flag_modified), не голый setattr.
+        if k == "acceptance_docs":
+            continue
         setattr(p, k, v)
-    # JSONB columns need explicit dirty-flag so SQLAlchemy detects mutations
-    if "acceptance_docs" in data.model_fields_set:
-        flag_modified(p, "acceptance_docs")
+    if "acceptance_docs" in payload_dict:
+        _acc_docs.replace_docs(p, payload_dict["acceptance_docs"])
 
     # Владелец (2026-08-12, «закупка сама становится планом»): PUT — единственный
     # путь добавить/поменять позицию в УЖЕ СУЩЕСТВУЮЩЕЙ закупке напрямую (в обход
@@ -1367,6 +1378,12 @@ async def update_purchase(
         import logging as _log
         _log.getLogger(__name__).warning("entity_change record failed: %s", _exc)
 
+    # ПРАВИЛО №6 (2026-09-07, группа D4): acceptance_doc_name/date/number/
+    # amount — производный кэш, уже синхронизирован app.services.
+    # acceptance_docs.replace_docs() выше (вызывается из setattr-цикла, если
+    # acceptance_docs был в payload) — отдельный overlay здесь не нужен,
+    # «голый» return p ниже уже отдаёт актуальные значения колонок.
+
     # 12-02: Return suggestions if any + Владелец (2026-09-02): сообщить фронту,
     # сколько привязок feo_planned_item_id сброшено сменой категории шапки
     # (см. _reset_incompatible_item_feo_links) — чтобы показать предупреждение
@@ -1526,8 +1543,12 @@ PATCHABLE_FIELDS = {
     "service_end_date", "service_term_days", "service_term_type",
     "service_deadline_date", "third_party_involved",
     "vat_applicable", "vat_rate", "vat_exemption_article", "vat_mode", "feo_per_item",
-    "acceptance_doc_name", "acceptance_doc_date", "acceptance_doc_number",
-    "acceptance_doc_amount",
+    # ПРАВИЛО №6 (2026-09-07, группа D4): acceptance_doc_name/date/number/amount
+    # убраны из PATCHABLE_FIELDS — это производный кэш JSONB acceptance_docs
+    # (app.services.acceptance_docs.sync_scalars, вызывается из replace_docs()
+    # ниже, когда PATCH меняет "acceptance_docs"); прямая правка этих 4 полей
+    # через PATCH теперь молча игнорируется (нет в PATCHABLE_FIELDS → цикл
+    # ниже их не тронет).
     # Phase 24 D-08: JSONB-массив закрывающих документов (АКТ/УПД/СЧФ/ТТН/...)
     "acceptance_docs",
     "payment_doc_number", "payment_doc_date",
@@ -1641,11 +1662,13 @@ async def patch_purchase(
             continue
         v = _coerce_patch_value(k, v)
         if getattr(p, k) != v:
-            setattr(p, k, v)
-            changed.append(k)
-            # JSONB колонки: SQLAlchemy не детектирует мутации без flag_modified
+            # ПРАВИЛО №6: acceptance_docs — единственный писатель
+            # app.services.acceptance_docs.replace_docs (dedup + flag_modified).
             if k == "acceptance_docs":
-                flag_modified(p, "acceptance_docs")
+                _acc_docs.replace_docs(p, v)
+            else:
+                setattr(p, k, v)
+            changed.append(k)
     # phase26-j-1 (fix): sync только при ИЗМЕНЕНИИ contract_id, иначе ручные правки
     # contract_number перетираются на каждом autosave (Phase 26 patches шлют contract_id вместе с другими полями).
     if p.contract_id and p.contract_id != old_contract_id_patch:

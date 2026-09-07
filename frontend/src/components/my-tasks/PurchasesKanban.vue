@@ -47,7 +47,7 @@
             </div>
             <div v-if="task.substatus" class="kanban-card-meta">
               <v-chip size="x-small" variant="outlined" color="teal">
-                {{ SUBSTATUS_LABEL[task.substatus] || task.substatus }}
+                {{ purchaseSubstatusLabel(task.substatus) || task.substatus }}
               </v-chip>
             </div>
             <div class="kanban-card-footer">
@@ -97,7 +97,7 @@
  * Pure presentation — no API calls, no router, no store access.
  */
 import { ref, computed } from 'vue'
-import { purchaseStatusColor } from '@/constants/purchaseStatus'
+import { purchaseStatusColor, purchaseSubstatusLabel } from '@/constants/purchaseStatus'
 
 export interface Purchase {
   id: number
@@ -160,15 +160,6 @@ const ARCHIVE_COLUMN: KanbanColumn = { status: 'paid', label: 'Оплачено 
 const visibleColumns = computed<KanbanColumn[]>(() =>
   props.showArchive ? [...COLUMNS, ARCHIVE_COLUMN] : COLUMNS
 )
-
-// ── Substatus labels ─────────────────────────────────────────────────────────
-const SUBSTATUS_LABEL: Record<string, string> = {
-  tz_forming: 'Формирование ТЗ',
-  kp_collecting: 'Сбор КП',
-  on_platform: 'На площадке',
-  contractor_negotiations: 'Переговоры с подрядчиком',
-  contract_signing: 'Договор на подписании',
-}
 
 // ── Subsidy filter (local UI state) ─────────────────────────────────────────
 const kanbanSubsidyFilter = ref<number | null>(null)

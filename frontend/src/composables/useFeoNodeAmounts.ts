@@ -17,6 +17,7 @@
 import { ref, watch, type Ref } from 'vue'
 import { apiFetch } from '@/api'
 import { useAuthStore } from '@/stores/auth'
+import { ACTIONS } from '@/constants/permissionActions'
 
 export interface FeoNodeAmount {
   /** Финансирование по ФЭО узла. */
@@ -37,7 +38,7 @@ export function useFeoNodeAmounts(opts: UseFeoNodeAmountsOptions) {
   watch(
     () => opts.subsidyId.value,
     async (subsidyId) => {
-      if (!subsidyId || !authStore.hasAction('feo_budget.view_tree_amounts')) {
+      if (!subsidyId || !authStore.hasAction(ACTIONS.FEO_BUDGET_VIEW_TREE_AMOUNTS!)) {
         nodeAmounts.value = null
         return
       }

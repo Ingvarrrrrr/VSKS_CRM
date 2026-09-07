@@ -23,6 +23,26 @@ class FieldDef:
     description: Optional[str] = None
 
 
+# ПРАВИЛО №6 (2026-09-07, группа D4): закрывающий документ закупки — источник
+# истины JSONB purchases.acceptance_docs (см. app.services.acceptance_docs),
+# скаляры acceptance_doc_name/number/date/amount больше НЕ пишутся новым кодом.
+# ⚠️ ИЗВЕСТНЫЙ ПРОБЕЛ (сознательно НЕ исправлен в этой волне): 4 поля ниже
+# (acceptance_doc_name/date/number/amount) и delivered_money всё ещё читают
+# ТОЛЬКО скаляр — для закупок, у которых закрывающий документ появился ПОСЛЕ
+# этой правки (JSONB заполнен, скаляр — нет), эти поля в конструкторе отчётов
+# (pivot_engine.py) будут показывать пусто/устаревшее значение. Причина —
+# pivot_engine._resolve_column()/_extract_value() понимают только «простая
+# колонка» ИЛИ «CASE WHEN» как готовое SQL-значение; произвольный COALESCE
+# с JSONB-подзапросом (SELECT SUM(...) FROM jsonb_array_elements(...)) ломает
+# _build_filters() (TextClause не поддерживает .ilike()/.in_()/>=/.desc() —
+# проверено) и list-режим (_extract_value молча возвращает None для сложных
+# выражений — тот же баг, что уже был исправлен для feo_planned_* через явный
+# спецкейс, см. _extract_feo_planned). Правильное решение — такой же явный
+# спецкейс в pivot_engine.py (_resolve_column/_extract_value), строящий
+# настоящий SQLAlchemy ColumnElement через Purchase.acceptance_docs[0]['name']
+# .astext + func.coalesce(...), а не строку sql_expr — отдельная задача,
+# см. отчёт группы D4 (2026-09-07).
+
 # Полный registry
 FIELDS: dict[str, FieldDef] = {
     # === ИДЕНТИФИКАЦИЯ ===

@@ -165,7 +165,15 @@ async def list_users(
         q = q.where(User.fleet_role == fleet_role)
     q = q.limit(limit)
     result = await db.execute(q)
-    return result.scalars().all()
+    users = result.scalars().all()
+    # Rule #6: единственный резолвер должности — users.position больше не
+    # синхронизируется при каждой правке, поэтому подставляем актуальное
+    # значение в ответ (не persist — сессия не коммитится после этого чтения).
+    from app.services.user_position import resolve_user_position, bulk_load_memberships
+    memberships_map = await bulk_load_memberships(db, (u.id for u in users))
+    for u in users:
+        u.position = resolve_user_position(u, memberships=memberships_map.get(u.id))
+    return users
 
 
 @router.get("/assignable-ids")
@@ -270,9 +278,10 @@ async def create_user(
     if user.org_id:
         await ensure_user_org_access(user.id, user.org_id, user.role, db)
         await db.commit()
-    # Sync to department if set
+    # Sync to department if set (свежий пользователь — членств ещё нет, org_id
+    # известен однозначно, никакой неоднозначности при записи должности).
     if user.department:
-        await _sync_user_department(user, db, hired_at=data.hired_at)
+        await _sync_user_department(user, db, hired_at=data.hired_at, position=data.position)
     return user
 
 
@@ -387,6 +396,13 @@ async def get_me(
     """
     out = UserOut.model_validate(current_user)
     out.has_license_scan = bool(current_user.license_scan)
+    # Rule #6: единственный резолвер должности — org_id из запроса (активная
+    # орг), иначе единственное/первое членство, иначе legacy User.position.
+    from app.services.user_position import resolve_user_position, bulk_load_memberships
+    _memberships_map = await bulk_load_memberships(db, [current_user.id])
+    out.position = resolve_user_position(
+        current_user, org_id=org_id, memberships=_memberships_map.get(current_user.id)
+    )
     from app.models.permission import PermissionTab, PermissionAction
 
     if current_user.role == "superadmin":
@@ -472,6 +488,9 @@ async def get_user(
         raise HTTPException(404, "Пользователь не найден")
     if user.role == "superadmin" and current_user.role != "superadmin":
         raise HTTPException(404, "Пользователь не найден")
+    from app.services.user_position import resolve_user_position, bulk_load_memberships
+    memberships_map = await bulk_load_memberships(db, [user.id])
+    user.position = resolve_user_position(user, memberships=memberships_map.get(user.id))
     return user
 
 
@@ -530,6 +549,14 @@ async def update_user(
     if "telegram_id" in update_data and update_data["telegram_id"]:
         update_data["telegram_id"] = _re.sub(r'[^0-9]', '', str(update_data["telegram_id"]))
 
+    # Rule #6: должность больше НЕ пишется на users.position из этого эндпоинта —
+    # единственный писатель app.services.user_position.set_user_position решает,
+    # в какую строку user_organizations она уйдёт (см. ниже, после department-sync).
+    # Здесь только выдёргиваем поле из общего цикла setattr, чтобы оно не легло
+    # напрямую на устаревшую колонку.
+    position_provided = "position" in update_data
+    new_position = update_data.pop("position", None)
+
     for k, v in update_data.items():
         # Phase 29 D-04: coerce ISO string → date for driver date fields (Lesson 2026-05-13)
         if k in _DATE_FIELDS and isinstance(v, str):
@@ -547,14 +574,41 @@ async def update_user(
         await ensure_user_org_access(user.id, user.org_id, user.role, db)
         await db.commit()
 
-    # Sync department membership
-    if "department" in update_data or "position" in update_data:
-        await _sync_user_department(user, db)
+    # Sync department membership (создаёт/находит строку user_organizations для
+    # user.org_id + user.department; если position тоже прислали — пишет её
+    # ТУДА ЖЕ через set_user_position, однозначно, т.к. dept/org уже известны).
+    from app.services.user_position import POSITION_UNSET
+    dept_synced = None
+    if "department" in update_data or position_provided:
+        dept_synced = await _sync_user_department(
+            user, db,
+            position=new_position if position_provided else POSITION_UNSET,
+        )
 
+    # У пользователя нет legacy department/org_id (не с чем связать membership
+    # однозначно через _sync_user_department) — «глобальная» правка position:
+    # единственное новое поведение по плану. Одно членство → пишем в него;
+    # ни одного — legacy users.position; несколько без явной орг — 422:
+    # «Укажите организацию: должность задаётся по организации» (используйте
+    # per-org редакторы — departments.py / hierarchy.py org-membership).
+    if position_provided and dept_synced is None:
+        from app.services.user_position import set_user_position, UserPositionError
+        try:
+            await set_user_position(db, new_position, user=user, org_id=None)
+            await db.commit()
+        except UserPositionError as exc:
+            raise HTTPException(422, exc.user_message)
+
+    await db.refresh(user)
+    # Ответ показывает актуальную должность (не users.position, который больше
+    # не синхронизируется при каждой правке — см. resolve_user_position).
+    from app.services.user_position import resolve_user_position, bulk_load_memberships
+    _memberships_map = await bulk_load_memberships(db, [user.id])
+    user.position = resolve_user_position(user, memberships=_memberships_map.get(user.id))
     return user
 
 
-async def _sync_user_department(user: User, db: AsyncSession, hired_at=None):
+async def _sync_user_department(user: User, db: AsyncSession, hired_at=None, position=None):
     """Sync user.department to user_organizations table and auto-set hierarchy.
 
     hired_at (дата приёма) — только для случая, когда это ПЕРВАЯ-ЕВЕР строка
@@ -562,16 +616,26 @@ async def _sync_user_department(user: User, db: AsyncSession, hired_at=None):
     и на должность равна ей, а не «сегодня» (владелец, 2026-09-01, см.
     app/services/org_assignment_dates.py). Для перевода/смены должности у
     уже трудоустроенного человека hired_at не используется.
+
+    position — Rule #6: единственный писатель должности (app.services.user_position)
+    вызывается ОТСЮДА, а не читает user.position сам. POSITION_UNSET (сентинел,
+    по умолчанию — обычный None тоже трактуется как «не меняли», см. вызовы
+    выше) означает «в этом вызове должность не меняется» — существующая
+    строка/значение не трогается; при создании новой строки — наследуем
+    должность от предыдущей строки той же пары (user, org), если она была.
+
+    Возвращает Department, если membership был найден/создан, иначе None
+    (нет user.department/user.org_id — синхронизировать нечего).
     """
     from app.models.department import Department
     from app.models.user_organization import UserOrganization as _UO_sync
-    from app.models.user_hierarchy import UserHierarchy
     from app.services.org_assignment_dates import (
         first_row_assignment_dates, dept_transfer_date, position_change_date,
     )
+    from app.services.user_position import set_user_position, POSITION_UNSET
 
     if not user.department or not user.org_id:
-        return
+        return None
 
     # Find or create department
     dept = (await db.execute(
@@ -594,11 +658,13 @@ async def _sync_user_department(user: User, db: AsyncSession, hired_at=None):
         )
     )).scalar_one_or_none()
     if existing:
-        position_changed = bool(user.position) and user.position != existing.position
-        existing.position = user.position
-        existing.position_assigned_at = position_change_date(
-            position_changed=position_changed, current=existing.position_assigned_at, explicit=None,
-        )
+        member_row = existing
+        if position is not POSITION_UNSET:
+            position_changed = position != existing.position
+            await set_user_position(db, position, membership=existing)
+            existing.position_assigned_at = position_change_date(
+                position_changed=position_changed, current=existing.position_assigned_at, explicit=None,
+            )
         if existing.dept_assigned_at is None:
             existing.dept_assigned_at = dept_transfer_date(None)
     else:
@@ -611,33 +677,36 @@ async def _sync_user_department(user: User, db: AsyncSession, hired_at=None):
             .order_by(_UO_sync.id.asc())
             .limit(1)
         )).scalar_one_or_none()
-        kwargs = dict(user_id=user.id, org_id=user.org_id, dept_id=dept.id, position=user.position)
+        new_position = position if position is not POSITION_UNSET else (any_prior.position if any_prior else None)
+        kwargs = dict(user_id=user.id, org_id=user.org_id, dept_id=dept.id, position=new_position)
         if hired_at is not None:
             kwargs["hired_at"] = hired_at
         if any_prior is None:
             kwargs.update(first_row_assignment_dates(
-                hired_at, has_position=bool(user.position), has_dept=True,
+                hired_at, has_position=bool(new_position), has_dept=True,
             ))
         else:
             kwargs["dept_assigned_at"] = dept_transfer_date(None)
-            position_changed = bool(user.position) and user.position != any_prior.position
+            position_changed = bool(new_position) and new_position != any_prior.position
             pos_date = position_change_date(
                 position_changed=position_changed, current=any_prior.position_assigned_at, explicit=None,
             )
             if pos_date is not None:
                 kwargs["position_assigned_at"] = pos_date
-        db.add(_UO_sync(**kwargs))
+        member_row = _UO_sync(**kwargs)
+        db.add(member_row)
     await db.flush()
 
-    # Должность в карточке пользователя → head/deputy отдела (двусторонняя синхронизация)
+    # Должность в членстве → head/deputy отдела (двусторонняя синхронизация)
     from app.services.dept_role_sync import sync_head_from_position
-    await sync_head_from_position(db, dept, user.id, user.position)
+    await sync_head_from_position(db, dept, user.id, member_row.position)
 
     # If user is head of this dept — auto-create hierarchy for all members
     if dept.head_user_id == user.id:
         await _sync_head_hierarchy(dept, db)
 
     await db.commit()
+    return dept
 
 
 async def _sync_head_hierarchy(dept, db: AsyncSession):
@@ -1362,8 +1431,16 @@ async def get_position_names(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Default + custom positions used in this org (optionally filtered by ?org_id=N)."""
+    """Default + custom positions used in this org (optionally filtered by ?org_id=N).
+
+    Rule #6: должность сотрудника теперь в основном живёт в user_organizations,
+    а не в users.position (legacy, актуален только для людей без единого
+    членства) — поэтому автокомплит собирает варианты из ОБОИХ источников,
+    иначе после перехода на UO новые должности переставали бы предлагаться.
+    """
     from app.models.user_org_access import UserOrgAccess
+    from app.models.user_organization import UserOrganization
+    custom: set[str] = set()
     if org_id is not None:
         # Users whose primary org is org_id OR who have access via user_org_access
         q = (
@@ -1376,13 +1453,24 @@ async def get_position_names(
             )
             .distinct()
         )
+        uo_q = select(UserOrganization.position).where(
+            UserOrganization.org_id == org_id,
+            UserOrganization.position.isnot(None),
+            UserOrganization.position != "",
+        ).distinct()
     else:
         org_ids = get_org_filter(current_user)
         q = select(User.position).where(User.position.isnot(None), User.position != "").distinct()
+        uo_q = select(UserOrganization.position).where(
+            UserOrganization.position.isnot(None), UserOrganization.position != ""
+        ).distinct()
         if org_ids is not None:
             q = q.where(User.org_id.in_(org_ids))
+            uo_q = uo_q.where(UserOrganization.org_id.in_(org_ids))
     result = await db.execute(q)
-    custom = {r[0] for r in result.all()}
+    custom.update(r[0] for r in result.all())
+    uo_result = await db.execute(uo_q)
+    custom.update(r[0] for r in uo_result.all())
     all_positions = sorted(set(DEFAULT_POSITIONS) | custom)
     return all_positions
 

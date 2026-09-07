@@ -34,6 +34,13 @@ jobs:
         # проде (см. Lessons: "Alembic: проверять multiple heads перед миграцией").
         run: python backend/scripts/check_alembic_single_head.py
 
+      - name: Purchase dictionaries in sync (Правило №6)
+        # frontend/src/data/dictionaries.json — генерируемая копия единого источника
+        # app/services/dictionaries.py + app/routers/purchases.py (STATUS_ORDER) +
+        # app/startup/permission_seeds.py (ключи действий/вкладок). Падает, если
+        # источник поменяли, а копию не пересоздали (python backend/scripts/export_dictionaries.py).
+        run: python backend/scripts/export_dictionaries.py --check
+
       - name: Dependency audit (informational)
         run: pip-audit -r backend/requirements.txt
         continue-on-error: true

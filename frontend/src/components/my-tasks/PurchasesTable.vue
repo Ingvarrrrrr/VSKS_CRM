@@ -24,7 +24,7 @@
                 {{ purchaseStatusLabel(task) }}
               </v-chip>
               <v-chip v-if="task.substatus" size="x-small" variant="outlined" color="teal">
-                {{ SUBSTATUS_LABEL[task.substatus] || task.substatus }}
+                {{ purchaseSubstatusLabel(task.substatus) || task.substatus }}
               </v-chip>
             </div>
           </td>
@@ -54,7 +54,7 @@
  * Pure presentation — no API calls, no router, no store access.
  */
 
-import { purchaseStatusLabel as canonicalStatusLabel, purchaseStatusColor } from '@/constants/purchaseStatus'
+import { purchaseStatusLabel as canonicalStatusLabel, purchaseStatusColor, purchaseSubstatusLabel } from '@/constants/purchaseStatus'
 
 export interface Purchase {
   id: number
@@ -99,14 +99,6 @@ const FRAMEWORK_TYPES = new Set(['framework_cumulative', 'framework_with_amount'
 function purchaseStatusLabel(task: Purchase): string {
   if (task.status === 'contracted' && FRAMEWORK_TYPES.has(task.purchase_contract_type || '')) return 'Заказ'
   return canonicalStatusLabel(task.status)
-}
-
-const SUBSTATUS_LABEL: Record<string, string> = {
-  tz_forming: 'Формирование ТЗ',
-  kp_collecting: 'Сбор КП',
-  on_platform: 'На площадке',
-  contractor_negotiations: 'Переговоры с подрядчиком',
-  contract_signing: 'Договор на подписании',
 }
 
 // ── Color helpers ────────────────────────────────────────────────────────────

@@ -4,11 +4,15 @@ Handles:
   GET  /api/purchases/export/columns   — list available Excel export columns
   GET  /api/purchases/export/excel     — stream .xlsx export of purchases
 
-Also defines ALL_EXPORT_COLUMNS, DEFAULT_EXPORT_COLUMNS, the *_LABELS
-dictionaries and _get_cell_value() — the single source of truth for
-status/method/basis/contract-type labels (Правило №6), imported by
-purchases.py, wishes.py, feo_planned_items.py and
-services/purchase_summary.py.
+Also defines ALL_EXPORT_COLUMNS, DEFAULT_EXPORT_COLUMNS and _get_cell_value().
+The *_LABELS dictionaries themselves (Правило №6, single source of truth for
+status/method/basis/contract-type labels) live in app/services/dictionaries.py;
+here they are re-imported under their historical `_FOO_LABELS` names so that
+existing call sites (purchases.py, wishes.py, feo_planned_items.py,
+purchase_items_edit.py, services/purchase_summary.py,
+services/wish_distribution.py) keep importing them from this module unchanged.
+See also GET /api/dictionaries/purchase (app/routers/dictionaries.py) — the
+same values, exposed to the frontend.
 
 Import-template and import endpoints were split out of this module into
 purchase_import_template.py and purchase_import.py (refactor, 2026-09;
@@ -34,6 +38,14 @@ from app.models.payment import Payment
 from app.utils.text import normalize_feo_name
 from app.utils.numbers import to_decimal
 from app.auth.jwt import get_current_user
+from app.services.dictionaries import (
+    PURCHASE_METHOD_LABELS as _PURCHASE_METHOD_LABELS,
+    PURCHASE_BASIS_LABELS as _PURCHASE_BASIS_LABELS,
+    CONTRACT_TYPE_LABELS as _CONTRACT_TYPE_LABELS,
+    STATUS_LABELS as _STATUS_LABELS,
+    SUBSTATUS_LABELS as _SUBSTATUS_LABELS,
+)
+from app.services.acceptance_docs import derived_scalars as _acceptance_derived_scalars
 
 try:
     from openpyxl import Workbook
@@ -118,38 +130,6 @@ DEFAULT_EXPORT_COLUMNS = [
     "status",
 ]
 
-_PURCHASE_METHOD_LABELS = {
-    "single":        "Единственный поставщик",
-    "competitive":   "Конкурентная процедура",
-    "quote_request": "Запрос котировок",
-    "advance":       "Авансовый отчёт",
-}
-_PURCHASE_BASIS_LABELS = {
-    "plan_schedule": "план закупок",
-    "service_note":  "служебная записка",
-}
-_CONTRACT_TYPE_LABELS = {
-    "single":               "Разовая поставка",
-    "framework_cumulative": "Рамочный (нарастающий итог)",
-    "framework_with_amount":"Рамочный (с указанием суммы)",
-}
-_STATUS_LABELS = {
-    "wishes":          "Желания сотрудников",
-    "plan_schedule":   "План закупок",
-    "work_in_progress":"Ведётся работа",
-    "contracted":      "Заключён договор",
-    "ordered":         "Заказано",
-    "delivered":       "Поставлено",
-    "paid":            "Оплачено",
-}
-_SUBSTATUS_LABELS = {
-    "tz_forming":              "Формирование ТЗ",
-    "kp_collecting":           "Сбор КП",
-    "on_platform":             "Размещено на площадке",
-    "contractor_negotiations": "Переговоры с поставщиком",
-    "contract_signing":        "Подписание договора",
-}
-
 
 def _get_cell_value(key: str, p: Purchase, ctx: dict):
     if key == "purchase_number":         return p.purchase_number or ""
@@ -186,10 +166,14 @@ def _get_cell_value(key: str, p: Purchase, ctx: dict):
     if key == "contractor":              return ctx["contractors"].get(p.contractor_id, "")
     if key == "contractor_inn":          return ctx["contractor_inns"].get(p.contractor_id, "")
     if key == "responsible_person":      return p.responsible_person or ""
-    if key == "acceptance_doc_name":     return p.acceptance_doc_name or ""
-    if key == "acceptance_doc_number":   return p.acceptance_doc_number or ""
-    if key == "acceptance_doc_date":     return str(p.acceptance_doc_date) if p.acceptance_doc_date else ""
-    if key == "acceptance_doc_amount":   return float(p.acceptance_doc_amount) if p.acceptance_doc_amount else ""
+    # ПРАВИЛО №6 (2026-09-07, группа D4): закрывающий документ — из JSONB
+    # acceptance_docs (первый документ), не напрямую из скаляров.
+    if key in ("acceptance_doc_name", "acceptance_doc_number", "acceptance_doc_date", "acceptance_doc_amount"):
+        _acc = _acceptance_derived_scalars(p)
+        if key == "acceptance_doc_name":     return _acc["name"] or ""
+        if key == "acceptance_doc_number":   return _acc["number"] or ""
+        if key == "acceptance_doc_date":     return str(_acc["date"]) if _acc["date"] else ""
+        if key == "acceptance_doc_amount":   return float(_acc["amount"]) if _acc["amount"] else ""
     if key == "payment_doc_number":      return p.payment_doc_number or ""
     if key == "payment_doc_date":        return str(p.payment_doc_date) if p.payment_doc_date else ""
     if key == "payment_amount":          return float(p.payment_amount) if p.payment_amount else ""

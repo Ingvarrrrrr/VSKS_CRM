@@ -820,6 +820,7 @@ import type { FeoPlanPosition, FeoPlanSelection } from '@/composables/useFeoPlan
 import { useItemMatching, type MatchCandidate } from '@/composables/useItemMatching'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
+import { ACTIONS } from '@/constants/permissionActions'
 import type { PriceFreshness } from '@/composables/usePriceFreshness'
 import {
   VAT_RATE_OPTIONS,
@@ -1114,7 +1115,7 @@ const props = withDefaults(defineProps<{
 // categoryResidualFor. Считаем локально (authStore), а не ждём проп сверху — тот
 // же паттерн, что canViewLeafBudget в CreateOrderView.vue.
 const authStore = useAuthStore()
-const canViewLeafBudget = computed(() => authStore.hasAction('feo_budget.view_leaf'))
+const canViewLeafBudget = computed(() => authStore.hasAction(ACTIONS.FEO_BUDGET_VIEW_LEAF!))
 
 // Phase 27.1.1: stagesEnabled — either the new prop or backward-compat alias
 const stagesEnabled = computed(() => props.unifiedStagesView || props.showContractColumns)

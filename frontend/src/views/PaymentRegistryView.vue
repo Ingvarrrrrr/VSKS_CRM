@@ -639,7 +639,7 @@
         <div class="d-flex gap-1 align-center">
           <!-- Confirm button (only if matched) -->
           <v-btn
-            v-if="can('payment.confirm')"
+            v-if="can(ACTIONS.PAYMENT_CONFIRM!)"
             icon
             size="x-small"
             variant="text"
@@ -665,7 +665,7 @@
 
           <!-- Unbind button -->
           <v-btn
-            v-if="can('payment.unbind') && item.matched_confirmed"
+            v-if="can(ACTIONS.PAYMENT_UNBIND!) && item.matched_confirmed"
             icon
             size="x-small"
             variant="text"
@@ -760,7 +760,7 @@
               <v-spacer />
               <!-- Confirm button (only if matched) -->
               <v-btn
-                v-if="can('payment.confirm')"
+                v-if="can(ACTIONS.PAYMENT_CONFIRM!)"
                 icon
                 size="x-small"
                 variant="text"
@@ -784,7 +784,7 @@
               </v-btn>
               <!-- Unbind button -->
               <v-btn
-                v-if="can('payment.unbind') && item.matched_confirmed"
+                v-if="can(ACTIONS.PAYMENT_UNBIND!) && item.matched_confirmed"
                 icon
                 size="x-small"
                 variant="text"
@@ -862,6 +862,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useToast } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
+import { ACTIONS } from '@/constants/permissionActions'
 import PaymentMatchDialog from '@/components/PaymentMatchDialog.vue'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import RegistryExportButton from '@/components/RegistryExportButton.vue'

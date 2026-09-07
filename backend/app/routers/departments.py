@@ -24,6 +24,7 @@ from app.services.org_assignment_dates import (
     dept_transfer_date,
     position_change_date,
 )
+from app.services.user_position import resolve_user_position, set_user_position
 
 router = APIRouter(prefix="/api/departments", tags=["departments"])
 
@@ -163,8 +164,13 @@ async def department_tree(
         if d.head_user_id:
             user_ids.add(d.head_user_id)
     users_map = {}
+    users_obj_map: dict[int, User] = {}
     if user_ids:
         for u in (await db.execute(select(User).where(User.id.in_(user_ids)))).scalars().all():  # superadmin-bypass-ok: lookup by pre-computed IDs for enrichment
+            users_obj_map[u.id] = u
+            # position здесь legacy-фон только для head_user_name-карточки (без
+            # membership-контекста); фактическая должность члена резолвится ниже
+            # через resolve_user_position с конкретной UO-строкой этого отдела.
             users_map[u.id] = {"id": u.id, "name": u.full_name or u.username, "role": u.role, "position": u.position}
 
     # Load org names
@@ -200,7 +206,9 @@ async def department_tree(
         entry = {
             "member_id": uo.id, "user_id": uo.user_id,
             "name": u.get("name", "?"), "role": u.get("role"),
-            "position": uo.position or u.get("position"),
+            "position": resolve_user_position(
+                users_obj_map.get(uo.user_id), org_id=uo.org_id, memberships=[uo]
+            ),
         }
         by_id[uo.dept_id]["members"].append(entry)
         added_pairs.add((uo.dept_id, uo.user_id))
@@ -337,7 +345,9 @@ async def list_members(
             id=r.id, department_id=dept_id, user_id=r.user_id,
             user_name=(u.full_name or u.username) if u else None,
             user_role=u.role if u else None,
-            position=r.position or (u.position if u else None),
+            # Rule #6: единственный резолвер — эта строка уже задаёт org_id,
+            # legacy User.position подмешивается только если членств нет вовсе.
+            position=resolve_user_position(u, org_id=r.org_id, memberships=[r]),
             dept_assigned_at=r.dept_assigned_at,
             position_assigned_at=r.position_assigned_at,
         ))
@@ -382,7 +392,7 @@ async def add_member(
         old_position = uo_exact.position
         position_changed = bool(data.position) and data.position != old_position
         if data.position:
-            uo_exact.position = data.position
+            await set_user_position(db, data.position, membership=uo_exact)
         uo_exact.position_assigned_at = position_change_date(
             position_changed=position_changed,
             current=uo_exact.position_assigned_at,
@@ -397,7 +407,6 @@ async def add_member(
         # hired_at (дата трудоустройства) ОБЩАЯ на пару (user, org) — переносим её
         # из заглушки/любой другой строки этой пары, а НЕ ставим now() (баг owner:
         # дата трудоустройства подменялась датой назначения в отдел).
-        new_pos = data.position or (user.position if user else None)
         base_row = null_row or (await db.execute(
             select(UserOrganization)
             .where(
@@ -407,6 +416,12 @@ async def add_member(
             .order_by(UserOrganization.id.asc())
             .limit(1)
         )).scalars().first()
+        # Rule #6: единственный резолвер — если ввод пуст, наследуем должность
+        # из другой строки этой же организации, иначе (нет вообще ни одной
+        # записи по этой org) — из legacy User.position.
+        new_pos = data.position or resolve_user_position(
+            user, org_id=dept.org_id, memberships=[base_row] if base_row else []
+        )
         kwargs = dict(user_id=data.user_id, org_id=dept.org_id, dept_id=dept_id, position=new_pos)
         if base_row is not None and base_row.hired_at is not None:
             kwargs["hired_at"] = base_row.hired_at
@@ -472,7 +487,7 @@ async def add_member(
         id=m.id, department_id=dept_id, user_id=m.user_id,
         user_name=(u.full_name or u.username) if u else None,
         user_role=u.role if u else None,
-        position=m.position or (u.position if u else None),
+        position=resolve_user_position(u, org_id=m.org_id, memberships=[m]),
         dept_assigned_at=m.dept_assigned_at,
         position_assigned_at=m.position_assigned_at,
     )
@@ -495,7 +510,7 @@ async def update_member(
     if not m:
         raise HTTPException(404, "Сотрудник не найден в отделе")
     if "position" in data:
-        m.position = data["position"]
+        await set_user_position(db, data["position"], membership=m)
         await db.commit()
         dept = await db.get(Department, dept_id)
         if dept is not None:
@@ -555,9 +570,10 @@ async def remove_member(
     if dept is not None:
         from app.services.dept_role_sync import clear_role_on_removal
         await clear_role_on_removal(db, dept, user_id)
+    from app.services.dept_role_sync import POSITION_HEAD, POSITION_DEPUTY
     for uo in uo_rows:
-        if uo.position in ("Начальник отдела", "Заместитель начальника отдела"):
-            uo.position = None
+        if uo.position in (POSITION_HEAD, POSITION_DEPUTY):
+            await set_user_position(db, None, membership=uo)
 
     for uo in uo_rows:
         # Multi-dept: если у пары (user, org) остаётся ЕЩЁ хотя бы один отдел (не
@@ -1031,7 +1047,7 @@ async def import_departments_excel(
             created_members += 1
         elif position:
             position_changed = position != existing_m.position
-            existing_m.position = position
+            await set_user_position(db, position, membership=existing_m)
             existing_m.position_assigned_at = position_change_date(
                 position_changed=position_changed,
                 current=existing_m.position_assigned_at,

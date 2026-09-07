@@ -8,6 +8,12 @@ class Subsidy(Base):
     name = Column(String(500), nullable=False)
     year = Column(Integer, nullable=False)
     budget = Column(Float, nullable=False)
+    # deprecated (Правило №6): БОЛЬШЕ НЕ пишется нигде (раньше писалась на
+    # каждый GET — см. историю app.routers.subsidies). Значение, которое
+    # отдаётся под этим именем в SubsidyOut, считается на чтении из дерева
+    # ФЭО — app.services.subsidy_budget.effective_subsidy_budget. Колонка
+    # оставлена (не удалена/не мигрирована) — читателей самой колонки в коде
+    # не найдено на момент депрекации.
     calculated_budget = Column(Float, nullable=True)
     description = Column(String(2000), nullable=True)
     # Phase 19: large free-text agreement clause (федеральный бюджет / Росмолодёжь)

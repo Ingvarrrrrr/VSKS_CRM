@@ -50,54 +50,19 @@ async def diag_columns(db: AsyncSession = Depends(get_db)):
     return {"table": "subsidies", "columns": columns}
 
 
-def _budget_from_tree(all_categories) -> float:
-    """
-    Рекурсивный подсчёт бюджета из ФЭО-дерева одной субсидии:
-    - Листовой узел (нет детей): берём его budget
-    - Родительский узел: если budget задан вручную (not null) → берём его,
-                         иначе сумма детей (рекурсивно)
-    Итог = сумма по всем корневым (level-1) узлам.
-    """
-    if not all_categories:
-        return 0.0
-
-    by_id = {c.id: c for c in all_categories}
-    children_map: dict = {}
-    for c in all_categories:
-        children_map.setdefault(c.id, [])
-        if c.parent_id and c.parent_id in by_id:
-            children_map.setdefault(c.parent_id, []).append(c)
-
-    def _calc_node(cat) -> float:
-        kids = children_map.get(cat.id, [])
-        if not kids:
-            return float(cat.budget) if cat.budget is not None else 0.0
-        if cat.budget is not None:
-            return float(cat.budget)
-        return sum(_calc_node(k) for k in kids)
-
-    roots = [c for c in all_categories if c.level == 1]
-    return sum(_calc_node(r) for r in roots)
-
-
-async def calculate_budget_from_categories(db: AsyncSession, subsidy_id: int) -> float:
-    result = await db.execute(
-        select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id)
-    )
-    return _budget_from_tree(result.scalars().all())
-
-
-async def calculate_budgets_bulk(db: AsyncSession, subsidy_ids: list[int]) -> dict[int, float]:
-    """Бюджеты для набора субсидий одним запросом (вместо N запросов в списках)."""
-    if not subsidy_ids:
-        return {}
-    result = await db.execute(
-        select(FeoCategory).where(FeoCategory.subsidy_id.in_(subsidy_ids))
-    )
-    by_subsidy: dict[int, list] = {}
-    for c in result.scalars().all():
-        by_subsidy.setdefault(c.subsidy_id, []).append(c)
-    return {sid: _budget_from_tree(by_subsidy.get(sid, [])) for sid in subsidy_ids}
+# Правило №6 (волна C1/C2, 2026-09-07): рекурсия «бюджет узла = собственный
+# budget, иначе сумма детей» и фолбэк «дерево пустое → ручной subsidy.budget»
+# теперь живут в app.services.subsidy_budget (там же перечислены ВСЕ места,
+# где формула раньше дублировалась). Здесь — тонкие обёртки: имена оставлены
+# без изменений, их продолжают импортировать app.routers.dashboard,
+# app.routers.feo_tree_ops, app.routers.purchase_budget, app.services.feo_plan,
+# и монкипатчить тесты (test_subsidy_draft.py делает
+# monkeypatch.setattr(subsidies, "calculate_budget_from_categories", ...)).
+from app.services.subsidy_budget import (
+    effective_subsidy_budget,
+    calculate_budget_from_categories,
+    calculate_budgets_bulk,
+)
 
 
 # Статусы, исключаемые из подсчёта потраченного (отменённые закупки не занимают бюджет)
@@ -316,8 +281,10 @@ async def list_subsidies(
     out = []
     for s in subsidies:
         calc = budgets.get(s.id, 0.0)
-        effective_budget = calc if calc > 0 else float(s.budget or 0)
-        s.calculated_budget = effective_budget
+        # calculated_budget — deprecated колонка, БОЛЬШЕ НЕ пишется на GET
+        # (Правило №6): считается на чтении через effective_subsidy_budget,
+        # единственный источник — app.services.subsidy_budget.
+        effective_budget = effective_subsidy_budget(calc, s.budget)
         # Решение 14.07: budget — ручное значение, деревом ФЭО НЕ перезаписывается
         spent = spent_map.get(s.id, 0.0)
         planned_amt = planned_amounts.get(s.id, 0.0)
@@ -339,7 +306,6 @@ async def list_subsidies(
         d.update(ceiling_forecasts.get(s.id, {}))
         out.append(d)
 
-    await db.commit()
     return out
 
 @router.get("/{subsidy_id}", response_model=SubsidyOut)
@@ -353,10 +319,9 @@ async def get_subsidy(
         raise HTTPException(status_code=404, detail="Subsidy not found")
 
     calc = await calculate_budget_from_categories(db, subsidy.id)
-    effective_budget = calc if calc > 0 else float(subsidy.budget or 0)
-    subsidy.calculated_budget = effective_budget
+    # calculated_budget — deprecated колонка, БОЛЬШЕ НЕ пишется на GET (Правило №6).
+    effective_budget = effective_subsidy_budget(calc, subsidy.budget)
     # Решение 14.07: budget — ручное значение, деревом ФЭО НЕ перезаписывается
-    await db.commit()
 
     spent = await _calculate_spent(db, subsidy.id)
     planned_amt = await _calculate_planned_amount(db, subsidy.id)
@@ -493,10 +458,14 @@ async def create_subsidy(
     await db.commit()
     await db.refresh(db_subsidy)
 
+    # Новая субсидия — дерево ФЭО ещё пустое (calc=0), effective = ручной budget
+    # (та же формула, что list/detail/dashboard — Правило №6, раньше здесь было
+    # захардкожено 0.0 независимо от заданного при создании budget).
+    _new_effective = effective_subsidy_budget(0.0, db_subsidy.budget)
     d = {c.name: getattr(db_subsidy, c.name) for c in db_subsidy.__table__.columns}
-    d["calculated_budget"] = 0.0
+    d["calculated_budget"] = _new_effective
     d["feo_filled"] = False
-    d["feo_budget_total"] = 0.0
+    d["feo_budget_total"] = _new_effective
     if _contractor is not None:
         d["contractor_name"] = _contractor.name
         d["contractor_inn"] = _contractor.inn
@@ -538,10 +507,14 @@ async def approve_subsidy(
         await db.refresh(db_subsidy)
 
     calc = await calculate_budget_from_categories(db, subsidy_id)
+    # Правило №6: раньше здесь НЕ применялся фолбэк на ручной budget (в отличие
+    # от list/detail/dashboard) — субсидия с budget=1 000 000, но ещё без дерева
+    # ФЭО, после /approve показывала calculated_budget=0 вместо budget.
+    effective_budget = effective_subsidy_budget(calc, db_subsidy.budget)
     d = {c.name: getattr(db_subsidy, c.name) for c in db_subsidy.__table__.columns}
-    d["calculated_budget"] = calc
+    d["calculated_budget"] = effective_budget
     d["feo_filled"] = calc > 0
-    d["feo_budget_total"] = calc
+    d["feo_budget_total"] = effective_budget
     if db_subsidy.contractor_id:
         contractor = await db.get(Contractor, db_subsidy.contractor_id)
         d["contractor_name"] = contractor.name if contractor else None
@@ -605,7 +578,8 @@ async def update_subsidy(
             raise HTTPException(status_code=409, detail=f"Субсидия с названием «{_upd_name}» уже существует")
     for key, value in payload.items():
         setattr(db_subsidy, key, value)
-    db_subsidy.calculated_budget = calc
+    # calculated_budget — deprecated колонка (Правило №6), БОЛЬШЕ НЕ пишется —
+    # см. app.services.subsidy_budget, считается на чтении.
 
     # Budget history write hook — track subsidy limit changes only (NOT calculated_budget)
     if old_budget != db_subsidy.budget:
@@ -653,7 +627,7 @@ async def update_subsidy(
 
         for key, value in payload.items():
             setattr(db_subsidy, key, value)
-        db_subsidy.calculated_budget = calc
+        # calculated_budget — deprecated, не пишется (см. выше).
 
         if old_budget != db_subsidy.budget:
             from app.models.budget_history import BudgetHistory as _BH2
@@ -680,10 +654,14 @@ async def update_subsidy(
     raw_row = raw.fetchone()
     logger.info("update_subsidy id=%s post-commit raw SELECT: %s", subsidy_id, raw_row)
 
+    # Правило №6: тот же фолбэк-на-ручной-budget, что list/detail/create/approve
+    # (calc посчитан ДО setattr — budget в payload мог измениться, effective
+    # пересчитывается по актуальному db_subsidy.budget после него).
+    effective_budget = effective_subsidy_budget(calc, db_subsidy.budget)
     d = {c.name: getattr(db_subsidy, c.name) for c in db_subsidy.__table__.columns}
-    d["calculated_budget"] = calc
+    d["calculated_budget"] = effective_budget
     d["feo_filled"] = calc > 0
-    d["feo_budget_total"] = calc
+    d["feo_budget_total"] = effective_budget
     if db_subsidy.contractor_id:
         contractor = await db.get(Contractor, db_subsidy.contractor_id)
         d["contractor_name"] = contractor.name if contractor else None

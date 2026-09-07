@@ -21,6 +21,10 @@ from app.database import get_db
 from app.models.feo_category import FeoCategory
 from app.auth.jwt import get_current_user
 from app.routers import feo_categories as fc
+# Правило №6: рекурсия «budget узла = собственный, иначе сумма детей» —
+# единственная реализация, см. app.services.subsidy_budget (та же формула,
+# что app.routers.subsidies.calculate_budget_from_categories).
+from app.services.subsidy_budget import compute_budget_map
 
 router = APIRouter(prefix="/api/feo-categories", tags=["feo_categories"])
 
@@ -937,14 +941,9 @@ async def feo_budget_residuals(
             out.extend(descendant_leaves(x))
         return out
 
-    def calc_budget(cid):
-        c = cat_by_id[cid]
-        ch = children.get(cid)
-        if not ch:
-            return float(c.budget) if c.budget is not None else 0.0
-        if c.budget is not None:
-            return float(c.budget)
-        return sum(calc_budget(x) for x in ch)
+    # Правило №6: budget по каждому узлу — общая рекурсия (compute_budget_map),
+    # не отдельная копия. Вычисляется один раз для всего дерева субсидии.
+    budget_map = compute_budget_map(all_cats)
 
     def contracted_of(cid):
         return sum(leaf_used.get(l, (0.0, 0.0))[0] for l in descendant_leaves(cid))
@@ -954,7 +953,7 @@ async def feo_budget_residuals(
 
     def node_info(cid):
         c = cat_by_id[cid]
-        b = calc_budget(cid)
+        b = budget_map.get(cid, 0.0)
         cu = contracted_of(cid)
         pu = planned_of(cid)
         return {

@@ -16,6 +16,9 @@ from app.auth.jwt import get_current_user, get_org_filter
 from app.auth.visibility import get_visible_subsidy_ids
 from app.routers.subsidies import calculate_budgets_bulk, _calculate_spent_bulk, _calculate_planned_amounts_bulk, _calculate_feo_planned_tree_bulk
 from app.services.feo_plan import calculate_ceiling_forecasts_bulk
+# Правило №6: та же формула фолбэка, что subsidies.py list/detail/create/approve/update —
+# единственная реализация в app.services.subsidy_budget.
+from app.services.subsidy_budget import effective_subsidy_budget
 from app.config import settings
 from decimal import Decimal
 # ПРАВИЛО №6 (2026-09-05): единый расчёт «суммы закупки» по стадии — заменяет
@@ -589,7 +592,7 @@ async def dashboard_charts(
     subsidy_stats = []
     for row in subsidy_rows:
         calc = budgets.get(row.id, 0.0)
-        effective_budget = calc if calc > 0 else float(row.budget or 0)
+        effective_budget = effective_subsidy_budget(calc, row.budget)
         spent = spent_map.get(row.id, 0.0)
         planned_amt = planned_amounts_map.get(row.id, 0.0)
         # planned_tree = правильное «Запланировано» = план дерева ФЭО (= «Свободно» = budget − planned_tree)

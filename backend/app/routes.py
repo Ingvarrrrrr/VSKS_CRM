@@ -19,6 +19,14 @@ from app.routers import (
     permissions as permissions_router,
     staff_directory,
 )
+# Разрезание purchase_items_import.py (Правило №5, сессия 2026-09-08): mapped-,
+# smart- и FEO-import вынесены в соседние роутеры на том же префиксе
+# /api/purchases. Все пути литеральные или минимум на 2 сегмента длиннее
+# catch-all "/{pid}" purchases.router — порядок регистрации относительно него
+# и друг друга не важен, регистрируются рядом с purchase_items_import.router.
+from app.routers import purchase_items_import_mapped
+from app.routers import purchase_items_import_smart
+from app.routers import purchase_items_import_feo
 # Разрезание subsidies.py (Правило №5, сессия 2026-09-07): subsidy_templates,
 # subsidy_plan_graph_compare, subsidy_plan_graph_versions, subsidy_plan_graph_export,
 # subsidy_finance содержат ТОЛЬКО статические/специфичные литеральные пути на
@@ -94,14 +102,6 @@ from app.routers import settings as settings_router
 from app.routers import chat as chat_router
 from app.routers import push as push_router
 from app.routers import purchase_receipts
-from app.routers import install as install_router
-from app.routers import analytics as analytics_router
-from app.routers import report_configs as report_configs_router
-from app.routers import vehicles_dashboard, vehicles, vehicle_attachments, repair_attachments
-from app.routers import vehicle_repairs, vehicle_odometer, fuel_logs, trips
-from app.routers import external_drivers
-from app.routers import vehicles_import as vehicles_import_router
-from app.routers import vehicle_fields as vehicle_fields_router
 # Разрезание purchase_receipts.py (Правило №5, сессия 2026-09-08): recompute/dedup,
 # import (JSON/QR/QR-fetch) и PDF/PNG-экспорт вынесены в соседние роутеры на том же
 # префиксе /api/purchases. Все пути минимум на 2 сегмента длиннее catch-all "/{pid}"
@@ -111,6 +111,14 @@ from app.routers import vehicle_fields as vehicle_fields_router
 from app.routers import purchase_receipts_recompute
 from app.routers import purchase_receipts_import
 from app.routers import purchase_receipts_export
+from app.routers import install as install_router
+from app.routers import analytics as analytics_router
+from app.routers import report_configs as report_configs_router
+from app.routers import vehicles_dashboard, vehicles, vehicle_attachments, repair_attachments
+from app.routers import vehicle_repairs, vehicle_odometer, fuel_logs, trips
+from app.routers import external_drivers
+from app.routers import vehicles_import as vehicles_import_router
+from app.routers import vehicle_fields as vehicle_fields_router
 from app.routers import body_type_icons as body_type_icons_router
 from app.routers import vehicle_fines
 from app.routers import fleet_documents as fleet_documents_router
@@ -134,14 +142,6 @@ from app.routers import okpd2 as okpd2_router
 from app.routers import expense_codes as expense_codes_router
 from app.routers import diag as diag_router
 from app.routers import dictionaries as dictionaries_router
-
-
-def register_routes(app: FastAPI) -> None:
-    app.include_router(auth.router)
-    app.include_router(users.router)
-    app.include_router(staff_directory.router)
-    app.include_router(contractors.router)
-    app.include_router(contracts.router)
 # Разрезание contractors.py (Правило №5, сессия 2026-09-08): contractors_directory,
 # contractors_lookup, contractors_enrich, contractors_import несут доп. эндпоинты
 # на префиксе /api/contractors. contractors_directory ОБЯЗАН регистрироваться ДО
@@ -155,12 +155,12 @@ from app.routers import contractors_directory
 from app.routers import contractors_lookup
 from app.routers import contractors_enrich
 from app.routers import contractors_import
-    # Phase 27.1: contract_items MUST be registered BEFORE purchases.router
-    # because purchases has catch-all /{purchase_id} that would intercept /contract-items
-    app.include_router(contract_items_router.router)
-    # Статические литеральные пути /api/purchases/* — ДО purchases.router
-    # (catch-all "/{pid}"), см. комментарий у импортов выше.
-    app.include_router(purchase_duplicates.router)
+
+
+def register_routes(app: FastAPI) -> None:
+    app.include_router(auth.router)
+    app.include_router(users.router)
+    app.include_router(staff_directory.router)
     # Статические/специфичные пути /api/contractors/* — ДО contractors.router
     # (см. комментарий у импортов выше); contractors_directory обязателен здесь,
     # остальные — для единообразия со всеми contractors_* siblings.
@@ -168,13 +168,24 @@ from app.routers import contractors_import
     app.include_router(contractors_lookup.router)
     app.include_router(contractors_enrich.router)
     app.include_router(contractors_import.router)
+    app.include_router(contractors.router)
+    app.include_router(contracts.router)
+    # Phase 27.1: contract_items MUST be registered BEFORE purchases.router
+    # because purchases has catch-all /{purchase_id} that would intercept /contract-items
+    app.include_router(contract_items_router.router)
+    # Статические литеральные пути /api/purchases/* — ДО purchases.router
+    # (catch-all "/{pid}"), см. комментарий у импортов выше.
+    app.include_router(purchase_duplicates.router)
     app.include_router(purchase_lists.router)
     app.include_router(purchase_payment_matching.router)
     app.include_router(purchase_ops.router)
     app.include_router(purchases.router)
     app.include_router(purchase_items_edit.router)
     app.include_router(purchase_comments.router)
+    app.include_router(purchase_receipts_recompute.router)
     app.include_router(purchase_receipts.router)
+    app.include_router(purchase_receipts_import.router)
+    app.include_router(purchase_receipts_export.router)
     app.include_router(install_router.router, prefix="/api")
     # bank_statements MUST be registered BEFORE payments.router:
     # /imports and /registry/{id}/... must resolve before payments' catch-all /{pid}
@@ -182,10 +193,7 @@ from app.routers import contractors_import
     app.include_router(payments.router)
     # Разрезание feo_categories.py (Правило №5, 2026-09-07) — см. комментарий у
     # импортов выше про порядок: статичные ДО feo_categories.router (catch-all
-    app.include_router(purchase_receipts_recompute.router)
     # GET/PUT/DELETE "/{cat_id}").
-    app.include_router(purchase_receipts_import.router)
-    app.include_router(purchase_receipts_export.router)
     app.include_router(feo_plan_reads.router)
     app.include_router(feo_import.router)
     app.include_router(feo_tree_ops.router)
@@ -234,6 +242,9 @@ from app.routers import contractors_import
     app.include_router(purchase_import_template.router)
     app.include_router(purchase_import.router)
     app.include_router(purchase_items_import.router)
+    app.include_router(purchase_items_import_mapped.router)
+    app.include_router(purchase_items_import_smart.router)
+    app.include_router(purchase_items_import_feo.router)
     app.include_router(purchase_transitions.router)
     # Специфичные суб-роутеры /api/tasks/* регистрируются ДО tasks.router,
     # иначе catch-all `/{task_id}` ловит `/badges`, `/pending-consent`, `/report/*`

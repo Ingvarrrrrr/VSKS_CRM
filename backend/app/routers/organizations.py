@@ -15,50 +15,38 @@ from app.models.user import User
 from app.schemas.schemas import OrganizationCreate, OrganizationOut, RegisterRequest, UserOut
 from app.utils.email import send_verification_email
 from app.services.fio import compose_fio, resolve_user_name_input
+from app.services.org_requisites import org_requisites
+from app.routers.contractors import apply_requisite_fields
 
 router = APIRouter(tags=["organizations"])
 
 
 def _merge_org_with_contractor(org: Organization, user_count: int = 0) -> OrganizationOut:
-    """Return OrganizationOut with fields resolved through linked Contractor when present.
+    """Return OrganizationOut with legal requisites resolved via org_requisites()
+    (Правило №6): Contractor is the single source of truth when
+    org.contractor_id is set — its values are NOT mixed with Organization's
+    own (deprecated) columns, otherwise editing the contractor directly
+    (ContractorEditDialog) silently stops being visible on the organization.
 
-    Organization's own fields (name, inn, etc.) take precedence ONLY if they are
-    explicitly set (non-null & non-empty). Otherwise they fall back to the
-    linked Contractor's field.
-
-    The short `name` field keeps Organization's override so the display name in
-    admin lists stays distinct from a contractor's legal short-name.
+    The short `name` field keeps Organization's own value — it is a display
+    label, not a legal requisite, and stays distinct from a contractor's
+    legal short-name by design.
     """
     c = getattr(org, 'contractor', None)
-
-    def pick(org_val: Optional[str], contractor_val: Optional[str]) -> Optional[str]:
-        if org_val is not None and str(org_val).strip() != '':
-            return org_val
-        return contractor_val
-
-    # Структурированные части подписанта: сначала из org, fallback из contractor
-    _sig_last = getattr(org, 'signatory_last_name', None) or (getattr(c, 'signatory_last_name', None) if c else None)
-    _sig_first = getattr(org, 'signatory_first_name', None) or (getattr(c, 'signatory_first_name', None) if c else None)
-    _sig_middle = getattr(org, 'signatory_middle_name', None) or (getattr(c, 'signatory_middle_name', None) if c else None)
-    # signatory: если есть структурированные части — пересобираем; иначе legacy fallback
-    _signatory_resolved: Optional[str]
-    if _sig_last or _sig_first:
-        _signatory_resolved = compose_fio(_sig_last, _sig_first, _sig_middle) or pick(org.signatory, getattr(c, 'signatory', None))
-    else:
-        _signatory_resolved = pick(org.signatory, getattr(c, 'signatory', None))
+    req = org_requisites(org, c)
 
     return OrganizationOut(
         id=org.id,
         name=org.name,
-        full_name=pick(org.full_name, getattr(c, 'full_name', None)),
-        inn=pick(org.inn, getattr(c, 'inn', None)),
-        kpp=pick(org.kpp, getattr(c, 'kpp', None)),
-        ogrn=pick(org.ogrn, getattr(c, 'ogrn', None)),
-        address=pick(org.address, getattr(c, 'address', None)),
-        signatory=_signatory_resolved,
-        signatory_last_name=_sig_last,
-        signatory_first_name=_sig_first,
-        signatory_middle_name=_sig_middle,
+        full_name=req['full_name'],
+        inn=req['inn'],
+        kpp=req['kpp'],
+        ogrn=req['ogrn'],
+        address=req['address'],
+        signatory=req['signatory'],
+        signatory_last_name=req['signatory_last_name'],
+        signatory_first_name=req['signatory_first_name'],
+        signatory_middle_name=req['signatory_middle_name'],
         is_active=org.is_active,
         created_at=org.created_at,
         user_count=user_count,
@@ -68,7 +56,8 @@ def _merge_org_with_contractor(org: Organization, user_count: int = 0) -> Organi
         org_phone=getattr(c, 'org_phone', None) if c else None,
         org_email=getattr(c, 'org_email', None) if c else None,
         color=org.color,
-        # Extended contractor requisites
+        # Extended contractor requisites (эти поля есть только у Contractor —
+        # расхождению взяться неоткуда, merge не нужен)
         postal_address=getattr(c, 'postal_address', None) if c else None,
         okpo=getattr(c, 'okpo', None) if c else None,
         okved=getattr(c, 'okved', None) if c else None,
@@ -77,7 +66,7 @@ def _merge_org_with_contractor(org: Organization, user_count: int = 0) -> Organi
         bik=getattr(c, 'bik', None) if c else None,
         single_treasury_account=getattr(c, 'single_treasury_account', None) if c else None,
         registration_date=str(c.registration_date) if c and getattr(c, 'registration_date', None) else None,
-        signatory_position=getattr(org, 'signatory_position', None) or (getattr(c, 'signatory_position', None) if c else None),
+        signatory_position=req['signatory_position'],
         signatory_basis=getattr(c, 'signatory_basis', None) if c else None,
         website=getattr(c, 'website', None) if c else None,
         # Geo/delivery fields — нужны фронту для дефолта адреса доставки
@@ -384,23 +373,55 @@ async def update_organization(
         if _dup:
             raise HTTPException(400, f"Организация с ИНН {_inn} уже существует: «{_dup.name}» (id={_dup.id}).")
     org.name = data.name
+    if data.color is not None:
+        org.color = data.color or None
     # Explicit contractor_id override (allows un-linking by setting null)
     if data.contractor_id is not None:
         org.contractor_id = data.contractor_id
-    for field in ('full_name', 'inn', 'kpp', 'ogrn', 'address', 'color',
-                  'signatory_position', 'signatory_last_name', 'signatory_first_name', 'signatory_middle_name'):
-        val = getattr(data, field, None)
-        if val is not None:
-            setattr(org, field, val or None)
-    # signatory: если пришли структурированные части — пересобрать; иначе обновить как обычно
-    if any([data.signatory_last_name, data.signatory_first_name, data.signatory_middle_name]):
-        org.signatory = compose_fio(
-            data.signatory_last_name, data.signatory_first_name, data.signatory_middle_name
-        ) or org.signatory
-    elif data.signatory is not None:
-        org.signatory = data.signatory or None
-    # Auto-link by INN if still unlinked
-    await _auto_link_contractor_by_inn(db, org, data)
+
+    _requisite_fields = (
+        'full_name', 'inn', 'kpp', 'ogrn', 'address',
+        'signatory_position', 'signatory_last_name', 'signatory_first_name', 'signatory_middle_name',
+    )
+
+    # Правило №6: если org привязана к контрагенту — реквизиты пишутся В
+    # КОНТРАГЕНТА (он источник истины), а не в organizations.* (deprecated).
+    # Резолвим контрагента заново — org.contractor мог устареть, если выше
+    # data.contractor_id только что переставил org.contractor_id.
+    contractor = None
+    if org.contractor_id:
+        if org.contractor is not None and org.contractor.id == org.contractor_id:
+            contractor = org.contractor
+        else:
+            contractor = (await db.execute(
+                select(Contractor).where(Contractor.id == org.contractor_id)
+            )).scalar_one_or_none()
+
+    if contractor is not None:
+        _updates = {f: (getattr(data, f) or None) for f in _requisite_fields if getattr(data, f, None) is not None}
+        if _updates:
+            apply_requisite_fields(contractor, _updates)
+        # signatory (единой строкой) без структурированных частей — как раньше у org
+        if data.signatory is not None and not any(
+            getattr(data, f, None) for f in ('signatory_last_name', 'signatory_first_name', 'signatory_middle_name')
+        ):
+            contractor.signatory = data.signatory or None
+    else:
+        # Переходный период: org без контрагента — прежнее поведение (пишем в org.*)
+        for field in _requisite_fields:
+            val = getattr(data, field, None)
+            if val is not None:
+                setattr(org, field, val or None)
+        # signatory: если пришли структурированные части — пересобрать; иначе обновить как обычно
+        if any([data.signatory_last_name, data.signatory_first_name, data.signatory_middle_name]):
+            org.signatory = compose_fio(
+                data.signatory_last_name, data.signatory_first_name, data.signatory_middle_name
+            ) or org.signatory
+        elif data.signatory is not None:
+            org.signatory = data.signatory or None
+        # Auto-link by INN if still unlinked (создаст/найдёт контрагента и привяжет —
+        # только для org, у которой контрагента ещё нет)
+        await _auto_link_contractor_by_inn(db, org, data)
     await db.commit()
     # Re-fetch with contractor eager-loaded
     res = await db.execute(

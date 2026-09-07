@@ -24,6 +24,31 @@ except ImportError:
     _pdfplumber = None
 
 
+def apply_requisite_fields(contractor: Contractor, updates: dict) -> None:
+    """Задать поля контрагента из `updates` + пересобрать `signatory` из
+    ФИО-частей, если они переданы.
+
+    Правило №6: единственное место, которое одновременно проставляет поля
+    контрагента и пересобирает `signatory` — используется PUT /contractors/{id}
+    (update_contractor, ниже) И записью реквизитов организации при заданном
+    `Organization.contractor_id` (app/routers/organizations.py::update_organization).
+    Не дублировать эту логику там ещё раз — при разводе оргов/контрагентов
+    именно рассинхрон таких копий и стал причиной волны Правило №6.
+
+    `updates` — только те поля, что нужно проставить (ключи, отсутствующие в
+    словаре, не трогаются — вызывающий сам решает, полная это замена или
+    частичное обновление).
+    """
+    for k, v in updates.items():
+        setattr(contractor, k, v)
+    if any(updates.get(f) for f in ('signatory_last_name', 'signatory_first_name', 'signatory_middle_name')):
+        contractor.signatory = compose_fio(
+            updates.get('signatory_last_name', contractor.signatory_last_name),
+            updates.get('signatory_first_name', contractor.signatory_first_name),
+            updates.get('signatory_middle_name', contractor.signatory_middle_name),
+        )
+
+
 def _ocr_pdf_to_rows(content: bytes) -> tuple[list, str | None]:
     """Fallback: convert scanned PDF pages to images, run OCR, parse lines.
     Returns (rows, error_message). error_message is None on success."""
@@ -1428,16 +1453,7 @@ async def update_contractor(
     c = result.scalar_one_or_none()
     if not c:
         raise HTTPException(404, "Not found")
-    d = data.model_dump()
-    for k, v in d.items():
-        setattr(c, k, v)
-    # Пересобираем signatory из структурированных частей (только ФИО, без должности)
-    if any(d.get(f) for f in ('signatory_last_name', 'signatory_first_name', 'signatory_middle_name')):
-        c.signatory = compose_fio(
-            d.get('signatory_last_name'),
-            d.get('signatory_first_name'),
-            d.get('signatory_middle_name'),
-        )
+    apply_requisite_fields(c, data.model_dump())
     await db.commit()
     await db.refresh(c)
     return c

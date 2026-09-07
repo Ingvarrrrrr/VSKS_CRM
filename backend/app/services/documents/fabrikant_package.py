@@ -86,6 +86,12 @@ async def render_fabrikant_package_files(
             ctr_r = await db.execute(select(_CtrC).where(_CtrC.id == customer_org.contractor_id))
             customer_ctr = ctr_r.scalar_one_or_none()
 
+    # Правило №6: единый источник реквизитов Заказчика — org_requisites()
+    # (Contractor, если org.contractor_id задан и найден; иначе deprecated
+    # колонки Organization). См. app/routers/documents.py — тот же паттерн.
+    from app.services.org_requisites import org_requisites
+    _cust_req = org_requisites(customer_org, customer_ctr) if customer_org else {}
+
     event = None
     if p.event_id:
         ev_r = await db.execute(select(Event).where(Event.id == p.event_id))
@@ -212,26 +218,11 @@ async def render_fabrikant_package_files(
                 return s
         return default
 
-    cust_signatory_full_z = _g2(
-        customer_org.signatory if customer_org else None,
-        customer_ctr.signatory if customer_ctr else None,
-    )
-    _cust_z_last = _g2(
-        getattr(customer_org, 'signatory_last_name', None) if customer_org else None,
-        getattr(customer_ctr, 'signatory_last_name', None) if customer_ctr else None,
-    ) or None
-    _cust_z_first = _g2(
-        getattr(customer_org, 'signatory_first_name', None) if customer_org else None,
-        getattr(customer_ctr, 'signatory_first_name', None) if customer_ctr else None,
-    ) or None
-    _cust_z_middle = _g2(
-        getattr(customer_org, 'signatory_middle_name', None) if customer_org else None,
-        getattr(customer_ctr, 'signatory_middle_name', None) if customer_ctr else None,
-    ) or None
-    _cust_z_position = _g2(
-        getattr(customer_org, 'signatory_position', None) if customer_org else None,
-        getattr(customer_ctr, 'signatory_position', None) if customer_ctr else None,
-    ) or None
+    cust_signatory_full_z = _cust_req.get('signatory') or ""
+    _cust_z_last = _cust_req.get('signatory_last_name') or None
+    _cust_z_first = _cust_req.get('signatory_first_name') or None
+    _cust_z_middle = _cust_req.get('signatory_middle_name') or None
+    _cust_z_position = _cust_req.get('signatory_position') or None
     cust_sig_z = _signatory_split(
         cust_signatory_full_z,
         last=_cust_z_last, first=_cust_z_first, middle=_cust_z_middle, position=_cust_z_position,
@@ -388,13 +379,13 @@ async def render_fabrikant_package_files(
         "receipts_table": "",
         # Customer (Organisation)
         "customer_name": _g2(customer_org.name if customer_org else None, customer_ctr.name if customer_ctr else None),
-        "customer_full_name": _g2(customer_org.full_name if customer_org else None, customer_ctr.name if customer_ctr else None, customer_org.name if customer_org else None),
+        "customer_full_name": _g2(_cust_req.get('full_name'), customer_ctr.name if customer_ctr else None, customer_org.name if customer_org else None),
         "customer_short_name": _g2(customer_org.name if customer_org else None, customer_ctr.name if customer_ctr else None),
-        "customer_address": _g2(customer_org.address if customer_org else None, customer_ctr.address if customer_ctr else None),
-        "customer_postal_address": _g2(customer_ctr.postal_address if customer_ctr else None, customer_org.address if customer_org else None),
-        "customer_inn": _clean_id(_g2(customer_org.inn if customer_org else None, customer_ctr.inn if customer_ctr else None)),
-        "customer_kpp": _clean_id(_g2(customer_org.kpp if customer_org else None, customer_ctr.kpp if customer_ctr else None)),
-        "customer_ogrn": _g2(customer_org.ogrn if customer_org else None, customer_ctr.ogrn if customer_ctr else None),
+        "customer_address": _g2(_cust_req.get('address')),
+        "customer_postal_address": _g2(customer_ctr.postal_address if customer_ctr else None, _cust_req.get('address')),
+        "customer_inn": _clean_id(_g2(_cust_req.get('inn'))),
+        "customer_kpp": _clean_id(_g2(_cust_req.get('kpp'))),
+        "customer_ogrn": _g2(_cust_req.get('ogrn')),
         "customer_bank_name": _g2(customer_ctr.bank_name if customer_ctr else None),
         "customer_settlement_account": _g2(customer_ctr.settlement_account if customer_ctr else None),
         "customer_correspondent_account": _g2(customer_ctr.correspondent_account if customer_ctr else None),

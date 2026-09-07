@@ -969,6 +969,15 @@ async def generate_document(
     context["initiator_dept_gen"] = _inflect_phrase_genitive(_init_dept_clean)
 
     # ── Phase 23: Заказчик (Customer = Organization владелец субсидии + linked Contractor) ──
+    # Правило №6: реквизиты (full_name/inn/kpp/ogrn/address/подписант) — ОДИН
+    # источник через org_requisites() (Contractor, если org.contractor_id задан
+    # и контрагент найден; иначе deprecated-колонки Organization на переходный
+    # период). Раньше здесь был свой inline-коалесинг "org, иначе ctr" — при
+    # правке контрагента отдельно от org это расходилось с тем, что видно в
+    # карточке организации (баг волны Правило №6, 2026-09).
+    from app.services.org_requisites import org_requisites
+    _cust_req = org_requisites(customer_org, customer_ctr) if customer_org else {}
+
     def _g(*sources, default=""):
         """Coalesce — return first non-empty value."""
         for s in sources:
@@ -976,27 +985,11 @@ async def generate_document(
                 return s
         return default
 
-    cust_signatory_full = _g(
-        customer_org.signatory if customer_org else None,
-        customer_ctr.signatory if customer_ctr else None,
-    )
-    # Структурированные части: приоритет org, затем ctr
-    _cust_last = _g(
-        getattr(customer_org, 'signatory_last_name', None) if customer_org else None,
-        getattr(customer_ctr, 'signatory_last_name', None) if customer_ctr else None,
-    ) or None
-    _cust_first = _g(
-        getattr(customer_org, 'signatory_first_name', None) if customer_org else None,
-        getattr(customer_ctr, 'signatory_first_name', None) if customer_ctr else None,
-    ) or None
-    _cust_middle = _g(
-        getattr(customer_org, 'signatory_middle_name', None) if customer_org else None,
-        getattr(customer_ctr, 'signatory_middle_name', None) if customer_ctr else None,
-    ) or None
-    _cust_position = _g(
-        getattr(customer_org, 'signatory_position', None) if customer_org else None,
-        getattr(customer_ctr, 'signatory_position', None) if customer_ctr else None,
-    ) or None
+    cust_signatory_full = _cust_req.get('signatory') or ""
+    _cust_last = _cust_req.get('signatory_last_name') or None
+    _cust_first = _cust_req.get('signatory_first_name') or None
+    _cust_middle = _cust_req.get('signatory_middle_name') or None
+    _cust_position = _cust_req.get('signatory_position') or None
     cust_sig = _signatory_split(
         cust_signatory_full,
         last=_cust_last, first=_cust_first, middle=_cust_middle, position=_cust_position,
@@ -1009,23 +1002,19 @@ async def generate_document(
     context.update({
         "customer_name":         _g(customer_org.name if customer_org else None,
                                     customer_ctr.name if customer_ctr else None),
-        "customer_full_name":    _g(customer_org.full_name if customer_org else None,
+        "customer_full_name":    _g(_cust_req.get('full_name'),
                                     customer_ctr.name if customer_ctr else None,
                                     customer_org.name if customer_org else None),
         # Phase 27.2-08: краткое название Заказчика = поле "Краткое наименование" из карточки
         # организации/контрагента напрямую, без вытаскивания из кавычек.
         "customer_short_name":   _g(customer_org.name if customer_org else None,
                                     customer_ctr.name if customer_ctr else None),
-        "customer_address":      _g(customer_org.address if customer_org else None,
-                                    customer_ctr.address if customer_ctr else None),
+        "customer_address":      _g(_cust_req.get('address')),
         "customer_postal_address": _g(customer_ctr.postal_address if customer_ctr else None,
-                                      customer_org.address if customer_org else None),
-        "customer_inn":          _clean_id(_g(customer_org.inn if customer_org else None,
-                                              customer_ctr.inn if customer_ctr else None)),
-        "customer_kpp":          _clean_id(_g(customer_org.kpp if customer_org else None,
-                                              customer_ctr.kpp if customer_ctr else None)),
-        "customer_ogrn":         _g(customer_org.ogrn if customer_org else None,
-                                    customer_ctr.ogrn if customer_ctr else None),
+                                      _cust_req.get('address')),
+        "customer_inn":          _clean_id(_g(_cust_req.get('inn'))),
+        "customer_kpp":          _clean_id(_g(_cust_req.get('kpp'))),
+        "customer_ogrn":         _g(_cust_req.get('ogrn')),
         "customer_bank_name":    _g(customer_ctr.bank_name if customer_ctr else None),
         "customer_settlement_account":    _g(customer_ctr.settlement_account if customer_ctr else None),
         "customer_correspondent_account": _g(customer_ctr.correspondent_account if customer_ctr else None),

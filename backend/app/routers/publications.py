@@ -357,11 +357,12 @@ async def _build_publish_payload(purchase_id: int, db: AsyncSession) -> dict:
         )
         _sub_org = org_res.scalar_one_or_none()
         if _sub_org:
-            org_inn = _sub_org.inn or (_sub_org.contractor.inn if _sub_org.contractor else None)
-            # Адрес по merge-паттерну: org.address, при пустом — адрес привязанного контрагента
-            org_address = (_sub_org.address or "").strip() or (
-                (_sub_org.contractor.address or "").strip() if _sub_org.contractor else ""
-            ) or None
+            # Правило №6: реквизиты — через org_requisites() (Contractor —
+            # источник истины при заданном contractor_id), не свой inline-merge.
+            from app.services.org_requisites import org_requisites
+            _sub_req = org_requisites(_sub_org, _sub_org.contractor)
+            org_inn = _sub_req.get('inn')
+            org_address = (_sub_req.get('address') or "").strip() or None
             org_region = (_sub_org.region or "").strip() or None
 
     # Субъект РФ доставки: сначала явное поле delivery_region, фолбэк — регион организации субсидии.

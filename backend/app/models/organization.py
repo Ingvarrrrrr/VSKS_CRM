@@ -9,6 +9,12 @@ class Organization(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
+    # --- Правило №6: юридические реквизиты ---------------------------------
+    # deprecated (Правило №6): читать через app.services.org_requisites.
+    # org_requisites(org, contractor) — Contractor (contractor_id) источник
+    # истины для этих полей, если он задан; эти колонки остаются только как
+    # переходный фолбэк для организаций БЕЗ контрагента и для обратной
+    # совместимости старых строк в БД. НЕ читать напрямую в новом коде.
     full_name = Column(String(1000), nullable=True)
     inn = Column(String(20), nullable=True)
     kpp = Column(String(20), nullable=True)
@@ -19,6 +25,7 @@ class Organization(Base):
     signatory_last_name = Column(String(100), nullable=True)
     signatory_first_name = Column(String(100), nullable=True)
     signatory_middle_name = Column(String(100), nullable=True)
+    # --- конец блока deprecated реквизитов ----------------------------------
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     # Multi-org / contour support

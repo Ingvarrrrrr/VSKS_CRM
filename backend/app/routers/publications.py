@@ -335,6 +335,26 @@ async def _build_publish_payload(purchase_id: int, db: AsyncSession) -> dict:
     items_res = await db.execute(select(PurchaseItem).where(PurchaseItem.purchase_id == purchase_id))
     items = items_res.scalars().all()
 
+    # ПРАВИЛО №6 (волна 4b-2d): «сумма закупки» для НМЦК извещения — единый
+    # источник app.services.purchase_amounts (было `p.total_nmck or p.nmck or
+    # p.planned_total_price or 0` с truthy-фолбэком на Σ items — три
+    # поля-мирроры одного плана + маскирующий 0). Σ items считается тем же
+    # per-item фолбэком, что и раньше (total_price ?? unit_price*quantity —
+    # покрывает позиции без пересчитанного total_price), передаётся как
+    # items_total, дальше purchase_amounts сама решает по стадии закупки
+    # (для процедуры публикации это обычно «до договора» — plan ?? Σ items).
+    from decimal import Decimal as _DecimalPub
+    from app.services.purchase_amounts import purchase_amounts as _purchase_amounts_pub
+    _items_total_pub = (
+        _DecimalPub(str(sum(
+            float(i.total_price or 0) or (float(i.unit_price or 0) * float(i.quantity or 0))
+            for i in items
+        )))
+        if items else None
+    )
+    _pub_amounts = _purchase_amounts_pub(p, items_total=_items_total_pub)
+    nmck_val = float(_pub_amounts.effective) if _pub_amounts.effective is not None else 0.0
+
     contractor = None
     if p.contractor_id:
         c_res = await db.execute(select(Contractor).where(Contractor.id == p.contractor_id))
@@ -401,10 +421,7 @@ async def _build_publish_payload(purchase_id: int, db: AsyncSession) -> dict:
         "purchase_id":       p.id,
         "registry_number":   p.registry_number,
         "subject":           p.subject,
-        "nmck":              float(p.total_nmck or p.nmck or p.planned_total_price or 0) or sum(
-            float(i.total_price or 0) or (float(i.unit_price or 0) * float(i.quantity or 0))
-            for i in items
-        ),
+        "nmck":              nmck_val,
         "purchase_method":   p.purchase_method,
         "contract_type":     p.purchase_contract_type,
         "execution_term":    str(p.execution_term) if p.execution_term else None,

@@ -220,6 +220,23 @@ async def financial_plan(
     )
     purchases = (await db.execute(purchases_q)).scalars().all()
 
+    # ПРАВИЛО №6 (волна 4b-2d): «принятые обязательства» — цена договора,
+    # единственный источник app.services.purchase_amounts.contract_amount()
+    # (цена договора ?? Σ ContractItem.total ПО ЭТОЙ закупке), не голый
+    # `p.contract_price or 0` — bulk Σ ContractItem на весь список закупок
+    # субсидии сразу (без N+1).
+    from app.models.contract_item import ContractItem as _ContractItemFin
+    from app.services.purchase_amounts import contract_amount as _contract_amount_fin
+    _purchase_ids_fin = [p.id for p in purchases]
+    _ci_totals_fin: dict[int, _Dec] = {}
+    if _purchase_ids_fin:
+        _ci_rows_fin = (await db.execute(
+            select(_ContractItemFin.purchase_id, func.sum(_ContractItemFin.total))
+            .where(_ContractItemFin.purchase_id.in_(_purchase_ids_fin))
+            .group_by(_ContractItemFin.purchase_id)
+        )).all()
+        _ci_totals_fin = {pid: total for pid, total in _ci_rows_fin}
+
     # Разбиваем по месяцам за target_year
     obligations_monthly: dict[int, _Dec] = {}   # month -> Decimal
     paid_monthly: dict[int, _Dec] = {}
@@ -228,7 +245,8 @@ async def financial_plan(
         # obligations — по obligation_date, только contracted/delivered/paid
         obl_d = _obligation_date(p)
         if obl_d and obl_d.year == target_year:
-            amt = _Dec(str(p.contract_price or 0))
+            _amt_raw = _contract_amount_fin(p, contract_items_total=_ci_totals_fin.get(p.id))
+            amt = _Dec(str(_amt_raw)) if _amt_raw is not None else _Dec(0)
             obligations_monthly[obl_d.month] = (
                 obligations_monthly.get(obl_d.month, _Dec(0)) + amt
             )

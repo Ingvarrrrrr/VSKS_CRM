@@ -35,6 +35,8 @@ def build_base_context_part1(
 ) -> dict:
     items_sum_val = amounts["items_sum_val"]
     doc_amount_val = amounts["doc_amount_val"]
+    plan_amount_val = amounts["plan_amount_val"]
+    contract_amount_val = amounts["contract_amount_val"]
 
     context = {
         # Закупка
@@ -93,10 +95,17 @@ def build_base_context_part1(
         # templates.
         # Phase: суммы в шапке документов не должны зависеть от стадии закупки —
         # фолбэк на doc_amount_val/items_sum_val, см. расчёт выше (перед НДС).
-        "total_nmcd": _fmt_money(p.total_nmck or p.nmck or p.planned_total_price or items_sum_val),
-        "total_nmck": _fmt_money(p.total_nmck or p.nmck or p.planned_total_price or items_sum_val),
-        "nmck": _fmt_money(p.nmck or p.total_nmck or items_sum_val),
-        "contract_price": _fmt_money(p.contract_price or doc_amount_val),
+        # ПРАВИЛО №6 (волна 4b-2d): было `p.total_nmck or p.nmck or
+        # p.planned_total_price or items_sum_val` (truthy на 0 + три
+        # поля-мирроры одного плана) — единый источник, см. plan_amount_val
+        # в stages_amounts.compute_amounts_and_vat (purchase_amounts(p).plan).
+        "total_nmcd": _fmt_money(plan_amount_val),
+        "total_nmck": _fmt_money(plan_amount_val),
+        "nmck": _fmt_money(plan_amount_val),
+        # ПРАВИЛО №6: было `p.contract_price or doc_amount_val` (truthy на 0) —
+        # contract_amount_val = contract_amount(), тот же расчёт, что и
+        # _resolve_doc_amount() для CONTRACT_FAMILY_DOC_TYPES.
+        "contract_price": _fmt_money(contract_amount_val),
         "economy": _fmt_money(p.economy),
         "price_increase": _fmt_money(p.price_increase),
         # Договор
@@ -133,6 +142,7 @@ async def build_base_context_part2(
 ) -> None:
     """Extends `context` in place with the rest of the original dict literal."""
     doc_amount_val = amounts["doc_amount_val"]
+    contract_amount_val = amounts["contract_amount_val"]
     vat_app = amounts["vat_app"]
     vat_rate_val = amounts["vat_rate_val"]
     vat_amount_val = amounts["vat_amount_val"]
@@ -216,9 +226,12 @@ async def build_base_context_part2(
         "vat_amount_words":      _rubles_to_words(vat_amount_val),
         "vat_exemption_article": ("" if vat_app else art),
         "vat_info_line":         vat_info_line,
-        # Цена прописью (фолбэк на doc_amount_val, если договор ещё не заключён)
-        "contract_price_num":   _fmt_money_plain(p.contract_price or doc_amount_val),
-        "contract_price_words": _rubles_to_words(p.contract_price or doc_amount_val),
+        # Цена прописью (фолбэк на doc_amount_val, если договор ещё не заключён).
+        # ПРАВИЛО №6 (волна 4b-2d): было `p.contract_price or doc_amount_val`
+        # (truthy на 0) — contract_amount_val = contract_amount(), см. её расчёт
+        # в stages_amounts.compute_amounts_and_vat.
+        "contract_price_num":   _fmt_money_plain(contract_amount_val),
+        "contract_price_words": _rubles_to_words(contract_amount_val),
         # Phase: сумма закупки для документов, не зависящая от стадии (план/договор).
         "doc_amount":         _fmt_money(doc_amount_val),
         "doc_amount_num":     _fmt_money_plain(doc_amount_val),

@@ -50,7 +50,12 @@ def _apply_vis_filter(q, vis):
     return q
 
 
-def _purchase_to_dict(p, contractors: dict, subsidies: dict, users: dict):
+def _purchase_to_dict(p, contractors: dict, subsidies: dict, users: dict, ci_totals: Optional[dict] = None):
+    # ПРАВИЛО №6 (волна 4b-2d): «Цена договора» — contract_amount() (цена
+    # договора ?? Σ ContractItem.total ПО ЭТОЙ закупке), не голый p.contract_price
+    # (та же формула, что и везде для «цены договора» — reports.py уже применял
+    # contract_amount() для колонки L в export_subsidy_report_xlsx, см. волну 4b-2c).
+    _ca = contract_amount(p, contract_items_total=(ci_totals or {}).get(p.id))
     return {
         "id": p.id,
         "subject": p.subject or p.item_name or "",
@@ -58,7 +63,7 @@ def _purchase_to_dict(p, contractors: dict, subsidies: dict, users: dict):
         "purchase_number": p.purchase_number,
         "registry_number": p.registry_number,
         "planned_total_price": float(p.planned_total_price or 0),
-        "contract_price": float(p.contract_price or 0),
+        "contract_price": float(_ca) if _ca is not None else 0.0,
         "payment_amount": float(p.payment_amount or 0),
         "execution_term": str(p.execution_term) if p.execution_term else None,
         "delivery_date": str(p.delivery_date) if p.delivery_date else None,
@@ -111,7 +116,7 @@ async def report_summary(
         _vis
     ))
     active_result = await db.execute(active_q)
-    active = [_purchase_to_dict(p, contractors, subsidies, users) for p in active_result.scalars().all()]
+    active_objs = active_result.scalars().all()
 
     # Completed in period (status=paid, payment_date in range)
     completed_q = _extra_filters(_apply_vis_filter(
@@ -121,7 +126,7 @@ async def report_summary(
         _vis
     ))
     completed_result = await db.execute(completed_q)
-    completed = [_purchase_to_dict(p, contractors, subsidies, users) for p in completed_result.scalars().all()]
+    completed_objs = completed_result.scalars().all()
 
     # Planned (status=planned or work_in_progress, created/updated in period — use id proxy)
     planned_q = _extra_filters(_apply_vis_filter(
@@ -130,7 +135,7 @@ async def report_summary(
         _vis
     ))
     planned_result = await db.execute(planned_q)
-    planned = [_purchase_to_dict(p, contractors, subsidies, users) for p in planned_result.scalars().all()]
+    planned_objs = planned_result.scalars().all()
 
     # Upcoming deadlines (execution_term in next period)
     next_start, next_end = _get_period_dates(period, end + timedelta(days=1))
@@ -141,7 +146,7 @@ async def report_summary(
         _vis
     ))
     upcoming_result = await db.execute(upcoming_q)
-    upcoming = [_purchase_to_dict(p, contractors, subsidies, users) for p in upcoming_result.scalars().all()]
+    upcoming_objs = upcoming_result.scalars().all()
 
     # Overdue
     overdue_q = _extra_filters(_apply_vis_filter(
@@ -151,14 +156,46 @@ async def report_summary(
         _vis
     ))
     overdue_result = await db.execute(overdue_q)
-    overdue = [_purchase_to_dict(p, contractors, subsidies, users) for p in overdue_result.scalars().all()]
+    overdue_objs = overdue_result.scalars().all()
+
+    # ПРАВИЛО №6 (волна 4b-2d): bulk Σ ContractItem.total на объединение ВСЕХ
+    # закупок этого ответа (без N+1) — единый источник contract_amount() для
+    # поля "contract_price" во всех пяти секциях + active_sum ниже.
+    _all_purchase_ids = list({
+        p.id for group in (active_objs, completed_objs, planned_objs, upcoming_objs, overdue_objs) for p in group
+    })
+    _ci_totals: dict = {}
+    if _all_purchase_ids:
+        _ci_rows = (await db.execute(
+            select(ContractItem.purchase_id, func.sum(ContractItem.total))
+            .where(ContractItem.purchase_id.in_(_all_purchase_ids))
+            .group_by(ContractItem.purchase_id)
+        )).all()
+        _ci_totals = {pid: total for pid, total in _ci_rows}
+
+    active = [_purchase_to_dict(p, contractors, subsidies, users, _ci_totals) for p in active_objs]
+    completed = [_purchase_to_dict(p, contractors, subsidies, users, _ci_totals) for p in completed_objs]
+    planned = [_purchase_to_dict(p, contractors, subsidies, users, _ci_totals) for p in planned_objs]
+    upcoming = [_purchase_to_dict(p, contractors, subsidies, users, _ci_totals) for p in upcoming_objs]
+    overdue = [_purchase_to_dict(p, contractors, subsidies, users, _ci_totals) for p in overdue_objs]
+
+    # active_sum — «сколько по договору у активных закупок»: contract_amount()
+    # ?? purchase_amounts(p).plan, ПРЯМО из ORM-объектов (не из уже
+    # сериализованного dict — там contract_price приведён к float(0.0) для
+    # JSON и легитимный 0 от «нет договора» уже неотличимы). Раньше —
+    # `p["contract_price"] or p["planned_total_price"]` (Python-truthy, тот же
+    # баг: contract_amount=0 молча проваливался на план).
+    _active_sum = 0.0
+    for _p in active_objs:
+        _ca = contract_amount(_p, contract_items_total=_ci_totals.get(_p.id))
+        _active_sum += float(_ca) if _ca is not None else float(_p.planned_total_price or 0)
 
     # Totals
     totals = {
         "planned_count": len(planned),
         "planned_sum": sum(p["planned_total_price"] for p in planned),
         "active_count": len(active),
-        "active_sum": sum(p["contract_price"] or p["planned_total_price"] for p in active),
+        "active_sum": _active_sum,
         "completed_count": len(completed),
         "completed_sum": sum(p["payment_amount"] for p in completed),
         "upcoming_count": len(upcoming),

@@ -320,8 +320,17 @@ async def get_feo_plan_tree(
         if (node.get("excess_amount") or 0) > 0.005 and not node.get("excess_approved"):
             result[cat_id]["excess_culprit"] = await find_excess_culprit(db, cat_id, node.get("budget"))
 
+    # ПРАВИЛО №6 (волна 4b-2d): PLANNED_STATUSES включает и стадии ПОСЛЕ
+    # договора (work_in_progress/contracted/ordered/delivered/paid) — раньше
+    # здесь читался голый Purchase.planned_total_price (застывший план), из-за
+    # чего «Ведётся работа» и подобные закупки без категории ФЭО показывали
+    # плановую, а не актуальную по стадии сумму. Единый источник — та же
+    # effective_amount_expr(), что и get_purchase_totals() выше в этом файле
+    # (SQL-агрегат, без доп. запросов на Σ contract_items/purchase_items —
+    # см. её докстринг про этот компромисс).
+    from app.services.purchase_amounts import effective_amount_expr
     unassigned_stmt = (
-        select(Purchase.id, Purchase.planned_total_price)
+        select(Purchase.id, effective_amount_expr().label("effective_amount"))
         .where(Purchase.subsidy_id == subsidy_id)
         .where(Purchase.status.in_(list(PLANNED_STATUSES)))
         .where(Purchase.feo_category_id.is_(None))
@@ -332,7 +341,7 @@ async def get_feo_plan_tree(
     )
     unassigned_rows = (await db.execute(unassigned_stmt)).all()
     result["unassigned"] = {
-        "amount": sum(float(r.planned_total_price or 0) for r in unassigned_rows),
+        "amount": sum(float(r.effective_amount or 0) for r in unassigned_rows),
         "purchase_count": len(unassigned_rows),
         "purchase_ids": [r.id for r in unassigned_rows[:50]],
     }

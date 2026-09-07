@@ -3,6 +3,7 @@
 
 import os
 from datetime import date
+from decimal import Decimal
 from io import BytesIO
 
 from sqlalchemy import select
@@ -38,6 +39,7 @@ from .contexts import _signatory_split, _build_contract_items_context, _format_s
 from .morphology import _to_gen_fio, _inflect_phrase_genitive
 from .docx_post import _strip_tech_spec_legend
 from app.services.acceptance_docs import derived_scalars as _acceptance_derived_scalars
+from app.services.purchase_amounts import contract_amount as _contract_amount_fn, purchase_amounts as _purchase_amounts_fn
 
 import logging
 
@@ -179,7 +181,16 @@ async def render_fabrikant_package_files(
     # рендером — см. чуть ниже по циклу.
     vat_app = bool(p.vat_applicable)
     vat_rate_val = p.vat_rate
-    price_val = float(p.contract_price or 0)
+    # ПРАВИЛО №6 (волна 4b-2d): было `float(p.contract_price or 0)` — «Проект
+    # договора» (fabrikant_contract_project.docx) хочет именно «цену договора»,
+    # единственный источник которой — contract_amount() (цена договора ??
+    # Σ ContractItem по этой закупке), не голый скаляр (0 и None здесь давали
+    # одинаковый результат случайно — не наблюдаемый баг, но второй копии
+    # формулы вместо canonical-функции быть не должно).
+    _ci_for_vat_z = getattr(p, "contract_items", None) or []
+    _ci_total_for_vat_z = Decimal(str(sum((ci.total or 0) for ci in _ci_for_vat_z))) if _ci_for_vat_z else None
+    _contract_amount_z = _contract_amount_fn(p, contract_items_total=_ci_total_for_vat_z)
+    price_val = float(_contract_amount_z) if _contract_amount_z is not None else 0.0
     vat_amount_val = (
         price_val * vat_rate_val / (100 + vat_rate_val)
         if (vat_app and price_val and vat_rate_val is not None) else 0.0
@@ -273,6 +284,14 @@ async def render_fabrikant_package_files(
     else:
         _app_review_date = ""
 
+    # ПРАВИЛО №6 (волна 4b-2d): единый источник для НМЦК (total_nmcd/total_nmck/
+    # nmck ниже) — purchase_amounts(p).plan, фолбэк на Σ плановых позиций.
+    _fab_items_sum = float(sum(Decimal(str(it.total_price or 0)) for it in (p.items or [])))
+    _fab_plan_pa = _purchase_amounts_fn(
+        p, items_total=Decimal(str(_fab_items_sum)) if (p.items or []) else None,
+    )
+    _fab_plan_amount_val = float(_fab_plan_pa.plan) if _fab_plan_pa.plan is not None else _fab_items_sum
+
     ci_ctx_z = await _build_contract_items_context(p, db)
 
     # ПРАВИЛО №6 (2026-09-07, группа D4): закрывающий документ — из JSONB
@@ -316,9 +335,13 @@ async def render_fabrikant_package_files(
         "feo_level_1": feo_level_1,
         "feo_level_2": feo_level_2,
         "feo_level_3": feo_level_3,
-        "total_nmcd": _fmt_money(p.total_nmck or p.nmck or p.planned_total_price),
-        "total_nmck": _fmt_money(p.total_nmck or p.nmck or p.planned_total_price),
-        "nmck": _fmt_money(p.nmck or p.total_nmck),
+        # ПРАВИЛО №6 (волна 4b-2d): было `p.total_nmck or p.nmck or
+        # p.planned_total_price` (truthy на 0 + три поля-мирроры одного плана,
+        # см. app.services.purchase_money_writer) — единый источник,
+        # purchase_amounts(p).plan (сырая planned_total_price).
+        "total_nmcd": _fmt_money(_fab_plan_amount_val),
+        "total_nmck": _fmt_money(_fab_plan_amount_val),
+        "nmck": _fmt_money(_fab_plan_amount_val),
         "contract_price": _fmt_money(p.contract_price),
         "economy": _fmt_money(p.economy),
         "contract_number": p.contract_number or "",

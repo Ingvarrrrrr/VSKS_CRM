@@ -19,6 +19,7 @@ from app.models.purchase import Purchase
 from app.services.documents.contexts import _resolve_doc_amount
 from app.services.documents.templates import _resolve_vat_exemption_basis
 from app.services.documents.formatting import _fmt_money_plain
+from app.services.purchase_amounts import contract_amount as _contract_amount_fn, purchase_amounts as _purchase_amounts_fn
 
 
 def contract_date_parts(p: Purchase):
@@ -58,6 +59,35 @@ def compute_amounts_and_vat(p: Purchase, doc_type: str) -> dict:
     # остальных типов — старое поведение (план/НМЦК до заключения договора).
     items_sum_val = float(sum(Decimal(str(it.total_price or 0)) for it in (p.items or [])))
     doc_amount_val, amount_is_planned = _resolve_doc_amount(p, doc_type)
+
+    # ПРАВИЛО №6 (волна 4b-2d): total_nmcd/total_nmck/nmck в contexts_build.py
+    # раньше собирались truthy-цепочкой `p.total_nmck or p.nmck or
+    # p.planned_total_price or items_sum_val` — три поля-мирроры одного и того
+    # же плана (см. app.services.purchase_money_writer: planned_total_price ==
+    # total_nmck == nmck по построению) плюс `or`, который путал легитимный 0
+    # с «пусто». Единственно нужное значение — purchase_amounts(p).plan (сырая
+    # planned_total_price), с фолбэком на Σ плановых позиций для закупок, у
+    # которых plan ещё не проставлен (та же семантика «до-договора» бакета
+    # purchase_amounts, независимая от текущей стадии — комментарий владельца
+    # «НМЦК по определению начальная плановая цена»).
+    _plan_pa = _purchase_amounts_fn(
+        p,
+        items_total=Decimal(str(items_sum_val)) if (p.items or []) else None,
+    )
+    plan_amount_val = float(_plan_pa.plan) if _plan_pa.plan is not None else items_sum_val
+
+    # "contract_price"/"contract_price_num"/"contract_price_words" — «цена
+    # договора», раньше три отдельные копии `p.contract_price or doc_amount_val`
+    # (тот же truthy-баг на contract_price=0). Единственный источник — та же
+    # contract_amount(), что уже применяется в _resolve_doc_amount() для
+    # CONTRACT_FAMILY_DOC_TYPES; фолбэк на doc_amount_val сохранён (владелец,
+    # исходный комментарий: «если договор ещё не заключён»).
+    _ci_for_contract = getattr(p, "contract_items", None) or []
+    _ci_total_for_contract = (
+        Decimal(str(sum((ci.total or 0) for ci in _ci_for_contract))) if _ci_for_contract else None
+    )
+    _contract_amount_raw = _contract_amount_fn(p, contract_items_total=_ci_total_for_contract)
+    contract_amount_val = float(_contract_amount_raw) if _contract_amount_raw is not None else doc_amount_val
 
     # VAT calculations.
     # Ставка берётся ТОЛЬКО из того, что ввёл пользователь — никаких
@@ -110,6 +140,8 @@ def compute_amounts_and_vat(p: Purchase, doc_type: str) -> dict:
     return {
         "items_sum_val": items_sum_val,
         "doc_amount_val": doc_amount_val,
+        "plan_amount_val": plan_amount_val,
+        "contract_amount_val": contract_amount_val,
         "amount_is_planned": amount_is_planned,
         "vat_app": vat_app,
         "vat_rate_val": vat_rate_val,

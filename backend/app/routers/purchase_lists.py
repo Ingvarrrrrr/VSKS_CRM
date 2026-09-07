@@ -54,22 +54,43 @@ async def my_tasks(
     q = q.order_by(Purchase.execution_term.asc().nulls_last(), Purchase.id.desc())
     result = await db.execute(q)
     purchases = result.scalars().all()
-    return [
-        {
+
+    # ПРАВИЛО №6 (волна 4b-2d): «Цена договора» карточки канбана — единственный
+    # источник app.services.purchase_amounts.contract_amount() (цена договора ??
+    # Σ ContractItem.total ПО ЭТОЙ закупке), не голый p.contract_price — bulk Σ
+    # на весь список сразу (без N+1). planned_total_price ниже остаётся сырой
+    # колонкой (это и есть purchase_amounts(p).plan — второй копии формулы нет,
+    # `or 0` тут — только защита float(None) для JSON, не маскировка легитимного 0).
+    from app.models.contract_item import ContractItem
+    from app.services.purchase_amounts import contract_amount
+    _purchase_ids_mt = [p.id for p in purchases]
+    _ci_totals_mt: dict = {}
+    if _purchase_ids_mt:
+        from sqlalchemy import func as _func_mt
+        _ci_rows_mt = (await db.execute(
+            select(ContractItem.purchase_id, _func_mt.sum(ContractItem.total))
+            .where(ContractItem.purchase_id.in_(_purchase_ids_mt))
+            .group_by(ContractItem.purchase_id)
+        )).all()
+        _ci_totals_mt = {pid: total for pid, total in _ci_rows_mt}
+
+    out_mt = []
+    for p in purchases:
+        _contract_amount_mt = contract_amount(p, contract_items_total=_ci_totals_mt.get(p.id))
+        out_mt.append({
             "id": p.id, "subject": p.subject or p.item_name or "",
             "status": p.status, "purchase_number": p.purchase_number,
             "registry_number": p.registry_number,
             "execution_term": str(p.execution_term) if p.execution_term else None,
             "delivery_date": str(p.delivery_date) if p.delivery_date else None,
             "planned_total_price": float(p.planned_total_price or 0),
-            "contract_price": float(p.contract_price or 0),
+            "contract_price": float(_contract_amount_mt) if _contract_amount_mt is not None else 0.0,
             "contractor_name": p.contractor.name if p.contractor else None,
             "feo_category_name": p.feo_category.name if p.feo_category else None,
             "task_comment": p.task_comment,
             "subsidy_id": p.subsidy_id,
-        }
-        for p in purchases
-    ]
+        })
+    return out_mt
 
 
 @router.get("/kanban-all")

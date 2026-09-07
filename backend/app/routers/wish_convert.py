@@ -19,6 +19,7 @@ from app.models.user import User
 from app.models.wish_item import WishItem
 from app.schemas.wishes import WishConvert
 from app.services.tz_excess_approval import register_tz_excess_approvals
+from app.services.item_contractor import set_item_contractor
 from app.routers import wishes as wishes_core
 
 router = APIRouter(prefix="/api/wishes", tags=["wishes"])
@@ -128,9 +129,22 @@ async def convert_wish(
                             "name": _pit.item_name, "amount": float(_pit.total_price or 0),
                         })
                 if not any(_pit.feo_category_id for _pit in _ep_items) and ep.feo_category_id:
+                    # ПРАВИЛО №6 (волна 4b-2d): было `ep.total_nmck or
+                    # ep.planned_total_price or 0` (truthy на 0 + поле-мирror
+                    # planned_total_price) — единый источник, purchase_amounts()
+                    # по стадии этой закупки (items_total — Σ уже загруженных
+                    # выше _ep_items, без доп. запроса).
+                    from decimal import Decimal as _DecimalWC
+                    from app.services.purchase_amounts import purchase_amounts as _purchase_amounts_wc
+                    _ep_items_total = (
+                        _DecimalWC(str(sum(float(_pit.total_price or 0) for _pit in _ep_items)))
+                        if _ep_items else None
+                    )
+                    _ep_amounts = _purchase_amounts_wc(ep, items_total=_ep_items_total)
+                    _ep_amount_val = float(_ep_amounts.effective) if _ep_amounts.effective is not None else 0.0
                     _cat_items.setdefault(ep.feo_category_id, []).append({
                         "name": ep.item_name or ep.subject or f"Закупка №{ep.id}",
-                        "amount": float(ep.total_nmck or ep.planned_total_price or 0),
+                        "amount": _ep_amount_val,
                     })
         for ep in existing:
             if ep.status == "wishes":
@@ -331,13 +345,12 @@ async def convert_wish(
             needed_date=wishes_core._eff_date(wish, wi),  # W2: наследование эффективной даты
             wish_item_id=wi.id,  # W1: hard link to source WishItem
             vat_rate=getattr(wi, 'vat_rate', None),
-            contractor_id=(_conv_contractor_obj.id if _conv_contractor_obj else None),
-            contractor_inn=(_conv_contractor_obj.inn if _conv_contractor_obj else None),
-            contractor_name=(
-                _conv_contractor_obj.name if _conv_contractor_obj
-                else getattr(wish, 'contractor_name', None)
-            ),
         )
+        # ПРАВИЛО №6 (группа D5, долг): единственный писатель контрагента
+        # позиции — item_contractor.set_item_contractor (не голые contractor_id/
+        # contractor_inn/contractor_name в конструкторе — тот обход уже разбирался
+        # в purchases.py, см. её комментарий там про "PurchaseItem(**d)").
+        set_item_contractor(pi, contractor=_conv_contractor_obj, name=getattr(wish, 'contractor_name', None))
         db.add(pi)
     await db.flush()
 

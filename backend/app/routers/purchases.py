@@ -724,11 +724,20 @@ async def create_purchase(
         await assert_subsidy_approved_for_binding(db, _alloc.subsidy_id)
 
     items_data = data.items or []
-    # Compute total_nmck from items
-    total_nmck = sum((i.total_price or Decimal("0")) for i in items_data) or data.nmck
+    # Compute total_nmck from items.
+    # ПРАВИЛО №6 (волна 4b-2d): было `sum(...) or data.nmck` — до вставки в БД
+    # это единственный расчёт «плановой суммы» (recalc_purchase_money ниже,
+    # после db.flush(), пересчитает то же самое из уже сохранённых
+    # PurchaseItem — не вторая копия формулы, а её же предварительный
+    # предпросмотр для бюджетной проверки/проверки превышения ФЭО ДО записи).
+    # Python-truthy `or` путал легитимный 0 (позиции есть, их сумма ровно 0) с
+    # «позиций нет» — тогда total_nmck ошибочно подменялся на data.nmck.
+    _items_sum_create = sum((i.total_price or Decimal("0")) for i in items_data) if items_data else None
+    total_nmck = _items_sum_create if _items_sum_create is not None else data.nmck
 
     if not admin_override and data.purchase_basis != 'service_note':
-        await _check_budget(data.subsidy_id, total_nmck or data.planned_total_price, None, db)
+        _budget_check_amount = total_nmck if total_nmck is not None else data.planned_total_price
+        await _check_budget(data.subsidy_id, _budget_check_amount, None, db)
 
     # Задача владельца (2026-08-05) «блокировать пока не согласовано превышение плана
     # ФЭО»: создание закупки — увеличивающее план действие. Проверяем по КАЖДОЙ
@@ -748,7 +757,7 @@ async def create_purchase(
             if _cid:
                 _cat_amounts[_cid] = _cat_amounts.get(_cid, Decimal("0")) + (_i.total_price or Decimal("0"))
         if not _cat_amounts and data.feo_category_id:
-            _cat_amounts[data.feo_category_id] = total_nmck or Decimal("0")
+            _cat_amounts[data.feo_category_id] = total_nmck if total_nmck is not None else Decimal("0")
         for _cid, _amt in _cat_amounts.items():
             _excess_warnings.extend(await assert_no_unapproved_excess(db, _cid, adding_amount=_amt))
 

@@ -321,6 +321,20 @@ async def _create_receipt_with_items(
                 ).limit(1)
             )
             if not existing_contract_q.scalar_one_or_none():
+                # ПРАВИЛО №6 (волна 4b-2d): тот же паттерн, что и
+                # app.routers.contracts._enrich_contract_from_purchases —
+                # contract_amount() (цена договора ?? Σ ContractItem.total ПО
+                # ЭТОЙ закупке) с фолбэком на purchase_amounts().plan, а не
+                # truthy-цепочка `total_nmck or contract_price or planned_total_price`
+                # (0 в любом из полей молча проваливался дальше по цепочке).
+                from app.models.contract_item import ContractItem as _CIAvans
+                from app.services.purchase_amounts import contract_amount as _contract_amount_avans, purchase_amounts as _purchase_amounts_avans
+                _ci_total_avans = (await db.execute(
+                    select(func.sum(_CIAvans.total)).where(_CIAvans.purchase_id == purchase_for_contract.id)
+                )).scalar_one_or_none()
+                _avans_contract_max_amount = _contract_amount_avans(purchase_for_contract, contract_items_total=_ci_total_avans)
+                if _avans_contract_max_amount is None:
+                    _avans_contract_max_amount = _purchase_amounts_avans(purchase_for_contract).plan
                 new_contract = _Contract(
                     contractor_id=contractor_id_for_items,
                     subsidy_id=purchase_for_contract.subsidy_id,
@@ -330,7 +344,7 @@ async def _create_receipt_with_items(
                     status='active',
                     # Phase 27.1.5: заполнить ВСЕ доступные поля из Purchase
                     subject=purchase_for_contract.subject or str(purchase_for_contract.purchase_number or ''),
-                    max_amount=purchase_for_contract.total_nmck or purchase_for_contract.contract_price or purchase_for_contract.planned_total_price,
+                    max_amount=_avans_contract_max_amount,
                     start_date=purchase_for_contract.contract_date,
                     end_date=purchase_for_contract.execution_term,
                     purchase_method=purchase_for_contract.purchase_method if purchase_for_contract.purchase_method in ('single', 'competitive') else 'single',

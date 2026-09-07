@@ -1987,7 +1987,10 @@ interface AnalyticsData {
   monthly_payments: { year: number; month: number; total: number }[]
   top_contractors: { name: string; count: number; total: number }[]
   upcoming_deliveries: { count: number; total: number }
-  economy: number
+  // Σ(план − договор) — агрегат дашборда, отдельный показатель от ручного
+  // поля закупки purchases.economy («Экономия»). Не путать и не сводить —
+  // ПРАВИЛО №6 (один показатель — одно имя).
+  plan_contract_delta: number
   overdue_count: number
   upcoming_deadlines: { id: number; name: string; purchase_number?: number; execution_term: string; status: string }[]
   method_distribution: Record<string, number>

@@ -924,13 +924,17 @@ async def analytics(
     ))
     upcoming = upcoming_result.one()
 
-    # 5. Economy (saved money)
-    economy_result = await db.execute(_pf(
+    # 5. Plan vs contract delta — Σ(план − договор) aggregate for the dashboard.
+    # NOT the same metric as the manual per-purchase Purchase.economy field
+    # ("Экономия"): this is a computed sum across purchases, that one is a
+    # user-entered value. Keeping distinct names (plan_contract_delta vs
+    # economy) per ПРАВИЛО №6 — one indicator, one name, one source.
+    plan_contract_delta_result = await db.execute(_pf(
         select(func.coalesce(func.sum(Purchase.planned_total_price - Purchase.contract_price), 0))
         .where(Purchase.contract_price != None)
         .where(Purchase.contract_price > 0)
     ))
-    economy = float(economy_result.scalar() or 0)
+    plan_contract_delta = float(plan_contract_delta_result.scalar() or 0)
 
     # 6. Overdue purchases (execution_term past, not paid/delivered)
     overdue_result = await db.execute(_pf(
@@ -997,7 +1001,7 @@ async def analytics(
         "monthly_payments": monthly,
         "top_contractors": top_contractors,
         "upcoming_deliveries": {"count": upcoming.cnt, "total": float(upcoming.total)},
-        "economy": economy,
+        "plan_contract_delta": plan_contract_delta,
         "overdue_count": overdue_count,
         "upcoming_deadlines": upcoming_deadlines,
         "method_distribution": method_distribution,

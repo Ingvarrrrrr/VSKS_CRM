@@ -3,11 +3,14 @@
 Вынесено из app/routers/subsidies.py (Правило №5, рефакторинг 2026-09):
 - `_materialize_org_from_contractor` — find-or-create Organization, зеркалящую
   контрагента субсидии (см. её докстринг про контур/Иерархию и root_org_id).
-- `_merge_duplicate_orgs_by_inn` — идемпотентный мерж дублей organizations по ИНН
-  (используется фоновым бэкафиллом app/startup/backfills.py).
+- `_merge_duplicate_orgs_by_inn` — идемпотентный мерж дублей organizations по ИНН.
+  Раньше вызывался фоновым бэкафиллом app/startup/backfills.py на КАЖДОМ
+  старте; перенесено в scripts/merge_duplicates_by_inn.py (D8/D9, волна 4b,
+  Правило №6) — это разовый data-fix, не часть старта приложения.
 
-Re-export обеих функций сохранён в app/routers/subsidies.py — backfills.py и
-тесты (test_organization_root_org_id.py) импортируют их оттуда.
+Re-export обеих функций сохранён в app/routers/subsidies.py — тесты
+(test_organization_root_org_id.py) импортируют `_materialize_org_from_contractor`
+оттуда.
 """
 import logging
 from typing import Optional
@@ -61,7 +64,7 @@ async def _materialize_org_from_contractor(db: AsyncSession, contractor, account
     return org
 
 
-async def _merge_duplicate_orgs_by_inn(db: AsyncSession) -> None:
+async def _merge_duplicate_orgs_by_inn(db: AsyncSession, *, dry_run: bool = False) -> Optional[dict]:
     """Идемпотентный мерж дублей organizations по ИНН.
 
     Алгоритм:
@@ -71,6 +74,13 @@ async def _merge_duplicate_orgs_by_inn(db: AsyncSession) -> None:
       от конфликтов уникальных индексов (junction-таблицы).
     - losers удаляются, commit выполняется после всех групп.
     - Функция НЕ падает фатально — ошибка группы логируется и пропускается.
+
+    dry_run=True (добавлено для CLI backend/scripts/merge_duplicates_by_inn.py,
+    D8/D9) — только находит группы дублей и возвращает их размер, НИЧЕГО не
+    пишет (ни rewire FK, ни merge полей, ни DELETE). Поведение по умолчанию
+    (dry_run=False) не менялось; единственный вызывающий теперь —
+    scripts/merge_duplicates_by_inn.py (раньше был app/startup/backfills.py —
+    вызов оттуда убран, D8/D9, это разовый data-fix, а не часть старта).
     """
     _log = logging.getLogger(__name__)
 
@@ -85,7 +95,10 @@ async def _merge_duplicate_orgs_by_inn(db: AsyncSession) -> None:
 
     if not groups:
         _log.info("org-merge по ИНН: дублей не найдено")
-        return
+        return {"groups": 0, "merged": 0}
+
+    if dry_run:
+        return {"groups": len(groups), "merged": sum(len(row[1]) - 1 for row in groups)}
 
     # 2. Собрать FK-ссылки на organizations.id через information_schema (один раз)
     fk_result = await db.execute(text(
@@ -207,3 +220,4 @@ async def _merge_duplicate_orgs_by_inn(db: AsyncSession) -> None:
     _log.info(
         f"org-merge по ИНН: групп {n_groups}, удалено дублей {total_deleted}"
     )
+    return {"groups": n_groups, "merged": total_deleted}

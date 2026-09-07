@@ -50,85 +50,10 @@ async def _phase22_bank_payments_hash_backfill():
         logging.getLogger(__name__).warning(f"Phase 22 hash backfill skipped (non-fatal): {e}")
 
 
-async def _phase26_qq_contractor_dedup_by_inn():
-    # Phase 26-QQ: idempotent dedup контрагентов по ИНН + UNIQUE constraint.
-    # Объединяет дубли (одинаковый INN), перевешивает FK на keep_id (MIN id),
-    # удаляет дубли. Затем создаёт partial unique index чтобы новые дубли не появлялись.
-    try:
-        from sqlalchemy import text as _text
-        from app.database import engine as _engine
-        async with _engine.begin() as conn:
-            # 1. Find duplicate groups
-            groups = (await conn.execute(_text("""
-                SELECT TRIM(inn) AS norm_inn, ARRAY_AGG(id ORDER BY id) AS ids, COUNT(*) AS n
-                FROM contractors
-                WHERE inn IS NOT NULL AND TRIM(inn) != ''
-                GROUP BY TRIM(inn)
-                HAVING COUNT(*) > 1
-            """))).all()
-
-            if len(groups) > 200:
-                logging.getLogger(__name__).warning(
-                    f"Phase 26-QQ contractor dedup: {len(groups)} duplicate groups — too many, skip auto-merge"
-                )
-            elif groups:
-                # FK columns referencing contractors.id (вычислено grep'ом моделей)
-                FK_TABLES = [
-                    ("bank_payments", "matched_contractor_id"),
-                    ("commercial_requests", "contractor_id"),
-                    ("contracts", "contractor_id"),
-                    ("organizations", "contractor_id"),
-                    ("purchases", "contractor_id"),
-                    ("purchase_items", "contractor_id"),
-                    ("subsidies", "contractor_id"),
-                    ("subsidy_contractor_overrides", "contractor_id"),
-                ]
-                total_merged = 0
-                for row in groups:
-                    norm_inn, ids, n = row.norm_inn, list(row.ids), row.n
-                    keep_id = ids[0]
-                    dup_ids = ids[1:]
-                    # Rewire FK для каждой dup-таблицы
-                    for tbl, col in FK_TABLES:
-                        try:
-                            await conn.execute(_text(
-                                f"UPDATE {tbl} SET {col} = :keep WHERE {col} = ANY(:dups)"
-                            ), {"keep": keep_id, "dups": dup_ids})
-                        except Exception as inner_e:
-                            logging.getLogger(__name__).warning(
-                                f"Phase 26-QQ rewire {tbl}.{col} failed (table may not exist): {inner_e}"
-                            )
-                    # Merge пустых полей в keep (берём заполнения из дублей)
-                    await conn.execute(_text("""
-                        UPDATE contractors keep SET
-                            name = COALESCE(NULLIF(keep.name, ''), dup.name),
-                            kpp = COALESCE(NULLIF(keep.kpp, ''), dup.kpp),
-                            ogrn = COALESCE(NULLIF(keep.ogrn, ''), dup.ogrn),
-                            address = COALESCE(NULLIF(keep.address, ''), dup.address),
-                            phone = COALESCE(NULLIF(keep.phone, ''), dup.phone),
-                            email = COALESCE(NULLIF(keep.email, ''), dup.email),
-                            signatory = COALESCE(NULLIF(keep.signatory, ''), dup.signatory)
-                        FROM contractors dup
-                        WHERE keep.id = :keep AND dup.id = ANY(:dups)
-                    """), {"keep": keep_id, "dups": dup_ids})
-                    # Удалить дубли
-                    await conn.execute(_text(
-                        "DELETE FROM contractors WHERE id = ANY(:dups)"
-                    ), {"dups": dup_ids})
-                    total_merged += len(dup_ids)
-                logging.getLogger(__name__).info(
-                    f"Phase 26-QQ dedup: merged {total_merged} duplicate contractors across {len(groups)} INN groups"
-                )
-
-            # 2. Partial unique index — предотвращает новые дубли при race condition.
-            #    Phase 26-OO defense in create_contractor — это второй уровень защиты.
-            await conn.execute(_text("""
-                CREATE UNIQUE INDEX IF NOT EXISTS ix_contractors_inn_unique
-                ON contractors (TRIM(inn))
-                WHERE inn IS NOT NULL AND TRIM(inn) != ''
-            """))
-    except Exception as e:
-        logging.getLogger(__name__).warning(f"Phase 26-QQ contractor dedup skipped (non-fatal): {e}")
+# Phase 26-QQ (dedup контрагентов по ИНН) перенесено в
+# scripts/merge_duplicates_by_inn.py (D8/D9, волна 4b, Правило №6) — это
+# разовый data-fix, не часть старта приложения. Логика теперь живёт в
+# app/services/contractor_dedup.py::merge_duplicate_contractors_by_inn.
 
 
 async def _phase22_restore_bank_payments_typed_backfill():
@@ -503,16 +428,10 @@ async def _subsidy_org_materialize_backfill():
         )
 
 
-async def _org_dedup_by_inn():
-    # org-dedup: мерж дублей organizations по ИНН (свежие данные побеждают, FK перепривязываются)
-    try:
-        from app.routers.subsidies import _merge_duplicate_orgs_by_inn
-        async with async_session() as _db_m:
-            await _merge_duplicate_orgs_by_inn(_db_m)
-    except Exception as e:
-        logging.getLogger(__name__).warning(
-            f"org-dedup по ИНН skipped (non-fatal): {e}"
-        )
+# org-dedup (мерж дублей organizations по ИНН) перенесено в
+# scripts/merge_duplicates_by_inn.py (D8/D9, волна 4b, Правило №6) — это
+# разовый data-fix, не часть старта приложения. Логика (не менялась) — в
+# app/services/org_dedup.py::_merge_duplicate_orgs_by_inn.
 
 
 async def _price_freshness_fx_rates_refresh():
@@ -538,7 +457,6 @@ async def _price_freshness_fx_rates_refresh():
 async def run():
     """Вызывает все idempotent бэкфиллы в исходном порядке (см. app/__init__.py.lifespan до разрезания)."""
     await _phase22_bank_payments_hash_backfill()
-    await _phase26_qq_contractor_dedup_by_inn()
     await _phase22_restore_bank_payments_typed_backfill()
     await _phase26_mmm_sync_purchase_from_contract()
     await _phase26_ooo_acceptance_docs_dedup()
@@ -548,5 +466,4 @@ async def run():
     await _phase26_bb_fuzzy_link_items_to_receipts()
     await _phase26_w_backfill_contractor_from_receipts()
     await _subsidy_org_materialize_backfill()
-    await _org_dedup_by_inn()
     await _price_freshness_fx_rates_refresh()

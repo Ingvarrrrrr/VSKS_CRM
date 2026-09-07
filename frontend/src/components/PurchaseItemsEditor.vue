@@ -692,25 +692,25 @@ import BulkFeoAssignDialog from '@/components/items/BulkFeoAssignDialog.vue'
 import CreatePlannedBulkDialog from '@/components/items/CreatePlannedBulkDialog.vue'
 import SplitItemDialog from '@/components/items/SplitItemDialog.vue'
 import type { ContractItem } from '@/types/contractItem'
-import type { ItemsDisplayRow } from '@/components/items/types'
 import { copyFromPurchase as apiCopyFromPurchase } from '@/api/contractItems'
 import { useResizableColumns } from '@/composables/useResizableColumns'
 import { formatNumber, parseNumber, fmtRub } from '@/utils/numberFormat'
 import { useFeoLeaves } from '@/composables/useFeoLeaves'
 import { useFeoNodeAmounts } from '@/composables/useFeoNodeAmounts'
 import type { FeoPlanPosition, FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
-import { useItemMatching, type MatchCandidate } from '@/composables/useItemMatching'
+import { useItemMatching } from '@/composables/useItemMatching'
 import { useItemsImport } from '@/composables/items/useItemsImport'
+import { useItemsTable } from '@/composables/items/useItemsTable'
+import { useItemsTotals } from '@/composables/items/useItemsTotals'
+import { useItemsCatalog, productPhotoSrc } from '@/composables/items/useItemsCatalog'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
 import { ACTIONS } from '@/constants/permissionActions'
 import type { PriceFreshness } from '@/composables/usePriceFreshness'
 import {
   VAT_RATE_OPTIONS,
-  parseVatRatePercent,
   vatAmount,
   totalWithVat,
-  normalizeVatRate,
 } from '@/composables/useVatCalc'
 
 // ── Interfaces ───────────────────────────────────────────────────────────────
@@ -791,18 +791,7 @@ interface Product {
   price_freshness?: PriceFreshness | null
 }
 
-// Phase 17.1-08: prefer the bytea-backed /api/products/{id}/photo endpoint
-// when the backend has a cached copy; fall back to external photo_url/link.
-function productPhotoSrc(p: Pick<Product, 'id' | 'has_photo' | 'photo_url' | 'photo_link'> | null | undefined): string | undefined {
-  if (!p) return undefined
-  if (p.has_photo) return `/api/products/${p.id}/photo`
-  return p.photo_url || p.photo_link || undefined
-}
-
-interface PriceLink {
-  url: string
-  price: number | null
-}
+// productPhotoSrc — composables/items/useItemsCatalog.ts
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -814,61 +803,10 @@ const COUNTRIES = ['РФ', 'Беларусь', 'Казахстан', 'Китай
 // normalizeVatRate imported above). Phase 27.1.16 convention preserved:
 // unit_price / total_price из чека ФФД ВКЛЮЧАЮТ НДС; vatAmount выделяет НДС
 // из суммы С НДС: total * pct / (100 + pct).
-
-// Phase 27.1.17: per-stage helpers с fallback vat_rate на PurchaseItem
-function effectiveVatRate(idx: number, stage: 'contract' | 'delivery'): string | null {
-  const ci = getContractItemFor(idx)
-  return ci?.vat_rate ?? localItems.value[idx]?.vat_rate ?? null
-}
-
-function vatAmountForStage(idx: number, stage: 'tz' | 'contract' | 'delivery'): number {
-  let rate: string | null = null
-  let total = 0
-  if (stage === 'tz') {
-    const pi = localItems.value[idx]
-    rate = pi?.vat_rate ?? null
-    total = Number((pi as any)?.total_price ?? 0)
-  } else if (stage === 'contract') {
-    rate = effectiveVatRate(idx, 'contract')
-    total = Number(getContractItemFor(idx)?.total ?? 0)
-  } else {
-    rate = effectiveVatRate(idx, 'delivery')
-    total = Number(getContractItemFor(idx)?.total ?? 0)
-  }
-  if (!rate) return 0
-  const pct = parseVatRatePercent(rate)
-  if (pct <= 0) return 0
-  return Number((total * pct / (100 + pct)).toFixed(2))
-}
-
-function totalWithVatForStage(idx: number, stage: 'contract' | 'delivery'): number {
-  return Number(getContractItemFor(idx)?.total ?? 0)
-}
-
-// fmtRub now imported from @/utils/numberFormat
-
-function onVatRateChange(idx: number, v: any) {
-  const item = localItems.value[idx]
-  if (!item) return
-  item.vat_rate = normalizeVatRate(v)
-  calcItemTotal(idx)
-}
+// Per-stage VAT helpers + calcItemTotal — composables/items/useItemsTotals.ts
 
 // Export COUNTRIES so template can use it if needed (not currently rendered but kept for completeness)
 void COUNTRIES
-
-// BUG #3: stable, monotonically-increasing row identity. Used as :key so that
-// rows keep insertion order and do NOT re-order/re-render when item_name changes
-// (e.g. via inline catalog matching).
-let _uidCounter = 0
-function nextUid(): string {
-  _uidCounter += 1
-  return `it-${Date.now().toString(36)}-${_uidCounter}`
-}
-function ensureUid<T extends { _uid?: string | number }>(item: T): T {
-  if (item._uid == null) item._uid = nextUid()
-  return item
-}
 
 // ── Props & Emits ────────────────────────────────────────────────────────────
 
@@ -1118,32 +1056,14 @@ const viewMode = ref<'table' | 'cards'>('table')
 const mobile = computed(() => display.mobile.value)
 const effectiveView = computed<'table' | 'cards'>(() => mobile.value ? 'cards' : viewMode.value)
 
-// BUG #3: assign stable _uid to every incoming item missing one (in-place so the
-// parent's objects keep identity), preserving insertion order.
-function normalizeItems(items: EditorItem[]): EditorItem[] {
-  return items.map(it => ensureUid(it))
-}
-const localItems = ref<EditorItem[]>(normalizeItems([...props.modelValue]))
-
-// Perf: self-emit guard breaks the emit→parent-writeback→watch-rebuild echo loop.
-// Shallow watch (no deep) — we only need to react when the parent SWAPS the array
-// reference (load/reset). Local nested-field edits mutate localItems[idx] objects
-// directly and call emitUpdate() explicitly, so deep traversal is unnecessary.
-let _selfEmit = false
-watch(
-  () => props.modelValue,
-  (v) => {
-    // Skip rebuild when the incoming value is the array we just emitted.
-    if (_selfEmit) { _selfEmit = false; return }
-    localItems.value = normalizeItems([...v])
-  }
-)
-
-function emitUpdate() {
-  _selfEmit = true
-  emit('update:modelValue', [...localItems.value])
-  emit('items-changed')
-}
+// Row identity, CRUD (add/remove/clear/confirm-match) and selection (composable)
+// — see composables/items/useItemsTable.ts.
+const {
+  nextUid, ensureUid, normalizeItems, localItems, emitUpdate,
+  addItem, removeItem, clearItem, confirmMatch,
+  selectedItemIdxs, allItemsSelected, toggleSelectAll, toggleItemSelect, removeSelectedItems,
+} = useItemsTable({ props, emit })
+void ensureUid; void normalizeItems
 
 // ── Phase 27.1 D-04: Contract items side-by-side ─────────────────────────────
 
@@ -1167,27 +1087,7 @@ function emitContractItemsUpdate() {
 // Import mode: when true, results of import dialog go to localContractItems instead of localItems
 const contractItemImportMode = ref(false)
 
-const contractItemsTotal = computed(() =>
-  localContractItems.value.reduce((s, ci) => s + Number(ci.total || 0), 0),
-)
-
-const purchasePlannedTotal = computed(() =>
-  localItems.value.reduce((s, it) => s + Number(it.total_price || 0), 0),
-)
-
-const contractSavings = computed(() => {
-  const tz = purchasePlannedTotal.value
-  const ci = contractItemsTotal.value
-  if (!tz || !ci) return null
-  return tz - ci
-})
-
-const contractSavingsPercent = computed(() => {
-  const tz = purchasePlannedTotal.value
-  const sv = contractSavings.value
-  if (!tz || sv == null) return null
-  return ((sv / tz) * 100).toFixed(1)
-})
+// contractItemsTotal/purchasePlannedTotal/contractSavings* — composables/items/useItemsTotals.ts
 
 // Phase 27.1.10: dynamic resolution orphan source_item_id → actual PurchaseItem.id
 // по item_name OR qty+unit_price match. Backend может ещё не успеть relink — UI решает сам.
@@ -1541,11 +1441,31 @@ function showSnack(
   toast.addToast(text, color, opts)
 }
 
-// Products catalogue
-const products = ref<Product[]>([])
-
 // Catalog matching (composable) — shared by inline match, repick, import review
 const { applyCandidate: applyMatchCandidate, clearBinding: clearMatchBinding } = useItemMatching()
+
+// Product catalogue: load/search/filter, per-row matching (picker/inline/full
+// product dialog), category/type grouping, bulk-add-to-catalog — composable,
+// see composables/items/useItemsCatalog.ts.
+const {
+  products, loadProducts,
+  itemsGroupBy, itemsFilterCats, itemsFilterTypes, productById, itemCategoryOf, itemTypeOf,
+  itemCategoryOptions, itemTypeOptions, itemsFilterActive, itemsDisplayRows, visibleItemsCount,
+  hasUncatalogedSelected, uncatalogedSelectedCount, bulkAddCatalogLoading, bulkAddToCatalog,
+  productFilter, productItemsFor, hasProducts, onItemProductSelect,
+  onInlineMatchPick, onInlineMatchClear, onInlineMatchCreateNew,
+  productPickerDialog, productPickerSearch, productPickerIdx, productPickerResults,
+  openProductPicker, selectFromPicker, createProductFromPicker,
+  fullProductDialog, fullProductSaving, fullProductIdx, fullProductEditingId,
+  fullProductPhotoFile, fullProductPhotoFileList, fullProductPhotoPreview, fullProductForm,
+  fullProductNameSearch, fullProductNameSuggestions, isFullProductDuplicate,
+  fullProductTypeOptions, fullProductCategoryOptions, fullAvgPrice,
+  onFullPhotoFileChange, resetFullProductForm, openFullProduct, populateFullProductFromProduct,
+  openQuickProductEdit, saveFullProduct,
+} = useItemsCatalog({
+  props, localItems, selectedItemIdxs, emitUpdate, emit, showSnack,
+  applyMatchCandidate, clearMatchBinding, clearItem,
+})
 
 // Excel/Smart import + product-match review + duplicate-merge + P1-B repick
 // dialog (composable) — see composables/items/useItemsImport.ts. Presentational
@@ -1601,15 +1521,14 @@ const showContractorColumn = computed(() => props.formMode === 'advance_report')
 // isAdvance: для авансовых закупок Договор/Поставка sub-rows показывают данные из ТЗ
 const isAdvance = computed(() => props.formMode === 'advance_report')
 
-// Phase 26-NN: для авансовых отчётов, если ни у одной позиции нет vat_rate
-// (чек от ИП на УСН или НДС не извлёкся) — скрываем НДС-колонки в expand-row.
-// Для не-авансовых — колонки НДС всегда видны.
-const showVatColumnsInExpandRow = computed(() => {
-  if (!isAdvance.value) return true
-  return (localItems.value || []).some((it: any) =>
-    it?.vat_rate && String(it.vat_rate).trim() !== ''
-  )
-})
+// VAT-per-row helpers, item/stage totals and contract-vs-plan savings % —
+// composables/items/useItemsTotals.ts. Phase 26-NN: showVatColumnsInExpandRow
+// hides НДС columns in expand-row for advance reports with no vat_rate at all.
+const {
+  effectiveVatRate, vatAmountForStage, totalWithVatForStage, onVatRateChange, calcItemTotal,
+  internalTotalNmck, contractItemsTotal, purchasePlannedTotal, contractSavings, contractSavingsPercent,
+  showVatColumnsInExpandRow,
+} = useItemsTotals({ localItems, localContractItems, getContractItemFor, isAdvance, emitUpdate })
 
 // Phase 26-V: resizable columns
 // Phase 26-V-fix (superseded below): «Тип» держал максимум «Услуга»+стрелка
@@ -1786,11 +1705,7 @@ async function onContractorSearchInput(idx: number, search: string) {
 }
 
 onMounted(async () => {
-  try {
-    products.value = await apiFetch<Product[]>('/products/')
-  } catch (e) {
-    console.warn('[PurchaseItemsEditor] Could not load products:', e)
-  }
+  await loadProducts()
   await loadContractors()
 
   // Phase 27.1.10: auto-fix orphan source_item_id'ы при mount
@@ -1827,174 +1742,13 @@ onMounted(async () => {
   }
 })
 
-// ── Totals ───────────────────────────────────────────────────────────────────
+// ── Totals — composables/items/useItemsTotals.ts ──────────────────────────────
 
-const internalTotalNmck = computed(() =>
-  localItems.value.reduce((s, i) => s + (i.total_price || 0), 0)
-)
+// ── Группировка/фильтр позиций, каталог, product-picker/full-product диалоги —
+// composables/items/useItemsCatalog.ts
 
-// ── Группировка/фильтр позиций по категории и виду товара из каталога ────────
-// Категория/вид берутся у сматченного товара (product_id → products); позиции
-// без товара попадают в «Без категории»/«Без вида». Строки данных ссылаются на
-// ОРИГИНАЛЬНЫЙ индекс в localItems, поэтому все idx-события работают как раньше.
-const NO_CATEGORY = 'Без категории'
-const NO_TYPE = 'Без вида'
-const itemsGroupBy = ref<'none' | 'category' | 'category_type'>('none')
-const itemsFilterCats = ref<string[]>([])
-const itemsFilterTypes = ref<string[]>([])
-
-const productById = computed(() => {
-  const m = new Map<number, Product>()
-  for (const p of products.value) m.set(p.id, p)
-  return m
-})
-function itemCategoryOf(it: EditorItem): string {
-  const p = it.product_id != null ? productById.value.get(it.product_id) : undefined
-  return (p?.category || '').trim() || ((it as any)._category || '').trim() || NO_CATEGORY
-}
-function itemTypeOf(it: EditorItem): string {
-  const p = it.product_id != null ? productById.value.get(it.product_id) : undefined
-  return (p?.product_type || '').trim() || ((it as any)._product_type || '').trim() || NO_TYPE
-}
-const itemCategoryOptions = computed(() => {
-  const s = new Set(localItems.value.map(itemCategoryOf))
-  return [...s].sort((a, b) => a.localeCompare(b, 'ru'))
-})
-const itemTypeOptions = computed(() => {
-  const cats = itemsFilterCats.value
-  const s = new Set(
-    localItems.value
-      .filter(it => !cats.length || cats.includes(itemCategoryOf(it)))
-      .map(itemTypeOf)
-  )
-  return [...s].sort((a, b) => a.localeCompare(b, 'ru'))
-})
-const itemsFilterActive = computed(() =>
-  itemsFilterCats.value.length > 0 || itemsFilterTypes.value.length > 0
-)
-
-const itemsDisplayRows = computed<ItemsDisplayRow[] | null>(() => {
-  // null → дети рендерят natural order без каких-либо изменений (быстрый путь)
-  if (itemsGroupBy.value === 'none' && !itemsFilterActive.value) return null
-  const rows = localItems.value
-    .map((item, idx) => ({
-      idx,
-      cat: itemCategoryOf(item),
-      type: itemTypeOf(item),
-      sum: Number(item.total_price || 0),
-    }))
-    .filter(r =>
-      (!itemsFilterCats.value.length || itemsFilterCats.value.includes(r.cat)) &&
-      (!itemsFilterTypes.value.length || itemsFilterTypes.value.includes(r.type))
-    )
-  if (itemsGroupBy.value === 'none') return rows.map(r => ({ idx: r.idx }))
-  rows.sort((a, b) =>
-    a.cat.localeCompare(b.cat, 'ru') ||
-    a.type.localeCompare(b.type, 'ru') ||
-    a.idx - b.idx
-  )
-  const out: ItemsDisplayRow[] = []
-  let curCat: string | null = null
-  let curType: string | null = null
-  for (const r of rows) {
-    if (r.cat !== curCat) {
-      curCat = r.cat
-      curType = null
-      const grp = rows.filter(x => x.cat === r.cat)
-      out.push({ header: r.cat, level: 1, count: grp.length, sum: grp.reduce((s, x) => s + x.sum, 0) })
-    }
-    if (itemsGroupBy.value === 'category_type' && r.type !== curType) {
-      curType = r.type
-      const grp = rows.filter(x => x.cat === r.cat && x.type === r.type)
-      out.push({ header: r.type, level: 2, count: grp.length, sum: grp.reduce((s, x) => s + x.sum, 0) })
-    }
-    out.push({ idx: r.idx })
-  }
-  return out
-})
-const visibleItemsCount = computed(() =>
-  itemsDisplayRows.value == null
-    ? localItems.value.length
-    : itemsDisplayRows.value.filter(r => r.idx != null).length
-)
-
-// ── Items CRUD ────────────────────────────────────────────────────────────────
-
-function addItem(atStart = false) {
-  const newItem: EditorItem = {
-    _uid: nextUid(),
-    product_id: null,
-    item_name: '',
-    item_type: props.defaultItemType,
-    quantity: null,
-    unit: props.defaultUnit,
-    unit_price: null,
-    total_price: null,
-    country_origin: props.defaultCountry,
-    _selectedProduct: null,
-    _photo_url: undefined,
-    _description: undefined,
-    _description_44fz: undefined,
-  }
-  if (props.itemShape === 'purchase') {
-    newItem.final_unit_price = null
-    newItem.final_total = null
-    // F-PLAN: новая строка сразу наследует шапочную плановую позицию, если задана
-    newItem.feo_planned_item_id = props.defaultFeoPlannedItemId ?? null
-    newItem.over_plan = false
-    // ISSUE-3 PART A: inherit header-selected deepest FEO level by default
-    if (props.feoPerItem && newItem.feo_category_id == null && props.defaultFeoCategoryId != null) {
-      newItem.feo_category_id = props.defaultFeoCategoryId
-    }
-  }
-  if (atStart) {
-    // Кнопка в шапке: новая строка сверху, чтобы была видна без прокрутки длинного списка
-    localItems.value.unshift(newItem)
-    selectedItemIdxs.value = selectedItemIdxs.value.map(i => i + 1)
-  } else {
-    localItems.value.push(newItem)
-  }
-  emit('item-added', newItem)
-  emitUpdate()
-}
-
-function removeItem(idx: number) {
-  localItems.value.splice(idx, 1)
-  selectedItemIdxs.value = selectedItemIdxs.value
-    .filter(i => i !== idx)
-    .map(i => (i > idx ? i - 1 : i))
-  emit('item-removed', idx)
-  emitUpdate()
-}
-
-function clearItem(idx: number) {
-  localItems.value[idx].item_name = ''
-  localItems.value[idx].product_id = null
-  localItems.value[idx]._selectedProduct = null
-  localItems.value[idx]._photo_url = undefined
-  localItems.value[idx]._description = undefined
-  localItems.value[idx]._description_44fz = undefined
-  localItems.value[idx]._price_meta = null
-  emitUpdate()
-}
-
-function confirmMatch(idx: number) {
-  const item = localItems.value[idx]
-  if (item) {
-    item.match_confirmed = true
-    emitUpdate()
-  }
-}
-
-function calcItemTotal(idx: number) {
-  const item = localItems.value[idx]
-  if (item.quantity != null && item.unit_price != null) {
-    item.total_price = Math.round(item.quantity * item.unit_price * 100) / 100
-  } else {
-    item.total_price = null
-  }
-  emitUpdate()
-}
+// ── Items CRUD (add/remove/clear/confirm-match) — composables/items/useItemsTable.ts
+// calcItemTotal — composables/items/useItemsTotals.ts
 
 // ── Разбивка позиции по категориям ФЭО (владелец 2026-08-18) ────────────────
 // Закупка «Заказано» (statuses с tzFrozen=true) запрещает ДОБАВЛЕНИЕ новых
@@ -2164,31 +1918,7 @@ async function saveSplit() {
   }
 }
 
-// ── Selection ────────────────────────────────────────────────────────────────
-
-const selectedItemIdxs = ref<number[]>([])
-const allItemsSelected = computed(() =>
-  localItems.value.length > 0 && selectedItemIdxs.value.length === localItems.value.length
-)
-
-function toggleSelectAll(val: boolean | null) {
-  selectedItemIdxs.value = val ? localItems.value.map((_, i) => i) : []
-}
-
-function toggleItemSelect(idx: number, val: boolean | null) {
-  if (val) {
-    if (!selectedItemIdxs.value.includes(idx)) selectedItemIdxs.value.push(idx)
-  } else {
-    selectedItemIdxs.value = selectedItemIdxs.value.filter(i => i !== idx)
-  }
-}
-
-function removeSelectedItems() {
-  const toRemove = new Set(selectedItemIdxs.value)
-  localItems.value = localItems.value.filter((_, i) => !toRemove.has(i))
-  selectedItemIdxs.value = []
-  emitUpdate()
-}
+// ── Selection — composables/items/useItemsTable.ts ────────────────────────────
 
 // ── ISSUE-3 PART B: bulk-assign FEO level to selected items ───────────────────
 const bulkFeoDialog = ref(false)
@@ -2906,360 +2636,7 @@ function onItemTypeChange(idx: number, val: string) {
 }
 
 // import-no-clutter: bulk-add несвязанных позиций в каталог
-const hasUncatalogedSelected = computed(() =>
-  selectedItemIdxs.value.some(idx => !localItems.value[idx]?.product_id)
-)
-const uncatalogedSelectedCount = computed(() =>
-  selectedItemIdxs.value.filter(idx => !localItems.value[idx]?.product_id).length
-)
-
-const bulkAddCatalogLoading = ref(false)    // import-no-clutter: loading для bulk-add кнопки
-
-async function bulkAddToCatalog() {
-  const uncatItems = selectedItemIdxs.value
-    .map(idx => localItems.value[idx])
-    .filter(it => it && !it.product_id && it.id)  // только сохранённые в БД (имеют id)
-  if (!uncatItems.length) {
-    showSnack('Выберите сохранённые позиции без привязки к каталогу', 'warning')
-    return
-  }
-  bulkAddCatalogLoading.value = true
-  try {
-    const res = await apiFetch<{ created: number; linked: number; errors: string[] }>(
-      '/products/bulk-from-purchase-items',
-      { method: 'POST', body: JSON.stringify({ purchase_item_ids: uncatItems.map(it => it.id) }) }
-    )
-    showSnack(`Добавлено в каталог: ${res.created + res.linked}`, 'success')
-    emit('reload-requested')
-  } catch (e: any) {
-    showSnack(e?.payload?.message || e?.message || 'Ошибка добавления в каталог', 'error')
-  } finally {
-    bulkAddCatalogLoading.value = false
-  }
-}
-
-// ── Product selection ────────────────────────────────────────────────────────
-
-const productFilter = (_value: string, query: string, item?: any): boolean => {
-  if (!query.trim()) return true
-  const q = query.toLowerCase().trim()
-  const name = (item?.raw?.name || '').toLowerCase()
-  const desc = (item?.raw?.description || '').toLowerCase()
-  const type = (item?.raw?.product_type || '').toLowerCase()
-  return name.includes(q) || desc.includes(q) || type.includes(q)
-}
-
-// Keep productFilter available but it's not used directly in this component's template
-void productFilter
-
-function productItemsFor(search?: string): Product[] {
-  const q = (search || '').toLowerCase().trim()
-  if (!q) return products.value
-  return products.value.filter(p => {
-    const name = (p.name || '').toLowerCase()
-    const desc = (p.description || '').toLowerCase()
-    const type = (p.product_type || '').toLowerCase()
-    return name.includes(q) || desc.includes(q) || type.includes(q)
-  })
-}
-
-const hasProducts = computed(() => products.value.length > 0)
-void hasProducts
-
-function onItemProductSelect(idx: number, val: any) {
-  const item = localItems.value[idx]
-  if (!val) {
-    clearMatchBinding(item)
-    item._description_44fz = undefined
-    ;(item as any).match_confirmed = true
-    emitUpdate()
-    return
-  }
-  if (typeof val === 'string') {
-    item.item_name = val
-    item.product_id = null
-    item._selectedProduct = val
-    item._photo_url = undefined
-    item._description = undefined
-    item._description_44fz = undefined
-    item._price_meta = null
-    ;(item as any).match_confirmed = true
-    emitUpdate()
-    return
-  }
-  // Catalog Product object → apply via shared matching logic.
-  applyMatchCandidate(item as any, {
-    product_id: val.id,
-    name: val.name || '',
-    price: val.price ?? null,
-    score: 1,
-    description: val.description ?? null,
-    photo_url: productPhotoSrc(val) ?? null,
-    item_type: val.product_type ?? null,
-    contract_price: val.contract_price ?? null,
-    price_updated_at: val.price_updated_at ?? null,
-    price_source: val.price_source ?? null,
-    price_source_ref: val.price_source_ref ?? null,
-    price_freshness: val.price_freshness ?? null,
-  })
-  item._description_44fz = val.description_44fz || undefined
-  emitUpdate()
-}
-
-// ── BUG #5: inline per-row catalog matching ──────────────────────────────────
-// InlineProductMatch emits a chosen candidate; apply it without opening a dialog.
-function onInlineMatchPick(idx: number, candidate: MatchCandidate) {
-  const item = localItems.value[idx]
-  if (!item) return
-  applyMatchCandidate(item as any, candidate)
-  emitUpdate()
-}
-
-function onInlineMatchClear(idx: number) {
-  clearItem(idx)
-}
-
-// Fall back to the full product dialog for "create new" from inline match.
-function onInlineMatchCreateNew(idx: number) {
-  const row = idx >= 0 ? localItems.value[idx] : null
-  const prefillName = row?.item_name || ''
-  const price = row && row.unit_price != null && Number(row.unit_price) > 0 ? Number(row.unit_price) : undefined
-  openFullProduct(idx, prefillName, undefined, price)
-}
-
-// ── Product picker dialog ────────────────────────────────────────────────────
-
-const productPickerDialog = ref(false)
-const productPickerSearch = ref('')
-const productPickerIdx = ref(-1)
-
-const productPickerResults = computed(() => productItemsFor(productPickerSearch.value))
-
-function openProductPicker(idx: number) {
-  productPickerIdx.value = idx
-  productPickerSearch.value = localItems.value[idx]?.item_name || ''
-  productPickerDialog.value = true
-}
-
-function selectFromPicker(prod: Product) {
-  productPickerDialog.value = false
-  onItemProductSelect(productPickerIdx.value, prod)
-}
-
-function createProductFromPicker() {
-  productPickerDialog.value = false
-  const idx = productPickerIdx.value
-  const row = idx >= 0 ? localItems.value[idx] : null
-  const price = row && row.unit_price != null && Number(row.unit_price) > 0 ? Number(row.unit_price) : undefined
-  openFullProduct(idx, productPickerSearch.value, undefined, price)
-}
-
-// ── Full product dialog ───────────────────────────────────────────────────────
-
-const fullProductDialog = ref(false)
-const fullProductSaving = ref(false)
-const fullProductIdx = ref(-1)
-const fullProductEditingId = ref<number | null>(null)
-const fullProductPhotoFile = ref<File | null>(null)
-const fullProductPhotoFileList = ref<File[]>([])
-const fullProductPhotoPreview = ref<string | null>(null)
-const fullProductForm = reactive({
-  name: '' as string,
-  category: '',
-  product_type: '',
-  item_kind: 'товар' as string,
-  price: null as number | null,
-  description: '',
-  photo_url: '',
-  photo_link: '',
-  is_active: true,
-  priceLinks: [] as PriceLink[],
-})
-
-const fullProductNameSearch = ref('')
-const fullProductNameSuggestions = computed(() => {
-  const q = (fullProductNameSearch.value || '').toLowerCase().trim()
-  if (q.length < 2) return []
-  return products.value
-    .filter(p => p.name.toLowerCase().includes(q))
-    .map(p => p.name)
-    .slice(0, 15)
-})
-
-const isFullProductDuplicate = computed(() => {
-  const q = (typeof fullProductForm.name === 'string' ? fullProductForm.name : '').toLowerCase().trim()
-  if (!q) return false
-  return products.value.some(p => p.name.toLowerCase().trim() === q)
-})
-
-const fullProductTypeOptions = computed(() => {
-  const types = products.value.map(p => p.product_type).filter(Boolean) as string[]
-  return [...new Set(types)].sort()
-})
-
-const fullProductCategoryOptions = computed(() => {
-  const cats = products.value.map(p => p.category).filter(Boolean) as string[]
-  return [...new Set(cats)].sort()
-})
-
-const fullAvgPrice = computed<number | null>(() => {
-  const prices = fullProductForm.priceLinks
-    .map(l => l.price)
-    .filter((p): p is number => p !== null && !isNaN(Number(p)) && Number(p) > 0)
-  if (!prices.length) return null
-  return Math.round(prices.reduce((s, p) => s + p, 0) / prices.length * 100) / 100
-})
-
-watch(fullAvgPrice, v => { if (v !== null) fullProductForm.price = v })
-
-function onFullPhotoFileChange(files: File[] | File | null) {
-  const fileArr = Array.isArray(files) ? files : (files ? [files] : [])
-  const f = fileArr[0] ?? null
-  fullProductPhotoFile.value = f
-  fullProductPhotoPreview.value = f ? URL.createObjectURL(f) : null
-}
-
-function resetFullProductForm(prefill?: string) {
-  Object.assign(fullProductForm, {
-    name: prefill || '',
-    category: '',
-    product_type: '',
-    item_kind: 'товар',
-    price: null,
-    description: '',
-    photo_url: '',
-    photo_link: '',
-    is_active: true,
-    priceLinks: [],
-  })
-  fullProductPhotoFile.value = null
-  fullProductPhotoFileList.value = []
-  fullProductPhotoPreview.value = null
-}
-
-function openFullProduct(idx: number, prefill?: string, productId?: number | null, prefillPrice?: number) {
-  fullProductIdx.value = idx
-  fullProductEditingId.value = null
-  resetFullProductForm(prefill)
-  if (!productId && prefillPrice != null && Number.isFinite(prefillPrice) && prefillPrice > 0) {
-    fullProductForm.price = prefillPrice
-  }
-  fullProductDialog.value = true
-
-  if (productId) {
-    // Try cache first, then refetch fresh data so any backend-only fields are loaded
-    const cached = products.value.find(p => p.id === productId)
-    if (cached) populateFullProductFromProduct(cached)
-    apiFetch<Product>(`/products/${productId}`)
-      .then(p => populateFullProductFromProduct(p))
-      .catch(() => { /* keep cached/prefill values */ })
-  }
-}
-
-function populateFullProductFromProduct(p: Product) {
-  fullProductEditingId.value = p.id
-  Object.assign(fullProductForm, {
-    name: p.name || '',
-    category: p.category || '',
-    product_type: p.product_type || '',
-    item_kind: (p as any).item_kind || 'товар',
-    price: p.price != null ? Number(p.price) : null,
-    description: p.description || '',
-    photo_url: p.photo_url || '',
-    photo_link: p.photo_link || '',
-    is_active: (p as any).is_active !== false,
-    priceLinks: Array.isArray((p as any).price_links)
-      ? (p as any).price_links.map((l: any) => ({ url: l.url || '', price: l.price ?? null }))
-      : [],
-  })
-  fullProductPhotoPreview.value = productPhotoSrc(p) || null
-}
-
-function openQuickProductEdit(item: EditorItem) {
-  const idx = localItems.value.indexOf(item)
-  const price = !item.product_id && item.unit_price != null && Number(item.unit_price) > 0 ? Number(item.unit_price) : undefined
-  openFullProduct(idx, item.item_name, item.product_id || undefined, price)
-}
-
-async function saveFullProduct() {
-  const nameStr = typeof fullProductForm.name === 'string' ? fullProductForm.name : (fullProductForm.name as any)?.name || ''
-  if (!nameStr.trim()) return
-  fullProductSaving.value = true
-  try {
-    const body: any = {
-      name: nameStr,
-      category: (fullProductForm.category || '').trim(),
-      product_type: fullProductForm.product_type || null,
-      item_kind: fullProductForm.item_kind || 'товар',
-      price: fullAvgPrice.value ?? fullProductForm.price ?? null,
-      description: fullProductForm.description || null,
-      photo_link: fullProductForm.photo_link || null,
-      is_active: fullProductForm.is_active,
-      price_links: fullProductForm.priceLinks.filter(l => l.url),
-    }
-    const isEdit = fullProductEditingId.value != null
-    let saved: Product
-    if (isEdit) {
-      saved = await apiFetch<Product>(`/products/${fullProductEditingId.value}`, { method: 'PUT', body })
-    } else {
-      try {
-        saved = await apiFetch<Product>('/products/', { method: 'POST', body })
-      } catch (err: any) {
-        // Backend detected a near-duplicate name → ask the user.
-        // FastAPI's HTTPException(detail={...}) is wrapped by api.ts: the original
-        // dict ends up at err.payload.message (apiFetch puts parsed.detail there).
-        const detail = err?.payload?.message
-        const existing = (err?.status === 409 && typeof detail === 'object' && detail?.code === 'duplicate_product')
-          ? detail.existing : null
-        if (existing) {
-          const msg = `Похожий товар уже есть в каталоге:\n«${existing.name}»\n\nИспользовать его (ОК) или всё равно создать новый (Отмена)?`
-          if (confirm(msg)) {
-            saved = existing
-          } else {
-            saved = await apiFetch<Product>('/products/?force=true', { method: 'POST', body })
-          }
-        } else {
-          throw err
-        }
-      }
-    }
-    // Upload photo if selected (works for both create and edit)
-    if (fullProductPhotoFile.value) {
-      const fd = new FormData()
-      fd.append('file', fullProductPhotoFile.value)
-      const token = localStorage.getItem('auth_token')
-      const res = await fetch(`/api/products/${saved.id}/photo`, {
-        method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: fd,
-      })
-      if (res.ok) Object.assign(saved, await res.json())
-    }
-    products.value = await apiFetch<Product[]>('/products/')
-    if (fullProductIdx.value >= 0) {
-      onItemProductSelect(fullProductIdx.value, saved)
-      // 27.4-14: моментальная запись привязки в БД (без ожидания общего «Сохранить»),
-      // иначе после F5 product_id вернётся в null.
-      const linkItem = localItems.value[fullProductIdx.value]
-      if (props.purchaseId && (linkItem as any)?.id && saved.id) {
-        try {
-          await apiFetch(`/purchases/${props.purchaseId}/items/${(linkItem as any).id}/set-product`,
-            { method: 'POST', body: { product_id: saved.id } })
-        } catch (e) { console.warn('Failed to persist product_id link', e) }
-      }
-    }
-    emit('product-created', saved)
-    showSnack(isEdit ? `Товар "${saved.name}" обновлён` : `Товар "${saved.name}" добавлен в каталог`)
-    fullProductDialog.value = false
-    fullProductPhotoFile.value = null
-    fullProductPhotoFileList.value = []
-    fullProductPhotoPreview.value = null
-  } catch {
-    showSnack('Ошибка при добавлении товара', 'error')
-  } finally {
-    fullProductSaving.value = false
-  }
-}
+// hasUncatalogedSelected..saveFullProduct — composables/items/useItemsCatalog.ts
 
 
 // SN-UX: formatNumber / parseNumber now imported from @/utils/numberFormat

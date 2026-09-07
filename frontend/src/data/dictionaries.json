@@ -135,6 +135,10 @@
       "description": "Изменение статуса закупки"
     },
     {
+      "key": "staff.location.view",
+      "description": "Просмотр местоположения сотрудников (диспетчерская карта «Где люди»)"
+    },
+    {
       "key": "vehicle.delete",
       "description": "Удаление ТС"
     },

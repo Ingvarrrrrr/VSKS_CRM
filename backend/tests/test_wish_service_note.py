@@ -3,7 +3,7 @@
 Covers:
   - 200 response with valid .docx content-type for a wish with items
   - Response body > 1000 bytes (real document, not stub)
-  - Content-Disposition contains SZ_Wish_{id}.docx
+  - Content-Disposition contains Служебная_записка_{title}.docx (RFC5987)
   - docx.Document(BytesIO(content)) parseability — confirms valid .docx structure
   - 404 for non-existent wish id
   - 200 with initiator_id query param (SubsidyApprover lookup doesn't crash)
@@ -20,6 +20,17 @@ from sqlalchemy import select
 from app import app
 from app.models.wish import Wish
 from app.models.wish_item import WishItem
+
+# Дефект (2026-09-07 QA): тесты ниже создавали свой собственный
+# AsyncClient(transport=ASGITransport(app=app), ...) БЕЗ override get_db —
+# запрос уходил на реальный (production) get_db, который не видит
+# test_user, созданного через db_session (отдельная транзакция/сессия) →
+# auth_headers несёт валидный JWT, но get_current_user не находит пользователя
+# по нему на "боевой" БД → всегда 401. Фикс: использовать фикстуру `client` из
+# conftest.py (overrides get_db на db_session), как в других тестовых файлах.
+# Только test_service_note_requires_auth (запрос вовсе без заголовка
+# Authorization — 401 до всякого обращения к БД) оставлен с сырым
+# AsyncClient — ему get_db не нужен.
 
 
 # ---------------------------------------------------------------------------
@@ -44,7 +55,7 @@ _SKIP_NO_TEMPLATE = pytest.mark.skipif(
 
 @_SKIP_NO_TEMPLATE
 @pytest.mark.asyncio
-async def test_generate_wish_service_note_returns_docx(db_session, auth_headers, test_org, test_user):
+async def test_generate_wish_service_note_returns_docx(client, db_session, auth_headers, test_org, test_user):
     """GET /api/wishes/{id}/documents/service_note returns a parseable .docx (D-07)."""
     # Arrange: wish with one item
     w = Wish(
@@ -66,20 +77,25 @@ async def test_generate_wish_service_note_returns_docx(db_session, auth_headers,
     await db_session.commit()
     await db_session.refresh(w)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        resp = await c.get(
-            f"/api/wishes/{w.id}/documents/service_note",
-            headers=auth_headers,
-        )
+    resp = await client.get(
+        f"/api/wishes/{w.id}/documents/service_note",
+        headers=auth_headers,
+    )
 
     # Status + content-type
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
     ct = resp.headers.get("content-type", "")
     assert "wordprocessingml" in ct, f"Expected .docx content-type, got: {ct!r}"
 
-    # Content-Disposition
-    cd = resp.headers.get("content-disposition", "")
-    assert f"SZ_Wish_{w.id}.docx" in cd, f"Expected SZ_Wish_{w.id}.docx in Content-Disposition, got: {cd!r}"
+    # Content-Disposition: filename convention changed from "SZ_Wish_{id}.docx"
+    # to RFC5987 filename*=UTF-8''Служебная_записка_{title}.docx (see
+    # wish_documents.py generate_wish_service_note, `safe_name`/`encoded`) —
+    # stale expectation predates this rename. Decode and check the real pattern.
+    from urllib.parse import unquote
+    cd = unquote(resp.headers.get("content-disposition", ""))
+    assert "Служебная_записка" in cd and cd.endswith(".docx"), (
+        f"Expected Служебная_записка_*.docx in Content-Disposition, got: {cd!r}"
+    )
 
     # Non-trivial body size — real .docx, not empty stub
     assert len(resp.content) > 1000, (
@@ -96,13 +112,12 @@ async def test_generate_wish_service_note_returns_docx(db_session, auth_headers,
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_service_note_404_for_missing_wish(auth_headers):
+async def test_service_note_404_for_missing_wish(client, auth_headers):
     """GET on a non-existent wish_id returns 404."""
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        resp = await c.get(
-            "/api/wishes/9999999/documents/service_note",
-            headers=auth_headers,
-        )
+    resp = await client.get(
+        "/api/wishes/9999999/documents/service_note",
+        headers=auth_headers,
+    )
     assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
     detail = resp.json().get("detail", "") or resp.json().get("message", "")
     assert (
@@ -116,10 +131,21 @@ async def test_service_note_404_for_missing_wish(auth_headers):
 
 @_SKIP_NO_TEMPLATE
 @pytest.mark.asyncio
-async def test_service_note_with_initiator_id(db_session, auth_headers, test_org, test_user):
+async def test_service_note_with_initiator_id(client, db_session, superadmin_headers, test_org, test_user):
     """GET with initiator_id=9999999 (non-existent approver) still returns 200.
 
     Endpoint gracefully falls back to creator name when initiator not found.
+
+    Fix (2026-09): a later business rule (see wish_documents.py, "за другого
+    человека делать СЗ может только тот, кому подчинён этот человек") now
+    403s with INITIATOR_FORBIDDEN for any initiator_id outside the caller's
+    visible-users set — an ordinary employee (auth_headers, no subordinates)
+    can never reach the "approver id doesn't exist" fallback this test is
+    actually about. superadmin_headers has SaaS-wide visibility
+    (_get_visible_user_ids returns None for superadmin/account_owner — no
+    user filter), so the request passes the ownership gate and exercises the
+    real thing under test: graceful fallback when initiator_id doesn't
+    resolve to any user.
     """
     w = Wish(
         org_id=test_org.id,
@@ -141,11 +167,10 @@ async def test_service_note_with_initiator_id(db_session, auth_headers, test_org
     await db_session.refresh(w)
 
     # Non-existent initiator_id — should not crash, fallback to creator name
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        resp = await c.get(
-            f"/api/wishes/{w.id}/documents/service_note?initiator_id=9999999",
-            headers=auth_headers,
-        )
+    resp = await client.get(
+        f"/api/wishes/{w.id}/documents/service_note?initiator_id=9999999",
+        headers=superadmin_headers,
+    )
 
     assert resp.status_code == 200, f"Expected 200 with unknown initiator_id, got {resp.status_code}: {resp.text}"
     ct = resp.headers.get("content-type", "")
@@ -165,7 +190,7 @@ async def test_service_note_with_initiator_id(db_session, auth_headers, test_org
 
 @_SKIP_NO_TEMPLATE
 @pytest.mark.asyncio
-async def test_service_note_wish_with_no_items(db_session, auth_headers, test_org, test_user):
+async def test_service_note_wish_with_no_items(client, db_session, auth_headers, test_org, test_user):
     """GET on a wish with zero items returns 200 (empty items list is valid)."""
     w = Wish(
         org_id=test_org.id,
@@ -177,11 +202,10 @@ async def test_service_note_wish_with_no_items(db_session, auth_headers, test_or
     await db_session.commit()
     await db_session.refresh(w)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        resp = await c.get(
-            f"/api/wishes/{w.id}/documents/service_note",
-            headers=auth_headers,
-        )
+    resp = await client.get(
+        f"/api/wishes/{w.id}/documents/service_note",
+        headers=auth_headers,
+    )
 
     assert resp.status_code == 200, f"Expected 200 for empty wish, got {resp.status_code}: {resp.text}"
     assert len(resp.content) > 1000, "Expected non-trivial .docx even with empty items"

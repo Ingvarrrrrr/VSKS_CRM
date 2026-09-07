@@ -2,21 +2,15 @@
 
 Split out of app/routers/documents.py::generate_document (wave 3f refactor).
 
-NOTE (deliberately preserved bug, per refactor instructions — do NOT fix):
-resolve_vat_exemption_article() below reproduces the pre-existing
-UnboundLocalError on `art` that occurs when vat_applicable=False and
-purchase_method='advance'. `art` is only assigned inside its final `else`
-branch; when the `elif is_advance` branch runs instead, the closing
-`return "" if vat_app else art` references an unassigned local and raises
-UnboundLocalError — same as the original inline code's
-`"vat_exemption_article": ("" if vat_app else art)` did while building the
-big docxtpl context dict (the ternary's short-circuit meant vat_app=True
-never touched `art` at all — that must stay true here too, so `art` is
-NOT put in compute_amounts_and_vat()'s returned dict; see its comment).
-Neither function is wrapped in a try/except by the orchestrator (mirrors
-the original, where this segment sat before the try/except added at the
-"Phase 26-U" block), so the exception propagates uncaught into a generic
-FastAPI 500, exactly as before.
+NOTE: resolve_vat_exemption_article() previously reproduced a pre-existing
+UnboundLocalError on `art` when vat_applicable=False and
+purchase_method='advance' (`art` was only assigned in the final `else`
+branch). Fixed 2026-09 — see the function's docstring; `art` is now always
+resolved via `_resolve_vat_exemption_basis(p)` when vat_app is False,
+regardless of is_advance, matching fabrikant_package.py's equivalent code
+which never had this bug (`art` is NOT put in compute_amounts_and_vat()'s
+returned dict for the same reason as before — the vat_app=True case never
+needs it; see that function's comment).
 """
 from datetime import date
 from decimal import Decimal
@@ -127,24 +121,26 @@ def compute_amounts_and_vat(p: Purchase, doc_type: str) -> dict:
         # ("" if vat_app else art) — Python only evaluates/needs `art` when
         # vat_app is False, so the vat_app=True case never touched it. Putting
         # "art": art here unconditionally would evaluate `art` on EVERY call
-        # (including vat_app=True), turning a narrow pre-existing bug into a
-        # 500 for the common vat_app=True case — a regression, not a
-        # preserved bug. See resolve_vat_exemption_article() below, which
-        # reproduces the original ternary's short-circuit exactly.
+        # (including vat_app=True) — unnecessary work for a value that's
+        # discarded when vat_app=True. See resolve_vat_exemption_article()
+        # below, which preserves that same short-circuit.
     }
 
 
 def resolve_vat_exemption_article(p: Purchase, vat_app: bool, is_advance: bool) -> str:
-    """Mirrors the original inline `"vat_exemption_article": ("" if vat_app
-    else art)` computation exactly, including the preserved
-    UnboundLocalError('art') bug when vat_app=False and is_advance=True —
-    `art` is assigned only in the final `else` branch below, exactly like
-    the original function-level `art` was assigned only in its `else`
-    branch (see compute_amounts_and_vat above)."""
+    """"vat_exemption_article" for the docxtpl context.
+
+    Fix (2026-09): the previous version left `art` unassigned when
+    vat_app=False and is_advance=True, causing an UnboundLocalError (500) on
+    every advance-purchase document without VAT. `_resolve_vat_exemption_basis`
+    is generic — it only looks at the manually entered article / contractor
+    self-employment / GPH-individual contract form, none of which depend on
+    purchase_method — so it applies identically for advance purchases, exactly
+    like fabrikant_package.py already does (that function never special-cased
+    is_advance here and always resolved `art` in its single `else` branch).
+    `is_advance` is kept as a parameter for call-site/API compatibility even
+    though it no longer changes this function's behaviour.
+    """
     if vat_app:
-        pass
-    elif is_advance:
-        pass
-    else:
-        art = _resolve_vat_exemption_basis(p)
-    return "" if vat_app else art
+        return ""
+    return _resolve_vat_exemption_basis(p)

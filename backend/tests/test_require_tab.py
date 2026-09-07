@@ -4,8 +4,18 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_require_tab_403_when_not_in_effective(client, auth_headers):
-    """employee has no 'staff' tab → GET /api/hierarchy/ returns 403 after migration."""
-    r = await client.get("/api/hierarchy/", headers=auth_headers)
+    """employee has no 'staff' tab → require_tab('staff')-gated endpoint returns 403.
+
+    Fix (2026-09): GET /api/hierarchy/ never existed as a route (always 404,
+    masking whatever this test was meant to check) — the real GET
+    /api/hierarchy/graph endpoint only depends on get_current_user, no
+    require_tab gate at all, so it can't be used here (returns 200 for any
+    authenticated user, verified empirically). POST /api/hierarchy/edges is
+    the require_tab('staff')-gated endpoint that actually exists in this
+    router; the dependency raises 403 before body validation runs, so an
+    empty JSON body still exercises the gate correctly.
+    """
+    r = await client.post("/api/hierarchy/edges", headers=auth_headers, json={})
     assert r.status_code == 403
 
 @pytest.mark.asyncio

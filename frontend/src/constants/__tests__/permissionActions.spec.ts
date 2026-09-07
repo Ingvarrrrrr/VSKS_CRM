@@ -16,18 +16,17 @@ import dictionaries from '@/data/dictionaries.json'
 // НЕ через permission_seeds.py (значит, export_dictionaries.py их не видит):
 //   - 'publication.create', 'purchase_files.upload' — через alembic-миграции
 //     (baseline / perm_seed_hotfix.sql), которые не переразбираются задним числом.
-//   - 'staff.location.view' — упоминается в докстринге staff_location.py как
-//     "см. app/__init__.py, блок Phase: staff.location.view permission seed",
-//     но такого блока НЕТ нигде (ни в app/__init__.py, ни в permission_seeds.py,
-//     ни в alembic) — настоящий незаведённый ключ, не наша задача чинить его
-//     здесь (staff-location — работа другого агента), только не терять из виду.
 //   - 'subsidy.edit' — заведён через исходную alembic-миграцию системы прав
 //     (q4r5s6t7u8v9_add_permission_system.py / perm_seed_hotfix.sql), не через
 //     permission_seeds.py; используется в SubsidiesView.vue (запрещённый для
 //     правки файл этой сессии) и SubsidyMembersDialog.vue.
-// Если один из этих ключей появится в permission_actions после сидирования —
-// уберите его из KNOWN_GAPS, иначе тест перестанет ловить реальные дефекты.
-const KNOWN_GAPS = new Set(['publication.create', 'purchase_files.upload', 'staff.location.view', 'subsidy.edit'])
+// 'staff.location.view' исключён из этого списка 2026-09-07: заведён сидом
+// _staff_location_view_action() в permission_seeds.py (дефект D3 починен),
+// теперь присутствует в dictionaries.json как обычный сидированный ключ.
+// Если один из оставшихся ключей появится в permission_actions после
+// сидирования — уберите его из KNOWN_GAPS, иначе тест перестанет ловить
+// реальные дефекты.
+const KNOWN_GAPS = new Set(['publication.create', 'purchase_files.upload', 'subsidy.edit'])
 
 const repoRoot = path.resolve(fileURLToPath(import.meta.url), '../../../../../')
 const srcDir = path.join(repoRoot, 'frontend', 'src')

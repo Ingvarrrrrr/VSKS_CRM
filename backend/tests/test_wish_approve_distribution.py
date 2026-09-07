@@ -6,13 +6,13 @@ approve), D-06 (N purchases in status='wishes').
 All test bodies are fully specified — no pass/... stubs.
 """
 import pytest
-from httpx import AsyncClient, ASGITransport
 from sqlalchemy import select, func
-from app import app
 from app.models.wish import Wish
 from app.models.wish_item import WishItem
 from app.models.purchase import Purchase
 from app.models.product import Product
+from app.models.subsidy import Subsidy
+from app.models.feo_category import FeoCategory
 
 
 async def _seed_wish_with_mixed_items(db_session, test_org, test_user):
@@ -22,7 +22,26 @@ async def _seed_wish_with_mixed_items(db_session, test_org, test_user):
       - Электроника (2 items: Laptop + Mouse via product.category)
       - Мебель (1 item: Chair via product.category)
       - __uncategorized__ (1 item: raw text, no product_id)
+
+    Fix (2026-09): approve-distribution now hard-gates on two checks added
+    after these tests were written (both in wishes.py):
+      - _ensure_feo_categories_assigned — every item needs an effective
+        feo_category_id (own or wish-level fallback) that actually exists in
+        feo_categories. Attach a minimal Subsidy + FeoCategory and set it as
+        the wish's fallback category so all 4 items pass the gate.
+      - _ensure_needed_dates (W2) — only applies when
+        Subsidy.require_planned_dates is true (server_default='true'); items
+        here have no needed_date/execution_deadline/desired_date, so disable
+        it explicitly on the test subsidy (a real, supported setting —
+        "Требование дат можно отключить в настройках субсидии").
     """
+    subsidy = Subsidy(name=f"TestSubsidy-{id(db_session)}", year=2026, budget=0, require_planned_dates=False)
+    db_session.add(subsidy)
+    await db_session.flush()
+    feo_cat = FeoCategory(subsidy_id=subsidy.id, level=1, name="Прочее")
+    db_session.add(feo_cat)
+    await db_session.flush()
+
     p_elec = Product(name=f"Laptop-{id(db_session)}", category="Электроника", org_id=test_org.id)
     p_furn = Product(name=f"Chair-{id(db_session)}", category="Мебель", org_id=test_org.id)
     db_session.add_all([p_elec, p_furn])
@@ -33,6 +52,8 @@ async def _seed_wish_with_mixed_items(db_session, test_org, test_user):
         title="Офис-комплект",
         status="submitted",
         created_by=test_user.id,
+        subsidy_id=subsidy.id,
+        feo_category_id=feo_cat.id,
     )
     db_session.add(w)
     await db_session.flush()
@@ -60,85 +81,90 @@ async def _seed_wish_with_mixed_items(db_session, test_org, test_user):
 
 
 @pytest.mark.asyncio
-async def test_approve_distribution_creates_n_purchases(db_session, admin_headers, test_org, test_user):
+async def test_approve_distribution_creates_n_purchases(client, db_session, admin_headers, test_org, test_user):
     """D-06: Happy path — POST /approve-distribution creates one purchase per column group."""
     w = await _seed_wish_with_mixed_items(db_session, test_org, test_user)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        resp = await c.post(f"/api/wishes/{w.id}/approve-distribution", headers=admin_headers)
+    resp = await client.post(f"/api/wishes/{w.id}/approve-distribution", headers=admin_headers)
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["count"] == 3, f"expected 3 column groups, got: {body}"
-    assert body["status"] == "approved"
+    # wish_convert.py::approve-distribution always returns "converted" — the
+    # locked terminal status (see wishes.py line ~1557 docstring); "approved"
+    # was stale drift from before this endpoint existed under its own name.
+    assert body["status"] == "converted"
     assert len(body["purchase_ids"]) == 3
 
-    # Verify DB state: 3 purchases with status='wishes' committed by the endpoint
+    # Verify DB state: 3 purchases with status='plan_schedule' committed by the
+    # endpoint (_distribute_wish_to_purchases default purchase_status; "wishes"
+    # was a stale status name — see wish_distribution.py "«План закупок»").
     purchases = (await db_session.execute(
         select(Purchase).where(Purchase.id.in_(body["purchase_ids"]))
     )).scalars().all()
     assert len(purchases) == 3, f"DB has {len(purchases)} purchases, expected 3"
-    assert all(p.status == "wishes" for p in purchases), (
-        f"Not all purchases have status='wishes': {[p.status for p in purchases]}"
+    assert all(p.status == "plan_schedule" for p in purchases), (
+        f"Not all purchases have status='plan_schedule': {[p.status for p in purchases]}"
     )
 
-    # Verify wish is now approved
+    # Verify wish is now converted (locked terminal status)
     await db_session.refresh(w)
-    assert w.status == "approved", f"wish.status={w.status!r}, expected 'approved'"
+    assert w.status == "converted", f"wish.status={w.status!r}, expected 'converted'"
 
 
 @pytest.mark.asyncio
-async def test_double_approve_returns_400(db_session, admin_headers, test_org, test_user):
+async def test_double_approve_returns_400(client, db_session, admin_headers, test_org, test_user):
     """D-05: Second approve call on already-approved wish must return 400."""
     w = await _seed_wish_with_mixed_items(db_session, test_org, test_user)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        first = await c.post(f"/api/wishes/{w.id}/approve-distribution", headers=admin_headers)
-        assert first.status_code == 200, f"First approve failed: {first.text}"
+    first = await client.post(f"/api/wishes/{w.id}/approve-distribution", headers=admin_headers)
+    assert first.status_code == 200, f"First approve failed: {first.text}"
 
-        second = await c.post(f"/api/wishes/{w.id}/approve-distribution", headers=admin_headers)
+    second = await client.post(f"/api/wishes/{w.id}/approve-distribution", headers=admin_headers)
 
     assert second.status_code == 400, second.text
-    detail = second.json().get("detail", "")
-    assert (
-        "уже одобрена" in detail.lower()
-        or "approved" in detail.lower()
-    ), f"Expected 'уже одобрена' in detail, got: {detail!r}"
+    # Error envelope uses "message" (see app's HTTPException handler), not a
+    # bare "detail" key — and the actual text is "Заявка уже распределена",
+    # not "уже одобрена"/"approved" (stale wording from before this endpoint's
+    # current message was written).
+    detail = second.json().get("message", "")
+    assert "уже распределена" in detail.lower(), f"Expected 'уже распределена' in message, got: {detail!r}"
 
 
 @pytest.mark.asyncio
-async def test_patch_item_blocked_when_approved(db_session, auth_headers, admin_headers, test_org, test_user):
+async def test_patch_item_blocked_when_approved(client, db_session, auth_headers, admin_headers, test_org, test_user):
     """D-05: wish becomes read-only after approve. PATCH /items/{iid} returns 409 Conflict."""
     w = await _seed_wish_with_mixed_items(db_session, test_org, test_user)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        # First approve the wish
-        approve_resp = await c.post(f"/api/wishes/{w.id}/approve-distribution", headers=admin_headers)
-        assert approve_resp.status_code == 200, f"Approve failed: {approve_resp.text}"
+    # First approve the wish
+    approve_resp = await client.post(f"/api/wishes/{w.id}/approve-distribution", headers=admin_headers)
+    assert approve_resp.status_code == 200, f"Approve failed: {approve_resp.text}"
 
-        # Pick any item from the wish
-        items = (await db_session.execute(
-            select(WishItem).where(WishItem.wish_id == w.id)
-        )).scalars().all()
-        assert items, "Fixture should have created wish items"
-        target_item = items[0]
+    # Pick any item from the wish
+    items = (await db_session.execute(
+        select(WishItem).where(WishItem.wish_id == w.id)
+    )).scalars().all()
+    assert items, "Fixture should have created wish items"
+    target_item = items[0]
 
-        patch_resp = await c.patch(
-            f"/api/wishes/{w.id}/items/{target_item.id}",
-            json={"target_column_key": "Новая категория"},
-            headers=auth_headers,
-        )
+    patch_resp = await client.patch(
+        f"/api/wishes/{w.id}/items/{target_item.id}",
+        json={"target_column_key": "Новая категория"},
+        headers=auth_headers,
+    )
 
     assert patch_resp.status_code == 409, patch_resp.text
-    detail = patch_resp.json().get("detail", "")
+    # Error envelope key is "message", not "detail" (see other fixes in this file).
+    detail = patch_resp.json().get("message", "")
     assert (
         "одобрена" in detail.lower()
         or "редактирование" in detail.lower()
-    ), f"Expected locked wish message in detail, got: {detail!r}"
+        or "распределена" in detail.lower()
+    ), f"Expected locked wish message, got: {detail!r}"
 
 
 @pytest.mark.asyncio
-async def test_patch_item_wrong_wish_returns_404(db_session, auth_headers, test_org, test_user):
+async def test_patch_item_wrong_wish_returns_404(client, db_session, auth_headers, test_org, test_user):
     """D-04: PATCH an item using a different wish's id in the path must return 404."""
     # Wish A owns item_a
     wa = Wish(org_id=test_org.id, title="Заявка A", status="submitted", created_by=test_user.id)
@@ -155,25 +181,24 @@ async def test_patch_item_wrong_wish_returns_404(db_session, auth_headers, test_
     await db_session.commit()
     await db_session.refresh(item_a)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        # Attempt: use wish B's id in path, but item_a's id — cross-wish scope violation
-        resp = await c.patch(
-            f"/api/wishes/{wb.id}/items/{item_a.id}",
-            json={"target_column_key": "X"},
-            headers=auth_headers,
-        )
+    # Attempt: use wish B's id in path, but item_a's id — cross-wish scope violation
+    resp = await client.patch(
+        f"/api/wishes/{wb.id}/items/{item_a.id}",
+        json={"target_column_key": "X"},
+        headers=auth_headers,
+    )
 
     assert resp.status_code == 404, resp.text
-    detail = resp.json().get("detail", "")
+    detail = resp.json().get("message", "")
     assert (
         "не найдена" in detail.lower()
         or "not found" in detail.lower()
-    ), f"Expected 'не найдена' in detail, got: {detail!r}"
+    ), f"Expected 'не найдена' in message, got: {detail!r}"
 
 
 @pytest.mark.asyncio
 async def test_approve_distribution_rollback_on_failure(
-    db_session, admin_headers, test_org, test_user, monkeypatch
+    client, db_session, admin_headers, test_org, test_user, monkeypatch
 ):
     """D-05 atomicity: if Purchase creation fails on 2nd call (induced),
     ALL purchases are rolled back and wish.status remains unchanged.
@@ -200,17 +225,17 @@ async def test_approve_distribution_rollback_on_failure(
 
     monkeypatch.setattr(purchase_module.Purchase, "__init__", faulty_init)
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        resp = await c.post(f"/api/wishes/{w.id}/approve-distribution", headers=admin_headers)
+    resp = await client.post(f"/api/wishes/{w.id}/approve-distribution", headers=admin_headers)
 
-    # Endpoint wraps exceptions → HTTP 500 with rollback message
+    # Endpoint wraps exceptions → HTTP 500 with rollback message. Error
+    # envelope key is "message", not "detail" (see other fixes in this file).
     assert resp.status_code == 500, resp.text
-    detail = resp.json().get("detail", "")
+    detail = resp.json().get("message", "")
     assert (
         "откат" in detail.lower()
         or "rollback" in detail.lower()
         or "induced failure" in detail.lower()
-    ), f"Expected rollback/induced-failure in detail, got: {detail!r}"
+    ), f"Expected rollback/induced-failure in message, got: {detail!r}"
 
     # CRITICAL: zero new purchases must have leaked to DB
     # Expire session cache to force fresh reads from DB

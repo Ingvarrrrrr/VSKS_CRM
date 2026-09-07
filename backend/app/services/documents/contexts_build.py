@@ -139,9 +139,6 @@ async def build_base_context_part2(
     vat_info_line = amounts["vat_info_line"]
     amount_is_planned = amounts["amount_is_planned"]
     is_advance = amounts["is_advance"]
-    # Preserved-bug call site — see stages_amounts.resolve_vat_exemption_article()
-    # docstring: raises UnboundLocalError('art') when vat_app=False and
-    # is_advance=True, exactly like the original inline ternary did.
     art = resolve_vat_exemption_article(p, vat_app, is_advance)
 
     context.update({

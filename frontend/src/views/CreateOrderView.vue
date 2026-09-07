@@ -1585,7 +1585,7 @@
                 </span>
                 <v-btn
                   size="x-small" variant="text" color="primary" class="ml-1"
-                  @click="document.getElementById('section-dates')?.scrollIntoView({ behavior: 'smooth', block: 'start' })"
+                  @click="scrollToDatesSection"
                 >Изменить ↓</v-btn>
               </div>
               <div class="text-caption text-medium-emphasis">Изменить даты — в блоке «Сроки и даты»</div>
@@ -5448,6 +5448,16 @@ function confirmDuplicateSave() {
   duplicateDialog.value = false
   duplicateConfirmed = true
   doSave(duplicatePendingOverride)
+}
+
+// Дефект: bare `document.getElementById(...)` в шаблоне (@click) резолвился
+// в _ctx.document (undefined) — компилятор Vue 3 в module-режиме (SFC/script
+// setup) не проставляет глобалы вроде document/window через `with`, только
+// через явный whitelist (GLOBALS_ALLOWED), куда DOM-глобалы не входят.
+// В <script setup> тот же идентификатор — обычный JS-global, поэтому вызов
+// вынесен в функцию и используется из шаблона по имени.
+function scrollToDatesSection() {
+  document.getElementById('section-dates')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
 // Доработка 5 мая: подсветка незаполненных полей при отказе перехода статуса.

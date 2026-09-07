@@ -461,6 +461,44 @@ async def _staff_directory_tab():
         logging.getLogger(__name__).warning(f"Phase 18 staff_directory tab seed skipped (non-fatal): {e}")
 
 
+async def _staff_location_view_action():
+    # Дефект (2026-09-07 QA): фронт (router/index.ts, AppBar.vue) проверяет
+    # action-право 'staff.location.view', но ни один сид его не заводил —
+    # право не могло быть выдано никому ни в UI, ни через RolePermission.
+    # Action-only (без tab), см. backend/app/routers/staff_location.py и
+    # router/index.ts beforeEnter на /staff-location — та же схема, что
+    # documents.view_all_in_org/wish.edit_feo выше. Дефолты — дословно из
+    # докстринга staff_location.py: superadmin/account_owner/admin/org_admin=TRUE,
+    # manager/employee — явный запрет (управленцы намеренно не входят в дефолт).
+    try:
+        from sqlalchemy import select as _sel
+        from app.models.permission import PermissionAction, RolePermission
+        async with async_session() as db:
+            ACTION_KEY = 'staff.location.view'
+            ex = await db.execute(_sel(PermissionAction).where(PermissionAction.action_key == ACTION_KEY))
+            if not ex.scalar_one_or_none():
+                db.add(PermissionAction(
+                    action_key=ACTION_KEY,
+                    description='Просмотр местоположения сотрудников (диспетчерская карта «Где люди»)',
+                ))
+                await db.commit()
+            ROLE_DEFAULTS = [
+                ('superadmin', True), ('account_owner', True),
+                ('admin', True), ('org_admin', True),
+                ('manager', False), ('employee', False),
+            ]
+            for role_name, granted in ROLE_DEFAULTS:
+                ex = await db.execute(_sel(RolePermission).where(
+                    RolePermission.role_name == role_name,
+                    RolePermission.key == ACTION_KEY,
+                ))
+                if not ex.scalar_one_or_none():
+                    db.add(RolePermission(role_name=role_name, key=ACTION_KEY, granted=granted))
+            await db.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"staff.location.view action seed skipped (non-fatal): {e}")
+
+
 async def run():
     """Вызывает все idempotent сиды прав в исходном порядке (см. app/__init__.py.lifespan до разрезания)."""
     await _payment_registry_tab_and_actions()
@@ -475,3 +513,4 @@ async def run():
     await _feo_category_edit_action()
     await _plan_excess_decide_action()
     await _staff_directory_tab()
+    await _staff_location_view_action()

@@ -9,7 +9,11 @@ import fs from 'fs';
 const SHOTS_DIR = path.resolve('.tmp_test/e2e_21jul');
 fs.mkdirSync(SHOTS_DIR, { recursive: true });
 
-const BASE = 'http://localhost:3002';
+// Дефект (2026-09-07 QA): раньше хардкодился const BASE = 'http://localhost:3002'
+// — мёртвый dev-server порт, не совпадающий с playwright.config.ts baseURL
+// (http://localhost:80, переопределяемым через env BASE_URL). Все page.goto()
+// ниже используют относительные пути — baseURL резолвится из конфига
+// автоматически (см. e2e/28-mobile-safe-area.spec.ts для того же приёма).
 
 async function shot(page: Page, name: string) {
   const p = path.join(SHOTS_DIR, `${name}.png`);
@@ -18,7 +22,7 @@ async function shot(page: Page, name: string) {
 }
 
 async function doLogin(page: Page) {
-  await page.goto(BASE + '/login');
+  await page.goto('/login');
   await page.waitForLoadState('networkidle');
   await page.locator('input[type="text"], input[type="email"]').first().fill('admin');
   await page.locator('input[type="password"]').first().fill('admin123');
@@ -27,7 +31,7 @@ async function doLogin(page: Page) {
 }
 
 async function openCreateWishDialog(page: Page) {
-  await page.goto(BASE + '/wishes?create=1');
+  await page.goto('/wishes?create=1');
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(1500);
   await page.waitForSelector('.wish-dialog', { timeout: 10_000 });
@@ -265,7 +269,7 @@ test.describe('Приёмка фиксов 21 июля', () => {
     await shot(page, '3_api_result');
 
     // Открываем заявку в UI для скриншота
-    await page.goto(BASE + `/wishes?open=${wishId}`);
+    await page.goto(`/wishes?open=${wishId}`);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
     await shot(page, '3_submitted_in_ui');
@@ -278,7 +282,7 @@ test.describe('Приёмка фиксов 21 июля', () => {
     await doLogin(page);
 
     // Deep-link открытие заявки #3
-    await page.goto(BASE + '/wishes?open=3');
+    await page.goto('/wishes?open=3');
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(3000); // дать время на загрузку и открытие диалога
 
@@ -357,7 +361,7 @@ test.describe('Приёмка фиксов 21 июля', () => {
     await doLogin(page);
 
     // ── Дашборд ──
-    await page.goto(BASE + '/dashboard');
+    await page.goto('/dashboard');
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
     await shot(page, '5_dashboard');
@@ -380,7 +384,7 @@ test.describe('Приёмка фиксов 21 июля', () => {
     }
 
     // ── Субсидии → открываем Субсидия_Абхазия ──
-    await page.goto(BASE + '/subsidies');
+    await page.goto('/subsidies');
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(1500);
 

@@ -50,8 +50,19 @@ async def test_contract_items_loop_in_template_vars(
 async def test_contract_items_total_formatted(
     db_session, make_purchase, make_contract_item
 ):
-    """CD-5: contract_items_total — форматированная строка с ₽;
-    contract_items_total_numeric — float; contract_item_count — int."""
+    """CD-5: contract_items_total — форматированная строка (space thousand
+    separator, comma decimal, БЕЗ знака валюты — см. _fmt_money в
+    app/services/documents/formatting.py); contract_items_total_numeric —
+    float; contract_item_count — int.
+
+    Fix (2026-09, QA): assertion "₽" in contract_items_total сломан с рождения
+    (коммит 250ee06) — _fmt_money никогда не печатал знак рубля, только
+    "1 234,56". Проверено по реальным .docx-шаблонам (contract_goods_single,
+    contract_services*, order_purchase, service_note*) — ни один литерально
+    не содержит "₽", и test_contract_templates.py (сентинел-тесты по всем
+    семи договорным шаблонам) тоже не ожидает знак валюты нигде. Значит это
+    не пропущенный дефект функции — сам тест был неверен; поправлен.
+    """
     from app.routers.documents import _build_contract_items_context
 
     p = await make_purchase()
@@ -62,9 +73,8 @@ async def test_contract_items_total_formatted(
 
     # Numeric: 1500 + 2500 = 4000.0
     assert ctx["contract_items_total_numeric"] == 4000.0
-    # Formatted string contains ruble sign
-    assert "₽" in ctx["contract_items_total"]
-    # And correct digits (space thousand separator)
+    # Formatted string: no currency sign, space thousand separator, comma decimal
+    assert "₽" not in ctx["contract_items_total"]
     assert "4 000" in ctx["contract_items_total"] or "4000" in ctx["contract_items_total"]
     # Count
     assert ctx["contract_item_count"] == 2

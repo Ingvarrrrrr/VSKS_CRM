@@ -1050,6 +1050,7 @@ import { useDashboardLayout, type LayoutItem } from '@/composables/useDashboardL
 import { useDashboardMode } from '@/composables/useDashboardMode'
 import { PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusColor } from '@/constants/purchaseStatus'
 import { safeDiv } from '@/utils/numberFormat'
+import { toAmount } from '@/types/purchaseAmounts'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 const { layout, isEditing, toggleEditing, resetLayout, onLayoutUpdated, DEFAULT_SUMMARY_LAYOUT } = useDashboardLayout()
@@ -1952,42 +1953,18 @@ function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + '…' : s
 }
 
-// Возвращает первое значение > 0 (после parseFloat), иначе 0.
-function pickPositive(...vals: any[]): number {
-  for (const v of vals) {
-    const n = parseFloat(v || 0)
-    if (n > 0) return n
-  }
-  return 0
-}
-
+// ПРАВИЛО №6 (2026-09-05/06): «сумма закупки» больше не считается на фронте —
+// единый источник backend/app/services/purchase_amounts.py (см. amounts.effective,
+// bulk-загружено на GET /api/purchases/, откуда приходит allPurchases). 0-фолбэк
+// для закупок, где вся цепочка формулы пуста, — тот же дефолт, что был у
+// pickPositive() раньше (возвращаемое число используется напрямую в суммах/
+// формате без null-проверок ниже по коду дашборда).
+// QA (2026-09-06): amounts.effective приходит с бэкенда JSON-строкой (Decimal),
+// не числом — toAmount() обязателен, иначе `sum + purchaseEffectivePrice(p)`
+// в reduce-ах ниже (строки 1424/1459/1679/1697/1726) конкатенирует строки вместо
+// сложения (0 + "10000.00" = "010000.00") — источник NaN в виджетах и drill-диалоге.
 function purchaseEffectivePrice(p: any): number {
-  const status = p.status
-  if (status === 'paid') {
-    return pickPositive(p.payment_amount, p.delivery_payment_amount,
-      p.acceptance_doc_amount, p.contract_price, p.planned_total_price)
-  }
-  if (status === 'delivered') {
-    return pickPositive(p.acceptance_doc_amount, p.delivery_payment_amount,
-      p.contract_price, p.planned_total_price)
-  }
-  if (status === 'ordered') {
-    return pickPositive(p.contract_price, p.delivery_payment_amount,
-      p.acceptance_doc_amount, p.planned_total_price)
-  }
-  if (status === 'contracted') {
-    const isFramework = p.purchase_contract_type === 'framework_cumulative' ||
-                        p.purchase_contract_type === 'framework_with_amount'
-    if (isFramework) {
-      return pickPositive(p.acceptance_doc_amount, p.delivery_payment_amount,
-        p.contract_price, p.planned_total_price)
-    }
-    if (p.purchase_method === 'single') {
-      return pickPositive(p.contract_price, p.delivery_payment_amount, p.planned_total_price)
-    }
-    return pickPositive(p.delivery_payment_amount, p.contract_price, p.planned_total_price)
-  }
-  return pickPositive(p.total_nmck, p.planned_total_price, p.contract_price)
+  return toAmount(p.amounts?.effective) ?? 0
 }
 
 function statusLabel(s: string): string {

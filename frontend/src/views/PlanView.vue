@@ -143,14 +143,14 @@
               <td class="th-feo text-caption text-medium-emphasis">{{ p.feo_category_name || '—' }}</td>
               <td class="th-sub text-caption">{{ p.subsidy_name || '—' }}</td>
               <td class="th-money">
-                <span v-if="planAmount(p) > 0">{{ fmt(planAmount(p)) }}</span>
+                <span v-if="planAmount(p) !== null">{{ fmtSigned(planAmount(p) ?? 0) }}</span>
                 <span v-else class="text-medium-emphasis">—</span>
-                <div v-if="isDraft(p) && planAmount(p) > 0" class="draft-note" :title="TT.draftRowNote">справочно, не в плане</div>
+                <div v-if="isDraft(p) && planAmount(p) !== null" class="draft-note" :title="TT.draftRowNote">справочно, не в плане</div>
               </td>
               <td class="th-money">
-                <span v-if="calcAmount(p) > 0" style="color:var(--color-contracted)">{{ fmt(calcAmount(p)) }}</span>
+                <span v-if="calcAmount(p) !== null" style="color:var(--color-contracted)">{{ fmtSigned(calcAmount(p) ?? 0) }}</span>
                 <span v-else class="text-medium-emphasis">—</span>
-                <div v-if="isDraft(p) && calcAmount(p) > 0" class="draft-note" :title="TT.draftRowNote">справочно, не в плане</div>
+                <div v-if="isDraft(p) && calcAmount(p) !== null" class="draft-note" :title="TT.draftRowNote">справочно, не в плане</div>
               </td>
               <td class="th-method">
                 <v-chip v-if="p.purchase_method" size="x-small"
@@ -411,6 +411,8 @@ import { apiFetch } from '@/api'
 import * as XLSX from 'xlsx'
 import { PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusColor } from '@/constants/purchaseStatus'
 import { useToast, type ToastType } from '@/composables/useToast'
+import type { PurchaseAmounts } from '@/types/purchaseAmounts'
+import { toAmount } from '@/types/purchaseAmounts'
 
 const router = useRouter()
 
@@ -438,6 +440,9 @@ interface Purchase {
   procurement_planned_date?: string | null
   status: string
   etp_url?: string | null
+  // ПРАВИЛО №6 (2026-09-05/06): единый расчёт суммы закупки — см.
+  // backend/app/services/purchase_amounts.py.
+  amounts?: PurchaseAmounts | null
 }
 
 interface SubsidyMeta { id: number; name: string; year: number }
@@ -513,15 +518,14 @@ const filtered = computed(() => {
 })
 
 // ── Amount helpers ──
-const planAmount = (p: Purchase) =>
-  Number(p.nmck) || Number(p.total_nmck) || Number(p.planned_total_price) || 0
-
-const calcAmount = (p: Purchase) => {
-  if (p.status === 'delivered' || p.status === 'paid') {
-    return Number(p.payment_amount) || Number(p.contract_price) || planAmount(p)
-  }
-  return planAmount(p)
-}
+// ПРАВИЛО №6 (2026-09-05/06): «плановая сумма» и «расчётная сумма» больше не
+// считаются на фронте — единый источник backend/app/services/purchase_amounts.py.
+// amounts.plan — сырое planned_total_price (без фолбэков); amounts.effective —
+// сумма по стадии закупки (готовый фолбэк-каскад делает бэкенд). null здесь
+// означает «бэкенд не нашёл ни одного значения по всей цепочке», а не 0 —
+// отображение обязано различать эти случаи (см. TT.totalPlan/TT.totalCalc ниже).
+const planAmount = (p: Purchase): number | null => toAmount(p.amounts?.plan)
+const calcAmount = (p: Purchase): number | null => toAmount(p.amounts?.effective)
 
 const isDraft = (p: Purchase) => p.status === 'wishes'
 
@@ -530,8 +534,8 @@ const isDraft = (p: Purchase) => p.status === 'wishes'
 const filteredForTotals = computed(() => filtered.value.filter(p => !isDraft(p)))
 const draftCount = computed(() => filtered.value.length - filteredForTotals.value.length)
 
-const totalPlan       = computed(() => filteredForTotals.value.reduce((s, p) => s + planAmount(p), 0))
-const totalCalc       = computed(() => filteredForTotals.value.reduce((s, p) => s + calcAmount(p), 0))
+const totalPlan       = computed(() => filteredForTotals.value.reduce((s, p) => s + (planAmount(p) ?? 0), 0))
+const totalCalc       = computed(() => filteredForTotals.value.reduce((s, p) => s + (calcAmount(p) ?? 0), 0))
 const totalContracted = computed(() => filteredForTotals.value.reduce((s, p) => s + Number(p.contract_price || 0), 0))
 const totalPaid       = computed(() => filteredForTotals.value.reduce((s, p) => s + Number(p.payment_amount || 0), 0))
 
@@ -539,12 +543,13 @@ const totalPaid       = computed(() => filteredForTotals.value.reduce((s, p) => 
 // один и тот же текст, чтобы не разойтись формулировками) ──
 const TT = {
   totalPlan:
-    'Плановая сумма по закупкам, которые видны в таблице сейчас — берётся из НМЦД (начальной цены закупки). ' +
+    'Плановая сумма по закупкам, которые видны в таблице сейчас — плановая цена закупки (planned_total_price). ' +
     'Считается по текущим фильтрам (статусы, субсидия, год) и меняется при их переключении. ' +
     'Черновики (статус «Черновик») в эту сумму не входят, даже если чип черновиков включён.',
   totalCalc:
-    'Расчётная сумма по тем же закупкам: для уже поставленных или оплаченных берётся фактическая сумма ' +
-    '(оплата, а если оплаты ещё нет — цена договора), для остальных — плановая сумма (НМЦД). ' +
+    'Расчётная сумма по тем же закупкам — единый расчёт по стадии закупки (см. amounts.effective): ' +
+    'для оплаченных/поставленных — фактическая сумма (оплата, а если её ещё нет — приёмка/договор), ' +
+    'для остальных — плановая сумма, с откатом на сумму позиций, если стадийное поле пустое. ' +
     'Тоже считается по текущим фильтрам. Черновики в эту сумму не входят.',
   remainder:
     '«Итого план» минус «Итого расчёт» по закупкам, видимым сейчас в таблице (без черновиков). ' +
@@ -888,8 +893,8 @@ const exportExcel = () => {
       p.feo_category_name ?? '',
       p.subsidy_name ?? '',
       Number(p.nmck || p.total_nmck || p.planned_total_price || 0),
-      planAmount(p),
-      calcAmount(p),
+      planAmount(p) ?? 0,
+      calcAmount(p) ?? 0,
       methodLabel(p.purchase_method),
       p.contractor_name ?? '',
       p.contract_number ?? '',

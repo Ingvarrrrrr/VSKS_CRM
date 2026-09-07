@@ -1633,6 +1633,8 @@ import { useColumnConfig, type ColumnDef, type FilterValue } from '@/composables
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import ColumnHeaderMenu from '@/components/ColumnHeaderMenu.vue'
 import { formatMoney } from '@/utils/formatMoney'
+import type { PurchaseAmounts } from '@/types/purchaseAmounts'
+import { toAmount } from '@/types/purchaseAmounts'
 import { useDisplay } from 'vuetify'
 import { PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusColor } from '@/constants/purchaseStatus'
 
@@ -1730,6 +1732,10 @@ interface Purchase {
   // feo_excess) — см. app.routers.purchases._compute_purchase_feo_mismatch.
   feo_mismatch?: boolean
   feo_mismatch_items?: { item_id: number; item_name: string; message: string; reason: string }[]
+  // ПРАВИЛО №6 (2026-09-05/06): единый расчёт суммы закупки — см.
+  // backend/app/services/purchase_amounts.py. Optional/null — защита на
+  // случай, если конкретный ответ бэкенда его не проставил.
+  amounts?: PurchaseAmounts | null
 }
 
 const FRAMEWORK_TYPES = new Set(['framework_cumulative', 'framework_with_amount'])
@@ -2197,18 +2203,12 @@ const deleteDialog = reactive({
 
 const showSnack = (text: string, color: ToastType = 'success') => { toast.addToast(text, color) }
 
-const effectivePrice = (item: Purchase): number | null => {
-  switch (item.status) {
-    case 'contracted':
-      return item.contract_price ?? item.total_nmck ?? item.planned_total_price ?? null
-    case 'delivered':
-      return item.contract_price ?? item.total_nmck ?? item.planned_total_price ?? null
-    case 'paid':
-      return item.payment_amount ?? item.contract_price ?? null
-    default:
-      return item.total_nmck ?? item.planned_total_price ?? null
-  }
-}
+// ПРАВИЛО №6 (2026-09-05/06): «сумма закупки» больше не считается на фронте —
+// читаем готовое amounts.effective (единый расчёт по стадии, см.
+// backend/app/services/purchase_amounts.py). Фолбэк на null оставлен только
+// для defensive-случая, когда бэкенд ещё не проставил amounts (не должно
+// случаться на GET /api/purchases, см. _purchase_to_full).
+const effectivePrice = (item: Purchase): number | null => toAmount(item.amounts?.effective)
 
 const formatDate = (d: string) => {
   const [y, m, day] = d.split('-')

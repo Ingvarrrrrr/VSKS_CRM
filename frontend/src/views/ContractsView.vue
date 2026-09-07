@@ -516,7 +516,10 @@
                         {{ p.registry_number || p.purchase_number || p.id }}
                       </td>
                       <td class="text-caption">{{ p.subject || p.item_name || '—' }}</td>
-                      <td class="text-right">{{ p.contract_price ? formatMoney(p.contract_price) : '—' }}</td>
+                      <!-- ПРАВИЛО №6 (2026-09-05/06): «Сумма» закупки — единый расчёт бэкенда
+                           (amounts.effective), не сырой contract_price — см. заголовок
+                           «Цена договора» контракта выше (item.max_amount) для того показателя. -->
+                      <td class="text-right">{{ purchaseEffectiveAmount(p) != null ? formatMoney(purchaseEffectiveAmount(p)!) : '—' }}</td>
                     </tr>
                     <tr v-if="expandedPurchases[p.id] && p.items?.length">
                       <td colspan="3" class="pa-0 pl-8">
@@ -974,6 +977,8 @@ import { useContractorsStore } from '@/stores/contractors'
 import ContractorPicker from '@/components/ContractorPicker.vue'
 import { useCardView } from '@/composables/useCardView'
 import { useToast, type ToastType } from '@/composables/useToast'
+import type { PurchaseAmounts } from '@/types/purchaseAmounts'
+import { toAmount } from '@/types/purchaseAmounts'
 
 const router = useRouter()
 const route = useRoute()
@@ -1040,7 +1045,7 @@ interface Contract {
 interface Subsidy { id: number; name: string; year: number }
 interface Contractor { id: number; name: string; inn?: string }
 interface PurchaseItem { item_name: string; quantity?: number; unit_price?: number; total_price?: number }
-interface Purchase { id: number; registry_number?: string; purchase_number?: number; subject?: string; item_name?: string; contract_price?: number; status: string; etp_url?: string | null; items?: PurchaseItem[]; purchase_method?: string | null }
+interface Purchase { id: number; registry_number?: string; purchase_number?: number; subject?: string; item_name?: string; contract_price?: number; status: string; etp_url?: string | null; items?: PurchaseItem[]; purchase_method?: string | null; amounts?: PurchaseAmounts | null }
 
 const contracts = ref<Contract[]>([])
 const subsidies = ref<Subsidy[]>([])
@@ -1496,6 +1501,9 @@ const isExpired = (d: string) => new Date(d) < new Date()
 const fmtDate = (d?: string) => d ? new Date(d).toLocaleDateString('ru-RU') : '—'
 const formatMoney = (v: number | string) =>
   Number(v).toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + ' ₽'
+// ПРАВИЛО №6 (2026-09-05/06): amounts.effective приходит с бэкенда JSON-строкой
+// (Decimal) — toAmount() в одном месте вместо повторного parseFloat в шаблоне.
+const purchaseEffectiveAmount = (p: Purchase): number | null => toAmount(p.amounts?.effective)
 const isFrameworkContract = (c: any): boolean =>
   c?.contract_type === 'framework_cumulative' || c?.contract_type === 'framework_non_cumulative'
 

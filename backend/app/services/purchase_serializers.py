@@ -8,6 +8,7 @@
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.schemas.schemas import PurchaseItemOut, PurchaseOutFull, PurchaseFileOut, SubsidyAllocationOut, PurchaseAmountsOut
+from app.services.purchase_contract_header import contract_header as _contract_header
 
 
 def _item_to_out(item: PurchaseItem, plan_residual=None, plan_planned_amount=None) -> PurchaseItemOut:
@@ -68,6 +69,7 @@ def _purchase_to_full(
     su_map: dict | None = None, feo_excess_map: dict | None = None, item_plan_map: dict | None = None,
     wish_title_map: dict | None = None, wish_status_map: dict | None = None,
     feo_mismatch_map: dict | None = None, amounts_map: dict | None = None,
+    contract=None,
 ) -> PurchaseOutFull:
     # Ленивый импорт — избежать цикла на уровне модуля: purchases.py (ядро)
     # импортирует _purchase_to_full ОТСЮДА, поэтому этот модуль не может
@@ -75,6 +77,18 @@ def _purchase_to_full(
     from app.routers.purchases import is_framework_head
 
     data = {c.name: getattr(p, c.name) for c in Purchase.__table__.columns}
+    # ПРАВИЛО №6 (2026-09-07, группа D7): при заданном contract_id — шапка
+    # договора (number/date/type/contractor_id) читается из связанного
+    # Contract, а не из денормализованного кэша на закупке (см. докстринг
+    # app.services.purchase_contract_header — четыре фазы бэкфилла чинили
+    # ровно это расхождение). `contract` — уже загруженный вызывающим
+    # (selectinload(Purchase.contract), без N+1); если не передан — как
+    # раньше, из кэша.
+    _hdr = _contract_header(p, contract)
+    data["contract_number"] = _hdr.contract_number
+    data["contract_date"] = _hdr.contract_date
+    data["purchase_contract_type"] = _hdr.purchase_contract_type
+    data["contractor_id"] = _hdr.contractor_id
     _ipm = item_plan_map or {}
     items = [
         _item_to_out(i, *(_ipm.get(i.id) or (None, None)))
@@ -136,8 +150,8 @@ def _purchase_to_full(
         items=items,
         files=files,
         files_count=len(files),
-        contractor_name=contractors.get(p.contractor_id),
-        contractor_inn=(contractor_inns or {}).get(p.contractor_id),
+        contractor_name=contractors.get(_hdr.contractor_id),
+        contractor_inn=(contractor_inns or {}).get(_hdr.contractor_id),
         feo_category_name=p.feo_category.name if p.feo_category else None,
         subsidy_name=subsidies.get(p.subsidy_id),
         event_name=p.event.name if p.event else None,

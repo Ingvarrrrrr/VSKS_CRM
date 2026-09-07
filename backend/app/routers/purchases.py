@@ -55,6 +55,7 @@ from datetime import datetime, date
 # единственный источник каждой из них (ПРАВИЛО №6), это ядро и остальные
 # routers/purchase_*.py их переиспользуют, а не считают заново.
 from app.services.purchase_serializers import _item_to_out, _purchase_to_full
+from app.services.purchase_contract_header import CONTRACT_HEADER_FIELDS
 from app.services.purchase_feo_checks import (
     _compute_purchase_feo_excess, _compute_purchase_feo_mismatch, _item_feo_mismatch,
     _category_within, _reset_incompatible_item_feo_links,
@@ -77,6 +78,13 @@ async def _sync_purchase_from_contract(p: Purchase, db: AsyncSession):
 
     Phase 26-lll: contractor_id ОБЯЗАТЕЛЬНО синхронизируется — иначе в реестре
     закупок колонка «Контрагент» пустая (—), хотя в договоре контрагент есть.
+
+    2026-09-07 (прод, группа D7): каждое поле копируется ТОЛЬКО если у Contract
+    оно непустое (if c.number / if c.date / if c.contract_type / if c.contractor_id
+    ниже) — пустое поле Contract НИКОГДА не затирает уже заполненный кэш на
+    закупке (иначе первый же вызов после привязки договора без даты стёр бы
+    contract_date, заполненную раньше вручную/импортом — см. миграцию
+    y7a9c1e3g5i7, тот же принцип на стороне SQL-бэкфилла).
     """
     if not p.contract_id:
         return
@@ -226,6 +234,11 @@ async def list_purchases(
         selectinload(Purchase.items).selectinload(PurchaseItem.product),
         selectinload(Purchase.files),
         selectinload(Purchase.event),
+        # ПРАВИЛО №6 (группа D7): сериализатор берёт шапку договора (number/
+        # date/type/contractor_id) из Contract, когда contract_id задан — см.
+        # app.services.purchase_contract_header. selectinload — 1 доп.
+        # запрос на всю страницу, не N+1.
+        selectinload(Purchase.contract),
     )
     org_ids = get_org_filter(current_user)
     # #8: явный grant субсидии (user_subsidy_access) расширяет org-фильтр —
@@ -401,14 +414,12 @@ async def list_purchases(
         import logging as _log
         _log.getLogger(__name__).warning("unseen purchase map failed: %s", _exc)
 
-    # Phase 31-04: batch contract_conflict — 1 query for all linked contracts (no N+1)
-    linked_contract_ids = {p.contract_id for p in purchases if p.contract_id}
-    contract_data_map: dict[int, tuple] = {}  # contract_id -> (number, date)
-    if linked_contract_ids:
-        _cr = await db.execute(
-            select(Contract.id, Contract.number, Contract.date).where(Contract.id.in_(linked_contract_ids))
-        )
-        contract_data_map = {row[0]: (row[1], row[2]) for row in _cr.all()}
+    # Phase 31-04: batch contract_conflict — Purchase.contract уже загружен
+    # selectinload'ом выше (см. q.options), доп. запроса не нужно.
+    contract_data_map: dict[int, tuple] = {
+        p.contract_id: (p.contract.number, p.contract.date)
+        for p in purchases if p.contract_id and p.contract is not None
+    }
 
     # Владелец (2026-08-12): значок «закупка создаёт превышение плана ФЭО» — опционален
     # (?with_feo_excess=true), считается ОДНИМ вызовом compute_feo_plan_tree на все субсидии
@@ -438,7 +449,7 @@ async def list_purchases(
         out = _purchase_to_full(
             p, contractors, subsidies, contractor_inns=contractor_inns, receipt_map=receipt_map,
             ru_map=ru_map, su_map=su_map, feo_excess_map=_feo_excess_map,
-            feo_mismatch_map=_feo_mismatch_map, amounts_map=_amounts_map,
+            feo_mismatch_map=_feo_mismatch_map, amounts_map=_amounts_map, contract=p.contract,
         )
         if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):
             out.framework_contract_total = display_total_by_contract.get(p.contract_id)
@@ -468,6 +479,9 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
             selectinload(Purchase.event),
             selectinload(Purchase.reimbursement_user),
             selectinload(Purchase.stopped_by_user),
+            # ПРАВИЛО №6 (группа D7): см. list_purchases выше — тот же источник
+            # шапки договора.
+            selectinload(Purchase.contract),
         )
         .where(Purchase.id == pid)
     )
@@ -633,11 +647,11 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
         p, contractors, subsidies, allocations=allocations, ru_map=single_ru_map, su_map=single_su_map,
         feo_excess_map=_single_feo_excess_map, item_plan_map=_item_plan_map, wish_title_map=_wish_title_map,
         wish_status_map=_wish_status_map, feo_mismatch_map=_single_feo_mismatch_map,
-        amounts_map=_single_amounts_map,
+        amounts_map=_single_amounts_map, contract=p.contract,
     )
     # phase26-m: populate framework_contract_total for single purchase view
     if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):
-        c = await db.get(Contract, p.contract_id)
+        c = p.contract
         if c:
             if c.max_amount is not None:
                 out.framework_contract_total = c.max_amount
@@ -659,9 +673,9 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
         import logging as _log
         _log.getLogger(__name__).warning("unseen purchase single failed: %s", _exc)
 
-    # Phase 31-04: contract_conflict — single GET (1 extra query, only if contract_id set)
+    # Phase 31-04: contract_conflict — single GET (p.contract уже загружен selectinload'ом выше, без доп. запроса)
     if p.contract_id:
-        _c = await db.get(Contract, p.contract_id)
+        _c = p.contract
         if _c:
             out.contract_conflict = (
                 (_c.number is not None and p.contract_number != _c.number)
@@ -1002,6 +1016,22 @@ async def update_purchase(
     # совместимости старых клиентов/скриптов).
     for _legacy_key in ("acceptance_doc_name", "acceptance_doc_date", "acceptance_doc_number", "acceptance_doc_amount"):
         payload_dict.pop(_legacy_key, None)
+
+    # ПРАВИЛО №6 (2026-09-07, группа D7): при заданном contract_id (текущем
+    # ИЛИ устанавливаемом этим же PUT) шапка договора — contract_number/
+    # contract_date/purchase_contract_type/contractor_id — читается ТОЛЬКО из
+    # связанного Contract (см. app.services.purchase_contract_header,
+    # _sync_purchase_from_contract ниже — единственный писатель этого кэша).
+    # Входящие значения из payload молча отбрасываются (без 422 — старые
+    # клиенты не ломаем), но перечисляются в ответе contract_fields_ignored.
+    _resolved_contract_id_put = payload_dict.get('contract_id', p.contract_id)
+    _contract_fields_ignored: list[str] = []
+    if _resolved_contract_id_put:
+        for _f in CONTRACT_HEADER_FIELDS:
+            if _f in payload_dict:
+                payload_dict.pop(_f)
+                _contract_fields_ignored.append(_f)
+
     # Phase 27.1.4: race-defence — если payload приходит с contractor_id=None,
     # а в БД он был установлен И contract_id не меняется → игнорируем stale null.
     # Это защищает от race в editFrameworkSeq: форма шлёт PUT до завершения async fetch контрагента.
@@ -1392,7 +1422,7 @@ async def update_purchase(
     # _excess_warnings (собраны выше у обеих точек assert_no_unapproved_excess
     # этого PUT) тоже требует явной сериализации через PurchaseOut, как и
     # suggested_feo_matches/_feo_links_reset — см. комментарий у create_purchase.
-    if suggested_feo_matches or _feo_links_reset or _excess_warnings:
+    if suggested_feo_matches or _feo_links_reset or _excess_warnings or _contract_fields_ignored:
         from app.schemas.schemas import PurchaseOut as _POut
         base = _POut.model_validate(p).model_dump()
         if suggested_feo_matches:
@@ -1400,6 +1430,8 @@ async def update_purchase(
         base["feo_links_reset"] = _feo_links_reset
         if _excess_warnings:
             base["excess_warnings"] = _excess_warnings
+        if _contract_fields_ignored:
+            base["contract_fields_ignored"] = _contract_fields_ignored
         return base
     return p
 
@@ -1654,11 +1686,19 @@ async def patch_purchase(
     # только при реальном изменении FK, а не на каждый autosave с тем же contract_id.
     old_contract_id_patch = p.contract_id
 
+    # ПРАВИЛО №6 (2026-09-07, группа D7): та же логика, что в PUT выше — при
+    # заданном contract_id шапка договора приходит ТОЛЬКО из Contract.
+    _resolved_contract_id_patch = (body or {}).get('contract_id', p.contract_id)
+    _contract_fields_ignored_patch: list[str] = []
+
     changed: list[str] = []
     for k, v in (body or {}).items():
         if k not in PATCHABLE_FIELDS:
             continue
         if not hasattr(p, k):
+            continue
+        if _resolved_contract_id_patch and k in CONTRACT_HEADER_FIELDS:
+            _contract_fields_ignored_patch.append(k)
             continue
         v = _coerce_patch_value(k, v)
         if getattr(p, k) != v:
@@ -1709,7 +1749,10 @@ async def patch_purchase(
     if changed:
         await db.commit()
         await db.refresh(p)
-    return {"id": p.id, "changed": changed, "feo_links_reset": _feo_links_reset}
+    return {
+        "id": p.id, "changed": changed, "feo_links_reset": _feo_links_reset,
+        "contract_fields_ignored": _contract_fields_ignored_patch,
+    }
 
 
 class _ActualizeContractNumberBody(BaseModel):

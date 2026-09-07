@@ -364,23 +364,21 @@ async def update_contract(cid: int, data: ContractCreate, db: AsyncSession = Dep
 
         # Import helper from plan 31-01 (entity change tracking, T-31-04-02)
         from app.routers.entity_changes import record_entity_changes as _rec_changes
+        # ПРАВИЛО №6 (2026-09-07, группа D7): единственный писатель кэша
+        # number/date/type/contractor_id на Purchase — _sync_purchase_from_contract
+        # (app.routers.purchases). Раньше здесь были параллельные setattr —
+        # своя копия той же логики (расхождение с сервисом, которое
+        # backfill-фазы 26-j-1/26-k-2/26-lll/26-mmm потом чинили). Локальный
+        # импорт — purchases.py импортирует ИЗ этого модуля на уровне модуля
+        # (ensure_contract_linked), обратный импорт сверху дал бы цикл.
+        from app.routers.purchases import _sync_purchase_from_contract
+        _sync_fields = ("contract_number", "contract_date", "purchase_contract_type", "contractor_id")
 
         for p in linked_purchases:
-            old_vals: dict = {}
-            new_vals: dict = {}
-            if cascade_number and data.number != old_number:
-                old_vals['contract_number'] = p.contract_number
-                p.contract_number = data.number
-                new_vals['contract_number'] = p.contract_number
-            if cascade_date:
-                # Always cascade date when in set_fields (includes explicit None = clear)
-                old_vals['contract_date'] = p.contract_date
-                p.contract_date = data.date
-                new_vals['contract_date'] = p.contract_date
-            if cascade_contractor and data.contractor_id != old_contractor_id:
-                old_vals['contractor_id'] = p.contractor_id
-                p.contractor_id = data.contractor_id
-                new_vals['contractor_id'] = p.contractor_id
+            before = {f: getattr(p, f) for f in _sync_fields}
+            await _sync_purchase_from_contract(p, db)
+            old_vals = {f: before[f] for f in _sync_fields if before[f] != getattr(p, f)}
+            new_vals = {f: getattr(p, f) for f in old_vals}
 
             # Record entity changes for audit trail (batch, committed after main commit)
             if old_vals:

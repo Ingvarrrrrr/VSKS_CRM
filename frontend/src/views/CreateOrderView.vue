@@ -243,7 +243,10 @@
                   :loading="contractorSearchLoading || contractorsInitialLoading"
                   :no-data-text="contractorsNoDataText"
                   :menu-props="{ maxWidth: 500 }"
-                  hint="Поставщик/исполнитель. Поиск по названию или ИНН" persistent-hint
+                  :readonly="contractHeaderLocked"
+                  :bg-color="contractHeaderLocked ? 'grey-lighten-4' : undefined"
+                  :hint="contractHeaderLocked ? contractHeaderLockedHint : 'Поставщик/исполнитель. Поиск по названию или ИНН'"
+                  persistent-hint
                   data-field="contractor_id"
                   @update:search="onContractorSearch"
                   @update:model-value="onContractorSelect"
@@ -608,6 +611,10 @@
             <v-col cols="12" md="3">
               <v-select v-model="form.purchase_contract_type" :items="CONTRACT_TYPES"
                 item-title="title" item-value="value" label="Тип договора" variant="outlined" density="compact"
+                :readonly="contractHeaderLocked"
+                :bg-color="contractHeaderLocked ? 'grey-lighten-4' : undefined"
+                :hint="contractHeaderLocked ? contractHeaderLockedHint : undefined"
+                :persistent-hint="contractHeaderLocked"
                 @update:model-value="onContractTypeChange" />
             </v-col>
             <v-col v-if="isFramework" cols="12" md="9">
@@ -1222,18 +1229,23 @@
                 @click="entityChanges.dismissField('contract_number')">
                 <v-text-field v-model="form.contract_number" :label="`Номер ${contractWordGen}`" variant="outlined" density="compact"
                   :placeholder="isNew ? 'Присвоится после сохранения (можно ввести вручную)' : ''"
-                  :hint="needsContract ? `Обязательно для перехода в статус ${contractWord}` : isNew ? 'Будет присвоен автоматически или введите вручную' : 'Можно изменить вручную'"
+                  :hint="contractHeaderLocked ? contractHeaderLockedHint : needsContract ? `Обязательно для перехода в статус ${contractWord}` : isNew ? 'Будет присвоен автоматически или введите вручную' : 'Можно изменить вручную'"
                   persistent-hint
-                  :readonly="!isNew && !contractNumberEditEnabled"
+                  :readonly="contractHeaderLocked || (!isNew && !contractNumberEditEnabled)"
+                  :bg-color="contractHeaderLocked ? 'grey-lighten-4' : undefined"
                   data-field="contract_number"
-                  @click="!isNew && !contractNumberEditEnabled && enableContractNumberEdit()" />
+                  @click="!contractHeaderLocked && !isNew && !contractNumberEditEnabled && enableContractNumberEdit()" />
               </div>
             </v-col>
             <v-col cols="12" md="3" data-field-name="contract_date">
               <div :class="entityChanges.isFieldUnseen('contract_date') ? 'field-changed' : ''"
                 @click="entityChanges.dismissField('contract_date')">
                 <v-text-field v-model="form.contract_date" :label="`Дата ${contractWordGen}`" variant="outlined"
-                  density="compact" type="date" :rules="contractDateRules" data-field="contract_date" />
+                  density="compact" type="date" :rules="contractDateRules" data-field="contract_date"
+                  :readonly="contractHeaderLocked"
+                  :bg-color="contractHeaderLocked ? 'grey-lighten-4' : undefined"
+                  :hint="contractHeaderLocked ? 'Берётся из договора — изменить в карточке договора' : undefined"
+                  :persistent-hint="contractHeaderLocked" />
               </div>
             </v-col>
             <!-- Phase 31-04: contract_conflict chip + «Взять из договора» button -->
@@ -3722,6 +3734,16 @@ const isFrameworkCumulative = computed(() => form.purchase_contract_type === 'fr
 const contractWord = computed(() => isFramework.value ? 'Заказ' : 'Договор')
 const contractWordLower = computed(() => isFramework.value ? 'заказ' : 'договор')
 const contractWordGen = computed(() => isFramework.value ? 'заказа' : 'договора')
+// ПРАВИЛО №6 (2026-09-07, группа D7): при заданном form.contract_id шапка
+// договора (номер/дата/тип/контрагент) — источник Contract на бэкенде
+// (см. app.services.purchase_contract_header, PUT/PATCH /api/purchases
+// молча игнорируют эти поля из payload'а при contract_id — contract_fields_ignored
+// в ответе). Фронт больше не даёт их редактировать здесь — правка только в
+// карточке договора (реестр «Договоры»).
+const contractHeaderLocked = computed(() => !!form.contract_id)
+const contractHeaderLockedHint = computed(() =>
+  `Берётся из договора №${form.contract_number || '—'} — изменить в карточке договора`
+)
 
 // ── Диалоги выбора/создания рамочного договора — вынесено в
 // composables/purchase/useFrameworkContracts.ts + components/purchase/FrameworkDialogs.vue ──

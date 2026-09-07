@@ -19,6 +19,29 @@ from app.routers import (
     permissions as permissions_router,
     staff_directory,
 )
+# Разрезание subsidies.py (Правило №5, сессия 2026-09-07): subsidy_templates,
+# subsidy_plan_graph_compare, subsidy_plan_graph_versions, subsidy_plan_graph_export,
+# subsidy_finance содержат ТОЛЬКО статические/специфичные литеральные пути на
+# префиксе /api/subsidies ("/global-templates/{doc_type}", "/templates/normalize-all",
+# ".../versions/compare", ".../versions/export-multi.xlsx", ".../plan-graph/export",
+# "/payment-summary", "/financial-plan" и т.д.) — регистрируются РЯДОМ с
+# subsidies.router и ДО него (как purchase_* перед purchases.router ниже).
+# subsidy_plan_graph_compare — ДО subsidy_plan_graph_versions: ".../versions/compare"
+# и ".../versions/export-multi.xlsx" не должны перехватываться int-конвертером
+# ".../versions/{version_id:int}" из versions-роутера.
+from app.routers import subsidy_templates
+from app.routers import subsidy_plan_graph_compare
+from app.routers import subsidy_plan_graph_versions
+from app.routers import subsidy_plan_graph_export
+from app.routers import subsidy_finance
+# Разрезание feo_categories.py (Правило №5, сессия 2026-09-07): feo_plan_reads,
+# feo_import, feo_tree_ops содержат ТОЛЬКО статические/литеральные пути на
+# префиксе /api/feo-categories (feo_plan_reads/feo_import — без {cat_id} вовсе;
+# feo_tree_ops — "/{cat_id}/<literal>", минимум на сегмент длиннее catch-all) —
+# регистрируются рядом с feo_categories.router и ДО него (как subsidy_* выше).
+from app.routers import feo_plan_reads
+from app.routers import feo_import
+from app.routers import feo_tree_ops
 # Разрезание purchases.py (Правило №5, сессия 2026-09-06): purchase_duplicates,
 # purchase_lists, purchase_payment_matching, purchase_ops содержат статические
 # литеральные пути ("/duplicate-check", "/my-tasks", "/payment-groups",
@@ -127,11 +150,24 @@ def register_routes(app: FastAPI) -> None:
     # /imports and /registry/{id}/... must resolve before payments' catch-all /{pid}
     app.include_router(bank_statements.router)
     app.include_router(payments.router)
+    # Разрезание feo_categories.py (Правило №5, 2026-09-07) — см. комментарий у
+    # импортов выше про порядок: статичные ДО feo_categories.router (catch-all
+    # GET/PUT/DELETE "/{cat_id}").
+    app.include_router(feo_plan_reads.router)
+    app.include_router(feo_import.router)
+    app.include_router(feo_tree_ops.router)
     app.include_router(feo_categories.router)
     app.include_router(feo_planned_items.router)
     app.include_router(plan_excess_router.router)
     app.include_router(settings_router.router)
     app.include_router(dashboard.router)
+    # Разрезание subsidies.py (Правило №5, 2026-09-07) — см. комментарий у импортов
+    # выше про порядок: statics/compare ДО subsidies.router (catch-all "/{subsidy_id}").
+    app.include_router(subsidy_templates.router)
+    app.include_router(subsidy_plan_graph_compare.router)
+    app.include_router(subsidy_plan_graph_versions.router)
+    app.include_router(subsidy_plan_graph_export.router)
+    app.include_router(subsidy_finance.router)
     app.include_router(subsidies.router)
     app.include_router(subsidy_members_router.router)
     app.include_router(products.router)

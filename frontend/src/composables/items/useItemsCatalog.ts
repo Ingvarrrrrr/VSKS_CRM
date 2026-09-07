@@ -6,17 +6,21 @@
 import { ref, computed, reactive, watch, type Ref } from 'vue'
 import { apiFetch } from '@/api'
 import type { MatchCandidate } from '@/composables/useItemMatching'
-import type { PriceLink, ItemsDisplayRow } from '@/components/items/types'
+import type { PriceLink, ItemsDisplayRow, ProductLike } from '@/components/items/types'
+import type { ToastType } from '@/composables/useToast'
 
 // EditorItem/Product are structurally identical to the parent's; kept loose
 // here (same convention as ItemsTableFlat.vue) since the parent owns the real
-// shape and this composable only reads/writes the fields it uses.
+// shape and this composable only reads/writes the fields it uses. ProductLike
+// (components/items/types.ts) is the existing shared shape the presentational
+// item table/dialog components already type their product-photo-src prop
+// against — productPhotoSrc below must match it exactly, not `any`.
 type EditorItem = any
 type Product = any
 
 // Phase 17.1-08: prefer the bytea-backed /api/products/{id}/photo endpoint
 // when the backend has a cached copy; fall back to external photo_url/link.
-export function productPhotoSrc(p: Pick<Product, 'id' | 'has_photo' | 'photo_url' | 'photo_link'> | null | undefined): string | undefined {
+export function productPhotoSrc(p: ProductLike | null | undefined): string | undefined {
   if (!p) return undefined
   if (p.has_photo) return `/api/products/${p.id}/photo`
   return p.photo_url || p.photo_link || undefined
@@ -31,7 +35,7 @@ export interface UseItemsCatalogDeps {
     (event: 'reload-requested'): void
     (event: 'product-created', product: Product): void
   }
-  showSnack: (text: string, color?: string, opts?: { actionText?: string; onAction?: () => void; duration?: number }) => void
+  showSnack: (text: string, color?: ToastType, opts?: { actionText?: string; onAction?: () => void; duration?: number }) => void
   applyMatchCandidate: (row: EditorItem, cand: MatchCandidate) => void
   clearMatchBinding: (row: EditorItem) => void
   clearItem: (idx: number) => void

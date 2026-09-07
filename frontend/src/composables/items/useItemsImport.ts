@@ -10,6 +10,7 @@ import { apiFetch } from '@/api'
 import type { ContractItem } from '@/types/contractItem'
 import type { MatchCandidate } from '@/composables/useItemMatching'
 import type { DupGroup, ResolvedGroup } from '@/components/DuplicateMergeDialog.vue'
+import type { ToastType } from '@/composables/useToast'
 
 // EditorItem is structurally identical to the parent's; kept loose here (same
 // convention as ItemsTableFlat.vue/ItemsCardsView.vue) since the parent owns
@@ -46,7 +47,7 @@ export interface UseItemsImportDeps {
   emitUpdate: () => void
   emitContractItemsUpdate: () => void
   emit: (event: 'reload-requested') => void
-  showSnack: (text: string, color?: string, opts?: { actionText?: string; onAction?: () => void; duration?: number }) => void
+  showSnack: (text: string, color?: ToastType, opts?: { actionText?: string; onAction?: () => void; duration?: number }) => void
   nextUid: () => string
   /** From useItemMatching().applyCandidate — shared with inline/bulk matching. */
   applyMatchCandidate: (row: EditorItem, cand: MatchCandidate) => void

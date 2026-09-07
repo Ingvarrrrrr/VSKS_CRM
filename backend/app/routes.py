@@ -19,10 +19,42 @@ from app.routers import (
     permissions as permissions_router,
     staff_directory,
 )
+# Разрезание purchases.py (Правило №5, сессия 2026-09-06): purchase_duplicates,
+# purchase_lists, purchase_payment_matching, purchase_ops содержат статические
+# литеральные пути ("/duplicate-check", "/my-tasks", "/payment-groups",
+# "/bulk" и т.д.) на префиксе /api/purchases — ОБЯЗАНЫ регистрироваться ДО
+# purchases.router (несёт catch-all "/{pid}" без явного int-конвертера в
+# строке пути; Starlette матчит первый подходящий по форме путь, а не по
+# типу параметра) — иначе тот перехватывает эти литералы и падает 422.
+# purchase_items_edit и purchase_comments путей вида "/{pid}" НЕ имеют
+# (минимум 2 сегмента сверх pid) — порядок относительно purchases.router
+# для них не важен.
+from app.routers import purchase_duplicates
+from app.routers import purchase_lists
+from app.routers import purchase_payment_matching
+from app.routers import purchase_ops
+from app.routers import purchase_items_edit
+from app.routers import purchase_comments
+# purchase_import_template / purchase_import: разрезаны из purchase_export.py
+# (Правило №5, рефакторинг 2026-09) — только статические пути /import*, не
+# несут catch-all, порядок относительно purchases.router не важен; включены
+# рядом с purchase_export.router ниже, там же, где раньше жил весь модуль.
+from app.routers import purchase_import_template
+from app.routers import purchase_import
 from app.routers import wish_documents
 from app.routers import wish_members as wish_members_router
 from app.routers import subsidy_members as subsidy_members_router
 from app.routers import wish_approvals as wish_approvals_router
+# Разрезание wishes.py (Правило №5, сессия 2026-09-06, по образцу purchases.py →
+# purchase_ops.py/purchase_*.py): wish_transitions/wish_convert/wish_export несут
+# ТОЛЬКО пути "/{wish_id}/<literal segment>" (submit/approve/reject/status/stop/
+# execution/convert/convert-to-advance-report/approve-distribution/export.xlsx) —
+# минимум 2 сегмента сверх wish_id, поэтому не конфликтуют с catch-all "/{wish_id}"
+# в wishes.router (GET/PUT/DELETE) независимо от порядка регистрации; включены
+# рядом с wishes.router ниже для читаемости.
+from app.routers import wish_transitions as wish_transitions_router
+from app.routers import wish_convert as wish_convert_router
+from app.routers import wish_export as wish_export_router
 from app.routers import user_addresses as user_addresses_router
 from app.routers import org_config
 from app.routers import purchase_transitions
@@ -80,7 +112,15 @@ def register_routes(app: FastAPI) -> None:
     # Phase 27.1: contract_items MUST be registered BEFORE purchases.router
     # because purchases has catch-all /{purchase_id} that would intercept /contract-items
     app.include_router(contract_items_router.router)
+    # Статические литеральные пути /api/purchases/* — ДО purchases.router
+    # (catch-all "/{pid}"), см. комментарий у импортов выше.
+    app.include_router(purchase_duplicates.router)
+    app.include_router(purchase_lists.router)
+    app.include_router(purchase_payment_matching.router)
+    app.include_router(purchase_ops.router)
     app.include_router(purchases.router)
+    app.include_router(purchase_items_edit.router)
+    app.include_router(purchase_comments.router)
     app.include_router(purchase_receipts.router)
     app.include_router(install_router.router, prefix="/api")
     # bank_statements MUST be registered BEFORE payments.router:
@@ -104,6 +144,16 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(responsible_persons.router)
     app.include_router(commercial_requests.router)
     app.include_router(suppliers.router)
+    # purchase_members.router несёт GET/POST /{pid}/members + DELETE
+    # /{pid}/members/{user_id} (перенесены из purchases.py, сессия 2026-09-06).
+    # purchase_events.router НИЖЕ определяет ТЕ ЖЕ ТРИ пути (пред-существующий
+    # дубль, list_members/add_member/remove_member) — раньше выигрывали
+    # purchases.py-версии, т.к. purchases.router стоял РАНЬШЕ purchase_events.router
+    # в этом файле; сохраняем то же старшинство явным порядком здесь, иначе после
+    # переноса в отдельный файл purchase_events.router оказался бы первым и начал
+    # реально отвечать на эти пути вместо purchases.py-версии (поведенческий
+    # регресс, найден при сверке OpenAPI-снапшота до/после разрезания).
+    app.include_router(purchase_members.router)
     app.include_router(purchase_events.router)
     app.include_router(user_hierarchy.router)
     app.include_router(system_incidents.router)
@@ -112,8 +162,9 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(events.router)
     app.include_router(purchase_approvals.router)
     app.include_router(purchase_export.router)
+    app.include_router(purchase_import_template.router)
+    app.include_router(purchase_import.router)
     app.include_router(purchase_items_import.router)
-    app.include_router(purchase_members.router)
     app.include_router(purchase_transitions.router)
     # Специфичные суб-роутеры /api/tasks/* регистрируются ДО tasks.router,
     # иначе catch-all `/{task_id}` ловит `/badges`, `/pending-consent`, `/report/*`
@@ -144,6 +195,13 @@ def register_routes(app: FastAPI) -> None:
     # wish_approvals (/api/wishes/{wid}/approvers/*) MUST be before wishes.router
     # so static "approvers" segment resolves before the catch-all /{wish_id:int}.
     app.include_router(wish_approvals_router.router)
+    # wish_transitions/wish_convert/wish_export — разрезаны из wishes.py, см.
+    # комментарий у импортов выше; порядок относительно wishes.router не важен
+    # (их пути минимум на 1 сегмент длиннее catch-all "/{wish_id}"), регистрируем
+    # рядом для читаемости.
+    app.include_router(wish_transitions_router.router)
+    app.include_router(wish_convert_router.router)
+    app.include_router(wish_export_router.router)
     app.include_router(wishes.router)
     app.include_router(push_router.router)
     app.include_router(permissions_router.router)

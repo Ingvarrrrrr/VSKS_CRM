@@ -262,6 +262,125 @@ export interface FeoReqItem {
 // сюда вместе с FeoReqItem (используется и useKpiDrilldown.ts, и деревом).
 export type PlannedBase = 'all' | 'manual' | 'requests' | 'purchases'
 
+// ── Дерево ФЭО: превышение плана/финансирования (волна 5c) ────────────────────
+// Вынесены из SubsidiesView.vue при разбиении на composables/subsidies/useFeoTree*.ts
+// (единственный источник — раньше объявлены только там; Правило №6).
+export interface ExcessCulprit {
+  purchase_id: number | null
+  purchase_number: string | number | null
+  item_name: string | null
+  amount_before: number
+  amount_at_crossing: number
+  cumulative_after: number
+}
+export interface ExcessPlanItemPurchase {
+  id: number
+  registry_number: string | number | null
+  purchase_number: string | number | null
+  status: string | null
+  status_label: string | null
+  amount: number
+  stopped_at: string | null
+}
+export interface ExcessPlanItem {
+  id: number
+  name: string
+  amount: number
+  purchases: ExcessPlanItemPurchase[]
+}
+export interface PlanTreeEntry {
+  display: number; display_quantity: number
+  excess_amount?: number; excess_pending?: boolean; excess_approved?: boolean
+  plan_manual?: number; ordered_sum?: number; residual?: number; consumed?: number
+  qty_plan?: number
+  plan?: number; fact?: number; fact_quantity?: number
+  excess_fact_over_plan?: number; excess_fact_pending?: boolean; excess_fact_approved?: boolean
+  excess_over_feo?: number; excess_culprit?: ExcessCulprit | null
+  over?: number
+  manual_plan_entered?: number
+  excess_plan_over_manual?: number
+  excess_plan_approved?: boolean
+  excess_plan_pending?: boolean
+  excess_plan_items?: ExcessPlanItem[]
+  excess_approval_amount?: number | null
+  excess_approval_at?: string | null
+  excess_approval_by_name?: string | null
+  excess_approval_plan_before?: number | null
+  excess_approval_plan_after?: number | null
+  plan_source?: 'planned_items' | 'manual_sum'
+  manual_plan_amount?: number | null
+}
+export interface PlanExcessStep {
+  id: number; approval_id: number; user_id: number | null; order_num: number
+  role_name: string | null; full_name: string | null; status: string
+  comment: string | null; decided_at: string | null; decided_by_user_id: number | null
+}
+export interface PlanExcessApprovalDto {
+  id: number; feo_category_id: number; subsidy_id: number
+  excess_amount: number; plan_amount: number | null; budget_amount: number | null
+  status: string; mode: string; requested_by_id: number | null
+  created_at: string | null; resolved_at: string | null; comment: string | null
+  steps: PlanExcessStep[]
+  self_approval?: boolean; warning?: string | null
+  can_decide?: boolean
+}
+
+// ── Дерево ФЭО: настройки отображения (localStorage), персистятся useFeoTreePrefs.ts ──
+export interface FeoDisplayPrefs {
+  plannedBase?: PlannedBase
+  feoItemsGroupBy?: 'none' | 'category' | 'category_type'
+  expandedIds?: number[]
+  expandedReqItems?: number[]
+  expandedItemPanels?: number[]
+  expandedPlannedItems?: number[]
+  collapsedPlannedItems?: number[]
+}
+
+// ── Дерево ФЭО: позиции «из заявок» как узлы дерева (useFeoReqItems.ts) ────────
+export interface FeoVirtualGroup {
+  name: string
+  unit: string | null
+  qty: number
+  total: number
+  category: string
+  product_type: string
+  items: FeoReqItem[]
+}
+export interface FeoReqRow {
+  key: string
+  header: string
+  level: number
+  count: number
+  sumQty: number
+  sum: number
+  group: FeoVirtualGroup | null
+  items: FeoReqItem[]
+}
+export interface FeoPurchaseFolder {
+  purchase_id: number
+  purchase_number: number | null
+  registry_number: string | null
+  purchase_status: string
+  wish_id: number | null
+  qty: number
+  unit: string | null
+  total: number
+  items: FeoReqItem[]
+  stopped_at?: string | null
+  stopped_by_name?: string | null
+}
+
+// ── Дерево ФЭО: разворот стадий уточнения (useFeoLevel5.ts) ────────────────────
+export interface FeoStageRow {
+  stage: FeoStage
+  nameChanged: boolean
+  qtyDeltaLabel: string | null
+  qtyDeltaColor: string
+  priceDeltaLabel: string | null
+  priceDeltaColor: string
+}
+export type DiffActual = { total_price?: number | string | null; fact_amount?: number | string | null; purchase_status?: string | null }
+
 // ── Импорт ФЭО из Excel (FeoImportWizard.vue/useFeoImport.ts) ─────────────────
 export interface FeoWarning {
   kind: 'level_gap' | 'level_duplicate' | 'sum_mismatch' | 'sum_without_qty' | 'parent_sum_mismatch'

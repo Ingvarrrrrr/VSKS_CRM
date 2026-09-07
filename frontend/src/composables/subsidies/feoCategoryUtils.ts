@@ -6,6 +6,13 @@
 // заводили свою копию (Правило №6).
 import type { FeoActualItem, FeoCategory, FeoLeftGroupInfo } from './types'
 
+// Нормализация имени для сопоставления позиций «из заявок» с категориями/друг другом —
+// используется useFeoLevel5.ts (fallbackAbsorbedByCategory/stagesWithDiff) и
+// useFeoReqItems.ts (mergedReqByCat/allReqGroupsByCat) — единственный источник (Правило №6).
+export function normName(s: string | null | undefined): string {
+  return (s || '').trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
 export function collectSubtreeIds(categories: FeoCategory[], nodeId: number): number[] {
   const ids = [nodeId]
   const find = (pid: number) => {

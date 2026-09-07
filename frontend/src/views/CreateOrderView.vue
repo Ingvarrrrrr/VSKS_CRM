@@ -1,113 +1,33 @@
 <template>
   <v-container fluid class="pa-6" style="max-width:1600px">
-    <div class="d-flex align-center justify-space-between mb-6">
-      <div>
-        <h1 class="text-h5 font-weight-bold" v-if="!isEdit || purchaseLoaded">
-          {{ pageTitle }}
-        </h1>
-        <div v-else class="text-h5 font-weight-bold text-medium-emphasis">…</div>
-        <div class="d-flex align-center gap-2 mt-1">
-          <v-chip v-if="isEdit && form.status" :color="STATUS_COLOR[form.status]" size="small" variant="tonal">
-            {{ STATUS_LABEL[form.status] }}
-          </v-chip>
-          <!-- Владелец (2026-09-02, закупка РЕЕ-2026-00904): «раньше суперадмин мог
-               двигать закупки по статусам самостоятельно, куда делось это поле» —
-               в карточке закупки такого управления не было вообще (было только в
-               списке, OrdersView.vue). Минует workflow-проверки, доступно только
-               SaaS-роли. -->
-          <v-menu v-if="isSaas && isEdit && purchaseId">
-            <template #activator="{ props: menuProps }">
-              <v-btn v-bind="menuProps" icon="mdi-shield-crown" size="x-small" variant="text" color="red-darken-2"
-                :loading="forcingOrderStatus" title="Принудительно сменить статус (SaaS-admin)" />
-            </template>
-            <v-list density="compact">
-              <v-list-item v-for="s in STATUS_ORDER" :key="s" :disabled="s === form.status" @click="forceOrderStatus(s)">
-                <template #prepend><v-icon :color="STATUS_COLOR[s]" icon="mdi-circle-medium" /></template>
-                <v-list-item-title>{{ STATUS_LABEL[s] }}</v-list-item-title>
-              </v-list-item>
-            </v-list>
-          </v-menu>
-          <v-chip v-if="form.substatus" size="x-small" variant="outlined" color="teal">
-            {{ SUBSTATUS_OPTIONS.find(o => o.value === form.substatus)?.title || form.substatus }}
-          </v-chip>
-          <v-icon v-if="form.is_monthly_payment" size="small" color="blue" title="Ежемесячный платёж">mdi-calendar-sync</v-icon>
-          <span v-if="isEdit && form.registry_number" class="text-caption text-medium-emphasis">
-            Реестр: {{ form.registry_number }}
-          </span>
-          <v-fade-transition>
-            <span v-if="draftSaved" class="text-caption text-success">
-              <v-icon size="12" icon="mdi-cloud-check" /> Черновик сохранён
-            </span>
-          </v-fade-transition>
-          <v-btn v-if="!isEdit && hasDraft" size="x-small" variant="outlined" color="warning"
-            prepend-icon="mdi-delete-sweep" @click="clearDraft(); showSnack('Черновик удалён')">
-            Очистить черновик
-          </v-btn>
-        </div>
-      </div>
-      <v-btn variant="outlined" prepend-icon="mdi-arrow-left" :to="backRoute">К списку</v-btn>
-    </div>
-
-    <!-- Задача владельца (сессия 2026-08-21): плашка превышения ФЭО + строка «Создана
-         из заявки №N». См. computed-и purchaseExcess*/purchaseData выше — оба блока
-         тихо не рендерятся, пока backend-агент не досчитал соответствующие поля в
-         GET /api/purchases/{id} (v-if по наличию полей, не заглушки). -->
-    <div v-if="isEdit && purchaseData?.feo_excess" class="feo-excess-culprit mb-3">
-      <v-icon size="16" icon="mdi-alert-decagram" class="mr-1" />
-      <span>{{ purchaseExcessText }}</span>
-      <v-chip size="x-small" :color="purchaseExcessStateColor" variant="flat" class="ml-1">
-        {{ purchaseExcessStateText }}
-      </v-chip>
-    </div>
-
-    <!-- Владелец (2026-09-02): «уведомление глобально, если позиция категории
-         ФЭО вверху и в каждом товаре не соответствует друг другу — об этом
-         должен быть алярм прям стоять». По образцу .purchase-stopped-banner
-         (OrdersView.vue) — крупная рамка на всю ширину, держится, пока
-         расхождение есть (не таймаут-снэкбар). Красный занят остановкой
-         закупки — здесь предупреждающий (амбер) цвет. См. GET /api/purchases/{id}
-         → feo_mismatch/feo_mismatch_items (app.routers.purchases._compute_purchase_feo_mismatch). -->
-    <div v-if="isEdit && purchaseData?.feo_mismatch" class="feo-mismatch-banner mb-3">
-      <div class="feo-mismatch-banner__head">
-        <v-icon icon="mdi-alert" size="18" class="mr-1" />
-        <span class="feo-mismatch-banner__title">РАСХОЖДЕНИЕ КАТЕГОРИИ ФЭО</span>
-      </div>
-      <div class="feo-mismatch-banner__hint">
-        Категория ФЭО у закупки и у товаров не совпадает. Выберите плановую позицию
-        из нужной категории либо исправьте категорию — иначе лист согласования и
-        план ФЭО разъедутся.
-      </div>
-      <ul class="feo-mismatch-banner__list">
-        <li v-for="mi in (purchaseData?.feo_mismatch_items || [])" :key="mi.item_id">
-          {{ mi.message }}
-        </li>
-      </ul>
-      <!-- Владелец (2026-09-02): чинит ровно то, что описывает reason='header'/'both' —
-           видна только пока «разные категории для каждого товара» выключены и есть
-           хоть одна позиция со своей (протухшей) категорией. См. fixFeoMismatchOwnCategories. -->
-      <v-btn v-if="feoMismatchFixableItems.length" size="small" variant="tonal" color="warning"
-        prepend-icon="mdi-broom" :loading="fixingFeoMismatch" class="mt-2"
-        @click="fixFeoMismatchOwnCategories">
-        Убрать свои категории у позиций ({{ feoMismatchFixableItems.length }})
-      </v-btn>
-    </div>
-    <div v-if="isEdit && purchaseData?.wish_id" class="text-caption text-medium-emphasis mb-3 d-flex align-center ga-1 flex-wrap">
-      <v-icon size="14" icon="mdi-file-document-outline" />
-      <span>Создана из заявки №{{ purchaseData.wish_id }}{{ purchaseData.wish_title ? ` «${purchaseData.wish_title}»` : '' }}</span>
-      <v-btn size="x-small" variant="text" color="primary"
-        @click="router.push({ path: '/wishes', query: { open: String(purchaseData.wish_id) } })">
-        Открыть заявку
-      </v-btn>
-    </div>
-    <!-- Владелец (2026-08-21, дефект «отцеплённая закупка»): status='wishes' —
-         закупка скрыта из реестра (см. backend list_purchases). Чип «Желания
-         сотрудников» сам по себе ничего не объясняет — прямо говорим, что
-         происходит: ждёт одобрения заявки (ещё не в плане) или отцеплена
-         обратно в черновик (force_wish_status/принудительный откат). -->
-    <v-alert v-if="isEdit && purchaseData?.status === 'wishes' && purchaseData?.wish_id"
-      type="warning" variant="tonal" density="compact" class="mb-3">
-      {{ wishWithdrawnBannerText }}
-    </v-alert>
+    <PurchaseHeader
+      :form="form"
+      :is-edit="isEdit"
+      :purchase-loaded="purchaseLoaded"
+      :page-title="pageTitle"
+      :is-saas="isSaas"
+      :purchase-id="purchaseId"
+      :status-order="STATUS_ORDER"
+      :status-label="STATUS_LABEL"
+      :status-color="STATUS_COLOR"
+      :forcing-order-status="forcingOrderStatus"
+      :substatus-options="SUBSTATUS_OPTIONS"
+      :has-draft="hasDraft"
+      :draft-saved="draftSaved"
+      :back-route="backRoute"
+      :purchase-data="purchaseData"
+      :purchase-excess-text="purchaseExcessText"
+      :purchase-excess-state-color="purchaseExcessStateColor"
+      :purchase-excess-state-text="purchaseExcessStateText"
+      :feo-mismatch-fixable-items="feoMismatchFixableItems"
+      :fixing-feo-mismatch="fixingFeoMismatch"
+      :wish-withdrawn-banner-text="wishWithdrawnBannerText"
+      :force-order-status="forceOrderStatus"
+      :clear-draft="clearDraft"
+      :show-snack="showSnack"
+      :fix-feo-mismatch-own-categories="fixFeoMismatchOwnCategories"
+      :go-to-wish="(wishId: number) => router.push({ path: '/wishes', query: { open: String(wishId) } })"
+    />
 
     <div v-if="form.subsidy_id && (feoDirections.length || feoResiduals.length)" class="mb-4">
       <!-- Заголовок с переключателем свёртки -->
@@ -1915,374 +1835,42 @@
         </v-card-text>
       </v-card>
 
-      <!-- 4б. Сроки и даты закупки — единый блок -->
-      <v-card id="section-dates" variant="outlined" class="mb-4">
-        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4 d-flex align-center">
-          <v-icon start color="blue-grey">mdi-calendar-clock</v-icon>
-          Сроки и даты
-        </v-card-title>
-        <v-card-text>
+      <PurchaseDatesSection
+        :form="form"
+        :is-framework="isFramework"
+        :selected-framework-contract="selectedFrameworkContract"
+      />
 
-          <!-- Планирование -->
-          <div class="text-caption text-medium-emphasis font-weight-medium text-uppercase mb-2">Планирование</div>
-          <v-row>
-            <v-col cols="12" md="3">
-              <v-text-field
-                v-model="form.procurement_planned_date"
-                label="Планируемая дата закупки"
-                variant="outlined" density="compact" type="date"
-                hint="Когда планируем провести закупку — используется в плане закупок"
-                persistent-hint
-              />
-            </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field
-                v-model="form.delivery_date"
-                label="Нужна к дате"
-                variant="outlined" density="compact" type="date"
-                hint="Срок, к которому товар/услуга должны быть получены"
-                persistent-hint
-              />
-            </v-col>
-            <v-col cols="12" md="6">
-              <v-text-field
-                v-model="form.submission_deadline"
-                label="Приём заявок до"
-                variant="outlined" density="compact"
-                type="datetime-local"
-                hint="Дедлайн подачи предложений поставщиками (уходит на Фабрикант как {{submission_deadline_datetime}})"
-                persistent-hint
-              />
-            </v-col>
-          </v-row>
+      <PurchaseAcceptanceSection
+        v-if="isSectionVisible('acceptance')"
+        :form="form"
+        :is-edit="isEdit"
+        :purchase-id="purchaseId"
+        :form-mode="formMode"
+        :acceptance-docs="acceptanceDocs"
+        :acceptance-doc-types="acceptanceDocTypes"
+        :builtin-acceptance-doc-types="BUILTIN_ACCEPTANCE_DOC_TYPES"
+        :add-acceptance-doc="addAcceptanceDoc"
+        :download-acceptance-file="downloadAcceptanceFile"
+        :on-acceptance-doc-type-add="onAcceptanceDocTypeAdd"
+        :delete-custom-doc-type="deleteCustomDocType"
+        :on-json-btn-click="onJsonBtnClick"
+        :on-acceptance-doc-files-dropped="onAcceptanceDocFilesDropped"
+      />
 
-          <v-divider class="my-3" />
-
-          <!-- Исполнение -->
-          <div class="text-caption text-medium-emphasis font-weight-medium text-uppercase mb-2">Исполнение</div>
-          <v-row>
-            <v-col cols="12">
-              <div class="text-body-2 mb-1">Срок оказания услуг</div>
-              <v-radio-group
-                v-model="form.service_term_mode"
-                inline density="compact" hide-details class="mt-0"
-              >
-                <v-radio label="Не указано" value="" />
-                <v-radio label="Конкретные даты (с… по…)" value="range" />
-                <v-radio label="В течение N дней" value="duration" />
-                <v-radio label="До даты" value="deadline" />
-              </v-radio-group>
-              <div class="text-caption text-medium-emphasis mt-1">Как считается срок исполнения: период, длительность или конкретная дата</div>
-            </v-col>
-          </v-row>
-          <v-row v-if="form.service_term_mode === 'range'">
-            <v-col cols="12" md="3">
-              <v-text-field
-                v-model="form.service_start_date"
-                label="Начало периода" type="date"
-                variant="outlined" density="compact"
-                hint="Дата начала оказания услуг/поставки" persistent-hint
-              />
-            </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field
-                v-model="form.service_end_date"
-                label="Конец периода" type="date"
-                variant="outlined" density="compact"
-                hint="Дата завершения оказания услуг/поставки" persistent-hint
-              />
-            </v-col>
-          </v-row>
-          <v-row v-if="form.service_term_mode === 'duration'">
-            <v-col cols="12" md="3">
-              <v-text-field
-                v-model.number="form.service_term_days"
-                label="Количество дней" type="number" min="1"
-                variant="outlined" density="compact"
-                hint="Срок исполнения в днях от даты подписания" persistent-hint
-              />
-            </v-col>
-            <v-col cols="12" md="3">
-              <v-select
-                v-model="form.service_term_type"
-                :items="[{title: 'Календарных', value: 'calendar'}, {title: 'Рабочих', value: 'working'}]"
-                item-title="title" item-value="value"
-                label="Тип дней" variant="outlined" density="compact"
-              />
-            </v-col>
-          </v-row>
-          <v-row v-if="form.service_term_mode === 'deadline'">
-            <v-col cols="12" md="3">
-              <v-text-field
-                v-model="form.service_deadline_date"
-                label="До какой даты" type="date"
-                variant="outlined" density="compact"
-                hint="Услуга/поставка должна быть исполнена не позднее этой даты" persistent-hint
-              />
-            </v-col>
-            <v-col cols="12" md="4" class="d-flex align-center gap-2">
-              <!-- Конец месяца quick-fill -->
-              <v-menu v-model="endOfMonthMenu" :close-on-content-click="false" location="bottom">
-                <template #activator="{ props: menuProps }">
-                  <v-btn v-bind="menuProps" size="small" variant="tonal" color="teal" prepend-icon="mdi-calendar-end">
-                    Конец месяца
-                  </v-btn>
-                </template>
-                <v-card min-width="260" class="pa-3">
-                  <div class="text-body-2 font-weight-medium mb-2">Выберите период</div>
-                  <v-row dense>
-                    <v-col cols="6">
-                      <v-text-field
-                        v-model.number="endOfMonthYear"
-                        label="Год" type="number" min="2020" max="2040"
-                        variant="outlined" density="compact"
-                      />
-                    </v-col>
-                    <v-col cols="6">
-                      <v-select
-                        v-model="endOfMonthMonth"
-                        :items="endOfMonthMonthItems"
-                        item-title="label" item-value="value"
-                        label="Месяц"
-                        variant="outlined" density="compact"
-                      />
-                    </v-col>
-                  </v-row>
-                  <v-btn color="primary" size="small" block @click="applyEndOfMonth">Применить</v-btn>
-                </v-card>
-              </v-menu>
-            </v-col>
-          </v-row>
-
-          <v-divider class="my-3" />
-
-          <!-- Договор и оплата -->
-          <div class="text-caption text-medium-emphasis font-weight-medium text-uppercase mb-2">Договор и оплата</div>
-          <v-row>
-            <v-col cols="12" md="3">
-              <v-text-field
-                v-model="form.contract_end_date"
-                label="Срок действия договора"
-                variant="outlined" density="compact" type="date"
-                :readonly="isFramework && !!selectedFrameworkContract?.end_date"
-                :bg-color="isFramework && selectedFrameworkContract?.end_date ? 'grey-lighten-4' : undefined"
-                hint="До какой даты действует договор" persistent-hint
-              />
-            </v-col>
-            <v-col cols="12" md="3">
-              <v-select
-                v-model="form.commitment_quarter"
-                :items="[1,2,3,4]"
-                label="Квартал принятия обязательств"
-                variant="outlined" density="compact" clearable
-                hint="Квартал, в котором приняты обязательства" persistent-hint
-              />
-            </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field
-                v-model="form.planned_payment_month"
-                label="Планируемый месяц платежа"
-                variant="outlined" density="compact" type="date"
-                hint="Месяц, в котором планируется платёж" persistent-hint
-              />
-            </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field
-                v-model="form.agreement_date"
-                label="Дата доп.соглашения"
-                variant="outlined" density="compact" type="date"
-                hint="Дата подписания дополнительного соглашения (при наличии)" persistent-hint
-              />
-            </v-col>
-            <v-col cols="12" md="3">
-              <v-text-field
-                v-model="form.order_date"
-                label="Дата заказа"
-                variant="outlined" density="compact" type="date"
-                hint="Когда сделан заказ поставщику" persistent-hint
-              />
-            </v-col>
-            <v-col v-if="form.is_prepayment" cols="12" md="3">
-              <v-text-field
-                v-model="form.prepayment_date"
-                label="Дата предоплаты" type="date"
-                variant="outlined" density="compact"
-                hint="Когда возникло обязательство по предоплате" persistent-hint
-              />
-            </v-col>
-          </v-row>
-
-        </v-card-text>
-      </v-card>
-
-      <!-- 5. Закрывающие документы (admin+) -->
-      <v-card v-if="isSectionVisible('acceptance')" variant="outlined" class="mb-4">
-        <!-- Мобильный фикс (владелец, 2026-09-04, «прокручиваемых вбок таблиц быть не должно»):
-             заголовок + кнопка без flex-wrap уезжали за правый край на узком экране, кнопка
-             «Добавить закрывающий документ» обрезалась. flex-wrap ga-2 — тот же приём, что уже
-             применён у заголовков «Загрузите чеки»/«Чеки» выше в этом файле: на десктопе места
-             хватает и перенос не срабатывает, на мобильном кнопка уходит на вторую строку. -->
-        <v-card-title class="d-flex flex-wrap align-center ga-2 text-subtitle-1 font-weight-bold px-4 pt-4">
-          Закрывающие документы
-          <v-spacer />
-          <v-btn size="small" variant="tonal" color="teal" prepend-icon="mdi-plus" @click="addAcceptanceDoc">Добавить закрывающий документ</v-btn>
-        </v-card-title>
-        <v-card-text>
-          <!-- Phase 26-ppp: кнопки «Загрузить» для типов документов (Договор/Акт/УПД/...)
-               перенесены в секцию «Документы к закупке» (один блок upload вместо
-               двух мест). Здесь оставляем ТОЛЬКО реквизиты (тип/№/дата/сумма) —
-               связь с файлом по-прежнему есть через doc.file_id paperclip-кнопку. -->
-
-          <!-- Реквизиты закрывающих документов -->
-          <div v-for="(doc, idx) in acceptanceDocs" :key="idx" class="mb-3">
-            <div class="d-flex align-center gap-2 mb-1">
-              <span class="text-caption font-weight-medium">Документ {{ idx + 1 }}</span>
-              <v-spacer />
-              <v-btn
-                v-if="doc.file_id"
-                icon="mdi-paperclip"
-                variant="text"
-                size="x-small"
-                color="primary"
-                title="Скачать прикреплённый файл (чек)"
-                @click="downloadAcceptanceFile(doc.file_id!)"
-              />
-              <v-btn icon="mdi-close" variant="text" size="x-small" color="error" @click="acceptanceDocs.splice(idx, 1)" />
-            </div>
-            <v-row dense>
-              <v-col cols="12" md="5">
-                <v-combobox
-                  v-model="doc.name"
-                  :items="acceptanceDocTypes"
-                  label="Тип документа"
-                  variant="outlined"
-                  density="compact"
-                  hide-details="auto"
-                  @update:model-value="onAcceptanceDocTypeAdd($event)"
-                >
-                  <template #item="{ props: itemProps, item }">
-                    <v-list-item v-bind="itemProps" :title="item.raw">
-                      <template #append>
-                        <v-btn
-                          v-if="!BUILTIN_ACCEPTANCE_DOC_TYPES.includes(item.raw)"
-                          icon="mdi-close"
-                          size="x-small"
-                          variant="text"
-                          color="error"
-                          @click.stop="deleteCustomDocType(item.raw)"
-                        />
-                      </template>
-                    </v-list-item>
-                  </template>
-                </v-combobox>
-              </v-col>
-              <v-col cols="12" md="2">
-                <v-text-field v-model="doc.number" label="Номер" variant="outlined" density="compact" hide-details />
-              </v-col>
-              <v-col cols="12" md="2">
-                <v-text-field v-model="doc.date" label="Дата" variant="outlined" density="compact" type="date" hide-details />
-              </v-col>
-              <v-col cols="12" md="3">
-                <v-text-field v-model.number="doc.amount" label="Сумма" variant="outlined" density="compact" type="number" suffix="₽" hide-details />
-              </v-col>
-            </v-row>
-            <v-divider v-if="idx < acceptanceDocs.length - 1" class="mt-3" />
-          </div>
-
-          <!-- Кнопка загрузки чека для авансового отчёта -->
-          <div v-if="isEdit && purchaseId && (formMode === 'advance_report' || form.purchase_method === 'advance')" class="mt-3 mb-1">
-            <v-btn size="small" variant="tonal" color="#fb923c" prepend-icon="mdi-receipt-text" @click="onJsonBtnClick">
-              Загрузить чек
-            </v-btn>
-          </div>
-
-          <!-- DnD-загрузка закрывающих документов (Phase 31-03) -->
-          <FileDropZone
-            v-if="isEdit && purchaseId"
-            accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
-            :multiple="true"
-            hint="Перетащите закрывающий документ (Акт/УПД/Прочее)"
-            @files="onAcceptanceDocFilesDropped"
-            class="mt-3"
-          >
-            <template #default="{ dragging, open }">
-              <div
-                class="d-flex align-center justify-center gap-2 pa-3"
-                style="min-height:120px; border:1px dashed var(--gala-accent, #fb923c); border-radius:6px"
-                :style="{ background: dragging ? 'rgba(251,146,60,0.08)' : 'transparent' }"
-              >
-                <v-icon :color="dragging ? '#fb923c' : 'grey'" size="20">mdi-file-upload-outline</v-icon>
-                <span class="text-body-2 text-medium-emphasis">Перетащите закрывающий документ или</span>
-                <v-btn variant="text" size="small" color="#fb923c" @click.stop="open()">выберите</v-btn>
-              </div>
-            </template>
-          </FileDropZone>
-        </v-card-text>
-      </v-card>
-
-      <!-- 6. Платёж (admin+) -->
-      <v-card v-if="isSectionVisible('payment')" variant="outlined" class="mb-4">
-        <v-card-title class="d-flex align-center text-subtitle-1 font-weight-bold px-4 pt-4">
-          Платёж
-        </v-card-title>
-        <v-card-text>
-          <!-- Загрузка платёжных документов -->
-          <div v-if="isEdit && purchaseId" class="mb-4">
-            <div class="d-flex align-center gap-2 py-2 border-b">
-              <v-icon size="18" color="orange">mdi-cash-check</v-icon>
-              <span class="text-body-2 font-weight-medium" style="min-width:120px">Платёжка</span>
-              <v-btn size="x-small" variant="tonal" color="orange" prepend-icon="mdi-upload"
-                :loading="uploading && pendingSectionUpload === 'invoice'" @click="uploadForSection('invoice')">
-                Загрузить
-              </v-btn>
-              <v-spacer />
-              <div class="d-flex flex-wrap gap-1">
-                <template v-for="f in paymentFiles" :key="f.id">
-                  <v-chip size="small" :color="f.is_active ? 'orange' : 'grey'" :variant="f.is_active ? 'tonal' : 'outlined'"
-                    closable @click:close="deleteFile(f.id)" @click="downloadFile(f.id, f.filename)">
-                    <v-icon start size="14">mdi-file</v-icon>
-                    {{ f.filename.length > 25 ? f.filename.slice(0, 22) + '...' : f.filename }}
-                    <template #append>
-                      <v-tooltip :text="f.is_active ? 'Актуальный' : 'Не актуальный'" location="top">
-                        <template #activator="{ props: tp }">
-                          <v-icon v-bind="tp" size="14" class="ml-1" :color="f.is_active ? 'success' : 'grey'"
-                            @click.stop="toggleFileActive(f)">{{ f.is_active ? 'mdi-check-circle' : 'mdi-close-circle-outline' }}</v-icon>
-                        </template>
-                      </v-tooltip>
-                    </template>
-                  </v-chip>
-                </template>
-              </div>
-            </div>
-          </div>
-          <v-row>
-            <v-col cols="12" md="4" data-field-name="payment_doc_number">
-              <v-text-field v-model="form.payment_doc_number" label="Номер платёжного поручения" variant="outlined" density="compact"
-                readonly hint="Заполняется автоматически из платежей. См. раздел Платежи ниже" persistent-hint />
-            </v-col>
-            <v-col cols="12" md="4" data-field-name="payment_doc_date">
-              <v-text-field v-model="form.payment_doc_date" label="Дата ПП" variant="outlined" density="compact" type="date"
-                readonly hint="Заполняется автоматически из платежей" persistent-hint />
-            </v-col>
-            <v-col cols="12" md="4" data-field-name="payment_amount">
-              <v-text-field v-model.number="form.payment_amount" label="Сумма платежа" variant="outlined"
-                density="compact" type="number" suffix="₽" readonly hint="Заполняется автоматически из платежей" persistent-hint />
-            </v-col>
-            <v-col cols="12" md="4">
-              <v-text-field v-model.number="form.payment_federal" label="в т.ч. федеральный бюджет" variant="outlined"
-                density="compact" type="number" suffix="₽" />
-            </v-col>
-            <v-col cols="12" md="4">
-              <v-text-field v-model="form.treasury_code" label="Казначейский код" variant="outlined" density="compact"
-                hint="Код для Приложения №3, колонка S" persistent-hint />
-            </v-col>
-            <v-col cols="12" md="4">
-              <v-checkbox v-model="form.has_pretension" label="Претензионная работа" density="compact"
-                hint="Колонка U в Приложении №3" persistent-hint />
-            </v-col>
-          </v-row>
-        </v-card-text>
-      </v-card>
+      <PurchasePaymentSection
+        v-if="isSectionVisible('payment')"
+        :form="form"
+        :is-edit="isEdit"
+        :purchase-id="purchaseId"
+        :uploading="uploading"
+        :pending-section-upload="pendingSectionUpload"
+        :payment-files="paymentFiles"
+        :upload-for-section="uploadForSection"
+        :delete-file="deleteFile"
+        :download-file="downloadFile"
+        :toggle-file-active="toggleFileActive"
+      />
 
       <!-- Платежи — только для обычных закупок (не advance_report, не service_note) -->
       <PaymentsBlock
@@ -2321,93 +1909,34 @@
         @send="sendPurchaseBroadcast"
       />
 
-      <!-- 7. Файлы (скрыто для employee, если нет права purchase_files.upload и не участник/согласующий) -->
-      <v-card v-if="canSeePurchaseDocs" variant="outlined" class="mb-4">
-        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Документы к закупке</v-card-title>
-        <v-card-text>
-          <!-- Phase 26-ppp: typed-upload секции перенесены сюда из «Закрывающие
-               документы» — единая точка загрузки всех файлов закупки.
-               Каждая кнопка «Загрузить» назначает file_type (contract/act/upd/
-               invoice/order/etc) при upload. Файлы списком ниже. -->
-          <div class="doc-upload-grid mb-4">
-            <FileDropZone v-for="sec in DOC_UPLOAD_SECTIONS" :key="sec.type"
-              accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png" :multiple="true" :disabled="!purchaseId"
-              class="doc-upload-tile" style="min-height:140px; align-items:flex-start; padding:12px"
-              @files="(files: File[]) => uploadFilesForType(files, sec.type)">
-              <template #default="{ dragging }">
-                <div class="doc-upload-tile-inner" :class="{ 'doc-upload-tile-inner--dragging': dragging && purchaseId }">
-                  <div class="d-flex align-center gap-2 mb-1">
-                    <v-icon size="20" :color="sec.color">{{ sec.icon }}</v-icon>
-                    <span class="text-body-2 font-weight-medium">{{ sec.label }}</span>
-                    <v-spacer />
-                    <v-progress-circular v-if="uploading && pendingSectionUpload === sec.type"
-                      indeterminate size="16" width="2" :color="sec.color" />
-                  </div>
-                  <div class="text-caption text-medium-emphasis mb-2">
-                    {{ purchaseId ? 'Перетащите файл сюда или нажмите' : 'Сначала сохраните закупку' }}
-                  </div>
-                  <div v-if="filesByType(sec.type).length" class="d-flex flex-wrap gap-1" @click.stop>
-                    <template v-for="f in filesByType(sec.type)" :key="f.id">
-                      <v-chip size="small" :color="f.is_active ? sec.color : 'grey'" :variant="f.is_active ? 'tonal' : 'outlined'"
-                        closable @click:close="deleteFile(f.id)" @click="downloadFile(f.id, f.filename)">
-                        <v-icon start size="14">mdi-file</v-icon>
-                        {{ f.filename.length > 20 ? f.filename.slice(0, 17) + '...' : f.filename }}
-                        <template #append>
-                          <v-tooltip :text="f.is_active ? 'Актуальный — нажмите чтобы деактивировать' : 'Не актуальный — нажмите чтобы активировать'" location="top">
-                            <template #activator="{ props: tp }">
-                              <v-icon v-bind="tp" size="14" class="ml-1" :color="f.is_active ? 'success' : 'grey'"
-                                @click.stop="toggleFileActive(f)">{{ f.is_active ? 'mdi-check-circle' : 'mdi-close-circle-outline' }}</v-icon>
-                            </template>
-                          </v-tooltip>
-                        </template>
-                      </v-chip>
-                    </template>
-                  </div>
-                </div>
-              </template>
-            </FileDropZone>
-          </div>
-          <input ref="sectionFileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
-            style="display:none" @change="uploadSectionFile" />
-          <input ref="fileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
-            style="display:none" @change="uploadFile" />
-
-          <v-list v-if="uploadedFiles.length" density="compact">
-            <v-list-item v-for="f in uploadedFiles" :key="f.id"
-              :prepend-icon="fileIcon(f.mime_type)"
-            >
-              <template #title>
-                <span class="text-body-2">{{ f.filename }}</span>
-                <v-chip size="x-small" class="ml-2" :color="fileTypeColor(f.file_type)" variant="tonal"
-                  style="cursor:pointer" @click="openFileTypeEdit(f)">
-                  {{ FILE_TYPE_LABELS[f.file_type || 'other'] || 'Прочее' }}
-                  <v-icon size="10" class="ml-1">mdi-pencil</v-icon>
-                </v-chip>
-                <v-chip size="x-small" class="ml-1"
-                  :color="f.doc_format === 'editable' ? 'blue' : 'grey'"
-                  :prepend-icon="f.doc_format === 'editable' ? 'mdi-file-edit-outline' : 'mdi-scanner'"
-                  variant="tonal" style="cursor:pointer" @click="toggleDocFormat(f)">
-                  {{ f.doc_format === 'editable' ? 'Ред.' : 'Скан' }}
-                </v-chip>
-              </template>
-              <template #subtitle>
-                {{ formatSize(f.size) }}
-                <span v-if="f.uploaded_by_name || f.created_at" class="text-medium-emphasis ml-2">
-                  · {{ f.uploaded_by_name || '' }}{{ f.created_at ? ' · ' + formatDate(f.created_at) : '' }}
-                </span>
-              </template>
-              <template #append>
-                <v-btn v-if="isPreviewable(f.mime_type)" icon="mdi-eye-outline" variant="text" size="small" color="primary"
-                  @click="openPreview(f)" />
-                <v-btn icon="mdi-download" variant="text" size="small" @click="downloadFile(f.id, f.filename)" />
-                <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
-                  @click="deleteFile(f.id)" />
-              </template>
-            </v-list-item>
-          </v-list>
-          <div v-else class="text-caption text-medium-emphasis">Нет загруженных файлов</div>
-        </v-card-text>
-      </v-card>
+      <PurchaseDocumentsCard
+        v-if="canSeePurchaseDocs"
+        :purchase-id="purchaseId"
+        :uploading="uploading"
+        :pending-section-upload="pendingSectionUpload"
+        :doc-upload-sections="DOC_UPLOAD_SECTIONS"
+        :uploaded-files="uploadedFiles"
+        :file-type-labels="FILE_TYPE_LABELS"
+        :upload-files-for-type="uploadFilesForType"
+        :files-by-type="filesByType"
+        :delete-file="deleteFile"
+        :download-file="downloadFile"
+        :toggle-file-active="toggleFileActive"
+        :file-icon="fileIcon"
+        :open-file-type-edit="openFileTypeEdit"
+        :file-type-color="fileTypeColor"
+        :toggle-doc-format="toggleDocFormat"
+        :format-size="formatSize"
+        :format-date="formatDate"
+        :is-previewable="isPreviewable"
+        :open-preview="openPreview"
+      />
+      <!-- Скрытые file-input'ы читаемых секций (см. PurchaseDocumentsCard.vue —
+           ref-биндинг не переносится в дочерний компонент без forwarding'а). -->
+      <input v-if="canSeePurchaseDocs" ref="sectionFileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+        style="display:none" @change="uploadSectionFile" />
+      <input v-if="canSeePurchaseDocs" ref="fileInputEl" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+        style="display:none" @change="uploadFile" />
 
       <!-- Диалоги файлов (загрузка / смена типа / предпросмотр) -->
       <PurchaseFileDialogs
@@ -2597,179 +2126,41 @@
         </v-card-text>
       </v-card>
 
-      <!-- 10. Публикация на площадках (can_publish permission) -->
-      <v-card v-if="isEdit && isSectionVisible('platform_publication') && canPublish" variant="outlined" class="mb-4" style="border-color:#7C3AED">
-        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-3 d-flex align-center justify-space-between">
-          <span class="d-flex align-center gap-2">
-            <v-icon icon="mdi-broadcast" color="deep-purple" size="20" />
-            Публикация на площадках
-          </span>
-          <div class="d-flex gap-2">
-            <v-btn color="deep-purple" variant="tonal" size="small" prepend-icon="mdi-folder-zip"
-              :loading="docLoading === 'fabrikant_package'"
-              @click="downloadFabrikantPackage">
-              Скачать пакет (ZIP)
-            </v-btn>
-            <v-btn color="deep-purple" variant="tonal" size="small" prepend-icon="mdi-upload-network"
-              @click="publishErrors = checkPublishReady(); publishDialog = true; pendingPlatform = null; fabrikantNoNmcd = !(publishNmck > 0)">
-              Опубликовать
-            </v-btn>
-          </div>
-        </v-card-title>
-        <v-card-text class="px-4 pb-3">
-          <div v-if="!publications.length" class="text-medium-emphasis text-caption">
-            Закупка ещё не публиковалась ни на одной площадке
-          </div>
-          <v-table v-else density="compact">
-            <thead>
-              <tr>
-                <th class="text-caption text-medium-emphasis" style="width:140px">Площадка</th>
-                <th class="text-caption text-medium-emphasis" style="width:130px">Статус</th>
-                <th class="text-caption text-medium-emphasis" style="width:160px">Номер закупки</th>
-                <th class="text-caption text-medium-emphasis">Ссылка на закупку</th>
-                <th class="text-caption text-medium-emphasis"></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="pub in publications" :key="pub.id">
-                <td class="font-weight-medium text-caption">{{ PLATFORM_LABELS[pub.platform] || pub.platform }}</td>
-                <td>
-                  <v-chip size="x-small" :color="PUB_STATUS_COLOR[pub.status]" variant="tonal">
-                    {{ PUB_STATUS_LABEL[pub.status] || pub.status }}
-                  </v-chip>
-                </td>
-                <td class="text-caption">
-                  <template v-if="pub.status === 'draft'">
-                    <span v-if="pub.platform_number" class="font-weight-medium">{{ pub.platform_number }}</span>
-                    <span v-else-if="pub.external_id" class="text-medium-emphasis">{{ pub.external_id }}</span>
-                    <span v-else class="text-medium-emphasis">—</span>
-                  </template>
-                  <span v-else-if="pub.status === 'error'" class="text-error" style="white-space: normal; word-break: break-word">{{ pub.error_text || 'Ошибка публикации' }}</span>
-                  <span v-else-if="pub.external_id">{{ pub.external_id }}</span>
-                  <span v-else class="text-medium-emphasis">—</span>
-                </td>
-                <td class="text-caption">
-                  <!-- Черновик: ссылка недоступна до размещения — показываем пояснение -->
-                  <template v-if="pub.status === 'draft'">
-                    <span class="text-orange-darken-2">
-                      Черновик №{{ pub.platform_number || '—' }} создан на Фабриканте.
-                      Разместите его в личном кабинете площадки — до размещения ссылка недоступна.
-                    </span>
-                  </template>
-                  <template v-else>
-                    <a v-if="pub.external_url" :href="pub.external_url" target="_blank"
-                      class="text-blue-darken-2 text-decoration-none">
-                      {{ pub.external_url }}
-                      <v-icon size="11">mdi-open-in-new</v-icon>
-                    </a>
-                    <span v-else class="text-medium-emphasis">—</span>
-                  </template>
-                </td>
-                <td style="width:72px" class="text-right">
-                  <!-- Обновить статус: для черновика и опубликованного (состояние может меняться) -->
-                  <v-btn
-                    v-if="pub.platform === 'fabrikant' && (pub.status === 'draft' || pub.status === 'published')"
-                    icon="mdi-refresh"
-                    size="x-small"
-                    variant="text"
-                    color="orange-darken-2"
-                    :loading="refreshingPubId === pub.id"
-                    title="Обновить статус с площадки"
-                    @click="refreshPubStatus(pub)"
-                  />
-                  <!-- Ретрай при ошибке -->
-                  <v-btn v-if="pub.status === 'error'" icon="mdi-send" size="x-small" variant="text"
-                    color="deep-purple" @click="pub.platform === 'fabrikant' ? openFabrikantRetry(pub.platform) : retryPublish(pub.platform)" />
-                </td>
-              </tr>
-            </tbody>
-          </v-table>
+      <PurchasePlatformCard
+        v-if="isEdit && isSectionVisible('platform_publication') && canPublish"
+        :doc-loading="docLoading"
+        :download-fabrikant-package="downloadFabrikantPackage"
+        :open-publish-dialog="openPublishDialog"
+        :publications="publications"
+        :PLATFORM_LABELS="PLATFORM_LABELS"
+        :PUB_STATUS_COLOR="PUB_STATUS_COLOR"
+        :PUB_STATUS_LABEL="PUB_STATUS_LABEL"
+        :refreshing-pub-id="refreshingPubId"
+        :refresh-pub-status="refreshPubStatus"
+        :open-fabrikant-retry="openFabrikantRetry"
+        :retry-publish="retryPublish"
+        :FABRIKANT_PKG_DOCS="FABRIKANT_PKG_DOCS"
+        :fabrikant-override="fabrikantOverride"
+        :download-file="downloadFile"
+        :delete-fabrikant-override="deleteFabrikantOverride"
+        :trigger-fabrikant-upload="triggerFabrikantUpload"
+      />
+      <!-- Скрытый file-input оверрайда пакета Фабрикант (см. PurchasePlatformCard.vue
+           — ref-биндинг не переносится в дочерний компонент без forwarding'а). -->
+      <input v-if="isEdit && isSectionVisible('platform_publication') && canPublish"
+        ref="fabrikantFileInputEl" type="file" accept=".docx,.pdf" style="display:none"
+        @change="uploadFabrikantOverride" />
 
-          <!-- Документы пакета Фабрикант -->
-          <v-divider class="my-3" />
-          <div class="text-caption font-weight-medium text-deep-purple mb-2">Документы пакета Фабрикант</div>
-          <input ref="fabrikantFileInputEl" type="file" accept=".docx,.pdf" style="display:none"
-            @change="uploadFabrikantOverride" />
-          <v-list density="compact" class="pa-0">
-            <v-list-item v-for="doc in FABRIKANT_PKG_DOCS" :key="doc.ft" class="px-0 py-1" min-height="36">
-              <template #prepend>
-                <span class="text-caption" style="min-width:160px">{{ doc.label }}</span>
-              </template>
-              <template #default>
-                <v-chip v-if="fabrikantOverride(doc.ft)" size="x-small" color="deep-purple" variant="tonal" class="mr-1">
-                  своя версия
-                </v-chip>
-                <v-chip v-else size="x-small" color="grey" variant="tonal" class="mr-1">авто</v-chip>
-                <span v-if="fabrikantOverride(doc.ft)" class="text-caption text-medium-emphasis mr-2">
-                  {{ fabrikantOverride(doc.ft)!.filename }}
-                </span>
-              </template>
-              <template #append>
-                <v-btn icon="mdi-upload" size="x-small" variant="text" density="compact"
-                  @click="triggerFabrikantUpload(doc.ft)" title="Загрузить свою версию" />
-                <template v-if="fabrikantOverride(doc.ft)">
-                  <v-btn icon="mdi-download" size="x-small" variant="text" density="compact"
-                    @click="downloadFile(fabrikantOverride(doc.ft)!.id, fabrikantOverride(doc.ft)!.filename)" />
-                  <v-btn icon="mdi-delete-outline" size="x-small" variant="text" density="compact" color="error"
-                    @click="deleteFabrikantOverride(fabrikantOverride(doc.ft)!.id)" />
-                </template>
-              </template>
-            </v-list-item>
-          </v-list>
-        </v-card-text>
-      </v-card>
-
-      <!-- Связанные задачи -->
-      <v-card v-if="isEdit && purchaseId" variant="outlined" class="mb-4">
-        <v-card-title class="text-subtitle-1 d-flex align-center gap-2">
-          <v-icon size="20">mdi-clipboard-check-outline</v-icon>
-          Связанные задачи
-          <v-chip size="x-small" variant="tonal" color="primary">{{ linkedTasks.length }}</v-chip>
-          <v-spacer />
-          <v-btn size="small" variant="tonal" color="secondary" prepend-icon="mdi-link-variant"
-            :to="`/my-tasks?link_purchase=${purchaseId}`" class="mr-2">
-            Привязать
-          </v-btn>
-          <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-plus"
-            @click="openCreateLinkedTask">
-            Создать
-          </v-btn>
-        </v-card-title>
-        <v-card-text v-if="linkedTasks.length" class="pt-0">
-          <v-list density="compact" class="pa-0">
-            <v-list-item v-for="lt in linkedTasks" :key="lt.id" class="px-2"
-              @click="$router.push(`/my-tasks?task=${lt.id}`)">
-              <template #prepend>
-                <v-icon :color="taskStatusColor(lt.status)" size="18">
-                  {{ lt.status === 'done' ? 'mdi-check-circle' : lt.status === 'in_progress' ? 'mdi-progress-clock' : 'mdi-circle-outline' }}
-                </v-icon>
-              </template>
-              <v-list-item-title class="text-body-2">{{ lt.title }}</v-list-item-title>
-              <v-list-item-subtitle class="text-caption">
-                <v-chip size="x-small" variant="flat" :color="taskPriorityColor(lt.priority)" class="mr-1">
-                  {{ lt.priority }}
-                </v-chip>
-                <span v-if="lt.assignees?.length">
-                  {{ lt.assignees.map((a: any) => a.user_name || `#${a.user_id}`).join(', ') }}
-                </span>
-                <span v-if="lt.due_date" class="ml-2">
-                  · до {{ new Date(lt.due_date).toLocaleDateString('ru') }}
-                </span>
-              </v-list-item-subtitle>
-              <template #append>
-                <v-chip size="x-small" variant="tonal" :color="taskStatusColor(lt.status)" class="mr-1">
-                  {{ TASK_STATUS_LABEL[lt.status] || lt.status }}
-                </v-chip>
-                <v-btn icon="mdi-link-variant-off" size="x-small" variant="text" color="grey"
-                  title="Отвязать задачу" @click.stop="unlinkTask(lt.id)" />
-              </template>
-            </v-list-item>
-          </v-list>
-        </v-card-text>
-        <v-card-text v-else class="text-caption text-medium-emphasis pt-0">
-          Нет связанных задач. Нажмите «Создать задачу» чтобы делегировать работу по этой закупке.
-        </v-card-text>
-      </v-card>
+      <PurchaseLinkedTasksCard
+        v-if="isEdit && purchaseId"
+        :purchase-id="purchaseId"
+        :linked-tasks="linkedTasks"
+        :open-create-linked-task="openCreateLinkedTask"
+        :task-status-color="taskStatusColor"
+        :task-priority-color="taskPriorityColor"
+        :TASK_STATUS_LABEL="TASK_STATUS_LABEL"
+        :unlink-task="unlinkTask"
+      />
 
       <!-- Диалоги задач закупки -->
       <LinkedTaskDialogs
@@ -3071,9 +2462,15 @@ import type { ContractItem } from '@/types/contractItem'
 import { useOrgConfig } from '@/composables/useOrgConfig'
 import PurchaseEventFeed from '@/components/PurchaseEventFeed.vue'
 import ApprovalPanel from '@/components/purchase/ApprovalPanel.vue'
+import PurchaseHeader from '@/components/purchase/PurchaseHeader.vue'
+import PurchaseDatesSection from '@/components/purchase/PurchaseDatesSection.vue'
+import PurchaseAcceptanceSection from '@/components/purchase/PurchaseAcceptanceSection.vue'
+import PurchasePaymentSection from '@/components/purchase/PurchasePaymentSection.vue'
+import PurchaseDocumentsCard from '@/components/purchase/PurchaseDocumentsCard.vue'
+import PurchasePlatformCard from '@/components/purchase/PurchasePlatformCard.vue'
+import PurchaseLinkedTasksCard from '@/components/purchase/PurchaseLinkedTasksCard.vue'
 import PurchaseBroadcastDialog from '@/components/purchase/PurchaseBroadcastDialog.vue'
 import { usePurchaseBroadcast } from '@/composables/purchase/usePurchaseBroadcast'
-import { useEndOfMonthFill } from '@/composables/purchase/useEndOfMonthFill'
 import { useDeliveryAddress } from '@/composables/purchase/useDeliveryAddress'
 import { useResponsiblePersons } from '@/composables/purchase/useResponsiblePersons'
 import AddResponsibleDialog from '@/components/purchase/AddResponsibleDialog.vue'
@@ -3105,7 +2502,6 @@ import {
   usePurchasePublications, PLATFORM_LABELS, PUB_STATUS_COLOR, PUB_STATUS_LABEL,
 } from '@/composables/purchase/usePurchasePublications'
 import PurchasePublishDialog from '@/components/purchase/PurchasePublishDialog.vue'
-import FileDropZone from '@/components/FileDropZone.vue'
 import ChatEmbed from '@/components/ChatEmbed.vue'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
 import QrScannerDialog from '@/components/QrScannerDialog.vue'
@@ -4038,10 +3434,9 @@ function showValidationArrows() {
   validationArrowsTimer = window.setTimeout(dismissValidationArrows, 8000)
 }
 
-// ── Конец месяца quick-fill — вынесено в composables/purchase/useEndOfMonthFill.ts ──
-const {
-  endOfMonthMenu, endOfMonthYear, endOfMonthMonth, endOfMonthMonthItems, applyEndOfMonth,
-} = useEndOfMonthFill(form)
+// ── Конец месяца quick-fill — вынесено в composables/purchase/useEndOfMonthFill.ts,
+// вызывается теперь внутри components/purchase/PurchaseDatesSection.vue (см. шаблон,
+// секция #section-dates) — не используется больше нигде в этом файле.
 const transitioning = ref(false)
 const converting = ref(false)
 // uploading — владеет composables/purchase/usePurchaseFiles.ts (вызов ниже по файлу)
@@ -4487,6 +3882,15 @@ const {
   purchaseId, showSnack, form, items, subsidies, isEdit, performAutosave, autosaveState,
   resolveRegionOkato, customerPreview, displayNmck, savedNmck, guideArrowTo,
 )
+// Кнопка «Опубликовать» в components/purchase/PurchasePlatformCard.vue — тот же
+// инлайн, что раньше стоял прямо в @click, вынесен в функцию, т.к. дочерний
+// компонент не может писать в чужие refs напрямую (передаём функцию пропом).
+function openPublishDialog() {
+  publishErrors.value = checkPublishReady()
+  publishDialog.value = true
+  pendingPlatform.value = null
+  fabrikantNoNmcd.value = !(publishNmck.value > 0)
+}
 
 const nmckHint = computed(() => {
   if (isContracted.value && savedNmck.value != null) {
@@ -6244,72 +5648,6 @@ const kpDialogRef = ref<InstanceType<typeof KpDialog> | null>(null)
 </script>
 
 <style scoped>
-/* «Заметный сигнал превышения» — по образцу .feo-excess-culprit в SubsidiesView.vue
-   (сознательно крупнее и контрастнее .feo-plan-note — задача владельца, сессия
-   2026-08-21: «в карточке закупки видно превышение»). Scoped-стиль, дублируется
-   как и остальные per-view карточки в этом проекте (не вынесен в общий CSS, т.к.
-   применяется только к заголовку карточки закупки). */
-.feo-excess-culprit {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
-  font-size: 13px; font-weight: 700; line-height: 1.4; white-space: normal;
-  color: #7f1d1d; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.45);
-  border-radius: 6px; padding: 6px 10px; max-width: 100%;
-}
-
-/* Владелец (2026-09-02): «алярм» расхождения категории ФЭО шапка/товар/план —
-   по образцу .purchase-stopped-banner (OrdersView.vue), но предупреждающий
-   (амбер), т.к. красный там занят остановкой закупки. Держится, пока
-   purchaseData.feo_mismatch=true — не самозакрывающийся снэкбар. */
-.feo-mismatch-banner {
-  width: 100%;
-  border: 2px solid #b45309;
-  background: #fffbeb;
-  color: #7c2d12;
-  border-radius: 6px;
-  padding: 10px 14px;
-}
-.feo-mismatch-banner__head {
-  display: flex;
-  align-items: center;
-}
-.feo-mismatch-banner__title {
-  font-weight: 800;
-  font-size: 0.92rem;
-  letter-spacing: 0.02em;
-}
-.feo-mismatch-banner__hint {
-  font-size: 0.8rem;
-  font-weight: 500;
-  margin-top: 2px;
-  opacity: 0.92;
-}
-.feo-mismatch-banner__list {
-  margin: 6px 0 0;
-  padding-left: 20px;
-  font-size: 0.8rem;
-  font-weight: 600;
-}
-.feo-mismatch-banner__list li {
-  margin-bottom: 2px;
-}
-.doc-upload-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 12px;
-}
-@media (max-width: 600px) {
-  .doc-upload-grid {
-    grid-template-columns: 1fr;
-  }
-}
-.doc-upload-tile-inner {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-}
-.doc-upload-tile-inner--dragging {
-  transform: scale(1.01);
-}
 .framework-siblings-label {
   font-size: 12px;
   color: var(--crm-text-muted);

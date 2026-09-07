@@ -39,6 +39,7 @@ from app.models.user import User
 from app.models.subsidy import Subsidy
 from app.models.feo_category import FeoCategory
 from app.models.purchase import Purchase
+from app.services.purchase_amounts import load_purchase_amounts
 
 router = APIRouter(prefix="/api/subsidies", tags=["subsidies"])
 
@@ -466,8 +467,16 @@ async def export_plan_graph_excel(
         .order_by(_P.id)
     )).all()
     _cat_id_set = set(cat_ids)
+    # ПРАВИЛО №6 (2026-09-07, волна 4b-2c): раньше `final_total_amount or
+    # planned_total_price or 0` — truthy-баг (0 в final_total_amount проваливался
+    # в план) плюс final_total_amount — легаси-скаляр мимо единого источника
+    # (не участвует в цепочке purchase_amounts вообще). Заменено на bulk
+    # load_purchase_amounts().effective — та же цепочка-по-стадии, что и везде:
+    # поставлено/оплачено берёт факт (JSONB acceptance_docs), до договора — план.
+    _amounts_by_pid = await load_purchase_amounts(db, [r.purchase_id for r in pl_rows])
     for r in pl_rows:
-        amount = float(r.final_total_amount or r.planned_total_price or 0)
+        _pa = _amounts_by_pid.get(r.purchase_id)
+        amount = float(_pa.effective) if _pa and _pa.effective is not None else 0.0
         qty = float(r.planned_quantity or 0)
         d = {
             "name": (r.item_name or r.subject or f"Закупка №{r.purchase_id}"),

@@ -15,6 +15,8 @@ from app.models.user import User
 from app.auth.jwt import get_current_user
 from app.auth.visibility import get_visible_subsidy_ids
 from app.services.acceptance_docs import derived_scalars as _acceptance_derived_scalars
+from app.models.contract_item import ContractItem
+from app.services.purchase_amounts import contract_amount
 from typing import Optional
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
@@ -207,6 +209,20 @@ async def export_subsidy_report_xlsx(
         select(Purchase).where(Purchase.subsidy_id == subsidy_id).order_by(Purchase.event_id, Purchase.id)
     )
     purchases = purchases_r.scalars().all()
+
+    # ПРАВИЛО №6 (2026-09-07, волна 4b-2c): колонка L «Сумма договора, руб.» —
+    # bulk Σ ContractItem.total на весь отчёт (без N+1), передаётся в contract_amount()
+    # ниже вместо старого `contract_price or planned_total_price` (truthy-баг на 0
+    # + подмена «сумма договора» плановой суммой, если контракта ещё нет).
+    _purchase_ids_for_ci = [p.id for p in purchases]
+    _ci_totals: dict = {}
+    if _purchase_ids_for_ci:
+        _ci_rows = (await db.execute(
+            select(ContractItem.purchase_id, func.sum(ContractItem.total))
+            .where(ContractItem.purchase_id.in_(_purchase_ids_for_ci))
+            .group_by(ContractItem.purchase_id)
+        )).all()
+        _ci_totals = {pid: total for pid, total in _ci_rows}
 
     contractor_ids = {p.contractor_id for p in purchases if p.contractor_id}
     feo_ids = {p.feo_category_id for p in purchases if p.feo_category_id}
@@ -428,7 +444,7 @@ async def export_subsidy_report_xlsx(
             contractor.name if contractor else "",                      # I
             contractor.inn if contractor else "",                       # J
             f"№{p.contract_number or ''} от {fmt_date(p.contract_date)}" if p.contract_number else "",  # K
-            fmt_money(p.contract_price or p.planned_total_price),      # L
+            fmt_money(contract_amount(p, contract_items_total=_ci_totals.get(p.id))),  # L "Сумма договора"
             fmt_money(p.payment_amount),                               # M
             subject_str,                                               # N
             tz_str,                                                    # O

@@ -60,7 +60,20 @@ async def _enrich_contract_from_purchases(c: Contract, db: AsyncSession) -> int:
     # 27.4-19: framework_cumulative (накопительный) НЕ имеет max_amount —
     # пропускаем enrich этого поля чтобы не воскрешать «Превышен лимит» после 27.4-17.
     if c.max_amount is None and c.contract_type != 'framework_cumulative':
-        v = p.total_nmck or p.contract_price or p.planned_total_price
+        # ПРАВИЛО №6 (2026-09-07, волна 4b-2c): раньше `total_nmck or contract_price
+        # or planned_total_price` — truthy-баг (0 в любом из полей молча проваливался
+        # дальше по цепочке). Единый источник: contract_amount() (цена договора ??
+        # Σ ContractItem.total ПО ЭТОЙ закупке), с фолбэком на purchase_amounts().plan,
+        # если по договору вообще ничего нет. НМЦК сюда сознательно не входит —
+        # contract_amount() не читает total_nmck (см. её докстринг в purchase_amounts.py).
+        from app.models.contract_item import ContractItem as _CI
+        from app.services.purchase_amounts import contract_amount, purchase_amounts
+        ci_total = (await db.execute(
+            select(func.sum(_CI.total)).where(_CI.purchase_id == p.id)
+        )).scalar_one_or_none()
+        v = contract_amount(p, contract_items_total=ci_total)
+        if v is None:
+            v = purchase_amounts(p).plan
         if v is not None:
             c.max_amount = v
             filled += 1
@@ -1108,6 +1121,17 @@ async def bulk_enrich_contracts_from_purchases(db: AsyncSession = Depends(get_db
         )
         if existing_q.scalar_one_or_none():
             continue
+        # ПРАВИЛО №6 (2026-09-07, волна 4b-2c): та же замена truthy-цепочки, что и
+        # в _enrich_contract_from_purchases выше — contract_amount() с фолбэком на
+        # purchase_amounts().plan, а не `total_nmck or contract_price or planned_total_price`.
+        from app.models.contract_item import ContractItem as _CI3
+        from app.services.purchase_amounts import contract_amount as _contract_amount3, purchase_amounts as _purchase_amounts3
+        _ci_total3 = (await db.execute(
+            select(func.sum(_CI3.total)).where(_CI3.purchase_id == p.id)
+        )).scalar_one_or_none()
+        _max_amount3 = _contract_amount3(p, contract_items_total=_ci_total3)
+        if _max_amount3 is None:
+            _max_amount3 = _purchase_amounts3(p).plan
         new_contract = Contract(
             contractor_id=p.contractor_id,
             subsidy_id=p.subsidy_id,
@@ -1117,7 +1141,7 @@ async def bulk_enrich_contracts_from_purchases(db: AsyncSession = Depends(get_db
             status='active',
             # Phase 27.1.5: заполнить ВСЕ доступные поля из Purchase
             subject=p.subject or str(p.purchase_number or ''),
-            max_amount=p.total_nmck or p.contract_price or p.planned_total_price,
+            max_amount=_max_amount3,
             start_date=p.contract_date,
             end_date=p.execution_term,
             purchase_method=p.purchase_method if p.purchase_method in ('single', 'competitive') else 'single',

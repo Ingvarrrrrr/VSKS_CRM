@@ -335,9 +335,9 @@ async def _phase26_cc_propagate_contractor_to_items():
                     )
                 )).scalars().all()
                 for it in null_items:
-                    it.contractor_id = c_row.id
-                    it.contractor_inn = c_row.inn
-                    it.contractor_name = c_row.name
+                    # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
+                    from app.services.item_contractor import set_item_contractor as _set_ic
+                    _set_ic(it, contractor=c_row)
                     propagated_total += 1
             if propagated_total:
                 await db.commit()
@@ -393,9 +393,9 @@ async def _phase26_bb_fuzzy_link_items_to_receipts():
                                 c_row = _Ctr(inn=best_r.seller_inn, name=best_r.seller_name or f"ИНН {best_r.seller_inn}")
                                 db.add(c_row)
                                 await db.flush()
-                            it.contractor_id = c_row.id
-                            it.contractor_inn = best_r.seller_inn
-                            it.contractor_name = best_r.seller_name
+                            # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
+                            from app.services.item_contractor import set_item_contractor as _set_ic
+                            _set_ic(it, contractor=c_row)
                         linked_total += 1
             if linked_total:
                 await db.commit()
@@ -441,16 +441,15 @@ async def _phase26_w_backfill_contractor_from_receipts():
                     )
                     db.add(contractor)
                     await db.flush()
-                # Update PurchaseItem (only NULL ones)
+                # Update PurchaseItem (only NULL ones). ПРАВИЛО №6 (группа D5):
+                # FK задаётся — текст обнуляется, см. item_contractor.item_contractor_fk_values
+                # (Core update(), не ORM-объекты — та же логика, что у set_item_contractor).
+                from app.services.item_contractor import item_contractor_fk_values as _fk_values
                 res = await db.execute(
                     _upd(_PI).where(
                         _PI.purchase_id == pid,
                         _PI.contractor_id.is_(None),
-                    ).values(
-                        contractor_id=contractor.id,
-                        contractor_inn=receipt.seller_inn,
-                        contractor_name=receipt.seller_name,
-                    )
+                    ).values(**_fk_values(contractor.id))
                 )
                 backfilled += res.rowcount or 0
             if backfilled:

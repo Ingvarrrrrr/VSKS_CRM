@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.wish_item import WishItem
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
+from app.services.item_contractor import set_item_contractor
 from app.models.purchase_event import PurchaseMember
 from app.models.feo_category import FeoCategory
 from app.routers.purchase_members import _create_assignment_chat_room
@@ -228,13 +229,9 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
                 needed_date=_eff_date(wish, wi),
                 wish_item_id=wi.id,
                 vat_rate=getattr(wi, 'vat_rate', None),
-                contractor_id=(_wish_contractor_obj.id if _wish_contractor_obj else None),
-                contractor_inn=(_wish_contractor_obj.inn if _wish_contractor_obj else None),
-                contractor_name=(
-                    _wish_contractor_obj.name if _wish_contractor_obj
-                    else getattr(wish, 'contractor_name', None)
-                ),
             )
+            # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
+            set_item_contractor(new_pi, contractor=_wish_contractor_obj, name=getattr(wish, 'contractor_name', None))
             db.add(new_pi)
             synced_items.append(new_pi)
             items_added.append({
@@ -644,16 +641,13 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
                 needed_date=_eff_date(wish, wi),  # W2: наследование эффективной даты
                 wish_item_id=wi.id,  # W1: hard link to source WishItem
                 vat_rate=getattr(wi, 'vat_rate', None),
-                # Контрагент заявки — на каждую позицию (см. резолв _wish_contractor_obj
-                # выше). Если контрагента в справочнике ещё нет — свободный ввод
-                # contractor_name (второе поле у Wish, ровно для этого случая).
-                contractor_id=(_wish_contractor_obj.id if _wish_contractor_obj else None),
-                contractor_inn=(_wish_contractor_obj.inn if _wish_contractor_obj else None),
-                contractor_name=(
-                    _wish_contractor_obj.name if _wish_contractor_obj
-                    else getattr(wish, 'contractor_name', None)
-                ),
             )
+            # Контрагент заявки — на каждую позицию (см. резолв _wish_contractor_obj
+            # выше). ПРАВИЛО №6 (группа D5): единственный писатель —
+            # item_contractor.set_item_contractor. Если контрагента в справочнике
+            # ещё нет — свободный ввод contractor_name (второе поле у Wish, ровно
+            # для этого случая).
+            set_item_contractor(pi, contractor=_wish_contractor_obj, name=getattr(wish, 'contractor_name', None))
             db.add(pi)
         await db.flush()
 

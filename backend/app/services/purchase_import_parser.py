@@ -27,6 +27,7 @@ from app.models.feo_category import FeoCategory
 from app.models.payment import Payment
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
+from app.services.item_contractor import set_item_contractor
 from app.models.subsidy import Subsidy
 from app.routers.events import normalize_event_name
 from app.services.purchase_payments import recompute_purchase_payments
@@ -1257,12 +1258,12 @@ async def _parse_and_group(
                 final_total=pr["fact_total"],
                 country_origin=pr["country_origin"],
                 feo_category_id=pr["feo_id"],
-                contractor_id=pr["cont_id"] if (pr["cont_id"] and pr["cont_id"] != -1) else None,
-                contractor_inn=pr["cont_inn"],
-                contractor_name=pr["cont_name"],
                 # Аналогично Purchase.vat_rate выше: truthy-check терял 0.
                 vat_rate=str(pr["vat_rate"]) if pr["vat_rate"] not in (None, "") else None,
             )
+            # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
+            _cont_id = pr["cont_id"] if (pr["cont_id"] and pr["cont_id"] != -1) else None
+            set_item_contractor(pi, contractor_id=_cont_id, inn=pr["cont_inn"], name=pr["cont_name"])
             items.append(pi)
 
         p.items = items

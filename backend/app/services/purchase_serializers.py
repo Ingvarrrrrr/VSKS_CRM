@@ -9,9 +9,36 @@ from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.schemas.schemas import PurchaseItemOut, PurchaseOutFull, PurchaseFileOut, SubsidyAllocationOut, PurchaseAmountsOut
 from app.services.purchase_contract_header import contract_header as _contract_header
+from app.services.item_contractor import item_contractor as _item_contractor
 
 
-def _item_to_out(item: PurchaseItem, plan_residual=None, plan_planned_amount=None) -> PurchaseItemOut:
+async def items_out_with_contractor_map(db, items) -> list:
+    """POST/PUT /api/purchases возвращают items напрямую (не через
+    _purchase_to_full — тот тянет шапку договора/ФЭО-дерево/суммы, которых на
+    момент create/update ещё рано считать), но обязаны показывать контрагента
+    ТАК ЖЕ, как GET (ПРАВИЛО №6, группа D5, QA-находка): «голый» ORM-ответ
+    отдавал бы contractor_inn/name = NULL при заданном FK (текст очищен
+    set_item_contractor). Один bulk SELECT на все переданные items (без N+1),
+    сама сборка — тот же _item_to_out, второго сериализатора не заводим.
+    """
+    from sqlalchemy import select as _select
+    from app.models.contractor import Contractor as _Contractor
+
+    _items = list(items or [])
+    _contractor_ids = {it.contractor_id for it in _items if it.contractor_id}
+    _names: dict = {}
+    _inns: dict = {}
+    if _contractor_ids:
+        _rows = (await db.execute(_select(_Contractor).where(_Contractor.id.in_(_contractor_ids)))).scalars().all()
+        _names = {c.id: c.name for c in _rows}
+        _inns = {c.id: c.inn for c in _rows}
+    return [_item_to_out(it, contractor_names=_names, contractor_inns=_inns) for it in _items]
+
+
+def _item_to_out(
+    item: PurchaseItem, plan_residual=None, plan_planned_amount=None,
+    contractor_names: dict | None = None, contractor_inns: dict | None = None,
+) -> PurchaseItemOut:
     product_name = None
     product_photo_url = None
     product_description = None
@@ -21,6 +48,10 @@ def _item_to_out(item: PurchaseItem, plan_residual=None, plan_planned_amount=Non
         product_photo_url = item.product.photo_url
         product_description = item.product.description
         product_description_44fz = item.product.description_44fz
+    # ПРАВИЛО №6 (группа D5): единственный читатель — item_contractor.item_contractor.
+    # FK (contractor_id) — источник истины, когда задан; contractor_names/contractor_inns —
+    # bulk-карты (тот же приём, что и для шапки закупки), без N+1 на страницу.
+    _ic = _item_contractor(item, name_map=contractor_names, inn_map=contractor_inns)
     return PurchaseItemOut(
         id=item.id,
         product_id=item.product_id,
@@ -39,9 +70,9 @@ def _item_to_out(item: PurchaseItem, plan_residual=None, plan_planned_amount=Non
         planned_total=getattr(item, 'planned_total', None),
         country_origin=item.country_origin,
         # Phase 26-V/W/BB: contractor + match + receipt linkage — критично для UI
-        contractor_id=item.contractor_id,
-        contractor_inn=item.contractor_inn,
-        contractor_name=item.contractor_name,
+        contractor_id=_ic["contractor_id"],
+        contractor_inn=_ic.get("contractor_inn"),
+        contractor_name=_ic["contractor_name"],
         match_confirmed=item.match_confirmed if item.match_confirmed is not None else True,
         receipt_id=getattr(item, 'receipt_id', None),
         vat_rate=getattr(item, 'vat_rate', None),
@@ -90,8 +121,11 @@ def _purchase_to_full(
     data["purchase_contract_type"] = _hdr.purchase_contract_type
     data["contractor_id"] = _hdr.contractor_id
     _ipm = item_plan_map or {}
+    # ПРАВИЛО №6 (группа D5): те же bulk-карты contractors/contractor_inns,
+    # что уже собраны вызывающим для шапки закупки (один SELECT на страницу) —
+    # переиспользуем их и для контрагента ПОЗИЦИИ, второй карты не заводим.
     items = [
-        _item_to_out(i, *(_ipm.get(i.id) or (None, None)))
+        _item_to_out(i, *(_ipm.get(i.id) or (None, None)), contractor_names=contractors, contractor_inns=contractor_inns)
         for i in (p.items or [])
     ]
     files = [
@@ -124,7 +158,11 @@ def _purchase_to_full(
     # Multi-contractor label for advance reports
     multi_contractor_label: str | None = None
     if p.purchase_method == 'advance' and p.items:
-        unique_names = {item.contractor_name for item in p.items if item.contractor_name}
+        unique_names = {
+            _item_contractor(item, name_map=contractors, inn_map=contractor_inns)["contractor_name"]
+            for item in p.items
+        }
+        unique_names.discard(None)
         if len(unique_names) > 1:
             multi_contractor_label = "Множественный контрагент"
         elif len(unique_names) == 1:

@@ -22,6 +22,7 @@ from app.auth.jwt import get_current_user, ADMIN_ROLES
 from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_over_plan, assert_tz_batch_not_over_plan
 from app.services.plan_autoassign import auto_assign_planned_items, move_or_detach_planned_item, deactivate_if_orphaned
 from app.services.plan_graph_versions import _create_plan_graph_version
+from app.services.item_contractor import set_item_contractor
 from app.routers.purchases import _has_purchase_write_access, _recalc_purchase_totals, TZ_FROZEN_STATUSES
 
 router = APIRouter(prefix="/api/purchases", tags=["purchases"])
@@ -726,9 +727,6 @@ async def split_purchase_item(
             feo_planned_item_id=parts[i].feo_planned_item_id,
             feo_category_id=parts[i].feo_category_id,
             match_confirmed=_src_match_confirmed,
-            contractor_id=_src_contractor_id,
-            contractor_inn=_src_contractor_inn,
-            contractor_name=_src_contractor_name,
             vat_rate=_src_vat_rate,
             vat_amount=vat_amounts[i],
             total_with_vat=total_with_vats[i],
@@ -742,6 +740,10 @@ async def split_purchase_item(
             # _check_rows выше (находка QA 2026-08-18).
             over_plan=bool(it.over_plan),
         )
+        # ПРАВИЛО №6 (группа D5, QA round 2): единственный писатель —
+        # item_contractor.set_item_contractor (не голый contractor_id=.../
+        # contractor_inn=.../contractor_name=... в конструкторе выше).
+        set_item_contractor(new_item, contractor_id=_src_contractor_id, inn=_src_contractor_inn, name=_src_contractor_name)
         db.add(new_item)
         created_items.append(new_item)
     await db.flush()  # получить id новых позиций — нужны для source_item_id договорных строк и ответа

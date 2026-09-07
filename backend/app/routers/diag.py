@@ -88,6 +88,7 @@ async def diag_run_backfills(current_user=Depends(get_current_user)):
     from app.models.purchase_receipt import PurchaseReceipt as _PR
     from app.models.contractor import Contractor as _Ctr
     from app.routers.purchase_receipts import _items_match_score as _fuzzy, _extract_items as _ext
+    from app.services.item_contractor import set_item_contractor
 
     result = {"propagated_from_purchase": 0, "linked_by_fuzzy": 0, "filled_first_receipt": 0, "errors": []}
 
@@ -108,9 +109,10 @@ async def diag_run_backfills(current_user=Depends(get_current_user)):
                     _sel(_PI).where(_PI.purchase_id == p.id, _PI.contractor_id.is_(None))
                 )).scalars().all()
                 for it in null_items:
-                    it.contractor_id = c_row.id
-                    it.contractor_inn = c_row.inn
-                    it.contractor_name = c_row.name
+                    # ПРАВИЛО №6 (группа D5): единственный писатель — тот же
+                    # item_contractor.set_item_contractor, что и в startup/backfills.py
+                    # (_phase26_cc_propagate_contractor_to_items) — код не копируем.
+                    set_item_contractor(it, contractor=c_row)
                     result["propagated_from_purchase"] += 1
             await db.commit()
         except Exception as e:
@@ -151,9 +153,9 @@ async def diag_run_backfills(current_user=Depends(get_current_user)):
                                 c_row = _Ctr(inn=best_r.seller_inn, name=best_r.seller_name or f"ИНН {best_r.seller_inn}")
                                 db.add(c_row)
                                 await db.flush()
-                            it.contractor_id = c_row.id
-                            it.contractor_inn = best_r.seller_inn
-                            it.contractor_name = best_r.seller_name
+                            # ПРАВИЛО №6 (группа D5): тот же set_item_contractor,
+                            # что и в startup/backfills.py (_phase26_bb_fuzzy_link_items_to_receipts).
+                            set_item_contractor(it, contractor=c_row)
                         result["linked_by_fuzzy"] += 1
             await db.commit()
         except Exception as e:
@@ -188,9 +190,9 @@ async def diag_run_backfills(current_user=Depends(get_current_user)):
                         db.add(c_row)
                         await db.flush()
                     for it in null_items:
-                        it.contractor_id = c_row.id
-                        it.contractor_inn = r.seller_inn
-                        it.contractor_name = r.seller_name
+                        # ПРАВИЛО №6 (группа D5): единственный писатель —
+                        # item_contractor.set_item_contractor (см. startup/backfills.py).
+                        set_item_contractor(it, contractor=c_row)
                         result["filled_first_receipt"] += 1
             await db.commit()
         except Exception as e:

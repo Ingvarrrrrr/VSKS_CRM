@@ -21,6 +21,7 @@ from app.models.purchase_item import PurchaseItem
 from app.models.feo_category import FeoCategory
 from app.services.text_match import normalize as _normalize_name
 from app.services.feo_plan import assert_tz_not_over_plan
+from app.services.item_contractor import item_contractor as _item_contractor, set_item_contractor
 # _move_or_detach_planned_item/_deactivate_if_orphaned нужны только update_wish
 # (ниже) — остальные хелперы автозаведения плана (_auto_assign_planned_items/
 # _backfill_item_type_from_plan) переехали в app/services/wish_distribution.py
@@ -86,12 +87,13 @@ def _enrich(w: Wish) -> WishOut:
         d.stopped_by_name = w.stopped_by_user.full_name or w.stopped_by_user.username
     if getattr(w, 'rejected_by_user', None):
         d.rejected_by_name = w.rejected_by_user.full_name or w.rejected_by_user.username
-    # Контрагент — из справочника, если contractor_id задан, иначе свободный
-    # ввод contractor_name (см. WishOut.contractor_display_name).
-    if getattr(w, 'contractor', None):
-        d.contractor_display_name = w.contractor.name
-    elif w.contractor_name:
-        d.contractor_display_name = w.contractor_name
+    # Контрагент — ПРАВИЛО №6 (группа D5): единственный читатель —
+    # item_contractor.item_contractor (FK, когда задан, иначе свободный текст).
+    # w.contractor — relationship lazy="selectin" (см. models/wish.py), уже
+    # подгружена без доп. запроса.
+    _wc = _item_contractor(w, contractor=getattr(w, 'contractor', None))
+    if _wc["contractor_name"]:
+        d.contractor_display_name = _wc["contractor_name"]
     return d
 
 
@@ -1070,11 +1072,20 @@ async def create_wish(
         created_by=current_user.id,
         feo_per_item=body.feo_per_item,
         vat_mode=body.vat_mode or 'uniform',
-        contractor_id=body.contractor_id,
-        contractor_name=body.contractor_name,
     )
     db.add(wish)
     await db.flush()
+
+    # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
+    if body.contractor_id is not None:
+        from app.models.contractor import Contractor as _Contractor
+        _create_contractor = await db.get(_Contractor, body.contractor_id)
+        if _create_contractor:
+            set_item_contractor(wish, contractor=_create_contractor, name=body.contractor_name)
+        else:
+            set_item_contractor(wish, contractor_id=body.contractor_id)
+    elif body.contractor_name:
+        set_item_contractor(wish, name=body.contractor_name)
 
     if body.items:
         for item_data in body.items:
@@ -1225,10 +1236,41 @@ async def update_wish(
     # если ключ отсутствовал вовсе. Так «прислали null» (пользователь снял контрагента)
     # отличается от «ключ не прислали» (например, автосохранение другого поля заявки —
     # значение контрагента трогать не должно).
+    # ПРАВИЛО №6 (группа D5): единственный писатель контрагента — item_contractor.
+    # set_item_contractor (FK — источник истины, текст обнуляется, когда FK задан).
+    # Partial-update нюанс (см. комментарий выше про model_fields_set): поле,
+    # которое НЕ пришло ключом в этом запросе, не трогаем — только contractor_id
+    # принудительно обнуляет текст ВСЕГДА, когда сам он устанавливается ненулевым
+    # (инвариант «текст только при contractor_id IS NULL» не может ждать, пока
+    # придёт ещё и contractor_name отдельным запросом).
     if 'contractor_id' in body.model_fields_set:
-        wish.contractor_id = body.contractor_id
-    if 'contractor_name' in body.model_fields_set:
-        wish.contractor_name = body.contractor_name
+        if body.contractor_id is not None:
+            from app.models.contractor import Contractor as _Contractor
+            _new_contractor = await db.get(_Contractor, body.contractor_id)
+            if _new_contractor:
+                set_item_contractor(
+                    wish, contractor=_new_contractor,
+                    name=(body.contractor_name if 'contractor_name' in body.model_fields_set else None),
+                )
+            else:
+                # Контрагент с таким id не найден — ставим голый FK, текст всё равно NULL.
+                set_item_contractor(wish, contractor_id=body.contractor_id)
+        else:
+            # Снятие контрагента: FK → NULL; contractor_name трогаем ТОЛЬКО если он
+            # реально пришёл в этом же запросе, иначе не вносим шум в чужое поле.
+            wish.contractor_id = None
+            if 'contractor_name' in body.model_fields_set:
+                wish.contractor_name = body.contractor_name
+    elif 'contractor_name' in body.model_fields_set:
+        if wish.contractor_id:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "update_wish: contractor_name=%r проигнорирован — у заявки id=%s уже задан "
+                "contractor_id=%s (FK остаётся источником истины)",
+                body.contractor_name, wish.id, wish.contractor_id,
+            )
+        else:
+            wish.contractor_name = body.contractor_name
 
     # Плановые позиции следуют за сменой категории (владелец, 2026-08-17):
     # предупреждения, когда привязку пришлось снять вместо переезда (см. ветку

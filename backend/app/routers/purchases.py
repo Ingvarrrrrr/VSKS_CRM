@@ -54,7 +54,8 @@ from datetime import datetime, date
 # _create_plan_graph_version (снапшот плана) вынесены в app/services/ —
 # единственный источник каждой из них (ПРАВИЛО №6), это ядро и остальные
 # routers/purchase_*.py их переиспользуют, а не считают заново.
-from app.services.purchase_serializers import _item_to_out, _purchase_to_full
+from app.services.purchase_serializers import _item_to_out, _purchase_to_full, items_out_with_contractor_map
+from app.services.item_contractor import set_item_contractor
 from app.services.purchase_contract_header import CONTRACT_HEADER_FIELDS
 from app.services.purchase_feo_checks import (
     _compute_purchase_feo_excess, _compute_purchase_feo_mismatch, _item_feo_mismatch,
@@ -467,8 +468,19 @@ async def list_purchases(
     return result_rows
 
 
-@router.get("/{pid}", response_model=PurchaseOutFull)
-async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
+async def load_purchase_for_out(db: AsyncSession, pid: int) -> Purchase | None:
+    """Единая загрузка Purchase со всеми eager-loads, нужными сериализатору
+    ответа (ПРАВИЛО №6 — один механизм для GET/POST/PUT, QA round 2).
+
+    _item_to_out дереференсит PurchaseItem.product (product_name/photo_url/
+    description); PurchaseOut/PurchaseOutFull — Purchase.files. Без явного
+    selectinload любой такой доступ ПОСЛЕ commit()/refresh() (например, PUT
+    удаляет и пересоздаёт items, затем сериализует ответ) ловит MissingGreenlet —
+    лениво подгружаемая relationship вне greenlet asyncpg (прод-инцидент на
+    закупке 856, воспроизведён 3× для позиций с product_id). GET /{pid}, POST /
+    и PUT /{pid} обязаны звать именно эту функцию перед сборкой ответа, не
+    заводить свою копию списка selectinload.
+    """
     result = await db.execute(
         select(Purchase)
         .options(
@@ -485,7 +497,12 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
         )
         .where(Purchase.id == pid)
     )
-    p = result.scalar_one_or_none()
+    return result.scalar_one_or_none()
+
+
+@router.get("/{pid}", response_model=PurchaseOutFull)
+async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_user=Depends(get_current_user)):
+    p = await load_purchase_for_out(db, pid)
     if not p:
         raise HTTPException(404, "Not found")
 
@@ -546,20 +563,9 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
                 if need_recompute:
                     from app.routers.purchase_receipts import _recompute_from_receipts_core
                     await _recompute_from_receipts_core(pid, db)
-                    # Re-fetch p после recompute с теми же relationships
-                    result = await db.execute(
-                        select(Purchase)
-                        .options(
-                            selectinload(Purchase.contractor),
-                            selectinload(Purchase.feo_category),
-                            selectinload(Purchase.items).selectinload(PurchaseItem.product),
-                            selectinload(Purchase.files),
-                            selectinload(Purchase.event),
-                            selectinload(Purchase.reimbursement_user),
-                        )
-                        .where(Purchase.id == pid)
-                    )
-                    p = result.scalar_one()
+                    # Re-fetch p после recompute — тот же единый загрузчик
+                    # (load_purchase_for_out), не своя копия options.
+                    p = await load_purchase_for_out(db, pid)
         except Exception as _re:
             import logging as _lg
             _lg.getLogger(__name__).warning(f"auto-recompute on GET /purchases/{pid} skipped: {_re}")
@@ -567,7 +573,14 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
     subsidies_r = await db.execute(select(Subsidy))
     subsidies = {s.id: s.name for s in subsidies_r.scalars().all()}
     contractors_r = await db.execute(select(Contractor))
-    contractors = {c.id: c.name for c in contractors_r.scalars().all()}
+    contractors_list_single = contractors_r.scalars().all()
+    contractors = {c.id: c.name for c in contractors_list_single}
+    # ПРАВИЛО №6 (группа D5): та же карта, что list_purchases уже строит для
+    # шапки закупки (contractor_inns) — теперь нужна и для контрагента КАЖДОЙ
+    # позиции (item_contractor.item_contractor), иначе при заданном FK и
+    # очищенном (после миграции b4d6f8h0j2l4) тексте карточка теряла бы ИНН
+    # позиции. Один и тот же SELECT выше, второго не заводим.
+    contractor_inns_single = {c.id: c.inn for c in contractors_list_single}
     alloc_r = await db.execute(
         select(PurchaseSubsidyAllocation)
         .options(selectinload(PurchaseSubsidyAllocation.subsidy))
@@ -644,7 +657,8 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
     _single_amounts_map = await _load_purchase_amounts_single(db, [p.id])
 
     out = _purchase_to_full(
-        p, contractors, subsidies, allocations=allocations, ru_map=single_ru_map, su_map=single_su_map,
+        p, contractors, subsidies, allocations=allocations, contractor_inns=contractor_inns_single,
+        ru_map=single_ru_map, su_map=single_su_map,
         feo_excess_map=_single_feo_excess_map, item_plan_map=_item_plan_map, wish_title_map=_wish_title_map,
         wish_status_map=_wish_status_map, feo_mismatch_map=_single_feo_mismatch_map,
         amounts_map=_single_amounts_map, contract=p.contract,
@@ -795,8 +809,19 @@ async def create_purchase(
 
     await _assign_framework_seq(p, db)
 
-    for item_d in items_data:
-        d = item_d.model_dump()
+    # ПРАВИЛО №6 (группа D5, QA-находка): фронт (PurchaseItemsEditor.vue) кладёт
+    # contractor_id/contractor_inn/contractor_name прямо в объект позиции —
+    # PurchaseItem(**d) писал их МИМО set_item_contractor, снова заводя текст
+    # рядом с FK при обычном сохранении из UI. Карта контрагентов — один SELECT
+    # на ВСЕ позиции запроса (без N+1), как в wish_distribution.py.
+    _item_dumps = [item_d.model_dump() for item_d in items_data]
+    _item_contractor_ids = {d.get("contractor_id") for d in _item_dumps if d.get("contractor_id")}
+    _item_contractors_map: dict = {}
+    if _item_contractor_ids:
+        _ic_rows = (await db.execute(select(Contractor).where(Contractor.id.in_(_item_contractor_ids)))).scalars().all()
+        _item_contractors_map = {c.id: c for c in _ic_rows}
+
+    for d in _item_dumps:
         if not d.get("product_id") and d.get("item_name"):
             org_id_for_match = get_single_org_id(current_user) or current_user.org_id
             existing = await find_matching_product(db, d["item_name"], org_id=org_id_for_match)
@@ -812,7 +837,18 @@ async def create_purchase(
                 db.add(new_prod)
                 await db.flush()
                 d["product_id"] = new_prod.id
+        _d_contractor_id = d.pop("contractor_id", None)
+        _d_contractor_inn = d.pop("contractor_inn", None)
+        _d_contractor_name = d.pop("contractor_name", None)
         item = PurchaseItem(purchase_id=p.id, **d)
+        # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
+        _d_contractor_obj = _item_contractors_map.get(_d_contractor_id) if _d_contractor_id else None
+        if _d_contractor_obj is not None:
+            set_item_contractor(item, contractor=_d_contractor_obj, inn=_d_contractor_inn, name=_d_contractor_name)
+        elif _d_contractor_id:
+            set_item_contractor(item, contractor_id=_d_contractor_id)
+        else:
+            set_item_contractor(item, inn=_d_contractor_inn, name=_d_contractor_name)
         # Снимок плана (Шаг 1 «план ≠ факт»): позиция создаётся напрямую (не из
         # заявки) — план фиксируется как введённые сейчас значения, если снимок
         # не передан явно клиентом.
@@ -903,10 +939,22 @@ async def create_purchase(
         )
 
     await db.commit()
-    await db.refresh(p)
+    # ПРАВИЛО №6 (группа D5, QA round 2): «голый» `return p` отдавал бы items
+    # сырыми колонками (contractor_inn/name = NULL при заданном FK, см.
+    # set_item_contractor выше) — фронт получил бы контрагента без имени сразу
+    # после сохранения. Тот же _item_to_out, что и GET-эндпоинты (второго
+    # сериализатора не заводим), с bulk-картой контрагентов ОДНИМ SELECT на
+    # все позиции (без N+1). Простой `db.refresh(p)` НЕ грузит relationships —
+    # `item.product`/`p.files` остались бы unloaded, и _item_to_out поймал бы
+    # MissingGreenlet при попытке лениво их подгрузить вне greenlet asyncpg
+    # (прод-инцидент на закупке 856) — перезагружаем `p` через ЕДИНЫЙ загрузчик
+    # load_purchase_for_out (тот же, что GET/PUT), а не голый refresh.
+    p = await load_purchase_for_out(db, p.id)
+    base = PurchaseOut.model_validate(p).model_dump()
+    base["items"] = [io.model_dump() for io in await items_out_with_contractor_map(db, p.items)]
     if _excess_warnings:
-        p.excess_warnings = _excess_warnings
-    return p
+        base["excess_warnings"] = _excess_warnings
+    return base
 
 
 @router.put("/{pid}")
@@ -1203,8 +1251,17 @@ async def update_purchase(
 
     # Replace items (auto-link to catalog via fuzzy match if product_id missing)
     await db.execute(delete(PurchaseItem).where(PurchaseItem.purchase_id == pid))
-    for item_d in items_data:
-        d = item_d.model_dump()
+    # ПРАВИЛО №6 (группа D5, QA-находка): см. комментарий у create_purchase —
+    # тот же обход set_item_contractor через PurchaseItem(**d) есть и на PUT.
+    # Карта контрагентов — один SELECT на ВСЕ позиции запроса (без N+1).
+    _item_dumps_put = [item_d.model_dump() for item_d in items_data]
+    _item_contractor_ids_put = {d.get("contractor_id") for d in _item_dumps_put if d.get("contractor_id")}
+    _item_contractors_map_put: dict = {}
+    if _item_contractor_ids_put:
+        _ic_rows_put = (await db.execute(select(Contractor).where(Contractor.id.in_(_item_contractor_ids_put)))).scalars().all()
+        _item_contractors_map_put = {c.id: c for c in _ic_rows_put}
+
+    for d in _item_dumps_put:
         if not d.get("product_id") and d.get("item_name"):
             org_id_for_match = get_single_org_id(current_user) or current_user.org_id
             existing = await find_matching_product(db, d["item_name"], org_id=org_id_for_match)
@@ -1220,7 +1277,18 @@ async def update_purchase(
                 db.add(new_prod)
                 await db.flush()
                 d["product_id"] = new_prod.id
+        _d_contractor_id_put = d.pop("contractor_id", None)
+        _d_contractor_inn_put = d.pop("contractor_inn", None)
+        _d_contractor_name_put = d.pop("contractor_name", None)
         item = PurchaseItem(purchase_id=pid, **d)
+        # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
+        _d_contractor_obj_put = _item_contractors_map_put.get(_d_contractor_id_put) if _d_contractor_id_put else None
+        if _d_contractor_obj_put is not None:
+            set_item_contractor(item, contractor=_d_contractor_obj_put, inn=_d_contractor_inn_put, name=_d_contractor_name_put)
+        elif _d_contractor_id_put:
+            set_item_contractor(item, contractor_id=_d_contractor_id_put)
+        else:
+            set_item_contractor(item, inn=_d_contractor_inn_put, name=_d_contractor_name_put)
         # Снимок плана (Шаг 1 «план ≠ факт»): PUT удаляет и пересоздаёт ВСЕ позиции
         # (нет id для сопоставления со старым снимком), поэтому снимок фиксируем из
         # введённых значений только пока закупка ещё в статусе «План закупок» — так
@@ -1246,9 +1314,8 @@ async def update_purchase(
                 select(PurchaseItem).where(PurchaseItem.purchase_id == pid, PurchaseItem.contractor_id.is_(None))
             )).scalars().all()
             for _it in _null_items_put:
-                _it.contractor_id = _ctr_put.id
-                _it.contractor_inn = _ctr_put.inn
-                _it.contractor_name = _ctr_put.name
+                # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
+                set_item_contractor(_it, contractor=_ctr_put)
 
     # 12-02: Auto-match FEO items for purchase items without feo_planned_item_id
     suggested_feo_matches = []
@@ -1411,8 +1478,8 @@ async def update_purchase(
     # ПРАВИЛО №6 (2026-09-07, группа D4): acceptance_doc_name/date/number/
     # amount — производный кэш, уже синхронизирован app.services.
     # acceptance_docs.replace_docs() выше (вызывается из setattr-цикла, если
-    # acceptance_docs был в payload) — отдельный overlay здесь не нужен,
-    # «голый» return p ниже уже отдаёт актуальные значения колонок.
+    # acceptance_docs был в payload) — отдельный overlay здесь не нужен, base
+    # ниже уже отдаёт актуальные значения колонок.
 
     # 12-02: Return suggestions if any + Владелец (2026-09-02): сообщить фронту,
     # сколько привязок feo_planned_item_id сброшено сменой категории шапки
@@ -1422,18 +1489,29 @@ async def update_purchase(
     # _excess_warnings (собраны выше у обеих точек assert_no_unapproved_excess
     # этого PUT) тоже требует явной сериализации через PurchaseOut, как и
     # suggested_feo_matches/_feo_links_reset — см. комментарий у create_purchase.
-    if suggested_feo_matches or _feo_links_reset or _excess_warnings or _contract_fields_ignored:
-        from app.schemas.schemas import PurchaseOut as _POut
-        base = _POut.model_validate(p).model_dump()
-        if suggested_feo_matches:
-            base["suggested_feo_matches"] = suggested_feo_matches
-        base["feo_links_reset"] = _feo_links_reset
-        if _excess_warnings:
-            base["excess_warnings"] = _excess_warnings
-        if _contract_fields_ignored:
-            base["contract_fields_ignored"] = _contract_fields_ignored
-        return base
-    return p
+    #
+    # ПРАВИЛО №6 (группа D5, QA round 2): «голый» return p (было раньше, когда
+    # ни одно из условий выше не сработало) отдавал бы items сырыми колонками —
+    # contractor_inn/name = NULL при заданном FK. Теперь ВСЕГДА строим base
+    # через PurchaseOut и переопределяем items тем же _item_to_out, что и GET
+    # (items_out_with_contractor_map — один SELECT на все позиции, без N+1;
+    # второго сериализатора не заводим). PUT удаляет и пересоздаёт items выше
+    # (delete+recreate) — `p`/`item.product`/`p.files` после db.refresh(p) НЕ
+    # eager-loaded, лениво их дереференсить вне greenlet asyncpg = MissingGreenlet
+    # (прод-инцидент, закупка 856, воспроизведён на позициях с product_id) —
+    # перезагружаем через ЕДИНЫЙ загрузчик load_purchase_for_out (тот же, что
+    # GET/POST), не голый refresh.
+    p = await load_purchase_for_out(db, p.id)
+    base = PurchaseOut.model_validate(p).model_dump()
+    base["items"] = [io.model_dump() for io in await items_out_with_contractor_map(db, p.items)]
+    if suggested_feo_matches:
+        base["suggested_feo_matches"] = suggested_feo_matches
+    base["feo_links_reset"] = _feo_links_reset
+    if _excess_warnings:
+        base["excess_warnings"] = _excess_warnings
+    if _contract_fields_ignored:
+        base["contract_fields_ignored"] = _contract_fields_ignored
+    return base
 
 
 async def _generate_temp_contract_number(p: Purchase, db: AsyncSession) -> str:
@@ -1727,9 +1805,8 @@ async def patch_purchase(
                 select(_PI).where(_PI.purchase_id == p.id, _PI.contractor_id.is_(None))
             )
             for it in upd_q.scalars().all():
-                it.contractor_id = c_row.id
-                it.contractor_inn = c_row.inn
-                it.contractor_name = c_row.name
+                # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
+                set_item_contractor(it, contractor=c_row)
 
     # Владелец (2026-09-02): смена категории ФЭО шапки закупки — см.
     # _reset_incompatible_item_feo_links. autosave (этот PATCH) — основной

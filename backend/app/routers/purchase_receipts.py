@@ -30,6 +30,7 @@ from app.models.purchase_item import PurchaseItem
 from app.models.purchase_receipt import PurchaseReceipt
 from app.models.user import User
 from app.product_matcher import find_matching_product
+from app.services.item_contractor import set_item_contractor
 from app.schemas.schemas import ReceiptCreate, ReceiptOut
 from app.services import acceptance_docs as _acc_docs
 
@@ -387,9 +388,8 @@ async def _create_receipt_with_items(
 
         if matched_existing is not None:
             matched_existing.receipt_id = receipt.id
-            matched_existing.contractor_id = contractor_id_for_items
-            matched_existing.contractor_inn = seller_inn
-            matched_existing.contractor_name = seller_name
+            # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
+            set_item_contractor(matched_existing, contractor_id=contractor_id_for_items, inn=seller_inn, name=seller_name)
             if it.get('vat_rate') and not matched_existing.vat_rate:
                 matched_existing.vat_rate = it.get('vat_rate')
             existing_unlinked.remove(matched_existing)
@@ -401,7 +401,7 @@ async def _create_receipt_with_items(
         # marked unconfirmed so the user verifies each one.
         matched = await find_matching_product(db, raw_name)
         matched_id = matched.id if matched else None
-        db.add(PurchaseItem(
+        _new_receipt_item = PurchaseItem(
             purchase_id=purchase_id,
             product_id=matched_id,
             item_name=raw_name,
@@ -410,12 +410,12 @@ async def _create_receipt_with_items(
             unit_price=price,
             total_price=total,
             match_confirmed=False,
-            contractor_id=contractor_id_for_items,
-            contractor_inn=seller_inn,
-            contractor_name=seller_name,
             receipt_id=receipt.id,  # Phase 26-BB
             vat_rate=it.get('vat_rate'),
-        ))
+        )
+        # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
+        set_item_contractor(_new_receipt_item, contractor_id=contractor_id_for_items, inn=seller_inn, name=seller_name)
+        db.add(_new_receipt_item)
 
     await db.commit()
     await db.refresh(receipt)
@@ -804,7 +804,7 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
                 except Exception:
                     total = _Dec('0')
                 raw_name = (str(ri.get('name') or f"Позиция {idx}"))[:5000]
-                db.add(_PI(
+                _auto_item = _PI(
                     purchase_id=purchase_id,
                     item_name=raw_name,
                     quantity=qty,
@@ -812,14 +812,14 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
                     unit_price=price,
                     total_price=total,
                     match_confirmed=False,
-                    contractor_id=cid,
-                    contractor_inn=c_inn,
-                    contractor_name=c_name,
                     receipt_id=r.id,
                     # Phase 26-fff: fallback на nds-код если vat_rate отсутствует
                     # в raw_json (старые чеки, импортированные ДО маппинга)
                     vat_rate=ri.get('vat_rate') or _nds_code_to_rate_str(ri.get('nds')),
-                ))
+                )
+                # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
+                set_item_contractor(_auto_item, contractor_id=cid, inn=c_inn, name=c_name)
+                db.add(_auto_item)
                 items_autocreated += 1
         if items_autocreated:
             await db.flush()
@@ -838,9 +838,8 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
         if pack:
             cid, c_inn, c_name = pack
             if it.contractor_id != cid:
-                it.contractor_id = cid
-                it.contractor_inn = c_inn
-                it.contractor_name = c_name
+                # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
+                set_item_contractor(it, contractor_id=cid, inn=c_inn, name=c_name)
                 items_updated += 1
         # vat_rate fallback: если NULL — найти соответствующий ri по name fuzzy
         # и поставить из nds-кода
@@ -885,9 +884,8 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
             pack = receipt_to_contractor.get(best_receipt.id)
             if pack:
                 cid, c_inn, c_name = pack
-                it.contractor_id = cid
-                it.contractor_inn = c_inn
-                it.contractor_name = c_name
+                # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
+                set_item_contractor(it, contractor_id=cid, inn=c_inn, name=c_name)
             items_updated += 1
             items_linked_by_fuzzy += 1
 

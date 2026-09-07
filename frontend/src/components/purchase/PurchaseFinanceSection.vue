@@ -114,7 +114,7 @@
                   </v-chip>
                 </td>
                 <td class="text-caption">{{ s.item_name || s.subject || '—' }}</td>
-                <td><v-chip :color="statusColor(s.status)" size="x-small" variant="tonal">{{ statusLabel(s.status) }}</v-chip></td>
+                <td><v-chip :color="purchaseStatusColor(s.status)" size="x-small" variant="tonal">{{ purchaseStatusLabel(s.status) }}</v-chip></td>
                 <td class="text-right text-caption">{{ s.total_nmck ? formatMoney(Number(s.total_nmck)) : '—' }}</td>
                 <td class="text-right text-caption">{{ s.contract_price ? formatMoney(Number(s.contract_price)) : '—' }}</td>
                 <td class="text-right text-caption">{{ s.payment_amount ? formatMoney(Number(s.payment_amount)) : '—' }}</td>
@@ -146,10 +146,12 @@
 //
 // Внутри есть блок `v-if="false"` («сиблинги по рамочному договору») —
 // это уже неактивный (недостижимый) код в исходном файле, перенесён
-// байт-в-байт без изменений вместе с остальным шаблоном секции; statusColor/
-// statusLabel там — тот же пред-существующий дефект (необъявленные
-// идентификаторы, см. STATUS_COLOR/STATUS_LABEL в другом месте кода),
-// не исправляется в рамках этого рефакторинга.
+// байт-в-байт вместе с остальным шаблоном секции; purchaseStatusColor/
+// purchaseStatusLabel там были необъявленными идентификаторами (statusColor/
+// statusLabel) — исправлено на импорт из constants/purchaseStatus, как и
+// в CreateOrderView.vue, на случай если блок когда-нибудь снова включат.
+import { purchaseStatusColor, purchaseStatusLabel } from '@/constants/purchaseStatus'
+
 defineProps<{
   form: any
   isFramework: boolean

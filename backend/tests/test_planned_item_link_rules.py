@@ -133,9 +133,21 @@ class _FakeDB:
 
     async def execute(self, stmt):
         sql = str(stmt).lower()
+        if "count(" in sql and ("sum(" in sql or "coalesce(" in sql):
+            # app.services.purchase_money_writer._load_items_total /
+            # _load_contract_items_total (единый писатель, вызывается из
+            # _recalc_purchase_totals) — select(count(...), coalesce(sum(...), 0)),
+            # читают через .one() и распаковывают (count, total) = row. Строка с
+            # count=0 -> писатель трактует это как "позиций нет вообще" и не
+            # трогает денежные поля закупки — тестам сами суммы безразличны,
+            # важно не уронить распаковку кортежа.
+            return _FakeResult([(0, Decimal("0"))])
         if "sum(" in sql or "coalesce(" in sql:
-            # _recalc_purchase_totals — сумма позиций закупки, тестам безразлична.
-            return _FakeResult([Decimal("0")])
+            # Прочие sum/coalesce-запросы без count() — например sibling_qty/
+            # sibling_total в patch_purchase_item (два coalesce(sum(...)) в одном
+            # select, читаются через .one() и индексируются [0]/[1]). Тот же
+            # двухколоночный кортеж-заглушка, тестам сами суммы безразличны.
+            return _FakeResult([(Decimal("0"), Decimal("0"))])
         if "purchase_approvals" in sql:
             return _FakeResult(self._approved_user_ids)
         for table in ("purchase_items", "feo_planned_items", "purchases", "wish_items", "feo_categories"):

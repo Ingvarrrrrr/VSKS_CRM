@@ -61,6 +61,7 @@ async def build_unmatched_report(state) -> None:
 
             suggestion = None
             suggestion_reason = None
+            suggestion_candidates: list[str] | None = None
             if kind == "needs_mapping":
                 cand_nonum = canon_path(cand_path, lower=False, yo=False)
                 for np, np_c in _np_nonum:
@@ -79,6 +80,32 @@ async def build_unmatched_report(state) -> None:
                         if np != cand_path and np_c == cand_yo:
                             suggestion, suggestion_reason = np, "отличается ё/е"
                             break
+                if suggestion is None:
+                    # Уровень вложенности мог измениться (в файле появился/пропал
+                    # промежуточный узел) — тогда полный путь никогда не совпадёт
+                    # ни по одной из трёх канонизаций выше, хотя лист (последний
+                    # сегмент) и корень (первый сегмент) — те же самые. Пример
+                    # боевого случая: «Организация питания / ИРП/Сухпай» (в БД,
+                    # 2 уровня) vs «Организация питания / Питание.../ИРП/Сухпай»
+                    # (в новом файле, 3 уровня). Сопоставляем по (корень, лист);
+                    # предлагаем ТОЛЬКО если кандидат в new_paths ровно один —
+                    # неоднозначность не разрешаем автоматически.
+                    cand_yo2 = canon_path(cand_path, lower=True, yo=True)
+                    cand_segs = cand_yo2.split(" / ")
+                    if len(cand_segs) >= 2:
+                        cand_root, cand_leaf = cand_segs[0], cand_segs[-1]
+                        _leaf_matches: list[str] = []
+                        for np, np_c in _np_yo:
+                            if np == cand_path:
+                                continue
+                            np_segs = np_c.split(" / ")
+                            if len(np_segs) >= 2 and np_segs[0] == cand_root and np_segs[-1] == cand_leaf:
+                                if np not in _leaf_matches:
+                                    _leaf_matches.append(np)
+                        if len(_leaf_matches) == 1:
+                            suggestion, suggestion_reason = _leaf_matches[0], "отличается уровнем вложенности"
+                        elif len(_leaf_matches) > 1:
+                            suggestion_candidates = _leaf_matches
 
             unmatched.append({
                 "id": cand.id,
@@ -86,6 +113,7 @@ async def build_unmatched_report(state) -> None:
                 "kind": kind,
                 "suggestion": suggestion,
                 "suggestion_reason": suggestion_reason,
+                "suggestion_candidates": suggestion_candidates,
                 "load": {
                     "purchases": load["purchases"],
                     "purchase_items": load["purchase_items"],

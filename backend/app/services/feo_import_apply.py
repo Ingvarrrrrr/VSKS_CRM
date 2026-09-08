@@ -540,7 +540,21 @@ async def apply_rows(state) -> None:
 
                 _pu = plan_unit if plan_unit is not None else feo_unit
 
-                if plan_sum is not None:
+                if plan_sum is not None and plan_sum == ZERO and (plan_qty is None or plan_qty == ZERO):
+                    # Сумма плана прямо равна нулю (не пуста!) и кол-во не задано —
+                    # раньше здесь всё равно подставлялось qty=1, что превращало
+                    # "плана нет" в "план = 0 шт. по цене 0" (видимую, но ложную
+                    # плановую позицию). Ноль — это значение, а не "поле не
+                    # заполнено": плановая позиция по строке не создаётся вовсе,
+                    # категория при этом продолжает создаваться/читаться как обычно
+                    # (см. дальше по циклу — этот блок только про collected_plan).
+                    warnings.append({
+                        "kind": "zero_plan_skipped",
+                        "row": row_num,
+                        "name": lv["name"],
+                        "message": "Сумма плана 0 — плановая позиция не создана",
+                    })
+                elif plan_sum is not None:
                     # Проверяем расхождение
                     if plan_qty is not None and plan_amt is not None and plan_qty != ZERO:
                         calc_ps = (plan_qty * plan_amt).quantize(QUANT)

@@ -1,0 +1,64 @@
+/* contractors.css — стили страницы реестра контрагентов (ContractorsView и не-телепортируемые
+   дочерние компоненты). Все правила под префиксом .contractors-page, чтобы не утекать
+   на другие страницы. Диалоги (телепортируются в <body>) стилизуются в своих компонентах. */
+
+.contractors-page {
+  padding: 20px 24px;
+  max-width: 1600px;
+}
+
+/* ── Header ── */
+.contractors-page .page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.contractors-page .page-header-left  { display: flex; align-items: center; }
+.contractors-page .page-header-right { display: flex; align-items: center; }
+.contractors-page .page-title    { font-size: 26px; font-weight: 700; color: var(--crm-text); line-height: 1.2; }
+.contractors-page .page-subtitle { font-size: 13px; color: var(--crm-text-muted); margin-top: 2px; }
+
+/* ── Filters ── */
+.contractors-page .filters-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.contractors-page .search-count {
+  font-size: 13px;
+  color: var(--crm-text-muted);
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+/* ── Table ── */
+.contractors-page .table-card {
+  background: var(--crm-surface);
+  border-radius: 12px;
+  border: 1px solid var(--crm-border);
+  box-shadow: 0 1px 4px var(--crm-shadow);
+  overflow: hidden;
+}
+.contractors-page .contractors-table thead th {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: var(--crm-text-muted) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--crm-table-header);
+  padding: 10px 14px !important;
+  white-space: nowrap;
+}
+.contractors-page .contractors-table tbody td {
+  padding: 10px 14px !important;
+  vertical-align: top;
+}
+.contractors-page .contractor-row:hover td { background: var(--crm-surface-alt); }
+.contractors-page .contractor-row--selected td { background: var(--crm-surface-hover); }
+.contractors-page .text-mono { font-family: monospace; font-size: 13px; }
+.contractors-page .text-sm   { font-size: 13px; }
+.contractors-page .cursor-pointer { cursor: pointer; }

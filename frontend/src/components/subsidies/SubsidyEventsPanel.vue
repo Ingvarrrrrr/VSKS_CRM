@@ -288,3 +288,19 @@ async function deleteEvent(eventId: number) {
 // loadEvents(id), которая теперь просто проксирует сюда.
 defineExpose({ reload: loadEvents })
 </script>
+
+<style scoped>
+/* .dialog-card/.dialog-title — было в <style scoped> SubsidiesView.vue, пока
+   диалог был её частью; вынесено вместе с диалогом (волна 5c) — иначе scoped CSS
+   другого файла эти классы не достаёт (проверено на ContractorEditDialog.vue —
+   тот же паттерн: каждый диалог держит эти два правила у себя). Здесь также
+   используются глобальные .detail-feo-header/.chart-card-title/.feo-empty —
+   те рендерятся НЕ в диалоге (инлайн в детали субсидии), их достаёт
+   @/styles/subsidies.css, отдельная копия не нужна. */
+.dialog-card {}
+.dialog-title {
+  display: flex; align-items: center;
+  font-size: 16px !important; font-weight: 600 !important;
+  padding: 16px 20px !important;
+}
+</style>

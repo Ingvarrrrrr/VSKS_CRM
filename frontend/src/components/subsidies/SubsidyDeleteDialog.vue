@@ -51,7 +51,7 @@ import type { SubsidyDeleteImpact, SubsidyRow } from '@/composables/subsidies/ty
 
 const visible = defineModel<boolean>({ default: false })
 
-const emit = defineEmits<{ (e: 'deleted'): void }>()
+const emit = defineEmits<{ (e: 'deleted', id: number): void }>()
 
 const toast = useToast()
 function showSnack(text: string, color: ToastType = 'success', opts?: { actionText?: string; onAction?: () => void; duration?: number }) {
@@ -77,20 +77,39 @@ async function open(s: SubsidyRow) {
   } catch { /* предупреждение опционально */ }
 }
 
+// Удаляет карточку из ЕДИНСТВЕННОГО источника списка (ctx.allSubsidies — тот же
+// ref, что читают SubsidyCardsGrid.vue/SubsidyListTable.vue/SubsidySummaryBar.vue
+// через useSubsidyList(), см. useSubsidyDetail.ts, Правило №6). removeLocally
+// используется и на успехе, и на «уже удалена» (404) — иначе после первого
+// успешного DELETE карточка остаётся видимой до следующего loadAll(), и владелец
+// жмёт «Удалить» ещё раз на уже удалённой строке (лог прода: 200, затем 404 ×3).
+function removeLocally(id: number) {
+  ctx.allSubsidies.value = ctx.allSubsidies.value.filter((s: SubsidyRow) => s.id !== id)
+  if (ctx.selectedId.value === id) ctx.selectedId.value = null
+}
+
 async function deleteSubsidy() {
   if (!deleteTarget.value) return
+  const targetId = deleteTarget.value.id
   saving.value = true
   try {
-    await apiFetch(`/subsidies/${deleteTarget.value.id}`, { method: 'DELETE' })
-    ctx.allSubsidies.value = ctx.allSubsidies.value.filter((s: SubsidyRow) => s.id !== deleteTarget.value!.id)
-    if (ctx.selectedId.value === deleteTarget.value.id) ctx.selectedId.value = null
+    await apiFetch(`/subsidies/${targetId}`, { method: 'DELETE' })
+    removeLocally(targetId)
     visible.value = false
     showSnack('Субсидия удалена', 'warning')
-    emit('deleted')
+    emit('deleted', targetId)
   } catch (e: any) {
     if (e?.status === 409) {
       deleteErrorLinked.value = true
       deleteErrorMsg.value = e?.detail || e?.payload?.message || ''
+    } else if (e?.status === 404) {
+      // Уже удалена раньше (повторный клик по карточке, которая не пропала визуально,
+      // или гонка с параллельной сессией) — не показывать модалку ошибки поверх
+      // диалога подтверждения: просто закрыть его и убрать строку из списка.
+      removeLocally(targetId)
+      visible.value = false
+      showSnack('Субсидия уже была удалена', 'info')
+      emit('deleted', targetId)
     } else {
       showSnack(e?.detail || e?.payload?.message || 'Ошибка удаления', 'error')
     }
@@ -111,3 +130,16 @@ function goToLinkedContracts() {
 
 defineExpose({ open })
 </script>
+
+<style scoped>
+/* .dialog-card/.dialog-title — было в <style scoped> SubsidiesView.vue, пока
+   диалог был её частью; вынесено вместе с диалогом (волна 5c) — иначе scoped CSS
+   другого файла эти классы не достаёт (проверено на ContractorEditDialog.vue —
+   тот же паттерн: каждый диалог держит эти два правила у себя). */
+.dialog-card {}
+.dialog-title {
+  display: flex; align-items: center;
+  font-size: 16px !important; font-weight: 600 !important;
+  padding: 16px 20px !important;
+}
+</style>

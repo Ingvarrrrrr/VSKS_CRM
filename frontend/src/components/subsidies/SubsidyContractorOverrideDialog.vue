@@ -168,3 +168,16 @@ async function saveContractorOverride() {
 
 defineExpose({ open })
 </script>
+
+<style scoped>
+/* .dialog-card/.dialog-title — было в <style scoped> SubsidiesView.vue, пока
+   диалог был её частью; вынесено вместе с диалогом (волна 5c) — иначе scoped CSS
+   другого файла эти классы не достаёт (проверено на ContractorEditDialog.vue —
+   тот же паттерн: каждый диалог держит эти два правила у себя). */
+.dialog-card {}
+.dialog-title {
+  display: flex; align-items: center;
+  font-size: 16px !important; font-weight: 600 !important;
+  padding: 16px 20px !important;
+}
+</style>

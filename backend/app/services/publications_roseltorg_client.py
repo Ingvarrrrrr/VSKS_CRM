@@ -8,7 +8,6 @@ import urllib.error
 from app.services.publications_status import _make_ssl_ctx, _set_pub_success, _set_pub_error
 
 ROSELTORG_TOKEN = os.getenv("ROSELTORG_TOKEN", "")
-ROSELTORG_URL = "https://business.roseltorg.ru/api/v1/lots"
 
 ROSELTORG_AUTH_URL = "https://lk.roseltorg.ru/api/app/api/auth-integration/v1/auth"
 

@@ -190,9 +190,8 @@ async def deduplicate_products(
     `threshold` — порог сходства (по умолчанию 0.8).
     `skip_ids` — CSV id'шников, которые пользователь снял с галочкой и НЕ хочет удалять.
     """
-    from app.product_matcher import name_similarity, _normalize, _tokens
+    from app.product_matcher import name_similarity, _normalize
     from collections import defaultdict
-    from difflib import SequenceMatcher
     from sqlalchemy import update as sa_update
     from app.models.purchase_item import PurchaseItem
 

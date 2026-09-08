@@ -35,8 +35,8 @@ from sqlalchemy import select, func, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import (
-    get_current_user, require_role, get_org_filter, get_single_org_id,
-    ADMIN_ROLES, MANAGER_ROLES,
+    get_current_user, get_org_filter, get_single_org_id,
+    ADMIN_ROLES,
 )
 from app.auth.permissions import require_tab
 from app.database import get_db

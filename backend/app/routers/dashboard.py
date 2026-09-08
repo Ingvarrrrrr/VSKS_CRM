@@ -71,24 +71,6 @@ def obligation_date(p: Purchase) -> Optional[date]:
 _UNSET = object()
 
 
-def _apply_subsidy_org_filter(query, user: User, org_ids=_UNSET, subsidy_ids=_UNSET):
-    """Filter subsidies by org_ids — или напрямую по subsidy_ids (приоритет).
-
-    subsidy_ids передаётся для scope=dashboard (двухуровневая видимость по вкладке
-    «Дашборд»): None → не фильтровать (SaaS), set → Subsidy.id.in_(set).
-    Иначе org_ids (или get_org_filter при _UNSET). Caller различает None и [].
-    """
-    if subsidy_ids is not _UNSET:
-        if subsidy_ids is not None:
-            query = query.where(Subsidy.id.in_(subsidy_ids))
-        return query
-    if org_ids is _UNSET:
-        org_ids = get_org_filter(user)
-    if org_ids is not None:
-        query = query.where(Subsidy.org_id.in_(org_ids))
-    return query
-
-
 def _apply_purchase_org_filter(query, user: User, org_ids=_UNSET, subsidy_ids=_UNSET):
     """Filter purchases via subsidy.org_id — или напрямую по subsidy_ids (приоритет).
 

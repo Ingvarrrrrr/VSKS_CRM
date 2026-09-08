@@ -37,18 +37,6 @@ def _safe_mul(a, b) -> Optional[Decimal]:
         return None
 
 
-def _safe_div(a, b) -> Optional[Decimal]:
-    if a is None or b is None:
-        return None
-    try:
-        b_dec = Decimal(str(b))
-        if b_dec == 0:
-            return None
-        return Decimal(str(a)) / b_dec
-    except (InvalidOperation, TypeError):
-        return None
-
-
 def _build_item_stages(
     pi: PurchaseItem,
     ci: Optional[ContractItem],

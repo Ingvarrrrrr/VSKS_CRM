@@ -8,10 +8,9 @@ from app.models.contract_subsidy import ContractSubsidy
 from app.models.purchase import Purchase
 from app.models.contractor import Contractor
 from app.schemas.schemas import ContractCreate, ContractOut, ContractSubsidyOut, ContractUpdateResponse, ContractSyncWarnings
-from app.auth.jwt import get_current_user, require_role, get_org_filter, ADMIN_ROLES, MANAGER_ROLES, ALL_ROLES
+from app.auth.jwt import get_current_user, require_role
 from app.auth.permissions import require_tab, require_action
 from app.auth.visibility import build_visibility_clause, get_visible_subsidy_ids
-from app.models.subsidy import Subsidy
 from typing import List, Optional
 from decimal import Decimal
 from app.routers.purchase_budget import FRAMEWORK_TYPES

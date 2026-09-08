@@ -27,6 +27,16 @@ from app.routers import (
 from app.routers import purchase_items_import_mapped
 from app.routers import purchase_items_import_smart
 from app.routers import purchase_items_import_feo
+# Разрезание departments.py (Правило №5, сессия 2026-09-08): departments_members,
+# departments_delegates, departments_import вынесены на тот же префикс
+# /api/departments. Ни один их путь не пересекается по путь+метод с catch-all
+# `/{dept_id}` ядра (тот несёт только PATCH/DELETE, у соседей другие методы
+# либо минимум на сегмент длиннее путь) — порядок регистрации относительно
+# departments.router и друг друга не важен, регистрируются рядом для
+# единообразия.
+from app.routers import departments_members
+from app.routers import departments_delegates
+from app.routers import departments_import
 # Разрезание subsidies.py (Правило №5, сессия 2026-09-07): subsidy_templates,
 # subsidy_plan_graph_compare, subsidy_plan_graph_versions, subsidy_plan_graph_export,
 # subsidy_finance содержат ТОЛЬКО статические/специфичные литеральные пути на
@@ -151,6 +161,9 @@ from app.routers import vehicles_dashboard_drill, vehicles_dashboard_summary, ve
 # Соседи dashboard.router после резки монолита 1641→core (Правило №5, 2026-09-08).
 from app.routers import dashboard_charts, dashboard_analytics, dashboard_financial_plan, dashboard_financial_plan_export
 from app.routers import vehicle_repairs, vehicle_odometer, fuel_logs, trips
+# Соседи trips.router после резки монолита 1204→core (Правило №5, 2026-09-08).
+# trips_reports регистрируется ДО trips (см. комментарий у include_router ниже).
+from app.routers import trips_reports, trips_status, trips_waybill, trips_telemetry
 from app.routers import external_drivers
 from app.routers import vehicles_import as vehicles_import_router
 from app.routers import vehicle_fields as vehicle_fields_router
@@ -161,9 +174,6 @@ from app.routers import checklists as checklists_router
 from app.routers import incidents as incidents_router
 from app.routers import vehicle_passes as vehicle_passes_router
 from app.routers.documents import guide_router as documents_guide_router
-# Соседи trips.router после резки монолита 1204→core (Правило №5, 2026-09-08).
-# trips_reports регистрируется ДО trips (см. комментарий у include_router ниже).
-from app.routers import trips_reports, trips_status, trips_waybill, trips_telemetry
 # Phase 27.1: contract_items MUST be registered BEFORE purchases.router
 # because purchases has catch-all /{purchase_id} that would intercept /contract-items
 from app.routers import contract_items as contract_items_router
@@ -333,6 +343,9 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(task_comments.router)
     app.include_router(tasks.router)
     app.include_router(departments.router)
+    app.include_router(departments_members.router)
+    app.include_router(departments_delegates.router)
+    app.include_router(departments_import.router)
     app.include_router(delivery_addresses.router)
     app.include_router(org_config.router)
     app.include_router(hierarchy.router)
@@ -393,6 +406,13 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(vehicle_repairs.router)             # /api/vehicle-repairs
     app.include_router(vehicle_odometer.router)            # /api/vehicle-odometer
     app.include_router(fuel_logs.router)                   # /api/fuel-logs
+    # trips_reports ДО trips: /stats и /last-fuel — литералы против catch-all
+    # GET /{trip_id} ядра (иначе 422 при попытке привести их к int).
+    app.include_router(trips_reports.router)               # /api/trips/stats, /last-fuel
+    app.include_router(trips.router)                       # /api/trips
+    app.include_router(trips_status.router)                # /api/trips/{trip_id}/tech-inspect...close
+    app.include_router(trips_waybill.router)                # /api/trips/{trip_id}/render, waybill.docx|xlsx
+    app.include_router(trips_telemetry.router)              # /api/trips/{trip_id}/route-stops, odometer, fuel-refills
     app.include_router(vehicle_fines.router)               # /api/vehicle-fines
     app.include_router(vehicle_passes_router.router)       # /api/vehicle-passes (2026-09)
     app.include_router(fleet_documents_router.router)      # /api/fleet-documents
@@ -404,10 +424,3 @@ def register_routes(app: FastAPI) -> None:
 
     app.include_router(diag_router.router)                 # /api/diag/*
     app.include_router(dictionaries_router.router)         # /api/dictionaries/purchase (Правило №6)
-    # trips_reports ДО trips: /stats и /last-fuel — литералы против catch-all
-    # GET /{trip_id} ядра (иначе 422 при попытке привести их к int).
-    app.include_router(trips_reports.router)               # /api/trips/stats, /last-fuel
-    app.include_router(trips.router)                       # /api/trips
-    app.include_router(trips_status.router)                # /api/trips/{trip_id}/tech-inspect...close
-    app.include_router(trips_waybill.router)                # /api/trips/{trip_id}/render, waybill.docx|xlsx
-    app.include_router(trips_telemetry.router)              # /api/trips/{trip_id}/route-stops, odometer, fuel-refills

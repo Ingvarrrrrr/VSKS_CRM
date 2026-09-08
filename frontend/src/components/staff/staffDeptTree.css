@@ -1,0 +1,72 @@
+/* Department tree styles — NOT scoped, because StaffDeptTreeNode is rendered
+   via h() in a separate module (components/staff/StaffDeptTreeNode.ts).
+   Дословный перенос из StaffView.vue (был в <style> без scoped). */
+.staff-view .dept-tree-row {
+  display: flex;
+  align-items: center;
+  padding: 10px 14px;
+  margin: 6px 4px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 2px solid rgba(var(--v-theme-primary), 0.25);
+  border-left: 5px solid rgb(var(--v-theme-primary));
+  background: rgba(var(--v-theme-primary), 0.04);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+}
+.staff-view .dept-tree-row:hover {
+  background: rgba(var(--v-theme-primary), 0.12);
+  border-color: rgb(var(--v-theme-primary));
+  box-shadow: 0 4px 12px rgba(var(--v-theme-primary), 0.2);
+  transform: translateX(4px);
+}
+.staff-view .dept-tree-row:hover .dept-row-arrow {
+  opacity: 1;
+  transform: translateX(3px);
+}
+.staff-view .dept-tree-row:active {
+  background: rgba(var(--v-theme-primary), 0.18);
+  transform: translateX(2px);
+}
+.staff-view .dept-row-arrow {
+  opacity: 0.4;
+  transition: all 0.2s ease;
+}
+.staff-view .dept-chevron { cursor: pointer; }
+.staff-view .dept-member-row {
+  display: flex;
+  align-items: center;
+  padding: 5px 14px;
+  margin: 1px 4px 1px 8px;
+  border-radius: 6px;
+  opacity: 0.85;
+  transition: all 0.15s;
+}
+.staff-view .dept-member-row:hover { opacity: 1; background: var(--crm-surface-hover); }
+.staff-view .dept-member-action { opacity: 0.3; transition: opacity 0.15s; }
+.staff-view .dept-member-row:hover .dept-member-action { opacity: 1; }
+.staff-view .feo-set-hint {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  color: #3B82F6;
+}
+.staff-view .feo-set-hint:hover { color: #2563EB; }
+
+/* Mobile: фильтры персонала в столбик (не сжаты в нечитаемые «(»), строки дерева переносятся */
+@media (max-width: 599px) {
+  .staff-view .dept-toolbar > .v-input,
+  .staff-view .dept-toolbar > .v-select,
+  .staff-view .dept-toolbar > .v-autocomplete {
+    max-width: 100% !important;
+    flex: 1 1 100%;
+  }
+  .staff-view .dept-tree-row {
+    flex-wrap: wrap;
+    row-gap: 4px;
+    padding: 8px 10px;
+  }
+  /* счётчик «N чел.» (outlined-чип) не сжимать — иначе обрезается до «0 ч» */
+  .staff-view .dept-tree-row .v-chip--variant-outlined {
+    flex-shrink: 0;
+  }
+}

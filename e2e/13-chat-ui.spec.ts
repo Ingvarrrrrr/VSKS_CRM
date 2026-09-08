@@ -1,6 +1,14 @@
 import { test, expect, chromium } from '@playwright/test'
 import { login, waitForOverlays } from './helpers'
 
+// NB: room selectors below target `.chat-room-list .v-list-item` (the v-list
+// with actual room rows in ChatSidebar.vue), not `.chat-sidebar .v-list-item` —
+// the sidebar's own header ("Чат" + кнопка "+") is ALSO a bare v-list-item
+// inside `.chat-sidebar`, so the broader selector's .first() picked the header
+// row instead of a room: clicking it never sets selectedRoomId, which cascaded
+// into 3 failures (placeholder never switched to "в чате", ChatToolbar/wsIcon
+// never rendered because no room was open, message input never appeared).
+
 // CHAT-UI-02: Sticky header
 test('CHAT-UI-02: chat header stays visible after scrolling', async ({ page }) => {
   await login(page)
@@ -58,7 +66,7 @@ test('CHAT-UI-03: search filters room list when no room selected', async ({ page
   await expect(searchField).toBeVisible()
 
   // With rooms present, typing should filter
-  const roomsBefore = await page.locator('.chat-sidebar .v-list-item').count()
+  const roomsBefore = await page.locator('.chat-room-list .v-list-item').count()
   if (roomsBefore === 0) {
     test.skip()
     return
@@ -68,7 +76,7 @@ test('CHAT-UI-03: search filters room list when no room selected', async ({ page
   await page.waitForTimeout(300)
 
   // Room list should be empty or reduced
-  const roomsAfter = await page.locator('.chat-sidebar .v-list-item').count()
+  const roomsAfter = await page.locator('.chat-room-list .v-list-item').count()
   expect(roomsAfter).toBeLessThanOrEqual(roomsBefore)
 })
 
@@ -77,7 +85,7 @@ test('CHAT-UI-03: search placeholder changes when room is selected', async ({ pa
   await page.goto('/chat')
   await waitForOverlays(page)
 
-  const roomItem = page.locator('.chat-sidebar .v-list-item').first()
+  const roomItem = page.locator('.chat-room-list .v-list-item').first()
   if (await roomItem.count() === 0) {
     test.skip()
     return
@@ -103,7 +111,7 @@ test('CHAT-UI-04: message bubbles have correct CSS classes', async ({ page }) =>
   await page.goto('/chat')
   await waitForOverlays(page)
 
-  const roomItem = page.locator('.chat-sidebar .v-list-item').first()
+  const roomItem = page.locator('.chat-room-list .v-list-item').first()
   if (await roomItem.count() === 0) {
     test.skip()
     return
@@ -136,7 +144,7 @@ test('CHAT-UI-04: date separators present when messages span multiple days', asy
   await page.goto('/chat')
   await waitForOverlays(page)
 
-  const roomItem = page.locator('.chat-sidebar .v-list-item').first()
+  const roomItem = page.locator('.chat-room-list .v-list-item').first()
   if (await roomItem.count() === 0) {
     test.skip()
     return
@@ -160,7 +168,7 @@ test('CHAT-UI-01: WebSocket connection indicator visible in chat header', async 
   await page.goto('/chat')
   await waitForOverlays(page)
 
-  const roomItem = page.locator('.chat-sidebar .v-list-item').first()
+  const roomItem = page.locator('.chat-room-list .v-list-item').first()
   if (await roomItem.count() === 0) {
     test.skip()
     return
@@ -178,7 +186,7 @@ test('CHAT-UI-01: message sent appears in chat without page reload', async ({ pa
   await page.goto('/chat')
   await waitForOverlays(page)
 
-  const roomItem = page.locator('.chat-sidebar .v-list-item').first()
+  const roomItem = page.locator('.chat-room-list .v-list-item').first()
   if (await roomItem.count() === 0) {
     test.skip()
     return

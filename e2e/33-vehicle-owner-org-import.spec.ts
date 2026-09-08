@@ -38,12 +38,13 @@ async function selectOrgAndApply(page: Page) {
 // 2) Сквозной путь: загрузка тестового файла (2 заведомо несуществующих
 //    госномера, собственник указан через ИНН реальной организации И через
 //    точное название другой реальной организации) → предпросмотр →
-//    подтверждение импорта. Тестовый .xlsx собран заранее (см. scratchpad)
-//    модификацией реального скачанного шаблона — эквивалент «скачать шаблон,
-//    заполнить руками», так как редактор xlsx недоступен внутри Playwright.
+//    подтверждение импорта. Тестовый .xlsx — фикстура репозитория
+//    (e2e/fixtures/vehicle_owner_org_import.xlsx), сгенерированная
+//    e2e/fixtures/gen_vehicle_owner_org_import.py (openpyxl); там же —
+//    какие организации/ИНН использованы и почему.
 
-const SHOTS_DIR = 'C:\\Users\\1\\AppData\\Local\\Temp\\claude\\c--Users-1-Desktop-Cursor-VSKS-CRM\\f7c97c55-1f66-4005-ba84-a7c85d9783ca\\scratchpad\\shots_owner';
-const TEST_XLSX = 'C:\\Users\\1\\AppData\\Local\\Temp\\claude\\c--Users-1-Desktop-Cursor-VSKS-CRM\\f7c97c55-1f66-4005-ba84-a7c85d9783ca\\scratchpad\\test_upload.xlsx';
+const SHOTS_DIR = path.join(__dirname, '..', '.tmp_e2e_shots', 'shots_owner');
+const TEST_XLSX = path.join(__dirname, 'fixtures', 'vehicle_owner_org_import.xlsx');
 
 test.beforeAll(() => {
   fs.mkdirSync(SHOTS_DIR, { recursive: true });

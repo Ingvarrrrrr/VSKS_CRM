@@ -7,7 +7,7 @@ import { login, waitForOverlays } from './helpers';
 // словоформа, не подстрока) — helper на эту модалку никогда не срабатывает.
 // helpers.ts трогать нельзя (общий файл, вне периметра этой задачи), поэтому
 // здесь — свой рабочий дубль с точным текстом.
-async function selectOrgAndApply(page: Page) {
+async function selectOrgVsks(page: Page) {
   const dialog = page.locator('.v-overlay-container').filter({ hasText: 'Выберите организации' }).first();
   if (!(await dialog.isVisible({ timeout: 2500 }).catch(() => false))) return;
   // Явно организация admin (org_id=1 → «ВСКС»), а НЕ первая по списку — иначе
@@ -61,7 +61,7 @@ test.describe.serial('Отслеживание местоположения со
 
   test('1-2. Начало смены → точки уходят на сервер, индикатор виден', async ({ page, context }) => {
     await login(page);
-    await selectOrgAndApply(page);
+    await selectOrgVsks(page);
     // Не форсируем повторный goto('/dashboard') сразу после dismissOrgPicker —
     // applyOrgSelection() сам делает window.location.reload(), и гонка с ручным
     // goto() приводила к тому, что попап «Выберите организации» открывался
@@ -122,7 +122,7 @@ test.describe.serial('Отслеживание местоположения со
 
   test('3. Офлайн: точки копятся локально и досылаются после восстановления сети', async ({ page, context }) => {
     await login(page);
-    await selectOrgAndApply(page);
+    await selectOrgVsks(page);
     // Не форсируем повторный goto('/dashboard') сразу после dismissOrgPicker —
     // applyOrgSelection() сам делает window.location.reload(), и гонка с ручным
     // goto() приводила к тому, что попап «Выберите организации» открывался
@@ -161,7 +161,7 @@ test.describe.serial('Отслеживание местоположения со
 
   test('5. Карта диспетчера показывает сотрудника на смене', async ({ page }) => {
     await login(page);
-    await selectOrgAndApply(page);
+    await selectOrgVsks(page);
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(800);
     await page.goto('/staff-location');
@@ -180,7 +180,7 @@ test.describe.serial('Отслеживание местоположения со
 
   test('4. Завершение смены останавливает передачу', async ({ page }) => {
     await login(page);
-    await selectOrgAndApply(page);
+    await selectOrgVsks(page);
     // Не форсируем повторный goto('/dashboard') сразу после dismissOrgPicker —
     // applyOrgSelection() сам делает window.location.reload(), и гонка с ручным
     // goto() приводила к тому, что попап «Выберите организации» открывался
@@ -213,7 +213,7 @@ test.describe.serial('Отслеживание местоположения со
 
   test('6. Пользователь без права staff.location.view не видит карту (проверка кодом: API + фронт)', async ({ page, request, browser }) => {
     await login(page);
-    await selectOrgAndApply(page);
+    await selectOrgVsks(page);
 
     // Временный сотрудник без права staff.location.view (manager/employee — explicit False в сиде прав)
     const token = await page.evaluate(() => localStorage.getItem('auth_token'));

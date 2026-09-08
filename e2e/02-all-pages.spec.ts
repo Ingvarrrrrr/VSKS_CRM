@@ -55,7 +55,13 @@ test.describe('Обход всех страниц', () => {
       });
 
       await page.goto(path);
-      await page.waitForLoadState('networkidle');
+      if (path === '/products') {
+        // /products держит фоновый polling — networkidle там никогда не
+        // наступает, ждём появления самой таблицы товаров вместо простоя сети.
+        await page.locator('.products-table').first().waitFor({ state: 'visible', timeout: 15_000 }).catch(() => {});
+      } else {
+        await page.waitForLoadState('networkidle');
+      }
       await page.waitForTimeout(2000); // Vue rendering
 
       // Page should not show blank screen

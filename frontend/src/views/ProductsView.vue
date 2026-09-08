@@ -1,1825 +1,279 @@
 <template>
   <v-container fluid class="pa-6">
-    <!-- Header -->
-    <div class="d-flex align-center justify-space-between mb-6">
-      <div>
-        <h1 class="text-h5 font-weight-bold">Каталог товаров</h1>
-        <span class="text-body-2 text-medium-emphasis">{{ products.length }} позиций</span>
-      </div>
-      <div class="d-flex gap-2">
-        <v-btn variant="outlined" prepend-icon="mdi-download-outline" @click="downloadTemplate">Шаблон</v-btn>
-        <v-btn variant="outlined" prepend-icon="mdi-upload-outline" color="secondary" @click="importDialog.show = true">Импорт Excel</v-btn>
-        <v-btn variant="outlined" prepend-icon="mdi-image-sync" color="teal" @click="openDownloadPhotosDialog">Скачать фото</v-btn>
-        <v-btn variant="outlined" prepend-icon="mdi-content-duplicate" color="warning" :loading="deduplicating" @click="deduplicateProducts">Удалить дубликаты</v-btn>
-        <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Добавить товар</v-btn>
-        <v-btn variant="outlined" prepend-icon="mdi-table-column" @click="colConfigDialog = true">Столбцы</v-btn>
-        <v-btn-toggle v-if="!mobile" v-model="viewMode" mandatory density="compact" variant="outlined" divided class="ml-1">
-          <v-btn value="table" size="small" icon="mdi-table" />
-          <v-btn value="cards" size="small" icon="mdi-view-grid" />
-        </v-btn-toggle>
-      </div>
-    </div>
+    <ProductsToolbar
+      :products-count="products.length"
+      :deduplicating="deduplicating"
+      :mobile="mobile"
+      :view-mode="viewMode"
+      @download-template="downloadTemplate"
+      @open-import="importDialog.show = true"
+      @open-download-photos="openDownloadPhotosDialog"
+      @deduplicate="deduplicateProducts"
+      @create="openCreate"
+      @open-column-config="colConfigDialog = true"
+      @update:view-mode="viewMode = $event"
+    />
 
-    <!-- Search + filter -->
-    <v-card class="mb-4" variant="outlined">
-      <v-card-text class="py-3">
-        <div class="d-flex gap-3 flex-wrap align-center">
-          <v-text-field
-            v-model="search"
-            prepend-inner-icon="mdi-magnify"
-            label="Поиск по наименованию / описанию"
-            variant="outlined" density="compact" clearable hide-details
-            style="min-width:240px"
-          />
-          <v-autocomplete
-            v-model="filterType"
-            :items="typeOptions"
-            label="Тип" variant="outlined" density="compact"
-            multiple chips closable-chips clearable hide-details style="min-width:180px"
-          />
-          <v-autocomplete
-            v-model="filterCategory"
-            :items="categoryOptions"
-            label="Категория" variant="outlined" density="compact"
-            multiple chips closable-chips clearable hide-details style="min-width:180px"
-          />
-          <v-select
-            v-model="filterActive"
-            :items="[{title:'Активные',value:true},{title:'Неактивные',value:false}]"
-            label="Статус" variant="outlined" density="compact"
-            clearable hide-details style="min-width:140px"
-          />
-          <v-text-field
-            v-model.number="filterPriceMin"
-            label="Цена от, ₽" type="number"
-            variant="outlined" density="compact" clearable hide-details
-            style="min-width:120px;max-width:140px"
-          />
-          <v-text-field
-            v-model.number="filterPriceMax"
-            label="Цена до, ₽" type="number"
-            variant="outlined" density="compact" clearable hide-details
-            style="min-width:120px;max-width:140px"
-          />
-          <v-switch
-            v-model="filterStaleOnly"
-            color="warning" density="compact" hide-details
-            class="flex-shrink-0"
-          >
-            <template #label>
-              <span class="text-body-2">Только требующие актуализации</span>
-              <v-chip v-if="staleProductsCount" size="x-small" color="warning" variant="tonal" class="ml-2">{{ staleProductsCount }}</v-chip>
-            </template>
-          </v-switch>
-          <v-btn
-            v-if="filterType.length || filterCategory.length || filterActive !== null || filterPriceMin || filterPriceMax || filterStaleOnly"
-            variant="text" size="small" prepend-icon="mdi-filter-off" color="grey-darken-1"
-            @click="filterType = []; filterCategory = []; filterActive = null; filterPriceMin = null; filterPriceMax = null; filterStaleOnly = false"
-          >Сбросить</v-btn>
-        </div>
-      </v-card-text>
-    </v-card>
-
-    <!-- Horizontal scrollbar — always visible above the table -->
-    <div v-if="effectiveView === 'table'" ref="mirrorScrollRef" class="mirror-hscroll">
-      <div :style="{ width: tableScrollWidth + 'px', height: '1px' }" />
-    </div>
+    <ProductsFilterBar
+      v-model:search="search"
+      v-model:filter-type="filterType"
+      v-model:filter-category="filterCategory"
+      v-model:filter-active="filterActive"
+      v-model:filter-price-min="filterPriceMin"
+      v-model:filter-price-max="filterPriceMax"
+      v-model:filter-stale-only="filterStaleOnly"
+      :type-options="typeOptions"
+      :category-options="categoryOptions"
+      :stale-products-count="staleProductsCount"
+      @reset="resetFilters"
+    />
 
     <!-- Table -->
-    <v-card v-if="effectiveView === 'table'" variant="outlined">
-      <!-- Bulk action bar -->
-      <v-toolbar v-if="selectedIds.length" color="primary" density="compact" class="px-2 rounded-t">
-        <span class="text-body-2 ml-2 font-weight-medium">Выбрано: {{ selectedIds.length }}</span>
-        <v-btn variant="text" size="small" prepend-icon="mdi-close-circle" color="white" class="ml-2"
-          @click="selectedIds = []">Снять</v-btn>
-        <v-btn v-if="selectedIds.length < filteredProducts.length" variant="text" size="small" prepend-icon="mdi-select-all" color="white" class="ml-1"
-          @click="selectedIds = filteredProducts.map(p => p.id)">Выбрать все ({{ filteredProducts.length }})</v-btn>
-        <v-spacer />
-        <v-btn variant="tonal" size="small" prepend-icon="mdi-tag-multiple" color="white" class="mr-2"
-          @click="openBulkEdit">Категория / вид</v-btn>
-        <v-btn variant="tonal" size="small" prepend-icon="mdi-eye-check" color="white" class="mr-2"
-          @click="bulkToggleActive(true)">Активировать</v-btn>
-        <v-btn variant="tonal" size="small" prepend-icon="mdi-eye-off" color="white" class="mr-2"
-          @click="bulkToggleActive(false)">Деактивировать</v-btn>
-        <v-btn variant="flat" size="small" prepend-icon="mdi-delete" color="error"
-          @click="bulkDeleteDialog = true">Удалить выбранные</v-btn>
-        <v-btn v-if="isSuperadmin" variant="flat" size="small" prepend-icon="mdi-delete-sweep" color="error" class="ml-2"
-          @click="deleteAllDialog = true">Удалить ВСЕ</v-btn>
-      </v-toolbar>
-
-      <v-data-table
-        v-resizable-columns="'products'"
-        v-model="selectedIds"
-        show-select
-        item-value="id"
-        :headers="headers"
-        :items="filteredProducts"
-        :loading="loading"
-        :search="search"
-        density="compact"
-        fixed-header
-        hover
-        items-per-page="25"
-        class="products-clickable products-table"
-        @click:row="onProductRowClick"
-        :items-per-page-options="[25, 50, 100, -1]"
-      >
-        <!-- Photo -->
-        <template #item.photo="{ item }">
-          <v-avatar size="40" rounded="sm" class="my-1" style="overflow:hidden">
-            <img
-              v-if="item.has_photo"
-              :src="`/api/products/${item.id}/photo`"
-              style="width:40px;height:40px;object-fit:cover;display:block"
-              @error="($event.target as HTMLImageElement).style.display='none'"
-            />
-            <img
-              v-else-if="item.photo_url || item.photo_link"
-              :src="(item.photo_url || item.photo_link) as string"
-              style="width:40px;height:40px;object-fit:cover;display:block"
-              @error="($event.target as HTMLImageElement).style.display='none'"
-            />
-            <v-icon v-else icon="mdi-package-variant" color="grey" />
-          </v-avatar>
-        </template>
-
-        <!-- Name + description -->
-        <template #item.name="{ item }">
-          <div class="font-weight-medium">{{ item.name }}</div>
-          <div v-if="item.description" class="text-caption text-medium-emphasis" style="max-width:280px;white-space:normal;line-height:1.3">
-            {{ item.description.slice(0, 100) }}{{ item.description.length > 100 ? '…' : '' }}
-          </div>
-          <v-chip v-if="item.description_44fz" size="x-small" variant="tonal" color="blue" class="mt-1">44-ФЗ</v-chip>
-        </template>
-
-        <!-- Type chip -->
-        <template #item.product_type="{ item }">
-          <v-chip v-if="item.product_type" size="x-small" variant="tonal" :color="typeColor(item.product_type)">
-            {{ item.product_type }}
-          </v-chip>
-          <span v-else class="text-medium-emphasis">—</span>
-        </template>
-
-        <!-- Price -->
-        <template #item.price="{ item }">
-          <div v-if="item.price" class="font-weight-medium text-blue-darken-2">
-            {{ Number(item.price).toLocaleString('ru-RU') }} ₽
-          </div>
-          <div v-if="item.price_links?.length" class="text-caption text-medium-emphasis">
-            {{ item.price_links.length }} ист.
-          </div>
-          <span v-if="!item.price" class="text-medium-emphasis">—</span>
-          <!-- Владелец, сессия 2026-08-29: штамп даты/источника актуализации мелким
-               шрифтом под ценой; устаревшее — оранжевым с иконкой предупреждения. -->
-          <v-tooltip v-if="item.price" :disabled="!item.price_freshness?.is_stale" :text="freshnessTooltip(item.price_freshness)" location="top" max-width="320">
-            <template #activator="{ props: tip }">
-              <div v-bind="tip" class="text-caption" :class="freshnessColor(item.price_freshness) === 'warning' ? PRICE_STALE_CLASS : 'text-medium-emphasis'">
-                <v-icon v-if="item.price_freshness?.is_stale" :icon="freshnessIcon(item.price_freshness)" size="12" class="mr-1" />{{ formatPriceStamp(item.price_updated_at, item.price_source, item.price_source_ref) }}
-              </div>
-            </template>
-          </v-tooltip>
-        </template>
-
-        <!-- Contract Price -->
-        <template #item.contract_price="{ item }">
-          <template v-if="item.contract_price">
-            <div class="font-weight-medium text-green-darken-2">
-              {{ Number(item.contract_price).toLocaleString('ru-RU') }} ₽
-            </div>
-            <div v-if="item.contract_number" class="text-caption text-medium-emphasis">
-              № {{ item.contract_number }}
-              <span v-if="item.contract_date"> от {{ item.contract_date }}</span>
-            </div>
-            <v-tooltip :text="item.price_shared ? 'Цена видна другим организациям' : 'Цена скрыта от других организаций'" location="top">
-              <template #activator="{ props: tip }">
-                <v-btn v-bind="tip" :icon="item.price_shared ? 'mdi-eye' : 'mdi-eye-off'" variant="text"
-                  size="x-small" :color="item.price_shared ? 'success' : 'grey'"
-                  @click="toggleSharing(item)" />
-              </template>
-            </v-tooltip>
-          </template>
-          <span v-else class="text-medium-emphasis">—</span>
-        </template>
-
-        <!-- Price freshness -->
-        <template #item.price_freshness="{ item }">
-          <v-tooltip v-if="item.price" :disabled="!item.price_freshness" :text="freshnessTooltip(item.price_freshness)" location="top" max-width="320">
-            <template #activator="{ props: tip }">
-              <div v-bind="tip">
-                <v-chip v-if="item.price_freshness?.is_stale" size="x-small" color="warning" variant="tonal" class="mb-1">
-                  <v-icon start icon="mdi-alert-outline" size="14" />{{ item.price_freshness?.reason === 'fx' ? 'Курс — проверить цену' : 'Требует актуализации' }}
-                </v-chip>
-                <div class="text-caption" :class="item.price_freshness?.is_stale ? PRICE_STALE_CLASS : 'text-medium-emphasis'">
-                  {{ formatPriceStamp(item.price_updated_at, item.price_source, item.price_source_ref) }}
-                </div>
-              </div>
-            </template>
-          </v-tooltip>
-          <span v-else class="text-medium-emphasis">—</span>
-        </template>
-
-        <!-- Country origin -->
-        <template #item.country_origin="{ item }">
-          <v-chip v-if="item.country_origin" size="x-small" variant="tonal"
-            :color="isDomesticCountry(item.country_origin) ? 'primary' : 'orange'">
-            {{ item.country_origin }}
-          </v-chip>
-          <v-chip v-else size="x-small" variant="tonal" color="error">не указана</v-chip>
-        </template>
-
-        <!-- Active -->
-        <template #item.is_active="{ item }">
-          <v-chip size="x-small" :color="item.is_active ? 'success' : 'grey'" variant="tonal">
-            {{ item.is_active ? 'Активен' : 'Неактивен' }}
-          </v-chip>
-        </template>
-
-        <!-- TZ verified -->
-        <template #item.tz_verified_at="{ item }">
-          <v-progress-circular v-if="tzVerifying === item.id + '_standard'" indeterminate size="18" width="2" color="primary" />
-          <div v-else class="d-flex align-center gap-1">
-            <v-tooltip
-              :text="item.tz_verified_at
-                ? `${new Date(item.tz_verified_at).toLocaleDateString('ru-RU')} · ${item.tz_verified_by}`
-                : 'Нажмите чтобы подтвердить'"
-              location="top"
-            >
-              <template #activator="{ props }">
-                <v-icon
-                  v-bind="props"
-                  :icon="item.tz_verified_at ? 'mdi-checkbox-marked-circle' : 'mdi-checkbox-blank-circle-outline'"
-                  :color="item.tz_verified_at ? 'success' : 'grey-lighten-1'"
-                  style="cursor: pointer"
-                  @click.stop="!item.tz_verified_at ? verifyTz(item, 'standard') : null"
-                />
-              </template>
-            </v-tooltip>
-            <v-tooltip v-if="item.tz_verified_at && isAdmin" text="Снять отметку (Администратор)" location="top">
-              <template #activator="{ props }">
-                <v-icon v-bind="props" icon="mdi-close-circle-outline" color="error" size="14"
-                  style="cursor:pointer; opacity:0.7" @click.stop="unverifyTz(item, 'standard')" />
-              </template>
-            </v-tooltip>
-          </div>
-        </template>
-
-        <!-- TZ 44fz verified -->
-        <template #item.tz_44fz_verified_at="{ item }">
-          <v-progress-circular v-if="tzVerifying === item.id + '_44fz'" indeterminate size="18" width="2" color="blue" />
-          <div v-else class="d-flex align-center gap-1">
-            <v-tooltip
-              :text="item.tz_44fz_verified_at
-                ? `${new Date(item.tz_44fz_verified_at).toLocaleDateString('ru-RU')} · ${item.tz_44fz_verified_by}`
-                : 'Нажмите чтобы подтвердить (44-ФЗ)'"
-              location="top"
-            >
-              <template #activator="{ props }">
-                <v-icon
-                  v-bind="props"
-                  :icon="item.tz_44fz_verified_at ? 'mdi-checkbox-marked-circle' : 'mdi-checkbox-blank-circle-outline'"
-                  :color="item.tz_44fz_verified_at ? 'blue-darken-2' : 'grey-lighten-1'"
-                  style="cursor: pointer"
-                  @click.stop="!item.tz_44fz_verified_at ? verifyTz(item, '44fz') : null"
-                />
-              </template>
-            </v-tooltip>
-            <v-tooltip v-if="item.tz_44fz_verified_at && isAdmin" text="Снять отметку (Администратор)" location="top">
-              <template #activator="{ props }">
-                <v-icon v-bind="props" icon="mdi-close-circle-outline" color="error" size="14"
-                  style="cursor:pointer; opacity:0.7" @click.stop="unverifyTz(item, '44fz')" />
-              </template>
-            </v-tooltip>
-          </div>
-        </template>
-
-        <!-- Actions -->
-        <template #item.actions="{ item }">
-          <div class="d-flex gap-1" @click.stop>
-            <v-tooltip text="Актуализировать цену" location="top">
-              <template #activator="{ props: tip }">
-                <v-btn v-bind="tip" icon="mdi-cash-refresh" variant="text" size="small"
-                  :color="item.price_freshness?.is_stale ? 'warning' : 'teal'"
-                  @click.stop="openActualizeDialog(item)" />
-              </template>
-            </v-tooltip>
-            <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
-              @click.stop="confirmDelete(item)" />
-          </div>
-        </template>
-
-        <template #no-data>
-          <div class="text-center py-10">
-            <v-icon icon="mdi-package-variant-closed" size="48" color="grey-lighten-1" class="mb-3" />
-            <div class="text-medium-emphasis">Товары не найдены</div>
-          </div>
-        </template>
-      </v-data-table>
-    </v-card>
+    <ProductsTable
+      v-if="effectiveView === 'table'"
+      :headers="headers"
+      :items="filteredProducts"
+      :loading="loading"
+      :search="search"
+      :selected-ids="selectedIds"
+      :is-superadmin="isSuperadmin"
+      :is-admin="isAdmin"
+      :tz-verifying="tzVerifying"
+      @update:selected-ids="selectedIds = $event"
+      @row-click="openEdit"
+      @toggle-sharing="toggleSharing"
+      @verify-tz="verifyTz"
+      @unverify-tz="unverifyTz"
+      @actualize="openActualizeDialog"
+      @delete="confirmDelete"
+      @bulk-edit="openBulkEdit"
+      @toggle-active="bulkToggleActive"
+      @bulk-delete="bulkDeleteDialog = true"
+      @delete-all="deleteAllDialog = true"
+    />
 
     <!-- Cards view -->
-    <div v-else>
-      <!-- Bulk action bar (cards mode) -->
-      <v-toolbar v-if="selectedIds.length" color="primary" density="compact" class="px-2 rounded mb-3">
-        <span class="text-body-2 ml-2 font-weight-medium">Выбрано: {{ selectedIds.length }}</span>
-        <v-btn variant="text" size="small" prepend-icon="mdi-close-circle" color="white" class="ml-2"
-          @click="selectedIds = []">Снять</v-btn>
-        <v-btn v-if="selectedIds.length < filteredProducts.length" variant="text" size="small" prepend-icon="mdi-select-all" color="white" class="ml-1"
-          @click="selectedIds = filteredProducts.map(p => p.id)">Выбрать все ({{ filteredProducts.length }})</v-btn>
-        <v-spacer />
-        <v-btn variant="tonal" size="small" prepend-icon="mdi-tag-multiple" color="white" class="mr-2"
-          @click="openBulkEdit">Категория / вид</v-btn>
-        <v-btn variant="tonal" size="small" prepend-icon="mdi-eye-check" color="white" class="mr-2"
-          @click="bulkToggleActive(true)">Активировать</v-btn>
-        <v-btn variant="tonal" size="small" prepend-icon="mdi-eye-off" color="white" class="mr-2"
-          @click="bulkToggleActive(false)">Деактивировать</v-btn>
-        <v-btn variant="flat" size="small" prepend-icon="mdi-delete" color="error"
-          @click="bulkDeleteDialog = true">Удалить выбранные</v-btn>
-        <v-btn v-if="isSuperadmin" variant="flat" size="small" prepend-icon="mdi-delete-sweep" color="error" class="ml-2"
-          @click="deleteAllDialog = true">Удалить ВСЕ</v-btn>
-      </v-toolbar>
-
-      <v-row v-if="pagedProducts.length" dense>
-        <v-col
-          v-for="p in pagedProducts"
-          :key="p.id"
-          cols="12" sm="6" md="4" lg="3"
-        >
-          <v-card
-            hover
-            variant="outlined"
-            class="d-flex flex-column h-100"
-            style="cursor:pointer"
-            @click="openEdit(p)"
-          >
-            <!-- Photo -->
-            <v-img
-              :src="cardPhotoSrc(p)"
-              height="180"
-              :cover="false"
-              class="bg-grey-lighten-4 flex-shrink-0"
-            >
-              <template #error>
-                <div class="d-flex align-center justify-center fill-height">
-                  <v-icon size="64" class="text-medium-emphasis">mdi-package-variant</v-icon>
-                </div>
-              </template>
-              <template #placeholder>
-                <div class="d-flex align-center justify-center fill-height">
-                  <v-icon size="64" class="text-medium-emphasis">mdi-package-variant</v-icon>
-                </div>
-              </template>
-            </v-img>
-
-            <v-card-text class="flex-grow-1 pb-1">
-              <div class="font-weight-bold text-body-2 mb-1" style="line-height:1.3">{{ p.name }}</div>
-              <div class="d-flex flex-wrap gap-1 mb-1">
-                <v-chip v-if="p.product_type" size="x-small" variant="tonal" :color="typeColor(p.product_type)">
-                  {{ p.product_type }}
-                </v-chip>
-                <v-chip v-if="p.category" size="x-small" variant="tonal" color="grey">
-                  {{ p.category }}
-                </v-chip>
-                <v-chip size="x-small" :color="p.is_active ? 'success' : 'grey'" variant="tonal">
-                  {{ p.is_active ? 'Активен' : 'Неактивен' }}
-                </v-chip>
-              </div>
-              <div v-if="p.price" class="font-weight-medium text-blue-darken-2 text-body-2">
-                {{ Number(p.price).toLocaleString('ru-RU') }} ₽
-              </div>
-              <div v-if="p.description" class="text-caption text-medium-emphasis mt-1" style="line-height:1.3">
-                {{ p.description.slice(0, 80) }}{{ p.description.length > 80 ? '…' : '' }}
-              </div>
-            </v-card-text>
-
-            <v-card-actions @click.stop class="pt-0">
-              <v-spacer />
-              <v-btn icon="mdi-pencil-outline" variant="text" size="small" @click.stop="openEdit(p)" />
-              <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error" @click.stop="confirmDelete(p)" />
-            </v-card-actions>
-          </v-card>
-        </v-col>
-      </v-row>
-
-      <!-- Empty state -->
-      <div v-else class="text-center py-10">
-        <v-icon icon="mdi-package-variant-closed" size="48" color="grey-lighten-1" class="mb-3" />
-        <div class="text-medium-emphasis">Товары не найдены</div>
-      </div>
-
-      <!-- Pagination -->
-      <v-pagination
-        v-if="cardsTotalPages > 1"
-        v-model="cardsPage"
-        :length="cardsTotalPages"
-        density="compact"
-        :total-visible="7"
-        class="d-flex justify-center mt-4"
-      />
-    </div>
+    <ProductsCards
+      v-else
+      :items="pagedProducts"
+      :total-count="filteredProducts.length"
+      :page="cardsPage"
+      :total-pages="cardsTotalPages"
+      :selected-ids="selectedIds"
+      :is-superadmin="isSuperadmin"
+      :card-photo-src="cardPhotoSrc"
+      @update:selected-ids="selectedIds = $event"
+      @update:page="cardsPage = $event"
+      @select-all="selectedIds = filteredProducts.map(p => p.id)"
+      @edit="openEdit"
+      @delete="confirmDelete"
+      @bulk-edit="openBulkEdit"
+      @toggle-active="bulkToggleActive"
+      @bulk-delete="bulkDeleteDialog = true"
+      @delete-all="deleteAllDialog = true"
+    />
 
     <!-- Add / Edit dialog -->
-    <v-dialog v-model="dialog" max-width="700" scrollable :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="text-h6 pt-4 px-6">
-          {{ editingId ? 'Редактировать товар' : 'Добавить товар' }}
-          <div v-if="editingId && editMeta.updated_by" class="text-caption text-medium-emphasis mt-1">
-            Изменено: {{ editMeta.updated_by }} — {{ formatDate(editMeta.updated_at) }}
-          </div>
-          <div v-if="editingId && editMeta.import_note" class="text-caption text-medium-emphasis mt-1">
-            {{ editMeta.import_note }}
-          </div>
-        </v-card-title>
-        <v-card-text class="px-6">
-          <v-row dense>
-            <!-- Наименование -->
-            <v-col cols="12">
-              <v-combobox
-                v-model="form.name"
-                v-model:search="nameSearch"
-                :items="nameSuggestions"
-                no-filter
-                label="Наименование *"
-                variant="outlined" density="compact"
-                :rules="[v => !!v || 'Обязательное поле']"
-                :hint="isDuplicateName ? '⚠ Товар с таким названием уже есть в каталоге' : ''"
-                :persistent-hint="isDuplicateName"
-              >
-                <template #item="{ item, props }">
-                  <v-list-item v-bind="props" :title="item.raw">
-                    <template #append>
-                      <v-chip size="x-small" color="warning" variant="tonal">уже есть</v-chip>
-                    </template>
-                  </v-list-item>
-                </template>
-              </v-combobox>
-            </v-col>
-
-            <!-- Товар / Услуга -->
-            <v-col cols="12" md="3">
-              <v-select v-model="form.item_kind"
-                :items="[{ title: 'Товар', value: 'товар' }, { title: 'Услуга', value: 'услуга' }]"
-                label="Товар / Услуга" variant="outlined" density="compact" />
-            </v-col>
-
-            <!-- Тип — свободный текст с подсказками -->
-            <v-col cols="12" md="4">
-              <v-combobox v-model="form.product_type"
-                :items="typeOptions"
-                label="Тип товара"
-                variant="outlined" density="compact" clearable
-                hint="Напр.: Ноутбук, Тренажёр, Ткань" persistent-hint />
-            </v-col>
-
-            <!-- Категория — свободный текст с подсказками -->
-            <v-col cols="12" md="5">
-              <v-combobox v-model="form.category"
-                :items="categoryOptions"
-                label="Категория" variant="outlined" density="compact" clearable
-                hint="Выберите или введите новую" persistent-hint />
-            </v-col>
-
-            <!-- Единица измерения (владелец, 2026-09-01) -->
-            <v-col cols="12" md="3">
-              <v-text-field v-model="form.unit"
-                label="Ед. изм." variant="outlined" density="compact" clearable
-                hint="шт, компл., кг…" persistent-hint />
-            </v-col>
-
-            <!-- Страна производства -->
-            <v-col cols="12" md="6">
-              <v-text-field v-model="form.country_origin"
-                label="Страна производства *"
-                variant="outlined" density="compact"
-                hint="Обязательно для Приложения №3 (колонка P)"
-                persistent-hint
-                :rules="[v => !!v?.trim() || 'Укажите страну производства']"
-              />
-            </v-col>
-
-            <!-- Цена (авто из ссылок или ручная) -->
-            <v-col cols="12" md="6">
-              <v-text-field v-model.number="form.price" label="Цена за ед., ₽" type="number"
-                variant="outlined" density="compact"
-                :readonly="avgPrice !== null"
-                :hint="avgPrice !== null ? 'Среднее из ссылок — ' + avgPrice.toLocaleString('ru-RU') + ' ₽' : 'Можно задать вручную или через ссылки ниже'"
-                persistent-hint />
-            </v-col>
-
-            <!-- Владелец, сессия 2026-08-29: срок актуальности не константа —
-                 по умолчанию считается по категории (+ поправка на курс доллара),
-                 но можно переопределить персонально для этого товара. -->
-            <v-col cols="12" md="6">
-              <v-text-field v-model.number="form.price_ttl_days" label="Свой срок актуальности, дней" type="number"
-                variant="outlined" density="compact" clearable
-                hint="Пусто — берётся из настроек по категории" persistent-hint />
-            </v-col>
-
-            <v-col cols="12" md="6">
-              <v-switch v-model="form.is_active" label="Активен" color="success" density="compact" hide-details class="mt-1" />
-            </v-col>
-
-            <v-col cols="12">
-              <v-textarea v-model="form.description" label="Точное описание"
-                hint="Конкретные характеристики товара"
-                variant="outlined" density="compact" rows="3" auto-grow persistent-hint />
-            </v-col>
-            <v-col cols="12">
-              <v-textarea v-model="form.description_44fz" label="Описание для 44-ФЗ"
-                hint="Допустимые интервалы характеристик для публикации закупки"
-                variant="outlined" density="compact" rows="3" auto-grow persistent-hint />
-            </v-col>
-
-            <!-- Фото -->
-            <v-col cols="12">
-              <div class="text-subtitle-2 mb-2">Фото товара</div>
-              <div v-if="photoPreview || (editingId && form.has_photo) || form.photo_url || form.photo_link" class="mb-3">
-                <img
-                  :src="photoPreview || ((editingId && form.has_photo) ? `/api/products/${editingId}/photo?v=${photoCacheBuster}` : (form.photo_url || form.photo_link))"
-                  style="max-width:100%;max-height:180px;object-fit:contain;display:block;border-radius:4px;border:1px solid #e0e0e0;background:#f5f5f5"
-                />
-                <div class="d-flex gap-2 mt-1">
-                  <v-btn
-                    v-if="editingId && form.has_photo"
-                    size="x-small" variant="text" color="error"
-                    :loading="deletingPhoto"
-                    @click="clearUploadedPhoto"
-                  >Удалить загруженное фото</v-btn>
-                  <v-btn
-                    v-if="form.photo_url?.startsWith('/api/products/photos/')"
-                    size="x-small" variant="text" color="error"
-                    @click="form.photo_url = ''"
-                  >Удалить устаревшую ссылку</v-btn>
-                </div>
-              </div>
-              <v-file-input
-                v-model="photoFileList"
-                label="Загрузить фото с компьютера"
-                accept="image/jpeg,image/jpg,image/png,image/webp,image/gif"
-                variant="outlined" density="compact"
-                prepend-icon="mdi-camera" show-size clearable
-                @update:model-value="onPhotoFileChange"
-              />
-              <div class="d-flex gap-2 align-center mt-2">
-                <v-text-field v-model="form.photo_url"
-                  label="Или внешняя ссылка на фото"
-                  variant="outlined" density="compact"
-                  prepend-inner-icon="mdi-image-outline"
-                  hide-details
-                  :disabled="!!photoFile"
-                  class="flex-grow-1"
-                />
-                <v-btn
-                  v-if="editingId && form.photo_url && (form.photo_url.startsWith('http://') || form.photo_url.startsWith('https://'))"
-                  variant="tonal" color="teal" size="small" :loading="downloadingPhoto"
-                  prepend-icon="mdi-image-sync"
-                  @click="downloadSinglePhoto"
-                >Скачать</v-btn>
-              </div>
-              <v-text-field v-model="form.photo_link" label="Запасная ссылка" variant="outlined"
-                density="compact" prepend-inner-icon="mdi-link" class="mt-2" />
-            </v-col>
-
-            <!-- Ссылки для сравнения цен -->
-            <v-col cols="12">
-              <div class="text-subtitle-2 mb-2">
-                Ссылки для сравнения цен
-                <span v-if="avgPrice !== null" class="text-caption font-weight-bold text-blue-darken-2 ml-2">
-                  ср. {{ avgPrice.toLocaleString('ru-RU') }} ₽
-                </span>
-              </div>
-              <div v-for="(link, i) in form.priceLinks" :key="i" class="d-flex gap-2 mb-2 align-center">
-                <v-text-field
-                  v-model="link.url"
-                  :label="'Ссылка ' + (i + 1)"
-                  variant="outlined" density="compact" hide-details
-                  prepend-inner-icon="mdi-link"
-                  class="flex-grow-1"
-                />
-                <v-text-field
-                  v-model.number="link.price"
-                  label="Цена, ₽"
-                  type="number" variant="outlined" density="compact" hide-details
-                  style="max-width: 140px"
-                />
-                <div class="d-flex flex-column gap-1">
-                  <v-btn
-                    v-if="link.url"
-                    icon="mdi-open-in-new" variant="text" size="x-small"
-                    color="primary"
-                    :href="link.url" target="_blank"
-                  />
-                  <v-btn
-                    icon="mdi-minus-circle" variant="text" size="x-small"
-                    color="error"
-                    @click="removePriceLink(i)"
-                  />
-                </div>
-              </div>
-              <v-btn prepend-icon="mdi-plus" variant="tonal" size="small" color="primary" @click="addPriceLink">
-                Добавить ссылку
-              </v-btn>
-            </v-col>
-          </v-row>
-        </v-card-text>
-        <v-card-actions class="px-6 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="dialog = false">Отмена</v-btn>
-          <v-btn color="primary" :loading="saving" @click="save">
-            {{ editingId ? 'Сохранить' : 'Добавить' }}
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ProductFormDialog
+      v-model="dialog"
+      v-model:name-search="nameSearch"
+      :mobile="mobile"
+      :editing-id="editingId"
+      :edit-meta="editMeta"
+      :form="form"
+      :name-suggestions="nameSuggestions"
+      :is-duplicate-name="isDuplicateName"
+      :type-options="typeOptions"
+      :category-options="categoryOptions"
+      :avg-price="avgPrice"
+      :photo-preview="photoPreview"
+      :photo-file="photoFile"
+      :photo-file-list="photoFileList"
+      :photo-cache-buster="photoCacheBuster"
+      :downloading-photo="downloadingPhoto"
+      :deleting-photo="deletingPhoto"
+      :saving="saving"
+      @save="save"
+      @clear-photo="clearUploadedPhoto"
+      @download-photo="downloadSinglePhoto"
+      @photo-file-change="onPhotoFileChange"
+      @add-price-link="addPriceLink"
+      @remove-price-link="removePriceLink"
+    />
 
     <!-- Delete confirm -->
-    <v-dialog v-model="deleteDialog" max-width="400">
-      <v-card>
-        <v-card-title class="text-h6 pt-4 px-6">Удалить товар?</v-card-title>
-        <v-card-text class="px-6">
-          <strong>{{ deleteTarget?.name }}</strong> будет удалён из каталога.
-        </v-card-text>
-        <v-card-actions class="px-6 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="deleteDialog = false">Отмена</v-btn>
-          <v-btn color="error" :loading="deleting" @click="doDelete">Удалить</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ProductDeleteDialog
+      v-model="deleteDialog"
+      :target="deleteTarget"
+      :deleting="deleting"
+      @confirm="doDelete"
+    />
 
     <!-- Bulk delete confirm -->
-    <v-dialog v-model="bulkDeleteDialog" max-width="420">
-      <v-card>
-        <v-card-title class="text-h6 pt-4 px-6">Удалить товары?</v-card-title>
-        <v-card-text class="px-6">
-          Будет удалено <strong>{{ selectedIds.length }}</strong> товаров из каталога.
-          Позиции в закупках, где эти товары были выбраны, сохранятся, но ссылка на карточку товара будет очищена.
-        </v-card-text>
-        <v-card-actions class="px-6 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="bulkDeleteDialog = false">Отмена</v-btn>
-          <v-btn color="error" :loading="bulkDeleting" @click="doBulkDelete">Удалить {{ selectedIds.length }} товаров</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ProductsBulkDeleteDialog
+      v-model="bulkDeleteDialog"
+      :count="selectedIds.length"
+      :deleting="bulkDeleting"
+      @confirm="doBulkDelete"
+    />
 
     <!-- Bulk edit category/type -->
-    <v-dialog v-model="bulkEditDialog" max-width="460">
-      <v-card>
-        <v-card-title class="text-h6 pt-4 px-6">Массовое изменение ({{ selectedIds.length }})</v-card-title>
-        <v-card-text class="px-6">
-          <v-combobox
-            v-model="bulkEditCategory" :items="categoryOptions"
-            label="Новая категория" variant="outlined" density="compact"
-            clearable hide-details class="mb-3"
-          />
-          <v-combobox
-            v-model="bulkEditType" :items="typeOptions"
-            label="Новый вид (тип)" variant="outlined" density="compact"
-            clearable hide-details
-          />
-          <div class="text-caption text-medium-emphasis mt-2">Пустое поле — значение не меняется.</div>
-        </v-card-text>
-        <v-card-actions class="px-6 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="bulkEditDialog = false">Отмена</v-btn>
-          <v-btn color="primary" :loading="bulkEditing" @click="doBulkEdit">Применить к {{ selectedIds.length }}</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ProductsBulkEditDialog
+      v-model="bulkEditDialog"
+      v-model:category="bulkEditCategory"
+      v-model:type="bulkEditType"
+      :count="selectedIds.length"
+      :editing="bulkEditing"
+      :category-options="categoryOptions"
+      :type-options="typeOptions"
+      @confirm="doBulkEdit"
+    />
 
     <!-- Delete ALL confirm (superadmin only) -->
-    <v-dialog v-model="deleteAllDialog" max-width="480">
-      <v-card>
-        <v-card-title class="text-h6 pt-4 px-6 text-error">Удалить ВСЕ товары?</v-card-title>
-        <v-card-text class="px-6">
-          Будут удалены <strong>все {{ products.length }}</strong> товаров из каталога.
-          Это действие необратимо. Для подтверждения введите слово <strong>УДАЛИТЬ</strong>.
-        </v-card-text>
-        <v-text-field v-model="deleteAllConfirm" label="Введите УДАЛИТЬ" variant="outlined" density="compact" class="mx-6" hide-details />
-        <v-card-actions class="px-6 pb-4 pt-3">
-          <v-spacer />
-          <v-btn variant="text" @click="deleteAllDialog = false; deleteAllConfirm = ''">Отмена</v-btn>
-          <v-btn color="error" :loading="deletingAll" :disabled="deleteAllConfirm !== 'УДАЛИТЬ'" @click="doDeleteAll">Удалить все</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ProductsDeleteAllDialog
+      v-model="deleteAllDialog"
+      v-model:confirm-text="deleteAllConfirm"
+      :total-count="products.length"
+      :deleting="deletingAll"
+      @confirm="doDeleteAll"
+    />
 
     <!-- Import dialog -->
-    <v-dialog v-model="importDialog.show" max-width="540" persistent :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="text-h6 pt-4 px-6">Импорт товаров из Excel</v-card-title>
-        <v-card-text class="px-6">
-          <!-- Step 1: upload -->
-          <template v-if="importDialog.step === 1">
-            <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-information-outline">
-              <div class="text-body-2">
-                <strong>Форматы:</strong> Excel (.xlsx, .xls)<br>
-                <strong>Заголовки:</strong> определяются автоматически по ключевым словам — могут быть в любой строке<br>
-                <strong>Лист:</strong> любое название — система прочитает первый или предложит выбрать
-              </div>
-            </v-alert>
-            <p class="text-body-2 text-medium-emphasis mb-4">
-              Загрузите файл .xlsx. Обязательная колонка:<br>
-              <strong>Наименование</strong> (или «Название», «Товар»).<br>
-              Необязательные: Описание, Категория, Вид, Цена (или «Стоимость»),
-              Ссылка 1…3, Цена ссылки 1…3,
-              Фото (URL), Многоразовое, Активен, Категория ФЭО.
-            </p>
-            <v-file-input
-              v-model="importDialog.fileList"
-              label="Файл Excel (.xlsx)"
-              accept=".xlsx,.xls"
-              variant="outlined" density="compact"
-              prepend-icon="mdi-file-excel"
-              show-size
-              @update:model-value="importDialog.file = Array.isArray($event) ? ($event[0] ?? null) : ($event ?? null)"
-            />
-          </template>
-
-          <!-- Step 2: results -->
-          <template v-else>
-            <v-alert v-if="importDialog.result && !importDialog.result.headers_found?.name" type="error" variant="tonal" class="mb-3">
-              Колонка <strong>«Наименование»</strong> не найдена в файле!<br>
-              Все строки пропущены. Проверьте заголовки в первой строке Excel.
-              <div v-if="importDialog.result.headers_raw?.length" class="mt-2 text-caption">
-                Найденные заголовки: <strong>{{ importDialog.result.headers_raw.filter((h: any) => h).join(', ') }}</strong>
-              </div>
-            </v-alert>
-            <v-alert v-else-if="importDialog.result" :type="importDialog.result.created > 0 ? 'success' : 'warning'" variant="tonal" class="mb-3">
-              Создано: <strong>{{ importDialog.result.created }}</strong> &nbsp;
-              Пропущено: <strong>{{ importDialog.result.skipped }}</strong>
-            </v-alert>
-            <div v-if="importDialog.result?.headers_found && Object.keys(importDialog.result.headers_found).length" class="mb-3">
-              <div class="text-caption text-medium-emphasis">Распознанные колонки:
-                <span v-for="(header, field) in importDialog.result.headers_found" :key="field" class="mr-2">
-                  <v-chip size="x-small" color="primary" variant="tonal">{{ header }}</v-chip>
-                </span>
-              </div>
-            </div>
-            <div v-if="importDialog.result?.errors?.length" class="mt-2">
-              <div class="text-subtitle-2 mb-1 text-error">Ошибки ({{ importDialog.result.errors.length }}):</div>
-              <v-list density="compact" class="bg-error-lighten-5 rounded">
-                <v-list-item v-for="e in importDialog.result.errors" :key="e.row"
-                  :subtitle="`Стр. ${e.row}: ${e.name} — ${e.message}`" />
-              </v-list>
-            </div>
-          </template>
-        </v-card-text>
-        <v-card-actions class="px-6 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="closeImportDialog">{{ importDialog.step === 2 ? 'Закрыть' : 'Отмена' }}</v-btn>
-          <v-btn v-if="importDialog.step === 1" color="primary" :loading="importDialog.loading"
-            :disabled="!importDialog.file" @click="doImport">Загрузить</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ProductsImportDialog
+      :dialog="importDialog"
+      :mobile="mobile"
+      @close="closeImportDialog"
+      @import="doImport"
+    />
 
     <!-- Download photos dialog -->
-    <v-dialog v-model="dlPhotoDialog.show" max-width="480" persistent :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="text-h6 pt-4 px-6">
-          <v-icon icon="mdi-image-sync" class="mr-2" />Скачать фото по ссылкам
-        </v-card-title>
-        <v-card-text class="px-6">
-          <template v-if="!dlPhotoDialog.result">
-            <p class="text-body-2 text-medium-emphasis">
-              Для всех товаров, у которых есть ссылка на фото (но нет локальной копии),
-              будет скачана фотография и сохранена в базе данных.
-            </p>
-            <v-alert v-if="dlPhotoDialog.loading" type="info" variant="tonal" class="mt-3">
-              <v-progress-circular indeterminate size="16" width="2" class="mr-2" />
-              Скачивание... может занять несколько минут
-            </v-alert>
-          </template>
-          <template v-else>
-            <v-alert type="success" variant="tonal" class="mb-3">
-              Обновлено: <strong>{{ dlPhotoDialog.result.updated }}</strong> &nbsp;
-              Пропущено: <strong>{{ dlPhotoDialog.result.skipped }}</strong>
-            </v-alert>
-            <div v-if="dlPhotoDialog.result.errors?.length" class="mt-2">
-              <div class="text-subtitle-2 mb-1 text-error">Ошибки ({{ dlPhotoDialog.result.errors.length }}):</div>
-              <v-list density="compact" class="rounded" style="max-height:160px;overflow-y:auto">
-                <v-list-item v-for="e in dlPhotoDialog.result.errors" :key="e.id"
-                  :subtitle="`#${e.id} ${e.name}: ${e.error}`" />
-              </v-list>
-            </div>
-          </template>
-        </v-card-text>
-        <v-card-actions class="px-6 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="dlPhotoDialog.show = false; dlPhotoDialog.result = null">Закрыть</v-btn>
-          <v-btn v-if="!dlPhotoDialog.result" color="teal" :loading="dlPhotoDialog.loading"
-            prepend-icon="mdi-download" @click="doDownloadAllPhotos">Скачать</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ProductsDownloadPhotosDialog
+      :dialog="dlPhotoDialog"
+      :mobile="mobile"
+      @download="doDownloadAllPhotos"
+    />
 
     <!-- Column configurator dialog -->
-    <v-dialog v-model="colConfigDialog" max-width="360" scrollable>
-      <v-card>
-        <v-card-title class="text-h6 pt-4 px-5 d-flex align-center justify-space-between">
-          Порядок столбцов
-          <v-btn variant="text" size="small" prepend-icon="mdi-restore" @click="resetColOrder">Сбросить</v-btn>
-        </v-card-title>
-        <v-card-subtitle class="px-5 pb-2 text-caption text-medium-emphasis">
-          Перетащите строки, чтобы изменить порядок
-        </v-card-subtitle>
-        <v-card-text class="px-3 py-0">
-          <v-list density="compact">
-            <v-list-item
-              v-for="(key, idx) in colOrder"
-              :key="key"
-              :draggable="true"
-              @dragstart="onDragStart(idx)"
-              @dragover="onDragOver($event, idx)"
-              @dragend="onDragEnd"
-              :style="dragSrcIdx === idx ? 'opacity:0.4' : ''"
-              class="col-drag-item px-2"
-              rounded="sm"
-            >
-              <template #prepend>
-                <v-icon icon="mdi-drag-vertical" color="grey" size="20" class="mr-1" style="cursor:grab" />
-              </template>
-              <v-list-item-title class="text-body-2">
-                {{ ALL_COLUMNS.find(c => c.key === key)?.title || key }}
-              </v-list-item-title>
-              <template #append>
-                <v-btn icon="mdi-chevron-up" variant="text" size="x-small" :disabled="idx === 0" @click="moveCol(idx, -1)" />
-                <v-btn icon="mdi-chevron-down" variant="text" size="x-small" :disabled="idx === colOrder.length - 1" @click="moveCol(idx, 1)" />
-              </template>
-            </v-list-item>
-          </v-list>
-        </v-card-text>
-        <v-card-actions class="px-5 pb-4">
-          <v-spacer />
-          <v-btn color="primary" @click="colConfigDialog = false">Готово</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ProductsColumnConfigDialog
+      v-model="colConfigDialog"
+      :col-order="colOrder"
+      :drag-src-idx="dragSrcIdx"
+      :all-columns="ALL_COLUMNS"
+      @reset="resetColOrder"
+      @drag-start="onDragStart"
+      @drag-over="onDragOver"
+      @drag-end="onDragEnd"
+      @move="moveCol"
+    />
 
     <!-- Dedup preview dialog -->
-    <v-dialog v-model="dupDialog.show" max-width="900" scrollable :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="d-flex align-center pt-4 px-6">
-          <v-icon icon="mdi-content-duplicate" color="warning" class="mr-2" />
-          Найденные дубликаты
-          <v-spacer />
-          <v-chip color="warning" variant="tonal" size="small">
-            Групп: {{ dupDialog.groups.length }} · Будет удалено: {{ totalDupsToDelete }}
-          </v-chip>
-        </v-card-title>
-        <v-card-text class="px-6">
-          <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
-            Из каждой группы остаётся <strong>один эталон</strong> (с фото / описанием / ссылками — приоритет автоматический). Остальные товары удаляются, но все их позиции в закупках перепривязываются к эталону. <strong>Точные совпадения (100%)</strong> отмечены галочкой по умолчанию. <strong>Неполные совпадения (80–99%)</strong> нужно подтвердить галочкой вручную.
-          </v-alert>
-          <v-expansion-panels variant="accordion">
-            <v-expansion-panel v-for="(grp, idx) in dupDialog.groups" :key="idx">
-              <v-expansion-panel-title>
-                <div class="d-flex align-center w-100 ga-2">
-                  <v-icon icon="mdi-trophy" color="success" size="20" />
-                  <span class="text-body-2 font-weight-medium">{{ grp.winner.name }}</span>
-                  <v-chip v-if="grp.winner.product_type" size="x-small" color="grey" variant="tonal">{{ grp.winner.product_type }}</v-chip>
-                  <v-spacer />
-                  <v-chip size="x-small" color="warning" variant="tonal">{{ grp.duplicates.length }} дубл.</v-chip>
-                </div>
-              </v-expansion-panel-title>
-              <v-expansion-panel-text>
-                <div class="text-caption text-medium-emphasis mb-2">Останется (эталон):</div>
-                <v-list-item class="bg-grey-lighten-4 mb-2 rounded">
-                  <template #prepend><v-icon icon="mdi-check-circle" color="success" /></template>
-                  <v-list-item-title>{{ grp.winner.name }}</v-list-item-title>
-                  <v-list-item-subtitle>
-                    {{ grp.winner.category || '—' }}
-                    <span v-if="grp.winner.has_photo">· фото</span>
-                    <span v-if="grp.winner.has_description">· описание</span>
-                  </v-list-item-subtitle>
-                </v-list-item>
-                <div class="text-caption text-medium-emphasis mb-2 mt-2">Удалится (дубликаты):</div>
-                <v-list density="compact">
-                  <v-list-item v-for="dup in grp.duplicates" :key="dup.id">
-                    <template #prepend>
-                      <v-checkbox
-                        :model-value="!dupDialog.skipIds.has(dup.id)"
-                        density="compact" hide-details
-                        @update:model-value="toggleSkip(dup.id)"
-                      />
-                    </template>
-                    <v-list-item-title :class="{ 'text-decoration-line-through text-medium-emphasis': !dupDialog.skipIds.has(dup.id) }">
-                      {{ dup.name }}
-                      <v-chip v-if="dup.match === 'exact'" size="x-small" color="success" variant="tonal" class="ml-2">100%</v-chip>
-                      <v-chip v-else size="x-small" color="warning" variant="tonal" class="ml-2">{{ dup.score }}% · подтвердите</v-chip>
-                    </v-list-item-title>
-                    <v-list-item-subtitle>
-                      {{ dup.category || '—' }}
-                      <span v-if="dup.has_photo">· фото</span>
-                      <span v-if="dup.has_description">· описание</span>
-                    </v-list-item-subtitle>
-                  </v-list-item>
-                </v-list>
-              </v-expansion-panel-text>
-            </v-expansion-panel>
-          </v-expansion-panels>
-        </v-card-text>
-        <v-card-actions class="px-6 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="dupDialog.show = false">Отмена</v-btn>
-          <v-btn color="warning" variant="flat" :loading="deduplicating" :disabled="totalDupsToDelete === 0" @click="confirmDeduplicate">
-            Удалить {{ totalDupsToDelete }} дубл.
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ProductsDedupDialog
+      :dialog="dupDialog"
+      :total-to-delete="totalDupsToDelete"
+      :deduplicating="deduplicating"
+      :mobile="mobile"
+      @toggle-skip="toggleSkip"
+      @confirm="confirmDeduplicate"
+    />
 
-    <!-- Актуализация цены (владелец, сессия 2026-08-29: «цена может быть уже
-         неактуальна, надо показывать дату актуализации и уметь её обновить») -->
-    <v-dialog v-model="actualizeDialog.show" max-width="560" scrollable :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="text-h6 pt-4 px-6">
-          Актуализация цены
-          <div v-if="actualizeDialog.product" class="text-caption text-medium-emphasis mt-1" style="white-space:normal">
-            {{ actualizeDialog.product.name }}
-          </div>
-        </v-card-title>
-        <v-card-text class="px-6">
-          <v-alert v-if="actualizeDialog.product?.price_freshness" type="info" variant="tonal" density="compact" class="mb-3">
-            Текущий статус: {{ actualizeDialog.product.price_freshness.label }}
-          </v-alert>
-          <v-row dense>
-            <v-col cols="12" sm="6">
-              <v-text-field v-model.number="actualizeForm.price" label="Цена, ₽ *" type="number"
-                variant="outlined" density="compact" />
-            </v-col>
-            <v-col cols="12" sm="6">
-              <v-text-field v-model="actualizeForm.collected_at" label="Дата актуализации" type="date"
-                variant="outlined" density="compact" />
-            </v-col>
-            <v-col cols="12" sm="6">
-              <v-select v-model="actualizeForm.source" :items="priceSourceOptions"
-                label="Источник *" variant="outlined" density="compact" />
-            </v-col>
-            <v-col cols="12" sm="6">
-              <v-text-field v-model="actualizeForm.source_ref" label="Номер/ссылка"
-                placeholder="напр. 123-ОК или Запрос КП №7"
-                variant="outlined" density="compact" />
-            </v-col>
-            <v-col cols="12">
-              <ContractorPicker v-model="actualizeForm.contractor_id" label="Контрагент (поставщик)" />
-            </v-col>
-            <v-col cols="12">
-              <v-textarea v-model="actualizeForm.note" label="Примечание" rows="2" auto-grow
-                variant="outlined" density="compact" />
-            </v-col>
-          </v-row>
-
-          <v-divider class="my-3" />
-          <div class="d-flex align-center justify-space-between mb-2">
-            <span class="text-subtitle-2">История актуализаций</span>
-            <v-progress-circular v-if="actualizeDialog.historyLoading" indeterminate size="16" width="2" />
-          </div>
-          <div v-if="!actualizeDialog.historyLoading && !actualizeDialog.history.length" class="text-caption text-medium-emphasis">
-            Актуализаций ещё не было.
-          </div>
-          <v-table v-else density="compact">
-            <thead>
-              <tr><th>Дата</th><th>Цена</th><th>Источник</th><th>Кто</th></tr>
-            </thead>
-            <tbody>
-              <tr v-for="h in actualizeDialog.history" :key="h.id">
-                <td>{{ formatDateDDMMYYYY(h.collected_at || h.created_at) || '—' }}</td>
-                <td>{{ Number(h.price).toLocaleString('ru-RU') }} ₽</td>
-                <td>{{ PRICE_SOURCE_LABELS[h.source] || h.source }}{{ h.source_ref ? ` · ${h.source_ref}` : '' }}</td>
-                <td>{{ h.created_by || '—' }}</td>
-              </tr>
-            </tbody>
-          </v-table>
-        </v-card-text>
-        <v-card-actions class="px-6 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="actualizeDialog.show = false">Отмена</v-btn>
-          <v-btn color="primary" :loading="actualizeDialog.saving" :disabled="!actualizeForm.price || !actualizeForm.source" @click="saveActualization">
-            Сохранить
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
+    <!-- Актуализация цены -->
+    <ProductsActualizeDialog
+      :dialog="actualizeDialog"
+      :form="actualizeForm"
+      :price-source-options="priceSourceOptions"
+      :mobile="mobile"
+      @save="saveActualization"
+    />
   </v-container>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, reactive, watch } from 'vue'
-import { apiFetch } from '@/api'
-import { useCardView } from '@/composables/useCardView'
+import { onMounted } from 'vue'
 import { useToast, type ToastType } from '@/composables/useToast'
-import ContractorPicker from '@/components/ContractorPicker.vue'
-import {
-  type PriceFreshness,
-  PRICE_SOURCE_LABELS,
-  PRICE_STALE_CLASS,
-  formatPriceStamp,
-  formatDateDDMMYYYY,
-  freshnessColor,
-  freshnessIcon,
-  freshnessTooltip,
-} from '@/composables/usePriceFreshness'
-import { numOrNull } from '@/utils/numberFormat'
 
-interface PriceLink { url: string; price: number | null }
-interface Product {
-  id: number; name: string; category?: string; product_type?: string; item_kind?: string
-  unit?: string | null  // Единица измерения (владелец, 2026-09-01)
-  price?: number; description?: string; description_44fz?: string; photo_url?: string
-  photo_link?: string; clarification_link?: string
-  is_active: boolean; is_reusable?: boolean; feo_category_id?: number
-  price_links?: PriceLink[]
-  contract_price?: number; contract_number?: string; contract_date?: string; contract_org_id?: number; price_shared?: boolean
-  tz_verified_at?: string; tz_verified_by?: string
-  tz_44fz_verified_at?: string; tz_44fz_verified_by?: string
-  has_photo?: boolean; photo_size?: number; photo_mime?: string
-  country_origin?: string
-  // Владелец, сессия 2026-08-29: «показывать дату последней актуализации цены,
-  // устаревшее — подсвечивать». Backend считает всю TTL/FX-логику (см. ProductOut).
-  price_updated_at?: string | null
-  price_source?: string | null
-  price_source_ref?: string | null
-  price_source_contractor_id?: number | null
-  price_ttl_days?: number | null
-  price_freshness?: PriceFreshness | null
-}
+import ProductsToolbar from '@/components/products/ProductsToolbar.vue'
+import ProductsFilterBar from '@/components/products/ProductsFilterBar.vue'
+import ProductsTable from '@/components/products/ProductsTable.vue'
+import ProductsCards from '@/components/products/ProductsCards.vue'
+import ProductFormDialog from '@/components/products/ProductFormDialog.vue'
+import ProductDeleteDialog from '@/components/products/ProductDeleteDialog.vue'
+import ProductsBulkDeleteDialog from '@/components/products/ProductsBulkDeleteDialog.vue'
+import ProductsBulkEditDialog from '@/components/products/ProductsBulkEditDialog.vue'
+import ProductsDeleteAllDialog from '@/components/products/ProductsDeleteAllDialog.vue'
+import ProductsImportDialog from '@/components/products/ProductsImportDialog.vue'
+import ProductsDownloadPhotosDialog from '@/components/products/ProductsDownloadPhotosDialog.vue'
+import ProductsColumnConfigDialog from '@/components/products/ProductsColumnConfigDialog.vue'
+import ProductsDedupDialog from '@/components/products/ProductsDedupDialog.vue'
+import ProductsActualizeDialog from '@/components/products/ProductsActualizeDialog.vue'
 
-interface PriceHistoryEntry {
-  id: number; price: number; source: string; source_ref?: string | null
-  contractor_id?: number | null; collected_at?: string | null; note?: string | null
-  created_by?: string | null; created_at?: string
-}
-
-// «РФ» — актуальный формат; «Россия» остаётся у старых записей до миграции/повторного сохранения.
-const DOMESTIC_COUNTRY_VALUES = new Set(['РФ', 'Россия'])
-function isDomesticCountry(v?: string | null): boolean {
-  return !!v && DOMESTIC_COUNTRY_VALUES.has(v.trim())
-}
+import { useProductsData } from '@/composables/products/useProductsData'
+import { useProductsColumns, ALL_COLUMNS } from '@/composables/products/useProductsColumns'
+import { useProductsForm } from '@/composables/products/useProductsForm'
+import { useProductsDelete } from '@/composables/products/useProductsDelete'
+import { useProductsBulkEdit } from '@/composables/products/useProductsBulkEdit'
+import { useProductsImport } from '@/composables/products/useProductsImport'
+import { useProductsPhotos } from '@/composables/products/useProductsPhotos'
+import { useProductsDedup } from '@/composables/products/useProductsDedup'
+import { useProductsTz } from '@/composables/products/useProductsTz'
+import { useProductsActualize } from '@/composables/products/useProductsActualize'
 
 const userRole = localStorage.getItem('user_role') || ''
 const isSuperadmin = userRole === 'superadmin'
 const isAdmin = userRole === 'admin' || userRole === 'superadmin'
 
-const products = ref<Product[]>([])
-const loading  = ref(false)
-const saving   = ref(false)
-const deleting = ref(false)
-const bulkDeleting = ref(false)
-const deletingAll = ref(false)
-const dialog      = ref(false)
-const deleteDialog = ref(false)
-const bulkDeleteDialog = ref(false)
-const deleteAllDialog = ref(false)
-const deleteAllConfirm = ref('')
-const deleteTarget = ref<Product | null>(null)
-const editingId    = ref<number | null>(null)
-const selectedIds  = ref<number[]>([])
-const search         = ref('')
-const filterType     = ref<string[]>([])
-const filterCategory = ref<string[]>([])
-const filterActive   = ref<boolean | null>(null)
-const filterPriceMin = ref<number | null>(null)
-const filterPriceMax = ref<number | null>(null)
-// Владелец, сессия 2026-08-29: «подсвечивать требующие актуализации» — быстрый
-// фильтр + счётчик, сколько таких товаров в каталоге прямо сейчас.
-const filterStaleOnly = ref(false)
-
-// Photo upload state
-const photoFile     = ref<File | null>(null)
-const photoFileList = ref<File[]>([])
-const photoPreview  = ref<string | null>(null)
-
 const toast = useToast()
 const showSnack = (text: string, color: ToastType = 'success') => { toast.addToast(text, color) }
 
-const deduplicating = ref(false)
-interface DupProduct { id: number; name: string; category?: string; product_type?: string; has_photo?: boolean; has_description?: boolean; score?: number; match?: 'exact' | 'fuzzy' }
-interface DupGroup { winner: DupProduct; duplicates: DupProduct[] }
-const dupDialog = reactive({
-  show: false,
-  groups: [] as DupGroup[],
-  skipIds: new Set<number>(),
-})
-
-async function deduplicateProducts() {
-  deduplicating.value = true
-  try {
-    const result = await apiFetch<{ groups: DupGroup[]; total_groups: number; total_to_delete: number }>(
-      '/products/deduplicate?dry_run=true', { method: 'POST' },
-    )
-    if (!result.total_groups) {
-      showSnack('Дубликатов не найдено')
-      return
-    }
-    dupDialog.groups = result.groups
-    dupDialog.skipIds = new Set()
-    for (const g of result.groups) for (const d of g.duplicates) if (d.match === 'fuzzy') dupDialog.skipIds.add(d.id)
-    dupDialog.show = true
-  } catch (e: any) {
-    showSnack(e.message || 'Ошибка поиска дубликатов', 'error')
-  } finally {
-    deduplicating.value = false
-  }
-}
-
-const totalDupsToDelete = computed(() =>
-  dupDialog.groups.reduce(
-    (sum, g) => sum + g.duplicates.filter(d => !dupDialog.skipIds.has(d.id)).length,
-    0,
-  ),
-)
-
-async function confirmDeduplicate() {
-  deduplicating.value = true
-  try {
-    const skipCsv = Array.from(dupDialog.skipIds).join(',')
-    const url = `/products/deduplicate${skipCsv ? `?skip_ids=${skipCsv}` : ''}`
-    const result = await apiFetch<{ deleted: number; kept: number }>(url, { method: 'POST' })
-    showSnack(`Удалено дублей: ${result.deleted}, оставлено: ${result.kept}`)
-    dupDialog.show = false
-    if (result.deleted > 0) await load()
-  } catch (e: any) {
-    showSnack(e.message || 'Ошибка дедупликации', 'error')
-  } finally {
-    deduplicating.value = false
-  }
-}
-
-function toggleSkip(id: number) {
-  if (dupDialog.skipIds.has(id)) dupDialog.skipIds.delete(id)
-  else dupDialog.skipIds.add(id)
-}
-
-const tzVerifying = ref<string | null>(null)
-async function verifyTz(item: Product, tzType: 'standard' | '44fz') {
-  tzVerifying.value = `${item.id}_${tzType}`
-  try {
-    const updated = await apiFetch<Product>(`/products/${item.id}/verify-tz?tz_type=${tzType}`, { method: 'PATCH' })
-    const idx = products.value.findIndex(p => p.id === item.id)
-    if (idx !== -1) products.value[idx] = { ...products.value[idx], ...updated }
-    showSnack('ТЗ подтверждено')
-  } catch {
-    showSnack('Ошибка подтверждения ТЗ', 'error')
-  } finally {
-    tzVerifying.value = null
-  }
-}
-
-async function unverifyTz(item: Product, tzType: 'standard' | '44fz') {
-  tzVerifying.value = `${item.id}_${tzType}`
-  try {
-    const updated = await apiFetch<Product>(`/products/${item.id}/verify-tz?tz_type=${tzType}`, { method: 'DELETE' })
-    const idx = products.value.findIndex(p => p.id === item.id)
-    if (idx !== -1) products.value[idx] = { ...products.value[idx], ...updated }
-    showSnack('Отметка снята')
-  } catch {
-    showSnack('Ошибка снятия отметки', 'error')
-  } finally {
-    tzVerifying.value = null
-  }
-}
-
-// ── Price actualization (владелец, сессия 2026-08-29) ───────────────────────
-const priceSourceOptions = Object.entries(PRICE_SOURCE_LABELS).map(([value, title]) => ({ value, title }))
-
-const actualizeDialog = reactive({
-  show: false,
-  product: null as Product | null,
-  history: [] as PriceHistoryEntry[],
-  historyLoading: false,
-  saving: false,
-})
-const actualizeForm = reactive({
-  price: null as number | null,
-  collected_at: new Date().toISOString().slice(0, 10),
-  source: 'manual' as string,
-  source_ref: '',
-  contractor_id: null as number | null,
-  note: '',
-})
-
-async function openActualizeDialog(p: Product) {
-  actualizeDialog.product = p
-  actualizeDialog.history = []
-  actualizeForm.price = p.price ?? null
-  actualizeForm.collected_at = new Date().toISOString().slice(0, 10)
-  actualizeForm.source = 'manual'
-  actualizeForm.source_ref = ''
-  actualizeForm.contractor_id = p.price_source_contractor_id ?? null
-  actualizeForm.note = ''
-  actualizeDialog.show = true
-
-  actualizeDialog.historyLoading = true
-  try {
-    actualizeDialog.history = await apiFetch<PriceHistoryEntry[]>(`/products/${p.id}/price-history`)
-  } catch (e: any) {
-    showSnack(e?.payload?.message || e?.detail || 'Не удалось загрузить историю актуализаций', 'error')
-  } finally {
-    actualizeDialog.historyLoading = false
-  }
-}
-
-async function saveActualization() {
-  const p = actualizeDialog.product
-  if (!p || !actualizeForm.price || !actualizeForm.source) return
-  actualizeDialog.saving = true
-  try {
-    const updated = await apiFetch<Product>(`/products/${p.id}/price-actualization`, {
-      method: 'POST',
-      body: {
-        price: actualizeForm.price,
-        source: actualizeForm.source,
-        source_ref: actualizeForm.source_ref?.trim() || null,
-        contractor_id: actualizeForm.contractor_id || null,
-        collected_at: actualizeForm.collected_at || null,
-        note: actualizeForm.note?.trim() || null,
-      },
-    })
-    const idx = products.value.findIndex(x => x.id === p.id)
-    if (idx !== -1) products.value[idx] = { ...products.value[idx], ...updated }
-    showSnack('Цена актуализирована')
-    actualizeDialog.show = false
-  } catch (e: any) {
-    showSnack(e?.payload?.message || e?.detail || `Ошибка актуализации цены (HTTP ${e?.status ?? '?'})`, 'error')
-  } finally {
-    actualizeDialog.saving = false
-  }
-}
-
-const emptyForm = () => ({
-  name: '', category: '', product_type: '', unit: '' as string, item_kind: 'товар' as string, price: null as number | null,
-  description: '', description_44fz: '', photo_url: '', photo_link: '', clarification_link: '',
-  is_active: true, is_reusable: true, feo_category_id: null as number | null,
-  priceLinks: [] as PriceLink[],
-  country_origin: 'РФ' as string,
-  has_photo: false as boolean,
-  price_ttl_days: null as number | null,
-})
-const form = reactive(emptyForm())
-// Bumped when we re-download / re-upload so the <img> bypasses browser cache.
-const photoCacheBuster = ref(0)
-const editMeta = reactive({ updated_at: null as string | null, updated_by: null as string | null, import_note: null as string | null })
-
-// Name autocomplete + duplicate detection
-const nameSearch = ref('')
-const nameSuggestions = computed(() => {
-  const q = (nameSearch.value || '').toLowerCase().trim()
-  if (q.length < 2) return []
-  return products.value
-    .filter(p => p.name.toLowerCase().includes(q) && p.id !== editingId.value)
-    .map(p => p.name)
-    .slice(0, 15)
-})
-const isDuplicateName = computed(() => {
-  if (!form.name) return false
-  const q = (typeof form.name === 'string' ? form.name : '').toLowerCase().trim()
-  if (!q) return false
-  return products.value.some(p => p.name.toLowerCase().trim() === q && p.id !== editingId.value)
-})
-
-// Computed options from existing data
-const typeOptions = computed(() => {
-  const types = products.value.map(p => p.product_type).filter(Boolean) as string[]
-  return [...new Set(types)].sort()
-})
-
-const categoryOptions = computed(() => {
-  const cats = products.value.map(p => p.category).filter(Boolean) as string[]
-  return [...new Set(cats)].sort()
-})
-
-// Auto-calculate average price from links
-const avgPrice = computed<number | null>(() => {
-  const prices = form.priceLinks
-    .map(l => l.price)
-    .filter((p): p is number => p !== null && p !== undefined && !isNaN(Number(p)) && Number(p) > 0)
-  if (prices.length === 0) return null
-  return Math.round(prices.reduce((s, p) => s + p, 0) / prices.length * 100) / 100
-})
-
-watch(avgPrice, (v) => { if (v !== null) form.price = v })
-
-// All available columns — порядок по умолчанию
-const ALL_COLUMNS = [
-  { title: '',          key: 'photo',              width: 56,  sortable: false, fixed: true },
-  { title: 'Наименование', key: 'name',            minWidth: 240, fixed: true },
-  { title: 'Тип',       key: 'product_type',       width: 140 },
-  { title: 'Категория', key: 'category',           minWidth: 140 },
-  { title: 'Цена',      key: 'price',              width: 130, align: 'end' as const },
-  { title: 'Цена по договору', key: 'contract_price', width: 180, align: 'end' as const },
-  { title: 'Актуальность цены', key: 'price_freshness', width: 200 },
-  { title: 'Страна',    key: 'country_origin',     width: 120 },
-  { title: 'Статус',    key: 'is_active',          width: 110 },
-  { title: 'Действия',  key: 'actions',            width: 100, sortable: false },
-  { title: 'ТЗ проверено',     key: 'tz_verified_at',      width: 160, sortable: false },
-  { title: 'ТЗ 44-ФЗ',        key: 'tz_44fz_verified_at', width: 150, sortable: false },
-]
-
-function loadColOrder(): string[] {
-  try {
-    const saved = localStorage.getItem('products_col_order')
-    if (saved) {
-      const arr = JSON.parse(saved) as string[]
-      const allKeys = ALL_COLUMNS.map(c => c.key)
-      // merge: saved + any new columns not yet in saved
-      const merged = arr.filter(k => allKeys.includes(k))
-      allKeys.forEach(k => { if (!merged.includes(k)) merged.push(k) })
-      return merged
-    }
-  } catch {}
-  return ALL_COLUMNS.map(c => c.key)
-}
-
-const colOrder = ref<string[]>(loadColOrder())
-
-const headers = computed(() => {
-  const map = Object.fromEntries(ALL_COLUMNS.map(c => [c.key, c]))
-  return colOrder.value.map(k => map[k]).filter(Boolean)
-})
-
-function saveColOrder() {
-  localStorage.setItem('products_col_order', JSON.stringify(colOrder.value))
-}
-
-// Column configurator dialog
-const colConfigDialog = ref(false)
-const dragSrcIdx = ref<number | null>(null)
-
-function onDragStart(idx: number) { dragSrcIdx.value = idx }
-function onDragOver(e: DragEvent, idx: number) {
-  e.preventDefault()
-  if (dragSrcIdx.value === null || dragSrcIdx.value === idx) return
-  const newOrder = [...colOrder.value]
-  const [moved] = newOrder.splice(dragSrcIdx.value, 1)
-  newOrder.splice(idx, 0, moved)
-  colOrder.value = newOrder
-  dragSrcIdx.value = idx
-}
-function onDragEnd() { dragSrcIdx.value = null; saveColOrder() }
-function moveCol(idx: number, dir: -1 | 1) {
-  const to = idx + dir
-  if (to < 0 || to >= colOrder.value.length) return
-  const newOrder = [...colOrder.value]
-  ;[newOrder[idx], newOrder[to]] = [newOrder[to], newOrder[idx]]
-  colOrder.value = newOrder
-  saveColOrder()
-}
-function resetColOrder() {
-  colOrder.value = ALL_COLUMNS.map(c => c.key)
-  saveColOrder()
-}
-
-const staleProductsCount = computed(() => products.value.filter(p => p.price_freshness?.is_stale).length)
-
-const filteredProducts = computed(() => {
-  let r = products.value
-  if (filterType.value.length)     r = r.filter(p => filterType.value.includes(p.product_type || ''))
-  if (filterCategory.value.length) r = r.filter(p => filterCategory.value.includes(p.category || ''))
-  if (filterActive.value !== null) r = r.filter(p => p.is_active === filterActive.value)
-  if (filterPriceMin.value !== null) r = r.filter(p => p.price != null && Number(p.price) >= filterPriceMin.value!)
-  if (filterPriceMax.value !== null) r = r.filter(p => p.price != null && Number(p.price) <= filterPriceMax.value!)
-  if (filterStaleOnly.value) r = r.filter(p => p.price_freshness?.is_stale)
-  return r
-})
+const {
+  products, loading,
+  search, filterType, filterCategory, filterActive, filterPriceMin, filterPriceMax, filterStaleOnly,
+  resetFilters, load,
+  typeOptions, categoryOptions, staleProductsCount, filteredProducts,
+  mobile, viewMode, effectiveView, cardsPage, cardsTotalPages, pagedProducts,
+  cardPhotoSrc,
+} = useProductsData(showSnack)
 
 const {
-  mobile,
-  viewMode,
-  effectiveView,
-  page: cardsPage,
-  totalPages: cardsTotalPages,
-  paged: pagedProducts,
-} = useCardView({
-  storageKey: 'products_view_mode',
-  source: () => filteredProducts.value,
-  search: () => search.value,
-  searchFields: (p: Product) => [p.name, p.description, p.product_type, p.category],
-  pageSize: 24,
-})
+  colOrder, headers, colConfigDialog, dragSrcIdx,
+  onDragStart, onDragOver, onDragEnd, moveCol, resetColOrder,
+} = useProductsColumns()
 
-function cardPhotoSrc(p: Product): string | undefined {
-  if (p.has_photo) return `/api/products/${p.id}/photo`
-  if (p.photo_url || p.photo_link) return (p.photo_url || p.photo_link) as string
-  return undefined
-}
+const {
+  saving, dialog, editingId,
+  photoFile, photoFileList, photoPreview,
+  form, photoCacheBuster, editMeta,
+  nameSearch, nameSuggestions, isDuplicateName,
+  avgPrice,
+  onPhotoFileChange, addPriceLink, removePriceLink,
+  openCreate, openEdit, save, toggleSharing,
+  downloadingPhoto, deletingPhoto, clearUploadedPhoto, downloadSinglePhoto,
+} = useProductsForm({ products, load, showSnack })
 
-// Hash-based color for any free-text type
-const PALETTE = ['blue', 'teal', 'orange', 'purple', 'pink', 'green', 'indigo', 'cyan', 'deep-orange']
-function typeColor(t: string): string {
-  const h = Math.abs([...t].reduce((acc, c) => acc * 31 + c.charCodeAt(0), 0))
-  return PALETTE[h % PALETTE.length]
-}
+const {
+  selectedIds,
+  deleting, deleteDialog, deleteTarget, confirmDelete, doDelete,
+  bulkDeleting, bulkDeleteDialog, doBulkDelete,
+  deletingAll, deleteAllDialog, deleteAllConfirm, doDeleteAll,
+  bulkToggleActive,
+} = useProductsDelete({ products, load, showSnack })
 
-function onPhotoFileChange(val: File | File[] | null) {
-  const f = Array.isArray(val) ? (val[0] ?? null) : val
-  photoFile.value = f
-  photoPreview.value = f ? URL.createObjectURL(f) : null
-  if (f) form.photo_url = ''
-}
+const {
+  bulkEditDialog, bulkEditCategory, bulkEditType, bulkEditing, openBulkEdit, doBulkEdit,
+} = useProductsBulkEdit({ selectedIds, load, showSnack })
 
-function addPriceLink() {
-  form.priceLinks.push({ url: '', price: null })
-}
-function removePriceLink(i: number) {
-  form.priceLinks.splice(i, 1)
-}
+const { importDialog, closeImportDialog, downloadTemplate, doImport } = useProductsImport({ load, showSnack })
 
-async function load() {
-  loading.value = true
-  try { products.value = await apiFetch<Product[]>('/products/') }
-  catch { showSnack('Ошибка загрузки', 'error') }
-  finally { loading.value = false }
-}
+const { dlPhotoDialog, openDownloadPhotosDialog, doDownloadAllPhotos } = useProductsPhotos({ load, showSnack })
 
-function resetPhotoState() {
-  photoFile.value = null
-  photoFileList.value = []
-  photoPreview.value = null
-}
+const {
+  deduplicating, dupDialog, deduplicateProducts, totalDupsToDelete, confirmDeduplicate, toggleSkip,
+} = useProductsDedup({ load, showSnack })
 
-function formatDate(d: string | null) {
-  if (!d) return ''
-  const dt = new Date(d)
-  return dt.toLocaleDateString('ru-RU') + ' ' + dt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
-}
+const { tzVerifying, verifyTz, unverifyTz } = useProductsTz({ products, showSnack })
 
-function openCreate() {
-  Object.assign(form, emptyForm())
-  resetPhotoState()
-  editingId.value = null
-  dialog.value = true
-}
+const {
+  priceSourceOptions, actualizeDialog, actualizeForm, openActualizeDialog, saveActualization,
+} = useProductsActualize({ products, showSnack })
 
-function onProductRowClick(_: any, { item }: { item: Product }) {
-  openEdit(item)
-}
-
-function openEdit(p: Product) {
-  Object.assign(form, {
-    name: p.name, category: p.category || '', product_type: p.product_type || '', unit: p.unit || '', item_kind: p.item_kind || 'товар',
-    price: p.price ?? null, description: p.description || '', description_44fz: p.description_44fz || '',
-    photo_url: p.photo_url || '', photo_link: p.photo_link || '',
-    clarification_link: p.clarification_link || '',
-    is_active: p.is_active, is_reusable: p.is_reusable ?? true,
-    feo_category_id: p.feo_category_id ?? null,
-    priceLinks: (p.price_links || []).map(l => ({ url: l.url, price: l.price ?? null })),
-    country_origin: p.country_origin || 'РФ',
-    has_photo: !!p.has_photo,
-    price_ttl_days: p.price_ttl_days ?? null,
-  })
-  photoCacheBuster.value = Date.now()
-  resetPhotoState()
-  editingId.value = p.id
-  editMeta.updated_at = (p as any).updated_at || null
-  editMeta.updated_by = (p as any).updated_by || null
-  editMeta.import_note = (p as any).import_note || null
-  dialog.value = true
-}
-
-async function save() {
-  if (!form.name.trim()) { showSnack('Укажите наименование', 'error'); return }
-  if (!form.country_origin?.trim()) { showSnack('Укажите страну производства', 'error'); return }
-  saving.value = true
-  try {
-    // price/link.price — v-model.number. `form.price || null` попутно ловит '',
-    // но и валидный 0 тоже схлопывает в null; `l.price ?? null` вообще не ловит ''
-    // (не null/undefined) — та самая ловушка, найденная владельцем 2026-09-04.
-    // numOrNull: '' → null, 0 сохраняется как число.
-    const payload = {
-      ...form,
-      price: numOrNull(form.price),
-      price_links: form.priceLinks.filter(l => l.url.trim()).map(l => ({ url: l.url, price: numOrNull(l.price) })),
-    }
-    let savedId: number
-    if (editingId.value) {
-      await apiFetch(`/products/${editingId.value}`, { method: 'PUT', body: payload })
-      savedId = editingId.value
-      showSnack('Товар обновлён')
-    } else {
-      const created = await apiFetch<Product>('/products/', { method: 'POST', body: payload })
-      savedId = created.id
-      showSnack('Товар добавлен')
-    }
-
-    if (photoFile.value) {
-      const fd = new FormData()
-      fd.append('file', photoFile.value)
-      const token = localStorage.getItem('auth_token')
-      const res = await fetch(`/api/products/${savedId}/photo`, {
-        method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: fd,
-      })
-      if (!res.ok) showSnack('Товар сохранён, но фото не загрузилось', 'warning')
-    }
-
-    dialog.value = false
-    resetPhotoState()
-    await load()
-  } catch (e: any) {
-    showSnack(e?.detail || 'Ошибка сохранения', 'error')
-  } finally {
-    saving.value = false
-  }
-}
-
-async function toggleSharing(p: any) {
-  try {
-    const res = await apiFetch<any>(`/products/${p.id}/share-price`, {
-      method: 'PATCH',
-      body: JSON.stringify({ shared: !p.price_shared }),
-    })
-    p.price_shared = res.price_shared
-    showSnack(p.price_shared ? 'Цена доступна другим организациям' : 'Цена скрыта')
-  } catch (e: any) {
-    showSnack(e?.detail || 'Ошибка', 'error')
-  }
-}
-
-function confirmDelete(p: Product) {
-  deleteTarget.value = p
-  deleteDialog.value = true
-}
-
-async function doDelete() {
-  if (!deleteTarget.value) return
-  deleting.value = true
-  try {
-    await apiFetch(`/products/${deleteTarget.value.id}`, { method: 'DELETE' })
-    showSnack('Товар удалён')
-    deleteDialog.value = false
-    selectedIds.value = selectedIds.value.filter(id => id !== deleteTarget.value!.id)
-    await load()
-  } catch (e: any) {
-    showSnack(e?.detail || 'Ошибка удаления', 'error')
-  } finally {
-    deleting.value = false
-  }
-}
-
-async function doBulkDelete() {
-  bulkDeleting.value = true
-  const ids = [...selectedIds.value]
-  try {
-    await Promise.all(ids.map(id => apiFetch(`/products/${id}`, { method: 'DELETE' })))
-    showSnack(`Удалено ${ids.length} товаров`)
-    bulkDeleteDialog.value = false
-    selectedIds.value = []
-    await load()
-  } catch {
-    showSnack('Ошибка при удалении', 'error')
-  } finally {
-    bulkDeleting.value = false
-  }
-}
-
-async function doDeleteAll() {
-  deletingAll.value = true
-  try {
-    const res = await apiFetch<{message: string}>('/products/bulk/all', { method: 'DELETE' })
-    showSnack(res.message || 'Все товары удалены')
-    deleteAllDialog.value = false
-    deleteAllConfirm.value = ''
-    selectedIds.value = []
-    await load()
-  } catch {
-    showSnack('Ошибка при удалении', 'error')
-  } finally {
-    deletingAll.value = false
-  }
-}
-
-const bulkEditDialog = ref(false)
-const bulkEditCategory = ref<string | null>(null)
-const bulkEditType = ref<string | null>(null)
-const bulkEditing = ref(false)
-
-function openBulkEdit() {
-  bulkEditCategory.value = null
-  bulkEditType.value = null
-  bulkEditDialog.value = true
-}
-
-async function doBulkEdit() {
-  const body: Record<string, string> = {}
-  const cat = (bulkEditCategory.value || '').trim()
-  const pt = (bulkEditType.value || '').trim()
-  if (cat) body.category = cat
-  if (pt) body.product_type = pt
-  if (!Object.keys(body).length) {
-    showSnack('Укажите новую категорию и/или вид', 'warning')
-    return
-  }
-  const ids = [...selectedIds.value]
-  bulkEditing.value = true
-  try {
-    await Promise.all(ids.map(id => apiFetch(`/products/${id}`, { method: 'PATCH', body })))
-    showSnack(`Обновлено ${ids.length} товаров`)
-    bulkEditDialog.value = false
-    selectedIds.value = []
-    await load()
-  } catch (e: any) {
-    showSnack(e?.payload?.message || e?.message || 'Ошибка массового обновления', 'error')
-  } finally {
-    bulkEditing.value = false
-  }
-}
-
-async function bulkToggleActive(active: boolean) {
-  const ids = [...selectedIds.value]
-  try {
-    await Promise.all(ids.map(id => {
-      const p = products.value.find(p => p.id === id)
-      if (!p) return Promise.resolve()
-      return apiFetch(`/products/${id}`, {
-        method: 'PUT',
-        body: { name: p.name, is_active: active, price_links: p.price_links || [] },
-      })
-    }))
-    showSnack(`${active ? 'Активировано' : 'Деактивировано'} ${ids.length} товаров`)
-    selectedIds.value = []
-    await load()
-  } catch {
-    showSnack('Ошибка обновления', 'error')
-  }
-}
-
-// Download photos
-const downloadingPhoto = ref(false)
-const deletingPhoto = ref(false)
-
-async function clearUploadedPhoto() {
-  if (!editingId.value) return
-  deletingPhoto.value = true
-  try {
-    await apiFetch(`/products/${editingId.value}/photo`, { method: 'DELETE' })
-    form.photo_url = ''
-    form.has_photo = false
-    form.photo_size = undefined
-    form.photo_mime = undefined
-    photoPreview.value = null
-    photoFile.value = null
-    photoFileList.value = []
-    photoCacheBuster.value = Date.now()
-    showSnack('Фото удалено', 'success')
-  } catch (e: any) {
-    showSnack(e?.detail || 'Не удалось удалить фото', 'error')
-  } finally {
-    deletingPhoto.value = false
-  }
-}
-
-const dlPhotoDialog = reactive({
-  show: false,
-  loading: false,
-  result: null as { updated: number; skipped: number; errors: { id: number; name: string; error: string }[] } | null,
-})
-
-function openDownloadPhotosDialog() {
-  dlPhotoDialog.result = null
-  dlPhotoDialog.show = true
-}
-
-async function doDownloadAllPhotos() {
-  dlPhotoDialog.loading = true
-  try {
-    dlPhotoDialog.result = await apiFetch<typeof dlPhotoDialog.result>('/products/download-photos', { method: 'POST' })
-    if (dlPhotoDialog.result?.updated) await load()
-  } catch (e: any) {
-    showSnack(e?.detail || 'Ошибка скачивания фото', 'error')
-  } finally {
-    dlPhotoDialog.loading = false
-  }
-}
-
-async function downloadSinglePhoto() {
-  if (!editingId.value) return
-  downloadingPhoto.value = true
-  try {
-    const updated = await apiFetch<Product>(`/products/${editingId.value}/download-photo`, { method: 'POST' })
-    form.photo_url = updated.photo_url || form.photo_url
-    form.has_photo = !!updated.has_photo
-    photoCacheBuster.value = Date.now()
-    showSnack('Фото скачано и сохранено')
-    await load()
-  } catch (e: any) {
-    showSnack(e?.detail || 'Ошибка скачивания фото', 'error')
-  } finally {
-    downloadingPhoto.value = false
-  }
-}
-
-// Import
-const importDialog = reactive({
-  show: false, step: 1, file: null as File | null, fileList: [] as File[],
-  loading: false, result: null as { created: number; skipped: number; errors: { row: number; name: string; message: string }[] } | null,
-})
-
-function closeImportDialog() {
-  importDialog.show = false
-  importDialog.step = 1
-  importDialog.file = null
-  importDialog.fileList = []
-  importDialog.result = null
-  if (importDialog.result?.created) load()
-}
-
-async function downloadTemplate() {
-  const token = localStorage.getItem('auth_token')
-  const res = await fetch('/api/products/import/template', {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  })
-  if (!res.ok) { showSnack('Ошибка загрузки шаблона', 'error'); return }
-  const blob = await res.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a'); a.href = url; a.download = 'Шаблон_импорта_товаров.xlsx'; a.click()
-  URL.revokeObjectURL(url)
-}
-
-async function doImport() {
-  if (!importDialog.file) return
-  importDialog.loading = true
-  try {
-    const fd = new FormData()
-    fd.append('file', importDialog.file)
-    const token = localStorage.getItem('auth_token')
-    const res = await fetch('/api/products/import', {
-      method: 'POST',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      body: fd,
-    })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}))
-      showSnack(err.detail || 'Ошибка импорта', 'error')
-      return
-    }
-    importDialog.result = await res.json()
-    importDialog.step = 2
-    showSnack(`Импорт завершён: создано ${importDialog.result!.created}`)
-    await load()
-  } catch {
-    showSnack('Ошибка импорта', 'error')
-  } finally {
-    importDialog.loading = false
-  }
-}
-
-// ── Mirror horizontal scrollbar (above the table) ────────────────────────────
-const mirrorScrollRef = ref<HTMLElement | null>(null)
-const tableScrollWidth = ref(0)
-
-function initMirrorScroll() {
-  const wrapper = document.querySelector('.products-table .v-table__wrapper') as HTMLElement
-  const mirror  = mirrorScrollRef.value
-  if (!wrapper || !mirror) return
-
-  const update = () => { tableScrollWidth.value = wrapper.scrollWidth }
-  update()
-
-  let syncing = false
-  mirror.addEventListener('scroll', () => {
-    if (syncing) return; syncing = true
-    wrapper.scrollLeft = mirror.scrollLeft
-    syncing = false
-  })
-  wrapper.addEventListener('scroll', () => {
-    if (syncing) return; syncing = true
-    mirror.scrollLeft = wrapper.scrollLeft
-    syncing = false
-  })
-
-  new ResizeObserver(update).observe(wrapper)
-}
-
-onMounted(async () => {
-  load()
-  await nextTick()
-  setTimeout(initMirrorScroll, 400)
-})
+onMounted(() => { load() })
 </script>
-
-<style scoped>
-.products-clickable :deep(tbody tr) { cursor: pointer; }
-.col-drag-item { cursor: default; user-select: none; }
-.col-drag-item:hover { background: rgba(var(--v-theme-on-surface), 0.04); }
-/* Mirror scrollbar — between filter card and table card */
-.mirror-hscroll {
-  overflow-x: auto;
-  overflow-y: hidden;
-  height: 16px;
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  border-radius: 4px;
-  margin-bottom: 4px;
-  background: rgba(var(--v-theme-on-surface), 0.03);
-}
-/* Hide native scrollbar inside the table (mirror takes over) */
-.products-table :deep(.v-table__wrapper) {
-  scrollbar-width: none;
-}
-.products-table :deep(.v-table__wrapper::-webkit-scrollbar) {
-  display: none;
-}
-</style>

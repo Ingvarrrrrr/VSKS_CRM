@@ -1,85 +1,26 @@
 <template>
   <div class="crm-dashboard">
 
-    <!-- ── Header ── -->
-    <div class="dash-header">
-      <div class="dash-header-left">
-        <v-icon icon="mdi-view-dashboard-outline" size="34" color="#fb923c" class="mr-3" />
-        <div>
-          <div class="dash-title gradient-text">Дашборд</div>
-          <div class="dash-subtitle">GALA · Управление закупками · {{ selectedYear }}</div>
-        </div>
-      </div>
-      <div class="dash-header-right">
-        <v-chip-group v-model="selectedYear" mandatory class="year-chips">
-          <v-chip
-            v-for="year in availableYears" :key="year" :value="year"
-            filter variant="elevated" color="primary" size="small"
-          >{{ year }}</v-chip>
-        </v-chip-group>
-        <v-select
-          v-model="selectedSubsidyIds"
-          :items="allSubsidies.filter((s: SubsidyRow) => s.year === selectedYear)"
-          item-title="name" item-value="id"
-          label="Субсидии"
-          variant="outlined" multiple chips clearable density="compact"
-          style="min-width: 220px; max-width: 340px;"
-          hide-details class="ml-3"
-        />
-        <v-btn
-          v-if="!mobile"
-          :icon="isEditing ? 'mdi-lock-open' : 'mdi-cursor-move'"
-          :variant="isEditing ? 'flat' : 'tonal'"
-          :color="isEditing ? 'warning' : 'default'"
-          size="small" class="ml-3"
-          @click="toggleEditing"
-          :title="isEditing ? 'Завершить редактирование' : 'Настроить расположение'"
-        />
-        <v-btn
-          v-if="isEditing && !mobile"
-          icon="mdi-restore" variant="tonal" color="error"
-          size="small" class="ml-1"
-          @click="resetLayout"
-          title="Сбросить расположение"
-        />
-        <v-btn
-          icon="mdi-refresh" variant="tonal" color="primary"
-          :loading="loading" @click="loadAll" size="small" class="ml-3"
-        />
-        <v-chip-group
-          v-model="dashboardToggleMode"
-          mandatory class="ml-3"
-          selected-class="text-primary"
-        >
-          <v-chip value="classic" size="small" variant="outlined" prepend-icon="mdi-view-dashboard" style="min-height: 44px">
-            Классик
-          </v-chip>
-          <v-chip value="radar" size="small" variant="outlined" prepend-icon="mdi-radar" style="min-height: 44px">
-            Радар
-          </v-chip>
-        </v-chip-group>
-      </div>
-    </div>
+    <DashboardHeader
+      v-model:selected-year="selectedYear"
+      v-model:selected-subsidy-ids="selectedSubsidyIds"
+      v-model:dashboard-toggle-mode="dashboardToggleMode"
+      :available-years="availableYears"
+      :all-subsidies="allSubsidies"
+      :is-editing="isEditing"
+      :mobile="mobile"
+      :loading="loading"
+      @toggle-editing="toggleEditing"
+      @reset-layout="resetLayout"
+      @refresh="loadAll"
+    />
 
-    <!-- ── Quick subsidy chips ── -->
-    <div v-if="yearSubsidies.length > 0" class="subsidy-chips-bar">
-      <v-chip
-        v-for="s in yearSubsidies" :key="s.id"
-        :color="selectedSubsidyIds.includes(s.id) ? 'primary' : undefined"
-        :variant="selectedSubsidyIds.includes(s.id) ? 'flat' : 'outlined'"
-        size="small"
-        class="subsidy-chip"
-        @click="toggleSubsidyChip(s.id)"
-      >
-        {{ s.shortName || s.name }}
-      </v-chip>
-      <v-chip
-        v-if="selectedSubsidyIds.length > 0"
-        variant="text" size="small" class="subsidy-chip"
-        prepend-icon="mdi-close-circle-outline"
-        @click="selectedSubsidyIds = []"
-      >Все</v-chip>
-    </div>
+    <DashboardSubsidyChips
+      :year-subsidies="yearSubsidies"
+      :selected-subsidy-ids="selectedSubsidyIds"
+      @toggle="toggleSubsidyChip"
+      @clear="selectedSubsidyIds = []"
+    />
 
     <!-- ── Tabs ── -->
     <v-tabs v-model="activeTab" color="primary" class="mb-4">
@@ -94,52 +35,13 @@
     <v-window v-model="activeTab">
     <v-window-item value="summary">
 
-    <!-- ── Edit mode banner ── -->
-    <div v-if="isEditing" class="edit-mode-banner">
-      <v-icon icon="mdi-cursor-move" size="18" class="mr-2" />
-      Режим редактирования — перетаскивайте и изменяйте размер виджетов
-      <v-btn size="small" variant="tonal" color="white" class="ml-4" @click="toggleEditing">Готово</v-btn>
-    </div>
-
-    <!-- ── Budget Overflow Alert (outside grid) ── -->
-    <div v-if="overrunSubsidies.length > 0" class="budget-overrun-banner">
-      <v-icon icon="mdi-alert" size="28" color="white" class="mr-3 flex-shrink-0" />
-      <div class="overrun-content">
-        <div class="overrun-title">Превышение бюджета субсидий!</div>
-        <div v-for="s in overrunSubsidies" :key="s.id" class="overrun-row">
-          <strong>{{ s.name }}</strong>:
-          бюджет {{ formatCurrency(s.budget) }},
-          НМЦД {{ formatCurrency(s.planned) }}
-          <span v-if="s.contracted > s.budget">
-            · законтрактовано {{ formatCurrency(s.contracted) }}
-          </span>
-          → <strong>перерасход {{ formatCurrency(Math.max(s.planned, s.contracted) - s.budget) }}</strong>
-        </div>
-        <div class="overrun-hint">Уменьшите НМЦД закупок или увеличьте размер субсидии</div>
-      </div>
-    </div>
-
-    <!-- ── Ceiling warning banner (владелец, 2026-08-30) ── -->
-    <div v-if="subsidiesNearCeiling.length > 0" class="ceiling-warning-banner"
-      :class="{ 'ceiling-warning-banner--critical': subsidiesNearCeiling.some(s => s.ceiling_exceeded) }"
-    >
-      <v-icon icon="mdi-gauge-full" size="28" color="white" class="mr-3 flex-shrink-0" />
-      <div class="overrun-content">
-        <div class="overrun-title">Субсидии у потолка финансирования</div>
-        <div v-for="s in subsidiesNearCeiling" :key="s.subsidy_id" class="overrun-row">
-          <strong>{{ s.name }}</strong>:
-          заказано {{ formatCurrency(s.ceiling_committed_total) }} из потолка {{ formatCurrency(s.ceiling_total) }}
-          — <strong>{{ s.ceiling_committed_percent }}%</strong>
-          (порог {{ s.ceiling_warn_percent }}%)
-          <span v-if="s.ceiling_exceeded"> — потолок превышен!</span>
-        </div>
-        <div class="overrun-hint">
-          В сумму заказанного входят разовые/авансовые/рамочные закупки в статусе «Заказано» и далее,
-          плюс ежемесячные платежи — весь график целиком.
-          <router-link to="/subsidies" class="ceiling-warning-link">Открыть субсидии →</router-link>
-        </div>
-      </div>
-    </div>
+    <DashboardBanners
+      :is-editing="isEditing"
+      :overrun-subsidies="overrunSubsidies"
+      :subsidies-near-ceiling="subsidiesNearCeiling"
+      :format-currency="formatCurrency"
+      @toggle-editing="toggleEditing"
+    />
 
     <GridLayout
       :layout="effectiveLayout"
@@ -154,699 +56,127 @@
     >
       <!-- ── KPI Cards ── -->
       <GridItem v-bind="effectiveLayout.find(l => l.i === 'kpi')" key="kpi">
-        <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
-          <div v-if="isEditing" class="widget-drag-handle">
-            <v-icon icon="mdi-drag" size="16" /> KPI
-          </div>
-          <v-row v-if="loading" class="kpi-row" style="margin:0">
-            <v-col cols="6" sm="4" lg="3" xl="auto" style="flex:1" v-for="n in 9" :key="'skel-'+n">
-              <v-skeleton-loader type="card" height="100" class="rounded-lg" />
-            </v-col>
-          </v-row>
-          <v-row v-else class="kpi-row" style="margin:0">
-            <v-col cols="6" sm="4" lg="3" xl="auto" style="flex:1" v-for="card in kpiCards" :key="card.key">
-              <v-tooltip :text="card.tooltip ?? undefined" location="bottom" :disabled="!card.tooltip">
-                <template #activator="{ props: tip }">
-                  <div v-bind="tip" class="kpi-card" :class="['kpi-' + card.key, { 'kpi-over': card.over }]" @click="handleKpiClick(card.key)">
-                    <div class="kpi-icon-box">
-                      <v-icon :icon="card.icon" size="26" />
-                    </div>
-                    <div class="kpi-body">
-                      <div class="kpi-value">{{ mobile ? formatCurrencyShort(card.amount) : formatCurrency(card.amount) }}</div>
-                      <div class="kpi-label">{{ card.label }}</div>
-                      <div class="kpi-count" v-if="card.count > 0">{{ card.count }} {{ card.countLabel }}</div>
-                      <div class="kpi-monthly" v-if="card.monthly !== null">
-                        в т.ч. ежемесячные платежи: {{ formatCurrencyShort(card.monthly!) }} /мес
-                      </div>
-                    </div>
-                  </div>
-                </template>
-              </v-tooltip>
-            </v-col>
-          </v-row>
-        </div>
+        <DashboardGridWidget :editing="isEditing" label="KPI">
+          <KpiCardsWidget
+            :loading="loading" :mobile="mobile" :kpi-cards="kpiCards"
+            :format-currency="formatCurrency" :format-currency-short="formatCurrencyShort"
+            @kpi-click="handleKpiClick"
+          />
+        </DashboardGridWidget>
       </GridItem>
 
       <!-- ── Donut Chart ── -->
       <GridItem v-bind="effectiveLayout.find(l => l.i === 'donut')" key="donut">
-        <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
-          <div v-if="isEditing" class="widget-drag-handle">
-            <v-icon icon="mdi-drag" size="16" /> Структура бюджета
-          </div>
-          <div class="chart-card" style="height:100%;overflow:auto">
-            <div class="chart-card-header">
-              <template v-if="donutView === 'breakdown'">
-                <v-btn icon="mdi-arrow-left" variant="text" size="x-small" class="mr-1" @click="donutView = 'donut'" />
-                <v-icon size="18" class="mr-2"
-                  :icon="['mdi-cash-check','mdi-file-sign','mdi-clock-outline','mdi-cash-remove'][drillDownSegment ?? 0]"
-                  :color="['success','primary','warning','grey'][drillDownSegment ?? 0]" />
-                <span class="chart-card-title">{{ SEGMENT_LABELS[drillDownSegment ?? 0] }}</span>
-              </template>
-              <template v-else>
-                <v-icon icon="mdi-chart-donut" size="18" color="#3B82F6" class="mr-2" />
-                <span class="chart-card-title">Структура бюджета</span>
-                <span class="text-caption text-medium-emphasis ml-2">(нажмите на сегмент)</span>
-              </template>
-            </div>
-            <Transition name="chart-fade" mode="out-in">
-              <div v-if="donutView === 'donut'" key="donut">
-                <apexchart v-if="donutReady" type="donut" height="270" :options="donutOptions" :series="donutSeries" />
-                <div v-else class="chart-empty">
-                  <v-icon icon="mdi-chart-donut" size="48" color="grey-lighten-2" />
-                  <div class="text-caption text-medium-emphasis mt-2">Нет данных о бюджете</div>
-                </div>
-              </div>
-              <div v-else key="breakdown">
-                <apexchart type="bar" height="270" :options="breakdownBarOptions" :series="breakdownBarSeries" />
-              </div>
-            </Transition>
-          </div>
-        </div>
+        <DashboardGridWidget :editing="isEditing" label="Структура бюджета">
+          <DonutChartWidget
+            v-model:donut-view="donutView"
+            :donut-ready="donutReady" :donut-options="donutOptions" :donut-series="donutSeries"
+            :drill-down-segment="drillDownSegment"
+            :breakdown-bar-options="breakdownBarOptions" :breakdown-bar-series="breakdownBarSeries"
+            :segment-labels="SEGMENT_LABELS"
+          />
+        </DashboardGridWidget>
       </GridItem>
 
       <!-- ── Radial Gauge ── -->
       <GridItem v-bind="effectiveLayout.find(l => l.i === 'radial')" key="radial">
-        <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
-          <div v-if="isEditing" class="widget-drag-handle">
-            <v-icon icon="mdi-drag" size="16" /> Освоение
-          </div>
-          <div class="chart-card chart-card--compact" style="height:100%;overflow:auto">
-            <div class="chart-card-header">
-              <v-icon icon="mdi-gauge" size="18" color="#22C55E" class="mr-2" />
-              <span class="chart-card-title">Освоение</span>
-            </div>
-            <apexchart type="radialBar" height="180" :options="radialOptions" :series="[totalUsagePct]" :key="'gauge-' + totalUsagePct" />
-            <div class="radial-footer">
-              <span class="text-caption text-medium-emphasis">
-                {{ formatCurrencyShort(totalPaid) }} из {{ formatCurrencyShort(totalBudget) }}
-              </span>
-            </div>
-          </div>
-        </div>
+        <DashboardGridWidget :editing="isEditing" label="Освоение">
+          <RadialGaugeWidget
+            :radial-options="radialOptions" :total-usage-pct="totalUsagePct"
+            :total-paid="totalPaid" :total-budget="totalBudget"
+            :format-currency-short="formatCurrencyShort"
+          />
+        </DashboardGridWidget>
       </GridItem>
 
       <!-- ── Pipeline ── -->
       <GridItem v-bind="effectiveLayout.find(l => l.i === 'pipeline')" key="pipeline">
-        <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
-          <div v-if="isEditing" class="widget-drag-handle">
-            <v-icon icon="mdi-drag" size="16" /> Закупки по этапам
-          </div>
-          <div class="chart-card" style="height:100%;overflow:auto">
-            <div class="chart-card-header">
-              <v-icon icon="mdi-stairs-up" size="18" color="#F59E0B" class="mr-2" />
-              <span class="chart-card-title">Закупки по этапам</span>
-              <v-chip
-                size="x-small"
-                :color="selectedSubsidyIds.length === 0 ? 'grey' : 'primary'"
-                variant="tonal"
-                class="ml-2"
-                :title="selectedSubsidyIds.length === 0 ? 'Показаны закупки по всем субсидиям' : 'Применён фильтр субсидий'"
-              >
-                {{ selectedSubsidyIds.length === 0
-                  ? 'Все субсидии'
-                  : selectedSubsidyIds.length === 1
-                    ? (allSubsidies.find(s => s.id === selectedSubsidyIds[0])?.name || '1 субсидия')
-                    : `${selectedSubsidyIds.length} субсидий` }}
-              </v-chip>
-              <span class="text-caption text-medium-emphasis ml-2">(нажмите для детализации)</span>
-            </div>
-            <div v-if="totalBudget > 0 || pipelineStages.some(s => s.amount > 0)" class="pipeline-wrap">
-              <div class="pipeline-row">
-                <div class="pipeline-label">
-                  <span class="pipeline-dot" style="background:#9CA3AF" />
-                  Бюджет
-                </div>
-                <div class="pipeline-bar-track">
-                  <div class="pipeline-bar-fill" style="width:100%; background:#9CA3AF; opacity:0.35" />
-                </div>
-                <div class="pipeline-meta">
-                  <span class="pipeline-amount">{{ formatCurrencyShort(totalBudget) }}</span>
-                  <span class="pipeline-pct" :style="{ color: chartMuted }">100%</span>
-                </div>
-              </div>
-              <template v-for="stage in pipelineStages" :key="stage.status">
-                <div
-                  class="pipeline-row"
-                  @click="onPipelineClick(stage.status)"
-                >
-                  <div class="pipeline-label">
-                    <span class="pipeline-dot" :style="{ background: stage.color }" />
-                    {{ stage.label }}
-                  </div>
-                  <div class="pipeline-bar-track">
-                    <div
-                      class="pipeline-bar-fill"
-                      :style="{ width: Math.min(stage.pct, 100) + '%', background: stage.color }"
-                    />
-                  </div>
-                  <div class="pipeline-meta">
-                    <span class="pipeline-amount">{{ formatCurrencyShort(stage.amount) }}</span>
-                    <span class="pipeline-pct" :style="{ color: stage.pct > 100 ? '#EF4444' : chartMuted }">
-                      {{ stage.pct }}%
-                    </span>
-                  </div>
-                </div>
-                <!-- Между «Поставлено» и «Оплачено» — красная метрика «Поставлено, не оплачено» -->
-                <div
-                  v-if="stage.status === 'delivered' && deliveredNotPaid.amount > 0"
-                  class="pipeline-row"
-                  style="background: rgba(239,68,68,0.06); border-radius:6px; margin: 4px 0"
-                  @click="onDeliveredNotPaidClick"
-                >
-                  <div class="pipeline-label">
-                    <span class="pipeline-dot" style="background:#EF4444" />
-                    Поставлено, не оплачено
-                  </div>
-                  <div class="pipeline-bar-track">
-                    <div class="pipeline-bar-fill" :style="{ width: Math.min(deliveredNotPaid.pct, 100) + '%', background: '#EF4444' }" />
-                  </div>
-                  <div class="pipeline-meta">
-                    <span class="pipeline-amount" style="color:#EF4444">{{ formatCurrencyShort(deliveredNotPaid.amount) }}</span>
-                    <span class="pipeline-pct" :style="{ color: chartMuted }">{{ deliveredNotPaid.pct }}%</span>
-                  </div>
-                </div>
-              </template>
-              <div v-if="wishesAmountForPie > 0" class="pipeline-wishes-hint">
-                <v-icon icon="mdi-star-circle-outline" size="14" color="warning" class="mr-1" />
-                Желания: {{ formatCurrencyShort(wishesAmountForPie) }}
-                ({{ Math.round(wishesAmountForPie / (totalBudget || 1) * 100) }}% бюджета)
-              </div>
-            </div>
-            <div v-else class="chart-empty">
-              <v-icon icon="mdi-cart-outline" size="48" color="grey-lighten-2" />
-              <div class="text-caption text-medium-emphasis mt-2">Нет данных о закупках</div>
-            </div>
-          </div>
-        </div>
+        <DashboardGridWidget :editing="isEditing" label="Закупки по этапам">
+          <PipelineWidget
+            :selected-subsidy-ids="selectedSubsidyIds" :all-subsidies="allSubsidies"
+            :total-budget="totalBudget" :pipeline-stages="pipelineStages"
+            :delivered-not-paid="deliveredNotPaid" :wishes-amount-for-pie="wishesAmountForPie"
+            :chart-muted="chartMuted" :format-currency-short="formatCurrencyShort"
+            @stage-click="onPipelineClick" @delivered-not-paid-click="onDeliveredNotPaidClick"
+          />
+        </DashboardGridWidget>
       </GridItem>
 
       <!-- ── Monthly Contracts ── -->
       <GridItem v-if="!mobile || monthlyContractsRemaining.length > 0" v-bind="effectiveLayout.find(l => l.i === 'monthly')" key="monthly">
-        <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
-          <div v-if="isEditing" class="widget-drag-handle">
-            <v-icon icon="mdi-drag" size="16" /> Ежемесячные договоры
-          </div>
-          <div class="chart-card" style="height:100%;overflow:auto">
-            <div class="chart-card-header">
-              <v-icon icon="mdi-calendar-refresh" size="18" color="#6366F1" class="mr-2" />
-              <span class="chart-card-title">Ежемесячные договоры — остаток к заказу</span>
-              <span v-if="monthlyContractsRemaining.length > 0" class="ml-auto font-weight-bold" style="color:#6366F1">{{ formatCurrencyShort(totalMonthlyRemaining) }}</span>
-            </div>
-            <template v-if="monthlyContractsRemaining.length > 0">
-              <div
-                v-for="c in monthlyContractsRemaining" :key="c.id"
-                class="pipeline-row"
-              >
-                <div class="pipeline-label">
-                  <span class="pipeline-dot" style="background:#6366F1" />
-                  {{ c.name }}
-                </div>
-                <div class="pipeline-bar-track">
-                  <div class="pipeline-bar-fill" :style="{ width: c.elapsedPct + '%', background: '#6366F1' }" />
-                </div>
-                <div class="pipeline-meta">
-                  <span class="pipeline-amount">{{ formatCurrencyShort(c.remaining) }} ост.</span>
-                  <span class="pipeline-pct" :style="{ color: chartMuted }">{{ c.elapsedPct }}%</span>
-                </div>
-              </div>
-            </template>
-            <div v-else class="chart-empty">
-              <v-icon icon="mdi-calendar-refresh" size="48" color="grey-lighten-2" />
-              <div class="text-caption text-medium-emphasis mt-2">Нет ежемесячных договоров</div>
-            </div>
-          </div>
-        </div>
+        <DashboardGridWidget :editing="isEditing" label="Ежемесячные договоры">
+          <MonthlyContractsWidget
+            :monthly-contracts-remaining="monthlyContractsRemaining" :total-monthly-remaining="totalMonthlyRemaining"
+            :chart-muted="chartMuted" :format-currency-short="formatCurrencyShort"
+          />
+        </DashboardGridWidget>
       </GridItem>
 
       <!-- ── Goods/Services Breakdown ── -->
       <GridItem v-if="!mobile || pipelineByType.some(s => s.total > 0)" v-bind="effectiveLayout.find(l => l.i === 'breakdown')" key="breakdown">
-        <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
-          <div v-if="isEditing" class="widget-drag-handle">
-            <v-icon icon="mdi-drag" size="16" /> Товары / Услуги
-          </div>
-          <div class="chart-card" style="height:100%;overflow:auto">
-            <div class="chart-card-header">
-              <v-icon icon="mdi-chart-box" size="18" color="#8B5CF6" class="mr-2" />
-              <span class="chart-card-title">Структура закупок — Товары / Услуги</span>
-            </div>
-            <template v-if="pipelineByType.some(s => s.total > 0)">
-              <div class="pipeline-row">
-                <div class="pipeline-label"><span class="pipeline-dot" style="background:#9CA3AF" />Бюджет</div>
-                <div class="pipeline-bar-track" style="margin-bottom:3px">
-                  <div class="pipeline-bar-fill" style="width:100%; background:#F59E0B; opacity:0.35" />
-                </div>
-                <div class="pipeline-meta">{{ formatCurrencyShort(totalBudget) }}</div>
-              </div>
-              <div v-for="stage in pipelineByType" :key="stage.status" class="pipeline-row">
-                <div class="pipeline-label">
-                  <span class="pipeline-dot" :style="{ background: stage.color }" />
-                  {{ stage.label }}
-                </div>
-                <div style="flex:1; min-width:0">
-                  <div class="pipeline-bar-track" style="margin-bottom:3px">
-                    <div class="pipeline-bar-fill" :style="{ width: Math.min(stage.goodsPct, 100) + '%', background: '#F59E0B' }" />
-                  </div>
-                  <div class="pipeline-bar-track">
-                    <div class="pipeline-bar-fill" :style="{ width: Math.min(stage.servicesPct, 100) + '%', background: '#3B82F6' }" />
-                  </div>
-                </div>
-                <div class="pipeline-meta" style="flex-direction:column; align-items:flex-end; gap:2px">
-                  <span style="color:#F59E0B; font-size:11px">{{ formatCurrencyShort(stage.goods) }}</span>
-                  <span style="color:#3B82F6; font-size:11px">{{ formatCurrencyShort(stage.services) }}</span>
-                </div>
-              </div>
-              <div class="d-flex gap-4 mt-2" style="font-size:11px; color:var(--crm-text-muted)">
-                <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#F59E0B;margin-right:4px"></span>Товары</span>
-                <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#3B82F6;margin-right:4px"></span>Услуги / Работы</span>
-              </div>
-            </template>
-            <div v-else class="chart-empty">
-              <v-icon icon="mdi-chart-box" size="48" color="grey-lighten-2" />
-              <div class="text-caption text-medium-emphasis mt-2">Нет данных о закупках</div>
-            </div>
-          </div>
-        </div>
+        <DashboardGridWidget :editing="isEditing" label="Товары / Услуги">
+          <GoodsServicesWidget
+            :pipeline-by-type="pipelineByType" :total-budget="totalBudget"
+            :format-currency-short="formatCurrencyShort"
+          />
+        </DashboardGridWidget>
       </GridItem>
 
       <!-- ── Recent Purchases ── -->
       <GridItem v-bind="effectiveLayout.find(l => l.i === 'purchases')" key="purchases">
-        <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
-          <div v-if="isEditing" class="widget-drag-handle">
-            <v-icon icon="mdi-drag" size="16" /> Последние закупки
-          </div>
-          <div class="chart-card" style="height:100%;overflow:auto">
-            <div class="chart-card-header">
-              <v-icon icon="mdi-clipboard-list-outline" size="18" color="#14B8A6" class="mr-2" />
-              <span class="chart-card-title">Последние закупки</span>
-              <span class="chart-link ml-auto" style="cursor:pointer" @click="goToOrders">Все →</span>
-            </div>
-            <div v-if="loadingPurchases" class="chart-empty">
-              <v-progress-circular indeterminate size="32" color="primary" />
-            </div>
-            <div v-else-if="recentPurchases.length === 0" class="chart-empty">
-              <v-icon icon="mdi-cart-off" size="48" color="grey-lighten-2" />
-              <div class="text-caption text-medium-emphasis mt-2">Нет закупок</div>
-            </div>
-            <div v-else class="purchase-list">
-              <div
-                v-for="p in recentPurchases" :key="p.id"
-                class="purchase-row"
-                @click="$router.push(`/orders/${p.id}/edit`)"
-              >
-                <div class="purchase-num">
-                  <v-icon icon="mdi-package-variant" size="16" :color="statusColorHex(p.status)" />
-                </div>
-                <div class="purchase-main">
-                  <div class="purchase-name">{{ p.subject || p.items?.[0]?.item_name || p.item_name || 'Без названия' }}</div>
-                  <div class="purchase-meta">
-                    {{ p.registry_number || p.order_number || '—' }}
-                    <span v-if="p.contractor_name"> · {{ p.contractor_name }}</span>
-                  </div>
-                </div>
-                <div class="purchase-right">
-                  <div class="purchase-amount">{{ formatCurrencyShort(purchaseEffectivePrice(p)) }}</div>
-                  <v-chip size="x-small" :color="statusColor(p.status)" variant="flat" class="mt-1">
-                    {{ statusLabel(p.status) }}
-                  </v-chip>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <DashboardGridWidget :editing="isEditing" label="Последние закупки">
+          <RecentPurchasesWidget
+            :loading-purchases="loadingPurchases" :recent-purchases="recentPurchases"
+            :selected-subsidy-ids="selectedSubsidyIds"
+            :format-currency-short="formatCurrencyShort"
+            :status-color-hex="statusColorHex" :status-color="statusColor" :status-label="statusLabel"
+            :purchase-effective-price="purchaseEffectivePrice"
+          />
+        </DashboardGridWidget>
       </GridItem>
 
       <!-- ── Summary Table ── -->
       <GridItem v-bind="effectiveLayout.find(l => l.i === 'table')" key="table">
-        <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
-          <div v-if="isEditing" class="widget-drag-handle">
-            <v-icon icon="mdi-drag" size="16" /> Детализация субсидий
-          </div>
-          <div class="chart-card table-card" style="height:100%;overflow:auto">
-            <div class="chart-card-header">
-              <v-icon icon="mdi-table" size="18" color="#1976D2" class="mr-2" />
-              <span class="chart-card-title">Детализация субсидий — {{ selectedYear }}</span>
-              <div class="ml-auto d-flex align-center" style="gap: 12px;">
-                <v-btn
-                  variant="tonal" color="primary" size="small"
-                  prepend-icon="mdi-chart-pie"
-                  @click="openBreakdown('budget')"
-                >
-                  Аналитика
-                </v-btn>
-              </div>
-            </div>
-
-            <div v-if="filteredSubsidies.length > 0" class="px-3 pt-2 d-flex flex-column" style="gap:10px">
-              <BudgetBar
-                v-for="s in filteredSubsidies"
-                :key="s.id"
-                :subsidy="{
-                  id: s.id,
-                  name: s.name,
-                  budget: s.budget,
-                  planned: s.planned,
-                  contracted: s.contracted,
-                  paid: s.paid,
-                }"
-              />
-            </div>
-
-            <v-table density="compact" class="dash-table mt-3">
-              <thead>
-                <tr>
-                  <th>Субсидия</th>
-                  <th class="text-right">Бюджет</th>
-                  <th class="text-right">Запланировано</th>
-                  <th class="text-right text-caption">ФЭО план</th>
-                  <th class="text-right">Заказано</th>
-                  <th class="text-right">Оплачено</th>
-                  <th class="text-right">Остаток</th>
-                  <th style="width: 160px;" class="text-center">% освоения</th>
-                  <th style="width: 60px;"></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="s in filteredSubsidies" :key="s.id"
-                  class="table-row-hover"
-                  @click="openBreakdown('budget')"
-                  style="cursor: pointer;"
-                >
-                  <td>
-                    <div class="font-weight-medium">{{ s.name }}</div>
-                    <div v-if="s.description" class="text-caption text-medium-emphasis">{{ s.description }}</div>
-                  </td>
-                  <td class="text-right font-weight-medium">{{ formatCurrency(s.budget) }}</td>
-                  <td class="text-right text-warning">{{ formatCurrency(s.plan_schedule) }}</td>
-                  <td class="text-right text-blue-grey">{{ formatCurrency(s.total_feo_planned ?? 0) }}</td>
-                  <td class="text-right text-primary">{{ formatCurrency(s.ordered) }}</td>
-                  <td class="text-right text-success">{{ formatCurrency(s.paid) }}</td>
-                  <td class="text-right" :class="(s.remaining ?? (s.budget - s.paid)) >= 0 ? 'text-success' : 'text-error'">
-                    {{ formatCurrency(s.remaining ?? (s.budget - s.paid)) }}
-                    <!-- Phase 31-05: discrepancy chip (D-15) -->
-                    <v-chip
-                      v-if="s.budget_discrepancy !== null && s.budget_discrepancy !== undefined && Math.abs(s.budget_discrepancy) > 0.01"
-                      color="#fb923c"
-                      size="x-small"
-                      class="ml-1"
-                      prepend-icon="mdi-alert"
-                      :title="'Расхождение суммы ФЭО-разбивки и плановой суммы субсидии'"
-                    >Δ {{ Math.abs(s.budget_discrepancy).toLocaleString('ru-RU', {maximumFractionDigits:0}) }} ₽</v-chip>
-                  </td>
-                  <td>
-                    <v-progress-linear
-                      :model-value="pct(s.paid, s.budget)" height="18"
-                      :color="progressColor(pct(s.paid, s.budget))" rounded
-                      class="gradient-progress"
-                    >
-                      <template #default>
-                        <span class="text-caption font-weight-bold">{{ pct(s.paid, s.budget) }}%</span>
-                      </template>
-                    </v-progress-linear>
-                  </td>
-                  <td>
-                    <v-btn icon="mdi-magnify" size="x-small" variant="text" @click.stop="openBreakdown('budget')" />
-                  </td>
-                </tr>
-
-                <tr class="total-row">
-                  <td><strong>ИТОГО</strong></td>
-                  <td class="text-right"><strong>{{ formatCurrency(totalBudget) }}</strong></td>
-                  <td class="text-right text-warning"><strong>{{ formatCurrency(totalPlanSchedule) }}</strong></td>
-                  <td class="text-right text-blue-grey"><strong>{{ formatCurrency(totalFeoPlanned) }}</strong></td>
-                  <td class="text-right text-primary"><strong>{{ formatCurrency(totalOrdered) }}</strong></td>
-                  <td class="text-right text-success"><strong>{{ formatCurrency(totalPaid) }}</strong></td>
-                  <td class="text-right" :class="totalRemaining >= 0 ? 'text-success' : 'text-error'">
-                    <strong>{{ formatCurrency(totalRemaining) }}</strong>
-                  </td>
-                  <td>
-                    <v-progress-linear
-                      :model-value="totalUsagePct" height="18"
-                      :color="progressColor(totalUsagePct)" rounded
-                      class="gradient-progress"
-                    >
-                      <template #default>
-                        <span class="text-caption font-weight-bold">{{ totalUsagePct }}%</span>
-                      </template>
-                    </v-progress-linear>
-                  </td>
-                  <td></td>
-                </tr>
-              </tbody>
-            </v-table>
-          </div>
-        </div>
+        <DashboardGridWidget :editing="isEditing" label="Детализация субсидий">
+          <SummaryTableWidget
+            :selected-year="selectedYear" :filtered-subsidies="filteredSubsidies"
+            :total-budget="totalBudget" :total-plan-schedule="totalPlanSchedule"
+            :total-feo-planned="totalFeoPlanned" :total-ordered="totalOrdered"
+            :total-paid="totalPaid" :total-remaining="totalRemaining" :total-usage-pct="totalUsagePct"
+            :format-currency="formatCurrency" :pct="pct" :progress-color="progressColor"
+            @open-breakdown="openBreakdown"
+          />
+        </DashboardGridWidget>
       </GridItem>
 
       <!-- ── Financial Plan ── -->
       <GridItem v-bind="effectiveLayout.find(l => l.i === 'finplan')" key="finplan">
-        <div class="grid-widget" :class="{ 'grid-widget--editing': isEditing }">
-          <div v-if="isEditing" class="widget-drag-handle">
-            <v-icon icon="mdi-drag" size="16" /> Финансовый план
-          </div>
-          <div class="chart-card" style="height:100%;overflow:auto">
-            <div class="chart-card-header">
-              <v-icon icon="mdi-calendar-clock" size="18" color="primary" class="mr-2" />
-              <span class="chart-card-title">Финансовый план</span>
-              <v-spacer />
-              <v-tooltip text="Кликни по бару чтобы увидеть закупки этой группы" location="top">
-                <template #activator="{ props: tip }">
-                  <v-icon v-bind="tip" icon="mdi-cursor-default-click" size="14" class="ml-1" color="grey" />
-                </template>
-              </v-tooltip>
-              <v-btn-toggle v-model="finplanGranularity" mandatory size="x-small" density="compact" class="ml-2">
-                <v-btn value="month">По месяцам</v-btn>
-                <v-btn value="quarter">По кварталам</v-btn>
-              </v-btn-toggle>
-              <v-btn size="x-small" variant="tonal" color="success" prepend-icon="mdi-microsoft-excel" @click="exportFinplanXlsx" class="ml-2">
-                Excel
-              </v-btn>
-            </div>
-
-            <!-- No-deadline banner -->
-            <v-alert
-              v-if="finplanNoDeadlineCount > 0"
-              type="warning" variant="tonal" density="compact" class="mx-3 mt-2"
-              :text="`${finplanNoDeadlineCount} закупок без срока исполнения — данные некорректны`"
-            >
-              <template #append>
-                <v-btn size="x-small" variant="tonal" color="warning" @click="openFinplanDrilldown('', 'no_deadline')">
-                  Показать
-                </v-btn>
-              </template>
-            </v-alert>
-
-            <!-- KPI текущего месяца -->
-            <div v-if="finplanCurrentMonthKpi" class="d-flex gap-3 px-3 py-2">
-              <v-card variant="tonal" color="warning" class="pa-2 flex-1 text-center" density="compact">
-                <div class="text-caption text-medium-emphasis">План</div>
-                <div class="text-body-2 font-weight-bold">{{ formatCurrencyShort(finplanCurrentMonthKpi.plan) }}</div>
-              </v-card>
-              <v-card variant="tonal" color="error" class="pa-2 flex-1 text-center" density="compact" style="cursor:pointer" @click="openFinplanDrilldown(finplanCurrentMonthKpi.period, 'overdue')">
-                <div class="text-caption text-medium-emphasis">Накопл. долг</div>
-                <div class="text-body-2 font-weight-bold">{{ formatCurrencyShort(finplanCurrentMonthKpi.overdue) }}</div>
-              </v-card>
-              <v-card variant="tonal" color="primary" class="pa-2 flex-1 text-center" density="compact">
-                <div class="text-caption text-medium-emphasis">Итого к оплате</div>
-                <div class="text-body-2 font-weight-bold">{{ formatCurrencyShort(finplanCurrentMonthKpi.plan + finplanCurrentMonthKpi.overdue) }}</div>
-              </v-card>
-            </div>
-
-            <apexchart
-              v-if="finplanSeries.length"
-              type="bar" height="300"
-              :options="finplanOptions" :series="finplanSeries"
-            />
-            <div v-else class="chart-empty">
-              <v-icon icon="mdi-calendar-clock" size="48" color="grey-lighten-2" />
-              <div class="text-caption text-medium-emphasis mt-2">Нет данных по ожидаемым выплатам</div>
-            </div>
-          </div>
-        </div>
+        <DashboardGridWidget :editing="isEditing" label="Финансовый план">
+          <FinancialPlanWidget
+            v-model:finplan-granularity="finplanGranularity"
+            :finplan-no-deadline-count="finplanNoDeadlineCount"
+            :finplan-current-month-kpi="finplanCurrentMonthKpi"
+            :finplan-series="finplanSeries" :finplan-options="finplanOptions"
+            :format-currency-short="formatCurrencyShort"
+            @open-drilldown="openFinplanDrilldown" @export-xlsx="exportFinplanXlsx"
+          />
+        </DashboardGridWidget>
       </GridItem>
     </GridLayout>
 
     </v-window-item>
 
     <v-window-item value="analytics">
-      <div v-if="analyticsLoading" class="d-flex justify-center py-12">
-        <v-progress-circular indeterminate color="primary" size="48" />
-      </div>
-      <template v-else-if="analyticsData">
-        <!-- KPI row -->
-        <v-row class="mb-4">
-          <v-col cols="6" md="3">
-            <v-card variant="outlined" class="pa-4 text-center table-row-hover" style="cursor:pointer" @click="router.push('/orders?overdue=1')">
-              <div class="text-h4 font-weight-bold text-error">{{ analyticsData.overdue_count }}</div>
-              <div class="text-body-2 text-medium-emphasis mt-1">Просрочено</div>
-              <v-icon icon="mdi-alert-circle" color="error" class="mt-1" />
-            </v-card>
-          </v-col>
-          <v-col cols="6" md="3">
-            <v-card variant="outlined" class="pa-4 text-center table-row-hover" style="cursor:pointer" @click="router.push('/orders?due_soon=1')">
-              <div class="text-h4 font-weight-bold text-warning">{{ analyticsData.upcoming_deadlines.length }}</div>
-              <div class="text-body-2 text-medium-emphasis mt-1">Срок до 30 дней</div>
-              <v-icon icon="mdi-clock-alert" color="warning" class="mt-1" />
-            </v-card>
-          </v-col>
-          <v-col cols="6" md="3">
-            <v-card variant="outlined" class="pa-4 text-center table-row-hover" style="cursor:pointer" @click="router.push('/orders?status=paid')">
-              <div class="text-h4 font-weight-bold text-success">{{ analyticsTotalPaid }}</div>
-              <div class="text-body-2 text-medium-emphasis mt-1">Оплачено за год</div>
-              <v-icon icon="mdi-cash-check" color="success" class="mt-1" />
-            </v-card>
-          </v-col>
-          <v-col cols="6" md="3">
-            <v-card variant="outlined" class="pa-4 text-center table-row-hover" style="cursor:pointer" @click="router.push('/orders')">
-              <div class="text-h4 font-weight-bold text-primary">{{ analyticsTotalPurchases }}</div>
-              <div class="text-body-2 text-medium-emphasis mt-1">Всего закупок</div>
-              <v-icon icon="mdi-clipboard-list" color="primary" class="mt-1" />
-            </v-card>
-          </v-col>
-        </v-row>
-
-        <v-row>
-          <!-- Purchase funnel -->
-          <v-col cols="12" md="6">
-            <v-card variant="outlined" class="pa-4">
-              <div class="text-subtitle-1 font-weight-bold mb-3">Воронка закупок</div>
-              <div v-for="item in analyticsData.funnel" :key="item.status" class="mb-3" style="cursor:pointer" @click="router.push(`/orders?status=${item.status}`)">
-                <div class="d-flex justify-space-between mb-1">
-                  <span class="text-body-2">{{ A_STATUS_LABELS[item.status] || item.status }}</span>
-                  <span class="text-body-2 font-weight-medium">{{ item.count }} шт{{ item.total ? ' · ' + formatCurrencyShort(item.total) : '' }}</span>
-                </div>
-                <v-progress-linear
-                  :model-value="analyticsFunnelPct(item.total)"
-                  :color="A_STATUS_COLORS[item.status] || 'grey'"
-                  rounded height="14" bg-color="grey-lighten-3"
-                />
-              </div>
-            </v-card>
-          </v-col>
-
-          <!-- Purchase method distribution -->
-          <v-col cols="12" md="3">
-            <v-card variant="outlined" class="pa-4" style="height:100%">
-              <div class="text-subtitle-1 font-weight-bold mb-3">Способы закупки</div>
-              <div v-for="(cnt, method) in analyticsData.method_distribution" :key="method" class="mb-3" style="cursor:pointer" @click="router.push(`/orders?method=${method}`)">
-                <div class="d-flex justify-space-between mb-1">
-                  <span class="text-body-2">{{ A_METHOD_LABELS[method] || method }}</span>
-                  <span class="text-body-2 font-weight-medium">{{ cnt }}</span>
-                </div>
-                <v-progress-linear
-                  :model-value="analyticsTotalPurchases > 0 ? (cnt / analyticsTotalPurchases) * 100 : 0"
-                  :color="A_METHOD_COLORS[method] || 'blue-grey'"
-                  rounded height="14" bg-color="grey-lighten-3"
-                />
-              </div>
-            </v-card>
-          </v-col>
-
-          <!-- Upcoming deadlines -->
-          <v-col cols="12" md="3">
-            <v-card variant="outlined" class="pa-4" style="height:100%">
-              <div class="text-subtitle-1 font-weight-bold mb-3">
-                Ближайшие сроки
-                <v-chip size="x-small" color="warning" variant="tonal" class="ml-1">{{ analyticsData.upcoming_deadlines.length }}</v-chip>
-              </div>
-              <div v-if="analyticsData.upcoming_deadlines.length === 0" class="text-caption text-medium-emphasis">
-                Нет сроков в ближайшие 30 дней
-              </div>
-              <div v-for="d in analyticsData.upcoming_deadlines" :key="d.id" class="analytics-deadline-item">
-                <div class="d-flex align-center justify-space-between">
-                  <router-link :to="`/orders/${d.id}`" class="text-body-2 analytics-deadline-link">
-                    {{ d.name || `Закупка #${d.purchase_number || d.id}` }}
-                  </router-link>
-                  <v-chip :color="analyticsDeadlineColor(d.execution_term)" size="x-small" variant="tonal">
-                    {{ analyticsFormatDate(d.execution_term) }}
-                  </v-chip>
-                </div>
-              </div>
-            </v-card>
-          </v-col>
-        </v-row>
-
-        <!-- Plan vs Fact -->
-        <v-row class="mt-4">
-          <v-col cols="12">
-            <v-card variant="outlined" class="pa-4">
-              <div class="text-subtitle-1 font-weight-bold mb-3">План / Факт по субсидиям</div>
-              <v-table density="compact">
-                <thead>
-                  <tr>
-                    <th>Субсидия</th>
-                    <th class="text-right">НМЦД (план)</th>
-                    <th class="text-right">Законтрактовано</th>
-                    <th class="text-right">Оплачено</th>
-                    <th>Исполнение</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="pf in analyticsData.plan_fact" :key="pf.subsidy">
-                    <td class="text-body-2">{{ pf.subsidy }}</td>
-                    <td class="text-right text-body-2">{{ formatCurrencyShort(pf.plan) }}</td>
-                    <td class="text-right text-body-2">{{ formatCurrencyShort(pf.contracted) }}</td>
-                    <td class="text-right text-body-2 text-success">{{ formatCurrencyShort(pf.paid) }}</td>
-                    <td style="min-width:150px">
-                      <v-progress-linear
-                        v-if="pf.plan > 0"
-                        :model-value="Math.min((pf.contracted / pf.plan) * 100, 100)"
-                        color="blue" height="12" rounded bg-color="grey-lighten-3"
-                        :title="`Законтрактовано: ${Math.round((pf.contracted / pf.plan)*100)}%`"
-                      />
-                    </td>
-                  </tr>
-                  <tr v-if="analyticsData.plan_fact.length === 0">
-                    <td colspan="5" class="text-center text-medium-emphasis text-caption pa-4">Нет данных</td>
-                  </tr>
-                </tbody>
-              </v-table>
-            </v-card>
-          </v-col>
-        </v-row>
-
-        <!-- Monthly paid + Top contractors -->
-        <v-row class="mt-4">
-          <v-col cols="12" md="7">
-            <v-card variant="outlined" class="pa-4">
-              <div class="text-subtitle-1 font-weight-bold mb-3">Ежемесячные оплаты</div>
-              <div v-if="analyticsData.monthly_payments.length === 0" class="text-caption text-medium-emphasis text-center py-4">
-                Нет данных об оплатах
-              </div>
-              <div v-else class="analytics-monthly-chart">
-                <div v-for="m in analyticsData.monthly_payments" :key="`${m.year}-${m.month}`" class="analytics-bar-col">
-                  <div class="analytics-bar-label">{{ formatCurrencyShort(m.total) }}</div>
-                  <div class="analytics-bar-wrap">
-                    <div class="analytics-bar-fill" :style="{ height: analyticsBarHeight(m.total) + '%' }" />
-                  </div>
-                  <div class="analytics-bar-x">{{ A_MONTH_NAMES[m.month - 1].slice(0,3) }}<br/>{{ m.year }}</div>
-                </div>
-              </div>
-            </v-card>
-          </v-col>
-
-          <v-col cols="12" md="5">
-            <v-card variant="outlined" class="pa-4">
-              <div class="text-subtitle-1 font-weight-bold mb-3">Топ контрагентов по сумме</div>
-              <div v-for="(c, i) in analyticsData.top_contractors" :key="c.name" class="mb-2">
-                <div class="d-flex justify-space-between mb-1">
-                  <span class="text-body-2 text-truncate" style="max-width:200px" :title="c.name">
-                    {{ i + 1 }}. {{ c.name }}
-                  </span>
-                  <span class="text-body-2 font-weight-medium ml-2 flex-shrink-0">{{ formatCurrencyShort(c.total) }}</span>
-                </div>
-                <v-progress-linear
-                  :model-value="analyticsTopPct(c.total)"
-                  color="indigo" rounded height="10" bg-color="grey-lighten-3"
-                />
-              </div>
-              <div v-if="analyticsData.top_contractors.length === 0" class="text-caption text-medium-emphasis text-center py-4">
-                Нет данных
-              </div>
-            </v-card>
-          </v-col>
-        </v-row>
-      </template>
+      <AnalyticsTab
+        :analytics-loading="analyticsLoading" :analytics-data="analyticsData"
+        :analytics-total-purchases="analyticsTotalPurchases" :analytics-total-paid="analyticsTotalPaid"
+        :analytics-funnel-pct="analyticsFunnelPct" :analytics-top-pct="analyticsTopPct"
+        :analytics-bar-height="analyticsBarHeight" :analytics-format-date="analyticsFormatDate"
+        :analytics-deadline-color="analyticsDeadlineColor" :format-currency-short="formatCurrencyShort"
+        :A_STATUS_LABELS="A_STATUS_LABELS" :A_STATUS_COLORS="A_STATUS_COLORS"
+        :A_METHOD_LABELS="A_METHOD_LABELS" :A_METHOD_COLORS="A_METHOD_COLORS"
+        :A_MONTH_NAMES="A_MONTH_NAMES"
+      />
     </v-window-item>
     </v-window>
 
@@ -872,718 +202,131 @@
       @row-click="(id) => { stageFeoDrillVisible = false; $router.push(`/orders/${id}/edit`) }"
     />
 
-    <!-- Status pie drill-down dialog -->
-    <v-dialog v-model="statusDrillDialog" max-width="700" scrollable :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="text-h6 pt-4 px-5 d-flex align-center gap-2">
-          <v-icon :icon="'mdi-cart-outline'" :color="STATUS_COLORS[statusDrillStatus] || 'grey'" />
-          {{ STATUS_LABELS[statusDrillStatus] || statusDrillStatus }}<span v-if="statusDrillStatuses.length > 1" class="text-medium-emphasis">&nbsp;(и далее)</span>
-          <v-chip size="x-small" variant="tonal" class="ml-1">{{ statusDrillPurchases.length }} шт.</v-chip>
-        </v-card-title>
-        <v-card-text class="pa-0">
-          <v-table density="compact">
-            <thead>
-              <tr>
-                <th class="px-4">№</th>
-                <th class="px-4">Предмет закупки</th>
-                <th class="text-right px-4">Сумма</th>
-                <th class="px-4">Субсидия</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="p in statusDrillPurchases" :key="p.id"
-                style="cursor:pointer" @click="$router.push(`/orders/${p.id}/edit`); statusDrillDialog = false">
-                <td class="px-4 text-medium-emphasis">{{ p.purchase_number || p.id }}</td>
-                <td class="px-4 py-2" style="max-width:280px;white-space:normal;font-size:13px">{{ p.subject || p.item_name || '—' }}</td>
-                <td class="text-right px-4 font-weight-medium text-primary">{{ formatCurrency(purchaseEffectivePrice(p)) }}</td>
-                <td class="px-4 text-caption text-medium-emphasis">{{ p.subsidy_name || '—' }}</td>
-              </tr>
-              <tr v-if="statusDrillPurchases.length === 0">
-                <td colspan="4" class="text-center py-6 text-medium-emphasis">Нет закупок</td>
-              </tr>
-            </tbody>
-          </v-table>
-        </v-card-text>
-        <v-card-actions class="px-5 pb-4">
-          <v-btn
-            v-if="statusDrillPurchases.length > 0"
-            color="success" variant="tonal" prepend-icon="mdi-microsoft-excel"
-            @click="exportStatusDrillXlsx"
-          >Скачать Excel</v-btn>
-          <v-spacer /><v-btn @click="statusDrillDialog = false">Закрыть</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <StatusDrillDialog
+      v-model="statusDrillDialog"
+      :mobile="mobile"
+      :status-drill-status="statusDrillStatus" :status-drill-statuses="statusDrillStatuses"
+      :status-drill-purchases="statusDrillPurchases"
+      :status-labels="STATUS_LABELS" :status-colors="STATUS_COLORS"
+      :format-currency="formatCurrency" :purchase-effective-price="purchaseEffectivePrice"
+      @export-xlsx="exportStatusDrillXlsx"
+    />
 
-    <!-- Donut drill-down dialog (legacy, kept for direct use) -->
-    <v-dialog v-model="drillDownDialog" max-width="500" :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="text-h6 pt-4 px-5 d-flex align-center gap-2">
-          <v-icon :color="['success','primary','warning','grey'][drillDownSegment ?? 0]"
-            :icon="['mdi-cash-check','mdi-file-sign','mdi-clock-outline','mdi-cash-remove'][drillDownSegment ?? 0]" />
-          {{ drillDownSegment !== null ? SEGMENT_LABELS[drillDownSegment] : '' }}
-        </v-card-title>
-        <v-card-subtitle class="px-5 pb-1 text-caption text-medium-emphasis">Разбивка по субсидиям</v-card-subtitle>
-        <v-card-text class="pa-0">
-          <v-table density="compact">
-            <thead>
-              <tr>
-                <th class="px-5">Субсидия</th>
-                <th class="text-right px-5">Сумма</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in drillDownRows" :key="row.name">
-                <td class="px-5 py-2">{{ row.name }}</td>
-                <td class="text-right px-5 font-weight-medium text-primary">{{ formatCurrency(row.value) }}</td>
-              </tr>
-              <tr v-if="drillDownRows.length === 0">
-                <td colspan="2" class="text-center py-6 text-medium-emphasis">Нет данных</td>
-              </tr>
-            </tbody>
-            <tfoot v-if="drillDownRows.length > 1">
-              <tr style="border-top: 2px solid var(--crm-border-strong)">
-                <td class="px-5 py-2 font-weight-bold">Итого</td>
-                <td class="text-right px-5 font-weight-bold text-primary">
-                  {{ formatCurrency(drillDownRows.reduce((s, r) => s + r.value, 0)) }}
-                </td>
-              </tr>
-            </tfoot>
-          </v-table>
-        </v-card-text>
-        <v-card-actions class="px-5 pb-4">
-          <v-spacer />
-          <v-btn @click="drillDownDialog = false">Закрыть</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <DonutDrillDialog
+      v-model="drillDownDialog"
+      :mobile="mobile" :drill-down-segment="drillDownSegment" :drill-down-rows="drillDownRows"
+      :segment-labels="SEGMENT_LABELS" :format-currency="formatCurrency"
+    />
 
     <!-- ── Financial Plan Drill-Down Dialog ── -->
-    <v-dialog v-model="finplanDrilldown.show" max-width="1100" scrollable :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="d-flex align-center pa-3">
-          <v-icon icon="mdi-format-list-bulleted" class="mr-2" />
-          <span>{{ finplanDrilldownTitle }} — {{ finplanDrilldown.period || 'все периоды' }}</span>
-          <v-spacer />
-          <v-chip size="small" variant="tonal" :color="finplanDrilldownChipColor">
-            {{ finplanDrilldown.items.length }} закупок · Σ {{ finplanDrilldownTotal.toLocaleString('ru-RU') }} ₽
-          </v-chip>
-          <v-btn v-if="finplanDrilldown.category !== 'no_deadline'" size="small" variant="tonal" color="success" prepend-icon="mdi-microsoft-excel" @click="exportFinplanDrilldownXlsx" class="ml-2">
-            Excel
-          </v-btn>
-          <v-btn icon="mdi-close" variant="text" size="small" class="ml-2" @click="finplanDrilldown.show = false" />
-        </v-card-title>
-        <v-divider />
-        <v-card-text class="pa-0">
-          <v-progress-linear v-if="finplanDrilldown.loading" indeterminate />
-          <v-table density="compact" v-else-if="finplanDrilldown.items.length">
-            <thead>
-              <tr>
-                <th>№</th>
-                <th>Предмет</th>
-                <th>Контрагент</th>
-                <th>Дата обязательства</th>
-                <th>Статус</th>
-                <th class="text-right">Сумма</th>
-                <th class="text-right">Оплачено</th>
-                <th class="text-right">Остаток</th>
-                <th>Метки</th>
-                <th>Понадобится</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in finplanDrilldown.items" :key="row.id"
-                  :style="{ cursor: 'pointer', opacity: row.is_likely_needed === false ? 0.55 : 1 }"
-                  @click="goToOrder(row.id)">
-                <td><code>{{ row.purchase_number || row.id }}</code></td>
-                <td>
-                  <div>{{ row.subject }}</div>
-                  <div v-if="row.stage_label" class="text-caption text-medium-emphasis">{{ row.stage_label }}</div>
-                </td>
-                <td>{{ row.contractor_name }}</td>
-                <td>{{ formatDate(row.obligation_date || row.expected_date) }}</td>
-                <td><v-chip size="x-small" variant="tonal">{{ STATUS_LABELS_FINPLAN[row.status] || row.status }}</v-chip></td>
-                <td class="text-right font-weight-medium">{{ (row.amount || 0).toLocaleString('ru-RU') }} ₽</td>
-                <td class="text-right">{{ (row.paid_amount || 0).toLocaleString('ru-RU') }} ₽</td>
-                <td class="text-right">{{ (row.remaining || 0).toLocaleString('ru-RU') }} ₽</td>
-                <td>
-                  <v-chip v-if="row.is_overdue" size="x-small" color="error" variant="tonal" class="mr-1">
-                    Просрочено
-                  </v-chip>
-                  <v-chip v-if="row.missing_deadline" size="x-small" color="warning" variant="tonal" class="mr-1">
-                    Нет срока
-                  </v-chip>
-                  <v-chip v-if="row.is_prepayment" size="x-small" color="info" variant="tonal">
-                    Предоплата
-                  </v-chip>
-                </td>
-                <td @click.stop>
-                  <v-checkbox
-                    :model-value="row.is_likely_needed !== false"
-                    density="compact" hide-details
-                    @update:model-value="patchIsLikelyNeeded(row, $event)"
-                  />
-                </td>
-              </tr>
-            </tbody>
-          </v-table>
-          <div v-else class="text-medium-emphasis text-center py-6">Нет закупок в этой группе</div>
-        </v-card-text>
-      </v-card>
-    </v-dialog>
+    <FinplanDrilldownDialog
+      :mobile="mobile" :finplan-drilldown="finplanDrilldown"
+      :finplan-drilldown-title="finplanDrilldownTitle" :finplan-drilldown-total="finplanDrilldownTotal"
+      :finplan-drilldown-chip-color="finplanDrilldownChipColor"
+      :status-labels-finplan="STATUS_LABELS_FINPLAN" :format-date="formatDate"
+      :go-to-order="goToOrder" :patch-is-likely-needed="patchIsLikelyNeeded"
+      @export-xlsx="exportFinplanDrilldownXlsx"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
-import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
-import { useRouter, useRoute } from 'vue-router'
-import { useTheme, useDisplay } from 'vuetify'
-import BudgetDrillDownDialog from '@/components/BudgetDrillDownDialog.vue'
-import StatusPieWithWishes from '@/components/StatusPieWithWishes.vue'
-import StageFeoDrillDialog from '@/components/StageFeoDrillDialog.vue'
-import BudgetBar from '@/components/BudgetBar.vue'
-import { apiFetch } from '@/api'
-import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
+import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 import { GridLayout, GridItem } from 'grid-layout-plus'
-import { useDashboardLayout, type LayoutItem } from '@/composables/useDashboardLayout'
-import { useDashboardMode } from '@/composables/useDashboardMode'
-import { PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusColor, purchaseMethodLabel } from '@/constants/purchaseStatus'
-import { safeDiv } from '@/utils/numberFormat'
-import { toAmount } from '@/types/purchaseAmounts'
 
-const { globalSubsidyId } = useGlobalSubsidy()
-const { layout, isEditing, toggleEditing, resetLayout, onLayoutUpdated, DEFAULT_SUMMARY_LAYOUT } = useDashboardLayout()
-const { setMode } = useDashboardMode()
+import BudgetDrillDownDialog from '@/components/BudgetDrillDownDialog.vue'
+import StageFeoDrillDialog from '@/components/StageFeoDrillDialog.vue'
 
+import DashboardHeader from '@/components/dashboard/DashboardHeader.vue'
+import DashboardSubsidyChips from '@/components/dashboard/DashboardSubsidyChips.vue'
+import DashboardBanners from '@/components/dashboard/DashboardBanners.vue'
+import DashboardGridWidget from '@/components/dashboard/DashboardGridWidget.vue'
+import KpiCardsWidget from '@/components/dashboard/KpiCardsWidget.vue'
+import DonutChartWidget from '@/components/dashboard/DonutChartWidget.vue'
+import RadialGaugeWidget from '@/components/dashboard/RadialGaugeWidget.vue'
+import PipelineWidget from '@/components/dashboard/PipelineWidget.vue'
+import MonthlyContractsWidget from '@/components/dashboard/MonthlyContractsWidget.vue'
+import GoodsServicesWidget from '@/components/dashboard/GoodsServicesWidget.vue'
+import RecentPurchasesWidget from '@/components/dashboard/RecentPurchasesWidget.vue'
+import SummaryTableWidget from '@/components/dashboard/SummaryTableWidget.vue'
+import FinancialPlanWidget from '@/components/dashboard/FinancialPlanWidget.vue'
+import AnalyticsTab from '@/components/dashboard/AnalyticsTab.vue'
+import StatusDrillDialog from '@/components/dashboard/StatusDrillDialog.vue'
+import DonutDrillDialog from '@/components/dashboard/DonutDrillDialog.vue'
+import FinplanDrilldownDialog from '@/components/dashboard/FinplanDrilldownDialog.vue'
+
+import { STATUS_LABELS, STATUS_COLORS } from '@/composables/dashboard/dashboardStatusMaps'
+import {
+  pct, progressColor, formatCurrency, formatCurrencyShort,
+  purchaseEffectivePrice, statusLabel, statusColor, statusColorHex,
+} from '@/composables/dashboard/dashboardFormat'
+import { useDashboardChartTheme } from '@/composables/dashboard/useDashboardChartTheme'
+import { useDashboardFilters } from '@/composables/dashboard/useDashboardFilters'
+import { useDashboardData } from '@/composables/dashboard/useDashboardData'
+import { useDashboardGridLayout } from '@/composables/dashboard/useDashboardGridLayout'
+import { useBudgetDrilldown } from '@/composables/dashboard/useBudgetDrilldown'
+import { useDonutWidget, SEGMENT_LABELS } from '@/composables/dashboard/useDonutWidget'
+import { usePipelineWidget } from '@/composables/dashboard/usePipelineWidget'
+import { useGoodsServicesWidget } from '@/composables/dashboard/useGoodsServicesWidget'
+import { useMonthlyContractsWidget } from '@/composables/dashboard/useMonthlyContractsWidget'
+import { useAnalyticsTab, A_STATUS_LABELS, A_STATUS_COLORS, A_METHOD_LABELS, A_METHOD_COLORS, A_MONTH_NAMES } from '@/composables/dashboard/useAnalyticsTab'
+import { useFinancialPlanWidget, STATUS_LABELS_FINPLAN } from '@/composables/dashboard/useFinancialPlanWidget'
+
+const router = useRouter()
 const { mobile } = useDisplay()
 
-// Mobile-only stacked layout (full-width, single column, tuned heights)
-// ROW_PX = 125 — высота одного ряда KPI-карточек на мобильном (card ~113px + v-col padding 12px)
-const MOBILE_KPI_ROW_PX = 125
-const MOBILE_KPI_PADDING = 32 // запас + 12 margin
+// ── Filters (год / субсидии / вкладка) ──────────────
+const { selectedYear, selectedSubsidyIds, activeTab, toggleSubsidyChip } = useDashboardFilters()
 
-const MOBILE_ITEMS_BASE: Array<{ i: string; h: number; condition?: () => boolean }> = [
-  { i: 'kpi',       h: 0  }, // h вычисляется динамически
-  { i: 'donut',     h: 11 },
-  { i: 'radial',    h: 7  },
-  { i: 'pipeline',  h: 11 },
-  { i: 'monthly',   h: 8,  condition: () => monthlyContractsRemaining.value.length > 0 },
-  { i: 'breakdown', h: 9,  condition: () => pipelineByType.value.some(s => s.total > 0) },
-  { i: 'purchases', h: 11 },
-  { i: 'table',     h: 14 },
-  { i: 'finplan',   h: 14 },
-]
-const mobileLayout = computed<LayoutItem[]>(() => {
-  // Фикс 2: динамическая высота KPI под реальное количество карточек (2 в ряд)
-  const rows = Math.ceil(kpiCards.value.length / 2)
-  const kpiH = Math.ceil((rows * MOBILE_KPI_ROW_PX + MOBILE_KPI_PADDING) / 42)
+// ── Ядро данных дашборда ─────────────────────────────
+const {
+  loading, loadingPurchases,
+  allSubsidies, allPurchases, statusCounts, widgetsData, subsidiesNearCeiling,
+  availableYears, yearSubsidies, filteredSubsidies, recentPurchases,
+  totalBudget, totalContracted, totalPaid, totalPlanned, totalPlanSchedule, totalOrdered,
+  totalFeoPlanned, totalRemaining, totalUsagePct,
+  overrunSubsidies, effectiveWidgets, kpiCards,
+  loadAll,
+} = useDashboardData(selectedYear, selectedSubsidyIds)
 
-  let y = 0
-  const result: LayoutItem[] = []
-  for (const { i, h: staticH, condition } of MOBILE_ITEMS_BASE) {
-    // Фикс 3: пропускать скрытые виджеты (monthly/breakdown) — убирает пустые дырки
-    if (condition && !condition()) continue
-    const h = i === 'kpi' ? kpiH : staticH
-    result.push({ i, x: 0, y, w: 12, h, minW: 12, minH: h })
-    y += h
-  }
-  return result
-})
+// ── Тема графиков (dark mode) ────────────────────────
+const chartTheme = useDashboardChartTheme()
+const { chartMuted } = chartTheme
 
-const effectiveLayout = computed<LayoutItem[]>(() => mobile.value ? mobileLayout.value : layout.value)
+// ── Диалог разбивки бюджета по субсидиям (общий для Донат-виджета и Сводной таблицы) ──
+const { showBreakdownDialog, breakdownMetric, drillDialogSubsidies, openBreakdown } = useBudgetDrilldown()
 
-function handleLayoutUpdated(l: typeof layout.value) {
-  if (!mobile.value) onLayoutUpdated(l)
-}
-const dashboardToggleMode = ref<'classic' | 'radar'>('classic')
-watch(dashboardToggleMode, (v) => {
-  if (v === 'classic' || v === 'radar') setMode(v)
-})
-
-const theme = useTheme()
-const router = useRouter()
-const route = useRoute()
-const loading = ref(false)
-const loadingPurchases = ref(false)
-const selectedYear = ref(new Date().getFullYear())
-const selectedSubsidyIds = ref<number[]>([])
-const showBreakdownDialog = ref(false)
-const activeTab = ref((route.query.tab as string) || 'summary')
-watch(activeTab, (tab) => router.replace({ query: { ...route.query, tab } }))
-
-// ── Data ──────────────────────────────────────────
-interface WidgetMetric {
-  amount: number
-  count: number
-  monthly_payments_total?: number
-}
-
-interface WidgetsData {
-  plan_schedule: WidgetMetric
-  work: WidgetMetric
-  ordered: WidgetMetric
-  delivered: WidgetMetric
-  delivered_unpaid: WidgetMetric
-  paid: WidgetMetric
-  contracts: WidgetMetric
-}
-
-interface SubsidyRow {
-  id: number; name: string; shortName: string; description: string; year: number
-  budget: number; contracted: number; paid: number; planned: number
-  plan_schedule: number; ordered: number
-  total_feo_planned: number  // 12-01
-  // Phase 31-05: canonical budget fields
-  remaining?: number | null
-  planned_amount?: number | null
-  budget_discrepancy?: number | null
-  widget?: WidgetsData | null
-}
-
-const allSubsidies    = ref<SubsidyRow[]>([])
-const allPurchases    = ref<any[]>([])
-const statusCounts    = ref<Record<string, number>>({})
-const breakdownMetric = ref('budget')
-const widgetsData     = ref<WidgetsData | null>(null)
-
-// Владелец (2026-08-30): «субсидии у потолка» — сумма заказанного (включая
-// ежемесячные платежи, весь график) приблизилась/превысила потолок ФЭО.
-// Приходит готовым списком с бэкенда (см. app/routers/dashboard.py
-// dashboard_charts → subsidies_near_ceiling), не пересчитывается на фронте.
-interface CeilingWarningRow {
-  subsidy_id: number; name: string
-  ceiling_total: number; ceiling_committed_total: number
-  ceiling_committed_percent: number; ceiling_warn_percent: number
-  ceiling_exceeded: boolean
-}
-const subsidiesNearCeiling = ref<CeilingWarningRow[]>([])
-
-// Dark mode aware colors for ApexCharts
-const isDark = computed(() => theme.global.name.value === 'dark')
-const chartText = computed(() => isDark.value ? '#CBD5E1' : '#374151')
-const chartMuted = computed(() => isDark.value ? '#94A3B8' : '#6B7280')
-const chartGrid = computed(() => isDark.value ? 'rgba(255,255,255,0.08)' : '#E2E8F0')
-const chartTrack = computed(() => isDark.value ? '#334155' : '#E2E8F0')
-
-// ── Derived ──────────────────────────────────────
-const availableYears = computed(() =>
-  [...new Set(allSubsidies.value.map(s => s.year))].sort((a, b) => b - a)
+// ── Донат-график ──────────────────────────────────────
+const {
+  donutReady, donutSeries, donutOptions,
+  drillDownDialog, drillDownSegment, donutView,
+  drillDownRows, breakdownBarSeries, breakdownBarOptions,
+} = useDonutWidget(
+  { totalPaid, totalOrdered, totalPlanSchedule, totalBudget },
+  filteredSubsidies,
+  chartTheme,
+  { showBreakdownDialog, breakdownMetric, drillDialogSubsidies },
 )
 
-const yearSubsidies = computed((): SubsidyRow[] =>
-  allSubsidies.value.filter((s: SubsidyRow) => s.year === selectedYear.value)
-)
-
-// Sync: global → local
-watch(globalSubsidyId, (id: number | null) => {
-  if (id !== null) selectedSubsidyIds.value = [id]
-  else selectedSubsidyIds.value = []
-}, { immediate: true })
-
-// Clear selection when year changes to avoid stale IDs from other year
-watch(selectedYear, () => { selectedSubsidyIds.value = [] })
-
-// Sync: local → global (only single selection)
-watch(selectedSubsidyIds, (ids: number[]) => {
-  if (ids.length === 1) globalSubsidyId.value = ids[0]
-  else if (ids.length === 0) globalSubsidyId.value = null
-})
-
-function toggleSubsidyChip(id: number) {
-  const idx = selectedSubsidyIds.value.indexOf(id)
-  if (idx >= 0) {
-    selectedSubsidyIds.value = selectedSubsidyIds.value.filter((x: number) => x !== id)
-  } else {
-    selectedSubsidyIds.value = [...selectedSubsidyIds.value, id]
-  }
-}
-
-const filteredSubsidies = computed(() => {
-  let res = allSubsidies.value.filter(s => s.year === selectedYear.value)
-  if (selectedSubsidyIds.value.length > 0)
-    res = res.filter(s => selectedSubsidyIds.value.includes(s.id))
-  return res
-})
-
-// Recent purchases filtered to selected subsidies
-const recentPurchases = computed(() => {
-  const subsidyIds = filteredSubsidies.value.map(s => s.id)
-  return allPurchases.value
-    .filter(p => subsidyIds.length === 0 || subsidyIds.includes(p.subsidy_id))
-    .slice(0, 8)
-})
-
-const totalBudget       = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.budget, 0))
-const totalContracted   = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.contracted, 0))
-const totalPaid         = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.paid, 0))
-const totalPlanned      = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.planned, 0))
-const totalPlanSchedule = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.plan_schedule, 0))
-const totalOrdered      = computed(() => filteredSubsidies.value.reduce((s, x) => s + x.ordered, 0))
-const totalFeoPlanned   = computed(() => filteredSubsidies.value.reduce((s: number, x: SubsidyRow) => s + (x.total_feo_planned ?? 0), 0))  // 12-01
-const totalRemaining    = computed(() => totalBudget.value - totalPaid.value)
-const totalUsagePct   = computed(() => pct(totalPaid.value, totalBudget.value))
-
-const overrunSubsidies = computed(() =>
-  filteredSubsidies.value.filter(s => s.planned > s.budget || s.contracted > s.budget)
-)
-
-// ── Effective widgets: global or summed over selected subsidies ───
-const effectiveWidgets = computed((): WidgetsData | null => {
-  if (selectedSubsidyIds.value.length === 0) return widgetsData.value
-  const keys = ['plan_schedule', 'work', 'ordered', 'delivered', 'delivered_unpaid', 'paid', 'contracts'] as const
-  const zero = (): WidgetMetric => ({ amount: 0, count: 0, monthly_payments_total: 0 })
-  const acc: WidgetsData = {
-    plan_schedule: zero(), work: zero(), ordered: zero(),
-    delivered: zero(), delivered_unpaid: zero(), paid: zero(), contracts: zero(),
-  }
-  for (const row of filteredSubsidies.value) {
-    if (!row.widget) continue
-    for (const key of keys) {
-      acc[key].amount += row.widget[key].amount ?? 0
-      acc[key].count  += row.widget[key].count  ?? 0
-      if (key === 'ordered') {
-        acc.ordered.monthly_payments_total =
-          (acc.ordered.monthly_payments_total ?? 0) + (row.widget.ordered.monthly_payments_total ?? 0)
-      }
-    }
-  }
-  return acc
-})
-
-// ── Animated KPI targets (mirrors kpiCards amount logic) ─────────────
-const kpiTarget_budget           = computed(() => totalBudget.value)
-const kpiTarget_plan_schedule    = computed(() => effectiveWidgets.value?.plan_schedule.amount    ?? totalPlanSchedule.value)
-const kpiTarget_work             = computed(() => effectiveWidgets.value?.work.amount             ?? 0)
-const kpiTarget_ordered          = computed(() => effectiveWidgets.value?.ordered.amount          ?? totalOrdered.value)
-const kpiTarget_contracts        = computed(() => effectiveWidgets.value?.contracts.amount        ?? 0)
-const kpiTarget_delivered        = computed(() => effectiveWidgets.value?.delivered.amount        ?? 0)
-const kpiTarget_delivered_unpaid = computed(() => effectiveWidgets.value?.delivered_unpaid.amount ?? 0)
-const kpiTarget_paid             = computed(() => effectiveWidgets.value?.paid.amount             ?? totalPaid.value)
-const kpiTarget_free             = computed(() => totalBudget.value - totalPlanSchedule.value)
-
-const kpiAnim_budget           = useAnimatedNumber(kpiTarget_budget,           800)
-const kpiAnim_plan_schedule    = useAnimatedNumber(kpiTarget_plan_schedule,    800)
-const kpiAnim_work             = useAnimatedNumber(kpiTarget_work,             800)
-const kpiAnim_ordered          = useAnimatedNumber(kpiTarget_ordered,          800)
-const kpiAnim_contracts        = useAnimatedNumber(kpiTarget_contracts,        800)
-const kpiAnim_delivered        = useAnimatedNumber(kpiTarget_delivered,        800)
-const kpiAnim_delivered_unpaid = useAnimatedNumber(kpiTarget_delivered_unpaid, 800)
-const kpiAnim_paid             = useAnimatedNumber(kpiTarget_paid,             800)
-const kpiAnim_free             = useAnimatedNumber(kpiTarget_free,             800)
-
-// ── KPI Cards (widgets — накопительная логика) ────
-const kpiCards = computed(() => {
-  const w = effectiveWidgets.value
-  const freeRaw = totalBudget.value - totalPlanSchedule.value
-  return [
-    {
-      key: 'budget',
-      label: 'Бюджет',
-      icon: 'mdi-wallet',
-      amount: kpiAnim_budget.value,
-      count: 0,
-      countLabel: '',
-      tooltip: 'суммарный бюджет по дереву ФЭО выбранных субсидий',
-      monthly: null,
-      over: undefined as boolean | undefined,
-    },
-    {
-      key: 'plan_schedule',
-      label: 'План-График',
-      icon: 'mdi-calendar-clock',
-      amount: kpiAnim_plan_schedule.value,
-      count: w?.plan_schedule.count ?? 0,
-      countLabel: 'закупок',
-      tooltip: 'включает все последующие этапы',
-      monthly: null,
-      over: undefined as boolean | undefined,
-    },
-    {
-      key: 'work',
-      label: 'Ведётся работа',
-      icon: 'mdi-progress-wrench',
-      amount: kpiAnim_work.value,
-      count: w?.work.count ?? 0,
-      countLabel: 'закупок',
-      tooltip: 'включает заказанные, поставленные и оплаченные',
-      monthly: null,
-      over: undefined as boolean | undefined,
-    },
-    {
-      key: 'ordered',
-      label: 'Заказано',
-      icon: 'mdi-cart-check',
-      amount: kpiAnim_ordered.value,
-      count: w?.ordered.count ?? 0,
-      countLabel: 'закупок',
-      tooltip: 'включает поставленные и оплаченные',
-      monthly: (w?.ordered.monthly_payments_total ?? 0) > 0
-        ? w!.ordered.monthly_payments_total!
-        : null,
-      over: undefined as boolean | undefined,
-    },
-    {
-      key: 'contracts',
-      label: 'Заключено договоров',
-      icon: 'mdi-file-sign',
-      amount: kpiAnim_contracts.value,
-      count: w?.contracts.count ?? 0,
-      countLabel: 'договоров',
-      tooltip: 'суммарная стоимость заключённых договоров',
-      monthly: null,
-      over: undefined as boolean | undefined,
-    },
-    {
-      key: 'delivered',
-      label: 'Поставлено',
-      icon: 'mdi-truck-check',
-      amount: kpiAnim_delivered.value,
-      count: w?.delivered.count ?? 0,
-      countLabel: 'закупок',
-      tooltip: 'включает оплаченные',
-      monthly: null,
-      over: undefined as boolean | undefined,
-    },
-    {
-      key: 'delivered_unpaid',
-      label: 'Поставлено, не оплачено',
-      icon: 'mdi-truck-alert',
-      amount: kpiAnim_delivered_unpaid.value,
-      count: w?.delivered_unpaid.count ?? 0,
-      countLabel: 'закупок',
-      tooltip: 'поставлено, но оплата ещё не прошла',
-      monthly: null,
-      over: undefined as boolean | undefined,
-    },
-    {
-      key: 'paid',
-      label: 'Оплачено',
-      icon: 'mdi-cash-check',
-      amount: kpiAnim_paid.value,
-      count: w?.paid.count ?? 0,
-      countLabel: 'закупок',
-      tooltip: null,
-      monthly: null,
-      over: undefined as boolean | undefined,
-    },
-    {
-      key: 'free',
-      label: freeRaw < 0 ? 'Превышение' : 'Свободно',
-      icon: 'mdi-cash-lock-open',
-      amount: Math.abs(kpiAnim_free.value),
-      count: 0,
-      countLabel: '',
-      tooltip: 'бюджет минус запланировано',
-      monthly: null,
-      over: freeRaw < 0,
-    },
-  ]
-})
-
-// ── Chart: Donut ──────────────────────────────────
-const donutReady = computed(() => totalBudget.value > 0)
-
-const donutSeries = computed(() => {
-  const paid       = totalPaid.value
-  const ordered    = Math.max(0, totalOrdered.value - paid)         // заказано (договор), не оплачено
-  const planned    = totalPlanSchedule.value                        // запланировано (confirmed+wip)
-  const free       = Math.max(0, totalBudget.value - totalOrdered.value - planned)
-  return [paid, ordered, planned, free]
-})
-
-const SEGMENT_LABELS  = ['Оплачено', 'Заказано', 'Запланировано', 'Свободно']
-const SEGMENT_COLORS  = ['#22C55E', '#3B82F6', '#F59E0B', '#94A3B8']
-const SEGMENT_METRICS = ['paid', 'ordered', 'budget', 'budget'] // maps to BudgetDrillDownDialog metric
-
-const drillDownDialog  = ref(false)
-const drillDownSegment = ref<number | null>(null)
-const donutView        = ref<'donut' | 'breakdown'>('donut')
-
-// Drill-down: scoped dialog subsidiaries
-const drillDialogSubsidies = ref<any[]>([])
-
-// Status pie drill-down
-const statusDrillDialog = ref(false)
-const statusDrillStatus = ref('')
-// Если задан — drill cumulative (пр. pipeline бар Заказано → ordered+delivered+paid).
-// Если пуст — drill exact по statusDrillStatus (pie chart по статусам).
-const statusDrillStatuses = ref<string[]>([])
-
-// FEO-иерархический drill для pipeline-этапов
-const stageFeoDrillVisible = ref(false)
-const stageFeoDrillTitle = ref('')
-const stageFeoDrillStatuses = ref<string[]>([])
-
-// Excel export для status drill-down (клиентский — использует список из computed).
-async function exportStatusDrillXlsx() {
-  try {
-    const XLSX = await import('xlsx')
-    const rows = statusDrillPurchases.value.map((p: any) => ({
-      '№': p.purchase_number || p.id,
-      'Предмет закупки': p.subject || p.item_name || '',
-      'Сумма': purchaseEffectivePrice(p),
-      'Субсидия': p.subsidy_name || '',
-      'Статус': STATUS_LABELS[p.status] || p.status,
-      'Контрагент': p.contractor_name || '',
-      '№ договора': p.contract_number || '',
-      'Дата договора': p.contract_date || '',
-    }))
-    const ws = XLSX.utils.json_to_sheet(rows)
-    const wb = XLSX.utils.book_new()
-    const sheetName = (STATUS_LABELS[statusDrillStatus.value] || statusDrillStatus.value || 'Закупки').slice(0, 31)
-    XLSX.utils.book_append_sheet(wb, ws, sheetName)
-    const fname = `dashboard_${statusDrillStatus.value}_${new Date().toISOString().slice(0, 10)}.xlsx`
-    XLSX.writeFile(wb, fname)
-  } catch (e: any) {
-    showSnack(e?.message || 'Не удалось сформировать Excel', 'error')
-  }
-}
-
-const statusDrillPurchases = computed(() => {
-  const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
-  const cumulative = statusDrillStatuses.value
-  const exact = statusDrillStatus.value
-  return allPurchases.value.filter((p: any) => {
-    if (subsidyIds.length > 0 && !subsidyIds.includes(p.subsidy_id)) return false
-    if (cumulative.length > 0) return cumulative.includes(p.status)
-    return p.status === exact
-  })
-})
-
-// Status amounts for tooltip
-const filteredStatusAmounts = computed(() => {
-  const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
-  const amounts: Record<string, number> = {}
-  for (const p of allPurchases.value) {
-    if (subsidyIds.length > 0 && !subsidyIds.includes(p.subsidy_id)) continue
-    amounts[p.status] = (amounts[p.status] || 0) + purchaseEffectivePrice(p)
-  }
-  return amounts
-})
-
-const drillDownRows = computed(() => {
-  if (drillDownSegment.value === null) return []
-  return filteredSubsidies.value.map(s => {
-    const values = [
-      s.paid,
-      Math.max(0, s.ordered - s.paid),
-      s.plan_schedule,
-      Math.max(0, s.budget - s.ordered - s.plan_schedule),
-    ]
-    return { name: s.name, value: values[drillDownSegment.value!] }
-  }).filter(r => r.value > 0).sort((a, b) => b.value - a.value)
-})
-
-const breakdownBarSeries = computed(() => [{
-  name: drillDownSegment.value !== null ? SEGMENT_LABELS[drillDownSegment.value] : '',
-  data: drillDownRows.value.map(r => r.value)
-}])
-
-const breakdownBarOptions = computed(() => ({
-  chart: {
-    type: 'bar', background: 'transparent', toolbar: { show: false },
-    animations: { speed: 350 },
-    theme: { mode: isDark.value ? 'dark' : 'light' },
-    events: {
-      dataPointSelection: (_e: any, _ctx: any, config: any) => {
-        const row = drillDownRows.value[config.dataPointIndex]
-        if (!row) return
-        const sub = filteredSubsidies.value.find((s: any) => s.name === row.name)
-        if (sub) {
-          drillDialogSubsidies.value = [sub]
-          breakdownMetric.value = SEGMENT_METRICS[drillDownSegment.value ?? 0]
-          showBreakdownDialog.value = true
-        }
-      }
-    }
-  },
-  colors: [drillDownSegment.value !== null ? SEGMENT_COLORS[drillDownSegment.value] : '#3B82F6'],
-  plotOptions: { bar: { horizontal: true, barHeight: '55%', borderRadius: 4, borderRadiusApplication: 'end' } },
-  dataLabels: {
-    enabled: true,
-    formatter: (v: number) => formatCurrencyShort(v),
-    style: { fontSize: '10px', colors: [chartText.value] }
-  },
-  xaxis: {
-    categories: drillDownRows.value.map(r => truncate(r.name, 22)),
-    labels: { formatter: (v: number) => formatCurrencyShort(v), style: { colors: chartMuted.value, fontSize: '10px' } }
-  },
-  yaxis: { labels: { style: { colors: chartText.value, fontSize: '11px' } } },
-  grid: { borderColor: chartGrid.value },
-  tooltip: {
-    theme: isDark.value ? 'dark' : 'light',
-    y: { formatter: (v: number) => formatCurrency(v) },
-    custom: () => `<div style="padding:6px 10px;font-size:12px">Нажмите для детализации →</div>`
-  }
-}))
-
-const donutOptions = computed(() => ({
-  chart: {
-    type: 'donut', background: 'transparent', toolbar: { show: false },
-    animations: { speed: 500 },
-    theme: { mode: isDark.value ? 'dark' : 'light' },
-    events: {
-      dataPointSelection: (_e: any, _ctx: any, config: any) => {
-        const idx = config.dataPointIndex
-        drillDownSegment.value = idx
-        donutView.value = 'breakdown'
-      }
-    }
-  },
-  colors: ['#22C55E', '#3B82F6', '#F59E0B', '#94A3B8'],
-  labels: SEGMENT_LABELS,
-  legend: { position: 'bottom', fontSize: '12px', labels: { colors: chartText.value } },
-  dataLabels: {
-    enabled: true,
-    style: { fontSize: '11px', colors: ['#fff', '#fff', '#fff', '#374151'] },
-    dropShadow: { enabled: false }
-  },
-  plotOptions: {
-    pie: {
-      donut: {
-        size: '68%',
-        labels: {
-          show: true,
-          total: {
-            show: true,
-            label: 'Бюджет',
-            color: chartMuted.value,
-            fontSize: '13px',
-            formatter: () => formatCurrencyShort(totalBudget.value)
-          },
-          value: {
-            show: true,
-            fontSize: '18px',
-            fontWeight: '600',
-            color: chartText.value,
-            formatter: (v: string) => formatCurrencyShort(Number(v))
-          },
-          name: { show: true, color: chartMuted.value }
-        }
-      }
-    }
-  },
-  tooltip: { y: { formatter: (v: number) => formatCurrency(v) } }
-}))
-
-// ── Chart: Radial ─────────────────────────────────
+// ── Радиальный индикатор освоения ────────────────────
 const radialOptions = computed(() => ({
-  chart: { type: 'radialBar', background: 'transparent', toolbar: { show: false }, theme: { mode: isDark.value ? 'dark' : 'light' } },
+  chart: { type: 'radialBar', background: 'transparent', toolbar: { show: false }, theme: { mode: chartTheme.isDark.value ? 'dark' : 'light' } },
   colors: [totalUsagePct.value >= 90 ? '#EF4444' : totalUsagePct.value >= 70 ? '#F59E0B' : '#22C55E'],
   plotOptions: {
     radialBar: {
       startAngle: -135,
       endAngle: 135,
       hollow: { size: '60%', background: 'transparent' },
-      track: { background: chartTrack.value, strokeWidth: '100%' },
+      track: { background: chartTheme.chartTrack.value, strokeWidth: '100%' },
       dataLabels: {
         name: {
-          show: true, offsetY: -10, color: chartMuted.value,
+          show: true, offsetY: -10, color: chartTheme.chartMuted.value,
           fontSize: '13px', fontWeight: '400'
         },
         value: {
-          show: true, color: chartText.value,
+          show: true, color: chartTheme.chartText.value,
           fontSize: '30px', fontWeight: '700',
           formatter: (val: number) => `${val}%`
         }
@@ -1601,307 +344,49 @@ const radialOptions = computed(() => ({
   }
 }))
 
-// ── Chart: Status Pie ─────────────────────────────
-// Единый источник цвета/подписи статуса закупки: frontend/src/constants/purchaseStatus.ts
-// 'planned'/'in_progress' — легаси-алиасы (см. backend PLAN_STATUSES / status="planned" для
-// дочерних закупок после разделения); резолвятся в тот же цвет, что канонический статус.
-const STATUS_LABELS: Record<string, string> = {
-  ...Object.fromEntries(PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusLabel(s)])),
-  planned: 'Планируется',
-  in_progress: purchaseStatusLabel('work_in_progress'),
-}
+// ── Pipeline (закупки по этапам) + его drill-down диалоги ──
+const {
+  statusDrillDialog, statusDrillStatus, statusDrillStatuses, statusDrillPurchases,
+  exportStatusDrillXlsx,
+  stageFeoDrillVisible, stageFeoDrillTitle, stageFeoDrillStatuses,
+  pipelineStages, deliveredNotPaid, onPipelineClick, onDeliveredNotPaidClick,
+  wishesAmountForPie,
+} = usePipelineWidget(allPurchases, filteredSubsidies, totalBudget)
 
-// Status counts filtered by selected subsidies
-const filteredStatusCounts = computed(() => {
-  const subsidyIds = filteredSubsidies.value.map(s => s.id)
-  const counts: Record<string, number> = {}
-  for (const p of allPurchases.value) {
-    if (subsidyIds.length > 0 && !subsidyIds.includes(p.subsidy_id)) continue
-    counts[p.status] = (counts[p.status] || 0) + 1
-  }
-  return counts
-})
+// ── Товары / Услуги ───────────────────────────────────
+const { pipelineByType } = useGoodsServicesWidget(allPurchases, filteredSubsidies, totalBudget)
 
-const STATUS_COLORS: Record<string, string> = {
-  ...Object.fromEntries(PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusColor(s)])),
-  planned: purchaseStatusColor('plan_schedule'),
-  in_progress: purchaseStatusColor('work_in_progress'),
-}
+// ── Ежемесячные договоры ──────────────────────────────
+const { monthlyContractsRemaining, totalMonthlyRemaining } = useMonthlyContractsWidget(allPurchases, filteredSubsidies)
 
-const statusPieReady = computed(() =>
-  Object.keys(filteredStatusCounts.value).length > 0 &&
-  Object.values(filteredStatusCounts.value).some(v => v > 0)
+// ── Раскладка сетки виджетов ──────────────────────────
+const dashboardToggleMode = ref<'classic' | 'radar'>('classic')
+const {
+  isEditing, toggleEditing, resetLayout, effectiveLayout, handleLayoutUpdated, setMode,
+} = useDashboardGridLayout(
+  mobile,
+  computed(() => kpiCards.value.length),
+  computed(() => monthlyContractsRemaining.value.length),
+  computed(() => pipelineByType.value.some(s => s.total > 0)),
+  dashboardToggleMode,
 )
 
-// Sorted entries so chart is stable
-const statusPieEntries = computed(() => {
-  const ORDER = ['planned', 'in_progress', 'work_in_progress', 'contracted', 'delivered', 'paid']
-  return Object.entries(filteredStatusCounts.value)
-    .filter(([, v]) => v > 0)
-    .sort((a, b) => ORDER.indexOf(a[0]) - ORDER.indexOf(b[0]))
-})
+// ── Вкладка «Аналитика» (ленивая загрузка) ────────────
+const {
+  analyticsData, analyticsLoading,
+  analyticsTotalPurchases, analyticsTotalPaid, analyticsFunnelPct,
+  analyticsTopPct, analyticsBarHeight, analyticsFormatDate, analyticsDeadlineColor,
+  loadAnalytics,
+} = useAnalyticsTab(activeTab, selectedSubsidyIds)
 
-const statusPieSeries = computed(() => statusPieEntries.value.map(([, v]) => v))
-const statusPieLabels = computed(() => statusPieEntries.value.map(([k]) => STATUS_LABELS[k] || k))
-const statusPieColors = computed(() => statusPieEntries.value.map(([k]) => STATUS_COLORS[k] || '#94A3B8'))
-const statusPieKey    = computed(() => statusPieEntries.value.map(e => e[0]).join('-'))
-
-// For custom StatusPieWithWishes component
-const statusPieForComponent = computed(() =>
-  statusPieEntries.value
-    .filter(([k]) => k !== 'wishes')
-    .map(([k, v]) => ({
-      status: k,
-      count: v,
-      color: STATUS_COLORS[k] || '#94A3B8',
-      label: STATUS_LABELS[k] || k,
-    }))
-)
-const wishesAmountForPie = computed(() => filteredStatusAmounts.value['wishes'] || 0)
-function onPieSliceClick(status: string) {
-  statusDrillStatuses.value = []   // exact mode
-  statusDrillStatus.value = status
-  statusDrillDialog.value = true
-}
-
-// Pipeline stages (purchase lifecycle funnel)
-const PIPELINE_ORDER = ['plan_schedule', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid']
-const pipelineStages = computed(() => {
-  const budget = totalBudget.value || 1
-  const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
-  const filtered = allPurchases.value.filter((p: any) =>
-    subsidyIds.length === 0 || subsidyIds.includes(p.subsidy_id)
-  )
-  return PIPELINE_ORDER
-    .map((status, idx) => {
-      const stagesAtOrBeyond = PIPELINE_ORDER.slice(idx)
-      const amount = filtered
-        .filter((p: any) => stagesAtOrBeyond.includes(p.status))
-        .reduce((sum: number, p: any) => sum + purchaseEffectivePrice(p), 0)
-      return {
-        status,
-        label: STATUS_LABELS[status] || status,
-        color: STATUS_COLORS[status] || '#94A3B8',
-        amount,
-        pct: Math.round(amount / budget * 100),
-      }
-    })
-})
-
-// «Поставлено, не оплачено» = SUM(delivered) − SUM(paid). Drill открывает status='delivered'.
-const deliveredNotPaid = computed(() => {
-  const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
-  const filtered = allPurchases.value.filter((p: any) =>
-    subsidyIds.length === 0 || subsidyIds.includes(p.subsidy_id)
-  )
-  const delivered = filtered.filter((p: any) => p.status === 'delivered')
-    .reduce((sum: number, p: any) => sum + purchaseEffectivePrice(p), 0)
-  const budget = totalBudget.value || 1
-  return {
-    amount: delivered,
-    pct: Math.round(delivered / budget * 100),
-  }
-})
-function onPipelineClick(status: string) {
-  // Cumulative: Заказано → ordered+delivered+paid и т.д.
-  const idx = PIPELINE_ORDER.indexOf(status)
-  const statuses = idx >= 0 ? PIPELINE_ORDER.slice(idx) : [status]
-  const label = STATUS_LABELS[status] || status
-  // Открываем FEO-иерархический drill (Субсидия → ФЭО 1 → ФЭО 2 → ... → закупки)
-  stageFeoDrillTitle.value = `${label} (и далее) — drill по ФЭО`
-  stageFeoDrillStatuses.value = statuses
-  stageFeoDrillVisible.value = true
-}
-
-// Точный фильтр для метрики «Поставлено, не оплачено».
-function onDeliveredNotPaidClick() {
-  statusDrillStatuses.value = []   // exact mode
-  statusDrillStatus.value = 'delivered'
-  statusDrillDialog.value = true
-}
-
-// Helper: split purchase amount by товары/услуги using item-level data
-function purchaseTypeSplit(p: any): { goods: number, services: number } {
-  const items: any[] = p.items || []
-  if (items.length === 0) {
-    const total = purchaseEffectivePrice(p)
-    if (p.item_type === 'товар') return { goods: total, services: 0 }
-    if (p.item_type === 'услуга' || p.item_type === 'работа') return { goods: 0, services: total }
-    return { goods: total / 2, services: total / 2 }
-  }
-  let goods = 0, services = 0
-  for (const item of items) {
-    const amt = parseFloat(item.final_total || item.total_price || 0)
-    if (item.item_type === 'товар') goods += amt
-    else services += amt
-  }
-  return { goods, services }
-}
-
-// Товары/услуги breakdown by pipeline stage (cumulative)
-const pipelineByType = computed(() => {
-  const budget = totalBudget.value || 1
-  const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
-  const filtered = allPurchases.value.filter((p: any) =>
-    subsidyIds.length === 0 || subsidyIds.includes(p.subsidy_id)
-  )
-  return PIPELINE_ORDER
-    .map((status, idx) => {
-      const stagesAtOrBeyond = PIPELINE_ORDER.slice(idx)
-      const stagePurchases = filtered.filter((p: any) => stagesAtOrBeyond.includes(p.status))
-      let goods = 0, services = 0
-      for (const p of stagePurchases) {
-        const split = purchaseTypeSplit(p)
-        goods += split.goods
-        services += split.services
-      }
-      const total = goods + services
-      return {
-        status,
-        label: STATUS_LABELS[status] || status,
-        color: STATUS_COLORS[status] || '#94A3B8',
-        goods,
-        services,
-        total,
-        goodsPct: budget > 0 ? Math.round(goods / budget * 100) : 0,
-        servicesPct: budget > 0 ? Math.round(services / budget * 100) : 0,
-      }
-    })
-})
-
-// Monthly payment contracts remaining
-const monthlyContractsRemaining = computed(() => {
-  const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
-  const today = new Date()
-  return allPurchases.value
-    .filter((p: any) => {
-      if (subsidyIds.length > 0 && !subsidyIds.includes(p.subsidy_id)) return false
-      return p.is_monthly_payment && p.monthly_payment_count && p.monthly_payment_amount
-    })
-    .map((p: any) => {
-      const count = Number(p.monthly_payment_count)
-      const perMonth = parseFloat(p.monthly_payment_amount)
-      const total = count * perMonth
-      const start = p.service_start_date ? new Date(p.service_start_date) : null
-      let elapsed = 0
-      if (start && !isNaN(start.getTime())) {
-        const fullMonths = Math.min(
-          Math.max(0, (today.getFullYear() - start.getFullYear()) * 12 + (today.getMonth() - start.getMonth())),
-          count
-        )
-        const partialFraction = fullMonths < count ? today.getDate() / 30 : 0
-        elapsed = (fullMonths + Math.min(partialFraction, 1)) * perMonth
-      }
-      const remaining = Math.max(0, total - elapsed)
-      return {
-        id: p.id,
-        name: p.name || `Закупка #${p.id}`,
-        total,
-        remaining,
-        elapsedPct: total > 0 ? Math.min(100, Math.round((total - remaining) / total * 100)) : 0,
-      }
-    })
-    .filter(c => c.total > 0)
-})
-
-const totalMonthlyRemaining = computed(() =>
-  monthlyContractsRemaining.value.reduce((s, c) => s + c.remaining, 0)
-)
-
-const statusPieOptions = computed(() => ({
-  chart: {
-    type: 'pie', background: 'transparent', toolbar: { show: false },
-    animations: { speed: 400 },
-    theme: { mode: isDark.value ? 'dark' : 'light' },
-    events: {
-      dataPointSelection: (_e: any, _ctx: any, config: any) => {
-        const entry = statusPieEntries.value[config.dataPointIndex]
-        if (entry) {
-          statusDrillStatus.value = entry[0]
-          statusDrillDialog.value = true
-        }
-      }
-    }
-  },
-  colors: statusPieColors.value,
-  labels: statusPieLabels.value,
-  legend: { position: 'bottom', fontSize: '12px', labels: { colors: chartText.value } },
-  dataLabels: { enabled: true, style: { fontSize: '11px', colors: ['#fff'] }, dropShadow: { enabled: false } },
-  tooltip: {
-    theme: isDark.value ? 'dark' : 'light',
-    y: {
-      formatter: (v: number, { dataPointIndex }: any) => {
-        const status = statusPieEntries.value[dataPointIndex]?.[0]
-        const amount = filteredStatusAmounts.value[status] || 0
-        return `${v} шт.${amount > 0 ? ' · ' + formatCurrencyShort(amount) : ''}`
-      }
-    }
-  },
-}))
-
-// ── Load data ─────────────────────────────────────
-async function loadAll() {
-  loading.value = true
-  loadingPurchases.value = true
-  try {
-    const [chartsData, purchasesData] = await Promise.all([
-      apiFetch<any>('/dashboard/charts?scope=dashboard'),
-      apiFetch<any[]>('/purchases/')
-    ])
-
-    // Build subsidy rows from charts endpoint
-    allSubsidies.value = chartsData.subsidy_stats.map((s: any) => ({
-      id: s.id,
-      name: s.name,
-      shortName: truncate(s.name, 20),
-      description: '',
-      year: s.year,
-      budget: s.calculated_budget || s.feo_budget_total || s.budget,
-      contracted: s.total_confirmed,
-      paid: s.total_paid,
-      planned: s.total_planned,
-      // plan_schedule = единый источник «Запланировано» = план дерева ФЭО (ручные позиции + из заявок).
-      // Совпадает с KPI «Запланировано» на вкладке «Субсидии».
-      // Fallback: total_plan_schedule (SUM confirmed/wip) если planned_tree отсутствует (legacy).
-      plan_schedule: s.planned_tree ?? s.total_plan_schedule ?? 0,
-      ordered: s.total_ordered ?? 0,
-      total_feo_planned: s.total_feo_planned ?? 0,  // 12-01: SUM FeoPlannedItem.amount (для колонки «ФЭО план»)
-      // Phase 31-05: canonical budget fields (D-17) — from server, not recalculated on client
-      // remaining = «Свободно» = budget − planned_tree (совпадает с панелью ФЭО вкладки «Субсидии»)
-      remaining: s.remaining ?? null,
-      planned_amount: s.planned_amount ?? null,
-      budget_discrepancy: s.budget_discrepancy ?? null,
-      widget: s.widget ?? null,
-    }))
-
-    statusCounts.value = chartsData.status_counts
-    subsidiesNearCeiling.value = chartsData.subsidies_near_ceiling ?? []
-
-    // Store widgets data from backend
-    if (chartsData.widgets) {
-      widgetsData.value = chartsData.widgets as WidgetsData
-    }
-
-    // Store all purchases for filtering
-    allPurchases.value = purchasesData
-
-    // Set default year to most recent available
-    const years = [...new Set(allSubsidies.value.map((s: SubsidyRow) => s.year))].sort((a, b) => b - a)
-    if (years.length > 0 && !years.includes(selectedYear.value)) {
-      selectedYear.value = years[0]
-    }
-  } catch (e) {
-    console.error('Dashboard load error:', e)
-  } finally {
-    loading.value = false
-    loadingPurchases.value = false
-  }
-}
-
-function openBreakdown(metric = 'budget') {
-  breakdownMetric.value = metric
-  showBreakdownDialog.value = true
-}
+// ── Финансовый план ────────────────────────────────────
+const {
+  finplanGranularity,
+  finplanDrilldown, openFinplanDrilldown, finplanDrilldownTotal, finplanDrilldownTitle, finplanDrilldownChipColor,
+  patchIsLikelyNeeded, finplanNoDeadlineCount, finplanCurrentMonthKpi, goToOrder,
+  exportFinplanXlsx, exportFinplanDrilldownXlsx, formatDate,
+  loadFinplan, finplanSeries, finplanOptions,
+} = useFinancialPlanWidget(selectedSubsidyIds, chartTheme)
 
 function handleKpiClick(key: string) {
   if (key === 'budget')            router.push('/subsidies')
@@ -1916,395 +401,6 @@ function handleKpiClick(key: string) {
   else openBreakdown(key)
 }
 
-function goToOrders() {
-  const ids = selectedSubsidyIds.value
-  if (ids.length === 1) {
-    router.push(`/orders?subsidy_id=${ids[0]}`)
-  } else {
-    router.push('/orders')
-  }
-}
-
-// ── Helpers ───────────────────────────────────────
-function pct(part: number, total: number): number {
-  if (!total) return 0
-  return Math.round((part / total) * 100)
-}
-
-function progressColor(p: number): string {
-  if (p >= 90) return 'error'
-  if (p >= 70) return 'warning'
-  return 'primary'
-}
-
-function formatCurrency(v: number): string {
-  return (v || 0).toLocaleString('ru-RU', { maximumFractionDigits: 0 }) + ' ₽'
-}
-
-function formatCurrencyShort(v: number): string {
-  if (!v) return '0 ₽'
-  if (Math.abs(v) >= 1_000_000_000) return (v / 1_000_000_000).toFixed(1) + ' млрд ₽'
-  if (Math.abs(v) >= 1_000_000) return (v / 1_000_000).toFixed(1) + ' млн ₽'
-  if (Math.abs(v) >= 1_000) return (v / 1_000).toFixed(0) + ' тыс ₽'
-  return v.toLocaleString('ru-RU') + ' ₽'
-}
-
-function truncate(s: string, n: number): string {
-  return s.length > n ? s.slice(0, n) + '…' : s
-}
-
-// ПРАВИЛО №6 (2026-09-05/06): «сумма закупки» больше не считается на фронте —
-// единый источник backend/app/services/purchase_amounts.py (см. amounts.effective,
-// bulk-загружено на GET /api/purchases/, откуда приходит allPurchases). 0-фолбэк
-// для закупок, где вся цепочка формулы пуста, — тот же дефолт, что был у
-// pickPositive() раньше (возвращаемое число используется напрямую в суммах/
-// формате без null-проверок ниже по коду дашборда).
-// QA (2026-09-06): amounts.effective приходит с бэкенда JSON-строкой (Decimal),
-// не числом — toAmount() обязателен, иначе `sum + purchaseEffectivePrice(p)`
-// в reduce-ах ниже (строки 1424/1459/1679/1697/1726) конкатенирует строки вместо
-// сложения (0 + "10000.00" = "010000.00") — источник NaN в виджетах и drill-диалоге.
-function purchaseEffectivePrice(p: any): number {
-  return toAmount(p.amounts?.effective) ?? 0
-}
-
-function statusLabel(s: string): string {
-  return STATUS_LABELS[s] || s
-}
-
-// Раньше statusColor()/statusColorHex() дублировали свою урезанную карту (без wishes/plan_schedule/
-// ordered — те молча падали на серый), теперь оба берут цвет из общего STATUS_COLORS выше.
-function statusColor(s: string): string {
-  return STATUS_COLORS[s] || '#94A3B8'
-}
-
-function statusColorHex(s: string): string {
-  return STATUS_COLORS[s] || '#94A3B8'
-}
-
-// ── Analytics Tab ─────────────────────────────────
-interface AnalyticsData {
-  funnel: { status: string; count: number; total: number }[]
-  monthly_payments: { year: number; month: number; total: number }[]
-  top_contractors: { name: string; count: number; total: number }[]
-  upcoming_deliveries: { count: number; total: number }
-  // Σ(план − договор) — агрегат дашборда, отдельный показатель от ручного
-  // поля закупки purchases.economy («Экономия»). Не путать и не сводить —
-  // ПРАВИЛО №6 (один показатель — одно имя).
-  plan_contract_delta: number
-  overdue_count: number
-  upcoming_deadlines: { id: number; name: string; purchase_number?: number; execution_term: string; status: string }[]
-  method_distribution: Record<string, number>
-  plan_fact: { subsidy: string; plan: number; contracted: number; paid: number }[]
-}
-
-const analyticsData = ref<AnalyticsData | null>(null)
-const analyticsLoading = ref(false)
-
-// Подписи здесь намеренно в грамматическом согласовании с «закупка» (женский род:
-// «Заказана», «Поставлена», «Оплачена») — оставлены как есть, унифицирован только цвет.
-const A_STATUS_LABELS: Record<string, string> = {
-  wishes:           'Пожелания',
-  plan_schedule:    'План закупок',
-  work_in_progress: 'Ведётся работа',
-  contracted:       'Законтрактована',
-  ordered:          'Заказана',
-  delivered:        'Поставлена',
-  paid:             'Оплачена',
-  planned:          'Планирование',
-  in_progress:      'Ведётся работа',
-}
-const A_STATUS_COLORS: Record<string, string> = {
-  ...Object.fromEntries(PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusColor(s)])),
-  planned: purchaseStatusColor('plan_schedule'),
-  in_progress: purchaseStatusColor('work_in_progress'),
-}
-// Единый источник подписи способа закупки: frontend/src/constants/purchaseStatus.ts (Правило №6)
-const A_METHOD_LABELS: Record<string, string> = {
-  single: purchaseMethodLabel('single'), competitive: purchaseMethodLabel('competitive'),
-  quote_request: purchaseMethodLabel('quote_request'), unknown: 'Не указано',
-}
-const A_METHOD_COLORS: Record<string, string> = {
-  single: 'blue', competitive: 'teal', quote_request: 'purple', unknown: 'grey',
-}
-const A_MONTH_NAMES = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек']
-
-const analyticsTotalPurchases = computed(() =>
-  analyticsData.value ? analyticsData.value.funnel.reduce((s, i) => s + i.count, 0) : 0
-)
-const analyticsTotalPaid = computed(() => {
-  if (!analyticsData.value) return '—'
-  const total = analyticsData.value.monthly_payments.reduce((s, i) => s + i.total, 0)
-  return formatCurrencyShort(total)
-})
-const analyticsMaxFunnel = computed(() =>
-  analyticsData.value ? Math.max(...analyticsData.value.funnel.map(i => i.total), 1) : 1
-)
-const analyticsFunnelPct = (count: number) => safeDiv(count, analyticsMaxFunnel.value) * 100
-const analyticsMaxContractor = computed(() =>
-  analyticsData.value?.top_contractors?.length ? analyticsData.value.top_contractors[0].total : 1
-)
-const analyticsTopPct = (total: number) => safeDiv(total, analyticsMaxContractor.value) * 100
-const analyticsMaxMonthly = computed(() =>
-  // Math.max(...totals, 1) — floor на 1 даже когда список не пуст, но все месяцы
-  // «оплачено 0» (иначе Math.max вернул бы 0 и analyticsBarHeight делил бы на
-  // ноль — владелец, 2026-09-04: деление на ноль не должно ломать интерфейс).
-  analyticsData.value?.monthly_payments?.length ? Math.max(...analyticsData.value.monthly_payments.map(m => m.total), 1) : 1
-)
-const analyticsBarHeight = (total: number) => Math.max(safeDiv(total, analyticsMaxMonthly.value) * 100, 4)
-
-function analyticsFormatDate(d: string): string {
-  if (!d) return ''
-  const [y, m, day] = d.split('-')
-  return `${day}.${m}.${y}`
-}
-function analyticsDeadlineColor(d: string): string {
-  const diff = (new Date(d).getTime() - Date.now()) / 86400000
-  if (diff <= 7) return 'error'
-  if (diff <= 14) return 'warning'
-  return 'success'
-}
-
-async function loadAnalytics() {
-  analyticsLoading.value = true
-  try {
-    const ids = selectedSubsidyIds.value
-    const qs = ids.length > 0 ? `?subsidy_ids=${ids.join(',')}` : ''
-    analyticsData.value = await apiFetch<AnalyticsData>(`/dashboard/analytics${qs}${qs ? '&' : '?'}scope=dashboard`)
-  } finally {
-    analyticsLoading.value = false
-  }
-}
-
-// Load analytics on tab switch (lazy)
-watch(activeTab, (tab) => {
-  if (tab === 'analytics') {
-    loadAnalytics()
-  }
-})
-
-// Reload analytics when subsidy filter changes while on analytics tab
-watch(selectedSubsidyIds, () => {
-  if (activeTab.value === 'analytics') {
-    loadAnalytics()
-  }
-})
-
-// ── Financial Plan Widget ──────────────────────────
-const finplanGranularity = ref<'month' | 'quarter'>('month')
-const finplanData = ref<any>(null)
-const finplanAllPeriods = ref<string[]>([])
-
-const finplanDrilldown = ref({
-  show: false,
-  loading: false,
-  period: '' as string,
-  category: '' as 'plan' | 'committed' | 'overdue' | 'no_deadline' | '',
-  items: [] as any[],
-})
-
-async function openFinplanDrilldown(period: string, category: 'plan' | 'committed' | 'overdue' | 'no_deadline') {
-  finplanDrilldown.value.show = true
-  finplanDrilldown.value.loading = true
-  finplanDrilldown.value.period = period
-  finplanDrilldown.value.category = category
-  finplanDrilldown.value.items = []
-  try {
-    const sidParam = selectedSubsidyIds.value.length === 1 ? `&subsidy_id=${selectedSubsidyIds.value[0]}` : ''
-    const periodParam = period ? `&period=${period}` : ''
-    const data = await apiFetch<any>(`/dashboard/financial-plan/details?category=${category}&granularity=${finplanGranularity.value}${periodParam}${sidParam}&scope=dashboard`)
-    finplanDrilldown.value.items = data.items || []
-  } catch (e) {
-    finplanDrilldown.value.items = []
-  } finally {
-    finplanDrilldown.value.loading = false
-  }
-}
-
-const finplanDrilldownTotal = computed(() =>
-  finplanDrilldown.value.items.reduce((s: number, r: any) => s + (r.amount || 0), 0)
-)
-
-const finplanDrilldownTitle = computed(() => {
-  const cat = finplanDrilldown.value.category
-  if (cat === 'plan') return 'Плановые'
-  if (cat === 'committed') return 'Принятые обязательства'
-  if (cat === 'overdue') return 'Накопленный долг'
-  if (cat === 'no_deadline') return 'Без срока исполнения'
-  return 'Закупки'
-})
-
-const finplanDrilldownChipColor = computed(() => {
-  const cat = finplanDrilldown.value.category
-  if (cat === 'plan') return 'warning'
-  if (cat === 'committed') return 'success'
-  if (cat === 'overdue') return 'error'
-  if (cat === 'no_deadline') return 'warning'
-  return 'grey'
-})
-
-async function patchIsLikelyNeeded(row: any, val: boolean) {
-  try {
-    await apiFetch(`/purchases/${row.id}`, { method: 'PATCH', body: { is_likely_needed: val } })
-    row.is_likely_needed = val
-  } catch (e) {
-    console.error('patchIsLikelyNeeded error', e)
-  }
-}
-
-// no_deadline count for banner
-const finplanNoDeadlineCount = computed(() => {
-  if (!finplanData.value) return 0
-  const key = finplanGranularity.value === 'month' ? 'by_month' : 'by_quarter'
-  return finplanData.value[key]?.no_deadline?.items_count ?? 0
-})
-
-// KPI текущего месяца
-const finplanCurrentMonthKpi = computed(() => {
-  if (!finplanData.value) return null
-  const key = finplanGranularity.value === 'month' ? 'by_month' : 'by_quarter'
-  const data = finplanData.value[key]
-  if (!data) return null
-  const now = new Date()
-  const period = finplanGranularity.value === 'month'
-    ? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-    : `${now.getFullYear()}-Q${Math.ceil((now.getMonth() + 1) / 3)}`
-  const planEntry = (data.plan || []).find((d: any) => d.period === period)
-  const overdueEntry = (data.overdue || []).find((d: any) => d.period === period)
-  return {
-    period,
-    plan: planEntry?.amount ?? 0,
-    overdue: overdueEntry?.accumulated ?? 0,
-  }
-})
-
-function goToOrder(id: number) {
-  finplanDrilldown.value.show = false
-  router.push(`/orders/${id}/edit`)
-}
-
-async function exportFinplanXlsx() {
-  const sidParam = selectedSubsidyIds.value.length === 1 ? `&subsidy_id=${selectedSubsidyIds.value[0]}` : ''
-  const token = localStorage.getItem('auth_token')
-  const url = `/api/dashboard/financial-plan/export.xlsx?granularity=${finplanGranularity.value}${sidParam}&scope=dashboard`
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-  if (!res.ok) return
-  const blob = await res.blob()
-  const link = document.createElement('a')
-  link.href = URL.createObjectURL(blob)
-  link.download = `Финплан_${finplanGranularity.value}_${new Date().toISOString().slice(0, 10)}.xlsx`
-  link.click()
-  URL.revokeObjectURL(link.href)
-}
-
-async function exportFinplanDrilldownXlsx() {
-  const sidParam = selectedSubsidyIds.value.length === 1 ? `&subsidy_id=${selectedSubsidyIds.value[0]}` : ''
-  const params = `period=${encodeURIComponent(finplanDrilldown.value.period)}&category=${finplanDrilldown.value.category}&granularity=${finplanGranularity.value}${sidParam}&scope=dashboard`
-  const token = localStorage.getItem('auth_token')
-  const res = await fetch(`/api/dashboard/financial-plan/details/export.xlsx?${params}`, { headers: { Authorization: `Bearer ${token}` } })
-  if (!res.ok) return
-  const blob = await res.blob()
-  const link = document.createElement('a')
-  link.href = URL.createObjectURL(blob)
-  link.download = `Финплан_${finplanDrilldown.value.period}_${finplanDrilldown.value.category}.xlsx`
-  link.click()
-  URL.revokeObjectURL(link.href)
-}
-
-function formatDate(iso: string) {
-  if (!iso) return ''
-  const [y, m, d] = iso.split('-')
-  return `${d}.${m}.${y}`
-}
-
-// 'wishes'/'contracted'/'planned' здесь намеренно в развёрнутой формулировке документа
-// финансового плана («Заявка», «Заключён договор», «Запланирован») — оставлены как есть;
-// остальные (в т.ч. написание «План закупок») — из единого источника.
-const STATUS_LABELS_FINPLAN: Record<string, string> = {
-  ...Object.fromEntries(PURCHASE_STATUS_ORDER.map(s => [s, purchaseStatusLabel(s)])),
-  planned: 'Запланирован', wishes: 'Заявка',
-  contracted: 'Заключён договор',
-}
-
-async function loadFinplan() {
-  try {
-    const sidParam = selectedSubsidyIds.value.length === 1 ? `?subsidy_id=${selectedSubsidyIds.value[0]}` : ''
-    const finplanScopeParam = sidParam ? '&scope=dashboard' : '?scope=dashboard'
-    finplanData.value = await apiFetch<any>(`/dashboard/financial-plan${sidParam}${finplanScopeParam}`)
-  } catch {
-    finplanData.value = null
-  }
-}
-
-const finplanSeries = computed(() => {
-  if (!finplanData.value) return []
-  const key = finplanGranularity.value === 'month' ? 'by_month' : 'by_quarter'
-  const data = finplanData.value[key]
-  if (!data) return []
-  const allPeriods = [...new Set([
-    ...(data.feo_plan || []).map((d: any) => d.period),
-    ...(data.plan || []).map((d: any) => d.period),
-    ...(data.committed || []).map((d: any) => d.period),
-    ...(data.overdue || []).map((d: any) => d.period),
-  ])].sort()
-  if (allPeriods.length === 0) return []
-  finplanAllPeriods.value = allPeriods
-  const feoMap = new Map((data.feo_plan || []).map((d: any) => [d.period, d.amount]))
-  const planMap = new Map((data.plan || []).map((d: any) => [d.period, d.amount]))
-  const commMap = new Map((data.committed || []).map((d: any) => [d.period, d.amount]))
-  const overdueMap = new Map((data.overdue || []).map((d: any) => [d.period, d.accumulated ?? d.amount ?? 0]))
-  const series: any[] = [
-    { name: 'План (график ФЭО)', data: allPeriods.map(p => Math.round((feoMap.get(p) as number) ?? 0)) },
-    { name: 'Принятые обязательства', data: allPeriods.map(p => Math.round((commMap.get(p) as number) ?? 0)) },
-    { name: 'Плановые', data: allPeriods.map(p => Math.round((planMap.get(p) as number) ?? 0)) },
-  ]
-  const hasOverdue = (data.overdue || []).length > 0
-  if (hasOverdue) {
-    series.push({ name: 'Накопленный долг', data: allPeriods.map(p => Math.round((overdueMap.get(p) as number) ?? 0)) })
-  }
-  return series
-})
-
-const finplanOptions = computed(() => {
-  if (!finplanData.value) return {}
-  const key = finplanGranularity.value === 'month' ? 'by_month' : 'by_quarter'
-  const data = finplanData.value[key]
-  if (!data) return {}
-  const allPeriods = [...new Set([
-    ...(data.feo_plan || []).map((d: any) => d.period),
-    ...(data.plan || []).map((d: any) => d.period),
-    ...(data.committed || []).map((d: any) => d.period),
-  ])].sort()
-  return {
-    chart: {
-      type: 'bar', stacked: true, background: 'transparent', toolbar: { show: false },
-      theme: { mode: isDark.value ? 'dark' : 'light' },
-      events: {
-        dataPointSelection: (_event: any, _ctx: any, config: any) => {
-          const period = finplanAllPeriods.value[config.dataPointIndex]
-          const seriesName = config.w.config.series[config.seriesIndex]?.name || ''
-          // ФЭО-plan series has no drilldown — skip
-          if (seriesName.includes('ФЭО')) return
-          let category: 'plan' | 'committed' | 'overdue' | 'no_deadline' = 'plan'
-          if (seriesName.toLowerCase().includes('принят')) category = 'committed'
-          else if (seriesName.toLowerCase().includes('накопл') || seriesName.toLowerCase().includes('долг')) category = 'overdue'
-          if (period) openFinplanDrilldown(period, category)
-        },
-      },
-    },
-    plotOptions: { bar: { horizontal: false, columnWidth: '60%' } },
-    dataLabels: { enabled: false },
-    xaxis: { categories: allPeriods, labels: { style: { colors: chartMuted.value, fontSize: '11px' } } },
-    yaxis: { labels: { formatter: (v: number) => formatCurrencyShort(v), style: { colors: chartMuted.value, fontSize: '11px' } } },
-    colors: ['#6366F1', '#15803D', '#F59E0B', '#EF4444'],
-    legend: { position: 'top', fontSize: '12px', labels: { colors: chartText.value } },
-    grid: { borderColor: chartGrid.value },
-    tooltip: { theme: isDark.value ? 'dark' : 'light', y: { formatter: (v: number) => formatCurrency(v) } },
-  }
-})
-
-// Reload finplan when subsidy filter changes
-watch(selectedSubsidyIds, () => { loadFinplan() })
-
 onMounted(() => {
   setMode('classic')
   loadAll()
@@ -2315,7 +411,12 @@ onMounted(() => {
 })
 </script>
 
-<style scoped>
+<style>
+/* Дашборд разбит на components/dashboard/* + composables/dashboard/* (рефакторинг
+   2026-09-08). CSS-классы виджетов (.chart-card, .kpi-*, .pipeline-*, .purchase-*,
+   .analytics-*) используются дочерними компонентами, поэтому стиль здесь НЕ scoped
+   (иначе scoped-атрибут DashboardView.vue не долетал бы до элементов, отрисованных
+   внутри дочерних SFC) — перенесено без изменений содержимого. */
 /* ── Budget Overrun Banner ── */
 .budget-overrun-banner {
   display: flex;
@@ -2772,16 +873,16 @@ onMounted(() => {
   transition: height 0.5s ease;
 }
 .analytics-bar-x { font-size: 9px; text-align: center; color: var(--crm-text-faint); margin-top: 4px; line-height: 1.2; }
-:deep(.apexcharts-pie-series path) { cursor: pointer; }
+.apexcharts-pie-series path { cursor: pointer; }
 .chart-fade-enter-active, .chart-fade-leave-active { transition: opacity 0.25s, transform 0.25s; }
 .chart-fade-enter-from { opacity: 0; transform: translateX(12px); }
 .chart-fade-leave-to  { opacity: 0; transform: translateX(-12px); }
 
 /* ── Gradient progress bars ── */
-.gradient-progress :deep(.v-progress-linear__determinate) {
+.gradient-progress .v-progress-linear__determinate {
   transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1) !important;
 }
-.gradient-progress :deep(.v-progress-linear__background) {
+.gradient-progress .v-progress-linear__background {
   opacity: 0.15 !important;
 }
 
@@ -2914,22 +1015,22 @@ onMounted(() => {
 }
 
 /* grid-layout-plus overrides */
-:deep(.vue-grid-item) {
+.vue-grid-item {
   transition: all 0.2s ease;
 }
-:deep(.vue-grid-item.vue-grid-placeholder) {
+.vue-grid-item.vue-grid-placeholder {
   background: rgba(59,130,246,0.15) !important;
   border: 2px dashed #3B82F6 !important;
   border-radius: 12px;
 }
-:deep(.vue-grid-item > .vue-resizable-handle) {
+.vue-grid-item > .vue-resizable-handle {
   width: 16px;
   height: 16px;
   bottom: 4px;
   right: 4px;
   background: none;
 }
-:deep(.vue-grid-item > .vue-resizable-handle::after) {
+.vue-grid-item > .vue-resizable-handle::after {
   content: '';
   position: absolute;
   right: 2px;

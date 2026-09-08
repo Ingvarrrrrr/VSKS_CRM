@@ -186,7 +186,15 @@ from app.routers.documents import guide_router as documents_guide_router
 from app.routers import contract_items as contract_items_router
 # bank_statements MUST be registered BEFORE payments.router:
 # /imports and /registry/{id}/... must resolve before payments' catch-all /{pid}
+# Разрезание bank_statements.py (Правило №5, сессия 2026-09-08): bank_statements
+# (ядро, POST /imports + org-скоуп хелперы) остаётся первым по прежней причине;
+# bank_statements_imports/_registry регистрируются рядом — их пути не имеют
+# формы-конфликта ни друг с другом, ни с payments.router catch-all "/{pid}"
+# (минимум 2 сегмента везде, кроме /registry/{bp_id} vs /registry/raw-columns —
+# тот порядок сохранён ВНУТРИ bank_statements_registry.py).
 from app.routers import bank_statements
+from app.routers import bank_statements_imports
+from app.routers import bank_statements_registry
 from app.routers import price_freshness as price_freshness_router
 # Специфичные суб-роутеры /api/tasks/* регистрируются ДО tasks.router,
 # иначе catch-all `/{task_id}` ловит `/badges`, `/pending-consent`, `/report/*`
@@ -268,6 +276,8 @@ def register_routes(app: FastAPI) -> None:
     # bank_statements MUST be registered BEFORE payments.router:
     # /imports and /registry/{id}/... must resolve before payments' catch-all /{pid}
     app.include_router(bank_statements.router)
+    app.include_router(bank_statements_imports.router)
+    app.include_router(bank_statements_registry.router)
     app.include_router(payments.router)
     # Разрезание feo_categories.py (Правило №5, 2026-09-07) — см. комментарий у
     # импортов выше про порядок: статичные ДО feo_categories.router (catch-all

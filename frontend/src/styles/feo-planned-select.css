@@ -1,0 +1,132 @@
+/* Стили FeoPlannedItemsSelect.vue и components/items/feo-planned/* (рефакторинг
+   монолита, 2026-09-08) — вынесены дословно из прежнего <style scoped> монолита.
+   Общий (НЕ scoped) файл, а не по компонентам: пикер вставляется в таблицы
+   редактора позиций и в диалоги (v-menu/v-dialog телепортируются в <body>),
+   классы используются сразу несколькими новыми компонентами
+   (components/items/feo-planned/FeoPlannedItemRow.vue, FeoPlannedDenseSelect.vue,
+   FeoPlannedExpandedList.vue, FeoPlannedConsumersDialog.vue, FeoPlannedDuplicateDialog.vue,
+   FeoPlannedMatchSuggestions.vue) — scoped-стиль одного из них не достал бы до
+   разметки, которую рисует другой. Импортируется один раз, из оркестратора
+   (FeoPlannedItemsSelect.vue), по тому же паттерну, что styles/purchase-form.css
+   (CreateOrderView.vue) и styles/fleet-dashboard.css (VehicleDashboardView.vue).
+   Имена классов не менялись — общий grep по frontend/src подтвердил уникальность. */
+
+.feo-planned-select {
+  margin-top: 4px;
+}
+.feo-planned-title {
+  color: var(--crm-text-secondary);
+}
+.feo-planned-disabled {
+  cursor: default;
+  opacity: 0.85;
+}
+.feo-planned-switch {
+  flex-shrink: 0;
+  margin-top: -4px;
+  margin-bottom: -4px;
+  /* Отступ до подписи (владелец 2026-08-06: текст «прилипал» к переключателю без
+     зазора) — 10px, как padding-left стандартного <v-switch><label> в форме (см.
+     «Не указывать последний уровень ФЭО» в WishesView.vue: там label получает его
+     из Vuetify по умолчанию, а тут подпись — соседний <span class="feo-tree-name">
+     без своего label/padding, поэтому зазор нужно задать явно). */
+  margin-right: 8px;
+  /* Чисто визуальный индикатор — клик обрабатывается на обёртке .feo-tree-row (div
+     role="switch"), не на самом переключателе (иначе браузер генерит второй
+     синтетический клик по клику на обёртке — двойное срабатывание onItemRadioClick,
+     см. комментарий в composables/items/feoPlanned/useFeoPlannedRows.ts). */
+  pointer-events: none;
+}
+.feo-planned-switch .v-selection-control {
+  min-height: unset;
+}
+.feo-planned-select .feo-tree-row--clickable {
+  cursor: pointer;
+}
+.feo-planned-select .feo-tree-row:not(.feo-tree-row--clickable) {
+  cursor: default;
+}
+.feo-planned-select .feo-tree-row--clickable:focus-visible {
+  outline: 2px solid #3B82F6;
+  outline-offset: -2px;
+}
+.feo-planned-qty {
+  margin-left: 6px;
+}
+.feo-planned-shortfall {
+  color: #EF4444;
+  font-weight: 700;
+}
+.feo-planned-shortfall-note {
+  color: #EF4444;
+  font-weight: 700;
+}
+.feo-planned-consumed-link {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.feo-planned-consumed-link:hover,
+.feo-planned-consumed-link:focus-visible {
+  color: #3B82F6;
+  outline: none;
+}
+.feo-consumers-table td {
+  vertical-align: top;
+}
+.feo-consumer-row--excluded {
+  opacity: 0.6;
+}
+.feo-consumer-link {
+  color: #3B82F6;
+  text-decoration: none;
+}
+.feo-consumer-link:hover {
+  text-decoration: underline;
+}
+.feo-planned-delete-btn {
+  flex-shrink: 0;
+  margin-left: 2px;
+  /* Оптический центр по первой строке текста — тот же приём, что у
+     .feo-tree-chevron/.feo-tree-row-icon в feoTreeRails.css (row теперь
+     align-items:flex-start). */
+  margin-top: calc((var(--feo-row-line) - 24px) / 2);
+}
+.feo-planned-ghost {
+  color: #EF4444;
+}
+.feo-planned-ghost .feo-tree-name {
+  color: #EF4444;
+}
+.feo-planned-dense-row {
+  cursor: pointer;
+}
+.feo-planned-dense-menu {
+  max-height: 360px;
+  overflow-y: auto;
+  min-width: 320px;
+}
+.feo-match-suggestions {
+  border: 1px dashed #14B8A6;
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(20, 184, 166, 0.06);
+}
+.feo-match-candidate-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+.feo-match-candidate-row--other {
+  opacity: 0.75;
+}
+.feo-match-score {
+  flex-shrink: 0;
+  min-width: 44px;
+  justify-content: center;
+}
+.feo-match-name {
+  flex: 1 1 auto;
+  font-size: 13px;
+}

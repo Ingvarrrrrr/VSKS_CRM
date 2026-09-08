@@ -115,6 +115,7 @@ from app.routers import install as install_router
 from app.routers import analytics as analytics_router
 from app.routers import report_configs as report_configs_router
 from app.routers import vehicles_dashboard, vehicles, vehicle_attachments, repair_attachments
+from app.routers import vehicles_dashboard_drill, vehicles_dashboard_summary, vehicles_dashboard_fines
 from app.routers import vehicle_repairs, vehicle_odometer, fuel_logs, trips
 from app.routers import external_drivers
 from app.routers import vehicles_import as vehicles_import_router
@@ -293,6 +294,12 @@ def register_routes(app: FastAPI) -> None:
     # vehicles_dashboard (/api/vehicles-dashboard) и external_drivers.drivers_router (/api/drivers)
     # регистрируются ПЕРЕД vehicles.router (/api/vehicles/{vehicle_id:int}) — Gotcha 2026-04-20 FastAPI routing
     app.include_router(vehicles_dashboard.router)          # /api/vehicles-dashboard
+    # Соседи vehicles_dashboard.router после резки монолита (Правило №5, 2026-09-08):
+    # тот же префикс /api/vehicles-dashboard, все пути статические (нет /{id}) —
+    # порядок регистрации друг относительно друга не важен для роутинга.
+    app.include_router(vehicles_dashboard_drill.router)     # /api/vehicles-dashboard (drill, expiring-docs-drill)
+    app.include_router(vehicles_dashboard_summary.router)   # /api/vehicles-dashboard (all-vehicles-summary, by-region, driver-reports, filter-counts)
+    app.include_router(vehicles_dashboard_fines.router)     # /api/vehicles-dashboard (fine-leaders, fines-summary, fines-by-filial)
     app.include_router(external_drivers.drivers_router)    # /api/drivers/available
     app.include_router(external_drivers.router)            # /api/external-drivers
     app.include_router(vehicles_import_router.router)      # /api/vehicles-import (BEFORE vehicles catch-all)

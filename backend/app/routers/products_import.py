@@ -434,3 +434,5 @@ async def bulk_create_from_items(
         await db.commit()
     except Exception as e:
         raise HTTPException(500, f"Ошибка сохранения: {e}")
+
+    return {"created": created, "linked": linked, "errors": errors}

@@ -222,8 +222,15 @@ async def enrich_contractor_from_fns(
     if not c.inn:
         raise HTTPException(400, "У контрагента не заполнен ИНН")
 
-    # Reuse lookup
-    fns_data = await lookup_inn(c.inn, _)
+    # Reuse lookup. Дефект (сессия 2026-09-08): `_` — результат require_tab
+    # (усечённый current_user-подобный объект), позиционно попадал на
+    # force_egrul: bool. Смысл эндпоинта — «дотянуться до ЕГРЮЛ/ФНС», а не
+    # найти совпадение по ИНН в локальной таблице (совпало бы с самим `c` и
+    # ничего не обновило бы) — поэтому force_egrul=True, db передан явно
+    # (при прямом вызове функции Depends(get_db) не резолвится). current_user
+    # внутри lookup_inn не используется — не прокидываем чужой объект туда,
+    # где ждут bool.
+    fns_data = await lookup_inn(c.inn, force_egrul=True, db=db)
 
     updated_fields = []
     field_map = {
@@ -269,7 +276,9 @@ async def enrich_all_contractors_from_fns(
 
     for c in candidates:
         try:
-            fns_data = await lookup_inn(c.inn.strip(), current_user)
+            # Тот же дефект и то же исправление, что в enrich_contractor_from_fns
+            # выше: current_user попадал на force_egrul: bool.
+            fns_data = await lookup_inn(c.inn.strip(), force_egrul=True, db=db)
             changed = False
             for fns_field, model_field in field_map.items():
                 fns_val = fns_data.get(fns_field)

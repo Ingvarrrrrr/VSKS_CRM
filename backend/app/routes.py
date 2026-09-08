@@ -74,6 +74,13 @@ from app.routers import products_price
 # feo_tree_ops — "/{cat_id}/<literal>", минимум на сегмент длиннее catch-all) —
 # регистрируются рядом с feo_categories.router и ДО него (как subsidy_* выше).
 from app.routers import feo_plan_reads
+# Волна 3a (2026-09-08, Правило №5): feo_plan_reads.py разросся до 1016 строк —
+# feo_plan_reads_tree (/plan-tree, /plan-positions) и feo_plan_reads_budget
+# (/leaves, /budget-residuals) вынесены соседями. Те же статичные пути на том
+# же префиксе — порядок этих трёх файлов друг относительно друга не важен
+# (пути не пересекаются), но ВСЕ обязаны идти до feo_categories.router.
+from app.routers import feo_plan_reads_tree
+from app.routers import feo_plan_reads_budget
 from app.routers import feo_import
 from app.routers import feo_tree_ops
 # Разрезание purchases.py (Правило №5, сессия 2026-09-06): purchase_duplicates,
@@ -266,6 +273,8 @@ def register_routes(app: FastAPI) -> None:
     # импортов выше про порядок: статичные ДО feo_categories.router (catch-all
     # GET/PUT/DELETE "/{cat_id}").
     app.include_router(feo_plan_reads.router)
+    app.include_router(feo_plan_reads_tree.router)
+    app.include_router(feo_plan_reads_budget.router)
     app.include_router(feo_import.router)
     app.include_router(feo_tree_ops.router)
     app.include_router(feo_categories.router)

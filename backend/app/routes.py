@@ -42,6 +42,15 @@ from app.routers import subsidy_plan_graph_compare
 from app.routers import subsidy_plan_graph_versions
 from app.routers import subsidy_plan_graph_export
 from app.routers import subsidy_finance
+# Разрезание products.py (Правило №5, сессия 2026-09-08): products_summary
+# products_match (POST /match, /deduplicate), products_photos (фото),
+# products_import (шаблон/импорт/bulk-from-purchase-items), products_price
+# catch-all) — регистрируются рядом для единообразия со всеми products_*
+from app.routers import products_summary
+from app.routers import products_match
+from app.routers import products_photos
+from app.routers import products_import
+from app.routers import products_price
 # Разрезание feo_categories.py (Правило №5, сессия 2026-09-07): feo_plan_reads,
 # feo_import, feo_tree_ops содержат ТОЛЬКО статические/литеральные пути на
 # префиксе /api/feo-categories (feo_plan_reads/feo_import — без {cat_id} вовсе;
@@ -260,6 +269,14 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(dashboard_charts.router)             # /api/dashboard (charts)
     app.include_router(dashboard_analytics.router)           # /api/dashboard (analytics)
     app.include_router(dashboard_financial_plan.router)       # /api/dashboard (financial-plan, financial-plan/details)
+    # импортов выше про порядок: products_summary ДО products.router (catch-all
+    # "/{product_id}"); products_match/products_photos/products_import/
+    # products_price — рядом, конфликтов по форме нет.
+    app.include_router(products_summary.router)
+    app.include_router(products_match.router)
+    app.include_router(products_photos.router)
+    app.include_router(products_import.router)
+    app.include_router(products_price.router)
     app.include_router(dashboard_financial_plan_export.router)  # /api/dashboard (financial-plan/export.xlsx, .../details/export.xlsx)
     app.include_router(suppliers.router)
     # purchase_members.router несёт GET/POST /{pid}/members + DELETE

@@ -29,6 +29,9 @@ from app.routers import feo_categories as fc
 # единственная реализация, см. app.services.subsidy_budget (та же формула,
 # что app.routers.subsidies.calculate_budget_from_categories).
 from app.services.subsidy_budget import compute_budget_map
+# Правило №6: агрегат «использовано по листу» — единственная реализация,
+# см. app.services.feo_plan_totals.leaf_used_totals.
+from app.services.feo_plan_totals import leaf_used_totals
 
 router = APIRouter(prefix="/api/feo-categories", tags=["feo_categories"])
 
@@ -52,10 +55,7 @@ async def get_feo_leaves(
     не проверял права, см. задачу владельца 2026-08-06).
     """
     can_view_leaf = await fc._has_feo_action(current_user, db, "feo_budget.view_leaf")
-    from sqlalchemy import select, func as sqlfunc, case
-    from app.models.purchase_item import PurchaseItem
-    from app.models.purchase import Purchase as _Purchase
-    from app.routers.purchase_budget import CONTRACTED_STATUSES, PLANNED_STATUSES
+    from sqlalchemy import select
 
     # Все FeoCategory для subsidy
     cats_q = select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id).order_by(FeoCategory.sort_order.nulls_last(), FeoCategory.id)
@@ -76,29 +76,10 @@ async def get_feo_leaves(
 
     leaf_ids = [c.id for c in leaves]
 
-    # Aggregate contracted_used and planned_used per feo_category_id via conditional sums
-    used_q = (
-        select(
-            PurchaseItem.feo_category_id,
-            sqlfunc.coalesce(
-                sqlfunc.sum(case((_Purchase.status.in_(list(CONTRACTED_STATUSES)), PurchaseItem.total_price), else_=0)),
-                0,
-            ).label("contracted_used"),
-            sqlfunc.coalesce(
-                sqlfunc.sum(case((_Purchase.status.in_(list(PLANNED_STATUSES)), PurchaseItem.total_price), else_=0)),
-                0,
-            ).label("planned_used"),
-        )
-        .join(_Purchase, PurchaseItem.purchase_id == _Purchase.id)
-        .where(PurchaseItem.feo_category_id.in_(leaf_ids))
-    )
-    if exclude_purchase_id is not None:
-        used_q = used_q.where(PurchaseItem.purchase_id != exclude_purchase_id)
-    used_q = used_q.group_by(PurchaseItem.feo_category_id)
-    # leaf_used_map: {feo_category_id: (contracted_used, planned_used)}
-    leaf_used_map: dict[int, tuple[float, float]] = {}
-    for r in (await db.execute(used_q)).all():
-        leaf_used_map[r.feo_category_id] = (float(r.contracted_used), float(r.planned_used))
+    # Правило №6: агрегат «использовано по листу» — единственная реализация,
+    # см. app.services.feo_plan_totals.leaf_used_totals (тот же SQL что и в
+    # /budget-residuals ниже).
+    leaf_used_map = await leaf_used_totals(db, leaf_ids, exclude_purchase_id=exclude_purchase_id)
 
     # Build path "Direction › Subcategory › Leaf"
     def build_path(cat) -> str:
@@ -163,10 +144,7 @@ async def feo_budget_residuals(
     from app.auth.permissions import _get_effective, _active_org
     effective = await _get_effective(current_user, db, _active_org(current_user))
     can_view_all_levels = (current_user.role == "superadmin") or ("feo_budget.view_all_levels" in effective)
-    from sqlalchemy import select as _sel, func as _f, case as _case
-    from app.models.purchase_item import PurchaseItem
-    from app.models.purchase import Purchase as _Purchase
-    from app.routers.purchase_budget import CONTRACTED_STATUSES, PLANNED_STATUSES
+    from sqlalchemy import select as _sel
 
     ids = [int(x) for x in category_ids.split(",") if x.strip().isdigit()]
     all_cats = (await db.execute(
@@ -181,28 +159,8 @@ async def feo_budget_residuals(
             children.setdefault(c.parent_id, []).append(c.id)
     leaf_ids_all = [c.id for c in all_cats if not children.get(c.id)]
 
-    used_q = (
-        _sel(
-            PurchaseItem.feo_category_id,
-            _f.coalesce(
-                _f.sum(_case((_Purchase.status.in_(list(CONTRACTED_STATUSES)), PurchaseItem.total_price), else_=0)),
-                0,
-            ).label("contracted_used"),
-            _f.coalesce(
-                _f.sum(_case((_Purchase.status.in_(list(PLANNED_STATUSES)), PurchaseItem.total_price), else_=0)),
-                0,
-            ).label("planned_used"),
-        )
-        .join(_Purchase, PurchaseItem.purchase_id == _Purchase.id)
-        .where(PurchaseItem.feo_category_id.in_(leaf_ids_all))
-    )
-    if exclude_purchase_id is not None:
-        used_q = used_q.where(PurchaseItem.purchase_id != exclude_purchase_id)
-    used_q = used_q.group_by(PurchaseItem.feo_category_id)
-    # leaf_used: {feo_category_id: (contracted_used, planned_used)}
-    leaf_used: dict[int, tuple[float, float]] = {}
-    for r in (await db.execute(used_q)).all():
-        leaf_used[r.feo_category_id] = (float(r.contracted_used), float(r.planned_used))
+    # Правило №6: тот же агрегат, что и /leaves выше.
+    leaf_used = await leaf_used_totals(db, leaf_ids_all, exclude_purchase_id=exclude_purchase_id)
 
     def descendant_leaves(cid):
         ch = children.get(cid)

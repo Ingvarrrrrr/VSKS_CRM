@@ -24,6 +24,7 @@ from app.services.feo_import_common import QUANT, ZERO, get_cell, to_bool, to_de
 from app.services.feo_import_common import fmt as _fmt
 from app.services.feo_import_common import norm as _norm
 from app.services.feo_import_snapshot import full_path
+from app.routers.feo_planned_items import normalize_item_type
 
 
 async def apply_rows(state) -> None:
@@ -103,25 +104,6 @@ async def apply_rows(state) -> None:
     skipped = state.skipped
 
     _new_paths_seen: set[str] = set()
-
-    try:
-        # Нормализатор типа плановой позиции (Товар/Услуга/Работа) — общий с
-        # app.routers.feo_planned_items, чтобы не разъезжались правила. Локальный
-        # fallback ниже — только на случай, если модуль/функция ещё не готовы
-        # (параллельная задача добавляет и её, и поле FeoPlannedItem.item_type);
-        # предпочтителен импорт, fallback не должен жить долго.
-        from app.routers.feo_planned_items import normalize_item_type
-    except ImportError:
-        def normalize_item_type(v):
-            if not v:
-                return None
-            s = str(v).strip().lower()
-            mapping = {
-                "товар": "товар", "товары": "товар", "т": "товар",
-                "услуга": "услуга", "услуги": "услуга", "у": "услуга",
-                "работа": "работа", "работы": "работа", "р": "работа",
-            }
-            return mapping.get(s)
 
     def _check_unit_shift(raw: str | None, row_num: int, name: str, col_label: str) -> str | None:
         """Признак сдвига колонок при импорте ФЭО (задача владельца 2026-08-07,

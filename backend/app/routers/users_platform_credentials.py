@@ -7,9 +7,11 @@
 конфликта по форме с GET /{user_id} core-роутера нет, порядок регистрации
 относительно него не важен.
 
-_assert_platform_access определена (перенесена как есть), но, как и в
-исходном users.py, ни один эндпоинт её не вызывает — каждый делает свою
-инлайн-проверку прав (см. дефект в отчёте о разрезании).
+_assert_platform_access теперь реально используется всеми тремя эндпоинтами
+(раньше была объявлена, но каждый дублировал ту же проверку инлайн — см.
+Правило №6). Три места отличались только русским словом-действием в тексте
+403 (Просмотр/Изменение/Удаление) — вынесено в параметр `action`, сам текст
+и код ответа не изменились дословно.
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -26,20 +28,26 @@ router = APIRouter(prefix="/api/users", tags=["users"])
 ALLOWED_PLATFORMS = {"fabrikant", "roseltorg"}
 
 
-def _assert_platform_access(current_user, user_id: int, db=None):
-    """Проверяет, может ли current_user читать/менять креды user_id.
+async def _assert_platform_access(current_user, user_id: int, db: AsyncSession, action: str) -> None:
+    """Проверяет, может ли current_user читать/менять/удалять креды user_id.
     Разрешено: сам пользователь ИЛИ имеет доступ к вкладке 'staff'.
     Возбуждает HTTPException 403 с понятной причиной по-русски.
+
+    `action` — русское слово-действие ("Просмотр"/"Изменение"/"Удаление"),
+    подставляется в начало текста ошибки — так три вызывающих эндпоинта
+    сохраняют свой прежний (дословный) текст 403.
     """
     if current_user.id == user_id:
         return  # сам себе — всегда можно
-    # Не сам — требуется доступ к вкладке staff (выполнится в роутере через require_tab)
-    # Здесь мы уже внутри роутеров с manual check, поэтому просто сообщаем причину.
-    raise HTTPException(
-        status_code=403,
-        detail="Просмотр и изменение учётных данных площадок другого пользователя "
-               "доступно только сотрудникам с доступом к разделу «Персонал».",
-    )
+    from app.auth.permissions import get_effective_tabs, _active_org
+    active_org = _active_org(current_user)
+    effective = await get_effective_tabs(current_user, db, active_org)
+    if "staff" not in effective:
+        raise HTTPException(
+            status_code=403,
+            detail=f"{action} учётных данных площадок другого пользователя "
+                   "доступно только сотрудникам с доступом к разделу «Персонал».",
+        )
 
 
 @router.get("/{user_id}/platform-credentials", response_model=List[PlatformCredentialOut])
@@ -52,17 +60,7 @@ async def list_platform_credentials(
     Пароль НИКОГДА не возвращается — только has_password: true.
     Доступ: сам пользователь ИЛИ вкладка 'staff'.
     """
-    from app.auth.permissions import get_effective_tabs, _active_org
-    # Проверяем права вручную
-    if current_user.id != user_id:
-        active_org = _active_org(current_user)
-        effective = await get_effective_tabs(current_user, db, active_org)
-        if "staff" not in effective:
-            raise HTTPException(
-                status_code=403,
-                detail="Просмотр учётных данных площадок другого пользователя "
-                       "доступно только сотрудникам с доступом к разделу «Персонал».",
-            )
+    await _assert_platform_access(current_user, user_id, db, "Просмотр")
 
     from app.models.user_platform_credential import UserPlatformCredential
     rows = (await db.execute(
@@ -89,16 +87,7 @@ async def upsert_platform_credential(
     if platform not in ALLOWED_PLATFORMS:
         raise HTTPException(400, f"Неизвестная площадка: {platform}. Допустимые: {', '.join(sorted(ALLOWED_PLATFORMS))}")
 
-    from app.auth.permissions import get_effective_tabs, _active_org
-    if current_user.id != user_id:
-        active_org = _active_org(current_user)
-        effective = await get_effective_tabs(current_user, db, active_org)
-        if "staff" not in effective:
-            raise HTTPException(
-                status_code=403,
-                detail="Изменение учётных данных площадок другого пользователя "
-                       "доступно только сотрудникам с доступом к разделу «Персонал».",
-            )
+    await _assert_platform_access(current_user, user_id, db, "Изменение")
 
     from app.models.user_platform_credential import UserPlatformCredential
     from app.services.cred_crypto import encrypt_password
@@ -140,16 +129,7 @@ async def delete_platform_credential(
     """Удаляет учётные данные площадки для пользователя.
     Доступ: сам пользователь ИЛИ вкладка 'staff'.
     """
-    from app.auth.permissions import get_effective_tabs, _active_org
-    if current_user.id != user_id:
-        active_org = _active_org(current_user)
-        effective = await get_effective_tabs(current_user, db, active_org)
-        if "staff" not in effective:
-            raise HTTPException(
-                status_code=403,
-                detail="Удаление учётных данных площадок другого пользователя "
-                       "доступно только сотрудникам с доступом к разделу «Персонал».",
-            )
+    await _assert_platform_access(current_user, user_id, db, "Удаление")
 
     from app.models.user_platform_credential import UserPlatformCredential
     row = (await db.execute(

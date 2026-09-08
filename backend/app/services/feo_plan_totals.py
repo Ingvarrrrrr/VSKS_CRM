@@ -3,7 +3,15 @@
 Вынесено из feo_plan.py (рефакторинг без изменения поведения, сессия
 2026-09-08, см. ПРАВИЛО №5). feo_plan_subsidy_totals — тонкая обёртка над
 compute_feo_plan_tree (ПРАВИЛО №6 — не пересчитывать сумму заново).
+
+leaf_used_totals — единственная реализация агрегата «использовано по листу
+ФЭО» (contracted_used/planned_used через CONTRACTED_STATUSES/PLANNED_STATUSES
+из app.routers.purchase_budget). Раньше идентичный SQL был продублирован в
+GET /leaves и GET /budget-residuals (routers/feo_plan_reads_budget.py, сессия
+2026-09-08) — оба теперь зовут эту функцию.
 """
+from typing import Optional
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.feo_plan_tree import compute_feo_plan_tree
@@ -42,6 +50,52 @@ def build_category_path(cat, cat_by_id: dict) -> str:
         cur = cat_by_id[cur.parent_id]
         names.append(cur.name)
     return " › ".join(reversed(names))
+
+
+async def leaf_used_totals(
+    db: AsyncSession,
+    leaf_ids: list[int],
+    exclude_purchase_id: Optional[int] = None,
+) -> dict[int, tuple[float, float]]:
+    """{feo_category_id листа: (contracted_used, planned_used)}.
+
+    contracted_used = SUM(PurchaseItem.total_price) по позициям листа, чья
+    закупка в CONTRACTED_STATUSES; planned_used — та же сумма по
+    PLANNED_STATUSES. exclude_purchase_id — исключить позиции этой закупки
+    (форма редактирования закупки не должна учитывать свои же старые суммы).
+    Пустой leaf_ids -> {} без обращения к БД.
+    """
+    if not leaf_ids:
+        return {}
+
+    from sqlalchemy import select, func as sqlfunc, case
+    from app.models.purchase_item import PurchaseItem
+    from app.models.purchase import Purchase as _Purchase
+    from app.routers.purchase_budget import CONTRACTED_STATUSES, PLANNED_STATUSES
+
+    used_q = (
+        select(
+            PurchaseItem.feo_category_id,
+            sqlfunc.coalesce(
+                sqlfunc.sum(case((_Purchase.status.in_(list(CONTRACTED_STATUSES)), PurchaseItem.total_price), else_=0)),
+                0,
+            ).label("contracted_used"),
+            sqlfunc.coalesce(
+                sqlfunc.sum(case((_Purchase.status.in_(list(PLANNED_STATUSES)), PurchaseItem.total_price), else_=0)),
+                0,
+            ).label("planned_used"),
+        )
+        .join(_Purchase, PurchaseItem.purchase_id == _Purchase.id)
+        .where(PurchaseItem.feo_category_id.in_(leaf_ids))
+    )
+    if exclude_purchase_id is not None:
+        used_q = used_q.where(PurchaseItem.purchase_id != exclude_purchase_id)
+    used_q = used_q.group_by(PurchaseItem.feo_category_id)
+
+    result: dict[int, tuple[float, float]] = {}
+    for r in (await db.execute(used_q)).all():
+        result[r.feo_category_id] = (float(r.contracted_used), float(r.planned_used))
+    return result
 
 
 def build_ancestor_ids(cat, cat_by_id: dict) -> list:

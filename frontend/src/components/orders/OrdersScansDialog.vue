@@ -142,6 +142,7 @@ import { useDisplay } from 'vuetify'
 import FileDropZone from '@/components/FileDropZone.vue'
 import type { ToastType } from '@/composables/useToast'
 import type { ScanPreviewResult, ScanResult, Subsidy } from '@/composables/orders/ordersTypes'
+import '@/styles/orders-import.css'
 
 const props = defineProps<{
   subsidies: Subsidy[]
@@ -249,15 +250,6 @@ defineExpose({ open })
 </script>
 
 <style scoped>
-.import-result-row {
-  display: flex; gap: 16px; justify-content: center; margin: 16px 0;
-}
-.import-stat {
-  display: flex; flex-direction: column; align-items: center;
-  padding: 16px 24px; border-radius: 10px; min-width: 100px;
-}
-.import-stat--ok   { background: rgba(34,197,94,0.1); }
-.import-stat--skip { background: rgba(245,158,11,0.1); }
 .scans-folder-label {
   display: flex; align-items: center; gap: 6px;
   padding: 12px 16px; border: 2px dashed var(--crm-border);

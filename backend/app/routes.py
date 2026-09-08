@@ -82,6 +82,15 @@ from app.routers import feo_plan_reads
 from app.routers import feo_plan_reads_tree
 from app.routers import feo_plan_reads_budget
 from app.routers import feo_import
+# Разрезание feo_import.py (Правило №5, сессия 2026-09-08): файл разросся до
+# 1088 строк — feo_import_template (/import/template), feo_import_preview
+# (/import-preview) и feo_import_export (/export) вынесены соседями. Те же
+# статичные литеральные пути на том же префиксе /api/feo-categories — порядок
+# этих трёх файлов и feo_import друг относительно друга не важен (пути не
+# пересекаются), но ВСЕ обязаны идти до feo_categories.router, как и выше.
+from app.routers import feo_import_template
+from app.routers import feo_import_preview
+from app.routers import feo_import_export
 from app.routers import feo_tree_ops
 # Разрезание purchases.py (Правило №5, сессия 2026-09-06): purchase_duplicates,
 # purchase_lists, purchase_payment_matching, purchase_ops содержат статические
@@ -218,6 +227,18 @@ from app.routers import contractors_directory
 from app.routers import contractors_lookup
 from app.routers import contractors_enrich
 from app.routers import contractors_import
+# Разрезание contracts.py (Правило №5, сессия 2026-09-08): contracts_approval
+# несёт POST "/{contract_id}/approval-purchase", contracts_admin — POST
+# "/{cid}/merge/{target_id}", "/migrate-from-purchases",
+# "/bulk-enrich-from-purchases", "/backfill-from-receipts", contracts_import —
+# POST "/import/preview"/"/import/mapped", contracts_stages — POST
+# "/{contract_id}/generate-monthly-stages". Ни один путь не пересекается по
+# форме+методу с PUT/DELETE "/{cid}" ядра (contracts.router) — порядок
+# регистрации относительно него и друг друга не важен.
+from app.routers import contracts_approval
+from app.routers import contracts_admin
+from app.routers import contracts_import
+from app.routers import contracts_stages
 # Разрезание users.py (Правило №5, сессия 2026-09-08): users_access, users_me
 # несут статические литеральные пути на префиксе /api/users (/assignable-ids,
 # /in-my-orgs, /i-can-act-for, /me...) — ОБЯЗАНЫ регистрироваться ДО
@@ -256,6 +277,13 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(contractors_import.router)
     app.include_router(contractors.router)
     app.include_router(contracts.router)
+    # Разрезание contracts.py (Правило №5, сессия 2026-09-08) — см. комментарий
+    # у импортов выше: ни один путь соседей не пересекается по форме+методу с
+    # PUT/DELETE "/{cid}" ядра, порядок регистрации не важен.
+    app.include_router(contracts_approval.router)
+    app.include_router(contracts_admin.router)
+    app.include_router(contracts_import.router)
+    app.include_router(contracts_stages.router)
     # Phase 27.1: contract_items MUST be registered BEFORE purchases.router
     # because purchases has catch-all /{purchase_id} that would intercept /contract-items
     app.include_router(contract_items_router.router)
@@ -286,6 +314,9 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(feo_plan_reads_tree.router)
     app.include_router(feo_plan_reads_budget.router)
     app.include_router(feo_import.router)
+    app.include_router(feo_import_template.router)
+    app.include_router(feo_import_preview.router)
+    app.include_router(feo_import_export.router)
     app.include_router(feo_tree_ops.router)
     app.include_router(feo_categories.router)
     app.include_router(feo_planned_items_matching.router)

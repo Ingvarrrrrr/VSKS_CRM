@@ -164,11 +164,34 @@ from app.routers import contractors_directory
 from app.routers import contractors_lookup
 from app.routers import contractors_enrich
 from app.routers import contractors_import
+# Разрезание users.py (Правило №5, сессия 2026-09-08): users_access, users_me
+# несут статические литеральные пути на префиксе /api/users (/assignable-ids,
+# /in-my-orgs, /i-can-act-for, /me...) — ОБЯЗАНЫ регистрироваться ДО
+# users.router, иначе Starlette матчит их на catch-all GET /{user_id} (int)
+# раньше и FastAPI падает 422. users_docs, users_platform_credentials,
+# users_dictionaries, users_import конфликтов по форме не несут (минимум на
+# сегмент длиннее /{user_id} или другой метод), регистрируются рядом для
+# единообразия со всеми users_* siblings.
+from app.routers import users_access
+from app.routers import users_me
+from app.routers import users_docs
+from app.routers import users_platform_credentials
+from app.routers import users_dictionaries
+from app.routers import users_import
 
 
 def register_routes(app: FastAPI) -> None:
     app.include_router(auth.router)
+    # Статические/специфичные пути /api/users/* — ДО users.router (см.
+    # комментарий у импортов выше); users_access/users_me обязательны здесь,
+    # остальные — для единообразия со всеми users_* siblings.
+    app.include_router(users_access.router)
+    app.include_router(users_me.router)
     app.include_router(users.router)
+    app.include_router(users_docs.router)
+    app.include_router(users_platform_credentials.router)
+    app.include_router(users_dictionaries.router)
+    app.include_router(users_import.router)
     app.include_router(staff_directory.router)
     # Статические/специфичные пути /api/contractors/* — ДО contractors.router
     # (см. комментарий у импортов выше); contractors_directory обязателен здесь,

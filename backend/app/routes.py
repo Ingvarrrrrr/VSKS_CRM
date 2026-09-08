@@ -102,6 +102,14 @@ from app.routers import wish_approvals as wish_approvals_router
 from app.routers import wish_transitions as wish_transitions_router
 from app.routers import wish_convert as wish_convert_router
 from app.routers import wish_export as wish_export_router
+# Вторая резка wishes.py (Правило №5, сессия 2026-09-08): wish_lists несёт
+# GET "/" и GET "/counts" (статические, 0 сегментов сверх префикса — не
+# пересекаются с catch-all "/{wish_id}" структурно, но регистрируется до
+# wishes.router тем же защитным принципом, что wish_documents/wish_members
+# выше); wish_items несёт "/{wish_id}/items/{item_id}" (на 2 сегмента длиннее
+# catch-all, порядок не важен) — оба включены рядом с wishes.router ниже.
+from app.routers import wish_lists as wish_lists_router
+from app.routers import wish_items as wish_items_router
 from app.routers import user_addresses as user_addresses_router
 from app.routers import org_config
 from app.routers import purchase_transitions
@@ -349,6 +357,10 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(wish_transitions_router.router)
     app.include_router(wish_convert_router.router)
     app.include_router(wish_export_router.router)
+    # wish_lists (GET "/", GET "/counts") и wish_items (PATCH "/{wish_id}/items/{item_id}")
+    # — разрезаны из wishes.py, см. комментарий у импортов выше.
+    app.include_router(wish_lists_router.router)
+    app.include_router(wish_items_router.router)
     app.include_router(wishes.router)
     app.include_router(push_router.router)
     app.include_router(permissions_router.router)

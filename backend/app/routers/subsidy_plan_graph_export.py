@@ -73,13 +73,6 @@ async def export_plan_graph_excel(
 
     data = await gather_live_plan_graph_data(db, subsidy_id)
 
-    # Дубль исходной проверки (унаследован из router до рефакторинга 2026-09-08,
-    # там был перед построением книги вручную) — фактически недостижим, т.к.
-    # openpyxl уже проверен выше и не меняется в рантайме. Оставлен как есть
-    # (Правило: не чинить найденные попутно дефекты, дефект приведён в отчёте).
-    if openpyxl is None:
-        raise HTTPException(500, "openpyxl не установлен")
-
     base_url = str(request.base_url).rstrip("/")
     wb = build_live_plan_graph_xlsx(sub, base_url, data)
 

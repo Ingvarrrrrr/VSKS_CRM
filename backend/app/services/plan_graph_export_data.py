@@ -340,38 +340,6 @@ async def gather_live_plan_graph_data(db: AsyncSession, subsidy_id: int) -> dict
     for item in feo_items:
         items_by_cat.setdefault(item.feo_category_id, []).append(item)
 
-    # Дерево (для будущего/альтернативного рендера через render_plan_graph_workbook)
-    # — исторически строилось здесь и в текущем «живом» экспорте не используется
-    # (см. app.services.plan_graph_export_xlsx, у него собственный traverse по
-    # cats/cats_by_parent). Оставлено ради 1:1 сохранения побочных эффектов при
-    # рефакторинге (Правило №5 2026-09-08) — не потребитель, вычисление без
-    # побочных эффектов на БД, безопасно держать как есть.
-    def _build_live_tree(all_cats, parent_id=None):
-        nodes = []
-        for c in all_cats:
-            if c.parent_id == parent_id:
-                cat_items = items_by_cat.get(c.id, [])
-                children = _build_live_tree(all_cats, parent_id=c.id)
-                node = {
-                    "id": c.id,
-                    "name": c.name,
-                    "level": c.level,
-                    "code": c.code,
-                    "appendix": c.appendix,
-                    "budget": float(c.budget) if c.budget is not None else None,
-                    "planned_amount": float(c.planned_amount) if c.planned_amount is not None else None,
-                    "planned_quantity": float(c.planned_quantity) if c.planned_quantity is not None else None,
-                    "unit": c.unit,
-                    "children": children,
-                    "_live_items": cat_items,
-                    "_used_map": used_map,
-                    "_contractor_map": contractor_map,
-                }
-                nodes.append(node)
-        return nodes
-
-    _build_live_tree(list(cats))  # см. комментарий выше — результат намеренно не используется
-
     # ── Лист «Сводная»: деньги по Товары/Услуги × корзины обязательств ────────
     summary = {"услуга": _empty_summary_buckets(), "товар": _empty_summary_buckets()}
     sum_rows = (await db.execute(

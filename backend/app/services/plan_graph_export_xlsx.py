@@ -89,7 +89,6 @@ def build_live_plan_graph_xlsx(sub, base_url: str, data: dict):
     # показывают суммарные итоги по всем листовым категориям-потомкам.
     # Факт листа берём по feo_category_id (cat_status_map) — это включает все
     # закупки категории, поэтому суммирование по потомкам не задваивается.
-    _cat_by_id = {c.id: c for c in cats}
     subtree_map: dict[int, dict] = {}
 
     def _compute_subtree(cat) -> dict:

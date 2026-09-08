@@ -89,6 +89,14 @@ from app.routers import wish_export as wish_export_router
 from app.routers import user_addresses as user_addresses_router
 from app.routers import org_config
 from app.routers import purchase_transitions
+# Разрезание feo_planned_items.py (Правило №5, сессия 2026-09-08): matching несёт
+# статические пути (product-hint/map/match/confirm-wish-plan-match), reports —
+# статические + "/{item_id}/consumers" (на сегмент длиннее catch-all ядра) на
+# префиксе /api/feo-planned-items — оба регистрируются рядом с
+# feo_planned_items.router и ДО него (catch-all "/{item_id}" — PUT/DELETE),
+# как feo_plan_reads/feo_import/feo_tree_ops выше.
+from app.routers import feo_planned_items_matching
+from app.routers import feo_planned_items_reports
 from app.routers import feo_planned_items
 from app.routers import plan_excess as plan_excess_router
 from app.routers import telegram_webhook
@@ -199,6 +207,8 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(feo_import.router)
     app.include_router(feo_tree_ops.router)
     app.include_router(feo_categories.router)
+    app.include_router(feo_planned_items_matching.router)
+    app.include_router(feo_planned_items_reports.router)
     app.include_router(feo_planned_items.router)
     app.include_router(plan_excess_router.router)
     app.include_router(settings_router.router)

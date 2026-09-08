@@ -366,6 +366,7 @@ import { apiFetch } from '@/api'
 import FileDropZone from '@/components/FileDropZone.vue'
 import type { ToastType } from '@/composables/useToast'
 import type { ImportPreview, ImportResult, Subsidy } from '@/composables/orders/ordersTypes'
+import '@/styles/orders-import.css'
 
 const props = defineProps<{
   subsidies: Subsidy[]
@@ -521,18 +522,6 @@ defineExpose({ open, downloadTemplate })
 </script>
 
 <style scoped>
-.import-result-row {
-  display: flex; gap: 16px; justify-content: center; margin: 16px 0;
-}
-.import-stat {
-  display: flex; flex-direction: column; align-items: center;
-  padding: 16px 24px; border-radius: 10px; min-width: 100px;
-}
-.import-stat--ok   { background: rgba(34,197,94,0.1); }
-.import-stat--skip { background: rgba(245,158,11,0.1); }
-.import-stat--err  { background: rgba(239,68,68,0.1); }
-.import-stat-val { font-size: 32px; font-weight: 700; color: var(--crm-text); }
-.import-stat-lbl { font-size: 12px; color: var(--crm-text-muted); margin-top: 4px; }
 .import-errors-list { max-height: 200px; overflow-y: auto; border: 1px solid var(--crm-border); border-radius: 8px; }
 .fz-11 { font-size: 11px; }
 .import-preview-table { border: 1px solid var(--crm-border); border-radius: 8px; max-height: 280px; overflow-y: auto; }

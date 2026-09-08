@@ -2154,6 +2154,7 @@ import { RUSSIAN_REGIONS, DELIVERY_REGIONS } from '@/constants/russian_regions'
 import { RU_REGION_OKATO, resolveRegionOkato } from '@/constants/ru_region_okato'
 import { useEntityChanges } from '@/composables/useEntityChanges'
 import { useUndoRedo } from '@/composables/useUndoRedo'
+import '@/styles/purchase-form.css'
 
 const route = useRoute()
 const router = useRouter()
@@ -5378,40 +5379,7 @@ const kpDialogRef = ref<InstanceType<typeof KpDialog> | null>(null)
   line-height: 1;
 }
 
-/* pub-pointer / pub-glow — указатель на целевые поля из диалога публикации */
-.pub-pointer {
-  position: absolute;
-  top: -42px;
-  left: 50%;
-  margin-left: -16px;
-  width: 32px;
-  height: 36px;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  pointer-events: none;
-  z-index: 30;
-  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.35));
-  animation: pub-pointer-wiggle 0.9s ease-in-out infinite;
-}
-.pub-pointer .mdi {
-  font-size: 30px;
-  color: #fb923c;
-  line-height: 1;
-}
-@keyframes pub-pointer-wiggle {
-  0%   { transform: translateY(0)    rotate(-10deg); }
-  25%  { transform: translateY(-6px) rotate(10deg); }
-  50%  { transform: translateY(0)    rotate(-8deg); }
-  75%  { transform: translateY(-4px) rotate(8deg); }
-  100% { transform: translateY(0)    rotate(-10deg); }
-}
-.pub-glow {
-  border-radius: 6px;
-  animation: pub-match-glow 1.2s ease-in-out infinite;
-}
-@keyframes pub-match-glow {
-  0%, 100% { box-shadow: 0 0 0 4px rgba(251,146,60,0.20), 0 0 16px 2px rgba(251,146,60,0.45); }
-  50%      { box-shadow: 0 0 0 6px rgba(251,146,60,0.35), 0 0 30px 8px rgba(251,146,60,0.75); }
-}
+/* pub-pointer / pub-glow вынесены в @/styles/purchase-form.css (используются также
+   в components/purchase/*); .guide-arrow-icon.guide-arrow-arrived выше опирается
+   на keyframes pub-pointer-wiggle оттуда. */
 </style>

@@ -2,124 +2,18 @@
   <div class="chat-layout">
     <!-- Sidebar: Chat list (плоская панель, без v-navigation-drawer — temporary-drawer
          с односторонним :model-value залипал после первого закрытия на мобиле) -->
-    <div
+    <ChatSidebar
       v-if="showSidebar"
-      class="chat-sidebar"
-      :class="{ 'chat-sidebar--full': !smAndUp }"
-    >
-      <!-- Header -->
-      <v-list-item class="py-3 px-4">
-        <template #prepend>
-          <v-icon icon="mdi-chat" class="me-2" />
-        </template>
-        <v-list-item-title class="text-h6 font-weight-bold">Чат</v-list-item-title>
-        <template #append>
-          <v-btn
-            icon="mdi-plus"
-            variant="text"
-            size="small"
-            @click="openNewChatDialog"
-          />
-        </template>
-      </v-list-item>
-
-      <v-divider />
-
-      <!-- Search field -->
-      <div class="px-3 pt-2 pb-1">
-        <v-text-field
-          v-model="searchQuery"
-          :placeholder="selectedRoom ? 'Поиск в чате...' : 'Поиск по чатам...'"
-          prepend-inner-icon="mdi-magnify"
-          variant="outlined"
-          density="compact"
-          hide-details
-          clearable
-          @click:clear="searchQuery = ''"
-        />
-      </div>
-
-      <!-- Room list -->
-      <v-list v-if="filteredRooms.length > 0" lines="two" nav class="pa-1 chat-room-list">
-        <v-list-item
-          v-for="room in filteredRooms"
-          :key="room.id"
-          :class="{ 'bg-primary-lighten-4': selectedRoom?.id === room.id }"
-          :active="selectedRoom?.id === room.id"
-          rounded="lg"
-          class="mb-1"
-          @click="selectRoom(room)"
-        >
-          <template #prepend>
-            <v-badge
-              :model-value="room.unread_count > 0"
-              :content="room.unread_count > 99 ? '99+' : room.unread_count"
-              color="error"
-              offset-x="6"
-              offset-y="6"
-              overlap
-            >
-              <v-avatar :color="roomColor(room)" size="44">
-                <span class="text-subtitle-1 font-weight-bold text-white">
-                  {{ roomInitial(room) }}
-                </span>
-              </v-avatar>
-            </v-badge>
-          </template>
-
-          <v-list-item-title class="font-weight-medium" :class="{ 'room-has-unread': room.unread_count > 0 }">
-            {{ roomDisplayName(room) }}
-          </v-list-item-title>
-          <v-list-item-subtitle class="text-truncate">
-            {{ room.last_message?.content || (room.last_message?.has_file ? '📎 Файл' : 'Нет сообщений') }}
-          </v-list-item-subtitle>
-
-          <template #append>
-            <div class="d-flex flex-column align-end" @click.stop>
-              <span v-if="room.last_message" class="text-caption text-medium-emphasis mb-1">
-                {{ formatTime(room.last_message.created_at) }}
-              </span>
-              <v-chip
-                v-if="room.unread_count > 0"
-                color="error"
-                size="small"
-                variant="flat"
-                class="font-weight-bold unread-chip"
-                density="compact"
-              >
-                {{ room.unread_count > 99 ? '99+' : room.unread_count }}
-              </v-chip>
-              <v-menu location="bottom end">
-                <template #activator="{ props: menuProps }">
-                  <v-btn
-                    v-bind="menuProps"
-                    icon="mdi-dots-vertical"
-                    variant="text"
-                    size="x-small"
-                    density="compact"
-                    class="room-menu-btn"
-                  />
-                </template>
-                <v-list density="compact">
-                  <v-list-item
-                    prepend-icon="mdi-exit-to-app"
-                    title="Удалить у себя"
-                    @click="confirmLeaveRoom(room)"
-                  />
-                </v-list>
-              </v-menu>
-            </div>
-          </template>
-        </v-list-item>
-      </v-list>
-
-      <v-empty-state
-        v-else
-        icon="mdi-chat-outline"
-        text="Нет чатов"
-        class="mt-8"
-      />
-    </div>
+      :rooms="filteredRooms"
+      :selected-room-id="selectedRoom?.id ?? null"
+      :search-query="searchQuery"
+      :current-user-id="currentUserId"
+      :sm-and-up="smAndUp"
+      @update:search-query="searchQuery = $event"
+      @select="onRoomClick"
+      @new-chat="openNewChatDialog"
+      @leave="confirmLeaveRoom"
+    />
 
     <!-- Main message area: на мобиле показываем только когда чат выбран -->
     <div v-if="smAndUp || !showSidebar" class="chat-main flex-grow-1">
@@ -131,784 +25,154 @@
       </div>
 
       <template v-else>
-        <!-- Toolbar -->
-        <v-toolbar density="compact" elevation="1" class="flex-shrink-0 chat-toolbar">
-          <!-- Back button on mobile -->
-          <v-btn
-            v-if="!smAndUp"
-            icon="mdi-arrow-left"
-            variant="text"
-            @click="backToList"
-          />
-          <v-avatar :color="roomColor(selectedRoom)" size="36" class="ms-2">
-            <span class="text-body-2 font-weight-bold text-white">
-              {{ roomInitial(selectedRoom) }}
-            </span>
-          </v-avatar>
-          <v-toolbar-title class="ms-3" style="cursor:pointer" @click="showParticipantsDialog = true">
-            <div class="font-weight-medium">{{ roomDisplayName(selectedRoom) }}</div>
-            <div class="text-caption text-medium-emphasis">
-              {{ selectedRoom.is_group ? `${selectedRoom.participants.length} участников` : 'Личный чат' }}
-            </div>
-          </v-toolbar-title>
-          <template #append>
-            <v-btn
-              icon="mdi-account-group"
-              variant="text"
-              size="small"
-              class="me-1"
-              title="Участники"
-              @click="showParticipantsDialog = true"
-            />
-            <v-icon
-              :icon="wsConnected ? 'mdi-wifi' : 'mdi-wifi-off'"
-              :color="wsConnected ? 'success' : 'error'"
-              size="18"
-              class="me-2"
-            />
-          </template>
-        </v-toolbar>
+        <ChatToolbar
+          :room="selectedRoom"
+          :current-user-id="currentUserId"
+          :sm-and-up="smAndUp"
+          :ws-connected="wsConnected"
+          @back="backToList"
+          @open-participants="showParticipantsDialog = true"
+        />
 
-        <!-- Messages area -->
-        <div
-          ref="messagesContainer"
-          class="chat-messages flex-grow-1 overflow-y-auto pa-3"
+        <ChatMessageList
+          :items="messagesWithSeparators"
+          :loading="loadingMessages"
+          :is-empty="filteredMessages.length === 0"
+          :current-user-id="currentUserId"
+          :search-query="searchQuery"
+          :room="selectedRoom"
+          :container-ref="setContainerRef"
           @scroll="onScroll"
-        >
-          <!-- Load more indicator -->
-          <div v-if="loadingMessages" class="text-center py-2">
-            <v-progress-circular indeterminate size="24" />
-          </div>
+        />
 
-          <!-- Messages -->
-          <template v-for="(item, idx) in messagesWithSeparators" :key="'type' in item ? 'sep-' + item.date + idx : item.id">
-            <!-- Date separator -->
-            <div v-if="'type' in item" class="date-separator">
-              <span>{{ item.date }}</span>
-            </div>
-
-            <!-- Message bubble -->
-            <div
-              v-else
-              class="message-row"
-              :class="item.sender_id === currentUserId ? 'message-row-self' : 'message-row-other'"
-            >
-              <!-- Avatar (only if showAvatar) -->
-              <v-avatar
-                v-if="item.sender_id !== currentUserId && item.showAvatar"
-                :color="stringToColor(item.sender_name || '')"
-                size="32"
-                class="message-avatar"
-              >
-                <span class="text-caption text-white">{{ (item.sender_name || '?')[0] }}</span>
-              </v-avatar>
-              <div v-else-if="item.sender_id !== currentUserId" class="message-avatar-spacer" />
-
-              <div
-                class="message-bubble"
-                :class="item.sender_id === currentUserId ? 'bubble-self' : 'bubble-other'"
-              >
-                <!-- Sender name (only if showAvatar and not self) -->
-                <div v-if="item.showAvatar && item.sender_id !== currentUserId" class="message-sender">
-                  {{ item.sender_name }}
-                </div>
-
-                <!-- Text content -->
-                <div v-if="item.content" class="message-text" v-html="highlightSearch(item.content || '')"></div>
-
-                <!-- File attachment -->
-                <div v-if="item.has_file && item.file_name" class="message-file">
-                  <!-- Inline image preview -->
-                  <a
-                    v-if="isImage(item)"
-                    :href="fileUrl(item.id)"
-                    target="_blank"
-                    class="message-image-link"
-                  >
-                    <img
-                      :src="fileUrl(item.id)"
-                      :alt="item.file_name"
-                      class="message-image"
-                      loading="lazy"
-                    />
-                  </a>
-                  <!-- Non-image file chip -->
-                  <v-chip
-                    v-else
-                    :href="fileUrl(item.id)"
-                    target="_blank"
-                    prepend-icon="mdi-paperclip"
-                    size="small"
-                    variant="tonal"
-                    class="mt-1 text-decoration-none"
-                    :class="item.sender_id === currentUserId ? 'bg-white text-primary' : 'bg-primary-lighten-5'"
-                    style="cursor: pointer;"
-                  >
-                    {{ item.file_name }}
-                    <span v-if="item.file_size" class="ms-1 text-caption opacity-70">
-                      ({{ formatSize(item.file_size) }})
-                    </span>
-                  </v-chip>
-                </div>
-
-                <!-- Timestamp -->
-                <div class="message-time">
-                  {{ formatDateTime(item.created_at) }}
-                  <v-icon
-                    v-if="item.sender_id === currentUserId"
-                    size="14"
-                    class="ms-1"
-                    :color="selectedRoom?.unread_count === 0 ? 'blue' : 'grey'"
-                  >mdi-check-all</v-icon>
-                </div>
-              </div>
-            </div>
-          </template>
-
-          <!-- Empty state -->
-          <div v-if="filteredMessages.length === 0 && !loadingMessages" class="text-center mt-8 text-medium-emphasis">
-            <v-icon icon="mdi-message-outline" size="48" class="mb-2 opacity-30" />
-            <p class="text-body-2">Нет сообщений. Начните переписку!</p>
-          </div>
-        </div>
-
-        <!-- Input area -->
-        <div class="chat-input pa-3 flex-shrink-0">
-          <!-- Selected file preview -->
-          <v-chip
-            v-if="fileInput"
-            closable
-            prepend-icon="mdi-paperclip"
-            class="mb-2"
-            @click:close="fileInput = null"
-          >
-            {{ fileInput.name }}
-          </v-chip>
-
-          <!-- Mention dropdown -->
-          <div v-if="mentionOpen && mentionCandidates.length" class="mention-dropdown-chat">
-            <div
-              v-for="p in mentionCandidates"
-              :key="p.id"
-              class="mention-dropdown-chat__item"
-              @mousedown.prevent="insertMention(p)"
-            >
-              <v-avatar :color="stringToColor(p.full_name)" size="22" class="me-2">
-                <span class="text-caption text-white" style="font-size:10px">{{ p.full_name[0] }}</span>
-              </v-avatar>
-              {{ p.full_name }}
-            </div>
-          </div>
-
-          <div class="d-flex align-end gap-2">
-            <!-- Hidden file input -->
-            <input
-              ref="fileInputEl"
-              type="file"
-              accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
-              style="display: none"
-              @change="onFileSelected"
-            />
-
-            <!-- Attach button -->
-            <v-btn
-              icon="mdi-paperclip"
-              variant="text"
-              :disabled="sending"
-              @click="fileInputEl?.click()"
-            />
-
-            <!-- @ mention button -->
-            <v-btn
-              icon="mdi-at"
-              variant="text"
-              size="small"
-              :disabled="sending"
-              title="Упомянуть"
-              @click="insertAtSymbol"
-            />
-
-            <!-- Рупор: mention all -->
-            <v-btn
-              v-if="selectedRoom?.is_group && selectedRoom.participants.length > 2"
-              icon="mdi-bullhorn-outline"
-              variant="text"
-              size="small"
-              :disabled="sending"
-              title="Упомянуть всех"
-              @click="mentionAll"
-            />
-
-            <!-- Text field -->
-            <v-text-field
-              v-model="inputText"
-              placeholder="Написать сообщение..."
-              variant="outlined"
-              density="compact"
-              hide-details
-              class="flex-grow-1"
-              :disabled="sending"
-              @input="onInputChange"
-              @keydown="onInputKeydown"
-              @keydown.enter.exact.prevent="sendMessage"
-              @keydown.enter.shift.exact="inputText += '\n'"
-            />
-
-            <!-- Send button -->
-            <v-btn
-              icon="mdi-send"
-              color="primary"
-              :disabled="(!inputText.trim() && !fileInput) || sending"
-              :loading="sending"
-              @click="sendMessage"
-            />
-          </div>
-        </div>
+        <ChatComposer
+          :input-text="inputText"
+          :file-input="fileInput"
+          :sending="sending"
+          :mention-open="mentionOpen"
+          :mention-candidates="mentionCandidates"
+          :show-mention-all="!!(selectedRoom?.is_group && selectedRoom.participants.length > 2)"
+          @update:input-text="inputText = $event"
+          @clear-file="fileInput = null"
+          @file-selected="fileInput = $event"
+          @at-click="insertAtSymbol"
+          @mention-all-click="mentionAll"
+          @input-change="onInputChange"
+          @keydown="onInputKeydown"
+          @send="sendMessage"
+          @newline="inputText += '\n'"
+          @mention-select="insertMention"
+        />
       </template>
     </div>
 
     <!-- New Chat Dialog -->
-    <v-dialog v-model="showNewChatDialog" max-width="500" scrollable :fullscreen="mobile">
-      <v-card>
-        <v-card-title class="d-flex align-center">
-          <v-icon icon="mdi-chat-plus" class="me-2" />
-          Новый чат
-        </v-card-title>
-        <v-card-text>
-          <!-- Staff search -->
-          <v-text-field
-            v-model="staffSearch"
-            placeholder="Поиск сотрудника..."
-            prepend-inner-icon="mdi-magnify"
-            variant="outlined"
-            density="compact"
-            class="mb-3"
-            clearable
-          />
+    <ChatNewRoomDialog
+      :model-value="showNewChatDialog"
+      :mobile="mobile"
+      :staff-search="staffSearch"
+      :filtered-staff="filteredStaff"
+      :selected-staff-ids="selectedStaffIds"
+      :new-group-name="newGroupName"
+      :creating-chat="creatingChat"
+      @update:model-value="showNewChatDialog = $event"
+      @update:staff-search="staffSearch = $event"
+      @update:new-group-name="newGroupName = $event"
+      @toggle-staff="toggleStaff"
+      @cancel="closeNewChatDialog"
+      @create="onCreateChat"
+    />
 
-          <!-- Staff list -->
-          <v-list lines="two" max-height="300" class="overflow-y-auto border rounded">
-            <v-list-item
-              v-for="person in filteredStaff"
-              :key="person.id"
-              :class="{ 'bg-primary-lighten-5': selectedStaffIds.includes(person.id) }"
-              rounded
-              @click="toggleStaff(person.id)"
-            >
-              <template #prepend>
-                <v-avatar color="secondary" size="36">
-                  <span class="text-body-2 text-white">{{ person.full_name.charAt(0) }}</span>
-                </v-avatar>
-              </template>
-              <v-list-item-title>{{ person.full_name }}</v-list-item-title>
-              <v-list-item-subtitle>{{ person.username }}</v-list-item-subtitle>
-              <template #append>
-                <v-checkbox-btn :model-value="selectedStaffIds.includes(person.id)" readonly />
-              </template>
-            </v-list-item>
-            <v-empty-state
-              v-if="filteredStaff.length === 0"
-              icon="mdi-account-search"
-              text="Сотрудники не найдены"
-              class="py-4"
-            />
-          </v-list>
+    <!-- Leave Room Confirm Dialog -->
+    <ChatLeaveDialog
+      :model-value="showLeaveDialog"
+      :room="leaveRoomTarget"
+      :current-user-id="currentUserId"
+      :leaving="leavingRoom"
+      @update:model-value="showLeaveDialog = $event"
+      @cancel="showLeaveDialog = false"
+      @confirm="doLeaveRoom"
+    />
 
-          <!-- Group name (shown when 2+ selected) -->
-          <v-text-field
-            v-if="selectedStaffIds.length >= 2"
-            v-model="newGroupName"
-            label="Название группы"
-            variant="outlined"
-            density="compact"
-            class="mt-3"
-            prepend-inner-icon="mdi-account-group"
-          />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="closeNewChatDialog">Отмена</v-btn>
-          <v-btn
-            color="primary"
-            variant="flat"
-            :disabled="selectedStaffIds.length === 0 || (selectedStaffIds.length >= 2 && !newGroupName.trim())"
-            :loading="creatingChat"
-            @click="createChat"
-          >
-            {{ selectedStaffIds.length === 1 ? 'Написать' : 'Создать группу' }}
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-  <!-- Leave Room Confirm Dialog -->
-  <v-dialog v-model="showLeaveDialog" max-width="400">
-    <v-card>
-      <v-card-title class="d-flex align-center pa-4">
-        <v-icon icon="mdi-exit-to-app" class="me-2" color="error" />
-        Удалить чат у себя?
-      </v-card-title>
-      <v-card-text>
-        Чат «{{ leaveRoomTarget ? roomDisplayName(leaveRoomTarget) : '' }}» будет удалён из вашего списка.
-        Другие участники не пострадают.
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn variant="text" @click="showLeaveDialog = false">Отмена</v-btn>
-        <v-btn color="error" variant="flat" :loading="leavingRoom" @click="doLeaveRoom">Удалить</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
-
-  <!-- Participants Dialog -->
-  <v-dialog v-model="showParticipantsDialog" max-width="400" scrollable :fullscreen="mobile">
-    <v-card v-if="selectedRoom">
-      <v-card-title class="d-flex align-center pa-4">
-        <v-icon icon="mdi-account-group" class="me-2" />
-        {{ roomDisplayName(selectedRoom) }}
-        <v-spacer />
-        <v-btn icon="mdi-close" variant="text" size="small" @click="showParticipantsDialog = false" />
-      </v-card-title>
-      <v-divider />
-      <v-card-text class="pa-2" style="max-height: 400px; overflow-y: auto">
-        <v-list density="compact">
-          <v-list-item
-            v-for="p in selectedRoom.participants"
-            :key="p.id"
-            :title="p.full_name"
-          >
-            <template #prepend>
-              <v-avatar :color="stringToColor(p.full_name)" size="36">
-                <span class="text-body-2 font-weight-bold text-white">{{ p.full_name[0] }}</span>
-              </v-avatar>
-            </template>
-            <template #append>
-              <v-chip v-if="p.id === currentUserId" size="x-small" color="primary" variant="tonal">Вы</v-chip>
-            </template>
-          </v-list-item>
-        </v-list>
-      </v-card-text>
-    </v-card>
-  </v-dialog>
+    <!-- Participants Dialog -->
+    <ChatParticipantsDialog
+      :model-value="showParticipantsDialog"
+      :mobile="mobile"
+      :room="selectedRoom"
+      :current-user-id="currentUserId"
+      @update:model-value="showParticipantsDialog = $event"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useDisplay } from 'vuetify'
-import { apiFetch } from '@/api'
 import { wsConnected, onChatEvent, connect } from '@/composables/useChat'
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface LastMessage {
-  id: number
-  content: string | null
-  sender_name: string | null
-  created_at: string
-  has_file: boolean
-}
-
-interface Participant {
-  id: number
-  full_name: string
-  username: string
-  avatar: string | null
-  department: string | null
-  position: string | null
-}
-
-interface Room {
-  id: number
-  name: string | null
-  is_group: boolean
-  org_id: number
-  created_at: string
-  last_message: LastMessage | null
-  unread_count: number
-  participants: Participant[]
-}
-
-interface Message {
-  id: number
-  room_id: number
-  sender_id: number | null
-  sender_name: string | null
-  content: string | null
-  file_name: string | null
-  file_mime: string | null
-  file_size: number | null
-  has_file: boolean
-  created_at: string
-}
-
-interface StaffMember {
-  id: number
-  full_name: string
-  username: string
-  avatar: string | null
-  department: string | null
-  position: string | null
-}
-
-// ─── Composables ──────────────────────────────────────────────────────────────
+import { useChatRooms } from '@/composables/chat/useChatRooms'
+import { useChatMessages } from '@/composables/chat/useChatMessages'
+import { useChatComposer } from '@/composables/chat/useChatComposer'
+import { useChatMentions } from '@/composables/chat/useChatMentions'
+import { useChatNewRoom } from '@/composables/chat/useChatNewRoom'
+import type { Message, Room } from '@/composables/chat/chatTypes'
+import ChatSidebar from '@/components/chat/ChatSidebar.vue'
+import ChatToolbar from '@/components/chat/ChatToolbar.vue'
+import ChatMessageList from '@/components/chat/ChatMessageList.vue'
+import ChatComposer from '@/components/chat/ChatComposer.vue'
+import ChatNewRoomDialog from '@/components/chat/ChatNewRoomDialog.vue'
+import ChatLeaveDialog from '@/components/chat/ChatLeaveDialog.vue'
+import ChatParticipantsDialog from '@/components/chat/ChatParticipantsDialog.vue'
+import '@/styles/chat.css'
 
 const { smAndUp, mobile } = useDisplay()
 
-// ─── State ────────────────────────────────────────────────────────────────────
+// ─── Composables (ПРАВИЛО №5/№6: одно состояние на фичу, без дублей) ─────────
 
-const rooms = ref<Room[]>([])
-const selectedRoom = ref<Room | null>(null)
-const messages = ref<Message[]>([])
-const inputText = ref('')
-const fileInput = ref<File | null>(null)
-const fileInputEl = ref<HTMLInputElement | null>(null)
-const messagesContainer = ref<HTMLElement | null>(null)
-const loadingMessages = ref(false)
-const sending = ref(false)
+const {
+  rooms, selectedRoom, currentUserId, searchQuery, showSidebar, filteredRooms,
+  loadRooms, selectRoom, backToList, markAsRead,
+  showLeaveDialog, leaveRoomTarget, leavingRoom, confirmLeaveRoom, doLeaveRoom,
+} = useChatRooms(smAndUp)
 
-// Mention dropdown
-const mentionOpen = ref(false)
-const mentionFilter = ref('')
-const mentionCursorPos = ref(0)
+const {
+  messages, loadingMessages, setContainerRef, filteredMessages, messagesWithSeparators,
+  scrollToBottom, loadMessages, onScroll,
+} = useChatMessages(selectedRoom, searchQuery)
 
-// Participants dialog
+const { inputText, fileInput, sending, sendMessage } = useChatComposer(selectedRoom, messages, scrollToBottom)
+
+const {
+  mentionOpen, mentionCandidates, onInputKeydown, onInputChange,
+  insertMention, insertAtSymbol, mentionAll,
+} = useChatMentions(selectedRoom, currentUserId, inputText)
+
+// Переход к выбранной/созданной комнате тянет и ленту сообщений, и прочтение —
+// вынесено ниже (onRoomClick), поэтому useChatNewRoom получает его коллбэком.
+const {
+  showNewChatDialog, staffSearch, selectedStaffIds, newGroupName, creatingChat, filteredStaff,
+  openNewChatDialog, closeNewChatDialog, toggleStaff, createChat,
+} = useChatNewRoom(loadRooms, (room: Room) => onRoomClick(room))
+
+// Participants dialog (единственное состояние, не относящееся ни к одной фиче)
 const showParticipantsDialog = ref(false)
 
-// New chat dialog
-const showNewChatDialog = ref(false)
-const staff = ref<StaffMember[]>([])
-const staffSearch = ref('')
-const selectedStaffIds = ref<number[]>([])
-const newGroupName = ref('')
-const creatingChat = ref(false)
+// ─── Orchestration: выбор комнаты тянет и ленту сообщений, и прочтение ───────
 
-// Current user
-const currentUserId = ref<number | null>(null)
-
-// Leave room dialog
-const showLeaveDialog = ref(false)
-const leaveRoomTarget = ref<Room | null>(null)
-const leavingRoom = ref(false)
-
-// Mobile: show sidebar or messages
-const showingSidebar = ref(true)
-
-// Search
-const searchQuery = ref('')
-
-// ─── Computed ─────────────────────────────────────────────────────────────────
-
-const showSidebar = computed(() => {
-  if (smAndUp.value) return true
-  return !selectedRoom.value || showingSidebar.value
-})
-
-const filteredStaff = computed(() => {
-  const q = staffSearch.value.toLowerCase()
-  if (!q) return staff.value
-  return staff.value.filter(p =>
-    p.full_name.toLowerCase().includes(q) ||
-    (p.department || '').toLowerCase().includes(q) ||
-    (p.position || '').toLowerCase().includes(q)
-  )
-})
-
-const filteredRooms = computed(() => {
-  const q = searchQuery.value.trim().toLowerCase()
-  if (!q) return rooms.value
-  return rooms.value.filter(r =>
-    roomDisplayName(r).toLowerCase().includes(q) ||
-    (r.last_message?.content || '').toLowerCase().includes(q)
-  )
-})
-
-const filteredMessages = computed(() => {
-  const q = searchQuery.value.trim().toLowerCase()
-  if (!q || !selectedRoom.value) return messages.value
-  return messages.value.filter(m =>
-    (m.content || '').toLowerCase().includes(q) ||
-    (m.sender_name || '').toLowerCase().includes(q)
-  )
-})
-
-// Clear search on room switch
-watch(selectedRoom, () => { searchQuery.value = '' })
-
-const mentionCandidates = computed(() => {
-  if (!selectedRoom.value) return []
-  const myId = currentUserId.value
-  return selectedRoom.value.participants
-    .filter(p => p.id !== myId)
-    .filter(p => {
-      if (!mentionFilter.value) return true
-      return p.full_name.toLowerCase().includes(mentionFilter.value.toLowerCase())
-    })
-})
-
-// ─── Telegram-style types & computed ─────────────────────────────────────────
-
-interface DateSeparator { type: 'separator'; date: string }
-type MessageOrSeparator = (Message & { showAvatar?: boolean }) | DateSeparator
-
-const messagesWithSeparators = computed((): MessageOrSeparator[] => {
-  const source = filteredMessages.value
-  const result: MessageOrSeparator[] = []
-  let lastDate = ''
-  let lastSenderId: number | null = null
-  let lastTime: number | null = null
-
-  for (const msg of source) {
-    const d = new Date(msg.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })
-    if (d !== lastDate) {
-      result.push({ type: 'separator', date: d })
-      lastDate = d
-      lastSenderId = null
-      lastTime = null
-    }
-
-    const msgTime = new Date(msg.created_at).getTime()
-    const showAvatar = msg.sender_id !== lastSenderId ||
-      (lastTime !== null && msgTime - lastTime > 2 * 60 * 1000)
-
-    result.push({ ...msg, showAvatar })
-    lastSenderId = msg.sender_id
-    lastTime = msgTime
-  }
-  return result
-})
-
-// ─── Colors ───────────────────────────────────────────────────────────────────
-
-const COLORS = ['blue', 'teal', 'deep-purple', 'indigo', 'cyan', 'green', 'orange', 'pink']
-
-function colorFromId(id: number): string {
-  return COLORS[id % COLORS.length]
-}
-
-function roomColor(room: Room): string {
-  return colorFromId(room.id)
-}
-
-function senderColor(senderId: number | null): string {
-  return colorFromId(senderId ?? 0)
-}
-
-function stringToColor(str: string): string {
-  let hash = 0
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash)
-  }
-  const colors = ['#E57373', '#81C784', '#64B5F6', '#FFD54F', '#BA68C8', '#4DB6AC', '#FF8A65', '#A1887F']
-  return colors[Math.abs(hash) % colors.length]
-}
-
-// ─── Display helpers ─────────────────────────────────────────────────────────
-
-function roomDisplayName(room: Room): string {
-  if (room.is_group) return room.name || 'Группа'
-  // For direct chat: show the other participant's name
-  const other = room.participants.find(p => p.id !== currentUserId.value)
-  return other?.full_name || room.name || 'Чат'
-}
-
-function roomInitial(room: Room): string {
-  return roomDisplayName(room).charAt(0).toUpperCase()
-}
-
-function formatTime(dateStr: string): string {
-  const d = new Date(dateStr)
-  const now = new Date()
-  if (d.toDateString() === now.toDateString()) {
-    return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
-  }
-  return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })
-}
-
-function formatDateTime(dateStr: string): string {
-  const d = new Date(dateStr)
-  return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} Б`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} КБ`
-  return `${(bytes / 1024 / 1024).toFixed(1)} МБ`
-}
-
-function isImage(msg: Message): boolean {
-  if (!msg.file_mime) return false
-  return msg.file_mime.startsWith('image/')
-}
-
-function fileUrl(msgId: number): string {
-  const token = localStorage.getItem('auth_token') ?? ''
-  return `/api/chat/rooms/${selectedRoom.value?.id}/files/${msgId}?token=${encodeURIComponent(token)}`
-}
-
-function highlightSearch(text: string): string {
-  const q = searchQuery.value.trim()
-  if (!q || !selectedRoom.value) return text
-  const regex = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')
-  return text.replace(regex, '<mark>$1</mark>')
-}
-
-// ─── API methods ──────────────────────────────────────────────────────────────
-
-async function loadRooms() {
-  try {
-    const data = await apiFetch<Room[]>('/chat/rooms')
-    rooms.value = data
-  } catch (e) {
-    // errors handled globally
-  }
-}
-
-async function selectRoom(room: Room) {
-  selectedRoom.value = room
+async function onRoomClick(room: Room) {
+  selectRoom(room)
   messages.value = []
-  showingSidebar.value = false
   await loadMessages()
   await markAsRead()
 }
 
-function backToList() {
-  selectedRoom.value = null
-  showingSidebar.value = true
+// Обёртка нужна, чтобы передать сам Ref `rooms` (для поиска созданной комнаты
+// ПОСЛЕ loadRooms(), который меняет ссылку на массив) — в шаблоне `rooms`
+// авто-разворачивается в Room[], поэтому вызов идёт из script, а не инлайном.
+function onCreateChat() {
+  createChat(rooms)
 }
 
-async function loadMessages(beforeId?: number) {
-  if (!selectedRoom.value) return
-  loadingMessages.value = true
-  try {
-    const params = beforeId ? `?before_id=${beforeId}&limit=50` : '?limit=50'
-    const data = await apiFetch<Message[]>(`/chat/rooms/${selectedRoom.value.id}/messages${params}`)
-    if (beforeId) {
-      messages.value = [...data, ...messages.value]
-    } else {
-      messages.value = data
-      await nextTick(scrollToBottom)
-    }
-  } catch (e) {
-    // errors handled globally
-  } finally {
-    loadingMessages.value = false
-  }
-}
-
-async function sendMessage() {
-  if (!selectedRoom.value) return
-  if (!inputText.value.trim() && !fileInput.value) return
-
-  sending.value = true
-  const roomId = selectedRoom.value.id
-  try {
-    const form = new FormData()
-    if (inputText.value.trim()) form.append('content', inputText.value.trim())
-    if (fileInput.value) form.append('file', fileInput.value)
-
-    const sent = await apiFetch<Message>(`/chat/rooms/${roomId}/messages`, {
-      method: 'POST',
-      body: form,
-    })
-
-    inputText.value = ''
-    fileInput.value = null
-
-    // Optimistic update — show message immediately without waiting for WS
-    if (roomId === selectedRoom.value?.id) {
-      const exists = messages.value.some(m => m.id === sent.id)
-      if (!exists) {
-        messages.value.push(sent)
-        await nextTick(scrollToBottom)
-      }
-    }
-  } catch (e) {
-    // errors handled globally
-  } finally {
-    sending.value = false
-  }
-}
-
-function onInputKeydown(e: KeyboardEvent) {
-  if (mentionOpen.value) {
-    if (e.key === 'Escape') { mentionOpen.value = false; e.preventDefault() }
-    return
-  }
-}
-
-function onInputChange() {
-  const val = inputText.value
-  const pos = (document.activeElement as HTMLInputElement)?.selectionStart ?? val.length
-  const beforeCursor = val.slice(0, pos)
-  const match = beforeCursor.match(/@([\w\u0400-\u04FF ]*)$/)
-  if (match) {
-    mentionFilter.value = match[1]
-    mentionOpen.value = true
-    mentionCursorPos.value = pos - match[0].length
-  } else {
-    mentionOpen.value = false
-  }
-}
-
-function insertMention(participant: Participant) {
-  const before = inputText.value.slice(0, mentionCursorPos.value)
-  const after = inputText.value.slice(
-    (document.activeElement as HTMLInputElement)?.selectionStart ?? inputText.value.length
-  )
-  inputText.value = before + '@' + participant.full_name + ' ' + after
-  mentionOpen.value = false
-}
-
-function insertAtSymbol() {
-  inputText.value += '@'
-  mentionFilter.value = ''
-  mentionOpen.value = true
-  mentionCursorPos.value = inputText.value.length - 1
-}
-
-function mentionAll() {
-  if (!selectedRoom.value) return
-  const myId = currentUserId.value
-  const others = selectedRoom.value.participants.filter(p => p.id !== myId)
-  const mentions = others.map(p => '@' + p.full_name).join(' ')
-  inputText.value = mentions + ' ' + inputText.value
-}
-
-async function markAsRead() {
-  if (!selectedRoom.value) return
-  try {
-    await apiFetch(`/chat/rooms/${selectedRoom.value.id}/read`, { method: 'POST' })
-    selectedRoom.value.unread_count = 0
-    // WS event unread_count will update totalUnread automatically
-  } catch (e) {
-    // ignore
-  }
-}
-
-// ─── Scroll ───────────────────────────────────────────────────────────────────
-
-function scrollToBottom() {
-  if (messagesContainer.value) {
-    messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
-  }
-}
-
-function onScroll(e: Event) {
-  const el = e.target as HTMLElement
-  if (el.scrollTop < 50 && messages.value.length >= 50 && !loadingMessages.value) {
-    loadMessages(messages.value[0]?.id)
-  }
-}
-
-// ─── File input ───────────────────────────────────────────────────────────────
-
-function onFileSelected(e: Event) {
-  const input = e.target as HTMLInputElement
-  fileInput.value = input.files?.[0] || null
-}
-
-// ─── WS event handler ─────────────────────────────────────────────────────────
+// ─── WS event handler ─────────────────────────────────────────────────────
 
 let removeChatListener: (() => void) | null = null
 
@@ -924,7 +188,7 @@ function handleChatEvent(event: any) {
       const exists = messages.value.some(m => m.id === msg.id)
       if (!exists) {
         messages.value.push(msg)
-        nextTick(scrollToBottom)
+        scrollToBottom()
         markAsRead()
       }
     }
@@ -960,95 +224,7 @@ function handleChatEvent(event: any) {
   }
 }
 
-// ─── Leave room ───────────────────────────────────────────────────────────────
-
-function confirmLeaveRoom(room: Room) {
-  leaveRoomTarget.value = room
-  showLeaveDialog.value = true
-}
-
-async function doLeaveRoom() {
-  if (!leaveRoomTarget.value) return
-  leavingRoom.value = true
-  try {
-    await apiFetch(`/chat/rooms/${leaveRoomTarget.value.id}/leave`, { method: 'POST' })
-    // Remove from local state
-    rooms.value = rooms.value.filter(r => r.id !== leaveRoomTarget.value!.id)
-    if (selectedRoom.value?.id === leaveRoomTarget.value.id) {
-      selectedRoom.value = null
-      showingSidebar.value = true
-    }
-    showLeaveDialog.value = false
-    leaveRoomTarget.value = null
-  } catch (e) {
-    // errors handled globally
-  } finally {
-    leavingRoom.value = false
-  }
-}
-
-// ─── New chat dialog ──────────────────────────────────────────────────────────
-
-async function openNewChatDialog() {
-  showNewChatDialog.value = true
-  selectedStaffIds.value = []
-  newGroupName.value = ''
-  staffSearch.value = ''
-  try {
-    const data = await apiFetch<StaffMember[]>('/chat/staff')
-    staff.value = data
-  } catch (e) {
-    // errors handled globally
-  }
-}
-
-function closeNewChatDialog() {
-  showNewChatDialog.value = false
-}
-
-function toggleStaff(id: number) {
-  const idx = selectedStaffIds.value.indexOf(id)
-  if (idx >= 0) {
-    selectedStaffIds.value.splice(idx, 1)
-  } else {
-    selectedStaffIds.value.push(id)
-  }
-}
-
-async function createChat() {
-  if (selectedStaffIds.value.length === 0) return
-  creatingChat.value = true
-  try {
-    let room: Room
-    if (selectedStaffIds.value.length === 1) {
-      // Direct chat
-      room = await apiFetch<Room>('/chat/rooms/direct', {
-        method: 'POST',
-        body: { target_user_id: selectedStaffIds.value[0] },
-      })
-    } else {
-      // Group chat
-      room = await apiFetch<Room>('/chat/rooms', {
-        method: 'POST',
-        body: {
-          name: newGroupName.value.trim(),
-          participant_ids: selectedStaffIds.value,
-        },
-      })
-    }
-    closeNewChatDialog()
-    await loadRooms()
-    // Find and select the created room
-    const found = rooms.value.find(r => r.id === room.id)
-    if (found) await selectRoom(found)
-  } catch (e) {
-    // errors handled globally
-  } finally {
-    creatingChat.value = false
-  }
-}
-
-// ─── Lifecycle ────────────────────────────────────────────────────────────────
+// ─── Lifecycle ────────────────────────────────────────────────────────────
 
 onMounted(async () => {
   // Get current user id from localStorage (set at login)
@@ -1067,273 +243,3 @@ onUnmounted(() => {
   if (removeChatListener) removeChatListener()
 })
 </script>
-
-<style scoped>
-.chat-layout {
-  display: flex !important;
-  /* compact app-bar = 48px */
-  height: calc(100vh - 48px) !important;
-  height: calc(100dvh - 48px) !important;
-  overflow: hidden !important;
-  width: 100%;
-  position: relative;
-}
-/* На мобиле под чатом фиксированная bottom-nav (60px) + safe-area сверху/снизу */
-@media (max-width: 959.98px) {
-  .chat-layout {
-    height: calc(100dvh - 48px - 60px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
-  }
-}
-
-/* Боковая панель списка чатов (плоский flex вместо v-navigation-drawer) */
-.chat-sidebar {
-  flex: 0 0 320px;
-  width: 320px;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: rgb(var(--v-theme-surface));
-  border-right: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-}
-.chat-sidebar--full {
-  flex: 1 1 auto;
-  width: 100%;
-  border-right: none;
-}
-/* Шапка/поиск не сжимаются, список чатов скроллится */
-.chat-sidebar > .v-list-item,
-.chat-sidebar > .v-divider,
-.chat-sidebar > div {
-  flex: 0 0 auto;
-}
-.chat-sidebar .chat-room-list {
-  flex: 1 1 0;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.chat-main {
-  min-width: 0;
-  height: 100% !important;
-  max-height: 100% !important;
-  overflow: hidden !important;
-  display: flex !important;
-  flex-direction: column !important;
-  flex: 1 1 0 !important;
-}
-
-.chat-messages {
-  background: rgb(var(--v-theme-background));
-  min-height: 0 !important;
-  flex: 1 1 0 !important;
-  overflow-y: auto !important;
-  overflow-x: hidden;
-}
-
-/* Message rows */
-.message-row {
-  display: flex;
-  align-items: flex-end;
-  margin-bottom: 2px;
-  padding: 0 16px;
-}
-.message-row-self {
-  justify-content: flex-end;
-}
-.message-row-other {
-  justify-content: flex-start;
-}
-
-/* Avatar */
-.message-avatar {
-  margin-right: 8px;
-  flex-shrink: 0;
-  align-self: flex-end;
-  margin-bottom: 2px;
-}
-.message-avatar-spacer {
-  width: 32px;
-  margin-right: 8px;
-  flex-shrink: 0;
-}
-
-/* Message bubbles */
-.message-bubble {
-  position: relative;
-  max-width: 65%;
-  padding: 8px 12px 4px;
-  border-radius: 12px;
-  word-break: break-word;
-  line-height: 1.4;
-}
-
-.bubble-self {
-  background: rgb(var(--v-theme-primary));
-  color: rgb(var(--v-theme-on-primary));
-  border-bottom-right-radius: 4px !important;
-}
-
-.bubble-other {
-  background: rgb(var(--v-theme-surface-variant));
-  color: rgb(var(--v-theme-on-surface-variant));
-  border-bottom-left-radius: 4px !important;
-}
-
-/* Bubble tails */
-.bubble-self::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  right: -6px;
-  width: 0;
-  height: 0;
-  border-left: 6px solid rgb(var(--v-theme-primary));
-  border-top: 6px solid transparent;
-}
-.bubble-other::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: -6px;
-  width: 0;
-  height: 0;
-  border-right: 6px solid rgb(var(--v-theme-surface-variant));
-  border-top: 6px solid transparent;
-}
-
-/* Sender name */
-.message-sender {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: rgb(var(--v-theme-primary));
-  margin-bottom: 2px;
-}
-.bubble-self .message-sender {
-  color: rgba(255,255,255,0.8);
-}
-
-/* Message text */
-.message-text {
-  font-size: 0.9rem;
-  line-height: 1.35;
-  white-space: pre-wrap;
-}
-.message-text :deep(mark) {
-  background: rgba(255,235,59,0.5);
-  border-radius: 2px;
-  padding: 0 2px;
-}
-
-/* Time */
-.message-time {
-  font-size: 0.68rem;
-  text-align: right;
-  opacity: 0.6;
-  margin-top: 2px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-}
-
-/* Date separator */
-.date-separator {
-  display: flex;
-  justify-content: center;
-  padding: 12px 0 8px;
-}
-.date-separator span {
-  background: rgba(var(--v-theme-surface-variant), 0.7);
-  padding: 4px 16px;
-  border-radius: 12px;
-  font-size: 0.75rem;
-  font-weight: 500;
-}
-
-/* Message file chip */
-.message-file {
-  margin-top: 4px;
-}
-
-/* Active room in sidebar */
-.chat-sidebar .v-list-item--active {
-  background: rgb(var(--v-theme-primary)) !important;
-  color: white !important;
-}
-.chat-sidebar .v-list-item--active .v-list-item-subtitle {
-  color: rgba(255,255,255,0.7) !important;
-}
-
-.chat-input {
-  background: rgb(var(--v-theme-surface));
-  border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  flex-shrink: 0 !important;
-  flex-grow: 0 !important;
-  position: relative;
-}
-
-/* Mention dropdown in main chat */
-.mention-dropdown-chat {
-  position: absolute;
-  bottom: 100%;
-  left: 0;
-  right: 0;
-  background: rgb(var(--v-theme-surface));
-  border: 1px solid var(--crm-border-strong);
-  border-radius: 8px;
-  box-shadow: 0 4px 16px var(--crm-shadow);
-  max-height: 200px;
-  overflow-y: auto;
-  z-index: 100;
-  margin-bottom: 4px;
-}
-.mention-dropdown-chat__item {
-  display: flex;
-  align-items: center;
-  padding: 8px 12px;
-  cursor: pointer;
-  font-size: 13px;
-  transition: background 0.15s;
-}
-.mention-dropdown-chat__item:hover {
-  background: var(--crm-surface-hover);
-}
-
-.chat-toolbar {
-  flex-shrink: 0 !important;
-  flex-grow: 0 !important;
-  z-index: 2;
-}
-
-.room-menu-btn {
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-.v-list-item:hover .room-menu-btn {
-  opacity: 1;
-}
-
-/* Inline image messages */
-.message-image {
-  max-width: 280px;
-  max-height: 300px;
-  border-radius: 8px;
-  display: block;
-  margin-top: 4px;
-  object-fit: cover;
-}
-.message-image-link {
-  display: block;
-}
-/* phase26-t: выделить комнату с непрочитанными сообщениями */
-.room-has-unread {
-  font-weight: 700 !important;
-  color: rgb(var(--v-theme-primary));
-}
-.unread-chip {
-  min-width: 22px;
-  height: 20px;
-  padding: 0 6px !important;
-  font-size: 12px;
-}
-</style>

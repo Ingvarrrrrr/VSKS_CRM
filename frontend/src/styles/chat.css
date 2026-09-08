@@ -1,0 +1,280 @@
+/* ГЛОБАЛЬНЫЕ стили ChatView.vue — вынесены 1:1 из исходного <style scoped>
+   (269 строк) при разбиении чата на components/chat/* и composables/chat/*
+   (ПРАВИЛО №5). Сознательно ГЛОБАЛЬНЫЕ (не scoped): после разрезки разметка,
+   которую стилизуют эти классы, живёт в НЕСКОЛЬКИХ дочерних компонентах —
+   scoped CSS одного файла её не достаёт (тот же приём, что styles/fleet-dashboard.css
+   и styles/subsidies.css). Каждый селектор ограничен корнем страницы префиксом
+   `.chat-layout` (класс на корневом <div> ChatView.vue). Диалоги чата (новый чат,
+   удаление чата, участники) используют только стандартные классы Vuetify и
+   utility-классы — собственных .chat-* классов внутри них нет, поэтому телепорт
+   диалогов вне .chat-layout не требует отдельных непрефиксованных копий.
+   `:deep(...)` (Vue-only псевдокласс scoped-стилей) заменён на обычный
+   descendant-селектор — вне scoped он не нужен и не работает. */
+
+.chat-layout {
+  display: flex !important;
+  /* compact app-bar = 48px */
+  height: calc(100vh - 48px) !important;
+  height: calc(100dvh - 48px) !important;
+  overflow: hidden !important;
+  width: 100%;
+  position: relative;
+}
+/* На мобиле под чатом фиксированная bottom-nav (60px) + safe-area сверху/снизу */
+@media (max-width: 959.98px) {
+  .chat-layout {
+    height: calc(100dvh - 48px - 60px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
+  }
+}
+
+/* Боковая панель списка чатов (плоский flex вместо v-navigation-drawer) */
+.chat-layout .chat-sidebar {
+  flex: 0 0 320px;
+  width: 320px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: rgb(var(--v-theme-surface));
+  border-right: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+.chat-layout .chat-sidebar--full {
+  flex: 1 1 auto;
+  width: 100%;
+  border-right: none;
+}
+/* Шапка/поиск не сжимаются, список чатов скроллится */
+.chat-layout .chat-sidebar > .v-list-item,
+.chat-layout .chat-sidebar > .v-divider,
+.chat-layout .chat-sidebar > div {
+  flex: 0 0 auto;
+}
+.chat-layout .chat-sidebar .chat-room-list {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.chat-layout .chat-main {
+  min-width: 0;
+  height: 100% !important;
+  max-height: 100% !important;
+  overflow: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 1 0 !important;
+}
+
+.chat-layout .chat-messages {
+  background: rgb(var(--v-theme-background));
+  min-height: 0 !important;
+  flex: 1 1 0 !important;
+  overflow-y: auto !important;
+  overflow-x: hidden;
+}
+
+/* Message rows */
+.chat-layout .message-row {
+  display: flex;
+  align-items: flex-end;
+  margin-bottom: 2px;
+  padding: 0 16px;
+}
+.chat-layout .message-row-self {
+  justify-content: flex-end;
+}
+.chat-layout .message-row-other {
+  justify-content: flex-start;
+}
+
+/* Avatar */
+.chat-layout .message-avatar {
+  margin-right: 8px;
+  flex-shrink: 0;
+  align-self: flex-end;
+  margin-bottom: 2px;
+}
+.chat-layout .message-avatar-spacer {
+  width: 32px;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+/* Message bubbles */
+.chat-layout .message-bubble {
+  position: relative;
+  max-width: 65%;
+  padding: 8px 12px 4px;
+  border-radius: 12px;
+  word-break: break-word;
+  line-height: 1.4;
+}
+
+.chat-layout .bubble-self {
+  background: rgb(var(--v-theme-primary));
+  color: rgb(var(--v-theme-on-primary));
+  border-bottom-right-radius: 4px !important;
+}
+
+.chat-layout .bubble-other {
+  background: rgb(var(--v-theme-surface-variant));
+  color: rgb(var(--v-theme-on-surface-variant));
+  border-bottom-left-radius: 4px !important;
+}
+
+/* Bubble tails */
+.chat-layout .bubble-self::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  right: -6px;
+  width: 0;
+  height: 0;
+  border-left: 6px solid rgb(var(--v-theme-primary));
+  border-top: 6px solid transparent;
+}
+.chat-layout .bubble-other::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: -6px;
+  width: 0;
+  height: 0;
+  border-right: 6px solid rgb(var(--v-theme-surface-variant));
+  border-top: 6px solid transparent;
+}
+
+/* Sender name */
+.chat-layout .message-sender {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: rgb(var(--v-theme-primary));
+  margin-bottom: 2px;
+}
+.chat-layout .bubble-self .message-sender {
+  color: rgba(255,255,255,0.8);
+}
+
+/* Message text */
+.chat-layout .message-text {
+  font-size: 0.9rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+}
+.chat-layout .message-text mark {
+  background: rgba(255,235,59,0.5);
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+/* Time */
+.chat-layout .message-time {
+  font-size: 0.68rem;
+  text-align: right;
+  opacity: 0.6;
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* Date separator */
+.chat-layout .date-separator {
+  display: flex;
+  justify-content: center;
+  padding: 12px 0 8px;
+}
+.chat-layout .date-separator span {
+  background: rgba(var(--v-theme-surface-variant), 0.7);
+  padding: 4px 16px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+/* Message file chip */
+.chat-layout .message-file {
+  margin-top: 4px;
+}
+
+/* Active room in sidebar */
+.chat-layout .chat-sidebar .v-list-item--active {
+  background: rgb(var(--v-theme-primary)) !important;
+  color: white !important;
+}
+.chat-layout .chat-sidebar .v-list-item--active .v-list-item-subtitle {
+  color: rgba(255,255,255,0.7) !important;
+}
+
+.chat-layout .chat-input {
+  background: rgb(var(--v-theme-surface));
+  border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  flex-shrink: 0 !important;
+  flex-grow: 0 !important;
+  position: relative;
+}
+
+/* Mention dropdown in main chat */
+.chat-layout .mention-dropdown-chat {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  background: rgb(var(--v-theme-surface));
+  border: 1px solid var(--crm-border-strong);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px var(--crm-shadow);
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 100;
+  margin-bottom: 4px;
+}
+.chat-layout .mention-dropdown-chat__item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s;
+}
+.chat-layout .mention-dropdown-chat__item:hover {
+  background: var(--crm-surface-hover);
+}
+
+.chat-layout .chat-toolbar {
+  flex-shrink: 0 !important;
+  flex-grow: 0 !important;
+  z-index: 2;
+}
+
+.chat-layout .room-menu-btn {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.chat-layout .v-list-item:hover .room-menu-btn {
+  opacity: 1;
+}
+
+/* Inline image messages */
+.chat-layout .message-image {
+  max-width: 280px;
+  max-height: 300px;
+  border-radius: 8px;
+  display: block;
+  margin-top: 4px;
+  object-fit: cover;
+}
+.chat-layout .message-image-link {
+  display: block;
+}
+/* phase26-t: выделить комнату с непрочитанными сообщениями */
+.chat-layout .room-has-unread {
+  font-weight: 700 !important;
+  color: rgb(var(--v-theme-primary));
+}
+.chat-layout .unread-chip {
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px !important;
+  font-size: 12px;
+}

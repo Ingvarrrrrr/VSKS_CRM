@@ -43,9 +43,16 @@ from app.routers import subsidy_plan_graph_versions
 from app.routers import subsidy_plan_graph_export
 from app.routers import subsidy_finance
 # Разрезание products.py (Правило №5, сессия 2026-09-08): products_summary
+# несёт GET "/summary" — ОДИН литеральный сегмент, ОБЯЗАН регистрироваться
+# ДО products.router (несёт GET "/{product_id}" без явного int-конвертера в
+# строке пути — совпадает по форме с любым односегментным литералом, иначе
+# Starlette матчит "/summary" на catch-all первым и FastAPI падает 422).
 # products_match (POST /match, /deduplicate), products_photos (фото),
 # products_import (шаблон/импорт/bulk-from-purchase-items), products_price
+# (share-price/price-actualization/price-history/verify-tz) конфликтов по
+# форме не несут (POST/DELETE-литералы или минимум на сегмент длиннее
 # catch-all) — регистрируются рядом для единообразия со всеми products_*
+# соседями.
 from app.routers import products_summary
 from app.routers import products_match
 from app.routers import products_photos
@@ -133,6 +140,8 @@ from app.routers import analytics as analytics_router
 from app.routers import report_configs as report_configs_router
 from app.routers import vehicles_dashboard, vehicles, vehicle_attachments, repair_attachments
 from app.routers import vehicles_dashboard_drill, vehicles_dashboard_summary, vehicles_dashboard_fines
+# Соседи dashboard.router после резки монолита 1641→core (Правило №5, 2026-09-08).
+from app.routers import dashboard_charts, dashboard_analytics, dashboard_financial_plan, dashboard_financial_plan_export
 from app.routers import vehicle_repairs, vehicle_odometer, fuel_logs, trips
 from app.routers import external_drivers
 from app.routers import vehicles_import as vehicles_import_router
@@ -149,7 +158,6 @@ from app.routers.documents import guide_router as documents_guide_router
 from app.routers import contract_items as contract_items_router
 # bank_statements MUST be registered BEFORE payments.router:
 # /imports and /registry/{id}/... must resolve before payments' catch-all /{pid}
-from app.routers import dashboard_charts, dashboard_analytics, dashboard_financial_plan, dashboard_financial_plan_export
 from app.routers import bank_statements
 from app.routers import price_freshness as price_freshness_router
 # Специфичные суб-роутеры /api/tasks/* регистрируются ДО tasks.router,
@@ -246,6 +254,12 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(plan_excess_router.router)
     app.include_router(settings_router.router)
     app.include_router(dashboard.router)
+    # Соседи dashboard.router после резки монолита 1641→core (Правило №5, 2026-09-08):
+    # тот же префикс /api/dashboard, все пути статические (нет /{id}) — порядок не критичен.
+    app.include_router(dashboard_charts.router)             # /api/dashboard (charts)
+    app.include_router(dashboard_analytics.router)           # /api/dashboard (analytics)
+    app.include_router(dashboard_financial_plan.router)       # /api/dashboard (financial-plan, financial-plan/details)
+    app.include_router(dashboard_financial_plan_export.router)  # /api/dashboard (financial-plan/export.xlsx, .../details/export.xlsx)
     # Разрезание subsidies.py (Правило №5, 2026-09-07) — см. комментарий у импортов
     # выше про порядок: statics/compare ДО subsidies.router (catch-all "/{subsidy_id}").
     app.include_router(subsidy_templates.router)
@@ -255,6 +269,15 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(subsidy_finance.router)
     app.include_router(subsidies.router)
     app.include_router(subsidy_members_router.router)
+    # Разрезание products.py (Правило №5, 2026-09-08) — см. комментарий у
+    # импортов выше про порядок: products_summary ДО products.router (catch-all
+    # "/{product_id}"); products_match/products_photos/products_import/
+    # products_price — рядом, конфликтов по форме нет.
+    app.include_router(products_summary.router)
+    app.include_router(products_match.router)
+    app.include_router(products_photos.router)
+    app.include_router(products_import.router)
+    app.include_router(products_price.router)
     app.include_router(products.router)
     app.include_router(price_freshness_router.router)
     app.include_router(purchase_files.router)
@@ -264,20 +287,6 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(subsidy_approvers.router)
     app.include_router(responsible_persons.router)
     app.include_router(commercial_requests.router)
-    # Соседи dashboard.router после резки монолита 1641→core (Правило №5, 2026-09-08):
-    # тот же префикс /api/dashboard, все пути статические (нет /{id}) — порядок не критичен.
-    app.include_router(dashboard_charts.router)             # /api/dashboard (charts)
-    app.include_router(dashboard_analytics.router)           # /api/dashboard (analytics)
-    app.include_router(dashboard_financial_plan.router)       # /api/dashboard (financial-plan, financial-plan/details)
-    # импортов выше про порядок: products_summary ДО products.router (catch-all
-    # "/{product_id}"); products_match/products_photos/products_import/
-    # products_price — рядом, конфликтов по форме нет.
-    app.include_router(products_summary.router)
-    app.include_router(products_match.router)
-    app.include_router(products_photos.router)
-    app.include_router(products_import.router)
-    app.include_router(products_price.router)
-    app.include_router(dashboard_financial_plan_export.router)  # /api/dashboard (financial-plan/export.xlsx, .../details/export.xlsx)
     app.include_router(suppliers.router)
     # purchase_members.router несёт GET/POST /{pid}/members + DELETE
     # /{pid}/members/{user_id} (перенесены из purchases.py, сессия 2026-09-06).

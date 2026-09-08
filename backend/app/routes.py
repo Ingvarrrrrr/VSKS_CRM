@@ -140,6 +140,7 @@ from app.routers.documents import guide_router as documents_guide_router
 from app.routers import contract_items as contract_items_router
 # bank_statements MUST be registered BEFORE payments.router:
 # /imports and /registry/{id}/... must resolve before payments' catch-all /{pid}
+from app.routers import dashboard_charts, dashboard_analytics, dashboard_financial_plan, dashboard_financial_plan_export
 from app.routers import bank_statements
 from app.routers import price_freshness as price_freshness_router
 # Специфичные суб-роутеры /api/tasks/* регистрируются ДО tasks.router,
@@ -254,6 +255,12 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(subsidy_approvers.router)
     app.include_router(responsible_persons.router)
     app.include_router(commercial_requests.router)
+    # Соседи dashboard.router после резки монолита 1641→core (Правило №5, 2026-09-08):
+    # тот же префикс /api/dashboard, все пути статические (нет /{id}) — порядок не критичен.
+    app.include_router(dashboard_charts.router)             # /api/dashboard (charts)
+    app.include_router(dashboard_analytics.router)           # /api/dashboard (analytics)
+    app.include_router(dashboard_financial_plan.router)       # /api/dashboard (financial-plan, financial-plan/details)
+    app.include_router(dashboard_financial_plan_export.router)  # /api/dashboard (financial-plan/export.xlsx, .../details/export.xlsx)
     app.include_router(suppliers.router)
     # purchase_members.router несёт GET/POST /{pid}/members + DELETE
     # /{pid}/members/{user_id} (перенесены из purchases.py, сессия 2026-09-06).

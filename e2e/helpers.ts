@@ -1,21 +1,35 @@
 import { Page, expect } from '@playwright/test';
 
-/** Dismiss the global "Выбрать организации" picker if it pops up after login */
+/**
+ * Dismiss the global org picker ("Выберите организации") if it pops up after
+ * login. Persistent for superadmin accounts with many orgs — its scrim blocks
+ * all clicks until an org selection is applied. Idempotent: no-op if the
+ * dialog isn't showing.
+ *
+ * NB: the dialog title is «Выберите организации» (not «Выбрать организации» —
+ * different word form, not a substring match).
+ */
 export async function dismissOrgPicker(page: Page) {
-  const dialog = page.locator('dialog, [role="dialog"]').filter({ hasText: 'Выбрать организации' }).first();
-  if (await dialog.isVisible({ timeout: 1500 }).catch(() => false)) {
-    // Tick first listed org to enable "Применить"
-    const firstOrg = dialog.locator('.v-list-item').nth(1); // [0] = "Выбрать все", [1] = first real org
-    await firstOrg.click({ force: true }).catch(() => {});
-    await page.waitForTimeout(200);
-    const applyBtn = dialog.getByRole('button', { name: /Применить/i });
-    if (await applyBtn.isEnabled({ timeout: 1000 }).catch(() => false)) {
-      await applyBtn.click({ force: true });
-      await page.waitForTimeout(500);
-    } else {
-      // Fallback: press Escape
-      await page.keyboard.press('Escape');
-    }
+  const dialog = page.locator('.v-overlay-container').filter({ hasText: 'Выберите организации' }).first();
+  if (!(await dialog.isVisible({ timeout: 1500 }).catch(() => false))) {
+    return;
+  }
+  // "Выбрать все" is a <v-checkbox> driven by @update:model-value on the
+  // checkbox itself, not a @click on the row (unlike individual org rows) —
+  // clicking the v-list-item div does nothing. Click the checkbox's own
+  // control wrapper instead.
+  const selectAllRow = dialog.locator('.v-list-item').first();
+  const selectAllWrapper = selectAllRow.locator('.v-selection-control__wrapper').first();
+  await selectAllWrapper.click({ force: true }).catch(() => {});
+  await page.waitForTimeout(200);
+  const applyBtn = dialog.getByRole('button', { name: /Применить/i });
+  if (await applyBtn.isEnabled({ timeout: 1000 }).catch(() => false)) {
+    await applyBtn.click({ force: true });
+    await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+    await page.waitForTimeout(500);
+  } else {
+    // Fallback: press Escape
+    await page.keyboard.press('Escape');
   }
 }
 
@@ -52,6 +66,7 @@ export async function login(page: Page) {
   await page.waitForURL(url => !url.pathname.includes('/login'), { timeout: 15_000 });
   await page.waitForLoadState('networkidle');
   await waitForOverlays(page);
+  await dismissOrgPicker(page);
 }
 
 /** Collect console errors during a callback */

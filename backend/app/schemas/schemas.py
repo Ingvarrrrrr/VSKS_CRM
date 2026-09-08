@@ -1,2033 +1,271 @@
+"""Facade module: re-exports all pydantic schemas.
+
+Historically all schemas lived in this single file. They have been split into
+domain modules under app/schemas/ (auth, subsidies, contracts, purchases,
+payments, products, marketplace, tasks, feo, permissions, reports) to keep
+files under ~700 lines (правило №5). This module re-exports every public name
+so existing `from app.schemas.schemas import X` call sites keep working
+unchanged.
+"""
 import re
 from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
 from typing import Optional, List, Any, Dict, Literal
 from datetime import date, datetime
 from decimal import Decimal
 
-# Alias to avoid Pydantic v2 field-name-shadows-type bug for 'date: Optional[date]'
-_Date = date
-
-# Auth
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    role: str
-    full_name: Optional[str] = None
-    org_id: Optional[int] = None
-    org_name: Optional[str] = None
-    user_id: Optional[int] = None
-    can_publish: bool = False
-
-# User
-class UserCreate(BaseModel):
-    email: str
-    password: str
-    username: Optional[str] = None
-    role: str = "employee"
-    last_name: Optional[str] = None
-    first_name: Optional[str] = None
-    middle_name: Optional[str] = None  # необязательно — не у всех есть отчество
-    full_name: Optional[str] = None  # deprecated: обратная совместимость (одна строка ФИО), разбирается на бэкенде через split_fio, если last/first_name не переданы
-    city: Optional[str] = None
-    department: Optional[str] = None
-    position: Optional[str] = None
-    phone: Optional[str] = None
-    work_phone: Optional[str] = None
-    telegram_id: Optional[str] = None
-    max_chat_id: Optional[str] = None
-    avatar: Optional[str] = None
-    org_id: Optional[int] = None
-    inn: Optional[str] = None
-    exclude_from_directory: bool = False
-    all_orgs_access: bool = False  # доступ ко всем организациям аккаунта, роль не меняется
-    # Дата трудоустройства (владелец, 2026-09-01): если указана при приёме
-    # с отделом/должностью — первая dept_assigned_at/position_assigned_at
-    # равна ей, а не «сегодня» (см. app/services/org_assignment_dates.py).
-    hired_at: Optional[datetime] = None
-
-class UserUpdate(BaseModel):
-    last_name: Optional[str] = None
-    first_name: Optional[str] = None
-    middle_name: Optional[str] = None  # необязательно — не у всех есть отчество
-    full_name: Optional[str] = None  # deprecated: обратная совместимость (одна строка ФИО), см. resolve_user_name_input
-    role: Optional[str] = None
-    city: Optional[str] = None
-    department: Optional[str] = None
-    position: Optional[str] = None
-    phone: Optional[str] = None
-    work_phone: Optional[str] = None
-    telegram_id: Optional[str] = None
-    max_chat_id: Optional[str] = None
-    email: Optional[str] = None
-    password: Optional[str] = None
-    avatar: Optional[str] = None
-    inn: Optional[str] = None
-    exclude_from_directory: Optional[bool] = None
-    all_orgs_access: Optional[bool] = None  # доступ ко всем организациям аккаунта, роль не меняется
-    superior_user_id: Optional[int] = None  # вышестоящий начальник (иерархия согласования)
-    # Phase 29 D-04: driver fields
-    can_drive: Optional[bool] = None
-    license_series: Optional[str] = None
-    license_number: Optional[str] = None
-    license_categories: Optional[str] = None
-    license_issued_at: Optional[_Date] = None
-    license_expires_at: Optional[_Date] = None
-    medical_cert_expires_at: Optional[_Date] = None
-    tachograph_card_expires_at: Optional[_Date] = None
-    psych_cert_expires_at: Optional[_Date] = None
-    periodic_medical_expires_at: Optional[_Date] = None
-
-class PermissionsOut(BaseModel):
-    tabs: List[str] = []
-    actions: List[str] = []
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class UserOut(BaseModel):
-    id: int
-    username: str
-    role: str
-    full_name: Optional[str] = None
-    last_name: Optional[str] = None
-    first_name: Optional[str] = None
-    middle_name: Optional[str] = None
-    city: Optional[str] = None
-    department: Optional[str] = None
-    position: Optional[str] = None
-    phone: Optional[str] = None
-    work_phone: Optional[str] = None
-    telegram_id: Optional[str] = None
-    max_chat_id: Optional[str] = None
-    email: Optional[str] = None
-    avatar: Optional[str] = None
-    photo_url: Optional[str] = None
-    org_id: Optional[int] = None
-    is_email_confirmed: bool = True
-    has_signature: bool = False
-    can_publish: bool = False
-    inn: Optional[str] = None
-    exclude_from_directory: bool = False
-    all_orgs_access: bool = False  # доступ ко всем организациям аккаунта, роль не меняется
-    superior_user_id: Optional[int] = None
-    # Phase 29 D-04 / 30: driver fields exposed to frontend
-    can_drive: bool = False
-    license_series: Optional[str] = None
-    license_number: Optional[str] = None
-    license_categories: Optional[str] = None
-    license_issued_at: Optional[_Date] = None
-    license_expires_at: Optional[_Date] = None
-    medical_cert_expires_at: Optional[_Date] = None
-    tachograph_card_expires_at: Optional[_Date] = None
-    psych_cert_expires_at: Optional[_Date] = None
-    periodic_medical_expires_at: Optional[_Date] = None
-    medical_cert_number: Optional[str] = None
-    driver_tab_number: Optional[str] = None
-    experience_years: Optional[int] = None
-    fleet_role: Optional[str] = None
-    has_license_scan: bool = False
-    permissions: Optional[PermissionsOut] = None
-
-    @classmethod
-    def from_orm_with_signature(cls, user):
-        d = cls.model_validate(user)
-        d.has_signature = bool(user.signature_image)
-        d.photo_url = user.profile_photo or None
-        d.has_license_scan = bool(getattr(user, 'license_scan', None))
-        return d
-
-    model_config = {"from_attributes": True}
-
-# Organization
-class OrganizationCreate(BaseModel):
-    name: str
-    full_name: Optional[str] = None
-    inn: Optional[str] = None
-    kpp: Optional[str] = None
-    ogrn: Optional[str] = None
-    address: Optional[str] = None
-    signatory: Optional[str] = None
-    signatory_position: Optional[str] = None
-    signatory_last_name: Optional[str] = None
-    signatory_first_name: Optional[str] = None
-    signatory_middle_name: Optional[str] = None
-    contractor_id: Optional[int] = None
-    color: Optional[str] = None
-    # Phase 30: geo + head
-    lat: Optional[float] = None
-    lon: Optional[float] = None
-    region: Optional[str] = None
-    head_user_id: Optional[int] = None
-    # Fabrikant: город заключения договора
-    contract_city: Optional[str] = None
-    # 2026-09-01: явный выбор аккаунта (головной организации) при создании —
-    # только superadmin; см. app/services/org_account_resolution.py. Для
-    # остальных ролей игнорируется бэкендом (аккаунт = свой контур).
-    root_org_id: Optional[int] = None
-
-class OrganizationOut(BaseModel):
-    id: int
-    name: str
-    full_name: Optional[str] = None
-    inn: Optional[str] = None
-    kpp: Optional[str] = None
-    ogrn: Optional[str] = None
-    address: Optional[str] = None
-    signatory: Optional[str] = None
-    is_active: bool
-    created_at: datetime
-    user_count: int = 0
-    root_org_id: Optional[int] = None
-    owner_user_id: Optional[int] = None
-    # Phase 17.1-03 — link to Contractor as single source of truth for legal requisites
-    contractor_id: Optional[int] = None
-    # Extra enrichment fields (optional) populated from linked Contractor
-    org_phone: Optional[str] = None
-    org_email: Optional[str] = None
-    color: Optional[str] = None
-    # Phase 30: geo + head
-    lat: Optional[float] = None
-    lon: Optional[float] = None
-    region: Optional[str] = None
-    head_user_id: Optional[int] = None
-    # Extended contractor requisites (populated when contractor_id is set)
-    postal_address: Optional[str] = None
-    okpo: Optional[str] = None
-    okved: Optional[str] = None
-    bank_name: Optional[str] = None
-    treasury_account: Optional[str] = None
-    bik: Optional[str] = None
-    single_treasury_account: Optional[str] = None
-    registration_date: Optional[str] = None
-    signatory_position: Optional[str] = None
-    signatory_last_name: Optional[str] = None
-    signatory_first_name: Optional[str] = None
-    signatory_middle_name: Optional[str] = None
-    signatory_basis: Optional[str] = None
-    website: Optional[str] = None
-    # Fabrikant: город заключения договора
-    contract_city: Optional[str] = None
-    model_config = {"from_attributes": True}
-
-class RegisterRequest(BaseModel):
-    org_name: str
-    org_inn: Optional[str] = None
-    username: Optional[str] = None
-    password: str
-    full_name: Optional[str] = None
-    email: str
-
-# Subsidy
-class SubsidyCreate(BaseModel):
-    model_config = ConfigDict(extra='ignore')
-
-    name: str
-    year: int
-    budget: float
-    description: Optional[str] = None
-    contractor_id: Optional[int] = None
-    # Phase 19: large agreement-text clause for docx templates
-    agreement_text: Optional[str] = None
-    # Phase 22: № и дата документа-основания
-    basis_doc_number: Optional[str] = None
-    basis_doc_date: Optional[_Date] = None
-    # Phase 28: реквизиты грантодателя для шаблонов договоров
-    grantor_name: Optional[str] = None
-    ministry_name: Optional[str] = None
-    # Phase 28: subsidy-specific clauses (пункты договора зависящие от субсидии)
-    extra_contract_clause_1: Optional[str] = None
-    extra_contract_clause_2: Optional[str] = None
-    # Требовать дату потребности у позиций (для помесячного плана)
-    require_planned_dates: bool = True
-    # Fabrikant: номер соглашения о субсидии
-    agreement_number: Optional[str] = None
-    # Владелец (2026-08-30): порог предупреждения о подходе к потолку субсидии (%)
-    ceiling_warn_percent: Optional[float] = None
-
-    @field_validator('basis_doc_date', mode='before')
-    @classmethod
-    def empty_str_to_none_date(cls, v):
-        if v == '' or v is None:
-            return None
-        return v
-
-    @field_validator('basis_doc_number', mode='before')
-    @classmethod
-    def empty_str_to_none_number(cls, v):
-        if v == '' or v is None:
-            return None
-        return v
-
-
-class SubsidyUpdate(BaseModel):
-    """Partial update — all fields optional."""
-    name: Optional[str] = None
-    year: Optional[int] = None
-    budget: Optional[float] = None
-    description: Optional[str] = None
-    contractor_id: Optional[int] = None
-    agreement_text: Optional[str] = None
-    # Phase 22: № и дата документа-основания
-    basis_doc_number: Optional[str] = None
-    basis_doc_date: Optional[_Date] = None
-    # Phase 28: реквизиты грантодателя для шаблонов договоров
-    grantor_name: Optional[str] = None
-    ministry_name: Optional[str] = None
-    # Phase 28: subsidy-specific clauses (пункты договора зависящие от субсидии)
-    extra_contract_clause_1: Optional[str] = None
-    extra_contract_clause_2: Optional[str] = None
-    require_planned_dates: Optional[bool] = None
-    # Fabrikant: номер соглашения о субсидии
-    agreement_number: Optional[str] = None
-    # Владелец (2026-08-30): порог предупреждения о подходе к потолку субсидии (%)
-    ceiling_warn_percent: Optional[float] = None
-
-    @field_validator('basis_doc_date', mode='before')
-    @classmethod
-    def empty_str_to_none_date(cls, v):
-        if v == '' or v is None:
-            return None
-        return v
-
-    @field_validator('basis_doc_number', mode='before')
-    @classmethod
-    def empty_str_to_none_number(cls, v):
-        if v == '' or v is None:
-            return None
-        return v
-
-
-class SubsidyOut(BaseModel):
-    id: int
-    name: str
-    year: int
-    budget: float
-    calculated_budget: Optional[float] = None
-    description: Optional[str] = None
-    contractor_id: Optional[int] = None
-    contractor_name: Optional[str] = None
-    contractor_inn: Optional[str] = None
-    org_id: Optional[int] = None
-    org_inn: Optional[str] = None
-    feo_filled: bool = False
-    feo_budget_total: float = 0.0
-    # Phase 19
-    agreement_text: Optional[str] = None
-    # Phase 22
-    basis_doc_number: Optional[str] = None
-    basis_doc_date: Optional[_Date] = None
-    # Phase 28: реквизиты грантодателя для шаблонов договоров
-    grantor_name: Optional[str] = None
-    ministry_name: Optional[str] = None
-    # Phase 28: subsidy-specific clauses (пункты договора зависящие от субсидии)
-    extra_contract_clause_1: Optional[str] = None
-    extra_contract_clause_2: Optional[str] = None
-    # Phase 31-05: canonical budget fields (D-14..D-17)
-    remaining: Optional[float] = None          # limit - spent (calculated_budget_from_categories - Σ purchases)
-    planned_amount: Optional[float] = None     # Σ FeoPlannedItem.amount (ФЭО плановая сумма)
-    budget_discrepancy: Optional[float] = None  # limit - planned_amount (Δ ФЭО vs плановая)
-    require_planned_dates: bool = True
-    # Fabrikant: номер соглашения о субсидии
-    agreement_number: Optional[str] = None
-    # Владелец (2026-08-30): предупреждение «сумма заказанного приближается к
-    # потолку субсидии». ceiling_warn_percent — настраиваемый порог (хранится
-    # в БД, умолчание 90 применяется в сервисе если NULL). Остальные поля —
-    # расчёт на лету, см. app.services.feo_plan.calculate_ceiling_forecast*:
-    #   ceiling_total            — потолок (calculate_budget_from_categories,
-    #                              тот же источник, что и жёсткий гейт
-    #                              PLAN_OVER_SUBSIDY_CEILING)
-    #   ceiling_committed_total  — «сумма заказанного»: разовые/авансовые/
-    #                              рамочные закупки в статусах Заказано+, ПЛЮС
-    #                              ежемесячные платежи ВЕСЬ график целиком
-    #   ceiling_committed_percent — committed / ceiling * 100
-    #   ceiling_near_warning     — percent >= ceiling_warn_percent (и ceiling > 0)
-    #   ceiling_exceeded         — committed > ceiling (потолок уже превышен)
-    ceiling_warn_percent: Optional[float] = None
-    ceiling_total: Optional[float] = None
-    ceiling_committed_total: Optional[float] = None
-    ceiling_committed_one_off: Optional[float] = None   # разовые/авансовые/рамочные (статусы Заказано+)
-    ceiling_committed_monthly: Optional[float] = None   # ежемесячные платежи, весь график целиком
-    ceiling_committed_percent: Optional[float] = None
-    ceiling_near_warning: bool = False
-    ceiling_exceeded: bool = False
-    # Черновые субсидии (план C1/C2): статус 'draft' | 'approved', автор,
-    # утвердивший и когда — чтобы фронт показал чип статуса и кнопку «Утвердить».
-    status: str = 'draft'
-    created_by: Optional[int] = None
-    approved_by: Optional[int] = None
-    approved_at: Optional[datetime] = None
-    model_config = {"from_attributes": True}
-
-
-class SubsidyContractorOverrideCreate(BaseModel):
-    org_type: Optional[str] = None
-    inn: Optional[str] = None
-    kpp: Optional[str] = None
-    ogrn: Optional[str] = None
-    signatory: Optional[str] = None
-    signatory_position: Optional[str] = None
-    signatory_last_name: Optional[str] = None
-    signatory_first_name: Optional[str] = None
-    signatory_middle_name: Optional[str] = None
-    signatory_basis: Optional[str] = None
-    address: Optional[str] = None
-    postal_address: Optional[str] = None
-    bank_details: Optional[str] = None
-    settlement_account: Optional[str] = None
-    bank_name: Optional[str] = None
-    bik: Optional[str] = None
-    correspondent_account: Optional[str] = None
-    contact_person: Optional[str] = None
-    phone: Optional[str] = None
-    email: Optional[str] = None
-    org_phone: Optional[str] = None
-    org_email: Optional[str] = None
-
-class SubsidyContractorOverrideOut(SubsidyContractorOverrideCreate):
-    id: int
-    subsidy_id: int
-    contractor_id: int
-    model_config = {"from_attributes": True}
-
-# ResponsiblePerson
-class ResponsiblePersonCreate(BaseModel):
-    full_name: str
-    position: Optional[str] = None
-
-class ResponsiblePersonOut(ResponsiblePersonCreate):
-    id: int
-    subsidy_id: Optional[int] = None
-    is_active: bool = True
-    model_config = {"from_attributes": True}
-
-# SubsidyApprover
-class SubsidyApproverCreate(BaseModel):
-    role_name: str
-    full_name: str
-    order_num: int = 0
-    is_default: bool = True
-    can_initiate: bool = False
-    show_feo_path: bool = False
-    user_id: Optional[int] = None
-
-class SubsidyApproverOut(SubsidyApproverCreate):
-    id: int
-    subsidy_id: int
-    model_config = {"from_attributes": True}
-
-# FeoCategory
-class FeoCategoryCreate(BaseModel):
-    # Дефект 2026-08-31 (владелец, форма «Редактировать направление ФЭО»): фронт
-    # иногда шлёт пустую строку вместо null для очищенного числового поля (напр.
-    # v-model.number на Vuetify оставляет '' как есть, если поле не парсится в
-    # число) — pydantic валит это 422 «ожидается число» с техническим именем поля
-    # (fields без русской подписи в field_labels в app/__init__.py). Пустая строка
-    # для ЧИСЛОВОГО поля этой схемы = «не задано», а не ошибка — нормализуем в None
-    # ДО валидации типов, тем же паттерном, что и ContractorCreate.empty_strings_to_none
-    # ниже. Фронт всё равно должен слать null (см. SubsidiesView.vue), это —
-    # защита от повторения, не замена фикса на фронте.
-    @model_validator(mode='before')
-    @classmethod
-    def empty_numeric_strings_to_none(cls, data: Any) -> Any:
-        if isinstance(data, dict):
-            for key in (
-                'budget', 'feo_quantity', 'feo_amount',
-                'planned_quantity', 'planned_amount', 'manual_plan_amount',
-            ):
-                if data.get(key) == '':
-                    data[key] = None
-        return data
-
-    parent_id: Optional[int] = None
-    subsidy_id: int
-    name: str
-    code: Optional[str] = None
-    appendix: Optional[str] = None
-    is_active: bool = True
-    description: Optional[str] = None
-    budget: Optional[float] = None
-    feo_quantity: Optional[float] = None
-    feo_unit: Optional[str] = None
-    feo_amount: Optional[float] = None
-    planned_quantity: Optional[float] = None
-    planned_amount: Optional[float] = None
-    unit: Optional[str] = None
-    # Владелец, план zany-fluttering-mountain.md (2026-08-13): переключатель способа
-    # расчёта плана — см. app/models/feo_category.py. Дефолт строкой (не None) —
-    # колонка NOT NULL, а FastAPI/pydantic отправляет явный None при пропуске поля
-    # старым клиентом, что уронило бы INSERT/UPDATE constraint-нарушением.
-    plan_source: str = "planned_items"
-    manual_plan_amount: Optional[float] = None
-
-class FeoCategoryOut(BaseModel):
-    id: int
-    parent_id: Optional[int] = None
-    subsidy_id: int
-    level: int
-    name: str
-    code: Optional[str] = None
-    appendix: Optional[str] = None
-    is_active: bool = True
-    description: Optional[str] = None
-    budget: Optional[float] = None
-    feo_quantity: Optional[float] = None
-    feo_unit: Optional[str] = None
-    feo_amount: Optional[float] = None
-    planned_quantity: Optional[float] = None
-    planned_amount: Optional[float] = None
-    unit: Optional[str] = None
-    plan_source: str = "planned_items"
-    manual_plan_amount: Optional[float] = None
-    # Задача владельца «план ≠ факт» (шаг D, сессия 2026-08-06): непустое — только
-    # когда PUT /feo-categories/{id} заподозрил, что в planned_amount (цена ЗА
-    # ЕДИНИЦУ) записана СУММА (защита от повторения К1, см. update_category).
-    # Ничего не блокирует, чисто предупреждение для UI.
-    warning: Optional[str] = None
-    model_config = {"from_attributes": True}
-
-class FeoCategoryTree(FeoCategoryOut):
-    children: List["FeoCategoryTree"] = []
-
-# Contractor
-class ContractorCreate(BaseModel):
-    @model_validator(mode='before')
-    @classmethod
-    def empty_strings_to_none(cls, data: Any) -> Any:
-        if isinstance(data, dict):
-            for key, value in list(data.items()):
-                if value == '':
-                    data[key] = None
-                elif isinstance(value, str) and key.endswith('_date'):
-                    m = re.fullmatch(r'(\d{2})\.(\d{2})\.(\d{4})', value.strip())
-                    if m:
-                        data[key] = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
-        return data
-
-    name: str
-    full_name: Optional[str] = None
-    inn: Optional[str] = None
-    kpp: Optional[str] = None
-    address: Optional[str] = None
-    contact_person: Optional[str] = None
-    phone: Optional[str] = None
-    email: Optional[str] = None
-    org_phone: Optional[str] = None
-    org_email: Optional[str] = None
-    bank_details: Optional[str] = None
-    # Contract document fields
-    signatory: Optional[str] = None
-    signatory_basis: Optional[str] = None
-    postal_address: Optional[str] = None
-    ogrn: Optional[str] = None
-    settlement_account: Optional[str] = None
-    bank_name: Optional[str] = None
-    bik: Optional[str] = None
-    correspondent_account: Optional[str] = None
-    org_type: Optional[str] = None
-    manual_product_categories: Optional[List[str]] = None
-    # ГПХ-поля для физ.лица
-    passport_series: Optional[str] = None
-    passport_number: Optional[str] = None
-    passport_issuer: Optional[str] = None
-    passport_issued_date: Optional[_Date] = None
-    snils: Optional[str] = None
-    registration_address: Optional[str] = None
-    birth_date: Optional[_Date] = None
-    website: Optional[str] = None
-    registration_date: Optional[_Date] = None
-    okpo: Optional[str] = None
-    okved: Optional[str] = None
-    treasury_account: Optional[str] = None
-    single_treasury_account: Optional[str] = None
-    signatory_position: Optional[str] = None
-    signatory_last_name: Optional[str] = None
-    signatory_first_name: Optional[str] = None
-    signatory_middle_name: Optional[str] = None
-
-class ContractorOut(ContractorCreate):
-    id: int
-    model_config = {"from_attributes": True}
-
-# Contract
-class ContractSubsidyOut(BaseModel):
-    id: int
-    subsidy_id: int
-    subsidy_name: Optional[str] = None
-    model_config = ConfigDict(from_attributes=True)
-
-class ContractCreate(BaseModel):
-    @model_validator(mode='before')
-    @classmethod
-    def empty_strings_to_none(cls, data: Any) -> Any:
-        if isinstance(data, dict):
-            for key, value in data.items():
-                if value == '' or value == '':
-                    data[key] = None
-        return data
-
-    number: str
-    date: Optional[_Date] = None
-    contract_type: str  # single / framework_cumulative / framework_with_amount
-    contractor_id: Optional[int] = None
-    subsidy_id: Optional[int] = None
-    subject: Optional[str] = None
-    max_amount: Optional[Decimal] = None
-    status: str = "active"
-    notes: Optional[str] = None
-    start_date: Optional[_Date] = None
-    end_date: Optional[_Date] = None
-    purchase_method: Optional[str] = None
-    item_type: Optional[str] = None  # товар / услуга
-    planned_monthly: Optional[Decimal] = None
-    extra_subsidy_ids: List[int] = []
-
-class ContractOut(ContractCreate):
-    id: int
-    total_payment: Optional[Decimal] = None
-    remaining: Optional[Decimal] = None  # legacy: same as remaining_ordered
-    remaining_ordered: Optional[Decimal] = None  # max_amount - SUM(contract_price)
-    remaining_delivered: Optional[Decimal] = None  # SUM(contract_price) - SUM(delivery_payment_amount)
-    remaining_paid: Optional[Decimal] = None  # SUM(delivery_payment_amount) - SUM(payment_amount)
-    total_ordered: Optional[Decimal] = None
-    total_delivered: Optional[Decimal] = None  # SUM(delivery_payment_amount)
-    total_paid: Optional[Decimal] = None
-    contractor_name: Optional[str] = None
-    contractor_inn: Optional[str] = None
-    subsidy_name: Optional[str] = None
-    extra_subsidies: List[ContractSubsidyOut] = []
-    # Владелец (2026-09-02): состояние согласования рамочной ГОЛОВЫ договора —
-    # вычисляется из Purchase.approval_status привязанной рамочной головы, не
-    # хранится отдельной колонкой (см. contracts.py::list_contracts).
-    # pending — голова ждёт согласования по цепочке руководителей, approved —
-    # согласована, None — головы нет или цепочка не строилась (историческая).
-    approval_state: Optional[str] = None
-    model_config = {"from_attributes": True}
-
-# Phase 31-04: contract cascade response
-class ContractSyncWarnings(BaseModel):
-    amount_over_max: bool = False
-    date_out_of_validity: List[int] = []
-
-class ContractUpdateResponse(BaseModel):
-    contract: ContractOut
-    n_updated_purchases: int = 0
-    warnings: ContractSyncWarnings = ContractSyncWarnings()
-
-# PurchaseItem
-class PurchaseItemCreate(BaseModel):
-    product_id: Optional[int] = None
-    item_name: str
-    item_type: Optional[str] = None
-    quantity: Optional[Decimal] = None
-    unit: Optional[str] = None
-    unit_price: Optional[Decimal] = None
-    total_price: Optional[Decimal] = None
-    final_unit_price: Optional[Decimal] = None
-    final_total: Optional[Decimal] = None
-    # Снимок плана (Шаг 1 «план ≠ факт») — обычно заполняется сервером, но поле
-    # оставлено настраиваемым на входе на случай явной установки (импорт/скрипт).
-    planned_quantity: Optional[Decimal] = None
-    planned_unit_price: Optional[Decimal] = None
-    planned_total: Optional[Decimal] = None
-    country_origin: Optional[str] = None
-    match_confirmed: bool = True
-    contractor_id: Optional[int] = None
-    contractor_inn: Optional[str] = None
-    contractor_name: Optional[str] = None
-    vat_rate: Optional[str] = None  # Phase 26-U-3: per-item НДС ставка
-    vat_amount: Optional[float] = None       # import-vat-cols: сумма НДС по позиции
-    total_with_vat: Optional[float] = None   # import-vat-cols: стоимость с НДС
-    feo_planned_item_id: Optional[int] = None  # 27.4-15: FEO link для plan-graph version
-    feo_category_id: Optional[int] = None  # FCAT-B1: per-item привязка к leaf FeoCategory
-    needed_date: Optional[_Date] = None  # W2: дата потребности per-item
-    over_plan: bool = False  # false — расходует план элемента ФЭО; true — сверх плана
-    # Стадия «Приняли» (5-я стадия жизненного цикла позиции): заполняется автоматически
-    # при переходе закупки в delivered, правится вручную — см. purchase_transitions.py.
-    accepted_name: Optional[str] = None
-    accepted_quantity: Optional[Decimal] = None
-    accepted_unit: Optional[str] = None
-
-class PurchaseItemOut(PurchaseItemCreate):
-    id: int
-    product_name: Optional[str] = None
-    product_photo_url: Optional[str] = None
-    product_description: Optional[str] = None
-    product_description_44fz: Optional[str] = None
-    receipt_id: Optional[int] = None  # Phase 26-BB
-    # Владелец (план crystalline-soaring-heron.md, п.4): остаток плановой позиции
-    # этой строки закупки, с учётом ВСЕХ расходов (включая саму эту строку) —
-    # отрицательное значение = превышение. Источник — FeoPlannedItem (Ур.5), если
-    # позиция к ней привязана (feo_planned_item_id), иначе узел дерева ФЭО её
-    # категории (см. GET /api/purchases/{id} — _attach_feo_excess_fields). None —
-    # у позиции вовсе нет категории ФЭО (план посчитать не от чего).
-    plan_residual: Optional[Decimal] = None
-    plan_planned_amount: Optional[Decimal] = None
-    model_config = {"from_attributes": True}
-
-class PurchaseFileOut(BaseModel):
-    id: int
-    purchase_id: int
-    filename: str
-    mime_type: Optional[str] = None
-    size: Optional[int] = None
-    file_type: Optional[str] = "other"
-    doc_format: Optional[str] = "scan"
-    content_hash: Optional[str] = None
-    is_active: Optional[bool] = True
-    created_at: Optional[datetime] = None
-    uploaded_by_id: Optional[int] = None
-    uploaded_by_name: Optional[str] = None
-    model_config = {"from_attributes": True}
-
-# SubsidyAllocation
-class SubsidyAllocationIn(BaseModel):
-    subsidy_id: int
-    amount: Optional[Decimal] = None
-
-class SubsidyAllocationOut(BaseModel):
-    id: int
-    subsidy_id: int
-    subsidy_name: Optional[str] = None
-    amount: Optional[Decimal] = None
-    model_config = ConfigDict(from_attributes=True)
-
-# Purchase
-class PurchaseCreate(BaseModel):
-    @model_validator(mode='before')
-    @classmethod
-    def empty_strings_to_none(cls, data: Any) -> Any:
-        """Convert empty strings to None for Optional fields to avoid validation errors."""
-        if isinstance(data, dict):
-            for key, value in data.items():
-                if value == '' or value == '':
-                    data[key] = None
-        return data
-
-    row_number: Optional[int] = None
-    purchase_number: Optional[int] = None
-    order_number: Optional[str] = None
-    feo_category_id: Optional[int] = None
-    item_type: Optional[str] = None
-    item_name: Optional[str] = None
-    contractor_id: Optional[int] = None
-    planned_quantity: Optional[Decimal] = None
-    unit: Optional[str] = None
-    planned_unit_price: Optional[Decimal] = None
-    planned_total_price: Optional[Decimal] = None
-    confirmed: Optional[bool] = False
-    final_unit_price: Optional[Decimal] = None
-    final_total_amount: Optional[Decimal] = None
-    delivery_payment_amount: Optional[Decimal] = None
-    contract_id: Optional[int] = None
-    subsidy_id: Optional[int] = None
-    status: str = "wishes"
-    substatus: Optional[str] = None
-    is_monthly_payment: Optional[bool] = False
-    monthly_payment_count: Optional[int] = None
-    monthly_payment_amount: Optional[Decimal] = None
-    # Phase 24: stages + financial plan
-    is_likely_needed: Optional[bool] = True
-    is_prepayment: Optional[bool] = False
-    prepayment_date: Optional[date] = None
-    stage_label: Optional[str] = None
-    # Phase 1: extended fields
-    contract_number: Optional[str] = None
-    contract_date: Optional[date] = None
-    registry_number: Optional[str] = None
-    purchase_method: Optional[str] = None  # 'single' | 'competitive' | 'advance'
-    # Уточнение к purchase_method == 'competitive': 'price_request' | 'auction' | 'tender'
-    competitive_form: Optional[str] = None
-    purchase_basis: Optional[str] = None   # 'plan_schedule' | 'service_note'
-    responsible_person: Optional[str] = None
-    nmck: Optional[Decimal] = None
-    contract_price: Optional[Decimal] = None
-    economy: Optional[Decimal] = None
-    price_increase: Optional[Decimal] = None
-    execution_term: Optional[date] = None
-    execution_term_changed: Optional[date] = None
-    delivery_date: Optional[date] = None
-    delivery_address: Optional[str] = None
-    # Структурированный адрес доставки (Фабрикант: место поставки)
-    delivery_region: Optional[str] = None
-    delivery_city: Optional[str] = None
-    delivery_street: Optional[str] = None
-    delivery_house: Optional[str] = None
-    delivery_building: Optional[str] = None
-    delivery_postcode: Optional[str] = None
-    procurement_planned_date: Optional[date] = None
-    country_origin: Optional[str] = None
-    subject: Optional[str] = None
-    acceptance_doc_name: Optional[str] = None
-    acceptance_doc_date: Optional[date] = None
-    acceptance_doc_number: Optional[str] = None
-    acceptance_doc_amount: Optional[Decimal] = None
-    acceptance_docs: Optional[list] = None  # [{name, number, date, amount}, ...]
-    payment_doc_number: Optional[str] = None
-    payment_doc_date: Optional[date] = None
-    payment_amount: Optional[Decimal] = None
-    # Владелец (2026-08-19): «заявлено, ждёт подтверждения» — сумма ручных
-    # неподтверждённых платежей, отдельно от payment_amount («оплачено» —
-    # только подтверждённое казначейством). См. app/services/purchase_payments.py.
-    payment_amount_declared: Optional[Decimal] = None
-    payment_federal: Optional[Decimal] = None
-    total_nmck: Optional[Decimal] = None
-    purchase_contract_type: Optional[str] = None
-    framework_seq: Optional[int] = None          # порядковый номер в рамочном договоре
-    # Владелец (2026-08-31): технический номер договора (рамочная голова без
-    # известных номера/даты) — True, пока номер не актуализирован пользователем.
-    contract_number_is_temporary: Optional[bool] = False
-    # Contract document generation fields
-    vat_applicable: Optional[bool] = False
-    vat_rate: Optional[int] = None
-    vat_exemption_article: Optional[str] = None
-    third_party_involved: Optional[bool] = False
-    contract_end_date: Optional[date] = None
-    commitment_quarter: Optional[int] = None
-    planned_payment_month: Optional[date] = None
-    service_period_type: Optional[str] = None
-    service_start_date: Optional[date] = None
-    service_end_date: Optional[date] = None
-    description_mode: Optional[str] = "exact"
-    event_id: Optional[int] = None
-    approval_status: Optional[str] = None
-    approval_mode: Optional[str] = None
-    approval_sign_type: Optional[str] = None
-    treasury_code: Optional[str] = None
-    has_pretension: Optional[bool] = False
-    payment_basis_type: Optional[str] = "contract"
-    service_note_text: Optional[str] = None
-    service_note_by: Optional[int] = None
-    service_note_at: Optional[datetime] = None
-    # Phase 19: template fields for docx context
-    submission_deadline: Optional[datetime] = None
-    delivery_location: Optional[str] = None
-    delivery_location_kind: Optional[str] = None    # '' | 'delivery' | 'service' (фидбек 5 мая, ручной тогл)
-    region: Optional[str] = None                    # Регион проведения мероприятия (89 субъектов РФ или спец-значения)
-    service_term_mode: Optional[str] = None         # 'range' | 'duration' | 'deadline'
-    service_term_days: Optional[int] = None         # mode='duration'
-    service_term_type: Optional[str] = None         # 'calendar' | 'working' (mode='duration')
-    service_deadline_date: Optional[date] = None    # mode='deadline'
-    reimbursement_user_id: Optional[int] = None
-    assigned_user_id: Optional[int] = None  # Phase 28 B4: ответственный исполнитель
-    service_note_to_user_id: Optional[int] = None  # SN-UX: адресат служебной записки
-    vat_mode: Optional[str] = None  # Phase 26-U-3: 'uniform' | 'per_item'
-    feo_per_item: bool = False  # режим «своя категория ФЭО для каждого товара»
-    # Phase 26-K: доп. соглашение и дата заказа
-    agreement_number: Optional[str] = None
-    agreement_date: Optional[date] = None
-    order_date: Optional[date] = None
-    # Phase 28: форма договора для выбора шаблона при генерации
-    contract_form: Optional[str] = None
-    # Методичка (большая/малая/без), приклеивается к договору отдельно от формы
-    methodology: Optional[str] = None
-    # Phase 28: contract-specific поля (условия конкретного договора)
-    acceptance_term_days: Optional[int] = None
-    penalty_rate: Optional[Decimal] = None
-    contractor_ogrnip_date: Optional[date] = None
-    repair_request_number: Optional[str] = None
-    commission_member_1_name: Optional[str] = None
-    commission_member_2_name: Optional[str] = None
-    commission_member_3_name: Optional[str] = None
-    advance_amount: Optional[Decimal] = None
-    # Phase 28: гарантия + ретроактивный договор (комментарии пользователя 2026-05-19)
-    warranty_period_days: Optional[int] = None
-    is_retroactive: Optional[bool] = False
-    # Phase 28 T6/T7: условные блоки шаблонов + протокол/приказ закупки
-    delivery_by_supplier: Optional[bool] = True
-    has_stages: Optional[bool] = False
-    procurement_protocol_number: Optional[str] = None
-    procurement_order_number: Optional[str] = None
-    # Phase 29: связь с ТС
-    vehicle_id: Optional[int] = None
-    # ЭТП: ссылка на конкурсную процедуру
-    etp_url: Optional[str] = None
-    wish_id: Optional[int] = None  # Связь с заявкой; при авансовом создаётся авто-заявка
-    # Fabrikant: срок оплаты и дата рассмотрения заявок
-    payment_term_days: Optional[int] = None
-    applications_review_date: Optional[date] = None
-    items: List[PurchaseItemCreate] = []
-    subsidy_allocations: Optional[List[SubsidyAllocationIn]] = None
-
-
-class PurchaseUpdate(BaseModel):
-    """Partial update — all fields optional. Accepts any known Purchase field."""
-    row_number: Optional[int] = None
-    purchase_number: Optional[int] = None
-    order_number: Optional[str] = None
-    feo_category_id: Optional[int] = None
-    item_type: Optional[str] = None
-    item_name: Optional[str] = None
-    contractor_id: Optional[int] = None
-    planned_quantity: Optional[Decimal] = None
-    unit: Optional[str] = None
-    planned_unit_price: Optional[Decimal] = None
-    planned_total_price: Optional[Decimal] = None
-    confirmed: Optional[bool] = None
-    final_unit_price: Optional[Decimal] = None
-    final_total_amount: Optional[Decimal] = None
-    delivery_payment_amount: Optional[Decimal] = None
-    contract_id: Optional[int] = None
-    subsidy_id: Optional[int] = None
-    status: Optional[str] = None
-    substatus: Optional[str] = None
-    is_monthly_payment: Optional[bool] = None
-    monthly_payment_count: Optional[int] = None
-    monthly_payment_amount: Optional[Decimal] = None
-    # Phase 24: stages + financial plan
-    is_likely_needed: Optional[bool] = None
-    is_prepayment: Optional[bool] = None
-    prepayment_date: Optional[date] = None
-    stage_label: Optional[str] = None
-    contract_number: Optional[str] = None
-    contract_date: Optional[date] = None
-    registry_number: Optional[str] = None
-    purchase_method: Optional[str] = None
-    # Уточнение к purchase_method == 'competitive': 'price_request' | 'auction' | 'tender'
-    competitive_form: Optional[str] = None
-    purchase_basis: Optional[str] = None
-    responsible_person: Optional[str] = None
-    nmck: Optional[Decimal] = None
-    contract_price: Optional[Decimal] = None
-    economy: Optional[Decimal] = None
-    price_increase: Optional[Decimal] = None
-    execution_term: Optional[date] = None
-    execution_term_changed: Optional[date] = None
-    delivery_date: Optional[date] = None
-    delivery_address: Optional[str] = None
-    # Структурированный адрес доставки (Фабрикант: место поставки)
-    delivery_region: Optional[str] = None
-    delivery_city: Optional[str] = None
-    delivery_street: Optional[str] = None
-    delivery_house: Optional[str] = None
-    delivery_building: Optional[str] = None
-    delivery_postcode: Optional[str] = None
-    procurement_planned_date: Optional[date] = None
-    country_origin: Optional[str] = None
-    subject: Optional[str] = None
-    acceptance_doc_name: Optional[str] = None
-    acceptance_doc_date: Optional[date] = None
-    acceptance_doc_number: Optional[str] = None
-    acceptance_doc_amount: Optional[Decimal] = None
-    acceptance_docs: Optional[list] = None
-    payment_doc_number: Optional[str] = None
-    payment_doc_date: Optional[date] = None
-    payment_amount: Optional[Decimal] = None
-    payment_amount_declared: Optional[Decimal] = None
-    payment_federal: Optional[Decimal] = None
-    total_nmck: Optional[Decimal] = None
-    purchase_contract_type: Optional[str] = None
-    framework_seq: Optional[int] = None
-    # Владелец (2026-08-31): технический номер договора (рамочная голова без
-    # известных номера/даты) — True, пока номер не актуализирован пользователем.
-    contract_number_is_temporary: Optional[bool] = None
-    vat_applicable: Optional[bool] = None
-    vat_rate: Optional[int] = None
-    vat_exemption_article: Optional[str] = None
-    third_party_involved: Optional[bool] = None
-    contract_end_date: Optional[date] = None
-    commitment_quarter: Optional[int] = None
-    planned_payment_month: Optional[date] = None
-    service_period_type: Optional[str] = None
-    service_start_date: Optional[date] = None
-    service_end_date: Optional[date] = None
-    description_mode: Optional[str] = None
-    event_id: Optional[int] = None
-    approval_status: Optional[str] = None
-    approval_mode: Optional[str] = None
-    approval_sign_type: Optional[str] = None
-    treasury_code: Optional[str] = None
-    has_pretension: Optional[bool] = None
-    payment_basis_type: Optional[str] = None
-    service_note_text: Optional[str] = None
-    service_note_by: Optional[int] = None
-    service_note_at: Optional[datetime] = None
-    # Phase 19
-    submission_deadline: Optional[datetime] = None
-    delivery_location: Optional[str] = None
-    delivery_location_kind: Optional[str] = None
-    region: Optional[str] = None                    # Регион проведения мероприятия
-    service_term_mode: Optional[str] = None
-    service_term_days: Optional[int] = None
-    service_term_type: Optional[str] = None
-    service_deadline_date: Optional[date] = None
-    reimbursement_user_id: Optional[int] = None
-    assigned_user_id: Optional[int] = None  # Phase 28 B4
-    vat_mode: Optional[str] = None  # Phase 26-U-3: 'uniform' | 'per_item'
-    feo_per_item: Optional[bool] = None  # режим «своя категория ФЭО для каждого товара»
-    # Phase 26-K: доп. соглашение и дата заказа
-    agreement_number: Optional[str] = None
-    agreement_date: Optional[date] = None
-    order_date: Optional[date] = None
-    # Phase 28: форма договора для выбора шаблона при генерации
-    contract_form: Optional[str] = None
-    # Методичка (большая/малая/без), приклеивается к договору отдельно от формы
-    methodology: Optional[str] = None
-    # Phase 28: contract-specific поля (условия конкретного договора)
-    acceptance_term_days: Optional[int] = None
-    penalty_rate: Optional[Decimal] = None
-    contractor_ogrnip_date: Optional[date] = None
-    repair_request_number: Optional[str] = None
-    commission_member_1_name: Optional[str] = None
-    commission_member_2_name: Optional[str] = None
-    commission_member_3_name: Optional[str] = None
-    advance_amount: Optional[Decimal] = None
-    # Phase 28: гарантия + ретроактивный договор (комментарии пользователя 2026-05-19)
-    warranty_period_days: Optional[int] = None
-    is_retroactive: Optional[bool] = None
-    # Phase 28 T6/T7: условные блоки шаблонов + протокол/приказ закупки
-    delivery_by_supplier: Optional[bool] = None
-    has_stages: Optional[bool] = None
-    procurement_protocol_number: Optional[str] = None
-    procurement_order_number: Optional[str] = None
-    # Phase 29: связь с ТС
-    vehicle_id: Optional[int] = None
-    # ЭТП: ссылка на конкурсную процедуру
-    etp_url: Optional[str] = None
-    # Fabrikant: срок оплаты и дата рассмотрения заявок
-    payment_term_days: Optional[int] = None
-    applications_review_date: Optional[date] = None
-
-
-# Владелец (2026-09-02): «уведомление глобально, если позиция категории ФЭО
-# вверху и в каждом товаре не соответствует друг другу — об этом должен быть
-# алярм прям стоять» — см. app.routers.purchases._compute_purchase_feo_mismatch.
-# НЕ голый булев флаг: пользователь должен понять, ЧТО именно расходится.
-class FeoMismatchItemOut(BaseModel):
-    item_id: Optional[int] = None
-    item_name: Optional[str] = None
-    reason: str  # 'planned' | 'header' | 'both'
-    message: str
-    item_category_id: Optional[int] = None
-    item_category_name: Optional[str] = None
-    header_category_id: Optional[int] = None
-    header_category_name: Optional[str] = None
-    planned_item_id: Optional[int] = None
-    planned_item_name: Optional[str] = None
-    planned_category_id: Optional[int] = None
-    planned_category_name: Optional[str] = None
-
-
-class PurchaseOut(PurchaseCreate):
-    id: int
-    # Заявка-источник (конвертация заявки в закупки)
-    wish_id: Optional[int] = None
-    items: List[PurchaseItemOut] = []
-    files: List[PurchaseFileOut] = []
-    subsidy_allocations: Optional[List[SubsidyAllocationOut]] = None
-    # Phase 31: diff-tracking — unseen changes from other users
-    unseen_fields: List[str] = []
-    unseen_changes_count: int = 0
-    # Phase 31-04: contract sync — True when linked contract data differs from purchase copy
-    contract_conflict: bool = False
-    # Phase 32: quick access to file count from list view
-    files_count: int = 0
-    # Владелец (2026-08-12): значок «закупка создаёт превышение плана ФЭО» в списке
-    # закупок — считается опционально (?with_feo_excess=true), см. list_purchases.
-    # Дополнено планом crystalline-soaring-heron.md (п.4, 2026-08-21): теперь
-    # считается и в карточке закупки (GET /api/purchases/{id}), не только в
-    # списке — см. app.routers.purchases._compute_purchase_feo_excess.
-    feo_excess: bool = False
-    feo_excess_hint: Optional[str] = None
-    feo_excess_amount: Optional[Decimal] = None
-    feo_excess_category: Optional[str] = None
-    # Владелец (2026-09-03): id категории-виновника — НЕ гейтится правом
-    # feo_budget.view_leaf (в отличие от FeoCategory.budget), см. докстринг
-    # _compute_purchase_feo_excess. Фронт сверяет его с item.feo_category_id, чтобы
-    # без права показать в позиции закупки только факт и размер превышения статьи.
-    feo_excess_category_id: Optional[int] = None
-    # "none" — превышения нет; "not_requested" — есть, согласование не запрошено;
-    # "pending" — запрос на согласование превышения ФЭО на рассмотрении;
-    # "approved" — согласовано (feo_excess при этом остаётся True — согласование
-    # НЕ прячет сам факт превышения, см. докстринг _compute_purchase_feo_excess).
-    feo_excess_state: str = "none"
-    feo_excess_approved_by: Optional[str] = None
-    feo_excess_approved_at: Optional[str] = None
-    # Название родительской заявки (Wish.title) — «Создана из заявки №N «…»»
-    # на карточке закупки (wish_id уже был на PurchaseOut, см. ниже).
-    wish_title: Optional[str] = None
-    # Статус родительской заявки (Wish.status: draft/submitted/approved/rejected/
-    # converted) — владелец (2026-08-21, дефект «отцеплённая закупка»): карточка
-    # закупки, скрытой в статусе 'wishes', обязана прямо объяснять, что с ней —
-    # ждёт одобрения или отцеплена обратно в черновик (см. wish_id/wish_title,
-    # используется вместе на карточке; см. get_purchase в purchases.py).
-    wish_status: Optional[str] = None
-    # Остановка закупки (владелец, 2026-08-13) — read-only, системой проставляется
-    # в POST /api/wishes/{wish_id}/stop, НЕ через PUT/PATCH закупки напрямую
-    # (намеренно отсутствует в PurchaseCreate/PurchaseUpdate — см. update_purchase
-    # payload_dict/exclude_unset и PATCHABLE_FIELDS в purchases.py).
-    stopped_at: Optional[datetime] = None
-    stopped_by: Optional[int] = None
-    stopped_by_name: Optional[str] = None
-    stopped_wish_id: Optional[int] = None
-    # Владелец (2026-09-02): расхождение категории ФЭО шапки/позиции/плановой
-    # позиции — считается ВСЕГДА (см. _compute_purchase_feo_mismatch), в списке
-    # достаточно признака для метки строки, в карточке нужен разбор по позициям.
-    feo_mismatch: bool = False
-    feo_mismatch_items: List[FeoMismatchItemOut] = []
-    # Владелец (2026-09-03): «перекос ветки — предупреждение, не блокировка» —
-    # см. app.services.feo_plan.assert_no_unapproved_excess. Список предупреждений
-    # о превышении плана ФЭО узла над его финансированием, собранных ИМЕННО этим
-    # действием (создание/правка закупки, форвард-переход стадии) — для НЕМЕДЛЕННОЙ
-    # обратной связи (тост), тот же паттерн, что excess_warnings в ответах
-    # app.routers.wishes (decide/approve/convert). Пусто, если превышения нет —
-    # persistent-источник истины на будущее остаётся feo_excess/feo_excess_* выше
-    # (считается заново на КАЖДОМ GET независимо от того, кто и когда создал
-    # превышение).
-    excess_warnings: List[dict] = []
-    model_config = {"from_attributes": True}
-
-    @model_validator(mode='after')
-    def _derive_acceptance_doc_scalars(self):
-        """ПРАВИЛО №6 (2026-09-07, группа D4): acceptance_doc_name/date/number/
-        amount больше НЕ пишутся в БД (источник истины — JSONB acceptance_docs,
-        см. app.services.acceptance_docs) — но фронт продолжает их читать как
-        обычные поля закупки, поэтому сериализатор ВЫЧИСЛЯЕТ их здесь из
-        acceptance_docs (первый документ), с фолбэком на уже прочитанные из
-        ORM legacy-скаляры для немигрированных закупок (acceptance_docs пуст).
-        Единая логика с app.services.acceptance_docs.derived_scalars — не
-        вторая копия («первый документ»/фолбэк совпадают дословно)."""
-        from app.services.acceptance_docs import derived_scalars
-        derived = derived_scalars(self)
-        self.acceptance_doc_name = derived["name"]
-        self.acceptance_doc_number = derived["number"]
-        self.acceptance_doc_date = derived["date"]
-        self.acceptance_doc_amount = derived["amount"]
-        return self
-
-class PurchaseAmountsOut(BaseModel):
-    """ПРАВИЛО №6 (2026-09-05): единственный расчёт «суммы закупки» — см.
-    app/services/purchase_amounts.py::purchase_amounts. plan/contract/fact/
-    paid — сырые колонки Purchase (planned_total_price/contract_price/
-    acceptance_doc_amount/payment_amount) БЕЗ фолбэков, для случаев, когда
-    фронту нужно показать именно исходное поле, а не итог. effective — сумма
-    по цепочке фолбэков владельца (см. докстринг purchase_amounts.py);
-    effective_source — имя поля/формулы, откуда взято effective (отладка)."""
-    plan: Optional[Decimal] = None
-    contract: Optional[Decimal] = None
-    fact: Optional[Decimal] = None
-    paid: Optional[Decimal] = None
-    effective: Optional[Decimal] = None
-    effective_source: str
-
-
-class PurchaseOutFull(PurchaseOut):
-    contractor_name: Optional[str] = None
-    contractor_inn: Optional[str] = None
-    feo_category_name: Optional[str] = None
-    subsidy_name: Optional[str] = None
-    event_name: Optional[str] = None
-    last_receipt_date: Optional[datetime] = None
-    reimbursement_user_name: Optional[str] = None
-    multi_contractor_label: Optional[str] = None
-    # phase26-m: для рамочных закупок — max_amount договора или SUM(contract_price) всех закупок по нему
-    framework_contract_total: Optional[Decimal] = None
-    # Владелец (2026-09-03): True только для рамочной ГОЛОВЫ договора (см.
-    # app/routers/purchases.py::is_framework_head) — фронт использует это,
-    # чтобы показать блок «Согласование необходимости договора» независимо
-    # от статуса закупки/approval_status (см. CreateOrderView.vue::
-    # showApprovalSection).
-    is_framework_head: bool = False
-    # ПРАВИЛО №6 (2026-09-05): единый расчёт суммы закупки — см. PurchaseAmountsOut.
-    # Optional/None только если вызывающий код не передал amounts_map (защита от
-    # регрессии на путях, которые ещё не переведены — не должно случаться на
-    # GET /api/purchases и GET /api/purchases/{id}, см. _purchase_to_full).
-    amounts: Optional[PurchaseAmountsOut] = None
-
-# Payment
-class PaymentCreate(BaseModel):
-    contract_id: Optional[int] = None
-    purchase_id: Optional[int] = None
-    document_number: Optional[str] = None
-    payment_purpose: Optional[str] = None
-    payment_date: Optional[date] = None
-    amount: Optional[Decimal] = None
-
-class PaymentOut(PaymentCreate):
-    id: int
-    bank_payment_id: Optional[int] = None
-    matched_confirmed: bool = False
-    # Владелец (2026-08-19): «по нашим данным» vs «подтверждено казначейством» —
-    # см. app/models/payment.py::Payment.payment_source/confirmed_by_statement.
-    payment_source: str = "manual"
-    confirmed_by_statement: bool = False
-    # Этап 4/5/7: код расходов и основание платежа (app/services/payment_basis.py) —
-    # проставляются при разнесении через payment_lookup.py::attach; нужны PaymentsBlock.vue
-    # для отображения «Назначение / основание» и «Код расходов» в карточке закупки.
-    expense_code: Optional[str] = None
-    basis_kind: Optional[str] = None
-    basis_number: Optional[str] = None
-    basis_date: Optional[date] = None
-    basis_key: Optional[str] = None
-    basis_label: Optional[str] = None
-    model_config = {"from_attributes": True}
-
-# Product
-class PriceLink(BaseModel):
-    url: str
-    price: Optional[float] = None
-    # Дата сбора цены по ссылке — читается _calc_price_from_links (было мёртвой
-    # веткой: схема раньше отбрасывала поле, хотя парсер уже искал l.get("collected_at")).
-    collected_at: Optional[str] = None
-
-
-# ── Price freshness (владелец, 2026-08-29) ──────────────────────────────────
-# Контракт с фронтом — см. app/services/price_freshness.py::evaluate docstring.
-# Поля/имена менять нельзя без согласования.
-class PriceFreshnessOut(BaseModel):
-    is_stale: bool
-    age_days: Optional[int] = None
-    ttl_days: int
-    base_ttl_days: int
-    reason: str  # 'ok' | 'never' | 'expired' | 'fx'
-    fx_change_pct: Optional[float] = None
-    label: str
-
-class ProductCreate(BaseModel):
-    feo_category_id: Optional[int] = None
-    name: str
-    description: Optional[str] = None
-    description_44fz: Optional[str] = None
-    category: str = Field(..., min_length=1)
-    product_type: Optional[str] = None
-    unit: Optional[str] = None  # Единица измерения (владелец, 2026-09-01)
-    item_kind: Optional[str] = "товар"  # "товар" или "услуга"
-    is_reusable: Optional[bool] = True
-    photo_url: Optional[str] = None
-    photo_link: Optional[str] = None
-    clarification_link: Optional[str] = None
-    is_active: bool = True
-    price: Optional[Decimal] = None
-    price_links: List[PriceLink] = []
-    country_origin: Optional[str] = "РФ"
-
-class ProductOut(ProductCreate):
-    id: int
-    # Override: in the DB old rows may still have category=NULL until the
-    # n1o2p3q4r5s6 backfill migration is applied. ProductCreate enforces
-    # non-empty on input, but responses must tolerate legacy NULLs.
-    category: Optional[str] = None
-    contract_price: Optional[Decimal] = None
-    contract_number: Optional[str] = None
-    contract_date: Optional[date] = None
-    contract_org_id: Optional[int] = None
-    price_shared: bool = False
-    tz_verified_at: Optional[datetime] = None
-    tz_verified_by: Optional[str] = None
-    tz_44fz_verified_at: Optional[datetime] = None
-    tz_44fz_verified_by: Optional[str] = None
-    updated_at: Optional[datetime] = None
-    updated_by: Optional[str] = None
-    import_note: Optional[str] = None
-    # Phase 17.1-08 — photo bytea storage. We expose only metadata here,
-    # never the raw bytes (would bloat API responses to MBs per product).
-    has_photo: bool = False
-    photo_size: Optional[int] = None
-    photo_mime: Optional[str] = None
-    # Актуализация цены (владелец, 2026-08-29)
-    price_updated_at: Optional[datetime] = None
-    price_source: Optional[str] = None
-    price_source_ref: Optional[str] = None
-    price_source_contractor_id: Optional[int] = None
-    price_ttl_days: Optional[int] = None
-    price_freshness: Optional[PriceFreshnessOut] = None
-    model_config = {"from_attributes": True}
-
-    @model_validator(mode='before')
-    @classmethod
-    def _compute_has_photo(cls, data):
-        # Derive `has_photo` from ORM object / dict so callers don't need to
-        # set it manually. Phase 17.1-08 perf: check `photo_size` (cheap scalar)
-        # instead of `photo_data` (bytea — triggers lazy load when deferred on
-        # the list query). `photo_size` is populated whenever bytes are cached
-        # (see _download_and_save_photo / upload_product_photo).
-        try:
-            if hasattr(data, 'photo_size'):
-                has_photo_val = getattr(data, 'photo_size', None) is not None
-                try:
-                    object.__setattr__(data, 'has_photo', has_photo_val)
-                except Exception:
-                    pass
-            elif isinstance(data, dict) and 'has_photo' not in data:
-                data['has_photo'] = (
-                    data.get('photo_size') is not None
-                    or data.get('photo_data') is not None
-                )
-        except Exception:
-            pass
-        return data
-
-class PriceActualizationIn(BaseModel):
-    """Тело POST /api/products/{id}/price-actualization — ручная актуализация цены."""
-    price: Decimal
-    source: str  # 'contract' | 'kp' | 'manual' | 'import' | 'monitoring'
-    source_ref: Optional[str] = None
-    contractor_id: Optional[int] = None
-    collected_at: Optional[str] = None  # ISO date
-    note: Optional[str] = None
-
-
-class ProductPriceHistoryOut(BaseModel):
-    id: int
-    product_id: int
-    price: Optional[Decimal] = None
-    source: Optional[str] = None
-    source_ref: Optional[str] = None
-    contractor_id: Optional[int] = None
-    collected_at: Optional[date] = None
-    note: Optional[str] = None
-    created_by: Optional[int] = None
-    created_at: Optional[datetime] = None
-    model_config = {"from_attributes": True}
-
-
-# Product Summary (сводная по продукции)
-class ProductSummaryItem(BaseModel):
-    purchase_id: int
-    subsidy_name: str
-    org_name: Optional[str] = None
-    org_id: Optional[int] = None
-    region: Optional[str] = None
-    quantity: Optional[Decimal] = None
-    unit: Optional[str] = None
-    unit_price: Optional[Decimal] = None
-    total_price: Optional[Decimal] = None
-    status: Optional[str] = None
-    delivery_date: Optional[date] = None
-    delivery_address: Optional[str] = None
-    procurement_planned_date: Optional[date] = None
-    purchase_method: Optional[str] = None
-
-class ProductSummaryGroup(BaseModel):
-    product_id: int
-    product_name: str
-    category: Optional[str] = None
-    product_type: Optional[str] = None
-    total_quantity: Decimal
-    total_amount: Decimal
-    purchase_count: int
-    items: List[ProductSummaryItem]
-
-# Dashboard
-class DashboardCategory(BaseModel):
-    id: int
-    name: str
-    level: int
-    total_planned: Decimal = Decimal("0")
-    total_confirmed: Decimal = Decimal("0")
-    total_payment: Decimal = Decimal("0")
-    children: List["DashboardCategory"] = []
-
-class DashboardSummary(BaseModel):
-    subsidy_limit: Decimal
-    total_obligations: Decimal
-    total_payments: Decimal
-    remaining: Decimal
-    categories: List[DashboardCategory]
-
-
-# Platform credentials (per-user)
-class PlatformCredentialUpsert(BaseModel):
-    login: str
-    password: Optional[str] = None  # если None — обновить только login
-
-class PlatformCredentialOut(BaseModel):
-    platform: str
-    login: str
-    has_password: bool = True
-
-    model_config = {"from_attributes": True}
-
-
-# Platform publications
-class PublishRequest(BaseModel):
-    platform: str  # fabrikant / roseltorg_rb
-    procedure_type: Optional[str] = None  # roseltorg_rb: request_quotations/...; fabrikant: zp | reduction | price_monitoring
-    proposal_start: Optional[str] = None       # ISO datetime, Фабрикант: начало приёма предложений
-    proposal_end: Optional[str] = None         # ISO datetime, Фабрикант: конец приёма предложений
-    determination_date: Optional[str] = None   # ISO datetime, Фабрикант: определение победителя
-    summing_up_date: Optional[str] = None      # ISO datetime, Фабрикант: подведение итогов
-    okpd2_code: Optional[str] = None           # ОКПД2 для всех позиций закупки (Фабрикант)
-    attach_documents: bool = False             # Фабрикант: прикрепить пакет из 5 документов после публикации
-    no_nmcd: bool = False                      # Фабрикант: опубликовать без НМЦД (nmck=0)
-    # Фабрикант Редукцион — дополнительные поля
-    auction_date_start: Optional[str] = None   # ISO datetime, дата начала редукциона
-    auction_bet_limit_from: Optional[float] = None  # граница ставки от
-    auction_bet_limit_to: Optional[float] = None    # граница ставки до
-
-class PublicationStatusUpdate(BaseModel):
-    status: str             # published / error
-    external_id: Optional[str] = None
-    external_url: Optional[str] = None
-    error_text: Optional[str] = None
-
-class PublicationOut(BaseModel):
-    id: int
-    purchase_id: int
-    platform: str
-    status: str
-    external_id: Optional[str] = None
-    external_url: Optional[str] = None
-    error_text: Optional[str] = None
-    published_at: Optional[datetime] = None
-    created_at: Optional[datetime] = None
-    platform_number: Optional[str] = None
-    platform_state: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-
-
-# ── Commercial Requests ────────────────────────────────────────────────────────
-
-class CommercialRequestRecipientOut(BaseModel):
-    id: int
-    contractor_id: Optional[int] = None
-    contractor_name: Optional[str] = None
-    email: Optional[str] = None
-    status: str
-
-class FreeRecipient(BaseModel):
-    name: Optional[str] = None
-    email: str
-
-class CommercialRequestCreate(BaseModel):
-    purchase_id: int
-    subject: Optional[str] = None
-    intro_text: Optional[str] = None
-    delivery_date: Optional[str] = None
-    recipient_ids: Optional[List[int]] = None
-    free_recipients: Optional[List[FreeRecipient]] = None
-
-class CommercialRequestUpdate(BaseModel):
-    subject: Optional[str] = None
-    intro_text: Optional[str] = None
-    delivery_date: Optional[str] = None
-
-class CommercialRequestStatusUpdate(BaseModel):
-    status: str
-
-class CommercialRequestRecipientStatusUpdate(BaseModel):
-    status: str
-
-class CommercialRequestOut(BaseModel):
-    id: int
-    purchase_id: int
-    subject: Optional[str] = None
-    intro_text: Optional[str] = None
-    delivery_date: Optional[str] = None
-    status: str
-    created_by: Optional[int] = None
-    created_at: Optional[datetime] = None
-    recipients: List[CommercialRequestRecipientOut] = []
-
-
-# ── Commercial Request Offers (владелец, 2026-08-29) — цены, полученные от
-# получателей запроса КП. Принятое предложение актуализирует цену товара. ──
-class CommercialRequestOfferIn(BaseModel):
-    id: Optional[int] = None  # существующий offer при обновлении набора; None → создать
-    recipient_id: Optional[int] = None
-    product_id: Optional[int] = None
-    item_name: Optional[str] = None
-    unit: Optional[str] = None
-    unit_price: Optional[Decimal] = None
-    note: Optional[str] = None
-
-
-class CommercialRequestOfferOut(BaseModel):
-    id: int
-    request_id: int
-    recipient_id: Optional[int] = None
-    product_id: Optional[int] = None
-    item_name: Optional[str] = None
-    unit: Optional[str] = None
-    unit_price: Optional[Decimal] = None
-    is_accepted: bool = False
-    note: Optional[str] = None
-    created_at: Optional[datetime] = None
-    model_config = {"from_attributes": True}
-
-
-# ── Suppliers ──────────────────────────────────────────────────────────────────
-
-class SupplierProductOut(BaseModel):
-    id: int
-    supplier_id: int
-    product_id: Optional[int] = None
-    price_notes: Optional[str] = None
-    source: Optional[str] = None
-
-class SupplierCreate(BaseModel):
-    name: str
-    inn: Optional[str] = None
-    kpp: Optional[str] = None
-    contact: Optional[str] = None
-    phone: Optional[str] = None
-    email: Optional[str] = None
-    notes: Optional[str] = None
-
-class SupplierOut(BaseModel):
-    id: int
-    name: str
-    inn: Optional[str] = None
-    kpp: Optional[str] = None
-    contact: Optional[str] = None
-    phone: Optional[str] = None
-    email: Optional[str] = None
-    notes: Optional[str] = None
-    products: List[SupplierProductOut] = []
-
-class SupplierProductCreate(BaseModel):
-    product_id: Optional[int] = None
-    price_notes: Optional[str] = None
-    source: Optional[str] = None
-
-
-# ── Events (Мероприятия) ──────────────────────────────────────────────────────
-
-class EventCreate(BaseModel):
-    subsidy_id: int
-    name: str
-    is_active: bool = True
-    region: Optional[str] = None
-    date_from: Optional[date] = None
-    date_to: Optional[date] = None
-    order_decree: Optional[str] = None
-    planned_indicators: Optional[str] = None
-    actual_indicators: Optional[str] = None
-    media_link_1: Optional[str] = None
-    media_link_2: Optional[str] = None
-    media_link_3: Optional[str] = None
-
-class EventOut(EventCreate):
-    id: int
-    model_config = {"from_attributes": True}
-
-
-# ── Purchase Approvals (электронное согласование) ─────────────────────────────
-
-class PurchaseApprovalOut(BaseModel):
-    id: int
-    purchase_id: int
-    subsidy_approver_id: Optional[int] = None
-    order_num: int
-    role_name: str
-    approver_full_name: str
-    user_id: Optional[int] = None
-    status: str
-    comment: Optional[str] = None
-    decided_at: Optional[datetime] = None
-    decided_by_user_id: Optional[int] = None
-    decided_by_username: Optional[str] = None
-    created_at: Optional[datetime] = None
-    has_signature: bool = False
-    signature_algorithm: Optional[str] = None
-    model_config = {"from_attributes": True}
-
-class ApprovalDecisionRequest(BaseModel):
-    action: str  # "approve" | "reject"
-    comment: Optional[str] = None
-    sign_electronically: bool = False
-
-# Task (общие задачи, не связанные с закупками)
-class TaskAssigneeOut(BaseModel):
-    user_id: int
-    user_name: Optional[str] = None
-    consent_pending: bool = False
-    model_config = {"from_attributes": True}
-
-class TaskCreate(BaseModel):
-    title: str
-    description: Optional[str] = None
-    priority: str = "medium"
-    due_date: Optional[datetime] = None
-    assignee_ids: List[int] = []
-    category: Optional[str] = None
-    parent_task_id: Optional[int] = None
-    purchase_id: Optional[int] = None
-    import_to_parent: bool = False
-
-class TaskUpdate(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-    status: Optional[str] = None
-    priority: Optional[str] = None
-    due_date: Optional[datetime] = None
-    assignee_ids: Optional[List[int]] = None
-    category: Optional[str] = None
-    purchase_id: Optional[int] = None
-    import_to_parent: Optional[bool] = None
-
-class ReviewCompleteRequest(BaseModel):
-    confirm: bool
-
-class TaskOut(BaseModel):
-    id: int
-    task_number: Optional[int] = None
-    title: str
-    description: Optional[str] = None
-    status: str
-    priority: str
-    due_date: Optional[datetime] = None
-    assignees: List[TaskAssigneeOut] = []
-    # legacy single-assignee fields (for backward compat in frontend)
-    assigned_user_id: Optional[int] = None
-    assigned_user_name: Optional[str] = None
-    created_by_id: Optional[int] = None
-    created_by_name: Optional[str] = None
-    org_id: Optional[int] = None
-    category: Optional[str] = None
-    parent_task_id: Optional[int] = None
-    purchase_id: Optional[int] = None
-    purchase_subject: Optional[str] = None
-    purchase_number: Optional[int] = None
-    purchase_status: Optional[str] = None
-    import_to_parent: bool = False
-    subtask_count: int = 0
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-    last_comment: Optional[str] = None
-    last_comment_user: Optional[str] = None
-    last_comment_at: Optional[datetime] = None
-    comment_count: int = 0
-    needs_my_consent: bool = False
-    unseen_changes_count: int = 0
-    unseen_fields: List[str] = []
-    model_config = {"from_attributes": True}
-
-
-class DismissFieldRequest(BaseModel):
-    field_name: str
-
-# Task Comments
-class TaskCommentCreate(BaseModel):
-    text: str
-
-class TaskCommentOut(BaseModel):
-    id: int
-    task_id: int
-    user_id: int
-    user_name: Optional[str] = None
-    text: str
-    created_at: Optional[datetime] = None
-    model_config = {"from_attributes": True}
-
-
-# ── FeoPlannedItem ──────────────────────────────────────────────────────────
-
-class FeoPlannedItemCreate(BaseModel):
-    feo_category_id: int
-    name: str
-    quantity: Optional[Decimal] = None
-    unit: Optional[str] = None
-    amount: Optional[Decimal] = None
-    # Цена ЗА ЕДИНИЦУ (владелец, 2026-09-02) — см. докстринг FeoPlannedItem.unit_price
-    # (app/models/feo_planned_item.py) и assert_tz_not_over_plan (app/services/
-    # feo_plan.py): задана → amount = quantity × unit_price, план полноценный
-    # (кол-во/цена/сумма проверяются); NULL → amount сама по себе итоговая сумма,
-    # quantity ориентировочное, деление не выполняется.
-    unit_price: Optional[Decimal] = None
-    notes: Optional[str] = None
-    is_active: bool = True
-    # Блок 1 (план zany-fluttering-mountain.md): товар / услуга / работа —
-    # нормализуется normalize_item_type() в app/routers/feo_planned_items.py.
-    item_type: Optional[str] = None
-    # W1b: payment schedule fields
-    payment_mode: str = "one_time"
-    planned_date: Optional[_Date] = None
-    monthly_start_date: Optional[_Date] = None
-    months_count: Optional[int] = None
-    monthly_amount: Optional[Decimal] = None
-    # Владелец (2026-08-12, «закупка сама становится планом»): порядок позиций
-    # внутри категории — настраиваемый на входе (ручное «менять местами»).
-    sort_order: Optional[int] = None
-    # Жалоба владельца (сессия 2026-08-19): дедуп по (категория, имя) в
-    # create_planned_item раньше молча возвращал существующую позицию и терял
-    # введённые пользователем количество/сумму. Теперь дедуп отдаёт 409 с
-    # выбором — этот флаг явно говорит «я осознанно создаю вторую позицию с
-    # тем же именем» (напр. похожий товар с другим нанесением). Дефолт False —
-    # прежнее поведение дедупа (но через 409, а не молча).
-    allow_duplicate_name: bool = False
-    # Происхождение плановой позиции (владелец, 2026-09-01) — ДВЕ НЕЗАВИСИМЫЕ
-    # галочки, не переключатель (см. докстринг миграции
-    # aa1b2c3d4e5f_feo_planned_item_origin.py и модели FeoPlannedItem):
-    # is_feo_breakdown — жёсткая построчная разбивка ФЭО реально есть, покупать
-    # будут именно это; is_internal_plan — в ФЭО была только более широкая
-    # категория (или позиции не было вовсе), состав придумали сами. Менять
-    # может только тот, кто вправе править ФЭО (см. create_planned_item —
-    # тихо игнорирует эти поля без вкладки feo_categories; update_planned_item
-    # уже целиком за require_tab('feo_categories')). model_fields_set-паттерн,
-    # как у item_type: если поле не пришло в PUT-payload — не трогаем (иначе
-    # любой другой PUT этого роутера, не приславший поле явно, молча сбросил
-    # бы уже выставленный признак в False).
-    is_feo_breakdown: bool = False
-    is_internal_plan: bool = False
-
-class FeoPlannedItemOut(FeoPlannedItemCreate):
-    id: int
-    created_at: Optional[datetime] = None
-    # Заведена автоматически (plan_autoassign.py), а не человеком — только
-    # для отображения, НЕ принимается на вход (см. create_planned_item).
-    auto_created: bool = False
-    # Владелец (2026-08-18): «в позициях точно прописано, к чему относятся
-    # данные позиции — товар/услуга/работа... почему не подтягиваются?».
-    # Считаются ТОЛЬКО в GET /feo-planned-items/comparison (см. get_comparison) —
-    # остальные эндпоинты, отдающие FeoPlannedItemOut, оставляют дефолты
-    # (item_type_effective=None, item_type_inherited=False), т.к. у них нет
-    # под рукой связанных purchase_items. Собственный item_type НЕ трогается —
-    # это read-only вычисление, не запись (правило «выбранное не меняется само»).
-    item_type_effective: Optional[str] = None  # свой item_type, иначе унаследованный от закупок, иначе None
-    item_type_inherited: bool = False           # True — item_type_effective взят у связанных purchase_items
-    model_config = {"from_attributes": True}
-
-
-class FeoPlannedItemBulkCreate(BaseModel):
-    """POST /feo-planned-items/bulk — создать несколько плановых позиций (Ур.5)
-    одной атомарной транзакцией (жалоба владельца, сессия 2026-08-17: «Создать в
-    плане закупок» создавала только ОДНУ позицию на всю НМЦД закупки вместо одной
-    позиции на каждый товар). Каждая позиция списка может относиться к своей
-    категории ФЭО (per-item режим) либо все — к одной (общий режим)."""
-    items: List[FeoPlannedItemCreate]
-
-
-class FeoPlannedItemBulkCreateResult(BaseModel):
-    items: List[FeoPlannedItemOut]
-
-
-class FeoStageOut(BaseModel):
-    """Одна стадия жизненного цикла позиции для /feo-planned-items/comparison.
-
-    Порядок стадий строго: feo → plan → purchase → contract → accepted.
-    Стадия попадает в массив, только если у неё есть хоть какие-то данные —
-    см. get_comparison() в feo_planned_items.py.
-    """
-    key: str            # 'feo' | 'plan' | 'purchase' | 'contract' | 'accepted'
-    label: str           # «ФЭО» | «План» | «Что выставляли на закупку» | «Номенклатура подрядчика» | «Приняли»
-    name: Optional[str] = None
-    quantity: Optional[Decimal] = None
-    unit: Optional[str] = None
-    unit_price: Optional[Decimal] = None
-    total: Optional[Decimal] = None
-
-
-class FeoActualItemOut(BaseModel):
-    """Фактическая позиция — purchase_item, связанный с feo_category через purchase."""
-    purchase_item_id: int
-    item_name: str
-    quantity: Optional[Decimal] = None
-    unit: Optional[str] = None
-    unit_price: Optional[Decimal] = None
-    total_price: Optional[Decimal] = None
-    feo_planned_item_id: Optional[int] = None  # если сопоставлено
-    purchase_id: int
-    purchase_number: Optional[int] = None
-    registry_number: Optional[str] = None
-    purchase_status: Optional[str] = None
-    wish_id: Optional[int] = None  # заявка, из которой заведена закупка (пусто — закупка заведена напрямую)
-    contract_number: Optional[str] = None
-    contractor_name: Optional[str] = None
-    product_photo: Optional[str] = None
-    # Требование владельца (2026-08-05): факт появляется с «Заказано», уточняется закрывающими
-    # документами при «Поставлено»/«Оплачено». См. get_comparison() в feo_planned_items.py.
-    final_unit_price: Optional[Decimal] = None   # позиция: цена по закрывающему документу
-    final_total: Optional[Decimal] = None        # позиция: сумма по закрывающему документу
-    acceptance_doc_amount: Optional[Decimal] = None  # закупка: сумма акта приёмки
-    contract_price: Optional[Decimal] = None         # закупка: цена по договору
-    purchase_items_count: Optional[int] = None       # всего позиций в этой закупке (для распределения)
-    fact_amount: Optional[Decimal] = None             # вычисленная фактическая сумма (см. правила выше)
-    fact_confirmed: bool = False                      # True — подтверждено актом приёмки (delivered/paid)
-    fact_allocated: bool = False                       # True — сумма распределена пропорционально между позициями
-    over_plan: bool = False                            # позиция «сверх плана» (не расходует лимит своего элемента)
-    # Стадия «Приняли» — см. FeoStageOut / accepted stage
-    accepted_name: Optional[str] = None
-    accepted_quantity: Optional[Decimal] = None
-    accepted_unit: Optional[str] = None
-    stages: list[FeoStageOut] = []  # цепочка стадий feo→plan→purchase→contract→accepted, только заполненные
-    model_config = {"from_attributes": True}
-
-
-class FeoComparisonOut(BaseModel):
-    planned: list[FeoPlannedItemOut]
-    actual: list[FeoActualItemOut]
-
-
-# Budget History
-class BudgetHistoryItemOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    entity_type: str
-    purchase_id: Optional[int] = None
-    old_value: Optional[float] = None
-    new_value: Optional[float] = None
-    changed_by_name: Optional[str] = None
-    reason: Optional[str] = None
-
-
-# ---------------------------------------------------------------------------
-# Phase 17 Plan 05: permission matrix + per-user overrides schemas
-# ---------------------------------------------------------------------------
-
-class PermissionTabOut(BaseModel):
-    tab_key: str
-    title: str
-    model_config = ConfigDict(from_attributes=True)
-
-
-class PermissionActionOut(BaseModel):
-    action_key: str
-    description: Optional[str] = None
-    model_config = ConfigDict(from_attributes=True)
-
-
-class RolePermissionOut(BaseModel):
-    role_name: str
-    key: str
-    granted: bool
-    model_config = ConfigDict(from_attributes=True)
-
-
-class RoleMatrixRow(BaseModel):
-    role_name: str
-    tabs: List[str]        # tab_keys where granted=True
-    actions: List[str]     # action_keys where granted=True
-
-
-class PermissionUpdate(BaseModel):
-    key: str
-    granted: bool
-
-
-class RoleUpdate(BaseModel):
-    role: str
-
-
-class OverrideOut(BaseModel):
-    key: str
-    granted: bool
-    model_config = ConfigDict(from_attributes=True)
-    changed_at: Optional[datetime] = None
-
-
-# ── Phase 21: purchase receipts ──────────────────────────────────────────────
-class ReceiptItemIn(BaseModel):
-    name: str
-    quantity: Optional[Decimal] = Decimal('1')
-    price: Optional[Decimal] = None   # ₽ already
-    sum: Optional[Decimal] = None     # ₽ already
-    nds: Optional[int] = None
-
-
-class ReceiptCreate(BaseModel):
-    fiscal_drive_number: Optional[str] = None
-    fiscal_document_number: Optional[int] = None
-    fiscal_sign: Optional[str] = None
-    kkt_reg_id: Optional[str] = None
-    receipt_datetime: Optional[datetime] = None
-    total_sum: Optional[Decimal] = None
-    cash_sum: Optional[Decimal] = None
-    ecash_sum: Optional[Decimal] = None
-    prepaid_sum: Optional[Decimal] = None
-    nds_sum: Optional[Decimal] = None
-    seller_name: Optional[str] = None
-    seller_inn: Optional[str] = None
-    retail_place: Optional[str] = None
-    retail_place_address: Optional[str] = None
-    operator: Optional[str] = None
-    operator_inn: Optional[str] = None
-    taxation_type: Optional[int] = None
-    source: Optional[str] = 'manual'
-    items: Optional[List[ReceiptItemIn]] = None
-
-
-class ReceiptOut(BaseModel):
-    id: int
-    purchase_id: int
-    fiscal_drive_number: Optional[str] = None
-    fiscal_document_number: Optional[int] = None
-    fiscal_sign: Optional[str] = None
-    kkt_reg_id: Optional[str] = None
-    receipt_datetime: Optional[datetime] = None
-    total_sum: Optional[Decimal] = None
-    cash_sum: Optional[Decimal] = None
-    ecash_sum: Optional[Decimal] = None
-    nds_sum: Optional[Decimal] = None
-    seller_name: Optional[str] = None
-    seller_inn: Optional[str] = None
-    retail_place: Optional[str] = None
-    retail_place_address: Optional[str] = None
-    operator: Optional[str] = None
-    operator_inn: Optional[str] = None
-    taxation_type: Optional[int] = None
-    source: Optional[str] = None
-    created_at: Optional[datetime] = None
-    model_config = ConfigDict(from_attributes=True)
-
-
-# ---------------------------------------------------------------------------
-# Phase 22 — Bank Statements
-# ---------------------------------------------------------------------------
-
-class BankStatementImportOut(BaseModel):
-    id: int
-    uploaded_by_id: Optional[int] = None
-    org_id: Optional[int] = None
-    uploaded_at: Optional[datetime] = None
-    file_name: Optional[str] = None
-    sheet_name: Optional[str] = None
-    rows_total: int = 0
-    rows_imported: int = 0
-    rows_skipped: int = 0
-    rows_matched: int = 0
-    rows_unmatched: int = 0
-    rows_dup: int = 0
-    rows_no_subsidy: int = 0
-    status: str = "processing"
-    error_message: Optional[str] = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class BankPaymentOut(BaseModel):
-    id: int
-    import_id: Optional[int] = None
-    org_id: Optional[int] = None
-    subsidy_id: Optional[int] = None
-    external_doc_id: Optional[str] = None
-    payment_number: Optional[str] = None
-    payment_date: Optional[_Date] = None
-    execution_datetime: Optional[datetime] = None
-    status: Optional[str] = None
-    amount: Optional[Decimal] = None
-    payer_inn: Optional[str] = None
-    payer_name: Optional[str] = None
-    payer_name_resolved: Optional[str] = None  # Phase 22.5: разрешённое имя из Organization/Contractor по ИНН
-    payee_inn: Optional[str] = None
-    payee_name: Optional[str] = None
-    payee_name_resolved: Optional[str] = None  # Phase 22.5: разрешённое имя из Organization/Contractor по ИНН
-    payee_account: Optional[str] = None
-    purpose_text: Optional[str] = None
-    parsed_contract_number: Optional[str] = None
-    parsed_contract_date: Optional[_Date] = None
-    parsed_kbk: Optional[str] = None
-    parsed_documents: Optional[Dict[str, List[Dict]]] = None
-    basis_doc_number: Optional[str] = None
-    basis_doc_date: Optional[_Date] = None
-    basis_doc_text: Optional[str] = None
-    subsidy_code: Optional[str] = None
-    # Этап 3/7: код направления расходования целевых средств (КРЦС) — см.
-    # app/services/payment_basis.py::expense_code; expense_code_name — расшифровка
-    # из справочника expense_codes, простановлена в bank_statements.py::list_bank_payment_registry.
-    expense_code: Optional[str] = None
-    expense_code_name: Optional[str] = None
-    # Этап 7в: «Куда отнесён» — закупки, на которые платёж РЕАЛЬНО разнесён через
-    # Payment(matched_confirmed=true); может быть несколько при allocations-сплите.
-    attached_purchases: Optional[List[Dict]] = None
-    matched_contractor_id: Optional[int] = None
-    matched_contract_id: Optional[int] = None
-    matched_purchase_id: Optional[int] = None
-    matched_subsidy_id: Optional[int] = None
-    matched_confirmed: bool = False
-    # 27.4-23: enriched human-readable значения для колонок «Match: ...»
-    matched_contractor_name: Optional[str] = None
-    matched_subsidy_name: Optional[str] = None
-    matched_contract_number: Optional[str] = None
-    matched_contract_subject: Optional[str] = None
-    matched_contract_date: Optional[str] = None
-    matched_purchase_number: Optional[int] = None
-    matched_purchase_item_name: Optional[str] = None
-    matched_purchase_amount: Optional[float] = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class BankPaymentMatchUpdate(BaseModel):
-    contract_id: Optional[int] = None
-    contractor_id: Optional[int] = None
-
-
-class BankPaymentConfirm(BaseModel):
-    purchase_ids: List[int]
-
-
-class ReportConfigCreate(BaseModel):
-    kind: Literal['list', 'pivot', 'dashboard']
-    name: str = Field(..., min_length=1, max_length=255)
-    description: Optional[str] = None
-    config_json: dict = Field(default_factory=dict)
-    parameters_json: list = Field(default_factory=list)
-    is_default: bool = False
-    is_shared: bool = True
-
-
-class ReportConfigUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    config_json: Optional[dict] = None
-    parameters_json: Optional[list] = None
-    is_default: Optional[bool] = None
-    is_shared: Optional[bool] = None
-
-
-class ReportConfigOut(BaseModel):
-    id: int
-    org_id: int
-    kind: str
-    name: str
-    description: Optional[str] = None
-    config_json: dict
-    parameters_json: list
-    created_by_id: Optional[int]
-    created_at: datetime
-    updated_at: datetime
-    is_default: bool
-    is_shared: bool
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-# ---------------------------------------------------------------------------
-# Phase 27.1: contract_items — фактически заказанные позиции по договору
-# ---------------------------------------------------------------------------
-
-class ContractItemBase(BaseModel):
-    source_item_id: Optional[int] = None
-    contract_id: Optional[int] = None
-    product_id: Optional[int] = None
-    name: str
-    quantity: Optional[Decimal] = None
-    unit: Optional[str] = None
-    unit_price: Optional[Decimal] = None
-    total: Optional[Decimal] = None
-    vat_rate: Optional[str] = None  # Phase 27.1.17
-    match_confirmed: bool = True
-
-
-class ContractItemCreate(ContractItemBase):
-    pass
-
-
-class ContractItemUpdate(BaseModel):
-    source_item_id: Optional[int] = None
-    contract_id: Optional[int] = None
-    product_id: Optional[int] = None
-    name: Optional[str] = None
-    quantity: Optional[Decimal] = None
-    unit: Optional[str] = None
-    unit_price: Optional[Decimal] = None
-    total: Optional[Decimal] = None
-    vat_rate: Optional[str] = None  # Phase 27.1.17
-    match_confirmed: Optional[bool] = None
-
-
-class ContractItemOut(ContractItemBase):
-    id: int
-    purchase_id: int
-    source_item_id: Optional[int] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-    model_config = ConfigDict(from_attributes=True)
+from .auth import (
+    LoginRequest,
+    Token,
+    UserCreate,
+    UserUpdate,
+    PermissionsOut,
+    UserOut,
+    OrganizationCreate,
+    OrganizationOut,
+    RegisterRequest,
+)
+from .subsidies import (
+    SubsidyCreate,
+    SubsidyUpdate,
+    SubsidyOut,
+    SubsidyContractorOverrideCreate,
+    SubsidyContractorOverrideOut,
+    ResponsiblePersonCreate,
+    ResponsiblePersonOut,
+    SubsidyApproverCreate,
+    SubsidyApproverOut,
+    FeoCategoryCreate,
+    FeoCategoryOut,
+    FeoCategoryTree,
+)
+from .contracts import (
+    ContractorCreate,
+    ContractorOut,
+    ContractSubsidyOut,
+    ContractCreate,
+    ContractOut,
+    ContractSyncWarnings,
+    ContractUpdateResponse,
+    ContractItemBase,
+    ContractItemCreate,
+    ContractItemUpdate,
+    ContractItemOut,
+)
+from .purchases import (
+    PurchaseItemCreate,
+    PurchaseItemOut,
+    PurchaseFileOut,
+    SubsidyAllocationIn,
+    SubsidyAllocationOut,
+    PurchaseCreate,
+    PurchaseUpdate,
+    FeoMismatchItemOut,
+    PurchaseOut,
+    PurchaseAmountsOut,
+    PurchaseOutFull,
+)
+from .payments import (
+    PaymentCreate,
+    PaymentOut,
+    ReceiptItemIn,
+    ReceiptCreate,
+    ReceiptOut,
+    BankStatementImportOut,
+    BankPaymentOut,
+    BankPaymentMatchUpdate,
+    BankPaymentConfirm,
+)
+from .products import (
+    PriceLink,
+    PriceFreshnessOut,
+    ProductCreate,
+    ProductOut,
+    PriceActualizationIn,
+    ProductPriceHistoryOut,
+    ProductSummaryItem,
+    ProductSummaryGroup,
+    DashboardCategory,
+    DashboardSummary,
+)
+from .marketplace import (
+    PlatformCredentialUpsert,
+    PlatformCredentialOut,
+    PublishRequest,
+    PublicationStatusUpdate,
+    PublicationOut,
+    CommercialRequestRecipientOut,
+    FreeRecipient,
+    CommercialRequestCreate,
+    CommercialRequestUpdate,
+    CommercialRequestStatusUpdate,
+    CommercialRequestRecipientStatusUpdate,
+    CommercialRequestOut,
+    CommercialRequestOfferIn,
+    CommercialRequestOfferOut,
+    SupplierProductOut,
+    SupplierCreate,
+    SupplierOut,
+    SupplierProductCreate,
+)
+from .tasks import (
+    EventCreate,
+    EventOut,
+    PurchaseApprovalOut,
+    ApprovalDecisionRequest,
+    TaskAssigneeOut,
+    TaskCreate,
+    TaskUpdate,
+    ReviewCompleteRequest,
+    TaskOut,
+    DismissFieldRequest,
+    TaskCommentCreate,
+    TaskCommentOut,
+)
+from .feo import (
+    FeoPlannedItemCreate,
+    FeoPlannedItemOut,
+    FeoPlannedItemBulkCreate,
+    FeoPlannedItemBulkCreateResult,
+    FeoStageOut,
+    FeoActualItemOut,
+    FeoComparisonOut,
+    BudgetHistoryItemOut,
+)
+from .permissions import (
+    PermissionTabOut,
+    PermissionActionOut,
+    RolePermissionOut,
+    RoleMatrixRow,
+    PermissionUpdate,
+    RoleUpdate,
+    OverrideOut,
+)
+from .reports import (
+    ReportConfigCreate,
+    ReportConfigUpdate,
+    ReportConfigOut,
+)
+
+__all__ = [
+    "LoginRequest",
+    "Token",
+    "UserCreate",
+    "UserUpdate",
+    "PermissionsOut",
+    "UserOut",
+    "OrganizationCreate",
+    "OrganizationOut",
+    "RegisterRequest",
+    "SubsidyCreate",
+    "SubsidyUpdate",
+    "SubsidyOut",
+    "SubsidyContractorOverrideCreate",
+    "SubsidyContractorOverrideOut",
+    "ResponsiblePersonCreate",
+    "ResponsiblePersonOut",
+    "SubsidyApproverCreate",
+    "SubsidyApproverOut",
+    "FeoCategoryCreate",
+    "FeoCategoryOut",
+    "FeoCategoryTree",
+    "ContractorCreate",
+    "ContractorOut",
+    "ContractSubsidyOut",
+    "ContractCreate",
+    "ContractOut",
+    "ContractSyncWarnings",
+    "ContractUpdateResponse",
+    "ContractItemBase",
+    "ContractItemCreate",
+    "ContractItemUpdate",
+    "ContractItemOut",
+    "PurchaseItemCreate",
+    "PurchaseItemOut",
+    "PurchaseFileOut",
+    "SubsidyAllocationIn",
+    "SubsidyAllocationOut",
+    "PurchaseCreate",
+    "PurchaseUpdate",
+    "FeoMismatchItemOut",
+    "PurchaseOut",
+    "PurchaseAmountsOut",
+    "PurchaseOutFull",
+    "PaymentCreate",
+    "PaymentOut",
+    "ReceiptItemIn",
+    "ReceiptCreate",
+    "ReceiptOut",
+    "BankStatementImportOut",
+    "BankPaymentOut",
+    "BankPaymentMatchUpdate",
+    "BankPaymentConfirm",
+    "PriceLink",
+    "PriceFreshnessOut",
+    "ProductCreate",
+    "ProductOut",
+    "PriceActualizationIn",
+    "ProductPriceHistoryOut",
+    "ProductSummaryItem",
+    "ProductSummaryGroup",
+    "DashboardCategory",
+    "DashboardSummary",
+    "PlatformCredentialUpsert",
+    "PlatformCredentialOut",
+    "PublishRequest",
+    "PublicationStatusUpdate",
+    "PublicationOut",
+    "CommercialRequestRecipientOut",
+    "FreeRecipient",
+    "CommercialRequestCreate",
+    "CommercialRequestUpdate",
+    "CommercialRequestStatusUpdate",
+    "CommercialRequestRecipientStatusUpdate",
+    "CommercialRequestOut",
+    "CommercialRequestOfferIn",
+    "CommercialRequestOfferOut",
+    "SupplierProductOut",
+    "SupplierCreate",
+    "SupplierOut",
+    "SupplierProductCreate",
+    "EventCreate",
+    "EventOut",
+    "PurchaseApprovalOut",
+    "ApprovalDecisionRequest",
+    "TaskAssigneeOut",
+    "TaskCreate",
+    "TaskUpdate",
+    "ReviewCompleteRequest",
+    "TaskOut",
+    "DismissFieldRequest",
+    "TaskCommentCreate",
+    "TaskCommentOut",
+    "FeoPlannedItemCreate",
+    "FeoPlannedItemOut",
+    "FeoPlannedItemBulkCreate",
+    "FeoPlannedItemBulkCreateResult",
+    "FeoStageOut",
+    "FeoActualItemOut",
+    "FeoComparisonOut",
+    "BudgetHistoryItemOut",
+    "PermissionTabOut",
+    "PermissionActionOut",
+    "RolePermissionOut",
+    "RoleMatrixRow",
+    "PermissionUpdate",
+    "RoleUpdate",
+    "OverrideOut",
+    "ReportConfigCreate",
+    "ReportConfigUpdate",
+    "ReportConfigOut",
+]
+
+# Preserve pre-split introspection identity: each schema class now physically
+# lives in a domain submodule, but code (and FastAPI's OpenAPI component
+# naming, which disambiguates same-named classes via __module__) previously
+# saw them all as defined in app.schemas.schemas. Re-stamp __module__ so
+# behavior/output is unchanged for external inspectors (e.g. a same-named but
+# unrelated EventOut in app/routers/purchase_events.py otherwise causes
+# FastAPI to rename components using each class's real submodule).
+for _name in __all__:
+    globals()[_name].__module__ = __name__
+del _name

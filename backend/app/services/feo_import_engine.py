@@ -723,7 +723,21 @@ async def _do_feo_import(
 
                 _pu = plan_unit if plan_unit is not None else feo_unit
 
-                if plan_sum is not None:
+                if plan_sum is not None and plan_sum == ZERO and (plan_qty is None or plan_qty == ZERO):
+                    # Сумма плана прямо равна нулю (не пуста!) и кол-во не задано —
+                    # раньше здесь всё равно подставлялось qty=1, что превращало
+                    # "плана нет" в "план = 0 шт. по цене 0" (видимую, но ложную
+                    # плановую позицию). Ноль — это значение, а не "поле не
+                    # заполнено": плановая позиция по строке не создаётся вовсе,
+                    # категория при этом продолжает создаваться/читаться как обычно
+                    # (см. дальше по циклу — этот блок только про collected_plan).
+                    warnings.append({
+                        "kind": "zero_plan_skipped",
+                        "row": row_num,
+                        "name": lv["name"],
+                        "message": "Сумма плана 0 — плановая позиция не создана",
+                    })
+                elif plan_sum is not None:
                     # Проверяем расхождение
                     if plan_qty is not None and plan_amt is not None and plan_qty != ZERO:
                         calc_ps = (plan_qty * plan_amt).quantize(QUANT)
@@ -1086,6 +1100,7 @@ async def _do_feo_import(
 
             suggestion = None
             suggestion_reason = None
+            suggestion_candidates: list[str] | None = None
             if kind == "needs_mapping":
                 cand_nonum = _canon_path(cand_path, lower=False, yo=False)
                 for np, np_c in _np_nonum:
@@ -1104,6 +1119,32 @@ async def _do_feo_import(
                         if np != cand_path and np_c == cand_yo:
                             suggestion, suggestion_reason = np, "отличается ё/е"
                             break
+                if suggestion is None:
+                    # Уровень вложенности мог измениться (в файле появился/пропал
+                    # промежуточный узел) — тогда полный путь никогда не совпадёт
+                    # ни по одной из трёх канонизаций выше, хотя лист (последний
+                    # сегмент) и корень (первый сегмент) — те же самые. Пример
+                    # боевого случая: «Организация питания / ИРП/Сухпай» (в БД,
+                    # 2 уровня) vs «Организация питания / Питание.../ИРП/Сухпай»
+                    # (в новом файле, 3 уровня). Сопоставляем по (корень, лист);
+                    # предлагаем ТОЛЬКО если кандидат в new_paths ровно один —
+                    # неоднозначность не разрешаем автоматически.
+                    cand_yo2 = _canon_path(cand_path, lower=True, yo=True)
+                    cand_segs = cand_yo2.split(" / ")
+                    if len(cand_segs) >= 2:
+                        cand_root, cand_leaf = cand_segs[0], cand_segs[-1]
+                        _leaf_matches: list[str] = []
+                        for np, np_c in _np_yo:
+                            if np == cand_path:
+                                continue
+                            np_segs = np_c.split(" / ")
+                            if len(np_segs) >= 2 and np_segs[0] == cand_root and np_segs[-1] == cand_leaf:
+                                if np not in _leaf_matches:
+                                    _leaf_matches.append(np)
+                        if len(_leaf_matches) == 1:
+                            suggestion, suggestion_reason = _leaf_matches[0], "отличается уровнем вложенности"
+                        elif len(_leaf_matches) > 1:
+                            suggestion_candidates = _leaf_matches
 
             unmatched.append({
                 "id": cand.id,
@@ -1111,6 +1152,7 @@ async def _do_feo_import(
                 "kind": kind,
                 "suggestion": suggestion,
                 "suggestion_reason": suggestion_reason,
+                "suggestion_candidates": suggestion_candidates,
                 "load": {
                     "purchases": load["purchases"],
                     "purchase_items": load["purchase_items"],

@@ -1,0 +1,139 @@
+{
+  "duplicates_count": 0,
+  "errors": [],
+  "feo_to_create": [
+    {
+      "level": 1,
+      "name": "Обучение",
+      "path": "Обучение"
+    },
+    {
+      "level": 2,
+      "name": "Охрана труда",
+      "path": "Обучение / Охрана труда"
+    },
+    {
+      "level": 1,
+      "name": "Прочее",
+      "path": "Прочее"
+    },
+    {
+      "level": 1,
+      "name": "Снаряжение",
+      "path": "Снаряжение"
+    },
+    {
+      "level": 2,
+      "name": "Одежда",
+      "path": "Снаряжение / Одежда"
+    },
+    {
+      "level": 3,
+      "name": "Кепи",
+      "path": "Снаряжение / Одежда / Кепи"
+    }
+  ],
+  "payments_errors": [],
+  "purchases": [
+    {
+      "contract_number": "Д-001",
+      "contractor": "ООО Поставщик",
+      "duplicate_matches": [],
+      "event_id": null,
+      "event_name": "Форма к слёту",
+      "fact_total": 490000.0,
+      "feo_path": "Снаряжение / Одежда / Кепи",
+      "group_key": "pg:20|Заказ 1 (март)",
+      "items_count": 1,
+      "order_number": "Заказ 1 (март)",
+      "payments_count": 1,
+      "payments_total": 245000.0,
+      "plan_total": 490000.0,
+      "purchase_group": "20",
+      "skipped": false,
+      "status": "paid"
+    },
+    {
+      "contract_number": "Д-002",
+      "contractor": "ИП Сидоров",
+      "duplicate_matches": [],
+      "event_id": null,
+      "event_name": null,
+      "fact_total": 85000.0,
+      "feo_path": "Обучение / Охрана труда",
+      "group_key": "pg:21|",
+      "items_count": 1,
+      "order_number": "",
+      "payments_count": 0,
+      "payments_total": null,
+      "plan_total": 85000.0,
+      "purchase_group": "21",
+      "skipped": false,
+      "status": "work_in_progress"
+    },
+    {
+      "contract_number": "GOLD-001",
+      "contractor": "1111111111",
+      "duplicate_matches": [],
+      "event_id": null,
+      "event_name": null,
+      "fact_total": 100000.0,
+      "feo_path": "Прочее",
+      "group_key": "contract:GOLD-001",
+      "items_count": 1,
+      "order_number": "",
+      "payments_count": 0,
+      "payments_total": null,
+      "plan_total": 100000.0,
+      "purchase_group": "",
+      "skipped": false,
+      "status": "contracted"
+    },
+    {
+      "contract_number": "GOLD-002",
+      "contractor": "1111111111",
+      "duplicate_matches": [],
+      "event_id": null,
+      "event_name": null,
+      "fact_total": 30000.0,
+      "feo_path": "Прочее",
+      "group_key": "contract:GOLD-002",
+      "items_count": 1,
+      "order_number": "",
+      "payments_count": 0,
+      "payments_total": null,
+      "plan_total": 30000.0,
+      "purchase_group": "",
+      "skipped": false,
+      "status": "contracted"
+    },
+    {
+      "contract_number": "GOLD-003",
+      "contractor": "2222222222",
+      "duplicate_matches": [],
+      "event_id": null,
+      "event_name": null,
+      "fact_total": 12500.0,
+      "feo_path": "Прочее",
+      "group_key": "contract:GOLD-003",
+      "items_count": 1,
+      "order_number": "",
+      "payments_count": 0,
+      "payments_total": null,
+      "plan_total": 12500.0,
+      "purchase_group": "",
+      "skipped": false,
+      "status": "contracted"
+    }
+  ],
+  "skipped": 0,
+  "subsidy_has_feo": false,
+  "warnings": [
+    {
+      "message": "Строка 2: мероприятие «Форма к слёту» не найдено среди мероприятий субсидии — закупка создана без привязки. Заведите мероприятие в карточке субсидии (Приложение №3) и привяжите вручную.",
+      "name": "Кепи камуфляж",
+      "row": 2
+    }
+  ],
+  "without_event": 5
+}

@@ -260,9 +260,12 @@ class TestAnnulledStatus:
     def test_is_not_executed(self):
         assert self.rows[0].is_executed is False
 
-    def test_skip_reason_set(self):
-        assert self.rows[0].skip_reason is not None
-        assert "АННУЛИРОВАН" in self.rows[0].skip_reason
+    # test_skip_reason_set удалён: "Этап 1" (commit 350af918) убрал skip_reason
+    # для АННУЛИРОВАН/отклонённых статусов намеренно — строка теперь сохраняется
+    # как есть (is_executed=False, status хранит фактический статус), чтобы
+    # аннулированный платёж было где увидеть; skip_reason больше нигде в
+    # _build_row не выставляется (см. app/services/bank_statement_parser_rows.py
+    # комментарий над блоком "Статус", строки ~340-344).
 
     def test_payment_number_still_parsed(self):
         assert self.rows[0].payment_number == "999"
@@ -271,52 +274,15 @@ class TestAnnulledStatus:
         assert self.rows[0].amount == Decimal("25000")
 
 
-# ---------------------------------------------------------------------------
-# Test 4 — multi-row split: два purpose_text для одной строки
-# ---------------------------------------------------------------------------
-
-class TestMultiRowSplit:
-    """Два столбца 'Расшифровка п/п/Контракт (договор)' → 2 ParsedRow."""
-
-    def setup_method(self):
-        headers = [
-            "Номер документа",
-            "Дата документа",
-            "Статус документа",
-            "Сумма",
-            "ИНН плательщика",
-            # Два столбца с одинаковым именем — multi-split
-            "Расшифровка п/п/Контракт (договор)",
-            "Расшифровка п/п/Контракт (договор)",
-        ]
-        data_row = [
-            "301",
-            date(2026, 4, 1),
-            "ИСПОЛНЕН",
-            100000.0,
-            "7700000001",
-            "ДОГОВОР 11-2026 ОТ 01.02.2026 НДС0.00",
-            "ДОГОВОР 22-2026 ОТ 15.03.2026 НДС0.00",
-        ]
-        self.data = _make_workbook(headers, [data_row])
-        self.sheet_name, self.rows = parse_workbook(self.data)
-
-    def test_returns_two_rows(self):
-        assert len(self.rows) == 2
-
-    def test_same_source_row_hash(self):
-        assert self.rows[0].source_row_hash == self.rows[1].source_row_hash
-
-    def test_different_contract_numbers(self):
-        numbers = {r.parsed_contract_number for r in self.rows}
-        assert "11-2026" in numbers
-        assert "22-2026" in numbers
-
-    def test_both_executed(self):
-        assert all(r.is_executed for r in self.rows)
-
-    def test_both_have_same_amount(self):
-        assert self.rows[0].amount == self.rows[1].amount == Decimal("100000")
+# Test 4 — multi-row split — УДАЛЁН: фича "два purpose_text → 2 ParsedRow"
+# полностью убрана из парсера (см. docstring app/services/bank_statement_parser.py
+# строка 8: "Одна строка xlsx = один платёж по одному договору (multi-row split
+# удалён)"; введена в 33501a76, снята в b8537b65 при разрезании модуля по
+# Правилу №5). Текущий parse_workbook при двух одноимённых колонках
+# "Расшифровка п/п/Контракт (договор)" берёт только первое найденное значение
+# (см. _build_row: "if not row.purpose_text: # берём первое найденное") и
+# возвращает одну ParsedRow, а не две — тест устаревшего поведения удалён
+# целиком, замены не требуется (сценарий больше не поддерживается продуктом).
 
 
 # ---------------------------------------------------------------------------
@@ -334,11 +300,21 @@ class TestParsePurpose:
         assert result["contract_date"] == date(2025, 12, 4)
         assert result["kbk"] == "712ZU7L4002"
 
-    def test_soglashenie_fallback(self):
+    def test_soglashenie_alone_not_used_as_contract_number(self):
+        """СОГЛАШЕНИЕ — это субсидия, а не договор: раньше (до dc204e3d)
+        parse_purpose брал его номер как contract_number, если ДОГОВОР/
+        КОНТРАКТ в тексте не было. Matcher из-за этого путал номер соглашения
+        о субсидии с номером договора. Теперь RX_CONTRACT_PARTS явно
+        пропускает метку "СОГЛАШЕНИЕ" (см.
+        app/services/bank_statement_parser_helpers.py: "СОГЛАШЕНИЕ — это
+        субсидия, не договор; не записываем в parsed_contract_number") —
+        contract_number вообще не выставляется, если в тексте нет
+        ДОГОВОР/КОНТРАКТ/РЕЕСТР ДОК.-ОСН."""
         text = "СОГЛАШЕНИЕ 831-2025-ВСКС ОТ 23.06.2025 НДС0.00"
         result = parse_purpose(text)
-        assert result["contract_number"] == "831-2025-ВСКС"
-        assert result["contract_date"] == date(2025, 6, 23)
+        assert "contract_number" not in result
+        assert "contract_date" not in result
+        assert result.get("vat") == Decimal("0.00")
 
     def test_reestr(self):
         text = "РЕЕСТР ДОК.-ОСН. 655 ОТ 29.12.2025 ЗАКУПКА УСЛУГ."

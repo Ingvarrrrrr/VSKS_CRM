@@ -6,28 +6,50 @@ import pytest
 async def test_publication_requires_action_403_without_override(
     client, auth_headers, test_user, user_org_access, make_role_permission
 ):
-    """User without publication.create in role seed AND no override → 403."""
-    # Ensure no per-user override grants it (default state). Attempt to create a publication.
+    """User without publication.create in role seed AND no override → 403.
+
+    Real route is POST /api/publications/purchases/{purchase_id} (see
+    app/routers/publications.py:51), not /api/publications/ — the purchase
+    doesn't need to exist: require_action('publication.create') runs as a
+    Depends and rejects before the handler body/purchase lookup runs.
+    """
     r = await client.post(
-        "/api/publications/",
+        "/api/publications/purchases/999999",
         headers=auth_headers,
-        json={"title": "Test pub", "content": "body"},  # adjust per actual schema
+        json={"platform": "roseltorg_rb"},
     )
     assert r.status_code == 403
 
+
 @pytest.mark.asyncio
 async def test_publication_granted_via_override_returns_200(
-    client, auth_headers, test_user, user_org_access, make_override
+    client, auth_headers, test_user, user_org_access, make_override, make_purchase, monkeypatch
 ):
-    """User with per-user publication.create override → 200."""
-    await make_override(user_org_access.id, "publication.create", True)
-    r = await client.post(
-        "/api/publications/",
-        headers=auth_headers,
-        json={"title": "Test pub", "content": "body"},
+    """User with per-user publication.create override → 200.
+
+    Publishing schedules a real background call to the marketplace client
+    (app/routers/publications.py:139, _call_roseltorg for platform
+    'roseltorg_rb') which the ASGI test client actually runs inline — mock it
+    out so the test never touches a real trading-platform API (see
+    services/publications_fabrikant_client / _roseltorg_client; same rule as
+    for Фабрикант — no live calls from tests).
+    """
+    async def _fake_call_roseltorg(pub_id, payload):
+        return None
+
+    monkeypatch.setattr(
+        "app.routers.publications._call_roseltorg", _fake_call_roseltorg
     )
-    # Accept any non-403 success code; endpoint may return 201 or 200
-    assert r.status_code in (200, 201, 422)  # 422 if schema differs — still not 403 (auth passed)
+
+    await make_override(user_org_access.id, "publication.create", True)
+    purchase = await make_purchase()
+    r = await client.post(
+        f"/api/publications/purchases/{purchase.id}",
+        headers=auth_headers,
+        json={"platform": "roseltorg_rb"},
+    )
+    assert r.status_code in (200, 201)
+
 
 @pytest.mark.asyncio
 async def test_publications_router_has_no_inline_can_publish():

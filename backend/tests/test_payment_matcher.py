@@ -41,10 +41,12 @@ def _uid() -> str:
 
 @pytest_asyncio.fixture
 async def contractor(db_session):
-    """Contractor с фиксированным ИНН 2315176820."""
+    """Contractor с уникальным на прогон ИНН (contractors.inn уникален в общей БД —
+    фиксированный '2315176820' коллизирует с накопленными за прошлые прогоны
+    строками и падает UniqueViolationError; см. отчёт по долгу тестов)."""
     c = Contractor(
         name=f"ТестКонтрагент-{_uid()}",
-        inn="2315176820",
+        inn=f"77{uuid.uuid4().int % 10**8:08d}",
     )
     db_session.add(c)
     await db_session.commit()
@@ -80,12 +82,13 @@ async def import_run(db_session):
 
 
 @pytest_asyncio.fixture
-async def bank_payment(db_session, import_run):
-    """BankPayment без матча (payee_inn + parsed_contract_number выставлены)."""
+async def bank_payment(db_session, import_run, contractor):
+    """BankPayment без матча (payee_inn = ИНН тестового contractor, чтобы
+    auto_match находил именно его; parsed_contract_number выставлен)."""
     bp = BankPayment(
         import_id=import_run.id,
         payment_number=f"ПП-{_uid()}",
-        payee_inn="2315176820",
+        payee_inn=contractor.inn,
         parsed_contract_number="11-26-1",
         amount=Decimal("100000.00"),
     )
@@ -117,9 +120,14 @@ async def purchase_delivered(db_session, contract):
 
 @pytest.mark.asyncio
 async def test_auto_match_by_inn(db_session, contractor, bank_payment):
-    """После auto_match bp.matched_contractor_id должен стать равен contractor.id."""
-    result = await auto_match(db_session, bank_payment)
-    assert result["contractor"] is not None
+    """После auto_match bp.matched_contractor_id должен стать равен contractor.id.
+
+    auto_match(bp, db) заполняет bp in-place и не возвращает dict (сигнатура
+    была изменена, тест раньше вызывал auto_match(db_session, bank_payment) с
+    перепутанным порядком аргументов и читал несуществующий result[...] —
+    см. app/services/payment_matcher.py:111 и реальные вызовы в
+    app/routers/bank_statements_imports.py:196)."""
+    await auto_match(bank_payment, db_session)
     assert bank_payment.matched_contractor_id == contractor.id
 
 
@@ -129,9 +137,11 @@ async def test_auto_match_by_inn(db_session, contractor, bank_payment):
 
 @pytest.mark.asyncio
 async def test_auto_match_contract_by_number(db_session, contractor, contract, bank_payment):
-    """После auto_match bp.matched_contract_id должен быть != None."""
-    result = await auto_match(db_session, bank_payment)
-    assert result["contract"] is not None
+    """После auto_match bp.matched_contract_id должен быть != None.
+
+    Тот же порядок аргументов/return-dict fix, что и в test_auto_match_by_inn
+    выше (одинаковый устаревший вызов auto_match)."""
+    await auto_match(bank_payment, db_session)
     assert bank_payment.matched_contract_id == contract.id
 
 

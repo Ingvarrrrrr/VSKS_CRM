@@ -204,11 +204,18 @@ async def test_approve_distribution_rollback_on_failure(
     ALL purchases are rolled back and wish.status remains unchanged.
     """
     w = await _seed_wish_with_mixed_items(db_session, test_org, test_user)
+    # Capture subsidy_id now: client shares db_session (get_db override), and
+    # the endpoint's own `except: await db.rollback()` on that SAME session
+    # (app/routers/wish_convert.py:503) expires every attribute on `w` as a
+    # side effect of the request below — touching w.subsidy_id afterwards as
+    # a bare sync attribute triggers an implicit lazy-load that needs an
+    # awaited greenlet context and raises sqlalchemy.exc.MissingGreenlet.
+    wish_subsidy_id = w.subsidy_id
 
     # Baseline: count existing purchases associated with this wish's subsidy (None)
     before_count = await db_session.scalar(
         select(func.count()).select_from(Purchase).where(
-            Purchase.subsidy_id == w.subsidy_id
+            Purchase.subsidy_id == wish_subsidy_id
         )
     ) or 0
 
@@ -238,11 +245,12 @@ async def test_approve_distribution_rollback_on_failure(
     ), f"Expected rollback/induced-failure in message, got: {detail!r}"
 
     # CRITICAL: zero new purchases must have leaked to DB
-    # Expire session cache to force fresh reads from DB
+    # Expire session cache to force fresh reads from DB (wish_subsidy_id was
+    # already captured above, before the request expired w — see comment there).
     await db_session.rollback()
     after_count = await db_session.scalar(
         select(func.count()).select_from(Purchase).where(
-            Purchase.subsidy_id == w.subsidy_id
+            Purchase.subsidy_id == wish_subsidy_id
         )
     ) or 0
     assert after_count == before_count, (

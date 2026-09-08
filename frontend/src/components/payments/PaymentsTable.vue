@@ -329,7 +329,7 @@
 
     <!-- Actions -->
     <template #item.actions="{ item }">
-      <div class="d-flex gap-1 align-center">
+      <div class="d-flex align-center">
         <!-- Confirm button (only if matched) -->
         <v-btn
           v-if="can(ACTIONS.PAYMENT_CONFIRM!)"
@@ -377,10 +377,10 @@
       <tr>
         <td :colspan="columns.length" class="pa-0">
           <div class="pa-3 bg-grey-lighten-5">
-            <div class="d-flex flex-wrap gap-x-8 gap-y-1 text-body-2 mb-2">
+            <div class="d-flex flex-wrap text-body-2 mb-2">
               <span><b>Назначение платежа:</b> {{ item.purpose_text || '—' }}</span>
             </div>
-            <div class="d-flex flex-wrap gap-x-8 gap-y-1 text-caption text-medium-emphasis">
+            <div class="d-flex flex-wrap text-caption text-medium-emphasis">
               <span v-if="item.kbk"><b>КБК:</b> {{ item.kbk }}</span>
               <span v-if="item.payer_kpp"><b>КПП плательщика:</b> {{ item.payer_kpp }}</span>
               <span v-if="item.payee_kpp"><b>КПП получателя:</b> {{ item.payee_kpp }}</span>

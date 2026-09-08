@@ -55,7 +55,6 @@ export const STATE_COLOR: Record<string, string> = {
 // в frontend/src/utils/vehicleLabels.ts (единый источник, коды не меняются).
 export const typeOptions = VEHICLE_TYPE_OPTIONS
 export const stateOptions = Object.entries(STATE_LABEL).map(([value, label]) => ({ value, label }))
-export const fuelTypeOptions = Object.entries(FUEL_TYPE_LABEL).map(([value, label]) => ({ value, label }))
 
 // Полный список типов топлива для select в карточке ТС (Phase 29.3)
 export const fuelTypeSelectItems = [

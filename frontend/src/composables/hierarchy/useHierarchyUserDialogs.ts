@@ -17,32 +17,6 @@ export function useHierarchyUserDialogs(opts: HierarchyUserDialogsOptions) {
   // ── User info (должности/оклады по организациям) ────────────────────────────
   const userInfoDialog = ref({ show: false, userId: 0, userName: '', orgs: [] as any[], saving: false })
 
-  async function openUserInfo(userId: number) {
-    try {
-      const [orgsResp, salaryData] = await Promise.all([
-        apiFetch<any>(`/users/${userId}/organizations`),
-        apiFetch<any[]>(`/users/${userId}/salary`).catch(() => []),
-      ])
-      // Merge primary + extra into flat list
-      const allOrgs: any[] = []
-      if (orgsResp.primary) {
-        allOrgs.push({ org_id: orgsResp.primary.id, org_name: orgsResp.primary.name, position: orgsResp.primary.position || '', is_primary: true })
-      }
-      for (const e of (orgsResp.extra || [])) {
-        allOrgs.push({ org_id: e.org_id || e.id, org_name: e.org_name || e.name || '', position: e.position || '', is_primary: false })
-      }
-      // Merge salary data
-      const salaryMap = new Map((salaryData || []).map((s: any) => [s.org_id, s]))
-      for (const o of allOrgs) {
-        const s: any = salaryMap.get(o.org_id) || {}
-        o.salary_amount = s.salary_amount ?? null
-        o.employment_percent = s.employment_percent ?? null
-      }
-      const user = opts.lastGraphData.value?.users.find(u => u.id === userId)
-      userInfoDialog.value = { show: true, userId, userName: user?.full_name || user?.username || '', orgs: allOrgs, saving: false }
-    } catch { opts.onEditUser(userId) }
-  }
-
   async function saveUserOrgSalary(orgId: number) {
     const o = userInfoDialog.value.orgs.find((x: any) => x.org_id === orgId)
     if (!o) return
@@ -121,7 +95,7 @@ export function useHierarchyUserDialogs(opts: HierarchyUserDialogsOptions) {
   }
 
   return {
-    userInfoDialog, openUserInfo, saveUserOrgSalary,
+    userInfoDialog, saveUserOrgSalary,
     copyUserDialog, copyTargetDeptId, copyDeptOptions, startCopyUser, confirmCopyUser,
     deleteUserConfirm, deleteUserNode, confirmDeleteUser,
   }

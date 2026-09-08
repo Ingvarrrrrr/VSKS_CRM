@@ -207,7 +207,7 @@
 // composables/hierarchy/useHierarchyGraph, DnD/связи/авторасстановка) и диалоги (создание/редактирование/
 // удаление организации, отдела, сотрудника) из composables/hierarchy/*. Вся бизнес-логика — в
 // композаблах; здесь только их связывание и разметка.
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 import { useToast, type ToastType } from '@/composables/useToast'
 import type { GraphData } from '@/composables/hierarchy/hierarchyTypes'
@@ -322,20 +322,32 @@ async function onPickColor(color: string) {
 // Слушатели пользовательских событий, которые рендер-функции узлов графа
 // (HierarchyGraphCanvas) диспатчат через document.dispatchEvent — так узлы
 // остаются decoupled от диалогов конкретной View.
+const onHvPickColor = ((e: CustomEvent) => {
+  pickOrgColor(e.detail)
+}) as EventListener
+const onHvCopyUser = ((e: CustomEvent) => {
+  startCopyUser(e.detail)
+}) as EventListener
+// Phase 30 restore: delete org / delete user из иерархии
+const onHvDeleteOrg = ((e: CustomEvent) => {
+  deleteOrgNode(e.detail.id, e.detail.name)
+}) as EventListener
+const onHvDeleteUser = ((e: CustomEvent) => {
+  deleteUserNode(e.detail.id, e.detail.name, e.detail.orgId ?? null)
+}) as EventListener
+
 onMounted(() => {
-  document.addEventListener('hv-pick-color', ((e: CustomEvent) => {
-    pickOrgColor(e.detail)
-  }) as EventListener)
-  document.addEventListener('hv-copy-user', ((e: CustomEvent) => {
-    startCopyUser(e.detail)
-  }) as EventListener)
-  // Phase 30 restore: delete org / delete user из иерархии
-  document.addEventListener('hv-delete-org', ((e: CustomEvent) => {
-    deleteOrgNode(e.detail.id, e.detail.name)
-  }) as EventListener)
-  document.addEventListener('hv-delete-user', ((e: CustomEvent) => {
-    deleteUserNode(e.detail.id, e.detail.name, e.detail.orgId ?? null)
-  }) as EventListener)
+  document.addEventListener('hv-pick-color', onHvPickColor)
+  document.addEventListener('hv-copy-user', onHvCopyUser)
+  document.addEventListener('hv-delete-org', onHvDeleteOrg)
+  document.addEventListener('hv-delete-user', onHvDeleteUser)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('hv-pick-color', onHvPickColor)
+  document.removeEventListener('hv-copy-user', onHvCopyUser)
+  document.removeEventListener('hv-delete-org', onHvDeleteOrg)
+  document.removeEventListener('hv-delete-user', onHvDeleteUser)
 })
 
 onMounted(loadGraph)

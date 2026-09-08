@@ -513,17 +513,6 @@ const heroBodyType = computed(() => form.body_type || vehicle.value?.body_type |
 // resolveBodyTypeIcon сам отсеивает пустое значение и NO_DATA_LABEL.
 const heroHasSilhouette = computed(() => !!resolveBodyTypeIcon(heroBodyType.value))
 
-// Не используется в шаблоне (пре-существующий мёртвый код, оставлен как есть —
-// не в рамках этого рефакторинга чинить, см. правило «не исправлять старые дефекты»).
-const heroBgStyle = computed(() => {
-  const color = (vehicle.value as any)?.assigned_org?.color
-    ?? (vehicle.value as any)?.assigned_org_color
-    ?? '#1976d2'
-  return {
-    background: `linear-gradient(135deg, ${color}88 0%, ${color} 100%)`,
-  }
-})
-
 // ─────────────── Error dialog ───────────────
 
 const { errorDialogShow, errorMsg, errorCode, errorCorrelationId } = useVehicleErrorDialog()

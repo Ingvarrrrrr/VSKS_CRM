@@ -68,9 +68,6 @@ export function useStaffDepartments(options: {
     const ms = selectedDept.value.members || []
     return ms.map((m: any) => ({ text: m.name || '?', value: m.user_id }))
   })
-  const memberUserItems = computed(() =>
-    deptMembers.value.map(m => ({ text: m.user_name || '?', value: m.user_id }))
-  )
 
   function openCreateDept() {
     editingDept.value = null
@@ -138,7 +135,7 @@ export function useStaffDepartments(options: {
     deptLoading, deptTree, filteredDeptTree, selectedDept, deptMembers, delegates,
     filterSubsidyId, filterDeptOrgId, filterDeptUserId,
     loadDeptTree, loadDeptMembers, loadDelegates,
-    deptDialog, editingDept, deptForm, otherDeptItems, deptMemberItems, memberUserItems,
+    deptDialog, editingDept, deptForm, otherDeptItems, deptMemberItems,
     openCreateDept, openEditDept, openEditDeptById, saveDept, deleteDept, selectDept,
   }
 }

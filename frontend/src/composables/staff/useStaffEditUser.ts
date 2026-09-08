@@ -303,9 +303,7 @@ export function useStaffEditUser(options: {
     }
 
     // Diagnostic: departments this user heads (head_user_id), for visibility audit.
-    // Also loads managed-orgs from hierarchy endpoint if available.
     editDialog.headedDepts = []
-    editDialog.headedOrgs = []
     try {
       const allDepts = flatDepts(deptTree.value)
       editDialog.headedDepts = allDepts

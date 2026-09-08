@@ -16,7 +16,7 @@
   <!-- Filters -->
   <v-card class="mb-4" variant="outlined" rounded="lg">
     <v-card-text class="py-2 px-3">
-      <div class="d-flex align-center gap-1 mb-2">
+      <div class="d-flex align-center mb-2">
         <v-icon size="16" color="grey">mdi-filter</v-icon>
         <span class="text-caption font-weight-medium text-medium-emphasis">ФИЛЬТРЫ</span>
         <v-spacer />
@@ -40,7 +40,7 @@
           Сбросить
         </v-btn>
       </div>
-      <div class="d-flex flex-wrap gap-2 align-end">
+      <div class="d-flex flex-wrap align-end">
         <v-text-field
           v-model="searchQuery"
           prepend-inner-icon="mdi-magnify"

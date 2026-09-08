@@ -1,5 +1,5 @@
 <template>
-  <div class="d-flex align-center justify-space-between mb-4 flex-wrap gap-2">
+  <div class="d-flex align-center justify-space-between mb-4 flex-wrap">
     <div>
       <h1 class="text-h5 font-weight-bold">
         Реестр платежей

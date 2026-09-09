@@ -22,7 +22,7 @@ from sqlalchemy import select
 from app.models.feo_category import FeoCategory
 from app.models.feo_planned_item import FeoPlannedItem
 from app.services.feo_import_common import (
-    QUANT, ZERO, format_rows, get_cell, level_label, resolve_target_subsidy_id, to_bool, to_dec,
+    QUANT, ZERO, format_rows, get_cell, level_label, resolve_target_subsidy_id, row_feo_money, to_bool, to_dec,
 )
 from app.services.feo_import_common import fmt as _fmt
 from app.services.feo_import_common import norm as _norm
@@ -113,6 +113,13 @@ async def apply_rows(state) -> None:
     skipped = state.skipped
 
     _new_paths_seen: set[str] = set()
+
+    def _row_feo_money(row):
+        """Обёртка над общим `feo_import_common.row_feo_money` с уже
+        известными индексами колонок ЭТОГО импорта (Правило №6 — один
+        источник; используется и продвижением «Плановой позиции» в уровень
+        ниже, и веткой amount_without_level2)."""
+        return row_feo_money(row, c_row_feo_sum, c_feo_sum_lvl2, c_feo_sum_lvl3, c_feo_sum_lvl4, c_budget)
 
     def _check_unit_shift(raw: str | None, row_num: int, name: str, col_label: str) -> str | None:
         """Признак сдвига колонок при импорте ФЭО (задача владельца 2026-08-07,
@@ -294,6 +301,72 @@ async def apply_rows(state) -> None:
             (c_plan_sum_lvl4, f"Сумма плана ({level_label(4)})"),
         ]) or lvl5_name
 
+        # --- Продвижение «Плановой позиции» в уровень (задача владельца
+        # 2026-09-09, план dreamy-booping-piglet.md, задача A, п.2) --------------
+        # Боевой файл «ЦЕНТРПОИСК...xlsx» не всегда пишет название категории в
+        # её «родную» колонку уровня:
+        #   (а) строка-заголовок называет направление/категорию ТОЛЬКО в
+        #       «Плановой позиции», а сама колонка уровня, которой это имя по
+        #       смыслу принадлежит, пуста (строки 2, 3, 9, 24 — «Экипировка» и
+        #       три её ребёнка; 33 — «Транспорт и техника» с Ур.2 пустым, Ур.3
+        #       заполненным тем же текстом; 251 — «Расходные материалы» с ОБОИМИ
+        #       Ур.2/Ур.3 пустыми). Продвигаем имя в БЛИЖАЙШИЙ (не самый
+        #       глубокий — иначе ложный level_gap, см. :525 и далее) размеченный
+        #       (для которого в файле вообще есть колонка) уровень, который для
+        #       ЭТОЙ строки пуст — но ТОЛЬКО когда по строке есть «Сумма по
+        #       ФЭО» (_row_feo_money) — без суммы это просто позиция без
+        #       уровня, ветка ниже (item_promoted_to_level2) уже её обрабатывает.
+        #   (б) строка-заголовок называет направление/категорию И в её родной
+        #       колонке уровня, И (тем же текстом) в «Плановой позиции» —
+        #       размеченных пустых уровней уже нет (строки 186/187 — «Логистика
+        #       и проживание» / «Аренда автотранспортных средств...», 252/257/259
+        #       — дети «Расходных материалов»). Это не отдельная позиция, а
+        #       итоговая сумма для уже заполненного уровня — «Плановую позицию»
+        #       очищаем так же, чтобы её сумма отправилась в cat.budget этого
+        #       уровня обычным путём (см. блок «плоские числа», :с _deepest_lv),
+        #       а не задвоилась позицией с именем своей же категории.
+        # Настоящие позиции (строка 188: «Аренда Хендей ГрандСтарекс» ≠ имя
+        # категории) сюда не попадают — их «Сумма по ФЭО» становится суммой
+        # ПОЗИЦИИ (см. правку у _deepest_lv в блоке «плоские числа» ниже), а не
+        # бюджетом родителя.
+        if lvl5_name and not lvl5_name.startswith("←"):
+            _level_cols = ((2, c_lvl2), (3, c_lvl3), (4, c_lvl4))
+            _level_vals = {2: lvl2_name, 3: lvl3_name, 4: lvl4_name}
+            _target_level = next(
+                (lvl for lvl, col in _level_cols if col is not None and not _level_vals[lvl]),
+                None,
+            )
+            if _target_level is not None:
+                _promo_money = _row_feo_money(row)
+                if _promo_money is not None:
+                    if _target_level == 2:
+                        lvl2_name = lvl5_name
+                    elif _target_level == 3:
+                        lvl3_name = lvl5_name
+                    else:
+                        lvl4_name = lvl5_name
+                    warnings.append({
+                        "kind": "item_promoted_to_level",
+                        "row": row_num,
+                        "name": lvl5_name,
+                        "message": (
+                            f"Плановая позиция «{lvl5_name}» — по строке указана Сумма по ФЭО "
+                            f"{_fmt(_promo_money)}, но {level_label(_target_level)} не заполнен: "
+                            f"название стало {level_label(_target_level)}"
+                        ),
+                    })
+                    lvl5_name = None
+            else:
+                # Все размеченные уровни уже заняты СВОИМИ именами — «Плановая
+                # позиция» с тем же именем, что и самый глубокий из них, не
+                # отдельная позиция, а строка-итог для него.
+                _deepest_level = max(
+                    (lvl for lvl, col in _level_cols if col is not None and _level_vals[lvl]),
+                    default=None,
+                )
+                if _deepest_level is not None and _norm(_level_vals[_deepest_level]) == _norm(lvl5_name):
+                    lvl5_name = None
+
         # Позиция без уровней → переезжает на Уровень 2 (задача владельца,
         # шаблон 2026-08-14): если Ур.2/3/4 пусты, а «Плановая позиция» заполнена —
         # её название становится направлением (Ур.2), плановая позиция при этом
@@ -321,14 +394,7 @@ async def apply_rows(state) -> None:
             # (плоская «Сумма по ФЭО» и её per-level варианты + легаси
             # «Финансирование») — если что-то есть, называем сумму прямо,
             # а не сваливаем строку в общее "(пустая строка) — нет наименования".
-            _money_hint = None
-            for _mc in (c_row_feo_sum, c_feo_sum_lvl2, c_feo_sum_lvl3, c_feo_sum_lvl4, c_budget):
-                if _mc is None:
-                    continue
-                _mv = to_dec(get_cell(row, _mc))
-                if _mv:
-                    _money_hint = _mv
-                    break
+            _money_hint = _row_feo_money(row)
             if _money_hint is not None:
                 warnings.append({
                     "kind": "amount_without_level2",
@@ -470,14 +536,37 @@ async def apply_rows(state) -> None:
 
         _deepest_lv = next((lv for lv in reversed(_lv) if lv["name"]), None)
 
-        if _deepest_lv is not None and any(v is not None for v in (_row_feo_qty, _row_feo_unit, _row_feo_price, _row_feo_sum)):
+        if _deepest_lv is not None and any(v is not None for v in (_row_feo_qty, _row_feo_unit, _row_feo_price)):
+            # Кол-во/ед./цена по ФЭО строки — как и раньше, безусловно к самому
+            # глубокому заполненному УРОВНЮ (не к позиции): их единственный
+            # потребитель — фолбэк «план категории = feo_qty × feo_amt», когда
+            # у категории нет собственных плановых колонок (см. ветку ниже,
+            # «Старое поведение источника данных»). Наличие «Плановой позиции»
+            # на этой же строке сюда не относится — только «Сумма по ФЭО»
+            # (ниже) имеет разное назначение в зависимости от неё.
             if _deepest_lv["feo_qty"] is None:
                 _deepest_lv["feo_qty"] = _row_feo_qty
             if _deepest_lv["feo_unit"] is None:
                 _deepest_lv["feo_unit"] = _row_feo_unit
             if _deepest_lv["feo_amt"] is None:
                 _deepest_lv["feo_amt"] = _row_feo_price
-            if _deepest_lv["feo_sum"] is None:
+
+        if _row_feo_sum is not None:
+            if lvl5_name and not lvl5_name.startswith("←"):
+                # Задача владельца 2026-09-09 (боевой файл, строка 188: «Аренда
+                # Хендей ГрандСтарекс» под уже занятой категорией «Аренда
+                # автотранспортных средств...», у которой своя Сумма по ФЭО уже
+                # задана отдельной строкой-заголовком, 500 000). «Плановая
+                # позиция» на этом этапе (после блока продвижения выше) заполнена
+                # ТОЛЬКО у настоящих позиций — категория-заголовок или строка
+                # без уровня уже очистили lvl5_name. Раз это настоящая позиция,
+                # «Сумма по ФЭО» строки — её СОБСТВЕННАЯ сумма (жёсткая
+                # расшифровка внутри родителя, is_feo_breakdown=True ниже), а не
+                # бюджет родителя: раньше она безусловно уходила в cat.budget и
+                # затирала итог, заданный строкой-заголовком категории.
+                if item_amount is None:
+                    item_amount = _row_feo_sum
+            elif _deepest_lv is not None and _deepest_lv["feo_sum"] is None:
                 _deepest_lv["feo_sum"] = _row_feo_sum
 
         if any(v is not None for v in (_row_plan_qty, _row_plan_unit, _row_plan_price, _row_plan_sum)):

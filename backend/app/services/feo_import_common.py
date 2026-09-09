@@ -136,7 +136,7 @@ def format_rows(rows, max_parts: int = 10) -> str:
     return f"{word} {text}"
 
 
-_LEVEL_LABELS = {2: "Уровень 2", 3: "Уровень 3", 4: "Уровень 4", 5: "Товар/услуга"}
+_LEVEL_LABELS = {2: "Уровень 2", 3: "Уровень 3", 4: "Уровень 4", 5: "Плановая позиция"}
 
 
 def level_label(level_src: int) -> str:
@@ -147,7 +147,33 @@ def level_label(level_src: int) -> str:
     шаблоне (см. app/routers/feo_import_template.py) колонки называются
     «Уровень 2 (Направление расходов по ФЭО)», «Уровень 3 (Тип расходов по
     ФЭО)», «Уровень 4 (Конкретизированный)» — а самый глубокий уровень данных
-    (level_src=5 во внутреннем разборе строки) пользователю виден как колонка
-    «Товар/услуга», а не как несуществующий «пятый уровень разбивки».
+    (level_src=5 во внутреннем разборе строки) — это колонка «Плановая
+    позиция», а не «Товар/услуга» (это СОСЕДНЯЯ колонка-классификатор,
+    normalize_item_type) — из-за старой подписи владелец не понял
+    предупреждение по строке 248 (задача 2026-09-09, план dreamy-booping-piglet).
     """
     return _LEVEL_LABELS.get(level_src, f"Уровень {level_src}")
+
+
+def row_feo_money(
+    row,
+    c_row_feo_sum: int | None,
+    c_feo_sum_lvl2: int | None,
+    c_feo_sum_lvl3: int | None,
+    c_feo_sum_lvl4: int | None,
+    c_budget: int | None,
+):
+    """Первая ненулевая денежная сумма строки импорта ФЭО среди колонок,
+    которые могли бы её нести: плоская «Сумма по ФЭО», её per-level варианты
+    и легаси «Финансирование» (Правило №6 — единый источник; раньше один и
+    тот же перебор был написан дважды в feo_import_apply.py — в ветке
+    amount_without_level2 и, отдельно, был нужен продвижению «Плановой
+    позиции» в уровень, см. план dreamy-booping-piglet.md, задача A, п.1/2).
+    """
+    for col in (c_row_feo_sum, c_feo_sum_lvl2, c_feo_sum_lvl3, c_feo_sum_lvl4, c_budget):
+        if col is None:
+            continue
+        v = to_dec(get_cell(row, col))
+        if v:
+            return v
+    return None

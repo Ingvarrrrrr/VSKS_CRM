@@ -15,6 +15,7 @@ from sqlalchemy import select
 
 from app.models.feo_category import FeoCategory
 from app.services.feo_import_common import ZERO, format_rows, level_label, fmt as _fmt
+from app.services.subsidy_budget import compute_budget_map
 
 
 async def apply_collected_plan(state) -> None:
@@ -190,6 +191,15 @@ async def apply_collected_plan(state) -> None:
                 _cat_obj.planned_amount = None
 
     # Проверка родитель vs сумма ВСЕХ дочерних узлов (до commit)
+    # Задача владельца 2026-09-09 (план dreamy-booping-piglet.md, задача A,
+    # п.6): раньше сумма прямых детей считалась как `c.budget or ZERO` —
+    # подраздел БЕЗ собственной Суммы по ФЭО (например, категория, у которой
+    # бюджет есть только у ЕЁ детей/внуков) читался как 0 и занижал сумму,
+    # выдавая ложное расхождение. compute_budget_map (Правило №6, единственная
+    # реализация рекурсии «budget = свой, иначе сумма детей» в проекте,
+    # app/services/subsidy_budget.py) считает эту величину правильно —
+    # переиспользуем её, вместо второй копии той же формулы.
+    _budget_map = compute_budget_map(cat_cache.values())
     for parent_id in touched_parents:
         if parent_id not in cat_by_db_id:
             continue
@@ -202,7 +212,15 @@ async def apply_collected_plan(state) -> None:
             c for c in cat_cache.values()
             if c.parent_id == parent_id and c.id is not None
         ]
-        children_sum = sum((c.budget or ZERO) for c in children)
+        if not children:
+            continue
+        children_sum = sum((Decimal(str(_budget_map.get(c.id, 0.0))) for c in children), ZERO)
+        _unset_count = sum(1 for c in children if c.budget is None)
+        if _unset_count == len(children):
+            # Ни один прямой подраздел не получил СВОЕЙ Суммы по ФЭО (ни
+            # напрямую, ни через своих детей) — сравнивать не с чем, это не
+            # расхождение, а просто ещё не заполненные данные; не шумим.
+            continue
         if abs(parent_budget - children_sum) > Decimal("0.01"):
             # Задача владельца 2026-09-09: назвать строки файла по обе стороны
             # сравнения — откуда взят бюджет раздела и откуда взята сумма его
@@ -216,13 +234,17 @@ async def apply_collected_plan(state) -> None:
             ])
             _parent_row_part = f" ({_parent_rows})" if _parent_rows else ""
             _child_row_part = f" ({_child_rows})" if _child_rows else ""
+            _unset_part = (
+                f"; у {_unset_count} из {len(children)} подразделов Сумма по ФЭО не задана"
+                if _unset_count else ""
+            )
             warnings.append({
                 "kind": "parent_sum_mismatch",
                 "row": None,
                 "name": parent_cat.name,
                 "message": (
                     f"Сумма по ФЭО раздела «{parent_cat.name}» = {_fmt(parent_budget)}{_parent_row_part} ≠ "
-                    f"сумме Сумм по ФЭО его подразделов = {_fmt(children_sum)}{_child_row_part}; "
+                    f"сумме Сумм по ФЭО его подразделов = {_fmt(children_sum)}{_child_row_part}{_unset_part}; "
                     f"победит значение раздела"
                 ),
             })

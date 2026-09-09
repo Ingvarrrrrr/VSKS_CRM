@@ -46,6 +46,8 @@ from app.services.dictionaries import (
     SUBSTATUS_LABELS as _SUBSTATUS_LABELS,
 )
 from app.services.acceptance_docs import derived_scalars as _acceptance_derived_scalars
+from app.services.item_forms import ITEM_FORMS, item_form_for_purchase
+from app.services.item_form_summary import item_form_summary, _fmt_datetime
 
 try:
     from openpyxl import Workbook
@@ -217,6 +219,67 @@ def _get_cell_value(key: str, p: Purchase, ctx: dict):
 
 
 # ---------------------------------------------------------------------------
+# item-forms-accommodation-transport.md, шаг 4: закупки со спец-формой позиции
+# («Проживание»/«Перевозки автобусом», см. app.services.item_forms) получают
+# в экспорте доп. колонки полей формы + колонку с человекочитаемым описанием.
+# Обычные закупки (item_form=None) — колонки не добавляются вовсе, поведение
+# как было (регресс-риск, см. план шаг 5).
+# ---------------------------------------------------------------------------
+
+def _representative_item(p: Purchase):
+    """Позиция закупки для чтения extra_attrs — спец-формы (в текущей модели,
+    см. план item-forms-accommodation-transport.md, раздел «Модель») задаются
+    на закупку целиком, представитель — первая позиция ТЗ."""
+    items = getattr(p, "items", None) or []
+    return items[0] if items else None
+
+
+def _format_form_field(item, field: dict):
+    """Значение одного поля спец-формы для экспорта — подписи те же, что в
+    реестре ITEM_FORMS (Правило №6, единый источник состава полей)."""
+    extra = getattr(item, "extra_attrs", None) if item else None
+    value = (extra or {}).get(field["key"])
+    if value in (None, ""):
+        return ""
+    field_type = field.get("type")
+    if field_type in ("select", "switch"):
+        options = {opt["value"]: opt["label"] for opt in field.get("options", [])}
+        return options.get(value, value)
+    if field_type == "number":
+        try:
+            f = float(value)
+            return int(f) if f == int(f) else f
+        except (TypeError, ValueError):
+            return value
+    if field_type == "datetime":
+        return _fmt_datetime(value)
+    return value
+
+
+def _build_item_form_columns(purchases: list) -> tuple[dict[int, str | None], list[tuple]]:
+    """(item_forms_by_purchase_id, extra_col_defs).
+
+    extra_col_defs — список (col_key, header, item_form, field) для КАЖДОЙ
+    спец-формы, реально встретившейся среди экспортируемых закупок (порядок —
+    как в ITEM_FORMS), плюс финальная колонка "form_summary" (None field), если
+    хотя бы одна закупка со спец-формой попала в выгрузку."""
+    item_forms_by_id = {p.id: item_form_for_purchase(p) for p in purchases}
+    present = {f for f in item_forms_by_id.values() if f}
+    extra_col_defs: list[tuple] = []
+    if not present:
+        return item_forms_by_id, extra_col_defs
+    for form_code, form_def in ITEM_FORMS.items():
+        if form_code not in present:
+            continue
+        for field in form_def["fields"]:
+            col_key = f"{form_code}__{field['key']}"
+            header = f"{form_def['label']}: {field['label']}"
+            extra_col_defs.append((col_key, header, form_code, field))
+    extra_col_defs.append(("form_summary", "Описание позиции (форма)", None, None))
+    return item_forms_by_id, extra_col_defs
+
+
+# ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
@@ -284,11 +347,16 @@ async def export_purchases_to_excel(
         "payment_purposes": payment_purposes,
     }
 
+    # item-forms-accommodation-transport.md, шаг 4: доп. колонки только если
+    # среди выгружаемых закупок есть хоть одна со спец-формой позиции —
+    # иначе набор колонок побайтово тот же, что и раньше.
+    item_forms_by_id, extra_col_defs = _build_item_form_columns(purchases)
+
     wb = Workbook()
     ws = wb.active
     ws.title = "Закупки"
 
-    col_headers = [ALL_EXPORT_COLUMNS[k]["label"] for k in col_keys]
+    col_headers = [ALL_EXPORT_COLUMNS[k]["label"] for k in col_keys] + [c[1] for c in extra_col_defs]
     ws.append(col_headers)
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     for cell in ws[1]:
@@ -304,11 +372,21 @@ async def export_purchases_to_excel(
             row.append(val)
             if val == "" or val is None:
                 empty_counts[k] += 1
+        if extra_col_defs:
+            p_form = item_forms_by_id.get(p.id)
+            rep_item = _representative_item(p) if p_form else None
+            for col_key, _header, form_code, field in extra_col_defs:
+                if col_key == "form_summary":
+                    row.append(item_form_summary(rep_item, p_form) if p_form and rep_item is not None else "")
+                elif p_form == form_code and rep_item is not None:
+                    row.append(_format_form_field(rep_item, field))
+                else:
+                    row.append("")
         ws.append(row)
 
-    for i, key in enumerate(col_keys, 1):
+    for i, header in enumerate(col_headers, 1):
         col_letter = ws.cell(1, i).column_letter
-        ws.column_dimensions[col_letter].width = max(len(col_headers[i - 1]) + 2, 12)
+        ws.column_dimensions[col_letter].width = max(len(header) + 2, 12)
 
     buffer = BytesIO()
     wb.save(buffer)

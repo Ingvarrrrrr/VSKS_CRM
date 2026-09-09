@@ -16,6 +16,8 @@ from app.services.acceptance_docs import (
     derived_scalars as _acceptance_derived_scalars,
     total_amount as _acceptance_total_amount,
 )
+from app.services.item_forms import item_form_for_purchase
+from app.services.item_form_summary import item_form_summary
 
 from .doc_types import CONTRACT_FAMILY_DOC_TYPES, FEO_PATH_UNRESOLVED_LABEL
 from .formatting import (
@@ -297,6 +299,7 @@ def _build_items_list_from_contract_items(p, resolve_photo=None) -> list[dict]:
     «Плановые не равно Договор» (требование владельца).
     """
     items_list: list[dict] = []
+    item_form = item_form_for_purchase(p)
     for idx, ci in enumerate(getattr(p, "contract_items", None) or [], start=1):
         product = getattr(ci, "product", None)
         photo_url = getattr(product, "photo_url", None) if product else None
@@ -315,6 +318,11 @@ def _build_items_list_from_contract_items(p, resolve_photo=None) -> list[dict]:
             # Поля для repair_framework (появятся позже, пока заглушки)
             "code": "",
             "norm_hours": "",
+            # item-forms-accommodation-transport.md, шаг 4: доп. атрибуты
+            # спец-формы и её человекочитаемое описание (Правило №6 —
+            # единственный писатель текста, app.services.item_form_summary).
+            "extra": dict(getattr(ci, "extra_attrs", None) or {}),
+            "form_summary": item_form_summary(ci, item_form),
         })
     return items_list
 
@@ -328,6 +336,7 @@ def _build_items_list_from_purchase_items(p, tz_override_mode=None, resolve_phot
     """
     description_mode = tz_override_mode or getattr(p, "description_mode", None) or "exact"
     items_list: list[dict] = []
+    item_form = item_form_for_purchase(p)
     for idx, (item, qty, total) in enumerate(_merge_identical_items(getattr(p, "items", None) or []), start=1):
         photo_url = item.product.photo_url if item.product else None
         items_list.append({
@@ -348,6 +357,11 @@ def _build_items_list_from_purchase_items(p, tz_override_mode=None, resolve_phot
             # Поля для repair_framework (появятся позже, пока заглушки)
             "code": "",
             "norm_hours": "",
+            # item-forms-accommodation-transport.md, шаг 4: доп. атрибуты
+            # спец-формы и её человекочитаемое описание (Правило №6 —
+            # единственный писатель текста, app.services.item_form_summary).
+            "extra": dict(getattr(item, "extra_attrs", None) or {}),
+            "form_summary": item_form_summary(item, item_form),
         })
     return items_list
 

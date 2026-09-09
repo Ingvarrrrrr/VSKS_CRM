@@ -1,0 +1,175 @@
+{
+  "item_forms": {
+    "accommodation": {
+      "label": "Проживание",
+      "formula": "Итог = цена × (номера или люди, по переключателю) × суток",
+      "fields": [
+        {
+          "key": "room_category",
+          "label": "Категория номера",
+          "type": "text"
+        },
+        {
+          "key": "price_basis",
+          "label": "Цена указана за",
+          "type": "select",
+          "options": [
+            {
+              "value": "room",
+              "label": "Номер"
+            },
+            {
+              "value": "person",
+              "label": "Человека"
+            }
+          ],
+          "default": "room",
+          "hint": "Цена указана за номер в сутки / за человека в сутки"
+        },
+        {
+          "key": "rooms",
+          "label": "Номеров",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "key": "persons",
+          "label": "Человек",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "key": "nights",
+          "label": "Суток",
+          "type": "number",
+          "default": 1
+        }
+      ]
+    },
+    "transport": {
+      "label": "Перевозки автобусом",
+      "formula": "Итог = ставка за час × (часы в работе + часы подачи) — режим «по часам»; либо введённая стоимость рейса — режим «стоимость рейса вручную»",
+      "fields": [
+        {
+          "key": "place_from",
+          "label": "Откуда",
+          "type": "text"
+        },
+        {
+          "key": "place_to",
+          "label": "Куда",
+          "type": "text"
+        },
+        {
+          "key": "persons",
+          "label": "Человек",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "key": "depart_at",
+          "label": "Отправление",
+          "type": "datetime"
+        },
+        {
+          "key": "finish_at",
+          "label": "Окончание",
+          "type": "datetime"
+        },
+        {
+          "key": "work_hours",
+          "label": "Часы в работе",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "key": "supply_hours",
+          "label": "Часы подачи",
+          "type": "number",
+          "default": 2,
+          "hint": "часы подачи, обычно 2"
+        },
+        {
+          "key": "hourly_rate",
+          "label": "Ставка за час",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "key": "cost_mode",
+          "label": "Расчёт стоимости",
+          "type": "switch",
+          "options": [
+            {
+              "value": "hours",
+              "label": "По часам"
+            },
+            {
+              "value": "trip",
+              "label": "Стоимость рейса вручную"
+            }
+          ],
+          "default": "hours",
+          "hint": "«По часам» — ставка × (работа + подача); «Стоимость рейса вручную» — вводится готовая сумма"
+        },
+        {
+          "key": "trip_cost",
+          "label": "Стоимость рейса",
+          "type": "number",
+          "default": 0
+        }
+      ]
+    }
+  },
+  "contract_forms": [
+    {
+      "key": "services",
+      "label": "Услуги",
+      "order": 0
+    },
+    {
+      "key": "services_food",
+      "label": "Услуги — питание",
+      "order": 1
+    },
+    {
+      "key": "services_accommodation",
+      "label": "Проживание",
+      "order": 2
+    },
+    {
+      "key": "services_transport",
+      "label": "Перевозки автобусом",
+      "order": 3
+    },
+    {
+      "key": "goods_single",
+      "label": "Поставка — разовый договор",
+      "order": 4
+    },
+    {
+      "key": "gph_individual",
+      "label": "ГПХ с физ.лицом",
+      "order": 5
+    },
+    {
+      "key": "gph_individual_rid",
+      "label": "ГПХ с физ.лицом, передача прав на РИД",
+      "order": 6
+    },
+    {
+      "key": "repair_vehicle",
+      "label": "Договор на ремонт ТС",
+      "order": 7
+    },
+    {
+      "key": "repair_framework",
+      "label": "Рамочный договор на ремонт ТС",
+      "order": 8
+    }
+  ],
+  "contract_form_to_item_form": {
+    "services_accommodation": "accommodation",
+    "services_transport": "transport"
+  }
+}

@@ -148,6 +148,9 @@ class ContractItemBase(BaseModel):
     total: Optional[Decimal] = None
     vat_rate: Optional[str] = None  # Phase 27.1.17
     match_confirmed: bool = True
+    # item-forms-accommodation-transport.md: копия extra_attrs исходной
+    # purchase_items (см. app/models/contract_item.py).
+    extra_attrs: dict = {}
 
 
 class ContractItemCreate(ContractItemBase):
@@ -165,6 +168,7 @@ class ContractItemUpdate(BaseModel):
     total: Optional[Decimal] = None
     vat_rate: Optional[str] = None  # Phase 27.1.17
     match_confirmed: Optional[bool] = None
+    extra_attrs: Optional[dict] = None
 
 
 class ContractItemOut(ContractItemBase):

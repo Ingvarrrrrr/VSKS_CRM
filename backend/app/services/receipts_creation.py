@@ -23,6 +23,7 @@ from app.models.purchase_item import PurchaseItem
 from app.models.purchase_receipt import PurchaseReceipt
 from app.product_matcher import find_matching_product
 from app.services import acceptance_docs as _acc_docs
+from app.services.item_amounts import line_total
 from app.services.item_contractor import set_item_contractor
 from app.services.receipts_parsing import _items_match_score
 from app.services.receipts_render import _render_receipt_png
@@ -213,7 +214,7 @@ async def _create_receipt_with_items(
         total = it.get('sum')
         if total is None:
             try:
-                total = (qty * Decimal(str(price))).quantize(Decimal('0.01'))
+                total = line_total(qty, price)
             except Exception:
                 total = Decimal('0')
         raw_name = (it.get('name') or f'Позиция {idx}')[:5000]
@@ -291,6 +292,7 @@ async def _create_receipt_with_items(
                     unit=pi.unit or 'шт.',
                     unit_price=pi.unit_price,
                     total=pi.total_price,
+                    extra_attrs=getattr(pi, 'extra_attrs', None) or {},
                     match_confirmed=True,
                 ))
             await db.commit()

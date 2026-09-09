@@ -1,4 +1,5 @@
 from sqlalchemy import Column, Integer, String, ForeignKey, Numeric, Text, Date, Boolean, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -37,6 +38,11 @@ class WishItem(Base):
     # false — позиция расходует план своего конечного элемента ФЭО; true — «сверх плана»,
     # прибавляется к плановой сумме (mirrors purchase_items.over_plan)
     over_plan = Column(Boolean, nullable=False, default=False, server_default=text("FALSE"))
+    # item-forms-accommodation-transport.md: поля спец-формы позиции (mirrors
+    # purchase_items.extra_attrs) — заявка может завести их ДО конвертации,
+    # копируются в PurchaseItem при конвертации/распределении (wish_convert.py,
+    # wish_distribution.py); сама форма выводится из закупки, не из заявки.
+    extra_attrs = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
 
     wish = relationship("Wish", back_populates="items")
     product = relationship("Product", foreign_keys=[product_id])

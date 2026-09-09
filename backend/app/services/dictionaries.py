@@ -52,3 +52,22 @@ SUBSTATUS_LABELS = {
     "contractor_negotiations": "Переговоры с поставщиком",
     "contract_signing":        "Подписание договора",
 }
+
+# Purchase.contract_form (см. app/models/purchase.py) — семь типовых форм
+# договора (+ frontend CreateOrderView.vue::contractFormOptions, который
+# сейчас держит собственную копию подписей; см. GET /api/dictionaries/item-forms
+# и export_dictionaries.py → frontend/src/data/item_forms.json, Правило №6).
+# 'services_accommodation'/'services_transport' — item-forms-accommodation-
+# transport.md (владелец, «Корректировки GALA 7 сентября»): формы позиций
+# «Проживание»/«Перевозки автобусом», см. app/services/item_forms.py.
+CONTRACT_FORM_LABELS = {
+    "services":               "Услуги",
+    "services_food":          "Услуги — питание",
+    "services_accommodation": "Проживание",
+    "services_transport":     "Перевозки автобусом",
+    "goods_single":           "Поставка — разовый договор",
+    "gph_individual":         "ГПХ с физ.лицом",
+    "gph_individual_rid":     "ГПХ с физ.лицом, передача прав на РИД",
+    "repair_vehicle":         "Договор на ремонт ТС",
+    "repair_framework":       "Рамочный договор на ремонт ТС",
+}

@@ -1,4 +1,5 @@
 from sqlalchemy import Boolean, Column, Integer, String, Text, Numeric, ForeignKey, DateTime, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -42,6 +43,10 @@ class ContractItem(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    # item-forms-accommodation-transport.md: копия extra_attrs исходной
+    # purchase_items (mirrors purchase_items.extra_attrs) — «скопировать из
+    # заявки» переносит и её, иначе договор теряет поля спец-формы позиции.
+    extra_attrs = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
 
     purchase = relationship("Purchase", back_populates="contract_items")
     source_item = relationship("PurchaseItem", foreign_keys=[source_item_id])

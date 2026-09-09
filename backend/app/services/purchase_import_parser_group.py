@@ -28,6 +28,7 @@ from app.models.payment import Payment
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.services.item_contractor import set_item_contractor
+from app.services.item_amounts import line_total
 from app.models.subsidy import Subsidy
 from app.routers.events import normalize_event_name
 from app.services.purchase_payments import recompute_purchase_payments
@@ -807,9 +808,7 @@ async def _parse_and_group(
                 continue
             seen_item_keys.add(item_key)
 
-            item_plan_total = pr["plan_total"] or (
-                (pr["plan_qty"] or Decimal(0)) * (pr["plan_unit_price"] or Decimal(0))
-            ) or None
+            item_plan_total = pr["plan_total"] or line_total(pr["plan_qty"], pr["plan_unit_price"]) or None
             pi = PurchaseItem(
                 item_name=pr["item_name"],
                 item_type=pr["item_type"],

@@ -23,6 +23,8 @@ from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_ove
 from app.services.plan_autoassign import auto_assign_planned_items, move_or_detach_planned_item, deactivate_if_orphaned
 from app.services.plan_graph_versions import _create_plan_graph_version
 from app.services.item_contractor import set_item_contractor
+from app.services.item_forms import item_form_for_purchase
+from app.services.item_amounts import apply_item_amounts, line_total
 from app.routers.purchases import _has_purchase_write_access, _recalc_purchase_totals, TZ_FROZEN_STATUSES
 
 router = APIRouter(prefix="/api/purchases", tags=["purchases"])
@@ -78,6 +80,10 @@ class _ItemPatchBody(BaseModel):
     # Шаг 2 «план ≠ факт» (сессия 2026-08-06): осознанный обход заморозки ТЗ —
     # только ADMIN_ROLES, только явным флагом в теле запроса, пишется в EntityChange.
     admin_override: bool = False
+    # item-forms-accommodation-transport.md: поля спец-формы позиции («Проживание»/
+    # «Перевозки», см. app/services/item_forms.py) — None здесь значит «не прислали»
+    # (см. model_fields_set ниже), не «очистить».
+    extra_attrs: Optional[dict] = None
 
 
 @router.patch("/{pid}/items/{item_id}")
@@ -277,7 +283,11 @@ async def patch_purchase_item(
     if _wants_tz_change and not (body.admin_override and current_user.role in ADMIN_ROLES):
         _prospective_qty = body.quantity if _qty_set else it.quantity
         _prospective_price = body.unit_price if _price_set else it.unit_price
-        _prospective_total = (_prospective_qty or Decimal("0")) * (_prospective_price or Decimal("0"))
+        # Гейт «ТЗ не выше плана» — приближение по обычной формуле (qty × price);
+        # спец-формы (item-forms-accommodation-transport.md) производят
+        # quantity/unit_price из extra_attrs только в apply_item_amounts ниже,
+        # до неё точных значений ещё нет — известное ограничение, см. отчёт.
+        _prospective_total = line_total(_prospective_qty, _prospective_price)
         # Владелец (2026-08-17, прод-инцидент РЕЕ-2026-00887): PATCH правит ОДНУ
         # позицию — «братья» (другие строки ЭТОЙ ЖЕ закупки на ту же плановую
         # позицию) лежат в БД, а не в памяти, как у create/PUT. Считаем их сумму
@@ -334,7 +344,7 @@ async def patch_purchase_item(
         if _qty_set or _price_set:
             _new_qty_g = body.quantity if _qty_set else it.quantity
             _new_price_g = body.unit_price if _price_set else it.unit_price
-            _new_item_total = (_new_qty_g or Decimal("0")) * (_new_price_g or Decimal("0"))
+            _new_item_total = line_total(_new_qty_g, _new_price_g)
         else:
             _new_item_total = _old_item_total
         if _new_item_cat_id:
@@ -365,16 +375,22 @@ async def patch_purchase_item(
         if not name:
             raise HTTPException(422, "Название позиции не может быть пустым")
         it.item_name = name
+    _extra_attrs_set = "extra_attrs" in body.model_fields_set
     if _qty_set:
         it.quantity = body.quantity
     if _unit_set:
         it.unit = (body.unit.strip() or None) if body.unit is not None else None
     if _price_set:
         it.unit_price = body.unit_price
-    if _qty_set or _price_set:
-        qty = it.quantity or Decimal("0")
-        price = it.unit_price or Decimal("0")
-        it.total_price = qty * price
+    if _extra_attrs_set:
+        it.extra_attrs = body.extra_attrs or {}
+    if _qty_set or _price_set or _extra_attrs_set:
+        # ПРАВИЛО №6: compute_item_total/apply_item_amounts — единственный
+        # писатель total_price (item-forms-accommodation-transport.md). Для
+        # спец-форм (accommodation/transport) quantity/unit_price ниже
+        # ПЕРЕЗАПИСЫВАЮТСЯ производными от extra_attrs — прямой ввод body.quantity/
+        # unit_price для этих форм не участвует (см. план, раздел «Модель»).
+        apply_item_amounts(it, item_form_for_purchase(p))
         # Снимок плана (Шаг 1 «план ≠ факт»): пока закупка в статусе «План закупок» —
         # правка кол-ва/цены двигает и снимок плана вместе с ТЗ (план ещё формируется).
         # С «Ведётся работа» и далее сюда попасть можно только через admin_override
@@ -691,6 +707,7 @@ async def split_purchase_item(
     _src_needed_date = it.needed_date
     _src_final_unit_price = it.final_unit_price
     _src_planned_unit_price = it.planned_unit_price
+    _src_extra_attrs = it.extra_attrs or {}
 
     # Часть 1 — мутируем исходную строку: id, история (EntityChange), wish_item_id
     # и прочие ссылки сохраняются (правило: «исходная строка сохраняется»).
@@ -718,6 +735,7 @@ async def split_purchase_item(
             unit=_src_unit,
             unit_price=unit_price,
             total_price=part_totals[i],
+            extra_attrs=_src_extra_attrs,
             final_unit_price=_src_final_unit_price,
             final_total=final_totals[i],
             planned_quantity=planned_quantities[i],

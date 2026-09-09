@@ -27,6 +27,8 @@ from app.models.wish_item import WishItem
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.services.item_contractor import set_item_contractor
+from app.services.item_forms import item_form_for_purchase
+from app.services.item_amounts import apply_item_amounts, line_total
 from app.models.purchase_event import PurchaseMember
 from app.models.feo_category import FeoCategory
 from app.routers.purchase_members import _create_assignment_chat_room
@@ -219,6 +221,7 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
                 unit=wi.unit,
                 unit_price=wi.unit_price,
                 total_price=wi.total_price,
+                extra_attrs=getattr(wi, 'extra_attrs', None) or {},  # item-forms-accommodation-transport.md
                 planned_quantity=wi.quantity,
                 planned_unit_price=wi.unit_price,
                 planned_total=wi.total_price,
@@ -627,6 +630,7 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
                 unit=wi.unit,
                 unit_price=wi.unit_price,
                 total_price=wi.total_price,
+                extra_attrs=getattr(wi, 'extra_attrs', None) or {},  # item-forms-accommodation-transport.md
                 # Снимок плана (Шаг 1 «план ≠ факт»): зафиксировать ТЗ заявки как план
                 # позиции ОТДЕЛЬНО от unit_price/total_price (которые дальше могут
                 # мутировать при правке цены по итогам закупки) — дерево ФЭО обязано
@@ -809,13 +813,26 @@ async def _sync_wish_items_to_purchases(wish, db: AsyncSession) -> None:
         )
         pitems = pitems_res.scalars().all()
         changed = False
+        # item-forms-accommodation-transport.md: форма выводится из ЦЕЛЕВОЙ
+        # закупки (p), не из заявки — ОДИН раз на закупку, не на каждую позицию.
+        _item_form_sync = item_form_for_purchase(p)
         for pi in pitems:
             wi = wish_item_map.get(pi.wish_item_id)
             if wi is None:
                 continue
+            pi.extra_attrs = getattr(wi, 'extra_attrs', None) or {}
+            # ПРАВИЛО №6: compute_item_total/apply_item_amounts — единственный
+            # писатель total_price (было `(wi.unit_price or 0) * (wi.quantity or 0)`
+            # инлайн — тот же дубль формулы, что и в purchase_items_edit.py/wishes.py,
+            # см. app/services/item_amounts.py). Для accommodation/transport quantity/
+            # unit_price — производные extra_attrs, wi.quantity/unit_price ниже
+            # используются ТОЛЬКО для обычной формы и для гейта (приближённо).
             _new_qty = wi.quantity
             _new_price = wi.unit_price
-            _new_total = (wi.unit_price or 0) * (wi.quantity or 0)
+            _new_total = apply_item_amounts(pi, _item_form_sync) if _item_form_sync else line_total(_new_qty, _new_price)
+            if _item_form_sync:
+                _new_qty = pi.quantity
+                _new_price = pi.unit_price
             # Шаг 5 «цена ТЗ не выше плановой»: та же позиция, тот же гейт, что и
             # у прямого PATCH — правка через заявку не должна быть лазейкой.
             # over_plan=true — сознательно сверх плана, пропускаем (см. purchases.py).
@@ -831,9 +848,10 @@ async def _sync_wish_items_to_purchases(wish, db: AsyncSession) -> None:
                 )
             pi.item_name = wi.item_name
             pi.unit = wi.unit
-            pi.unit_price = _new_price
-            pi.quantity = _new_qty
-            pi.total_price = _new_total
+            if not _item_form_sync:
+                pi.unit_price = _new_price
+                pi.quantity = _new_qty
+                pi.total_price = _new_total
             # Снимок плана (Шаг 1): позиция ещё НЕ ушла из плана закупок (проверено
             # выше — p.status not in TZ_FROZEN_STATUSES), поэтому правка заявки
             # по-прежнему двигает и «текущую» цену, и зафиксированный план вместе —

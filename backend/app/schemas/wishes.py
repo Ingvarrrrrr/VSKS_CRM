@@ -126,6 +126,9 @@ class WishItemOut(BaseModel):
     needed_date: Optional[date] = None  # W2: дата потребности per-item
     vat_rate: Optional[str] = None  # per-item НДС ставка (mirrors PurchaseItem.vat_rate)
     over_plan: bool = False  # false — расходует план элемента ФЭО; true — сверх плана (mirrors PurchaseItem.over_plan)
+    # item-forms-accommodation-transport.md: поля спец-формы (mirrors PurchaseItem.extra_attrs) —
+    # заявка может завести их до конвертации, форма выводится из закупки, не из заявки.
+    extra_attrs: dict = {}
     # W-diff (2026-08-13): «двойник» позиции в закупке — заполняется ТОЛЬКО в карточке
     # заявки (GET /{wish_id}), в списке (GET /) отсутствует (лишний вес). См. WishItemPurchaseMatch.
     purchase_match: Optional[WishItemPurchaseMatch] = None

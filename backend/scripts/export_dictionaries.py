@@ -44,8 +44,10 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 DICTIONARIES_SRC = BACKEND_DIR / "app" / "services" / "dictionaries.py"
 PURCHASES_SRC = BACKEND_DIR / "app" / "routers" / "purchases.py"
 PERMISSION_SEEDS_SRC = BACKEND_DIR / "app" / "startup" / "permission_seeds.py"
+ITEM_FORMS_SRC = BACKEND_DIR / "app" / "services" / "item_forms.py"
 FRONTEND_DIR = BACKEND_DIR.parent / "frontend"
 OUTPUT_PATH = FRONTEND_DIR / "src" / "data" / "dictionaries.json"
+ITEM_FORMS_OUTPUT_PATH = FRONTEND_DIR / "src" / "data" / "item_forms.json"
 
 DICT_NAMES = [
     "STATUS_LABELS",
@@ -54,6 +56,12 @@ DICT_NAMES = [
     "PURCHASE_METHOD_LABELS",
     "PURCHASE_BASIS_LABELS",
 ]
+
+# item-forms-accommodation-transport.md: CONTRACT_FORM_LABELS живёт в
+# dictionaries.py рядом с остальными словарями закупки — читаем тем же
+# _extract_module_dicts, но отдельно от DICT_NAMES/dictionaries.json, т.к.
+# идёт в свой файл item_forms.json (см. build_item_forms ниже).
+CONTRACT_FORM_DICT_NAME = "CONTRACT_FORM_LABELS"
 
 
 def _parse(path: Path) -> ast.Module:
@@ -249,6 +257,52 @@ def build_dictionaries() -> dict:
     }
 
 
+def build_item_forms() -> dict:
+    """item-forms-accommodation-transport.md: ITEM_FORMS/CONTRACT_FORM_TO_ITEM_FORM
+    (services/item_forms.py) + CONTRACT_FORM_LABELS (services/dictionaries.py) —
+    тот же набор, что отдаёт GET /api/dictionaries/item-forms (см.
+    app/routers/dictionaries.py::get_item_forms), одна структура на бэк и фронт."""
+    item_forms_tree = _parse(ITEM_FORMS_SRC)
+    item_forms = _extract_module_dicts(item_forms_tree, ["ITEM_FORMS"])["ITEM_FORMS"]
+    contract_form_to_item_form = _extract_module_dicts(
+        item_forms_tree, ["CONTRACT_FORM_TO_ITEM_FORM"]
+    )["CONTRACT_FORM_TO_ITEM_FORM"]
+    contract_form_labels = _extract_module_dicts(
+        _parse(DICTIONARIES_SRC), [CONTRACT_FORM_DICT_NAME]
+    )[CONTRACT_FORM_DICT_NAME]
+    return {
+        "item_forms": item_forms,
+        "contract_forms": [
+            {"key": k, "label": contract_form_labels[k], "order": i}
+            for i, k in enumerate(contract_form_labels)
+        ],
+        "contract_form_to_item_form": contract_form_to_item_form,
+    }
+
+
+def _write_or_check(output_path: Path, data: dict, check_only: bool, sources_desc: str) -> int:
+    serialized = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=False) + "\n"
+
+    if check_only:
+        if not output_path.exists():
+            print(f"[export_dictionaries] {output_path} отсутствует. Запустите: python backend/scripts/export_dictionaries.py")
+            return 1
+        existing = output_path.read_text(encoding="utf-8")
+        if existing != serialized:
+            print(
+                f"[export_dictionaries] {output_path} РАСХОДИТСЯ с источниками "
+                f"({sources_desc}). Запустите: python backend/scripts/export_dictionaries.py — и закоммитьте JSON."
+            )
+            return 1
+        print(f"[export_dictionaries] OK: {output_path.name} в синхроне с источниками")
+        return 0
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(serialized, encoding="utf-8")
+    print(f"[export_dictionaries] записано: {output_path}")
+    return 0
+
+
 def main() -> int:
     check_only = "--check" in sys.argv[1:]
 
@@ -264,30 +318,18 @@ def main() -> int:
     try:
         data = build_dictionaries()
     except Exception as exc:  # noqa: BLE001 — CI-скрипт, нужен читаемый вывод
-        print(f"[export_dictionaries] ошибка разбора источников: {exc}")
+        print(f"[export_dictionaries] ошибка разбора источников (dictionaries.json): {exc}")
         return 1
 
-    serialized = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=False) + "\n"
+    try:
+        item_forms_data = build_item_forms()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[export_dictionaries] ошибка разбора источников (item_forms.json): {exc}")
+        return 1
 
-    if check_only:
-        if not OUTPUT_PATH.exists():
-            print(f"[export_dictionaries] {OUTPUT_PATH} отсутствует. Запустите: python backend/scripts/export_dictionaries.py")
-            return 1
-        existing = OUTPUT_PATH.read_text(encoding="utf-8")
-        if existing != serialized:
-            print(
-                f"[export_dictionaries] {OUTPUT_PATH} РАСХОДИТСЯ с источниками "
-                f"(dictionaries.py/purchases.py/permission_seeds.py). "
-                f"Запустите: python backend/scripts/export_dictionaries.py — и закоммитьте JSON."
-            )
-            return 1
-        print("[export_dictionaries] OK: dictionaries.json в синхроне с источниками")
-        return 0
-
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_PATH.write_text(serialized, encoding="utf-8")
-    print(f"[export_dictionaries] записано: {OUTPUT_PATH}")
-    return 0
+    rc1 = _write_or_check(OUTPUT_PATH, data, check_only, "dictionaries.py/purchases.py/permission_seeds.py")
+    rc2 = _write_or_check(ITEM_FORMS_OUTPUT_PATH, item_forms_data, check_only, "item_forms.py/dictionaries.py")
+    return rc1 or rc2
 
 
 if __name__ == "__main__":

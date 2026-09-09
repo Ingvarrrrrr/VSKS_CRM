@@ -351,6 +351,7 @@ async def split_purchase(
                     unit=src_it.unit,
                     unit_price=src_it.unit_price,
                     total_price=src_it.total_price,
+                    extra_attrs=getattr(src_it, 'extra_attrs', None) or {},
                     # Снимок плана (Шаг 1): разбиение закупки на подгруппы — переносим
                     # УЖЕ зафиксированный план исходной позиции, а не текущую цену
                     # (иначе разбиение задним числом «размораживало» бы план). Fallback

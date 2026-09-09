@@ -14,6 +14,8 @@ from io import BytesIO
 from decimal import Decimal
 from fastapi import HTTPException
 
+from app.services.item_amounts import line_total
+
 try:
     from openpyxl import load_workbook
 except ImportError:
@@ -604,7 +606,7 @@ def _smart_import_xlsx_direct(content: bytes, fname: str = '') -> tuple[list[dic
             except Exception:
                 pass
         if total_price is None and unit_price is not None and qty:
-            total_price = unit_price * qty
+            total_price = line_total(qty, unit_price)
         unit_val = _get_cell(row, 'unit')
         unit_raw = str(unit_val).strip() if unit_val else None  # без дефолта — для бэкфилла Product.unit
         unit = unit_raw or 'шт'

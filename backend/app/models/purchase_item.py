@@ -1,4 +1,5 @@
 from sqlalchemy import Boolean, Column, Integer, String, Text, Numeric, ForeignKey, text, Date
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -48,6 +49,11 @@ class PurchaseItem(Base):
     accepted_name = Column(Text, nullable=True)
     accepted_quantity = Column(Numeric(15, 4), nullable=True)
     accepted_unit = Column(String(50), nullable=True)
+    # item-forms-accommodation-transport.md: поля спец-формы позиции («Проживание»/
+    # «Перевозки», см. services/item_forms.py::ITEM_FORMS) — форма выводится из
+    # purchase.contract_form (один источник, см. item_form_for_purchase), сама
+    # позиция item_form не хранит, только эти атрибуты.
+    extra_attrs = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
 
     purchase = relationship("Purchase", back_populates="items")
     product = relationship("Product")

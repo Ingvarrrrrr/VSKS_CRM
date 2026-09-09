@@ -52,6 +52,12 @@ DOC_TYPES = {
     "contract_services_large":      ("contract_services.docx",      "Договор_услуги_крупный"),
     "contract_services_small":      ("contract_services.docx",      "Договор_услуги_малый"),
     "contract_services_food":       ("contract_services_food.docx",       "Договор_услуги_питание"),
+    # item-forms-accommodation-transport.md (владелец, 2026-09-09): «пока таблица
+    # позиций в существующем договоре услуг; свои docx — позже» — файлы ниже НЕ
+    # загружены, DOC_TYPE_FALLBACK_FILES ниже откатывает на contract_services.docx
+    # до тех пор, пока владелец не пришлёт образцы (см. CONTRACT_TYPED_FORM_DOC_TYPES).
+    "contract_services_accommodation": ("contract_services_accommodation.docx", "Договор_услуги_проживание"),
+    "contract_services_transport":     ("contract_services_transport.docx",     "Договор_услуги_перевозки"),
     "methodology_large":             ("methodology_large.docx",            "Методические_рекомендации_большие"),
     "methodology_small":             ("methodology_small.docx",            "Методические_рекомендации_малые"),
     "contract_goods_single":        ("contract_goods_single.docx",        "Договор_поставка_единственный"),
@@ -88,6 +94,8 @@ CONTRACT_FAMILY_DOC_TYPES = {
     "contract_services_large",
     "contract_services_small",
     "contract_services_food",
+    "contract_services_accommodation",
+    "contract_services_transport",
     "contract_goods_single",
     "contract_gph_individual",
     "contract_gph_individual_rid",
@@ -110,6 +118,8 @@ CONTRACT_TYPED_FORM_DOC_TYPES = {
     "contract_services_large",
     "contract_services_small",
     "contract_services_food",
+    "contract_services_accommodation",
+    "contract_services_transport",
     "contract_goods_single",
     "contract_gph_individual",
     "contract_gph_individual_rid",
@@ -133,6 +143,12 @@ DOC_TYPE_FALLBACK_FILES = {
     "contract_services_large":     "contract.docx",
     "contract_services_small":     "contract.docx",
     "contract_services_food":      "contract.docx",
+    # item-forms-accommodation-transport.md: своих шаблонов ещё нет — владелец
+    # (2026-09-09) «пока таблица позиций в существующем договоре услуг» —
+    # откатываемся именно на contract_services.docx, а не на универсальный
+    # contract.docx, как остальные формы этого блока.
+    "contract_services_accommodation": "contract_services.docx",
+    "contract_services_transport":     "contract_services.docx",
     "contract_goods_single":       "contract.docx",
     "contract_gph_individual":     "contract.docx",
     "contract_gph_individual_rid": "contract.docx",
@@ -189,6 +205,8 @@ VAT_RATE_PRINTED_DOC_TYPES = {
     "contract_services_large",
     "contract_services_small",
     "contract_services_food",
+    "contract_services_accommodation",
+    "contract_services_transport",
     "contract_goods_single",
     "contract_repair_framework",
     "tech_spec_contract",

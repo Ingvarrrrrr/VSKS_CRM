@@ -23,6 +23,7 @@ from app.database import get_db
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.product import Product
+from app.services.item_amounts import line_total
 from app.auth.jwt import get_current_user, get_single_org_id
 from app.models.user import User
 from app.services.product_matcher import score as _fuzzy_score, SCORE_AUTO as _SCORE_AUTO
@@ -203,7 +204,7 @@ async def import_items_mapped_nopid(
         unit_raw = _cell(row, col_unit) if col_unit >= 0 else None  # без дефолта — для бэкфилла Product.unit
         unit = unit_raw or 'шт'
         if not total_price and unit_price:
-            total_price = quantity * unit_price
+            total_price = line_total(quantity, unit_price)
         elif not unit_price and total_price and quantity:
             unit_price = total_price / quantity
         vat_str = _cell(row, col_vat) if col_vat >= 0 else None
@@ -469,7 +470,7 @@ async def import_items_mapped(
 
             # Calculate missing values
             if not total_price and unit_price:
-                total_price = quantity * unit_price
+                total_price = line_total(quantity, unit_price)
             elif not unit_price and total_price and quantity:
                 unit_price = total_price / quantity
 
@@ -527,7 +528,7 @@ async def import_items_mapped(
                 matched_catalog += 1
                 if not unit_price and matched_product.price:
                     unit_price = matched_product.price
-                    total_price = quantity * unit_price
+                    total_price = line_total(quantity, unit_price)
                 elif unit_price and isinstance(matched_product, Product):
                     # Цена из файла актуальнее; категория/вид из БД не трогаем (БД главнее)
                     if matched_product.price != unit_price:

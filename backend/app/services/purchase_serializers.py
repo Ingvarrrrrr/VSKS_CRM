@@ -91,6 +91,7 @@ def _item_to_out(
         product_description_44fz=product_description_44fz,
         plan_residual=plan_residual,
         plan_planned_amount=plan_planned_amount,
+        extra_attrs=getattr(item, 'extra_attrs', None) or {},
     )
 
 

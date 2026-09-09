@@ -20,6 +20,7 @@ from app.models.product import Product
 from app.models.purchase_item import PurchaseItem
 from app.auth.jwt import get_single_org_id
 from app.services.product_matcher import score as _fuzzy_score, SCORE_AUTO as _SCORE_AUTO
+from app.services.item_amounts import line_total
 from app.services.feo_plan import assert_tz_not_over_plan
 from app.services.product_unit import backfill_product_unit
 
@@ -120,7 +121,7 @@ async def _save_smart_preview_to_purchase(
                 feo_category_id=getattr(purchase, "feo_category_id", None),
                 quantity=qty,
                 unit_price=unit_price,
-                total_price=total_price if total_price is not None else (qty * unit_price if unit_price else None),
+                total_price=total_price if total_price is not None else (line_total(qty, unit_price) if unit_price else None),
                 item_name=item_name,
             )
         except HTTPException as _tz_exc:
@@ -150,7 +151,7 @@ async def _save_smart_preview_to_purchase(
                 matched_catalog += 1
                 if not unit_price and matched.price:
                     unit_price = matched.price
-                    total_price = qty * unit_price
+                    total_price = line_total(qty, unit_price)
                 if isinstance(matched, Product):
                     await backfill_product_unit(db, matched, import_unit=row_data.get("unit_raw"))
             else:
@@ -163,7 +164,7 @@ async def _save_smart_preview_to_purchase(
                 )
                 new_in_catalog += 1
         if total_price is None and unit_price:
-            total_price = qty * unit_price
+            total_price = line_total(qty, unit_price)
         db.add(PurchaseItem(
             purchase_id=pid, product_id=product_id,
             item_name=item_name, item_type=row_data["item_type"],

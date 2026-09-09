@@ -43,6 +43,8 @@ from app.services import acceptance_docs as _acc_docs
 # в app/services/contract_item_link.py — там же полный диагноз.
 from app.services.contract_item_link import relink_contract_items, build_purchase_item_id_map
 from app.product_matcher import find_matching_product
+from app.services.item_forms import item_form_for_purchase
+from app.services.item_amounts import apply_item_amounts
 from typing import List, Optional
 from pydantic import BaseModel
 from decimal import Decimal
@@ -818,6 +820,14 @@ async def create_purchase(
 
     await _assign_framework_seq(p, db)
 
+    # item-forms-accommodation-transport.md: форма позиций выводится из
+    # p.contract_form (один источник, item_form_for_purchase) — для спец-форм
+    # (accommodation/transport) apply_item_amounts ниже пересчитывает
+    # quantity/unit_price/total_price из extra_attrs и ПОБЕЖДАЕТ то, что
+    # прислал клиент; для обычных позиций (item_form=None) поведение не
+    # меняется — total_price по-прежнему берётся из payload как есть.
+    _item_form_create = item_form_for_purchase(p)
+
     # ПРАВИЛО №6 (группа D5, QA-находка): фронт (PurchaseItemsEditor.vue) кладёт
     # contractor_id/contractor_inn/contractor_name прямо в объект позиции —
     # PurchaseItem(**d) писал их МИМО set_item_contractor, снова заводя текст
@@ -850,6 +860,8 @@ async def create_purchase(
         _d_contractor_inn = d.pop("contractor_inn", None)
         _d_contractor_name = d.pop("contractor_name", None)
         item = PurchaseItem(purchase_id=p.id, **d)
+        if _item_form_create:
+            apply_item_amounts(item, _item_form_create)
         # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
         _d_contractor_obj = _item_contractors_map.get(_d_contractor_id) if _d_contractor_id else None
         if _d_contractor_obj is not None:
@@ -901,6 +913,7 @@ async def create_purchase(
                 country_origin=d.get('country_origin'),
                 product_id=d.get('product_id'),
                 feo_category_id=d.get('feo_category_id'),
+                extra_attrs=d.get('extra_attrs') or {},
             ))
 
     # Save subsidy allocations
@@ -1258,6 +1271,11 @@ async def update_purchase(
         for it in sorted(p.items, key=lambda x: x.id)
     ]
 
+    # item-forms-accommodation-transport.md: p.contract_form уже обновлён setattr-
+    # циклом выше (payload_dict), значит item_form_for_purchase(p) здесь видит
+    # НОВУЮ форму — см. комментарий у create_purchase.
+    _item_form_put = item_form_for_purchase(p)
+
     # Replace items (auto-link to catalog via fuzzy match if product_id missing)
     await db.execute(delete(PurchaseItem).where(PurchaseItem.purchase_id == pid))
     # ПРАВИЛО №6 (группа D5, QA-находка): см. комментарий у create_purchase —
@@ -1290,6 +1308,8 @@ async def update_purchase(
         _d_contractor_inn_put = d.pop("contractor_inn", None)
         _d_contractor_name_put = d.pop("contractor_name", None)
         item = PurchaseItem(purchase_id=pid, **d)
+        if _item_form_put:
+            apply_item_amounts(item, _item_form_put)
         # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
         _d_contractor_obj_put = _item_contractors_map_put.get(_d_contractor_id_put) if _d_contractor_id_put else None
         if _d_contractor_obj_put is not None:
@@ -1428,6 +1448,7 @@ async def update_purchase(
                     country_origin=d.get('country_origin'),
                     product_id=d.get('product_id'),
                     feo_category_id=d.get('feo_category_id'),
+                    extra_attrs=d.get('extra_attrs') or {},
                 ))
 
     # 12-03: Auto-create plan-graph version on status→fact or FEO-linked items

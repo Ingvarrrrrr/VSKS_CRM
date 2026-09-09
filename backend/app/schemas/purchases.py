@@ -39,6 +39,10 @@ class PurchaseItemCreate(BaseModel):
     accepted_name: Optional[str] = None
     accepted_quantity: Optional[Decimal] = None
     accepted_unit: Optional[str] = None
+    # item-forms-accommodation-transport.md: поля спец-формы позиции («Проживание»/
+    # «Перевозки», см. app/services/item_forms.py) — форма выводится из
+    # purchase.contract_form, не хранится на позиции отдельно.
+    extra_attrs: dict = {}
 
 class PurchaseItemOut(PurchaseItemCreate):
     id: int

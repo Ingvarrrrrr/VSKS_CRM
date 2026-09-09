@@ -22,6 +22,7 @@ from app.models.purchase import Purchase
 from app.auth.jwt import get_current_user
 from app.routers.purchases import _has_purchase_write_access
 from app.models.user import User
+from app.services.item_amounts import line_total
 from app.services.items_import_parsing import (
     _try_decode_qr,
     _smart_import_image_ocr,
@@ -255,7 +256,7 @@ async def import_items_smart(
             except Exception:
                 pass
         if total_price is None and unit_price is not None and quantity:
-            total_price = unit_price * (quantity or Decimal("1"))
+            total_price = line_total(quantity or Decimal("1"), unit_price)
         return {
             "item_name": item_name,
             "item_type": item_type,

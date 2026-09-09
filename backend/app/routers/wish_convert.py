@@ -338,6 +338,7 @@ async def convert_wish(
             unit=wi.unit,
             unit_price=wi.unit_price,       # B4: «утверждённая цена» = из WishItem
             total_price=wi.total_price,
+            extra_attrs=getattr(wi, 'extra_attrs', None) or {},  # item-forms-accommodation-transport.md
             country_origin=wi.country_origin,
             feo_category_id=wi.feo_category_id,  # B9: per-item feo
             feo_planned_item_id=wi.feo_planned_item_id,  # расходуем уже запланированную позицию, не задваиваем план

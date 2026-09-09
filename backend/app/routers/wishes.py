@@ -17,6 +17,7 @@ from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.services.feo_plan import assert_tz_not_over_plan
 from app.services.item_contractor import set_item_contractor
+from app.services.item_amounts import line_total
 # _move_or_detach_planned_item/_deactivate_if_orphaned нужны только update_wish
 # (ниже) — остальные хелперы автозаведения плана (_auto_assign_planned_items/
 # _backfill_item_type_from_plan) переехали в app/services/wish_distribution.py
@@ -340,6 +341,7 @@ async def create_wish(
                 unit=item_data.get('unit', 'шт'),
                 unit_price=item_data.get('unit_price', 0),
                 total_price=item_data.get('total_price', 0),
+                extra_attrs=item_data.get('extra_attrs') or {},  # item-forms-accommodation-transport.md
                 country_origin=item_data.get('country_origin', 'РФ'),
                 feo_category_id=item_data.get('feo_category_id'),  # B9
                 feo_planned_item_id=item_data.get('feo_planned_item_id'),  # привязка к плановой позиции плана закупок
@@ -533,6 +535,7 @@ async def update_wish(
                     unit=item_data.get('unit', 'шт'),
                     unit_price=item_data.get('unit_price', 0),
                     total_price=item_data.get('total_price', 0),
+                    extra_attrs=item_data.get('extra_attrs') or {},  # item-forms-accommodation-transport.md
                     country_origin=item_data.get('country_origin', 'РФ'),
                     feo_category_id=item_data.get('feo_category_id'),  # B9
                     feo_planned_item_id=item_data.get('feo_planned_item_id'),  # план закупок ФЭО
@@ -565,10 +568,16 @@ async def update_wish(
                     wi.quantity = item_data['quantity']
                 if 'unit' in item_data:
                     wi.unit = item_data['unit']
+                if 'extra_attrs' in item_data:
+                    wi.extra_attrs = item_data['extra_attrs'] or {}
                 if 'total_price' in item_data:
                     wi.total_price = item_data['total_price']
                 elif 'unit_price' in item_data or 'quantity' in item_data:
-                    wi.total_price = (wi.unit_price or 0) * (wi.quantity or 0)
+                    # ПРАВИЛО №6: то же умножение, что и в purchase_items_edit.py/
+                    # wish_distribution.py — единственный писатель line_total().
+                    # WishItem не привязан к закупке (item_form неизвестен до
+                    # конвертации), поэтому здесь всегда обычная формула.
+                    wi.total_price = line_total(wi.quantity, wi.unit_price)
                 _wi_cat_changing = (
                     'feo_category_id' in item_data
                     and item_data['feo_category_id'] != wi.feo_category_id

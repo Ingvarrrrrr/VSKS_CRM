@@ -34,6 +34,7 @@ from app.database import get_db
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.product import Product
+from app.services.item_amounts import line_total
 from app.auth.jwt import get_current_user, get_single_org_id
 from app.auth.permissions import require_tab
 from app.models.user import User
@@ -315,7 +316,7 @@ async def import_items_excel(
         unit_raw = _cell(row, 'unit')  # без дефолта — для бэкфилла Product.unit
         unit = unit_raw or 'шт'
         unit_price = _to_dec(_cell(row, 'unit_price'))
-        total_price = (quantity * unit_price) if unit_price else None
+        total_price = line_total(quantity, unit_price) if unit_price else None
 
         # Шаг 5 «цена ТЗ не выше плановой» (владелец, 2026-08-07): позиция импорта
         # наследует ФЭО-категорию закупки (feo_planned_item_id импорт не проставляет —
@@ -355,7 +356,7 @@ async def import_items_excel(
             matched_catalog += 1
             if not unit_price and matched_product.price:
                 unit_price = matched_product.price
-                total_price = quantity * unit_price
+                total_price = line_total(quantity, unit_price)
             if isinstance(matched_product, Product):
                 await backfill_product_unit(db, matched_product, import_unit=unit_raw)
         else:

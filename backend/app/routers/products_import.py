@@ -20,6 +20,7 @@ from app.database import get_db
 from app.models.product import Product
 from app.models.user import User
 from app.services.price_actualization import actualize_product_price
+from app.services.item_amounts import line_total
 from app.services.product_unit import backfill_product_unit
 
 try:
@@ -364,7 +365,7 @@ async def import_products_from_excel(
             qty = rd.get("qty") or Decimal('1')
             unit = rd.get("unit") or 'шт.'
             unit_price = rd.get("price") or p.price
-            total = (qty * unit_price) if unit_price else None
+            total = line_total(qty, unit_price) if unit_price else None
             db.add(PurchaseItem(
                 purchase_id=purchase_id,
                 product_id=p.id,

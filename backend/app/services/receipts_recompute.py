@@ -14,6 +14,7 @@ from app.models.purchase_item import PurchaseItem
 from app.models.purchase_receipt import PurchaseReceipt
 from app.services import acceptance_docs as _acc_docs
 from app.services.item_contractor import set_item_contractor
+from app.services.item_amounts import line_total
 from app.services.receipts_creation import _create_or_enrich_contractor_from_receipt
 from app.services.receipts_parsing import _extract_items, _items_match_score, _nds_code_to_rate_str
 from app.services.receipts_render import _render_receipt_png
@@ -176,7 +177,8 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
                 except Exception:
                     price = _Dec('0')
                 try:
-                    total = _Dec(str(ri.get('sum') or ri.get('total') or (qty * price)))
+                    _sum_or_total = ri.get('sum') or ri.get('total')
+                    total = _Dec(str(_sum_or_total)) if _sum_or_total is not None else line_total(qty, price)
                 except Exception:
                     total = _Dec('0')
                 raw_name = (str(ri.get('name') or f"Позиция {idx}"))[:5000]

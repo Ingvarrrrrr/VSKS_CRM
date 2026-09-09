@@ -23,7 +23,7 @@ from app.models.feo_category import FeoCategory
 from app.models.feo_planned_item import FeoPlannedItem
 from app.services.feo_import_common import (
     QUANT, ZERO, build_level_name_index, format_rows, get_cell, level_label, resolve_target_subsidy_id,
-    row_feo_money, to_bool, to_dec,
+    row_feo_money, row_plan_money, to_bool, to_dec,
 )
 from app.services.feo_import_common import fmt as _fmt
 from app.services.feo_import_common import norm as _norm
@@ -419,30 +419,67 @@ async def apply_rows(state) -> None:
         # это подраздел или позиция. Настоящие расшифровки без такого
         # совпадения (строка 188: «Аренда Хендей ГрандСтарекс» нигде не
         # встречается как уровень) предупреждения не получают.
+        #
+        # ТРЕТИЙ разбор владельца (2026-09-09): требование «есть Сумма по
+        # ФЭО» скрывало настоящий дефект дальше по тому же боевому файлу —
+        # строка 214 (Ур.3=«Обеспечение топливом...», Плановая позиция=
+        # «Хозяйственные, административные расходы...», ПЛАН 200 000, Суммы
+        # по ФЭО у строки нет вовсе) — тот же человеческий фактор (это же имя
+        # объявлено Уровнем 3 строкой раньше, 213, а тут забыли поправить
+        # Уровень 3 этой строки), но предупреждение молчало, потому что
+        # смотрело только на _row_feo_money. Условие теперь — ровно три пункта
+        # из требования владельца: (1) позиция осталась позицией — раз мы
+        # здесь, значит да; (2) имя где-то в файле объявлено значением уровня
+        # (_occ_all); (3) имя НЕ совпадает с самым глубоким заполненным
+        # уровнем ЭТОЙ строки (не самообъявление — уже гарантировано блоком
+        # продвижения выше, но проверяем явно, а не полагаемся на побочный
+        # эффект). Деньги по строке для самого условия больше не нужны — если
+        # они есть (ФЭО и/или план), называем их в тексте; если нет —
+        # называем просто позицию.
         if lvl5_name and not lvl5_name.startswith("←"):
+            _cur_deepest_pair = next(
+                ((lvl, v) for lvl, v in ((4, lvl4_name), (3, lvl3_name), (2, lvl2_name)) if v),
+                None,
+            )
+            _current_deepest = _cur_deepest_pair[1] if _cur_deepest_pair else None
+            _current_deepest_level = _cur_deepest_pair[0] if _cur_deepest_pair else None
+            _is_self_declared = bool(_current_deepest) and _norm(_current_deepest) == _norm(lvl5_name)
             _occ_all = [
                 (_lvl, _r) for _lvl, _r in level_name_index.get(_norm(lvl5_name), []) if _r != row_num
             ]
-            if _occ_all:
-                _item_money = _row_feo_money(row)
-                if _item_money is not None:
-                    _current_deepest = next((v for v in (lvl4_name, lvl3_name, lvl2_name) if v), None)
-                    _levels_found = sorted({_lvl for _lvl, _r in _occ_all})
-                    _levels_text = ", ".join(level_label(_lvl) for _lvl in _levels_found)
-                    _rows_found = sorted({_r for _lvl, _r in _occ_all})
-                    _rows_text = format_rows(_rows_found, max_parts=5)
-                    warnings.append({
-                        "kind": "item_name_used_as_level",
-                        "row": row_num,
-                        "name": lvl5_name,
-                        "message": (
-                            f"Строка {row_num}: «{lvl5_name}» указана как плановая позиция внутри "
-                            f"«{_current_deepest}», но это же имя используется как {_levels_text} "
-                            f"({_rows_text}) — проверьте, это подраздел или позиция. Сейчас учтено как "
-                            f"позиция внутри «{_current_deepest}» (Сумма по ФЭО {_fmt(_item_money)} "
-                            f"вошла в его расшифровку)"
-                        ),
-                    })
+            if _occ_all and not _is_self_declared:
+                _item_feo_money = _row_feo_money(row)
+                _item_plan_money = row_plan_money(
+                    row, c_row_plan_sum, c_plan_sum_lvl2, c_plan_sum_lvl3, c_plan_sum_lvl4
+                )
+                _value_bits: list[tuple[str, str]] = []
+                if _item_feo_money is not None:
+                    _value_bits.append(("feo", f"Сумма по ФЭО {_fmt(_item_feo_money)}"))
+                if _item_plan_money is not None:
+                    _value_bits.append(("plan", f"план {_fmt(_item_plan_money)}"))
+                if not _value_bits:
+                    _value_phrase, _verb = "эта позиция", "учтена"
+                elif len(_value_bits) == 1:
+                    _kind, _value_phrase = _value_bits[0]
+                    _verb = "учтён" if _kind == "plan" else "учтена"
+                else:
+                    _value_phrase = " и ".join(t for _, t in _value_bits)
+                    _verb = "учтены"
+                _levels_found = sorted({_lvl for _lvl, _r in _occ_all})
+                _levels_text = ", ".join(level_label(_lvl) for _lvl in _levels_found)
+                _rows_found = sorted({_r for _lvl, _r in _occ_all})
+                _rows_text = format_rows(_rows_found, max_parts=5)
+                warnings.append({
+                    "kind": "item_name_used_as_level",
+                    "row": row_num,
+                    "name": lvl5_name,
+                    "message": (
+                        f"Строка {row_num}: «{lvl5_name}» объявлена как {_levels_text} "
+                        f"({_rows_text}), но здесь записана позицией внутри «{_current_deepest}» — "
+                        f"{_value_phrase} {_verb} не в том подразделе; проверьте "
+                        f"{level_label(_current_deepest_level)} этой строки"
+                    ),
+                })
 
         # Позиция без уровней → переезжает на Уровень 2 (задача владельца,
         # шаблон 2026-08-14): если Ур.2/3/4 пусты, а «Плановая позиция» заполнена —

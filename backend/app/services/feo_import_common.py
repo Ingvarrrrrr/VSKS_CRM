@@ -179,6 +179,32 @@ def row_feo_money(
     return None
 
 
+def row_plan_money(
+    row,
+    c_row_plan_sum: int | None,
+    c_plan_sum_lvl2: int | None,
+    c_plan_sum_lvl3: int | None,
+    c_plan_sum_lvl4: int | None,
+):
+    """Сестра `row_feo_money` (Правило №6, единый источник) — первая ненулевая
+    сумма ПЛАНА строки среди колонок, которые могли бы её нести: плоская
+    «Сумма плана» и её per-level варианты. Нужна там, где у строки есть только
+    план, а «Сумма по ФЭО» не задана вовсе — задача владельца 2026-09-09,
+    третий разбор: боевой файл, строка 214 («Хозяйственные, административные
+    расходы...» объявлена Уровнем 3 в строке 213, но здесь — Плановая позиция
+    внутри чужого «Обеспечение топливом...», из денег у строки только Сумма
+    плана 200 000, Суммы по ФЭО нет вовсе) — см. item_name_used_as_level в
+    feo_import_apply.py, ей нужно назвать именно ПЛАН, если ФЭО у строки нет.
+    """
+    for col in (c_row_plan_sum, c_plan_sum_lvl2, c_plan_sum_lvl3, c_plan_sum_lvl4):
+        if col is None:
+            continue
+        v = to_dec(get_cell(row, col))
+        if v:
+            return v
+    return None
+
+
 def build_level_name_index(
     rows,
     c_lvl2: int | None,

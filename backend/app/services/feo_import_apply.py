@@ -22,7 +22,8 @@ from sqlalchemy import select
 from app.models.feo_category import FeoCategory
 from app.models.feo_planned_item import FeoPlannedItem
 from app.services.feo_import_common import (
-    QUANT, ZERO, format_rows, get_cell, level_label, resolve_target_subsidy_id, row_feo_money, to_bool, to_dec,
+    QUANT, ZERO, build_level_name_index, format_rows, get_cell, level_label, resolve_target_subsidy_id,
+    row_feo_money, to_bool, to_dec,
 )
 from app.services.feo_import_common import fmt as _fmt
 from app.services.feo_import_common import norm as _norm
@@ -259,6 +260,11 @@ async def apply_rows(state) -> None:
     duplicate_row_count = 0
     duplicate_rows: list[int] = []
 
+    # Пред-проход по ВСЕМ строкам файла (задача владельца 2026-09-09, вторая
+    # часть правила «Плановая позиция становится узлом уровня») — ДО основного
+    # цикла, см. докстринг build_level_name_index в feo_import_common.py.
+    level_name_index = build_level_name_index(rows, c_lvl2, c_lvl3, c_lvl4)
+
     for row_num, row in enumerate(rows, start=2):
         lvl2_name = get_cell(row, c_lvl2)
 
@@ -366,6 +372,46 @@ async def apply_rows(state) -> None:
                 )
                 if _deepest_level is not None and _norm(_level_vals[_deepest_level]) == _norm(lvl5_name):
                     lvl5_name = None
+
+        # --- Предупреждение: «Плановая позиция» остаётся ПОЗИЦИЕЙ, но её имя
+        # ГДЕ-ТО в файле встречается как значение колонки уровня (задача
+        # владельца 2026-09-09, повторный разбор — решение владельца: файл
+        # читаем БУКВАЛЬНО, дерево/суммы НЕ меняем; расхождение — человеческий
+        # фактор заполнения файла, который нужно ПОКАЗАТЬ, а не решать за
+        # пользователя). level_name_index — пред-проход выше (build_level_name_
+        # index в feo_import_common.py). Боевой пример: строка 211 (Ур2=
+        # «Логистика и проживание», Ур3=«Межрегиональные перевозки», Плановая
+        # позиция=«Обеспечение топливом...», Сумма по ФЭО=200 000) — Ур.3 этой
+        # строки остаётся «Межрегиональные перевозки» как и было (позиция
+        # внутри них, сумма входит в их расшифровку), но то же имя «Обеспечение
+        # топливом...» стоит как Уровень 3 в строке 212 — стоит предупредить,
+        # это подраздел или позиция. Настоящие расшифровки без такого
+        # совпадения (строка 188: «Аренда Хендей ГрандСтарекс» нигде не
+        # встречается как уровень) предупреждения не получают.
+        if lvl5_name and not lvl5_name.startswith("←"):
+            _occ_all = [
+                (_lvl, _r) for _lvl, _r in level_name_index.get(_norm(lvl5_name), []) if _r != row_num
+            ]
+            if _occ_all:
+                _item_money = _row_feo_money(row)
+                if _item_money is not None:
+                    _current_deepest = next((v for v in (lvl4_name, lvl3_name, lvl2_name) if v), None)
+                    _levels_found = sorted({_lvl for _lvl, _r in _occ_all})
+                    _levels_text = ", ".join(level_label(_lvl) for _lvl in _levels_found)
+                    _rows_found = sorted({_r for _lvl, _r in _occ_all})
+                    _rows_text = format_rows(_rows_found, max_parts=5)
+                    warnings.append({
+                        "kind": "item_name_used_as_level",
+                        "row": row_num,
+                        "name": lvl5_name,
+                        "message": (
+                            f"Строка {row_num}: «{lvl5_name}» указана как плановая позиция внутри "
+                            f"«{_current_deepest}», но это же имя используется как {_levels_text} "
+                            f"({_rows_text}) — проверьте, это подраздел или позиция. Сейчас учтено как "
+                            f"позиция внутри «{_current_deepest}» (Сумма по ФЭО {_fmt(_item_money)} "
+                            f"вошла в его расшифровку)"
+                        ),
+                    })
 
         # Позиция без уровней → переезжает на Уровень 2 (задача владельца,
         # шаблон 2026-08-14): если Ур.2/3/4 пусты, а «Плановая позиция» заполнена —

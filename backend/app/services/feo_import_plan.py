@@ -14,7 +14,7 @@ from decimal import Decimal
 from sqlalchemy import select
 
 from app.models.feo_category import FeoCategory
-from app.services.feo_import_common import ZERO, level_label, fmt as _fmt
+from app.services.feo_import_common import ZERO, format_rows, level_label, fmt as _fmt
 
 
 async def apply_collected_plan(state) -> None:
@@ -100,13 +100,23 @@ async def apply_collected_plan(state) -> None:
                         " (взят из чисел по ФЭО, плановые колонки пустые)"
                         if _pdata.get("from_feo_fallback") else ""
                     )
+                    # Задача владельца 2026-09-09: сообщение обязано называть,
+                    # ЧТО с ЧЕМ сравнивается и по каким строкам файла — иначе
+                    # «план строки = 0» читается как утверждение о категории в
+                    # целом, хотя реально это последняя из НЕСКОЛЬКИХ строк,
+                    # писавших план_writes[cat_id] (см. feo_import_apply.py).
+                    _plan_rows_str = format_rows(state.plan_writes.get(_cat_id, [_plan_row]))
+                    _item_rows_str = format_rows(state.lvl5_item_rows.get(_cat_id, []))
+                    _cmp_word = "меньше" if (_pdata["amount"] or ZERO) < _items_sum else "больше"
+                    _item_rows_part = f" ({_item_rows_str})" if _item_rows_str else ""
                     warnings.append({
                         "kind": "plan_vs_items_mismatch",
                         "row": _plan_row,
                         "name": _plan_name,
                         "message": (
-                            f"План строки «{_plan_name}» = {_fmt(_pdata['amount'])}{_fallback_note}, а сумма строк "
-                            f"«{level_label(5)}» = {_fmt(_items_sum)} — расхождение, план строки не записан"
+                            f"План строки «{_plan_name}» ({_plan_rows_str}) = {_fmt(_pdata['amount'])}{_fallback_note} "
+                            f"{_cmp_word} суммы строк «{level_label(5)}» этой категории = {_fmt(_items_sum)}{_item_rows_part} "
+                            f"— расхождение, план строки не записан"
                         ),
                     })
                 continue
@@ -188,19 +198,32 @@ async def apply_collected_plan(state) -> None:
         if not parent_budget:
             continue
         # Сумма budget всех прямых детей из cat_cache (весь справочник)
-        children_sum = sum(
-            (c.budget or ZERO)
-            for c in cat_cache.values()
+        children = [
+            c for c in cat_cache.values()
             if c.parent_id == parent_id and c.id is not None
-        )
+        ]
+        children_sum = sum((c.budget or ZERO) for c in children)
         if abs(parent_budget - children_sum) > Decimal("0.01"):
+            # Задача владельца 2026-09-09: назвать строки файла по обе стороны
+            # сравнения — откуда взят бюджет раздела и откуда взята сумма его
+            # подразделов (только те, чей budget реально ненулевой — «пустой»
+            # подраздел ничего не объясняет в сумме и был бы шумом в списке).
+            _parent_rows = format_rows([r for r, _v, _n in state.budget_writes.get(parent_id, [])])
+            _child_rows = format_rows([
+                state.budget_writes[c.id][-1][0]
+                for c in children
+                if c.id in state.budget_writes and (c.budget or ZERO) != ZERO
+            ])
+            _parent_row_part = f" ({_parent_rows})" if _parent_rows else ""
+            _child_row_part = f" ({_child_rows})" if _child_rows else ""
             warnings.append({
                 "kind": "parent_sum_mismatch",
                 "row": None,
                 "name": parent_cat.name,
                 "message": (
-                    f"Родитель «{parent_cat.name}»: бюджет {_fmt(parent_budget)} ≠ "
-                    f"сумма всех дочерних узлов {_fmt(children_sum)}; победит значение родителя"
+                    f"Сумма по ФЭО раздела «{parent_cat.name}» = {_fmt(parent_budget)}{_parent_row_part} ≠ "
+                    f"сумме Сумм по ФЭО его подразделов = {_fmt(children_sum)}{_child_row_part}; "
+                    f"победит значение раздела"
                 ),
             })
 

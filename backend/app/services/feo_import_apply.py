@@ -22,7 +22,7 @@ from sqlalchemy import select
 from app.models.feo_category import FeoCategory
 from app.models.feo_planned_item import FeoPlannedItem
 from app.services.feo_import_common import (
-    QUANT, ZERO, get_cell, level_label, resolve_target_subsidy_id, to_bool, to_dec,
+    QUANT, ZERO, format_rows, get_cell, level_label, resolve_target_subsidy_id, to_bool, to_dec,
 )
 from app.services.feo_import_common import fmt as _fmt
 from app.services.feo_import_common import norm as _norm
@@ -104,6 +104,9 @@ async def apply_rows(state) -> None:
     lvl5_leaves = state.lvl5_leaves
     lvl5_sum_by_cat = state.lvl5_sum_by_cat
     touched_parents = state.touched_parents
+    budget_writes = state.budget_writes
+    plan_writes = state.plan_writes
+    lvl5_item_rows = state.lvl5_item_rows
 
     created = state.created
     updated = state.updated
@@ -247,6 +250,7 @@ async def apply_rows(state) -> None:
     # этим именем в этой категории в ЭТОМ ЖЕ импорте (для текста «повтор строки N»).
     lvl5_item_first_row: dict[tuple[int, str], int] = {}
     duplicate_row_count = 0
+    duplicate_rows: list[int] = []
 
     for row_num, row in enumerate(rows, start=2):
         lvl2_name = get_cell(row, c_lvl2)
@@ -308,11 +312,41 @@ async def apply_rows(state) -> None:
                 lvl5_name = None
 
         if not lvl2_name:
+            # Задача владельца 2026-09-09 (боевой файл, строка 33): "Уровень 3"
+            # заполнен, "Уровень 2" — нет, промоушен на Уровень 2 (см. блок
+            # выше) в этом случае НЕ срабатывает (условие требует пустоты И
+            # Ур.3, И Ур.4) — строка просто пропускается целиком, а её Сумма
+            # по ФЭО молча теряется без единого упоминания суммы в тексте.
+            # Ищем деньги в ЛЮБОЙ из колонок, которые могли бы их нести
+            # (плоская «Сумма по ФЭО» и её per-level варианты + легаси
+            # «Финансирование») — если что-то есть, называем сумму прямо,
+            # а не сваливаем строку в общее "(пустая строка) — нет наименования".
+            _money_hint = None
+            for _mc in (c_row_feo_sum, c_feo_sum_lvl2, c_feo_sum_lvl3, c_feo_sum_lvl4, c_budget):
+                if _mc is None:
+                    continue
+                _mv = to_dec(get_cell(row, _mc))
+                if _mv:
+                    _money_hint = _mv
+                    break
+            if _money_hint is not None:
+                warnings.append({
+                    "kind": "amount_without_level2",
+                    "row": row_num,
+                    "name": None,
+                    "message": (
+                        f"Строка {row_num}: указана Сумма по ФЭО {_fmt(_money_hint)}, но не заполнен "
+                        f"{level_label(2)} — строка пропущена, сумма НЕ учтена"
+                    ),
+                })
             skipped += 1
             skipped_details.append({
                 "row": row_num,
                 "name": lvl2_name or "(пустая строка)",
-                "reason": "нет наименования (уровень 2 пуст)",
+                "reason": (
+                    "нет наименования (уровень 2 пуст)" if _money_hint is None else
+                    f"указана Сумма по ФЭО {_fmt(_money_hint)}, но не заполнен {level_label(2)} — сумма НЕ учтена"
+                ),
             })
             continue
 
@@ -541,6 +575,15 @@ async def apply_rows(state) -> None:
                             })
                     if cat.budget != feo_sum:
                         cat.budget = feo_sum
+                    # Задача владельца 2026-09-09: каждая строка, задавшая Сумму
+                    # по ФЭО ЭТОГО узла — не только последняя, что реально
+                    # победила (cat.budget). Несколько строк на один и тот же
+                    # узел — обычное дело для «строк-подытогов» без Уровня 3
+                    # (боевой пример: «Экипировка», строки 2/3/9/24) — раньше
+                    # это было видно только косвенно, через parent_sum_mismatch
+                    # без единого номера строки. Копим ВСЕ попытки (не только
+                    # изменившие значение) — предупреждение обязано назвать их все.
+                    budget_writes.setdefault(cat.id, []).append((row_num, feo_sum, lv["name"]))
                     # Если feo_amt пуст, но есть кол-во — восстановим цену
                     if feo_amt is None and feo_qty is not None and feo_qty != ZERO:
                         feo_amt = (feo_sum / feo_qty).quantize(QUANT)
@@ -572,7 +615,39 @@ async def apply_rows(state) -> None:
 
                 _pu = plan_unit if plan_unit is not None else feo_unit
 
-                if plan_sum is not None and plan_sum == ZERO and (plan_qty is None or plan_qty == ZERO):
+                # Задача владельца 2026-09-09 (боевой файл, строки 239, 242-244,
+                # 246-248): строка без единого содержательного значения — нет ни
+                # «Плановой позиции»/«Товар-услуга», ни чисел по ФЭО, ни ненулевых
+                # цены/суммы плана — но «Плановое количество» технически заполнено
+                # (100 или скопированная 1). Раньше такая строка всё равно
+                # перезаписывала collected_plan этой категории суммой 0 (условие
+                # zero_plan_skipped требует qty ТОЖЕ 0/пусто, а тут qty≠0) —
+                # последняя из таких пустых строк "побеждала" в
+                # plan_vs_items_mismatch, выглядя как «план строки = 0» для
+                # категории, у которой реальный план — только сумма её
+                # собственных строк «Товар/услуга». Полностью пустую строку не
+                # считаем планом строки вообще — ни в плюс, ни в ноль.
+                _row_has_any_content = bool(
+                    (lvl5_name and lvl5_name not in ("←", ""))
+                    or item_qty is not None or item_price is not None or item_amount is not None
+                    or feo_qty is not None or feo_amt is not None or feo_sum is not None
+                    or (plan_amt is not None and plan_amt != ZERO)
+                    or (plan_sum is not None and plan_sum != ZERO)
+                )
+                # Условие сужено до plan_qty≠0/None намеренно: строка с
+                # plan_sum=0 И plan_qty пустым/нулевым — это УЖЕ существующий
+                # (более ранний) сценарий zero_plan_skipped ниже, менять его не
+                # нужно. Отличие боевого дефекта — именно НЕНУЛЕВОЕ "Плановое
+                # количество" (технический дубль/копипаста), при котором
+                # старое условие zero_plan_skipped не срабатывало вообще.
+                if not _row_has_any_content and plan_qty is not None and plan_qty != ZERO:
+                    skipped += 1
+                    skipped_details.append({
+                        "row": row_num,
+                        "name": lv["name"],
+                        "reason": "нет ни плановой позиции, ни товара/услуги, суммы нулевые — строка пропущена",
+                    })
+                elif plan_sum is not None and plan_sum == ZERO and (plan_qty is None or plan_qty == ZERO):
                     # Сумма плана прямо равна нулю (не пуста!) и кол-во не задано —
                     # раньше здесь всё равно подставлялось qty=1, что превращало
                     # "плана нет" в "план = 0 шт. по цене 0" (видимую, но ложную
@@ -615,6 +690,7 @@ async def apply_rows(state) -> None:
                         "item_type": item_type,
                         "from_feo_fallback": False,
                     }
+                    plan_writes.setdefault(cat.id, []).append(row_num)
                 else:
                     # Старое поведение источника данных: план кол-во/ед/цена напрямую.
                     # Если ОБЕ плановые колонки (кол-во и цена) пусты — сумма целиком
@@ -634,6 +710,7 @@ async def apply_rows(state) -> None:
                             "item_type": item_type,
                             "from_feo_fallback": plan_qty is None and plan_amt is None,
                         }
+                        plan_writes.setdefault(cat.id, []).append(row_num)
 
                 if _pu and cat.unit != _pu:
                     cat.unit = _pu
@@ -671,6 +748,7 @@ async def apply_rows(state) -> None:
                 if deduped and deduped[-1].get("feo_sum") is None:
                     if leaf.budget != budget:
                         leaf.budget = budget; changed = True
+                    budget_writes.setdefault(leaf.id, []).append((row_num, budget, leaf.name))
             if leaf.is_active != is_active:
                 leaf.is_active = is_active; changed = True
             if changed and not leaf_is_new:
@@ -689,6 +767,7 @@ async def apply_rows(state) -> None:
                 # позиция, а описание её содержимого; см. блок ниже.
                 lvl5_leaves.add(leaf.id)
                 lvl5_sum_by_cat[leaf.id] = lvl5_sum_by_cat.get(leaf.id, ZERO) + (eff_item_amount or ZERO)
+                lvl5_item_rows.setdefault(leaf.id, []).append(row_num)
 
                 existing_item = (await db.execute(
                     select(FeoPlannedItem).where(
@@ -742,6 +821,7 @@ async def apply_rows(state) -> None:
                             # выше основного цикла). Текст должен читаться как
                             # «повтор», а не как «обновлены существующие данные».
                             duplicate_row_count += 1
+                            duplicate_rows.append(row_num)
                             updated_details.append({
                                 "row": row_num, "name": lvl5_name,
                                 "reason": f"повтор строки {_dup_first_row} — значения взяты из последней",
@@ -778,7 +858,30 @@ async def apply_rows(state) -> None:
             "name": None,
             "message": (
                 f"В файле {duplicate_row_count} повторяющихся позиций (одинаковое имя в одной "
-                f"категории) — учтена последняя строка"
+                f"категории) — {format_rows(duplicate_rows)} — учтена последняя строка"
+            ),
+        })
+
+    # Задача владельца 2026-09-09: узел, чью Сумму по ФЭО задавали НЕСКОЛЬКО
+    # строк файла (боевой пример: «Экипировка» — строки 2/3/9/24, каждая
+    # перезаписывает предыдущую) — победившее значение видно в дереве, но БЕЗ
+    # этого предупреждения не видно, что оно вообще перезаписывалось, и уж тем
+    # более какие строки/суммы проиграли. Само поведение (последняя строка
+    # побеждает) не меняется — только становится видимым явно, по имени узла и
+    # номерам строк, а не только через parent_sum_mismatch постфактум.
+    for _cat_id, _writes in budget_writes.items():
+        if len(_writes) < 2:
+            continue
+        _b_name = _writes[-1][2]
+        _last_row, _last_val, _ = _writes[-1]
+        _rows_vals = ", ".join(f"{r} ({_fmt(v)})" for r, v, _ in _writes)
+        warnings.append({
+            "kind": "budget_overwritten_by_row",
+            "row": None,
+            "name": _b_name,
+            "message": (
+                f"Сумма по ФЭО для «{_b_name}» задана в строках {_rows_vals} — "
+                f"учтена последняя (строка {_last_row})"
             ),
         })
 

@@ -26,6 +26,8 @@ export function feoWarnKindLabel(kind: string): string {
     plan_skipped_has_items: 'План строки не записан — у категории уже есть позиции',
     subsidy_name_ignored: 'Субсидия из файла проигнорирована — импорт идёт в открытую',
     duplicate_row_in_file: 'В файле повторяются позиции — учтена последняя строка',
+    amount_without_level2: 'Сумма указана, но не заполнен Уровень 2 — строка пропущена',
+    budget_overwritten_by_row: 'Сумма по ФЭО узла задана несколькими строками — учтена последняя',
   }
   return labels[kind] ?? kind
 }

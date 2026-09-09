@@ -97,6 +97,45 @@ def resolve_target_subsidy_id(
     return None
 
 
+def format_rows(rows, max_parts: int = 10) -> str:
+    """Компактный список номеров строк файла для текста предупреждений импорта
+    ФЭО (задача владельца 2026-09-09: сводные предупреждения — «В файле N
+    повторяющихся позиций», «Бюджет родителя ≠ сумма дочерних» — не называли
+    ни одной строки, разбор жалобы требовал повторного дебага).
+
+    Подряд идущие номера схлопываются в диапазон «N–M» (например, построчная
+    разбивка «Товар/услуга» одной категории — строки 217–245). После
+    `max_parts` кусков остаток сворачивается в «и ещё K» (K — сколько строк
+    файла не показано явно, а не сколько «кусков» отброшено).
+
+    Правило №6: единственное место форматирования списков строк в
+    предупреждениях импорта ФЭО — feo_import_apply.py/feo_import_plan.py
+    вызывают эту функцию, а не собирают строку вручную по месту.
+    """
+    uniq = sorted({r for r in rows if r is not None})
+    if not uniq:
+        return ""
+    ranges: list[tuple[int, int]] = []
+    start = prev = uniq[0]
+    for r in uniq[1:]:
+        if r == prev + 1:
+            prev = r
+            continue
+        ranges.append((start, prev))
+        start = prev = r
+    ranges.append((start, prev))
+
+    shown = ranges[:max_parts]
+    shown_count = sum(b - a + 1 for a, b in shown)
+    parts = [str(a) if a == b else f"{a}–{b}" for a, b in shown]
+    text = ", ".join(parts)
+    remaining = len(uniq) - shown_count
+    if remaining > 0:
+        text += f" и ещё {remaining}"
+    word = "строка" if len(uniq) == 1 else "строки"
+    return f"{word} {text}"
+
+
 _LEVEL_LABELS = {2: "Уровень 2", 3: "Уровень 3", 4: "Уровень 4", 5: "Товар/услуга"}
 
 

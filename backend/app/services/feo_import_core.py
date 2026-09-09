@@ -162,6 +162,22 @@ class FeoImportState:
     lvl5_sum_by_cat: dict = field(default_factory=dict)
     touched_parents: set = field(default_factory=set)
 
+    # --- Правило №6 / задача владельца 2026-09-09: номера строк файла,
+    # стоящих за каждым числом предупреждений — единственный источник для
+    # feo_import_apply.py (пишет) и feo_import_plan.py (читает при сборке
+    # текста parent_sum_mismatch/plan_vs_items_mismatch).
+    # cat_id -> [(row_num, value, name), ...] — каждая строка, задавшая
+    # Сумму по ФЭО (или легаси «Финансирование») ЭТОЙ категории напрямую.
+    budget_writes: dict = field(default_factory=dict)
+    # cat_id -> [row_num, ...] — каждая строка, писавшая «план строки»
+    # (collected_plan) этой категории (нужно, т.к. collected_plan хранит
+    # только последнюю запись, а предупреждение обязано назвать ВСЕ строки).
+    plan_writes: dict = field(default_factory=dict)
+    # cat_id -> [row_num, ...] — строки, создавшие/обновившие плановую
+    # позицию «Товар/услуга» этого листа (для диапазона строк в тексте
+    # plan_vs_items_mismatch).
+    lvl5_item_rows: dict = field(default_factory=dict)
+
     # --- переезд/удаление (feo_import_remap.py) ---
     relinked_count: int = 0
     deleted_count: int = 0

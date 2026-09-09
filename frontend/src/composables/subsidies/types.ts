@@ -393,6 +393,14 @@ export interface FeoWarning {
     // Оба — ОДНО агрегированное предупреждение на импорт, без привязки к
     // строке/имени, поэтому row/name у них null.
     | 'subsidy_name_ignored' | 'duplicate_row_in_file'
+    // Задача владельца 2026-09-09: 'amount_without_level2' — в строке есть
+    // Сумма по ФЭО, но Уровень 2 пуст и строка не подходит под промоушен
+    // (см. feo_import_apply.py) — деньги теряются молча без этого текста.
+    // 'budget_overwritten_by_row' — несколько строк подряд задают Сумму по
+    // ФЭО ОДНОГО И ТОГО ЖЕ узла (см. budget_writes в feo_import_apply.py) —
+    // последняя побеждает, это предупреждение делает видимым сам факт и все
+    // строки-кандидаты, а не только итог.
+    | 'amount_without_level2' | 'budget_overwritten_by_row'
   row: number | null
   name: string | null
   message: string

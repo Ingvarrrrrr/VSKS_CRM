@@ -14,6 +14,18 @@
 топливом...» встречается как значение Уровня 3 в строке 212 — предупреждение
 должно назвать ОБЕ строки (211 и 212).
 
+ВТОРОЙ разбор владельца (ложное срабатывание на строке 216): условие
+продвижения «Плановой позиции» в уровень (блок из c0a9da31, см.
+`_is_level_free` в `feo_import_apply.py`) теперь считает уровень СВОБОДНЫМ не
+только когда он буквально пуст, но и когда его значение — ДУБЛЬ значения
+уровня НАД ним (после схлопывания дублей ниже по циклу всё равно получится
+ОДИН узел). Строка 216 (Ур2=Ур3=«Организация питания», Плановая позиция=
+«Питание, в т.ч. закупка продуктов...», Сумма по ФЭО=4 300 000) — Ур.3
+дублирует Ур.2, значит фактически свободен: позиция становится узлом Уровня 3,
+предупреждения `item_name_used_as_level` по ней уже НЕТ (в отличие от строки
+211, где Ур.3 «Межрегиональные перевозки» — самостоятельный узел, НЕ дубль
+Ур.2, и предупреждение остаётся законным).
+
 Используем ту же 18-колоночную тестовую раскладку и `_import17` (c_lvl4=None),
 что и `test_feo_import_promote_level.py` — воспроизводит раскладку уровней
 боевого файла владельца.
@@ -184,5 +196,84 @@ async def test_multiple_matching_rows_get_separate_warnings(db_session):
         assert len(matches) == 2
         rows_warned = {m["row"] for m in matches}
         assert rows_warned == {2, 3}
+    finally:
+        await _cleanup_subsidy(db_session, subsidy.id)
+
+
+# --- Строка 216: Уровень 3 дублирует Уровень 2 + позиция с суммой → узел уровня 3, без предупреждения
+
+@pytest.mark.asyncio
+async def test_level3_duplicating_level2_becomes_node_no_warning(db_session):
+    """Ур.2 и Ур.3 названы ОДИНАКОВО («Организация питания» в обеих
+    колонках) — второй разбор владельца: Уровень 3 в этом случае фактически
+    СВОБОДЕН (после схлопывания дублей превратился бы в тот же единственный
+    узел), значит «Плановая позиция» с суммой продвигается в НЕГО как
+    самостоятельный узел Уровня 3 — точно так же, как строка 3 «Комплект
+    специальной одежды» продвигается под пустой Ур.3 «Экипировки». Раз
+    продвижение состоялось, предупреждения `item_name_used_as_level` быть не
+    должно (в отличие от строки 211, где Ур.3 — самостоятельное имя, не
+    дубль Ур.2)."""
+    subsidy = await _make_subsidy(db_session)
+    try:
+        rows = [
+            mk_row(
+                lvl2="Организация питания", lvl3="Организация питания",
+                item_name="Питание, в т.ч. закупка продуктов при проживании в автономных лагерях",
+                feo_sum="4300000",
+            ),
+        ]
+        result = await _import17(db_session, subsidy.id, rows)
+        assert result["errors"] == []
+        assert not any(w["kind"] == "item_name_used_as_level" for w in result["warnings"])
+
+        promo_warns = [w for w in result["warnings"] if w["kind"] == "item_promoted_to_level"]
+        assert len(promo_warns) == 1
+        assert "дублирует" in promo_warns[0]["message"]
+
+        cats = await _get_categories(db_session, subsidy.id)
+        by_name = {c.name: c for c in cats}
+        root = by_name["Организация питания"]
+        child = by_name["Питание, в т.ч. закупка продуктов при проживании в автономных лагерях"]
+        assert child.parent_id == root.id
+        assert child.budget == Decimal("4300000")
+
+        items = await _get_items(db_session, child.id)
+        assert items == [], "продвинутое имя стало узлом, а не отдельной позицией внутри него"
+    finally:
+        await _cleanup_subsidy(db_session, subsidy.id)
+
+
+# --- Строка 211 регресс: Уровень 3 — НЕ дубль Уровня 2 → предупреждение сохраняется
+
+@pytest.mark.asyncio
+async def test_level3_not_duplicating_level2_keeps_warning(db_session):
+    """Контроль на смешение с предыдущим тестом: когда Ур.3 — самостоятельное
+    имя (не совпадает с Ур.2 после нормализации), новая логика свободы уровня
+    НЕ срабатывает — позиция остаётся позицией и предупреждение
+    `item_name_used_as_level` выдаётся, как и раньше (это ровно сценарий
+    строки 211 боевого файла)."""
+    subsidy = await _make_subsidy(db_session)
+    try:
+        rows = [
+            mk_row(
+                lvl2="Логистика и проживание", lvl3="Межрегиональные перевозки",
+                item_name="Обеспечение топливом при работах в зоне гуманитарной помощи",
+                feo_sum="200000",
+            ),
+            mk_row(
+                lvl2="Логистика и проживание",
+                lvl3="Обеспечение топливом при работах в зоне гуманитарной помощи",
+            ),
+        ]
+        result = await _import17(db_session, subsidy.id, rows)
+        assert result["errors"] == []
+        assert not any(w["kind"] == "item_promoted_to_level" for w in result["warnings"])
+        assert any(w["kind"] == "item_name_used_as_level" for w in result["warnings"])
+
+        cats = await _get_categories(db_session, subsidy.id)
+        leaf = next(c for c in cats if c.name == "Межрегиональные перевозки")
+        items = await _get_items(db_session, leaf.id)
+        assert len(items) == 1
+        assert items[0].name == "Обеспечение топливом при работах в зоне гуманитарной помощи"
     finally:
         await _cleanup_subsidy(db_session, subsidy.id)

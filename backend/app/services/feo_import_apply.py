@@ -338,28 +338,59 @@ async def apply_rows(state) -> None:
         if lvl5_name and not lvl5_name.startswith("←"):
             _level_cols = ((2, c_lvl2), (3, c_lvl3), (4, c_lvl4))
             _level_vals = {2: lvl2_name, 3: lvl3_name, 4: lvl4_name}
+
+            def _is_level_free(lvl: int) -> bool:
+                """Уровень СВОБОДЕН для продвижения не только когда буквально
+                пуст, но и когда его значение — ДУБЛЬ значения уровня НАД ним
+                (задача владельца 2026-09-09, повторный разбор владельца:
+                строка 216 — Ур.2=Ур.3=«Организация питания» — после
+                нормализации совпадают, значит при схлопывании дублей ниже
+                («Схлопываем соседние дубли») всё равно получится ОДИН узел —
+                Ур.3 фактически лишний текст, а не отдельный узел, и свободен
+                под «Питание, в т.ч. закупка продуктов...». Тот же случай —
+                строка 31/29 внутри «Медицинское оснащение...», где Ур.2=Ур.3.
+                У Уровня 2 нет уровня над ним — для него дубль невозможен,
+                свобода только через буквальную пустоту."""
+                if not _level_vals[lvl]:
+                    return True
+                if lvl == 2:
+                    return False
+                _shallower = 2 if lvl == 3 else 3
+                _shallower_val = _level_vals.get(_shallower)
+                return bool(_shallower_val) and _norm(_shallower_val) == _norm(_level_vals[lvl])
+
             _target_level = next(
-                (lvl for lvl, col in _level_cols if col is not None and not _level_vals[lvl]),
+                (lvl for lvl, col in _level_cols if col is not None and _is_level_free(lvl)),
                 None,
             )
             if _target_level is not None:
                 _promo_money = _row_feo_money(row)
                 if _promo_money is not None:
+                    _old_val = _level_vals[_target_level]  # непустое ⇒ был дубль уровня над ним
                     if _target_level == 2:
                         lvl2_name = lvl5_name
                     elif _target_level == 3:
                         lvl3_name = lvl5_name
                     else:
                         lvl4_name = lvl5_name
+                    if _old_val:
+                        _shallower_lvl = 2 if _target_level == 3 else 3
+                        _msg = (
+                            f"Плановая позиция «{lvl5_name}» — {level_label(_target_level)} "
+                            f"дублирует {level_label(_shallower_lvl)} («{_old_val}») и фактически "
+                            f"свободен: название стало {level_label(_target_level)}"
+                        )
+                    else:
+                        _msg = (
+                            f"Плановая позиция «{lvl5_name}» — по строке указана Сумма по ФЭО "
+                            f"{_fmt(_promo_money)}, но {level_label(_target_level)} не заполнен: "
+                            f"название стало {level_label(_target_level)}"
+                        )
                     warnings.append({
                         "kind": "item_promoted_to_level",
                         "row": row_num,
                         "name": lvl5_name,
-                        "message": (
-                            f"Плановая позиция «{lvl5_name}» — по строке указана Сумма по ФЭО "
-                            f"{_fmt(_promo_money)}, но {level_label(_target_level)} не заполнен: "
-                            f"название стало {level_label(_target_level)}"
-                        ),
+                        "message": _msg,
                     })
                     lvl5_name = None
             else:

@@ -794,6 +794,7 @@
             v-model="items"
             v-model:contract-items="contractItemsState"
             :items-title="formMode === 'service_note_delivery' ? 'Что надо выдать' : undefined"
+            :contract-form="form.contract_form"
             :show-contract-columns="canShowContractColumns"
             :unified-stages-view="canShowContractColumns"
             :purchase-status="form.status"
@@ -1971,6 +1972,9 @@ import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import { useFeoTreeNodes } from '@/composables/useFeoTreeNodes'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
 import { numOrNull } from '@/utils/numberFormat'
+// item-forms-accommodation-transport.md: contractFormOptions — единственный
+// источник item_forms.json::contract_forms (Правило №6), см. composables/items/useItemForm.ts.
+import { contractFormOptions as contractFormOptionsFromDict } from '@/composables/items/useItemForm'
 import { PURCHASE_STATUS_ORDER, purchaseStatusColor, purchaseStatusLabel, purchaseSubstatusLabel } from '@/constants/purchaseStatus'
 
 const monthlyStagesDialogShow = ref(false)
@@ -2270,6 +2274,10 @@ interface OrderItem {
   final_unit_price: number | null
   final_total: number | null
   match_confirmed?: boolean
+  // item-forms-accommodation-transport.md: поля спец-формы позиции («Проживание»/
+  // «Перевозки автобусом») — единственное хранилище (mirrors PurchaseItem.extra_attrs),
+  // отправляется на бэк как есть (см. save(): ...rest spread ниже по файлу).
+  extra_attrs?: Record<string, any> | null
   // UI-only: not sent to backend
   _selectedProduct?: Product | null
   _photo_url?: string
@@ -3126,27 +3134,26 @@ const CONTRACT_TYPES = [
 ]
 
 // Phase 28: варианты формы договора — определяют какой шаблон используется при скачивании.
-// Семь форм (большая/малая отчётность объединены в «Услуги» — различие теперь
-// не в тексте договора, а в приклеиваемой методичке, см. methodologyOptions ниже).
-const contractFormOptions = [
-  { value: 'services',           title: 'Услуги' },
-  { value: 'services_food',      title: 'Услуги — питание' },
-  { value: 'goods_single',       title: 'Поставка — разовый договор' },
-  { value: 'gph_individual',     title: 'ГПХ с физ.лицом' },
-  { value: 'gph_individual_rid', title: 'ГПХ с физ.лицом, передача прав на РИД' },
-  { value: 'repair_vehicle',     title: 'Договор на ремонт ТС' },
-  { value: 'repair_framework',   title: 'Рамочный договор на ремонт ТС' },
-]
+// item-forms-accommodation-transport.md (владелец, 2026-09-09): «Проживание»/«Перевозки
+// автобусом» добавлены в реестр форм; ЕДИНСТВЕННЫЙ источник подписей/порядка —
+// item_forms.json::contract_forms (тот же файл, что описывает поля позиций — Правило №6),
+// раньше список был захардкожен прямо здесь отдельной копией CONTRACT_FORM_LABELS.
+const contractFormOptions = contractFormOptionsFromDict()
 
-// Phase 28: маппинг contract_form → doc_type для кнопки «Договор»
+// Phase 28: маппинг contract_form → doc_type для кнопки «Договор». item-forms-
+// accommodation-transport.md: contract_services_accommodation/_transport уже
+// заведены в doc_types.py (пока откатываются на contract_services.docx —
+// владелец «пока таблица позиций в существующем договоре услуг»).
 const contractDocTypeMap: Record<string, string> = {
-  services:           'contract_services',
-  services_food:      'contract_services_food',
-  goods_single:       'contract_goods_single',
-  gph_individual:     'contract_gph_individual',
-  gph_individual_rid: 'contract_gph_individual_rid',
-  repair_vehicle:     'contract_repair_vehicle',
-  repair_framework:   'contract_repair_framework',
+  services:                   'contract_services',
+  services_food:              'contract_services_food',
+  services_accommodation:     'contract_services_accommodation',
+  services_transport:         'contract_services_transport',
+  goods_single:               'contract_goods_single',
+  gph_individual:             'contract_gph_individual',
+  gph_individual_rid:         'contract_gph_individual_rid',
+  repair_vehicle:             'contract_repair_vehicle',
+  repair_framework:           'contract_repair_framework',
 }
 
 // Методичка, приклеиваемая к договору при генерации (docxcompose) — выбирается
@@ -3969,6 +3976,9 @@ const loadPurchase = async () => {
         vat_rate: i.vat_rate ?? null,  // Phase 27.1.15: НДС % per-item из чека ФФД 1.2 (Phase 26-AAA парсил → не подтягивался во фронт)
         feo_planned_item_id: i.feo_planned_item_id ?? null,  // F-PIF1: per-item FEO (legacy)
         feo_category_id: i.feo_category_id ?? null,  // FCAT-F1: per-item leaf FeoCategory
+        // item-forms-accommodation-transport.md: без этого поля здесь «сохранить →
+        // перезагрузить страницу» теряло бы значения формы («Проживание»/«Перевозки»).
+        extra_attrs: i.extra_attrs || {},
         _selectedProduct: prod ?? (i.item_name || null),
         _photo_url: productPhotoSrc(prod),
         _description: i.product_description || prod?.description || undefined,

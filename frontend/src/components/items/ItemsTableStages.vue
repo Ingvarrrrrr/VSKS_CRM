@@ -19,9 +19,12 @@
           </th>
           <th style="width:36px;text-align:center;color:#888;font-size:12px">№</th>
           <th>Наименование</th>
-          <th style="width:90px">Кол-во</th>
-          <th style="width:110px">Цена, ₽</th>
-          <th style="width:120px">Сумма, ₽</th>
+          <th v-if="itemForm" colspan="2">{{ itemFormLabel }}</th>
+          <template v-else>
+            <th style="width:90px">Кол-во</th>
+            <th style="width:110px">Цена, ₽</th>
+          </template>
+          <th style="width:120px">{{ itemForm ? 'Итого, ₽' : 'Сумма, ₽' }}</th>
           <th style="min-width:220px">Суммы стадий</th>
           <th style="width:48px">Матч</th>
           <th style="width:80px"></th>
@@ -57,6 +60,10 @@
                 <span class="text-body-2" style="white-space:normal;line-height:1.3;word-break:break-word">{{ summaryName(idx) || '—' }}</span>
               </div>
             </td>
+            <td v-if="itemForm" colspan="2" @click.stop class="text-caption text-medium-emphasis" style="max-width:220px">
+              {{ specSummary(item) || 'Разверните строку, чтобы заполнить' }}
+            </td>
+            <template v-else>
             <td @click.stop>
               <v-tooltip :disabled="!tzFrozen || readonly" :text="tzFrozenTooltip" location="top" max-width="280">
                 <template #activator="{ props: tip }">
@@ -83,6 +90,7 @@
               </v-tooltip>
               <PriceFreshnessStamp :price-meta="item._price_meta" />
             </td>
+            </template>
             <td class="font-weight-medium" style="font-size:12px;white-space:nowrap">
               {{ fmtRub(totalWithVat(item)) }}
               <v-tooltip v-if="planExcessFor?.(item)" location="top" max-width="280">
@@ -185,6 +193,18 @@
                       </div>
                       <!-- Phase 27.1.1 fix: per-item contractor только для авансовых (advance_report). Inline contractor для обычных закупок убран — 1 контрагент на закупку. -->
                     </td>
+                    <td v-if="itemForm" colspan="3">
+                      <ItemFormFields
+                        :item-form="itemForm"
+                        :fields="itemFormFields || []"
+                        :model-value="item.extra_attrs"
+                        :unit-price="item.unit_price"
+                        :disabled="tzDisabled"
+                        @update:model-value="(v) => { item.extra_attrs = v; emit('calc-item-total', idx) }"
+                        @update:unit-price="(v) => { item.unit_price = v; emit('calc-item-total', idx) }"
+                      />
+                    </td>
+                    <template v-else>
                     <td>
                       <v-tooltip :disabled="!tzFrozen || readonly" :text="tzFrozenTooltip" location="top" max-width="280">
                         <template #activator="{ props: tip }">
@@ -226,6 +246,7 @@
                       </div>
                       <PriceFreshnessStamp :price-meta="item._price_meta" />
                     </td>
+                    </template>
                     <!-- Fix 4/5: НДС % column -->
                     <td v-if="showVatColumnsInExpandRow">
                       <v-combobox v-model="item.vat_rate"
@@ -556,6 +577,13 @@ import type { FeoNode } from '@/composables/useFeoLeaves'
 import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import { formatPlanResidual } from '@/utils/numberFormat'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
+// item-forms-accommodation-transport.md: спец-форма позиции — ItemFormFields.vue
+// заменяет колонки Кол-во/Ед./Цена в развёрнутой ТЗ-подстроке (Правило №6, единый
+// рендерер спец-полей); свёрнутая сводная строка показывает только компактную
+// расшифровку (formatExtraAttrsSummary), редактирование — после разворота строки.
+import ItemFormFields from '@/components/items/ItemFormFields.vue'
+import type { ItemFormCode, ItemFormField } from '@/utils/itemAmounts'
+import { formatExtraAttrsSummary } from '@/utils/itemAmounts'
 
 type EditorItem = any
 type StageTotals = { tz: number; dog: number; delivery: number }
@@ -563,6 +591,9 @@ type StageTotals = { tz: number; dog: number; delivery: number }
 const props = defineProps<{
   items: EditorItem[]
   readonly: boolean
+  itemForm?: ItemFormCode | null
+  itemFormFields?: ItemFormField[]
+  itemFormLabel?: string
   // Владелец (2026-08-19): согласующий заявки — состав заблокирован, построчная
   // категория/плановая позиция ФЭО остаётся редактируемой. См. PurchaseItemsEditor.vue
   // и feoReadonly ниже.
@@ -670,6 +701,14 @@ const props = defineProps<{
 // показать ИМЕННО причину заморозки, а не общий «нет доступа».
 const tzDisabled = computed(() => props.readonly || !!props.tzFrozen)
 const tzFrozenTooltip = 'Закупка объявлена — кол-во и цена ТЗ зафиксированы. Итоговую цену по результатам закупки внесите в подстроке «Договор» ниже.'
+
+// item-forms-accommodation-transport.md: компактная расшифровка extra_attrs для
+// свёрнутой сводной строки (полное редактирование — в развёрнутой ТЗ-подстроке,
+// см. ItemFormFields ниже). formatExtraAttrsSummary — utils/itemAmounts.ts, тот
+// же helper, никакой второй копии форматирования.
+function specSummary(item: EditorItem): string {
+  return formatExtraAttrsSummary(item.extra_attrs, props.itemFormFields)
+}
 // См. feoAttrsEditable в defineProps выше — построчные ФЭО-контролы остаются
 // кликабельными даже при readonly=true, если родитель явно это разрешил.
 const feoReadonly = computed(() => props.readonly && !props.feoAttrsEditable)

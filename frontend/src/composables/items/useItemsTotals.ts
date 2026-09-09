@@ -3,6 +3,10 @@
 // Extracted from PurchaseItemsEditor.vue (monolith refactor, часть 2).
 import { computed, type ComputedRef, type Ref } from 'vue'
 import { parseVatRatePercent, normalizeVatRate } from '@/composables/useVatCalc'
+// item-forms-accommodation-transport.md: ЕДИНСТВЕННОЕ место на фронте, вызывающее
+// applyItemAmounts — таблицы (ItemsTableFlat/Stages/Wish/ItemsCardsView) сами
+// формулу не считают, только эмитят 'calc-item-total' сюда (Правило №6).
+import { applyItemAmounts, type ItemFormCode } from '@/utils/itemAmounts'
 
 // EditorItem/ContractItem are structurally identical to the parent's; kept
 // loose here (same convention as ItemsTableFlat.vue) since the parent owns
@@ -16,10 +20,14 @@ export interface UseItemsTotalsDeps {
   getContractItemFor: (rowIdx: number) => ContractItem | undefined
   isAdvance: ComputedRef<boolean>
   emitUpdate: () => void
+  // item-forms-accommodation-transport.md: форма позиций текущей закупки
+  // (выводится из Purchase.contract_form, см. composables/items/useItemForm.ts) —
+  // null для обычных закупок/заявок, тогда calcItemTotal считает как раньше.
+  itemForm?: ComputedRef<ItemFormCode | null>
 }
 
 export function useItemsTotals(deps: UseItemsTotalsDeps) {
-  const { localItems, localContractItems, getContractItemFor, isAdvance, emitUpdate } = deps
+  const { localItems, localContractItems, getContractItemFor, isAdvance, emitUpdate, itemForm } = deps
 
   // Phase 27.1.17: per-stage helpers с fallback vat_rate на PurchaseItem
   function effectiveVatRate(idx: number, stage: 'contract' | 'delivery'): string | null {
@@ -62,7 +70,13 @@ export function useItemsTotals(deps: UseItemsTotalsDeps) {
 
   function calcItemTotal(idx: number) {
     const item = localItems.value[idx]
-    if (item.quantity != null && item.unit_price != null) {
+    const form = itemForm?.value ?? null
+    if (form) {
+      // Спец-форма позиции («Проживание»/«Перевозки автобусом»): quantity/unit_price
+      // (для transport) — производные от extra_attrs, total_price — по формуле формы.
+      // Единственный писатель — utils/itemAmounts.ts (превью того же расчёта, что на бэке).
+      applyItemAmounts(item, form)
+    } else if (item.quantity != null && item.unit_price != null) {
       item.total_price = Math.round(item.quantity * item.unit_price * 100) / 100
     } else {
       item.total_price = null

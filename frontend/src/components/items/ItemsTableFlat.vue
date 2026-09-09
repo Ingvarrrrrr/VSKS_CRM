@@ -15,10 +15,15 @@
           <th style="width:36px;text-align:center;color:#888;font-size:12px">№</th>
           <th :style="resizeStyle('name')">Наименование<span class="col-resize-handle" @mousedown="onResizeStart($event, 'name')">&nbsp;</span></th>
           <th :style="resizeStyle('type')">Тип<span class="col-resize-handle" @mousedown="onResizeStart($event, 'type')">&nbsp;</span></th>
-          <th :style="resizeStyle('qty')">Кол-во<span class="col-resize-handle" @mousedown="onResizeStart($event, 'qty')">&nbsp;</span></th>
-          <th :style="resizeStyle('unit')">Ед. изм.<span class="col-resize-handle" @mousedown="onResizeStart($event, 'unit')">&nbsp;</span></th>
-          <th :style="resizeStyle('price')">Цена ед., ₽<span class="col-resize-handle" @mousedown="onResizeStart($event, 'price')">&nbsp;</span></th>
-          <th :style="resizeStyle('sum')">Сумма, ₽<span class="col-resize-handle" @mousedown="onResizeStart($event, 'sum')">&nbsp;</span></th>
+          <!-- item-forms-accommodation-transport.md: спец-форма позиции — одна колонка
+               полей формы вместо Кол-во/Ед./Цена; обычная форма — три колонки как раньше. -->
+          <th v-if="itemForm" colspan="3">{{ itemFormLabel }}</th>
+          <template v-else>
+            <th :style="resizeStyle('qty')">Кол-во<span class="col-resize-handle" @mousedown="onResizeStart($event, 'qty')">&nbsp;</span></th>
+            <th :style="resizeStyle('unit')">Ед. изм.<span class="col-resize-handle" @mousedown="onResizeStart($event, 'unit')">&nbsp;</span></th>
+            <th :style="resizeStyle('price')">Цена ед., ₽<span class="col-resize-handle" @mousedown="onResizeStart($event, 'price')">&nbsp;</span></th>
+          </template>
+          <th :style="resizeStyle('sum')">{{ itemForm ? 'Итого, ₽' : 'Сумма, ₽' }}<span class="col-resize-handle" @mousedown="onResizeStart($event, 'sum')">&nbsp;</span></th>
           <th :style="resizeStyle('country')">Страна происхождения<span class="col-resize-handle" @mousedown="onResizeStart($event, 'country')">&nbsp;</span></th>
           <th v-if="vatMode === 'per_item'" style="min-width:130px">НДС</th>
           <th v-if="showNeededDate" style="min-width:150px">Дата поставки</th>
@@ -94,6 +99,18 @@
               hide-details class="my-1" :disabled="readonly"
               @update:model-value="(v: string) => emit('item-type-change', idx, v)" />
           </td>
+          <td v-if="itemForm" colspan="3">
+            <ItemFormFields
+              :item-form="itemForm"
+              :fields="itemFormFields || []"
+              :model-value="item.extra_attrs"
+              :unit-price="item.unit_price"
+              :disabled="tzDisabled"
+              @update:model-value="(v) => { item.extra_attrs = v; emit('calc-item-total', idx) }"
+              @update:unit-price="(v) => { item.unit_price = v; emit('calc-item-total', idx) }"
+            />
+          </td>
+          <template v-else>
           <td>
             <v-tooltip :disabled="!tzFrozen || readonly" :text="tzFrozenTooltip" location="top" max-width="280">
               <template #activator="{ props: tip }">
@@ -134,6 +151,7 @@
             </div>
             <PriceFreshnessStamp :price-meta="item._price_meta" />
           </td>
+          </template>
           <td>
             <v-text-field :model-value="formatNumber(item.total_price)" readonly density="compact"
               variant="outlined" hide-details bg-color="grey-lighten-4" class="my-1"
@@ -331,6 +349,11 @@ import type { Contractor, ProductLike, ItemsDisplayRow } from '@/components/item
 import type { FeoNode } from '@/composables/useFeoLeaves'
 import { formatPlanResidual } from '@/utils/numberFormat'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
+// item-forms-accommodation-transport.md: при спец-форме позиции («Проживание»/
+// «Перевозки автобусом») колонки Кол-во/Ед./Цена заменяются полями формы —
+// ItemFormFields.vue, единственный рендерер (Правило №6).
+import ItemFormFields from '@/components/items/ItemFormFields.vue'
+import type { ItemFormCode, ItemFormField } from '@/utils/itemAmounts'
 
 // EditorItem is structurally identical to the parent's; kept loose here since the
 // parent owns the canonical definition and passes its own objects through.
@@ -343,6 +366,11 @@ const VIRT_THRESHOLD = 40
 const props = defineProps<{
   items: EditorItem[]
   readonly: boolean
+  // item-forms-accommodation-transport.md: форма позиций текущей закупки (null —
+  // обычная закупка, колонки Кол-во/Ед./Цена рендерятся как раньше без изменений).
+  itemForm?: ItemFormCode | null
+  itemFormFields?: ItemFormField[]
+  itemFormLabel?: string
   // Владелец (2026-08-19): согласующий заявки видит состав заблокированным
   // (readonly=true), но должен иметь возможность перераспределить категорию/
   // плановую позицию ФЭО построчно — см. одноимённый проп в PurchaseItemsEditor.vue.

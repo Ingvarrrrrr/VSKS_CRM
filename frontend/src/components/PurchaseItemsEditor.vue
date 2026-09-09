@@ -180,6 +180,9 @@
         <ItemsTableStages
           :items="localItems"
           :readonly="props.readonly"
+          :item-form="itemForm"
+          :item-form-fields="itemFormFields"
+          :item-form-label="itemFormLabel"
           :feo-attrs-editable="props.feoAttrsEditable"
           :tz-frozen="tzFrozen"
           :allowed-item-types="props.allowedItemTypes"
@@ -273,6 +276,9 @@
           :items="localItems"
           :display-rows="itemsDisplayRows"
           :readonly="props.readonly"
+          :item-form="itemForm"
+          :item-form-fields="itemFormFields"
+          :item-form-label="itemFormLabel"
           :feo-attrs-editable="props.feoAttrsEditable"
           :supports-split="true"
           :allowed-item-types="props.allowedItemTypes"
@@ -339,6 +345,9 @@
           :items="localItems"
           :display-rows="itemsDisplayRows"
           :readonly="props.readonly"
+          :item-form="itemForm"
+          :item-form-fields="itemFormFields"
+          :item-form-label="itemFormLabel"
           :feo-attrs-editable="props.feoAttrsEditable"
           :tz-frozen="tzFrozen"
           :allowed-item-types="props.allowedItemTypes"
@@ -702,6 +711,7 @@ import { useItemMatching } from '@/composables/useItemMatching'
 import { useItemsImport } from '@/composables/items/useItemsImport'
 import { useItemsTable } from '@/composables/items/useItemsTable'
 import { useItemsTotals } from '@/composables/items/useItemsTotals'
+import { useItemForm } from '@/composables/items/useItemForm'
 import { useItemsCatalog, productPhotoSrc } from '@/composables/items/useItemsCatalog'
 import { useItemsContractors } from '@/composables/items/useItemsContractors'
 import { useItemsSplit } from '@/composables/items/useItemsSplit'
@@ -743,6 +753,10 @@ interface EditorItem {
   contractor_inn?: string | null
   contractor_name?: string | null
   receipt_id?: number | null  // Phase 26-BB
+  // item-forms-accommodation-transport.md: поля спец-формы позиции («Проживание»/
+  // «Перевозки автобусом») — единственное хранилище (mirrors PurchaseItem.extra_attrs
+  // на бэке), item_form сам НЕ хранится тут, выводится из props.contractForm.
+  extra_attrs?: Record<string, any> | null
   // Purchase-only (undefined when itemShape === 'wish'):
   final_unit_price?: number | null
   final_total?: number | null
@@ -885,6 +899,11 @@ const props = withDefaults(defineProps<{
   itemsTitle?: string
   // Per-item delivery date column (only shown when explicitly enabled)
   showNeededDate?: boolean
+  // item-forms-accommodation-transport.md: Purchase.contract_form закупки —
+  // ЕДИНСТВЕННЫЙ источник формы позиций (composables/items/useItemForm.ts
+  // выводит itemForm/fields отсюда). Wish не передаёт (у Wish нет contract_form,
+  // см. план «Модель») — тогда itemForm=null и все 4 таблицы работают как раньше.
+  contractForm?: string | null
   // Владелец (2026-09-03, «подсказка о превышении должна быть понятной»): размер
   // превышения плана категории над финансированием по ФЭО и id категории-виновника —
   // ОДИН И ТОТ ЖЕ канал, что уже питает плашку «Превышение плана ФЭО» на карточке
@@ -932,6 +951,7 @@ const props = withDefaults(defineProps<{
   showNeededDate: false,
   feoExcessAmount: null,
   feoExcessCategoryId: null,
+  contractForm: null,
 })
 
 // Владелец (2026-09-03): «обычному пользователю не надо знать, сколько денег
@@ -1510,6 +1530,13 @@ const showContractorColumn = computed(() => props.formMode === 'advance_report')
 // isAdvance: для авансовых закупок Договор/Поставка sub-rows показывают данные из ТЗ
 const isAdvance = computed(() => props.formMode === 'advance_report')
 
+// item-forms-accommodation-transport.md: форма позиций текущей закупки — ЕДИНСТВЕННЫЙ
+// источник composables/items/useItemForm.ts (props.contractForm → item_forms.json).
+// itemFormFields прокидывается в 4 таблицы (Flat/Stages/Wish/ItemsCardsView) — они сами
+// список полей не хранят (Правило №6).
+const { itemForm, fields: itemFormFields, descriptor: itemFormDescriptor } = useItemForm(computed(() => props.contractForm))
+const itemFormLabel = computed(() => itemFormDescriptor.value?.label ?? '')
+
 // VAT-per-row helpers, item/stage totals and contract-vs-plan savings % —
 // composables/items/useItemsTotals.ts. Phase 26-NN: showVatColumnsInExpandRow
 // hides НДС columns in expand-row for advance reports with no vat_rate at all.
@@ -1517,7 +1544,7 @@ const {
   effectiveVatRate, vatAmountForStage, totalWithVatForStage, onVatRateChange, calcItemTotal,
   internalTotalNmck, contractItemsTotal, purchasePlannedTotal, contractSavings, contractSavingsPercent,
   showVatColumnsInExpandRow,
-} = useItemsTotals({ localItems, localContractItems, getContractItemFor, isAdvance, emitUpdate })
+} = useItemsTotals({ localItems, localContractItems, getContractItemFor, isAdvance, emitUpdate, itemForm })
 
 // Phase 26-V: resizable columns
 // Phase 26-V-fix (superseded below): «Тип» держал максимум «Услуга»+стрелка

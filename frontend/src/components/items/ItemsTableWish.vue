@@ -15,10 +15,13 @@
           <th style="width:36px;text-align:center;color:#888;font-size:12px">№</th>
           <th style="min-width:380px">Наименование</th>
           <th style="min-width:150px">Тип</th>
-          <th style="min-width:120px">Кол-во</th>
-          <th style="min-width:120px">Ед. изм.</th>
-          <th style="min-width:140px">Цена ед., ₽</th>
-          <th style="min-width:140px">Сумма, ₽</th>
+          <th v-if="itemForm" colspan="3">{{ itemFormLabel }}</th>
+          <template v-else>
+            <th style="min-width:120px">Кол-во</th>
+            <th style="min-width:120px">Ед. изм.</th>
+            <th style="min-width:140px">Цена ед., ₽</th>
+          </template>
+          <th style="min-width:140px">{{ itemForm ? 'Итого, ₽' : 'Сумма, ₽' }}</th>
           <th style="width:48px"></th>
         </tr>
       </thead>
@@ -104,6 +107,18 @@
               item-title="title" item-value="value" density="compact" variant="outlined"
               hide-details class="my-1" :disabled="readonly" />
           </td>
+          <td v-if="itemForm" colspan="3">
+            <ItemFormFields
+              :item-form="itemForm"
+              :fields="itemFormFields || []"
+              :model-value="item.extra_attrs"
+              :unit-price="item.unit_price"
+              :disabled="readonly"
+              @update:model-value="(v) => { item.extra_attrs = v; emit('calc-item-total', idx) }"
+              @update:unit-price="(v) => { item.unit_price = v; emit('calc-item-total', idx) }"
+            />
+          </td>
+          <template v-else>
           <td>
             <v-text-field v-model.number="item.quantity" type="number" density="compact"
               variant="outlined" hide-details class="my-1" :disabled="readonly"
@@ -122,6 +137,7 @@
             />
             <PriceFreshnessStamp :price-meta="item._price_meta" />
           </td>
+          </template>
           <td>
             <v-text-field :model-value="formatNumber(item.total_price)" readonly density="compact"
               variant="outlined" hide-details bg-color="grey-lighten-4" class="my-1" />
@@ -157,6 +173,11 @@ import InlineProductMatch from '@/components/items/InlineProductMatch.vue'
 import PriceFreshnessStamp from '@/components/items/PriceFreshnessStamp.vue'
 import type { MatchCandidate } from '@/composables/useItemMatching'
 import type { Contractor } from '@/components/items/types'
+// item-forms-accommodation-transport.md: Wish не хранит contract_form (см. план
+// «Модель») — itemForm сюда всегда придёт null, но приёмник заведён для единого
+// сигнатуры 4 таблиц (Правило №6, один рендерер спец-полей — ItemFormFields.vue).
+import ItemFormFields from '@/components/items/ItemFormFields.vue'
+import type { ItemFormCode, ItemFormField } from '@/utils/itemAmounts'
 
 type EditorItem = any
 
@@ -167,6 +188,9 @@ const VIRT_THRESHOLD = 40
 const props = defineProps<{
   items: EditorItem[]
   readonly: boolean
+  itemForm?: ItemFormCode | null
+  itemFormFields?: ItemFormField[]
+  itemFormLabel?: string
   allowedItemTypes: string[]
   contractors: Contractor[]
   selectedItemIdxs: number[]

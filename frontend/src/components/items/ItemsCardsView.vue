@@ -148,6 +148,21 @@
                 @planned-item-deleted="emit('planned-item-deleted')" />
             </v-col>
 
+            <!-- item-forms-accommodation-transport.md: спец-форма позиции — поля формы
+                 вместо Кол-во/Ед./Цена ед. (Правило №6, ItemFormFields.vue). -->
+            <v-col v-if="itemForm" cols="12">
+              <div class="text-caption text-medium-emphasis mb-1">{{ itemFormLabel }}</div>
+              <ItemFormFields
+                :item-form="itemForm"
+                :fields="itemFormFields || []"
+                :model-value="item.extra_attrs"
+                :unit-price="item.unit_price"
+                :disabled="readonly"
+                @update:model-value="(v) => { item.extra_attrs = v; emit('calc-item-total', idx) }"
+                @update:unit-price="(v) => { item.unit_price = v; emit('calc-item-total', idx) }"
+              />
+            </v-col>
+            <template v-else>
             <!-- Кол-во -->
             <v-col cols="6" sm="3">
               <v-text-field v-model.number="item.quantity" type="number" density="compact"
@@ -188,6 +203,7 @@
               </div>
               <PriceFreshnessStamp :price-meta="item._price_meta" />
             </v-col>
+            </template>
 
             <!-- Сумма (readonly) -->
             <v-col cols="6" sm="4">
@@ -321,6 +337,8 @@ import type { FeoNode } from '@/composables/useFeoLeaves'
 import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import { formatPlanResidual } from '@/utils/numberFormat'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
+import ItemFormFields from '@/components/items/ItemFormFields.vue'
+import type { ItemFormCode, ItemFormField } from '@/utils/itemAmounts'
 
 // EditorItem is structurally identical to the parent's; kept loose here since the
 // parent owns the canonical definition and passes its own objects through.
@@ -333,6 +351,11 @@ const VIRT_THRESHOLD = 40
 const props = defineProps<{
   items: EditorItem[]
   readonly: boolean
+  // item-forms-accommodation-transport.md: форма позиций текущей закупки (null —
+  // обычная закупка/заявка, поведение без изменений).
+  itemForm?: ItemFormCode | null
+  itemFormFields?: ItemFormField[]
+  itemFormLabel?: string
   // Владелец (2026-08-19): согласующий заявки — состав заблокирован, но построчная
   // категория/плановая позиция ФЭО остаётся редактируемой. См. одноимённый проп в
   // PurchaseItemsEditor.vue и feoReadonly ниже.

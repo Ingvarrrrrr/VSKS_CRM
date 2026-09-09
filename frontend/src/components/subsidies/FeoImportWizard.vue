@@ -46,6 +46,21 @@
           <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-clipboard-text-search-outline">
             Это <strong>прогноз</strong> — данные ещё не записаны в базу. Проверьте результат и нажмите «Импортировать».
           </v-alert>
+          <!-- D (баг 2026-09-09): куда реально идёт импорт — колонка «Субсидия»
+               файла на это НЕ влияет, побеждает всегда открытая карточка. -->
+          <v-alert v-if="feoImportTargetSubsidyName" type="success" variant="tonal" density="compact"
+            class="mb-3" icon="mdi-target">
+            Импорт в субсидию: <strong>{{ feoImportTargetSubsidyName }}</strong>
+          </v-alert>
+          <!-- Предупреждение «субсидия из файла проигнорирована» — заметно, не
+               мелким пунктом в общем списке ниже. -->
+          <v-alert
+            v-if="feoImport.dryResult?.warnings?.some(w => w.kind === 'subsidy_name_ignored')"
+            type="warning" variant="tonal" density="compact" class="mb-3" icon="mdi-alert">
+            <div v-for="(w, wi) in feoImport.dryResult!.warnings!.filter(x => x.kind === 'subsidy_name_ignored')" :key="wi">
+              {{ w.message }}
+            </div>
+          </v-alert>
           <div v-if="feoImport.dryResult" class="d-flex flex-wrap gap-2 mb-3">
             <v-chip color="success" variant="flat"
               :disabled="!feoImport.dryResult.created_details?.length"
@@ -74,7 +89,7 @@
             <div class="text-subtitle-2 mb-1 text-warning">Предупреждения ({{ feoImport.dryResult.warnings.length }}):</div>
             <v-expansion-panels v-model="feoResultPanels" multiple class="mb-3">
               <v-expansion-panel
-                v-for="kind in [...new Set(feoImport.dryResult.warnings.map(w => w.kind))]"
+                v-for="kind in [...new Set(feoImport.dryResult.warnings.filter(w => w.kind !== 'subsidy_name_ignored').map(w => w.kind))]"
                 :key="'dw_' + kind"
                 :value="'dw_' + kind">
                 <v-expansion-panel-title>
@@ -86,7 +101,7 @@
                     <v-list-item
                       v-for="(w, wi) in feoImport.dryResult.warnings.filter(x => x.kind === kind)"
                       :key="wi"
-                      :title="w.name"
+                      :title="w.name ?? undefined"
                       :subtitle="feoWarnSubtitle(w)" />
                   </v-list>
                 </v-expansion-panel-text>
@@ -224,6 +239,17 @@
 
         <!-- Step 5: Result (после реального импорта) -->
         <template v-if="feoImport.step === 5">
+          <v-alert v-if="feoImportTargetSubsidyName" type="success" variant="tonal" density="compact"
+            class="mb-3" icon="mdi-target">
+            Импорт в субсидию: <strong>{{ feoImportTargetSubsidyName }}</strong>
+          </v-alert>
+          <v-alert
+            v-if="feoImport.result?.warnings?.some(w => w.kind === 'subsidy_name_ignored')"
+            type="warning" variant="tonal" density="compact" class="mb-3" icon="mdi-alert">
+            <div v-for="(w, wi) in feoImport.result!.warnings!.filter(x => x.kind === 'subsidy_name_ignored')" :key="wi">
+              {{ w.message }}
+            </div>
+          </v-alert>
           <div v-if="feoImport.result" class="d-flex flex-wrap gap-2 mb-3">
             <v-chip color="success" variant="flat"
               :disabled="!feoImport.result.created_details?.length"
@@ -326,7 +352,7 @@
             <div class="text-subtitle-2 mb-1 text-warning">Предупреждения ({{ feoImport.result.warnings.length }}):</div>
             <v-expansion-panels v-model="feoResultPanels" multiple class="mb-3">
               <v-expansion-panel
-                v-for="kind in [...new Set(feoImport.result.warnings.map(w => w.kind))]"
+                v-for="kind in [...new Set(feoImport.result.warnings.filter(w => w.kind !== 'subsidy_name_ignored').map(w => w.kind))]"
                 :key="'rw_' + kind"
                 :value="'rw_' + kind">
                 <v-expansion-panel-title>
@@ -338,7 +364,7 @@
                     <v-list-item
                       v-for="(w, wi) in feoImport.result.warnings!.filter(x => x.kind === kind)"
                       :key="wi"
-                      :title="w.name"
+                      :title="w.name ?? undefined"
                       :subtitle="feoWarnSubtitle(w)" />
                   </v-list>
                 </v-expansion-panel-text>
@@ -411,7 +437,7 @@ import FeoImportMappingStep from './FeoImportMappingStep.vue'
 
 const { mobile } = useDisplay()
 const {
-  feoImport, feoResultPanels, feoToggleResultPanel,
+  feoImport, feoImportTargetSubsidyName, feoResultPanels, feoToggleResultPanel,
   feoUnmatchedNeedsMapping, feoHasSuggestions, feoAcceptAllSuggestions,
   feoStep4MainLabel, feoLoadSummary, feoMappingValid,
   feoWarnKindLabel, feoWarnSubtitle,

@@ -20,7 +20,10 @@ from decimal import Decimal
 from sqlalchemy import select
 
 from app.models.feo_category import FeoCategory
-from app.services.feo_import_common import QUANT, ZERO, get_cell, to_bool, to_dec
+from app.models.feo_planned_item import FeoPlannedItem
+from app.services.feo_import_common import (
+    QUANT, ZERO, get_cell, level_label, resolve_target_subsidy_id, to_bool, to_dec,
+)
 from app.services.feo_import_common import fmt as _fmt
 from app.services.feo_import_common import norm as _norm
 from app.services.feo_import_snapshot import full_path
@@ -32,11 +35,14 @@ async def apply_rows(state) -> None:
     user = state.user
     rows = state.rows
     remap_list = state.remap_list
+    sub_rows = state.sub_rows
     sub_by_name = state.sub_by_name
     default_subsidy_id = state.default_subsidy_id
     cat_cache = state.cat_cache
     existing_by_id = state.existing_by_id
     touched_subsidies = state.touched_subsidies
+    ignored_subsidy_rows = 0
+    ignored_subsidy_names: set[str] = set()
 
     c_subsidy = state.c_subsidy
     c_lvl2 = state.c_lvl2
@@ -218,6 +224,30 @@ async def apply_rows(state) -> None:
             if _v_created:
                 state.version_created = True
 
+    # E (баг 2026-09-09, разбор скриншота владельца): различить «позиция
+    # ДЕЙСТВИТЕЛЬНО существовала до импорта» от «эта же строка файла
+    # повторяется дважды в одной категории». `db.flush()` ниже делает
+    # только что созданную в СВОЕЙ же строке позицию видимой более поздним
+    # `select`-ам в той же транзакции — без этого снимка более поздняя строка
+    # находила бы её и честно (но вводяще в заблуждение) отчитывалась как
+    # «обновлена позиция», хотя реального обновления существующих данных не
+    # было: субсидия «ЦП_2026_2» была пустой, обе строки — из ОДНОГО файла
+    # (боевой случай: «Аренда офиса» и «4» встречались в файле по два раза).
+    # Снимок берём ТОЛЬКО по категориям, существовавшим до импорта
+    # (existing_by_id — уже отфильтрован по целевым субсидиям, см. B в
+    # feo_import_core.py); позиции внутри категорий, созданных этим же
+    # импортом, заведомо не могут быть «существовавшими до».
+    existing_plan_item_ids: set[int] = set()
+    if existing_by_id:
+        _epi_ids = (await db.execute(
+            select(FeoPlannedItem.id).where(FeoPlannedItem.feo_category_id.in_(list(existing_by_id.keys())))
+        )).scalars().all()
+        existing_plan_item_ids = set(_epi_ids)
+    # (feo_category_id, name) → номер первой строки файла, создавшей позицию с
+    # этим именем в этой категории в ЭТОМ ЖЕ импорте (для текста «повтор строки N»).
+    lvl5_item_first_row: dict[tuple[int, str], int] = {}
+    duplicate_row_count = 0
+
     for row_num, row in enumerate(rows, start=2):
         lvl2_name = get_cell(row, c_lvl2)
 
@@ -236,28 +266,28 @@ async def apply_rows(state) -> None:
         # уровня N+1, случайно набранное в числовой колонке уровня N, — вернуть
         # на место ДО того, как из lvl2/3/4/5_name соберётся дерево строки.
         lvl3_name = _numeric_shift_scan(row_num, 2, lvl3_name, [
-            (c_feo_qty_lvl2, "Кол-во по ФЭО (Ур.2)"),
-            (c_feo_amt_lvl2, "Стоимость по ФЭО (Ур.2)"),
-            (c_feo_sum_lvl2, "Сумма по ФЭО (Ур.2)"),
-            (c_qty_lvl2, "Плановое кол-во (Ур.2)"),
-            (c_amt_lvl2, "Плановая стоимость за ед. (Ур.2)"),
-            (c_plan_sum_lvl2, "Сумма плана (Ур.2)"),
+            (c_feo_qty_lvl2, f"Кол-во по ФЭО ({level_label(2)})"),
+            (c_feo_amt_lvl2, f"Стоимость по ФЭО ({level_label(2)})"),
+            (c_feo_sum_lvl2, f"Сумма по ФЭО ({level_label(2)})"),
+            (c_qty_lvl2, f"Плановое кол-во ({level_label(2)})"),
+            (c_amt_lvl2, f"Плановая стоимость за ед. ({level_label(2)})"),
+            (c_plan_sum_lvl2, f"Сумма плана ({level_label(2)})"),
         ]) or lvl3_name
         lvl4_name = _numeric_shift_scan(row_num, 3, lvl4_name, [
-            (c_feo_qty_lvl3, "Кол-во по ФЭО (Ур.3)"),
-            (c_feo_amt_lvl3, "Стоимость по ФЭО (Ур.3)"),
-            (c_feo_sum_lvl3, "Сумма по ФЭО (Ур.3)"),
-            (c_qty_lvl3, "Плановое кол-во (Ур.3)"),
-            (c_amt_lvl3, "Плановая стоимость за ед. (Ур.3)"),
-            (c_plan_sum_lvl3, "Сумма плана (Ур.3)"),
+            (c_feo_qty_lvl3, f"Кол-во по ФЭО ({level_label(3)})"),
+            (c_feo_amt_lvl3, f"Стоимость по ФЭО ({level_label(3)})"),
+            (c_feo_sum_lvl3, f"Сумма по ФЭО ({level_label(3)})"),
+            (c_qty_lvl3, f"Плановое кол-во ({level_label(3)})"),
+            (c_amt_lvl3, f"Плановая стоимость за ед. ({level_label(3)})"),
+            (c_plan_sum_lvl3, f"Сумма плана ({level_label(3)})"),
         ]) or lvl4_name
         lvl5_name = _numeric_shift_scan(row_num, 4, lvl5_name, [
-            (c_feo_qty_lvl4, "Кол-во по ФЭО (Ур.4)"),
-            (c_feo_amt_lvl4, "Стоимость по ФЭО (Ур.4)"),
-            (c_feo_sum_lvl4, "Сумма по ФЭО (Ур.4)"),
-            (c_qty_lvl4, "Плановое кол-во (Ур.4)"),
-            (c_amt_lvl4, "Плановая стоимость за ед. (Ур.4)"),
-            (c_plan_sum_lvl4, "Сумма плана (Ур.4)"),
+            (c_feo_qty_lvl4, f"Кол-во по ФЭО ({level_label(4)})"),
+            (c_feo_amt_lvl4, f"Стоимость по ФЭО ({level_label(4)})"),
+            (c_feo_sum_lvl4, f"Сумма по ФЭО ({level_label(4)})"),
+            (c_qty_lvl4, f"Плановое кол-во ({level_label(4)})"),
+            (c_amt_lvl4, f"Плановая стоимость за ед. ({level_label(4)})"),
+            (c_plan_sum_lvl4, f"Сумма плана ({level_label(4)})"),
         ]) or lvl5_name
 
         # Позиция без уровней → переезжает на Уровень 2 (задача владельца,
@@ -272,7 +302,7 @@ async def apply_rows(state) -> None:
                     "kind": "item_promoted_to_level2",
                     "row": row_num,
                     "name": lvl5_name,
-                    "message": f"Плановая позиция «{lvl5_name}» — в строке нет ни одного уровня, создана направлением (Ур.2)",
+                    "message": f"Плановая позиция «{lvl5_name}» — в строке нет ни одного уровня, создана направлением ({level_label(2)})",
                 })
                 lvl2_name = lvl5_name
                 lvl5_name = None
@@ -287,17 +317,33 @@ async def apply_rows(state) -> None:
             continue
 
         sub_name = get_cell(row, c_subsidy) if c_subsidy is not None else None
-        if sub_name and not sub_name.startswith("←"):
-            subsidy_id = sub_by_name.get(sub_name.lower().strip()) or default_subsidy_id
-            if not subsidy_id:
-                errors.append({"row": row_num, "name": lvl2_name, "message": f"Субсидия не найдена: '{sub_name}'"})
-                continue
+        subsidy_id = resolve_target_subsidy_id(sub_name, sub_by_name, default_subsidy_id)
+        if default_subsidy_id:
+            # Открытая субсидия (карточка, из которой запущен импорт) побеждает
+            # БЕЗУСЛОВНО — баг 2026-09-09: шаблон, заполненный под другую
+            # субсидию, не должен перебивать субсидию назначения. Колонка
+            # «Субсидия» файла здесь НЕ маршрутизирует — если она называет
+            # ДРУГУЮ существующую субсидию, копим для одного агрегированного
+            # предупреждения после цикла (не молча, но и не на каждую строку).
+            if sub_name and not sub_name.startswith("←"):
+                _named_sid = sub_by_name.get(sub_name.lower().strip())
+                if _named_sid and _named_sid != default_subsidy_id:
+                    ignored_subsidy_rows += 1
+                    ignored_subsidy_names.add(sub_name.strip())
         else:
-            subsidy_id = default_subsidy_id
-            if not subsidy_id:
-                skipped += 1
-                skipped_details.append({"row": row_num, "name": lvl2_name, "reason": "не указана субсидия назначения"})
-                continue
+            # Мультисубсидийный режим (default_subsidy_id не передан — сегодня
+            # только самостоятельная страница FeoCategoriesView.vue, без
+            # карточки субсидии): колонка «Субсидия» файла — единственный
+            # источник маршрутизации, поведение прежнее.
+            if sub_name and not sub_name.startswith("←"):
+                if not subsidy_id:
+                    errors.append({"row": row_num, "name": lvl2_name, "message": f"Субсидия не найдена: '{sub_name}'"})
+                    continue
+            else:
+                if not subsidy_id:
+                    skipped += 1
+                    skipped_details.append({"row": row_num, "name": lvl2_name, "reason": "не указана субсидия назначения"})
+                    continue
 
         code      = get_cell(row, c_code)
         appendix  = get_cell(row, c_appendix)
@@ -307,7 +353,7 @@ async def apply_rows(state) -> None:
         item_qty    = to_dec(get_cell(row, c_qty))
         item_unit   = get_cell(row, c_unit)
         item_unit   = _check_unit_shift(
-            item_unit, row_num, lvl5_name or lvl4_name or lvl3_name or lvl2_name, "Ед. изм. (Ур.5)"
+            item_unit, row_num, lvl5_name or lvl4_name or lvl3_name or lvl2_name, f"Ед. изм. ({level_label(5)})"
         )
         item_amount = to_dec(get_cell(row, c_item_amt))
         item_price  = to_dec(get_cell(row, c_item_price)) if c_item_price is not None else None
@@ -433,7 +479,7 @@ async def apply_rows(state) -> None:
                     "kind": "level_duplicate",
                     "row": row_num,
                     "name": lv["name"],
-                    "message": f"Ур.{lv['level_src']} и Ур.{deduped[-1]['level_src']} названы одинаково — склеены в один узел",
+                    "message": f"{level_label(lv['level_src'])} и {level_label(deduped[-1]['level_src'])} названы одинаково — склеены в один узел",
                 })
                 # Числа объединяем с приоритетом нижнего непустого
                 prev = deduped[-1]
@@ -447,7 +493,7 @@ async def apply_rows(state) -> None:
                         "kind": "level_gap",
                         "row": row_num,
                         "name": lv["name"],
-                        "message": f"Ур.{lv['level_src']} поднят на место Ур.{deduped[-1]['level_src'] + 1} — промежуточный уровень не заполнен",
+                        "message": f"{level_label(lv['level_src'])} поднят на место {level_label(deduped[-1]['level_src'] + 1)} — промежуточный уровень не заполнен",
                     })
                 deduped.append(lv)
 
@@ -465,14 +511,18 @@ async def apply_rows(state) -> None:
 
                 if is_new:
                     created += 1
-                    label = {1: "направление (ур. 2)", 2: "категория (ур. 3)", 3: "статья (ур. 4)"}.get(db_level, f"уровень {db_level + 1}")
+                    label = {
+                        1: f"направление ({level_label(2)})",
+                        2: f"категория ({level_label(3)})",
+                        3: f"статья ({level_label(4)})",
+                    }.get(db_level, f"уровень {db_level + 1}")
                     created_details.append({"row": row_num, "name": lv["name"], "reason": label})
 
                 # --- ФЭО-поля ---
                 feo_qty  = lv["feo_qty"]
                 feo_unit = lv["feo_unit"]
                 feo_unit = _check_unit_shift(
-                    feo_unit, row_num, lv["name"], f"Ед. изм. по ФЭО (Ур.{lv['level_src']})"
+                    feo_unit, row_num, lv["name"], f"Ед. изм. по ФЭО ({level_label(lv['level_src'])})"
                 )
                 feo_amt  = lv["feo_amt"]
                 feo_sum  = lv["feo_sum"]
@@ -515,7 +565,7 @@ async def apply_rows(state) -> None:
                 plan_qty  = lv["plan_qty"]
                 plan_unit = lv["plan_unit"]
                 plan_unit = _check_unit_shift(
-                    plan_unit, row_num, lv["name"], f"Ед. изм. плана (Ур.{lv['level_src']})"
+                    plan_unit, row_num, lv["name"], f"Ед. изм. плана ({level_label(lv['level_src'])})"
                 )
                 plan_amt  = lv["plan_amt"]
                 plan_sum  = lv["plan_sum"]
@@ -628,8 +678,6 @@ async def apply_rows(state) -> None:
                 updated_details.append({"row": row_num, "name": leaf.name, "reason": "обновлены поля категории"})
 
             if lvl5_name and lvl5_name not in ("←", ""):
-                from app.models.feo_planned_item import FeoPlannedItem
-
                 # Вычислить итоговую сумму позиции: item_amount приоритетнее
                 eff_item_amount = item_amount
                 if eff_item_amount is None and item_price is not None:
@@ -672,7 +720,8 @@ async def apply_rows(state) -> None:
                     db.add(pi)
                     await db.flush()
                     created += 1
-                    created_details.append({"row": row_num, "name": lvl5_name, "reason": "плановая позиция (ур. 5)"})
+                    created_details.append({"row": row_num, "name": lvl5_name, "reason": f"плановая позиция ({level_label(5)})"})
+                    lvl5_item_first_row[(leaf.id, lvl5_name)] = row_num
                 else:
                     ch2 = False
                     if item_qty is not None and existing_item.quantity != item_qty:
@@ -685,12 +734,52 @@ async def apply_rows(state) -> None:
                         existing_item.item_type = item_type; ch2 = True
                     if ch2:
                         updated += 1
-                        updated_details.append({"row": row_num, "name": lvl5_name, "reason": "обновлена позиция"})
+                        _dup_first_row = lvl5_item_first_row.get((leaf.id, lvl5_name))
+                        if existing_item.id not in existing_plan_item_ids and _dup_first_row is not None:
+                            # Не настоящее обновление БД-данных — эта же позиция
+                            # уже была создана более ранней строкой ЭТОГО ЖЕ
+                            # файла (см. комментарий у existing_plan_item_ids
+                            # выше основного цикла). Текст должен читаться как
+                            # «повтор», а не как «обновлены существующие данные».
+                            duplicate_row_count += 1
+                            updated_details.append({
+                                "row": row_num, "name": lvl5_name,
+                                "reason": f"повтор строки {_dup_first_row} — значения взяты из последней",
+                            })
+                        else:
+                            updated_details.append({
+                                "row": row_num, "name": lvl5_name,
+                                "reason": "обновлена позиция — значения перезаписаны из файла",
+                            })
                     else:
                         skipped += 1
                         skipped_details.append({"row": row_num, "name": lvl5_name, "reason": "без изменений"})
 
         except Exception as e:
             errors.append({"row": row_num, "name": lvl2_name, "message": str(e)})
+
+    if ignored_subsidy_rows:
+        _target_name = next((s.name for s in sub_rows if s.id == default_subsidy_id), None) or f"#{default_subsidy_id}"
+        _ignored_names_str = "«" + "», «".join(sorted(ignored_subsidy_names)) + "»"
+        warnings.append({
+            "kind": "subsidy_name_ignored",
+            "row": None,
+            "name": None,
+            "message": (
+                f"В файле указана субсидия {_ignored_names_str}, импорт идёт в открытую "
+                f"«{_target_name}» — строки будут созданы в ней (затронуто строк: {ignored_subsidy_rows})"
+            ),
+        })
+
+    if duplicate_row_count:
+        warnings.append({
+            "kind": "duplicate_row_in_file",
+            "row": None,
+            "name": None,
+            "message": (
+                f"В файле {duplicate_row_count} повторяющихся позиций (одинаковое имя в одной "
+                f"категории) — учтена последняя строка"
+            ),
+        })
 
     state.created, state.updated, state.skipped = created, updated, skipped

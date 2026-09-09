@@ -14,7 +14,7 @@ from decimal import Decimal
 from sqlalchemy import select
 
 from app.models.feo_category import FeoCategory
-from app.services.feo_import_common import ZERO, fmt as _fmt
+from app.services.feo_import_common import ZERO, level_label, fmt as _fmt
 
 
 async def apply_collected_plan(state) -> None:
@@ -105,8 +105,8 @@ async def apply_collected_plan(state) -> None:
                         "row": _plan_row,
                         "name": _plan_name,
                         "message": (
-                            f"План строки «{_plan_name}» = {_fmt(_pdata['amount'])}{_fallback_note}, а сумма позиций Ур.5 "
-                            f"= {_fmt(_items_sum)} — расхождение, план строки не записан"
+                            f"План строки «{_plan_name}» = {_fmt(_pdata['amount'])}{_fallback_note}, а сумма строк "
+                            f"«{level_label(5)}» = {_fmt(_items_sum)} — расхождение, план строки не записан"
                         ),
                     })
                 continue

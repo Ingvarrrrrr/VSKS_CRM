@@ -279,14 +279,27 @@ async def _do_feo_import(
     state.sub_rows = (await db.execute(select(Subsidy))).scalars().all()
     state.sub_by_name = {s.name.lower().strip(): s.id for s in state.sub_rows}
 
-    state.existing_cats = (await db.execute(select(FeoCategory))).scalars().all()
+    # B (баг 2026-09-09, прод): touched_subsidies вычисляется РАНЬШЕ, чем раньше
+    # (было после снимка existing_cats) — теперь используется ещё и для того,
+    # чтобы existing_cats/cat_cache грузили категории ТОЛЬКО целевых субсидий,
+    # а не всей БД. Раньше при default_subsidy_id, заданном для НОВОЙ пустой
+    # субсидии, cat_cache всё равно тянул категории ВСЕХ субсидий (в т.ч. чужих
+    # с сотнями узлов) — сама привязка find_or_create по (subsidy_id, parent_id,
+    # name) не давала им ложно матчиться, но отчёт «несопоставленные узлы»
+    # (build_unmatched_report/remap_and_prune) видел чужие деревья целиком.
+    # collect_affected_subsidies не имеет побочных эффектов и не зависит от
+    # cat_cache/existing_cats — переставить её раньше безопасно.
+    collect_affected_subsidies(state)
+
+    state.existing_cats = (await db.execute(
+        select(FeoCategory).where(FeoCategory.subsidy_id.in_(state.touched_subsidies))
+    )).scalars().all() if state.touched_subsidies else []
     cat_cache: dict[tuple, FeoCategory] = {}
     for c in state.existing_cats:
         cat_cache[(c.subsidy_id, c.parent_id, c.name.lower().strip())] = c
     state.cat_cache = cat_cache
 
     snapshot_tree_before(state)
-    collect_affected_subsidies(state)
     await assert_write_gate(state)
     await apply_rows(state)
     await apply_collected_plan(state)

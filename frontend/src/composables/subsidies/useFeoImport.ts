@@ -24,6 +24,8 @@ export function feoWarnKindLabel(kind: string): string {
     group_plan_ignored: 'План строки не записан — у категории есть подкатегории',
     plan_vs_items_mismatch: 'План строки не совпадает с суммой плановых позиций',
     plan_skipped_has_items: 'План строки не записан — у категории уже есть позиции',
+    subsidy_name_ignored: 'Субсидия из файла проигнорирована — импорт идёт в открытую',
+    duplicate_row_in_file: 'В файле повторяются позиции — учтена последняя строка',
   }
   return labels[kind] ?? kind
 }
@@ -312,6 +314,17 @@ export function useFeoImport(ctx?: FeoImportCtx) {
     toast.addToast(text, color, opts)
   }
 
+  // D (баг 2026-09-09, владелец): в предпросмотре должно быть явно видно, В
+  // КАКУЮ субсидию идёт импорт — backend с этой сессии ВСЕГДА пишет ровно в
+  // неё (default_subsidy_id побеждает безусловно, см. resolve_target_subsidy_id
+  // в app/services/feo_import_common.py), но пока это было не видно в UI,
+  // владелец не мог заметить проблему до того, как она уже случилась.
+  const feoImportTargetSubsidyName = computed(() => {
+    const id = feoImportTargetSubsidy.value
+    if (id == null) return null
+    return ctx?.allSubsidies.value.find(s => s.id === id)?.name ?? null
+  })
+
   async function doFeoImport() {
     if (!feoImport.file) return
     feoImport.loading = true
@@ -456,7 +469,7 @@ export function useFeoImport(ctx?: FeoImportCtx) {
   }
 
   return {
-    feoImport, feoImportTargetSubsidy, FEO_TARGET_FIELDS,
+    feoImport, feoImportTargetSubsidy, feoImportTargetSubsidyName, FEO_TARGET_FIELDS,
     feoDragMapping, feoIgnoredCols, feoDragOverTarget, feoResultPanels, feoToggleResultPanel,
     feoUnmatchedNeedsMapping, feoHasSuggestions, feoRemapPlannedCount, feoAcceptAllSuggestions,
     feoStep4MainLabel, feoLoadSummary, feoCurrentSheet, feoCurrentHeaders, feoMappingValid, feoUnmappedCount,

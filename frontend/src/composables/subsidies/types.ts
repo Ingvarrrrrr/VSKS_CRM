@@ -386,8 +386,15 @@ export interface FeoWarning {
   kind: 'level_gap' | 'level_duplicate' | 'sum_mismatch' | 'sum_without_qty' | 'parent_sum_mismatch'
     | 'level_name_in_number_column' | 'item_promoted_to_level2' | 'item_type_unknown'
     | 'column_shift' | 'group_plan_ignored' | 'plan_vs_items_mismatch' | 'plan_skipped_has_items'
+    // Баг 2026-09-09: 'subsidy_name_ignored' — открытая субсидия перебила
+    // другую, названную в файле (см. resolve_target_subsidy_id в
+    // app/services/feo_import_common.py); 'duplicate_row_in_file' — одна
+    // позиция дважды в файле (см. existing_plan_item_ids в feo_import_apply.py).
+    // Оба — ОДНО агрегированное предупреждение на импорт, без привязки к
+    // строке/имени, поэтому row/name у них null.
+    | 'subsidy_name_ignored' | 'duplicate_row_in_file'
   row: number | null
-  name: string
+  name: string | null
   message: string
 }
 export interface FeoUnmatchedNode {

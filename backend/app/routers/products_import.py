@@ -4,24 +4,21 @@
 catch-all "/{product_id}" products.router — по форме не конфликтуют,
 регистрируется рядом с остальными products_* соседями для единообразия.
 """
-from decimal import Decimal
 from io import BytesIO
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query, UploadFile, File, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from urllib.parse import quote as _url_quote
 
 from app.auth.jwt import get_current_user
 from app.database import get_db
-from app.models.product import Product
 from app.models.user import User
-from app.services.price_actualization import actualize_product_price
-from app.services.item_amounts import line_total
-from app.services.product_unit import backfill_product_unit
+from app.services.import_preview_sheets import detect_header_row, read_preview_sheets, read_full_sheet_rows
+from app.services.products_import_map import suggest_products_column_mapping
+from app.services.products_import_apply import apply_products_import
 
 try:
     from openpyxl import Workbook, load_workbook
@@ -98,6 +95,15 @@ async def download_products_template(
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_url_quote('Шаблон_импорта_товаров.xlsx', safe='-_.~')}"})
 
 
+# Ключевые слова для авто-детекта СТРОКИ заголовка (не колонок!) — общие что
+# для старого /import (одна активная/лучшая по заполненности книга), что для
+# /import-preview (все листы файла).
+_PRODUCTS_HEADER_HINTS = (
+    'наименован', 'назван', 'товар', 'предмет', 'name', 'title', 'услуг', 'работ',
+    'цена', 'описан', 'кол', 'тип', 'price', 'стоимост', 'ед.', 'единиц', 'катег',
+)
+
+
 @router.post("/import")
 async def import_products_from_excel(
     file: UploadFile = File(...),
@@ -105,7 +111,16 @@ async def import_products_from_excel(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Импорт товаров из Excel. Возвращает {created, skipped, errors}."""
+    """Импорт товаров из Excel с автоопределением строки заголовка и ТОЧНЫМ
+    (без фаззи-угадывания) сопоставлением колонок из
+    services/products_import_map.py — раньше фаззи-цепочка и пере-угадывание
+    `name` по типу данных на боевом файле владельца приняли колонку
+    «Категория товара» за наименование (план dreamy-booping-piglet.md,
+    задача B, дефект №2: 1022 «товара»-категории). Если автоопределение
+    промахнулось (в `headers_found` нет `name`) — использовать
+    POST /import-preview + POST /import-mapped с ручным маппингом.
+    Возвращает {created, updated, skipped, errors, rows, product_ids,
+    headers_found, headers_raw}."""
     if not (file.filename or "").lower().endswith((".xlsx", ".xls")):
         raise HTTPException(400, "Поддерживаются только .xlsx и .xls")
 
@@ -119,269 +134,105 @@ async def import_products_from_excel(
     if len(rows) < 2:
         raise HTTPException(400, "Файл пустой")
 
-    # Auto-detect header row — scan ALL rows for the one with most recognizable column names
-    NAME_HINTS = ('наименован', 'назван', 'товар', 'предмет', 'name', 'title', 'услуг', 'работ')
-    ALL_HINTS = NAME_HINTS + ('цена', 'описан', 'кол', 'тип', 'price', 'стоимост', 'ед.', 'единиц', 'катег')
-    header_row_idx = 0
-    best_score = 0
-    for ri, row in enumerate(rows):
-        norm = [str(h).strip().lower() if h is not None else "" for h in row]
-        score = sum(1 for h in norm if h and any(x in h for x in ALL_HINTS))
-        if score > best_score:
-            best_score = score
-            header_row_idx = ri
+    header_row_idx = detect_header_row(rows, _PRODUCTS_HEADER_HINTS)
     rows = rows[header_row_idx:]  # trim leading rows above header
 
     raw_headers = [str(h).strip().lower() if h is not None else "" for h in rows[0]]
-    COLUMN_MAP = {
-        "наименование": "name",
-        "название": "name",
-        "наименование товара": "name",
-        "товар": "name",
-        "name": "name",
-        "описание": "description",
-        "description": "description",
-        "категория": "category",
-        "category": "category",
-        "вид": "product_type",
-        "тип": "product_type",
-        "type": "product_type",
-        "цена": "price",
-        "цена, руб": "price",
-        "цена, ₽": "price",
-        "цена (руб)": "price",
-        "стоимость": "price",
-        "price": "price",
-        "фото (url)": "photo_link",
-        "фото": "photo_link",
-        "photo": "photo_link",
-        "ссылка на фото": "photo_link",
-        "многоразовое": "is_reusable",
-        "активен": "is_active",
-        "активна": "is_active",
-        "active": "is_active",
-        "категория фэо": "feo_category_name",
-        "фэо": "feo_category_name",
-        "направление фэо": "feo_category_name",
-    }
-    # Also map Ссылка N / Цена ссылки N
-    import re as _re
-    col_idx: dict[str, int] = {}
-    for i, h in enumerate(raw_headers):
-        # Exact match first
-        field = COLUMN_MAP.get(h)
-        if field and field not in col_idx:
-            col_idx[field] = i
-        # Fuzzy/partial match for name and common fields
-        if 'name' not in col_idx and any(x in h for x in ('наименован', 'назван', 'товар', 'предмет', 'наимен')):
-            col_idx['name'] = i
-        elif 'description' not in col_idx and any(x in h for x in ('описан', 'техническ', 'характерист', 'specification')):
-            col_idx['description'] = i
-        elif 'price' not in col_idx and any(x in h for x in ('цена', 'стоимость', 'price')) and 'сумм' not in h:
-            col_idx['price'] = i
-        elif 'product_type' not in col_idx and any(x in h for x in ('тип', 'вид', 'type')):
-            col_idx['product_type'] = i
-        elif 'category' not in col_idx and 'категор' in h:
-            col_idx['category'] = i
-        elif 'quantity' not in col_idx and any(x in h for x in ('кол-во', 'количеств', 'qty', 'кол.')):
-            col_idx['quantity'] = i
-        elif 'unit' not in col_idx and any(x in h for x in ('ед.', 'ед. изм', 'единиц', 'unit')):
-            col_idx['unit'] = i
-        # Dynamic link columns
-        m = _re.match(r"ссылка (\d+)$", h)
-        if m:
-            col_idx[f"link_url_{m.group(1)}"] = i
-        m2 = _re.match(r"цена ссылки (\d+)$", h)
-        if m2:
-            col_idx[f"link_price_{m2.group(1)}"] = i
+    col_idx = suggest_products_column_mapping(raw_headers)
 
-    # Post-map validation: if 'name' column contains numbers in data rows,
-    # find the first string-heavy column instead (handles article+name dual-column files)
-    if 'name' in col_idx and len(rows) > 1:
-        name_col = col_idx['name']
-        sample_vals = [rows[i][name_col] for i in range(1, min(4, len(rows))) if name_col < len(rows[i])]
-        numeric_count = sum(1 for v in sample_vals if isinstance(v, (int, float)) and v == v)
-        if numeric_count >= len(sample_vals) and sample_vals:
-            # Mapped name column has only numbers — find the first string column
-            for ci in range(len(rows[0])):
-                if ci == name_col:
-                    continue
-                str_vals = [rows[i][ci] for i in range(1, min(4, len(rows))) if ci < len(rows[i])]
-                if sum(1 for v in str_vals if isinstance(v, str) and len(v.strip()) > 5) >= len(str_vals) // 2 + 1:
-                    col_idx['name'] = ci
-                    break
-
-    # FEO lookup
-    from app.models.feo_category import FeoCategory
-    feo_rows = (await db.execute(select(FeoCategory))).scalars().all()
-    feo_by_name = {f.name.lower().strip(): f.id for f in feo_rows}
-
-    def cell(row, field):
-        idx = col_idx.get(field)
-        if idx is None or idx >= len(row): return None
-        v = row[idx]; return str(v).strip() if v is not None else None
-
-    def to_bool(v):
-        if v is None: return True
-        return str(v).lower().strip() in ("да", "yes", "true", "1", "+")
-
-    def to_dec(v):
-        if v is None: return None
-        try: return Decimal(str(v).replace(" ", "").replace(",", "."))
-        except: return None
-
-    # Load existing products for dedup check (key → Product)
-    def _norm_key(s) -> str:
-        return (s or '').replace('\r\n', '\n').replace('\r', '\n').strip().lower()
-
-    existing_result = await db.execute(select(Product))
-    existing_by_key: dict[str, Product] = {}
-    for ep in existing_result.scalars().all():
-        k = _norm_key(ep.name) + '|' + _norm_key(ep.description)
-        existing_by_key[k] = ep
-
-    created = 0; skipped = 0; errors: list[dict] = []
-    all_products: list[Product] = []   # both new and existing (for purchase items)
-    product_row_data: list[dict] = []  # qty/unit per product for PurchaseItem
-
-    from datetime import datetime as _dt
-    _user_name = getattr(current_user, 'full_name', None) or getattr(current_user, 'username', '') or ''
-    _import_note = (
-        f"Импорт каталога из файла «{file.filename}», "
-        f"{_user_name}, {_dt.now().strftime('%d.%m.%Y %H:%M')}"
+    result = await apply_products_import(
+        db, rows[1:], col_idx,
+        filename=file.filename or "", current_user=current_user,
+        purchase_id=purchase_id, dry_run=False, first_row_num=2,
     )
+    recognized = {field: raw_headers[idx] for field, idx in col_idx.items() if idx < len(raw_headers)}
+    return {**result, "headers_found": recognized, "headers_raw": raw_headers[:20]}
 
-    for row_num, row in enumerate(rows[1:], start=2):
-        try:
-            name = cell(row, "name")
-            if not name: continue  # empty row — don't count as skipped product
-            desc_val = cell(row, "description")
-            dedup_key = _norm_key(name) + '|' + _norm_key(desc_val)
 
-            # Collect price_links
-            price_links = []
-            for n in range(1, 10):
-                url = cell(row, f"link_url_{n}")
-                if not url: break
-                price_val = to_dec(cell(row, f"link_price_{n}"))
-                price_links.append({"url": url, "price": float(price_val) if price_val else None})
+@router.post("/import-preview")
+async def products_import_preview(
+    file: UploadFile = File(...),
+    _=Depends(get_current_user),
+):
+    """Читает Excel/XLS/DOCX/PDF, возвращает ВСЕ листы (заголовки + примеры
+    строк, распознанную строку заголовка) и подсказку маппинга колонок
+    (`mapping_hint`, только точные совпадения — см. products_import_map.py)
+    — БЕЗ применения. Общий сервис чтения с мастером ФЭО
+    (services/import_preview_sheets.py, ПРАВИЛО №6). Следующий шаг —
+    пользователь подтверждает/правит маппинг и уходит на
+    POST /import-mapped с явными индексами колонок."""
+    content = await file.read()
+    result = read_preview_sheets(content, file.filename or "", _PRODUCTS_HEADER_HINTS)
+    for sheet in result["sheets"]:
+        sheet["mapping_hint"] = suggest_products_column_mapping(sheet["headers"])
+    return result
 
-            feo_name = cell(row, "feo_category_name")
-            feo_id = feo_by_name.get(feo_name.lower().strip()) if feo_name else None
 
-            price = to_dec(cell(row, "price"))
-            if not price and price_links:
-                prices = [l["price"] for l in price_links if l["price"]]
-                if prices: price = Decimal(str(round(sum(prices) / len(prices), 2)))
+@router.post("/import-mapped")
+async def products_import_mapped(
+    file: UploadFile = File(...),
+    sheet_name: str = Query("", description="Имя листа из ответа /import-preview"),
+    header_row_offset: int = Query(0, description="Сколько строк пропустить до заголовка (из /import-preview)"),
+    dry_run: bool = Query(True, description="true — только посчитать и вернуть отчёт, ничего не сохранять"),
+    purchase_id: Optional[int] = Query(None, description="Если передан и dry_run=false — добавить товары в закупку"),
+    col_name: int = Query(-1, description="Индекс столбца «Наименование» (0-based, обязателен)"),
+    col_description: int = Query(-1),
+    col_category: int = Query(-1),
+    col_product_type: int = Query(-1),
+    col_price: int = Query(-1),
+    col_photo_link: int = Query(-1),
+    col_is_reusable: int = Query(-1),
+    col_is_active: int = Query(-1),
+    col_feo_category_name: int = Query(-1),
+    col_quantity: int = Query(-1),
+    col_unit: int = Query(-1),
+    col_link_url_1: int = Query(-1), col_link_price_1: int = Query(-1),
+    col_link_url_2: int = Query(-1), col_link_price_2: int = Query(-1),
+    col_link_url_3: int = Query(-1), col_link_price_3: int = Query(-1),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Импорт с РУЧНЫМ маппингом колонок, подтверждённым после
+    POST /import-preview. Индексы колонок — 0-based, из тех же `headers`,
+    что вернул предпросмотр для выбранного листа. `dry_run=true` (по
+    умолчанию) — построчный отчёт (`rows`: row/action/name/reason) без
+    записи в БД; чтобы реально импортировать, передать `dry_run=false`.
+    Использует тот же apply_products_import, что и POST /import (ПРАВИЛО
+    №6 — поведение импорта не расходится между авто- и ручным маппингом)."""
+    if col_name < 0:
+        raise HTTPException(400, "Не указан столбец «Наименование»")
+    if not (file.filename or "").lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(400, "Поддерживаются только .xlsx и .xls")
 
-            qty_str = cell(row, "quantity")
-            unit_raw = cell(row, "unit")  # без дефолта — для бэкфилла Product.unit
-            unit_str = unit_raw or "шт."
-            row_qty = None
-            if qty_str:
-                try: row_qty = Decimal(str(qty_str).replace(',', '.').replace(' ', ''))
-                except: pass
+    content = await file.read()
+    try:
+        all_rows = read_full_sheet_rows(content, file.filename or "", sheet_name)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"Не удалось прочитать файл ({file.filename}): {e}")
 
-            if dedup_key in existing_by_key:
-                # Product already in catalog — update price + backfill empty fields
-                ep = existing_by_key[dedup_key]
-                if price and ep.price != price:
-                    # Актуализация цены (владелец, 2026-08-29): цена пришла из
-                    # импортируемого Excel-файла — source='import'.
-                    await actualize_product_price(
-                        db, ep, price=price, source="import",
-                        source_ref=file.filename, user=current_user,
-                    )
+    data_rows = all_rows[header_row_offset + 1:]
+    if not data_rows:
+        raise HTTPException(400, "Нет строк данных после заголовка")
 
-                # Fill ONLY empty string-fields on existing product from this row
-                def _fill(attr, val):
-                    if val and not getattr(ep, attr):
-                        setattr(ep, attr, val)
+    col_map_raw = {
+        "name": col_name, "description": col_description, "category": col_category,
+        "product_type": col_product_type, "price": col_price, "photo_link": col_photo_link,
+        "is_reusable": col_is_reusable, "is_active": col_is_active,
+        "feo_category_name": col_feo_category_name, "quantity": col_quantity, "unit": col_unit,
+        "link_url_1": col_link_url_1, "link_price_1": col_link_price_1,
+        "link_url_2": col_link_url_2, "link_price_2": col_link_price_2,
+        "link_url_3": col_link_url_3, "link_price_3": col_link_price_3,
+    }
+    col_idx = {k: v for k, v in col_map_raw.items() if v is not None and v >= 0}
 
-                # Категория: «Прочее» — дефолт, считаем пустым; заполненную в БД не трогаем (БД главнее)
-                if cell(row, "category") and (not ep.category or ep.category == 'Прочее'):
-                    ep.category = cell(row, "category")
-                _fill("product_type", cell(row, "product_type"))
-                _fill("photo_link", cell(row, "photo_link"))
-                _fill("description", cell(row, "description"))
-
-                ep.import_note = _import_note
-                ep.updated_at = _dt.utcnow()
-                ep.updated_by = _user_name
-
-                # feo_category_id — numeric, set only if empty
-                if feo_id and not ep.feo_category_id:
-                    ep.feo_category_id = feo_id
-
-                # price_links — list, fill only if existing empty and new non-empty
-                if price_links and not ep.price_links:
-                    from sqlalchemy.orm.attributes import flag_modified
-                    ep.price_links = price_links
-                    flag_modified(ep, "price_links")
-
-                # Единица измерения (владелец, 2026-09-01): не трогаем уже
-                # заполненную; иначе — из самого импорта, иначе — из истории
-                # закупок этого товара (единственная встречавшаяся).
-                await backfill_product_unit(db, ep, import_unit=unit_raw)
-
-                all_products.append(ep)
-                product_row_data.append({"qty": row_qty, "unit": unit_str, "price": price or ep.price})
-                skipped += 1
-                continue
-
-            p = Product(
-                name=name,
-                description=cell(row, "description"),
-                category=cell(row, "category"),
-                product_type=cell(row, "product_type"),
-                unit=(unit_raw or "").strip() or None,  # брэнд-новый товар — истории покупок ещё нет
-                price=price,
-                photo_link=cell(row, "photo_link"),
-                is_reusable=to_bool(cell(row, "is_reusable")),
-                is_active=to_bool(cell(row, "is_active")),
-                feo_category_id=feo_id,
-                price_links=price_links or [],
-                import_note=_import_note,
-                updated_at=_dt.utcnow(),
-                updated_by=_user_name,
-            )
-            db.add(p)
-            all_products.append(p)
-            product_row_data.append({"qty": row_qty, "unit": unit_str, "price": price})
-            created += 1
-        except Exception as e:
-            errors.append({"row": row_num, "name": cell(row, "name") or "?", "message": str(e)})
-
-    # Flush to get product IDs
-    await db.flush()
-
-    product_ids: list[int] = [p.id for p in all_products]
-
-    # If purchase_id provided — add ALL products (new + existing) as purchase items
-    if purchase_id and all_products:
-        from app.models.purchase_item import PurchaseItem
-        for idx_p, p in enumerate(all_products):
-            rd = product_row_data[idx_p] if idx_p < len(product_row_data) else {}
-            qty = rd.get("qty") or Decimal('1')
-            unit = rd.get("unit") or 'шт.'
-            unit_price = rd.get("price") or p.price
-            total = line_total(qty, unit_price) if unit_price else None
-            db.add(PurchaseItem(
-                purchase_id=purchase_id,
-                product_id=p.id,
-                item_name=p.name[:500],
-                item_type=p.product_type or 'товар',
-                quantity=qty,
-                unit=unit,
-                unit_price=unit_price,
-                total_price=total,
-            ))
-
-    await db.commit()
-    recognized = {field: raw_headers[idx] for field, idx in col_idx.items()}
-    return {"created": created, "skipped": skipped, "errors": errors,
-            "product_ids": product_ids,
-            "headers_found": recognized, "headers_raw": raw_headers[:20]}
+    return await apply_products_import(
+        db, data_rows, col_idx,
+        filename=file.filename or "", current_user=current_user,
+        purchase_id=purchase_id, dry_run=dry_run,
+        first_row_num=header_row_offset + 2,
+    )
 
 
 # import-no-clutter: bulk-add purchase items to catalog

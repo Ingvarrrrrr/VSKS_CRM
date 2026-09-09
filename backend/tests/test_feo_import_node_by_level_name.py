@@ -261,6 +261,9 @@ async def test_level3_duplicating_level2_becomes_node_no_warning(db_session):
         promo_warns = [w for w in result["warnings"] if w["kind"] == "item_promoted_to_level"]
         assert len(promo_warns) == 1
         assert "дублирует" in promo_warns[0]["message"]
+        assert not any(w["kind"] == "item_promoted_needs_review" for w in result["warnings"]), (
+            "имя нигде в файле не встречается как значение уровня — needs_review не должен появиться"
+        )
 
         cats = await _get_categories(db_session, subsidy.id)
         by_name = {c.name: c for c in cats}
@@ -300,6 +303,10 @@ async def test_level3_not_duplicating_level2_keeps_warning(db_session):
         result = await _import17(db_session, subsidy.id, rows)
         assert result["errors"] == []
         assert not any(w["kind"] == "item_promoted_to_level" for w in result["warnings"])
+        assert not any(w["kind"] == "item_promoted_needs_review" for w in result["warnings"]), (
+            "здесь позиция не продвигалась вовсе (Ур.3 занят своим именем, не дублем Ур.2) — "
+            "needs_review относится только к развилке продвижения"
+        )
         assert any(w["kind"] == "item_name_used_as_level" for w in result["warnings"])
 
         cats = await _get_categories(db_session, subsidy.id)
@@ -307,5 +314,130 @@ async def test_level3_not_duplicating_level2_keeps_warning(db_session):
         items = await _get_items(db_session, leaf.id)
         assert len(items) == 1
         assert items[0].name == "Обеспечение топливом при работах в зоне гуманитарной помощи"
+    finally:
+        await _cleanup_subsidy(db_session, subsidy.id)
+
+
+# --- ТРЁХВЕТОЧНАЯ развилка продвижения (задача владельца 2026-09-09, повторный
+# разбор блока item_promoted_to_level в feo_import_apply.py, строки 366-395):
+# заполненный уровень-дубль + то же имя ГДЕ-ТО в файле само стоит значением
+# уровня → отдельный kind item_promoted_needs_review вместо «дублирует и
+# свободен»; пустой уровень occurrences вообще не считает.
+
+@pytest.mark.asyncio
+async def test_promoted_to_duplicate_level_but_name_used_elsewhere_needs_review(db_session):
+    """Как test_level3_duplicating_level2_becomes_node_no_warning (Ур.2=Ур.3 —
+    дубль, «Плановая позиция» с суммой продвигается в свободный Ур.3), но
+    ДОПОЛНИТЕЛЬНО то же имя позиции в другой строке файла само стоит значением
+    Уровня 3 (level_name_index) — простое «дублирует и свободен» тут вводит в
+    заблуждение (может, это подраздел, а не позиция): развилка обязана дать
+    kind `item_promoted_needs_review` вместо `item_promoted_to_level`, а
+    механику дерева (узел под корнем, бюджет на месте, items==[]) НЕ менять."""
+    subsidy = await _make_subsidy(db_session)
+    try:
+        rows = [
+            mk_row(
+                lvl2="Организация питания", lvl3="Организация питания",
+                item_name="Продукты", feo_sum="4300000",
+            ),
+            # Аналог строки-декларации: то же имя стоит значением Уровня 3 в
+            # другой строке файла (другой раздел, для индекса неважно).
+            mk_row(lvl2="Логистика и проживание", lvl3="Продукты"),
+        ]
+        result = await _import17(db_session, subsidy.id, rows)
+        assert result["errors"] == []
+
+        matches = [w for w in result["warnings"] if w["kind"] == "item_promoted_needs_review"]
+        assert len(matches) == 1
+        w = matches[0]
+        assert w["row"] == 2  # первая строка файла = row_num 2
+        assert "строка 3" in w["message"]  # строка-декларация, row_num=3
+        assert "Уровень 3" in w["message"]
+        assert "Продукты" in w["message"]
+        assert "Организация питания" in w["message"]  # старое значение дублировавшего уровня
+        assert not any(x["kind"] == "item_promoted_to_level" for x in result["warnings"]), (
+            "needs_review заменяет item_promoted_to_level, а не дополняет его"
+        )
+
+        # Дерево/бюджет/items не поменялись относительно обычного продвижения —
+        # меняется только текст и kind предупреждения.
+        cats = await _get_categories(db_session, subsidy.id)
+        root = next(c for c in cats if c.name == "Организация питания" and c.parent_id is None)
+        child = next(c for c in cats if c.parent_id == root.id and c.name == "Продукты")
+        assert child.budget == Decimal("4300000")
+        items = await _get_items(db_session, child.id)
+        assert items == [], "продвинутое имя осталось узлом дерева, механику не меняем"
+    finally:
+        await _cleanup_subsidy(db_session, subsidy.id)
+
+
+# --- Пустой уровень (не дубль) → occurrences НЕ считаются, needs_review не бывает
+
+@pytest.mark.asyncio
+async def test_promoted_to_empty_level_ignores_occurrences_elsewhere(db_session):
+    """Уровень 3 строки буквально ПУСТ (не дубль Уровня 2, а именно пустой) —
+    третья ветка развилки: пустой уровень предупреждения о совпадении НЕ даёт
+    (явное решение владельца — «пустой уровень алертов не даёт»), даже когда
+    то же имя ниже по файлу само стоит значением Уровня 3. kind остаётся
+    `item_promoted_to_level` с текстом «не заполнен», occurrences по нему не
+    вычисляются вовсе — `item_promoted_needs_review` быть не должно."""
+    subsidy = await _make_subsidy(db_session)
+    try:
+        rows = [
+            mk_row(
+                lvl2="Транспорт и техника",
+                item_name="Экипировка", feo_sum="100000",
+            ),
+            # То же имя стоит значением Уровня 3 ниже — но Ур.3 первой строки
+            # был буквально пуст (не дубль), значит occurrences не считаем.
+            mk_row(lvl2="Транспорт и техника", lvl3="Экипировка"),
+        ]
+        result = await _import17(db_session, subsidy.id, rows)
+        assert result["errors"] == []
+
+        matches = [w for w in result["warnings"] if w["kind"] == "item_promoted_to_level"]
+        assert len(matches) == 1
+        assert "не заполнен" in matches[0]["message"]
+        assert not any(w["kind"] == "item_promoted_needs_review" for w in result["warnings"])
+    finally:
+        await _cleanup_subsidy(db_session, subsidy.id)
+
+
+# --- Самообъявление: Ур.2 = Ур.3 = Плановая позиция (одно имя) → НЕ needs_review
+
+@pytest.mark.asyncio
+async def test_self_declared_section_summary_row_does_not_need_review(db_session):
+    """Боевой файл, строка 186: Уровень 2 = Уровень 3 = «Плановая позиция» =
+    ОДНО И ТО ЖЕ имя («Логистика и проживание»), Сумма по ФЭО = 8 200 000 —
+    это строка-итог раздела, а не отдельная позиция, продвигаемая на Ур.3
+    (дубль Ур.2, значит свободен). Раздел содержит другие строки (187–214),
+    у которых Ур.2 — то же самое имя «Логистика и проживание» — это её
+    СОБСТВЕННЫЙ раздел, а не человеческий фактор: needs_review НЕ должен
+    сработать, несмотря на то что имя встречается как значение уровня в
+    других строках файла. Остаётся прежнее поведение — kind
+    `item_promoted_to_level`, текст «дублирует … и фактически свободен»."""
+    subsidy = await _make_subsidy(db_session)
+    try:
+        rows = [
+            mk_row(
+                lvl2="Логистика и проживание", lvl3="Логистика и проживание",
+                item_name="Логистика и проживание", feo_sum="8200000",
+            ),
+            # Другая строка того же раздела: её Ур.2 — то же самое имя, как и
+            # в боевом файле (187–214) — не должно повлиять на решение.
+            mk_row(
+                lvl2="Логистика и проживание", lvl3="Аренда автотранспортных средств",
+                item_name="Аренда Хендей ГрандСтарекс", feo_sum="500000",
+            ),
+        ]
+        result = await _import17(db_session, subsidy.id, rows)
+        assert result["errors"] == []
+
+        assert not any(w["kind"] == "item_promoted_needs_review" for w in result["warnings"]), (
+            "самообъявление (Ур.2=Ур.3=Плановая позиция) — не человеческий фактор, а итог раздела"
+        )
+        matches = [w for w in result["warnings"] if w["kind"] == "item_promoted_to_level"]
+        assert len(matches) == 1
+        assert "дублирует" in matches[0]["message"]
     finally:
         await _cleanup_subsidy(db_session, subsidy.id)

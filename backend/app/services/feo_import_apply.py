@@ -374,20 +374,60 @@ async def apply_rows(state) -> None:
                     else:
                         lvl4_name = lvl5_name
                     if _old_val:
+                        # Занятый уровень (дубль уровня над ним) — но если то же
+                        # имя ГДЕ-ТО в файле само встречается как значение уровня
+                        # (level_name_index — пред-проход строки 266, тот же
+                        # индекс, что и у item_name_used_as_level ниже), простое
+                        # «дублирует и свободен» вводит в заблуждение: возможно,
+                        # это настоящий подраздел, а не позиция — предупреждаем
+                        # отдельным kind, требующим ручной проверки (задача
+                        # владельца 2026-09-09, третья часть правила).
+                        # Самообъявление (боевой файл, строка 186: Ур.2=Ур.3=
+                        # «Логистика и проживание»=Плановая позиция, все три —
+                        # ОДНО имя) — строка-итог раздела, а не человеческий
+                        # фактор: остальные вхождения этого же имени как
+                        # значения уровня (187–214) — это её СОБСТВЕННЫЙ
+                        # раздел, разбирать нечего. Проверяем ДО вычисления
+                        # _occ, аналог _is_self_declared в блоке
+                        # item_name_used_as_level ниже (не то же место — тот
+                        # блок не трогаем).
                         _shallower_lvl = 2 if _target_level == 3 else 3
-                        _msg = (
-                            f"Плановая позиция «{lvl5_name}» — {level_label(_target_level)} "
-                            f"дублирует {level_label(_shallower_lvl)} («{_old_val}») и фактически "
-                            f"свободен: название стало {level_label(_target_level)}"
-                        )
+                        _is_self_declared = _norm(_old_val) == _norm(lvl5_name)
+                        _occ = [] if _is_self_declared else [
+                            (_lvl, _r) for _lvl, _r in level_name_index.get(_norm(lvl5_name), [])
+                            if _r != row_num
+                        ]
+                        if _occ:
+                            _kind = "item_promoted_needs_review"
+                            _occ_rows = sorted({_r for _lvl, _r in _occ})
+                            _occ_levels = sorted({_lvl for _lvl, _r in _occ})
+                            _occ_levels_text = ", ".join(level_label(_lvl) for _lvl in _occ_levels)
+                            _msg = (
+                                f"Плановая позиция «{lvl5_name}»: {format_rows(_occ_rows)} — "
+                                f"это же название стоит как {_occ_levels_text}. "
+                                f"{level_label(_target_level)} этой строки дублировал "
+                                f"{level_label(_shallower_lvl)} («{_old_val}»), поэтому название "
+                                f"поставлено {level_label(_target_level)} и сумма {_fmt(_promo_money)} "
+                                f"ушла в него. Проверьте вручную: это подраздел или всё-таки позиция."
+                            )
+                        else:
+                            _kind = "item_promoted_to_level"
+                            _msg = (
+                                f"Плановая позиция «{lvl5_name}» — {level_label(_target_level)} "
+                                f"дублирует {level_label(_shallower_lvl)} («{_old_val}») и фактически "
+                                f"свободен: название стало {level_label(_target_level)}"
+                            )
                     else:
+                        # Пустой уровень алертов не даёт (явное решение
+                        # владельца, задача 2026-09-09) — occurrences не считаем.
+                        _kind = "item_promoted_to_level"
                         _msg = (
                             f"Плановая позиция «{lvl5_name}» — по строке указана Сумма по ФЭО "
                             f"{_fmt(_promo_money)}, но {level_label(_target_level)} не заполнен: "
                             f"название стало {level_label(_target_level)}"
                         )
                     warnings.append({
-                        "kind": "item_promoted_to_level",
+                        "kind": _kind,
                         "row": row_num,
                         "name": lvl5_name,
                         "message": _msg,

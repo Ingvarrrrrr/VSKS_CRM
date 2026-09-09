@@ -28,11 +28,35 @@ export function feoWarnKindLabel(kind: string): string {
     duplicate_row_in_file: 'В файле повторяются позиции — учтена последняя строка',
     amount_without_level2: 'Сумма указана, но не заполнен Уровень 2 — строка пропущена',
     budget_overwritten_by_row: 'Сумма по ФЭО узла задана несколькими строками — учтена последняя',
+    item_promoted_needs_review: 'Разберите вручную: позиция ниже используется как подраздел',
+    item_name_used_as_level: 'Разберите вручную: позиция лежит под чужим подразделом',
+    item_promoted_to_level: 'Плановая позиция стала подразделом',
   }
   return labels[kind] ?? kind
 }
 export function feoWarnSubtitle(w: FeoWarning): string {
   return w.row != null ? `Стр. ${w.row} — ${w.message}` : w.message
+}
+
+// Предупреждения, требующие ручного разбора владельцем (не просто информационные) —
+// единственное место, где перечислены эти два kind'а: и feoWarnKindIsAlert, и
+// сортировка в feoWarnKinds читают отсюда, список не дублируется.
+const FEO_WARN_ALERT_KINDS = new Set(['item_promoted_needs_review', 'item_name_used_as_level'])
+
+export function feoWarnKindIsAlert(kind: string): boolean {
+  return FEO_WARN_ALERT_KINDS.has(kind)
+}
+
+// Уникальные kind'ы предупреждений: алертные (требуют разбора) — первыми, внутри
+// каждой группы порядок стабильный (порядок первого появления в массиве).
+export function feoWarnKinds(warnings: FeoWarning[] | undefined | null): string[] {
+  const seen: string[] = []
+  for (const w of warnings || []) {
+    if (!seen.includes(w.kind)) seen.push(w.kind)
+  }
+  const alerts = seen.filter(k => feoWarnKindIsAlert(k))
+  const rest = seen.filter(k => !feoWarnKindIsAlert(k))
+  return [...alerts, ...rest]
 }
 
 const feoImport = reactive({
@@ -477,7 +501,7 @@ export function useFeoImport(ctx?: FeoImportCtx) {
     feoStep4MainLabel, feoLoadSummary, feoCurrentSheet, feoCurrentHeaders, feoMappingValid, feoUnmappedCount,
     feoIsMapped, feoIsIgnored, feoIsTargetFilled, feoGetColumnLabel, feoGetSamples,
     feoOnDragStart, feoOnDropToTarget, feoOnDropToUnresolved, feoUnmapTarget, feoIgnoreColumn, feoAutoMap,
-    feoWarnKindLabel, feoWarnSubtitle,
+    feoWarnKindLabel, feoWarnSubtitle, feoWarnKindIsAlert, feoWarnKinds,
     doFeoImport, doFeoMappedImport, closeFeoImport,
     // allSubsidies — источник для выбора «Субсидия назначения» на шаге 2 (только чтение)
     allSubsidies: ctx?.allSubsidies,

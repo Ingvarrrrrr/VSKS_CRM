@@ -89,11 +89,13 @@
             <div class="text-subtitle-2 mb-1 text-warning">Предупреждения ({{ feoImport.dryResult.warnings.length }}):</div>
             <v-expansion-panels v-model="feoResultPanels" multiple class="mb-3">
               <v-expansion-panel
-                v-for="kind in [...new Set(feoImport.dryResult.warnings.filter(w => w.kind !== 'subsidy_name_ignored').map(w => w.kind))]"
+                v-for="kind in feoWarnKinds(feoImport.dryResult.warnings.filter(w => w.kind !== 'subsidy_name_ignored'))"
                 :key="'dw_' + kind"
                 :value="'dw_' + kind">
                 <v-expansion-panel-title>
-                  <v-icon icon="mdi-alert-outline" size="18" color="warning" class="mr-2" />
+                  <v-icon
+                    :icon="feoWarnKindIsAlert(kind) ? 'mdi-account-alert' : 'mdi-alert-outline'"
+                    size="18" :color="feoWarnKindIsAlert(kind) ? 'error' : 'warning'" class="mr-2" />
                   {{ feoWarnKindLabel(kind) }} ({{ feoImport.dryResult.warnings.filter(w => w.kind === kind).length }})
                 </v-expansion-panel-title>
                 <v-expansion-panel-text>
@@ -352,11 +354,13 @@
             <div class="text-subtitle-2 mb-1 text-warning">Предупреждения ({{ feoImport.result.warnings.length }}):</div>
             <v-expansion-panels v-model="feoResultPanels" multiple class="mb-3">
               <v-expansion-panel
-                v-for="kind in [...new Set(feoImport.result.warnings.filter(w => w.kind !== 'subsidy_name_ignored').map(w => w.kind))]"
+                v-for="kind in feoWarnKinds(feoImport.result.warnings.filter(w => w.kind !== 'subsidy_name_ignored'))"
                 :key="'rw_' + kind"
                 :value="'rw_' + kind">
                 <v-expansion-panel-title>
-                  <v-icon icon="mdi-alert-outline" size="18" color="warning" class="mr-2" />
+                  <v-icon
+                    :icon="feoWarnKindIsAlert(kind) ? 'mdi-account-alert' : 'mdi-alert-outline'"
+                    size="18" :color="feoWarnKindIsAlert(kind) ? 'error' : 'warning'" class="mr-2" />
                   {{ feoWarnKindLabel(kind) }} ({{ feoImport.result.warnings!.filter(w => w.kind === kind).length }})
                 </v-expansion-panel-title>
                 <v-expansion-panel-text>
@@ -440,7 +444,7 @@ const {
   feoImport, feoImportTargetSubsidyName, feoResultPanels, feoToggleResultPanel,
   feoUnmatchedNeedsMapping, feoHasSuggestions, feoAcceptAllSuggestions,
   feoStep4MainLabel, feoLoadSummary, feoMappingValid,
-  feoWarnKindLabel, feoWarnSubtitle,
+  feoWarnKindLabel, feoWarnSubtitle, feoWarnKindIsAlert, feoWarnKinds,
   doFeoImport, doFeoMappedImport, closeFeoImport,
 } = useFeoImport(useSubsidyDetailCtx())
 </script>

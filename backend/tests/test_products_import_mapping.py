@@ -9,7 +9,10 @@
 «Наименование», а не на «Категория товара» (и вообще ни на что, если бы
 «Наименование» не было в списке — но здесь оно есть, точным совпадением).
 """
-from app.services.products_import_map import suggest_products_column_mapping
+from app.services.products_import_map import (
+    suggest_products_column_mapping,
+    suggest_products_column_mapping_with_hints,
+)
 
 # Заголовки листа «ТЗ» файла владельца (буквально из плана
 # dreamy-booping-piglet.md, задача B) — «Категория товара» стоит РАНЬШЕ
@@ -72,3 +75,42 @@ def test_link_columns_still_detected_dynamically():
     assert mapping["name"] == 0
     assert mapping["link_url_1"] == 1
     assert mapping["link_price_1"] == 2
+
+
+# ── Второй проход (владелец, 2026-09-09): подсказка обязана предлагать
+# «Категория товара»/«Ед. изм.»/«Цена за ед.» — на первом исправлении они
+# молча падали в «Не определилось», и пользователь рисковал снова получить
+# категорию «Прочее» по умолчанию (тот же эффект дефекта №2, только не через
+# 'name', а через пропуск подсказки). Использует ТОЛЬКО в /import-preview
+# (suggest_products_column_mapping_with_hints) — старый /import по-прежнему
+# зовёт suggest_products_column_mapping без второго прохода.
+
+def test_hints_fill_category_unit_price_via_second_pass():
+    mapping = suggest_products_column_mapping_with_hints(_TZ_HEADERS)
+    assert _TZ_HEADERS[mapping["category"]] == "Категория товара"
+    assert _TZ_HEADERS[mapping["unit"]] == "Ед. изм."
+    assert _TZ_HEADERS[mapping["price"]] == "Цена за ед."
+    # 'name' остаётся на «Наименование» — второй проход не переназначил его
+    assert _TZ_HEADERS[mapping["name"]] == "Наименование"
+    assert mapping["name"] != mapping["category"]
+    assert set(mapping["mapping_hint_fuzzy"]) >= {"category", "unit", "price"}
+    assert "name" not in mapping["mapping_hint_fuzzy"]  # 'name' пришёл точным совпадением, не вторым проходом
+
+
+def test_hints_never_assign_name_to_category_like_header():
+    """п.3 задания: заголовок «Наименование категории» формально начинается
+    с термина 'наименование' (обычный префиксный критерий прошёл бы), но
+    содержит «категор» — жёсткий бэкстоп обязан отказаться от 'name' для
+    этой колонки вместо того, чтобы полагаться только на порядок полей."""
+    mapping = suggest_products_column_mapping_with_hints(["Наименование категории", "Цена"])
+    assert "name" not in mapping
+
+
+def test_old_import_endpoint_helper_unaffected_by_second_pass():
+    """Старый POST /import обязан продолжать звать
+    suggest_products_column_mapping (точное совпадение) напрямую — без
+    второго прохода 'category'/'unit'/'price' по этим заголовкам не найти."""
+    mapping = suggest_products_column_mapping(_TZ_HEADERS)
+    assert "category" not in mapping
+    assert "unit" not in mapping
+    assert "price" not in mapping

@@ -17,7 +17,7 @@ from app.auth.jwt import get_current_user
 from app.database import get_db
 from app.models.user import User
 from app.services.import_preview_sheets import detect_header_row, read_preview_sheets, read_full_sheet_rows
-from app.services.products_import_map import suggest_products_column_mapping
+from app.services.products_import_map import suggest_products_column_mapping, suggest_products_column_mapping_with_hints
 from app.services.products_import_apply import apply_products_import
 
 try:
@@ -164,7 +164,11 @@ async def products_import_preview(
     content = await file.read()
     result = read_preview_sheets(content, file.filename or "", _PRODUCTS_HEADER_HINTS)
     for sheet in result["sheets"]:
-        sheet["mapping_hint"] = suggest_products_column_mapping(sheet["headers"])
+        # _with_hints — только для превью: точное совпадение + безопасный
+        # второй проход (services/products_import_map.py). Старый /import
+        # ниже по файлу продолжает звать suggest_products_column_mapping
+        # напрямую (без второго прохода) — поведение auto-apply не меняется.
+        sheet["mapping_hint"] = suggest_products_column_mapping_with_hints(sheet["headers"])
     return result
 
 

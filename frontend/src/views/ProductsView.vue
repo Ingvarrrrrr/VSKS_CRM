@@ -140,10 +140,8 @@
 
     <!-- Import dialog -->
     <ProductsImportDialog
-      :dialog="importDialog"
+      :wizard="productsImport"
       :mobile="mobile"
-      @close="closeImportDialog"
-      @import="doImport"
     />
 
     <!-- Download photos dialog -->
@@ -261,7 +259,8 @@ const {
   bulkEditDialog, bulkEditCategory, bulkEditType, bulkEditing, openBulkEdit, doBulkEdit,
 } = useProductsBulkEdit({ selectedIds, load, showSnack })
 
-const { importDialog, closeImportDialog, downloadTemplate, doImport } = useProductsImport({ load, showSnack })
+const productsImport = useProductsImport({ load, showSnack })
+const { importDialog, downloadTemplate } = productsImport
 
 const { dlPhotoDialog, openDownloadPhotosDialog, doDownloadAllPhotos } = useProductsPhotos({ load, showSnack })
 

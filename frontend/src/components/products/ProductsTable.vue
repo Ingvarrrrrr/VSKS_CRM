@@ -38,18 +38,16 @@
         @click:row="(_: any, row: { item: Product }) => $emit('row-click', row.item)"
         :items-per-page-options="[25, 50, 100, -1]"
       >
-        <!-- Photo -->
+        <!-- Photo — единый источник utils/productPhoto.ts (ПРАВИЛО №6):
+             отсекает мусорные photo_link вроде «НЕ смог найти» (импорт
+             Excel), оставшиеся от исходного файла владельца — раньше такой
+             текст уходил в :src как есть, браузер пытался его загрузить и
+             после @error оставлял пустое место в аватаре вместо иконки. -->
         <template #item.photo="{ item }">
           <v-avatar size="40" rounded="sm" class="my-1" style="overflow:hidden">
             <img
-              v-if="item.has_photo"
-              :src="`/api/products/${item.id}/photo`"
-              style="width:40px;height:40px;object-fit:cover;display:block"
-              @error="($event.target as HTMLImageElement).style.display='none'"
-            />
-            <img
-              v-else-if="item.photo_url || item.photo_link"
-              :src="(item.photo_url || item.photo_link) as string"
+              v-if="productPhotoSrc(item)"
+              :src="productPhotoSrc(item)"
               style="width:40px;height:40px;object-fit:cover;display:block"
               @error="($event.target as HTMLImageElement).style.display='none'"
             />
@@ -245,6 +243,7 @@ import { typeColor, isDomesticCountry } from '@/composables/products/productsTyp
 import type { Product } from '@/composables/products/productsTypes'
 import { useProductsScroll } from '@/composables/products/useProductsScroll'
 import ProductsBulkActionBar from './ProductsBulkActionBar.vue'
+import { productPhotoSrc } from '@/utils/productPhoto'
 
 defineProps<{
   headers: any[]

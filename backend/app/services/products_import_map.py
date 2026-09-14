@@ -34,6 +34,17 @@ products_import_mapped — реальные индексы колонок пер
 Поле «name» второй проход не получает вовсе, если заголовок похож на
 категорию/вид/тип/описание (`_NAME_FORBIDDEN_SUBSTR`) — жёсткий бэкстоп
 против исходного бага, даже если алгоритм совпадения когда-нибудь изменится.
+
+Третье правило (`_pick_best_exact_candidate`, только для /import-preview,
+2026-09-15): на боевом файле владельца («ТЗ для АПИ (4).xlsx») ОБА
+заголовка «фото» и «Ссылка на фото» точно совпадают с ключами COLUMN_MAP
+на `photo_link` — «фото» стоит в файле раньше и пустой во всех строках,
+реальные адреса лежат в «Ссылка на фото». Правило не «переставить фото
+выше ссылки в словаре» (в чужом файле порядок и сами названия будут
+другими), а общее: если на одно поле нашлось НЕСКОЛЬКО точных совпадений,
+берём то, у которого в образце строк (`sample`, те же данные, что клиент
+и так видит в предпросмотре) есть хоть одно непустое значение; без образца
+— прежнее поведение (первый по порядку).
 """
 import re as _re
 
@@ -96,6 +107,73 @@ def suggest_products_column_mapping(headers: list) -> dict:
         if m2:
             col_idx[f"link_price_{m2.group(1)}"] = i
     return col_idx
+
+
+def _exact_match_candidates(headers: list) -> dict:
+    """Как `suggest_products_column_mapping`, но БЕЗ правила «первый победил»
+    — возвращает {field: [все индексы заголовков, точно совпавших с полем]}.
+    На чужих файлах одно поле нередко имеет два точных синонима в
+    COLUMN_MAP разом (пример: «фото» и «Ссылка на фото» — оба ключа на
+    `photo_link`); который из двух реальный, решает не порядок колонок в
+    файле, а `_pick_best_exact_candidate` (см. ниже)."""
+    by_field: dict = {}
+    for i, h in enumerate(headers):
+        norm = str(h).strip().lower() if h is not None else ""
+        if not norm:
+            continue
+        field = COLUMN_MAP.get(norm)
+        if field:
+            by_field.setdefault(field, []).append(i)
+    return by_field
+
+
+# Значения, которые Excel сам подставляет при битой формуле/ссылке — считать
+# их «есть данные» нельзя: на боевом файле владельца колонка «фото» (пустая
+# почти везде) в одной строке образца содержала не URL, а буквально `#REF!` —
+# при подсчёте «есть хоть одно непустое значение» ЭТО единственное значение
+# перевешивало и снова выбирало пустую колонку вместо «Ссылка на фото»
+# (там реальные адреса в 5 строках из 5, но простое «хоть одна непустая
+# ячейка» не отличает частый мусор от редкого).
+_EXCEL_ERROR_TOKENS = {"#ref!", "#n/a", "#value!", "#div/0!", "#name?", "#null!", "#num!"}
+
+
+def _sample_fill_count(sample: list, col_idx: int) -> int:
+    """Сколько строк образца в этой колонке реально заполнены — ячейки с
+    Excel-ошибкой (#REF! и т.п.) не считаются, все остальные непустые
+    значения считаются (включая текстовый мусор вроде «НЕ смог найти» —
+    отличать текст от настоящего URL это правило не пытается, оно только
+    выбирает, у какого из двух ЗАГОЛОВКОВ данные заполнены гуще)."""
+    count = 0
+    for row in sample or ():
+        if col_idx < len(row):
+            val = row[col_idx]
+            if val is None:
+                continue
+            s = str(val).strip()
+            if s and s.lower() not in _EXCEL_ERROR_TOKENS:
+                count += 1
+    return count
+
+
+def _pick_best_exact_candidate(candidates: list, sample: list) -> int:
+    """Несколько заголовков точно совпали с одним полем — правило не «кто
+    первый встретился», а «у кого в образце строк реально ГУЩЕ заполнены
+    данные» (побеждает наибольшее число непустых строк образца, а не факт
+    «хоть одна непустая ячейка» — единичный мусор в редко используемой
+    колонке иначе перевешивал бы стабильно заполненную). При равенстве —
+    первый по порядку в файле. Без образца (sample пуст/не передан)
+    откатываемся на прежнее поведение — первый по порядку, чтобы не ломать
+    вызовы без sample."""
+    if not sample:
+        return candidates[0]
+    counts = [(i, _sample_fill_count(sample, i)) for i in candidates]
+    best_count = max(cnt for _, cnt in counts)
+    if best_count == 0:
+        return candidates[0]
+    for i, cnt in counts:
+        if cnt == best_count:
+            return i
+    return candidates[0]
 
 
 # ── Второй проход (только для /import-preview) ──────────────────────────
@@ -175,15 +253,24 @@ def _apply_fuzzy_pass(col_idx: dict, headers: list) -> list:
     return fuzzy_fields
 
 
-def suggest_products_column_mapping_with_hints(headers: list) -> dict:
+def suggest_products_column_mapping_with_hints(headers: list, sample: list = None) -> dict:
     """Для POST /import-preview: точное совпадение
-    (`suggest_products_column_mapping`) + второй, узкий проход
-    (`_apply_fuzzy_pass`). Возвращает тот же {field: column_index}, плюс
-    ключ `mapping_hint_fuzzy` — список полей, подставленных вторым проходом
-    (см. модуль docstring). Старый POST /import НЕ использует эту функцию —
-    он по-прежнему зовёт `suggest_products_column_mapping` напрямую, только
-    точное совпадение, без второго прохода."""
+    (`suggest_products_column_mapping`) + пересмотр полей с НЕСКОЛЬКИМИ
+    точно совпавшими заголовками по данным образца (`sample` — те же
+    строки-примеры, что /import-preview и так возвращает клиенту, см.
+    `_pick_best_exact_candidate`) + второй, узкий проход (`_apply_fuzzy_pass`).
+    Возвращает тот же {field: column_index}, плюс ключ `mapping_hint_fuzzy`
+    — список полей, подставленных вторым проходом (см. модуль docstring).
+    `sample` необязателен (по умолчанию None) — без него поведение как
+    раньше, «первый точно совпавший заголовок побеждает». Старый POST
+    /import НЕ использует эту функцию — он по-прежнему зовёт
+    `suggest_products_column_mapping` напрямую, только точное совпадение,
+    без второго прохода и без пересмотра по образцу."""
     col_idx = suggest_products_column_mapping(headers)
+    if sample:
+        for field, candidates in _exact_match_candidates(headers).items():
+            if len(candidates) > 1:
+                col_idx[field] = _pick_best_exact_candidate(candidates, sample)
     fuzzy_fields = _apply_fuzzy_pass(col_idx, headers)
     col_idx["mapping_hint_fuzzy"] = fuzzy_fields
     return col_idx

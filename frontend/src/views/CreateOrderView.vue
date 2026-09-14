@@ -622,53 +622,14 @@
           </v-row>
           <!-- Phase 28: Условия конкретного договора — видно только если выбрана форма договора -->
           <template v-if="form.contract_form">
-            <!-- Срок приёмки + неустойка — для поставки и услуг -->
-            <v-row v-if="['goods_single', 'services', 'services_food'].includes(form.contract_form)" class="mt-1">
-              <v-col cols="12" class="pb-0">
-                <div class="text-subtitle-2 text-medium-emphasis">Условия договора</div>
-              </v-col>
-              <v-col cols="6" md="3">
-                <v-text-field v-model.number="form.acceptance_term_days" type="number" label="Срок приёмки (раб. дней)" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
-              </v-col>
-              <v-col cols="6" md="3">
-                <v-text-field v-model.number="form.penalty_rate" type="number" step="0.01" label="Неустойка, %/день" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
-              </v-col>
-              <v-col cols="6" md="3">
-                <v-text-field
-                  v-model.number="form.warranty_period_days"
-                  type="number"
-                  label="Срок гарантии (раб.дней)"
-                  hint="{{warranty_period_days}} в шаблонах. По умолчанию 15."
-                  persistent-hint
-                  density="compact"
-                  variant="outlined"
-                  @blur="flushAutosaveOnBlur"
-                />
-              </v-col>
-            </v-row>
-            <!-- Договор задним числом — для всех форм договора -->
-            <v-row v-if="form.contract_form" class="mt-1">
+            <!-- Владелец (2026-09-15): «Срок приёмки/Неустойка/Срок гарантии/Договор
+                 задним числом/Доставка силами поставщика» — всё это нужно для
+                 формирования договора, перенесено в PurchaseContractParamsSection.vue
+                 («Параметры {{ contractWordGen }} (для документа)»). Разметка и form.*
+                 не менялись, только расположение. -->
+            <!-- has_stages остался здесь — владелец не называл его в списке переноса -->
+            <v-row v-if="['gph_individual', 'gph_individual_rid'].includes(form.contract_form)" class="mt-1">
               <v-col cols="12" md="6">
-                <v-checkbox
-                  v-model="form.is_retroactive"
-                  label="Договор задним числом (ст. 425 ГК РФ)"
-                  hint="Если включено, в шаблон добавляется пункт о применении условий с даты начала услуг до подписания договора. {{is_retroactive}}"
-                  persistent-hint
-                  density="compact"
-                />
-              </v-col>
-              <!-- Phase 28 T8: delivery_by_supplier — для договоров поставки -->
-              <v-col v-if="form.contract_form === 'goods_single'" cols="12" md="6">
-                <v-checkbox
-                  v-model="form.delivery_by_supplier"
-                  label="Доставка силами поставщика"
-                  hint="В договоре поставки: включено — поставщик доставляет сам; выключено — самовывоз со склада поставщика."
-                  persistent-hint
-                  density="compact"
-                />
-              </v-col>
-              <!-- Phase 28 T8: has_stages — для договоров ГПХ (услуги) -->
-              <v-col v-if="['gph_individual', 'gph_individual_rid'].includes(form.contract_form)" cols="12" md="6">
                 <v-checkbox
                   v-model="form.has_stages"
                   label="Этапы оказания услуг (Приложение №1)"
@@ -694,44 +655,6 @@
             <v-row v-if="form.methodology === 'large'" class="mt-1">
               <v-col cols="6" md="3">
                 <v-text-field v-model.number="form.advance_amount" type="number" label="Сумма аванса, ₽" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
-              </v-col>
-            </v-row>
-            <!-- Закупочная комиссия — для всех форм (нужна в Протоколе) -->
-            <v-row class="mt-1">
-              <v-col cols="12" class="pb-0">
-                <div class="text-subtitle-2 text-medium-emphasis">Закупочная комиссия (для протокола)</div>
-              </v-col>
-              <v-col cols="12" md="4">
-                <v-text-field v-model="form.commission_member_1_name" label="ФИО члена комиссии 1" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
-              </v-col>
-              <v-col cols="12" md="4">
-                <v-text-field v-model="form.commission_member_2_name" label="ФИО члена комиссии 2" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
-              </v-col>
-              <v-col cols="12" md="4">
-                <v-text-field v-model="form.commission_member_3_name" label="ФИО члена комиссии 3" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
-              </v-col>
-              <!-- Phase 28 T8: номера документов закупочной комиссии -->
-              <v-col cols="12" md="4">
-                <v-text-field
-                  v-model="form.procurement_protocol_number"
-                  label="Номер протокола закупочной комиссии"
-                  density="compact"
-                  variant="outlined"
-                  hint="Заполняется в шаблоне протокола. {{procurement_protocol_number}}"
-                  persistent-hint
-                  @blur="flushAutosaveOnBlur"
-                />
-              </v-col>
-              <v-col cols="12" md="4">
-                <v-text-field
-                  v-model="form.procurement_order_number"
-                  label="Номер приказа о закупке"
-                  density="compact"
-                  variant="outlined"
-                  hint="Номер внутреннего приказа, подтверждающего проведение закупки. {{procurement_order_number}}"
-                  persistent-hint
-                  @blur="flushAutosaveOnBlur"
-                />
               </v-col>
             </v-row>
           </template>
@@ -970,7 +893,11 @@
 
       <!-- 4. Договор / Счёт / Счёт-договор -->
       <v-card v-if="isSectionVisible('contract')" variant="outlined" class="mb-4">
-        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-3 pb-0">Основание для закупки</v-card-title>
+        <!-- Владелец (2026-09-15): «Основание для закупки» путалось с приказом/служебной
+             запиской (см. блок «Основание закупки» ниже — про план закупок / служебную
+             записку, это другая сущность). Переименовано, чтобы не было двух похожих
+             названий у разных вещей. -->
+        <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-3 pb-0">На каком основании взаимодействовали с подрядчиком</v-card-title>
         <v-tabs v-model="form.payment_basis_type" density="compact" color="primary" class="px-2 pt-1">
           <v-tab value="contract">Разовый договор</v-tab>
           <v-tab value="invoice">Счёт</v-tab>
@@ -1287,8 +1214,17 @@
         :clear-guide-arrow="clearGuideArrow"
         :delivery-label="deliveryLabel"
         :scroll-to-dates-section="scrollToDatesSection"
+        :flush-autosave-on-blur="flushAutosaveOnBlur"
         v-model:show-placeholders-dialog="showPlaceholdersDialog"
         v-model:pointer-target="pointerTarget"
+      />
+
+      <!-- Владелец (2026-09-15): закупочная комиссия/протокол и приказ о закупке —
+           отдельные сущности, вынесены из «Основной информации» в свой блок. -->
+      <PurchaseCommissionSection
+        v-if="form.contract_form"
+        :form="form"
+        :flush-autosave-on-blur="flushAutosaveOnBlur"
       />
 
       <PurchaseDatesSection
@@ -1917,6 +1853,7 @@ import { useToast, type ToastType } from '@/composables/useToast'
 import { listContractItems, replaceAllContractItems } from '@/api/contractItems'
 import type { ContractItem } from '@/types/contractItem'
 import { useOrgConfig } from '@/composables/useOrgConfig'
+import { productPhotoSrc } from '@/utils/productPhoto'
 import PurchaseEventFeed from '@/components/PurchaseEventFeed.vue'
 import ApprovalPanel from '@/components/purchase/ApprovalPanel.vue'
 import PurchaseHeader from '@/components/purchase/PurchaseHeader.vue'
@@ -1925,6 +1862,7 @@ import PurchaseAcceptanceSection from '@/components/purchase/PurchaseAcceptanceS
 import PurchasePaymentSection from '@/components/purchase/PurchasePaymentSection.vue'
 import PurchaseFinanceSection from '@/components/purchase/PurchaseFinanceSection.vue'
 import PurchaseContractParamsSection from '@/components/purchase/PurchaseContractParamsSection.vue'
+import PurchaseCommissionSection from '@/components/purchase/PurchaseCommissionSection.vue'
 import PurchaseDocumentsCard from '@/components/purchase/PurchaseDocumentsCard.vue'
 import PurchasePlatformCard from '@/components/purchase/PurchasePlatformCard.vue'
 import PurchaseLinkedTasksCard from '@/components/purchase/PurchaseLinkedTasksCard.vue'
@@ -2259,12 +2197,6 @@ interface Product {
   price_freshness?: import('@/composables/usePriceFreshness').PriceFreshness | null
 }
 
-// Phase 17.1-08: prefer bytea endpoint when DB has a cached copy.
-function productPhotoSrc(p: Pick<Product, 'id' | 'has_photo' | 'photo_url' | 'photo_link'> | null | undefined): string | undefined {
-  if (!p) return undefined
-  if (p.has_photo) return `/api/products/${p.id}/photo`
-  return p.photo_url || p.photo_link || undefined
-}
 interface FrameworkContract { id: number; number: string; date?: string; contract_type: string; contractor_id?: number; contractor_name?: string; contractor_inn?: string; subject?: string; max_amount?: number; remaining?: number; remaining_ordered?: number; remaining_delivered?: number; remaining_paid?: number; total_ordered?: number; status?: string; purchase_method?: string; end_date?: string }
 interface OrderItem {
   product_id: number | null

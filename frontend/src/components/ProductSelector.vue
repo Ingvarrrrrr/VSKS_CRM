@@ -275,6 +275,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { debounce } from 'lodash-es'
+import { productPhotoSrc } from '@/utils/productPhoto'
 
 interface Product {
   id: number
@@ -288,13 +289,6 @@ interface Product {
   has_photo?: boolean
   clarification_link?: string
   feo_category_id?: number
-}
-
-// Phase 17.1-08: prefer DB bytea endpoint when a cached copy exists.
-function productPhotoSrc(p: Pick<Product, 'id' | 'has_photo' | 'photo_url' | 'photo_link'> | null | undefined): string | undefined {
-  if (!p) return undefined
-  if (p.has_photo) return `/api/products/${p.id}/photo`
-  return p.photo_url || p.photo_link || undefined
 }
 
 const props = defineProps<{

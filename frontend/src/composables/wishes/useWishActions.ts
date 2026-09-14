@@ -5,6 +5,7 @@
 // Дословный перенос из WishesView.vue при разбиении файла на компоненты/композаблы.
 import { ref } from 'vue'
 import { numOrNull } from '@/utils/numberFormat'
+import { productPhotoSrc } from '@/utils/productPhoto'
 import type { WishesContext } from './useWishesContext'
 import type { Wish } from './wishTypes'
 import type { UseWishFormReturn } from './useWishForm'
@@ -168,7 +169,7 @@ export function useWishActions(deps: {
         return {
           ...it,
           product_id: it.product_id ?? prod?.id ?? null,
-          _photo_url: (prod?.has_photo ? `/api/products/${prod.id}/photo` : (prod?.photo_url ?? prod?.photo_link)) ?? it._photo_url ?? null,
+          _photo_url: productPhotoSrc(prod) ?? it._photo_url ?? null,
           _product_category: prod?.category || it._product_category || '',
         }
       })

@@ -5,6 +5,7 @@ import { apiFetch } from '@/api'
 import { useCardView } from '@/composables/useCardView'
 import type { ToastType } from '@/composables/useToast'
 import type { Product } from './productsTypes'
+import { productPhotoSrc } from '@/utils/productPhoto'
 
 export function useProductsData(showSnack: (text: string, color?: ToastType) => void) {
   const products = ref<Product[]>([])
@@ -75,11 +76,9 @@ export function useProductsData(showSnack: (text: string, color?: ToastType) => 
     pageSize: 24,
   })
 
-  function cardPhotoSrc(p: Product): string | undefined {
-    if (p.has_photo) return `/api/products/${p.id}/photo`
-    if (p.photo_url || p.photo_link) return (p.photo_url || p.photo_link) as string
-    return undefined
-  }
+  // Единый источник — utils/productPhoto.ts (ПРАВИЛО №6): отсекает мусорные
+  // значения photo_link вроде «НЕ смог найти», оставшиеся от Excel-импорта.
+  const cardPhotoSrc = productPhotoSrc
 
   return {
     products, loading,

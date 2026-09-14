@@ -3,6 +3,54 @@
   <v-card variant="outlined" class="mb-4">
     <v-card-title class="text-subtitle-1 font-weight-bold px-4 pt-4">Параметры {{ contractWordGen }} (для документа)</v-card-title>
     <v-card-text>
+      <!-- Владелец (2026-09-15): «Срок приёмки/Неустойка/Срок гарантии/Договор задним
+           числом/Доставка силами поставщика» — перенесено сюда из «Основной информации»
+           (CreateOrderView.vue), т.к. это всё нужно только для формирования договора.
+           Разметка и имена form.* не менялись — только расположение. -->
+      <v-row v-if="['goods_single', 'services', 'services_food'].includes(form.contract_form)" class="mt-1">
+        <v-col cols="12" class="pb-0">
+          <div class="text-subtitle-2 text-medium-emphasis">Условия договора</div>
+        </v-col>
+        <v-col cols="6" md="3">
+          <v-text-field v-model.number="form.acceptance_term_days" type="number" label="Срок приёмки (раб. дней)" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
+        </v-col>
+        <v-col cols="6" md="3">
+          <v-text-field v-model.number="form.penalty_rate" type="number" step="0.01" label="Неустойка, %/день" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
+        </v-col>
+        <v-col cols="6" md="3">
+          <v-text-field
+            v-model.number="form.warranty_period_days"
+            type="number"
+            label="Срок гарантии (раб.дней)"
+            hint="{{warranty_period_days}} в шаблонах. По умолчанию 15."
+            persistent-hint
+            density="compact"
+            variant="outlined"
+            @blur="flushAutosaveOnBlur"
+          />
+        </v-col>
+      </v-row>
+      <v-row v-if="form.contract_form" class="mt-1">
+        <v-col cols="12" md="6">
+          <v-checkbox
+            v-model="form.is_retroactive"
+            label="Договор задним числом (ст. 425 ГК РФ)"
+            hint="Если включено, в шаблон добавляется пункт о применении условий с даты начала услуг до подписания договора. {{is_retroactive}}"
+            persistent-hint
+            density="compact"
+          />
+        </v-col>
+        <v-col v-if="form.contract_form === 'goods_single'" cols="12" md="6">
+          <v-checkbox
+            v-model="form.delivery_by_supplier"
+            label="Доставка силами поставщика"
+            hint="В договоре поставки: включено — поставщик доставляет сам; выключено — самовывоз со склада поставщика."
+            persistent-hint
+            density="compact"
+          />
+        </v-col>
+      </v-row>
+      <v-divider v-if="form.contract_form" class="my-3" />
       <v-row>
         <v-col cols="12" md="3">
           <v-select
@@ -342,6 +390,7 @@ const props = defineProps<{
   clearGuideArrow: () => void
   deliveryLabel: string
   scrollToDatesSection: () => void
+  flushAutosaveOnBlur: () => void
 }>()
 
 const showPlaceholdersDialog = defineModel<boolean>('showPlaceholdersDialog', { required: true })

@@ -160,6 +160,7 @@ import { useFeoTreeDnd } from '@/composables/subsidies/useFeoTreeDnd'
 import { useFeoLevel5 } from '@/composables/subsidies/useFeoLevel5'
 import { useFeoUndoStack, handleFeoUndoKeydown } from '@/composables/subsidies/useFeoUndoStack'
 import { useFeoReqItems } from '@/composables/subsidies/useFeoReqItems'
+import { useFeoTreeSearch } from '@/composables/subsidies/useFeoTreeSearch'
 // Относительный путь (не '@/...'), т.к. tsconfig.app.json не содержит paths-маппинга
 // для алиаса '@' (Vite резолвит его сам через vite.config.ts, но чистый tsc/vue-tsc —
 // нет) — см. комментарий у остальных импортов типов в этом файле (не менялся волной 5c).
@@ -311,6 +312,17 @@ const feoTreeDnd = useFeoTreeDnd({
   selectedId,
   loadFeo,
   syncFeoFilled: feoTreeAmounts.syncFeoFilled,
+})
+// Поиск по субсидии в дереве ФЭО (владелец, 2026-09-15) — см. докстринг файла.
+const feoTreeSearch = useFeoTreeSearch({
+  selectedId,
+  feoCategories: feoTreeState.feoCategories,
+  expandedIds: feoTreePrefs.expandedIds,
+  expandedItemPanels: feoTreePrefs.expandedItemPanels,
+  comparisonData: feoLevel5.comparisonData,
+  loadingComparison: feoLevel5.loadingComparison,
+  refreshComparison: feoLevel5.refreshComparison,
+  feoTableArea,
 })
 
 // Стек отмены/повтора дерева плана (владелец, п.4 волны 4, 2026-09-13) — стек
@@ -800,6 +812,10 @@ const subsidyDetailCtx = {
   plannedBase: feoTreePrefs.plannedBase,
   plannedSumBase: feoTreePrefs.plannedSumBase,
   plannedQtyBase: feoTreePrefs.plannedQtyBase,
+  feoSearchQuery: feoTreeSearch.feoSearchQuery,
+  feoSearchResults: feoTreeSearch.feoSearchResults,
+  feoSearchLoading: feoTreeSearch.feoSearchLoading,
+  goToFeoSearchResult: feoTreeSearch.goToFeoSearchResult,
   selectedBudget: feoTreeAmounts.selectedBudget,
   selectedPlannedTotal: feoTreeAmounts.selectedPlannedTotal,
   plannedItemsByCat: feoTreeState.plannedItemsByCat,

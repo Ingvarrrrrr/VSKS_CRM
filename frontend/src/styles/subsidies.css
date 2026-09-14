@@ -316,6 +316,55 @@
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+/* Поиск по субсидии в дереве ФЭО (владелец, 2026-09-15, useFeoTreeSearch.ts) —
+   ширина ФИКСИРОВАНА (не растягивается на всю строку), сам flex-child переносится
+   на следующую строку той же .detail-feo-header, если места не хватает — тот же
+   приём wrap, что уже спас панель кнопок от горизонтального вылета (см. комментарий
+   выше). Дропдаун — абсолютным позиционированием СТРОГО в границах поля (left:0;
+   right:0 относительно .feo-search-wrap, а не относительно всей страницy), поэтому
+   не может стать причиной горизонтального скролла независимо от места на экране. */
+.subsidies-page .feo-search-wrap {
+  position: relative;
+  width: 220px;
+  max-width: 100%;
+  flex: 0 1 220px;
+}
+.subsidies-page .feo-search-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  background: var(--crm-surface);
+  border: 1px solid var(--crm-border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px var(--crm-shadow);
+  max-height: 320px;
+  overflow-y: auto;
+}
+.subsidies-page .feo-search-dropdown__empty {
+  display: flex; align-items: center;
+  padding: 10px 12px;
+  color: var(--crm-text-faint);
+  font-size: 13px;
+}
+.subsidies-page .feo-search-dropdown__item {
+  display: flex; align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--crm-border);
+}
+.subsidies-page .feo-search-dropdown__item:last-child { border-bottom: none; }
+.subsidies-page .feo-search-dropdown__item:hover { background: rgba(13, 148, 136, 0.08); }
+.subsidies-page .feo-search-dropdown__text { min-width: 0; }
+.subsidies-page .feo-search-dropdown__name {
+  font-size: 13px; font-weight: 500; color: var(--crm-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.subsidies-page .feo-search-dropdown__path {
+  font-size: 11px; color: var(--crm-text-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .subsidies-page .chart-card-title {
   font-size: 14px; font-weight: 600; color: var(--crm-text-secondary);
 }

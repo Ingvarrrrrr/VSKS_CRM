@@ -16,6 +16,7 @@ import type {
   FeoPlannedItem, FeoPurchaseFolder, FeoReqItem, FeoReqRow, FeoStage, FeoStageRow, FeoVirtualGroup,
   PlanExcessApprovalDto, PlanExcessStep, PlannedBase, PlanTreeEntry, SubsidyRow,
 } from './types'
+import type { FeoSearchResult } from './useFeoTreeSearch'
 
 export interface SubsidyDetailContext {
   router: Router
@@ -76,6 +77,14 @@ export interface SubsidyDetailContext {
   plannedBase: Ref<PlannedBase>
   plannedSumBase: Ref<PlannedBase>
   plannedQtyBase: Ref<PlannedBase>
+
+  // ── Поиск по субсидии в развёрнутом дереве ФЭО (useFeoTreeSearch.ts, владелец,
+  // 2026-09-15): «ОУ-2 огнетушитель не помню где находится... задолбался искать».
+  // FeoTreeToolbar.vue — поле ввода и выпадающий список результатов с путём.
+  feoSearchQuery: Ref<string>
+  feoSearchResults: ComputedRef<FeoSearchResult[]>
+  feoSearchLoading: Ref<boolean>
+  goToFeoSearchResult: (r: FeoSearchResult) => Promise<void>
 
   // ── Стек отмены/повтора дерева плана (useFeoUndoStack.ts, владелец, п.4
   // волны 4, 2026-09-13): кнопки «назад»/«вперёд» в FeoTreeToolbar.vue +

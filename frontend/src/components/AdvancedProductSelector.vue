@@ -264,6 +264,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import AddProductDialog from './AddProductDialog.vue'
+import { productPhotoSrc } from '@/utils/productPhoto'
 
 interface Product {
   id: number
@@ -278,13 +279,6 @@ interface Product {
   clarification_link?: string
   feo_category_id?: number
   price?: string | number  // Цена из Google Sheets
-}
-
-// Phase 17.1-08: prefer DB bytea endpoint when a cached copy exists.
-function productPhotoSrc(p: Pick<Product, 'id' | 'has_photo' | 'photo_url' | 'photo_link'> | null | undefined): string | undefined {
-  if (!p) return undefined
-  if (p.has_photo) return `/api/products/${p.id}/photo`
-  return p.photo_url || p.photo_link || undefined
 }
 
 const props = defineProps<{

@@ -16,6 +16,7 @@ import { useFeoNodeAmounts } from '@/composables/useFeoNodeAmounts'
 import { ACTIONS } from '@/constants/permissionActions'
 import { useFeoPlannedResiduals } from '@/composables/useFeoPlannedResiduals'
 import { numOrNull } from '@/utils/numberFormat'
+import { productPhotoSrc } from '@/utils/productPhoto'
 import type { WishesContext } from './useWishesContext'
 import type { Wish } from './wishTypes'
 
@@ -639,12 +640,6 @@ export function useWishForm(deps: {
         } catch {}
       }
 
-      const photoOf = (p: any): string | undefined => {
-        if (!p) return undefined
-        if (p.has_photo) return `/api/products/${p.id}/photo`
-        return p.photo_url || p.photo_link || undefined
-      }
-
       wishForm.value.items = rawItems.map((i: any) => {
         const prod = i.product_id != null ? byId.get(i.product_id) : null
         return {
@@ -663,7 +658,7 @@ export function useWishForm(deps: {
           vat_rate: i.vat_rate ?? null,
           needed_date: i.needed_date ?? null,
           purchase_match: i.purchase_match ?? null,
-          _photo_url: prod ? photoOf(prod) : undefined,
+          _photo_url: prod ? productPhotoSrc(prod) : undefined,
           _description: prod?.description || undefined,
           _price_meta: prod ? {
             price_updated_at: prod.price_updated_at ?? null,

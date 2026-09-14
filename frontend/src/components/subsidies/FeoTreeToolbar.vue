@@ -21,6 +21,47 @@
         <v-btn size="x-small" value="category_type">Категории + виды</v-btn>
       </v-btn-toggle>
     </div>
+    <!-- Поиск по субсидии в дереве ФЭО (владелец, 2026-09-15): «ОУ-2 огнетушитель не
+         помню где находится... задолбался искать» — общий поиск по БД не привязан к
+         текущей субсидии и не показывает путь. Ищет по названиям направлений/
+         категорий (клиент, ctx.feoCategories уже загружены целиком) И по названиям
+         плановых позиций (GET /feo-categories/plan-positions, тот же эндпоинт, что
+         уже использует FeoPlannedItemsSelect.vue — см. useFeoTreeSearch.ts).
+         Простое вхождение слов, порядок/регистр не важны. -->
+    <div class="feo-search-wrap ml-2">
+      <v-text-field
+        v-model="ctx.feoSearchQuery.value"
+        density="compact" variant="outlined" hide-details clearable
+        placeholder="Поиск по субсидии…"
+        prepend-inner-icon="mdi-magnify"
+        @keydown.esc="ctx.feoSearchQuery.value = ''"
+      />
+      <div v-if="(ctx.feoSearchQuery.value || '').trim()" class="feo-search-dropdown">
+        <div v-if="ctx.feoSearchLoading.value" class="feo-search-dropdown__empty">
+          <v-progress-circular indeterminate size="16" width="2" color="teal" class="mr-2" />
+          Загрузка плановых позиций…
+        </div>
+        <template v-else>
+          <div v-if="!ctx.feoSearchResults.value.length" class="feo-search-dropdown__empty">
+            Ничего не найдено
+          </div>
+          <div
+            v-for="r in ctx.feoSearchResults.value" :key="r.key"
+            class="feo-search-dropdown__item"
+            @click="ctx.goToFeoSearchResult(r)"
+          >
+            <v-icon
+              :icon="r.kind === 'planned_item' ? 'mdi-cube-outline' : 'mdi-folder-outline'"
+              size="16" color="teal" class="mr-2"
+            />
+            <div class="feo-search-dropdown__text">
+              <div class="feo-search-dropdown__name">{{ r.name }}</div>
+              <div v-if="r.path" class="feo-search-dropdown__path">{{ r.path }}</div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
     <div class="d-flex align-center ml-auto feo-toolbar-actions" style="gap:8px">
       <!-- Отмена/повтор дерева плана (владелец, п.4 волны 4, 2026-09-13): создание/
            правка/удаление/перенос плановых позиций + перенос категорий, глубина 5.

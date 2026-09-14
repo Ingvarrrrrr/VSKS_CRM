@@ -6,25 +6,22 @@
 import { ref, computed, reactive, watch, type Ref } from 'vue'
 import { apiFetch } from '@/api'
 import type { MatchCandidate } from '@/composables/useItemMatching'
-import type { PriceLink, ItemsDisplayRow, ProductLike } from '@/components/items/types'
+import type { PriceLink, ItemsDisplayRow } from '@/components/items/types'
 import type { ToastType } from '@/composables/useToast'
+import { productPhotoSrc } from '@/utils/productPhoto'
 
 // EditorItem/Product are structurally identical to the parent's; kept loose
 // here (same convention as ItemsTableFlat.vue) since the parent owns the real
-// shape and this composable only reads/writes the fields it uses. ProductLike
-// (components/items/types.ts) is the existing shared shape the presentational
-// item table/dialog components already type their product-photo-src prop
-// against — productPhotoSrc below must match it exactly, not `any`.
+// shape and this composable only reads/writes the fields it uses.
 type EditorItem = any
 type Product = any
 
-// Phase 17.1-08: prefer the bytea-backed /api/products/{id}/photo endpoint
-// when the backend has a cached copy; fall back to external photo_url/link.
-export function productPhotoSrc(p: ProductLike | null | undefined): string | undefined {
-  if (!p) return undefined
-  if (p.has_photo) return `/api/products/${p.id}/photo`
-  return p.photo_url || p.photo_link || undefined
-}
+// productPhotoSrc — реэкспорт единого источника (utils/productPhoto.ts,
+// ПРАВИЛО №6) ради обратной совместимости: PurchaseItemsEditor.vue и другие
+// файлы уже импортируют его отсюда (`import { productPhotoSrc } from
+// '@/composables/items/useItemsCatalog'`) — переносить все call-site'ы ради
+// одной строки риска не стоит, логика теперь в одном месте.
+export { productPhotoSrc }
 
 export interface UseItemsCatalogDeps {
   props: { purchaseId?: number | null }

@@ -75,7 +75,10 @@
           </thead>
           <tbody>
             <template v-for="(planned, pIdx) in ctx.displayPlannedRowsFor(node)" :key="`p-${planned.id}`">
-              <tr style="border-bottom:1px solid #E5E7EB">
+              <!-- data-feo-planned-item-id — цель прокрутки+подсветки поиска по субсидии
+                   (useFeoTreeSearch.ts::scrollAndHighlight), тот же приём, что и
+                   data-feo-node-id у строки категории (FeoTreeRow.vue). -->
+              <tr style="border-bottom:1px solid #E5E7EB" :data-feo-planned-item-id="planned.id">
                 <td :style="[feoResize.resizeStyle('name'), { paddingLeft: `${ctx.plannedItemIndentPx(node)}px` }]" style="padding-top:4px;padding-right:8px;padding-bottom:4px;color:#0c4a6e">
                   <div class="d-flex align-center" style="gap:2px">
                     <!-- Задача владельца, п.12 волны 3: чекбокс массового выбора — только у

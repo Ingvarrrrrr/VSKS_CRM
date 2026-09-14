@@ -113,9 +113,9 @@
           <!-- Фото -->
           <v-col cols="12">
             <div class="text-subtitle-2 mb-2">Фото товара</div>
-            <div v-if="photoPreview || (editingId && form.has_photo) || form.photo_url || form.photo_link" class="mb-3">
+            <div v-if="photoPreview || (editingId && form.has_photo) || isLikelyImageUrl(form.photo_url) || isLikelyImageUrl(form.photo_link)" class="mb-3">
               <img
-                :src="photoPreview || ((editingId && form.has_photo) ? `/api/products/${editingId}/photo?v=${photoCacheBuster}` : (form.photo_url || form.photo_link))"
+                :src="photoPreview || ((editingId && form.has_photo) ? `/api/products/${editingId}/photo?v=${photoCacheBuster}` : (isLikelyImageUrl(form.photo_url) ? form.photo_url : form.photo_link))"
                 style="max-width:100%;max-height:180px;object-fit:contain;display:block;border-radius:4px;border:1px solid #e0e0e0;background:#f5f5f5"
               />
               <div class="d-flex gap-2 mt-1">
@@ -215,6 +215,7 @@
 
 <script setup lang="ts">
 import { formatDate } from '@/composables/products/productsTypes'
+import { isLikelyImageUrl } from '@/utils/productPhoto'
 
 defineProps<{
   mobile: boolean

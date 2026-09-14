@@ -168,7 +168,7 @@ async def products_import_preview(
         # второй проход (services/products_import_map.py). Старый /import
         # ниже по файлу продолжает звать suggest_products_column_mapping
         # напрямую (без второго прохода) — поведение auto-apply не меняется.
-        sheet["mapping_hint"] = suggest_products_column_mapping_with_hints(sheet["headers"])
+        sheet["mapping_hint"] = suggest_products_column_mapping_with_hints(sheet["headers"], sheet.get("sample"))
     return result
 
 

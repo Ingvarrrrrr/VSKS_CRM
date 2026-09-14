@@ -19,6 +19,7 @@ from app.auth.permissions import require_tab
 from app.database import get_db
 from app.models.contract import Contract
 from app.models.contractor import Contractor
+from app.utils.numbers import to_decimal
 
 try:
     from openpyxl import load_workbook as _load_workbook
@@ -204,18 +205,10 @@ def _parse_date(val) -> Optional[date_type]:
 
 
 def _parse_amount(val) -> Optional[Decimal]:
-    if val is None:
-        return None
-    if isinstance(val, (int, float)):
-        return Decimal(str(val))
-    s = str(val).strip().replace(' ', '').replace('\xa0', '').replace(',', '.')
-    s = ''.join(c for c in s if c.isdigit() or c == '.')
-    if not s:
-        return None
-    try:
-        return Decimal(s)
-    except Exception:
-        return None
+    # Единый разборщик чисел (Правило №6, app/utils/numbers.py) — раньше
+    # запятая менялась на точку ДО разбора точки-разделителя тысяч, что
+    # портило "499.950,00" (см. дефект позиции закупки id=3166, 2026-09-14).
+    return to_decimal(val)
 
 
 # ── Import endpoints ──────────────────────────────────────────────────────────

@@ -27,6 +27,7 @@ from app.services.product_catalog_match import (
     find_exact_product, index_products_by_name, normalize_product_name,
 )
 from app.services.price_actualization import actualize_product_price
+from app.services.qty_price_check import resolve_qty_price_choice
 
 # ---------------------------------------------------------------------------
 # Product-catalog upsert helper
@@ -134,11 +135,17 @@ async def _save_smart_preview_to_purchase(
     db: AsyncSession,
     current_user,
     skip_catalog: bool = False,
+    resolutions: dict | None = None,
 ) -> dict:
     """Сохраняет preview-строки в БД как PurchaseItem'ы.
     Переиспользуется как из xlsx-ветки, так и (потенциально) из markitdown-ветки.
     skip_catalog=True: не вызывать _upsert для несматченных → product_id=None.
-    """
+
+    resolutions: {row_num(str): 'recalc_sum'|'recalc_price'|'keep'} — выбор
+    пользователя по строкам, где кол-во × цена ≠ сумма из файла (Дефект 2,
+    владелец, 2026-09-14; см. app/services/qty_price_check.py). row_num —
+    значение row_data['row'], выставленное парсером (номер строки файла), не
+    порядковый индекс превью."""
     org_id = get_single_org_id(current_user)
     prod_q = select(Product)
     if org_id:
@@ -153,6 +160,9 @@ async def _save_smart_preview_to_purchase(
         qty = Decimal(str(row_data["quantity"])) if row_data["quantity"] else Decimal("1")
         unit_price = Decimal(str(row_data["unit_price"])) if row_data["unit_price"] else None
         total_price = Decimal(str(row_data["total_price"])) if row_data["total_price"] else None
+        _choice = (resolutions or {}).get(str(row_data.get("row"))) if row_data.get("row") is not None else None
+        if _choice and _choice != "keep":
+            unit_price, total_price = resolve_qty_price_choice(qty, unit_price, total_price, _choice)
         # Шаг 5 «цена ТЗ не выше плановой» (владелец, 2026-08-07): позиция смарт-
         # импорта наследует ФЭО-категорию закупки (feo_planned_item_id импорт не
         # проставляет). Аггрегация ошибок по строкам — строка пропускается, импорт

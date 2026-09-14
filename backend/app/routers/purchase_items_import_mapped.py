@@ -31,6 +31,9 @@ from app.services.feo_plan import assert_tz_not_over_plan
 from app.services.product_catalog_match import index_products_by_name, normalize_product_name
 from app.services.items_import_parsing import _extract_html_tables, _read_excel_rows
 from app.services.items_import_catalog import _upsert_product_to_catalog, _apply_import_to_existing_product
+from app.utils.numbers import to_decimal
+from app.services.qty_price_check import check_qty_price_sum, resolve_qty_price_choice
+import json as _json
 
 router = APIRouter(prefix="/api/purchases", tags=["purchase-items-import"])
 
@@ -151,18 +154,7 @@ async def import_items_mapped_nopid(
             return None
         return s
 
-    def _to_dec(v):
-        if v is None:
-            return None
-        try:
-            s = str(v).replace(',', '.').replace(' ', '').replace('\xa0', '')
-            import re
-            m = re.match(r'^([0-9]+\.?[0-9]*)', s)
-            if not m:
-                return None
-            return Decimal(m.group(1))
-        except Exception:
-            return None
+    _to_dec = to_decimal
 
     _SKIP_KEYWORDS_NP = {
         'итого', 'всего', 'итог', 'total', 'подитог', 'subtotal',
@@ -184,10 +176,11 @@ async def import_items_mapped_nopid(
         return False
 
     items_out = []
+    warnings: list[dict] = []
     skipped_empty = 0
     skipped_junk = 0
 
-    for row in data_iter:
+    for row_num, row in enumerate(data_iter, start=skip + 1):
         item_name = _cell(row, col_item_name)
         if not item_name:
             skipped_empty += 1
@@ -196,11 +189,19 @@ async def import_items_mapped_nopid(
             skipped_junk += 1
             continue
         description = _cell(row, col_description) if col_description >= 0 else None
-        quantity = _to_dec(_cell(row, col_quantity)) if col_quantity >= 0 else None
-        if not quantity:
-            quantity = Decimal('1')
+        quantity_raw = _to_dec(_cell(row, col_quantity)) if col_quantity >= 0 else None
+        quantity = quantity_raw if quantity_raw else Decimal('1')
         unit_price = _to_dec(_cell(row, col_unit_price)) if col_unit_price >= 0 else None
         total_price = _to_dec(_cell(row, col_total_price)) if col_total_price >= 0 else None
+        # Дефект 2 (владелец, 2026-09-14): пока в строке ЕСТЬ все три исходных
+        # значения (не после автозаполнения недостающего ниже) — проверяем,
+        # что кол-во × цена сходится с суммой из файла; иначе строка попадает
+        # в предупреждение с номером строки, а не тихо принимает то, что
+        # написано (см. app/services/qty_price_check.py — тот же допуск и
+        # текст, что у импорта ФЭО).
+        _mismatch = check_qty_price_sum(row_num, item_name, quantity_raw, unit_price, total_price)
+        if _mismatch:
+            warnings.append(_mismatch)
         unit_raw = _cell(row, col_unit) if col_unit >= 0 else None  # без дефолта — для бэкфилла Product.unit
         unit = unit_raw or 'шт'
         if not total_price and unit_price:
@@ -231,6 +232,7 @@ async def import_items_mapped_nopid(
         eff_category, eff_product_type = row_category, row_product_type
 
         items_out.append({
+            'row': row_num,
             'item_name': item_name[:500],
             'item_type': 'товар',
             'description': description,
@@ -254,6 +256,7 @@ async def import_items_mapped_nopid(
     return {
         "items": items_out,
         "added": len(items_out),
+        "warnings": warnings,
         "debug": {
             "total_rows_after_header": len(data_iter),
             "skipped_empty_name": skipped_empty,
@@ -280,10 +283,20 @@ async def import_items_mapped(
     col_category: Optional[int] = Query(default=None, description="Индекс столбца Категория товара"),
     col_product_type: Optional[int] = Query(default=None, description="Индекс столбца Вид товара"),
     header_row_offset: int = Query(0, description="Сколько строк пропустить до заголовка (авто-определено при preview)"),
+    confirm: bool = Query(default=False, description="false — только предпросмотр с предупреждениями, ничего не пишет в БД; true — реальный импорт"),
+    resolutions: Optional[str] = Query(default=None, description='JSON {"<row_num>": "recalc_sum"|"recalc_price"|"keep"} — выбор пользователя по строкам с sum_mismatch'),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Import items using user-specified column mapping."""
+    """Import items using user-specified column mapping.
+
+    Дефект 2 (владелец, 2026-09-14): «5 шт по 99 990» молча сохранялось
+    суммой 499.95 вместо 499 950. Теперь эндпоинт двухфазный, как smart-import:
+    confirm=false — парсит файл и возвращает предпросмотр + warnings
+    (sum_mismatch с номером строки), НИЧЕГО не пишет в БД; confirm=true —
+    применяет resolutions (если пользователь выбрал пересчёт) и импортирует
+    по-настоящему. Без warnings в файле поведение как раньше — один вызов
+    с confirm=true."""
     if col_item_name < 0:
         raise HTTPException(400, "Не указан столбец Наименование")
 
@@ -383,19 +396,87 @@ async def import_items_mapped(
             return None
         return s
 
-    def _to_dec(v):
-        if v is None:
-            return None
-        try:
-            s = str(v).replace(',', '.').replace(' ', '').replace('\xa0', '')
-            # Strip non-numeric suffix (e.g. "руб.", "шт.", "р.")
-            import re
-            m = re.match(r'^([0-9]+\.?[0-9]*)', s)
-            if not m:
-                return None
-            return Decimal(m.group(1))
-        except Exception:
-            return None
+    _to_dec = to_decimal
+
+    def _cell_name(row):
+        return _cell(row, col_item_name)
+
+    def _parse_row_numbers(row):
+        """Общий разбор кол-во/цена/сумма для превью и для реального импорта
+        (Правило №6 — одна логика, не две копии в одном файле)."""
+        quantity_raw = _to_dec(_cell(row, col_quantity)) if col_quantity >= 0 else None
+        quantity = quantity_raw if quantity_raw else Decimal('1')
+        unit_price = _to_dec(_cell(row, col_unit_price)) if col_unit_price >= 0 else None
+        total_price = _to_dec(_cell(row, col_total_price)) if col_total_price >= 0 else None
+        return quantity_raw, quantity, unit_price, total_price
+
+    try:
+        resolutions_map: dict[str, str] = _json.loads(resolutions) if resolutions else {}
+    except Exception:
+        resolutions_map = {}
+
+    # Keywords that indicate non-product rows (totals, footers, signatures) —
+    # определены здесь (а не рядом с основным циклом ниже), т.к. нужны уже в
+    # предпросмотре, до основного цикла.
+    _SKIP_KEYWORDS = {
+        'итого', 'всего', 'итог', 'total', 'подитог', 'subtotal',
+        'поставщик', 'покупатель', 'заказчик', 'исполнитель',
+        'генеральный директор', 'директор', 'бухгалтер', 'подпись',
+        'м.п.', 'м.п', 'печать', 'ооо', 'оао', 'зао', 'ип ',
+        'инн', 'кпп', 'огрн', 'р/с', 'к/с', 'бик',
+        'адрес', 'телефон', 'email', 'банк',
+        'примечание', 'основание', 'договор №', 'счёт №', 'счет №',
+    }
+
+    def _is_junk_row(name_val: str) -> bool:
+        """Check if this looks like a footer/total/signature row, not a product."""
+        low = name_val.lower().strip()
+        for kw in _SKIP_KEYWORDS:
+            if low.startswith(kw) or low == kw:
+                return True
+        if low.startswith('итого'):
+            return True
+        return False
+
+    # ── Предпросмотр (confirm=false): парсим файл, считаем warnings по
+    # кол-во × цена ≠ сумма, В БД НИЧЕГО НЕ ПИШЕМ — ни PurchaseItem, ни
+    # каталог. Дефект 2 (владелец, 2026-09-14): раньше этот эндпоинт всегда
+    # коммитил напрямую, расхождение сумм ("5 шт по 99 990" → 499.95 вместо
+    # 499 950) уходило в БД молча. ──
+    if not confirm:
+        preview_items: list[dict] = []
+        preview_warnings: list[dict] = []
+        _prev_skipped_empty = 0
+        _prev_skipped_junk = 0
+        for row_num, row in enumerate(data_iter, start=skip + 1):
+            item_name = _cell_name(row)
+            if not item_name:
+                _prev_skipped_empty += 1
+                continue
+            if _is_junk_row(item_name):
+                _prev_skipped_junk += 1
+                continue
+            quantity_raw, quantity, unit_price, total_price = _parse_row_numbers(row)
+            _mismatch = check_qty_price_sum(row_num, item_name, quantity_raw, unit_price, total_price)
+            if _mismatch:
+                preview_warnings.append(_mismatch)
+            preview_items.append({
+                'row': row_num,
+                'item_name': item_name[:500],
+                'quantity': float(quantity) if quantity else None,
+                'unit_price': float(unit_price) if unit_price else None,
+                'total_price': float(total_price) if total_price else None,
+            })
+        return {
+            "preview": preview_items,
+            "warnings": preview_warnings,
+            "total_rows": len(preview_items),
+            "debug": {
+                "total_rows_after_header": len(data_iter),
+                "skipped_empty_name": _prev_skipped_empty,
+                "skipped_junk_row": _prev_skipped_junk,
+            },
+        }
 
     # Load products for auto-matching
     org_id = get_single_org_id(current_user)
@@ -422,30 +503,7 @@ async def import_items_mapped(
         f"{_user_name}, {datetime.now().strftime('%d.%m.%Y %H:%M')}"
     )
 
-    # Keywords that indicate non-product rows (totals, footers, signatures)
-    _SKIP_KEYWORDS = {
-        'итого', 'всего', 'итог', 'total', 'подитог', 'subtotal',
-        'поставщик', 'покупатель', 'заказчик', 'исполнитель',
-        'генеральный директор', 'директор', 'бухгалтер', 'подпись',
-        'м.п.', 'м.п', 'печать', 'ооо', 'оао', 'зао', 'ип ',
-        'инн', 'кпп', 'огрн', 'р/с', 'к/с', 'бик',
-        'адрес', 'телефон', 'email', 'банк',
-        'примечание', 'основание', 'договор №', 'счёт №', 'счет №',
-    }
-
-    def _is_junk_row(name_val: str) -> bool:
-        """Check if this looks like a footer/total/signature row, not a product."""
-        low = name_val.lower().strip()
-        # Direct match with skip keywords
-        for kw in _SKIP_KEYWORDS:
-            if low.startswith(kw) or low == kw:
-                return True
-        # Row starts with "итого" variants like "Итого с НДС:", "Итого:"
-        if low.startswith('итого'):
-            return True
-        return False
-
-    for row_idx, row in enumerate(data_iter):
+    for row_idx, row in enumerate(data_iter, start=skip + 1):
         try:
             total_data_rows += 1
             item_name = _cell(row, col_item_name)
@@ -459,11 +517,14 @@ async def import_items_mapped(
                 continue
 
             description = _cell(row, col_description) if col_description >= 0 else None
-            quantity = _to_dec(_cell(row, col_quantity)) if col_quantity >= 0 else Decimal('1')
-            if not quantity:
-                quantity = Decimal('1')
-            unit_price = _to_dec(_cell(row, col_unit_price)) if col_unit_price >= 0 else None
-            total_price = _to_dec(_cell(row, col_total_price)) if col_total_price >= 0 else None
+            quantity_raw, quantity, unit_price, total_price = _parse_row_numbers(row)
+            # Дефект 2 (владелец, 2026-09-14): выбор пользователя из предпросмотра
+            # (recalc_sum/recalc_price/keep) применяется здесь, ДО автозаполнения
+            # недостающего значения ниже — molчаливой третьей ветки нет, при
+            # отсутствии выбора для строки поведение как раньше (файл как есть).
+            _choice = resolutions_map.get(str(row_idx))
+            if _choice and _choice != "keep":
+                unit_price, total_price = resolve_qty_price_choice(quantity_raw, unit_price, total_price, _choice)
             unit_raw = _cell(row, col_unit) if col_unit >= 0 else None  # без дефолта — для бэкфилла Product.unit
             unit = unit_raw or 'шт'
 
@@ -490,7 +551,7 @@ async def import_items_mapped(
                     item_name=item_name,
                 )
             except HTTPException as _tz_exc:
-                errors_list.append(f"Строка {row_idx + 1}: {_tz_exc.detail}")
+                errors_list.append(f"Строка {row_idx}: {_tz_exc.detail}")
                 continue
 
             # VAT info → append to description
@@ -567,7 +628,7 @@ async def import_items_mapped(
             db.add(item)
             added += 1
         except Exception as e:
-            errors_list.append(f"Строка {row_idx + 1}: {e}")
+            errors_list.append(f"Строка {row_idx}: {e}")
             await db.rollback()
             continue
 

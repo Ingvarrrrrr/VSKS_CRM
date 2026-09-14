@@ -46,6 +46,8 @@ from app.services.items_import_parsing import (
     _read_excel_rows,
     _ocrmypdf_then_extract_tables,
 )
+from app.utils.numbers import to_decimal
+from app.services.qty_price_check import check_qty_price_sum
 # Re-export: app/routers/products.py делает
 # `from app.routers.purchase_items_import import _upsert_product_to_catalog`.
 from app.services.items_import_catalog import _upsert_product_to_catalog, _apply_import_to_existing_product
@@ -272,13 +274,7 @@ async def import_items_excel(
             return None
         return s
 
-    def _to_dec(v):
-        if v is None:
-            return None
-        try:
-            return Decimal(str(v).replace(',', '.').replace(' ', ''))
-        except Exception:
-            return None
+    _to_dec = to_decimal
 
     # Load products for auto-matching by name
     org_id = get_single_org_id(current_user)

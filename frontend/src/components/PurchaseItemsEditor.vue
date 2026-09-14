@@ -608,6 +608,14 @@
       @confirm="onDupMergeConfirm"
     />
 
+    <!-- ===== Sum-mismatch Dialog (Дефект 2, владелец 2026-09-14): кол-во × цена ≠ сумма ===== -->
+    <SumMismatchDialog
+      v-if="sumMismatchShow"
+      v-model="sumMismatchShow"
+      :warnings="sumMismatchWarnings"
+      @confirm="onSumMismatchConfirm"
+    />
+
     <!-- ===== P1-B: Single Product Repick Dialog ===== -->
     <SingleProductPickerDialog
       v-if="repickDialog.show"
@@ -701,6 +709,7 @@ import { apiFetch } from '@/api'
 import FileDropZone from '@/components/FileDropZone.vue'
 import ProductMatchReviewDialog from '@/components/ProductMatchReviewDialog.vue'
 import DuplicateMergeDialog from '@/components/DuplicateMergeDialog.vue'
+import SumMismatchDialog from '@/components/items/SumMismatchDialog.vue'
 import SingleProductPickerDialog from '@/components/SingleProductPickerDialog.vue'
 import ProductPickerDialog from '@/components/items/ProductPickerDialog.vue'
 import FullProductDialog from '@/components/items/FullProductDialog.vue'
@@ -1573,6 +1582,7 @@ const {
   applyColumnMapping,
   matchReviewShow, matchReviewRows, onMatchConfirm, onMatchCancel,
   dupMergeShow, dupMergeGroups, onDupMergeConfirm,
+  sumMismatchShow, sumMismatchWarnings, onSumMismatchConfirm,
   repickDialog, openRepickDialog, onRepickPick,
 } = useItemsImport({
   props, localItems, localContractItems, contractItemImportMode,

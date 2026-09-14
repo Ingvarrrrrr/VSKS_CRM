@@ -13,6 +13,7 @@ doesn't matter (see app/routes.py comment next to purchase_items_import
 imports). Registered next to purchase_items_import.router for readability.
 """
 import logging
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from decimal import Decimal
@@ -31,6 +32,9 @@ from app.services.items_import_parsing import (
     _legacy_detect_best_table,
 )
 from app.services.items_import_catalog import _save_smart_preview_to_purchase
+from app.utils.numbers import to_decimal
+from app.services.qty_price_check import check_qty_price_sum
+import json as _json
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +52,7 @@ async def import_items_smart_nopid(
         raise HTTPException(400, "Этот endpoint только для XLSX/XLS. Используйте /import-preview для других форматов.")
     content = await file.read()
     try:
-        preview, columns = _smart_import_xlsx_direct(content, fname=fname)
+        preview, columns, warnings = _smart_import_xlsx_direct(content, fname=fname)
     except Exception as e:
         logger.warning("import-smart-nopid failed: %s", e)
         ext = '.xls' if fname.endswith('.xls') else '.xlsx'
@@ -58,6 +62,7 @@ async def import_items_smart_nopid(
         "total_rows": len(preview),
         "file_type": "excel",
         "columns_found": columns,
+        "warnings": warnings,
     }
 
 @router.post("/{pid}/items/import-smart")
@@ -66,6 +71,7 @@ async def import_items_smart(
     file: UploadFile = File(...),
     confirm: bool = Query(default=False),
     skip_catalog: bool = Query(default=False, description="Не добавлять несматченные позиции в каталог"),
+    resolutions: Optional[str] = Query(default=None, description='JSON {"<row_num>": "recalc_sum"|"recalc_price"|"keep"} — выбор пользователя по строкам с sum_mismatch'),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -166,10 +172,10 @@ async def import_items_smart(
     # к опечаткам в header'е (напр. "Количечество"), разделам-подзаголовкам и multi-line cells.
     if file_type == "excel":
         try:
-            xlsx_preview, xlsx_columns = _smart_import_xlsx_direct(content, fname=filename)
+            xlsx_preview, xlsx_columns, xlsx_warnings = _smart_import_xlsx_direct(content, fname=filename)
         except Exception as _e:
             logger.warning("Direct XLSX parser failed: %s — fallback to markitdown", _e)
-            xlsx_preview, xlsx_columns = [], []
+            xlsx_preview, xlsx_columns, xlsx_warnings = [], [], []
         if xlsx_preview:
             if not confirm:
                 return {
@@ -177,8 +183,16 @@ async def import_items_smart(
                     "total_rows": len(xlsx_preview),
                     "file_type": file_type,
                     "columns_found": xlsx_columns,
+                    "warnings": xlsx_warnings,
                 }
-            return await _save_smart_preview_to_purchase(pid, xlsx_preview, purchase, db, current_user, skip_catalog=skip_catalog)
+            try:
+                resolutions_map = _json.loads(resolutions) if resolutions else {}
+            except Exception:
+                resolutions_map = {}
+            return await _save_smart_preview_to_purchase(
+                pid, xlsx_preview, purchase, db, current_user,
+                skip_catalog=skip_catalog, resolutions=resolutions_map,
+            )
         # Если direct-parser не нашёл строк — fallback на markitdown (ниже)
 
     # --- Stage 1: Convert to Markdown via markitdown ---
@@ -224,16 +238,10 @@ async def import_items_smart(
         "работа": "работа", "работы": "работа",
     }
 
-    def _to_dec(v: str):
-        if not v:
-            return None
-        try:
-            cleaned = v.replace(",", ".").replace(" ", "").replace("\xa0", "").replace("–", "").replace("—", "")
-            return Decimal(cleaned)
-        except Exception:
-            return None
+    _to_dec = to_decimal
+    md_warnings: list[dict] = []
 
-    def _parse_row(row: list[str]):
+    def _parse_row(row: list[str], row_num: int):
         def _get(field: str) -> str:
             idx = best_col.get(field)
             if idx is None or idx >= len(row):
@@ -250,6 +258,11 @@ async def import_items_smart(
         unit = unit_raw or "шт"
         unit_price = _to_dec(_get("unit_price"))
         total_price = _to_dec(_get("total_price"))
+        # Дефект 2 (владелец, 2026-09-14): кол-во × цена ≠ сумма из файла —
+        # по ИСХОДНЫМ значениям, до автозаполнения недостающего ниже.
+        _mismatch = check_qty_price_sum(row_num, item_name, quantity, unit_price, total_price)
+        if _mismatch:
+            md_warnings.append(_mismatch)
         if unit_price is None and total_price is not None and quantity:
             try:
                 unit_price = total_price / quantity
@@ -258,6 +271,7 @@ async def import_items_smart(
         if total_price is None and unit_price is not None and quantity:
             total_price = line_total(quantity or Decimal("1"), unit_price)
         return {
+            "row": row_num,
             "item_name": item_name,
             "item_type": item_type,
             "quantity": float(quantity) if quantity else None,
@@ -268,13 +282,27 @@ async def import_items_smart(
         }
 
     data_rows = best_table[best_header_row + 1:]
-    preview = [r for r in (_parse_row(row) for row in data_rows[:200]) if r]
+    preview = [
+        r for r in (
+            _parse_row(row, best_header_row + 2 + i) for i, row in enumerate(data_rows[:200])
+        ) if r
+    ]
 
     if not confirm:
-        return {"preview": preview, "total_rows": len(preview), "file_type": file_type, "columns_found": list(best_col.keys())}
+        return {
+            "preview": preview, "total_rows": len(preview), "file_type": file_type,
+            "columns_found": list(best_col.keys()), "warnings": md_warnings,
+        }
 
+    try:
+        resolutions_map = _json.loads(resolutions) if resolutions else {}
+    except Exception:
+        resolutions_map = {}
     # Save items to DB (markitdown path — xlsx теперь идёт через _save_smart_preview_to_purchase)
-    return await _save_smart_preview_to_purchase(pid, preview, purchase, db, current_user, skip_catalog=skip_catalog)
+    return await _save_smart_preview_to_purchase(
+        pid, preview, purchase, db, current_user,
+        skip_catalog=skip_catalog, resolutions=resolutions_map,
+    )
 
 # ---------------------------------------------------------------------------
 # PDF Debug endpoint (import-pdf-debug)

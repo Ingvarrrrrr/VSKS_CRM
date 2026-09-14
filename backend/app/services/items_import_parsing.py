@@ -15,6 +15,8 @@ from decimal import Decimal
 from fastapi import HTTPException
 
 from app.services.item_amounts import line_total
+from app.utils.numbers import to_decimal
+from app.services.qty_price_check import check_qty_price_sum
 
 try:
     from openpyxl import load_workbook
@@ -485,13 +487,17 @@ def _read_excel_rows(content: bytes, fname: str) -> list[list[list]]:
     return [[list(r) for r in ws.iter_rows(values_only=True)] for ws in wb.worksheets]
 
 
-def _smart_import_xlsx_direct(content: bytes, fname: str = '') -> tuple[list[dict], list[str]]:
+def _smart_import_xlsx_direct(content: bytes, fname: str = '') -> tuple[list[dict], list[str], list[dict]]:
     """Direct XLSX/XLS parser without markitdown — устойчив к опечаткам в заголовке,
     разделам-подзаголовкам в середине, multi-line cells, merged headers.
     Поддерживает .xls BIFF8 с авто-cp1251-override при mojibake.
 
-    Returns (preview_rows, columns_found).
-    Каждый dict в preview_rows: item_name, item_type, quantity, unit, unit_price, total_price.
+    Returns (preview_rows, columns_found, warnings).
+    Каждый dict в preview_rows: row (номер строки файла), item_name, item_type,
+    quantity, unit, unit_price, total_price.
+    warnings — Дефект 2 (владелец, 2026-09-14): sum_mismatch, если в строке
+    заданы кол-во, цена И сумма, а произведение с суммой не сходится (см.
+    app/services/qty_price_check.py — тот же допуск/текст, что у ФЭО-импорта).
     """
     import re as _re
 
@@ -515,7 +521,7 @@ def _smart_import_xlsx_direct(content: bytes, fname: str = '') -> tuple[list[dic
     try:
         sheets = _read_excel_rows(content, fname)
     except Exception:
-        return [], []
+        return [], [], []
     all_rows: list[list] = [r for sh in sheets for r in sh]
 
     def _classify_header(row: list) -> dict:
@@ -552,24 +558,13 @@ def _smart_import_xlsx_direct(content: bytes, fname: str = '') -> tuple[list[dic
     col_map = best_map
 
     if header_idx == -1:
-        return [], []
+        return [], [], []
 
     # Inverse map: field -> col_idx
     field_to_idx = {v: k for k, v in col_map.items()}
     columns_found = list(field_to_idx.keys())
 
-    def _to_dec(v):
-        if v is None:
-            return None
-        if isinstance(v, (int, float)):
-            return Decimal(str(v))
-        try:
-            s = str(v).strip().replace(',', '.').replace(' ', '').replace('\xa0', '')
-            if not s or s in ('-', '—', '–'):
-                return None
-            return Decimal(s)
-        except Exception:
-            return None
+    _to_dec = to_decimal
 
     def _get_cell(row: list, field: str):
         idx = field_to_idx.get(field)
@@ -585,7 +580,11 @@ def _smart_import_xlsx_direct(content: bytes, fname: str = '') -> tuple[list[dic
     }
 
     preview: list[dict] = []
-    for row in all_rows[header_idx + 1:]:
+    warnings: list[dict] = []
+    # Номер строки файла = header_idx (0-based) + 2 (сам заголовок — строка
+    # header_idx+1, данные начинаются со следующей) + порядковый номер в цикле.
+    for i, row in enumerate(all_rows[header_idx + 1:]):
+        row_num = header_idx + 2 + i
         name_val = _get_cell(row, 'item_name')
         if name_val is None:
             continue
@@ -599,6 +598,11 @@ def _smart_import_xlsx_direct(content: bytes, fname: str = '') -> tuple[list[dic
         total_price = _to_dec(_get_cell(row, 'total_price'))
         if qty is None and unit_price is None and total_price is None:
             continue
+        # Дефект 2 (владелец, 2026-09-14): кол-во × цена ≠ сумма из файла —
+        # предупреждение по ИСХОДНЫМ (не дозаполненным ниже) значениям.
+        _mismatch = check_qty_price_sum(row_num, name, qty, unit_price, total_price)
+        if _mismatch:
+            warnings.append(_mismatch)
         # Вычисляем недостающее
         if unit_price is None and total_price is not None and qty:
             try:
@@ -613,6 +617,7 @@ def _smart_import_xlsx_direct(content: bytes, fname: str = '') -> tuple[list[dic
         type_val = _get_cell(row, 'item_type')
         item_type = TYPE_MAP.get(str(type_val).lower().strip() if type_val else '', 'товар')
         preview.append({
+            'row': row_num,
             'item_name': name,
             'item_type': item_type,
             'quantity': float(qty) if qty else None,
@@ -621,4 +626,4 @@ def _smart_import_xlsx_direct(content: bytes, fname: str = '') -> tuple[list[dic
             'unit_price': float(unit_price) if unit_price else None,
             'total_price': float(total_price) if total_price else None,
         })
-    return preview, columns_found
+    return preview, columns_found, warnings

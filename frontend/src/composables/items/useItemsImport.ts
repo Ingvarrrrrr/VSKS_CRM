@@ -10,6 +10,8 @@ import { apiFetch } from '@/api'
 import type { ContractItem } from '@/types/contractItem'
 import type { MatchCandidate } from '@/composables/useItemMatching'
 import type { DupGroup, ResolvedGroup } from '@/components/DuplicateMergeDialog.vue'
+import type { SumMismatchWarning, SumMismatchChoice } from '@/components/items/SumMismatchDialog.vue'
+import { applySumMismatchChoice } from '@/utils/qtyPriceCheck'
 import type { ToastType } from '@/composables/useToast'
 
 // EditorItem is structurally identical to the parent's; kept loose here (same
@@ -336,6 +338,77 @@ export function useItemsImport(deps: UseItemsImportDeps) {
     return item
   }
 
+  function _mappedColParams(): URLSearchParams {
+    const params = new URLSearchParams()
+    if (importSelectedSheet.value) params.set('sheet_name', importSelectedSheet.value)
+    const headerRowOffset = currentSheetData.value?.header_row_offset ?? 0
+    if (headerRowOffset > 0) params.set('header_row_offset', String(headerRowOffset))
+    const paramMap: Record<string, string> = {
+      item_name:     'col_item_name',
+      description:   'col_description',
+      quantity:      'col_quantity',
+      unit_price:    'col_unit_price',
+      total_price:   'col_total_price',
+      unit:          'col_unit',
+      row_num:       'col_row_num',
+      vat_rate:      'col_vat_rate',
+      vat_amount:    'col_vat_amount',
+      total_with_vat: 'col_total_with_vat',
+      category:      'col_category',
+      product_type:  'col_product_type',
+    }
+    for (const [field, colIdx] of Object.entries(dragMapping.value)) {
+      if (colIdx !== null && colIdx !== undefined && paramMap[field]) {
+        params.set(paramMap[field], String(colIdx))
+      }
+    }
+    return params
+  }
+
+  /** Один вызов /{pid}/items/import-mapped — confirm=false для предпросмотра
+   * с warnings (Дефект 2), confirm=true (+resolutions) для реального импорта. */
+  async function _requestMappedImportPid(confirm: boolean, resolutions?: Record<number, SumMismatchChoice>) {
+    const token = localStorage.getItem('auth_token')
+    const fd = new FormData()
+    fd.append('file', itemsImportFile.value as File)
+    const params = _mappedColParams()
+    params.set('confirm', String(confirm))
+    if (resolutions) params.set('resolutions', JSON.stringify(resolutions))
+    const resp = await fetch(`/api/purchases/${props.purchaseId}/items/import-mapped?${params}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` } as HeadersInit,
+      body: fd,
+    })
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '')
+      let detail = `Ошибка ${resp.status}`
+      try { detail = JSON.parse(errText).detail || detail } catch { /* */ }
+      throw new Error(detail)
+    }
+    return resp.json()
+  }
+
+  function _handleMappedImportPidResult(data: any) {
+    itemsImportResult.value = data
+    importStep.value = 3
+    if (data.added > 0) {
+      showSnack(`Импортировано ${data.added} позиций`)
+      emit('reload-requested')
+    } else {
+      importError.value = 'Не удалось импортировать ни одной позиции. Проверьте маппинг столбцов.'
+      if (data.debug) {
+        const d = data.debug
+        showSnack(
+          `Импортировано 0 позиций. Обработано строк: ${d.rows_processed}. ` +
+          `Пустое наименование: ${d.skipped_empty_name}. ` +
+          `Отброшено как «итого/подпись»: ${d.skipped_junk_row}. ` +
+          `Первые строки данных: ${JSON.stringify(d.first_3_rows_sample)}`,
+          'warning'
+        )
+      }
+    }
+  }
+
   async function doMappedImport() {
     if (!itemsImportFile.value) return
     itemsImportLoading.value = true
@@ -343,63 +416,31 @@ export function useItemsImport(deps: UseItemsImportDeps) {
     importError.value = ''
     try {
       if (props.purchaseId) {
-        // Purchase context — call pid-bound endpoint
-        const token = localStorage.getItem('auth_token')
-        const fd = new FormData()
-        fd.append('file', itemsImportFile.value)
-        const params = new URLSearchParams()
-        if (importSelectedSheet.value) params.set('sheet_name', importSelectedSheet.value)
-        const headerRowOffset = currentSheetData.value?.header_row_offset ?? 0
-        if (headerRowOffset > 0) params.set('header_row_offset', String(headerRowOffset))
-        const paramMap: Record<string, string> = {
-          item_name:     'col_item_name',
-          description:   'col_description',
-          quantity:      'col_quantity',
-          unit_price:    'col_unit_price',
-          total_price:   'col_total_price',
-          unit:          'col_unit',
-          row_num:       'col_row_num',
-          vat_rate:      'col_vat_rate',
-          vat_amount:    'col_vat_amount',
-          total_with_vat: 'col_total_with_vat',
-          category:      'col_category',
-          product_type:  'col_product_type',
-        }
-        for (const [field, colIdx] of Object.entries(dragMapping.value)) {
-          if (colIdx !== null && colIdx !== undefined && paramMap[field]) {
-            params.set(paramMap[field], String(colIdx))
+        // Purchase context — двухфазно: confirm=false сначала (Дефект 2,
+        // владелец 2026-09-14) — если файл без расхождений сумм, второй
+        // вызов уходит сразу же (тот же UX в один клик, что и раньше).
+        const preview = await _requestMappedImportPid(false)
+        const warnings: SumMismatchWarning[] = preview.warnings || []
+        if (warnings.length > 0) {
+          sumMismatchWarnings.value = warnings
+          sumMismatchShow.value = true
+          _pendingSumMismatchResolve = async (resolutions) => {
+            itemsImportLoading.value = true
+            try {
+              const finalData = await _requestMappedImportPid(true, resolutions)
+              _handleMappedImportPidResult(finalData)
+            } catch (e: any) {
+              importError.value = e?.message ?? 'Ошибка импорта'
+              importStep.value = 3
+              showSnack('Ошибка импорта', 'error')
+            } finally {
+              itemsImportLoading.value = false
+            }
           }
+          return
         }
-        const resp = await fetch(`/api/purchases/${props.purchaseId}/items/import-mapped?${params}`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` } as HeadersInit,
-          body: fd,
-        })
-        if (!resp.ok) {
-          const errText = await resp.text().catch(() => '')
-          let detail = `Ошибка ${resp.status}`
-          try { detail = JSON.parse(errText).detail || detail } catch { /* */ }
-          throw new Error(detail)
-        }
-        const data = await resp.json()
-        itemsImportResult.value = data
-        importStep.value = 3
-        if (data.added > 0) {
-          showSnack(`Импортировано ${data.added} позиций`)
-          emit('reload-requested')
-        } else {
-          importError.value = 'Не удалось импортировать ни одной позиции. Проверьте маппинг столбцов.'
-          if (data.debug) {
-            const d = data.debug
-            showSnack(
-              `Импортировано 0 позиций. Обработано строк: ${d.rows_processed}. ` +
-              `Пустое наименование: ${d.skipped_empty_name}. ` +
-              `Отброшено как «итого/подпись»: ${d.skipped_junk_row}. ` +
-              `Первые строки данных: ${JSON.stringify(d.first_3_rows_sample)}`,
-              'warning'
-            )
-          }
-        }
+        const finalData = await _requestMappedImportPid(true)
+        _handleMappedImportPidResult(finalData)
       } else {
         // Wish / no-pid context — вызов backend import-mapped-nopid
         const sheet = importPreviewData.value?.sheets?.find((s: any) => s.name === importSelectedSheet.value)
@@ -407,29 +448,7 @@ export function useItemsImport(deps: UseItemsImportDeps) {
         if (!sheet) { showSnack('Нет данных превью', 'error'); return }
         const fdNoPid = new FormData()
         fdNoPid.append('file', itemsImportFile.value as File)
-        const paramsNoPid = new URLSearchParams()
-        if (importSelectedSheet.value) paramsNoPid.set('sheet_name', importSelectedSheet.value)
-        const headerOffset = sheet.header_row_offset ?? 0
-        if (headerOffset > 0) paramsNoPid.set('header_row_offset', String(headerOffset))
-        const paramMapNoPid: Record<string, string> = {
-          item_name:     'col_item_name',
-          description:   'col_description',
-          quantity:      'col_quantity',
-          unit_price:    'col_unit_price',
-          total_price:   'col_total_price',
-          unit:          'col_unit',
-          row_num:       'col_row_num',
-          vat_rate:      'col_vat_rate',
-          vat_amount:    'col_vat_amount',
-          total_with_vat: 'col_total_with_vat',
-          category:      'col_category',
-          product_type:  'col_product_type',
-        }
-        for (const [field, colIdx] of Object.entries(dragMapping.value)) {
-          if (colIdx !== null && colIdx !== undefined && paramMapNoPid[field]) {
-            paramsNoPid.set(paramMapNoPid[field], String(colIdx))
-          }
-        }
+        const paramsNoPid = _mappedColParams()
         const token = localStorage.getItem('auth_token') || ''
         const respNoPid = await fetch(`/api/purchases/items/import-mapped-nopid?${paramsNoPid}`, {
           method: 'POST',
@@ -444,8 +463,10 @@ export function useItemsImport(deps: UseItemsImportDeps) {
         }
         const dataNoPid = await respNoPid.json()
         const backendItems: any[] = dataNoPid.items || []
-        const newItems: EditorItem[] = backendItems.map((bi) => ({
+        const warnings: SumMismatchWarning[] = dataNoPid.warnings || []
+        const buildNewItems = () => backendItems.map((bi) => ({
           _uid: nextUid(),
+          _row: bi.row,
           product_id: bi.product_id ?? null,
           item_name: bi.item_name || '',
           item_type: bi.item_type || 'товар',
@@ -458,11 +479,26 @@ export function useItemsImport(deps: UseItemsImportDeps) {
           _category: bi.category || '',
           _product_type: bi.product_type || '',
         } as EditorItem))
-        localItems.value = [...localItems.value, ...newItems]
-        emitUpdate()
-        itemsImportResult.value = { imported: newItems.length, added: newItems.length }
-        importStep.value = 3
-        showSnack(`Добавлено позиций: ${newItems.length}`)
+        const commitNewItems = (newItems: EditorItem[]) => {
+          localItems.value = [...localItems.value, ...newItems]
+          emitUpdate()
+          itemsImportResult.value = { imported: newItems.length, added: newItems.length }
+          importStep.value = 3
+          showSnack(`Добавлено позиций: ${newItems.length}`)
+        }
+        if (warnings.length > 0) {
+          sumMismatchWarnings.value = warnings
+          sumMismatchShow.value = true
+          _pendingSumMismatchResolve = (resolutions) => {
+            const newItems = buildNewItems()
+            for (const item of newItems) {
+              applySumMismatchChoice(item, resolutions[item._row])
+            }
+            commitNewItems(newItems)
+          }
+          return
+        }
+        commitNewItems(buildNewItems())
       }
     } catch (e: any) {
       importError.value = e?.message ?? 'Ошибка импорта'
@@ -552,6 +588,24 @@ export function useItemsImport(deps: UseItemsImportDeps) {
   const dupMergeGroups = ref<DupGroup[]>([])
   // Pending items waiting for user decision in DuplicateMergeDialog
   let _pendingMergeItems: EditorItem[] = []
+
+  // ── Sum-mismatch dialog (Дефект 2, владелец, 2026-09-14): кол-во × цена ≠
+  // сумма из файла — показываем ПЕРЕД тем, как позиции попадут в localItems
+  // (nopid-потоки) или будут реально сохранены (pid-потоки), и даём выбор
+  // по каждой строке (recalc_sum/recalc_price/keep). Один диалог на все
+  // пути импорта позиций (Правило №6 — не изобретаем второй UI для того же
+  // выбора, что уже есть у DuplicateMergeDialog для дублей). ──
+  const sumMismatchShow = ref(false)
+  const sumMismatchWarnings = ref<SumMismatchWarning[]>([])
+  // Что делать, когда пользователь применил свой выбор в диалоге — задаётся
+  // тем вызовом, который показал диалог (nopid-mapped/pid-mapped/...).
+  let _pendingSumMismatchResolve: ((resolutions: Record<number, SumMismatchChoice>) => void) | null = null
+
+  function onSumMismatchConfirm(resolutions: Record<number, SumMismatchChoice>) {
+    const cb = _pendingSumMismatchResolve
+    _pendingSumMismatchResolve = null
+    cb?.(resolutions)
+  }
 
   // ── P1-B: Single product repick dialog ───────────────────────────────────────
   const repickDialog = ref<{ show: boolean; itemIdx: number; itemName: string }>({
@@ -655,6 +709,30 @@ export function useItemsImport(deps: UseItemsImportDeps) {
     showMappingPanel.value = false
   }
 
+  // Дефект 2 (владелец, 2026-09-14): выбор пользователя по sum_mismatch для
+  // smart-импорта в СУЩЕСТВУЮЩУЮ закупку без правки маппинга — тот путь
+  // (см. doSmartImport ниже) заново шлёт файл на сервер, не читая
+  // smartImportPreview.value, поэтому выбор нужно передать явно параметром.
+  let _smartPidResolutions: Record<number, SumMismatchChoice> = {}
+
+  /** Показывает диалог sum_mismatch (если есть warnings) и применяет выбор
+   * пользователя прямо к строкам preview (общая логика для всех веток
+   * smart-импорта — Правило №6, один обработчик на xlsx-nopid/xlsx-pid/
+   * markitdown-fallback, а не три копии). */
+  function _handleSmartPreviewWarnings(warnings: SumMismatchWarning[] | undefined) {
+    _smartPidResolutions = {}
+    if (!warnings || !warnings.length) return
+    sumMismatchWarnings.value = warnings
+    sumMismatchShow.value = true
+    _pendingSumMismatchResolve = (resolutions) => {
+      _smartPidResolutions = resolutions
+      const rows = smartImportPreview.value || []
+      for (const row of rows) {
+        if (row && row.row != null) applySumMismatchChoice(row, resolutions[row.row])
+      }
+    }
+  }
+
   async function doSmartPreview() {
     if (!smartImportFile.value) return
 
@@ -687,6 +765,7 @@ export function useItemsImport(deps: UseItemsImportDeps) {
           // /import-smart-nopid возвращает уже распарсенные позиции — без sample-slice
           smartImportPreview.value = data.preview || []
           smartImportColumns.value = ['item_name', 'quantity', 'unit', 'unit_price', 'total_price']
+          _handleSmartPreviewWarnings(data.warnings)
           if (!smartImportPreview.value.length) showSnack('Позиции не распознаны', 'warning')
         } else {
           // legacy path для PDF/DOCX/HTML — sample 5 строк
@@ -746,6 +825,7 @@ export function useItemsImport(deps: UseItemsImportDeps) {
       }
       smartImportPreview.value = data.preview || []
       smartImportColumns.value = data.columns_found || []
+      _handleSmartPreviewWarnings(data.warnings)
       if (data.warning) showSnack(data.warning, 'warning')
       if (!smartImportPreview.value.length) showSnack('Позиции не распознаны', 'warning')
     } catch (e: any) {
@@ -990,7 +1070,13 @@ export function useItemsImport(deps: UseItemsImportDeps) {
       const token = localStorage.getItem('auth_token')
       const fd = new FormData()
       fd.append('file', smartImportFile.value)
-      const resp = await fetch(`/api/purchases/${props.purchaseId}/items/import-smart?confirm=true&skip_catalog=${smartImportSkipCatalog.value}`, {
+      // Дефект 2 (владелец, 2026-09-14): этот путь заново парсит файл на
+      // сервере (не читает smartImportPreview.value) — выбор пользователя
+      // по sum_mismatch, сделанный в doSmartPreview, передаём явно.
+      const resolutionsParam = Object.keys(_smartPidResolutions).length
+        ? `&resolutions=${encodeURIComponent(JSON.stringify(_smartPidResolutions))}`
+        : ''
+      const resp = await fetch(`/api/purchases/${props.purchaseId}/items/import-smart?confirm=true&skip_catalog=${smartImportSkipCatalog.value}${resolutionsParam}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` } as HeadersInit,
         body: fd,
@@ -1056,6 +1142,8 @@ export function useItemsImport(deps: UseItemsImportDeps) {
     matchReviewShow, matchReviewRows, onMatchConfirm, onMatchCancel, commitPreviewItems,
     // Duplicate merge
     dupMergeShow, dupMergeGroups, onDupMergeConfirm,
+    // Sum-mismatch (Дефект 2, владелец 2026-09-14)
+    sumMismatchShow, sumMismatchWarnings, onSumMismatchConfirm,
     // P1-B repick
     repickDialog, openRepickDialog, onRepickPick,
   }

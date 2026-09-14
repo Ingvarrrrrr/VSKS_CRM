@@ -12,6 +12,8 @@ backfills.py, purchase_items_import.py) keep working unchanged.
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
+from app.utils.numbers import to_decimal
+
 
 def _kop_to_rub(v):
     """Convert копейки → рубли. Accepts None / int / float / str."""
@@ -268,9 +270,12 @@ def _extract_items_from_proverkacheka_html(html: str) -> list:
             # Новая позиция: cells [№, name, price, qty, sum]
             try:
                 name = cleaned[1]
-                price = float(cleaned[2].replace(',', '.').replace(' ', '') or 0)
-                qty = float(cleaned[3].replace(',', '.').replace(' ', '') or 1)
-                sm = float(cleaned[4].replace(',', '.').replace(' ', '') or 0)
+                # Единый разборщик чисел (Правило №6, app/utils/numbers.py) —
+                # replace(',', '.') "в лоб" ломает точку-разделитель тысяч
+                # (см. дефект позиции закупки id=3166, 2026-09-14).
+                price = float(to_decimal(cleaned[2]) or 0)
+                qty = float(to_decimal(cleaned[3]) or 1)
+                sm = float(to_decimal(cleaned[4]) or 0)
                 if not name:
                     current_item = None
                     continue

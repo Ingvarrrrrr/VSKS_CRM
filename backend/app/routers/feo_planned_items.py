@@ -1,3 +1,4 @@
+from datetime import date as _Date_
 from decimal import Decimal, InvalidOperation
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -19,6 +20,7 @@ from app.schemas.schemas import (
     FeoPlannedItemBulkCreate, FeoPlannedItemBulkCreateResult,
 )
 from app.services.text_match import normalize as _norm_text
+from app.services.feo_monthly_schedule import compute_monthly_schedule
 
 
 def _fmt_money(v) -> str:
@@ -69,25 +71,84 @@ def normalize_item_type(v: Optional[str]) -> Optional[str]:
 
 def _apply_payment_fields(item: FeoPlannedItem, data: FeoPlannedItemCreate) -> None:
     """
-    W1b: Apply payment schedule fields and enforce the amount consistency rule:
-      monthly mode → amount = monthly_amount * months_count (if both provided).
-      one_time mode → amount taken as-is from data.
+    W1b + Волна 3, п.3 (владелец, «период с даты по дату вместо целого
+    "Количество месяцев"»): единственное место, где monthly-позиция считает
+    свою итоговую сумму — через compute_monthly_schedule (app/services/
+    feo_monthly_schedule.py, Правило №6 проекта, тот же расчёт использует
+    предпросмотр monthly_schedule_preview ниже и cash-flow разворачивание
+    в plan_cashflow.expand_planned_item).
+
+      monthly + monthly_end_date задана → период "с даты по дату": полные
+        месяцы + остаток дней ÷ длина того месяца, куда остаток попадает.
+        months_count ПЕРЕЗАПИСЫВАЕТСЯ вычисленным значением (полные месяцы) —
+        ручной ввод данных больше не принимается, но поле остаётся для
+        обратной совместимости с cash-flow-разворачиванием/экспортом.
+      monthly БЕЗ даты окончания (легаси-позиции с ручным months_count) →
+        старая арифметика monthly_amount × months_count, без остатка.
+      one_time → amount как есть, ручной ввод.
+
+    Волна 3, п.2 (владелец, «двоится Количество»): для monthly-режима
+    quantity — количество ЕДИНИЦ товара/услуги, а не срок. У ежемесячного
+    платежа этот параметр не участвует в формуле суммы вообще (сумма — только
+    monthly_amount × срок), реального смысла «сколько единиц» тут обычно нет
+    (аренда, подписка — это одна позиция), а ручной ввод сюда исторически и
+    создавал боевой баг («Кол-во» 6.66, всплывавшее как плановое количество
+    категории — см. SUM(FeoPlannedItem.quantity) в
+    feo_planned_items_reports.py::cat_plan_fallback). Поле скрыто в
+    PlannedItemAddDialog.vue/PlannedItemEditDialog.vue для monthly-режима —
+    фиксируем 1 и здесь же, на бэкенде, чтобы прямой вызов API тоже не мог
+    протащить произвольное число.
     """
     item.payment_mode = data.payment_mode
     item.planned_date = data.planned_date
     item.monthly_start_date = data.monthly_start_date
-    item.months_count = data.months_count
+    item.monthly_end_date = data.monthly_end_date
     item.monthly_amount = data.monthly_amount
 
     if data.payment_mode == "monthly":
-        if data.monthly_amount is not None and data.months_count is not None:
-            item.amount = Decimal(str(data.monthly_amount)) * data.months_count
-        # else: keep whatever amount was already set (data.amount or existing value)
+        schedule = compute_monthly_schedule(
+            start_date=data.monthly_start_date,
+            end_date=data.monthly_end_date,
+            months_count=data.months_count,
+            monthly_amount=data.monthly_amount,
+        )
+        item.months_count = schedule.effective_months_count
+        if schedule.total is not None:
+            item.amount = schedule.total
+        # else: недостаточно данных — оставляем прежнее amount как было
+        item.quantity = Decimal("1")
     else:
-        # one_time: honour the manually supplied amount
+        # one_time: honour the manually supplied amount and quantity
         item.amount = data.amount
+        item.quantity = data.quantity
 
 router = APIRouter(prefix="/api/feo-planned-items", tags=["feo_planned_items"])
+
+
+@router.get("/monthly-schedule-preview")
+async def monthly_schedule_preview(
+    start_date: Optional[_Date_] = Query(None, description="Начало периода (monthly_start_date)"),
+    end_date: Optional[_Date_] = Query(None, description="Конец периода (monthly_end_date)"),
+    monthly_amount: Optional[Decimal] = Query(None),
+    _=Depends(get_current_user),
+):
+    """Живая расшифровка периода «с даты по дату» для диалогов добавления/
+    правки плановой позиции (PlannedItemAddDialog.vue/PlannedItemEditDialog.vue,
+    Волна 3, п.2-3 владельца) — «6 мес. 20 дн.» и итоговая сумма ДО сохранения.
+    Единственная формула — compute_monthly_schedule (см. её докстринг и
+    _apply_payment_fields выше, Правило №6): один расчёт и здесь, и при
+    сохранении, и в cash-flow разворачивании (plan_cashflow.py), числа не
+    могут разойтись между предпросмотром и итогом.
+    """
+    if start_date is not None and end_date is not None and end_date <= start_date:
+        raise HTTPException(400, "Дата окончания периода должна быть позже даты начала")
+    schedule = compute_monthly_schedule(start_date, end_date, None, monthly_amount)
+    return {
+        "full_months": schedule.full_months,
+        "extra_days": schedule.extra_days,
+        "label": schedule.label,
+        "total": str(schedule.total) if schedule.total is not None else None,
+    }
 
 
 async def _check_planned_item_write_access(current_user, db: AsyncSession, cat: FeoCategory) -> None:
@@ -261,6 +322,14 @@ async def create_planned_item(
         # FeoPlannedItem.unit_price / assert_tz_not_over_plan. NULL = не задана,
         # amount тогда сам по себе итоговая сумма (не делим на quantity).
         unit_price=data.unit_price,
+        # Раздельные числа по ФЭО (владелец, 2026-09-14) — см. докстринг
+        # FeoPlannedItem.feo_quantity/feo_unit_price/feo_amount. Не гейтятся
+        # _can_edit_feo_origin: сами по себе это просто числа для сверки, без
+        # доступа к правке is_feo_breakdown они нигде на фронте не показываются
+        # (FeoLevel5Panel.vue рисует их только рядом с выставленной галочкой).
+        feo_quantity=data.feo_quantity,
+        feo_unit_price=data.feo_unit_price,
+        feo_amount=data.feo_amount,
         notes=data.notes,
         is_active=data.is_active,
         sort_order=data.sort_order,
@@ -373,6 +442,11 @@ async def create_planned_items_bulk(
             quantity=data.quantity,
             unit=data.unit,
             unit_price=data.unit_price,
+            # Раздельные числа по ФЭО (владелец, 2026-09-14) — см. коммент в
+            # create_planned_item / докстринг модели.
+            feo_quantity=data.feo_quantity,
+            feo_unit_price=data.feo_unit_price,
+            feo_amount=data.feo_amount,
             notes=data.notes,
             is_active=data.is_active,
             sort_order=sort_order,
@@ -432,6 +506,15 @@ async def update_planned_item(
     # SubsidiesView.vue) обязан слать unit_price существующей позиции явно, иначе
     # он молча обнулится. Все три места фронта обновлены вместе с этим полем.
     item.unit_price = data.unit_price
+    # Раздельные числа по ФЭО (владелец, 2026-09-14) — тот же режим ПОЛНОЙ
+    # замены, что и у quantity/unit_price/amount выше (НЕ через
+    # model_fields_set, в отличие от is_feo_breakdown/item_type): диалог правки
+    # (PlannedItemEditDialog.vue) всегда шлёт актуальный снимок этих трёх
+    # полей явно, как и остальной числовой блок. См. докстринг
+    # FeoPlannedItem.feo_quantity/feo_unit_price/feo_amount.
+    item.feo_quantity = data.feo_quantity
+    item.feo_unit_price = data.feo_unit_price
+    item.feo_amount = data.feo_amount
     item.notes = data.notes
     item.is_active = data.is_active
     item.sort_order = data.sort_order

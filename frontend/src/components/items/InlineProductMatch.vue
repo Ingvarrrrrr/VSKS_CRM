@@ -25,6 +25,7 @@
       style="min-width:200px"
       @focus="activate"
       @mousedown="activate"
+      @paste="onLazyPaste"
     />
 
     <v-autocomplete
@@ -135,10 +136,14 @@ const props = withDefaults(defineProps<{
   disabled?: boolean
   /** Debounce for re-querying matches while typing (ms). */
   debounce?: number
-  /** Hide the trailing "Создать новый товар…" menu entry (2026-09: диалог
-   *  «Добавить плановую позицию» на Субсидиях переиспользует этот компонент
-   *  только для подсказок/визуализации — свободный ввод обязателен, но
-   *  создавать товары в каталоге прямо из этого диалога не должен). */
+  /** Hide the trailing "Создать новый товар…" menu entry. Владелец (волна 3,
+   *  п.19, 2026-09-13): раньше диалог «Добавить плановую позицию» на
+   *  Субсидиях включал этот флаг, чтобы НЕ писать в каталог товаров — но
+   *  тогда statusTooltip врал «можно создать новый», хотя пункта не было, а
+   *  свободно набранное имя нельзя было превратить в товар каталога вообще
+   *  никак. Теперь этот диалог флаг не передаёт (PlannedItemAddDialog.vue
+   *  сам создаёт товар через @create-new, см. onPlannedCreateNewProduct) —
+   *  проп остаётся для будущих мест, которым реально нужно спрятать пункт. */
   hideCreateNew?: boolean
 }>(), {
   itemName: '',
@@ -194,6 +199,34 @@ function activate() {
   })
 }
 
+// Владелец (волна 3, п.19): «CTRL+V не работает — вставленное само не
+// вставляется». До активации поле — readonly (перф: не монтировать тяжёлый
+// v-autocomplete, пока строка не тронута, см. активацию выше). readonly
+// блокирует именно ИЗМЕНЕНИЕ value браузером, но событие paste всё равно
+// долетает до обработчика — просто раньше его никто не слушал, и вставленный
+// текст молча пропадал. Читаем буфер вручную, сразу переносим его в
+// searchText/наверх родителю и переключаемся в активное состояние — тот же
+// путь, что и обычный клик, только с уже готовым текстом для подбора.
+function onLazyPaste(e: ClipboardEvent) {
+  const text = (e.clipboardData?.getData('text') || '').trim()
+  if (!text) return
+  e.preventDefault()
+  searchText.value = text
+  emit('update:search-text', text)
+  activate()
+  // activate() выше фокусирует только что смонтированный v-autocomplete — а
+  // сам Vuetify (VAutocomplete.js: watch(isFocused, ...), см. hasSelectionSlot)
+  // на КАЖДЫЙ переход в фокус сбрасывает свой internal search в '' — это
+  // Vue-watcher, а не наш nextTick, и он выполняется в СВОЁМ микротаске
+  // планировщика Vue, который может отработать ПОСЛЕ обычного nextTick —
+  // поэтому обычный nextTick здесь не помогает (проверено: поле оставалось
+  // пустым). setTimeout(0) гарантированно выполняется макротаском, то есть
+  // строго после того, как очередь микротасков (включая watcher Vuetify) уже
+  // опустела — переставляем текст туда. Имя родителю уже ушло через emit
+  // выше в любом случае, это только про то, что видно в самом поле.
+  setTimeout(() => { searchText.value = text }, 0)
+}
+
 // Keep the field showing the current name when the row name changes externally.
 watch(() => props.itemName, (v) => {
   if ((v || '') !== (searchText.value || '')) searchText.value = v || ''
@@ -243,7 +276,10 @@ const statusTooltip = computed(() => {
   }
   if (status.value === 'auto') return 'Точное совпадение в каталоге'
   if (status.value === 'suggest') return 'Есть похожие товары — выберите'
-  return 'В каталоге нет — можно создать новый'
+  // Владелец (волна 3, п.19): подсказка врала «можно создать новый», когда
+  // hideCreateNew реально прячет пункт «Создать новый товар…» из списка —
+  // подпись обязана отражать то, что действительно доступно в этом поле.
+  return props.hideCreateNew ? 'В каталоге нет' : 'В каталоге нет — можно создать новый'
 })
 
 function scoreColor(score: number | undefined): string {
@@ -308,8 +344,20 @@ function onSelect(val: MatchCandidate | null) {
   void nextTick(() => { autocompleteRef.value?.blur?.() })
 }
 
+// Владелец (2026-09-14, дефект «не могу добавить плановую позицию, если её
+// нет в каталоге»): клик на «Создать новый товар…» эмитил create-new, но —
+// в отличие от onSelect() выше — НЕ снимал фокус с автокомплита. Из-за этого
+// (та же причина, что описана в комментарии onSelect: hasSelectionSlot держит
+// ОДНОВРЕМЕННО наш #selection И родной <input>, а меню закрывается только по
+// blur) поле рисовало ДВЕ строки с одинаковым текстом одна под другой, а
+// выпадающий список так и оставался открытым с уже неактуальными «Совпадений
+// нет» / «Создать новый товар…» — визуально выглядело так, будто клик ничего
+// не сделал (хотя товар реально создавался и product_id подставлялся, зелёная
+// галочка становилась настоящей, а не ложной). Тот же blur, что и после
+// обычного выбора кандидата — не второй механизм закрытия меню.
 function emitCreateNew() {
   emit('create-new')
+  void nextTick(() => { autocompleteRef.value?.blur?.() })
 }
 
 onBeforeUnmount(() => { if (timer) clearTimeout(timer) })

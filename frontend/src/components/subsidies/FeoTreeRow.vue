@@ -1,4 +1,26 @@
 <template>
+  <!-- Общий переключатель РАСКРЫТИЯ комментариев ФЭО — ОДИН на всю субсидию
+       (правка 2026-09-14, жалоба владельца: раньше прятал саму иконку —
+       «должна быть видна постоянно», переключатель обязан только разворачивать
+       /сворачивать все ветки разом). UI-точка одна физическая: рисуется только
+       в самой первой видимой строке дерева (см. isFirstVisibleRow ниже), а не
+       в каждой строке. Строка ВСЕГДА видима независимо от текущего значения. -->
+  <tr v-if="isFirstVisibleRow" class="feo-comments-visibility-bar">
+    <td colspan="7" style="padding:4px 8px">
+      <div class="d-flex align-center" style="gap:6px">
+        <v-icon icon="mdi-comment-text-multiple-outline" size="14" color="grey-darken-1" />
+        <span class="text-caption text-medium-emphasis">Комментарии к плану ФЭО:</span>
+        <v-switch
+          :model-value="feoComments.isVisibleCached(subsidyId)"
+          density="compact" hide-details color="teal" style="flex:0 0 auto"
+          :label="feoComments.isVisibleCached(subsidyId) ? 'все развёрнуты' : 'все свёрнуты'"
+          @update:model-value="onToggleCommentsVisible"
+        />
+        <span class="text-caption text-medium-emphasis">— разворачивает/сворачивает сразу все ветки; иконка комментария видна всегда</span>
+      </div>
+    </td>
+  </tr>
+
   <tr
     v-if="ctx.isNodeVisible(node) && !(ctx.plannedBase.value === 'requests' && ctx.isManualPosLeaf(node))"
     class="feo-tr"
@@ -19,10 +41,18 @@
     <!-- Наименование -->
     <td class="feo-td feo-td-name" :style="{ paddingLeft: `${node.depth * 20 + 8}px` }">
       <div class="feo-name-inner">
-        <!-- Лист ФЭО: клик по папке/шеврону раскрывает ЕДИНУЮ панель «Плановые
-             позиции» (expandedItemPanels/toggleItemPanel) — единственный источник
-             детализации листа с 2026-08-07. -->
-        <span class="feo-tree-chevron" @click="node.hasChildren ? ctx.toggleExpand(node.id) : ctx.toggleItemPanel(node)">
+        <!-- Один клик — одно раскрытие (жалоба владельца 2026-09-14, вторая волна:
+             «пусть если это на направлении лежит, то разворачивается вместе с
+             папкой, а не отдельным нажатием»). Для направления, у которого есть
+             И подразделы, И собственные плановые позиции, toggleNodeExpansion
+             переключает ОБА состояния согласованно за один клик — раскрыл: видно
+             подразделы и панель позиций, свернул: скрыто и то и другое. Для
+             направления без подразделов — прежнее поведение (шеврон открывает
+             панель позиций листа). Для направления без собственных позиций —
+             тоже прежнее (только подразделы). См. toggleNodeExpansion в
+             <script setup> — единственное место, решающее «что открыть по
+             клику»; бейдж/строка состава ниже вызывают её же, не полдела. -->
+        <span class="feo-tree-chevron" @click="toggleNodeExpansion(node)">
           <v-icon
             v-if="node.hasChildren"
             size="15"
@@ -45,11 +75,30 @@
             ? (ctx.expandedIds.value.includes(node.id) ? 'mdi-folder-open' : 'mdi-folder')
             : (ctx.expandedItemPanels.value.has(node.id) ? 'mdi-folder-open' : 'mdi-folder')"
           :color="node.level === 1 ? '#3B82F6' : node.level === 2 ? '#F59E0B' : '#22C55E'"
-          @click="node.hasChildren ? ctx.toggleExpand(node.id) : ctx.toggleItemPanel(node)"
+          @click="toggleNodeExpansion(node)"
         />
         <span class="feo-name" :class="`feo-name--l${node.level}`">{{ node.name }}</span>
         <span v-if="node.code" class="feo-code ml-2">{{ node.code }}</span>
         <span v-if="node.appendix" class="feo-appendix ml-1">{{ node.appendix }}</span>
+      </div>
+      <!-- Заметный индикатор собственных плановых позиций направления (не в
+           подкатегориях) — виден ДО раскрытия чего-либо. Кликабелен, но делает
+           РОВНО то же, что шеврон/папка (toggleNodeExpansion) — раньше открывал
+           только панель позиций отдельно от подразделов, владелец справедливо
+           указал, что это два действия там, где должно быть одно («это тоже
+           входит в состав направления»). НА СВОЕЙ СТРОКЕ (не внутри
+           .feo-name-inner) — тот флекс-ряд и так тесный; втиснутый туда бейдж с
+           суммой отжимал у .feo-name всю ширину до нуля и валил колонку в
+           800+px переносом по одному символу (найдено живой проверкой на
+           стенде, категория 4792 — ИСПРАВЛЕНО переносом бейджа сюда). -->
+      <div v-if="feoOwnItemsBadgeText" class="feo-name-badge-row">
+        <span class="feo-own-badge"
+          :class="{ 'feo-own-badge--active': ctx.expandedItemPanels.value.has(node.id) }"
+          title="На этом направлении есть свои плановые позиции — раскрываются вместе с подразделами по клику на папку/шеврон"
+          @click.stop="toggleNodeExpansion(node)"
+        >
+          <v-icon size="12" icon="mdi-clipboard-text-outline" class="mr-1" />{{ feoOwnItemsBadgeText }}
+        </span>
       </div>
       <v-tooltip v-if="node.description" location="bottom" open-delay="150" :max-width="420">
         <template #activator="{ props: tooltipProps }">
@@ -59,25 +108,25 @@
       </v-tooltip>
     </td>
 
-    <!-- Финансирование по ФЭО (inline edit) -->
+    <!-- Кол-во и финансирование по ФЭО (inline edit) -->
     <td class="feo-td feo-td-num" style="vertical-align:top">
-      <template v-if="ctx.feoRollup(node).qty != null || ctx.feoRollup(node).amount != null">
-        <div class="feo-plan-note text-right"
-          :class="ctx.feoRollup(node).qtyAuto || ctx.feoRollup(node).amountAuto ? 'text-medium-emphasis' : ''"
-          :title="(ctx.feoRollup(node).qtyAuto || ctx.feoRollup(node).amountAuto) ? 'Сумма по вложенным' : 'Количество и стоимость по документу ФЭО'"
-        >
-          <template v-if="ctx.feoRollup(node).qty != null && ctx.feoRollup(node).amount != null">
-            {{ ctx.feoRollup(node).qty }}{{ node.feo_unit ? ` ${node.feo_unit}` : '' }} × {{ ctx.feoRollup(node).amount?.toLocaleString('ru-RU') }} ₽
-          </template>
-          <template v-else-if="ctx.feoRollup(node).qty != null">
-            {{ ctx.feoRollup(node).qty }}{{ node.feo_unit ? ` ${node.feo_unit}` : ' шт' }}
-          </template>
-          <template v-else>
-            {{ ctx.feoRollup(node).amount?.toLocaleString('ru-RU') }} ₽
-          </template>
-          <v-chip v-if="ctx.feoRollup(node).qtyAuto || ctx.feoRollup(node).amountAuto" size="x-small" color="blue-grey" variant="tonal" class="ml-1">авто</v-chip>
-        </div>
-      </template>
+      <!-- Только Кол-во и Сумма по документу ФЭО (задача владельца, п.15б —
+           раньше здесь стояло «qty × цена за ед.», читавшееся как цена за
+           единицу, которой в этой колонке быть не должно). feoRollup(node).amount
+           теперь ВСЕГДА готовые деньги (qty × unit_price), не голая цена за
+           единицу (node.feo_amount) — см. подробный комментарий в
+           useFeoTreeAmounts.ts у feoRollup. Блок целиком скрыт, если сумму не
+           из чего посчитать (задано только количество ИЛИ только цена за ед.,
+           но не оба) — показывать один из этих двух чисел под подписью «Сумма»
+           нельзя, а 0 трактуется как «не задано» так же, как и node.budget. -->
+      <div v-if="ctx.feoRollup(node).amount != null" class="feo-plan-note text-right"
+        :class="ctx.feoRollup(node).qtyAuto || ctx.feoRollup(node).amountAuto ? 'text-medium-emphasis' : ''"
+        :title="(ctx.feoRollup(node).qtyAuto || ctx.feoRollup(node).amountAuto) ? 'Сумма по вложенным' : 'Количество и сумма (кол-во × цена за ед.) по документу ФЭО'"
+      >
+        <div v-if="ctx.feoRollup(node).qty != null">Кол-во: {{ ctx.feoRollup(node).qty }}{{ node.feo_unit ? ` ${node.feo_unit}` : '' }}</div>
+        <div>Сумма: {{ formatCurrency(ctx.feoRollup(node).amount!) }}</div>
+        <v-chip v-if="ctx.feoRollup(node).qtyAuto || ctx.feoRollup(node).amountAuto" size="x-small" color="blue-grey" variant="tonal" class="ml-1">авто</v-chip>
+      </div>
       <div v-if="ctx.inlineBudgetId.value === node.id" class="d-flex align-center justify-end">
         <input
           ref="inlineInputEl"
@@ -88,6 +137,14 @@
           @keydown.enter="ctx.saveInlineBudget(node)"
           @keydown.esc="ctx.cancelInlineBudget()"
         />
+        <!-- «Не задано» явным выбором в поле ввода (задача владельца, п.8) — не
+             только стирать вручную. mousedown.prevent, чтобы клик не сначала
+             отправил blur со старым значением, а сразу обнулил и сохранил. -->
+        <v-btn
+          icon="mdi-close-circle-outline" variant="text" size="x-small" color="grey" class="ml-1"
+          title="Не задано (очистить финансирование по ФЭО)"
+          @mousedown.prevent="() => { ctx.inlineBudgetVal.value = ''; ctx.saveInlineBudget(node) }"
+        />
       </div>
       <div v-else-if="ctx.isAutoNode(node)" class="feo-amount-cell text-right" :class="{ 'feo-amount-cell--readonly': !ctx.canEditFeo.value }" @click="ctx.canEditFeo.value && ctx.startInlineBudget(node)"
         :title="ctx.canEditFeo.value ? 'Расчёт: ручное ФЭО дочерних; без ФЭО — факт (поставлено/оплачено), иначе план. Кликните, чтобы задать вручную' : 'Расчёт: ручное ФЭО дочерних; без ФЭО — факт (поставлено/оплачено), иначе план'"
@@ -96,22 +153,27 @@
           <span class="feo-amount text-medium-emphasis">{{ formatCurrency(ctx.feoEffectiveFor(node)) }}</span>
           <v-chip size="x-small" color="blue-grey" variant="tonal" class="ml-1">расчёт</v-chip>
         </template>
-        <span v-else-if="ctx.canEditFeo.value" class="feo-set-hint">Задать</span>
-        <span v-else class="feo-set-hint">—</span>
+        <span v-else class="feo-set-hint">Не задано</span>
       </div>
       <div v-else class="feo-amount-cell" :class="{ 'feo-amount-cell--readonly': !ctx.canEditFeo.value }" @click="ctx.canEditFeo.value && ctx.startInlineBudget(node)">
         <span v-if="ctx.feoBudgetFor(node) > 0" class="feo-amount"
           :style="ctx.feoChildrenBudgetDiff(node) > 0.005 ? 'color:#EF4444;font-weight:700' : ''"
         >{{ formatCurrency(ctx.feoBudgetFor(node)) }}</span>
-        <span v-else-if="ctx.canEditFeo.value" class="feo-set-hint">Задать</span>
-        <span v-else class="feo-set-hint">—</span>
+        <span v-else class="feo-set-hint">Не задано</span>
       </div>
       <template v-if="node.hasChildren && node.budget != null && node.budget > 0">
+        <!-- Задача владельца, п.17: старый текст «Подробное деление в ФЭО
+             отсутствовало» стоял вплотную к сумме выше и читался как отрицание
+             этой же суммы («сумма есть, а деления нет — как так»). На деле оба
+             факта верны и не спорят друг с другом: сумма задана на саму группу
+             целиком, а по вложенным строкам её никто не расписывал — условие
+             показа (!hasManualChildFeo) не менялось, объяснено в title. -->
         <div v-if="!ctx.hasManualChildFeo(node)"
           class="feo-plan-note text-medium-emphasis"
-          title="Ни у одной дочерней строки не задано финансирование по ФЭО"
+          style="white-space:normal"
+          :title="`Эта подпись появляется только когда у направления задано своё финансирование по ФЭО (сумма выше) и при этом ни у одной вложенной категории собственного ФЭО нет — делить тогда нечего, вся сумма относится к группе целиком. Задайте ФЭО хотя бы одной дочерней категории — здесь появится разбор «заложено / лишние / не распределено».`"
         >
-          Подробное деление в ФЭО отсутствовало
+          сумма {{ formatCurrency(node.budget || 0) }} задана на всю группу целиком — это нормально, по подкатегориям она не расписывалась
         </div>
         <div v-else-if="ctx.feoChildrenBudgetDiff(node) > 0.005"
           class="feo-plan-note" style="color:#EF4444"
@@ -191,13 +253,25 @@
         :title="ctx.plannedSumBase.value === 'all' ? `Ручные ${formatCurrency(ctx.feoPlannedTotalFor(node))} + из заявок ${formatCurrency(ctx.feoPlannedRequestsFor(node))}` : ''"
       >{{ formatCurrency(ctx.feoPlannedDisplayFor(node)) }}</span>
       <span v-else class="feo-amount-empty">—</span>
-      <!-- «В т.ч. на самом направлении N ₽» — часть плана узла с детьми, заложенная
-           НЕПОСРЕДСТВЕННО на нём самом. Кликабельна — раскрывает ту же панель, что и
-           иконка-список в «Действиях» (toggleItemPanel). -->
-      <div v-if="ctx.feoOwnDirectionPlanFor(node) > 0"
+      <!-- Состав суммы направления: сколько заложено по подкатегориям и сколько —
+           прямо на самом направлении (жалоба владельца 2026-09-14 — число 831 972
+           не читалось как сложение). Показывается ТОЛЬКО когда есть обе части
+           (см. feoDirectionCompositionText). Кликабельна — вызывает
+           toggleNodeExpansion, то же единое раскрытие, что и шеврон/папка/бейдж. -->
+      <div v-if="feoDirectionCompositionText"
         class="feo-plan-note text-medium-emphasis feo-plan-note--link"
-        title="Часть плана этого направления, заложенная прямо на нём (не в подкатегориях). Клик открывает список этих плановых позиций"
-        @click="ctx.toggleItemPanel(node)"
+        title="Часть плана этого направления, заложенная прямо на нём (не в подкатегориях). Клик раскрывает направление целиком — подразделы и эти позиции"
+        @click="toggleNodeExpansion(node)"
+      >
+        {{ feoDirectionCompositionText }}
+      </div>
+      <!-- Направление без плана по подкатегориям, но с собственными позициями —
+           прежняя короткая подпись остаётся (обе части не нужны, показывать
+           «состав» не из чего складывать). -->
+      <div v-else-if="ctx.feoOwnDirectionPlanFor(node) > 0"
+        class="feo-plan-note text-medium-emphasis feo-plan-note--link"
+        title="Часть плана этого направления, заложенная прямо на нём (не в подкатегориях). Клик раскрывает направление целиком — подразделы и эти позиции"
+        @click="toggleNodeExpansion(node)"
       >
         в т.ч. на самом направлении {{ formatCurrency(ctx.feoOwnDirectionPlanFor(node)) }}
       </div>
@@ -495,13 +569,16 @@
       <div class="feo-actions-wrap">
         <!-- Level 3: кнопка раскрытия позиций / spacer for alignment. У направления
              (node.hasChildren) кнопка тоже появляется, но ТОЛЬКО если у него есть
-             СОБСТВЕННЫЕ плановые позиции (hasOwnPlannedAmountFor). -->
+             СОБСТВЕННЫЕ плановые позиции (hasOwnPlannedAmountFor). Клик — то же
+             единое toggleNodeExpansion, что и у шеврона/папки/бейджа (для узла с
+             подразделами она теперь тоже раскрывает подразделы, не только
+             позиции — второго действия для одного направления быть не должно). -->
         <span class="feo-action-slot"><v-btn v-if="!node.hasChildren || ctx.hasOwnPlannedAmountFor(node)"
           :icon="ctx.expandedItemPanels.value.has(node.id) ? 'mdi-list-box' : 'mdi-list-box-outline'"
           variant="text" size="x-small"
           :color="ctx.expandedItemPanels.value.has(node.id) ? 'teal' : 'grey'"
-          :title="node.hasChildren ? 'Состав плана: позиции, привязанные к самому направлению (не к его подкатегориям)' : 'Показать плановые / фактические позиции'"
-          @click="ctx.toggleItemPanel(node)"
+          :title="node.hasChildren ? 'Состав плана: позиции, привязанные к самому направлению (не к его подкатегориям). Клик раскрывает направление целиком' : 'Показать плановые / фактические позиции'"
+          @click="toggleNodeExpansion(node)"
         /></span>
         <!-- Стрелки — друг под другом (B5: скрыты без feo_category.edit) -->
         <div v-if="ctx.canEditFeo.value" class="feo-actions-col">
@@ -522,7 +599,69 @@
             title="Редактировать" @click="ctx.startFeoEdit(node)" />
           <v-btn v-if="ctx.canEditFeo.value" icon="mdi-delete-outline" variant="text" size="x-small" color="error"
             title="Удалить" @click="ctx.confirmFeoDelete(node)" />
+          <!-- Комментарии к категории (владелец, Волна 4, п.16) — раскрывает
+               ветку комментариев в отдельной строке ниже (см. FeoCommentThread.vue
+               ниже). Правка 2026-09-14: иконка видна ВСЕГДА (общий переключатель
+               наверху таблицы больше не прячет её — он лишь массово раскрывает/
+               сворачивает ветки, см. докстринг isFirstVisibleRow строки выше).
+               Правка 2026-09-15 (жалоба владельца — «раскрыть всё» открывало
+               пустые карточки «Комментариев пока нет»): счётчик рядом с иконкой
+               ВИДЕН ДО раскрытия — по нему сразу понятно, есть ли комментарии и
+               сколько, не только по цвету/заливке самой иконки. Клик по иконке
+               работает КАК РАНЬШЕ — просто переключает commentsExpanded
+               локально, и открывает ветку даже если comment count = 0 (иначе
+               некуда было бы написать первый комментарий).
+               НЕ v-badge — в первом прогоне живой проверки на стенде (2026-09-15)
+               v-badge оказался ДОСТАТОЧНО КРУПНЫМ, чтобы полностью накрыть
+               x-small-иконку в тесной колонке «Действия» и перехватывать клик
+               мимо кнопки (поймано Playwright: "intercepts pointer events" — это
+               не строгость теста, а реальный клик мимо цели у живого
+               пользователя). Свой маленький уголковый бейдж вместо этого:
+               pointer-events:none, чтобы клик всегда доходил до кнопки под ним. -->
+          <span class="feo-comment-icon-wrap">
+            <v-btn
+              :icon="categoryCommentCount > 0 ? 'mdi-comment-text' : 'mdi-comment-text-outline'"
+              variant="text" size="x-small" :color="commentsExpanded ? 'teal' : 'grey-darken-1'"
+              title="Комментарии к этой категории"
+              @click.stop="commentsExpanded = !commentsExpanded"
+            />
+            <span v-if="categoryCommentCount > 0" class="feo-comment-count-badge">{{ categoryCommentCount }}</span>
+          </span>
         </div>
+      </div>
+    </td>
+  </tr>
+
+  <!-- Разделяющая подпись перед панелью собственных позиций направления
+       (владелец, 2026-09-14, вторая волна): теперь один клик по папке
+       раскрывает СРАЗУ и подразделы, и панель позиций самого направления —
+       они окажутся под одной строкой одновременно, и без подписи было бы
+       непонятно, что мини-таблица ниже относится к самому направлению
+       («Стенды»/«Ростов»), а не к первой попавшейся подкатегории. Рисуется
+       ЗДЕСЬ (в FeoTreeRow.vue, не в FeoLevel5Panel.vue) — FeoTreeTable.vue
+       рендерит <FeoTreeRow>, затем <FeoLevel5Panel> как соседний <tr> для
+       того же узла (Правило №6, второй компонент не трогаем): любой <tr>,
+       добавленный в конец шаблона ЭТОГО компонента, гарантированно окажется
+       ПЕРЕД панелью в DOM. Сами подкатегории — отдельные строки со своими
+       именами и увеличенным отступом сразу после панели, вторая подпись
+       перед ними не нужна: они и так самоочевидно другие строки. -->
+  <tr v-if="feoOwnItemsBadgeText && node.hasChildren && ctx.expandedItemPanels.value.has(node.id)">
+    <td colspan="7" :style="{ padding: `2px 8px 0 ${node.depth * 20 + 32}px` }">
+      <span class="feo-own-items-caption">
+        <v-icon size="12" icon="mdi-clipboard-text-outline" class="mr-1" />Плановые позиции самого направления «{{ node.name }}» — не входят в подкатегории ниже
+      </span>
+    </td>
+  </tr>
+
+  <!-- Ветка комментариев категории — раскрывающийся блок под строкой (не
+       колонка), как и панель «Плановые vs факт» в FeoLevel5Panel.vue соседом.
+       Правка 2026-09-14: больше не гейтится общим переключателем видимости
+       (тот теперь управляет только начальным раскрытием, см. commentsExpanded
+       ниже) — только собственным состоянием раскрытия этой ветки. -->
+  <tr v-if="commentsExpanded">
+    <td colspan="7" style="padding:0">
+      <div style="margin:6px 8px 10px 32px;padding:8px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:6px">
+        <FeoCommentThread :feo-category-id="node.id" :subsidy-id="subsidyId" />
       </div>
     </td>
   </tr>
@@ -533,14 +672,30 @@
 // кол-во/сумма, «в плане-графике», остаток, действия — со всеми плашками
 // превышения плана) — вынесена из SubsidiesView.vue (волна 5c). Level 5 панель
 // (плановые vs фактические) — соседний <tr>, см. FeoLevel5Panel.vue.
-import { computed } from 'vue'
+import { computed, ref, onMounted, toRef, watch } from 'vue'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { useKpiDrilldown } from '@/composables/subsidies/useKpiDrilldown'
 import { formatCurrency } from '@/composables/subsidies/format'
+import { useFeoComments } from '@/composables/subsidies/useFeoComments'
+import { useToast } from '@/composables/useToast'
 import type { FeoNode } from '@/composables/subsidies/types'
+import FeoCommentThread from './FeoCommentThread.vue'
 
 const props = defineProps<{ node: FeoNode }>()
-const node = props.node
+// ФИКС (найден QA стека отмены, доп. волна 2026-09-14): `const node = props.node`
+// захватывал ОБЪЕКТ props.node ОДИН РАЗ при монтировании компонента — v-for в
+// FeoTreeTable.vue переиспользует уже смонтированный экземпляр по :key="node.id"
+// (id не меняется при правке ПОЛЕЙ категории), поэтому <script setup> не
+// перезапускается, а `node` в шаблоне навсегда оставался ссылкой на СТАРЫЙ
+// объект — правка направления (имя/бюджет/т.д.) сохранялась на сервере
+// (проверено сетевым логом и повторным GET), но строка дерева не обновлялась
+// без полной перезагрузки страницы. toRef(props, 'node') — реактивная ссылка
+// НА ТЕКУЩЕЕ значение props.node; шаблон Vue автоматически разворачивает
+// топ-level ref (node.name работает как раньше, без node.value.*) — единственное
+// исключение — node.id внутри <script setup> (isFirstVisibleRow ниже), там
+// разворачивание ручное. Баг был и до стека отмены (обычная правка направления
+// через диалог тоже не обновляла дерево без Ctrl+F5) — не только для undo/redo.
+const node = toRef(props, 'node')
 
 const ctx = useSubsidyDetailCtx()
 const kpi = useKpiDrilldown(ctx)
@@ -550,4 +705,153 @@ const kpi = useKpiDrilldown(ctx)
 // дублирование не нарушает Правило №6).
 const userRoleRaw = localStorage.getItem('user_role') || ''
 const canSaveVersion = computed(() => ['superadmin', 'org_admin', 'admin', 'account_owner'].includes(userRoleRaw))
+
+// Комментарии к плану ФЭО (владелец, Волна 4, п.16) — переиспользуем ОДИН
+// FeoCommentThread.vue (та же копия, что и у плановых позиций в
+// FeoLevel5Panel.vue, см. её докстринг) + один общий переключатель видимости
+// на всю субсидию, рисуемый ровно в первой видимой строке дерева.
+const feoComments = useFeoComments()
+const toast = useToast()
+const commentsExpanded = ref(false)
+const subsidyId = computed(() => ctx.selectedId.value)
+
+// «Первая видимая строка» — единственное место, где рисуется общий
+// переключатель (см. шаблон выше): ctx.visibleFeoNodes — тот же поток узлов,
+// что рендерит FeoTreeTable.vue через v-for (Правило №6, ничего не пересчитываем
+// заново), просто сверяем id первого элемента с id текущего узла.
+const isFirstVisibleRow = computed(() => ctx.visibleFeoNodes.value[0]?.id === node.value.id)
+
+// Счётчик комментариев ЭТОЙ категории (владелец, 2026-09-15) — читает
+// уже загруженный общесубсидийный кэш (см. loadCounts в onMounted ниже),
+// единственный источник и для бейджа, и для решения «раскрывать ли ветку
+// при массовом раскрытии» (watch на expandAllSignal ниже).
+const categoryCommentCount = computed(() => feoComments.categoryCommentCount(subsidyId.value, node.value.id))
+
+// Состав плановой суммы направления (жалоба владельца 2026-09-14: «не понял,
+// как суммировалось 831 972, вижу только подкатегории на 550 000») — явно
+// показываем оба слагаемых, из которых складывается число в колонке выше,
+// а не только «довесок» на самом направлении. Показываем ТОЛЬКО когда обе
+// части реально есть — своя сумма (feoOwnDirectionPlanFor) И план по
+// подкатегориям (feoChildrenPlanManualFor); суммы читаем из
+// useFeoTreeAmounts.ts (Правило №6, здесь ничего не пересчитывается).
+const feoDirectionCompositionText = computed(() => {
+  const n = node.value
+  if (!n.hasChildren) return null
+  const own = ctx.feoOwnDirectionPlanFor(n)
+  const children = ctx.feoChildrenPlanManualFor(n)
+  if (own <= 0.005 || children <= 0.005) return null
+  const count = ctx.feoChildrenWithPlanCountFor(n)
+  const byWord = count === 1 ? 'подкатегории' : 'подкатегориям'
+  return `состав: ${formatCurrency(children)} по ${count} ${byWord} + ${formatCurrency(own)} на самом направлении`
+})
+
+// КОРЕНЬ жалобы владельца (2026-09-14, уточнение по п.6): у направления с
+// подразделами шеврон/папка раскрывают ТОЛЬКО подразделы (ctx.toggleExpand) —
+// панель собственных плановых позиций (ctx.toggleItemPanel/expandedItemPanels)
+// у такого узла до сих пор открывалась ЕДИНСТВЕННО крошечной иконкой в самом
+// конце строки, в колонке «Действия», и НИЧЕМ не анонсировалась заранее — по
+// строке было не видно, что на направлении вообще что-то лежит. Ровно это
+// владелец описал как «позиции исчезли из поля видимости»: они не удалялись
+// (категория 4792 — «Стенды» 0 ₽ и «Ростов» 281 972 ₽ по-прежнему активны),
+// их просто неоткуда было увидеть. Этот бейдж — ЗАМЕТНЫЙ (не мелкая серая
+// пометка) счётчик прямо у названия направления, который: (1) виден ДО любого
+// раскрытия, (2) кликабелен и открывает ту же панель, что и иконка в
+// «Действиях» (Правило №6 — общий toggleItemPanel/expandedItemPanels, свой
+// переключатель не заводим). Условие показа — то же самое hasOwnPlannedAmountFor,
+// что уже управляет иконкой в «Действиях» (см. докстринг там же).
+// СУММОЙ, не количеством: реальный список FeoPlannedItem направления (тот,
+// что покажет панель) грузится лениво — только по клику (ensureComparison /
+// toggleItemPanel в useFeoLevel5.ts), поэтому ДО раскрытия точного числа
+// позиций у нас нет. feoOwnDirectionPlanFor(node) — тот же надёжный источник,
+// что уже используется для «в т.ч. на самом направлении» и для «состава
+// суммы» выше (Правило №6) — его и показываем, чтобы не выдумывать цифру.
+const feoOwnItemsBadgeText = computed(() => {
+  const n = node.value
+  if (!n.hasChildren || !ctx.hasOwnPlannedAmountFor(n)) return null
+  const own = ctx.feoOwnDirectionPlanFor(n)
+  if (own > 0.005) return `на направлении: ${formatCurrency(own)}`
+  return 'на направлении есть позиции'
+})
+
+// ЕДИНСТВЕННОЕ место, решающее «что открыть по клику» — жалоба владельца
+// 2026-09-14 (вторая волна): «пусть если это на направлении лежит, то
+// разворачивается вместе с папкой, а не отдельным нажатием. Зачем оно
+// отдельно, это тоже входит в состав "Канцелярские и бытовые расходы..."».
+// Раньше шеврон/папка вызывали ctx.toggleExpand ТОЛЬКО подразделов, а панель
+// собственных позиций (ctx.toggleItemPanel) была отдельным действием, до
+// которого добирались лишь бейджем/иконкой в «Действиях» — два независимых
+// переключателя для одного направления. Теперь везде (шеврон, папка, бейдж,
+// строка состава суммы, иконка в «Действиях») зовут ЭТУ функцию:
+// - лист (без подразделов) — как раньше, просто toggleItemPanel;
+// - направление без своих позиций — как раньше, просто toggleExpand;
+// - направление С ОБЕИМИ частями — оба состояния переключаются СОГЛАСОВАННО
+//   за один клик: раскрыл — открылись подразделы И панель позиций; свернул —
+//   закрылось и то, и другое. Целевое состояние берём из expandedIds (что
+//   сейчас видно по подразделам) и приводим expandedItemPanels к нему же —
+//   так функция самовосстанавливает согласованность, даже если панель была
+//   открыта раньше каким-то другим путём (например, снэпшотом KPI-дриллдауна).
+function toggleNodeExpansion(node: FeoNode) {
+  if (!node.hasChildren) {
+    ctx.toggleItemPanel(node)
+    return
+  }
+  if (!ctx.hasOwnPlannedAmountFor(node)) {
+    ctx.toggleExpand(node.id)
+    return
+  }
+  const willExpand = !ctx.expandedIds.value.includes(node.id)
+  ctx.toggleExpand(node.id)
+  const panelOpen = ctx.expandedItemPanels.value.has(node.id)
+  if (willExpand !== panelOpen) ctx.toggleItemPanel(node)
+}
+
+// Правка 2026-09-14 (жалоба владельца): раньше этот флаг только прятал иконку;
+// теперь на старте ветки её раскрытие подстраивается ПОД ТЕКУЩЕЕ положение
+// общего переключателя (так свежесмонтированная строка — например, только что
+// раскрытая подкатегория — выглядит согласованно с уже видимыми ветками), а
+// дальше живёт своим независимым commentsExpanded (клик по иконке ничего не
+// шлёт на сервер и не трогает feoComments.expandAllSignal).
+onMounted(async () => {
+  if (subsidyId.value == null) return
+  // loadCounts — дедуп на уровне composable (module-level singleton
+  // countsPromises): сколько бы строк дерева ни смонтировалось одновременно,
+  // сетевой запрос на субсидию уйдёт РОВНО ОДИН (жалоба владельца 2026-09-15
+  // про десятки запросов при «развернуть все»). Не await — не блокируем
+  // готовность строки её результатом, значение подтянется реактивно.
+  void feoComments.loadCounts(subsidyId.value)
+  const visible = await feoComments.loadVisibility(subsidyId.value)
+  // Жалоба владельца 2026-09-15: «если комментариев нет, то и поле показываться
+  // не должно» — начальное раскрытие следует за общим переключателем ТОЛЬКО у
+  // веток, где комментарии реально есть; пустые остаются свёрнутыми, даже если
+  // переключатель сейчас в положении «все развёрнуты».
+  commentsExpanded.value = visible && categoryCommentCount.value > 0
+})
+
+// Синхронизация с общим переключателем (см. broadcastExpandAll в
+// useFeoComments.ts) — реагируем на version, а не на пару (subsidyId, expanded),
+// чтобы повторное «включили те же значения» тоже применилось. После этого
+// события commentsExpanded снова свободно живёт локально до следующего
+// broadcast — обычный клик по иконке ветки его не трогает.
+watch(() => feoComments.expandAllSignal.version, () => {
+  if (feoComments.expandAllSignal.version === 0) return
+  if (feoComments.expandAllSignal.subsidyId !== subsidyId.value) return
+  const expanded = feoComments.expandAllSignal.expanded
+  // Массовое «развернуть» открывает ТОЛЬКО ветки с реальными комментариями
+  // (жалоба владельца, см. задачу) — пустые не трогаем вовсе, они остаются в
+  // текущем состоянии (обычно свёрнуты). Массовое «свернуть» по-прежнему
+  // закрывает ВСЕ ветки безусловно, включая те, что были раскрыты вручную
+  // индивидуальным кликом по иконке.
+  commentsExpanded.value = expanded ? categoryCommentCount.value > 0 : false
+})
+
+async function onToggleCommentsVisible(val: boolean | null) {
+  if (subsidyId.value == null) return
+  const next = !!val
+  try {
+    await feoComments.setVisibility(subsidyId.value, next)
+    feoComments.broadcastExpandAll(subsidyId.value, next)
+  } catch (e: any) {
+    toast.addToast(e?.payload?.message || e?.detail || e?.message || 'Не удалось изменить видимость комментариев', 'error')
+  }
+}
 </script>

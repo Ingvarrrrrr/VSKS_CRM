@@ -59,7 +59,18 @@ function buildFeoTreeExcess(ctx: FeoTreeExcessCtx) {
       ? `закупка № ${c.purchase_number}${c.item_name ? ` «${c.item_name}»` : ''}`
       : (c.item_name || 'плановое значение категории')
     const budget = node.budget != null ? formatCurrency(node.budget) : '—'
-    return `из-за чего: ${source} — добавила ${formatCurrency(c.amount_at_crossing)}, после неё выбрано ${formatCurrency(c.cumulative_after)} при ФЭО ${budget}`
+    // Владелец, Волна 1 п.13 (2026-09-13), дословно: «сумма 4 012 784,48 плюс
+    // общая сумма 6 645 234,48 — почему тогда общая сумма именно 6 645 234,48,
+    // а не 8 012 784,48». Причина — прежний текст называл cumulative_after
+    // («после неё выбрано») без пояснения, что это НАКОПЛЕННЫЙ итог на момент
+    // пересечения черты, а не добавочная величина, и не показывал, чем всё
+    // кончилось — читатель складывал его с итоговым планом сам. Текст ниже
+    // держится того же честного смысла, что и 409-предупреждение
+    // (assert_no_unapproved_excess, feo_plan_excess.py): называет позицию
+    // ПЕРВОЙ, а не единственной причиной, и завершает тем же итоговым планом/
+    // превышением, что и в чипе рядом («превышение N — требуется
+    // согласование», excessFor читает то же excess_amount узла).
+    return `из-за чего: ${source} — первая позиция, из-за которой план по категории перевалил за ФЭО (не единственная причина всего превышения). До неё было выбрано ${formatCurrency(c.amount_before)}, она добавила ${formatCurrency(c.amount_at_crossing)} — накопленным итогом на тот момент стало ${formatCurrency(c.cumulative_after)} при ФЭО ${budget}. Дальше план продолжил расти и дошёл до ${formatCurrency(c.total_plan_amount)} — итоговое превышение ${formatCurrency(c.total_excess)}`
   }
 
   function isExcessCulpritActual(node: FeoNode, actual: { purchase_id: number; item_name: string }): boolean {
@@ -72,7 +83,9 @@ function buildFeoTreeExcess(ctx: FeoTreeExcessCtx) {
     const c = excessCulpritFor(node)
     if (!c) return ''
     const budget = node.budget != null ? formatCurrency(node.budget) : '—'
-    return `Добавила ${formatCurrency(c.amount_at_crossing)} — после неё выбрано ${formatCurrency(c.cumulative_after)} при ФЭО ${budget}`
+    // Тот же честный смысл, что в excessCulpritText выше, но короче — для
+    // всплывающей подсказки над чипом плановой позиции (FeoLevel5Panel.vue).
+    return `Первая позиция за чертой ФЭО (не единственная причина превышения): добавила ${formatCurrency(c.amount_at_crossing)}, накопленным итогом стало ${formatCurrency(c.cumulative_after)} при ФЭО ${budget}. Итоговый план ${formatCurrency(c.total_plan_amount)}, итоговое превышение ${formatCurrency(c.total_excess)}`
   }
 
   function excessFactFor(node: FeoNode): { amount: number; pending: boolean; approved: boolean } | null {

@@ -154,10 +154,17 @@
       </v-row>
       <v-row>
         <v-col cols="12">
+          <!-- Phase 32 (владелец, 2026-09-13): раньше здесь было ВТОРОЕ свободное
+               поле ввода того же адреса поверх покомпонентных полей ниже
+               (индекс/город/улица/дом/корпус) — «странно дублировать». ПРАВИЛО
+               №6: один источник — form.delivery_location теперь либо особая
+               формулировка (см. toggleSpecialDeliveryLocation), либо ВСЕГДА
+               пересобирается из покомпонентных полей (watch на assembledDeliveryAddress
+               ниже в скрипте). Ручного ввода строки адреса тут больше нет. -->
           <div id="pub-target-address" style="position:relative">
             <div v-if="pointerTarget === 'address'" class="pub-pointer"><span class="mdi mdi-arrow-down-bold" /></div>
             <div :class="pointerTarget === 'address' ? 'pub-glow' : ''">
-              <div class="mb-1">
+              <div class="mb-2 d-flex align-center flex-wrap ga-2">
                 <v-btn-toggle
                   v-model="form.delivery_location_kind"
                   density="compact" mandatory color="primary" variant="outlined"
@@ -165,14 +172,23 @@
                   <v-btn value="delivery" size="small">Адрес доставки</v-btn>
                   <v-btn value="service" size="small">Место оказания услуг</v-btn>
                 </v-btn-toggle>
+                <v-btn
+                  size="small" density="compact"
+                  :variant="isSpecialDeliveryLocation ? 'flat' : 'tonal'"
+                  :color="isSpecialDeliveryLocation ? 'primary' : undefined"
+                  :prepend-icon="isSpecialDeliveryLocation ? 'mdi-check' : undefined"
+                  @click="toggleSpecialDeliveryLocation"
+                >
+                  По месту нахождения подрядчика
+                </v-btn>
               </div>
-              <AddressAutocomplete
-                v-model="form.delivery_location"
-                :label="deliveryLabel"
-                :customer-address="customerPreview?.address"
-                hint="Подставится в шаблон документа"
-                persistent-hint
-              />
+              <div class="text-body-2" style="line-height:1.5">
+                <span class="text-medium-emphasis">{{ deliveryLabel }} (подставится в документ):</span>
+                <strong class="ml-1">{{ form.delivery_location || '—' }}</strong>
+              </div>
+              <div v-if="!isSpecialDeliveryLocation" class="text-caption text-medium-emphasis">
+                Собирается автоматически из полей адреса ниже (индекс / город / улица / дом / корпус) — вводить его отдельно не нужно.
+              </div>
             </div>
           </div>
         </v-col>
@@ -279,7 +295,10 @@
           <!-- дата предоплаты перенесена в блок «Сроки и даты» -->
         </v-col>
       </v-row>
-      <v-row>
+      <!-- «Подпись этапа» относится только к рамочным договорам (этапы/накопительные
+           заказы) — владелец (2026-09-13): у разового договора этапов нет, поле
+           не должно быть видно. -->
+      <v-row v-if="form.purchase_contract_type !== 'single'">
         <v-col cols="12" md="6">
           <v-text-field
             v-model="form.stage_label"
@@ -308,10 +327,10 @@
 // гида по всей форме (используется и другими секциями).
 // DELIVERY_REGIONS/RUSSIAN_REGIONS — статические константы, импортируются
 // напрямую (не пропы, т.к. не меняются и не относятся к состоянию формы).
-import AddressAutocomplete from '@/components/AddressAutocomplete.vue'
+import { computed, watch } from 'vue'
 import { RUSSIAN_REGIONS, DELIVERY_REGIONS } from '@/constants/russian_regions'
 
-defineProps<{
+const props = defineProps<{
   form: any
   contractWordGen: string
   formMode: string
@@ -327,4 +346,37 @@ defineProps<{
 
 const showPlaceholdersDialog = defineModel<boolean>('showPlaceholdersDialog', { required: true })
 const pointerTarget = defineModel<string | null>('pointerTarget', { required: true })
+
+// ПРАВИЛО №6: адрес доставки — один источник. По умолчанию form.delivery_location
+// пересобирается из покомпонентных полей ниже (индекс/регион/город/улица/дом/корпус —
+// тот же порядок и формат, что использует backend/app/services/publications_payload.py
+// _build_delivery_address для публикации на Фабрикант, чтобы документ и публикация не
+// расходились). Если пользователь явно выбрал особую формулировку («по месту нахождения
+// подрядчика» — реально встречается в боевых данных, это НЕ адрес, а юридическая фраза),
+// она замораживается и watch её не перезаписывает.
+const DELIVERY_LOCATION_SPECIAL = 'По месту нахождения подрядчика'
+
+const assembledDeliveryAddress = computed(() => {
+  const f = props.form
+  const parts: string[] = []
+  if ((f.delivery_postcode || '').trim()) parts.push(f.delivery_postcode.trim())
+  if ((f.delivery_region || '').trim()) parts.push(f.delivery_region.trim())
+  if ((f.delivery_city || '').trim()) parts.push(f.delivery_city.trim())
+  if ((f.delivery_street || '').trim()) parts.push(f.delivery_street.trim())
+  if ((f.delivery_house || '').trim()) parts.push('д. ' + f.delivery_house.trim())
+  if ((f.delivery_building || '').trim()) parts.push('к. ' + f.delivery_building.trim())
+  return parts.join(', ')
+})
+
+const isSpecialDeliveryLocation = computed(() => props.form.delivery_location === DELIVERY_LOCATION_SPECIAL)
+
+function toggleSpecialDeliveryLocation() {
+  props.form.delivery_location = isSpecialDeliveryLocation.value
+    ? assembledDeliveryAddress.value
+    : DELIVERY_LOCATION_SPECIAL
+}
+
+watch(assembledDeliveryAddress, (val) => {
+  if (!isSpecialDeliveryLocation.value) props.form.delivery_location = val
+}, { immediate: true })
 </script>

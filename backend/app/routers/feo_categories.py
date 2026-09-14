@@ -827,14 +827,26 @@ async def get_category_subtree(
     db: AsyncSession = Depends(get_db),
     _=Depends(get_current_user),
 ):
-    """Имя категории + id всего поддерева (для фильтра «закупки этой категории»)."""
+    """Имя категории + id всего поддерева (для фильтра «закупки этой категории»),
+    плюс сколько плановых позиций (feo_planned_items) лежит во всём поддереве —
+    единственное существующее место, отдающее состав поддерева категории, поэтому
+    FeoCategoryDeleteDialog.vue (владелец, п.6 волны 2, 2026-09-13: диалог удаления
+    категории предупреждал только про дочерние категории и МОЛЧАЛ про плановые
+    позиции, которые каскадом удаляются вместе с ней — см. _purge_feo_categories)
+    переиспользует этот же эндпоинт вместо отдельного «delete-impact» (Правило №6:
+    один показатель — не заводить второй механизм ради того же числа)."""
+    from app.models.feo_planned_item import FeoPlannedItem
+
     cat = (await db.execute(
         select(FeoCategory).where(FeoCategory.id == cat_id)
     )).scalar_one_or_none()
     if not cat:
         raise HTTPException(status_code=404, detail="Категория не найдена")
     ids = await _collect_subtree_ids(cat_id, db)
-    return {"id": cat.id, "name": cat.name, "ids": ids}
+    planned_items_count = (await db.execute(
+        select(func.count()).select_from(FeoPlannedItem).where(FeoPlannedItem.feo_category_id.in_(ids))
+    )).scalar_one()
+    return {"id": cat.id, "name": cat.name, "ids": ids, "planned_items_count": planned_items_count}
 
 
 @router.delete("/{cat_id}")

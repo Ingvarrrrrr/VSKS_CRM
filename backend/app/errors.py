@@ -36,7 +36,7 @@ field_labels = {
     "unit_price": "Цена за единицу", "amount": "Сумма", "name": "Наименование",
     "feo_category_id": "Категория ФЭО", "months_count": "Количество месяцев",
     "monthly_amount": "Сумма в месяц", "planned_date": "Плановая дата",
-    "monthly_start_date": "Дата начала выплат",
+    "monthly_start_date": "Дата начала выплат", "monthly_end_date": "Дата окончания периода",
 }
 
 

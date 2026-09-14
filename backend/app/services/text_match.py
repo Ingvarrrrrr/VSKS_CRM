@@ -26,7 +26,7 @@ category_id/...) поверх `generic_progressive_match` — сама меха�
 """
 import re
 from difflib import SequenceMatcher
-from typing import Any
+from typing import Any, Callable, Optional
 
 # ---------------------------------------------------------------------------
 # Tuneable thresholds
@@ -131,6 +131,7 @@ def generic_progressive_match(
     query: str,
     indexed: list[tuple[Any, set[str]]],
     prefix_match: bool = False,
+    tie_breaker: Optional[Callable[[Any], Any]] = None,
 ) -> tuple[str, list[tuple[Any, float]]]:
     """Прогрессивное сужение по словам — domain-agnostic ядро (см. модуль docstring).
 
@@ -153,9 +154,17 @@ def generic_progressive_match(
     сопоставление при импорте/дедупе товаров обязано оставаться строгим, чтобы не
     расширять его поведение по умолчанию.
 
+    `tie_breaker` (опционально) — вторичный ключ сортировки ПРИ РАВНОМ score
+    (владелец, 2026-09-14: «сопоставление предпочитает запись с ТЗ» — пока в
+    каталоге ещё есть дубли по имени, кандидат с более «истинным» payload'ом
+    должен идти выше среди равных по покрытию). Домен передаёт функцию
+    payload → сравнимое значение (например, 1, если у товара заполнено
+    описание, иначе 0); большее значение — выше в списке. По умолчанию None —
+    прежний порядок (стабильная сортировка Python сохраняет порядок `indexed`).
+
     Возвращает (status, [(payload, coverage_score), ...]) — score в [0, 1],
-    отсортировано по score desc, отфильтровано по SCORE_DIFFERENT (заведомо
-    чужие — не зашумляем выбор пользователя).
+    отсортировано по (score, tie_breaker(payload)) desc, отфильтровано по
+    SCORE_DIFFERENT (заведомо чужие — не зашумляем выбор пользователя).
 
     status:
       - 'create'  — даже первый токен query ни у одного payload не встречается
@@ -189,7 +198,10 @@ def generic_progressive_match(
         coverage = len([s for s in q_stems if _stem_hits(s, c_stems, prefix_match)]) / len(q_stems)
         results.append((payload, round(coverage, 4)))
 
-    results.sort(key=lambda x: x[1], reverse=True)
+    if tie_breaker is not None:
+        results.sort(key=lambda x: (x[1], tie_breaker(x[0])), reverse=True)
+    else:
+        results.sort(key=lambda x: x[1], reverse=True)
 
     # Отсекаем заведомо чужие объекты: при <40% покрытия это почти наверняка
     # совсем другая сущность — не зашумляем выбор пользователя ложными кандидатами.

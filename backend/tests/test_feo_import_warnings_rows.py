@@ -47,11 +47,18 @@ from tests.test_feo_import_tree import (
 
 
 # --- 1. Сводные предупреждения называют номера строк ------------------------
+# Волна 4, п.23 (владелец): duplicate_row_in_file («учтена последняя строка»)
+# убран — старую роль («не потерять номера строк-дублей молча») теперь
+# выполняет duplicate_groups в ответе (см. test_feo_import_duplicate_names.py
+# для полного покрытия keep/merge/нормализации имени).
 
 @pytest.mark.asyncio
-async def test_duplicate_row_in_file_names_rows(db_session):
-    """duplicate_row_in_file обязан называть строку(и)-повтор в тексте, не
-    только количество."""
+async def test_duplicate_group_reported_with_row_numbers(db_session):
+    """Группа полных совпадений имени в одной категории обязана называть все
+    строки-участницы (rows) в duplicate_groups, а не молчать о них — то же
+    требование к номерам строк, что было у duplicate_row_in_file, но без
+    самовольного «взята последняя строка»: по умолчанию обе строки остаются
+    отдельными позициями."""
     subsidy = await _make_subsidy(db_session)
     try:
         rows = [
@@ -60,9 +67,17 @@ async def test_duplicate_row_in_file_names_rows(db_session):
         ]
         result = await _import(db_session, subsidy.id, rows)
         assert result["errors"] == []
-        dup = [w for w in result["warnings"] if w["kind"] == "duplicate_row_in_file"]
-        assert len(dup) == 1
-        assert "строка 3" in dup[0]["message"], f"должна называться строка-повтор: {dup[0]['message']!r}"
+        assert not any(w["kind"] == "duplicate_row_in_file" for w in result["warnings"])
+
+        groups = result["duplicate_groups"]
+        assert len(groups) == 1
+        assert groups[0]["resolution"] == "keep"
+        assert [r["row"] for r in groups[0]["rows"]] == [2, 3]
+
+        cats = await _get_categories(db_session, subsidy.id)
+        leaf = next(c for c in cats if c.name == "Аренда офиса R1")
+        items = await _get_items(db_session, leaf.id)
+        assert len(items) == 2, "по умолчанию — оставить как есть, обе строки own позицией"
     finally:
         await _cleanup_subsidy(db_session, subsidy.id)
 

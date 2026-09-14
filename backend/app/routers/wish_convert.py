@@ -193,14 +193,19 @@ async def convert_wish(
     # W2-гейт в основном пути /convert
     await wishes_core._ensure_needed_dates(wish, db, items_full)
 
-    # B10: Backfill product_id for legacy items lacking it
+    # B10: Backfill product_id for legacy items lacking it. Точное совпадение
+    # по имени — normalize_product_name (Правило №6, см.
+    # app/services/product_catalog_match.py): при дублях каталога с одинаковым
+    # именем предпочитает запись с заполненным описанием («сопоставление
+    # предпочитает запись с ТЗ», владелец 2026-09-14).
+    from app.services.product_catalog_match import normalize_product_name, index_products_by_name
     missing = [it for it in items_full if not it.product_id and (it.item_name or "").strip()]
     if missing:
         names = list({(it.item_name or "").strip() for it in missing})
         pres = await db.execute(select(Product).where(Product.name.in_(names)))
-        name_to_product = {(p.name or "").strip().lower(): p for p in pres.scalars().all()}
+        name_to_product = index_products_by_name(pres.scalars().all())
         for it in missing:
-            hit = name_to_product.get((it.item_name or "").strip().lower())
+            hit = name_to_product.get(normalize_product_name(it.item_name))
             if hit:
                 it.product_id = hit.id
 

@@ -353,7 +353,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { useToast, type ToastType } from '@/composables/useToast'
@@ -361,7 +361,17 @@ import { numOrNull } from '@/utils/numberFormat'
 import { formatCurrency } from '@/composables/subsidies/format'
 import { collectSubtreeIds } from '@/composables/subsidies/feoCategoryUtils'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
+import { pushFeoUndo } from '@/composables/subsidies/useFeoUndoStack'
+import { createCategoryRaw, deleteCategoryRaw, putCategoryFull, buildCategoryFullPayload, moveCategoryRaw } from '@/composables/subsidies/useFeoTreeDnd'
 import type { FeoCategory, FeoNode } from '@/composables/subsidies/types'
+
+// Снимок «до» правки — payload из ИСХОДНОЙ категории в момент открытия диалога
+// (openEdit ниже), нужен только стеку отмены (доп. волна 2026-09-14: «отмена
+// для позиций И КАТЕГОРИЙ по всем четырём действиям»). Module-level переменная —
+// тот же приём, что и editPlannedBeforeSnapshot в useFeoPlannedItemEditDialog.ts:
+// между открытием диалога и сохранением всегда ровно одна активная правка.
+let feoEditBeforeSnapshot: Record<string, unknown> | null = null
+let feoEditBeforeParentId: number | null = null
 
 const addOpen = defineModel<boolean>('addOpen', { default: false })
 const editOpen = defineModel<boolean>('editOpen', { default: false })
@@ -450,6 +460,10 @@ function openAdd(parentId: number | null) {
 
 function openEdit(node: FeoNode) {
   feoEditTarget.value = node
+  // Снимок «до» для стека отмены (см. коммент у feoEditBeforeSnapshot выше) —
+  // ДО того, как форма ниже начнёт собирать свои auto-режимы/пустые строки.
+  feoEditBeforeSnapshot = buildCategoryFullPayload(node)
+  feoEditBeforeParentId = node.parent_id ?? null
   const autoMode = node.hasChildren && node.budget === null
   const qtyAutoMode = node.hasChildren && node.planned_quantity === null
   const amtAutoMode = node.hasChildren && node.planned_amount === null
@@ -499,35 +513,124 @@ function convertCategoryEditPlanToItem() {
   ctx.openConvertManualPlanToItem(node)
 }
 
+// Стек отмены — создание/правка направления ФЭО (доп. волна 2026-09-14,
+// координатор: «отмена для позиций И КАТЕГОРИЙ по всем четырём действиям»).
+// Перенос (смена родителя) — НЕ здесь: та же запись стека, что и у drag&drop
+// (ctx.registerCategoryMoveUndo, useFeoTreeDnd.ts), второй регистратор не
+// заводим. Удаление — сознательно БЕЗ отмены, см. докстринг у
+// FeoCategoryDeleteDialog.vue::deleteFeoCategory (каскад необратим).
+
+// Проверка «категория всё ещё пуста» перед undo(создание) — GET .../subtree
+// уже существует и используется FeoCategoryDeleteDialog.vue (Правило №6, второй
+// счётчик состава поддерева не заводим).
+async function isCategoryEmptyForUndo(id: number): Promise<{ empty: true } | { empty: false; reason: string }> {
+  try {
+    const info = await apiFetch<{ ids: number[]; planned_items_count: number }>(`/feo-categories/${id}/subtree`)
+    if ((info.ids?.length ?? 1) > 1) return { empty: false, reason: 'в направлении уже есть подкатегории' }
+    if ((info.planned_items_count ?? 0) > 0) return { empty: false, reason: 'в направлении уже есть плановые позиции' }
+    return { empty: true }
+  } catch {
+    return { empty: false, reason: 'не удалось проверить содержимое направления' }
+  }
+}
+
+// undo(создание) удаляет категорию, только если она ВСЁ ЕЩЁ пуста в момент
+// нажатия «Отменить» — удаление направления каскадно и необратимо (см.
+// FeoCategoryDeleteDialog.vue), и если между созданием и отменой человек успел
+// завести внутрь подкатегорию/плановую позицию (в т.ч. отдельным, не связанным
+// с этим действием шагом), молчаливое удаление снесло бы её без возможности
+// вернуть — то самое «хуже, чем отсутствие отмены», от которого предостерегал
+// координатор. Честный отказ с причиной вместо этого.
+function registerCategoryCreateUndo(created: FeoCategory) {
+  let currentId = created.id
+  const payload = buildCategoryFullPayload(created)
+  pushFeoUndo({
+    label: `создание направления «${created.name}»`,
+    undo: async () => {
+      const check = await isCategoryEmptyForUndo(currentId)
+      if (!check.empty) {
+        return {
+          ok: false,
+          error: `Отменить создание нельзя: ${check.reason}. Удаление направления необратимо — уберите содержимое вручную, только если уверены.`,
+        }
+      }
+      const res = await deleteCategoryRaw(currentId)
+      if (res.ok && ctx.selectedId.value) { await ctx.loadFeo(ctx.selectedId.value); ctx.syncFeoFilled() }
+      return res
+    },
+    redo: async () => {
+      try {
+        const recreated = await createCategoryRaw(payload)
+        currentId = recreated.id
+        if (ctx.selectedId.value) { await ctx.loadFeo(ctx.selectedId.value); ctx.syncFeoFilled() }
+        return { ok: true }
+      } catch (e: any) {
+        return { ok: false, error: e?.payload?.message || e?.detail || e?.message || 'Не удалось повторить создание' }
+      }
+    },
+  })
+}
+
+// undo(правка) — ТОЛЬКО поля категории (parent_id в этом PUT игнорируется
+// бэкендом что при исходном сохранении, что здесь — см. update_category в
+// app/routers/feo_categories.py, парент меняется исключительно через /move).
+// before/after — ПОЛНЫЕ снимки (PUT здесь всегда полная замена), не diff — тот
+// же принцип, что у registerEditUndo в useFeoPlannedItemEditDialog.ts.
+function registerCategoryEditUndo(categoryId: number, name: string, before: Record<string, unknown> | null, after: Record<string, unknown>) {
+  if (!before) return
+  pushFeoUndo({
+    label: `изменение направления «${name}»`,
+    undo: async () => {
+      const res = await putCategoryFull(categoryId, before)
+      if (res.ok && ctx.selectedId.value) { await ctx.loadFeo(ctx.selectedId.value); ctx.syncFeoFilled() }
+      return res.ok ? { ok: true } : { ok: false, error: res.error }
+    },
+    redo: async () => {
+      const res = await putCategoryFull(categoryId, after)
+      if (res.ok && ctx.selectedId.value) { await ctx.loadFeo(ctx.selectedId.value); ctx.syncFeoFilled() }
+      return res.ok ? { ok: true } : { ok: false, error: res.error }
+    },
+  })
+}
+
 async function addFeoCategory() {
   if (!ctx.selectedSubsidy.value) return
   if (feoAddPlanPairError.value) { showSnack(feoAddPlanPairError.value, 'error'); return }
   savingFeo.value = true
+  const parentId = feoForm.value.parentId
+  // Жалоба владельца (п.10 волны 2, 2026-09-13): создал подкатегорию «Проживание...»
+  // внутри листа «Межрегиональные перевозки» — сумма списалась, а узла не видно
+  // (isNodeVisible в useFeoTreeState.ts прячет детей нераскрытого родителя,
+  // expandedIds сюда не пополнялся вовсе). Заодно: если родитель ДО создания был
+  // листом, клик по его шеврону переключал expandedItemPanels (панель плановых
+  // позиций) — после появления первого ребёнка тот же клик переключается на
+  // expandedIds (раскрытие дерева, см. FeoTreeRow.vue), а старая запись в
+  // expandedItemPanels остаётся недостижимой для закрытия («постоянно
+  // развёрнутые плановые позиции» из той же жалобы). Фиксируем «был листом» ДО
+  // мутации ctx.feoCategories ниже.
+  const parentWasLeaf = parentId != null && !ctx.feoCategories.value.some((c: FeoCategory) => c.parent_id === parentId)
   try {
-    const res = await apiFetch<FeoCategory>('/feo-categories/', {
-      method: 'POST',
-      body: JSON.stringify({
-        subsidy_id: ctx.selectedSubsidy.value.id,
-        parent_id: feoForm.value.parentId || null,
-        name: feoForm.value.name,
-        code: feoForm.value.code || null,
-        appendix: feoForm.value.appendix || null,
-        is_active: true,
-        // budget/planned_quantity/planned_amount/feo_quantity/feo_amount/manual_plan_amount —
-        // numOrNull (2026-09-04): '' → null, 0 сохраняется как число.
-        budget: feoForm.value.budgetAuto ? null : numOrNull(feoForm.value.budget),
-        planned_quantity: feoForm.value.qtyAuto ? null : numOrNull(feoForm.value.planned_quantity),
-        planned_amount: feoForm.value.amtAuto ? null : numOrNull(feoForm.value.planned_amount),
-        unit: feoForm.value.unit || null,
-        feo_quantity: numOrNull(feoForm.value.feo_quantity),
-        feo_unit: feoForm.value.feo_unit || null,
-        description: feoForm.value.description?.trim() || null,
-        feo_amount: numOrNull(feoForm.value.feo_amount),
-        // План zany-fluttering-mountain.md, п.1: способ расчёта плана — при 'manual_sum'
-        // уходит введённая сумма, при 'planned_items' поле обнуляется (истина в позициях).
-        plan_source: feoForm.value.planSource,
-        manual_plan_amount: feoForm.value.planSource === 'manual_sum' ? numOrNull(feoForm.value.manual_plan_amount) : null,
-      })
+    const res = await createCategoryRaw({
+      subsidy_id: ctx.selectedSubsidy.value.id,
+      parent_id: feoForm.value.parentId || null,
+      name: feoForm.value.name,
+      code: feoForm.value.code || null,
+      appendix: feoForm.value.appendix || null,
+      is_active: true,
+      // budget/planned_quantity/planned_amount/feo_quantity/feo_amount/manual_plan_amount —
+      // numOrNull (2026-09-04): '' → null, 0 сохраняется как число.
+      budget: feoForm.value.budgetAuto ? null : numOrNull(feoForm.value.budget),
+      planned_quantity: feoForm.value.qtyAuto ? null : numOrNull(feoForm.value.planned_quantity),
+      planned_amount: feoForm.value.amtAuto ? null : numOrNull(feoForm.value.planned_amount),
+      unit: feoForm.value.unit || null,
+      feo_quantity: numOrNull(feoForm.value.feo_quantity),
+      feo_unit: feoForm.value.feo_unit || null,
+      description: feoForm.value.description?.trim() || null,
+      feo_amount: numOrNull(feoForm.value.feo_amount),
+      // План zany-fluttering-mountain.md, п.1: способ расчёта плана — при 'manual_sum'
+      // уходит введённая сумма, при 'planned_items' поле обнуляется (истина в позициях).
+      plan_source: feoForm.value.planSource,
+      manual_plan_amount: feoForm.value.planSource === 'manual_sum' ? numOrNull(feoForm.value.manual_plan_amount) : null,
     })
     ctx.feoCategories.value.push(res)
     addOpen.value = false
@@ -535,12 +638,42 @@ async function addFeoCategory() {
     showSnack('Направление добавлено')
     if (ctx.selectedId.value) await ctx.loadFeo(ctx.selectedId.value)
     ctx.syncFeoFilled()
+    // Раскрыть родителя — иначе новый узел списал деньги, но остался невидим
+    // (см. коммент у parentWasLeaf выше). Снять стухшую панель плановых позиций
+    // родителя, если он только что перестал быть листом.
+    if (parentId != null) {
+      if (!ctx.expandedIds.value.includes(parentId)) ctx.expandedIds.value.push(parentId)
+      if (parentWasLeaf) ctx.expandedItemPanels.value.delete(parentId)
+    }
     emit('saved')
+    scrollToNewFeoNode(res.id)
+    registerCategoryCreateUndo(res)
   } catch (e: any) {
     showSnack(e?.payload?.message || e?.detail || e?.message || 'Ошибка добавления направления', 'error')
   } finally {
     savingFeo.value = false
   }
+}
+
+// Прокрутка+подсветка нового узла — тот же приём, что и scrollToFirstKpiHighlight
+// в useKpiDrilldown.ts (ctx.feoTableArea.querySelector + scrollIntoView), только
+// целится в data-feo-node-id (атрибут уже есть на каждой строке в FeoTreeRow.vue),
+// а не в CSS-класс подсветки KPI — заводить свой класс в чужом файле нельзя (см.
+// запрет на FeoTreeRow.vue в этой волне), поэтому подсветка — временный inline-стиль.
+async function scrollToNewFeoNode(nodeId: number) {
+  await nextTick()
+  await nextTick() // v-for перерисовывается после loadFeo — один tick может быть рано
+  const el = ctx.feoTableArea.value?.querySelector<HTMLElement>(`[data-feo-node-id="${nodeId}"]`)
+  if (!el) return
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  const prevBg = el.style.backgroundColor
+  const prevTransition = el.style.transition
+  el.style.transition = 'background-color 1.6s ease'
+  el.style.backgroundColor = '#FEF3C7'
+  setTimeout(() => {
+    el.style.backgroundColor = prevBg
+    setTimeout(() => { el.style.transition = prevTransition }, 1700)
+  }, 400)
 }
 
 async function updateFeoCategory() {
@@ -551,44 +684,72 @@ async function updateFeoCategory() {
   // остальных полей категории (название, код и т.д.) обязано проходить в любом случае.
   savingFeo.value = true
   try {
-    // Если parent_id изменился — вызываем move endpoint
+    const targetId = feoEditTarget.value.id
+    const targetName = feoEditForm.value.name
+    // Если parent_id изменился — вызываем move endpoint (moveCategoryRaw,
+    // useFeoTreeDnd.ts — то же место, что и drag&drop, второй PATCH не заводим).
     const oldParentId = feoEditTarget.value.parent_id ?? null
     const newParentId = feoEditForm.value.parent_id ?? null
-    if (oldParentId !== newParentId) {
-      const moveRes = await apiFetch<any>(`/feo-categories/${feoEditTarget.value.id}/move`, {
-        method: 'PATCH', body: JSON.stringify({ parent_id: newParentId }),
-      })
-      if (moveRes?.warning) showSnack(moveRes.warning, 'warning')
+    const parentChanged = oldParentId !== newParentId
+    if (parentChanged) {
+      const moveRes = await moveCategoryRaw(targetId, newParentId)
+      if (!moveRes.ok) throw new Error(moveRes.error)
+      if (moveRes.warning) showSnack(moveRes.warning, 'warning')
     }
-    // Обновляем остальные поля
-    await apiFetch<FeoCategory>(`/feo-categories/${feoEditTarget.value.id}`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        subsidy_id: feoEditTarget.value.subsidy_id,
-        parent_id: newParentId,
-        name: feoEditForm.value.name,
-        code: feoEditForm.value.code || null,
-        appendix: feoEditForm.value.appendix || null,
-        is_active: feoEditForm.value.is_active,
-        budget: feoEditForm.value.budgetAuto ? null : numOrNull(feoEditForm.value.budget),
-        planned_quantity: feoEditForm.value.qtyAuto ? null : numOrNull(feoEditForm.value.planned_quantity),
-        planned_amount: feoEditForm.value.amtAuto ? null : numOrNull(feoEditForm.value.planned_amount),
-        unit: feoEditForm.value.unit || null,
-        feo_quantity: numOrNull(feoEditForm.value.feo_quantity),
-        feo_unit: feoEditForm.value.feo_unit || null,
-        description: feoEditForm.value.description?.trim() || null,
-        feo_amount: numOrNull(feoEditForm.value.feo_amount),
-        // План zany-fluttering-mountain.md, п.1: способ расчёта плана — см. комментарий
-        // у того же поля в addFeoCategory выше.
-        plan_source: feoEditForm.value.planSource,
-        manual_plan_amount: feoEditForm.value.planSource === 'manual_sum' ? numOrNull(feoEditForm.value.manual_plan_amount) : null,
-      })
-    })
+    // Обновляем остальные поля (putCategoryFull — то же место, что шлёт PUT для
+    // undo/redo правки, второй запрос не заводим).
+    const afterPayload = {
+      subsidy_id: feoEditTarget.value.subsidy_id,
+      parent_id: newParentId,
+      name: feoEditForm.value.name,
+      code: feoEditForm.value.code || null,
+      appendix: feoEditForm.value.appendix || null,
+      is_active: feoEditForm.value.is_active,
+      budget: feoEditForm.value.budgetAuto ? null : numOrNull(feoEditForm.value.budget),
+      planned_quantity: feoEditForm.value.qtyAuto ? null : numOrNull(feoEditForm.value.planned_quantity),
+      planned_amount: feoEditForm.value.amtAuto ? null : numOrNull(feoEditForm.value.planned_amount),
+      unit: feoEditForm.value.unit || null,
+      feo_quantity: numOrNull(feoEditForm.value.feo_quantity),
+      feo_unit: feoEditForm.value.feo_unit || null,
+      description: feoEditForm.value.description?.trim() || null,
+      feo_amount: numOrNull(feoEditForm.value.feo_amount),
+      // План zany-fluttering-mountain.md, п.1: способ расчёта плана — см. комментарий
+      // у того же поля в addFeoCategory выше.
+      plan_source: feoEditForm.value.planSource,
+      manual_plan_amount: feoEditForm.value.planSource === 'manual_sum' ? numOrNull(feoEditForm.value.manual_plan_amount) : null,
+    }
+    const putRes = await putCategoryFull(targetId, afterPayload)
+    if (!putRes.ok) throw new Error(putRes.error)
+    // Дефект, найденный QA стека отмены (доп. волна 2026-09-14): ctx.loadFeo()
+    // ниже честно перезапрашивает /feo-categories/ (проверено сетевым логом —
+    // GET уходит и возвращает уже новое имя), но дерево на экране название НЕ
+    // обновляло — «Не отменил» на глазах становился «Отменил, но не показал».
+    // Полный перезаход на страницу показывает верно, значит проблема ровно в
+    // отображении, а не в данных. Тот же обходной приём, что уже применяют
+    // saveInlineBudget/saveInlineQty/saveInlineAmt в useFeoTreeDnd.ts —
+    // напрямую подменяем объект категории в ctx.feoCategories.value и
+    // переприсваиваем массив, чтобы Vue гарантированно перерисовал строку, не
+    // полагаясь только на loadFeo(). Было БАГОМ и до стека отмены (обычная
+    // правка направления тоже не обновляла имя без ручной перезагрузки
+    // страницы) — чиним заодно, иначе собственный undo/redo этой волны показывал
+    // бы «не подействовало» ровно из-за него.
+    const idx = ctx.feoCategories.value.findIndex((c: FeoCategory) => c.id === targetId)
+    if (idx !== -1) {
+      const next = [...ctx.feoCategories.value]
+      next[idx] = { ...next[idx], ...putRes.item }
+      ctx.feoCategories.value = next
+    }
     editOpen.value = false
     showSnack('Направление обновлено')
     if (ctx.selectedId.value) await ctx.loadFeo(ctx.selectedId.value)
     ctx.syncFeoFilled()
     emit('saved')
+    // Стек отмены: перенос и правка полей — РАЗНЫЕ шаги (та же гранулярность,
+    // что и у остального дерева — «одно действие = одна запись»), поэтому один
+    // клик «Сохранить» может положить на стек ДО ДВУХ записей.
+    if (parentChanged) ctx.registerCategoryMoveUndo(targetId, targetName, oldParentId, newParentId)
+    registerCategoryEditUndo(targetId, targetName, feoEditBeforeSnapshot, afterPayload)
+    feoEditBeforeSnapshot = null
   } catch (e: any) {
     showSnack(e?.payload?.message || e?.detail || e?.message || 'Ошибка обновления', 'error')
   } finally {

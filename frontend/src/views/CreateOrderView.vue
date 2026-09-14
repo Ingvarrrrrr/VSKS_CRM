@@ -501,7 +501,10 @@
                 @update:model-value="onAutoFieldChange('registry_number', 'Реестровый номер', $event)" />
             </v-col>
             <!-- Мероприятие (после выбора субсидии, или всегда для служебных записок) -->
-            <v-col v-if="(form.subsidy_id && filteredEvents.length) || formMode === 'service_note_delivery'" cols="12" md="4">
+            <!-- Владелец (2026-09-13): не прятать поле, если мероприятие уже выбрано,
+                 даже пока filteredEvents ещё не догрузился (иначе поле молча исчезает
+                 при открытии закупки на долю секунды/навсегда при гонке загрузки). -->
+            <v-col v-if="(form.subsidy_id && (filteredEvents.length || form.event_id)) || formMode === 'service_note_delivery'" cols="12" md="4">
               <div class="d-flex align-center gap-2">
                 <v-select
                   v-model="form.event_id"
@@ -2812,9 +2815,18 @@ const deliveryLabel = computed(() => {
 })
 
 const allEvents = ref<EventItem[]>([])
-const filteredEvents = computed(() =>
-  allEvents.value.filter(e => e.subsidy_id === form.subsidy_id && e.is_active)
-)
+// Владелец (2026-09-13): выбранное мероприятие не должно пропадать из списка —
+// ни когда оно стало неактивным (is_active=false) уже ПОСЛЕ выбора, ни пока
+// справочник мероприятий ещё не догрузился. Без этого v-select ниже (см.
+// шаблон, "Мероприятие *") молча схлопывался бы вместе со своей v-col.
+const filteredEvents = computed(() => {
+  const base = allEvents.value.filter(e => e.subsidy_id === form.subsidy_id && e.is_active)
+  if (form.event_id != null && !base.some(e => e.id === form.event_id)) {
+    const current = allEvents.value.find(e => e.id === form.event_id)
+    if (current) return [...base, current]
+  }
+  return base
+})
 const currentSubsidyOrgId = computed(() =>
   subsidies.value.find(s => s.id === form.subsidy_id)?.org_id ?? null
 )
@@ -3064,18 +3076,71 @@ const contractorInn = ref('')
 // ── Guide arrow (летящая стрелка с пунктирным следом) — вынесено в
 // composables/purchase/useGuideArrow.ts. onBeforeNavigate закрывает диалог
 // публикации при наведении на цель вне диалога — то же поведение, что раньше
-// было зашито прямо в guideArrowTo. ──
+// было зашито прямо в guideArrowTo.
+// Владелец (2026-09-13): «опять слетели стрелочки» — часть якорей уехала
+// внутрь секций, которые к моменту вызова guideArrowTo могут быть свёрнуты
+// (v-show) или ещё не смонтированы (v-if внутри диалога). Раскрываем
+// «Техническое задание» здесь (это единственная секция вне диалога
+// публикации с ручным сворачиванием — v-show="!tzCollapsed" в этом же файле);
+// диалог публикации раскрывается отдельно в revealField ниже, т.к. для его
+// целей (okpd2/auction-*) onBeforeNavigate НЕ вызывается (см. IN_DIALOG_TARGETS
+// в useGuideArrow.ts — тот же диалог должен остаться открытым, а не закрыться).
+// onMiss — вторая часть жалобы: раньше промах молчал, теперь пишем в консоль
+// и показываем текстовую подсказку через showSnack, куда идти руками.
+const GUIDE_ARROW_TARGET_LABELS: Record<string, string> = {
+  subsidy: '«Субсидия» в разделе «Основная информация»',
+  subject: '«Предмет закупки» в разделе «Основная информация»',
+  items: 'раздел «Позиции закупки» / «Техническое задание»',
+  address: '«Адрес доставки» в разделе «Параметры договора» (для документа)',
+  region: '«Регион поставки» в разделе «Параметры договора» (для документа)',
+  nmck: '«НМЦД» в разделе «Финансовые показатели»',
+  okpd2: '«Код ОКПД2» в диалоге публикации на Фабрикант',
+  'auction-date': '«Дата начала редукциона» в диалоге публикации на Фабрикант',
+  'auction-bet': '«Границы ставки редукциона» в диалоге публикации на Фабрикант',
+}
 const {
   guideArrowVisible, guideArrowPos, guideArrowAngle, guideArrowArrived, guideTrail,
   pointerTarget, okpd2Pointer, auctionPointerTarget,
   clearGuideArrow, guideArrowTo,
-} = useGuideArrow(() => {
-  publishDialog.value = false
-  pendingPlatform.value = null
-})
+} = useGuideArrow(
+  (target) => {
+    publishDialog.value = false
+    pendingPlatform.value = null
+    if (target === 'items' || target.startsWith('item:')) {
+      tzCollapsed.value = false
+    }
+  },
+  (target) => {
+    const label = target.startsWith('item:')
+      ? 'нужную позицию — раскройте список позиций в разделе «Техническое задание»'
+      : (GUIDE_ARROW_TARGET_LABELS[target] || `поле «${target}»`)
+    showSnack(`Стрелка не нашла поле — откройте вручную: ${label}`, 'warning', { duration: 8000 })
+  },
+)
 // ── end guide arrow ────────────────────────────────────────────────────────────
 
-function revealField(target: string) {
+async function revealField(target: string) {
+  // okpd2/auction-date/auction-bet живут внутри диалога публикации за
+  // вложенными v-if: v-dialog не рендерит контент, пока закрыт; блок
+  // «Настройки Фабрикант» — пока pendingPlatform !== 'fabrikant' (список
+  // ошибок публикации может быть уже показан ДО выбора площадки —
+  // openPublishDialog() сбрасывает pendingPlatform в null); поля редукциона —
+  // пока fabrikantProcedureType !== 'reduction'.
+  if (target === 'okpd2' || target === 'auction-date' || target === 'auction-bet') {
+    publishDialog.value = true
+    if (pendingPlatform.value !== 'fabrikant') {
+      pendingPlatform.value = 'fabrikant'
+      initFabrikantDates()
+    }
+    if (target !== 'okpd2' && fabrikantProcedureType.value !== 'reduction') {
+      fabrikantProcedureType.value = 'reduction'
+    }
+    // v-dialog + вложенные v-expand-transition монтируют содержимое
+    // асинхронно — ждём кадр рендера, иначе getElementById промахнётся мимо
+    // ещё не вставленного узла.
+    await nextTick()
+    await nextTick()
+  }
   guideArrowTo(target)
 }
 
@@ -3547,7 +3612,20 @@ const itemsFeoLevel2 = computed<number | null>(() => {
 
 const onSubsidyChange = async () => {
   form.feo_category_id = null
-  form.event_id = null
+  // Владелец (2026-09-13): «мероприятие слетело при переходе в закупку».
+  // Раньше здесь было безусловное form.event_id = null — стирало уже
+  // согласованный выбор при любом срабатывании этого обработчика, включая
+  // случаи, когда субсидия фактически не менялась (гонка загрузки
+  // allEvents/повторная простановка того же значения). Обнуляем только если
+  // можем ДОКАЗАТЬ, что текущее мероприятие относится к ДРУГОЙ субсидии —
+  // если справочник мероприятий ещё не загрузился (allEvents пуст), доказать
+  // это нельзя, поэтому выбор не трогаем.
+  if (form.event_id != null && allEvents.value.length) {
+    const currentEvent = allEvents.value.find(e => e.id === form.event_id)
+    if (currentEvent && currentEvent.subsidy_id !== form.subsidy_id) {
+      form.event_id = null
+    }
+  }
   feoSaveAttempted.value = false
   feoSkipLast.value = false
   fetchRemaining()

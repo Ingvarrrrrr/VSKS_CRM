@@ -148,6 +148,17 @@ async def apply_collected_plan(state) -> None:
                     _match_item.amount = _pdata["amount"]; _ch = True
                 if _pdata.get("item_type") is not None and hasattr(_match_item, "item_type") and _match_item.item_type != _pdata["item_type"]:
                     _match_item.item_type = _pdata["item_type"]; _ch = True
+                # Происхождение (Правило №6, resolve_origin_flags в
+                # feo_import_common.py) — уже посчитано feo_import_apply.py по
+                # деньгам строки и положено в _pdata, здесь только читаем и
+                # поправляем позицию, если файл переимпортирован с другими
+                # данными (см. тот же аргумент у ветки создания ниже).
+                _pdata_feo = _pdata.get("is_feo_breakdown", False)
+                _pdata_plan = _pdata.get("is_internal_plan", True)
+                if hasattr(_match_item, "is_feo_breakdown") and _match_item.is_feo_breakdown != _pdata_feo:
+                    _match_item.is_feo_breakdown = _pdata_feo; _ch = True
+                if hasattr(_match_item, "is_internal_plan") and _match_item.is_internal_plan != _pdata_plan:
+                    _match_item.is_internal_plan = _pdata_plan; _ch = True
                 if _ch:
                     updated += 1
                     updated_details.append({"row": _plan_row, "name": _plan_name, "reason": "плановая позиция из плана строки"})
@@ -173,12 +184,20 @@ async def apply_collected_plan(state) -> None:
                     )
                     if hasattr(FeoPlannedItem, "item_type"):
                         _pi_kwargs["item_type"] = _pdata.get("item_type")
-                    # Происхождение (владелец, 2026-09-01): эта ветка — колонка
-                    # «Плановая» на категории целиком, БЕЗ построчной разбивки ФЭО
-                    # (см. докстринг миграции aa1b2c3d4e5f_feo_planned_item_origin.py) —
-                    # is_internal_plan, не is_feo_breakdown.
+                    # Происхождение (владелец, 2026-09-01, исправлено 2026-09-1x):
+                    # эта ветка — колонка «Плановая» на категории целиком, БЕЗ
+                    # собственной построчной разбивки Ур.5 — но категория может
+                    # ВСЁ РАВНО иметь деньги в разделе ФЭО (см. cat.budget,
+                    # выставленный из feo_sum этой же строки в feo_import_apply.py) —
+                    # тогда обе галочки истинны (владелец это допускает явно).
+                    # Флаги посчитаны ОДИН раз в feo_import_apply.py по реальным
+                    # деньгам строки (resolve_origin_flags, Правило №6) и положены
+                    # в _pdata — здесь не пересчитываем, а безусловное
+                    # is_internal_plan=True (было раньше) заменено на них.
+                    if hasattr(FeoPlannedItem, "is_feo_breakdown"):
+                        _pi_kwargs["is_feo_breakdown"] = _pdata.get("is_feo_breakdown", False)
                     if hasattr(FeoPlannedItem, "is_internal_plan"):
-                        _pi_kwargs["is_internal_plan"] = True
+                        _pi_kwargs["is_internal_plan"] = _pdata.get("is_internal_plan", True)
                     _pi = FeoPlannedItem(**_pi_kwargs)
                     db.add(_pi)
                     await db.flush()

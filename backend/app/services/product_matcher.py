@@ -62,11 +62,21 @@ def progressive_match(
     (см. её docstring/`_stem_hits`): включает префиксное сопоставление стемов для
     интерактивного набора. По умолчанию False — прежнее строгое поведение.
 
+    Владелец (2026-09-14): «сопоставление предпочитает запись с ТЗ» — при
+    равном покрытии (напр. каталог ещё содержит дубли по имени, до слияния)
+    кандидат с заполненным описанием ранжируется выше через tie_breaker
+    (см. text_match.generic_progressive_match docstring) — единая точка
+    правила, не третья копия (Правило №6).
+
     Возвращает (status, candidates) — семантика status не изменилась (см.
     text_match.generic_progressive_match docstring).
     """
     indexed = [(entry, entry[3]) for entry in catalog_indexed]
-    status, scored = generic_progressive_match(query, indexed, prefix_match=prefix_match)
+
+    def _tie_breaker(entry) -> int:  # entry[4] = description
+        return 1 if (entry[4] or "").strip() else 0
+
+    status, scored = generic_progressive_match(query, indexed, prefix_match=prefix_match, tie_breaker=_tie_breaker)
 
     candidates: list[CandidateResult] = []
     for entry, sc in scored:

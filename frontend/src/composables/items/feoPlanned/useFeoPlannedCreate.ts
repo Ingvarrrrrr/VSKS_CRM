@@ -36,6 +36,27 @@ export interface DuplicateInfo {
   newAmount: number | null
 }
 
+// Разбор тела 409 planned_item_duplicate_name (backend/app/routers/feo_planned_items.py
+// ::create_planned_item) в DuplicateInfo — вынесено в отдельную функцию (правка
+// Волны 2, п.2 плана владельца), чтобы useFeoPlannedItemAddDialog.ts (диалог
+// «Добавить плановую позицию» из дерева ФЭО) переиспользовал ТОТ ЖЕ разбор
+// вместо копии полей по отдельности (Правило №6 — один источник истины).
+// Поведение не менялось — дословно то, что раньше лежало прямо в catch ниже.
+export function parseDuplicateHttpError(e: any): DuplicateInfo | null {
+  const det = e?.payload?.details
+  if (e?.status !== 409 || det?.error_code !== 'planned_item_duplicate_name') return null
+  return {
+    message: det.message || e.message,
+    existingItemId: det.existing_item_id,
+    existingQuantity: det.existing_item_quantity != null ? Number(det.existing_item_quantity) : null,
+    existingUnit: det.existing_item_unit ?? null,
+    existingAmount: det.existing_item_amount != null ? Number(det.existing_item_amount) : null,
+    newQuantity: det.new_quantity != null ? Number(det.new_quantity) : null,
+    newUnit: det.new_unit ?? null,
+    newAmount: det.new_amount != null ? Number(det.new_amount) : null,
+  }
+}
+
 export interface UseFeoPlannedCreateDeps {
   props: {
     categoryId: number | null
@@ -183,18 +204,9 @@ export function useFeoPlannedCreate(deps: UseFeoPlannedCreateDeps) {
       emit('update:modelValue', { kind: 'planned_item', id: created.id })
       showSnack('Плановая позиция создана')
     } catch (e: any) {
-      const det = e?.payload?.details
-      if (e?.status === 409 && det?.error_code === 'planned_item_duplicate_name') {
-        duplicateInfo.value = {
-          message: det.message || e.message,
-          existingItemId: det.existing_item_id,
-          existingQuantity: det.existing_item_quantity != null ? Number(det.existing_item_quantity) : null,
-          existingUnit: det.existing_item_unit ?? null,
-          existingAmount: det.existing_item_amount != null ? Number(det.existing_item_amount) : null,
-          newQuantity: det.new_quantity != null ? Number(det.new_quantity) : null,
-          newUnit: det.new_unit ?? null,
-          newAmount: det.new_amount != null ? Number(det.new_amount) : null,
-        }
+      const dup = parseDuplicateHttpError(e)
+      if (dup) {
+        duplicateInfo.value = dup
         duplicateDialog.value = true
       } else {
         showSnack(e?.payload?.message || e?.detail || e?.message || 'Не удалось создать плановую позицию', 'error')

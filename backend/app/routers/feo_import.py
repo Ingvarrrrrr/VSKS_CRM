@@ -49,6 +49,7 @@ async def import_feo_from_excel(
     dry_run: bool = Query(False),
     remap: str = Query(""),
     apply_remap: bool = Query(False),
+    duplicate_resolutions: str = Query(""),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_tab('feo_categories')),
 ):
@@ -179,6 +180,7 @@ async def import_feo_from_excel(
         c_item_type=c_item_type,
         db=db, dry_run=dry_run,
         user=current_user, remap=remap, apply_remap=apply_remap,
+        duplicate_resolutions=duplicate_resolutions,
     )
 
 
@@ -240,6 +242,7 @@ async def import_feo_mapped(
     dry_run: bool = Query(False),
     remap: str = Query(""),
     apply_remap: bool = Query(False),
+    duplicate_resolutions: str = Query(""),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_tab('feo_categories')),
 ):
@@ -371,4 +374,5 @@ async def import_feo_mapped(
         default_subsidy_id=default_subsidy_id if default_subsidy_id > 0 else None,
         db=db, dry_run=dry_run,
         user=current_user, remap=remap, apply_remap=apply_remap,
+        duplicate_resolutions=duplicate_resolutions,
     )

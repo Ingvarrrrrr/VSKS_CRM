@@ -21,7 +21,7 @@ from app.auth.jwt import get_current_user
 from app.auth.permissions import require_tab
 from app.schemas.schemas import ContractorOut
 from app.services.contractor_lookup import _split_signatory, _check_npd_status
-from app.services.fio import split_position_and_fio
+from app.services.fio import split_fio
 
 router = APIRouter(prefix="/api/contractors", tags=["contractors"])
 
@@ -170,10 +170,16 @@ async def lookup_inn(
             row = rows[0]  # first match
             # ЕГРЮЛ возвращает руководителя как "ДОЛЖНОСТЬ: ФИО"
             # (например "ПРЕДСЕДАТЕЛЬ: Девлишева Максим Махмович").
+            # Дефект (2026-09-14): второй вызов ниже раньше звал split_position_and_fio
+            # ПОВТОРНО на исходной "ДОЛЖНОСТЬ: ФИО" строке, но уже с передан-
+            # ной должностью — та ветка функции доверяла вызывающему и считала
+            # raw чистым ФИО, разнося "ГЕНЕРАЛЬНЫЙ ДИРЕКТОР: Широков Владимир
+            # Константинович" как фамилию "ГЕНЕРАЛЬНЫЙ". _signatory уже содержит
+            # ФИО-часть (без должности, см. _split_signatory/compose_fio) —
+            # разбираем на last/first/middle именно её, split_position_and_fio
+            # второй раз не зовём.
             _signatory, _signatory_position = _split_signatory(row.get("g"))
-            _eg_last, _eg_first, _eg_middle, _ = split_position_and_fio(
-                row.get("g"), _signatory_position
-            )
+            _eg_last, _eg_first, _eg_middle = split_fio(_signatory)
             result = {
                 "name": row.get("c") or row.get("n"),  # c=short name, n=full name
                 "full_name": row.get("n"),              # n=full legal name

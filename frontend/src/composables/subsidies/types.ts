@@ -125,6 +125,11 @@ export interface FeoPlannedItem {
   payment_mode?: 'one_time' | 'monthly'
   planned_date?: string | null
   monthly_start_date?: string | null
+  // Конец периода (владелец, Волна 3, п.3) — основной способ задать
+  // длительность ежемесячного платежа для новых позиций, см. докстринг
+  // FeoPlannedItem.monthly_end_date (backend/app/models/feo_planned_item.py)
+  // и compute_monthly_schedule (backend/app/services/feo_monthly_schedule.py).
+  monthly_end_date?: string | null
   months_count?: number | null
   monthly_amount?: number | null
   // Владелец (2026-08-12, замечание 2): порядок позиций внутри категории —
@@ -144,6 +149,15 @@ export interface FeoPlannedItem {
   // не было вовсе), состав придумали сами. См. backend/app/models/feo_planned_item.py.
   is_feo_breakdown?: boolean
   is_internal_plan?: boolean
+  // Раздельные числа по ФЭО (владелец, 2026-09-14): quantity/unit_price/amount
+  // выше ОСТАЮТСЯ «планом» (единственный источник для дерева/контроля
+  // превышения, ПРАВИЛО №6) — эти три поля ТОЛЬКО «число по ФЭО» для
+  // отображения рядом с планом «для сверки» (см. backend/app/models/
+  // feo_planned_item.py). NULL = «не задано» (не 0) — заполняются, только
+  // когда ОБЕ галочки происхождения стоят и числа расходятся.
+  feo_quantity?: number | null
+  feo_unit_price?: number | null
+  feo_amount?: number | null
 }
 
 // Стадия уточнения позиции (ФЭО → План → Что выставили на закупку → Номенклатура
@@ -272,6 +286,15 @@ export interface ExcessCulprit {
   amount_before: number
   amount_at_crossing: number
   cumulative_after: number
+  // Владелец, Волна 1 п.13 (2026-09-13): без этих двух чисел плашка называла
+  // только «накопленный итог на момент пересечения» (cumulative_after) и это
+  // читалось как «добавочная сумма», которую владелец складывал с итоговым
+  // планом — total_plan_amount/total_excess (то же число, что в чипе
+  // «превышение N — требуется согласование», см. excessFor) дают текст,
+  // который не провоцирует такое сложение. См. find_excess_culprit
+  // (backend/app/services/feo_plan_excess.py) — оттуда и приходят эти поля.
+  total_plan_amount: number
+  total_excess: number
 }
 export interface ExcessPlanItemPurchase {
   id: number
@@ -388,11 +411,9 @@ export interface FeoWarning {
     | 'column_shift' | 'group_plan_ignored' | 'plan_vs_items_mismatch' | 'plan_skipped_has_items'
     // Баг 2026-09-09: 'subsidy_name_ignored' — открытая субсидия перебила
     // другую, названную в файле (см. resolve_target_subsidy_id в
-    // app/services/feo_import_common.py); 'duplicate_row_in_file' — одна
-    // позиция дважды в файле (см. existing_plan_item_ids в feo_import_apply.py).
-    // Оба — ОДНО агрегированное предупреждение на импорт, без привязки к
-    // строке/имени, поэтому row/name у них null.
-    | 'subsidy_name_ignored' | 'duplicate_row_in_file'
+    // app/services/feo_import_common.py). Агрегированное предупреждение на
+    // импорт, без привязки к строке/имени, поэтому row/name у него null.
+    | 'subsidy_name_ignored'
     // Задача владельца 2026-09-09: 'amount_without_level2' — в строке есть
     // Сумма по ФЭО, но Уровень 2 пуст и строка не подходит под промоушен
     // (см. feo_import_apply.py) — деньги теряются молча без этого текста.
@@ -401,9 +422,49 @@ export interface FeoWarning {
     // последняя побеждает, это предупреждение делает видимым сам факт и все
     // строки-кандидаты, а не только итог.
     | 'amount_without_level2' | 'budget_overwritten_by_row'
+    // Волна 4, п.23 (владелец): полное совпадение имени Ур.5 в одной
+    // категории — раньше был единственный warning 'duplicate_row_in_file'
+    // («учтена последняя строка», самовольное объединение, запрещено
+    // владельцем). Теперь решение по каждой ГРУППЕ явное (см.
+    // FeoDuplicateGroup/duplicate_groups ниже, показывается на шаге
+    // предпросмотра) — 'duplicate_group_merged' появляется в warnings ТОЛЬКО
+    // когда человек выбрал «объединить» для конкретной группы (см.
+    // app/services/feo_import_duplicates.py::_upsert_merge); выбор «оставить
+    // как есть» (по умолчанию) предупреждения не создаёт — это больше не
+    // аномалия, а нормальный путь.
+    | 'duplicate_group_merged'
   row: number | null
   name: string | null
   message: string
+}
+
+// Волна 4, п.23 (владелец): группа строк файла с ПОЛНЫМ (после нормализации
+// пробелов/регистра) совпадением имени плановой позиции внутри одной и той
+// же категории — решение «оставить как есть» (по умолчанию, каждая строка —
+// своя позиция) или «объединить» (суммы/количества складываются, цена — от
+// деления) принимает человек ПО КАЖДОЙ ГРУППЕ ОТДЕЛЬНО, см.
+// app/services/feo_import_duplicates.py (единственный источник — раньше
+// объединение/«взять последнюю» делалось самовольно).
+export interface FeoDuplicateGroupRow {
+  row: number
+  qty: number | null
+  unit: string | null
+  amount: number | null
+}
+export interface FeoDuplicateGroup {
+  key: string
+  category_path: string
+  name: string
+  rows: FeoDuplicateGroupRow[]
+  count: number
+  sum_before: number | null
+  qty_before: number | null
+  merged_preview: { qty: number | null; unit: string | null; price: number | null; amount: number | null }
+  // Присутствует только в ОТВЕТЕ (после того, как это решение уже применено
+  // сервером) — на предпросмотре (dry-run) до выбора человека равно 'keep'
+  // (серверный дефолт), фронт держит собственный выбор в
+  // feoImport.duplicateResolutions[key] и не читает это поле для UI-стейта.
+  resolution?: 'merge' | 'keep'
 }
 export interface FeoUnmatchedNode {
   id: number
@@ -435,6 +496,7 @@ export interface FeoImportResult {
   skipped_details?: { row: number; name: string; reason: string }[]
   created_details?: { row: number; name: string; reason: string }[]
   warnings?: FeoWarning[]
+  duplicate_groups?: FeoDuplicateGroup[]
   unmatched?: FeoUnmatchedNode[]
   new_paths?: string[]
   deleted_count?: number

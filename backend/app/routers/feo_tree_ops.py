@@ -209,6 +209,15 @@ async def align_budget_to_plan(
         ceiling_after_d = Decimal(str(ceiling_after))
         if total_plan_after_d - ceiling_after_d > Decimal("0.005"):
             over_d = total_plan_after_d - ceiling_after_d
+            # Читаем subsidy_id ДО rollback — после db.rollback() объект `cat`
+            # expired, и синхронное обращение к его атрибуту внутри f-строки/dict
+            # ниже пытается лениво подгрузить его из БД вне async-контекста
+            # (greenlet), что валит sqlalchemy.exc.MissingGreenlet вместо
+            # честного 409 — ровно это ловил владелец на ДНР_2026
+            # (INTERNAL_ERROR, correlation_id e188c17c-...): у субсидии план уже
+            # превышал потолок ФЭО, любое «Приравнять» уходило в эту ветку и
+            # падало здесь, а не отдавало понятный отказ.
+            subsidy_id_for_error = cat.subsidy_id
             await db.rollback()
             raise HTTPException(
                 409,
@@ -220,7 +229,7 @@ async def align_budget_to_plan(
                         f"ФЭО — {ceiling_after_d:,.2f} ₽ (превышение {over_d:,.2f} ₽). Уменьшите "
                         f"финансирование или план по другим категориям субсидии."
                     ),
-                    "subsidy_id": cat.subsidy_id,
+                    "subsidy_id": subsidy_id_for_error,
                     "total_plan": float(total_plan_after_d),
                     "ceiling": float(ceiling_after_d),
                     "over_amount": float(over_d),

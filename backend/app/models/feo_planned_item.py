@@ -33,7 +33,19 @@ class FeoPlannedItem(Base):
     payment_mode = Column(String(20), nullable=False, server_default='one_time')  # 'one_time' | 'monthly'
     planned_date = Column(Date, nullable=True)          # «когда потребуется» для one_time
     monthly_start_date = Column(Date, nullable=True)    # первый платёж для monthly
-    months_count = Column(Integer, nullable=True)       # на сколько месяцев
+    # Владелец (Волна 3, п.3, 2026-09-13): «требует целое число месяцев, а я
+    # ввёл 6,66... надо ввести период с даты по дату». monthly_end_date —
+    # конец периода, ОСНОВНОЙ способ задать длительность для НОВЫХ позиций:
+    # см. app/services/feo_monthly_schedule.py (compute_monthly_schedule,
+    # единственная формула) — полные месяцы + остаток дней ÷ число дней в
+    # том месяце, к которому остаток относится. NULL — легаси-режим, работает
+    # months_count как раньше (см. его комментарий ниже). Задание monthly_end_date
+    # ПЕРЕЗАПИСЫВАЕТ months_count вычисленным значением (см. _apply_payment_fields,
+    # app/routers/feo_planned_items.py) — months_count остаётся для обратной
+    # совместимости с cash-flow-разворачиванием (plan_cashflow.py) и экспортом,
+    # человек его больше не вводит вручную.
+    monthly_end_date = Column(Date, nullable=True)
+    months_count = Column(Integer, nullable=True)       # на сколько месяцев (легаси-ввод ИЛИ производное от периода)
     monthly_amount = Column(Numeric(15, 2), nullable=True)  # платёж за ОДИН месяц
     # Владелец (2026-08-12, «закупка сама становится планом»): позиция заведена
     # автоматически из закупки/заявки (app/services/plan_autoassign.py), а не
@@ -57,6 +69,51 @@ class FeoPlannedItem(Base):
     # aa1b2c3d4e5f_feo_planned_item_origin.py.
     is_feo_breakdown = Column(Boolean, nullable=False, default=False, server_default=text("FALSE"))
     is_internal_plan = Column(Boolean, nullable=False, default=False, server_default=text("FALSE"))
+
+    # РАЗДЕЛЬНЫЕ числа по ФЭО и по внутреннему плану (владелец, 2026-09-14):
+    # «надо отдельно если я включил по ФЭО, и отдельно для Внутреннего плана,
+    # это нужно если ФЭО и внутренний план разнятся». ДО этой правки обе
+    # галочки (is_feo_breakdown/is_internal_plan) делили ОДИН комплект чисел
+    # (quantity/unit_price/amount) — фронт рисовал их дважды под разными
+    # подписями (FeoLevel5Panel.vue), что выглядело как разбивка, но было одно
+    # и то же число.
+    #
+    # Владелец, решение по опросу: quantity/unit_price/amount (поля выше)
+    # ОСТАЮТСЯ «планом» — ИМЕННО их читают compute_feo_plan_tree
+    # (feo_plan_tree.py), assert_tz_not_over_plan/assert_tz_batch_not_over_plan
+    # (feo_plan_tz_checks.py), find_excess_culprit/assert_no_unapproved_excess
+    # (feo_plan_excess.py) — вся арифметика дерева плана, контроль «ТЗ не выше
+    # плана» и контроль превышения плана над финансированием ФЭО. Выбор решает
+    # задачу владельца буквально: «Суммой плана в дереве, в остатках и в
+    # контроле превышения считается ВНУТРЕННИЙ ПЛАН» — раз quantity/unit_price/
+    # amount не переименовывались, вся эта арифметика продолжает считать
+    # «план = внутренний план» БЕЗ единой правки в перечисленных файлах
+    # (ПРАВИЛО №6 — не заводить вторую формулу дерева/контроля, здесь она и
+    # не понадобилась).
+    #
+    # feo_quantity/feo_unit_price/feo_amount ниже — ВТОРОЙ, независимый
+    # комплект: «число по ФЭО», которое встаёт РЯДОМ с планом «для сверки»
+    # (дословно владелец) — participates ТОЛЬКО в отображении
+    # (FeoLevel5Panel.vue, диалоги добавления/правки), ни в одной формуле
+    # плана/контроля превышения не участвует — второй механизм проверки
+    # сознательно не заводится (задача, п.6).
+    #
+    # NULL здесь означает «не задано», а НЕ ноль — тот же смысл, что и у
+    # unit_price выше (см. её докстринг): если человек поставил только одну
+    # галочку происхождения, второй комплект чисел просто не показывается в
+    # форме и остаётся NULL, а не 0 — «не хочу вводить оба числа, если по факту
+    # они совпадают» (задача, п.3: «Не заставляй заполнять оба... незаполненное
+    # фэошное значение означает "не задано"»).
+    #
+    # БЭКФИЛЛ существующих строк — миграция ниже переносит ТЕКУЩЕЕ значение
+    # quantity/unit_price/amount В ОБА комплекта (feo_* = quantity/unit_price/
+    # amount) для ВСЕХ строк, заведённых до этой правки — решение владельца
+    # «чтобы цифры никуда не поехали»: разойдутся числа руками, там, где
+    # владелец сам решит их развести. См. миграцию
+    # c2d4e6f8a0b2_feo_planned_item_feo_split.py.
+    feo_quantity = Column(Numeric(15, 4), nullable=True)
+    feo_unit_price = Column(Numeric(15, 2), nullable=True)
+    feo_amount = Column(Numeric(15, 2), nullable=True)
 
     feo_category = relationship(
         "FeoCategory",

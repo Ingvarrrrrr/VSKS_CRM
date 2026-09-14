@@ -294,9 +294,27 @@
 }
 
 /* FEO section */
+/* Заголовок + переключатель «Позиции» + панель кнопок над деревом ФЭО раньше
+   стояли одной нерезиновой строкой (display:flex без wrap) — на боевой ширине
+   1075px панель кнопок (особенно после добавления undo/redo, п.4 волны 4,
+   2026-09-13) не помещалась и толкала ВСЮ страницу subsidies в горизонтальный
+   скролл (замер 2026-09-14: вылет 176px при 1680px, 80px даже без undo/redo).
+   Фикс: разрешаем переносить панель кнопок на вторую строку, вправо (ml-auto
+   сохраняет прижатие к правому краю и на своей отдельной строке). row-gap —
+   а не gap — чтобы не увеличивать горизонтальный отступ между заголовком и
+   переключателем «Позиции» на первой строке, когда перенос не нужен. */
 .subsidies-page .detail-feo-header {
-  display: flex; align-items: center;
+  display: flex; align-items: center; flex-wrap: wrap; row-gap: 8px;
   margin-bottom: 12px;
+}
+/* Панель кнопок сама по себе (без заголовка/переключателя слева) шире, чем
+   любое из проверенных окон (1075px < контент даже при 1280px), так что до
+   переноса кнопок ВНУТРИ панели дело обычно не доходит — перенос всей панели
+   целиком на вторую строку уже убирает горизонтальный скролл. flex-wrap здесь
+   оставлен как страховка на случай ещё более узкого окна или лишней кнопки. */
+.subsidies-page .feo-toolbar-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 .subsidies-page .chart-card-title {
   font-size: 14px; font-weight: 600; color: var(--crm-text-secondary);
@@ -391,11 +409,67 @@
 .subsidies-page .feo-tr:hover .feo-td { background: var(--crm-surface-alt); }
 .subsidies-page .feo-tr--l1 .feo-td { background: var(--crm-surface-alt); }
 .subsidies-page .feo-tr--l1:hover .feo-td { background: var(--crm-surface-hover); }
-.subsidies-page .feo-plan-note { font-size: 10px; line-height: 1.2; white-space: nowrap; }
+/* Дефект владельца 2026-09 (сид 51, направление 3710): пояснение «по плану
+   можно добавить ещё N ₽ до финансирования ФЭО (это остаток по плану...)» —
+   при table-layout:fixed td НЕ клипует переполнение сам, а white-space:nowrap
+   не давал тексту переноситься внутри своей узкой (resizable) колонки — текст
+   вылезал вправо и накладывался на соседнюю колонку «В плане-графике».
+   Обрезать многоточием нельзя (владелец отдельно потребовал видеть текст
+   целиком) — вместо nowrap текст переносится строками внутри своей ширины.
+   Копия этого правила — FeoTreeTable.vue (scoped, для строк «Без категории
+   ФЭО»/«ИТОГО», которые рисует сам этот компонент, а не FeoTreeRow.vue) —
+   держать байт-в-байт синхронной (см. докстринг файла про копии для
+   телепортируемой/собственной разметки). */
+.subsidies-page .feo-plan-note { font-size: 10px; line-height: 1.2; white-space: normal; overflow-wrap: break-word; }
 /* Кликабельная заметка «в т.ч. на самом направлении N ₽» (жалоба владельца
    2026-08-13) — раскрывает панель направления, см. feoOwnDirectionPlanFor(). */
 .subsidies-page .feo-plan-note--link { cursor: pointer; text-decoration: none; }
 .subsidies-page .feo-plan-note--link:hover { text-decoration: underline; color: #0f766e; }
+/* Счётчик собственных плановых позиций направления (жалоба владельца 2026-09-14 —
+   позиции «Ростов»/«Стенды» лежат прямо на направлении с подкатегориями и были
+   видны только по крошечной иконке в «Действиях», ничем заранее не анонсируясь).
+   Сознательно контрастнее .feo-plan-note — это не сноска, а точка входа, которую
+   владелец должен заметить, даже не разворачивая строку. */
+/* Собственная строка под названием (НЕ внутри .feo-name-inner) — тот флекс-ряд
+   и так тесный (шеврон + папка + название + код/приложение); втиснутый туда
+   бейдж с суммой отжимал у .feo-name всю ширину до нуля и валил колонку
+   переносом ПО ОДНОМУ СИМВОЛУ (rowHeight 875px — найдено живой проверкой на
+   стенде, направление 4792). На своей строке бейдж соревнуется только с самим
+   собой за ширину ячейки, поэтому имени ничего не грозит. */
+.subsidies-page .feo-name-badge-row { margin-top: 2px; max-width: 100%; }
+.subsidies-page .feo-own-badge {
+  display: inline-flex; align-items: center; max-width: 100%;
+  font-size: 10px; font-weight: 600; line-height: 1.4; white-space: normal; text-align: left;
+  color: #0f766e; background: rgba(20,184,166,0.12); border: 1px solid rgba(20,184,166,0.35);
+  border-radius: 10px; padding: 1px 7px; cursor: pointer;
+}
+.subsidies-page .feo-own-badge:hover { background: rgba(20,184,166,0.22); }
+/* Счётчик комментариев у иконки (владелец, 2026-09-15) — «из строки должно
+   быть понятно, есть ли комментарии, до раскрытия». СВОЙ маленький уголковый
+   бейдж, НЕ v-badge: v-badge оказался достаточно крупным, чтобы полностью
+   накрыть x-small-иконку в тесной колонке «Действия» и перехватывать клик
+   мимо самой кнопки (см. докстринг в FeoTreeRow.vue/FeoLevel5Panel.vue) —
+   pointer-events:none гарантирует, что клик всегда доходит до кнопки под ним,
+   независимо от размера иконки в конкретном месте таблицы. */
+.subsidies-page .feo-comment-icon-wrap { position: relative; display: inline-flex; flex: 0 0 auto; }
+.subsidies-page .feo-comment-count-badge {
+  position: absolute; top: -2px; right: -2px;
+  min-width: 13px; height: 13px; padding: 0 2px;
+  border-radius: 999px; background: #0d9488; color: #fff;
+  font-size: 9px; font-weight: 700; line-height: 13px; text-align: center;
+  pointer-events: none;
+}
+.subsidies-page .feo-own-badge--active { background: rgba(20,184,166,0.3); border-color: #0f766e; }
+/* Разделяющая подпись над панелью собственных позиций направления (владелец,
+   2026-09-14, вторая волна) — с объединением клика подразделы и панель
+   раскрываются одной строкой одновременно; подпись объясняет, к чему
+   относится идущая следом мини-таблица, прежде чем начнутся строки
+   подкатегорий. normal, не nowrap — длинное имя направления в подписи не
+   должно вызывать горизонтальный вылет строки. */
+.subsidies-page .feo-own-items-caption {
+  display: inline-block; font-size: 10px; font-weight: 600; color: #0f766e;
+  white-space: normal; line-height: 1.3;
+}
 /* «Заметный сигнал превышения» (план zany-fluttering-mountain.md, возвращено из отката
    e0db76a) — сознательно КРУПНЕЕ и заметнее соседних .feo-plan-note (10px, тонкий текст):
    владелец жаловался, что превышение «теряется среди чисел» — эта плашка обязана читаться

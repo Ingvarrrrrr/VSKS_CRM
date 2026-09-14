@@ -88,6 +88,7 @@ async def auto_assign_planned_items(
     """
     from app.models.feo_planned_item import FeoPlannedItem
     from app.models.feo_category import FeoCategory
+    from app.services.feo_import_common import resolve_origin_flags
     from app.services.text_match import normalize
 
     # cat_id -> {normalize(name): fpi_id}; загружается лениво, один раз на категорию.
@@ -134,6 +135,9 @@ async def auto_assign_planned_items(
                 continue
             # amount=it.total_price — снимок плана (Шаг 1 «план ≠ факт»): фиксируется
             # как план категории в момент постановки в план закупок.
+            _origin_is_feo_breakdown, _origin_is_internal_plan = resolve_origin_flags(
+                None, getattr(it, "total_price", None),
+            )
             new_fpi = FeoPlannedItem(
                 feo_category_id=eff_cat_id,
                 name=getattr(it, "item_name", None),
@@ -162,10 +166,16 @@ async def auto_assign_planned_items(
                 # такие строки отдельно (см. auto_created в схеме FeoPlannedItemOut).
                 auto_created=True,
                 # Происхождение (владелец, 2026-09-01): автозаведённая позиция
-                # никогда не была построчной разбивкой ФЭО — родилась из
-                # реального расхода заявки/закупки, не из файла ФЭО (см.
-                # докстринг миграции aa1b2c3d4e5f_feo_planned_item_origin.py).
-                is_internal_plan=True,
+                # родилась из реального расхода заявки/закупки, не из файла ФЭО —
+                # раздела «Сумма по ФЭО» у неё нет по построению (это не строка
+                # Excel-импорта), поэтому feo_money=None. Флаги считает та же
+                # resolve_origin_flags, что и импорт ФЭО (Правило №6, единственный
+                # источник в feo_import_common.py) — при feo_money=None она
+                # детерминированно отдаёт (False, True), то же самое, что было
+                # здесь захардкожено раньше, без второй копии правила «денег в
+                # ФЭО нет — значит внутренний план».
+                is_feo_breakdown=_origin_is_feo_breakdown,
+                is_internal_plan=_origin_is_internal_plan,
             )
             db.add(new_fpi)
             await db.flush()

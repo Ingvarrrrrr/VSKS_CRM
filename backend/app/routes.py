@@ -148,6 +148,10 @@ from app.routers import purchase_transitions
 from app.routers import feo_planned_items_matching
 from app.routers import feo_planned_items_reports
 from app.routers import feo_planned_items
+# Комментарии (мини-чат) к плановым позициям/категориям ФЭО (владелец, Волна 4,
+# п.16, 2026-09-13) — собственный префикс /api/feo-comments, не пересекается ни
+# с одним catch-all соседних роутеров, порядок регистрации не важен.
+from app.routers import feo_comments
 from app.routers import plan_excess as plan_excess_router
 from app.routers import telegram_webhook
 # Отслеживание местоположения сотрудников (владелец, 2026-09): смены/точки +
@@ -322,6 +326,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(feo_planned_items_matching.router)
     app.include_router(feo_planned_items_reports.router)
     app.include_router(feo_planned_items.router)
+    app.include_router(feo_comments.router)
     app.include_router(plan_excess_router.router)
     app.include_router(settings_router.router)
     app.include_router(dashboard.router)

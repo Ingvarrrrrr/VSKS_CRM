@@ -11,9 +11,163 @@ import { apiFetch } from '@/api'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { formatCurrency, formatCurrencyRound } from './format'
 import { normName } from './feoCategoryUtils'
+import { filterFundedNodes, type FeoLeaf as FeoPickerLeaf, type FeoNode as FeoPickerNode } from '@/composables/useFeoLeaves'
+import { PURCHASE_STATUS_ORDER, purchaseStatusColor, purchaseStatusLabel } from '@/constants/purchaseStatus'
+import { pushFeoUndo } from './useFeoUndoStack'
+import { createPlannedItemRaw } from './useFeoPlannedItemAddDialog'
 import type {
   DiffActual, FeoActualItem, FeoCategory, FeoNode, FeoPlannedItem, FeoStage, FeoStageRow,
 } from './types'
+
+// ── Сырые операции с плановой позицией — без диалогов/confirm/тостов ────────
+// Выделены из deletePlannedItem/moveOnePlannedItem ниже специально для стека
+// отмены (useFeoUndoStack.ts, задача владельца п.4, 2026-09-13): «отмена
+// выполняется ОБРАТНОЙ ОПЕРАЦИЕЙ через существующие эндпоинты» — эти функции и
+// есть та единственная точка входа в POST/PUT/DELETE /feo-planned-items (Правило
+// №6), обычный путь (deletePlannedItem) их тоже вызывает, второго набора
+// запросов нет.
+export async function deletePlannedItemRaw(itemId: number): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    await apiFetch(`/feo-planned-items/${itemId}`, { method: 'DELETE' })
+    return { ok: true }
+  } catch (e: any) {
+    return { ok: false, error: e?.payload?.message || e?.detail || e?.message || 'Не удалось удалить плановую позицию' }
+  }
+}
+
+export async function putPlannedItemFull(itemId: number, payload: Record<string, unknown>): Promise<{ ok: true; item: FeoPlannedItem } | { ok: false; error: string }> {
+  try {
+    const item = await apiFetch<FeoPlannedItem>(`/feo-planned-items/${itemId}`, { method: 'PUT', body: JSON.stringify(payload) })
+    return { ok: true, item }
+  } catch (e: any) {
+    return { ok: false, error: e?.payload?.message || e?.detail || e?.message || 'Ошибка сохранения' }
+  }
+}
+
+// Полный payload FeoPlannedItemCreate по снимку позиции. POST и PUT на бэкенде
+// используют РОВНО одну и ту же pydantic-схему (update_planned_item(data:
+// FeoPlannedItemCreate) — см. app/routers/feo_planned_items.py), поэтому одна
+// функция годится и для пересоздания при undo(удаление)/redo(создание), и для
+// полной замены при undo/redo(правка). is_feo_breakdown/is_internal_plan
+// включены ЯВНО — в отличие от PUT (там непереданное поле не трогается,
+// model_fields_set-guard), POST такой поблажки не имеет: не пришло — станет
+// False, и «восстановленная» позиция молча потеряла бы признак разбивки ФЭО.
+export function buildPlannedItemFullPayload(
+  item: FeoPlannedItem,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    feo_category_id: item.feo_category_id,
+    name: item.name,
+    quantity: item.quantity,
+    unit: item.unit,
+    amount: item.amount,
+    unit_price: item.unit_price ?? null,
+    // Раздельные числа по ФЭО (владелец, 2026-09-14) — та же логика полного
+    // снимка, что и у unit_price выше: без явной отправки undo/redo (POST при
+    // пересоздании, PUT при полной замене) молча обнулили бы уже введённые
+    // feo_quantity/feo_unit_price/feo_amount. См. FeoPlannedItem.feo_quantity
+    // в backend/app/models/feo_planned_item.py.
+    feo_quantity: item.feo_quantity ?? null,
+    feo_unit_price: item.feo_unit_price ?? null,
+    feo_amount: item.feo_amount ?? null,
+    notes: item.notes,
+    is_active: item.is_active,
+    payment_mode: item.payment_mode ?? 'one_time',
+    planned_date: item.planned_date ?? null,
+    monthly_start_date: item.monthly_start_date ?? null,
+    monthly_end_date: item.monthly_end_date ?? null,
+    months_count: item.months_count ?? null,
+    monthly_amount: item.monthly_amount ?? null,
+    sort_order: item.sort_order ?? null,
+    item_type: item.item_type ?? null,
+    is_feo_breakdown: item.is_feo_breakdown ?? false,
+    is_internal_plan: item.is_internal_plan ?? false,
+    allow_duplicate_name: true,
+    ...overrides,
+  }
+}
+
+// Единственное место, которое реально шлёт PUT для смены feo_category_id
+// плановой позиции (Правило №6) — одиночный перенос (movePlannedItemToCategory),
+// массовый (bulkMove*) и стек отмены (undo/redo переноса, registerMoveUndo ниже)
+// вызывают РОВНО эту функцию.
+async function moveOnePlannedItem(item: FeoPlannedItem, targetCategoryId: number): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    await apiFetch(`/feo-planned-items/${item.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        feo_category_id: targetCategoryId,
+        name: item.name,
+        quantity: item.quantity,
+        unit: item.unit,
+        amount: item.amount,
+        unit_price: item.unit_price ?? null,
+        notes: item.notes,
+        is_active: item.is_active,
+        payment_mode: item.payment_mode ?? 'one_time',
+        planned_date: item.planned_date ?? null,
+        monthly_start_date: item.monthly_start_date ?? null,
+        monthly_end_date: item.monthly_end_date ?? null,
+        months_count: item.months_count ?? null,
+        monthly_amount: item.monthly_amount ?? null,
+        sort_order: item.sort_order ?? null,
+        item_type: item.item_type ?? null,
+      }),
+    })
+    return { ok: true }
+  } catch (e: any) {
+    return { ok: false, error: e?.payload?.message || e?.detail || e?.message || 'Ошибка переноса' }
+  }
+}
+
+export interface StageBreakdownSegment { key: string; label: string; color: string; count: number; pct: number }
+
+// Жалоба владельца, п.15 волны 4 (2026-09-13): «в позициях плана должно быть...
+// на каком этапе находится данная закупка». У одной плановой позиции может
+// висеть НЕСКОЛЬКО строк закупки (несколько PurchaseItem одной и той же
+// закупки, привязанных к одной плановой позиции — например, позиция разбита
+// на несколько строк) — стадия у них общая (это одна и та же Purchase), считаем
+// и показываем ЗАКУПКУ, а не строку, иначе бар/список задваивает одну и ту же
+// закупку.
+export function dedupPurchasesByPurchaseId(facts: FeoActualItem[]): FeoActualItem[] {
+  const seen = new Map<number, FeoActualItem>()
+  for (const a of facts) {
+    if (!seen.has(a.purchase_id)) seen.set(a.purchase_id, a)
+  }
+  return [...seen.values()]
+}
+
+// Полоска по стадиям (свёрнутый вид новой колонки «Стадия закупки»): мера —
+// КОЛИЧЕСТВО закупок на стадии, не деньги и не количество товара. Деньги
+// недоступны на ранних стадиях (plan_schedule ещё не имеет fact_amount, см.
+// purchase_item_fact_amount) — полоска бы молчала там, где владелец как раз
+// хочет видеть «в плане-графике». Количество товара несравнимо между
+// позициями с разными единицами измерения. Количество закупок — единственная
+// мера, всегда доступная и однородная. Тот же приём (PURCHASE_STATUS_ORDER,
+// filter+map по счётчику статусов), что useFeoReqItems.groupStatuses — там
+// считаются статусы товаров виртуальной группы позиций заявок, здесь —
+// закупки одной плановой позиции; второй счётчик статусов НЕ заводится,
+// переиспользуется тот же канонический порядок жизненного цикла закупки.
+export function buildStageBreakdown(facts: FeoActualItem[]): StageBreakdownSegment[] {
+  const purchases = dedupPurchasesByPurchaseId(facts)
+  const total = purchases.length
+  if (!total) return []
+  const counts = new Map<string, number>()
+  for (const p of purchases) {
+    const st = p.purchase_status || ''
+    counts.set(st, (counts.get(st) || 0) + 1)
+  }
+  return PURCHASE_STATUS_ORDER
+    .filter(key => counts.get(key))
+    .map(key => ({
+      key,
+      label: purchaseStatusLabel(key),
+      color: purchaseStatusColor(key),
+      count: counts.get(key)!,
+      pct: (counts.get(key)! / total) * 100,
+    }))
+}
 
 interface ExcessReasonPurchase { id: number; label: string; amount: number; stopped: boolean }
 interface ExcessReasonItem { key: string; name: string; amount: number; purchases: ExcessReasonPurchase[] }
@@ -34,6 +188,20 @@ let _api: ReturnType<typeof buildFeoLevel5> | null = null
 
 export function useFeoLevel5(ctx: FeoLevel5Ctx) {
   if (!_api) _api = buildFeoLevel5(ctx)
+  return _api
+}
+
+// Точечный доступ к уже построенному синглтону — для новой массовой
+// выбор/перенос-функциональности (п.12 волны 3, 2026-09-13), которую
+// FeoLevel5Panel.vue вызывает напрямую, а не через SubsidyDetailContext
+// (тот объект целиком собирается в SubsidiesView.vue — файл параллельного
+// исполнителя этой же волны, не трогаем). SubsidiesView.vue вызывает
+// useFeoLevel5(realCtx) в своём <script setup> раньше, чем монтируется любой
+// дочерний компонент, поэтому к моменту вызова здесь синглтон уже собран.
+export function useFeoLevel5Api() {
+  if (!_api) {
+    throw new Error('useFeoLevel5Api() вызван до useFeoLevel5(ctx) — синглтон ещё не построен')
+  }
   return _api
 }
 
@@ -190,6 +358,22 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
 
   function factForPlannedTotal(catId: number, plannedId: number): number {
     return factForPlanned(catId, plannedId).reduce((s, a) => s + Number(a.fact_amount ?? a.total_price ?? 0), 0)
+  }
+
+  // ── Колонка «Стадия закупки» (владелец, п.15 волны 4, 2026-09-13) ──────────
+  // Источник — тот же factForPlanned, что уже рисует нижнюю панель «План vs
+  // факт»: она у ЭТОЙ плановой позиции уже загружена (comparisonData
+  // подтягивается при раскрытии панели категории, ДО того как рисуется эта
+  // таблица) — второй запрос к бэкенду не заводится (Правило №6), полоска и
+  // список закупок — только вид данных, уже лежащих в памяти.
+  function purchasesForPlanned(catId: number, plannedId: number): FeoActualItem[] {
+    return dedupPurchasesByPurchaseId(factForPlanned(catId, plannedId))
+  }
+  function stageBreakdownFor(catId: number, plannedId: number): StageBreakdownSegment[] {
+    return buildStageBreakdown(factForPlanned(catId, plannedId))
+  }
+  function stageBreakdownTitle(catId: number, plannedId: number): string {
+    return stageBreakdownFor(catId, plannedId).map(s => `${s.label}: ${s.count}`).join(' · ')
   }
 
   function purchaseLabelFor(a: { registry_number?: string | null; purchase_number?: number | null; purchase_id: number }): string {
@@ -415,15 +599,62 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
   // ── Удаление / перенос / переупорядочивание плановых позиций ────────────
   const deletingPlannedItemId = ref<number | null>(null)
   async function deletePlannedItem(item: FeoPlannedItem) {
+    // Жалоба владельца (п.6 волны 2, 2026-09-13): «хотел удалить плановую позицию
+    // „Москва“ — удалились сразу все» — на деле владелец нажал на корзину у
+    // КАТЕГОРИИ (тот же значок, каскад по всему поддереву), а не у позиции: у
+    // удаления ПОЗИЦИИ подтверждения не было вовсе, разница между двумя кнопками
+    // визуально не считывалась. confirm() — тот же приём, что и у соседних
+    // удалений в композаблах без отдельного диалога (см. useStaffDepartments.ts,
+    // usePurchaseReceipts.ts, useContractsMaintenance.ts) — с названием позиции,
+    // чтобы было видно, что удаляется именно она, а не категория целиком.
+    if (!confirm(`Удалить плановую позицию «${item.name}»?`)) return
     deletingPlannedItemId.value = item.id
     try {
-      await apiFetch(`/feo-planned-items/${item.id}`, { method: 'DELETE' })
+      const res = await deletePlannedItemRaw(item.id)
+      if (!res.ok) throw new Error(res.error)
       await Promise.all([refreshComparison(item.feo_category_id), refreshReqData()])
+      registerDeleteUndo(item)
     } catch (e: any) {
       showSnack(e?.payload?.message || e?.detail || e?.message || 'Не удалось удалить плановую позицию', 'error')
     } finally {
       deletingPlannedItemId.value = null
     }
+  }
+
+  // Стек отмены (владелец, п.4 волны 4, 2026-09-13): «удалили позицию — отмена
+  // создаёт её заново с теми же полями». Снимок — ПОЛНЫЙ payload из
+  // buildPlannedItemFullPayload(item) (все поля, включая is_feo_breakdown/
+  // is_internal_plan — POST их не подставит сам, в отличие от PUT). currentId —
+  // id ТЕКУЩЕГО воплощения строки: сразу после удаления воплощения нет (null),
+  // после undo сервер выдаёт НОВЫЙ id (это уже другая строка БД с тем же
+  // содержимым) — redo обязан удалить именно его, не исходный (уже удалённый) id.
+  function registerDeleteUndo(item: FeoPlannedItem) {
+    let currentId: number | null = null
+    const snapshot = buildPlannedItemFullPayload(item)
+    const categoryId = item.feo_category_id
+    pushFeoUndo({
+      label: `удаление позиции «${item.name}»`,
+      undo: async () => {
+        try {
+          const created = await createPlannedItemRaw(snapshot)
+          currentId = created.id
+          await Promise.all([refreshComparison(categoryId), refreshReqData()])
+          return { ok: true }
+        } catch (e: any) {
+          return {
+            ok: false,
+            error: e?.payload?.message || e?.detail || e?.message
+              || 'Не удалось восстановить позицию — возможно, в категории уже есть позиция с таким именем, или сервер отказал',
+          }
+        }
+      },
+      redo: async () => {
+        if (currentId == null) return { ok: false, error: 'Позиция ещё не была восстановлена' }
+        const res = await deletePlannedItemRaw(currentId)
+        if (res.ok) await Promise.all([refreshComparison(categoryId), refreshReqData()])
+        return res
+      },
+    })
   }
 
   function descendantCategoriesFor(node: FeoNode): FeoNode[] {
@@ -436,33 +667,192 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
     const sourceCategoryId = item.feo_category_id
     movingPlannedItemId.value = item.id
     try {
-      await apiFetch(`/feo-planned-items/${item.id}`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          feo_category_id: targetCategoryId,
-          name: item.name,
-          quantity: item.quantity,
-          unit: item.unit,
-          amount: item.amount,
-          unit_price: item.unit_price ?? null,
-          notes: item.notes,
-          is_active: item.is_active,
-          payment_mode: item.payment_mode ?? 'one_time',
-          planned_date: item.planned_date ?? null,
-          monthly_start_date: item.monthly_start_date ?? null,
-          months_count: item.months_count ?? null,
-          monthly_amount: item.monthly_amount ?? null,
-          sort_order: item.sort_order ?? null,
-          item_type: item.item_type ?? null,
-        }),
-      })
+      const result = await moveOnePlannedItem(item, targetCategoryId)
+      if (!result.ok) throw new Error(result.error)
       await Promise.all([refreshComparison(sourceCategoryId), refreshComparison(targetCategoryId)])
       await refreshReqData()
       showSnack('Позиция перенесена')
+      registerMoveUndo(item, sourceCategoryId, targetCategoryId)
     } catch (e: any) {
-      showSnack(e?.payload?.message || e?.detail || 'Ошибка переноса', 'error')
+      showSnack(e?.message || 'Ошибка переноса', 'error')
     } finally {
       movingPlannedItemId.value = null
+    }
+  }
+
+  // Стек отмены: «перенесли — отмена переносит обратно». Снимок — сам item ДО
+  // переноса (feo_category_id ещё равен fromCategoryId в момент вызова) —
+  // остальные поля перенос не меняет, moveOnePlannedItem шлёт их as-is в обе
+  // стороны (тот же приём, что и в обычном пути выше — Правило №6, второй
+  // запрос не заводим).
+  function registerMoveUndo(item: FeoPlannedItem, fromCategoryId: number, toCategoryId: number) {
+    const snapshot: FeoPlannedItem = { ...item, feo_category_id: fromCategoryId }
+    const fromName = feoCategories.value.find(c => c.id === fromCategoryId)?.name || `#${fromCategoryId}`
+    const toName = feoCategories.value.find(c => c.id === toCategoryId)?.name || `#${toCategoryId}`
+    pushFeoUndo({
+      label: `перенос позиции «${item.name}» из «${fromName}» в «${toName}»`,
+      undo: async () => {
+        const res = await moveOnePlannedItem(snapshot, fromCategoryId)
+        if (res.ok) await Promise.all([refreshComparison(fromCategoryId), refreshComparison(toCategoryId), refreshReqData()])
+        return res
+      },
+      redo: async () => {
+        const res = await moveOnePlannedItem(snapshot, toCategoryId)
+        if (res.ok) await Promise.all([refreshComparison(fromCategoryId), refreshComparison(toCategoryId), refreshReqData()])
+        return res
+      },
+    })
+  }
+
+  // ── Массовый выбор и перенос плановых позиций (владелец, п.12 волны 3,
+  // 2026-09-13): «Нужен массовый выбор „Плановых позиций“... массово переносить
+  // в другую папку». Выбор — глобальный Set id (id плановых позиций уникальны
+  // по всей базе), т.к. это не усложняет код, а даёт бонус: выбор переживает
+  // сворачивание панели категории. selectedIdsForNode/allSelectedForNode и т.д.
+  // проецируют этот общий Set на видимые строки конкретного узла — тулбар и
+  // «выбрать всё» в каждой раскрытой панели работают только со своими строками.
+  // Ручная псевдо-строка (isManual, id<0 — см. displayPlannedRowsFor) не является
+  // настоящей записью FeoPlannedItem и не может переноситься массово — исключена.
+  const selectedPlannedItemIds = ref<Set<number>>(new Set())
+  function isPlannedItemSelected(id: number): boolean {
+    return selectedPlannedItemIds.value.has(id)
+  }
+  function togglePlannedItemSelected(id: number) {
+    const s = new Set(selectedPlannedItemIds.value)
+    if (s.has(id)) s.delete(id); else s.add(id)
+    selectedPlannedItemIds.value = s
+  }
+  function selectableRowsFor(node: FeoNode): (FeoPlannedItem & { isManual?: boolean })[] {
+    return displayPlannedRowsFor(node).filter(p => !p.isManual)
+  }
+  function selectedIdsForNode(node: FeoNode): number[] {
+    const ids = new Set(selectableRowsFor(node).map(p => p.id))
+    return [...selectedPlannedItemIds.value].filter(id => ids.has(id))
+  }
+  function someSelectedForNode(node: FeoNode): boolean {
+    return selectedIdsForNode(node).length > 0
+  }
+  function allSelectedForNode(node: FeoNode): boolean {
+    const rows = selectableRowsFor(node)
+    return rows.length > 0 && rows.every(p => selectedPlannedItemIds.value.has(p.id))
+  }
+  function toggleSelectAllForNode(node: FeoNode) {
+    const rows = selectableRowsFor(node)
+    const selectAll = !allSelectedForNode(node)
+    const s = new Set(selectedPlannedItemIds.value)
+    for (const p of rows) {
+      if (selectAll) s.add(p.id); else s.delete(p.id)
+    }
+    selectedPlannedItemIds.value = s
+  }
+  function clearSelectionForNode(node: FeoNode) {
+    const toRemove = selectedIdsForNode(node)
+    if (!toRemove.length) return
+    const s = new Set(selectedPlannedItemIds.value)
+    for (const id of toRemove) s.delete(id)
+    selectedPlannedItemIds.value = s
+  }
+
+  // Диалог переноса — состояние общее (singleton useFeoLevel5), но
+  // bulkMoveActiveNodeId помечает, КАКАЯ панель его открыла: FeoLevel5Panel.vue
+  // рисует сам <v-dialog> только когда node.id совпадает с этим полем — иначе
+  // при одновременно раскрытых нескольких категориях каждая панель завела бы
+  // свой экземпляр диалога на общий v-model и все открылись бы разом.
+  const bulkMoveDialogOpen = ref(false)
+  const bulkMoveActiveNodeId = ref<number | null>(null)
+  const bulkMoveItemIds = ref<number[]>([])
+  const bulkMoveTargetCategoryId = ref<number | null>(null)
+  const bulkMoveNodes = ref<FeoPickerNode[]>([])
+  const bulkMoveLeaves = ref<FeoPickerLeaf[]>([])
+  const bulkMoveLoadingTree = ref(false)
+  const bulkMoveSubmitting = ref(false)
+  const bulkMoveFailures = ref<{ name: string; error: string }[]>([])
+
+  async function openBulkMoveDialog(node: FeoNode) {
+    const ids = selectedIdsForNode(node)
+    if (!ids.length) return
+    bulkMoveActiveNodeId.value = node.id
+    bulkMoveItemIds.value = ids
+    bulkMoveTargetCategoryId.value = null
+    bulkMoveFailures.value = []
+    bulkMoveDialogOpen.value = true
+    const subsId = selectedId.value
+    if (!subsId) return
+    bulkMoveLoadingTree.value = true
+    try {
+      // Полное дерево категорий субсидии, как у обычного пикера ФЭО (FeoTreeSelect —
+      // переиспользуем существующий компонент выбора, второй свой не пишем).
+      const [nodes, leaves] = await Promise.all([
+        apiFetch<FeoPickerNode[]>(`/feo-categories/flat?subsidy_id=${subsId}`),
+        apiFetch<FeoPickerLeaf[]>(`/feo-categories/leaves?subsidy_id=${subsId}`),
+      ])
+      bulkMoveNodes.value = filterFundedNodes(nodes)
+      bulkMoveLeaves.value = leaves
+    } catch {
+      bulkMoveNodes.value = []
+      bulkMoveLeaves.value = []
+    } finally {
+      bulkMoveLoadingTree.value = false
+    }
+  }
+
+  function closeBulkMoveDialog() {
+    bulkMoveDialogOpen.value = false
+  }
+
+  async function submitBulkMove() {
+    const targetId = bulkMoveTargetCategoryId.value
+    const ids = bulkMoveItemIds.value
+    if (!targetId || !ids.length) return
+    bulkMoveSubmitting.value = true
+    bulkMoveFailures.value = []
+    // Сами объекты позиций — из уже загруженного comparisonData (единственный
+    // источник, тот же, что рисует таблицу), а не повторный запрос по id.
+    const itemsById = new Map<number, FeoPlannedItem>()
+    for (const data of Object.values(comparisonData.value)) {
+      for (const p of data.planned) itemsById.set(p.id, p)
+    }
+    let successCount = 0
+    const movedIds: number[] = []
+    const touchedCategoryIds = new Set<number>([targetId])
+    for (const id of ids) {
+      const item = itemsById.get(id)
+      if (!item) {
+        bulkMoveFailures.value.push({ name: `#${id}`, error: 'Позиция не найдена — обновите список' })
+        continue
+      }
+      if (item.feo_category_id === targetId) {
+        successCount++
+        movedIds.push(id)
+        continue
+      }
+      touchedCategoryIds.add(item.feo_category_id)
+      const result = await moveOnePlannedItem(item, targetId)
+      if (result.ok) {
+        successCount++
+        movedIds.push(id)
+      } else {
+        bulkMoveFailures.value.push({ name: item.name, error: result.error })
+      }
+    }
+    if (movedIds.length) {
+      const s = new Set(selectedPlannedItemIds.value)
+      for (const id of movedIds) s.delete(id)
+      selectedPlannedItemIds.value = s
+      bulkMoveItemIds.value = bulkMoveItemIds.value.filter(id => !movedIds.includes(id))
+    }
+    await Promise.all([...touchedCategoryIds].map(cid => refreshComparison(cid)))
+    await refreshReqData()
+    bulkMoveSubmitting.value = false
+    if (!bulkMoveFailures.value.length) {
+      showSnack(`Перенесено ${successCount} из ${ids.length}`)
+      bulkMoveDialogOpen.value = false
+    } else {
+      showSnack(
+        `Перенесено ${successCount} из ${ids.length}. Не удалось: `
+        + bulkMoveFailures.value.map(f => `«${f.name}» — ${f.error}`).join('; '),
+        'error',
+      )
     }
   }
 
@@ -482,6 +872,11 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
         payment_mode: item.payment_mode ?? 'one_time',
         planned_date: item.planned_date ?? null,
         monthly_start_date: item.monthly_start_date ?? null,
+        // Волна 3, п.3 (владелец, период "с даты по дату") — тот же приём, что и в
+        // moveOnePlannedItem выше: PUT здесь ПОЛНАЯ замена, без явной передачи
+        // уже сохранённый конец периода молча обнулился бы при каждой перестановке
+        // сортировки (см. FeoPlannedItem.monthly_end_date).
+        monthly_end_date: item.monthly_end_date ?? null,
         months_count: item.months_count ?? null,
         monthly_amount: item.monthly_amount ?? null,
         sort_order: newOrder,
@@ -524,6 +919,7 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
     anyPlannedExpandedFor, toggleAllPlannedItemsForCategory,
     FACT_STATUSES, isFactActual, WISH_PLAN_LOCKED_STATUSES, isWishLocked,
     actualFactFor, allActualFor, fallbackAbsorbedByCategory, factForPlanned, factForPlannedTotal,
+    purchasesForPlanned, stageBreakdownFor, stageBreakdownTitle,
     purchaseLabelFor, factExcessReasonItems, factExcessReasonRemainder,
     stageHeaderLabelFor, stageChipLabelFor, stageChipTitleFor, stageChipColorFor, factStageHeaderFor,
     planBreakdownText, displayPlannedRowsFor, unplannedActualFor, isOrphanedActual,
@@ -532,5 +928,11 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
     deletingPlannedItemId, deletePlannedItem, descendantCategoriesFor,
     movingPlannedItemId, movePlannedItemToCategory,
     reorderingPlannedItemId, savePlannedItemSortOrder, reorderPlannedItem,
+    // Массовый выбор/перенос (п.12 волны 3)
+    selectedPlannedItemIds, isPlannedItemSelected, togglePlannedItemSelected, selectableRowsFor,
+    selectedIdsForNode, someSelectedForNode, allSelectedForNode, toggleSelectAllForNode, clearSelectionForNode,
+    bulkMoveDialogOpen, bulkMoveActiveNodeId, bulkMoveItemIds, bulkMoveTargetCategoryId,
+    bulkMoveNodes, bulkMoveLeaves, bulkMoveLoadingTree, bulkMoveSubmitting, bulkMoveFailures,
+    openBulkMoveDialog, closeBulkMoveDialog, submitBulkMove,
   }
 }

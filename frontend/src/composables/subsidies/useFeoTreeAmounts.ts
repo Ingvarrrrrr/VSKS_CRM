@@ -48,12 +48,28 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
   const residualBase = ref<'plan' | 'feo'>('plan')
 
   // ── Финансирование ФЭО ───────────────────────────
+  // Ноль в node.budget означает «не задано» наравне с NULL (владелец, сессия
+  // 2026-09-05 — п.8: «когда введено 0, это значит, что не задана сумма»;
+  // зеркалит правку backend/app/services/feo_plan_tree.py, где узел с budget=0
+  // тоже не даёт превышения). ВСЕ места, решающие «задано ли финансирование
+  // узла», обязаны спрашивать feoBudgetIsSet, а не сравнивать budget != null
+  // напрямую — иначе 0 снова читается как «есть значение» (Правило №6, один
+  // источник этой проверки). Функция внутренняя — наружу (ctx) не отдаётся,
+  // потребители уже получают её эффект через feoEffectiveFor/feoDisplayedFor/
+  // isAutoNode ниже.
+  function feoBudgetIsSet(node: FeoNode): boolean {
+    return node.budget != null && Number(node.budget) !== 0
+  }
+
+  // Для АРИФМЕТИКИ (суммирование по дереву) ноль как слагаемое безопасен — эта
+  // функция НЕ используется для решения «показать ли узел как заданный», см.
+  // feoBudgetIsSet выше.
   function feoBudgetFor(node: FeoNode): number {
     return node.budget != null ? Number(node.budget) : 0
   }
 
   function feoEffectiveFor(node: FeoNode): number {
-    if (node.budget != null) return Number(node.budget)
+    if (feoBudgetIsSet(node)) return Number(node.budget)
     if (!node.hasChildren) {
       const fact = purchaseTotals.value[node.id] || 0
       return fact > 0 ? fact : feoPlannedTotalFor(node)
@@ -74,14 +90,39 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
 
   function isAutoNode(node: FeoNode): boolean {
     if (!node.hasChildren) return false
-    return node.budget == null
+    return !feoBudgetIsSet(node)
   }
 
+  // ИСПРАВЛЕНИЕ (ревью координатора, та же сессия 2026-09-05): node.feo_amount —
+  // это ЦЕНА ЗА ЕДИНИЦУ по документу ФЭО (см. комментарий в
+  // backend/app/models/feo_category.py: «Стоимость за ед. по документу ФЭО»),
+  // НЕ сумма. Backend сам так её и использует — feo_import_apply.py считает
+  // `feo_amt = feo_sum / feo_qty` при импорте, а feo_planned_items_reports.py
+  // строит total через `_safe_mul(cat.feo_quantity, cat.feo_amount)` (Правило
+  // №6 — та же формула qty × unit_price, что уже есть в бэкенде, а не новая).
+  // Первая версия этой правки (п.15б) убрала «qty × amount» из вёрстки, но
+  // подписала «Сумма» той же ЦЕНОЙ ЗА ЕДИНИЦУ — то есть перенесла ошибку
+  // владельца («129 шт × 8200 ₽ читается как цена за единицу») в обратную
+  // сторону (голая цена за единицу выдавалась за сумму). Теперь `amount` —
+  // ВСЕГДА итоговые деньги (qty × unit_price), а не голая цена.
   function feoRollup(node: FeoNode): { qty: number | null; qtyAuto: boolean; amount: number | null; amountAuto: boolean } {
-    const ownQty = node.feo_quantity != null ? Number(node.feo_quantity) : null
-    const ownAmt = node.feo_amount != null ? Number(node.feo_amount) : null
-    if (ownQty != null || ownAmt != null) {
-      return { qty: ownQty, qtyAuto: false, amount: ownAmt, amountAuto: false }
+    // 0 в feo_quantity/feo_amount (значения «по документу ФЭО») трактуется как
+    // «не задано» тем же правилом, что и node.budget выше — иначе колонка
+    // «Количество и финансирование по ФЭО» рисует буквальное «0 ₽» вместо того,
+    // чтобы промолчать (задача владельца, п.15б).
+    const ownQtyRaw = node.feo_quantity != null ? Number(node.feo_quantity) : null
+    const ownQty = ownQtyRaw != null && ownQtyRaw !== 0 ? ownQtyRaw : null
+    const ownUnitPriceRaw = node.feo_amount != null ? Number(node.feo_amount) : null
+    const ownUnitPrice = ownUnitPriceRaw != null && ownUnitPriceRaw !== 0 ? ownUnitPriceRaw : null
+    if (ownQty != null || ownUnitPrice != null) {
+      // Сумма считается ТОЛЬКО когда известны ОБА сомножителя. Если задано
+      // только количество или только цена за единицу — сумма посчитана быть
+      // не может; молча выдавать одно из этих чисел под подписью «Сумма»
+      // нельзя (это и была найденная ошибка) — amount остаётся null, и
+      // FeoTreeRow.vue целиком скрывает блок (показывать его владелец просил
+      // только когда сумма реально задана в ФЭО).
+      const ownTotal = (ownQty != null && ownUnitPrice != null) ? ownQty * ownUnitPrice : null
+      return { qty: ownQty, qtyAuto: false, amount: ownTotal, amountAuto: false }
     }
     if (!node.hasChildren) return { qty: null, qtyAuto: false, amount: null, amountAuto: false }
     let sumQty = 0; let hasQty = false
@@ -90,6 +131,10 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
       for (const c of children) {
         const r = feoRollup(c)
         if (r.qty != null) { sumQty += r.qty; hasQty = true }
+        // r.amount у ребёнка — уже деньги (собственный итог или сумма итогов его
+        // детей, см. return выше и этот же комментарий рекурсивно) — поэтому
+        // складывать amount по дереву корректно: сумма денег остаётся деньгами,
+        // в отличие от суммы цен за единицу.
         if (r.amount != null) { sumAmt += r.amount; hasAmt = true }
       }
     }
@@ -120,7 +165,7 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
   }
 
   function feoDisplayedFor(node: FeoNode): number {
-    if (node.budget != null) return Number(node.budget)
+    if (feoBudgetIsSet(node)) return Number(node.budget)
     return node.hasChildren ? feoEffectiveFor(node) : 0
   }
 
@@ -335,16 +380,33 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
     return !!(t && Number(t.plan_manual || 0) > 0)
   }
 
+  // Сумма плана дочерних подкатегорий узла (по plan_manual каждого прямого
+  // ребёнка) — единственное место, где считается эта сумма (Правило №6);
+  // feoOwnDirectionPlanFor/hasOwnPlannedAmountFor и подпись «состав суммы» в
+  // FeoTreeRow.vue читают её отсюда, а не пересчитывают вторым способом.
+  function feoChildrenPlanManualFor(node: FeoNode): number {
+    if (!node.hasChildren) return 0
+    return (node.children || []).reduce(
+      (sum, ch) => sum + Number(planTreeByCat.value[ch.id]?.plan_manual || 0), 0
+    )
+  }
+
+  // Сколько прямых подкатегорий узла реально несут план (plan_manual > 0) —
+  // для подписи «по N подкатегориям» в составе суммы направления.
+  function feoChildrenWithPlanCountFor(node: FeoNode): number {
+    if (!node.hasChildren) return 0
+    return (node.children || []).filter(
+      ch => Number(planTreeByCat.value[ch.id]?.plan_manual || 0) > 0.005
+    ).length
+  }
+
   // Направление со временем может наполниться — раскрывать панель «Плановые позиции»
   // у узла с детьми имеет смысл, только если у него САМОГО есть активные FeoPlannedItem.
   function hasOwnPlannedAmountFor(node: FeoNode): boolean {
     if (!node.hasChildren) return false
     const t = planTreeByCat.value[node.id]
     if (t) {
-      const childrenPlanManual = (node.children || []).reduce(
-        (sum, ch) => sum + Number(planTreeByCat.value[ch.id]?.plan_manual || 0), 0
-      )
-      const ownAmt = Number(t.plan_manual || 0) - childrenPlanManual
+      const ownAmt = Number(t.plan_manual || 0) - feoChildrenPlanManualFor(node)
       if (ownAmt > 0.005) return true
     }
     return (plannedItemsByCat.value[node.id]?.length || 0) > 0
@@ -354,10 +416,7 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
     if (!node.hasChildren) return 0
     const t = planTreeByCat.value[node.id]
     if (!t) return 0
-    const childrenPlanManual = (node.children || []).reduce(
-      (sum, ch) => sum + Number(planTreeByCat.value[ch.id]?.plan_manual || 0), 0
-    )
-    const own = Number(t.plan_manual || 0) - childrenPlanManual
+    const own = Number(t.plan_manual || 0) - feoChildrenPlanManualFor(node)
     return own > 0.005 ? own : 0
   }
 
@@ -432,7 +491,8 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
     feoAmtFor, feoPlannedTotalFor, feoPlannedRequestsFor, feoPlannedConsumedFor, feoInPlanScheduleFor,
     feoPlannedOverFor, feoPlannedDisplayRaw, feoPlannedDisplayFor,
     feoResidualNoteFor, feoPlanConsumedNoteFor, feoForecastWarningFor, isAutoAmtNode,
-    isManualPosLeaf, hasOwnPlannedAmountFor, feoOwnDirectionPlanFor, mergedManualPriority,
+    isManualPosLeaf, hasOwnPlannedAmountFor, feoOwnDirectionPlanFor,
+    feoChildrenPlanManualFor, feoChildrenWithPlanCountFor, mergedManualPriority,
     setMatchedReqFns,
     totalFeoBudget, totalFeoEffective, totalFeoDiff, totalFeoPurchased, totalFeoInPlanSchedule,
     selectedBudget, selectedPlannedTotal, syncFeoFilled, getFeoPlanManual,

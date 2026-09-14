@@ -21,7 +21,24 @@
         <v-btn size="x-small" value="category_type">Категории + виды</v-btn>
       </v-btn-toggle>
     </div>
-    <div class="d-flex align-center ml-auto" style="gap:8px">
+    <div class="d-flex align-center ml-auto feo-toolbar-actions" style="gap:8px">
+      <!-- Отмена/повтор дерева плана (владелец, п.4 волны 4, 2026-09-13): создание/
+           правка/удаление/перенос плановых позиций + перенос категорий, глубина 5.
+           Подпись в title называет КОНКРЕТНОЕ действие — «человек должен понимать,
+           ЧТО именно отменится» (не просто «отменить»). Ctrl+Z/Ctrl+Y — тот же
+           стек, хоткей навешан в SubsidiesView.vue (useFeoUndoStack.ts). -->
+      <v-btn
+        icon="mdi-undo" size="small" variant="text" color="blue-grey"
+        :disabled="!ctx.canUndoFeo.value"
+        :title="ctx.canUndoFeo.value ? `Отменить: ${ctx.feoUndoLabel.value} (Ctrl+Z)` : 'Отменить нечего'"
+        @click="ctx.performFeoUndo()"
+      />
+      <v-btn
+        icon="mdi-redo" size="small" variant="text" color="blue-grey"
+        :disabled="!ctx.canRedoFeo.value"
+        :title="ctx.canRedoFeo.value ? `Повторить: ${ctx.feoRedoLabel.value} (Ctrl+Y)` : 'Повторять нечего'"
+        @click="ctx.performFeoRedo()"
+      />
       <v-btn size="small" variant="outlined" color="success" prepend-icon="mdi-file-excel-outline" @click="openExportVersionsDialog">Выгрузить ФЭО</v-btn>
       <template v-if="ctx.canEditFeo.value">
         <v-btn size="small" variant="outlined" prepend-icon="mdi-download-outline" @click="ctx.downloadFeoTemplate(ctx.selectedSubsidy.value?.id, ctx.selectedSubsidy.value?.name)">Шаблон</v-btn>

@@ -13,6 +13,17 @@
         <v-text-field v-model="dialog.email" label="Email *" variant="outlined" density="compact" class="mb-3"
           hint="Используется для входа в систему" persistent-hint prepend-inner-icon="mdi-email-outline"
           type="email" :rules="[v => !!v || 'Email обязателен', v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) || 'Введите корректный email (например, ivanov@company.ru)']" />
+        <!-- Дефект (2026-09-14): при разрезании StaffView.vue на composable + этот
+        компонент поля пароля потерялись из шаблона, а проверка dialog.password в
+        disabled кнопки "Создать" осталась — сотрудника нельзя было создать вообще,
+        кнопка была перманентно disabled без текста ошибки. Возвращены сюда. -->
+        <v-text-field v-model="dialog.password" label="Пароль *" variant="outlined" density="compact" class="mb-3"
+          type="password" prepend-inner-icon="mdi-lock-outline"
+          hint="Сотрудник сможет сменить пароль после входа" persistent-hint
+          :rules="[v => !!v || 'Пароль обязателен', v => (!!v && v.length >= 6) || 'Минимум 6 символов']" />
+        <v-text-field v-model="dialog.password_confirm" label="Повтор пароля *" variant="outlined" density="compact" class="mb-3"
+          type="password" prepend-inner-icon="mdi-lock-check-outline"
+          :rules="[v => !!v || 'Повторите пароль', v => v === dialog.password || 'Пароли не совпадают']" />
         <v-text-field
           :model-value="formatPhoneRu(dialog.phone)"
           @update:model-value="dialog.phone = $event"

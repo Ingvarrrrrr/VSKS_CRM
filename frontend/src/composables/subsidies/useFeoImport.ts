@@ -8,7 +8,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useToast, type ToastType } from '@/composables/useToast'
 import type { SubsidyDetailContext } from './useSubsidyDetail'
-import type { FeoImportResult, FeoUnmatchedNode, FeoWarning } from './types'
+import type { FeoDuplicateGroup, FeoImportResult, FeoUnmatchedNode, FeoWarning } from './types'
 
 export function feoWarnKindLabel(kind: string): string {
   const labels: Record<string, string> = {
@@ -25,8 +25,8 @@ export function feoWarnKindLabel(kind: string): string {
     plan_vs_items_mismatch: 'План строки не совпадает с суммой плановых позиций',
     plan_skipped_has_items: 'План строки не записан — у категории уже есть позиции',
     subsidy_name_ignored: 'Субсидия из файла проигнорирована — импорт идёт в открытую',
-    duplicate_row_in_file: 'В файле повторяются позиции — учтена последняя строка',
     amount_without_level2: 'Сумма указана, но не заполнен Уровень 2 — строка пропущена',
+    duplicate_group_merged: 'Дублирующиеся позиции объединены по вашему выбору',
     budget_overwritten_by_row: 'Сумма по ФЭО узла задана несколькими строками — учтена последняя',
     item_promoted_needs_review: 'Разберите вручную: позиция ниже используется как подраздел',
     item_name_used_as_level: 'Разберите вручную: позиция лежит под чужим подразделом',
@@ -68,6 +68,11 @@ const feoImport = reactive({
   selectedSheet: '',
   // ключ = unmatched.id, значение = выбранный new_path либо null («оставить как есть»)
   remap: {} as Record<number, string | null>,
+  // Волна 4, п.23 (владелец): решение человека ПО КАЖДОЙ ГРУППЕ дублей Ур.5
+  // отдельно — ключ = FeoDuplicateGroup.key (стабилен между dry-run и боевым
+  // вызовом, см. group_key в app/services/feo_import_duplicates.py), значение
+  // 'keep' (по умолчанию, владелец запретил автообъединение) или 'merge'.
+  duplicateResolutions: {} as Record<string, 'merge' | 'keep'>,
 })
 
 const feoImportTargetSubsidy = ref<number | null>(null)
@@ -142,6 +147,19 @@ watch(() => feoImport.step, (step) => {
     warnKeys.forEach(k => { if (!feoResultPanels.value.includes(k)) feoResultPanels.value.push(k) })
   }
 })
+
+// Волна 4, п.23 (владелец): группы дублей Ур.5 — читаются из ответа
+// предпросмотра (dry-run), решение по каждой группе живёт в
+// feoImport.duplicateResolutions отдельно от самого ответа (сервер на
+// dry-run всегда возвращает resolution='keep' для новой группы — реальный
+// выбор человека применяется только следующим вызовом).
+const feoDuplicateGroups = computed<FeoDuplicateGroup[]>(() => feoImport.dryResult?.duplicate_groups || [])
+function feoResolutionFor(key: string): 'merge' | 'keep' {
+  return feoImport.duplicateResolutions[key] ?? 'keep'
+}
+function feoSetResolution(key: string, value: 'merge' | 'keep') {
+  feoImport.duplicateResolutions[key] = value
+}
 
 // Узлы, которым не хватает цели переезда — требуют решения человека (шаг «Сопоставление»)
 const feoUnmatchedNeedsMapping = computed<FeoUnmatchedNode[]>(() =>
@@ -446,6 +464,13 @@ export function useFeoImport(ctx?: FeoImportCtx) {
         col_item_type:      String(m['item_type']      ?? -1),
       })
       if (remapEntries.length) params.set('remap', JSON.stringify(remapEntries))
+      // Волна 4, п.23: решения человека по группам дублей Ур.5 — только те,
+      // что реально выбраны (объект может быть пуст, если дублей не было или
+      // человек ничего не менял; сервер по умолчанию считает «оставить как
+      // есть» для любой группы, не упомянутой здесь).
+      if (Object.keys(feoImport.duplicateResolutions).length) {
+        params.set('duplicate_resolutions', JSON.stringify(feoImport.duplicateResolutions))
+      }
       const fd = new FormData()
       fd.append('file', feoImport.file)
       const token = localStorage.getItem('auth_token')
@@ -467,6 +492,13 @@ export function useFeoImport(ctx?: FeoImportCtx) {
         feoImport.dryResult = data
         ;(data.unmatched || []).forEach(u => {
           if (u.kind === 'needs_mapping' && !(u.id in feoImport.remap)) feoImport.remap[u.id] = null
+        })
+        // Волна 4, п.23: новая группа дублей получает дефолт «оставить как
+        // есть» — если человек уже выбирал по этому же ключу раньше
+        // («Пересчитать» на шаге 4 не должен сбрасывать сделанный выбор),
+        // существующее значение не трогаем.
+        ;(data.duplicate_groups || []).forEach(g => {
+          if (!(g.key in feoImport.duplicateResolutions)) feoImport.duplicateResolutions[g.key] = 'keep'
         })
         if (!keepStep) feoImport.step = 3
       } else {
@@ -491,14 +523,16 @@ export function useFeoImport(ctx?: FeoImportCtx) {
     feoImport.file = null; feoImport.fileList = []; feoImport.result = null; feoImport.dryResult = null
     feoImport.previewData = null; feoImport.selectedSheet = ''
     feoDragMapping.value = {}; feoIgnoredCols.value = []; feoImport.remap = {}
+    feoImport.duplicateResolutions = {}
     if (wasCreated && ctx?.selectedId.value) { ctx.loadFeo(ctx.selectedId.value); ctx.syncFeoFilled() }
   }
 
   return {
     feoImport, feoImportTargetSubsidy, feoImportTargetSubsidyName, FEO_TARGET_FIELDS,
     feoDragMapping, feoIgnoredCols, feoDragOverTarget, feoResultPanels, feoToggleResultPanel,
+    feoDuplicateGroups, feoResolutionFor, feoSetResolution,
     feoUnmatchedNeedsMapping, feoHasSuggestions, feoRemapPlannedCount, feoAcceptAllSuggestions,
-    feoStep4MainLabel, feoLoadSummary, feoCurrentSheet, feoCurrentHeaders, feoMappingValid, feoUnmappedCount,
+    feoStep4MainLabel, feoLoadSummary, feoPluralRu, feoCurrentSheet, feoCurrentHeaders, feoMappingValid, feoUnmappedCount,
     feoIsMapped, feoIsIgnored, feoIsTargetFilled, feoGetColumnLabel, feoGetSamples,
     feoOnDragStart, feoOnDropToTarget, feoOnDropToUnresolved, feoUnmapTarget, feoIgnoreColumn, feoAutoMap,
     feoWarnKindLabel, feoWarnSubtitle, feoWarnKindIsAlert, feoWarnKinds,

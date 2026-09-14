@@ -13,6 +13,31 @@ export async function copyFromPurchase(purchaseId: number): Promise<ContractItem
   })
 }
 
+// Волна 4 п.22 «Подставить названия из ТЗ» — меняет ТОЛЬКО name у уже
+// существующих договорных позиций, сопоставленных со своей позицией ТЗ через
+// source_item_id; количество/цена/сумма/товар не трогает (в отличие от
+// copyFromPurchase выше, которая полностью перезаписывает состав). Ответ —
+// не голый список (в отличие от copyFromPurchase): бэк обязан явно сказать,
+// сколько позиций не сопоставилось и разошёлся ли состав ТЗ/договора (см.
+// backend/app/routers/contract_items.py::copy_names_from_purchase_items) —
+// молча портить/пропускать нельзя.
+export interface CopyNamesFromPurchaseResult {
+  items: ContractItem[]
+  updated_count: number
+  unmatched_count: number
+  unmatched: { id: number; name: string }[]
+  purchase_items_total: number
+  contract_items_total: number
+  composition_mismatch: boolean
+}
+
+export async function copyNamesFromPurchase(purchaseId: number): Promise<CopyNamesFromPurchaseResult> {
+  return apiFetch<CopyNamesFromPurchaseResult>(
+    `/purchases/${purchaseId}/contract-items/copy-names-from-purchase`,
+    { method: 'POST' },
+  )
+}
+
 export async function replaceAllContractItems(
   purchaseId: number,
   items: ContractItemDraft[],

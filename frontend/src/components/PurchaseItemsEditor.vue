@@ -96,7 +96,12 @@
       </div>
     </div>
 
-    <!-- Phase 27.1 D-01: Contract items toolbar (only when stagesEnabled) -->
+    <!-- Phase 27.1 D-01 / Волна 4 п.22: Contract items toolbar (only when stagesEnabled).
+         Владелец: прежняя кнопка «Скопировать из заявки» была неочевидна — непонятно,
+         что она копирует ВСЁ (включая количество/цену) и СТИРАЕТ уже введённые
+         позиции договора. Разделена на две: полный перенос (с подтверждением, что
+         сотрёт N позиций) и точечная подстановка только названий (без подтверждения —
+         количество/цена/сумма/товар не трогаются, стирать нечего). -->
     <div v-if="stagesEnabled && !props.readonly" class="d-flex ga-2 mb-2 flex-wrap">
       <v-btn
         variant="tonal" prepend-icon="mdi-content-copy" size="small" color="success"
@@ -104,7 +109,15 @@
         :disabled="localContractItems.length > 0 && localItems.length === 0"
         @click="handleCopyFromPurchase"
       >
-        Скопировать из заявки
+        Перенести все позиции из ТЗ
+      </v-btn>
+      <v-btn
+        variant="tonal" prepend-icon="mdi-form-textbox" size="small" color="primary"
+        :loading="contractNamesCopying"
+        :disabled="localContractItems.length === 0"
+        @click="handleCopyNamesFromPurchase"
+      >
+        Подставить названия из ТЗ
       </v-btn>
       <v-btn
         variant="tonal" prepend-icon="mdi-file-import" size="small" color="primary"
@@ -701,7 +714,10 @@ import BulkFeoAssignDialog from '@/components/items/BulkFeoAssignDialog.vue'
 import CreatePlannedBulkDialog from '@/components/items/CreatePlannedBulkDialog.vue'
 import SplitItemDialog from '@/components/items/SplitItemDialog.vue'
 import type { ContractItem } from '@/types/contractItem'
-import { copyFromPurchase as apiCopyFromPurchase } from '@/api/contractItems'
+import {
+  copyFromPurchase as apiCopyFromPurchase,
+  copyNamesFromPurchase as apiCopyNamesFromPurchase,
+} from '@/api/contractItems'
 import { useResizableColumns } from '@/composables/useResizableColumns'
 import { formatNumber, parseNumber, fmtRub } from '@/utils/numberFormat'
 import { useFeoLeaves } from '@/composables/useFeoLeaves'
@@ -1278,17 +1294,67 @@ async function handleCopyFromPurchase() {
     showSnack('Сохраните закупку перед копированием позиций', 'warning')
     return
   }
+  // Владелец, Волна 4 п.22: «Перенести все позиции из ТЗ» полностью СТИРАЕТ уже
+  // введённые позиции договора (см. contract_items.py::copy_from_purchase_items —
+  // DELETE перед вставкой) — подтверждение с конкретным числом, а не generic
+  // "уверены?" (native confirm() — принятый в проекте паттерн, см.
+  // useItemsCatalog.ts). Пусто в договоре — стирать нечего, подтверждение не нужно.
+  if (localContractItems.value.length > 0) {
+    const ok = confirm(
+      `Позиции договора будут ПОЛНОСТЬЮ заменены позициями из ТЗ. Уже введённые ` +
+      `позиции договора (${localContractItems.value.length} шт.) будут стёрты. Продолжить?`
+    )
+    if (!ok) return
+  }
   contractItemCopying.value = true
   try {
     const result = await apiCopyFromPurchase(props.purchaseId)
     localContractItems.value = result
     emit('update:contractItems', result)
-    showSnack(`Скопировано ${result.length} позиций из заявки`)
+    showSnack(`Перенесено ${result.length} позиций из ТЗ`)
   } catch (e: any) {
-    const msg = e?.response?.data?.detail?.message || e?.detail || e?.message || 'Ошибка копирования'
+    const msg = e?.response?.data?.detail?.message || e?.detail || e?.message || 'Ошибка переноса позиций'
     showSnack(msg, 'error')
   } finally {
     contractItemCopying.value = false
+  }
+}
+
+const contractNamesCopying = ref(false)
+
+async function handleCopyNamesFromPurchase() {
+  if (!props.purchaseId) {
+    showSnack('Сохраните закупку перед подстановкой названий', 'warning')
+    return
+  }
+  contractNamesCopying.value = true
+  try {
+    const result = await apiCopyNamesFromPurchase(props.purchaseId)
+    localContractItems.value = result.items
+    emit('update:contractItems', result.items)
+    // Владелец, Волна 4 п.22: если состав ТЗ/договора разошёлся или часть
+    // позиций не сопоставилась — сказать человеку явно, не проглатывать
+    // (см. feedback_no_false_absence_claims / правило проекта об отказах с
+    // понятной причиной). Успех без замечаний — обычный короткий тост.
+    if (result.unmatched_count > 0 || result.composition_mismatch) {
+      const names = result.unmatched.slice(0, 5).map(u => `«${u.name}»`).join(', ')
+      const more = result.unmatched.length > 5 ? ` и ещё ${result.unmatched.length - 5}` : ''
+      const parts = [`Названия подставлены для ${result.updated_count} из ${result.contract_items_total} позиций договора.`]
+      if (result.unmatched_count > 0) {
+        parts.push(`Не удалось сопоставить с ТЗ: ${names}${more} — проверьте эти позиции вручную.`)
+      }
+      if (result.composition_mismatch) {
+        parts.push(`Состав разошёлся: в ТЗ ${result.purchase_items_total} поз., в договоре ${result.contract_items_total} поз.`)
+      }
+      showSnack(parts.join(' '), 'warning')
+    } else {
+      showSnack(`Названия подставлены для ${result.updated_count} позиций`)
+    }
+  } catch (e: any) {
+    const msg = e?.response?.data?.detail?.message || e?.detail || e?.message || 'Ошибка подстановки названий'
+    showSnack(msg, 'error')
+  } finally {
+    contractNamesCopying.value = false
   }
 }
 

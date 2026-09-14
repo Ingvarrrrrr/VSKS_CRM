@@ -301,7 +301,10 @@ watchEffect(() => {
 .feo-tr:hover .feo-td { background: var(--crm-surface-alt); }
 .feo-tr--l1 .feo-td { background: var(--crm-surface-alt); }
 .feo-tr--l1:hover .feo-td { background: var(--crm-surface-hover); }
-.feo-plan-note { font-size: 10px; line-height: 1.2; white-space: nowrap; }
+/* Синхронизировано с .subsidies-page .feo-plan-note в styles/subsidies.css —
+   тот же дефект (наложение на соседнюю колонку при table-layout:fixed), та же
+   правка (перенос строк вместо nowrap), см. докстринг там. */
+.feo-plan-note { font-size: 10px; line-height: 1.2; white-space: normal; overflow-wrap: break-word; }
 .feo-plan-note--link { cursor: pointer; text-decoration: none; }
 .feo-plan-note--link:hover { text-decoration: underline; color: #0f766e; }
 .feo-excess-culprit {

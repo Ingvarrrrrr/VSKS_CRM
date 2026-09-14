@@ -77,6 +77,21 @@ export interface SubsidyDetailContext {
   plannedSumBase: Ref<PlannedBase>
   plannedQtyBase: Ref<PlannedBase>
 
+  // ── Стек отмены/повтора дерева плана (useFeoUndoStack.ts, владелец, п.4
+  // волны 4, 2026-09-13): кнопки «назад»/«вперёд» в FeoTreeToolbar.vue +
+  // Ctrl+Z/Ctrl+Y (хоткей навешан в SubsidiesView.vue). Область — создание/
+  // правка/удаление/перенос плановых позиций и перенос категорий ФЭО.
+  canUndoFeo: ComputedRef<boolean>
+  canRedoFeo: ComputedRef<boolean>
+  feoUndoLabel: ComputedRef<string>
+  feoRedoLabel: ComputedRef<string>
+  performFeoUndo: () => Promise<void>
+  performFeoRedo: () => Promise<void>
+  // useFeoTreeDnd.ts — переиспользуется FeoCategoryDialog.vue при смене
+  // родителя категории через диалог «Редактировать направление» (та же запись
+  // стека, что и у переноса drag&drop, второй регистратор не заводим).
+  registerCategoryMoveUndo: (categoryId: number, name: string, fromParentId: number | null, toParentId: number | null) => void
+
   // ── Волна 5b: KPI drill-down (useKpiDrilldown.ts/SubsidyKpiCards.vue) — сырые
   // ингредиенты дерева ФЭО, которые composable читает/раскрывает по клику на
   // KPI-плитку. Формулы/состав дерева остаются в SubsidiesView.vue (вне этой
@@ -163,6 +178,8 @@ export interface SubsidyDetailContext {
   isManualPosLeaf: (node: FeoNode) => boolean
   hasOwnPlannedAmountFor: (node: FeoNode) => boolean
   feoOwnDirectionPlanFor: (node: FeoNode) => number
+  feoChildrenPlanManualFor: (node: FeoNode) => number
+  feoChildrenWithPlanCountFor: (node: FeoNode) => number
   mergedManualPriority: (node: FeoNode) => boolean
   totalFeoBudget: ComputedRef<number | null>
   totalFeoEffective: ComputedRef<number>

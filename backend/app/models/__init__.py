@@ -81,3 +81,5 @@ from app.models.staff_shift import StaffShift  # noqa: F401
 from app.models.staff_location import StaffLocationPoint  # noqa: F401
 # Разовый запрос местоположения через мессенджер (владелец, 2026-09)
 from app.models.staff_location_request import StaffLocationRequest  # noqa: F401
+# Комментарии (мини-чат) к плановым позициям/категориям ФЭО (владелец, Волна 4, п.16, 2026-09-13)
+from app.models.feo_comment import FeoComment, FeoCommentsVisibility  # noqa: F401

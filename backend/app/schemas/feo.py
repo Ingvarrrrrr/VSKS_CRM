@@ -29,6 +29,16 @@ class FeoPlannedItemCreate(BaseModel):
     payment_mode: str = "one_time"
     planned_date: Optional[_Date] = None
     monthly_start_date: Optional[_Date] = None
+    # Конец периода (владелец, Волна 3, п.3) — ОСНОВНОЙ способ задать
+    # длительность ежемесячного платежа для новых позиций, см. докстринг
+    # FeoPlannedItem.monthly_end_date и compute_monthly_schedule (app/services/
+    # feo_monthly_schedule.py, единственная формула). Задана → months_count
+    # ниже игнорируется на входе и пересчитывается сервером (полные месяцы).
+    monthly_end_date: Optional[_Date] = None
+    # Легаси-ввод длительности (позиции ДО monthly_end_date) — количество
+    # месяцев целиком. Держится для обратной совместимости: старые позиции с
+    # заполненным months_count и БЕЗ monthly_end_date продолжают считаться по
+    # старой формуле (см. _apply_payment_fields).
     months_count: Optional[int] = None
     monthly_amount: Optional[Decimal] = None
     # Владелец (2026-08-12, «закупка сама становится планом»): порядок позиций
@@ -55,6 +65,19 @@ class FeoPlannedItemCreate(BaseModel):
     # бы уже выставленный признак в False).
     is_feo_breakdown: bool = False
     is_internal_plan: bool = False
+    # РАЗДЕЛЬНЫЕ числа по ФЭО и по внутреннему плану (владелец, 2026-09-14) —
+    # см. докстринг полей FeoPlannedItem.feo_quantity/feo_unit_price/feo_amount
+    # (app/models/feo_planned_item.py) и миграцию
+    # c2d4e6f8a0b2_feo_planned_item_feo_split.py. quantity/unit_price/amount
+    # ВЫШЕ остаются «планом» (единственный источник для дерева плана и
+    # контролей превышения, ПРАВИЛО №6) — эти три поля ТОЛЬКО «число по ФЭО»
+    # для отображения рядом с планом «для сверки», не участвуют ни в одной
+    # формуле. NULL = «не задано» (не 0) — второй комплект необязателен,
+    # заполняется, только когда обе галочки происхождения стоят одновременно
+    # и числа расходятся (см. PlannedItemAddDialog.vue/PlannedItemEditDialog.vue).
+    feo_quantity: Optional[Decimal] = None
+    feo_unit_price: Optional[Decimal] = None
+    feo_amount: Optional[Decimal] = None
 
 class FeoPlannedItemOut(FeoPlannedItemCreate):
     id: int

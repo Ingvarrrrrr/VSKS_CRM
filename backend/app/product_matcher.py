@@ -14,10 +14,11 @@ import unicodedata
 from difflib import SequenceMatcher
 from typing import Iterable, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.product import Product
+from app.services.product_catalog_match import find_exact_product as _find_exact_product
 
 
 _STOP = {
@@ -84,11 +85,11 @@ async def find_matching_product(
     if not name:
         return None
 
-    # Exact case-insensitive (single round-trip)
-    q = select(Product).where(func.lower(Product.name) == name.lower())
-    if org_id is not None:
-        q = q.where(Product.org_id == org_id)
-    exact = (await db.execute(q.limit(1))).scalar_one_or_none()
+    # Exact match (Правило №6, единая точка входа — app/services/product_catalog_match.py):
+    # обрезка пробелов по краям + схлопывание внутренних + lower(); при
+    # дублях с одинаковым именем предпочитает запись с заполненным описанием
+    # («сопоставление предпочитает запись с ТЗ», владелец 2026-09-14).
+    exact = await _find_exact_product(db, name, org_id=org_id, include_org_null=False)
     if exact:
         return exact
 

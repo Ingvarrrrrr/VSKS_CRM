@@ -103,7 +103,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
@@ -158,6 +158,7 @@ import { useFeoTreeAmounts } from '@/composables/subsidies/useFeoTreeAmounts'
 import { useFeoTreeExcess } from '@/composables/subsidies/useFeoTreeExcess'
 import { useFeoTreeDnd } from '@/composables/subsidies/useFeoTreeDnd'
 import { useFeoLevel5 } from '@/composables/subsidies/useFeoLevel5'
+import { useFeoUndoStack, handleFeoUndoKeydown } from '@/composables/subsidies/useFeoUndoStack'
 import { useFeoReqItems } from '@/composables/subsidies/useFeoReqItems'
 // Относительный путь (не '@/...'), т.к. tsconfig.app.json не содержит paths-маппинга
 // для алиаса '@' (Vite резолвит его сам через vite.config.ts, но чистый tsc/vue-tsc —
@@ -183,6 +184,21 @@ const loading    = ref(false)
 const loadingFeo = ref(false)
 
 const allSubsidies = ref<SubsidyRow[]>([])
+// Волна 2, п.5 (жалоба владельца: «после внесения каждого изменения меня
+// бросает к самому верху страницы... моргание»). loadFeo() зовётся и при
+// первом открытии субсидии, И после каждой мелкой правки (добавить плановую
+// позицию, приравнять ФЭО к плану, добавить/удалить категорию — см. вызовы
+// ctx.loadFeo(...) из FeoCategoryDialog.vue/FeoCategoryDeleteDialog.vue/
+// AlignBudgetDialog.vue/useFeoPlannedItemAddDialog.ts и др., ниже по файлу
+// сам loadFeo). Раньше loadingFeo=true на КАЖДЫЙ такой вызов — а
+// `v-if="loadingFeo"`/`v-else` в шаблоне (см. блок «FEO categories» выше)
+// на каждый такой toggle полностью РАЗМОНТИРУЕТ FeoTreeTable/FeoTreeToolbar
+// и создаёт заново — это и есть прыжок наверх и моргание, а не только
+// обнуление данных. Держим id субсидии, для которой дерево уже показано:
+// повторная загрузка ТОЙ ЖЕ субсидии (правка) — «тихая» (без спиннера, без
+// размонтирования), смена субсидии — как раньше (спиннер, ожидаемый переход
+// в другой контекст).
+let feoLoadedForSubsidyId: number | null = null
 
 const showAddDialog      = ref(false)
 const showEditDialog     = ref(false)
@@ -296,6 +312,11 @@ const feoTreeDnd = useFeoTreeDnd({
   loadFeo,
   syncFeoFilled: feoTreeAmounts.syncFeoFilled,
 })
+
+// Стек отмены/повтора дерева плана (владелец, п.4 волны 4, 2026-09-13) — стек
+// живёт в рамках ОДНОЙ субсидии, поэтому получает selectedId и сам обнуляется
+// при её смене (см. watch внутри useFeoUndoStack.ts).
+const feoUndo = useFeoUndoStack({ selectedId })
 
 // ── Плановые позиции (usePlannedItems.ts, тот же singleton-паттерн) ────────
 const plannedItems = usePlannedItems({
@@ -446,21 +467,41 @@ async function downloadFeoTemplate(subsidyId?: number, subsidyName?: string) {
 }
 
 async function loadFeo(subsidyId: number) {
-  loadingFeo.value = true
-  feoTreeState.feoCategories.value = []
-  feoTreeState.purchaseTotals.value = {}
-  feoTreeState.plannedPurchaseTotals.value = {}
-  feoTreeState.plannedPurchaseQty.value = {}
-  feoTreeState.plannedPurchaseTotalsLinked.value = {}
-  feoTreeState.plannedPurchaseQtyLinked.value = {}
-  feoTreeState.plannedPurchaseTotalsOver.value = {}
-  feoTreeState.plannedPurchaseQtyOver.value = {}
-  feoTreeState.plannedPurchaseForecast.value = {}
-  feoTreeState.planTreeByCat.value = {}
-  feoTreeState.planExcessApprovals.value = {}
-  feoTreeState.unassignedFeo.value = { amount: 0, purchase_count: 0, purchase_ids: [] }
-  feoTreeState.plannedItemsByCat.value = {}
-  feoTreeState.plannedItemsLoaded.value = false
+  // «Тихая» перезагрузка — та же субсидия, что уже показана (правка внутри
+  // неё), а не переход к другой. Не трогаем loadingFeo (не размонтируем
+  // v-if/v-else блок с деревом) и не обнуляем данные ДО ответа сервера —
+  // ниже все refs заменяются ОДНИМ проходом уже готовыми данными, поэтому
+  // v-for дерева патчит существующие DOM-узлы по :key вместо
+  // удалить-всё-и-создать-заново. Приём как в useKpiDrilldown.ts
+  // (applyKpiExpansion — одно присваивание на ref) — сохраняем позицию
+  // скролла на всякий случай (nextTick ниже), не изобретаем новый механизм.
+  const isRefresh = feoLoadedForSubsidyId === subsidyId
+  const scrollEl = feoTableArea.value
+  const savedScrollTop = isRefresh ? (scrollEl?.scrollTop ?? null) : null
+  // Владелец говорит именно про «бросает к самому верху страницы» — помимо
+  // внутренней прокрутки .feo-table-wrap, это ЕЩЁ и window.scrollY: пока
+  // дерево было спрятано за спиннером (v-if=loadingFeo), высота документа
+  // на миг схлопывалась, и браузер сам подрезал scrollY. Основной фикс выше
+  // (не трогать loadingFeo/не обнулять данные на «тихой» перезагрузке) не
+  // даёт высоте схлопнуться вовсе, restoreWindowScrollY — подстраховка.
+  const savedWindowScrollY = isRefresh ? window.scrollY : null
+  if (!isRefresh) {
+    loadingFeo.value = true
+    feoTreeState.feoCategories.value = []
+    feoTreeState.purchaseTotals.value = {}
+    feoTreeState.plannedPurchaseTotals.value = {}
+    feoTreeState.plannedPurchaseQty.value = {}
+    feoTreeState.plannedPurchaseTotalsLinked.value = {}
+    feoTreeState.plannedPurchaseQtyLinked.value = {}
+    feoTreeState.plannedPurchaseTotalsOver.value = {}
+    feoTreeState.plannedPurchaseQtyOver.value = {}
+    feoTreeState.plannedPurchaseForecast.value = {}
+    feoTreeState.planTreeByCat.value = {}
+    feoTreeState.planExcessApprovals.value = {}
+    feoTreeState.unassignedFeo.value = { amount: 0, purchase_count: 0, purchase_ids: [] }
+    feoTreeState.plannedItemsByCat.value = {}
+    feoTreeState.plannedItemsLoaded.value = false
+  }
   // expandedReqItems больше НЕ сбрасывается здесь безусловно — см. комментарий в
   // useFeoTreePrefs.ts (persist через FEO_DISPLAY_PREFS_KEY).
   try {
@@ -471,6 +512,7 @@ async function loadFeo(subsidyId: number) {
       apiFetch<Record<number, FeoReqItem[]>>(`/feo-categories/planned-purchase-items?subsidy_id=${subsidyId}`),
       apiFetch<Record<string, any>>(`/feo-categories/plan-tree?subsidy_id=${subsidyId}`),
     ])
+    feoLoadedForSubsidyId = subsidyId
     feoTreeState.feoCategories.value = cats
     feoTreeState.purchaseTotals.value = totals
     feoTreeState.planTreeByCat.value = feoTreeState.splitPlanTree(planTree)
@@ -516,7 +558,18 @@ async function loadFeo(subsidyId: number) {
   } catch {
     showSnack('Ошибка загрузки категорий ФЭО', 'error')
   } finally {
-    loadingFeo.value = false
+    if (!isRefresh) loadingFeo.value = false
+    // Подстраховка на случай, если замена данных всё же сдвинула высоту
+    // контента (новая строка, изменившиеся суммы) — возвращаем скролл
+    // контейнера туда, где он был до правки (жалоба владельца: «надо, чтобы
+    // оставалось на том месте, где было»). nextTick — та же техника, что и у
+    // scrollToFirstKpiHighlight/scrollToNewFeoNode (дождаться перерисовки
+    // v-for перед обращением к DOM).
+    if (isRefresh && (savedScrollTop != null || savedWindowScrollY != null)) {
+      await nextTick()
+      if (scrollEl && savedScrollTop != null) scrollEl.scrollTop = savedScrollTop
+      if (savedWindowScrollY != null) window.scrollTo({ top: savedWindowScrollY })
+    }
   }
 }
 
@@ -813,6 +866,8 @@ const subsidyDetailCtx = {
   isManualPosLeaf: feoTreeAmounts.isManualPosLeaf,
   hasOwnPlannedAmountFor: feoTreeAmounts.hasOwnPlannedAmountFor,
   feoOwnDirectionPlanFor: feoTreeAmounts.feoOwnDirectionPlanFor,
+  feoChildrenPlanManualFor: feoTreeAmounts.feoChildrenPlanManualFor,
+  feoChildrenWithPlanCountFor: feoTreeAmounts.feoChildrenWithPlanCountFor,
   mergedManualPriority: feoTreeAmounts.mergedManualPriority,
   totalFeoBudget: feoTreeAmounts.totalFeoBudget,
   totalFeoEffective: feoTreeAmounts.totalFeoEffective,
@@ -919,6 +974,14 @@ const subsidyDetailCtx = {
   startInlineAmt: feoTreeDnd.startInlineAmt,
   saveInlineAmt: feoTreeDnd.saveInlineAmt,
 
+  canUndoFeo: feoUndo.canUndoFeo,
+  canRedoFeo: feoUndo.canRedoFeo,
+  feoUndoLabel: feoUndo.feoUndoLabel,
+  feoRedoLabel: feoUndo.feoRedoLabel,
+  performFeoUndo: feoUndo.performFeoUndo,
+  performFeoRedo: feoUndo.performFeoRedo,
+  registerCategoryMoveUndo: feoTreeDnd.registerCategoryMoveUndo,
+
   openAlignBudgetConfirm,
   openReqItemEdit,
   openReqItemEditFromActual,
@@ -954,5 +1017,14 @@ watch(feoTreePrefs.plannedBase, () => {
 onMounted(() => {
   loadAll()
   loadTemplateVars()
+  // Ctrl+Z/Ctrl+Y дерева плана (владелец, п.4 волны 4, 2026-09-13) — глобальный
+  // слушатель на window: дерево не всегда в фокусе, а хоткей должен работать,
+  // пока открыта карточка субсидии. Сам обработчик (useFeoUndoStack.ts) сам
+  // проверяет, не печатает ли человек в поле/не открыт ли диалог — здесь только
+  // подписка/отписка.
+  window.addEventListener('keydown', handleFeoUndoKeydown)
+})
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleFeoUndoKeydown)
 })
 </script>

@@ -13,7 +13,7 @@ import (purchase_items_import.py), the mapped import
 from datetime import datetime
 from decimal import Decimal
 from fastapi import HTTPException
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.product import Product
@@ -23,50 +23,93 @@ from app.services.product_matcher import score as _fuzzy_score, SCORE_AUTO as _S
 from app.services.item_amounts import line_total
 from app.services.feo_plan import assert_tz_not_over_plan
 from app.services.product_unit import backfill_product_unit
+from app.services.product_catalog_match import (
+    find_exact_product, index_products_by_name, normalize_product_name,
+)
+from app.services.price_actualization import actualize_product_price
 
 # ---------------------------------------------------------------------------
 # Product-catalog upsert helper
 # ---------------------------------------------------------------------------
 
+async def _apply_import_to_existing_product(
+    db, existing: Product, *, unit_price=None, description: str | None = None,
+    category: str | None = None, product_type: str | None = None,
+    unit: str | None = None, import_note: str | None = None,
+    updated_by: str | None = None, user=None,
+) -> None:
+    """Дополняет уже найденный товар данными из импорта (владелец, 2026-09-14:
+    «загрузка ДОПОЛНЯЕТ существующий товар... заполняет пустые поля значениями
+    из файла и НЕ затирает уже заполненные»). Единая точка входа — вызывается
+    и из _upsert_product_to_catalog (fallback, когда fast-path вызывающего
+    кода сам не нашёл товар), и напрямую роутерами импорта позиций закупки в
+    ветке «уже сматчено по имени», чтобы не дублировать это же правило по
+    каждому роутеру (Правило №6).
+
+    Правила конфликтов:
+    - цена: если файл её принёс — актуализируется ЧЕРЕЗ
+      app.services.price_actualization.actualize_product_price (source='import'),
+      которая обновляет product.price И добавляет строку в
+      product_price_history — НЕ молча перезаписывает текущую цену (владелец:
+      «добавляет ещё одну запись по цене к уже имеющимся, чтобы правильнее
+      считалась средняя»);
+    - описание/категория/вид: БД главнее — из файла берём только если в БД
+      пусто (для категории дефолт «Прочее» тоже считается пустым);
+    - import_note: кто/как/когда загрузил — перезаписывается свежим импортом;
+    - ед. измерения (владелец, 2026-09-01): БД главнее — уже заполненную не
+      трогаем; иначе берём из САМОГО импорта, см. app/services/product_unit.py.
+    """
+    from datetime import datetime as _dt
+    if unit_price:
+        try:
+            new_price = Decimal(str(unit_price))
+        except Exception:
+            new_price = None
+        if new_price:
+            await actualize_product_price(
+                db, existing,
+                price=new_price,
+                source="import",
+                source_ref=import_note,
+                user=user,
+            )
+    if description and not (existing.description or "").strip():
+        existing.description = description
+    if category and (not existing.category or existing.category == 'Прочее'):
+        existing.category = category
+    if product_type and not existing.product_type:
+        existing.product_type = product_type
+    if import_note:
+        existing.import_note = import_note
+        existing.updated_at = _dt.utcnow()
+        if updated_by:
+            existing.updated_by = updated_by
+    await backfill_product_unit(db, existing, import_unit=unit)
+
+
 async def _upsert_product_to_catalog(
     db, item_name: str, item_type: str, unit_price, description: str = "",
     category: str | None = None, product_type: str | None = None,
     import_note: str | None = None, updated_by: str | None = None,
-    unit: str | None = None,
+    unit: str | None = None, user=None,
 ) -> int:
     """Find or create a product in the global catalog. Returns product.id.
 
-    Правила конфликтов при импорте из файла:
-    - цена: обновляется из файла (файл — источник актуальной цены);
-    - категория/вид: БД главнее — из файла берём только если в БД пусто
-      (для категории дефолт «Прочее» считается пустым);
-    - import_note: кто/как/когда загрузил — перезаписывается свежим импортом;
-    - ед. измерения (владелец, 2026-09-01): БД главнее — уже заполненную не
-      трогаем; иначе берём из САМОГО импорта (параметр `unit`, БЕЗ дефолтов
-      вида 'шт' — их проставляют вызывающие для PurchaseItem.unit отдельно);
-      если импорт её тоже не принёс — из истории закупок этого товара
-      (единственная встречавшаяся), см. app/services/product_unit.py.
+    Точный (не fuzzy) поиск существующего товара — через find_exact_product
+    (единая нормализация имени, Правило №6, см. app/services/product_catalog_match.py).
+    Найден → дополняем через _apply_import_to_existing_product, НЕ заводим
+    второй товар. Не найден → создаём новый.
     """
-    from datetime import datetime as _dt
-    norm = item_name.strip().lower()
-    existing = (await db.execute(
-        select(Product).where(func.lower(Product.name) == norm)
-    )).scalar_one_or_none()
+    existing = await find_exact_product(db, item_name)
     if existing:
-        new_price = Decimal(str(unit_price)) if unit_price else None
-        if new_price and existing.price != new_price:
-            existing.price = new_price
-        if category and (not existing.category or existing.category == 'Прочее'):
-            existing.category = category
-        if product_type and not existing.product_type:
-            existing.product_type = product_type
-        if import_note:
-            existing.import_note = import_note
-            existing.updated_at = _dt.utcnow()
-            if updated_by:
-                existing.updated_by = updated_by
-        await backfill_product_unit(db, existing, import_unit=unit)
+        await _apply_import_to_existing_product(
+            db, existing,
+            unit_price=unit_price, description=description,
+            category=category, product_type=product_type, unit=unit,
+            import_note=import_note, updated_by=updated_by, user=user,
+        )
         return existing.id
+    from datetime import datetime as _dt
     p = Product(
         name=item_name.strip(),
         description=description or "",
@@ -101,7 +144,7 @@ async def _save_smart_preview_to_purchase(
     if org_id:
         prod_q = prod_q.where((Product.org_id == org_id) | (Product.org_id.is_(None)))
     products = (await db.execute(prod_q)).scalars().all()
-    product_by_name = {(p.name or "").lower().strip(): p for p in products}
+    product_by_name = index_products_by_name(products)
 
     added = matched_catalog = new_in_catalog = 0
     errors_list: list[str] = []
@@ -133,8 +176,10 @@ async def _save_smart_preview_to_purchase(
             product_id = None
             matched = None
         else:
-            # 1) exact match (fast path)
-            matched = product_by_name.get(item_name.lower().strip())
+            # 1) exact match (fast path) — normalize_product_name (Правило №6,
+            # см. product_catalog_match.py): обрезка + схлопывание пробелов + lower()
+            _uname = getattr(current_user, 'full_name', None) or getattr(current_user, 'username', '') or ''
+            matched = product_by_name.get(normalize_product_name(item_name))
             if not matched:
                 # 2) fuzzy fallback
                 best_score = 0.0
@@ -153,14 +198,21 @@ async def _save_smart_preview_to_purchase(
                     unit_price = matched.price
                     total_price = line_total(qty, unit_price)
                 if isinstance(matched, Product):
-                    await backfill_product_unit(db, matched, import_unit=row_data.get("unit_raw"))
+                    await _apply_import_to_existing_product(
+                        db, matched,
+                        unit_price=unit_price,
+                        import_note=f"Смарт-импорт из файла, {_uname}, {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+                        updated_by=_uname,
+                        unit=row_data.get("unit_raw"),
+                        user=current_user,
+                    )
             else:
-                _uname = getattr(current_user, 'full_name', None) or getattr(current_user, 'username', '') or ''
                 product_id = await _upsert_product_to_catalog(
                     db, item_name, row_data["item_type"], unit_price,
                     import_note=f"Смарт-импорт из файла, {_uname}, {datetime.now().strftime('%d.%m.%Y %H:%M')}",
                     updated_by=_uname,
                     unit=row_data.get("unit_raw"),
+                    user=current_user,
                 )
                 new_in_catalog += 1
         if total_price is None and unit_price:

@@ -40,7 +40,7 @@ from app.auth.permissions import require_tab
 from app.models.user import User
 from app.services.product_matcher import score as _fuzzy_score, SCORE_AUTO as _SCORE_AUTO
 from app.services.feo_plan import assert_tz_not_over_plan
-from app.services.product_unit import backfill_product_unit
+from app.services.product_catalog_match import index_products_by_name, normalize_product_name
 from app.services.items_import_parsing import (
     _extract_html_tables,
     _read_excel_rows,
@@ -48,7 +48,7 @@ from app.services.items_import_parsing import (
 )
 # Re-export: app/routers/products.py делает
 # `from app.routers.purchase_items_import import _upsert_product_to_catalog`.
-from app.services.items_import_catalog import _upsert_product_to_catalog
+from app.services.items_import_catalog import _upsert_product_to_catalog, _apply_import_to_existing_product
 
 try:
     from openpyxl import Workbook, load_workbook
@@ -287,11 +287,9 @@ async def import_items_excel(
         prod_q = prod_q.where((Product.org_id == org_id) | (Product.org_id.is_(None)))
     prod_result = await db.execute(prod_q)
     products = prod_result.scalars().all()
-    # Build name lookup (lowercase → product)
-    product_by_name: dict[str, Product] = {}
-    for p in products:
-        if p.name:
-            product_by_name[p.name.lower().strip()] = p
+    # Build name lookup (normalize_product_name → предпочтительный Product,
+    # Правило №6, см. app/services/product_catalog_match.py).
+    product_by_name: dict[str, Product] = index_products_by_name(products)
 
     TYPE_MAP = {
         'товар': 'товар', 'товары': 'товар', 'product': 'товар', 'goods': 'товар',
@@ -338,8 +336,10 @@ async def import_items_excel(
             continue
 
         # Auto-match or create in catalog
-        # 1) exact match (fast path)
-        matched_product = product_by_name.get(item_name.lower().strip())
+        _uname = getattr(current_user, 'full_name', None) or getattr(current_user, 'username', '') or ''
+        # 1) exact match (fast path) — normalize_product_name (Правило №6):
+        # обрезка пробелов по краям + схлопывание внутренних + lower().
+        matched_product = product_by_name.get(normalize_product_name(item_name))
         if not matched_product:
             # 2) fuzzy fallback — find best candidate above SCORE_AUTO threshold
             best_score = 0.0
@@ -358,16 +358,26 @@ async def import_items_excel(
                 unit_price = matched_product.price
                 total_price = line_total(quantity, unit_price)
             if isinstance(matched_product, Product):
-                await backfill_product_unit(db, matched_product, import_unit=unit_raw)
+                # Владелец (2026-09-14): точное совпадение ДОПОЛНЯЕТ товар —
+                # пустые поля из файла, цена новой записью в историю (не молча
+                # перезаписывается), не третья копия правила (Правило №6).
+                await _apply_import_to_existing_product(
+                    db, matched_product,
+                    unit_price=unit_price, description=description or None,
+                    import_note=f"Импорт из файла «{file.filename}» (шаблон), {_uname}, {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+                    updated_by=_uname,
+                    unit=unit_raw,
+                    user=current_user,
+                )
         else:
-            _uname = getattr(current_user, 'full_name', None) or getattr(current_user, 'username', '') or ''
             product_id = await _upsert_product_to_catalog(
                 db, item_name, item_type, unit_price, description or "",
                 import_note=f"Импорт из файла «{file.filename}» (шаблон), {_uname}, {datetime.now().strftime('%d.%m.%Y %H:%M')}",
                 updated_by=_uname,
                 unit=unit_raw,
+                user=current_user,
             )
-            product_by_name[item_name.lower().strip()] = type('_P', (), {'id': product_id, 'name': item_name, 'price': unit_price})()
+            product_by_name[normalize_product_name(item_name)] = type('_P', (), {'id': product_id, 'name': item_name, 'price': unit_price})()
             new_in_catalog += 1
 
         item = PurchaseItem(

@@ -108,15 +108,40 @@ export function useStaffCreateUser(options: {
         },
       })
       users.value = [...users.value, u]
+      // Диалог даёт выбрать субсидию (Правило №6: единственный писатель доступа —
+      // PUT /permissions/users/{id}/subsidy-access, тот же, что и правка сотрудника).
+      // Раньше createDialog.subsidy_id молча терялся: поле в форме было,
+      // а в payload создания пользователя — нет (UserCreate его не принимает),
+      // и никто его после создания не применял.
+      let subsidyGrantError: string | null = null
+      if (createDialog.subsidy_id) {
+        try {
+          await apiFetch(`/permissions/users/${u.id}/subsidy-access`, {
+            method: 'PUT',
+            body: { subsidy_id: createDialog.subsidy_id, role: 'employee' },
+          })
+        } catch (e: any) {
+          subsidyGrantError = e?.message || e?.payload?.message || 'ошибка'
+        }
+      }
       createDialog.show = false
-      showSnack('Сотрудник создан')
+      if (subsidyGrantError) {
+        showSnack(`Сотрудник создан, но доступ к субсидии не назначен: ${subsidyGrantError}`, 'error')
+      } else {
+        showSnack('Сотрудник создан')
+      }
       // Reload dept tree if department was specified
       if (createDialog.department) {
         await loadDeptTree()
       }
       refreshHierarchy()
     } catch (e: any) {
-      showSnack(e?.payload?.detail || e?.payload?.message || e?.message || 'Ошибка', 'error')
+      // apiFetch (app/api.ts) уже нормализует ответ сервера в err.message/err.payload.message —
+      // включая 422 со списком невалидных полей (склеивает в "поле: причина; поле: причина").
+      // e?.payload?.detail никогда не был реальным полем (payload содержит .message и .details,
+      // не .detail) — было мёртвым первым звеном цепочки, из-за которого при отсутствии e?.message
+      // отказ мог схлопнуться в бесполезное "Ошибка", хотя сервер прислал точную причину.
+      showSnack(e?.message || e?.payload?.message || 'Ошибка', 'error')
     } finally {
       createDialog.saving = false
     }

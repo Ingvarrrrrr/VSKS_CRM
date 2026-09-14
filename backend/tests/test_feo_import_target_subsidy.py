@@ -197,12 +197,21 @@ async def test_subsidy_name_matches_open_target_no_warning(db_session):
 
 
 # --- 3. Настоящая причина жалобы: повтор строки в самом файле ---------------
+# Волна 4, п.23 (владелец): раньше вторая строка «Аренда офиса» тихо
+# ПЕРЕЗАПИСЫВАЛА позицию, созданную первой (warning duplicate_row_in_file,
+# «учтена последняя строка») — ровно то самовольное поведение, которое
+# владелец запретил («не делать это самовольно и не брать только последнее
+# значение»). Теперь по умолчанию («оставить как есть», без явного решения
+# duplicate_resolutions) обе строки создают ДВЕ отдельные позиции — тест
+# переписан под новое поведение, см. backend/tests/test_feo_import_duplicate_names.py
+# для полного покрытия механизма (группы/merge/keep/нормализация имени).
 
 @pytest.mark.asyncio
-async def test_duplicate_row_in_file_reported_as_repeat_not_update(db_session):
+async def test_duplicate_rows_in_file_kept_separate_by_default(db_session):
     """Одна и та же позиция (то же имя в той же категории) дважды в файле —
-    вторая строка не должна выглядеть как «обновление существующих данных»:
-    reason обязан читаться как повтор, со ссылкой на первую строку."""
+    БЕЗ явного решения «объединить» обе строки остаются отдельными позициями
+    (новое поведение по умолчанию — «оставить как есть»), предпросмотр
+    сообщает о группе дублей через duplicate_groups."""
     test_sub = await _make_subsidy(db_session)
     try:
         rows = [
@@ -211,23 +220,27 @@ async def test_duplicate_row_in_file_reported_as_repeat_not_update(db_session):
         ]
         result = await _import(db_session, test_sub.id, rows)
         assert result["errors"] == []
-        assert result["created"] == 2, "1 категория + 1 позиция на первой строке"
-        assert result["updated"] == 1, "вторая строка — единственное 'обновление'"
-        assert len(result["updated_details"]) == 1
-        _reason = result["updated_details"][0]["reason"]
-        assert "повтор строки" in _reason, f"неожиданный reason: {_reason!r}"
-        assert "повтор строки 2" in _reason, f"должна называться первая строка (row_num=2): {_reason!r}"
-        assert "обновлена позиция —" not in _reason, "не должно читаться как обновление существующих данных"
+        assert result["created"] == 3, "1 категория + 2 отдельные позиции (по одной на строку)"
+        assert result["updated"] == 0
 
-        _dup_warnings = [w for w in result["warnings"] if w["kind"] == "duplicate_row_in_file"]
-        assert len(_dup_warnings) == 1
-        assert "1" in _dup_warnings[0]["message"]
+        assert not any(w["kind"] == "duplicate_row_in_file" for w in result["warnings"]), (
+            "старый warning убран — механизм заменён duplicate_groups"
+        )
+        groups = result["duplicate_groups"]
+        assert len(groups) == 1
+        assert groups[0]["count"] == 2
+        assert groups[0]["resolution"] == "keep"
+        assert groups[0]["rows"] == [
+            {"row": 2, "qty": None, "unit": None, "amount": 1000.0},
+            {"row": 3, "qty": None, "unit": None, "amount": 2000.0},
+        ]
 
         cats = await _get_categories(db_session, test_sub.id)
         assert len(cats) == 1
         items = await _get_items(db_session, cats[0].id)
-        assert len(items) == 1, "дублей позиции быть не должно — одна и та же строка обновлялась"
-        assert items[0].amount == 2000, "должно победить значение из ПОСЛЕДНЕЙ строки файла"
+        assert len(items) == 2, "владелец: пять «чайников» — это пять закупок, объединять самовольно нельзя"
+        assert sorted(it.amount for it in items) == [1000, 2000]
+        assert sum(it.amount for it in items) == 3000, "сумма трёх (здесь двух) строк не должна пострадать"
     finally:
         await _cleanup_subsidy(db_session, test_sub.id)
 

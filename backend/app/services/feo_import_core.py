@@ -50,6 +50,7 @@ from app.utils.text import normalize_feo_name
 from app.routers import feo_categories as fc
 
 from app.services.feo_import_apply import apply_rows
+from app.services.feo_import_duplicates import finalize_lvl5_items
 from app.services.feo_import_gate import assert_write_gate, collect_affected_subsidies
 from app.services.feo_import_plan import apply_collected_plan
 from app.services.feo_import_remap import remap_and_prune
@@ -178,6 +179,25 @@ class FeoImportState:
     # plan_vs_items_mismatch).
     lvl5_item_rows: dict = field(default_factory=dict)
 
+    # --- Волна 4, п.23 (владелец): полные совпадения имени Ур.5 в одной
+    # категории в пределах файла — не объединяются самовольно, решение по
+    # каждой группе принимает человек (feo_import_duplicates.py, единственный
+    # источник этого механизма — старый warning `duplicate_row_in_file`,
+    # молча бравший последнюю строку, убран целиком, Правило №6). ---
+    # group_key(...) -> [{row, name, qty, unit, amount, ..., leaf}, ...] —
+    # заполняет feo_import_apply.py во время основного цикла, читает и
+    # опустошает в FeoPlannedItem feo_import_duplicates.finalize_lvl5_items.
+    pending_lvl5_items: dict = field(default_factory=dict)
+    # group_key(...) -> "merge" | "keep" — решение человека с фронта (по
+    # умолчанию, если группы нет в словаре, — "keep", т.к. владелец явно
+    # запретил автоматическое объединение).
+    duplicate_resolutions: dict = field(default_factory=dict)
+    # Отчёт для предпросмотра мастера (шаг «Проверка», FeoImportWizard.vue) —
+    # каждая ГРУППА из 2+ строк с одинаковым (после нормализации) именем в
+    # одной категории, с разбивкой по строкам и тем, что получится при
+    # объединении (см. _describe_group в feo_import_duplicates.py).
+    duplicate_groups: list = field(default_factory=list)
+
     # --- переезд/удаление (feo_import_remap.py) ---
     relinked_count: int = 0
     deleted_count: int = 0
@@ -243,6 +263,12 @@ async def _do_feo_import(
     user=None,
     remap: str = "",
     apply_remap: bool = False,
+    # Волна 4, п.23 (владелец): решения человека по группам полных совпадений
+    # имени Ур.5 в одной категории — JSON-объект {group_key: "merge"|"keep"},
+    # group_key — см. app/services/feo_import_duplicates.py::group_key.
+    # Группа, не упомянутая в этом словаре, разбирается как "keep" (владелец
+    # запретил автоматическое объединение).
+    duplicate_resolutions: str = "",
 ) -> dict:
     """Core import logic shared by /import и /import-mapped endpoints.
 
@@ -280,6 +306,21 @@ async def _do_feo_import(
         except Exception as e:
             raise HTTPException(400, f"Неверный формат параметра remap: {e}")
 
+    _dup_resolutions: dict = {}
+    if duplicate_resolutions:
+        try:
+            _raw_dup = json.loads(duplicate_resolutions)
+            if not isinstance(_raw_dup, dict):
+                raise ValueError("ожидался объект {group_key: 'merge'|'keep'}")
+            for _k, _v in _raw_dup.items():
+                if _v not in ("merge", "keep"):
+                    raise ValueError(f"недопустимое решение для группы {_k!r}: {_v!r}")
+                _dup_resolutions[str(_k)] = _v
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(400, f"Неверный формат параметра duplicate_resolutions: {e}")
+
     # Все ~50 колоночных параметров (c_subsidy, c_lvl2, ..., c_item_type) идут в
     # state 1:1 по имени через locals() — сигнатура функции не меняется для
     # вызывающего кода (app/routers/feo_import.py передаёт их по имени как и
@@ -288,6 +329,7 @@ async def _do_feo_import(
     state = FeoImportState(
         db=db, user=user, dry_run=dry_run, apply_remap=apply_remap,
         default_subsidy_id=default_subsidy_id, rows=rows, remap_list=remap_list,
+        duplicate_resolutions=_dup_resolutions,
         **column_kwargs,
     )
 
@@ -318,6 +360,7 @@ async def _do_feo_import(
     snapshot_tree_before(state)
     await assert_write_gate(state)
     await apply_rows(state)
+    await finalize_lvl5_items(state)
     await apply_collected_plan(state)
     await build_unmatched_report(state)
     await remap_and_prune(state)
@@ -350,6 +393,7 @@ async def _do_feo_import(
         "errors": state.errors, "warnings": warnings,
         "created_details": state.created_details,
         "updated_details": state.updated_details, "skipped_details": state.skipped_details,
+        "duplicate_groups": state.duplicate_groups,
         "dry_run": dry_run,
         "unmatched": state.unmatched,
         "new_paths": state.new_paths,

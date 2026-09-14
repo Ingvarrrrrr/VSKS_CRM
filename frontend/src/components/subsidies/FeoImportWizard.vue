@@ -61,6 +61,50 @@
               {{ w.message }}
             </div>
           </v-alert>
+          <!-- Волна 4, п.23 (владелец): полное совпадение имени Ур.5 внутри
+               одной категории — предложить решение, а не решать самовольно.
+               По умолчанию «оставить как есть» (пять «чайников» могли быть
+               заведены намеренно — пять разных закупок); «объединить» —
+               суммы/количества складываются, цена — от деления, деньги не
+               меняются ни на рубль. Решение — по КАЖДОЙ группе отдельно. -->
+          <v-alert v-if="feoDuplicateGroups.length" type="warning" variant="tonal" density="compact"
+            class="mb-3" icon="mdi-content-duplicate">
+            <div class="text-body-2 mb-2">
+              В файле {{ feoDuplicateGroups.length }}
+              {{ feoPluralRu(feoDuplicateGroups.length, ['группа', 'группы', 'групп']) }} строк с одинаковым
+              (без учёта регистра и пробелов) названием в одной категории — решите по каждой.
+            </div>
+            <v-card v-for="g in feoDuplicateGroups" :key="g.key" variant="outlined" class="mb-2 pa-3">
+              <div class="text-subtitle-2">
+                «{{ g.name }}» <span class="text-medium-emphasis">— {{ g.category_path }}</span>
+              </div>
+              <v-list density="compact" class="my-1">
+                <v-list-item v-for="r in g.rows" :key="r.row" :lines="false" class="px-0">
+                  <template #title>
+                    <span class="feo-wrap-text">
+                      Стр. {{ r.row }}<template v-if="r.qty != null">, кол-во {{ r.qty }}{{ r.unit ? ' ' + r.unit : '' }}</template>
+                      — {{ formatCurrency(r.amount ?? 0) }}
+                    </span>
+                  </template>
+                </v-list-item>
+              </v-list>
+              <v-radio-group
+                :model-value="feoResolutionFor(g.key)"
+                @update:model-value="(v: 'merge' | 'keep') => feoSetResolution(g.key, v)"
+                inline hide-details density="compact" class="mt-1">
+                <v-radio label="Оставить как есть" value="keep" />
+                <v-radio value="merge">
+                  <template #label>
+                    <span>
+                      Объединить в одну (сумма {{ formatCurrency(g.merged_preview.amount ?? 0) }},
+                      кол-во {{ g.merged_preview.qty }}{{ g.merged_preview.unit ? ' ' + g.merged_preview.unit : '' }},
+                      цена {{ formatCurrency(g.merged_preview.price ?? 0) }} за ед.)
+                    </span>
+                  </template>
+                </v-radio>
+              </v-radio-group>
+            </v-card>
+          </v-alert>
           <div v-if="feoImport.dryResult" class="d-flex flex-wrap gap-2 mb-3">
             <v-chip color="success" variant="flat"
               :disabled="!feoImport.dryResult.created_details?.length"
@@ -102,9 +146,10 @@
                   <v-list density="compact" max-height="280" class="overflow-y-auto">
                     <v-list-item
                       v-for="(w, wi) in feoImport.dryResult.warnings.filter(x => x.kind === kind)"
-                      :key="wi"
-                      :title="w.name ?? undefined"
-                      :subtitle="feoWarnSubtitle(w)" />
+                      :key="wi" :lines="false">
+                      <template v-if="w.name" #title><span class="feo-wrap-text">{{ w.name }}</span></template>
+                      <template #subtitle><span class="feo-wrap-text">{{ feoWarnSubtitle(w) }}</span></template>
+                    </v-list-item>
                   </v-list>
                 </v-expansion-panel-text>
               </v-expansion-panel>
@@ -114,8 +159,9 @@
           <div v-if="feoImport.dryResult?.errors?.length" class="mt-2">
             <div class="text-subtitle-2 mb-1 text-error">Ошибки ({{ feoImport.dryResult.errors.length }}) — исправьте файл перед импортом:</div>
             <v-list density="compact" class="bg-error-lighten-5 rounded">
-              <v-list-item v-for="(e, i) in feoImport.dryResult.errors" :key="i"
-                :subtitle="`Стр. ${e.row}: ${e.name} — ${e.message}`" />
+              <v-list-item v-for="(e, i) in feoImport.dryResult.errors" :key="i" :lines="false">
+                <template #subtitle><span class="feo-wrap-text">Стр. {{ e.row }}: {{ e.name }} — {{ e.message }}</span></template>
+              </v-list-item>
             </v-list>
           </div>
           <!-- Детали по категориям (сворачиваемые) -->
@@ -127,8 +173,10 @@
               </v-expansion-panel-title>
               <v-expansion-panel-text>
                 <v-list density="compact" max-height="320" class="overflow-y-auto">
-                  <v-list-item v-for="(d, i) in feoImport.dryResult.created_details" :key="i"
-                    :title="d.name" :subtitle="`Стр. ${d.row} — ${d.reason}`" />
+                  <v-list-item v-for="(d, i) in feoImport.dryResult.created_details" :key="i" :lines="false">
+                    <template #title><span class="feo-wrap-text">{{ d.name }}</span></template>
+                    <template #subtitle><span class="feo-wrap-text">Стр. {{ d.row }} — {{ d.reason }}</span></template>
+                  </v-list-item>
                 </v-list>
               </v-expansion-panel-text>
             </v-expansion-panel>
@@ -139,8 +187,10 @@
               </v-expansion-panel-title>
               <v-expansion-panel-text>
                 <v-list density="compact" max-height="320" class="overflow-y-auto">
-                  <v-list-item v-for="(d, i) in feoImport.dryResult.updated_details" :key="i"
-                    :title="d.name" :subtitle="`Стр. ${d.row} — ${d.reason}`" />
+                  <v-list-item v-for="(d, i) in feoImport.dryResult.updated_details" :key="i" :lines="false">
+                    <template #title><span class="feo-wrap-text">{{ d.name }}</span></template>
+                    <template #subtitle><span class="feo-wrap-text">Стр. {{ d.row }} — {{ d.reason }}</span></template>
+                  </v-list-item>
                 </v-list>
               </v-expansion-panel-text>
             </v-expansion-panel>
@@ -151,8 +201,10 @@
               </v-expansion-panel-title>
               <v-expansion-panel-text>
                 <v-list density="compact" max-height="320" class="overflow-y-auto">
-                  <v-list-item v-for="(d, i) in feoImport.dryResult.skipped_details" :key="i"
-                    :title="d.name" :subtitle="`Стр. ${d.row} — ${d.reason}`" />
+                  <v-list-item v-for="(d, i) in feoImport.dryResult.skipped_details" :key="i" :lines="false">
+                    <template #title><span class="feo-wrap-text">{{ d.name }}</span></template>
+                    <template #subtitle><span class="feo-wrap-text">Стр. {{ d.row }} — {{ d.reason }}</span></template>
+                  </v-list-item>
                 </v-list>
               </v-expansion-panel-text>
             </v-expansion-panel>
@@ -163,8 +215,10 @@
               </v-expansion-panel-title>
               <v-expansion-panel-text>
                 <v-list density="compact" max-height="240" class="overflow-y-auto">
-                  <v-list-item v-for="(d, i) in feoImport.dryResult.deleted_details" :key="i"
-                    :title="d.path" :subtitle="d.reason" />
+                  <v-list-item v-for="(d, i) in feoImport.dryResult.deleted_details" :key="i" :lines="false">
+                    <template #title><span class="feo-wrap-text">{{ d.path }}</span></template>
+                    <template #subtitle><span class="feo-wrap-text">{{ d.reason }}</span></template>
+                  </v-list-item>
                 </v-list>
               </v-expansion-panel-text>
             </v-expansion-panel>
@@ -175,8 +229,10 @@
               Останется вне новой разбивки ({{ feoUnmatchedNeedsMapping.length }}):
             </div>
             <v-list density="compact" class="bg-error-lighten-5 rounded mb-3">
-              <v-list-item v-for="n in feoUnmatchedNeedsMapping" :key="n.id"
-                :title="n.path" :subtitle="feoLoadSummary(n.load)" />
+              <v-list-item v-for="n in feoUnmatchedNeedsMapping" :key="n.id" :lines="false">
+                <template #title><span class="feo-wrap-text">{{ n.path }}</span></template>
+                <template #subtitle><span class="feo-wrap-text">{{ feoLoadSummary(n.load) }}</span></template>
+              </v-list-item>
             </v-list>
           </template>
           <v-alert v-if="feoImport.dryResult?.remap_aborted_reason" type="warning" variant="tonal"
@@ -283,8 +339,10 @@
               </v-expansion-panel-title>
               <v-expansion-panel-text>
                 <v-list density="compact" max-height="320" class="overflow-y-auto">
-                  <v-list-item v-for="(d, i) in feoImport.result.created_details" :key="i"
-                    :title="d.name" :subtitle="`Стр. ${d.row} — ${d.reason}`" />
+                  <v-list-item v-for="(d, i) in feoImport.result.created_details" :key="i" :lines="false">
+                    <template #title><span class="feo-wrap-text">{{ d.name }}</span></template>
+                    <template #subtitle><span class="feo-wrap-text">Стр. {{ d.row }} — {{ d.reason }}</span></template>
+                  </v-list-item>
                 </v-list>
               </v-expansion-panel-text>
             </v-expansion-panel>
@@ -295,8 +353,10 @@
               </v-expansion-panel-title>
               <v-expansion-panel-text>
                 <v-list density="compact" max-height="320" class="overflow-y-auto">
-                  <v-list-item v-for="(d, i) in feoImport.result.updated_details" :key="i"
-                    :title="d.name" :subtitle="`Стр. ${d.row} — ${d.reason}`" />
+                  <v-list-item v-for="(d, i) in feoImport.result.updated_details" :key="i" :lines="false">
+                    <template #title><span class="feo-wrap-text">{{ d.name }}</span></template>
+                    <template #subtitle><span class="feo-wrap-text">Стр. {{ d.row }} — {{ d.reason }}</span></template>
+                  </v-list-item>
                 </v-list>
               </v-expansion-panel-text>
             </v-expansion-panel>
@@ -307,8 +367,10 @@
               </v-expansion-panel-title>
               <v-expansion-panel-text>
                 <v-list density="compact" max-height="320" class="overflow-y-auto">
-                  <v-list-item v-for="(d, i) in feoImport.result.skipped_details" :key="i"
-                    :title="d.name" :subtitle="`Стр. ${d.row} — ${d.reason}`" />
+                  <v-list-item v-for="(d, i) in feoImport.result.skipped_details" :key="i" :lines="false">
+                    <template #title><span class="feo-wrap-text">{{ d.name }}</span></template>
+                    <template #subtitle><span class="feo-wrap-text">Стр. {{ d.row }} — {{ d.reason }}</span></template>
+                  </v-list-item>
                 </v-list>
               </v-expansion-panel-text>
             </v-expansion-panel>
@@ -331,8 +393,10 @@
               </v-expansion-panel-title>
               <v-expansion-panel-text>
                 <v-list density="compact" max-height="240" class="overflow-y-auto">
-                  <v-list-item v-for="(d, i) in feoImport.result.deleted_details" :key="i"
-                    :title="d.path" :subtitle="d.reason" />
+                  <v-list-item v-for="(d, i) in feoImport.result.deleted_details" :key="i" :lines="false">
+                    <template #title><span class="feo-wrap-text">{{ d.path }}</span></template>
+                    <template #subtitle><span class="feo-wrap-text">{{ d.reason }}</span></template>
+                  </v-list-item>
                 </v-list>
               </v-expansion-panel-text>
             </v-expansion-panel>
@@ -343,8 +407,9 @@
               </v-expansion-panel-title>
               <v-expansion-panel-text>
                 <v-list density="compact" max-height="280" class="overflow-y-auto">
-                  <v-list-item v-for="(r, i) in feoImport.result.remap_applied" :key="i"
-                    :title="`${r.old_path} → ${r.new_path}`" />
+                  <v-list-item v-for="(r, i) in feoImport.result.remap_applied" :key="i" :lines="false">
+                    <template #title><span class="feo-wrap-text">{{ r.old_path }} → {{ r.new_path }}</span></template>
+                  </v-list-item>
                 </v-list>
               </v-expansion-panel-text>
             </v-expansion-panel>
@@ -367,9 +432,10 @@
                   <v-list density="compact" max-height="280" class="overflow-y-auto">
                     <v-list-item
                       v-for="(w, wi) in feoImport.result.warnings!.filter(x => x.kind === kind)"
-                      :key="wi"
-                      :title="w.name ?? undefined"
-                      :subtitle="feoWarnSubtitle(w)" />
+                      :key="wi" :lines="false">
+                      <template v-if="w.name" #title><span class="feo-wrap-text">{{ w.name }}</span></template>
+                      <template #subtitle><span class="feo-wrap-text">{{ feoWarnSubtitle(w) }}</span></template>
+                    </v-list-item>
                   </v-list>
                 </v-expansion-panel-text>
               </v-expansion-panel>
@@ -378,8 +444,9 @@
           <div v-if="feoImport.result?.errors?.length" class="mt-2">
             <div class="text-subtitle-2 mb-1 text-error">Ошибки ({{ feoImport.result.errors.length }}):</div>
             <v-list density="compact" class="bg-error-lighten-5 rounded">
-              <v-list-item v-for="(e, i) in feoImport.result.errors" :key="i"
-                :subtitle="`Стр. ${e.row}: ${e.name} — ${e.message}`" />
+              <v-list-item v-for="(e, i) in feoImport.result.errors" :key="i" :lines="false">
+                <template #subtitle><span class="feo-wrap-text">Стр. {{ e.row }}: {{ e.name }} — {{ e.message }}</span></template>
+              </v-list-item>
             </v-list>
           </div>
         </template>
@@ -437,13 +504,15 @@
 import { useDisplay } from 'vuetify'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { useFeoImport } from '@/composables/subsidies/useFeoImport'
+import { formatCurrency } from '@/composables/subsidies/format'
 import FeoImportMappingStep from './FeoImportMappingStep.vue'
 
 const { mobile } = useDisplay()
 const {
   feoImport, feoImportTargetSubsidyName, feoResultPanels, feoToggleResultPanel,
+  feoDuplicateGroups, feoResolutionFor, feoSetResolution,
   feoUnmatchedNeedsMapping, feoHasSuggestions, feoAcceptAllSuggestions,
-  feoStep4MainLabel, feoLoadSummary, feoMappingValid,
+  feoStep4MainLabel, feoLoadSummary, feoPluralRu, feoMappingValid,
   feoWarnKindLabel, feoWarnSubtitle, feoWarnKindIsAlert, feoWarnKinds,
   doFeoImport, doFeoMappedImport, closeFeoImport,
 } = useFeoImport(useSubsidyDetailCtx())
@@ -459,5 +528,27 @@ const {
   display: flex; align-items: center;
   font-size: 16px !important; font-weight: 600 !important;
   padding: 16px 20px !important;
+}
+/* Владелец (волна 3, п.1): длинные предупреждения/пояснения в мастере импорта
+   («Проверка» шаг 3 и «Результат» шаг 5) обрезались Vuetify-шним
+   white-space:nowrap + text-overflow:ellipsis на .v-list-item-title/-subtitle —
+   владелец видел «...» вместо полного текста. Раньше эти v-list-item задавали
+   текст через props :title/:subtitle (обычный текст), а не через собственную
+   разметку — CSS-правило на .v-list-item-title в scoped-стиле ЭТОГО файла не
+   достало бы до div'а, который рендерит сам Vuetify внутри v-list-item (тот же
+   инцидент со scoped CSS родителя, не достающим до потомков дочернего
+   компонента). Поэтому текст теперь идёт через #title/#subtitle слоты
+   собственным <span> — тот же приём, что уже работает в проекте (см.
+   InlineProductMatch.vue #title, ItemsTableFlat.vue:227, ContractorPicker.vue:27):
+   стиль объявлен прямо на span, который целиком наш, а не Vuetify-шний div —
+   .feo-wrap-text применяется здесь же, как обычный scoped-класс. */
+.feo-wrap-text {
+  display: block;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.35;
+}
+.dialog-card :deep(.v-list-item) {
+  min-height: unset;
 }
 </style>

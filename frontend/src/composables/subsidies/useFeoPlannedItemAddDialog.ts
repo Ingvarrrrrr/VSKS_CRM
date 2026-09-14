@@ -6,13 +6,39 @@
 // собирать один composable на 700+ строк — Правило №5, модульность кода).
 // Module-level singleton state.
 import { computed, ref, watch } from 'vue'
+import { debounce } from 'lodash-es'
 import { apiFetch } from '@/api'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { numOrNull } from '@/utils/numberFormat'
 import type { MatchCandidate } from '@/composables/useItemMatching'
 import { leftGroupInfo } from './feoCategoryUtils'
+import { pushFeoUndo } from './useFeoUndoStack'
+import { buildPlannedItemFullPayload, deletePlannedItemRaw } from './useFeoLevel5'
+import { fetchMonthlySchedulePreview } from './feoMonthlySchedulePreview'
 import type { SubsidyDetailContext } from './useSubsidyDetail'
 import type { FeoActualItem, FeoNode, FeoPlannedItem } from './types'
+
+// Сырое создание плановой позиции по готовому payload — без диалога/формы/
+// тостов. Используется обычным путём (savePlannedItem/confirmCreateDuplicate
+// ниже, после сборки payload из формы) И стеком отмены (useFeoUndoStack.ts):
+// «повторить создание» при redo зовёт ЭТУ ЖЕ функцию (Правило №6 — второй POST
+// не заводим). Единственное место, которое шлёт POST /feo-planned-items/.
+export async function createPlannedItemRaw(payload: Record<string, unknown>): Promise<FeoPlannedItem> {
+  return apiFetch<FeoPlannedItem>('/feo-planned-items/', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+// Диалог «Такая позиция уже есть в плане» (кнопки «Привязать»/«Создать
+// отдельную») — правка Волны 2, п.2 владельца: «предлагает Привязать или
+// Создать отдельную закупку, но кнопок при этом нет». Полноценный диалог УЖЕ
+// существует и подключён к FeoPlannedItemsSelect.vue (панель подбора плановой
+// позиции при создании закупки) — переиспользуем его КОМПОНЕНТ
+// (FeoPlannedDuplicateDialog.vue, подключается в PlannedItemAddDialog.vue) и
+// его же разбор ответа сервера (parseDuplicateHttpError), вместо второго
+// диалога/копии парсинга 409 (Правило №6 проекта). Раньше здесь конфликт
+// только показывался тостом без кнопок (see savePlannedItem catch ниже).
+import { parseDuplicateHttpError, type DuplicateInfo } from '@/composables/items/feoPlanned/useFeoPlannedCreate'
 
 const showAddPlannedDialog = ref(false)
 const addPlannedCategoryId = ref<number | null>(null)
@@ -47,6 +73,13 @@ const plannedItemForm = ref({
   payment_mode: 'one_time' as 'one_time' | 'monthly',
   planned_date: '' as string,
   monthly_start_date: '' as string,
+  // Конец периода (владелец, Волна 3, п.3, 2026-09-13) — ОСНОВНОЙ способ
+  // задать длительность ежемесячного платежа: «требует целое число месяцев, а
+  // я ввёл 6,66... надо ввести период с даты по дату». Заменяет собой ручной
+  // ввод months_count (см. buildPlannedItemPayload/addPlannedMonthlySchedule
+  // ниже) — сервер сам считает полные месяцы + остаток дней
+  // (compute_monthly_schedule, backend/app/services/feo_monthly_schedule.py).
+  monthly_end_date: '' as string,
   months_count: null as number | null,
   monthly_amount: null as number | null,
   // Происхождение (владелец, 2026-09-01) — ДВЕ НЕЗАВИСИМЫЕ галочки, см. чекбоксы
@@ -56,7 +89,83 @@ const plannedItemForm = ref({
   // человек явно не отметит обратное.
   is_feo_breakdown: false,
   is_internal_plan: true,
+  // Раздельные числа по ФЭО (владелец, 2026-09-14) — второй, независимый
+  // комплект количество/цена/сумма, показывается в диалоге ТОЛЬКО когда ОБЕ
+  // галочки происхождения стоят одновременно (см. addShowBothOriginFields ниже
+  // и PlannedItemAddDialog.vue). quantity/unitPrice/amount выше остаются
+  // «планом» и заполняются всегда — вторая пара нужна, только если числа
+  // по ФЭО и по внутреннему плану расходятся. NULL — «не задано», не 0.
+  feoQuantity: null as number | null,
+  feoUnitPrice: null as number | null,
+  feoAmount: null as number | null,
 })
+
+// Диалог показывает раздельные поля «По ФЭО»/«Внутренний план» ТОЛЬКО когда
+// ОБЕ галочки происхождения стоят одновременно (задача владельца, п.3: «Когда
+// отмечена только одна галочка — один комплект полей, как сейчас»). Иначе —
+// единственный набор полей quantity/unitPrice/amount, как и было до этой
+// правки.
+const addShowBothOriginFields = computed(() =>
+  plannedItemForm.value.is_feo_breakdown && plannedItemForm.value.is_internal_plan,
+)
+
+// Тот же принцип «цена задана и не равна 0 → сумма считается сама», что и у
+// основного комплекта (plannedItemAmountIsComputed/recalcPlannedAmountFromUnitPrice
+// ниже) — применён ко второму, ФЭО-комплекту, чтобы поведение обеих групп
+// полей было единообразным (задача владельца, п.4 — «везде одинаково»).
+const plannedItemFeoAmountIsComputed = computed(() => {
+  const p = plannedItemForm.value.feoUnitPrice
+  return p != null && Number(p) !== 0
+})
+
+function recalcPlannedFeoAmountFromUnitPrice() {
+  if (!plannedItemFeoAmountIsComputed.value) return
+  const price = Number(plannedItemForm.value.feoUnitPrice)
+  const qtyRaw = plannedItemForm.value.feoQuantity
+  const qty = qtyRaw != null && Number(qtyRaw) > 0 ? Number(qtyRaw) : 1
+  plannedItemForm.value.feoAmount = Math.round(qty * price * 100) / 100
+}
+
+watch(
+  [() => plannedItemForm.value.feoQuantity, () => plannedItemForm.value.feoUnitPrice],
+  () => recalcPlannedFeoAmountFromUnitPrice(),
+)
+
+// Расшифровка периода ежемесячного платежа (владелец, Волна 3, п.2-3): «6 мес.
+// 20 дн.» + итоговая сумма, посчитанные СЕРВЕРОМ (GET .../monthly-schedule-preview)
+// по ЕДИНСТВЕННОЙ формуле compute_monthly_schedule (Правило №6) — не дублируем
+// расчёт остатка дней на фронте, иначе предпросмотр рано или поздно разойдётся
+// с суммой, которую реально сохранит _apply_payment_fields.
+const addPlannedMonthlySchedule = ref<{ label: string; total: number | null } | null>(null)
+
+async function refreshAddPlannedMonthlySchedule() {
+  const f = plannedItemForm.value
+  if (f.payment_mode !== 'monthly') {
+    addPlannedMonthlySchedule.value = null
+    return
+  }
+  addPlannedMonthlySchedule.value = await fetchMonthlySchedulePreview(
+    f.monthly_start_date, f.monthly_end_date, f.monthly_amount,
+  )
+}
+
+// Debounce (владелец, 2026-09-14): дата — это ДВЕ ISO-цифры года за раз, watch
+// иначе стреляет на каждое нажатие клавиши, включая заведомо недописанный год
+// (см. докстринг fetchMonthlySchedulePreview.ts). 400мс — тот же порядок, что
+// и у остального debounce-поиска в проекте (InlineProductMatch.vue: debounce
+// по умолчанию 300мс), lodash-es уже используется для этого в ProductSelector.vue —
+// не изобретаем свой setTimeout-таймер.
+const debouncedRefreshAddPlannedMonthlySchedule = debounce(refreshAddPlannedMonthlySchedule, 400)
+
+watch(
+  [
+    () => plannedItemForm.value.payment_mode,
+    () => plannedItemForm.value.monthly_start_date,
+    () => plannedItemForm.value.monthly_end_date,
+    () => plannedItemForm.value.monthly_amount,
+  ],
+  () => { void debouncedRefreshAddPlannedMonthlySchedule() },
+)
 // Владелец (2026-08-31): «Добавить плановую позицию» — подсказки/картинка из
 // каталога товаров через InlineProductMatch, но FeoPlannedItem (backend модель)
 // НЕ имеет product_id — это чисто UI-состояние диалога, ничего из этого не
@@ -80,6 +189,13 @@ const addPlannedPriceMeta = ref<{
   price_source: string | null
   price_source_ref: string | null
 } | null>(null)
+
+// Диалог дубликата (см. импорт parseDuplicateHttpError выше) — открывается
+// ПОВЕРХ showAddPlannedDialog (тот не закрывается, как и createDialog в
+// useFeoPlannedCreate.ts при том же 409), закрывается вместе с ним при любом
+// исходе (attach/create-duplicate/отмена).
+const duplicateDialog = ref(false)
+const duplicateInfo = ref<DuplicateInfo | null>(null)
 
 // Русские подписи источника цены — минимальная копия PRICE_SOURCE_LABELS
 // (usePriceFreshness.ts), намеренно НЕ импортированная (см. коммент выше у
@@ -134,6 +250,21 @@ function recalcPlannedAmountFromUnitPrice() {
   plannedItemForm.value.amount = Math.round(qty * price * 100) / 100
 }
 
+// Ежемесячная позиция без периода (владелец, Волна 3, п.3) больше не имеет
+// смысла — раньше вместо периода можно было ввести только months_count,
+// теперь это единственный способ задать срок для НОВЫХ позиций. Кнопка
+// «Добавить» блокируется, пока обе даты не заполнены (и платёж за месяц —
+// без него сумму всё равно не из чего посчитать).
+const addPlannedItemDisabled = computed(() => {
+  if (!plannedItemForm.value.name.trim()) return true
+  if (plannedItemForm.value.payment_mode === 'monthly') {
+    return !plannedItemForm.value.monthly_start_date
+      || !plannedItemForm.value.monthly_end_date
+      || plannedItemForm.value.monthly_amount == null
+  }
+  return false
+})
+
 watch(
   [() => plannedItemForm.value.quantity, () => plannedItemForm.value.unitPrice],
   () => recalcPlannedAmountFromUnitPrice(),
@@ -152,6 +283,9 @@ watch(showAddPlannedDialog, (val) => {
     addPlannedProductPhoto.value = null
     addPlannedMatchConfirmed.value = undefined
     addPlannedPriceMeta.value = null
+    duplicateDialog.value = false
+    duplicateInfo.value = null
+    addPlannedMonthlySchedule.value = null
   }
 })
 
@@ -173,8 +307,9 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
       // количество по умолчанию 1, а не пусто.
       name: '', quantity: 1, unit: '', unitPrice: null, amount: null,
       payment_mode: 'one_time', planned_date: '', monthly_start_date: '',
-      months_count: null, monthly_amount: null,
+      monthly_end_date: '', months_count: null, monthly_amount: null,
       is_feo_breakdown: false, is_internal_plan: true,
+      feoQuantity: null, feoUnitPrice: null, feoAmount: null,
     }
     addPlannedProductId.value = null
     addPlannedProductPhoto.value = null
@@ -216,11 +351,12 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
       unitPrice,
       amount,
       payment_mode: 'one_time',
-      planned_date: '', monthly_start_date: '', months_count: null, monthly_amount: null,
+      planned_date: '', monthly_start_date: '', monthly_end_date: '', months_count: null, monthly_amount: null,
       // Ручной план ФЭО (planned_quantity/planned_amount на самой категории) по
       // определению без построчной ФЭО-разбивки — та же строка панели уже
       // подписана «подробного деления в ФЭО не было» (см. шаблон выше).
       is_feo_breakdown: false, is_internal_plan: true,
+      feoQuantity: null, feoUnitPrice: null, feoAmount: null,
     }
     addPlannedProductId.value = null
     addPlannedProductPhoto.value = null
@@ -249,10 +385,11 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
       unitPrice: info.unitPrice ?? null,
       amount: info.total ?? Number(actual.fact_amount ?? actual.total_price ?? 0),
       payment_mode: 'one_time',
-      planned_date: '', monthly_start_date: '', months_count: null, monthly_amount: null,
+      planned_date: '', monthly_start_date: '', monthly_end_date: '', months_count: null, monthly_amount: null,
       // Заводится по факту закупки/заявки, без плана — та же семантика, что и
       // auto_created в plan_autoassign.py (см. is_internal_plan там).
       is_feo_breakdown: false, is_internal_plan: true,
+      feoQuantity: null, feoUnitPrice: null, feoAmount: null,
     }
     addPlannedProductId.value = null
     addPlannedProductPhoto.value = null
@@ -365,90 +502,167 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
     if (ctx.selectedId.value) await ctx.loadFeo(ctx.selectedId.value)
   }
 
+  // Тело POST /feo-planned-items/ — вынесено отдельно, чтобы «Создать отдельную»
+  // (confirmCreateDuplicate ниже) слало ТОЧНО ТОТ ЖЕ payload второй раз с
+  // allow_duplicate_name: true, а не пересобирала его копией (Правило №6).
+  function buildPlannedItemPayload(allowDuplicateName: boolean) {
+    const f = plannedItemForm.value
+    const isMonthly = f.payment_mode === 'monthly'
+    // Владелец (2026-09-01): «добавляется плановая позиция по одной штуке» — если
+    // количество осталось пустым (в т.ч. стёрто вручную), по умолчанию 1.
+    // Волна 3, п.2 («двоится Количество»): для monthly-режима поле «Кол-во» не
+    // показывается в форме вообще (см. PlannedItemAddDialog.vue) — количество
+    // единиц товара/услуги не имеет отношения к сроку платежей, backend всё
+    // равно фиксирует 1 сам (_apply_payment_fields), но не полагаемся только на
+    // это: сюда явно шлём 1, а не то, что осталось в form.quantity от предыдущего
+    // режима переключения одной и той же формы.
+    const qtyOrDefault = isMonthly
+      ? 1
+      : ((f.quantity == null || (f.quantity as unknown as string) === '') ? 1 : f.quantity)
+    return {
+      feo_category_id: addPlannedCategoryId.value,
+      name: f.name.trim(),
+      quantity: qtyOrDefault,
+      unit: f.unit || null,
+      amount: isMonthly ? null : numOrNull(f.amount),
+      // Цена за единицу (правка 2026-09-03) — раньше здесь не отправлялась
+      // вовсе, введённая в поле «Плановая стоимость за единицу» цена молча
+      // терялась (амаунт уже посчитан watch'ем из неё, а сама цена — нет).
+      // См. FeoPlannedItem.unit_price / assert_tz_not_over_plan.
+      // numOrNull (не `f.unitPrice ?? null` — правка 2026-09-04, жалоба
+      // владельца «да какого хуя тут ожидается число, может быть пусто, может быть 0»):
+      // `??` пустую строку от v-model.number НЕ ловит, только null/undefined —
+      // очищенное поле уходило на сервер как '' и валило 422. См. numOrNull
+      // в @/utils/numberFormat.ts.
+      unit_price: isMonthly ? null : numOrNull(f.unitPrice),
+      // Раздельные числа по ФЭО (владелец, 2026-09-14) — второй, независимый
+      // комплект: видим и редактируем в форме, только когда обе галочки
+      // происхождения стоят разом (addShowBothOriginFields, см. диалог), но
+      // отправляются ВСЕГДА как есть — monthly-режим фиксирует их в null по
+      // той же причине, что и amount/unit_price выше (срок платежа не имеет
+      // отдельного «количества»).
+      feo_quantity: isMonthly ? null : numOrNull(f.feoQuantity),
+      feo_unit_price: isMonthly ? null : numOrNull(f.feoUnitPrice),
+      feo_amount: isMonthly ? null : numOrNull(f.feoAmount),
+      is_active: true,
+      payment_mode: f.payment_mode,
+      planned_date: !isMonthly && f.planned_date ? f.planned_date : null,
+      monthly_start_date: isMonthly && f.monthly_start_date ? f.monthly_start_date : null,
+      // Конец периода (владелец, Волна 3, п.3) — ОСНОВНОЙ способ задать
+      // длительность теперь; months_count больше НЕ вводится вручную здесь
+      // (см. compute_monthly_schedule, backend/app/services/
+      // feo_monthly_schedule.py — сервер сам считает полные месяцы из периода).
+      monthly_end_date: isMonthly && f.monthly_end_date ? f.monthly_end_date : null,
+      months_count: null,
+      monthly_amount: isMonthly ? numOrNull(f.monthly_amount) : null,
+      is_feo_breakdown: f.is_feo_breakdown,
+      is_internal_plan: f.is_internal_plan,
+      allow_duplicate_name: allowDuplicateName,
+    }
+  }
+
+  // Стек отмены (владелец, п.4 волны 4, 2026-09-13): «создали — отмена удаляет».
+  // Регистрируется ТОЛЬКО для обычного «Добавить плановую позицию» — у двух
+  // других входов в этот же диалог (конвертация ручного плана категории в
+  // позицию, заведение из конкретной закупки с автопривязкой) создание
+  // сопровождается ДОПОЛНИТЕЛЬНЫМ побочным эффектом (очистка planned_quantity/
+  // planned_amount категории, привязка purchase_item через /map) — простое
+  // «удалить созданную позицию» эти эффекты не отменяет, регистрировать для них
+  // undo было бы враньём («как будто отменили», хотя привязка/очистка остались).
+  // Честно ограничиваем стек только тем сценарием, где обратная операция полная.
+  function registerCreateUndo(created: FeoPlannedItem) {
+    let currentId = created.id
+    const payload = buildPlannedItemFullPayload(created)
+    const categoryId = created.feo_category_id
+    pushFeoUndo({
+      label: `создание позиции «${created.name}»`,
+      undo: async () => {
+        const res = await deletePlannedItemRaw(currentId)
+        if (res.ok && ctx) await Promise.all([ctx.refreshComparison(categoryId), ctx.refreshReqData()])
+        return res
+      },
+      redo: async () => {
+        try {
+          const recreated = await createPlannedItemRaw(payload)
+          currentId = recreated.id
+          if (ctx) await Promise.all([ctx.refreshComparison(categoryId), ctx.refreshReqData()])
+          return { ok: true }
+        } catch (e: any) {
+          return { ok: false, error: e?.payload?.message || e?.detail || e?.message || 'Не удалось повторить создание' }
+        }
+      },
+    })
+  }
+
+  // Довязка/дозачистка после успешного создания плановой позиции — общая для
+  // обычного создания (savePlannedItem) и для «Создать отдельную»
+  // (confirmCreateDuplicate), поэтому вынесена отдельно, а не продублирована.
+  async function afterPlannedItemCreated(created: FeoPlannedItem) {
+    if (!ctx || !addPlannedCategoryId.value) return
+    // Признак «обычное создание, без побочных эффектов» — фиксируем ДО того, как
+    // код ниже обнулит оба флага (см. комментарий у registerCreateUndo выше).
+    const isPlainCreate = createPlannedFromActualId.value == null && convertFromCategoryPlanId.value == null
+    // Если позиция заводилась ИЗ конкретной закупки (openCreatePlannedFromActual выше) —
+    // сразу привязываем её к только что созданной плановой позиции тем же эндпоинтом, что
+    // и ручное «Сопоставить с плановой» (applyMapping/POST /feo-planned-items/map), иначе
+    // плановая позиция создастся, а закупка так и провисит в «Не привязаны» до следующего
+    // ручного клика — половинчатое действие. Ошибку не глотаем — распаковываем
+    // e.payload.message (правило проекта), позиция при этом уже создана, поэтому диалог
+    // не блокируем повторной попыткой, просто честно сообщаем, что довязать не вышло.
+    if (createPlannedFromActualId.value != null) {
+      try {
+        await apiFetch(`/feo-planned-items/map?purchase_item_id=${createPlannedFromActualId.value}&planned_item_id=${created.id}`, {
+          method: 'POST',
+        })
+      } catch (e: any) {
+        showSnack(e?.payload?.message || e?.detail || e?.message || 'Плановая позиция создана, но не удалось привязать к ней закупку — сопоставьте вручную кнопкой «Сопоставить с плановой»', 'error')
+      }
+      createPlannedFromActualId.value = null
+    }
+    // Позиция создана. Если это было действие «Перенести в плановую позицию»
+    // (convertFromCategoryPlanId стоит на id этой же категории) — очищаем
+    // planned_quantity/planned_amount категории: иначе они и дальше заслоняют
+    // только что созданную запись при расчёте плана листа (backend суммирует
+    // плановые позиции, ТОЛЬКО когда qty×amt категории не заданы), и правка
+    // записи не будет менять сумму в шапке — ровно та жалоба, из-за которой
+    // всё это переделывается. Сначала — успешное создание позиции (уже
+    // произошло выше), потом — очистка полей категории.
+    const convertCategoryId = convertFromCategoryPlanId.value === addPlannedCategoryId.value
+      ? convertFromCategoryPlanId.value
+      : null
+    showAddPlannedDialog.value = false
+    duplicateDialog.value = false
+    duplicateInfo.value = null
+    convertFromCategoryPlanId.value = null
+    // refreshComparison обновляет только состав панели «План vs факт»; числа узла/
+    // родителей в шапке дерева и плашка превышения читаются из planTreeByCat —
+    // его обновляет refreshReqData (см. разбор жалобы владельца у deletePlannedItem
+    // и уже работающий movePlannedItemToCategory). Без него новая плановая позиция
+    // не давала вклад в «Плановую сумму» до перезагрузки страницы.
+    await Promise.all([ctx.refreshComparison(addPlannedCategoryId.value), ctx.refreshReqData()])
+    if (convertCategoryId) await clearCategoryManualPlan(convertCategoryId)
+    if (isPlainCreate) registerCreateUndo(created)
+  }
+
   async function savePlannedItem() {
     if (!addPlannedCategoryId.value || !plannedItemForm.value.name.trim() || !ctx) return
     savingPlannedItem.value = true
     try {
-      const f = plannedItemForm.value
-      const isMonthly = f.payment_mode === 'monthly'
-      // Владелец (2026-09-01): «добавляется плановая позиция по одной штуке» — если
-      // количество осталось пустым (в т.ч. стёрто вручную), по умолчанию 1.
-      const qtyOrDefault = (f.quantity == null || (f.quantity as unknown as string) === '') ? 1 : f.quantity
-      const created = await apiFetch<FeoPlannedItem>('/feo-planned-items/', {
-        method: 'POST',
-        body: JSON.stringify({
-          feo_category_id: addPlannedCategoryId.value,
-          name: f.name.trim(),
-          quantity: qtyOrDefault,
-          unit: f.unit || null,
-          amount: isMonthly ? null : numOrNull(f.amount),
-          // Цена за единицу (правка 2026-09-03) — раньше здесь не отправлялась
-          // вовсе, введённая в поле «Плановая стоимость за единицу» цена молча
-          // терялась (амаунт уже посчитан watch'ем из неё, а сама цена — нет).
-          // См. FeoPlannedItem.unit_price / assert_tz_not_over_plan.
-          // numOrNull (не `f.unitPrice ?? null` — правка 2026-09-04, жалоба
-          // владельца «да какого хуя тут ожидается число, может быть пусто, может быть 0»):
-          // `??` пустую строку от v-model.number НЕ ловит, только null/undefined —
-          // очищенное поле уходило на сервер как '' и валило 422. См. numOrNull
-          // в @/utils/numberFormat.ts.
-          unit_price: isMonthly ? null : numOrNull(f.unitPrice),
-          is_active: true,
-          payment_mode: f.payment_mode,
-          planned_date: !isMonthly && f.planned_date ? f.planned_date : null,
-          monthly_start_date: isMonthly && f.monthly_start_date ? f.monthly_start_date : null,
-          months_count: isMonthly ? numOrNull(f.months_count) : null,
-          monthly_amount: isMonthly ? numOrNull(f.monthly_amount) : null,
-          is_feo_breakdown: f.is_feo_breakdown,
-          is_internal_plan: f.is_internal_plan,
-        }),
-      })
-      // Если позиция заводилась ИЗ конкретной закупки (openCreatePlannedFromActual выше) —
-      // сразу привязываем её к только что созданной плановой позиции тем же эндпоинтом, что
-      // и ручное «Сопоставить с плановой» (applyMapping/POST /feo-planned-items/map), иначе
-      // плановая позиция создастся, а закупка так и провисит в «Не привязаны» до следующего
-      // ручного клика — половинчатое действие. Ошибку не глотаем — распаковываем
-      // e.payload.message (правило проекта), позиция при этом уже создана, поэтому диалог
-      // не блокируем повторной попыткой, просто честно сообщаем, что довязать не вышло.
-      if (createPlannedFromActualId.value != null) {
-        try {
-          await apiFetch(`/feo-planned-items/map?purchase_item_id=${createPlannedFromActualId.value}&planned_item_id=${created.id}`, {
-            method: 'POST',
-          })
-        } catch (e: any) {
-          showSnack(e?.payload?.message || e?.detail || e?.message || 'Плановая позиция создана, но не удалось привязать к ней закупку — сопоставьте вручную кнопкой «Сопоставить с плановой»', 'error')
-        }
-        createPlannedFromActualId.value = null
-      }
-      // Позиция создана. Если это было действие «Перенести в плановую позицию»
-      // (convertFromCategoryPlanId стоит на id этой же категории) — очищаем
-      // planned_quantity/planned_amount категории: иначе они и дальше заслоняют
-      // только что созданную запись при расчёте плана листа (backend суммирует
-      // плановые позиции, ТОЛЬКО когда qty×amt категории не заданы), и правка
-      // записи не будет менять сумму в шапке — ровно та жалоба, из-за которой
-      // всё это переделывается. Сначала — успешное создание позиции (уже
-      // произошло выше), потом — очистка полей категории.
-      const convertCategoryId = convertFromCategoryPlanId.value === addPlannedCategoryId.value
-        ? convertFromCategoryPlanId.value
-        : null
-      showAddPlannedDialog.value = false
-      convertFromCategoryPlanId.value = null
-      // refreshComparison обновляет только состав панели «План vs факт»; числа узла/
-      // родителей в шапке дерева и плашка превышения читаются из planTreeByCat —
-      // его обновляет refreshReqData (см. разбор жалобы владельца у deletePlannedItem
-      // и уже работающий movePlannedItemToCategory). Без него новая плановая позиция
-      // не давала вклад в «Плановую сумму» до перезагрузки страницы.
-      await Promise.all([ctx.refreshComparison(addPlannedCategoryId.value), ctx.refreshReqData()])
-      if (convertCategoryId) await clearCategoryManualPlan(convertCategoryId)
+      const created = await createPlannedItemRaw(buildPlannedItemPayload(false))
+      await afterPlannedItemCreated(created)
     } catch (e: any) {
-      // Жалоба владельца (сессия 2026-08-19): create_planned_item теперь отдаёт 409
-      // planned_item_duplicate_name вместо тихого слияния с существующей позицией (см.
-      // backend/app/routers/feo_planned_items.py). Полноценный диалог выбора (привязать/
-      // создать отдельную), как в FeoPlannedItemsSelect.vue, здесь не заводим — этот путь
-      // создания «из закупки»/«из ручного плана категории» — редкий сценарий, здесь просто
-      // честно показываем сообщение сервера, не глотаем ошибку generic-снэкбаром.
-      const det = e?.payload?.details
-      if (e?.status === 409 && det?.error_code === 'planned_item_duplicate_name') {
-        showSnack(det.message || e.message || 'Такая плановая позиция уже есть в категории', 'error')
+      // Жалоба владельца (Волна 2, п.2): «предлагает Привязать или Создать отдельную,
+      // но кнопок при этом нет». create_planned_item отдаёт 409
+      // planned_item_duplicate_name (см. backend/app/routers/feo_planned_items.py) —
+      // ТЕПЕРЬ показываем ПОЛНОЦЕННЫЙ диалог выбора, тот же компонент и тот же разбор
+      // ответа, что и в FeoPlannedItemsSelect.vue (parseDuplicateHttpError,
+      // useFeoPlannedCreate.ts) — второй диалог/парсинг не заводим (Правило №6).
+      // showAddPlannedDialog НЕ закрываем — диалог дубликата открывается поверх, как
+      // и createDialog у соседнего диалога создания.
+      const dup = parseDuplicateHttpError(e)
+      if (dup) {
+        duplicateInfo.value = dup
+        duplicateDialog.value = true
       } else {
         showSnack(e?.payload?.message || e?.detail || e?.message || 'Не удалось создать плановую позицию', 'error')
       }
@@ -457,10 +671,72 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
     }
   }
 
+  // «Создать отдельную» — повторный POST с allow_duplicate_name: true (тот же
+  // payload формы), затем те же довязки/очистки, что и у обычного создания.
+  async function confirmCreateDuplicate() {
+    if (!addPlannedCategoryId.value || !ctx) return
+    savingPlannedItem.value = true
+    try {
+      const created = await createPlannedItemRaw(buildPlannedItemPayload(true))
+      showSnack('Плановая позиция создана')
+      await afterPlannedItemCreated(created)
+    } catch (e: any) {
+      showSnack(e?.payload?.message || e?.detail || e?.message || 'Не удалось создать плановую позицию', 'error')
+    } finally {
+      savingPlannedItem.value = false
+    }
+  }
+
+  // «Привязать к существующей» — новую позицию НЕ создаём, используем уже
+  // существующую FeoPlannedItem (duplicateInfo.existingItemId). Что именно
+  // «привязать» зависит от того, ЗАЧЕМ открывался диалог добавления:
+  //  - из конкретной закупки (openCreatePlannedFromActual) — довязываем эту
+  //    закупку к СУЩЕСТВУЮЩЕЙ позиции тем же /feo-planned-items/map, что и
+  //    обычное «Сопоставить с плановой» (та же семантика, что и
+  //    afterPlannedItemCreated выше, но без предшествующего create);
+  //  - перенос ручного плана категории (openConvertManualPlanToItem) —
+  //    очищаем planned_quantity/planned_amount категории, план категории
+  //    теперь представлен существующей позицией;
+  //  - обычное «Добавить плановую позицию» — создавать нечего, существующая
+  //    позиция уже и есть план по этому наименованию, просто закрываем диалог.
+  async function confirmAttachDuplicate() {
+    const existingId = duplicateInfo.value?.existingItemId
+    if (existingId == null || !ctx || !addPlannedCategoryId.value) return
+    savingPlannedItem.value = true
+    try {
+      if (createPlannedFromActualId.value != null) {
+        try {
+          await apiFetch(`/feo-planned-items/map?purchase_item_id=${createPlannedFromActualId.value}&planned_item_id=${existingId}`, {
+            method: 'POST',
+          })
+        } catch (e: any) {
+          showSnack(e?.payload?.message || e?.detail || e?.message || 'Не удалось привязать закупку к существующей плановой позиции', 'error')
+          return
+        }
+        createPlannedFromActualId.value = null
+      }
+      const convertCategoryId = convertFromCategoryPlanId.value === addPlannedCategoryId.value
+        ? convertFromCategoryPlanId.value
+        : null
+      showAddPlannedDialog.value = false
+      duplicateDialog.value = false
+      duplicateInfo.value = null
+      convertFromCategoryPlanId.value = null
+      showSnack('Использована существующая плановая позиция')
+      await Promise.all([ctx.refreshComparison(addPlannedCategoryId.value), ctx.refreshReqData()])
+      if (convertCategoryId) await clearCategoryManualPlan(convertCategoryId)
+    } finally {
+      savingPlannedItem.value = false
+    }
+  }
+
   return {
     showAddPlannedDialog, addPlannedCategoryId, savingPlannedItem, plannedItemForm,
     addPlannedProductId, addPlannedProductPhoto, addPlannedMatchConfirmed, addPlannedPriceCaption,
-    plannedItemAmountIsComputed, onPlannedItemProductPick, onPlannedItemProductClear,
+    plannedItemAmountIsComputed, addPlannedItemDisabled, addPlannedMonthlySchedule,
+    addShowBothOriginFields, plannedItemFeoAmountIsComputed,
+    onPlannedItemProductPick, onPlannedItemProductClear,
     openAddPlannedItem, openConvertManualPlanToItem, openCreatePlannedFromActual, savePlannedItem,
+    duplicateDialog, duplicateInfo, confirmAttachDuplicate, confirmCreateDuplicate,
   }
 }

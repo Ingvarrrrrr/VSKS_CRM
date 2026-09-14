@@ -62,6 +62,28 @@ def resolve_user_name_input(
     return (None, None, None, None)
 
 
+def _strip_leading_position(raw: str, position: str) -> str:
+    """Если *raw* начинается с уже известной *position* (с двоеточием после неё
+    или без) — отрезать её и вернуть остаток (предположительно чистое ФИО).
+
+    Защита от повторного разбора: split_position_and_fio может быть вызвана с
+    ОБОИМИ аргументами непустыми, где raw — исходная "ДОЛЖНОСТЬ: ФИО" строка
+    целиком, а не уже вычлененная ФИО-часть (баг сессии 2026-09-14:
+    contractors_lookup.py передавал именно так). Раньше функция в этом случае
+    молча доверяла вызывающему и звала split_fio на ВСЕЙ строке, разнося
+    "ГЕНЕРАЛЬНЫЙ ДИРЕКТОР: Иванов Иван Иванович" на фамилию "ГЕНЕРАЛЬНЫЙ".
+    """
+    pos = position.strip()
+    if not pos:
+        return raw
+    if raw[: len(pos)].casefold() != pos.casefold():
+        return raw
+    rest = raw[len(pos):].lstrip()
+    if rest.startswith(":"):
+        rest = rest[1:].lstrip()
+    return rest
+
+
 def split_position_and_fio(
     raw: str | None,
     position: str | None = None,
@@ -69,7 +91,9 @@ def split_position_and_fio(
     """Split a raw signatory string into (last, first, middle, position).
 
     Resolution order:
-      1. If *position* is already provided — use it and parse only FIO from *raw*.
+      1. If *position* is already provided — use it and parse only FIO from *raw*
+         (если *raw* сам начинается с этой должности — она сперва отрезается,
+         см. _strip_leading_position; иначе raw уже считается чистым ФИО).
       2. If *raw* contains ":" — text before colon is the position, after is FIO.
       3. If *raw* has more than 3 words — first (n−3) words are the position,
          last 3 words are FIO.
@@ -83,7 +107,8 @@ def split_position_and_fio(
     raw = raw.strip()
 
     if position:
-        last, first, middle = split_fio(raw)
+        fio_part = _strip_leading_position(raw, position)
+        last, first, middle = split_fio(fio_part)
         return (last, first, middle, position.strip() or None)
 
     if ":" in raw:

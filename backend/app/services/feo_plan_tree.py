@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.feo_category import FeoCategory
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
+from app.services.feo_plan_common import _order_substituted_plan
 from app.services.feo_plan_fact import (
     fact_consumption_by_category,
     ordered_consumption_by_category,
@@ -158,7 +159,14 @@ async def compute_feo_plan_tree(
     участвуют в assert_no_unapproved_excess наравне друг с другом, один и тот же
     PlanExcessApproval по категории закрывает все три сразу:
       1) excess_over_feo/excess_amount — план дороже финансирования по ФЭО узла
-         (budget), см. выше.
+         (budget), см. выше. Владелец, Волна 1 п.8 (2026-09-13): budget=0
+         трактуется НАРАВНЕ с budget=NULL — «сумма не задана», сравнивать план
+         не с чем, узел не поднимает своего excess_amount (см. нормализацию
+         `_raw_budget in (None, 0.0)` в _visit ниже). Контроль при этом
+         НЕ отключается для всего дерева — родитель с СОБСТВЕННЫМ заданным
+         (ненулевым) budget по-прежнему проверяется как раньше, т.к. каждый
+         узел цепочки предков проверяется независимо своим полем budget
+         (см. assert_no_unapproved_excess).
       2) excess_fact_over_plan — факт (итог закупки/КП) дороже плана узла, см. выше.
          СУПРЕССИЯ (задача п.1): если у листа ЕСТЬ хотя бы одна активная плановая
          позиция (FeoPlannedItem) и ВСЕ они auto_created=true (заведены автоматически
@@ -453,8 +461,10 @@ async def compute_feo_plan_tree(
     def _own_plan_and_forecast(qty: float, amt: float, plan_manual: float, ordered: float, ordered_qty: float):
         """Формула замещения плана заказом для ОДНОГО узла (без учёта детей) —
         общая для листа и «собственной» части группы. qty/amt — planned_quantity/
-        planned_amount именно этого узла (для группы — всегда 0, см. вызывающий код)."""
-        plan = ordered if (qty > 0 and ordered_qty >= qty) else plan_manual
+        planned_amount именно этого узла (для группы — всегда 0, см. вызывающий код).
+        Замещение «заказ вместо плана» — общая точка _order_substituted_plan
+        (feo_plan_common.py, ПРАВИЛО №6, зовёт её же find_excess_culprit)."""
+        plan = _order_substituted_plan(qty, ordered, ordered_qty, plan_manual)
         if ordered_qty > 0:
             avg_price = ordered / ordered_qty
             remaining_qty = max(0.0, qty - ordered_qty) if qty > 0 else 0.0
@@ -624,7 +634,22 @@ async def compute_feo_plan_tree(
         # Если она превышает финансирование по ФЭО (budget) и превышение НЕ
         # согласовано — display откатывается к plan_manual (превышение не входит
         # в план, пока не согласовано или не убрано обратно в рамки).
-        budget = float(r.budget) if r.budget is not None else None
+        # Владелец, Волна 1 п.8 (2026-09-13), дословно: «Когда в поле
+        # финансирование по ФЭО введено „0“, то в моём понимании это значит,
+        # что не задана сумма. ... Ведь если нет жёстко заданной суммы, то и
+        # сравнивать не с чем.» ДО этой правки budget=0.0 (например, из
+        # Excel-импорта, который пишет 0 в пустую ячейку вместо NULL) проходил
+        # через `budget is not None` как ЗАДАННОЕ финансирование — любой
+        # положительный план тут же считался превышением. Теперь 0
+        # приравнивается к NULL («не задано») — контроль на ЭТОМ узле молчит,
+        # но продолжает подниматься на предках (см. цикл chain_ids в
+        # assert_no_unapproved_excess — она проверяет каждый узел цепочки
+        # независимо своим budget, этот узел просто не добавляет своего
+        # excess_amount). Миграция o7q9s1u3w5y7 разово чистит уже накопленные
+        # в базе нули; здесь — тот же контракт применяется и к новым записям,
+        # не дожидаясь миграции.
+        _raw_budget = float(r.budget) if r.budget is not None else None
+        budget = _raw_budget if _raw_budget not in (None, 0.0) else None
         full_display = plan + over
         excess_amount = 0.0
         excess_pending = False

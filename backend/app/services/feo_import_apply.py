@@ -17,17 +17,15 @@ warnings/errors идут в том же порядке, что и раньше, 
 """
 from decimal import Decimal
 
-from sqlalchemy import select
-
 from app.models.feo_category import FeoCategory
-from app.models.feo_planned_item import FeoPlannedItem
 from app.services.feo_import_common import (
-    QUANT, ZERO, build_level_name_index, format_rows, get_cell, level_label, resolve_target_subsidy_id,
-    row_feo_money, row_plan_money, to_bool, to_dec,
+    QUANT, ZERO, build_level_name_index, format_rows, get_cell, level_label, resolve_origin_flags,
+    resolve_target_subsidy_id, row_feo_money, row_plan_money, to_bool, to_dec,
 )
 from app.services.feo_import_common import fmt as _fmt
 from app.services.feo_import_common import norm as _norm
 from app.services.feo_import_snapshot import full_path
+from app.services.feo_import_duplicates import group_key, register_pending_item
 from app.routers.feo_planned_items import normalize_item_type
 
 
@@ -234,31 +232,6 @@ async def apply_rows(state) -> None:
             _v_created = await _create_plan_graph_version(subsidy_id=_sid, db=db, user=user, note=_note)
             if _v_created:
                 state.version_created = True
-
-    # E (баг 2026-09-09, разбор скриншота владельца): различить «позиция
-    # ДЕЙСТВИТЕЛЬНО существовала до импорта» от «эта же строка файла
-    # повторяется дважды в одной категории». `db.flush()` ниже делает
-    # только что созданную в СВОЕЙ же строке позицию видимой более поздним
-    # `select`-ам в той же транзакции — без этого снимка более поздняя строка
-    # находила бы её и честно (но вводяще в заблуждение) отчитывалась как
-    # «обновлена позиция», хотя реального обновления существующих данных не
-    # было: субсидия «ЦП_2026_2» была пустой, обе строки — из ОДНОГО файла
-    # (боевой случай: «Аренда офиса» и «4» встречались в файле по два раза).
-    # Снимок берём ТОЛЬКО по категориям, существовавшим до импорта
-    # (existing_by_id — уже отфильтрован по целевым субсидиям, см. B в
-    # feo_import_core.py); позиции внутри категорий, созданных этим же
-    # импортом, заведомо не могут быть «существовавшими до».
-    existing_plan_item_ids: set[int] = set()
-    if existing_by_id:
-        _epi_ids = (await db.execute(
-            select(FeoPlannedItem.id).where(FeoPlannedItem.feo_category_id.in_(list(existing_by_id.keys())))
-        )).scalars().all()
-        existing_plan_item_ids = set(_epi_ids)
-    # (feo_category_id, name) → номер первой строки файла, создавшей позицию с
-    # этим именем в этой категории в ЭТОМ ЖЕ импорте (для текста «повтор строки N»).
-    lvl5_item_first_row: dict[tuple[int, str], int] = {}
-    duplicate_row_count = 0
-    duplicate_rows: list[int] = []
 
     # Пред-проход по ВСЕМ строкам файла (задача владельца 2026-09-09, вторая
     # часть правила «Плановая позиция становится узлом уровня») — ДО основного
@@ -688,6 +661,19 @@ async def apply_rows(state) -> None:
         _row_plan_price = to_dec(get_cell(row, c_row_plan_price)) if c_row_plan_price is not None else None
         _row_plan_sum   = to_dec(get_cell(row, c_row_plan_sum))   if c_row_plan_sum   is not None else None
 
+        # Происхождение позиции этой строки (Правило №6, единственный источник —
+        # resolve_origin_flags в feo_import_common.py): считаем ОДИН раз на
+        # строку, по деньгам, реально найденным в разделе ФЭО/плана ЭТОЙ строки
+        # (включая per-level колонки и легаси «Финансирование» — те же наборы
+        # колонок, что и у cat.budget/collected_plan ниже). Используется и для
+        # позиции Ур.5 (создание/обновление ниже), и передаётся дальше через
+        # collected_plan — feo_import_plan.py создаёт позицию из категории без
+        # собственного Ур.5 тем же признаком, не пересчитывая его заново.
+        _row_is_feo_breakdown, _row_is_internal_plan = resolve_origin_flags(
+            row_feo_money(row, c_row_feo_sum, c_feo_sum_lvl2, c_feo_sum_lvl3, c_feo_sum_lvl4, c_budget),
+            row_plan_money(row, c_row_plan_sum, c_plan_sum_lvl2, c_plan_sum_lvl3, c_plan_sum_lvl4),
+        )
+
         _deepest_lv = next((lv for lv in reversed(_lv) if lv["name"]), None)
 
         if _deepest_lv is not None and any(v is not None for v in (_row_feo_qty, _row_feo_unit, _row_feo_price)):
@@ -715,9 +701,11 @@ async def apply_rows(state) -> None:
                 # ТОЛЬКО у настоящих позиций — категория-заголовок или строка
                 # без уровня уже очистили lvl5_name. Раз это настоящая позиция,
                 # «Сумма по ФЭО» строки — её СОБСТВЕННАЯ сумма (жёсткая
-                # расшифровка внутри родителя, is_feo_breakdown=True ниже), а не
-                # бюджет родителя: раньше она безусловно уходила в cat.budget и
-                # затирала итог, заданный строкой-заголовком категории.
+                # расшифровка внутри родителя, происхождение позиции считается
+                # по _row_is_feo_breakdown/_row_is_internal_plan выше — реальным
+                # деньгам строки, а не безусловно), а не бюджет родителя: раньше
+                # она безусловно уходила в cat.budget и затирала итог, заданный
+                # строкой-заголовком категории.
                 if item_amount is None:
                     item_amount = _row_feo_sum
             elif _deepest_lv is not None and _deepest_lv["feo_sum"] is None:
@@ -932,6 +920,11 @@ async def apply_rows(state) -> None:
                         "name": cat.name,
                         "item_type": item_type,
                         "from_feo_fallback": False,
+                        # Происхождение (Правило №6) — посчитано один раз выше по
+                        # РЕАЛЬНЫМ деньгам этой строки, feo_import_plan.py читает
+                        # готовое значение, а не пересчитывает.
+                        "is_feo_breakdown": _row_is_feo_breakdown,
+                        "is_internal_plan": _row_is_internal_plan,
                     }
                     plan_writes.setdefault(cat.id, []).append(row_num)
                 else:
@@ -952,6 +945,8 @@ async def apply_rows(state) -> None:
                             "name": cat.name,
                             "item_type": item_type,
                             "from_feo_fallback": plan_qty is None and plan_amt is None,
+                            "is_feo_breakdown": _row_is_feo_breakdown,
+                            "is_internal_plan": _row_is_internal_plan,
                         }
                         plan_writes.setdefault(cat.id, []).append(row_num)
 
@@ -1012,71 +1007,30 @@ async def apply_rows(state) -> None:
                 lvl5_sum_by_cat[leaf.id] = lvl5_sum_by_cat.get(leaf.id, ZERO) + (eff_item_amount or ZERO)
                 lvl5_item_rows.setdefault(leaf.id, []).append(row_num)
 
-                existing_item = (await db.execute(
-                    select(FeoPlannedItem).where(
-                        FeoPlannedItem.feo_category_id == leaf.id,
-                        FeoPlannedItem.name == lvl5_name,
-                    )
-                )).scalar_one_or_none()
-                if not existing_item:
-                    # item_type (Товар/Услуга/Работа, задача владельца 2026-08-14):
-                    # поле добавляется параллельно в модель FeoPlannedItem — hasattr-
-                    # проверка, чтобы этот код не падал, пока миграция ещё не применена.
-                    _fpi_kwargs = dict(
-                        feo_category_id=leaf.id,
-                        name=lvl5_name,
-                        quantity=item_qty,
-                        unit=item_unit,
-                        amount=eff_item_amount,
-                        is_active=is_active,
-                    )
-                    if hasattr(FeoPlannedItem, "item_type"):
-                        _fpi_kwargs["item_type"] = item_type
-                    # Происхождение (владелец, 2026-09-01): эта ветка — детальная
-                    # строка Ур.5 из файла ФЭО, жёсткая построчная разбивка есть
-                    # по построению (см. докстринг миграции
-                    # aa1b2c3d4e5f_feo_planned_item_origin.py) — is_feo_breakdown.
-                    if hasattr(FeoPlannedItem, "is_feo_breakdown"):
-                        _fpi_kwargs["is_feo_breakdown"] = True
-                    pi = FeoPlannedItem(**_fpi_kwargs)
-                    db.add(pi)
-                    await db.flush()
-                    created += 1
-                    created_details.append({"row": row_num, "name": lvl5_name, "reason": f"плановая позиция ({level_label(5)})"})
-                    lvl5_item_first_row[(leaf.id, lvl5_name)] = row_num
-                else:
-                    ch2 = False
-                    if item_qty is not None and existing_item.quantity != item_qty:
-                        existing_item.quantity = item_qty; ch2 = True
-                    if item_unit is not None and existing_item.unit != item_unit:
-                        existing_item.unit = item_unit; ch2 = True
-                    if eff_item_amount is not None and existing_item.amount != eff_item_amount:
-                        existing_item.amount = eff_item_amount; ch2 = True
-                    if item_type is not None and hasattr(existing_item, "item_type") and existing_item.item_type != item_type:
-                        existing_item.item_type = item_type; ch2 = True
-                    if ch2:
-                        updated += 1
-                        _dup_first_row = lvl5_item_first_row.get((leaf.id, lvl5_name))
-                        if existing_item.id not in existing_plan_item_ids and _dup_first_row is not None:
-                            # Не настоящее обновление БД-данных — эта же позиция
-                            # уже была создана более ранней строкой ЭТОГО ЖЕ
-                            # файла (см. комментарий у existing_plan_item_ids
-                            # выше основного цикла). Текст должен читаться как
-                            # «повтор», а не как «обновлены существующие данные».
-                            duplicate_row_count += 1
-                            duplicate_rows.append(row_num)
-                            updated_details.append({
-                                "row": row_num, "name": lvl5_name,
-                                "reason": f"повтор строки {_dup_first_row} — значения взяты из последней",
-                            })
-                        else:
-                            updated_details.append({
-                                "row": row_num, "name": lvl5_name,
-                                "reason": "обновлена позиция — значения перезаписаны из файла",
-                            })
-                    else:
-                        skipped += 1
-                        skipped_details.append({"row": row_num, "name": lvl5_name, "reason": "без изменений"})
+                # Волна 4, п.23 (владелец): «5 строк с именем «чайник» — не
+                # ставить одну позицию с ценой последней строки, а предложить
+                # человеку решение — оставить как есть или объединить». Строка
+                # больше НЕ создаёт/обновляет FeoPlannedItem немедленно — она
+                # копится по ключу группы (полное совпадение имени ПОСЛЕ
+                # нормализации, см. group_key в feo_import_duplicates.py) и
+                # разбирается ПОСЛЕ основного цикла по всем строкам файла
+                # (finalize_lvl5_items, feo_import_core.py) — только тогда
+                # известно, сколько строк реально попало в одну группу, и есть
+                # решение человека (state.duplicate_resolutions) по этой
+                # конкретной группе.
+                _dup_key = group_key(subsidy_id, [c.name for c in cats_in_row], lvl5_name)
+                register_pending_item(state, _dup_key, leaf, {
+                    "row": row_num,
+                    "name": lvl5_name,
+                    "qty": item_qty,
+                    "unit": item_unit,
+                    "amount": eff_item_amount,
+                    "item_type": item_type,
+                    "is_active": is_active,
+                    "is_feo_breakdown": _row_is_feo_breakdown,
+                    "is_internal_plan": _row_is_internal_plan,
+                    "path": [c.name for c in cats_in_row],
+                })
 
         except Exception as e:
             errors.append({"row": row_num, "name": lvl2_name, "message": str(e)})
@@ -1091,17 +1045,6 @@ async def apply_rows(state) -> None:
             "message": (
                 f"В файле указана субсидия {_ignored_names_str}, импорт идёт в открытую "
                 f"«{_target_name}» — строки будут созданы в ней (затронуто строк: {ignored_subsidy_rows})"
-            ),
-        })
-
-    if duplicate_row_count:
-        warnings.append({
-            "kind": "duplicate_row_in_file",
-            "row": None,
-            "name": None,
-            "message": (
-                f"В файле {duplicate_row_count} повторяющихся позиций (одинаковое имя в одной "
-                f"категории) — {format_rows(duplicate_rows)} — учтена последняя строка"
             ),
         })
 

@@ -442,16 +442,20 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
     await _ensure_feo_categories_assigned(wish, items_full, db)
 
     # Backfill product_id + category by item_name for legacy wish_items
-    # (created before product_id was persisted on wish_items).
+    # (created before product_id was persisted on wish_items). Точное
+    # совпадение по имени — normalize_product_name (Правило №6, см.
+    # app/services/product_catalog_match.py): при дублях каталога с одинаковым
+    # именем предпочитает запись с заполненным описанием («сопоставление
+    # предпочитает запись с ТЗ», владелец 2026-09-14).
+    from app.services.product_catalog_match import normalize_product_name, index_products_by_name
     missing = [it for it in items_full if not it.product_id and (it.item_name or "").strip()]
     name_to_product: dict[str, Product] = {}
     if missing:
         names = list({(it.item_name or "").strip() for it in missing})
         pres = await db.execute(select(Product).where(Product.name.in_(names)))
-        for p in pres.scalars().all():
-            name_to_product[(p.name or "").strip().lower()] = p
+        name_to_product = index_products_by_name(pres.scalars().all())
         for it in missing:
-            hit = name_to_product.get((it.item_name or "").strip().lower())
+            hit = name_to_product.get(normalize_product_name(it.item_name))
             if hit:
                 it.product_id = hit.id
 
@@ -461,7 +465,7 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
             return it.target_column_key
         if it.product_id and it.product and it.product.category:
             return it.product.category
-        hit = name_to_product.get((it.item_name or "").strip().lower())
+        hit = name_to_product.get(normalize_product_name(it.item_name))
         if hit and hit.category:
             return hit.category
         return "__uncategorized__"

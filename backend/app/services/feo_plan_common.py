@@ -5,8 +5,31 @@
 (find_excess_culprit), и feo_plan_tz_checks.py (assert_tz_not_over_plan) —
 единственная точка формулы плана листа при plan_source='manual_sum', чтобы
 она не разошлась при разъезде по разным файлам (ПРАВИЛО №6).
+
+`_order_substituted_plan` — вторая единая точка (задача владельца, Волна 1 п.13,
+2026-09-13, «сумма запланированного неправильно считается»): find_excess_culprit
+ДО этой задачи считал вклад узла в план ТОЛЬКО как Σ FeoPlannedItem/manual_plan_amount
+(_leaf_plan_manual), полностью игнорируя замещение «заказ вместо плана»
+(compute_feo_plan_tree._own_plan_and_forecast, задача владельца 2026-08-05) — из-за
+этого сумма контрибьюторов find_excess_culprit могла НЕ совпадать с
+compute_feo_plan_tree.plan (и, соответственно, с display/excess_amount, на которые
+реально смотрит блокировка и плашка «требуется согласование»). Теперь обе функции
+зовут именно эту точку.
 """
 from typing import Optional
+
+
+def _order_substituted_plan(qty: float, ordered: float, ordered_qty: float, plan_manual: float) -> float:
+    """Общая точка формулы «заказ замещает план, когда количество набрано
+    целиком» (compute_feo_plan_tree._own_plan_and_forecast, задача владельца
+    2026-08-05, ФОРМУЛА v2 — см. подробный docstring compute_feo_plan_tree) —
+    используется И деревом (для листа и «собственной» части группы), И
+    find_excess_culprit (feo_plan_excess.py, ПРАВИЛО №6): узел заказан
+    ПОЛНОСТЬЮ (qty > 0 and ordered_qty >= qty) → его вклад в план становится
+    фактической суммой заказа (`ordered`) — экономия/переплата высвобождается;
+    иначе (заказано частично или количество не задано) — план резервируется
+    целиком (`plan_manual`), даже если что-то уже заказано дешевле/дороже."""
+    return ordered if (qty > 0 and ordered_qty >= qty) else plan_manual
 
 
 def _leaf_plan_manual(

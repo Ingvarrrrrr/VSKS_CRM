@@ -28,9 +28,9 @@ from app.auth.jwt import get_current_user, get_single_org_id
 from app.models.user import User
 from app.services.product_matcher import score as _fuzzy_score, SCORE_AUTO as _SCORE_AUTO
 from app.services.feo_plan import assert_tz_not_over_plan
-from app.services.product_unit import backfill_product_unit
+from app.services.product_catalog_match import index_products_by_name, normalize_product_name
 from app.services.items_import_parsing import _extract_html_tables, _read_excel_rows
-from app.services.items_import_catalog import _upsert_product_to_catalog
+from app.services.items_import_catalog import _upsert_product_to_catalog, _apply_import_to_existing_product
 
 router = APIRouter(prefix="/api/purchases", tags=["purchase-items-import"])
 
@@ -404,10 +404,9 @@ async def import_items_mapped(
         prod_q = prod_q.where((Product.org_id == org_id) | (Product.org_id.is_(None)))
     prod_result = await db.execute(prod_q)
     products = prod_result.scalars().all()
-    product_by_name: dict[str, Product] = {}
-    for p in products:
-        if p.name:
-            product_by_name[p.name.lower().strip()] = p
+    # normalize_product_name → предпочтительный Product (Правило №6, при
+    # дублях с одинаковым именем предпочитает запись с заполненным описанием).
+    product_by_name: dict[str, Product] = index_products_by_name(products)
 
     added = 0
     matched_catalog = 0
@@ -510,8 +509,9 @@ async def import_items_mapped(
             row_product_type = _cell(row, col_product_type) if (col_product_type is not None and col_product_type >= 0) else None
 
             # Auto-match or create in catalog
-            # 1) exact match (fast path)
-            matched_product = product_by_name.get(item_name.lower().strip())
+            # 1) exact match (fast path) — normalize_product_name (Правило №6):
+            # обрезка пробелов по краям + схлопывание внутренних + lower().
+            matched_product = product_by_name.get(normalize_product_name(item_name))
             if not matched_product:
                 # 2) fuzzy fallback — find best candidate above SCORE_AUTO threshold
                 best_score = 0.0
@@ -529,27 +529,26 @@ async def import_items_mapped(
                 if not unit_price and matched_product.price:
                     unit_price = matched_product.price
                     total_price = line_total(quantity, unit_price)
-                elif unit_price and isinstance(matched_product, Product):
-                    # Цена из файла актуальнее; категория/вид из БД не трогаем (БД главнее)
-                    if matched_product.price != unit_price:
-                        matched_product.price = unit_price
-                    matched_product.import_note = _import_note
-                    matched_product.updated_at = datetime.utcnow()
-                    matched_product.updated_by = _user_name
-                    if row_category and (not matched_product.category or matched_product.category == 'Прочее'):
-                        matched_product.category = row_category
-                    if row_product_type and not matched_product.product_type:
-                        matched_product.product_type = row_product_type
                 if isinstance(matched_product, Product):
-                    await backfill_product_unit(db, matched_product, import_unit=unit_raw)
+                    # Владелец (2026-09-14): точное совпадение ДОПОЛНЯЕТ товар —
+                    # пустые поля из файла, цена НОВОЙ записью в историю цен (не
+                    # молча matched_product.price = unit_price, как раньше), не
+                    # третья копия правила (Правило №6, см. items_import_catalog.py).
+                    await _apply_import_to_existing_product(
+                        db, matched_product,
+                        unit_price=unit_price, description=description or None,
+                        category=row_category, product_type=row_product_type,
+                        import_note=_import_note, updated_by=_user_name,
+                        unit=unit_raw, user=current_user,
+                    )
             else:
                 product_id = await _upsert_product_to_catalog(
                     db, item_name, 'товар', unit_price, description or "",
                     category=row_category, product_type=row_product_type,
                     import_note=_import_note, updated_by=_user_name,
-                    unit=unit_raw,
+                    unit=unit_raw, user=current_user,
                 )
-                product_by_name[item_name.lower().strip()] = type('_P', (), {'id': product_id, 'name': item_name, 'price': unit_price})()
+                product_by_name[normalize_product_name(item_name)] = type('_P', (), {'id': product_id, 'name': item_name, 'price': unit_price})()
                 new_in_catalog += 1
 
             item = PurchaseItem(

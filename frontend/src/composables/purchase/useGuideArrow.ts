@@ -7,9 +7,19 @@
 // `publishDialog.value = false; pendingPlatform.value = null` внутри
 // guideArrowTo; теперь колбэк передаётся снаружи, чтобы стрелка не завязывалась
 // на детали диалога публикации (единственный вызывающий её сейчас компонент).
+//
+// onMiss — владелец (2026-09-13): «опять слетели стрелочки ... я сам не могу
+// найти, что надо заполнять без них». Раньше промах (элемент с pub-target-*
+// не найден в DOM) молча выходил из guideArrowTo — пользователь просто не
+// видел стрелку и не понимал, что что-то сломалось. Теперь всегда пишем
+// причину в консоль, а вызывающая сторона (onMiss) может показать понятную
+// текстовую подсказку, куда идти руками.
 import { ref, nextTick } from 'vue'
 
-export function useGuideArrow(onBeforeNavigate?: (target: string) => void) {
+export function useGuideArrow(
+  onBeforeNavigate?: (target: string) => void,
+  onMiss?: (target: string) => void,
+) {
   const guideArrowVisible = ref(false)
   const guideArrowPos = ref({ x: 0, y: 0 })
   const guideArrowAngle = ref(0)
@@ -63,7 +73,16 @@ export function useGuideArrow(onBeforeNavigate?: (target: string) => void) {
     const el = itemUid != null
       ? document.getElementById('item-row-' + itemUid)
       : document.getElementById('pub-target-' + target)
-    if (!el) return
+    if (!el) {
+      const elId = itemUid != null ? 'item-row-' + itemUid : 'pub-target-' + target
+      console.warn(
+        `[guideArrowTo] цель "${target}" не найдена в DOM (ожидался элемент #${elId}). ` +
+        'Возможно, секция с этим полем свёрнута/скрыта или ещё не смонтирована — ' +
+        'проверьте якорь и условия видимости вокруг него.'
+      )
+      onMiss?.(target)
+      return
+    }
 
     // Старт: правый верхний угол вьюпорта (где снэкбар)
     const startX = window.innerWidth - 100

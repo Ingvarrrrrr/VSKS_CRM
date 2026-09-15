@@ -5,7 +5,11 @@
     <SubsidyListHeader v-model:add-open="showAddDialog" :registry-area="registryArea" />
 
     <!-- ── Loading ── -->
-    <div v-if="loading" class="d-flex justify-center py-16">
+    <!-- data-testid — E2E-маркер полноэкранного индикатора (Playwright,
+         e2e/34-subsidy-noflicker.spec.ts): владелец требует, чтобы удаление и
+         создание субсидии НЕ показывали этот блок (loadAll() с ним больше не
+         вызывается на этих операциях, см. silentRefreshSubsidies() в скрипте). -->
+    <div v-if="loading" class="d-flex justify-center py-16" data-testid="subsidies-loading">
       <v-progress-circular indeterminate color="primary" size="52" />
     </div>
 
@@ -461,6 +465,89 @@ async function loadAll() {
   }
 }
 
+// Id, удалённые в ТЕКУЩЕЙ сессии — форс-игнорировать в silentRefreshSubsidies(),
+// если фоновый /dashboard/charts стартовал ДО того, как DELETE долетел до
+// сервера, и всё ещё содержит удалённую строку (та же гонка, что раньше
+// чинилась в onSubsidyDeleted() через await loadAll() + filter, см. историю
+// ниже — теперь чиним в самом источнике слияния, а не постфактум).
+const recentlyDeletedIds = new Set<number>()
+
+// Тихое обновление сводных чисел (владелец, 2026-09-16, дословно: «Удаление и
+// добавление субсидий должно происходить без перезагрузки экрана и без его
+// моргания»). В отличие от loadAll() НЕ выставляет loading (не размонтирует
+// v-if/v-else блок таблицы/карточек) и не заменяет allSubsidies.value целиком —
+// только точечно обновляет поля уже показанных объектов ПО ССЫЛКЕ (Object.assign
+// в существующий элемент массива, не замена ссылки) и дописывает подтверждённо
+// новые id. v-for по :key="s.id" в SubsidyCardsGrid.vue/SubsidyListTable.vue
+// патчит DOM конкретной карточки/строки на месте, а не размонтирует всю сетку —
+// соседние карточки остаются ТЕМИ ЖЕ DOM-узлами. Вызывается вместо ctx.loadAll()
+// из SubsidyDeleteDialog.vue (через onSubsidyDeleted) и SubsidyEditDialog.vue
+// (updateSubsidy) — оба места раньше звали await ctx.loadAll(), что on каждую
+// мелкую правку включало `loading=true` и на миг размонтировало всю сетку.
+async function silentRefreshSubsidies() {
+  try {
+    const charts = await apiFetch<any>('/dashboard/charts?scope=managed')
+    const rows: any[] = charts.subsidy_stats || []
+    let statusRows: Array<{ id: number; status?: string; created_by?: number | null; approved_by?: number | null; approved_at?: string | null }> = []
+    try {
+      statusRows = await apiFetch<typeof statusRows>('/subsidies/')
+    } catch (e) {
+      // Статус необязателен для этого тихого обновления — та же логика
+      // деградации, что и в loadAll() (см. её catch ниже по файлу).
+      console.warn('[subsidies] silent status refresh failed:', e)
+    }
+    const statusById = new Map(statusRows.map(r => [r.id, r]))
+    const existingById = new Map(allSubsidies.value.map(s => [s.id, s]))
+    for (const s of rows) {
+      if (recentlyDeletedIds.has(s.id)) continue
+      const mapped = {
+        id: s.id, name: s.name, year: s.year, budget: s.budget,
+        calculated_budget: s.calculated_budget ?? 0,
+        planned: s.planned_tree ?? s.total_planned, paid: s.total_paid, contracted: s.total_confirmed,
+        plan_schedule: s.total_plan_schedule ?? 0,
+        ordered: s.total_ordered ?? 0,
+        feo_budget_total: s.feo_budget_total ?? 0,
+        feo_filled: s.feo_filled ?? false,
+        contractor_id: s.contractor_id ?? null,
+        contractor_name: s.contractor_name ?? null,
+        contractor_inn: s.contractor_inn ?? null,
+        remaining: s.remaining ?? null,
+        planned_amount: s.planned_amount ?? null,
+        budget_discrepancy: s.budget_discrepancy ?? null,
+        work: s.total_work ?? 0,
+        contracts: s.total_contracts ?? 0,
+        delivered: s.total_delivered ?? 0,
+        delivered_unpaid: s.total_delivered_unpaid ?? 0,
+        ceiling_warn_percent: s.ceiling_warn_percent ?? 90,
+        ceiling_total: s.ceiling_total ?? 0,
+        ceiling_committed_total: s.ceiling_committed_total ?? 0,
+        ceiling_committed_percent: s.ceiling_committed_percent ?? 0,
+        ceiling_near_warning: s.ceiling_near_warning ?? false,
+        ceiling_exceeded: s.ceiling_exceeded ?? false,
+      }
+      const foundStatus = statusById.get(s.id)
+      const statusFields = foundStatus
+        ? { status: foundStatus.status ?? 'approved', created_by: foundStatus.created_by ?? null, approved_by: foundStatus.approved_by ?? null, approved_at: foundStatus.approved_at ?? null }
+        : {}
+      const existing = existingById.get(s.id)
+      if (existing) {
+        // Обновляем поля НА МЕСТЕ (тот же объект-элемент массива) — v-for не
+        // видит замены ссылки и не перемонтирует DOM-узел карточки/строки.
+        Object.assign(existing, mapped, statusFields)
+      } else {
+        // Подтверждённо новая субсидия на сервере, которой ещё нет локально
+        // (создана в другой вкладке/сессии) — не теряем её, дописываем.
+        allSubsidies.value.push({ ...mapped, status: 'approved', ...statusFields } as SubsidyRow)
+      }
+    }
+  } catch (e: any) {
+    // Молча оставляем локальное состояние как есть (без «воскрешения» и без
+    // отката UI) — но сообщаем конкретную причину, не generic «Ошибка».
+    console.warn('[subsidies] silent refresh failed:', e)
+    showSnack(e?.detail || e?.payload?.message || 'Не удалось обновить сводные данные субсидий (список актуален, суммы могут отставать)', 'error')
+  }
+}
+
 async function downloadFeoTemplate(subsidyId?: number, subsidyName?: string) {
   const token = localStorage.getItem('auth_token')
   const qs = subsidyId ? `?subsidy_id=${subsidyId}` : ''
@@ -684,17 +771,19 @@ async function confirmDelete(s: SubsidyRow) {
 }
 
 // SubsidyDeleteDialog.vue уже убрала удалённую строку из allSubsidies оптимистично
-// (единственный источник — ctx.allSubsidies, Правило №6). loadAll() здесь нужен
-// только чтобы подтянуть пересчитанные сервером агрегаты (бюджеты/суммы других
-// субсидий) — но его источник (/dashboard/charts) на проде иногда отдавал ответ
-// на миг раньше, чем DELETE долетал до этого же чтения, и «удалённая» строка
-// возвращалась в список: владелец видел карточку живой и жал «Удалить» ещё раз
-// на уже удалённой субсидии (лог прода: DELETE 200, затем 404 ×3). Подтверждённое
-// удаление ЭТОГО id в рамках текущей сессии сильнее устаревшего чтения — не даём
-// loadAll() воскресить строку, которую сервер только что подтвердил как удалённую.
+// (единственный источник — ctx.allSubsidies, Правило №6) — здесь её не трогаем
+// второй раз (кроме фильтра на всякий случай ниже). Раньше здесь был
+// `await loadAll()` — полный перезапрос /dashboard/charts с loading=true, из-за
+// которого вся сетка/таблица размонтировалась и на миг мигала пустым/спиннером
+// (владелец, 2026-09-16: «без перезагрузки экрана и без его моргания»), а если
+// ответ /dashboard/charts долетал раньше, чем DELETE — «удалённая» строка ещё и
+// воскресала. Теперь вместо loadAll() — silentRefreshSubsidies(): без loading,
+// без размонтирования, и recentlyDeletedIds не даёт устаревшему ответу
+// воскресить эту строку, даже если запрос стартовал до DELETE.
 async function onSubsidyDeleted(deletedId: number) {
-  await loadAll()
+  recentlyDeletedIds.add(deletedId)
   allSubsidies.value = allSubsidies.value.filter(s => s.id !== deletedId)
+  await silentRefreshSubsidies()
 }
 
 // openAddFeoDialog/startFeoEdit/confirmFeoDelete — тонкие прокси в
@@ -777,6 +866,7 @@ const subsidyDetailCtx = {
   router,
   allSubsidies,
   loadAll,
+  silentRefreshSubsidies,
   selectedId,
   selectedSubsidy,
   feoCategories: feoTreeState.feoCategories,

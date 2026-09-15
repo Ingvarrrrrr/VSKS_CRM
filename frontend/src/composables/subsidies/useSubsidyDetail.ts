@@ -22,6 +22,13 @@ export interface SubsidyDetailContext {
   router: Router
   allSubsidies: Ref<SubsidyRow[]>
   loadAll: () => Promise<void>
+  // Тихий фоновый пересчёт сводных чисел (Правило владельца 2026-09-16: удаление
+  // и добавление субсидий — без перезагрузки экрана и без моргания). В отличие
+  // от loadAll() НЕ выставляет `loading` (не размонтирует таблицу/сетку) и не
+  // заменяет allSubsidies.value целиком — точечно обновляет поля уже
+  // показанных карточек по id и дописывает подтверждённо новые. Вызывается
+  // SubsidyDeleteDialog.vue/SubsidyEditDialog.vue вместо ctx.loadAll().
+  silentRefreshSubsidies: () => Promise<void>
   selectedId: Ref<number | null>
   selectedSubsidy: ComputedRef<SubsidyRow | null>
   // ── Дерево ФЭО (остаётся в родителе целиком — вне этой волны рефакторинга) ──

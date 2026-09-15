@@ -286,6 +286,12 @@ async function addSubsidy() {
     form.value = { name: '', year: new Date().getFullYear(), budget: null, description: '', contractor_id: null, agreement_text: '', basis_doc_number: '', basis_doc_date: '' }
     showSnack('Субсидия добавлена')
     emit('saved')
+    // Тихий фон досчитает поля, которых POST не возвращает (contractor_name/
+    // feo_budget_total/ceiling_* — агрегаты с /dashboard/charts), БЕЗ loading
+    // и БЕЗ ожидания — карточка уже видна оптимистично (см. push выше). Не
+    // await: диалог закрывается сразу, ошибка (если будет) придёт снэкбаром
+    // отдельно, локальное состояние не откатывается.
+    void ctx.silentRefreshSubsidies()
   } catch (e: any) {
     showSnack(e?.detail || e?.payload?.message || 'Ошибка добавления', 'error')
   } finally {
@@ -296,17 +302,42 @@ async function addSubsidy() {
 async function updateSubsidy() {
   saving.value = true
   try {
-    await apiFetch<any>(`/subsidies/${editForm.value.id}`, {
+    const res = await apiFetch<any>(`/subsidies/${editForm.value.id}`, {
       method: 'PUT',
       body: JSON.stringify({ name: editForm.value.name, year: editForm.value.year, budget: numOrNull(editForm.value.budget), description: editForm.value.description || null, contractor_id: editForm.value.contractor_id, agreement_text: editForm.value.agreement_text || null, basis_doc_number: editForm.value.basis_doc_number || null, basis_doc_date: editForm.value.basis_doc_date || null, grantor_name: editForm.value.grantor_name || null, ministry_name: editForm.value.ministry_name || null, extra_contract_clause_1: editForm.value.extra_contract_clause_1 || null, extra_contract_clause_2: editForm.value.extra_contract_clause_2 || null, require_planned_dates: editForm.value.require_planned_dates, ceiling_warn_percent: numOrNull(editForm.value.ceiling_warn_percent) })
     })
-    // После save перезагружаем весь список с backend — гарантированно свежие
-    // данные (включая поля которые backend мог трансформировать). Spread-merge
-    // ответа PUT мог давать stale поля если SW кэшировал предыдущий GET.
-    await ctx.loadAll()
+    // Владелец (2026-09-16, дословно): «Удаление и добавление субсидий должно
+    // происходить без перезагрузки экрана и без его моргания» — раньше здесь
+    // был `await ctx.loadAll()` (полный /dashboard/charts + loading=true),
+    // из-за которого вся сетка/таблица на миг размонтировалась. Теперь: карточка
+    // обновляется НА МЕСТЕ (тот же объект-элемент массива, v-for по :key="id" не
+    // перемонтирует DOM), ответом PUT — он возвращает актуальную запись
+    // subsidies (включая то, что backend мог трансформировать); поля, которых
+    // PUT не отдаёт (calculated_budget/feo_budget_total/contractor_name и
+    // т.п. агрегаты с /dashboard/charts), досчитывает тихий фон
+    // silentRefreshSubsidies() — без loading, без размонтирования.
+    const idx = ctx.allSubsidies.value.findIndex((s: SubsidyRow) => s.id === editForm.value.id)
+    if (idx >= 0) {
+      const existing = ctx.allSubsidies.value[idx]!
+      Object.assign(existing, {
+        name: res.name ?? editForm.value.name,
+        year: res.year ?? editForm.value.year,
+        budget: res.budget ?? numOrNull(editForm.value.budget),
+        description: res.description ?? (editForm.value.description || null),
+        contractor_id: res.contractor_id ?? editForm.value.contractor_id,
+        basis_doc_number: res.basis_doc_number ?? (editForm.value.basis_doc_number || null),
+        basis_doc_date: res.basis_doc_date ?? (editForm.value.basis_doc_date || null),
+        require_planned_dates: res.require_planned_dates ?? editForm.value.require_planned_dates,
+        ceiling_warn_percent: res.ceiling_warn_percent ?? numOrNull(editForm.value.ceiling_warn_percent),
+      })
+    }
     editOpen.value = false
     showSnack('Субсидия обновлена')
     emit('saved')
+    // Не await — карточка уже видна обновлённой локально (см. Object.assign
+    // выше), диалог закрывается сразу; фон досчитает агрегаты и, если упадёт,
+    // сам покажет отдельный снэкбар с причиной (silentRefreshSubsidies).
+    void ctx.silentRefreshSubsidies()
   } catch (e: any) {
     console.error('updateSubsidy failed:', e)
     showSnack(e?.detail || e?.payload?.message || 'Ошибка сохранения', 'error')

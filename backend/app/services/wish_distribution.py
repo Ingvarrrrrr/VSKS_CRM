@@ -447,13 +447,20 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
     # app/services/product_catalog_match.py): при дублях каталога с одинаковым
     # именем предпочитает запись с заполненным описанием («сопоставление
     # предпочитает запись с ТЗ», владелец 2026-09-14).
-    from app.services.product_catalog_match import normalize_product_name, index_products_by_name
+    #
+    # find_products_by_normalized_names — НЕ `Product.name.in_(names)`
+    # (владелец, 2026-09-16): байтовый предфильтр сравнивал сырые строки ДО
+    # normalize_product_name, поэтому позиция с гомоглифом/ё/лишним пробелом
+    # никогда не попадала в выборку кандидатов — тот же дефект FISKARS
+    # X17/Х17, но именно на пути «заявка → конверсия в закупку», которым
+    # владелец реально пользуется. Сужение выборки на стороне БД сохранено —
+    # тем же SQL translate(), что и find_exact_product.
+    from app.services.product_catalog_match import normalize_product_name, find_products_by_normalized_names
     missing = [it for it in items_full if not it.product_id and (it.item_name or "").strip()]
     name_to_product: dict[str, Product] = {}
     if missing:
-        names = list({(it.item_name or "").strip() for it in missing})
-        pres = await db.execute(select(Product).where(Product.name.in_(names)))
-        name_to_product = index_products_by_name(pres.scalars().all())
+        names = {(it.item_name or "").strip() for it in missing}
+        name_to_product = await find_products_by_normalized_names(db, names)
         for it in missing:
             hit = name_to_product.get(normalize_product_name(it.item_name))
             if hit:

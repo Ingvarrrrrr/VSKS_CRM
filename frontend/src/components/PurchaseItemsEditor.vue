@@ -7,7 +7,7 @@
       </span>
       <div class="d-flex align-center ga-2 flex-wrap">
         <!-- View-mode toggle (hidden on mobile, which is forced to cards) -->
-        <v-btn-toggle v-if="!mobile" v-model="viewMode" density="compact" mandatory variant="outlined">
+        <v-btn-toggle v-if="!mobile && !isFoodForm" v-model="viewMode" density="compact" mandatory variant="outlined">
           <v-tooltip text="Таблица" location="top">
             <template #activator="{ props: tip }">
               <v-btn v-bind="tip" value="table" size="small" icon="mdi-table" />
@@ -102,7 +102,7 @@
          позиции договора. Разделена на две: полный перенос (с подтверждением, что
          сотрёт N позиций) и точечная подстановка только названий (без подтверждения —
          количество/цена/сумма/товар не трогаются, стирать нечего). -->
-    <div v-if="stagesEnabled && !props.readonly" class="d-flex ga-2 mb-2 flex-wrap">
+    <div v-if="stagesEnabled && !props.readonly && !isFoodForm" class="d-flex ga-2 mb-2 flex-wrap">
       <v-btn
         variant="tonal" prepend-icon="mdi-content-copy" size="small" color="success"
         :loading="contractItemCopying"
@@ -135,7 +135,7 @@
          всю ширину и делит кнопки поровну с переносом текста внутри кнопки — вместо обрезки
          вбок текст уходит на вторую строку. Тот же фикс — у группировки ниже. Десктоп не тронут,
          класс навешивается только когда mobile. -->
-    <div v-if="itemShape === 'purchase' && !props.readonly" class="d-flex ga-2 mb-2 align-center flex-wrap">
+    <div v-if="itemShape === 'purchase' && !props.readonly && !isFoodForm" class="d-flex ga-2 mb-2 align-center flex-wrap">
       <span class="text-caption text-medium-emphasis">НДС:</span>
       <v-btn-toggle
         :model-value="props.vatMode || 'uniform'"
@@ -149,7 +149,7 @@
     </div>
 
     <!-- Группировка и фильтр позиций по категориям/видам товаров из каталога -->
-    <div v-if="itemShape === 'purchase' && !stagesEnabled && localItems.length > 1"
+    <div v-if="itemShape === 'purchase' && !stagesEnabled && localItems.length > 1 && !isFoodForm"
       class="d-flex ga-2 mb-2 align-center flex-wrap">
       <span class="text-caption text-medium-emphasis">Группировка:</span>
       <v-btn-toggle v-model="itemsGroupBy" density="compact" rounded="lg" color="primary" border mandatory
@@ -186,8 +186,42 @@
       план и не {{ itemsMissingPlanWord === 'позиция' ? 'видна' : 'видны' }} в плане закупок — выберите плановую позицию в строке или создайте новую.
     </v-alert>
 
+    <!-- food-menu-editor.md (владелец, 2026-09-15, «даже мне не читаемо»): форма
+         «Питание» полностью обходит стороной таблицы позиций (Flat/Stages/Cards/
+         Wish — их построчный layout заточен под каталожные товары: имя+тип+
+         страна+фото, что для еды «явно лишнее») — вместо этого одна широкая
+         панель на позицию (обычно она одна, item_name — «Организация питания»,
+         не показывается полем). Не зависит от itemShape (и заявка, и закупка
+         могут получить contract_form='services_food', см. useItemForm.ts) и от
+         stagesEnabled (у отредактированной закупки canShowContractColumns=true
+         независимо от формы договора — см. CreateOrderView.vue). -->
+    <template v-if="isFoodForm">
+      <div class="food-items-panels">
+        <v-sheet
+          v-for="(item, fIdx) in localItems" :key="item._uid ?? fIdx"
+          class="food-item-panel pa-3 mb-3" variant="outlined" rounded
+        >
+          <div v-if="localItems.length > 1" class="d-flex align-center justify-space-between mb-2">
+            <span class="text-caption text-medium-emphasis">Позиция {{ fIdx + 1 }}</span>
+            <v-btn v-if="!props.readonly" icon="mdi-delete-outline" size="small" variant="text" color="error"
+              title="Удалить позицию" @click="removeItem(fIdx)" />
+          </div>
+          <ItemFormFields
+            item-form="food"
+            :fields="itemFormFields || []"
+            :model-value="item.extra_attrs"
+            :unit-price="item.unit_price"
+            :total-price="item.total_price"
+            :disabled="props.readonly"
+            @update:model-value="(v) => { item.extra_attrs = v; calcItemTotal(fIdx) }"
+            @update:unit-price="(v) => { item.unit_price = v; calcItemTotal(fIdx) }"
+          />
+        </v-sheet>
+      </div>
+    </template>
+
     <!-- Purchase shape table -->
-    <template v-if="itemShape === 'purchase'">
+    <template v-else-if="itemShape === 'purchase'">
       <!-- Phase 27.1.1: expand-row layout (3 sub-rows per position: ТЗ / Договор / Поставка) — Layer 3: extracted -->
       <template v-if="stagesEnabled">
         <ItemsTableStages
@@ -502,7 +536,7 @@
       <v-btn variant="tonal" prepend-icon="mdi-plus" size="small" @click="addItem()">
         Добавить позицию
       </v-btn>
-      <v-btn v-if="props.supportsFullProductDialog"
+      <v-btn v-if="props.supportsFullProductDialog && !isFoodForm"
         variant="outlined" prepend-icon="mdi-package-variant-plus" size="small" color="primary"
         @click="openFullProduct(-1)">
         Добавить товар в каталог
@@ -719,6 +753,10 @@ import ItemsTableFlat from '@/components/items/ItemsTableFlat.vue'
 import ItemsCardsView from '@/components/items/ItemsCardsView.vue'
 import ItemsTableWish from '@/components/items/ItemsTableWish.vue'
 import ItemsTableStages from '@/components/items/ItemsTableStages.vue'
+// food-menu-editor.md: форма «Питание» рендерит ItemFormFields напрямую (широкая
+// панель на всю ширину) вместо делегирования в одну из 4 таблиц выше — см.
+// `v-if="isFoodForm"` в шаблоне.
+import ItemFormFields from '@/components/items/ItemFormFields.vue'
 import BulkFeoAssignDialog from '@/components/items/BulkFeoAssignDialog.vue'
 import CreatePlannedBulkDialog from '@/components/items/CreatePlannedBulkDialog.vue'
 import SplitItemDialog from '@/components/items/SplitItemDialog.vue'
@@ -1113,6 +1151,18 @@ const effectiveView = computed<'table' | 'cards'>(() => mobile.value ? 'cards' :
 const { itemForm, fields: itemFormFields, descriptor: itemFormDescriptor } = useItemForm(computed(() => props.contractForm))
 const itemFormLabel = computed(() => itemFormDescriptor.value?.label ?? '')
 
+// food-menu-editor.md (владелец, 2026-09-15): форма «Питание» рендерится
+// отдельной веткой шаблона (широкая панель на позицию вместо таблицы Flat/
+// Stages/Cards/Wish) — см. `v-if="isFoodForm"` выше блока «Purchase shape table».
+const isFoodForm = computed(() => itemForm.value === 'food')
+
+// Автоназвание позиции «Питание» (владелец: «поле Наименование явно
+// лишнее» — панель его не показывает вовсе, но item_name всё равно нужен
+// бэку/документам как заголовок позиции). Единственное место, где строка
+// прописывается — тот же паттерн, что и fillEmptyItemsWithDefaultFeo ниже
+// (трогаем ТОЛЬКО пустые item_name, ручной ввод не перезаписываем).
+const FOOD_DEFAULT_ITEM_NAME = 'Организация питания'
+
 // food-menu-editor.md: владелец, 2026-09-15 — у форм со спец-полями (food/
 // accommodation/transport) ТИП позиции всегда «услуга» (это явно услуга, не
 // товар/работа). useItemsTable.ts/useItemsImport.ts читают props.defaultItemType
@@ -1139,6 +1189,28 @@ const {
   selectedItemIdxs, allItemsSelected, toggleSelectAll, toggleItemSelect, removeSelectedItems,
 } = useItemsTable({ props: propsForItemDefaults, emit })
 void ensureUid; void normalizeItems
+
+// food-menu-editor.md: item_name автозаполняется для формы «Питание» — панель
+// (см. `v-if="isFoodForm"` в шаблоне выше) не показывает поле «Наименование»
+// вовсе, но пустая строка недопустима (документы/бэк ждут заголовок позиции).
+// Трогаем ТОЛЬКО пустые значения — тот же guard-паттерн, что у
+// fillEmptyItemsWithDefaultFeo ниже (не перезаписываем то, что пользователь
+// мог ввести руками до переключения формы договора).
+watch(
+  () => [isFoodForm.value, localItems.value.length] as const,
+  () => {
+    if (!isFoodForm.value) return
+    let changed = false
+    for (const it of localItems.value) {
+      if (!it.item_name || !String(it.item_name).trim()) {
+        it.item_name = FOOD_DEFAULT_ITEM_NAME
+        changed = true
+      }
+    }
+    if (changed) emitUpdate()
+  },
+  { immediate: true },
+)
 
 // ── Phase 27.1 D-04: Contract items side-by-side ─────────────────────────────
 
@@ -1935,6 +2007,15 @@ th { position: relative; }
 /* ──────────────────────────────────────────────────────── */
 .purchase-items-editor {
   width: 100%;
+}
+
+/* food-menu-editor.md: широкая панель питания — на всю ширину, вместо
+   таблицы позиций (см. `v-if="isFoodForm"` выше). */
+.food-items-panels {
+  width: 100%;
+}
+.food-item-panel {
+  border-color: rgba(var(--v-border-color), var(--v-border-opacity)) !important;
 }
 </style>
 

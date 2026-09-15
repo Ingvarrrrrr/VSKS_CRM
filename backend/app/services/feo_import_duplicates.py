@@ -88,14 +88,30 @@ def _combine_rows(rows: list) -> dict:
     деньги не должны измениться ни на рубль. `amount` объединённой позиции —
     точная сумма amount всех строк (без промежуточного округления через
     цену), поэтому инвариант «сумма не изменилась» выполняется тождественно,
-    а не в пределах округления."""
+    а не в пределах округления.
+
+    То же самое — ОТДЕЛЬНО — для комплекта «по ФЭО» (feo_qty/feo_unit/
+    feo_amount, боевой инцидент 2026-09-16, см. feo_import_apply.py у
+    объявления item_plan_qty): без этого объединение группы дублей молча
+    брало ФЭО-числа ПОСЛЕДНЕЙ строки (через `dict(rows[-1])`), и они переставали
+    сходиться с объединённым планом/суммой."""
     total_amount = sum((r["amount"] or ZERO) for r in rows)
     total_qty = sum((r["qty"] if r["qty"] is not None else ONE) for r in rows)
     unit = next((r["unit"] for r in rows if r["unit"]), None)
+    unit_price = (total_amount / total_qty).quantize(QUANT) if total_qty else None
+    total_feo_amount = sum((r.get("feo_amount") or ZERO) for r in rows)
+    total_feo_qty = sum((r.get("feo_qty") or ZERO) for r in rows)
+    feo_unit = next((r.get("feo_unit") for r in rows if r.get("feo_unit")), None)
+    feo_unit_price = (total_feo_amount / total_feo_qty).quantize(QUANT) if total_feo_qty else None
     merged = dict(rows[-1])  # берём последние флаги/тип как есть — они одинаковы по построению группы
     merged["qty"] = total_qty
     merged["unit"] = unit
     merged["amount"] = total_amount
+    merged["unit_price"] = unit_price
+    merged["feo_qty"] = total_feo_qty or None
+    merged["feo_unit"] = feo_unit
+    merged["feo_unit_price"] = feo_unit_price
+    merged["feo_amount"] = total_feo_amount or None
     merged["row"] = rows[-1]["row"]
     return merged
 
@@ -169,6 +185,20 @@ async def _upsert_one(state, leaf, item_data: dict, *, extra_reason: str | None,
             _fpi_kwargs["is_feo_breakdown"] = item_data.get("is_feo_breakdown", False)
         if hasattr(FeoPlannedItem, "is_internal_plan"):
             _fpi_kwargs["is_internal_plan"] = item_data.get("is_internal_plan", True)
+        # Боевой инцидент 2026-09-16 (субсидия «Абхазия_2»): цена за единицу и
+        # раздельный комплект «по ФЭО» (см. FeoPlannedItem.unit_price/feo_quantity/
+        # feo_unit_price/feo_amount, миграции z1a2b3c4d5e6/c2d4e6f8a0b2) раньше
+        # никогда не заполнялись импортом — hasattr-проверка тут по тому же
+        # стилю, что и у item_type/is_feo_breakdown выше (совместимость со
+        # старыми тестовыми моделями).
+        if hasattr(FeoPlannedItem, "unit_price"):
+            _fpi_kwargs["unit_price"] = item_data.get("unit_price")
+        if hasattr(FeoPlannedItem, "feo_quantity"):
+            _fpi_kwargs["feo_quantity"] = item_data.get("feo_qty")
+        if hasattr(FeoPlannedItem, "feo_unit_price"):
+            _fpi_kwargs["feo_unit_price"] = item_data.get("feo_unit_price")
+        if hasattr(FeoPlannedItem, "feo_amount"):
+            _fpi_kwargs["feo_amount"] = item_data.get("feo_amount")
         pi = FeoPlannedItem(**_fpi_kwargs)
         db.add(pi)
         await db.flush()
@@ -190,6 +220,14 @@ async def _upsert_one(state, leaf, item_data: dict, *, extra_reason: str | None,
         existing_item.is_feo_breakdown = item_data.get("is_feo_breakdown", False); ch2 = True
     if hasattr(existing_item, "is_internal_plan") and existing_item.is_internal_plan != item_data.get("is_internal_plan", True):
         existing_item.is_internal_plan = item_data.get("is_internal_plan", True); ch2 = True
+    if item_data.get("unit_price") is not None and hasattr(existing_item, "unit_price") and existing_item.unit_price != item_data["unit_price"]:
+        existing_item.unit_price = item_data["unit_price"]; ch2 = True
+    if item_data.get("feo_qty") is not None and hasattr(existing_item, "feo_quantity") and existing_item.feo_quantity != item_data["feo_qty"]:
+        existing_item.feo_quantity = item_data["feo_qty"]; ch2 = True
+    if item_data.get("feo_unit_price") is not None and hasattr(existing_item, "feo_unit_price") and existing_item.feo_unit_price != item_data["feo_unit_price"]:
+        existing_item.feo_unit_price = item_data["feo_unit_price"]; ch2 = True
+    if item_data.get("feo_amount") is not None and hasattr(existing_item, "feo_amount") and existing_item.feo_amount != item_data["feo_amount"]:
+        existing_item.feo_amount = item_data["feo_amount"]; ch2 = True
     if ch2:
         state.updated += 1
         reason = extra_reason or "обновлена позиция — значения перезаписаны из файла"

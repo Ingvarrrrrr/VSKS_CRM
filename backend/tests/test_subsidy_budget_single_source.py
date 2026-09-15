@@ -28,6 +28,74 @@ def _cat(id, parent_id, level, budget=None):
     return SimpleNamespace(id=id, parent_id=parent_id, level=level, budget=budget)
 
 
+def _item(feo_category_id, feo_amount, is_active=True):
+    return SimpleNamespace(feo_category_id=feo_category_id, feo_amount=feo_amount, is_active=is_active)
+
+
+# ---------------------------------------------------------------------------
+# Боевой инцидент 2026-09-16 (субсидия «Абхазия_2»): узел БЕЗ своей Суммы по
+# ФЭО обязан учитывать feo_amount СОБСТВЕННЫХ плановых позиций — не только
+# сумму budget детей (ДО этой правки узел с детьми ИГНОРИРОВАЛ свои позиции
+# целиком, даже если своего budget у него не было; см. docstring
+# compute_budget_map). Явная сумма узла по-прежнему главнее и НЕ складывается
+# с его позициями (тест «Катер» ниже — не задвоить).
+# ---------------------------------------------------------------------------
+
+def test_leaf_without_budget_sums_own_feo_items():
+    """Лист без budget и без детей, но с двумя активными позициями с
+    feo_amount — «по ФЭО» листа = сумма feo_amount позиций (раньше было 0.0,
+    позиции не учитывались вовсе)."""
+    cats = [_cat(1, None, 1, budget=None)]
+    items = [_item(1, 20_000), _item(1, 3_970)]
+    assert compute_budget_map(cats, items) == {1: 23_970.0}
+    assert subsidy_budget_from_categories(cats, items) == 23_970.0
+
+
+def test_inactive_or_empty_feo_amount_items_do_not_count():
+    """Позиция без feo_amount (это план, не ФЭО) и неактивная позиция с
+    feo_amount — обе не участвуют в «по ФЭО»."""
+    cats = [_cat(1, None, 1, budget=None)]
+    items = [_item(1, None), _item(1, 999_999, is_active=False)]
+    assert compute_budget_map(cats, items) == {1: 0.0}
+
+
+def test_branch_without_own_budget_sums_own_items_plus_children():
+    """Узел с детьми И собственными позициями, но БЕЗ своего budget: «по ФЭО»
+    = feo_amount своих позиций + «по ФЭО» детей (боевой пример — категория
+    «Окружные» субсидии МИНПРОС_2026, у которой были и подкатегории, и
+    собственные позиции, а budget не задан — раньше позиции терялись)."""
+    cats = [
+        _cat(1, None, 1, budget=None),   # родитель без budget, с детьми И своими позициями
+        _cat(2, 1, 2, budget=100_000),   # ребёнок 1
+        _cat(3, 1, 2, budget=50_000),    # ребёнок 2
+    ]
+    items = [_item(1, 12_000)]  # собственная позиция родителя
+    budget_map = compute_budget_map(cats, items)
+    assert budget_map[1] == 162_000.0  # 100000 + 50000 + 12000
+    assert subsidy_budget_from_categories(cats, items) == 162_000.0
+
+
+def test_explicit_budget_wins_over_own_items_no_double_count():
+    """Узел «Катер» (боевой инцидент 2026-09-16, строка 189 «Абхазия ЦЭМАК»):
+    явная Сумма по ФЭО (4 484 400) задана вручную — узел ОДНОВРЕМЕННО имеет
+    собственную плановую позицию с ТЕМ ЖЕ feo_amount (см. item_name_equals_
+    category в feo_import_apply.py). budget узла ГЛАВНЕЕ и НЕ складывается с
+    позицией — иначе результат задвоился бы до 8 968 800."""
+    cats = [_cat(1, None, 1, budget=4_484_400)]
+    items = [_item(1, 4_484_400)]
+    assert compute_budget_map(cats, items) == {1: 4_484_400.0}
+    assert subsidy_budget_from_categories(cats, items) == 4_484_400.0
+
+
+def test_calculate_budget_from_categories_default_items_backward_compatible():
+    """Вызов БЕЗ второго аргумента (существующие вызывающие места, которым
+    позиции не нужны/недоступны, например feo_import_plan.py) продолжает
+    работать ровно как раньше — items не передан, позиции не учитываются."""
+    cats = [_cat(1, None, 1, budget=None), _cat(2, 1, 2, budget=None)]
+    assert compute_budget_map(cats) == {1: 0.0, 2: 0.0}
+    assert subsidy_budget_from_categories(cats) == 0.0
+
+
 # ---------------------------------------------------------------------------
 # Три дерева из задания: плоское, override у родителя, NULL у листа.
 # ---------------------------------------------------------------------------

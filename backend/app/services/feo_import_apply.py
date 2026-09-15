@@ -468,6 +468,34 @@ async def apply_rows(state) -> None:
                     default=None,
                 )
                 if _deepest_level is not None and _norm(_level_vals[_deepest_level]) == _norm(lvl5_name):
+                    # Задача владельца (в), боевой инцидент 2026-09-16, файл
+                    # «Абхазия ЦЭМАК», строка 189 «Катер»: подраздел получает
+                    # свою Сумму по ФЭО как обычно (лист без явно построчной
+                    # позиции — cat.budget этого узла и, если у листа нет своих
+                    # Ур.5 строк, обобщённая плановая позиция с именем категории
+                    # заводятся дальше по циклу тем же путём, что и раньше, см.
+                    # apply_collected_plan в feo_import_plan.py). Решение
+                    # владельца: поведение НЕ меняем (и подраздел, и позиция
+                    # остаются), но человек должен узнать об этом совпадении —
+                    # раньше оно проходило молча. Предупреждаем ЗДЕСЬ (в точке,
+                    # где обнаружено совпадение имени с уже занятым уровнем), а
+                    # не в блоке создания FeoPlannedItem Ур.5 — туда эта строка
+                    # никогда не попадает (lvl5_name обнуляется ниже).
+                    _self_decl_amt = _row_feo_money(row)
+                    if _self_decl_amt is None:
+                        _self_decl_amt = row_plan_money(
+                            row, c_row_plan_sum, c_plan_sum_lvl2, c_plan_sum_lvl3, c_plan_sum_lvl4
+                        )
+                    warnings.append({
+                        "kind": "item_name_equals_category",
+                        "row": row_num,
+                        "name": lvl5_name,
+                        "message": (
+                            f"Строка {row_num}: «{lvl5_name}» названа и подразделом, и позицией — "
+                            f"сумма {_fmt(_self_decl_amt)} записана подразделу как ФЭО и позицией в него; "
+                            f"если это разные вещи, переименуйте одно из них"
+                        ),
+                    })
                     lvl5_name = None
 
         # --- Предупреждение: «Плановая позиция» остаётся ПОЗИЦИЕЙ, но её имя
@@ -651,13 +679,25 @@ async def apply_rows(state) -> None:
         budget    = to_dec(get_cell(row, c_budget))
         is_active = to_bool(get_cell(row, c_active))
 
-        item_qty    = to_dec(get_cell(row, c_qty))
-        item_unit   = get_cell(row, c_unit)
-        item_unit   = _check_unit_shift(
-            item_unit, row_num, lvl5_name or lvl4_name or lvl3_name or lvl2_name, f"Ед. изм. ({level_label(5)})"
+        # Раздельные комплекты чисел позиции (Ур.5) — ПЛАН и ФЭО (боевой
+        # инцидент 2026-09-16, субсидия «Абхазия_2»/файл «Абхазия ЦЭМАК»):
+        # ДО этой правки числа «по ФЭО» строки (колонки G–J) и числа «плана»
+        # (колонки K–N) безусловно сливались в ОДИН набор item_qty/item_unit/
+        # item_price/item_amount (первый заполненный побеждал, второй молча
+        # терялся) — 189 позиций получали is_feo_breakdown=true, но их
+        # feo_quantity/feo_unit_price/feo_amount (см. модель FeoPlannedItem)
+        # оставались NULL, а unit_price не писался вообще. item_plan_* —
+        # legacy-колонки «Ур.5» старых шаблонов (Количество/Ед.изм./Сумма/Цена
+        # (Ур.5)) как и раньше — база для ПЛАНА; item_feo_* заполняются только
+        # ниже, из плоских ФЭО-колонок строки (c_row_feo_*).
+        item_plan_qty    = to_dec(get_cell(row, c_qty))
+        item_plan_unit   = get_cell(row, c_unit)
+        item_plan_unit   = _check_unit_shift(
+            item_plan_unit, row_num, lvl5_name or lvl4_name or lvl3_name or lvl2_name, f"Ед. изм. ({level_label(5)})"
         )
-        item_amount = to_dec(get_cell(row, c_item_amt))
-        item_price  = to_dec(get_cell(row, c_item_price)) if c_item_price is not None else None
+        item_plan_amount = to_dec(get_cell(row, c_item_amt))
+        item_plan_price  = to_dec(get_cell(row, c_item_price)) if c_item_price is not None else None
+        item_feo_qty = item_feo_unit = item_feo_price = item_feo_amount = None
 
         raw_item_type = get_cell(row, c_item_type) if c_item_type is not None else None
         item_type = normalize_item_type(raw_item_type) if raw_item_type else None
@@ -722,7 +762,8 @@ async def apply_rows(state) -> None:
         # Ед.изм./Цена/Сумма по ФЭО» и «Плановое количество/Ед.изм./Цена/Сумма плана» —
         # ОДНА пара колонок на всю строку, не по уровням. Прикрепляются к САМОМУ
         # ГЛУБОКОМУ заполненному уровню строки, либо — если заполнена «Плановая
-        # позиция» — к переменной позиции (item_qty/item_unit/item_price/item_amount).
+        # позиция» — к переменной позиции, РАЗДЕЛЬНО в item_feo_*/item_plan_*
+        # (см. докстринг у объявления item_plan_qty выше).
         # Значения из per-level колонок (уже посчитаны в _lv выше) ИМЕЮТ ПРИОРИТЕТ —
         # присваиваем только там, где ещё None, — так старые 37-колоночные файлы
         # (с явными per-level колонками) ведут себя ровно как раньше.
@@ -764,14 +805,20 @@ async def apply_rows(state) -> None:
                 # позиций. Этот фантомный план потом сравнивался с суммой ВСЕХ
                 # 25 позиций категории и давал ложный plan_vs_items_mismatch.
                 # Приоритет как у остальных row-flat полей (см. row_plan_*
-                # ниже) — заполняем item_qty/item_unit/item_price, только
-                # если они ещё не заданы отдельными колонками позиции.
-                if item_qty is None:
-                    item_qty = _row_feo_qty
-                if item_unit is None:
-                    item_unit = _row_feo_unit
-                if item_price is None:
-                    item_price = _row_feo_price
+                # ниже) — заполняем item_feo_qty/item_feo_unit/item_feo_price,
+                # только если они ещё не заданы (per-row блок исполняется один
+                # раз, но сохраняем тот же защитный стиль). Это ОТДЕЛЬНЫЙ
+                # комплект от item_plan_* — раньше оба сливались в один набор
+                # item_qty/item_unit/item_price (см. докстринг у объявления
+                # item_plan_qty выше), из-за чего feo_quantity/feo_unit_price
+                # позиции никогда не заполнялись, а плановые числа строки (K–N)
+                # молча терялись, если ФЭО-числа (G–J) заполнялись первыми.
+                if item_feo_qty is None:
+                    item_feo_qty = _row_feo_qty
+                if item_feo_unit is None:
+                    item_feo_unit = _row_feo_unit
+                if item_feo_price is None:
+                    item_feo_price = _row_feo_price
             elif _deepest_lv is not None:
                 # Строка-категория БЕЗ позиции (файл ЦЕНТРПОИСК, строки-
                 # заголовки без «Плановой позиции») — поведение прежнее:
@@ -802,23 +849,26 @@ async def apply_rows(state) -> None:
                 # деньгам строки, а не безусловно), а не бюджет родителя: раньше
                 # она безусловно уходила в cat.budget и затирала итог, заданный
                 # строкой-заголовком категории.
-                if item_amount is None:
-                    item_amount = _row_feo_sum
+                if item_feo_amount is None:
+                    item_feo_amount = _row_feo_sum
             elif _deepest_lv is not None and _deepest_lv["feo_sum"] is None:
                 _deepest_lv["feo_sum"] = _row_feo_sum
 
         if any(v is not None for v in (_row_plan_qty, _row_plan_unit, _row_plan_price, _row_plan_sum)):
             if lvl5_name and not lvl5_name.startswith("←"):
                 # «Плановая позиция» заполнена — плоский план описывает ЕЁ (переменную
-                # позицию), а не категорию; см. item_qty/item_unit/item_price/item_amount ниже.
-                if item_qty is None:
-                    item_qty = _row_plan_qty
-                if item_unit is None:
-                    item_unit = _row_plan_unit
-                if item_price is None:
-                    item_price = _row_plan_price
-                if item_amount is None:
-                    item_amount = _row_plan_sum
+                # позицию), а не категорию; см. item_plan_qty/item_plan_unit/
+                # item_plan_price/item_plan_amount ниже — ОТДЕЛЬНЫЙ от ФЭО комплект
+                # (см. докстринг у объявления item_plan_qty), больше не затирается и
+                # не затирает ФЭО-числа этой же строки.
+                if item_plan_qty is None:
+                    item_plan_qty = _row_plan_qty
+                if item_plan_unit is None:
+                    item_plan_unit = _row_plan_unit
+                if item_plan_price is None:
+                    item_plan_price = _row_plan_price
+                if item_plan_amount is None:
+                    item_plan_amount = _row_plan_sum
             elif _deepest_lv is not None:
                 if _deepest_lv["plan_qty"] is None:
                     _deepest_lv["plan_qty"] = _row_plan_qty
@@ -973,7 +1023,8 @@ async def apply_rows(state) -> None:
                 # считаем планом строки вообще — ни в плюс, ни в ноль.
                 _row_has_any_content = bool(
                     (lvl5_name and lvl5_name not in ("←", ""))
-                    or item_qty is not None or item_price is not None or item_amount is not None
+                    or item_plan_qty is not None or item_plan_price is not None or item_plan_amount is not None
+                    or item_feo_qty is not None or item_feo_price is not None or item_feo_amount is not None
                     or feo_qty is not None or feo_amt is not None or feo_sum is not None
                     or (plan_amt is not None and plan_amt != ZERO)
                     or (plan_sum is not None and plan_sum != ZERO)
@@ -1110,18 +1161,65 @@ async def apply_rows(state) -> None:
                 updated_details.append({"row": row_num, "name": leaf.name, "reason": "обновлены поля категории"})
 
             if lvl5_name and lvl5_name not in ("←", ""):
-                # Вычислить итоговую сумму позиции: item_amount приоритетнее
-                eff_item_amount = item_amount
-                if eff_item_amount is None and item_price is not None:
-                    eff_item_qty = item_qty if item_qty is not None else Decimal("1")
-                    eff_item_amount = (item_price * eff_item_qty).quantize(QUANT)
+                # Вычислить итоговую сумму позиции ОТДЕЛЬНО для ФЭО и для плана
+                # (см. докстринг у объявления item_plan_qty выше — Правило №6,
+                # это тот же приём «сумма приоритетнее, иначе кол-во × цена»,
+                # что и на уровне категории выше, применённый к ОБОИМ комплектам).
+                eff_item_feo_amount = item_feo_amount
+                if eff_item_feo_amount is None and item_feo_price is not None:
+                    _eff_feo_qty = item_feo_qty if item_feo_qty is not None else Decimal("1")
+                    eff_item_feo_amount = (item_feo_price * _eff_feo_qty).quantize(QUANT)
+
+                eff_item_plan_amount = item_plan_amount
+                if eff_item_plan_amount is None and item_plan_price is not None:
+                    _eff_plan_qty = item_plan_qty if item_plan_qty is not None else Decimal("1")
+                    eff_item_plan_amount = (item_plan_price * _eff_plan_qty).quantize(QUANT)
+
+                # Задача владельца (а): нет НАСТОЯЩЕГО планового числа у строки —
+                # план позиции = ФЭО позиции (те же деньги, показывать план
+                # отдельно не из чего). Есть реальные плановые деньги —
+                # плановые колонки главнее целиком (не смешиваем поле из плана
+                # с полем из ФЭО внутри одного комплекта).
+                #
+                # «Настоящие деньги» — непустая И НЕНУЛЕВАЯ цена или сумма
+                # плана (Правило №6 — тот же смысл «0 = не задано», что и у
+                # budget/финансирования по ФЭО, см. feo_plan_tree.py:
+                # «когда введено 0, это значит, что не задана сумма»).
+                # test_row188_style_item_amount_does_not_overwrite_parent_budget
+                # (2026-09-09) — «плановые колонки строки — нулевые заглушки»
+                # (кол-во 15 «дней», цена/сумма плана — 0): такую строку
+                # владелец САМ описал как «плана по сути нет», ФЭО (142 500)
+                # обязана остаться суммой позиции. qty/unit одни, без ненулевой
+                # цены/суммы, «настоящим планом» не считаются.
+                _item_has_plan_numbers = (
+                    (item_plan_price is not None and item_plan_price != ZERO)
+                    or (item_plan_amount is not None and item_plan_amount != ZERO)
+                )
+                if _item_has_plan_numbers:
+                    final_qty, final_unit, final_price, final_amount = (
+                        item_plan_qty, item_plan_unit, item_plan_price, eff_item_plan_amount
+                    )
+                else:
+                    final_qty, final_unit, final_price, final_amount = (
+                        item_feo_qty, item_feo_unit, item_feo_price, eff_item_feo_amount
+                    )
 
                 # Категория получила позицию Ур.5 в ЭТОМ импорте — план строки
                 # (собранный выше в collected_plan) для неё уже не отдельная
                 # позиция, а описание её содержимого; см. блок ниже.
                 lvl5_leaves.add(leaf.id)
-                lvl5_sum_by_cat[leaf.id] = lvl5_sum_by_cat.get(leaf.id, ZERO) + (eff_item_amount or ZERO)
+                lvl5_sum_by_cat[leaf.id] = lvl5_sum_by_cat.get(leaf.id, ZERO) + (final_amount or ZERO)
                 lvl5_item_rows.setdefault(leaf.id, []).append(row_num)
+
+                # Примечание (Правило №6): случай «имя позиции = имя узла,
+                # которым она создана» (задача владельца (в), боевой инцидент
+                # 2026-09-16, строка 189 «Катер») до этой точки цикла уже не
+                # доходит — он перехватывается РАНЬШЕ, в блоке продвижения
+                # «Плановой позиции» в уровень (см. self-declared ветку выше,
+                # `item_name_equals_category`), где lvl5_name обнуляется, а
+                # категория и обобщённая плановая позиция заводятся дальше
+                # обычным путём (apply_collected_plan, feo_import_plan.py).
+                # Второй такой же проверки здесь заводить не нужно.
 
                 # Волна 4, п.23 (владелец): «5 строк с именем «чайник» — не
                 # ставить одну позицию с ценой последней строки, а предложить
@@ -1138,9 +1236,14 @@ async def apply_rows(state) -> None:
                 register_pending_item(state, _dup_key, leaf, {
                     "row": row_num,
                     "name": lvl5_name,
-                    "qty": item_qty,
-                    "unit": item_unit,
-                    "amount": eff_item_amount,
+                    "qty": final_qty,
+                    "unit": final_unit,
+                    "amount": final_amount,
+                    "unit_price": final_price,
+                    "feo_qty": item_feo_qty,
+                    "feo_unit": item_feo_unit,
+                    "feo_unit_price": item_feo_price,
+                    "feo_amount": eff_item_feo_amount,
                     "item_type": item_type,
                     "is_active": is_active,
                     "is_feo_breakdown": _row_is_feo_breakdown,

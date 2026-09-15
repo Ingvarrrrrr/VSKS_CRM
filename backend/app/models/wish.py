@@ -56,6 +56,14 @@ class Wish(Base):
     execution_deadline = Column(Date, nullable=True)  # Срок исполнения (ставит approver)
     approval_mode = Column(String(20), nullable=False, default="sequential", server_default="sequential")  # sequential/parallel
     source = Column(String(30), nullable=True)  # 'advance_report' = авто-заявка из авансового; NULL = обычная
+    # Форма договора заявки (mirrors Purchase.contract_form) — владелец,
+    # 2026-09-15: «договора на перевозку и питание могут быть не только
+    # рамочные, но и разовые», спец-формы позиций (см. app/services/item_forms.py)
+    # обязаны работать ДО конвертации в закупку, не только после. Единственный
+    # источник для item_form_for_wish(); при конвертации/распределении переезжает
+    # в Purchase.contract_form (wish_convert.py/wish_distribution.py), если у
+    # закупки форма ещё не задана — см. миграцию a4c6e8g0i2k4.
+    contract_form = Column(String(50), nullable=True)
 
     # Остановка заявки (владелец, 2026-08-13): «Останавливать могут все» —
     # заявка не удаляется, а исчезает из плана закупок и перестаёт считаться в

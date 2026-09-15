@@ -150,6 +150,10 @@ export function useWishForm(deps: {
     contractor_id: null as number | null,
     contractor_name: '' as string,
     feo_per_item: false as boolean,
+    // Форма договора заявки (владелец, 2026-09-15) — mirrors Purchase.contract_form,
+    // источник спец-полей позиций («Проживание»/«Перевозки автобусом»/«Питание»)
+    // ДО конвертации в закупку. См. composables/items/useItemForm.ts.
+    contract_form: null as string | null,
   })
 
   // Название субсидии для «ствола» дерева ФЭО (FeoTreeSelect rootLabel).
@@ -559,6 +563,7 @@ export function useWishForm(deps: {
       contractor_id: null,
       contractor_name: '',
       feo_per_item: false,
+      contract_form: null,
     }
     wishFeoSelected.value = null
     wishDateMode.value = 'common'
@@ -595,6 +600,7 @@ export function useWishForm(deps: {
     wishForm.value.contractor_id = (wish as any).contractor_id ?? null
     wishForm.value.contractor_name = (wish as any).contractor_name || ''
     wishForm.value.feo_per_item = (wish as any).feo_per_item ?? false
+    wishForm.value.contract_form = (wish as any).contract_form ?? null
 
     wishFeoSelected.value = wish.feo_category_id ?? null
 
@@ -657,6 +663,11 @@ export function useWishForm(deps: {
           over_plan: i.over_plan ?? false,
           vat_rate: i.vat_rate ?? null,
           needed_date: i.needed_date ?? null,
+          // item-forms-accommodation-transport.md: спец-поля формы («Проживание»/
+          // «Перевозки автобусом»/«Питание») — без этого поля перезагрузка карточки
+          // заявки стирала бы уже введённые значения (mirrors CreateOrderView.vue
+          // items-loading map, extra_attrs: i.extra_attrs || {}).
+          extra_attrs: i.extra_attrs || {},
           purchase_match: i.purchase_match ?? null,
           _photo_url: prod ? productPhotoSrc(prod) : undefined,
           _description: prod?.description || undefined,

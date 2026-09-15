@@ -119,6 +119,31 @@
           "default": 0
         }
       ]
+    },
+    "food": {
+      "label": "Питание",
+      "formula": "Итог = цена за приём × человек × приёмов пищи в день × дней",
+      "fields": [
+        {
+          "key": "persons",
+          "label": "Человек",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "key": "meals_per_day",
+          "label": "Приёмов пищи в день",
+          "type": "number",
+          "default": 3,
+          "hint": "обычно 3: завтрак, обед, ужин"
+        },
+        {
+          "key": "days",
+          "label": "Дней",
+          "type": "number",
+          "default": 1
+        }
+      ]
     }
   },
   "contract_forms": [
@@ -169,6 +194,7 @@
     }
   ],
   "contract_form_to_item_form": {
+    "services_food": "food",
     "services_accommodation": "accommodation",
     "services_transport": "transport"
   }

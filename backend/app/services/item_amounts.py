@@ -63,6 +63,20 @@ def _accommodation_nights(extra: dict) -> Decimal:
     return nights_dec if nights_dec != 0 else Decimal("1")
 
 
+def _food_quantity(extra: dict) -> Decimal:
+    """Питание: quantity = человек × приёмов пищи в день × дней (цена за приём —
+    обычный unit_price позиции, здесь не участвует). Человек=0 → 0 (нет людей —
+    нет расхода); приёмов пищи и дней — по аналогии с _accommodation_nights:
+    пусто/не задано трактуем как 1, а не 0, иначе забытое поле молча обнуляет
+    весь расчёт вместо явного «человек=0»."""
+    persons = _dec(extra.get("persons"))
+    meals_raw = extra.get("meals_per_day")
+    meals = _dec(meals_raw) if meals_raw not in (None, "") else Decimal("1")
+    days_raw = extra.get("days")
+    days = _dec(days_raw) if days_raw not in (None, "") else Decimal("1")
+    return persons * meals * days
+
+
 def _transport_quantity_and_rate(item: Any, extra: dict) -> tuple[Decimal, Decimal]:
     cost_mode = extra.get("cost_mode") or "hours"
     if cost_mode == "trip":
@@ -85,6 +99,10 @@ def compute_item_total(item: Any, item_form: Optional[str]) -> Decimal:
     if item_form == "transport":
         qty, unit_price = _transport_quantity_and_rate(item, extra)
         return _q2(qty * unit_price)
+    if item_form == "food":
+        qty = _food_quantity(extra)
+        unit_price = _dec(getattr(item, "unit_price", None))
+        return _q2(unit_price * qty)
     return line_total(getattr(item, "quantity", None), getattr(item, "unit_price", None))
 
 
@@ -102,6 +120,9 @@ def apply_item_amounts(item: Any, item_form: Optional[str]) -> Decimal:
         qty, unit_price = _transport_quantity_and_rate(item, extra)
         item.quantity = qty
         item.unit_price = unit_price
+    elif item_form == "food":
+        item.quantity = _food_quantity(extra)
+        # unit_price — цена за приём пищи, вводится пользователем напрямую.
     total = compute_item_total(item, item_form)
     item.total_price = total
     return total

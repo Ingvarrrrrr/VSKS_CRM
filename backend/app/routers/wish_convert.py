@@ -153,6 +153,15 @@ async def convert_wish(
             # вручную прямо в закупке).
             if getattr(wish, 'contractor_id', None) and not ep.contractor_id:
                 ep.contractor_id = wish.contractor_id
+            # Форма договора заявки (владелец, 2026-09-15) — тот же принцип, что
+            # у контрагента: заполняем ТОЛЬКО пустую форму закупки, никогда не
+            # перетираем уже заданную (закупщик мог выбрать форму вручную прямо
+            # в закупке ДО повторного согласования этой заявки). Если формы
+            # расходятся — закупка остаётся источником истины для СВОИХ позиций
+            # (item_form_for_purchase читает именно ep.contract_form), расхождение
+            # не проверяется отдельно здесь.
+            if getattr(wish, 'contract_form', None) and not ep.contract_form:
+                ep.contract_form = wish.contract_form
         wish.status = "converted"
         wish.approved_by = wish.approved_by or current_user.id
         wish.purchase_id = wish.purchase_id or existing[0].id
@@ -326,6 +335,10 @@ async def convert_wish(
         # указан. Purchase свежесозданный, поэтому «не перетирать уже заданное»
         # выполняется автоматически.
         contractor_id=getattr(wish, 'contractor_id', None),
+        # Форма договора заявки (владелец, 2026-09-15) — переезжает в закупку
+        # тем же принципом, что и контрагент выше. Purchase свежесозданный,
+        # поэтому «не перетирать уже заданное» выполняется автоматически.
+        contract_form=getattr(wish, 'contract_form', None),
     )
     db.add(p)
     await db.flush()  # get p.id

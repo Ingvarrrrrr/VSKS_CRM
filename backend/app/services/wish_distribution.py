@@ -322,6 +322,14 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
     p.item_name = title
     if getattr(wish, 'contractor_id', None) and not p.contractor_id:
         p.contractor_id = wish.contractor_id
+    # Форма договора заявки (владелец, 2026-09-15) — тот же принцип, что и у
+    # контрагента выше: заполняем ТОЛЬКО пустую форму закупки, никогда не
+    # перетираем уже заданную (могла быть выбрана вручную прямо в закупке до
+    # повторного согласования). Расхождение форм не проверяется отдельно —
+    # закупка остаётся источником истины для СВОИХ позиций (item_form_for_purchase
+    # читает p.contract_form, не wish.contract_form).
+    if getattr(wish, 'contract_form', None) and not p.contract_form:
+        p.contract_form = wish.contract_form
 
     await db.flush()
 
@@ -626,6 +634,10 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
             # если указан. Purchase свежесозданный (contractor_id ещё пуст) —
             # «не перетирать уже заданное» тут выполняется автоматически.
             contractor_id=getattr(wish, 'contractor_id', None),
+            # Форма договора заявки (владелец, 2026-09-15) — тот же принцип,
+            # что и у контрагента выше. Purchase свежесозданный — «не перетирать
+            # уже заданное» выполняется автоматически.
+            contract_form=getattr(wish, 'contract_form', None),
         )
         db.add(p)
         await db.flush()  # get p.id

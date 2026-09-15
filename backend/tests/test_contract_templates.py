@@ -540,3 +540,145 @@ def test_services_vat_rate_change_clause_gated_by_vat_applicable():
 
     assert marker in txt_true, f"«{marker}» отсутствует при vat_applicable=True"
     assert marker not in txt_false, f"«{marker}» присутствует при vat_applicable=False"
+
+
+# ---------------------------------------------------------------------------
+# form_summary в таблице позиций ТЗ (contract_tz.docx, tech_spec_contract.docx)
+#
+# Спец-формы позиций («Проживание», «Перевозки автобусом», «Питание») отдают
+# человекочитаемое описание в item.form_summary (единственный источник —
+# app/services/item_form_summary.py, см. ПРАВИЛО №6). Ячейка названия
+# позиции обязана печатать его в скобках сразу после названия; для обычных
+# позиций (form_summary == "") вывод не должен отличаться от эталона.
+#
+# Эталон "ДО правки" получен рендером тех же шаблонов и того же контекста ДО
+# добавления run'а form_summary (сохранён как строковый литерал — сравнение
+# идёт с зафиксированным значением, не с живым файлом бэкапа, которого нет
+# в репозитории).
+# ---------------------------------------------------------------------------
+
+_FORM_SUMMARY_PLAIN_ITEM = {
+    "num": 1,
+    "name": "ПОЗИЦИЯ-ОБЫЧНАЯ-СЕНТИНЕЛ",
+    "description": "ОПИСАНИЕ-ОБЫЧНОЕ-СЕНТИНЕЛ",
+    "photo": "",
+    "quantity": 2,
+    "unit": "шт",
+    "unit_price": "100,00",
+    "total_price": "200,00",
+    "type": "товар",
+    "form_summary": "",
+}
+
+_FORM_SUMMARY_SPEC_ITEM = {
+    "num": 2,
+    "name": "ПОЗИЦИЯ-ПИТАНИЕ-СЕНТИНЕЛ",
+    "description": "ОПИСАНИЕ-ПИТАНИЕ-СЕНТИНЕЛ",
+    "photo": "",
+    "quantity": 10,
+    "unit": "чел.",
+    "unit_price": "250,00",
+    "total_price": "37500,00",
+    "type": "услуга",
+    "form_summary": "Стандарт, 8 номеров × 6 600,00 ₽ × 3 сут.",
+}
+
+_FORM_SUMMARY_ITEMS = [_FORM_SUMMARY_PLAIN_ITEM, _FORM_SUMMARY_SPEC_ITEM]
+
+_FORM_SUMMARY_CTX_TZ = {
+    "items": _FORM_SUMMARY_ITEMS,
+    "contract_number": "ЧЧЧ",
+    "contract_date": "01.01.2026",
+    "contract_price": "1000,00",
+    "contractor_address": "АДРЕС",
+    "contractor_bank_details": "БАНК",
+    "contractor_inn": "1",
+    "contractor_kpp": "2",
+    "contractor_name": "ПОДРЯДЧИК",
+    "contractor_ogrn": "3",
+    "contractor_signatory_line": "ПОДПИСЬ",
+    "economy": "0",
+    "execution_term": "СРОК",
+    "purchase_method": "МЕТОД",
+    "registry_number": "РЕЕСТР",
+    "subsidy_name": "СУБСИДИЯ",
+    "subsidy_year": "2026",
+    "total_nmck": "1000,00",
+}
+
+_FORM_SUMMARY_CTX_TECH = {
+    "items": _FORM_SUMMARY_ITEMS,
+    "contract_date_day": "1",
+    "contract_date_month": "января",
+    "contract_date_year": "2026",
+    "contract_number": "ЧЧЧ",
+    "contract_price_num": "1000,00",
+    "contract_price_words": "тысяча рублей",
+    "contractor_signatory_initials": "И.И.",
+    "customer_signatory_initials": "П.П.",
+    "delivery_location": "МЕСТО",
+    "service_term": "СРОК",
+    "subject": "ПРЕДМЕТ",
+    "subject_kind": "goods",
+    "vat_amount_num": "0",
+    "vat_exemption_article": "",
+    "vat_rate": 20,
+    "vat_applicable": True,
+    "third_party_involved": True,
+}
+
+# Эталон "ДО правки" — строка обычной позиции в рендере (name + описание на
+# следующей строке ячейки). Тот же контекст, тот же шаблон, зафиксировано
+# рендером до добавления run'а form_summary.
+_PLAIN_ITEM_BASELINE_LINES = [
+    "ПОЗИЦИЯ-ОБЫЧНАЯ-СЕНТИНЕЛ",
+    "ОПИСАНИЕ-ОБЫЧНОЕ-СЕНТИНЕЛ",
+]
+
+_SPEC_ITEM_EXPECTED_NAME_LINE = (
+    "ПОЗИЦИЯ-ПИТАНИЕ-СЕНТИНЕЛ (Стандарт, 8 номеров × 6 600,00 ₽ × 3 сут.)"
+)
+_SPEC_ITEM_DESCRIPTION_LINE = "ОПИСАНИЕ-ПИТАНИЕ-СЕНТИНЕЛ"
+
+
+@pytest.mark.parametrize(
+    "template_name,ctx",
+    [
+        ("contract_tz.docx", _FORM_SUMMARY_CTX_TZ),
+        ("tech_spec_contract.docx", _FORM_SUMMARY_CTX_TECH),
+    ],
+)
+def test_item_form_summary_shown_in_parens_after_name(template_name, ctx):
+    """form_summary печатается в скобках сразу после названия позиции у
+    спец-формы и полностью отсутствует (в т.ч. пустые скобки) у обычной."""
+    template_path = os.path.join(_TEMPLATES_DIR, template_name)
+    assert os.path.isfile(template_path), f"Шаблон не найден: {template_path}"
+
+    txt = _render_text(template_path, ctx)
+    lines = txt.splitlines()
+
+    # Обычная позиция: строки name/description байт-в-байт как в эталоне
+    # ДО правки — скобок нет вообще.
+    for expected_line in _PLAIN_ITEM_BASELINE_LINES:
+        assert expected_line in lines, (
+            f"[{template_name}] эталонная строка обычной позиции «{expected_line}» "
+            f"отсутствует или изменилась — регрессия рендера"
+        )
+    assert "ПОЗИЦИЯ-ОБЫЧНАЯ-СЕНТИНЕЛ (" not in txt, (
+        f"[{template_name}] у обычной позиции неожиданно появились скобки"
+    )
+
+    # Спец-форма: form_summary в скобках сразу после названия, описание —
+    # отдельной строкой, без изменений.
+    assert _SPEC_ITEM_EXPECTED_NAME_LINE in lines, (
+        f"[{template_name}] ожидаемая строка «{_SPEC_ITEM_EXPECTED_NAME_LINE}» "
+        f"не найдена в рендере"
+    )
+    assert _SPEC_ITEM_DESCRIPTION_LINE in lines, (
+        f"[{template_name}] описание спец-формы отсутствует/изменилось"
+    )
+
+    # Никаких остатков Jinja/docxtpl-тегов в итоговом тексте.
+    assert "{%" not in txt and "{{" not in txt, (
+        f"[{template_name}] в рендере остались нераскрытые Jinja-теги"
+    )

@@ -13,6 +13,8 @@ frontend/src/data/item_forms.json, генерируется backend/scripts/expo
     итог = цена × (номера|люди) × суток.
   - transport («Перевозки автобусом»): «часы в работе» + «часы подачи»
     (по умолчанию 2) × ставка/час, либо переключатель на ручную стоимость рейса.
+  - food («Питание», добавлено 2026-09-15): итог = цена за приём × человек ×
+    приёмов пищи в день × дней.
 """
 from __future__ import annotations
 
@@ -75,6 +77,21 @@ ITEM_FORMS = {
             {"key": "trip_cost", "label": "Стоимость рейса", "type": "number", "default": 0},
         ],
     },
+    "food": {
+        "label": "Питание",
+        "formula": "Итог = цена за приём × человек × приёмов пищи в день × дней",
+        "fields": [
+            {"key": "persons", "label": "Человек", "type": "number", "default": 0},
+            {
+                "key": "meals_per_day",
+                "label": "Приёмов пищи в день",
+                "type": "number",
+                "default": 3,
+                "hint": "обычно 3: завтрак, обед, ужин",
+            },
+            {"key": "days", "label": "Дней", "type": "number", "default": 1},
+        ],
+    },
 }
 
 
@@ -82,6 +99,7 @@ ITEM_FORMS = {
 # → код формы позиций из ITEM_FORMS выше. Значения contract_form, отсутствующие
 # здесь (обычные «Услуги», «Поставка» и т.д.) — обычная форма, item_form = None.
 CONTRACT_FORM_TO_ITEM_FORM = {
+    "services_food": "food",
     "services_accommodation": "accommodation",
     "services_transport": "transport",
 }
@@ -94,6 +112,21 @@ def item_form_for_purchase(purchase) -> str | None:
     if purchase is None:
         return None
     contract_form = getattr(purchase, "contract_form", None)
+    if not contract_form:
+        return None
+    return CONTRACT_FORM_TO_ITEM_FORM.get(contract_form)
+
+
+def item_form_for_wish(wish) -> str | None:
+    """Форма позиций заявки — тот же CONTRACT_FORM_TO_ITEM_FORM, читающий
+    wish.contract_form (владелец, 2026-09-15: «договора на перевозку и питание
+    могут быть не только рамочные, но и разовые» — заявка обязана заводить
+    спец-форму ДО конвертации в закупку, не только после). Логика намеренно
+    зеркалит item_form_for_purchase выше — единственная разница источник
+    (Wish вместо Purchase), формулы/реестр ITEM_FORMS общие и не дублируются."""
+    if wish is None:
+        return None
+    contract_form = getattr(wish, "contract_form", None)
     if not contract_form:
         return None
     return CONTRACT_FORM_TO_ITEM_FORM.get(contract_form)

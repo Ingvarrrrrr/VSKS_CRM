@@ -16,11 +16,15 @@ item-forms-accommodation-transport.md, шаг 4:
   - transport: «Москва → Курск, 32 чел., подача 07.05.2026 08:00, 5 ч работы +
     2 ч подачи × 1 500,00 ₽/ч» либо «... стоимость рейса 12 000,00 ₽»
     (переключатель cost_mode).
+  - food (добавлено 2026-09-15): «10 чел. × 3 приёма/день × 5 дн. ×
+    250,00 ₽» — пустые meals_per_day/days трактуются как 1, ровно как в
+    _food_quantity (item_amounts.py), чтобы описание не расходилось с суммой.
   - обычная позиция (item_form=None) — пустая строка.
 """
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Optional
 
 from app.services.documents.formatting import _fmt_date, _fmt_money
@@ -80,6 +84,39 @@ def _accommodation_summary(item: Any, extra: dict) -> str:
     return ", ".join(p for p in parts if p)
 
 
+def _plural_ru(n: Decimal, one: str, few: str, many: str) -> str:
+    """Простой словарь форм для целого количества (без стороннего
+    плюрализатора — в проекте такого для количественных слов нет, только
+    падежные склонения ФИО/должностей в documents/morphology.py, они сюда не
+    подходят). Дробное количество (не должно происходить для приёмов пищи,
+    но на всякий случай) — форма «few», как для «3,5 дня» в русском."""
+    if n != n.to_integral_value():
+        return few
+    i = abs(int(n)) % 100
+    if 11 <= i <= 14:
+        return many
+    i = i % 10
+    if i == 1:
+        return one
+    if 2 <= i <= 4:
+        return few
+    return many
+
+
+def _food_summary(item: Any, extra: dict) -> str:
+    persons = _dec(extra.get("persons"))
+    meals_raw = extra.get("meals_per_day")
+    meals = _dec(meals_raw) if meals_raw not in (None, "") else Decimal("1")
+    days_raw = extra.get("days")
+    days = _dec(days_raw) if days_raw not in (None, "") else Decimal("1")
+    price_str = _fmt_money(getattr(item, "unit_price", None))
+    meal_word = _plural_ru(meals, "приём", "приёма", "приёмов")
+    return (
+        f"{_fmt_count(persons)} чел. × {_fmt_count(meals)} {meal_word}/день × "
+        f"{_fmt_count(days)} дн. × {price_str} ₽"
+    )
+
+
 def _transport_summary(item: Any, extra: dict) -> str:
     place_from = (extra.get("place_from") or "").strip()
     place_to = (extra.get("place_to") or "").strip()
@@ -115,9 +152,11 @@ def item_form_summary(item: Any, item_form: Optional[str]) -> str:
     через getattr/extra_attrs — годится и для PurchaseItem/WishItem/
     ContractItem (ORM), и для SimpleNamespace в тестах. item_form=None
     (обычная позиция) — пустая строка."""
-    if item_form not in ("accommodation", "transport"):
+    if item_form not in ("accommodation", "transport", "food"):
         return ""
     extra = _extra(item)
     if item_form == "accommodation":
         return _accommodation_summary(item, extra)
+    if item_form == "food":
+        return _food_summary(item, extra)
     return _transport_summary(item, extra)

@@ -17,7 +17,8 @@ from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.services.feo_plan import assert_tz_not_over_plan
 from app.services.item_contractor import set_item_contractor
-from app.services.item_amounts import line_total
+from app.services.item_amounts import line_total, apply_item_amounts
+from app.services.item_forms import item_form_for_wish
 # _move_or_detach_planned_item/_deactivate_if_orphaned нужны только update_wish
 # (ниже) — остальные хелперы автозаведения плана (_auto_assign_planned_items/
 # _backfill_item_type_from_plan) переехали в app/services/wish_distribution.py
@@ -313,6 +314,10 @@ async def create_wish(
         created_by=current_user.id,
         feo_per_item=body.feo_per_item,
         vat_mode=body.vat_mode or 'uniform',
+        # item-forms-accommodation-transport.md: заявка получает собственный
+        # contract_form (владелец, 2026-09-15) — источник item_form_for_wish
+        # ниже, тот же принцип, что и у Purchase.contract_form.
+        contract_form=body.contract_form,
     )
     db.add(wish)
     await db.flush()
@@ -329,6 +334,10 @@ async def create_wish(
         set_item_contractor(wish, name=body.contractor_name)
 
     if body.items:
+        # item-forms-accommodation-transport.md: форма позиций заявки выводится
+        # из wish.contract_form (один источник, item_form_for_wish) — считается
+        # ОДИН раз на заявку, не на каждую позицию (mirrors purchases.py create_purchase).
+        _item_form_wish_create = item_form_for_wish(wish)
         for item_data in body.items:
             if not _is_meaningful_item(item_data):
                 continue  # пустая строка-заготовка — в БД не пишем
@@ -349,6 +358,8 @@ async def create_wish(
                 needed_date=_as_date(item_data.get('needed_date')),  # W2
                 vat_rate=item_data.get('vat_rate'),
             )
+            if _item_form_wish_create:
+                apply_item_amounts(wi, _item_form_wish_create)
             db.add(wi)
         await db.flush()
 
@@ -523,6 +534,10 @@ async def update_wish(
         if old_status == "draft":
             # Draft: delete+recreate (original behaviour)
             await db.execute(delete(WishItem).where(WishItem.wish_id == wish.id))
+            # item-forms-accommodation-transport.md: wish.contract_form уже
+            # обновлён setattr-циклом выше (update_data), значит item_form_for_wish(wish)
+            # здесь видит НОВУЮ форму — см. аналогичный комментарий в purchases.py PUT.
+            _item_form_wish_put_draft = item_form_for_wish(wish)
             for item_data in body.items:
                 if not _is_meaningful_item(item_data):
                     continue  # пустая строка-заготовка — в БД не пишем
@@ -543,6 +558,8 @@ async def update_wish(
                     needed_date=_as_date(item_data.get('needed_date')),  # W2
                     vat_rate=item_data.get('vat_rate'),
                 )
+                if _item_form_wish_put_draft:
+                    apply_item_amounts(wi, _item_form_wish_put_draft)
                 db.add(wi)
             await db.flush()
         else:
@@ -553,6 +570,10 @@ async def update_wish(
             # matching id are silently skipped).
             existing_items = {wi.id: wi for wi in wish.items}
             payload_ids: set[int] = set()
+            # item-forms-accommodation-transport.md: та же форма для всех строк
+            # этого PUT (один источник — wish.contract_form, уже обновлён
+            # setattr-циклом выше, если пришёл в этом же запросе).
+            _item_form_wish_put_live = item_form_for_wish(wish)
             for item_data in body.items:
                 item_id = item_data.get('id') if isinstance(item_data, dict) else getattr(item_data, 'id', None)
                 if item_id:
@@ -560,23 +581,31 @@ async def update_wish(
                 wi = existing_items.get(item_id) if item_id else None
                 if wi is None:
                     continue
+                _qty_set = 'quantity' in item_data
+                _price_set = 'unit_price' in item_data
+                _extra_set = 'extra_attrs' in item_data
                 if 'item_name' in item_data:
                     wi.item_name = item_data['item_name']
-                if 'unit_price' in item_data:
+                if _price_set:
                     wi.unit_price = item_data['unit_price']
-                if 'quantity' in item_data:
+                if _qty_set:
                     wi.quantity = item_data['quantity']
                 if 'unit' in item_data:
                     wi.unit = item_data['unit']
-                if 'extra_attrs' in item_data:
+                if _extra_set:
                     wi.extra_attrs = item_data['extra_attrs'] or {}
-                if 'total_price' in item_data:
+                if _item_form_wish_put_live and (_qty_set or _price_set or _extra_set):
+                    # ПРАВИЛО №6: compute_item_total/apply_item_amounts — единственный
+                    # писатель total_price для спец-форм (accommodation/transport/food).
+                    # quantity/unit_price ниже могут быть ПЕРЕЗАПИСАНЫ производными от
+                    # extra_attrs (см. apply_item_amounts) — прямой ввод не участвует.
+                    apply_item_amounts(wi, _item_form_wish_put_live)
+                elif 'total_price' in item_data:
                     wi.total_price = item_data['total_price']
-                elif 'unit_price' in item_data or 'quantity' in item_data:
+                elif _qty_set or _price_set:
                     # ПРАВИЛО №6: то же умножение, что и в purchase_items_edit.py/
                     # wish_distribution.py — единственный писатель line_total().
-                    # WishItem не привязан к закупке (item_form неизвестен до
-                    # конвертации), поэтому здесь всегда обычная формула.
+                    # Обычная позиция (item_form=None) — формула не меняется.
                     wi.total_price = line_total(wi.quantity, wi.unit_price)
                 _wi_cat_changing = (
                     'feo_category_id' in item_data

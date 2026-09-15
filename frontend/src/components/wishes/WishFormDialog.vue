@@ -183,6 +183,22 @@
                   />
                 </v-col>
                 <v-col cols="12" md="6">
+                  <v-select
+                    v-model="wishForm.contract_form"
+                    :items="contractFormOptions"
+                    item-title="title"
+                    item-value="value"
+                    label="Форма договора"
+                    variant="outlined"
+                    density="compact"
+                    clearable
+                    :readonly="!isWishEditable"
+                    hint="Договора на перевозку/проживание/питание могут быть рамочные или разовые — форма включает соответствующие спец-поля позиций ниже"
+                    persistent-hint
+                    data-field="contract_form"
+                  />
+                </v-col>
+                <v-col cols="12" md="6">
                   <div class="text-caption font-weight-medium mb-1">Дата поставки</div>
                   <!-- Мобильный фикс (владелец, 2026-09-04): .mobile-toggle-wrap тянет тумблер
                        на всю ширину и переносит текст внутри кнопки на вторую строку. -->
@@ -346,6 +362,7 @@
                   item-shape="purchase"
                   :purchase-id="null"
                   :wish-id="editingWishId"
+                  :contract-form="wishForm.contract_form"
                   :default-unit="'шт.'"
                   :default-country="'РФ'"
                   :allowed-item-types="['товар','услуга','работа']"
@@ -1146,6 +1163,14 @@ import { useWishApprovers } from '@/composables/wishes/useWishApprovers'
 import { useWishItemsFeoAutosave } from '@/composables/wishes/useWishItemsFeoAutosave'
 import { useWishActions } from '@/composables/wishes/useWishActions'
 import type { Wish } from '@/composables/wishes/wishTypes'
+// item-forms-accommodation-transport.md (владелец, 2026-09-15): «договора на
+// перевозку и питание могут быть не только рамочные, но и разовые» — заявка
+// получила собственный contract_form, тот же справочник вариантов, что и
+// CreateOrderView.vue (contractFormOptions), см. composables/items/useItemForm.ts
+// (Правило №6 — единственный источник item_forms.json::contract_forms).
+import { contractFormOptions as contractFormOptionsFromDict } from '@/composables/items/useItemForm'
+
+const contractFormOptions = contractFormOptionsFromDict()
 
 const props = defineProps<{
   mobile: boolean

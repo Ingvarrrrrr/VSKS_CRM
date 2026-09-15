@@ -32,7 +32,7 @@ export interface ItemFormDescriptor {
   fields: ItemFormField[]
 }
 
-export type ItemFormCode = 'accommodation' | 'transport'
+export type ItemFormCode = 'accommodation' | 'transport' | 'food'
 
 export type ExtraAttrs = Record<string, any>
 
@@ -77,6 +77,18 @@ function transportQuantityAndRate(extra: ExtraAttrs): [number, number] {
   return [workHours + supplyHours, toNum(extra.hourly_rate)]
 }
 
+// Питание: quantity = человек × приёмов пищи в день × дней (см.
+// item_amounts.py::_food_quantity). Человек=0 → 0; приёмов пищи и дней
+// пустые/не заданы → 1 (по аналогии с accommodationNights).
+function foodQuantity(extra: ExtraAttrs): number {
+  const persons = toNum(extra.persons)
+  const mealsRaw = extra.meals_per_day
+  const meals = mealsRaw === null || mealsRaw === undefined || mealsRaw === '' ? 1 : toNum(mealsRaw)
+  const daysRaw = extra.days
+  const days = daysRaw === null || daysRaw === undefined || daysRaw === '' ? 1 : toNum(daysRaw)
+  return persons * meals * days
+}
+
 /** Обычная позиция (item_form=null): количество × цена за единицу. */
 export function lineTotal(quantity: unknown, unitPrice: unknown): number {
   return round2(toNum(quantity) * toNum(unitPrice))
@@ -102,6 +114,10 @@ export function computeItemTotal(
     const [qty, rate] = transportQuantityAndRate(ex)
     return round2(qty * rate)
   }
+  if (itemForm === 'food') {
+    const qty = foodQuantity(ex)
+    return round2(toNum(unitPrice) * qty)
+  }
   return lineTotal(quantity, unitPrice)
 }
 
@@ -123,6 +139,9 @@ export function applyItemAmounts(
     const [qty, rate] = transportQuantityAndRate(extra)
     item.quantity = qty
     item.unit_price = rate
+  } else if (itemForm === 'food') {
+    item.quantity = foodQuantity(extra)
+    // unit_price — цена за приём пищи, вводится пользователем напрямую.
   }
   const total = computeItemTotal(extra, itemForm, item.quantity, item.unit_price)
   item.total_price = total

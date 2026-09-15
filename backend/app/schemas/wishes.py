@@ -163,6 +163,10 @@ class WishCreate(BaseModel):
     # блокирует сохранение/согласование/конвертацию заявки.
     contractor_id: Optional[int] = None
     contractor_name: Optional[str] = None
+    # Форма договора заявки (mirrors Purchase.contract_form, владелец,
+    # 2026-09-15) — источник для item_form_for_wish/спец-полей позиций
+    # («Проживание»/«Перевозки автобусом»/«Питание»). См. Wish.contract_form.
+    contract_form: Optional[str] = None
     items: Optional[list] = None  # list of dicts with item_name, item_type, quantity, unit, unit_price, total_price, country_origin
 
     @field_validator('title')
@@ -209,6 +213,10 @@ class WishUpdate(BaseModel):
     # поля). См. комментарий в app/routers/wishes.py::update_wish.
     contractor_id: Optional[int] = None
     contractor_name: Optional[str] = None
+    # Форма договора заявки — см. WishCreate.contract_form. Optional[...] = None,
+    # как и остальные поля формы заявки выше — общий model_dump(exclude_none=True)
+    # в update_wish трактует отсутствующий/null ключ как «не менять».
+    contract_form: Optional[str] = None
     items: Optional[list] = None  # list of dicts with item_name, item_type, quantity, unit, unit_price, total_price, country_origin
 
     @field_validator('title')
@@ -305,6 +313,10 @@ class WishOut(BaseModel):
     contractor_id: Optional[int] = None
     contractor_name: Optional[str] = None
     contractor_display_name: Optional[str] = None
+    # Форма договора заявки — см. WishCreate.contract_form / Wish.contract_form.
+    # Источник для item_form_for_wish() и спец-полей позиций на фронте
+    # (PurchaseItemsEditor :contract-form) до конвертации в закупку.
+    contract_form: Optional[str] = None
     event_id: Optional[int] = None
     event_name: Optional[str] = None
     assigned_to: Optional[int] = None

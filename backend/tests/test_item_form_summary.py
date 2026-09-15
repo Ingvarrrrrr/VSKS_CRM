@@ -84,6 +84,41 @@ def test_transport_trip_mode():
     )
 
 
+def test_food_summary():
+    """«10 чел. × 3 приёма/день × 5 дн. × 250,00 ₽» (формула владельца: человек
+    × приёмов пищи × дней, цена — за приём)."""
+    item = SimpleNamespace(
+        unit_price=Decimal("250"),
+        extra_attrs={"persons": 10, "meals_per_day": 3, "days": 5},
+    )
+    assert item_form_summary(item, "food") == (
+        "10 чел. × 3 приёма/день × 5 дн. × 250,00 ₽"
+    )
+
+
+def test_food_summary_empty_meals_and_days_default_to_one():
+    """Пустые meals_per_day/days — трактуются как 1, ровно как в
+    _food_quantity (item_amounts.py), иначе описание разойдётся с суммой."""
+    item = SimpleNamespace(
+        unit_price=Decimal("250"),
+        extra_attrs={"persons": 4, "meals_per_day": "", "days": None},
+    )
+    assert item_form_summary(item, "food") == (
+        "4 чел. × 1 приём/день × 1 дн. × 250,00 ₽"
+    )
+
+
+def test_food_summary_zero_persons_not_empty():
+    """persons=0 — описание всё равно строится (не пустая строка)."""
+    item = SimpleNamespace(
+        unit_price=Decimal("250"),
+        extra_attrs={"persons": 0, "meals_per_day": 3, "days": 1},
+    )
+    assert item_form_summary(item, "food") == (
+        "0 чел. × 3 приёма/день × 1 дн. × 250,00 ₽"
+    )
+
+
 def test_ordinary_item_empty_summary():
     """item_form=None (обычная позиция) — пустая строка, не None."""
     item = SimpleNamespace(unit_price=Decimal("100"), extra_attrs={})

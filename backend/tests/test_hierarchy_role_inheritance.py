@@ -55,6 +55,13 @@ async def test_superadmin_not_inherited_via_hierarchy(db_session, test_org, make
 
 @pytest.mark.asyncio
 async def test_employee_without_hierarchy_blocked(client, test_user, auth_headers):
-    """Обычный employee → 403 на require_superadmin endpoint."""
-    resp = await client.get("/api/organizations/", headers=auth_headers)
+    """Обычный employee → 403 на require_superadmin endpoint.
+
+    Раньше проверялось на GET /api/organizations/ — этот гейт сняли намеренно
+    1 сентября (коммит a5388252 «сотрудник может видеть все организации
+    аккаунта»; сам роутер: «GET LIST доступен любому залогиненному — нужен
+    для dropdown'ов»). Перецелено на /api/organizations/accounts — единственный
+    в этом роутере эндпоинт, реально закрытый require_superadmin() (список
+    аккаунтов для формы создания организации суперадмином)."""
+    resp = await client.get("/api/organizations/accounts", headers=auth_headers)
     assert resp.status_code == 403

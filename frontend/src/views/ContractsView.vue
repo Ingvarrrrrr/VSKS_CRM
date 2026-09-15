@@ -157,6 +157,7 @@
 import { onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
+import { ADMIN_ROLES } from '@/constants/roles'
 import MonthlyStagesDialog from '@/components/MonthlyStagesDialog.vue'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import { useCardView } from '@/composables/useCardView'
@@ -202,7 +203,7 @@ function onFileDropped(file: File) {
 }
 
 const userRole = localStorage.getItem('user_role') || ''
-const isAdmin = ['admin', 'superadmin', 'org_admin'].includes(userRole)
+const isAdmin = ADMIN_ROLES.includes(userRole as typeof ADMIN_ROLES[number])
 
 const toast = useToast()
 const showSnack = (text: string, color: ToastType = 'success') => { toast.addToast(text, color) }

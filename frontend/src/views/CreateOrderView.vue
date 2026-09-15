@@ -1848,6 +1848,7 @@ import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { ACTIONS } from '@/constants/permissionActions'
+import { ADMIN_ROLES, MANAGER_ROLES } from '@/constants/roles'
 import { useContractorsStore } from '@/stores/contractors'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { listContractItems, replaceAllContractItems } from '@/api/contractItems'
@@ -2076,12 +2077,12 @@ let _pendingUndoBlur: { field: string; before: unknown } | null = null
 const userRole = localStorage.getItem('user_role') || 'employee'
 const isEmployee = computed(() => userRole === 'employee')
 const isManager = computed(() => userRole === 'manager')
-const isAdminLevel = computed(() => ['superadmin', 'org_admin', 'admin'].includes(userRole))
+const isAdminLevel = computed(() => ADMIN_ROLES.includes(userRole as typeof ADMIN_ROLES[number]))
 const isSuperadmin = computed(() => userRole === 'superadmin')
 // Владелец (2026-09-02): «раньше суперадмин мог двигать закупки по статусам
 // самостоятельно, куда делось это поле» — то же правило, что isSaas в WishesView.vue.
 const isSaas = computed(() => ['superadmin', 'account_owner'].includes(userRole))
-const isManagerLevel = computed(() => ['superadmin', 'org_admin', 'admin', 'manager'].includes(userRole))
+const isManagerLevel = computed(() => MANAGER_ROLES.includes(userRole as typeof MANAGER_ROLES[number]))
 const canPublish = computed(() =>
   isAdminLevel.value ||
   authStore.hasAction('publication.create') ||
@@ -2975,7 +2976,7 @@ const basketForNode = (nodeId: number, leafIds?: Set<number>): number => {
 }
 
 const budgetOverrideDialog = ref(false)
-const isAdmin = computed(() => ['superadmin', 'org_admin', 'admin'].includes(userRole))
+const isAdmin = computed(() => ADMIN_ROLES.includes(userRole as typeof ADMIN_ROLES[number]))
 
 // ── Approval (Согласование) — extracted to ApprovalPanel.vue ─────────────────
 const approvalPanelRef = ref<InstanceType<typeof ApprovalPanel> | null>(null)

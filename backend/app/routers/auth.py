@@ -253,7 +253,7 @@ async def select_orgs(
 ):
     """Select multiple organizations (superadmin) — returns new JWT with org_ids."""
     if user.role != 'superadmin':
-        raise HTTPException(403, "Только для суперадмина")
+        raise HTTPException(403, "Действие недоступно")
     if not req.org_ids:
         raise HTTPException(400, "Выберите хотя бы одну организацию")
 

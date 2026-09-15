@@ -304,7 +304,7 @@ async def delete_all_products(
 ):
     """Удалить все товары. Только для superadmin."""
     if current_user.role != "superadmin":
-        raise HTTPException(403, "Только суперадмин может удалить все товары")
+        raise HTTPException(403, "Действие недоступно")
     from sqlalchemy import delete as sa_delete
     result = await db.execute(sa_delete(Product))
     await db.commit()

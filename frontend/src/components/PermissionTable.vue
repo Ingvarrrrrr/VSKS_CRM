@@ -36,6 +36,8 @@
 </template>
 
 <script setup lang="ts">
+import { ROLE_LABELS } from '@/composables/staff/staffLabels'
+
 const props = defineProps<{
   roles: string[]
   columns: any[]
@@ -58,15 +60,10 @@ function isLocked(role: string, key: string): boolean {
   return role === props.currentRole && props.protectedKeys.includes(key)
 }
 
+// Владелец 2026-09-15 (Правило №6): единственный источник подписей ролей —
+// composables/staff/staffLabels.ts, дубль этого словаря здесь убран.
 function roleLabel(role: string): string {
-  const labels: Record<string, string> = {
-    account_owner: 'Владелец аккаунта',
-    admin: 'Администратор',
-    org_admin: 'Админ организации',
-    manager: 'Менеджер',
-    employee: 'Сотрудник',
-  }
-  return labels[role] ?? role
+  return ROLE_LABELS[role] ?? role
 }
 </script>
 

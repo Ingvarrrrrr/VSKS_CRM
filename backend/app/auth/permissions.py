@@ -92,12 +92,31 @@ _ROLE_PRIORITY = {
 
 ROLE_LABELS_RU = {
     "superadmin": "Суперадмин",
-    "account_owner": "Хозяин аккаунта",
+    "account_owner": "Владелец аккаунта",
     "admin": "Администратор аккаунта",
     "org_admin": "Администратор организации",
     "manager": "Менеджер",
     "employee": "Сотрудник",
 }
+
+
+def combine_role_rank(global_role: Optional[str], org_role: Optional[str]) -> str:
+    """Единая точка "чья роль главнее" (Правило №6) — владелец 2026-09-15:
+    эффективная роль = БОЛЕЕ ВЫСОКАЯ по рангу (_ROLE_PRIORITY) из глобальной
+    роли и роли пользователя В ЭТОЙ ЖЕ организации. Раньше орг-роль ПОДМЕНЯЛА
+    глобальную (org_role полностью перекрывал global_role), из-за чего
+    account_owner с UOA org_admin в конкретной орге терял «Хозяина» и получал
+    «Недостаточно прав» при настройке допусков в собственном аккаунте.
+
+    ВАЖНО: комбинирует только global vs роль В ЭТОЙ ЖЕ орге — роли в ДРУГИХ
+    организациях сюда не подмешиваются (сквозное повышение через чужую орг-роль
+    убрано намеренно, см. Wave 3 / комментарий выше в _get_effective_simple).
+    При обеих пустых — "employee" (потолок по умолчанию, никогда не unranked).
+    """
+    candidates = [r for r in (global_role, org_role) if r]
+    if not candidates:
+        return "employee"
+    return max(candidates, key=lambda r: _ROLE_PRIORITY.get(r, 0))
 
 
 async def _get_effective_simple(user: User, db: AsyncSession, org_id: Optional[int], include_subsidy_grants: bool = True) -> set:
@@ -117,33 +136,10 @@ async def _get_effective_simple(user: User, db: AsyncSession, org_id: Optional[i
     # Модель A: UOA-роль — самодостаточный источник полномочий по орг, членство
     # (user_organizations) НЕ требуется. Полномочия ≠ трудоустройство.
 
-    # Step 0: resolve effective role (per-org override takes precedence)
-    effective_role = user.role
-    if org_id:
-        uoa = (await db.execute(
-            select(UserOrgAccess).where(
-                UserOrgAccess.user_id == user.id,
-                UserOrgAccess.org_id == org_id,
-            )
-        )).scalar_one_or_none()
-        if uoa and uoa.role:
-            effective_role = uoa.role
-
-    # Step 0b (N-10 fallback ONLY): если у пользователя вовсе нет глобальной
-    # роли (user.role NULL) и нет UOA для этой орги — берём лучшую per-org роль.
-    # Cross-org elevation при НАЛИЧИИ глобальной роли убран (Wave 3): орг-роль
-    # даёт власть только в своей орге; в чужих оргах действует глобальная роль.
-    # Гейты вкладок/действий компенсируют это перебором орг (см. require_tab).
-    if not effective_role:
-        _uoa_role_rows = (await db.execute(
-            select(UserOrgAccess.org_id, UserOrgAccess.role).where(
-                UserOrgAccess.user_id == user.id,
-                UserOrgAccess.role.isnot(None),
-            )
-        )).all()
-        all_uoa_rows = [r for (oid, r) in _uoa_role_rows if oid]
-        if all_uoa_rows:
-            effective_role = max(all_uoa_rows, key=lambda r: _ROLE_PRIORITY.get(r, 0))
+    # Step 0/0b: resolve effective role — see _resolve_role_for_org (единая
+    # функция, Правило №6, владелец 2026-09-15: max(global, org_role) вместо
+    # подмены глобальной роли орг-ролью).
+    effective_role = await _resolve_role_for_org(user, db, org_id)
 
     # Step 1: base from role matrix with resolved role
     rp_rows = await db.execute(
@@ -238,16 +234,29 @@ async def _subsidy_grant_keys(user_id: int, db: AsyncSession) -> set:
 # разрешено назначать только superadmin/account_owner (см. вызов в роутере).
 
 
-async def _resolve_role_for_rank(user: User, db: AsyncSession, org_id: Optional[int]) -> str:
-    """Resolve a user's role for rank-comparison purposes only.
+async def _resolve_role_for_org(user: User, db: AsyncSession, org_id: Optional[int]) -> str:
+    """ЕДИНАЯ async-точка резолва эффективной роли пользователя для (user, org_id)
+    — источник истины для _get_effective_simple (Step 0/0b) И для рангового
+    сравнения (get_user_rank / assert_can_manage_user_access). Правило №6:
+    раньше это было продублировано в двух местах с разными формулами.
 
-    Mirrors the role-resolution used by _get_effective_simple's Step 0/0b:
-    per-org UOA role wins if set for org_id, else global user.role, else the
-    highest-priority role among any UOA row the user holds (N-10 fallback).
-    Defaults to 'employee' (lowest rank) if nothing resolves — a user with no
-    role anywhere must never be treated as unranked/unmanageable.
+    Владелец 2026-09-15: эффективная роль = max(global_role, org_role) через
+    combine_role_rank — БОЛЕЕ ВЫСОКАЯ по рангу из глобальной роли и роли
+    пользователя В ЭТОЙ ЖЕ организации (раньше org_role полностью ПОДМЕНЯЛ
+    global_role, что понижало account_owner с UOA org_admin в своей же орге).
+
+    Step 0b (N-10 fallback, СОХРАНЁН как есть): если у пользователя вовсе нет
+    глобальной роли И нет UOA-роли для ЭТОЙ орги — берём лучшую роль среди ВСЕХ
+    его UOA-строк (по другим оргам). Cross-org elevation при НАЛИЧИИ глобальной
+    роли или роли в этой орге не производится (Wave 3) — сквозное повышение
+    через чужую орг-роль убрано намеренно, гейты вкладок/действий компенсируют
+    это перебором орг (см. require_tab / _has_key_in_any_org).
+
+    Возвращает "employee" (не None), если ничего не резолвится — пользователь
+    никогда не должен считаться unranked/unmanageable.
     """
-    role = user.role
+    global_role = user.role
+    org_role: Optional[str] = None
     if org_id:
         uoa = (await db.execute(
             select(UserOrgAccess).where(
@@ -256,8 +265,9 @@ async def _resolve_role_for_rank(user: User, db: AsyncSession, org_id: Optional[
             )
         )).scalar_one_or_none()
         if uoa and uoa.role:
-            role = uoa.role
-    if not role:
+            org_role = uoa.role
+
+    if not global_role and not org_role:
         uoa_rows = (await db.execute(
             select(UserOrgAccess.role).where(
                 UserOrgAccess.user_id == user.id,
@@ -265,13 +275,14 @@ async def _resolve_role_for_rank(user: User, db: AsyncSession, org_id: Optional[
             )
         )).scalars().all()
         if uoa_rows:
-            role = max(uoa_rows, key=lambda r: _ROLE_PRIORITY.get(r, 0))
-    return role or "employee"
+            org_role = max(uoa_rows, key=lambda r: _ROLE_PRIORITY.get(r, 0))
+
+    return combine_role_rank(global_role, org_role)
 
 
 async def get_user_rank(user: User, db: AsyncSession, org_id: Optional[int] = None) -> int:
     """Numeric rank (see _ROLE_PRIORITY) used to decide 'who can configure whom'."""
-    role = await _resolve_role_for_rank(user, db, org_id)
+    role = await _resolve_role_for_org(user, db, org_id)
     return _ROLE_PRIORITY.get(role, 1)
 
 
@@ -284,32 +295,64 @@ async def assert_can_manage_user_access(
     """403 if current_user is not allowed to edit target_user's permissions/role.
 
     - superadmin bypasses (technical SaaS role).
-    - Editing your own access is always forbidden (self-escalation/self-lockout
-      guard, in BOTH directions — see SELF_LOCKOUT_PROTECTED_KEYS in
-      permissions.py router for the narrower legacy check this supersedes).
-    - Otherwise the actor's rank must be STRICTLY greater than the target's.
+    - account_owner bypasses the self-edit guard (владелец 2026-09-15): он
+      единственный, кому позволено настраивать СВОИ собственные допуски —
+      иначе владелец аккаунта, у которого UOA-роль в какой-то орге ниже
+      глобальной, не мог поправить самому себе org_admin-допуски в этой орге.
+    - Editing your own access is otherwise always forbidden (self-escalation/
+      self-lockout guard, in BOTH directions — see SELF_LOCKOUT_PROTECTED_KEYS
+      in permissions.py router for the narrower legacy check this supersedes).
+    - Otherwise the actor's rank must be STRICTLY greater than the target's —
+      кроме account_owner на самом себе, где ранги равны по определению и это
+      разрешено (см. выше).
     """
     if current_user.role == "superadmin":
         return
-    if target_user_id == current_user.id:
+    is_self = target_user_id == current_user.id
+    if is_self and current_user.role != "account_owner":
         raise HTTPException(
             403,
-            "Нельзя менять свои собственные допуски — это может сделать только "
-            "хозяин аккаунта (владелец) или суперадмин. Попросите его.",
+            "Нельзя менять свои собственные допуски. Обратитесь к владельцу аккаунта.",
         )
     target_user = await db.get(User, target_user_id)
     if target_user is None:
         raise HTTPException(404, "Пользователь не найден")
     actor_rank = await get_user_rank(current_user, db, org_id)
-    target_role_name = await _resolve_role_for_rank(target_user, db, org_id)
+    target_role_name = await _resolve_role_for_org(target_user, db, org_id)
     target_rank = _ROLE_PRIORITY.get(target_role_name, 1)
+    if is_self:
+        # account_owner на самом себе: ранги равны (actor_rank == target_rank),
+        # общее правило "строго выше" его бы заблокировало — обходим намеренно.
+        return
     if actor_rank <= target_rank:
         target_label = ROLE_LABELS_RU.get(target_role_name, target_role_name)
         raise HTTPException(
             403,
             f"Недостаточно прав: настраивать допуски пользователя с ролью "
-            f"«{target_label}» может только хозяин аккаунта (владелец) или "
-            "суперадмин — эта роль равна вашей или выше.",
+            f"«{target_label}» — эта роль равна вашей или выше. Обратитесь "
+            "к владельцу аккаунта.",
+        )
+
+
+def assert_role_assignable(current_user: User, new_role: str) -> None:
+    """403 если current_user не вправе НАЗНАЧИТЬ роль new_role кому-либо.
+
+    Единственное текущее правило (Правило №6 — было продублировано текстом в
+    routers/permissions.py PATCH .../role): роль account_owner («Владелец
+    аккаунта») вправе назначать только superadmin или действующий
+    account_owner — иначе org_admin/admin мог бы сам себе или кому угодно
+    выдать самый высокий пользовательский ранг.
+
+    Вызывается ОБОИМИ путями назначения роли: routers/permissions.py PATCH
+    /users/{id}/role (орг-роль в user_org_access) И routers/users.py PATCH
+    /api/users/{id} (глобальная user.role) — до этой правки второй путь
+    вообще не проверял, кто вправе выдать account_owner (дыра в правах).
+    Проверки ранга/self-edit — отдельно, см. assert_can_manage_user_access.
+    """
+    if new_role == "account_owner" and current_user.role not in ("superadmin", "account_owner"):
+        raise HTTPException(
+            403,
+            "Роль «Владелец аккаунта» может назначить только действующий владелец аккаунта.",
         )
 
 

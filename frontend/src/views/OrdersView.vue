@@ -137,6 +137,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { useAuthStore } from '@/stores/auth'
+import { ADMIN_ROLES } from '@/constants/roles'
 import { useGlobalSubsidy } from '@/composables/useGlobalSubsidy'
 import { useToast, type ToastType } from '@/composables/useToast'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
@@ -171,7 +172,7 @@ const viewMode = ref<'table' | 'cards'>((localStorage.getItem('orders_view_mode'
 watch(viewMode, v => localStorage.setItem('orders_view_mode', v))
 const effectiveView = computed(() => (mobile.value ? 'cards' : viewMode.value))
 const userRole = localStorage.getItem('user_role') || ''
-const isAdmin = ['admin', 'superadmin', 'org_admin'].includes(userRole)
+const isAdmin = ADMIN_ROLES.includes(userRole as typeof ADMIN_ROLES[number])
 
 // Snackbar — единый механизм (useToast + ToastContainer, смонтирован в App.vue).
 // duration=0 по умолчанию: результат действия (смена статуса, удаление и т.п.)

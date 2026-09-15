@@ -30,6 +30,7 @@ import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/controls/dist/style.css'
 import '@vue-flow/minimap/dist/style.css'
+import { ROLE_LABELS } from '@/composables/staff/staffLabels'
 
 const emit = defineEmits<{ connect: [conn: Connection] }>()
 
@@ -131,10 +132,12 @@ const UserNode = markRaw({
       superadmin: '#9c27b0', org_admin: '#f44336', admin: '#f44336',
       manager: '#2196f3', employee: '#009688',
     }
-    const roleLabels: Record<string, string> = {
-      superadmin: 'Суперадмин', org_admin: 'Администратор', admin: 'Администратор',
-      manager: 'Менеджер', employee: 'Сотрудник',
-    }
+    // Владелец 2026-09-15 (Правило №6): подписи ролей — из единого словаря
+    // composables/staff/staffLabels.ts, локальный дубль убран (org_admin/admin
+    // здесь стояли ОДНИМ ярлыком «Администратор», хотя это разные роли).
+    // `??` при использовании ниже, не `||` — ROLE_LABELS.superadmin
+    // намеренно пустая строка (служебная SaaS-роль, никто из сотрудников её
+    // видеть не должен), и её нельзя подменять сырым 'superadmin'.
     return () => h('div', { class: 'hnode hnode-user' }, [
       // Green source handle (right) — drag to create hierarchy edge
       h(Handle, {
@@ -178,7 +181,7 @@ const UserNode = markRaw({
           // Compact org/position count
           h('div', { style: 'display:flex;align-items:center;gap:6px;margin-top:2px' }, [
             h('div', { class: 'hnode-user-role', style: { color: roleColors[p.data.role] || '#666' } },
-              roleLabels[p.data.role] || p.data.role),
+              ROLE_LABELS[p.data.role] ?? p.data.role),
             (() => {
               const orgs = p.data.userOrgs || []
               const orgCount = new Set(orgs.map((o: any) => o.org)).size

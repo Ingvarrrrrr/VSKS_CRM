@@ -439,7 +439,8 @@ async def _plan_excess_decide_action():
 
 
 async def _staff_directory_tab():
-    # Phase 18: idempotent seed для tab 'staff_directory' (all 5 roles)
+    # Phase 18: idempotent seed для tab 'staff_directory' (все роли аккаунта;
+    # account_owner добавлен 2026-09-15 — список отставал от появления роли)
     try:
         from sqlalchemy import select as _sel
         from app.models.permission import PermissionTab, RolePermission
@@ -448,7 +449,7 @@ async def _staff_directory_tab():
             if not ex.scalar_one_or_none():
                 db.add(PermissionTab(tab_key='staff_directory', title='Справочник сотрудников'))
                 await db.commit()
-            ALL_SD_ROLES = ['superadmin', 'admin', 'org_admin', 'manager', 'employee']
+            ALL_SD_ROLES = ['superadmin', 'account_owner', 'admin', 'org_admin', 'manager', 'employee']
             for role_name in ALL_SD_ROLES:
                 ex = await db.execute(_sel(RolePermission).where(
                     RolePermission.role_name == role_name,

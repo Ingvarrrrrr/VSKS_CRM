@@ -364,7 +364,7 @@ async def get_role_scoped_org_ids(
     if user.role in _SAAS_ROLES:
         return None
 
-    from app.auth.permissions import _ROLE_PRIORITY
+    from app.auth.permissions import _ROLE_PRIORITY, combine_role_rank
     from app.models.user_organization import UserOrganization
 
     threshold = _ROLE_PRIORITY.get(min_role, 0)
@@ -392,7 +392,11 @@ async def get_role_scoped_org_ids(
 
     result: list[int] = []
     for org_id in candidates:
-        role = uoa_role_map.get(org_id) or user.role
+        # Правило №6 (владелец 2026-09-15): эффективная роль = БОЛЕЕ ВЫСОКАЯ
+        # по рангу из глобальной роли и роли В ЭТОЙ ЖЕ орге — раньше орг-роль
+        # подменяла глобальную (`uoa_role_map.get(org_id) or user.role`),
+        # что понижало account_owner/admin в орге, где у них UOA ниже.
+        role = combine_role_rank(user.role, uoa_role_map.get(org_id))
         if _ROLE_PRIORITY.get(role, 0) >= threshold:
             result.append(org_id)
     return result

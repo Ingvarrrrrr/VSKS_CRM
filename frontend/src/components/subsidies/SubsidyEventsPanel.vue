@@ -120,6 +120,7 @@ import { ref } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { useToast, type ToastType } from '@/composables/useToast'
+import { ADMIN_ROLES } from '@/constants/roles'
 import type { EventItem } from '@/composables/subsidies/types'
 
 const props = defineProps<{ subsidyId: number | null }>()
@@ -131,7 +132,7 @@ function showSnack(text: string, color: ToastType = 'success', opts?: { actionTe
 }
 
 const userRoleRaw = localStorage.getItem('user_role') || ''
-const isAdminLevel = ['superadmin', 'org_admin', 'admin'].includes(userRoleRaw)
+const isAdminLevel = ADMIN_ROLES.includes(userRoleRaw as typeof ADMIN_ROLES[number])
 
 const subsidyEvents = ref<EventItem[]>([])
 const showAddEventDialog = ref(false)

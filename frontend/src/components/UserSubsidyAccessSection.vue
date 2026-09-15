@@ -104,6 +104,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { apiFetch } from '../api'
 import UserSubsidyPermissionsPanel from './UserSubsidyPermissionsPanel.vue'
+import { ROLE_LABELS } from '@/composables/staff/staffLabels'
 
 const props = defineProps<{
   userId: number
@@ -145,11 +146,10 @@ function toggleExpand(subsidyId: number) {
   expanded.value = next
 }
 
-const roleOptions = [
-  { value: 'org_admin', label: 'Админ организации' },
-  { value: 'manager',   label: 'Менеджер' },
-  { value: 'employee',  label: 'Сотрудник' },
-]
+// Владелец 2026-09-15 (Правило №6): подписи ролей больше НЕ дублируются
+// здесь — единственный источник composables/staff/staffLabels.ts (ROLE_LABELS).
+const roleOptions = (['org_admin', 'manager', 'employee'] as const)
+  .map(value => ({ value, label: ROLE_LABELS[value] }))
 
 const availableSubsidies = computed(() => {
   const grantedIds = new Set(grants.value.map((g: Grant) => g.subsidy_id))

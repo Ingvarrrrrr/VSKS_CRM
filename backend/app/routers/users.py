@@ -41,7 +41,10 @@ from app.models.user import User
 from app.services.fio import resolve_user_name_input
 from app.auth.jwt import hash_password, get_current_user, get_org_filter
 from app.schemas.schemas import UserCreate, UserUpdate, UserOut
-from app.auth.permissions import require_action, ensure_user_org_access
+from app.auth.permissions import (
+    require_action, ensure_user_org_access,
+    assert_can_manage_user_access, assert_role_assignable,
+)
 from typing import List, Optional
 
 router = APIRouter(prefix="/api/users", tags=["users"])
@@ -311,6 +314,20 @@ async def update_user(
         raise HTTPException(403, "Нет доступа")
 
     update_data = data.dict(exclude_unset=True)
+
+    # Дыра в правах (аудит владельца 2026-09-15): поле role шло через общий
+    # цикл setattr на user.role в обход assert_can_manage_user_access — этот
+    # PATCH менял ГЛОБАЛЬНУЮ роль пользователя, будучи защищён только
+    # require_action('user.manage'), без иерархии «кто кого настраивает» и
+    # без запрета «сам себе». Та же цепочка проверок, что и у остальных путей
+    # смены роли (routers/permissions.py PATCH .../role): assert_role_assignable
+    # (роль account_owner выдаёт только superadmin/действующий account_owner,
+    # общий хелпер — Правило №6) + assert_can_manage_user_access (иерархия +
+    # self-edit guard, org_id=None — это правка ГЛОБАЛЬНОЙ роли, не орг-роли).
+    if "role" in update_data:
+        assert_role_assignable(current_user, update_data["role"])
+        await assert_can_manage_user_access(current_user, user_id, db, org_id=None)
+
     if "password" in update_data:
         pwd = update_data.pop("password")
         if pwd:

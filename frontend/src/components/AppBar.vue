@@ -502,6 +502,7 @@ import { myPendingApprovalsCount, initApprovalsBadge, destroyApprovalsBadge } fr
 import { initStaffLocationTracking, destroyStaffLocationTracking } from '@/composables/useStaffLocationTracking'
 import ShiftToggleButton from '@/components/staff/ShiftToggleButton.vue'
 import { useAuthStore } from '../stores/auth'
+import { ROLE_LABELS } from '@/composables/staff/staffLabels'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 const authStore = useAuthStore()
@@ -518,10 +519,6 @@ watch(() => $route.path, () => {
   if (!mdAndUp.value) drawerOpen.value = false
 })
 const vuetifyTheme = useTheme()
-
-const ADMIN_ROLES = ['superadmin', 'account_owner', 'org_admin', 'admin']
-const MANAGER_ROLES = ['superadmin', 'account_owner', 'org_admin', 'admin', 'manager']
-const ALL_ROLES = ['superadmin', 'account_owner', 'org_admin', 'admin', 'manager', 'employee']
 
 const isEmployee = computed(() => userRoleRaw.value === 'employee')
 
@@ -586,15 +583,16 @@ function toggleTheme() {
 const userName = computed(() => localStorage.getItem('user_name') || 'Пользователь')
 const userOrgName = computed(() => localStorage.getItem('user_org_name') || '')
 const userRoleRaw = computed(() => localStorage.getItem('user_role') || '')
+// Владелец 2026-09-15 (Правило №6): подпись роли — из единого словаря
+// composables/staff/staffLabels.ts, локальный дубль убран (он путал
+// org_admin/admin под общим «Администратор» и не знал про account_owner).
+// `??`, не `||` — ROLE_LABELS.superadmin намеренно пустая строка
+// (служебная SaaS-роль, пользователю о ней знать незачем), и её не нужно
+// подменять сырым 'superadmin'.
 const userRole = computed(() => {
-  const roles: Record<string, string> = {
-    superadmin: 'Суперадмин',
-    org_admin: 'Администратор',
-    manager: 'Менеджер',
-    employee: 'Сотрудник',
-    admin: 'Администратор',
-  }
-  return roles[userRoleRaw.value] || userRoleRaw.value || 'Неизвестно'
+  const raw = userRoleRaw.value
+  if (!raw) return 'Неизвестно'
+  return ROLE_LABELS[raw] ?? raw
 })
 const isSuperadmin = computed(() => userRoleRaw.value === 'superadmin')
 const orgSummary = computed(() => {

@@ -249,6 +249,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { apiFetch } from '../api'
+import { ROLE_LABELS } from '@/composables/staff/staffLabels'
 
 // Владелец 2026-09-02: закрытие эскалации привилегий — org_admin мог сам себе
 // назначать/снимать допуски и даже роль account_owner. Бэкенд теперь жёстко
@@ -292,13 +293,10 @@ const saved = ref(false)
 // организацию (apply_to_all=false на бэкенде).
 const applyToAllOrgs = ref(false)
 
-const roleOptions = [
-  { value: 'account_owner', label: 'Владелец аккаунта' },
-  { value: 'admin',         label: 'Администратор' },
-  { value: 'org_admin',     label: 'Админ организации' },
-  { value: 'manager',       label: 'Менеджер' },
-  { value: 'employee',      label: 'Сотрудник' },
-]
+// Владелец 2026-09-15 (Правило №6): подписи ролей больше НЕ дублируются
+// здесь — единственный источник composables/staff/staffLabels.ts (ROLE_LABELS).
+const roleOptions = (['account_owner', 'admin', 'org_admin', 'manager', 'employee'] as const)
+  .map(value => ({ value, label: ROLE_LABELS[value] }))
 
 // Владелец 2026-09-02, п.3: роль «Владелец аккаунта» вправе выдавать только
 // суперадмин или действующий владелец — не показываем опцию остальным,
@@ -308,16 +306,32 @@ const roleOptionsAvailable = computed(() => {
   return roleOptions.filter(o => o.value !== 'account_owner')
 })
 
-const isSelfEdit = computed(() => props.userId === props.currentUserId)
+// Владелец, 2026-09-15: раньше правка своих же допусков была запрещена
+// ВСЕМ без исключения — но тогда владельца аккаунта некому чинить, если он
+// сам себе что-то отключил. Исключение только для account_owner (глобальная
+// роль); для всех остальных запрет остаётся как был.
+const isSelfEdit = computed(() =>
+  props.userId === props.currentUserId && currentUserGlobalRole !== 'account_owner'
+)
 
-// Эффективная роль редактирующего для выбранной организации: сначала
-// per-org (UOA), иначе глобальная — то же правило, что и для currentOrgRole
-// (target) ниже, и что и в backend _resolve_role_for_rank.
+// Владелец, 2026-09-15 (Правило №6): единая точка "чья роль главнее" —
+// зеркалит combine_role_rank в backend/app/auth/permissions.py. Эффективная
+// роль = БОЛЕЕ ВЫСОКАЯ по ROLE_RANK из глобальной роли и роли пользователя
+// В ЭТОЙ ЖЕ организации (раньше org-роль ПОДМЕНЯЛА глобальную целиком, из-за
+// чего владелец аккаунта с UOA org_admin в конкретной орге терял «Владельца»
+// и получал «Недостаточно прав» в собственном аккаунте). Роли в ДРУГИХ
+// организациях сюда не подмешиваются.
+function combineRoleRank(globalRole: string | null | undefined, orgRole: string | null | undefined): string {
+  const candidates = [globalRole, orgRole].filter((r): r is string => !!r)
+  if (candidates.length === 0) return 'employee'
+  return candidates.reduce((best, r) => ((ROLE_RANK[r] ?? 0) > (ROLE_RANK[best] ?? 0) ? r : best))
+}
+
+// Эффективная роль РЕДАКТИРУЮЩЕГО для выбранной организации — combineRoleRank
+// его глобальной роли и его роли per-org (UOA) в этой же организации.
 const currentUserEffectiveRole = computed(() => {
-  if (selectedOrgId.value != null && currentUserOrgRoles.value[selectedOrgId.value] != null) {
-    return currentUserOrgRoles.value[selectedOrgId.value] as string
-  }
-  return currentUserGlobalRole
+  const orgRole = selectedOrgId.value != null ? currentUserOrgRoles.value[selectedOrgId.value] : null
+  return combineRoleRank(currentUserGlobalRole, orgRole)
 })
 
 const isHierarchyBlocked = computed(() => {
@@ -328,18 +342,21 @@ const isHierarchyBlocked = computed(() => {
   return actorRank <= targetRank
 })
 
-// Общий гейт: свои допуски не трогает никто (кроме суперадмина), чужие —
-// только если ты строго выше по лестнице ролей. Зеркалит
-// assert_can_manage_user_access на бэкенде.
+// Общий гейт: свои допуски не трогает никто (кроме владельца аккаунта и
+// суперадмина), чужие — только если ты строго выше по лестнице ролей.
+// Зеркалит assert_can_manage_user_access на бэкенде.
 const isManageBlocked = computed(() => isSelfEdit.value || isHierarchyBlocked.value)
 
+// Владелец, 2026-09-15: тексты подсказок больше не упоминают «суперадмин» —
+// это служебная SaaS-роль площадки, пользователю о ней знать незачем.
+// Обе подсказки отправляют к владельцу аккаунта, как и на бэкенде.
 const manageBlockedReason = computed(() => {
   if (currentUserGlobalRole === 'superadmin') return ''
   if (isSelfEdit.value) {
-    return 'Нельзя менять свои собственные допуски — попросите хозяина аккаунта (владельца) или суперадмина.'
+    return 'Нельзя менять свои собственные допуски. Обратитесь к владельцу аккаунта.'
   }
   if (isHierarchyBlocked.value) {
-    return `Недостаточно прав: настраивать допуски пользователя с ролью «${roleLabel(currentOrgRole.value)}» может только хозяин аккаунта (владелец) или суперадмин.`
+    return `Недостаточно прав: у пользователя с ролью «${roleLabel(currentOrgRole.value)}» — эта роль равна вашей или выше. Обратитесь к владельцу аккаунта.`
   }
   return ''
 })
@@ -422,13 +439,19 @@ async function onAllOrgsAccessChange(newVal: boolean) {
   }
 }
 
+// Владелец, 2026-09-15 (Правило №6): эффективная роль РЕДАКТИРУЕМОГО считается
+// по ТОЙ ЖЕ формуле, что и роль редактирующего выше — combineRoleRank его
+// глобальной роли (props.userRole) и его роли per-org в выбранной организации.
+// Раньше org-роль подменяла глобальную целиком, из-за чего владелец аккаунта,
+// назначенный org_admin в конкретной организации, терял свой реальный ранг
+// и в isHierarchyBlocked, и в дефолтах допусков (roleDefaults ниже).
 const currentOrgRole = computed(() => {
   // Prefer the per-org role from the dedicated endpoint (fresh source of truth)
-  if (selectedOrgId.value != null && orgRoles.value[selectedOrgId.value] != null) {
-    return orgRoles.value[selectedOrgId.value] as string
-  }
-  const rec = props.orgAccessList.find(o => o.org_id === selectedOrgId.value)
-  return rec?.role ?? props.userRole
+  const orgRole =
+    (selectedOrgId.value != null ? orgRoles.value[selectedOrgId.value] : null) ??
+    props.orgAccessList.find(o => o.org_id === selectedOrgId.value)?.role ??
+    null
+  return combineRoleRank(props.userRole, orgRole)
 })
 
 const hasOverrides = computed(() => Object.keys(overrides.value).length > 0)
@@ -452,16 +475,10 @@ function isLocked(_key: string): boolean {
   return isManageBlocked.value
 }
 
+// Владелец 2026-09-15 (Правило №6): единственный источник подписей ролей —
+// composables/staff/staffLabels.ts, дубль этого словаря здесь убран.
 function roleLabel(role: string): string {
-  const labels: Record<string, string> = {
-    account_owner: 'Владелец аккаунта',
-    superadmin: 'Суперадмин',
-    admin: 'Администратор',
-    org_admin: 'Админ организации',
-    manager: 'Менеджер',
-    employee: 'Сотрудник',
-  }
-  return labels[role] ?? role
+  return ROLE_LABELS[role] ?? role
 }
 
 // ─────────────────────────────────────────────────────────────────────────

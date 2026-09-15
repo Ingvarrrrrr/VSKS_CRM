@@ -245,6 +245,7 @@ import { useUndoRedo } from '@/composables/useUndoRedo'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
+import { ADMIN_ROLES } from '@/constants/roles'
 
 const { mobile } = useDisplay()
 import ChatEmbed from '@/components/ChatEmbed.vue'
@@ -320,7 +321,7 @@ const priorityItems = [
 const isTaskReadonly = computed(() => {
   if (!props.editingTask) return false
   const role = localStorage.getItem('user_role') || ''
-  if (['superadmin', 'org_admin', 'admin'].includes(role)) return false
+  if (ADMIN_ROLES.includes(role as typeof ADMIN_ROLES[number])) return false
   const t = props.editingTask
   return (t.assignees || []).some((a: any) => a.user_id === props.currentUserId) && t.created_by_id !== props.currentUserId
 })

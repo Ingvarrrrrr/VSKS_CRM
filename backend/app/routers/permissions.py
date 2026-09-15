@@ -22,7 +22,8 @@ from app.models.permission import (
 from app.auth.jwt import get_current_user
 from app.auth.permissions import (
     require_tab, ensure_user_org_access,
-    assert_can_manage_user_access, get_user_rank, ROLE_LABELS_RU, _ROLE_PRIORITY,
+    assert_can_manage_user_access, assert_role_assignable,
+    get_user_rank, ROLE_LABELS_RU, _ROLE_PRIORITY,
 )
 from app.schemas.schemas import (
     PermissionTabOut, PermissionActionOut, RoleMatrixRow,
@@ -104,8 +105,8 @@ async def update_role_matrix(
             raise HTTPException(
                 403,
                 f"Недостаточно прав: менять набор допусков по умолчанию для роли "
-                f"«{role_label}» может только хозяин аккаунта (владелец) или "
-                "суперадмин — эта роль равна вашей или выше.",
+                f"«{role_label}» — эта роль равна вашей или выше. Обратитесь "
+                "к владельцу аккаунта.",
             )
 
     # D-05.2 self-lockout protection
@@ -308,25 +309,23 @@ async def update_user_org_role(
         raise HTTPException(400, "Недопустимая роль")
 
     # Владелец 2026-09-02, п.3: главный путь эскалации — org_admin назначал
-    # СЕБЕ (или кому угодно) роль account_owner через этот эндпоинт. Роль
-    # «Хозяин аккаунта» вправе выдавать только superadmin или действующий
-    # account_owner.
-    if body.role == "account_owner" and current_user.role not in ("superadmin", "account_owner"):
-        raise HTTPException(
-            403,
-            "Роль «Хозяин аккаунта» может назначить только суперадмин или "
-            "действующий хозяин аккаунта.",
-        )
+    # СЕБЕ (или кому угодно) роль account_owner через этот эндпоинт. Правило
+    # вынесено в общий хелпер (Правило №6, владелец 2026-09-15) — тот же
+    # вызов защищает routers/users.py PATCH /api/users/{id}.
+    assert_role_assignable(current_user, body.role)
 
     # Владелец 2026-09-02, п.1-2: никто не правит свою роль (в обе стороны —
     # раньше блокировалось только понижение), настраивать чужую роль можно
     # только строго сверху вниз по лестнице ролей.
     await assert_can_manage_user_access(current_user, user_id, db, org_id)
 
-    # D-05.2: self-lockout — cannot demote self below admin-level in own org
-    # (легаси-проверка более узкого случая — теперь недостижима для
-    # не-superadmin: строка выше уже блокирует ЛЮБУЮ правку своей роли.
-    # Оставлена как есть по требованию не ломать существующую защиту.)
+    # D-05.2: self-lockout — cannot demote self below admin-level in own org.
+    # Владелец 2026-09-15: строка выше (assert_can_manage_user_access) теперь
+    # ПРОПУСКАЕТ account_owner на самом себе (иначе он не мог настроить свои
+    # же допуски) — то есть для account_owner эта проверка ДОСТИЖИМА и именно
+    # она не даёт ему понизить себе роль в этой орге так, чтобы потерять
+    # admin.roles/staff. Для всех остальных ролей self-edit блокируется
+    # раньше, строкой выше, и сюда они не доходят.
     if user_id == current_user.id:
         res = await db.execute(
             select(RolePermission.key).where(

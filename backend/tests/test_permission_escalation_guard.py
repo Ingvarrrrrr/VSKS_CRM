@@ -54,7 +54,7 @@ async def test_org_admin_cannot_grant_self_override(client, test_admin_user, adm
     # Custom exception envelope: {"code","message","details","correlation_id"}
     # (see app-wide HTTPException handler) — NOT the plain FastAPI {"detail"}.
     message = resp.json().get("message", "")
-    assert "хозяин аккаунта" in message.lower() or "суперадмин" in message.lower()
+    assert "владельцу аккаунта" in message.lower()
 
 
 @pytest.mark.asyncio
@@ -82,7 +82,7 @@ async def test_org_admin_cannot_self_promote_to_account_owner(client, test_admin
     )
     assert resp.status_code == 403
     message = resp.json().get("message", "")
-    assert "хозяин аккаунта" in message.lower()
+    assert "владелец аккаунта" in message.lower()
 
 
 @pytest.mark.asyncio
@@ -98,7 +98,7 @@ async def test_org_admin_cannot_promote_someone_else_to_account_owner(
     )
     assert resp.status_code == 403
     message = resp.json().get("message", "")
-    assert "хозяин аккаунта" in message.lower()
+    assert "владелец аккаунта" in message.lower()
 
 
 @pytest.mark.asyncio

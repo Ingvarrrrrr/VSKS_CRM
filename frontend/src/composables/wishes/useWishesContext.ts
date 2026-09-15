@@ -17,6 +17,7 @@ import { apiFetch } from '@/api'
 import { formatMoney } from '@/utils/formatMoney'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
+import { ADMIN_ROLES, MANAGER_ROLES } from '@/constants/roles'
 import type {
   Subsidy, FeoCategory, EventItem, User, Wish, WishPurchaseSummary,
   ExcessWarning, PurchaseSync,
@@ -59,9 +60,6 @@ export const priorityOptions = [
   { title: 'Высокий', value: 'high' },
   { title: 'Срочный', value: 'urgent' },
 ]
-
-const ADMIN_ROLES = ['superadmin', 'account_owner', 'org_admin', 'admin']
-const MANAGER_ROLES = ['superadmin', 'account_owner', 'org_admin', 'admin', 'manager']
 
 // «От кого»: Фамилия И.О. вместо полного ФИО
 export function shortName(full?: string | null): string {
@@ -211,8 +209,8 @@ export function provideWishesContext(): WishesContext {
 
   const userRole = localStorage.getItem('user_role') || ''
   const currentUserId = Number(localStorage.getItem('user_id') || '0')
-  const isAdmin = computed(() => ADMIN_ROLES.includes(userRole))
-  const isManagerOrAdmin = computed(() => MANAGER_ROLES.includes(userRole))
+  const isAdmin = computed(() => ADMIN_ROLES.includes(userRole as typeof ADMIN_ROLES[number]))
+  const isManagerOrAdmin = computed(() => MANAGER_ROLES.includes(userRole as typeof MANAGER_ROLES[number]))
   const isSaas = computed(() => ['superadmin', 'account_owner'].includes(userRole))
 
   const subsidies = ref<Subsidy[]>([])

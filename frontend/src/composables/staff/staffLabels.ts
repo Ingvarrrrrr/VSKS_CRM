@@ -1,9 +1,20 @@
 // staffLabels.ts — роли, аватарки, мелкие форматтеры вкладки «Персонал».
 // Дословный перенос из StaffView.vue.
 
+// Владелец, 2026-09-15: ЕДИНЫЙ на весь фронт словарь названий ролей (Правило
+// №6) — зафиксированные владельцем подписи, сверху вниз по рангу:
+// account_owner > admin > org_admin > manager > employee. Раньше подписи были
+// продублированы и расходились (PermissionTable.vue, UserPermissionsSection.vue,
+// AppBar.vue, HierarchyGraphCanvas.vue, здесь же — «Хозяин аккаунта» вместо
+// «Владелец аккаунта»). Все места теперь импортируют отсюда.
+// superadmin — служебная SaaS-роль площадки, пользователю о ней знать незачем
+// (см. CLAUDE.md ПРАВИЛО «служебная роль»): подпись намеренно пустая. Каждое
+// место, где ROLE_LABELS[role] может получить 'superadmin', обязано читать
+// значение через `??`, а не `||` — иначе пустая строка провалится к сырому
+// 'superadmin' по фолбэку.
 export const ROLE_LABELS: Record<string, string> = {
-  superadmin: 'Суперадмин',
-  account_owner: 'Хозяин аккаунта',
+  superadmin: '',
+  account_owner: 'Владелец аккаунта',
   admin: 'Администратор аккаунта',
   org_admin: 'Администратор организации',
   manager: 'Менеджер',
@@ -15,15 +26,15 @@ export const ROLE_LABELS: Record<string, string> = {
 // Сотрудник / Менеджер / Администратор аккаунта (управляет всем аккаунтом).
 export function getRoleItems(currentRole: string) {
   const items = [
-    { value: 'manager', label: 'Менеджер' },
-    { value: 'employee', label: 'Сотрудник' },
+    { value: 'manager', label: ROLE_LABELS.manager },
+    { value: 'employee', label: ROLE_LABELS.employee },
   ]
-  // «Администратор аккаунта» и «Хозяин аккаунта» доступны любому, кто управляет
+  // «Администратор аккаунта» и «Владелец аккаунта» доступны любому, кто управляет
   // сотрудниками (org_admin и выше). Запрос 14.07: в аккаунте может не быть ни одного
   // admin/account_owner — если опции прятать, роль некому выдать в принципе.
   if (['superadmin', 'account_owner', 'admin', 'org_admin'].includes(currentRole)) {
-    items.unshift({ value: 'admin', label: 'Администратор аккаунта' })
-    items.unshift({ value: 'account_owner', label: 'Хозяин аккаунта' })
+    items.unshift({ value: 'admin', label: ROLE_LABELS.admin })
+    items.unshift({ value: 'account_owner', label: ROLE_LABELS.account_owner })
   }
   return items
 }

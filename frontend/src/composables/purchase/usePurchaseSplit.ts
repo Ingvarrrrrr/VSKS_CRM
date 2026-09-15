@@ -4,8 +4,8 @@ import { ref, computed, type ComputedRef, type Ref } from 'vue'
 import type { Router } from 'vue-router'
 import { apiFetch } from '@/api'
 import type { ToastType } from '@/composables/useToast'
+import { ADMIN_ROLES } from '@/constants/roles'
 
-const ADMIN_ROLES_FE = ['superadmin', 'account_owner', 'org_admin', 'admin']
 const LOCKED_SPLIT_STATUSES = ['contracted', 'delivered', 'paid']
 
 export function usePurchaseSplit(
@@ -26,7 +26,7 @@ export function usePurchaseSplit(
     if ((items.value?.length || 0) < 2) return false
     if (LOCKED_SPLIT_STATUSES.includes(st)) {
       const role = localStorage.getItem('user_role') || ''
-      return ADMIN_ROLES_FE.includes(role)
+      return ADMIN_ROLES.includes(role as typeof ADMIN_ROLES[number])
     }
     return true
   })

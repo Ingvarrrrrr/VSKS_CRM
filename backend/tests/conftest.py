@@ -51,12 +51,60 @@ from httpx import AsyncClient, ASGITransport
 # level instead of going through `get_db()`, so they bypass this override and
 # would still hit the real engine. No current test exercises those paths.
 #
-# Known unrelated flake (do not "fix" by touching this): async tests fail
-# with "attached to a different loop" when run together in bulk; pytest.ini
-# uses asyncio_mode=auto with the pytest-asyncio default (a fresh event loop
-# per test function) against one process-wide `engine`/connection pool. Not a
-# regression from this change — run suspect files individually.
+# Fixed (2026-09-15): async tests used to fail with "attached to a different
+# loop" (asyncpg InterfaceError "another operation is in progress" as the
+# follow-on symptom) whenever 2+ test functions ran in the same pytest
+# invocation — confirmed by running tests/test_feo_import_promote_level.py
+# alone (7/8 nodes failed with exactly this error; the first node, which gets
+# a brand-new pool with no pre-existing connections, passed).
+#
+# Root cause: pytest.ini sets asyncio_mode=auto, and pytest-asyncio's default
+# is a NEW event loop per test function. `app.database.engine` (the asyncpg
+# connection pool) is created ONCE at process/import time and is shared by
+# every test. asyncpg connections are bound to the event loop that opened
+# them, so once a connection is checked back into the pool after test #1's
+# loop closes, handing that same connection to test #2 (a different loop)
+# blows up — the C-level protocol object still thinks a query from the dead
+# loop is in flight.
+#
+# Fix: an autouse fixture below (`_dispose_engine_pool`) calls
+# `await engine.dispose()` after every test, closing all pooled connections
+# so the NEXT test's (new) event loop always opens fresh ones. This is
+# simpler and lower-risk than pinning a session-scoped event loop (which is
+# deprecated in pytest-asyncio 0.23 and would force every test's async
+# fixtures/teardowns to interleave on one loop for the whole run) or
+# switching `engine` to NullPool (would touch app/database.py, out of scope
+# here and would slow down every test with a fresh TCP+auth handshake instead
+# of just an extra dispose() per test). Cost: one extra pool-teardown round
+# trip per test (cheap — no live queries in flight at that point), not per
+# assertion. autouse means it also covers test_cleanup_bad_product_import.py
+# and test_merge_duplicate_products_by_name.py, which open their own
+# `app.database.async_session` directly instead of going through db_session —
+# they share the same process-wide `engine`, so the same pool reset helps
+# them too.
+#
+# Ordering note: this fixture has no dependency on db_session, so pytest's
+# autouse-first setup rule puts it first in setup order and therefore LAST in
+# teardown order (teardown is LIFO) — engine.dispose() only runs after
+# db_session has already closed its own connection for that test, never
+# concurrently with it.
 # ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _dispose_engine_pool():
+    """Reset the shared asyncpg pool after every test (see comment above).
+
+    Each pytest-asyncio test function gets its own event loop, but
+    `app.database.engine`'s connection pool is process-wide. Disposing it
+    after each test forces the pool empty so the next test's loop always
+    opens brand-new connections instead of being handed one still bound to
+    a loop that has already been closed.
+    """
+    yield
+    from app.database import engine
+
+    await engine.dispose()
 
 @pytest_asyncio.fixture
 async def db_session():

@@ -11,7 +11,16 @@ async def test_admin_cannot_revoke_own_admin_roles(client, admin_headers, test_a
         json=[{"key": "admin.roles", "granted": False}],
     )
     assert r.status_code == 403
-    assert "Нельзя" in r.text or "lockout" in r.text.lower() or "Самоблок" in r.text
+    # 2026-09-15: текст отказа обновлён (слово «суперадмин» убрано из сообщений,
+    # см. app/routers/permissions.py ~:104-:109) — теперь это общее «Недостаточно
+    # прав: ...», а не отдельная self-lockout формулировка. Код 403 и сценарий
+    # (админ не может снять admin.roles у своей же роли) не изменились.
+    assert (
+        "Нельзя" in r.text
+        or "lockout" in r.text.lower()
+        or "Самоблок" in r.text
+        or "Недостаточно прав" in r.text
+    )
 
 @pytest.mark.asyncio
 async def test_admin_cannot_revoke_own_staff_tab(client, admin_headers, test_admin_user):

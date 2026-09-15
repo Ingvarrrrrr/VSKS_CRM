@@ -8,9 +8,9 @@
       </v-card-title>
       <v-divider />
       <v-card-text class="pt-4">
-        <template v-if="deleteErrorLinked">
+        <template v-if="deleteErrorLinked || hasBlockingLinks">
           <v-alert type="error" variant="tonal" class="mb-3" style="white-space:pre-line">
-            {{ deleteErrorMsg || 'Нельзя удалить субсидию: есть связанные записи. Сначала удалите или перепривяжите их.' }}
+            {{ deleteErrorMsg || blockingLinksMsg }}
           </v-alert>
           <v-btn v-if="(deleteImpact?.purchases ?? 0) > 0" block color="primary" variant="tonal"
             prepend-icon="mdi-cart-outline" class="mb-2" @click="goToLinkedPurchases">
@@ -36,14 +36,14 @@
       <v-card-actions class="px-4 pb-4">
         <v-spacer />
         <v-btn variant="text" @click="visible = false">Отмена</v-btn>
-        <v-btn v-if="!deleteErrorLinked" color="error" :loading="saving" @click="deleteSubsidy">Удалить</v-btn>
+        <v-btn v-if="!deleteErrorLinked && !hasBlockingLinks" color="error" :loading="saving" @click="deleteSubsidy">Удалить</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { apiFetch } from '@/api'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
@@ -65,6 +65,24 @@ const deleteTarget = ref<SubsidyRow | null>(null)
 const deleteErrorLinked = ref(false)
 const deleteErrorMsg = ref('')
 const deleteImpact = ref<SubsidyDeleteImpact | null>(null)
+
+// Владелец (2026-09-15, боевой инцидент): узнать про связанные закупки/договоры
+// нужно ДО клика «Удалить», по данным delete-impact — а не только из отказа 409
+// (тот суперадмину раньше не приходил вовсе, backend/app/routers/subsidies.py
+// delete_subsidy). Если delete-impact не загрузился (:77 глушит ошибку) —
+// deleteImpact остаётся null, hasBlockingLinks = false: кнопку не блокируем,
+// но и не утверждаем, что связей нет (см. deleteErrorLinked/409 — запасной путь).
+const hasBlockingLinks = computed(() =>
+  !!deleteImpact.value && ((deleteImpact.value.purchases ?? 0) > 0 || (deleteImpact.value.contracts ?? 0) > 0)
+)
+const blockingLinksMsg = computed(() => {
+  const d = deleteImpact.value
+  if (!d) return 'Нельзя удалить субсидию: есть связанные записи. Сначала удалите или перепривяжите их.'
+  const parts: string[] = []
+  if ((d.purchases ?? 0) > 0) parts.push(`${d.purchases} закупок`)
+  if ((d.contracts ?? 0) > 0) parts.push(`${d.contracts} договоров`)
+  return `Нельзя удалить субсидию: связано ${parts.join(' и ')}. Сначала удалите или перепривяжите их.`
+})
 
 async function open(s: SubsidyRow) {
   deleteTarget.value = s

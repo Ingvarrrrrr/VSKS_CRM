@@ -679,13 +679,17 @@ async def update_subsidy(
     d.update(await calculate_ceiling_forecast(db, db_subsidy.id))
     return d
 
-@router.get("/{subsidy_id}/delete-impact")
-async def subsidy_delete_impact(
-    subsidy_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_tab('subsidies')),
-):
-    """Counts of dependent rows so the UI can warn before deleting a subsidy."""
+async def _get_subsidy_delete_dependents(db: AsyncSession, subsidy_id: int) -> dict:
+    """Единственный источник подсчёта зависимостей субсидии перед удалением
+    (Правило №6) — используется и GET /delete-impact (предупреждение в UI ДО
+    отправки запроса), и DELETE /{subsidy_id} (сам гейт на 409). Раньше это
+    были две отдельные реализации, которые разошлись: delete_subsidy вообще
+    пропускал подсчёт закупок/договоров для role == 'superadmin', из-за чего
+    409 не срабатывал и удаление субсидии обнуляло purchases.subsidy_id через
+    FK ON DELETE SET NULL (боевой инцидент 2026-09-15, id=56 «Субсидия_Абхазия»).
+    Возвращает и счётчики (для delete-impact), и сами строки purchases/contracts
+    (id [+status у purchases] — нужны delete_subsidy для текста 409).
+    """
     from app.models.purchase import Purchase
     from app.models.contract import Contract
     from app.models.feo_planned_item import FeoPlannedItem
@@ -697,17 +701,34 @@ async def subsidy_delete_impact(
         .join(FeoCategory, FeoPlannedItem.feo_category_id == FeoCategory.id)
         .where(FeoCategory.subsidy_id == subsidy_id)
     )
-    p_count = await db.scalar(
-        select(func.count()).select_from(Purchase).where(Purchase.subsidy_id == subsidy_id)
-    )
-    c_count = await db.scalar(
-        select(func.count()).select_from(Contract).where(Contract.subsidy_id == subsidy_id)
-    )
+    purchase_rows = (await db.execute(
+        select(Purchase.id, Purchase.status).where(Purchase.subsidy_id == subsidy_id)
+    )).all()
+    contract_rows = (await db.execute(
+        select(Contract.id).where(Contract.subsidy_id == subsidy_id)
+    )).all()
     return {
         "feo_categories": feo_count or 0,
         "planned_items": planned_count or 0,
-        "purchases": p_count or 0,
-        "contracts": c_count or 0,
+        "purchases": len(purchase_rows),
+        "contracts": len(contract_rows),
+        "purchase_rows": purchase_rows,
+        "contract_rows": contract_rows,
+    }
+
+@router.get("/{subsidy_id}/delete-impact")
+async def subsidy_delete_impact(
+    subsidy_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab('subsidies')),
+):
+    """Counts of dependent rows so the UI can warn before deleting a subsidy."""
+    dependents = await _get_subsidy_delete_dependents(db, subsidy_id)
+    return {
+        "feo_categories": dependents["feo_categories"],
+        "planned_items": dependents["planned_items"],
+        "purchases": dependents["purchases"],
+        "contracts": dependents["contracts"],
     }
 
 @router.delete("/{subsidy_id}")
@@ -740,21 +761,16 @@ async def delete_subsidy(
                 detail="Нет права удалить субсидию: право «Редактирование субсидий» не выдано для организации-грантополучателя",
             )
 
-    # Pre-check FK references to avoid 500 ForeignKeyViolationError
-    # Superadmin bypasses this check — DB will SET NULL automatically (b7e1 migration).
-    if current_user.role != 'superadmin':
-        from app.models.purchase import Purchase
-        from app.models.contract import Contract
-
-        blocking_purchases = (await db.execute(
-            select(Purchase.id, Purchase.status).where(Purchase.subsidy_id == subsidy_id)
-        )).all()
-        blocking_contracts = (await db.execute(
-            select(Contract.id).where(Contract.subsidy_id == subsidy_id)
-        )).all()
-    else:
-        blocking_purchases = []
-        blocking_contracts = []
+    # Pre-check FK references to avoid 500 ForeignKeyViolationError.
+    # Действует ДЛЯ ВСЕХ РОЛЕЙ, включая superadmin — без исключений и без
+    # query-параметра force. Раньше superadmin был исключён из этой проверки
+    # и удаление субсидии тихо обнуляло purchases.subsidy_id через
+    # FK ON DELETE SET NULL (боевой инцидент 2026-09-15). Нельзя удалить
+    # субсидию, у которой есть связанные закупки или договоры — их сначала
+    # удаляют или перепривязывают.
+    dependents = await _get_subsidy_delete_dependents(db, subsidy_id)
+    blocking_purchases = dependents["purchase_rows"]
+    blocking_contracts = dependents["contract_rows"]
     if blocking_purchases or blocking_contracts:
         parts = []
         if blocking_purchases:

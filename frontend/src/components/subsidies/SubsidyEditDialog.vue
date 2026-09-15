@@ -15,7 +15,7 @@
             <v-text-field v-model.number="form.year" label="Год *" variant="outlined" density="compact" type="number" hide-details />
           </v-col>
           <v-col cols="6">
-            <v-text-field v-model.number="form.budget" label="Бюджет, ₽ *" variant="outlined" density="compact" type="number" hide-details />
+            <v-text-field v-model.number="form.budget" label="Бюджет, ₽" placeholder="Ещё не определено" variant="outlined" density="compact" type="number" hide-details />
           </v-col>
         </v-row>
         <ContractorPicker v-model="form.contractor_id" class="mt-3" />
@@ -43,7 +43,7 @@
       <v-card-actions class="px-4 pb-4">
         <v-spacer />
         <v-btn variant="text" @click="addOpen = false">Отмена</v-btn>
-        <v-btn color="primary" :loading="saving" :disabled="!form.name || !form.budget || !form.year" @click="addSubsidy">
+        <v-btn color="primary" :loading="saving" :disabled="!form.name || !form.year" @click="addSubsidy">
           Добавить
         </v-btn>
       </v-card-actions>
@@ -66,7 +66,7 @@
             <v-text-field v-model.number="editForm.year" label="Год *" variant="outlined" density="compact" type="number" hide-details />
           </v-col>
           <v-col cols="6">
-            <v-text-field v-model.number="editForm.budget" label="Бюджет, ₽ *" variant="outlined" density="compact" type="number" hide-details />
+            <v-text-field v-model.number="editForm.budget" label="Бюджет, ₽" placeholder="Ещё не определено" variant="outlined" density="compact" type="number" hide-details />
           </v-col>
         </v-row>
         <ContractorPicker v-model="editForm.contractor_id" :initial-contractor="editInitialContractor" class="mt-3" />
@@ -176,7 +176,7 @@
       <v-card-actions class="px-4 pb-4">
         <v-spacer />
         <v-btn variant="text" @click="editOpen = false">Отмена</v-btn>
-        <v-btn color="primary" :loading="saving" :disabled="!editForm.name || !editForm.budget || !editForm.year" @click="updateSubsidy">
+        <v-btn color="primary" :loading="saving" :disabled="!editForm.name || !editForm.year" @click="updateSubsidy">
           Сохранить
         </v-btn>
       </v-card-actions>
@@ -192,6 +192,7 @@ import { useToast, type ToastType } from '@/composables/useToast'
 import { numOrNull } from '@/utils/numberFormat'
 import ContractorPicker from '@/components/ContractorPicker.vue'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
+import { useSubsidyList } from '@/composables/subsidies/useSubsidyList'
 import type { SubsidyRow } from '@/composables/subsidies/types'
 
 const addOpen = defineModel<boolean>('addOpen', { default: false })
@@ -206,6 +207,20 @@ function showSnack(text: string, color: ToastType = 'success', opts?: { actionTe
 }
 
 const ctx = useSubsidyDetailCtx()
+// Год списка (карточки/таблица фильтруются по нему, useSubsidyList.ts —
+// единственный источник, Правило №6). Баг владельца (2026-09-15): «добавил
+// субсидию Абхазия_2 — не появилась, пока не перезагрузил». Причина —
+// filteredSubsidies фильтрует allSubsidies по selectedYear, а addSubsidy()
+// пушит новую субсидию оптимистично, не трогая selectedYear; если пользователь
+// в этот момент смотрит вкладку другого года (или дефолтный год формы
+// New Date().getFullYear() разошёлся с тем годом, на который loadAll() в
+// прошлый раз переключил вкладку — «самый свежий год среди СУЩЕСТВУЮЩИХ
+// субсидий», см. SubsidiesView.vue:444), карточка молча проваливается в
+// невидимый фильтр. Только перезагрузка (loadAll → selectedYear = новый max)
+// её показывала. Подтверждено Playwright на стенде (создание на вкладке 2025
+// при форме с годом 2026 — карточка не видна до reload). Фикс: переключать
+// вкладку на год только что созданной субсидии, чтобы она была видна сразу.
+const { selectedYear } = useSubsidyList(ctx)
 
 // Тот же гейт, что и в остальных местах SubsidiesView.vue (canSaveVersion) —
 // вычисляется независимо здесь же, т.к. используется ещё в двух местах вне
@@ -215,8 +230,11 @@ const canSaveVersion = computed(() => ['superadmin', 'org_admin', 'admin', 'acco
 
 const saving = ref(false)
 
-const form = ref({ name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string })
-const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string, grantor_name: '' as string, ministry_name: '' as string, extra_contract_clause_1: null as string | null, extra_contract_clause_2: null as string | null, require_planned_dates: true as boolean, ceiling_warn_percent: 90 as number | null })
+// budget: null (не 0) — «ещё не определено» отличается от «определён и равен
+// нулю» (владелец, 2026-09-15). Пустое поле формы даёт null через numOrNull
+// при сборке payload ниже (тот же паттерн, что ceiling_warn_percent).
+const form = ref({ name: '', year: new Date().getFullYear(), budget: null as number | null, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string })
+const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: null as number | null, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string, grantor_name: '' as string, ministry_name: '' as string, extra_contract_clause_1: null as string | null, extra_contract_clause_2: null as string | null, require_planned_dates: true as boolean, ceiling_warn_percent: 90 as number | null })
 
 const contractors = ref<{ id: number; name: string; inn?: string }[]>([])
 const editInitialContractor = computed(() => {
@@ -258,11 +276,14 @@ async function addSubsidy() {
   try {
     const res = await apiFetch<any>('/subsidies/', {
       method: 'POST',
-      body: JSON.stringify({ name: form.value.name, year: form.value.year, budget: form.value.budget, description: form.value.description || null, contractor_id: form.value.contractor_id, agreement_text: form.value.agreement_text || null, basis_doc_number: form.value.basis_doc_number || null, basis_doc_date: form.value.basis_doc_date || null })
+      body: JSON.stringify({ name: form.value.name, year: form.value.year, budget: numOrNull(form.value.budget), description: form.value.description || null, contractor_id: form.value.contractor_id, agreement_text: form.value.agreement_text || null, basis_doc_number: form.value.basis_doc_number || null, basis_doc_date: form.value.basis_doc_date || null })
     })
     ctx.allSubsidies.value.push({ ...res, planned: 0, paid: 0, contracted: 0, plan_schedule: 0, ordered: 0, work: 0, contracts: 0, delivered: 0, delivered_unpaid: 0 })
+    // Показать созданную карточку сразу, даже если она попала в другой год,
+    // чем сейчас открытая вкладка (см. докстринг у selectedYear выше).
+    if (res.year !== selectedYear.value) selectedYear.value = res.year
     addOpen.value = false
-    form.value = { name: '', year: new Date().getFullYear(), budget: 0, description: '', contractor_id: null, agreement_text: '', basis_doc_number: '', basis_doc_date: '' }
+    form.value = { name: '', year: new Date().getFullYear(), budget: null, description: '', contractor_id: null, agreement_text: '', basis_doc_number: '', basis_doc_date: '' }
     showSnack('Субсидия добавлена')
     emit('saved')
   } catch (e: any) {
@@ -277,7 +298,7 @@ async function updateSubsidy() {
   try {
     await apiFetch<any>(`/subsidies/${editForm.value.id}`, {
       method: 'PUT',
-      body: JSON.stringify({ name: editForm.value.name, year: editForm.value.year, budget: editForm.value.budget, description: editForm.value.description || null, contractor_id: editForm.value.contractor_id, agreement_text: editForm.value.agreement_text || null, basis_doc_number: editForm.value.basis_doc_number || null, basis_doc_date: editForm.value.basis_doc_date || null, grantor_name: editForm.value.grantor_name || null, ministry_name: editForm.value.ministry_name || null, extra_contract_clause_1: editForm.value.extra_contract_clause_1 || null, extra_contract_clause_2: editForm.value.extra_contract_clause_2 || null, require_planned_dates: editForm.value.require_planned_dates, ceiling_warn_percent: numOrNull(editForm.value.ceiling_warn_percent) })
+      body: JSON.stringify({ name: editForm.value.name, year: editForm.value.year, budget: numOrNull(editForm.value.budget), description: editForm.value.description || null, contractor_id: editForm.value.contractor_id, agreement_text: editForm.value.agreement_text || null, basis_doc_number: editForm.value.basis_doc_number || null, basis_doc_date: editForm.value.basis_doc_date || null, grantor_name: editForm.value.grantor_name || null, ministry_name: editForm.value.ministry_name || null, extra_contract_clause_1: editForm.value.extra_contract_clause_1 || null, extra_contract_clause_2: editForm.value.extra_contract_clause_2 || null, require_planned_dates: editForm.value.require_planned_dates, ceiling_warn_percent: numOrNull(editForm.value.ceiling_warn_percent) })
     })
     // После save перезагружаем весь список с backend — гарантированно свежие
     // данные (включая поля которые backend мог трансформировать). Spread-merge

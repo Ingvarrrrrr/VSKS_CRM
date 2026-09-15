@@ -12,7 +12,13 @@ class SubsidyCreate(BaseModel):
 
     name: str
     year: int
-    budget: float
+    # Владелец (2026-09-15): бюджет необязателен — «ещё не определено» валидное
+    # состояние субсидии. Раньше поле было обязательным float, вынуждая ставить
+    # 0/произвольное число сразу при создании. None здесь — реальное «не задано»,
+    # а не отсутствующий ключ: PUT (update_subsidy использует ЭТУ же схему,
+    # model_dump() без exclude_unset) должен уметь ОЧИСТИТЬ ранее заданный
+    # бюджет явной передачей budget: null.
+    budget: Optional[float] = None
     description: Optional[str] = None
     contractor_id: Optional[int] = None
     # Phase 19: large agreement-text clause for docx templates
@@ -43,6 +49,16 @@ class SubsidyCreate(BaseModel):
     @field_validator('basis_doc_number', mode='before')
     @classmethod
     def empty_str_to_none_number(cls, v):
+        if v == '' or v is None:
+            return None
+        return v
+
+    # Vuetify v-model.number оставляет '' (не null), если поле «Бюджет» очищено
+    # вручную (тот же паттерн, что и basis_doc_* выше, и FeoCategoryCreate в
+    # этом же файле) — без этого пустое поле валилось бы 422 вместо «не задано».
+    @field_validator('budget', mode='before')
+    @classmethod
+    def empty_str_to_none_budget(cls, v):
         if v == '' or v is None:
             return None
         return v
@@ -90,7 +106,11 @@ class SubsidyOut(BaseModel):
     id: int
     name: str
     year: int
-    budget: float
+    # Optional (2026-09-15): «ещё не определён» — см. SubsidyCreate.budget выше.
+    # calculated_budget/feo_budget_total (эффективный бюджет для расчётов)
+    # остаются числом (0 при NULL, см. effective_subsidy_budget) — только сам
+    # РУЧНОЙ ввод может быть null.
+    budget: Optional[float] = None
     calculated_budget: Optional[float] = None
     description: Optional[str] = None
     contractor_id: Optional[int] = None

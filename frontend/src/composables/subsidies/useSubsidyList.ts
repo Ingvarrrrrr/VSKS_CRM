@@ -125,12 +125,27 @@ function buildSubsidyList(ctx?: Pick<SubsidyDetailContext, 'allSubsidies'>) {
     return (s.feo_budget_total || s.budget || 0) - (s.planned || 0)
   }
 
+  // displayBudget/isBudgetUndefined — единый источник для «какое число бюджета
+  // показать в карточке/таблице» (владелец, 2026-09-15: «почему нельзя оставить
+  // Бюджет пустым»). Раньше `s.feo_budget_total || s.budget` было продублировано
+  // в SubsidyCardsGrid.vue (5 мест) и SubsidyListTable.vue по отдельности —
+  // после того как budget стал nullable, каждое место рисковало тихо показать
+  // «0 ₽» вместо «Бюджет не определён» (formatCurrencyShort(null) тоже даёт
+  // «0 ₽» — 0 и «не задано» неразличимы на выходе). Теперь оба места вызывают
+  // ОДНУ функцию для решения «budget задан?» вместо копирования условия.
+  function displayBudget(s: SubsidyRow): number {
+    return s.feo_budget_total || s.budget || 0
+  }
+  function isBudgetUndefined(s: SubsidyRow): boolean {
+    return !(s.feo_budget_total && s.feo_budget_total > 0) && (s.budget === null || s.budget === undefined)
+  }
+
   return {
     selectedYear, availableYears, filteredSubsidies, subsidyTableHeaders, totals,
     mobile, viewMode, effectiveView, subPage, subTotalPages, subPaged,
     cardDragIdx, cardDragOverIdx,
     onCardDragStart, onCardDragOver, onCardDrop,
     getSubsidyExportColumns, getSubsidyExportRows,
-    pct, progressColor, cardDelta, formatCurrencyShort,
+    pct, progressColor, cardDelta, formatCurrencyShort, displayBudget, isBudgetUndefined,
   }
 }

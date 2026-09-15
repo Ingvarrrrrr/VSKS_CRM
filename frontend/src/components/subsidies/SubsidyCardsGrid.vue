@@ -38,8 +38,10 @@
         </div>
       </div>
 
-      <div class="sc-budget">{{ formatCurrencyShort(s.feo_budget_total || s.budget) }}</div>
-      <div class="sc-budget-label">{{ (s.feo_budget_total || 0) > 0 ? 'Бюджет ФЭО (расчёт)' : 'Бюджет' }}</div>
+      <div class="sc-budget" :class="{ 'sc-budget--undefined': isBudgetUndefined(s) }">
+        {{ isBudgetUndefined(s) ? 'Бюджет не определён' : formatCurrencyShort(displayBudget(s)) }}
+      </div>
+      <div v-if="!isBudgetUndefined(s)" class="sc-budget-label">{{ (s.feo_budget_total || 0) > 0 ? 'Бюджет ФЭО (расчёт)' : 'Бюджет' }}</div>
 
       <div class="sc-mini-row">
         <div class="sc-mini" title="Запланировано (план ФЭО + заявки) — то же, что «Запланировано» на шкале ниже">
@@ -57,8 +59,8 @@
       </div>
 
       <v-progress-linear
-        :model-value="pct(s.planned, s.feo_budget_total || s.budget)"
-        :color="progressColor(pct(s.planned, s.feo_budget_total || s.budget))"
+        :model-value="pct(s.planned, displayBudget(s))"
+        :color="progressColor(pct(s.planned, displayBudget(s)))"
         height="6" rounded class="mt-3"
       />
       <BudgetBar
@@ -68,7 +70,7 @@
         :subsidy="{
           id: s.id,
           name: s.name,
-          budget: s.feo_budget_total || s.budget,
+          budget: displayBudget(s),
           planned: s.planned,
           contracted: s.contracted,
           paid: s.paid,
@@ -81,11 +83,11 @@
         class="mt-1 sc-delta-chip"
         prepend-icon="mdi-alert"
         :title="cardDelta(s) > 0
-          ? `Бюджет ${Math.round(s.feo_budget_total || s.budget || 0).toLocaleString('ru-RU')} ₽ − запланировано (план ФЭО + заявки) ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ = можно допланировать ${Math.round(cardDelta(s)).toLocaleString('ru-RU')} ₽`
-          : `Запланировано (план ФЭО + заявки) ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ — больше бюджета ${Math.round(s.feo_budget_total || s.budget || 0).toLocaleString('ru-RU')} ₽ на ${Math.round(-cardDelta(s)).toLocaleString('ru-RU')} ₽`"
+          ? `Бюджет ${Math.round(displayBudget(s)).toLocaleString('ru-RU')} ₽ − запланировано (план ФЭО + заявки) ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ = можно допланировать ${Math.round(cardDelta(s)).toLocaleString('ru-RU')} ₽`
+          : `Запланировано (план ФЭО + заявки) ${Math.round(s.planned || 0).toLocaleString('ru-RU')} ₽ — больше бюджета ${Math.round(displayBudget(s)).toLocaleString('ru-RU')} ₽ на ${Math.round(-cardDelta(s)).toLocaleString('ru-RU')} ₽`"
       >ФЭО {{ cardDelta(s) > 0 ? '>' : '<' }} план: {{ cardDelta(s) > 0 ? 'допланировать' : 'урезать' }} {{ formatCurrencyShort(Math.abs(cardDelta(s))) }}</v-chip>
       <v-chip
-        v-else-if="(s.feo_budget_total || s.budget || 0) > 0 && (s.planned || 0) > 0"
+        v-else-if="(displayBudget(s)) > 0 && (s.planned || 0) > 0"
         color="success"
         size="small"
         class="mt-1 sc-delta-chip"
@@ -105,7 +107,7 @@
         <span>{{ s.contractor_name }}</span>
       </div>
       <div class="sc-footer">
-        <div class="sc-pct">{{ pct(s.planned, s.feo_budget_total || s.budget) }}% запланировано</div>
+        <div class="sc-pct">{{ pct(s.planned, displayBudget(s)) }}% запланировано</div>
         <div class="sc-feo-badge" :class="s.feo_filled ? 'sc-feo-badge--ok' : 'sc-feo-badge--no'">
           <v-icon :icon="s.feo_filled ? 'mdi-check-circle' : 'mdi-circle-outline'" size="14" class="mr-1" />
           ФЭО
@@ -131,6 +133,7 @@ const ctx = useSubsidyDetailCtx()
 const {
   subPaged, subTotalPages, subPage, cardDragIdx, cardDragOverIdx,
   onCardDragStart, onCardDragOver, onCardDrop, pct, progressColor, cardDelta,
+  displayBudget, isBudgetUndefined,
 } = useSubsidyList(ctx)
 const { openApproversDialog } = useSubsidyApprovers()
 const { openTemplateDialog, contractTemplates } = useSubsidyTemplates()

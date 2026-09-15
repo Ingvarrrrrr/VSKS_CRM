@@ -7,7 +7,13 @@ class Subsidy(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(500), nullable=False)
     year = Column(Integer, nullable=False)
-    budget = Column(Float, nullable=False)
+    # Владелец (2026-09-15): «почему нельзя оставить бюджет пустым — ещё не
+    # определён». Раньше NOT NULL заставлял ставить фиктивный 0/произвольное
+    # число сразу при создании субсидии. NULL = «бюджет ещё не определён»;
+    # effective_subsidy_budget (services/subsidy_budget.py) уже трактует
+    # NULL так же, как 0 (float(manual_budget or 0)) — расчёты по дереву ФЭО
+    # не ломаются, None только не подставляется вместо реального числа.
+    budget = Column(Float, nullable=True)
     # deprecated (Правило №6): БОЛЬШЕ НЕ пишется нигде (раньше писалась на
     # каждый GET — см. историю app.routers.subsidies). Значение, которое
     # отдаётся под этим именем в SubsidyOut, считается на чтении из дерева

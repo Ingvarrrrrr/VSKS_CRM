@@ -8,7 +8,8 @@
     class="subsidy-main-table mb-3"
   >
     <template #item.feo_budget_total="{ item }">
-      {{ formatCurrencyShort(item.feo_budget_total || item.budget) }}
+      <span v-if="isBudgetUndefined(item)" class="text-medium-emphasis font-italic">Бюджет не определён</span>
+      <span v-else>{{ formatCurrencyShort(displayBudget(item)) }}</span>
     </template>
     <template #item.planned="{ item }">
       <span style="color:#F59E0B">{{ formatCurrencyShort(item.planned) }}</span>
@@ -81,7 +82,7 @@ import { useSubsidyApprovers } from '@/composables/subsidies/useSubsidyApprovers
 import { useSubsidyTemplates } from '@/composables/subsidies/useSubsidyTemplates'
 
 const ctx = useSubsidyDetailCtx()
-const { filteredSubsidies, subsidyTableHeaders } = useSubsidyList(ctx)
+const { filteredSubsidies, subsidyTableHeaders, displayBudget, isBudgetUndefined } = useSubsidyList(ctx)
 const { openApproversDialog } = useSubsidyApprovers()
 const { openTemplateDialog, contractTemplates } = useSubsidyTemplates()
 </script>

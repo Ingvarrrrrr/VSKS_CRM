@@ -371,7 +371,12 @@ async def dashboard_charts(
             "id": row.id,
             "name": row.name,
             "year": row.year,
-            "budget": float(row.budget),
+            # budget теперь nullable (владелец 2026-09-15: «ещё не определён»,
+            # см. app/models/subsidy.py) — float(None) валил бы /dashboard/charts
+            # целиком для ВСЕХ пользователей, если хотя бы одна субсидия без
+            # бюджета. effective_budget (ниже, из effective_subsidy_budget)
+            # остаётся числом — это то, что реально используется для расчётов.
+            "budget": float(row.budget) if row.budget is not None else None,
             "calculated_budget": effective_budget,
             "total_planned": float(row.total_planned),
             "total_confirmed": float(row.total_confirmed),

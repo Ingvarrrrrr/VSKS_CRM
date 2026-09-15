@@ -18,7 +18,7 @@ from app.models.purchase_receipt import PurchaseReceipt
 from app.models.user import User
 from app.schemas.schemas import ReceiptOut
 from app.services.receipts_creation import _create_receipt_with_items, _raise_receipt_duplicate_detail
-from app.services.receipts_parsing import _parse_fns_json_receipt, _parse_qr_string
+from app.services.receipts_parsing import _parse_fns_json_receipt, _parse_proverkacheka_html_receipt, _parse_qr_string
 
 router = APIRouter(prefix="/api/purchases", tags=["receipts"])
 
@@ -72,6 +72,56 @@ async def import_receipt_json(
         # All entries conflicted — bubble first message up so the user sees it.
         raise HTTPException(409, detail=conflicts[0])
     return results
+
+
+@router.post("/{purchase_id}/receipts/import-html", response_model=List[ReceiptOut])
+async def import_receipt_html(
+    purchase_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Import one receipt from a saved proverkacheka.com check HTML page.
+
+    Владелец: «нельзя перетащить PDF/HTML, только TIF» — жалоба 2026-09-15.
+    HTML-экспорт от proverkacheka.com не несёт JSON, но его таблица позиций
+    машиночитаема тем же парсером, что уже используется как fallback-путь
+    для /from-qr-fetch (services/receipts_parsing.py::
+    _extract_items_from_proverkacheka_html) — переиспользуется здесь, а не
+    дублируется (ПРАВИЛО №6). Тот же ответ (List[ReceiptOut]) и тот же путь
+    дедупликации (_create_receipt_with_items), что у import-json.
+    """
+    name_lower = (file.filename or "").lower()
+    if not (name_lower.endswith('.html') or name_lower.endswith('.htm')):
+        raise HTTPException(400, "Поддерживается только .html/.htm")
+
+    purchase = await db.get(Purchase, purchase_id)
+    if not purchase:
+        raise HTTPException(404, "Закупка не найдена")
+
+    content = await file.read()
+    try:
+        html_text = content.decode('utf-8')
+    except UnicodeDecodeError:
+        try:
+            html_text = content.decode('cp1251')
+        except UnicodeDecodeError:
+            html_text = content.decode('utf-8', errors='replace')
+
+    data = _parse_proverkacheka_html_receipt(html_text)
+    if not data.get('items'):
+        raise HTTPException(
+            400,
+            "Не удалось распознать чек в HTML-файле (ожидается страница "
+            "proverkacheka.com с таблицей позиций). Файл можно прикрепить "
+            "как обычный документ.",
+        )
+
+    receipt = await _create_receipt_with_items(
+        purchase_id, data, 'html_import',
+        {"proverkacheka": {"data": {"html": html_text}}}, db,
+    )
+    return [receipt]
 
 
 @router.post("/{purchase_id}/receipts/from-qr", response_model=ReceiptOut)

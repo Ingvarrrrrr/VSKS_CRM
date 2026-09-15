@@ -879,14 +879,19 @@ async def create_purchase(
             item.planned_total = item.total_price
         db.add(item)
 
-    # Авансовый без wish_id → авто-заявка на возмещение (source='advance_report', status='submitted')
+    # Авансовый без wish_id → авто-заявка на возмещение (source='advance_report', status='draft').
+    # Решение владельца (опрос 2026-09-15): раньше уходила status='submitted' сразу
+    # ВСЕМ руководителям по иерархии, хотя никто ничего не отправлял (дефект: у
+    # Любарец их двое — Лягин и Цыганов увидел себя согласующим). Теперь черновик —
+    # сотрудник сам жмёт «Отправить на согласование» (см. AdvanceReimbursementCard.vue
+    # → POST /api/wishes/{id}/submit, тот же эндпоинт, что и у обычных заявок).
     if is_advance and not data.wish_id:
         from app.models.wish import Wish
         from app.models.wish_item import WishItem as WishItemModel
         wish_title = f"Возмещение по авансовому отчёту {p.registry_number or f'#{p.id}'}"
         auto_wish = Wish(
             source='advance_report',
-            status='submitted',
+            status='draft',
             title=wish_title[:499],
             created_by=current_user.id,
             org_id=get_single_org_id(current_user) or current_user.org_id,

@@ -5,14 +5,17 @@
        Stages/Wish/ItemsCardsView) сами колонки под спец-форму не рисуют, а
        вставляют этот компонент вместо quantity/unit/unit_price. -->
   <div class="item-form-fields d-flex flex-wrap ga-2">
-    <!-- Проживание: цена — НЕ поле extra_attrs (не в реестре item_forms.json), это
-         тот же item.unit_price, что и у обычной позиции (backend/app/services/
-         item_amounts.py: «unit_price — цена за номер/человека в сутки, вводится
-         пользователем напрямую», НЕ производная, в отличие от transport, где
-         unit_price выводится из hourly_rate/trip_cost и своего поля ввода не
-         требует). Показываем его тут же, рядом со спец-полями, с формулировкой
-         подписи по price_basis — единственное место, где решается эта подпись. -->
-    <div v-if="itemForm === 'accommodation'" class="item-form-fields__field">
+    <!-- Проживание/питание-просто: цена — НЕ поле extra_attrs (не в реестре
+         item_forms.json), это тот же item.unit_price, что и у обычной
+         позиции (backend/app/services/item_amounts.py: «unit_price — цена за
+         номер/человека в сутки» / «цена за приём пищи», вводится
+         пользователем напрямую), НЕ производная, в отличие от transport
+         (unit_price из hourly_rate/trip_cost) и food/меню (unit_price =
+         итог/quantity). Показываем его тут же, рядом со спец-полями, с
+         формулировкой подписи по форме/price_basis — единственное место, где
+         решается эта подпись. Питание/меню — цену НЕ показываем вовсе, она
+         производная (FoodMenuEditor вводит цену за КАЖДЫЙ приём отдельно). -->
+    <div v-if="itemForm === 'accommodation' || (itemForm === 'food' && foodMode !== 'menu')" class="item-form-fields__field">
       <v-text-field
         :model-value="unitPriceDisplay"
         type="number" :label="priceLabel" hide-details="auto"
@@ -70,12 +73,25 @@
         />
 
         <v-text-field
-          v-else
+          v-else-if="f.type !== 'custom'"
           :model-value="valueOf(f) ?? ''"
           type="text" :label="f.label" :hint="f.hint" persistent-hint
           density="compact" variant="outlined" hide-details="auto" style="min-width:180px"
           :disabled="disabled"
           @update:model-value="(v: string) => setValue(f.key, v || null)"
+        />
+
+        <!-- food-menu-editor.md: type='custom' — вложенная структура (меню
+             питания по дням), не ложится в generic-рендер выше; подключаем
+             компонент по f.custom_editor (сейчас единственное значение —
+             'food_menu' → FoodMenuEditor.vue). На всю ширину контейнера. -->
+        <FoodMenuEditor
+          v-else-if="f.custom_editor === 'food_menu'"
+          :model-value="extra.menu"
+          :days="extra.days"
+          :persons="extra.persons"
+          :disabled="disabled"
+          @update:model-value="(v) => setValue('menu', v)"
         />
       </div>
     </template>
@@ -86,6 +102,7 @@
 import { computed } from 'vue'
 import type { ItemFormCode, ItemFormField, ExtraAttrs } from '@/utils/itemAmounts'
 import { numOrNull } from '@/utils/numberFormat'
+import FoodMenuEditor from './FoodMenuEditor.vue'
 
 const props = defineProps<{
   itemForm: ItemFormCode | null
@@ -103,11 +120,15 @@ const emit = defineEmits<{
 
 const unitPriceDisplay = computed(() => props.unitPrice === undefined || props.unitPrice === null ? '' : String(props.unitPrice))
 const priceLabel = computed(() => {
+  if (props.itemForm === 'food') return 'Цена за приём, ₽'
   const basis = extra.value.price_basis || 'room'
   return basis === 'person' ? 'Цена за человека, ₽/сутки' : 'Цена за номер, ₽/сутки'
 })
 
 const extra = computed<ExtraAttrs>(() => (props.modelValue && typeof props.modelValue === 'object') ? props.modelValue : {})
+// Питание: режим ввода ('simple'|'menu') — переключает видимость полей и
+// заодно решает, показывать ли общую цену за приём (см. блок «Цена» выше).
+const foodMode = computed(() => extra.value.mode || 'simple')
 
 function valueOf(f: ItemFormField): any {
   const v = extra.value[f.key]
@@ -155,6 +176,15 @@ const visibleFields = computed<ItemFormField[]>(() => {
       }
       if (f.key === 'trip_cost') return (ex.cost_mode || 'hours') === 'trip'
     }
+    // Питание: переключатель mode решает, какие поля видны — «просто»
+    // (meals_per_day, обычная цена за приём вводится в общую unit_price
+    // позиции) или «меню по дням» (custom_editor food_menu, своя цена за
+    // приём НА КАЖДЫЙ приём). persons/days общие для обоих режимов.
+    if (props.itemForm === 'food') {
+      const mode = ex.mode || 'simple'
+      if (f.key === 'meals_per_day') return mode !== 'menu'
+      if (f.key === 'menu') return mode === 'menu'
+    }
     return true
   })
 })
@@ -168,5 +198,12 @@ const visibleFields = computed<ItemFormField[]>(() => {
 .item-form-fields__hint {
   max-width: 220px;
   line-height: 1.3;
+}
+/* food-menu-editor.md: редактор меню по дням — на всю ширину контейнера
+   (day-панели с несколькими полями на строку не помещаются в узкую колонку
+   рядом с остальными полями формы). */
+.item-form-fields__field--custom {
+  flex-basis: 100%;
+  width: 100%;
 }
 </style>

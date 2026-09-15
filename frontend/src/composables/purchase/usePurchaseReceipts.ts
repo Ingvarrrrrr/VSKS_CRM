@@ -30,10 +30,31 @@ export interface ReceiptsFormSlice {
   purchase_method?: string | null
 }
 
+// Файл чека, прикреплённый как обычный PurchaseFile (file_type='receipt') —
+// когда QR/HTML не распознан или формат (PDF/TIF/HEIC) распознавание не
+// поддерживает. Показывается в блоке под таблицей распознанных чеков, чтобы
+// файл не выглядел «пропавшим» (жалоба владельца 2026-09-15).
+export interface ReceiptFile {
+  id: number
+  filename: string
+  original_name?: string | null
+  mime_type?: string | null
+  size?: number | null
+  created_at?: string | null
+}
+
 // Экспортируется — save() в CreateOrderView.vue проверяет наличие отложенного
 // действия (не показывать снэк «Закупка создана», если сейчас откроется QR/JSON/
 // ручной ввод по этому ключу). Один источник ключа (ПРАВИЛО №6).
 export const POST_SAVE_ACTION_KEY = 'advance_report_post_save_action'
+
+// Единый accept для FileDropZone во всех 3 местах использования
+// PurchaseReceiptsBlock.vue (ПРАВИЛО №6 — один источник, не 3 разных строки).
+// Используется и как атрибут accept, и как селектор в document.querySelector
+// (см. onJsonBtnClick / consumePostSaveAction ниже) для клика по input,
+// который рендерит FileDropZone.
+export const RECEIPT_FILE_ACCEPT = '.json,.pdf,.html,.htm,.png,.jpg,.jpeg,.webp,.tif,.tiff,.heic'
+export const RECEIPT_FILE_HINT = 'PDF, HTML (proverkacheka), PNG/JPG с QR, JSON ФНС'
 
 export function usePurchaseReceipts(
   purchaseId: ComputedRef<number | null>,
@@ -48,10 +69,11 @@ export function usePurchaseReceipts(
   logRefetchDebug?: () => void,
 ) {
   const receipts = ref<Receipt[]>([])
+  const receiptFiles = ref<ReceiptFile[]>([])
 
   function sourceLabel(s?: string | null) {
     if (!s) return '—'
-    return ({ json_import: 'JSON', qr_scan: 'QR', manual: 'Вручную' } as Record<string, string>)[s] || s
+    return ({ json_import: 'JSON', qr_scan: 'QR', manual: 'Вручную', html_import: 'HTML' } as Record<string, string>)[s] || s
   }
 
   async function loadReceipts() {
@@ -60,6 +82,35 @@ export function usePurchaseReceipts(
       receipts.value = await apiFetch<Receipt[]>(`/purchases/${purchaseId.value}/receipts`)
     } catch {
       /* silent — no receipts is fine */
+    }
+  }
+
+  // Файлы чеков без автораспознавания — переиспользует общий эндпоинт файлов
+  // закупки (GET /purchases/{id}/files), не заводит отдельный список
+  // хранения (ПРАВИЛО №6: один источник — purchase_files, здесь только фильтр).
+  async function loadReceiptFiles() {
+    if (!purchaseId.value) return
+    try {
+      const all = await apiFetch<any[]>(`/purchases/${purchaseId.value}/files`)
+      receiptFiles.value = (all || []).filter(f => f.file_type === 'receipt' && f.is_active !== false)
+    } catch {
+      receiptFiles.value = []
+    }
+  }
+
+  async function attachReceiptFile(f: File): Promise<'attached' | 'duplicate' | 'error'> {
+    if (!purchaseId.value) return 'error'
+    try {
+      const fd = new FormData()
+      fd.append('file', f)
+      fd.append('file_type', 'receipt')
+      fd.append('doc_format', 'scan')
+      await apiFetch(`/purchases/${purchaseId.value}/files`, { method: 'POST', body: fd as any })
+      return 'attached'
+    } catch (e: any) {
+      if (e?.status === 409) return 'duplicate'
+      showSnack(e?.payload?.message || e?.message || `Не удалось прикрепить файл ${f.name}`, 'error')
+      return 'error'
     }
   }
 
@@ -89,7 +140,7 @@ export function usePurchaseReceipts(
 
   async function onJsonBtnClick() {
     if (!(await ensureSavedThen('upload_json'))) return
-    document.querySelector<HTMLInputElement>('input[type=file][accept="image/*,.json"]')?.click()
+    document.querySelector<HTMLInputElement>(`input[type=file][accept="${RECEIPT_FILE_ACCEPT}"]`)?.click()
   }
 
   async function onManualBtnClick() {
@@ -124,7 +175,7 @@ export function usePurchaseReceipts(
     sessionStorage.removeItem(POST_SAVE_ACTION_KEY)
     if (pending === 'scan_qr') qrScanShow.value = true
     else if (pending === 'upload_json') {
-      document.querySelector<HTMLInputElement>('input[type=file][accept="image/*,.json"]')?.click()
+      document.querySelector<HTMLInputElement>(`input[type=file][accept="${RECEIPT_FILE_ACCEPT}"]`)?.click()
     }
     else if (pending === 'manual_receipt') openManualReceiptDialog()
   }
@@ -182,32 +233,70 @@ export function usePurchaseReceipts(
     }
   }
 
-  async function onJsonReceiptUpload(e: Event) {
-    const input = e.target as HTMLInputElement
-    const files = Array.from(input.files || [])
-    if (!files.length || !purchaseId.value) {
-      if (input) input.value = ''
+  // Единая точка входа для загрузки чеков — вызывается и из drag-n-drop
+  // (FileDropZone @files), и из клика по кнопке «Загрузить чек» (тот же
+  // input, см. RECEIPT_FILE_ACCEPT) — было два вида обработчиков (drop
+  // отсутствовал вовсе), жалоба владельца 2026-09-15. Имя сохранено (не
+  // onReceiptFiles) — так его деструктурируют 3 места использования
+  // PurchaseReceiptsBlock.vue в CreateOrderView.vue.
+  //
+  // Маршрутизация по типу файла:
+  //   .json              → import-json (как раньше)
+  //   image (png/jpg/webp) → decode QR → from-qr-fetch; QR не найден → файл
+  //                        не теряется, прикрепляется как файл чека (п.3)
+  //   .html/.htm         → import-html (proverkacheka) → не разобран → тоже
+  //                        прикрепляется как файл чека
+  //   pdf/tif/tiff/heic/прочее → сразу прикрепляется как файл чека —
+  //                        распознавание из них не обещаем (ТЗ)
+  async function onJsonReceiptUpload(files: File[]) {
+    if (!files.length) return
+    if (!purchaseId.value) {
+      // Раньше единственный путь открыть file input лежал через кнопку
+      // «Загрузить чек» → onJsonBtnClick → ensureSavedThen (сохраняет
+      // черновик первым же кликом, ДО открытия пикера) — молчаливый ранний
+      // return здесь был безопасен, потому что до него было физически не
+      // добраться без сохранения. FileDropZone это предположение ломает:
+      // файл можно перетащить в ещё не сохранённый авансовый отчёт напрямую,
+      // и старый молчаливый return воспроизвёл бы ту же жалобу «чек никуда
+      // не делся, но и не появился». Теперь — сохраняем сначала (как кнопка),
+      // предупредив, что перетащенный файл придётся выбрать заново.
+      showSnack('Черновик сохраняется — после сохранения повторите загрузку файла', 'info')
+      await ensureSavedThen('upload_json')
       return
     }
     const existingIds = new Set(receipts.value.map(r => r.id))
     let added = 0
     let dups = 0
     let qrFails = 0
+    let htmlFails = 0
+    let filesAttached = 0
+    let filesDup = 0
+
+    function handleDuplicate(p: any): boolean {
+      const code = p?.code
+      const det = (p?.details && typeof p.details === 'object') ? p.details : null
+      if (code === 'RECEIPT_DUPLICATE' && det?.purchase_id) {
+        const { fallbackMessage, actionText, onAction } = receiptDuplicateOpenAction(det)
+        showSnack(p.message || fallbackMessage, 'warning', { actionText, onAction })
+        return true
+      }
+      if (code === 'FNS_RATE_LIMIT') {
+        showSnack(p?.message || 'ФНС временно ограничила запросы', 'warning')
+        return true
+      }
+      return false
+    }
+
     for (const f of files) {
-      const isImage = (f.type || '').startsWith('image/') || /\.(png|jpe?g|webp|heic|heif)$/i.test(f.name)
+      const lower = f.name.toLowerCase()
+      const isJson = lower.endsWith('.json')
+      const isHtml = lower.endsWith('.html') || lower.endsWith('.htm')
+      const isImage = !isJson && !isHtml &&
+        ((f.type || '').startsWith('image/') || /\.(png|jpe?g|webp)$/i.test(lower)) &&
+        !/\.(tiff?|heic|heif)$/i.test(lower)
+
       try {
-        if (isImage) {
-          const qr = await decodeQrFromImageFile(f)
-          if (!qr) { qrFails++; continue }
-          const r = await apiFetch<Receipt>(
-            `/purchases/${purchaseId.value}/receipts/from-qr-fetch`,
-            { method: 'POST', body: { qr } as any },
-          )
-          if (r?.id != null) {
-            if (existingIds.has(r.id)) dups++
-            else { added++; existingIds.add(r.id) }
-          }
-        } else {
+        if (isJson) {
           const fd = new FormData()
           fd.append('file', f)
           const res = await apiFetch<Receipt[]>(
@@ -218,33 +307,94 @@ export function usePurchaseReceipts(
             if (existingIds.has(r.id)) dups++
             else { added++; existingIds.add(r.id) }
           }
+        } else if (isImage) {
+          // decodeQrFromImageFile может не только вернуть null, но и БРОСИТЬ
+          // (canvas/createImageBitmap отказывается декодировать повреждённое
+          // или вырожденное изображение) — без своего try/catch это исключение
+          // улетало в общий catch ниже и показывало «Ошибка обработки», а файл
+          // терялся, что прямо противоречит ТЗ («QR не распознан — НЕ терять
+          // файл»). Оба исхода (null и throw) — одна и та же ветка fallback.
+          let qr: string | null = null
+          try {
+            qr = await decodeQrFromImageFile(f)
+          } catch {
+            qr = null
+          }
+          if (!qr) {
+            qrFails++
+            const outcome = await attachReceiptFile(f)
+            if (outcome === 'attached') filesAttached++
+            else if (outcome === 'duplicate') filesDup++
+            continue
+          }
+          try {
+            const r = await apiFetch<Receipt>(
+              `/purchases/${purchaseId.value}/receipts/from-qr-fetch`,
+              { method: 'POST', body: { qr } as any },
+            )
+            if (r?.id != null) {
+              if (existingIds.has(r.id)) dups++
+              else { added++; existingIds.add(r.id) }
+            }
+          } catch (qrFetchErr: any) {
+            if (!handleDuplicate(qrFetchErr?.payload)) {
+              // QR прочитан, но получить чек не удалось (ФНС недоступна и т.п.) —
+              // тоже не теряем файл, а не только при «QR не распознан».
+              qrFails++
+              const outcome = await attachReceiptFile(f)
+              if (outcome === 'attached') filesAttached++
+              else if (outcome === 'duplicate') filesDup++
+            }
+          }
+        } else if (isHtml) {
+          try {
+            const fd = new FormData()
+            fd.append('file', f)
+            const res = await apiFetch<Receipt[]>(
+              `/purchases/${purchaseId.value}/receipts/import-html`,
+              { method: 'POST', body: fd as any }
+            )
+            for (const r of (res || [])) {
+              if (existingIds.has(r.id)) dups++
+              else { added++; existingIds.add(r.id) }
+            }
+          } catch (htmlErr: any) {
+            if (handleDuplicate(htmlErr?.payload)) continue
+            htmlFails++
+            const outcome = await attachReceiptFile(f)
+            if (outcome === 'attached') filesAttached++
+            else if (outcome === 'duplicate') filesDup++
+          }
+        } else {
+          // PDF / TIF / TIFF / HEIC / прочее — распознавание не обещаем
+          const outcome = await attachReceiptFile(f)
+          if (outcome === 'attached') filesAttached++
+          else if (outcome === 'duplicate') filesDup++
         }
       } catch (err: any) {
-        const p2 = err?.payload
-        const code2 = p2?.code
-        const det2 = (p2?.details && typeof p2.details === 'object') ? p2.details : null
-        if (code2 === 'RECEIPT_DUPLICATE' && det2?.purchase_id) {
-          const { fallbackMessage, actionText, onAction } = receiptDuplicateOpenAction(det2)
-          showSnack(p2.message || fallbackMessage, 'warning', { actionText, onAction })
-        } else if (code2 === 'FNS_RATE_LIMIT') {
-          showSnack(p2?.message || 'ФНС временно ограничила запросы', 'warning')
-        } else {
+        if (!handleDuplicate(err?.payload)) {
           showSnack(err?.message || `Ошибка обработки ${f.name}`, 'error')
         }
       }
     }
-    input.value = ''
     await loadReceipts()
+    await loadReceiptFiles()
     if (isEdit.value && purchaseId.value) {
       await new Promise(r => setTimeout(r, 50))
       await loadPurchase()
       logRefetchDebug?.()
     }
     const parts: string[] = []
-    if (added) parts.push(`добавлено: ${added}`)
+    if (added) parts.push(`чеков добавлено: ${added}`)
     if (dups) parts.push(`уже было: ${dups}`)
     if (qrFails) parts.push(`QR не распознан: ${qrFails}`)
-    if (parts.length) showSnack(parts.join(', '), qrFails && !added ? 'warning' : 'success')
+    if (htmlFails) parts.push(`HTML не распознан: ${htmlFails}`)
+    if (filesAttached) parts.push(`файл${filesAttached > 1 ? 'ов' : ''} прикреплено: ${filesAttached}`)
+    if (filesDup) parts.push(`файл уже был прикреплён: ${filesDup}`)
+    if (parts.length) {
+      const hasFailure = (qrFails || htmlFails) && !added
+      showSnack(parts.join(', '), hasFailure ? 'warning' : 'success')
+    }
   }
 
   async function deleteReceipt(id: number) {
@@ -260,6 +410,7 @@ export function usePurchaseReceipts(
 
   return {
     receipts, sourceLabel, loadReceipts,
+    receiptFiles, loadReceiptFiles,
     qrScanShow, onScanQrClick, onJsonBtnClick, onManualBtnClick,
     recomputeLoading, recomputeFromReceipts,
     consumePostSaveAction, onQrDetected, onJsonReceiptUpload, deleteReceipt,

@@ -13,13 +13,28 @@ frontend/src/data/item_forms.json, генерируется backend/scripts/expo
     итог = цена × (номера|люди) × суток.
   - transport («Перевозки автобусом»): «часы в работе» + «часы подачи»
     (по умолчанию 2) × ставка/час, либо переключатель на ручную стоимость рейса.
-  - food («Питание», добавлено 2026-09-15): итог = цена за приём × человек ×
-    приёмов пищи в день × дней.
+  - food («Питание», добавлено 2026-09-15, режим «просто»): итог = цена за
+    приём × человек × приёмов пищи в день × дней.
+  - food, режим «меню по дням» (владелец не принял «просто», 2026-09-15:
+    «должен быть переключатель, ... а должно быть и по дням и человекам»):
+    поле `mode` переключает simple/menu; в menu — `menu`: список дней
+    [{day, meals: [{name, description, price}]}], цена — за приём НА
+    ЧЕЛОВЕКА. Итог = человек × Σ(price всех приёмов всех дней); для
+    совместимости с обычной позицией quantity = человек × (приёмов всего),
+    unit_price = итог / quantity — ПРОИЗВОДНОЕ (как unit_price у transport в
+    режиме «стоимость рейса»), с фронта не принимается (см. item_amounts.py
+    ::_food_menu_amounts). Вложенный редактор меню не ложится в generic
+    рендер по списку fields — поле `menu` помечено `custom_editor:
+    "food_menu"`, ItemFormFields.vue подключает по этому флагу
+    components/items/FoodMenuEditor.vue.
 """
 from __future__ import annotations
 
-# code → {label, fields: [{key, label, type, options?, default?, hint?}], formula}
-# type: text | number | select | datetime | switch
+# code → {label, fields: [{key, label, type, options?, default?, hint?,
+#         custom_editor?}], formula}
+# type: text | number | select | datetime | switch | custom (custom — поле не
+# рендерится generic-рендером ItemFormFields.vue, а подключает компонент по
+# custom_editor, см. food.menu ниже)
 ITEM_FORMS = {
     "accommodation": {
         "label": "Проживание",
@@ -79,8 +94,35 @@ ITEM_FORMS = {
     },
     "food": {
         "label": "Питание",
-        "formula": "Итог = цена за приём × человек × приёмов пищи в день × дней",
+        "formula": (
+            "Режим «просто»: итог = цена за приём × человек × приёмов пищи в "
+            "день × дней. Режим «меню по дням»: итог = человек × сумма цен "
+            "всех приёмов всех дней (цена — за приём на человека); quantity = "
+            "человек × приёмов всего, unit_price = итог / quantity — "
+            "производное значение"
+        ),
+        # Названия приёмов по умолчанию для нового дня в режиме «меню по
+        # дням» — единственный источник (владелец: «по умолчанию завтрак/
+        # обед/ужин, можно добавить/убрать/переименовать»), читает
+        # components/items/FoodMenuEditor.vue через item_forms.json, второй
+        # копии списка на фронте не заводить.
+        "default_meal_names": ["Завтрак", "Обед", "Ужин"],
         "fields": [
+            {
+                "key": "mode",
+                "label": "Режим ввода",
+                "type": "switch",
+                "options": [
+                    {"value": "simple", "label": "Просто"},
+                    {"value": "menu", "label": "Меню по дням"},
+                ],
+                "default": "simple",
+                "hint": (
+                    "«Просто» — общее число приёмов пищи в день; «Меню по "
+                    "дням» — свой список приёмов (завтрак/обед/ужин и т.д.) "
+                    "и состав на каждый день"
+                ),
+            },
             {"key": "persons", "label": "Человек", "type": "number", "default": 0},
             {
                 "key": "meals_per_day",
@@ -90,6 +132,14 @@ ITEM_FORMS = {
                 "hint": "обычно 3: завтрак, обед, ужин",
             },
             {"key": "days", "label": "Дней", "type": "number", "default": 1},
+            {
+                "key": "menu",
+                "label": "Меню по дням",
+                "type": "custom",
+                "custom_editor": "food_menu",
+                "default": [],
+                "hint": "цена — за приём на одного человека",
+            },
         ],
     },
 }

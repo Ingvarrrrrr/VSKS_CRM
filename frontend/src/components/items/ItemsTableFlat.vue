@@ -93,10 +93,14 @@
             <!-- Phase 27.1.2: inline contractor убран для не-advance из flat layout. Per-item contractor только в advance_report mode (колонка showContractorColumn справа). -->
           </td>
           <td>
+            <!-- food-menu-editor.md: активная спец-форма (food/accommodation/
+                 transport) принудительно ставит item_type='услуга' (apply_item_amounts
+                 на бэке / applyItemAmounts на фронте) — селектор блокируем, чтобы
+                 пользователь не переключил его обратно вручную. -->
             <v-select v-model="item.item_type"
               :items="allowedItemTypes.map(t => ({ value: t, title: t.charAt(0).toUpperCase() + t.slice(1) }))"
               item-title="title" item-value="value" density="compact" variant="outlined"
-              hide-details class="my-1" :disabled="readonly"
+              hide-details class="my-1" :disabled="readonly || !!itemForm"
               @update:model-value="(v: string) => emit('item-type-change', idx, v)" />
           </td>
           <td v-if="itemForm" colspan="3">

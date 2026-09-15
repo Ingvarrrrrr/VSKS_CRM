@@ -77,6 +77,46 @@ def _food_quantity(extra: dict) -> Decimal:
     return persons * meals * days
 
 
+def _food_menu_meals_total_price(menu: Any) -> tuple[Decimal, int]:
+    """Питание, режим «меню по дням»: сумма цен ВСЕХ приёмов ВСЕХ дней (цена
+    — за приём на человека) и общее число приёмов — единственное место,
+    читающее структуру extra['menu'] (список дней [{day, meals: [{name,
+    description, price}]}]); item_form_summary.py импортирует эту же функцию
+    для текстового описания, второй копии обхода структуры не заводить
+    (Правило №6). Мусор в структуре (не список/не dict) молча пропускается —
+    не должен валить расчёт суммы."""
+    total = Decimal("0")
+    count = 0
+    if isinstance(menu, list):
+        for day in menu:
+            if not isinstance(day, dict):
+                continue
+            meals = day.get("meals")
+            if not isinstance(meals, list):
+                continue
+            for meal in meals:
+                if not isinstance(meal, dict):
+                    continue
+                total += _dec(meal.get("price"))
+                count += 1
+    return total, count
+
+
+def _food_menu_amounts(extra: dict) -> tuple[Decimal, Decimal, Decimal]:
+    """Питание, режим «меню по дням»: итог = человек × Σ(price всех приёмов
+    всех дней). Для совместимости с обычной позицией (quantity × unit_price)
+    quantity = человек × (приёмов всего), unit_price = итог / quantity —
+    ПРОИЗВОДНОЕ значение (тот же приём, что unit_price у transport в режиме
+    «стоимость рейса вручную» — см. _transport_quantity_and_rate), с фронта
+    не принимается. 0 человек или пустое меню → 0/0/0, без деления на ноль."""
+    persons = _dec(extra.get("persons"))
+    per_person_total, meals_count = _food_menu_meals_total_price(extra.get("menu"))
+    quantity = persons * Decimal(meals_count)
+    total = _q2(persons * per_person_total)
+    unit_price = _q2(total / quantity) if quantity != 0 else Decimal("0")
+    return quantity, unit_price, total
+
+
 def _transport_quantity_and_rate(item: Any, extra: dict) -> tuple[Decimal, Decimal]:
     cost_mode = extra.get("cost_mode") or "hours"
     if cost_mode == "trip":
@@ -100,6 +140,10 @@ def compute_item_total(item: Any, item_form: Optional[str]) -> Decimal:
         qty, unit_price = _transport_quantity_and_rate(item, extra)
         return _q2(qty * unit_price)
     if item_form == "food":
+        mode = extra.get("mode") or "simple"
+        if mode == "menu":
+            _, _, total = _food_menu_amounts(extra)
+            return total
         qty = _food_quantity(extra)
         unit_price = _dec(getattr(item, "unit_price", None))
         return _q2(unit_price * qty)
@@ -110,7 +154,17 @@ def apply_item_amounts(item: Any, item_form: Optional[str]) -> Decimal:
     """Выставляет quantity/unit_price/total_price на `item` по правилам формы
     и возвращает итоговую сумму. Для accommodation/transport quantity (и для
     transport ещё и unit_price) — ПРОИЗВОДНЫЕ от extra_attrs, не принимаются
-    напрямую с фронта (см. план, раздел «Модель»)."""
+    напрямую с фронта (см. план, раздел «Модель»); то же для food в режиме
+    «меню по дням» (quantity И unit_price — производные).
+
+    Владелец (2026-09-15): у форм со спец-полями («Проживание»/«Перевозки»/
+    «Питание») ТИП позиции — всегда «услуга» (это явно услуга, не товар/
+    работа); единственное место, проставляющее item_type для этих форм — сам
+    выбор типа позиции на фронте (PurchaseItemsEditor.vue) forced-дефолтом
+    зеркалит эту же проверку `if item_form`, второго списка форм не заводить
+    (Правило №6)."""
+    if item_form:
+        item.item_type = "услуга"
     extra = _extra(item)
     if item_form == "accommodation":
         item.quantity = _accommodation_quantity(extra)
@@ -121,8 +175,14 @@ def apply_item_amounts(item: Any, item_form: Optional[str]) -> Decimal:
         item.quantity = qty
         item.unit_price = unit_price
     elif item_form == "food":
-        item.quantity = _food_quantity(extra)
-        # unit_price — цена за приём пищи, вводится пользователем напрямую.
+        mode = extra.get("mode") or "simple"
+        if mode == "menu":
+            qty, unit_price, _total = _food_menu_amounts(extra)
+            item.quantity = qty
+            item.unit_price = unit_price
+        else:
+            item.quantity = _food_quantity(extra)
+            # unit_price — цена за приём пищи, вводится пользователем напрямую.
     total = compute_item_total(item, item_form)
     item.total_price = total
     return total

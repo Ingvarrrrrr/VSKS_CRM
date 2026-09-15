@@ -16,9 +16,14 @@ item-forms-accommodation-transport.md, шаг 4:
   - transport: «Москва → Курск, 32 чел., подача 07.05.2026 08:00, 5 ч работы +
     2 ч подачи × 1 500,00 ₽/ч» либо «... стоимость рейса 12 000,00 ₽»
     (переключатель cost_mode).
-  - food (добавлено 2026-09-15): «10 чел. × 3 приёма/день × 5 дн. ×
-    250,00 ₽» — пустые meals_per_day/days трактуются как 1, ровно как в
-    _food_quantity (item_amounts.py), чтобы описание не расходилось с суммой.
+  - food, режим «просто» (добавлено 2026-09-15): «10 чел. × 3 приёма/день ×
+    5 дн. × 250,00 ₽» — пустые meals_per_day/days трактуются как 1, ровно как
+    в _food_quantity (item_amounts.py), чтобы описание не расходилось с суммой.
+  - food, режим «меню по дням» (владелец не принял «просто», тот же день):
+    краткая сводка «10 чел. × 2 дн., 6 приёмов — 1 700,00 ₽ на человека,
+    итого 17 000,00 ₽» в item.form_summary; ПОЛНАЯ раскладка по дням/приёмам/
+    составу — отдельно в item.menu_lines (см. item_menu_lines ниже, печатает
+    docx-шаблон, а не эта функция).
   - обычная позиция (item_form=None) — пустая строка.
 """
 from __future__ import annotations
@@ -28,7 +33,7 @@ from decimal import Decimal
 from typing import Any, Optional
 
 from app.services.documents.formatting import _fmt_date, _fmt_money
-from app.services.item_amounts import _dec
+from app.services.item_amounts import _dec, _food_menu_meals_total_price
 
 
 def _extra(item: Any) -> dict:
@@ -104,6 +109,14 @@ def _plural_ru(n: Decimal, one: str, few: str, many: str) -> str:
 
 
 def _food_summary(item: Any, extra: dict) -> str:
+    """Питание: режим «просто» — как раньше (человек × приёмов/день × дней ×
+    цена за приём); режим «меню по дням» — своя короткая сводка
+    (_food_menu_summary), полная раскладка по дням идёт отдельно в
+    item_menu_lines (docx-шаблон печатает её абзацами под этой строкой, а не
+    внутри неё — см. contract_tz.docx/tech_spec_contract.docx)."""
+    mode = extra.get("mode") or "simple"
+    if mode == "menu":
+        return _food_menu_summary(extra)
     persons = _dec(extra.get("persons"))
     meals_raw = extra.get("meals_per_day")
     meals = _dec(meals_raw) if meals_raw not in (None, "") else Decimal("1")
@@ -115,6 +128,60 @@ def _food_summary(item: Any, extra: dict) -> str:
         f"{_fmt_count(persons)} чел. × {_fmt_count(meals)} {meal_word}/день × "
         f"{_fmt_count(days)} дн. × {price_str} ₽"
     )
+
+
+def _food_menu_summary(extra: dict) -> str:
+    """Питание, режим «меню по дням»: «10 чел. × 2 дн., 6 приёмов —
+    1 700,00 ₽ на человека, итого 17 000,00 ₽». Суммы — через
+    _food_menu_meals_total_price (item_amounts.py), та же функция, что
+    считает total_price/quantity/unit_price (Правило №6 — обход структуры
+    меню не дублируется)."""
+    persons = _dec(extra.get("persons"))
+    per_person_total, meals_count = _food_menu_meals_total_price(extra.get("menu"))
+    days_raw = extra.get("days")
+    if days_raw not in (None, ""):
+        days = _dec(days_raw)
+    else:
+        days = Decimal(len(extra.get("menu") or []))
+    total = persons * per_person_total
+    meal_word = _plural_ru(Decimal(meals_count), "приём", "приёма", "приёмов")
+    return (
+        f"{_fmt_count(persons)} чел. × {_fmt_count(days)} дн., "
+        f"{meals_count} {meal_word} — {_fmt_money(per_person_total)} ₽ на человека, "
+        f"итого {_fmt_money(total)} ₽"
+    )
+
+
+def _food_menu_lines(extra: dict) -> list[str]:
+    """Полная раскладка меню по дням для ТЗ («День 1 — Завтрак (200,00 ₽):
+    каша, чай; Обед (350,00 ₽): ...; Ужин (300,00 ₽): ...») — item_menu_lines
+    зовёт это ТОЛЬКО для food+mode=menu, для всех остальных случаев (обычная
+    позиция, food/просто, accommodation/transport) — пустой список (см.
+    item_menu_lines ниже)."""
+    menu = extra.get("menu")
+    if not isinstance(menu, list):
+        return []
+    lines: list[str] = []
+    for idx, day in enumerate(menu, start=1):
+        if not isinstance(day, dict):
+            continue
+        day_num = day.get("day")
+        day_label = _fmt_count(day_num) if day_num not in (None, "") else str(idx)
+        meals = day.get("meals")
+        meal_parts: list[str] = []
+        if isinstance(meals, list):
+            for meal in meals:
+                if not isinstance(meal, dict):
+                    continue
+                name = (meal.get("name") or "").strip() or "Приём"
+                price_str = _fmt_money(meal.get("price"))
+                description = (meal.get("description") or "").strip()
+                if description:
+                    meal_parts.append(f"{name} ({price_str} ₽): {description}")
+                else:
+                    meal_parts.append(f"{name} ({price_str} ₽)")
+        lines.append(f"День {day_label} — " + "; ".join(meal_parts))
+    return lines
 
 
 def _transport_summary(item: Any, extra: dict) -> str:
@@ -160,3 +227,20 @@ def item_form_summary(item: Any, item_form: Optional[str]) -> str:
     if item_form == "food":
         return _food_summary(item, extra)
     return _transport_summary(item, extra)
+
+
+def item_menu_lines(item: Any, item_form: Optional[str]) -> list[str]:
+    """Полная раскладка меню питания по дням для ТЗ (contract_tz.docx,
+    tech_spec_contract.docx: `{%p for l in item.menu_lines %}{{ l }}{%p
+    endfor %}` в ячейке названия позиции, следом за item.form_summary) —
+    ЕДИНСТВЕННЫЙ писатель этого текста (Правило №6). Пустой список для всех
+    случаев, кроме food+mode=menu (обычная позиция, food/просто,
+    accommodation, transport) — ключ item.menu_lines в контексте документа
+    ВСЕГДА присутствует (contexts.py прокидывает его для каждой позиции), но
+    для них он пуст и цикл в шаблоне не печатает ни одного абзаца."""
+    if item_form != "food":
+        return []
+    extra = _extra(item)
+    if (extra.get("mode") or "simple") != "menu":
+        return []
+    return _food_menu_lines(extra)

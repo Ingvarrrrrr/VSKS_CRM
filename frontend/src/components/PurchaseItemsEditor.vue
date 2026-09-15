@@ -1105,13 +1105,39 @@ const viewMode = ref<'table' | 'cards'>('table')
 const mobile = computed(() => display.mobile.value)
 const effectiveView = computed<'table' | 'cards'>(() => mobile.value ? 'cards' : viewMode.value)
 
+// item-forms-accommodation-transport.md: форма позиций текущей закупки — ЕДИНСТВЕННЫЙ
+// источник composables/items/useItemForm.ts (props.contractForm → item_forms.json).
+// itemFormFields прокидывается в 4 таблицы (Flat/Stages/Wish/ItemsCardsView) — они сами
+// список полей не хранят (Правило №6). Поднято выше useItemsTable/useItemsImport
+// (было объявлено ниже) — обеим нужен itemForm для forced item_type, см. ниже.
+const { itemForm, fields: itemFormFields, descriptor: itemFormDescriptor } = useItemForm(computed(() => props.contractForm))
+const itemFormLabel = computed(() => itemFormDescriptor.value?.label ?? '')
+
+// food-menu-editor.md: владелец, 2026-09-15 — у форм со спец-полями (food/
+// accommodation/transport) ТИП позиции всегда «услуга» (это явно услуга, не
+// товар/работа). useItemsTable.ts/useItemsImport.ts читают props.defaultItemType
+// как единственный источник дефолта нового/импортированного item_type
+// (Правило №6) — не заводим второй список форм и не трогаем сами композаблы
+// (вне зоны этой задачи), а подменяем ТОЛЬКО это поле прозрачным Proxy поверх
+// реактивных props. Тот же `if itemForm` — зеркало backend
+// item_amounts.py::apply_item_amounts / utils/itemAmounts.ts::applyItemAmounts,
+// которые дополнительно форсируют item_type и на уже существующих строках при
+// каждом пересчёте (эта подмена покрывает МОМЕНТ СОЗДАНИЯ строки).
+const effectiveDefaultItemType = computed(() => itemForm.value ? 'услуга' : props.defaultItemType)
+const propsForItemDefaults = new Proxy(props, {
+  get(target, key, receiver) {
+    if (key === 'defaultItemType') return effectiveDefaultItemType.value
+    return Reflect.get(target, key, receiver)
+  },
+}) as typeof props
+
 // Row identity, CRUD (add/remove/clear/confirm-match) and selection (composable)
 // — see composables/items/useItemsTable.ts.
 const {
   nextUid, ensureUid, normalizeItems, localItems, emitUpdate,
   addItem, removeItem, clearItem, confirmMatch,
   selectedItemIdxs, allItemsSelected, toggleSelectAll, toggleItemSelect, removeSelectedItems,
-} = useItemsTable({ props, emit })
+} = useItemsTable({ props: propsForItemDefaults, emit })
 void ensureUid; void normalizeItems
 
 // ── Phase 27.1 D-04: Contract items side-by-side ─────────────────────────────
@@ -1585,7 +1611,7 @@ const {
   sumMismatchShow, sumMismatchWarnings, onSumMismatchConfirm,
   repickDialog, openRepickDialog, onRepickPick,
 } = useItemsImport({
-  props, localItems, localContractItems, contractItemImportMode,
+  props: propsForItemDefaults, localItems, localContractItems, contractItemImportMode,
   emitUpdate, emitContractItemsUpdate, emit, showSnack, nextUid, applyMatchCandidate,
 })
 
@@ -1605,13 +1631,6 @@ const showContractorColumn = computed(() => props.formMode === 'advance_report')
 
 // isAdvance: для авансовых закупок Договор/Поставка sub-rows показывают данные из ТЗ
 const isAdvance = computed(() => props.formMode === 'advance_report')
-
-// item-forms-accommodation-transport.md: форма позиций текущей закупки — ЕДИНСТВЕННЫЙ
-// источник composables/items/useItemForm.ts (props.contractForm → item_forms.json).
-// itemFormFields прокидывается в 4 таблицы (Flat/Stages/Wish/ItemsCardsView) — они сами
-// список полей не хранят (Правило №6).
-const { itemForm, fields: itemFormFields, descriptor: itemFormDescriptor } = useItemForm(computed(() => props.contractForm))
-const itemFormLabel = computed(() => itemFormDescriptor.value?.label ?? '')
 
 // VAT-per-row helpers, item/stage totals and contract-vs-plan savings % —
 // composables/items/useItemsTotals.ts. Phase 26-NN: showVatColumnsInExpandRow

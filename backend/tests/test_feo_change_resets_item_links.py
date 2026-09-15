@@ -154,9 +154,9 @@ def test_link_to_descendant_of_new_category_is_preserved():
 
 def test_link_preserved_even_when_own_category_pulled_to_header():
     """feo_per_item=False, feo_category_id позиции ещё не проставлена (None) —
-    подтягивается к новой категории шапки (count==1 из-за этого), но привязка
-    к плановой позиции НОВОЙ категории всё равно сохраняется, а не сбрасывается
-    заодно с категорией."""
+    подтягивается к новой категории шапки, привязка к плановой позиции НОВОЙ
+    категории сохраняется. Владелец (2026-09-15): подтягивание категории —
+    это НЕ отвязка, count==0, хотя feo_category_id и изменился."""
     db = _FakeDB(categories=_mk_categories(), planned_items=_mk_planned_items())
     item = _mk_item(feo_category_id=None, feo_planned_item_id=2)
 
@@ -164,12 +164,15 @@ def test_link_preserved_even_when_own_category_pulled_to_header():
         [item], old_category_id=20, new_category_id=11, per_item_mode=False, db=db,
     ))
 
-    assert count == 1
+    assert count == 0
     assert item.feo_category_id == 11
     assert item.feo_planned_item_id == 2  # НЕ сброшена
 
 
 def test_per_item_off_pulls_item_category_to_new_header_category():
+    """Владелец (2026-09-15), прод-баг (РЕЕ-2026-00916): позиция без единой
+    привязки feo_planned_item_id — подтягивание feo_category_id к шапке НЕ
+    считается отвязкой, count==0, хотя feo_category_id и меняется."""
     db = _FakeDB(categories=_mk_categories(), planned_items=_mk_planned_items())
     item = _mk_item(feo_category_id=21, feo_planned_item_id=None)  # своя категория осталась старой
 
@@ -177,7 +180,7 @@ def test_per_item_off_pulls_item_category_to_new_header_category():
         [item], old_category_id=20, new_category_id=11, per_item_mode=False, db=db,
     ))
 
-    assert count == 1
+    assert count == 0
     assert item.feo_category_id == 11  # подтянулась к новой категории шапки
 
 
@@ -237,6 +240,43 @@ def test_category_unchanged_resets_nothing():
     assert count == 0
     assert item_foreign.feo_planned_item_id == 1
     assert item_stale_own_cat.feo_category_id == 20
+
+
+def test_three_unlinked_items_category_change_counts_zero():
+    """Владелец (2026-09-15), прод-баг (авансовый отчёт РЕЕ-2026-00916):
+    «откуда-то все позиции отвязываются, откуда они отвязываются, если только
+    что заводятся» — 4 позиции без единой привязки feo_planned_item_id, смена
+    категории шапки. Никто ничего не отвязывал -> count==0, фронт не должен
+    показывать предупреждение (handleFeoLinksReset в CreateOrderView.vue
+    ничего не делает при falsy count)."""
+    db = _FakeDB(categories=_mk_categories(), planned_items=_mk_planned_items())
+    items = [_mk_item(feo_category_id=None, feo_planned_item_id=None) for _ in range(3)]
+
+    count = asyncio.run(pr._reset_incompatible_item_feo_links(
+        items, old_category_id=20, new_category_id=11, per_item_mode=False, db=db,
+    ))
+
+    assert count == 0
+    assert all(it.feo_category_id == 11 for it in items)  # категория всё же подтянулась
+    assert all(it.feo_planned_item_id is None for it in items)
+
+
+def test_one_foreign_link_plus_two_unlinked_counts_one():
+    """1 позиция реально привязана к плановой позиции ЧУЖОЙ категории (21) +
+    2 позиции без привязки -> реально отвязывается ровно одна, а не три."""
+    db = _FakeDB(categories=_mk_categories(), planned_items=_mk_planned_items())
+    linked = _mk_item(feo_category_id=None, feo_planned_item_id=1)  # план чужой категории 21
+    unlinked_a = _mk_item(feo_category_id=None, feo_planned_item_id=None)
+    unlinked_b = _mk_item(feo_category_id=None, feo_planned_item_id=None)
+
+    count = asyncio.run(pr._reset_incompatible_item_feo_links(
+        [linked, unlinked_a, unlinked_b],
+        old_category_id=20, new_category_id=11, per_item_mode=False, db=db,
+    ))
+
+    assert count == 1
+    assert linked.feo_planned_item_id is None
+    assert unlinked_a.feo_planned_item_id is None and unlinked_b.feo_planned_item_id is None
 
 
 def test_dangling_planned_item_reference_is_reset():

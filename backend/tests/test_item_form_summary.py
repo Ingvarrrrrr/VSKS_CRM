@@ -11,7 +11,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 from app.routers import documents as docs
-from app.services.item_form_summary import item_form_summary
+from app.services.item_form_summary import item_form_summary, item_menu_lines
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +119,62 @@ def test_food_summary_zero_persons_not_empty():
     )
 
 
+_OWNER_MENU = [
+    {"day": 1, "meals": [
+        {"name": "Завтрак", "description": "каша, чай", "price": 200},
+        {"name": "Обед", "description": "суп, второе", "price": 350},
+        {"name": "Ужин", "description": "рагу", "price": 300},
+    ]},
+    {"day": 2, "meals": [
+        {"name": "Завтрак", "description": "каша, чай", "price": 200},
+        {"name": "Обед", "description": "суп, второе", "price": 350},
+        {"name": "Ужин", "description": "рагу", "price": 300},
+    ]},
+]
+
+
+def test_food_menu_summary():
+    """«10 чел. × 2 дн., 6 приёмов — 1 700,00 ₽ на человека, итого
+    17 000,00 ₽» — краткая сводка режима «меню по дням» (владелец, 2026-09-15)."""
+    item = SimpleNamespace(extra_attrs={"mode": "menu", "persons": 10, "days": 2, "menu": _OWNER_MENU})
+    assert item_form_summary(item, "food") == (
+        "10 чел. × 2 дн., 6 приёмов — 1 700,00 ₽ на человека, итого 17 000,00 ₽"
+    )
+
+
+def test_food_menu_lines_full_breakdown():
+    """Полная раскладка по дням для ТЗ — одна строка на день, приёмы через «; »,
+    состав в скобках после цены."""
+    item = SimpleNamespace(extra_attrs={"mode": "menu", "persons": 10, "days": 2, "menu": _OWNER_MENU})
+    lines = item_menu_lines(item, "food")
+    assert lines == [
+        "День 1 — Завтрак (200,00 ₽): каша, чай; Обед (350,00 ₽): суп, второе; Ужин (300,00 ₽): рагу",
+        "День 2 — Завтрак (200,00 ₽): каша, чай; Обед (350,00 ₽): суп, второе; Ужин (300,00 ₽): рагу",
+    ]
+
+
+def test_food_menu_lines_empty_for_simple_mode_and_other_forms():
+    """menu_lines пуст для food/просто, для accommodation/transport и для
+    обычной позиции — не только form_summary, но и полная раскладка."""
+    simple_item = SimpleNamespace(extra_attrs={"persons": 10, "meals_per_day": 3, "days": 5})
+    assert item_menu_lines(simple_item, "food") == []
+
+    accommodation_item = SimpleNamespace(extra_attrs={"price_basis": "room", "rooms": 1, "nights": 1})
+    assert item_menu_lines(accommodation_item, "accommodation") == []
+
+    ordinary_item = SimpleNamespace(extra_attrs={})
+    assert item_menu_lines(ordinary_item, None) == []
+
+
+def test_food_menu_lines_meal_without_description():
+    """Приём без состава — печатается без «: …» на конце."""
+    item = SimpleNamespace(extra_attrs={
+        "mode": "menu", "persons": 1,
+        "menu": [{"day": 1, "meals": [{"name": "Перекус", "price": 50}]}],
+    })
+    assert item_menu_lines(item, "food") == ["День 1 — Перекус (50,00 ₽)"]
+
+
 def test_ordinary_item_empty_summary():
     """item_form=None (обычная позиция) — пустая строка, не None."""
     item = SimpleNamespace(unit_price=Decimal("100"), extra_attrs={})
@@ -216,3 +272,21 @@ def test_contract_items_context_carries_extra_and_form_summary():
     assert out["form_summary"] == (
         "Москва → Курск, 32 чел., подача 07.05.2026 08:00, стоимость рейса 12 000,00 ₽"
     )
+
+
+def test_purchase_items_context_carries_menu_lines_for_food_menu_mode():
+    """food-menu-editor.md: items_list прокидывает menu_lines для food+menu
+    и пустой список для обычных позиций (ключ ВСЕГДА присутствует — шаблон
+    не должен упасть на неопределённой переменной)."""
+    extra_attrs = {"mode": "menu", "persons": 10, "days": 2, "menu": _OWNER_MENU}
+    item = _mk_purchase_item_with_extra("Питание группы", "283.33", extra_attrs, qty=60)
+    ordinary = _mk_purchase_item_with_extra("Обычный товар", "100", {}, item_type="товар")
+    p = SimpleNamespace(items=[item, ordinary], contract_form="services_food")
+
+    items_list = docs._build_items_list_from_purchase_items(p)
+
+    assert items_list[0]["menu_lines"] == [
+        "День 1 — Завтрак (200,00 ₽): каша, чай; Обед (350,00 ₽): суп, второе; Ужин (300,00 ₽): рагу",
+        "День 2 — Завтрак (200,00 ₽): каша, чай; Обед (350,00 ₽): суп, второе; Ужин (300,00 ₽): рагу",
+    ]
+    assert items_list[1]["menu_lines"] == []

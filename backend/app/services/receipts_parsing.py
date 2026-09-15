@@ -303,6 +303,90 @@ def _extract_items_from_proverkacheka_html(html: str) -> list:
     return out
 
 
+def _parse_proverkacheka_html_receipt(html: str) -> dict:
+    """Извлечь чек целиком (шапка + позиции) из сохранённой HTML-страницы
+    proverkacheka.com — используется загрузкой .html/.htm файла (когда QR
+    отсканировать нельзя и JSON-экспорта нет, только HTML-страница «Проверки
+    чека» сохранённая из браузера).
+
+    Товары — через уже существующий _extract_items_from_proverkacheka_html
+    (тот же парсер, что fallback-путь для /from-qr-fetch и _extract_items,
+    ПРАВИЛО №6 — не второй парсер таблицы позиций, а переиспользование).
+
+    Шапка (ИНН/ФН/ФД/ФП/дата/итог) на proverkacheka.com не имеет отдельного
+    предсказуемого класса как таблица товаров — извлекается best-effort
+    регулярками по тексту без тегов. Отсутствие ФН/ФД/ФП не блокирует импорт:
+    идемпотентность и дедуп в receipts_creation.py в этом случае откатываются
+    на мягкую проверку (seller_inn+receipt_datetime+total_sum) либо не
+    срабатывают вовсе — осознанная деградация, не баг. Признак «чек разобран»
+    для вызывающего кода — непустой items (см. purchase_receipts_import.py).
+    """
+    if not html or not isinstance(html, str):
+        return {'items': []}
+    import re as _re
+
+    items = _extract_items_from_proverkacheka_html(html)
+
+    text = _re.sub(r'<[^>]+>', ' ', html)
+    text = (
+        text.replace('&nbsp;', ' ')
+        .replace('&amp;', '&')
+        .replace('&lt;', '<')
+        .replace('&gt;', '>')
+    )
+    text = _re.sub(r'\s+', ' ', text)
+
+    def _search(pattern):
+        return _re.search(pattern, text, flags=_re.IGNORECASE)
+
+    seller_inn = None
+    m = _search(r'ИНН[:\s№]*([0-9]{10,12})')
+    if m:
+        seller_inn = m.group(1)
+
+    fiscal_drive_number = None
+    m = _search(r'\bФН[:\s№]*([0-9]{10,20})')
+    if m:
+        fiscal_drive_number = m.group(1)
+
+    fiscal_document_number = None
+    m = _search(r'\bФД[:\s№]*([0-9]{1,10})\b')
+    if m:
+        try:
+            fiscal_document_number = int(m.group(1))
+        except ValueError:
+            fiscal_document_number = None
+
+    fiscal_sign = None
+    m = _search(r'\bФП[Д]?[:\s№]*([0-9]{6,15})')
+    if m:
+        fiscal_sign = m.group(1)
+
+    total_sum = None
+    m = _search(r'ИТОГ[О]?[:\s]*([0-9][0-9\s.,]*[0-9])')
+    if m:
+        total_sum = to_decimal(m.group(1))
+
+    receipt_datetime = None
+    m = _search(r'(\d{2}\.\d{2}\.\d{4})\D{1,6}(\d{2}:\d{2})')
+    if m:
+        try:
+            receipt_datetime = datetime.strptime(f"{m.group(1)} {m.group(2)}", '%d.%m.%Y %H:%M')
+        except Exception:
+            receipt_datetime = None
+
+    return {
+        'fiscal_drive_number': fiscal_drive_number,
+        'fiscal_document_number': fiscal_document_number,
+        'fiscal_sign': fiscal_sign,
+        'receipt_datetime': receipt_datetime,
+        'total_sum': total_sum,
+        'seller_name': None,
+        'seller_inn': seller_inn,
+        'items': items,
+    }
+
+
 def _extract_items(raw) -> list:
     """Pull items out of the raw_json regardless of FNS shape variant."""
     if not isinstance(raw, dict):

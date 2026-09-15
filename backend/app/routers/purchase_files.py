@@ -33,9 +33,18 @@ ALLOWED_MIME = {
     "image/jpeg",
     "image/jpg",
     "image/png",
+    # Phase: приём чеков без автораспознавания (PDF/TIF/HEIC — QR/HTML-парсер
+    # их не читает, но владелец должен иметь возможность прикрепить файл, а не
+    # получить отказ) + HTML-экспорт proverkacheka.com, который парсится, но
+    # тоже может прикрепляться как файл, если парсинг не удался.
+    "text/html",
+    "image/tiff",
+    "image/heic",
 }
 
-# Scan — only images and PDF; editable — only Office formats
+# Scan — только изображения/PDF; editable — только Office-форматы.
+# "receipt" (см. FILE_TYPES) в этот словарь не входит — формат чека
+# проверяется только верхним ALLOWED_MIME, см. FORMAT_RULE_EXEMPT_TYPES ниже.
 FORMAT_RULES = {
     "scan": {
         "application/pdf",
@@ -66,6 +75,10 @@ FILE_TYPES = {
     "fabrikant_documentation":   "Фабрикант: Документация",
     "fabrikant_contract_project":"Фабрикант: Проект договора",
     "fabrikant_tech_spec":       "Фабрикант: ТЗ",
+    # Файл чека без автораспознавания (PDF/TIF/HEIC/нераспознанный HTML) —
+    # прикреплён из блока «Чеки» (PurchaseReceiptsBlock.vue), чтобы владелец
+    # видел, что файл не пропал, даже когда QR/HTML-парсер не смог его прочитать.
+    "receipt":                   "Чек",
 }
 
 FABRIKANT_OVERRIDE_TYPES = {
@@ -75,6 +88,17 @@ FABRIKANT_OVERRIDE_TYPES = {
     "fabrikant_contract_project",
     "fabrikant_tech_spec",
 }
+
+# file_type, для которых формат НЕ проверяется через FORMAT_RULES (scan/editable) —
+# только верхним ALLOWED_MIME. "receipt" сюда входит: чек может быть PDF, TIF,
+# HEIC или HTML одновременно, это не укладывается в дихотомию скан/редактируемый.
+FORMAT_RULE_EXEMPT_TYPES = FABRIKANT_OVERRIDE_TYPES | {"receipt"}
+
+# file_type, для которых загрузка НОВОГО файла не деактивирует предыдущие
+# файлы того же типа в закупке (обычные типы — «последняя версия» документа,
+# но чеков к одной закупке может быть законно несколько: PDF + PNG-без-QR +
+# JSON и т.д. — все должны остаться видимыми).
+MULTI_FILE_TYPES = {"receipt"}
 
 DOC_FORMATS = {"scan", "editable"}
 
@@ -157,8 +181,9 @@ async def upload_file(
     if doc_format not in DOC_FORMATS:
         doc_format = "scan"
 
-    # Validate format rules (fabrikant override types accept both pdf and word)
-    if file_type not in FABRIKANT_OVERRIDE_TYPES:
+    # Validate format rules (fabrikant override types + "receipt" accept any
+    # ALLOWED_MIME format — see FORMAT_RULE_EXEMPT_TYPES)
+    if file_type not in FORMAT_RULE_EXEMPT_TYPES:
         allowed_for_format = FORMAT_RULES.get(doc_format)
         if allowed_for_format and file.content_type not in allowed_for_format:
             if doc_format == "scan":
@@ -203,16 +228,18 @@ async def upload_file(
         with open(dest_path, "wb") as f:
             f.write(contents)
 
-    # Deactivate other files of same type in this purchase
-    await db.execute(
-        PurchaseFile.__table__.update()
-        .where(
-            PurchaseFile.purchase_id == pid,
-            PurchaseFile.file_type == file_type,
-            PurchaseFile.is_active == True,
+    # Deactivate other files of same type in this purchase — skipped for
+    # MULTI_FILE_TYPES (receipt: several files legitimately coexist).
+    if file_type not in MULTI_FILE_TYPES:
+        await db.execute(
+            PurchaseFile.__table__.update()
+            .where(
+                PurchaseFile.purchase_id == pid,
+                PurchaseFile.file_type == file_type,
+                PurchaseFile.is_active == True,
+            )
+            .values(is_active=False)
         )
-        .values(is_active=False)
-    )
 
     pf = PurchaseFile(
         purchase_id=pid,

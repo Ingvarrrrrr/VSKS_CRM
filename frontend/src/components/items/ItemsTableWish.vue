@@ -102,10 +102,12 @@
             </v-autocomplete>
           </td>
           <td>
+            <!-- food-menu-editor.md: спец-форма принудительно ставит
+                 item_type='услуга' — селектор блокируем. -->
             <v-select v-model="item.item_type"
               :items="allowedItemTypes.map(t => ({ value: t, title: t.charAt(0).toUpperCase() + t.slice(1) }))"
               item-title="title" item-value="value" density="compact" variant="outlined"
-              hide-details class="my-1" :disabled="readonly" />
+              hide-details class="my-1" :disabled="readonly || !!itemForm" />
           </td>
           <td v-if="itemForm" colspan="3">
             <ItemFormFields

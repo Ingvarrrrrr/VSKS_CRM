@@ -34,6 +34,17 @@ export function useGuideArrow(
   let _okpd2Timer: ReturnType<typeof setTimeout> | null = null
   let _auctionPointerTimer: ReturnType<typeof setTimeout> | null = null
 
+  // Владелец (2026-09-15): «зависают пунктиры к проблемам — проблема уже
+  // решена, а пунктир всё ещё на экране». pointerTarget/okpd2Pointer/
+  // auctionPointerTarget выставлялись в guideArrowTo и не гасли НИКОГДА сами —
+  // _pointerTimer/_okpd2Timer/_auctionPointerTimer были объявлены, но
+  // setTimeout на них никогда не ставился. Теперь указатель гаснет сам через
+  // разумное время после прилёта стрелки (страховка на случай, если вызывающая
+  // сторона не смогла определить, что поле уже заполнено), а также — сразу по
+  // clearPointer() из вызывающей стороны (CreateOrderView.vue следит через
+  // watch, решена ли проблема, к которой ведёт текущий указатель).
+  const POINTER_AUTO_HIDE_MS = 20_000
+
   const AUCTION_TARGETS = new Set(['auction-date', 'auction-bet'])
 
   let _guideRafId: number | null = null
@@ -50,6 +61,20 @@ export function useGuideArrow(
     guideTrail.value = []
     if (_guideRafId !== null) { cancelAnimationFrame(_guideRafId); _guideRafId = null }
     if (_guideSafetyTimer !== null) { clearTimeout(_guideSafetyTimer); _guideSafetyTimer = null }
+  }
+
+  // Гасит указатель/подсветку поля (pub-pointer/pub-glow), НЕ трогая летящую
+  // стрелку (clearGuideArrow — отдельно, вызывающая сторона комбинирует их по
+  // необходимости). Используется: (1) автоматическим таймером ниже,
+  // (2) вызывающей стороной, когда проблема, к которой вёл указатель, уже
+  // решена, (3) при успешном сохранении формы.
+  function clearPointer() {
+    pointerTarget.value = null
+    okpd2Pointer.value = false
+    auctionPointerTarget.value = null
+    if (_pointerTimer !== null) { clearTimeout(_pointerTimer); _pointerTimer = null }
+    if (_okpd2Timer !== null) { clearTimeout(_okpd2Timer); _okpd2Timer = null }
+    if (_auctionPointerTimer !== null) { clearTimeout(_auctionPointerTimer); _auctionPointerTimer = null }
   }
 
   async function guideArrowTo(target: string) {
@@ -106,12 +131,15 @@ export function useGuideArrow(
     } else if (AUCTION_TARGETS.has(target)) {
       if (_auctionPointerTimer) clearTimeout(_auctionPointerTimer)
       auctionPointerTarget.value = target
+      _auctionPointerTimer = setTimeout(() => { auctionPointerTarget.value = null }, POINTER_AUTO_HIDE_MS)
     } else if (target === 'okpd2') {
       if (_okpd2Timer) clearTimeout(_okpd2Timer)
       okpd2Pointer.value = true
+      _okpd2Timer = setTimeout(() => { okpd2Pointer.value = false }, POINTER_AUTO_HIDE_MS)
     } else {
       if (_pointerTimer) clearTimeout(_pointerTimer)
       pointerTarget.value = target
+      _pointerTimer = setTimeout(() => { pointerTarget.value = null }, POINTER_AUTO_HIDE_MS)
     }
 
     const LERP = 0.07
@@ -165,7 +193,7 @@ export function useGuideArrow(
   return {
     guideArrowVisible, guideArrowPos, guideArrowAngle, guideArrowArrived, guideTrail,
     pointerTarget, okpd2Pointer, auctionPointerTarget,
-    clearGuideArrow, guideArrowTo,
+    clearGuideArrow, clearPointer, guideArrowTo,
   }
 }
 

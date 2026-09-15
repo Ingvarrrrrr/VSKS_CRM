@@ -102,11 +102,13 @@
 
             <!-- Тип (+ ФЭО позиция under it, like the flat table) -->
             <v-col cols="12" sm="6">
+              <!-- food-menu-editor.md: спец-форма принудительно ставит
+                   item_type='услуга' — селектор блокируем. -->
               <v-select v-model="item.item_type"
                 :items="allowedItemTypes.map(t => ({ value: t, title: t.charAt(0).toUpperCase() + t.slice(1) }))"
                 item-title="title" item-value="value" density="compact" variant="outlined"
                 :label="feoPerItem ? 'Тип / ФЭО *' : 'Тип'"
-                hide-details :disabled="readonly"
+                hide-details :disabled="readonly || !!itemForm"
                 @update:model-value="(v: string) => emit('item-type-change', idx, v)" />
               <template v-if="feoPerItem">
                 <FeoTreeSelect

@@ -17,7 +17,7 @@ from app.services.acceptance_docs import (
     total_amount as _acceptance_total_amount,
 )
 from app.services.item_forms import item_form_for_purchase
-from app.services.item_form_summary import item_form_summary
+from app.services.item_form_summary import item_form_summary, item_menu_lines
 
 from .doc_types import CONTRACT_FAMILY_DOC_TYPES, FEO_PATH_UNRESOLVED_LABEL
 from .formatting import (
@@ -323,6 +323,10 @@ def _build_items_list_from_contract_items(p, resolve_photo=None) -> list[dict]:
             # единственный писатель текста, app.services.item_form_summary).
             "extra": dict(getattr(ci, "extra_attrs", None) or {}),
             "form_summary": item_form_summary(ci, item_form),
+            # food-menu-editor.md: полная раскладка меню питания по дням
+            # (пустой список для всех прочих позиций/форм — Правило №6,
+            # единственный писатель app.services.item_form_summary::item_menu_lines).
+            "menu_lines": item_menu_lines(ci, item_form),
         })
     return items_list
 
@@ -362,6 +366,10 @@ def _build_items_list_from_purchase_items(p, tz_override_mode=None, resolve_phot
             # единственный писатель текста, app.services.item_form_summary).
             "extra": dict(getattr(item, "extra_attrs", None) or {}),
             "form_summary": item_form_summary(item, item_form),
+            # food-menu-editor.md: полная раскладка меню питания по дням
+            # (пустой список для всех прочих позиций/форм — Правило №6,
+            # единственный писатель app.services.item_form_summary::item_menu_lines).
+            "menu_lines": item_menu_lines(item, item_form),
         })
     return items_list
 

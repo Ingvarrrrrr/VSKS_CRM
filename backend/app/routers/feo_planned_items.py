@@ -1,5 +1,5 @@
 from datetime import date as _Date_
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, update as sql_update
@@ -21,31 +21,6 @@ from app.schemas.schemas import (
 )
 from app.services.text_match import normalize as _norm_text
 from app.services.feo_monthly_schedule import compute_monthly_schedule
-
-
-def _fmt_money(v) -> str:
-    """Человекочитаемая сумма для текста 409-ответа дедупа (см. create_planned_item).
-    Округление до целого — как fmt() на фронте (FeoPlannedItemsSelect.vue), это
-    только для сообщения человеку, структурные суммы уходят в detail отдельными
-    полями с полной точностью (str(Decimal), без округления)."""
-    if v is None:
-        return "—"
-    try:
-        n = int(Decimal(str(v)).quantize(Decimal("1")))
-    except (InvalidOperation, TypeError):
-        return "—"
-    return f"{n:,}".replace(",", " ") + " ₽"
-
-
-def _fmt_qty(qty, unit) -> str:
-    if qty is None:
-        return "—"
-    try:
-        q = Decimal(str(qty))
-        q_str = str(q.quantize(Decimal("1")) if q == q.to_integral_value() else q)
-    except (InvalidOperation, TypeError):
-        q_str = str(qty)
-    return f"{q_str} {unit}".strip() if unit else q_str
 
 
 def normalize_item_type(v: Optional[str]) -> Optional[str]:
@@ -281,11 +256,15 @@ async def create_planned_item(
             raise HTTPException(
                 status_code=409,
                 detail={
+                    # Текст сокращён (Правило проекта «меньше лишних слов», сессия
+                    # 2026-09-15): числа (кол-во/сумма — старая и новая) дублировались
+                    # в этом же сообщении И в таблице диалога дубля
+                    # (FeoPlannedDuplicateDialog.vue), который читает их из структурных
+                    # полей detail ниже (existing_item_quantity/new_quantity и т.д.) —
+                    # само сообщение теперь только называет позицию и предлагает выбор,
+                    # числа человек видит один раз, в таблице.
                     "message": (
-                        f"В этой категории уже есть плановая позиция с таким названием: "
-                        f"«{existing_item.name}» — {_fmt_qty(existing_item.quantity, existing_item.unit)} "
-                        f"на {_fmt_money(existing_item.amount)}. Вы вводите: "
-                        f"{_fmt_qty(data.quantity, data.unit)} на {_fmt_money(data.amount)}. "
+                        f"Плановая позиция «{existing_item.name}» уже есть в этой категории. "
                         f"Привязать к существующей или создать отдельную?"
                     ),
                     "error_code": "planned_item_duplicate_name",

@@ -27,6 +27,18 @@
       :show-snack="showSnack"
       :fix-feo-mismatch-own-categories="fixFeoMismatchOwnCategories"
       :go-to-wish="(wishId: number) => router.push({ path: '/wishes', query: { open: String(wishId) } })"
+      :on-stop-purchase="onStopPurchase"
+      :on-resume-purchase="onResumePurchase"
+    />
+
+    <PurchaseStopDialog
+      v-model="stopAction.dialog.show"
+      :mode="stopAction.dialog.mode"
+      :purchase="stopAction.dialog.purchase"
+      :reason="stopAction.dialog.reason"
+      :loading="stopAction.loading.value"
+      @update:reason="v => stopAction.dialog.reason = v"
+      @confirm="onConfirmStopPurchase"
     />
 
     <div v-if="form.subsidy_id && (feoDirections.length || feoResiduals.length)" class="mb-4">
@@ -93,6 +105,7 @@
         v-if="showReceiptsOnTop"
         variant="top"
         :receipts="receipts"
+        :receipt-files="receiptFiles"
         :purchase-id="purchaseId"
         :is-edit="isEdit"
         :source-label="sourceLabel"
@@ -127,8 +140,10 @@
         class="mb-3"
         icon="mdi-file-document-check-outline"
       >
-        При сохранении будет автоматически создана <strong>заявка на возмещение</strong> (статус «На согласовании»). После одобрения руководителем вам вернут средства.
+        Заявка на возмещение создаётся <strong>черновиком</strong>. Когда всё заполнено — нажмите «Отправить на согласование».
       </v-alert>
+
+      <AdvanceReimbursementCard v-if="formMode === 'advance_report'" :purchase-id="purchaseId" :wish-id="purchaseData?.wish_id" :items-count="items.length" :receipts="receipts" :receipt-files="receiptFiles" :show-snack="showSnack" />
 
       <!-- 1. Основная информация -->
       <v-card variant="outlined" class="mb-4">
@@ -681,6 +696,7 @@
         v-if="!showReceiptsOnTop && showReceiptsBlock"
         variant="block"
         :receipts="receipts"
+        :receipt-files="receiptFiles"
         :purchase-id="purchaseId"
         :is-edit="isEdit"
         :source-label="sourceLabel"
@@ -1165,6 +1181,7 @@
             <PurchaseReceiptsBlock
               variant="tab"
               :receipts="receipts"
+              :receipt-files="receiptFiles"
               :purchase-id="purchaseId"
               :is-edit="isEdit"
               :source-label="sourceLabel"
@@ -1858,6 +1875,7 @@ import { productPhotoSrc } from '@/utils/productPhoto'
 import PurchaseEventFeed from '@/components/PurchaseEventFeed.vue'
 import ApprovalPanel from '@/components/purchase/ApprovalPanel.vue'
 import PurchaseHeader from '@/components/purchase/PurchaseHeader.vue'
+import AdvanceReimbursementCard from '@/components/purchase/AdvanceReimbursementCard.vue'
 import PurchaseDatesSection from '@/components/purchase/PurchaseDatesSection.vue'
 import PurchaseAcceptanceSection from '@/components/purchase/PurchaseAcceptanceSection.vue'
 import PurchasePaymentSection from '@/components/purchase/PurchasePaymentSection.vue'
@@ -1897,6 +1915,8 @@ import AddContractorDialog from '@/components/purchase/AddContractorDialog.vue'
 import EgrulDiffDialog from '@/components/purchase/EgrulDiffDialog.vue'
 import { useDocPickerDialogs } from '@/composables/purchase/useDocPickerDialogs'
 import DocPickerDialogs from '@/components/purchase/DocPickerDialogs.vue'
+import { usePurchaseStop } from '@/composables/orders/usePurchaseStop'
+import PurchaseStopDialog from '@/components/orders/PurchaseStopDialog.vue'
 import { usePurchaseFiles } from '@/composables/purchase/usePurchaseFiles'
 import { usePurchaseNmck } from '@/composables/purchase/usePurchaseNmck'
 import PurchaseFileDialogs from '@/components/purchase/PurchaseFileDialogs.vue'
@@ -2920,6 +2940,22 @@ const showSnack = (
 ) => {
   toast.addToast(text, color, opts)
 }
+
+// Владелец, 2026-09-15: остановка/возобновление закупки с карточки — тот же
+// общий composable, что и вкладка «Закупки» (OrdersView.vue), ПРАВИЛО №6.
+// Обновление после подтверждения — полный loadPurchase() (тот же путь, что и
+// после остальных действий на карточке), не ручное слияние полей.
+const stopAction = usePurchaseStop({ showSnack })
+function onStopPurchase() {
+  if (purchaseData.value) stopAction.openStop(purchaseData.value)
+}
+function onResumePurchase() {
+  if (purchaseData.value) stopAction.openResume(purchaseData.value)
+}
+function onConfirmStopPurchase() {
+  stopAction.confirm(() => { loadPurchase() })
+}
+
 const itemsEditorRef = ref<any>(null)
 const budgetInfo = ref<{ remaining: number; exceeded: boolean; over: number; limit?: number; spent?: number } | null>(null)
 // Остатки бюджета по ФЭО (по правам: лист всем с view_leaf, уровни выше — view_all_levels)
@@ -3034,7 +3070,7 @@ const GUIDE_ARROW_TARGET_LABELS: Record<string, string> = {
 const {
   guideArrowVisible, guideArrowPos, guideArrowAngle, guideArrowArrived, guideTrail,
   pointerTarget, okpd2Pointer, auctionPointerTarget,
-  clearGuideArrow, guideArrowTo,
+  clearGuideArrow, clearPointer, guideArrowTo,
 } = useGuideArrow(
   (target) => {
     publishDialog.value = false
@@ -3050,6 +3086,44 @@ const {
     showSnack(`Стрелка не нашла поле — откройте вручную: ${label}`, 'warning', { duration: 8000 })
   },
 )
+
+// Владелец (2026-09-15): «зависают пунктиры к проблемам — проблема уже решена,
+// а пунктир всё ещё на экране». Раньше pointerTarget/okpd2Pointer/
+// auctionPointerTarget гасли только через 3 минуты (общая страховка летящей
+// стрелки, _guideSafetyTimer в useGuideArrow.ts) — указатель, доехавший до
+// поля, мог висеть на экране всё это время, даже если пользователь поле уже
+// заполнил. Общий 20-секундный автогас теперь в самом useGuideArrow.ts
+// (clearPointer + POINTER_AUTO_HIDE_MS); здесь — вторая часть требования:
+// гасить указатель СРАЗУ, как только решена именно та проблема, к которой он
+// ведёт. Одна карта «цель → предикат решённости» на ВСЕ статические цели
+// guideArrowTo (см. GUIDE_ARROW_TARGET_LABELS выше — тот же набор ключей) +
+// один computed + один watch, вместо watch на каждую цель по отдельности.
+const GUIDE_TARGET_RESOLVED: Record<string, () => boolean> = {
+  subsidy: () => !!form.subsidy_id,
+  subject: () => !!form.subject?.trim(),
+  // Владелец, прод-баг (авансовый отчёт РЕЕ-2026-00916): именно этот таргет
+  // используется предупреждением о сбросе привязок feo_planned_item_id (см.
+  // handleFeoLinksReset ниже) — решена, когда ни у одной именованной позиции
+  // не осталась пустая привязка к плановой позиции.
+  items: () => !items.value.some(it => it.item_name?.trim() && !it.feo_planned_item_id),
+  address: () => !!form.delivery_location?.trim(),
+  region: () => !!form.delivery_region,
+  nmck: () => (nmckMode.value === 'auto' ? displayNmck.value > 0 : !!nmckManualValue.value),
+  okpd2: () => !!fabrikantOkpd2.value,
+  'auction-date': () => !!fabrikantAuctionDateStart.value,
+  'auction-bet': () => numOrNull(fabrikantAuctionBetFrom.value) != null || numOrNull(fabrikantAuctionBetTo.value) != null,
+}
+const activeGuidePointerTarget = computed<string | null>(() => {
+  if (okpd2Pointer.value) return 'okpd2'
+  if (auctionPointerTarget.value) return auctionPointerTarget.value
+  return pointerTarget.value
+})
+const guidePointerResolved = computed(() => {
+  const t = activeGuidePointerTarget.value
+  if (!t) return false
+  return GUIDE_TARGET_RESOLVED[t]?.() ?? false
+})
+watch(guidePointerResolved, (resolved) => { if (resolved) clearPointer() })
 // ── end guide arrow ────────────────────────────────────────────────────────────
 
 async function revealField(target: string) {
@@ -4222,6 +4296,7 @@ const { manualReceiptDialog, openManualReceiptDialog, saveManualReceipt } =
 
 const {
   receipts, sourceLabel, loadReceipts,
+  receiptFiles, loadReceiptFiles,
   qrScanShow, onScanQrClick, onJsonBtnClick, onManualBtnClick,
   recomputeLoading, recomputeFromReceipts,
   consumePostSaveAction, onQrDetected, onJsonReceiptUpload, deleteReceipt,
@@ -4312,6 +4387,7 @@ onMounted(async () => {
     // и для любых обычных закупок (позиции добавляются по QR).
     if (formMode.value === 'advance_report' || formMode.value === 'order' || form.purchase_method === 'advance') {
       await loadReceipts()
+      await loadReceiptFiles()
       consumePostSaveAction()
     }
   } else {
@@ -4551,6 +4627,11 @@ const doSave = async (adminOverride: boolean) => {
     const qs = _qsParams.toString() ? `?${_qsParams.toString()}` : ''
     if (isEdit.value) {
       const updated = await apiFetch<any>(`/purchases/${purchaseId.value}${qs}`, { method: 'PUT', body: payload })
+      // Владелец (2026-09-15): успешное сохранение — гасим стрелочный указатель
+      // от ПРЕДЫДУЩЕЙ проблемы (если он ещё висел); если сохранение вскроет
+      // НОВУЮ проблему (feo_links_reset и т.п.) — ниже её обработчик поставит
+      // указатель заново через guideArrowTo.
+      clearPointer()
       // 12-02: capture FEO match suggestions
       if (updated.suggested_feo_matches?.length) {
         feoMatchSuggestions.value = updated.suggested_feo_matches
@@ -4593,6 +4674,7 @@ const doSave = async (adminOverride: boolean) => {
       }
     } else {
       const created = await apiFetch<any>(`/purchases/${qs}`, { method: 'POST', body: payload, suppressErrorDialog: true })
+      clearPointer()
       clearDraft()
       showExcessWarnings(created.excess_warnings)
       const hasPostSaveAction = !!sessionStorage.getItem(POST_SAVE_ACTION_KEY)

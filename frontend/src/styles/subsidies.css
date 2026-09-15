@@ -110,8 +110,12 @@
 }
 .subsidies-page .sc-delta-chip { height: auto !important; max-width: 100%; }
 .subsidies-page .sc-delta-chip .v-chip__content { white-space: normal; line-height: 1.35; padding-top: 3px; padding-bottom: 3px; }
-.subsidies-page .sc-budget      { font-size: 22px; font-weight: 700; color: var(--crm-text); }
+.subsidies-page .sc-budget      { font-size: 22px; font-weight: 700; color: var(--crm-text); margin-bottom: 12px; }
 .subsidies-page .sc-budget-label{ font-size: 11px; color: var(--crm-text-faint); margin-bottom: 12px; }
+/* Владелец (2026-09-15): бюджет субсидии необязателен — «ещё не определён»
+   визуально отличается от заполненного числа (приглушённый, курсив), не
+   маскируется под «0 ₽». См. SubsidyCardsGrid.vue isBudgetUndefined(). */
+.subsidies-page .sc-budget--undefined { font-size: 15px; font-weight: 500; font-style: italic; color: var(--crm-text-faint); }
 
 .subsidies-page .sc-mini-row { display: flex; gap: 20px; }
 .subsidies-page .sc-mini-label { font-size: 11px; color: var(--crm-text-faint); margin-bottom: 2px; }

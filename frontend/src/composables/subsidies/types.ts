@@ -5,7 +5,11 @@
 // один источник истины).
 
 export interface SubsidyRow {
-  id: number; name: string; year: number; budget: number
+  // budget — РУЧНОЙ ввод, может быть null («ещё не определено», владелец
+  // 2026-09-15, см. backend/app/models/subsidy.py). feo_budget_total ниже —
+  // ЭФФЕКТИВНЫЙ бюджет для расчётов (0, если и дерево ФЭО пусто, и budget не
+  // задан) — он всегда число, не null.
+  id: number; name: string; year: number; budget: number | null
   calculated_budget?: number
   description?: string; planned: number; paid: number; contracted: number
   plan_schedule: number; ordered: number

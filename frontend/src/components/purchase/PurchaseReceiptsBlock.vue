@@ -31,8 +31,6 @@
       <v-btn size="small" variant="tonal" color="#fb923c" @click="onJsonBtnClick?.()">
         <v-icon start>mdi-file-upload</v-icon>Загрузить чек
       </v-btn>
-      <input type="file" accept="image/*,.json" multiple
-        style="display:none" @change="onJsonReceiptUpload" />
       <v-btn size="small" variant="tonal" @click="onManualClick">
         <v-icon start>mdi-plus</v-icon>Вручную
       </v-btn>
@@ -50,14 +48,22 @@
     </v-card-title>
     <v-card-text>
       <v-alert type="warning" variant="tonal" density="compact" class="mb-3 text-caption" color="#fb923c">
-        Сначала загрузите все чеки — сканируйте QR или загрузите фото/JSON. После загрузки позиции и суммы подтянутся автоматически.
+        Сначала загрузите все чеки — сканируйте QR или перетащите фото/PDF/HTML/JSON. После загрузки позиции и суммы подтянутся автоматически.
       </v-alert>
+
+      <FileDropZone
+        :accept="RECEIPT_FILE_ACCEPT"
+        multiple
+        :hint="RECEIPT_FILE_HINT"
+        class="mb-3"
+        @files="onJsonReceiptUpload"
+      />
 
       <!-- Empty-state: нет чеков — крупный призыв -->
       <div v-if="receipts.length === 0" class="text-center py-6">
         <v-icon size="48" style="color: #ccc; margin-bottom: 8px;" class="d-block mx-auto">mdi-receipt-text-plus</v-icon>
         <div class="text-subtitle-2 text-medium-emphasis mb-1">Пока нет чеков</div>
-        <div class="text-caption text-medium-emphasis mb-4">Нажмите «Сканировать QR» или «Загрузить чек» выше</div>
+        <div class="text-caption text-medium-emphasis mb-4">Перетащите файл выше или нажмите «Сканировать QR» / «Загрузить чек»</div>
         <div class="d-flex justify-center ga-2 flex-wrap">
           <v-btn variant="flat" color="#fb923c" @click="onScanQrClick?.()">
             <v-icon start>mdi-qrcode-scan</v-icon>Сканировать QR
@@ -102,6 +108,25 @@
           </tr>
         </tbody>
       </v-table>
+
+      <!-- Файлы чеков без автораспознавания (PDF/TIF/HEIC/нераспознанный HTML) —
+           чтобы владелец видел, что файл не пропал (жалоба 2026-09-15). -->
+      <template v-if="receiptFiles && receiptFiles.length">
+        <div class="text-caption text-medium-emphasis mt-4 mb-1">
+          Прикреплённые файлы чеков (без автораспознавания):
+        </div>
+        <v-list density="compact" class="pa-0" style="background: transparent;">
+          <v-list-item
+            v-for="rf in receiptFiles" :key="rf.id"
+            :href="`/api/purchases/${purchaseId}/files/${rf.id}/download`"
+            target="_blank" rel="noopener"
+            prepend-icon="mdi-paperclip"
+            density="compact"
+          >
+            <v-list-item-title class="text-body-2">{{ rf.original_name || rf.filename }}</v-list-item-title>
+          </v-list-item>
+        </v-list>
+      </template>
     </v-card-text>
   </v-card>
 
@@ -119,22 +144,27 @@
       <v-btn size="small" variant="tonal" @click="onJsonBtnClick?.()">
         <v-icon start>mdi-file-upload</v-icon>Загрузить чек
       </v-btn>
-      <input type="file" accept="image/*,.json" multiple
-        style="display:none" @change="onJsonReceiptUpload" />
       <v-btn size="small" variant="tonal" @click="onManualClick">
         <v-icon start>mdi-plus</v-icon>Вручную
       </v-btn>
     </v-card-title>
     <v-card-text>
       <v-alert v-if="!isEdit || !purchaseId" type="info" variant="tonal" density="compact" class="mb-0 text-caption">
-        При сканировании QR или загрузке фото/JSON чека запись сохранится автоматически, позиции из чеков подтянутся в «Позиции закупки».
+        При сканировании QR или загрузке фото/PDF/HTML/JSON чека запись сохранится автоматически, позиции из чеков подтянутся в «Позиции закупки».
       </v-alert>
       <template v-else>
         <v-alert type="info" variant="tonal" density="compact" class="mb-3 text-caption">
-          Сканируйте QR с чека или загрузите его фото / JSON — данные подтянутся из ФНС, позиции попадут в «Позиции закупки» ниже. Для каждой позиции укажите товар из каталога (или создайте новый).
+          Сканируйте QR с чека или перетащите его фото / PDF / HTML (proverkacheka) / JSON — данные подтянутся из ФНС, позиции попадут в «Позиции закупки» ниже. Для каждой позиции укажите товар из каталога (или создайте новый).
         </v-alert>
+        <FileDropZone
+          :accept="RECEIPT_FILE_ACCEPT"
+          multiple
+          :hint="RECEIPT_FILE_HINT"
+          class="mb-3"
+          @files="onJsonReceiptUpload"
+        />
         <div v-if="receipts.length === 0" class="text-center text-medium-emphasis py-4 text-caption">
-          Чеков нет — отсканируйте QR, загрузите фото чека (PNG/JPG) или JSON
+          Чеков нет — перетащите файл выше, отсканируйте QR или загрузите его вручную
         </div>
         <v-table v-else density="compact">
           <thead>
@@ -169,6 +199,24 @@
             </tr>
           </tbody>
         </v-table>
+
+        <!-- Файлы чеков без автораспознавания — см. комментарий в variant="top". -->
+        <template v-if="receiptFiles && receiptFiles.length">
+          <div class="text-caption text-medium-emphasis mt-4 mb-1">
+            Прикреплённые файлы чеков (без автораспознавания):
+          </div>
+          <v-list density="compact" class="pa-0" style="background: transparent;">
+            <v-list-item
+              v-for="rf in receiptFiles" :key="rf.id"
+              :href="`/api/purchases/${purchaseId}/files/${rf.id}/download`"
+              target="_blank" rel="noopener"
+              prepend-icon="mdi-paperclip"
+              density="compact"
+            >
+              <v-list-item-title class="text-body-2">{{ rf.original_name || rf.filename }}</v-list-item-title>
+            </v-list-item>
+          </v-list>
+        </template>
       </template>
     </v-card-text>
   </v-card>
@@ -179,17 +227,25 @@
       <v-icon start>mdi-receipt-text-outline</v-icon>
       <span>Чеки ({{ receipts.length }})</span>
       <v-spacer />
-      <v-btn size="small" variant="tonal" @click="tabJsonInput?.click()">
-        <v-icon start>mdi-file-upload</v-icon>JSON чека
+      <v-btn size="small" variant="tonal" @click="tabDropZone?.openPicker()">
+        <v-icon start>mdi-file-upload</v-icon>Загрузить чек
       </v-btn>
-      <input ref="tabJsonInput" type="file" accept=".json" multiple
-        style="display:none" @change="onJsonReceiptUpload" />
       <v-btn size="small" variant="tonal" class="ml-2" @click="onManualClick">
         <v-icon start>mdi-plus</v-icon>Вручную
       </v-btn>
     </v-card-title>
+    <v-card-text class="pb-0">
+      <FileDropZone
+        ref="tabDropZone"
+        :accept="RECEIPT_FILE_ACCEPT"
+        multiple
+        :hint="RECEIPT_FILE_HINT"
+        class="mb-3"
+        @files="onJsonReceiptUpload"
+      />
+    </v-card-text>
     <v-card-text v-if="receipts.length === 0" class="text-center text-medium-emphasis py-4">
-      Чеков нет — загрузите JSON из приложения «Проверка чека» (ФНС) или введите данные вручную
+      Чеков нет — перетащите файл выше (PDF/HTML/фото/JSON) или введите данные вручную
     </v-card-text>
     <v-table v-else density="compact">
       <thead>
@@ -224,16 +280,37 @@
         </tr>
       </tbody>
     </v-table>
+
+    <!-- Файлы чеков без автораспознавания — см. комментарий в variant="top". -->
+    <v-card-text v-if="receiptFiles && receiptFiles.length" class="pt-0">
+      <div class="text-caption text-medium-emphasis mb-1">
+        Прикреплённые файлы чеков (без автораспознавания):
+      </div>
+      <v-list density="compact" class="pa-0" style="background: transparent;">
+        <v-list-item
+          v-for="rf in receiptFiles" :key="rf.id"
+          :href="`/api/purchases/${purchaseId}/files/${rf.id}/download`"
+          target="_blank" rel="noopener"
+          prepend-icon="mdi-paperclip"
+          density="compact"
+        >
+          <v-list-item-title class="text-body-2">{{ rf.original_name || rf.filename }}</v-list-item-title>
+        </v-list-item>
+      </v-list>
+    </v-card-text>
   </v-card>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import type { Receipt } from '@/composables/purchase/usePurchaseReceipts'
+import type { Receipt, ReceiptFile } from '@/composables/purchase/usePurchaseReceipts'
+import { RECEIPT_FILE_ACCEPT, RECEIPT_FILE_HINT } from '@/composables/purchase/usePurchaseReceipts'
+import FileDropZone from '@/components/FileDropZone.vue'
 
 defineProps<{
   variant: 'top' | 'block' | 'tab'
   receipts: Receipt[]
+  receiptFiles?: ReceiptFile[]
   purchaseId: number | null
   isEdit: boolean
   sourceLabel: (s?: string | null) => string
@@ -242,11 +319,11 @@ defineProps<{
   onJsonBtnClick?: () => void
   onManualClick: () => void
   onRecompute?: () => void
-  onJsonReceiptUpload: (e: Event) => void
+  onJsonReceiptUpload: (files: File[]) => void
   onDeleteReceipt: (id: number) => void
 }>()
 
-// variant="tab" кликает по своему input напрямую (было $refs.jsonReceiptInput.click()
+// variant="tab" открывает свою drop-zone напрямую (было $refs.jsonReceiptInput.click()
 // в CreateOrderView.vue) — тот же эффект, локальный ref вместо родительского $refs.
-const tabJsonInput = ref<HTMLInputElement | null>(null)
+const tabDropZone = ref<InstanceType<typeof FileDropZone> | null>(null)
 </script>

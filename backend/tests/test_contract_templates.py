@@ -568,6 +568,10 @@ _FORM_SUMMARY_PLAIN_ITEM = {
     "total_price": "200,00",
     "type": "товар",
     "form_summary": "",
+    # food-menu-editor.md: ключ ВСЕГДА присутствует в контексте (contexts.py
+    # прокидывает его для каждой позиции) — пусто для обычной позиции, но
+    # шаблон обязан пережить {%p for l in item.menu_lines %} без него.
+    "menu_lines": [],
 }
 
 _FORM_SUMMARY_SPEC_ITEM = {
@@ -581,9 +585,31 @@ _FORM_SUMMARY_SPEC_ITEM = {
     "total_price": "37500,00",
     "type": "услуга",
     "form_summary": "Стандарт, 8 номеров × 6 600,00 ₽ × 3 сут.",
+    "menu_lines": [],
 }
 
-_FORM_SUMMARY_ITEMS = [_FORM_SUMMARY_PLAIN_ITEM, _FORM_SUMMARY_SPEC_ITEM]
+# food-menu-editor.md: питание, режим «меню по дням» — form_summary краткий,
+# menu_lines полный (одна строка на день), обе печатаются в ту же ячейку
+# названия позиции (form_summary — в скобках после названия, menu_lines —
+# отдельными абзацами следом).
+_FORM_SUMMARY_FOOD_MENU_ITEM = {
+    "num": 3,
+    "name": "ПОЗИЦИЯ-ПИТАНИЕ-МЕНЮ-СЕНТИНЕЛ",
+    "description": "ОПИСАНИЕ-ПИТАНИЕ-МЕНЮ-СЕНТИНЕЛ",
+    "photo": "",
+    "quantity": 60,
+    "unit": "приём",
+    "unit_price": "283,33",
+    "total_price": "17000,00",
+    "type": "услуга",
+    "form_summary": "10 чел. × 2 дн., 6 приёмов — 1 700,00 ₽ на человека, итого 17 000,00 ₽",
+    "menu_lines": [
+        "День 1 — Завтрак (200,00 ₽): каша, чай; Обед (350,00 ₽): суп, второе; Ужин (300,00 ₽): рагу",
+        "День 2 — Завтрак (200,00 ₽): каша, чай; Обед (350,00 ₽): суп, второе; Ужин (300,00 ₽): рагу",
+    ],
+}
+
+_FORM_SUMMARY_ITEMS = [_FORM_SUMMARY_PLAIN_ITEM, _FORM_SUMMARY_SPEC_ITEM, _FORM_SUMMARY_FOOD_MENU_ITEM]
 
 _FORM_SUMMARY_CTX_TZ = {
     "items": _FORM_SUMMARY_ITEMS,
@@ -640,6 +666,11 @@ _SPEC_ITEM_EXPECTED_NAME_LINE = (
 )
 _SPEC_ITEM_DESCRIPTION_LINE = "ОПИСАНИЕ-ПИТАНИЕ-СЕНТИНЕЛ"
 
+_FOOD_MENU_ITEM_EXPECTED_NAME_LINE = (
+    "ПОЗИЦИЯ-ПИТАНИЕ-МЕНЮ-СЕНТИНЕЛ (10 чел. × 2 дн., 6 приёмов — "
+    "1 700,00 ₽ на человека, итого 17 000,00 ₽)"
+)
+
 
 @pytest.mark.parametrize(
     "template_name,ctx",
@@ -677,6 +708,18 @@ def test_item_form_summary_shown_in_parens_after_name(template_name, ctx):
     assert _SPEC_ITEM_DESCRIPTION_LINE in lines, (
         f"[{template_name}] описание спец-формы отсутствует/изменилось"
     )
+
+    # food-menu-editor.md: питание, режим «меню по дням» — краткая сводка в
+    # скобках после названия (как у прочих спец-форм) И полная раскладка по
+    # дням отдельными абзацами следом (item.menu_lines), в той же ячейке.
+    assert _FOOD_MENU_ITEM_EXPECTED_NAME_LINE in lines, (
+        f"[{template_name}] ожидаемая строка меню питания «{_FOOD_MENU_ITEM_EXPECTED_NAME_LINE}» "
+        f"не найдена в рендере"
+    )
+    for menu_line in _FORM_SUMMARY_FOOD_MENU_ITEM["menu_lines"]:
+        assert menu_line in lines, (
+            f"[{template_name}] строка меню «{menu_line}» отсутствует в рендере"
+        )
 
     # Никаких остатков Jinja/docxtpl-тегов в итоговом тексте.
     assert "{%" not in txt and "{{" not in txt, (

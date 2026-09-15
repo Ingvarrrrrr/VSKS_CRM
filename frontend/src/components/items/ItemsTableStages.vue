@@ -371,10 +371,12 @@
                           </div>
                         </div>
                         <!-- Тип -->
+                        <!-- food-menu-editor.md: спец-форма принудительно ставит
+                             item_type='услуга' — селектор блокируем. -->
                         <v-select v-model="item.item_type"
                           :items="allowedItemTypes.map(t => ({ value: t, title: t.charAt(0).toUpperCase() + t.slice(1) }))"
                           item-title="title" item-value="value" density="compact" variant="outlined"
-                          label="Тип" hide-details style="min-width:140px;max-width:180px" class="my-1" :disabled="readonly"
+                          label="Тип" hide-details style="min-width:140px;max-width:180px" class="my-1" :disabled="readonly || !!itemForm"
                           @update:model-value="(v: string) => emit('item-type-change', idx, v)" />
                         <!-- Страна -->
                         <v-text-field v-model="item.country_origin" density="compact"

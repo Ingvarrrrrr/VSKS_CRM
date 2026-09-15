@@ -10,7 +10,10 @@
 // см. line_total ниже). Второй копии этой формулы в проекте быть не должно —
 // таблицы (ItemsTableFlat/Stages/Wish/ItemsCardsView) сами total_price не считают.
 
-export type ItemFormFieldType = 'text' | 'number' | 'select' | 'datetime' | 'switch'
+// 'custom' — поле не рендерится generic-рендером (ItemFormFields.vue), а
+// подключает отдельный компонент по field.custom_editor (food-menu-editor.md:
+// food.menu → components/items/FoodMenuEditor.vue).
+export type ItemFormFieldType = 'text' | 'number' | 'select' | 'datetime' | 'switch' | 'custom'
 
 export interface ItemFormFieldOption {
   value: string
@@ -22,19 +25,37 @@ export interface ItemFormField {
   label: string
   type: ItemFormFieldType
   options?: ItemFormFieldOption[]
-  default?: string | number | null
+  default?: string | number | any[] | null
   hint?: string
+  custom_editor?: string
 }
 
 export interface ItemFormDescriptor {
   label: string
   formula: string
   fields: ItemFormField[]
+  /** food-menu-editor.md: названия приёмов по умолчанию для нового дня в
+   * режиме «меню по дням» — единственный источник (item_forms.py), второй
+   * копии списка на фронте не заводить. */
+  default_meal_names?: string[]
 }
 
 export type ItemFormCode = 'accommodation' | 'transport' | 'food'
 
 export type ExtraAttrs = Record<string, any>
+
+// food-menu-editor.md: структура extra.menu в режиме «меню по дням» —
+// цена price ВСЕГДА за приём НА ЧЕЛОВЕКА (владелец, уточнение 2026-09-15).
+export interface FoodMenuMeal {
+  name: string
+  description?: string | null
+  price: number | null
+}
+
+export interface FoodMenuDay {
+  day: number
+  meals: FoodMenuMeal[]
+}
 
 function toNum(v: unknown): number {
   if (v === null || v === undefined || v === '') return 0
@@ -77,8 +98,8 @@ function transportQuantityAndRate(extra: ExtraAttrs): [number, number] {
   return [workHours + supplyHours, toNum(extra.hourly_rate)]
 }
 
-// Питание: quantity = человек × приёмов пищи в день × дней (см.
-// item_amounts.py::_food_quantity). Человек=0 → 0; приёмов пищи и дней
+// Питание, режим «просто»: quantity = человек × приёмов пищи в день × дней
+// (см. item_amounts.py::_food_quantity). Человек=0 → 0; приёмов пищи и дней
 // пустые/не заданы → 1 (по аналогии с accommodationNights).
 function foodQuantity(extra: ExtraAttrs): number {
   const persons = toNum(extra.persons)
@@ -87,6 +108,39 @@ function foodQuantity(extra: ExtraAttrs): number {
   const daysRaw = extra.days
   const days = daysRaw === null || daysRaw === undefined || daysRaw === '' ? 1 : toNum(daysRaw)
   return persons * meals * days
+}
+
+// Питание, режим «меню по дням»: сумма цен ВСЕХ приёмов ВСЕХ дней (цена — за
+// приём на человека) и общее число приёмов — превью-зеркало backend
+// item_amounts.py::_food_menu_meals_total_price, единственный обход
+// структуры menu на фронте (formatExtraAttrsSummary её не трогает, менюшный
+// custom_editor свой рендер строит сам в FoodMenuEditor.vue).
+function foodMenuMealsTotal(menu: unknown): [number, number] {
+  let total = 0
+  let count = 0
+  if (Array.isArray(menu)) {
+    for (const day of menu) {
+      const meals = (day as FoodMenuDay | null | undefined)?.meals
+      if (!Array.isArray(meals)) continue
+      for (const meal of meals) {
+        total += toNum((meal as FoodMenuMeal | null | undefined)?.price)
+        count += 1
+      }
+    }
+  }
+  return [total, count]
+}
+
+// Питание, режим «меню по дням»: итог = человек × Σ(price всех приёмов всех
+// дней); quantity/unit_price — производные (зеркало
+// item_amounts.py::_food_menu_amounts, см. докстринг там).
+function foodMenuAmounts(extra: ExtraAttrs): [number, number, number] {
+  const persons = toNum(extra.persons)
+  const [perPersonTotal, mealsCount] = foodMenuMealsTotal(extra.menu)
+  const quantity = persons * mealsCount
+  const total = round2(persons * perPersonTotal)
+  const unitPrice = quantity !== 0 ? round2(total / quantity) : 0
+  return [quantity, unitPrice, total]
 }
 
 /** Обычная позиция (item_form=null): количество × цена за единицу. */
@@ -115,6 +169,11 @@ export function computeItemTotal(
     return round2(qty * rate)
   }
   if (itemForm === 'food') {
+    const mode = ex.mode || 'simple'
+    if (mode === 'menu') {
+      const [, , total] = foodMenuAmounts(ex)
+      return total
+    }
     const qty = foodQuantity(ex)
     return round2(toNum(unitPrice) * qty)
   }
@@ -128,9 +187,21 @@ export function computeItemTotal(
  * от extra_attrs, не вводятся напрямую пользователем в этих режимах.
  */
 export function applyItemAmounts(
-  item: { quantity?: unknown; unit_price?: unknown; total_price?: unknown; extra_attrs?: ExtraAttrs | null },
+  item: {
+    quantity?: unknown
+    unit_price?: unknown
+    total_price?: unknown
+    extra_attrs?: ExtraAttrs | null
+    item_type?: string | null
+  },
   itemForm: ItemFormCode | null | undefined,
 ): number {
+  // Владелец (2026-09-15): у форм со спец-полями ТИП позиции — всегда
+  // «услуга» (зеркало backend item_amounts.py::apply_item_amounts, тот же
+  // `if itemForm` — второго списка форм не заводить, Правило №6).
+  if (itemForm) {
+    item.item_type = 'услуга'
+  }
   const extra = extraOf(item.extra_attrs)
   if (itemForm === 'accommodation') {
     item.quantity = accommodationQuantity(extra)
@@ -140,8 +211,15 @@ export function applyItemAmounts(
     item.quantity = qty
     item.unit_price = rate
   } else if (itemForm === 'food') {
-    item.quantity = foodQuantity(extra)
-    // unit_price — цена за приём пищи, вводится пользователем напрямую.
+    const mode = extra.mode || 'simple'
+    if (mode === 'menu') {
+      const [qty, unitPrice] = foodMenuAmounts(extra)
+      item.quantity = qty
+      item.unit_price = unitPrice
+    } else {
+      item.quantity = foodQuantity(extra)
+      // unit_price — цена за приём пищи, вводится пользователем напрямую.
+    }
   }
   const total = computeItemTotal(extra, itemForm, item.quantity, item.unit_price)
   item.total_price = total
@@ -162,6 +240,10 @@ export function formatExtraAttrsSummary(
   if (!fields || !fields.length) return ''
   const parts: string[] = []
   for (const f of fields) {
+    // 'custom' (food.menu) — структура, не скалярное значение; строит свой
+    // рендер FoodMenuEditor.vue/item.menu_lines, сюда не годится ни как есть,
+    // ни через String() (дал бы «[object Object],[object Object]»).
+    if (f.type === 'custom') continue
     const raw = ex[f.key]
     if (raw === null || raw === undefined || raw === '') continue
     let display: string = String(raw)

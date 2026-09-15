@@ -349,25 +349,30 @@ async def _reset_incompatible_item_feo_links(
 
     Не вызывается, если категория шапки не менялась (old_category_id ==
     new_category_id) — тогда возвращает 0, в БД не лезет.
-    Возвращает число позиций, у которых что-то изменилось (для ответа
-    эндпоинта фронту — предупредить пользователя)."""
+
+    Владелец (2026-09-15), прод-баг (авансовый отчёт РЕЕ-2026-00916): счётчик
+    раньше считал ЛЮБОЕ изменение позиции, включая просто «подтянули
+    feo_category_id к новой категории шапки» при выключенном feo_per_item —
+    у позиции без единой привязки feo_planned_item_id ничего не отвязывалось,
+    а фронт (handleFeoLinksReset в CreateOrderView.vue) всё равно показывал
+    «N позиций отвязано от плановых позиций» и рисовал стрелку. Единственный
+    потребитель возвращаемого числа — это предупреждение об ОТВЯЗКЕ (grep
+    feo_links_reset: только CreateOrderView.vue), второго потребителя, которому
+    нужен факт «категория подтянута», нет — поэтому считаем ТОЛЬКО реальный
+    сброс feo_planned_item_id, не любое изменение позиции."""
     if old_category_id == new_category_id:
         return 0
     from app.models.feo_planned_item import FeoPlannedItem
 
     reset_count = 0
     for item in items:
-        changed = False
         if not per_item_mode and item.feo_category_id != new_category_id:
             item.feo_category_id = new_category_id
-            changed = True
         effective_cat_id = item.feo_category_id or new_category_id
         if item.feo_planned_item_id and effective_cat_id:
             planned = await db.get(FeoPlannedItem, item.feo_planned_item_id)
             planned_cat_id = planned.feo_category_id if planned else None
             if not await _category_within(db, planned_cat_id, effective_cat_id):
                 item.feo_planned_item_id = None
-                changed = True
-        if changed:
-            reset_count += 1
+                reset_count += 1
     return reset_count

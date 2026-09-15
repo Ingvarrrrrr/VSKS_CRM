@@ -6,6 +6,13 @@ from decimal import Decimal
 
 _Date = date
 
+
+class PurchaseStop(BaseModel):
+    """POST /api/purchases/{pid}/stop — необязательная причина остановки
+    (app/routers/purchase_stop.py). Тот же смысл, что WishStop (schemas/wishes.py)."""
+    reason: Optional[str] = None
+
+
 # PurchaseItem
 class PurchaseItemCreate(BaseModel):
     product_id: Optional[int] = None
@@ -456,6 +463,9 @@ class PurchaseOut(PurchaseCreate):
     stopped_by: Optional[int] = None
     stopped_by_name: Optional[str] = None
     stopped_wish_id: Optional[int] = None
+    # Причина остановки (владелец, 2026-09-15) — заполняется и каскадом от
+    # заявки, и POST /api/purchases/{id}/stop (app/routers/purchase_stop.py).
+    stopped_reason: Optional[str] = None
     # Владелец (2026-09-02): расхождение категории ФЭО шапки/позиции/плановой
     # позиции — считается ВСЕГДА (см. _compute_purchase_feo_mismatch), в списке
     # достаточно признака для метки строки, в карточке нужен разбор по позициям.

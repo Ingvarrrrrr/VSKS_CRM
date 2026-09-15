@@ -61,9 +61,6 @@ async def stop_wish(
     Исполнителю (Wish.executor_id) уходит уведомление. Обратной операции
     (возобновление) нет — владелец её не просил.
     """
-    from app.routers.purchases import STATUS_ORDER
-    from app.routers.purchase_budget import FRAMEWORK_TYPES
-
     wish = await wishes_core._load_wish(wish_id, db)
 
     # Видимость — та же проверка, что и в GET /{wish_id} (владелец: «Останавливать
@@ -98,16 +95,15 @@ async def stop_wish(
     wish.stopped_by = current_user.id
     wish.stopped_reason = (body.reason if body else None) or None
 
+    from app.services.purchase_stop import can_stop_purchase
+
     purchases = await wishes_core._wish_linked_purchases(wish_id, db)
     stopped_count = 0
     for p in purchases:
         if p.stopped_at is not None:
             continue  # уже остановлена ранее (другой заявкой/повторный вызов)
-        is_framework = p.purchase_contract_type in FRAMEWORK_TYPES
-        threshold_status = "ordered" if is_framework else "contracted"
-        cur_idx = STATUS_ORDER.index(p.status) if p.status in STATUS_ORDER else 0
-        threshold_idx = STATUS_ORDER.index(threshold_status)
-        if cur_idx < threshold_idx:
+        can_stop, _reason = can_stop_purchase(p)
+        if can_stop:
             p.stopped_at = now
             p.stopped_by = current_user.id
             p.stopped_wish_id = wish.id
@@ -155,12 +151,51 @@ async def submit_wish(
     _approver_count = (await db.execute(
         select(func.count()).select_from(_WA_submit).where(_WA_submit.wish_id == wish_id)
     )).scalar() or 0
+
+    # Компаньон авансового отчёта (source='advance_report', см. purchases.py::
+    # create_purchase) не проходит через обычный подбор согласующих — в его
+    # карточке нет раздела «Согласующие» (владелец, 2026-09-15: заявка теперь
+    # создаётся 'draft' и ждёт ручной отправки, а не уходит всем руководителям
+    # автоматически). Строим ТУ ЖЕ восходящую цепочку, что и ручной
+    # POST /approvers/cascade — тем же сервисом build_ascending_chain
+    # (ПРАВИЛО №6: не заводить второй механизм подбора согласующих), только
+    # автоматически и до руководителя организации (Organization.head_user_id)
+    # как top_user_id по умолчанию.
+    if _approver_count == 0 and getattr(wish, 'source', None) == 'advance_report':
+        from app.models.organization import Organization as _Org_submit
+        from app.services.approval_chain import build_ascending_chain as _build_chain_submit
+        _org_submit = await db.get(_Org_submit, wish.org_id)
+        _top_uid_submit = getattr(_org_submit, 'head_user_id', None)
+        if _top_uid_submit:
+            _chain_submit, _ = await _build_chain_submit(
+                db, wish.created_by or current_user.id, _top_uid_submit, wish.org_id
+            )
+            for _step_submit in _chain_submit:
+                db.add(_WA_submit(
+                    wish_id=wish_id,
+                    user_id=_step_submit["user_id"],
+                    order_num=_step_submit["order_num"],
+                    role_name=_step_submit["role_name"],
+                    approver_full_name=_step_submit["full_name"],
+                    is_auto=True,
+                    status="pending",
+                ))
+            if _chain_submit:
+                await db.flush()
+            _approver_count = len(_chain_submit)
+
     if _approver_count == 0:
-        raise HTTPException(
-            status_code=409,
-            detail="Нельзя отправить на согласование: не выбраны согласующие. "
-                   "Добавьте хотя бы одного согласующего в разделе «Согласующие».",
+        _detail = (
+            "Нельзя отправить на согласование: не выбраны согласующие. "
+            "Добавьте хотя бы одного согласующего в разделе «Согласующие»."
         )
+        if getattr(wish, 'source', None) == 'advance_report':
+            _detail = (
+                "Нельзя отправить возмещение на согласование: у организации не "
+                "назначен руководитель (для авто-подбора согласующих). "
+                "Обратитесь к администратору, чтобы указать руководителя организации."
+            )
+        raise HTTPException(status_code=409, detail=_detail)
 
     # W2: проверяем плановые даты (авансовые пропускаем) — ДО смены статуса
     if getattr(wish, 'source', None) != 'advance_report':

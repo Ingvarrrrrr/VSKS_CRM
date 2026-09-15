@@ -151,6 +151,10 @@ class Purchase(Base):
     stopped_at = Column(DateTime(timezone=True), nullable=True)
     stopped_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     stopped_wish_id = Column(Integer, ForeignKey("wishes.id", ondelete="SET NULL"), nullable=True)
+    # Причина остановки (владелец, 2026-09-15) — заполняется и каскадом от
+    # остановки заявки, и напрямую POST /api/purchases/{id}/stop
+    # (app/routers/purchase_stop.py). То же поле по смыслу, что Wish.stopped_reason.
+    stopped_reason = Column(Text, nullable=True)
 
     # Авансовый отчёт: кому возмещать (сотрудник)
     reimbursement_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

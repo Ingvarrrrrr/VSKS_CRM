@@ -29,6 +29,23 @@
         <v-chip v-if="form.substatus" size="x-small" variant="outlined" color="teal">
           {{ substatusOptions.find(o => o.value === form.substatus)?.title || form.substatus }}
         </v-chip>
+        <!-- Владелец, 2026-09-15: «поставить кнопку Остановить закупку», в т.ч. на
+             карточке — обратная операция (возобновить) для уже остановленной. -->
+        <v-btn v-if="isEdit && purchaseData?.stopped_at" size="x-small" variant="tonal" color="success"
+          prepend-icon="mdi-play-circle-outline" @click="onResumePurchase">
+          Возобновить
+        </v-btn>
+        <v-tooltip v-else-if="isEdit && purchaseId" location="top"
+          :text="stopCheck.allowed ? 'Остановить закупку' : (stopCheck.reason || '')">
+          <template #activator="{ props: stopProps }">
+            <span v-bind="stopProps">
+              <v-btn size="x-small" variant="tonal" color="error" prepend-icon="mdi-stop-circle-outline"
+                :disabled="!stopCheck.allowed" @click="onStopPurchase">
+                Остановить
+              </v-btn>
+            </span>
+          </template>
+        </v-tooltip>
         <v-icon v-if="form.is_monthly_payment" size="small" color="blue" title="Ежемесячный платёж">mdi-calendar-sync</v-icon>
         <span v-if="isEdit && form.registry_number" class="text-caption text-medium-emphasis">
           Реестр: {{ form.registry_number }}
@@ -51,6 +68,11 @@
        из заявки №N». См. computed-и purchaseExcess*/purchaseData выше — оба блока
        тихо не рендерятся, пока backend-агент не досчитал соответствующие поля в
        GET /api/purchases/{id} (v-if по наличию полей, не заглушки). -->
+  <!-- Владелец, 2026-09-15: тот же баннер, что и в списке «Закупки»
+       (OrdersTable.vue/OrdersCards.vue), теперь единый компонент (ПРАВИЛО №6). -->
+  <PurchaseStoppedBanner v-if="isEdit && purchaseData?.stopped_at" class="mb-3"
+    :stopped-by-name="purchaseData.stopped_by_name" :stopped-at="purchaseData.stopped_at" :stopped-reason="purchaseData.stopped_reason" />
+
   <div v-if="isEdit && purchaseData?.feo_excess" class="feo-excess-culprit mb-3">
     <v-icon size="16" icon="mdi-alert-decagram" class="mr-1" />
     <span>{{ purchaseExcessText }}</span>
@@ -116,6 +138,10 @@
 // form/purchaseData остаются в родителе, сюда приходят пропом; действия,
 // требующие вызова родительских функций (forceOrderStatus/clearDraft/
 // showSnack/fixFeoMismatchOwnCategories/переход к заявке) — тоже пропами-колбэками.
+import { computed } from 'vue'
+import PurchaseStoppedBanner from '@/components/orders/PurchaseStoppedBanner.vue'
+import { canStopPurchase } from '@/composables/orders/ordersLabels'
+
 interface Props {
   form: any
   isEdit: boolean
@@ -143,8 +169,17 @@ interface Props {
   showSnack: (msg: string, type?: any, opts?: any) => void
   fixFeoMismatchOwnCategories: () => void
   goToWish: (wishId: number) => void
+  // Владелец, 2026-09-15: кнопка «Остановить/Возобновить закупку» — открытие
+  // общего диалога (usePurchaseStop.ts) живёт в родителе (CreateOrderView.vue),
+  // здесь только вызов колбэка (тот же приём, что forceOrderStatus/clearDraft выше).
+  onStopPurchase: () => void
+  onResumePurchase: () => void
 }
-defineProps<Props>()
+const props = defineProps<Props>()
+
+// Та же граница «можно ли остановить», что и в списке «Закупки»
+// (composables/orders/ordersLabels.ts::canStopPurchase, ПРАВИЛО №6).
+const stopCheck = computed(() => props.purchaseData ? canStopPurchase(props.purchaseData) : { allowed: false, reason: null })
 </script>
 
 <style scoped>

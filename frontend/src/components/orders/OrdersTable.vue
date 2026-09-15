@@ -207,11 +207,8 @@
       <!-- Предмет договора -->
       <template #item.subject="{ item }">
         <!-- Владелец, 2026-08-13: остановка закупки — крупный алерт на всю ширину -->
-        <div v-if="item.stopped_at" class="purchase-stopped-banner">
-          <v-icon icon="mdi-alert-octagon" size="18" class="mr-1" />
-          <span class="purchase-stopped-banner__title">ЗАКУПКА ОСТАНОВЛЕНА</span>
-          <span class="purchase-stopped-banner__meta">{{ stoppedPurchaseLine(item) }}</span>
-        </div>
+        <PurchaseStoppedBanner v-if="item.stopped_at"
+          :stopped-by-name="item.stopped_by_name" :stopped-at="item.stopped_at" :stopped-reason="item.stopped_reason" />
         <div class="d-flex align-center flex-wrap" style="gap:6px">
           <span>{{ item.subject || item.item_name || '—' }}</span>
           <!-- Phase 31-06: badge for unseen changes -->
@@ -423,6 +420,18 @@
             prepend-icon="mdi-link-variant" @click.stop="emit('link-task', item.id)">
             Привязать
           </v-btn>
+          <!-- Владелец, 2026-09-15: «поставить кнопку Остановить закупку», в т.ч. в
+               списке — обратная операция (возобновить) для уже остановленной. -->
+          <v-btn v-if="item.stopped_at" icon="mdi-play-circle-outline" variant="text" size="small" color="success"
+            title="Возобновить закупку" @click.stop="emit('resume-purchase', item)" />
+          <v-tooltip v-else location="top" :text="canStopPurchase(item).allowed ? 'Остановить закупку' : (canStopPurchase(item).reason || '')">
+            <template #activator="{ props: stopProps }">
+              <span v-bind="stopProps">
+                <v-btn icon="mdi-stop-circle-outline" variant="text" size="small" color="error"
+                  :disabled="!canStopPurchase(item).allowed" @click.stop="emit('stop-purchase', item)" />
+              </span>
+            </template>
+          </v-tooltip>
           <v-spacer />
           <!-- Phase 32: file badge -->
           <v-chip
@@ -442,11 +451,8 @@
         <tr>
           <td :colspan="columns.length" class="pa-0 bg-grey-lighten-5">
             <div class="pa-3">
-              <div v-if="item.stopped_at" class="purchase-stopped-banner mb-3">
-                <v-icon icon="mdi-alert-octagon" size="18" class="mr-1" />
-                <span class="purchase-stopped-banner__title">ЗАКУПКА ОСТАНОВЛЕНА</span>
-                <span class="purchase-stopped-banner__meta">{{ stoppedPurchaseLine(item) }}</span>
-              </div>
+              <PurchaseStoppedBanner v-if="item.stopped_at" class="mb-3"
+                :stopped-by-name="item.stopped_by_name" :stopped-at="item.stopped_at" :stopped-reason="item.stopped_reason" />
               <v-table density="compact" class="rounded border expand-items-table">
                 <colgroup>
                   <col style="width: auto">
@@ -505,10 +511,11 @@ import { getRowField, uniqValues } from '@/composables/orders/useOrdersColumns'
 import {
   STATUS_ORDER, STATUS_LABEL, STATUS_COLOR, APPROVAL_STATUS_COLOR, APPROVAL_STATUS_LABEL,
   effectivePrice, formatDate, statusLabelFor, purchaseTypeLabel, purchaseTypeColor,
-  purchaseMethodLabel, feoExcessChip, stoppedPurchaseLine, itemDisplayName, nextStatus,
+  purchaseMethodLabel, feoExcessChip, itemDisplayName, nextStatus, canStopPurchase,
 } from '@/composables/orders/ordersLabels'
 import type { Purchase } from '@/composables/orders/ordersTypes'
 import type { FilterValue } from '@/composables/useColumnConfig'
+import PurchaseStoppedBanner from '@/components/orders/PurchaseStoppedBanner.vue'
 
 const props = defineProps<{
   headers: any[]
@@ -538,6 +545,8 @@ const emit = defineEmits<{
   'link-task': [id: number]
   'delete-one': [item: Purchase]
   'open-files': [item: Purchase]
+  'stop-purchase': [item: Purchase]
+  'resume-purchase': [item: Purchase]
 }>()
 
 const router = useRouter()
@@ -570,30 +579,4 @@ onMounted(() => {
   word-break: break-word;
 }
 
-/* Владелец, 2026-08-13: «остановка закупки» — крупный алерт в красной рамке, а
-   не мелкий чип (тот же приём, что и wish-stopped-banner в WishesView.vue). */
-.purchase-stopped-banner {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  column-gap: 10px;
-  row-gap: 2px;
-  width: 100%;
-  border: 2px solid #d32f2f;
-  background: #fdecea;
-  color: #b71c1c;
-  border-radius: 6px;
-  padding: 6px 10px;
-  margin-bottom: 6px;
-}
-.purchase-stopped-banner__title {
-  font-weight: 800;
-  font-size: 0.92rem;
-  letter-spacing: 0.02em;
-}
-.purchase-stopped-banner__meta {
-  font-size: 0.78rem;
-  font-weight: 500;
-  opacity: 0.9;
-}
 </style>

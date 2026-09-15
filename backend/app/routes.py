@@ -139,6 +139,10 @@ from app.routers import wish_items as wish_items_router
 from app.routers import user_addresses as user_addresses_router
 from app.routers import org_config
 from app.routers import purchase_transitions
+# purchase_stop (сессия 2026-09-15): POST /{pid}/stop и /{pid}/resume — на
+# сегмент длиннее catch-all "/{pid}" purchases.router, порядок регистрации
+# относительно него не важен (тот же принцип, что purchase_transitions выше).
+from app.routers import purchase_stop
 # Разрезание feo_planned_items.py (Правило №5, сессия 2026-09-08): matching несёт
 # статические пути (product-hint/map/match/confirm-wish-plan-match), reports —
 # статические + "/{item_id}/consumers" (на сегмент длиннее catch-all ядра) на
@@ -389,6 +393,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(purchase_items_import_smart.router)
     app.include_router(purchase_items_import_feo.router)
     app.include_router(purchase_transitions.router)
+    app.include_router(purchase_stop.router)
     # Специфичные суб-роутеры /api/tasks/* регистрируются ДО tasks.router,
     # иначе catch-all `/{task_id}` ловит `/badges`, `/pending-consent`, `/report/*`
     app.include_router(entity_changes_router.router)  # /api/entity-changes (Phase 31 diff-tracking)

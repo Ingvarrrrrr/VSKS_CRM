@@ -134,11 +134,30 @@ export function purchaseFeoCategoryIds(o: Purchase): number[] {
 
 // Владелец, 2026-08-13: «закупка остановлена {ФИО}, {дата}» — stopped_at приходит
 // полным ISO-таймстампом (не YYYY-MM-DD, как formatDate ниже ожидает), поэтому
-// отдельная функция без ручного split.
-export function stoppedPurchaseLine(p: { stopped_by_name?: string | null; stopped_at?: string | null }): string {
+// отдельная функция без ручного split. Владелец, 2026-09-15: причина остановки
+// (stopped_reason) добавлена через двоеточие — единственное место, которое её
+// рендерит (используется PurchaseStoppedBanner.vue), второй копии не заводим.
+export function stoppedPurchaseLine(p: { stopped_by_name?: string | null; stopped_at?: string | null; stopped_reason?: string | null }): string {
   const who = p.stopped_by_name || 'неизвестно кем'
   const when = p.stopped_at ? new Date(p.stopped_at).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }) : ''
-  return `остановил ${who}${when ? ', ' + when : ''}`
+  const reason = (p.stopped_reason || '').trim()
+  return `остановил ${who}${when ? ', ' + when : ''}${reason ? ': ' + reason : ''}`
+}
+
+// Владелец, 2026-09-15: «можно ли остановить эту закупку сейчас» — та же
+// граница, что и на бэкенде (app.services.purchase_stop.can_stop_purchase,
+// ПРАВИЛО №6): обычная закупка — пока статус строго раньше 'contracted',
+// рамочная — пока раньше 'ordered'. Формулировка причины отказа дословно
+// совпадает с backend-текстом (тултип кнопки в списке/на карточке).
+export function canStopPurchase(item: Purchase): { allowed: boolean; reason: string | null } {
+  if (item.stopped_at) return { allowed: false, reason: 'Закупка уже остановлена' }
+  const threshold = isItemFramework(item) ? 'ordered' : 'contracted'
+  const curIdx = STATUS_ORDER.indexOf(item.status)
+  const thresholdIdx = STATUS_ORDER.indexOf(threshold)
+  if (curIdx >= 0 && curIdx >= thresholdIdx) {
+    return { allowed: false, reason: `Закупка уже на стадии «${STATUS_LABEL[item.status] || item.status}» — остановить нельзя` }
+  }
+  return { allowed: true, reason: null }
 }
 
 export const itemDisplayName = (p: Purchase) => {

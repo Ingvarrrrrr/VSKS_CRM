@@ -90,6 +90,8 @@
       @link-task="doLinkTask"
       @delete-one="confirmDeleteOne"
       @open-files="item => filesViewerRef?.open(item)"
+      @stop-purchase="stopAction.openStop"
+      @resume-purchase="stopAction.openResume"
     />
 
     <!-- Cards view -->
@@ -105,6 +107,18 @@
       @transition="doTransition"
       @delete-one="confirmDeleteOne"
       @open-files="item => filesViewerRef?.open(item)"
+      @stop-purchase="stopAction.openStop"
+      @resume-purchase="stopAction.openResume"
+    />
+
+    <PurchaseStopDialog
+      v-model="stopAction.dialog.show"
+      :mode="stopAction.dialog.mode"
+      :purchase="stopAction.dialog.purchase"
+      :reason="stopAction.dialog.reason"
+      :loading="stopAction.loading.value"
+      @update:reason="v => stopAction.dialog.reason = v"
+      @confirm="onConfirmStopPurchase"
     />
 
     <OrdersDeleteDialog :dialog="deleteDialog" :selected-count="selectedOrders.length" :on-delete="doDelete" />
@@ -154,11 +168,14 @@ import OrdersScansDialog from '@/components/orders/OrdersScansDialog.vue'
 import OrdersPaymentMatchDialog from '@/components/orders/OrdersPaymentMatchDialog.vue'
 import OrdersFilterPresetDialog from '@/components/orders/OrdersFilterPresetDialog.vue'
 import OrdersExportDialog from '@/components/orders/OrdersExportDialog.vue'
+import PurchaseStopDialog from '@/components/orders/PurchaseStopDialog.vue'
 
 import { allColumns, getRowField, groups, useOrdersColumns } from '@/composables/orders/useOrdersColumns'
 import { useOrdersFilters } from '@/composables/orders/useOrdersFilters'
 import { useOrdersData } from '@/composables/orders/useOrdersData'
+import { usePurchaseStop } from '@/composables/orders/usePurchaseStop'
 import { orderTypeOptions, statusItems } from '@/composables/orders/ordersLabels'
+import type { Purchase } from '@/composables/orders/ordersTypes'
 
 const { globalSubsidyId } = useGlobalSubsidy()
 const authStore = useAuthStore()
@@ -203,6 +220,16 @@ const {
   filters, matchesColumnFilters, localSort, getRowField,
   showSnack,
 })
+
+// Владелец, 2026-09-15: остановка/возобновление закупки — общий composable
+// (usePurchaseStop.ts), тот же используется в CreateOrderView.vue (карточка).
+const stopAction = usePurchaseStop({ showSnack })
+function onConfirmStopPurchase() {
+  stopAction.confirm((updated: Purchase) => {
+    const idx = orders.value.findIndex(o => o.id === updated.id)
+    if (idx >= 0) orders.value[idx] = { ...orders.value[idx], ...updated }
+  })
+}
 
 // Component refs (dialogs, opened imperatively — см. defineExpose в компонентах)
 const filesViewerRef = ref<InstanceType<typeof OrdersFilesViewerDialog> | null>(null)

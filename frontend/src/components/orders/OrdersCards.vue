@@ -4,11 +4,8 @@
       <v-col v-for="item in pagedCards" :key="item.id" cols="12" sm="6" lg="4">
         <v-card variant="outlined" class="h-100 d-flex flex-column" hover @click="router.push(`/orders/${item.id}/edit`)">
           <!-- Владелец, 2026-08-13: остановка закупки — крупный алерт на всю ширину карточки -->
-          <div v-if="item.stopped_at" class="purchase-stopped-banner ma-2 mb-0">
-            <v-icon icon="mdi-alert-octagon" size="18" class="mr-1" />
-            <span class="purchase-stopped-banner__title">ЗАКУПКА ОСТАНОВЛЕНА</span>
-            <span class="purchase-stopped-banner__meta">{{ stoppedPurchaseLine(item) }}</span>
-          </div>
+          <PurchaseStoppedBanner v-if="item.stopped_at" class="ma-2 mb-0"
+            :stopped-by-name="item.stopped_by_name" :stopped-at="item.stopped_at" :stopped-reason="item.stopped_reason" />
           <v-card-item class="pb-1">
             <template #prepend>
               <v-checkbox-btn :model-value="isOrderSelected(item)" density="compact" @click.stop @update:model-value="toggleOrderSelected(item)" />
@@ -61,6 +58,17 @@
               class="cursor-pointer"
               @click.stop="emit('open-files', item)"
             >{{ item.files_count }}</v-chip>
+            <!-- Владелец, 2026-09-15: та же кнопка остановки/возобновления, что и в списке. -->
+            <v-btn v-if="item.stopped_at" icon="mdi-play-circle-outline" variant="text" size="small" color="success"
+              title="Возобновить закупку" @click.stop="emit('resume-purchase', item)" />
+            <v-tooltip v-else location="top" :text="canStopPurchase(item).allowed ? 'Остановить закупку' : (canStopPurchase(item).reason || '')">
+              <template #activator="{ props: stopProps }">
+                <span v-bind="stopProps">
+                  <v-btn icon="mdi-stop-circle-outline" variant="text" size="small" color="error"
+                    :disabled="!canStopPurchase(item).allowed" @click.stop="emit('stop-purchase', item)" />
+                </span>
+              </template>
+            </v-tooltip>
             <v-btn v-if="isAdmin" icon="mdi-delete" variant="text" size="small" color="error" @click.stop="emit('delete-one', item)" />
           </v-card-actions>
         </v-card>
@@ -82,9 +90,10 @@ import { formatMoney } from '@/utils/formatMoney'
 import {
   STATUS_COLOR, APPROVAL_STATUS_COLOR, APPROVAL_STATUS_LABEL,
   effectivePrice, formatDate, statusLabelFor, purchaseTypeLabel, purchaseTypeColor,
-  feoExcessChip, stoppedPurchaseLine, nextStatus,
+  feoExcessChip, nextStatus, canStopPurchase,
 } from '@/composables/orders/ordersLabels'
 import type { Purchase } from '@/composables/orders/ordersTypes'
+import PurchaseStoppedBanner from '@/components/orders/PurchaseStoppedBanner.vue'
 
 defineProps<{
   pagedCards: any[]
@@ -101,36 +110,10 @@ const emit = defineEmits<{
   transition: [item: Purchase]
   'delete-one': [item: Purchase]
   'open-files': [item: Purchase]
+  'stop-purchase': [item: Purchase]
+  'resume-purchase': [item: Purchase]
 }>()
 
 const router = useRouter()
 </script>
 
-<style scoped>
-/* Владелец, 2026-08-13: «остановка закупки» — крупный алерт в красной рамке, а
-   не мелкий чип (тот же приём, что и wish-stopped-banner в WishesView.vue). */
-.purchase-stopped-banner {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  column-gap: 10px;
-  row-gap: 2px;
-  width: 100%;
-  border: 2px solid #d32f2f;
-  background: #fdecea;
-  color: #b71c1c;
-  border-radius: 6px;
-  padding: 6px 10px;
-  margin-bottom: 6px;
-}
-.purchase-stopped-banner__title {
-  font-weight: 800;
-  font-size: 0.92rem;
-  letter-spacing: 0.02em;
-}
-.purchase-stopped-banner__meta {
-  font-size: 0.78rem;
-  font-weight: 500;
-  opacity: 0.9;
-}
-</style>

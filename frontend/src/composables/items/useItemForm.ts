@@ -49,8 +49,10 @@ export interface UseItemFormResult {
   fields: ComputedRef<ItemFormField[]>
 }
 
-/** contractForm — реактивный источник (Purchase.contract_form закупки; для
- * заявок/wish — всегда null, у Wish нет contract_form, см. план «Модель»). */
+/** contractForm — реактивный источник: Purchase.contract_form закупки ИЛИ
+ * Wish.contract_form заявки (владелец, 2026-09-15: «договора на перевозку и
+ * питание могут быть не только рамочные, но и разовые» — заявка получила
+ * собственный contract_form, спец-формы позиций работают до конвертации). */
 export function useItemForm(contractForm: Ref<string | null | undefined> | ComputedRef<string | null | undefined>): UseItemFormResult {
   const itemForm = computed<ItemFormCode | null>(() => itemFormForContractForm(contractForm.value))
   const descriptor = computed<ItemFormDescriptor | null>(() => itemFormDescriptor(itemForm.value))

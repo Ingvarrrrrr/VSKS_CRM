@@ -141,12 +141,20 @@ async def test_parent_sum_mismatch_names_parent_and_children_rows(db_session):
 
 @pytest.mark.asyncio
 async def test_amount_without_level2_names_the_amount(db_session):
-    """Уровень 2 пуст, Уровень 3 заполнен (промоушен на направление не
-    срабатывает) + Сумма по ФЭО задана → строка пропущена, но
-    warning amount_without_level2 называет саму сумму; ничего не создаётся."""
+    """Уровень 2/3/4 пусты (ни один уровень не заполнен) + Сумма по ФЭО
+    задана → строка пропущена, но warning amount_without_level2 называет саму
+    сумму; ничего не создаётся.
+
+    Задача владельца 2026-09-15 (боевой инцидент, файл «Абхазия ЦЭМАК
+    (1).xlsx», см. комментарий у `if not (lvl2_name or lvl3_name or lvl4_name)`
+    в feo_import_apply.py): раньше сюда попадала и строка с ПУСТЫМ Уровнем 2,
+    но ЗАПОЛНЕННЫМ Уровнем 3 — с тех пор такая строка больше не считается
+    «строкой без уровня» (категория строится начиная с Уровня 3, деньги не
+    теряются); этот тест проверяет именно случай, когда уровня НЕТ ВООБЩЕ ни
+    одного — тут деньгам действительно некуда деться."""
     subsidy = await _make_subsidy(db_session)
     try:
-        rows = [mk_row(lvl3="Транспорт и техника F1", feo_sum="29000000")]
+        rows = [mk_row(feo_sum="29000000")]
         result = await _import(db_session, subsidy.id, rows)
         assert result["errors"] == []
         assert result["created"] == 0, "строка без Уровня 2 не должна ничего создавать"
@@ -217,5 +225,89 @@ async def test_contentless_row_does_not_fake_zero_plan(db_session):
         items = await _get_items(db_session, leaf.id)
         assert len(items) == 1, "реальная позиция Ур.5 из строки 2 не должна пострадать"
         assert items[0].amount == 2000
+    finally:
+        await _cleanup_subsidy(db_session, subsidy.id)
+
+
+# --- 4. Колонка «Код» содержит суммы, не коды (боевой инцидент 2026-09-15,
+#        файл «Абхазия ЦЭМАК (1).xlsx») ----------------------------------------
+
+@pytest.mark.asyncio
+async def test_code_column_holding_amounts_file_level_warning(db_session):
+    """3+ строки, где «Код» после нормализации совпадает с «Суммой по ФЭО»
+    ЭТОЙ ЖЕ строки → один файловый сигнал code_column_holds_amounts (не
+    построчный шум), код категорий из этих строк НЕ записан, и это не
+    считается «обновлением» категории."""
+    subsidy = await _make_subsidy(db_session)
+    try:
+        rows = [
+            mk_row(lvl2="Направление L1", lvl3="Категория L1", code="1000", feo_sum="1000"),
+            mk_row(lvl2="Направление L1", lvl3="Категория L2", code="2000", feo_sum="2000"),
+            mk_row(lvl2="Направление L1", lvl3="Категория L3", code="3000", feo_sum="3000"),
+        ]
+        result = await _import(db_session, subsidy.id, rows)
+        assert result["errors"] == []
+
+        matches = [w for w in result["warnings"] if w["kind"] == "code_column_holds_amounts"]
+        assert len(matches) == 1, f"ожидался ровно один файловый сигнал: {result['warnings']}"
+        msg = matches[0]["message"]
+        assert "3" in msg and "Код" in msg and "Сумму по ФЭО" in msg
+        assert "2–4" in msg or ("2" in msg and "3" in msg and "4" in msg)
+        assert not any(w["kind"] == "column_shift" for w in result["warnings"]), (
+            "3+ совпадений — это файловый сигнал, а не построчный column_shift"
+        )
+
+        cats = await _get_categories(db_session, subsidy.id)
+        for name in ("Категория L1", "Категория L2", "Категория L3"):
+            leaf = next(c for c in cats if c.name == name)
+            assert leaf.code is None, f"«Код»-сумма не должна была записаться в {name}"
+
+        assert result["updated"] == 0, (
+            f"запись мусорного «кода» не должна считаться обновлением: {result['updated_details']}"
+        )
+    finally:
+        await _cleanup_subsidy(db_session, subsidy.id)
+
+
+@pytest.mark.asyncio
+async def test_code_column_single_match_gets_row_level_column_shift(db_session):
+    """Одно-единственное совпадение «Код» = «Сумма по ФЭО» в файле — сигнал
+    построчный (column_shift, как и для единиц измерения), а не файловый; код
+    всё равно не записан."""
+    subsidy = await _make_subsidy(db_session)
+    try:
+        rows = [mk_row(lvl2="Направление L4", lvl3="Категория L4", code="5000", feo_sum="5000")]
+        result = await _import(db_session, subsidy.id, rows)
+        assert result["errors"] == []
+
+        assert not any(w["kind"] == "code_column_holds_amounts" for w in result["warnings"])
+        shifts = [w for w in result["warnings"] if w["kind"] == "column_shift" and w["row"] == 2]
+        assert len(shifts) == 1, f"ожидался построчный column_shift для строки 2: {result['warnings']}"
+        assert "Код" in shifts[0]["message"] and "Сумм" in shifts[0]["message"]
+
+        cats = await _get_categories(db_session, subsidy.id)
+        leaf = next(c for c in cats if c.name == "Категория L4")
+        assert leaf.code is None
+    finally:
+        await _cleanup_subsidy(db_session, subsidy.id)
+
+
+@pytest.mark.asyncio
+async def test_real_alphanumeric_code_written_as_before(db_session):
+    """Настоящий код («2.1.3») не приводится к Decimal и не совпадает ни с
+    какой суммой — пишется в категорию как и раньше, никаких новых
+    предупреждений о колонке «Код»."""
+    subsidy = await _make_subsidy(db_session)
+    try:
+        rows = [mk_row(lvl2="Направление L5", lvl3="Категория L5", code="2.1.3", feo_sum="12345")]
+        result = await _import(db_session, subsidy.id, rows)
+        assert result["errors"] == []
+        assert not any(
+            w["kind"] in ("code_column_holds_amounts", "column_shift") for w in result["warnings"]
+        )
+
+        cats = await _get_categories(db_session, subsidy.id)
+        leaf = next(c for c in cats if c.name == "Категория L5")
+        assert leaf.code == "2.1.3"
     finally:
         await _cleanup_subsidy(db_session, subsidy.id)

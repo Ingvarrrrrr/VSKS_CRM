@@ -466,6 +466,35 @@ export interface FeoDuplicateGroup {
   // feoImport.duplicateResolutions[key] и не читает это поле для UI-стейта.
   resolution?: 'merge' | 'keep'
 }
+
+// Владелец (2026-09-15, опрос): одна КАТЕГОРИЯ (строка-заголовок без
+// «Плановой позиции»), чья «Сумма по ФЭО» объявлена в файле НЕСКОЛЬКИМИ
+// строками с РАЗНЫМИ суммами — импорт не берёт молча последнюю, решение по
+// каждой такой категории отдельно принимает человек (варианты: первая /
+// последняя / сложить), тот же паттерн карточек с радио, что и у
+// FeoDuplicateGroup выше. См. backend/app/services/feo_import_budget_conflicts.py
+// (единственный источник построения групп и применения решения).
+export interface FeoBudgetConflictRow {
+  row: number
+  amount: number | null
+}
+export interface FeoBudgetConflictGroup {
+  key: string
+  name: string
+  category_path: string
+  rows: FeoBudgetConflictRow[]
+  options: {
+    first: { row: number; amount: number | null }
+    last: { row: number; amount: number | null }
+    sum: { amount: number | null }
+  }
+  // Присутствует только в ОТВЕТЕ (решение уже применено сервером) — на
+  // предпросмотре (dry-run) до выбора человека равно 'last' (серверный
+  // дефолт — прежнее поведение «последняя побеждает»); фронт держит
+  // собственный выбор в feoImport.duplicateResolutions[key] (тот же канал,
+  // что и у FeoDuplicateGroup, ключи различаются префиксом `budget::`).
+  resolution?: 'first' | 'last' | 'sum'
+}
 export interface FeoUnmatchedNode {
   id: number
   path: string
@@ -497,6 +526,7 @@ export interface FeoImportResult {
   created_details?: { row: number; name: string; reason: string }[]
   warnings?: FeoWarning[]
   duplicate_groups?: FeoDuplicateGroup[]
+  budget_conflict_groups?: FeoBudgetConflictGroup[]
   unmatched?: FeoUnmatchedNode[]
   new_paths?: string[]
   deleted_count?: number

@@ -50,6 +50,7 @@ from app.utils.text import normalize_feo_name
 from app.routers import feo_categories as fc
 
 from app.services.feo_import_apply import apply_rows
+from app.services.feo_import_budget_conflicts import KEY_PREFIX as BUDGET_KEY_PREFIX
 from app.services.feo_import_duplicates import finalize_lvl5_items
 from app.services.feo_import_gate import assert_write_gate, collect_affected_subsidies
 from app.services.feo_import_plan import apply_collected_plan
@@ -198,6 +199,26 @@ class FeoImportState:
     # объединении (см. _describe_group в feo_import_duplicates.py).
     duplicate_groups: list = field(default_factory=list)
 
+    # --- Задача владельца 2026-09-15 (опрос): та же категория, чью Сумму по
+    # ФЭО объявили НЕСКОЛЬКО строк файла с РАЗНЫМИ значениями — решение
+    # человека ПО КАЖДОЙ такой категории отдельно (feo_import_budget_
+    # conflicts.py), тот же канал `duplicate_resolutions`, что и у групп
+    # дублей Ур.5 выше (ключи с префиксом `budget::`, Правило №6 — один канал
+    # решений на весь импорт, не два). ---
+    # cat.id -> объект FeoCategory, чей .budget нужно будет поправить после
+    # цикла по строкам (register_budget_write заполняет вместе с budget_writes).
+    budget_write_cats: dict = field(default_factory=dict)
+    # cat.id -> (subsidy_id, [имена узлов пути включая саму категорию]) —
+    # нужно для стабильного текстового ключа группы (budget_group_key),
+    # который, в отличие от id категории, совпадает между dry-run и боевым
+    # вызовом.
+    budget_write_paths: dict = field(default_factory=dict)
+    # Отчёт для предпросмотра мастера — каждая категория, чья Сумма по ФЭО
+    # задана 2+ строками с РАЗНЫМИ значениями (см. apply_budget_conflict_
+    # resolutions в feo_import_budget_conflicts.py). Одинаковые повторы одного
+    # числа сюда не попадают — там нечего выбирать.
+    budget_conflict_groups: list = field(default_factory=list)
+
     # --- переезд/удаление (feo_import_remap.py) ---
     relinked_count: int = 0
     deleted_count: int = 0
@@ -268,6 +289,10 @@ async def _do_feo_import(
     # group_key — см. app/services/feo_import_duplicates.py::group_key.
     # Группа, не упомянутая в этом словаре, разбирается как "keep" (владелец
     # запретил автоматическое объединение).
+    # Тот же словарь (Правило №6, один канал решений) несёт и решения по
+    # конфликтам Суммы по ФЭО (владелец, 2026-09-15) — ключи с префиксом
+    # `budget::` (см. feo_import_budget_conflicts.py::budget_group_key),
+    # значения "first"|"last"|"sum"; не упомянутая группа — "last" (как было).
     duplicate_resolutions: str = "",
 ) -> dict:
     """Core import logic shared by /import и /import-mapped endpoints.
@@ -311,11 +336,17 @@ async def _do_feo_import(
         try:
             _raw_dup = json.loads(duplicate_resolutions)
             if not isinstance(_raw_dup, dict):
-                raise ValueError("ожидался объект {group_key: 'merge'|'keep'}")
+                raise ValueError("ожидался объект {group_key: 'merge'|'keep'|'first'|'last'|'sum'}")
             for _k, _v in _raw_dup.items():
-                if _v not in ("merge", "keep"):
+                _k = str(_k)
+                # Два непересекающихся пространства ключей в одном канале
+                # (Правило №6): budget:: — конфликты Суммы по ФЭО
+                # (feo_import_budget_conflicts.py), остальное — дубли имени
+                # Ур.5 (feo_import_duplicates.py). Значения не перепутать.
+                _allowed = ("first", "last", "sum") if _k.startswith(BUDGET_KEY_PREFIX) else ("merge", "keep")
+                if _v not in _allowed:
                     raise ValueError(f"недопустимое решение для группы {_k!r}: {_v!r}")
-                _dup_resolutions[str(_k)] = _v
+                _dup_resolutions[_k] = _v
         except HTTPException:
             raise
         except Exception as e:
@@ -394,6 +425,7 @@ async def _do_feo_import(
         "created_details": state.created_details,
         "updated_details": state.updated_details, "skipped_details": state.skipped_details,
         "duplicate_groups": state.duplicate_groups,
+        "budget_conflict_groups": state.budget_conflict_groups,
         "dry_run": dry_run,
         "unmatched": state.unmatched,
         "new_paths": state.new_paths,

@@ -8,7 +8,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useToast, type ToastType } from '@/composables/useToast'
 import type { SubsidyDetailContext } from './useSubsidyDetail'
-import type { FeoDuplicateGroup, FeoImportResult, FeoUnmatchedNode, FeoWarning } from './types'
+import type { FeoBudgetConflictGroup, FeoDuplicateGroup, FeoImportResult, FeoUnmatchedNode, FeoWarning } from './types'
 
 export function feoWarnKindLabel(kind: string): string {
   const labels: Record<string, string> = {
@@ -72,7 +72,11 @@ const feoImport = reactive({
   // отдельно — ключ = FeoDuplicateGroup.key (стабилен между dry-run и боевым
   // вызовом, см. group_key в app/services/feo_import_duplicates.py), значение
   // 'keep' (по умолчанию, владелец запретил автообъединение) или 'merge'.
-  duplicateResolutions: {} as Record<string, 'merge' | 'keep'>,
+  // Тот же словарь (Правило №6, один канал решений на весь импорт) несёт и
+  // решения по конфликтам Суммы по ФЭО (владелец, 2026-09-15, опрос) — ключи
+  // FeoBudgetConflictGroup.key с префиксом `budget::`, значения
+  // 'first'|'last'|'sum' — см. feoBudgetResolutionFor/feoSetBudgetResolution.
+  duplicateResolutions: {} as Record<string, 'merge' | 'keep' | 'first' | 'last' | 'sum'>,
 })
 
 const feoImportTargetSubsidy = ref<number | null>(null)
@@ -158,6 +162,19 @@ function feoResolutionFor(key: string): 'merge' | 'keep' {
   return feoImport.duplicateResolutions[key] ?? 'keep'
 }
 function feoSetResolution(key: string, value: 'merge' | 'keep') {
+  feoImport.duplicateResolutions[key] = value
+}
+
+// Владелец (2026-09-15, опрос): группы конфликтов Суммы по ФЭО — читаются из
+// того же ответа предпросмотра (dry-run), тем же приёмом, что и feoDuplicateGroups
+// выше; решение живёт в ТОМ ЖЕ feoImport.duplicateResolutions (ключи различаются
+// префиксом `budget::`, Правило №6 — один канал, не два).
+const feoBudgetConflictGroups = computed<FeoBudgetConflictGroup[]>(() => feoImport.dryResult?.budget_conflict_groups || [])
+function feoBudgetResolutionFor(key: string): 'first' | 'last' | 'sum' {
+  const v = feoImport.duplicateResolutions[key]
+  return v === 'first' || v === 'sum' ? v : 'last'
+}
+function feoSetBudgetResolution(key: string, value: 'first' | 'last' | 'sum') {
   feoImport.duplicateResolutions[key] = value
 }
 
@@ -500,6 +517,12 @@ export function useFeoImport(ctx?: FeoImportCtx) {
         ;(data.duplicate_groups || []).forEach(g => {
           if (!(g.key in feoImport.duplicateResolutions)) feoImport.duplicateResolutions[g.key] = 'keep'
         })
+        // Владелец (2026-09-15): новая группа конфликта Суммы по ФЭО получает
+        // дефолт 'last' (прежнее поведение «последняя побеждает») — «Пересчитать»
+        // на шаге 4 не должен сбрасывать уже сделанный человеком выбор.
+        ;(data.budget_conflict_groups || []).forEach(g => {
+          if (!(g.key in feoImport.duplicateResolutions)) feoImport.duplicateResolutions[g.key] = 'last'
+        })
         if (!keepStep) feoImport.step = 3
       } else {
         feoImport.result = data
@@ -531,6 +554,7 @@ export function useFeoImport(ctx?: FeoImportCtx) {
     feoImport, feoImportTargetSubsidy, feoImportTargetSubsidyName, FEO_TARGET_FIELDS,
     feoDragMapping, feoIgnoredCols, feoDragOverTarget, feoResultPanels, feoToggleResultPanel,
     feoDuplicateGroups, feoResolutionFor, feoSetResolution,
+    feoBudgetConflictGroups, feoBudgetResolutionFor, feoSetBudgetResolution,
     feoUnmatchedNeedsMapping, feoHasSuggestions, feoRemapPlannedCount, feoAcceptAllSuggestions,
     feoStep4MainLabel, feoLoadSummary, feoPluralRu, feoCurrentSheet, feoCurrentHeaders, feoMappingValid, feoUnmappedCount,
     feoIsMapped, feoIsIgnored, feoIsTargetFilled, feoGetColumnLabel, feoGetSamples,

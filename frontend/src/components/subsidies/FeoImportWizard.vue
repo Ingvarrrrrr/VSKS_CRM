@@ -105,6 +105,51 @@
               </v-radio-group>
             </v-card>
           </v-alert>
+          <!-- Владелец (2026-09-15, опрос): одна КАТЕГОРИЯ (строка-заголовок
+               без «Плановой позиции»), чья Сумма по ФЭО объявлена в файле
+               НЕСКОЛЬКИМИ строками с РАЗНЫМИ суммами — не брать молча
+               последнюю, решение принимает человек по каждой такой
+               категории. Тот же стиль карточек, что и у дублей Ур.5 выше. -->
+          <v-alert v-if="feoBudgetConflictGroups.length" type="warning" variant="tonal" density="compact"
+            class="mb-3" icon="mdi-cash-sync">
+            <div class="text-body-2 mb-2">
+              В файле {{ feoBudgetConflictGroups.length }}
+              {{ feoPluralRu(feoBudgetConflictGroups.length, ['категория', 'категории', 'категорий']) }},
+              для которых Сумма по ФЭО задана несколькими строками с РАЗНЫМИ суммами — решите по каждой.
+            </div>
+            <v-card v-for="g in feoBudgetConflictGroups" :key="g.key" variant="outlined" class="mb-2 pa-3">
+              <div class="text-subtitle-2">
+                «{{ g.name }}» <span class="text-medium-emphasis">— {{ g.category_path }}</span>
+              </div>
+              <v-list density="compact" class="my-1">
+                <v-list-item v-for="r in g.rows" :key="r.row" :lines="false" class="px-0">
+                  <template #title>
+                    <span class="feo-wrap-text">Стр. {{ r.row }} — {{ formatCurrency(r.amount ?? 0) }}</span>
+                  </template>
+                </v-list-item>
+              </v-list>
+              <v-radio-group
+                :model-value="feoBudgetResolutionFor(g.key)"
+                @update:model-value="(v: 'first' | 'last' | 'sum') => feoSetBudgetResolution(g.key, v)"
+                hide-details density="compact" class="mt-1">
+                <v-radio value="first">
+                  <template #label>
+                    <span>Взять первую (стр. {{ g.options.first.row }} — {{ formatCurrency(g.options.first.amount ?? 0) }})</span>
+                  </template>
+                </v-radio>
+                <v-radio value="last">
+                  <template #label>
+                    <span>Взять последнюю (стр. {{ g.options.last.row }} — {{ formatCurrency(g.options.last.amount ?? 0) }})</span>
+                  </template>
+                </v-radio>
+                <v-radio value="sum">
+                  <template #label>
+                    <span>Сложить ({{ formatCurrency(g.options.sum.amount ?? 0) }})</span>
+                  </template>
+                </v-radio>
+              </v-radio-group>
+            </v-card>
+          </v-alert>
           <div v-if="feoImport.dryResult" class="d-flex flex-wrap gap-2 mb-3">
             <v-chip color="success" variant="flat"
               :disabled="!feoImport.dryResult.created_details?.length"
@@ -511,6 +556,7 @@ const { mobile } = useDisplay()
 const {
   feoImport, feoImportTargetSubsidyName, feoResultPanels, feoToggleResultPanel,
   feoDuplicateGroups, feoResolutionFor, feoSetResolution,
+  feoBudgetConflictGroups, feoBudgetResolutionFor, feoSetBudgetResolution,
   feoUnmatchedNeedsMapping, feoHasSuggestions, feoAcceptAllSuggestions,
   feoStep4MainLabel, feoLoadSummary, feoPluralRu, feoMappingValid,
   feoWarnKindLabel, feoWarnSubtitle, feoWarnKindIsAlert, feoWarnKinds,

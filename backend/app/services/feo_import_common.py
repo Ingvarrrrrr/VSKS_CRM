@@ -286,3 +286,52 @@ def build_level_name_index(
                 continue
             occurrences.setdefault(norm(v), []).append((lvl, row_num))
     return occurrences
+
+
+def find_uniformly_empty_levels(
+    rows,
+    c_lvl2: int | None,
+    c_lvl3: int | None,
+    c_lvl4: int | None,
+) -> set[int]:
+    """Уровни (2/3/4), чья колонка пуста ВО ВСЕХ строках данных файла — это
+    раскладка файла целиком, а не N отдельных построчных аномалий (боевой
+    инцидент 2026-09-15, владелец: файл «Абхазия ЦЭМАК (1).xlsx» — «Уровень 2»
+    не заполнен ни в одной из 189 строк, категории у него всегда начинаются с
+    «Уровень 3»). Единственный источник (Правило №6): используется и для
+    одного агрегированного предупреждения `level_column_empty_in_file` вместо
+    построчных `level_gap`, и для подавления построчных `level_gap`, целиком
+    вызванных именно такой колонкой (см. feo_import_apply.py) — построчный
+    `level_gap` остаётся только для разрывов, которых нет во всех строках.
+
+    Пред-проход рядом с `build_level_name_index` (тот же критерий служебной
+    строки — «← ...» в Уровне 2 пропускается целиком), а не второй независимый
+    цикл где-то ещё в коде. Пустой файл (нет ни одной строки данных) не
+    считается «пустой колонкой» — возвращает пустое множество.
+
+    Требует МИНИМУМ 2 строки данных, иначе возвращает пустое множество: при
+    одной-единственной строке «пусто во всех строках» и «пусто в этой одной
+    строке» неотличимы, а по существующему поведению (test_feo_import_tree.py
+    ::test_level_gap_still_collapses_when_no_number_column_involved — Ур.3
+    пуст в единственной строке синтетического теста) это ОБЫЧНЫЙ построчный
+    разрыв, а не раскладка файла — построчный `level_gap` должен остаться.
+    """
+    cols = [(2, c_lvl2), (3, c_lvl3), (4, c_lvl4)]
+    candidates = {lvl for lvl, col in cols if col is not None}
+    seen_rows = 0
+    for row in rows:
+        lvl2v = get_cell(row, c_lvl2)
+        if lvl2v and lvl2v.startswith("←"):
+            continue
+        seen_rows += 1
+        for lvl, col in cols:
+            if lvl not in candidates:
+                continue
+            v = get_cell(row, col)
+            if v and not v.startswith("←"):
+                candidates.discard(lvl)
+        if not candidates:
+            break
+    if seen_rows < 2:
+        return set()
+    return candidates

@@ -20,7 +20,7 @@ import pytest
 
 from app.routers.feo_categories import _do_feo_import
 from tests.test_feo_import_tree import (
-    _IDX, _cleanup_subsidy, _get_categories, _get_items, _make_subsidy, mk_row,
+    _IDX, _cleanup_subsidy, _get_categories, _get_items, _import, _make_subsidy, mk_row,
 )
 
 
@@ -253,26 +253,148 @@ async def test_row188_style_item_amount_does_not_overwrite_parent_budget(db_sess
         await _cleanup_subsidy(db_session, subsidy.id)
 
 
-# --- Негатив: позиция без суммы при недостающем уровне остаётся не продвинутой
+# --- Ур.2 пуст, Ур.3 заполнен, денег на строке нет вовсе — структура строится
+# --- по названиям уровней, а не по наличию денег (правка 2026-09-15) --------
 
 @pytest.mark.asyncio
-async def test_item_without_money_and_partial_levels_is_not_promoted(db_session):
-    """Ур.2 пуст, Ур.3 заполнен, «Плановая позиция» заполнена, но по строке НЕТ
-    ни «Суммы по ФЭО», ни какой-либо другой денежной колонки — продвигать
-    нечего (условие явно требует _row_feo_money() is not None), а старая ветка
-    item_promoted_to_level2 тоже не подходит (она требует ПОЛНОСТЬЮ пустых
-    Ур.2/3/4, а Ур.3 здесь заполнен). Строка просто пропускается — ни новой
-    категории, ни новой позиции с этим именем быть не должно."""
+async def test_item_without_money_and_partial_levels_still_builds_structure(db_session):
+    """Ур.2 пуст, Ур.3 заполнен, «Плановая позиция» заполнена, денег на строке
+    НЕТ вовсе (ни «Суммы по ФЭО», ни любой другой денежной колонки) — не повод
+    продвигать (условие продвижения и так требует деньги), но и не повод
+    ВЫБРОСИТЬ строку целиком.
+
+    ДО правки 2026-09-15 здесь стоял старый гейт `if not lvl2_name` — при
+    пустом Ур.2 и отсутствии денег продвижение никогда не заполняло lvl2_name,
+    и строка полностью пропадала вместе с Ур.3 («нет наименования (уровень 2
+    пуст)»), хотя Ур.3 был прямо в файле. Это тот же класс бага, что и разрыв
+    в боевом файле «Абхазия ЦЭМАК (1).xlsx»: гейт смотрел только на Ур.2,
+    игнорируя заполненные уровни глубже. Гейт исправлен на «нет НИ ОДНОГО из
+    Ур.2/3/4» (см. `test_row33_style_missing_level2_creates_category_not_dropped`
+    — тот же гейт спасает и деньги строки 33). Категории в проекте и так
+    строятся по названиям уровней независимо от денег (test_feo_sum_goes_to_
+    deepest_filled_level создаёт направление-предка вообще без своего
+    бюджета) — эта строка не исключение: категория «Уже существующий уровень»
+    создаётся, «Плановая позиция» становится в ней обычной позицией с пустой
+    суммой (нечего было продвигать И нечего было насчитать)."""
     subsidy = await _make_subsidy(db_session)
     try:
         rows = [mk_row(lvl3="Уже существующий уровень", item_name="Позиция без суммы")]
         result = await _import17(db_session, subsidy.id, rows)
         assert result["errors"] == []
-        assert not any(w["kind"] == "item_promoted_to_level" for w in result["warnings"])
+        assert not any(w["kind"].startswith("item_promoted") for w in result["warnings"])
+        assert not any(w["kind"] == "amount_without_level2" for w in result["warnings"])
 
         cats = await _get_categories(db_session, subsidy.id)
-        assert cats == [], "без суммы и без Ур.2 строка не должна создать ни одной категории"
-        assert len(result["skipped_details"]) == 1
-        assert result["skipped_details"][0]["reason"] == "нет наименования (уровень 2 пуст)"
+        assert len(cats) == 1
+        cat = cats[0]
+        assert cat.name == "Уже существующий уровень"
+        assert cat.level == 1 and cat.parent_id is None
+        assert cat.budget is None
+
+        items = await _get_items(db_session, cat.id)
+        assert len(items) == 1
+        assert items[0].name == "Позиция без суммы"
+        assert items[0].amount is None
+    finally:
+        await _cleanup_subsidy(db_session, subsidy.id)
+
+
+# --- Боевой инцидент 2026-09-15: Ур.2 пуст, Ур.3 И Ур.4 заполнены, есть деньги
+# --- (файл «Абхазия ЦЭМАК (1).xlsx») — позиция ДОЛЖНА остаться позицией -----
+
+@pytest.mark.asyncio
+async def test_item_with_money_and_deeper_filled_levels_stays_item(db_session):
+    """Слова владельца: «какого хуя все позиции из плановых переехали на
+    уровень 2? Перед ними заполнены категории, максимум что должно было
+    произойти — это всё вместе сместиться. Позиции в плановых так и должны
+    остаться в плане. У них есть категории!» — Ур.2 пуст, но Ур.3
+    («Оборудование и снаряжение») и Ур.4 («Альпинистское снаряжение»)
+    заполнены, у строки есть «Сумма по ФЭО» — это НЕ повод продвигать имя
+    позиции в пустой Ур.2 (там разрыв цепочки категорий, а не отсутствие
+    категории у позиции): позиция создаётся ПОЗИЦИЕЙ под Ур.4, категории
+    поднимаются на уровень выше (Ур.3→level1, Ур.4→level2) обычным дедупом,
+    никакого item_promoted_* быть не должно."""
+    subsidy = await _make_subsidy(db_session)
+    try:
+        rows = [mk_row(
+            lvl3="Оборудование и снаряжение", lvl4="Альпинистское снаряжение",
+            item_name="Верёвка статическая 10 мм", feo_sum="50000",
+        )]
+        result = await _import(db_session, subsidy.id, rows)
+        assert result["errors"] == []
+        assert not any(w["kind"].startswith("item_promoted") for w in result["warnings"]), (
+            "деньги + заполненные Ур.3/Ур.4 глубже пустого Ур.2 — это разрыв, не повод продвигать"
+        )
+
+        cats = await _get_categories(db_session, subsidy.id)
+        by_name = {c.name: c for c in cats}
+        assert set(by_name) == {"Оборудование и снаряжение", "Альпинистское снаряжение"}, (
+            "категории должны подняться на уровень выше, а не пропасть/задвоиться"
+        )
+        root = by_name["Оборудование и снаряжение"]
+        leaf = by_name["Альпинистское снаряжение"]
+        assert root.level == 1 and root.parent_id is None
+        assert leaf.level == 2 and leaf.parent_id == root.id
+
+        items = await _get_items(db_session, leaf.id)
+        assert len(items) == 1, "позиция обязана остаться позицией под своей категорией"
+        assert items[0].name == "Верёвка статическая 10 мм"
+        assert items[0].amount == Decimal("50000")
+    finally:
+        await _cleanup_subsidy(db_session, subsidy.id)
+
+
+# --- Боевой инцидент 2026-09-15: колонка пуста ВО ВСЕХ строках файла -------
+# --- → одно агрегированное предупреждение, не по одному на каждую строку ---
+
+@pytest.mark.asyncio
+async def test_level2_empty_in_whole_file_gives_one_aggregate_warning(db_session):
+    """«Уровень 2» пуст во ВСЕХ строках данных файла (раскладка файла — как в
+    «Абхазия ЦЭМАК (1).xlsx», где ни одна из 189 строк его не использует) —
+    это одно свойство файла, а не N отдельных построчных аномалий: ровно ОДНО
+    предупреждение `level_column_empty_in_file`, никаких построчных
+    `level_gap` на каждую из трёх строк."""
+    subsidy = await _make_subsidy(db_session)
+    try:
+        rows = [
+            mk_row(
+                lvl3="Оборудование и снаряжение", lvl4="Альпинистское снаряжение",
+                item_name="Верёвка", feo_sum="10000",
+            ),
+            mk_row(
+                lvl3="Оборудование и снаряжение", lvl4="Бензоинструмент",
+                item_name="Бензопила", feo_sum="20000",
+            ),
+            mk_row(
+                lvl3="Оборудование и снаряжение", lvl4="Пожарное оборудование",
+                item_name="Огнетушитель", feo_sum="30000",
+            ),
+        ]
+        result = await _import(db_session, subsidy.id, rows)
+        assert result["errors"] == []
+
+        empty_col_warns = [w for w in result["warnings"] if w["kind"] == "level_column_empty_in_file"]
+        assert len(empty_col_warns) == 1, "ровно одно предупреждение на весь файл, не по строке"
+        assert "Уровень 2" in empty_col_warns[0]["message"]
+        assert empty_col_warns[0]["row"] is None
+
+        assert not any(w["kind"] == "level_gap" for w in result["warnings"]), (
+            "построчный level_gap не должен плодиться, когда колонка пуста во всём файле"
+        )
+        assert not any(w["kind"].startswith("item_promoted") for w in result["warnings"])
+
+        cats = await _get_categories(db_session, subsidy.id)
+        by_name = {c.name: c for c in cats}
+        assert set(by_name) == {
+            "Оборудование и снаряжение", "Альпинистское снаряжение",
+            "Бензоинструмент", "Пожарное оборудование",
+        }
+        root = by_name["Оборудование и снаряжение"]
+        assert root.level == 1 and root.parent_id is None
+        for child_name in ("Альпинистское снаряжение", "Бензоинструмент", "Пожарное оборудование"):
+            child = by_name[child_name]
+            assert child.level == 2 and child.parent_id == root.id
+            items = await _get_items(db_session, child.id)
+            assert len(items) == 1
     finally:
         await _cleanup_subsidy(db_session, subsidy.id)

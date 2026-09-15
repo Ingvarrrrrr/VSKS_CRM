@@ -19,13 +19,14 @@ from decimal import Decimal
 
 from app.models.feo_category import FeoCategory
 from app.services.feo_import_common import (
-    QUANT, ZERO, build_level_name_index, format_rows, get_cell, level_label, resolve_origin_flags,
-    resolve_target_subsidy_id, row_feo_money, row_plan_money, to_bool, to_dec,
+    QUANT, ZERO, build_level_name_index, find_uniformly_empty_levels, format_rows, get_cell, level_label,
+    resolve_origin_flags, resolve_target_subsidy_id, row_feo_money, row_plan_money, to_bool, to_dec,
 )
 from app.services.feo_import_common import fmt as _fmt
 from app.services.feo_import_common import norm as _norm
 from app.services.feo_import_snapshot import full_path
 from app.services.feo_import_duplicates import group_key, register_pending_item
+from app.services.feo_import_budget_conflicts import apply_budget_conflict_resolutions, register_budget_write
 from app.routers.feo_planned_items import normalize_item_type
 
 
@@ -42,6 +43,15 @@ async def apply_rows(state) -> None:
     touched_subsidies = state.touched_subsidies
     ignored_subsidy_rows = 0
     ignored_subsidy_names: set[str] = set()
+    # Хвост Б (боевой инцидент 2026-09-15, файл «Абхазия ЦЭМАК (1).xlsx»):
+    # колонка «Код» в 165 из 189 строк повторяет «Сумму по ФЭО» этой же строки
+    # (23970, 4770, 17440…) — брак/сдвиг заполнения файла, не настоящий код.
+    # Копится по ходу цикла тем же стилем, что budget_writes/ignored_subsidy_rows
+    # (список, агрегируем ПОСЛЕ цикла — только тогда видно, файловый это сигнал
+    # или единичное совпадение). code_present_rows — знаменатель для доли
+    # совпадений среди строк, где колонка «Код» вообще заполнена.
+    code_amount_matches: list[tuple[int, str | None, Decimal]] = []
+    code_present_rows = 0
 
     c_subsidy = state.c_subsidy
     c_lvl2 = state.c_lvl2
@@ -103,7 +113,6 @@ async def apply_rows(state) -> None:
     lvl5_leaves = state.lvl5_leaves
     lvl5_sum_by_cat = state.lvl5_sum_by_cat
     touched_parents = state.touched_parents
-    budget_writes = state.budget_writes
     plan_writes = state.plan_writes
     lvl5_item_rows = state.lvl5_item_rows
 
@@ -238,6 +247,17 @@ async def apply_rows(state) -> None:
     # цикла, см. докстринг build_level_name_index в feo_import_common.py.
     level_name_index = build_level_name_index(rows, c_lvl2, c_lvl3, c_lvl4)
 
+    # Тот же пред-проход (боевой инцидент 2026-09-15, владелец, файл «Абхазия
+    # ЦЭМАК (1).xlsx»): колонки уровня, пустые ВО ВСЕХ строках данных файла —
+    # это раскладка файла («Уровень 2» здесь не используется вовсе, категории
+    # всегда начинаются с «Уровень 3»), а не N отдельных построчных аномалий.
+    # Используется ниже, чтобы построчный `level_gap` не плодился на каждую
+    # такую строку файла — вместо этого одно агрегированное предупреждение
+    # `level_column_empty_in_file` после цикла (см. также блок продвижения
+    # «Плановой позиции» — у него своя, независимая от файловой уникальности,
+    # защита от разрыва: смотрит только на ЭТУ строку).
+    uniformly_empty_levels = find_uniformly_empty_levels(rows, c_lvl2, c_lvl3, c_lvl4)
+
     for row_num, row in enumerate(rows, start=2):
         lvl2_name = get_cell(row, c_lvl2)
 
@@ -336,6 +356,39 @@ async def apply_rows(state) -> None:
                 (lvl for lvl, col in _level_cols if col is not None and _is_level_free(lvl)),
                 None,
             )
+            if _target_level is not None and any(
+                _level_vals.get(_deeper_lvl) and not _level_vals[_deeper_lvl].startswith("←")
+                for _deeper_lvl, _deeper_col in _level_cols
+                if _deeper_col is not None and _deeper_lvl > _target_level
+            ):
+                # Боевой инцидент 2026-09-15 (владелец, файл «Абхазия ЦЭМАК
+                # (1).xlsx»): ближайший ПУСТОЙ уровень — не всегда свободное
+                # место для позиции. Если ГЛУБЖЕ него в этой же строке стоят
+                # заполненные уровни (здесь Ур.2 пуст, а Ур.3 «Оборудование и
+                # снаряжение» / Ур.4 «Альпинистское снаряжение» и т.п.
+                # заполнены КАЖДОЙ из 189 строк), пустой уровень — это РАЗРЫВ
+                # в цепочке категорий (файл просто не использует Ур.2 вовсе),
+                # а не отсутствие категории для этой позиции. Слова владельца:
+                # «перед ними заполнены категории, максимум что должно было
+                # произойти — это всё вместе сместиться». Продвигать сюда имя
+                # позиции нельзя — иначе 744 подраздела вместо 189 позиций, и
+                # дубли (feo_import_duplicates.py: «объединить»/«оставить как
+                # есть») до них не доходят, потому что они уже не позиции.
+                # Правильное поведение — вообще НЕ продвигать здесь: категории
+                # (Ур.3/Ур.4) поджимаются вверх обычным дедупом ниже
+                # («Схлопываем соседние дубли» / level_gap), а «Плановая
+                # позиция» остаётся позицией под самым глубоким уровнем.
+                # Старый файл ЦЕНТРПОИСК (ради которого писалось продвижение)
+                # эту ветку почти не задевает: там за пустым уровнем ничего
+                # глубже не заполнено (строки 2/3/9/24/251 — Ур.3/Ур.4 у них
+                # тоже пусты). Исключение — строка 33 (тест
+                # test_row33_style_missing_level2_creates_category_not_dropped):
+                # Ур.3 занят тем же именем, что и «Плановая позиция» — раньше
+                # продвигалось на Ур.2, теперь эта ветка отключает продвижение
+                # и код уходит в ветку «строка-итог для самого глубокого
+                # уровня» (см. else ниже) — тот же результат: 1 узел, бюджет
+                # цел, просто через другой путь.
+                _target_level = None
             if _target_level is not None:
                 _promo_money = _row_feo_money(row)
                 if _promo_money is not None:
@@ -511,12 +564,18 @@ async def apply_rows(state) -> None:
                 lvl2_name = lvl5_name
                 lvl5_name = None
 
-        if not lvl2_name:
-            # Задача владельца 2026-09-09 (боевой файл, строка 33): "Уровень 3"
-            # заполнен, "Уровень 2" — нет, промоушен на Уровень 2 (см. блок
-            # выше) в этом случае НЕ срабатывает (условие требует пустоты И
-            # Ур.3, И Ур.4) — строка просто пропускается целиком, а её Сумма
-            # по ФЭО молча теряется без единого упоминания суммы в тексте.
+        if not (lvl2_name or lvl3_name or lvl4_name):
+            # Правило владельца 2026-09-09/2026-09-15: пропускаем строку
+            # целиком ТОЛЬКО когда ВООБЩЕ ни одного уровня не заполнено — до
+            # 2026-09-15 здесь стояла проверка одного lvl2_name, из-за которой
+            # боевой файл «Абхазия ЦЭМАК (1).xlsx» (Ур.2 пуст ВО ВСЕХ строках,
+            # Ур.3/Ур.4 заполнены) полностью пропускал бы каждую строку заново
+            # после того, как продвижение (блок выше) перестало заполнять
+            # lvl2_name суммой при разрыве — раньше промоушен «на Ур.2» решал
+            # это побочно, теперь разрыв поджимается обычным дедупом ниже
+            # (Ур.3→level1, Ур.4→level2), и категория обязана строиться из
+            # lvl3_name/lvl4_name, а не только из lvl2_name. Строка 33 боевого
+            # файла ЦЕНТРПОИСК — тот же случай: Ур.3 заполнен, Ур.2 нет.
             # Ищем деньги в ЛЮБОЙ из колонок, которые могли бы их нести
             # (плоская «Сумма по ФЭО» и её per-level варианты + легаси
             # «Финансирование») — если что-то есть, называем сумму прямо,
@@ -573,6 +632,21 @@ async def apply_rows(state) -> None:
                     continue
 
         code      = get_cell(row, c_code)
+        if code is not None:
+            code_present_rows += 1
+            _code_dec = to_dec(code)
+            if _code_dec is not None:
+                _code_row_money = _row_feo_money(row)
+                if _code_row_money is not None and _code_dec == _code_row_money:
+                    # Брак/сдвиг заполнения файла (см. code_amount_matches
+                    # выше) — «Код» этой строки на самом деле «Сумма по ФЭО»,
+                    # случайно продублированная в соседнюю колонку. Не пишем
+                    # её в leaf.code (категория получила бы «код» вида
+                    # «23970», а предпросмотр — ложное «обновлено»). Само
+                    # предупреждение (файловое или построчное) собирается
+                    # после цикла по всем строкам — см. code_column_holds_amounts.
+                    code_amount_matches.append((row_num, lvl5_name or lvl4_name or lvl3_name or lvl2_name, _code_dec))
+                    code = None
         appendix  = get_cell(row, c_appendix)
         budget    = to_dec(get_cell(row, c_budget))
         is_active = to_bool(get_cell(row, c_active))
@@ -676,20 +750,42 @@ async def apply_rows(state) -> None:
 
         _deepest_lv = next((lv for lv in reversed(_lv) if lv["name"]), None)
 
-        if _deepest_lv is not None and any(v is not None for v in (_row_feo_qty, _row_feo_unit, _row_feo_price)):
-            # Кол-во/ед./цена по ФЭО строки — как и раньше, безусловно к самому
-            # глубокому заполненному УРОВНЮ (не к позиции): их единственный
-            # потребитель — фолбэк «план категории = feo_qty × feo_amt», когда
-            # у категории нет собственных плановых колонок (см. ветку ниже,
-            # «Старое поведение источника данных»). Наличие «Плановой позиции»
-            # на этой же строке сюда не относится — только «Сумма по ФЭО»
-            # (ниже) имеет разное назначение в зависимости от неё.
-            if _deepest_lv["feo_qty"] is None:
-                _deepest_lv["feo_qty"] = _row_feo_qty
-            if _deepest_lv["feo_unit"] is None:
-                _deepest_lv["feo_unit"] = _row_feo_unit
-            if _deepest_lv["feo_amt"] is None:
-                _deepest_lv["feo_amt"] = _row_feo_price
+        if any(v is not None for v in (_row_feo_qty, _row_feo_unit, _row_feo_price)):
+            if lvl5_name and not lvl5_name.startswith("←"):
+                # Боевой инцидент 2026-09-15 (владелец, файл «Абхазия ЦЭМАК
+                # (1).xlsx»): КАЖДАЯ строка категории «Альпинистское
+                # снаряжение» (строки 2–26) несёт свою «Плановую позицию» —
+                # кол-во/ед./цена по ФЭО этой строки принадлежат ЭТОЙ позиции,
+                # а не глубокому уровню категории. Раньше они безусловно
+                # уходили в _deepest_lv["feo_*"], и ПЕРВАЯ строка категории
+                # "заражала" уровень фантомным планом (см. ветку «Старое
+                # поведение источника данных» ниже, from_feo_fallback), хотя у
+                # категории вообще нет собственного плана — только сумма её
+                # позиций. Этот фантомный план потом сравнивался с суммой ВСЕХ
+                # 25 позиций категории и давал ложный plan_vs_items_mismatch.
+                # Приоритет как у остальных row-flat полей (см. row_plan_*
+                # ниже) — заполняем item_qty/item_unit/item_price, только
+                # если они ещё не заданы отдельными колонками позиции.
+                if item_qty is None:
+                    item_qty = _row_feo_qty
+                if item_unit is None:
+                    item_unit = _row_feo_unit
+                if item_price is None:
+                    item_price = _row_feo_price
+            elif _deepest_lv is not None:
+                # Строка-категория БЕЗ позиции (файл ЦЕНТРПОИСК, строки-
+                # заголовки без «Плановой позиции») — поведение прежнее:
+                # кол-во/ед./цена по ФЭО безусловно к самому глубокому
+                # заполненному УРОВНЮ. Их единственный потребитель — фолбэк
+                # «план категории = feo_qty × feo_amt», когда у категории нет
+                # собственных плановых колонок (см. ветку ниже, «Старое
+                # поведение источника данных»).
+                if _deepest_lv["feo_qty"] is None:
+                    _deepest_lv["feo_qty"] = _row_feo_qty
+                if _deepest_lv["feo_unit"] is None:
+                    _deepest_lv["feo_unit"] = _row_feo_unit
+                if _deepest_lv["feo_amt"] is None:
+                    _deepest_lv["feo_amt"] = _row_feo_price
 
         if _row_feo_sum is not None:
             if lvl5_name and not lvl5_name.startswith("←"):
@@ -754,12 +850,23 @@ async def apply_rows(state) -> None:
             else:
                 # Проверяем пропуск уровня: если предыдущий src=2 а текущий src=4 — Ур.3 был пропущен
                 if deduped and lv["level_src"] - deduped[-1]["level_src"] > 1:
-                    warnings.append({
-                        "kind": "level_gap",
-                        "row": row_num,
-                        "name": lv["name"],
-                        "message": f"{level_label(lv['level_src'])} поднят на место {level_label(deduped[-1]['level_src'] + 1)} — промежуточный уровень не заполнен",
-                    })
+                    _gap_levels = set(range(deduped[-1]["level_src"] + 1, lv["level_src"]))
+                    # Боевой инцидент 2026-09-15: если ВСЕ промежуточные уровни
+                    # этого разрыва пусты ВО ВСЕХ строках файла (раскладка
+                    # файла — см. find_uniformly_empty_levels), это не 189
+                    # отдельных построчных аномалий, а одно свойство файла —
+                    # предупреждаем один раз после цикла (level_column_empty_
+                    # in_file), построчный level_gap здесь не плодим. Если хотя
+                    # бы один из промежуточных уровней где-то в файле всё же
+                    # заполнен (разрыв — исключение, а не правило), построчное
+                    # предупреждение остаётся как было.
+                    if not _gap_levels <= uniformly_empty_levels:
+                        warnings.append({
+                            "kind": "level_gap",
+                            "row": row_num,
+                            "name": lv["name"],
+                            "message": f"{level_label(lv['level_src'])} поднят на место {level_label(deduped[-1]['level_src'] + 1)} — промежуточный уровень не заполнен",
+                        })
                 deduped.append(lv)
 
         # Нет ни одного заполненного уровня — уже пропустили по lvl2_name выше
@@ -813,8 +920,14 @@ async def apply_rows(state) -> None:
                     # (боевой пример: «Экипировка», строки 2/3/9/24) — раньше
                     # это было видно только косвенно, через parent_sum_mismatch
                     # без единого номера строки. Копим ВСЕ попытки (не только
-                    # изменившие значение) — предупреждение обязано назвать их все.
-                    budget_writes.setdefault(cat.id, []).append((row_num, feo_sum, lv["name"]))
+                    # изменившие значение) — задача владельца 2026-09-15: если
+                    # среди них окажутся РАЗНЫЕ значения, apply_budget_conflict_
+                    # resolutions (после цикла) спросит решение человека вместо
+                    # молчаливого «последняя побеждает».
+                    register_budget_write(
+                        state, cat, subsidy_id, [c.name for c in cats_in_row] + [cat.name],
+                        row_num, feo_sum, lv["name"],
+                    )
                     # Если feo_amt пуст, но есть кол-во — восстановим цену
                     if feo_amt is None and feo_qty is not None and feo_qty != ZERO:
                         feo_amt = (feo_sum / feo_qty).quantize(QUANT)
@@ -986,7 +1099,10 @@ async def apply_rows(state) -> None:
                 if deduped and deduped[-1].get("feo_sum") is None:
                     if leaf.budget != budget:
                         leaf.budget = budget; changed = True
-                    budget_writes.setdefault(leaf.id, []).append((row_num, budget, leaf.name))
+                    register_budget_write(
+                        state, leaf, subsidy_id, [c.name for c in cats_in_row],
+                        row_num, budget, leaf.name,
+                    )
             if leaf.is_active != is_active:
                 leaf.is_active = is_active; changed = True
             if changed and not leaf_is_new:
@@ -1035,6 +1151,76 @@ async def apply_rows(state) -> None:
         except Exception as e:
             errors.append({"row": row_num, "name": lvl2_name, "message": str(e)})
 
+    # Один файл-уровневый сигнал вместо N одинаковых построчных (боевой
+    # инцидент 2026-09-15, файл «Абхазия ЦЭМАК (1).xlsx»): колонка уровня,
+    # пустая ВО ВСЕХ строках данных — раскладка файла, а не аномалия каждой
+    # строки. Построчные level_gap для разрывов, вызванных именно такой
+    # колонкой, уже подавлены выше (см. uniformly_empty_levels) — здесь
+    # единственное упоминание об этом на весь импорт.
+    if uniformly_empty_levels:
+        _existing_levels = sorted(
+            lvl for lvl, col in ((2, c_lvl2), (3, c_lvl3), (4, c_lvl4)) if col is not None
+        )
+        for _empty_lvl in sorted(uniformly_empty_levels):
+            _deeper = [
+                lvl for lvl in _existing_levels
+                if lvl > _empty_lvl and lvl not in uniformly_empty_levels
+            ]
+            if not _deeper:
+                continue
+            _landed = {lvl: lvl - sum(1 for e in uniformly_empty_levels if e < lvl) for lvl in _deeper}
+            _from_text = " и ".join(level_label(lvl) for lvl in _deeper)
+            _to_text = " и ".join(level_label(_landed[lvl]) for lvl in _deeper)
+            _verb = "поднят" if len(_deeper) == 1 else "подняты"
+            warnings.append({
+                "kind": "level_column_empty_in_file",
+                "row": None,
+                "name": None,
+                "message": (
+                    f"Колонка «{level_label(_empty_lvl)}» пуста во всём файле — "
+                    f"{_from_text} {_verb} на место {_to_text}"
+                ),
+            })
+
+    # Хвост Б (боевой инцидент 2026-09-15, файл «Абхазия ЦЭМАК (1).xlsx»):
+    # агрегирование code_amount_matches, накопленных по ходу цикла выше. 1–2
+    # совпадения — построчный column_shift, тем же kind'ом и стилем, что и
+    # `_check_unit_shift` для единиц измерения (не отдельный механизм).
+    # ≥3 строк ИЛИ ≥20% строк с заполненным «Кодом» — один файловый сигнал
+    # `code_column_holds_amounts` (иначе на боевом файле было бы 165
+    # одинаковых построчных предупреждений — тот же принцип, что и у
+    # level_column_empty_in_file выше). Доля считается ТОЛЬКО при разумном
+    # размере выборки (от 5 строк с «Кодом») — иначе единственная строка файла
+    # с совпадением даёт 100% и ложно выглядит как «раскладка файла», хотя это
+    # ровно тот самый одиночный случай, который должен остаться column_shift.
+    _CODE_SHARE_MIN_ROWS = 5
+    if code_amount_matches:
+        _code_match_rows = [r for r, _n, _v in code_amount_matches]
+        _code_match_count = len(code_amount_matches)
+        _code_share = _code_match_count / code_present_rows if code_present_rows else 0
+        if _code_match_count >= 3 or (code_present_rows >= _CODE_SHARE_MIN_ROWS and _code_share >= 0.2):
+            warnings.append({
+                "kind": "code_column_holds_amounts",
+                "row": None,
+                "name": None,
+                "message": (
+                    f"Колонка «Код» в {_code_match_count} строках повторяет «Сумму по ФЭО» "
+                    f"({format_rows(_code_match_rows)}) — похоже на сдвиг колонок; код категорий "
+                    f"из этих строк не записан"
+                ),
+            })
+        else:
+            for _r, _n, _v in code_amount_matches:
+                warnings.append({
+                    "kind": "column_shift",
+                    "row": _r,
+                    "name": _n or "",
+                    "message": (
+                        f"Строка {_r}: в колонке «Код» число {_fmt(_v)} совпадает с «Суммой по ФЭО» "
+                        f"этой строки — похоже, колонки сдвинуты, код не записан"
+                    ),
+                })
+
     if ignored_subsidy_rows:
         _target_name = next((s.name for s in sub_rows if s.id == default_subsidy_id), None) or f"#{default_subsidy_id}"
         _ignored_names_str = "«" + "», «".join(sorted(ignored_subsidy_names)) + "»"
@@ -1049,26 +1235,14 @@ async def apply_rows(state) -> None:
         })
 
     # Задача владельца 2026-09-09: узел, чью Сумму по ФЭО задавали НЕСКОЛЬКО
-    # строк файла (боевой пример: «Экипировка» — строки 2/3/9/24, каждая
-    # перезаписывает предыдущую) — победившее значение видно в дереве, но БЕЗ
-    # этого предупреждения не видно, что оно вообще перезаписывалось, и уж тем
-    # более какие строки/суммы проиграли. Само поведение (последняя строка
-    # побеждает) не меняется — только становится видимым явно, по имени узла и
-    # номерам строк, а не только через parent_sum_mismatch постфактум.
-    for _cat_id, _writes in budget_writes.items():
-        if len(_writes) < 2:
-            continue
-        _b_name = _writes[-1][2]
-        _last_row, _last_val, _ = _writes[-1]
-        _rows_vals = ", ".join(f"{r} ({_fmt(v)})" for r, v, _ in _writes)
-        warnings.append({
-            "kind": "budget_overwritten_by_row",
-            "row": None,
-            "name": _b_name,
-            "message": (
-                f"Сумма по ФЭО для «{_b_name}» задана в строках {_rows_vals} — "
-                f"учтена последняя (строка {_last_row})"
-            ),
-        })
+    # строк файла (боевой пример: «Экипировка» — строки 2/3/9/24) — БЕЗ
+    # предупреждения не видно, что она вообще перезаписывалась, и уж тем более
+    # какие строки/суммы проиграли. Задача владельца 2026-09-15 (опрос): если
+    # среди этих строк есть РАЗНЫЕ значения — это уже не просто уведомление,
+    # решение принимает человек по каждой такой категории отдельно (см.
+    # feo_import_budget_conflicts.py); одинаковые повторы одного и того же
+    # числа по-прежнему остаются без группы и без предупреждения — там нечего
+    # выбирать.
+    apply_budget_conflict_resolutions(state)
 
     state.created, state.updated, state.skipped = created, updated, skipped

@@ -9,6 +9,10 @@ export const ALL_COLUMNS = [
   { title: 'Тип',       key: 'product_type',       width: 140 },
   { title: 'Категория', key: 'category',           minWidth: 140 },
   { title: 'Цена',      key: 'price',              width: 130, align: 'end' as const },
+  // Средняя цена за 60 дней (решение владельца 2026-09-16, п.3) — avg_price/
+  // avg_price_basis/avg_price_stale уже приходят в ProductOut, второго запроса
+  // на строку не делаем (Правило №6).
+  { title: 'Средняя',   key: 'avg_price',          width: 150, align: 'end' as const },
   { title: 'Цена по договору', key: 'contract_price', width: 180, align: 'end' as const },
   { title: 'Актуальность цены', key: 'price_freshness', width: 200 },
   { title: 'Страна',    key: 'country_origin',     width: 120 },

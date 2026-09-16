@@ -20,6 +20,7 @@ from app.models.purchase_item import PurchaseItem
 from app.models.contractor import Contractor
 from app.models.subsidy import Subsidy
 from app.models.product import Product
+from app.models.product_price_history import ProductPriceHistory
 from app.models.user import User
 from app.auth.jwt import get_current_user, require_role, ADMIN_ROLES, MANAGER_ROLES, OWNER_ROLES
 from app.auth.permissions import require_action
@@ -436,6 +437,20 @@ async def transition_status(
             product.contract_number = p.contract_number
             product.contract_date = p.contract_date
             product.contract_org_id = contract_org_id
+            # Идемпотентность (владелец, 2026-09-16, п.3/D): повторный переход в
+            # contracted (например, откат админом и повторное проведение) не
+            # должен плодить дубли строк истории — та же запись «этот товар,
+            # источник='contract', этот номер договора, эта дата договора» уже
+            # есть → пишем только акутальные поля product.* (write_history=False),
+            # НЕ вторую строку истории.
+            _dup_history = (await db.execute(
+                select(ProductPriceHistory.id).where(
+                    ProductPriceHistory.product_id == product.id,
+                    ProductPriceHistory.source == "contract",
+                    ProductPriceHistory.source_ref == p.contract_number,
+                    ProductPriceHistory.collected_at == p.contract_date,
+                ).limit(1)
+            )).scalar_one_or_none()
             await actualize_product_price(
                 db, product,
                 price=item_price,
@@ -444,6 +459,7 @@ async def transition_status(
                 contractor_id=getattr(p, "contractor_id", None),
                 collected_at=p.contract_date,
                 user=current_user,
+                write_history=_dup_history is None,
             )
 
     # Auto-create/link contract record when moving to contracted status

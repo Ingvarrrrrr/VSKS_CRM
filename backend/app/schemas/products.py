@@ -25,6 +25,14 @@ class PriceFreshnessOut(BaseModel):
     fx_change_pct: Optional[float] = None
     label: str
 
+class PurchaseCategoryRef(BaseModel):
+    """Категория закупки (владелец, 2026-09-16) — отдельный справочник от
+    «категории товара» (Product.category, поле ниже). См. app.models.purchase_category."""
+    id: int
+    name: str
+    model_config = {"from_attributes": True}
+
+
 class ProductCreate(BaseModel):
     feo_category_id: Optional[int] = None
     name: str
@@ -42,6 +50,10 @@ class ProductCreate(BaseModel):
     price: Optional[Decimal] = None
     price_links: List[PriceLink] = []
     country_origin: Optional[str] = "РФ"
+    # Категории закупки (владелец, 2026-09-16) — несколько, id из
+    # purchase_categories; сохраняется отдельно от остальных полей (см.
+    # routers/products.py — не колонка Product, а M2M связь).
+    purchase_category_ids: List[int] = []
 
 class ProductOut(ProductCreate):
     id: int
@@ -73,6 +85,15 @@ class ProductOut(ProductCreate):
     price_source_contractor_id: Optional[int] = None
     price_ttl_days: Optional[int] = None
     price_freshness: Optional[PriceFreshnessOut] = None
+    # Категории закупки (владелец, 2026-09-16) — читаются из relationship
+    # Product.purchase_categories (lazy="selectin", см. app/models/product.py).
+    purchase_categories: List[PurchaseCategoryRef] = []
+    # Средняя цена (владелец, 2026-09-16) — одна функция-источник
+    # app.services.product_price_stats.compute_price_stats; проставляется
+    # роутером ОДНИМ запросом на весь список (не N+1), не колонка БД.
+    avg_price: Optional[Decimal] = None
+    avg_price_basis: Optional[int] = None
+    avg_price_stale: Optional[bool] = None
     model_config = {"from_attributes": True}
 
     @model_validator(mode='before')
@@ -116,11 +137,27 @@ class ProductPriceHistoryOut(BaseModel):
     source: Optional[str] = None
     source_ref: Optional[str] = None
     contractor_id: Optional[int] = None
+    contractor_name: Optional[str] = None  # владелец, 2026-09-16 — донабирается в роутере join'ом
     collected_at: Optional[date] = None
     note: Optional[str] = None
     created_by: Optional[int] = None
     created_at: Optional[datetime] = None
     model_config = {"from_attributes": True}
+
+
+class PriceHistoryManualIn(BaseModel):
+    """Тело POST /api/products/{id}/price-history — ручное добавление цены в
+    историю (владелец, 2026-09-16, п.3: список цен в карточке товара + ручное
+    добавление). Источник ограничен подмножеством VALID_PRICE_SOURCES —
+    'contract'/'import' проставляются только автоматически (переход в
+    contracted / импорт), сюда их передавать нельзя."""
+    price: Decimal
+    source: str = "manual"  # 'manual' | 'kp' | 'monitoring'
+    source_ref: Optional[str] = None
+    url: Optional[str] = None
+    contractor_id: Optional[int] = None
+    collected_at: Optional[str] = None  # ISO date; пусто — сегодня
+    note: Optional[str] = None
 
 
 # Product Summary (сводная по продукции)

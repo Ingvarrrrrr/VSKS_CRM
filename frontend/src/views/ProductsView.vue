@@ -97,8 +97,6 @@
       @clear-photo="clearUploadedPhoto"
       @download-photo="downloadSinglePhoto"
       @photo-file-change="onPhotoFileChange"
-      @add-price-link="addPriceLink"
-      @remove-price-link="removePriceLink"
     />
 
     <!-- Delete confirm -->
@@ -242,7 +240,7 @@ const {
   form, photoCacheBuster, editMeta,
   nameSearch, nameSuggestions, isDuplicateName,
   avgPrice,
-  onPhotoFileChange, addPriceLink, removePriceLink,
+  onPhotoFileChange,
   openCreate, openEdit, save, toggleSharing,
   downloadingPhoto, deletingPhoto, clearUploadedPhoto, downloadSinglePhoto,
 } = useProductsForm({ products, load, showSnack })

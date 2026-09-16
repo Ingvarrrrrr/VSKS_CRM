@@ -261,6 +261,8 @@ from app.routers import users_docs
 from app.routers import users_platform_credentials
 from app.routers import users_dictionaries
 from app.routers import users_import
+# Категории закупки товара — отдельный справочник, many-to-many (владелец, 2026-09-16)
+from app.routers import purchase_categories as purchase_categories_router
 
 
 def register_routes(app: FastAPI) -> None:
@@ -484,3 +486,4 @@ def register_routes(app: FastAPI) -> None:
 
     app.include_router(diag_router.router)                 # /api/diag/*
     app.include_router(dictionaries_router.router)         # /api/dictionaries/purchase (Правило №6)
+    app.include_router(purchase_categories_router.router)  # /api/purchase-categories (2026-09-16)

@@ -28,12 +28,45 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.jwt import get_current_user, get_single_org_id
 from app.database import get_db
 from app.models.product import Product
+from app.models.purchase_category import PurchaseCategory
 from app.models.user import User
 from app.schemas.schemas import ProductCreate, ProductOut
 from app.services.price_freshness import load_context as load_freshness_context, evaluate as evaluate_freshness
 from app.services.price_actualization import actualize_product_price
+from app.services.product_price_stats import compute_price_stats_bulk
 
 router = APIRouter(prefix="/api/products", tags=["products"])
+
+
+async def _set_purchase_categories(db: AsyncSession, product: Product, category_ids: Optional[list]) -> None:
+    """Заменяет ПОЛНЫЙ набор категорий закупки товара (владелец, 2026-09-16) —
+    PUT/POST семантика замены, как и у остальных полей ProductCreate. Неизвестные
+    id молча отфильтровываются (select .in_()), а не 404 — тот же подход, что и
+    остальной импорт/сохранение справочных ссылок в этом роутере."""
+    if category_ids is None:
+        return
+    ids = [i for i in category_ids if i is not None]
+    if ids:
+        rows = (await db.execute(
+            select(PurchaseCategory).where(PurchaseCategory.id.in_(ids))
+        )).scalars().all()
+    else:
+        rows = []
+    product.purchase_categories = list(rows)
+
+
+async def _attach_price_stats(db: AsyncSession, products: list) -> None:
+    """Проставляет avg_price/avg_price_basis/avg_price_stale ОДНИМ запросом на
+    весь список (app.services.product_price_stats.compute_price_stats_bulk) —
+    не N+1. Используется и списком, и карточкой товара (список из одного)."""
+    ids = [p.id for p in products]
+    stats_by_id = await compute_price_stats_bulk(db, ids)
+    for p in products:
+        stats = stats_by_id.get(p.id)
+        if stats is not None:
+            p.avg_price = stats.avg_price
+            p.avg_price_basis = stats.basis_count
+            p.avg_price_stale = stats.stale
 
 
 @router.get("/", response_model=List[ProductOut])
@@ -88,6 +121,7 @@ async def list_products(
     freshness_ctx = await load_freshness_context(db, org_id)
     for p in products:
         p.price_freshness = evaluate_freshness(p, freshness_ctx)
+    await _attach_price_stats(db, products)
 
     return products
 
@@ -112,6 +146,7 @@ async def get_product(
     org_id = get_single_org_id(current_user)
     freshness_ctx = await load_freshness_context(db, org_id)
     product.price_freshness = evaluate_freshness(product, freshness_ctx)
+    await _attach_price_stats(db, [product])
     return product
 
 
@@ -173,8 +208,16 @@ async def create_product(
             )
 
     data = product.model_dump()
+    category_ids = data.pop("purchase_category_ids", None)
     _apply_price_links(data, None)
     db_product = Product(**data)
+    # Категории закупки (владелец, 2026-09-16) выставляются ДО db.add()/flush():
+    # объект ещё transient, relationship-коллекция пуста в памяти без обращения
+    # к БД. Присвоение УЖЕ ПОСЛЕ flush() на async-сессии падает
+    # MissingGreenlet — SQLAlchemy пытается синхронно долить «старое» значение
+    # lazy-запросом для персистентного объекта (lazy="selectin" эту ситуацию
+    # не покрывает, он работает только как eager-стратегия внутри SELECT).
+    await _set_purchase_categories(db, db_product, category_ids)
     db.add(db_product)
     await db.commit()
     await db.refresh(db_product)
@@ -194,11 +237,13 @@ async def update_product(
         raise HTTPException(status_code=404, detail="Product not found")
     old_price = db_product.price
     data = product.model_dump()
+    category_ids = data.pop("purchase_category_ids", None)
     had_links = bool(data.get("price_links"))
     _apply_price_links(data, db_product)
     new_price = data.get("price")
     for key, value in data.items():
         setattr(db_product, key, value)
+    await _set_purchase_categories(db, db_product, category_ids)
     from datetime import datetime
     db_product.updated_at = datetime.utcnow()
     db_product.updated_by = current_user.full_name or current_user.username
@@ -245,6 +290,8 @@ async def patch_product(
     if "product_type" in data:
         pt = (data["product_type"] or "").strip()
         db_product.product_type = pt or None
+    if "purchase_category_ids" in data:
+        await _set_purchase_categories(db, db_product, data["purchase_category_ids"])
     if "category" in data or "product_type" in data:
         from datetime import datetime
         db_product.updated_at = datetime.utcnow()

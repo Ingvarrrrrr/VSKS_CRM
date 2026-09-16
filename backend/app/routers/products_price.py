@@ -9,23 +9,35 @@
 Правило №6) вызывается отсюда И из ядра (create/update/patch); история и
 sharing-флаг читаются/пишутся только здесь.
 """
-from typing import List
+from datetime import date as _date
+from decimal import Decimal
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query, Body, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.jwt import get_current_user, get_single_org_id
+from app.auth.jwt import get_current_user, get_single_org_id, ADMIN_ROLES
 from app.auth.permissions import require_tab
 from app.database import get_db
+from app.models.contractor import Contractor
 from app.models.product import Product
 from app.models.product_price_history import ProductPriceHistory
 from app.models.user import User
-from app.schemas.schemas import ProductOut, PriceActualizationIn, ProductPriceHistoryOut
+from app.schemas.schemas import (
+    ProductOut, PriceActualizationIn, ProductPriceHistoryOut, PriceHistoryManualIn,
+)
 from app.services.price_freshness import load_context as load_freshness_context, evaluate as evaluate_freshness
 from app.services.price_actualization import actualize_product_price, VALID_PRICE_SOURCES
+from app.services.product_price_stats import compute_price_stats
 
 router = APIRouter(prefix="/api/products", tags=["products"])
+
+# POST /{product_id}/price-history (ручное добавление, владелец 2026-09-16) —
+# подмножество VALID_PRICE_SOURCES: 'contract'/'import' проставляются ТОЛЬКО
+# автоматически (переход в contracted / импорт файла), руками их указать
+# нельзя — иначе история потеряет достоверность источника.
+MANUAL_PRICE_SOURCES = ("manual", "kp", "monitoring")
 
 
 @router.patch("/{product_id}/share-price")
@@ -93,16 +105,116 @@ async def get_price_history(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """История актуализации цены товара, новые сверху."""
+    """История актуализации цены товара, новые сверху. Карточка товара
+    (владелец, 2026-09-16, п.3): дата/источник/контрагент/ссылка по каждой
+    записи — contractor_name донабирается join'ом с Contractor тут же, одним
+    запросом (не второй эндпоинт истории, тот же — расширен полем)."""
     product = await db.get(Product, product_id)
     if not product:
         raise HTTPException(404, "Товар не найден")
     rows = (await db.execute(
-        select(ProductPriceHistory)
+        select(ProductPriceHistory, Contractor.name.label("contractor_name"))
+        .outerjoin(Contractor, Contractor.id == ProductPriceHistory.contractor_id)
         .where(ProductPriceHistory.product_id == product_id)
         .order_by(ProductPriceHistory.created_at.desc())
-    )).scalars().all()
-    return rows
+    )).all()
+
+    out: List[ProductPriceHistoryOut] = []
+    for history_row, contractor_name in rows:
+        item = ProductPriceHistoryOut.model_validate(history_row)
+        item.contractor_name = contractor_name
+        out.append(item)
+    return out
+
+
+@router.get("/{product_id}/price-stats")
+async def get_price_stats(
+    product_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Средняя цена товара за окно (владелец, 2026-09-16, п.4) — единая функция
+    app.services.product_price_stats.compute_price_stats, без второй формулы
+    для одиночного товара (списочный расчёт — compute_price_stats_bulk поверх
+    той же функции, см. routers/products.py::_attach_price_stats)."""
+    product = await db.get(Product, product_id)
+    if not product:
+        raise HTTPException(404, "Товар не найден")
+    rows = (await db.execute(
+        select(ProductPriceHistory.price, ProductPriceHistory.collected_at)
+        .where(ProductPriceHistory.product_id == product_id)
+    )).all()
+    stats = compute_price_stats(rows)
+    return stats.as_dict()
+
+
+@router.post("/{product_id}/price-history", response_model=ProductPriceHistoryOut)
+async def add_manual_price_history(
+    product_id: int,
+    data: PriceHistoryManualIn,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_tab('products')),
+):
+    """Ручное добавление цены в историю товара (владелец, 2026-09-16, п.3) —
+    через ЕДИНУЮ точку записи app.services.price_actualization.actualize_product_price
+    (тот же писатель, что и /price-actualization; отдельный путь — под
+    контракт карточки товара «список цен» фронта, схема источников уже
+    сужена до manual|kp|monitoring, см. MANUAL_PRICE_SOURCES)."""
+    if data.source not in MANUAL_PRICE_SOURCES:
+        raise HTTPException(422, {
+            "code": "invalid_price_source",
+            "message": f"Недопустимый источник для ручного добавления: {data.source}. Допустимо: {', '.join(MANUAL_PRICE_SOURCES)}",
+        })
+    product = await db.get(Product, product_id)
+    if not product:
+        raise HTTPException(404, "Товар не найден")
+
+    source_ref = data.source_ref or data.url
+    collected_at = data.collected_at or _date.today().isoformat()
+
+    await actualize_product_price(
+        db, product,
+        price=data.price,
+        source=data.source,
+        source_ref=source_ref,
+        contractor_id=data.contractor_id,
+        collected_at=collected_at,
+        note=data.note,
+        user=current_user,
+    )
+    await db.commit()
+
+    row = (await db.execute(
+        select(ProductPriceHistory)
+        .where(ProductPriceHistory.product_id == product_id)
+        .order_by(ProductPriceHistory.id.desc())
+        .limit(1)
+    )).scalar_one()
+    return row
+
+
+@router.delete("/{product_id}/price-history/{history_id}")
+async def delete_price_history_entry(
+    product_id: int,
+    history_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Удалить запись истории цены (владелец, 2026-09-16, п.3) — только автор
+    записи сам, либо администратор."""
+    row = (await db.execute(
+        select(ProductPriceHistory).where(
+            ProductPriceHistory.id == history_id,
+            ProductPriceHistory.product_id == product_id,
+        )
+    )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, "Запись истории цены не найдена")
+    if row.created_by != current_user.id and current_user.role not in ADMIN_ROLES:
+        raise HTTPException(403, "Удалить запись может только её автор или администратор")
+    await db.delete(row)
+    await db.commit()
+    return {"ok": True}
 
 
 @router.patch("/{product_id}/verify-tz", response_model=ProductOut)

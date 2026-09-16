@@ -59,6 +59,26 @@
               hint="Выберите или введите новую" persistent-hint />
           </v-col>
 
+          <!-- Категории закупки — справочник, решение владельца 2026-09-16, п.1:
+               отдельный мультивыбор от свободнотекстовой «Категории» выше — по
+               этим категориям товар выставляется в закупку. -->
+          <v-col cols="12">
+            <div class="d-flex align-center mb-1" style="gap:8px">
+              <v-select
+                v-model="form.purchase_category_ids"
+                :items="categoryChoices"
+                item-title="name" item-value="id"
+                label="Категории закупки" multiple chips closable-chips
+                variant="outlined" density="compact" hide-details
+                class="flex-grow-1"
+              />
+              <v-btn size="small" variant="text" color="teal" prepend-icon="mdi-cog-outline" @click="catalogDialog = true">
+                Справочник…
+              </v-btn>
+            </div>
+            <div class="text-caption text-medium-emphasis">По этим категориям товар выставляется в закупку.</div>
+          </v-col>
+
           <!-- Единица измерения (владелец, 2026-09-01) -->
           <v-col cols="12" md="3">
             <v-text-field v-model="form.unit"
@@ -160,45 +180,10 @@
               density="compact" prepend-inner-icon="mdi-link" class="mt-2" />
           </v-col>
 
-          <!-- Ссылки для сравнения цен -->
+          <!-- Цены: история + средняя — решение владельца 2026-09-16, п.2/п.3,
+               заменяет собой редактируемые «Ссылки для сравнения цен». -->
           <v-col cols="12">
-            <div class="text-subtitle-2 mb-2">
-              Ссылки для сравнения цен
-              <span v-if="avgPrice !== null" class="text-caption font-weight-bold text-blue-darken-2 ml-2">
-                ср. {{ avgPrice.toLocaleString('ru-RU') }} ₽
-              </span>
-            </div>
-            <div v-for="(link, i) in form.priceLinks" :key="i" class="d-flex gap-2 mb-2 align-center">
-              <v-text-field
-                v-model="link.url"
-                :label="'Ссылка ' + (i + 1)"
-                variant="outlined" density="compact" hide-details
-                prepend-inner-icon="mdi-link"
-                class="flex-grow-1"
-              />
-              <v-text-field
-                v-model.number="link.price"
-                label="Цена, ₽"
-                type="number" variant="outlined" density="compact" hide-details
-                style="max-width: 140px"
-              />
-              <div class="d-flex flex-column gap-1">
-                <v-btn
-                  v-if="link.url"
-                  icon="mdi-open-in-new" variant="text" size="x-small"
-                  color="primary"
-                  :href="link.url" target="_blank"
-                />
-                <v-btn
-                  icon="mdi-minus-circle" variant="text" size="x-small"
-                  color="error"
-                  @click="$emit('remove-price-link', i)"
-                />
-              </div>
-            </div>
-            <v-btn prepend-icon="mdi-plus" variant="tonal" size="small" color="primary" @click="$emit('add-price-link')">
-              Добавить ссылку
-            </v-btn>
+            <PurchasePriceHistory :product-id="editingId" :legacy-price-links="form.priceLinks" />
           </v-col>
         </v-row>
       </v-card-text>
@@ -211,13 +196,21 @@
       </v-card-actions>
     </v-card>
   </v-dialog>
+
+  <!-- Справочник категорий закупки — управление списком (добавить/переименовать/
+       выключить/удалить), решение владельца 2026-09-16, п.1. -->
+  <PurchaseCategoriesDialog v-model="catalogDialog" :mobile="mobile" />
 </template>
 
 <script setup lang="ts">
+import { computed, ref } from 'vue'
 import { formatDate } from '@/composables/products/productsTypes'
 import { isLikelyImageUrl } from '@/utils/productPhoto'
+import { usePurchaseCategories } from '@/composables/products/usePurchaseCategories'
+import PurchaseCategoriesDialog from '@/components/settings/PurchaseCategoriesDialog.vue'
+import PurchasePriceHistory from '@/components/products/PurchasePriceHistory.vue'
 
-defineProps<{
+const props = defineProps<{
   mobile: boolean
   editingId: number | null
   editMeta: { updated_at: string | null; updated_by: string | null; import_note: string | null }
@@ -241,10 +234,25 @@ defineEmits<{
   (e: 'clear-photo'): void
   (e: 'download-photo'): void
   (e: 'photo-file-change', value: File | File[] | null): void
-  (e: 'add-price-link'): void
-  (e: 'remove-price-link', i: number): void
 }>()
 
 const dialog = defineModel<boolean>('modelValue', { required: true })
 const nameSearch = defineModel<string>('nameSearch', { required: true })
+
+// Категории закупки (справочник) — решение владельца 2026-09-16, п.1. Диалог
+// самодостаточен (тот же приём, что и ContractorPicker.vue со своим
+// ContractorEditDialog): не требует прокидывать список категорий через
+// ProductsView.vue отдельным пропом.
+const { categories, activeCategories, load: loadPurchaseCategories } = usePurchaseCategories()
+loadPurchaseCategories()
+
+const catalogDialog = ref(false)
+
+// Активные + уже выбранные неактивные (иначе выбор молча пропадает из списка,
+// если категорию потом выключили в справочнике).
+const categoryChoices = computed(() => {
+  const selected = new Set<number>(props.form.purchase_category_ids || [])
+  const extra = categories.value.filter(c => !c.is_active && selected.has(c.id))
+  return [...activeCategories.value, ...extra]
+})
 </script>

@@ -15,7 +15,8 @@ PurchaseItem при purchase_id) НЕ менялась. Новое: явные �
 пустые имена молча пропускались без счётчика и без номера строки, из-за чего
 дефект №2 (1022 «товара»-категории) не был виден в самом отчёте импорта.
 """
-from datetime import datetime as _dt
+import re as _re
+from datetime import date as _date_type, datetime as _dt
 from decimal import Decimal
 from typing import Optional
 
@@ -34,6 +35,49 @@ def _cell(row, col_idx: dict, field: str):
         return None
     v = row[idx]
     return str(v).strip() if v is not None else None
+
+
+def _raw_cell(row, col_idx: dict, field: str):
+    """Как `_cell`, но БЕЗ str()-приведения — нужно для «Дата цены»: ячейка
+    Excel с датой приходит из openpyxl уже как datetime/date, str() испортил
+    бы её до парсинга (см. `_parse_price_date`)."""
+    idx = col_idx.get(field)
+    if idx is None or idx >= len(row):
+        return None
+    return row[idx]
+
+
+_DATE_DMY_RE = _re.compile(r"^(\d{1,2})[./](\d{1,2})[./](\d{2,4})$")
+
+
+def _parse_price_date(v) -> Optional[_date_type]:
+    """«Дата цены» колонки импорта (владелец, 2026-09-16) — принимает datetime/
+    date из openpyxl (Excel-ячейка с датой), ISO-строку 'YYYY-MM-DD' или
+    привычный русский 'ДД.ММ.ГГГГ'/'ДД/ММ/ГГГГ'. Не распознано/пусто → None
+    (тогда апстрим подставляет дату загрузки файла)."""
+    if v is None:
+        return None
+    if isinstance(v, _dt):
+        return v.date()
+    if isinstance(v, _date_type):
+        return v
+    s = str(v).strip()
+    if not s:
+        return None
+    try:
+        return _date_type.fromisoformat(s[:10])
+    except ValueError:
+        pass
+    m = _DATE_DMY_RE.match(s)
+    if m:
+        d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if y < 100:
+            y += 2000
+        try:
+            return _date_type(y, mo, d)
+        except ValueError:
+            return None
+    return None
 
 
 def _to_bool(v) -> bool:
@@ -108,12 +152,19 @@ async def apply_products_import(
     report_rows: list = []
     all_products: list = []
     product_row_data: list = []
+    # Новые товары получают product_id только после db.flush() ниже —
+    # актуализацию цены (и запись в историю) для них откладываем до
+    # post-flush прохода (см. цикл после `await db.flush()`).
+    pending_new_price: list = []
 
     _user_name = getattr(current_user, "full_name", None) or getattr(current_user, "username", "") or ""
     _import_note = (
         f"Импорт каталога из файла «{filename}», "
         f"{_user_name}, {_dt.now().strftime('%d.%m.%Y %H:%M')}"
     )
+    # «Дата цены» (владелец, 2026-09-16): заполнена в строке — пишем ею,
+    # иначе — датой загрузки файла (одна дата на весь файл, не per-row `now()`).
+    _upload_date = _dt.now().date()
 
     try:
         for i, row in enumerate(data_rows):
@@ -146,6 +197,8 @@ async def apply_products_import(
                     if prices:
                         price = Decimal(str(round(sum(prices) / len(prices), 2)))
 
+                price_date_val = _parse_price_date(_raw_cell(row, col_idx, "price_date")) or _upload_date
+
                 qty_str = _cell(row, col_idx, "quantity")
                 unit_raw = _cell(row, col_idx, "unit")  # без дефолта — для бэкфилла Product.unit
                 unit_str = unit_raw or "шт."
@@ -160,10 +213,13 @@ async def apply_products_import(
                     ep = existing_by_key[dedup_key]
                     if price and ep.price != price:
                         # Актуализация цены (владелец, 2026-08-29): цена пришла из
-                        # импортируемого Excel-файла — source='import'.
+                        # импортируемого Excel-файла — source='import'. collected_at
+                        # (владелец, 2026-09-16) — «Дата цены» из строки, иначе дата
+                        # загрузки файла.
                         await actualize_product_price(
                             db, ep, price=price, source="import",
-                            source_ref=filename, user=current_user,
+                            source_ref=filename, collected_at=price_date_val,
+                            user=current_user,
                         )
 
                     def _fill(attr, val):
@@ -206,7 +262,11 @@ async def apply_products_import(
                     category=_cell(row, col_idx, "category") or "Прочее",
                     product_type=_cell(row, col_idx, "product_type"),
                     unit=(unit_raw or "").strip() or None,  # брэнд-новый товар — истории покупок ещё нет
-                    price=price,
+                    # price НЕ задаём здесь напрямую (ПРАВИЛО №6 — единственный
+                    # писатель product.price это actualize_product_price, см.
+                    # пост-flush проход ниже, `pending_new_price`) — иначе
+                    # у только что созданного товара цена есть, а строки в
+                    # истории (product_price_history) — нет.
                     photo_link=_cell(row, col_idx, "photo_link"),
                     is_reusable=_to_bool(_cell(row, col_idx, "is_reusable")),
                     is_active=_to_bool(_cell(row, col_idx, "is_active")),
@@ -219,6 +279,8 @@ async def apply_products_import(
                 db.add(p)
                 all_products.append(p)
                 product_row_data.append({"qty": row_qty, "unit": unit_str, "price": price})
+                if price:
+                    pending_new_price.append((p, price, price_date_val))
                 created += 1
                 report_rows.append({"row": row_num, "action": "created", "name": name, "reason": None})
             except Exception as e:
@@ -227,6 +289,17 @@ async def apply_products_import(
 
         # Flush to get product IDs (и поймать реальные ошибки БД до commit/rollback)
         await db.flush()
+
+        # Актуализация цены для НОВЫХ товаров (владелец, 2026-09-16) — только
+        # теперь у них есть product.id (нужен для ProductPriceHistory.product_id
+        # NOT NULL). Одна и та же функция-писатель, что и для существующих
+        # (см. actualize_product_price выше) — не вторая формула/копия.
+        for _p, _price, _price_date in pending_new_price:
+            await actualize_product_price(
+                db, _p, price=_price, source="import",
+                source_ref=filename, collected_at=_price_date,
+                user=current_user,
+            )
 
         product_ids = [p.id for p in all_products]
 

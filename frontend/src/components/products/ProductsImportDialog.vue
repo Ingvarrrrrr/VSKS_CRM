@@ -142,6 +142,13 @@
             обновлено: <strong>{{ wizard.importDialog.result.updated }}</strong>,
             пропущено: <strong>{{ wizard.importDialog.result.skipped }}</strong>.
           </v-alert>
+          <!-- Решение владельца 2026-09-16, п.4: в отчёте видно, какой датой
+               записаны цены — колонка «Дата цены» сопоставлена или нет. -->
+          <div class="text-caption text-medium-emphasis">
+            Цены в истории записаны {{ wizard.importDialog.mapping.price_date != null
+              ? 'датой из колонки «Дата цены»'
+              : 'датой загрузки файла' }}.
+          </div>
         </template>
       </v-card-text>
       <v-card-actions class="px-6 pb-4">

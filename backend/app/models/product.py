@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, Text, Numer
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from app.database import Base
+from app.models.purchase_category import product_purchase_categories
 
 class Product(Base):
     __tablename__ = "products"
@@ -65,3 +66,16 @@ class Product(Base):
     import_note = Column(Text, nullable=True)
 
     feo_category = relationship("FeoCategory", backref="products")
+
+    # Категории закупки (владелец, 2026-09-16) — НЕСКОЛЬКО, отдельный
+    # справочник purchase_categories (см. app/models/purchase_category.py).
+    # lazy="selectin": один доп. SELECT на весь результат запроса (не N+1) без
+    # необходимости расставлять .options(selectinload(...)) в каждом из
+    # многочисленных мест, где грузится Product (products.py, products_match.py,
+    # products_import_apply.py, feo_planned_items_matching.py, ...).
+    purchase_categories = relationship(
+        "PurchaseCategory",
+        secondary=product_purchase_categories,
+        backref="products",
+        lazy="selectin",
+    )

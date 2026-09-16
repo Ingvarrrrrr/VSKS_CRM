@@ -24,6 +24,7 @@ from app.models.purchase import Purchase
 from app.models.product import Product
 from app.models.wish import Wish
 from app.models.wish_item import WishItem
+from app.models.purchase_category import PurchaseCategory, product_purchase_categories
 from app.services.text_match import tokenize, stem, generic_progressive_match
 
 router = APIRouter(prefix="/api/feo-planned-items", tags=["feo_planned_items"])
@@ -32,6 +33,11 @@ router = APIRouter(prefix="/api/feo-planned-items", tags=["feo_planned_items"])
 @router.get("/product-hint")
 async def get_product_hint(
     product_id: int = Query(...),
+    feo_category_id: Optional[int] = Query(
+        None,
+        description="Узел ФЭО, для которого заводится плановая позиция (владелец, 2026-09-16) "
+                    "— если передан, в ответе появляется category_match.",
+    ),
     db: AsyncSession = Depends(get_db),
     _=Depends(get_current_user),
 ):
@@ -58,7 +64,18 @@ async def get_product_hint(
     последнюю единицу измерения, с которой товар фигурировал в позиции
     закупки (PurchaseItem.unit по product_id, самая свежая по id); null, если
     ни разу не покупался с явно указанной единицей — фронт тогда оставляет
-    поле пустым."""
+    поле пустым.
+
+    category_match (владелец, 2026-09-16, п.F) — учитывает КАТЕГОРИИ ЗАКУПКИ
+    товара (новый справочник, app/models/purchase_category.py): совпадение
+    названия хотя бы одной категории закупки товара с названием узла ФЭО
+    поднимает кандидата. Категория товара (Product.category) участвует в том
+    же сравнении, как и раньше — второго механизма подбора не заводим, оба
+    сигнала прогоняются через ОДНУ и ту же токенизацию text_match.tokenize/
+    stem (тот же движок, что и /products/match, /feo-planned-items/match —
+    ПРАВИЛО №6). Считается, только если передан feo_category_id — это ТОЛЬКО
+    сигнал для фронта (bool), сам список кандидатов формирует не этот
+    эндпоинт (он принимает уже выбранный product_id)."""
     # Колонки price_updated_at/price_source/price_source_ref появляются вместе с
     # отдельной работой по свежести цен и на момент этого кода могут ещё не
     # существовать ни в модели, ни в БД (прод отдавал 500: «type object 'Product'
@@ -67,7 +84,7 @@ async def get_product_hint(
     # появятся сами, как только колонки приедут — без правок здесь.
     _optional = [c for c in ("price_updated_at", "price_source", "price_source_ref")
                  if hasattr(Product, c)]
-    _cols = [Product.price, Product.contract_price, Product.unit] + [getattr(Product, c) for c in _optional]
+    _cols = [Product.price, Product.contract_price, Product.unit, Product.category] + [getattr(Product, c) for c in _optional]
     product = (await db.execute(select(*_cols).where(Product.id == product_id))).first()
 
     # Приоритет (владелец, 2026-09-01): собственная Product.unit, если заполнена;
@@ -88,6 +105,30 @@ async def get_product_hint(
     if product is None:
         return {"unit": unit_val, "price": None, "price_updated_at": None, "price_source": None, "price_source_ref": None}
 
+    category_match: Optional[bool] = None
+    if feo_category_id is not None:
+        feo_name = (await db.execute(
+            select(FeoCategory.name).where(FeoCategory.id == feo_category_id)
+        )).scalar_one_or_none()
+        if feo_name:
+            feo_stems = {stem(t) for t in tokenize(feo_name)}
+            category_names: list[str] = []
+            if product.category:
+                category_names.append(product.category)
+            purchase_cat_names = (await db.execute(
+                select(PurchaseCategory.name)
+                .join(product_purchase_categories,
+                      product_purchase_categories.c.purchase_category_id == PurchaseCategory.id)
+                .where(product_purchase_categories.c.product_id == product_id)
+            )).scalars().all()
+            category_names.extend(purchase_cat_names)
+            category_match = any(
+                feo_stems & {stem(t) for t in tokenize(name)}
+                for name in category_names if name
+            )
+        else:
+            category_match = False
+
     best_price = product.contract_price if product.contract_price is not None else product.price
     _updated = getattr(product, "price_updated_at", None)
     return {
@@ -96,6 +137,7 @@ async def get_product_hint(
         "price_updated_at": _updated.isoformat() if _updated else None,
         "price_source": getattr(product, "price_source", None),
         "price_source_ref": getattr(product, "price_source_ref", None),
+        "category_match": category_match,
     }
 
 

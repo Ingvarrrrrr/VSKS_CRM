@@ -28,6 +28,9 @@ export function useProductsForm(options: {
     description: '', description_44fz: '', photo_url: '', photo_link: '', clarification_link: '',
     is_active: true, is_reusable: true, feo_category_id: null as number | null,
     priceLinks: [] as PriceLink[],
+    // Категории закупки (справочник, решение владельца 2026-09-16, п.1) —
+    // отдельно от свободнотекстового category выше.
+    purchase_category_ids: [] as number[],
     country_origin: 'РФ' as string,
     has_photo: false as boolean,
     price_ttl_days: null as number | null,
@@ -105,6 +108,7 @@ export function useProductsForm(options: {
       is_active: p.is_active, is_reusable: p.is_reusable ?? true,
       feo_category_id: p.feo_category_id ?? null,
       priceLinks: (p.price_links || []).map(l => ({ url: l.url, price: l.price ?? null })),
+      purchase_category_ids: p.purchase_category_ids ?? (p.purchase_categories || []).map(c => c.id),
       country_origin: p.country_origin || 'РФ',
       has_photo: !!p.has_photo,
       price_ttl_days: p.price_ttl_days ?? null,

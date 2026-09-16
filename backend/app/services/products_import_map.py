@@ -80,6 +80,12 @@ COLUMN_MAP = {
     "категория фэо": "feo_category_name",
     "фэо": "feo_category_name",
     "направление фэо": "feo_category_name",
+    # Дата цены (владелец, 2026-09-16): если заполнена — цена в истории
+    # пишется этой датой, иначе датой загрузки файла (см.
+    # services/products_import_apply.py::apply_products_import).
+    "дата цены": "price_date",
+    "цена на дату": "price_date",
+    "дата обновления цены": "price_date",
 }
 
 _LINK_URL_RE = _re.compile(r"ссылка (\d+)$")

@@ -92,6 +92,24 @@
           </v-tooltip>
         </template>
 
+        <!-- Средняя цена за 60 дней (решение владельца 2026-09-16, п.3) —
+             читаем avg_price/avg_price_basis/avg_price_stale из Out, второго
+             запроса на строку не делаем (Правило №6, тот же принцип, что и у
+             price_freshness выше). -->
+        <template #item.avg_price="{ item }">
+          <template v-if="item.avg_price != null">
+            <v-tooltip :text="'на основании ' + avgPriceBasisText(item.avg_price_basis || 0) + ' за 60 дней'" location="top">
+              <template #activator="{ props: tip }">
+                <div v-bind="tip" class="font-weight-medium" :class="item.avg_price_stale ? PRICE_STALE_CLASS : ''">
+                  {{ Number(item.avg_price).toLocaleString('ru-RU') }} ₽
+                  <v-icon v-if="item.avg_price_stale" icon="mdi-alert-outline" size="12" class="ml-1" />
+                </div>
+              </template>
+            </v-tooltip>
+          </template>
+          <span v-else class="text-medium-emphasis">—</span>
+        </template>
+
         <!-- Contract Price -->
         <template #item.contract_price="{ item }">
           <template v-if="item.contract_price">
@@ -239,7 +257,7 @@ import {
   freshnessTooltip,
 } from '@/composables/usePriceFreshness'
 import { onMounted, nextTick } from 'vue'
-import { typeColor, isDomesticCountry } from '@/composables/products/productsTypes'
+import { typeColor, isDomesticCountry, avgPriceBasisText } from '@/composables/products/productsTypes'
 import type { Product } from '@/composables/products/productsTypes'
 import { useProductsScroll } from '@/composables/products/useProductsScroll'
 import ProductsBulkActionBar from './ProductsBulkActionBar.vue'

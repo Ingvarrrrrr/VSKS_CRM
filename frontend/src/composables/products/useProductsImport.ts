@@ -30,6 +30,9 @@ export const PRODUCTS_IMPORT_TARGET_FIELDS: ProductsImportTargetField[] = [
   { key: 'product_type', label: 'Вид' },
   { key: 'unit', label: 'Ед. изм.' },
   { key: 'price', label: 'Цена' },
+  // Дата цены (решение владельца 2026-09-16, п.4) — записывается в историю цен
+  // товара вместе с импортированной ценой; пусто — берётся дата загрузки файла.
+  { key: 'price_date', label: 'Дата цены', hint: 'Пусто — датой загрузки файла' },
   { key: 'quantity', label: 'Количество', hint: 'Только если импорт сразу добавляет позиции в закупку' },
   { key: 'photo_link', label: 'Фото (URL)' },
   { key: 'is_reusable', label: 'Многоразовое' },

@@ -63,6 +63,17 @@
             <div v-if="p.price" class="font-weight-medium text-blue-darken-2 text-body-2">
               {{ Number(p.price).toLocaleString('ru-RU') }} ₽
             </div>
+            <!-- Средняя цена за 60 дней (решение владельца 2026-09-16, п.3) —
+                 то же avg_price/avg_price_basis/avg_price_stale, что и колонка
+                 «Средняя» в ProductsTable.vue (Правило №6, один источник). -->
+            <v-tooltip v-if="p.avg_price != null" :text="'на основании ' + avgPriceBasisText(p.avg_price_basis || 0) + ' за 60 дней'" location="top">
+              <template #activator="{ props: tip }">
+                <div v-bind="tip" class="text-caption" :class="p.avg_price_stale ? 'text-warning' : 'text-medium-emphasis'">
+                  Средняя: {{ Number(p.avg_price).toLocaleString('ru-RU') }} ₽
+                  <v-icon v-if="p.avg_price_stale" icon="mdi-alert-outline" size="12" class="ml-1" />
+                </div>
+              </template>
+            </v-tooltip>
             <div v-if="p.description" class="text-caption text-medium-emphasis mt-1" style="line-height:1.3">
               {{ p.description.slice(0, 80) }}{{ p.description.length > 80 ? '…' : '' }}
             </div>
@@ -97,7 +108,7 @@
 </template>
 
 <script setup lang="ts">
-import { typeColor } from '@/composables/products/productsTypes'
+import { typeColor, avgPriceBasisText } from '@/composables/products/productsTypes'
 import type { Product } from '@/composables/products/productsTypes'
 import ProductsBulkActionBar from './ProductsBulkActionBar.vue'
 

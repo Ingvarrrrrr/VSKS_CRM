@@ -44,34 +44,39 @@ export default defineConfig({
         ],
       },
       workbox: {
-        // Phase 26-FFF: убрали 'html' из globPatterns — index.html больше не precached.
-        // Раньше старый index.html отдавался из SW-кэша → ссылки на старые JS/CSS →
-        // пользователь не получал свежие коммиты без Ctrl+F5. Теперь NetworkFirst через
-        // runtimeCaching ниже: сначала пробуем сеть (timeout 3s), fallback на кэш только
-        // если оффлайн. Assets (JS/CSS) precache'ятся как обычно — у них immutable hash.
+        // index.html НЕ precache'ится (не в globPatterns) — раньше старый index.html
+        // отдавался из SW-кэша → ссылки на старые JS/CSS → пользователь не получал
+        // свежие коммиты без Ctrl+F5. Assets (JS/CSS) precache'ятся как обычно —
+        // у них immutable hash, cleanupOutdatedCaches чистит старые версии сам.
         globPatterns: ['**/*.{js,css,ico,png,svg,woff,woff2,ttf}'],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MiB
         importScripts: ['/custom-sw.js'],
         skipWaiting: true,
         clientsClaim: true,
         cleanupOutdatedCaches: true,
-        navigateFallbackDenylist: [/^\/api\//, /^\/deploy\//],
+        // 2026-09-16, разбор бага «после деплоя пусто, только логотип»: по умолчанию
+        // vite-plugin-pwa САМ добавляет navigateFallback:'index.html' (см.
+        // node_modules/vite-plugin-pwa defaultWorkbox), если явно не выключить. Он
+        // регистрирует свой NavigationRoute ПЕРЕД любым нашим runtimeCaching-правилом
+        // для navigate — то есть предыдущая попытка (Phase 26-FFF, NetworkFirst
+        // 'html-cache' ниже в истории файла) НИКОГДА реально не выполнялась, весь
+        // navigate трафик уходил в скрытый дефолтный роут. А тот роут в паре с
+        // createHandlerBoundToURL('index.html') требует index.html В precache —
+        // которого там нет (см. комментарий выше) — то есть весь навигационный
+        // роутинг SW был в непредсказуемом, не задокументированном состоянии.
+        // Явно выключаем дефолт и берём navigate ПОЛНОСТЬЮ под свой контроль —
+        // см. custom-sw.js (fetch-хендлер для request.mode==='navigate').
+        // Альтернатива «NetworkFirst с версионным маркером» отклонена: потребовала
+        // бы встраивать метку сборки в index.html и синхронизировать её с SW на
+        // каждый деплой — лишняя движущаяся часть ради выигрыша, которого NetworkOnly
+        // даёт бесплатно (протухший HTML физически не может появиться, если он
+        // никогда не сохраняется в CacheStorage).
+        navigateFallback: undefined,
         runtimeCaching: [
           {
             // PDF/DOCX/XLSX export — крупный traffic, не кэшируем.
             urlPattern: /^\/api\/.+\/(documents|export)\//,
             handler: 'NetworkOnly',
-          },
-          {
-            // Phase 26-FFF: index.html / любой navigate → NetworkFirst. Свежий HTML
-            // → свежие asset-ссылки → новый bundle подхватывается без жёсткой перезагрузки.
-            urlPattern: ({ request }) => request.mode === 'navigate',
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'html-cache',
-              networkTimeoutSeconds: 3,
-              expiration: { maxEntries: 5, maxAgeSeconds: 60 * 60 * 24 },
-            },
           },
           {
             // CRM-данные и права ВСЕГДА живые: никакого SW-кэша на /api/.
@@ -81,6 +86,12 @@ export default defineConfig({
             urlPattern: /^\/api\//,
             handler: 'NetworkOnly',
           },
+          // navigate (request.mode==='navigate') НЕ описан здесь намеренно: generateSW
+          // умеет отдавать только строковые стратегии (NetworkFirst/NetworkOnly/...),
+          // а нам нужен NetworkOnly + собственный офлайн-фолбэк без обращения к
+          // CacheStorage — это гибче сделать напрямую в custom-sw.js одним
+          // fetch-листенером, зарегистрированным ДО генерируемого workbox-роутинга
+          // (importScripts исполняется первым). См. custom-sw.js.
         ],
       },
     }),

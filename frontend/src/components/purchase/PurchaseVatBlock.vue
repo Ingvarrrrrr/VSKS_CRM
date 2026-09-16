@@ -1,0 +1,130 @@
+<template>
+  <!-- Единый блок НДС (владелец, закупка РЕЕ-2026-00918, 2026-09-16): «НДС должно
+       быть в ОДНОМ месте, в панели "Позиции закупки", переключатели там должны
+       что-то давать». Раньше режим (одинаковый/для каждой позиции) переключался
+       здесь, а сама ставка/статья НК РФ вводились совсем в другом месте —
+       секция «Параметры договора» (PurchaseContractParamsSection.vue), которую
+       владелец не нашёл. Теперь оба переключателя и сама ставка — один блок,
+       единственный источник — props.vatApplicable/vatRate/vatExemptionArticle/
+       vatMode (мутируются ТОЛЬКО через emit наверх, копий состояния нет,
+       ПРАВИЛО №6). Якорь id="pub-target-vat" — цель стрелки-гида (guideArrowTo). -->
+  <div id="pub-target-vat" style="position:relative">
+    <div v-if="pointerTarget === 'vat'" class="pub-pointer"><span class="mdi mdi-arrow-down-bold" /></div>
+    <div :class="pointerTarget === 'vat' ? 'pub-glow' : ''" class="pa-1">
+      <div class="d-flex ga-2 mb-1 align-center flex-wrap">
+        <span class="text-caption text-medium-emphasis">НДС:</span>
+        <v-btn-toggle
+          :model-value="vatMode || 'uniform'"
+          density="compact" rounded="lg" color="primary" border mandatory
+          :class="{ 'mobile-toggle-wrap': mobile }"
+          @update:model-value="(v: string) => emit('update:vatMode', v)"
+        >
+          <v-btn value="uniform" size="x-small">Одинаковый на всю закупку</v-btn>
+          <v-btn value="per_item" size="x-small">Для каждой позиции</v-btn>
+        </v-btn-toggle>
+
+        <template v-if="(vatMode || 'uniform') === 'uniform'">
+          <v-select
+            :model-value="selectedRate"
+            :items="rateOptions"
+            density="compact" variant="outlined" hide-details
+            style="max-width:190px;min-width:160px"
+            label="Ставка НДС"
+            @update:model-value="onRateSelect"
+          />
+          <v-text-field
+            v-if="!vatApplicable"
+            :model-value="vatExemptionArticle"
+            :label="vatExemptionAutoBasis ? 'Статья НК РФ (основание определено автоматически)' : 'Статья НК РФ *'"
+            variant="outlined" density="compact"
+            :placeholder="vatExemptionAutoBasis ? '' : 'напр. п.2 ст.346.11 НК РФ (УСН)'"
+            :rules="vatExemptionAutoBasis ? [] : [(v: string) => !!(v && v.trim()) || 'Без основания документы с НДС не сформируются']"
+            :hint="vatExemptionAutoBasis
+              ? `Основание найдено автоматически: ${vatExemptionAutoBasis}. Можно ввести своё — оно заменит автоматическое.`
+              : 'Обязательно для печати документов: без статьи НК РФ система откажет в формировании договора/приказа/листа согласования. Не требуется для самозанятых исполнителей и договоров ГПХ с физлицом — там основание определяется само.'"
+            persistent-hint
+            style="min-width:280px;flex:1 1 320px"
+            @update:model-value="(v: string) => emit('update:vatExemptionArticle', v)"
+          />
+        </template>
+        <span v-else class="text-caption text-medium-emphasis">
+          Ставка выбирается в строке каждой позиции ниже
+        </span>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+// Единственный источник значений — form.vat_applicable/vat_rate/vat_exemption_article/
+// vat_mode родителя (CreateOrderView.vue), сюда доходят как typed props/emits через
+// PurchaseItemsEditor.vue (тот же паттерн, что уже был у vatMode/update:vatMode) —
+// НЕ через целиком проброшенный `form` (как у PurchaseContractParamsSection.vue),
+// чтобы не завести два способа достучаться до одних и тех же полей.
+import { computed } from 'vue'
+
+const props = defineProps<{
+  mobile: boolean
+  vatMode: 'uniform' | 'per_item'
+  vatApplicable: boolean
+  vatRate: number | null
+  vatExemptionArticle: string | null
+  vatExemptionAutoBasis: string | null
+  pointerTarget?: string | null
+}>()
+
+const emit = defineEmits<{
+  'update:vatMode': [mode: string]
+  'update:vatApplicable': [value: boolean]
+  'update:vatRate': [value: number | null]
+  'update:vatExemptionArticle': [value: string | null]
+}>()
+
+// Сентинел 'exempt' нужен, т.к. 0% — валидная облагаемая ставка и не может
+// делить одно значение null/undefined с «не облагается» (vat_applicable=false).
+const EXEMPT = 'exempt'
+
+const rateOptions = [
+  { title: 'Не облагается', value: EXEMPT },
+  { title: '0%', value: 0 },
+  { title: '5%', value: 5 },
+  { title: '7%', value: 7 },
+  { title: '10%', value: 10 },
+  { title: '20%', value: 20 },
+  { title: '22%', value: 22 },
+]
+
+const selectedRate = computed<string | number>(() => (
+  props.vatApplicable ? (props.vatRate ?? 22) : EXEMPT
+))
+
+function onRateSelect(v: string | number) {
+  if (v === EXEMPT) {
+    emit('update:vatApplicable', false)
+    return
+  }
+  emit('update:vatApplicable', true)
+  emit('update:vatRate', Number(v))
+}
+</script>
+
+<style scoped>
+/* Тот же мобильный фикс, что и у group-тумблеров в PurchaseItemsEditor.vue
+   (см. комментарий там) — растягивает v-btn-toggle на всю ширину на мобильном,
+   чтобы длинный текст «ОДИНАКОВЫЙ НА ВСЮ ЗАКУПКУ» не обрезался за краем диалога. */
+.mobile-toggle-wrap {
+  width: 100%;
+}
+.mobile-toggle-wrap :deep(.v-btn) {
+  flex: 1 1 0;
+  height: auto !important;
+  min-height: 32px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.mobile-toggle-wrap :deep(.v-btn__content) {
+  white-space: normal;
+  text-align: center;
+  line-height: 1.2;
+}
+</style>

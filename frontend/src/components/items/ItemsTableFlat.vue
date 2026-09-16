@@ -199,7 +199,18 @@
               variant="outlined" hide-details class="my-1" placeholder="РФ" :disabled="readonly" />
           </td>
           <td v-if="vatMode === 'per_item'">
-            <v-combobox v-model="item.vat_rate"
+            <!-- Дефект «[object Object]» (владелец, закупка РЕЕ-2026-00918, 2026-09-16):
+                 v-combobox с v-model="item.vat_rate" ПЛЮС явный @update:model-value на
+                 том же событии — v-model компилируется в свой собственный
+                 onUpdate:modelValue, оба слушателя сливаются в массив и оба получают
+                 «сырое» событие комбобокса; итог зависел от порядка/типа события и мог
+                 осесть в поле как объект варианта списка, а не его value. Список ставок
+                 теперь фиксированный (0/5/7/10/20/22/Не облагается, см. VAT_RATE_OPTIONS)
+                 — свободный ввод (весь смысл v-combobox) не нужен, v-select однозначно
+                 отдаёт item-value; ЕДИНСТВЕННЫЙ слушатель — обработчик снаружи
+                 (onVatRateChange), который сам пишет item.vat_rate и пересчитывает сумму. -->
+            <v-select
+              :model-value="item.vat_rate"
               :items="vatRateOptions"
               item-title="title" item-value="value"
               density="compact" variant="outlined" hide-details class="my-1"

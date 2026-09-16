@@ -12,6 +12,7 @@ which never had this bug (`art` is NOT put in compute_amounts_and_vat()'s
 returned dict for the same reason as before — the vat_app=True case never
 needs it; see that function's comment).
 """
+import re
 from datetime import date
 from decimal import Decimal
 
@@ -20,6 +21,30 @@ from app.services.documents.contexts import _resolve_doc_amount
 from app.services.documents.templates import _resolve_vat_exemption_basis
 from app.services.documents.formatting import _fmt_money_plain
 from app.services.purchase_amounts import contract_amount as _contract_amount_fn, purchase_amounts as _purchase_amounts_fn
+
+
+def _parse_vat_rate_percent(rate) -> float:
+    """Числовой процент из строки ставки НДС позиции ('5%', '20', None).
+
+    Тот же принцип, что и во фронтовом composables/useVatCalc.ts::
+    parseVatRatePercent — единственное на бэке место, где нужна эта же
+    математика (см. compute_amounts_and_vat ниже, ветка vat_mode='per_item').
+    """
+    if not rate:
+        return 0.0
+    m = re.match(r'^(\d+(?:\.\d+)?)\s*%?$', str(rate).strip())
+    return float(m.group(1)) if m else 0.0
+
+
+def _item_vat_amount(item) -> float:
+    """НДС, выделенный из ВКЛЮЧАЮЩЕЙ НДС суммы позиции (total_price) — та же
+    формула и то же допущение («total_price уже с НДС»), что и у
+    composables/useVatCalc.ts::vatAmount на фронте."""
+    total = float(getattr(item, "total_price", None) or 0)
+    pct = _parse_vat_rate_percent(getattr(item, "vat_rate", None))
+    if pct <= 0:
+        return 0.0
+    return round(total * pct / (100 + pct), 2)
 
 
 def contract_date_parts(p: Purchase):
@@ -98,44 +123,76 @@ def compute_amounts_and_vat(p: Purchase, doc_type: str) -> dict:
     # None+vat_applicable уже отбит выше в _require_vat_rate_for_doc —
     # сюда с таким сочетанием можно дойти только для остальных doc_type,
     # где vat_rate/vat_info_line в шаблоне не используются.
-    vat_app = bool(p.vat_applicable)
-    vat_rate_val = p.vat_rate
-    price_val = doc_amount_val
-    if vat_app and price_val and vat_rate_val is not None:
-        vat_amount_val = price_val * vat_rate_val / (100 + vat_rate_val)
-    else:
-        vat_amount_val = 0.0
-
-    # НДС info for approval sheet
-    # Phase 26-TT: для авансового отчёта не придумывать «НДС не облагается» если
-    # в чеке/items нет данных VAT — пишем только то, что реально есть.
     is_advance = (p.purchase_method == 'advance')
     items_with_vat = [it for it in (p.items or []) if getattr(it, 'vat_rate', None)]
+    vat_mode = (getattr(p, "vat_mode", None) or "uniform")
 
-    if vat_app:
-        if vat_rate_val is not None:
-            vat_info_line = f"В том числе НДС {vat_rate_val}%: {_fmt_money_plain(vat_amount_val)} руб."
+    if vat_mode == "per_item":
+        # Режим «НДС для каждой позиции» (владелец, закупка РЕЕ-2026-00918,
+        # 2026-09-16) — ставка не в шапке, а построчно в PurchaseItem.vat_rate.
+        # _require_vat_rate_for_doc уже отбил случай, когда у части названных
+        # позиций ставка пуста — сюда попадают только закупки, где у всех
+        # позиций (или их вовсе нет) ставка проставлена. Переиспользуем ту же
+        # формулу «НДС из суммы, ВКЛЮЧАЮЩЕЙ НДС», что и у построчных
+        # vat_amount/total_with_vat во фронтовом composables/useVatCalc.ts —
+        # см. _item_vat_amount выше, никакого нового расчёта не заводим.
+        priced_items = [it for it in items_with_vat]
+        if priced_items:
+            vat_app = True
+            vat_amount_val = round(sum(_item_vat_amount(it) for it in priced_items), 2)
+            unique_rates = sorted({str(it.vat_rate) for it in priced_items})
+            if len(unique_rates) == 1:
+                vat_rate_val = int(_parse_vat_rate_percent(unique_rates[0]))
+                vat_info_line = f"В том числе НДС {vat_rate_val}%: {_fmt_money_plain(vat_amount_val)} руб."
+            else:
+                # Разные ставки у разных позиций — единого числа для {{vat_rate}}
+                # нет, полная картина только в vat_info_line (как и в advance-ветке
+                # ниже для того же случая).
+                vat_rate_val = None
+                vat_info_line = f"НДС по позициям ({', '.join(unique_rates)}): {_fmt_money_plain(vat_amount_val)} руб."
         else:
-            # doc_type, печатающие ставку, уже отбиты раньше в
-            # _require_vat_rate_for_doc — сюда попадают только те, где
-            # vat_info_line в шаблоне не используется; не выдумываем число.
-            vat_info_line = "НДС (ставка не указана)"
-    elif is_advance:
-        # Авансовый: данные из чеков ФНС; если в чеке нет НДС — не пишем ничего лишнего.
-        if items_with_vat:
-            # Per-item VAT — показать сводку по факту
-            unique_rates = sorted({str(it.vat_rate) for it in items_with_vat if it.vat_rate})
-            vat_info_line = f"НДС по позициям: {', '.join(unique_rates)}"
-        else:
-            vat_info_line = ""  # пусто — не придумываем
+            # Позиций с проставленной ставкой нет (пустая закупка) — не
+            # придумываем ни ставку, ни основание освобождения.
+            vat_app = False
+            vat_rate_val = None
+            vat_amount_val = 0.0
+            vat_info_line = "НДС не облагается"
     else:
-        # Основание — введённое человеком ИЛИ определённое автоматически
-        # (самозанятый контрагент / договор ГПХ с физлицом), см.
-        # _resolve_vat_exemption_basis. Для doc_type из VAT_RATE_PRINTED_DOC_TYPES
-        # пустое основание уже отбито раньше в _require_vat_rate_for_doc —
-        # сюда с пустым основанием можно дойти только для остальных doc_type.
-        art = _resolve_vat_exemption_basis(p)
-        vat_info_line = f"НДС не облагается" + (f" ({art})" if art else "")
+        vat_app = bool(p.vat_applicable)
+        vat_rate_val = p.vat_rate
+        price_val = doc_amount_val
+        if vat_app and price_val and vat_rate_val is not None:
+            vat_amount_val = price_val * vat_rate_val / (100 + vat_rate_val)
+        else:
+            vat_amount_val = 0.0
+
+        # НДС info for approval sheet
+        # Phase 26-TT: для авансового отчёта не придумывать «НДС не облагается» если
+        # в чеке/items нет данных VAT — пишем только то, что реально есть.
+        if vat_app:
+            if vat_rate_val is not None:
+                vat_info_line = f"В том числе НДС {vat_rate_val}%: {_fmt_money_plain(vat_amount_val)} руб."
+            else:
+                # doc_type, печатающие ставку, уже отбиты раньше в
+                # _require_vat_rate_for_doc — сюда попадают только те, где
+                # vat_info_line в шаблоне не используется; не выдумываем число.
+                vat_info_line = "НДС (ставка не указана)"
+        elif is_advance:
+            # Авансовый: данные из чеков ФНС; если в чеке нет НДС — не пишем ничего лишнего.
+            if items_with_vat:
+                # Per-item VAT — показать сводку по факту
+                unique_rates = sorted({str(it.vat_rate) for it in items_with_vat if it.vat_rate})
+                vat_info_line = f"НДС по позициям: {', '.join(unique_rates)}"
+            else:
+                vat_info_line = ""  # пусто — не придумываем
+        else:
+            # Основание — введённое человеком ИЛИ определённое автоматически
+            # (самозанятый контрагент / договор ГПХ с физлицом), см.
+            # _resolve_vat_exemption_basis. Для doc_type из VAT_RATE_PRINTED_DOC_TYPES
+            # пустое основание уже отбито раньше в _require_vat_rate_for_doc —
+            # сюда с пустым основанием можно дойти только для остальных doc_type.
+            art = _resolve_vat_exemption_basis(p)
+            vat_info_line = f"НДС не облагается" + (f" ({art})" if art else "")
 
     return {
         "items_sum_val": items_sum_val,

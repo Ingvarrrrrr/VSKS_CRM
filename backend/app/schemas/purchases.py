@@ -66,6 +66,10 @@ class PurchaseItemOut(PurchaseItemCreate):
     # у позиции вовсе нет категории ФЭО (план посчитать не от чего).
     plan_residual: Optional[Decimal] = None
     plan_planned_amount: Optional[Decimal] = None
+    # Черновая раскладка канбана «Разбить на несколько» (см. app/models/purchase_item.py) —
+    # прочитана здесь, чтобы PurchaseSplitKanban.vue мог восстановить колонки после
+    # переоткрытия диалога/перезагрузки страницы, не только на время сессии.
+    split_column_key: Optional[str] = None
     model_config = {"from_attributes": True}
 
 class PurchaseFileOut(BaseModel):

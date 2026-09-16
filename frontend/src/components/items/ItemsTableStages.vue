@@ -247,9 +247,11 @@
                       <PriceFreshnessStamp :price-meta="item._price_meta" />
                     </td>
                     </template>
-                    <!-- Fix 4/5: НДС % column -->
+                    <!-- Fix 4/5: НДС % column. v-select, не v-combobox: см. комментарий
+                         про «[object Object]» в ItemsTableFlat.vue (тот же дефект). -->
                     <td v-if="showVatColumnsInExpandRow">
-                      <v-combobox v-model="item.vat_rate"
+                      <v-select
+                        :model-value="item.vat_rate"
                         :items="vatRateOptions"
                         item-title="title" item-value="value"
                         density="compact" variant="outlined" hide-details class="my-1"
@@ -421,9 +423,10 @@
                         @update:model-value="(v: string) => emit('update-contract-field', idx, 'unit_price', Number(v))"
                       />
                     </td>
-                    <!-- Fix 4/5: НДС % column (Договор) -->
+                    <!-- Fix 4/5: НДС % column (Договор). v-select для единообразия
+                         со строкой ТЗ выше (тот же фиксированный список ставок). -->
                     <td v-if="showVatColumnsInExpandRow">
-                      <v-combobox
+                      <v-select
                         :model-value="getContractItemFor(idx)?.vat_rate ?? items[idx]?.vat_rate ?? null"
                         :items="vatRateOptions"
                         item-title="title" item-value="value"

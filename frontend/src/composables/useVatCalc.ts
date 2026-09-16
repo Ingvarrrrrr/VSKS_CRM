@@ -9,18 +9,26 @@ export interface VatLike {
   vat_rate?: string | null
 }
 
+// Владелец (закупка РЕЕ-2026-00918, 2026-09-16): «список ставок неполный —
+// нужны 5% и 7%» (УСН с 2025 г.) — единственный источник построчного списка
+// ставок НДС, используется всеми 4 таблицами позиций (ItemsTableFlat/
+// ItemsTableStages/ItemsCardsView/ItemsTableWish) через vatRateOptions prop —
+// не плодить копии (ПРАВИЛО №6).
 export const VAT_RATE_OPTIONS = [
+  { title: 'Не облагается', value: null as string | null },
+  { title: '0%', value: '0%' },
   { title: '5%', value: '5%' },
+  { title: '7%', value: '7%' },
   { title: '10%', value: '10%' },
+  { title: '20%', value: '20%' },
   { title: '22%', value: '22%' },
-  { title: 'Без НДС', value: null as string | null },
 ]
 
 /** Parse a rate like "22%" / "22" / "Без НДС" / null → numeric percent (0 when none). */
 export function parseVatRatePercent(rate: string | null | undefined): number {
   if (!rate || rate === 'Без НДС') return 0
   const m = String(rate).match(/^(\d+(?:\.\d+)?)\s*%?$/)
-  return m ? parseFloat(m[1]) : 0
+  return m?.[1] ? parseFloat(m[1]) : 0
 }
 
 /** VAT portion extracted from a gross (VAT-inclusive) total. */

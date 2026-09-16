@@ -127,26 +127,28 @@
       </v-btn>
     </div>
 
-    <!-- Phase 27.1.2: НДС режим toggle (всегда виден над таблицей, не зависит от секции «Параметры договора») -->
-    <!-- Мобильный фикс (владелец, 2026-09-04, «прокручиваемых вбок таблиц быть не должно»):
-         border-variant v-btn-toggle держит intrinsic ширину кнопок и на узком экране обрезался
-         за краем диалога («ОДИНАКОВЫЙ НА ВСЮ ЗАКУПКУ | ДЛЯ КАЖДОЙ ПОЗИЦ…» — правый край текста
-         был не виден). .mobile-toggle-wrap (см. <style scoped> внизу файла) тянет тумблер на
-         всю ширину и делит кнопки поровну с переносом текста внутри кнопки — вместо обрезки
-         вбок текст уходит на вторую строку. Тот же фикс — у группировки ниже. Десктоп не тронут,
-         класс навешивается только когда mobile. -->
-    <div v-if="itemShape === 'purchase' && !props.readonly && !isFoodForm" class="d-flex ga-2 mb-2 align-center flex-wrap">
-      <span class="text-caption text-medium-emphasis">НДС:</span>
-      <v-btn-toggle
-        :model-value="props.vatMode || 'uniform'"
-        density="compact" rounded="lg" color="primary" border mandatory
-        :class="{ 'mobile-toggle-wrap': mobile }"
-        @update:model-value="(v: string) => emit('update:vatMode', v)"
-      >
-        <v-btn value="uniform" size="x-small">Одинаковый на всю закупку</v-btn>
-        <v-btn value="per_item" size="x-small">Для каждой позиции</v-btn>
-      </v-btn-toggle>
-    </div>
+    <!-- Единый блок НДС (владелец, закупка РЕЕ-2026-00918, 2026-09-16): «НДС должно
+         быть в ОДНОМ месте, в панели "Позиции закупки"» — раньше здесь был только
+         переключатель режима, а сама ставка/статья НК РФ вводились в отдельной
+         секции «Параметры договора» (PurchaseContractParamsSection.vue), которую
+         пришлось искать. Извлечено в components/purchase/PurchaseVatBlock.vue —
+         единственный источник значений: props.vatApplicable/vatRate/
+         vatExemptionArticle/vatMode, мутируются только через emit наверх. -->
+    <PurchaseVatBlock
+      v-if="itemShape === 'purchase' && !props.readonly && !isFoodForm"
+      :mobile="mobile"
+      :vat-mode="props.vatMode || 'uniform'"
+      :vat-applicable="props.vatApplicable"
+      :vat-rate="props.vatRate"
+      :vat-exemption-article="props.vatExemptionArticle"
+      :vat-exemption-auto-basis="props.vatExemptionAutoBasis"
+      :pointer-target="props.pointerTarget"
+      class="mb-2"
+      @update:vat-mode="(v: string) => emit('update:vatMode', v)"
+      @update:vat-applicable="(v: boolean) => emit('update:vatApplicable', v)"
+      @update:vat-rate="(v: number | null) => emit('update:vatRate', v)"
+      @update:vat-exemption-article="(v: string | null) => emit('update:vatExemptionArticle', v)"
+    />
 
     <!-- Группировка и фильтр позиций по категориям/видам товаров из каталога -->
     <div v-if="itemShape === 'purchase' && !stagesEnabled && localItems.length > 1 && !isFoodForm"
@@ -757,6 +759,7 @@ import ItemsTableStages from '@/components/items/ItemsTableStages.vue'
 // панель на всю ширину) вместо делегирования в одну из 4 таблиц выше — см.
 // `v-if="isFoodForm"` в шаблоне.
 import ItemFormFields from '@/components/items/ItemFormFields.vue'
+import PurchaseVatBlock from '@/components/purchase/PurchaseVatBlock.vue'
 import BulkFeoAssignDialog from '@/components/items/BulkFeoAssignDialog.vue'
 import CreatePlannedBulkDialog from '@/components/items/CreatePlannedBulkDialog.vue'
 import SplitItemDialog from '@/components/items/SplitItemDialog.vue'
@@ -927,7 +930,24 @@ const props = withDefaults(defineProps<{
   // поля строки и add/remove-позиция по-прежнему не трогает.
   feoAttrsEditable?: boolean
   vatMode?: 'uniform' | 'per_item'          // Phase 26-U-3: НДС режим
-  uniformVatRate?: string | null             // Phase 26-U-3: ставка для uniform режима
+  // НДС «одинаковый на всю закупку» (vatMode='uniform') — единственный источник:
+  // form.vat_applicable/vat_rate/vat_exemption_article родителя (CreateOrderView.vue),
+  // сюда идут как typed props (тот же паттерн, что уже был у vatMode/update:vatMode) —
+  // читаются/пишутся ТОЛЬКО components/purchase/PurchaseVatBlock.vue, смонтированным
+  // в шаблоне выше (владелец, закупка РЕЕ-2026-00918, 2026-09-16: «НДС должно быть
+  // в ОДНОМ месте»; раньше эти поля жили в отдельной секции «Параметры договора»).
+  vatApplicable?: boolean
+  vatRate?: number | null
+  vatExemptionArticle?: string | null
+  // Автоподстановка основания «НДС не облагается» (самозанятый/ГПХ с физлицом) —
+  // вычисляется один раз в CreateOrderView.vue (см. vatExemptionAutoBasis computed
+  // там), только для отображения подсказки в PurchaseVatBlock.
+  vatExemptionAutoBasis?: string | null
+  // Цель летящей стрелки-гида (composables/purchase/useGuideArrow.ts) — 'vat', когда
+  // стрелка ведёт к этому блоку (missing_fields vat_rate/vat_exemption_article/
+  // items.vat_rate, см. CreateOrderView.vue). Прокидывается в PurchaseVatBlock для
+  // pub-pointer/pub-glow подсветки, сам composable живёт в родителе.
+  pointerTarget?: string | null
   formMode?: string                          // Phase 26-X: 'advance_report' → показывать колонку Контрагент
   contractors?: Contractor[]                 // Phase 26-JJ: shared contractors state from parent
   // F-PIF1/F-PIF2: per-item FEO selector props
@@ -998,7 +1018,11 @@ const props = withDefaults(defineProps<{
   purchaseId: null,
   wishId: null,
   vatMode: 'uniform',
-  uniformVatRate: null,
+  vatApplicable: false,
+  vatRate: null,
+  vatExemptionArticle: null,
+  vatExemptionAutoBasis: null,
+  pointerTarget: null,
   formMode: 'default',
   feoPerItem: false,
   level2Id: null,
@@ -1118,6 +1142,9 @@ const emit = defineEmits<{
   'update:modelValue': [items: EditorItem[]]
   'update:contractItems': [items: ContractItem[]]  // Phase 27.1 D-04
   'update:vatMode': [mode: string]                 // Phase 27.1.2: inline toggle
+  'update:vatApplicable': [value: boolean]         // PurchaseVatBlock — единый блок НДС
+  'update:vatRate': [value: number | null]
+  'update:vatExemptionArticle': [value: string | null]
   'item-added': [item: EditorItem]
   'item-removed': [idx: number]
   'product-created': [product: Product]

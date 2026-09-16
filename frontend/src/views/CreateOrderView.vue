@@ -750,7 +750,11 @@
             :supports-full-product-dialog="true"
             :supports-photo-upload="true"
             :vat-mode="form.vat_mode"
-            :uniform-vat-rate="form.vat_applicable ? String(form.vat_rate ?? '') : null"
+            :vat-applicable="form.vat_applicable"
+            :vat-rate="form.vat_rate"
+            :vat-exemption-article="form.vat_exemption_article"
+            :vat-exemption-auto-basis="vatExemptionAutoBasis"
+            :pointer-target="pointerTarget"
             :form-mode="formMode"
             :contractors="contractors"
             :feo-per-item="form.feo_per_item"
@@ -765,6 +769,9 @@
             :feo-excess-amount="purchaseData?.feo_excess_amount ?? null"
             :feo-excess-category-id="purchaseData?.feo_excess_category_id ?? null"
             @update:vat-mode="(v: string) => { form.vat_mode = v; onVatModeChange(v) }"
+            @update:vat-applicable="(v: boolean) => { form.vat_applicable = v }"
+            @update:vat-rate="(v: number | null) => { form.vat_rate = v }"
+            @update:vat-exemption-article="(v: string | null) => { form.vat_exemption_article = v ?? '' }"
             @items-changed="syncContractPriceIfSingle"
             @reload-requested="loadPurchase"
             @product-created="onProductCreatedFromEditor"
@@ -1223,8 +1230,6 @@
         :form="form"
         :contract-word-gen="contractWordGen"
         :form-mode="formMode"
-        :vat-exemption-auto-basis="vatExemptionAutoBasis"
-        :on-vat-mode-change="onVatModeChange"
         :customer-preview="customerPreview"
         :contract-form-options="contractFormOptions"
         :methodology-options="methodologyOptions"
@@ -2136,15 +2141,18 @@ function closeAdvanceInfoAlert() {
   localStorage.setItem(ADVANCE_ALERT_KEY, '1')
 }
 
-// U-3: НДС режим toggle
-function onVatModeChange(newMode: string) {
-  if (newMode === 'per_item') {
-    // При переключении на per_item — сбрасываем vat_rate у всех items на null (без НДС)
-    items.value = items.value.map((it: any) => ({ ...it, vat_rate: null }))
-  } else if (newMode === 'uniform') {
-    // При переключении на uniform — убираем per-item ставки (они игнорируются при сохранении)
-    items.value = items.value.map((it: any) => ({ ...it, vat_rate: null }))
-  }
+// U-3: НДС режим toggle.
+// Владелец (закупка РЕЕ-2026-00918, 2026-09-16), Правило E: раньше переключение
+// режима в ЛЮБУЮ сторону стирало ВСЕ item.vat_rate — случайный клик по тумблеру
+// (или переключение туда-обратно, пока сравнивают варианты) уничтожал уже
+// введённые построчные ставки НДС. vat_mode теперь только выбирает, ОТКУДА
+// документы берут НДС — из шапки или построчно (см.
+// backend/app/services/documents/templates.py::_require_vat_rate_for_doc) —
+// сами item.vat_rate ничем не трогаем: неактивный режим их просто игнорирует,
+// а при возврате они мгновенно снова доступны. Функция оставлена (не пустой
+// no-op вызывающей стороны) на случай будущей логики, специфичной для смены режима.
+function onVatModeChange(_newMode: string) {
+  // намеренно no-op — см. комментарий выше
 }
 
 // --- formMode: drives simplified views for service notes / advance reports ---
@@ -3112,6 +3120,19 @@ const GUIDE_TARGET_RESOLVED: Record<string, () => boolean> = {
   okpd2: () => !!fabrikantOkpd2.value,
   'auction-date': () => !!fabrikantAuctionDateStart.value,
   'auction-bet': () => numOrNull(fabrikantAuctionBetFrom.value) != null || numOrNull(fabrikantAuctionBetTo.value) != null,
+  // Владелец (закупка РЕЕ-2026-00918, 2026-09-16): стрелка к блоку НДС решена,
+  // когда режим «одинаковый» имеет заполненную ставку/статью, ИЛИ режим
+  // «для каждой позиции» — когда у всех названных позиций своя ставка
+  // проставлена (то же условие, что и в backend/app/services/documents/
+  // templates.py::_require_per_item_vat_rate_for_doc — ПРАВИЛО №6, тут просто
+  // клиентская зеркальная проверка для гашения указателя, не источник истины).
+  vat: () => {
+    if ((form.vat_mode || 'uniform') === 'per_item') {
+      const named = items.value.filter((it: any) => it.item_name?.trim())
+      return named.length > 0 && named.every((it: any) => !!it.vat_rate)
+    }
+    return form.vat_applicable ? form.vat_rate != null : !!form.vat_exemption_article?.trim()
+  },
 }
 const activeGuidePointerTarget = computed<string | null>(() => {
   if (okpd2Pointer.value) return 'okpd2'

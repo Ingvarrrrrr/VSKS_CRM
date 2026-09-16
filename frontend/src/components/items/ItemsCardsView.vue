@@ -265,9 +265,11 @@
               />
             </v-col>
 
-            <!-- НДС (per_item only) -->
+            <!-- НДС (per_item only) — v-select, не v-combobox: см. комментарий про
+                 «[object Object]» в ItemsTableFlat.vue (тот же дефект, тот же фикс). -->
             <v-col v-if="vatMode === 'per_item'" cols="6" sm="4">
-              <v-combobox v-model="item.vat_rate"
+              <v-select
+                :model-value="item.vat_rate"
                 :items="vatRateOptions"
                 item-title="title" item-value="value"
                 density="compact" variant="outlined" hide-details

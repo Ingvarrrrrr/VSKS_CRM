@@ -54,6 +54,12 @@ class PurchaseItem(Base):
     # purchase.contract_form (один источник, см. item_form_for_purchase), сама
     # позиция item_form не хранит, только эти атрибуты.
     extra_attrs = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    # Черновая раскладка канбана «Разбить на несколько» (2026-09-16, владелец:
+    # «перекидывал по категориям, вышел из окна — всё слетело»). null — колонка
+    # берётся из product.category (как раньше); непустая строка — ручной
+    # override, переживает закрытие/переоткрытие диалога и перезагрузку страницы.
+    # Тот же приём, что WishItem.target_column_key — см. app/models/wish_item.py.
+    split_column_key = Column(String(200), nullable=True)
 
     purchase = relationship("Purchase", back_populates="items")
     product = relationship("Product")

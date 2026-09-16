@@ -92,6 +92,7 @@ def _item_to_out(
         plan_residual=plan_residual,
         plan_planned_amount=plan_planned_amount,
         extra_attrs=getattr(item, 'extra_attrs', None) or {},
+        split_column_key=getattr(item, 'split_column_key', None),
     )
 
 

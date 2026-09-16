@@ -92,48 +92,18 @@
           />
         </v-col>
       </v-row>
+      <!-- Владелец (закупка РЕЕ-2026-00918, 2026-09-16): «НДС должно быть в ОДНОМ
+           месте, в панели "Позиции закупки"» — раньше режим/ставка/статья НК РФ
+           вводились здесь, отдельно от переключателя режима над таблицей позиций,
+           и терялись. Поля НДС отсюда убраны — единственное место теперь
+           components/purchase/PurchaseVatBlock.vue, смонтированный в
+           PurchaseItemsEditor.vue над таблицей позиций (id="pub-target-vat"). -->
       <v-row>
-        <v-col cols="12" md="3">
-          <v-checkbox
-            v-model="form.vat_applicable"
-            label="НДС применяется"
-            density="compact" hide-details
-          />
-        </v-col>
-        <v-col v-if="form.vat_applicable" cols="12" md="2">
-          <v-text-field
-            v-model.number="form.vat_rate"
-            label="Ставка НДС (%)" variant="outlined" density="compact" type="number"
-            suffix="%" placeholder="20"
-          />
-        </v-col>
-        <v-col v-if="!form.vat_applicable" cols="12" md="6">
-          <v-text-field
-            v-model="form.vat_exemption_article"
-            :label="vatExemptionAutoBasis ? 'Статья НК РФ (основание определено автоматически)' : 'Статья НК РФ *'"
-            variant="outlined" density="compact"
-            :placeholder="vatExemptionAutoBasis ? '' : 'напр. п.2 ст.346.11 НК РФ (УСН)'"
-            :rules="vatExemptionAutoBasis ? [] : [(v: string) => !!(v && v.trim()) || 'Без основания документы с НДС не сформируются']"
-            :hint="vatExemptionAutoBasis
-              ? `Основание найдено автоматически: ${vatExemptionAutoBasis}. Можно ввести своё — оно заменит автоматическое.`
-              : 'Обязательно для печати документов: без статьи НК РФ система откажет в формировании договора/приказа/листа согласования. Не требуется для самозанятых исполнителей и договоров ГПХ с физлицом — там основание определяется само.'"
-            persistent-hint
-          />
-        </v-col>
-        <!-- U-3: НДС режим toggle -->
-        <v-col cols="12" md="4" class="d-flex align-center">
-          <v-btn-toggle
-            v-model="form.vat_mode"
-            density="compact"
-            rounded="lg"
-            color="primary"
-            border
-            mandatory
-            @update:model-value="onVatModeChange"
-          >
-            <v-btn value="uniform" size="small">НДС одинаковый</v-btn>
-            <v-btn value="per_item" size="small">НДС для каждого товара</v-btn>
-          </v-btn-toggle>
+        <v-col cols="12">
+          <div class="text-caption text-medium-emphasis d-flex align-center ga-1">
+            <v-icon size="16">mdi-information-outline</v-icon>
+            НДС задаётся в панели «Позиции закупки» (режим, ставка, статья НК РФ)
+          </div>
         </v-col>
       </v-row>
 
@@ -382,8 +352,6 @@ const props = defineProps<{
   form: any
   contractWordGen: string
   formMode: string
-  vatExemptionAutoBasis: string | null
-  onVatModeChange: (mode: string) => void
   customerPreview: any
   contractFormOptions: Array<{ title: string; value: string }>
   methodologyOptions: Array<{ title: string; value: string }>

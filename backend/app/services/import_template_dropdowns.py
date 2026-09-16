@@ -63,8 +63,10 @@ _DD_VAT_APPLICABLE = [   # just display values, stored as bool
     ("Да",   None),
     ("Нет",  None),
 ]
-_DD_VAT_RATE = [         # stored as integer
+_DD_VAT_RATE = [         # stored as integer. 5/7% — УСН с 2025 г. (владелец, 2026-09-16)
     ("0",   None),
+    ("5",   None),
+    ("7",   None),
     ("10",  None),
     ("20",  None),
     ("22",  None),

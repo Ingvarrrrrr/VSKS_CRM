@@ -49,6 +49,16 @@
           v-if="info?.code === 'CONTRACT_ITEMS_REQUIRED'">
           Показать позиции
         </v-btn>
+        <!-- Владелец (закупка РЕЕ-2026-00918, 2026-09-16): стрелка после ошибки НДС
+             раньше никуда не вела (или уводила к общему заголовку «Позиции закупки») —
+             теперь ведёт прямо к единому блоку НДС (id="pub-target-vat" внутри
+             панели позиций, см. PurchaseVatBlock.vue). VAT_RATE_REQUIRED покрывает и
+             шапочный, и построчный (missing_fields=['items.vat_rate']) варианты. -->
+        <v-btn variant="tonal" color="primary" prepend-icon="mdi-percent-outline"
+          @click="open = false; $emit('reveal-field', 'vat')"
+          v-if="info?.code === 'VAT_RATE_REQUIRED' || info?.code === 'VAT_EXEMPTION_ARTICLE_REQUIRED'">
+          Показать блок НДС
+        </v-btn>
         <v-spacer />
         <v-btn @click="open = false">Закрыть</v-btn>
       </v-card-actions>

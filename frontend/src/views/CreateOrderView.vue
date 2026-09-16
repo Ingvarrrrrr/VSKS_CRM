@@ -98,7 +98,28 @@
       </div>
     </div>
 
-    <v-form ref="formRef" :class="{ 'compact-mobile': formMode === 'advance_report' }" @submit.prevent="save">
+    <!-- Владелец (2026-09-16, п.4): «даёт вносить изменения, но не сохраняет» —
+         единственное серверное условие, которое реально блокирует сохранение
+         правок закупки, — _guard_feo_category_change_after_approval в
+         routers/purchases.py (approval_status === 'approved' → 422
+         FEO_CATEGORY_LOCKED_AFTER_APPROVAL при смене категории ФЭО). Раньше
+         форма оставалась полностью editable, и человек узнавал об отказе
+         только постфактум. Механизма «снять согласование» в системе нет —
+         честно говорим об этом, не выдумываем. -->
+    <v-alert
+      v-if="isPurchaseLockedForEdit"
+      type="warning"
+      variant="tonal"
+      density="comfortable"
+      class="mb-4"
+      icon="mdi-lock-outline"
+    >
+      Закупка согласована — изменения не сохраняются. Поля показаны только для чтения.
+      Чтобы внести правки, согласование нужно снять или остановить закупку — обратитесь
+      к владельцу аккаунта организации.
+    </v-alert>
+
+    <v-form ref="formRef" :disabled="isPurchaseLockedForEdit" :class="{ 'compact-mobile': formMode === 'advance_report' }" @submit.prevent="save">
 
       <!-- Чеки вверху — только при создании авансового отчёта -->
       <PurchaseReceiptsBlock
@@ -116,6 +137,7 @@
         :on-recompute="recomputeFromReceipts"
         :on-json-receipt-upload="onJsonReceiptUpload"
         :on-delete-receipt="deleteReceipt"
+        :on-delete-receipt-file="deleteReceiptFile"
       />
 
       <!-- U-2: Подсказка про мульти-чеки (только для авансового, закрываемая) -->
@@ -406,11 +428,11 @@
                 :items="orgUsersList"
                 item-title="full_name"
                 item-value="id"
-                :label="formMode === 'service_note_delivery' ? 'Ответственный исполнитель' : 'Ответственный исполнитель *'"
+                :label="formMode === 'service_note_delivery' || formMode === 'advance_report' ? 'Ответственный исполнитель' : 'Ответственный исполнитель *'"
                 variant="outlined"
                 density="compact"
                 hide-no-data
-                :rules="formMode === 'service_note_delivery' ? [] : [v => !!v || 'Обязательное поле']"
+                :rules="formMode === 'service_note_delivery' || formMode === 'advance_report' ? [] : [v => !!v || 'Обязательное поле']"
                 :hint="formMode === 'service_note_delivery' ? 'На кого расписана СЗ (автоматически = адресат)' : 'Кто ведёт закупку в системе'"
                 persistent-hint
                 autocomplete="off"
@@ -525,9 +547,9 @@
                   v-model="form.event_id"
                   :items="filteredEvents"
                   item-title="name" item-value="id"
-                  label="Мероприятие *"
+                  :label="formMode === 'advance_report' ? 'Мероприятие' : 'Мероприятие *'"
                   variant="outlined" density="compact"
-                  :rules="[v => !!v || 'Обязательное поле']"
+                  :rules="formMode === 'advance_report' ? [] : [v => !!v || 'Обязательное поле']"
                   hint="К какому мероприятию относится закупка" persistent-hint
                   class="flex-grow-1"
                 />
@@ -705,6 +727,7 @@
         :on-manual-click="onManualBtnClick"
         :on-json-receipt-upload="onJsonReceiptUpload"
         :on-delete-receipt="deleteReceipt"
+        :on-delete-receipt-file="deleteReceiptFile"
       />
 
       <!-- 2. Позиции закупки -->
@@ -1195,6 +1218,7 @@
               :on-manual-click="openManualReceiptDialog"
               :on-json-receipt-upload="onJsonReceiptUpload"
               :on-delete-receipt="deleteReceipt"
+              :on-delete-receipt-file="deleteReceiptFile"
             />
           </template>
           <v-alert
@@ -1593,7 +1617,7 @@
 
       <!-- Кнопки -->
       <div class="d-flex gap-3 mt-4 flex-wrap align-center">
-        <v-btn ref="saveBtnRef" type="submit" color="primary" size="large" :loading="saving" prepend-icon="mdi-content-save">
+        <v-btn ref="saveBtnRef" type="submit" color="primary" size="large" :loading="saving" :disabled="isPurchaseLockedForEdit" prepend-icon="mdi-content-save">
           {{ isEdit ? 'Сохранить' : formMode === 'advance_report' ? 'Сформировать авансовый' : formMode === 'service_note_delivery' ? 'Создать служебную записку' : 'Создать закупку' }}
         </v-btn>
         <!-- Phase 26: индикатор автосохранения -->
@@ -3022,6 +3046,12 @@ const basketForNode = (nodeId: number, leafIds?: Set<number>): number => {
 const budgetOverrideDialog = ref(false)
 const isAdmin = computed(() => ADMIN_ROLES.includes(userRole as typeof ADMIN_ROLES[number]))
 
+// Владелец (2026-09-16, п.4): один источник условия блокировки правки —
+// то же самое поле (form.approval_status), которое сервер сравнивает в
+// _guard_feo_category_change_after_approval (routers/purchases.py). Банер +
+// :disabled на v-form (см. шаблон) + на кнопку «Сохранить» ниже.
+const isPurchaseLockedForEdit = computed(() => isEdit.value && form.approval_status === 'approved')
+
 // ── Approval (Согласование) — extracted to ApprovalPanel.vue ─────────────────
 const approvalPanelRef = ref<InstanceType<typeof ApprovalPanel> | null>(null)
 
@@ -4321,6 +4351,7 @@ const {
   qrScanShow, onScanQrClick, onJsonBtnClick, onManualBtnClick,
   recomputeLoading, recomputeFromReceipts,
   consumePostSaveAction, onQrDetected, onJsonReceiptUpload, deleteReceipt,
+  deleteReceiptFile,
 } = usePurchaseReceipts(
   purchaseId, formMode, isEdit, form, showSnack, guideArrowTo,
   () => save(), () => loadPurchase(), openManualReceiptDialog,
@@ -4450,9 +4481,54 @@ onMounted(async () => {
 })
 
 const save = async () => {
+  // Владелец (2026-09-16, п.4): «никаких немых полей, которые молча не
+  // сохраняются» — :disabled на v-form гасит стандартные Vuetify-инпуты, но
+  // не программные пути (Enter в незаблокированном стороннем контроле, вызов
+  // save() из composables/purchase/usePurchaseReceipts.ts при перетаскивании
+  // файла). Явный ранний выход с тем же объяснением, что и в банере.
+  if (isPurchaseLockedForEdit.value) {
+    showSnack('Закупка согласована — изменения не сохраняются. Обратитесь к владельцу аккаунта, чтобы снять согласование.', 'error')
+    return
+  }
   const { valid } = await formRef.value.validate()
   feoSaveAttempted.value = true
   const feoErr = feoValidationError.value
+
+  // Владелец (2026-09-16, п.3): «невозможно сохранить авансовый в качестве
+  // черновика, если чего-то не хватает» — авансовый отчёт (formMode ===
+  // 'advance_report') в CreateOrderView.vue ВСЕГДА является черновиком: нет
+  // отдельного действия «Сохранить набело», отдельное действие «Отправить на
+  // согласование» — кнопка в AdvanceReimbursementCard.vue (useAdvanceReimbursement.ts,
+  // canSubmit/submit) — она и остаётся местом полной проверки. Здесь для
+  // авансового полные блокирующие проверки заменены на предупреждение,
+  // сохранение продолжается как есть (название/позиции/чеки). НЕ ослабляем
+  // ничего для formMode !== 'advance_report' (обычные закупки/СЗ) — та ветка
+  // ниже не изменилась.
+  if (formMode.value === 'advance_report') {
+    dismissValidationArrows()
+    const draftWarnings: string[] = []
+    if (!valid || feoErr) draftWarnings.push(feoErr || 'заполнены не все обязательные поля')
+    if (form.item_type === 'mixed') {
+      const missingType = items.value.filter(i => i.item_name?.trim() && !i.item_type)
+      if (missingType.length) draftWarnings.push(`не указан тип у ${missingType.length} позиции(й)`)
+    }
+    // Привязка к каталогу для авансовых НЕобязательна: названия позиций в чеках
+    // каждый раз чуть отличаются, форсировать каталог нельзя (решение 2026-07-06) —
+    // но неподтверждённые позиции стоит перечислить перед отправкой на согласование.
+    const unconfirmed = items.value.filter(i => i.item_name?.trim() && i.match_confirmed === false)
+    if (unconfirmed.length) draftWarnings.push(`не подтверждено ${unconfirmed.length} позиция(й) из чека (товар/тип/категория)`)
+    if (budgetInfo.value?.exceeded) draftWarnings.push('превышен бюджет субсидии')
+    if (draftWarnings.length) {
+      showSnack(
+        `Черновик сохранён. Перед отправкой на согласование: ${draftWarnings.join('; ')}.`,
+        'warning',
+        { duration: 8000 },
+      )
+    }
+    await doSave(false)
+    return
+  }
+
   if (!valid || feoErr) {
     showSnack(feoErr || 'Необходимо заполнить выделенные поля', 'error')
     await nextTick()
@@ -4475,27 +4551,6 @@ const save = async () => {
       return
     }
   }
-  if (formMode.value === 'advance_report') {
-    // Привязка к каталогу для авансовых НЕобязательна: названия позиций в чеках
-    // каждый раз чуть отличаются, форсировать каталог нельзя (решение 2026-07-06).
-    const unconfirmed = items.value.filter(i => i.item_name?.trim() && i.match_confirmed === false)
-    if (unconfirmed.length) {
-      // Владелец (2026-09-04): именно эта проверка молчала «куда смотреть» — ведём
-      // к первой неподтверждённой позиции из чека.
-      const firstUid = unconfirmed[0]._uid
-      showSnack(
-        `Подтвердите ${unconfirmed.length} позицию(й) из чека: товар, тип и категория должны быть проверены вручную.`,
-        'error',
-        {
-          actionText: 'Показать позицию',
-          onAction: () => guideArrowTo(firstUid != null ? 'item:' + firstUid : 'items'),
-        },
-      )
-      await nextTick()
-      guideArrowTo(firstUid != null ? 'item:' + firstUid : 'items')
-      return
-    }
-  }
   if (budgetInfo.value?.exceeded) {
     if (!isAdmin.value) {
       showSnack('Превышение бюджета субсидии. Сохранение недоступно.', 'error')
@@ -4509,22 +4564,29 @@ const save = async () => {
 
 const doSave = async (adminOverride: boolean) => {
   budgetOverrideDialog.value = false
-  // F-PIF2: Hard validation — в режиме feo_per_item каждая позиция должна иметь feo_planned_item_id
+  // F-PIF2: Hard validation — в режиме feo_per_item каждая позиция должна иметь feo_planned_item_id.
+  // Черновик авансового (formMode==='advance_report') сохраняется всегда (п.3, 2026-09-16) —
+  // feo_per_item практически недостижим в этом режиме (переключатель скрыт, пока не выбрана
+  // ФЭО-категория, а она для авансового необязательна), но на случай, если пользователь всё же
+  // включил его и не дополнил — не блокируем, просто предупреждаем.
   if (form.feo_per_item) {
     const missingCount = itemsEditorRef.value?.missingFeoRowsCount?.() ?? 0
     if (missingCount > 0) {
       const firstUid = itemsEditorRef.value?.firstMissingFeoRowUid?.() ?? null
-      showSnack(
-        `Не сохранено: у ${missingCount} ${missingCount === 1 ? 'позиции' : 'позиций'} не указана ФЭО позиция. Включите режим «Одинаковый на всю закупку» или укажите ФЭО для каждой.`,
-        'error',
-        {
-          actionText: 'Показать позицию',
-          onAction: () => guideArrowTo(firstUid != null ? 'item:' + firstUid : 'items'),
-        },
-      )
-      await nextTick()
-      guideArrowTo(firstUid != null ? 'item:' + firstUid : 'items')
-      return
+      if (formMode.value !== 'advance_report') {
+        showSnack(
+          `Не сохранено: у ${missingCount} ${missingCount === 1 ? 'позиции' : 'позиций'} не указана ФЭО позиция. Включите режим «Одинаковый на всю закупку» или укажите ФЭО для каждой.`,
+          'error',
+          {
+            actionText: 'Показать позицию',
+            onAction: () => guideArrowTo(firstUid != null ? 'item:' + firstUid : 'items'),
+          },
+        )
+        await nextTick()
+        guideArrowTo(firstUid != null ? 'item:' + firstUid : 'items')
+        return
+      }
+      showSnack(`Черновик сохранён — у ${missingCount} ${missingCount === 1 ? 'позиции' : 'позиций'} не указана ФЭО позиция.`, 'warning')
     }
   }
   // Предупреждение о возможном повторе: разовая закупка (НЕ ежемесячный платёж)

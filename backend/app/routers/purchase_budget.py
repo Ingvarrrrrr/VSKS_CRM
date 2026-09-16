@@ -129,7 +129,8 @@ async def _check_budget(
     db: AsyncSession,
     feo_items: Optional[list] = None,
     is_admin: bool = False,
-) -> None:
+    raise_on_exceed: bool = True,
+) -> Optional[dict]:
     """Raises 422 if adding `amount` to subsidy total would exceed its budget.
 
     Args:
@@ -139,9 +140,20 @@ async def _check_budget(
         db: Active async DB session.
         feo_items: list of {"feo_planned_item_id": int, "amount": Decimal} for per-item check.
         is_admin: If True, skip FEO-item-level check (admin bypass).
+        raise_on_exceed: When False, an exceeded subsidy-level budget is returned as a warning
+            dict instead of raising — used for авансовый отчёт (purchase_method='advance'), где
+            черновик обязан сохраняться ВСЕГДА (задача владельца 2026-09-16, п.3): полная
+            (блокирующая) проверка бюджета переносится на «Отправить на согласование»
+            (POST /wishes/{id}/submit — там же, где идёт основной согласовательный контроль).
+            FEO-item-level check (ниже) не смягчается — это отдельный, намеренно жёсткий
+            контроль «ТЗ над плановой позицией» без обходов (см. ПРАВИЛО №6 в CLAUDE.md).
 
     Raises:
-        HTTPException(422): When budget exceeded.
+        HTTPException(422): When budget exceeded and raise_on_exceed is True.
+
+    Returns:
+        A warning dict ({"code", "message", "subsidy_id"}) when the subsidy-level budget is
+        exceeded and raise_on_exceed is False; otherwise None.
     """
     # ── 1. Subsidy-level check — canonical ФЭО-tree limit (D-14, D-16) ──
     if subsidy_id and amount:
@@ -180,8 +192,7 @@ async def _check_budget(
                     pass
                 elif not is_admin:
                     over = -remaining_after
-                    raise HTTPException(
-                        422,
+                    msg = (
                         f"Превышен бюджет субсидии «{subsidy.name}». "
                         f"Лимит: {limit_d:,.2f} ₽, "
                         f"уже использовано: {spent_without_this:,.2f} ₽, "
@@ -189,6 +200,9 @@ async def _check_budget(
                         f"Не хватает: {over:,.2f} ₽. "
                         f"Уменьшите плановую сумму закупки или увеличьте ФЭО-бюджет."
                     )
+                    if not raise_on_exceed:
+                        return {"code": "BUDGET_EXCEEDED", "message": msg, "subsidy_id": subsidy_id}
+                    raise HTTPException(422, msg)
 
     # ── 2. FEO-item-level check (non-admin only) ──
     if is_admin or not feo_items:

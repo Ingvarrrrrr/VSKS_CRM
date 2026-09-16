@@ -124,6 +124,10 @@
             density="compact"
           >
             <v-list-item-title class="text-body-2">{{ rf.original_name || rf.filename }}</v-list-item-title>
+            <template #append>
+              <v-btn size="x-small" variant="text" color="error" icon="mdi-delete"
+                @click.prevent.stop="onDeleteReceiptFile?.(rf.id)" />
+            </template>
           </v-list-item>
         </v-list>
       </template>
@@ -321,6 +325,7 @@ defineProps<{
   onRecompute?: () => void
   onJsonReceiptUpload: (files: File[]) => void
   onDeleteReceipt: (id: number) => void
+  onDeleteReceiptFile?: (id: number) => void
 }>()
 
 // variant="tab" открывает свою drop-zone напрямую (было $refs.jsonReceiptInput.click()

@@ -737,10 +737,6 @@ async def create_purchase(
     _items_sum_create = sum((i.total_price or Decimal("0")) for i in items_data) if items_data else None
     total_nmck = _items_sum_create if _items_sum_create is not None else data.nmck
 
-    if not admin_override and data.purchase_basis != 'service_note':
-        _budget_check_amount = total_nmck if total_nmck is not None else data.planned_total_price
-        await _check_budget(data.subsidy_id, _budget_check_amount, None, db)
-
     # Задача владельца (2026-08-05) «блокировать пока не согласовано превышение плана
     # ФЭО»: создание закупки — увеличивающее план действие. Проверяем по КАЖДОЙ
     # категории ФЭО, к которой отнесены позиции (per-item feo_category_id,
@@ -752,6 +748,20 @@ async def create_purchase(
     # ответа (excess_warnings в PurchaseOut) — тот же паттерн, что уже применён
     # в app.routers.wishes._collect_excess_warnings.
     _excess_warnings: list[dict] = []
+
+    if not admin_override and data.purchase_basis != 'service_note':
+        _budget_check_amount = total_nmck if total_nmck is not None else data.planned_total_price
+        # Авансовый отчёт (is_advance) — черновик, обязан сохраняться всегда (задача
+        # владельца 2026-09-16, п.3): превышение бюджета здесь только предупреждает
+        # (excess_warnings), полная блокирующая проверка — на «Отправить на
+        # согласование» (не здесь, ПРАВИЛО №6 — не заводим второй расчёт превышения).
+        _budget_warning = await _check_budget(
+            data.subsidy_id, _budget_check_amount, None, db,
+            raise_on_exceed=not is_advance,
+        )
+        if _budget_warning:
+            _excess_warnings.append(_budget_warning)
+
     if not admin_override:
         _cat_amounts: dict[int, Decimal] = {}
         for _i in items_data:
@@ -1062,6 +1072,14 @@ async def update_purchase(
     # второй писатель), только используется как значение для гейтов.
     _total_nmck_for_checks = p.total_nmck if is_contracted else items_sum
 
+    # Владелец (2026-09-03): «перекос ветки — предупреждение, не блокировка» —
+    # копится за весь PUT (см. обе точки extend ниже) и отдаётся в ответе как
+    # excess_warnings. Объявлено здесь (раньше по коду, чем раньше), чтобы
+    # бюджетная проверка ниже тоже могла класть сюда предупреждение вместо 422
+    # для авансового отчёта (см. _is_advance_update, п.3 задачи 2026-09-16).
+    _excess_warnings: list[dict] = []
+    _is_advance_update = (data.purchase_method == 'advance')
+
     if not admin_override and data.purchase_basis != 'service_note':
         budget_amount = _total_nmck_for_checks
         # 12-02: per-item FEO budget check
@@ -1070,14 +1088,21 @@ async def update_purchase(
             for i in items_data
             if i.feo_planned_item_id and i.total_price
         ]
-        await _check_budget(
+        # Авансовый отчёт — черновик, обязан сохраняться всегда (задача владельца
+        # 2026-09-16, п.3): субсидийный бюджет здесь только предупреждает.
+        # FEO-item-level check (feo_items) НЕ смягчается — намеренно жёсткий
+        # контроль «ТЗ над плановой позицией» без обходов (ПРАВИЛО №6 в CLAUDE.md).
+        _budget_warning = await _check_budget(
             data.subsidy_id,
             budget_amount or data.planned_total_price,
             pid,
             db,
             feo_items=_feo_check_items,
             is_admin=current_user.role in ADMIN_ROLES,
+            raise_on_exceed=not _is_advance_update,
         )
+        if _budget_warning:
+            _excess_warnings.append(_budget_warning)
 
     # If contract_id or type changed, reset seq so it gets re-assigned
     old_contract_id = p.contract_id
@@ -1171,8 +1196,9 @@ async def update_purchase(
     # docstring).
     # Владелец (2026-09-03): «перекос ветки — предупреждение, не блокировка» —
     # см. комментарий у create_purchase выше. Копится за весь PUT (обе точки
-    # вызова ниже) и отдаётся в ответе как excess_warnings.
-    _excess_warnings: list[dict] = []
+    # вызова ниже, плюс бюджетная проверка выше) и отдаётся в ответе как
+    # excess_warnings. _excess_warnings объявлен раньше по коду (см. выше,
+    # у бюджетной проверки) — здесь не переобъявляем (ПРАВИЛО №6, один список).
     if not admin_override:
         _new_item_cat_amounts: dict[int, Decimal] = {}
         for _i in items_data:

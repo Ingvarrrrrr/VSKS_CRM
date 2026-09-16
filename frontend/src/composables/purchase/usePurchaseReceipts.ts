@@ -56,6 +56,21 @@ export const POST_SAVE_ACTION_KEY = 'advance_report_post_save_action'
 export const RECEIPT_FILE_ACCEPT = '.json,.pdf,.html,.htm,.png,.jpg,.jpeg,.webp,.tif,.tiff,.heic'
 export const RECEIPT_FILE_HINT = 'PDF, HTML (proverkacheka), PNG/JPG с QR, JSON ФНС'
 
+// Файлы, перетащенные в блок «Чеки» ДО того, как черновик авансового/закупки
+// сохранён. save() при создании делает router.push('/…/{id}/edit') — вид
+// смонтирован по route.path как :key, поэтому переход /create → /edit
+// полностью размонтирует CreateOrderView и уничтожает все локальные
+// замыкания (включая переданные File-объекты). sessionStorage хранит только
+// строковый флаг действия (POST_SAVE_ACTION_KEY) — File туда не положить.
+// Модульная переменная переживает remount в пределах SPA-сессии (JS-модуль
+// не перезагружается при router.push), поэтому здесь держим сами файлы и
+// дозавершаем их обработку в consumePostSaveAction() на новом инстансе —
+// не заставляя владельца выбирать файл заново после каждого drag-n-drop в
+// ещё не сохранённый документ (жалоба 2026-09-16, «драг-н-дроп не работает»,
+// закупка 914: раньше просто показывался снэк «повторите загрузку» и файл
+// терялся).
+let pendingDroppedFiles: File[] | null = null
+
 export function usePurchaseReceipts(
   purchaseId: ComputedRef<number | null>,
   formMode: ComputedRef<string>,
@@ -116,7 +131,12 @@ export function usePurchaseReceipts(
 
   const qrScanShow = ref(false)
 
-  async function ensureSavedThen(action: 'scan_qr' | 'upload_json' | 'manual_receipt') {
+  // beforeSave — вызывается только когда мы реально собираемся сохранять
+  // (субсидия на месте), непосредственно перед save(). Используется
+  // onJsonReceiptUpload, чтобы застолбить pendingDroppedFiles ровно в тот
+  // момент, когда известно, что save() будет вызван — без повторения самой
+  // проверки субсидии второй раз (ПРАВИЛО №6 — одна проверка, не дубль).
+  async function ensureSavedThen(action: 'scan_qr' | 'upload_json' | 'manual_receipt', beforeSave?: () => void) {
     if (purchaseId.value) return true
     if (!form.subsidy_id && formMode.value !== 'advance_report') {
       showSnack('Сначала выберите субсидию (вверху страницы)', 'warning', {
@@ -126,6 +146,7 @@ export function usePurchaseReceipts(
       guideArrowTo('subsidy')
       return false
     }
+    beforeSave?.()
     sessionStorage.setItem(POST_SAVE_ACTION_KEY, action)
     await save()
     // save() либо успешно перенаправит (тогда после loadPurchase сработает action),
@@ -175,7 +196,18 @@ export function usePurchaseReceipts(
     sessionStorage.removeItem(POST_SAVE_ACTION_KEY)
     if (pending === 'scan_qr') qrScanShow.value = true
     else if (pending === 'upload_json') {
-      document.querySelector<HTMLInputElement>(`input[type=file][accept="${RECEIPT_FILE_ACCEPT}"]`)?.click()
+      if (pendingDroppedFiles && pendingDroppedFiles.length) {
+        // Файлы уже были выбраны/перетащены до сохранения — довершаем их
+        // загрузку напрямую, без повторного открытия пикера (см. комментарий
+        // у pendingDroppedFiles).
+        const filesToUpload = pendingDroppedFiles
+        pendingDroppedFiles = null
+        onJsonReceiptUpload(filesToUpload)
+      } else {
+        // Старый путь (кнопка «Загрузить чек» без drag-n-drop) — файла ещё
+        // не было, открываем пикер как раньше.
+        document.querySelector<HTMLInputElement>(`input[type=file][accept="${RECEIPT_FILE_ACCEPT}"]`)?.click()
+      }
     }
     else if (pending === 'manual_receipt') openManualReceiptDialog()
   }
@@ -251,17 +283,20 @@ export function usePurchaseReceipts(
   async function onJsonReceiptUpload(files: File[]) {
     if (!files.length) return
     if (!purchaseId.value) {
-      // Раньше единственный путь открыть file input лежал через кнопку
-      // «Загрузить чек» → onJsonBtnClick → ensureSavedThen (сохраняет
-      // черновик первым же кликом, ДО открытия пикера) — молчаливый ранний
-      // return здесь был безопасен, потому что до него было физически не
-      // добраться без сохранения. FileDropZone это предположение ломает:
-      // файл можно перетащить в ещё не сохранённый авансовый отчёт напрямую,
-      // и старый молчаливый return воспроизвёл бы ту же жалобу «чек никуда
-      // не делся, но и не появился». Теперь — сохраняем сначала (как кнопка),
-      // предупредив, что перетащенный файл придётся выбрать заново.
-      showSnack('Черновик сохраняется — после сохранения повторите загрузку файла', 'info')
-      await ensureSavedThen('upload_json')
+      // Черновик ещё не сохранён — файл перетащили (или выбрали) раньше, чем
+      // появился purchaseId. Раньше здесь просто показывали снэк «повторите
+      // загрузку файла» и всё — сам файл терялся, потому что save() делает
+      // router.push на /…/{id}/edit, а RouterView держит вид на :key=route.path,
+      // то есть при создании авансового компонент полностью пересоздаётся и
+      // теряет любые локальные переменные. Теперь сами File-объекты кладём в
+      // pendingDroppedFiles (модульная переменная, переживает remount — см.
+      // комментарий у объявления), и consumePostSaveAction() на новом
+      // инстансе дозавершает загрузку САМИХ этих файлов автоматически, не
+      // прося владельца выбрать файл ещё раз (жалоба 2026-09-16, закупка 914).
+      await ensureSavedThen('upload_json', () => {
+        pendingDroppedFiles = files
+        showSnack('Черновик сохраняется — файл будет обработан автоматически после сохранения', 'info')
+      })
       return
     }
     const existingIds = new Set(receipts.value.map(r => r.id))
@@ -408,11 +443,37 @@ export function usePurchaseReceipts(
     }
   }
 
+  // Удаление прикреплённого файла чека без автораспознавания (жалоба
+  // владельца 2026-09-16: «файл прикрепился, а как его удалить?»). Переиспользует
+  // общий эндпоинт DELETE /purchases/{id}/files/{fid} (purchase_files.py) — тот
+  // же, которым удаляются остальные файлы закупки, права те же
+  // (_check_upload_permission), второй механизм не заводится (ПРАВИЛО №6).
+  async function deleteReceiptFile(id: number) {
+    if (!purchaseId.value) return
+    if (!confirm('Удалить файл чека?')) return
+    try {
+      await apiFetch(`/purchases/${purchaseId.value}/files/${id}`, { method: 'DELETE' })
+      await loadReceiptFiles()
+      showSnack('Файл удалён')
+    } catch (e: any) {
+      const status = e?.status
+      if (status === 403) {
+        showSnack(e?.payload?.message || e?.message || 'Нет прав на удаление этого файла', 'error')
+      } else if (status === 404) {
+        showSnack('Файл уже удалён или не найден', 'warning')
+        await loadReceiptFiles()
+      } else {
+        showSnack(e?.payload?.message || e?.message || 'Ошибка удаления файла', 'error')
+      }
+    }
+  }
+
   return {
     receipts, sourceLabel, loadReceipts,
     receiptFiles, loadReceiptFiles,
     qrScanShow, onScanQrClick, onJsonBtnClick, onManualBtnClick,
     recomputeLoading, recomputeFromReceipts,
     consumePostSaveAction, onQrDetected, onJsonReceiptUpload, deleteReceipt,
+    deleteReceiptFile,
   }
 }

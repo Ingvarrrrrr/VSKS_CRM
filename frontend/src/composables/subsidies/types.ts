@@ -437,6 +437,12 @@ export interface FeoWarning {
     // как есть» (по умолчанию) предупреждения не создаёт — это больше не
     // аномалия, а нормальный путь.
     | 'duplicate_group_merged'
+    // Владелец (2026-09-16): выбор человека «взять сумму позиций» для
+    // категории, у которой заполнены ОБА источника (см.
+    // FeoCategorySumConflictGroup) — появляется в warnings ТОЛЬКО когда
+    // резолюция группы 'items' (см. apply_category_sum_conflicts); выбор
+    // 'own' (по умолчанию) предупреждения не создаёт — прежнее поведение.
+    | 'category_sum_replaced_by_items'
   row: number | null
   name: string | null
   message: string
@@ -499,6 +505,30 @@ export interface FeoBudgetConflictGroup {
   // что и у FeoDuplicateGroup, ключи различаются префиксом `budget::`).
   resolution?: 'first' | 'last' | 'sum'
 }
+
+// Владелец (2026-09-16, дословно): сумма категории «по ФЭО» — либо её
+// собственная сумма (строка-заголовок с числом), либо сумма вложенных
+// позиций; если в файле заполнены ОБА источника ОДНОЙ категории — импорт не
+// берёт молча собственную сумму (как это уже делает compute_budget_map,
+// subsidy_budget.py — это остаётся поведением ПО УМОЛЧАНИЮ), а даёт
+// выбрать. Тот же паттерн карточек с радио, что и у FeoBudgetConflictGroup
+// выше. См. backend/app/services/feo_import_budget_conflicts.py::
+// apply_category_sum_conflicts (единственное место построения групп).
+export interface FeoCategorySumConflictGroup {
+  key: string
+  name: string
+  category_path: string
+  own_amount: number | null
+  items_amount: number | null
+  items_count: number
+  options: ['own', 'items']
+  // Присутствует только в ОТВЕТЕ (решение уже применено сервером) — на
+  // предпросмотре (dry-run) до выбора человека равно 'own' (серверный
+  // дефолт — прежнее поведение, явная сумма узла главнее); фронт держит
+  // собственный выбор в feoImport.duplicateResolutions[key] (тот же канал,
+  // ключи различаются префиксом `catsum::`).
+  resolution?: 'own' | 'items'
+}
 export interface FeoUnmatchedNode {
   id: number
   path: string
@@ -531,6 +561,7 @@ export interface FeoImportResult {
   warnings?: FeoWarning[]
   duplicate_groups?: FeoDuplicateGroup[]
   budget_conflict_groups?: FeoBudgetConflictGroup[]
+  category_sum_conflict_groups?: FeoCategorySumConflictGroup[]
   unmatched?: FeoUnmatchedNode[]
   new_paths?: string[]
   deleted_count?: number

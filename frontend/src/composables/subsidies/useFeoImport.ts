@@ -8,7 +8,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useToast, type ToastType } from '@/composables/useToast'
 import type { SubsidyDetailContext } from './useSubsidyDetail'
-import type { FeoBudgetConflictGroup, FeoDuplicateGroup, FeoImportResult, FeoUnmatchedNode, FeoWarning } from './types'
+import type { FeoBudgetConflictGroup, FeoCategorySumConflictGroup, FeoDuplicateGroup, FeoImportResult, FeoUnmatchedNode, FeoWarning } from './types'
 
 export function feoWarnKindLabel(kind: string): string {
   const labels: Record<string, string> = {
@@ -28,6 +28,7 @@ export function feoWarnKindLabel(kind: string): string {
     amount_without_level2: 'Сумма указана, но не заполнен Уровень 2 — строка пропущена',
     duplicate_group_merged: 'Дублирующиеся позиции объединены по вашему выбору',
     budget_overwritten_by_row: 'Сумма по ФЭО узла задана несколькими строками — учтена последняя',
+    category_sum_replaced_by_items: 'Взята сумма позиций вместо собственной суммы категории — по вашему выбору',
     item_promoted_needs_review: 'Разберите вручную: позиция ниже используется как подраздел',
     item_name_used_as_level: 'Разберите вручную: позиция лежит под чужим подразделом',
     item_promoted_to_level: 'Плановая позиция стала подразделом',
@@ -76,7 +77,10 @@ const feoImport = reactive({
   // решения по конфликтам Суммы по ФЭО (владелец, 2026-09-15, опрос) — ключи
   // FeoBudgetConflictGroup.key с префиксом `budget::`, значения
   // 'first'|'last'|'sum' — см. feoBudgetResolutionFor/feoSetBudgetResolution.
-  duplicateResolutions: {} as Record<string, 'merge' | 'keep' | 'first' | 'last' | 'sum'>,
+  // И (владелец, 2026-09-16) решения «сумма категории / сумма позиций» —
+  // FeoCategorySumConflictGroup.key с префиксом `catsum::`, значения
+  // 'own'|'items' — см. feoCatSumResolutionFor/feoSetCatSumResolution.
+  duplicateResolutions: {} as Record<string, 'merge' | 'keep' | 'first' | 'last' | 'sum' | 'own' | 'items'>,
 })
 
 const feoImportTargetSubsidy = ref<number | null>(null)
@@ -175,6 +179,19 @@ function feoBudgetResolutionFor(key: string): 'first' | 'last' | 'sum' {
   return v === 'first' || v === 'sum' ? v : 'last'
 }
 function feoSetBudgetResolution(key: string, value: 'first' | 'last' | 'sum') {
+  feoImport.duplicateResolutions[key] = value
+}
+
+// Владелец (2026-09-16, дословно): категория, у которой в файле заполнены И
+// собственная сумма, И собственные позиции с feo_amount — читаются из того
+// же ответа предпросмотра, тем же приёмом, что и feoBudgetConflictGroups
+// выше; решение живёт в ТОМ ЖЕ feoImport.duplicateResolutions (ключи с
+// префиксом `catsum::`, Правило №6 — один канал, не три).
+const feoCategorySumConflictGroups = computed<FeoCategorySumConflictGroup[]>(() => feoImport.dryResult?.category_sum_conflict_groups || [])
+function feoCatSumResolutionFor(key: string): 'own' | 'items' {
+  return feoImport.duplicateResolutions[key] === 'items' ? 'items' : 'own'
+}
+function feoSetCatSumResolution(key: string, value: 'own' | 'items') {
   feoImport.duplicateResolutions[key] = value
 }
 
@@ -523,6 +540,13 @@ export function useFeoImport(ctx?: FeoImportCtx) {
         ;(data.budget_conflict_groups || []).forEach(g => {
           if (!(g.key in feoImport.duplicateResolutions)) feoImport.duplicateResolutions[g.key] = 'last'
         })
+        // Владелец (2026-09-16): новая группа «сумма категории / сумма
+        // позиций» получает дефолт 'own' (прежнее поведение — явная сумма
+        // узла главнее) — «Пересчитать» на шаге 4 не сбрасывает уже
+        // сделанный человеком выбор.
+        ;(data.category_sum_conflict_groups || []).forEach(g => {
+          if (!(g.key in feoImport.duplicateResolutions)) feoImport.duplicateResolutions[g.key] = 'own'
+        })
         if (!keepStep) feoImport.step = 3
       } else {
         feoImport.result = data
@@ -555,6 +579,7 @@ export function useFeoImport(ctx?: FeoImportCtx) {
     feoDragMapping, feoIgnoredCols, feoDragOverTarget, feoResultPanels, feoToggleResultPanel,
     feoDuplicateGroups, feoResolutionFor, feoSetResolution,
     feoBudgetConflictGroups, feoBudgetResolutionFor, feoSetBudgetResolution,
+    feoCategorySumConflictGroups, feoCatSumResolutionFor, feoSetCatSumResolution,
     feoUnmatchedNeedsMapping, feoHasSuggestions, feoRemapPlannedCount, feoAcceptAllSuggestions,
     feoStep4MainLabel, feoLoadSummary, feoPluralRu, feoCurrentSheet, feoCurrentHeaders, feoMappingValid, feoUnmappedCount,
     feoIsMapped, feoIsIgnored, feoIsTargetFilled, feoGetColumnLabel, feoGetSamples,

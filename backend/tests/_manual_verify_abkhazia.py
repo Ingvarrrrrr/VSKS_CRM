@@ -78,6 +78,15 @@ async def main():
                 if w["kind"] in ("level_column_empty_in_file", "code_column_holds_amounts", "item_name_equals_category"):
                     print(f"    -> {w['kind']}: {w['message']}")
 
+            # Задача владельца 2026-09-16: категории, у которых есть И
+            # собственная сумма, И собственные позиции с feo_amount —
+            # по умолчанию побеждает собственная сумма (resolution='own'),
+            # но группа должна быть видна человеку на предпросмотре.
+            catsum_groups = result.get("category_sum_conflict_groups", [])
+            print(f"\ncategory_sum_conflict_groups: {len(catsum_groups)}")
+            for g in catsum_groups:
+                print(f"  {g}")
+
             total_feo = await calculate_budget_from_categories(db, sid)
             print(f"\nПо ФЭО субсидии (calculate_budget_from_categories) = {total_feo:,.2f}".replace(",", " "))
 

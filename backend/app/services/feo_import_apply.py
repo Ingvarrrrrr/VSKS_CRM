@@ -26,7 +26,11 @@ from app.services.feo_import_common import fmt as _fmt
 from app.services.feo_import_common import norm as _norm
 from app.services.feo_import_snapshot import full_path
 from app.services.feo_import_duplicates import group_key, register_pending_item
-from app.services.feo_import_budget_conflicts import apply_budget_conflict_resolutions, register_budget_write
+from app.services.feo_import_budget_conflicts import (
+    apply_budget_conflict_resolutions,
+    apply_category_sum_conflicts,
+    register_budget_write,
+)
 from app.routers.feo_planned_items import normalize_item_type
 
 
@@ -1347,5 +1351,16 @@ async def apply_rows(state) -> None:
     # числа по-прежнему остаются без группы и без предупреждения — там нечего
     # выбирать.
     apply_budget_conflict_resolutions(state)
+
+    # Владелец 2026-09-16: категория, у которой в ЭТОМ импорте есть И
+    # собственная сумма (уже разрешённая строкой выше, если по ней самой
+    # тоже был конфликт нескольких строк), И собственные позиции с
+    # feo_amount — выбор человека «взять сумму категории / взять сумму
+    # позиций» (см. feo_import_budget_conflicts.py, единственное место
+    # построения таких групп). Обязательно ПОСЛЕ apply_budget_conflict_
+    # resolutions выше и ДО finalize_lvl5_items (feo_import_core.py) — читает
+    # ещё «сырые» state.pending_lvl5_items, сумма которых не зависит от
+    # решения по дублям Ур.5 (см. докстринг _own_items_feo_totals).
+    apply_category_sum_conflicts(state)
 
     state.created, state.updated, state.skipped = created, updated, skipped

@@ -39,6 +39,37 @@ autoincrement внутри текущей транзакции, не совпа�
           выбрал, не меняется) и добавляет ОДНО информационное
           предупреждение kind=`budget_overwritten_by_row` (тот же kind, что и
           раньше, — фронт/тесты, завязанные на него, не ломаются).
+
+Владелец 2026-09-16 (дословно по смыслу): сумма категории «по ФЭО» — либо её
+СОБСТВЕННАЯ сумма (строка-заголовок с числом), либо сумма ВЛОЖЕННЫХ позиций.
+Сейчас (см. `app/services/subsidy_budget.py::compute_budget_map`) при наличии
+ОБЕИХ молча побеждает собственная сумма узла — это ОСТАЁТСЯ поведением по
+умолчанию (`compute_budget_map` не трогаем — единственная формула, Правило
+№6). Но если у категории в ЭТОМ импорте есть И собственная сумма, И
+заполненные позиции (`feo_amount` вложенных позиций Ур.5, СОБСТВЕННЫХ узла,
+не потомков) — «при переносе должно давать выбирать», тем же механизмом, что
+и выше (третий канал не заводим):
+
+    apply_category_sum_conflicts(state)
+        — вызывается СРАЗУ ПОСЛЕ apply_budget_conflict_resolutions (тот же
+          вызов в feo_import_apply.py), когда `cat.budget` уже разрешён (если
+          у самой суммы категории тоже был конфликт нескольких строк — см.
+          выше). Собственная сумма позиций считается по `state.pending_
+          lvl5_items` (наполнено feo_import_apply.py в основном цикле,
+          ДО вызова этой функции) — сумма/число СОБСТВЕННЫХ (не через
+          дочерние категории) активных строк узла с непустым feo_amount;
+          объединение/разделение дублей Ур.5 (feo_import_duplicates.py) на
+          эту сумму не влияет — деньги при объединении складываются
+          тождественно (см. `_combine_rows`), при «оставить как есть» просто
+          не меняются, так что считать можно ДО finalize_lvl5_items.
+          Группа — `state.category_sum_conflict_groups`, ключ —
+          `catsum::<то же построение, что и budget_group_key>` (свой
+          префикс — Правило №6, не путать пространства имён одного канала
+          `duplicate_resolutions`). Решение человека — 'own' (по умолчанию,
+          прежнее поведение не меняется) | 'items'; 'items' — `cat.budget :=
+          None`, тогда единственная формула `compute_budget_map` сама
+          возьмёт сумму позиций (не дублируем расчёт здесь) — плюс одно
+          информационное предупреждение.
 """
 from decimal import Decimal
 
@@ -47,6 +78,9 @@ from app.services.feo_import_common import fmt as _fmt
 from app.services.feo_import_duplicates import group_key as _item_group_key
 
 KEY_PREFIX = "budget::"
+# Правило №6 — тот же канал `duplicate_resolutions`, отдельное пространство
+# имён ключей (см. докстринг выше, category_sum_conflict_key).
+CATSUM_KEY_PREFIX = "catsum::"
 
 
 def _num(v) -> float | None:
@@ -129,4 +163,88 @@ def apply_budget_conflict_resolutions(state) -> None:
             "row": None,
             "name": name,
             "message": f"Сумма по ФЭО для «{name}» задана в строках {_rows_vals} — {_tail}",
+        })
+
+
+def category_sum_conflict_key(subsidy_id, path_names: list) -> str:
+    """Ключ группы «собственная сумма категории vs сумма её позиций» — та же
+    обёртка над `group_key`, что и `budget_group_key` выше (Правило №6, один
+    построитель пути), другой префикс — своё пространство имён в общем
+    словаре `duplicate_resolutions`."""
+    return CATSUM_KEY_PREFIX + _item_group_key(subsidy_id, path_names[:-1], path_names[-1])
+
+
+def _own_items_feo_totals(state) -> dict:
+    """cat_id (leaf.id) -> (сумма feo_amount, число строк) по ВСЕМ строкам
+    `state.pending_lvl5_items`, накопленным основным циклом `apply_rows` для
+    ЭТОГО импорта — считаем ДО `finalize_lvl5_items` (см. докстринг модуля):
+    объединение группы дублей Ур.5 сохраняет сумму тождественно, «оставить
+    как есть» её не меняет вовсе, так что число здесь совпадёт с тем, что
+    реально ляжет в БД при любом решении по дублям. Неактивная строка (файл
+    явно пометил "Активна" = нет) в счёт не идёт — тем же признаком, каким
+    `compute_budget_map` (subsidy_budget.py) фильтрует позиции при подсчёте
+    суммы по дереву, иначе число здесь разошлось бы с тем, что покажет дерево
+    после выбора «взять сумму позиций»."""
+    totals: dict = {}
+    for rows in state.pending_lvl5_items.values():
+        for r in rows:
+            leaf = r.get("leaf")
+            fa = r.get("feo_amount")
+            if leaf is None or fa is None or not r.get("is_active", True):
+                continue
+            amt, cnt = totals.get(leaf.id, (ZERO, 0))
+            totals[leaf.id] = (amt + fa, cnt + 1)
+    return totals
+
+
+def apply_category_sum_conflicts(state) -> None:
+    """Единственное место, строящее группы «собственная сумма vs сумма
+    позиций» и применяющее решение человека — вызывается ПОСЛЕ
+    `apply_budget_conflict_resolutions` (см. докстринг модуля), чтобы читать
+    уже РАЗРЕШЁННУЮ собственную сумму категории (`cat.budget`), если у неё
+    самой был конфликт нескольких строк. Категория без собственной явной
+    суммы в этом импорте (не побывавшая в `state.budget_write_cats`) или без
+    СОБСТВЕННЫХ позиций с feo_amount — не кандидат, группы и предупреждения
+    нет, `cat.budget` не трогаем (то же самое поведение, что и всегда было —
+    задача владельца требует выбор ТОЛЬКО когда оба источника реально
+    заполнены одновременно)."""
+    items_totals = _own_items_feo_totals(state)
+    for cat_id, cat in state.budget_write_cats.items():
+        own_amount = cat.budget
+        if own_amount is None:
+            continue
+        items_amount, items_count = items_totals.get(cat_id, (ZERO, 0))
+        if items_count == 0:
+            continue
+
+        subsidy_id, path_names = state.budget_write_paths[cat_id]
+        key = category_sum_conflict_key(subsidy_id, path_names)
+        name = path_names[-1] if path_names else cat.name
+
+        resolution = state.duplicate_resolutions.get(key, "own")
+        if resolution == "items":
+            if cat.budget is not None:
+                cat.budget = None
+            state.warnings.append({
+                "kind": "category_sum_replaced_by_items",
+                "row": None,
+                "name": name,
+                "message": (
+                    f"«{name}»: по вашему выбору взята сумма позиций "
+                    f"({_fmt(items_amount)}, позиций: {items_count}) вместо "
+                    f"собственной суммы категории ({_fmt(own_amount)})"
+                ),
+            })
+        else:
+            resolution = "own"
+
+        state.category_sum_conflict_groups.append({
+            "key": key,
+            "name": name,
+            "category_path": " / ".join(path_names),
+            "own_amount": _num(own_amount),
+            "items_amount": _num(items_amount),
+            "items_count": items_count,
+            "options": ["own", "items"],
+            "resolution": resolution,
         })

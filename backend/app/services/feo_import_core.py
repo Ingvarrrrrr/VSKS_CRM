@@ -50,6 +50,7 @@ from app.utils.text import normalize_feo_name
 from app.routers import feo_categories as fc
 
 from app.services.feo_import_apply import apply_rows
+from app.services.feo_import_budget_conflicts import CATSUM_KEY_PREFIX
 from app.services.feo_import_budget_conflicts import KEY_PREFIX as BUDGET_KEY_PREFIX
 from app.services.feo_import_duplicates import finalize_lvl5_items
 from app.services.feo_import_gate import assert_write_gate, collect_affected_subsidies
@@ -219,6 +220,14 @@ class FeoImportState:
     # числа сюда не попадают — там нечего выбирать.
     budget_conflict_groups: list = field(default_factory=list)
 
+    # --- Владелец 2026-09-16: категория, у которой в ЭТОМ импорте есть И
+    # собственная сумма, И собственные позиции с feo_amount — выбор человека
+    # «взять сумму категории / взять сумму позиций» (см. feo_import_budget_
+    # conflicts.py::apply_category_sum_conflicts, единственное место
+    # построения). Тот же канал `duplicate_resolutions`, ключи с префиксом
+    # `catsum::` (CATSUM_KEY_PREFIX). ---
+    category_sum_conflict_groups: list = field(default_factory=list)
+
     # --- переезд/удаление (feo_import_remap.py) ---
     relinked_count: int = 0
     deleted_count: int = 0
@@ -293,6 +302,10 @@ async def _do_feo_import(
     # конфликтам Суммы по ФЭО (владелец, 2026-09-15) — ключи с префиксом
     # `budget::` (см. feo_import_budget_conflicts.py::budget_group_key),
     # значения "first"|"last"|"sum"; не упомянутая группа — "last" (как было).
+    # И решения «сумма категории / сумма позиций» (владелец, 2026-09-16) —
+    # ключи с префиксом `catsum::` (см. feo_import_budget_conflicts.py::
+    # category_sum_conflict_key), значения "own"|"items"; не упомянутая
+    # группа — "own" (прежнее поведение — явная сумма узла главнее).
     duplicate_resolutions: str = "",
 ) -> dict:
     """Core import logic shared by /import и /import-mapped endpoints.
@@ -339,11 +352,19 @@ async def _do_feo_import(
                 raise ValueError("ожидался объект {group_key: 'merge'|'keep'|'first'|'last'|'sum'}")
             for _k, _v in _raw_dup.items():
                 _k = str(_k)
-                # Два непересекающихся пространства ключей в одном канале
+                # Три непересекающихся пространства ключей в одном канале
                 # (Правило №6): budget:: — конфликты Суммы по ФЭО
-                # (feo_import_budget_conflicts.py), остальное — дубли имени
-                # Ур.5 (feo_import_duplicates.py). Значения не перепутать.
-                _allowed = ("first", "last", "sum") if _k.startswith(BUDGET_KEY_PREFIX) else ("merge", "keep")
+                # (feo_import_budget_conflicts.py::apply_budget_conflict_
+                # resolutions), catsum:: — выбор «сумма категории / сумма
+                # позиций» (feo_import_budget_conflicts.py::apply_category_
+                # sum_conflicts), остальное — дубли имени Ур.5
+                # (feo_import_duplicates.py). Значения не перепутать.
+                if _k.startswith(BUDGET_KEY_PREFIX):
+                    _allowed = ("first", "last", "sum")
+                elif _k.startswith(CATSUM_KEY_PREFIX):
+                    _allowed = ("own", "items")
+                else:
+                    _allowed = ("merge", "keep")
                 if _v not in _allowed:
                     raise ValueError(f"недопустимое решение для группы {_k!r}: {_v!r}")
                 _dup_resolutions[_k] = _v
@@ -426,6 +447,7 @@ async def _do_feo_import(
         "updated_details": state.updated_details, "skipped_details": state.skipped_details,
         "duplicate_groups": state.duplicate_groups,
         "budget_conflict_groups": state.budget_conflict_groups,
+        "category_sum_conflict_groups": state.category_sum_conflict_groups,
         "dry_run": dry_run,
         "unmatched": state.unmatched,
         "new_paths": state.new_paths,

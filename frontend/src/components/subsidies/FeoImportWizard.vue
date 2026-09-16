@@ -150,6 +150,41 @@
               </v-radio-group>
             </v-card>
           </v-alert>
+          <!-- Владелец (2026-09-16, дословно): категория, у которой в файле
+               заполнены И собственная сумма (строка-заголовок), И
+               собственные позиции с суммой по ФЭО — сейчас молча побеждает
+               собственная сумма категории (compute_budget_map), это
+               остаётся поведением по умолчанию («Взять сумму категории»),
+               но при переносе даём выбрать явно. Тот же стиль карточек, что
+               и у конфликтов сумм выше. -->
+          <v-alert v-if="feoCategorySumConflictGroups.length" type="warning" variant="tonal" density="compact"
+            class="mb-3" icon="mdi-scale-balance">
+            <div class="text-body-2 mb-2">
+              В файле {{ feoCategorySumConflictGroups.length }}
+              {{ feoPluralRu(feoCategorySumConflictGroups.length, ['категория', 'категории', 'категорий']) }},
+              для которых заданы И собственная сумма по ФЭО, И сумма вложенных позиций — решите по каждой.
+            </div>
+            <v-card v-for="g in feoCategorySumConflictGroups" :key="g.key" variant="outlined" class="mb-2 pa-3">
+              <div class="text-subtitle-2">
+                «{{ g.name }}» <span class="text-medium-emphasis">— {{ g.category_path }}</span>
+              </div>
+              <v-radio-group
+                :model-value="feoCatSumResolutionFor(g.key)"
+                @update:model-value="(v: 'own' | 'items') => feoSetCatSumResolution(g.key, v)"
+                hide-details density="compact" class="mt-1">
+                <v-radio value="own">
+                  <template #label>
+                    <span>Взять сумму категории ({{ formatCurrency(g.own_amount ?? 0) }})</span>
+                  </template>
+                </v-radio>
+                <v-radio value="items">
+                  <template #label>
+                    <span>Взять сумму позиций ({{ formatCurrency(g.items_amount ?? 0) }}, позиций: {{ g.items_count }})</span>
+                  </template>
+                </v-radio>
+              </v-radio-group>
+            </v-card>
+          </v-alert>
           <div v-if="feoImport.dryResult" class="d-flex flex-wrap gap-2 mb-3">
             <v-chip color="success" variant="flat"
               :disabled="!feoImport.dryResult.created_details?.length"
@@ -557,6 +592,7 @@ const {
   feoImport, feoImportTargetSubsidyName, feoResultPanels, feoToggleResultPanel,
   feoDuplicateGroups, feoResolutionFor, feoSetResolution,
   feoBudgetConflictGroups, feoBudgetResolutionFor, feoSetBudgetResolution,
+  feoCategorySumConflictGroups, feoCatSumResolutionFor, feoSetCatSumResolution,
   feoUnmatchedNeedsMapping, feoHasSuggestions, feoAcceptAllSuggestions,
   feoStep4MainLabel, feoLoadSummary, feoPluralRu, feoMappingValid,
   feoWarnKindLabel, feoWarnSubtitle, feoWarnKindIsAlert, feoWarnKinds,

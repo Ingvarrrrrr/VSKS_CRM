@@ -791,7 +791,7 @@
               </div>
 
               <!-- Ручное добавление -->
-              <template v-if="editingWishId && (isWishEditable || (editingWish && editingWish.status === 'submitted' && (isChainApprover || ctx.isManagerOrAdmin.value)))">
+              <template v-if="editingWishId && (isWishEditable || canDecideWish)">
                 <v-divider class="my-3" />
                 <v-autocomplete
                   v-model="approverToAdd"
@@ -1277,7 +1277,7 @@ const {
   wishFeoStale, wishItemsMissingFeoCategory, wishFeoCategoryMissing, wishFeoCategoryMissingTooltip,
   wishItemsWithStaleFeoCategory, itemDiscrepancy, wishItemStatus,
   onAddApproversClick, totalNmck, onSubsidyChange,
-  isWishEditable, isDialogCreator, canAssigneeAct, isChainApprover, canEditWishFeo, canEditAssignee,
+  isWishEditable, isDialogCreator, canAssigneeAct, canEditWishFeo, canEditAssignee, canDecideWish,
   saveWish, WISH_FORCE_STATUS_OPTIONS, forceStatusValue, forcingStatus, forceStatus,
   rowForceStatusWish,
   undoRedoWish,

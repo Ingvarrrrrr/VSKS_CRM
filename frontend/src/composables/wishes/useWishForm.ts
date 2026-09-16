@@ -531,12 +531,25 @@ export function useWishForm(deps: {
   const isChainApprover = computed(() => _isChainApproverRef.value)
   function setIsChainApprover(v: boolean) { _isChainApproverRef.value = v }
 
+  // Владелец (2026-09-16): «согласующий не может привести позиции к плану» —
+  // на этапе согласования решать по заявке (менять ФЭО/одобрять/отклонять) вправе
+  // тот же круг людей, что и бэкенд пускает в POST /wishes/{id}/approve|reject
+  // (wish_transitions.py: MANAGER_ROLES или assigned_to) плюс участник явной
+  // цепочки согласования (wish_approvals) — единая формулировка, используется
+  // и здесь, и в панели ручного добавления согласующих (WishFormDialog.vue:794),
+  // чтобы не разъезжаться (ПРАВИЛО №6).
+  const canDecideWish = computed(() =>
+    !!editingWish.value
+    && editingWish.value.status === 'submitted'
+    && (
+      isChainApprover.value
+      || ctx.isManagerOrAdmin.value
+      || editingWish.value.assigned_to === currentUserId
+    )
+  )
   const canEditWishFeo = computed(() =>
     can(ACTIONS.WISH_EDIT_FEO!)
-    && (
-      canAssigneeAct.value
-      || (!!editingWish.value && editingWish.value.status === 'submitted' && isChainApprover.value)
-    )
+    && (canAssigneeAct.value || canDecideWish.value)
   )
   const canEditAssignee = computed(() =>
     !!editingWish.value
@@ -1025,7 +1038,7 @@ export function useWishForm(deps: {
     highlightMissingFeoCategory, highlightMissingApprovers, focusApproversField, onAddApproversClick,
     undoRedoWish, totalNmck, onSubsidyChange,
     isWishEditable, isDialogAssignee, isDialogCreator, canAssigneeAct, isChainApprover, setIsChainApprover,
-    canEditWishFeo, canEditAssignee,
+    canEditWishFeo, canEditAssignee, canDecideWish,
     resetForm, openCreateDialog, openEditDialog,
     wishFormSavedSnapshot, buildWishPayload, wishPayloadSnapshotJson, saveWish,
     handleMissingDatesError, handleMissingFeoCategoryError,

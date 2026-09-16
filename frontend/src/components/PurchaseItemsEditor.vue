@@ -74,6 +74,19 @@
           не выбрана конечная категория ФЭО — заполните её, иначе для этих строк нельзя создать плановую позицию:
           {{ itemsMissingCategoryForPlan.slice(0, 5).map(r => `№${r.idx + 1} «${r.name}»`).join(', ') }}{{ itemsMissingCategoryForPlan.length > 5 ? `, …и ещё ${itemsMissingCategoryForPlan.length - 5}` : '' }}
         </v-tooltip>
+        <!-- Дефект 2 (владелец, 2026-09-16): «была возможность привязать ВСЕ позиции к
+             ИМЕЮЩИМСЯ плановым одной кнопкой» — рядом с «Создать в плане закупок» (та
+             всегда заводит НОВУЮ плановую позицию), эта сначала ищет среди уже
+             существующих (POST /feo-planned-items/match, тот же матчер) и предлагает
+             привязку с чекбоксами (useFeoPlannedBulkMatch.ts). Видна при тех же условиях
+             доступа, что и «Создать в плане закупок», плюс нужна субсидия (матчер ищет
+             по её плановым позициям) и хоть одна непривязанная строка. -->
+        <v-btn
+          v-if="(!props.readonly || props.feoAttrsEditable) && props.subsidyId && bulkMatch.canOpenBulkMatch.value"
+          variant="tonal" prepend-icon="mdi-link-variant" size="small" color="primary"
+          @click="bulkMatch.openBulkMatchDialog()">
+          Привязать к плану ({{ bulkMatch.unlinkedForMatch.value.length }})
+        </v-btn>
         <v-btn
           v-if="selectedItemIdxs.length > 0 && hasUncatalogedSelected && !props.readonly"
           size="small" variant="tonal" color="teal"
@@ -251,6 +264,7 @@
           :default-feo-category-id="props.defaultFeoCategoryId"
           :planned-items="props.plannedItems"
           :planned-selection-for="plannedSelectionFor"
+          :item-candidates="planSuggest.candidatesFor"
           :pending-by-planned-item="pendingByPlannedItem"
           :pending-items-by-planned-item="pendingItemsByPlannedItem"
           :purchase-id="props.purchaseId"
@@ -338,6 +352,7 @@
           :default-feo-category-id="props.defaultFeoCategoryId"
           :planned-items="props.plannedItems"
           :planned-selection-for="plannedSelectionFor"
+          :item-candidates="planSuggest.candidatesFor"
           :pending-by-planned-item="pendingByPlannedItem"
           :pending-items-by-planned-item="pendingItemsByPlannedItem"
           :purchase-id="props.purchaseId"
@@ -407,6 +422,7 @@
           :default-feo-category-id="props.defaultFeoCategoryId"
           :planned-items="props.plannedItems"
           :planned-selection-for="plannedSelectionFor"
+          :item-candidates="planSuggest.candidatesFor"
           :pending-by-planned-item="pendingByPlannedItem"
           :pending-items-by-planned-item="pendingItemsByPlannedItem"
           :purchase-id="props.purchaseId"
@@ -673,6 +689,7 @@
       :node-amounts="nodeAmounts"
       :allow-unallocated="!!props.subsidyId"
       :subsidy-name="props.subsidyName"
+      :subsidy-id="props.subsidyId"
       :feo-planned-per-item="props.feoPlannedPerItem"
       :purchase-id="props.purchaseId"
       :planned-prefill="bulkPlannedPrefill"
@@ -697,6 +714,18 @@
       @cancel="closeCreatePlannedBulkDialog"
     />
 
+    <!-- Дефект 2 (владелец, 2026-09-16): «Привязать к плану» — общий диалог для
+         закупки и заявки, см. useFeoPlannedBulkMatch.ts. -->
+    <FeoPlannedBulkMatchDialog
+      v-model="bulkMatch.bulkMatchDialog.value"
+      :rows="bulkMatch.bulkMatchRows.value"
+      :loading="bulkMatch.bulkMatchLoading.value"
+      :fmt="fmtRub"
+      @toggle="bulkMatch.toggleBulkMatchRow"
+      @confirm="bulkMatch.runBulkMatchApply"
+      @cancel="bulkMatch.closeBulkMatchDialog"
+    />
+
     <!-- ===== Разбивка позиции по категориям ФЭО (владелец 2026-08-18): закупка
          в статусе «Заказано» с заморозкой ТЗ (добавлять НОВЫЕ позиции нельзя), но
          владельцу нужно разложить уже существующую позицию (напр. 66 огнетушителей)
@@ -717,6 +746,7 @@
       :node-amounts="nodeAmounts"
       :allow-unallocated="!!props.subsidyId"
       :subsidy-name="props.subsidyName"
+      :subsidy-id="props.subsidyId"
       :show-planned-select="props.feoPlannedPerItem || props.allowPerItemPlan"
       :purchase-id="props.purchaseId"
       :part-amount="splitPartAmount"
@@ -762,6 +792,7 @@ import ItemFormFields from '@/components/items/ItemFormFields.vue'
 import PurchaseVatBlock from '@/components/purchase/PurchaseVatBlock.vue'
 import BulkFeoAssignDialog from '@/components/items/BulkFeoAssignDialog.vue'
 import CreatePlannedBulkDialog from '@/components/items/CreatePlannedBulkDialog.vue'
+import FeoPlannedBulkMatchDialog from '@/components/items/feo-planned/FeoPlannedBulkMatchDialog.vue'
 import SplitItemDialog from '@/components/items/SplitItemDialog.vue'
 import type { ContractItem } from '@/types/contractItem'
 import {
@@ -783,6 +814,8 @@ import { useItemsContractors } from '@/composables/items/useItemsContractors'
 import { useItemsSplit } from '@/composables/items/useItemsSplit'
 import { useItemsFeo } from '@/composables/items/useItemsFeo'
 import { useItemsBulkFeo } from '@/composables/items/useItemsBulkFeo'
+import { useItemsPlanSuggest } from '@/composables/items/useItemsPlanSuggest'
+import { useFeoPlannedBulkMatch } from '@/composables/items/feoPlanned/useFeoPlannedBulkMatch'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
 import { ACTIONS } from '@/constants/permissionActions'
@@ -1812,7 +1845,11 @@ const {
   openSplitDialog, closeSplitDialog, addSplitPart, removeSplitPart,
   onSplitPartFeoChange, splitPartPlannedSelection, onSplitPartPlannedChange, splitPartAmount,
   saveSplit,
-} = useItemsSplit({ props, localItems, feoNodes, display, emit, showSnack })
+} = useItemsSplit({
+  props, localItems, feoNodes,
+  plannedItems: computed(() => props.plannedItems || []),
+  display, emit, showSnack,
+})
 
 // ── Selection — composables/items/useItemsTable.ts ────────────────────────────
 
@@ -1838,10 +1875,29 @@ const {
   createPlannedBulkDialog, createPlannedBulkLoading, createPlannedBulkProgress, createPlannedBulkFailures,
   openCreatePlannedBulkDialog, closeCreatePlannedBulkDialog,
   highlightMissingCategoryForPlan, runCreatePlannedBulk,
+  effectiveFeoCategoryId,
 } = useItemsBulkFeo({
   props, localItems, selectedItemIdxs, feoNodes,
   injectUnallocatedNode: _injectUnallocatedNode,
   emitUpdate, emit, showSnack,
+})
+
+// Дефект 2/4 (владелец, 2026-09-16): «похожие плановые позиции под каждой строкой»
+// (useItemsPlanSuggest.ts) + кнопка «Привязать к плану» (useFeoPlannedBulkMatch.ts) —
+// composables/items/feoPlanned/useFeoPlannedBulkMatch.ts, общий для закупки и заявки
+// (требование владельца C — один композабл, один диалог, см. FeoPlannedBulkMatchDialog
+// выше в template).
+const planSuggest = useItemsPlanSuggest({
+  localItems,
+  subsidyId: computed(() => props.subsidyId),
+  plannedItems: effectivePlannedItems,
+  effectiveCategoryId: effectiveFeoCategoryId,
+})
+const bulkMatch = useFeoPlannedBulkMatch({
+  localItems,
+  subsidyId: computed(() => props.subsidyId),
+  plannedItems: effectivePlannedItems,
+  emitUpdate, showSnack,
 })
 
 // import-no-clutter: bulk-add несвязанных позиций в каталог

@@ -116,9 +116,22 @@ export function useItemsBulkFeo(deps: UseItemsBulkFeoDeps) {
         if (planned) {
           if (planned.kind === 'planned_item') {
             item.feo_planned_item_id = planned.id
+            // Дефект 1 (владелец, 2026-09-16): поиск по всей субсидии в
+            // FeoPlannedItemsSelect позволяет выбрать плановую позицию ВНЕ дерева,
+            // выбранного выше в этом же диалоге (bulkFeoId) — категория позиции
+            // обязана последовать за плановой (тот же приём, что и в
+            // useItemsFeo.ts::onItemPlannedChange), иначе сохранение расходится
+            // с check_planned_item_category_link на бэке.
+            const plannedCategoryId = effectivePlannedItems.value
+              .find(p => p.kind === 'planned_item' && p.id === planned.id)?.category_id
+            if (plannedCategoryId != null) {
+              item.feo_node_id = plannedCategoryId
+              item.feo_category_id = plannedCategoryId
+            }
           } else {
             item.feo_planned_item_id = null
             item.feo_category_id = planned.id
+            item.feo_node_id = planned.id
           }
           item.over_plan = false
         }
@@ -370,5 +383,10 @@ export function useItemsBulkFeo(deps: UseItemsBulkFeoDeps) {
     createPlannedBulkDialog, createPlannedBulkLoading, createPlannedBulkProgress, createPlannedBulkFailures,
     openCreatePlannedBulkDialog, closeCreatePlannedBulkDialog,
     highlightMissingCategoryForPlan, runCreatePlannedBulk,
+    // Экспортируется (владелец, 2026-09-16) для useItemsPlanSuggest.ts/
+    // useFeoPlannedBulkMatch.ts — ПРАВИЛО №6, то же правило «feoPerItem выключен →
+    // категория шапки, включён → своя категория позиции», что и выше в этом файле
+    // (needPlanRows) и в ItemsTableFlat.vue::effectiveCategoryId — не копировать снова.
+    effectiveFeoCategoryId: _effectiveFeoCategoryId,
   }
 }

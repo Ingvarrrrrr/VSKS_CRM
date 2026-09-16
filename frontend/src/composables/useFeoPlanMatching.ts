@@ -42,11 +42,19 @@ export interface FeoMatchResult {
 export function useFeoPlanMatching() {
   const matching = ref(false)
 
-  /** Batch-запрос POST /feo-planned-items/match. */
+  /** Batch-запрос POST /feo-planned-items/match.
+   *
+   *  `limit` (владелец, 2026-09-16) — сколько кандидатов на запрос просить у бэкенда
+   *  (по умолчанию сервер сам берёт 5, см. _FeoMatchRequest.limit); интерактивный
+   *  поиск по всей субсидии (FeoPlannedItemsSelect.vue::useFeoPlannedSearch) просит
+   *  больше (кап поднят до 25 на бэкенде — см. докстринг top_k в
+   *  feo_planned_items_matching.py), пакетная привязка (useFeoPlannedBulkMatch) —
+   *  достаточно лучшего кандидата, оставляет умолчание. */
   async function matchQueries(
     queries: string[],
     subsidyId: number,
     feoCategoryId?: number | null,
+    limit?: number,
   ): Promise<FeoMatchResult[]> {
     if (!queries.length || !subsidyId) return []
     matching.value = true
@@ -57,6 +65,7 @@ export function useFeoPlanMatching() {
           queries,
           subsidy_id: subsidyId,
           feo_category_id: feoCategoryId ?? null,
+          ...(limit ? { limit } : {}),
         },
       })
       return data?.results ?? []

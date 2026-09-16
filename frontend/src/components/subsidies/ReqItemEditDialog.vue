@@ -41,6 +41,7 @@
           :category-id="state.form.feo_category_id"
           :nodes="feoNodes"
           :items="plannedResiduals"
+          :subsidy-id="subsidyId"
           :amount="planAmount"
           :loading="plannedLoading"
           :prefill="planPrefill"
@@ -126,6 +127,17 @@ const planTouched = ref(false)
 function onPlanSelect(val: FeoPlanSelection | null) {
   planTouched.value = true
   planSelection.value = val && val.kind === 'planned_item' ? val : null
+  // Дефект 1 (владелец, 2026-09-16): поиск по всей субсидии в FeoPlannedItemsSelect
+  // может вернуть плановую позицию из ДРУГОЙ категории, чем выбранная выше в
+  // FeoTreeSelect (state.form.feo_category_id) — переносим категорию формы вслед
+  // за плановой позицией (тот же приём, что useItemsFeo.ts::onItemPlannedChange),
+  // иначе save() отправит feo_planned_item_id и feo_category_id из разных категорий
+  // и PATCH отклонит 409 (check_planned_item_category_link).
+  if (planSelection.value) {
+    const plannedCategoryId = plannedResiduals.value
+      .find(p => p.kind === 'planned_item' && p.id === planSelection.value!.id)?.category_id
+    if (plannedCategoryId != null) state.form.feo_category_id = plannedCategoryId
+  }
 }
 const planAmount = computed(() =>
   (Number(state.form.quantity) || 0) * (Number(state.form.unit_price) || 0)

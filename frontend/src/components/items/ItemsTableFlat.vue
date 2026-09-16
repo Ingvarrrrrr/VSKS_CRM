@@ -317,11 +317,13 @@
                 :model-value="plannedSelectionFor ? plannedSelectionFor(item) : null"
                 :category-id="effectiveCategoryId(item)"
                 :nodes="feoNodes" :items="plannedItems || []"
+                :subsidy-id="subsidyId"
                 :amount="item.total_price" :readonly="feoReadonly" dense
                 :pending-by-planned-item="pendingByPlannedItem"
                 :pending-items-by-planned-item="pendingItemsByPlannedItem"
                 :purchase-id="purchaseId"
                 :wish-id="wishId"
+                :candidates="itemCandidates ? itemCandidates(item) : undefined"
                 style="flex:1 1 320px;min-width:260px"
                 :prefill="{ name: item.item_name, quantity: item.quantity, unit: item.unit, amount: item.total_price }"
                 @update:model-value="(v) => emit('item-planned-change', idx, v)"
@@ -360,6 +362,7 @@ import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
 import PriceFreshnessStamp from '@/components/items/PriceFreshnessStamp.vue'
 import type { MatchCandidate } from '@/composables/useItemMatching'
 import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
+import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
 import type { Contractor, ProductLike, ItemsDisplayRow } from '@/components/items/types'
 import type { FeoNode } from '@/composables/useFeoLeaves'
 import { formatPlanResidual } from '@/utils/numberFormat'
@@ -414,6 +417,13 @@ const props = defineProps<{
   // фактическим полям позиции (feo_planned_item_id / feo_category_id / over_plan) —
   // см. plannedSelectionFor() в PurchaseItemsEditor.vue (общая логика для всех 3 таблиц).
   plannedSelectionFor?: (item: EditorItem) => FeoPlanSelection | null
+  // Дефект 2/4 (владелец, 2026-09-16): «раньше кнопка предлагала подходящие плановые
+  // позиции сама» — восстановлено через уже существующий бэкенд/UI-блок «похожие
+  // плановые позиции» (FeoPlannedMatchSuggestions.vue, был построен, но нигде не
+  // вызывался для позиций закупки/заявки, см. useItemsPlanSuggest.ts в
+  // PurchaseItemsEditor.vue). Функция-проп по тому же паттерну, что и
+  // plannedSelectionFor выше — без пропа блок просто не рендерится (back-compat).
+  itemCandidates?: (item: EditorItem) => FeoMatchCandidate[]
   // Жалоба владельца (сессия 2026-08-19): «выбрано»/«остаток» не учитывали переключатели,
   // включённые ПРЯМО СЕЙЧАС в этой форме — только серверные числа. Карта
   // feo_planned_item_id → сумма позиций ЭТОЙ формы (см. pendingByPlannedItem в

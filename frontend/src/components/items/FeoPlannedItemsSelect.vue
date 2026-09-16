@@ -30,6 +30,21 @@
       </template>
 
       <template v-else>
+        <!-- Поиск по ВСЕЙ субсидии (владелец, 2026-09-16, дефекты 1/3/4) — до дерева
+             текущей категории: находит плановую позицию НЕЗАВИСИМО от того, к какой
+             категории привязана сама позиция закупки/заявки сейчас (см. докстринг
+             useFeoPlannedSearch.ts). Один и тот же блок для dense/expanded — ниже по
+             шаблону. -->
+        <FeoPlannedSearchBox
+          v-if="subsidyId"
+          v-model:search-text="search.searchText.value"
+          :rows="search.searchRows.value"
+          :loading="search.searchLoading.value"
+          :readonly="readonly"
+          :fmt="rows.fmt"
+          @select="onSearchSelect"
+        />
+
         <!-- Корневая строка — выбранная категория, не кликается -->
         <div class="feo-tree-row feo-tree-row--root">
           <v-icon size="15" class="mr-1 flex-shrink-0" icon="mdi-folder" color="#3B82F6" />
@@ -160,9 +175,11 @@ import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { useFeoPlannedRows } from '@/composables/items/feoPlanned/useFeoPlannedRows'
 import { useFeoPlannedMatch } from '@/composables/items/feoPlanned/useFeoPlannedMatch'
+import { useFeoPlannedSearch, type FeoPlannedSearchRow } from '@/composables/items/feoPlanned/useFeoPlannedSearch'
 import { useFeoPlannedCreate } from '@/composables/items/feoPlanned/useFeoPlannedCreate'
 import { useFeoPlannedBulk } from '@/composables/items/feoPlanned/useFeoPlannedBulk'
 import { useFeoPlannedConsumers } from '@/composables/items/feoPlanned/useFeoPlannedConsumers'
+import FeoPlannedSearchBox from './feo-planned/FeoPlannedSearchBox.vue'
 import FeoPlannedMatchSuggestions from './feo-planned/FeoPlannedMatchSuggestions.vue'
 import FeoPlannedDenseSelect from './feo-planned/FeoPlannedDenseSelect.vue'
 import FeoPlannedExpandedList from './feo-planned/FeoPlannedExpandedList.vue'
@@ -250,6 +267,11 @@ const props = defineProps<{
    *  числа на экране разойдутся между собой. */
   excludeWishId?: number | null
   excludePurchaseId?: number | null
+  /** Субсидия — нужна ТОЛЬКО для поиска по всей субсидии (FeoPlannedSearchBox,
+   *  владелец, 2026-09-16): POST /feo-planned-items/match требует subsidy_id.
+   *  Без пропа (легаси-места, которые ещё не прокинули) поле поиска просто не
+   *  рендерится (v-if="subsidyId" в шаблоне) — остальной пикер работает как раньше. */
+  subsidyId?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -285,9 +307,25 @@ function showSnack(text: string, color: ToastType = 'success') {
 
 const rows = useFeoPlannedRows({ props, emit, showSnack })
 const match = useFeoPlannedMatch({ props, emit, denseMenuOpen })
+const search = useFeoPlannedSearch({ props })
 const create = useFeoPlannedCreate({ props, emit, showSnack, fmt: rows.fmt, fmtNum: rows.fmtNum })
 const bulk = useFeoPlannedBulk({ props, emit, showSnack })
 const consumers = useFeoPlannedConsumers({ props, pendingItemsFor: rows.pendingItemsFor })
+
+// Выбор из поля поиска (владелец, 2026-09-16, дефект 1: план был найден только
+// поиском по ВСЕЙ субсидии — категория закупки/заявки и категория плановой позиции
+// разошлись). Сам выбор — то же update:modelValue, что и клик по строке дерева;
+// перенос категории вслед за плановой позицией (когда она из чужой ветки) не
+// делается здесь — это работа onItemPlannedChange/onSplitPartPlannedChange/
+// applyBulkFeo/ReqItemEditDialog.onPlanSelect (единая правка синхронизации
+// категории на стороне каждого владельца localItems, ПРАВИЛО №6 — сама мутация
+// item.feo_category_id живёт там же, где и остальные мутации той же позиции, не
+// здесь: этот компонент category у родителя не хранит и менять не может).
+function onSearchSelect(row: FeoPlannedSearchRow) {
+  if (props.readonly) return
+  emit('update:modelValue', { kind: row.kind, id: row.id })
+  search.clearSearch()
+}
 
 // Владелец (сессия 2026-08-17): «должна сразу предлагать, как сделать» — на
 // «шапочном» экземпляре (bulkItems передан и непуст) кнопка открывает диалог выбора

@@ -10,7 +10,7 @@
 import { computed, reactive, ref, type Ref } from 'vue'
 import { apiFetch } from '@/api'
 import type { FeoNode } from '@/composables/useFeoLeaves'
-import type { FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
+import type { FeoPlanPosition, FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
 import type { ToastType } from '@/composables/useToast'
 
 // EditorItem is structurally identical to the parent's; kept loose here (same
@@ -30,13 +30,20 @@ export interface UseItemsSplitDeps {
   props: { purchaseId?: number | null }
   localItems: Ref<EditorItem[]>
   feoNodes: Ref<FeoNode[]>
+  /** Плановые позиции субсидии (владелец, 2026-09-16) — нужны ТОЛЬКО чтобы
+   *  onSplitPartPlannedChange мог найти категорию свежевыбранной FeoPlannedItem
+   *  (см. её докстринг) — тот же props.plannedItems, что и у PurchaseItemsEditor.vue
+   *  в целом, передаётся напрямую (useItemsBulkFeo::effectivePlannedItems строится
+   *  ПОСЛЕ вызова useItemsSplit — порядок объявления в PurchaseItemsEditor.vue, брать
+   *  оттуда было бы циклической зависимостью). */
+  plannedItems?: Ref<FeoPlanPosition[]>
   display: { smAndDown: { value: boolean }; mdAndDown: { value: boolean } }
   emit: { (event: 'reload-requested'): void }
   showSnack: (text: string, color?: ToastType, opts?: { actionText?: string; onAction?: () => void; duration?: number }) => void
 }
 
 export function useItemsSplit(deps: UseItemsSplitDeps) {
-  const { props, localItems, feoNodes, display, emit, showSnack } = deps
+  const { props, localItems, feoNodes, plannedItems, display, emit, showSnack } = deps
 
   const splitDialog = reactive({
     show: false,
@@ -145,6 +152,19 @@ export function useItemsSplit(deps: UseItemsSplitDeps) {
     const part = splitParts.value[i]
     if (!part) return
     part.feo_planned_item_id = val && val.kind === 'planned_item' ? val.id : null
+    // Дефект 1 (владелец, 2026-09-16): поиск по всей субсидии в FeoPlannedItemsSelect
+    // может вернуть FeoPlannedItem из ЧУЖОЙ (относительно part.feo_category_id)
+    // категории — переносим категорию части ВМЕСТЕ с привязкой (тот же приём, что
+    // useItemsFeo.ts::onItemPlannedChange), иначе POST /split отклонит часть 409
+    // (категория части ≠ категория плановой позиции).
+    if (part.feo_planned_item_id != null) {
+      const plannedCategoryId = (plannedItems?.value || [])
+        .find(p => p.kind === 'planned_item' && p.id === part.feo_planned_item_id)?.category_id
+      if (plannedCategoryId != null) {
+        part.feo_node_id = plannedCategoryId
+        part.feo_category_id = plannedCategoryId
+      }
+    }
   }
 
   function splitPartAmount(i: number): number | null {

@@ -397,9 +397,22 @@ export function useItemsFeo(deps: UseItemsFeoDeps) {
       if (val.kind === 'planned_item') {
         it.feo_planned_item_id = val.id
         it.over_plan = false
+        // Дефект 1 (владелец, 2026-09-16): поиск по всей субсидии (FeoPlannedSearchBox)
+        // и блок «похожие плановые позиции» (bindCandidate) позволяют выбрать плановую
+        // позицию из ЧУЖОЙ категории — переносим категорию позиции ВМЕСТЕ с привязкой
+        // (тот же приём, что и в ветке plan_position/feo_article ниже), иначе на
+        // сохранении category_id позиции и category_id плановой позиции разъедутся
+        // (см. check_planned_item_category_link на бэке — 409 обычному пользователю).
+        const plannedCategoryId = (props.plannedItems || [])
+          .find(p => p.kind === 'planned_item' && p.id === val.id)?.category_id
+        if (plannedCategoryId != null) {
+          it.feo_node_id = plannedCategoryId
+          it.feo_category_id = plannedCategoryId
+        }
       } else {
         it.feo_planned_item_id = null
         it.feo_category_id = val.id
+        it.feo_node_id = val.id
         it.over_plan = false
       }
     })

@@ -57,6 +57,7 @@
                 :category-id="part.feo_node_id ?? part.feo_category_id"
                 :nodes="feoNodes"
                 :items="plannedItems"
+                :subsidy-id="subsidyId"
                 :amount="partAmount(i)"
                 :purchase-id="purchaseId"
                 :exclude-purchase-id="purchaseId"
@@ -116,6 +117,8 @@ defineProps<{
   nodeAmounts?: Record<number, { budget: number; free: number }> | null
   allowUnallocated?: boolean
   subsidyName?: string | null
+  /** Владелец, 2026-09-16 — поиск по всей субсидии внутри FeoPlannedItemsSelect. */
+  subsidyId?: number | null
   showPlannedSelect?: boolean
   purchaseId?: number | null
   partAmount: (i: number) => number | null

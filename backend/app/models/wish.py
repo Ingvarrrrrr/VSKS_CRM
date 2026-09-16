@@ -86,5 +86,9 @@ class Wish(Base):
     contractor = relationship("Contractor", foreign_keys=[contractor_id], lazy="selectin")
     subsidy = relationship("Subsidy", lazy="selectin")
     event = relationship("Event", foreign_keys=[event_id], lazy="selectin")
-    items = relationship("WishItem", back_populates="wish", cascade="all, delete-orphan", lazy="selectin")
+    # Жалоба владельца (2026-09-16, заявка №67): без order_by Postgres отдаёт
+    # позиции в физическом порядке строк (меняется при любом UPDATE), а не в
+    # порядке загрузки файла. id присваивается по возрастанию в порядке импорта/
+    # ручного добавления — единственный стабильный признак порядка ввода.
+    items = relationship("WishItem", back_populates="wish", cascade="all, delete-orphan", lazy="selectin", order_by="WishItem.id")
     approvals = relationship("WishApproval", back_populates="wish", cascade="all, delete-orphan", lazy="selectin", order_by="WishApproval.order_num")

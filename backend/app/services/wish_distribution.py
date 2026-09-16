@@ -119,7 +119,9 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
             ),
         }
 
-    items_res = await db.execute(select(WishItem).where(WishItem.wish_id == wish.id))
+    items_res = await db.execute(
+        select(WishItem).where(WishItem.wish_id == wish.id).order_by(WishItem.id)
+    )
     _all_wish_items = items_res.scalars().all()
     wish_items = [it for it in _all_wish_items if _is_meaningful_item(it)]
     # Дефект 2 (QA): ВСЕ id позиций заявки (включая «незначимые» — пустые
@@ -146,7 +148,7 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
     )
 
     pitems_res = await db.execute(
-        select(PurchaseItem).where(PurchaseItem.purchase_id == p.id)
+        select(PurchaseItem).where(PurchaseItem.purchase_id == p.id).order_by(PurchaseItem.id)
     )
     existing_items = pitems_res.scalars().all()
 
@@ -387,6 +389,7 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
         if getattr(wish, 'source', None) == 'advance_report':
             adv_items_res = await db.execute(
                 select(PurchaseItem).where(PurchaseItem.purchase_id.in_([p.id for p in existing]))
+                .order_by(PurchaseItem.id)
             )
             adv_items = adv_items_res.scalars().all()
             if adv_items:
@@ -401,7 +404,9 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
         # 2026-08-11): скрытые (status='wishes') закупки ещё не в плане.
         wishes_purchases = [p for p in existing if p.status == "wishes"]
         if wishes_purchases:
-            items_res = await db.execute(select(WishItem).where(WishItem.wish_id == wish.id))
+            items_res = await db.execute(
+                select(WishItem).where(WishItem.wish_id == wish.id).order_by(WishItem.id)
+            )
             items_for_gate = [it for it in items_res.scalars().all() if _is_meaningful_item(it)]
             await _ensure_feo_categories_assigned(wish, items_for_gate, db)
             await _ensure_needed_dates(wish, db, items_for_gate)
@@ -434,6 +439,7 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
         select(WishItem)
         .options(sil(WishItem.product))
         .where(WishItem.wish_id == wish.id)
+        .order_by(WishItem.id)
     )
     items_full = res.scalars().all()
 
@@ -832,7 +838,7 @@ async def _sync_wish_items_to_purchases(wish, db: AsyncSession) -> None:
             select(PurchaseItem).where(
                 PurchaseItem.purchase_id == p.id,
                 PurchaseItem.wish_item_id.isnot(None),
-            )
+            ).order_by(PurchaseItem.id)
         )
         pitems = pitems_res.scalars().all()
         changed = False

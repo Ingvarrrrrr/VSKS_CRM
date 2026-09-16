@@ -94,7 +94,9 @@ async def convert_wish(
         # это тоже момент «попадания в План закупок» (владелец, 2026-08-11).
         wishes_existing = [ep for ep in existing if ep.status == "wishes"]
         if wishes_existing and getattr(wish, 'source', None) != 'advance_report':
-            items_res = await db.execute(select(WishItem).where(WishItem.wish_id == wish.id))
+            items_res = await db.execute(
+                select(WishItem).where(WishItem.wish_id == wish.id).order_by(WishItem.id)
+            )
             _all_items_existing = items_res.scalars().all()
             await wishes_core._ensure_feo_categories_assigned(
                 wish, [it for it in _all_items_existing if wishes_core._is_meaningful_item(it)], db,
@@ -115,6 +117,7 @@ async def convert_wish(
             _ep_ids = [ep.id for ep in wishes_existing]
             _items_res = await db.execute(
                 select(_PurchaseItem).where(_PurchaseItem.purchase_id.in_(_ep_ids))
+                .order_by(_PurchaseItem.id)
             )
             _items_by_purchase: dict[int, list] = {}
             for _pit in _items_res.scalars().all():
@@ -189,6 +192,7 @@ async def convert_wish(
     # Preload items with products (B4/B10)
     res = await db.execute(
         select(WishItem).options(sil(WishItem.product)).where(WishItem.wish_id == wish.id)
+        .order_by(WishItem.id)
     )
     items_full = res.scalars().all()
 

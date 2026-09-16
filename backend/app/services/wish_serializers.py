@@ -104,6 +104,7 @@ async def _attach_purchase_matches(wish: Wish, enriched: WishOut, db: AsyncSessi
             select(PurchaseItem, FeoCategory.name)
             .outerjoin(FeoCategory, FeoCategory.id == PurchaseItem.feo_category_id)
             .where(PurchaseItem.purchase_id.in_(purchase_ids))
+            .order_by(PurchaseItem.id)
         )).all()
 
     direct_by_wish_item_id: dict[int, tuple] = {}

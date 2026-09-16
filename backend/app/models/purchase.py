@@ -242,8 +242,10 @@ class Purchase(Base):
     service_note_to_user = relationship("User", foreign_keys=[service_note_to_user_id])
     event = relationship("Event")
     total_nmck = Column(Numeric(15, 2))  # источник истины НМЦК; nmck выше — deprecated-алиас, всегда = total_nmck (см. purchase_money_writer.py)
+    # Тот же дефект и то же лекарство, что у Wish.items (заявка №67, 2026-09-16):
+    # без order_by порядок позиций закупки «плывёт» после любого UPDATE строки.
     items = relationship("PurchaseItem", back_populates="purchase",
-                         cascade="all, delete-orphan", lazy="selectin")
+                         cascade="all, delete-orphan", lazy="selectin", order_by="PurchaseItem.id")
     contract_items = relationship(
         "ContractItem",
         back_populates="purchase",

@@ -72,7 +72,7 @@ async def download_products_template(
     ws.title = "Товары"
     headers = [
         "Наименование", "Описание", "Категория", "Вид", "Ед. изм.",
-        "Цена", "Ссылка 1", "Цена ссылки 1", "Ссылка 2", "Цена ссылки 2", "Ссылка 3", "Цена ссылки 3",
+        "Цена", "Дата цены", "Ссылка 1", "Цена ссылки 1", "Ссылка 2", "Цена ссылки 2", "Ссылка 3", "Цена ссылки 3",
         "Фото (URL)", "Многоразовое", "Активен", "Категория ФЭО",
     ]
     ws.append(headers)
@@ -83,10 +83,10 @@ async def download_products_template(
         cell.alignment = Alignment(horizontal="center", vertical="center")
     ws.append([
         "Компьютер Dell", "Core i5, 16GB RAM", "Оргтехника", "Рабочая станция", "шт",
-        "85000", "https://market.yandex.ru/...", "83000", "https://dns-shop.ru/...", "87000", "", "",
+        "85000", "01.09.2026", "https://market.yandex.ru/...", "83000", "https://dns-shop.ru/...", "87000", "", "",
         "", "да", "да", "Техническое оснащение",
     ])
-    for i, w in enumerate([30, 30, 20, 20, 10, 12, 35, 14, 35, 14, 35, 14, 30, 12, 10, 30], 1):
+    for i, w in enumerate([30, 30, 20, 20, 10, 12, 14, 35, 14, 35, 14, 35, 14, 30, 12, 10, 30], 1):
         ws.column_dimensions[ws.cell(1, i).column_letter].width = w
     ws.freeze_panes = "A2"
     buf = BytesIO(); wb.save(buf); buf.seek(0)
@@ -184,6 +184,7 @@ async def products_import_mapped(
     col_category: int = Query(-1),
     col_product_type: int = Query(-1),
     col_price: int = Query(-1),
+    col_price_date: int = Query(-1, description="Индекс столбца «Дата цены» (владелец, 2026-09-16)"),
     col_photo_link: int = Query(-1),
     col_is_reusable: int = Query(-1),
     col_is_active: int = Query(-1),
@@ -222,7 +223,7 @@ async def products_import_mapped(
 
     col_map_raw = {
         "name": col_name, "description": col_description, "category": col_category,
-        "product_type": col_product_type, "price": col_price, "photo_link": col_photo_link,
+        "product_type": col_product_type, "price": col_price, "price_date": col_price_date, "photo_link": col_photo_link,
         "is_reusable": col_is_reusable, "is_active": col_is_active,
         "feo_category_name": col_feo_category_name, "quantity": col_quantity, "unit": col_unit,
         "link_url_1": col_link_url_1, "link_price_1": col_link_price_1,

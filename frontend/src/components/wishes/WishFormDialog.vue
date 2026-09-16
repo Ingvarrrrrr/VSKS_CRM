@@ -1042,6 +1042,13 @@
           <v-btn color="primary" variant="tonal" :loading="saving" @click="saveWish(false)">
             Сохранить изменения
           </v-btn>
+          <!-- Владелец (2026-09-16): «концептуально согласовали, потом понадобилось
+               разбить — не могу найти кнопку» — тот же предикат, что и в трёх вкладках
+               списка заявок (useWishActions.ts::canDistributeWish), не копия условия. -->
+          <v-btn v-if="canDistributeWish(editingWish, ctx)" color="primary" variant="tonal" prepend-icon="mdi-view-column-outline"
+                 @click="actions.openKanbanDialog(editingWish); wishDialog = false">
+            Распределить
+          </v-btn>
           <v-btn v-if="ctx.isManagerOrAdmin.value && editingWish.status === 'approved'" color="primary" variant="flat" prepend-icon="mdi-cart-arrow-right"
                  @click="actions.openConvertDialog(editingWish); wishDialog = false">
             Передать в План закупок
@@ -1164,7 +1171,7 @@ import {
 import { useWishForm } from '@/composables/wishes/useWishForm'
 import { useWishApprovers } from '@/composables/wishes/useWishApprovers'
 import { useWishItemsFeoAutosave } from '@/composables/wishes/useWishItemsFeoAutosave'
-import { useWishActions } from '@/composables/wishes/useWishActions'
+import { useWishActions, canDistributeWish } from '@/composables/wishes/useWishActions'
 import type { Wish } from '@/composables/wishes/wishTypes'
 // item-forms-accommodation-transport.md (владелец, 2026-09-15): «договора на
 // перевозку и питание могут быть не только рамочные, но и разовые» — заявка

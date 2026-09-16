@@ -464,6 +464,11 @@ export function useItemsImport(deps: UseItemsImportDeps) {
         const dataNoPid = await respNoPid.json()
         const backendItems: any[] = dataNoPid.items || []
         const warnings: SumMismatchWarning[] = dataNoPid.warnings || []
+        // Владелец (2026-09-16): «для позиций из каталога должны подтягиваться
+        // картинки» — backend (import-mapped-nopid) теперь сам сопоставляет
+        // товар по точному имени и отдаёт product_id/photo_url/description/unit
+        // от найденного товара; кладём их в строку тем же полем (_photo_url),
+        // каким фото-колонка редактора уже пользуется при импорте в закупку.
         const buildNewItems = () => backendItems.map((bi) => ({
           _uid: nextUid(),
           _row: bi.row,
@@ -475,6 +480,7 @@ export function useItemsImport(deps: UseItemsImportDeps) {
           unit_price: bi.unit_price ?? 0,
           total_price: bi.total_price ?? 0,
           country_origin: 'РФ',
+          _photo_url: bi.photo_url ?? undefined,
           _description: bi.description || '',
           _category: bi.category || '',
           _product_type: bi.product_type || '',
@@ -874,24 +880,33 @@ export function useItemsImport(deps: UseItemsImportDeps) {
     const newItems: EditorItem[] = previewRows.map((row, i) => {
       const res = resolved[i]
       const cand = res?.chosen_candidate ?? null
-      // P0-B: если привязан к каталогу — берём имя/описание/фото из кандидата
-      const hasCatalog = res?.product_id != null && cand != null
+      // Владелец (2026-09-16): для wish/no-pid import-smart-nopid backend уже
+      // сопоставил строку с каталогом ТОЧНЫМ совпадением имени (row.product_id,
+      // см. purchase_items_import_smart.py) — этот exact-match главнее ручного
+      // выбора из fuzzy-диалога (/products/match), второй источник для того же
+      // product_id не заводим, просто отдаём приоритет более точному.
+      const exactProductId: number | null = row.product_id ?? null
+      const hasExact = exactProductId != null
+      // P0-B: если привязан к каталогу через диалог — берём имя/описание/фото из кандидата
+      const hasCatalog = hasExact || (res?.product_id != null && cand != null)
       const item: EditorItem = {
         _uid: nextUid(),
-        product_id: res?.product_id ?? null,
-        // item_name: из каталога если привязан, иначе из xlsx
-        item_name: hasCatalog ? (cand!.name || row.item_name || '') : (row.item_name || ''),
-        // item_type: из каталога если есть, иначе из xlsx или дефолт
-        item_type: hasCatalog && cand!.item_type ? cand!.item_type : (row.item_type || props.defaultItemType),
-        // qty/unit_price/total_price ВСЕГДА из xlsx
+        product_id: hasExact ? exactProductId : (res?.product_id ?? null),
+        // item_name: из каталога если привязан через диалог, иначе из xlsx
+        // (exact-match не переименовывает строку — только фото/описание/ед.)
+        item_name: (!hasExact && hasCatalog) ? (cand!.name || row.item_name || '') : (row.item_name || ''),
+        // item_type: из каталога если есть (диалог), иначе из xlsx или дефолт
+        item_type: (!hasExact && hasCatalog && cand!.item_type) ? cand!.item_type : (row.item_type || props.defaultItemType),
+        // qty/unit_price/total_price ВСЕГДА из xlsx (unit — из каталога, если backend
+        // сматчил строку точным именем — см. purchase_items_import_smart.py)
         quantity: row.quantity ?? null,
         unit: row.unit || props.defaultUnit,
         unit_price: row.unit_price ?? null,
         total_price: row.total_price ?? null,
         country_origin: props.defaultCountry,
         _selectedProduct: null,
-        _photo_url: hasCatalog ? (cand!.photo_url ?? undefined) : undefined,
-        _description: hasCatalog ? (cand!.description ?? undefined) : undefined,
+        _photo_url: hasExact ? (row.photo_url ?? undefined) : (hasCatalog ? (cand!.photo_url ?? undefined) : undefined),
+        _description: hasExact ? (row.description ?? undefined) : (hasCatalog ? (cand!.description ?? undefined) : undefined),
         _description_44fz: undefined,
         _price_meta: hasCatalog ? {
           price_updated_at: cand!.price_updated_at ?? null,

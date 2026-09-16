@@ -339,3 +339,22 @@ async def find_products_by_normalized_names(
     q = _apply_org_scope(q, org_id, include_org_null)
     candidates = (await db.execute(q)).scalars().all()
     return index_products_by_name(candidates)
+
+
+def effective_photo_url(product: Product) -> Optional[str]:
+    """Отображаемый URL фото товара — явный Product.photo_url, иначе (при
+    фото в bytea, Product.photo_data) — эндпоинт /api/products/{id}/photo.
+
+    Тот же приоритет, что уже считают инлайново POST /api/products/match
+    (app/routers/products_match.py) и отчёты ФЭО (feo_plan_reads.py,
+    feo_planned_items_reports.py) — не переносим их (вне задачи), но новый
+    код по импорту позиций заявки (import-mapped-nopid / import-smart-nopid,
+    владелец 2026-09-16: «для позиций из каталога должны подтягиваться
+    картинки») использует ЭТУ единственную функцию, а не третью копию формулы
+    (Правило №6)."""
+    url = getattr(product, "photo_url", None)
+    if url:
+        return url
+    if getattr(product, "photo_data", None) is not None and getattr(product, "id", None) is not None:
+        return f"/api/products/{product.id}/photo"
+    return None

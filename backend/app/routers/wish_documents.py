@@ -46,6 +46,29 @@ SUBSIDY_TEMPLATES_DIR = "/app/uploads/templates"
 UPLOADS_DIR = "/app/uploads/products"
 
 
+def _resolve_local_product_photo(tpl, photo_url):
+    """InlineImage для локально сохранённых фото товара, иначе "".
+
+    Единственная точка (Правило №6) — используется и /service_note, и
+    /tech_spec ниже, вместо двух копий одной и той же проверки локального
+    пути + docxtpl.InlineImage."""
+    if not photo_url:
+        return ""
+    url = str(photo_url).strip()
+    local_path = None
+    if url.startswith("/api/products/photos/"):
+        fname = url.split("/")[-1]
+        local_path = f"{UPLOADS_DIR}/{fname}"
+    if not local_path or not os.path.exists(local_path):
+        return ""
+    try:
+        from docxtpl import InlineImage
+        from docx.shared import Cm
+        return InlineImage(tpl, local_path, width=Cm(2.5))
+    except Exception:
+        return ""
+
+
 @router.get("/{wish_id}/documents/service_note")
 async def generate_wish_service_note(
     wish_id: int,
@@ -184,27 +207,13 @@ async def generate_wish_service_note(
 
     # ── Build DocxTemplate object (needed early for InlineImage) ────────────
     try:
-        from docxtpl import DocxTemplate, InlineImage
-        from docx.shared import Cm
+        from docxtpl import DocxTemplate
         tpl = DocxTemplate(template_path)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка загрузки шаблона: {e}")
 
     def _resolve_photo(photo_url):
-        """Return InlineImage for local product photos, empty string otherwise."""
-        if not photo_url:
-            return ""
-        url = str(photo_url).strip()
-        local_path = None
-        if url.startswith("/api/products/photos/"):
-            fname = url.split("/")[-1]
-            local_path = f"{UPLOADS_DIR}/{fname}"
-        if not local_path or not os.path.exists(local_path):
-            return ""
-        try:
-            return InlineImage(tpl, local_path, width=Cm(2.5))
-        except Exception:
-            return ""
+        return _resolve_local_product_photo(tpl, photo_url)
 
     # ── Build items list (same shape as documents.py items_list) ────────────
     items_list = []
@@ -391,6 +400,118 @@ async def generate_wish_service_note(
         safe_name = f"Служебная_записка_{_wish_title}.docx"
     else:
         safe_name = f"Служебная_записка_заявка_{w.id}.docx"
+    encoded = quote(safe_name, safe="-_.~")
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded}"},
+    )
+
+
+@router.get("/{wish_id}/documents/tech_spec")
+async def generate_wish_tech_spec(
+    wish_id: int,
+    tz_override_mode: Optional[str] = Query(
+        default=None,
+        description="Переопределить режим ТЗ: 'exact' или '44fz' (по умолчанию — точное описание)",
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Generate Техническое задание .docx from Wish items (pre-approval, no purchase yet).
+
+    Владелец (2026-09-16): «вкладка ТЗ, только свёрнутая, как в закупке» —
+    свёрнутая секция ТЗ у заявки (WishTzSection.vue) скачивает документ отсюда.
+
+    Построение items_list — ЧЕРЕЗ _build_items_list_from_purchase_items
+    (services/documents/contexts.py), тот же построитель, что печатает ТЗ уже
+    подтверждённой закупки — докстринг item_form_summary явно говорит, что он
+    годится и для WishItem (Правило №6: не второй построитель контекста).
+    Резолюция файла шаблона — ЧЕРЕЗ _resolve_doc_template_path (services/
+    documents/templates.py), тот же приоритет «субсидия → глобальный →
+    fallback», что использует общий /api/purchases/{pid}/documents/{doc_type};
+    doc_type 'tech_spec' резолвится в contract_tz.docx (doc_types.DOC_TYPES) —
+    тот же файл, что печатает ТЗ закупки по кнопкам «ТЗ для запроса цен» /
+    «ТЗ для договора» (оба тоже падают на contract_tz.docx, см.
+    DOC_TYPE_FALLBACK_FILES).
+
+    Заявка ещё не одобрена — договорных/контрагентских полей шаблона нет,
+    заполняются пустой строкой (тот же приём, что и в generate_wish_service_note
+    выше)."""
+    result = await db.execute(
+        select(Wish)
+        .options(
+            selectinload(Wish.subsidy),
+            selectinload(Wish.items).selectinload(WishItem.product),
+        )
+        .where(Wish.id == wish_id)
+    )
+    w = result.scalar_one_or_none()
+    if not w:
+        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    if not (w.items or []):
+        raise HTTPException(status_code=422, detail="В заявке нет позиций — нечего печатать в ТЗ")
+
+    from app.services.documents.contexts import _build_items_list_from_purchase_items
+    from app.services.documents.templates import _resolve_doc_template_path
+
+    template_path, _tpl_file, _tpl_base = _resolve_doc_template_path("tech_spec", w.subsidy_id)
+    if not os.path.exists(template_path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Шаблон ТЗ ({_tpl_file}) не найден. Поместите файл в backend/templates/{_tpl_file}",
+        )
+
+    try:
+        from docxtpl import DocxTemplate
+        tpl = DocxTemplate(template_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка загрузки шаблона: {e}")
+
+    def _resolve_photo(photo_url):
+        return _resolve_local_product_photo(tpl, photo_url)
+
+    items_list = _build_items_list_from_purchase_items(
+        w, tz_override_mode=tz_override_mode, resolve_photo=_resolve_photo,
+    )
+    total_nmck_val = sum(float(it.total_price or 0) for it in (w.items or []))
+
+    # Договорных/контрагентских полей у заявки ещё нет (пре-одобрение) — те же
+    # пустые дефолты, что и в generate_wish_service_note выше, чтобы шаблон
+    # contract_tz.docx не падал на отсутствующих плейсхолдерах.
+    context = {
+        "registry_number": f"WISH-{w.id}",
+        "purchase_method": "",
+        "subsidy_name": w.subsidy.name if w.subsidy else "",
+        "subsidy_year": w.subsidy.year if w.subsidy else "",
+        "total_nmck": _fmt_money(total_nmck_val),
+        "contract_number": "",
+        "contract_date": "",
+        "contract_price": "",
+        "economy": "",
+        "execution_term": "",
+        "contractor_name": "",
+        "contractor_address": "",
+        "contractor_inn": "",
+        "contractor_kpp": "",
+        "contractor_ogrn": "",
+        "contractor_bank_details": "",
+        "contractor_signatory_line": "",
+        "items": items_list,
+    }
+
+    try:
+        tpl.render(context)
+        buf = BytesIO()
+        tpl.save(buf)
+        buf.seek(0)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка генерации документа: {e}")
+
+    _wish_title = (w.title or "").strip()
+    _wish_title = _re.sub(r'[\\/:*?"<>|\r\n]+', "", _wish_title)
+    _wish_title = _re.sub(r'\s+', "_", _wish_title)[:50]
+    safe_name = f"ТЗ_{_wish_title}.docx" if _wish_title else f"ТЗ_заявка_{w.id}.docx"
     encoded = quote(safe_name, safe="-_.~")
     return StreamingResponse(
         buf,

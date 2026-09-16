@@ -386,6 +386,8 @@
                   @planned-item-deleted="onWishPlannedItemCreated"
                 />
               </div>
+              <!-- Владелец (2026-09-16): «вкладка ТЗ, только свёрнутая, как в закупке». -->
+              <WishTzSection :items="wishForm.items" :wish-id="editingWishId" />
               <!-- Владелец, 2026-08-13: построчные пометки — что остановлено, что разошлось с
                    закупкой, что не удалось сопоставить однозначно. -->
               <div v-if="wishForm.items.some((i: any) => wishItemStatus(i))" class="mt-2 d-flex flex-column" style="gap:4px">
@@ -1154,6 +1156,7 @@ import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import ValidationArrows from '@/components/ValidationArrows.vue'
 import WishKanbanDialog from './WishKanbanDialog.vue'
 import WishActionDialogs from './WishActionDialogs.vue'
+import WishTzSection from './WishTzSection.vue'
 import { apiFetch } from '@/api'
 import {
   useWishesContext, statusLabel, priorityOptions,

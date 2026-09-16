@@ -28,7 +28,10 @@ from app.auth.jwt import get_current_user, get_single_org_id
 from app.models.user import User
 from app.services.product_matcher import score as _fuzzy_score, SCORE_AUTO as _SCORE_AUTO
 from app.services.feo_plan import assert_tz_not_over_plan
-from app.services.product_catalog_match import index_products_by_name, normalize_product_name
+from app.services.product_catalog_match import (
+    index_products_by_name, normalize_product_name,
+    find_products_by_normalized_names, effective_photo_url,
+)
 from app.services.items_import_parsing import _extract_html_tables, _read_excel_rows
 from app.services.items_import_catalog import _upsert_product_to_catalog, _apply_import_to_existing_product
 from app.utils.numbers import to_decimal
@@ -224,10 +227,13 @@ async def import_items_mapped_nopid(
         # Владелец (2026-09-04): «на этапе заявки действительно нет смысла вносить
         # в БД. Вдруг не одобрят». На этом пути закупки/заявки ЕЩЁ НЕТ — в каталог
         # ничего не пишем (ни новых карточек, ни обновления цены/категории у
-        # существующих). Позиция возвращается с пустым product_id; категория и
-        # вид берутся из файла — БД как источник тут недоступна (сопоставления
-        # с каталогом на этом этапе не делаем вовсе, в отличие от Smart-импорта,
-        # который матчит по имени, но тоже не пишет при отсутствии закупки).
+        # существующих). Категория и вид — как есть в файле, пока не перекрыты
+        # ниже сопоставлением с каталогом.
+        # Владелец (2026-09-16): «для позиций, которые есть в БД, должны
+        # подтягиваться картинки» — product_id/photo_url/описание/ед. изм. для
+        # строк с ТОЧНЫМ совпадением имени заполняются пакетно ниже, после
+        # цикла (find_products_by_normalized_names — Правило №6, тот же
+        # exact-match, что и импорт позиций В закупку, второй матчер не заводим).
         product_id = None
         eff_category, eff_product_type = row_category, row_product_type
 
@@ -244,9 +250,27 @@ async def import_items_mapped_nopid(
             'vat_amount': float(vat_amount_dec) if vat_amount_dec else None,
             'total_with_vat': float(total_with_vat_dec) if total_with_vat_dec else None,
             'product_id': product_id,
+            'photo_url': None,
             'category': eff_category,
             'product_type': eff_product_type,
         })
+
+    # Точное сопоставление с каталогом — ТОЛЬКО чтение, ничего не пишем
+    # (заявка/закупка ещё не существует). Один батч-запрос на все имена
+    # (find_products_by_normalized_names, product_catalog_match.py).
+    _names = [it['item_name'] for it in items_out if it['item_name']]
+    if _names:
+        _matched_by_name = await find_products_by_normalized_names(db, _names)
+        for it in items_out:
+            _prod = _matched_by_name.get(normalize_product_name(it['item_name']))
+            if not _prod:
+                continue
+            it['product_id'] = _prod.id
+            it['photo_url'] = effective_photo_url(_prod)
+            if _prod.description and not it['description']:
+                it['description'] = _prod.description
+            if _prod.unit:
+                it['unit'] = _prod.unit
 
     try:
         await db.commit()

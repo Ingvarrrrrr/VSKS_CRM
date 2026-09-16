@@ -43,6 +43,7 @@ router = APIRouter(prefix="/api/purchases", tags=["purchase-items-import"])
 @router.post("/items/import-smart-nopid")
 async def import_items_smart_nopid(
     file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """27.4-26b: XLSX preview БЕЗ purchaseId — для wish / новой закупки.
@@ -57,6 +58,31 @@ async def import_items_smart_nopid(
         logger.warning("import-smart-nopid failed: %s", e)
         ext = '.xls' if fname.endswith('.xls') else '.xlsx'
         raise HTTPException(400, f"Не удалось распознать файл ({ext}): {e}. Если файл .xls — попробуйте сохранить его как .xlsx (Excel: Файл → Сохранить как → Книга Excel) и повторите.")
+
+    # Владелец (2026-09-16): «для позиций, которые есть в БД, должны
+    # подтягиваться картинки» — ТОЧНОЕ совпадение по нормализованному имени
+    # (find_products_by_normalized_names, Правило №6 — тот же exact-match, что
+    # и импорт позиций В закупку, второй матчер здесь не заводим). Только
+    # чтение, в каталог ничего не пишем (заявка ещё не одобрена).
+    from app.services.product_catalog_match import (
+        effective_photo_url, find_products_by_normalized_names, normalize_product_name,
+    )
+    _names = [r.get("item_name") for r in preview if r.get("item_name")]
+    if _names:
+        _matched_by_name = await find_products_by_normalized_names(db, _names)
+        for row in preview:
+            _prod = _matched_by_name.get(normalize_product_name(row.get("item_name")))
+            row["product_id"] = _prod.id if _prod else None
+            row["photo_url"] = effective_photo_url(_prod) if _prod else None
+            row["description"] = (_prod.description or None) if _prod else None
+            if _prod and _prod.unit:
+                row["unit"] = _prod.unit
+    else:
+        for row in preview:
+            row["product_id"] = None
+            row["photo_url"] = None
+            row["description"] = None
+
     return {
         "preview": preview[:200],
         "total_rows": len(preview),

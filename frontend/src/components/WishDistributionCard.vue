@@ -1,5 +1,5 @@
 <template>
-  <div class="wish-card" :class="{ 'readonly': readonly, 'wish-card-unseen': hasUnseenChanges }">
+  <div class="wish-card" :data-item-id="item.id" :class="{ 'readonly': readonly, 'wish-card-unseen': hasUnseenChanges }">
     <div class="wish-card-photo">
       <img v-if="item._photo_url" :src="item._photo_url" alt="" />
       <v-icon v-else color="grey-lighten-1" size="20">mdi-package-variant</v-icon>

@@ -166,13 +166,21 @@
             <v-list-item prepend-icon="mdi-image-off" title="Без фото" @click="$emit('download-excel', item, false)" />
           </v-list>
         </v-menu>
+        <!-- Распределить — submitted ИЛИ approved (владелец, 2026-09-16: «концептуально
+             согласовали, потом понадобилось разбить — не могу найти кнопку»), предикат
+             общий на все три вкладки заявок, см. useWishActions.ts::canDistributeWish. -->
+        <v-btn
+          v-if="canDistributeWish(item, ctx)"
+          size="x-small" variant="tonal" color="primary"
+          :title="item.status === 'approved' ? 'Заявка уже одобрена — разбить на несколько закупок' : undefined"
+          @click="$emit('kanban', item)"
+        >
+          Распределить
+        </v-btn>
         <template v-if="item.status === 'submitted'">
-          <!-- Распределить/Одобрить/Отклонить — только менеджер+ или назначенный согласующий.
+          <!-- Одобрить/Отклонить — только менеджер+ или назначенный согласующий.
                Участник цепочки (chain approver, employee) одобряет через диалог — кнопка «Согласовать» там. -->
           <template v-if="ctx.isManagerOrAdmin.value || item.assigned_to === ctx.currentUserId">
-            <v-btn size="x-small" variant="tonal" color="primary" @click="$emit('kanban', item)">
-              Распределить
-            </v-btn>
             <v-btn size="x-small" variant="tonal" color="success" :loading="approvingId === item.id" @click="$emit('approve', item)">
               Одобрить
             </v-btn>
@@ -208,6 +216,7 @@ import {
   shortName, wishCoAuthors, wishRecipients, wishItemsTotal, formatDate, formatPrice,
   stoppedByLine, rejectedByLine,
 } from '@/composables/wishes/useWishesContext'
+import { canDistributeWish } from '@/composables/wishes/useWishActions'
 import type { Wish } from '@/composables/wishes/wishTypes'
 
 defineProps<{

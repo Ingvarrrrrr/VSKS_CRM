@@ -263,6 +263,7 @@ from app.routers import users_dictionaries
 from app.routers import users_import
 # Категории закупки товара — отдельный справочник, many-to-many (владелец, 2026-09-16)
 from app.routers import purchase_categories as purchase_categories_router
+from app.routers import purchase_split_columns  # черновик раскладки канбана разбиения (2026-09-16)
 
 
 def register_routes(app: FastAPI) -> None:
@@ -487,3 +488,4 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(diag_router.router)                 # /api/diag/*
     app.include_router(dictionaries_router.router)         # /api/dictionaries/purchase (Правило №6)
     app.include_router(purchase_categories_router.router)  # /api/purchase-categories (2026-09-16)
+    app.include_router(purchase_split_columns.router)  # PATCH split_column_key (2026-09-16)

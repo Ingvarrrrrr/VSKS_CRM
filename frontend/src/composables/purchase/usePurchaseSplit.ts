@@ -58,6 +58,10 @@ export function usePurchaseSplit(
         _photo_url: productPhotoSrc(prod) ?? null,
         _product_category: category,
         _column: category || '__uncategorized__',
+        // Владелец (2026-09-16): раскладка канбана переживает закрытие окна —
+        // читаем сохранённый черновик (app/models/purchase_item.py::split_column_key),
+        // PurchaseSplitKanban.vue восстанавливает по нему колонки при открытии.
+        split_column_key: it.split_column_key ?? null,
       }
     })
     splitKanbanDialog.value = true

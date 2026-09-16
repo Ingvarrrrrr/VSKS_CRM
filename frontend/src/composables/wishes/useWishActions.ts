@@ -10,6 +10,25 @@ import type { WishesContext } from './useWishesContext'
 import type { Wish } from './wishTypes'
 import type { UseWishFormReturn } from './useWishForm'
 
+// canDistributeWish — ЕДИНЫЙ предикат видимости кнопки «Распределить» (ПРАВИЛО
+// №6: раньше три вкладки (WishIncomingTab/WishAllTab/WishMyTab) держали копии
+// условия — и держали его НЕПРАВИЛЬНО: показывали кнопку только на статусе
+// 'submitted', хотя POST /wishes/{id}/approve-distribution (wish_convert.py)
+// разрешает распределение и на 'approved' — владелец, 2026-09-16: «концептуально
+// согласовали, потом понадобилось разбить — не могу найти кнопку». Функция —
+// НЕ метод хука useWishActions (тот инстанциируется только внутри
+// WishFormDialog.vue, файла другого исполнителя) — модульная, чтобы её мог
+// импортировать любой компонент, у которого уже есть свой useWishesContext().
+// Право на действие — то же самое, что уже стояло у «Распределить»/«Одобрить»:
+// менеджер+ или сам назначенный согласующий (assigned_to).
+export function canDistributeWish(
+  wish: Pick<Wish, 'status' | 'assigned_to'>,
+  ctx: Pick<WishesContext, 'isManagerOrAdmin' | 'currentUserId'>,
+): boolean {
+  if (wish.status !== 'submitted' && wish.status !== 'approved') return false
+  return ctx.isManagerOrAdmin.value || wish.assigned_to === ctx.currentUserId
+}
+
 export function useWishActions(deps: {
   ctx: WishesContext
   apiFetch: typeof import('@/api').apiFetch

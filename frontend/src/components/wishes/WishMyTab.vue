@@ -173,6 +173,19 @@
                  списка, без диалога правки. -->
             <v-btn v-if="ctx.isSaas.value" icon="mdi-shield-crown" size="x-small" variant="text" color="red-darken-2"
               title="Принудительно сменить статус (SaaS-admin)" @click="$emit('force-status', item)" />
+            <!-- Распределить — submitted ИЛИ approved (владелец, 2026-09-16: «концептуально
+                 согласовали, потом понадобилось разбить — не могу найти кнопку»), тот же
+                 предикат, что «На согласование мне»/«Заявки сотрудников» — см.
+                 useWishActions.ts::canDistributeWish. Раньше на «Моих» этой кнопки не было
+                 вовсе — не только на approved, ни на каком статусе. -->
+            <v-btn
+              v-if="canDistributeWish(item, ctx)"
+              size="x-small" variant="tonal" color="primary"
+              :title="item.status === 'approved' ? 'Заявка уже одобрена — разбить на несколько закупок' : undefined"
+              @click="$emit('kanban', item)"
+            >
+              Распределить
+            </v-btn>
             <template v-if="item.status === 'draft'">
               <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click="$emit('open-edit', item)" />
               <v-btn
@@ -300,6 +313,14 @@
                      табличном виде. -->
                 <v-btn v-if="ctx.isSaas.value" icon="mdi-shield-crown" size="x-small" variant="text" color="red-darken-2"
                   title="Принудительно сменить статус (SaaS-admin)" @click.stop="$emit('force-status', w)" />
+                <v-btn
+                  v-if="canDistributeWish(w, ctx)"
+                  size="x-small" variant="tonal" color="primary"
+                  :title="w.status === 'approved' ? 'Заявка уже одобрена — разбить на несколько закупок' : undefined"
+                  @click.stop="$emit('kanban', w)"
+                >
+                  Распределить
+                </v-btn>
                 <template v-if="w.status === 'draft'">
                   <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click.stop="$emit('open-edit', w)" />
                   <v-btn
@@ -393,6 +414,7 @@ import {
   shortName, wishCoAuthors, wishRecipients, wishItemsTotal, formatDate, formatPrice,
   stoppedByLine, rejectedByLine, purchaseMenuLabel, wishPurchasesLabel,
 } from '@/composables/wishes/useWishesContext'
+import { canDistributeWish } from '@/composables/wishes/useWishActions'
 import type { Wish } from '@/composables/wishes/wishTypes'
 
 defineProps<{
@@ -417,6 +439,7 @@ defineEmits<{
   (e: 'delete', item: Wish): void
   (e: 'force-status', item: Wish): void
   (e: 'convert', item: Wish): void
+  (e: 'kanban', item: Wish): void
   (e: 'download-excel', item: Wish, withPhotos: boolean): void
   (e: 'update:cards-page', page: number): void
 }>()

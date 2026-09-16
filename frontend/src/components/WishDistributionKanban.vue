@@ -2,45 +2,23 @@
   <div class="wish-kanban">
     <div class="wish-kanban-header mb-3">
       <div class="text-caption text-medium-emphasis">
-        Распределите позиции по будущим закупкам (колонки = категории товаров). Перетащите карточку между колонками.
+        Распределите позиции по будущим закупкам (колонки = категории товаров). Перетащите карточку
+        между колонками, «+ Столбец» — своя колонка под то, чего нет в категориях каталога.
       </div>
       <div class="text-caption mt-1">
         Всего: <strong>{{ totalItems }}</strong> позиций · <strong>{{ formatMoney(totalAmount) }}</strong>
       </div>
     </div>
 
-    <div class="wish-kanban-columns">
-      <div
-        v-for="col in columns"
-        :key="col.key"
-        class="wish-kanban-col"
-      >
-        <div class="wish-kanban-col-head">
-          <div class="wish-kanban-col-title">
-            <v-icon v-if="col.key === UNCAT_KEY" size="16" class="mr-1" color="grey">mdi-help-circle-outline</v-icon>
-            <v-icon v-else size="16" class="mr-1" color="primary">mdi-tag-outline</v-icon>
-            {{ col.label }}
-          </div>
-          <div class="wish-kanban-col-meta">
-            {{ col.items.length }} шт · {{ formatMoney(col.sum) }}
-          </div>
-        </div>
-        <draggable
-          :list="col.items"
-          :group="{ name: groupName, pull: !readonly, put: !readonly }"
-          item-key="id"
-          :disabled="readonly"
-          :animation="150"
-          ghost-class="wish-kanban-ghost"
-          class="wish-kanban-drop"
-          @end="onDragEnd($event, col.key)"
-        >
-          <template #item="{ element }">
-            <WishDistributionCard :item="element" :readonly="readonly" />
-          </template>
-        </draggable>
-      </div>
-    </div>
+    <CategoryKanbanBoard
+      ref="boardRef"
+      v-model:columns="columns"
+      :readonly="readonly"
+      :group-name="groupName"
+      :uncat-key="UNCAT_KEY"
+      add-column-prefix="Новая категория"
+      @change="onColumnChange"
+    />
 
     <div v-if="!readonly" class="wish-kanban-actions mt-4 d-flex ga-2 align-center">
       <div class="d-flex ga-2 align-center">
@@ -101,11 +79,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-// @ts-ignore - vuedraggable types are loose
-import draggable from 'vuedraggable'
+// Владелец (2026-09-16, прод): «перетаскивание карточек по категориям было
+// решено, при рефакторинге WishesView (commit 8091b92d) угробилось» — на самом
+// деле DnD пережил перенос в WishDistributionKanban.vue целиком (см. историю
+// файла), просто не показывал ни «+ Столбец», ни полноэкранное окно. Обе вещи
+// добавлены здесь на ОБЩЕМ борде — см. components/kanban/CategoryKanbanBoard.vue
+// (используется и разбиением закупки, PurchaseSplitKanban.vue — ПРАВИЛО №6, один
+// канбан-компонент на оба места). columns — ref (не computed, как было раньше):
+// computed не мог держать пустую колонку, добавленную вручную и ещё без позиций.
+import { computed, ref, watch } from 'vue'
 import { apiFetch } from '@/api'
-import WishDistributionCard from '@/components/WishDistributionCard.vue'
+import CategoryKanbanBoard from '@/components/kanban/CategoryKanbanBoard.vue'
+import type { KanbanColumnState } from '@/components/kanban/kanbanTypes'
 
 interface WishItem {
   id: number
@@ -144,7 +129,12 @@ function labelOf(key: string): string {
   return key === UNCAT_KEY ? 'Не определено' : key
 }
 
-const columns = computed(() => {
+// Real ref state — не computed — чтобы можно было добавить пустую колонку
+// («+ Столбец», владелец 2026-09-16) до того, как в неё перетащили хоть одну
+// позицию: производный computed от props.items такую колонку не удержал бы.
+const columns = ref<KanbanColumnState[]>([])
+
+function rebuildFromProps() {
   const groups = new Map<string, WishItem[]>()
   groups.set(UNCAT_KEY, [])
   for (const it of props.items) {
@@ -152,17 +142,20 @@ const columns = computed(() => {
     if (!groups.has(k)) groups.set(k, [])
     groups.get(k)!.push(it)
   }
-  const entries: { key: string; label: string; items: WishItem[]; sum: number }[] = []
+  const out: KanbanColumnState[] = []
   const uncat = groups.get(UNCAT_KEY) || []
-  if (uncat.length > 0) {
-    entries.push({ key: UNCAT_KEY, label: 'Не определено', items: uncat, sum: sumOf(uncat) })
-  }
+  if (uncat.length > 0) out.push({ key: UNCAT_KEY, label: 'Не определено', items: uncat })
   for (const [k, arr] of groups.entries()) {
     if (k === UNCAT_KEY) continue
-    entries.push({ key: k, label: labelOf(k), items: arr, sum: sumOf(arr) })
+    out.push({ key: k, label: labelOf(k), items: arr })
   }
-  return entries
-})
+  columns.value = out
+}
+rebuildFromProps()
+// deep:false — намеренно: onColumnChange мутирует поля СУЩЕСТВУЮЩИХ элементов
+// props.items (тот же массив, что держит родитель), пересборка на это не должна
+// реагировать (иначе ручные «+ Столбец» колонки исчезали бы при каждом drag).
+watch(() => props.items, rebuildFromProps, { deep: false })
 
 function sumOf(items: WishItem[]): number {
   return items.reduce((s, it) => s + (Number(it.total_price) || 0), 0)
@@ -173,12 +166,7 @@ const totalAmount = computed(() => sumOf(props.items))
 const nonEmptyColumnCount = computed(() => columns.value.filter(c => c.items.length > 0).length)
 
 // Естественная колонка позиции БЕЗ учёта ручного/объединённого target_column_key —
-// то, куда позиция попала бы после сброса. Используется, чтобы решить, показывать
-// ли кнопку «разложить обратно»: если у всех позиций и так одна и та же реальная
-// категория, разложить — значит вернуть их всё в ту же единственную колонку, то
-// есть кнопка ничего не изменит и создаст ложное ожидание. В этом случае кнопку
-// не показываем вовсе (не просто disabled — чтобы не провоцировать вопрос
-// «почему не работает»).
+// см. подробное обоснование кнопки «разложить обратно» ниже у onSplitAll.
 function naturalKey(it: WishItem): string {
   if (it._product_category && it._product_category.trim()) return it._product_category
   return UNCAT_KEY
@@ -202,21 +190,42 @@ function pluralPurchases(n: number): string {
   return 'закупок'
 }
 
-async function onDragEnd(ev: any, colKey: string) {
+// Перенос элемента между массивами колонок (для отката неудавшегося PATCH —
+// см. onColumnChange). vuedraggable уже переместил элемент оптимистично в
+// массив колонки-получателя ДО ответа сервера; при ошибке возвращаем его в
+// колонку, соответствующую восстановленному target_column_key.
+function moveItemToColumnArrays(item: WishItem, targetKey: string) {
+  for (const c of columns.value) {
+    const i = c.items.findIndex((x: any) => x.id === item.id)
+    if (i !== -1) c.items.splice(i, 1)
+  }
+  let target = columns.value.find(c => c.key === targetKey)
+  if (!target) {
+    target = { key: targetKey, label: labelOf(targetKey), items: [] }
+    columns.value.push(target)
+  }
+  target.items.push(item)
+}
+
+async function onColumnChange(colKey: string, evt: any) {
   if (props.readonly) return
-  const item = ev?.item?.__draggable_context?.element as WishItem | undefined
+  const added = evt?.added
+  if (!added) return // reorder внутри той же колонки или удаление — сохранять нечего
+  const item = added.element as WishItem | undefined
   if (!item) return
-  if (item.target_column_key === colKey) return
-  const prev = item.target_column_key
-  item.target_column_key = colKey
+  const newKey = colKey === UNCAT_KEY ? null : colKey
+  if (item.target_column_key === newKey) return
+  const prev = item.target_column_key ?? null
+  item.target_column_key = newKey
   try {
     await apiFetch(`/wishes/${props.wishId}/items/${item.id}`, {
       method: 'PATCH',
-      body: JSON.stringify({ target_column_key: colKey === UNCAT_KEY ? null : colKey }),
+      body: JSON.stringify({ target_column_key: newKey }),
     })
   } catch (e: any) {
-    item.target_column_key = prev ?? null
-    emit('error', e?.message || 'Не удалось сохранить позицию')
+    item.target_column_key = prev
+    moveItemToColumnArrays(item, resolveKey(item))
+    emit('error', e?.payload?.message || e?.message || 'Не удалось сохранить позицию')
   }
 }
 
@@ -235,7 +244,9 @@ function pickMergeTargetKey(): string | null {
   const nonEmpty = columns.value.filter(c => c.items.length > 0)
   if (nonEmpty.length === 0) return null
   const realCategory = nonEmpty.find(c => c.key !== UNCAT_KEY)
-  return (realCategory || nonEmpty[0]).key
+  // nonEmpty.length>0 гарантирован ранним return выше — non-null assertion
+  // безопасен (nonEmpty[0] existence, не noUncheckedIndexedAccess artefact).
+  return (realCategory || nonEmpty[0])!.key
 }
 
 const merging = ref(false)
@@ -250,6 +261,7 @@ async function onMergeAll() {
     for (const item of toMove) {
       const prev = item.target_column_key
       item.target_column_key = targetKey
+      moveItemToColumnArrays(item, targetKey)
       try {
         await apiFetch(`/wishes/${props.wishId}/items/${item.id}`, {
           method: 'PATCH',
@@ -257,6 +269,7 @@ async function onMergeAll() {
         })
       } catch (e: any) {
         item.target_column_key = prev ?? null
+        moveItemToColumnArrays(item, resolveKey(item))
         failCount += 1
       }
     }
@@ -286,6 +299,7 @@ async function onSplitAll() {
     for (const item of toReset) {
       const prev = item.target_column_key
       item.target_column_key = null
+      moveItemToColumnArrays(item, resolveKey(item))
       try {
         await apiFetch(`/wishes/${props.wishId}/items/${item.id}`, {
           method: 'PATCH',
@@ -293,6 +307,7 @@ async function onSplitAll() {
         })
       } catch (e: any) {
         item.target_column_key = prev ?? null
+        moveItemToColumnArrays(item, resolveKey(item))
         failCount += 1
       }
     }
@@ -315,21 +330,29 @@ async function onApprove() {
     )
     emit('approved', res)
   } catch (e: any) {
-    emit('error', e?.message || 'Ошибка одобрения распределения')
+    emit('error', e?.payload?.message || e?.message || 'Ошибка одобрения распределения')
   } finally {
     approving.value = false
   }
 }
+
+// Проброс наверх (WishKanbanDialog.vue) для предупреждения при закрытии окна —
+// пустые «+ Столбец»-колонки нигде не хранятся и исчезнут при переоткрытии.
+const boardRef = ref<InstanceType<typeof CategoryKanbanBoard> | null>(null)
+function vanishingManualColumns(): string[] {
+  return boardRef.value?.vanishingManualColumns() ?? []
+}
+defineExpose({ vanishingManualColumns })
 </script>
 
 <style scoped>
 /* Владелец (2026-09-04): окно распределения должно быть шире, карточки —
    компактнее, а колонки — со СВОЕЙ вертикальной прокруткой (не всего окна),
-   чтобы при resize диалога (см. WishesView.vue) doска вела себя предсказуемо.
-   Цепочка высот: .wish-kanban (100% высоты диалога) → .wish-kanban-columns
-   (flex:1, тянется на всё оставшееся место) → .wish-kanban-col (flex-колонка)
-   → .wish-kanban-drop (flex:1 + overflow-y:auto — здесь и скроллится список
-   карточек колонки, независимо от соседних колонок). */
+   чтобы при resize диалога (см. WishKanbanDialog.vue) доска вела себя предсказуемо.
+   Цепочка высот: .wish-kanban (100% высоты диалога) → CategoryKanbanBoard's
+   .kb-columns (flex:1, тянется на всё оставшееся место, своя горизонтальная
+   прокрутка) → .kb-col (flex-колонка) → .kb-drop (flex:1 + overflow-y:auto —
+   здесь и скроллится список карточек колонки, независимо от соседних колонок). */
 .wish-kanban {
   width: 100%;
   height: 100%;
@@ -339,53 +362,6 @@ async function onApprove() {
 }
 .wish-kanban-header {
   flex: 0 0 auto;
-}
-.wish-kanban-columns {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  flex: 1 1 auto;
-  min-height: 0;
-  padding-bottom: 8px;
-}
-.wish-kanban-col {
-  flex: 0 0 220px;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  background: rgba(var(--v-theme-surface-variant), 0.35);
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  border-radius: 8px;
-  padding: 8px;
-}
-.wish-kanban-col-head {
-  flex: 0 0 auto;
-  margin-bottom: 6px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-}
-.wish-kanban-col-title {
-  font-weight: 600;
-  font-size: 0.85rem;
-  display: flex;
-  align-items: center;
-}
-.wish-kanban-col-meta {
-  font-size: 0.72rem;
-  color: rgba(var(--v-theme-on-surface), 0.65);
-  margin-top: 2px;
-}
-.wish-kanban-drop {
-  flex: 1 1 auto;
-  min-height: 60px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-.wish-kanban-ghost {
-  opacity: 0.4;
 }
 .wish-kanban-actions {
   flex: 0 0 auto;

@@ -116,6 +116,7 @@
         @delete="onDeleteWish"
         @force-status="onForceStatus"
         @convert="onConvert"
+        @kanban="onKanban"
         @download-excel="onDownloadExcel"
         @update:cards-page="v => cardsPage = v"
       />
@@ -526,45 +527,10 @@ onMounted(async () => {
   filter: grayscale(0.35);
 }
 
-/* Владелец (2026-09-04): окно «Распределение позиций по закупкам» — шире,
-   компактнее, с изменяемым мышью размером (см. WishKanbanDialog.vue).
-   content-class на v-dialog применяется к .v-overlay__content, который Vuetify
-   телепортирует в <body> — эти правила намеренно НЕ scoped. */
-.wish-kanban-dialog-content {
-  width: 95vw;
-  max-width: 1800px;
-  height: 88vh;
-  max-height: 92vh;
-  min-width: 760px;
-  min-height: 420px;
-  resize: both;
-  overflow: hidden;
-}
-.v-overlay--fullscreen .wish-kanban-dialog-content {
-  width: 100% !important;
-  height: 100% !important;
-  max-width: 100% !important;
-  max-height: 100% !important;
-  min-width: 0 !important;
-  min-height: 0 !important;
-  resize: none !important;
-}
-.wish-kanban-dialog-card {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.wish-kanban-dialog-cardtext {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  display: flex;
-}
-.wish-kanban-dialog-cardtext > * {
-  min-height: 0;
-  width: 100%;
-}
+/* Владелец (2026-09-16): окно «Распределение позиций по закупкам» теперь
+   ВСЕГДА fullscreen (было width 95vw/max 1800 — на 27" влезало 5 колонок из
+   26, «заебался переключаться») — правила размера/resize диалога и стили
+   .wish-kanban-dialog-card/-cardtext переехали в сам WishKanbanDialog.vue
+   (там же, где теперь единственный источник этой разметки, ПРАВИЛО №6 — не
+   держать те же селекторы в двух файлах). */
 </style>

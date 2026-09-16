@@ -3,78 +3,22 @@
     <div class="split-kanban-header mb-3">
       <div class="text-caption text-medium-emphasis">
         Перетащите позиции по колонкам — каждая непустая колонка станет отдельной закупкой.
+        Раскладка сохраняется на сервере сразу же (переживает закрытие окна и перезагрузку).
       </div>
       <div class="text-caption mt-1">
         Всего: <strong>{{ totalItems }}</strong> позиций · <strong>{{ formatMoney(totalAmount) }}</strong>
       </div>
     </div>
 
-    <!-- Sticky top scrollbar (mirrors bottom) -->
-    <div ref="topScrollerRef" class="split-kanban-top-scroller">
-      <div class="split-kanban-top-scroller-phantom" :style="{ width: contentWidth + 'px' }" />
-    </div>
-
-    <div ref="columnsRef" class="split-kanban-columns">
-      <div
-        v-for="(col, idx) in columns"
-        :key="col.key"
-        class="split-kanban-col"
-      >
-        <div class="split-kanban-col-head">
-          <div class="split-kanban-col-title">
-            <v-icon v-if="col.key === UNCAT_KEY" size="16" class="mr-1" color="grey">mdi-help-circle-outline</v-icon>
-            <v-icon v-else size="16" class="mr-1" color="primary">mdi-tag-outline</v-icon>
-            <template v-if="!col.editing">
-              <span class="flex-grow-1">{{ col.label }}</span>
-              <v-btn
-                v-if="!readonly && col.key !== UNCAT_KEY"
-                icon="mdi-pencil-outline"
-                size="x-small"
-                variant="text"
-                @click="col.editing = true"
-              />
-              <v-btn
-                v-if="!readonly && !col.items.length && col.key !== UNCAT_KEY"
-                icon="mdi-close"
-                size="x-small"
-                variant="text"
-                color="error"
-                @click="removeColumn(idx)"
-              />
-            </template>
-            <template v-else>
-              <input
-                v-model="col.label"
-                class="split-kanban-col-input"
-                @keyup.enter="finishEditColumn(col)"
-                @blur="finishEditColumn(col)"
-              />
-            </template>
-          </div>
-          <div class="split-kanban-col-meta">
-            {{ col.items.length }} шт · {{ formatMoney(sumOf(col.items)) }}
-          </div>
-        </div>
-        <draggable
-          :list="col.items"
-          :group="{ name: groupName, pull: !readonly, put: !readonly }"
-          item-key="id"
-          :disabled="readonly"
-          :animation="150"
-          ghost-class="split-kanban-ghost"
-          class="split-kanban-drop"
-        >
-          <template #item="{ element }">
-            <WishDistributionCard :item="element" :readonly="readonly" />
-          </template>
-        </draggable>
-      </div>
-
-      <div v-if="!readonly" class="split-kanban-col split-kanban-col-add" @click="addColumn">
-        <v-icon size="28" color="primary">mdi-plus</v-icon>
-        <div class="text-caption text-primary mt-1">Новая колонка</div>
-      </div>
-    </div>
+    <CategoryKanbanBoard
+      ref="boardRef"
+      v-model:columns="columns"
+      :readonly="readonly"
+      :group-name="groupName"
+      :uncat-key="UNCAT_KEY"
+      add-column-prefix="Новая колонка"
+      @change="onColumnChange"
+    />
 
     <div v-if="!readonly" class="split-kanban-actions mt-4 d-flex ga-2 justify-end">
       <v-btn
@@ -111,11 +55,19 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-// @ts-ignore - vuedraggable types are loose
-import draggable from 'vuedraggable'
+// Владелец (2026-09-16): «перекидывал по категориям в канбане разбиения
+// закупки, случайно вышел из окна — всё слетело». Раскладка теперь сохраняется
+// на сервере per-позиция (purchase_items.split_column_key, PATCH на каждый
+// бросок — см. app/routers/purchase_split_columns.py) вместо чисто клиентского
+// состояния, живущего только в памяти этого компонента. Общий столбчатый борд
+// (drag/drop, «+ Столбец», rename/remove пустой колонки, горизонтальная
+// прокрутка колёсиком, автопрокрутка к краю при перетаскивании) — тот же
+// компонент, что у распределения заявки (ПРАВИЛО №6, владелец: «один канбан на
+// оба места»): components/kanban/CategoryKanbanBoard.vue.
+import { computed, ref, watch } from 'vue'
 import { apiFetch } from '@/api'
-import WishDistributionCard from '@/components/WishDistributionCard.vue'
+import CategoryKanbanBoard from '@/components/kanban/CategoryKanbanBoard.vue'
+import type { KanbanColumnState } from '@/components/kanban/kanbanTypes'
 
 interface PurchaseItemLike {
   id: number
@@ -126,7 +78,7 @@ interface PurchaseItemLike {
   product_id?: number | null
   _photo_url?: string | null
   _product_category?: string
-  _column?: string
+  split_column_key?: string | null
 }
 
 const props = defineProps<{
@@ -144,36 +96,39 @@ const emit = defineEmits<{
 const UNCAT_KEY = '__uncategorized__'
 const groupName = computed(() => `purchase-split-${props.purchaseId}`)
 
-interface ColumnState {
-  key: string
-  label: string
-  items: PurchaseItemLike[]
-  editing: boolean
+function resolveKey(it: PurchaseItemLike): string {
+  if (it.split_column_key && it.split_column_key.trim()) return it.split_column_key
+  if (it._product_category && it._product_category.trim()) return it._product_category
+  return UNCAT_KEY
+}
+function labelOf(key: string): string {
+  return key === UNCAT_KEY ? 'Не определено' : key
 }
 
-// Real ref state — не computed — чтобы vuedraggable мог мутировать массив
-// при drop между колонками и mutation persist'ился.
-const columns = ref<ColumnState[]>([])
+// Real ref state — не computed, чтобы держать пустые «+ Столбец» колонки и
+// колонки с уже сохранённым на сервере split_column_key.
+const columns = ref<KanbanColumnState[]>([])
 
 function rebuildFromProps() {
   const groups = new Map<string, PurchaseItemLike[]>()
   for (const it of props.items) {
-    const cat = (it._product_category || '').trim()
-    const k = cat || UNCAT_KEY
+    const k = resolveKey(it)
     if (!groups.has(k)) groups.set(k, [])
     groups.get(k)!.push(it)
   }
-  const out: ColumnState[] = []
+  const out: KanbanColumnState[] = []
   const uncat = groups.get(UNCAT_KEY) || []
-  if (uncat.length) out.push({ key: UNCAT_KEY, label: 'Не определено', items: uncat, editing: false })
+  if (uncat.length) out.push({ key: UNCAT_KEY, label: 'Не определено', items: uncat })
   for (const [k, arr] of groups.entries()) {
     if (k === UNCAT_KEY) continue
-    out.push({ key: k, label: k, items: arr, editing: false })
+    out.push({ key: k, label: k, items: arr })
   }
   columns.value = out
 }
-
 rebuildFromProps()
+// deep:false — как и у WishDistributionKanban.vue: onColumnChange мутирует
+// split_column_key на существующих элементах props.items (тот же массив, не
+// заменяется), пересборка на эту мутацию реагировать не должна.
 watch(() => props.items, rebuildFromProps, { deep: false })
 
 function sumOf(items: PurchaseItemLike[]): number {
@@ -197,78 +152,42 @@ function pluralPurchases(n: number): string {
   return 'закупок'
 }
 
-function addColumn() {
-  if (props.readonly) return
-  let n = columns.value.filter(c => c.key !== UNCAT_KEY).length + 1
-  let key = `Новая колонка ${n}`
-  while (columns.value.some(c => c.key === key)) {
-    n += 1
-    key = `Новая колонка ${n}`
+// Откат неудавшегося PATCH — см. onColumnChange (тот же приём, что и в
+// WishDistributionKanban.vue::moveItemToColumnArrays).
+function moveItemToColumnArrays(item: PurchaseItemLike, targetKey: string) {
+  for (const c of columns.value) {
+    const i = c.items.findIndex((x: any) => x.id === item.id)
+    if (i !== -1) c.items.splice(i, 1)
   }
-  columns.value.push({ key, label: key, items: [], editing: true })
-}
-
-function removeColumn(idx: number) {
-  if (props.readonly) return
-  const col = columns.value[idx]
-  if (!col || col.key === UNCAT_KEY) return
-  if (col.items.length) return
-  columns.value.splice(idx, 1)
-}
-
-function finishEditColumn(col: ColumnState) {
-  const newLabel = (col.label || '').trim()
-  if (!newLabel) {
-    col.label = col.key
-  } else {
-    col.key = newLabel
-    col.label = newLabel
+  let target = columns.value.find(c => c.key === targetKey)
+  if (!target) {
+    target = { key: targetKey, label: labelOf(targetKey), items: [] }
+    columns.value.push(target)
   }
-  col.editing = false
+  target.items.push(item)
 }
 
-// ── Sticky top scrollbar sync ────────────────────────────────────────────────
-const topScrollerRef = ref<HTMLDivElement | null>(null)
-const columnsRef = ref<HTMLDivElement | null>(null)
-const contentWidth = ref(0)
-let _syncing = false
-let _resizeObs: ResizeObserver | null = null
-
-function updateContentWidth() {
-  if (!columnsRef.value) return
-  contentWidth.value = columnsRef.value.scrollWidth
+async function onColumnChange(colKey: string, evt: any) {
+  if (props.readonly) return
+  const added = evt?.added
+  if (!added) return
+  const item = added.element as PurchaseItemLike | undefined
+  if (!item) return
+  const newKey = colKey === UNCAT_KEY ? null : colKey
+  if ((item.split_column_key ?? null) === newKey) return
+  const prev = item.split_column_key ?? null
+  item.split_column_key = newKey
+  try {
+    await apiFetch(`/purchases/${props.purchaseId}/items/${item.id}/split-column`, {
+      method: 'PATCH',
+      body: JSON.stringify({ split_column_key: newKey }),
+    })
+  } catch (e: any) {
+    item.split_column_key = prev
+    moveItemToColumnArrays(item, resolveKey(item))
+    emit('error', e?.payload?.message || e?.message || 'Не удалось сохранить раскладку позиции')
+  }
 }
-function onTopScroll() {
-  if (_syncing || !columnsRef.value || !topScrollerRef.value) return
-  _syncing = true
-  columnsRef.value.scrollLeft = topScrollerRef.value.scrollLeft
-  _syncing = false
-}
-function onBottomScroll() {
-  if (_syncing || !columnsRef.value || !topScrollerRef.value) return
-  _syncing = true
-  topScrollerRef.value.scrollLeft = columnsRef.value.scrollLeft
-  _syncing = false
-}
-onMounted(() => {
-  nextTick(() => {
-    updateContentWidth()
-    if (columnsRef.value) {
-      columnsRef.value.addEventListener('scroll', onBottomScroll, { passive: true })
-      _resizeObs = new ResizeObserver(() => updateContentWidth())
-      _resizeObs.observe(columnsRef.value)
-    }
-    if (topScrollerRef.value) {
-      topScrollerRef.value.addEventListener('scroll', onTopScroll, { passive: true })
-    }
-  })
-})
-onBeforeUnmount(() => {
-  if (columnsRef.value) columnsRef.value.removeEventListener('scroll', onBottomScroll)
-  if (topScrollerRef.value) topScrollerRef.value.removeEventListener('scroll', onTopScroll)
-  if (_resizeObs) _resizeObs.disconnect()
-})
-watch(columns, () => nextTick(updateContentWidth), { deep: true })
 
 const splitting = ref(false)
 async function onSplit() {
@@ -284,7 +203,7 @@ async function onSplit() {
         .filter(c => c.items.length > 0)
         .map(c => ({
           column_key: c.key === UNCAT_KEY ? '' : c.key,
-          item_ids: c.items.map(it => it.id),
+          item_ids: c.items.map((it: any) => it.id),
         })),
     }
     const res = await apiFetch<{ source_purchase_id: number; purchase_ids: number[]; count: number }>(
@@ -293,107 +212,38 @@ async function onSplit() {
     )
     emit('split', res)
   } catch (e: any) {
-    emit('error', e?.message || 'Ошибка разбиения закупки')
+    emit('error', e?.payload?.message || e?.message || 'Ошибка разбиения закупки')
   } finally {
     splitting.value = false
   }
 }
+
+// Проброс наверх (SplitKanbanDialog.vue) — предупреждение при закрытии окна о
+// пустых «+ Столбец» колонках, которые нигде не хранятся (см. CategoryKanbanBoard).
+const boardRef = ref<InstanceType<typeof CategoryKanbanBoard> | null>(null)
+function vanishingManualColumns(): string[] {
+  return boardRef.value?.vanishingManualColumns() ?? []
+}
+defineExpose({ vanishingManualColumns })
 </script>
 
 <style scoped>
 .split-kanban {
   width: 100%;
-}
-.split-kanban-top-scroller {
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  overflow-x: auto;
-  overflow-y: hidden;
-  height: 14px;
-  margin-bottom: 4px;
-  background: rgba(var(--v-theme-surface), 0.9);
-  backdrop-filter: blur(2px);
-}
-.split-kanban-top-scroller-phantom {
-  height: 1px;
-}
-.split-kanban-columns {
-  display: flex;
-  gap: 12px;
-  overflow-x: auto;
-  padding-bottom: 8px;
-}
-.split-kanban-col {
-  flex: 0 0 220px;
-  min-width: 180px;
-  max-width: 520px;
-  resize: horizontal;
-  overflow: hidden auto;
+  height: 100%;
   display: flex;
   flex-direction: column;
-  background: rgba(var(--v-theme-surface-variant), 0.35);
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  border-radius: 8px;
-  padding: 10px;
+  min-height: 0;
+}
+.split-kanban-header {
+  flex: 0 0 auto;
 }
 .split-kanban :deep(.wish-card-name) {
   white-space: normal;
   word-break: break-word;
   line-height: 1.25;
 }
-.split-kanban-col-head {
-  margin-bottom: 8px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-}
-.split-kanban-col-title {
-  font-weight: 600;
-  font-size: 0.9rem;
-  display: flex;
-  align-items: center;
-}
-.split-kanban-col-meta {
-  font-size: 0.75rem;
-  color: rgba(var(--v-theme-on-surface), 0.65);
-  margin-top: 2px;
-}
-.split-kanban-drop {
-  min-height: 80px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.split-kanban-ghost {
-  opacity: 0.4;
-}
-.split-kanban-col-add {
-  flex: 0 0 160px;
-  min-width: 160px;
-  max-width: 160px;
-  resize: none;
-  border-style: dashed;
-  cursor: pointer;
-  align-items: center;
-  justify-content: center;
-  opacity: 0.65;
-  transition: opacity 0.15s;
-}
-.split-kanban-col-add:hover {
-  opacity: 1;
-}
-.split-kanban-col-input {
-  flex: 1;
-  background: transparent;
-  border: 1px solid rgba(var(--v-border-color), 0.6);
-  border-radius: 4px;
-  padding: 2px 6px;
-  color: inherit;
-  font-size: inherit;
-  font-family: inherit;
-  outline: none;
-}
-.split-kanban-col-input:focus {
-  border-color: rgb(var(--v-theme-primary));
+.split-kanban-actions {
+  flex: 0 0 auto;
 }
 </style>

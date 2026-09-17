@@ -13,7 +13,10 @@ export function useContractsColumns(isAdmin: boolean) {
     // Phase 26-MMM: actions — обычная колонка через useColumnConfig (двигается/скрывается).
     // Раньше была hardcoded в tableHeaders.computed → нельзя было переместить.
     ...(isAdmin ? [{ title: 'Действия', key: 'actions', width: 80, sortable: false, group: 'core' as const }] : []),
-    { title: '№ документа', key: 'number', group: 'core' },
+    // Регресс 2026-09-17 (владелец): это была единственная колонка без width —
+    // после добавления show-select таблица сжала её до нуля, номер разваливался
+    // по буквам. width подобрана по реальным номерам («ВСС-0486709», «2026/883»).
+    { title: '№ документа', key: 'number', width: 160, group: 'core' },
     { title: 'Дата', key: 'date', width: 110, group: 'core' },
     { title: 'Тип', key: 'contract_type', width: 170, group: 'core' },
     { title: 'Способ', key: 'purchase_method', width: 130, group: 'core' },

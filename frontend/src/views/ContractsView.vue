@@ -37,6 +37,20 @@
       @clear-column-filters="cfgClearAllFilters()"
     />
 
+    <!-- Bulk actions bar -->
+    <div v-if="selected.length > 0" class="d-flex align-center gap-3 mb-3 pa-3 bg-blue-lighten-5 rounded-lg">
+      <v-icon icon="mdi-checkbox-marked-outline" color="primary" />
+      <span class="text-body-2 font-weight-medium">Выбрано: {{ selected.length }}</span>
+      <v-btn size="small" variant="tonal" color="success" prepend-icon="mdi-file-excel-outline" @click="selectedExportDialog = true">
+        Экспорт выбранных
+      </v-btn>
+      <v-spacer />
+      <v-btn v-if="isAdmin" color="error" variant="tonal" size="small" prepend-icon="mdi-delete" @click="confirmBulkDelete">
+        Удалить выбранные
+      </v-btn>
+      <v-btn variant="text" size="small" @click="clearSelection">Снять выделение</v-btn>
+    </div>
+
     <!-- ── Table ── -->
     <ContractsTable
       v-if="effectiveView === 'table'"
@@ -45,6 +59,8 @@
       :contracts="contracts"
       :loading="loading"
       v-model:expanded="expanded"
+      :selected="selected"
+      @update:selected="v => selected = v"
       :col-filters="colState.filters"
       :local-sort="localSort"
       :get-sort-by="getSortBy"
@@ -59,6 +75,7 @@
       :f-product="fProduct"
       @edit="openEdit"
       @confirm-delete="confirmDelete"
+      @open-card="openCard"
     />
 
     <!-- ── Cards view ── -->
@@ -91,6 +108,30 @@
       :export-loading="exportLoading"
       :mobile="mobile"
       :on-export="doExport"
+    />
+
+    <!-- Экспорт выбранных — тот же механизм useContractsExport, источник данных — selected -->
+    <ContractsExportDialog
+      v-model="selectedExportDialog"
+      :export-columns="selectedExportColumns"
+      :export-loading="selectedExportLoading"
+      :mobile="mobile"
+      :on-export="doExportSelected"
+    />
+
+    <ContractsBulkDeleteDialog
+      :dialog="bulkDeleteDialog"
+      :selected="selectedContracts"
+      @confirm="doBulkDelete"
+      @close="bulkDeleteDialog.show = false"
+    />
+
+    <ContractCardDialog
+      v-model="cardDialog.show"
+      :contract="cardDialog.contract"
+      :purchases="cardPurchases"
+      :loading="cardDialog.loading"
+      @edit="onCardEdit"
     />
 
     <ContractsDuplicatesDialog
@@ -154,7 +195,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, reactive } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { ADMIN_ROLES } from '@/constants/roles'
@@ -174,6 +215,8 @@ import ContractsDeleteDialog from '@/components/contracts/ContractsDeleteDialog.
 import ContractsMigrateDialog from '@/components/contracts/ContractsMigrateDialog.vue'
 import ContractsEnrichDialog from '@/components/contracts/ContractsEnrichDialog.vue'
 import ContractsImportDialog from '@/components/contracts/ContractsImportDialog.vue'
+import ContractsBulkDeleteDialog from '@/components/contracts/ContractsBulkDeleteDialog.vue'
+import ContractCardDialog from '@/components/contracts/ContractCardDialog.vue'
 
 import { useContractsColumns } from '@/composables/contracts/useContractsColumns'
 import { useContractsData } from '@/composables/contracts/useContractsData'
@@ -182,6 +225,8 @@ import { useContractsDialog } from '@/composables/contracts/useContractsDialog'
 import { useContractsMaintenance } from '@/composables/contracts/useContractsMaintenance'
 import { useContractsExport } from '@/composables/contracts/useContractsExport'
 import { useContractsImport } from '@/composables/contracts/useContractsImport'
+import { useContractsSelection } from '@/composables/contracts/useContractsSelection'
+import type { Contract } from '@/composables/contracts/contractsTypes'
 
 const router = useRouter()
 const route = useRoute()
@@ -255,6 +300,44 @@ const { exportDialog, exportColumns, exportLoading, doExport } = useContractsExp
 const { importDialog, subsidyOptions, closeImportDialog, doImportPreview, doImportMapped } = useContractsImport({
   subsidies, loadContracts,
 })
+
+// ── Множественный выбор + массовые действия (ПРАВИЛО №5: отдельный composable) ──
+// selected хранит id (number[]) — как и expanded (см. регресс 2026-09-17 в
+// ContractsTable.vue: return-object ломал v-model:expanded). Полные Contract
+// для отображения/экспорта — selectedContracts, резолвится по id из contracts.
+const {
+  selected, selectedContracts, clearSelection,
+  bulkDeleteDialog, confirmBulkDelete, doBulkDelete,
+} = useContractsSelection({ contracts, loadContracts, showSnack })
+
+// Экспорт выбранных — переиспользуем useContractsExport (ПРАВИЛО №6), источник
+// данных — selectedContracts вместо filtered. Второй набор exportColumns/
+// exportDialog нужен только чтобы не делить состояние диалога с «Скачать реестр».
+const {
+  exportDialog: selectedExportDialog, exportColumns: selectedExportColumns,
+  exportLoading: selectedExportLoading, doExport: doExportSelected,
+} = useContractsExport({ filtered: selectedContracts, purchasesByContract, showSnack })
+
+// ── Карточка договора («провалиться в договор») — полноэкранный диалог,
+// роут заводить нельзя (router/index.ts правит другая сессия). Закупки берём
+// из уже существующего purchasesByContract/loadPurchasesForContract —
+// второй запрос не заводим (ПРАВИЛО №6).
+const cardDialog = reactive({ show: false, contract: null as Contract | null, loading: false })
+const cardPurchases = computed(() => cardDialog.contract ? (purchasesByContract.value[cardDialog.contract.id] || []) : [])
+
+async function openCard(c: Contract) {
+  cardDialog.contract = c
+  cardDialog.show = true
+  if (!purchasesByContract.value[c.id]) {
+    cardDialog.loading = true
+    try { await loadPurchasesForContract(c.id) } finally { cardDialog.loading = false }
+  }
+}
+
+function onCardEdit(c: Contract) {
+  cardDialog.show = false
+  openEdit(c)
+}
 
 // ── Card view (table↔cards toggle) ────────────────────────────────────────
 const { mobile, viewMode, effectiveView, page: cardsPage, totalPages: cardsTotalPages, paged: pagedCards } = useCardView({

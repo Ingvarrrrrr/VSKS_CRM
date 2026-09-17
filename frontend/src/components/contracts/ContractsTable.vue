@@ -6,6 +6,9 @@
     :loading="loading"
     density="compact"
     show-expand
+    show-select
+    :model-value="selected"
+    @update:model-value="v => emit('update:selected', v)"
     v-model:expanded="expanded"
     item-value="id"
     class="elevation-1"
@@ -179,7 +182,9 @@
     <!-- /ColumnHeaderMenu slots -->
 
     <template #item.number="{ item }">
-      <span class="font-weight-medium">{{ item.number }}</span>
+      <a href="#" class="font-weight-medium contract-number-link" :title="item.number" @click.stop.prevent="emit('open-card', item)">
+        {{ item.number }}
+      </a>
     </template>
     <template #item.date="{ item }">
       {{ fmtDate(item.date) }}
@@ -419,6 +424,13 @@ const props = defineProps<{
   expandedPurchases: Record<number, boolean>
   loadPurchasesForContract: (id: number) => void
   fProduct: string
+  // Регресс 2026-09-17 (владелец): return-object на v-data-table ломал
+  // v-model:expanded (тоже стал получать объекты вместо id) — раскрытие
+  // строки слало [object Object] в /purchases/by-contract/. Убрали
+  // return-object; selected — id договоров, как и expanded. Полные Contract
+  // для показа номеров/экспорта резолвятся по id из уже загруженного списка
+  // contracts (ПРАВИЛО №6 — не заводим второй источник данных).
+  selected: number[]
 }>()
 
 const expanded = defineModel<number[]>('expanded', { required: true })
@@ -426,12 +438,27 @@ const expanded = defineModel<number[]>('expanded', { required: true })
 const emit = defineEmits<{
   edit: [item: Contract]
   'confirm-delete': [item: Contract]
+  'open-card': [item: Contract]
+  'update:selected': [ids: number[]]
 }>()
 
 const router = useRouter()
 </script>
 
 <style scoped>
+.contract-number-link {
+  display: inline-block;
+  max-width: 100%;
+  color: rgb(var(--v-theme-primary));
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+.contract-number-link:hover {
+  text-decoration: underline;
+}
 .contract-approval-pending-banner {
   display: flex;
   align-items: center;

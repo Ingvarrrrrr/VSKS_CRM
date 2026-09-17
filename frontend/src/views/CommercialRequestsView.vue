@@ -352,7 +352,22 @@
         <v-card-text class="pa-4 pt-0">
           <v-text-field v-model="quickContractor.name" label="Название *" variant="outlined" density="compact" class="mb-3" />
           <v-text-field v-model="quickContractor.email" label="Email" type="email" variant="outlined" density="compact" class="mb-3" />
-          <v-text-field v-model="quickContractor.inn" label="ИНН" variant="outlined" density="compact" class="mb-3" />
+          <div class="d-flex align-start ga-2 mb-1">
+            <v-text-field v-model="quickContractor.inn" label="ИНН" variant="outlined" density="compact" hide-details class="flex-grow-1" />
+            <v-btn
+              variant="tonal" color="primary" size="small"
+              prepend-icon="mdi-database-search-outline"
+              :loading="quickContractorLookupLoading"
+              :disabled="!quickContractorInnValid"
+              style="margin-top:2px"
+              @click="lookupQuickContractorInn"
+            >
+              Из налоговой
+            </v-btn>
+          </div>
+          <v-alert v-if="quickContractorLookupMessage" :type="quickContractorLookupMessageType" variant="tonal" density="compact" class="mb-3 mt-2 text-caption" closable @click:close="quickContractorLookupMessage = ''">
+            {{ quickContractorLookupMessage }}
+          </v-alert>
           <v-text-field v-model="quickContractor.phone" label="Телефон" variant="outlined" density="compact" />
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
@@ -614,8 +629,57 @@ const quickContractor = reactive({
   email: '',
   inn: '',
   phone: '',
+  kpp: '',
+  address: '',
+  ogrn: '',
   saving: false,
 })
+
+// Заполнение из налоговой (ЕГРЮЛ/ЕГРИП/НПД) по ИНН — переиспользует общий
+// backend-механизм GET /contractors/lookup-inn/{inn}?force_egrul=1 (тот же,
+// что в ContractorEditDialog.vue/AddContractorDialog.vue). Второй механизм
+// не заводим, только UI-обвязка вокруг существующего эндпоинта.
+const quickContractorLookupLoading = ref(false)
+const quickContractorLookupMessage = ref('')
+const quickContractorLookupMessageType = ref<'success' | 'info' | 'error' | 'warning'>('info')
+const quickContractorInnValid = computed(() => {
+  const digits = (quickContractor.inn || '').replace(/\D/g, '')
+  return digits.length === 10 || digits.length === 12
+})
+
+async function lookupQuickContractorInn() {
+  const inn = (quickContractor.inn || '').replace(/\D/g, '')
+  if (inn.length !== 10 && inn.length !== 12) return
+  quickContractorLookupLoading.value = true
+  quickContractorLookupMessage.value = ''
+  try {
+    const data = await apiFetch<Record<string, any>>(`/contractors/lookup-inn/${inn}?force_egrul=1`)
+    if (data?._source === 'npd') {
+      quickContractorLookupMessage.value = data._notice || `ИНН ${inn} — самозанятый. Сведения через налоговую получить нельзя, заполните данные вручную.`
+      quickContractorLookupMessageType.value = 'warning'
+      return
+    }
+    const filled: string[] = []
+    if (!quickContractor.name.trim() && data.name) { quickContractor.name = data.name; filled.push('название') }
+    if (data.kpp) { quickContractor.kpp = data.kpp; filled.push('КПП') }
+    if (data.address) { quickContractor.address = data.address; filled.push('адрес') }
+    if (data.ogrn) { quickContractor.ogrn = data.ogrn; filled.push('ОГРН') }
+    quickContractorLookupMessage.value = filled.length
+      ? `Заполнено из налоговой: ${filled.join(', ')}`
+      : 'Данные из налоговой совпадают с уже введёнными — изменений нет'
+    quickContractorLookupMessageType.value = filled.length ? 'success' : 'info'
+  } catch (e: any) {
+    if (e?.payload?.code === 'INN_NOT_FOUND') {
+      quickContractorLookupMessage.value = e.payload.message
+      quickContractorLookupMessageType.value = 'warning'
+    } else {
+      quickContractorLookupMessage.value = e?.message || 'Ошибка запроса к налоговой'
+      quickContractorLookupMessageType.value = 'error'
+    }
+  } finally {
+    quickContractorLookupLoading.value = false
+  }
+}
 
 const detailDialog = reactive({
   show: false,
@@ -864,6 +928,10 @@ function openQuickContractor() {
   quickContractor.email = ''
   quickContractor.inn = ''
   quickContractor.phone = ''
+  quickContractor.kpp = ''
+  quickContractor.address = ''
+  quickContractor.ogrn = ''
+  quickContractorLookupMessage.value = ''
   quickContractor.show = true
 }
 
@@ -878,6 +946,9 @@ async function saveQuickContractor() {
         email: quickContractor.email || null,
         inn: quickContractor.inn || null,
         phone: quickContractor.phone || null,
+        kpp: quickContractor.kpp || null,
+        address: quickContractor.address || null,
+        ogrn: quickContractor.ogrn || null,
       },
     })
     contractors.value.push(created)

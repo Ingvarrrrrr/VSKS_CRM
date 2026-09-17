@@ -23,6 +23,7 @@ from .doc_types import CONTRACT_FAMILY_DOC_TYPES, FEO_PATH_UNRESOLVED_LABEL
 from .formatting import (
     _fmt_date,
     _fmt_money,
+    _fmt_quantity,
     _merge_identical_items,
     _fio_to_genitive,
     _fio_to_initials,
@@ -200,7 +201,7 @@ async def _build_contract_items_context(p, db) -> dict:
             result_list.append({
                 "num": idx,
                 "name": ci.name or "",
-                "quantity": float(ci.quantity) if ci.quantity else "",
+                "quantity": _fmt_quantity(ci.quantity),
                 "unit": ci.unit or "",
                 "unit_price": _fmt_money(ci.unit_price),
                 "total": _fmt_money(ci.total),
@@ -214,7 +215,7 @@ async def _build_contract_items_context(p, db) -> dict:
             result_list.append({
                 "num": idx,
                 "name": item.item_name or "",
-                "quantity": float(qty) if qty else "",
+                "quantity": _fmt_quantity(qty),
                 "unit": item.unit or "",
                 "unit_price": _fmt_money(item.unit_price),
                 "total": _fmt_money(total),
@@ -308,7 +309,7 @@ def _build_items_list_from_contract_items(p, resolve_photo=None) -> list[dict]:
             "description": ((getattr(product, "description", None) if product else "") or ""),
             "type": "",
             "item_kind": (getattr(product, "item_kind", None) if product else None) or "товар",
-            "quantity": float(ci.quantity) if ci.quantity else "",
+            "quantity": _fmt_quantity(ci.quantity),
             "unit": ci.unit or "",
             "unit_price": _fmt_money(ci.unit_price),
             "total_price": _fmt_money(ci.total),
@@ -355,7 +356,7 @@ def _build_items_list_from_purchase_items(p, tz_override_mode=None, resolve_phot
             ) or "",
             "type": item.item_type or "",
             "item_kind": (item.product.item_kind if item.product else None) or "товар",
-            "quantity": float(qty) if qty else "",
+            "quantity": _fmt_quantity(qty),
             "unit": item.unit or "",
             "unit_price": _fmt_money(item.unit_price),
             "total_price": _fmt_money(total),

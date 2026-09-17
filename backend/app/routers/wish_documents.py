@@ -41,7 +41,7 @@ from app.models.wish_item import WishItem
 from app.models.subsidy_approver import SubsidyApprover
 # Reuse formatters from documents.py — avoids duplicating money/date formatting logic
 from app.routers.documents import (
-    _fmt_date, _fmt_money,
+    _fmt_date, _fmt_money, _fmt_quantity,
     _format_initials,
     _resolve_user_dept as _resolve_user_dept_for_wish,
     _resolve_user_position as _resolve_user_position_for_wish,
@@ -196,7 +196,7 @@ async def generate_wish_service_note(
             "name": it.item_name or "",
             "description": (it.product.description if it.product else "") or "",
             "type": it.item_type or "",
-            "quantity": float(it.quantity) if it.quantity else "",
+            "quantity": _fmt_quantity(it.quantity),
             "unit": it.unit or "",
             "unit_price": _fmt_money(it.unit_price),
             "total_price": _fmt_money(it.total_price),

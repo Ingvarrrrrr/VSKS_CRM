@@ -39,6 +39,31 @@ def _fmt_money(v) -> str:
 _fmt_money_plain = _fmt_money
 
 
+def _fmt_quantity(v) -> str:
+    """Количество для документов: целое печатается без «.0», дробное — без
+    хвостовых нулей, запятая как десятичный разделитель (как в _fmt_money).
+
+    Владелец (2026-09-17): «количество должно передаваться как целое число,
+    32, а не 32.0» — раньше в items_list клали "quantity": float(qty), а
+    docxtpl печатал Python-репрезентацию float целиком (32.0). Единственное
+    место форматирования — все builders items_list (contexts.py,
+    fabrikant_package.py, wish_documents.py) обязаны звать эту функцию,
+    вторую копию не заводить.
+
+        32.0 → "32"; 32.5 → "32,5"; 32.50 → "32,5"; None/"" → "".
+    """
+    if v is None or v == "":
+        return ""
+    try:
+        d = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    if d == int(d):
+        return str(int(d))
+    s = f"{d:.4f}".rstrip("0").rstrip(".")
+    return s.replace(".", ",")
+
+
 def _merge_identical_items(items):
     """Склеивает позиции, у которых совпадает всё, кроме категории ФЭО.
 

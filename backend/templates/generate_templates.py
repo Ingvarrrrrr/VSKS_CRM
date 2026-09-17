@@ -69,6 +69,8 @@ def make_contract_tz():
     def _set_col_width(cell, width_cm):
         tc = cell._tc
         tcPr = tc.get_or_add_tcPr()
+        for old_tcW in tcPr.findall(_qn('w:tcW')):
+            tcPr.remove(old_tcW)
         tcW = _OE('w:tcW')
         tcW.set(_qn('w:w'), str(int(width_cm * 567)))  # 567 twips/cm
         tcW.set(_qn('w:type'), 'dxa')
@@ -253,6 +255,8 @@ def make_approval_sheet():
     def _set_col_width(cell, width_cm):
         tc = cell._tc
         tcPr = tc.get_or_add_tcPr()
+        for old_tcW in tcPr.findall(_qn('w:tcW')):
+            tcPr.remove(old_tcW)
         tcW = _OE('w:tcW')
         tcW.set(_qn('w:w'), str(int(width_cm * 567)))
         tcW.set(_qn('w:type'), 'dxa')

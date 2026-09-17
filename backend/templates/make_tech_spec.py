@@ -26,13 +26,43 @@ TEMPLATES_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def _set_col_width(cell, width_cm):
     """Точная ширина колонки таблицы — как в generate_templates.py::make_contract_tz
-    (contract_tz.docx), чтобы столбец «Фото» не разъезжался по ширине."""
+    (contract_tz.docx), чтобы столбец «Фото» не разъезжался по ширине.
+
+    add_table() кладёт в каждую ячейку СВОЙ дефолтный <w:tcW> при создании —
+    без явного удаления здесь накопился бы второй тег в той же tcPr (два
+    <w:tcW> подряд — де-факто рабочее, но ambiguous OOXML: обнаружено
+    2026-09-17 при попытке прочитать «настоящую» ширину обратно из
+    contract_tz.docx, см. fix_contract_tz_table_layout.py)."""
     tc = cell._tc
     tcPr = tc.get_or_add_tcPr()
+    for old_tcW in tcPr.findall(qn('w:tcW')):
+        tcPr.remove(old_tcW)
     tcW = OxmlElement('w:tcW')
     tcW.set(qn('w:w'), str(int(width_cm * 567)))  # 567 twips/cm
     tcW.set(qn('w:type'), 'dxa')
     tcPr.append(tcW)
+
+
+def _lock_table_layout(tbl, col_widths_cm):
+    """Запрещает Word пересчитывать ширины колонок по содержимому.
+
+    Владелец (2026-09-17): «переменная в таблице должна переноситься по
+    строкам, иначе в шаблоне получается слишком широкая» — {{item.num}} и
+    {{item.quantity}} без пробелов внутри длиннее, чем нужная ширина колонки
+    (2 и 5 символов у реального значения), и по умолчанию (autofit по
+    содержимому) Word растягивает столбец под весь плейсхолдер целиком,
+    игнорируя _set_col_width на отдельных ячейках — тот выставляет tcW,
+    но при autofit-раскладке эта подсказка не используется. Явный
+    tblLayout=fixed (tbl.autofit=False) + совпадающий tblGrid заставляют
+    Word использовать заданную ширину и переносить длинный текст по
+    строкам/буквам внутри неё — так и было задумано, а реальные короткие
+    значения после рендера (docxtpl только подставляет текст, ширины не
+    трогает) в один ряд поместятся тем более."""
+    tbl.autofit = False
+    grid = tbl._tbl.find(qn('w:tblGrid'))
+    if grid is not None:
+        for gc, width_cm in zip(grid.findall(qn('w:gridCol')), col_widths_cm):
+            gc.set(qn('w:w'), str(int(width_cm * 567)))
 
 # ─── ЦВЕТА ───────────────────────────────────────────────────────────────────
 COLOR_PLACEHOLDER = RGBColor(0x1E, 0x40, 0xAF)   # синий — {{var}}
@@ -230,6 +260,8 @@ def add_items_table(doc, columns, col_headers, col_widths=None):
     """
     tbl = doc.add_table(rows=4, cols=len(columns))
     tbl.style = "Table Grid"
+    if col_widths:
+        _lock_table_layout(tbl, col_widths)
 
     # Row 0: header
     hdr_cells = tbl.rows[0].cells
@@ -417,6 +449,7 @@ def make_ts_contract(doc):
     col_widths = [2.8, 0.8, 3.0, 3.4, 2.4, 2.2, 2.2]
     tbl = doc.add_table(rows=4, cols=7)
     tbl.style = "Table Grid"
+    _lock_table_layout(tbl, col_widths)
 
     col_headers = ["Фото", "№", "Наименование", "Описание", "Кол-во / Ед.", "Цена, руб.", "Сумма, руб."]
     hdr_cells = tbl.rows[0].cells

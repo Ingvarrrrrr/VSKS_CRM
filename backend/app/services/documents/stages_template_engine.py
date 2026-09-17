@@ -3,12 +3,10 @@ and the two InlineImage-producing helpers (product photo / base64 signature).
 
 Split out of app/routers/documents.py::generate_document (wave 3f refactor).
 """
-import os
 import logging
 
 from fastapi import HTTPException
-from docxtpl import DocxTemplate, InlineImage
-from docx.shared import Cm as _Cm
+from docxtpl import DocxTemplate
 
 logger = logging.getLogger(__name__)
 
@@ -66,63 +64,13 @@ def build_docx_template(template_path: str, pid: int, doc_type: str) -> DocxTemp
 UPLOADS_DIR = "/app/uploads/products"
 
 
-def make_photo_resolver(tpl: DocxTemplate, uploads_dir: str = UPLOADS_DIR):
-    """Factory: returns a resolve_photo(photo_url) closure bound to `tpl`."""
-
-    def _resolve_photo(photo_url):
-        """Return InlineImage or empty string."""
-        import tempfile, urllib.request as _ur
-        if not photo_url:
-            return ""
-        url = str(photo_url).strip()
-        local_path = None
-
-        if url.startswith("/api/products/photos/"):
-            fname = url.split("/")[-1]
-            local_path = f"{uploads_dir}/{fname}"
-        elif url.isdigit():
-            for ext in ("jpg", "jpeg", "png"):
-                pth = f"{uploads_dir}/product_{url}.{ext}"
-                if os.path.exists(pth):
-                    local_path = pth
-                    break
-        elif url.startswith("http://") or url.startswith("https://"):
-            # Download external image; convert webp via Pillow if available
-            try:
-                with _ur.urlopen(url, timeout=5) as r:
-                    ct = r.headers.get("Content-Type", "").split(";")[0].strip().lower()
-                    raw = r.read()
-                is_webp = "webp" in ct or url.lower().endswith(".webp")
-                if is_webp:
-                    try:
-                        from PIL import Image as _Img
-                        import io as _io
-                        img = _Img.open(_io.BytesIO(raw)).convert("RGB")
-                        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
-                        img.save(tmp, format="JPEG", quality=85)
-                        tmp.close()
-                        local_path = tmp.name
-                    except Exception:
-                        return ""  # Pillow not available or conversion failed
-                else:
-                    ext_map = {"image/jpeg": ".jpg", "image/jpg": ".jpg", "image/png": ".png",
-                               "image/gif": ".gif", "image/bmp": ".bmp", "image/tiff": ".tiff"}
-                    suffix = ext_map.get(ct, ".jpg")
-                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-                    tmp.write(raw)
-                    tmp.close()
-                    local_path = tmp.name
-            except Exception:
-                return ""
-
-        if not local_path or not os.path.exists(local_path):
-            return ""
-        try:
-            return InlineImage(tpl, local_path, width=_Cm(2.5))
-        except Exception:
-            return ""
-
-    return _resolve_photo
+# Правило №6 — один резолвер фото товара на весь проект. Реализация живёт в
+# product_photos.py (умеет канонический products.photo_data + запасные
+# ветки photo_url/local-file/http); здесь только re-export под старым
+# именем/сигнатурой, чтобы не трогать многочисленные call sites
+# (generate.py, wish_documents.py и т.д.), которые импортируют
+# make_photo_resolver именно отсюда.
+from app.services.documents.product_photos import make_photo_resolver  # noqa: E402,F401
 
 
 def make_base64_to_inline(tpl: DocxTemplate):

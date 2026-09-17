@@ -5,9 +5,19 @@ Split out of app/routers/documents.py::generate_document (wave 3f refactor).
 Failure here is non-fatal by design (original just logs and returns buf
 unchanged) — preserved exactly.
 """
+import logging
 from io import BytesIO
 
 from app.services.documents.formatting import _fmt_date, _fmt_money_plain
+# Правило №6 — тот же единственный резолвер фото товара, что и docxtpl-путь
+# (app/services/documents/product_photos.py). Здесь таблица собирается
+# ВРУЧНУЮ через python-docx поверх уже отрендеренного .docx (новый
+# Document(buf), а не оригинальный tpl из generate.py) — поэтому нужен не
+# InlineImage (привязан к DocxTemplate), а сырой путь к файлу для
+# run.add_picture().
+from app.services.documents.product_photos import get_product_photo_path
+
+logger = logging.getLogger(__name__)
 
 
 def append_tz_table_for_contract(buf: BytesIO, doc_type: str, items_list: list, p) -> BytesIO:
@@ -17,6 +27,7 @@ def append_tz_table_for_contract(buf: BytesIO, doc_type: str, items_list: list, 
             from docx import Document as _DocxDoc
             from docx.shared import Pt, Cm, RGBColor
             from docx.enum.text import WD_ALIGN_PARAGRAPH
+            from docx.enum.table import WD_ROW_HEIGHT_RULE
             from docx.oxml.ns import qn
             from docx.oxml import OxmlElement
 
@@ -66,12 +77,33 @@ def append_tz_table_for_contract(buf: BytesIO, doc_type: str, items_list: list, 
 
             # Data rows
             total_sum = 0.0
+            _photo_cache: dict = {}
             for item_data in items_list:
                 row_cells = table.add_row().cells
                 row_cells[0].text = str(item_data["num"])
                 row_cells[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-                # Photo cell: leave empty
+                # Photo cell — товар берём из item_data["_product"] (см.
+                # contexts.py::_build_items_list_from_*), фото — общий
+                # резолвер product_photos.get_product_photo_path. Битое/
+                # нечитаемое изображение не должно ронять генерацию —
+                # пустая ячейка + запись в лог (см. try/except ниже).
                 row_cells[1].text = ""
+                row_cells[1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                _product = item_data.get("_product")
+                if _product is not None:
+                    try:
+                        _photo_path = get_product_photo_path(_product, cache=_photo_cache)
+                        if _photo_path:
+                            _run = row_cells[1].paragraphs[0].add_run()
+                            _run.add_picture(_photo_path, width=Cm(2.5))
+                            # Строка не должна резать вставленную картинку.
+                            table.rows[-1].height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
+                            table.rows[-1].height = Cm(2.7)
+                    except Exception as _photo_err:
+                        logger.warning(
+                            "append_tz_table_for_contract: photo insert failed for product %s: %s",
+                            getattr(_product, "id", None), _photo_err,
+                        )
                 # Name + description
                 name_cell = row_cells[2]
                 name_para = name_cell.paragraphs[0]

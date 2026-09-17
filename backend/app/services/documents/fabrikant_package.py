@@ -151,7 +151,17 @@ async def render_fabrikant_package_files(
         "_build_items_list_from_contract_items, иначе документ уйдёт с плановыми данными"
     )
 
+    # items_list/context ниже общие для ВСЕХ 5 документов пакета (см. цикл
+    # рендера дальше) — но "photo" не может быть общей: docxtpl InlineImage
+    # привязан к КОНКРЕТНОМУ DocxTemplate, а каждый из 5 файлов рендерится
+    # своим отдельным _tpl (см. `_tpl = _DxTpl(tpl_path)` в цикле). Поэтому
+    # здесь "photo" остаётся "" (как раньше), а реальный InlineImage
+    # подставляется точечно для tech_spec_request прямо перед его рендером
+    # (единственный шаблон в пакете с колонкой «Фото», см. make_tech_spec.py) —
+    # items_products хранит товар-источник для этой подмены (Правило №6:
+    # тот же общий резолвер product_photos.make_photo_resolver, не второй).
     items_list = []
+    items_products = []
     for idx, (item, qty, total) in enumerate(_merge_identical_items(p.items or []), start=1):
         items_list.append({
             "num": idx,
@@ -169,6 +179,7 @@ async def render_fabrikant_package_files(
             "code": "",
             "norm_hours": "",
         })
+        items_products.append(item.product)
 
     # Ставка НДС — только из введённого пользователем, без придуманного
     # значения по умолчанию (см. подробный комментарий у generate_document /
@@ -576,7 +587,19 @@ async def render_fabrikant_package_files(
             if doc_key == "fabrikant_contract_project" and not vat_app and not _resolve_vat_exemption_basis(p):
                 raise ValueError("Не указано основание освобождения от НДС. " + _vat_exemption_missing_hint(p))
             _tpl = _DxTpl(tpl_path)
-            _tpl.render(context)
+            if doc_key == "tech_spec_request":
+                # Единственный шаблон пакета с колонкой «Фото» — резолвим
+                # InlineImage под ЭТОТ конкретный _tpl (см. комментарий у
+                # items_products выше), общим резолвером make_photo_resolver.
+                from app.services.documents.product_photos import make_photo_resolver as _mk_photo_resolver
+                _resolve_photo_z = _mk_photo_resolver(_tpl)
+                _items_with_photo = [
+                    {**_it, "photo": _resolve_photo_z(_prod)}
+                    for _it, _prod in zip(items_list, items_products)
+                ]
+                _tpl.render({**context, "items": _items_with_photo})
+            else:
+                _tpl.render(context)
             _buf = BytesIO()
             _tpl.save(_buf)
             _rendered_bytes = _buf.getvalue()

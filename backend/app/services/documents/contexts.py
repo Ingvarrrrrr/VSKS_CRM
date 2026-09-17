@@ -302,7 +302,6 @@ def _build_items_list_from_contract_items(p, resolve_photo=None) -> list[dict]:
     item_form = item_form_for_purchase(p)
     for idx, ci in enumerate(getattr(p, "contract_items", None) or [], start=1):
         product = getattr(ci, "product", None)
-        photo_url = getattr(product, "photo_url", None) if product else None
         items_list.append({
             "num": idx,
             "name": ci.name or "",
@@ -314,7 +313,12 @@ def _build_items_list_from_contract_items(p, resolve_photo=None) -> list[dict]:
             "unit_price": _fmt_money(ci.unit_price),
             "total_price": _fmt_money(ci.total),
             "total": _fmt_money(ci.total),
-            "photo": resolve_photo(photo_url) if resolve_photo else "",
+            "photo": resolve_photo(product) if resolve_photo else "",
+            # Товар-источник фото — для stages_contract_tz.py (ручная сборка
+            # ТЗ-таблицы python-docx, добавляется по Правилу №6 через тот же
+            # резолвер product_photos.get_product_photo_path, а не через
+            # docxtpl-InlineImage выше, который к другому Document привязан).
+            "_product": product,
             # Поля для repair_framework (появятся позже, пока заглушки)
             "code": "",
             "norm_hours": "",
@@ -342,7 +346,6 @@ def _build_items_list_from_purchase_items(p, tz_override_mode=None, resolve_phot
     items_list: list[dict] = []
     item_form = item_form_for_purchase(p)
     for idx, (item, qty, total) in enumerate(_merge_identical_items(getattr(p, "items", None) or []), start=1):
-        photo_url = item.product.photo_url if item.product else None
         items_list.append({
             "num": idx,
             "name": item.item_name or "",
@@ -357,7 +360,10 @@ def _build_items_list_from_purchase_items(p, tz_override_mode=None, resolve_phot
             "unit_price": _fmt_money(item.unit_price),
             "total_price": _fmt_money(total),
             "total": _fmt_money(total),
-            "photo": resolve_photo(photo_url) if resolve_photo else "",
+            "photo": resolve_photo(item.product) if resolve_photo else "",
+            # См. комментарий у _build_items_list_from_contract_items выше —
+            # товар-источник фото для ручной сборки ТЗ-таблицы (stages_contract_tz.py).
+            "_product": item.product,
             # Поля для repair_framework (появятся позже, пока заглушки)
             "code": "",
             "norm_hours": "",

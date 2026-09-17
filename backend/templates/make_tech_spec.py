@@ -23,6 +23,17 @@ from docx.oxml import OxmlElement
 
 TEMPLATES_DIR = os.path.dirname(os.path.abspath(__file__))
 
+
+def _set_col_width(cell, width_cm):
+    """Точная ширина колонки таблицы — как в generate_templates.py::make_contract_tz
+    (contract_tz.docx), чтобы столбец «Фото» не разъезжался по ширине."""
+    tc = cell._tc
+    tcPr = tc.get_or_add_tcPr()
+    tcW = OxmlElement('w:tcW')
+    tcW.set(qn('w:w'), str(int(width_cm * 567)))  # 567 twips/cm
+    tcW.set(qn('w:type'), 'dxa')
+    tcPr.append(tcW)
+
 # ─── ЦВЕТА ───────────────────────────────────────────────────────────────────
 COLOR_PLACEHOLDER = RGBColor(0x1E, 0x40, 0xAF)   # синий — {{var}}
 COLOR_BRANCH_TRUE = RGBColor(0x15, 0x80, 0x3D)   # зелёный — ветка услуги
@@ -142,11 +153,18 @@ def add_legend(doc):
     r_lt.font.size = Pt(11)
     r_lt.font.color.rgb = RGBColor(0x1F, 0x29, 0x37)
 
+    # Правка a74dc616 (2026-05-18): «синие переменные»/«маркеры» — только
+    # инструктивный текст для человека. Раньше он был буквально обёрнут в
+    # {{ }} / {% %}, из-за чего docxtpl пытался распарсить его как настоящий
+    # Jinja-тег и падал TemplateSyntaxError ещё до рендера. Тогда починили
+    # прямой правкой бинарника (без изменения этого скрипта) — здесь тот же
+    # фикс перенесён в источник, чтобы повторная генерация не откатывала
+    # шаблон обратно на сломанный вариант.
     LEGEND_LINES = [
-        ("placeholder", "{{синие переменные}}    — автоподстановка из БД"),
+        ("placeholder", "синие переменные        — автоподстановка из БД"),
         ("true",        "зелёный текст           — вариант «услуги» в условном блоке"),
         ("false",       "оранжевый текст         — вариант «товары»"),
-        ("marker",      "серые {% маркеры %}    — технические условия Jinja2 (не трогать)"),
+        ("marker",      "серые маркеры           — технические условия Jinja2 (не трогать)"),
     ]
 
     for kind, text in LEGEND_LINES:
@@ -194,19 +212,30 @@ def add_legend(doc):
 
 # ─── ТАБЛИЦА ПОЗИЦИЙ (цикл) ──────────────────────────────────────────────────
 
-def add_items_table(doc, columns, col_headers):
+def add_items_table(doc, columns, col_headers, col_widths=None):
     """
     columns — список имён полей item (без 'item.'), например ['num', 'name', 'unit', 'quantity']
     col_headers — заголовки колонок
-    """
-    p_for = new_para(doc, space_after=0)
-    add_marker(p_for, "{% tr for item in items %}", size=10)
+    col_widths — опционально, ширины колонок в см (тот же порядок) — как в
+        generate_templates.py::make_contract_tz, чтобы «Фото» не разъезжалась
 
-    tbl = doc.add_table(rows=2, cols=len(columns))
+    ВАЖНО (a74dc616, 2026-05-18): docxtpl-тег {%tr for/endfor%} обязан лежать
+    ВНУТРИ строки таблицы (единственным содержимым параграфа в ячейке) —
+    иначе docxtpl не распознаёт его как маркер повтора строки и падает
+    `TemplateSyntaxError: Encountered unknown tag 'tr'`. Раньше эти маркеры
+    стояли в параграфах ДО/ПОСЛЕ таблицы; тогда почин или прямой правкой
+    бинарника (скрипт не трогали) — здесь 4-строчный паттерн (шапка / for /
+    данные / endfor) перенесён в сам генератор, как в
+    generate_templates.py::make_contract_tz.
+    """
+    tbl = doc.add_table(rows=4, cols=len(columns))
     tbl.style = "Table Grid"
 
+    # Row 0: header
     hdr_cells = tbl.rows[0].cells
     for i, h in enumerate(col_headers):
+        if col_widths:
+            _set_col_width(hdr_cells[i], col_widths[i])
         p_h = hdr_cells[i].paragraphs[0]
         r = p_h.add_run(h)
         r.bold = True
@@ -214,8 +243,14 @@ def add_items_table(doc, columns, col_headers):
         r.font.size = Pt(10)
         p_h.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    data_cells = tbl.rows[1].cells
+    # Row 1: {%tr for item in items %} — entire row replaced by jinja2 for tag
+    add_marker(tbl.rows[1].cells[0].paragraphs[0], "{%tr for item in items %}", size=8)
+
+    # Row 2: data template row (repeated per item)
+    data_cells = tbl.rows[2].cells
     for i, col in enumerate(columns):
+        if col_widths:
+            _set_col_width(data_cells[i], col_widths[i])
         p_c = data_cells[i].paragraphs[0]
         r = p_c.add_run(f"{{{{item.{col}}}}}")
         r.font.name = FONT_NAME
@@ -224,8 +259,8 @@ def add_items_table(doc, columns, col_headers):
         r.bold = True
         p_c.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    p_endfor = new_para(doc, space_before=2, space_after=6)
-    add_marker(p_endfor, "{% tr endfor %}", size=10)
+    # Row 3: {%tr endfor %} — entire row replaced by jinja2 endfor tag
+    add_marker(tbl.rows[3].cells[0].paragraphs[0], "{%tr endfor %}", size=8)
 
 
 # ─── ТЗ ДЛЯ ЗАПРОСА КП ───────────────────────────────────────────────────────
@@ -288,10 +323,14 @@ def make_ts_request(doc):
     p6_hdr = clause(doc, "6")
     add_text_run(p6_hdr, "Спецификация:")
 
+    # Столбец «Фото» — первым и узким, как в contract_tz.docx (владелец,
+    # 2026-09-17: «я же не просто так их закачивал в БД»). Плейсхолдер
+    # {{item.photo}} подставляется общим резолвером product_photos.py.
     add_items_table(
         doc,
-        columns=["num", "name", "description", "unit", "quantity"],
-        col_headers=["№", "Наименование", "Описание / Требования", "Ед. изм.", "Кол-во"]
+        columns=["photo", "num", "name", "description", "unit", "quantity"],
+        col_headers=["Фото", "№", "Наименование", "Описание / Требования", "Ед. изм.", "Кол-во"],
+        col_widths=[2.8, 0.8, 3.0, 4.4, 1.4, 1.4],
     )
 
     # 7. Требования к КП
@@ -367,16 +406,22 @@ def make_ts_contract(doc):
     p5_hdr = clause(doc, "5")
     add_text_run(p5_hdr, "Спецификация:")
 
-    # Расширенная таблица для договорного ТЗ
-    p_for = new_para(doc, space_after=0)
-    add_marker(p_for, "{% tr for item in items %}", size=10)
-
-    tbl = doc.add_table(rows=2, cols=6)
+    # Расширенная таблица для договорного ТЗ.
+    # Столбец «Фото» — первым и узким, как в contract_tz.docx (владелец,
+    # 2026-09-17: «я же не просто так их закачивал в БД»).
+    #
+    # 4-строчный паттерн (шапка / {%tr for%} / данные / {%tr endfor%}) —
+    # маркеры ОБЯЗАНЫ лежать внутри строк таблицы, иначе docxtpl падает
+    # `TemplateSyntaxError: Encountered unknown tag 'tr'` (см. add_items_table
+    # выше и a74dc616).
+    col_widths = [2.8, 0.8, 3.0, 3.4, 2.4, 2.2, 2.2]
+    tbl = doc.add_table(rows=4, cols=7)
     tbl.style = "Table Grid"
 
-    col_headers = ["№", "Наименование", "Описание", "Кол-во / Ед.", "Цена, руб.", "Сумма, руб."]
+    col_headers = ["Фото", "№", "Наименование", "Описание", "Кол-во / Ед.", "Цена, руб.", "Сумма, руб."]
     hdr_cells = tbl.rows[0].cells
     for i, h in enumerate(col_headers):
+        _set_col_width(hdr_cells[i], col_widths[i])
         p_h = hdr_cells[i].paragraphs[0]
         r = p_h.add_run(h)
         r.bold = True
@@ -384,14 +429,29 @@ def make_ts_contract(doc):
         r.font.size = Pt(10)
         p_h.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    cols_data = ["item.num", "item.name", "item.description",
-                 "item.quantity ~ item.unit", "item.unit_price", "item.total_price"]
-    placeholders = [
-        "{{item.num}}", "{{item.name}}", "{{item.description}}",
-        "{{item.quantity}} {{item.unit}}", "{{item.unit_price}}", "{{item.total_price}}"
-    ]
-    data_cells = tbl.rows[1].cells
-    for i, ph in enumerate(placeholders):
+    # Row 1: {%tr for item in items %}
+    add_marker(tbl.rows[1].cells[0].paragraphs[0], "{%tr for item in items %}", size=8)
+
+    # Наименование (индекс 2) — особый случай, не голый {{item.name}}:
+    # form_summary (спец-формы) печатается в скобках сразу после названия,
+    # а для питания «по дням» следом идёт полная раскладка item.menu_lines
+    # через {%p for/endfor%} (докстринг-loop по параграфам ВНУТРИ ячейки).
+    # Это существующее поведение шаблона (см. test_contract_templates.py::
+    # test_item_form_summary_shown_in_parens_after_name) — перенесено сюда
+    # из ранее раздельно правленного бинарника, чтобы повторная генерация
+    # скриптом больше не откатывала эту функциональность.
+    NAME_COL_IDX = 2
+    placeholders_by_idx = {
+        0: "{{item.photo}}",
+        1: "{{item.num}}",
+        3: "{{item.description}}",
+        4: "{{item.quantity}} {{item.unit}}",
+        5: "{{item.unit_price}}",
+        6: "{{item.total_price}}",
+    }
+    data_cells = tbl.rows[2].cells
+    for i, ph in placeholders_by_idx.items():
+        _set_col_width(data_cells[i], col_widths[i])
         p_c = data_cells[i].paragraphs[0]
         r = p_c.add_run(ph)
         r.font.name = FONT_NAME
@@ -400,8 +460,30 @@ def make_ts_contract(doc):
         r.bold = True
         p_c.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    p_endfor = new_para(doc, space_before=2, space_after=6)
-    add_marker(p_endfor, "{% tr endfor %}", size=10)
+    name_cell = data_cells[NAME_COL_IDX]
+    _set_col_width(name_cell, col_widths[NAME_COL_IDX])
+    p_name = name_cell.paragraphs[0]
+    p_name.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r_name = p_name.add_run("{{item.name}}")
+    r_name.font.name = FONT_NAME
+    r_name.font.size = Pt(10)
+    r_name.font.color.rgb = COLOR_PLACEHOLDER
+    r_name.bold = True
+    r_form = p_name.add_run("{% if item.form_summary %} ({{ item.form_summary }}){% endif %}")
+    r_form.font.name = FONT_NAME
+    r_form.font.size = Pt(10)
+    r_form.font.color.rgb = COLOR_PLACEHOLDER
+    r_form.bold = True
+    # {%p %} — параграфный (не построчный) цикл docxtpl: раскладка меню
+    # питания по дням остаётся в ТОЙ ЖЕ ячейке отдельными абзацами.
+    for menu_text in ("{%p for l in item.menu_lines %}", "{{ l }}", "{%p endfor %}"):
+        p_menu = name_cell.add_paragraph()
+        r_menu = p_menu.add_run(menu_text)
+        r_menu.font.name = FONT_NAME
+        r_menu.font.size = Pt(8)
+
+    # Row 3: {%tr endfor %}
+    add_marker(tbl.rows[3].cells[0].paragraphs[0], "{%tr endfor %}", size=8)
 
     # Итого
     p_total = new_para(doc, space_after=4)

@@ -39,34 +39,16 @@ from app.routers.documents import (
     _resolve_user_dept as _resolve_user_dept_for_wish,
     _resolve_user_position as _resolve_user_position_for_wish,
 )
+# Правило №6 — единственный резолвер фото товара (app/services/documents/
+# product_photos.py, канонический products.photo_data + запасные ветки),
+# re-export'нутый здесь же, где его берёт и generate.py. Раньше в этом
+# файле жила урезанная копия-дубль (_resolve_local_product_photo), умевшая
+# только локальный /api/products/photos/<file> и не знавшая про photo_data.
+from app.services.documents.stages_template_engine import make_photo_resolver
 
 router = APIRouter(prefix="/api/wishes", tags=["wish-documents"])
 
 SUBSIDY_TEMPLATES_DIR = "/app/uploads/templates"
-UPLOADS_DIR = "/app/uploads/products"
-
-
-def _resolve_local_product_photo(tpl, photo_url):
-    """InlineImage для локально сохранённых фото товара, иначе "".
-
-    Единственная точка (Правило №6) — используется и /service_note, и
-    /tech_spec ниже, вместо двух копий одной и той же проверки локального
-    пути + docxtpl.InlineImage."""
-    if not photo_url:
-        return ""
-    url = str(photo_url).strip()
-    local_path = None
-    if url.startswith("/api/products/photos/"):
-        fname = url.split("/")[-1]
-        local_path = f"{UPLOADS_DIR}/{fname}"
-    if not local_path or not os.path.exists(local_path):
-        return ""
-    try:
-        from docxtpl import InlineImage
-        from docx.shared import Cm
-        return InlineImage(tpl, local_path, width=Cm(2.5))
-    except Exception:
-        return ""
 
 
 @router.get("/{wish_id}/documents/service_note")
@@ -212,8 +194,7 @@ async def generate_wish_service_note(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка загрузки шаблона: {e}")
 
-    def _resolve_photo(photo_url):
-        return _resolve_local_product_photo(tpl, photo_url)
+    resolve_photo = make_photo_resolver(tpl)
 
     # ── Build items list (same shape as documents.py items_list) ────────────
     items_list = []
@@ -227,7 +208,7 @@ async def generate_wish_service_note(
             "unit": it.unit or "",
             "unit_price": _fmt_money(it.unit_price),
             "total_price": _fmt_money(it.total_price),
-            "photo": _resolve_photo(it.product.photo_url if it.product else None),
+            "photo": resolve_photo(it.product),
         })
 
     # ── Unique product categories for {{item_categories}} ───────────────────
@@ -468,11 +449,10 @@ async def generate_wish_tech_spec(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка загрузки шаблона: {e}")
 
-    def _resolve_photo(photo_url):
-        return _resolve_local_product_photo(tpl, photo_url)
+    resolve_photo = make_photo_resolver(tpl)
 
     items_list = _build_items_list_from_purchase_items(
-        w, tz_override_mode=tz_override_mode, resolve_photo=_resolve_photo,
+        w, tz_override_mode=tz_override_mode, resolve_photo=resolve_photo,
     )
     total_nmck_val = sum(float(it.total_price or 0) for it in (w.items or []))
 

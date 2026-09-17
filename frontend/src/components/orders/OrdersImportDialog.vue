@@ -71,6 +71,7 @@
           <FileDropZone v-model="state.file"
             accept=".xlsx,.xls"
             hint="Excel (.xlsx, .xls) — перетащите или нажмите"
+            :max-size-mb="MAX_UPLOAD_SIZE_MB"
             class="mb-2" />
 
           <div v-if="state.format === 'standard'" class="mt-3 text-caption text-medium-emphasis">
@@ -364,6 +365,7 @@ import { computed, reactive, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import FileDropZone from '@/components/FileDropZone.vue'
+import { MAX_UPLOAD_SIZE_MB } from '@/constants/uploadLimits'
 import type { ToastType } from '@/composables/useToast'
 import type { ImportPreview, ImportResult, Subsidy } from '@/composables/orders/ordersTypes'
 import '@/styles/orders-import.css'

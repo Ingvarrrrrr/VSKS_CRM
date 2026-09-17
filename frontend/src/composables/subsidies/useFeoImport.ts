@@ -7,6 +7,7 @@
 // читает/пишет то же самое состояние через useFeoImport(useSubsidyDetailCtx()).
 import { computed, reactive, ref, watch } from 'vue'
 import { useToast, type ToastType } from '@/composables/useToast'
+import { uploadHttpErrorMessage } from '@/constants/uploadLimits'
 import type { SubsidyDetailContext } from './useSubsidyDetail'
 import type { FeoBudgetConflictGroup, FeoCategorySumConflictGroup, FeoDuplicateGroup, FeoImportResult, FeoUnmatchedNode, FeoWarning } from './types'
 
@@ -417,7 +418,7 @@ export function useFeoImport(ctx?: FeoImportCtx) {
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
-        showSnack(err.detail || 'Ошибка чтения файла', 'error'); return
+        showSnack(uploadHttpErrorMessage(res.status) || err.detail || 'Ошибка чтения файла', 'error'); return
       }
       const data = await res.json()
       feoImport.previewData = data
@@ -433,6 +434,20 @@ export function useFeoImport(ctx?: FeoImportCtx) {
     }
   }
 
+  // Владелец (2026-09-15/16, опрос): дефолт «ничего не выбрано» для КАЖДОГО
+  // канала duplicateResolutions — ровно то же значение, что бэкенд применяет
+  // при ОТСУТСТВИИ ключа (finalize_lvl5_items/apply_budget_conflict_
+  // resolutions/apply_category_sum_conflicts в feo_import_duplicates.py и
+  // feo_import_budget_conflicts.py, Правило №6 — сверено с бэкендом, не
+  // задублировано вслепую). Строка, где человек ничего не менял, не должна
+  // раздувать duplicate_resolutions — это и есть источник HTTP 414 на
+  // больших субсидиях (десятки catsum-групп по числу категорий).
+  function _isDefaultFeoResolution(key: string, value: string): boolean {
+    if (key.startsWith('budget::')) return value === 'last'
+    if (key.startsWith('catsum::')) return value === 'own'
+    return value === 'keep'
+  }
+
   async function doFeoMappedImport(dryRun = false, keepStep = false) {
     if (!feoImport.file) return
     feoImport.loading = true
@@ -443,79 +458,93 @@ export function useFeoImport(ctx?: FeoImportCtx) {
       const remapEntries = Object.entries(feoImport.remap)
         .filter(([, newPath]) => !!newPath)
         .map(([oldId, newPath]) => ({ old_id: Number(oldId), new_path: newPath as string }))
-      const params = new URLSearchParams({
-        sheet_name: feoImport.selectedSheet,
-        header_row_offset: String(sheet?.header_row_offset ?? 0),
-        dry_run: dryRun ? 'true' : 'false',
-        apply_remap: 'true',
-        col_subsidy:  String(m['subsidy']  ?? -1),
-        default_subsidy_id: String(feoImportTargetSubsidy.value ?? -1),
-        col_lvl2:     String(m['lvl2']     ?? -1),
-        col_lvl3:     String(m['lvl3']     ?? -1),
-        col_lvl4:     String(m['lvl4']     ?? -1),
-        col_lvl5:     String(m['lvl5']     ?? -1),
-        col_code:     String(m['code']     ?? -1),
-        col_appendix: String(m['appendix'] ?? -1),
-        col_budget:   String(m['budget']   ?? -1),
-        col_quantity: String(m['quantity'] ?? -1),
-        col_unit:      String(m['unit']      ?? -1),
-        col_item_amt:  String(m['item_amt']  ?? -1),
-        col_active:    String(m['active']    ?? -1),
-        col_qty_lvl2:  String(m['qty_lvl2']  ?? -1),
-        col_qty_lvl3:  String(m['qty_lvl3']  ?? -1),
-        col_qty_lvl4:  String(m['qty_lvl4']  ?? -1),
-        col_unit_lvl2: String(m['unit_lvl2'] ?? -1),
-        col_unit_lvl3: String(m['unit_lvl3'] ?? -1),
-        col_unit_lvl4: String(m['unit_lvl4'] ?? -1),
-        col_amt_lvl2:  String(m['amt_lvl2']  ?? -1),
-        col_amt_lvl3:  String(m['amt_lvl3']  ?? -1),
-        col_amt_lvl4:  String(m['amt_lvl4']  ?? -1),
-        col_feo_qty_lvl2:    String(m['feo_qty_lvl2']    ?? -1),
-        col_feo_unit_lvl2:   String(m['feo_unit_lvl2']   ?? -1),
-        col_feo_amount_lvl2: String(m['feo_amount_lvl2'] ?? -1),
-        col_feo_qty_lvl3:    String(m['feo_qty_lvl3']    ?? -1),
-        col_feo_unit_lvl3:   String(m['feo_unit_lvl3']   ?? -1),
-        col_feo_amount_lvl3: String(m['feo_amount_lvl3'] ?? -1),
-        col_feo_qty_lvl4:    String(m['feo_qty_lvl4']    ?? -1),
-        col_feo_unit_lvl4:   String(m['feo_unit_lvl4']   ?? -1),
-        col_feo_amount_lvl4: String(m['feo_amount_lvl4'] ?? -1),
-        col_feo_sum_lvl2: String(m['feo_sum_lvl2'] ?? -1),
-        col_feo_sum_lvl3: String(m['feo_sum_lvl3'] ?? -1),
-        col_feo_sum_lvl4: String(m['feo_sum_lvl4'] ?? -1),
-        col_plan_sum_lvl2: String(m['plan_sum_lvl2'] ?? -1),
-        col_plan_sum_lvl3: String(m['plan_sum_lvl3'] ?? -1),
-        col_plan_sum_lvl4: String(m['plan_sum_lvl4'] ?? -1),
-        col_item_price:    String(m['item_price']    ?? -1),
-        // Новый плоский 18-колоночный шаблон (2026-08-14)
-        col_row_feo_qty:    String(m['row_feo_qty']    ?? -1),
-        col_row_feo_unit:   String(m['row_feo_unit']   ?? -1),
-        col_row_feo_price:  String(m['row_feo_price']  ?? -1),
-        col_row_feo_sum:    String(m['row_feo_sum']    ?? -1),
-        col_row_plan_qty:   String(m['row_plan_qty']   ?? -1),
-        col_row_plan_unit:  String(m['row_plan_unit']  ?? -1),
-        col_row_plan_price: String(m['row_plan_price'] ?? -1),
-        col_row_plan_sum:   String(m['row_plan_sum']   ?? -1),
-        col_item_type:      String(m['item_type']      ?? -1),
-      })
-      if (remapEntries.length) params.set('remap', JSON.stringify(remapEntries))
-      // Волна 4, п.23: решения человека по группам дублей Ур.5 — только те,
-      // что реально выбраны (объект может быть пуст, если дублей не было или
-      // человек ничего не менял; сервер по умолчанию считает «оставить как
-      // есть» для любой группы, не упомянутой здесь).
-      if (Object.keys(feoImport.duplicateResolutions).length) {
-        params.set('duplicate_resolutions', JSON.stringify(feoImport.duplicateResolutions))
-      }
+
+      // Баг владельца 2026-09-17 (HTTP 414 на субсидии "Центрпоиск_3"): все
+      // параметры ниже раньше шли в query-строку GET-подобным способом при
+      // POST'е — ~70 col_* плюс remap плюс duplicate_resolutions (кириллица,
+      // по группе на каждую категорию) уходили на десятки КБ, выше лимита
+      // nginx (large_client_header_buffers). Файл и так шёл в теле FormData —
+      // теперь ВСЁ идёт туда же, в URL не остаётся ничего, что растёт от
+      // данных файла (backend принимает то же самое и из формы, и из query
+      // для обратной совместимости — см. app/services/feo_import_params.py).
       const fd = new FormData()
       fd.append('file', feoImport.file)
+      fd.append('sheet_name', feoImport.selectedSheet)
+      fd.append('header_row_offset', String(sheet?.header_row_offset ?? 0))
+      fd.append('dry_run', dryRun ? 'true' : 'false')
+      fd.append('apply_remap', 'true')
+      fd.append('col_subsidy',  String(m['subsidy']  ?? -1))
+      fd.append('default_subsidy_id', String(feoImportTargetSubsidy.value ?? -1))
+      fd.append('col_lvl2',     String(m['lvl2']     ?? -1))
+      fd.append('col_lvl3',     String(m['lvl3']     ?? -1))
+      fd.append('col_lvl4',     String(m['lvl4']     ?? -1))
+      fd.append('col_lvl5',     String(m['lvl5']     ?? -1))
+      fd.append('col_code',     String(m['code']     ?? -1))
+      fd.append('col_appendix', String(m['appendix'] ?? -1))
+      fd.append('col_budget',   String(m['budget']   ?? -1))
+      fd.append('col_quantity', String(m['quantity'] ?? -1))
+      fd.append('col_unit',      String(m['unit']      ?? -1))
+      fd.append('col_item_amt',  String(m['item_amt']  ?? -1))
+      fd.append('col_active',    String(m['active']    ?? -1))
+      fd.append('col_qty_lvl2',  String(m['qty_lvl2']  ?? -1))
+      fd.append('col_qty_lvl3',  String(m['qty_lvl3']  ?? -1))
+      fd.append('col_qty_lvl4',  String(m['qty_lvl4']  ?? -1))
+      fd.append('col_unit_lvl2', String(m['unit_lvl2'] ?? -1))
+      fd.append('col_unit_lvl3', String(m['unit_lvl3'] ?? -1))
+      fd.append('col_unit_lvl4', String(m['unit_lvl4'] ?? -1))
+      fd.append('col_amt_lvl2',  String(m['amt_lvl2']  ?? -1))
+      fd.append('col_amt_lvl3',  String(m['amt_lvl3']  ?? -1))
+      fd.append('col_amt_lvl4',  String(m['amt_lvl4']  ?? -1))
+      fd.append('col_feo_qty_lvl2',    String(m['feo_qty_lvl2']    ?? -1))
+      fd.append('col_feo_unit_lvl2',   String(m['feo_unit_lvl2']   ?? -1))
+      fd.append('col_feo_amount_lvl2', String(m['feo_amount_lvl2'] ?? -1))
+      fd.append('col_feo_qty_lvl3',    String(m['feo_qty_lvl3']    ?? -1))
+      fd.append('col_feo_unit_lvl3',   String(m['feo_unit_lvl3']   ?? -1))
+      fd.append('col_feo_amount_lvl3', String(m['feo_amount_lvl3'] ?? -1))
+      fd.append('col_feo_qty_lvl4',    String(m['feo_qty_lvl4']    ?? -1))
+      fd.append('col_feo_unit_lvl4',   String(m['feo_unit_lvl4']   ?? -1))
+      fd.append('col_feo_amount_lvl4', String(m['feo_amount_lvl4'] ?? -1))
+      fd.append('col_feo_sum_lvl2', String(m['feo_sum_lvl2'] ?? -1))
+      fd.append('col_feo_sum_lvl3', String(m['feo_sum_lvl3'] ?? -1))
+      fd.append('col_feo_sum_lvl4', String(m['feo_sum_lvl4'] ?? -1))
+      fd.append('col_plan_sum_lvl2', String(m['plan_sum_lvl2'] ?? -1))
+      fd.append('col_plan_sum_lvl3', String(m['plan_sum_lvl3'] ?? -1))
+      fd.append('col_plan_sum_lvl4', String(m['plan_sum_lvl4'] ?? -1))
+      fd.append('col_item_price',    String(m['item_price']    ?? -1))
+      // Новый плоский 18-колоночный шаблон (2026-08-14)
+      fd.append('col_row_feo_qty',    String(m['row_feo_qty']    ?? -1))
+      fd.append('col_row_feo_unit',   String(m['row_feo_unit']   ?? -1))
+      fd.append('col_row_feo_price',  String(m['row_feo_price']  ?? -1))
+      fd.append('col_row_feo_sum',    String(m['row_feo_sum']    ?? -1))
+      fd.append('col_row_plan_qty',   String(m['row_plan_qty']   ?? -1))
+      fd.append('col_row_plan_unit',  String(m['row_plan_unit']  ?? -1))
+      fd.append('col_row_plan_price', String(m['row_plan_price'] ?? -1))
+      fd.append('col_row_plan_sum',   String(m['row_plan_sum']   ?? -1))
+      fd.append('col_item_type',      String(m['item_type']      ?? -1))
+      if (remapEntries.length) fd.append('remap', JSON.stringify(remapEntries))
+      // Волна 4, п.23 + не слать то, что ничего не меняет (см.
+      // _isDefaultFeoResolution выше): решения человека по группам дублей
+      // Ур.5/конфликтов Суммы по ФЭО/суммы категории — только те, что
+      // РЕАЛЬНО отличаются от дефолта, который backend и так применит при
+      // отсутствии ключа. Раньше сюда клался дефолт для КАЖДОЙ группы, даже
+      // нетронутой человеком — на субсидии с сотнями catsum-групп это и
+      // раздувало запрос до HTTP 414.
+      const _resolutionsToSend: Record<string, string> = {}
+      for (const [key, value] of Object.entries(feoImport.duplicateResolutions)) {
+        if (!_isDefaultFeoResolution(key, value)) _resolutionsToSend[key] = value
+      }
+      if (Object.keys(_resolutionsToSend).length) {
+        fd.append('duplicate_resolutions', JSON.stringify(_resolutionsToSend))
+      }
       const token = localStorage.getItem('auth_token')
-      const res = await fetch(`/api/feo-categories/import-mapped?${params}`, {
+      const res = await fetch('/api/feo-categories/import-mapped', {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: fd,
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
-        const msg = err.detail || err.message || `Ошибка импорта (HTTP ${res.status})`
+        const msg = uploadHttpErrorMessage(res.status) || err.detail || err.message || `Ошибка импорта (HTTP ${res.status})`
         showSnack(msg, 'error')
         console.error('FEO import error:', err)
         return

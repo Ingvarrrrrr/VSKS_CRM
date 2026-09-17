@@ -29,8 +29,9 @@
             variant="outlined" density="compact"
             prepend-icon="mdi-file-upload"
             show-size
-            hint="Перетащите файл сюда или нажмите для выбора"
+            :hint="`Перетащите файл сюда или нажмите для выбора. Максимум ${MAX_UPLOAD_SIZE_MB} МБ.`"
             persistent-hint
+            :rules="[(files: File[] | File | null) => checkUploadSize(Array.isArray(files) ? files[0] : files) || true]"
             @update:model-value="feoImport.file = Array.isArray($event) ? ($event[0] ?? null) : ($event ?? null)"
           />
         </template>
@@ -585,6 +586,7 @@ import { useDisplay } from 'vuetify'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { useFeoImport } from '@/composables/subsidies/useFeoImport'
 import { formatCurrency } from '@/composables/subsidies/format'
+import { MAX_UPLOAD_SIZE_MB, checkUploadSize } from '@/constants/uploadLimits'
 import FeoImportMappingStep from './FeoImportMappingStep.vue'
 
 const { mobile } = useDisplay()

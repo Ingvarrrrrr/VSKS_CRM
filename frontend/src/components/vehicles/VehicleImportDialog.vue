@@ -33,6 +33,7 @@
             v-model="selectedFile"
             accept=".xlsx"
             hint="Excel (.xlsx) — перетащите или нажмите"
+            :max-size-mb="MAX_UPLOAD_SIZE_MB"
             class="mb-3"
           />
         </template>
@@ -279,6 +280,7 @@ import { ref, reactive, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import FileDropZone from '@/components/FileDropZone.vue'
+import { MAX_UPLOAD_SIZE_MB } from '@/constants/uploadLimits'
 
 const { mobile } = useDisplay()
 

@@ -12,6 +12,7 @@
           v-model="file"
           accept=".xlsx,.xls"
           hint="Excel-файл банковской выписки (.xlsx, .xls)"
+          :max-size-mb="MAX_UPLOAD_SIZE_MB"
         />
         <v-progress-linear v-if="uploading" indeterminate color="primary" class="mt-3" />
         <div class="mt-3 d-flex justify-end">
@@ -241,6 +242,7 @@ import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
 import { useToast } from '@/composables/useToast'
 import FileDropZone from '@/components/FileDropZone.vue'
+import { MAX_UPLOAD_SIZE_MB } from '@/constants/uploadLimits'
 import { useColumnConfig, type ColumnDef } from '@/composables/useColumnConfig'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import { useCardView } from '@/composables/useCardView'

@@ -20,6 +20,7 @@
           <FileDropZone v-model="im.contractorImportFile.value"
             accept=".xlsx,.xls,.docx,.doc,.pdf"
             hint=".xlsx, .xls, .docx, .doc, .pdf — перетащите или нажмите"
+            :max-size-mb="MAX_UPLOAD_SIZE_MB"
             class="mb-4" />
           <v-alert v-if="im.contractorImportError.value" type="error" density="compact" class="mt-2">{{ im.contractorImportError.value }}</v-alert>
         </template>
@@ -119,6 +120,7 @@
 
 <script setup lang="ts">
 import FileDropZone from '@/components/FileDropZone.vue'
+import { MAX_UPLOAD_SIZE_MB } from '@/constants/uploadLimits'
 import type { ContractorsImportApi } from '@/composables/contractors/useContractorsImport'
 
 defineProps<{

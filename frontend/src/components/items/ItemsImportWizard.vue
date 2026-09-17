@@ -44,6 +44,7 @@
           <FileDropZone v-model="state.itemsImportFile"
             accept=".xlsx,.xls,.pdf,.docx,.doc,.html,.htm"
             hint="Excel, PDF, Word, HTML — перетащите или нажмите"
+            :max-size-mb="MAX_UPLOAD_SIZE_MB"
             class="mb-2" />
         </template>
 
@@ -141,6 +142,7 @@
           <FileDropZone v-model="state.smartImportFile"
             accept=".xlsx,.xls,.pdf,.docx,.doc,.html,.htm,.jpg,.jpeg,.png,.webp,.heic"
             hint="Excel, PDF, Word, HTML, фото чека — перетащите или нажмите"
+            :max-size-mb="MAX_UPLOAD_SIZE_MB"
             class="mb-4" />
 
           <!-- import-no-clutter: тогл «не добавлять в каталог» -->
@@ -295,6 +297,7 @@
 
 <script setup lang="ts">
 import FileDropZone from '@/components/FileDropZone.vue'
+import { MAX_UPLOAD_SIZE_MB } from '@/constants/uploadLimits'
 import { useDisplay } from 'vuetify'
 
 const { mobile } = useDisplay()

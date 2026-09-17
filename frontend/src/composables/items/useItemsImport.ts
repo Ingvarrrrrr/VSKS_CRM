@@ -12,6 +12,7 @@ import type { MatchCandidate } from '@/composables/useItemMatching'
 import type { DupGroup, ResolvedGroup } from '@/components/DuplicateMergeDialog.vue'
 import type { SumMismatchWarning, SumMismatchChoice } from '@/components/items/SumMismatchDialog.vue'
 import { applySumMismatchChoice } from '@/utils/qtyPriceCheck'
+import { uploadHttpErrorMessage } from '@/constants/uploadLimits'
 import type { ToastType } from '@/composables/useToast'
 
 // EditorItem is structurally identical to the parent's; kept loose here (same
@@ -366,7 +367,15 @@ export function useItemsImport(deps: UseItemsImportDeps) {
   }
 
   /** Один вызов /{pid}/items/import-mapped — confirm=false для предпросмотра
-   * с warnings (Дефект 2), confirm=true (+resolutions) для реального импорта. */
+   * с warnings (Дефект 2), confirm=true (+resolutions) для реального импорта.
+   *
+   * Тот же дефект, что и HTTP 414 у импорта ФЭО (владелец, 2026-09-17,
+   * см. useFeoImport.ts::doFeoMappedImport) — раньше col_* / confirm /
+   * resolutions уходили в query-строку POST'а, здесь пока не выстрелило
+   * только из-за меньшего масштаба (resolutions растёт по числу строк с
+   * sum_mismatch, а не по числу категорий субсидии). Теперь всё уходит в
+   * то же тело FormData, что и файл (backend принимает форму/query
+   * одинаково — см. app/services/request_params.py). */
   async function _requestMappedImportPid(confirm: boolean, resolutions?: Record<number, SumMismatchChoice>) {
     const token = localStorage.getItem('auth_token')
     const fd = new FormData()
@@ -374,12 +383,15 @@ export function useItemsImport(deps: UseItemsImportDeps) {
     const params = _mappedColParams()
     params.set('confirm', String(confirm))
     if (resolutions) params.set('resolutions', JSON.stringify(resolutions))
-    const resp = await fetch(`/api/purchases/${props.purchaseId}/items/import-mapped?${params}`, {
+    for (const [k, v] of params.entries()) fd.append(k, v)
+    const resp = await fetch(`/api/purchases/${props.purchaseId}/items/import-mapped`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` } as HeadersInit,
       body: fd,
     })
     if (!resp.ok) {
+      const uploadMsg = uploadHttpErrorMessage(resp.status)
+      if (uploadMsg) throw new Error(uploadMsg)
       const errText = await resp.text().catch(() => '')
       let detail = `Ошибка ${resp.status}`
       try { detail = JSON.parse(errText).detail || detail } catch { /* */ }
@@ -1085,18 +1097,25 @@ export function useItemsImport(deps: UseItemsImportDeps) {
       const token = localStorage.getItem('auth_token')
       const fd = new FormData()
       fd.append('file', smartImportFile.value)
+      fd.append('confirm', 'true')
+      fd.append('skip_catalog', String(smartImportSkipCatalog.value))
       // Дефект 2 (владелец, 2026-09-14): этот путь заново парсит файл на
       // сервере (не читает smartImportPreview.value) — выбор пользователя
       // по sum_mismatch, сделанный в doSmartPreview, передаём явно.
-      const resolutionsParam = Object.keys(_smartPidResolutions).length
-        ? `&resolutions=${encodeURIComponent(JSON.stringify(_smartPidResolutions))}`
-        : ''
-      const resp = await fetch(`/api/purchases/${props.purchaseId}/items/import-smart?confirm=true&skip_catalog=${smartImportSkipCatalog.value}${resolutionsParam}`, {
+      // 2026-09-17: тот же дефект, что и HTTP 414 у ФЭО-импорта — эти поля
+      // раньше шли в query-строку POST'а; теперь в тело FormData вместе с
+      // файлом (см. комментарий у _requestMappedImportPid выше).
+      if (Object.keys(_smartPidResolutions).length) {
+        fd.append('resolutions', JSON.stringify(_smartPidResolutions))
+      }
+      const resp = await fetch(`/api/purchases/${props.purchaseId}/items/import-smart`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` } as HeadersInit,
         body: fd,
       })
       if (!resp.ok) {
+        const uploadMsg = uploadHttpErrorMessage(resp.status)
+        if (uploadMsg) throw new Error(uploadMsg)
         const err = await resp.json().catch(() => ({}))
         throw new Error(err.detail || err.message || `Ошибка ${resp.status}`)
       }

@@ -27,7 +27,7 @@ app/services/feo_import_engine.py — этот модуль только опр�
 """
 from io import BytesIO
 
-from fastapi import APIRouter, Depends, Query, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, Query, HTTPException, Request, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 try:
     from openpyxl import load_workbook
@@ -39,6 +39,7 @@ from app.auth.permissions import require_tab
 from app.routers import feo_categories as fc
 from app.services.feo_import_engine import _do_feo_import
 from app.services.feo_import_links import _relink_feo_category, _feo_category_load  # noqa: F401 (re-export)
+from app.services.feo_import_params import resolve_feo_import_mapped_params
 
 router = APIRouter(prefix="/api/feo-categories", tags=["feo_categories"])
 
@@ -186,6 +187,7 @@ async def import_feo_from_excel(
 
 @router.post("/import-mapped")
 async def import_feo_mapped(
+    request: Request,
     file: UploadFile = File(...),
     sheet_name: str = Query(""),
     header_row_offset: int = Query(0),
@@ -250,7 +252,55 @@ async def import_feo_mapped(
     dry_run=true: вся обработка выполняется, транзакция откатывается; возвращает предупреждения.
     Переезд (remap) несопоставленных узлов и удаление опустевших старых узлов выполняются
     только при apply_remap=true; иначе выполняется только анализ (unmatched/new_paths).
+
+    Баг владельца 2026-09-17 (HTTP 414 на субсидии "Центрпоиск_3"): фронт
+    (useFeoImport.ts) теперь шлёт все параметры ниже ЧЕРЕЗ ТЕЛО multipart-
+    формы вместе с файлом — все `col_*`, remap, duplicate_resolutions на
+    больших субсидиях уходили на десятки КБ в query-строке, что выше лимита
+    nginx `large_client_header_buffers`. Query(...) в сигнатуре ниже оставлен
+    ТОЛЬКО ради обратной совместимости (PWA-кеш на проде мог сохранить
+    старый фронт, шлющий эти же поля в query) — реальные значения теперь
+    приходят через resolve_feo_import_mapped_params (Правило №6, один
+    парсер и для формы, и для query, см. app/services/feo_import_params.py).
     """
+    _p = await resolve_feo_import_mapped_params(
+        request,
+        sheet_name=sheet_name, header_row_offset=header_row_offset,
+        col_subsidy=col_subsidy, col_lvl2=col_lvl2, col_lvl3=col_lvl3, col_lvl4=col_lvl4, col_lvl5=col_lvl5,
+        col_code=col_code, col_appendix=col_appendix, col_budget=col_budget,
+        col_quantity=col_quantity, col_unit=col_unit, col_item_amt=col_item_amt, col_active=col_active,
+        col_qty_lvl2=col_qty_lvl2, col_qty_lvl3=col_qty_lvl3, col_qty_lvl4=col_qty_lvl4,
+        col_unit_lvl2=col_unit_lvl2, col_unit_lvl3=col_unit_lvl3, col_unit_lvl4=col_unit_lvl4,
+        col_amt_lvl2=col_amt_lvl2, col_amt_lvl3=col_amt_lvl3, col_amt_lvl4=col_amt_lvl4,
+        col_feo_qty_lvl2=col_feo_qty_lvl2, col_feo_qty_lvl3=col_feo_qty_lvl3, col_feo_qty_lvl4=col_feo_qty_lvl4,
+        col_feo_unit_lvl2=col_feo_unit_lvl2, col_feo_unit_lvl3=col_feo_unit_lvl3, col_feo_unit_lvl4=col_feo_unit_lvl4,
+        col_feo_amount_lvl2=col_feo_amount_lvl2, col_feo_amount_lvl3=col_feo_amount_lvl3, col_feo_amount_lvl4=col_feo_amount_lvl4,
+        col_feo_sum_lvl2=col_feo_sum_lvl2, col_feo_sum_lvl3=col_feo_sum_lvl3, col_feo_sum_lvl4=col_feo_sum_lvl4,
+        col_plan_sum_lvl2=col_plan_sum_lvl2, col_plan_sum_lvl3=col_plan_sum_lvl3, col_plan_sum_lvl4=col_plan_sum_lvl4,
+        col_item_price=col_item_price,
+        col_row_feo_qty=col_row_feo_qty, col_row_feo_unit=col_row_feo_unit,
+        col_row_feo_price=col_row_feo_price, col_row_feo_sum=col_row_feo_sum,
+        col_row_plan_qty=col_row_plan_qty, col_row_plan_unit=col_row_plan_unit,
+        col_row_plan_price=col_row_plan_price, col_row_plan_sum=col_row_plan_sum,
+        col_item_type=col_item_type,
+        default_subsidy_id=default_subsidy_id,
+        dry_run=dry_run, remap=remap, apply_remap=apply_remap,
+        duplicate_resolutions=duplicate_resolutions,
+    )
+    # Переменные, используемые ДО итогового вызова _do_feo_import ниже
+    # (гейт прав, выбор листа/строки заголовка) — реальные значения теперь
+    # только из `_p`; остальные ~40 col_* читаются из `_p` прямо в месте
+    # вызова _do_feo_import, без промежуточного переприсваивания.
+    sheet_name = _p["sheet_name"]
+    header_row_offset = _p["header_row_offset"]
+    col_subsidy = _p["col_subsidy"]
+    col_lvl2 = _p["col_lvl2"]
+    default_subsidy_id = _p["default_subsidy_id"]
+    dry_run = _p["dry_run"]
+    remap = _p["remap"]
+    apply_remap = _p["apply_remap"]
+    duplicate_resolutions = _p["duplicate_resolutions"]
+
     if col_lvl2 < 0:
         raise HTTPException(400, "Не указан обязательный столбец: Уровень 2")
     if col_subsidy < 0 and default_subsidy_id <= 0:
@@ -323,54 +373,61 @@ async def import_feo_mapped(
 
     data_rows = all_rows[header_row_offset + 1:]
 
+    # Оставшиеся ~40 col_* читаются напрямую из `_p` (уже разрешённых форма/query,
+    # см. resolve_feo_import_mapped_params выше) — им не нужно промежуточное
+    # переприсваивание локальной переменной, они используются только здесь.
+    def _c(name: str):
+        v = _p[name]
+        return v if v >= 0 else None
+
     return await _do_feo_import(
         rows=data_rows,
-        c_subsidy=col_subsidy if col_subsidy >= 0 else None,
+        c_subsidy=_c("col_subsidy"),
         c_lvl2=col_lvl2,
-        c_lvl3=col_lvl3 if col_lvl3 >= 0 else None,
-        c_lvl4=col_lvl4 if col_lvl4 >= 0 else None,
-        c_lvl5=col_lvl5 if col_lvl5 >= 0 else None,
-        c_qty=col_quantity if col_quantity >= 0 else None,
-        c_unit=col_unit if col_unit >= 0 else None,
-        c_item_amt=col_item_amt if col_item_amt >= 0 else None,
-        c_code=col_code if col_code >= 0 else None,
-        c_appendix=col_appendix if col_appendix >= 0 else None,
-        c_budget=col_budget if col_budget >= 0 else None,
-        c_active=col_active if col_active >= 0 else None,
-        c_qty_lvl2=col_qty_lvl2 if col_qty_lvl2 >= 0 else None,
-        c_qty_lvl3=col_qty_lvl3 if col_qty_lvl3 >= 0 else None,
-        c_qty_lvl4=col_qty_lvl4 if col_qty_lvl4 >= 0 else None,
-        c_unit_lvl2=col_unit_lvl2 if col_unit_lvl2 >= 0 else None,
-        c_unit_lvl3=col_unit_lvl3 if col_unit_lvl3 >= 0 else None,
-        c_unit_lvl4=col_unit_lvl4 if col_unit_lvl4 >= 0 else None,
-        c_amt_lvl2=col_amt_lvl2 if col_amt_lvl2 >= 0 else None,
-        c_amt_lvl3=col_amt_lvl3 if col_amt_lvl3 >= 0 else None,
-        c_amt_lvl4=col_amt_lvl4 if col_amt_lvl4 >= 0 else None,
-        c_feo_qty_lvl2=col_feo_qty_lvl2 if col_feo_qty_lvl2 >= 0 else None,
-        c_feo_qty_lvl3=col_feo_qty_lvl3 if col_feo_qty_lvl3 >= 0 else None,
-        c_feo_qty_lvl4=col_feo_qty_lvl4 if col_feo_qty_lvl4 >= 0 else None,
-        c_feo_unit_lvl2=col_feo_unit_lvl2 if col_feo_unit_lvl2 >= 0 else None,
-        c_feo_unit_lvl3=col_feo_unit_lvl3 if col_feo_unit_lvl3 >= 0 else None,
-        c_feo_unit_lvl4=col_feo_unit_lvl4 if col_feo_unit_lvl4 >= 0 else None,
-        c_feo_amt_lvl2=col_feo_amount_lvl2 if col_feo_amount_lvl2 >= 0 else None,
-        c_feo_amt_lvl3=col_feo_amount_lvl3 if col_feo_amount_lvl3 >= 0 else None,
-        c_feo_amt_lvl4=col_feo_amount_lvl4 if col_feo_amount_lvl4 >= 0 else None,
-        c_feo_sum_lvl2=col_feo_sum_lvl2 if col_feo_sum_lvl2 >= 0 else None,
-        c_feo_sum_lvl3=col_feo_sum_lvl3 if col_feo_sum_lvl3 >= 0 else None,
-        c_feo_sum_lvl4=col_feo_sum_lvl4 if col_feo_sum_lvl4 >= 0 else None,
-        c_plan_sum_lvl2=col_plan_sum_lvl2 if col_plan_sum_lvl2 >= 0 else None,
-        c_plan_sum_lvl3=col_plan_sum_lvl3 if col_plan_sum_lvl3 >= 0 else None,
-        c_plan_sum_lvl4=col_plan_sum_lvl4 if col_plan_sum_lvl4 >= 0 else None,
-        c_item_price=col_item_price if col_item_price >= 0 else None,
-        c_row_feo_qty=col_row_feo_qty if col_row_feo_qty >= 0 else None,
-        c_row_feo_unit=col_row_feo_unit if col_row_feo_unit >= 0 else None,
-        c_row_feo_price=col_row_feo_price if col_row_feo_price >= 0 else None,
-        c_row_feo_sum=col_row_feo_sum if col_row_feo_sum >= 0 else None,
-        c_row_plan_qty=col_row_plan_qty if col_row_plan_qty >= 0 else None,
-        c_row_plan_unit=col_row_plan_unit if col_row_plan_unit >= 0 else None,
-        c_row_plan_price=col_row_plan_price if col_row_plan_price >= 0 else None,
-        c_row_plan_sum=col_row_plan_sum if col_row_plan_sum >= 0 else None,
-        c_item_type=col_item_type if col_item_type >= 0 else None,
+        c_lvl3=_c("col_lvl3"),
+        c_lvl4=_c("col_lvl4"),
+        c_lvl5=_c("col_lvl5"),
+        c_qty=_c("col_quantity"),
+        c_unit=_c("col_unit"),
+        c_item_amt=_c("col_item_amt"),
+        c_code=_c("col_code"),
+        c_appendix=_c("col_appendix"),
+        c_budget=_c("col_budget"),
+        c_active=_c("col_active"),
+        c_qty_lvl2=_c("col_qty_lvl2"),
+        c_qty_lvl3=_c("col_qty_lvl3"),
+        c_qty_lvl4=_c("col_qty_lvl4"),
+        c_unit_lvl2=_c("col_unit_lvl2"),
+        c_unit_lvl3=_c("col_unit_lvl3"),
+        c_unit_lvl4=_c("col_unit_lvl4"),
+        c_amt_lvl2=_c("col_amt_lvl2"),
+        c_amt_lvl3=_c("col_amt_lvl3"),
+        c_amt_lvl4=_c("col_amt_lvl4"),
+        c_feo_qty_lvl2=_c("col_feo_qty_lvl2"),
+        c_feo_qty_lvl3=_c("col_feo_qty_lvl3"),
+        c_feo_qty_lvl4=_c("col_feo_qty_lvl4"),
+        c_feo_unit_lvl2=_c("col_feo_unit_lvl2"),
+        c_feo_unit_lvl3=_c("col_feo_unit_lvl3"),
+        c_feo_unit_lvl4=_c("col_feo_unit_lvl4"),
+        c_feo_amt_lvl2=_c("col_feo_amount_lvl2"),
+        c_feo_amt_lvl3=_c("col_feo_amount_lvl3"),
+        c_feo_amt_lvl4=_c("col_feo_amount_lvl4"),
+        c_feo_sum_lvl2=_c("col_feo_sum_lvl2"),
+        c_feo_sum_lvl3=_c("col_feo_sum_lvl3"),
+        c_feo_sum_lvl4=_c("col_feo_sum_lvl4"),
+        c_plan_sum_lvl2=_c("col_plan_sum_lvl2"),
+        c_plan_sum_lvl3=_c("col_plan_sum_lvl3"),
+        c_plan_sum_lvl4=_c("col_plan_sum_lvl4"),
+        c_item_price=_c("col_item_price"),
+        c_row_feo_qty=_c("col_row_feo_qty"),
+        c_row_feo_unit=_c("col_row_feo_unit"),
+        c_row_feo_price=_c("col_row_feo_price"),
+        c_row_feo_sum=_c("col_row_feo_sum"),
+        c_row_plan_qty=_c("col_row_plan_qty"),
+        c_row_plan_unit=_c("col_row_plan_unit"),
+        c_row_plan_price=_c("col_row_plan_price"),
+        c_row_plan_sum=_c("col_row_plan_sum"),
+        c_item_type=_c("col_item_type"),
         default_subsidy_id=default_subsidy_id if default_subsidy_id > 0 else None,
         db=db, dry_run=dry_run,
         user=current_user, remap=remap, apply_remap=apply_remap,

@@ -28,6 +28,9 @@
             variant="outlined" density="compact"
             prepend-icon="mdi-file-excel"
             show-size
+            :hint="`Максимум ${MAX_UPLOAD_SIZE_MB} МБ`"
+            persistent-hint
+            :rules="[(files: File[] | File | null) => checkUploadSize(Array.isArray(files) ? files[0] : files) || true]"
             :loading="wizard.importDialog.loading"
             @update:model-value="onFilePicked"
           />
@@ -174,6 +177,7 @@
 <script setup lang="ts">
 import ImportMappingGrid from '@/components/common/ImportMappingGrid.vue'
 import { PRODUCTS_IMPORT_TARGET_FIELDS, type useProductsImport } from '@/composables/products/useProductsImport'
+import { MAX_UPLOAD_SIZE_MB, checkUploadSize } from '@/constants/uploadLimits'
 
 const targetFields = PRODUCTS_IMPORT_TARGET_FIELDS
 

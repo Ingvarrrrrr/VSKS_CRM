@@ -16,6 +16,9 @@
           accept=".xlsx,.xls"
           variant="outlined" density="compact"
           prepend-icon="mdi-file-upload-outline"
+          :hint="`Максимум ${MAX_UPLOAD_SIZE_MB} МБ`"
+          persistent-hint
+          :rules="[(f: File | null) => checkUploadSize(f) || true]"
           :disabled="dialog.loading"
         />
         <v-alert v-if="dialog.result" :type="dialog.result.errors?.length ? 'warning' : 'success'" class="mt-3" density="compact">
@@ -42,6 +45,8 @@
 </template>
 
 <script setup lang="ts">
+import { MAX_UPLOAD_SIZE_MB, checkUploadSize } from '@/constants/uploadLimits'
+
 defineProps<{
   dialog: { show: boolean; file: File | null; loading: boolean; result: { created: number; skipped: number; errors: { row: number; error: string }[] } | null }
   mobile: boolean

@@ -11,7 +11,7 @@ so registration order relative to it doesn't matter (see app/routes.py comment
 next to purchase_items_import imports). Registered next to
 purchase_items_import.router for readability.
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from io import BytesIO
@@ -36,6 +36,7 @@ from app.services.items_import_parsing import _extract_html_tables, _read_excel_
 from app.services.items_import_catalog import _upsert_product_to_catalog, _apply_import_to_existing_product
 from app.utils.numbers import to_decimal
 from app.services.qty_price_check import check_qty_price_sum, resolve_qty_price_choice
+from app.services.request_params import merge_form_over_query
 import json as _json
 
 router = APIRouter(prefix="/api/purchases", tags=["purchase-items-import"])
@@ -290,6 +291,7 @@ async def import_items_mapped_nopid(
 
 @router.post("/{pid}/items/import-mapped")
 async def import_items_mapped(
+    request: Request,
     pid: int,
     file: UploadFile = File(...),
     sheet_name: str = Query(""),
@@ -320,7 +322,51 @@ async def import_items_mapped(
     (sum_mismatch с номером строки), НИЧЕГО не пишет в БД; confirm=true —
     применяет resolutions (если пользователь выбрал пересчёт) и импортирует
     по-настоящему. Без warnings в файле поведение как раньше — один вызов
-    с confirm=true."""
+    с confirm=true.
+
+    Тот же дефект, что и HTTP 414 на импорте ФЭО (владелец, 2026-09-17,
+    см. app/routers/feo_import.py::import_feo_mapped) — `resolutions` на
+    файле с большим числом строк sum_mismatch способен раздуть query-строку.
+    Параметры ниже теперь приходят через тело multipart-формы вместе с
+    файлом (useItemsImport.ts, _requestMappedImportPid); Query(...) в
+    сигнатуре — только обратная совместимость со старым фронтом. Один и
+    тот же парсер формы/query, что и у импорта ФЭО (Правило №6, см.
+    app/services/request_params.py — второй механизм не заводим)."""
+    _p = await merge_form_over_query(
+        request,
+        dict(
+            sheet_name=sheet_name, col_item_name=col_item_name, col_description=col_description,
+            col_quantity=col_quantity, col_unit_price=col_unit_price, col_total_price=col_total_price,
+            col_vat=col_vat, col_unit=col_unit, col_row_num=col_row_num, col_vat_rate=col_vat_rate,
+            col_vat_amount=col_vat_amount, col_total_with_vat=col_total_with_vat, col_category=col_category,
+            col_product_type=col_product_type, header_row_offset=header_row_offset, confirm=confirm,
+            resolutions=resolutions,
+        ),
+        bool_fields=frozenset({"confirm"}),
+        int_fields=frozenset({
+            "col_item_name", "col_description", "col_quantity", "col_unit_price", "col_total_price",
+            "col_vat", "col_unit", "col_row_num", "col_vat_rate", "col_vat_amount", "col_total_with_vat",
+            "col_category", "col_product_type", "header_row_offset",
+        }),
+    )
+    sheet_name = _p["sheet_name"]
+    col_item_name = _p["col_item_name"]
+    col_description = _p["col_description"]
+    col_quantity = _p["col_quantity"]
+    col_unit_price = _p["col_unit_price"]
+    col_total_price = _p["col_total_price"]
+    col_vat = _p["col_vat"]
+    col_unit = _p["col_unit"]
+    col_row_num = _p["col_row_num"]
+    col_vat_rate = _p["col_vat_rate"]
+    col_vat_amount = _p["col_vat_amount"]
+    col_total_with_vat = _p["col_total_with_vat"]
+    col_category = _p["col_category"]
+    col_product_type = _p["col_product_type"]
+    header_row_offset = _p["header_row_offset"]
+    confirm = _p["confirm"]
+    resolutions = _p["resolutions"]
+
     if col_item_name < 0:
         raise HTTPException(400, "Не указан столбец Наименование")
 

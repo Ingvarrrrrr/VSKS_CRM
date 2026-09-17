@@ -14,7 +14,7 @@ imports). Registered next to purchase_items_import.router for readability.
 """
 import logging
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from decimal import Decimal
 
@@ -34,6 +34,7 @@ from app.services.items_import_parsing import (
 from app.services.items_import_catalog import _save_smart_preview_to_purchase
 from app.utils.numbers import to_decimal
 from app.services.qty_price_check import check_qty_price_sum
+from app.services.request_params import merge_form_over_query
 import json as _json
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,7 @@ async def import_items_smart_nopid(
 
 @router.post("/{pid}/items/import-smart")
 async def import_items_smart(
+    request: Request,
     pid: int,
     file: UploadFile = File(...),
     confirm: bool = Query(default=False),
@@ -101,7 +103,22 @@ async def import_items_smart(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Smart import: extract items table from PDF / DOCX / XLSX."""
+    """Smart import: extract items table from PDF / DOCX / XLSX.
+
+    Те же поля, что и раньше, но теперь приходят приоритетно из тела
+    multipart-формы (useItemsImport.ts, doSmartImport) — тот же дефект и
+    тот же общий парсер, что и у import-mapped/ФЭО-импорта (Правило №6,
+    app/services/request_params.py). Query(...) остаётся для обратной
+    совместимости со старым фронтом."""
+    _p = await merge_form_over_query(
+        request,
+        dict(confirm=confirm, skip_catalog=skip_catalog, resolutions=resolutions),
+        bool_fields=frozenset({"confirm", "skip_catalog"}),
+    )
+    confirm = _p["confirm"]
+    skip_catalog = _p["skip_catalog"]
+    resolutions = _p["resolutions"]
+
     purchase = await db.get(Purchase, pid)
     if not purchase:
         raise HTTPException(404, "Закупка не найдена")

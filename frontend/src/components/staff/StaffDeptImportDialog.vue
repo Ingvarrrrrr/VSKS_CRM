@@ -4,7 +4,9 @@
       <v-card-title>Импорт отделов из Excel</v-card-title>
       <v-card-text>
         <v-btn variant="outlined" size="small" prepend-icon="mdi-download" class="mb-3" @click="$emit('download-template')">Скачать шаблон</v-btn>
-        <v-file-input v-model="deptImportFile" label="Выберите файл .xlsx" accept=".xlsx,.xls" variant="outlined" density="compact" />
+        <v-file-input v-model="deptImportFile" label="Выберите файл .xlsx" accept=".xlsx,.xls" variant="outlined" density="compact"
+          :hint="`Максимум ${MAX_UPLOAD_SIZE_MB} МБ`" persistent-hint
+          :rules="[(f: File | null) => checkUploadSize(f) || true]" />
         <v-alert v-if="deptImportResult" :type="deptImportResult.errors?.length ? 'warning' : 'success'" variant="tonal" class="mt-2">
           Создано отделов: {{ deptImportResult.created_departments }}, сотрудников: {{ deptImportResult.created_members }}
           <div v-for="err in deptImportResult.errors?.slice(0, 5)" :key="err.row" class="text-caption">Строка {{ err.row }}: {{ err.error }}</div>
@@ -20,6 +22,8 @@
 </template>
 
 <script setup lang="ts">
+import { MAX_UPLOAD_SIZE_MB, checkUploadSize } from '@/constants/uploadLimits'
+
 defineProps<{
   deptImportResult: any
   deptImporting: boolean

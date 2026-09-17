@@ -70,8 +70,27 @@
       <v-card-text class="pa-0" style="min-height:500px">
         <iframe v-if="previewFile?.mime_type === 'application/pdf'"
           :src="previewUrl" style="width:100%;height:600px;border:none" />
-        <div v-else-if="previewFile?.mime_type?.startsWith('image/')" class="d-flex justify-center pa-4">
+        <div v-else-if="isPreviewable(previewFile?.mime_type)" class="d-flex justify-center pa-4">
           <img :src="previewUrl" style="max-width:100%;max-height:600px;object-fit:contain" />
+        </div>
+        <!-- Правка 2026-09-17 (п.3, независимая приёмка): раньше для форматов,
+             которые браузер не умеет показать инлайн (TIFF/HEIC/DOC/HTML —
+             ровно те, ради которых заводился приём «нераспознанного чека»),
+             тело диалога оставалось ПУСТЫМ — единственный путь скачать был
+             мелкая иконка в заголовке. Явная и заметная заглушка + причина +
+             крупная кнопка «Скачать файл» (эмитит тот же 'download', что и
+             иконка в заголовке — второй способ скачивания не заводим). -->
+        <div v-else class="d-flex flex-column align-center justify-center text-center pa-8" style="min-height:500px">
+          <v-icon :icon="fileIcon(previewFile?.mime_type)" size="64" class="mb-4 text-medium-emphasis" />
+          <div class="text-body-1 mb-1">Предпросмотр недоступен</div>
+          <div class="text-caption text-medium-emphasis mb-4" style="max-width:360px">
+            Браузер не умеет показывать формат «{{ previewFile?.mime_type || 'неизвестный' }}» —
+            скачайте файл, чтобы открыть его в подходящей программе.
+          </div>
+          <v-btn color="primary" variant="tonal" size="large" prepend-icon="mdi-download"
+            @click="previewFile && $emit('download', previewFile.id, previewFile.filename)">
+            Скачать файл
+          </v-btn>
         </div>
       </v-card-text>
     </v-card>
@@ -97,6 +116,10 @@ defineProps<{
   previewFile: { id: number; filename: string; mime_type?: string } | null
   previewUrl: string
   fileIcon: (mime?: string) => string
+  // Единый источник «браузер умеет показать инлайн» — usePurchaseFiles.ts::
+  // isPreviewable (ПРАВИЛО №6, тот же predicate, что решает показывать ли
+  // кнопку-глаз в PurchaseDocumentsCard.vue).
+  isPreviewable: (mime?: string) => boolean
 }>()
 
 defineEmits<{

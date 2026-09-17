@@ -18,7 +18,12 @@ from app.models.purchase_receipt import PurchaseReceipt
 from app.models.user import User
 from app.schemas.schemas import ReceiptOut
 from app.services.receipts_creation import _create_receipt_with_items, _raise_receipt_duplicate_detail
-from app.services.receipts_parsing import _parse_fns_json_receipt, _parse_proverkacheka_html_receipt, _parse_qr_string
+from app.services.receipts_parsing import (
+    _parse_fns_json_receipt,
+    _parse_proverkacheka_html_receipt,
+    _parse_qr_string,
+    classify_proverkacheka_error,
+)
 
 router = APIRouter(prefix="/api/purchases", tags=["receipts"])
 
@@ -273,20 +278,23 @@ async def import_receipt_qr_fetch(
     if not isinstance(payload, dict) or payload.get("code") != 1:
         msg = (payload or {}).get("data") if isinstance(payload, dict) else None
         msg_str = msg if isinstance(msg, str) else ""
-        # Если ФНС режет по rate-limit — это сильный сигнал что чек уже импортировали
-        # сегодня. Пробуем ещё раз поискать в БД (loose поиск тоже).
-        if "Превышено" in msg_str or "превышен" in msg_str.lower() or "уже" in msg_str.lower():
+        # Владелец (п.6а, 2026-09-17): единая классификация ответа proverkacheka —
+        # честный текст «ФНС ещё обрабатывает, до 24ч» вместо неверного «лимит»,
+        # см. docstring classify_proverkacheka_error (ПРАВИЛО №6, один источник
+        # текстов для всех вызывающих proverkacheka.com в проекте).
+        classified = classify_proverkacheka_error(msg_str)
+        # RATE_LIMIT/PENDING — оба сигналы, что чек, возможно, уже заведён (та же
+        # эвристика, что была раньше): перепроверяем БД перед тем, как отдать
+        # пользователю честный текст «подождите/введите вручную».
+        if classified["code"] in ("FNS_RATE_LIMIT", "RECEIPT_PENDING"):
             again = await _find_existing_by_qr() or await _find_existing_loose()
             if again:
                 await _raise_receipt_duplicate(again)
-            raise HTTPException(429, detail={
-                "code": "FNS_RATE_LIMIT",
-                "message": "ФНС временно ограничила запросы. В базе CRM этот чек не найден — попробуйте через 1–2 минуты.",
-                "hint": msg_str or None,
-            })
-        if msg_str:
-            raise HTTPException(400, f"Чек не найден: {msg_str}")
-        raise HTTPException(400, "Чек не найден в ФНС (proverkacheka.com)")
+        raise HTTPException(classified["status"], detail={
+            "code": classified["code"],
+            "message": classified["message"],
+            "hint": classified["hint"],
+        })
 
     body = payload.get("data") or {}
     receipt_obj = body.get("json") if isinstance(body, dict) else None

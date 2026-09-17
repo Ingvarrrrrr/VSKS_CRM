@@ -211,6 +211,53 @@ async def upload_file(
     if same_purchase_dup.scalar_one_or_none():
         raise HTTPException(409, "Этот файл уже загружен в данную закупку (идентичное содержимое)")
 
+    # Владелец (2026-09-17, п.6б): нераспознанный чек (file_type='receipt') не
+    # несёт фискальных ФН/ФД/ФП — их дедуп уже делает _create_receipt_with_items
+    # по (fn,fd,fp) / (ИНН+дата+сумма), см. receipts_creation.py. Единственный
+    # устойчивый признак дубля НЕРАСПОЗНАННОГО файла — хеш его содержимого.
+    # Раньше кросс-закупочной проверки не было вовсе: тот же файл принимался в
+    # любое количество закупок молча (владелец внёс один чек и в 945, и в 941 —
+    # оба приняли). Формулировка отказа — тот же хелпер, что у распознанных
+    # чеков (_raise_receipt_duplicate_detail), второй механизм не заводим
+    # (ПРАВИЛО №6).
+    #
+    # ИСПРАВЛЕНО (независимая приёмка, 2026-09-17, п.2 — приватность): раньше
+    # поиск шёл по ВСЕЙ таблице purchase_files без учёта того, вправе ли
+    # пользователь вообще видеть закупку-владельца найденного файла. Две разные
+    # организации, загрузившие байт-идентичный файл (шаблон/пустой бланк),
+    # получали 409 с номером ЧУЖОЙ закупки — утечка между организациями И
+    # ложная блокировка (у второй организации это не дубль, а совпадение
+    # шаблона). Ограничиваем поиск дубля тем же контуром видимости, что и
+    # список закупок пользователя — переиспользуем build_visibility_clause()
+    # (app/auth/visibility.py), а не пишем свой фильтр (ПРАВИЛО №6). Если
+    # совпадение по хешу лежит в закупке ВНЕ контура пользователя — оно просто
+    # не находится этим запросом, дубль-проверка на него не срабатывает
+    # (загрузка проходит как обычно, без чужих реквизитов и без блокировки).
+    # Совпадение ВНУТРИ контура (тот же аккаунт/орг-доступ) — тот же 409 с
+    # номером документа, что и раньше.
+    if file_type == 'receipt':
+        from app.auth.visibility import build_visibility_clause
+        visibility_clause = await build_visibility_clause(current_user, db, 'purchase')
+        cross_dup_query = (
+            select(PurchaseFile)
+            .join(Purchase, Purchase.id == PurchaseFile.purchase_id)
+            .where(
+                PurchaseFile.content_hash == content_hash,
+                PurchaseFile.file_type == 'receipt',
+                PurchaseFile.is_active == True,
+                PurchaseFile.purchase_id != pid,
+            )
+        )
+        # visibility_clause is None только для SaaS-ролей (superadmin и т.п.) —
+        # для них фильтр не нужен, они и так видят всё (см. docstring
+        # build_visibility_clause).
+        if visibility_clause is not None:
+            cross_dup_query = cross_dup_query.where(visibility_clause)
+        cross_purchase_dup = (await db.execute(cross_dup_query.limit(1))).scalar_one_or_none()
+        if cross_purchase_dup:
+            from app.services.receipts_creation import _raise_receipt_duplicate_detail
+            await _raise_receipt_duplicate_detail(cross_purchase_dup.purchase_id, pid, None, db)
+
     # Check if file with same hash exists anywhere (for disk dedup)
     dup_result = await db.execute(
         select(PurchaseFile).where(PurchaseFile.content_hash == content_hash).limit(1)

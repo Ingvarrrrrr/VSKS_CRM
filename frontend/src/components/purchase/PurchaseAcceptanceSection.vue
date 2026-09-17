@@ -80,27 +80,29 @@
         </v-btn>
       </div>
 
-      <!-- DnD-загрузка закрывающих документов (Phase 31-03) -->
-      <FileDropZone
+      <!-- Владелец (п.7, 2026-09-17): «поле "Перетащите закрывающий документ"
+           некорректно, туда перетаскиваешь и ничего не происходит». Проверено
+           по коду: зона технически рабочая (FileDropZone → onAcceptanceDocFilesDropped
+           → uploadFilesForType(files,'other') → POST .../files, снэк «Файл
+           загружен») — сбивало с толку то, что результат появляется НЕ здесь,
+           а в отдельной карточке «Документы к закупке» (PurchaseDocumentsCard,
+           дальше по странице), тогда как сюда, в «Закрывающие документы»,
+           ничего не добавляется — ни строки, ни превью. Владелец просит на
+           это место крупную кнопку «Добавить закрывающий документ» — тот же
+           addAcceptanceDoc, что и мелкая кнопка в заголовке (ПРАВИЛО №6, один
+           источник действия, не второй механизм), просто заметнее. -->
+      <v-btn
         v-if="isEdit && purchaseId"
-        accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
-        :multiple="true"
-        hint="Перетащите закрывающий документ (Акт/УПД/Прочее)"
-        @files="onAcceptanceDocFilesDropped"
+        block
+        size="x-large"
+        variant="tonal"
+        color="teal"
+        prepend-icon="mdi-plus"
         class="mt-3"
+        @click="addAcceptanceDoc"
       >
-        <template #default="{ dragging, open }">
-          <div
-            class="d-flex align-center justify-center gap-2 pa-3"
-            style="min-height:120px; border:1px dashed var(--gala-accent, #fb923c); border-radius:6px"
-            :style="{ background: dragging ? 'rgba(251,146,60,0.08)' : 'transparent' }"
-          >
-            <v-icon :color="dragging ? '#fb923c' : 'grey'" size="20">mdi-file-upload-outline</v-icon>
-            <span class="text-body-2 text-medium-emphasis">Перетащите закрывающий документ или</span>
-            <v-btn variant="text" size="small" color="#fb923c" @click.stop="open()">выберите</v-btn>
-          </div>
-        </template>
-      </FileDropZone>
+        Добавить закрывающий документ
+      </v-btn>
     </v-card-text>
   </v-card>
 </template>
@@ -113,8 +115,6 @@
 // функции/справочники (addAcceptanceDoc/downloadAcceptanceFile/onJsonBtnClick/...)
 // остаются в родителе и приходят колбэками, т.к. используются там же в
 // save()/loadPurchase()/DocPickerDialogs.
-import FileDropZone from '@/components/FileDropZone.vue'
-
 defineProps<{
   form: any
   isEdit: boolean

@@ -78,13 +78,24 @@ export function usePurchaseReceipts(
   form: ReceiptsFormSlice,
   showSnack: (text: string, color?: ToastType, opts?: { actionText?: string; onAction?: () => void; duration?: number }) => void,
   guideArrowTo: (target: string) => void,
-  save: () => Promise<void>,
+  // Пункт 1 (владелец, 2026-09-17): boolean успеха — раньше doSave() глотал
+  // ошибки сохранения в своём catch и всегда резолвился, recomputeFromReceipts
+  // ниже продолжала пересчёт и loadPurchase() даже при непрошедшем save(),
+  // стирая ручные позиции. См. CreateOrderView.vue::save()/doSave().
+  save: () => Promise<boolean>,
   loadPurchase: () => Promise<void>,
   openManualReceiptDialog: () => void,
   logRefetchDebug?: () => void,
 ) {
   const receipts = ref<Receipt[]>([])
   const receiptFiles = ref<ReceiptFile[]>([])
+  // Владелец (п.8, 2026-09-17): «нераспознанный чек должен выводиться той
+  // картинкой, которой его загрузили». Миниатюры — objectURL по id файла,
+  // получены через ТОТ ЖЕ /files/{id}/view, что использует общий просмотрщик
+  // вложений (usePurchaseFiles::openPreview в CreateOrderView.vue) — второй
+  // эндпоинт показа не заводим (ПРАВИЛО №6). Ключ — receipt-файл может быть
+  // не только картинкой (PDF/TIF/HEIC) — для них миниатюры нет, остаётся иконка.
+  const receiptFileThumbs = ref<Record<number, string>>({})
 
   function sourceLabel(s?: string | null) {
     if (!s) return '—'
@@ -108,8 +119,31 @@ export function usePurchaseReceipts(
     try {
       const all = await apiFetch<any[]>(`/purchases/${purchaseId.value}/files`)
       receiptFiles.value = (all || []).filter(f => f.file_type === 'receipt' && f.is_active !== false)
+      for (const rf of receiptFiles.value) {
+        void _loadReceiptFileThumb(rf)
+      }
     } catch {
       receiptFiles.value = []
+    }
+  }
+
+  // Подгрузить миниатюру одного файла (только изображения — PDF/TIF/HEIC
+  // остаются с иконкой в списке, превью открывается по клику через общий
+  // диалог просмотра). Не перезапрашивает уже закешированные id.
+  async function _loadReceiptFileThumb(rf: ReceiptFile) {
+    if (!purchaseId.value) return
+    if (!rf.mime_type || !rf.mime_type.startsWith('image/')) return
+    if (receiptFileThumbs.value[rf.id]) return
+    try {
+      const token = localStorage.getItem('auth_token')
+      const res = await fetch(`/api/purchases/${purchaseId.value}/files/${rf.id}/view`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) return
+      const blob = await res.blob()
+      receiptFileThumbs.value = { ...receiptFileThumbs.value, [rf.id]: URL.createObjectURL(blob) }
+    } catch {
+      /* миниатюра — приятная мелочь, не критично при сбое */
     }
   }
 
@@ -123,7 +157,22 @@ export function usePurchaseReceipts(
       await apiFetch(`/purchases/${purchaseId.value}/files`, { method: 'POST', body: fd as any })
       return 'attached'
     } catch (e: any) {
-      if (e?.status === 409) return 'duplicate'
+      if (e?.status === 409) {
+        // Владелец (п.6б, 2026-09-17): «внёс один и тот же нераспознанный чек в
+        // 945 и 941 — везде пропустило» — бэкенд теперь при file_type='receipt'
+        // сверяет хеш содержимого файла кросс-закупочно (purchase_files.py) и
+        // отдаёт structured RECEIPT_DUPLICATE с номером/ссылкой на документ, где
+        // чек уже лежит — тот же формат и та же функция открытия документа
+        // (receiptDuplicateOpenAction), что и у распознанных чеков (ПРАВИЛО №6).
+        const p = e?.payload
+        const code = p?.code
+        const det = (p?.details && typeof p.details === 'object') ? p.details : null
+        if (code === 'RECEIPT_DUPLICATE' && det?.purchase_id) {
+          const { fallbackMessage, actionText, onAction } = receiptDuplicateOpenAction(det)
+          showSnack(p.message || fallbackMessage, 'warning', { actionText, onAction })
+        }
+        return 'duplicate'
+      }
       showSnack(e?.payload?.message || e?.message || `Не удалось прикрепить файл ${f.name}`, 'error')
       return 'error'
     }
@@ -174,6 +223,32 @@ export function usePurchaseReceipts(
     if (!purchaseId.value) return
     recomputeLoading.value = true
     try {
+      // Владелец (п.5, 2026-09-17): «"Пересчитать из чеков" выкидывает то, что
+      // я вносил вручную». Сам пересчёт на бэкенде НЕ удаляет и не трогает
+      // PurchaseItem без receipt_id — он только связывает/дополняет позиции из
+      // чеков (см. app/services/receipts_recompute.py::_recompute_from_receipts_core).
+      // Реальная потеря происходила на клиенте: позиции, добавленные вручную,
+      // но ещё НЕ отправленные на сервер (items сохраняются целиком через
+      // save(), не построчным автосохранением — см. serializeFormForAutosave()
+      // в CreateOrderView.vue, которая items не включает), стирались строкой
+      // ниже loadPurchase(), перезатирающей форму серверным состоянием.
+      // Технически можно сохранить ручной ввод вместо предупреждения — просто
+      // сохраняем форму ПЕРЕД пересчётом тем же save(), что и кнопка
+      // «Сохранить» (ПРАВИЛО №6, второй механизм сохранения не заводим). Для
+      // авансового отчёта (единственный режим, где кнопка вообще показана —
+      // см. showReceiptsOnTop) save() сохраняет черновик всегда, без
+      // блокирующей валидации.
+      // КРИТИЧНО (независимая приёмка, 2026-09-17, п.1): save() теперь
+      // возвращает boolean успеха. Раньше doSave() глотал ошибку сохранения
+      // в своём catch (просто показывал снэк) и промис резолвился как
+      // «успешный» — код ниже (recompute-from-receipts + loadPurchase())
+      // выполнялся, даже когда save() реально не сохранил форму, и
+      // loadPurchase() перезатирал форму серверным состоянием БЕЗ ручных
+      // позиций. Если save() вернул false — прерываемся, ничего не пересчитываем
+      // и не перезагружаем, человек остаётся со своими несохранёнными данными
+      // на экране и уже увиденной причиной отказа (снэк от save()/doSave()).
+      const saved = await save()
+      if (!saved) return
       const result = await apiFetch<any>(
         `/purchases/${purchaseId.value}/recompute-from-receipts`,
         { method: 'POST' }
@@ -257,8 +332,11 @@ export function usePurchaseReceipts(
       if (code === 'RECEIPT_DUPLICATE' && det?.purchase_id) {
         const { fallbackMessage, actionText, onAction } = receiptDuplicateOpenAction(det)
         showSnack(p.message || fallbackMessage, 'warning', { actionText, onAction })
-      } else if (code === 'FNS_RATE_LIMIT') {
-        showSnack(p?.message || 'ФНС временно ограничила запросы', 'warning')
+      } else if (code === 'FNS_RATE_LIMIT' || code === 'RECEIPT_PENDING') {
+        // Владелец (п.6а): честный текст вместо «лимита» — см.
+        // classify_proverkacheka_error (backend/app/services/receipts_parsing.py),
+        // единственный источник этих формулировок.
+        showSnack(p?.message || 'ФНС ещё не вернула данные по чеку', 'warning', { duration: 10000 })
       } else {
         showSnack(e?.message || 'Не удалось получить чек из ФНС', 'error')
       }
@@ -315,8 +393,9 @@ export function usePurchaseReceipts(
         showSnack(p.message || fallbackMessage, 'warning', { actionText, onAction })
         return true
       }
-      if (code === 'FNS_RATE_LIMIT') {
-        showSnack(p?.message || 'ФНС временно ограничила запросы', 'warning')
+      if (code === 'FNS_RATE_LIMIT' || code === 'RECEIPT_PENDING') {
+        // См. комментарий в onQrDetected — тот же источник текста, не дублируем.
+        showSnack(p?.message || 'ФНС ещё не вернула данные по чеку', 'warning', { duration: 10000 })
         return true
       }
       return false
@@ -470,7 +549,7 @@ export function usePurchaseReceipts(
 
   return {
     receipts, sourceLabel, loadReceipts,
-    receiptFiles, loadReceiptFiles,
+    receiptFiles, loadReceiptFiles, receiptFileThumbs,
     qrScanShow, onScanQrClick, onJsonBtnClick, onManualBtnClick,
     recomputeLoading, recomputeFromReceipts,
     consumePostSaveAction, onQrDetected, onJsonReceiptUpload, deleteReceipt,

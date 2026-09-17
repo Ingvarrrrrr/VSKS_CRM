@@ -275,7 +275,21 @@ export function usePurchaseFiles(
   const previewFile = ref<UploadedFile | null>(null)
   const previewUrl = ref('')
 
-  const isPreviewable = (mime?: string) => mime === 'application/pdf' || !!mime?.startsWith('image/')
+  // Правка 2026-09-17 (п.3, независимая приёмка): раньше ЛЮБОЙ mime, начинающийся
+  // с 'image/', считался «превьюшным» — но браузер (<img>) реально не может
+  // отрисовать TIFF/HEIC (оба входят в ALLOWED_MIME на бэке специально ДЛЯ
+  // нераспознанных чеков, см. purchase_files.py). Для них previewFile диалог
+  // (PurchaseFileDialogs.vue) рисовал пустое окно — ровно те форматы, ради
+  // которых заводился приём «нераспознанного чека», выглядели как баг.
+  // Единственный источник правды про «браузер умеет показать инлайн»
+  // (ПРАВИЛО №6) — этот список, используется и списком файлов
+  // (PurchaseDocumentsCard.vue — показывать ли кнопку-глаз), и диалогом
+  // просмотра (PurchaseFileDialogs.vue — рисовать <img>/<iframe> или честную
+  // заглушку со скачиванием).
+  const BROWSER_RENDERABLE_IMAGE_MIME = new Set([
+    'image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif', 'image/svg+xml', 'image/bmp',
+  ])
+  const isPreviewable = (mime?: string) => mime === 'application/pdf' || (!!mime && BROWSER_RENDERABLE_IMAGE_MIME.has(mime))
 
   const openPreview = async (f: UploadedFile) => {
     const token = localStorage.getItem('auth_token')

@@ -118,15 +118,28 @@
         <v-list density="compact" class="pa-0" style="background: transparent;">
           <v-list-item
             v-for="rf in receiptFiles" :key="rf.id"
-            :href="`/api/purchases/${purchaseId}/files/${rf.id}/download`"
-            target="_blank" rel="noopener"
-            prepend-icon="mdi-paperclip"
             density="compact"
+            :style="onPreviewReceiptFile ? 'cursor:pointer' : undefined"
+            @click="onPreviewReceiptFile?.(rf)"
           >
+            <template #prepend>
+              <img
+                v-if="receiptFileThumbs?.[rf.id]"
+                :src="receiptFileThumbs[rf.id]"
+                alt=""
+                style="width:36px;height:36px;object-fit:cover;border-radius:4px;margin-right:12px"
+              />
+              <v-icon v-else icon="mdi-paperclip" class="mr-3" />
+            </template>
             <v-list-item-title class="text-body-2">{{ rf.original_name || rf.filename }}</v-list-item-title>
             <template #append>
+              <!-- Правка 2026-09-17 (п.3): прямая кнопка скачивания — раньше
+                   единственный путь получить файл был через общий диалог
+                   просмотра, который для TIFF/HEIC/DOC/HTML открывался пустым. -->
+              <v-btn size="x-small" variant="text" color="primary" icon="mdi-download"
+                @click.stop="onDownloadReceiptFile?.(rf)" />
               <v-btn size="x-small" variant="text" color="error" icon="mdi-delete"
-                @click.prevent.stop="onDeleteReceiptFile?.(rf.id)" />
+                @click.stop="onDeleteReceiptFile?.(rf.id)" />
             </template>
           </v-list-item>
         </v-list>
@@ -212,12 +225,26 @@
           <v-list density="compact" class="pa-0" style="background: transparent;">
             <v-list-item
               v-for="rf in receiptFiles" :key="rf.id"
-              :href="`/api/purchases/${purchaseId}/files/${rf.id}/download`"
-              target="_blank" rel="noopener"
-              prepend-icon="mdi-paperclip"
               density="compact"
+              :style="onPreviewReceiptFile ? 'cursor:pointer' : undefined"
+              @click="onPreviewReceiptFile?.(rf)"
             >
+              <template #prepend>
+                <img
+                  v-if="receiptFileThumbs?.[rf.id]"
+                  :src="receiptFileThumbs[rf.id]"
+                  alt=""
+                  style="width:36px;height:36px;object-fit:cover;border-radius:4px;margin-right:12px"
+                />
+                <v-icon v-else icon="mdi-paperclip" class="mr-3" />
+              </template>
               <v-list-item-title class="text-body-2">{{ rf.original_name || rf.filename }}</v-list-item-title>
+              <template #append>
+                <v-btn size="x-small" variant="text" color="primary" icon="mdi-download"
+                  @click.stop="onDownloadReceiptFile?.(rf)" />
+                <v-btn size="x-small" variant="text" color="error" icon="mdi-delete"
+                  @click.stop="onDeleteReceiptFile?.(rf.id)" />
+              </template>
             </v-list-item>
           </v-list>
         </template>
@@ -293,12 +320,26 @@
       <v-list density="compact" class="pa-0" style="background: transparent;">
         <v-list-item
           v-for="rf in receiptFiles" :key="rf.id"
-          :href="`/api/purchases/${purchaseId}/files/${rf.id}/download`"
-          target="_blank" rel="noopener"
-          prepend-icon="mdi-paperclip"
           density="compact"
+          :style="onPreviewReceiptFile ? 'cursor:pointer' : undefined"
+          @click="onPreviewReceiptFile?.(rf)"
         >
+          <template #prepend>
+            <img
+              v-if="receiptFileThumbs?.[rf.id]"
+              :src="receiptFileThumbs[rf.id]"
+              alt=""
+              style="width:36px;height:36px;object-fit:cover;border-radius:4px;margin-right:12px"
+            />
+            <v-icon v-else icon="mdi-paperclip" class="mr-3" />
+          </template>
           <v-list-item-title class="text-body-2">{{ rf.original_name || rf.filename }}</v-list-item-title>
+          <template #append>
+            <v-btn size="x-small" variant="text" color="primary" icon="mdi-download"
+              @click.stop="onDownloadReceiptFile?.(rf)" />
+            <v-btn size="x-small" variant="text" color="error" icon="mdi-delete"
+              @click.stop="onDeleteReceiptFile?.(rf.id)" />
+          </template>
         </v-list-item>
       </v-list>
     </v-card-text>
@@ -326,6 +367,24 @@ defineProps<{
   onJsonReceiptUpload: (files: File[]) => void
   onDeleteReceipt: (id: number) => void
   onDeleteReceiptFile?: (id: number) => void
+  // Владелец (п.8, 2026-09-17): нераспознанный чек — миниатюрой того файла,
+  // которым его загрузили, с открытием в полный размер по клику. Миниатюры
+  // (objectURL по id) и открытие — переданы из родителя, который уже владеет
+  // общим просмотрщиком вложений (usePurchaseFiles::openPreview/isPreviewable),
+  // второй механизм показа здесь не заводим (ПРАВИЛО №6).
+  receiptFileThumbs?: Record<number, string>
+  onPreviewReceiptFile?: (rf: ReceiptFile) => void
+  // Правка 2026-09-17 (п.3, независимая приёмка): раньше единственный способ
+  // получить нераспознанный файл — общий диалог просмотра (openPreview),
+  // который для TIFF/HEIC/DOC/HTML показывал пустое окно (isPreviewable в
+  // usePurchaseFiles.ts их не поддерживает, а диалог до правки не давал
+  // явной альтернативы). Прежний пропавший «isPreviewable»-проп здесь был
+  // мёртвым (нигде не читался) — удалён; вместо ветвления в списке прямая
+  // кнопка «скачать» на каждой строке (см. три места использования ниже) —
+  // работает независимо от формата, второй просмотрщик не заводим, сам
+  // диалог (PurchaseFileDialogs.vue) теперь тоже даёт явную заглушку+скачивание
+  // для непревьюшных форматов.
+  onDownloadReceiptFile?: (rf: ReceiptFile) => void
 }>()
 
 // variant="tab" открывает свою drop-zone напрямую (было $refs.jsonReceiptInput.click()

@@ -178,7 +178,16 @@ async def import_items_smart(
                 raise HTTPException(502, f"Ошибка запроса к proverkacheka.com: {exc}")
             if not isinstance(_payload, dict) or _payload.get("code") != 1:
                 _msg = (_payload or {}).get("data", "") if isinstance(_payload, dict) else ""
-                raise HTTPException(400, f"Чек не найден в ФНС: {_msg or 'неизвестная ошибка'}")
+                # ПРАВИЛО №6: та же классификация ответа proverkacheka, что и в
+                # purchase_receipts_import.py::import_receipt_qr_fetch — второй
+                # текст-механизм не заводим (жалоба владельца п.6а, 2026-09-17).
+                from app.services.receipts_parsing import classify_proverkacheka_error
+                _classified = classify_proverkacheka_error(_msg if isinstance(_msg, str) else "")
+                raise HTTPException(_classified["status"], detail={
+                    "code": _classified["code"],
+                    "message": _classified["message"],
+                    "hint": _classified["hint"],
+                })
             _body = _payload.get("data") or {}
             _receipt_obj = _body.get("json") if isinstance(_body, dict) else None
             if not isinstance(_receipt_obj, dict):

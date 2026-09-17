@@ -138,6 +138,9 @@
         :on-json-receipt-upload="onJsonReceiptUpload"
         :on-delete-receipt="deleteReceipt"
         :on-delete-receipt-file="deleteReceiptFile"
+        :receipt-file-thumbs="receiptFileThumbs"
+        :on-preview-receipt-file="openReceiptFilePreview"
+        :on-download-receipt-file="downloadReceiptFile"
       />
 
       <!-- U-2: Подсказка про мульти-чеки (только для авансового, закрываемая) -->
@@ -688,12 +691,10 @@
                 <v-text-field v-model="form.repair_request_number" label="Номер заявки на ремонт" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
               </v-col>
             </v-row>
-            <!-- Сумма аванса — только для большой отчётности (теперь это ось методички, не формы) -->
-            <v-row v-if="form.methodology === 'large'" class="mt-1">
-              <v-col cols="6" md="3">
-                <v-text-field v-model.number="form.advance_amount" type="number" label="Сумма аванса, ₽" density="compact" variant="outlined" @blur="flushAutosaveOnBlur" />
-              </v-col>
-            </v-row>
+            <!-- Сумма аванса (методичка «большая отчётность» ИЛИ предоплата) — перенесена
+                 в PurchaseContractParamsSection.vue, блок «Условия договора» → «Оплата»
+                 (жалоба владельца п.10, 2026-09-17: предоплата/постоплата собраны вместе,
+                 не разбросаны по форме). Условие видимости там: is_prepayment || methodology==='large'. -->
           </template>
         </v-card-text>
       </v-card>
@@ -728,6 +729,9 @@
         :on-json-receipt-upload="onJsonReceiptUpload"
         :on-delete-receipt="deleteReceipt"
         :on-delete-receipt-file="deleteReceiptFile"
+        :receipt-file-thumbs="receiptFileThumbs"
+        :on-preview-receipt-file="openReceiptFilePreview"
+        :on-download-receipt-file="downloadReceiptFile"
       />
 
       <!-- 2. Позиции закупки -->
@@ -791,6 +795,7 @@
             :planned-items="purchasePlannedResiduals"
             :feo-excess-amount="purchaseData?.feo_excess_amount ?? null"
             :feo-excess-category-id="purchaseData?.feo_excess_category_id ?? null"
+            :ensure-items-saved="ensureItemsSavedForCopy"
             @update:vat-mode="(v: string) => { form.vat_mode = v; onVatModeChange(v) }"
             @update:vat-applicable="(v: boolean) => { form.vat_applicable = v }"
             @update:vat-rate="(v: number | null) => { form.vat_rate = v }"
@@ -1203,6 +1208,9 @@
               :on-json-receipt-upload="onJsonReceiptUpload"
               :on-delete-receipt="deleteReceipt"
               :on-delete-receipt-file="deleteReceiptFile"
+              :receipt-file-thumbs="receiptFileThumbs"
+              :on-preview-receipt-file="openReceiptFilePreview"
+              :on-download-receipt-file="downloadReceiptFile"
             />
           </template>
           <v-alert
@@ -1408,6 +1416,7 @@
         :preview-file="previewFile"
         :preview-url="previewUrl"
         :file-icon="fileIcon"
+        :is-previewable="isPreviewable"
         @choose-file="fileInputEl?.click()"
         @save-file-type="saveFileType"
         @download="(id, filename) => downloadFile(id, filename)"
@@ -1528,18 +1537,25 @@
             >
               Лист согласования
             </v-btn>
-            <v-divider vertical class="mx-1" />
-            <v-btn
-              prepend-icon="mdi-folder-zip-outline"
-              variant="tonal"
-              color="orange-darken-2"
-              size="small"
-              :loading="docLoading === 'fabrikant_package'"
-              @click="downloadFabrikantPackage"
-              title="Пакет документов для публикации на Фабрикант (5 файлов)"
-            >
-              Пакет для Фабриканта (ZIP)
-            </v-btn>
+            <!-- Владелец (п.9, 2026-09-17): «Пакет для Фабриканта» на авансовый
+                 отчёт не выставляется — скрыт по тому же признаку formMode/
+                 purchase_method==='advance', которым весь файл уже отличает
+                 авансовый от обычной закупки (ПРАВИЛО №6, не заводим новый
+                 флаг). Для обычных закупок кнопка остаётся как была. -->
+            <template v-if="formMode !== 'advance_report' && form.purchase_method !== 'advance'">
+              <v-divider vertical class="mx-1" />
+              <v-btn
+                prepend-icon="mdi-folder-zip-outline"
+                variant="tonal"
+                color="orange-darken-2"
+                size="small"
+                :loading="docLoading === 'fabrikant_package'"
+                @click="downloadFabrikantPackage"
+                title="Пакет документов для публикации на Фабрикант (5 файлов)"
+              >
+                Пакет для Фабриканта (ZIP)
+              </v-btn>
+            </template>
           </div>
           <div class="text-caption text-medium-emphasis mt-2">
             Документы формируются по шаблонам из backend/templates/
@@ -2385,6 +2401,9 @@ const form = reactive({
   is_likely_needed: true as boolean,
   is_prepayment: false as boolean,
   prepayment_date: '' as string,
+  // Владелец (жалоба п.10, 2026-09-17): срок оплаты после поставки/приёмки
+  // (постоплата) — было в модели/PATCHABLE_FIELDS, но нигде на форме
+  payment_term_days: null as number | null,
   stage_label: '' as string,
   // Авансовый отчёт: кому возмещать
   reimbursement_user_id: null as number | null,
@@ -2413,6 +2432,8 @@ const form = reactive({
   commission_member_3_name: null as string | null,
   advance_amount: null as number | null,
   warranty_period_days: null as number | null,
+  // Владелец (жалоба п.10, 2026-09-17): единица к числу выше — 'days'|'months'|'years'
+  warranty_period_unit: 'days' as string | null,
   is_retroactive: false as boolean,
   // Phase 28 T8: доставка и этапы (управляют ветвлениями в шаблонах договоров)
   delivery_by_supplier: true as boolean,
@@ -2555,6 +2576,7 @@ function serializeFormForAutosave() {
     is_likely_needed: f.is_likely_needed,
     is_prepayment: f.is_prepayment,
     prepayment_date: f.prepayment_date || null,
+    payment_term_days: numOrNull(f.payment_term_days),
     stage_label: f.stage_label || null,
     // Phase 28 B4: ответственный исполнитель — не шлём null, только валидное id
     ...(f.assigned_user_id ? { assigned_user_id: f.assigned_user_id } : {}),
@@ -2572,6 +2594,7 @@ function serializeFormForAutosave() {
     commission_member_3_name: f.commission_member_3_name || null,
     advance_amount: numOrNull(f.advance_amount),
     warranty_period_days: numOrNull(f.warranty_period_days),
+    warranty_period_unit: f.warranty_period_unit || null,
     is_retroactive: f.is_retroactive ?? false,
     // Phase 28 T8: доставка и этапы
     delivery_by_supplier: f.delivery_by_supplier ?? true,
@@ -3589,9 +3612,13 @@ const feoValidationError = computed((): string | null => {
 // feo_planned_item_id в validItems/doSave), просмотр/удаление доступны через
 // построчный FeoPlannedItemsSelect (тот же список filteredItems, что показывал
 // убранный шапочный перечень). fmtHeadPlannedMoney используется и ниже (excess badge).
+// Правка 2026-09-17 (п.4, независимая приёмка): раньше maximumFractionDigits: 0
+// округлял до целых (86 вместо 86,40 — та же плановая сумма, показанная в
+// бейдже превышения ФЭО). Единственный источник форматирования денег —
+// formatMoney() выше (ПРАВИЛО №6), второй способ не заводим.
 function fmtHeadPlannedMoney(v: number | null | undefined): string {
   if (v == null) return '—'
-  return v.toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' ₽'
+  return formatMoney(v)
 }
 
 // Псевдо-«Не определена»: для авансового отчёта (см. allow-unallocated на FeoTreeSelect).
@@ -4025,6 +4052,7 @@ const loadPurchase = async () => {
     is_likely_needed: data.is_likely_needed !== false,  // default true
     is_prepayment: !!data.is_prepayment,
     prepayment_date: data.prepayment_date || '',
+    payment_term_days: data.payment_term_days ?? null,
     stage_label: data.stage_label || '',
     event_id: data.event_id ?? null,
     reimbursement_user_id: data.reimbursement_user_id ?? null,
@@ -4062,6 +4090,7 @@ const loadPurchase = async () => {
     commission_member_3_name: data.commission_member_3_name || null,
     advance_amount: data.advance_amount != null ? Number(data.advance_amount) : null,
     warranty_period_days: data.warranty_period_days ?? null,
+    warranty_period_unit: data.warranty_period_unit || 'days',
     is_retroactive: data.is_retroactive ?? false,
     // Phase 28 T8: доставка и этапы
     delivery_by_supplier: data.delivery_by_supplier ?? true,
@@ -4370,7 +4399,7 @@ const { manualReceiptDialog, openManualReceiptDialog, saveManualReceipt } =
 
 const {
   receipts, sourceLabel, loadReceipts,
-  receiptFiles, loadReceiptFiles,
+  receiptFiles, loadReceiptFiles, receiptFileThumbs,
   qrScanShow, onScanQrClick, onJsonBtnClick, onManualBtnClick,
   recomputeLoading, recomputeFromReceipts,
   consumePostSaveAction, onQrDetected, onJsonReceiptUpload, deleteReceipt,
@@ -4380,6 +4409,28 @@ const {
   () => save(), () => loadPurchase(), openManualReceiptDialog,
   () => console.log(`[advance] items refetched: ${items.value.length}, acceptance_docs: ${acceptanceDocs.value.length}`),
 )
+
+// Владелец (п.8, 2026-09-17): нераспознанный чек — открыть тем же общим
+// диалогом просмотра вложений, что и остальные файлы закупки (previewFile/
+// previewUrl/openPreview из usePurchaseFiles выше), а не заводить второй
+// просмотрщик (ПРАВИЛО №6). ReceiptFile не несёт purchase_id — подставляем
+// его из closure, openPreview его не читает (only .id/.mime_type/.filename).
+function openReceiptFilePreview(rf: { id: number; filename: string; original_name?: string | null; mime_type?: string | null }) {
+  openPreview({
+    id: rf.id,
+    purchase_id: purchaseId.value || 0,
+    filename: rf.original_name || rf.filename,
+    mime_type: rf.mime_type || undefined,
+  })
+}
+
+// Правка 2026-09-17 (п.3, независимая приёмка): прямая кнопка скачивания в
+// списке файлов чеков — переиспользует ТОТ ЖЕ downloadFile из usePurchaseFiles,
+// что и обычные документы закупки (PurchaseDocumentsCard.vue), второй способ
+// скачивания не заводим (ПРАВИЛО №6).
+function downloadReceiptFile(rf: { id: number; filename: string; original_name?: string | null }) {
+  downloadFile(rf.id, rf.original_name || rf.filename)
+}
 
 // ---------------------------------------------------------------------------
 // Autosave draft for new purchases
@@ -4503,7 +4554,7 @@ onMounted(async () => {
   }
 })
 
-const save = async () => {
+const save = async (): Promise<boolean> => {
   // Владелец (2026-09-16, п.4): «никаких немых полей, которые молча не
   // сохраняются» — :disabled на v-form гасит стандартные Vuetify-инпуты, но
   // не программные пути (Enter в незаблокированном стороннем контроле, вызов
@@ -4511,7 +4562,7 @@ const save = async () => {
   // файла). Явный ранний выход с тем же объяснением, что и в банере.
   if (isPurchaseLockedForEdit.value) {
     showSnack('Закупка согласована — изменения не сохраняются. Обратитесь к владельцу аккаунта, чтобы снять согласование.', 'error')
-    return
+    return false
   }
   const { valid } = await formRef.value.validate()
   feoSaveAttempted.value = true
@@ -4548,15 +4599,14 @@ const save = async () => {
         { duration: 8000 },
       )
     }
-    await doSave(false)
-    return
+    return await doSave(false)
   }
 
   if (!valid || feoErr) {
     showSnack(feoErr || 'Необходимо заполнить выделенные поля', 'error')
     await nextTick()
     showValidationArrows()
-    return
+    return false
   }
   dismissValidationArrows()
   if (form.item_type === 'mixed') {
@@ -4571,21 +4621,21 @@ const save = async () => {
       })
       await nextTick()
       guideArrowTo(firstUid != null ? 'item:' + firstUid : 'items')
-      return
+      return false
     }
   }
   if (budgetInfo.value?.exceeded) {
     if (!isAdmin.value) {
       showSnack('Превышение бюджета субсидии. Сохранение недоступно.', 'error')
-      return
+      return false
     }
     budgetOverrideDialog.value = true
-    return
+    return false
   }
-  await doSave(false)
+  return await doSave(false)
 }
 
-const doSave = async (adminOverride: boolean) => {
+const doSave = async (adminOverride: boolean): Promise<boolean> => {
   budgetOverrideDialog.value = false
   // F-PIF2: Hard validation — в режиме feo_per_item каждая позиция должна иметь feo_planned_item_id.
   // Черновик авансового (formMode==='advance_report') сохраняется всегда (п.3, 2026-09-16) —
@@ -4607,7 +4657,7 @@ const doSave = async (adminOverride: boolean) => {
         )
         await nextTick()
         guideArrowTo(firstUid != null ? 'item:' + firstUid : 'items')
-        return
+        return false
       }
       showSnack(`Черновик сохранён — у ${missingCount} ${missingCount === 1 ? 'позиции' : 'позиций'} не указана ФЭО позиция.`, 'warning')
     }
@@ -4624,7 +4674,7 @@ const doSave = async (adminOverride: boolean) => {
         duplicateMatches.value = matches
         duplicatePendingOverride = adminOverride
         duplicateDialog.value = true
-        return
+        return false
       }
     } catch { /* проверка опциональна — не блокируем сохранение */ }
   }
@@ -4709,6 +4759,7 @@ const doSave = async (adminOverride: boolean) => {
       is_likely_needed: form.is_likely_needed,
       is_prepayment: form.is_prepayment,
       prepayment_date: form.prepayment_date || null,
+      payment_term_days: numOrNull(form.payment_term_days),
       stage_label: form.stage_label || null,
       acceptance_doc_date: form.acceptance_doc_date || null,
       // doc.amount — v-model.number (2181): при очистке даёт '', уходит в JSONB-колонку
@@ -4799,6 +4850,7 @@ const doSave = async (adminOverride: boolean) => {
           : `/orders/${created.id}/edit`
       router.push(editPath)
     }
+    return true
   } catch (e: any) {
     // Phase 27.1.4: handle 409 FRAMEWORK_SEQ_DUPLICATE
     const errCode = e?.code || e?.body?.code || e?.detail?.code
@@ -4811,8 +4863,7 @@ const doSave = async (adminOverride: boolean) => {
       if (autoFix) {
         form.framework_seq = null
         saving.value = false
-        await doSave(adminOverride)
-        return
+        return await doSave(adminOverride)
       }
     } else if (e?.status === 403) {
       // Показываем полный detail из бэка (не generic «ошибка»)
@@ -4820,6 +4871,13 @@ const doSave = async (adminOverride: boolean) => {
     } else {
       showSnack(e?.message || e?.detail || 'Ошибка сохранения', 'error')
     }
+    // Пункт 1 (владелец, 2026-09-17): раньше catch только показывал снэк и
+    // ничего не возвращал — save()/doSave() резолвились «успешно» даже при
+    // реальном сбое сохранения, и recomputeFromReceipts() шёл дальше стирать
+    // ручной ввод чтением устаревшего состояния. Теперь ЛЮБОЙ путь через
+    // catch (кроме автофикса номера выше, который сам проксирует результат
+    // рекурсивного вызова) означает «сохранение не удалось» — false.
+    return false
   } finally {
     saving.value = false
   }
@@ -4829,6 +4887,31 @@ function confirmDuplicateSave() {
   duplicateDialog.value = false
   duplicateConfirmed = true
   doSave(duplicatePendingOverride)
+}
+
+// Дефект «Перенести все позиции из ТЗ видит только 9 из 11» (владелец,
+// 2026-09-17): передаётся в PurchaseItemsEditor.vue как ensureItemsSaved,
+// вызывается ПЕРЕД POST copy-from-purchase — тот эндпоинт читает
+// purchase_items ИЗ БД, а строки, добавленные в ТЗ прямо сейчас (localItems),
+// попадают туда только через PUT /purchases/{id} (единственный способ создать
+// НОВУЮ строку purchase_items — PATCH принимает только скалярные PATCHABLE_FIELDS,
+// items там не Pydantic-partial).
+//
+// ИСПРАВЛЕНО (независимая приёмка, 2026-09-17, п.5): раньше здесь вызывался
+// doSave(false) НАПРЯМУЮ, в обход formRef.value.validate() из save() — на
+// обычной (не авансовой) закупке кнопки «Перенести из ТЗ»/«Привязать к плану»
+// тем самым сохраняли форму в обход того же гейта, что держит обычную кнопку
+// «Сохранить» при невалидных данных. Теперь вызываем save() — ОДИН и тот же
+// источник правила «когда сохранение разрешено» (ПРАВИЛО №6, не заводим
+// второй гейт): для formMode !== 'advance_report' save() гоняет
+// formRef.value.validate()/feoErr и, если форма невалидна, сама покажет
+// причину (снэк + стрелка к полю) и вернёт false — копирование прерывается,
+// читать устаревший снимок БД не даём. Для 'advance_report' save() и раньше
+// НЕ блокировала (черновик авансового сохраняется всегда, см. ветку внутри
+// save()) — это поведение сохранено, второй путь для авансового не заводим.
+async function ensureItemsSavedForCopy(): Promise<boolean> {
+  if (!isEdit.value || !purchaseId.value) return true
+  return await save()
 }
 
 // Дефект: bare `document.getElementById(...)` в шаблоне (@click) резолвился

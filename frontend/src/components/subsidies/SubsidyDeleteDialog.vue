@@ -1,6 +1,6 @@
 <template>
   <!-- ── Delete confirm ── -->
-  <v-dialog v-model="visible" max-width="420">
+  <v-dialog v-model="visible" max-width="520">
     <v-card class="dialog-card">
       <v-card-title class="dialog-title">
         <v-icon icon="mdi-alert-circle-outline" color="error" class="mr-2" />
@@ -12,14 +12,32 @@
           <v-alert type="error" variant="tonal" class="mb-3" style="white-space:pre-line">
             {{ deleteErrorMsg || blockingLinksMsg }}
           </v-alert>
-          <v-btn v-if="(deleteImpact?.purchases ?? 0) > 0" block color="primary" variant="tonal"
-            prepend-icon="mdi-cart-outline" class="mb-2" @click="goToLinkedPurchases">
-            Перейти к закупкам ({{ deleteImpact?.purchases }})
-          </v-btn>
-          <v-btn v-if="(deleteImpact?.contracts ?? 0) > 0" block color="primary" variant="tonal"
-            prepend-icon="mdi-file-document-outline" @click="goToLinkedContracts">
-            Перейти к договорам ({{ deleteImpact?.contracts }})
-          </v-btn>
+          <div v-for="g in blockingGroups" :key="g.key" class="mb-3">
+            <div class="d-flex align-center gap-2 mb-1">
+              <span class="text-body-2 font-weight-medium">{{ g.label }} ({{ g.group!.count }})</span>
+              <v-spacer />
+              <v-btn size="small" color="primary" variant="tonal"
+                :prepend-icon="g.icon" @click="g.goTo()">
+                Перейти
+              </v-btn>
+            </div>
+            <v-expansion-panels density="compact" variant="accordion">
+              <v-expansion-panel :title="`Показать список (${g.group!.items.length}${g.group!.count > g.group!.items.length ? ` из ${g.group!.count}` : ''})`">
+                <v-expansion-panel-text>
+                  <div class="obj-list">
+                    <div v-for="it in g.group!.items" :key="it.id" class="obj-row">
+                      <span class="text-medium-emphasis">№{{ it.number ?? it.id }}</span>
+                      <span class="obj-name">{{ it.name || '—' }}</span>
+                      <v-chip size="x-small" variant="tonal">{{ statusLabel(it.status) }}</v-chip>
+                    </div>
+                    <div v-if="g.group!.count > g.group!.items.length" class="text-caption text-medium-emphasis mt-1">
+                      и ещё {{ g.group!.count - g.group!.items.length }}
+                    </div>
+                  </div>
+                </v-expansion-panel-text>
+              </v-expansion-panel>
+            </v-expansion-panels>
+          </div>
         </template>
         <template v-else>
           <div class="mb-2">Удалить <strong>{{ deleteTarget?.name }}</strong>? Действие нельзя отменить.</div>
@@ -47,7 +65,19 @@ import { ref, computed } from 'vue'
 import { apiFetch } from '@/api'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
-import type { SubsidyDeleteImpact, SubsidyRow } from '@/composables/subsidies/types'
+import type { SubsidyDeleteImpact, SubsidyDeleteImpactGroup, SubsidyRow } from '@/composables/subsidies/types'
+import { purchaseStatusLabel } from '@/constants/purchaseStatus'
+
+// Человеческие подписи статусов "служебных" групп — wishes/split не показывают
+// стандартную метку статуса закупки для пользователя без жаргона (владелец,
+// 2026-09-17: "никаких английских статусов в тексте"). Обычные закупки и
+// договоры используют общий словарь purchaseStatusLabel (Правило №6 — не
+// дублировать словарь статусов).
+function statusLabel(status: string | null): string {
+  if (status === 'wishes') return 'Не в работе'
+  if (status === 'split') return 'Разделена'
+  return purchaseStatusLabel(status) || status || '—'
+}
 
 const visible = defineModel<boolean>({ default: false })
 
@@ -72,16 +102,51 @@ const deleteImpact = ref<SubsidyDeleteImpact | null>(null)
 // delete_subsidy). Если delete-impact не загрузился (:77 глушит ошибку) —
 // deleteImpact остаётся null, hasBlockingLinks = false: кнопку не блокируем,
 // но и не утверждаем, что связей нет (см. deleteErrorLinked/409 — запасной путь).
-const hasBlockingLinks = computed(() =>
-  !!deleteImpact.value && ((deleteImpact.value.purchases ?? 0) > 0 || (deleteImpact.value.contracts ?? 0) > 0)
-)
+// Группы, ЧЬЁ количество отдал бэкенд (app/services/subsidy_delete_impact.py) —
+// единственный источник разбивки (Правило №6): диалог не пересчитывает и не
+// дублирует формулировки, только раскладывает готовые данные по строкам с
+// человеческой подписью и правильной ссылкой на реестр (?status=wishes/split
+// для скрытых групп — обычный реестр закупок эти статусы не показывает
+// никаким фильтром, см. backend/app/routers/purchases.py).
+const GROUP_META: Record<string, { label: string; icon: string; goTo: (id: number) => void }> = {
+  purchases: {
+    label: 'Закупки', icon: 'mdi-cart-outline',
+    goTo: (id) => ctx.router.push(`/orders?subsidy_id=${id}`),
+  },
+  wishes: {
+    label: 'Заявки, не переданные в работу', icon: 'mdi-hand-heart-outline',
+    goTo: (id) => ctx.router.push(`/orders?subsidy_id=${id}&status=wishes`),
+  },
+  split: {
+    label: 'Разделённые закупки (родительские записи)', icon: 'mdi-call-split',
+    goTo: (id) => ctx.router.push(`/orders?subsidy_id=${id}&status=split`),
+  },
+  contracts: {
+    label: 'Договоры', icon: 'mdi-file-document-outline',
+    goTo: (id) => ctx.router.push(`/contracts?subsidy_id=${id}`),
+  },
+}
+const blockingGroups = computed(() => {
+  const d = deleteImpact.value
+  const id = deleteTarget.value?.id
+  if (!d || !id) return []
+  return (['purchases', 'wishes', 'split', 'contracts'] as const)
+    .filter(key => (d[key]?.count ?? 0) > 0)
+    .map(key => ({
+      key,
+      label: GROUP_META[key].label,
+      icon: GROUP_META[key].icon,
+      group: d[key] as SubsidyDeleteImpactGroup,
+      goTo: () => { visible.value = false; GROUP_META[key].goTo(id) },
+    }))
+})
+const hasBlockingLinks = computed(() => blockingGroups.value.length > 0)
 const blockingLinksMsg = computed(() => {
   const d = deleteImpact.value
   if (!d) return 'Нельзя удалить субсидию: есть связанные записи. Сначала удалите или перепривяжите их.'
-  const parts: string[] = []
-  if ((d.purchases ?? 0) > 0) parts.push(`${d.purchases} закупок`)
-  if ((d.contracts ?? 0) > 0) parts.push(`${d.contracts} договоров`)
-  return `Нельзя удалить субсидию: связано ${parts.join(' и ')}. Сначала удалите или перепривяжите их.`
+  const parts = blockingGroups.value.map(g => `${g.group!.count} ${g.label.toLowerCase()}`)
+  if (!parts.length) return ''
+  return `Нельзя удалить субсидию: связано ${parts.join(', ')}. Сначала удалите или перепривяжите их.`
 })
 
 async function open(s: SubsidyRow) {
@@ -136,16 +201,6 @@ async function deleteSubsidy() {
   }
 }
 
-function goToLinkedPurchases() {
-  visible.value = false
-  ctx.router.push(`/orders?subsidy_id=${deleteTarget.value?.id}`)
-}
-
-function goToLinkedContracts() {
-  visible.value = false
-  ctx.router.push(`/contracts?subsidy_id=${deleteTarget.value?.id}`)
-}
-
 defineExpose({ open })
 </script>
 
@@ -160,4 +215,11 @@ defineExpose({ open })
   font-size: 16px !important; font-weight: 600 !important;
   padding: 16px 20px !important;
 }
+.obj-list { max-height: 240px; overflow-y: auto; }
+.obj-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 0; font-size: 13px;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+}
+.obj-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

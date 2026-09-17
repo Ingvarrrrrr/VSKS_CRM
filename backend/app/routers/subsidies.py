@@ -25,6 +25,9 @@ from app.auth.permissions import require_tab
 from app.models.user import User
 from app.services.fio import compose_fio
 from app.services.feo_plan import calculate_ceiling_forecasts_bulk, calculate_ceiling_forecast
+from app.services.subsidy_delete_impact import (
+    get_subsidy_delete_impact, has_blocking_dependents, format_delete_block_message,
+)
 from typing import List, Optional
 
 # Re-exports (Правило №5, рефакторинг 2026-09-07 — разрезание subsidies.py):
@@ -679,57 +682,19 @@ async def update_subsidy(
     d.update(await calculate_ceiling_forecast(db, db_subsidy.id))
     return d
 
-async def _get_subsidy_delete_dependents(db: AsyncSession, subsidy_id: int) -> dict:
-    """Единственный источник подсчёта зависимостей субсидии перед удалением
-    (Правило №6) — используется и GET /delete-impact (предупреждение в UI ДО
-    отправки запроса), и DELETE /{subsidy_id} (сам гейт на 409). Раньше это
-    были две отдельные реализации, которые разошлись: delete_subsidy вообще
-    пропускал подсчёт закупок/договоров для role == 'superadmin', из-за чего
-    409 не срабатывал и удаление субсидии обнуляло purchases.subsidy_id через
-    FK ON DELETE SET NULL (боевой инцидент 2026-09-15, id=56 «Субсидия_Абхазия»).
-    Возвращает и счётчики (для delete-impact), и сами строки purchases/contracts
-    (id [+status у purchases] — нужны delete_subsidy для текста 409).
-    """
-    from app.models.purchase import Purchase
-    from app.models.contract import Contract
-    from app.models.feo_planned_item import FeoPlannedItem
-    feo_count = await db.scalar(
-        select(func.count()).select_from(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id)
-    )
-    planned_count = await db.scalar(
-        select(func.count()).select_from(FeoPlannedItem)
-        .join(FeoCategory, FeoPlannedItem.feo_category_id == FeoCategory.id)
-        .where(FeoCategory.subsidy_id == subsidy_id)
-    )
-    purchase_rows = (await db.execute(
-        select(Purchase.id, Purchase.status).where(Purchase.subsidy_id == subsidy_id)
-    )).all()
-    contract_rows = (await db.execute(
-        select(Contract.id).where(Contract.subsidy_id == subsidy_id)
-    )).all()
-    return {
-        "feo_categories": feo_count or 0,
-        "planned_items": planned_count or 0,
-        "purchases": len(purchase_rows),
-        "contracts": len(contract_rows),
-        "purchase_rows": purchase_rows,
-        "contract_rows": contract_rows,
-    }
-
 @router.get("/{subsidy_id}/delete-impact")
 async def subsidy_delete_impact(
     subsidy_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_tab('subsidies')),
 ):
-    """Counts of dependent rows so the UI can warn before deleting a subsidy."""
-    dependents = await _get_subsidy_delete_dependents(db, subsidy_id)
-    return {
-        "feo_categories": dependents["feo_categories"],
-        "planned_items": dependents["planned_items"],
-        "purchases": dependents["purchases"],
-        "contracts": dependents["contracts"],
-    }
+    """Counts + object lists of dependent rows so the UI can warn before deleting
+    a subsidy. Единственный источник подсчёта — app.services.subsidy_delete_impact
+    (Правило №6), тот же самый источник используется гейтом 409 в DELETE ниже.
+    Закупки разбиты на группы purchases/wishes/split по видимости в реестре
+    закупок (см. докстринг модуля) — раньше единое число «закупок» включало
+    status='wishes'/'split', которые /orders не показывает никаким фильтром."""
+    return await get_subsidy_delete_impact(db, subsidy_id)
 
 @router.delete("/{subsidy_id}")
 async def delete_subsidy(
@@ -766,28 +731,14 @@ async def delete_subsidy(
     # query-параметра force. Раньше superadmin был исключён из этой проверки
     # и удаление субсидии тихо обнуляло purchases.subsidy_id через
     # FK ON DELETE SET NULL (боевой инцидент 2026-09-15). Нельзя удалить
-    # субсидию, у которой есть связанные закупки или договоры — их сначала
-    # удаляют или перепривязывают.
-    dependents = await _get_subsidy_delete_dependents(db, subsidy_id)
-    blocking_purchases = dependents["purchase_rows"]
-    blocking_contracts = dependents["contract_rows"]
-    if blocking_purchases or blocking_contracts:
-        parts = []
-        if blocking_purchases:
-            ids = ", ".join(f"#{p.id}" for p in blocking_purchases[:20])
-            more = f" и ещё {len(blocking_purchases) - 20}" if len(blocking_purchases) > 20 else ""
-            parts.append(f"{len(blocking_purchases)} закупок (ID: {ids}{more})")
-        if blocking_contracts:
-            ids = ", ".join(f"#{c.id}" for c in blocking_contracts[:20])
-            more = f" и ещё {len(blocking_contracts) - 20}" if len(blocking_contracts) > 20 else ""
-            parts.append(f"{len(blocking_contracts)} договоров (ID: {ids}{more})")
+    # субсидию, у которой есть связанные закупки (в т.ч. скрытые в реестре
+    # status='wishes'/'split', см. app.services.subsidy_delete_impact) или
+    # договоры — их сначала удаляют или перепривязывают.
+    impact = await get_subsidy_delete_impact(db, subsidy_id)
+    if has_blocking_dependents(impact):
         raise HTTPException(
             status_code=409,
-            detail=(
-                f"Нельзя удалить субсидию «{db_subsidy.name}»: связано "
-                f"{' и '.join(parts)}. Часть закупок может быть скрыта фильтрами в списке "
-                f"(например, разделённые закупки со статусом «split»). Сначала удалите или перепривяжите их."
-            ),
+            detail=format_delete_block_message(db_subsidy.name, impact),
         )
 
     # Bulk-delete dependents via SQL (not ORM cascade): feo_planned_items.feo_category_id

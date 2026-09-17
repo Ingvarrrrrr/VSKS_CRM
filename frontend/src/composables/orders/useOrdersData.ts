@@ -2,7 +2,7 @@
 // странице (filteredSum через toAmount/effectivePrice), выбор строк, массовые
 // действия (bulk delete/статус), переходы статуса. Дословный перенос из
 // OrdersView.vue, без изменения поведения.
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import type { ToastType } from '@/composables/useToast'
 import { apiFetch } from '@/api'
 import type { OrdersFiltersState } from './useOrdersFilters'
@@ -189,13 +189,52 @@ export function useOrdersData(options: {
       // на элементах (задача владельца 2026-08-12, значок превышения ФЭО на
       // закупке). Если бэкенд ещё не знает этот параметр, лишний query-параметр
       // FastAPI молча игнорирует — список грузится как раньше, просто без чипа.
-      orders.value = await apiFetch<Purchase[]>('/purchases/?scope=purchases&with_feo_excess=true')
+      //
+      // Владелец (2026-09-17): scope=purchases по умолчанию скрывает
+      // status='wishes' (заявки не в работе) и status='split' (родительские
+      // записи разделённых закупок) — backend/app/routers/purchases.py делает
+      // исключение ТОЛЬКО когда status запрошен явно. Раньше этот параметр
+      // никогда не уходил в запрос, поэтому фильтр статуса "Желания" в реестре
+      // ничего не находил — данные для него просто не загружались. Передаём
+      // filters.status, когда он задан (одиночное значение, см. v-select/
+      // v-chip-group в OrdersFilterBar.vue — комма-список там не используется).
+      const params = new URLSearchParams({ scope: 'purchases', with_feo_excess: 'true' })
+      if (filters.status) params.set('status', filters.status)
+      orders.value = await apiFetch<Purchase[]>(`/purchases/?${params.toString()}`)
     } catch {
       showSnack('Ошибка загрузки закупок', 'error')
     } finally {
       loading.value = false
     }
   }
+
+  // Владелец (2026-09-17): переключение статуса-фильтра на "служебные" значения
+  // (wishes/split) должно догрузить их с сервера — они не входят в изначальный
+  // список orders.value (см. комментарий в loadOrders выше). Перезагружаем при
+  // ЛЮБОЙ смене статуса, а не только служебных — так фильтр статуса всегда
+  // отражает актуальный набор (без этого выбор "Желания" в уже открытом реестре
+  // молча показывал бы 0 строк, пока не обновить страницу по ссылке).
+  //
+  // Двойной запрос при первом заходе по ссылке ?status=wishes (баг QA,
+  // 2026-09-17): applyFiltersFromQuery (OrdersView.onMounted) проставляет
+  // filters.status СИНХРОННО до явного loadOrders() ниже в том же onMounted —
+  // этот watch реагирует на ту же установку отдельным вторым вызовом. При
+  // заходе без query-параметра filters.status не меняется и watch вовсе не
+  // срабатывает — там был только один запрос, баг был именно на ссылках с
+  // ?status=. suppressNextStatusReload() — вызывается OrdersView ПЕРЕД
+  // applyFiltersFromQuery — гасит ровно одно ближайшее срабатывание watch (если
+  // оно вообще случится) и сам сбрасывается на следующем тике, так что
+  // последующая смена статуса пользователем в интерфейсе снова перезагружает
+  // список как раньше.
+  let suppressNextStatusWatch = false
+  function suppressNextStatusReload() {
+    suppressNextStatusWatch = true
+    nextTick(() => { suppressNextStatusWatch = false })
+  }
+  watch(() => filters.status, () => {
+    if (suppressNextStatusWatch) { suppressNextStatusWatch = false; return }
+    loadOrders()
+  })
 
   // Подсказка «возможный дубликат» в реестре — молча игнорируем ошибку загрузки,
   // это вспомогательная подсказка, а не критичные данные строки.
@@ -342,7 +381,7 @@ export function useOrdersData(options: {
     filteredOrders, filteredOrdersWithRowNum,
     cardsPage, cardsPageSize, cardsSource, cardsTotalPages, pagedCards,
     isOrderSelected, toggleOrderSelected, filteredSum,
-    loadOrders, loadDuplicateGroups, loadSubsidies,
+    loadOrders, loadDuplicateGroups, loadSubsidies, suppressNextStatusReload,
     doTransition, doForceStatus, confirmDeleteOne, confirmBulkDelete, bulkChangeStatus, doDelete,
   }
 }

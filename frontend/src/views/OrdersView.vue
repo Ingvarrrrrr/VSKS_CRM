@@ -65,6 +65,14 @@
       </div>
     </v-alert>
 
+    <!-- Владелец (2026-09-17): открыт фильтр статуса, который обычные фильтры
+         реестра никогда не показывают (переход из диалога удаления субсидии,
+         ?status=wishes/split) — плашка объясняет, почему эти строки обычно не
+         видны, чтобы не выглядело так, будто реестр их "прячет" без причины. -->
+    <v-alert v-if="hiddenStatusBanner" type="info" variant="tonal" class="mb-3">
+      {{ hiddenStatusBanner }}
+    </v-alert>
+
     <!-- Table / Cards toggle -->
     <OrdersTable
       v-if="effectiveView === 'table'"
@@ -214,7 +222,7 @@ const {
   filteredOrders, filteredOrdersWithRowNum,
   cardsPage, cardsTotalPages, pagedCards,
   isOrderSelected, toggleOrderSelected, filteredSum,
-  loadOrders, loadDuplicateGroups, loadSubsidies,
+  loadOrders, loadDuplicateGroups, loadSubsidies, suppressNextStatusReload,
   doTransition, doForceStatus, confirmDeleteOne, confirmBulkDelete, bulkChangeStatus, doDelete,
 } = useOrdersData({
   filters, matchesColumnFilters, localSort, getRowField,
@@ -238,17 +246,36 @@ const scansDialogRef = ref<InstanceType<typeof OrdersScansDialog> | null>(null)
 const paymentMatchDialogRef = ref<InstanceType<typeof OrdersPaymentMatchDialog> | null>(null)
 const exportDialogRef = ref<InstanceType<typeof OrdersExportDialog> | null>(null)
 
+// Владелец (2026-09-17): "заявки не в работе"/"разделённые закупки" скрыты в
+// реестре обычными фильтрами — эта плашка появляется, только когда открыт
+// именно такой служебный фильтр (например, по ссылке из диалога удаления
+// субсидии), и объясняет причину прямым текстом без жаргона статусов.
+const hiddenStatusBanner = computed(() => {
+  if (filters.status === 'wishes') return 'Показаны заявки, не переданные в работу — обычно они не отображаются в реестре закупок, пока не будут переданы в план.'
+  if (filters.status === 'split') return 'Показаны разделённые закупки (родительские записи) — после разделения их части учитываются отдельно, сама родительская запись обычно скрыта в реестре.'
+  return null
+})
+
 // Phase 26-ZZ: bulk-load контрагентов убран. Фильтр контрагентов
 // dedupe-by-name из orders, не требует справочника.
 onMounted(async () => {
-  loadOrders()
-  loadDuplicateGroups()
-  loadSubsidies(() => { globalSubsidyId.value = null })
-  loadFilterPresets()
+  // Владелец (2026-09-17): статус/субсидию/т.п. из query-строки нужно применить
+  // ДО первого loadOrders() — иначе первый запрос уходит без ?status= (реестр
+  // не знает про wishes/split из ссылки), см. useOrdersData.ts::loadOrders.
+  // suppressNextStatusReload() ДО applyFiltersFromQuery — иначе синхронная
+  // установка filters.status из ?status= в ссылке триггерит watch внутри
+  // useOrdersData и уходит ВТОРОЙ (дублирующий) запрос вдобавок к явному
+  // loadOrders() ниже (QA-баг 2026-09-17, см. комментарий у watch в
+  // useOrdersData.ts).
+  suppressNextStatusReload()
   applyFiltersFromQuery(() => {
     const found = orders.value.find(o => o.feo_category_id === filters.feoCategoryId)
     if (found?.feo_category_name) filters.feoCategoryName = found.feo_category_name
   })
+  loadOrders()
+  loadDuplicateGroups()
+  loadSubsidies(() => { globalSubsidyId.value = null })
+  loadFilterPresets()
 })
 </script>
 

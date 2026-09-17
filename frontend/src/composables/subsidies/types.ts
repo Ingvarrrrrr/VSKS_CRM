@@ -97,11 +97,26 @@ export interface EventItem {
   media_link_1?: string; media_link_2?: string; media_link_3?: string
 }
 
+// Владелец (2026-09-17, боевая жалоба): «Точнее сначала показало 2, я их
+// удалил, теперь ни одной не показывает, но блокер по-прежнему работает» —
+// единое число "purchases" включало status='wishes'/'split', которые реестр
+// закупок (/orders) не показывает никаким фильтром. Бэкенд теперь отдаёт
+// закупки разбитыми на группы по видимости (см.
+// backend/app/services/subsidy_delete_impact.py, Правило №6 — единственный
+// источник и для этого GET, и для 409 при DELETE) — каждая группа несёт
+// точный count и до 50 конкретных объектов, чтобы диалог мог показать список
+// без второго запроса.
+export interface SubsidyDeleteImpactGroup {
+  count: number
+  items: { id: number; number: number | string | null; name: string | null; status: string | null }[]
+}
 export interface SubsidyDeleteImpact {
   feo_categories: number
   planned_items: number
-  purchases: number
-  contracts: number
+  purchases: SubsidyDeleteImpactGroup
+  wishes: SubsidyDeleteImpactGroup
+  split: SubsidyDeleteImpactGroup
+  contracts: SubsidyDeleteImpactGroup
 }
 
 // ── Плановые/фактические позиции ФЭО (панель «План vs факт», волна 5a-2) ──────

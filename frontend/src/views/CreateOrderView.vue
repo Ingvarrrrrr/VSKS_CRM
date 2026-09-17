@@ -983,22 +983,6 @@
                   :persistent-hint="contractHeaderLocked" />
               </div>
             </v-col>
-            <!-- Phase 31-04: contract_conflict chip + «Взять из договора» button -->
-            <v-col v-if="!isNew && purchaseData?.contract_conflict && form.contract_id" cols="12" class="d-flex align-center gap-2 pb-0">
-              <v-chip
-                color="warning"
-                size="small"
-                prepend-icon="mdi-alert"
-                :title="linkedContractTooltip"
-              >Расхождение с договором</v-chip>
-              <v-btn
-                variant="tonal"
-                size="small"
-                color="#fb923c"
-                :loading="takingFromContract"
-                @click="takeFromContract"
-              >Взять из договора</v-btn>
-            </v-col>
             <v-col cols="12" md="3">
               <v-text-field v-model="form.agreement_number" label="№ доп.соглашения" variant="outlined"
                 density="compact" placeholder="При наличии" />
@@ -1246,6 +1230,38 @@
           </v-window-item>
 
           </v-window>
+          <!-- Phase 31-04 (2026-07-07): contract_conflict chip. Раньше жила ВНУТРИ
+               v-window-item value="contract" — видна только на вкладке «Разовый
+               договор». Закупки со связанным Contract (contract_id) в основном ведут
+               оплату через «Счёт»/«Счёт по РД» (см. закупку id=900: payment_basis_type
+               'invoice' при contract_id=106) — на тех вкладках чип, хоть и был в DOM,
+               никогда не был виден (v-window скрывает неактивный item через v-show).
+               Вынесена сюда, вне вкладок, — актуальна независимо от того, каким
+               основанием оформлена оплата. Кнопка «Взять из договора», которая тут
+               была, вызывала несуществующий takeFromContract (осталась недописанной
+               с самого начала — grep по истории не находит ни одного определения).
+               Не восстановлена: ПРАВИЛО №6, группа D7 (2026-09-07, см.
+               app.services.purchase_contract_header) с тех пор сделало
+               contract_number/contract_date/contractor_id при заданном contract_id
+               ЕДИНОНАЧАЛЬНО читаемыми из Contract — GET /purchases/{id} уже отдаёт их
+               из связанного договора (contract_header()), и то же PUT/PATCH
+               /api/purchases молча игнорирует эти поля во входящем payload
+               (contract_fields_ignored) — то есть подставлять на экране нечего (поля
+               и так показывают данные договора), а записать «взятое» обратно в
+               закупку с фронта уже нельзя. contract_conflict здесь — сигнал о
+               расхождении внутреннего денормализованного кэша, невидимого в форме;
+               чинится пересохранением договора в реестре «Договоры» (см. каскад в
+               PUT /api/contracts/{cid}), не с этой карточки. -->
+          <v-row v-if="!isNew && purchaseData?.contract_conflict && form.contract_id" class="px-3">
+            <v-col cols="12" class="d-flex align-center gap-2 pb-3 pt-0">
+              <v-chip
+                color="warning"
+                size="small"
+                prepend-icon="mdi-alert"
+                :title="contractConflictTooltip"
+              >Расхождение с договором</v-chip>
+            </v-col>
+          </v-row>
         </v-card-text>
       </v-card>
 
@@ -3316,6 +3332,13 @@ const contractWordGen = computed(() => isFramework.value ? 'заказа' : 'д�
 const contractHeaderLocked = computed(() => !!form.contract_id)
 const contractHeaderLockedHint = computed(() =>
   `Берётся из договора №${form.contract_number || '—'} — изменить в карточке договора`
+)
+// Phase 31-04 chip «Расхождение с договором»: поля номера/даты на этой форме уже
+// показывают значения договора (см. комментарий у чипа выше, ПРАВИЛО №6 D7) —
+// расхождение живёт только во внутреннем кэше, чинится пересохранением договора
+// в реестре «Договоры», не на этой карточке.
+const contractConflictTooltip = computed(() =>
+  'Внутренний технический кэш номера/даты закупки отличается от договора — на полях выше это не отражается, они уже показывают данные договора. Устраняется пересохранением договора в реестре «Договоры».'
 )
 
 // ── Диалоги выбора/создания рамочного договора — вынесено в

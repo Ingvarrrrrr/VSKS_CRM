@@ -35,13 +35,17 @@
           <v-text-field
             v-if="!vatApplicable"
             :model-value="vatExemptionArticle"
-            :label="vatExemptionAutoBasis ? 'Статья НК РФ (основание определено автоматически)' : 'Статья НК РФ *'"
+            :label="vatExemptionAutoBasis
+              ? 'Статья НК РФ (основание определено автоматически)'
+              : (requireArticle ? 'Статья НК РФ *' : 'Статья НК РФ')"
             variant="outlined" density="compact"
             :placeholder="vatExemptionAutoBasis ? '' : 'напр. п.2 ст.346.11 НК РФ (УСН)'"
-            :rules="vatExemptionAutoBasis ? [] : [(v: string) => !!(v && v.trim()) || 'Без основания документы с НДС не сформируются']"
+            :rules="(!requireArticle || vatExemptionAutoBasis) ? [] : [(v: string) => !!(v && v.trim()) || 'Без основания документы с НДС не сформируются']"
             :hint="vatExemptionAutoBasis
               ? `Основание найдено автоматически: ${vatExemptionAutoBasis}. Можно ввести своё — оно заменит автоматическое.`
-              : 'Обязательно для печати документов: без статьи НК РФ система откажет в формировании договора/приказа/листа согласования. Не требуется для самозанятых исполнителей и договоров ГПХ с физлицом — там основание определяется само.'"
+              : (requireArticle
+                ? 'Обязательно для печати документов: без статьи НК РФ система откажет в формировании договора/приказа/листа согласования. Не требуется для самозанятых исполнителей и договоров ГПХ с физлицом — там основание определяется само.'
+                : 'На этапе заявки не обязательно — понадобится перед формированием договора, когда определится подрядчик. Можно заполнить сейчас или позже.')"
             persistent-hint
             style="min-width:280px;flex:1 1 320px"
             @update:model-value="(v: string) => emit('update:vatExemptionArticle', v)"
@@ -71,7 +75,16 @@ const props = defineProps<{
   vatExemptionArticle: string | null
   vatExemptionAutoBasis: string | null
   pointerTarget?: string | null
+  // Владелец (2026-09-17): на этапе заявки подрядчик и, соответственно, реальное
+  // основание освобождения от НДС ещё не известны — блокировать заявку из-за
+  // пустой статьи НК РФ нельзя. Обязательно это поле только на этапе закупки/
+  // договора (requireArticle=true, значение по умолчанию — старое поведение).
+  // Единственный источник решения «нужна ли статья прямо сейчас» —
+  // PurchaseItemsEditor::!props.wishId, сюда приходит уже готовым.
+  requireArticle?: boolean
 }>()
+
+const requireArticle = computed(() => props.requireArticle !== false)
 
 const emit = defineEmits<{
   'update:vatMode': [mode: string]

@@ -156,6 +156,7 @@
       :vat-exemption-article="props.vatExemptionArticle"
       :vat-exemption-auto-basis="props.vatExemptionAutoBasis"
       :pointer-target="props.pointerTarget"
+      :require-article="!props.wishId"
       class="mb-2"
       @update:vat-mode="(v: string) => emit('update:vatMode', v)"
       @update:vat-applicable="(v: boolean) => emit('update:vatApplicable', v)"

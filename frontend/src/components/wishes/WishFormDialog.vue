@@ -278,8 +278,14 @@
                 :disabled="!isWishEditable"
                 @update:model-value="onWishFeoPerItemChange"
               />
-              <!-- data-field="feo_category" — цель для highlightMissingFeoCategory. -->
-              <div data-field="feo_category">
+              <!-- data-field="feo_category" — цель для highlightMissingFeoCategory.
+                   Владелец (2026-09-17): «подсвети поле "Категория ФЭО", я его найти
+                   не могу, даже зная что он должен быть» — рамка + подпись сверху,
+                   тот же приём, что contract-terms-box в PurchaseContractParamsSection.vue. -->
+              <div data-field="feo_category" class="feo-category-highlight pa-3 mb-3">
+                <div class="text-caption text-medium-emphasis font-weight-medium mb-1">
+                  <v-icon size="16" class="mr-1">mdi-sitemap</v-icon>Категория ФЭО
+                </div>
                 <template v-if="!wishForm.feo_per_item">
                   <v-alert v-if="wishFeoStale" type="warning" density="compact" variant="tonal" class="mb-2">
                     Категория ФЭО, выбранная в заявке, была удалена из справочника (структуру ФЭО субсидии
@@ -1339,5 +1345,18 @@ defineExpose({
 <style scoped>
 .wish-dialog.v-theme--light :deep(.text-medium-emphasis) {
   color: rgba(0, 0, 0, 0.72) !important;
+}
+
+/* Владелец (2026-09-17): «подсвети поле "Категория ФЭО"» — рамка + лёгкий фон,
+   тот же приём, что .contract-terms-box в PurchaseContractParamsSection.vue. */
+.feo-category-highlight {
+  border: 1px solid #6366f1;
+  border-radius: 8px;
+}
+.v-theme--light .feo-category-highlight {
+  background: rgba(99, 102, 241, 0.05);
+}
+.v-theme--dark .feo-category-highlight {
+  background: rgba(99, 102, 241, 0.1);
 }
 </style>

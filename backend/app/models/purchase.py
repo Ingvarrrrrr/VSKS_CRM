@@ -202,7 +202,15 @@ class Purchase(Base):
     applications_review_date = Column(Date, nullable=True)
 
     # Phase 28: гарантия договора + ретроактивный флаг (комментарии пользователя 2026-05-19)
-    warranty_period_days = Column(Integer, nullable=True)   # срок гарантии товара/услуги в раб.днях (для договора)
+    warranty_period_days = Column(Integer, nullable=True)   # срок гарантии товара/услуги: ЧИСЛО, введённое пользователем, В ЕДИНИЦЕ warranty_period_unit ниже (имя колонки — legacy, у старых записей (unit IS NULL) это дни)
+    # Владелец (жалоба п.10, 2026-09-17): «Срок гарантии может быть в днях, в
+    # месяцах, в годах» — единица измерения к числу warranty_period_days выше.
+    # NULL = старая закупка → трактуется как 'days'. См. миграцию
+    # w3x4y5z6a7b8_purchase_warranty_period_unit.py и
+    # app/services/documents/contract_terms.py::warranty_period_text (человеко-
+    # читаемый текст «1 год»/«12 месяцев»/«30 дней» для нового ключа шаблона
+    # warranty_period_text; старый ключ warranty_period_days остаётся числом).
+    warranty_period_unit = Column(String(10), nullable=True)
     is_retroactive = Column(Boolean, nullable=False, server_default='false')  # договор задним числом — применяется ст. 425 ГК блок
 
     # Phase 28: contract-specific поля (условия конкретного договора)

@@ -239,6 +239,8 @@ class PurchaseCreate(BaseModel):
     advance_amount: Optional[Decimal] = None
     # Phase 28: гарантия + ретроактивный договор (комментарии пользователя 2026-05-19)
     warranty_period_days: Optional[int] = None
+    # Владелец (жалоба п.10, 2026-09-17): единица к числу выше — 'days'|'months'|'years'
+    warranty_period_unit: Optional[str] = None
     is_retroactive: Optional[bool] = False
     # Phase 28 T6/T7: условные блоки шаблонов + протокол/приказ закупки
     delivery_by_supplier: Optional[bool] = True
@@ -381,6 +383,8 @@ class PurchaseUpdate(BaseModel):
     advance_amount: Optional[Decimal] = None
     # Phase 28: гарантия + ретроактивный договор (комментарии пользователя 2026-05-19)
     warranty_period_days: Optional[int] = None
+    # Владелец (жалоба п.10, 2026-09-17): единица к числу выше — 'days'|'months'|'years'
+    warranty_period_unit: Optional[str] = None
     is_retroactive: Optional[bool] = None
     # Phase 28 T6/T7: условные блоки шаблонов + протокол/приказ закупки
     delivery_by_supplier: Optional[bool] = None

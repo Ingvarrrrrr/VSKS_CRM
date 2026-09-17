@@ -19,6 +19,7 @@ from app.models.purchase import Purchase
 from app.services.documents.formatting import _fmt_date, _clean_id, _fio_to_initials_prefix
 from app.services.documents.morphology import _to_gen_fio, _to_gen_phrase, _inflect_phrase_genitive
 from app.services.documents.contexts import _signatory_split
+from app.services.documents.contract_terms import warranty_period_text
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,12 @@ def add_phase28_context(context: dict, subsidy, c, p: Purchase) -> None:
         context["contractor_ogrnip_date"]      = _fmt_date(p.contractor_ogrnip_date) if p.contractor_ogrnip_date else ""
         # Phase 28: гарантия + ретроактивный договор (комментарии пользователя 2026-05-19)
         context["warranty_period_days"]        = p.warranty_period_days if p.warranty_period_days is not None else 15
+        # Владелец (жалоба п.10, 2026-09-17): единица измерения (дни/месяцы/годы) +
+        # человекочитаемый текст «1 год»/«12 месяцев»/«30 дней» для новых шаблонов —
+        # единственный расчёт в contract_terms.warranty_period_text (ПРАВИЛО №6).
+        context["warranty_period_text"]        = warranty_period_text(
+            context["warranty_period_days"], getattr(p, "warranty_period_unit", None)
+        )
         context["is_retroactive"]              = bool(p.is_retroactive)
         # delivery_by_supplier=True — поставщик доставляет; False — самовывоз.
         # has_stages=True — в Приложении №1 есть этапы оказания услуг.

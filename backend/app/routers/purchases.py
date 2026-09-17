@@ -1744,7 +1744,7 @@ PATCHABLE_FIELDS = {
     'commission_member_1_name', 'commission_member_2_name', 'commission_member_3_name',
     'advance_amount',
     # Phase 28: гарантия + ретроактивный договор (комментарии пользователя 2026-05-19)
-    'warranty_period_days', 'is_retroactive',
+    'warranty_period_days', 'warranty_period_unit', 'is_retroactive',
     # Phase 29: связь закупки с ТС
     'vehicle_id',
     # SN-UX: адресат служебной записки

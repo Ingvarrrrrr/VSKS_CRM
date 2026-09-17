@@ -75,7 +75,11 @@ async def test_copy_from_purchase_empty_items_422(client, make_purchase, admin_h
         headers=admin_headers,
     )
     assert resp.status_code == 422
-    assert resp.json()["detail"]["code"] == "NO_PURCHASE_ITEMS"
+    # Формат ошибок унифицирован (app/errors.py::http_exception_handler):
+    # HTTPException(detail={"code": ...}) разворачивается в code на ВЕРХНЕМ
+    # уровне ответа ({"code", "message", "details", "correlation_id"}), без
+    # вложенного "detail" — это раньше был формат по умолчанию FastAPI.
+    assert resp.json()["code"] == "NO_PURCHASE_ITEMS"
 
 
 @pytest.mark.asyncio

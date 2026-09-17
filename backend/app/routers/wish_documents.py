@@ -6,9 +6,16 @@ Separate from documents.py to keep contracts clean:
 
 Endpoint: GET /api/wishes/{wish_id}/documents/service_note
   - Builds docxtpl context from Wish + WishItem directly (not from Purchase)
-  - Phase 19.07: primary template is service_note_procurement.docx (СЗ на закупку),
-    with fallback to legacy service_note.docx if the procurement template is
-    not yet uploaded (globally or per-subsidy)
+  - doc_type выбирается по wish.source: 'advance_report' → service_note_advance
+    (СЗ на аванс), иначе — service_note_procurement (СЗ на закупку). Раньше
+    здесь ВСЕГДА была служебка на закупку, независимо от source — авансовый
+    компаньон заявки печатал не тот бланк.
+  - Резолюция файла шаблона — ЧЕРЕЗ _resolve_doc_template_path (services/
+    documents/templates.py), ТОТ ЖЕ приоритет «субсидия → глобальный →
+    fallback», что использует общий /api/purchases/{pid}/documents/{doc_type}
+    (см. Правило №6 — жалоба владельца 2026-09-17: своя копия резолвера здесь
+    игнорировала субсидийный override для service_note_advance, потому что
+    вообще не знала о таком doc_type).
   - Defensive: fills empty strings for all purchase-only keys so render never crashes
   - Returns .docx as StreamingResponse with Content-Disposition filename
   - NOTE: Endpoint URL kept as /service_note (not /service_note_procurement)
@@ -34,7 +41,7 @@ from app.models.wish_item import WishItem
 from app.models.subsidy_approver import SubsidyApprover
 # Reuse formatters from documents.py — avoids duplicating money/date formatting logic
 from app.routers.documents import (
-    _fmt_date, _fmt_money, TEMPLATES_DIR,
+    _fmt_date, _fmt_money,
     _format_initials,
     _resolve_user_dept as _resolve_user_dept_for_wish,
     _resolve_user_position as _resolve_user_position_for_wish,
@@ -45,10 +52,15 @@ from app.routers.documents import (
 # файле жила урезанная копия-дубль (_resolve_local_product_photo), умевшая
 # только локальный /api/products/photos/<file> и не знавшая про photo_data.
 from app.services.documents.stages_template_engine import make_photo_resolver
+# Правило №6 — единственный резолвер пути к шаблону документа (субсидийный
+# override → глобальный → DOC_TYPE_FALLBACK_FILES). До 2026-09-17 здесь жила
+# урезанная копия-дубль (PRIMARY_FILE/FALLBACK_FILE ниже), которая не умела
+# service_note_advance вовсе — авансовый компаньон заявки получал службу на
+# закупку/глобальный бланк, даже когда для субсидии был загружен свой
+# service_note_advance.docx.
+from app.services.documents.templates import _resolve_doc_template_path
 
 router = APIRouter(prefix="/api/wishes", tags=["wish-documents"])
-
-SUBSIDY_TEMPLATES_DIR = "/app/uploads/templates"
 
 
 @router.get("/{wish_id}/documents/service_note")
@@ -68,9 +80,10 @@ async def generate_wish_service_note(
     """Generate a Служебная Записка .docx from Wish data (pre-approval, no purchase required).
 
     D-07 requirement: download button in WishesView available BEFORE approve.
-    Phase 19.07: uses service_note_procurement.docx as the primary template
-    (СЗ на закупку — the natural wish-stage SZ). Falls back to legacy
-    service_note.docx if the procurement template hasn't been uploaded yet.
+    doc_type: service_note_advance для авансового компаньона заявки
+    (wish.source == 'advance_report'), иначе service_note_procurement (СЗ на
+    закупку — обычная wish-stage СЗ). Резолюция файла — через
+    _resolve_doc_template_path (см. докстринг модуля, Правило №6).
     """
     # ── Load wish with eager relations ──────────────────────────────────────
     result = await db.execute(
@@ -87,34 +100,13 @@ async def generate_wish_service_note(
     if not w:
         raise HTTPException(status_code=404, detail="Заявка не найдена")
 
-    # ── Resolve template path (subsidy-specific override supported) ─────────
-    # Phase 19.07: prefer service_note_procurement.docx, fall back to legacy
-    # service_note.docx so existing deployments keep working.
-    PRIMARY_FILE = "service_note_procurement.docx"
-    FALLBACK_FILE = "service_note.docx"
-
-    template_path = None
-    if w.subsidy_id:
-        for fname in (PRIMARY_FILE, FALLBACK_FILE):
-            candidate = os.path.join(
-                SUBSIDY_TEMPLATES_DIR, "subsidies", str(w.subsidy_id), fname
-            )
-            if os.path.exists(candidate):
-                template_path = candidate
-                break
-    if template_path is None:
-        for fname in (PRIMARY_FILE, FALLBACK_FILE):
-            candidate = os.path.join(TEMPLATES_DIR, fname)
-            if os.path.exists(candidate):
-                template_path = candidate
-                break
-    if template_path is None or not os.path.exists(template_path):
+    # ── Resolve doc_type + template path (subsidy override → global → fallback) ──
+    _note_doc_type = "service_note_advance" if getattr(w, "source", None) == "advance_report" else "service_note_procurement"
+    template_path, _tpl_file, _tpl_base = _resolve_doc_template_path(_note_doc_type, w.subsidy_id)
+    if not os.path.exists(template_path):
         raise HTTPException(
             status_code=404,
-            detail=(
-                f"Шаблон {PRIMARY_FILE} (или {FALLBACK_FILE}) не найден. "
-                f"Поместите файл в backend/templates/{PRIMARY_FILE}"
-            ),
+            detail=f"Шаблон {_tpl_file} не найден. Поместите файл в backend/templates/{_tpl_file}",
         )
 
     # ── Load initiator if provided ──────────────────────────────────────────

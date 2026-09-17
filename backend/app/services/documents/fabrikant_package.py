@@ -17,13 +17,10 @@ from app.models.event import Event
 from app.models.feo_category import FeoCategory
 
 from .doc_types import (
-    DOC_TYPES,
-    TEMPLATES_DIR,
-    SUBSIDY_TEMPLATES_DIR,
-    DOC_TYPE_FALLBACK_FILES,
     CONTRACT_FAMILY_DOC_TYPES,
     FABRIKANT_PKG_FILE_NAMES,
 )
+from .contract_terms import warranty_period_text as _warranty_period_text
 from .formatting import (
     _fmt_date,
     _fmt_money,
@@ -34,7 +31,10 @@ from .formatting import (
     _rubles_to_words,
     _merge_identical_items,
 )
-from .templates import _resolve_vat_exemption_basis, _vat_exemption_missing_hint
+# Правило №6 — единственный резолвер пути к шаблону (субсидийный override →
+# глобальный → DOC_TYPE_FALLBACK_FILES). Раньше здесь жили две копии-дубли
+# той же логики приоритета (ниже — tech_spec_request и цикл рендера пакета).
+from .templates import _resolve_vat_exemption_basis, _vat_exemption_missing_hint, _resolve_doc_template_path
 from .contexts import _signatory_split, _build_contract_items_context, _format_service_term
 from .morphology import _to_gen_fio, _inflect_phrase_genitive
 from .docx_post import _strip_tech_spec_legend
@@ -454,6 +454,12 @@ async def render_fabrikant_package_files(
         "acceptance_term_days": p.acceptance_term_days if p.acceptance_term_days is not None else 5,
         "penalty_rate": str(p.penalty_rate) if p.penalty_rate is not None else "0.1",
         "warranty_period_days": p.warranty_period_days if p.warranty_period_days is not None else 15,
+        # Человекочитаемый текст «1 год»/«12 месяцев»/«30 дней» — см. ПРАВИЛО №6,
+        # единственный расчёт в app.services.documents.contract_terms.warranty_period_text.
+        "warranty_period_text": _warranty_period_text(
+            p.warranty_period_days if p.warranty_period_days is not None else 15,
+            getattr(p, "warranty_period_unit", None),
+        ),
         "is_retroactive": bool(p.is_retroactive),
         # Phase 28 T3: условные блоки (поля в модели Purchase пока отсутствуют — T8)
         "delivery_by_supplier": bool(getattr(p, "delivery_by_supplier", True)),
@@ -492,18 +498,9 @@ async def render_fabrikant_package_files(
     context["contractor_org_type"] = (c.org_type or "") if c else ""
 
     # ── Which templates to render ─────────────────────────────────────────────
-    # tech_spec_request with fallback to contract_tz
-    _tz_file, _tz_base = DOC_TYPES.get("tech_spec_request", ("tech_spec_request.docx", "ТЗ_запрос_цен"))
-    _tz_path = os.path.join(TEMPLATES_DIR, _tz_file)
-    if p.subsidy_id:
-        _sub_tz = os.path.join(SUBSIDY_TEMPLATES_DIR, "subsidies", str(p.subsidy_id), "tech_spec_request.docx")
-        if os.path.exists(_sub_tz):
-            _tz_path = _sub_tz
-    if not os.path.exists(_tz_path):
-        _fb = DOC_TYPE_FALLBACK_FILES.get("tech_spec_request", "contract_tz.docx")
-        _fb_path = os.path.join(TEMPLATES_DIR, _fb)
-        if os.path.exists(_fb_path):
-            _tz_path = _fb_path
+    # tech_spec_request with fallback to contract_tz — резолюция ЧЕРЕЗ единый
+    # резолвер (субсидия → глобальный → DOC_TYPE_FALLBACK_FILES), Правило №6.
+    _tz_path, _tz_file, _tz_base = _resolve_doc_template_path("tech_spec_request", p.subsidy_id)
 
     # (doc_key, archive_name used in ZIP) — legacy internal names, kept for ZIP endpoint
     _pkg_docs_legacy = [
@@ -559,12 +556,7 @@ async def render_fabrikant_package_files(
         if doc_key == "tech_spec_request":
             tpl_path = _tz_path
         else:
-            tpl_file, _ = DOC_TYPES.get(doc_key, (f"{doc_key}.docx", doc_key))
-            tpl_path = os.path.join(TEMPLATES_DIR, tpl_file)
-            if p.subsidy_id:
-                _sub_override = os.path.join(SUBSIDY_TEMPLATES_DIR, "subsidies", str(p.subsidy_id), f"{doc_key}.docx")
-                if os.path.exists(_sub_override):
-                    tpl_path = _sub_override
+            tpl_path, _tpl_file, _tpl_base = _resolve_doc_template_path(doc_key, p.subsidy_id)
 
         if not os.path.exists(tpl_path):
             errors.append(f"{ascii_name}: шаблон не найден ({tpl_path})")

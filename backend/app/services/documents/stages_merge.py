@@ -7,7 +7,13 @@ unchanged) — preserved exactly.
 import os
 from io import BytesIO
 
-from app.services.documents.doc_types import TEMPLATES_DIR, SUBSIDY_TEMPLATES_DIR, DOC_TYPES, DOC_TYPE_FALLBACK_FILES
+from app.services.documents.doc_types import DOC_TYPES
+# Правило №6 — единственный резолвер пути к шаблону (субсидийный override →
+# глобальный → DOC_TYPE_FALLBACK_FILES). Раньше здесь жила копия-дубль той же
+# логики приоритета — эквивалентная по результату, но лишний источник
+# расхождения при будущих правках резолвера (см. _resolve_doc_template_path
+# docstring и жалобу владельца 2026-09-17 про service_note_advance).
+from app.services.documents.templates import _resolve_doc_template_path
 
 
 def merge_secondary_doc(buf: BytesIO, merge, doc_type: str, context: dict, p, filename_base: str):
@@ -21,22 +27,7 @@ def merge_secondary_doc(buf: BytesIO, merge, doc_type: str, context: dict, p, fi
             from docx import Document as _Docx
             from copy import deepcopy
 
-            secondary_file, secondary_base = DOC_TYPES[merge]
-            secondary_path = os.path.join(TEMPLATES_DIR, secondary_file)
-            # subsidy override for secondary
-            if p.subsidy_id:
-                sub_override = os.path.join(
-                    SUBSIDY_TEMPLATES_DIR, "subsidies", str(p.subsidy_id), f"{merge}.docx"
-                )
-                if os.path.exists(sub_override):
-                    secondary_path = sub_override
-            # fallback if the dedicated secondary file is missing
-            if not os.path.exists(secondary_path):
-                fb = DOC_TYPE_FALLBACK_FILES.get(merge)
-                if fb:
-                    fb_path = os.path.join(TEMPLATES_DIR, fb)
-                    if os.path.exists(fb_path):
-                        secondary_path = fb_path
+            secondary_path, _secondary_file, secondary_base = _resolve_doc_template_path(merge, p.subsidy_id)
 
             if os.path.exists(secondary_path):
                 sec_tpl = _Tpl(secondary_path)

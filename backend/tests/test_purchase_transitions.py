@@ -17,10 +17,14 @@ async def test_contracted_requires_contract_items_422(client, make_purchase_with
         f"/api/purchases/{p.id}/transition?status=contracted", headers=admin_headers,
     )
     assert resp.status_code == 422, resp.text
-    detail = resp.json()["detail"]
-    assert detail["code"] == "CONTRACT_ITEMS_REQUIRED"
-    assert "Скопировать из заявки" in detail["message"]
-    assert "Импорт из файла/QR" in detail["message"]
+    # Формат ошибок унифицирован (app/errors.py::http_exception_handler):
+    # HTTPException(detail={"code": ...}) разворачивается в code/message на
+    # ВЕРХНЕМ уровне ответа, без вложенного "detail" (см. тот же фикс в
+    # test_contract_items_router.py::test_copy_from_purchase_empty_items_422).
+    body = resp.json()
+    assert body["code"] == "CONTRACT_ITEMS_REQUIRED"
+    assert "Скопировать из заявки" in body["message"]
+    assert "Импорт из файла/QR" in body["message"]
 
 
 @pytest.mark.asyncio

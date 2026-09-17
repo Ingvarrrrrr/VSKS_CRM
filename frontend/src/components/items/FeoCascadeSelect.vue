@@ -61,6 +61,7 @@
 import { computed, ref, watch } from 'vue'
 import type { FeoNode, FeoLeaf } from '@/composables/useFeoLeaves'
 import { formatPlanResidual } from '@/utils/numberFormat'
+import { formatMoney } from '@/utils/formatMoney'
 
 const props = defineProps<{
   modelValue: number | null
@@ -169,9 +170,13 @@ const selectedLeaf = computed((): FeoLeaf | null => {
   return props.leaves.find(l => l.id === lastId) ?? null
 })
 
+// Дефект «план округлён до целых» (владелец, 2026-09-17): та же копия
+// нулевого-decimals money-форматтера, что была в useFeoPlannedRows.ts —
+// «План: N ₽» рядом печатал остаток через formatPlanResidual (2 знака),
+// расхождение точности сбивало с толку. formatMoney — единственный денежный
+// форматтер проекта (ПРАВИЛО №6).
 function fmt(v: number | null | undefined): string {
-  if (v == null) return '—'
-  return v.toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' ₽'
+  return formatMoney(v)
 }
 
 // Задача владельца (сессия 2026-08-21): та же подпись «План: … • Ост.: …», что в

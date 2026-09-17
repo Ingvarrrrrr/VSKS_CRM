@@ -12,6 +12,7 @@ import { apiFetch } from '@/api'
 import type { FeoNode } from '@/composables/useFeoLeaves'
 import type { FeoPlanPosition, FeoPlanSelection, FeoPlanKind } from '@/composables/useFeoPlannedResiduals'
 import { formatPlanResidual, type PlanResidualDisplay } from '@/utils/numberFormat'
+import { formatMoney } from '@/utils/formatMoney'
 import type { ToastType } from '@/composables/useToast'
 
 /** Готовый набор подписей строки для FeoPlannedItemRow.vue — построен ОДИН раз
@@ -101,9 +102,16 @@ export function useFeoPlannedRows(deps: UseFeoPlannedRowsDeps) {
     return !filteredItems.value.some(r => r.key === selectedKey.value)
   })
 
+  // Дефект «план 86 ₽, хотя плановая сумма 86,40 ₽» (владелец, 2026-09-17):
+  // эта подпись обрезала копейки (maximumFractionDigits: 0) — свой, второй
+  // денежный форматтер рядом с formatMoney/fmtRub, которым отформатирован
+  // ОСТАТОК той же строки (formatPlanResidual → fmtRub, 2 знака). Из-за
+  // расхождения план и остаток в одной подсказке показывали разную точность,
+  // и округлённый план читался как несовпадающий с остатком. formatMoney —
+  // единственный денежный форматтер проекта (ПРАВИЛО №6); больше своей копии
+  // здесь не заводим — деньги везде с копейками.
   function fmt(v: number | null | undefined): string {
-    if (v == null) return '—'
-    return v.toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' ₽'
+    return formatMoney(v)
   }
 
   function fmtNum(v: number | null | undefined): string {

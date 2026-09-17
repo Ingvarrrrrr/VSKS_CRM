@@ -236,6 +236,7 @@ import type { FeoNode, FeoLeaf } from '@/composables/useFeoLeaves'
 import type { FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import { useAuthStore } from '@/stores/auth'
 import { formatPlanResidual } from '@/utils/numberFormat'
+import { formatMoney } from '@/utils/formatMoney'
 import { ACTIONS } from '@/constants/permissionActions'
 
 const props = defineProps<{
@@ -477,9 +478,12 @@ const selectedLeafForNote = computed((): { budget: number | null; residual: numb
   return planNoteFor(props.modelValue)
 })
 
+// Дефект «план округлён до целых» (владелец, 2026-09-17): та же копия
+// нулевого-decimals money-форматтера, что была в useFeoPlannedRows.ts/
+// FeoCascadeSelect.vue — formatMoney (ПРАВИЛО №6) — единственный денежный
+// форматтер проекта, деньги везде с копейками.
 function fmt(v: number | null | undefined): string {
-  if (v == null) return '—'
-  return v.toLocaleString('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' ₽'
+  return formatMoney(v)
 }
 
 // Задача владельца (сессия 2026-08-21, добор после проверки в браузере): «под

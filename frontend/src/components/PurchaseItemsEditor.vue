@@ -1033,6 +1033,24 @@ const props = withDefaults(defineProps<{
   // рендерится для пользователя без права (нет придуманных чисел).
   feoExcessAmount?: number | null
   feoExcessCategoryId?: number | null
+  // Дефект «Перенести все позиции из ТЗ видит только N из M» (владелец,
+  // 2026-09-17): кнопка ниже (handleCopyFromPurchase) читает purchase_items
+  // ЧЕРЕЗ БЭКЕНД (POST /purchases/{id}/contract-items/copy-from-purchase —
+  // единственный источник копии 1↔1), а ручные строки, добавленные в ТЗ
+  // прямо сейчас (localItems), попадают в БД только полным сохранением формы
+  // (CreateOrderView.vue::save → PUT /purchases/{id} с items — единственный
+  // путь создать НОВУЮ строку purchase_items, PATCH одного поля недостаточен,
+  // items там не Pydantic-partial). Без этого коллбэка кнопка молча работала
+  // по устаревшему снимку БД: 9 позиций из чека уже сохранены, 2 введённые
+  // вручную — только в памяти формы, сервер их не видел. Родитель передаёт
+  // ensureItemsSavedForCopy — обёртку над ТЕМ ЖЕ save(), что и у кнопки
+  // «Сохранить» (не второй путь сохранения, ПРАВИЛО №6). Возвращает boolean
+  // успеха (правка 2026-09-17, п.5): раньше обход formRef.value.validate()
+  // был БЕЗУСЛОВНЫМ (звал doSave() напрямую), что снимало гейт валидации и на
+  // обычных закупках — теперь save() сам решает (для авансового отчёта
+  // валидация мягкая, как раньше; для остальных — тот же гейт, что у кнопки
+  // «Сохранить»), а false означает «не сохранено, копирование прерываем».
+  ensureItemsSaved?: () => Promise<boolean> | boolean | Promise<void> | void
 }>(), {
   contractItems: () => [],
   showContractColumns: false,
@@ -1399,31 +1417,59 @@ function getContractItemFor(rowIdx: number): ContractItem | undefined {
   return localContractItems.value[rowIdx]
 }
 
+// Дефект «НДС/сумма стадии Договор — 0,00» (владелец, 2026-09-17): цена и
+// ставка НДС были заполнены на глаз, но vatAmountForStage/totalWithVatForStage
+// (composables/items/useItemsTotals.ts) читают ЕДИНСТВЕННОЕ поле-источник —
+// ContractItem.total — а первое редактирование строки «Договор» создавало
+// ЭТУ строку без total (см. старую ветку `if (!ci)` ниже — total: null и
+// пересчёт применялся только в ветке «ci уже есть»). Пока пользователь не
+// трогал ИМЕННО quantity/unit_price ВТОРЫМ отдельным полем ПОСЛЕ создания
+// строки, total оставался null/0 — отсюда 0,00 в обеих денежных колонках.
+// recalcContractTotal — единственная формула qty×цена для стадии «Договор»
+// (ПРАВИЛО №6): применяется что при создании строки, что при любой правке
+// количества/цены, что раньше жило в двух копиях (одна вообще не пересчитывала).
+function recalcContractTotal(ci: ContractItem) {
+  ci.total = Math.round(Number(ci.quantity || 0) * Number(ci.unit_price || 0) * 100) / 100
+}
+
+// Заводит ContractItem для строки, если его ещё нет — сиды количества/ед./
+// цены/названия/ставки НДС берутся из связанной позиции ТЗ (то же самое, что
+// UI и так показывает как ПРОЧЕРК-фолбэк в незаполненных полях «Договор», см.
+// :model-value="getContractItemFor(idx)?.quantity ?? items[idx]?.quantity ?? ''"
+// в ItemsTableStages.vue) — иначе первое же редактирование одного поля (например,
+// только цены) создавало бы строку с quantity=null, и total считался бы от
+// несуществующего количества. Общая точка входа для updateContractField И
+// onContractVatRateChange — раньше вторая молча игнорировала отсутствие ci
+// (`if (!ci) return`), из-за чего смена ставки НДС ДО первой правки количества/
+// цены нигде не сохранялась.
+function ensureContractItemFor(rowIdx: number): ContractItem {
+  const existing = getContractItemFor(rowIdx)
+  if (existing) return existing
+  const pi = localItems.value[rowIdx] as any
+  const newCi: ContractItem = {
+    id: 0,
+    purchase_id: props.purchaseId || 0,
+    source_item_id: pi?.id ?? null,
+    contract_id: null,
+    product_id: null,
+    name: pi?.item_name || '',
+    quantity: pi?.quantity ?? null,
+    unit: pi?.unit ?? null,
+    unit_price: pi?.unit_price ?? null,
+    total: null,
+    vat_rate: pi?.vat_rate ?? null,
+    match_confirmed: true,
+  } as ContractItem
+  recalcContractTotal(newCi)
+  localContractItems.value.push(newCi)
+  return newCi
+}
+
 function updateContractField(rowIdx: number, field: keyof ContractItem, value: unknown) {
-  const ci = getContractItemFor(rowIdx)
-  if (!ci) {
-    // Create a new contract_item linked to this row
-    const newCi: ContractItem = {
-      id: 0,
-      purchase_id: props.purchaseId || 0,
-      source_item_id: (localItems.value[rowIdx] as any)?.id ?? null,
-      contract_id: null,
-      product_id: null,
-      name: (localItems.value[rowIdx] as any)?.item_name || '',
-      quantity: null,
-      unit: null,
-      unit_price: null,
-      total: null,
-      match_confirmed: true,
-    }
-    ;(newCi as any)[field] = value
-    localContractItems.value.push(newCi)
-  } else {
-    ;(ci as any)[field] = value
-    // Auto-recalc total = qty × unit_price
-    if (field === 'quantity' || field === 'unit_price') {
-      ci.total = Math.round(Number(ci.quantity || 0) * Number(ci.unit_price || 0) * 100) / 100
-    }
+  const ci = ensureContractItemFor(rowIdx)
+  ;(ci as any)[field] = value
+  if (field === 'quantity' || field === 'unit_price') {
+    recalcContractTotal(ci)
   }
   emitContractItemsUpdate()
 }
@@ -1443,10 +1489,13 @@ function updateAcceptedField(
 }
 
 // Layer 3: extracted from the inline Договор-VAT @update:model-value handler so
-// the stages table template can call a named parent handler (logic unchanged).
+// the stages table template can call a named parent handler. Дефект (владелец,
+// 2026-09-17): раньше `if (!ci) return` молча терял выбор ставки НДС, если
+// пользователь трогал ставку ДО количества/цены (строки «Договор» ещё не
+// существовало) — теперь ensureContractItemFor заводит её тем же путём, что
+// updateContractField (ПРАВИЛО №6 — одна точка создания строки «Договор»).
 function onContractVatRateChange(idx: number, v: any) {
-  const ci = getContractItemFor(idx)
-  if (!ci) return
+  const ci = ensureContractItemFor(idx)
   let rate: string | null
   if (v == null || v === '' || v === 'Без НДС') { rate = null }
   else { const s = String(v); rate = /^\d+(?:\.\d+)?$/.test(s.trim()) ? s.trim() + '%' : s }
@@ -1475,6 +1524,21 @@ async function handleCopyFromPurchase() {
   }
   contractItemCopying.value = true
   try {
+    // Дефект «видит только 9 из 11» (владелец, 2026-09-17): copy-from-purchase
+    // читает purchase_items ИЗ БД — строки, добавленные вручную прямо сейчас
+    // и ещё не сохранённые формой (нет id), там не появятся. ensureItemsSaved
+    // (см. проп выше, CreateOrderView.vue::ensureItemsSavedForCopy → save) —
+    // тот же PUT, что у кнопки «Сохранить»: гоняем его ПЕРЕД чтением, а не
+    // заводим отдельный способ синхронизации позиций.
+    // Правка 2026-09-17 (п.5): ensureItemsSaved теперь возвращает false, если
+    // save() отказал (невалидная форма на обычной закупке) — save() уже
+    // показал причину своим снэком/стрелкой к полю, здесь только прерываем
+    // копирование, не читаем устаревший снимок БД поверх непройденной
+    // валидации.
+    if (props.ensureItemsSaved) {
+      const saved = await props.ensureItemsSaved()
+      if (saved === false) return
+    }
     const result = await apiCopyFromPurchase(props.purchaseId)
     localContractItems.value = result
     emit('update:contractItems', result)

@@ -6,20 +6,20 @@
        v-if="candidates.length"). Каждый кандидат — % совпадения + «Привязать»;
        кандидаты из чужой категории — отдельной подгруппой с пометкой (не молча). -->
   <div v-if="!readonly && candidates && candidates.length" class="feo-match-suggestions mb-2">
-    <div class="text-caption text-medium-emphasis d-flex align-center ga-1 mb-1">
-      <v-icon size="14" icon="mdi-auto-fix" />
-      <span>Похожие плановые позиции — подтвердите выбор или выберите свою ниже</span>
+    <div class="feo-match-header d-flex align-center ga-1 mb-1">
+      <v-icon size="18" icon="mdi-auto-fix" color="teal" />
+      <span>Как мне кажется, это подходящие плановые позиции — подтвердите выбор или выберите свою ниже</span>
     </div>
     <div
       v-for="c in sameCategoryCandidates"
       :key="'cand-' + c.key"
       class="feo-match-candidate-row"
     >
-      <v-chip size="small" :color="scoreColor(c.score)" variant="tonal" class="feo-match-score">
+      <v-chip size="small" :color="scoreColor(c.score)" variant="flat" class="feo-match-score">
         {{ Math.round(c.score * 100) }}%
       </v-chip>
       <span class="feo-match-name">{{ c.name }}</span>
-      <v-btn size="x-small" color="primary" variant="tonal" @click="$emit('bind', c)">Привязать</v-btn>
+      <v-btn size="small" color="primary" variant="flat" @click="$emit('bind', c)">Привязать</v-btn>
     </div>
     <div v-if="otherCategoryCandidates.length" class="mt-1">
       <div class="text-caption text-medium-emphasis">Похожие есть и в других категориях — привязка перенесёт позицию в категорию плановой позиции:</div>
@@ -28,21 +28,21 @@
         :key="'cand-other-' + c.key"
         class="feo-match-candidate-row feo-match-candidate-row--other"
       >
-        <v-chip size="small" color="grey" variant="tonal" class="feo-match-score">
+        <v-chip size="small" :color="scoreColor(c.score)" variant="flat" class="feo-match-score">
           {{ Math.round(c.score * 100) }}%
         </v-chip>
         <span class="feo-match-name">{{ c.name }} <span class="text-caption text-medium-emphasis">— {{ c.path }}</span></span>
         <v-btn
-          size="x-small"
+          size="small"
           color="warning"
-          variant="tonal"
+          variant="flat"
           :title="`Привязать и перенести позицию в категорию: ${c.path}`"
           @click="$emit('bind', c)"
         >Привязать</v-btn>
       </div>
     </div>
-    <v-btn size="x-small" variant="text" color="primary" class="mt-1" @click="$emit('reject')">
-      Ни одна не подходит — выбрать вручную
+    <v-btn size="x-small" variant="text" class="feo-match-reject mt-1" @click="$emit('reject')">
+      Больше подходящих категорий я найти не смог — попробуйте выбрать сами, может лучше получится
     </v-btn>
   </div>
 </template>

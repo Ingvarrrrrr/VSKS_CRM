@@ -107,26 +107,73 @@
   min-width: 320px;
 }
 .feo-match-suggestions {
-  border: 1px dashed #14B8A6;
+  border: 1.5px solid #14B8A6;
   border-radius: 8px;
-  padding: 8px;
-  background: rgba(20, 184, 166, 0.06);
+  padding: 10px;
+  background: rgba(20, 184, 166, 0.08);
+}
+/* Подсветка (владелец, 2026-09-17, дефект 1): раньше акцент читался на
+   отказном «ни одна не подходит», а не на самой подсказке — заголовок и
+   найденное совпадение приглушённым текстом (text-caption/text-medium-emphasis)
+   проигрывали яркой оранжевой (var(--v-theme-primary)) text-кнопке отказа.
+   Теперь заголовок и совпадение — заметный текст на фоне блока, «Привязать» —
+   основная (flat, не tonal) кнопка, а отказ — нейтральный приглушённый текст
+   без акцентного цвета темы. */
+.feo-match-header {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--crm-text);
 }
 .feo-match-candidate-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  padding: 6px 8px;
+  margin: 4px 0;
+  border-radius: 6px;
+  background: var(--crm-surface);
+  border: 1px solid var(--crm-border-strong);
+}
+/* Дефект 2 (владелец, 2026-09-17): было opacity:0.75 на ВСЮ строку — из-за
+   этого сплошная заливка чипа/кнопки «Привязать» (см. ниже) выглядела
+   блёклой ровно там, где реально рендерится большинство подсказок (feo_per_item
+   выключен → эффективная категория позиции берётся из шапки, а не из самой
+   позиции, см. _effectiveFeoCategoryId в useItemsBulkFeo.ts — «другая категория»
+   на практике куда чаще «своей»). Приглушаем только фон/рамку строки и путь
+   категории (у него свой text-medium-emphasis в разметке), чип и кнопка внутри
+   остаются в полную силу — opacity:1 явно, чтобы не наследовать блёклость. */
+.feo-match-candidate-row--other {
+  background: transparent;
+  border: none;
   padding: 2px 0;
 }
-.feo-match-candidate-row--other {
-  opacity: 0.75;
+.feo-match-candidate-row--other .feo-match-score,
+.feo-match-candidate-row--other .v-btn {
+  opacity: 1;
 }
 .feo-match-score {
   flex-shrink: 0;
   min-width: 44px;
   justify-content: center;
+  font-weight: 700;
 }
 .feo-match-name {
   flex: 1 1 auto;
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--crm-text);
+}
+/* Ссылка отказа — намеренно нейтральная (не var(--v-theme-primary)/оранжевая),
+   мельче и приглушённее заголовка/совпадения выше, чтобы взгляд не уходил на
+   неё раньше самой подсказки. Остаётся читаемой и кликабельной, не исчезает. */
+.feo-match-reject {
+  color: var(--crm-text-muted) !important;
+  font-size: 11px;
+  text-transform: none !important;
+  opacity: 0.85;
+  letter-spacing: normal;
+}
+.feo-match-reject:hover {
+  color: var(--crm-text-secondary) !important;
+  opacity: 1;
 }

@@ -9,6 +9,7 @@ import type { MatchCandidate } from '@/composables/useItemMatching'
 import type { PriceLink, ItemsDisplayRow } from '@/components/items/types'
 import type { ToastType } from '@/composables/useToast'
 import { productPhotoSrc } from '@/utils/productPhoto'
+import { describeApiError } from '@/utils/apiErrorMessage'
 
 // EditorItem/Product are structurally identical to the parent's; kept loose
 // here (same convention as ItemsTableFlat.vue) since the parent owns the real
@@ -484,8 +485,14 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
       fullProductPhotoFile.value = null
       fullProductPhotoFileList.value = []
       fullProductPhotoPreview.value = null
-    } catch {
-      showSnack('Ошибка при добавлении товара', 'error')
+    } catch (err: any) {
+      // Не глотать причину generic-текстом (память проекта
+      // feedback_no_generic_error_snackbar) — общий хелпер, см. также
+      // useProductsForm.ts::save().
+      showSnack(
+        describeApiError(err, { fallback: 'Не удалось сохранить товар', prefix: 'Ошибка сохранения' }),
+        'error',
+      )
     } finally {
       fullProductSaving.value = false
     }

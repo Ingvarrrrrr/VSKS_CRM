@@ -325,7 +325,12 @@ async def split_purchase(
             new_p = Purchase(
                 subsidy_id=purchase.subsidy_id,
                 feo_category_id=purchase.feo_category_id,
-                item_name=purchase.item_name or f"Закупка #{purchase.id}",
+                # Владелец (2026-09-20): item_name дочерней закупки раньше
+                # наследовал item_name РОДИТЕЛЯ целиком (часто — заголовок
+                # исходной заявки) — «Наименование» не совпадало с реально
+                # разбитым subject. item_name = new_subject, тот же текст, что
+                # уже показывается колонкой «Предмет договора».
+                item_name=new_subject or f"Закупка #{purchase.id}",
                 subject=new_subject,
                 planned_total_price=total,
                 total_nmck=total,

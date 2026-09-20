@@ -111,6 +111,19 @@ async def test_approve_distribution_creates_n_purchases(client, db_session, admi
     await db_session.refresh(w)
     assert w.status == "converted", f"wish.status={w.status!r}, expected 'converted'"
 
+    # Владелец (2026-09-20): item_name дочерней закупки раньше был ЗАГОЛОВКОМ
+    # заявки целиком ("Офис-комплект" для КАЖДОЙ из 3 групп) — экспорт/список
+    # показывали одинаковое, бессмысленное «Наименование» вместо разбитого по
+    # группе текста. Теперь item_name == subject (тот же текст, что уже видно
+    # в колонке «Предмет договора»), и группы различимы по item_name.
+    assert all(p.item_name == p.subject for p in purchases), (
+        f"item_name должен совпадать с subject (не с заголовком заявки): "
+        f"{[(p.item_name, p.subject) for p in purchases]}"
+    )
+    assert not any(p.item_name == w.title for p in purchases), (
+        f"item_name не должен оставаться заголовком заявки целиком: {[p.item_name for p in purchases]}"
+    )
+
 
 @pytest.mark.asyncio
 async def test_double_approve_returns_400(client, db_session, admin_headers, test_org, test_user):

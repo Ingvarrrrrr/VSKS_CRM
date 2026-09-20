@@ -124,6 +124,33 @@ async def test_matching_prefers_product_with_description_among_duplicates(db_ses
 
 
 @pytest.mark.asyncio
+async def test_new_product_from_import_gets_price_updated_at_and_history_date(db_session):
+    """Владелец, 2026-09-20: цена, пришедшая импортом ТЗ, у НОВОГО товара
+    оставалась без даты («все цены старше 60 дней», «на основании 1 цены»,
+    прочерки в колонке «Дата») — Product(price=...) создавался напрямую, в
+    обход actualize_product_price. Теперь цена нового товара проходит через
+    ту же единую точку (post-flush, т.к. ProductPriceHistory.product_id
+    NOT NULL), что и для уже существующего — price_updated_at и
+    product_price_history.collected_at обязаны быть заполнены."""
+    pid = await _upsert_product_to_catalog(
+        db_session, f"{_UNIQ} F Новый из импорта", "товар", Decimal("777"),
+        import_note="Смарт-импорт из файла, тест, 20.09.2026 00:00",
+    )
+    p = (await db_session.execute(select(Product).where(Product.id == pid))).scalar_one()
+    assert p.price == Decimal("777")
+    assert p.price_updated_at is not None, "новый товар из импорта остался без даты актуализации цены"
+    assert p.price_source == "import"
+
+    hist = (await db_session.execute(
+        select(ProductPriceHistory).where(ProductPriceHistory.product_id == pid)
+    )).scalars().all()
+    assert len(hist) == 1
+    assert hist[0].price == Decimal("777")
+    assert hist[0].source == "import"
+    assert hist[0].collected_at is not None, "строка истории цены нового товара осталась без даты"
+
+
+@pytest.mark.asyncio
 async def test_different_names_still_create_separate_products(db_session):
     """Товары с РАЗНЫМИ названиями по-прежнему создаются раздельно (никакого
     fuzzy-слияния разных товаров)."""

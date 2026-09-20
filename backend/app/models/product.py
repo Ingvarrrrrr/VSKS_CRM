@@ -4,6 +4,13 @@ from sqlalchemy.orm import relationship
 from app.database import Base
 from app.models.purchase_category import product_purchase_categories
 
+# Дефолт категории товара — одна константа (владелец, 2026-09-20: ручное
+# добавление товара падало 422, т.к. ProductCreate требовала непустую
+# категорию; теперь она опциональна, а пустая/None подменяется этим значением
+# в routers/products.py — не два литерала 'Прочее', ПРАВИЛО №6).
+DEFAULT_PRODUCT_CATEGORY = 'Прочее'
+
+
 class Product(Base):
     __tablename__ = "products"
     id = Column(Integer, primary_key=True, index=True)
@@ -11,7 +18,7 @@ class Product(Base):
     name = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
     description_44fz = Column(Text, nullable=True)  # Описание для 44-ФЗ (интервалы характеристик)
-    category = Column(String(200), nullable=False, default='Прочее')  # Категория товара из таблицы
+    category = Column(String(200), nullable=False, default=DEFAULT_PRODUCT_CATEGORY)  # Категория товара из таблицы
     product_type = Column(String(200), nullable=True)  # Вид
     # Единица измерения (владелец, 2026-09-01): либо задана вручную в карточке,
     # либо дозаполняется бэкфиллом/импортом по правилу — единственная ЕИ, с

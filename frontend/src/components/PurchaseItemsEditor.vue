@@ -1408,23 +1408,46 @@ const resolvedContractLinks = computed(() => {
 function getContractItemFor(rowIdx: number): ContractItem | undefined {
   const pi = localItems.value[rowIdx]
   const pid = (pi as any)?.id
-  if (pid == null) return localContractItems.value[rowIdx]
 
-  // Direct match по source_item_id
-  let linked = localContractItems.value.find(ci => (ci as any).source_item_id === pid)
-  if (linked) return linked
+  if (pid != null) {
+    // Direct match по source_item_id
+    const linked = localContractItems.value.find(ci => (ci as any).source_item_id === pid)
+    if (linked) return linked
 
-  // Reverse lookup через resolved links — может быть orphan CI который должен связаться с этим PI
-  for (const ci of localContractItems.value) {
-    const ciId = (ci as any).id
-    if (ciId == null) continue
-    if (resolvedContractLinks.value.get(ciId) === pid) {
-      return ci
+    // Reverse lookup через resolved links — может быть orphan CI который должен связаться с этим PI
+    for (const ci of localContractItems.value) {
+      const ciId = (ci as any).id
+      if (ciId == null) continue
+      if (resolvedContractLinks.value.get(ciId) === pid) {
+        return ci
+      }
     }
   }
 
-  // Positional fallback
-  return localContractItems.value[rowIdx]
+  // 2026-09-20: позиционный фолбэк по rowIdx раньше срабатывал БЕЗУСЛОВНО (и
+  // для сохранённых pid, и для несохранённых pid==null) — если ContractItem
+  // на этом индексе массива на самом деле принадлежал ДРУГОЙ позиции (для
+  // текущей строки ещё не создан ensureContractItemFor'ом), фолбэк подсовывал
+  // чужую строку: стадия «Договор» показывала чужие цену/сумму, а правка через
+  // updateContractField уходила в ContractItem чужой позиции (хвост жалобы
+  // владельца 17.09 «в договоре суммы не отобразились, а в поставке
+  // отобразились» — обе стадии читают один и тот же getContractItemFor).
+  // Разрешаем фолбэк по индексу ТОЛЬКО для «ничьей» legacy-строки — у неё нет
+  // source_item_id И resolvedContractLinks не смог подобрать для неё ни одной
+  // позиции (значение null/отсутствует), т.е. она не привязана вообще ни к
+  // одной строке ТЗ. Для такой строки (закупки до Phase 27.1.10, где
+  // source_item_id ещё не проставлялся) позиционный индекс — единственный
+  // доступный ориентир. Во всех остальных случаях — undefined; вызывающие уже
+  // обрабатывают отсутствие (пустые поля стадии через `?? ...`, ensureContractItemFor
+  // заводит новую строку при первом вводе).
+  const candidate = localContractItems.value[rowIdx]
+  if (!candidate) return undefined
+  const candidateId = (candidate as any).id
+  const candidateSrcId = (candidate as any).source_item_id
+  const isUnclaimed =
+    candidateSrcId == null &&
+    (candidateId == null || (resolvedContractLinks.value.get(candidateId) ?? null) == null)
+  return isUnclaimed ? candidate : undefined
 }
 
 // Дефект «НДС/сумма стадии Договор — 0,00» (владелец, 2026-09-17): цена и

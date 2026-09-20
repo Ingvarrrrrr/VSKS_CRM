@@ -50,11 +50,9 @@
           <v-col cols="12" md="4">
             <v-combobox v-model="form.category"
               :items="categoryOptions"
-              label="Категория *"
-              :rules="[(v: any) => (!!v && String(v).trim().length > 0) || 'Категория обязательна']"
-              required
+              label="Категория"
               variant="outlined" density="compact"
-              hint="Выберите или введите новую (обязательное поле)" persistent-hint />
+              hint="Пусто — будет «Прочее»" persistent-hint />
           </v-col>
           <v-col cols="12" md="6">
             <v-text-field v-model.number="form.price" label="Цена за ед., ₽" type="number"
@@ -114,7 +112,6 @@
         <v-spacer />
         <v-btn variant="text" @click="emit('update:modelValue', false)">Отмена</v-btn>
         <v-btn color="primary" :loading="saving"
-          :disabled="!form.category || !String(form.category).trim()"
           @click="emit('save')">
           {{ editingId ? 'Сохранить' : 'Добавить в каталог' }}
         </v-btn>

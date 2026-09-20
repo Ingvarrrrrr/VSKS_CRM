@@ -1,5 +1,5 @@
 """Products, pricing, and dashboard summary schemas (extracted from schemas.py)."""
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 from typing import Optional, List
 from datetime import date, datetime
 from decimal import Decimal
@@ -38,7 +38,10 @@ class ProductCreate(BaseModel):
     name: str
     description: Optional[str] = None
     description_44fz: Optional[str] = None
-    category: str = Field(..., min_length=1)
+    # Опционально (владелец, 2026-09-20): ручное добавление товара падало 422
+    # на пустой категории — пусто/None допускается на входе, роутер создания
+    # подставляет app.models.product.DEFAULT_PRODUCT_CATEGORY.
+    category: Optional[str] = None
     product_type: Optional[str] = None
     unit: Optional[str] = None  # Единица измерения (владелец, 2026-09-01)
     item_kind: Optional[str] = "товар"  # "товар" или "услуга"

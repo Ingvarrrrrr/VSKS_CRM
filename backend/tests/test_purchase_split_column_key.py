@@ -9,6 +9,7 @@
 затрагивает соседние позиции/закупки.
 """
 import pytest
+from sqlalchemy import select
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 
@@ -116,3 +117,18 @@ async def test_split_purchase_still_works_and_drops_split_column_key(client, db_
 
     await db_session.refresh(p)
     assert p.status == "split"
+
+    # Владелец (2026-09-20): item_name дочерних закупок раньше наследовал
+    # item_name РОДИТЕЛЯ целиком — обе группы получали одинаковое, бесполезное
+    # «Наименование» (purchase.item_name.py:purchase_ops.py). Теперь
+    # item_name == subject (разбитый по группе текст), группы различимы и
+    # совпадают с тем, что видно в списке/экспорте.
+    children = (await db_session.execute(
+        select(Purchase).where(Purchase.parent_purchase_id == p.id)
+    )).scalars().all()
+    assert len(children) == 2
+    assert {c.item_name for c in children} == {c.subject for c in children}
+    assert len({c.item_name for c in children}) == 2, (
+        f"Дочерние закупки должны иметь РАЗНЫЕ item_name (по группе), а не "
+        f"унаследованное имя родителя: {[c.item_name for c in children]}"
+    )

@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import get_current_user, get_single_org_id
 from app.database import get_db
-from app.models.product import Product
+from app.models.product import Product, DEFAULT_PRODUCT_CATEGORY
 from app.models.purchase_category import PurchaseCategory
 from app.models.user import User
 from app.schemas.schemas import ProductCreate, ProductOut
@@ -181,6 +181,36 @@ def _price_links_max_collected_at(links: list) -> Optional[str]:
     return max(dates) if dates else None
 
 
+async def _actualize_price_from_form(
+    db: AsyncSession, db_product: Product, *, price, had_links: bool, links: list, user,
+) -> None:
+    """Единая точка выбора source/collected_at при записи цены из формы
+    ProductCreate — используется И create_product, И update_product (владелец,
+    2026-08-29, расширено 2026-09-20: create_product клал price напрямую в
+    Product(**data), минуя actualize_product_price — та же болезнь, что была
+    в импорте, ПРАВИЛО №6 — не копировать эту логику выбора второй раз).
+
+    Цена посчиталась из price_links (автомониторинг ссылок сравнения цен) →
+    source='monitoring', collected_at — самая свежая дата среди ссылок; иначе
+    — ручной ввод → source='manual'.
+    """
+    if had_links and _calc_price_from_links(links or []) is not None:
+        collected = _price_links_max_collected_at(links or [])
+        await actualize_product_price(
+            db, db_product, price=price, source="monitoring",
+            collected_at=collected, user=user,
+        )
+    else:
+        from datetime import datetime as _dt
+        # collected_at = момент ввода (без него ProductPriceHistory.collected_at
+        # остаётся NULL — та же болезнь, что чинилась в импорте ТЗ, и такая же
+        # строка выпадает из compute_price_stats/price_freshness).
+        await actualize_product_price(
+            db, db_product, price=price, source="manual",
+            collected_at=_dt.utcnow(), user=user,
+        )
+
+
 @router.post("/", response_model=ProductOut)
 async def create_product(
     product: ProductCreate,
@@ -209,7 +239,18 @@ async def create_product(
 
     data = product.model_dump()
     category_ids = data.pop("purchase_category_ids", None)
+    # Категория опциональна на входе (владелец, 2026-09-20: ручное добавление
+    # товара без категории падало 422) — пусто/None подменяется дефолтом
+    # модели, одна константа (app.models.product.DEFAULT_PRODUCT_CATEGORY).
+    if not (data.get("category") or "").strip():
+        data["category"] = DEFAULT_PRODUCT_CATEGORY
     _apply_price_links(data, None)
+    # price НЕ задаём здесь напрямую (ПРАВИЛО №6 — единственный писатель
+    # product.price это actualize_product_price, см. ниже) — иначе у только
+    # что созданного товара цена есть, а price_updated_at/строка в
+    # product_price_history — нет (та же болезнь, что чинилась в импорте ТЗ,
+    # координатор 2026-09-20: price_updated_at=null после ручного добавления).
+    new_price = data.pop("price", None)
     db_product = Product(**data)
     # Категории закупки (владелец, 2026-09-16) выставляются ДО db.add()/flush():
     # объект ещё transient, relationship-коллекция пуста в памяти без обращения
@@ -219,6 +260,13 @@ async def create_product(
     # не покрывает, он работает только как eager-стратегия внутри SELECT).
     await _set_purchase_categories(db, db_product, category_ids)
     db.add(db_product)
+    await db.flush()  # нужен db_product.id для ProductPriceHistory.product_id (NOT NULL)
+    if new_price is not None:
+        await _actualize_price_from_form(
+            db, db_product, price=new_price,
+            had_links=bool(data.get("price_links")), links=data.get("price_links") or [],
+            user=current_user,
+        )
     await db.commit()
     await db.refresh(db_product)
     return db_product
@@ -238,6 +286,11 @@ async def update_product(
     old_price = db_product.price
     data = product.model_dump()
     category_ids = data.pop("purchase_category_ids", None)
+    # Тот же фолбэк, что и в create_product (см. коммент там) — PUT тоже
+    # принимает полную ProductCreate-форму, пустая категория не должна ронять
+    # обновление 422/NOT NULL.
+    if not (data.get("category") or "").strip():
+        data["category"] = DEFAULT_PRODUCT_CATEGORY
     had_links = bool(data.get("price_links"))
     _apply_price_links(data, db_product)
     new_price = data.get("price")
@@ -249,19 +302,14 @@ async def update_product(
     db_product.updated_by = current_user.full_name or current_user.username
 
     # Актуализация цены (владелец, 2026-08-29): price изменился — записать
-    # источник + историю. Если пришли price_links и из них посчиталась цена —
-    # это автомониторинг ссылок ('monitoring'), иначе ручной ввод ('manual').
+    # источник + историю через единую точку выбора source (_actualize_price_from_form,
+    # общую с create_product, см. коммент там).
     if new_price is not None and new_price != old_price:
-        if had_links and _calc_price_from_links(data.get("price_links") or []) is not None:
-            collected = _price_links_max_collected_at(data.get("price_links") or [])
-            await actualize_product_price(
-                db, db_product, price=new_price, source="monitoring",
-                collected_at=collected, user=current_user,
-            )
-        else:
-            await actualize_product_price(
-                db, db_product, price=new_price, source="manual", user=current_user,
-            )
+        await _actualize_price_from_form(
+            db, db_product, price=new_price,
+            had_links=had_links, links=data.get("price_links") or [],
+            user=current_user,
+        )
 
     await db.commit()
     await db.refresh(db_product)

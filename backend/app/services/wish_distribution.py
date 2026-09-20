@@ -617,7 +617,13 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
             subsidy_id=wish.subsidy_id,
             feo_category_id=wish.feo_category_id,
             event_id=getattr(wish, 'event_id', None),  # «Мероприятие»
-            item_name=title,
+            # Владелец (2026-09-20): «Наименование» дочерней закупки было
+            # заголовком заявки целиком (title, у владельца буквально «Всё») —
+            # мусорное наследство, раз subject уже несёт нормальный,
+            # разбитый по группе текст. item_name = subject (единый источник
+            # текста закупки, см. purchase_export.py и OrdersTable.vue, которые
+            # оба показывают subject || item_name).
+            item_name=subject,
             subject=subject,
             planned_quantity=total_qty_grp or wish.quantity,
             planned_total_price=total_nmck,

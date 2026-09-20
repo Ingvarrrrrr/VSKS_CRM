@@ -8,6 +8,7 @@ import { apiFetch } from '@/api'
 import type { OrdersFiltersState } from './useOrdersFilters'
 import type { Purchase, Subsidy, Contractor } from './ordersTypes'
 import { effectivePrice, getOrderTypeKey, isItemFramework, nextStatus, statusLabelFor, transitionRequired } from './ordersLabels'
+import { itemsMatchQuery, purchaseMatchesSearch } from './ordersSearch'
 
 export function useOrdersData(options: {
   filters: OrdersFiltersState
@@ -98,10 +99,19 @@ export function useOrdersData(options: {
     if (filters.product && filters.product.trim()) {
       const q = filters.product.trim().toLowerCase()
       r = r.filter(o =>
-        (o as any).items?.some((it: any) => it.item_name?.toLowerCase().includes(q)) ||
+        itemsMatchQuery((o as any).items, q) ||
         o.subject?.toLowerCase().includes(q) ||
         o.item_name?.toLowerCase().includes(q)
       )
+    }
+    // Владелец (2026-09-20): строка «Поиск» — по полям шапки закупки И по
+    // наименованиям её позиций (см. ordersSearch.purchaseMatchesSearch,
+    // переиспользует itemsMatchQuery — ту же проверку, что и filters.product
+    // выше, Правило №6). Раньше поиск целиком выполнялся клиентом через
+    // встроенный :search v-data-table (видит только отображаемые колонки) и
+    // дублирующий фильтр cardsSource ниже — ни один не заглядывал в items[].
+    if (filters.search && filters.search.trim()) {
+      r = r.filter(o => purchaseMatchesSearch(o, filters.search))
     }
     // Phase 31-06: filter to show only purchases with unseen foreign changes
     if (filters.onlyUnseen) r = r.filter(o => (o as any).unseen_changes_count > 0)
@@ -146,18 +156,11 @@ export function useOrdersData(options: {
   })
 
   // Cards pagination + selection (declared after filteredOrdersWithRowNum to avoid TDZ).
-  // cardsSource also applies the free-text `search` (which the v-data-table handled
-  // internally via :search — cards must replicate it to keep search interactive).
+  // Поиск (filters.search) уже применён выше, внутри filteredOrders — единая
+  // точка фильтрации для табличного и карточного представлений (Правило №6).
   const cardsPage = ref(1)
   const cardsPageSize = 24
-  const cardsSource = computed(() => {
-    const q = (filters.search || '').trim().toLowerCase()
-    if (!q) return filteredOrdersWithRowNum.value
-    return filteredOrdersWithRowNum.value.filter((o: any) =>
-      [o.registry_number, o.subject, o.item_name, o.contractor_name, o.subsidy_name, o.contract_number, o.order_number, o.agreement_number]
-        .some(v => String(v ?? '').toLowerCase().includes(q))
-    )
-  })
+  const cardsSource = computed(() => filteredOrdersWithRowNum.value)
   const cardsTotalPages = computed(() => Math.max(1, Math.ceil(cardsSource.value.length / cardsPageSize)))
   const pagedCards = computed(() => { const s = (cardsPage.value - 1) * cardsPageSize; return cardsSource.value.slice(s, s + cardsPageSize) })
   watch(cardsTotalPages, t => { if (cardsPage.value > t) cardsPage.value = t })

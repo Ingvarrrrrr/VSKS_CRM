@@ -5,6 +5,7 @@ import { ref, computed, reactive, watch } from 'vue'
 import { apiFetch } from '@/api'
 import type { ToastType } from '@/composables/useToast'
 import { numOrNull } from '@/utils/numberFormat'
+import { describeApiError } from '@/utils/apiErrorMessage'
 import type { Product, PriceLink } from './productsTypes'
 
 export function useProductsForm(options: {
@@ -163,7 +164,13 @@ export function useProductsForm(options: {
       resetPhotoState()
       await load()
     } catch (e: any) {
-      showSnack(e?.detail || 'Ошибка сохранения', 'error')
+      // Не глотать причину generic-текстом (память проекта
+      // feedback_no_generic_error_snackbar) — общий хелпер, см. также
+      // useItemsCatalog.ts::saveFullProduct().
+      showSnack(
+        describeApiError(e, { fallback: 'Не удалось сохранить товар', prefix: 'Ошибка сохранения' }),
+        'error',
+      )
     } finally {
       saving.value = false
     }

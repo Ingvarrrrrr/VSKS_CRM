@@ -80,7 +80,6 @@
       :items="filteredOrdersWithRowNum"
       :filtered-orders="filteredOrders"
       :loading="loading"
-      :search="filters.search"
       v-model:selected-orders="selectedOrders"
       v-model:expanded="expanded"
       :col-filters="colState.filters"

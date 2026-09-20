@@ -67,11 +67,18 @@ async def _apply_import_to_existing_product(
         except Exception:
             new_price = None
         if new_price:
+            # collected_at (владелец, 2026-09-20, фикс «все цены старше 60
+            # дней»/«прочерк в Дате»): ТЗ-импорт не несёт отдельной колонки
+            # «дата цены» (в отличие от products_import_apply.py) — дата
+            # актуализации = момент импорта. Без явного collected_at
+            # actualize_product_price оставляет ProductPriceHistory.collected_at
+            # NULL, и compute_price_stats/price_freshness такую строку не видят.
             await actualize_product_price(
                 db, existing,
                 price=new_price,
                 source="import",
                 source_ref=import_note,
+                collected_at=_dt.utcnow(),
                 user=user,
             )
     if description and not (existing.description or "").strip():
@@ -118,14 +125,33 @@ async def _upsert_product_to_catalog(
         product_type=product_type or item_type or "товар",
         item_kind=item_type or "товар",
         unit=(unit or "").strip() or None,  # брэнд-новый товар — истории покупок ещё нет
-        price=Decimal(str(unit_price)) if unit_price else Decimal("0"),
+        # price НЕ задаём здесь напрямую (ПРАВИЛО №6 — единственный писатель
+        # product.price это actualize_product_price, см. ниже) — иначе у
+        # только что созданного товара цена есть, а price_updated_at/строка в
+        # product_price_history — нет (владелец, 2026-09-20: «все цены старше
+        # 60 дней», «на основании 1 цены», прочерки в «Дате» — были у товаров,
+        # заведённых этой веткой).
         is_active=True,
         import_note=import_note,
         updated_at=_dt.utcnow() if import_note else None,
         updated_by=updated_by if import_note else None,
     )
     db.add(p)
-    await db.flush()
+    await db.flush()  # нужен p.id для ProductPriceHistory.product_id (NOT NULL)
+    if unit_price:
+        try:
+            new_price = Decimal(str(unit_price))
+        except Exception:
+            new_price = None
+        if new_price:
+            await actualize_product_price(
+                db, p,
+                price=new_price,
+                source="import",
+                source_ref=import_note,
+                collected_at=_dt.utcnow(),
+                user=user,
+            )
     return p.id
 
 async def _save_smart_preview_to_purchase(

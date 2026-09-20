@@ -72,7 +72,10 @@ ALL_EXPORT_COLUMNS = {
     "item_type":              {"label": "Тип",                   "group": "Позиция"},
     "unit":                   {"label": "Ед. изм",               "group": "Позиция"},
     "quantity":               {"label": "Кол-во",                "group": "Позиция"},
-    "subject":                {"label": "Предмет закупки",       "group": "Позиция"},
+    # Владелец (2026-09-20): подпись расходилась с полем — «Предмет закупки»
+    # здесь vs «Предмет договора» в списке (OrdersTable.vue) и в
+    # field_registry.py (единый справочник полей). Свели к одной подписи.
+    "subject":                {"label": "Предмет договора",      "group": "Позиция"},
     "country_origin":         {"label": "Страна происхождения",  "group": "Позиция"},
     "planned_unit_price":     {"label": "Плановая цена за ед.",  "group": "Цены"},
     "planned_total_price":    {"label": "Плановая сумма",        "group": "Цены"},

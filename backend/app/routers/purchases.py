@@ -328,19 +328,11 @@ async def list_purchases(
     if scope == "purchases" and status != "wishes":
         q = q.where(Purchase.status != "wishes")
     if search:
-        like = f"%{search}%"
-        from sqlalchemy import cast, String as SAString
-        search_filters = [
-            Purchase.item_name.ilike(like),
-            Purchase.subject.ilike(like),
-            Purchase.registry_number.ilike(like),
-            Purchase.contract_number.ilike(like),
-            Purchase.order_number.ilike(like),
-        ]
-        # Search by purchase_number if numeric
-        if search.strip().isdigit():
-            search_filters.append(Purchase.purchase_number == int(search.strip()))
-        q = q.where(or_(*search_filters))
+        # Владелец (2026-09-20): поиск и по шапке закупки, и по наименованиям
+        # её позиций (purchase_items/contract_items) — единая сборка условия,
+        # см. докстринг app/services/purchase_search.py (Правило №6).
+        from app.services.purchase_search import build_purchase_search_clause
+        q = q.where(build_purchase_search_clause(search))
     q = q.order_by(Purchase.id.desc())
     if limit:
         q = q.limit(limit)
@@ -1958,6 +1950,18 @@ async def _recalc_purchase_totals(p: Purchase, db: AsyncSession) -> None:
     await recalc_purchase_money(db, p)
 
 
+async def delete_purchase_core(p: Purchase, db: AsyncSession) -> None:
+    """Тело удаления ОДНОЙ закупки — единственная реализация (ПРАВИЛО №6),
+    переиспользуется `delete_purchase` (DELETE /api/purchases/{pid}) и
+    `app.routers.wish_distribution_reset` (DELETE /api/wishes/{id}/distribution,
+    сброс разбивки заявки — удаляет «пустые» скрытые закупки заявки целиком,
+    чтобы повторное согласование создало их заново по target_column_key).
+    Каскады (purchase_items/purchase_members/чаты/файлы/комментарии/...) — на
+    уровне БД (ondelete=CASCADE, см. соответствующие модели), не копируются
+    здесь. Commit НЕ делает — это на вызывающем."""
+    await db.delete(p)
+
+
 @router.delete("/{pid}")
 async def delete_purchase(
     pid: int,
@@ -1972,7 +1976,7 @@ async def delete_purchase(
     from app.auth.permissions import can_manage_purchase
     if not await can_manage_purchase(current_user, p, db):
         raise HTTPException(403, "Нет прав на удаление: нужна вкладка «Закупки» (роль менеджер и выше) либо авторство своего авансового отчёта")
-    await db.delete(p)
+    await delete_purchase_core(p, db)
     await db.commit()
     return {"ok": True}
 

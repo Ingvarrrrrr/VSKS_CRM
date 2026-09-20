@@ -1,11 +1,15 @@
 <template>
+  <!-- Владелец (2026-09-20): встроенный :search v-data-table убран — он видит
+       только отображаемые колонки строки и никогда не находил совпадение
+       внутри items[] (позиции закупки). Поиск (filters.search) теперь
+       применяется ДО передачи items сюда, в useOrdersData.filteredOrders
+       (см. composables/orders/ordersSearch.ts) — единая точка фильтрации. -->
   <v-data-table
       v-resizable-columns="'orders'"
       ref="ordersTableRef"
       :headers="headers"
       :items="items"
       :loading="loading"
-      :search="search"
       density="compact"
       hover
       show-expand
@@ -522,7 +526,6 @@ const props = defineProps<{
   items: any[]
   filteredOrders: Purchase[]
   loading: boolean
-  search: string
   selectedOrders: Purchase[]
   expanded: string[]
   colFilters: Record<string, FilterValue>

@@ -23,15 +23,19 @@
           label="Название заявки" placeholder="По умолчанию сформирует сервер"
           density="compact" variant="outlined" hide-details style="max-width:420px"
         />
+        <!-- Общий переключатель (владелец, задача 3) — применяет режим КО ВСЕМ
+             строкам сразу, без состояния «следует общему» (строки всегда несут
+             свой явный priceMode). Названия — PRICE_MODE_LABELS, тот же
+             источник текста, что и построчный переключатель в
+             PlanToRequestRow.vue (Правило №6). -->
         <div class="d-flex align-center" style="gap:8px">
-          <span class="text-caption text-medium-emphasis">Цена по умолчанию для всех строк:</span>
+          <span class="text-caption text-medium-emphasis">Установить цену для ВСЕХ строк:</span>
           <v-btn-toggle
             :model-value="planToRequest.globalPriceSource.value"
-            density="compact" mandatory variant="outlined" color="deep-purple"
-            @update:model-value="(v: 'catalog' | 'plan') => planToRequest.setGlobalPriceSource(v)"
+            density="compact" variant="outlined" color="deep-purple"
+            @update:model-value="(v: PriceMode | null) => { if (v) planToRequest.setGlobalPriceSource(v) }"
           >
-            <v-btn size="small" value="catalog">Из каталога</v-btn>
-            <v-btn size="small" value="plan">Плановая</v-btn>
+            <v-btn v-for="mode in PRICE_MODE_ORDER" :key="mode" size="small" :value="mode">{{ PRICE_MODE_LABELS[mode] }}</v-btn>
           </v-btn-toggle>
         </div>
         <v-spacer />
@@ -76,7 +80,7 @@
               <th style="width:26%">Плановая позиция</th>
               <th style="width:130px">Кол-во</th>
               <th style="width:26%">Товар</th>
-              <th style="width:160px">Цена за ед.</th>
+              <th style="width:210px">Цена за ед.</th>
               <th style="width:140px">Сумма</th>
               <th style="width:36px"></th>
             </tr>
@@ -86,7 +90,7 @@
               v-for="row in planToRequest.rows.value" :key="row.plannedItemId"
               :row="row"
               @pick="(c) => planToRequest.pickCandidateForRow(row, c)"
-              @set-source-override="(s) => planToRequest.setRowPriceSourceOverride(row, s)"
+              @set-price-mode="(mode) => planToRequest.setRowPriceMode(row, mode)"
               @open-catalog-search="openPickerFor(row)"
               @write-to-initiator="planToRequest.writeToInitiator(row)"
               @remove="removeRow(row)"
@@ -96,15 +100,26 @@
       </div>
 
       <v-divider />
-      <v-card-actions class="px-4 py-3">
+      <v-card-actions class="px-4 py-3 flex-wrap">
         <span class="text-caption text-medium-emphasis">
           {{ planToRequest.totalRowsCount.value }} строк(и) станут позициями заявки
         </span>
+        <!-- «Без товара из каталога» недопустимо (владелец, задача 2) — пока
+             остаются строки без товара, «Создать заявку» дизейблена, и рядом
+             видно сколько именно + быстрый переход к первой такой строке.
+             rowsMissingProduct — единственный источник (usePlanToRequest.ts),
+             второй подсчёт не заводим. -->
+        <template v-if="planToRequest.rowsMissingProduct.value.length">
+          <v-chip size="small" color="warning" variant="tonal" class="ml-3">
+            Без товара: {{ planToRequest.rowsMissingProduct.value.length }}
+          </v-chip>
+          <v-btn size="small" variant="text" color="warning" class="ml-1" @click="scrollToFirstMissingProduct">показать</v-btn>
+        </template>
         <v-spacer />
         <v-btn variant="text" :disabled="planToRequest.submitting.value" @click="planToRequest.closeDialog()">Отмена</v-btn>
         <v-btn color="deep-purple" variant="flat" prepend-icon="mdi-hand-heart-outline"
           :loading="planToRequest.submitting.value"
-          :disabled="!planToRequest.totalRowsCount.value"
+          :disabled="!planToRequest.totalRowsCount.value || !!planToRequest.rowsMissingProduct.value.length"
           @click="planToRequest.submitCreate()"
         >Создать заявку</v-btn>
       </v-card-actions>
@@ -134,7 +149,10 @@
 // ручной поиск по каталогу и итоги.
 import { ref } from 'vue'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
-import { usePlanToRequest, type PlanToRequestRow as PlanToRequestRowState, type PlanToWishCandidate } from '@/composables/subsidies/usePlanToRequest'
+import {
+  usePlanToRequest, PRICE_MODE_LABELS, PRICE_MODE_ORDER,
+  type PlanToRequestRow as PlanToRequestRowState, type PlanToWishCandidate, type PriceMode,
+} from '@/composables/subsidies/usePlanToRequest'
 import { formatMoney } from '@/utils/formatMoney'
 import { productPhotoSrc } from '@/utils/productPhoto'
 import { apiFetch } from '@/api'
@@ -204,12 +222,21 @@ function onPickerPick(p: ProductLike) {
 }
 
 function onPickerCreateNew() {
-  // Владелец допустил (задание): если полноценный диалог создания товара
-  // (FullProductDialog + useItemsCatalog.ts) нельзя подключить без копипасты
-  // его логики — оставить только «Без товара». useItemsCatalog.ts завязан на
-  // localItems/selectedItemIdxs формы позиций закупки, здесь их нет — второй
-  // независимый экземпляр этой логики заводить не стали (Правило №6).
-  toast.addToast('Создание нового товара здесь недоступно — выберите «Без товара» или заведите товар в каталоге (Товары) и повторите поиск', 'info')
+  // «Без товара» убрано (владелец, задача 2) — каждая строка обязана иметь
+  // товар, поэтому вместо этого пути указываем на «Добавить товар» в меню
+  // самой строки (PlanToRequestRow.vue, тот же ProductFormDialog/useProductsForm.ts,
+  // второй независимый экземпляр не заводим, Правило №6).
+  toast.addToast('Создание нового товара здесь недоступно — закройте поиск и выберите «Добавить товар» в меню этой строки, либо заведите товар в каталоге (Товары) и повторите поиск', 'info')
+}
+
+// «показать» у «Без товара: N» (владелец, задача 2) — прокрутка к первой
+// строке без товара внутри собственного скролл-контейнера таблицы (не
+// window.scrollTo — диалог fullscreen со своим overflow-y:auto).
+function scrollToFirstMissingProduct() {
+  const first = planToRequest.rowsMissingProduct.value[0]
+  if (!first) return
+  const el = document.querySelector(`[data-planned-item-id="${first.plannedItemId}"]`)
+  el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 </script>
 

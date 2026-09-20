@@ -100,6 +100,10 @@
           :loading="planToRequest.residualsLoading.value"
           @click="planToRequest.selectWholeSmeta(!wholeSmetaAllSelected)">
           {{ wholeSmetaAllSelected ? 'Снять всё' : 'Вся смета' }}
+          <!-- Счётчик «(N с остатком)» (владелец, задача 1б) — тот же источник,
+               что и подпись «выбрано k из N» на чекбоксах категорий
+               (usePlanToRequest.ts::wholeSmetaSelection.total, Правило №6). -->
+          <span v-if="planToRequest.wholeSmetaSelection.value.total" class="ml-1">({{ planToRequest.wholeSmetaSelection.value.total }} с остатком)</span>
         </v-btn>
         <v-btn size="small" variant="flat" color="deep-purple"
           prepend-icon="mdi-check-bold"
@@ -207,6 +211,21 @@ const feoCollapse = useFeoCategoryCollapse()
 watch(() => ctx.selectedId.value, (id) => {
   if (id != null) void feoCollapse.ensureCandidates(id)
 }, { immediate: true })
+
+// Очистка выбора при смене субсидии, пока активен режим «Создать закупку на
+// основе плана» (владелец, правка 2026-09-20, задача 1а): без этого
+// selectedPlannedItemIds оставался глобальным Set с id прошлой субсидии, и
+// чекбоксы категорий новой субсидии могли показывать indeterminate по
+// случайному совпадению id. immediate НЕ ставим — на монтаже planToRequest.active
+// всегда false (режим ещё не запущен), первый вызов watcher срабатывает уже на
+// РЕАЛЬНУЮ смену субсидии. clearSelection переиспользует startSelectMode
+// целиком (тот же сброс Set + перезагрузка остатков под новую субсидию,
+// Правило №6, второй сброс не пишем).
+watch(() => ctx.selectedId.value, (id, prevId) => {
+  if (id != null && id !== prevId && planToRequest.active.value) {
+    planToRequest.clearSelection(id)
+  }
+})
 
 // Состояние кнопки «Вся смета»/«Снять всё» (задача 1) — тот же источник, что и
 // чекбоксы категорий (usePlanToRequest.ts::wholeSmetaSelection, Правило №6).

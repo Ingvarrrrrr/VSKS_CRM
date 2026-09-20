@@ -56,17 +56,31 @@
              только в режиме выбора для «Создать закупку на основе плана».
              Состояние/клик — usePlanToRequest.ts::subtreeSelectionState/
              selectCategorySubtree (Правило №6, тот же общий Set выбора, что и
-             построчные чекбоксы FeoLevel5Panel.vue). -->
-        <v-checkbox-btn
-          v-if="planToRequest.active.value"
-          class="feo-tree-select-checkbox"
-          density="compact" color="orange-darken-1"
-          :model-value="subtreeSelection.all"
-          :indeterminate="!subtreeSelection.all && subtreeSelection.some"
-          title="Выбрать все плановые позиции этой категории и подкатегорий с остатком количества > 0"
-          @click.stop
-          @update:model-value="(v: boolean | null) => planToRequest.selectCategorySubtree(node, ctx.feoCategories.value, !!v)"
-        />
+             построчные чекбоксы FeoLevel5Panel.vue). Правка 2026-09-20: жалоба
+             владельца — на категориях вроде «Экипировка»/«Комплект специальной
+             одежды для добровольцев» чекбокс показывал indeterminate («квадрат
+             с минусом»), и это не читалось как галочка вовсе. Крупнее (density
+             default, control-size 22px — уже был в CSS), с явной подписью
+             «категория целиком» и tooltip со счётом «выбрано k из N» — тот же
+             subtreeSelection (задача 1б, total/selectedCount из
+             computeSelectionState), второй подсчёт не заводим. N=0 — disabled
+             (в категории нет позиций с остатком, кликать нечего). -->
+        <v-tooltip v-if="planToRequest.active.value" location="top" open-delay="200">
+          <template #activator="{ props: cbTooltipProps }">
+            <span v-bind="cbTooltipProps" class="feo-tree-select-wrap" @click.stop>
+              <v-checkbox-btn
+                class="feo-tree-select-checkbox"
+                density="default" color="orange-darken-1"
+                :model-value="subtreeSelection.all"
+                :indeterminate="!subtreeSelection.all && subtreeSelection.some"
+                :disabled="subtreeSelection.total === 0"
+                @update:model-value="(v: boolean | null) => planToRequest.selectCategorySubtree(node, ctx.feoCategories.value, !!v)"
+              />
+              <span class="feo-tree-select-label">категория целиком</span>
+            </span>
+          </template>
+          <span>{{ subtreeSelectionTooltip }}</span>
+        </v-tooltip>
         <!-- Шеврон/папка — увеличенная кликабельная область (владелец, задача 3):
              раньше цель клика была ровно с иконку (15/16px), мимо легко было
              промахнуться. Обёрнуты в span 28×28 с паддингом — попадание проще,
@@ -742,6 +756,13 @@ const kpi = useKpiDrilldown(ctx)
 // источник, тот же Set выбора, что и построчные чекбоксы FeoLevel5Panel.vue).
 const planToRequest = usePlanToRequest()
 const subtreeSelection = computed(() => planToRequest.subtreeSelectionState(node.value, ctx.feoCategories.value))
+// Tooltip чекбокса категории (задача 1б) — тот же subtreeSelection, второй
+// источник счёта не заводим (Правило №6).
+const subtreeSelectionTooltip = computed(() => {
+  const s = subtreeSelection.value
+  if (s.total === 0) return 'В этой категории нет позиций с остатком количества'
+  return `Выбрано ${s.selectedCount} из ${s.total} позиций с остатком количества`
+})
 
 // Сворачивание категории-дубля в плановую позицию (задача 3) — тот же список
 // кандидатов, что считает счётчик/диалог в FeoTreeToolbar.vue (Правило №6).

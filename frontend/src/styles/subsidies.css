@@ -604,6 +604,23 @@
 .subsidies-page .feo-tree-select-checkbox .v-selection-control {
   min-height: unset;
 }
+/* Обёртка чекбокса «категория целиком» + подпись (владелец, правка 2026-09-20,
+   задача 1б) — сам tooltip-activator: flex-ряд, чтобы клик по подписи тоже
+   попадал в область tooltip (сам чекбокс кликается отдельно через свой
+   @update:model-value, здесь только hover-цель для v-tooltip). */
+.subsidies-page .feo-tree-select-wrap {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.subsidies-page .feo-tree-select-label {
+  font-size: 10px;
+  line-height: 1.1;
+  color: #94A3B8;
+  white-space: nowrap;
+  margin: 0 4px 0 1px;
+}
 .subsidies-page .cursor-pointer { cursor: pointer; }
 
 /* Inline budget edit */

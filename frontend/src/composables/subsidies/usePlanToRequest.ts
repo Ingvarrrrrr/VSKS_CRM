@@ -72,7 +72,25 @@ export interface PlanToWishCandidateItem {
   by_type: PlanToWishCandidate[]
 }
 
+// PriceSource — поле payload для бэка (app/routers/plan_to_wish.py::_CreateItem,
+// НЕ меняется). PriceMode — режим строки/общего переключателя в UI (владелец,
+// задача 3): у «Ввести самостоятельно» нет отдельного значения на бэке — маппится
+// в price_source='catalog' + явный unit_price (бэк: явная цена побеждает
+// price_source, см. create_wish_from_plan). Единственное место этого маппинга —
+// backendPriceSourceFor ниже (Правило №6, второй расчёт price_source не заводим).
 export type PriceSource = 'catalog' | 'plan'
+export type PriceMode = 'manual' | 'catalog' | 'plan'
+
+// Единственный источник подписей режима цены (владелец, задача 3: «одинаковые
+// названия и в общем переключателе сверху, и построчно») — PlanToRequestDialog.vue
+// (общий переключатель) и PlanToRequestRow.vue (построчный) читают отсюда, второй
+// копии текста не заводим.
+export const PRICE_MODE_LABELS: Record<PriceMode, string> = {
+  manual: 'Ввести самостоятельно',
+  catalog: 'Из прошлых закупок',
+  plan: 'По плану',
+}
+export const PRICE_MODE_ORDER: PriceMode[] = ['manual', 'catalog', 'plan']
 
 // Строка диалога подбора — кандидат из бэкенда + редактируемое состояние
 // (количество/выбранный товар/цена). reactive — удобнее точечных ref-ов, поля
@@ -95,11 +113,35 @@ export interface PlanToRequestRow {
   byType: PlanToWishCandidate[]
   // ── редактируемое состояние строки ──
   quantity: number
+  // «Без товара из каталога» убрано (владелец, задача 2: «на основании чего
+  // появится ТЗ в закупке?») — selectedCandidate теперь ЕДИНСТВЕННЫЙ признак
+  // «товар выбран», отдельного productChosen-флага не заводим (Правило №6).
+  // null = строка ещё требует выбора товара (плейсхолдер «Выбрать товар…» +
+  // предупреждающая рамка, см. PlanToRequestRow.vue).
   selectedCandidate: PlanToWishCandidate | null
-  productChosen: boolean // false = «ещё не выбрано» (плейсхолдер), true = осознанный выбор (включая «без товара»)
-  priceSourceOverride: PriceSource | null // null = берёт общий переключатель
+  priceMode: PriceMode // построчный режим цены — ВСЕГДА явный, без «следует общему» (задача 3)
   unitPrice: number
   creatingTask: boolean
+}
+
+// Дефолтный режим цены строки (владелец, задача 3): «Из прошлых закупок» —
+// если у выбранного товара есть цена; иначе «По плану» — если у плановой
+// позиции задана цена за единицу; иначе «Ввести самостоятельно». Единственное
+// место этого решения — вызывается и при создании строки (emptyRowFrom), и
+// при смене товара (pickCandidateForRow), второй копии условия не заводим.
+function defaultPriceModeFor(row: Pick<PlanToRequestRow, 'selectedCandidate' | 'planUnitPrice'>): PriceMode {
+  if (row.selectedCandidate?.price != null) return 'catalog'
+  if (row.planUnitPrice != null) return 'plan'
+  return 'manual'
+}
+
+// Причина, по которой режим цены недоступен для КОНКРЕТНОЙ строки (владелец,
+// задача 3) — используется PlanToRequestRow.vue, чтобы задизейблить кнопку
+// режима с tooltip. «Ввести самостоятельно» недоступным не бывает.
+export function priceModeDisabledReason(row: Pick<PlanToRequestRow, 'selectedCandidate' | 'planUnitPrice'>, mode: PriceMode): string | null {
+  if (mode === 'catalog' && row.selectedCandidate?.price == null) return 'у товара нет цены в каталоге'
+  if (mode === 'plan' && row.planUnitPrice == null) return 'у плановой позиции нет плановой цены'
+  return null
 }
 
 function emptyRowFrom(c: PlanToWishCandidateItem): PlanToRequestRow {
@@ -122,11 +164,11 @@ function emptyRowFrom(c: PlanToWishCandidateItem): PlanToRequestRow {
     byType: c.by_type || [],
     quantity: qty > 0 ? qty : 1,
     selectedCandidate: c.exact || null,
-    productChosen: !!c.exact,
-    priceSourceOverride: null,
+    priceMode: 'manual', // пересчитается ниже через defaultPriceModeFor
     unitPrice: 0,
     creatingTask: false,
   }
+  row.priceMode = defaultPriceModeFor(row)
   return row
 }
 
@@ -136,7 +178,11 @@ const dialogOpen = ref(false)
 const loadingCandidates = ref(false)
 const submitting = ref(false)
 const title = ref('')
-const globalPriceSource = ref<PriceSource>('catalog')
+// Косметическое состояние общего переключателя (задача 3) — НЕ «режим всех
+// строк» (такого понятия больше нет, см. докстринг PlanToRequestRow), только
+// подсветка последней нажатой кнопки в шапке диалога; сами строки всегда несут
+// свой priceMode независимо.
+const globalPriceSource = ref<PriceMode>('catalog')
 const rows = ref<PlanToRequestRow[]>([])
 const currentSubsidyId = ref<number | null>(null)
 // Прогресс материализации ручных планов категорий (перед сбором planned_item_ids)
@@ -181,10 +227,13 @@ function eligibleResidualIds(rows: FeoPlanPosition[]): number[] {
   return ids
 }
 
-function computeSelectionState(ids: number[], selected: Set<number>): { all: boolean; some: boolean } {
-  if (!ids.length) return { all: false, some: false }
+// total/selectedCount добавлены (владелец, задача 1б) — единственный источник
+// счётчика «Выбрано k из N» и для tooltip чекбокса категории (FeoTreeRow.vue),
+// и для подписи кнопки «Вся смета» (FeoTreeToolbar.vue) — второй подсчёт не заводим.
+function computeSelectionState(ids: number[], selected: Set<number>): { all: boolean; some: boolean; total: number; selectedCount: number } {
+  if (!ids.length) return { all: false, some: false, total: 0, selectedCount: 0 }
   const selectedCount = ids.filter(id => selected.has(id)).length
-  return { all: selectedCount === ids.length, some: selectedCount > 0 }
+  return { all: selectedCount === ids.length, some: selectedCount > 0, total: ids.length, selectedCount }
 }
 
 export function usePlanToRequest() {
@@ -212,6 +261,16 @@ export function usePlanToRequest() {
     } else {
       residualsSubsidyId.value = subsidyId
     }
+  }
+
+  // Очистка выбора без выхода из режима (владелец, задача 1а) — вызывается
+  // при смене субсидии, пока режим выбора активен (см. watch в
+  // FeoTreeToolbar.vue): чекбоксы не должны наследовать id прошлой субсидии.
+  // startSelectMode делает то же самое + перегружает остатки под новую
+  // субсидию — переиспользуем его целиком, второй сброс Set не заводим
+  // (Правило №6).
+  function clearSelection(subsidyId: number) {
+    startSelectMode(subsidyId)
   }
 
   function cancelSelectMode() {
@@ -251,7 +310,7 @@ export function usePlanToRequest() {
   // поддерева с остатком количества > 0 → отмечен; выбрана часть →
   // indeterminate; нет ни одной подходящей позиции в поддереве → снят и
   // некликабелен по сути (клик просто ничего не выберет).
-  function subtreeSelectionState(node: FeoNode, feoCategories: FeoCategory[]): { all: boolean; some: boolean } {
+  function subtreeSelectionState(node: FeoNode, feoCategories: FeoCategory[]): { all: boolean; some: boolean; total: number; selectedCount: number } {
     const subtreeIds = new Set(collectSubtreeIds(feoCategories, node.id))
     const rowsInSubtree = feoResiduals.plannedResiduals.value.filter(r => subtreeIds.has(r.category_id))
     return computeSelectionState(eligibleResidualIds(rowsInSubtree), feoLevel5.selectedPlannedItemIds.value)
@@ -261,36 +320,60 @@ export function usePlanToRequest() {
     computeSelectionState(eligibleResidualIds(feoResiduals.plannedResiduals.value), feoLevel5.selectedPlannedItemIds.value),
   )
 
-  function effectiveSourceFor(row: PlanToRequestRow): PriceSource {
-    if (!row.selectedCandidate) return 'plan'
-    return row.priceSourceOverride ?? globalPriceSource.value
+  // Бэковый price_source для конкретной строки (владелец, задача 3): payload
+  // на сервер НЕ меняется — 'manual' маппится в 'catalog' + явный unit_price
+  // (бэк: явная цена побеждает price_source, см. create_wish_from_plan),
+  // 'catalog'/'plan' идут как есть. Единственное место этого решения —
+  // submitCreate ниже читает отсюда, второй if/else не заводит (Правило №6).
+  function backendPriceSourceFor(row: PlanToRequestRow): PriceSource {
+    return row.priceMode === 'plan' ? 'plan' : 'catalog'
   }
 
+  // Пересчитывает ТОЛЬКО unitPrice под уже установленный row.priceMode (сам
+  // режим здесь не меняется — вызывающий код решает, когда режим менять, см.
+  // pickCandidateForRow/setGlobalPriceSource/setRowPriceMode). 'manual' —
+  // значение остаётся тем, что ввёл пользователь, здесь не трогается.
   function recomputeRowPrice(row: PlanToRequestRow) {
-    const src = effectiveSourceFor(row)
-    if (src === 'catalog' && row.selectedCandidate?.price != null) {
-      row.unitPrice = Number(row.selectedCandidate.price)
-    } else {
+    if (row.priceMode === 'catalog') {
+      row.unitPrice = row.selectedCandidate?.price != null ? Number(row.selectedCandidate.price) : 0
+    } else if (row.priceMode === 'plan') {
       row.unitPrice = row.planUnitPrice != null ? Number(row.planUnitPrice) : 0
     }
   }
 
-  function setGlobalPriceSource(src: PriceSource) {
-    globalPriceSource.value = src
+  // Общий переключатель (владелец, задача 3): применяет режим КО ВСЕМ
+  // строкам сразу, без состояния «следует общему» — но пропускает строки, для
+  // которых этот режим недоступен (нет цены товара/плана, см.
+  // priceModeDisabledReason), оставляя их текущий режим как есть — иначе
+  // читаемая только для чтения цена молча стала бы нулём без возможности
+  // поправить (поле недоступно для правки вне 'manual').
+  function setGlobalPriceSource(mode: PriceMode) {
+    globalPriceSource.value = mode
     for (const row of rows.value) {
-      if (row.priceSourceOverride == null) recomputeRowPrice(row)
+      if (priceModeDisabledReason(row, mode)) continue
+      row.priceMode = mode
+      recomputeRowPrice(row)
     }
   }
 
-  function setRowPriceSourceOverride(row: PlanToRequestRow, src: PriceSource | null) {
-    row.priceSourceOverride = src
+  // Построчный переключатель — меняет режим ТОЛЬКО этой строки (задача 3).
+  function setRowPriceMode(row: PlanToRequestRow, mode: PriceMode) {
+    if (priceModeDisabledReason(row, mode)) return
+    row.priceMode = mode
     recomputeRowPrice(row)
   }
 
-  function pickCandidateForRow(row: PlanToRequestRow, cand: PlanToWishCandidate | null) {
+  function pickCandidateForRow(row: PlanToRequestRow, cand: PlanToWishCandidate) {
     row.selectedCandidate = cand
-    row.productChosen = true
-    if (!cand) row.priceSourceOverride = 'plan'
+    // «При смене товара пересчитать цену по режиму» (задача 3) — текущий
+    // priceMode строки сохраняется, пересчитывается только число; но если
+    // именно ИЗ-ЗА смены товара текущий режим стал недоступен (у нового
+    // товара нет цены, а строка была в 'catalog'), откатываемся на дефолт
+    // по тем же правилам, что и при первом создании строки (defaultPriceModeFor,
+    // Правило №6 — второе условие выбора дефолта не пишем).
+    if (priceModeDisabledReason(row, row.priceMode)) {
+      row.priceMode = defaultPriceModeFor(row)
+    }
     recomputeRowPrice(row)
   }
 
@@ -403,6 +486,12 @@ export function usePlanToRequest() {
 
   const totalRowsCount = computed(() => rows.value.length)
   const totalAmount = computed(() => rows.value.reduce((s, r) => s + (Number(r.unitPrice) || 0) * (Number(r.quantity) || 0), 0))
+  // «Без товара из каталога» недопустимо (владелец, задача 2: «на основании
+  // чего появится ТЗ в закупке?») — единственный источник списка проблемных
+  // строк для disabled-кнопки «Создать заявку», подписи «Без товара: N» и
+  // прокрутки к первой такой строке (PlanToRequestDialog.vue), второй подсчёт
+  // не заводим.
+  const rowsMissingProduct = computed(() => rows.value.filter(r => !r.selectedCandidate))
 
   async function writeToInitiator(row: PlanToRequestRow) {
     const target = row.linkedPurchases[0]
@@ -434,6 +523,15 @@ export function usePlanToRequest() {
 
   async function submitCreate() {
     if (!currentSubsidyId.value || rows.value.length === 0) return
+    // Защита в коде, не только в UI (владелец, задача 2) — кнопка «Создать
+    // заявку» дизейблится в PlanToRequestDialog.vue при rowsMissingProduct,
+    // но submitCreate — единственная точка отправки на сервер, поэтому
+    // повторяет ту же проверку здесь (второй источник условия не заводим,
+    // читает тот же rowsMissingProduct).
+    if (rowsMissingProduct.value.length) {
+      showSnack(`Выберите товар из каталога для всех строк — без товара: ${rowsMissingProduct.value.length}`, 'error')
+      return
+    }
     submitting.value = true
     try {
       const payload = {
@@ -442,10 +540,13 @@ export function usePlanToRequest() {
         items: rows.value.map(r => ({
           feo_planned_item_id: r.plannedItemId,
           quantity: r.quantity,
-          product_id: r.selectedCandidate ? r.selectedCandidate.product_id : null,
-          item_name: r.selectedCandidate ? null : r.name,
-          unit_price: r.unitPrice,
-          price_source: effectiveSourceFor(r),
+          product_id: r.selectedCandidate!.product_id,
+          item_name: null,
+          // 'manual' — явная цена побеждает price_source на бэке, поэтому
+          // отправляем unit_price; 'catalog'/'plan' — цену не передаём вовсе,
+          // сервер берёт её сам из каталога/плана (см. backendPriceSourceFor).
+          unit_price: r.priceMode === 'manual' ? r.unitPrice : null,
+          price_source: backendPriceSourceFor(r),
         })),
       }
       const resp = await apiFetch<{ wish_id: number; title: string; items_count: number; warnings: string[] }>(
@@ -469,10 +570,10 @@ export function usePlanToRequest() {
   return {
     active, dialogOpen, loadingCandidates, submitting,
     title, globalPriceSource, rows, selectedCount,
-    totalRowsCount, totalAmount,
-    startSelectMode, cancelSelectMode, openConfirmDialog, closeDialog,
-    setGlobalPriceSource, setRowPriceSourceOverride, pickCandidateForRow,
-    effectiveSourceFor, recomputeRowPrice, writeToInitiator, submitCreate,
+    totalRowsCount, totalAmount, rowsMissingProduct,
+    startSelectMode, cancelSelectMode, clearSelection, openConfirmDialog, closeDialog,
+    setGlobalPriceSource, setRowPriceMode, pickCandidateForRow,
+    recomputeRowPrice, writeToInitiator, submitCreate,
     // Выбор категории/сметы целиком + материализация ручных планов (задачи 1 и 2)
     residualsLoading, selectCategorySubtree, selectWholeSmeta,
     subtreeSelectionState, wholeSmetaSelection,

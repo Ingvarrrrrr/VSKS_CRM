@@ -21,7 +21,10 @@
     <v-card class="wish-kanban-dialog-card">
       <v-toolbar density="comfortable" color="surface" class="wish-kanban-dialog-toolbar">
         <v-icon class="ml-4 mr-2" color="primary">mdi-view-column-outline</v-icon>
-        <v-toolbar-title>
+        <v-toolbar-title v-if="wish && wish.status === 'converted'">
+          Закупки заявки №{{ wish.id }} — перенос позиций до договора
+        </v-toolbar-title>
+        <v-toolbar-title v-else>
           Распределение позиций по закупкам
           <span v-if="wish" class="text-subtitle-2 text-medium-emphasis ml-2">
             · {{ wish.title || `Заявка #${wish.id}` }}
@@ -31,12 +34,23 @@
         <v-btn icon="mdi-close" title="Закрыть" @click="close" />
       </v-toolbar>
       <v-card-text class="pa-3 wish-kanban-dialog-cardtext">
+        <!-- Владелец (лист 2 №2, 2026-09-20): заявка УЖЕ согласована ('converted' —
+             закупки созданы) — здесь больше нечего «распределять и одобрить», это
+             отдельный борд переноса позиций между уже существующими закупками
+             (WishPurchasesKanban.vue). Несогласованной заявке (submitted/approved) —
+             старое поведение без изменений: WishDistributionKanban ниже. -->
+        <WishPurchasesKanban
+          v-if="wish && wish.status === 'converted'"
+          ref="boardRef"
+          :wish-id="wish.id"
+          @error="(m: string) => ctx.showSnack(m, 'error')"
+        />
         <WishDistributionKanban
-          v-if="wish"
+          v-else-if="wish"
           ref="boardRef"
           :wish-id="wish.id"
           :items="items"
-          :readonly="wish.status === 'converted'"
+          :readonly="false"
           @approved="(result: any) => $emit('approved', result)"
           @cancel="close"
           @error="(m: string) => ctx.showSnack(m, 'error')"
@@ -47,11 +61,14 @@
 </template>
 
 <script setup lang="ts">
-// WishKanbanDialog.vue — тонкая обёртка над WishDistributionKanban. Дословный
-// перенос шаблона (2213-2257) из WishesView.vue; логика (kanbanDialog/kanbanWish/
-// kanbanItems/openKanbanDialog/onKanbanApproved) осталась в useWishActions.ts.
+// WishKanbanDialog.vue — тонкая обёртка над WishDistributionKanban/
+// WishPurchasesKanban (второй — лист 2 №2, 2026-09-20, канбан по УЖЕ созданным
+// закупкам согласованной заявки). Дословный перенос шаблона (2213-2257) из
+// WishesView.vue; логика (kanbanDialog/kanbanWish/kanbanItems/openKanbanDialog/
+// onKanbanApproved) осталась в useWishActions.ts.
 import { ref } from 'vue'
 import WishDistributionKanban from '@/components/WishDistributionKanban.vue'
+import WishPurchasesKanban from './WishPurchasesKanban.vue'
 import { useWishesContext } from '@/composables/wishes/useWishesContext'
 import type { Wish } from '@/composables/wishes/wishTypes'
 
@@ -64,7 +81,7 @@ defineEmits<{ (e: 'approved', result: { purchase_ids: number[]; count: number })
 const model = defineModel<boolean>({ required: true })
 
 const ctx = useWishesContext()
-const boardRef = ref<InstanceType<typeof WishDistributionKanban> | null>(null)
+const boardRef = ref<InstanceType<typeof WishDistributionKanban> | InstanceType<typeof WishPurchasesKanban> | null>(null)
 
 // Владелец (2026-09-16): «случайно вышел из окна, всё слетает». Каждый бросок
 // карточки уже сохранён PATCH-ом (см. WishDistributionKanban.vue) — единственное,

@@ -15,10 +15,16 @@
       :style="{ flexBasis: columnWidth, maxWidth: columnWidth }"
     >
       <div class="kb-col-head">
-        <v-icon v-if="col.key === uncatKey" size="14" class="mr-1" color="grey">mdi-help-circle-outline</v-icon>
+        <!-- col.frozen (WishPurchasesKanban.vue, 2026-09-20): замок вместо обычной
+             иконки — закупка недоступна для переноса ни туда, ни оттуда. -->
+        <v-icon v-if="col.frozen" size="14" class="mr-1" color="grey">mdi-lock-outline</v-icon>
+        <v-icon v-else-if="col.key === uncatKey" size="14" class="mr-1" color="grey">mdi-help-circle-outline</v-icon>
         <v-icon v-else size="14" class="mr-1" color="primary">mdi-tag-outline</v-icon>
         <template v-if="!col.editing">
           <span class="kb-col-title" :title="col.label">{{ col.label }}</span>
+          <v-chip v-if="col.statusLabel" size="x-small" :color="col.statusColor || 'default'" variant="tonal" class="ml-1 flex-shrink-0">
+            {{ col.statusLabel }}
+          </v-chip>
           <v-btn
             v-if="!readonly && allowAddColumn && col.key !== uncatKey"
             icon="mdi-pencil-outline"
@@ -62,9 +68,9 @@
            реальный DOM, а не соревнуется с браузерным перетаскиванием. -->
       <draggable
         :list="col.items"
-        :group="{ name: groupName, pull: !readonly, put: !readonly }"
+        :group="{ name: groupName, pull: !readonly && !col.frozen, put: !readonly && !col.frozen }"
         item-key="id"
-        :disabled="readonly"
+        :disabled="readonly || !!col.frozen"
         :animation="150"
         :scroll="true"
         :scroll-sensitivity="80"
@@ -77,7 +83,7 @@
         @change="(evt: any) => $emit('change', col.key, evt)"
       >
         <template #item="{ element }">
-          <WishDistributionCard :item="element" :readonly="readonly" />
+          <WishDistributionCard :item="element" :readonly="readonly || !!col.frozen" />
         </template>
       </draggable>
     </div>

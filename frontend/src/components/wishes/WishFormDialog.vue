@@ -128,7 +128,20 @@
             class="mb-4"
             icon="mdi-lock-outline"
           >
-            Редактирование запрещено: заявка привязана к закупке — {{ editingWish.contracted_locked_reason || 'на этапе договора или позже' }}
+            <div>Редактирование запрещено: заявка привязана к закупке — {{ editingWish.contracted_locked_reason || 'на этапе договора или позже' }}</div>
+            <!-- Владелец (лист 2 №4, 2026-09-20): поля формы уже disabled — плашка
+                 объясняет, что состав меняется только через возврат на доработку, и
+                 даёт кнопку вместо того, чтобы пользователь искал её сам. -->
+            <v-btn
+              class="mt-2"
+              size="small"
+              variant="tonal"
+              color="error"
+              prepend-icon="mdi-undo-variant"
+              @click="convertedEditGateDialog = true"
+            >
+              Вернуть на доработку
+            </v-btn>
           </v-alert>
 
           <!-- Section 1: Основная информация -->
@@ -1016,6 +1029,19 @@
                prepend-icon="mdi-stop-circle-outline" @click="actions.openStopDialog(editingWish)">
           Остановить заявку
         </v-btn>
+        <!-- Владелец (лист 2 №3, 2026-09-20): заявку откатили с 'converted' (реджект/
+             повторное согласование), но старые закупки из прошлого распределения
+             остались скрытыми (status='wishes') — вернутся с той же разбивкой при
+             следующем approve-distribution. Кнопка — насовсем их убрать. -->
+        <v-btn
+          v-if="editingWishId && editingWish && editingWish.status !== 'converted' && distReset.hiddenPurchasesCount.value > 0"
+          variant="tonal"
+          color="warning"
+          prepend-icon="mdi-backspace-outline"
+          @click="distReset.openResetDialog()"
+        >
+          Сбросить разбивку ({{ distReset.hiddenPurchasesCount.value }})
+        </v-btn>
         <!-- Владелец, 2026-09-04: возможность завести заявку как авансовый отчёт -->
         <v-tooltip v-if="editingWishId && editingWish && editingWish.source !== 'advance_report' && editingWish.contracted_locked"
                    location="top" :text="`Нельзя: ${editingWish.contracted_locked_reason || 'заявка уже на этапе договора или позже'}`">
@@ -1144,6 +1170,38 @@
     @convert-to-advance-confirm="actions.confirmConvertToAdvance"
     @convert-confirm="actions.convertWish"
   />
+
+  <!-- Владелец (лист 2 №3): подтверждение сброса скрытой разбивки. -->
+  <v-dialog v-model="distReset.resetDialog.value" max-width="480">
+    <v-card>
+      <v-card-title class="d-flex align-center ga-2">
+        <v-icon color="warning">mdi-backspace-outline</v-icon>
+        Сбросить разбивку
+      </v-card-title>
+      <v-card-text>
+        Скрытые закупки ({{ distReset.hiddenPurchasesCount.value }}) будут удалены, при следующем
+        согласовании разбивка соберётся заново по канбану. Разбивка НЕ сбрасывается сама при
+        откате — только этой кнопкой.
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer />
+        <v-btn variant="tonal" color="default" :disabled="distReset.resetting.value" @click="distReset.resetDialog.value = false">Отмена</v-btn>
+        <v-btn variant="flat" color="warning" :loading="distReset.resetting.value" @click="editingWish && distReset.confirmResetDistribution(editingWish)">
+          Сбросить
+        </v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
+  <!-- Владелец (лист 2 №4): гейт правки состава согласованной заявки. -->
+  <WishConvertedEditGate
+    v-model="convertedEditGateDialog"
+    :purchases-count="editingWish?.purchases?.length || editingWish?.purchase_ids?.length || 0"
+    :reason="convertedEditGateReason"
+    :can-return="ctx.isSaas.value"
+    :loading="actions.rejectingWish.value"
+    @confirm-return="onConvertedEditGateReturn"
+  />
 </template>
 
 <script setup lang="ts">
@@ -1177,6 +1235,7 @@ import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import ValidationArrows from '@/components/ValidationArrows.vue'
 import WishKanbanDialog from './WishKanbanDialog.vue'
 import WishActionDialogs from './WishActionDialogs.vue'
+import WishConvertedEditGate from './WishConvertedEditGate.vue'
 import WishTzSection from './WishTzSection.vue'
 import { apiFetch } from '@/api'
 import {
@@ -1186,6 +1245,7 @@ import { useWishForm } from '@/composables/wishes/useWishForm'
 import { useWishApprovers } from '@/composables/wishes/useWishApprovers'
 import { useWishItemsFeoAutosave } from '@/composables/wishes/useWishItemsFeoAutosave'
 import { useWishActions, canDistributeWish } from '@/composables/wishes/useWishActions'
+import { useWishDistributionReset } from '@/composables/wishes/useWishDistributionReset'
 import type { Wish } from '@/composables/wishes/wishTypes'
 // item-forms-accommodation-transport.md (владелец, 2026-09-15): «договора на
 // перевозку и питание могут быть не только рамочные, но и разовые» — заявка
@@ -1250,6 +1310,12 @@ const wishLive = useWishLive({
   },
 })
 
+const distReset = useWishDistributionReset({
+  ctx,
+  apiFetch,
+  reloadActiveTab: props.reloadActiveTab,
+})
+
 // Полностью оркестрованное открытие карточки — форма + участники + согласующие +
 // снимки автосейва ФЭО, ровно как единая функция openEditDialog в исходном файле.
 async function openEdit(wish: Wish) {
@@ -1262,6 +1328,21 @@ async function openEdit(wish: Wish) {
       autosave.snapshotWishItemsFeo()
     },
   })
+  // Владелец (лист 2 №3): проверка скрытых закупок (status='wishes', заявку
+  // откатили с converted) — лениво, только при реальном открытии карточки, не
+  // в списках. forgetHiddenPurchasesCheck() перед вызовом — чтобы повторное
+  // открытие ТОЙ ЖЕ заявки после внешнего изменения не показало устаревший счёт.
+  distReset.forgetHiddenPurchasesCheck()
+  if (form.editingWish.value) await distReset.checkHiddenPurchases(form.editingWish.value)
+}
+// Кнопка «Вернуть на доработку» в WishConvertedEditGate.vue (лист 2 №4) —
+// переиспользует существующий диалог «Отклонить» (Правило №6, см. обоснование
+// в самом WishConvertedEditGate.vue), не заводит второй механизм отката.
+function onConvertedEditGateReturn() {
+  if (!form.editingWish.value) return
+  form.convertedEditGateDialog.value = false
+  actions.openRejectDialog(form.editingWish.value)
+  form.wishDialog.value = false
 }
 function openCreate() {
   approvers.wishMembers.value = []
@@ -1290,6 +1371,7 @@ async function applyRowForceStatus() { await form.applyRowForceStatus() }
 // доступ (что и в оригинале работало именно так). ──
 const {
   wishDialog, wishDialogLoading, editingWishId, editingWish, wishDateMode, wishConvertError,
+  convertedEditGateDialog, convertedEditGateReason,
   applyCommonDateToAllItems, wishFormRef, wishSubmitBtnRef,
   validationArrowsActive, validationArrowFrom, validationArrowTargets, dismissValidationArrows,
   highlightMissingFeoCategory, saving, serverFieldErrors, wishForm, selectedSubsidyName, eventsForSubsidy,

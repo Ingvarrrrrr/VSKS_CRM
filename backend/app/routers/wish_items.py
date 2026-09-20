@@ -59,3 +59,17 @@ async def patch_wish_item(
     await db.commit()
     await db.refresh(item)
     return {"id": item.id, "target_column_key": item.target_column_key}
+
+
+# Под-роутеры (Правило №5 — не раздувать ядро этого файла новыми эндпоинтами,
+# сессия 2026-09-20, задачи B/D): DELETE .../{wish_id}/distribution («Сбросить
+# разбивку», app/routers/wish_distribution_reset.py) и GET .../{wish_id}/
+# purchases-board (доска закупок заявки для канбана, app/routers/
+# wish_purchases_board.py) — оба на 1 сегмент длиннее catch-all "/{wish_id}"
+# ядра wishes.py, не конфликтуют с ним независимо от порядка регистрации (тот
+# же принцип, что у "/{wish_id}/items/{item_id}" самого этого файла).
+from app.routers.wish_distribution_reset import router as _wish_distribution_reset_router
+from app.routers.wish_purchases_board import router as _wish_purchases_board_router
+
+router.include_router(_wish_distribution_reset_router)
+router.include_router(_wish_purchases_board_router)

@@ -5,7 +5,7 @@
   </div>
 
   <!-- FEO table with D&D, inline edit, total row -->
-  <div v-else ref="feoTableAreaEl" class="feo-table-wrap">
+  <div v-else ref="feoTableAreaEl" class="feo-table-wrap" :class="{ 'feo-table-wrap--select-mode': planToRequest.active.value }">
     <table class="feo-table">
       <thead>
         <tr>
@@ -193,12 +193,16 @@
 import { watchEffect, ref } from 'vue'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { formatCurrency } from '@/composables/subsidies/format'
+import { usePlanToRequest } from '@/composables/subsidies/usePlanToRequest'
 import FeoTreeRow from './FeoTreeRow.vue'
 import FeoLevel5Panel from './FeoLevel5Panel.vue'
 import FeoReqItemsRows from './FeoReqItemsRows.vue'
 import FeoByPurchasesRows from './FeoByPurchasesRows.vue'
 
 const ctx = useSubsidyDetailCtx()
+// Подсветка «режим выбора» для «Создать закупку на основе плана» (владелец,
+// лист 2 №7) — тот же синглтон, что и кнопка в FeoTreeToolbar.vue (Правило №6).
+const planToRequest = usePlanToRequest()
 
 // ctx.feoTableArea — ref на контейнер таблицы, нужен FeoTreeToolbar.vue для
 // PDF-экспорта (см. её докстринг); ref DOM-элемента не может быть создан внутри
@@ -251,6 +255,16 @@ watchEffect(() => {
   overflow-x: auto;
   overflow-y: auto;
   max-height: calc(100vh - 260px);
+  transition: outline-color 0.15s, background-color 0.15s;
+}
+/* Режим выбора плановых позиций «Создать закупку на основе плана» (владелец,
+   лист 2 №7) — заметный контур+фон всей панели дерева, чтобы было видно, что
+   экран в другом режиме, пока не нажата «Подтвердить выбор» или «Отмена»
+   (см. FeoTreeToolbar.vue/usePlanToRequest.ts). */
+.feo-table-wrap--select-mode {
+  outline: 2px solid #7c3aed;
+  outline-offset: 2px;
+  background: rgba(124, 58, 237, 0.05);
 }
 .feo-table {
   width: 100%;

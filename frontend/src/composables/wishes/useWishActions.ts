@@ -21,11 +21,16 @@ import type { UseWishFormReturn } from './useWishForm'
 // импортировать любой компонент, у которого уже есть свой useWishesContext().
 // Право на действие — то же самое, что уже стояло у «Распределить»/«Одобрить»:
 // менеджер+ или сам назначенный согласующий (assigned_to).
+// 'converted' добавлен сюда (владелец, лист 2 №2, 2026-09-20): «согласовали,
+// закупки уже созданы — понадобилось перенести позицию из одной в другую».
+// Клик открывает тот же WishKanbanDialog, но тот сам переключает борд по
+// wish.status (см. WishKanbanDialog.vue) — WishDistributionKanban (target_column_key,
+// до одобрения) уступает WishPurchasesKanban (перенос между готовыми закупками).
 export function canDistributeWish(
   wish: Pick<Wish, 'status' | 'assigned_to'>,
   ctx: Pick<WishesContext, 'isManagerOrAdmin' | 'currentUserId'>,
 ): boolean {
-  if (wish.status !== 'submitted' && wish.status !== 'approved') return false
+  if (!['submitted', 'approved', 'converted'].includes(wish.status)) return false
   return ctx.isManagerOrAdmin.value || wish.assigned_to === ctx.currentUserId
 }
 
@@ -169,6 +174,12 @@ export function useWishActions(deps: {
     kanbanWish.value = wish
     kanbanItems.value = []
     kanbanDialog.value = true
+    // 'converted' (владелец, лист 2 №2): WishKanbanDialog рендерит для неё
+    // WishPurchasesKanban, которая грузит /wishes/{id}/purchases-board САМА —
+    // kanbanItems (обогащённые каталогом товаров для target_column_key-доски)
+    // ей не нужны, и PATCH /items/{id} на этом статусе всё равно заблокирован
+    // бэком (заявка уже распределена). Не тратим запрос впустую.
+    if (wish.status === 'converted') return
     try {
       const full = await apiFetch<Wish & { items?: any[] }>(`/wishes/${wish.id}`)
       const items: any[] = Array.isArray(full.items) ? full.items : []

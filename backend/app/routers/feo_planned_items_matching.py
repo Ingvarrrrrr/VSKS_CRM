@@ -457,3 +457,13 @@ async def confirm_wish_plan_match(
     result = await db.execute(stmt)
     await db.commit()
     return {"ok": True, "wish_id": body.wish_id, "updated": result.rowcount}
+
+
+# ---------------------------------------------------------------------------
+# «Из плана — в заявку» (plan-to-wish, сессия 2026-09-20) — подключён под-роутером
+# (Правило №5, тонкий роутер + сервис): app/routers/plan_to_wish.py +
+# app/services/plan_to_wish.py. Итоговые пути — см. докстринг plan_to_wish.py.
+# ---------------------------------------------------------------------------
+from app.routers.plan_to_wish import router as plan_to_wish_router  # noqa: E402
+
+router.include_router(plan_to_wish_router)

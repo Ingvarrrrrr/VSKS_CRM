@@ -49,6 +49,57 @@ from app.services.plan_autoassign import (
 )
 
 
+async def backfill_wish_items_product_ids(wish_items: list, db: AsyncSession) -> dict:
+    """Бэкфилл product_id у legacy WishItem по точному совпадению имени
+    (normalize_product_name — Правило №6, см. app/services/product_catalog_match.py).
+    Мутирует переданные wish_items in-place (проставляет product_id там, где
+    его не было), возвращает normalize_product_name(name) → Product — тот же
+    словарь, что `resolve_wish_item_group_key` ниже использует как fallback
+    при отсутствующей связи product_id/product.category.
+
+    Вынесено из `_distribute_wish_to_purchases` (единственное место, где этот
+    блок раньше жил) — `wish_multi_sync.sync_multi_purchase_from_wish` тоже
+    зовёт `resolve_wish_item_group_key` (чтобы определить, к какой из
+    НЕСКОЛЬКИХ закупок заявки относится группа новой позиции) и нуждается в
+    ТОМ ЖЕ словаре, без второй копии этого запроса к БД (Правило №6).
+    """
+    from app.services.product_catalog_match import normalize_product_name, find_products_by_normalized_names
+    missing = [it for it in wish_items if not it.product_id and (it.item_name or "").strip()]
+    name_to_product: dict = {}
+    if missing:
+        names = {(it.item_name or "").strip() for it in missing}
+        name_to_product = await find_products_by_normalized_names(db, names)
+        for it in missing:
+            hit = name_to_product.get(normalize_product_name(it.item_name))
+            if hit:
+                it.product_id = hit.id
+    return name_to_product
+
+
+def resolve_wish_item_group_key(it: WishItem, name_to_product: dict) -> str:
+    """target_column_key → product.category → name-matched product.category →
+    '__uncategorized__'. ЕДИНСТВЕННЫЙ источник группировки позиции заявки по
+    колонке (ПРАВИЛО №6) — используется при первом создании закупок
+    (`_distribute_wish_to_purchases`, группировка по колонкам канбана) И при
+    повторном согласовании заявки, распределённой на НЕСКОЛЬКО закупок
+    (`app.services.wish_multi_sync.sync_multi_purchase_from_wish` — чтобы
+    определить, в закупку какой группы попадёт новая позиция заявки, ключ
+    группы обязан считаться тем же способом, что и при исходном распределении).
+
+    `name_to_product` — normalize_product_name(name) → Product, см.
+    `backfill_wish_items_product_ids` выше.
+    """
+    from app.services.product_catalog_match import normalize_product_name
+    if it.target_column_key:
+        return it.target_column_key
+    if it.product_id and it.product and it.product.category:
+        return it.product.category
+    hit = name_to_product.get(normalize_product_name(it.item_name))
+    if hit and hit.category:
+        return hit.category
+    return "__uncategorized__"
+
+
 async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> Optional[dict]:
     """Повторное согласование заявки (вернули в черновик/отклонили → поправили →
     согласовали заново) приводит УЖЕ СУЩЕСТВУЮЩУЮ закупку заявки к её текущему
@@ -65,12 +116,14 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
     легитимная правка, сделанная, пока заявка была НЕ converted; правило «после
     согласования правят в закупке» этим не нарушается.
 
-    len(purchases) != 1 — заявка когда-то распределена канбаном на НЕСКОЛЬКО
-    закупок (split=True, approve_distribution) — без сохранённого сопоставления
-    «группа → закупка» синхронизация неоднозначна, поэтому не выполняется вовсе
-    (возвращает None, поведение как до этой задачи). Обычное согласование
-    (split=False) — всегда ОДНА закупка, это подавляющее большинство случаев,
-    включая описанный на проде.
+    len(purchases) == 0 — синхронизировать нечего, возвращает None.
+    len(purchases) > 1 — заявка распределена канбаном на НЕСКОЛЬКО закупок
+    (split=True, approve_distribution) — раньше (до задачи A, владелец, лист 2
+    №2, 2026-09-20) синхронизация здесь не выполнялась вовсе («без сохранённого
+    сопоставления группа → закупка синхронизация неоднозначна»), теперь
+    сопоставление явное — PurchaseItem.wish_item_id/split_column_key уже несут
+    его, см. app.services.wish_multi_sync.sync_multi_purchase_from_wish
+    (отдельный файл — Правило №5, этот модуль уже большой).
 
     Гейт по стадии — тот же принцип и те же тексты, что `_withdraw_wish_from_plan`
     выше: закупка ушла дальше «Плана закупок» (TZ_FROZEN_STATUSES) — состав и
@@ -84,8 +137,11 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
     blocked_reason}. None — нечего/некого синхронизировать (0 или 2+ закупок).
     Commit НЕ делает — это на вызывающем (как и весь _distribute_wish_to_purchases).
     """
-    if len(purchases) != 1:
+    if len(purchases) == 0:
         return None
+    if len(purchases) > 1:
+        from app.services.wish_multi_sync import sync_multi_purchase_from_wish
+        return await sync_multi_purchase_from_wish(wish, purchases, db)
     from app.routers.purchases import TZ_FROZEN_STATUSES
     from app.routers.purchase_export import _STATUS_LABELS
     # Ленивый импорт (во избежание цикла роутер↔сервис, см. докстринг модуля):
@@ -191,21 +247,11 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
     items_kept_manual: list[dict] = []
     synced_items: list[PurchaseItem] = []
 
-    def _fmt(qty, price, total) -> str:
-        return f"{qty or 0} × {price or 0} ₽ = {float(total or 0):.2f} ₽"
-
-    # Дефект 3 (QA): поля с сохранённым «снимком ТЗ на момент переноса» —
-    # planned_* движется вместе с текущим значением ТОЛЬКО пока его не трогали
-    # руками в закупке (правило проекта «после согласования правят в закупке»).
-    # Признак ручной правки — текущее значение отличается от снимка; тогда поле
-    # НЕ перезаписывается из заявки (ни значение, ни сам снимок), а расхождение
-    # возвращается в items_conflicted, чтобы фронт показал его человеку вместо
-    # молчаливого отката.
-    _tracked_fields = (
-        ("quantity", "planned_quantity"),
-        ("unit_price", "planned_unit_price"),
-        ("total_price", "planned_total"),
-    )
+    # ПРАВИЛО №6: обновление полей ОДНОЙ уже сопоставленной пары (pi, wi) —
+    # единственный источник этого блока, см. app/services/
+    # wish_purchase_item_field_sync.py (вынесено оттуда же, где раньше жил
+    # инлайн, — теперь используется И здесь, И в wish_multi_sync.py).
+    from app.services.wish_purchase_item_field_sync import sync_purchase_item_fields_from_wish_item
 
     for wi in wish_items:
         pi = _existing_by_wid.pop(wi.id, None)
@@ -244,50 +290,10 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
             })
             continue
 
-        _before_qty, _before_price, _before_total = pi.quantity, pi.unit_price, pi.total_price
-        _name_changed = (pi.item_name or "") != (wi.item_name or "")
-
-        _any_field_changed = _name_changed
-        for field, snap_field in _tracked_fields:
-            cur_val = float(getattr(pi, field) or 0)
-            snap_val = float(getattr(pi, snap_field) or 0)
-            wish_val = float(getattr(wi, field) or 0)
-            _manually_edited = abs(cur_val - snap_val) > 0.005
-            if _manually_edited:
-                if abs(cur_val - wish_val) > 0.005:
-                    items_conflicted.append({
-                        "name": wi.item_name, "field": field,
-                        "in_purchase": cur_val, "in_wish": wish_val,
-                    })
-                # Не трогаем ни значение, ни снимок — ручная правка остаётся как есть.
-                continue
-            if abs(cur_val - wish_val) > 0.005:
-                _any_field_changed = True
-            setattr(pi, field, getattr(wi, field))
-            setattr(pi, snap_field, getattr(wi, field))
-
-        if _any_field_changed:
-            items_changed.append({
-                "name": wi.item_name,
-                "was": _fmt(_before_qty, _before_price, _before_total),
-                "now": _fmt(pi.quantity, pi.unit_price, pi.total_price),
-            })
-        pi.item_name = wi.item_name
-        pi.item_type = wi.item_type or pi.item_type
-        pi.unit = wi.unit
-        pi.country_origin = wi.country_origin
-        pi.feo_category_id = wi.feo_category_id
-        pi.feo_planned_item_id = wi.feo_planned_item_id
-        pi.over_plan = getattr(wi, 'over_plan', False)
-        pi.vat_rate = getattr(wi, 'vat_rate', None)
-        pi.needed_date = _eff_date(wish, wi)
-        # Ре-линковка (см. комментарий у _existing_by_wid/_existing_pool выше):
-        # правка в 'draft' пересоздаёт WishItem с новым id — восстанавливаем hard
-        # link на АКТУАЛЬНЫЙ id, иначе связь «заявка ↔ строка закупки» (W1,
-        # используется W-diff/exclude_wish_id/_fpi_reference_keys) обрывается
-        # молча при первом же возврате в черновик, даже когда содержимое позиции
-        # не менялось.
-        pi.wish_item_id = wi.id
+        _result = sync_purchase_item_fields_from_wish_item(pi, wi, wish)
+        if _result["changed_entry"]:
+            items_changed.append(_result["changed_entry"])
+        items_conflicted.extend(_result["conflicts"])
         synced_items.append(pi)
 
     # Дефект 2 (QA): позиции закупки, оставшиеся непарными, удаляются ТОЛЬКО
@@ -469,32 +475,16 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
     # X17/Х17, но именно на пути «заявка → конверсия в закупку», которым
     # владелец реально пользуется. Сужение выборки на стороне БД сохранено —
     # тем же SQL translate(), что и find_exact_product.
-    from app.services.product_catalog_match import normalize_product_name, find_products_by_normalized_names
-    missing = [it for it in items_full if not it.product_id and (it.item_name or "").strip()]
-    name_to_product: dict[str, Product] = {}
-    if missing:
-        names = {(it.item_name or "").strip() for it in missing}
-        name_to_product = await find_products_by_normalized_names(db, names)
-        for it in missing:
-            hit = name_to_product.get(normalize_product_name(it.item_name))
-            if hit:
-                it.product_id = hit.id
-
-    def _resolve_key(it: WishItem) -> str:
-        """target_column_key → product.category → name-matched product.category → '__uncategorized__'"""
-        if it.target_column_key:
-            return it.target_column_key
-        if it.product_id and it.product and it.product.category:
-            return it.product.category
-        hit = name_to_product.get(normalize_product_name(it.item_name))
-        if hit and hit.category:
-            return hit.category
-        return "__uncategorized__"
+    # ПРАВИЛО №6: бэкфилл product_id + resolve_wish_item_group_key — ЕДИНСТВЕННЫЙ
+    # источник (вынесены в module-level функции выше — тем же кодом пользуется
+    # wish_multi_sync.sync_multi_purchase_from_wish при повторном согласовании
+    # заявки, распределённой на несколько закупок).
+    name_to_product = await backfill_wish_items_product_ids(items_full, db)
 
     groups: dict[str, list] = {}
     if split:
         for it in items_full:
-            groups.setdefault(_resolve_key(it), []).append(it)
+            groups.setdefault(resolve_wish_item_group_key(it, name_to_product), []).append(it)
     elif items_full:
         groups["__all__"] = list(items_full)
 

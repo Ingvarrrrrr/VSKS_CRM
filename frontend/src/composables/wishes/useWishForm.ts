@@ -58,7 +58,17 @@ export function useWishForm(deps: {
   // T3: error state for «missing needed dates» when converting/approving
   const wishConvertError = ref<{ message: string; missingItemIds: number[]; missingItemNames: string[] } | null>(null)
 
-  watch(wishDialog, (v) => { if (!v) { dismissValidationArrows(); wishConvertError.value = null } })
+  // Гейт правки состава согласованной заявки (владелец, лист 2 №4, 2026-09-20):
+  // PUT /wishes/{id} на approved/converted, у которой изменился состав, вернул
+  // 409 (backend/app/services/wish_distribution.py::_withdraw_wish_from_plan —
+  // связанная закупка уже ушла дальше «Плана закупок», откат запрещён). Вместо
+  // голого текста в snackbar — понятный диалог (WishConvertedEditGate.vue,
+  // рендерится в WishFormDialog.vue), reason = сырое сообщение сервера (какая
+  // именно закупка блокирует).
+  const convertedEditGateDialog = ref(false)
+  const convertedEditGateReason = ref<string | null>(null)
+
+  watch(wishDialog, (v) => { if (!v) { dismissValidationArrows(); wishConvertError.value = null; convertedEditGateDialog.value = false; convertedEditGateReason.value = null } })
 
   watch(wishDateMode, (mode, prev) => {
     if (mode === 'per_item' && prev === 'common') {
@@ -876,6 +886,15 @@ export function useWishForm(deps: {
         document.querySelector('.v-overlay--active .v-input--error')
           ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       }
+      // Гейт (владелец, лист 2 №4): PUT на approved/converted заявку упёрся в
+      // _withdraw_wish_from_plan (409) — связанная закупка уже ушла дальше «Плана
+      // закупок», откат состава запрещён. Голый snackbar заменяем понятным
+      // диалогом (см. convertedEditGateDialog выше, рендерится в WishFormDialog.vue).
+      if (e?.status === 409 && ['approved', 'converted'].includes(editingWish.value?.status || '')) {
+        convertedEditGateReason.value = e?.payload?.message || e?.detail || null
+        convertedEditGateDialog.value = true
+        return false
+      }
       const msg = e?.payload?.message || e?.message || 'неизвестная ошибка'
       showSnack(`Не удалось сохранить: ${msg}`, 'error')
       return false
@@ -1035,6 +1054,7 @@ export function useWishForm(deps: {
   return {
     // core state
     wishDialog, wishDialogLoading, editingWishId, editingWish, wishDateMode, wishConvertError,
+    convertedEditGateDialog, convertedEditGateReason,
     applyCommonDateToAllItems, wishFormRef, wishSubmitBtnRef,
     validationArrowsActive, validationArrowFrom, validationArrowTargets, dismissValidationArrows,
     pointArrowsTo, showValidationArrows,

@@ -88,6 +88,13 @@ class WishPurchaseSync(BaseModel):
     items_conflicted: List[dict] = []
     items_kept_manual: List[dict] = []
     blocked_reason: Optional[str] = None
+    # Задача A (владелец, лист 2 №2, 2026-09-20): заявка, распределённая
+    # канбаном на НЕСКОЛЬКО закупок — верхние поля (purchase_id/…/items_added/…)
+    # остаются АГРЕГАТОМ по всем закупкам заявки (обратная совместимость с
+    # текущим потребителем, см. useWishesContext.ts::showPurchaseSync), а
+    # разбивка по каждой закупке — здесь, для будущего UI. Пусто для
+    # одиночной закупки (см. app.services.wish_distribution._sync_purchase_from_wish).
+    purchases: List[dict] = []
     model_config = ConfigDict(from_attributes=True)
 
 

@@ -65,3 +65,15 @@ async def patch_split_column(
     it.split_column_key = key
     await db.commit()
     return {"id": it.id, "split_column_key": it.split_column_key}
+
+
+# Под-роутер (Правило №5 — не раздувать ядро этого файла, сессия 2026-09-20,
+# задача C): POST .../items/{item_id}/move (перенос позиции между
+# «сестринскими» закупками одной заявки/родителя, app/routers/
+# purchase_items_move.py). Тот же приём, что plan_to_wish.py →
+# feo_planned_items_matching.py — см. докстринг purchase_items_move.py про
+# отсутствие у него собственного prefix (иначе include_router задвоил бы
+# "/api/purchases").
+from app.routers.purchase_items_move import router as _purchase_items_move_router
+
+router.include_router(_purchase_items_move_router)

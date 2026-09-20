@@ -53,6 +53,14 @@ class _MatchCandidate(BaseModel):
     price_source: Optional[str] = None
     price_source_ref: Optional[str] = None
     price_freshness: Optional[PriceFreshnessOut] = None
+    # plan-to-wish (2026-09-20): product_type/unit добавлены для переиспользования
+    # этой ЖЕ candidate-формы в POST /feo-planned-items/plan-to-wish/candidates
+    # (app/services/plan_to_wish.py) — item_type выше исторически уже несёт
+    # значение Product.product_type (см. _score_product_candidates ниже), эти
+    # два поля — те же данные под их настоящими именами, плюс unit, которого
+    # раньше в кандидате не было вовсе.
+    product_type: Optional[str] = None
+    unit: Optional[str] = None
 
 
 class _MatchResultItem(BaseModel):
@@ -75,18 +83,30 @@ class _MatchResponse(BaseModel):
     results: List[_MatchResultItem]
 
 
-@router.post("/match", response_model=_MatchResponse)
-async def match_products(
-    body: _MatchRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Score a list of product name queries against the catalog using token-based fuzzy matching.
+async def _score_product_candidates(
+    db: AsyncSession,
+    org_id: Optional[int],
+    queries: List[str],
+    limit: int,
+    prefix: bool = False,
+    active_only: bool = False,
+) -> List[dict]:
+    """Общий сборщик кандидатов-товаров: SELECT каталога → bulk_match (text_match) →
+    доактуализация цены (freshness), одним SELECT+один freshness-контекст на весь
+    запрос. Вынесено из POST /match (был единственным местом, где жил этот код) —
+    ПРАВИЛО №6: POST /api/products/match ниже и POST
+    /api/feo-planned-items/plan-to-wish/candidates (app/services/plan_to_wish.py)
+    вызывают ЭТУ функцию, не заводят вторую копию SELECT/bulk_match/freshness.
 
-    Returns top-k candidates per query with status: 'auto' (score>=0.95),
-    'suggest' (0.60<=score<0.95), or 'create' (no match found).
+    `active_only=True` — фильтр Product.is_active (нужен plan-to-wish: «кандидаты
+    только is_active»); /products/match исторически такого фильтра не имел и
+    продолжает без него (active_only=False по умолчанию — поведение не менялось).
+
+    Возвращает список dict (НЕ pydantic) в том же порядке, что `queries`:
+    [{"query": str, "status": 'auto'|'suggest'|'create', "candidates": [candidate_dict, ...]}]
+    candidate_dict несёт все поля формы _MatchCandidate (см. класс выше), включая
+    product_type/unit.
     """
-    org_id = get_single_org_id(current_user)
     # 27.4-29: photo_url из БД ИЛИ /api/products/{id}/photo если фото в bytea (photo_data)
     q = select(
         Product.id,
@@ -100,6 +120,8 @@ async def match_products(
     )
     if org_id:
         q = q.where((Product.org_id == org_id) | (Product.org_id.is_(None)))
+    if active_only:
+        q = q.where(Product.is_active.is_(True))
     rows = (await db.execute(q)).all()
     catalog = [
         (
@@ -117,8 +139,8 @@ async def match_products(
     # Потолок поднят с 10 до 200: инлайновый поиск в строке позиции (InlineProductMatch)
     # должен показывать весь список совпадений с прокруткой, а не top-3/top-10.
     # Пакетный импорт по-прежнему не шлёт limit явно и получает дефолт 3.
-    top_k = max(1, min(body.limit, 200))
-    results = bulk_match(body.queries, catalog, top_k=top_k, prefix_match=body.prefix)
+    top_k = max(1, min(limit, 200))
+    results = bulk_match(queries, catalog, top_k=top_k, prefix_match=prefix)
 
     # Актуализация цены (владелец, 2026-08-29): bulk_match не трогаем (сигнатура
     # зафиксирована) — донабираем метаданные вторым проходом по product_id
@@ -136,40 +158,61 @@ async def match_products(
             freshness_by_id[prod.id] = evaluate_freshness(prod, freshness_ctx)
 
     _log.info(
-        "POST /api/products/match: %d queries, catalog_size=%d, "
+        "products_match._score_product_candidates: %d queries, catalog_size=%d, "
         "auto=%d suggest=%d create=%d",
-        len(body.queries),
+        len(queries),
         len(catalog),
         sum(1 for r in results if r.status == 'auto'),
         sum(1 for r in results if r.status == 'suggest'),
         sum(1 for r in results if r.status == 'create'),
     )
 
+    out: List[dict] = []
+    for r in results:
+        candidates = []
+        for c in r.candidates:
+            meta = meta_by_id.get(c.product_id)
+            candidates.append({
+                "product_id": c.product_id,
+                "name": c.name,
+                "price": c.price,
+                "score": c.score,
+                "description": c.description,
+                "photo_url": c.photo_url,
+                "item_type": c.item_type,
+                "category": c.category,
+                "product_type": meta.product_type if meta else None,
+                "unit": meta.unit if meta else None,
+                "price_updated_at": (
+                    meta.price_updated_at.isoformat() if meta and meta.price_updated_at else None
+                ),
+                "price_source": meta.price_source if meta else None,
+                "price_source_ref": meta.price_source_ref if meta else None,
+                "price_freshness": freshness_by_id.get(c.product_id),
+            })
+        out.append({"query": r.query, "status": r.status, "candidates": candidates})
+    return out
+
+
+@router.post("/match", response_model=_MatchResponse)
+async def match_products(
+    body: _MatchRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Score a list of product name queries against the catalog using token-based fuzzy matching.
+
+    Returns top-k candidates per query with status: 'auto' (score>=0.95),
+    'suggest' (0.60<=score<0.95), or 'create' (no match found).
+    """
+    org_id = get_single_org_id(current_user)
+    results = await _score_product_candidates(db, org_id, body.queries, body.limit, prefix=body.prefix)
+
     return _MatchResponse(results=[
         _MatchResultItem(
-            query=r.query,
-            status=r.status,
-            candidates=[
-                _MatchCandidate(
-                    product_id=c.product_id,
-                    name=c.name,
-                    price=c.price,
-                    score=c.score,
-                    description=c.description,
-                    photo_url=c.photo_url,
-                    item_type=c.item_type,
-                    category=c.category,
-                    price_updated_at=(
-                        meta_by_id[c.product_id].price_updated_at.isoformat()
-                        if meta_by_id.get(c.product_id) and meta_by_id[c.product_id].price_updated_at
-                        else None
-                    ),
-                    price_source=meta_by_id[c.product_id].price_source if meta_by_id.get(c.product_id) else None,
-                    price_source_ref=meta_by_id[c.product_id].price_source_ref if meta_by_id.get(c.product_id) else None,
-                    price_freshness=freshness_by_id.get(c.product_id),
-                )
-                for c in r.candidates
-            ],
+            query=r["query"],
+            status=r["status"],
+            candidates=[_MatchCandidate(**c) for c in r["candidates"]],
         )
         for r in results
     ])

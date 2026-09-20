@@ -170,16 +170,26 @@ async def test_candidates_exact_match_collapses_double_spaces(db_session, test_u
 
 @pytest.mark.asyncio
 async def test_candidates_by_type_match(db_session, test_user):
-    """«Принтер» при товарах с product_type «принтер» (разные названия) → by_type,
-    а не exact/by_name (имена совсем другие — score по имени низкий).
+    """«Принтер» при товарах с product_type «принтер» (разные названия) —
+    обнаруживаются через product_type, а не по имени (имена совсем другие).
+
+    Владелец, 2026-09-21 (живая проверка, субсидия 46): пул by_name и пул
+    by_type теперь ОБЪЕДИНЯЮТСЯ и ранжируются одним similarity ДО раздачи по
+    двум спискам (см. build_plan_to_wish_candidates) — какая из товарных
+    находок попадёт в by_name, а какая в by_type, зависит от того, сколько
+    ещё конкурентов у неё по similarity (a не от жёсткого «type-match всегда
+    в by_type», как было раньше). Поэтому тест проверяет ОБЪЕДИНЕНИЕ
+    (by_name ∪ by_type) — сам факт, что product_type-совпадение нашло HP/Canon
+    несмотря на совсем другие имена, а «Сканер» (другой product_type) не
+    попал никуда.
 
     Имя плановой позиции — «Принтер тест-{uuid}» (не голое «Принтер»): общий
     dev-каталог реально содержит десятки товаров со словом «принтер»/«принтера»
     в названии (расходники/запчасти) — однословный запрос совпадает с ЛЮБЫМ из
-    них по стему с coverage=1.0 и мог случайно попасть в exact/by_name. Второе
-    слово с уникальным суффиксом гарантирует, что ни один реальный товар не
-    наберёт полное покрытие по НАЗВАНИЮ — но word-токен «принтер» (>=4 симв.)
-    всё равно попадает в match_targets для by_type (см. build_plan_to_wish_candidates)."""
+    них по стему с coverage=1.0 и мог случайно попасть в exact. Второе слово с
+    уникальным суффиксом гарантирует, что ни один реальный товар не наберёт
+    полное покрытие по НАЗВАНИЮ — но word-токен «принтер» (>=4 симв.) всё
+    равно попадает в match_targets для type-match (см. build_plan_to_wish_candidates)."""
     import uuid
     suffix = uuid.uuid4().hex[:8]
     name = f"Принтер тест-{suffix}"
@@ -197,9 +207,157 @@ async def test_candidates_by_type_match(db_session, test_user):
     row = result[0]
 
     assert row["exact"] is None
+    surfaced_ids = {c["product_id"] for c in row["by_name"]} | {c["product_id"] for c in row["by_type"]}
+    assert p1.id in surfaced_ids and p2.id in surfaced_ids, (
+        f"expected both printers to surface (by_name or by_type), got by_name={row['by_name']}, by_type={row['by_type']}"
+    )
+    assert unrelated.id not in surfaced_ids
+
+
+@pytest.mark.asyncio
+async def test_candidates_by_name_ranked_by_similarity_not_100_percent(db_session, test_user):
+    """Владелец, приёмка 2026-09-21: подбор товара для плановой позиции
+    «Перчатки» показывал «Перчатки латексные» и длинное чужое описание ОБА
+    как 100% (одностороннее покрытие токенов text_match.score у однословного
+    запроса — 1.0 любому названию, куда слово входит целиком). Теперь score
+    кандидатов by_name = text_match.similarity (симметричный Jaccard по
+    стемам), и by_name отсортирован по нему по убыванию — короткое близкое
+    название выше длинного описания с кучей посторонних слов.
+
+    Выдуманное слово-основа (не «Перчатки») — общий dev-каталог реально
+    содержит десятки живых перчаточных товаров (та же субсидия 46, на которой
+    владелец нашёл баг), которые иначе конкурировали бы за топ-8 наравне с
+    тестовыми и делали бы сравнение score недетерминированным."""
+    import uuid
+    suffix = uuid.uuid4().hex[:8]
+    base = "жбурзик"  # выдуманное слово — гарантированно отсутствует в реальном каталоге
+    name = f"{base} {suffix}"
+
+    _subsidy, cat = await _make_subsidy_with_leaf(db_session, "Subsidy-glove-rank")
+    planned = await _make_planned_item(db_session, cat, name, quantity=Decimal("10"), unit_price=Decimal("100"), amount=Decimal("1000"))
+
+    p_close1 = Product(name=f"{base} {suffix} латексные", category="Прочее", price=Decimal("50"), is_active=True)
+    p_close2 = Product(name=f"Защитные {base} {suffix}", category="Прочее", price=Decimal("60"), is_active=True)
+    p_long = Product(
+        name=(
+            f"{base} {suffix} цельноспилковые Master-Pro ПРОФИ (ДРАЙВЕР) / "
+            "водительские, размер 10,5 XL, 20 пар 9080-GSD-10"
+        ),
+        category="Прочее", price=Decimal("900"), is_active=True,
+    )
+    db_session.add_all([p_close1, p_close2, p_long])
+    await db_session.commit()
+    await db_session.refresh(p_close1)
+    await db_session.refresh(p_close2)
+    await db_session.refresh(p_long)
+
+    result = await build_plan_to_wish_candidates(db_session, [planned.id], limit=6)
+    row = result[0]
+
+    assert row["exact"] is None, f"однословный запрос не должен давать exact/100%, got: {row['exact']}"
+
+    by_name = row["by_name"]
+    ids_present = {c["product_id"] for c in by_name}
+    assert {p_close1.id, p_close2.id, p_long.id} <= ids_present, by_name
+
+    for c in by_name:
+        assert c["score"] < 1.0, f"ни один кандидат не должен показывать 100%, got: {c}"
+
+    # порядок by_name — по убыванию score (similarity); длинное описание с кучей
+    # посторонних слов (артикул/размер/бренд/количество) ранжируется НИЖЕ
+    # коротких близких названий (точные числа 0.5/0.5/<0.2 на голом «Перчатки»
+    # без изолирующей приставки — отдельно в test_text_match_similarity.py).
+    scores_by_id = {c["product_id"]: c["score"] for c in by_name}
+    assert scores_by_id[p_long.id] < scores_by_id[p_close1.id]
+    assert scores_by_id[p_long.id] < scores_by_id[p_close2.id]
+    assert scores_by_id[p_long.id] < 0.2, scores_by_id
+
+    ordered_scores = [c["score"] for c in by_name]
+    assert ordered_scores == sorted(ordered_scores, reverse=True), by_name
+
+
+@pytest.mark.asyncio
+async def test_candidates_type_matched_product_merged_into_by_name_ranking(db_session, test_user):
+    """Живая проверка владельца (2026-09-21, субсидия 46, «Перчатки»): товары,
+    совпавшие ТОЛЬКО по product_type («Защитные перчатки SBARCO MAGNUM...»,
+    «ВСВ Премиум...» — их имена не содержат искомого слова целиком, текстовый
+    поиск _score_product_candidates их не находит НИКАКИМ лимитом), но при
+    этом реально похожие по similarity — оставались в by_type, хотя по
+    подобию названия должны попасть в by_name (там были кандидаты с более
+    низким similarity, просто найденные текстовым поиском). Пул по имени и
+    пул по типу теперь объединяются ДО сортировки по similarity — единое
+    ранжирование, best-8 к пользователю независимо от того, каким путём
+    товар был найден."""
+    import uuid
+    suffix = uuid.uuid4().hex[:8]
+    base = "мурзаклей"  # выдуманное слово — гарантированно отсутствует в реальном каталоге
+    name = f"{base} {suffix}"
+
+    _subsidy, cat = await _make_subsidy_with_leaf(db_session, "Subsidy-glove-typemerge")
+    planned = await _make_planned_item(db_session, cat, name, quantity=Decimal("10"), unit_price=Decimal("100"), amount=Decimal("1000"))
+
+    # Совпадает ТОЛЬКО по типу — имя не содержит выдуманного слова вовсе,
+    # прогрессивное сужение по первому токену query его отсекает ещё до
+    # формирования пула по имени, независимо от ширины лимита.
+    p_type_only = Product(
+        name=f"SBARCO MAGNUM {suffix}", product_type=base,
+        category="Прочее", price=Decimal("300"), is_active=True,
+    )
+    # Проходит через пул по имени (содержит base+suffix — полное покрытие),
+    # но длинное описание с кучей посторонних слов — низкий similarity, ниже,
+    # чем у p_type_only (общий стем — только suffix).
+    p_long_name_match = Product(
+        name=(
+            f"{base} {suffix} цельноспилковые Master-Pro ПРОФИ (ДРАЙВЕР) / "
+            "водительские, размер 10,5 XL, 20 пар 9080-GSD-10"
+        ),
+        category="Прочее", price=Decimal("900"), is_active=True,
+    )
+    db_session.add_all([p_type_only, p_long_name_match])
+    await db_session.commit()
+    await db_session.refresh(p_type_only)
+    await db_session.refresh(p_long_name_match)
+
+    result = await build_plan_to_wish_candidates(db_session, [planned.id], limit=6)
+    row = result[0]
+
+    by_name_ids = {c["product_id"] for c in row["by_name"]}
     by_type_ids = {c["product_id"] for c in row["by_type"]}
-    assert p1.id in by_type_ids and p2.id in by_type_ids, f"expected both printers in by_type, got: {row['by_type']}"
-    assert unrelated.id not in by_type_ids
+
+    assert p_type_only.id in by_name_ids, (
+        f"товар, совпавший только по типу, но более похожий по имени, должен "
+        f"попасть в by_name, а не остаться в by_type: by_name={row['by_name']}, "
+        f"by_type={row['by_type']}"
+    )
+    assert p_type_only.id not in by_type_ids, "не должен дублироваться в by_type после попадания в by_name"
+
+    scores_by_id = {c["product_id"]: c["score"] for c in row["by_name"]}
+    assert scores_by_id[p_type_only.id] > scores_by_id[p_long_name_match.id], scores_by_id
+
+
+@pytest.mark.asyncio
+async def test_candidates_by_name_limit_is_8(db_session, test_user):
+    """limit by_name поднят до 8 (было завязано на общий `limit` параметр,
+    обычно 6) — владелец, 2026-09-21."""
+    import uuid
+    suffix = uuid.uuid4().hex[:8]
+    base = "фыркотяп"  # выдуманное слово — гарантированно отсутствует в реальном каталоге
+    name = f"{base} {suffix}"
+
+    _subsidy, cat = await _make_subsidy_with_leaf(db_session, "Subsidy-glove-limit")
+    planned = await _make_planned_item(db_session, cat, name, quantity=Decimal("10"), unit_price=Decimal("100"), amount=Decimal("1000"))
+
+    products = [
+        Product(name=f"{base} {suffix} вариант {i}", category="Прочее", price=Decimal("50"), is_active=True)
+        for i in range(10)
+    ]
+    db_session.add_all(products)
+    await db_session.commit()
+
+    # limit=6 передан в функцию (как и раньше для by_type), но by_name всегда до 8
+    result = await build_plan_to_wish_candidates(db_session, [planned.id], limit=6)
+    row = result[0]
+    assert len(row["by_name"]) == 8, row["by_name"]
 
 
 @pytest.mark.asyncio

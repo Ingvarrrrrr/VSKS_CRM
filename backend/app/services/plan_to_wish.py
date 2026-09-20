@@ -7,13 +7,21 @@
     (тот же источник, что и GET /feo-planned-items/residuals, GET
     /feo-categories/plan-positions — единственное место, считающее used/used_qty/
     linked_purchase_ids по PurchaseItem.feo_planned_item_id);
-  - сопоставление по имени (score/normalize/SCORE_SUGGEST) — ТОЛЬКО
-    app.services.text_match (через app.routers.products_match._score_product_candidates,
-    тот же SELECT+bulk_match+freshness, что у POST /products/match, не вторая копия);
+  - сопоставление по имени, отбор кандидатов в пул (score покрытия/normalize/
+    SCORE_SUGGEST) — ТОЛЬКО app.services.text_match (через
+    app.routers.products_match._score_product_candidates, тот же
+    SELECT+bulk_match+freshness, что у POST /products/match, не вторая копия);
     порог для "exact" — text_match.is_exact_match (см. там докстринг: полное
     совпадение нормализованных имён ИЛИ score>=SCORE_AUTO с защитой от коротких
     1-2-словных запросов) — строже, чем 'auto' у POST /products/match, который
     is_exact_match не использует и не меняется этой правкой.
+  - поле "score", которое видит пользователь (проценты в подсказках
+    exact/by_name/by_type) — ТОЛЬКО text_match.similarity (симметричный
+    Jaccard по стемам, см. её докстринг: 100% только при полном совпадении
+    normalize(имён), не при одностороннем покрытии токенов query, как у
+    text_match.score — владелец, 2026-09-21, «100% это не правда» на
+    однословный запрос). text_match.score остаётся ТОЛЬКО как фильтр отбора в
+    пул by_name (>=SCORE_SUGGEST) — второй формулы "похожести" не заводим.
   - суммы позиций (total_price = quantity × unit_price) — ТОЛЬКО
     app.services.item_amounts.line_total;
   - создание заявки — ТОЛЬКО app.routers.wishes.create_wish (вызывается напрямую с
@@ -23,8 +31,8 @@ by_type — отдельный, сознательно НЕ fuzzy механиз
 совпадение normalize(Product.product_type) с normalize(имени плановой позиции)
 целиком ИЛИ с любым её словом длиной ≥4 после text_match.tokenize. Использует
 ту же normalize/tokenize, что и text_match (единая точка нормализации), просто
-другое правило сравнения — второй механизм СЧЁТА score не заводится, score
-кандидата by_type считается той же text_match.score(...), что и everywhere else.
+другое правило сравнения — score кандидата by_type (проценты для пользователя)
+считается той же text_match.similarity(...), что и exact/by_name.
 """
 from dataclasses import dataclass
 from datetime import date
@@ -47,10 +55,49 @@ from app.services.feo_plan_fact import planned_item_consumption
 from app.services.item_amounts import line_total
 from app.services.price_freshness import load_context as load_freshness_context, evaluate as evaluate_freshness
 from app.services.product_snapshot import resolve_photo_url
-from app.services.text_match import normalize, tokenize, score as text_score, is_exact_match, SCORE_SUGGEST
+from app.services.text_match import normalize, tokenize, similarity as text_similarity, is_exact_match, SCORE_SUGGEST
 
 
 _BY_TYPE_MIN_WORD_LEN = 4
+
+# Владелец, 2026-09-21 (приёмка «По названию» для плановой позиции «Перчатки»):
+# «Перчатки латексные» и «Перчатки цельноспилковые ... 9080-GSD-10» оба
+# показывались как 100% — это было ОДНОСТОРОННЕЕ покрытие токенов query
+# (text_match.score), у однословного запроса оно всегда 1.0 у любого
+# названия, куда слово входит. Кандидат «score» теперь = text_match.similarity
+# (симметричный Jaccard по стемам, 100% только при полном совпадении имён —
+# см. её докстринг) — единая точка для by_name/by_type/exact ниже, второй
+# формулы "похожести" не заводим (Правило №6). limit by_name поднят до 8
+# (было `limit`, обычно 6) — с более честным ранжированием эта строка
+# читаема пользователем, не 1-2 случайных "100%"-кандидата.
+_BY_NAME_LIMIT = 8
+
+# Живая проверка владельца (2026-09-21, субсидия 46, «Перчатки»): пул
+# _score_product_candidates был узким (max(limit,10) ~= 6-10), progressive
+# narrowing по ПОКРЫТИЮ токенов усекал его ДО пересчёта similarity — более
+# похожие по имени товары («Защитные перчатки SBARCO MAGNUM размер 10/9»,
+# «ВСВ Премиум размер 7») вообще не попадали в кандидаты по имени и
+# оставались в by_type только потому, что by_type строится ОТДЕЛЬНО (по
+# product_type, без лимита). Фикс: (1) запрашивать широкий пул по имени
+# (лимит 40, не завязан на общий `limit` параметра), (2) объединять его с
+# пулом, совпавшим по типу, ДО сортировки по similarity — единый источник
+# ранжирования для by_name/by_type, второй формулы не заводим.
+_NAME_POOL_FETCH_LIMIT = 40
+
+
+def _price_recency_sort_value(price_updated_at_iso: Optional[str]) -> float:
+    """«Свежая цена» как тай-брейкер сортировки by_name (владелец, 2026-09-21):
+    более НЕДАВНО актуализированная цена — выше среди кандидатов с одинаковым
+    similarity. Возвращает значение для АСЦЕНДИРУЮЩЕЙ сортировки (меньше —
+    выше в списке): более свежая дата → более отрицательное число; дата не
+    задана → +inf (в самый конец)."""
+    if not price_updated_at_iso:
+        return float("inf")
+    try:
+        from datetime import datetime as _dt
+        return -_dt.fromisoformat(price_updated_at_iso).timestamp()
+    except (ValueError, TypeError):
+        return float("inf")
 
 
 def _candidate_from_type_row(row, score_value: float, freshness_ctx) -> dict:
@@ -174,7 +221,7 @@ async def build_plan_to_wish_candidates(
 
     names = [by_id[iid][0].name or "" for iid in ordered_ids]
     name_results = await _score_product_candidates(
-        db, org_id=None, queries=names, limit=max(limit, 10), prefix=False, active_only=True,
+        db, org_id=None, queries=names, limit=_NAME_POOL_FETCH_LIMIT, prefix=False, active_only=True,
     )
     name_results_by_index = {i: r for i, r in enumerate(name_results)}
 
@@ -224,39 +271,69 @@ async def build_plan_to_wish_candidates(
         cands = name_res["candidates"]
         exact = None
         rest = cands
+        # is_exact_match проверяется ПОКА cands[0]["score"] ещё покрытие
+        # (text_match.score) — порог SCORE_AUTO в её докстринге завязан именно
+        # на эту семантику, менять на similarity нельзя.
         if cands and is_exact_match(item_name, cands[0]["name"], cands[0]["score"]):
             exact = cands[0]
+            exact["score"] = 1.0  # владелец, 2026-09-21: «100% — когда имена совпадают»
             rest = cands[1:]
         # Кандидат, у которого раньше был высокий score (даже >=SCORE_AUTO), но
         # is_exact_match его отсёк — остаётся в rest (rest==cands целиком, если
-        # exact не назначен) и попадает в by_name с его настоящим score: выбор за
+        # exact не назначен) и попадает в объединённый пул: выбор за
         # пользователем, а не автоподстановка (см. is_exact_match docstring).
-        by_name = [c for c in rest if c["score"] >= SCORE_SUGGEST][:limit]
 
-        used_product_ids = {c["product_id"] for c in ([exact] if exact else []) + by_name}
-
+        # --- кандидаты по типу товара (product_type) — считаются СРАЗУ (а не
+        # после by_name), т.к. теперь участвуют в общем ранжировании по имени.
+        exact_product_id = exact["product_id"] if exact else None
         name_norm = normalize(item_name)
         match_targets = {t for t in ({name_norm} | {t for t in tokenize(item_name) if len(t) >= _BY_TYPE_MIN_WORD_LEN}) if t}
 
-        by_type_products: list = []
+        type_matched_products: list = []
         seen_type_ids: set[int] = set()
         for target in match_targets:
             for prod in products_by_type_norm.get(target, []):
-                if prod.id in used_product_ids or prod.id in seen_type_ids:
+                if prod.id == exact_product_id or prod.id in seen_type_ids:
                     continue
                 seen_type_ids.add(prod.id)
-                by_type_products.append(prod)
+                type_matched_products.append(prod)
+        type_matched_candidates: dict[int, dict] = {
+            prod.id: _candidate_from_type_row(prod, text_similarity(item_name, prod.name or ""), freshness_ctx)
+            for prod in type_matched_products
+        }
 
-        def _sort_key(prod):
-            fresh = evaluate_freshness(prod, freshness_ctx)
-            is_stale = bool(fresh.get("is_stale"))
-            return (is_stale, (prod.name or "").lower())
+        # --- объединённый пул для by_name: отбор в пул — ПОКРЫТИЕ токенов query
+        # (text_match.score, порог SCORE_SUGGEST, как и раньше) ИЛИ совпадение по
+        # типу товара (владелец, 2026-09-21: иначе более похожие по имени товары
+        # застревали в by_type только из-за узкого лимита пула по имени). Проценты
+        # и порядок — text_match.similarity, единая точка (см. модуль docstring).
+        merged_pool_by_id: dict[int, dict] = {}
+        for c in rest:
+            if c["score"] >= SCORE_SUGGEST:
+                c["score"] = round(text_similarity(item_name, c["name"]), 4)
+                merged_pool_by_id[c["product_id"]] = c
+        for pid, c in type_matched_candidates.items():
+            merged_pool_by_id.setdefault(pid, c)
 
-        by_type_products.sort(key=_sort_key)
-        by_type = [
-            _candidate_from_type_row(prod, text_score(item_name, prod.name or ""), freshness_ctx)
-            for prod in by_type_products[:limit]
-        ]
+        merged_pool = list(merged_pool_by_id.values())
+        merged_pool.sort(key=lambda c: (
+            -c["score"],
+            _price_recency_sort_value(c.get("price_updated_at")),
+            c.get("name") or "",
+        ))
+        by_name = merged_pool[:_BY_NAME_LIMIT]
+
+        used_product_ids = {c["product_id"] for c in ([exact] if exact else []) + by_name}
+
+        # --- by_type: то, что совпало по типу, но не попало в exact/by_name —
+        # тоже по similarity desc (тай-брейк — свежесть цены, потом имя).
+        by_type_products = [p for p in type_matched_products if p.id not in used_product_ids]
+        by_type_products.sort(key=lambda p: (
+            -type_matched_candidates[p.id]["score"],
+            bool((type_matched_candidates[p.id].get("price_freshness") or {}).get("is_stale")),
+            (p.name or "").lower(),
+        ))
+        by_type = [type_matched_candidates[p.id] for p in by_type_products[:limit]]
 
         out.append({
             "planned_item_id": planned.id,

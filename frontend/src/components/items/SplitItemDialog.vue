@@ -13,76 +13,101 @@
         Разбить позицию «{{ item.item_name || '—' }}»
       </v-card-title>
       <v-card-text>
-        <div class="text-caption text-medium-emphasis mb-3">
-          Исходное количество: {{ formatNumber(item.quantity) }} {{ item.unit }}
-          &nbsp;·&nbsp; цена за единицу: {{ fmtRub(item.unit_price || 0) }}
-          &nbsp;·&nbsp; сумма: {{ fmtRub(item.total_price || 0) }}
-        </div>
-
-        <div v-for="(part, i) in parts" :key="i" class="split-part-block mb-4 pa-3">
-          <div class="d-flex align-center justify-space-between mb-2">
-            <span class="text-caption font-weight-bold">Часть {{ i + 1 }}</span>
-            <v-btn v-if="parts.length > 2" icon="mdi-close" size="x-small" variant="text" color="error"
-              title="Удалить часть" @click="emit('remove-part', i)" />
+        <!-- Замок (владелец, замечание 3, правка 2026-09-21): позиция закупки,
+             пришедшая из заявки/привязанная к плановой позиции (isItemFeoCategoryLocked,
+             utils/feoItemLock.ts, тот же предикат, что и построчный пикер категории
+             и disabled-кнопка «Разбить» в ItemsTableFlat/Stages/CardsView) — категория
+             меняется только в плане закупок, разбивка по разным категориям здесь
+             бессмысленна (все части всё равно уедут в ОДНУ и ту же зафиксированную
+             категорию). Форма частей не рендерится вовсе, показываем причину. -->
+        <v-alert v-if="isItemFeoCategoryLocked(item)" type="info" variant="tonal" density="comfortable">
+          {{ FEO_CATEGORY_LOCKED_HINT }}
+        </v-alert>
+        <template v-else>
+          <div class="text-caption text-medium-emphasis mb-3">
+            Исходное количество: {{ formatNumber(item.quantity) }} {{ item.unit }}
+            &nbsp;·&nbsp; цена за единицу: {{ fmtRub(item.unit_price || 0) }}
+            &nbsp;·&nbsp; сумма: {{ fmtRub(item.total_price || 0) }}
           </div>
-          <v-row dense>
-            <v-col cols="12" sm="4">
-              <v-text-field
-                :model-value="formatNumber(part.quantity)"
-                label="Кол-во" density="compact" variant="outlined" hide-details
-                @update:model-value="(v: string) => { part.quantity = parseNumber(v) }"
-              />
-            </v-col>
-            <v-col cols="12" sm="8" class="d-flex align-center">
-              <span class="text-caption text-medium-emphasis">
-                Сумма части: {{ partAmount(i) != null ? fmtRub(partAmount(i)!) : '—' }}
-              </span>
-            </v-col>
-            <v-col cols="12">
-              <FeoTreeSelect
-                :model-value="part.feo_node_id"
-                :nodes="feoNodes"
-                :leaves="feoLeaves"
-                :plan-positions="plannedItems"
-                :node-amounts="nodeAmounts"
-                :allow-unallocated="allowUnallocated"
-                :root-label="subsidyName"
-                label="Категория ФЭО"
-                @update:model-value="(v: number | null) => emit('feo-change', i, v)"
-              />
-            </v-col>
-            <v-col v-if="showPlannedSelect" cols="12">
-              <FeoPlannedItemsSelect
-                :model-value="plannedSelectionFor(i)"
-                :category-id="part.feo_node_id ?? part.feo_category_id"
-                :nodes="feoNodes"
-                :items="plannedItems"
-                :subsidy-id="subsidyId"
-                :amount="partAmount(i)"
-                :purchase-id="purchaseId"
-                :exclude-purchase-id="purchaseId"
-                dense
-                @update:model-value="(v) => emit('planned-change', i, v)"
-                @planned-item-created="emit('planned-item-created')"
-                @planned-item-deleted="emit('planned-item-deleted')"
-              />
-            </v-col>
-          </v-row>
-        </div>
 
-        <v-btn variant="tonal" prepend-icon="mdi-plus" size="small" @click="emit('add-part')">Добавить часть</v-btn>
+          <div v-for="(part, i) in parts" :key="i" class="split-part-block mb-4 pa-3">
+            <div class="d-flex align-center justify-space-between mb-2">
+              <span class="text-caption font-weight-bold">Часть {{ i + 1 }}</span>
+              <v-btn v-if="parts.length > 2" icon="mdi-close" size="x-small" variant="text" color="error"
+                title="Удалить часть" @click="emit('remove-part', i)" />
+            </div>
+            <v-row dense>
+              <v-col cols="12" sm="4">
+                <v-text-field
+                  :model-value="formatNumber(part.quantity)"
+                  label="Кол-во" density="compact" variant="outlined" hide-details
+                  @update:model-value="(v: string) => { part.quantity = parseNumber(v) }"
+                />
+              </v-col>
+              <v-col cols="12" sm="8" class="d-flex align-center">
+                <span class="text-caption text-medium-emphasis">
+                  Сумма части: {{ partAmount(i) != null ? fmtRub(partAmount(i)!) : '—' }}
+                </span>
+              </v-col>
+              <v-col cols="12">
+                <FeoTreeSelect
+                  :model-value="part.feo_node_id"
+                  :nodes="feoNodes"
+                  :leaves="feoLeaves"
+                  :plan-positions="plannedItems"
+                  :node-amounts="nodeAmounts"
+                  :allow-unallocated="allowUnallocated"
+                  :root-label="subsidyName"
+                  label="Категория ФЭО"
+                  @update:model-value="(v: number | null) => emit('feo-change', i, v)"
+                />
+              </v-col>
+              <!-- Чекбокс «Создать плановую позицию» (владелец, замечание 3) — только
+                   для закупок НЕ из плана (вся эта ветка недоступна локнутой позиции,
+                   см. v-else выше), появляется как только у части выбрана категория
+                   (лист дерева). Дефолт/тумблер — useItemsSplit.ts::defaultCreatePlannedFor/
+                   onSplitPartCreatePlannedChange, второй копии условия здесь нет. -->
+              <v-col v-if="part.feo_category_id != null" cols="12">
+                <v-checkbox
+                  :model-value="part.create_planned_item"
+                  density="compact" hide-details :rules="[]"
+                  label="Создать плановую позицию в этой категории (кол-во части × цена)"
+                  @update:model-value="(v: boolean | null) => emit('create-planned-change', i, !!v)"
+                />
+              </v-col>
+              <v-col v-if="showPlannedSelect" cols="12">
+                <FeoPlannedItemsSelect
+                  :model-value="plannedSelectionFor(i)"
+                  :category-id="part.feo_node_id ?? part.feo_category_id"
+                  :nodes="feoNodes"
+                  :items="plannedItems"
+                  :subsidy-id="subsidyId"
+                  :amount="partAmount(i)"
+                  :purchase-id="purchaseId"
+                  :exclude-purchase-id="purchaseId"
+                  dense
+                  @update:model-value="(v) => emit('planned-change', i, v)"
+                  @planned-item-created="emit('planned-item-created')"
+                  @planned-item-deleted="emit('planned-item-deleted')"
+                />
+              </v-col>
+            </v-row>
+          </div>
 
-        <div class="mt-4">
-          <span class="text-body-2 font-weight-bold" :class="balanced ? 'text-success' : 'text-error'">
-            Распределено {{ formatNumber(distributed) }} из {{ formatNumber(item.quantity) }}
-            <template v-if="!balanced">, остаток {{ formatNumber(remaining) }}</template>
-          </span>
-        </div>
+          <v-btn variant="tonal" prepend-icon="mdi-plus" size="small" @click="emit('add-part')">Добавить часть</v-btn>
+
+          <div class="mt-4">
+            <span class="text-body-2 font-weight-bold" :class="balanced ? 'text-success' : 'text-error'">
+              Распределено {{ formatNumber(distributed) }} из {{ formatNumber(item.quantity) }}
+              <template v-if="!balanced">, остаток {{ formatNumber(remaining) }}</template>
+            </span>
+          </div>
+        </template>
       </v-card-text>
       <v-card-actions>
         <v-spacer />
         <v-btn variant="text" :disabled="saving" @click="emit('cancel')">Отмена</v-btn>
-        <v-btn color="primary" variant="flat" :loading="saving" :disabled="!canSave" @click="emit('save')">
+        <v-btn v-if="!isItemFeoCategoryLocked(item)" color="primary" variant="flat" :loading="saving" :disabled="!canSave" @click="emit('save')">
           Разбить
         </v-btn>
       </v-card-actions>
@@ -96,6 +121,7 @@ import FeoPlannedItemsSelect from '@/components/items/FeoPlannedItemsSelect.vue'
 import type { FeoNode, FeoLeaf } from '@/composables/useFeoLeaves'
 import type { FeoPlanPosition, FeoPlanSelection } from '@/composables/useFeoPlannedResiduals'
 import { formatNumber, parseNumber, fmtRub } from '@/utils/numberFormat'
+import { isItemFeoCategoryLocked, FEO_CATEGORY_LOCKED_HINT } from '@/utils/feoItemLock'
 
 // EditorItem/SplitPart are structurally identical to the parent's; kept loose
 // here (same convention as ItemsTableFlat.vue) since the parent owns the real
@@ -134,6 +160,7 @@ const emit = defineEmits<{
   'add-part': []
   'feo-change': [i: number, nodeId: number | null]
   'planned-change': [i: number, val: FeoPlanSelection | null]
+  'create-planned-change': [i: number, val: boolean]
   'planned-item-created': []
   'planned-item-deleted': []
   save: []

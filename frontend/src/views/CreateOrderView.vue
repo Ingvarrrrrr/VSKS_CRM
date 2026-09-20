@@ -758,6 +758,19 @@
             >
               Разбить на закупки
             </v-btn>
+            <!-- «Перенести позиции в другую закупку заявки» (владелец, замечание 2,
+                 правка 2026-09-21) — тот же канбан-борд, что и «Распределить» из
+                 карточки согласованной заявки (WishKanbanDialog.vue, ветка converted). -->
+            <v-btn
+              v-if="canTransferToSiblingPurchase"
+              size="small"
+              variant="tonal"
+              color="deep-purple"
+              prepend-icon="mdi-swap-horizontal"
+              @click="transferKanbanDialog = true"
+            >
+              Перенести позиции в другую закупку заявки
+            </v-btn>
             <v-chip v-if="isContracted && savedNmck" color="orange" variant="tonal" size="small" :title="`Зафиксирована при заключении ${contractWordGen}`">
               НМЦД (фикс.): {{ formatMoney(savedNmck) }}
             </v-chip>
@@ -778,6 +791,7 @@
             :purchase-status="form.status"
             item-shape="purchase"
             :purchase-id="purchaseId"
+            :purchase-wish-id="purchaseData?.wish_id ?? null"
             :default-unit="'шт.'"
             :default-country="'РФ'"
             :allowed-item-types="['товар','услуга','работа']"
@@ -1792,6 +1806,19 @@
       @error="(m: string) => showSnack(m, 'error')"
     />
 
+    <!-- «Перенести позиции в другую закупку заявки» (владелец, замечание 2, правка
+         2026-09-21) — переиспользованный WishKanbanDialog.vue (ветка converted =
+         WishPurchasesKanban), items не нужен этой ветке. Закрытие перезагружает
+         закупку (usePurchaseTransfer.ts::watch). -->
+    <WishKanbanDialog
+      v-if="transferWish"
+      v-model="transferKanbanDialog"
+      :wish="transferWish"
+      :items="[]"
+      :mobile="mobile"
+      @approved="() => {}"
+    />
+
     <!-- Add contractor inline dialog -->
     <AddContractorDialog
       v-model="addContractorDialog"
@@ -1932,6 +1959,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, reactive, watch, nextTick, shallowRef } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
+import { useDisplay } from 'vuetify'
 import { apiFetch } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { ACTIONS } from '@/constants/permissionActions'
@@ -1968,6 +1996,9 @@ import { usePurchaseTasks, TASK_STATUS_LABEL, taskStatusColor, taskPriorityColor
 import LinkedTaskDialogs from '@/components/purchase/LinkedTaskDialogs.vue'
 import { usePurchaseSplit } from '@/composables/purchase/usePurchaseSplit'
 import SplitKanbanDialog from '@/components/purchase/SplitKanbanDialog.vue'
+import { usePurchaseTransfer } from '@/composables/purchase/usePurchaseTransfer'
+import WishKanbanDialog from '@/components/wishes/WishKanbanDialog.vue'
+import { provideWishesContext } from '@/composables/wishes/useWishesContext'
 import { usePurchaseChat } from '@/composables/purchase/usePurchaseChat'
 import { useFrameworkSiblings } from '@/composables/purchase/useFrameworkSiblings'
 import { useFrameworkContracts } from '@/composables/purchase/useFrameworkContracts'
@@ -2027,6 +2058,15 @@ import '@/styles/purchase-form.css'
 
 const route = useRoute()
 const router = useRouter()
+const { mobile } = useDisplay()
+// WishKanbanDialog.vue (переиспользуется ниже для «Перенести позиции в другую
+// закупку заявки», usePurchaseTransfer.ts) зовёт useWishesContext() внутри и
+// требует provideWishesContext() у предка (иначе throw) — эта форма закупки не
+// вложена в WishesView.vue, поэтому предоставляет контекст сама. Справочники
+// внутри (subsidies/allFeoCategories/users/...) остаются пустыми — используемая
+// здесь ветка WishKanbanDialog (wish.status==='converted' → WishPurchasesKanban)
+// их не читает, только ctx.showSnack на сетевую ошибку доски.
+provideWishesContext()
 // Phase 27/31: id текущего пользователя — читается один раз при инициализации формы,
 // используется как в этом файле (дефолты для reimbursement/assigned_user_id/service_note_by),
 // так и в composables/purchase/* (usePurchaseMembers, useResponsiblePersons/docPicker) —
@@ -3491,6 +3531,14 @@ const {
   totalNmck, isSinglePurchase, isContracted, displayNmck,
   nmckHint, contractPriceHint, nmckExcessPct, nmckWarningLevel,
 } = usePurchaseNmck(form, items, contractWordGen, isFramework)
+
+// ── «Перенести позиции в другую закупку заявки» (владелец, замечание 2, правка
+// 2026-09-21) — composables/purchase/usePurchaseTransfer.ts + переиспользованный
+// components/wishes/WishKanbanDialog.vue (ветка converted). Нужен isContracted
+// (usePurchaseNmck выше) — объявлен здесь, не раньше. ──
+const {
+  transferKanbanDialog, transferWish, canTransferToSiblingPurchase,
+} = usePurchaseTransfer(purchaseData, isContracted, isEdit, () => loadPurchase())
 
 // Предупреждение о возможном повторе разовой закупки
 const duplicateDialog = ref(false)

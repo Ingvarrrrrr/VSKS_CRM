@@ -32,13 +32,41 @@
     >
       <!-- Split (top-right, absolute, next to delete) — владелец 2026-08-18:
            разбивка позиции по разным категориям ФЭО. Только для закупок
-           (supportsSplit), не для заявок (wish), от 2 единиц количества. -->
-      <v-tooltip v-if="supportsSplit && !readonly && (item.quantity ?? 0) >= 2" text="Разбить по категориям ФЭО" location="top">
+           (supportsSplit), не для заявок (wish), от 2 единиц количества. Замок
+           (владелец, 2026-09-20/21): позиция из заявки/плана — disabled с
+           текстом itemFeoLockTooltip, как построчный пикер. -->
+      <v-tooltip v-if="supportsSplit && !readonly && (item.quantity ?? 0) >= 2" :text="itemFeoLockTooltip(item) || 'Разбить по категориям ФЭО'" location="top">
         <template #activator="{ props: tip }">
           <v-btn v-bind="tip" icon="mdi-call-split" variant="text" size="small" color="primary"
-            class="item-card-split" data-testid="split-item-btn" @click="emit('split-item', idx)" />
+            class="item-card-split" data-testid="split-item-btn"
+            :disabled="isItemFeoCategoryLocked(item)"
+            @click="emit('split-item', idx)" />
         </template>
       </v-tooltip>
+      <!-- «Перенести в другую закупку заявки…» (владелец, замечание 2, правка
+           2026-09-21) — см. докстринг в ItemsTableFlat.vue. -->
+      <v-menu v-if="supportsSplit && !readonly && purchaseId != null && purchaseWishId != null" location="end top"
+        @update:model-value="(v: boolean) => { if (v) emit('open-move-menu') }">
+        <template #activator="{ props: menuProps }">
+          <v-btn v-bind="menuProps" icon="mdi-swap-horizontal" variant="text" size="small" color="primary"
+            class="item-card-move" title="Перенести в другую закупку заявки" data-testid="move-to-purchase-btn" />
+        </template>
+        <v-list density="compact" min-width="260">
+          <v-list-item v-if="siblingPurchasesLoading" title="Загрузка…" disabled>
+            <template #prepend><v-progress-circular indeterminate size="16" width="2" class="mr-2" /></template>
+          </v-list-item>
+          <template v-else>
+            <v-list-item v-if="!(siblingPurchases || []).length" title="Других закупок в заявке нет" disabled />
+            <v-list-item
+              v-for="sp in siblingPurchases" :key="sp.id"
+              :title="sp.label"
+              :subtitle="sp.disabledReason || undefined"
+              :disabled="sp.disabled"
+              @click="emit('move-item-to-purchase', idx, sp.id)"
+            />
+          </template>
+        </v-list>
+      </v-menu>
       <!-- Delete (top-right, absolute) -->
       <v-btn v-if="!readonly" icon="mdi-delete-outline" variant="text" size="small" color="error"
         class="item-card-delete" @click="emit('remove-item', idx)" />
@@ -428,6 +456,11 @@ const props = defineProps<{
   // Дефект 2 (владелец, 2026-08-20): та же роль, что purchaseId выше, для формы заявки
   // (закупки ещё нет) — см. одноимённый проп в FeoPlannedItemsSelect.vue / PurchaseItemsEditor.vue.
   wishId?: number | null
+  // «Перенести позиции в другую закупку заявки» (владелец, замечание 2, правка
+  // 2026-09-21) — см. одноимённый проп в ItemsTableFlat.vue.
+  purchaseWishId?: number | null
+  siblingPurchases?: { id: number; label: string; disabled: boolean; disabledReason: string | null }[]
+  siblingPurchasesLoading?: boolean
   // Владелец 2026-08-18: показать кнопку «Разбить» на карточке — только у закупок
   // (POST /purchases/{pid}/items/{item_id}/split не существует для заявок/wish-позиций).
   supportsSplit?: boolean
@@ -542,6 +575,8 @@ const emit = defineEmits<{
   'vat-rate-change': [idx: number, v: any]
   'remove-item': [idx: number]
   'split-item': [idx: number]
+  'open-move-menu': []
+  'move-item-to-purchase': [idx: number, targetPurchaseId: number]
   'contractor-search-input': [idx: number, search: string]
   'item-contractor-select': [idx: number, val: Contractor | null]
   'open-contractor-quick-create': [idx: number]
@@ -567,6 +602,12 @@ const emit = defineEmits<{
   position: absolute;
   top: 4px;
   right: 44px;
+  z-index: 2;
+}
+.item-card-move {
+  position: absolute;
+  top: 4px;
+  right: 84px;
   z-index: 2;
 }
 .item-card-photo { background: rgb(var(--v-theme-surface)); }

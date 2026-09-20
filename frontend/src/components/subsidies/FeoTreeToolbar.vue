@@ -98,12 +98,12 @@
         <v-btn size="small" variant="outlined" color="deep-purple"
           :prepend-icon="wholeSmetaAllSelected ? 'mdi-checkbox-multiple-blank-outline' : 'mdi-checkbox-multiple-marked-outline'"
           :loading="planToRequest.residualsLoading.value"
-          @click="planToRequest.selectWholeSmeta(!wholeSmetaAllSelected)">
+          @click="planToRequest.selectWholeSmeta(ctx.feoCategories.value, !wholeSmetaAllSelected)">
           {{ wholeSmetaAllSelected ? 'Снять всё' : 'Вся смета' }}
           <!-- Счётчик «(N с остатком)» (владелец, задача 1б) — тот же источник,
                что и подпись «выбрано k из N» на чекбоксах категорий
-               (usePlanToRequest.ts::wholeSmetaSelection.total, Правило №6). -->
-          <span v-if="planToRequest.wholeSmetaSelection.value.total" class="ml-1">({{ planToRequest.wholeSmetaSelection.value.total }} с остатком)</span>
+               (usePlanToRequest.ts::wholeSmetaSelection().total, Правило №6). -->
+          <span v-if="wholeSmetaSelectionState.total" class="ml-1">({{ wholeSmetaSelectionState.total }} с остатком)</span>
         </v-btn>
         <v-btn size="small" variant="flat" color="deep-purple"
           prepend-icon="mdi-check-bold"
@@ -229,7 +229,10 @@ watch(() => ctx.selectedId.value, (id, prevId) => {
 
 // Состояние кнопки «Вся смета»/«Снять всё» (задача 1) — тот же источник, что и
 // чекбоксы категорий (usePlanToRequest.ts::wholeSmetaSelection, Правило №6).
-const wholeSmetaAllSelected = computed(() => planToRequest.wholeSmetaSelection.value.all)
+// Единственный вызов на рендер (не два computed'а, дублирующих фильтр) — оба
+// места шаблона (state и подпись счётчика) читают этот же computed.
+const wholeSmetaSelectionState = computed(() => planToRequest.wholeSmetaSelection(ctx.feoCategories.value))
+const wholeSmetaAllSelected = computed(() => wholeSmetaSelectionState.value.all)
 
 const toast = useToast()
 function showSnack(text: string, color: ToastType = 'success') {

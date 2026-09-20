@@ -138,14 +138,42 @@
                       @click.stop="emit('open-repick-dialog', idx)" />
                   </template>
                 </v-tooltip>
-                <!-- Владелец 2026-08-18: разбивка позиции по разным категориям ФЭО. -->
-                <v-tooltip v-if="!readonly && (item.quantity ?? 0) >= 2" text="Разбить по категориям ФЭО" location="top">
+                <!-- Владелец 2026-08-18: разбивка позиции по разным категориям ФЭО.
+                     Замок (владелец, 2026-09-20/21): позиция из заявки/плана —
+                     disabled с текстом itemFeoLockTooltip, как построчный пикер. -->
+                <v-tooltip v-if="!readonly && (item.quantity ?? 0) >= 2" :text="itemFeoLockTooltip(item) || 'Разбить по категориям ФЭО'" location="top">
                   <template #activator="{ props: tip }">
                     <v-btn v-bind="tip" icon="mdi-call-split" size="x-small" variant="text"
                       color="primary" data-testid="split-item-btn"
+                      :disabled="isItemFeoCategoryLocked(item)"
                       @click.stop="emit('split-item', idx)" />
                   </template>
                 </v-tooltip>
+                <!-- «Перенести в другую закупку заявки…» (владелец, замечание 2,
+                     правка 2026-09-21) — см. докстринг в ItemsTableFlat.vue. -->
+                <v-menu v-if="!readonly && purchaseId != null && purchaseWishId != null" location="end top"
+                  @update:model-value="(v: boolean) => { if (v) emit('open-move-menu') }">
+                  <template #activator="{ props: menuProps }">
+                    <v-btn v-bind="menuProps" icon="mdi-swap-horizontal" size="x-small" variant="text" color="primary"
+                      title="Перенести в другую закупку заявки" data-testid="move-to-purchase-btn"
+                      @click.stop />
+                  </template>
+                  <v-list density="compact" min-width="260">
+                    <v-list-item v-if="siblingPurchasesLoading" title="Загрузка…" disabled>
+                      <template #prepend><v-progress-circular indeterminate size="16" width="2" class="mr-2" /></template>
+                    </v-list-item>
+                    <template v-else>
+                      <v-list-item v-if="!(siblingPurchases || []).length" title="Других закупок в заявке нет" disabled />
+                      <v-list-item
+                        v-for="sp in siblingPurchases" :key="sp.id"
+                        :title="sp.label"
+                        :subtitle="sp.disabledReason || undefined"
+                        :disabled="sp.disabled"
+                        @click.stop="emit('move-item-to-purchase', idx, sp.id)"
+                      />
+                    </template>
+                  </v-list>
+                </v-menu>
                 <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
                   :disabled="readonly"
                   @click.stop="emit('remove-item', idx)" />
@@ -664,6 +692,12 @@ const props = defineProps<{
   // Дефект 2 (владелец, 2026-08-20): та же роль, что purchaseId выше, для формы заявки
   // (закупки ещё нет) — см. одноимённый проп в FeoPlannedItemsSelect.vue / PurchaseItemsEditor.vue.
   wishId?: number | null
+  // «Перенести позиции в другую закупку заявки» (владелец, замечание 2, правка
+  // 2026-09-21) — см. одноимённый проп в ItemsTableFlat.vue (тот же смысл, тот
+  // же источник состояния — composables/purchase/useMoveToSiblingPurchase.ts).
+  purchaseWishId?: number | null
+  siblingPurchases?: { id: number; label: string; disabled: boolean; disabledReason: string | null }[]
+  siblingPurchasesLoading?: boolean
   // Шаг 5 «ТЗ не дороже и не больше плана» (владелец, 2026-08-07) — см. тот же
   // проп в ItemsTableFlat.vue.
   planForItem?: (item: EditorItem) => FeoPlanPosition | null
@@ -803,6 +837,8 @@ const emit = defineEmits<{
   'open-repick-dialog': [idx: number]
   'remove-item': [idx: number]
   'split-item': [idx: number]
+  'open-move-menu': []
+  'move-item-to-purchase': [idx: number, targetPurchaseId: number]
   'open-product-picker': [idx: number]
   'clear-item': [idx: number]
   'open-quick-product-edit': [item: EditorItem]

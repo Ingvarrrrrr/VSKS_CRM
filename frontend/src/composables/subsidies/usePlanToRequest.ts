@@ -17,7 +17,7 @@ import { describeApiError } from '@/utils/apiErrorMessage'
 import { useFeoPlannedResiduals, type FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import { useFeoLevel5Api } from './useFeoLevel5'
 import { materializeManualPlanAsItem } from './useFeoManualPlanMaterialize'
-import { collectSubtreeIds } from './feoCategoryUtils'
+import { collectSubtreeIds, normName } from './feoCategoryUtils'
 import type { FeoCategory, FeoNode } from './types'
 
 export interface PlanToWishLinkedPurchase {
@@ -217,11 +217,52 @@ const feoResiduals = useFeoPlannedResiduals({ subsidyId: residualsSubsidyId })
 // без отдельных FeoPlannedItem) — синтетический id = −category_id, тот же
 // приём, что и displayPlannedRowsFor в useFeoLevel5.ts (задача 2 — такие id
 // материализуются в настоящие FeoPlannedItem перед отправкой на сервер).
-function eligibleResidualIds(rows: FeoPlanPosition[]): number[] {
+//
+// Исключения (владелец, правка 2026-09-21, расширено после приёмки на
+// ЦентрПоиск): «Названия категорий не идут в закупку — только плановые позиции
+// из выбранных категорий». При выборе поддерева/«Вся смета» ДВЕ строки-мусор не
+// должны попадать в отбор (листовые категории не задеты — там ручной план листа
+// выбирается как обычно):
+//  (а) ручной план НАПРАВЛЕНИЯ (kind='plan_position'|'feo_article'), заданный
+//      прямо на категории, у которой ЕСТЬ подкатегории — это сумма по всему
+//      поддереву, не отдельная позиция для закупки;
+//  (б) planned_item, чьё normName(имя) совпадает с normName имени ЛЮБОЙ
+//      категории субсидии (не только своей собственной — на ЦентрПоиск мусор
+//      лежал на категории 840 «Экипировка», но был назван именами её ПОДкатегорий
+//      863/870/872) — ЕДИНСТВЕННОЕ исключение: это его СОБСТВЕННАЯ категория И
+//      она ЛИСТОВАЯ (совпадение «Пила цепная» с листом «Пила цепная» — настоящая
+//      позиция, оставляем).
+// Единственное место обоих условий (Правило №6) — читают selectCategorySubtree/
+// selectWholeSmeta/subtreeSelectionState/wholeSmetaSelection ниже, второй
+// фильтр не заводим.
+function hasSubcategories(feoCategories: FeoCategory[], categoryId: number): boolean {
+  return feoCategories.some(c => c.parent_id === categoryId)
+}
+
+function eligibleResidualIds(rows: FeoPlanPosition[], feoCategories: FeoCategory[]): number[] {
   const ids: number[] = []
+  // Категории субсидии по normName(имя) — построено один раз на вызов (не на
+  // каждую строку rows), иначе поиск (б) был бы O(rows × categories).
+  const categoriesByNormName = new Map<string, FeoCategory[]>()
+  for (const c of feoCategories) {
+    const n = normName(c.name)
+    const arr = categoriesByNormName.get(n)
+    if (arr) arr.push(c)
+    else categoriesByNormName.set(n, [c])
+  }
   for (const r of rows) {
     if (r.planned_quantity == null) continue
     if (!(Number(r.residual_quantity) > 0)) continue
+    const categoryHasChildren = hasSubcategories(feoCategories, r.category_id)
+    if (categoryHasChildren && r.kind !== 'planned_item') continue // (а) ручной план направления
+    if (r.kind === 'planned_item') {
+      const matches = categoriesByNormName.get(normName(r.name))
+      if (matches && matches.length) {
+        const ownMatch = matches.find(c => c.id === r.category_id)
+        const ownIsLeaf = !!ownMatch && !hasSubcategories(feoCategories, ownMatch.id)
+        if (!(ownMatch && ownIsLeaf)) continue // (б) имя дублирует любую категорию субсидии
+      }
+    }
     ids.push(r.kind === 'planned_item' ? r.id : -r.category_id)
   }
   return ids
@@ -299,11 +340,11 @@ export function usePlanToRequest() {
   function selectCategorySubtree(node: FeoNode, feoCategories: FeoCategory[], on: boolean) {
     const subtreeIds = new Set(collectSubtreeIds(feoCategories, node.id))
     const rowsInSubtree = feoResiduals.plannedResiduals.value.filter(r => subtreeIds.has(r.category_id))
-    applySelection(eligibleResidualIds(rowsInSubtree), on)
+    applySelection(eligibleResidualIds(rowsInSubtree, feoCategories), on)
   }
 
-  function selectWholeSmeta(on: boolean) {
-    applySelection(eligibleResidualIds(feoResiduals.plannedResiduals.value), on)
+  function selectWholeSmeta(feoCategories: FeoCategory[], on: boolean) {
+    applySelection(eligibleResidualIds(feoResiduals.plannedResiduals.value, feoCategories), on)
   }
 
   // Состояние чекбокса категории (задача 1): выбраны ВСЕ плановые позиции
@@ -313,12 +354,17 @@ export function usePlanToRequest() {
   function subtreeSelectionState(node: FeoNode, feoCategories: FeoCategory[]): { all: boolean; some: boolean; total: number; selectedCount: number } {
     const subtreeIds = new Set(collectSubtreeIds(feoCategories, node.id))
     const rowsInSubtree = feoResiduals.plannedResiduals.value.filter(r => subtreeIds.has(r.category_id))
-    return computeSelectionState(eligibleResidualIds(rowsInSubtree), feoLevel5.selectedPlannedItemIds.value)
+    return computeSelectionState(eligibleResidualIds(rowsInSubtree, feoCategories), feoLevel5.selectedPlannedItemIds.value)
   }
 
-  const wholeSmetaSelection = computed(() =>
-    computeSelectionState(eligibleResidualIds(feoResiduals.plannedResiduals.value), feoLevel5.selectedPlannedItemIds.value),
-  )
+  // Была computed(() => ...) без параметров — «Вся смета» теперь тоже фильтрует
+  // мусорные строки (см. eligibleResidualIds выше), а для этого нужен feoCategories,
+  // которого нет внутри этого файла (передаётся вызывающим компонентом, тот же
+  // приём, что и subtreeSelectionState). computed → функция, вызывающая сторона
+  // (FeoTreeToolbar.vue) передаёт ctx.feoCategories.value при каждом обращении.
+  function wholeSmetaSelection(feoCategories: FeoCategory[]): { all: boolean; some: boolean; total: number; selectedCount: number } {
+    return computeSelectionState(eligibleResidualIds(feoResiduals.plannedResiduals.value, feoCategories), feoLevel5.selectedPlannedItemIds.value)
+  }
 
   // Бэковый price_source для конкретной строки (владелец, задача 3): payload
   // на сервер НЕ меняется — 'manual' маппится в 'catalog' + явный unit_price

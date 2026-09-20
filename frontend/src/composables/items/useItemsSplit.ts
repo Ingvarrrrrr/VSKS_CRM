@@ -24,6 +24,12 @@ export interface SplitPart {
   feo_node_id: number | null
   feo_category_id: number | null
   feo_planned_item_id: number | null
+  // Чекбокс «Создать плановую позицию в этой категории» (владелец, замечание 3,
+  // правка 2026-09-21) — ТОЛЬКО для закупок НЕ из плана (см. isItemFeoCategoryLocked
+  // в SplitItemDialog.vue, локальную позицию туда не пускает форма разбивки вовсе).
+  // По умолчанию включён, когда у категории части остаток 0 или плановой позиции
+  // нет вовсе — см. defaultCreatePlannedFor ниже, единственное место этого решения.
+  create_planned_item: boolean
 }
 
 export interface UseItemsSplitDeps {
@@ -83,18 +89,34 @@ export function useItemsSplit(deps: UseItemsSplitDeps) {
   const splitPartsValid = computed(() => splitParts.value.every(p => Number(p.quantity) > 0))
   const splitCanSave = computed(() => splitBalanced.value && splitPartsValid.value)
 
+  // Дефолт чекбокса «Создать плановую позицию» (владелец, замечание 3, правка
+  // 2026-09-21): категория БЕЗ плановой позиции ИЛИ с нулевым остатком по ВСЕМ
+  // своим плановым записям — включён; есть живой остаток — выключен (план уже
+  // покрывает часть, плодить вторую плановую позицию не нужно по умолчанию,
+  // пользователь может включить вручную). Единственное место этого решения
+  // (Правило №6) — вызывается и при первом открытии диалога, и при смене
+  // категории части (onSplitPartFeoChange).
+  function defaultCreatePlannedFor(categoryId: number | null): boolean {
+    if (categoryId == null) return false
+    const rows = (plannedItems?.value || []).filter(p => p.category_id === categoryId)
+    if (!rows.length) return true
+    return !rows.some(r => Number(r.residual_quantity) > 0)
+  }
+
   function openSplitDialog(idx: number) {
     const item = localItems.value[idx]
     if (!item) return
     splitDialog.idx = idx
+    const firstCategoryId = item.feo_category_id ?? null
     splitParts.value = [
       {
         quantity: null,
         feo_node_id: item.feo_node_id ?? item.feo_category_id ?? null,
-        feo_category_id: item.feo_category_id ?? null,
+        feo_category_id: firstCategoryId,
         feo_planned_item_id: null,
+        create_planned_item: defaultCreatePlannedFor(firstCategoryId),
       },
-      { quantity: null, feo_node_id: null, feo_category_id: null, feo_planned_item_id: null },
+      { quantity: null, feo_node_id: null, feo_category_id: null, feo_planned_item_id: null, create_planned_item: false },
     ]
     splitDialog.show = true
   }
@@ -116,7 +138,7 @@ export function useItemsSplit(deps: UseItemsSplitDeps) {
   }
 
   function addSplitPart() {
-    splitParts.value.push({ quantity: null, feo_node_id: null, feo_category_id: null, feo_planned_item_id: null })
+    splitParts.value.push({ quantity: null, feo_node_id: null, feo_category_id: null, feo_planned_item_id: null, create_planned_item: false })
   }
 
   function removeSplitPart(i: number) {
@@ -133,9 +155,23 @@ export function useItemsSplit(deps: UseItemsSplitDeps) {
     if (!part) return
     const isLeaf = nodeId != null && (feoNodes.value.find(n => n.id === nodeId)?.is_leaf ?? false)
     const newCategoryId = isLeaf ? nodeId : null
-    if (part.feo_category_id !== newCategoryId) part.feo_planned_item_id = null
+    if (part.feo_category_id !== newCategoryId) {
+      part.feo_planned_item_id = null
+      // Смена категории части — пересчитываем дефолт чекбокса «Создать плановую
+      // позицию» под НОВУЮ категорию (тот же приём, что и сброс feo_planned_item_id
+      // выше — ручной выбор пользователя для СТАРОЙ категории здесь неприменим).
+      part.create_planned_item = defaultCreatePlannedFor(newCategoryId)
+    }
     part.feo_node_id = nodeId
     part.feo_category_id = newCategoryId
+  }
+
+  // Ручной тумблер чекбокса части (владелец, замечание 3) — пользователь
+  // переопределяет дефолт defaultCreatePlannedFor вручную.
+  function onSplitPartCreatePlannedChange(i: number, val: boolean) {
+    const part = splitParts.value[i]
+    if (!part) return
+    part.create_planned_item = val
   }
 
   function splitPartPlannedSelection(i: number): FeoPlanSelection | null {
@@ -185,17 +221,26 @@ export function useItemsSplit(deps: UseItemsSplitDeps) {
     if (!splitCanSave.value) return
     splitDialog.saving = true
     try {
-      await apiFetch(`/purchases/${props.purchaseId}/items/${itemId}/split`, {
+      // create_planned_item — по части (владелец, замечание 3, правка 2026-09-21):
+      // бэкенд создаёт плановую позицию в категории части (кол-во × цена части) и
+      // возвращает её id в created_planned_item_ids. Контракт согласован с
+      // бэкенд-агентом параллельно — второй эндпоинт под это не заводим.
+      const resp = await apiFetch<{ created_planned_item_ids?: number[] }>(`/purchases/${props.purchaseId}/items/${itemId}/split`, {
         method: 'POST',
         body: JSON.stringify({
           parts: splitParts.value.map(p => ({
             quantity: p.quantity,
             feo_category_id: p.feo_category_id,
             feo_planned_item_id: p.feo_planned_item_id,
+            create_planned_item: p.create_planned_item,
           })),
         }),
       })
       showSnack('Позиция разбита на части', 'success')
+      const createdCount = resp?.created_planned_item_ids?.length ?? 0
+      if (createdCount > 0) {
+        showSnack(`Создано плановых позиций: ${createdCount}`, 'success')
+      }
       closeSplitDialog()
       // Тот же приём, что у bulkAddToCatalog/runCreatePlannedBulk: сервер
       // пересчитал/создал позиции — перезагружаем их у родителя, а не пытаемся
@@ -213,6 +258,7 @@ export function useItemsSplit(deps: UseItemsSplitDeps) {
     splitDistributed, splitRemaining, splitBalanced, splitPartsValid, splitCanSave,
     openSplitDialog, closeSplitDialog, addSplitPart, removeSplitPart,
     onSplitPartFeoChange, splitPartPlannedSelection, onSplitPartPlannedChange, splitPartAmount,
+    onSplitPartCreatePlannedChange,
     saveSplit,
   }
 }

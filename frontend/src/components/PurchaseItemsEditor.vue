@@ -269,6 +269,9 @@
           :pending-by-planned-item="pendingByPlannedItem"
           :pending-items-by-planned-item="pendingItemsByPlannedItem"
           :purchase-id="props.purchaseId"
+          :purchase-wish-id="props.purchaseWishId"
+          :sibling-purchases="siblingPurchases"
+          :sibling-purchases-loading="siblingPurchasesLoading"
           :wish-id="props.wishId"
           :plan-for-item="planForItem"
           :plan-excess-for="planExcessFor"
@@ -310,6 +313,8 @@
           @open-repick-dialog="openRepickDialog"
           @remove-item="removeItem"
           @split-item="openSplitDialog"
+          @open-move-menu="ensureSiblingPurchasesLoaded"
+          @move-item-to-purchase="onMoveItemToPurchase"
           @open-product-picker="openProductPicker"
           @clear-item="clearItem"
           @open-quick-product-edit="openQuickProductEdit"
@@ -357,6 +362,9 @@
           :pending-by-planned-item="pendingByPlannedItem"
           :pending-items-by-planned-item="pendingItemsByPlannedItem"
           :purchase-id="props.purchaseId"
+          :purchase-wish-id="props.purchaseWishId"
+          :sibling-purchases="siblingPurchases"
+          :sibling-purchases-loading="siblingPurchasesLoading"
           :wish-id="props.wishId"
           :plan-for-item="planForItem"
           :plan-excess-for="planExcessFor"
@@ -394,6 +402,8 @@
           @vat-rate-change="onVatRateChange"
           @remove-item="removeItem"
           @split-item="openSplitDialog"
+          @open-move-menu="ensureSiblingPurchasesLoaded"
+          @move-item-to-purchase="onMoveItemToPurchase"
           @contractor-search-input="onContractorSearchInput"
           @item-contractor-select="onItemContractorSelect"
           @open-contractor-quick-create="openContractorQuickCreate"
@@ -427,6 +437,9 @@
           :pending-by-planned-item="pendingByPlannedItem"
           :pending-items-by-planned-item="pendingItemsByPlannedItem"
           :purchase-id="props.purchaseId"
+          :purchase-wish-id="props.purchaseWishId"
+          :sibling-purchases="siblingPurchases"
+          :sibling-purchases-loading="siblingPurchasesLoading"
           :wish-id="props.wishId"
           :plan-for-item="planForItem"
           :plan-excess-for="planExcessFor"
@@ -466,6 +479,8 @@
           @vat-rate-change="onVatRateChange"
           @remove-item="removeItem"
           @split-item="openSplitDialog"
+          @open-move-menu="ensureSiblingPurchasesLoaded"
+          @move-item-to-purchase="onMoveItemToPurchase"
           @contractor-search-input="onContractorSearchInput"
           @item-contractor-select="onItemContractorSelect"
           @open-contractor-quick-create="openContractorQuickCreate"
@@ -760,6 +775,7 @@
       @add-part="addSplitPart"
       @feo-change="onSplitPartFeoChange"
       @planned-change="onSplitPartPlannedChange"
+      @create-planned-change="onSplitPartCreatePlannedChange"
       @planned-item-created="emit('planned-item-created')"
       @planned-item-deleted="emit('planned-item-deleted')"
       @save="saveSplit"
@@ -813,6 +829,7 @@ import { useItemForm } from '@/composables/items/useItemForm'
 import { useItemsCatalog, productPhotoSrc } from '@/composables/items/useItemsCatalog'
 import { useItemsContractors } from '@/composables/items/useItemsContractors'
 import { useItemsSplit } from '@/composables/items/useItemsSplit'
+import { useMoveToSiblingPurchase } from '@/composables/purchase/useMoveToSiblingPurchase'
 import { useItemsFeo } from '@/composables/items/useItemsFeo'
 import { useItemsBulkFeo } from '@/composables/items/useItemsBulkFeo'
 import { useItemsPlanSuggest } from '@/composables/items/useItemsPlanSuggest'
@@ -936,6 +953,13 @@ const props = withDefaults(defineProps<{
   purchaseStatus?: string               // Phase 27.1.1: для определения isDelivered (D-01.1.1)
   itemShape: 'purchase' | 'wish'
   purchaseId?: number | null
+  // Замечание владельца 2 (правка 2026-09-21): id заявки, ИЗ КОТОРОЙ пришла ЭТА
+  // закупка (purchaseData.wish_id в CreateOrderView.vue) — НЕ то же самое, что
+  // wishId ниже (тот держит id ЕЩЁ НЕ СОХРАНЁННОЙ заявки в форме заявки, itemShape
+  // ='wish'). Нужен только для построчного меню «→ В другую закупку заявки…»
+  // (useMoveToSiblingPurchase ниже) — показывает GET /wishes/{id}/purchases-board
+  // сестринских закупок. null/не передан → пункт меню не рендерится.
+  purchaseWishId?: number | null
   // Дефект 2 (владелец, 2026-08-20): «удалить случайно созданную плановую позицию
   // прямо из заявки» — та же роль, что purchaseId выше, для формы заявки, у которой
   // закупки ещё нет. Прокидывается дальше в ItemsTableStages/ItemsCardsView/
@@ -1076,6 +1100,7 @@ const props = withDefaults(defineProps<{
   readonly: false,
   feoAttrsEditable: false,
   purchaseId: null,
+  purchaseWishId: null,
   wishId: null,
   isWishStage: false,
   vatMode: 'uniform',
@@ -1941,12 +1966,34 @@ const {
   splitDistributed, splitRemaining, splitBalanced, splitPartsValid, splitCanSave,
   openSplitDialog, closeSplitDialog, addSplitPart, removeSplitPart,
   onSplitPartFeoChange, splitPartPlannedSelection, onSplitPartPlannedChange, splitPartAmount,
+  onSplitPartCreatePlannedChange,
   saveSplit,
 } = useItemsSplit({
   props, localItems, feoNodes,
   plannedItems: computed(() => props.plannedItems || []),
   display, emit, showSnack,
 })
+
+// ── «Перенести позиции в другую закупку заявки» (владелец, замечание 2, правка
+// 2026-09-21) — composables/purchase/useMoveToSiblingPurchase.ts. Построчное меню
+// действий (ItemsTableFlat/ItemsTableStages/ItemsCardsView) рендерит список из
+// siblingPurchases, эмитит move-item-to-purchase(idx, targetId) — обработчик здесь
+// резолвит idx → реальный item.id и зовёт moveItemToPurchase. reload-requested —
+// ТОТ ЖЕ emit, что и после saveSplit() выше (родитель CreateOrderView.vue уже
+// слушает его через loadPurchase, второй канал перезагрузки не заводим).
+const {
+  siblingPurchases, siblingPurchasesLoading,
+  ensureSiblingPurchasesLoaded, moveItemToPurchase,
+} = useMoveToSiblingPurchase({
+  purchaseId: computed(() => props.purchaseId),
+  wishId: computed(() => props.purchaseWishId),
+  emitReload: () => emit('reload-requested'),
+  showSnack,
+})
+function onMoveItemToPurchase(idx: number, targetPurchaseId: number) {
+  const itemId = (localItems.value[idx] as any)?.id
+  void moveItemToPurchase(itemId, targetPurchaseId)
+}
 
 // ── Selection — composables/items/useItemsTable.ts ────────────────────────────
 

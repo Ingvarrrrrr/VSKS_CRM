@@ -563,6 +563,15 @@ class _ItemSplitPart(BaseModel):
     quantity: Decimal
     feo_category_id: Optional[int] = None
     feo_planned_item_id: Optional[int] = None
+    # Владелец (2026-09-21): «не вижу, чтобы предлагал создать плановые позиции
+    # в тех категориях, куда перераспределяю» — для позиций БЕЗ привязки к
+    # заявке/плану (см. блокировку по feo_planned_item_id/wish_item_id ниже в
+    # split_purchase_item) часть разбивки может сразу завести недостающую
+    # плановую позицию в своей категории и привязаться к ней. Игнорируется с
+    # 400, если часть уже несёт свой feo_planned_item_id (нельзя одновременно
+    # привязать к существующей и создать новую) или для позиции, чья категория
+    # зафиксирована планом (см. guard выше по коду).
+    create_planned_item: bool = False
 
 
 class _ItemSplitBody(BaseModel):
@@ -653,6 +662,77 @@ async def split_purchase_item(
             f"({original_qty}) — разбивка не меняет ни количество, ни сумму позиции, только распределение "
             "по категориям ФЭО.",
         )
+
+    # Владелец (2026-09-21): позиция, пришедшая из заявки/плана (wish_item_id
+    # и/или feo_planned_item_id уже проставлены), — её категория ФЭО
+    # зафиксирована планом (тот же принцип и тот же общий текст ошибки, что и
+    # в patch_purchase_item — см. _raise_item_feo_category_locked/
+    # _guard_item_feo_category_locked_from_plan выше в этом файле, не копируем
+    # формулировку второй раз). Разбивка по РАЗНЫМ категориям для такой
+    # позиции запрещена. Разбивка на части В ТОЙ ЖЕ категории допускается,
+    # только если КАЖДАЯ часть остаётся в текущей категории И привязана к той
+    # же плановой позиции — частичный перенос/отвязка одной из частей это тот
+    # же обход замка, поэтому тоже отказ. create_planned_item для такой
+    # позиции тоже запрещён — новую плановую позицию для уже спланированной
+    # строки заводить незачем (и было бы вторым, независимым планом рядом с
+    # уже существующим).
+    created_planned_item_ids: list[int] = []
+    if it.feo_planned_item_id is not None or it.wish_item_id is not None:
+        for part in parts:
+            if (
+                part.feo_category_id != it.feo_category_id
+                or part.feo_planned_item_id != it.feo_planned_item_id
+                or part.create_planned_item
+            ):
+                _raise_item_feo_category_locked()
+    elif any(pt.create_planned_item for pt in parts):
+        # Владелец (2026-09-21): «не вижу, чтобы предлагал создать плановые
+        # позиции в тех категориях, куда перераспределяю» — позиция БЕЗ
+        # привязки к заявке/плану (ветка выше не сработала) может создать
+        # недостающие плановые позиции прямо здесь. Переиспользуем
+        # create_planned_item (POST /feo-planned-items/ — тот же эндпоинт,
+        # что и «Создать в плане закупок» у заявки, см.
+        # frontend/src/composables/items/feoPlanned/useFeoPlannedCreate.ts) —
+        # те же проверки доступа/дедупа/происхождения, вторая копия этой
+        # логики здесь не заводится (Правило №6). Создаётся ДО общего цикла
+        # валидации категорий/плановых позиций ниже — он же проверит
+        # свежесозданные записи наравне с присланными (активна, категория
+        # совпадает — по построению).
+        from app.routers.feo_planned_items import create_planned_item as _create_feo_planned_item
+        from app.schemas.feo import FeoPlannedItemCreate as _FPICreate
+        for idx, part in enumerate(parts, start=1):
+            if not part.create_planned_item:
+                continue
+            if part.feo_planned_item_id is not None:
+                raise HTTPException(
+                    400,
+                    f"Часть {idx}: нельзя одновременно указать плановую позицию и "
+                    "запросить создание новой",
+                )
+            if part.feo_category_id is None:
+                raise HTTPException(
+                    400,
+                    f"Часть {idx}: для создания плановой позиции нужна категория ФЭО",
+                )
+            _new_fpi_amount = (
+                Decimal(str(part.quantity)) * (it.unit_price if it.unit_price is not None else Decimal("0"))
+            ).quantize(Decimal("0.01"))
+            _new_fpi = await _create_feo_planned_item(
+                _FPICreate(
+                    feo_category_id=part.feo_category_id,
+                    name=it.item_name,
+                    quantity=part.quantity,
+                    unit=it.unit,
+                    unit_price=it.unit_price,
+                    amount=_new_fpi_amount,
+                    item_type=it.item_type,
+                    is_internal_plan=True,
+                ),
+                db=db,
+                current_user=current_user,
+            )
+            part.feo_planned_item_id = _new_fpi.id
+            created_planned_item_ids.append(_new_fpi.id)
 
     # Категории/плановые позиции частей — те же проверки и формулировки ошибок,
     # что и в patch_purchase_item (см. ветки feo_category_id / _explicit_planned_item_chosen).
@@ -917,6 +997,10 @@ async def split_purchase_item(
             for ci in created_items
         ],
         "contract_item_ids": new_contract_ids,
+        # Владелец (2026-09-21): части с create_planned_item=true — id вновь
+        # заведённых плановых позиций (см. блок создания выше), пустой список,
+        # если флаг не запрашивался ни у одной части.
+        "created_planned_item_ids": created_planned_item_ids,
     }
 
 

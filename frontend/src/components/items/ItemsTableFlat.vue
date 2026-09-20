@@ -263,14 +263,43 @@
             <div class="d-flex">
               <!-- Владелец 2026-08-18: разбивка позиции по разным категориям ФЭО
                    (напр. 66 огнетушителей → 41 по одной категории, 25 по другой).
-                   Доступно от 2 единиц количества, недоступно в readonly. -->
-              <v-tooltip v-if="!readonly && (item.quantity ?? 0) >= 2" text="Разбить по категориям ФЭО" location="top">
+                   Доступно от 2 единиц количества, недоступно в readonly. Замок
+                   (владелец, 2026-09-20/21): позиция из заявки/плана — категория
+                   меняется только в плане, кнопка disabled с тем же текстом, что
+                   и построчный пикер (itemFeoLockTooltip). -->
+              <v-tooltip v-if="!readonly && (item.quantity ?? 0) >= 2" :text="itemFeoLockTooltip(item) || 'Разбить по категориям ФЭО'" location="top">
                 <template #activator="{ props: tip }">
                   <v-btn v-bind="tip" icon="mdi-call-split" variant="text" size="small" color="primary"
                     data-testid="split-item-btn"
+                    :disabled="isItemFeoCategoryLocked(item)"
                     @click="emit('split-item', idx)" />
                 </template>
               </v-tooltip>
+              <!-- «Перенести в другую закупку заявки…» (владелец, замечание 2,
+                   правка 2026-09-21) — только когда закупка пришла из заявки
+                   (purchaseWishId) и есть реальный id закупки-источника. -->
+              <v-menu v-if="!readonly && purchaseId != null && purchaseWishId != null" location="end top"
+                @update:model-value="(v: boolean) => { if (v) emit('open-move-menu') }">
+                <template #activator="{ props: menuProps }">
+                  <v-btn v-bind="menuProps" icon="mdi-swap-horizontal" variant="text" size="small" color="primary"
+                    title="Перенести в другую закупку заявки" data-testid="move-to-purchase-btn" />
+                </template>
+                <v-list density="compact" min-width="260">
+                  <v-list-item v-if="siblingPurchasesLoading" title="Загрузка…" disabled>
+                    <template #prepend><v-progress-circular indeterminate size="16" width="2" class="mr-2" /></template>
+                  </v-list-item>
+                  <template v-else>
+                    <v-list-item v-if="!(siblingPurchases || []).length" title="Других закупок в заявке нет" disabled />
+                    <v-list-item
+                      v-for="sp in siblingPurchases" :key="sp.id"
+                      :title="sp.label"
+                      :subtitle="sp.disabledReason || undefined"
+                      :disabled="sp.disabled"
+                      @click="emit('move-item-to-purchase', idx, sp.id)"
+                    />
+                  </template>
+                </v-list>
+              </v-menu>
               <v-btn icon="mdi-delete-outline" variant="text" size="small" color="error"
                 :disabled="readonly" @click="emit('remove-item', idx)" />
             </div>
@@ -451,6 +480,15 @@ const props = defineProps<{
   // Дефект 2 (владелец, 2026-08-20): та же роль, что purchaseId выше, для формы заявки
   // (закупки ещё нет) — см. одноимённый проп в FeoPlannedItemsSelect.vue / PurchaseItemsEditor.vue.
   wishId?: number | null
+  // «Перенести позиции в другую закупку заявки» (владелец, замечание 2, правка
+  // 2026-09-21) — id заявки, ИЗ КОТОРОЙ пришла ЭТА закупка (НЕ путать с wishId
+  // выше — тот про форму заявки). null → пункт меню «→ В другую закупку заявки…»
+  // не рендерится. siblingPurchases/siblingPurchasesLoading — состояние из
+  // composables/purchase/useMoveToSiblingPurchase.ts, ЕДИНСТВЕННЫЙ источник
+  // (Правило №6), живёт в родителе (PurchaseItemsEditor.vue), сюда приходит готовым.
+  purchaseWishId?: number | null
+  siblingPurchases?: { id: number; label: string; disabled: boolean; disabledReason: string | null }[]
+  siblingPurchasesLoading?: boolean
   // Шаг 5 «ТЗ не дороже и не больше плана» (владелец, 2026-08-07): найти плановую
   // строку позиции (для подписи «план: N шт / N ₽») и проверить превышение
   // (для подсветки) — обе считаются один раз в родителе (см. planForItem/
@@ -602,6 +640,8 @@ const emit = defineEmits<{
   'vat-rate-change': [idx: number, v: any]
   'remove-item': [idx: number]
   'split-item': [idx: number]
+  'open-move-menu': []
+  'move-item-to-purchase': [idx: number, targetPurchaseId: number]
   'contractor-search-input': [idx: number, search: string]
   'item-contractor-select': [idx: number, val: Contractor | null]
   'open-contractor-quick-create': [idx: number]

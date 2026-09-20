@@ -33,7 +33,7 @@
             @update:model-value="onRateSelect"
           />
           <v-text-field
-            v-if="!vatApplicable"
+            v-if="vatApplicable === false"
             :model-value="vatExemptionArticle"
             :label="vatExemptionAutoBasis
               ? 'Статья НК РФ (основание определено автоматически)'
@@ -50,6 +50,9 @@
             style="min-width:280px;flex:1 1 320px"
             @update:model-value="(v: string) => emit('update:vatExemptionArticle', v)"
           />
+          <span v-if="vatApplicable === null" class="text-caption text-medium-emphasis">
+            Уточните, когда определится подрядчик
+          </span>
         </template>
         <span v-else class="text-caption text-medium-emphasis">
           Ставка выбирается в строке каждой позиции ниже
@@ -70,7 +73,12 @@ import { computed } from 'vue'
 const props = defineProps<{
   mobile: boolean
   vatMode: 'uniform' | 'per_item'
-  vatApplicable: boolean
+  // Владелец (2026-09-17): «ещё раз введи возможность поставить "Ставка НДС"
+  // поле "Ещё не знаю"» — третье состояние, отдельное от «Не облагается»:
+  // null = решение не принято (обычно потому что подрядчик ещё не выбран),
+  // false = точно определено, что НДС не начисляется. purchases.vat_applicable
+  // в БД и так nullable — раньше фронт просто нигде не давал выбрать null явно.
+  vatApplicable: boolean | null
   vatRate: number | null
   vatExemptionArticle: string | null
   vatExemptionAutoBasis: string | null
@@ -80,7 +88,7 @@ const props = defineProps<{
   // пустой статьи НК РФ нельзя. Обязательно это поле только на этапе закупки/
   // договора (requireArticle=true, значение по умолчанию — старое поведение).
   // Единственный источник решения «нужна ли статья прямо сейчас» —
-  // PurchaseItemsEditor::!props.wishId, сюда приходит уже готовым.
+  // PurchaseItemsEditor::props.isWishStage, сюда приходит уже готовым.
   requireArticle?: boolean
 }>()
 
@@ -88,16 +96,19 @@ const requireArticle = computed(() => props.requireArticle !== false)
 
 const emit = defineEmits<{
   'update:vatMode': [mode: string]
-  'update:vatApplicable': [value: boolean]
+  'update:vatApplicable': [value: boolean | null]
   'update:vatRate': [value: number | null]
   'update:vatExemptionArticle': [value: string | null]
 }>()
 
-// Сентинел 'exempt' нужен, т.к. 0% — валидная облагаемая ставка и не может
-// делить одно значение null/undefined с «не облагается» (vat_applicable=false).
+// Сентинелы: 0% — валидная облагаемая ставка и не может делить одно значение
+// null/undefined с «не облагается» (vat_applicable=false) или с «ещё не
+// знаю» (vat_applicable=null) — три РАЗНЫХ состояния нужны три РАЗНЫХ ключа.
 const EXEMPT = 'exempt'
+const UNKNOWN = 'unknown'
 
 const rateOptions = [
+  { title: 'Ещё не знаю', value: UNKNOWN },
   { title: 'Не облагается', value: EXEMPT },
   { title: '0%', value: 0 },
   { title: '5%', value: 5 },
@@ -107,11 +118,17 @@ const rateOptions = [
   { title: '22%', value: 22 },
 ]
 
-const selectedRate = computed<string | number>(() => (
-  props.vatApplicable ? (props.vatRate ?? 22) : EXEMPT
-))
+const selectedRate = computed<string | number>(() => {
+  if (props.vatApplicable === null) return UNKNOWN
+  return props.vatApplicable ? (props.vatRate ?? 22) : EXEMPT
+})
 
 function onRateSelect(v: string | number) {
+  if (v === UNKNOWN) {
+    emit('update:vatApplicable', null)
+    emit('update:vatRate', null)
+    return
+  }
   if (v === EXEMPT) {
     emit('update:vatApplicable', false)
     return

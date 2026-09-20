@@ -115,6 +115,9 @@ export interface Wish {
   quantity?: number | null
   estimated_price?: number | null
   vat_mode?: string | null
+  vat_applicable?: boolean | null
+  vat_rate?: number | null
+  vat_exemption_article?: string | null
   approval_mode?: string | null
   // Phase 31-06: бейдж «чужих правок с последнего просмотра».
   unseen_changes_count?: number | null

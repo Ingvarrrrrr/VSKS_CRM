@@ -797,7 +797,7 @@
             :feo-excess-category-id="purchaseData?.feo_excess_category_id ?? null"
             :ensure-items-saved="ensureItemsSavedForCopy"
             @update:vat-mode="(v: string) => { form.vat_mode = v; onVatModeChange(v) }"
-            @update:vat-applicable="(v: boolean) => { form.vat_applicable = v }"
+            @update:vat-applicable="(v: boolean | null) => { form.vat_applicable = v }"
             @update:vat-rate="(v: number | null) => { form.vat_rate = v }"
             @update:vat-exemption-article="(v: string | null) => { form.vat_exemption_article = v ?? '' }"
             @items-changed="syncContractPriceIfSingle"
@@ -2372,7 +2372,7 @@ const form = reactive({
   framework_seq: null as number | null,
   responsible_person: '' as string,
   // Поля для генерации договора
-  vat_applicable: true as boolean,
+  vat_applicable: true as boolean | null,
   vat_rate: 22 as number | null,
   vat_exemption_article: '' as string,
   third_party_involved: false as boolean,
@@ -3200,6 +3200,9 @@ const GUIDE_TARGET_RESOLVED: Record<string, () => boolean> = {
       const named = items.value.filter((it: any) => it.item_name?.trim())
       return named.length > 0 && named.every((it: any) => !!it.vat_rate)
     }
+    // «Ещё не знаю» (vat_applicable=null) — осознанный выбор отложить решение,
+    // указателю тут нечего подсвечивать (владелец, 2026-09-17).
+    if (form.vat_applicable === null) return true
     return form.vat_applicable ? form.vat_rate != null : !!form.vat_exemption_article?.trim()
   },
 }
@@ -4030,7 +4033,12 @@ const loadPurchase = async () => {
     contract_id: data.contract_id ?? null,
     framework_seq: data.framework_seq ?? null,
     responsible_person: data.responsible_person || '',
-    vat_applicable: !!data.vat_applicable,
+    // Владелец (2026-09-17): «ещё раз введи возможность поставить "Ставка НДС"
+    // поле "Ещё не знаю"» — !!data.vat_applicable раньше схлопывал стоявший в
+    // БД null («ещё не знаю», nullable=True) в false («точно не облагается»),
+    // теряя эти состояния при каждой загрузке карточки. Разделяем ??-фолбэком:
+    // null/undefined остаются null, а false/true проходят как есть.
+    vat_applicable: data.vat_applicable === undefined ? null : data.vat_applicable,
     vat_rate: data.vat_rate ?? null,
     vat_exemption_article: data.vat_exemption_article || '',
     third_party_involved: !!data.third_party_involved,

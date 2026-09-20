@@ -157,6 +157,12 @@ class WishCreate(BaseModel):
     assigned_to: Optional[int] = None
     feo_per_item: bool = False  # режим «своя категория ФЭО для каждого товара»
     vat_mode: Optional[str] = None  # 'uniform' | 'per_item'
+    # Значения НДС при vat_mode='uniform' (владелец, 2026-09-17) — зеркалируют
+    # Purchase.vat_applicable/vat_rate/vat_exemption_article. None у vat_applicable
+    # значит «ещё не знаю», а не «не облагается».
+    vat_applicable: Optional[bool] = None
+    vat_rate: Optional[int] = None
+    vat_exemption_article: Optional[str] = None
     # Контрагент — необязательное поле (владелец, 2026-08-17): либо ссылка на
     # справочник (contractor_id), либо просто имя от руки, если контрагента
     # там ещё нет (contractor_name). Ни то, ни другое не обязательно и не
@@ -200,6 +206,13 @@ class WishUpdate(BaseModel):
     # значение при каждом частичном PUT, не содержащем это поле.
     feo_per_item: Optional[bool] = None
     vat_mode: Optional[str] = None  # 'uniform' | 'per_item'
+    # См. WishCreate — те же три поля, то же значение None у vat_applicable
+    # («ещё не знаю»). update_wish обрабатывает их точечно через
+    # model_fields_set, как и contractor_id ниже — общий exclude_none-дамп
+    # иначе не отличит явный null от «поле не прислали».
+    vat_applicable: Optional[bool] = None
+    vat_rate: Optional[int] = None
+    vat_exemption_article: Optional[str] = None
     # Контрагент — см. WishCreate.contractor_id/contractor_name. Optional[...] = None,
     # как и у остальных полей формы заявки (feo_category_id/subsidy_id выше) —
     # общий model_dump(exclude_none=True) в update_wish по-прежнему трактует
@@ -305,6 +318,9 @@ class WishOut(BaseModel):
     feo_category_id: Optional[int] = None
     feo_per_item: bool = False  # режим «своя категория ФЭО для каждого товара»
     vat_mode: Optional[str] = None  # 'uniform' | 'per_item'
+    vat_applicable: Optional[bool] = None
+    vat_rate: Optional[int] = None
+    vat_exemption_article: Optional[str] = None
     # Контрагент заявки — необязательный (владелец, 2026-08-17). contractor_id —
     # ссылка на справочник, contractor_name — свободный ввод, когда контрагента
     # там ещё нет. contractor_display_name — готовое имя для показа: из

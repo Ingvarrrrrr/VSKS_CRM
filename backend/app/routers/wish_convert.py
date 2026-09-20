@@ -335,6 +335,13 @@ async def convert_wish(
         payment_basis_type=_conv_payment_basis_type,
         feo_per_item=bool(getattr(wish, 'feo_per_item', False)),
         vat_mode=(getattr(wish, 'vat_mode', None) or 'uniform'),
+        # Владелец (2026-09-17): значения НДС, введённые на этапе заявки при
+        # vat_mode='uniform', переезжают в закупку тем же принципом, что и
+        # сам vat_mode строкой выше — второй перенос не заводим. Purchase
+        # свежесозданный, «не перетирать уже заданное» не актуально.
+        vat_applicable=getattr(wish, 'vat_applicable', None),
+        vat_rate=getattr(wish, 'vat_rate', None),
+        vat_exemption_article=getattr(wish, 'vat_exemption_article', None),
         # Контрагент заявки (владелец, 2026-08-17) — переезжает в закупку, если
         # указан. Purchase свежесозданный, поэтому «не перетирать уже заданное»
         # выполняется автоматически.

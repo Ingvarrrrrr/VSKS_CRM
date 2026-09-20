@@ -147,6 +147,13 @@ export function useWishForm(deps: {
     executor_id: null as number | null,
     execution_deadline: '' as string,
     vat_mode: 'uniform' as string,
+    // Владелец (2026-09-17): «ещё раз введи возможность поставить «Ещё не
+    // знаю»» — null = решение по НДС ещё не принято (контрагент на этапе
+    // заявки часто не выбран); по умолчанию для новой заявки, в отличие от
+    // закупки (CreateOrderView.vue::form.vat_applicable = true), намеренно.
+    vat_applicable: null as boolean | null,
+    vat_rate: null as number | null,
+    vat_exemption_article: '' as string,
     contractor_id: null as number | null,
     contractor_name: '' as string,
     feo_per_item: false as boolean,
@@ -573,6 +580,9 @@ export function useWishForm(deps: {
       executor_id: null,
       execution_deadline: '',
       vat_mode: 'uniform',
+      vat_applicable: null,
+      vat_rate: null,
+      vat_exemption_article: '',
       contractor_id: null,
       contractor_name: '',
       feo_per_item: false,
@@ -610,6 +620,9 @@ export function useWishForm(deps: {
     wishForm.value.desired_date = wish.desired_date || ''
     wishForm.value.status = wish.status || 'draft'
     wishForm.value.vat_mode = (wish as any).vat_mode || 'uniform'
+    wishForm.value.vat_applicable = (wish as any).vat_applicable === undefined ? null : (wish as any).vat_applicable
+    wishForm.value.vat_rate = (wish as any).vat_rate ?? null
+    wishForm.value.vat_exemption_article = (wish as any).vat_exemption_article || ''
     wishForm.value.contractor_id = (wish as any).contractor_id ?? null
     wishForm.value.contractor_name = (wish as any).contractor_name || ''
     wishForm.value.feo_per_item = (wish as any).feo_per_item ?? false

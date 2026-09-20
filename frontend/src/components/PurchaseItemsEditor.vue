@@ -156,10 +156,10 @@
       :vat-exemption-article="props.vatExemptionArticle"
       :vat-exemption-auto-basis="props.vatExemptionAutoBasis"
       :pointer-target="props.pointerTarget"
-      :require-article="!props.wishId"
+      :require-article="!props.isWishStage"
       class="mb-2"
       @update:vat-mode="(v: string) => emit('update:vatMode', v)"
-      @update:vat-applicable="(v: boolean) => emit('update:vatApplicable', v)"
+      @update:vat-applicable="(v: boolean | null) => emit('update:vatApplicable', v)"
       @update:vat-rate="(v: number | null) => emit('update:vatRate', v)"
       @update:vat-exemption-article="(v: string | null) => emit('update:vatExemptionArticle', v)"
     />
@@ -942,6 +942,14 @@ const props = withDefaults(defineProps<{
   // ItemsTableFlat → FeoPlannedItemsSelect::wishId (см. deletePlannedItem там и
   // backend/app/routers/feo_planned_items.py::delete_planned_item).
   wishId?: number | null
+  // Владелец (2026-09-17): «не починил продвижение при создании Новой заявки» —
+  // requireArticle (см. ниже) раньше решался по !!props.wishId, а у ЕЩЁ НЕ
+  // СОХРАНЁННОЙ заявки wishId=null совпадает СО СВОИМ ЖЕ дефолтом для закупки
+  // (оба случая неотличимы: проп либо не передан вовсе, либо передан как null —
+  // Vue не хранит разницу). Явный признак стадии — WishFormDialog.vue передаёт
+  // true независимо от того, сохранена ли уже заявка; CreateOrderView.vue его
+  // не передаёт (default false).
+  isWishStage?: boolean
   allowedItemTypes?: string[]
   defaultItemType?: string
   defaultUnit?: string
@@ -970,7 +978,7 @@ const props = withDefaults(defineProps<{
   // читаются/пишутся ТОЛЬКО components/purchase/PurchaseVatBlock.vue, смонтированным
   // в шаблоне выше (владелец, закупка РЕЕ-2026-00918, 2026-09-16: «НДС должно быть
   // в ОДНОМ месте»; раньше эти поля жили в отдельной секции «Параметры договора»).
-  vatApplicable?: boolean
+  vatApplicable?: boolean | null
   vatRate?: number | null
   vatExemptionArticle?: string | null
   // Автоподстановка основания «НДС не облагается» (самозанятый/ГПХ с физлицом) —
@@ -1069,6 +1077,7 @@ const props = withDefaults(defineProps<{
   feoAttrsEditable: false,
   purchaseId: null,
   wishId: null,
+  isWishStage: false,
   vatMode: 'uniform',
   vatApplicable: false,
   vatRate: null,
@@ -1194,7 +1203,7 @@ const emit = defineEmits<{
   'update:modelValue': [items: EditorItem[]]
   'update:contractItems': [items: ContractItem[]]  // Phase 27.1 D-04
   'update:vatMode': [mode: string]                 // Phase 27.1.2: inline toggle
-  'update:vatApplicable': [value: boolean]         // PurchaseVatBlock — единый блок НДС
+  'update:vatApplicable': [value: boolean | null]  // PurchaseVatBlock — единый блок НДС (null = «ещё не знаю»)
   'update:vatRate': [value: number | null]
   'update:vatExemptionArticle': [value: string | null]
   'item-added': [item: EditorItem]

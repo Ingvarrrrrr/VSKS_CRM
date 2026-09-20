@@ -50,6 +50,13 @@ class Wish(Base):
     feo_per_item = Column(Boolean, nullable=False, default=False, server_default="false")
     # НДС режим — 'uniform' (одинаковый) или 'per_item' (для каждого товара), см. Purchase.vat_mode
     vat_mode = Column(String(20), nullable=True, default="uniform", server_default="uniform")
+    # Значения НДС при vat_mode='uniform' — зеркалируют Purchase.vat_applicable/
+    # vat_rate/vat_exemption_article (владелец, 2026-09-17: до этого их было
+    # негде хранить на заявке, любой ввод в блоке НДС пропадал). NULL у
+    # vat_applicable — «ещё не знаю», осознанный третий выбор, не «не облагается».
+    vat_applicable = Column(Boolean, nullable=True)
+    vat_rate = Column(Integer, nullable=True)
+    vat_exemption_article = Column(String(200), nullable=True)
     event_id = Column(Integer, ForeignKey("events.id", ondelete="SET NULL"), nullable=True)
     assigned_to = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     executor_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # Кто исполняет (ставит approver)

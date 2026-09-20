@@ -314,6 +314,9 @@ async def create_wish(
         created_by=current_user.id,
         feo_per_item=body.feo_per_item,
         vat_mode=body.vat_mode or 'uniform',
+        vat_applicable=body.vat_applicable,
+        vat_rate=body.vat_rate,
+        vat_exemption_article=body.vat_exemption_article,
         # item-forms-accommodation-transport.md: заявка получает собственный
         # contract_form (владелец, 2026-09-15) — источник item_form_for_wish
         # ниже, тот же принцип, что и у Purchase.contract_form.
@@ -524,6 +527,17 @@ async def update_wish(
             )
         else:
             wish.contractor_name = body.contractor_name
+
+    # НДС «ещё не знаю» (владелец, 2026-09-17, PurchaseVatBlock.vue::UNKNOWN) —
+    # тот же нюанс частичного обновления, что и у contractor_id выше: общий
+    # exclude_none-дамп молча ВЫКИДЫВАЕТ vat_applicable=None из update_data,
+    # так что явный выбор «ещё не знаю» не отличить от «поле не прислали» и
+    # заявка тихо остаётся с прежним значением — ровно то, на что жаловался
+    # владелец («ничего не могу ввести»). model_fields_set отличает «пришёл
+    # null» от «ключа не было» для ЛЮБОГО значения, не только null — держим
+    # ветку одной, не заводим отдельную только под null.
+    if 'vat_applicable' in body.model_fields_set:
+        wish.vat_applicable = body.vat_applicable
 
     # Плановые позиции следуют за сменой категории (владелец, 2026-08-17):
     # предупреждения, когда привязку пришлось снять вместо переезда (см. ветку

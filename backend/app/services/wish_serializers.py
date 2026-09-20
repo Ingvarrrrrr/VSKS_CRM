@@ -13,15 +13,19 @@ app/routers/wish_transitions.py зовут их через `wishes_core._enrich`
 см. докстринг wish_transitions.py про monkeypatch).
 """
 from sqlalchemy import select
+from sqlalchemy.orm import defer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.wish import Wish
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.feo_category import FeoCategory
+from app.models.product import Product
 from app.schemas.wishes import WishOut, WishItemPurchaseMatch, WishPurchaseSummary
 from app.services.text_match import normalize as _normalize_name
 from app.services.item_contractor import item_contractor as _item_contractor
+from app.services.price_freshness import load_context as _load_freshness_context
+from app.services.product_snapshot import build_product_snapshot as _build_product_snapshot
 
 
 def _enrich(w: Wish) -> WishOut:
@@ -173,6 +177,89 @@ async def _attach_purchase_matches(wish: Wish, enriched: WishOut, db: AsyncSessi
                     match_method="item_name_ambiguous",
                     ambiguous_candidates_count=len(candidates),
                 )
+
+
+async def _attach_item_product_snapshot(wish: Wish, enriched: WishOut, db: AsyncSession) -> None:
+    """Владелец (2026-09-20, задача 2): «позиции заявки с фото/ценой на сервере,
+    вместо полного каталога на фронте» — заполняет WishItemOut.has_photo/
+    photo_url/photo_link/price_updated_at/price_source/price_source_ref/
+    price_freshness для КАЖДОЙ позиции заявки, у которой удаётся определить
+    товар каталога. Только карточка заявки (GET /{wish_id}), не список — тот же
+    приём, что и у _attach_purchase_matches выше (лишний вес не нужен в списке).
+
+    Источник значений — ОДНА функция app.services.product_snapshot.build_product_snapshot
+    (Правило №6): то же price_freshness (app.services.price_freshness.evaluate),
+    что и GET /api/products/, тот же фолбэк photo_url (внешняя ссылка → эндпоинт
+    bytea), что и products_match/_candidate_from_type_row — здесь не заводится
+    вторая копия ни одной из этих формул.
+
+    Определение товара позиции:
+      1. WishItem.product_id, если задан — прямая связь.
+      2. Иначе, при непустом item_name — ТОЧНОЕ совпадение normalize(item_name)
+         (app.services.text_match.normalize, единая нормализация проекта) с
+         normalize(Product.name) среди ВСЕГО каталога. Неоднозначность (0 или
+         ≥2 совпадений) — product_id НЕ подставляется, позиция остаётся без
+         снимка (поля не заполняются, WishItemOut отдаёт None как обычно) —
+         намеренно, наугад не выбираем (тот же принцип, что и
+         match_method='item_name_ambiguous' в _attach_purchase_matches выше).
+
+    Один пакетный SELECT Product на всю заявку (без N+1 по позициям), плюс,
+    только если есть позиции без product_id, один SELECT id/name всего каталога
+    для сопоставления по имени (normalize — Python-функция, не SQL)."""
+    wish_items = list(wish.items or [])
+    if not wish_items:
+        return
+
+    need_name_lookup = [wi for wi in wish_items if not wi.product_id and (wi.item_name or "").strip()]
+    by_normalized_name: dict[str, list[int]] = {}
+    if need_name_lookup:
+        name_rows = (await db.execute(select(Product.id, Product.name))).all()
+        for pid, name in name_rows:
+            key = _normalize_name(name or "")
+            if key:
+                by_normalized_name.setdefault(key, []).append(pid)
+
+    product_id_by_wish_item: dict[int, int] = {}
+    all_product_ids: set[int] = set()
+    for wi in wish_items:
+        if wi.product_id:
+            product_id_by_wish_item[wi.id] = wi.product_id
+            all_product_ids.add(wi.product_id)
+    for wi in need_name_lookup:
+        key = _normalize_name(wi.item_name or "")
+        candidates = by_normalized_name.get(key, [])
+        if len(candidates) == 1:
+            product_id_by_wish_item[wi.id] = candidates[0]
+            all_product_ids.add(candidates[0])
+
+    if not all_product_ids:
+        return
+
+    products_rows = (await db.execute(
+        select(Product).options(defer(Product.photo_data)).where(Product.id.in_(all_product_ids))
+    )).scalars().all()
+    products_by_id = {p.id: p for p in products_rows}
+
+    freshness_ctx = await _load_freshness_context(db, wish.org_id)
+
+    for w_item, out_item in zip(wish_items, enriched.items):
+        product_id = product_id_by_wish_item.get(w_item.id)
+        if not product_id:
+            continue
+        product = products_by_id.get(product_id)
+        if product is None:
+            continue
+        snap = _build_product_snapshot(product, freshness_ctx)
+        out_item.product_id = product_id
+        out_item.has_photo = snap["has_photo"]
+        out_item.photo_url = snap["photo_url"]
+        out_item.photo_link = snap["photo_link"]
+        out_item.description = snap["description"]
+        out_item.description_44fz = snap["description_44fz"]
+        out_item.price_updated_at = snap["price_updated_at"]
+        out_item.price_source = snap["price_source"]
+        out_item.price_source_ref = snap["price_source_ref"]
+        out_item.price_freshness = snap["price_freshness"]
 
 
 async def _wish_purchase_summaries_map(wish_ids: list, db: AsyncSession) -> dict:

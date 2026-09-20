@@ -116,11 +116,43 @@
           <v-list-item prepend-icon="mdi-magnify" @click="$emit('open-catalog-search')">
             <v-list-item-title>Найти в каталоге…</v-list-item-title>
           </v-list-item>
+          <v-list-item prepend-icon="mdi-plus-box" @click="openAddProduct">
+            <v-list-item-title>Добавить товар</v-list-item-title>
+          </v-list-item>
           <v-list-item prepend-icon="mdi-close-circle-outline" @click="$emit('pick', null)">
             <v-list-item-title>Без товара из каталога</v-list-item-title>
           </v-list-item>
         </v-list>
       </v-menu>
+
+      <!-- «Добавить товар» — тот же каталожный диалог/композабл, что и
+           страница «Товары» (Правило №6, useProductsForm.ts::onSaved). Товар
+           создаётся в общем каталоге (POST /products/) и сразу подставляется
+           в строку как выбранный кандидат. -->
+      <ProductFormDialog
+        v-model="productCreate.dialog.value"
+        v-model:name-search="productCreate.nameSearch.value"
+        :mobile="productCreate.mobile.value"
+        :editing-id="productCreate.editingId.value"
+        :edit-meta="productCreate.editMeta"
+        :form="productCreate.form"
+        :name-suggestions="productCreate.nameSuggestions.value"
+        :is-duplicate-name="productCreate.isDuplicateName.value"
+        :type-options="productCreate.typeOptions.value"
+        :category-options="productCreate.categoryOptions.value"
+        :avg-price="productCreate.avgPrice.value"
+        :photo-preview="productCreate.photoPreview.value"
+        :photo-file="productCreate.photoFile.value"
+        :photo-file-list="productCreate.photoFileList.value"
+        :photo-cache-buster="productCreate.photoCacheBuster.value"
+        :downloading-photo="productCreate.downloadingPhoto.value"
+        :deleting-photo="productCreate.deletingPhoto.value"
+        :saving="productCreate.saving.value"
+        @save="productCreate.save"
+        @clear-photo="productCreate.clearUploadedPhoto"
+        @download-photo="productCreate.downloadSinglePhoto"
+        @photo-file-change="productCreate.onPhotoFileChange"
+      />
     </td>
 
     <!-- Цена за единицу -->
@@ -160,6 +192,8 @@
 import { computed } from 'vue'
 import { formatMoney } from '@/utils/formatMoney'
 import PriceFreshnessStamp from '@/components/items/PriceFreshnessStamp.vue'
+import ProductFormDialog from '@/components/products/ProductFormDialog.vue'
+import { usePlanToRequestProductCreate } from '@/composables/subsidies/usePlanToRequestProductCreate'
 import type { PlanToRequestRow as PlanToRequestRowState, PlanToWishCandidate, PriceSource } from '@/composables/subsidies/usePlanToRequest'
 
 const props = defineProps<{ row: PlanToRequestRowState }>()
@@ -196,6 +230,19 @@ function pct(score: number): number {
 
 function onSourceToggle(v: PriceSource | 'inherit') {
   emit('set-source-override', v === 'inherit' ? null : v)
+}
+
+// «Добавить товар» — открывает каталожный диалог создания товара
+// (ProductFormDialog.vue через useProductsForm.ts, Правило №6) прямо из
+// строки, без ухода на страницу «Товары». Наименование/ед. изм. плановой
+// позиции предзаполняются; после сохранения товар подставляется как
+// выбранный кандидат строки (см. onCreated в usePlanToRequestProductCreate.ts).
+const productCreate = usePlanToRequestProductCreate((cand: PlanToWishCandidate) => {
+  emit('pick', cand)
+})
+
+function openAddProduct() {
+  productCreate.openCreateFor(row.name, row.unit)
 }
 </script>
 

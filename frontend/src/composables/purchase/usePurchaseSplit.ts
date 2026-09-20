@@ -39,14 +39,24 @@ export function usePurchaseSplit(
     try { fresh = await apiFetch<any>(`/purchases/${pid}`) } catch {}
     const rawItems: any[] = (fresh?.items || []).filter((it: any) => it && it.id != null)
 
-    let productsList: any[] = []
-    try { productsList = await apiFetch<any[]>('/products/?limit=10000') } catch {}
-    const byId = new Map<number, any>(productsList.map((p: any) => [p.id, p]))
-    const byName = new Map<string, any>(productsList.map((p: any) => [(p.name || '').trim().toLowerCase(), p]))
+    // Перф (сессия 2026-09-20): раньше здесь грузился ВЕСЬ каталог товаров
+    // (`/products/?limit=10000`, единственно ради фото/категории уже
+    // ПРИВЯЗАННЫХ позиций) — byName-подбор без product_id не нужен: позиции
+    // закупки либо уже привязаны, либо остаются без фото/категории (как и
+    // раньше, когда byName не находил совпадение). Грузим точечно по
+    // product_id, без полного каталога (тот же приём, что и в
+    // useWishActions.ts::openKanbanDialog, ПРАВИЛО №6).
+    const ids = [...new Set(rawItems.map((it: any) => it.product_id).filter((id: any) => id != null))]
+    let byId = new Map<number, any>()
+    if (ids.length) {
+      try {
+        const productsList = await apiFetch<any[]>(`/products/?ids=${ids.join(',')}`)
+        byId = new Map<number, any>((productsList || []).map((p: any) => [p.id, p]))
+      } catch {}
+    }
 
     splitKanbanItems.value = rawItems.map((it: any) => {
-      let prod = it.product_id ? byId.get(it.product_id) : null
-      if (!prod && it.item_name) prod = byName.get(it.item_name.trim().toLowerCase()) || null
+      const prod = it.product_id != null ? byId.get(it.product_id) : null
       const category = (prod?.category || '').trim()
       return {
         id: it.id,

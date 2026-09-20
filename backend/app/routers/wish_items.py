@@ -21,6 +21,7 @@ from app.auth.jwt import get_current_user
 from app.models.user import User
 from app.schemas.wishes import WishItemPatch
 from app.routers import wishes as wishes_core
+from app.services.wish_item_category_guard import assert_wish_item_category_from_plan
 
 router = APIRouter(prefix="/api/wishes", tags=["wishes"])
 
@@ -56,9 +57,16 @@ async def patch_wish_item(
         raise HTTPException(status_code=404, detail="Позиция не найдена в данной заявке")
     # body.target_column_key may be None (clear) or a non-empty string (override)
     item.target_column_key = body.target_column_key
+    # Задача 3 (владелец, 2026-09-20): построчная смена feo_category_id вне
+    # drag-drop — необязательное поле, только если реально прислано в теле
+    # запроса (model_fields_set), иначе обычный drag-drop (без него) не
+    # трогает уже сохранённую категорию позиции.
+    if "feo_category_id" in body.model_fields_set:
+        await assert_wish_item_category_from_plan(db, item, body.feo_category_id)
+        item.feo_category_id = body.feo_category_id
     await db.commit()
     await db.refresh(item)
-    return {"id": item.id, "target_column_key": item.target_column_key}
+    return {"id": item.id, "target_column_key": item.target_column_key, "feo_category_id": item.feo_category_id}
 
 
 # Под-роутеры (Правило №5 — не раздувать ядро этого файла новыми эндпоинтами,

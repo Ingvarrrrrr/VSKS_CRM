@@ -343,6 +343,27 @@ export function useWishForm(deps: {
     return !!id && wishFeoNodes.value.length > 0 && !wishFeoNodes.value.some(n => n.id === id)
   })
 
+  // Единый источник «категория/позиция дошла до конечного уровня» (владелец,
+  // приёмка заявки №544, 2026-09-20): раньше «конечная» означало ИСКЛЮЧИТЕЛЬНО
+  // node.is_leaf — но план закупок допускает плановые позиции ПРЯМО на
+  // направлении (не листе, у которого есть подкатегории, см. чек-лист п.6
+  // «позиции на направлении»). Категория с собственными плановыми позициями
+  // (wishPlannedByCategory.has(catId)) — валидная «конечная» для позиции,
+  // привязанной к одной из них; позиция с уже выбранным feo_planned_item_id
+  // корректна всегда, категория берётся от самой плановой позиции и её
+  // «нелистовость» вообще не проверяется. ЕДИНСТВЕННОЕ место этой проверки —
+  // используется и submit-валидацией (saveWish → wishFeoCategoryMissing), и
+  // стрелками (highlightMissingFeoCategory), и алертом в WishFormDialog.vue —
+  // второй копии этой логики в проекте нет (ПРАВИЛО №6).
+  function itemHasFinalFeoCategory(item: any, catId: number | null): boolean {
+    if (catId == null) return false
+    if (item?.feo_planned_item_id != null) return true
+    const node = wishFeoNodes.value.find(n => n.id === catId)
+    if (!node) return true // узел не найден (устарел/удалён) — не считаем это «незаполненной категорией»
+    if (node.is_leaf) return true
+    return wishPlannedByCategory.value.has(catId)
+  }
+
   const wishItemsMissingFeoCategory = computed(() => {
     const items = (wishForm.value.items as any[]).filter(
       (it) => (it.item_name || '').toString().trim() || Number(it.total_price) || Number(it.quantity)
@@ -350,16 +371,20 @@ export function useWishForm(deps: {
     if (!items.length) return [] as any[]
     if (!wishForm.value.feo_per_item) {
       const catId = wishFeoSelected.value
-      if (catId == null) return items
-      const node = wishFeoNodes.value.find(n => n.id === catId)
-      return (node && !node.is_leaf) ? items : []
+      // Дефект (прод, заявка №76, 2026-09-20): при пустой шапке (feo_category_id
+      // заголовка = null) старая проверка считала БЕЗ КАТЕГОРИИ все позиции разом,
+      // даже когда каждая позиция уже несёт свою feo_category_id (заявка создана
+      // из плана с несколькими категориями, но feo_per_item не выставлен — см.
+      // openEditDialog ниже, который теперь чинит это при открытии). Здесь —
+      // защита на случай, если синхронизация выше почему-то не сработала: при
+      // пустой шапке позицию считаем «без категории» только если И у неё самой
+      // feo_category_id пуст, а не автоматом всех.
+      if (catId == null) {
+        return items.filter((it: any) => it.feo_category_id == null)
+      }
+      return items.filter((it: any) => !itemHasFinalFeoCategory(it, catId))
     }
-    return items.filter((it) => {
-      const catId = it.feo_category_id ?? wishFeoSelected.value
-      if (catId == null) return true
-      const node = wishFeoNodes.value.find(n => n.id === catId)
-      return !!node && !node.is_leaf
-    })
+    return items.filter((it) => !itemHasFinalFeoCategory(it, it.feo_category_id ?? wishFeoSelected.value))
   })
   const wishFeoCategoryMissing = computed(() => wishItemsMissingFeoCategory.value.length > 0)
   const wishFeoCategoryMissingTooltip = computed(() =>
@@ -663,27 +688,16 @@ export function useWishForm(deps: {
         rawItems = (wish as any).items
       }
 
-      const needsBackfill = rawItems.some((i: any) => !i.product_id && i.item_name)
-      const hasProductIds = rawItems.some((i: any) => i.product_id != null)
-      let byId = new Map<number, any>()
-      if (needsBackfill || hasProductIds) {
-        try {
-          const products = await apiFetch<any[]>('/products/?limit=10000')
-          const byName = new Map<string, any>(
-            (products || []).map((p: any) => [(p.name || '').trim().toLowerCase(), p])
-          )
-          byId = new Map<number, any>((products || []).map((p: any) => [p.id, p]))
-          for (const it of rawItems) {
-            if (!it.product_id && it.item_name) {
-              const hit = byName.get(it.item_name.trim().toLowerCase())
-              if (hit) it.product_id = hit.id
-            }
-          }
-        } catch {}
-      }
-
+      // Перф (прод, заявка №76, 2026-09-20): раньше здесь грузился ВЕСЬ каталог
+      // товаров (`/products/?limit=10000`, ~4,4 МБ) ради backfill'а product_id
+      // по имени и фото/цены позиций — на каждое открытие карточки заявки, и это
+      // был ВТОРОЙ полный фетч каталога (первый — PurchaseItemsEditor.vue::
+      // onMounted → useItemsCatalog.ts::loadProducts, тоже убран в эту сессию).
+      // Контракт GET /wishes/{id} (бэкенд-агент, эта же сессия) теперь отдаёт
+      // сам: product_id уже дозаполнен по имени сервером, плюс has_photo/
+      // photo_url/photo_link/price_* прямо на каждой позиции — клиенту каталог
+      // целиком больше не нужен вовсе.
       wishForm.value.items = rawItems.map((i: any) => {
-        const prod = i.product_id != null ? byId.get(i.product_id) : null
         return {
           id: i.id ?? null,
           product_id: i.product_id ?? null,
@@ -705,13 +719,23 @@ export function useWishForm(deps: {
           // items-loading map, extra_attrs: i.extra_attrs || {}).
           extra_attrs: i.extra_attrs || {},
           purchase_match: i.purchase_match ?? null,
-          _photo_url: prod ? productPhotoSrc(prod) : undefined,
-          _description: prod?.description || undefined,
-          _price_meta: prod ? {
-            price_updated_at: prod.price_updated_at ?? null,
-            price_source: prod.price_source ?? null,
-            price_source_ref: prod.price_source_ref ?? null,
-            price_freshness: prod.price_freshness ?? null,
+          // productPhotoSrc (ПРАВИЛО №6) — прямо из полей позиции, отданных
+          // GET /wishes/{id} (has_photo/photo_url/photo_link), без похода за
+          // самим товаром в каталог.
+          _photo_url: i.product_id != null
+            ? productPhotoSrc({ id: i.product_id, has_photo: i.has_photo, photo_url: i.photo_url, photo_link: i.photo_link })
+            : undefined,
+          // Описание товара приходит в снимке позиции GET /wishes/{id}
+          // (app/services/wish_serializers.py::_attach_item_product_snapshot,
+          // поля description/description_44fz) — раньше бралось из полного
+          // каталога, теперь без похода за каталогом; читает WishTzSection.vue.
+          _description: i.description ?? undefined,
+          _description_44fz: i.description_44fz ?? undefined,
+          _price_meta: i.product_id != null ? {
+            price_updated_at: i.price_updated_at ?? null,
+            price_source: i.price_source ?? null,
+            price_source_ref: i.price_source_ref ?? null,
+            price_freshness: i.price_freshness ?? null,
           } : null,
         }
       }) as any
@@ -719,6 +743,20 @@ export function useWishForm(deps: {
         for (const it of wishForm.value.items as any[]) {
           if (it.feo_category_id == null) it.feo_category_id = wishFeoSelected.value
         }
+      } else if (!wishForm.value.feo_per_item) {
+        // Дефект (прод, заявка №76, 2026-09-20): заявка создана из плана
+        // закупок с НЕСКОЛЬКИМИ категориями — у каждой позиции своя
+        // feo_category_id, но шапка (wishFeoSelected) пуста, а feo_per_item
+        // почему-то остался false (бэкенд теперь ставит true при создании из
+        // плана с разными категориями, но старые заявки/крайние случаи это не
+        // чинят). Без этой синхронизации wishItemsMissingFeoCategory (общая
+        // ветка выше) видит пустую шапку и требует категорию ЗАНОВО у всех
+        // позиций, хотя она у них уже есть — «Конечная категория ФЭО не
+        // выбрана» на заявке, где она давно выбрана для каждой позиции.
+        // Включаем per-item режим — он переводит проверку на собственные
+        // feo_category_id позиций (ветка ниже в wishItemsMissingFeoCategory).
+        const hasOwnCategory = (wishForm.value.items as any[]).some(it => it.feo_category_id != null)
+        if (hasOwnCategory) wishForm.value.feo_per_item = true
       }
 
       wishDateMode.value = (wishForm.value.items as any[]).some(it => it.needed_date) ? 'per_item' : 'common'

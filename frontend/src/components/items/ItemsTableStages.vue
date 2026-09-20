@@ -305,23 +305,33 @@
                         <!-- ФЭО позиция — горизонтальный каскад по уровням -->
                         <div v-if="feoPerItem || allowPerItemPlan" class="d-flex align-start ga-2 flex-wrap" style="flex:1 1 460px;min-width:300px">
                           <template v-if="feoPerItem">
-                            <FeoTreeSelect
-                              :model-value="item.feo_node_id ?? item.feo_category_id"
-                              :nodes="feoNodes"
-                              :leaves="feoLeaves"
-                              :plan-positions="plannedItems || []"
-                              :node-amounts="nodeAmounts"
-                              :readonly="feoReadonly"
-                              :error="isFeoMissing(item)"
-                              horizontal
-                              label="ФЭО позиция"
-                              required
-                              :allow-unallocated="!!subsidyId"
-                              :root-label="subsidyName"
-                              style="flex:1 1 auto;min-width:240px"
-                              @update:model-value="(v: number | null) => emit('item-feo-change', idx, v)"
-                              @pick-unallocated="(parentId: number | null) => emit('item-pick-unallocated', idx, parentId)"
-                            />
+                            <div style="flex:1 1 auto;min-width:240px">
+                              <v-tooltip :text="itemFeoLockTooltip(item) || ''" :disabled="!itemFeoLockTooltip(item)" location="top">
+                                <template #activator="{ props: lockTip }">
+                                  <div v-bind="lockTip">
+                                    <FeoTreeSelect
+                                      :model-value="item.feo_node_id ?? item.feo_category_id"
+                                      :nodes="feoNodes"
+                                      :leaves="feoLeaves"
+                                      :plan-positions="plannedItems || []"
+                                      :node-amounts="nodeAmounts"
+                                      :readonly="feoReadonly || isItemFeoCategoryLocked(item)"
+                                      :error="isFeoMissing(item)"
+                                      horizontal
+                                      label="ФЭО позиция"
+                                      required
+                                      :allow-unallocated="!!subsidyId"
+                                      :root-label="subsidyName"
+                                      @update:model-value="(v: number | null) => emit('item-feo-change', idx, v)"
+                                      @pick-unallocated="(parentId: number | null) => emit('item-pick-unallocated', idx, parentId)"
+                                    />
+                                  </div>
+                                </template>
+                              </v-tooltip>
+                              <v-chip v-if="feoLockChipLabel(item)" size="x-small" variant="tonal" color="grey" class="mt-1" prepend-icon="mdi-lock-outline">
+                                {{ feoLockChipLabel(item) }}
+                              </v-chip>
+                            </div>
                             <div v-if="isOverBudget(item)" class="text-caption text-warning mt-2 d-flex align-center ga-1" style="white-space:nowrap">
                               <v-icon icon="mdi-alert-outline" size="14" />
                               Превышение: {{ fmtRub(overBudgetDelta(item)) }}
@@ -585,6 +595,7 @@ import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlan
 import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
 import { formatPlanResidual } from '@/utils/numberFormat'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
+import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT } from '@/utils/feoItemLock'
 // item-forms-accommodation-transport.md: спец-форма позиции — ItemFormFields.vue
 // заменяет колонки Кол-во/Ед./Цена в развёрнутой ТЗ-подстроке (Правило №6, единый
 // рендерер спец-полей); свёрнутая сводная строка показывает только компактную
@@ -722,6 +733,12 @@ function specSummary(item: EditorItem): string {
 // См. feoAttrsEditable в defineProps выше — построчные ФЭО-контролы остаются
 // кликабельными даже при readonly=true, если родитель явно это разрешил.
 const feoReadonly = computed(() => props.readonly && !props.feoAttrsEditable)
+
+// Замок категории (владелец, 2026-09-20) — см. докстринг в ItemsTableFlat.vue,
+// тот же предикат/текст (utils/feoItemLock.ts, ПРАВИЛО №6).
+function itemFeoLockTooltip(item: EditorItem): string | null {
+  return isItemFeoCategoryLocked(item) ? FEO_CATEGORY_LOCKED_HINT : null
+}
 
 // Дефект «РЕЕ-2026-00904» (владелец, 2026-09-02): протухший собственный feo_node_id
 // позиции (от старой категории ФЭО) при ВЫКЛЮЧЕННОМ feoPerItem скоупил дерево

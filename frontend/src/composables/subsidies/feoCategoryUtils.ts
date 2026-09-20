@@ -24,6 +24,31 @@ export function collectSubtreeIds(categories: FeoCategory[], nodeId: number): nu
   return ids
 }
 
+// Нижний порог ширины колонки «Наименование» дерева ФЭО (координатор, регресс
+// приёмки 2026-09-20 №2): несжимаемые шеврон/папка (+чекбокс категории/позиции
+// в режиме выбора) перед текстом съедают ~70px, при сохранённой в localStorage
+// узкой ширине ('feo-table' colWidths.name) текст рвался по буквам. Единственный
+// источник формулы (Правило №6): FeoTreeTable.vue (шапка дерева) и
+// FeoLevel5Panel.vue (своя вложенная <table> внутри панели «План vs факт» —
+// table-layout:fixed считает ширины НЕЗАВИСИМО от внешней таблицы, поэтому ей
+// нужен тот же порог отдельно) оборачивают им СВОЙ resizeStyle('name'), второй
+// копии формулы/чисел не заводят. minWidth ПЕРЕКРЫВАЕТ уже сохранённое узкое
+// значение при каждом чтении (не разовая миграция localStorage) — по CSS-спеке
+// min-width всегда побеждает над меньшим width/max-width.
+export const FEO_NAME_COLUMN_MIN = 230
+export const FEO_NAME_COLUMN_MIN_SELECT_MODE = FEO_NAME_COLUMN_MIN + 24
+
+export function withNameColumnFloor(base: Record<string, string>, selectModeActive: boolean): Record<string, string> {
+  const min = selectModeActive ? FEO_NAME_COLUMN_MIN_SELECT_MODE : FEO_NAME_COLUMN_MIN
+  // resizeStyle() (useResizableColumns.ts) отдаёт width/minWidth/maxWidth одним
+  // числом — при table-layout: fixed колонку держит width, а maxWidth не даёт
+  // расти, поэтому один только minWidth ничего не менял (приёмка 20.09:
+  // названия по-прежнему рвались по буквам). Порог применяем ко всем трём.
+  const stored = parseInt(String(base.width ?? ''), 10)
+  const w = Number.isFinite(stored) ? Math.max(stored, min) : min
+  return { ...base, width: `${w}px`, minWidth: `${w}px`, maxWidth: `${w}px` }
+}
+
 // ── Левая группа колонок панели «план vs факт»: ДВА состояния, не «план» ──────
 // Правка владельца (2026-08-09): левая группа у строк ФАКТА — это НЕ план (план —
 // только строка самой плановой позиции, помечена чипом «план»). До заключения

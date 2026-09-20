@@ -54,6 +54,7 @@ def _item_to_out(
     _ic = _item_contractor(item, name_map=contractor_names, inn_map=contractor_inns)
     return PurchaseItemOut(
         id=item.id,
+        wish_item_id=getattr(item, 'wish_item_id', None),
         product_id=item.product_id,
         item_name=item.item_name,
         item_type=item.item_type,

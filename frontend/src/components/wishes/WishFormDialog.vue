@@ -1297,6 +1297,10 @@ const approvers = useWishApprovers({
 const wishLive = useWishLive({
   wishId: form.editingWishId,
   isOpen: form.wishDialog,
+  // Перф (прод, заявка №76, 2026-09-20): не стартовать поллер, пока идёт
+  // тяжёлая загрузка карточки (useWishForm.ts::openEditDialog) — см.
+  // докстринг useWishLive.ts::UseWishLiveOptions.loading.
+  loading: form.wishDialogLoading,
   approvers: approvers.wishApprovers,
   wish: form.editingWish as any,
   currentUserId: ctx.currentUserId,

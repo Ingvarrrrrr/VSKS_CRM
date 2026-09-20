@@ -53,6 +53,11 @@ class PurchaseItemCreate(BaseModel):
 
 class PurchaseItemOut(PurchaseItemCreate):
     id: int
+    # Владелец (2026-09-20, доп. к задаче 2): прямая связь на исходную позицию
+    # заявки (mirrors PurchaseItem.wish_item_id) — фронт по её наличию делает
+    # категорию позиции readonly (состав/категория идут из заявки/плана, не
+    # правятся напрямую в закупке для позиций с живой связью).
+    wish_item_id: Optional[int] = None
     product_name: Optional[str] = None
     product_photo_url: Optional[str] = None
     product_description: Optional[str] = None

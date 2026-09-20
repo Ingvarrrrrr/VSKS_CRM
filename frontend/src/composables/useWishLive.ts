@@ -61,6 +61,15 @@ export interface UseWishLiveOptions<A extends WishLiveApprover, W extends WishLi
   // «мои согласования» (loadWishes/loadAllWishes + refreshMyPendingApprovals).
   onExternalChange?: () => void
   intervalMs?: number
+  // Перф (прод, заявка №76, 2026-09-20): диалог открывается (isOpen=true)
+  // СИНХРОННО, ДО того как openEditDialog(useWishForm.ts) закончит тяжёлую
+  // загрузку позиций (wishDialogLoading=true всё это время) — поллер раньше
+  // стартовал сразу на isOpen и бил по GET /wishes/{id}+/approvers ровно
+  // тогда, когда сеть и так занята основной загрузкой. Опциональный флаг —
+  // пока true, start() не запускается (см. shouldRun ниже); вызывающий обязан
+  // передать wishDialogLoading (useWishForm.ts), иначе прежнее поведение
+  // (поллер стартует сразу на isOpen).
+  loading?: Ref<boolean>
 }
 
 export function useWishLive<A extends WishLiveApprover, W extends WishLiveHeader>(
@@ -68,13 +77,19 @@ export function useWishLive<A extends WishLiveApprover, W extends WishLiveHeader
 ) {
   const {
     wishId, isOpen, approvers, wish, currentUserId, isAutosaveBusy, showSnack,
-    onExternalChange, intervalMs = LIVE_INTERVAL_MS,
+    onExternalChange, intervalMs = LIVE_INTERVAL_MS, loading,
   } = options
   const shortName = options.shortName || ((full?: string | null) => full || '')
 
   let timer: ReturnType<typeof setInterval> | null = null
   let inFlight = false
   let running = false
+  // Дебаунс тиков по focus/visibilitychange (задача 3, сессия 2026-09-20):
+  // переключение вкладок туда-сюда или частые фокусы поля раньше дёргали
+  // /wishes/{id}+/approvers на КАЖДОЕ событие — теперь не чаще, чем раз в
+  // intervalMs (20с) от последнего РЕАЛЬНОГО тика (интервального ИЛИ
+  // событийного), независимо друг от друга.
+  let lastTickAt = 0
   // Гонка устаревшего ответа (QA, сессия 2026-08-20): тик читает GET
   // approvers/wish, а ровно пока запрос летит, пользователь мог сам принять
   // решение (decideApprover) и уже применить СВЕЖИЙ ответ сервера в те же
@@ -117,6 +132,7 @@ export function useWishLive<A extends WishLiveApprover, W extends WishLiveHeader
     if (isAutosaveBusy()) return
     if (inFlight) return
     inFlight = true
+    lastTickAt = Date.now()
     const versionAtStart = localVersion
     try {
       const [freshApprovers, freshWish] = await Promise.all([
@@ -168,10 +184,17 @@ export function useWishLive<A extends WishLiveApprover, W extends WishLiveHeader
     }
   }
 
-  const onVisibility = () => {
-    if (typeof document !== 'undefined' && !document.hidden) tick()
+  // Событийные тики (фокус вкладки/окна) — не чаще intervalMs от последнего
+  // РЕАЛЬНОГО тика (см. lastTickAt в tick() выше). Частое переключение вкладок
+  // раньше означало столько же запросов подряд.
+  function tickIfDue() {
+    if (Date.now() - lastTickAt < intervalMs) return
+    tick()
   }
-  const onFocus = () => { tick() }
+  const onVisibility = () => {
+    if (typeof document !== 'undefined' && !document.hidden) tickIfDue()
+  }
+  const onFocus = () => { tickIfDue() }
 
   function start() {
     if (running) return
@@ -188,7 +211,15 @@ export function useWishLive<A extends WishLiveApprover, W extends WishLiveHeader
     if (typeof window !== 'undefined') window.removeEventListener('focus', onFocus)
   }
 
-  watch(isOpen, (v) => { if (v) start(); else stop() }, { immediate: true })
+  // Не стартуем, пока идёт тяжёлая загрузка карточки (loading=true) — см.
+  // докстринг у UseWishLiveOptions.loading выше. loading без значения (проп не
+  // передан) — прежнее поведение, поллер стартует сразу на isOpen.
+  function syncRunning() {
+    const shouldRun = isOpen.value && !(loading?.value)
+    if (shouldRun) start(); else stop()
+  }
+  watch(isOpen, syncRunning, { immediate: true })
+  if (loading) watch(loading, syncRunning)
   onUnmounted(stop)
 
   return { start, stop, markLocalUpdate }

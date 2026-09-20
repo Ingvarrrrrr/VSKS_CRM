@@ -42,6 +42,7 @@ from app.services.dictionaries import STATUS_LABELS
 from app.services.feo_plan_fact import planned_item_consumption
 from app.services.item_amounts import line_total
 from app.services.price_freshness import load_context as load_freshness_context, evaluate as evaluate_freshness
+from app.services.product_snapshot import resolve_photo_url
 from app.services.text_match import normalize, tokenize, score as text_score, SCORE_AUTO, SCORE_SUGGEST
 
 
@@ -67,7 +68,7 @@ def _candidate_from_type_row(row, score_value: float, freshness_ctx) -> dict:
         "price": float(row.price) if row.price is not None else None,
         "score": round(score_value, 4),
         "description": row.description,
-        "photo_url": row.photo_url or (f"/api/products/{row.id}/photo" if row.has_bytea_photo else None),
+        "photo_url": resolve_photo_url(row.photo_url, row.has_bytea_photo, row.id),
         "item_type": row.product_type,
         "category": row.category,
         "product_type": row.product_type,
@@ -413,6 +414,14 @@ async def create_wish_from_plan(
                 )
 
     feo_category_id = next(iter(categories_used)) if len(categories_used) == 1 else None
+    # Владелец (2026-09-20, блокер): позиции из НЕСКОЛЬКИХ категорий ФЭО —
+    # заявка должна открываться в режиме «своя категория у каждого товара»
+    # (WishCreate.feo_per_item, то же поле, что и ручное создание заявки),
+    # иначе шапка заявки остаётся без категории, а позиции с уже проставленным
+    # per-item feo_category_id (см. item_dicts выше) визуально выглядят как
+    # ошибка несинхронизированности. Один источник категории каждой позиции —
+    # cat.id, посчитанный в цикле выше; здесь просто включается режим показа.
+    feo_per_item = len(categories_used) > 1
 
     if title:
         wish_title = title
@@ -423,6 +432,7 @@ async def create_wish_from_plan(
         title=wish_title,
         subsidy_id=subsidy_id,
         feo_category_id=feo_category_id,
+        feo_per_item=feo_per_item,
         items=item_dicts,
     )
     wish_out = await create_wish(body=wish_body, db=db, current_user=current_user)

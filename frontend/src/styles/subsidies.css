@@ -541,7 +541,18 @@
 }
 .subsidies-page .feo-residual-opt:hover { color: #475569; }
 .subsidies-page .feo-residual-opt--active { color: #0f766e; background: rgba(20,184,166,0.12); border-color: rgba(20,184,166,0.35); }
-.subsidies-page .feo-name { font-size: 13px; font-weight: 500; color: var(--crm-text); white-space: normal; word-break: break-word; min-width: 0; flex: 1; }
+/* Регресс приёмки 2026-09-20: word-break:break-word вычисляется браузером как
+   word-break:normal + overflow-wrap:ANYWHERE (см. MDN) — anywhere уменьшает
+   МИНИМАЛЬНУЮ intrinsic-ширину flex-элемента почти до нуля (в отличие от
+   overflow-wrap:break-word, который переносит длинные слова, но НЕ занижает
+   min-content), поэтому в паре с чекбоксом/шевроном/папкой, отъедающими
+   ширину у узкой колонки «Наименование», текст рвался по слогам/буквам
+   («Закуп/а», «Пила/цепн/ая»). overflow-wrap:break-word + word-break:normal —
+   слова переносятся по границам, ломается только слово ДЛИННЕЕ доступной
+   ширины (длинные названия товаров), короткие — целиком на новую строку. */
+/* min-width:6ch (координатор, регресс №2, вместо прежнего 0) — короткие слова
+   не рвутся даже когда колонка временно уже порога. */
+.subsidies-page .feo-name { font-size: 13px; font-weight: 500; color: var(--crm-text); white-space: normal; word-break: normal; overflow-wrap: break-word; min-width: 6ch; flex: 1; }
 .subsidies-page .feo-name--l1 { font-weight: 700; font-size: 13px; }
 .subsidies-page .feo-name--l2 { font-weight: 600; }
 .subsidies-page .feo-name--l3 { font-weight: 400; color: var(--crm-text-secondary); }
@@ -558,7 +569,41 @@
   font-size: 12px; color: #3B82F6; cursor: pointer; text-decoration: underline dotted;
 }
 .subsidies-page .feo-set-hint:hover { color: #2563EB; }
-.subsidies-page .feo-tree-chevron { display: inline-flex; align-items: center; }
+/* Шеврон/папка (владелец, задача 3): увеличенная кликабельная область вместо
+   голой 15/16px иконки. Регресс приёмки 2026-09-20: 28×28 с 4px паддингом
+   (content-box) отъедали ~72px у узкой колонки «Наименование» — вдвое больше
+   исходных ~39px (два голых mr-1-инкона). Сузили до 24×28 (box-sizing:
+   border-box — паддинг/бордер НЕ добавляются сверху ширины) и убрали
+   margin-right (небольшой зазор даёт сам паддинг внутри рамки), высота 28px
+   сохраняет кликабельную область по вертикали. Строка не «распухает» — высоту
+   задают более высокие соседи (сетка кнопок в «Действиях»). */
+.subsidies-page .feo-tree-chevron,
+.subsidies-page .feo-tree-folder {
+  box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 28px; padding: 1px;
+  flex-shrink: 0;
+  cursor: pointer; border-radius: 6px;
+}
+.subsidies-page .feo-tree-chevron:hover,
+.subsidies-page .feo-tree-folder:hover { background: rgba(59,130,246,0.10); }
+
+/* Чекбокс «выбрать категорию» перед шевроном (задача 1) — тот же регресс: Vuetify
+   даёт v-selection-control 40px тач-таргет даже с density="compact" (~36px),
+   в узкой колонке «Наименование» это ещё ~30-40px в довесок к шеврону/папке.
+   --v-selection-control-size — официальная CSS-переменная Vuetify для его
+   размера (тот же приём отрисовки без обёрток-костылей), min-height:unset —
+   как в .feo-planned-switch (styles/feo-planned-select.css). Отрицательные
+   поля компенсируют внутренний паддинг control'а, чтобы визуальная иконка
+   (18×18) не сдвигала соседние элементы на всю величину тач-таргета. */
+.subsidies-page .feo-tree-select-checkbox {
+  --v-selection-control-size: 22px;
+  flex-shrink: 0;
+  margin: -3px -2px -3px -4px;
+}
+.subsidies-page .feo-tree-select-checkbox .v-selection-control {
+  min-height: unset;
+}
 .subsidies-page .cursor-pointer { cursor: pointer; }
 
 /* Inline budget edit */

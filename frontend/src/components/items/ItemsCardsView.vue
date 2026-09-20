@@ -111,20 +111,29 @@
                 hide-details :disabled="readonly || !!itemForm"
                 @update:model-value="(v: string) => emit('item-type-change', idx, v)" />
               <template v-if="feoPerItem">
-                <FeoTreeSelect
-                  :model-value="item.feo_node_id ?? item.feo_category_id"
-                  :nodes="feoNodes"
-                  :leaves="feoLeaves"
-                  :plan-positions="plannedItems || []"
-                  :node-amounts="nodeAmounts"
-                  :readonly="feoReadonly"
-                  :error="isFeoMissing(item)"
-                  class="mt-2"
-                  :allow-unallocated="!!subsidyId"
-                  :root-label="subsidyName"
-                  @update:model-value="(v: number | null) => emit('item-feo-change', idx, v)"
-                  @pick-unallocated="(parentId: number | null) => emit('item-pick-unallocated', idx, parentId)"
-                />
+                <v-tooltip :text="itemFeoLockTooltip(item) || ''" :disabled="!itemFeoLockTooltip(item)" location="top">
+                  <template #activator="{ props: lockTip }">
+                    <div v-bind="lockTip">
+                      <FeoTreeSelect
+                        :model-value="item.feo_node_id ?? item.feo_category_id"
+                        :nodes="feoNodes"
+                        :leaves="feoLeaves"
+                        :plan-positions="plannedItems || []"
+                        :node-amounts="nodeAmounts"
+                        :readonly="feoReadonly || isItemFeoCategoryLocked(item)"
+                        :error="isFeoMissing(item)"
+                        class="mt-2"
+                        :allow-unallocated="!!subsidyId"
+                        :root-label="subsidyName"
+                        @update:model-value="(v: number | null) => emit('item-feo-change', idx, v)"
+                        @pick-unallocated="(parentId: number | null) => emit('item-pick-unallocated', idx, parentId)"
+                      />
+                    </div>
+                  </template>
+                </v-tooltip>
+                <v-chip v-if="feoLockChipLabel(item)" size="x-small" variant="tonal" color="grey" class="mt-1" prepend-icon="mdi-lock-outline">
+                  {{ feoLockChipLabel(item) }}
+                </v-chip>
                 <div v-if="isOverBudget(item)" class="text-caption text-warning d-flex align-center ga-1 mt-1">
                   <v-icon icon="mdi-alert-outline" size="12" />
                   <span style="font-size:11px">Превышение: {{ fmtRub(overBudgetDelta(item)) }}</span>
@@ -344,6 +353,7 @@ import type { FeoPlanSelection, FeoPlanPosition } from '@/composables/useFeoPlan
 import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
 import { formatPlanResidual } from '@/utils/numberFormat'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
+import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT } from '@/utils/feoItemLock'
 import ItemFormFields from '@/components/items/ItemFormFields.vue'
 import type { ItemFormCode, ItemFormField } from '@/utils/itemAmounts'
 
@@ -455,6 +465,12 @@ const virtualize = computed(() => props.items.length > VIRT_THRESHOLD)
 // См. feoAttrsEditable в defineProps выше — построчные ФЭО-контролы остаются
 // кликабельными даже при readonly=true, если родитель явно это разрешил.
 const feoReadonly = computed(() => props.readonly && !props.feoAttrsEditable)
+
+// Замок категории (владелец, 2026-09-20) — см. докстринг в ItemsTableFlat.vue,
+// тот же предикат/текст (utils/feoItemLock.ts, ПРАВИЛО №6).
+function itemFeoLockTooltip(item: EditorItem): string | null {
+  return isItemFeoCategoryLocked(item) ? FEO_CATEGORY_LOCKED_HINT : null
+}
 
 // Дефект «РЕЕ-2026-00904» (владелец, 2026-09-02): протухший собственный feo_node_id
 // позиции (от старой категории ФЭО) при ВЫКЛЮЧЕННОМ feoPerItem скоупил дерево

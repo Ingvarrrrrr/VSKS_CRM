@@ -29,6 +29,7 @@ from app.models.user import User
 from app.schemas.schemas import PriceFreshnessOut
 from app.services.product_matcher import bulk_match
 from app.services.price_freshness import load_context as load_freshness_context, evaluate as evaluate_freshness
+from app.services.product_snapshot import resolve_photo_url
 
 _log = logging.getLogger(__name__)
 
@@ -129,7 +130,7 @@ async def _score_product_candidates(
             r.name or '',
             float(r.price) if r.price is not None else None,
             r.description,
-            r.photo_url or (f'/api/products/{r.id}/photo' if r.has_bytea_photo else None),
+            resolve_photo_url(r.photo_url, r.has_bytea_photo, r.id),
             r.product_type,
             r.category,
         )

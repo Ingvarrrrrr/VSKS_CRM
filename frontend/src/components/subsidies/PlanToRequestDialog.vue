@@ -43,15 +43,34 @@
 
       <v-divider />
 
+      <!-- Материализация ручных планов категорий (задача 2) — перед POST
+           plan-to-wish/candidates: отрицательные id (категория без отдельных
+           FeoPlannedItem) сначала становятся настоящими позициями, см.
+           usePlanToRequest.ts::materializeSelectedManualPlans. -->
+      <div v-if="planToRequest.materializingManualPlans.value" class="d-flex align-center justify-center" style="height:80px;gap:8px">
+        <v-progress-circular indeterminate color="deep-purple" size="20" />
+        <span class="text-body-2">Создаю плановые позиции…</span>
+      </div>
+      <!-- Пачки по 50 (владелец, задача 1) — строки появляются по мере готовности. -->
+      <div v-if="planToRequest.candidatesProgress.value" class="px-4 py-2">
+        <div class="text-caption text-medium-emphasis mb-1">
+          Подбор товаров: {{ planToRequest.candidatesProgress.value.done }} из {{ planToRequest.candidatesProgress.value.total }}
+        </div>
+        <v-progress-linear
+          :model-value="(planToRequest.candidatesProgress.value.done / planToRequest.candidatesProgress.value.total) * 100"
+          color="deep-purple" height="6" rounded
+        />
+      </div>
+
       <div class="flex-grow-1" style="overflow-y:auto">
-        <div v-if="planToRequest.loadingCandidates.value" class="d-flex align-center justify-center" style="height:200px;gap:8px">
+        <div v-if="planToRequest.loadingCandidates.value && !planToRequest.rows.value.length" class="d-flex align-center justify-center" style="height:200px;gap:8px">
           <v-progress-circular indeterminate color="deep-purple" />
           <span class="text-body-2">Подбираем кандидатов по каталогу…</span>
         </div>
-        <div v-else-if="!planToRequest.rows.value.length" class="text-center text-medium-emphasis py-8">
+        <div v-else-if="!planToRequest.rows.value.length && !planToRequest.materializingManualPlans.value" class="text-center text-medium-emphasis py-8">
           Нет плановых позиций для подбора
         </div>
-        <table v-else class="ptr-table">
+        <table v-if="planToRequest.rows.value.length" class="ptr-table">
           <thead>
             <tr>
               <th style="width:26%">Плановая позиция</th>

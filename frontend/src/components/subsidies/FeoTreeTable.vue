@@ -9,7 +9,7 @@
     <table class="feo-table">
       <thead>
         <tr>
-          <th class="feo-th feo-th-name" :style="ctx.feoResize.resizeStyle('name')">
+          <th class="feo-th feo-th-name" :style="nameColumnStyle">
             Наименование
             <span class="col-resize-handle" @mousedown="ctx.feoResize.onResizeStart($event, 'name')"></span>
           </th>
@@ -190,10 +190,11 @@
 // (позиции «из заявок» после поддерева владельца). Формулы/состояние —
 // composables/subsidies/useFeoTree*.ts (Правило №6), здесь только вёрстка +
 // сборка строк.
-import { watchEffect, ref } from 'vue'
+import { watchEffect, ref, computed } from 'vue'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { formatCurrency } from '@/composables/subsidies/format'
 import { usePlanToRequest } from '@/composables/subsidies/usePlanToRequest'
+import { withNameColumnFloor } from '@/composables/subsidies/feoCategoryUtils'
 import FeoTreeRow from './FeoTreeRow.vue'
 import FeoLevel5Panel from './FeoLevel5Panel.vue'
 import FeoReqItemsRows from './FeoReqItemsRows.vue'
@@ -203,6 +204,13 @@ const ctx = useSubsidyDetailCtx()
 // Подсветка «режим выбора» для «Создать закупку на основе плана» (владелец,
 // лист 2 №7) — тот же синглтон, что и кнопка в FeoTreeToolbar.vue (Правило №6).
 const planToRequest = usePlanToRequest()
+
+// Нижний порог ширины «Наименование» (координатор, регресс приёмки 2026-09-20
+// №2) — оборачивает ctx.feoResize.resizeStyle('name'), перекрывая слишком
+// узкую сохранённую в localStorage ширину; +24px в режиме выбора (чекбокс
+// категории перед шевроном, см. FeoTreeRow.vue). Формула — feoCategoryUtils.ts
+// (Правило №6, тот же порог использует FeoLevel5Panel.vue для своей таблицы).
+const nameColumnStyle = computed(() => withNameColumnFloor(ctx.feoResize.resizeStyle('name'), planToRequest.active.value))
 
 // ctx.feoTableArea — ref на контейнер таблицы, нужен FeoTreeToolbar.vue для
 // PDF-экспорта (см. её докстринг); ref DOM-элемента не может быть создан внутри
@@ -335,7 +343,16 @@ watchEffect(() => {
 }
 .feo-residual-opt:hover { color: #475569; }
 .feo-residual-opt--active { color: #0f766e; background: rgba(20,184,166,0.12); border-color: rgba(20,184,166,0.35); }
-.feo-name { font-size: 13px; font-weight: 500; color: var(--crm-text); white-space: normal; word-break: break-word; min-width: 0; flex: 1; }
+/* Регресс приёмки 2026-09-20 — см. идентичный докстринг в styles/subsidies.css
+   (.subsidies-page .feo-name): word-break:break-word == word-break:normal +
+   overflow-wrap:anywhere, а anywhere занижает min-content flex-элемента почти
+   до нуля — в паре с более широкими шевроном/папкой/чекбоксом текст рвался по
+   слогам. overflow-wrap:break-word держит нормальный min-content. */
+/* min-width:6ch (координатор, регресс №2, вместо прежнего 0) — короткие слова
+   не рвутся даже когда колонка временно уже порога (до перерасчёта layout),
+   overflow-wrap:break-word по-прежнему ломает только слово длиннее доступной
+   ширины. */
+.feo-name { font-size: 13px; font-weight: 500; color: var(--crm-text); white-space: normal; word-break: normal; overflow-wrap: break-word; min-width: 6ch; flex: 1; }
 .feo-name--l1 { font-weight: 700; font-size: 13px; }
 .feo-name--l2 { font-weight: 600; }
 .feo-name--l3 { font-weight: 400; color: var(--crm-text-secondary); }
@@ -352,7 +369,23 @@ watchEffect(() => {
   font-size: 12px; color: #3B82F6; cursor: pointer; text-decoration: underline dotted;
 }
 .feo-set-hint:hover { color: #2563EB; }
-.feo-tree-chevron { display: inline-flex; align-items: center; }
+/* Шеврон/папка (владелец, задача 3): увеличенная кликабельная область вместо
+   голой 15/16px иконки. Регресс приёмки 2026-09-20 — исходные 28×28 (content-box,
+   4px паддинг) отъедали ~72px у узкой колонки «Наименование», текст рвался по
+   слогам. Сужено до 24×28 (border-box — паддинг не добавляется сверху ширины).
+   Дублирует правку в styles/subsidies.css (.subsidies-page .feo-tree-chevron/
+   .feo-tree-folder) — этот блок глобальный (см. докстринг файла выше про
+   scoped CSS дочерних компонентов), держать оба в синхроне вручную. */
+.feo-tree-chevron,
+.feo-tree-folder {
+  box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 28px; padding: 1px;
+  flex-shrink: 0;
+  cursor: pointer; border-radius: 6px;
+}
+.feo-tree-chevron:hover,
+.feo-tree-folder:hover { background: rgba(59,130,246,0.10); }
 .cursor-pointer { cursor: pointer; }
 
 /* Inline budget edit */

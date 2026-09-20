@@ -30,6 +30,75 @@ from app.routers.purchases import _has_purchase_write_access, _recalc_purchase_t
 router = APIRouter(prefix="/api/purchases", tags=["purchases"])
 
 
+# Владелец (2026-09-20): «когда закупка создаётся из заявки — у неё нельзя
+# менять категорию ФЭО; из какой взяли, в такой и должна находиться; менять —
+# в плане и согласовывать до формирования закупки». Тот же принцип на уровне
+# ОДНОЙ позиции закупки (см. _guard_feo_category_change_after_approval в
+# purchases.py — та же формулировка задачи, но на уровне шапки закупки):
+# позиция, привязанная к плановой позиции (feo_planned_item_id) ИЛИ пришедшая
+# из заявки (wish_item_id), — её категория ФЭО зафиксирована планом. Менять
+# можно только в плане закупок, до формирования закупки. Жёсткий замок — БЕЗ
+# суперадмин-обхода (владелец хочет именно так; см. отчёт).
+#
+# ПРАВИЛО №6: единственное место, где рождается текст/код этой ошибки — обе
+# проверки ниже (точечный PATCH одной позиции и PUT с полной заменой items)
+# зовут этот common raise, а не копируют HTTPException(...) по второму разу.
+def _raise_item_feo_category_locked() -> None:
+    raise HTTPException(
+        422,
+        detail={
+            "code": "ITEM_FEO_CATEGORY_LOCKED_FROM_PLAN",
+            "message": (
+                "Категория позиции берётся из плановой позиции — изменить её "
+                "можно только в плане закупок, до формирования закупки"
+            ),
+        },
+    )
+
+
+# ПРАВИЛО №6: единственное место, где проверяется это условие для ОДНОЙ
+# позиции закупки — вызывается из patch_purchase_item ниже. Не копировать
+# текст проверки во второй раз, если найдётся ещё одно место правки
+# feo_category_id позиции — импортировать эту функцию.
+def _guard_item_feo_category_locked_from_plan(
+    it: PurchaseItem,
+    new_feo_category_id: Optional[int],
+    clearing: bool = False,
+) -> None:
+    if it.feo_planned_item_id is None and it.wish_item_id is None:
+        return
+    if clearing or (new_feo_category_id is not None and new_feo_category_id != it.feo_category_id):
+        _raise_item_feo_category_locked()
+
+
+# Владелец (2026-09-20, добивка PUT items-replace): PUT /api/purchases/{pid}
+# заменяет ВСЕ позиции закупки целиком (delete+recreate, см. update_purchase в
+# purchases.py) — входящие items_data ещё pydantic (PurchaseItemCreate), схема
+# которой вообще не несёт wish_item_id, и старой персистентной строки для
+# сравнения тоже нет (она будет удалена). _guard_item_feo_category_locked_from_plan
+# выше здесь неприменим буквально — вместо сравнения со СТАРОЙ категорией
+# позиции сверяем входящую feo_category_id с СОБСТВЕННОЙ категорией плановой
+# позиции (FeoPlannedItem.feo_category_id — источник истины плана): позиция,
+# ссылающаяся на плановую позицию (feo_planned_item_id), но приходящая с ДРУГОЙ
+# категорией, — тот же обход замка, что и точечный PATCH выше блокирует.
+# Один SELECT по всем feo_planned_item_id входящих позиций (без N+1).
+async def assert_items_feo_category_matches_planned_items(items_data, db: AsyncSession) -> None:
+    _fpi_ids = {i.feo_planned_item_id for i in items_data if i.feo_planned_item_id is not None}
+    if not _fpi_ids:
+        return
+    from app.models.feo_planned_item import FeoPlannedItem
+    _rows = (await db.execute(
+        select(FeoPlannedItem.id, FeoPlannedItem.feo_category_id).where(FeoPlannedItem.id.in_(_fpi_ids))
+    )).all()
+    _fpi_cat_map = {row[0]: row[1] for row in _rows}
+    for _i in items_data:
+        if _i.feo_planned_item_id is None or _i.feo_category_id is None:
+            continue
+        _plan_cat_id = _fpi_cat_map.get(_i.feo_planned_item_id)
+        if _plan_cat_id is not None and _i.feo_category_id != _plan_cat_id:
+            _raise_item_feo_category_locked()
+
+
 class _SetProductBody(BaseModel):
     product_id: Optional[int] = None  # None — снять привязку
 
@@ -161,6 +230,13 @@ async def patch_purchase_item(
     # общим сервисом, что и wishes.py (app/services/plan_autoassign.py).
     _cat_id_before_patch = it.feo_category_id
     _category_changing = False
+    # Владелец (2026-09-20): категория позиции, привязанной к плану (заявке или
+    # плановой позиции), зафиксирована — см. _guard_item_feo_category_locked_from_plan
+    # выше. Проверяем ДО применения смены/очистки категории ниже.
+    if body.clear_feo_category:
+        _guard_item_feo_category_locked_from_plan(it, None, clearing=True)
+    elif body.feo_category_id is not None:
+        _guard_item_feo_category_locked_from_plan(it, body.feo_category_id)
     if body.clear_feo_category:
         if it.feo_category_id is not None:
             _category_changing = True

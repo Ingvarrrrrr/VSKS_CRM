@@ -473,8 +473,17 @@
                 :allow-unallocated="!!form.subsidy_id"
                 :required="formMode !== 'service_note_delivery' && formMode !== 'advance_report'"
                 :root-label="selectedSubsidyName"
+                :readonly="!!purchaseData?.wish_id"
                 @pick-unallocated="onFeoPickUnallocated"
               />
+              <!-- Замок категории (владелец, 2026-09-20): «категория закупки из
+                   заявки не меняется, менять — в плане» — тот же текст и то же
+                   условие, что и в per-item пикерах (utils/feoItemLock.ts,
+                   ПРАВИЛО №6), бэкенд отклоняет попытку 422
+                   FEO_CATEGORY_LOCKED_FROM_WISH (см. purchases.py). -->
+              <div v-if="purchaseData?.wish_id" class="text-caption text-medium-emphasis mt-1">
+                {{ FEO_CATEGORY_LOCKED_HINT }}
+              </div>
             </v-col>
             <!-- Владелец (сессия 2026-08-21): шапочный read-only перечень плановых позиций
                  категории (просмотр + удаление) убран — дублирует то же самое, что уже
@@ -1933,6 +1942,8 @@ import { listContractItems, replaceAllContractItems } from '@/api/contractItems'
 import type { ContractItem } from '@/types/contractItem'
 import { useOrgConfig } from '@/composables/useOrgConfig'
 import { productPhotoSrc } from '@/utils/productPhoto'
+import { describeApiError } from '@/utils/apiErrorMessage'
+import { FEO_CATEGORY_LOCKED_HINT } from '@/utils/feoItemLock'
 import PurchaseEventFeed from '@/components/PurchaseEventFeed.vue'
 import ApprovalPanel from '@/components/purchase/ApprovalPanel.vue'
 import PurchaseHeader from '@/components/purchase/PurchaseHeader.vue'
@@ -4877,7 +4888,12 @@ const doSave = async (adminOverride: boolean): Promise<boolean> => {
       // Показываем полный detail из бэка (не generic «ошибка»)
       showSnack(e?.payload?.message || e?.detail || 'Нет доступа', 'error')
     } else {
-      showSnack(e?.message || e?.detail || 'Ошибка сохранения', 'error')
+      // describeApiError (utils/apiErrorMessage.ts, ПРАВИЛО №6) — единая
+      // распаковка ошибки apiFetch; покрывает в т.ч. 422 FEO_CATEGORY_LOCKED_
+      // FROM_WISH/ITEM_FEO_CATEGORY_LOCKED_FROM_PLAN (замок категории ФЭО из
+      // заявки/плана, задача 5, 2026-09-20) — payload.message у них уже
+      // человекочитаемый, просто не терялся генериком.
+      showSnack(describeApiError(e, { fallback: 'Ошибка сохранения' }), 'error')
     }
     // Пункт 1 (владелец, 2026-09-17): раньше catch только показывал снэк и
     // ничего не возвращал — save()/doSave() резолвились «успешно» даже при

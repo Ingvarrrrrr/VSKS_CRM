@@ -17,6 +17,7 @@ import { buildPlannedItemFullPayload, deletePlannedItemRaw } from './useFeoLevel
 import { fetchMonthlySchedulePreview } from './feoMonthlySchedulePreview'
 import type { SubsidyDetailContext } from './useSubsidyDetail'
 import type { FeoActualItem, FeoNode, FeoPlannedItem } from './types'
+import { clearCategoryManualPlanRaw } from './useFeoManualPlanMaterialize'
 
 // Сырое создание плановой позиции по готовому payload — без диалога/формы/
 // тостов. Используется обычным путём (savePlannedItem/confirmCreateDuplicate
@@ -29,6 +30,11 @@ export async function createPlannedItemRaw(payload: Record<string, unknown>): Pr
     body: JSON.stringify(payload),
   })
 }
+
+// clearCategoryManualPlanRaw/materializeManualPlanAsItem — вынесены в
+// useFeoManualPlanMaterialize.ts (Правило №5: этот файл уже 750+ строк, новая
+// логика — новый файл, не дописывать сюда). Реимпортированы ниже там, где
+// нужны (clearCategoryManualPlan).
 // Диалог «Такая позиция уже есть в плане» (кнопки «Привязать»/«Создать
 // отдельную») — правка Волны 2, п.2 владельца: «предлагает Привязать или
 // Создать отдельную закупку, но кнопок при этом нет». Полноценный диалог УЖЕ
@@ -480,16 +486,7 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
     const cat = ctx.feoCategories.value.find(c => c.id === categoryId)
     if (cat) {
       try {
-        await apiFetch(`/feo-categories/${categoryId}`, {
-          method: 'PUT',
-          body: JSON.stringify({
-            subsidy_id: cat.subsidy_id, name: cat.name, code: cat.code ?? null, appendix: cat.appendix ?? null,
-            is_active: cat.is_active, budget: cat.budget ?? null,
-            feo_quantity: cat.feo_quantity ?? null, feo_unit: cat.feo_unit ?? null, feo_amount: cat.feo_amount ?? null,
-            description: cat.description ?? null, unit: cat.unit ?? null,
-            planned_quantity: null, planned_amount: null,
-          }),
-        })
+        await clearCategoryManualPlanRaw(cat)
         cat.planned_quantity = null
         cat.planned_amount = null
       } catch (e: any) {

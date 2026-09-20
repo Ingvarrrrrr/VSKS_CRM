@@ -273,6 +273,62 @@ async def test_create_wish_warns_when_over_residual(db_session, test_user):
 
 
 @pytest.mark.asyncio
+async def test_create_wish_multi_category_sets_feo_per_item(db_session, test_user):
+    """Блокер владельца (2026-09-20): позиции из ДВУХ категорий ФЭО → заявка
+    заводится с feo_per_item=True (режим «своя категория у каждого товара»),
+    а не с обнулённой шапочной feo_category_id без объяснения. У каждой
+    позиции при этом свой feo_category_id (её плановой позиции)."""
+    subsidy, cat_a = await _make_subsidy_with_leaf(db_session, "Subsidy-multicat")
+    cat_b = FeoCategory(subsidy_id=subsidy.id, level=3, name="Прочее-Б")
+    db_session.add(cat_b)
+    await db_session.commit()
+    await db_session.refresh(cat_b)
+
+    planned_a = await _make_planned_item(db_session, cat_a, "Позиция А", quantity=Decimal("5"), unit_price=Decimal("100"), amount=Decimal("500"))
+    planned_b = await _make_planned_item(db_session, cat_b, "Позиция Б", quantity=Decimal("5"), unit_price=Decimal("200"), amount=Decimal("1000"))
+
+    items = [
+        PlanToWishItemInput(feo_planned_item_id=planned_a.id, quantity=Decimal("1"), item_name="Позиция А", price_source="plan"),
+        PlanToWishItemInput(feo_planned_item_id=planned_b.id, quantity=Decimal("1"), item_name="Позиция Б", price_source="plan"),
+    ]
+
+    result = await create_wish_from_plan(db_session, test_user, subsidy.id, None, items)
+
+    from sqlalchemy import select
+    wish = (await db_session.execute(select(Wish).where(Wish.id == result["wish_id"]))).scalar_one()
+    assert wish.feo_per_item is True
+    assert wish.feo_category_id is None
+
+    wish_items = (await db_session.execute(select(WishItem).where(WishItem.wish_id == wish.id))).scalars().all()
+    assert len(wish_items) == 2
+    item_a = next(wi for wi in wish_items if wi.feo_planned_item_id == planned_a.id)
+    item_b = next(wi for wi in wish_items if wi.feo_planned_item_id == planned_b.id)
+    assert item_a.feo_category_id == cat_a.id
+    assert item_b.feo_category_id == cat_b.id
+
+
+@pytest.mark.asyncio
+async def test_create_wish_single_category_no_feo_per_item(db_session, test_user):
+    """Позиции из ОДНОЙ категории → feo_category_id заявки = эта категория,
+    feo_per_item остаётся False (обычный режим, без изменений поведения)."""
+    _subsidy, cat = await _make_subsidy_with_leaf(db_session, "Subsidy-singlecat")
+    planned1 = await _make_planned_item(db_session, cat, "Позиция 1", quantity=Decimal("5"), unit_price=Decimal("100"), amount=Decimal("500"))
+    planned2 = await _make_planned_item(db_session, cat, "Позиция 2", quantity=Decimal("5"), unit_price=Decimal("200"), amount=Decimal("1000"))
+
+    items = [
+        PlanToWishItemInput(feo_planned_item_id=planned1.id, quantity=Decimal("1"), item_name="Позиция 1", price_source="plan"),
+        PlanToWishItemInput(feo_planned_item_id=planned2.id, quantity=Decimal("1"), item_name="Позиция 2", price_source="plan"),
+    ]
+
+    result = await create_wish_from_plan(db_session, test_user, _subsidy.id, None, items)
+
+    from sqlalchemy import select
+    wish = (await db_session.execute(select(Wish).where(Wish.id == result["wish_id"]))).scalar_one()
+    assert wish.feo_category_id == cat.id
+    assert wish.feo_per_item is False
+
+
+@pytest.mark.asyncio
 async def test_create_wish_422_foreign_subsidy(db_session, test_user):
     _subsidy_a, cat_a = await _make_subsidy_with_leaf(db_session, "Subsidy-A")
     _subsidy_b, _cat_b = await _make_subsidy_with_leaf(db_session, "Subsidy-B")

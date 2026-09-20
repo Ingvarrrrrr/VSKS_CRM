@@ -39,22 +39,59 @@ export interface ApiFetchOptions extends RequestInit {
   suppressErrorDialog?: boolean
 }
 
+// Прод, 2026-09-20: apiFetch не имел таймаута вовсе — если бэкенд/сеть зависли
+// (например, на заявке №76 из-за тяжёлой загрузки), спиннер крутился вечно, а
+// пользователь не понимал, ждать или перезагружать страницу. 60с — заведомо
+// больше любого нормального ответа (самые тяжёлые ручки — секунды), но конечно.
+const REQUEST_TIMEOUT_MS = 60_000
+
 export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): Promise<T> {
   const body = options.body && typeof options.body === 'object' && !(options.body instanceof FormData)
     ? JSON.stringify(options.body)
     : options.body
   _inflight += 1
   emitLoading()
+  // Внешний AbortController поверх пользовательского options.signal (если он
+  // когда-нибудь появится у вызывающих) — на сегодня ни один вызов apiFetch в
+  // проекте signal не передаёт, но на всякий случай не затираем его молча.
+  const timeoutController = new AbortController()
+  const timeoutId = setTimeout(() => timeoutController.abort(), REQUEST_TIMEOUT_MS)
+  if (options.signal) {
+    if (options.signal.aborted) timeoutController.abort()
+    else options.signal.addEventListener('abort', () => timeoutController.abort(), { once: true })
+  }
   try {
-  const res = await fetch(BASE + path, {
-    ...options,
-    body,
-    headers: {
-      ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
-      ...authHeaders(),
-      ...(options.headers || {}),
-    },
-  })
+  let res: Response
+  try {
+    res = await fetch(BASE + path, {
+      ...options,
+      body,
+      signal: timeoutController.signal,
+      headers: {
+        ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+        ...authHeaders(),
+        ...(options.headers || {}),
+      },
+    })
+  } catch (fetchErr: any) {
+    if (fetchErr?.name === 'AbortError') {
+      const payload = {
+        code: 'REQUEST_TIMEOUT',
+        message: 'Сервер не ответил за 60 секунд — повторите попытку',
+        details: '',
+        correlation_id: '',
+      }
+      if (!options.suppressErrorDialog) {
+        window.dispatchEvent(new CustomEvent('api-error', { detail: payload }))
+      }
+      const err: any = new Error(payload.message)
+      err.status = 0
+      err.detail = payload.message
+      err.payload = payload
+      throw err
+    }
+    throw fetchErr
+  }
   // 27.4-24: успешный ответ → сбрасываем счётчик 5xx
   if (res.ok) _consecutive5xx = 0
   if (!res.ok) {
@@ -140,6 +177,7 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
     return undefined as unknown as T
   }
   } finally {
+    clearTimeout(timeoutId)
     _inflight -= 1
     emitLoading()
   }

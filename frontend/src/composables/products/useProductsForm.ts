@@ -12,8 +12,15 @@ export function useProductsForm(options: {
   products: { value: Product[] }
   load: () => Promise<void>
   showSnack: (text: string, color?: ToastType) => void
+  // Опциональный колбэк — товар только что создан/обновлён и сохранён в общий
+  // каталог (POST/PUT /products/, как обычно). Единственный текущий
+  // потребитель композабла — ProductsView.vue — колбэк не передаёт, поведение
+  // не меняется. Добавлен для «Добавить товар» в PlanToRequestRow.vue: после
+  // сохранения строка заявки подставляет товар как выбранного кандидата, не
+  // заводя второй механизм создания (Правило №6).
+  onSaved?: (product: Product) => void
 }) {
-  const { products, load, showSnack } = options
+  const { products, load, showSnack, onSaved } = options
 
   const saving = ref(false)
   const dialog = ref(false)
@@ -163,6 +170,14 @@ export function useProductsForm(options: {
       dialog.value = false
       resetPhotoState()
       await load()
+      if (onSaved) {
+        // Всегда прямым запросом, а не поиском по products — у части
+        // потребителей (usePlanToRequestProductCreate.ts) список не полный
+        // каталог, а узкая подсказка по search-запросу, только что созданного
+        // товара там может не быть.
+        const fresh = await apiFetch<Product>(`/products/${savedId}`).catch(() => null)
+        if (fresh) onSaved(fresh)
+      }
     } catch (e: any) {
       // Не глотать причину generic-текстом (память проекта
       // feedback_no_generic_error_snackbar) — общий хелпер, см. также

@@ -25,7 +25,7 @@ type Product = any
 export { productPhotoSrc }
 
 export interface UseItemsCatalogDeps {
-  props: { purchaseId?: number | null }
+  props: { purchaseId?: number | null; isWishStage?: boolean }
   localItems: Ref<EditorItem[]>
   selectedItemIdxs: Ref<number[]>
   emitUpdate: () => void
@@ -46,6 +46,32 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
 
   async function loadProducts() {
     try {
+      // Перф (координатор, сессия 2026-09-20, находка «каталог грузится
+      // ДВАЖДЫ при открытии заявки»): PurchaseItemsEditor.vue::onMounted зовёт
+      // loadProducts() БЕЗУСЛОВНО, ДО того как useWishForm.ts::openEditDialog
+      // успевает наполнить localItems — это был ПЕРВЫЙ полный фетч каталога
+      // (`/products/`, без ids, весь каталог ~4 МБ), сразу за GET /wishes/{id}
+      // и ВТОРЫМ таким же полным фетчем (`/products/?limit=10000`, убран в эту
+      // же сессию в useWishForm.ts). В заявке (isWishStage) каталог целиком не
+      // нужен: основной подбор товара идёт через InlineProductMatch.vue (свой
+      // POST /products/match, эту ref не читает), а строки уже несут product_id
+      // (сервер дозаполняет его по имени, см. wish_serializers.py). Грузим
+      // только уже привязанные товары — по id, тем же контрактом
+      // (`/products/?ids=`), что и useWishActions.ts/usePurchaseSplit.ts.
+      // Вторичные фичи каталога (группировка по категории/типу для ещё НЕ
+      // привязанных строк, подсказки имени/категории/типа в диалоге «Новый
+      // товар из каталога», productPickerDialog fallback-список) в заявке при
+      // этом видят суженный products — деградация осознанная, обычные закупки
+      // (isWishStage=false) не затронуты вовсе.
+      if (props.isWishStage) {
+        const ids = [...new Set(
+          (localItems.value as any[])
+            .map((it) => it?.product_id)
+            .filter((id): id is number => id != null)
+        )]
+        products.value = ids.length ? await apiFetch<Product[]>(`/products/?ids=${ids.join(',')}`) : []
+        return
+      }
       products.value = await apiFetch<Product[]>('/products/')
     } catch (e) {
       console.warn('[PurchaseItemsEditor] Could not load products:', e)

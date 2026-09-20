@@ -75,6 +75,7 @@ async def list_products(
     category: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
     search: Optional[str] = Query(None, description="Полнотекстовый поиск по имени/описанию/типу"),
+    ids: Optional[str] = Query(None, description="CSV id товаров (\"1,2,3\") — точечная догрузка карточек без полного каталога"),
     limit: Optional[int] = Query(None, ge=1, le=10000, description="Ограничить кол-во результатов (фронт грузит весь каталог в пикер)"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -84,6 +85,14 @@ async def list_products(
     # GET /{product_id}/photo when has_photo=True.
     q = select(Product).options(defer(Product.photo_data))
     # Products are global — no org_id filter
+    if ids is not None:
+        try:
+            ids_list = [int(part.strip()) for part in ids.split(",") if part.strip()]
+        except ValueError:
+            raise HTTPException(422, "Параметр ids: ожидается список чисел через запятую")
+        if not ids_list:
+            raise HTTPException(422, "Параметр ids: пустой список")
+        q = q.where(Product.id.in_(ids_list))
     if feo_category_id is not None:
         q = q.where(Product.feo_category_id == feo_category_id)
     if category is not None:

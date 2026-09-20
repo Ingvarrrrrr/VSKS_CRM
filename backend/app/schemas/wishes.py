@@ -3,6 +3,8 @@ from typing import List, Optional
 from datetime import datetime, date
 from decimal import Decimal
 
+from app.schemas.products import PriceFreshnessOut
+
 # wishes.title — VARCHAR(500). Заголовок формируется на фронте из названий
 # позиций; при множестве товаров он может превысить лимит → раньше падало
 # INTERNAL_ERROR (StringDataRightTruncation). Клампим централизованно.
@@ -139,12 +141,39 @@ class WishItemOut(BaseModel):
     # W-diff (2026-08-13): «двойник» позиции в закупке — заполняется ТОЛЬКО в карточке
     # заявки (GET /{wish_id}), в списке (GET /) отсутствует (лишний вес). См. WishItemPurchaseMatch.
     purchase_match: Optional[WishItemPurchaseMatch] = None
+    # Снимок товара каталога (владелец, 2026-09-20): заполняется ТОЛЬКО в карточке
+    # заявки (GET /{wish_id}, см. app.services.wish_serializers._attach_item_product_snapshot),
+    # в списке отсутствует — как и purchase_match выше. Одна функция-источник
+    # (app.services.product_snapshot.build_product_snapshot) — то же price_freshness,
+    # что и PriceFreshnessOut в GET /api/products/. has_photo=None/photo_url=None и
+    # т.п. — товар не нашёлся (нет product_id и по имени не сопоставилось однозначно).
+    has_photo: Optional[bool] = None
+    photo_url: Optional[str] = None
+    photo_link: Optional[str] = None
+    # ТЗ заявки (владелец, 2026-09-20, доп. к задаче 2): WishTzSection.vue на
+    # фронте раньше брало описание товара из полного каталога — без них ТЗ
+    # заявки пустело, когда фронт перестал грузить каталог целиком.
+    description: Optional[str] = None
+    description_44fz: Optional[str] = None
+    price_updated_at: Optional[datetime] = None
+    price_source: Optional[str] = None
+    price_source_ref: Optional[str] = None
+    price_freshness: Optional[PriceFreshnessOut] = None
     model_config = ConfigDict(from_attributes=True)
 
 
 class WishItemPatch(BaseModel):
-    """D-04: Patch payload for drag-drop column reassignment."""
+    """D-04: Patch payload for drag-drop column reassignment.
+
+    feo_category_id (владелец, 2026-09-20, задача 3) — необязательная
+    построчная смена категории ФЭО одной позиции вне полного пересбора
+    состава (см. WishUpdate.items). Optional[...] = None + чтение через
+    model_fields_set в роутере (как и остальные точечные патчи в проекте) —
+    None-по-умолчанию НЕ должен трогать существующее значение при обычном
+    drag-drop запросе (тот присылает только target_column_key). Гейтится
+    app.services.wish_item_category_guard.assert_wish_item_category_from_plan."""
     target_column_key: Optional[str] = None
+    feo_category_id: Optional[int] = None
 
 
 class WishCreate(BaseModel):

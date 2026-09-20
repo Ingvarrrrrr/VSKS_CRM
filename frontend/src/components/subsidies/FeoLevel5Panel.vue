@@ -42,7 +42,7 @@
         <table v-else-if="ctx.comparisonData.value[node.id]" style="width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px">
           <thead>
             <tr>
-              <th :style="[feoResize.resizeStyle('name'), { paddingLeft: `${ctx.plannedItemIndentPx(node)}px` }]" style="padding-top:4px;padding-right:8px;padding-bottom:4px;text-align:left;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE" title="Плановая позиция. Закупки, привязанные к ней (как выставили в закупку / как в договоре — по стадии), — в раскрывающемся блоке под строкой плана.">
+              <th :style="[nameColStyle, { paddingLeft: `${ctx.plannedItemIndentPx(node)}px` }]" style="padding-top:4px;padding-right:8px;padding-bottom:4px;text-align:left;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE" title="Плановая позиция. Закупки, привязанные к ней (как выставили в закупку / как в договоре — по стадии), — в раскрывающемся блоке под строкой плана.">
                 <div class="d-flex align-center" style="gap:2px">
                   <v-checkbox-btn
                     v-if="feoLevel5.selectableRowsFor(node).length > 0"
@@ -79,16 +79,35 @@
                    (useFeoTreeSearch.ts::scrollAndHighlight), тот же приём, что и
                    data-feo-node-id у строки категории (FeoTreeRow.vue). -->
               <tr style="border-bottom:1px solid #E5E7EB" :data-feo-planned-item-id="planned.id">
-                <td :style="[feoResize.resizeStyle('name'), { paddingLeft: `${ctx.plannedItemIndentPx(node)}px` }]" style="padding-top:4px;padding-right:8px;padding-bottom:4px;color:#0c4a6e">
+                <td :style="[nameColStyle, { paddingLeft: `${ctx.plannedItemIndentPx(node)}px` }]" style="padding-top:4px;padding-right:8px;padding-bottom:4px;color:#0c4a6e">
                   <div class="d-flex align-center" style="gap:2px">
                     <!-- Задача владельца, п.12 волны 3: чекбокс массового выбора — только у
                          настоящих записей (ручная псевдо-строка isManual не может переноситься
-                         пачкой, у нет отдельной FeoPlannedItem-записи в базе). -->
+                         пачкой, у неё нет отдельной FeoPlannedItem-записи в базе). -->
                     <v-checkbox-btn
                       v-if="!planned.isManual"
                       density="compact" color="orange-darken-1"
                       :model-value="feoLevel5.isPlannedItemSelected(planned.id)"
                       style="flex:0 0 auto"
+                      @click.stop
+                      @update:model-value="feoLevel5.togglePlannedItemSelected(planned.id)"
+                    />
+                    <!-- Задача 2 (владелец, «Создать закупку на основе плана»): ручной план
+                         категории (isManual, id = −node.id — уже уникален в общем Set выбора,
+                         Правило №6) выбирается ТОЙ ЖЕ галочкой/функцией, что и настоящие записи
+                         выше — второй механизм выбора не заводим, разница только в id. Видна
+                         ТОЛЬКО в режиме «Создать закупку на основе плана» (usePlanToRequest.ts):
+                         вне этого режима у ручного плана нет операции, для которой имел бы смысл
+                         этот чекбокс (массовый перенос категорий его не поддерживает — см. условие
+                         выше, selectableRowsFor тоже исключает isManual). При подтверждении выбора
+                         usePlanToRequest.ts::materializeSelectedManualPlans заменяет −node.id на id
+                         только что созданной настоящей FeoPlannedItem (задача 2). -->
+                    <v-checkbox-btn
+                      v-else-if="planToRequest.active.value"
+                      density="compact" color="orange-darken-1"
+                      :model-value="feoLevel5.isPlannedItemSelected(planned.id)"
+                      style="flex:0 0 auto"
+                      title="Выбрать ручной план категории — при подтверждении выбора он станет настоящей плановой позицией"
                       @click.stop
                       @update:model-value="feoLevel5.togglePlannedItemSelected(planned.id)"
                     />
@@ -563,8 +582,9 @@
 // (Правило №6), здесь только вёрстка.
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { useFeoLevel5Api } from '@/composables/subsidies/useFeoLevel5'
+import { usePlanToRequest } from '@/composables/subsidies/usePlanToRequest'
 import { formatCurrency } from '@/composables/subsidies/format'
-import { leftGroupInfo } from '@/composables/subsidies/feoCategoryUtils'
+import { leftGroupInfo, withNameColumnFloor } from '@/composables/subsidies/feoCategoryUtils'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
 import { purchaseStatusLabel, purchaseStatusColor } from '@/constants/purchaseStatus'
 import type { FeoNode, FeoPlannedItem } from '@/composables/subsidies/types'
@@ -582,6 +602,14 @@ const ctx = useSubsidyDetailCtx()
 // и приходит через ctx.feoResize — иначе у каждого узла была бы своя, не связанная
 // с основной таблицей ширина колонок (см. комментарий в FeoTreeTable.vue).
 const feoResize = ctx.feoResize
+// Нижний порог ширины «Наименование» (координатор, регресс приёмки 2026-09-20
+// №2) — эта панель рисует СВОЮ <table> (table-layout:fixed внутри неё считает
+// ширины независимо от внешнего дерева), поэтому оборачивает feoResize.resizeStyle
+// тем же порогом отдельно (feoCategoryUtils.ts, Правило №6 — общая формула).
+// Чекбокс массового выбора здесь виден при bulk-move ИЛИ режиме «Создать
+// закупку на основе плана» независимо от их состояния — всегда берём порог
+// «с чекбоксом» (true), а не гоняемся за тем, показан ли он в конкретный момент.
+const nameColStyle = computed(() => withNameColumnFloor(feoResize.resizeStyle('name'), true))
 // Массовый выбор/перенос плановых позиций (п.12 волны 3, 2026-09-13) — берём
 // напрямую из синглтона useFeoLevel5, а не через ctx: SubsidyDetailContext
 // (SubsidiesView.vue) собирается параллельным исполнителем этой же волны в
@@ -589,6 +617,9 @@ const feoResize = ctx.feoResize
 // SubsidiesView.vue синглтон (см. её докстринг) — второй экземпляр состояния
 // не заводится, это тот же объект, что и ctx.movePlannedItemToCategory и т.п.
 const feoLevel5 = useFeoLevel5Api()
+// «Создать закупку на основе плана» (задача 2) — только для видимости чекбокса
+// у ручных планов (isManual), см. докстринг в шаблоне выше.
+const planToRequest = usePlanToRequest()
 
 // Комментарии к плановым позициям (владелец, Волна 4, п.16) — переиспользуем
 // ОДИН FeoCommentThread.vue (та же копия, что и у категории в FeoTreeRow.vue,

@@ -184,22 +184,32 @@ export function useWishActions(deps: {
       const full = await apiFetch<Wish & { items?: any[] }>(`/wishes/${wish.id}`)
       const items: any[] = Array.isArray(full.items) ? full.items : []
 
-      let products: any[] = []
-      try { products = await apiFetch<any[]>('/products/?limit=10000') } catch {}
-      const byId = new Map<number, any>(products.map((p: any) => [p.id, p]))
-      const byName = new Map<string, any>(
-        products.map((p: any) => [(p.name || '').trim().toLowerCase(), p])
-      )
+      // Перф (сессия 2026-09-20, ПРАВИЛО №6 — не заводить второй полный фетч
+      // каталога наравне с useWishForm.ts::openEditDialog, который убирает
+      // такой же): раньше здесь грузился ВЕСЬ каталог (`/products/?limit=10000`)
+      // ради фото/категории и byName-подбора product_id. GET /wishes/{id}
+      // теперь сам дозаполняет product_id (см. app/services/wish_serializers.py::
+      // _attach_item_product_snapshot) и отдаёт has_photo/photo_url/photo_link —
+      // byName-фолбэк тут больше не нужен. Категория товара (_product_category,
+      // нужна канбану для колонок) — единственное, чего снимок позиции не несёт,
+      // берём точечно по product_id уже привязанных позиций (`/products/?ids=`),
+      // не всем каталогом.
+      const ids = [...new Set(items.map((it: any) => it.product_id).filter((id: any) => id != null))]
+      let byId = new Map<number, any>()
+      if (ids.length) {
+        try {
+          const products = await apiFetch<any[]>(`/products/?ids=${ids.join(',')}`)
+          byId = new Map<number, any>((products || []).map((p: any) => [p.id, p]))
+        } catch {}
+      }
 
       kanbanItems.value = items.map((it: any) => {
-        let prod = it.product_id ? byId.get(it.product_id) : null
-        if (!prod && it.item_name) {
-          prod = byName.get(it.item_name.trim().toLowerCase()) || null
-        }
+        const prod = it.product_id != null ? byId.get(it.product_id) : null
         return {
           ...it,
-          product_id: it.product_id ?? prod?.id ?? null,
-          _photo_url: productPhotoSrc(prod) ?? it._photo_url ?? null,
+          _photo_url: (prod ? productPhotoSrc(prod) : undefined)
+            ?? (it.product_id != null ? productPhotoSrc({ id: it.product_id, has_photo: it.has_photo, photo_url: it.photo_url, photo_link: it.photo_link }) : undefined)
+            ?? it._photo_url ?? null,
           _product_category: prod?.category || it._product_category || '',
         }
       })

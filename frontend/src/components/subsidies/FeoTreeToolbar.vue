@@ -87,21 +87,38 @@
            подсветка дерева — FeoTreeTable.vue (тот же синглтон). -->
       <template v-if="!planToRequest.active.value">
         <v-btn size="small" variant="tonal" color="deep-purple" prepend-icon="mdi-cart-plus"
-          @click="planToRequest.startSelectMode()">
+          @click="planToRequest.startSelectMode(ctx.selectedId.value!)">
           Создать закупку на основе плана
         </v-btn>
       </template>
       <template v-else>
+        <!-- «Вся смета» (владелец, задача 1) — toggle выбрать всё/снять всё по
+             всей субсидии, тот же общий Set выбора, что и построчные/категорийные
+             чекбоксы (usePlanToRequest.ts::selectWholeSmeta, Правило №6). -->
+        <v-btn size="small" variant="outlined" color="deep-purple"
+          :prepend-icon="wholeSmetaAllSelected ? 'mdi-checkbox-multiple-blank-outline' : 'mdi-checkbox-multiple-marked-outline'"
+          :loading="planToRequest.residualsLoading.value"
+          @click="planToRequest.selectWholeSmeta(!wholeSmetaAllSelected)">
+          {{ wholeSmetaAllSelected ? 'Снять всё' : 'Вся смета' }}
+        </v-btn>
         <v-btn size="small" variant="flat" color="deep-purple"
           prepend-icon="mdi-check-bold"
           :disabled="planToRequest.selectedCount.value === 0"
-          @click="planToRequest.openConfirmDialog(ctx.selectedId.value!)">
+          @click="planToRequest.openConfirmDialog(ctx.selectedId.value!, ctx.feoCategories.value, () => ctx.loadFeo(ctx.selectedId.value!))">
           Подтвердить выбор для создания закупки ({{ planToRequest.selectedCount.value }})
         </v-btn>
         <v-btn size="small" variant="text" color="grey-darken-1" @click="planToRequest.cancelSelectMode()">
           Отмена
         </v-btn>
       </template>
+      <!-- «Свернуть категории-дубли» (владелец, задача 3) — categoryCollapse.ts,
+           счётчик считается лениво при открытии субсидии (watch на ctx.selectedId
+           ниже), кнопка скрыта при 0 кандидатов. -->
+      <v-btn v-if="feoCollapse.candidatesCount.value > 0" size="small" variant="outlined" color="blue-grey-darken-1"
+        prepend-icon="mdi-arrow-collapse-up"
+        @click="feoCollapse.openBulkDialog(ctx.selectedId.value!)">
+        Свернуть категории-дубли ({{ feoCollapse.candidatesCount.value }})
+      </v-btn>
       <v-btn size="small" variant="outlined" color="success" prepend-icon="mdi-file-excel-outline" @click="openExportVersionsDialog">Выгрузить ФЭО</v-btn>
       <template v-if="ctx.canEditFeo.value">
         <v-btn size="small" variant="outlined" prepend-icon="mdi-download-outline" @click="ctx.downloadFeoTemplate(ctx.selectedSubsidy.value?.id, ctx.selectedSubsidy.value?.name)">Шаблон</v-btn>
@@ -159,24 +176,41 @@
        пока активен режим создания заявки из плана. -->
   <div v-if="planToRequest.active.value" class="plan-to-request-hint">
     <v-icon icon="mdi-cursor-default-click-outline" size="14" class="mr-1" />
-    Отметьте плановые позиции галочками — из них соберётся заявка
+    Отметьте плановые позиции галочками (построчно, категорией целиком или «Вся смета») — из них соберётся заявка
+    <span v-if="planToRequest.residualsLoading.value" class="ml-2 text-medium-emphasis">(загрузка остатков…)</span>
   </div>
 
   <PlanToRequestDialog />
+  <FeoCollapseCandidatesDialog />
+  <FeoCollapseConfirmDialog />
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { useRegistryExport } from '@/composables/useRegistryExport'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { usePlanGraphVersions } from '@/composables/subsidies/usePlanGraphVersions'
 import { useFeoImport } from '@/composables/subsidies/useFeoImport'
 import { usePlanToRequest } from '@/composables/subsidies/usePlanToRequest'
+import { useFeoCategoryCollapse } from '@/composables/subsidies/useFeoCategoryCollapse'
 import PlanToRequestDialog from '@/components/subsidies/PlanToRequestDialog.vue'
+import FeoCollapseCandidatesDialog from '@/components/subsidies/FeoCollapseCandidatesDialog.vue'
+import FeoCollapseConfirmDialog from '@/components/subsidies/FeoCollapseConfirmDialog.vue'
 
 const ctx = useSubsidyDetailCtx()
 const planToRequest = usePlanToRequest()
+const feoCollapse = useFeoCategoryCollapse()
+
+// N кандидатов на сворачивание — считается лениво при открытии субсидии
+// (задача 3), не на каждый рендер тулбара.
+watch(() => ctx.selectedId.value, (id) => {
+  if (id != null) void feoCollapse.ensureCandidates(id)
+}, { immediate: true })
+
+// Состояние кнопки «Вся смета»/«Снять всё» (задача 1) — тот же источник, что и
+// чекбоксы категорий (usePlanToRequest.ts::wholeSmetaSelection, Правило №6).
+const wholeSmetaAllSelected = computed(() => planToRequest.wholeSmetaSelection.value.all)
 
 const toast = useToast()
 function showSnack(text: string, color: ToastType = 'success') {

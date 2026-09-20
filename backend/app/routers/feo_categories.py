@@ -914,3 +914,15 @@ def __getattr__(name):
         import importlib
         return getattr(importlib.import_module(module_path), name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# «Сделать из категории просто плановую позицию» (владелец, 2026-09-20) —
+# app/routers/feo_categories_collapse.py, см. её докстринг. Подключена как
+# ПОД-роутер (а не отдельная регистрация в routes.py, как у feo_plan_reads/
+# feo_import/feo_tree_ops) — по прямому указанию задачи, чтобы не трогать
+# routes.py. collapse_router создан БЕЗ собственного prefix, поэтому
+# include_router складывает его пути прямо из префикса ЭТОГО router'а
+# ("/api/feo-categories"): GET /collapse-candidates, POST
+# /{cat_id}/collapse-to-item, POST /collapse-bulk.
+from app.routers.feo_categories_collapse import router as _collapse_router  # noqa: E402
+router.include_router(_collapse_router)

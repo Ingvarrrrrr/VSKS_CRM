@@ -1025,6 +1025,17 @@ async def update_purchase(
         await assert_subsidy_approved_for_binding(db, _alloc.subsidy_id)
 
     items_data = data.items or []
+
+    # Владелец (2026-09-20, добивка): PUT заменяет ВСЕ позиции закупки —
+    # тот же замок «категория позиции берётся из плана», что и в точечном
+    # PATCH одной позиции (см. app.routers.purchase_items_edit.
+    # _guard_item_feo_category_locked_from_plan), но проверяется здесь через
+    # СОБСТВЕННУЮ категорию плановой позиции — см. докстринг
+    # assert_items_feo_category_matches_planned_items (та же ошибка/код, не
+    # вторая копия). Проверяем как можно раньше — до любых мутаций ниже.
+    from app.routers.purchase_items_edit import assert_items_feo_category_matches_planned_items
+    await assert_items_feo_category_matches_planned_items(items_data, db)
+
     items_sum = sum((i.total_price or Decimal("0")) for i in items_data) or data.nmck
 
     # Phase 28 B4: validate assigned_user_id on PUT
@@ -1637,6 +1648,29 @@ async def _guard_feo_category_change_after_approval(
         return
     if new_feo_category_id == p.feo_category_id:
         return
+
+    # Владелец (2026-09-20): «когда закупка создаётся из заявки — у неё нельзя
+    # менять категорию ФЭО; из какой взяли, в такой и должна находиться; менять —
+    # в плане и согласовывать до формирования закупки». Жёсткий замок — БЕЗ
+    # суперадмин-обхода (в отличие от проверки согласования ниже): категория
+    # закупки, рождённой из заявки, — производная от плана, а не самостоятельное
+    # решение этой закупки. Проверяется ПЕРВОЙ, до approval_status ниже —
+    # несогласованная закупка из заявки тоже не должна разъезжаться с планом.
+    # getattr(..., None) — а не p.wish_id напрямую — ради обратной совместимости
+    # с офлайн-тестами (test_feo_change_after_approval.py), где `p` — SimpleNamespace
+    # без атрибута wish_id вовсе; на реальном Purchase (ORM) атрибут есть всегда.
+    if getattr(p, "wish_id", None) is not None:
+        raise HTTPException(
+            422,
+            detail={
+                "code": "FEO_CATEGORY_LOCKED_FROM_WISH",
+                "message": (
+                    "Категория ФЭО закупки берётся из заявки и плана закупок — "
+                    "изменить её можно только в плане, до формирования закупки"
+                ),
+            },
+        )
+
     if p.approval_status != "approved":
         return
 

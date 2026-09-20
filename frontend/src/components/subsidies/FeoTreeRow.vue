@@ -52,31 +52,52 @@
              тоже прежнее (только подразделы). См. toggleNodeExpansion в
              <script setup> — единственное место, решающее «что открыть по
              клику»; бейдж/строка состава ниже вызывают её же, не полдела. -->
+        <!-- Чекбокс «выбрать категорию/поддерево целиком» (владелец, задача 1) —
+             только в режиме выбора для «Создать закупку на основе плана».
+             Состояние/клик — usePlanToRequest.ts::subtreeSelectionState/
+             selectCategorySubtree (Правило №6, тот же общий Set выбора, что и
+             построчные чекбоксы FeoLevel5Panel.vue). -->
+        <v-checkbox-btn
+          v-if="planToRequest.active.value"
+          class="feo-tree-select-checkbox"
+          density="compact" color="orange-darken-1"
+          :model-value="subtreeSelection.all"
+          :indeterminate="!subtreeSelection.all && subtreeSelection.some"
+          title="Выбрать все плановые позиции этой категории и подкатегорий с остатком количества > 0"
+          @click.stop
+          @update:model-value="(v: boolean | null) => planToRequest.selectCategorySubtree(node, ctx.feoCategories.value, !!v)"
+        />
+        <!-- Шеврон/папка — увеличенная кликабельная область (владелец, задача 3):
+             раньше цель клика была ровно с иконку (15/16px), мимо легко было
+             промахнуться. Обёрнуты в span 28×28 с паддингом — попадание проще,
+             сама строка выше не становится (высоту задаёт колонка «Действия» с
+             её сеткой кнопок). -->
         <span class="feo-tree-chevron" @click="toggleNodeExpansion(node)">
           <v-icon
             v-if="node.hasChildren"
-            size="15"
+            size="22"
             :icon="ctx.expandedIds.value.includes(node.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
             color="grey"
-            class="mr-1 cursor-pointer"
+            class="cursor-pointer"
           />
           <v-icon
             v-else
-            size="15"
+            size="22"
             :icon="ctx.expandedItemPanels.value.has(node.id) ? 'mdi-chevron-down' : 'mdi-chevron-right'"
             color="grey"
-            class="mr-1 cursor-pointer"
+            class="cursor-pointer"
           />
         </span>
-        <v-icon
-          size="16"
-          class="mr-1 flex-shrink-0 cursor-pointer"
-          :icon="node.hasChildren
-            ? (ctx.expandedIds.value.includes(node.id) ? 'mdi-folder-open' : 'mdi-folder')
-            : (ctx.expandedItemPanels.value.has(node.id) ? 'mdi-folder-open' : 'mdi-folder')"
-          :color="node.level === 1 ? '#3B82F6' : node.level === 2 ? '#F59E0B' : '#22C55E'"
-          @click="toggleNodeExpansion(node)"
-        />
+        <span class="feo-tree-folder" @click="toggleNodeExpansion(node)">
+          <v-icon
+            size="20"
+            class="cursor-pointer"
+            :icon="node.hasChildren
+              ? (ctx.expandedIds.value.includes(node.id) ? 'mdi-folder-open' : 'mdi-folder')
+              : (ctx.expandedItemPanels.value.has(node.id) ? 'mdi-folder-open' : 'mdi-folder')"
+            :color="node.level === 1 ? '#3B82F6' : node.level === 2 ? '#F59E0B' : '#22C55E'"
+          />
+        </span>
         <span class="feo-name" :class="`feo-name--l${node.level}`">{{ node.name }}</span>
         <span v-if="node.code" class="feo-code ml-2">{{ node.code }}</span>
         <span v-if="node.appendix" class="feo-appendix ml-1">{{ node.appendix }}</span>
@@ -597,6 +618,20 @@
             @click.stop="ctx.router.push(`/orders?feo_category_id=${node.id}`)" />
           <v-btn v-if="ctx.canEditFeo.value" icon="mdi-pencil-outline" variant="text" size="x-small" color="primary"
             title="Редактировать" @click="ctx.startFeoEdit(node)" />
+          <!-- «Сделать плановой позицией» (владелец, задача 3) — у категории без
+               подкатегорий и ровно с одной плановой позицией, обычно дублирующей
+               её же имя. collapseCandidate — единственный источник и для этой
+               кнопки, и для счётчика/диалога массового сворачивания в
+               FeoTreeToolbar.vue (Правило №6, useFeoCategoryCollapse.ts). -->
+          <v-btn v-if="ctx.canEditFeo.value && collapseCandidate" icon="mdi-arrow-collapse-up" variant="text" size="x-small"
+            :color="collapseCandidate.blocked_reason ? 'grey' : 'blue-grey-darken-1'"
+            :disabled="!!collapseCandidate.blocked_reason"
+            :loading="feoCollapse.singleCollapsing.value === node.id"
+            :title="collapseCandidate.blocked_reason
+              ? `Нельзя свернуть: ${collapseCandidate.blocked_reason}`
+              : `Сделать плановой позицией: «${collapseCandidate.planned_item_name}» переедет в родительскую категорию, сама категория «${node.name}» исчезнет, деньги ФЭО категории перейдут на позицию`"
+            @click="onCollapseToItem"
+          />
           <v-btn v-if="ctx.canEditFeo.value" icon="mdi-delete-outline" variant="text" size="x-small" color="error"
             title="Удалить" @click="ctx.confirmFeoDelete(node)" />
           <!-- Комментарии к категории (владелец, Волна 4, п.16) — раскрывает
@@ -677,6 +712,8 @@ import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { useKpiDrilldown } from '@/composables/subsidies/useKpiDrilldown'
 import { formatCurrency } from '@/composables/subsidies/format'
 import { useFeoComments } from '@/composables/subsidies/useFeoComments'
+import { usePlanToRequest } from '@/composables/subsidies/usePlanToRequest'
+import { useFeoCategoryCollapse } from '@/composables/subsidies/useFeoCategoryCollapse'
 import { useToast } from '@/composables/useToast'
 import type { FeoNode } from '@/composables/subsidies/types'
 import FeoCommentThread from './FeoCommentThread.vue'
@@ -699,6 +736,24 @@ const node = toRef(props, 'node')
 
 const ctx = useSubsidyDetailCtx()
 const kpi = useKpiDrilldown(ctx)
+
+// Выбор категории/поддерева целиком (задача 1) — состояние чекбокса перед
+// шевроном читает usePlanToRequest.ts::subtreeSelectionState (единственный
+// источник, тот же Set выбора, что и построчные чекбоксы FeoLevel5Panel.vue).
+const planToRequest = usePlanToRequest()
+const subtreeSelection = computed(() => planToRequest.subtreeSelectionState(node.value, ctx.feoCategories.value))
+
+// Сворачивание категории-дубля в плановую позицию (задача 3) — тот же список
+// кандидатов, что считает счётчик/диалог в FeoTreeToolbar.vue (Правило №6).
+const feoCollapse = useFeoCategoryCollapse()
+const collapseCandidate = computed(() => (node.value.hasChildren ? undefined : feoCollapse.candidateFor(node.value.id)))
+function onCollapseToItem() {
+  const cand = collapseCandidate.value
+  if (!cand || cand.blocked_reason) return
+  // Подтверждение — v-dialog (FeoCollapseConfirmDialog.vue, рендерится один раз
+  // в FeoTreeToolbar.vue), не window.confirm() (координатор, приёмка в браузере).
+  feoCollapse.openSingleCollapseDialog(node.value.id, node.value.name, cand.planned_item_name)
+}
 
 // Тот же гейт, что и в SubsidyEditDialog.vue/FeoTreeToolbar.vue (canSaveVersion) —
 // вычисляется независимо здесь же (простая проверка роли из localStorage, не формула,

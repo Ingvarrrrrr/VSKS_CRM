@@ -28,6 +28,7 @@ from app.services.plan_autoassign import (
     move_or_detach_planned_item as _move_or_detach_planned_item,
     deactivate_if_orphaned as _deactivate_if_orphaned,
 )
+from app.services.wish_item_category_guard import assert_wish_item_category_from_plan
 from decimal import Decimal
 # Перенос заявки в План закупок и обратно (Правило №5, сессия 2026-09-06,
 # разрезание wishes.py по образцу purchases.py → purchase_ops.py) — вынесены в
@@ -62,6 +63,7 @@ from app.services.wish_distribution import (
 from app.services.wish_serializers import (
     _enrich,
     _attach_purchase_matches,
+    _attach_item_product_snapshot,
     _wish_purchase_summaries_map,
 )
 from app.services.wish_access import (
@@ -185,6 +187,9 @@ async def get_wish(
 
     # W-diff: «двойник» каждой позиции в закупке — только карточка, не список
     await _attach_purchase_matches(wish, enriched, db)
+    # Задача 2 (владелец, 2026-09-20): фото/актуальность цены товара каталога у
+    # каждой позиции — только карточка, не список (см. докстринг функции).
+    await _attach_item_product_snapshot(wish, enriched, db)
 
     # Phase 31: unseen_fields for single wish GET (D-05..D-09)
     try:
@@ -572,6 +577,13 @@ async def update_wish(
                     needed_date=_as_date(item_data.get('needed_date')),  # W2
                     vat_rate=item_data.get('vat_rate'),
                 )
+                # Задача 3 (владелец, 2026-09-20): при пересборе черновика payload
+                # может прислать РАССОГЛАСОВАННУЮ пару feo_planned_item_id/
+                # feo_category_id (например, фронт перетащил позицию в другую
+                # категорию, но не сбросил старую привязку к плановой позиции) —
+                # wi.feo_planned_item_id уже выставлен конструктором выше, проверяем
+                # ДО db.add(wi), чтобы вся операция не сохранила ничего частично.
+                await assert_wish_item_category_from_plan(db, wi, item_data.get('feo_category_id'))
                 if _item_form_wish_put_draft:
                     apply_item_amounts(wi, _item_form_wish_put_draft)
                 db.add(wi)

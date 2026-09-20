@@ -287,22 +287,32 @@
           <td :colspan="totalColCount - 2">
             <div class="d-flex align-start ga-4 flex-wrap py-1">
               <template v-if="feoPerItem">
-                <FeoTreeSelect
-                  :model-value="item.feo_node_id ?? item.feo_category_id"
-                  :nodes="feoNodes"
-                  :leaves="feoLeaves"
-                  :plan-positions="plannedItems || []"
-                  :node-amounts="nodeAmounts"
-                  :readonly="feoReadonly"
-                  :error="isFeoMissing(item)"
-                  label="Категория ФЭО"
-                  required
-                  :allow-unallocated="!!subsidyId"
-                  :root-label="subsidyName"
-                  style="flex:2 1 520px;min-width:320px"
-                  @update:model-value="(v: number | null) => emit('item-feo-change', idx, v)"
-                  @pick-unallocated="(parentId: number | null) => emit('item-pick-unallocated', idx, parentId)"
-                />
+                <div style="flex:2 1 520px;min-width:320px">
+                  <v-tooltip :text="itemFeoLockTooltip(item) || ''" :disabled="!itemFeoLockTooltip(item)" location="top">
+                    <template #activator="{ props: lockTip }">
+                      <div v-bind="lockTip">
+                        <FeoTreeSelect
+                          :model-value="item.feo_node_id ?? item.feo_category_id"
+                          :nodes="feoNodes"
+                          :leaves="feoLeaves"
+                          :plan-positions="plannedItems || []"
+                          :node-amounts="nodeAmounts"
+                          :readonly="feoReadonly || isItemFeoCategoryLocked(item)"
+                          :error="isFeoMissing(item)"
+                          label="Категория ФЭО"
+                          required
+                          :allow-unallocated="!!subsidyId"
+                          :root-label="subsidyName"
+                          @update:model-value="(v: number | null) => emit('item-feo-change', idx, v)"
+                          @pick-unallocated="(parentId: number | null) => emit('item-pick-unallocated', idx, parentId)"
+                        />
+                      </div>
+                    </template>
+                  </v-tooltip>
+                  <v-chip v-if="feoLockChipLabel(item)" size="x-small" variant="tonal" color="grey" class="mt-1" prepend-icon="mdi-lock-outline">
+                    {{ feoLockChipLabel(item) }}
+                  </v-chip>
+                </div>
                 <div v-if="isOverBudget(item)" class="text-caption text-warning mt-2 d-flex align-center ga-1" style="white-space:nowrap">
                   <v-icon icon="mdi-alert-outline" size="14" />
                   Превышение: {{ fmtRub(overBudgetDelta(item)) }}
@@ -367,6 +377,7 @@ import type { Contractor, ProductLike, ItemsDisplayRow } from '@/components/item
 import type { FeoNode } from '@/composables/useFeoLeaves'
 import { formatPlanResidual } from '@/utils/numberFormat'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
+import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT } from '@/utils/feoItemLock'
 // item-forms-accommodation-transport.md: при спец-форме позиции («Проживание»/
 // «Перевозки автобусом») колонки Кол-во/Ед./Цена заменяются полями формы —
 // ItemFormFields.vue, единственный рендерер (Правило №6).
@@ -504,6 +515,16 @@ const tzFrozenTooltip = 'Закупка объявлена — кол-во и ц
 // См. feoAttrsEditable выше — построчные ФЭО-контролы остаются кликабельными
 // даже при readonly=true, если родитель явно это разрешил.
 const feoReadonly = computed(() => props.readonly && !props.feoAttrsEditable)
+
+// Замок категории (владелец, 2026-09-20): позиция, пришедшая из заявки
+// (wish_item_id) или привязанная к плановой позиции (feo_planned_item_id) —
+// её собственная категория ФЭО меняется только в плане закупок, построчный
+// пикер здесь заблокирован (utils/feoItemLock.ts, ПРАВИЛО №6 — тот же текст,
+// что и в шапке закупки CreateOrderView.vue). Бэкенд отклоняет попытку 422
+// ITEM_FEO_CATEGORY_LOCKED_FROM_PLAN — это лишь UX-подсказка ДО отправки.
+function itemFeoLockTooltip(item: EditorItem): string | null {
+  return isItemFeoCategoryLocked(item) ? FEO_CATEGORY_LOCKED_HINT : null
+}
 
 // Дефект «РЕЕ-2026-00904» (владелец, 2026-09-02): протухший собственный feo_node_id
 // позиции (от старой категории ФЭО) при ВЫКЛЮЧЕННОМ feoPerItem скоупил дерево

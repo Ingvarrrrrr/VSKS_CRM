@@ -47,6 +47,19 @@
         </template>
       </div>
       <div class="kb-col-meta">{{ col.items.length }} шт · {{ formatMoney(sumOf(col.items)) }}</div>
+      <!-- forceFallback (владелец, 2026-09-17: «открылся большой канбан и тут
+           сразу зависает, если пытаюсь что-то перенести из раздела в раздел» —
+           разбиение закупки 858, 17 столбцов): по умолчанию Sortable тащит
+           нативным HTML5 drag-and-drop, а этот борд одновременно скроллится
+           и по вертикали внутри колонки (.kb-drop), и по горизонтали по всей
+           полосе столбцов (.kb-columns, :scroll на draggable). Нативный DnD
+           программный scrollLeft/scrollTop ВО ВРЕМЯ активного перетаскивания —
+           известная связка, на которой Chromium подвешивает курсор перетаскивания
+           (сам drag не завершается ни отпусканием кнопки, ни Escape, вкладка
+           внешне «зависает», хотя JS-поток не заблокирован). forceFallback
+           переключает Sortable на собственную JS-имитацию (плавающий клон
+           элемента вместо нативного drag-image) — авто-скролл двигает
+           реальный DOM, а не соревнуется с браузерным перетаскиванием. -->
       <draggable
         :list="col.items"
         :group="{ name: groupName, pull: !readonly, put: !readonly }"
@@ -56,6 +69,9 @@
         :scroll="true"
         :scroll-sensitivity="80"
         :scroll-speed="14"
+        :force-fallback="true"
+        :fallback-tolerance="3"
+        fallback-class="kb-fallback-drag"
         ghost-class="kb-ghost"
         class="kb-drop"
         @change="(evt: any) => $emit('change', col.key, evt)"
@@ -231,6 +247,14 @@ defineExpose({ addColumn, vanishingManualColumns })
 }
 .kb-ghost {
   opacity: 0.4;
+}
+/* Плавающий клон карточки при forceFallback — Sortable ставит его position:fixed
+   на document.body, вне scroll-контейнеров борда, поэтому overflow их не режет. */
+.kb-fallback-drag {
+  opacity: 0.9;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
+  cursor: grabbing;
+  pointer-events: none;
 }
 .kb-col-input {
   flex: 1;

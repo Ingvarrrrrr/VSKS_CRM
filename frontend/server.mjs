@@ -53,6 +53,19 @@ createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' })
     res.end(data)
   } catch {
+    // Инцидент на проде 20.09.2026 22:43: во время поочерёдной замены двух
+    // фронт-контейнеров браузер владельца запросил у СТАРОГО контейнера новый
+    // /assets/index-<hash>.css, тот файла не имел и отдал index.html с кодом 200
+    // (этот SPA-фолбэк). Внешний nginx добавил Cache-Control: immutable на год —
+    // браузер закэшировал HTML как CSS, и страница осталась без стилей до
+    // очистки данных сайта. Ассеты и любые файлы с расширением при отсутствии
+    // обязаны отвечать 404 без кэша — фолбэк на index.html только для маршрутов SPA.
+    const pathOnly = req.url.split('?')[0]
+    if (pathOnly.startsWith('/assets/') || extname(pathOnly)) {
+      res.writeHead(404, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' })
+      res.end('Not Found')
+      return
+    }
     // SPA fallback
     const index = await readFile(join(DIST, 'index.html'))
     res.writeHead(200, { 'Content-Type': 'text/html' })

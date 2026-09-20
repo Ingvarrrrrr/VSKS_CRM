@@ -7,9 +7,13 @@
     (тот же источник, что и GET /feo-planned-items/residuals, GET
     /feo-categories/plan-positions — единственное место, считающее used/used_qty/
     linked_purchase_ids по PurchaseItem.feo_planned_item_id);
-  - сопоставление по имени (score/normalize/SCORE_AUTO/SCORE_SUGGEST) — ТОЛЬКО
+  - сопоставление по имени (score/normalize/SCORE_SUGGEST) — ТОЛЬКО
     app.services.text_match (через app.routers.products_match._score_product_candidates,
     тот же SELECT+bulk_match+freshness, что у POST /products/match, не вторая копия);
+    порог для "exact" — text_match.is_exact_match (см. там докстринг: полное
+    совпадение нормализованных имён ИЛИ score>=SCORE_AUTO с защитой от коротких
+    1-2-словных запросов) — строже, чем 'auto' у POST /products/match, который
+    is_exact_match не использует и не меняется этой правкой.
   - суммы позиций (total_price = quantity × unit_price) — ТОЛЬКО
     app.services.item_amounts.line_total;
   - создание заявки — ТОЛЬКО app.routers.wishes.create_wish (вызывается напрямую с
@@ -43,7 +47,7 @@ from app.services.feo_plan_fact import planned_item_consumption
 from app.services.item_amounts import line_total
 from app.services.price_freshness import load_context as load_freshness_context, evaluate as evaluate_freshness
 from app.services.product_snapshot import resolve_photo_url
-from app.services.text_match import normalize, tokenize, score as text_score, SCORE_AUTO, SCORE_SUGGEST
+from app.services.text_match import normalize, tokenize, score as text_score, is_exact_match, SCORE_SUGGEST
 
 
 _BY_TYPE_MIN_WORD_LEN = 4
@@ -214,18 +218,23 @@ async def build_plan_to_wish_candidates(
         if planned.amount is not None:
             residual_amount = max(planned.amount - Decimal(str(cons["used"] or 0)), Decimal("0"))
 
+        item_name = planned.name or ""
+
         name_res = name_results_by_index.get(idx, {"candidates": []})
         cands = name_res["candidates"]
         exact = None
         rest = cands
-        if cands and cands[0]["score"] >= SCORE_AUTO:
+        if cands and is_exact_match(item_name, cands[0]["name"], cands[0]["score"]):
             exact = cands[0]
             rest = cands[1:]
-        by_name = [c for c in rest if SCORE_SUGGEST <= c["score"] < SCORE_AUTO][:limit]
+        # Кандидат, у которого раньше был высокий score (даже >=SCORE_AUTO), но
+        # is_exact_match его отсёк — остаётся в rest (rest==cands целиком, если
+        # exact не назначен) и попадает в by_name с его настоящим score: выбор за
+        # пользователем, а не автоподстановка (см. is_exact_match docstring).
+        by_name = [c for c in rest if c["score"] >= SCORE_SUGGEST][:limit]
 
         used_product_ids = {c["product_id"] for c in ([exact] if exact else []) + by_name}
 
-        item_name = planned.name or ""
         name_norm = normalize(item_name)
         match_targets = {t for t in ({name_norm} | {t for t in tokenize(item_name) if len(t) >= _BY_TYPE_MIN_WORD_LEN}) if t}
 

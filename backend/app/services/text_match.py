@@ -99,6 +99,46 @@ def score(query: str, catalog_name: str) -> float:
     return combined
 
 
+_EXACT_MIN_QUERY_TOKENS = 3   # ниже — однословные/двусловные запросы слишком общие
+_EXACT_NAME_LEN_RATIO = 1.5   # имя товара не длиннее query больше чем в столько раз
+
+
+def is_exact_match(query: str, product_name: str, score_value: float) -> bool:
+    """Строгое правило автоподстановки «exact» (владелец, 2026-09-21, приёмка
+    в браузере): однословная плановая позиция «Экипировка» подхватила товар
+    «Тренажёры для работы в экипировке в воде (например, с грузом, в
+    гидрокостюме)» как 100%-совпадение — coverage=1.0 (все токены query нашлись
+    в имени товара) при SCORE_AUTO=0.95 пропускает случайные товары для
+    коротких запросов. Владелец: «если 100% совпадение названия в плане и в
+    БД — именно этот товар»; иначе высокий score — это ПОДСКАЗКА пользователю
+    (by_name), не решение за него.
+
+    Используется ТОЛЬКО app.services.plan_to_wish (single source — не копия
+    во app.routers.products_match, у POST /products/match своё поведение
+    'auto'/score>=SCORE_AUTO не меняется).
+
+    True, если:
+      - normalize(query) == normalize(product_name) — полное совпадение
+        нормализованных имён (пробелы/пунктуация/регистр не считаются), ЛИБО
+      - score_value >= SCORE_AUTO И у query >= 3 значимых токенов (защита от
+        1-2-словных запросов, которые совпадают с чем угодно по coverage) И
+        число токенов имени товара не превышает токены query больше чем в 1.5
+        раза (защита от длинного названия товара, зацепившегося одним-двумя
+        общими словами).
+    """
+    if normalize(query) == normalize(product_name):
+        return True
+    if score_value < SCORE_AUTO:
+        return False
+    q_tokens = tokenize(query)
+    if len(q_tokens) < _EXACT_MIN_QUERY_TOKENS:
+        return False
+    c_tokens = tokenize(product_name)
+    if not c_tokens:
+        return False
+    return len(c_tokens) <= len(q_tokens) * _EXACT_NAME_LEN_RATIO
+
+
 # ---------------------------------------------------------------------------
 # Generic progressive narrowing (domain-agnostic — works on any payload)
 # ---------------------------------------------------------------------------

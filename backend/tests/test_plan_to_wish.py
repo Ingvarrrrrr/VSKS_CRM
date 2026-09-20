@@ -84,6 +84,91 @@ async def test_candidates_exact_name_match(db_session, test_user):
 
 
 @pytest.mark.asyncio
+async def test_candidates_single_word_full_coverage_not_exact(db_session, test_user):
+    """Владелец, приёмка в браузере 2026-09-21: однословная плановая позиция
+    «Экипировка» подхватила товар «Тренажёры для работы в экипировке в воде
+    (например, с грузом, в гидрокостюме)» как exact (100%) только потому, что
+    единственное слово запроса входит в название товара (coverage=1.0).
+    text_match.is_exact_match теперь требует >=3 значимых токенов запроса для
+    score-based exact (или полное normalize-равенство имён) — однословный
+    запрос с частичным совпадением уходит в by_name, выбор за пользователем.
+
+    Слово намеренно бессмысленное+uuid (не «экипировка»), чтобы не зависеть от
+    того, что реально лежит в общем dev-каталоге — изолирует тест от чужих
+    товаров с похожим словом, сохраняя тот же механизм дефекта (один токен
+    запроса, длинное название товара с этим токеном внутри)."""
+    import uuid
+    suffix = uuid.uuid4().hex[:8]
+    word = f"жгутик{suffix}"
+    name = word  # плановая позиция — одно слово, как в реальном дефекте
+    product_name = f"Тренажёры для работы с приспособлением {word} в воде (например, с грузом, в гидрокостюме)"
+
+    _subsidy, cat = await _make_subsidy_with_leaf(db_session, "Subsidy-singleword")
+    planned = await _make_planned_item(db_session, cat, name, quantity=Decimal("5"), unit_price=Decimal("100"), amount=Decimal("500"))
+
+    product = Product(name=product_name, category="Прочее", price=Decimal("900"), is_active=True)
+    db_session.add(product)
+    await db_session.commit()
+    await db_session.refresh(product)
+
+    result = await build_plan_to_wish_candidates(db_session, [planned.id], limit=6)
+    row = result[0]
+
+    assert row["exact"] is None, f"expected NOT exact for single-word query, got: {row['exact']}"
+    by_name_ids = {c["product_id"] for c in row["by_name"]}
+    assert product.id in by_name_ids, f"expected product to land in by_name, got: {row['by_name']}"
+
+
+@pytest.mark.asyncio
+async def test_candidates_exact_full_name_match_stays_exact(db_session, test_user):
+    """«Принтер epson l100» против товара с точно таким же именем — остаётся
+    exact (normalize(query) == normalize(product.name)), это ровно случай,
+    который владелец назвал «100% совпадение названия — именно этот товар»."""
+    import uuid
+    suffix = uuid.uuid4().hex[:8]
+    name = f"Принтер epson l100 {suffix}"
+
+    _subsidy, cat = await _make_subsidy_with_leaf(db_session, "Subsidy-exact-fullname")
+    planned = await _make_planned_item(db_session, cat, name, quantity=Decimal("1"), unit_price=Decimal("15000"), amount=Decimal("15000"))
+
+    product = Product(name=name, category="Оргтехника", price=Decimal("14500"), is_active=True)
+    db_session.add(product)
+    await db_session.commit()
+    await db_session.refresh(product)
+
+    result = await build_plan_to_wish_candidates(db_session, [planned.id], limit=6)
+    row = result[0]
+
+    assert row["exact"] is not None, f"expected exact match, got: {row}"
+    assert row["exact"]["product_id"] == product.id
+
+
+@pytest.mark.asyncio
+async def test_candidates_exact_match_collapses_double_spaces(db_session, test_user):
+    """«Шнур Vento Высота 6 цветной (200 м)» против того же имени, но с
+    двойным пробелом в имени товара — text_match.normalize схлопывает пробелы,
+    имена совпадают после нормализации → остаётся exact."""
+    import uuid
+    suffix = uuid.uuid4().hex[:8]
+    name = f"Шнур Vento Высота 6 цветной (200 м) {suffix}"
+    product_name = f"Шнур Vento  Высота 6 цветной (200 м)  {suffix}"  # двойные пробелы
+
+    _subsidy, cat = await _make_subsidy_with_leaf(db_session, "Subsidy-exact-doublespace")
+    planned = await _make_planned_item(db_session, cat, name, quantity=Decimal("10"), unit_price=Decimal("500"), amount=Decimal("5000"))
+
+    product = Product(name=product_name, category="Электрика", price=Decimal("480"), is_active=True)
+    db_session.add(product)
+    await db_session.commit()
+    await db_session.refresh(product)
+
+    result = await build_plan_to_wish_candidates(db_session, [planned.id], limit=6)
+    row = result[0]
+
+    assert row["exact"] is not None, f"expected exact match despite double spaces, got: {row}"
+    assert row["exact"]["product_id"] == product.id
+
+
+@pytest.mark.asyncio
 async def test_candidates_by_type_match(db_session, test_user):
     """«Принтер» при товарах с product_type «принтер» (разные названия) → by_type,
     а не exact/by_name (имена совсем другие — score по имени низкий).

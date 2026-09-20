@@ -17,7 +17,7 @@ import { describeApiError } from '@/utils/apiErrorMessage'
 import { useFeoPlannedResiduals, type FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import { useFeoLevel5Api } from './useFeoLevel5'
 import { materializeManualPlanAsItem } from './useFeoManualPlanMaterialize'
-import { collectSubtreeIds, normName } from './feoCategoryUtils'
+import { collectSubtreeIds } from './feoCategoryUtils'
 import type { FeoCategory, FeoNode } from './types'
 
 export interface PlanToWishLinkedPurchase {
@@ -207,65 +207,32 @@ const feoResiduals = useFeoPlannedResiduals({ subsidyId: residualsSubsidyId })
 // /feo-planned-items/residuals (feo_item_id/quantity) — он заменён на
 // /feo-categories/plan-positions (см. докстринг FeoPlanPosition), тут
 // используются его актуальные поля: `id`+`kind` вместо `feo_item_id`,
-// `planned_quantity` вместо `quantity`. Решение владельца — только остаток
-// количества > 0, позиции без количества (planned_quantity == null) пропускаются.
+// `planned_quantity` вместо `quantity`.
 //
-// id-пространство совпадает с selectedPlannedItemIds (переиспользуем ТОТ ЖЕ
-// Set, см. докстринг файла выше): для kind='planned_item' — это уже id
-// настоящей FeoPlannedItem (то же число, что чекбоксы FeoLevel5Panel.vue); для
-// kind='plan_position'/'feo_article' (ручной план задан прямо на категории,
-// без отдельных FeoPlannedItem) — синтетический id = −category_id, тот же
-// приём, что и displayPlannedRowsFor в useFeoLevel5.ts (задача 2 — такие id
-// материализуются в настоящие FeoPlannedItem перед отправкой на сервер).
+// РЕШЕНИЕ ВЛАДЕЛЬЦА (21.09.2026, дословно): «Все плановые должны включаться.
+// Категории не включать, включать только плановые позиции. Нет плановых
+// позиций — значит ещё не запланировано и включать нечего. Записи плана с
+// именами категорий и без цены — включать всё без исключений». Прежние
+// исключения по совпадению имени с категорией/подкатегорией (нормализация
+// normName, карта категорий) и по сумме — убраны целиком: единственный
+// критерий ниже. Строки kind!=='planned_item' (ручные суммы на категориях —
+// 'plan_position'/'feo_article', синтетический id=−category_id) в массовый
+// выбор («категория целиком», «Вся смета», счётчики, tooltip) не попадают на
+// любом уровне дерева, включая категории без подкатегорий — это НЕ настоящая
+// плановая позиция. Явная галочка у такой строки в FeoLevel5Panel.vue —
+// отдельное действие пользователя, этой функции не касается (см.
+// materializeSelectedManualPlans).
 //
-// Исключения (владелец, правка 2026-09-21, СУЖЕНО после жалобы: «Вся смета» не
-// отмечала настоящие позиции «Футболка ГМ»/«Комбинезон ГМ»/«Куртка ГМ» —
-// прежнее правило (б) «имя совпадает с именем ЛЮБОЙ категории субсидии»
-// зацепило папку-дубль «Футболка ГМ» и исключило одноимённую настоящую позицию
-// на другом направлении. Правило сужено до ЧИСТОГО мусора — всё остальное с
-// остатком включается, включая дубли имён между разными направлениями:
-//  (а) ручной план НАПРАВЛЕНИЯ (kind='plan_position'|'feo_article'), заданный
-//      прямо на категории, у которой ЕСТЬ подкатегории — это сумма по всему
-//      поддереву, не отдельная позиция для закупки;
-//  (б1) planned_item, чьё normName(имя) совпадает с normName имени СВОЕЙ
-//      категории, И у своей категории ЕСТЬ подкатегории — агрегатный мусор
-//      («Экипировка» на категории «Экипировка», «Мобильный оперативный штаб…»
-//      на своём направлении);
-//  (б2) planned_item, чьё normName(имя) совпадает с normName имени ПРЯМОЙ
-//      подкатегории своей категории, И planned_amount пустой/0 — технический
-//      нулевой остаток от разбиения на подкатегории («Комплект специальной
-//      одежды для добровольцев» 1×— = 0₽ на «Экипировке», «Средства
-//      индивидуальной защиты…» 50×— = 0₽). Ненулевые суммы такого совпадения
-//      НЕ исключаются — это уже настоящая позиция.
-// Единственное место обоих условий (Правило №6) — читают selectCategorySubtree/
+// Единственное место фильтра (Правило №6) — читают selectCategorySubtree/
 // selectWholeSmeta/subtreeSelectionState/wholeSmetaSelection ниже, второй
 // фильтр не заводим.
-function hasSubcategories(feoCategories: FeoCategory[], categoryId: number): boolean {
-  return feoCategories.some(c => c.parent_id === categoryId)
-}
-
-function eligibleResidualIds(rows: FeoPlanPosition[], feoCategories: FeoCategory[]): number[] {
+function eligibleResidualIds(rows: FeoPlanPosition[]): number[] {
   const ids: number[] = []
-  const categoryById = new Map<number, FeoCategory>()
-  for (const c of feoCategories) categoryById.set(c.id, c)
   for (const r of rows) {
+    if (r.kind !== 'planned_item') continue
     if (r.planned_quantity == null) continue
     if (!(Number(r.residual_quantity) > 0)) continue
-    const categoryHasChildren = hasSubcategories(feoCategories, r.category_id)
-    if (categoryHasChildren && r.kind !== 'planned_item') continue // (а) ручной план направления
-    if (r.kind === 'planned_item' && categoryHasChildren) {
-      const ownCategory = categoryById.get(r.category_id)
-      if (ownCategory) {
-        const rName = normName(r.name)
-        if (rName === normName(ownCategory.name)) continue // (б1) агрегатный мусор — имя своей категории
-        const isEmptyAmount = r.planned_amount == null || Number(r.planned_amount) === 0
-        if (isEmptyAmount) {
-          const isDirectChildName = feoCategories.some(c => c.parent_id === ownCategory.id && normName(c.name) === rName)
-          if (isDirectChildName) continue // (б2) нулевой остаток, имя прямой подкатегории
-        }
-      }
-    }
-    ids.push(r.kind === 'planned_item' ? r.id : -r.category_id)
+    ids.push(r.id)
   }
   return ids
 }
@@ -349,11 +316,11 @@ export function usePlanToRequest() {
   function selectCategorySubtree(node: FeoNode, feoCategories: FeoCategory[], on: boolean) {
     const subtreeIds = new Set(collectSubtreeIds(feoCategories, node.id))
     const rowsInSubtree = feoResiduals.plannedResiduals.value.filter(r => subtreeIds.has(r.category_id))
-    applySelection(eligibleResidualIds(rowsInSubtree, feoCategories), on)
+    applySelection(eligibleResidualIds(rowsInSubtree), on)
   }
 
   function selectWholeSmeta(feoCategories: FeoCategory[], on: boolean) {
-    applySelection(eligibleResidualIds(feoResiduals.plannedResiduals.value, feoCategories), on)
+    applySelection(eligibleResidualIds(feoResiduals.plannedResiduals.value), on)
   }
 
   // Состояние чекбокса категории (задача 1): выбраны ВСЕ плановые позиции
@@ -363,16 +330,15 @@ export function usePlanToRequest() {
   function subtreeSelectionState(node: FeoNode, feoCategories: FeoCategory[]): { all: boolean; some: boolean; total: number; selectedCount: number } {
     const subtreeIds = new Set(collectSubtreeIds(feoCategories, node.id))
     const rowsInSubtree = feoResiduals.plannedResiduals.value.filter(r => subtreeIds.has(r.category_id))
-    return computeSelectionState(eligibleResidualIds(rowsInSubtree, feoCategories), feoLevel5.selectedPlannedItemIds.value)
+    return computeSelectionState(eligibleResidualIds(rowsInSubtree), feoLevel5.selectedPlannedItemIds.value)
   }
 
-  // Была computed(() => ...) без параметров — «Вся смета» теперь тоже фильтрует
-  // мусорные строки (см. eligibleResidualIds выше), а для этого нужен feoCategories,
-  // которого нет внутри этого файла (передаётся вызывающим компонентом, тот же
-  // приём, что и subtreeSelectionState). computed → функция, вызывающая сторона
-  // (FeoTreeToolbar.vue) передаёт ctx.feoCategories.value при каждом обращении.
+  // feoCategories в сигнатуре сохранён ради единообразия вызова с
+  // selectWholeSmeta/subtreeSelectionState (FeoTreeToolbar.vue передаёт
+  // ctx.feoCategories.value во все четыре без разбора) — сам eligibleResidualIds
+  // больше не фильтрует по категориям (решение владельца 21.09.2026 выше).
   function wholeSmetaSelection(feoCategories: FeoCategory[]): { all: boolean; some: boolean; total: number; selectedCount: number } {
-    return computeSelectionState(eligibleResidualIds(feoResiduals.plannedResiduals.value, feoCategories), feoLevel5.selectedPlannedItemIds.value)
+    return computeSelectionState(eligibleResidualIds(feoResiduals.plannedResiduals.value), feoLevel5.selectedPlannedItemIds.value)
   }
 
   // Бэковый price_source для конкретной строки (владелец, задача 3): payload

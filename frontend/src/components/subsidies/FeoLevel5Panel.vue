@@ -2,7 +2,10 @@
   <!-- ── Level 5 панель: Плановые vs Фактические ──
        Условие расширено (!node.hasChildren || hasOwnPlannedAmountFor(node)) — у
        направления панель раскрывается, только если есть чем её наполнить. -->
-  <tr v-if="(!node.hasChildren || ctx.hasOwnPlannedAmountFor(node)) && ctx.expandedItemPanels.value.has(node.id)" :data-feo-panel-for="node.id">
+  <!-- Владелец 21.09.2026: панель открывается у ЛЮБОГО узла (в т.ч. у направления
+       без собственных позиций — пустая, с кнопкой «Добавить плановую»), иначе
+       первую позицию на направление добавить неоткуда. -->
+  <tr v-if="ctx.expandedItemPanels.value.has(node.id)" :data-feo-panel-for="node.id">
     <td colspan="7" style="padding:0">
       <div style="padding:10px 0 12px 0">
         <div class="d-flex align-center mb-2" style="gap:8px">

@@ -94,17 +94,25 @@
       <template v-else>
         <!-- «Вся смета» (владелец, задача 1) — toggle выбрать всё/снять всё по
              всей субсидии, тот же общий Set выбора, что и построчные/категорийные
-             чекбоксы (usePlanToRequest.ts::selectWholeSmeta, Правило №6). -->
-        <v-btn size="small" variant="outlined" color="deep-purple"
-          :prepend-icon="wholeSmetaAllSelected ? 'mdi-checkbox-multiple-blank-outline' : 'mdi-checkbox-multiple-marked-outline'"
-          :loading="planToRequest.residualsLoading.value"
-          @click="planToRequest.selectWholeSmeta(ctx.feoCategories.value, !wholeSmetaAllSelected)">
-          {{ wholeSmetaAllSelected ? 'Снять всё' : 'Вся смета' }}
-          <!-- Счётчик «(N с остатком)» (владелец, задача 1б) — тот же источник,
-               что и подпись «выбрано k из N» на чекбоксах категорий
-               (usePlanToRequest.ts::wholeSmetaSelection().total, Правило №6). -->
-          <span v-if="wholeSmetaSelectionState.total" class="ml-1">({{ wholeSmetaSelectionState.total }} с остатком)</span>
-        </v-btn>
+             чекбоксы (usePlanToRequest.ts::selectWholeSmeta, Правило №6).
+             Подпись и tooltip (правка 2026-09-21: владелец спросил, что значит
+             «остаток») — RESIDUAL_SELECTION_TOOLTIP, единственный источник
+             текста, второй не заводим. -->
+        <v-tooltip location="top" open-delay="200">
+          <template #activator="{ props: wholeSmetaTooltipProps }">
+            <v-btn v-bind="wholeSmetaTooltipProps" size="small" variant="outlined" color="deep-purple"
+              :prepend-icon="wholeSmetaAllSelected ? 'mdi-checkbox-multiple-blank-outline' : 'mdi-checkbox-multiple-marked-outline'"
+              :loading="planToRequest.residualsLoading.value"
+              @click="planToRequest.selectWholeSmeta(ctx.feoCategories.value, !wholeSmetaAllSelected)">
+              {{ wholeSmetaAllSelected ? 'Снять всё' : 'Вся смета' }}
+              <!-- Счётчик (владелец, задача 1б) — тот же источник, что и подпись
+                   «выбрано k из N» на чекбоксах категорий
+                   (usePlanToRequest.ts::wholeSmetaSelection().total, Правило №6). -->
+              <span v-if="wholeSmetaSelectionState.total" class="ml-1">({{ wholeSmetaSelectionState.total }}{{ wholeSmetaAllSelected ? '' : ' незакупленных' }})</span>
+            </v-btn>
+          </template>
+          <span>{{ RESIDUAL_SELECTION_TOOLTIP }}</span>
+        </v-tooltip>
         <v-btn size="small" variant="flat" color="deep-purple"
           prepend-icon="mdi-check-bold"
           :disabled="planToRequest.selectedCount.value === 0"
@@ -196,7 +204,7 @@ import { useRegistryExport } from '@/composables/useRegistryExport'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { usePlanGraphVersions } from '@/composables/subsidies/usePlanGraphVersions'
 import { useFeoImport } from '@/composables/subsidies/useFeoImport'
-import { usePlanToRequest } from '@/composables/subsidies/usePlanToRequest'
+import { usePlanToRequest, RESIDUAL_SELECTION_TOOLTIP } from '@/composables/subsidies/usePlanToRequest'
 import { useFeoCategoryCollapse } from '@/composables/subsidies/useFeoCategoryCollapse'
 import PlanToRequestDialog from '@/components/subsidies/PlanToRequestDialog.vue'
 import FeoCollapseCandidatesDialog from '@/components/subsidies/FeoCollapseCandidatesDialog.vue'

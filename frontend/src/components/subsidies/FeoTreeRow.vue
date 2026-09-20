@@ -76,7 +76,7 @@
                 :disabled="subtreeSelection.total === 0"
                 @update:model-value="(v: boolean | null) => planToRequest.selectCategorySubtree(node, ctx.feoCategories.value, !!v)"
               />
-              <span class="feo-tree-select-label">категория целиком</span>
+              <span class="feo-tree-select-label">{{ subtreeSelectionLabel }}</span>
             </span>
           </template>
           <span>{{ subtreeSelectionTooltip }}</span>
@@ -608,12 +608,18 @@
              единое toggleNodeExpansion, что и у шеврона/папки/бейджа (для узла с
              подразделами она теперь тоже раскрывает подразделы, не только
              позиции — второго действия для одного направления быть не должно). -->
-        <span class="feo-action-slot"><v-btn v-if="!node.hasChildren || ctx.hasOwnPlannedAmountFor(node)"
+        <!-- Владелец 21.09.2026: «на любом уровне ФЭО можно добавить плановую
+             позицию» — раньше у направления без собственных позиций кнопки не
+             было вовсе, и первую позицию на направление добавить было неоткуда
+             (панель с «Добавить плановую» открыть нечем). Кнопка есть у всех
+             узлов и открывает именно панель собственных позиций (пустую — с
+             кнопкой «Добавить плановую»); раскрытие подкатегорий — за шевроном/папкой. -->
+        <span class="feo-action-slot"><v-btn
           :icon="ctx.expandedItemPanels.value.has(node.id) ? 'mdi-list-box' : 'mdi-list-box-outline'"
           variant="text" size="x-small"
           :color="ctx.expandedItemPanels.value.has(node.id) ? 'teal' : 'grey'"
-          :title="node.hasChildren ? 'Состав плана: позиции, привязанные к самому направлению (не к его подкатегориям). Клик раскрывает направление целиком' : 'Показать плановые / фактические позиции'"
-          @click="toggleNodeExpansion(node)"
+          :title="node.hasChildren ? 'Позиции самого направления (не подкатегорий): показать / добавить плановую' : 'Показать плановые / фактические позиции'"
+          @click="node.hasChildren ? ctx.toggleItemPanel(node) : toggleNodeExpansion(node)"
         /></span>
         <!-- Стрелки — друг под другом (B5: скрыты без feo_category.edit) -->
         <div v-if="ctx.canEditFeo.value" class="feo-actions-col">
@@ -694,7 +700,7 @@
        ПЕРЕД панелью в DOM. Сами подкатегории — отдельные строки со своими
        именами и увеличенным отступом сразу после панели, вторая подпись
        перед ними не нужна: они и так самоочевидно другие строки. -->
-  <tr v-if="feoOwnItemsBadgeText && node.hasChildren && ctx.expandedItemPanels.value.has(node.id)">
+  <tr v-if="node.hasChildren && ctx.expandedItemPanels.value.has(node.id)">
     <td colspan="7" :style="{ padding: `2px 8px 0 ${node.depth * 20 + 32}px` }">
       <span class="feo-own-items-caption">
         <v-icon size="12" icon="mdi-clipboard-text-outline" class="mr-1" />Плановые позиции самого направления «{{ node.name }}» — не входят в подкатегории ниже
@@ -726,7 +732,7 @@ import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { useKpiDrilldown } from '@/composables/subsidies/useKpiDrilldown'
 import { formatCurrency } from '@/composables/subsidies/format'
 import { useFeoComments } from '@/composables/subsidies/useFeoComments'
-import { usePlanToRequest } from '@/composables/subsidies/usePlanToRequest'
+import { usePlanToRequest, RESIDUAL_SELECTION_TOOLTIP } from '@/composables/subsidies/usePlanToRequest'
 import { useFeoCategoryCollapse } from '@/composables/subsidies/useFeoCategoryCollapse'
 import { useToast } from '@/composables/useToast'
 import type { FeoNode } from '@/composables/subsidies/types'
@@ -756,12 +762,23 @@ const kpi = useKpiDrilldown(ctx)
 // источник, тот же Set выбора, что и построчные чекбоксы FeoLevel5Panel.vue).
 const planToRequest = usePlanToRequest()
 const subtreeSelection = computed(() => planToRequest.subtreeSelectionState(node.value, ctx.feoCategories.value))
-// Tooltip чекбокса категории (задача 1б) — тот же subtreeSelection, второй
-// источник счёта не заводим (Правило №6).
+// Подпись чекбокса категории (правка 2026-09-21, СЖАТО после приёмки: полный
+// текст «Выбрано k из N незакупленных» рвал колонку «Наименование» по буквам —
+// теперь компактный чип «k из N» (N=0 → просто «0»), полный текст ушёл в
+// tooltip ниже. Тот же subtreeSelection, второй источник счёта не заводим
+// (Правило №6).
+const subtreeSelectionLabel = computed(() => {
+  const s = subtreeSelection.value
+  if (s.total === 0) return '0'
+  return `${s.selectedCount} из ${s.total}`
+})
+// Tooltip чекбокса категории — счёт + тот же explain-текст, что и у кнопки
+// «Вся смета» (usePlanToRequest.ts::RESIDUAL_SELECTION_TOOLTIP, единственный
+// источник объяснения, второй не заводим — Правило №6).
 const subtreeSelectionTooltip = computed(() => {
   const s = subtreeSelection.value
-  if (s.total === 0) return 'В этой категории нет позиций с остатком количества'
-  return `Выбрано ${s.selectedCount} из ${s.total} позиций с остатком количества`
+  if (s.total === 0) return 'В этой категории нет незакупленных плановых позиций. ' + RESIDUAL_SELECTION_TOOLTIP
+  return `Выбрано ${s.selectedCount} из ${s.total} незакупленных. ` + RESIDUAL_SELECTION_TOOLTIP
 })
 
 // Сворачивание категории-дубля в плановую позицию (задача 3) — тот же список

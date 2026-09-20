@@ -619,6 +619,7 @@
   line-height: 1.1;
   color: #94A3B8;
   white-space: nowrap;
+  flex: 0 0 auto;
   margin: 0 4px 0 1px;
 }
 .subsidies-page .cursor-pointer { cursor: pointer; }

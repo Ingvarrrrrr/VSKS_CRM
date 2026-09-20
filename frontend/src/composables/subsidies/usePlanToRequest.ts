@@ -218,20 +218,25 @@ const feoResiduals = useFeoPlannedResiduals({ subsidyId: residualsSubsidyId })
 // приём, что и displayPlannedRowsFor в useFeoLevel5.ts (задача 2 — такие id
 // материализуются в настоящие FeoPlannedItem перед отправкой на сервер).
 //
-// Исключения (владелец, правка 2026-09-21, расширено после приёмки на
-// ЦентрПоиск): «Названия категорий не идут в закупку — только плановые позиции
-// из выбранных категорий». При выборе поддерева/«Вся смета» ДВЕ строки-мусор не
-// должны попадать в отбор (листовые категории не задеты — там ручной план листа
-// выбирается как обычно):
+// Исключения (владелец, правка 2026-09-21, СУЖЕНО после жалобы: «Вся смета» не
+// отмечала настоящие позиции «Футболка ГМ»/«Комбинезон ГМ»/«Куртка ГМ» —
+// прежнее правило (б) «имя совпадает с именем ЛЮБОЙ категории субсидии»
+// зацепило папку-дубль «Футболка ГМ» и исключило одноимённую настоящую позицию
+// на другом направлении. Правило сужено до ЧИСТОГО мусора — всё остальное с
+// остатком включается, включая дубли имён между разными направлениями:
 //  (а) ручной план НАПРАВЛЕНИЯ (kind='plan_position'|'feo_article'), заданный
 //      прямо на категории, у которой ЕСТЬ подкатегории — это сумма по всему
 //      поддереву, не отдельная позиция для закупки;
-//  (б) planned_item, чьё normName(имя) совпадает с normName имени ЛЮБОЙ
-//      категории субсидии (не только своей собственной — на ЦентрПоиск мусор
-//      лежал на категории 840 «Экипировка», но был назван именами её ПОДкатегорий
-//      863/870/872) — ЕДИНСТВЕННОЕ исключение: это его СОБСТВЕННАЯ категория И
-//      она ЛИСТОВАЯ (совпадение «Пила цепная» с листом «Пила цепная» — настоящая
-//      позиция, оставляем).
+//  (б1) planned_item, чьё normName(имя) совпадает с normName имени СВОЕЙ
+//      категории, И у своей категории ЕСТЬ подкатегории — агрегатный мусор
+//      («Экипировка» на категории «Экипировка», «Мобильный оперативный штаб…»
+//      на своём направлении);
+//  (б2) planned_item, чьё normName(имя) совпадает с normName имени ПРЯМОЙ
+//      подкатегории своей категории, И planned_amount пустой/0 — технический
+//      нулевой остаток от разбиения на подкатегории («Комплект специальной
+//      одежды для добровольцев» 1×— = 0₽ на «Экипировке», «Средства
+//      индивидуальной защиты…» 50×— = 0₽). Ненулевые суммы такого совпадения
+//      НЕ исключаются — это уже настоящая позиция.
 // Единственное место обоих условий (Правило №6) — читают selectCategorySubtree/
 // selectWholeSmeta/subtreeSelectionState/wholeSmetaSelection ниже, второй
 // фильтр не заводим.
@@ -241,32 +246,36 @@ function hasSubcategories(feoCategories: FeoCategory[], categoryId: number): boo
 
 function eligibleResidualIds(rows: FeoPlanPosition[], feoCategories: FeoCategory[]): number[] {
   const ids: number[] = []
-  // Категории субсидии по normName(имя) — построено один раз на вызов (не на
-  // каждую строку rows), иначе поиск (б) был бы O(rows × categories).
-  const categoriesByNormName = new Map<string, FeoCategory[]>()
-  for (const c of feoCategories) {
-    const n = normName(c.name)
-    const arr = categoriesByNormName.get(n)
-    if (arr) arr.push(c)
-    else categoriesByNormName.set(n, [c])
-  }
+  const categoryById = new Map<number, FeoCategory>()
+  for (const c of feoCategories) categoryById.set(c.id, c)
   for (const r of rows) {
     if (r.planned_quantity == null) continue
     if (!(Number(r.residual_quantity) > 0)) continue
     const categoryHasChildren = hasSubcategories(feoCategories, r.category_id)
     if (categoryHasChildren && r.kind !== 'planned_item') continue // (а) ручной план направления
-    if (r.kind === 'planned_item') {
-      const matches = categoriesByNormName.get(normName(r.name))
-      if (matches && matches.length) {
-        const ownMatch = matches.find(c => c.id === r.category_id)
-        const ownIsLeaf = !!ownMatch && !hasSubcategories(feoCategories, ownMatch.id)
-        if (!(ownMatch && ownIsLeaf)) continue // (б) имя дублирует любую категорию субсидии
+    if (r.kind === 'planned_item' && categoryHasChildren) {
+      const ownCategory = categoryById.get(r.category_id)
+      if (ownCategory) {
+        const rName = normName(r.name)
+        if (rName === normName(ownCategory.name)) continue // (б1) агрегатный мусор — имя своей категории
+        const isEmptyAmount = r.planned_amount == null || Number(r.planned_amount) === 0
+        if (isEmptyAmount) {
+          const isDirectChildName = feoCategories.some(c => c.parent_id === ownCategory.id && normName(c.name) === rName)
+          if (isDirectChildName) continue // (б2) нулевой остаток, имя прямой подкатегории
+        }
       }
     }
     ids.push(r.kind === 'planned_item' ? r.id : -r.category_id)
   }
   return ids
 }
+
+// Единственный источник текста tooltip кнопки «Вся смета»/«Снять всё» и
+// чекбокса категории (владелец, правка 2026-09-21: «что значит остаток?») —
+// FeoTreeToolbar.vue и FeoTreeRow.vue читают отсюда, второй текст не заводим
+// (Правило №6).
+export const RESIDUAL_SELECTION_TOOLTIP =
+  'Плановые позиции, у которых остаток количества больше нуля: план минус уже привязанное в закупках. Полностью закупленные не отмечаются.'
 
 // total/selectedCount добавлены (владелец, задача 1б) — единственный источник
 // счётчика «Выбрано k из N» и для tooltip чекбокса категории (FeoTreeRow.vue),

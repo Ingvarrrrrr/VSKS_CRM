@@ -36,11 +36,12 @@ export function collectSubtreeIds(categories: FeoCategory[], nodeId: number): nu
 // значение при каждом чтении (не разовая миграция localStorage) — по CSS-спеке
 // min-width всегда побеждает над меньшим width/max-width.
 export const FEO_NAME_COLUMN_MIN = 230
-// +24 → +110 (правка 2026-09-20, задача 1б): чекбокс категории обзавёлся
-// подписью «категория целиком» (FeoTreeRow.vue, feo-tree-select-label) — при
-// старом +24 текст подписи рвался по буквам так же, как раньше страдало само
-// наименование (см. докстринг выше). Единственный источник порога (Правило №6).
-export const FEO_NAME_COLUMN_MIN_SELECT_MODE = FEO_NAME_COLUMN_MIN + 110
+// +24 → +110 → +40 (правка 2026-09-21, приёмка: подпись «Выбрано k из N
+// незакупленных» снова рвала «Наименование» по буквам; подпись сжата до чипа
+// «k из N» — FeoTreeRow.vue, feo-tree-select-label — короткому чипу хватает
+// прежнего +40 (чекбокс + короткий чип), полный текст ушёл в tooltip.
+// Единственный источник порога (Правило №6).
+export const FEO_NAME_COLUMN_MIN_SELECT_MODE = FEO_NAME_COLUMN_MIN + 40
 
 export function withNameColumnFloor(base: Record<string, string>, selectModeActive: boolean): Record<string, string> {
   const min = selectModeActive ? FEO_NAME_COLUMN_MIN_SELECT_MODE : FEO_NAME_COLUMN_MIN

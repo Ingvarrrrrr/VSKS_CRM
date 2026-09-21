@@ -52,6 +52,7 @@ from app.models.feo_category import FeoCategory
 from app.models.subsidy import Subsidy
 from app.models.plan_excess_approval import PlanExcessApproval, PlanExcessApprovalStep
 from app.services.feo_plan import compute_feo_plan_tree
+from app.services import plan_excess_kinds as PEK
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +156,13 @@ def _approval_dict(a: PlanExcessApproval) -> dict:
         "id": a.id,
         "feo_category_id": a.feo_category_id,
         "subsidy_id": a.subsidy_id,
+        # Задача владельца 2026-09-21 (независимые согласования по видам/уровням):
+        # kind/kind_label — единственный источник подписей app.services.plan_excess_kinds
+        # (ПРАВИЛО №6); level — по наличию feo_category_id (NULL = согласование на
+        # субсидию целиком).
+        "kind": a.kind,
+        "kind_label": PEK.kind_label(a.kind),
+        "level": PEK.level_for_category_id(a.feo_category_id),
         "excess_amount": float(a.excess_amount) if a.excess_amount is not None else 0.0,
         "plan_amount": float(a.plan_amount) if a.plan_amount is not None else None,
         "budget_amount": float(a.budget_amount) if a.budget_amount is not None else None,
@@ -382,46 +390,37 @@ async def request_plan_excess_approval(
     # Задача владельца «план ≠ факт» (сессия 2026-08-06): узел может иметь ДВА
     # независимых превышения — «план дороже финансирования ФЭО» (excess_amount,
     # как раньше) и/или «факт (итог закупки/КП) дороже плана» (excess_fact_over_plan,
-    # новое, см. compute_feo_plan_tree). Один и тот же механизм согласования
-    # (PlanExcessApproval по категории) закрывает оба — approved снимает блокировку
-    # для обоих видов сразу (см. assert_no_unapproved_excess).
+    # новое, см. compute_feo_plan_tree). Тот же ПРАВИЛО №6-источник видов —
+    # app.services.plan_excess_kinds — задание владельца (2026-09-21): согласования
+    # по разным видам ТЕПЕРЬ независимы (см. app.services.feo_plan_tree._latest_approval),
+    # у каждой записи есть kind.
     #
     # Задача владельца п.2 (2026-08-12): ТРЕТИЙ вид — сумма плановых позиций
     # категории превысила «ручной» план (excess_plan_over_manual, см.
-    # compute_feo_plan_tree). Тот же механизм согласования закрывает и его —
-    # см. assert_no_unapproved_excess, третья проверка в цепочке.
+    # compute_feo_plan_tree).
     excess_amount = node.get("excess_amount") or 0.0
     excess_fact_over_plan = node.get("excess_fact_over_plan") or 0.0
     excess_plan_over_manual = node.get("excess_plan_over_manual") or 0.0
-    if excess_amount <= 0.005 and excess_fact_over_plan <= 0.005 and excess_plan_over_manual <= 0.005:
-        raise HTTPException(400, f"По категории «{cat.name}» нет превышения плана")
-    # Что именно согласуем в этом запросе — приоритет тот же, что и в
-    # assert_no_unapproved_excess (сверху вниз: над финансированием ФЭО, затем
-    # факт над планом, затем плановые позиции над ручным планом).
-    if excess_amount > 0.005:
-        excess_for_request = excess_amount
-        excess_kind = "over_feo"
-        excess_kind_label = "План превышает финансирование по ФЭО"
-        excess_description = (
+
+    def _desc_over_feo() -> tuple[str, str]:
+        return (
+            PEK.kind_label(PEK.OVER_FEO),
             f"Превышение плана над финансированием ФЭО по категории «{cat.name}»: "
             f"финансирование по ФЭО {Decimal(str(node.get('budget') or 0.0)):,.2f} ₽, "
             f"текущая плановая сумма {Decimal(str(node['plan'] + node['over'])):,.2f} ₽, "
-            f"превышение {Decimal(str(excess_amount)):,.2f} ₽."
+            f"превышение {Decimal(str(excess_amount)):,.2f} ₽.",
         )
-    elif excess_fact_over_plan > 0.005:
-        excess_for_request = excess_fact_over_plan
-        excess_kind = "fact_over_plan"
-        excess_kind_label = "Факт (итог закупки/КП) превышает план"
-        excess_description = (
+
+    def _desc_fact_over_plan() -> tuple[str, str]:
+        return (
+            PEK.kind_label(PEK.FACT_OVER_PLAN),
             f"Итог закупки (факт) по категории «{cat.name}» превышает план: "
             f"план {Decimal(str(node.get('plan') or 0.0)):,.2f} ₽, "
             f"факт {Decimal(str(node.get('fact') or 0.0)):,.2f} ₽, "
-            f"превышение {Decimal(str(excess_fact_over_plan)):,.2f} ₽."
+            f"превышение {Decimal(str(excess_fact_over_plan)):,.2f} ₽.",
         )
-    else:
-        excess_for_request = excess_plan_over_manual
-        excess_kind = "plan_over_manual"
-        excess_kind_label = "Плановые позиции превышают вручную заданный план"
+
+    def _desc_plan_over_manual() -> tuple[str, str]:
         _manual_entered = node.get("manual_plan_entered") or 0.0
         _plan_manual_total = node.get("plan_manual") or 0.0
         _items = node.get("excess_plan_items") or []
@@ -432,16 +431,54 @@ async def request_plan_excess_approval(
             )
             _more = f" и ещё {len(_items) - 5} поз." if len(_items) > 5 else ""
             _items_txt = f" Позиции-виновники: {_shown}{_more}."
-        excess_description = (
+        return (
+            PEK.kind_label(PEK.PLAN_OVER_MANUAL),
             f"Сумма плановых позиций категории «{cat.name}» превышает вручную заданный "
             f"план: ручной план {Decimal(str(_manual_entered)):,.2f} ₽, сумма плановых "
             f"позиций {Decimal(str(_plan_manual_total)):,.2f} ₽, превышение "
-            f"{Decimal(str(excess_plan_over_manual)):,.2f} ₽.{_items_txt}"
+            f"{Decimal(str(excess_plan_over_manual)):,.2f} ₽.{_items_txt}",
         )
+
+    # Приоритет тот же, что и раньше был в единственной if/elif/else ветке (и
+    # тот же, что и в assert_no_unapproved_excess): сверху вниз — над
+    # финансированием ФЭО, затем факт над планом, затем плановые позиции над
+    # ручным планом. body.get("kind") — НОВОЕ (задача владельца 2026-09-21):
+    # явный выбор вида запроса вместо автоопределения по приоритету (нужен,
+    # например, когда на узле одновременно есть НЕСКОЛЬКО видов превышения и
+    # нужно согласовать не первый по приоритету, а конкретный).
+    _kind_amounts = {
+        PEK.OVER_FEO: excess_amount,
+        PEK.FACT_OVER_PLAN: excess_fact_over_plan,
+        PEK.PLAN_OVER_MANUAL: excess_plan_over_manual,
+    }
+    _kind_builders = {
+        PEK.OVER_FEO: _desc_over_feo,
+        PEK.FACT_OVER_PLAN: _desc_fact_over_plan,
+        PEK.PLAN_OVER_MANUAL: _desc_plan_over_manual,
+    }
+    _priority = (PEK.OVER_FEO, PEK.FACT_OVER_PLAN, PEK.PLAN_OVER_MANUAL)
+
+    if all(_kind_amounts[k] <= 0.005 for k in _priority):
+        raise HTTPException(400, f"По категории «{cat.name}» нет превышения плана")
+
+    requested_kind = body.get("kind")
+    if requested_kind:
+        if requested_kind not in _kind_amounts or _kind_amounts[requested_kind] <= 0.005:
+            raise HTTPException(
+                400,
+                f"По категории «{cat.name}» нет превышения плана вида «{PEK.kind_label(requested_kind)}»",
+            )
+        excess_kind = requested_kind
+    else:
+        excess_kind = next(k for k in _priority if _kind_amounts[k] > 0.005)
+
+    excess_for_request = _kind_amounts[excess_kind]
+    excess_kind_label, excess_description = _kind_builders[excess_kind]()
 
     existing_pending = (await db.execute(
         select(PlanExcessApproval).where(
             PlanExcessApproval.feo_category_id == feo_category_id,
+            PlanExcessApproval.kind == excess_kind,
             PlanExcessApproval.status == "pending",
         ).order_by(PlanExcessApproval.created_at.desc()).limit(1)
     )).scalar_one_or_none()
@@ -496,7 +533,7 @@ async def request_plan_excess_approval(
     # NULL для остальных двух видов (over_feo/fact_over_plan) — там понятия
     # «план был → стал» не было запрошено владельцем.
     plan_before = plan_after = None
-    if excess_kind == "plan_over_manual":
+    if excess_kind == PEK.PLAN_OVER_MANUAL:
         # ⚠️ node["plan_manual"] ЗДЕСЬ — ЕЩЁ вручную заданная сумма, не Σ позиций:
         # пока НЕТ approved-запроса, app.services.feo_plan._manual_plan_for держит
         # plan_manual == manual_plan_amount (план не подменяется, пока не согласовано —
@@ -506,13 +543,14 @@ async def request_plan_excess_approval(
         plan_before = Decimal(str(node.get("manual_plan_entered") or 0.0))
         plan_after = plan_before + Decimal(str(node.get("excess_plan_over_manual") or 0.0))
 
-    # У PlanExcessApproval нет отдельного поля «вид превышения» — различаем вид
-    # текстом в comment, см. excess_description выше. Тот же принцип, что и у
-    # полей excess_amount/plan_amount/budget_amount ниже — они уже были общими
-    # для всех трёх видов, comment теперь тоже общий, но содержательный per-вид.
+    # kind=excess_kind (задача владельца 2026-09-21, миграция g5h7j9k1m3n5) —
+    # PlanExcessApproval.kind ТЕПЕРЬ хранит вид превышения структурно, не только
+    # текстом в comment (comment остаётся — читаемое описание для UI/уведомлений,
+    # текст не меняем).
     approval = PlanExcessApproval(
         feo_category_id=feo_category_id,
         subsidy_id=cat.subsidy_id,
+        kind=excess_kind,
         excess_amount=Decimal(str(excess_for_request)),
         plan_amount=Decimal(str(full_plan)),
         budget_amount=Decimal(str(node.get("budget") or 0)),

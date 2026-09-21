@@ -42,6 +42,7 @@ from app.services.payment_basis import (
     extract_basis,
     basis_key as _basis_key,
 )
+from app.services.item_type_split import kind_of
 from app.services.payment_matcher import apply_advance_report_override
 from app.services.payment_target import PaymentGroup
 from app.services.purchase_payments import recompute_purchase_payments, find_manual_match
@@ -209,10 +210,9 @@ async def _purchase_kind_totals(db: AsyncSession, purchase_ids: list[int], kind:
     items = (await db.execute(
         select(PurchaseItem).where(PurchaseItem.purchase_id.in_(purchase_ids))
     )).scalars().all()
-    wanted = {"товар"} if kind == "goods" else {"услуга", "работа"}
     totals: dict[int, Decimal] = {pid: Decimal(0) for pid in purchase_ids}
     for it in items:
-        if (it.item_type or "").strip() in wanted:
+        if kind_of(it.item_type) == kind:
             totals[it.purchase_id] += Decimal(str(it.total_price)) if it.total_price is not None else Decimal(0)
     return totals
 

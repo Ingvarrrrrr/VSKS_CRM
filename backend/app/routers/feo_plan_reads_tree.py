@@ -102,6 +102,7 @@ async def get_feo_plan_tree(
     app.routers.plan_excess), null для остальных видов превышения.
     """
     from app.services.feo_plan import compute_feo_plan_tree, find_excess_culprit
+    from app.services.feo_plan_tree import compute_subsidy_type_summary
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem
     from app.routers.purchase_budget import PLANNED_STATUSES
@@ -172,9 +173,41 @@ async def get_feo_plan_tree(
             # неснятым excess_amount — find_excess_culprit не бесплатна (доп. запрос),
             # гнать её на каждый узел дерева на каждый вызов (в т.ч. KPI-дашборд) не нужно.
             "excess_culprit": None,
+            # Раздел E (план ancient-prancing-music.md, 2026-09-21): «товары/
+            # услуги» по узлу — см. compute_feo_plan_tree.node за докстрингом
+            # каждого поля (goods+services+unspecified == итогу узла по трём
+            # метрикам — plan/feo/fact, тестом test_feo_plan_tree_type_split.py).
+            "plan_goods": node["plan_goods"],
+            "plan_services": node["plan_services"],
+            "plan_unspecified": node["plan_unspecified"],
+            "feo_goods": node["feo_goods"],
+            "feo_services": node["feo_services"],
+            "feo_unspecified": node["feo_unspecified"],
+            "fact_goods": node["fact_goods"],
+            "fact_services": node["fact_services"],
+            "fact_unspecified": node["fact_unspecified"],
+            "excess_plan_over_feo_goods": node["excess_plan_over_feo_goods"],
+            "excess_plan_over_feo_goods_approved": node["excess_plan_over_feo_goods_approved"],
+            "excess_plan_over_feo_goods_pending": node["excess_plan_over_feo_goods_pending"],
+            "excess_plan_over_feo_services": node["excess_plan_over_feo_services"],
+            "excess_plan_over_feo_services_approved": node["excess_plan_over_feo_services_approved"],
+            "excess_plan_over_feo_services_pending": node["excess_plan_over_feo_services_pending"],
+            "excess_fact_over_plan_goods": node["excess_fact_over_plan_goods"],
+            "excess_fact_over_plan_goods_approved": node["excess_fact_over_plan_goods_approved"],
+            "excess_fact_over_plan_goods_pending": node["excess_fact_over_plan_goods_pending"],
+            "excess_fact_over_plan_services": node["excess_fact_over_plan_services"],
+            "excess_fact_over_plan_services_approved": node["excess_fact_over_plan_services_approved"],
+            "excess_fact_over_plan_services_pending": node["excess_fact_over_plan_services_pending"],
         }
         for cat_id, node in tree.items()
     }
+
+    # Раздел E1 — итог по субсидии целиком (уровень 'subsidy', см.
+    # compute_subsidy_type_summary) для карточек KPI/дерева: суммы корневых
+    # узлов по типу + 4 контроля превышения на уровне субсидии.
+    _type_summary = await compute_subsidy_type_summary(db, subsidy_id, tree)
+    result["subsidy_type_totals"] = _type_summary["totals"]
+    result["subsidy_type_excess"] = _type_summary["excess"]
 
     # Виновник превышения плана над ФЭО — «должна отображаться данная закупка и
     # показать, что из-за неё всё превысило» (владелец). Считаем только для узлов
@@ -217,14 +250,23 @@ async def get_feo_plan_tree(
             "manual_plan_entered", "excess_plan_over_manual", "excess_plan_items",
             "excess_approval_amount", "manual_plan_amount",
             "excess_approval_plan_before", "excess_approval_plan_after",
+            # Раздел E — «товары/услуги» и 4 контроля по типу, те же деньги.
+            "plan_goods", "plan_services", "plan_unspecified",
+            "feo_goods", "feo_services", "feo_unspecified",
+            "fact_goods", "fact_services", "fact_unspecified",
+            "excess_plan_over_feo_goods", "excess_plan_over_feo_services",
+            "excess_fact_over_plan_goods", "excess_fact_over_plan_services",
         )
         for cat_id, node in result.items():
-            if cat_id == "unassigned":
-                node["amount"] = None
+            if cat_id in ("unassigned", "subsidy_type_totals", "subsidy_type_excess"):
+                if cat_id == "unassigned":
+                    node["amount"] = None
                 continue
             for f in MONEY_FIELDS:
                 if f in node:
                     node[f] = None
+        result["subsidy_type_totals"] = None
+        result["subsidy_type_excess"] = None
 
     return result
 

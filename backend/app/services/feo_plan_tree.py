@@ -22,7 +22,142 @@ from app.services.feo_plan_fact import (
     plan_consumption_by_category,
     planned_item_consumption,
 )
+# ⚠️ НЕ импортировать app.services.item_type_split на уровне модуля (тот же
+# найденный цикл, что и в feo_plan_fact.py — см. её докстринг наверху файла:
+# item_type_split → app.routers.feo_planned_items → ... → plan_to_wish →
+# feo_plan_fact/этот модуль). KIND_GOODS/KIND_SERVICES/KIND_UNSPECIFIED/kind_of
+# импортируются ЛОКАЛЬНО внутри compute_feo_plan_tree/compute_subsidy_type_summary.
 from app.services.purchase_summary import purchase_summaries_by_id
+
+
+async def resolve_effective_item_types(db: AsyncSession, planned_items) -> dict:
+    """item_type_effective плановой позиции (FeoPlannedItem) — собственный
+    item_type, если задан; иначе — единственный ОБЩИЙ item_type среди
+    связанных PurchaseItem (наследование). ПРАВИЛО №6: сам ЗАПРОС наследования
+    (PLANNED_STATUSES + не остановленные, группировка по feo_planned_item_id)
+    НЕ дублируется — единственная реализация теперь
+    app.services.type_totals.effective_item_types (параллельно написана для
+    раздела B плана ancient-prancing-music.md, «Бюджет (ФЭО)»/«План» по типам
+    для дашборда/субсидий; та же формула, что раньше жила инлайн в
+    app.routers.feo_planned_items_reports) — эта функция лишь ДОБАВЛЯЕТ
+    приоритет «свой item_type побеждает наследование» и отдаёт результат ПО
+    КАЖДОМУ переданному id (в т.ч. с собственным типом), а не только по тем,
+    у кого нашлось наследование, — под сигнатуру, удобную вызывающему коду
+    ниже (compute_feo_plan_tree, раздел E1: goods/services/unspecified узла).
+
+    planned_items — итерируемый набор объектов/строк с атрибутами id/item_type
+    (FeoPlannedItem ИЛИ Row той же формы). Возвращает {id: effective_type_or_None}
+    для КАЖДОГО переданного id.
+    """
+    from app.services.type_totals import effective_item_types as _inherited_item_types
+
+    items = list(planned_items)
+    result: dict = {it.id: (it.item_type or None) for it in items}
+    _need_inherit_ids = [it.id for it in items if not it.item_type]
+    if not _need_inherit_ids:
+        return result
+
+    inherited = await _inherited_item_types(db, _need_inherit_ids)
+    for fpi_id in _need_inherit_ids:
+        result[fpi_id] = inherited.get(fpi_id)
+    return result
+
+
+async def latest_plan_excess_approval(db: AsyncSession, feo_category_id: Optional[int], kind: str):
+    """Последний (created_at DESC) PlanExcessApproval узла (или субсидии
+    целиком, если feo_category_id=None) ИМЕННО этого kind — а если его нет,
+    legacy-фолбэк (kind='legacy') ТОЛЬКО для kind из
+    plan_excess_kinds.LEGACY_FALLBACK_KINDS (три старых вида узла дерева).
+
+    Точечный (не батчевый) эквивалент замыкания `_latest_approval` внутри
+    compute_feo_plan_tree ниже — для вызывающего кода ВНЕ этой функции
+    (find_excess_culprit в feo_plan_excess.py, assert_tz_not_over_plan в
+    feo_plan_tz_checks.py), которому батчевые словари всей субсидии
+    недоступны (ПРАВИЛО №6 — общий поиск живёт в одном месте, оба модуля его
+    импортируют, а не копируют запрос). НОВЫЕ виды (plan_over_feo_goods/
+    services, fact_over_plan_goods/services) в LEGACY_FALLBACK_KINDS не
+    входят — фолбэк для них не сработает, даже если вызвать эту функцию с
+    ними (см. app.services.type_excess_approval, которая сравнивает latest
+    напрямую по latest_approval_by_cat_kind, без обращения к этой функции)."""
+    from app.models.plan_excess_approval import PlanExcessApproval
+    from app.services import plan_excess_kinds as _pek
+
+    def _q(k: str):
+        q = select(PlanExcessApproval).where(PlanExcessApproval.kind == k)
+        q = q.where(PlanExcessApproval.feo_category_id.is_(None)) if feo_category_id is None \
+            else q.where(PlanExcessApproval.feo_category_id == feo_category_id)
+        return q.order_by(PlanExcessApproval.created_at.desc()).limit(1)
+
+    found = (await db.execute(_q(kind))).scalar_one_or_none()
+    if found is not None:
+        return found
+    if kind not in _pek.LEGACY_FALLBACK_KINDS:
+        return None
+    return (await db.execute(_q(_pek.LEGACY))).scalar_one_or_none()
+
+
+async def compute_subsidy_type_summary(db: AsyncSession, subsidy_id: int, tree: dict) -> dict:
+    """Итог по СУБСИДИИ целиком (уровень 'subsidy', feo_category_id=NULL — см.
+    app.services.plan_excess_kinds.LEVEL_SUBSIDY) для раздела «товары/услуги»
+    (план ancient-prancing-music.md, раздел E1): суммы КОРНЕВЫХ узлов дерева
+    (parent_id IS NULL) по трём метрикам (план/ФЭО/факт), разложенным по типу,
+    и 4 контроля превышения ПО ТИПУ на уровне субсидии — читает готовые
+    plan_goods/feo_goods/fact_goods и т.п. КАЖДОГО корневого узла (см. node
+    dict внутри compute_feo_plan_tree ниже), второй раз дерево не считает.
+
+    tree — уже посчитанный compute_feo_plan_tree(db, [subsidy_id]) ЭТОГО ЖЕ
+    вызова (используется GET /api/feo-categories/plan-tree —
+    app.routers.feo_plan_reads_tree — и app.services.type_excess_approution.
+    collect_type_excess_violations).
+
+    Возвращает {"totals": {...9 полей...}, "excess": {"plan_over_feo_goods":
+    {"amount","pending","approved"}, ...4 вида...}}.
+    """
+    from app.models.plan_excess_approval import PlanExcessApproval
+    from app.services import plan_excess_kinds as _pek
+    # Локальный импорт — см. предупреждение у импортов наверху файла.
+    from app.services.item_type_split import KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED
+
+    roots = [n for n in tree.values() if n.get("parent_id") is None]
+    totals = {
+        f"{metric}_{kind}": sum(float(n.get(f"{metric}_{kind}", 0.0) or 0.0) for n in roots)
+        for metric in ("plan", "feo", "fact")
+        for kind in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)
+    }
+
+    _specs = (
+        (_pek.PLAN_OVER_FEO_GOODS, "plan_over_feo_goods", f"plan_{KIND_GOODS}", f"feo_{KIND_GOODS}", True),
+        (_pek.PLAN_OVER_FEO_SERVICES, "plan_over_feo_services", f"plan_{KIND_SERVICES}", f"feo_{KIND_SERVICES}", True),
+        (_pek.FACT_OVER_PLAN_GOODS, "fact_over_plan_goods", f"fact_{KIND_GOODS}", f"plan_{KIND_GOODS}", False),
+        (_pek.FACT_OVER_PLAN_SERVICES, "fact_over_plan_services", f"fact_{KIND_SERVICES}", f"plan_{KIND_SERVICES}", False),
+    )
+    _kind_list = [s[0] for s in _specs]
+    appr_rows = (await db.execute(
+        select(PlanExcessApproval)
+        .where(PlanExcessApproval.subsidy_id == subsidy_id)
+        .where(PlanExcessApproval.feo_category_id.is_(None))
+        .where(PlanExcessApproval.kind.in_(_kind_list))
+        .order_by(PlanExcessApproval.kind, PlanExcessApproval.created_at.desc())
+    )).scalars().all()
+    latest_by_kind: dict = {}
+    for a in appr_rows:
+        if a.kind not in latest_by_kind:
+            latest_by_kind[a.kind] = a
+
+    excess = {}
+    for kind, out_key, top_key, bottom_key, requires_positive_bottom in _specs:
+        top = totals.get(top_key, 0.0)
+        bottom = totals.get(bottom_key, 0.0)
+        amt = 0.0
+        if not requires_positive_bottom or bottom > 0.005:
+            amt = max(top - bottom, 0.0)
+        appr = latest_by_kind.get(kind)
+        excess[out_key] = {
+            "amount": amt,
+            "pending": bool(amt > 0.005 and appr is not None and appr.status == "pending"),
+            "approved": bool(amt > 0.005 and appr is not None and appr.status == "approved"),
+        }
+    return {"totals": totals, "excess": excess}
 
 
 async def compute_feo_plan_tree(
@@ -242,6 +377,9 @@ async def compute_feo_plan_tree(
     if not subsidy_ids:
         return result
     from app.models.feo_planned_item import FeoPlannedItem
+    # Локальный импорт — см. предупреждение у импортов наверху файла (цикл
+    # item_type_split → ... → feo_plan_fact).
+    from app.services.item_type_split import KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED, kind_of
 
     cat_q = select(
         FeoCategory.id, FeoCategory.subsidy_id, FeoCategory.parent_id,
@@ -293,6 +431,42 @@ async def compute_feo_plan_tree(
         for r in (await db.execute(fpi_q)).all():
             leaf_item_amt[r.feo_category_id] = float(r.amt)
             leaf_item_qty[r.feo_category_id] = float(r.qty)
+
+    # ── Раздел E1 (план ancient-prancing-music.md, 2026-09-21): «товары/услуги»
+    # по узлу — own_plan_by_kind[cat_id] = Σ amount активных FeoPlannedItem
+    # УЗЛА (без рекурсии по поддереву — рекурсия ниже, в _plan_by_kind, тем же
+    # приёмом, что и остальные суммы этого файла), по
+    # kind_of(item_type_effective) — см. resolve_effective_item_types выше
+    # (та же функция, что и GET /api/feo-planned-items/comparison, ПРАВИЛО
+    # №6, не вторая копия наследования типа).
+    # own_feo_by_kind[cat_id] — то же самое по feo_amount строк с
+    # is_feo_breakdown=true (задание владельца: «ФЭО по типам считается
+    # только там, где есть строки „по ФЭО“ с типом» — позиции без
+    # is_feo_breakdown/feo_amount в эту сумму не входят вообще).
+    own_plan_by_kind: dict[int, dict] = {}
+    own_feo_by_kind: dict[int, dict] = {}
+    if by_id:
+        _type_split_q = (
+            select(
+                FeoPlannedItem.id, FeoPlannedItem.feo_category_id, FeoPlannedItem.item_type,
+                FeoPlannedItem.amount, FeoPlannedItem.feo_amount, FeoPlannedItem.is_feo_breakdown,
+            )
+            .where(FeoPlannedItem.feo_category_id.in_(list(by_id.keys())))
+            .where(FeoPlannedItem.is_active.is_(True))
+        )
+        _type_split_rows = (await db.execute(_type_split_q)).all()
+        _eff_types = await resolve_effective_item_types(db, _type_split_rows)
+        for _row in _type_split_rows:
+            _bucket = kind_of(_eff_types.get(_row.id))
+            _pd = own_plan_by_kind.setdefault(
+                _row.feo_category_id, {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: 0.0}
+            )
+            _pd[_bucket] += float(_row.amount or 0)
+            if _row.is_feo_breakdown and _row.feo_amount is not None:
+                _fd = own_feo_by_kind.setdefault(
+                    _row.feo_category_id, {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: 0.0}
+                )
+                _fd[_bucket] += float(_row.feo_amount)
 
     over_consumption = await plan_consumption_by_category(db, subsidy_ids, exclude_planned_item_linked=True)
     ordered_consumption = await ordered_consumption_by_category(db, subsidy_ids, exclude_planned_item_linked=True)
@@ -415,17 +589,41 @@ async def compute_feo_plan_tree(
     # pending/rejected/отсутствует — превышение НЕ входит в display (остаётся
     # plan_manual), но видно отдельно в excess_amount/excess_pending для UI-бейджа
     # (см. GET /api/feo-categories/plan-tree, frontend SubsidiesView.vue).
+    # Задача владельца (план ancient-prancing-music.md, раздел D, 2026-09-21):
+    # согласования по разным ВИДАМ превышения узла (over_feo/fact_over_plan/
+    # plan_over_manual, см. app.services.plan_excess_kinds) теперь независимы —
+    # раньше latest_approval_by_cat брал ПРОСТО последний по created_at запрос
+    # категории и одно approved гасило все три вида сразу. latest_approval_by_cat_kind
+    # ключуется (feo_category_id, kind) — см. _latest_approval ниже, которая
+    # добавляет legacy-фолбэк (задача обратной совместимости: approved-записи
+    # БЕЗ kind, заведённые до миграции g5h7j9k1m3n5, несут kind='legacy' и
+    # по-прежнему гасят любой из трёх старых видов, см.
+    # plan_excess_kinds.LEGACY_FALLBACK_KINDS).
     from app.models.plan_excess_approval import PlanExcessApproval
-    latest_approval_by_cat: dict[int, PlanExcessApproval] = {}
+    from app.services import plan_excess_kinds as _pek
+    latest_approval_by_cat_kind: dict[tuple, PlanExcessApproval] = {}
     if by_id:
         appr_rows = (await db.execute(
             select(PlanExcessApproval)
             .where(PlanExcessApproval.feo_category_id.in_(list(by_id.keys())))
-            .order_by(PlanExcessApproval.feo_category_id, PlanExcessApproval.created_at.desc())
+            .order_by(
+                PlanExcessApproval.feo_category_id,
+                PlanExcessApproval.kind,
+                PlanExcessApproval.created_at.desc(),
+            )
         )).scalars().all()
         for a in appr_rows:
-            if a.feo_category_id not in latest_approval_by_cat:
-                latest_approval_by_cat[a.feo_category_id] = a
+            key = (a.feo_category_id, a.kind)
+            if key not in latest_approval_by_cat_kind:
+                latest_approval_by_cat_kind[key] = a
+
+    def _latest_approval(cat_id: int, kind: str) -> Optional[PlanExcessApproval]:
+        """Последний запрос ИМЕННО этого вида (kind) на узле, а если его нет —
+        legacy-фолбэк (см. комментарий выше у latest_approval_by_cat_kind)."""
+        found = latest_approval_by_cat_kind.get((cat_id, kind))
+        if found is not None:
+            return found
+        return latest_approval_by_cat_kind.get((cat_id, _pek.LEGACY))
 
     # Задача владельца п.4 (2026-08-12): «если согласовали превышение — так и
     # остаётся... надо, чтобы висело предупреждение, что согласовали». Для КАЖДОЙ
@@ -434,7 +632,7 @@ async def compute_feo_plan_tree(
     # решение закрыло запрос) — см. app.routers.plan_excess.decide_plan_excess_step.
     finalizer_by_approval: dict[int, tuple] = {}
     finalizer_names: dict[int, Optional[str]] = {}
-    approved_ids = [a.id for a in latest_approval_by_cat.values() if a.status == "approved"]
+    approved_ids = [a.id for a in latest_approval_by_cat_kind.values() if a.status == "approved"]
     if approved_ids:
         from app.models.plan_excess_approval import PlanExcessApprovalStep
         step_rows = (await db.execute(
@@ -502,10 +700,66 @@ async def compute_feo_plan_tree(
         excess = own_manual_excess.get(cid, 0.0)
         items = own_excess_items.get(cid, [])
         plan_manual = manual_amt
-        appr = latest_approval_by_cat.get(cid)
+        appr = _latest_approval(cid, _pek.PLAN_OVER_MANUAL)
         if excess > 0.005 and appr is not None and appr.status == "approved":
             plan_manual = items_total
         return manual_amt, plan_manual, excess, items
+
+    # ── Раздел E1: рекурсивные накопители «по типу» узла+поддерева ──────────
+    _feo_by_kind_memo: dict[int, dict] = {}
+
+    def _feo_by_kind(cat_id: int) -> dict:
+        """Рекурсивная Σ «по ФЭО», по типу, узла+поддерева — тот же принцип
+        override'а явным FeoCategory.budget, что и
+        app.services.subsidy_budget.compute_budget_map (ПРАВИЛО №6: та
+        функция возвращает СКАЛЯР по всему дереву, а не разбивку по типу на
+        каждом узле — разбивка нужна именно здесь; переиспользовать её
+        напрямую невозможно без второго прохода по дереву и без уже
+        построенных by_id/children_map этой функции, поэтому 3-строчная
+        рекурсивная формула воспроизведена здесь, а не в БД-запросе — второй
+        запрос НЕ заводится, own_feo_by_kind уже посчитан одним запросом
+        выше). Явный (ненулевой, см. нормализацию budget в _visit ниже)
+        FeoCategory.budget узла — «нетипизированный бюджет категории» —
+        идёт ЦЕЛИКОМ в unspecified, СОБСТВЕННЫЕ typed-строки узла при этом
+        НЕ прибавляются поверх (как и в compute_budget_map — иначе
+        задвоение суммы «Катер = подраздел + позиция с той же суммой»)."""
+        if cat_id in _feo_by_kind_memo:
+            return _feo_by_kind_memo[cat_id]
+        r = by_id[cat_id]
+        _raw_b = float(r.budget) if r.budget is not None else None
+        if _raw_b not in (None, 0.0):
+            val = {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: _raw_b}
+        else:
+            own = own_feo_by_kind.get(cat_id) or {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: 0.0}
+            val = dict(own)
+            for _kid in children_map.get(cat_id, []):
+                _kv = _feo_by_kind(_kid)
+                for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED):
+                    val[k] += _kv[k]
+        _feo_by_kind_memo[cat_id] = val
+        return val
+
+    _plan_by_kind_memo: dict[int, dict] = {}
+
+    def _plan_by_kind(cat_id: int) -> dict:
+        """Рекурсивная Σ плановых позиций узла+поддерева, по типу — ВСЕГДА Σ
+        активных FeoPlannedItem.amount (владелец, план
+        ancient-prancing-music.md, раздел «Дизайн»: «Собственный план всегда
+        делится на товары и услуги... и «по ФЭО», и «внутренний план», и
+        введённые вручную» — БЕЗ переключателя plan_source/order-substituted
+        (_order_substituted_plan), которые применяет node['plan']/
+        ['plan_manual'] для БЛОКИРУЮЩЕГО контроля выше; здесь — отдельная,
+        более простая ОТЧЁТНАЯ величина, инвариант с ней НЕ требуется)."""
+        if cat_id in _plan_by_kind_memo:
+            return _plan_by_kind_memo[cat_id]
+        own = own_plan_by_kind.get(cat_id) or {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: 0.0}
+        val = dict(own)
+        for _kid in children_map.get(cat_id, []):
+            _kv = _plan_by_kind(_kid)
+            for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED):
+                val[k] += _kv[k]
+        _plan_by_kind_memo[cat_id] = val
+        return val
 
     def _visit(cat_id: int) -> dict:
         cached = result.get(cat_id)
@@ -523,6 +777,12 @@ async def compute_feo_plan_tree(
         fact_cons = fact_consumption.get(cat_id) or {}
         own_fact = fact_cons.get("fact", 0.0)
         own_fact_qty = fact_cons.get("fact_quantity", 0.0)
+        # Раздел E1: собственный (без рекурсии по детям) факт узла по типу —
+        # см. fact_consumption_by_category (feo_plan_fact.py), уже разложенный
+        # по kind_of(PurchaseItem.item_type) той же строкой запроса, что и fact.
+        own_fact_goods = fact_cons.get("fact_goods", 0.0)
+        own_fact_services = fact_cons.get("fact_services", 0.0)
+        own_fact_unspecified = fact_cons.get("fact_unspecified", 0.0)
 
         leaf_all_auto = False
         manual_plan_entered = 0.0
@@ -548,6 +808,9 @@ async def compute_feo_plan_tree(
             consumed_qty = own_consumed_qty
             fact = own_fact
             fact_qty = own_fact_qty
+            fact_goods = own_fact_goods
+            fact_services = own_fact_services
+            fact_unspecified = own_fact_unspecified
             plan, forecast, forecast_over = _own_plan_and_forecast(qty, amt, plan_manual, ordered, ordered_qty)
             # qty_plan — тот же принцип замещения, что и plan (money), но для
             # количества: заказанное количество замещает плановое, когда оно набрано
@@ -573,6 +836,9 @@ async def compute_feo_plan_tree(
             children_forecast_over = sum(c["forecast_over"] for c in child_nodes)
             children_fact = sum(c["fact"] for c in child_nodes)
             children_fact_qty = sum(c["fact_quantity"] for c in child_nodes)
+            children_fact_goods = sum(c["fact_goods"] for c in child_nodes)
+            children_fact_services = sum(c["fact_services"] for c in child_nodes)
+            children_fact_unspecified = sum(c["fact_unspecified"] for c in child_nodes)
 
             # Задача владельца «направление со временем может наполниться,
             # соответственно должно считаться и оно» (сессия 2026-08-12, повод —
@@ -611,6 +877,9 @@ async def compute_feo_plan_tree(
             consumed_qty = own_consumed_qty + children_consumed_qty
             fact = own_fact + children_fact
             fact_qty = own_fact_qty + children_fact_qty
+            fact_goods = own_fact_goods + children_fact_goods
+            fact_services = own_fact_services + children_fact_services
+            fact_unspecified = own_fact_unspecified + children_fact_unspecified
             plan = own_plan + children_plan
             forecast_over = children_forecast_over
             forecast = plan_manual + forecast_over
@@ -655,15 +924,18 @@ async def compute_feo_plan_tree(
         excess_pending = False
         excess_approved = False
         display = full_display
-        appr = latest_approval_by_cat.get(cat_id)
+        # Три вида превышения теперь читают СВОИ независимые записи (kind,
+        # см. _latest_approval выше) — раньше все три делили один `appr`, и
+        # approved одного вида молча гасил остальные два на том же узле.
+        appr_over_feo = _latest_approval(cat_id, _pek.OVER_FEO)
         if budget is not None and full_display - budget > 0.005:
             excess_amount = full_display - budget
-            if appr is not None and appr.status == "approved":
+            if appr_over_feo is not None and appr_over_feo.status == "approved":
                 excess_approved = True
                 display = full_display
             else:
                 display = plan_manual
-                excess_pending = bool(appr is not None and appr.status == "pending")
+                excess_pending = bool(appr_over_feo is not None and appr_over_feo.status == "pending")
 
         # Задача владельца «план ≠ факт» (шаг C, сессия 2026-08-06): ВТОРОЕ,
         # независимое превышение — «факт дороже плана» (итог закупки/КП больше,
@@ -681,27 +953,38 @@ async def compute_feo_plan_tree(
             # самой же закупки (см. leaf_all_auto выше) — план по определению
             # следует за закупкой, «факт дороже плана» тут ложная тревога.
             excess_fact_over_plan = 0.0
-        # Согласование превышения факта над планом — та же PlanExcessApproval-запись
-        # на категорию (единый механизм согласования, задача владельца «согласование
-        # существующим механизмом»): approved снимает блокировку для ВСЕХ ТРЁХ видов
-        # превышения одновременно (см. assert_no_unapproved_excess/plan_excess.py).
-        excess_fact_approved = bool(excess_fact_over_plan > 0.005 and appr is not None and appr.status == "approved")
-        excess_fact_pending = bool(excess_fact_over_plan > 0.005 and appr is not None and appr.status == "pending")
+        # Согласование превышения факта над планом — СВОЯ независимая запись
+        # (kind=fact_over_plan, легаси-фолбэк — см. _latest_approval): approved
+        # ЭТОГО вида больше не даёт approved у over_feo/plan_over_manual того же
+        # узла молча снять и их блокировку — задача владельца, план
+        # ancient-prancing-music.md раздел D (2026-09-21), «независимые
+        # согласования по видам».
+        appr_fact = _latest_approval(cat_id, _pek.FACT_OVER_PLAN)
+        excess_fact_approved = bool(excess_fact_over_plan > 0.005 and appr_fact is not None and appr_fact.status == "approved")
+        excess_fact_pending = bool(excess_fact_over_plan > 0.005 and appr_fact is not None and appr_fact.status == "pending")
 
         # Задача владельца п.2 (2026-08-12): ТРЕТЬЕ независимое превышение — Σ ВСЕХ
         # плановых позиций листа/подветки (plan_manual) больше «ручного» плана
         # (manual_plan_entered, посчитан выше в _visit) — «планируются одни траты,
-        # а тут уже превысили, значит не хватит на всё». Тот же PlanExcessApproval
-        # закрывает и это (см. assert_no_unapproved_excess).
-        excess_plan_approved = bool(excess_plan_over_manual > 0.005 and appr is not None and appr.status == "approved")
-        excess_plan_pending = bool(excess_plan_over_manual > 0.005 and appr is not None and appr.status == "pending")
+        # а тут уже превысили, значит не хватит на всё». СВОЯ независимая запись
+        # (kind=plan_over_manual), та же самая, что читает _manual_plan_for выше.
+        appr_plan_manual = _latest_approval(cat_id, _pek.PLAN_OVER_MANUAL)
+        excess_plan_approved = bool(excess_plan_over_manual > 0.005 and appr_plan_manual is not None and appr_plan_manual.status == "approved")
+        excess_plan_pending = bool(excess_plan_over_manual > 0.005 and appr_plan_manual is not None and appr_plan_manual.status == "pending")
 
         # Задача владельца п.4 (2026-08-12): «если согласовали превышение — так и
         # остаётся... надо, чтобы висело предупреждение, что согласовали» — данные
         # для такого предупреждения (сумма/дата/автор ПОСЛЕДНЕГО approved-запроса
-        # по категории), независимо от того, какой из трёх видов превышения его
-        # породил и даже если сейчас узел уже не в превышении (запись не стирается).
-        if appr is not None and appr.status == "approved":
+        # по категории). Виды теперь независимы — берём первую approved-запись по
+        # приоритету over_feo → fact_over_plan → plan_over_manual (тот же порядок,
+        # что и при регистрации нового запроса, см. request_plan_excess_approval);
+        # если ни одна не approved, плашки нет, даже если узел не в превышении
+        # (запись не стирается).
+        appr = next(
+            (a for a in (appr_over_feo, appr_fact, appr_plan_manual) if a is not None and a.status == "approved"),
+            None,
+        )
+        if appr is not None:
             excess_approval_amount = float(appr.excess_amount) if appr.excess_amount is not None else None
             excess_approval_at = appr.resolved_at.isoformat() if appr.resolved_at else None
             _finalizer = finalizer_by_approval.get(appr.id)
@@ -722,6 +1005,69 @@ async def compute_feo_plan_tree(
             excess_approval_plan_before = None
             excess_approval_plan_after = None
 
+        # ── Раздел E2 (план ancient-prancing-music.md, 2026-09-21): контроли
+        # превышения ПО ТИПУ (товары/услуги) — НЕЗАВИСИМЫЕ от excess_amount/
+        # excess_fact_over_plan выше (разные виды, разные согласования).
+        _plan_kind = _plan_by_kind(cat_id)
+        _feo_kind = _feo_by_kind(cat_id)
+        plan_goods, plan_services, plan_unspecified = (
+            _plan_kind[KIND_GOODS], _plan_kind[KIND_SERVICES], _plan_kind[KIND_UNSPECIFIED],
+        )
+        feo_goods, feo_services, feo_unspecified = (
+            _feo_kind[KIND_GOODS], _feo_kind[KIND_SERVICES], _feo_kind[KIND_UNSPECIFIED],
+        )
+
+        # excess_plan_over_feo_{goods,services} — только если типизированное
+        # ФЭО по этому типу ЕСТЬ (feo_goods/feo_services > 0) — владелец: «на
+        # категории без типизированного ФЭО контроль не срабатывает».
+        excess_plan_over_feo_goods = max(plan_goods - feo_goods, 0.0) if feo_goods > 0.005 else 0.0
+        excess_plan_over_feo_services = max(plan_services - feo_services, 0.0) if feo_services > 0.005 else 0.0
+        # excess_fact_over_plan_{goods,services} — ВСЕГДА (план по типу есть
+        # всегда, см. _plan_by_kind).
+        excess_fact_over_plan_goods = max(fact_goods - plan_goods, 0.0)
+        excess_fact_over_plan_services = max(fact_services - plan_services, 0.0)
+
+        def _exact_kind_appr(_kind: str):
+            # НОВЫЕ 4 вида НЕ используют legacy-фолбэк (легаси-записи заведены
+            # ДО появления этих видов и физически не могут их согласовывать —
+            # эти kind не входят в plan_excess_kinds.LEGACY_FALLBACK_KINDS).
+            # Смотрим latest_approval_by_cat_kind НАПРЯМУЮ (тот же батчевый
+            # словарь, что и _latest_approval выше), а не через неё саму —
+            # у неё фолбэк безусловный.
+            return latest_approval_by_cat_kind.get((cat_id, _kind))
+
+        _appr_pofg = _exact_kind_appr(_pek.PLAN_OVER_FEO_GOODS)
+        excess_plan_over_feo_goods_approved = bool(
+            excess_plan_over_feo_goods > 0.005 and _appr_pofg is not None and _appr_pofg.status == "approved"
+        )
+        excess_plan_over_feo_goods_pending = bool(
+            excess_plan_over_feo_goods > 0.005 and _appr_pofg is not None and _appr_pofg.status == "pending"
+        )
+
+        _appr_pofs = _exact_kind_appr(_pek.PLAN_OVER_FEO_SERVICES)
+        excess_plan_over_feo_services_approved = bool(
+            excess_plan_over_feo_services > 0.005 and _appr_pofs is not None and _appr_pofs.status == "approved"
+        )
+        excess_plan_over_feo_services_pending = bool(
+            excess_plan_over_feo_services > 0.005 and _appr_pofs is not None and _appr_pofs.status == "pending"
+        )
+
+        _appr_fopg = _exact_kind_appr(_pek.FACT_OVER_PLAN_GOODS)
+        excess_fact_over_plan_goods_approved = bool(
+            excess_fact_over_plan_goods > 0.005 and _appr_fopg is not None and _appr_fopg.status == "approved"
+        )
+        excess_fact_over_plan_goods_pending = bool(
+            excess_fact_over_plan_goods > 0.005 and _appr_fopg is not None and _appr_fopg.status == "pending"
+        )
+
+        _appr_fops = _exact_kind_appr(_pek.FACT_OVER_PLAN_SERVICES)
+        excess_fact_over_plan_services_approved = bool(
+            excess_fact_over_plan_services > 0.005 and _appr_fops is not None and _appr_fops.status == "approved"
+        )
+        excess_fact_over_plan_services_pending = bool(
+            excess_fact_over_plan_services > 0.005 and _appr_fops is not None and _appr_fops.status == "pending"
+        )
+
         node = {
             "subsidy_id": r.subsidy_id,
             "parent_id": r.parent_id,
@@ -736,6 +1082,37 @@ async def compute_feo_plan_tree(
             "consumed_quantity": consumed_qty,
             "fact": fact,
             "fact_quantity": fact_qty,
+            # Раздел E1 (план ancient-prancing-music.md, 2026-09-21): «товары/
+            # услуги» — см. _plan_by_kind/_feo_by_kind/fact_goods rollup выше.
+            # Инвариант goods+services+unspecified == соответствующему итогу
+            # узла проверяется тестом test_feo_plan_tree_type_split.py (для
+            # feo_* — относительно compute_budget_map-эквивалентной величины,
+            # НЕ node['budget'] — см. докстринг _feo_by_kind).
+            "plan_goods": plan_goods,
+            "plan_services": plan_services,
+            "plan_unspecified": plan_unspecified,
+            "feo_goods": feo_goods,
+            "feo_services": feo_services,
+            "feo_unspecified": feo_unspecified,
+            "fact_goods": fact_goods,
+            "fact_services": fact_services,
+            "fact_unspecified": fact_unspecified,
+            # Раздел E2: 4 НЕЗАВИСИМЫХ контроля превышения по типу (kind — см.
+            # app.services.plan_excess_kinds.PLAN_OVER_FEO_GOODS/SERVICES,
+            # FACT_OVER_PLAN_GOODS/SERVICES) — своё согласование/pending/approved
+            # на каждый, БЕЗ legacy-фолбэка (см. _exact_kind_appr выше).
+            "excess_plan_over_feo_goods": excess_plan_over_feo_goods,
+            "excess_plan_over_feo_goods_approved": excess_plan_over_feo_goods_approved,
+            "excess_plan_over_feo_goods_pending": excess_plan_over_feo_goods_pending,
+            "excess_plan_over_feo_services": excess_plan_over_feo_services,
+            "excess_plan_over_feo_services_approved": excess_plan_over_feo_services_approved,
+            "excess_plan_over_feo_services_pending": excess_plan_over_feo_services_pending,
+            "excess_fact_over_plan_goods": excess_fact_over_plan_goods,
+            "excess_fact_over_plan_goods_approved": excess_fact_over_plan_goods_approved,
+            "excess_fact_over_plan_goods_pending": excess_fact_over_plan_goods_pending,
+            "excess_fact_over_plan_services": excess_fact_over_plan_services,
+            "excess_fact_over_plan_services_approved": excess_fact_over_plan_services_approved,
+            "excess_fact_over_plan_services_pending": excess_fact_over_plan_services_pending,
             "plan": plan,
             "budget": budget,
             "display": display,

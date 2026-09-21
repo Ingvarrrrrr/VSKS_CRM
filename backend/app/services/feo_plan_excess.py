@@ -201,22 +201,26 @@ async def find_excess_culprit(
         items_total_by_node[r.feo_category_id] = float(r.amt)
         items_qty_by_node[r.feo_category_id] = float(r.qty)
 
-    # ПОСЛЕДНИЙ (по created_at) PlanExcessApproval КАЖДОГО узла — approval
+    # ПОСЛЕДНИЙ (по created_at) PlanExcessApproval КАЖДОГО узла ИМЕННО вида
+    # plan_over_manual (с legacy-фолбэком для старых записей) — approval
     # привязан к КОНКРЕТНОЙ категории (feo_category_id), не к переданному сюда
-    # feo_category_id узла с бюджетом (тот может быть предком-группой) — та же
-    # семантика, что latest_approval_by_cat в compute_feo_plan_tree.
+    # feo_category_id узла с бюджетом (тот может быть предком-группой).
+    #
+    # Задача владельца (план ancient-prancing-music.md, раздел D, 2026-09-21):
+    # node_approved ниже управляет ТОЛЬКО _leaf_plan_manual (режим
+    # plan_source='manual_sum' — согласование ИМЕННО вида plan_over_manual),
+    # а НЕ «любое последнее решение по узлу» (как было ДО разделения по видам
+    # — approved другого вида, например over_feo, молча подставлял бы Σ
+    # позиций в plan_manual вместо ручной суммы). Единый помощник
+    # app.services.feo_plan_tree.latest_plan_excess_approval — поиск НЕ
+    # копируется, см. её докстринг (та же формула, что и _latest_approval
+    # внутри compute_feo_plan_tree, но точечно на один узел за раз).
+    from app.services.feo_plan_tree import latest_plan_excess_approval
+    from app.services import plan_excess_kinds as _pek
     node_approved: dict[int, bool] = {}
-    appr_rows = (await db.execute(
-        select(PlanExcessApproval.feo_category_id, PlanExcessApproval.status)
-        .where(PlanExcessApproval.feo_category_id.in_(node_ids))
-        .order_by(PlanExcessApproval.feo_category_id, PlanExcessApproval.created_at.desc())
-    )).all()
-    seen_appr: set = set()
-    for ar in appr_rows:
-        if ar.feo_category_id in seen_appr:
-            continue
-        seen_appr.add(ar.feo_category_id)
-        node_approved[ar.feo_category_id] = (ar.status == "approved")
+    for nid in node_ids:
+        _appr = await latest_plan_excess_approval(db, nid, _pek.PLAN_OVER_MANUAL)
+        node_approved[nid] = bool(_appr is not None and _appr.status == "approved")
 
     # Собственные (БЕЗ рекурсии по детям) ordered/ordered_quantity каждого узла —
     # та же величина, что own_ordered/own_ordered_qty в compute_feo_plan_tree._visit,

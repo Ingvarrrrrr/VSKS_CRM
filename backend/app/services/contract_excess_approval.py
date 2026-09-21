@@ -60,6 +60,8 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services import plan_excess_kinds as PEK
+
 
 def _fmt_qty(d: Decimal) -> str:
     """Количество без хвостовых нулей (2, не 2.0000)."""
@@ -232,18 +234,30 @@ async def register_contract_excess_approvals(
         cat = await db.get(FeoCategory, cid)
         cat_name = cat.name if cat else f"#{cid}"
 
-        # ⚠️ Смотрим на ПОСЛЕДНИЙ запрос по категории НЕЗАВИСИМО от статуса —
-        # не только 'pending' (правка, поймана живой проверкой на стенде
-        # 2026-09-13): если латест уже 'approved', НЕЛЬЗЯ заводить второй
-        # pending-запрос — assert_no_pending_contract_excess смотрит на
-        # ПОСЛЕДНИЙ по created_at, и свежесозданный pending заслонил бы собой
-        # уже одобренное решение на КАЖДОЙ следующей попытке сохранить те же
-        # позиции (вечный 409 даже после одобрения — баг, а не гейт).
+        # ⚠️ Смотрим на ПОСЛЕДНИЙ запрос СВОЕГО вида (kind=contract_over_tz) по
+        # категории НЕЗАВИСИМО от статуса — не только 'pending' (правка,
+        # поймана живой проверкой на стенде 2026-09-13): если латест уже
+        # 'approved', НЕЛЬЗЯ заводить второй pending-запрос —
+        # assert_no_pending_contract_excess смотрит на ПОСЛЕДНИЙ по created_at,
+        # и свежесозданный pending заслонил бы собой уже одобренное решение на
+        # КАЖДОЙ следующей попытке сохранить те же позиции (вечный 409 даже
+        # после одобрения — баг, а не гейт). Если записи своего вида ещё нет —
+        # legacy-фолбэк (задача владельца 2026-09-21, независимые согласования
+        # по видам, см. app.services.plan_excess_kinds.LEGACY_FALLBACK_KINDS и
+        # app.services.feo_plan_tree._latest_approval — та же семантика).
         latest = (await db.execute(
             select(PlanExcessApproval).where(
                 PlanExcessApproval.feo_category_id == cid,
+                PlanExcessApproval.kind == PEK.CONTRACT_OVER_TZ,
             ).order_by(PlanExcessApproval.created_at.desc()).limit(1)
         )).scalar_one_or_none()
+        if latest is None:
+            latest = (await db.execute(
+                select(PlanExcessApproval).where(
+                    PlanExcessApproval.feo_category_id == cid,
+                    PlanExcessApproval.kind == PEK.LEGACY,
+                ).order_by(PlanExcessApproval.created_at.desc()).limit(1)
+            )).scalar_one_or_none()
         if latest is not None and latest.status in ("approved", "pending"):
             full = await _load_approval(latest.id, db)
             results.append(_approval_dict(full))
@@ -270,6 +284,7 @@ async def register_contract_excess_approvals(
         approval = PlanExcessApproval(
             feo_category_id=cid,
             subsidy_id=subsidy_id,
+            kind=PEK.CONTRACT_OVER_TZ,
             excess_amount=total_excess,
             plan_amount=None,
             budget_amount=None,
@@ -343,12 +358,28 @@ async def assert_no_pending_contract_excess(
             by_cat.setdefault(cid, []).append(v)
 
     for cid, cat_violations in by_cat.items():
+        # СВОЙ вид (kind=contract_over_tz), а если записи ещё нет — legacy-
+        # фолбэк (см. комментарий у аналогичного лукапа в
+        # register_contract_excess_approvals выше).
         appr = (await db.execute(
             select(PlanExcessApproval)
-            .where(PlanExcessApproval.feo_category_id == cid)
+            .where(
+                PlanExcessApproval.feo_category_id == cid,
+                PlanExcessApproval.kind == PEK.CONTRACT_OVER_TZ,
+            )
             .order_by(PlanExcessApproval.created_at.desc())
             .limit(1)
         )).scalar_one_or_none()
+        if appr is None:
+            appr = (await db.execute(
+                select(PlanExcessApproval)
+                .where(
+                    PlanExcessApproval.feo_category_id == cid,
+                    PlanExcessApproval.kind == PEK.LEGACY,
+                )
+                .order_by(PlanExcessApproval.created_at.desc())
+                .limit(1)
+            )).scalar_one_or_none()
         if appr is not None and appr.status == "approved":
             continue
 

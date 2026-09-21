@@ -38,6 +38,10 @@ from app.services.feo_plan import assert_tz_not_over_plan, compute_feo_plan_tree
 # регистрируется запрос на согласование (см. докстринг модуля, ПОЧЕМУ это не
 # правка feo_plan.py и не второй параллельный механизм превышения).
 from app.services.tz_excess_approval import collect_tz_over_plan_violations, register_tz_excess_approvals
+# Задача владельца (план ancient-prancing-music.md, раздел E, 2026-09-21):
+# контроль превышения ПО ТИПУ (товары/услуги) — та же точка вызова, что и ТЗ
+# выше (мягкая регистрация ПОСЛЕ создания закупок, см. её докстринг).
+from app.services.type_excess_approval import collect_type_excess_violations, register_type_excess_approvals
 # _auto_assign_planned_items вынесена в app.services.plan_autoassign (владелец,
 # 2026-08-12, «закупка сама становится планом»): нужна ТАКЖЕ из purchases.py для
 # закупок, созданных/меняемых в обход заявки. Поведение НЕ менялось при переносе —
@@ -731,6 +735,17 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
         db, _tz_violations, subsidy_id=wish.subsidy_id, current_user=current_user,
         context_label=f"согласование заявки №{wish.id}",
     )
+    # Задача владельца (раздел E, 2026-09-21): мягкий контроль превышения ПО
+    # ТИПУ (товары/услуги) — те же затронутые категории (_cat_items), тот же
+    # момент вызова (после создания закупок).
+    wish._type_excess_approvals = []
+    if wish.subsidy_id:
+        _type_violations = await collect_type_excess_violations(db, wish.subsidy_id, list(_cat_items.keys()))
+        if _type_violations:
+            wish._type_excess_approvals = await register_type_excess_approvals(
+                db, _type_violations, subsidy_id=wish.subsidy_id, current_user=current_user,
+                context_label=f"согласование заявки №{wish.id}",
+            )
 
     return created_purchase_ids
 

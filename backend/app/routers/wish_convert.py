@@ -19,6 +19,7 @@ from app.models.user import User
 from app.models.wish_item import WishItem
 from app.schemas.wishes import WishConvert
 from app.services.tz_excess_approval import register_tz_excess_approvals
+from app.services.type_excess_approval import collect_type_excess_violations, register_type_excess_approvals
 from app.services.item_contractor import set_item_contractor
 from app.routers import wishes as wishes_core
 
@@ -179,6 +180,17 @@ async def convert_wish(
             subsidy_id=wish.subsidy_id, current_user=current_user,
             context_label=f"повторное согласование заявки №{wish.id} (/convert)",
         )
+        # Задача владельца (план ancient-prancing-music.md, раздел E, 2026-09-21):
+        # мягкий контроль превышения ПО ТИПУ (товары/услуги) — тем же приёмом,
+        # что и regular tz_excess_approvals выше, на тех же затронутых категориях.
+        _type_excess_approvals = []
+        if wish.subsidy_id:
+            _type_violations = await collect_type_excess_violations(db, wish.subsidy_id, list(_cat_items.keys()))
+            if _type_violations:
+                _type_excess_approvals = await register_type_excess_approvals(
+                    db, _type_violations, subsidy_id=wish.subsidy_id, current_user=current_user,
+                    context_label=f"повторное согласование заявки №{wish.id} (/convert)",
+                )
         await db.commit()
         return {
             "wish_id": wish.id, "purchase_id": existing[0].id, "status": "converted",
@@ -186,6 +198,7 @@ async def convert_wish(
             "already_converted": _was_already_converted,
             "excess_warnings": _excess_warnings,
             "tz_excess_approvals": _tz_excess_approvals,
+            "type_excess_approvals": _type_excess_approvals,
             "purchase_sync": _purchase_sync,
         }
 
@@ -410,6 +423,16 @@ async def convert_wish(
         db, _tz_violations, subsidy_id=wish.subsidy_id, current_user=current_user,
         context_label=f"согласование заявки №{wish.id} (/convert)",
     )
+    # Задача владельца (раздел E, 2026-09-21): мягкий контроль превышения ПО
+    # ТИПУ — та же точка вызова, что и tz-контроль выше.
+    _type_excess_approvals = []
+    if wish.subsidy_id:
+        _type_violations = await collect_type_excess_violations(db, wish.subsidy_id, list(_conv_cat_items.keys()))
+        if _type_violations:
+            _type_excess_approvals = await register_type_excess_approvals(
+                db, _type_violations, subsidy_id=wish.subsidy_id, current_user=current_user,
+                context_label=f"согласование заявки №{wish.id} (/convert)",
+            )
     await db.commit()
 
     return {
@@ -418,6 +441,7 @@ async def convert_wish(
         "already_converted": False,
         "excess_warnings": _excess_warnings,
         "tz_excess_approvals": _tz_excess_approvals,
+        "type_excess_approvals": _type_excess_approvals,
         # Первое создание закупки — синхронизировать нечего (см. purchase_sync
         # в ветке «существующая закупка» выше).
         "purchase_sync": None,
@@ -547,4 +571,5 @@ async def approve_distribution(
         "warning": getattr(wish, "_convert_warning", None),
         "excess_warnings": getattr(wish, "_excess_warnings", []),
         "tz_excess_approvals": getattr(wish, "_tz_excess_approvals", []),
+        "type_excess_approvals": getattr(wish, "_type_excess_approvals", []),
     }

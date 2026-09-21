@@ -36,6 +36,7 @@ from app.models.purchase_item import PurchaseItem
 from app.models.contractor import Contractor
 from app.models.payment import Payment
 from app.routers.purchase_budget import FRAMEWORK_TYPES  # {"framework_cumulative", "framework_with_amount"}
+from app.services.item_type_split import KIND_GOODS, KIND_SERVICES, kind_of
 
 
 @dataclass
@@ -225,10 +226,10 @@ async def build_groups(db: AsyncSession, subsidy_id: int) -> list[PaymentGroup]:
         for p in plist:
             for it in items_by_purchase.get(p.id, []):
                 amt = Decimal(str(it.total_price)) if it.total_price is not None else Decimal(0)
-                kind = (it.item_type or "").strip()
-                if kind == "товар":
+                bucket = kind_of(it.item_type)
+                if bucket == KIND_GOODS:
                     goods += amt
-                elif kind in ("услуга", "работа"):
+                elif bucket == KIND_SERVICES:
                     services += amt
                 else:
                     unspecified += amt

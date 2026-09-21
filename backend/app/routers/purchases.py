@@ -30,6 +30,9 @@ from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_ove
 from app.services.tz_excess_approval import (
     collect_tz_over_plan_violations, register_tz_excess_approvals, assert_no_pending_tz_excess,
 )
+from app.services.type_excess_approval import (
+    collect_type_excess_violations, register_type_excess_approvals,
+)
 # Владелец (2026-08-12, «закупка сама становится планом»): та же логика
 # автозаведения плановой позиции, что и в wishes.py, нужна и здесь — для
 # закупок, созданных/меняемых в обход заявки (см. вызов ниже в update_purchase;
@@ -740,6 +743,11 @@ async def create_purchase(
     # ответа (excess_warnings в PurchaseOut) — тот же паттерн, что уже применён
     # в app.routers.wishes._collect_excess_warnings.
     _excess_warnings: list[dict] = []
+    # Задача владельца (план ancient-prancing-music.md, раздел E, 2026-09-21):
+    # превышение ПО ТИПУ (товары/услуги) — собрано ниже (в блоке assert_no_
+    # unapproved_excess, где уже известны затронутые категории), регистрируется
+    # ПОСЛЕ создания закупки (см. context_label с purchase_number ниже).
+    _type_violations: list[dict] = []
 
     if not admin_override and data.purchase_basis != 'service_note':
         _budget_check_amount = total_nmck if total_nmck is not None else data.planned_total_price
@@ -764,6 +772,15 @@ async def create_purchase(
             _cat_amounts[data.feo_category_id] = total_nmck if total_nmck is not None else Decimal("0")
         for _cid, _amt in _cat_amounts.items():
             _excess_warnings.extend(await assert_no_unapproved_excess(db, _cid, adding_amount=_amt))
+        # Задача владельца (раздел E, 2026-09-21): мягкий контроль превышения
+        # ПО ТИПУ — collect здесь (те же затронутые категории, что и выше),
+        # register ПОСЛЕ создания закупки (см. ниже, покрывает и уровень
+        # субсидии целиком — collect_type_excess_violations проверяет её
+        # безусловно, не только переданные категории).
+        if data.subsidy_id:
+            _type_violations = await collect_type_excess_violations(
+                db, data.subsidy_id, list(_cat_amounts.keys()),
+            )
 
     # Шаг 5 «цена ТЗ не выше плановой» (владелец, 2026-08-07): по каждой позиции,
     # ДО создания закупки. over_plan=true пропускаем — такая позиция сознательно
@@ -967,6 +984,16 @@ async def create_purchase(
             context_label=f"создание закупки №{p.purchase_number or p.id}",
         )
 
+    # Задача владельца (раздел E, 2026-09-21): регистрируем запрос(ы) на
+    # согласование превышения ПО ТИПУ (собраны выше, см. _type_violations) —
+    # результат подмешивается в excess_warnings, как и остальные мягкие
+    # предупреждения этого эндпоинта (ПРАВИЛО №6 — тот же список, не второй).
+    if _type_violations:
+        _excess_warnings.extend(await register_type_excess_approvals(
+            db, _type_violations, subsidy_id=data.subsidy_id, current_user=current_user,
+            context_label=f"создание закупки №{p.purchase_number or p.id}",
+        ))
+
     await db.commit()
     # ПРАВИЛО №6 (группа D5, QA round 2): «голый» `return p` отдавал бы items
     # сырыми колонками (contractor_inn/name = NULL при заданном FK, см.
@@ -1082,6 +1109,10 @@ async def update_purchase(
     # для авансового отчёта (см. _is_advance_update, п.3 задачи 2026-09-16).
     _excess_warnings: list[dict] = []
     _is_advance_update = (data.purchase_method == 'advance')
+    # Задача владельца (раздел E, 2026-09-21): превышение ПО ТИПУ — собрано
+    # ниже (там, где уже известны затронутые категории PUT'а), регистрируется
+    # ПОСЛЕ сохранения позиций (см. _tz_violations_put — та же схема).
+    _type_violations_put: list[dict] = []
 
     if not admin_override and data.purchase_basis != 'service_note':
         budget_amount = _total_nmck_for_checks
@@ -1218,6 +1249,13 @@ async def update_purchase(
                 _excess_warnings.extend(
                     await assert_no_unapproved_excess(db, _cid, adding_amount=_new_amt - _old_amt)
                 )
+        # Задача владельца (раздел E, 2026-09-21): мягкий контроль превышения
+        # ПО ТИПУ — по всем ЗАТРОНУТЫМ категориям этого PUT (тот же набор, что
+        # и цикл выше), register — после сохранения позиций (см. ниже).
+        if p.subsidy_id and _touched_cat_ids:
+            _type_violations_put = await collect_type_excess_violations(
+                db, p.subsidy_id, list(_touched_cat_ids),
+            )
 
     # Задача владельца «план ≠ факт» (шаг C, сессия 2026-08-06): переход закупки
     # в «Договор» — превентивная точка контроля. С этого момента итог закупки
@@ -1507,6 +1545,15 @@ async def update_purchase(
             db, _tz_violations_put, subsidy_id=(data.subsidy_id or p.subsidy_id), current_user=current_user,
             context_label=f"сохранение закупки №{p.purchase_number or p.id}",
         )
+
+    # Задача владельца (раздел E, 2026-09-21): регистрируем запрос(ы) на
+    # согласование превышения ПО ТИПУ (собраны выше, см. _type_violations_put) —
+    # мягко, в excess_warnings, как и остальные предупреждения этого PUT.
+    if _type_violations_put:
+        _excess_warnings.extend(await register_type_excess_approvals(
+            db, _type_violations_put, subsidy_id=(data.subsidy_id or p.subsidy_id), current_user=current_user,
+            context_label=f"сохранение закупки №{p.purchase_number or p.id}",
+        ))
 
     await db.commit()
     await db.refresh(p)

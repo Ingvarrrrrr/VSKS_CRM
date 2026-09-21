@@ -166,8 +166,8 @@ async def _calculate_spent_bulk(
 
 
 async def _calculate_feo_planned_tree_bulk(
-    db: AsyncSession, subsidy_ids: list[int]
-) -> dict[int, float]:
+    db: AsyncSession, subsidy_ids: list[int], *, type_split: bool = False,
+):
     """Плановая сумма дерева ФЭО для набора субсидий (единый источник для «Запланировано»).
 
     Тонкая обёртка над app.services.feo_plan.feo_plan_subsidy_totals — Σ display
@@ -186,11 +186,30 @@ async def _calculate_feo_planned_tree_bulk(
     Совпадает с тем, что показывает панель ФЭО вкладки «Субсидии»
     (feoPlannedDisplayFor(root) в SubsidiesView.vue, режим 'all' — реализует ту же
     формулу MAX(план, выбрано)+сверх_план на фронте, см. docstring там).
-    """
+
+    type_split=False (умолчание, ВСЕ существующие вызовы) — возвращает РОВНО ТО
+    ЖЕ, что и раньше: dict[int, float] planned_tree, байт-в-байт (это остаётся
+    ОТДЕЛЬНОЙ величиной от «плана по типам» ниже — см. её докстринг: planned_tree
+    = MAX(план, выбрано)+сверх_план дерева, а plan_goods/services/unspecified =
+    Σ FeoPlannedItem.amount по типу — разные формулы, разное число).
+
+    type_split=True (план ancient-prancing-music.md, раздел B/2) — возвращает
+    dict[int, dict] с ключом "planned_tree" (то самое прежнее число) плюс
+    plan_goods/plan_services/plan_unspecified/feo_goods/feo_services/
+    feo_unspecified из app.services.type_totals.subsidy_type_totals (единственный
+    источник «плана/ФЭО по типам», не вторая копия — см. её докстринг)."""
     if not subsidy_ids:
         return {}
     from app.services.feo_plan import feo_plan_subsidy_totals
-    return await feo_plan_subsidy_totals(db, subsidy_ids)
+    totals = await feo_plan_subsidy_totals(db, subsidy_ids)
+    if not type_split:
+        return totals
+    from app.services.type_totals import subsidy_type_totals
+    type_map = await subsidy_type_totals(db, subsidy_ids)
+    return {
+        sid: {"planned_tree": totals.get(sid, 0.0), **type_map.get(sid, {})}
+        for sid in subsidy_ids
+    }
 
 
 @router.get("/", response_model=List[SubsidyOut])

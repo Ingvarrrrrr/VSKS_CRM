@@ -32,6 +32,14 @@ from app.models.feo_category import FeoCategory
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.services.acceptance_docs import total_amount as _acceptance_total_amount
+# ⚠️ НЕ импортировать app.services.item_type_split на уровне модуля — она тянет
+# app.routers.feo_planned_items (normalize_item_type), а тот в конце концов
+# импортирует app.services.plan_to_wish → app.services.feo_plan_fact (этот же
+# модуль) — цикл на старте процесса (сломано найдено 2026-09-21: любой
+# «холодный» импорт app — alembic, pytest сбора тестов — падал ImportError
+# ДО того, как модуль успевал определить planned_item_consumption). kind_of
+# используется только внутри fact_consumption_by_category — импорт локальный,
+# см. там же.
 
 # «Заказано» и дальше — закупка уже реально размещена (в отличие от plan_schedule/
 # work_in_progress/contracted, которые ещё черновик плана закупок). FACT_CONFIRMED_STATUSES —
@@ -510,7 +518,19 @@ async def fact_consumption_by_category(
 
     Остановленные закупки исключены (Purchase.stopped_at IS NOT NULL) — см.
     docstring plan_consumption_by_category.
+
+    fact_goods/fact_services/fact_unspecified (план ancient-prancing-music.md,
+    раздел E1, 2026-09-21) — ТА ЖЕ выборка/ratio/fact_amount, разложенная по
+    kind_of(pi.item_type) (app.services.item_type_split, ПРАВИЛО №6 — единственный
+    источник правила «тип позиции → товары/услуги»). Каждая строка PurchaseItem
+    уже несёт свой собственный item_type — доля позиции в сумме закупки (ratio)
+    уже применена к amount_expr при вычислении fact_amount ниже, повторно
+    расщеплять её через purchase_type_shares (для СМЕШАННОГО состава закупки)
+    было бы второй, при этом менее точной формулой: у КАЖДОЙ строки тип уже
+    известен напрямую, а не только по общей пропорции закупки.
     """
+    from app.services.item_type_split import kind_of  # локальный импорт — см. докстринг наверху файла
+
     result: dict[int, dict] = {}
     if not subsidy_ids:
         return result
@@ -551,9 +571,13 @@ async def fact_consumption_by_category(
         )
         if fact_amount is None:
             continue
-        d = result.setdefault(r.cat_id, {"fact": 0.0, "fact_quantity": 0.0})
+        d = result.setdefault(r.cat_id, {
+            "fact": 0.0, "fact_quantity": 0.0,
+            "fact_goods": 0.0, "fact_services": 0.0, "fact_unspecified": 0.0,
+        })
         d["fact"] += float(fact_amount)
         d["fact_quantity"] += float(pi.quantity or 0)
+        d[f"fact_{kind_of(pi.item_type)}"] += float(fact_amount)
     return result
 
 

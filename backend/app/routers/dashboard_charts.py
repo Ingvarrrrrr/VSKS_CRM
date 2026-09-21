@@ -7,6 +7,7 @@ ordered/delivered/paid/contracts), «субсидии у потолка». По�
 app/services/dashboard_monthly_accrual.py (чистый агрегат без своей логики
 видимости — фильтр передаётся вызовом снаружи).
 """
+from decimal import Decimal
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func, case, and_, or_, literal
@@ -30,6 +31,10 @@ from app.services.subsidy_budget import effective_subsidy_budget
 # во всех местах ниже, где раньше были точечные COALESCE(...).
 from app.services.purchase_amounts import effective_amount_expr
 from app.services.dashboard_monthly_accrual import compute_monthly_ordered_map
+# План B (ancient-prancing-music.md, раздел B) — товары/услуги/без типа по этапам
+# (?type_split=true) и по «Бюджет (ФЭО)»/«Запланировано» — оба читаются отсюда,
+# единственный источник (Правило №6), никакой второй копии формул типа/долей.
+from app.services.dashboard_type_split import compute_type_split_raw, reconcile_split, STAGE_KEYS
 from app.routers.dashboard import _apply_purchase_org_filter
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -40,6 +45,13 @@ async def dashboard_charts(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
     scope: Optional[str] = Query(None),
+    # План B (2026-09-21): при true — к каждому накопительному этапу добавляются
+    # <stage>_goods/_services/_unspecified (товары/услуги/без типа), а к каждой
+    # субсидии — budget_goods/services/unspecified («Бюджет (ФЭО)» по типу) и
+    # planned_goods/services/unspecified («Запланировано» = Σ FeoPlannedItem.amount
+    # по типу). Ленивая догрузка — без флага ответ БАЙТ-В-БАЙТ прежний (доп.
+    # вычисления просто не выполняются, ни одно существующее поле не трогается).
+    type_split: bool = Query(False),
 ):
     org_ids = get_org_filter(current_user)
     # «Субсидии»: орг-админ-роль + гранты. «Дашборд»: двухуровневая видимость по вкладке dashboard.
@@ -575,6 +587,64 @@ async def dashboard_charts(
         },
     }
 
+    # ── План B (?type_split=true): товары/услуги/без типа по этапам + «Бюджет
+    # (ФЭО)»/«Запланировано» по типу — см. app.services.dashboard_type_split /
+    # app.services.type_totals (единственный источник, Правило №6). Ленивая
+    # догрузка: без флага этот блок не выполняется вовсе, существующие ключи
+    # widgets/subsidy_stats выше уже полностью посчитаны и не трогаются здесь. ──
+    dashboard_type_totals: Optional[dict] = None
+    if type_split:
+        def _purchase_filter(q):
+            if use_sids:
+                return _apply_purchase_org_filter(q, current_user, subsidy_ids=visible_subsidy_ids)
+            return _apply_purchase_org_filter(q, current_user, org_ids)
+
+        raw_split = await compute_type_split_raw(
+            db, apply_filter=_purchase_filter, use_sids=use_sids,
+            visible_subsidy_ids=visible_subsidy_ids, org_ids=org_ids,
+        )
+        _zero_raw = [Decimal(0), Decimal(0), Decimal(0)]
+        for stage in STAGE_KEYS:
+            reconciled = reconcile_split(raw_split["global"].get(stage, _zero_raw), widgets[stage]["amount"])
+            widgets[stage][f"{stage}_goods"] = reconciled["goods"]
+            widgets[stage][f"{stage}_services"] = reconciled["services"]
+            widgets[stage][f"{stage}_unspecified"] = reconciled["unspecified"]
+
+        # «Бюджет (ФЭО)» и «Запланировано» по типу — per-subsidy, через
+        # _calculate_feo_planned_tree_bulk(type_split=True) (subsidies.py), тот
+        # же единственный вход, что читает app.services.type_totals. ДРУГАЯ
+        # величина, чем widgets.plan_schedule выше (тот — сумма закупок по
+        # статусу; budget_*/planned_* — дерево ФЭО/плановые позиции).
+        # budget_* = feo_* оттуда, planned_* = plan_*.
+        type_totals_map = await _calculate_feo_planned_tree_bulk(db, sid_list, type_split=True)
+        _agg = {k: 0.0 for k in (
+            "budget_goods", "budget_services", "budget_unspecified",
+            "planned_goods", "planned_services", "planned_unspecified",
+        )}
+        for row in subsidy_stats:
+            sid = row["id"]
+            per_sub_raw = raw_split["per_subsidy"].get(sid, {})
+            for stage in STAGE_KEYS:
+                reconciled = reconcile_split(per_sub_raw.get(stage, _zero_raw), row["widget"][stage]["amount"])
+                row["widget"][stage][f"{stage}_goods"] = reconciled["goods"]
+                row["widget"][stage][f"{stage}_services"] = reconciled["services"]
+                row["widget"][stage][f"{stage}_unspecified"] = reconciled["unspecified"]
+            tt = type_totals_map.get(sid, {})
+            row["budget_goods"] = tt.get("feo_goods", 0.0)
+            row["budget_services"] = tt.get("feo_services", 0.0)
+            row["budget_unspecified"] = tt.get("feo_unspecified", 0.0)
+            row["planned_goods"] = tt.get("plan_goods", 0.0)
+            row["planned_services"] = tt.get("plan_services", 0.0)
+            row["planned_unspecified"] = tt.get("plan_unspecified", 0.0)
+            for k in _agg:
+                _agg[k] += row[k]
+
+        if use_sids:
+            # Только scope=dashboard/managed (задача B/2) — агрегат по видимым
+            # субсидиям, простая Σ уже посчитанных per-subsidy значений (не
+            # второй расчёт).
+            dashboard_type_totals = _agg
+
     # Владелец (2026-08-30): блок «субсидии у потолка» — субсидии, где сумма
     # заказанного (включая ежемесячные — весь график) достигла/превысила
     # настроенный порог (ceiling_warn_percent, умолчание 90%). Отсортировано
@@ -596,9 +666,12 @@ async def dashboard_charts(
         key=lambda x: x["ceiling_committed_percent"], reverse=True,
     )
 
-    return {
+    payload = {
         "status_counts": status_counts,
         "subsidy_stats": subsidy_stats,
         "widgets": widgets,
         "subsidies_near_ceiling": subsidies_near_ceiling,
     }
+    if dashboard_type_totals is not None:
+        payload.update(dashboard_type_totals)
+    return payload

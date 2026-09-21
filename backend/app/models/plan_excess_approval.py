@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Text, Numeric
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Text, Numeric, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -7,12 +7,34 @@ from app.database import Base
 class PlanExcessApproval(Base):
     """Запрос на согласование превышения плана ФЭО над финансированием узла
     (feo_categories.budget). См. миграцию h8i9j0k1l2m3 и
-    app.services.feo_plan.assert_no_unapproved_excess."""
+    app.services.feo_plan.assert_no_unapproved_excess.
+
+    kind (миграция g5h7j9k1m3n5, задача владельца, план
+    ancient-prancing-music.md раздел D, 2026-09-21) — вид согласуемого
+    превышения, единственный источник видов/подписей —
+    app.services.plan_excess_kinds. Записи, созданные ДО этой миграции, несут
+    kind='legacy' (server_default) — approved legacy-запись по-прежнему гасит
+    любой из трёх старых видов узла дерева (см. plan_excess_kinds.
+    LEGACY_FALLBACK_KINDS и app.services.feo_plan_tree._latest_approval —
+    фолбэк «своего вида нет → смотрим legacy»), чтобы согласования, принятые
+    до разделения по видам, не пришлось запрашивать заново.
+
+    feo_category_id nullable — level='subsidy' (см. plan_excess_kinds.
+    level_for_category_id): запись согласования на субсидию целиком, а не на
+    конкретный узел ФЭО.
+    """
     __tablename__ = "plan_excess_approvals"
+    __table_args__ = (
+        Index(
+            "ix_plan_excess_approvals_cat_kind_created",
+            "subsidy_id", "feo_category_id", "kind", "created_at",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    feo_category_id = Column(Integer, ForeignKey("feo_categories.id", ondelete="CASCADE"), nullable=False, index=True)
+    feo_category_id = Column(Integer, ForeignKey("feo_categories.id", ondelete="CASCADE"), nullable=True, index=True)
     subsidy_id = Column(Integer, ForeignKey("subsidies.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = Column(String(40), nullable=False, default="legacy", server_default="legacy")
 
     excess_amount = Column(Numeric(15, 2), nullable=False)
     plan_amount = Column(Numeric(15, 2), nullable=True)

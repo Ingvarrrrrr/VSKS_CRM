@@ -174,14 +174,18 @@ async def assert_tz_not_over_plan(
             )
             _items_total = float((await db.execute(_fpi_amt_q)).scalar() or 0)
 
-            from app.models.plan_excess_approval import PlanExcessApproval as _PEA
-            _latest_status = (await db.execute(
-                select(_PEA.status)
-                .where(_PEA.feo_category_id == feo_category_id)
-                .order_by(_PEA.created_at.desc())
-                .limit(1)
-            )).scalar_one_or_none()
-            _excess_approved = (_latest_status == "approved")
+            # Владелец, план ancient-prancing-music.md, раздел D (2026-09-21):
+            # согласования по видам ТЕПЕРЬ независимы — «любое последнее
+            # решение по категории» (как было ДО разделения) молча гасило бы
+            # эту подмену плана approved-записью ЧУЖОГО вида (например,
+            # over_feo). Здесь нужен ИМЕННО plan_over_manual (с legacy-
+            # фолбэком для старых записей) — единый помощник
+            # app.services.feo_plan_tree.latest_plan_excess_approval, поиск
+            # не копируется (см. её докстринг).
+            from app.services.feo_plan_tree import latest_plan_excess_approval
+            from app.services import plan_excess_kinds as _pek
+            _appr = await latest_plan_excess_approval(db, feo_category_id, _pek.PLAN_OVER_MANUAL)
+            _excess_approved = bool(_appr is not None and _appr.status == "approved")
 
             _, _plan_manual, _ = _leaf_plan_manual(
                 cat.plan_source, cat.manual_plan_amount, _items_total, _excess_approved,

@@ -24,6 +24,12 @@ from app.models.wish import Wish
 from app.models.wish_item import WishItem
 from app.schemas.schemas import FeoComparisonOut, FeoActualItemOut, FeoStageOut, FeoPlannedItemOut
 from app.services.acceptance_docs import total_amount as _acceptance_total_amount
+# ⚠️ НЕ импортировать app.services.type_totals на уровне модуля — этот файл сам
+# импортируется из app.routers.feo_planned_items (строка ~722), а type_totals
+# тянет app.services.item_type_split, которая в свою очередь импортирует
+# app.routers.feo_planned_items (normalize_item_type) — цикл на старте процесса
+# (см. аналогичный комментарий в app.services.feo_plan_fact). Импорт локальный,
+# см. функцию comparison ниже.
 
 router = APIRouter(prefix="/api/feo-planned-items", tags=["feo_planned_items"])
 
@@ -276,32 +282,15 @@ async def get_comparison(
     # Владелец (2026-08-18): «данные-то есть [в позициях закупок], почему они не
     # подтягиваются?» — плановая позиция без СВОЕГО item_type наследует тип от
     # связанных позиций закупок (см. FeoPlannedItemOut.item_type_effective/
-    # item_type_inherited). Один сгруппированный запрос на ВСЕ плановые позиции
-    # категории сразу (не в цикле по planned_rows — иначе N+1). Фильтры статуса/
-    # stopped_at — те же, что и у actual_rows выше (PLANNED_STATUSES +
-    # Purchase.stopped_at.is_(None)), чтобы «тип» не подтягивался из
-    # отменённых/остановленных закупок.
+    # item_type_inherited). Правило №6 (план ancient-prancing-music.md, раздел B/2,
+    # 2026-09-21): эта логика больше НЕ дублируется инлайн — единственная
+    # реализация теперь app.services.type_totals.effective_item_types (та же
+    # выборка: PLANNED_STATUSES + Purchase.stopped_at.is_(None), один
+    # сгруппированный запрос на все id сразу, не в цикле — не N+1), её же
+    # использует расчёт «план по типам» дашборда/субсидий.
+    from app.services.type_totals import effective_item_types  # локальный импорт — см. докстринг наверху файла
     _planned_ids_all = [p.id for p in planned_rows]
-    _inherited_type_map: dict[int, Optional[str]] = {}
-    if _planned_ids_all:
-        _type_rows = (await db.execute(
-            select(PurchaseItem.feo_planned_item_id, PurchaseItem.item_type)
-            .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
-            .where(PurchaseItem.feo_planned_item_id.in_(_planned_ids_all))
-            .where(Purchase.status.in_(PLANNED_STATUSES))
-            .where(Purchase.stopped_at.is_(None))
-            .distinct()
-        )).all()
-        _types_by_planned: dict[int, set] = {}
-        for _fpi_id, _itype in _type_rows:
-            if not _itype:
-                continue
-            _types_by_planned.setdefault(_fpi_id, set()).add(_itype)
-        for _fpi_id, _types in _types_by_planned.items():
-            # Один и тот же непустой тип у всех связанных позиций — наследуем.
-            # Разные типы — не выдумываем за пользователя, отдаём None
-            # (см. item_type_effective ниже: own или ничего).
-            _inherited_type_map[_fpi_id] = next(iter(_types)) if len(_types) == 1 else None
+    _inherited_type_map = await effective_item_types(db, _planned_ids_all)
 
     # Resolve contractor names
     from app.models.contractor import Contractor

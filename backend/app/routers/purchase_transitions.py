@@ -32,6 +32,7 @@ from app.routers.purchases import (
 from app.schemas.schemas import PurchaseOutFull
 from app.services.feo_plan import assert_no_unapproved_excess
 from app.services.tz_excess_approval import assert_no_pending_tz_excess
+from app.services.type_excess_approval import assert_no_pending_type_excess
 from app.services.price_actualization import actualize_product_price
 
 router = APIRouter(prefix="/api/purchases", tags=["purchase-transitions"])
@@ -411,6 +412,13 @@ async def transition_status(
         # заполненной ценой договора, т.е. ПОЗЖЕ самого первого форвард-перехода).
         # Отдельный, независимый гейт закрывает именно этот момент.
         await assert_no_pending_tz_excess(db, p.items, fallback_category_id=p.feo_category_id)
+        # Задача владельца (план ancient-prancing-music.md, раздел E, 2026-09-21):
+        # ДВА новых, независимых контроля превышения ПО ТИПУ (товары/услуги) —
+        # «план над ФЭО по типу» и «закупки над планом по типу», на уровне
+        # категории И субсидии целиком — тот же принцип, что и у ТЗ-контроля
+        # выше: жёстко на КАЖДОМ forward-переходе, тем же набором затронутых
+        # категорий (_gate_cat_ids, уже собран выше для assert_no_unapproved_excess).
+        await assert_no_pending_type_excess(db, p.subsidy_id, _gate_cat_ids)
 
     old_status = p.status
     p.status = target_status

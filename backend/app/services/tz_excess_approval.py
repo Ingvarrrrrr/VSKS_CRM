@@ -73,6 +73,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.feo_plan import assert_tz_not_over_plan
+from app.services import plan_excess_kinds as PEK
 
 
 def _tz_check_units(items, fallback_category_id: Optional[int]) -> list[dict]:
@@ -262,6 +263,7 @@ async def register_tz_excess_approvals(
         existing_pending = (await db.execute(
             select(PlanExcessApproval).where(
                 PlanExcessApproval.feo_category_id == cid,
+                PlanExcessApproval.kind == PEK.TZ_OVER_PLANNED_ITEM,
                 PlanExcessApproval.status == "pending",
             ).order_by(PlanExcessApproval.created_at.desc()).limit(1)
         )).scalar_one_or_none()
@@ -292,6 +294,7 @@ async def register_tz_excess_approvals(
         approval = PlanExcessApproval(
             feo_category_id=cid,
             subsidy_id=subsidy_id,
+            kind=PEK.TZ_OVER_PLANNED_ITEM,
             excess_amount=total_excess,
             plan_amount=None,
             budget_amount=None,
@@ -369,13 +372,36 @@ async def assert_no_pending_tz_excess(
         if cid:
             by_cat.setdefault(cid, []).append(v)
 
-    for cid, cat_violations in by_cat.items():
+    async def _latest_tz_approval(cid: int):
+        """Последняя запись kind=tz_over_planned_item на категории, а если её
+        нет — legacy-фолбэк (задача владельца 2026-09-21, независимые
+        согласования по видам): записи, заведённые ДО миграции g5h7j9k1m3n5
+        (kind='legacy' по умолчанию, включая старые запросы, зарегистрированные
+        этой же функцией до появления kind), продолжают гасить блокировку —
+        та же семантика, что и в app.services.feo_plan_tree._latest_approval."""
         appr = (await db.execute(
             select(PlanExcessApproval)
-            .where(PlanExcessApproval.feo_category_id == cid)
+            .where(
+                PlanExcessApproval.feo_category_id == cid,
+                PlanExcessApproval.kind == PEK.TZ_OVER_PLANNED_ITEM,
+            )
             .order_by(PlanExcessApproval.created_at.desc())
             .limit(1)
         )).scalar_one_or_none()
+        if appr is not None:
+            return appr
+        return (await db.execute(
+            select(PlanExcessApproval)
+            .where(
+                PlanExcessApproval.feo_category_id == cid,
+                PlanExcessApproval.kind == PEK.LEGACY,
+            )
+            .order_by(PlanExcessApproval.created_at.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+
+    for cid, cat_violations in by_cat.items():
+        appr = await _latest_tz_approval(cid)
         if appr is not None and appr.status == "approved":
             continue
 

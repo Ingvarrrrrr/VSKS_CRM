@@ -1,15 +1,28 @@
-"""Задача владельца (план ancient-prancing-music.md, раздел E, 2026-09-21):
-контроль превышения ПО ТИПУ (товары/услуги) блокирует forward-переход закупки
-ЖЁСТКО — тот же принцип, что и assert_no_pending_tz_excess (см.
-test_tz_over_plan_goes_to_approval.py), но для другого вида превышения
-(app.services.type_excess_approval.assert_no_pending_type_excess, вызывается
-из app.routers.purchase_transitions рядом с ТЗ-гейтом).
+"""Задача владельца (план ancient-prancing-music.md, раздел E, 2026-09-21;
+РЕШЕНИЕ ВЛАДЕЛЬЦА от 21.09, повторное уточнение): контроль превышения ПО ТИПУ
+(товары/услуги) на forward-переходах закупки — МЯГКИЙ, не 409. Переход
+проходит (200), но (1) регистрирует запрос на согласование через
+register_type_excess_approvals (тот же сервис, что и в routers/purchases.py
+create/PUT, routers/wish_convert.py — ПРАВИЛО №6, второй копии нет) и
+(2) отдаёт предупреждение в excess_warnings ответа перехода — тем же
+механизмом, что и «план над ФЭО» (assert_no_unapproved_excess) с 2026-09-03.
+
+Жёсткий контроль «ТЗ над плановой позицией» (assert_no_pending_tz_excess)
+этим НЕ затронут (см. test_tz_over_plan_goes_to_approval.py — отдельный
+файл, здесь не дублируется). Функция assert_no_pending_type_excess (жёсткая,
+409) сохранена в app/services/type_excess_approval.py про запас — на
+forward-переходах больше не вызывается (см. test_type_excess_approval.py —
+прямые тесты самой функции/сервиса, здесь не дублируются, ПРАВИЛО №6).
 
 Сценарий: категория ФЭО с типизированным ФЭО по услугам (30 000 ₽) и планом
-услуг выше этого (60 000 ₽, за счёт позиции ВНЕ ФЭО-разбивки) — узел не
-блокирует создание закупки (мягкий контроль), но переход «План закупок» →
-«Ведётся работа» заблокирован 409 TYPE_EXCESS_PENDING, пока превышение
-plan_over_feo_services не согласовано.
+услуг выше этого (60 000 ₽, за счёт позиции ВНЕ ФЭО-разбивки). Проверяем:
+  (а) forward-переход проходит 200, несмотря на непогашенное превышение;
+  (б) в ответе (excess_warnings) есть предупреждение вида plan_over_feo_services
+      с видом (kind) и уровнем (level);
+  (в) создана pending-запись PlanExcessApproval нужного kind (и на уровне
+      категории, и на уровне субсидии целиком — оба независимы);
+  (г) повторный forward-переход (следующий шаг того же перекоса) НЕ плодит
+      дубль pending-записей — переиспользует уже созданные.
 
 Флейк pytest-asyncio «different loop» (см. tests/conftest.py) — гонять КАЖДЫЙ
 тест ПО ОТДЕЛЬНОСТИ (pytest tests/test_purchase_transitions_type_gate.py::<name>).
@@ -27,7 +40,6 @@ from app.models.user_org_access import UserOrgAccess
 from app.models.permission import UserOrgPermissionOverride
 from app.services import plan_excess_kinds as PEK
 from app.auth.jwt import create_access_token
-from app.services.type_excess_approval import collect_type_excess_violations, register_type_excess_approvals
 
 
 async def _make_subsidy(db_session, org_id, budget=10_000_000):
@@ -101,12 +113,12 @@ async def _make_planned_items(db_session, feo_category_id):
     await db_session.commit()
 
 
-async def _make_purchase_in_plan_schedule(db_session, subsidy_id, feo_category_id, amount=Decimal("30000")):
+async def _make_purchase(db_session, subsidy_id, feo_category_id, amount=Decimal("30000"), status="wishes"):
     p = Purchase(
         subsidy_id=subsidy_id,
         feo_category_id=feo_category_id,
         item_name="Услуга (закупка, тест типового гейта)",
-        status="plan_schedule",
+        status=status,
         planned_total_price=amount,
         total_nmck=amount,
         nmck=amount,
@@ -141,102 +153,107 @@ def _headers_for(user):
     return {"Authorization": f"Bearer {token}"}
 
 
+async def _pending_type_excess_rows(db_session, subsidy_id):
+    rows = (await db_session.execute(
+        select(PlanExcessApproval).where(
+            PlanExcessApproval.subsidy_id == subsidy_id,
+            PlanExcessApproval.kind == PEK.PLAN_OVER_FEO_SERVICES,
+            PlanExcessApproval.status == "pending",
+        )
+    )).scalars().all()
+    return rows
+
+
 @pytest.mark.asyncio
-async def test_forward_transition_blocked_by_type_excess_until_approved(
+async def test_forward_transition_soft_warns_registers_pending_no_dup(
     client, db_session, test_org, test_admin_user, admin_headers, make_user,
 ):
-    """Переход «План закупок» → «Ведётся работа» заблокирован 409
-    TYPE_EXCESS_PENDING, пока превышение plan_over_feo_services не
-    согласовано; после approve — переход разрешён."""
-    approver = await _make_type_excess_approver(db_session, test_org, make_user)
-    approver_headers = _headers_for(approver)
+    """(а)+(б)+(в)+(г) в одном сценарии: forward-переход при непогашенном
+    превышении по типу проходит 200, несёт предупреждение (kind/level),
+    создаёт pending PlanExcessApproval нужного kind, а СЛЕДУЮЩИЙ forward-
+    переход того же перекоса не плодит дубль (переиспользует pending)."""
+    await _make_type_excess_approver(db_session, test_org, make_user)
 
     subsidy = await _make_subsidy(db_session, test_org.id)
     cat = await _make_category(db_session, subsidy.id)
     await _make_planned_items(db_session, cat.id)
     await _make_ceiling_headroom_category(db_session, subsidy.id)
-    purchase = await _make_purchase_in_plan_schedule(db_session, subsidy.id, cat.id)
+    purchase = await _make_purchase(db_session, subsidy.id, cat.id, status="wishes")
 
-    # Мягкий путь (create_purchase/PUT) уже собрал бы и зарегистрировал этот
-    # запрос — здесь закупка заведена напрямую через ORM (без прохождения
-    # эндпоинта), поэтому регистрируем явно тем же сервисом, что и они
-    # (app.services.type_excess_approval), чтобы у ЖЁСТКОГО гейта transition
-    # было что согласовывать.
-    # У этой субсидии единственная типизированная категория — значит нарушение
-    # plan_over_feo_services поднимается СРАЗУ на ДВУХ независимых уровнях
-    # (category И subsidy, level='subsidy' — собственный контроль, см.
-    # collect_type_excess_violations) — оба надо согласовать по отдельности,
-    # гейт transition проверяет category_ids (жёстко) И субсидию целиком
-    # безусловно (независимые записи — независимые approve).
-    violations = await collect_type_excess_violations(db_session, subsidy.id, [cat.id])
-    services_v = [v for v in violations if v["kind"] == PEK.PLAN_OVER_FEO_SERVICES]
-    assert any(v["level"] == PEK.LEVEL_CATEGORY for v in services_v), violations
-    assert any(v["level"] == PEK.LEVEL_SUBSIDY for v in services_v), violations
-    await register_type_excess_approvals(
-        db_session, services_v, subsidy_id=subsidy.id, current_user=test_admin_user,
-        context_label="подготовка теста",
+    # Шаг 1: wishes -> plan_schedule (первый forward-переход, гейт по типу
+    # срабатывает на КАЖДОМ forward-переходе, см. purchase_transitions.py).
+    resp1 = await client.post(
+        f"/api/purchases/{purchase.id}/transition?status=plan_schedule",
+        headers=admin_headers,
     )
-    await db_session.commit()
+    assert resp1.status_code == 200, (
+        f"Мягкий контроль — переход НЕ должен блокироваться превышением по типу: "
+        f"{resp1.status_code} {resp1.text}"
+    )
+    body1 = resp1.json()
+    warnings1 = body1.get("excess_warnings") or []
+    services_warnings1 = [w for w in warnings1 if w.get("kind") == PEK.PLAN_OVER_FEO_SERVICES]
+    assert services_warnings1, f"Ожидалось предупреждение plan_over_feo_services в ответе: {warnings1}"
+    assert any(w.get("level") == PEK.LEVEL_CATEGORY for w in services_warnings1), services_warnings1
+    assert any(w.get("level") == PEK.LEVEL_SUBSIDY for w in services_warnings1), services_warnings1
 
-    blocked = await client.post(
+    rows_after_step1 = await _pending_type_excess_rows(db_session, subsidy.id)
+    assert len(rows_after_step1) == 2, (
+        f"Ожидались ДВЕ независимые pending-записи (категория + субсидия целиком), "
+        f"получено {len(rows_after_step1)}"
+    )
+    ids_after_step1 = {r.id for r in rows_after_step1}
+
+    purchase_after_step1 = await db_session.get(Purchase, purchase.id)
+    assert purchase_after_step1.status == "plan_schedule"
+
+    # Шаг 2: plan_schedule -> work_in_progress (второй forward-переход, тот же
+    # непогашенный перекос по услугам) — переход ОБЯЗАН пройти, а pending-
+    # записи НЕ должны задублироваться (register_type_excess_approvals находит
+    # существующий pending той же пары (feo_category_id, kind) и переиспользует).
+    resp2 = await client.post(
         f"/api/purchases/{purchase.id}/transition?status=work_in_progress",
         headers=admin_headers,
     )
-    assert blocked.status_code == 409, (
-        f"Движение закупки ОБЯЗАНО быть заблокировано, пока превышение по типу "
-        f"(услуги) не согласовано: {blocked.status_code} {blocked.text}"
+    assert resp2.status_code == 200, (
+        f"Мягкий контроль — второй forward-переход тоже НЕ должен блокироваться: "
+        f"{resp2.status_code} {resp2.text}"
     )
-    body = blocked.json()
-    assert body.get("code") == "TYPE_EXCESS_PENDING", body
-    assert "услуг" in body.get("message", "").lower(), body
+    body2 = resp2.json()
+    warnings2 = body2.get("excess_warnings") or []
+    services_warnings2 = [w for w in warnings2 if w.get("kind") == PEK.PLAN_OVER_FEO_SERVICES]
+    assert services_warnings2, f"Ожидалось предупреждение и на втором переходе: {warnings2}"
 
-    purchase_after = await db_session.get(Purchase, purchase.id)
-    assert purchase_after.status == "plan_schedule", "Статус не должен был сдвинуться при 409"
+    rows_after_step2 = await _pending_type_excess_rows(db_session, subsidy.id)
+    assert len(rows_after_step2) == 2, (
+        f"Повторный переход НЕ должен плодить дубли pending-записей: "
+        f"было {len(rows_after_step1)}, стало {len(rows_after_step2)}"
+    )
+    ids_after_step2 = {r.id for r in rows_after_step2}
+    assert ids_after_step1 == ids_after_step2, (
+        "Второй переход обязан переиспользовать ТЕ ЖЕ записи согласования, а не создавать новые"
+    )
 
-    # Одобряем ОБА независимых запроса (категория + субсидия целиком) через
-    # реальный эндпоинт /decide уполномоченным пользователем.
-    pending_rows = (await db_session.execute(
-        select(PlanExcessApproval).where(
-            PlanExcessApproval.subsidy_id == subsidy.id,
-            PlanExcessApproval.kind == PEK.PLAN_OVER_FEO_SERVICES,
-            PlanExcessApproval.status == "pending",
-        )
-    )).scalars().all()
-    assert len(pending_rows) == 2, (
-        f"Ожидались ДВЕ независимые записи (категория + субсидия), получено {len(pending_rows)}"
-    )
-    for _appr in pending_rows:
-        decide_resp = await client.post(
-            f"/api/plan-excess/{_appr.id}/decide",
-            json={"decision": "approved"},
-            headers=approver_headers,
-        )
-        assert decide_resp.status_code == 200, decide_resp.text
-        assert decide_resp.json()["status"] == "approved"
-
-    allowed = await client.post(
-        f"/api/purchases/{purchase.id}/transition?status=work_in_progress",
-        headers=admin_headers,
-    )
-    assert allowed.status_code == 200, (
-        f"После одобрения ОБОИХ превышений по типу движение закупки обязано быть "
-        f"разрешено: {allowed.status_code} {allowed.text}"
-    )
     purchase_final = await db_session.get(Purchase, purchase.id)
     assert purchase_final.status == "work_in_progress"
 
 
 @pytest.mark.asyncio
-async def test_no_approver_falls_back_to_hard_block_not_silent_pass(
+async def test_no_approver_still_blocks_transition_not_silent_pass(
     client, db_session, test_org, test_admin_user, admin_headers,
 ):
-    """Без единого уполномоченного ('plan_excess.decide') — переход остаётся
-    заблокирован 409 (превышение по типу не проходит молча)."""
+    """Без единого уполномоченного ('plan_excess.decide') регистрация запроса
+    на согласование невозможна — register_type_excess_approvals сама бросает
+    409 (граница «превышение не проходит молча», см. docstring
+    app/services/type_excess_approval.py), поэтому переход остаётся
+    заблокирован — но ТЕПЕРЬ по ДРУГОЙ причине, чем раньше: не жёсткий гейт
+    assert_no_pending_type_excess (он больше не вызывается на переходах), а
+    невозможность создать сам запрос на согласование."""
     subsidy = await _make_subsidy(db_session, test_org.id)
     cat = await _make_category(db_session, subsidy.id)
     await _make_planned_items(db_session, cat.id)
     await _make_ceiling_headroom_category(db_session, subsidy.id)
-    purchase = await _make_purchase_in_plan_schedule(db_session, subsidy.id, cat.id)
+    purchase = await _make_purchase(db_session, subsidy.id, cat.id, status="plan_schedule")
 
     resp = await client.post(
         f"/api/purchases/{purchase.id}/transition?status=work_in_progress",
@@ -246,3 +263,16 @@ async def test_no_approver_falls_back_to_hard_block_not_silent_pass(
         f"Без уполномоченного согласовать превышение по типу некому — переход "
         f"ОБЯЗАН остаться заблокированным: {resp.status_code} {resp.text}"
     )
+    # Глобальный обработчик исключений оборачивает HTTPException(409, "<str>")
+    # в {"code": "HTTP_409", "message": "<str>", ...} — не {"detail": ...}
+    # (см. app/main.py exception handler); текст сообщения — из
+    # register_type_excess_approvals (единственный источник, ПРАВИЛО №6).
+    body = resp.json()
+    message = body.get("message") or str(body.get("detail"))
+    assert "Согласовать некому" in message, body
+
+    purchase_after = await db_session.get(Purchase, purchase.id)
+    assert purchase_after.status == "plan_schedule", "Статус не должен был сдвинуться при 409"
+
+    rows = await _pending_type_excess_rows(db_session, subsidy.id)
+    assert rows == [], "Без уполномоченного запись согласования не должна была создаться"

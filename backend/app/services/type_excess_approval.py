@@ -27,10 +27,18 @@ app.services.plan_excess_kinds): PLAN_OVER_FEO_GOODS/SERVICES,
 FACT_OVER_PLAN_GOODS/SERVICES, на двух уровнях (LEVEL_CATEGORY/LEVEL_SUBSIDY,
 feo_category_id=None для уровня субсидии).
 
-Точки вызова (см. задание, повторяют точки tz_excess_approval.py):
-  - routers/purchase_transitions.py — ЖЁСТКО (assert_no_pending_type_excess),
-    на КАЖДОМ forward-переходе закупки, тем же набором категорий (_gate_cat_ids),
-    что уже проверяет assert_no_unapproved_excess/assert_no_pending_tz_excess;
+Точки вызова (РЕШЕНИЕ ВЛАДЕЛЬЦА от 21.09, повторное уточнение — контроль по
+типу МЯГКИЙ везде, не только на create/PUT/wish; изначальный план «жёстко на
+переходах» ниже пересмотрен):
+  - routers/purchase_transitions.py — МЯГКО: collect_type_excess_violations +
+    register_type_excess_approvals на КАЖДОМ forward-переходе закупки, тем же
+    набором категорий (_gate_cat_ids), что уже проверяет
+    assert_no_unapproved_excess (тоже мягкий) — результат подмешивается в
+    excess_warnings ответа перехода. Жёсткий гейт «ТЗ над плановой позицией»
+    (assert_no_pending_tz_excess) на переходах НЕ затронут — остаётся 409.
+    assert_no_pending_type_excess (жёсткая версия, ниже) здесь БОЛЬШЕ НЕ
+    вызывается — оставлена в файле про запас (прямые тесты — см.
+    tests/test_type_excess_approval.py);
   - routers/purchases.py create/PUT — МЯГКО: collect_type_excess_violations +
     register_type_excess_approvals, результат подмешивается в excess_warnings
     (тот же паттерн, что и остальные предупреждения этих эндпоинтов);

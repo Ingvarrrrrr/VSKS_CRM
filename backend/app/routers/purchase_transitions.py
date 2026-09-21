@@ -32,7 +32,9 @@ from app.routers.purchases import (
 from app.schemas.schemas import PurchaseOutFull
 from app.services.feo_plan import assert_no_unapproved_excess
 from app.services.tz_excess_approval import assert_no_pending_tz_excess
-from app.services.type_excess_approval import assert_no_pending_type_excess
+from app.services.type_excess_approval import (
+    collect_type_excess_violations, register_type_excess_approvals,
+)
 from app.services.price_actualization import actualize_product_price
 
 router = APIRouter(prefix="/api/purchases", tags=["purchase-transitions"])
@@ -415,10 +417,29 @@ async def transition_status(
         # Задача владельца (план ancient-prancing-music.md, раздел E, 2026-09-21):
         # ДВА новых, независимых контроля превышения ПО ТИПУ (товары/услуги) —
         # «план над ФЭО по типу» и «закупки над планом по типу», на уровне
-        # категории И субсидии целиком — тот же принцип, что и у ТЗ-контроля
-        # выше: жёстко на КАЖДОМ forward-переходе, тем же набором затронутых
-        # категорий (_gate_cat_ids, уже собран выше для assert_no_unapproved_excess).
-        await assert_no_pending_type_excess(db, p.subsidy_id, _gate_cat_ids)
+        # категории И субсидии целиком, тем же набором затронутых категорий
+        # (_gate_cat_ids, уже собран выше для assert_no_unapproved_excess).
+        # РЕШЕНИЕ ВЛАДЕЛЬЦА (21.09, повторное уточнение): на forward-переходах
+        # закупки этот контроль МЯГКИЙ — не блокирует 409, а (1) регистрирует
+        # запрос на согласование через register_type_excess_approvals (тот же
+        # механизм, что уже используют routers/purchases.py create/PUT и
+        # wish_convert.py — ПРАВИЛО №6, второй копии здесь нет) и (2) отдаёт
+        # предупреждение тем же способом, что и «план над ФЭО» выше —
+        # подмешивается в _excess_warnings/excess_warnings ответа перехода.
+        # Жёсткий контроль «ТЗ над плановой позицией» (assert_no_pending_tz_excess,
+        # строка выше) этим НЕ затронут — остаётся блокирующим. Функция
+        # assert_no_pending_type_excess (жёсткая, 409) сохранена в
+        # app/services/type_excess_approval.py про запас, но на переходах
+        # больше не вызывается.
+        _type_violations = await collect_type_excess_violations(db, p.subsidy_id, _gate_cat_ids)
+        if _type_violations:
+            _excess_warnings.extend(await register_type_excess_approvals(
+                db, _type_violations, subsidy_id=p.subsidy_id, current_user=current_user,
+                context_label=(
+                    f"переход закупки №{p.purchase_number or p.id} в статус "
+                    f"«{STATUS_LABELS.get(target_status, target_status)}»"
+                ),
+            ))
 
     old_status = p.status
     p.status = target_status

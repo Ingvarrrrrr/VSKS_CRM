@@ -226,6 +226,16 @@
           заложено в ФЭО {{ formatCurrency(ctx.manualChildFeoSum(node)) }}
         </div>
       </template>
+      <!-- Раздел C0 (план ancient-prancing-music.md, 2026-09-21): «товары/услуги» —
+           переключатель kpiTypeSplit (useKpiPrefs.ts, общий с карточками KPI и
+           вторым экземпляром переключателя в FeoTreeToolbar.vue). Поля узла —
+           см. feoTreeAmounts2.feoTypeSplitFor (useFeoTreeAmounts.ts), null —
+           нечего показать (все доли нулевые). -->
+      <div v-if="kpiPrefs.kpiTypeSplit.value === 'split' && feoTreeAmounts2.feoTypeSplitFor(node)"
+        class="feo-plan-note feo-type-split-note text-medium-emphasis"
+      >
+        товары {{ formatCurrency(feoTreeAmounts2.feoTypeSplitFor(node)!.goods) }} · услуги {{ formatCurrency(feoTreeAmounts2.feoTypeSplitFor(node)!.services) }}<span v-if="feoTreeAmounts2.feoTypeSplitFor(node)!.unspecified > 0.005"> · без типа {{ formatCurrency(feoTreeAmounts2.feoTypeSplitFor(node)!.unspecified) }}</span>
+      </div>
     </td>
 
     <!-- Плановое количество -->
@@ -288,6 +298,14 @@
         :title="ctx.plannedSumBase.value === 'all' ? `Ручные ${formatCurrency(ctx.feoPlannedTotalFor(node))} + из заявок ${formatCurrency(ctx.feoPlannedRequestsFor(node))}` : ''"
       >{{ formatCurrency(ctx.feoPlannedDisplayFor(node)) }}</span>
       <span v-else class="feo-amount-empty">—</span>
+      <!-- Раздел C0: «товары/услуги» плановой суммы — та же схема, что и у
+           колонки «Количество и финансирование по ФЭО» выше (feoTreeAmounts2.
+           planTypeSplitFor, поля plan_goods/plan_services/plan_unspecified узла). -->
+      <div v-if="kpiPrefs.kpiTypeSplit.value === 'split' && feoTreeAmounts2.planTypeSplitFor(node)"
+        class="feo-plan-note feo-type-split-note text-medium-emphasis"
+      >
+        товары {{ formatCurrency(feoTreeAmounts2.planTypeSplitFor(node)!.goods) }} · услуги {{ formatCurrency(feoTreeAmounts2.planTypeSplitFor(node)!.services) }}<span v-if="feoTreeAmounts2.planTypeSplitFor(node)!.unspecified > 0.005"> · без типа {{ formatCurrency(feoTreeAmounts2.planTypeSplitFor(node)!.unspecified) }}</span>
+      </div>
       <!-- Состав суммы направления: сколько заложено по подкатегориям и сколько —
            прямо на самом направлении (жалоба владельца 2026-09-14 — число 831 972
            не читалось как сложение). Показывается ТОЛЬКО когда есть обе части
@@ -553,6 +571,62 @@
         </div>
       </div>
 
+      <!-- ЧЕТВЁРТАЯ/ПЯТАЯ, независимые плашки — превышение ПО ТИПУ (товары/
+           услуги), раздел E плана ancient-prancing-music.md (владелец,
+           21.09.2026): «план по товарам/услугам выше ФЭО по товарам/услугам»
+           и «закупки по товарам/услугам выше плана по товарам/услугам» — на
+           уровне ЭТОЙ категории (уровень субсидии целиком — SubsidyKpiCards.vue,
+           другой агент). Величины/approval — useFeoTreeExcess.ts::typeExcessFor
+           (единственный источник, НЕЗАВИСИМ от excessFor/excessFactFor/
+           excessPlanFor выше — те держат СТАРЫЕ три вида; одобрение по одному
+           виду/типу не гасит остальные). v-for по typeExcessKindDefs — общий
+           массив 4 видов с SubsidyKpiCards.vue (Правило №6, не дублируем). -->
+      <template v-for="tk in feoTreeExcess.typeExcessKindDefs" :key="tk.kind">
+        <div v-if="feoTreeExcess.typeExcessFor(node, tk.kind)" class="feo-plan-note d-flex align-center flex-wrap ga-1 mt-1">
+          <template v-if="feoTreeExcess.typeExcessFor(node, tk.kind)!.approval?.status === 'pending'">
+            <v-chip size="x-small" color="orange" variant="flat">
+              согласование: {{ tk.label }} на {{ formatCurrency(feoTreeExcess.typeExcessFor(node, tk.kind)!.amount) }} · на согласовании у: {{ feoTreeExcess.typeExcessPendingNames(node.id, tk.kind) || '—' }}
+            </v-chip>
+            <template v-if="feoTreeExcess.typeExcessMyPendingStep(node.id, tk.kind) && feoTreeExcess.typeExcessFor(node, tk.kind)!.approval?.can_decide">
+              <v-btn size="x-small" variant="tonal" color="success"
+                :loading="feoTreeExcess.typeExcessDecideLoading.value === feoTreeExcess.typeExcessKey(node.id, tk.kind)"
+                @click.stop="feoTreeExcess.decideTypeExcess(node.id, tk.kind, 'approved')"
+              >Одобрить</v-btn>
+              <v-btn size="x-small" variant="tonal" color="error"
+                :loading="feoTreeExcess.typeExcessDecideLoading.value === feoTreeExcess.typeExcessKey(node.id, tk.kind)"
+                @click.stop="feoTreeExcess.decideTypeExcess(node.id, tk.kind, 'rejected')"
+              >Отклонить</v-btn>
+            </template>
+            <div v-else-if="feoTreeExcess.typeExcessMyPendingStep(node.id, tk.kind) && !feoTreeExcess.typeExcessFor(node, tk.kind)!.approval?.can_decide" class="feo-plan-note text-medium-emphasis" style="width:100%">
+              Решение по превышению принимают только уполномоченные (владелец/финансист). Обратитесь к ним — согласовывать может не любой назначенный.
+            </div>
+          </template>
+          <template v-else-if="feoTreeExcess.typeExcessFor(node, tk.kind)!.approved">
+            <v-chip size="x-small" color="grey" variant="flat">
+              {{ tk.label }} на {{ formatCurrency(feoTreeExcess.typeExcessFor(node, tk.kind)!.amount) }} · согласовано · {{ feoTreeExcess.typeExcessResolvedByName(node.id, tk.kind) }}{{ feoTreeExcess.typeExcessResolvedDate(node.id, tk.kind) ? ' · ' + feoTreeExcess.typeExcessResolvedDate(node.id, tk.kind) : '' }}
+            </v-chip>
+          </template>
+          <template v-else-if="feoTreeExcess.typeExcessFor(node, tk.kind)!.approval?.status === 'rejected'">
+            <v-chip size="x-small" color="red" variant="flat">
+              {{ tk.label }} — отклонено{{ feoTreeExcess.typeExcessFor(node, tk.kind)!.approval?.comment ? ': ' + feoTreeExcess.typeExcessFor(node, tk.kind)!.approval!.comment : '' }}
+            </v-chip>
+            <v-btn size="x-small" variant="tonal" color="red"
+              :loading="feoTreeExcess.typeExcessRequestLoading.value === feoTreeExcess.typeExcessKey(node.id, tk.kind)"
+              @click.stop="feoTreeExcess.requestTypeExcessApproval(node, tk.kind)"
+            >Согласовать</v-btn>
+          </template>
+          <template v-else>
+            <v-chip size="x-small" color="red" variant="flat">
+              {{ tk.label }} на {{ formatCurrency(feoTreeExcess.typeExcessFor(node, tk.kind)!.amount) }} — требуется согласование
+            </v-chip>
+            <v-btn size="x-small" variant="tonal" color="red"
+              :loading="feoTreeExcess.typeExcessRequestLoading.value === feoTreeExcess.typeExcessKey(node.id, tk.kind)"
+              @click.stop="feoTreeExcess.requestTypeExcessApproval(node, tk.kind)"
+            >Согласовать</v-btn>
+          </template>
+        </div>
+      </template>
+
       <!-- Постоянная пометка «превышение согласовано» — НЕ зависит от того, активно ли
            превышение прямо сейчас. -->
       <div v-if="ctx.excessPlanApprovalPermanent(node)" class="feo-plan-note mt-1">
@@ -597,6 +671,13 @@
         {{ ctx.feoResidualFor(node) < 0 ? '−' : '' }}{{ formatCurrency(Math.abs(ctx.feoResidualFor(node))) }}
       </span>
       <span v-else class="feo-amount-empty">—</span>
+      <!-- Раздел C0: остаток по типам = ФЭО по типу − план по типу (формула
+           фиксирована — не следует переключателю «от плановой/от ФЭО»
+           residualBase у общей колонки, см. докстринг remainingTypeSplitFor). -->
+      <div v-if="kpiPrefs.kpiTypeSplit.value === 'split'" class="feo-plan-note feo-type-split-note text-medium-emphasis">
+        товары {{ feoTreeAmounts2.remainingTypeSplitFor(node).goods < 0 ? '−' : '' }}{{ formatCurrency(Math.abs(feoTreeAmounts2.remainingTypeSplitFor(node).goods)) }}
+        · услуги {{ feoTreeAmounts2.remainingTypeSplitFor(node).services < 0 ? '−' : '' }}{{ formatCurrency(Math.abs(feoTreeAmounts2.remainingTypeSplitFor(node).services)) }}
+      </div>
     </td>
 
     <!-- Действия -->
@@ -737,6 +818,18 @@ import { useFeoCategoryCollapse } from '@/composables/subsidies/useFeoCategoryCo
 import { useToast } from '@/composables/useToast'
 import type { FeoNode } from '@/composables/subsidies/types'
 import FeoCommentThread from './FeoCommentThread.vue'
+// Раздел C0/E (план ancient-prancing-music.md, 2026-09-21): переключатель
+// «целиком / товары-услуги» (useKpiPrefs.ts — пишет параллельный агент, см.
+// задание волны: карточки KPI и второй экземпляр переключателя в
+// FeoTreeToolbar.vue читают тот же общий pref) + превышения по типу
+// (useFeoTreeExcess.ts, singleton уже построен SubsidiesView.vue — здесь
+// переиспользуется БЕЗ ctx, тот же приём, что и useFeoLevel5Api() в
+// FeoLevel5Panel.vue). ⚠️ useKpiPrefs.ts на момент написания этого файла ещё
+// не существовал (пишет другой агент параллельно) — импорт по согласованному
+// пути, npx vue-tsc --noEmit перепроверить, когда файл появится.
+import { useKpiPrefs } from '@/composables/useKpiPrefs'
+import { useFeoTreeExcess } from '@/composables/subsidies/useFeoTreeExcess'
+import { useFeoTreeAmounts } from '@/composables/subsidies/useFeoTreeAmounts'
 
 const props = defineProps<{ node: FeoNode }>()
 // ФИКС (найден QA стека отмены, доп. волна 2026-09-14): `const node = props.node`
@@ -756,6 +849,12 @@ const node = toRef(props, 'node')
 
 const ctx = useSubsidyDetailCtx()
 const kpi = useKpiDrilldown(ctx)
+// Раздел C0/E — см. докстринг у импортов выше. Оба уже построены как singleton
+// (SubsidiesView.vue вызывает их с ctx при монтировании дерева раньше первой
+// строки) — вызов без аргумента возвращает тот же объект.
+const kpiPrefs = useKpiPrefs()
+const feoTreeExcess = useFeoTreeExcess()
+const feoTreeAmounts2 = useFeoTreeAmounts()
 
 // Выбор категории/поддерева целиком (задача 1) — состояние чекбокса перед
 // шевроном читает usePlanToRequest.ts::subtreeSelectionState (единственный

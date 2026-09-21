@@ -81,7 +81,10 @@ async def _make_planned_item(
     return fpi
 
 
-async def _make_purchase_item(db_session, subsidy_id, feo_category_id, item_name, item_type, amount, status="work_in_progress"):
+async def _make_purchase_item(
+    db_session, subsidy_id, feo_category_id, item_name, item_type, amount,
+    status="work_in_progress", over_plan=False, quantity=1,
+):
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem
     p = Purchase(
@@ -99,13 +102,13 @@ async def _make_purchase_item(db_session, subsidy_id, feo_category_id, item_name
     pi = PurchaseItem(
         purchase_id=p.id,
         item_name=item_name,
-        quantity=Decimal("1"),
+        quantity=Decimal(str(quantity)),
         unit="шт",
         unit_price=Decimal(str(amount)),
         total_price=Decimal(str(amount)),
         feo_category_id=feo_category_id,
         item_type=item_type,
-        over_plan=False,
+        over_plan=over_plan,
     )
     db_session.add(pi)
     await db_session.commit()
@@ -241,3 +244,71 @@ async def test_subsidy_level_summary_sums_root_nodes(db_session, test_org):
     assert summary["totals"]["plan_services"] == pytest.approx(40_000.0)
     assert "plan_over_feo_goods" in summary["excess"]
     assert "fact_over_plan_services" in summary["excess"]
+
+
+@pytest.mark.asyncio
+async def test_order_substituted_plan_reconciles_by_type(db_session, test_org):
+    """Исправление 2026-09-21 (боевой замер «ЦентрПоиск_2026»: split плана
+    БЫЛ БОЛЬШЕ planned_tree на 18,8 млн) — когда узел заказан ПОЛНОСТЬЮ
+    (qty > 0 and ordered_qty >= qty), node['plan'] замещается фактической
+    суммой заказа (_order_substituted_plan) вместо Σ FeoPlannedItem.amount.
+    Типовой split (plan_goods/services/unspecified) обязан замещаться ТЕМИ ЖЕ
+    типизированными суммами заказа (ordered_goods/services из
+    ordered_consumption_by_category), а не оставаться «сырой» Σ позиций плана —
+    иначе split (140 000, сумма плановых позиций) расходится с node['display']
+    (125 000, сумма РЕАЛЬНО заказанного — заказано дешевле плана, экономия
+    высвобождена)."""
+    subsidy = await _make_subsidy(db_session, test_org.id)
+    cat = await _make_category(
+        db_session, subsidy.id, name="Узел — заказ замещает план", planned_quantity=Decimal("2"),
+    )
+    await _make_planned_item(db_session, cat.id, "Ноутбук (план)", 100_000, item_type="товар")
+    await _make_planned_item(db_session, cat.id, "Обслуживание (план)", 40_000, item_type="услуга")
+
+    # Заказано ПОЛНОСТЬЮ (2 шт из 2), но ДЕШЕВЛЕ плана — экономия 15 000.
+    await _make_purchase_item(
+        db_session, subsidy.id, cat.id, "Ноутбук (заказ)", "товар", 90_000, status="ordered",
+    )
+    await _make_purchase_item(
+        db_session, subsidy.id, cat.id, "Обслуживание (заказ)", "услуга", 35_000, status="ordered",
+    )
+
+    tree = await compute_feo_plan_tree(db_session, [subsidy.id])
+    node = tree[cat.id]
+
+    assert node["plan"] == pytest.approx(125_000.0), "план замещён фактически заказанной суммой (экономия высвобождена)"
+    assert node["display"] == pytest.approx(125_000.0), "budget не задан, over=0 -> display == plan"
+    assert node["plan_goods"] == pytest.approx(90_000.0)
+    assert node["plan_services"] == pytest.approx(35_000.0)
+    assert node["plan_unspecified"] == pytest.approx(0.0)
+    total_split = node["plan_goods"] + node["plan_services"] + node["plan_unspecified"]
+    assert total_split == pytest.approx(node["display"]), "Правило №6: split обязан суммироваться в scalar узла"
+
+
+@pytest.mark.asyncio
+async def test_over_plan_purchase_item_included_in_type_split(db_session, test_org):
+    """over_plan=true позиции закупки прибавляются к node['plan'] БЕЗУСЛОВНО
+    (over, см. docstring compute_feo_plan_tree) — типовой split обязан
+    прибавлять ТУ ЖЕ типизированную сумму (over_goods/services из
+    plan_consumption_by_category), иначе split (только план, без over)
+    расходится с node['display'] (план + over)."""
+    subsidy = await _make_subsidy(db_session, test_org.id)
+    cat = await _make_category(db_session, subsidy.id, name="Узел — сверх плана")
+    await _make_planned_item(db_session, cat.id, "Ноутбук (план)", 50_000, item_type="товар")
+
+    await _make_purchase_item(
+        db_session, subsidy.id, cat.id, "Доп. услуга сверх плана", "услуга", 20_000,
+        status="work_in_progress", over_plan=True,
+    )
+
+    tree = await compute_feo_plan_tree(db_session, [subsidy.id])
+    node = tree[cat.id]
+
+    assert node["plan"] == pytest.approx(50_000.0), "план БЕЗ over (over прибавляется отдельно к full_display)"
+    assert node["over"] == pytest.approx(20_000.0)
+    assert node["display"] == pytest.approx(70_000.0), "display = plan + over"
+    assert node["plan_goods"] == pytest.approx(50_000.0)
+    assert node["plan_services"] == pytest.approx(20_000.0), "over-строка типа «услуга» добавлена в plan_services"
+    assert node["plan_unspecified"] == pytest.approx(0.0)
+    total_split = node["plan_goods"] + node["plan_services"] + node["plan_unspecified"]
+    assert total_split == pytest.approx(node["display"]), "Правило №6: split обязан суммироваться в scalar узла"

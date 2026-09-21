@@ -28,6 +28,15 @@ from app.services.feo_plan_fact import (
 # feo_plan_fact/этот модуль). KIND_GOODS/KIND_SERVICES/KIND_UNSPECIFIED/kind_of
 # импортируются ЛОКАЛЬНО внутри compute_feo_plan_tree/compute_subsidy_type_summary.
 from app.services.purchase_summary import purchase_summaries_by_id
+# normalize_feo_category_budget — ЕДИНСТВЕННАЯ реализация теперь живёт в
+# app.services.subsidy_budget (перенесена туда 2026-09-21: ДО переноса
+# compute_budget_map/calculate_budgets_bulk — единственный источник
+# feo_budget_total, см. её докстринг — НЕ применяла эту нормализацию вовсе,
+# из-за чего feo_budget_total (scalar) и это дерево/типовой split расходились
+# на категориях с budget=0, см. докстринг normalize_feo_category_budget в
+# subsidy_budget.py). Реэкспортируется отсюда — app.services.type_totals и
+# прочий код, уже импортирующий её ИЗ ЭТОГО модуля, не трогается.
+from app.services.subsidy_budget import normalize_feo_category_budget  # noqa: F401
 
 
 async def resolve_effective_item_types(db: AsyncSession, planned_items) -> dict:
@@ -439,10 +448,18 @@ async def compute_feo_plan_tree(
     # kind_of(item_type_effective) — см. resolve_effective_item_types выше
     # (та же функция, что и GET /api/feo-planned-items/comparison, ПРАВИЛО
     # №6, не вторая копия наследования типа).
-    # own_feo_by_kind[cat_id] — то же самое по feo_amount строк с
-    # is_feo_breakdown=true (задание владельца: «ФЭО по типам считается
-    # только там, где есть строки „по ФЭО“ с типом» — позиции без
-    # is_feo_breakdown/feo_amount в эту сумму не входят вообще).
+    # own_feo_by_kind[cat_id] — то же самое по feo_amount строк, ТЕ ЖЕ строки,
+    # что и app.services.subsidy_budget._active_feo_items_with_amount (активна,
+    # feo_amount задан) — БЕЗ фильтра по is_feo_breakdown (исправлено
+    # 2026-09-21: строка с feo_amount, но is_feo_breakdown=false, раньше
+    # выпадала из типового ФЭО целиком, хотя calculate_budgets_bulk её
+    # учитывает — feo_goods+feo_services+feo_unspecified расходился со
+    # scalar'ом feo_budget_total на живых субсидиях, см.
+    # test_type_totals.py::test_feo_amount_without_breakdown_flag_counts_as_unspecified).
+    # Строка с is_feo_breakdown=true — типизирована (bucket = kind_of
+    # эффективного типа); БЕЗ флага — сумма всё равно входит в «по ФЭО» (иначе
+    # разойдётся со scalar'ом), но владелец её типом не размечал, поэтому идёт
+    # ЦЕЛИКОМ в feo_unspecified, а не kind_of(item_type).
     own_plan_by_kind: dict[int, dict] = {}
     own_feo_by_kind: dict[int, dict] = {}
     if by_id:
@@ -462,11 +479,11 @@ async def compute_feo_plan_tree(
                 _row.feo_category_id, {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: 0.0}
             )
             _pd[_bucket] += float(_row.amount or 0)
-            if _row.is_feo_breakdown and _row.feo_amount is not None:
+            if _row.feo_amount is not None:
                 _fd = own_feo_by_kind.setdefault(
                     _row.feo_category_id, {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: 0.0}
                 )
-                _fd[_bucket] += float(_row.feo_amount)
+                _fd[_bucket if _row.is_feo_breakdown else KIND_UNSPECIFIED] += float(_row.feo_amount)
 
     over_consumption = await plan_consumption_by_category(db, subsidy_ids, exclude_planned_item_linked=True)
     ordered_consumption = await ordered_consumption_by_category(db, subsidy_ids, exclude_planned_item_linked=True)
@@ -680,7 +697,7 @@ async def compute_feo_plan_tree(
         ЭТОГО узла (plan_source/manual_plan_amount).
 
         Возвращает (manual_plan_entered, plan_manual, excess_plan_over_manual,
-        excess_plan_items):
+        excess_plan_items, plan_manual_by_kind):
           'planned_items' (умолчание) — manual_plan_entered=0, plan_manual = Σ
             активных плановых позиций узла (leaf_item_amt[cid], уже посчитана по
             ВСЕМ категориям выше), excess_plan_over_manual всегда 0 — план не
@@ -692,18 +709,30 @@ async def compute_feo_plan_tree(
             plan_manual становится Σ позиций (решение владельца: «план стал
             равен сумме позиций»). excess_plan_items — уже готовые виновники с
             привязанными закупками (own_excess_items, посчитано выше).
+
+        plan_manual_by_kind (Раздел E1 продолжение, 2026-09-21, исправление
+        расхождения «план по типу ≠ план дерева») — ТА ЖЕ ветка, разложенная
+        по типу: 'planned_items' → own_plan_by_kind[cid] (та же строка, что и
+        items_total, просто по трём корзинам вместо одного числа); 'manual_sum'
+        неутверждённое — ОДНО число manual_amt, БЕЗ разбивки по позициям (никто
+        не размечал тип ручной суммы) → целиком в KIND_UNSPECIFIED, тот же
+        приём, что и явный FeoCategory.budget в _feo_by_kind выше; согласовано
+        → own_plan_by_kind[cid], синхронно со скалярным plan_manual=items_total.
         """
         items_total = leaf_item_amt.get(cid, 0.0)
+        _own_kind = own_plan_by_kind.get(cid) or {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: 0.0}
         if (r.plan_source or "planned_items") != "manual_sum":
-            return 0.0, items_total, 0.0, []
+            return 0.0, items_total, 0.0, [], dict(_own_kind)
         manual_amt = float(r.manual_plan_amount) if r.manual_plan_amount is not None else 0.0
         excess = own_manual_excess.get(cid, 0.0)
         items = own_excess_items.get(cid, [])
         plan_manual = manual_amt
+        plan_manual_by_kind = {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: manual_amt}
         appr = _latest_approval(cid, _pek.PLAN_OVER_MANUAL)
         if excess > 0.005 and appr is not None and appr.status == "approved":
             plan_manual = items_total
-        return manual_amt, plan_manual, excess, items
+            plan_manual_by_kind = dict(_own_kind)
+        return manual_amt, plan_manual, excess, items, plan_manual_by_kind
 
     # ── Раздел E1: рекурсивные накопители «по типу» узла+поддерева ──────────
     _feo_by_kind_memo: dict[int, dict] = {}
@@ -726,8 +755,8 @@ async def compute_feo_plan_tree(
         if cat_id in _feo_by_kind_memo:
             return _feo_by_kind_memo[cat_id]
         r = by_id[cat_id]
-        _raw_b = float(r.budget) if r.budget is not None else None
-        if _raw_b not in (None, 0.0):
+        _raw_b = normalize_feo_category_budget(r.budget)
+        if _raw_b is not None:
             val = {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: _raw_b}
         else:
             own = own_feo_by_kind.get(cat_id) or {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: 0.0}
@@ -739,26 +768,116 @@ async def compute_feo_plan_tree(
         _feo_by_kind_memo[cat_id] = val
         return val
 
+    # ── Раздел E1 продолжение (исправление 2026-09-21, ПРАВИЛО №6) ──────────
+    # Инвариант владельца: plan_goods+plan_services+plan_unspecified узла
+    # ОБЯЗАН совпадать с node['display'] этого же узла (та самая величина,
+    # которую суммируют корни для KPI «Запланировано», см.
+    # app.services.feo_plan_totals.feo_plan_subsidy_totals) — «то же самое
+    # дерево, та же формула, разложенная по типу», а не отдельная более
+    # простая отчётная величина (ДО этой правки own_plan_by_kind суммировался
+    # БЕЗ order-substitution/over/budget-клэмпа — расходился со скаляром на
+    # узлах с заказом/сверх-плановыми позициями/финансированием, см. боевой
+    # замер «ЦентрПоиск_2026»: split 94 712 790 vs planned_tree 75 896 105).
+    #
+    # Три типовых рекурсивных накопителя ЗЕРКАЛЯТ три скалярных переменных
+    # _visit ниже (plan_manual/plan/over) — та же ветка/формула, только по
+    # трём корзинам вместо одного числа:
+    #   _plan_manual_by_kind  ↔ scalar plan_manual (own + Σ children)
+    #   _plan_by_kind         ↔ scalar plan        (own «заказ замещает план»
+    #                            + Σ children['plan'])
+    #   _over_by_kind         ↔ scalar over         (own + Σ children['over'])
+    # display_by_kind собирается в _visit ниже ТЕМ ЖЕ клэмпом budget/
+    # excess_approved, что и scalar display — общий read переиспользуется
+    # напрямую (см. _visit).
+
+    def _own_qty_and_ordered(cid: int) -> tuple:
+        """(qty, ordered, ordered_quantity, ordered_by_kind) — «собственные»
+        (без рекурсии) qty/заказ узла, ТЕМ ЖЕ способом, что и _visit
+        определяет qty/ordered/ordered_qty для листа (r.planned_quantity с
+        фолбэком на leaf_item_qty) и для «собственной» части группы
+        (leaf_item_qty напрямую, БЕЗ r.planned_quantity — см. _visit,
+        комментарий у own_qty). ordered_by_kind — та же own-сумма
+        ordered_consumption_by_category, разложенная по типу позиции закупки
+        (ordered_goods/services/unspecified, см. её докстринг)."""
+        r = by_id[cid]
+        if cid in has_children:
+            qty = leaf_item_qty.get(cid, 0.0)
+        else:
+            qty = float(r.planned_quantity) if r.planned_quantity is not None else 0.0
+            if qty == 0.0:
+                qty = leaf_item_qty.get(cid, 0.0)
+        _ord = ordered_consumption.get(cid) or {}
+        ordered = _ord.get("ordered", 0.0)
+        ordered_qty = _ord.get("ordered_quantity", 0.0)
+        ordered_by_kind = {
+            k: _ord.get(f"ordered_{k}", 0.0) for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)
+        }
+        return qty, ordered, ordered_qty, ordered_by_kind
+
+    _plan_manual_by_kind_memo: dict[int, dict] = {}
+
+    def _plan_manual_by_kind(cat_id: int) -> dict:
+        """Рекурсивная Σ plan_manual узла+поддерева, по типу — зеркалит
+        scalar `plan_manual = children_plan_manual + own_plan_manual_for_calc`
+        (_visit, ветка группы) и «own plan_manual = _manual_plan_for(...)[1]»
+        (ветка листа): own-часть берётся из ЕЁ ЖЕ 5-го возврата
+        (plan_manual_by_kind, см. _manual_plan_for), рекурсия по детям —
+        как и везде в этом файле."""
+        if cat_id in _plan_manual_by_kind_memo:
+            return _plan_manual_by_kind_memo[cat_id]
+        r = by_id[cat_id]
+        _own_kind = _manual_plan_for(cat_id, r)[4]
+        val = dict(_own_kind)
+        for _kid in children_map.get(cat_id, []):
+            _kv = _plan_manual_by_kind(_kid)
+            for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED):
+                val[k] += _kv[k]
+        _plan_manual_by_kind_memo[cat_id] = val
+        return val
+
     _plan_by_kind_memo: dict[int, dict] = {}
 
     def _plan_by_kind(cat_id: int) -> dict:
-        """Рекурсивная Σ плановых позиций узла+поддерева, по типу — ВСЕГДА Σ
-        активных FeoPlannedItem.amount (владелец, план
-        ancient-prancing-music.md, раздел «Дизайн»: «Собственный план всегда
-        делится на товары и услуги... и «по ФЭО», и «внутренний план», и
-        введённые вручную» — БЕЗ переключателя plan_source/order-substituted
-        (_order_substituted_plan), которые применяет node['plan']/
-        ['plan_manual'] для БЛОКИРУЮЩЕГО контроля выше; здесь — отдельная,
-        более простая ОТЧЁТНАЯ величина, инвариант с ней НЕ требуется)."""
+        """Рекурсивная Σ «заказ замещает план», по типу — зеркалит scalar
+        `plan` (_visit: лист — _order_substituted_plan(qty, ordered,
+        ordered_qty, plan_manual); группа — own_plan + children_plan, где
+        own_plan — та же формула по «собственным» qty/ordered узла). own-часть
+        заменяется на ordered_by_kind ЦЕЛИКОМ (не пропорционально), когда
+        заказ полностью набрал plan (та же булева развилка, что и у
+        scalar'а) — иначе own-часть = plan_manual_by_kind узла (без
+        рекурсии — рекурсия добавляется ниже, отдельно от own)."""
         if cat_id in _plan_by_kind_memo:
             return _plan_by_kind_memo[cat_id]
-        own = own_plan_by_kind.get(cat_id) or {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: 0.0}
-        val = dict(own)
+        qty, ordered, ordered_qty, ordered_by_kind = _own_qty_and_ordered(cat_id)
+        own_plan_manual_kind = _manual_plan_for(cat_id, by_id[cat_id])[4]
+        substituted = qty > 0 and ordered_qty >= qty
+        own_kind = dict(ordered_by_kind) if substituted else dict(own_plan_manual_kind)
+        val = dict(own_kind)
         for _kid in children_map.get(cat_id, []):
             _kv = _plan_by_kind(_kid)
             for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED):
                 val[k] += _kv[k]
         _plan_by_kind_memo[cat_id] = val
+        return val
+
+    _over_by_kind_memo: dict[int, dict] = {}
+
+    def _over_by_kind(cat_id: int) -> dict:
+        """Рекурсивная Σ «сверх плана» (over_plan=true), по типу — зеркалит
+        scalar `over = own_over + children_over` (own — over_cons.get('over'),
+        та же own-сумма для листа и группы, см. _visit). own-часть — типовой
+        over_goods/services/unspecified из plan_consumption_by_category (over
+        уже разложен по kind_of(PurchaseItem.item_type) на уровне SQL, см. её
+        докстринг)."""
+        if cat_id in _over_by_kind_memo:
+            return _over_by_kind_memo[cat_id]
+        _over_cons = over_consumption.get(cat_id) or {}
+        val = {k: _over_cons.get(f"over_{k}", 0.0) for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)}
+        for _kid in children_map.get(cat_id, []):
+            _kv = _over_by_kind(_kid)
+            for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED):
+                val[k] += _kv[k]
+        _over_by_kind_memo[cat_id] = val
         return val
 
     def _visit(cat_id: int) -> dict:
@@ -793,7 +912,7 @@ async def compute_feo_plan_tree(
         if not kids:
             qty = float(r.planned_quantity) if r.planned_quantity is not None else 0.0
             amt = float(r.planned_amount) if r.planned_amount is not None else 0.0
-            manual_plan_entered, plan_manual, excess_plan_over_manual, excess_plan_items = _manual_plan_for(cat_id, r)
+            manual_plan_entered, plan_manual, excess_plan_over_manual, excess_plan_items, _ = _manual_plan_for(cat_id, r)
             if qty == 0.0:
                 # planned_quantity категории не задано (план введён позициями,
                 # не полями листа) — без этого fallback'а qty_plan/display_quantity
@@ -862,7 +981,7 @@ async def compute_feo_plan_tree(
             # для группы включается только явным выбором в форме.
             own_qty = leaf_item_qty.get(cat_id, 0.0)
             own_amt = leaf_item_amt.get(cat_id, 0.0)
-            own_manual_entered, own_plan_manual_for_calc, own_excess, own_excess_items_ = _manual_plan_for(cat_id, r)
+            own_manual_entered, own_plan_manual_for_calc, own_excess, own_excess_items_, _ = _manual_plan_for(cat_id, r)
             own_plan, _own_forecast, _own_forecast_over = _own_plan_and_forecast(
                 own_qty, own_amt, own_plan_manual_for_calc, own_ordered, own_ordered_qty
             )
@@ -917,8 +1036,7 @@ async def compute_feo_plan_tree(
         # excess_amount). Миграция o7q9s1u3w5y7 разово чистит уже накопленные
         # в базе нули; здесь — тот же контракт применяется и к новым записям,
         # не дожидаясь миграции.
-        _raw_budget = float(r.budget) if r.budget is not None else None
-        budget = _raw_budget if _raw_budget not in (None, 0.0) else None
+        budget = normalize_feo_category_budget(r.budget)
         full_display = plan + over
         excess_amount = 0.0
         excess_pending = False
@@ -1008,10 +1126,28 @@ async def compute_feo_plan_tree(
         # ── Раздел E2 (план ancient-prancing-music.md, 2026-09-21): контроли
         # превышения ПО ТИПУ (товары/услуги) — НЕЗАВИСИМЫЕ от excess_amount/
         # excess_fact_over_plan выше (разные виды, разные согласования).
+        #
+        # plan_goods/plan_services/plan_unspecified — ИСПРАВЛЕНО 2026-09-21
+        # (Правило №6, боевой замер «ЦентрПоиск_2026»: split дерева расходился
+        # со scalar'ом node['display'] на 18,8 млн): теперь это НЕ отдельная
+        # «отчётная» Σ активных FeoPlannedItem.amount, а node['display'] ЭТОГО
+        # ЖЕ узла, разложенный по типу — ТОТ ЖЕ клэмп budget/excess_approved,
+        # что и у scalar'а (см. display = full_display/plan_manual выше),
+        # применённый к типовым _plan_by_kind/_over_by_kind/_plan_manual_by_kind
+        # (зеркалят scalar plan/over/plan_manual, см. их докстринги). Σ по
+        # корневым узлам этого поля == planned_tree (feo_plan_subsidy_totals,
+        # Σ node['display'] корней) БАЙТ-В-БАЙТ — инвариант проверяется
+        # test_feo_plan_tree_type_split.py.
+        _clamped = bool(budget is not None and full_display - budget > 0.005 and not excess_approved)
         _plan_kind = _plan_by_kind(cat_id)
+        _over_kind = _over_by_kind(cat_id)
+        _full_display_kind = {
+            k: _plan_kind[k] + _over_kind[k] for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)
+        }
+        _display_kind = _plan_manual_by_kind(cat_id) if _clamped else _full_display_kind
         _feo_kind = _feo_by_kind(cat_id)
         plan_goods, plan_services, plan_unspecified = (
-            _plan_kind[KIND_GOODS], _plan_kind[KIND_SERVICES], _plan_kind[KIND_UNSPECIFIED],
+            _display_kind[KIND_GOODS], _display_kind[KIND_SERVICES], _display_kind[KIND_UNSPECIFIED],
         )
         feo_goods, feo_services, feo_unspecified = (
             _feo_kind[KIND_GOODS], _feo_kind[KIND_SERVICES], _feo_kind[KIND_UNSPECIFIED],

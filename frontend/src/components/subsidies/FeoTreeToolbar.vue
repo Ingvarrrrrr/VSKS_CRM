@@ -21,6 +21,22 @@
         <v-btn size="x-small" value="category_type">Категории + виды</v-btn>
       </v-btn-toggle>
     </div>
+    <!-- Раздел C (план ancient-prancing-music.md, 2026-09-21): «целиком / товары-
+         услуги» — общий pref useKpiPrefs.ts (localStorage-singleton, тот же
+         паттерн, что и feoItemsGroupBy выше), общий с KpiCardsWidget.vue/
+         SubsidyKpiCards.vue (другой агент) — состояние одно на все три места,
+         второй переключатель здесь просто второй ВИЗУАЛЬНЫЙ экземпляр того же
+         pref, не отдельное состояние. ⚠️ useKpiPrefs.ts на момент написания
+         этого файла ещё не существовал (пишет другой агент параллельно) —
+         импорт по согласованному пути, npx vue-tsc --noEmit перепроверить,
+         когда файл появится. -->
+    <div class="d-flex align-center ml-3" style="gap:6px" title="Показывать суммы категорий целиком или разбитыми на товары/услуги">
+      <span class="text-caption text-medium-emphasis">Суммы:</span>
+      <v-btn-toggle v-model="kpiPrefs.kpiTypeSplit.value" density="compact" mandatory variant="outlined" color="teal" style="height:26px">
+        <v-btn size="x-small" value="total">Целиком</v-btn>
+        <v-btn size="x-small" value="split">Товары и услуги</v-btn>
+      </v-btn-toggle>
+    </div>
     <!-- Поиск по субсидии в дереве ФЭО (владелец, 2026-09-15): «ОУ-2 огнетушитель не
          помню где находится... задолбался искать» — общий поиск по БД не привязан к
          текущей субсидии и не показывает путь. Ищет по названиям направлений/
@@ -209,10 +225,13 @@ import { useFeoCategoryCollapse } from '@/composables/subsidies/useFeoCategoryCo
 import PlanToRequestDialog from '@/components/subsidies/PlanToRequestDialog.vue'
 import FeoCollapseCandidatesDialog from '@/components/subsidies/FeoCollapseCandidatesDialog.vue'
 import FeoCollapseConfirmDialog from '@/components/subsidies/FeoCollapseConfirmDialog.vue'
+// Раздел C — см. докстринг у переключателя «Суммы» в шаблоне выше.
+import { useKpiPrefs } from '@/composables/useKpiPrefs'
 
 const ctx = useSubsidyDetailCtx()
 const planToRequest = usePlanToRequest()
 const feoCollapse = useFeoCategoryCollapse()
+const kpiPrefs = useKpiPrefs()
 
 // N кандидатов на сворачивание — считается лениво при открытии субсидии
 // (задача 3), не на каждый рендер тулбара.

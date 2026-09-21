@@ -165,6 +165,11 @@ import { useFeoLevel5 } from '@/composables/subsidies/useFeoLevel5'
 import { useFeoUndoStack, handleFeoUndoKeydown } from '@/composables/subsidies/useFeoUndoStack'
 import { useFeoReqItems } from '@/composables/subsidies/useFeoReqItems'
 import { useFeoTreeSearch } from '@/composables/subsidies/useFeoTreeSearch'
+// Раздел C (план ancient-prancing-music.md, 21.09) — общий с дашбордом
+// переключатель «целиком/товары-услуги» (SubsidyKpiCards.vue); используется
+// здесь только чтобы решить, догружать ли ?type_split=true к /dashboard/charts
+// (Правило №6 — второго переключателя не заводим).
+import { useKpiPrefs } from '@/composables/useKpiPrefs'
 // Относительный путь (не '@/...'), т.к. tsconfig.app.json не содержит paths-маппинга
 // для алиаса '@' (Vite резолвит его сам через vite.config.ts, но чистый tsc/vue-tsc —
 // нет) — см. комментарий у остальных импортов типов в этом файле (не менялся волной 5c).
@@ -248,6 +253,8 @@ function showSnack(
 ) {
   toast.addToast(text, color, opts)
 }
+
+const kpiPrefs = useKpiPrefs()
 
 // ── Дерево ФЭО: composables (волна 5c) ─────────────────────────────────────
 // Порядок вызовов важен только для того, что нужно СРАЗУ (refs/computed) —
@@ -402,7 +409,11 @@ function kpiFolderClass(f: FeoPurchaseFolder): string {
 async function loadAll() {
   loading.value = true
   try {
-    const charts = await apiFetch<any>('/dashboard/charts?scope=managed')
+    // Раздел B/C (21.09): ?type_split=true — лениво, только когда переключатель
+    // уже стоит на «Товары и услуги» (persisted localStorage) — обычная загрузка
+    // не утяжеляется (Правило №6, тот же флаг, что и useDashboardData.ts).
+    const typeSplitQs = kpiPrefs.kpiTypeSplit.value === 'split' ? '&type_split=true' : ''
+    const charts = await apiFetch<any>(`/dashboard/charts?scope=managed${typeSplitQs}`)
     allSubsidies.value = charts.subsidy_stats.map((s: any) => ({
       id: s.id, name: s.name, year: s.year, budget: s.budget,
       calculated_budget: s.calculated_budget ?? 0,
@@ -421,6 +432,7 @@ async function loadAll() {
       contracts: s.total_contracts ?? 0,
       delivered: s.total_delivered ?? 0,
       delivered_unpaid: s.total_delivered_unpaid ?? 0,
+      widget: s.widget ?? null,
       ceiling_warn_percent: s.ceiling_warn_percent ?? 90,
       ceiling_total: s.ceiling_total ?? 0,
       ceiling_committed_total: s.ceiling_committed_total ?? 0,
@@ -486,7 +498,8 @@ const recentlyDeletedIds = new Set<number>()
 // мелкую правку включало `loading=true` и на миг размонтировало всю сетку.
 async function silentRefreshSubsidies() {
   try {
-    const charts = await apiFetch<any>('/dashboard/charts?scope=managed')
+    const typeSplitQs = kpiPrefs.kpiTypeSplit.value === 'split' ? '&type_split=true' : ''
+    const charts = await apiFetch<any>(`/dashboard/charts?scope=managed${typeSplitQs}`)
     const rows: any[] = charts.subsidy_stats || []
     let statusRows: Array<{ id: number; status?: string; created_by?: number | null; approved_by?: number | null; approved_at?: string | null }> = []
     try {
@@ -518,6 +531,7 @@ async function silentRefreshSubsidies() {
         contracts: s.total_contracts ?? 0,
         delivered: s.total_delivered ?? 0,
         delivered_unpaid: s.total_delivered_unpaid ?? 0,
+        widget: s.widget ?? null,
         ceiling_warn_percent: s.ceiling_warn_percent ?? 90,
         ceiling_total: s.ceiling_total ?? 0,
         ceiling_committed_total: s.ceiling_committed_total ?? 0,
@@ -547,6 +561,20 @@ async function silentRefreshSubsidies() {
     showSnack(e?.detail || e?.payload?.message || 'Не удалось обновить сводные данные субсидий (список актуален, суммы могут отставать)', 'error')
   }
 }
+
+// Раздел C (21.09): владелец включает «Товары и услуги» ПОСЛЕ первой загрузки
+// списка (обычный сценарий — pref не был persisted split при заходе на
+// вкладку) — widget уже в allSubsidies.value, но БЕЗ *_goods/_services/
+// _unspecified (загружен без ?type_split=true). Тихий refresh (без
+// loading=true — не моргает сеткой) один раз догружает split-поля; повторный
+// переключатель туда-обратно новых запросов не делает (проверка на уже
+// присутствующее поле у текущей выбранной субсидии).
+watch(() => kpiPrefs.kpiTypeSplit.value, (v) => {
+  if (v !== 'split') return
+  const s = selectedSubsidy.value ?? allSubsidies.value[0]
+  const hasSplit = s?.widget && Object.values(s.widget).some(w => Object.keys(w).some(k => k.endsWith('_goods')))
+  if (!hasSplit) silentRefreshSubsidies()
+})
 
 async function downloadFeoTemplate(subsidyId?: number, subsidyName?: string) {
   const token = localStorage.getItem('auth_token')

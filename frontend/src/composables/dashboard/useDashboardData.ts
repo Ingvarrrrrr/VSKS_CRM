@@ -1,9 +1,12 @@
 // Ядро данных дашборда: субсидии/закупки/виджеты с бэкенда + агрегаты + KPI-карточки.
 // Перенесено без изменений из DashboardView.vue при разбиении на модули.
-import { ref, computed, type Ref } from 'vue'
+import { ref, computed, watch, type Ref } from 'vue'
 import { apiFetch } from '@/api'
 import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 import { pct, truncate } from './dashboardFormat'
+import { useKpiPrefs } from '@/composables/useKpiPrefs'
+
+export interface TypeSplitAmounts { goods: number; services: number; unspecified: number }
 
 export interface WidgetMetric {
   amount: number
@@ -54,6 +57,28 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
   const widgetsData     = ref<WidgetsData | null>(null)
   const subsidiesNearCeiling = ref<CeilingWarningRow[]>([])
 
+  // ── Раздел B/C (план ancient-prancing-music.md, 21.09): товары/услуги по
+  // этапам — ленивая догрузка (?type_split=true), запрашивается ТОЛЬКО когда
+  // владелец включает переключатель «Товары и услуги» (kpiPrefs.kpiTypeSplit),
+  // чтобы не утяжелять обычный первый рендер дашборда. Данные приходят per-
+  // subsidy (subsidy_stats[].widget[stage][`${stage}_goods`] и т.п., см.
+  // app.services.dashboard_type_split) — единственный источник этих чисел,
+  // здесь только суммирование по выбранным субсидиям (та же схема фильтрации,
+  // что totalBudget/totalPlanSchedule ниже: filteredSubsidies по году +
+  // выбранным id, независимо от того, пуст ли selectedSubsidyIds).
+  const kpiPrefs = useKpiPrefs()
+  const typeSplitLoaded = ref(false)
+  const typeSplitLoading = ref(false)
+  const typeSplitSubsidyStats = ref<Record<number, any>>({})
+  // Глобальные widgets ИЗ type_split-ответа (chartsData.widgets, ТЕ ЖЕ 7 этапов,
+  // что effectiveWidgets читает без фильтра ниже) — нужны отдельно от
+  // typeSplitSubsidyStats: без выбранных субсидий «целиком» (effectiveWidgets)
+  // берёт widgetsData (весь видимый контур), а Σ по subsidy_stats — ТОЛЬКО по
+  // субсидиям, попавшим в этот список (бывают закупки вне него), из-за чего
+  // сумма строк по типу расходилась с «целиком» (приёмка 2026-09-21). Тот же
+  // источник, что и «целиком» без фильтра — не второй расчёт (Правило №6).
+  const typeSplitGlobalWidgets = ref<Record<string, any> | null>(null)
+
   const availableYears = computed(() =>
     [...new Set(allSubsidies.value.map(s => s.year))].sort((a, b) => b - a)
   )
@@ -68,6 +93,78 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
       res = res.filter(s => selectedSubsidyIds.value.includes(s.id))
     return res
   })
+
+  // Σ по типу для одного этапа (STAGE_KEYS бэкенда) по filteredSubsidies —
+  // ЕДИНСТВЕННАЯ функция суммирования типа (используется и card.split ниже,
+  // и «Бюджет»/«Свободно» — Правило №6, вызывается с разным picker'ом, не
+  // копируется). null, пока сами данные не загружены (ensureTypeSplitLoaded).
+  function sumTypeSplit(picker: (stat: any) => { g?: number; s?: number; u?: number } | null): TypeSplitAmounts | null {
+    if (!typeSplitLoaded.value) return null
+    let g = 0, s = 0, u = 0, found = false
+    for (const row of filteredSubsidies.value) {
+      const stat = typeSplitSubsidyStats.value[row.id]
+      if (!stat) continue
+      const v = picker(stat)
+      if (!v) continue
+      found = true
+      g += v.g || 0; s += v.s || 0; u += v.u || 0
+    }
+    return found ? { goods: g, services: s, unspecified: u } : null
+  }
+
+  function stageTypeSplit(stage: string): TypeSplitAmounts | null {
+    // Без выбранных субсидий «целиком» (kpiTarget_*) читает effectiveWidgets →
+    // widgetsData.value (ВЕСЬ видимый контур с бэкенда) — строки по типу ниже
+    // обязаны брать ТОТ ЖЕ глобальный источник (chartsData.widgets из
+    // type_split-ответа), а не Σ по subsidy_stats: последний не включает
+    // закупки без субсидии в списке — расхождение, найденное приёмкой.
+    if (selectedSubsidyIds.value.length === 0) {
+      if (!typeSplitLoaded.value) return null
+      const w = typeSplitGlobalWidgets.value?.[stage]
+      if (!w) return null
+      const g = w[`${stage}_goods`]
+      if (g === undefined) return null
+      return { goods: Number(g) || 0, services: Number(w[`${stage}_services`]) || 0, unspecified: Number(w[`${stage}_unspecified`]) || 0 }
+    }
+    return sumTypeSplit(stat => {
+      const w = stat.widget?.[stage]
+      if (!w) return null
+      return { g: w[`${stage}_goods`], s: w[`${stage}_services`], u: w[`${stage}_unspecified`] }
+    })
+  }
+
+  const budgetTypeSplit = computed<TypeSplitAmounts | null>(() =>
+    sumTypeSplit(stat => ({ g: stat.budget_goods, s: stat.budget_services, u: stat.budget_unspecified }))
+  )
+  const plannedTypeSplit = computed<TypeSplitAmounts | null>(() =>
+    sumTypeSplit(stat => ({ g: stat.planned_goods, s: stat.planned_services, u: stat.planned_unspecified }))
+  )
+  // «Свободно/Превышение» по типам = ФЭО по типу − план по типу (тот же смысл,
+  // что и общая freeRaw = totalBudget − totalPlanSchedule ниже, разложенный по типу).
+  const freeTypeSplit = computed<TypeSplitAmounts | null>(() => {
+    const b = budgetTypeSplit.value, p = plannedTypeSplit.value
+    if (!b || !p) return null
+    return { goods: b.goods - p.goods, services: b.services - p.services, unspecified: b.unspecified - p.unspecified }
+  })
+
+  async function ensureTypeSplitLoaded() {
+    if (typeSplitLoaded.value || typeSplitLoading.value) return
+    typeSplitLoading.value = true
+    try {
+      const chartsData = await apiFetch<any>('/dashboard/charts?scope=dashboard&type_split=true')
+      const map: Record<number, any> = {}
+      for (const s of chartsData.subsidy_stats || []) map[s.id] = s
+      typeSplitSubsidyStats.value = map
+      typeSplitGlobalWidgets.value = chartsData.widgets ?? null
+      typeSplitLoaded.value = true
+    } catch (e) {
+      console.error('Dashboard type-split load error:', e)
+    } finally {
+      typeSplitLoading.value = false
+    }
+  }
+
+  watch(kpiPrefs.kpiTypeSplit, (v) => { if (v === 'split') ensureTypeSplitLoaded() }, { immediate: true })
 
   // Recent purchases filtered to selected subsidies
   const recentPurchases = computed(() => {
@@ -150,6 +247,7 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         tooltip: 'суммарный бюджет по дереву ФЭО выбранных субсидий',
         monthly: null,
         over: undefined as boolean | undefined,
+        split: budgetTypeSplit.value,
       },
       {
         key: 'plan_schedule',
@@ -161,6 +259,7 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         tooltip: 'включает все последующие этапы',
         monthly: null,
         over: undefined as boolean | undefined,
+        split: stageTypeSplit('plan_schedule'),
       },
       {
         key: 'work',
@@ -172,6 +271,7 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         tooltip: 'включает заказанные, поставленные и оплаченные',
         monthly: null,
         over: undefined as boolean | undefined,
+        split: stageTypeSplit('work'),
       },
       {
         key: 'ordered',
@@ -185,6 +285,7 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
           ? w!.ordered.monthly_payments_total!
           : null,
         over: undefined as boolean | undefined,
+        split: stageTypeSplit('ordered'),
       },
       {
         key: 'contracts',
@@ -196,6 +297,7 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         tooltip: 'суммарная стоимость заключённых договоров',
         monthly: null,
         over: undefined as boolean | undefined,
+        split: stageTypeSplit('contracts'),
       },
       {
         key: 'delivered',
@@ -207,6 +309,7 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         tooltip: 'включает оплаченные',
         monthly: null,
         over: undefined as boolean | undefined,
+        split: stageTypeSplit('delivered'),
       },
       {
         key: 'delivered_unpaid',
@@ -215,6 +318,7 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         amount: kpiAnim_delivered_unpaid.value,
         count: w?.delivered_unpaid.count ?? 0,
         countLabel: 'закупок',
+        split: stageTypeSplit('delivered_unpaid'),
         tooltip: 'поставлено, но оплата ещё не прошла',
         monthly: null,
         over: undefined as boolean | undefined,
@@ -229,6 +333,7 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         tooltip: null,
         monthly: null,
         over: undefined as boolean | undefined,
+        split: stageTypeSplit('paid'),
       },
       {
         key: 'free',
@@ -240,6 +345,7 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         tooltip: 'бюджет минус запланировано',
         monthly: null,
         over: freeRaw < 0,
+        split: freeTypeSplit.value,
       },
     ]
   })
@@ -293,7 +399,7 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
       // Set default year to most recent available
       const years = [...new Set(allSubsidies.value.map((s: SubsidyRow) => s.year))].sort((a, b) => b - a)
       if (years.length > 0 && !years.includes(selectedYear.value)) {
-        selectedYear.value = years[0]
+        selectedYear.value = years[0]!
       }
     } catch (e) {
       console.error('Dashboard load error:', e)

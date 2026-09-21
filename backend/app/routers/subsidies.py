@@ -188,16 +188,16 @@ async def _calculate_feo_planned_tree_bulk(
     формулу MAX(план, выбрано)+сверх_план на фронте, см. docstring там).
 
     type_split=False (умолчание, ВСЕ существующие вызовы) — возвращает РОВНО ТО
-    ЖЕ, что и раньше: dict[int, float] planned_tree, байт-в-байт (это остаётся
-    ОТДЕЛЬНОЙ величиной от «плана по типам» ниже — см. её докстринг: planned_tree
-    = MAX(план, выбрано)+сверх_план дерева, а plan_goods/services/unspecified =
-    Σ FeoPlannedItem.amount по типу — разные формулы, разное число).
+    ЖЕ, что и раньше: dict[int, float] planned_tree, байт-в-байт.
 
     type_split=True (план ancient-prancing-music.md, раздел B/2) — возвращает
     dict[int, dict] с ключом "planned_tree" (то самое прежнее число) плюс
     plan_goods/plan_services/plan_unspecified/feo_goods/feo_services/
     feo_unspecified из app.services.type_totals.subsidy_type_totals (единственный
-    источник «плана/ФЭО по типам», не вторая копия — см. её докстринг)."""
+    источник «плана/ФЭО по типам», не вторая копия — см. её докстринг).
+    Начиная с исправления 2026-09-21 plan_goods+plan_services+plan_unspecified
+    == planned_tree (±0.01) — обе величины читаются из ОДНОГО дерева
+    (compute_feo_plan_tree), это больше не «разные формулы, разное число»."""
     if not subsidy_ids:
         return {}
     from app.services.feo_plan import feo_plan_subsidy_totals

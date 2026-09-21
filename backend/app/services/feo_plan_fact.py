@@ -209,7 +209,8 @@ async def plan_consumption_by_category(
     exclude_purchase_id: Optional[int] = None,
     exclude_wish_id: Optional[int] = None,
 ) -> dict[int, dict]:
-    """{feo_category_id: {consumed, consumed_quantity, over, over_quantity}}
+    """{feo_category_id: {consumed, consumed_quantity, over, over_quantity,
+    over_goods, over_services, over_unspecified}}
 
     Суммы позиций закупок в PLANNED_STATUSES, отнесённых к конечному элементу
     дерева ФЭО (COALESCE(PurchaseItem.feo_category_id, Purchase.feo_category_id)),
@@ -255,6 +256,15 @@ async def plan_consumption_by_category(
     флага/рассинхрона категорий — невалидная привязка теперь равнозначна её
     отсутствию для целей ЭТОЙ суммы (сама привязка feo_planned_item_id при этом не
     трогается, только формула consumed/over).
+
+    over_goods/over_services/over_unspecified (план ancient-prancing-music.md,
+    раздел E2 продолжение, 2026-09-21 — исправление расхождения «план по типу
+    ≠ план дерева»): ТА ЖЕ выборка over_plan=true, разложенная по
+    kind_of(PurchaseItem.item_type) (ПРАВИЛО №6 — единственный источник типа
+    позиции закупки, см. fact_consumption_by_category). compute_feo_plan_tree
+    прибавляет `over` к `plan` БЕЗУСЛОВНО (см. её docstring) — типовой split
+    узла (plan_goods/services/unspecified) обязан прибавлять тот же `over`,
+    разложенный по типу, а не терять его (см. _over_by_kind в feo_plan_tree.py).
     """
     result: dict[int, dict] = {}
     if not subsidy_ids:
@@ -262,6 +272,7 @@ async def plan_consumption_by_category(
 
     from app.routers.purchase_budget import PLANNED_STATUSES  # local: avoid router import cycle
     from app.models.feo_planned_item import FeoPlannedItem
+    from app.services.item_type_split import kind_of  # локальный импорт — см. докстринг наверху файла
     from sqlalchemy.orm import aliased
 
     # Задача владельца «план ≠ факт» (шаг B, сессия 2026-08-06): суммируем СНИМОК
@@ -279,6 +290,7 @@ async def plan_consumption_by_category(
         select(
             cat_col.label("cat_id"),
             PurchaseItem.over_plan,
+            PurchaseItem.item_type,
             func.coalesce(func.sum(amount_expr), 0).label("amount"),
             func.coalesce(func.sum(qty_expr), 0).label("qty"),
         )
@@ -289,7 +301,7 @@ async def plan_consumption_by_category(
         .where(Purchase.stopped_at.is_(None))
         .where(FeoCategory.subsidy_id.in_(subsidy_ids))
         .where(Purchase.subsidy_id == FeoCategory.subsidy_id)
-        .group_by(cat_col, PurchaseItem.over_plan)
+        .group_by(cat_col, PurchaseItem.over_plan, PurchaseItem.item_type)
     )
     if exclude_planned_item_linked:
         # Исключаем (считаем «уже учтено своей плановой строкой») ТОЛЬКО строки с
@@ -314,10 +326,12 @@ async def plan_consumption_by_category(
         d = result.setdefault(r.cat_id, {
             "consumed": 0.0, "consumed_quantity": 0.0,
             "over": 0.0, "over_quantity": 0.0,
+            "over_goods": 0.0, "over_services": 0.0, "over_unspecified": 0.0,
         })
         if r.over_plan:
             d["over"] += float(r.amount)
             d["over_quantity"] += float(r.qty)
+            d[f"over_{kind_of(r.item_type)}"] += float(r.amount)
         else:
             d["consumed"] += float(r.amount)
             d["consumed_quantity"] += float(r.qty)
@@ -393,7 +407,8 @@ async def ordered_consumption_by_category(
     subsidy_ids: list[int],
     exclude_planned_item_linked: bool = False,
 ) -> dict[int, dict]:
-    """{feo_category_id: {ordered, ordered_quantity}} — ФАКТИЧЕСКАЯ сумма и
+    """{feo_category_id: {ordered, ordered_quantity, ordered_goods,
+    ordered_services, ordered_unspecified}} — ФАКТИЧЕСКАЯ сумма и
     количество позиций закупок в статусах «Заказано»/«Поставлено»/«Оплачено»
     (ORDERED_STATUSES), отнесённых к конечному элементу дерева ФЭО (COALESCE
     (PurchaseItem.feo_category_id, Purchase.feo_category_id)), по правилам
@@ -468,6 +483,8 @@ async def ordered_consumption_by_category(
     # по source_item_id, предзапрошено одним батчем на все позиции выборки.
     contract_totals = await _contract_item_totals(db, (r.PurchaseItem.id for r in rows))
 
+    from app.services.item_type_split import kind_of  # локальный импорт — см. докстринг наверху файла
+
     for r in rows:
         pi = r.PurchaseItem
         p = r.Purchase
@@ -484,9 +501,19 @@ async def ordered_consumption_by_category(
         )
         if fact_amount is None:
             continue
-        d = result.setdefault(r.cat_id, {"ordered": 0.0, "ordered_quantity": 0.0})
+        d = result.setdefault(r.cat_id, {
+            "ordered": 0.0, "ordered_quantity": 0.0,
+            "ordered_goods": 0.0, "ordered_services": 0.0, "ordered_unspecified": 0.0,
+        })
         d["ordered"] += float(fact_amount)
         d["ordered_quantity"] += float(pi.quantity or 0)
+        # Раздел E2 продолжение (2026-09-21) — тот же приём, что и fact_goods/
+        # services/unspecified в fact_consumption_by_category ниже: ordered
+        # split нужен compute_feo_plan_tree._own_qty_and_ordered, чтобы типовой
+        # план узла (plan_goods/services/unspecified) при полностью набранном
+        # заказе (order-substitution) замещался ТЕМИ ЖЕ типизированными
+        # суммами, а не терял разбивку по типу.
+        d[f"ordered_{kind_of(pi.item_type)}"] += float(fact_amount)
     return result
 
 

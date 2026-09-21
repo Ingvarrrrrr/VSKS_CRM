@@ -190,3 +190,36 @@ class TestDashboardChartsTypeSplit:
         for key in ("budget_goods", "budget_services", "budget_unspecified",
                     "planned_goods", "planned_services", "planned_unspecified"):
             assert key in row
+
+    async def test_subsidy_without_tree_puts_fallback_budget_in_unspecified(self, client, superadmin_headers, db_session):
+        """Исправление 2026-09-21 (боевой замер, субсидия «Тестовая» id 59):
+        субсидия БЕЗ единой FeoCategory — compute_feo_plan_tree не возвращает
+        ни одного узла, split (budget_goods/services/unspecified) у неё 0 по
+        построению. Но effective_budget (карточка «Бюджет (ФЭО)») в этом
+        случае берёт fallback — subsidies.budget (calculate_budgets_bulk дал
+        0, дерева нет) — а не 0. Fallback типа не имеет -> целиком в
+        budget_unspecified, иначе Σ(goods+services+unspecified) разойдётся с
+        feo_budget_total (100000 vs 0)."""
+        from app.models.subsidy import Subsidy
+        subsidy = Subsidy(
+            name=f"NoTreeSubsidy-{uuid.uuid4().hex[:8]}", year=2026,
+            require_planned_dates=False, budget=Decimal("100000"),
+        )
+        db_session.add(subsidy)
+        await db_session.commit()
+        await db_session.refresh(subsidy)
+
+        resp = await client.get(
+            "/api/dashboard/charts", params={"scope": "dashboard", "type_split": "true"},
+            headers=superadmin_headers,
+        )
+        assert resp.status_code == 200
+        row = _find_subsidy_row(resp.json(), subsidy.id)
+
+        assert row["feo_filled"] is False, "дерева нет -> calculate_budgets_bulk дал 0 -> fallback"
+        assert row["feo_budget_total"] == pytest.approx(100_000.0)
+        assert row["budget_goods"] == pytest.approx(0.0)
+        assert row["budget_services"] == pytest.approx(0.0)
+        assert row["budget_unspecified"] == pytest.approx(100_000.0)
+        split_sum = row["budget_goods"] + row["budget_services"] + row["budget_unspecified"]
+        assert split_sum == pytest.approx(row["feo_budget_total"]), "Правило №6: split обязан суммироваться в scalar"

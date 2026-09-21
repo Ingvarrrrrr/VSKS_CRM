@@ -29,8 +29,17 @@ interface FeoTreeAmountsCtx {
 
 let _api: ReturnType<typeof buildFeoTreeAmounts> | null = null
 
-export function useFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
-  if (!_api) _api = buildFeoTreeAmounts(ctx)
+// ctx необязателен НАЧИНАЯ СО ВТОРОГО вызова (раздел C0, план ancient-prancing-
+// music.md, 2026-09-21) — тот же паттерн, что и useFeoTreeExcess.ts/
+// useFeoLevel5Api(): FeoTreeRow.vue вызывает БЕЗ аргумента, чтобы достать
+// feoTypeSplitFor/planTypeSplitFor/remainingTypeSplitFor напрямую, не проходя
+// через ctx (SubsidyDetailContext собирается в SubsidiesView.vue — файл вне
+// этой задачи, см. докстринг useFeoLevel5Api() в FeoLevel5Panel.vue).
+export function useFeoTreeAmounts(ctx?: FeoTreeAmountsCtx) {
+  if (!_api) {
+    if (!ctx) throw new Error('useFeoTreeAmounts() вызван до первого построения (нужен ctx) — проверьте порядок монтирования SubsidiesView.vue')
+    _api = buildFeoTreeAmounts(ctx)
+  }
   return _api
 }
 
@@ -290,18 +299,27 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
     return node.children.reduce((acc, child) => acc + feoAmtFor(child), 0)
   }
 
+  // ИСПРАВЛЕНИЕ (расследование «Запланировано 75 896 105 vs 101 415 814,62»,
+  // субсидия 46 «ЦентрПоиск_2026», 2026-09-21): раньше эта функция САМА
+  // пересчитывала «ручной план» узла — для листа qty×unitPrice старых полей
+  // FeoCategory.planned_quantity/planned_amount с фолбэком на
+  // planTreeByCat.plan_manual, для узла с детьми — ТОЛЬКО Σ детей, БЕЗ
+  // собственного plan_manual узла. Это была ВТОРАЯ, более старая формула
+  // (Правило №6): backend/app/services/feo_plan_tree.py::compute_feo_plan_tree
+  // уже считает plan_manual КАЖДОГО узла (и листа, и группы) — для листа Σ
+  // активных FeoPlannedItem (те самые старые поля FeoCategory давно не
+  // участвуют в сумме, см. её докстринг), для группы Σ plan_manual детей ПЛЮС
+  // собственные FeoPlannedItem, заведённые прямо на направлении (ФОРМУЛА v3,
+  // сессия 2026-08-12, «направление со временем может наполниться»). Клиент
+  // эту v3-часть никогда не пересчитывал — на «ЦентрПоиск_2026» 9 направлений
+  // с собственным планом (Σ 25 519 709,48) выпадали из карточки KPI
+  // «Запланировано» (selectedPlannedTotal ниже), хотя ИТОГО дерева (через
+  // feoPlannedDisplayRaw → planTreeByCat.display) их уже показывало —
+  // карточка и ИТОГО расходились. Теперь функция просто ЧИТАЕТ готовое
+  // plan_manual с бэкенда для ЛЮБОГО узла (тот же приём, что и
+  // feoPlannedDisplayRaw/feoQtyDisplayRaw ниже) — второй формулы больше нет.
   function feoPlannedTotalFor(node: FeoNode): number {
-    if (node.hasChildren) {
-      return node.children.reduce((acc, child) => acc + feoPlannedTotalFor(child), 0)
-    }
-    const qty = node.planned_quantity != null ? Number(node.planned_quantity) : 0
-    const unitPrice = node.planned_amount != null ? Number(node.planned_amount) : 0
-    if (qty > 0 && unitPrice > 0) return qty * unitPrice
-    if (node.planned_quantity == null && node.planned_amount == null) {
-      const t = planTreeByCat.value[node.id]
-      if (t && t.plan_manual != null) return Number(t.plan_manual)
-    }
-    return 0
+    return Number(planTreeByCat.value[node.id]?.plan_manual || 0)
   }
 
   function feoPlannedRequestsFor(node: FeoNode): number {
@@ -456,9 +474,21 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
     if (feoTree.value.length) return totalFeoEffective.value
     return selectedSubsidy.value.feo_budget_total || selectedSubsidy.value.budget || 0
   })
+  // ИСПРАВЛЕНИЕ (то же расследование, что и у feoPlannedTotalFor выше, 2026-09-21):
+  // КПИ-карточка «Запланировано» (SubsidyKpiCards.vue::kpiSubTarget_plan_schedule)
+  // и «Свободно»/«Превышение» (selectedBudget − это) читали ЭТУ сумму — раньше
+  // feoPlannedTotalFor(r) + feoPlannedRequestsFor(r), третья формула плановой суммы
+  // параллельно ИТОГО дерева (FeoTreeTable.vue, Σ feoPlannedDisplayFor) и дашборду
+  // (_calculate_feo_planned_tree_bulk). Правило №6 — один показатель, один источник:
+  // backend/app/services/feo_plan_tree.py::compute_feo_plan_tree сам документирует
+  // (docstring _calculate_feo_planned_tree_bulk, subsidies.py), что его planned_tree
+  // «Совпадает с тем, что показывает панель ФЭО... feoPlannedDisplayFor(root)... режим
+  // 'all'» — то есть feoPlannedDisplayFor(root) уже ЯВЛЯЕТСЯ контрактом с дашбордом,
+  // его и переиспользуем здесь вместо повторной сборки той же суммы другим способом.
+  // Теперь карточка, ИТОГО дерева и дашборд читают ровно одну формулу.
   const selectedPlannedTotal = computed(() => {
     if (feoTree.value.length) {
-      return feoTree.value.reduce((acc, r) => acc + feoPlannedTotalFor(r) + feoPlannedRequestsFor(r), 0)
+      return feoTree.value.reduce((acc, r) => acc + feoPlannedDisplayFor(r), 0)
     }
     return selectedSubsidy.value?.planned || 0
   })
@@ -480,6 +510,42 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
     return Number(planTreeByCat.value[categoryId]?.plan_manual || 0)
   }
 
+  // ── Раздел C0 (план ancient-prancing-music.md, 2026-09-21): «товары/услуги» —
+  // читают ГОТОВЫЕ поля узла plan_tree (compute_feo_plan_tree, backend/app/
+  // services/feo_plan_tree.py), ничего не пересчитывают (Правило №6 — та же
+  // Σ, что и excess-контроли useFeoTreeExcess.ts::typeExcessFor). null — нечего
+  // показать (все три доли нулевые), чтобы FeoTreeRow.vue не рисовал пустую
+  // строку «товары 0 ₽ · услуги 0 ₽».
+  type TypeSplit = { goods: number; services: number; unspecified: number }
+  function nodeTypeSplit(node: FeoNode, prefix: 'plan' | 'feo' | 'fact'): TypeSplit | null {
+    const t = planTreeByCat.value[node.id] as any
+    const goods = Number(t?.[`${prefix}_goods`] || 0)
+    const services = Number(t?.[`${prefix}_services`] || 0)
+    const unspecified = Number(t?.[`${prefix}_unspecified`] || 0)
+    if (Math.abs(goods) <= 0.005 && Math.abs(services) <= 0.005 && Math.abs(unspecified) <= 0.005) return null
+    return { goods, services, unspecified }
+  }
+  function planTypeSplitFor(node: FeoNode): TypeSplit | null {
+    return nodeTypeSplit(node, 'plan')
+  }
+  function feoTypeSplitFor(node: FeoNode): TypeSplit | null {
+    return nodeTypeSplit(node, 'feo')
+  }
+  // Остаток по типам = ФЭО по типу − план по типу (владелец, раздел C0) — НЕ
+  // тот же переключатель «от плановой/от ФЭО», что у общей колонки «Остаток»
+  // (residualBase выше) — по типам он один, зафиксированная формула. Не может
+  // вернуться null «отсутствия» — 0−0=0 тоже валидный остаток (в отличие от
+  // planTypeSplitFor/feoTypeSplitFor, где null значит «нечего показать»).
+  function remainingTypeSplitFor(node: FeoNode): TypeSplit {
+    const feo = feoTypeSplitFor(node) || { goods: 0, services: 0, unspecified: 0 }
+    const plan = planTypeSplitFor(node) || { goods: 0, services: 0, unspecified: 0 }
+    return {
+      goods: feo.goods - plan.goods,
+      services: feo.services - plan.services,
+      unspecified: feo.unspecified - plan.unspecified,
+    }
+  }
+
   return {
     residualBase,
     feoBudgetFor, feoEffectiveFor, manualChildFeoSum, hasManualChildFeo, isAutoNode, feoRollup,
@@ -496,6 +562,8 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
     setMatchedReqFns,
     totalFeoBudget, totalFeoEffective, totalFeoDiff, totalFeoPurchased, totalFeoInPlanSchedule,
     selectedBudget, selectedPlannedTotal, syncFeoFilled, getFeoPlanManual,
+    // Раздел C0 — «товары/услуги» по узлу (см. докстринги функций выше).
+    planTypeSplitFor, feoTypeSplitFor, remainingTypeSplitFor,
   }
 }
 

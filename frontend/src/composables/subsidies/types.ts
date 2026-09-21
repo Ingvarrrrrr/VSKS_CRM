@@ -30,6 +30,17 @@ export interface SubsidyRow {
   contracts: number
   delivered: number
   delivered_unpaid: number
+  // Раздел B/C (план ancient-prancing-music.md, 21.09): та же накопительная
+  // корзина закупок, что и work/ordered/contracts/delivered/delivered_unpaid/
+  // paid выше, но по стадиям (`${stage}_amount` = w.amount и т.п.) плюс
+  // ОПЦИОНАЛЬНАЯ разбивка по типу `${stage}_goods/_services/_unspecified`
+  // (app.services.dashboard_type_split) — приходит ТОЛЬКО когда
+  // /dashboard/charts запрошен с ?type_split=true (SubsidiesView.vue,
+  // лениво, см. её докстринг). Тот же формат, что WidgetsData/WidgetMetric в
+  // composables/dashboard/useDashboardData.ts — не дублируем тип 1:1 здесь
+  // (там завязан на 7 конкретных ключей верхнего уровня), SubsidyKpiCards.vue
+  // читает по строковому ключу этапа.
+  widget?: Record<string, { amount: number; count: number } & Record<string, number>> | null
   // Владелец (2026-08-30): предупреждение «сумма заказанного приближается к
   // потолку субсидии» — см. app/services/feo_plan.py calculate_ceiling_forecast*.
   ceiling_warn_percent?: number | null
@@ -351,6 +362,30 @@ export interface PlanTreeEntry {
   excess_approval_plan_after?: number | null
   plan_source?: 'planned_items' | 'manual_sum'
   manual_plan_amount?: number | null
+  // Раздел E1 (план ancient-prancing-music.md, 2026-09-21) — «товары/услуги»
+  // на КАЖДОМ узле дерева (compute_feo_plan_tree, backend/app/services/
+  // feo_plan_tree.py:1091-1099): goods+services+unspecified == соответствующему
+  // итогу узла (plan/budget-эквивалент/fact) — тест test_feo_plan_tree_type_split.py.
+  plan_goods?: number; plan_services?: number; plan_unspecified?: number
+  feo_goods?: number; feo_services?: number; feo_unspecified?: number
+  fact_goods?: number; fact_services?: number; fact_unspecified?: number
+  // Раздел E2 — 4 НЕЗАВИСИМЫХ контроля превышения по типу (kind — см.
+  // TypeExcessKind ниже), каждый со своим amount/pending/approved. НЕ имеют
+  // legacy-фолбэка (backend/app/services/feo_plan_tree.py::_exact_kind_appr) —
+  // независимы и от старых трёх видов (excess_amount и т.п. выше), и друг от
+  // друга (одобрение goods не гасит services).
+  excess_plan_over_feo_goods?: number
+  excess_plan_over_feo_goods_pending?: boolean
+  excess_plan_over_feo_goods_approved?: boolean
+  excess_plan_over_feo_services?: number
+  excess_plan_over_feo_services_pending?: boolean
+  excess_plan_over_feo_services_approved?: boolean
+  excess_fact_over_plan_goods?: number
+  excess_fact_over_plan_goods_pending?: boolean
+  excess_fact_over_plan_goods_approved?: boolean
+  excess_fact_over_plan_services?: number
+  excess_fact_over_plan_services_pending?: boolean
+  excess_fact_over_plan_services_approved?: boolean
 }
 export interface PlanExcessStep {
   id: number; approval_id: number; user_id: number | null; order_num: number
@@ -358,7 +393,19 @@ export interface PlanExcessStep {
   comment: string | null; decided_at: string | null; decided_by_user_id: number | null
 }
 export interface PlanExcessApprovalDto {
-  id: number; feo_category_id: number; subsidy_id: number
+  id: number
+  // Владелец, задача 2026-09-21 (раздел D): уровень «субсидия целиком» —
+  // feo_category_id=null (см. app.services.plan_excess_kinds.level_for_category_id,
+  // backend/app/routers/plan_excess.py::_approval_dict). Раньше поле было ВСЕГДА
+  // числом — старые три вида (kind='over_feo'/'fact_over_plan'/'plan_over_manual')
+  // остаются category-only, только новые 4 вида по типу умеют уровень 'subsidy'.
+  feo_category_id: number | null
+  subsidy_id: number
+  // kind/kind_label/level — единственный источник подписей
+  // app.services.plan_excess_kinds (ПРАВИЛО №6). level — 'category' | 'subsidy'.
+  kind?: string
+  kind_label?: string
+  level?: 'category' | 'subsidy'
   excess_amount: number; plan_amount: number | null; budget_amount: number | null
   status: string; mode: string; requested_by_id: number | null
   created_at: string | null; resolved_at: string | null; comment: string | null
@@ -366,6 +413,38 @@ export interface PlanExcessApprovalDto {
   self_approval?: boolean; warning?: string | null
   can_decide?: boolean
 }
+
+// ── Раздел E (план ancient-prancing-music.md, 2026-09-21): контроли
+// превышения ПО ТИПУ (товары/услуги) — 4 вида, НЕЗАВИСИМЫЕ от старых трёх
+// (excess_amount/excess_fact_over_plan/excess_plan_over_manual) и друг от
+// друга; каждый — на ДВУХ уровнях (category/subsidy). Единственный источник
+// констант на фронте — composables/subsidies/useFeoTreeExcess.ts::
+// TYPE_EXCESS_KIND_DEFS (Правило №6), сюда вынесен только тип значений.
+export type TypeExcessKind =
+  | 'plan_over_feo_goods' | 'plan_over_feo_services'
+  | 'fact_over_plan_goods' | 'fact_over_plan_services'
+
+export interface TypeExcessInfo {
+  amount: number
+  pending: boolean
+  approved: boolean
+  approval: PlanExcessApprovalDto | null
+}
+
+// Раздел E1 — итог по СУБСИДИИ целиком (GET /api/feo-categories/plan-tree,
+// ключи "subsidy_type_totals"/"subsidy_type_excess" — см. backend/app/services/
+// feo_plan_tree.py::compute_subsidy_type_summary и backend/app/routers/
+// feo_plan_reads_tree.py:205-210). Composables/subsidies/useFeoTreeState.ts
+// (splitPlanTree) НЕ фильтрует эти два строковых ключа из planTreeByCat — они
+// проезжают в ЕЁ Record<number,...> нетронутыми (объявленный тип — компромисс,
+// см. докстринг splitPlanTree), useFeoTreeExcess.ts читает их оттуда же по
+// строковому ключу (единственное место с этим кастом, не копировать).
+export interface SubsidyTypeTotals {
+  plan_goods: number; plan_services: number; plan_unspecified: number
+  feo_goods: number; feo_services: number; feo_unspecified: number
+  fact_goods: number; fact_services: number; fact_unspecified: number
+}
+export type SubsidyTypeExcess = Record<TypeExcessKind, { amount: number; pending: boolean; approved: boolean }>
 
 // ── Дерево ФЭО: настройки отображения (localStorage), персистятся useFeoTreePrefs.ts ──
 export interface FeoDisplayPrefs {

@@ -358,6 +358,100 @@ async def _notify_plan_excess_decision(
         logger.warning("notify plan-excess decision failed: %s", e)
 
 
+# Задача владельца (2026-09-21, ручной запрос по 4 новым видам товары/услуги):
+# эти виды НЕ входят в старую тройку (over_feo/fact_over_plan/plan_over_manual)
+# и умеют жить на уровне субсидии целиком (feo_category_id=None) — обрабатываются
+# отдельной веткой _request_type_excess_approval ДО разбора feo_category_id
+# старой веткой (которая требует feo_category_id всегда).
+_TYPE_SPLIT_KINDS = (
+    PEK.PLAN_OVER_FEO_GOODS, PEK.PLAN_OVER_FEO_SERVICES,
+    PEK.FACT_OVER_PLAN_GOODS, PEK.FACT_OVER_PLAN_SERVICES,
+)
+
+
+async def _request_type_excess_approval(
+    body: dict, kind: str, db: AsyncSession, current_user: User,
+) -> dict:
+    """Ручной запрос согласования по одному из 4 НОВЫХ видов превышения
+    (товары/услуги, план 2026-09-21) — на уровне категории ФЭО
+    (feo_category_id задан) либо субсидии целиком (feo_category_id
+    отсутствует/None + передан subsidy_id).
+
+    ПРАВИЛО №6: суммы превышения и сама регистрация записи PlanExcessApproval
+    НЕ считаются здесь заново — переиспользуются
+    app.services.type_excess_approval.collect_type_excess_violations (тот же
+    источник сумм, что и compute_feo_plan_tree/compute_subsidy_type_summary)
+    и .register_type_excess_approvals (та же функция, которой эти виды
+    регистрируются автоматически из purchases.py/wish_convert.py/
+    wish_distribution.py, включая переиспользование pending-записи и
+    уведомления согласующих)."""
+    from app.services.type_excess_approval import (
+        collect_type_excess_violations, register_type_excess_approvals,
+    )
+
+    raw_cat_id = body.get("feo_category_id")
+    feo_category_id = int(raw_cat_id) if raw_cat_id not in (None, "") else None
+
+    cat: FeoCategory | None = None
+    if feo_category_id is not None:
+        cat = await db.get(FeoCategory, feo_category_id)
+        if cat is None:
+            raise HTTPException(404, "Категория ФЭО не найдена")
+        subsidy_id = cat.subsidy_id
+        category_ids = [feo_category_id]
+        expected_level = PEK.LEVEL_CATEGORY
+    else:
+        raw_subsidy_id = body.get("subsidy_id")
+        if not raw_subsidy_id:
+            raise HTTPException(
+                422,
+                "Для согласования на уровне субсидии обязателен subsidy_id "
+                "(feo_category_id не задан)",
+            )
+        subsidy_id = int(raw_subsidy_id)
+        category_ids = []
+        expected_level = PEK.LEVEL_SUBSIDY
+
+    subsidy = await db.get(Subsidy, subsidy_id)
+    if subsidy is None:
+        raise HTTPException(404, "Субсидия не найдена")
+
+    violations = await collect_type_excess_violations(db, subsidy_id, category_ids)
+    violation = next(
+        (
+            v for v in violations
+            if v["kind"] == kind and v["level"] == expected_level
+            and v.get("feo_category_id") == feo_category_id
+        ),
+        None,
+    )
+    if violation is None:
+        scope_txt = (
+            f"по категории ФЭО «{cat.name}»" if cat is not None
+            else f"по субсидии «{subsidy.name}» целиком"
+        )
+        raise HTTPException(
+            409,
+            f"Превышения вида «{PEK.kind_label(kind)}» {scope_txt} нет.",
+        )
+
+    registered = await register_type_excess_approvals(
+        db, [violation], subsidy_id=subsidy_id, current_user=current_user,
+        context_label="ручной запрос согласования",
+    )
+    await db.commit()
+
+    resp = registered[0]
+    resp["warning"] = None
+    resp["self_approval"] = False
+    # Та же тройка полей, что и у старых видов (over_feo/fact_over_plan/
+    # plan_over_manual) в ответе ниже — фронт не должен различать источник.
+    resp["excess_kind"] = kind
+    resp["excess_kind_label"] = PEK.kind_label(kind)
+    resp["excess_description"] = violation["message"]
+    return resp
+
+
 # ── POST request ──────────────────────────────────────────────────────────────
 
 @router.post("", status_code=201)
@@ -369,7 +463,17 @@ async def request_plan_excess_approval(
     """Запросить согласование превышения плана по узлу ФЭО. body:
     {feo_category_id, mode?}. Кому направить запрос решает НЕ автор (никакого
     top_user_id) — цепочка строится из уполномоченных, см.
-    _authorized_plan_excess_approvers."""
+    _authorized_plan_excess_approvers.
+
+    body.get("kind") ∈ _TYPE_SPLIT_KINDS (новые виды товары/услуги, задача
+    владельца 2026-09-21) обрабатывается ОТДЕЛЬНОЙ веткой
+    _request_type_excess_approval — эти виды умеют жить на уровне субсидии
+    целиком (feo_category_id=None), поэтому разбираются ДО обязательной
+    проверки feo_category_id ниже (которая касается только старой тройки
+    over_feo/fact_over_plan/plan_over_manual)."""
+    if body.get("kind") in _TYPE_SPLIT_KINDS:
+        return await _request_type_excess_approval(body, body.get("kind"), db, current_user)
+
     feo_category_id = int(body.get("feo_category_id", 0))
     if not feo_category_id:
         raise HTTPException(422, "feo_category_id обязателен")
@@ -632,6 +736,11 @@ async def decide_plan_excess_step(
     subsidy = await db.get(Subsidy, approval.subsidy_id)
     if subsidy is None:
         raise HTTPException(404, "Субсидия не найдена")
+    # Захватываем имя субсидии ДО commit — после commit объект `subsidy`
+    # протухает (expired), а обращение к его атрибуту в async-сессии вне
+    # greenlet роняет MissingGreenlet (см. соседние комментарии про
+    # load_purchase_for_out); нужна только строка для cat_name ниже.
+    subsidy_name_for_decide = subsidy.name
 
     # Владелец (2026-08-29): «превышение не может согласовывать любой из цепочки
     # согласования… только определённые люди — например, только владельцы или
@@ -679,8 +788,15 @@ async def decide_plan_excess_step(
     await db.commit()
     full = await _load_approval(approval_id, db)
 
-    cat = await db.get(FeoCategory, full.feo_category_id)
-    cat_name = cat.name if cat else f"категория №{full.feo_category_id}"
+    # Задача владельца 2026-09-21: записи новых видов (товары/услуги) могут
+    # жить на уровне субсидии целиком (feo_category_id=None, см.
+    # PEK.level_for_category_id) — db.get(FeoCategory, None) валится, поэтому
+    # уровень определяем ДО обращения к FeoCategory.
+    if PEK.level_for_category_id(full.feo_category_id) == PEK.LEVEL_SUBSIDY:
+        cat_name = f"{subsidy_name_for_decide} (субсидия целиком)"
+    else:
+        cat = await db.get(FeoCategory, full.feo_category_id)
+        cat_name = cat.name if cat else f"категория №{full.feo_category_id}"
     decided_step = next((s for s in full.steps if s.id == step_id_decided), None)
     if decided_step is not None:
         await _notify_plan_excess_decision(full, decided_step, db, decided_by_name, cat_name)

@@ -228,6 +228,13 @@
                     title="Тип взят из позиций закупок — у самой плановой позиции он не задан"
                   >{{ planned.item_type_effective }}</span>
                   <span v-else>{{ planned.item_type_effective || '—' }}</span>
+                  <!-- Раздел C0 (план ancient-prancing-music.md, 2026-09-21): позиция
+                       без типа не участвует в контролях превышения по типу
+                       (useFeoTreeExcess.ts::typeExcessFor/backend kind_of) — явная
+                       подсказка вместо молчаливого выпадения из подсчёта. -->
+                  <v-icon v-if="!planned.item_type_effective" icon="mdi-alert-circle-outline" size="12" color="amber-darken-3"
+                    class="ml-1" title="укажите тип — иначе не участвует в контроле по типам"
+                  />
                   <!-- Комментарии к плановой позиции (владелец, Волна 4, п.16, правка
                        2026-09-14) — «отображается после поля Тип»: сразу под значением
                        типа, в этой же ячейке (новую колонку не заводим — таблица
@@ -530,6 +537,19 @@
           </tfoot>
         </table>
 
+        <!-- Раздел C0 (план ancient-prancing-music.md, 2026-09-21): подытоги
+             товары/услуги/без типа по СТРОКАМ ЭТОЙ панели — считаются на клиенте
+             (kindOf, единственный источник правила на фронте — utils/
+             itemTypeKind.ts, та же формула, что и на бэкенде kind_of) из уже
+             отображаемых displayPlannedRowsFor(node), второй запрос не шлём. -->
+        <div v-if="ctx.displayPlannedRowsFor(node).length" class="feo-level5-type-subtotals">
+          товары: {{ formatCurrency(typeSubtotals.goods.sum) }} ({{ typeSubtotals.goods.count }} поз.)
+          · услуги: {{ formatCurrency(typeSubtotals.services.sum) }} ({{ typeSubtotals.services.count }} поз.)
+          <span v-if="typeSubtotals.unspecified.count > 0">
+            · без типа: {{ formatCurrency(typeSubtotals.unspecified.sum) }} ({{ typeSubtotals.unspecified.count }} поз.)
+          </span>
+        </div>
+
         <!-- Диалог массового переноса (п.12 волны 3) — рендерится ТОЛЬКО в панели,
              которая его открыла (bulkMoveActiveNodeId === node.id): состояние
              диалога общее на все панели (синглтон useFeoLevel5), а не привязано к
@@ -595,6 +615,13 @@ import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import { computed, reactive, watch } from 'vue'
 import { useFeoComments } from '@/composables/subsidies/useFeoComments'
 import FeoCommentThread from './FeoCommentThread.vue'
+// Раздел C0 (план ancient-prancing-music.md, 2026-09-21) — единственный
+// источник правила «тип позиции → товары/услуги» на фронте (зеркалит
+// backend/app/services/item_type_split.py::kind_of, ПРАВИЛО №6, второй
+// разбор item_type здесь не пишем). ⚠️ Файл пишет параллельный агент —
+// на момент написания этого компонента ещё не существовал, импорт по
+// согласованному пути; npx vue-tsc --noEmit перепроверить, когда появится.
+import { kindOf } from '@/utils/itemTypeKind'
 
 const props = defineProps<{ node: FeoNode }>()
 const node = props.node
@@ -695,6 +722,26 @@ function feoQuantityFor(p: FeoPlannedItem): number | null {
 function feoAmountFor(p: FeoPlannedItem): number | null {
   return p.feo_amount != null ? Number(p.feo_amount) : (p.amount != null ? Number(p.amount) : null)
 }
+
+// Раздел C0 — подытоги товары/услуги/без типа по строкам панели (см. докстринг
+// в шаблоне выше). kindOf принимает item_type_effective строки (уже с учётом
+// наследования от позиций закупок, см. resolve_effective_item_types на
+// бэкенде) — псевдо-строка ручного плана (isManual) не имеет этого поля и
+// честно попадает в «без типа».
+const typeSubtotals = computed(() => {
+  const acc = {
+    goods: { sum: 0, count: 0 },
+    services: { sum: 0, count: 0 },
+    unspecified: { sum: 0, count: 0 },
+  }
+  for (const row of ctx.displayPlannedRowsFor(node)) {
+    const kind = kindOf((row as any).item_type_effective)
+    const bucket = acc[kind as 'goods' | 'services' | 'unspecified'] || acc.unspecified
+    bucket.sum += Number(row.amount || 0)
+    bucket.count += 1
+  }
+  return acc
+})
 </script>
 
 <style scoped>
@@ -794,5 +841,14 @@ function feoAmountFor(p: FeoPlannedItem): number | null {
 .feo-stage-list-row__status {
   font-weight: 600;
   flex-shrink: 0;
+}
+
+/* Раздел C0 (план ancient-prancing-music.md, 2026-09-21): подытоги товары/
+   услуги/без типа под таблицей плановых позиций панели. */
+.feo-level5-type-subtotals {
+  margin-top: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: #64748b;
 }
 </style>

@@ -60,7 +60,7 @@
           <KpiCardsWidget
             :loading="loading" :mobile="mobile" :kpi-cards="kpiCards"
             :format-currency="formatCurrency" :format-currency-short="formatCurrencyShort"
-            @kpi-click="handleKpiClick"
+            @kpi-click="handleKpiClick" @type-row-click="onKpiTypeRowClick"
           />
         </DashboardGridWidget>
       </GridItem>
@@ -198,7 +198,11 @@
       :effective-price="purchaseEffectivePrice"
       :status-label-map="STATUS_LABELS"
       :status-color-map="STATUS_COLORS"
-      @close="stageFeoDrillVisible = false"
+      :type-kind="stageFeoDrillTypeKind"
+      :stage-key="stageFeoDrillStageKey"
+      scope="dashboard"
+      :type-drill-subsidy-ids="selectedSubsidyIds.length > 0 ? selectedSubsidyIds : null"
+      @close="stageFeoDrillVisible = false; stageFeoDrillTypeKind = null; stageFeoDrillStageKey = null"
       @row-click="(id) => { stageFeoDrillVisible = false; $router.push(`/orders/${id}/edit`) }"
     />
 
@@ -269,6 +273,7 @@ import { useDashboardGridLayout } from '@/composables/dashboard/useDashboardGrid
 import { useBudgetDrilldown } from '@/composables/dashboard/useBudgetDrilldown'
 import { useDonutWidget, SEGMENT_LABELS } from '@/composables/dashboard/useDonutWidget'
 import { usePipelineWidget } from '@/composables/dashboard/usePipelineWidget'
+import { KPI_STAGE_CUMULATIVE_STATUSES, KPI_STAGE_LABELS, KIND_LABELS } from '@/utils/itemTypeKind'
 import { useGoodsServicesWidget } from '@/composables/dashboard/useGoodsServicesWidget'
 import { useMonthlyContractsWidget } from '@/composables/dashboard/useMonthlyContractsWidget'
 import { useAnalyticsTab, A_STATUS_LABELS, A_STATUS_COLORS, A_METHOD_LABELS, A_METHOD_COLORS, A_MONTH_NAMES } from '@/composables/dashboard/useAnalyticsTab'
@@ -348,10 +353,35 @@ const radialOptions = computed(() => ({
 const {
   statusDrillDialog, statusDrillStatus, statusDrillStatuses, statusDrillPurchases,
   exportStatusDrillXlsx,
-  stageFeoDrillVisible, stageFeoDrillTitle, stageFeoDrillStatuses,
+  stageFeoDrillVisible, stageFeoDrillTitle, stageFeoDrillStatuses, stageFeoDrillTypeKind, stageFeoDrillStageKey,
   pipelineStages, deliveredNotPaid, onPipelineClick, onDeliveredNotPaidClick,
   wishesAmountForPie,
 } = usePipelineWidget(allPurchases, filteredSubsidies, totalBudget)
+
+// Раздел C1 (план ancient-prancing-music.md, 21.09): клик по строке «товары»/
+// «услуги»/«без типа» KPI-карточки открывает ТОТ ЖЕ StageFeoDrillDialog в
+// режиме typeKind — статусы/подписи этапов берём из общей таблицы
+// (utils/itemTypeKind.ts), не заводим вторую (Правило №6). Сами позиции
+// диалог теперь грузит сам через GET /dashboard/type-drill (stageKey ниже —
+// её параметр stage), stageFeoDrillStatuses здесь используется только для
+// сохранения общего интерфейса с категорийным режимом (onPipelineClick).
+function onKpiTypeRowClick(payload: { stage: string; kind: 'goods' | 'services' | 'unspecified'; active: boolean }) {
+  if (!payload.active) {
+    // Повторный клик по той же строке — выключение фильтра (KpiCardsWidget.vue
+    // уже сняло kpiPrefs.activeTypeFilter) — просто закрываем диалог.
+    stageFeoDrillVisible.value = false
+    stageFeoDrillTypeKind.value = null
+    stageFeoDrillStageKey.value = null
+    return
+  }
+  const statuses = KPI_STAGE_CUMULATIVE_STATUSES[payload.stage]
+  if (!statuses) return  // budget/free — нет списка закупок для расшифровки
+  stageFeoDrillTypeKind.value = payload.kind
+  stageFeoDrillStageKey.value = payload.stage
+  stageFeoDrillTitle.value = `${KPI_STAGE_LABELS[payload.stage] || payload.stage} · ${KIND_LABELS[payload.kind]}`
+  stageFeoDrillStatuses.value = statuses
+  stageFeoDrillVisible.value = true
+}
 
 // ── Товары / Услуги ───────────────────────────────────
 const { pipelineByType } = useGoodsServicesWidget(allPurchases, filteredSubsidies, totalBudget)

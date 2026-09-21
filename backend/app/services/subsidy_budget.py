@@ -58,6 +58,35 @@ from app.models.feo_category import FeoCategory
 from app.models.feo_planned_item import FeoPlannedItem
 
 
+def normalize_feo_category_budget(raw_budget) -> Optional[float]:
+    """Явный FeoCategory.budget узла — «задано ли вручную» или None.
+
+    ЕДИНСТВЕННОЕ место с этой нормализацией (Правило №6) — перенесено сюда
+    2026-09-21 из app.services.feo_plan_tree (там ЖЕ было заведено раньше,
+    для _feo_by_kind/compute_feo_plan_tree, но оставлено НЕприменённым здесь,
+    в compute_budget_map — единственном источнике feo_budget_total, см.
+    докстринг модуля выше). Из-за этого расхождения scalar (calculate_budgets_bulk)
+    и дерево/типовой split (feo_plan_tree.py) расходились на категориях с
+    budget=0: явный ноль в _calc() ниже трактовался как «финансирование = 0»
+    (Excel-импорт пишет 0 в пустую ячейку вместо NULL), а дерево уже считало
+    0 как «не задано» — боевой замер, субсидия «Тестовая» (id 59):
+    feo_budget_total=0, split по типу=100 000 (найдены typed ФЭО-строки,
+    которые compute_budget_map тут же отбрасывал явным budget=0 узла).
+
+    Владелец, Волна 1 п.8 (2026-09-13), дословно: «Когда в поле финансирование
+    по ФЭО введено „0", то в моём понимании это значит, что не задана сумма.
+    ... Ведь если нет жёстко заданной суммы, то и сравнивать не с чем.» — то
+    же поле (FeoCategory.budget), та же семантика везде, где оно читается как
+    «задано вручную» (compute_budget_map._calc ниже, app.services.feo_plan_tree
+    ._feo_by_kind/_visit, app.services.type_totals.subsidy_type_totals — ВСЕ
+    импортируют эту функцию, а не переопределяют собственную проверку
+    `budget is not None`)."""
+    if raw_budget is None:
+        return None
+    val = float(raw_budget)
+    return val if val != 0.0 else None
+
+
 def compute_budget_map(categories: Iterable, items: Iterable | None = None) -> dict:
     """budget по КАЖДОМУ узлу переданного набора категорий одного дерева
     (не только по корням): собственный FeoCategory.budget, если задан,
@@ -110,12 +139,14 @@ def compute_budget_map(categories: Iterable, items: Iterable | None = None) -> d
     def _calc(cat) -> float:
         if cat.id in memo:
             return memo[cat.id]
-        if cat.budget is not None:
+        _own_budget = normalize_feo_category_budget(cat.budget)
+        if _own_budget is not None:
             # Явная сумма узла — главнее (Правило владельца, задача (в)):
             # собственные позиции узла (если есть) НЕ прибавляются поверх —
             # иначе узел вроде «Катер» (сам себе и подраздел, и позиция с той
-            # же суммой) задвоил бы «по ФЭО».
-            val = float(cat.budget)
+            # же суммой) задвоил бы «по ФЭО». 0 == «не задано» (Волна 1 п.8,
+            # см. normalize_feo_category_budget) — падает в ветку else.
+            val = _own_budget
         else:
             kids = children_map.get(cat.id, [])
             val = _own_items_feo_sum(cat.id) + sum(_calc(k) for k in kids)

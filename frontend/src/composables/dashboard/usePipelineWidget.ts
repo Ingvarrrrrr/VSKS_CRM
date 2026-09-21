@@ -11,6 +11,7 @@ import { ref, computed, type Ref } from 'vue'
 import { purchaseEffectivePrice } from './dashboardFormat'
 import { STATUS_LABELS, STATUS_COLORS } from './dashboardStatusMaps'
 import type { SubsidyRow } from './useDashboardData'
+import { useToast } from '@/composables/useToast'
 
 // Pipeline stages (purchase lifecycle funnel)
 const PIPELINE_ORDER = ['plan_schedule', 'work_in_progress', 'contracted', 'ordered', 'delivered', 'paid']
@@ -20,6 +21,12 @@ export function usePipelineWidget(
   filteredSubsidies: Ref<SubsidyRow[]>,
   totalBudget: Ref<number>,
 ) {
+  // Прежде showSnack была не определена/не импортирована в этом catch — не
+  // компилировалось под настоящий tsconfig.app.json (и бросило бы ReferenceError,
+  // сработай catch на проде). Правка исправляет именно эту ссылку (Правило №6:
+  // useToast — единственный источник тостов в проекте), поведение экспорта не меняет.
+  const toast = useToast()
+
   // Status pie drill-down
   const statusDrillDialog = ref(false)
   const statusDrillStatus = ref('')
@@ -31,6 +38,15 @@ export function usePipelineWidget(
   const stageFeoDrillVisible = ref(false)
   const stageFeoDrillTitle = ref('')
   const stageFeoDrillStatuses = ref<string[]>([])
+  // Раздел C1 (план ancient-prancing-music.md, 21.09): клик по строке «товары»/
+  // «услуги»/«без типа» в KPI-карточке открывает ТОТ ЖЕ диалог в режиме позиций
+  // одного типа — null здесь означает обычный (категорийный) режим drill,
+  // выставляется/сбрасывается DashboardView.vue (onKpiTypeRowClick/onPipelineClick).
+  const stageFeoDrillTypeKind = ref<'goods' | 'services' | 'unspecified' | null>(null)
+  // Ключ этапа (plan_schedule/work/ordered/...) для GET /api/dashboard/type-drill
+  // (StageFeoDrillDialog.vue, режим typeKind) — та же строка, что и card.key/
+  // payload.stage в onKpiTypeRowClick, единственный источник запроса расшифровки.
+  const stageFeoDrillStageKey = ref<string | null>(null)
 
   const statusDrillPurchases = computed(() => {
     const subsidyIds = filteredSubsidies.value.map((s: any) => s.id)
@@ -64,11 +80,7 @@ export function usePipelineWidget(
       const fname = `dashboard_${statusDrillStatus.value}_${new Date().toISOString().slice(0, 10)}.xlsx`
       XLSX.writeFile(wb, fname)
     } catch (e: any) {
-      // ДЕФЕКТ (сохранён как есть): showSnack здесь не определена и не импортирована
-      // в исходном DashboardView.vue — вызов бросил бы ReferenceError, если бы
-      // catch когда-нибудь сработал. Не исправлено намеренно (задача — перенос
-      // без изменения поведения), см. отчёт о рефакторинге.
-      showSnack(e?.message || 'Не удалось сформировать Excel', 'error')
+      toast.addToast(e?.payload?.message || e?.message || 'Не удалось сформировать Excel', 'error')
     }
   }
 
@@ -126,6 +138,8 @@ export function usePipelineWidget(
     const statuses = idx >= 0 ? PIPELINE_ORDER.slice(idx) : [status]
     const label = STATUS_LABELS[status] || status
     // Открываем FEO-иерархический drill (Субсидия → ФЭО 1 → ФЭО 2 → ... → закупки)
+    stageFeoDrillTypeKind.value = null  // обычный (не по типу) режим — сброс возможного typeKind
+    stageFeoDrillStageKey.value = null
     stageFeoDrillTitle.value = `${label} (и далее) — drill по ФЭО`
     stageFeoDrillStatuses.value = statuses
     stageFeoDrillVisible.value = true
@@ -188,7 +202,7 @@ export function usePipelineWidget(
   return {
     statusDrillDialog, statusDrillStatus, statusDrillStatuses, statusDrillPurchases,
     exportStatusDrillXlsx, filteredStatusAmounts,
-    stageFeoDrillVisible, stageFeoDrillTitle, stageFeoDrillStatuses,
+    stageFeoDrillVisible, stageFeoDrillTitle, stageFeoDrillStatuses, stageFeoDrillTypeKind, stageFeoDrillStageKey,
     pipelineStages, deliveredNotPaid, onPipelineClick, onDeliveredNotPaidClick,
     // мёртвый код (см. заголовок)
     filteredStatusCounts, statusPieReady, statusPieEntries, statusPieSeries,

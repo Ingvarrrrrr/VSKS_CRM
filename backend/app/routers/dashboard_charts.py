@@ -36,8 +36,14 @@ from app.services.dashboard_monthly_accrual import compute_monthly_ordered_map
 # единственный источник (Правило №6), никакой второй копии формул типа/долей.
 from app.services.dashboard_type_split import compute_type_split_raw, reconcile_split, STAGE_KEYS
 from app.routers.dashboard import _apply_purchase_org_filter
+# Расшифровка строки «товары/услуги/без типа» карточки этапа (2026-09-21) —
+# отдельный файл (Правило №5), подключается под-роутером БЕЗ своего prefix
+# здесь: type_drill_router уже несёт prefix="/type-drill" сам по себе, полный
+# путь = "/api/dashboard" (этот router) + "/type-drill". routes.py не трогается.
+from app.routers.dashboard_type_drill import router as type_drill_router
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+router.include_router(type_drill_router)
 
 
 @router.get("/charts")
@@ -633,6 +639,21 @@ async def dashboard_charts(
             row["budget_goods"] = tt.get("feo_goods", 0.0)
             row["budget_services"] = tt.get("feo_services", 0.0)
             row["budget_unspecified"] = tt.get("feo_unspecified", 0.0)
+            # Исправление 2026-09-21 (боевой замер, субсидия «Тестовая» id 59:
+            # feo_budget_total=100 000, split=0): субсидия БЕЗ дерева ФЭО
+            # (ни одной FeoCategory) — compute_feo_plan_tree не возвращает ни
+            # одного корневого узла, split (feo_goods/services/unspecified)
+            # у неё математически 0 по построению. Но effective_budget (строка
+            # 365) в этом случае берёт НЕ дерево, а fallback
+            # (subsidies.budget/потолок, см. effective_subsidy_budget) — тот
+            # же самый источник, что и row["feo_filled"] здесь (feo_filled =
+            # calc > 0, calc = calculate_budgets_bulk, ТОТ ЖЕ calc, что решает
+            # эту ветку в effective_subsidy_budget). Зеркалим ровно это
+            # условие — второго расчёта источника нет: fallback типа не имеет,
+            # целиком в unspecified, иначе budget_goods+services+unspecified
+            # (0) расходится с feo_budget_total (fallback > 0).
+            if not row["feo_filled"] and row["feo_budget_total"] > 0:
+                row["budget_unspecified"] = row["feo_budget_total"]
             row["planned_goods"] = tt.get("plan_goods", 0.0)
             row["planned_services"] = tt.get("plan_services", 0.0)
             row["planned_unspecified"] = tt.get("plan_unspecified", 0.0)

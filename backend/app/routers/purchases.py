@@ -67,7 +67,16 @@ from app.services.purchase_feo_checks import (
     _category_within, _reset_incompatible_item_feo_links,
 )
 from app.services.plan_graph_versions import _create_plan_graph_version
+# Дубли строк ТЗ (21.09, corrections-21-09.md W3) и возврат закупки в заявку —
+# под-роутеры БЕЗ своего prefix (Правило №5, образец: dashboard_charts.py →
+# dashboard_type_drill.router): полный путь = "/api/purchases" (этот router)
+# + путь эндпоинта в дочернем файле. routes.py не трогается.
+from app.routers.purchase_tz import router as purchase_tz_router
+from app.routers.purchase_return import router as purchase_return_router
+
 router = APIRouter(prefix="/api/purchases", tags=["purchases"])
+router.include_router(purchase_tz_router)
+router.include_router(purchase_return_router)
 
 # Phase 31: fields tracked for diff-highlighting (D-05..D-09)
 PURCHASE_TRACKED_FIELDS: set[str] = {
@@ -313,9 +322,17 @@ async def list_purchases(
         q = q.where(Purchase.vehicle_id == vehicle_id)
     if wish_id is not None:
         q = q.where(Purchase.wish_id == wish_id)
-    # Hide purchases that were split into children unless explicitly requested
-    if status != "split":
-        q = q.where(Purchase.status != "split")
+    # Владелец (решение 21.09, corrections-21-09.md П1): родительские записи
+    # разделённых закупок скрыты из реестра СОВСЕМ, включая явный запрос
+    # ?status=split — раньше это был единственный способ их увидеть (ссылка
+    # из SubsidyDeleteDialog.vue, убрана вместе с этой правкой). Условие
+    # больше не смотрит на входной status: если он всё же равен 'split'
+    # (старая закладка/ссылка), фильтр выше (Purchase.status == status) и этот
+    # взаимно исключают друг друга — результат пуст, а не список родителей.
+    # Единственное место, определяющее видимость Purchase.status='split'
+    # (Правило №6) — subsidy_delete_impact.py считает эти закупки отдельно,
+    # но в реестр их не возвращает.
+    q = q.where(Purchase.status != "split")
     # Владелец (2026-08-21, дефект «отцеплённая закупка»): скрытые закупки
     # (status='wishes' — ещё не прошли гейт одобрения заявки ИЛИ принудительно
     # возвращены обратно через force_wish_status/_withdraw_wish_from_plan) не

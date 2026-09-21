@@ -78,6 +78,24 @@ class FeoPlannedItemCreate(BaseModel):
     feo_quantity: Optional[Decimal] = None
     feo_unit_price: Optional[Decimal] = None
     feo_amount: Optional[Decimal] = None
+    # Решение владельца (21.09, раздел W2 плана corrections-21-09.md): у
+    # плановой позиции обязано быть поле «Тип», автозаполняемое из каталога;
+    # если пользователь ЗАДАЛ тип, а у товара каталога он пуст/другой — тип
+    # переносится обратно в товар. product_id/sync_product_kind — ТРАНЗИТНЫЕ
+    # поля запроса, НЕ колонки FeoPlannedItem (плановая позиция сама по себе
+    # не хранит product_id — см. useFeoPlannedItemAddDialog.ts: «чисто
+    # UI-состояние диалога»): используются один раз в create/update
+    # (app/routers/feo_planned_items.py), только чтобы решить, писать ли
+    # item_type в Product.item_kind через
+    # app.services.item_types.apply_item_type_to_product. product_id не
+    # прислан, а sync_product_kind=true — update_planned_item подбирает товар
+    # сам по ТОЧНОМУ совпадению имени (app.services.item_types.
+    # resolve_product_for_planned_item) — иначе диалог правки/инлайн-селект
+    # типа, которые product_id не знают, никогда бы не синхронизировали
+    # каталог. Дефолт sync_product_kind=False — старое поведение (плановая
+    # позиция не трогает каталог) не меняется без явного согласия пользователя.
+    product_id: Optional[int] = None
+    sync_product_kind: bool = False
 
 class FeoPlannedItemOut(FeoPlannedItemCreate):
     id: int
@@ -94,6 +112,17 @@ class FeoPlannedItemOut(FeoPlannedItemCreate):
     # это read-only вычисление, не запись (правило «выбранное не меняется само»).
     item_type_effective: Optional[str] = None  # свой item_type, иначе унаследованный от закупок, иначе None
     item_type_inherited: bool = False           # True — item_type_effective взят у связанных purchase_items
+    # Ответ PUT /feo-planned-items/{id} (владелец, 21.09, раздел W2) — когда
+    # sync_product_kind=true сработал БЕЗ явного product_id в теле запроса
+    # (см. app.services.item_types.resolve_product_for_planned_item, вызывается
+    # из update_planned_item), фронт показывает снэкбар «тип записан в товар
+    # каталога «...»». Выставляется вручную на ORM-объекте перед return в
+    # update_planned_item (тот же приём, что и item_type_effective в
+    # get_comparison, feo_planned_items_reports.py) — сама позиция это не
+    # хранит, поэтому в POST/bulk остаётся дефолтом False/None (там product_id
+    # либо явно есть, либо запрос не про синхронизацию по имени).
+    product_kind_synced: bool = False
+    product_name: Optional[str] = None
     model_config = {"from_attributes": True}
 
 

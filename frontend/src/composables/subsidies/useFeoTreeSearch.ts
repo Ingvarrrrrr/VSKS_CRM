@@ -28,6 +28,7 @@
 //    роутер под то же самое не заводим.
 import { computed, nextTick, ref, watch, type Ref } from 'vue'
 import { apiFetch } from '@/api'
+import { makeCtxSingleton } from './ctxSingleton'
 import type { FeoCategory } from './types'
 
 export interface FeoSearchResult {
@@ -48,8 +49,6 @@ interface PlanPositionRow {
   kind: 'plan_position' | 'feo_article' | 'planned_item'
 }
 
-let _api: ReturnType<typeof buildFeoTreeSearch> | null = null
-
 interface FeoTreeSearchCtx {
   selectedId: Ref<number | null>
   feoCategories: Ref<FeoCategory[]>
@@ -61,13 +60,15 @@ interface FeoTreeSearchCtx {
   feoTableArea: Ref<HTMLElement | null>
 }
 
-// Module-level singleton — тот же паттерн, что и useKpiDrilldown.ts/useFeoTreeState.ts
-// в этом же проекте: единственный экземпляр состояния на всех потребителей
-// (FeoTreeToolbar.vue — поле ввода и список результатов).
-export function useFeoTreeSearch(ctx: FeoTreeSearchCtx) {
-  if (!_api) _api = buildFeoTreeSearch(ctx)
-  return _api
-}
+// Module-level singleton через makeCtxSingleton (ctxSingleton.ts, Правило №6) —
+// единственный экземпляр состояния на всех потребителей (FeoTreeToolbar.vue —
+// поле ввода и список результатов); пересобирается при новом ctx (повторный
+// маунт SubsidiesView.vue, владелец 21.09 П2), не держит ctx первого маунта
+// навсегда.
+export const useFeoTreeSearch = makeCtxSingleton(
+  buildFeoTreeSearch,
+  'useFeoTreeSearch() вызван до первого построения (нужен ctx) — проверьте порядок монтирования SubsidiesView.vue',
+)
 
 function buildFeoTreeSearch(ctx: FeoTreeSearchCtx) {
   const feoSearchQuery = ref('')

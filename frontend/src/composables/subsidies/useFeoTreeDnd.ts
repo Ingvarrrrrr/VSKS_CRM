@@ -10,6 +10,7 @@ import { apiFetch } from '@/api'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { collectSubtreeIds } from './feoCategoryUtils'
 import { pushFeoUndo } from './useFeoUndoStack'
+import { makeCtxSingleton } from './ctxSingleton'
 import type { FeoCategory, FeoNode } from './types'
 
 // Сырой перенос категории (смена родителя) — выделен из onDrop/onDropToRoot
@@ -105,12 +106,12 @@ interface FeoTreeDndCtx {
   syncFeoFilled: () => void
 }
 
-let _api: ReturnType<typeof buildFeoTreeDnd> | null = null
-
-export function useFeoTreeDnd(ctx: FeoTreeDndCtx) {
-  if (!_api) _api = buildFeoTreeDnd(ctx)
-  return _api
-}
+// makeCtxSingleton (ctxSingleton.ts, Правило №6) — пересобирает API при новом
+// ctx (повторный маунт SubsidiesView.vue, владелец 21.09 П2).
+export const useFeoTreeDnd = makeCtxSingleton(
+  buildFeoTreeDnd,
+  'useFeoTreeDnd() вызван до первого построения (нужен ctx) — проверьте порядок монтирования SubsidiesView.vue',
+)
 
 function buildFeoTreeDnd(ctx: FeoTreeDndCtx) {
   const { feoCategories, visibleFeoNodes, selectedId, loadFeo, syncFeoFilled } = ctx

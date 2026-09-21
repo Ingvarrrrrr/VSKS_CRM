@@ -7,9 +7,9 @@
 env-переменных вроде SECRET_KEY и тянет всю цепочку моделей/БД, а этот скрипт
 обязан работать в CI-джобе backend без Postgres и без .env):
 
-  - backend/app/services/dictionaries.py — STATUS_LABELS, SUBSTATUS_LABELS,
-    CONTRACT_TYPE_LABELS, PURCHASE_METHOD_LABELS, PURCHASE_BASIS_LABELS
-    (простые словарные литералы верхнего уровня).
+  - backend/app/services/dictionaries.py — STATUS_LABELS, HIDDEN_STATUS_LABELS,
+    SUBSTATUS_LABELS, CONTRACT_TYPE_LABELS, PURCHASE_METHOD_LABELS,
+    PURCHASE_BASIS_LABELS (простые словарные литералы верхнего уровня).
   - backend/app/routers/purchases.py — STATUS_ORDER (порядок статусов в
     канбане/фильтрах; см. GET /api/dictionaries/purchase, который использует
     тот же STATUS_ORDER — здесь НЕ дублируем значение, а не читаем эндпоинт).
@@ -51,6 +51,7 @@ ITEM_FORMS_OUTPUT_PATH = FRONTEND_DIR / "src" / "data" / "item_forms.json"
 
 DICT_NAMES = [
     "STATUS_LABELS",
+    "HIDDEN_STATUS_LABELS",
     "SUBSTATUS_LABELS",
     "CONTRACT_TYPE_LABELS",
     "PURCHASE_METHOD_LABELS",
@@ -244,6 +245,11 @@ def build_dictionaries() -> dict:
 
     return {
         "statuses": entries(dicts["STATUS_LABELS"], status_order),
+        # 'split' — служебная пометка родительской записи после разбиения
+        # закупки, не стадия жизненного цикла (см. HIDDEN_STATUS_LABELS в
+        # app/services/dictionaries.py) — отдельный ключ, не подмешивается в
+        # "statuses" (тот кормит статус-дропдауны/kanban/массовую смену статуса).
+        "hidden_statuses": entries(dicts["HIDDEN_STATUS_LABELS"]),
         "substatuses": entries(dicts["SUBSTATUS_LABELS"]),
         "contract_types": entries(dicts["CONTRACT_TYPE_LABELS"]),
         "purchase_methods": entries(dicts["PURCHASE_METHOD_LABELS"]),

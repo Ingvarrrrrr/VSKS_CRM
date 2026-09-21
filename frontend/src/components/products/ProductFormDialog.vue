@@ -35,11 +35,12 @@
             </v-combobox>
           </v-col>
 
-          <!-- Товар / Услуга -->
+          <!-- Товар / Услуга / Работа — ITEM_TYPE_OPTIONS, единственный источник
+               (Правило №6, владелец 21.09, раздел W2 плана corrections-21-09.md). -->
           <v-col cols="12" md="3">
             <v-select v-model="form.item_kind"
-              :items="[{ title: 'Товар', value: 'товар' }, { title: 'Услуга', value: 'услуга' }]"
-              label="Товар / Услуга" variant="outlined" density="compact" />
+              :items="ITEM_TYPE_OPTIONS"
+              label="Товар / Услуга / Работа" variant="outlined" density="compact" />
           </v-col>
 
           <!-- Тип — свободный текст с подсказками -->
@@ -206,6 +207,7 @@
 import { computed, ref } from 'vue'
 import { formatDate } from '@/composables/products/productsTypes'
 import { isLikelyImageUrl } from '@/utils/productPhoto'
+import { ITEM_TYPE_OPTIONS } from '@/utils/itemTypeKind'
 import { usePurchaseCategories } from '@/composables/products/usePurchaseCategories'
 import PurchaseCategoriesDialog from '@/components/settings/PurchaseCategoriesDialog.vue'
 import PurchasePriceHistory from '@/components/products/PurchasePriceHistory.vue'

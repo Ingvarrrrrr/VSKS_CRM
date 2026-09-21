@@ -15,6 +15,7 @@ from app.auth.jwt import get_current_user
 from app.routers.purchases import STATUS_ORDER
 from app.services.dictionaries import (
     STATUS_LABELS,
+    HIDDEN_STATUS_LABELS,
     SUBSTATUS_LABELS,
     CONTRACT_TYPE_LABELS,
     PURCHASE_METHOD_LABELS,
@@ -37,6 +38,10 @@ def _entries(labels: dict, order: list[str] | None = None) -> list[dict]:
 async def get_purchase_dictionaries(_=Depends(get_current_user)):
     return {
         "statuses": _entries(STATUS_LABELS, STATUS_ORDER),
+        # 'split' — НЕ стадия жизненного цикла (см. комментарий у
+        # HIDDEN_STATUS_LABELS в services/dictionaries.py) — отдельный ключ,
+        # чтобы не попасть в statuses/statusItems/kanban на фронте.
+        "hidden_statuses": _entries(HIDDEN_STATUS_LABELS),
         "substatuses": _entries(SUBSTATUS_LABELS),
         "contract_types": _entries(CONTRACT_TYPE_LABELS),
         "purchase_methods": _entries(PURCHASE_METHOD_LABELS),

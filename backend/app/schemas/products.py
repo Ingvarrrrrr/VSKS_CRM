@@ -44,7 +44,7 @@ class ProductCreate(BaseModel):
     category: Optional[str] = None
     product_type: Optional[str] = None
     unit: Optional[str] = None  # Единица измерения (владелец, 2026-09-01)
-    item_kind: Optional[str] = "товар"  # "товар" или "услуга"
+    item_kind: Optional[str] = "товар"  # "товар" / "услуга" / "работа" (app.services.item_types.ITEM_TYPES, ПРАВИЛО №6)
     is_reusable: Optional[bool] = True
     photo_url: Optional[str] = None
     photo_link: Optional[str] = None

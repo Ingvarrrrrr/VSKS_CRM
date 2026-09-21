@@ -44,6 +44,42 @@ async def _is_wish_member(wish_id: int, user_id: int, db: AsyncSession) -> bool:
     return res.scalar_one_or_none() is not None
 
 
+async def ensure_wish_read_access(wish, current_user, db: AsyncSession) -> None:
+    """403, если у пользователя нет доступа к чтению заявки.
+
+    Извлечено БЕЗ ИЗМЕНЕНИЯ ПОВЕДЕНИЯ из routers/wishes.py::get_wish (2026-09-21,
+    W3) — GET /api/wishes/{id}/tz-rows нуждается ровно в той же проверке
+    («Права — как у чтения заявки»), заводить вторую копию нельзя (Правило №6).
+    get_wish теперь тоже зовёт эту функцию.
+
+    Правила: org isolation по get_org_filter; дальше — creator/assignee/
+    manager+ проходят всегда; employee — только участник (WishMember) или
+    согласующий из цепочки (WishApproval).
+    """
+    from app.auth.jwt import get_org_filter
+    from app.models.wish_approval import WishApproval
+
+    org_ids = get_org_filter(current_user)
+    if org_ids is not None and wish.org_id not in org_ids:
+        raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
+    if current_user.role == 'employee' and wish.created_by != current_user.id and wish.assigned_to != current_user.id:
+        member_res = await db.execute(
+            select(WishMember.id).where(
+                WishMember.wish_id == wish.id,
+                WishMember.user_id == current_user.id,
+            ).limit(1)
+        )
+        if member_res.scalar_one_or_none() is None:
+            appr = await db.execute(
+                select(WishApproval.id).where(
+                    WishApproval.wish_id == wish.id,
+                    WishApproval.user_id == current_user.id,
+                ).limit(1)
+            )
+            if appr.scalar_one_or_none() is None:
+                raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
+
+
 async def _ensure_no_pending_approvals(
     wish, db: AsyncSession, current_user=None, allow_override: bool = False
 ) -> None:

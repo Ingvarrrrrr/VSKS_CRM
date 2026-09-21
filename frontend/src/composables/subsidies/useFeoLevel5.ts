@@ -15,6 +15,7 @@ import { filterFundedNodes, type FeoLeaf as FeoPickerLeaf, type FeoNode as FeoPi
 import { PURCHASE_STATUS_ORDER, purchaseStatusColor, purchaseStatusLabel } from '@/constants/purchaseStatus'
 import { pushFeoUndo } from './useFeoUndoStack'
 import { createPlannedItemRaw } from './useFeoPlannedItemAddDialog'
+import { makeCtxSingleton } from './ctxSingleton'
 import type {
   DiffActual, FeoActualItem, FeoCategory, FeoNode, FeoPlannedItem, FeoStage, FeoStageRow,
 } from './types'
@@ -184,12 +185,13 @@ interface FeoLevel5Ctx {
   refreshReqData: (catId?: number) => Promise<void>
 }
 
-let _api: ReturnType<typeof buildFeoLevel5> | null = null
-
-export function useFeoLevel5(ctx: FeoLevel5Ctx) {
-  if (!_api) _api = buildFeoLevel5(ctx)
-  return _api
-}
+// makeCtxSingleton (ctxSingleton.ts, Правило №6) — пересобирает API при новом
+// ctx (повторный маунт SubsidiesView.vue, владелец 21.09 П2), а не держит ctx
+// первого маунта навсегда.
+export const useFeoLevel5 = makeCtxSingleton(
+  buildFeoLevel5,
+  'useFeoLevel5() вызван до первого построения (нужен ctx) — проверьте порядок монтирования SubsidiesView.vue',
+)
 
 // Точечный доступ к уже построенному синглтону — для новой массовой
 // выбор/перенос-функциональности (п.12 волны 3, 2026-09-13), которую
@@ -197,12 +199,11 @@ export function useFeoLevel5(ctx: FeoLevel5Ctx) {
 // (тот объект целиком собирается в SubsidiesView.vue — файл параллельного
 // исполнителя этой же волны, не трогаем). SubsidiesView.vue вызывает
 // useFeoLevel5(realCtx) в своём <script setup> раньше, чем монтируется любой
-// дочерний компонент, поэтому к моменту вызова здесь синглтон уже собран.
+// дочерний компонент, поэтому к моменту вызова здесь синглтон уже собран —
+// эквивалент вызова useFeoLevel5() без ctx (makeCtxSingleton отдаёт уже
+// построенный API и не трогает его).
 export function useFeoLevel5Api() {
-  if (!_api) {
-    throw new Error('useFeoLevel5Api() вызван до useFeoLevel5(ctx) — синглтон ещё не построен')
-  }
-  return _api
+  return useFeoLevel5()
 }
 
 function buildFeoLevel5(ctx: FeoLevel5Ctx) {

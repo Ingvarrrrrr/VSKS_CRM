@@ -24,10 +24,13 @@ from .formatting import (
     _fmt_date,
     _fmt_money,
     _fmt_quantity,
-    _merge_identical_items,
     _fio_to_genitive,
     _fio_to_initials,
 )
+# build_tz_rows — единственный источник группировки/слияния дублей строк ТЗ
+# (Правило №6), преемник удалённой _merge_identical_items. См. докстринг
+# app.services.tz_items и _require_tz_duplicates_resolved_for_doc ниже.
+from app.services.tz_items import build_tz_rows
 
 
 # Phase 23: split "Президент Козеев Евгений Викторович" into structured parts
@@ -210,14 +213,17 @@ async def _build_contract_items_context(p, db) -> dict:
             total_numeric += tot
     else:
         # D-08 fallback: contract_items empty — use purchase_items as deprecated alias
-        for idx, (item, qty, total) in enumerate(_merge_identical_items(getattr(p, "items", None) or []), start=1):
+        _tz = build_tz_rows(getattr(p, "items", None) or [], getattr(p, "tz_duplicate_decisions", None))
+        for idx, row in enumerate(_tz["rows"], start=1):
+            item = row["item"]
+            total = row["total_price"]
             tot = float(total) if total else 0.0
             result_list.append({
                 "num": idx,
                 "name": item.item_name or "",
-                "quantity": _fmt_quantity(qty),
+                "quantity": _fmt_quantity(row["quantity"]),
                 "unit": item.unit or "",
-                "unit_price": _fmt_money(item.unit_price),
+                "unit_price": _fmt_money(row["unit_price"]),
                 "total": _fmt_money(total),
                 "total_numeric": tot,
             })
@@ -346,7 +352,10 @@ def _build_items_list_from_purchase_items(p, tz_override_mode=None, resolve_phot
     description_mode = tz_override_mode or getattr(p, "description_mode", None) or "exact"
     items_list: list[dict] = []
     item_form = item_form_for_purchase(p)
-    for idx, (item, qty, total) in enumerate(_merge_identical_items(getattr(p, "items", None) or []), start=1):
+    _tz = build_tz_rows(getattr(p, "items", None) or [], getattr(p, "tz_duplicate_decisions", None))
+    for idx, row in enumerate(_tz["rows"], start=1):
+        item = row["item"]
+        total = row["total_price"]
         items_list.append({
             "num": idx,
             "name": item.item_name or "",
@@ -356,9 +365,9 @@ def _build_items_list_from_purchase_items(p, tz_override_mode=None, resolve_phot
             ) or "",
             "type": item.item_type or "",
             "item_kind": (item.product.item_kind if item.product else None) or "товар",
-            "quantity": _fmt_quantity(qty),
+            "quantity": _fmt_quantity(row["quantity"]),
             "unit": item.unit or "",
-            "unit_price": _fmt_money(item.unit_price),
+            "unit_price": _fmt_money(row["unit_price"]),
             "total_price": _fmt_money(total),
             "total": _fmt_money(total),
             "photo": resolve_photo(item.product) if resolve_photo else "",
@@ -451,6 +460,35 @@ def _require_contract_items_for_doc(p, doc_type: str) -> None:
             ),
             "missing_fields": ["contract_items"],
             "doc_type": doc_type,
+        },
+    )
+
+
+def _require_tz_duplicates_resolved_for_doc(p) -> None:
+    """409, если в ТЗ закупки остались нерешённые дубли строк.
+
+    Правило владельца (21.09, corrections-21-09.md W3): документ ТЗ (и любой
+    другой, печатающий строки purchase_items — договор без ContractItem у
+    рамочной головы, пакет Фабрикант) нельзя сформировать, пока по каждой
+    группе дублей не принято решение merge/keep — см.
+    app.services.tz_items.find_duplicate_groups/build_tz_rows.
+    """
+    from app.services.tz_items import find_duplicate_groups
+
+    dup_groups = find_duplicate_groups(getattr(p, "items", None) or [])
+    if not dup_groups:
+        return
+    decisions = getattr(p, "tz_duplicate_decisions", None) or {}
+    unresolved = [g for g in dup_groups if decisions.get(g["key"]) not in ("merge", "keep")]
+    if not unresolved:
+        return
+    names = "; ".join(f"«{g['name']}»" for g in unresolved)
+    raise HTTPException(
+        409,
+        detail={
+            "code": "TZ_DUPLICATES_UNRESOLVED",
+            "message": f"Решите, что делать с повторяющимися позициями: {names}",
+            "duplicate_keys": [g["key"] for g in unresolved],
         },
     )
 

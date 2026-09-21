@@ -21,6 +21,7 @@
 // (kpi.kpiItemIds), не дублируя его.
 import { computed, nextTick, ref, watch } from 'vue'
 import { type KpiKey, KPI_MODE, kpiItemMatches } from '@/constants/kpiMetrics'
+import { makeCtxSingleton } from './ctxSingleton'
 import type { SubsidyDetailContext } from './useSubsidyDetail'
 import type { FeoNode, PlannedBase } from './types'
 
@@ -54,12 +55,16 @@ type KpiCtx = Pick<SubsidyDetailContext,
 // объект (первый вызов строит его по СВОЕМУ ctx, но обе стороны всегда передают
 // один и тот же набор реактивных ссылок — либо из SubsidyDetailContext, либо
 // напрямую из SubsidiesView.vue, что структурно то же самое, см. useSubsidyDetail.ts).
-let _api: ReturnType<typeof buildKpiDrilldown> | null = null
-
-export function useKpiDrilldown(ctx: KpiCtx) {
-  if (!_api) _api = buildKpiDrilldown(ctx)
-  return _api
-}
+//
+// makeCtxSingleton (ctxSingleton.ts, Правило №6) — дополнительно пересобирает
+// API при новом ctx (повторный маунт SubsidiesView.vue, владелец 21.09 П2),
+// а не держит ctx первого маунта навсегда (иначе activeKpi/watch продолжали бы
+// читать expandedIds и т.п. прошлого экземпляра дерева ФЭО после возврата на
+// /subsidies).
+export const useKpiDrilldown = makeCtxSingleton(
+  buildKpiDrilldown,
+  'useKpiDrilldown() вызван до первого построения (нужен ctx) — проверьте порядок монтирования SubsidiesView.vue',
+)
 
 function buildKpiDrilldown(ctx: KpiCtx) {
   function feoHasChildren(id: number): boolean {

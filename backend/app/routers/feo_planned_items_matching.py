@@ -26,6 +26,7 @@ from app.models.wish import Wish
 from app.models.wish_item import WishItem
 from app.models.purchase_category import PurchaseCategory, product_purchase_categories
 from app.services.text_match import tokenize, stem, generic_progressive_match
+from app.services.item_types import normalize_item_type
 
 router = APIRouter(prefix="/api/feo-planned-items", tags=["feo_planned_items"])
 
@@ -84,7 +85,7 @@ async def get_product_hint(
     # появятся сами, как только колонки приедут — без правок здесь.
     _optional = [c for c in ("price_updated_at", "price_source", "price_source_ref")
                  if hasattr(Product, c)]
-    _cols = [Product.price, Product.contract_price, Product.unit, Product.category] + [getattr(Product, c) for c in _optional]
+    _cols = [Product.price, Product.contract_price, Product.unit, Product.category, Product.item_kind] + [getattr(Product, c) for c in _optional]
     product = (await db.execute(select(*_cols).where(Product.id == product_id))).first()
 
     # Приоритет (владелец, 2026-09-01): собственная Product.unit, если заполнена;
@@ -103,7 +104,7 @@ async def get_product_hint(
         )).scalar_one_or_none()
 
     if product is None:
-        return {"unit": unit_val, "price": None, "price_updated_at": None, "price_source": None, "price_source_ref": None}
+        return {"unit": unit_val, "price": None, "price_updated_at": None, "price_source": None, "price_source_ref": None, "item_kind": None}
 
     category_match: Optional[bool] = None
     if feo_category_id is not None:
@@ -138,6 +139,12 @@ async def get_product_hint(
         "price_source": getattr(product, "price_source", None),
         "price_source_ref": getattr(product, "price_source_ref", None),
         "category_match": category_match,
+        # item_kind (владелец, 21.09, раздел W2 плана corrections-21-09.md) —
+        # нормализованный тип товара каталога (app.services.item_types,
+        # ПРАВИЛО №6, тот же нормализатор, что и у FeoPlannedItem.item_type) —
+        # фронт подставляет его в поле «Тип» диалога добавления/правки
+        # плановой позиции при выборе товара из каталога.
+        "item_kind": normalize_item_type(product.item_kind),
     }
 
 

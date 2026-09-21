@@ -9,6 +9,7 @@ import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import type { Router } from 'vue-router'
 import { normName } from './feoCategoryUtils'
 import { PURCHASE_STATUS_META, PURCHASE_STATUS_ORDER } from '@/constants/purchaseStatus'
+import { makeCtxSingleton } from './ctxSingleton'
 import type {
   FeoActualItem, FeoNode, FeoPlannedItem, FeoPurchaseFolder, FeoReqItem, FeoReqRow, FeoStage,
   FeoVirtualGroup, PlannedBase,
@@ -32,12 +33,12 @@ interface FeoReqItemsCtx {
   openMapDialog: (actual: FeoActualItem, categoryId: number) => void
 }
 
-let _api: ReturnType<typeof buildFeoReqItems> | null = null
-
-export function useFeoReqItems(ctx: FeoReqItemsCtx) {
-  if (!_api) _api = buildFeoReqItems(ctx)
-  return _api
-}
+// makeCtxSingleton (ctxSingleton.ts, Правило №6) — пересобирает API при новом
+// ctx (повторный маунт SubsidiesView.vue, владелец 21.09 П2).
+export const useFeoReqItems = makeCtxSingleton(
+  buildFeoReqItems,
+  'useFeoReqItems() вызван до первого построения (нужен ctx) — проверьте порядок монтирования SubsidiesView.vue',
+)
 
 function buildFeoReqItems(ctx: FeoReqItemsCtx) {
   const {

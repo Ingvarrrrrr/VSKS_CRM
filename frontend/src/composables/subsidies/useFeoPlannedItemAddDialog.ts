@@ -104,6 +104,12 @@ const plannedItemForm = ref({
   feoQuantity: null as number | null,
   feoUnitPrice: null as number | null,
   feoAmount: null as number | null,
+  // Тип позиции — товар/услуга/работа (владелец, 21.09, раздел W2 плана
+  // corrections-21-09.md). Автоподставляется из каталога при выборе товара
+  // (см. applyPlannedProductHint/onPlannedItemProductPick ниже), пока
+  // пользователь не тронул поле вручную (addPlannedItemTypeTouched) —
+  // выбранное на предыдущем этапе не смеет меняться само.
+  item_type: null as string | null,
 })
 
 // Диалог показывает раздельные поля «По ФЭО»/«Внутренний план» ТОЛЬКО когда
@@ -195,6 +201,28 @@ const addPlannedPriceMeta = ref<{
   price_source: string | null
   price_source_ref: string | null
 } | null>(null)
+
+// Синхронизация типа с каталогом (владелец, 21.09, раздел W2) — та же схема,
+// что и у цены выше: product-hint (см. applyPlannedProductHint ниже) — ЕДИНСТВЕННЫЙ
+// авторитетный источник item_kind товара каталога (Правило №6, зеркалит
+// GET /feo-planned-items/product-hint::item_kind). addPlannedItemTypeTouched —
+// «пользователь тронул поле "Тип" вручную» — как только выставлен, автоподстановка
+// (при выборе/смене товара) больше НЕ трогает plannedItemForm.item_type (правило
+// проекта «выбранное на предыдущем этапе не смеет меняться само»).
+const addPlannedItemTypeTouched = ref(false)
+const addPlannedHintItemKind = ref<string | null>(null)
+// Чекбокс «Обновить тип товара в каталоге», по умолчанию включён (задача
+// владельца). Виден и учитывается ТОЛЬКО когда есть выбранный товар И тип
+// позиции расходится с типом товара в каталоге (или у товара тип не задан) —
+// см. addShowSyncProductKindCheckbox ниже.
+const addSyncProductKind = ref(true)
+const addShowSyncProductKindCheckbox = computed(() => {
+  if (addPlannedProductId.value == null) return false
+  const t = plannedItemForm.value.item_type
+  if (!t) return false
+  const hint = addPlannedHintItemKind.value
+  return !hint || hint !== t
+})
 
 // Диалог дубликата (см. импорт parseDuplicateHttpError выше) — открывается
 // ПОВЕРХ showAddPlannedDialog (тот не закрывается, как и createDialog в
@@ -289,6 +317,9 @@ watch(showAddPlannedDialog, (val) => {
     addPlannedProductPhoto.value = null
     addPlannedMatchConfirmed.value = undefined
     addPlannedPriceMeta.value = null
+    addPlannedItemTypeTouched.value = false
+    addPlannedHintItemKind.value = null
+    addSyncProductKind.value = true
     duplicateDialog.value = false
     duplicateInfo.value = null
     addPlannedMonthlySchedule.value = null
@@ -316,11 +347,15 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
       monthly_end_date: '', months_count: null, monthly_amount: null,
       is_feo_breakdown: false, is_internal_plan: true,
       feoQuantity: null, feoUnitPrice: null, feoAmount: null,
+      item_type: null,
     }
     addPlannedProductId.value = null
     addPlannedProductPhoto.value = null
     addPlannedMatchConfirmed.value = undefined
     addPlannedPriceMeta.value = null
+    addPlannedItemTypeTouched.value = false
+    addPlannedHintItemKind.value = null
+    addSyncProductKind.value = true
     showAddPlannedDialog.value = true
   }
 
@@ -363,11 +398,15 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
       // подписана «подробного деления в ФЭО не было» (см. шаблон выше).
       is_feo_breakdown: false, is_internal_plan: true,
       feoQuantity: null, feoUnitPrice: null, feoAmount: null,
+      item_type: null,
     }
     addPlannedProductId.value = null
     addPlannedProductPhoto.value = null
     addPlannedMatchConfirmed.value = undefined
     addPlannedPriceMeta.value = null
+    addPlannedItemTypeTouched.value = false
+    addPlannedHintItemKind.value = null
+    addSyncProductKind.value = true
     showAddPlannedDialog.value = true
   }
 
@@ -396,11 +435,15 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
       // auto_created в plan_autoassign.py (см. is_internal_plan там).
       is_feo_breakdown: false, is_internal_plan: true,
       feoQuantity: null, feoUnitPrice: null, feoAmount: null,
+      item_type: null,
     }
     addPlannedProductId.value = null
     addPlannedProductPhoto.value = null
     addPlannedMatchConfirmed.value = undefined
     addPlannedPriceMeta.value = null
+    addPlannedItemTypeTouched.value = false
+    addPlannedHintItemKind.value = null
+    addSyncProductKind.value = true
     showAddPlannedDialog.value = true
   }
 
@@ -425,6 +468,7 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
         price_updated_at: string | null
         price_source: string | null
         price_source_ref: string | null
+        item_kind: string | null
       }>(`/feo-planned-items/product-hint?product_id=${productId}`)
       if (addPlannedProductId.value !== productId) return
       if (res?.unit) plannedItemForm.value.unit = res.unit
@@ -435,6 +479,13 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
         price_updated_at: res?.price_updated_at ?? null,
         price_source: res?.price_source ?? null,
         price_source_ref: res?.price_source_ref ?? null,
+      }
+      // Тип (владелец, 21.09, раздел W2) — product-hint авторитетный, перезаписывает
+      // запасной candidate.item_type (см. onPlannedItemProductPick), но ТОЛЬКО пока
+      // пользователь не тронул поле «Тип» вручную (addPlannedItemTypeTouched).
+      addPlannedHintItemKind.value = res?.item_kind ?? null
+      if (!addPlannedItemTypeTouched.value) {
+        plannedItemForm.value.item_type = res?.item_kind ?? null
       }
       recalcPlannedAmountFromUnitPrice()
     } catch {
@@ -463,6 +514,13 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
       price_source: c.price_source ?? null,
       price_source_ref: c.price_source_ref ?? null,
     }
+    // Тип — запасной вариант из кандидата (тот же приём, что и у цены выше),
+    // тут же перезаписывается авторитетным product-hint ниже. Пока пользователь
+    // не тронул поле «Тип» вручную — подставляем.
+    addPlannedHintItemKind.value = c.item_type ?? null
+    if (!addPlannedItemTypeTouched.value) {
+      plannedItemForm.value.item_type = c.item_type ?? null
+    }
     recalcPlannedAmountFromUnitPrice()
     void applyPlannedProductHint(c.product_id)
   }
@@ -472,8 +530,18 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
     addPlannedProductPhoto.value = null
     addPlannedMatchConfirmed.value = undefined
     addPlannedPriceMeta.value = null
+    addPlannedHintItemKind.value = null
     plannedItemForm.value.name = ''
     plannedItemForm.value.unitPrice = null
+  }
+
+  // Отметка «поле "Тип" тронуто вручную» — v-select в шаблоне зовёт это на
+  // @update:model-value ДО присвоения через v-model (порядок событий Vuetify
+  // не гарантирован относительно v-model), поэтому диалог сам не решает, что
+  // считать «вручную»: сюда попадают ВСЕ изменения, кроме автоподстановки выше
+  // (та пишет в plannedItemForm.item_type напрямую, минуя этот хендлер).
+  function onPlannedItemTypeInput() {
+    addPlannedItemTypeTouched.value = true
   }
 
   // Чистит planned_quantity/planned_amount категории после переноса ручного плана в
@@ -555,6 +623,18 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
       is_feo_breakdown: f.is_feo_breakdown,
       is_internal_plan: f.is_internal_plan,
       allow_duplicate_name: allowDuplicateName,
+      // Тип + синхронизация с каталогом (владелец, 21.09, раздел W2) — product_id
+      // транзитный (FeoPlannedItem его не хранит, см. докстринг
+      // FeoPlannedItemCreate.product_id в backend/app/schemas/feo.py), нужен
+      // ТОЛЬКО чтобы backend понял, какой товар обновлять. sync_product_kind
+      // шлём true, только когда чекбокс реально показан И включён —
+      // addShowSyncProductKindCheckbox уже гарантирует, что product_id задан и
+      // тип расходится с каталогом (иначе backend apply_item_type_to_product
+      // всё равно не изменил бы товар — но лишний true без причины вводит в
+      // заблуждение read-only читателей payload).
+      item_type: f.item_type || null,
+      product_id: addPlannedProductId.value,
+      sync_product_kind: addShowSyncProductKindCheckbox.value && addSyncProductKind.value,
     }
   }
 
@@ -733,6 +813,7 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
     plannedItemAmountIsComputed, addPlannedItemDisabled, addPlannedMonthlySchedule,
     addShowBothOriginFields, plannedItemFeoAmountIsComputed,
     onPlannedItemProductPick, onPlannedItemProductClear,
+    addShowSyncProductKindCheckbox, addSyncProductKind, onPlannedItemTypeInput,
     openAddPlannedItem, openConvertManualPlanToItem, openCreatePlannedFromActual, savePlannedItem,
     duplicateDialog, duplicateInfo, confirmAttachDuplicate, confirmCreateDuplicate,
   }

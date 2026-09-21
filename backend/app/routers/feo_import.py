@@ -148,7 +148,14 @@ async def import_feo_from_excel(
     c_row_plan_unit  = find_col(["ед. изм. плана"])
     c_row_plan_price = find_col(["плановая цена за единицу", "плановая цена за ед."])
     c_row_plan_sum   = find_col(["сумма плана"])
-    c_item_type      = find_col(["товар/услуга", "тип позиции"])
+    # Заголовок колонки переименован в «Тип (товар/услуга/работа)» (владелец,
+    # 21.09, раздел W2 плана corrections-21-09.md) — старые файлы с «Товар/
+    # услуга»/«Тип позиции» продолжают импортироваться (обратная совместимость).
+    # Точные/специфичные варианты — ПЕРВЫМИ, generic «тип» — ПОСЛЕДНИМ: к этому
+    # моменту c_lvl3 (find_col выше, «уровень 3»/«тип расходов») уже забрал
+    # свою колонку в _used_cols, единственный другой заголовок в шаблоне,
+    # содержащий «тип» — так что generic-фолбэк не перехватывает чужую колонку.
+    c_item_type      = find_col(["тип (товар/услуга/работа)", "товар/услуга", "тип позиции", "тип"])
     # Fallback: generic qty column if no specific level columns present
     if c_qty is None and c_qty_lvl2 is None and c_qty_lvl3 is None and c_qty_lvl4 is None and c_feo_qty_lvl2 is None and c_feo_qty_lvl3 is None and c_feo_qty_lvl4 is None:
         c_qty = find_col(["количество", "кол-во", "qty"])

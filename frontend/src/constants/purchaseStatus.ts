@@ -68,6 +68,23 @@ export function purchaseStatusOrder(s?: string | null): number {
   return PURCHASE_STATUS_META[s]?.order ?? 99
 }
 
+// ── Служебные статусы ВНЕ жизненного цикла (сейчас — только 'split') ────────
+// Намеренно НЕ подмешаны в PURCHASE_STATUS_META/PURCHASE_STATUS_ORDER выше —
+// тот словарь кормит статус-дропдауны/фильтры/массовую смену статуса/kanban
+// (statusItems в composables/orders/ordersLabels.ts), а 'split' нельзя ни
+// выбрать вручную, ни отфильтровать в реестре (владелец, решение 21.09:
+// родительские записи разделённых закупок скрыты совсем, см.
+// backend/app/routers/purchases.py). Источник — backend HIDDEN_STATUS_LABELS
+// (app/services/dictionaries.py), тот же генератор dictionaries.json.
+const HIDDEN_STATUS_LABELS: Record<string, string> = Object.fromEntries(
+  (dictionaries.hidden_statuses as { key: string; label: string }[]).map(s => [s.key, s.label])
+)
+
+export function purchaseHiddenStatusLabel(s?: string | null): string {
+  if (!s) return ''
+  return HIDDEN_STATUS_LABELS[s] ?? s
+}
+
 // ── Подстатус закупки (tz_forming/kp_collecting/on_platform/...) ────────────
 const SUBSTATUS_LABELS: Record<string, string> = Object.fromEntries(
   (dictionaries.substatuses as { key: string; label: string }[]).map(s => [s.key, s.label])

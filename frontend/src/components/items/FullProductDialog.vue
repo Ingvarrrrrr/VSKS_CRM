@@ -36,10 +36,12 @@
               </template>
             </v-combobox>
           </v-col>
+          <!-- Товар / Услуга / Работа — ITEM_TYPE_OPTIONS, единственный источник
+               (Правило №6, владелец 21.09, раздел W2 плана corrections-21-09.md). -->
           <v-col cols="12" md="4">
             <v-select v-model="form.item_kind"
-              :items="[{ title: 'Товар', value: 'товар' }, { title: 'Услуга', value: 'услуга' }]"
-              label="Товар / Услуга" variant="outlined" density="compact" />
+              :items="ITEM_TYPE_OPTIONS"
+              label="Товар / Услуга / Работа" variant="outlined" density="compact" />
           </v-col>
           <v-col cols="12" md="4">
             <v-combobox v-model="form.product_type"
@@ -123,6 +125,7 @@
 <script setup lang="ts">
 import type { FullProductForm } from '@/components/items/types'
 import { useDisplay } from 'vuetify'
+import { ITEM_TYPE_OPTIONS } from '@/utils/itemTypeKind'
 
 const { mobile } = useDisplay()
 

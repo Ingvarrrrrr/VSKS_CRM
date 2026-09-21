@@ -194,13 +194,15 @@ export function useOrdersData(options: {
       // FastAPI молча игнорирует — список грузится как раньше, просто без чипа.
       //
       // Владелец (2026-09-17): scope=purchases по умолчанию скрывает
-      // status='wishes' (заявки не в работе) и status='split' (родительские
-      // записи разделённых закупок) — backend/app/routers/purchases.py делает
-      // исключение ТОЛЬКО когда status запрошен явно. Раньше этот параметр
-      // никогда не уходил в запрос, поэтому фильтр статуса "Желания" в реестре
-      // ничего не находил — данные для него просто не загружались. Передаём
-      // filters.status, когда он задан (одиночное значение, см. v-select/
-      // v-chip-group в OrdersFilterBar.vue — комма-список там не используется).
+      // status='wishes' (заявки не в работе) — backend/app/routers/purchases.py
+      // делает исключение ТОЛЬКО когда status запрошен явно. Раньше этот
+      // параметр никогда не уходил в запрос, поэтому фильтр статуса "Желания"
+      // в реестре ничего не находил — данные для него просто не загружались.
+      // Передаём filters.status, когда он задан (одиночное значение, см.
+      // v-select/v-chip-group в OrdersFilterBar.vue — комма-список там не
+      // используется). status='split' (родительские записи разделённых
+      // закупок) исключения НЕ имеет (владелец, решение 21.09, П1): скрыт
+      // безусловно, даже explicit ?status=split вернёт пустой список.
       const params = new URLSearchParams({ scope: 'purchases', with_feo_excess: 'true' })
       if (filters.status) params.set('status', filters.status)
       orders.value = await apiFetch<Purchase[]>(`/purchases/?${params.toString()}`)

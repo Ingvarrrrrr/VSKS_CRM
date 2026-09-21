@@ -8,27 +8,28 @@
 // заново в каждом из них — каждый получил бы СВОЙ независимый viewMode, и клик
 // по переключателю в шапке не переключал бы вид у остальных (баг, найденный
 // при 5b-приёмке: клик по «карточки» не менял таблицу). Поэтому, как и в
-// useKpiDrilldown.ts (тот же module-level-singleton паттерн с watch()), здесь
-// весь реактивный API строится ОДИН раз (buildSubsidyList, по ctx первого
-// вызвавшего — во всех местах это структурно одна и та же ссылка allSubsidies,
-// см. useSubsidyDetail.ts) и кэшируется в _api; остальные вызовы просто
-// получают тот же объект.
+// useKpiDrilldown.ts, здесь весь реактивный API строится через makeCtxSingleton
+// (ctxSingleton.ts, Правило №6) — по ctx первого вызвавшего, а при новом ctx
+// (повторный маунт SubsidiesView.vue) пересобирается заново, иначе рендер
+// после возврата на /subsidies читал бы allSubsidies прошлого маунта
+// (владелец, 21.09, П2 — строка субсидии не исчезала после удаления до F5).
 import { computed, ref } from 'vue'
 import { useCardView } from '@/composables/useCardView'
 import { formatCurrencyShort } from './format'
+import { makeCtxSingleton } from './ctxSingleton'
 import type { SubsidyDetailContext } from './useSubsidyDetail'
 import type { SubsidyRow } from './types'
 
 const CARD_ORDER_KEY = 'subsidies_card_order'
 
-let _api: ReturnType<typeof buildSubsidyList> | null = null
+// makeCtxSingleton (Правило №6, владелец 21.09 П2): переизбор ctx при новом
+// маунте SubsidiesView.vue — см. докстринг ctxSingleton.ts.
+export const useSubsidyList = makeCtxSingleton(
+  buildSubsidyList,
+  'useSubsidyList() вызван до первого построения (нужен ctx) — проверьте порядок монтирования SubsidiesView.vue',
+)
 
-export function useSubsidyList(ctx?: Pick<SubsidyDetailContext, 'allSubsidies'>) {
-  if (!_api) _api = buildSubsidyList(ctx)
-  return _api
-}
-
-function buildSubsidyList(ctx?: Pick<SubsidyDetailContext, 'allSubsidies'>) {
+function buildSubsidyList(ctx: Pick<SubsidyDetailContext, 'allSubsidies'>) {
   const selectedYear = ref<number>(new Date().getFullYear())
   const cardDragIdx = ref(-1)
   const cardDragOverIdx = ref(-1)

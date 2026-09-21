@@ -14,6 +14,7 @@ import type {
   PlanTreeEntry, SubsidyTypeExcess, TypeExcessInfo, TypeExcessKind,
 } from './types'
 import { formatCurrency } from './format'
+import { makeCtxSingleton } from './ctxSingleton'
 
 interface FeoTreeExcessCtx {
   planTreeByCat: Ref<Record<number, PlanTreeEntry>>
@@ -50,21 +51,20 @@ const NODE_EXCESS_FIELD: Record<TypeExcessKind, string> = {
   fact_over_plan_services: 'excess_fact_over_plan_services',
 }
 
-let _api: ReturnType<typeof buildFeoTreeExcess> | null = null
-
 // ctx необязателен НАЧИНАЯ СО ВТОРОГО вызова (задача владельца, раздел C,
 // 2026-09-21): SubsidiesView.vue строит singleton первым (с полным ctx) —
 // FeoTreeRow.vue/FeoLevel5Panel.vue/FeoTreeToolbar.vue и SubsidyKpiCards.vue
 // (другой агент, вне ctx SubsidyDetailContext — см. докстринг в
 // FeoLevel5Panel.vue про useFeoLevel5Api()) переиспользуют УЖЕ построенный
 // singleton вызовом БЕЗ аргумента — тот же паттерн, что и useFeoLevel5Api().
-export function useFeoTreeExcess(ctx?: FeoTreeExcessCtx) {
-  if (!_api) {
-    if (!ctx) throw new Error('useFeoTreeExcess() вызван до первого построения (нужен ctx) — проверьте порядок монтирования SubsidiesView.vue')
-    _api = buildFeoTreeExcess(ctx)
-  }
-  return _api
-}
+// makeCtxSingleton (Правило №6, владелец 21.09 П2) дополнительно пересобирает
+// API, если ctx передан и отличается от захваченного на предыдущей сборке —
+// иначе повторный маунт SubsidiesView.vue (новый ctx) не подхватывался бы —
+// см. докстринг ctxSingleton.ts.
+export const useFeoTreeExcess = makeCtxSingleton(
+  buildFeoTreeExcess,
+  'useFeoTreeExcess() вызван до первого построения (нужен ctx) — проверьте порядок монтирования SubsidiesView.vue',
+)
 
 function buildFeoTreeExcess(ctx: FeoTreeExcessCtx) {
   const { planTreeByCat, planExcessApprovals, selectedId, refreshReqData } = ctx

@@ -50,6 +50,24 @@
         >
           <v-icon icon="mdi-information-outline" size="13" style="margin-top:-2px" class="mr-1" />{{ p.editPriceCaption.value }}
         </div>
+        <!-- Тип позиции — товар/услуга/работа (владелец, 21.09, раздел W2).
+             ITEM_TYPE_OPTIONS — единственный источник списка (Правило №6).
+             Без чекбокса «Обновить тип в каталоге» — плановая позиция НЕ хранит
+             product_id (см. докстринг FeoPlannedItemCreate.product_id,
+             backend/app/schemas/feo.py: «транзитное поле запроса»), GET сюда его
+             не возвращает, так что диалог правки не знает, какой товар каталога
+             привязан. sync_product_kind=true шлётся всегда (saveEditPlannedItem,
+             useFeoPlannedItemEditDialog.ts) — backend (update_planned_item →
+             app.services.item_types.resolve_product_for_planned_item) сам
+             подбирает товар по точному совпадению имени; снэкбар после
+             сохранения показывает, что реально записалось. -->
+        <v-select
+          v-model="p.editPlannedDialog.value.item_type"
+          :items="ITEM_TYPE_OPTIONS"
+          label="Тип" clearable
+          variant="outlined" density="compact"
+          class="mb-2"
+        />
         <!-- Происхождение (владелец, 2026-09-01) — ДВЕ НЕЗАВИСИМЫЕ галочки, тот же
              смысл, что и в диалоге создания. Правка доступна только тому, кто может
              редактировать ФЭО — этот диалог уже за той же вкладкой (feo_categories). -->
@@ -184,6 +202,7 @@
 // общий с остальными тремя диалогами панели «план vs факт»).
 import { useDisplay } from 'vuetify'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
+import { ITEM_TYPE_OPTIONS } from '@/utils/itemTypeKind'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { usePlannedItems } from '@/composables/subsidies/usePlannedItems'
 

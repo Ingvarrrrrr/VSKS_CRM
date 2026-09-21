@@ -79,6 +79,7 @@ from app.services.wish_access import (
     _is_meaningful_item,
     _wish_locked_descr,
     _notify_pending_approvers,
+    ensure_wish_read_access,
 )
 
 
@@ -88,6 +89,11 @@ def _is_saas(user: User) -> bool:
 
 
 router = APIRouter(prefix="/api/wishes", tags=["wishes"])
+# Предпросмотр дублей строк ТЗ заявки (21.09, corrections-21-09.md W3) —
+# под-роутер БЕЗ своего prefix (Правило №5, образец: dashboard_charts.py →
+# dashboard_type_drill.router). routes.py не трогается.
+from app.routers.wish_tz import router as wish_tz_router
+router.include_router(wish_tz_router)
 
 # Phase 31: fields tracked for diff-highlighting (D-05..D-09)
 # estimated_price is the wish amount proxy (Wish has no total_price column)
@@ -128,28 +134,9 @@ async def get_wish(
 ):
     """Get single wish with items. Creator, assignee, or manager/admin of same org."""
     wish = await _load_wish(wish_id, db)
-    org_ids = get_org_filter(current_user)
-    if org_ids is not None and wish.org_id not in org_ids:
-        raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
-    if current_user.role == 'employee' and wish.created_by != current_user.id and wish.assigned_to != current_user.id:
-        # Check if current user is a participant (wish member)
-        member_res = await db.execute(
-            select(WishMember).where(
-                WishMember.wish_id == wish_id,
-                WishMember.user_id == current_user.id,
-            )
-        )
-        if member_res.scalar_one_or_none() is None:
-            # …или согласующий из цепочки (вкладка «На согласование мне»)
-            from app.models.wish_approval import WishApproval
-            appr = await db.execute(
-                select(WishApproval.id).where(
-                    WishApproval.wish_id == wish_id,
-                    WishApproval.user_id == current_user.id,
-                ).limit(1)
-            )
-            if appr.scalar_one_or_none() is None:
-                raise HTTPException(status_code=403, detail="Нет доступа к этой заявке")
+    # Правило №6: та же проверка, что и GET /api/wishes/{id}/tz-rows
+    # (routers/wish_tz.py) — единственный источник «прав как у чтения заявки».
+    await ensure_wish_read_access(wish, current_user, db)
 
     enriched = _enrich(wish)
     mnames = (await db.execute(

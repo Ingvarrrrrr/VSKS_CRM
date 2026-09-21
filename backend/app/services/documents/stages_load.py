@@ -21,7 +21,10 @@ from app.services.documents.templates import (
     _require_vat_rate_for_doc,
     _require_purchase_method_for_doc,
 )
-from app.services.documents.contexts import _require_contract_items_for_doc
+from app.services.documents.contexts import (
+    _require_contract_items_for_doc,
+    _require_tz_duplicates_resolved_for_doc,
+)
 from app.services.documents.formatting import _resolve_responsible_person_update
 
 import os
@@ -101,6 +104,14 @@ async def framework_contract_guard(p: Purchase, doc_type: str, db: AsyncSession)
     # никакого молчаливого отката на plan/НМЦК. Гейт стоит максимально рано,
     # до тяжёлых запросов ниже.
     _require_contract_items_for_doc(p, doc_type)
+    # Решение владельца (21.09, W3): документ, печатающий строки purchase_items
+    # (любой doc_type не из CONTRACT_FAMILY_DOC_TYPES, и рамочная голова без
+    # ContractItem — см. _build_contract_items_context D-08 fallback), не
+    # формируется, пока дубли строк ТЗ не решены явно (merge/keep). Договорной
+    # doc_type с уже заполненными ContractItem их не использует вовсе —
+    # проверка здесь не нужна, чтобы не блокировать несвязанный документ.
+    if doc_type not in CONTRACT_FAMILY_DOC_TYPES or not getattr(p, "contract_items", None):
+        _require_tz_duplicates_resolved_for_doc(p)
     _require_purchase_method_for_doc(p, doc_type)
     _require_vat_rate_for_doc(p, doc_type)
 

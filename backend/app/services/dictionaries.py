@@ -45,6 +45,23 @@ STATUS_LABELS = {
     "paid":             "Оплачено",
 }
 
+# Служебные значения Purchase.status ВНЕ обычного жизненного цикла закупки —
+# намеренно НЕ входят в STATUS_LABELS/STATUS_ORDER выше. Тот словарь кормит
+# статус-дропдауны/фильтры/массовую смену статуса и kanban-колонки на фронте
+# (frontend/src/composables/orders/ordersLabels.ts::statusItems,
+# OrdersView.vue "Сменить статус"/OrdersFilterBar/ColumnHeaderMenu) — 'split'
+# туда попадать не должен: это не стадия, которую можно выбрать вручную, а
+# терминальная пометка родительской записи после разбиения закупки
+# (app/routers/purchase_ops.py::split_purchase). Владелец (решение 21.09,
+# corrections-21-09.md П1): такие записи скрыты из реестра закупок СОВСЕМ
+# (app/routers/purchases.py — Purchase.status != 'split' безусловно), поэтому
+# им не место и среди выбираемых статусов. Единственный текущий потребитель
+# этого словаря — SubsidyDeleteDialog.vue (чип статуса в списке
+# «Разделённые закупки», справочно, без перехода и без выбора).
+HIDDEN_STATUS_LABELS = {
+    "split": "Разделена",
+}
+
 SUBSTATUS_LABELS = {
     "tz_forming":              "Формирование ТЗ",
     "kp_collecting":           "Сбор КП",

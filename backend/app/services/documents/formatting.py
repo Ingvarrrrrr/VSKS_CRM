@@ -5,7 +5,6 @@
 
 import re
 from datetime import date
-from decimal import Decimal
 from typing import Optional
 
 
@@ -64,35 +63,12 @@ def _fmt_quantity(v) -> str:
     return s.replace(".", ",")
 
 
-def _merge_identical_items(items):
-    """Склеивает позиции, у которых совпадает всё, кроме категории ФЭО.
-
-    Возвращает список кортежей (representative_item, merged_quantity, merged_total_price)
-    в порядке первого появления. Цена за единицу в группе одна и та же, поэтому
-    суммы документа склейка не меняет.
-    """
-    groups: dict = {}
-    order: list = []
-    for item in items or []:
-        # feo_category_id/feo_planned_item_id намеренно не входят в ключ — по ним и склеиваем
-        key = (
-            item.product_id,
-            (item.item_name or "").strip().lower(),
-            (item.item_type or ""),
-            (item.unit or ""),
-            str(item.unit_price) if item.unit_price is not None else "",
-            (item.country_origin or ""),
-            (getattr(item, "vat_rate", None) or ""),
-        )
-        if key not in groups:
-            groups[key] = [item, None, None]  # [representative, quantity, total_price]
-            order.append(key)
-        g = groups[key]
-        if item.quantity is not None:
-            g[1] = (g[1] if g[1] is not None else Decimal("0")) + Decimal(str(item.quantity))
-        if item.total_price is not None:
-            g[2] = (g[2] if g[2] is not None else Decimal("0")) + Decimal(str(item.total_price))
-    return [tuple(groups[key]) for key in order]
+# _merge_identical_items удалена (21.09, план corrections-21-09.md W3): молчаливая
+# склейка одинаковых строк ТЗ больше не устраивает владельца — повторяющиеся
+# позиции («Огнетушитель — 2 шт»/«Огнетушитель — 3 шт») теперь требуют явного
+# решения пользователя (объединить/оставить раздельно/вернуть на доработку).
+# Единственный преемник — app.services.tz_items.build_tz_rows (Правило №6),
+# вызывается из contexts.py и fabrikant_package.py с decisions закупки.
 
 
 # Signatory position: extract from signatory field if "Директор ФИО" format

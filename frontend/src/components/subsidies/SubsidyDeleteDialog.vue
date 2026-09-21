@@ -16,7 +16,7 @@
             <div class="d-flex align-center gap-2 mb-1">
               <span class="text-body-2 font-weight-medium">{{ g.label }} ({{ g.group!.count }})</span>
               <v-spacer />
-              <v-btn size="small" color="primary" variant="tonal"
+              <v-btn v-if="g.goTo" size="small" color="primary" variant="tonal"
                 :prepend-icon="g.icon" @click="g.goTo()">
                 Перейти
               </v-btn>
@@ -66,16 +66,20 @@ import { apiFetch } from '@/api'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import type { SubsidyDeleteImpact, SubsidyDeleteImpactGroup, SubsidyRow } from '@/composables/subsidies/types'
-import { purchaseStatusLabel } from '@/constants/purchaseStatus'
+import { purchaseStatusLabel, purchaseHiddenStatusLabel } from '@/constants/purchaseStatus'
 
 // Человеческие подписи статусов "служебных" групп — wishes/split не показывают
 // стандартную метку статуса закупки для пользователя без жаргона (владелец,
 // 2026-09-17: "никаких английских статусов в тексте"). Обычные закупки и
 // договоры используют общий словарь purchaseStatusLabel (Правило №6 — не
-// дублировать словарь статусов).
+// дублировать словарь статусов); подпись для 'split' тоже не копия — берётся
+// из общего backend-словаря HIDDEN_STATUS_LABELS через
+// purchaseHiddenStatusLabel (см. constants/purchaseStatus.ts), только 'wishes'
+// здесь намеренно переопределён — контекстная формулировка отличается от
+// основной подписи статуса «Желания сотрудников».
 function statusLabel(status: string | null): string {
   if (status === 'wishes') return 'Не в работе'
-  if (status === 'split') return 'Разделена'
+  if (status === 'split') return purchaseHiddenStatusLabel('split')
   return purchaseStatusLabel(status) || status || '—'
 }
 
@@ -105,10 +109,15 @@ const deleteImpact = ref<SubsidyDeleteImpact | null>(null)
 // Группы, ЧЬЁ количество отдал бэкенд (app/services/subsidy_delete_impact.py) —
 // единственный источник разбивки (Правило №6): диалог не пересчитывает и не
 // дублирует формулировки, только раскладывает готовые данные по строкам с
-// человеческой подписью и правильной ссылкой на реестр (?status=wishes/split
-// для скрытых групп — обычный реестр закупок эти статусы не показывает
-// никаким фильтром, см. backend/app/routers/purchases.py).
-const GROUP_META: Record<string, { label: string; icon: string; goTo: (id: number) => void }> = {
+// человеческой подписью и правильной ссылкой на реестр (?status=wishes для
+// скрытой группы «заявки не в работе» — обычный реестр закупок этот статус не
+// показывает никаким фильтром, см. backend/app/routers/purchases.py).
+// 'split' — без goTo (владелец, решение 21.09, corrections-21-09.md П1):
+// родительские записи разделённых закупок скрыты из реестра СОВСЕМ, включая
+// явный ?status=split (см. purchases.py) — переход туда вёл бы в пустой
+// список, поэтому у этой группы остаётся только счётчик-информация, без
+// кнопки «Перейти».
+const GROUP_META: Record<string, { label: string; icon: string; goTo?: (id: number) => void }> = {
   purchases: {
     label: 'Закупки', icon: 'mdi-cart-outline',
     goTo: (id) => ctx.router.push(`/orders?subsidy_id=${id}`),
@@ -119,7 +128,6 @@ const GROUP_META: Record<string, { label: string; icon: string; goTo: (id: numbe
   },
   split: {
     label: 'Разделённые закупки (родительские записи)', icon: 'mdi-call-split',
-    goTo: (id) => ctx.router.push(`/orders?subsidy_id=${id}&status=split`),
   },
   contracts: {
     label: 'Договоры', icon: 'mdi-file-document-outline',
@@ -132,13 +140,17 @@ const blockingGroups = computed(() => {
   if (!d || !id) return []
   return (['purchases', 'wishes', 'split', 'contracts'] as const)
     .filter(key => (d[key]?.count ?? 0) > 0)
-    .map(key => ({
-      key,
-      label: GROUP_META[key].label,
-      icon: GROUP_META[key].icon,
-      group: d[key] as SubsidyDeleteImpactGroup,
-      goTo: () => { visible.value = false; GROUP_META[key].goTo(id) },
-    }))
+    .map(key => {
+      const meta = GROUP_META[key]! // все 4 ключа определены в GROUP_META статически
+      const metaGoTo = meta.goTo
+      return {
+        key,
+        label: meta.label,
+        icon: meta.icon,
+        group: d[key] as SubsidyDeleteImpactGroup,
+        goTo: metaGoTo ? () => { visible.value = false; metaGoTo(id) } : null,
+      }
+    })
 })
 const hasBlockingLinks = computed(() => blockingGroups.value.length > 0)
 const blockingLinksMsg = computed(() => {

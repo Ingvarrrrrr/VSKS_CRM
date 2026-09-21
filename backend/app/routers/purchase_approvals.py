@@ -471,35 +471,10 @@ async def reset_approvals(
     if not purchase:
         raise HTTPException(404, "Закупка не найдена")
 
-    # Delete all approval records
-    result = await db.execute(
-        select(PurchaseApproval).where(PurchaseApproval.purchase_id == pid)
-    )
-    for a in result.scalars().all():
-        await db.delete(a)
-
-    purchase.approval_status = None
-
-    db.add(PurchaseEvent(
-        purchase_id=pid,
-        user_id=current_user.id,
-        event_type="approval_reset",
-        data={},
-    ))
-
-    # Cancel all pending approval Tasks for this purchase (best-effort)
-    try:
-        tasks_res = await db.execute(
-            select(Task).where(
-                Task.purchase_id == pid,
-                Task.category == "Согласование",
-                Task.status == TaskStatus.todo,
-            )
-        )
-        for t in tasks_res.scalars().all():
-            t.status = TaskStatus.cancelled
-    except Exception:
-        pass  # best-effort
+    # Правило №6 — единственный механизм сброса согласования закупки, тот же
+    # зовёт и routers/purchase_return.py (возврат закупки в заявку).
+    from app.services.purchase_approval_reset import reset_purchase_approvals
+    await reset_purchase_approvals(purchase, db, current_user)
 
     await db.commit()
     return {"ok": True}

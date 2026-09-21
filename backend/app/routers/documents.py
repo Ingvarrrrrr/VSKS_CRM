@@ -52,7 +52,6 @@ from app.services.documents.formatting import (
     _fmt_money,
     _fmt_money_plain,
     _fmt_quantity,
-    _merge_identical_items,
     _signatory_position,
     _fio_to_genitive,
     _format_initials,

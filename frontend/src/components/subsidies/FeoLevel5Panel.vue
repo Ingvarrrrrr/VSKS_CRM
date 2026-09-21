@@ -63,7 +63,7 @@
               <th :style="feoResize.resizeStyle('budget')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE">Плановая цена за единицу</th>
               <th :style="feoResize.resizeStyle('qty')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE">Кол-во плана</th>
               <th :style="feoResize.resizeStyle('planned')" style="padding:4px 8px;text-align:right;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE">Сумма плана</th>
-              <th style="width:74px;min-width:74px;padding:4px 8px;text-align:center;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE">Тип</th>
+              <th style="width:86px;min-width:86px;padding:4px 8px;text-align:center;color:#1e40af;font-weight:600;border-bottom:1px solid #BFDBFE">Тип</th>
               <!-- Задача владельца, п.15 волны 4 (2026-09-13): «на каком этапе находится
                    данная закупка» — свободное место сразу после «Тип». Переиспользуем
                    колонку 'spent' — в этой конкретной (Ур.5) таблице она и так всегда
@@ -221,19 +221,44 @@
                     <span v-if="planned.amount">{{ formatCurrency(planned.amount) }}</span>
                   </template>
                 </td>
-                <td style="width:74px;min-width:74px;padding:4px 8px;text-align:center;color:#64748b">
-                  <span
-                    v-if="planned.item_type_inherited"
-                    class="text-medium-emphasis"
-                    title="Тип взят из позиций закупок — у самой плановой позиции он не задан"
-                  >{{ planned.item_type_effective }}</span>
-                  <span v-else>{{ planned.item_type_effective || '—' }}</span>
+                <td style="width:86px;min-width:86px;padding:2px 4px;text-align:center;color:#64748b">
+                  <!-- Инлайн-правка (владелец, 21.09, раздел W2) — только у реальных
+                       позиций (!isManual, есть id для PUT); ручная псевдо-строка
+                       категории продолжает показываться текстом, как и раньше.
+                       item_type_inherited (тип унаследован от позиций закупок,
+                       собственный item_type у позиции пуст) — показываем как
+                       read-only текст с той же подсказкой: смена типа здесь правит
+                       СВОЙ item_type позиции, а не закупки, из которых унаследован
+                       показанный текст, поэтому сразу давать редактировать нечего. -->
+                  <template v-if="!planned.isManual && !planned.item_type_inherited">
+                    <v-select
+                      :ref="(el: any) => { if (el) itemTypeSelectRefs.set(planned.id, el); else itemTypeSelectRefs.delete(planned.id) }"
+                      :model-value="planned.item_type_effective || null"
+                      :items="ITEM_TYPE_OPTIONS"
+                      :loading="itemTypeInline.savingItemTypeId.value === planned.id"
+                      :disabled="itemTypeInline.savingItemTypeId.value === planned.id"
+                      clearable hide-details density="compact" variant="plain"
+                      style="font-size:11px"
+                      @update:model-value="(v: string | null) => itemTypeInline.saveInlineItemType(planned, v)"
+                      @click.stop
+                    />
+                  </template>
+                  <template v-else>
+                    <span
+                      v-if="planned.item_type_inherited"
+                      class="text-medium-emphasis"
+                      title="Тип взят из позиций закупок — у самой плановой позиции он не задан"
+                    >{{ planned.item_type_effective }}</span>
+                    <span v-else>{{ planned.item_type_effective || '—' }}</span>
+                  </template>
                   <!-- Раздел C0 (план ancient-prancing-music.md, 2026-09-21): позиция
                        без типа не участвует в контролях превышения по типу
                        (useFeoTreeExcess.ts::typeExcessFor/backend kind_of) — явная
-                       подсказка вместо молчаливого выпадения из подсчёта. -->
+                       подсказка вместо молчаливого выпадения из подсчёта. Клик
+                       открывает выбор (владелец, 21.09) — фокусирует v-select выше. -->
                   <v-icon v-if="!planned.item_type_effective" icon="mdi-alert-circle-outline" size="12" color="amber-darken-3"
-                    class="ml-1" title="укажите тип — иначе не участвует в контроле по типам"
+                    class="ml-1" style="cursor:pointer" title="укажите тип — иначе не участвует в контроле по типам"
+                    @click.stop="focusItemTypeSelect(planned.id)"
                   />
                   <!-- Комментарии к плановой позиции (владелец, Волна 4, п.16, правка
                        2026-09-14) — «отображается после поля Тип»: сразу под значением
@@ -621,7 +646,8 @@ import FeoCommentThread from './FeoCommentThread.vue'
 // разбор item_type здесь не пишем). ⚠️ Файл пишет параллельный агент —
 // на момент написания этого компонента ещё не существовал, импорт по
 // согласованному пути; npx vue-tsc --noEmit перепроверить, когда появится.
-import { kindOf } from '@/utils/itemTypeKind'
+import { kindOf, ITEM_TYPE_OPTIONS } from '@/utils/itemTypeKind'
+import { useFeoLevel5ItemType } from '@/composables/subsidies/useFeoLevel5ItemType'
 
 const props = defineProps<{ node: FeoNode }>()
 const node = props.node
@@ -647,6 +673,17 @@ const nameColStyle = computed(() => withNameColumnFloor(feoResize.resizeStyle('n
 // SubsidiesView.vue синглтон (см. её докстринг) — второй экземпляр состояния
 // не заводится, это тот же объект, что и ctx.movePlannedItemToCategory и т.п.
 const feoLevel5 = useFeoLevel5Api()
+// Инлайн-правка колонки «Тип» (владелец, 21.09, раздел W2) — см. докстринг
+// useFeoLevel5ItemType.ts. ctx.refreshComparison/ctx.refreshReqData — те же
+// функции, что и у openEditPlannedItem/saveEditPlannedItem (второй набор не
+// заводим, Правило №6).
+const itemTypeInline = useFeoLevel5ItemType(ctx)
+// Ссылки на v-select строк «Тип» — клик по подсказке «укажите тип» открывает
+// выбор (задача владельца), а не просто подсвечивает.
+const itemTypeSelectRefs = reactive(new Map<number, any>())
+function focusItemTypeSelect(plannedId: number) {
+  itemTypeSelectRefs.get(plannedId)?.focus?.()
+}
 // «Создать закупку на основе плана» (задача 2) — только для видимости чекбокса
 // у ручных планов (isManual), см. докстринг в шаблоне выше.
 const planToRequest = usePlanToRequest()

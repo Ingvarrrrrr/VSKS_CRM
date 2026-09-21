@@ -108,6 +108,19 @@ export function hasStageDrill(stage: string): boolean {
   return stage in KPI_STAGE_CUMULATIVE_STATUSES
 }
 
+// Три допустимых значения поля «Тип» плановой позиции ФЭО/товара каталога
+// (владелец, 21.09, раздел W2 плана corrections-21-09.md) — зеркалит ITEM_TYPES
+// (backend/app/services/item_types.py). Единственный источник вариантов для
+// v-select «Тип» на фронте — PlannedItemAddDialog.vue, PlannedItemEditDialog.vue,
+// FeoLevel5Panel.vue (инлайн-правка колонки «Тип»), ProductFormDialog.vue и
+// FullProductDialog.vue (селект «Товар/Услуга» на самом товаре каталога) читают
+// ЭТОТ список, второй такой же массив по компонентам не заводим (Правило №6).
+export const ITEM_TYPE_OPTIONS: { value: 'товар' | 'услуга' | 'работа'; title: string }[] = [
+  { value: 'товар', title: 'Товар' },
+  { value: 'услуга', title: 'Услуга' },
+  { value: 'работа', title: 'Работа' },
+]
+
 export const KPI_STAGE_LABELS: Record<string, string> = {
   plan_schedule: 'План-график',
   work: 'Ведётся работа',

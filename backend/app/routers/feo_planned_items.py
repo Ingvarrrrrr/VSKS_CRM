@@ -21,27 +21,18 @@ from app.schemas.schemas import (
 )
 from app.services.text_match import normalize as _norm_text
 from app.services.feo_monthly_schedule import compute_monthly_schedule
-
-
-def normalize_item_type(v: Optional[str]) -> Optional[str]:
-    """Признак «Товар/Услуга/Работа» плановой позиции (блок 1, план
-    zany-fluttering-mountain.md) — приводит свободный ввод (в т.ч. импорт ФЭО)
-    к одному из трёх нижнерегистрных значений, как в purchase_items.item_type/
-    wish_items.item_type. Пусто/непонятное значение → None (поле необязательное).
-    Экспортируется — используется импортом ФЭО (тот же нормализатор, не дублируем).
-    """
-    if not v:
-        return None
-    s = str(v).strip().lower()
-    if not s:
-        return None
-    if s.startswith("тов"):
-        return "товар"
-    if s.startswith("усл"):
-        return "услуга"
-    if s.startswith("раб"):
-        return "работа"
-    return None
+# normalize_item_type/ITEM_TYPES/apply_item_type_to_product раньше жили здесь
+# (нормализатор был написан прямо в этом роутере) — вынесены в
+# app/services/item_types.py (ПРАВИЛО №6, 21.09, раздел W2 плана
+# corrections-21-09.md), чтобы Product.item_kind не заводил свою копию
+# нормализации. Имя normalize_item_type РЕЭКСПОРТИРУЕТСЯ отсюда без изменений
+# — app/services/feo_import_apply.py и app/services/item_type_split.py
+# продолжают делать `from app.routers.feo_planned_items import
+# normalize_item_type` как раньше, ничего в них менять не нужно.
+from app.services.item_types import (  # noqa: F401 (normalize_item_type — реэкспорт)
+    normalize_item_type, apply_item_type_to_product, resolve_product_for_planned_item,
+)
+from app.models.product import Product
 
 
 def _apply_payment_fields(item: FeoPlannedItem, data: FeoPlannedItemCreate) -> None:
@@ -319,6 +310,12 @@ async def create_planned_item(
     )
     _apply_payment_fields(item, data)
     db.add(item)
+    # Синхронизация типа с товаром каталога (владелец, 21.09, раздел W2) — см.
+    # докстринг apply_item_type_to_product/FeoPlannedItemCreate.sync_product_kind.
+    # Единственная точка вызова для этого эндпоинта; сама позиция product_id не
+    # хранит, поле транзитное.
+    if data.sync_product_kind:
+        await apply_item_type_to_product(db, data.product_id, item.item_type)
     _sid = cat.subsidy_id
     if _sid is not None:
         from app.routers.purchases import _create_plan_graph_version
@@ -445,6 +442,11 @@ async def create_planned_items_bulk(
             dedup_seen[dedup_key] = item
         if cat.subsidy_id is not None:
             touched_subsidies.add(cat.subsidy_id)
+        # Синхронизация типа с товаром каталога — тот же вызов, что и в
+        # одиночном create_planned_item (см. его докстринг про
+        # apply_item_type_to_product), по одному на позицию с sync_product_kind=true.
+        if data.sync_product_kind:
+            await apply_item_type_to_product(db, data.product_id, item.item_type)
 
     await db.flush()
 
@@ -505,6 +507,30 @@ async def update_planned_item(
     # запроса по-прежнему очищает поле — это осознанное действие.
     if "item_type" in data.model_fields_set:
         item.item_type = normalize_item_type(data.item_type)
+        # Синхронизация типа с товаром каталога (владелец, 21.09, раздел W2) —
+        # только когда клиент реально прислал item_type в этом PUT (иначе
+        # sync_product_kind=true без нового типа нечего синхронизировать) и
+        # явно попросил sync_product_kind=true. См. apply_item_type_to_product.
+        #
+        # product_id — транзитное поле запроса (см. докстринг
+        # FeoPlannedItemCreate.product_id); диалог правки/инлайн-селект типа
+        # (PlannedItemEditDialog.vue, useFeoLevel5ItemType.ts) его не знают —
+        # позиция сама по себе product_id не хранит. Раньше это молча
+        # выключало синхронизацию; теперь при sync_product_kind=true БЕЗ
+        # product_id в теле запроса товар подбирается по ТОЧНОМУ совпадению
+        # имени (app.services.item_types.resolve_product_for_planned_item —
+        # 0 или 2+ совпадений → None, не гадаем).
+        _sync_product_id = data.product_id
+        if data.sync_product_kind and _sync_product_id is None:
+            _sync_product_id = await resolve_product_for_planned_item(db, item)
+        if data.sync_product_kind:
+            _synced = await apply_item_type_to_product(db, _sync_product_id, item.item_type)
+            if _synced:
+                item.product_kind_synced = True
+                _synced_product = (
+                    await db.execute(select(Product.id, Product.name).where(Product.id == _sync_product_id))
+                ).first()
+                item.product_name = _synced_product.name if _synced_product else None
     # Происхождение (владелец, 2026-09-01) — тот же паттерн, что и у item_type
     # чуть выше: PUT здесь полная замена, у роутера много вызывающих
     # (movePlannedItemToCategory/savePlannedItemSortOrder/clearCategoryManualPlan

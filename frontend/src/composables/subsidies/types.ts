@@ -188,6 +188,13 @@ export interface FeoPlannedItem {
   feo_quantity?: number | null
   feo_unit_price?: number | null
   feo_amount?: number | null
+  // Ответ PUT /feo-planned-items/{id} (владелец, 21.09, раздел W2) — true,
+  // когда sync_product_kind=true в этом запросе реально записал item_type в
+  // Product.item_kind (см. backend/app/schemas/feo.py::FeoPlannedItemOut,
+  // resolve_product_for_planned_item в backend/app/services/item_types.py).
+  // Только для чтения ответа PUT — GET .../comparison эти поля не отдаёт.
+  product_kind_synced?: boolean
+  product_name?: string | null
 }
 
 // Стадия уточнения позиции (ФЭО → План → Что выставили на закупку → Номенклатура

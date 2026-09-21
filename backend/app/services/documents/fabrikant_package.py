@@ -21,6 +21,10 @@ from .doc_types import (
     FABRIKANT_PKG_FILE_NAMES,
 )
 from .contract_terms import warranty_period_text as _warranty_period_text
+from .contexts import (
+    _signatory_split, _build_contract_items_context, _format_service_term,
+    _require_tz_duplicates_resolved_for_doc,
+)
 from .formatting import (
     _fmt_date,
     _fmt_money,
@@ -30,13 +34,14 @@ from .formatting import (
     _signatory_position,
     _fio_to_initials_prefix,
     _rubles_to_words,
-    _merge_identical_items,
 )
+# build_tz_rows/_require_tz_duplicates_resolved_for_doc — единственный источник
+# группировки дублей строк ТЗ (Правило №6), см. app.services.tz_items.
+from app.services.tz_items import build_tz_rows
 # Правило №6 — единственный резолвер пути к шаблону (субсидийный override →
 # глобальный → DOC_TYPE_FALLBACK_FILES). Раньше здесь жили две копии-дубли
 # той же логики приоритета (ниже — tech_spec_request и цикл рендера пакета).
 from .templates import _resolve_vat_exemption_basis, _vat_exemption_missing_hint, _resolve_doc_template_path
-from .contexts import _signatory_split, _build_contract_items_context, _format_service_term
 from .morphology import _to_gen_fio, _inflect_phrase_genitive
 from .docx_post import _strip_tech_spec_legend
 from app.services.acceptance_docs import derived_scalars as _acceptance_derived_scalars
@@ -75,6 +80,12 @@ async def render_fabrikant_package_files(
     p = result.scalar_one_or_none()
     if not p:
         return [], [f"Закупка {purchase_id} не найдена"]
+
+    # Решение владельца (21.09, W3): весь пакет из 5 документов печатает строки
+    # purchase_items (см. items_list ниже) — если в ТЗ остались нерешённые
+    # дубли строк, пакет не формируется целиком (409), не «по-доброму»
+    # по-документно, как остальные сбои рендера ниже.
+    _require_tz_duplicates_resolved_for_doc(p)
 
     subsidy_r = await db.execute(select(Subsidy).where(Subsidy.id == p.subsidy_id))
     subsidy = subsidy_r.scalar_one_or_none()
@@ -163,16 +174,19 @@ async def render_fabrikant_package_files(
     # тот же общий резолвер product_photos.make_photo_resolver, не второй).
     items_list = []
     items_products = []
-    for idx, (item, qty, total) in enumerate(_merge_identical_items(p.items or []), start=1):
+    _tz = build_tz_rows(p.items or [], getattr(p, "tz_duplicate_decisions", None))
+    for idx, row in enumerate(_tz["rows"], start=1):
+        item = row["item"]
+        total = row["total_price"]
         items_list.append({
             "num": idx,
             "name": item.item_name or "",
             "description": "",
             "type": item.item_type or "",
             "item_kind": (item.product.item_kind if item.product else None) or "товар",
-            "quantity": _fmt_quantity(qty),
+            "quantity": _fmt_quantity(row["quantity"]),
             "unit": item.unit or "",
-            "unit_price": _fmt_money(item.unit_price),
+            "unit_price": _fmt_money(row["unit_price"]),
             "total_price": _fmt_money(total),
             "total": _fmt_money(total),
             "photo": "",

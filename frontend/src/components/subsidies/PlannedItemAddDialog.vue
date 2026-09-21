@@ -82,6 +82,29 @@
             />
           </v-col>
         </v-row>
+        <!-- Тип позиции — товар/услуга/работа (владелец, 21.09, раздел W2):
+             автоподставляется из каталога при выборе товара (см.
+             applyPlannedProductHint в useFeoPlannedItemAddDialog.ts), пока
+             пользователь не тронул поле сам. ITEM_TYPE_OPTIONS — единственный
+             источник списка (Правило №6). -->
+        <v-select
+          v-model="p.plannedItemForm.value.item_type"
+          :items="ITEM_TYPE_OPTIONS"
+          label="Тип" clearable
+          variant="outlined" density="compact"
+          class="mb-2"
+          @update:model-value="p.onPlannedItemTypeInput"
+        />
+        <!-- Чекбокс синхронизации типа с каталогом — виден только когда выбран
+             товар каталога И тип позиции расходится с типом товара в каталоге
+             (или у товара тип не задан), см. addShowSyncProductKindCheckbox. -->
+        <v-checkbox
+          v-if="p.addShowSyncProductKindCheckbox.value"
+          v-model="p.addSyncProductKind.value"
+          density="compact" hide-details
+          label="Обновить тип товара в каталоге"
+          class="mb-2"
+        />
         <!-- Плановая стоимость за единицу (владелец, 2026-09-01): подставляется из
              каталога при выборе товара (onPlannedItemProductPick), полностью
              редактируема; пока задана и не равна 0 — «Плановая сумма» ниже считается
@@ -285,6 +308,7 @@
 import { useDisplay } from 'vuetify'
 import InlineProductMatch from '@/components/items/InlineProductMatch.vue'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
+import { ITEM_TYPE_OPTIONS } from '@/utils/itemTypeKind'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { usePlannedItems } from '@/composables/subsidies/usePlannedItems'
 import { formatCurrency } from '@/composables/subsidies/format'

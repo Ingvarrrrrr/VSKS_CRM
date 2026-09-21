@@ -245,6 +245,14 @@ export function useFeoPlannedItemEditDialog(ctx?: EditDialogCtx) {
         months_count: (isMonthly && !d.monthly_end_date) ? numOrNull(d.months_count) : null,
         monthly_amount: isMonthly ? numOrNull(d.monthly_amount) : null,
         item_type: d.item_type,
+        // Синхронизация типа с товаром каталога (владелец, 21.09, раздел W2) —
+        // диалог правки product_id не знает (плановая позиция его не хранит,
+        // см. докстринг FeoPlannedItemCreate.product_id в backend/app/schemas/
+        // feo.py), поэтому backend (update_planned_item → resolve_product_for_planned_item
+        // в app/services/item_types.py) подбирает товар сам по точному
+        // совпадению имени. sync_product_kind=true шлётся всегда — на бэкенде
+        // это no-op, если item_type не менялся/товар уже с тем же типом.
+        sync_product_kind: true,
         is_feo_breakdown: d.is_feo_breakdown,
         is_internal_plan: d.is_internal_plan,
         // Раздельные числа по ФЭО (владелец, 2026-09-14) — ПОЛНАЯ замена, как
@@ -258,10 +266,13 @@ export function useFeoPlannedItemEditDialog(ctx?: EditDialogCtx) {
         // sort_order.nulls_last(), id в feo_planned_items_reports.py).
         sort_order: d.sort_order,
       }
-      await apiFetch(`/feo-planned-items/${d.id}`, { method: 'PUT', body: JSON.stringify(body) })
+      const saved = await apiFetch<FeoPlannedItem>(`/feo-planned-items/${d.id}`, { method: 'PUT', body: JSON.stringify(body) })
       editPlannedDialog.value.show = false
       registerEditUndo(d.id, d.feo_category_id, d.name, editPlannedBeforeSnapshot, body)
       editPlannedBeforeSnapshot = null
+      if (saved.product_kind_synced && saved.product_name) {
+        showSnack(`Тип «${d.item_type}» записан в товар каталога «${saved.product_name}»`)
+      }
       // См. комментарий у deletePlannedItem (SubsidiesView.vue) — refreshComparison
       // один не обновляет planTreeByCat, от которого зависят числа узла/родителей и
       // плашка превышения.

@@ -100,6 +100,13 @@ class Purchase(Base):
     description_mode = Column(String(10), default="exact")               # 'exact' | '44fz'
     event_id = Column(Integer, ForeignKey("events.id"), nullable=True)
 
+    # Решения по дублям строк ТЗ (21.09, corrections-21-09.md W3): карта
+    # group_key(app.services.tz_items) → 'merge'|'keep', которую пользователь
+    # принял для повторяющихся позиций ТЗ (см. routers/purchase_tz.py). NULL/{}
+    # = решений ещё нет — build_tz_rows тогда не сливает ничего, а генерация
+    # документа блокируется 409 TZ_DUPLICATES_UNRESOLVED (contexts.py).
+    tz_duplicate_decisions = Column(JSONB, nullable=True)
+
     # Approval
     approval_status = Column(String(30), nullable=True)  # None / in_progress / approved / rejected
     approval_mode = Column(String(20), nullable=True, default="sequential")  # sequential / parallel

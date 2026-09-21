@@ -25,7 +25,13 @@ class Product(Base):
     # которой товар фигурировал в позициях закупок (см. app/services/product_unit.py);
     # при разнобое единиц остаётся NULL.
     unit = Column(String(50), nullable=True)
-    item_kind = Column(String(20), default="товар")  # "товар" или "услуга"
+    # Тип товара каталога — "товар"/"услуга"/"работа" (владелец, 21.09, раздел
+    # W2 плана corrections-21-09.md: третье значение добавлено, чтобы
+    # соответствовать типу плановой позиции ФЭО). Допустимые значения — ЕДИНЫЙ
+    # источник app.services.item_types.ITEM_TYPES (ПРАВИЛО №6), тот же набор,
+    # что и у FeoPlannedItem.item_type; сюда автозаписывается из плановой
+    # позиции через apply_item_type_to_product (sync_product_kind=true).
+    item_kind = Column(String(20), default="товар")
     is_reusable = Column(Boolean, default=True)  # Многоразовое или одноразовое
     photo_url = Column(String(1000), nullable=True)  # Внешняя ссылка (маркетплейс) — источник правды для повторного скачивания
     photo_link = Column(String(1000), nullable=True)  # Альтернативная ссылка на фото

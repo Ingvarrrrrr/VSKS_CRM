@@ -8,6 +8,7 @@
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import type { FeoNode, FeoReqItem, PlanTreeEntry, SubsidyRow } from './types'
 import { formatCurrency as fmtLocal } from './format'
+import { makeCtxSingleton } from './ctxSingleton'
 
 interface FeoTreeAmountsCtx {
   purchaseTotals: Ref<Record<number, number>>
@@ -27,21 +28,18 @@ interface FeoTreeAmountsCtx {
   selectedId: Ref<number | null>
 }
 
-let _api: ReturnType<typeof buildFeoTreeAmounts> | null = null
-
 // ctx необязателен НАЧИНАЯ СО ВТОРОГО вызова (раздел C0, план ancient-prancing-
 // music.md, 2026-09-21) — тот же паттерн, что и useFeoTreeExcess.ts/
 // useFeoLevel5Api(): FeoTreeRow.vue вызывает БЕЗ аргумента, чтобы достать
 // feoTypeSplitFor/planTypeSplitFor/remainingTypeSplitFor напрямую, не проходя
 // через ctx (SubsidyDetailContext собирается в SubsidiesView.vue — файл вне
 // этой задачи, см. докстринг useFeoLevel5Api() в FeoLevel5Panel.vue).
-export function useFeoTreeAmounts(ctx?: FeoTreeAmountsCtx) {
-  if (!_api) {
-    if (!ctx) throw new Error('useFeoTreeAmounts() вызван до первого построения (нужен ctx) — проверьте порядок монтирования SubsidiesView.vue')
-    _api = buildFeoTreeAmounts(ctx)
-  }
-  return _api
-}
+// makeCtxSingleton (Правило №6, владелец 21.09 П2) дополнительно пересобирает
+// API при новом ctx (повторный маунт SubsidiesView.vue) — см. ctxSingleton.ts.
+export const useFeoTreeAmounts = makeCtxSingleton(
+  buildFeoTreeAmounts,
+  'useFeoTreeAmounts() вызван до первого построения (нужен ctx) — проверьте порядок монтирования SubsidiesView.vue',
+)
 
 function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
   const {

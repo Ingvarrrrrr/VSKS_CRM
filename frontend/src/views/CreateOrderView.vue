@@ -882,6 +882,8 @@
                   prepend-icon="mdi-file-word-outline"
                   append-icon="mdi-chevron-down"
                   :loading="!!docLoading && docLoading.startsWith('tech_spec')"
+                  :disabled="tzHasUnresolved"
+                  :title="tzHasUnresolved ? tzDisabledTooltip : undefined"
                 >
                   Скачать ТЗ (.docx)
                 </v-btn>
@@ -898,48 +900,31 @@
             <v-chip v-else size="small" color="grey" variant="tonal">Сохраните закупку для скачивания</v-chip>
           </div>
         </v-card-title>
-        <v-card-text v-show="!tzCollapsed" class="pa-0">
-          <v-table density="comfortable" class="tz-table">
-            <thead>
-              <tr class="tz-table-header">
-                <th style="width:36px;text-align:center">№</th>
-                <th style="width:72px;text-align:center">Фото</th>
-                <th>Наименование и описание</th>
-                <th style="width:70px;text-align:center">Кол-во</th>
-                <th style="width:56px;text-align:center">Ед.</th>
-                <th style="width:120px;text-align:right">Цена ед., ₽</th>
-                <th style="width:130px;text-align:right">Сумма, ₽</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(item, i) in items.filter(x => x.item_name?.trim())" :key="i" style="vertical-align:middle">
-                <td class="text-center text-medium-emphasis">{{ i + 1 }}</td>
-                <td class="text-center py-2">
-                  <v-avatar v-if="item._photo_url" size="56" rounded="sm" style="overflow:hidden">
-                    <img :src="item._photo_url" style="width:56px;height:56px;object-fit:cover;display:block" />
-                  </v-avatar>
-                  <v-icon v-else size="40" color="grey-lighten-2">mdi-image-off-outline</v-icon>
-                </td>
-                <td class="py-2">
-                  <div class="font-weight-medium" style="font-size:13px">{{ item.item_name }}</div>
-                  <div v-if="activeDescription(item)" class="text-caption text-medium-emphasis mt-1" style="white-space:pre-line;max-width:420px">
-                    {{ activeDescription(item) }}
-                  </div>
-                  <v-chip v-if="form.description_mode === '44fz' && !item._description_44fz && item._description" size="x-small" variant="tonal" color="warning" class="mt-1">нет описания 44-ФЗ</v-chip>
-                </td>
-                <td class="text-center">{{ item.quantity ?? '—' }}</td>
-                <td class="text-center">{{ item.unit || '—' }}</td>
-                <td class="text-right">{{ nmckMode === 'manual' ? '—' : (item.unit_price != null ? item.unit_price.toLocaleString('ru-RU', {minimumFractionDigits:2}) : '—') }}</td>
-                <td class="text-right font-weight-medium">{{ nmckMode === 'manual' ? '—' : (item.total_price != null ? item.total_price.toLocaleString('ru-RU', {minimumFractionDigits:2}) : '—') }}</td>
-              </tr>
-            </tbody>
-            <tfoot>
-              <tr class="tz-table-footer">
-                <td colspan="6" class="text-right font-weight-bold pa-3" style="font-size:13px">Итого НМЦД:</td>
-                <td class="text-right font-weight-bold pa-3 text-primary" style="font-size:13px">{{ formatMoney(displayNmck) }}</td>
-              </tr>
-            </tfoot>
-          </v-table>
+        <v-card-text v-show="!tzCollapsed" class="pa-0 pa-md-2">
+          <!-- Строки ТЗ — единственный источник GET /purchases/{id}/tz-rows
+               (Правило №6, TzRowsSection.vue), локального пересчёта дублей
+               здесь больше нет. До первого сохранения закупки id ещё нет —
+               серверные строки/дубли недоступны, показываем подсказку. -->
+          <TzRowsSection
+            v-if="isEdit && purchaseId"
+            ref="tzRowsRef"
+            :purchase-id="purchaseId"
+            :price-dash="nmckMode === 'manual'"
+            :footer-total="displayNmck"
+            :resolve-local-item="resolveTzLocalItem"
+            :active-description="activeDescription"
+            :show-snack="showSnack"
+            @unresolved-changed="tzHasUnresolved = $event"
+          >
+            <template #row-extra="{ row }">
+              <v-chip v-if="show44fzWarning(row)" size="x-small" variant="tonal" color="warning" class="mt-1">
+                нет описания 44-ФЗ
+              </v-chip>
+            </template>
+          </TzRowsSection>
+          <div v-else class="pa-4 text-center text-medium-emphasis text-caption">
+            Сохраните закупку, чтобы увидеть строки ТЗ и проверку повторяющихся позиций.
+          </div>
         </v-card-text>
       </v-card>
 
@@ -1501,6 +1486,8 @@
                   color="blue-darken-2"
                   size="small"
                   :loading="!!docLoading && docLoading.startsWith('tech_spec')"
+                  :disabled="tzHasUnresolved"
+                  :title="tzHasUnresolved ? tzDisabledTooltip : undefined"
                 >
                   ТЗ
                 </v-btn>
@@ -1521,8 +1508,9 @@
               color="indigo"
               size="small"
               :loading="docLoading === (form.contract_form ? contractDocTypeMap[form.contract_form] || 'contract' : 'contract')"
+              :disabled="tzHasUnresolved"
               @click="downloadDoc(form.contract_form ? contractDocTypeMap[form.contract_form] || 'contract' : 'contract')"
-              :title="form.contract_form ? 'Форма: ' + (contractFormOptions.find(o => o.value === form.contract_form)?.title || form.contract_form) : 'Договор (универсальный) — тип определяется автоматически по позициям закупки'"
+              :title="tzHasUnresolved ? tzDisabledTooltip : (form.contract_form ? 'Форма: ' + (contractFormOptions.find(o => o.value === form.contract_form)?.title || form.contract_form) : 'Договор (универсальный) — тип определяется автоматически по позициям закупки')"
             >
               {{ contractWord }}
             </v-btn>
@@ -1545,8 +1533,9 @@
               color="indigo-darken-2"
               size="small"
               :loading="docLoading === 'contract_merge'"
+              :disabled="tzHasUnresolved"
               @click="downloadDoc(form.contract_form ? contractDocTypeMap[form.contract_form] || 'contract' : 'contract', '?merge=tech_spec_contract', 'contract_merge')"
-              title="Скачать Договор и ТЗ одним файлом"
+              :title="tzHasUnresolved ? tzDisabledTooltip : 'Скачать Договор и ТЗ одним файлом'"
             >
               {{ contractWord }} + ТЗ
             </v-btn>
@@ -1573,8 +1562,9 @@
                 color="orange-darken-2"
                 size="small"
                 :loading="docLoading === 'fabrikant_package'"
+                :disabled="tzHasUnresolved"
                 @click="downloadFabrikantPackage"
-                title="Пакет документов для публикации на Фабрикант (5 файлов)"
+                :title="tzHasUnresolved ? tzDisabledTooltip : 'Пакет документов для публикации на Фабрикант (5 файлов)'"
               >
                 Пакет для Фабриканта (ZIP)
               </v-btn>
@@ -2029,6 +2019,8 @@ import {
 import PurchasePublishDialog from '@/components/purchase/PurchasePublishDialog.vue'
 import ChatEmbed from '@/components/ChatEmbed.vue'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
+import TzRowsSection from '@/components/purchase/TzRowsSection.vue'
+import type { TzRow } from '@/composables/purchase/useTzRows'
 import QrScannerDialog from '@/components/QrScannerDialog.vue'
 import ValidationArrows from '@/components/ValidationArrows.vue'
 import MonthlyStagesDialog from '@/components/MonthlyStagesDialog.vue'
@@ -2227,6 +2219,30 @@ const tzCollapsed = ref(localStorage.getItem(TZ_COLLAPSE_KEY) === '1' ? true : f
 function toggleTz() {
   tzCollapsed.value = !tzCollapsed.value
   try { localStorage.setItem(TZ_COLLAPSE_KEY, tzCollapsed.value ? '1' : '0') } catch {}
+}
+
+// TzRowsSection — экземпляр для refresh() после сохранения позиций (см. save()
+// ниже) + флаг нерешённых дублей ТЗ, которым задизейбливаются кнопки скачивания
+// ТЗ/договора (Правило №6, corrections-21-09.md W3).
+const tzRowsRef = ref<InstanceType<typeof TzRowsSection> | null>(null)
+const tzHasUnresolved = ref(false)
+const tzDisabledTooltip = 'Сначала решите, что делать с повторяющимися позициями'
+
+// Сервер (GET /purchases/{id}/tz-rows) не отдаёт фото/описание позиции — это
+// локально редактируемые поля формы (product photo/44fz description), их
+// источник как и раньше — items.value. Подбор строго для отображения, не для
+// группировки дублей (та остаётся целиком на бэкенде).
+function resolveTzLocalItem(row: TzRow): OrderItem | undefined {
+  if (row.item_id != null) {
+    const byId = items.value.find((it) => (it as any).id === row.item_id)
+    if (byId) return byId
+  }
+  return items.value.find((it) => it.item_name?.trim() && it.item_name.trim() === row.item_name?.trim())
+}
+function show44fzWarning(row: TzRow): boolean {
+  if (form.description_mode !== '44fz') return false
+  const item = resolveTzLocalItem(row)
+  return !!(item && !item._description_44fz && item._description)
 }
 
 // Блок «Остатки по категориям ФЭО» — свёрнут по умолчанию
@@ -4896,6 +4912,9 @@ const doSave = async (adminOverride: boolean): Promise<boolean> => {
       } else {
         showSnack('Сохранено')
       }
+      // Позиции сохранены (items — часть payload PUT выше) — перечитать
+      // строки ТЗ с сервера, дубли/группы могли измениться.
+      tzRowsRef.value?.refresh()
     } else {
       const created = await apiFetch<any>(`/purchases/${qs}`, { method: 'POST', body: payload, suppressErrorDialog: true })
       clearPointer()
@@ -5237,8 +5256,9 @@ const kpDialogRef = ref<InstanceType<typeof KpDialog> | null>(null)
   background: var(--crm-table-stripe);
   border-top: 2px solid var(--crm-border-strong);
 }
-.tz-table-header { background: var(--crm-table-header); }
-.tz-table-footer { background: var(--crm-table-stripe); }
+/* .tz-table-header/.tz-table-footer перенесены в TzRowsSection.vue вместе с
+   разметкой таблицы ТЗ (21.09, corrections-21-09.md W3) — здесь больше не
+   используются. */
 .purchase-chat-container {
   max-height: 350px;
   overflow-y: auto;

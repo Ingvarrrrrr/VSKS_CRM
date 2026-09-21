@@ -29,6 +29,12 @@
       "label": "Оплачено"
     }
   ],
+  "hidden_statuses": [
+    {
+      "key": "split",
+      "label": "Разделена"
+    }
+  ],
   "substatuses": [
     {
       "key": "contract_signing",

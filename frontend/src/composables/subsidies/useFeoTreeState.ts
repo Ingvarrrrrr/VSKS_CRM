@@ -8,20 +8,21 @@
 // refs для остальных composables дерева ФЭО (useFeoTreeAmounts/useFeoTreeExcess/
 // useFeoLevel5/useFeoReqItems/useFeoTreeDnd) и компонентов таблицы дерева.
 import { computed, ref } from 'vue'
+import { makeCtxSingleton } from './ctxSingleton'
 import type { FeoCategory, FeoNode, FeoReqItem, PlanExcessApprovalDto, PlanTreeEntry } from './types'
 
 type ForecastEntry = { forecast: number; forecast_over: number; plan_manual: number }
-
-let _api: ReturnType<typeof buildFeoTreeState> | null = null
 
 interface FeoTreeStateCtx {
   expandedIds: import('vue').Ref<number[]>
 }
 
-export function useFeoTreeState(ctx: FeoTreeStateCtx) {
-  if (!_api) _api = buildFeoTreeState(ctx)
-  return _api
-}
+// makeCtxSingleton (ctxSingleton.ts, Правило №6) — пересобирает API при новом
+// ctx (повторный маунт SubsidiesView.vue, владелец 21.09 П2).
+export const useFeoTreeState = makeCtxSingleton(
+  buildFeoTreeState,
+  'useFeoTreeState() вызван до первого построения (нужен ctx) — проверьте порядок монтирования SubsidiesView.vue',
+)
 
 function buildFeoTreeState(ctx: FeoTreeStateCtx) {
   const { expandedIds } = ctx

@@ -112,8 +112,8 @@ async def test_merge_resolution_combines_sum_and_quantity(db_session):
     строчка «Чайник» с ценой средней 5000, которая получилась из
     (4000+5000+6000)/3» — суммы и количества СКЛАДЫВАЮТСЯ (владелец,
     уточнение №2: деньги не должны измениться ни на рубль), цена выводится
-    делением. Три строки без явного количества (qty неявно = 1 каждая) →
-    объединённое количество = 3, сумма = 15000, цена = 5000."""
+    делением. Три строки с явным количеством 1/1/1 → объединённое
+    количество = 3, сумма = 15000, цена = 5000."""
     subsidy = await _make_subsidy(db_session)
     # `subsidy.id` захвачен здесь ЯВНО, обычным int'ом — dry_run ниже делает
     # `db.rollback()`, который истекает (expire) все ORM-объекты сессии, а
@@ -122,10 +122,16 @@ async def test_merge_resolution_combines_sum_and_quantity(db_session):
     # значение везде дальше вместо повторного чтения атрибута объекта.
     subsidy_id = subsidy.id
     try:
+        # Правило №6, баг 22.09 (строки 269/270 группы «Спасательный конец
+        # Александрова»): раньше отсутствующее количество молча подменялось
+        # единицей — этот тест теперь ЗАДАЁТ qty=1 явно у каждой строки,
+        # чтобы проверять «объединение с известным количеством», а не старое
+        # угадывание. Сценарий «количество не указано ни у одной строки» —
+        # отдельно, см. test_feo_import_duplicates_qty.py.
         rows = [
-            mk_row(lvl2="Кухня", item_name="Чайник", plan_sum="4000"),
-            mk_row(lvl2="Кухня", item_name="Чайник", plan_sum="5000"),
-            mk_row(lvl2="Кухня", item_name="Чайник", plan_sum="6000"),
+            mk_row(lvl2="Кухня", item_name="Чайник", plan_qty="1", plan_sum="4000"),
+            mk_row(lvl2="Кухня", item_name="Чайник", plan_qty="1", plan_sum="5000"),
+            mk_row(lvl2="Кухня", item_name="Чайник", plan_qty="1", plan_sum="6000"),
         ]
 
         # Предпросмотр (dry-run, как и в мастере) — узнаём ключ группы, чтобы
@@ -150,7 +156,7 @@ async def test_merge_resolution_combines_sum_and_quantity(db_session):
         item = items[0]
         assert item.name == "Чайник"
         assert item.amount == Decimal("15000"), "сумма не должна измениться ни на рубль"
-        assert item.quantity == Decimal("3"), "количество — сумма количеств (по умолчанию 1 на строку)"
+        assert item.quantity == Decimal("3"), "количество — сумма явно заданных количеств строк"
 
         merge_warn = [w for w in result["warnings"] if w["kind"] == "duplicate_group_merged"]
         assert len(merge_warn) == 1

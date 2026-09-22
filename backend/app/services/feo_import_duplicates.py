@@ -51,7 +51,30 @@ from app.models.feo_planned_item import FeoPlannedItem
 from app.services.feo_import_common import QUANT, ZERO, format_rows, level_label, norm
 from app.services.feo_import_common import fmt as _fmt
 
-ONE = Decimal("1")
+def _sum_qty(rows: list) -> Decimal | None:
+    """Единственное место суммирования количества группы дублей (Правило №6
+    — `_combine_rows` и `_describe_group` обязаны звать именно её, а не
+    считать сумму каждая по-своему).
+
+    Баг владельца (22.09, группа «Спасательный конец Александрова в
+    чехле», строки 269/270): у ОБЕИХ строк количество в файле не задано
+    (пустая ячейка — см. `get_cell`/`to_dec` в feo_import_common.py), а
+    старый код `r["qty"] if r["qty"] is not None else ONE` подставлял 1 за
+    каждую такую строку и показывал в предпросмотре «кол-во 2» и цену
+    0,00 ₽/ед. — оба числа выдуманы, реального количества в файле нет.
+
+    Правило теперь: складываются только строки, где количество РЕАЛЬНО
+    задано в файле; если ни у одной строки группы количества нет —
+    результат None (не 0 и не подстановка единицы). Если известно только у
+    части строк — результат частичная сумма (используется вызывающей
+    стороной вместе с проверкой «известно ли количество у ВСЕХ строк
+    группы», см. `_combine_rows`/`_describe_group`, — цена за единицу при
+    частично известном количестве не выводится, чтобы не показать цену,
+    посчитанную на угаданном числителе)."""
+    known = [r["qty"] for r in rows if r["qty"] is not None]
+    if not known:
+        return None
+    return sum(known, ZERO)
 
 
 def group_key(subsidy_id, path_names: list, item_name: str) -> str:
@@ -96,9 +119,14 @@ def _combine_rows(rows: list) -> dict:
     брало ФЭО-числа ПОСЛЕДНЕЙ строки (через `dict(rows[-1])`), и они переставали
     сходиться с объединённым планом/суммой."""
     total_amount = sum((r["amount"] or ZERO) for r in rows)
-    total_qty = sum((r["qty"] if r["qty"] is not None else ONE) for r in rows)
+    total_qty = _sum_qty(rows)
+    all_qty_known = all(r["qty"] is not None for r in rows)
     unit = next((r["unit"] for r in rows if r["unit"]), None)
-    unit_price = (total_amount / total_qty).quantize(QUANT) if total_qty else None
+    unit_price = (
+        (total_amount / total_qty).quantize(QUANT)
+        if (all_qty_known and total_qty)
+        else None
+    )
     total_feo_amount = sum((r.get("feo_amount") or ZERO) for r in rows)
     total_feo_qty = sum((r.get("feo_qty") or ZERO) for r in rows)
     feo_unit = next((r.get("feo_unit") for r in rows if r.get("feo_unit")), None)
@@ -118,9 +146,14 @@ def _combine_rows(rows: list) -> dict:
 
 def _describe_group(key: str, name: str, rows: list) -> dict:
     total_amount = sum((r["amount"] or ZERO) for r in rows)
-    total_qty = sum((r["qty"] if r["qty"] is not None else ONE) for r in rows)
+    total_qty = _sum_qty(rows)
+    all_qty_known = all(r["qty"] is not None for r in rows)
     unit = next((r["unit"] for r in rows if r["unit"]), None)
-    merged_price = (total_amount / total_qty).quantize(QUANT) if total_qty else None
+    merged_price = (
+        (total_amount / total_qty).quantize(QUANT)
+        if (all_qty_known and total_qty)
+        else None
+    )
     path_names = rows[0].get("path") or []
     return {
         "key": key,
@@ -257,13 +290,14 @@ async def _upsert_merge(state, leaf, rows: list, key: str) -> None:
                 "reason": f"деактивирована как лишний дубль после объединения группы ({_rows_str})",
             })
     total_before = sum((r["amount"] or ZERO) for r in rows)
+    _qty_str = _fmt(merged["qty"]) if merged["qty"] is not None else "не задано"
     state.warnings.append({
         "kind": "duplicate_group_merged",
         "row": None,
         "name": merged["name"],
         "message": (
             f"«{merged['name']}» — объединены {len(rows)} строк файла ({_rows_str}): "
-            f"количество {_fmt(merged['qty'])}, сумма {_fmt(merged['amount'])} "
+            f"количество {_qty_str}, сумма {_fmt(merged['amount'])} "
             f"(было по строкам: {_fmt(total_before)} — сумма не изменилась)"
         ),
     })

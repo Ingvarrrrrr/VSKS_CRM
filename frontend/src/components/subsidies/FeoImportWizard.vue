@@ -98,8 +98,8 @@
                   <template #label>
                     <span>
                       Объединить в одну (сумма {{ formatCurrency(g.merged_preview.amount ?? 0) }},
-                      кол-во {{ g.merged_preview.qty }}{{ g.merged_preview.unit ? ' ' + g.merged_preview.unit : '' }},
-                      цена {{ formatCurrency(g.merged_preview.price ?? 0) }} за ед.)
+                      кол-во {{ g.merged_preview.qty != null ? g.merged_preview.qty + (g.merged_preview.unit ? ' ' + g.merged_preview.unit : '') : 'не задано' }},
+                      цена {{ g.merged_preview.price != null ? formatCurrency(g.merged_preview.price) + ' за ед.' : 'не задана (количество не у всех строк указано)' }})
                     </span>
                   </template>
                 </v-radio>

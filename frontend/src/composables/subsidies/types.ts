@@ -544,9 +544,32 @@ export interface FeoWarning {
     // резолюция группы 'items' (см. apply_category_sum_conflicts); выбор
     // 'own' (по умолчанию) предупреждения не создаёт — прежнее поведение.
     | 'category_sum_replaced_by_items'
+    // Задача 2026-09-22: строка файла называет тип позиции (товар/услуга/
+    // работа), который отличается от типа уже существующего товара в
+    // каталоге (см. FeoItemTypeConflict ниже) — 'item_type_from_catalog'
+    // информационное (решение принято автоматически или человеком),
+    // 'item_type_conflict_unresolved' — конфликт есть, а решения человека
+    // нет (импорт возьмёт тип из файла по умолчанию, каталог не изменится).
+    | 'item_type_from_catalog' | 'item_type_conflict_unresolved'
   row: number | null
   name: string | null
   message: string
+}
+
+// Задача 2026-09-22: тип позиции (товар/услуга/работа) в файле импорта
+// отличается от типа уже сопоставленного товара в каталоге — решение по
+// каждой строке принимает человек (см. блок «Тип позиции отличается от
+// каталога» в FeoImportItemTypeConflicts.vue). Бэкенд отдаёт этот список и в
+// предпросмотре (dry_run), и в результате боевого импорта — единственный
+// источник построения списка и применения решения (Правило №6).
+export interface FeoItemTypeConflict {
+  row: number
+  item_name: string
+  file_type: 'товар' | 'услуга' | 'работа'
+  catalog_type: 'товар' | 'услуга' | 'работа' | null
+  product_id: number
+  product_name: string
+  decision: 'file' | 'catalog' | null
 }
 
 // Волна 4, п.23 (владелец): группа строк файла с ПОЛНЫМ (после нормализации
@@ -663,6 +686,7 @@ export interface FeoImportResult {
   duplicate_groups?: FeoDuplicateGroup[]
   budget_conflict_groups?: FeoBudgetConflictGroup[]
   category_sum_conflict_groups?: FeoCategorySumConflictGroup[]
+  item_type_conflicts?: FeoItemTypeConflict[]
   unmatched?: FeoUnmatchedNode[]
   new_paths?: string[]
   deleted_count?: number

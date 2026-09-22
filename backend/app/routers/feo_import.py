@@ -91,6 +91,10 @@ async def import_feo_from_excel(
     remap: str = Query(""),
     apply_remap: bool = Query(False),
     duplicate_resolutions: str = Query(""),
+    # Решения человека по конфликтам «тип позиции из файла vs тип товара
+    # каталога» (владелец, 22.09) — JSON {номер_строки: "file"|"catalog"},
+    # отдельный канал от duplicate_resolutions (см. feo_import_item_types.py).
+    item_type_decisions: str = Query(""),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_tab('feo_categories')),
 ):
@@ -236,6 +240,7 @@ async def import_feo_from_excel(
         db=db, dry_run=dry_run,
         user=current_user, remap=remap, apply_remap=apply_remap,
         duplicate_resolutions=duplicate_resolutions,
+        item_type_decisions=item_type_decisions,
     )
 
 
@@ -305,6 +310,9 @@ async def import_feo_mapped(
     remap: str = Query(""),
     apply_remap: bool = Query(False),
     duplicate_resolutions: str = Query(""),
+    # Решения человека по конфликтам «тип позиции из файла vs тип товара
+    # каталога» (владелец, 22.09) — см. пояснение у /import выше.
+    item_type_decisions: str = Query(""),
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_tab('feo_categories')),
 ):
@@ -347,6 +355,7 @@ async def import_feo_mapped(
         default_subsidy_id=default_subsidy_id,
         dry_run=dry_run, remap=remap, apply_remap=apply_remap,
         duplicate_resolutions=duplicate_resolutions,
+        item_type_decisions=item_type_decisions,
     )
     # Переменные, используемые ДО итогового вызова _do_feo_import ниже
     # (гейт прав, выбор листа/строки заголовка) — реальные значения теперь
@@ -361,6 +370,7 @@ async def import_feo_mapped(
     remap = _p["remap"]
     apply_remap = _p["apply_remap"]
     duplicate_resolutions = _p["duplicate_resolutions"]
+    item_type_decisions = _p["item_type_decisions"]
 
     if col_lvl2 < 0:
         raise HTTPException(400, "Не указан обязательный столбец: Уровень 2")
@@ -494,4 +504,5 @@ async def import_feo_mapped(
         db=db, dry_run=dry_run,
         user=current_user, remap=remap, apply_remap=apply_remap,
         duplicate_resolutions=duplicate_resolutions,
+        item_type_decisions=item_type_decisions,
     )

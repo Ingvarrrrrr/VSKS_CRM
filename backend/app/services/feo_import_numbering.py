@@ -58,6 +58,7 @@ from app.services.feo_import_common import (
 from app.services.feo_import_common import fmt as _fmt
 from app.services.feo_import_common import norm as _norm
 from app.services.feo_import_duplicates import group_key, register_pending_item
+from app.services.feo_import_item_types import resolve_item_type_for_row
 from app.routers.feo_planned_items import normalize_item_type
 
 ONE = Decimal("1")
@@ -242,9 +243,11 @@ async def apply_rows_numbered(state) -> None:
             if amount is not None:
                 qty = to_dec(get_cell(row, c_qty)) or ONE
                 is_feo, is_plan = resolve_origin_flags(feo_amount, amount if amount != feo_amount else None)
+                _leaf_item_name = item_name_cell or name
+                _leaf_item_type = await resolve_item_type_for_row(state, row_num, _leaf_item_name, None)
                 state.collected_plan[cat.id] = {
                     "qty": qty, "unit": get_cell(row, c_unit), "amount": amount,
-                    "row": row_num, "name": item_name_cell or name, "item_type": None,
+                    "row": row_num, "name": _leaf_item_name, "item_type": _leaf_item_type,
                     "from_feo_fallback": False,
                     "is_feo_breakdown": is_feo, "is_internal_plan": is_plan,
                 }
@@ -278,6 +281,7 @@ async def apply_rows_numbered(state) -> None:
 
         raw_item_type = get_cell(row, c_item_type) if c_item_type is not None else None
         item_type = normalize_item_type(raw_item_type) if raw_item_type else None
+        item_type = await resolve_item_type_for_row(state, row_num, item_name, item_type)
 
         state.lvl5_leaves.add(ancestor.id)
         state.lvl5_sum_by_cat[ancestor.id] = state.lvl5_sum_by_cat.get(ancestor.id, ZERO) + (amount or ZERO)

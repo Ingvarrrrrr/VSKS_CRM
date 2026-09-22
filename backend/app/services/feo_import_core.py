@@ -54,6 +54,7 @@ from app.services.feo_import_numbering import apply_rows_numbered
 from app.services.feo_import_budget_conflicts import CATSUM_KEY_PREFIX
 from app.services.feo_import_budget_conflicts import KEY_PREFIX as BUDGET_KEY_PREFIX
 from app.services.feo_import_duplicates import finalize_lvl5_items
+from app.services.feo_import_item_types import ITEM_TYPE_DECISION_VALUES
 from app.services.feo_import_gate import assert_write_gate, collect_affected_subsidies
 from app.services.feo_import_plan import apply_collected_plan
 from app.services.feo_import_remap import remap_and_prune
@@ -235,6 +236,21 @@ class FeoImportState:
     # `catsum::` (CATSUM_KEY_PREFIX). ---
     category_sum_conflict_groups: list = field(default_factory=list)
 
+    # --- Задача владельца 22.09: тип плановой позиции («товар/услуга/
+    # работа») из файла vs товар каталога с тем же именем — решение по
+    # каждому конфликту принимает человек ОТДЕЛЬНЫМ каналом (не
+    # duplicate_resolutions — ключ там текстовый по категории/группе дублей,
+    # здесь ключ — номер строки файла, разная природа, см. докстринг
+    # feo_import_item_types.py, Правило №6 не смешивать пространства имён). ---
+    # str(row_num) -> 'file'|'catalog', с фронта (item_type_decisions).
+    item_type_decisions: dict = field(default_factory=dict)
+    # Отчёт для предпросмотра мастера — каждая строка, где тип файла и тип
+    # каталога РАЗЛИЧАЮТСЯ (см. feo_import_item_types.py::resolve_item_type_for_row).
+    item_type_conflicts: list = field(default_factory=list)
+    # normalize_product_name(item_name) -> Product|None — кеш поиска товара
+    # каталога по точному имени на весь импорт (feo_import_item_types.py).
+    item_type_product_cache: dict = field(default_factory=dict)
+
     # --- переезд/удаление (feo_import_remap.py) ---
     relinked_count: int = 0
     deleted_count: int = 0
@@ -320,6 +336,12 @@ async def _do_feo_import(
     # category_sum_conflict_key), значения "own"|"items"; не упомянутая
     # группа — "own" (прежнее поведение — явная сумма узла главнее).
     duplicate_resolutions: str = "",
+    # Задача владельца 22.09: решения человека по конфликтам «тип файла vs
+    # тип каталога» — JSON-объект {row_num: "file"|"catalog"}, ОТДЕЛЬНЫЙ канал
+    # от duplicate_resolutions (см. FeoImportState.item_type_decisions выше,
+    # feo_import_item_types.py). Строка, не упомянутая в этом словаре, —
+    # на боевом импорте применяется тип из файла без изменения каталога.
+    item_type_decisions: str = "",
 ) -> dict:
     """Core import logic shared by /import и /import-mapped endpoints.
 
@@ -386,6 +408,21 @@ async def _do_feo_import(
         except Exception as e:
             raise HTTPException(400, f"Неверный формат параметра duplicate_resolutions: {e}")
 
+    _item_type_decisions: dict = {}
+    if item_type_decisions:
+        try:
+            _raw_itd = json.loads(item_type_decisions)
+            if not isinstance(_raw_itd, dict):
+                raise ValueError("ожидался объект {номер_строки: 'file'|'catalog'}")
+            for _k, _v in _raw_itd.items():
+                if _v not in ITEM_TYPE_DECISION_VALUES:
+                    raise ValueError(f"недопустимое решение для строки {_k!r}: {_v!r}")
+                _item_type_decisions[str(_k)] = _v
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(400, f"Неверный формат параметра item_type_decisions: {e}")
+
     # Все ~50 колоночных параметров (c_subsidy, c_lvl2, ..., c_item_type) идут в
     # state 1:1 по имени через locals() — сигнатура функции не меняется для
     # вызывающего кода (app/routers/feo_import.py передаёт их по имени как и
@@ -395,6 +432,7 @@ async def _do_feo_import(
         db=db, user=user, dry_run=dry_run, apply_remap=apply_remap,
         default_subsidy_id=default_subsidy_id, rows=rows, remap_list=remap_list,
         duplicate_resolutions=_dup_resolutions,
+        item_type_decisions=_item_type_decisions,
         **column_kwargs,
     )
 
@@ -472,6 +510,7 @@ async def _do_feo_import(
         "duplicate_groups": state.duplicate_groups,
         "budget_conflict_groups": state.budget_conflict_groups,
         "category_sum_conflict_groups": state.category_sum_conflict_groups,
+        "item_type_conflicts": state.item_type_conflicts,
         "dry_run": dry_run,
         "unmatched": state.unmatched,
         "new_paths": state.new_paths,

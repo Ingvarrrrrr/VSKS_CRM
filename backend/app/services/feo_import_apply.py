@@ -32,6 +32,7 @@ from app.services.feo_import_budget_conflicts import (
     apply_category_sum_conflicts,
     register_budget_write,
 )
+from app.services.feo_import_item_types import resolve_item_type_for_row
 from app.routers.feo_planned_items import normalize_item_type
 
 
@@ -649,6 +650,12 @@ async def apply_rows(state) -> None:
                     _orphan_key = group_key(
                         _prev_leaf_cat.subsidy_id, [c.name for c in _prev_cats_in_row], lvl5_name
                     )
+                    # Строка без единого уровня не читает колонку «Тип» вовсе
+                    # (как и раньше — file_item_type=None здесь всегда), но
+                    # каталог с тем же именем позиции всё равно может задать
+                    # тип автозаполнением (владелец 22.09, п.1 — см. docstring
+                    # feo_import_item_types.py).
+                    _orphan_item_type = await resolve_item_type_for_row(state, row_num, lvl5_name, None)
                     register_pending_item(state, _orphan_key, _prev_leaf_cat, {
                         "row": row_num, "name": lvl5_name,
                         "qty": _orphan_qty, "unit": _orphan_unit, "amount": _orphan_amount,
@@ -657,7 +664,7 @@ async def apply_rows(state) -> None:
                             if _orphan_amount and _orphan_qty else None
                         ),
                         "feo_qty": None, "feo_unit": None, "feo_unit_price": None, "feo_amount": None,
-                        "item_type": None, "is_active": True,
+                        "item_type": _orphan_item_type, "is_active": True,
                         "is_feo_breakdown": _orphan_is_feo, "is_internal_plan": _orphan_is_plan,
                         "path": [c.name for c in _prev_cats_in_row],
                     })
@@ -1171,7 +1178,7 @@ async def apply_rows(state) -> None:
                         "amount": plan_sum,
                         "row": row_num,
                         "name": cat.name,
-                        "item_type": item_type,
+                        "item_type": await resolve_item_type_for_row(state, row_num, cat.name, item_type),
                         "from_feo_fallback": False,
                         # Происхождение (Правило №6) — посчитано один раз выше по
                         # РЕАЛЬНЫМ деньгам этой строки, feo_import_plan.py читает
@@ -1196,7 +1203,7 @@ async def apply_rows(state) -> None:
                             "amount": (_pq * _pa).quantize(QUANT),
                             "row": row_num,
                             "name": cat.name,
-                            "item_type": item_type,
+                            "item_type": await resolve_item_type_for_row(state, row_num, cat.name, item_type),
                             "from_feo_fallback": plan_qty is None and plan_amt is None,
                             "is_feo_breakdown": _row_is_feo_breakdown,
                             "is_internal_plan": _row_is_internal_plan,
@@ -1337,7 +1344,7 @@ async def apply_rows(state) -> None:
                     "feo_unit": item_feo_unit,
                     "feo_unit_price": item_feo_price,
                     "feo_amount": eff_item_feo_amount,
-                    "item_type": item_type,
+                    "item_type": await resolve_item_type_for_row(state, row_num, lvl5_name, item_type),
                     "is_active": is_active,
                     "is_feo_breakdown": _row_is_feo_breakdown,
                     "is_internal_plan": _row_is_internal_plan,

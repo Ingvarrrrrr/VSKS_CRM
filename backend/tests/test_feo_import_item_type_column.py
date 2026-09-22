@@ -66,7 +66,8 @@ async def test_new_and_legacy_type_column_headers_all_resolve(db_session, supera
 
             result = await import_feo_from_excel(
                 file=upload, dry_run=False, remap="", apply_remap=False,
-                duplicate_resolutions="", db=db_session, current_user=superadmin_user,
+                duplicate_resolutions="", item_type_decisions="",
+                db=db_session, current_user=superadmin_user,
             )
             assert result["errors"] == [], f"заголовок «{type_header}»: {result['errors']}"
 

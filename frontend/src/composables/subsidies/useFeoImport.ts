@@ -9,7 +9,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { uploadHttpErrorMessage } from '@/constants/uploadLimits'
 import type { SubsidyDetailContext } from './useSubsidyDetail'
-import type { FeoBudgetConflictGroup, FeoCategorySumConflictGroup, FeoDuplicateGroup, FeoImportResult, FeoUnmatchedNode, FeoWarning } from './types'
+import type { FeoBudgetConflictGroup, FeoCategorySumConflictGroup, FeoDuplicateGroup, FeoImportResult, FeoItemTypeConflict, FeoUnmatchedNode, FeoWarning } from './types'
 
 export function feoWarnKindLabel(kind: string): string {
   const labels: Record<string, string> = {
@@ -30,6 +30,8 @@ export function feoWarnKindLabel(kind: string): string {
     duplicate_group_merged: 'Дублирующиеся позиции объединены по вашему выбору',
     budget_overwritten_by_row: 'Сумма по ФЭО узла задана несколькими строками — учтена последняя',
     category_sum_replaced_by_items: 'Взята сумма позиций вместо собственной суммы категории — по вашему выбору',
+    item_type_from_catalog: 'Тип позиции отличается от каталога',
+    item_type_conflict_unresolved: 'Тип позиции отличается от каталога — решение не выбрано, взят тип из файла',
     item_promoted_needs_review: 'Разберите вручную: позиция ниже используется как подраздел',
     item_name_used_as_level: 'Разберите вручную: позиция лежит под чужим подразделом',
     item_promoted_to_level: 'Плановая позиция стала подразделом',
@@ -81,7 +83,15 @@ const feoImport = reactive({
   // И (владелец, 2026-09-16) решения «сумма категории / сумма позиций» —
   // FeoCategorySumConflictGroup.key с префиксом `catsum::`, значения
   // 'own'|'items' — см. feoCatSumResolutionFor/feoSetCatSumResolution.
-  duplicateResolutions: {} as Record<string, 'merge' | 'keep' | 'first' | 'last' | 'sum' | 'own' | 'items'>,
+  // И (задача 2026-09-22) решения «тип из файла / тип из каталога» по
+  // строке — ключ `itemtype::${row}` (FeoItemTypeConflict.row), значения
+  // 'file'|'catalog' — см. feoItemTypeResolutionFor/feoSetItemTypeResolution.
+  // В ОТЛИЧИЕ от трёх каналов выше у этого НЕТ дефолта, который сервер и так
+  // применит молча: «без выбора — тип из файла, каталог не меняется» — но
+  // ключ появляется здесь, только когда человек реально нажал переключатель
+  // или кнопку «Все из файла/каталога» (dry-run НЕ проставляет дефолт сам,
+  // см. doFeoMappedImport ниже) — пустой канал = решений нет вовсе.
+  duplicateResolutions: {} as Record<string, 'merge' | 'keep' | 'first' | 'last' | 'sum' | 'own' | 'items' | 'file' | 'catalog'>,
 })
 
 const feoImportTargetSubsidy = ref<number | null>(null)
@@ -164,7 +174,7 @@ watch(() => feoImport.step, (step) => {
 // выбор человека применяется только следующим вызовом).
 const feoDuplicateGroups = computed<FeoDuplicateGroup[]>(() => feoImport.dryResult?.duplicate_groups || [])
 function feoResolutionFor(key: string): 'merge' | 'keep' {
-  return feoImport.duplicateResolutions[key] ?? 'keep'
+  return feoImport.duplicateResolutions[key] === 'merge' ? 'merge' : 'keep'
 }
 function feoSetResolution(key: string, value: 'merge' | 'keep') {
   feoImport.duplicateResolutions[key] = value
@@ -194,6 +204,36 @@ function feoCatSumResolutionFor(key: string): 'own' | 'items' {
 }
 function feoSetCatSumResolution(key: string, value: 'own' | 'items') {
   feoImport.duplicateResolutions[key] = value
+}
+
+// Задача 2026-09-22: строки, где тип позиции (товар/услуга/работа) из файла
+// отличается от типа уже сопоставленного товара в каталоге — читаются из
+// того же ответа предпросмотра, тем же приёмом, что и группы выше; решение
+// живёт в ТОМ ЖЕ feoImport.duplicateResolutions (ключи с префиксом
+// `itemtype::${row}`, Правило №6 — один канал, не четыре). В отличие от
+// budget::/catsum:: у этого канала НЕТ дефолтного значения — «нет решения»
+// означает, что ключ отсутствует вовсе (см. комментарий у duplicateResolutions).
+const feoItemTypeConflicts = computed<FeoItemTypeConflict[]>(() => feoImport.dryResult?.item_type_conflicts || [])
+function feoItemTypeKey(row: number): string {
+  return `itemtype::${row}`
+}
+function feoItemTypeResolutionFor(row: number): 'file' | 'catalog' | null {
+  const v = feoImport.duplicateResolutions[feoItemTypeKey(row)]
+  return v === 'file' || v === 'catalog' ? v : null
+}
+function feoSetItemTypeResolution(row: number, value: 'file' | 'catalog' | null | undefined) {
+  const key = feoItemTypeKey(row)
+  if (value === 'file' || value === 'catalog') feoImport.duplicateResolutions[key] = value
+  // v-btn-toggle без mandatory отдаёт undefined при повторном клике по уже
+  // активной кнопке (снятие выбора) — «решения нет» здесь означает ОТСУТСТВИЕ
+  // ключа в канале (см. комментарий у duplicateResolutions), не значение.
+  else delete feoImport.duplicateResolutions[key]
+}
+// Кнопки «Все из файла» / «Все из каталога» — применяют один выбор ко ВСЕМ
+// текущим конфликтам разом (тот же канал, точечный выбор по строке остаётся
+// доступен после — просто перезаписывает значение по своему ключу).
+function feoSetAllItemTypeResolutions(value: 'file' | 'catalog') {
+  for (const c of feoItemTypeConflicts.value) feoSetItemTypeResolution(c.row, value)
 }
 
 // Узлы, которым не хватает цели переезда — требуют решения человека (шаг «Сопоставление»)
@@ -445,6 +485,12 @@ export function useFeoImport(ctx?: FeoImportCtx) {
   function _isDefaultFeoResolution(key: string, value: string): boolean {
     if (key.startsWith('budget::')) return value === 'last'
     if (key.startsWith('catsum::')) return value === 'own'
+    // itemtype:: уходит СВОИМ полем item_type_decisions (см. блок ниже в
+    // doFeoMappedImport), не через duplicate_resolutions — бэкенд не знает
+    // такого kind группы и отвечает 400. Эта функция фильтрует только
+    // duplicate_resolutions, поэтому для itemtype:: всегда «считать
+    // дефолтом» = исключить отсюда (не значит «решения нет»).
+    if (key.startsWith('itemtype::')) return true
     return value === 'keep'
   }
 
@@ -536,6 +582,22 @@ export function useFeoImport(ctx?: FeoImportCtx) {
       if (Object.keys(_resolutionsToSend).length) {
         fd.append('duplicate_resolutions', JSON.stringify(_resolutionsToSend))
       }
+      // Задача 2026-09-22: решения «тип из файла / тип из каталога» живут в
+      // ТОМ ЖЕ duplicateResolutions (ключи `itemtype::${row}`), но контракт
+      // бэкенда — ОТДЕЛЬНОЕ поле формы item_type_decisions, JSON-объект
+      // {"<row>": "file"|"catalog"} (тот же способ передачи — поле формы с
+      // JSON-строкой, — каким уже уходит duplicate_resolutions выше; второй
+      // транспорт не заводим, второе ИМЯ поля задано контрактом бэкенда).
+      // Отсутствие ключа = «решения нет» — ничего не отправляем, если пусто.
+      const _itemTypeDecisions: Record<string, 'file' | 'catalog'> = {}
+      for (const [key, value] of Object.entries(feoImport.duplicateResolutions)) {
+        if (key.startsWith('itemtype::') && (value === 'file' || value === 'catalog')) {
+          _itemTypeDecisions[key.slice('itemtype::'.length)] = value
+        }
+      }
+      if (Object.keys(_itemTypeDecisions).length) {
+        fd.append('item_type_decisions', JSON.stringify(_itemTypeDecisions))
+      }
       const token = localStorage.getItem('auth_token')
       const res = await fetch('/api/feo-categories/import-mapped', {
         method: 'POST',
@@ -609,6 +671,7 @@ export function useFeoImport(ctx?: FeoImportCtx) {
     feoDuplicateGroups, feoResolutionFor, feoSetResolution,
     feoBudgetConflictGroups, feoBudgetResolutionFor, feoSetBudgetResolution,
     feoCategorySumConflictGroups, feoCatSumResolutionFor, feoSetCatSumResolution,
+    feoItemTypeConflicts, feoItemTypeResolutionFor, feoSetItemTypeResolution, feoSetAllItemTypeResolutions,
     feoUnmatchedNeedsMapping, feoHasSuggestions, feoRemapPlannedCount, feoAcceptAllSuggestions,
     feoStep4MainLabel, feoLoadSummary, feoPluralRu, feoCurrentSheet, feoCurrentHeaders, feoMappingValid, feoUnmappedCount,
     feoIsMapped, feoIsIgnored, feoIsTargetFilled, feoGetColumnLabel, feoGetSamples,

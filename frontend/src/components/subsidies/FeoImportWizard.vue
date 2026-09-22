@@ -91,7 +91,7 @@
               </v-list>
               <v-radio-group
                 :model-value="feoResolutionFor(g.key)"
-                @update:model-value="(v: 'merge' | 'keep') => feoSetResolution(g.key, v)"
+                @update:model-value="(v: 'merge' | 'keep' | null) => feoSetResolution(g.key, v ?? 'keep')"
                 inline hide-details density="compact" class="mt-1">
                 <v-radio label="Оставить как есть" value="keep" />
                 <v-radio value="merge">
@@ -131,7 +131,7 @@
               </v-list>
               <v-radio-group
                 :model-value="feoBudgetResolutionFor(g.key)"
-                @update:model-value="(v: 'first' | 'last' | 'sum') => feoSetBudgetResolution(g.key, v)"
+                @update:model-value="(v: 'first' | 'last' | 'sum' | null) => feoSetBudgetResolution(g.key, v ?? 'last')"
                 hide-details density="compact" class="mt-1">
                 <v-radio value="first">
                   <template #label>
@@ -171,7 +171,7 @@
               </div>
               <v-radio-group
                 :model-value="feoCatSumResolutionFor(g.key)"
-                @update:model-value="(v: 'own' | 'items') => feoSetCatSumResolution(g.key, v)"
+                @update:model-value="(v: 'own' | 'items' | null) => feoSetCatSumResolution(g.key, v ?? 'own')"
                 hide-details density="compact" class="mt-1">
                 <v-radio value="own">
                   <template #label>
@@ -186,6 +186,11 @@
               </v-radio-group>
             </v-card>
           </v-alert>
+          <!-- Задача 2026-09-22: тип позиции (товар/услуга/работа) из файла
+               отличается от типа уже сопоставленного товара в каталоге —
+               отдельный компонент (Правило №5), тот же singleton
+               useFeoImport.ts. -->
+          <FeoImportItemTypeConflicts />
           <div v-if="feoImport.dryResult" class="d-flex flex-wrap gap-2 mb-3">
             <v-chip color="success" variant="flat"
               :disabled="!feoImport.dryResult.created_details?.length"
@@ -588,6 +593,7 @@ import { useFeoImport } from '@/composables/subsidies/useFeoImport'
 import { formatCurrency } from '@/composables/subsidies/format'
 import { MAX_UPLOAD_SIZE_MB, checkUploadSize } from '@/constants/uploadLimits'
 import FeoImportMappingStep from './FeoImportMappingStep.vue'
+import FeoImportItemTypeConflicts from './FeoImportItemTypeConflicts.vue'
 
 const { mobile } = useDisplay()
 const {

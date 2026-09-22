@@ -635,8 +635,14 @@ async def apply_rows(state) -> None:
                         _orphan_amount = row_plan_money(
                             row, c_row_plan_sum, c_plan_sum_lvl2, c_plan_sum_lvl3, c_plan_sum_lvl4
                         )
-                    _orphan_qty = to_dec(get_cell(row, c_qty)) or Decimal("1")
+                    # Количество/цена — из ТЕХ ЖЕ колонок позиции, что и у
+                    # обычной строки с уровнями (c_qty/c_unit/c_item_price);
+                    # количество не выдумывается (Правило №6, тот же принцип,
+                    # что и в feo_import_duplicates._sum_qty) — раньше
+                    # незаданное количество подставлялось единицей.
+                    _orphan_qty = to_dec(get_cell(row, c_qty))
                     _orphan_unit = get_cell(row, c_unit)
+                    _orphan_price = to_dec(get_cell(row, c_item_price))
                     warnings.append({
                         "kind": "item_attached_to_previous_node",
                         "row": row_num,
@@ -660,8 +666,11 @@ async def apply_rows(state) -> None:
                         "row": row_num, "name": lvl5_name,
                         "qty": _orphan_qty, "unit": _orphan_unit, "amount": _orphan_amount,
                         "unit_price": (
-                            (_orphan_amount / _orphan_qty).quantize(QUANT)
-                            if _orphan_amount and _orphan_qty else None
+                            _orphan_price if _orphan_price is not None
+                            else (
+                                (_orphan_amount / _orphan_qty).quantize(QUANT)
+                                if _orphan_amount and _orphan_qty else None
+                            )
                         ),
                         "feo_qty": None, "feo_unit": None, "feo_unit_price": None, "feo_amount": None,
                         "item_type": _orphan_item_type, "is_active": True,
@@ -1168,12 +1177,15 @@ async def apply_rows(state) -> None:
                             "kind": "sum_without_qty",
                             "row": row_num,
                             "name": lv["name"],
-                            "message": f"Сумма плана {_fmt(plan_sum)} задана без кол-во; установлено кол-во = 1",
+                            "message": f"Сумма плана {_fmt(plan_sum)} задана без кол-ва — количество не задано",
                         })
-                    # amount = сумма плана как есть; qty = кол-во из файла, иначе 1
-                    eff_plan_qty = plan_qty if (plan_qty is not None and plan_qty != ZERO) else Decimal("1")
+                    # amount = сумма плана как есть; количество не выдумывается
+                    # (Правило №6, тот же принцип, что и в
+                    # feo_import_duplicates._sum_qty/feo_import_numbering.py) —
+                    # раньше здесь подставлялась 1, если в файле кол-во не
+                    # задано; теперь plan_qty идёт как есть, включая None.
                     collected_plan[cat.id] = {
-                        "qty": eff_plan_qty,
+                        "qty": plan_qty,
                         "unit": _pu,
                         "amount": plan_sum,
                         "row": row_num,
@@ -1366,12 +1378,39 @@ async def apply_rows(state) -> None:
         _leaf = _o["leaf"]
         if _o["amount"] is None:
             continue
+        # Собираем ТОЛЬКО непосредственно следующие по номеру строки записи
+        # того же узла (leaf), накапливая сумму, пока она не совпадёт со
+        # строкой-итогом, — это её составляющие. Матчинг «любая строка того
+        # же leaf, где угодно в файле» (было раньше) ошибочно захватывал
+        # СЛЕДУЮЩУЮ, ни с чем не связанную группу-итог под тем же
+        # безуровневым родителем (боевой случай: несколько групп-итогов
+        # подряд без уровней под одной категорией — владелец, 22.09,
+        # скриншоты, строки 9 и 16) — сумма набегала ЗА ГРАНИЦУ своей
+        # группы и переставала совпадать, строка-итог оставалась отдельной
+        # (дублирующей) позицией.
+        _candidates = sorted(
+            (
+                _rd
+                for _rows2 in state.pending_lvl5_items.values()
+                for _rd in _rows2
+                if _rd.get("leaf") is _leaf and _rd is not _o["ref"] and _rd["row"] > _o["row"]
+            ),
+            key=lambda r: r["row"],
+        )
+        # Итог обязан складываться минимум из ДВУХ составляющих строк — иначе
+        # совпадение суммы с ровно ОДНОЙ следующей строкой (та же цена товара
+        # в соседней позиции, чистое совпадение) ложно превращала бы саму эту
+        # соседнюю строку в «итог».
         _others = ZERO
-        for _rows2 in state.pending_lvl5_items.values():
-            for _rd in _rows2:
-                if _rd.get("leaf") is _leaf and _rd is not _o["ref"]:
-                    _others += _rd.get("amount") or ZERO
-        if _others and abs(_o["amount"] - _others) <= Decimal("0.01"):
+        _consumed = 0
+        for _rd in _candidates:
+            _others += _rd.get("amount") or ZERO
+            _consumed += 1
+            if _consumed >= 2 and abs(_o["amount"] - _others) <= Decimal("0.01"):
+                break
+            if _others > _o["amount"] + Decimal("0.01"):
+                break
+        if _consumed >= 2 and _others and abs(_o["amount"] - _others) <= Decimal("0.01"):
             _bucket = state.pending_lvl5_items.get(_o["key"])
             if _bucket and _o["ref"] in _bucket:
                 _bucket.remove(_o["ref"])

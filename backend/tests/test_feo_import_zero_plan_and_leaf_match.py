@@ -70,12 +70,16 @@ async def test_zero_plan_sum_without_qty_skips_planned_item(db_session):
         await _cleanup_subsidy(db_session, subsidy.id)
 
 
-# --- 2. Сумма плана > 0 без кол-во → прежнее поведение (qty=1) --------------
+# --- 2. Сумма плана > 0 без кол-во → количество не выдумывается (22.09) -----
+# Раньше здесь подставлялась qty=1 («установлено кол-во = 1»); владелец
+# признал это той же ошибкой, что и в feo_import_duplicates._sum_qty
+# (Правило №6) — количество остаётся None, warning sum_without_qty сохранён,
+# но текст больше не утверждает про подставленную единицу.
 
 @pytest.mark.asyncio
-async def test_nonzero_plan_sum_without_qty_still_defaults_to_one(db_session):
-    """plan_sum=600000, plan_qty пуст → плановая позиция создаётся с qty=1,
-    прежнее предупреждение sum_without_qty сохранено."""
+async def test_nonzero_plan_sum_without_qty_leaves_quantity_none(db_session):
+    """plan_sum=600000, plan_qty пуст → плановая позиция создаётся с
+    quantity=None (не выдуманная 1), предупреждение sum_without_qty сохранено."""
     subsidy = await _make_subsidy(db_session)
     try:
         rows = [mk_row(
@@ -93,7 +97,7 @@ async def test_nonzero_plan_sum_without_qty_still_defaults_to_one(db_session):
         items = await _get_items(db_session, leaf.id)
         assert len(items) == 1
         item = items[0]
-        assert item.quantity == Decimal("1")
+        assert item.quantity is None, "количество не задано в файле — не должно стать 1"
         assert item.amount == Decimal("600000")
     finally:
         await _cleanup_subsidy(db_session, subsidy.id)

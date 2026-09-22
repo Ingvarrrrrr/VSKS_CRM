@@ -37,7 +37,7 @@ except ImportError:
 from app.database import get_db
 from app.auth.permissions import require_tab
 from app.routers import feo_categories as fc
-from app.services.feo_import_common import get_cell, to_dec
+from app.services.feo_import_common import get_cell, parse_numbering_cell
 from app.services.feo_import_engine import _do_feo_import
 from app.services.feo_import_links import _relink_feo_category, _feo_category_load  # noqa: F401 (re-export)
 from app.services.feo_import_params import resolve_feo_import_mapped_params
@@ -47,18 +47,23 @@ from app.services.feo_import_params import resolve_feo_import_mapped_params
 # col_num1..col_num4 напрямую): для /import (импорт по заголовку) колонки
 # нумерации не имеют заголовка вовсе — они авто-детектятся по СОДЕРЖИМОМУ:
 # ведущие (с колонки 0) столбцы файла, где КАЖДАЯ непустая ячейка данных —
-# целое число, до первой не-числовой/нецелой колонки. Единственное место
-# такого детекта (Правило №6) — используется и /import ниже.
+# целое число ИЛИ склеенный точками путь вида "2.2.1" (см.
+# feo_import_common.parse_numbering_cell — тот же боевой файл ДНР_2026
+# кладёт в один столбец то целое, то "2.2"/"2.3"/"2.2.1", см. докстринг
+# feo_import_numbering.py::parse_row_path), до первой не подходящей под это
+# колонки. Единственное место такого детекта (Правило №6) — используется и
+# /import ниже, и parse_row_path (тот же критерий «валидная ячейка
+# нумерации»).
 _MAX_NUMBERING_COLS = 4
 
 
 def detect_numbering_columns(data_rows: list, boundary_col: int | None) -> list[int]:
     """Ведущие (с колонки 0) столбцы file[0:boundary_col], которые целиком
-    состоят из пустых/целых значений — колонки нумерации A–D. `boundary_col`
-    обычно индекс колонки «Субсидия» (нумерация всегда стоит ДО неё в
-    реальном файле) — без неё (None) используется c_lvl2. Меньше 2 таких
-    ведущих колонок — нумерации в файле нет, возвращается пустой список
-    (обычный построчный импорт без изменений)."""
+    состоят из пустых/целых/склеенных-точками значений — колонки нумерации
+    A–D. `boundary_col` обычно индекс колонки «Субсидия» (нумерация всегда
+    стоит ДО неё в реальном файле) — без неё (None) используется c_lvl2.
+    Меньше 2 таких ведущих колонок — нумерации в файле нет, возвращается
+    пустой список (обычный построчный импорт без изменений)."""
     if not boundary_col:
         return []
     max_col = min(boundary_col, _MAX_NUMBERING_COLS)
@@ -71,8 +76,7 @@ def detect_numbering_columns(data_rows: list, boundary_col: int | None) -> list[
             if v is None:
                 continue
             has_value = True
-            d = to_dec(v)
-            if d is None or d != d.to_integral_value():
+            if parse_numbering_cell(v) is None:
                 ok = False
                 break
         if ok and has_value:

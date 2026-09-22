@@ -17,7 +17,9 @@ apply_rows.
 
 Путь строки — непустой ПРЕФИКС значений колонок нумерации (num1, [num2,
 [num3, [num4]]]): первая пустая или нецелая ячейка обрывает путь (см.
-`_row_number_path`). Путь P — прямой родитель строк с путём P + (x,); если
+`parse_row_path`; ячейка может и склеивать несколько сегментов точками —
+"2.2.1" — см. её докстринг и `feo_import_common.parse_numbering_cell`).
+Путь P — прямой родитель строк с путём P + (x,); если
 такой строки-предка нет (пропущен промежуточный уровень), родителем
 становится БЛИЖАЙШИЙ по убыванию длины путь, который уже стал узлом —
 устойчиво к дыркам в нумерации.
@@ -43,8 +45,6 @@ apply_rows.
 — строки, где это произошло, собираются в предупреждение `numbering_vs_levels`
 (нумерация ВСЕГДА побеждает — узел строится по ней, а не по имени уровня;
 расхождение только показывается человеку, дерево не меняется по нему)."""
-from decimal import Decimal
-
 from app.models.feo_category import FeoCategory
 from app.services.feo_import_budget_conflicts import (
     apply_budget_conflict_resolutions,
@@ -52,8 +52,8 @@ from app.services.feo_import_budget_conflicts import (
     register_budget_write,
 )
 from app.services.feo_import_common import (
-    QUANT, ZERO, find_or_create_category, format_rows, get_cell, resolve_origin_flags,
-    resolve_target_subsidy_id, row_feo_money, to_dec,
+    QUANT, ZERO, find_or_create_category, format_rows, get_cell, parse_numbering_cell,
+    resolve_origin_flags, resolve_target_subsidy_id, row_feo_money, to_dec,
 )
 from app.services.feo_import_common import fmt as _fmt
 from app.services.feo_import_common import norm as _norm
@@ -61,21 +61,38 @@ from app.services.feo_import_duplicates import group_key, register_pending_item
 from app.services.feo_import_item_types import resolve_item_type_for_row
 from app.routers.feo_planned_items import normalize_item_type
 
-ONE = Decimal("1")
 
+def parse_row_path(row, c_num1, c_num2, c_num3, c_num4) -> tuple[int, ...] | None:
+    """Путь строки по ведущим колонкам нумерации A–D. Колонка, не замапленная
+    в этом импорте (None), считается пустой ячейкой КАЖДОЙ строки — путь
+    просто короче на этот сегмент, а не обрывается раньше времени.
 
-def _row_number_path(row, c_num1, c_num2, c_num3, c_num4) -> tuple[int, ...] | None:
-    """Непустой префикс колонок нумерации A–D. Колонка, не замапленная в этом
-    импорте (None), считается пустой ячейкой КАЖДОЙ строки — путь просто
-    короче на этот сегмент, а не обрывается раньше времени."""
+    Обычно каждая колонка несёт один сегмент пути (целое число). Боевой файл
+    ДНР_2026 (22.09) в некоторых строках склеивает НЕСКОЛЬКО сегментов
+    точками в одной ячейке ("2.2.1", "2.2", "2.3" — см. `parse_numbering_cell`,
+    единственное место, что считается валидной ячейкой нумерации, Правило
+    №6) — такая ячейка, если её начало согласовано с уже накопленными
+    целыми слева, задаёт путь ЦЕЛИКОМ и дальнейшие колонки не читаются;
+    несогласованная — считается обрывом пути, как и пустая ячейка. Первая
+    пустая/нераспознанная ячейка обрывает путь — «оторванный хвост» (напр.
+    заполненная D при пустых B/C) не читается вовсе, т.к. до него уже
+    случился обрыв на пустой B."""
     path: list[int] = []
     for col in (c_num1, c_num2, c_num3, c_num4):
         if col is None:
             break
-        v = to_dec(get_cell(row, col))
-        if v is None or v != v.to_integral_value():
+        v = get_cell(row, col)
+        if v is None:
             break
-        path.append(int(v))
+        seg = parse_numbering_cell(v)
+        if seg is None:
+            break
+        if len(seg) == 1:
+            path.append(seg[0])
+            continue
+        if seg[: len(path)] == tuple(path):
+            return seg
+        break
     return tuple(path) if path else None
 
 
@@ -117,7 +134,7 @@ async def apply_rows_numbered(state) -> None:
     # знать заранее нельзя без взгляда вперёд).
     row_paths: dict[int, tuple | None] = {}
     for row_num, row in enumerate(rows, start=2):
-        row_paths[row_num] = _row_number_path(row, c_num1, c_num2, c_num3, c_num4)
+        row_paths[row_num] = parse_row_path(row, c_num1, c_num2, c_num3, c_num4)
     all_paths = {p for p in row_paths.values() if p}
 
     def _has_child(path: tuple) -> bool:
@@ -241,7 +258,10 @@ async def apply_rows_numbered(state) -> None:
             if amount is None:
                 amount = feo_amount
             if amount is not None:
-                qty = to_dec(get_cell(row, c_qty)) or ONE
+                # Количество не выдумывается (Правило №6, тот же принцип, что
+                # и в feo_import_duplicates._sum_qty) — если в файле не
+                # задано, остаётся None, а не подставленная 1.
+                qty = to_dec(get_cell(row, c_qty))
                 is_feo, is_plan = resolve_origin_flags(feo_amount, amount if amount != feo_amount else None)
                 _leaf_item_name = item_name_cell or name
                 _leaf_item_type = await resolve_item_type_for_row(state, row_num, _leaf_item_name, None)
@@ -274,8 +294,13 @@ async def apply_rows_numbered(state) -> None:
         unit = get_cell(row, c_unit)
         price = to_dec(get_cell(row, c_item_price))
         amount = to_dec(get_cell(row, c_row_plan_sum))
-        if amount is None and price is not None:
-            amount = (price * (qty or ONE)).quantize(QUANT)
+        # Сумма из цены считается ТОЛЬКО когда количество реально задано в
+        # файле — количество не выдумывается (Правило №6, тот же принцип,
+        # что и в feo_import_duplicates._sum_qty): цена без количества сама
+        # по себе не сумма. Amount остаётся None и падает на фолбэк ниже
+        # (Сумма по ФЭО), как и раньше для строк вовсе без плановых чисел.
+        if amount is None and price is not None and qty is not None:
+            amount = (price * qty).quantize(QUANT)
         if amount is None:
             amount = row_feo_money(row, c_row_feo_sum, None, None, None, c_budget)
 
@@ -291,7 +316,7 @@ async def apply_rows_numbered(state) -> None:
         _dup_key = group_key(subsidy_id, _path_names, item_name)
         register_pending_item(state, _dup_key, ancestor, {
             "row": row_num, "name": item_name,
-            "qty": qty if qty is not None else ONE, "unit": unit, "amount": amount, "unit_price": price,
+            "qty": qty, "unit": unit, "amount": amount, "unit_price": price,
             "feo_qty": None, "feo_unit": None, "feo_unit_price": None, "feo_amount": None,
             "item_type": item_type, "is_active": True,
             "is_feo_breakdown": False, "is_internal_plan": True,

@@ -43,10 +43,8 @@ async def create_version_snapshot(state) -> None:
     снимок перестал бы быть "предыдущей" редакцией.
 
     Вынесено из `apply_rows` в отдельную функцию (Правило №6, 22.09) — теперь
-    вызывается РОВНО ОДИН раз из feo_import_core.py, ДО ветвления на обычный
-    `apply_rows` или `apply_rows_numbered` (feo_import_numbering.py, когда
-    файл замаплен по нумерации A–D) — иначе версия создавалась бы дважды или
-    не создавалась бы вовсе при нумерации."""
+    вызывается РОВНО ОДИН раз из feo_import_core.py, ДО `apply_rows` — иначе
+    версия создавалась бы дважды."""
     db = state.db
     user = state.user
     state.version_created = False
@@ -261,8 +259,8 @@ async def apply_rows(state) -> None:
 
     async def find_or_create(subsidy_id: int, parent_id, name: str, level: int):
         # Единственная реализация — feo_import_common.find_or_create_category
-        # (Правило №6; общая с feo_import_numbering.py). Тонкая обёртка здесь
-        # оставлена, чтобы не переписывать ~десяток вызовов ниже по сигнатуре.
+        # (Правило №6). Тонкая обёртка здесь оставлена, чтобы не переписывать
+        # ~десяток вызовов ниже по сигнатуре.
         return await find_or_create_category(db, cat_cache, subsidy_id, parent_id, name, level)
 
     # Пред-проход по ВСЕМ строкам файла (задача владельца 2026-09-09, вторая
@@ -1181,9 +1179,9 @@ async def apply_rows(state) -> None:
                         })
                     # amount = сумма плана как есть; количество не выдумывается
                     # (Правило №6, тот же принцип, что и в
-                    # feo_import_duplicates._sum_qty/feo_import_numbering.py) —
-                    # раньше здесь подставлялась 1, если в файле кол-во не
-                    # задано; теперь plan_qty идёт как есть, включая None.
+                    # feo_import_duplicates._sum_qty) — раньше здесь
+                    # подставлялась 1, если в файле кол-во не задано; теперь
+                    # plan_qty идёт как есть, включая None.
                     collected_plan[cat.id] = {
                         "qty": plan_qty,
                         "unit": _pu,
@@ -1371,9 +1369,8 @@ async def apply_rows(state) -> None:
     # строка item_name_equals_category (_self_declared_regs) — если её сумма
     # совпадает с суммой ОСТАЛЬНЫХ позиций того же узла/следующих строк того
     # же уровня, это строка-ИТОГ, а не отдельная позиция: отменяем её и
-    # предупреждаем kind=group_total_row — тот же термин, что и у одноимённого
-    # предупреждения в feo_import_numbering.py (Правило №6, одно явление —
-    # одно имя предупреждения, а не два механизма).
+    # предупреждаем kind=group_total_row — единое имя предупреждения на оба
+    # случая (Правило №6, одно явление — одно имя, а не два механизма).
     for _o in _orphan_regs:
         _leaf = _o["leaf"]
         if _o["amount"] is None:

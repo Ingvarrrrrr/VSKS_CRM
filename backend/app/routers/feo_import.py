@@ -37,53 +37,9 @@ except ImportError:
 from app.database import get_db
 from app.auth.permissions import require_tab
 from app.routers import feo_categories as fc
-from app.services.feo_import_common import get_cell, parse_numbering_cell
 from app.services.feo_import_engine import _do_feo_import
 from app.services.feo_import_links import _relink_feo_category, _feo_category_load  # noqa: F401 (re-export)
 from app.services.feo_import_params import resolve_feo_import_mapped_params
-
-# Нумерация строк A–D (22.09, боевой случай ДНР_2026) — главный источник
-# иерархии, когда явно НЕ задана маппингом (/import-mapped может передать
-# col_num1..col_num4 напрямую): для /import (импорт по заголовку) колонки
-# нумерации не имеют заголовка вовсе — они авто-детектятся по СОДЕРЖИМОМУ:
-# ведущие (с колонки 0) столбцы файла, где КАЖДАЯ непустая ячейка данных —
-# целое число ИЛИ склеенный точками путь вида "2.2.1" (см.
-# feo_import_common.parse_numbering_cell — тот же боевой файл ДНР_2026
-# кладёт в один столбец то целое, то "2.2"/"2.3"/"2.2.1", см. докстринг
-# feo_import_numbering.py::parse_row_path), до первой не подходящей под это
-# колонки. Единственное место такого детекта (Правило №6) — используется и
-# /import ниже, и parse_row_path (тот же критерий «валидная ячейка
-# нумерации»).
-_MAX_NUMBERING_COLS = 4
-
-
-def detect_numbering_columns(data_rows: list, boundary_col: int | None) -> list[int]:
-    """Ведущие (с колонки 0) столбцы file[0:boundary_col], которые целиком
-    состоят из пустых/целых/склеенных-точками значений — колонки нумерации
-    A–D. `boundary_col` обычно индекс колонки «Субсидия» (нумерация всегда
-    стоит ДО неё в реальном файле) — без неё (None) используется c_lvl2.
-    Меньше 2 таких ведущих колонок — нумерации в файле нет, возвращается
-    пустой список (обычный построчный импорт без изменений)."""
-    if not boundary_col:
-        return []
-    max_col = min(boundary_col, _MAX_NUMBERING_COLS)
-    cols: list[int] = []
-    for col in range(max_col):
-        has_value = False
-        ok = True
-        for row in data_rows:
-            v = get_cell(row, col)
-            if v is None:
-                continue
-            has_value = True
-            if parse_numbering_cell(v) is None:
-                ok = False
-                break
-        if ok and has_value:
-            cols.append(col)
-        else:
-            break
-    return cols if len(cols) >= 2 else []
 
 router = APIRouter(prefix="/api/feo-categories", tags=["feo_categories"])
 
@@ -215,16 +171,9 @@ async def import_feo_from_excel(
     c_budget    = find_col(["финансирование", "бюджет", "budget"])
     c_active    = find_col(["активна", "активен", "active"])
 
-    _num_cols = detect_numbering_columns(rows[1:], c_subsidy if c_subsidy is not None else c_lvl2)
-    c_num1 = _num_cols[0] if len(_num_cols) > 0 else None
-    c_num2 = _num_cols[1] if len(_num_cols) > 1 else None
-    c_num3 = _num_cols[2] if len(_num_cols) > 2 else None
-    c_num4 = _num_cols[3] if len(_num_cols) > 3 else None
-
     return await _do_feo_import(
         rows=rows[1:],
         c_subsidy=c_subsidy, c_lvl2=c_lvl2, c_lvl3=c_lvl3, c_lvl4=c_lvl4,
-        c_num1=c_num1, c_num2=c_num2, c_num3=c_num3, c_num4=c_num4,
         c_lvl5=c_lvl5, c_qty=c_qty, c_unit=c_unit, c_item_amt=c_item_amt,
         c_code=c_code, c_appendix=c_appendix, c_budget=c_budget, c_active=c_active,
         c_qty_lvl2=c_qty_lvl2, c_qty_lvl3=c_qty_lvl3, c_qty_lvl4=c_qty_lvl4,
@@ -303,12 +252,6 @@ async def import_feo_mapped(
     col_row_plan_price: int = Query(-1),
     col_row_plan_sum: int = Query(-1),
     col_item_type: int = Query(-1),
-    # Нумерация строк A–D (22.09) — явный маппинг из мастера, минуя авто-детект
-    # (тот применяется только в /import, где колонки не размечены пользователем).
-    col_num1: int = Query(-1),
-    col_num2: int = Query(-1),
-    col_num3: int = Query(-1),
-    col_num4: int = Query(-1),
     default_subsidy_id: int = Query(-1),
     dry_run: bool = Query(False),
     remap: str = Query(""),
@@ -355,7 +298,6 @@ async def import_feo_mapped(
         col_row_plan_qty=col_row_plan_qty, col_row_plan_unit=col_row_plan_unit,
         col_row_plan_price=col_row_plan_price, col_row_plan_sum=col_row_plan_sum,
         col_item_type=col_item_type,
-        col_num1=col_num1, col_num2=col_num2, col_num3=col_num3, col_num4=col_num4,
         default_subsidy_id=default_subsidy_id,
         dry_run=dry_run, remap=remap, apply_remap=apply_remap,
         duplicate_resolutions=duplicate_resolutions,
@@ -503,7 +445,6 @@ async def import_feo_mapped(
         c_row_plan_price=_c("col_row_plan_price"),
         c_row_plan_sum=_c("col_row_plan_sum"),
         c_item_type=_c("col_item_type"),
-        c_num1=_c("col_num1"), c_num2=_c("col_num2"), c_num3=_c("col_num3"), c_num4=_c("col_num4"),
         default_subsidy_id=default_subsidy_id if default_subsidy_id > 0 else None,
         db=db, dry_run=dry_run,
         user=current_user, remap=remap, apply_remap=apply_remap,

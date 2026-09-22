@@ -3,7 +3,7 @@
 
 Колонка «Тип» файла (`c_item_type`, см. app/routers/feo_import.py::find_col и
 app/services/feo_import_params.py::_COL_INT_FIELDS) уже нормализуется на
-месте построчного чтения (feo_import_apply.py/feo_import_numbering.py, через
+месте построчного чтения (feo_import_apply.py, через
 `app.routers.feo_planned_items.normalize_item_type` — реэкспорт
 app.services.item_types.normalize_item_type). Этот модуль — единственное
 место, решающее, ЧТО в итоге запишется в FeoPlannedItem.item_type, когда рядом
@@ -55,9 +55,9 @@ FeoPlannedItem вообще существует, и нужен сам Product (
 Публичный API:
     ITEM_TYPE_DECISION_VALUES              — допустимые значения item_type_decisions
     resolve_item_type_for_row(state, row_num, item_name, file_item_type)
-        — единственная точка решения, вызывается из feo_import_apply.py и
-          feo_import_numbering.py в каждом месте, где строка файла кладёт
-          item_type в pending_lvl5_items/collected_plan (регистрация через
+        — единственная точка решения, вызывается из feo_import_apply.py в
+          каждом месте, где строка файла кладёт item_type в
+          pending_lvl5_items/collected_plan (регистрация через
           feo_import_duplicates.register_pending_item и прямую запись
           collected_plan[cat.id] в feo_import_apply.py). `file_item_type` —
           уже нормализованное значение колонки файла (или None) — сама

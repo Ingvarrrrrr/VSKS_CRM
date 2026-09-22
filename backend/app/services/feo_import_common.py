@@ -5,7 +5,6 @@ app/services/feo_import_engine.py до разрезания на этапы, П�
 изменения логики — только сняты с закрытия функции (были вложенными def,
 не обращались ни к чему, кроме своих аргументов и импорта normalize_feo_name).
 """
-import re
 from decimal import Decimal
 
 from app.models.feo_category import FeoCategory
@@ -14,37 +13,13 @@ from app.utils.text import normalize_feo_name
 ZERO = Decimal("0")
 QUANT = Decimal("0.01")
 
-_DOTTED_PATH_RE = re.compile(r"^\d+(?:\.\d+)+$")
-
-
-def parse_numbering_cell(v: str | None) -> tuple[int, ...] | None:
-    """Разбор одной ячейки колонки нумерации A–D (Правило №6 — единственное
-    место, что считается валидной ячейкой нумерации; используется и детектом
-    колонок `routers/feo_import.py::detect_numbering_columns`, и разбором
-    пути строки `feo_import_numbering.py::parse_row_path`).
-
-    Обычная ячейка — одно целое число, один сегмент пути ("2" -> (2,)).
-    Боевой файл ДНР_2026 (22.09) в некоторых строках склеивает НЕСКОЛЬКО
-    сегментов пути точками в одной ячейке ("2.2.1") — такая ячейка
-    возвращает путь ЦЕЛИКОМ, несколько сегментов сразу: (2, 2, 1).
-    Не число и не вида N.N(.N...) — не ячейка нумерации, None."""
-    if v is None:
-        return None
-    d = to_dec(v)
-    if d is not None and d == d.to_integral_value():
-        return (int(d),)
-    s = str(v).strip()
-    if _DOTTED_PATH_RE.match(s):
-        return tuple(int(x) for x in s.split("."))
-    return None
-
 
 async def find_or_create_category(db, cat_cache: dict, subsidy_id: int, parent_id, name: str, level: int):
     """Единственная реализация upsert категории по (subsidy_id, parent_id,
     имя) — Правило №6 (QA, 22.09): раньше был байт-в-байт дублирован как
-    вложенный `find_or_create` в feo_import_apply.py и feo_import_numbering.py
-    (построчный путь и путь по нумерации A–D создают/находят категории ровно
-    той же логикой). `cat_cache` — общий кэш вызывающей стороны (ключ —
+    вложенный `find_or_create` в feo_import_apply.py и (устаревший путь по
+    нумерации A–D, удалён 22.09) — построчный путь создаёт/находит категории
+    этой логикой. `cat_cache` — общий кэш вызывающей стороны (ключ —
     тот же кортеж), мутируется на месте."""
     key = (subsidy_id, parent_id, name.lower().strip())
     if key in cat_cache:

@@ -47,6 +47,17 @@
           <v-alert type="info" variant="tonal" density="compact" class="mb-3" icon="mdi-clipboard-text-search-outline">
             Это <strong>прогноз</strong> — данные ещё не записаны в базу. Проверьте результат и нажмите «Импортировать».
           </v-alert>
+          <!-- Баг владельца 23.09: после смены решения (радио-кнопки ниже)
+               предупреждения и счётчики создано/обновлено/пропущено — от
+               СТАРОГО прогноза, пока не придёт свежий dry-run (см.
+               feoScheduleRecompute в useFeoImport.ts). Индикатор + приглушение
+               блока — чтобы не читать устаревшие цифры (правило проекта: долгая
+               операция не оставляет мёртвый экран). -->
+          <v-progress-linear v-if="feoImport.recomputing" indeterminate color="primary" height="3" class="mb-3" />
+          <v-alert v-if="feoImport.recomputeError" type="error" variant="tonal" density="compact" class="mb-3" icon="mdi-alert-circle">
+            Не удалось пересчитать прогноз: {{ feoImport.recomputeError }}. Показаны прежние (устаревшие) цифры.
+            <v-btn size="small" variant="text" color="error" class="ml-2" @click="feoRecomputeNow">Повторить</v-btn>
+          </v-alert>
           <!-- D (баг 2026-09-09): куда реально идёт импорт — колонка «Субсидия»
                файла на это НЕ влияет, побеждает всегда открытая карточка. -->
           <v-alert v-if="feoImportTargetSubsidyName" type="success" variant="tonal" density="compact"
@@ -184,6 +195,11 @@
                значением уже сопоставленного товара в каталоге — отдельный
                компонент (Правило №5), тот же singleton useFeoImport.ts. -->
           <FeoImportItemTypeConflicts />
+          <!-- Счётчики/предупреждения/детали ниже — приглушаются, пока прогноз
+               устарел (feoImport.resultStale, см. докстринг выше). Сами решения
+               (радио-кнопки/переключатели выше) остаются кликабельными —
+               дебаунс их не блокирует, серия кликов схлопывается в один запрос. -->
+          <div :class="{ 'feo-stale-block': feoImport.resultStale }">
           <div v-if="feoImport.dryResult" class="d-flex flex-wrap gap-2 mb-3">
             <v-chip color="success" variant="flat"
               :disabled="!feoImport.dryResult.created_details?.length"
@@ -321,6 +337,7 @@
             icon="mdi-alert" class="mb-3">
             {{ feoImport.dryResult.remap_aborted_reason }}
           </v-alert>
+          </div>
         </template>
 
         <!-- Step 4: Remap unmatched nodes (условный — только если есть needs_mapping) -->
@@ -554,22 +571,26 @@
         <v-btn v-if="feoImport.step === 2" color="primary" variant="flat"
           :loading="feoImport.loading" :disabled="!feoMappingValid"
           @click="doFeoMappedImport(true)">Проверить</v-btn>
-        <!-- Шаг 3: если есть несопоставленные узлы — на шаг 4 (Сопоставление), иначе сразу реальный импорт → шаг 5 -->
+        <!-- Шаг 3: если есть несопоставленные узлы — на шаг 4 (Сопоставление), иначе сразу реальный импорт → шаг 5.
+             Пока прогноз устарел/пересчитывается (feoImport.resultStale/recomputing) — обе кнопки заблокированы,
+             человек не должен импортировать по цифрам, которые ещё не отражают его выбор (баг 23.09). -->
         <v-btn v-if="feoImport.step === 3 && feoUnmatchedNeedsMapping.length" color="primary" variant="flat"
-          :disabled="!!(feoImport.dryResult?.errors?.length)"
+          :disabled="!!(feoImport.dryResult?.errors?.length) || feoImport.resultStale"
           @click="feoImport.step = 4">Сопоставить ({{ feoUnmatchedNeedsMapping.length }})</v-btn>
         <v-btn v-if="feoImport.step === 3 && !feoUnmatchedNeedsMapping.length" color="success" variant="flat"
           :loading="feoImport.loading"
-          :disabled="!!(feoImport.dryResult?.errors?.length)"
+          :disabled="!!(feoImport.dryResult?.errors?.length) || feoImport.resultStale"
           @click="doFeoMappedImport(false)">Импортировать<template v-if="feoImport.dryResult?.deleted_count">, удалить {{ feoImport.dryResult.deleted_count }}</template></v-btn>
-        <!-- Шаг 4: пересчитать прогноз с текущим remap или перейти к реальному импорту → шаг 5 -->
-        <v-btn v-if="feoImport.step === 4" variant="tonal" :loading="feoImport.loading"
-          @click="doFeoMappedImport(true, true)">
+        <!-- Шаг 4: пересчитать прогноз с текущим remap или перейти к реальному импорту → шаг 5.
+             feoRecomputeNow — тот же канал, что и автопересчёт после радио-кнопок на шаге 3
+             (feoScheduleRecompute в useFeoImport.ts), просто без ожидания дебаунса. -->
+        <v-btn v-if="feoImport.step === 4" variant="tonal" :loading="feoImport.recomputing"
+          @click="feoRecomputeNow">
           <v-icon icon="mdi-refresh" class="mr-1" /> Пересчитать
         </v-btn>
         <v-btn v-if="feoImport.step === 4" color="success" variant="flat"
           :loading="feoImport.loading"
-          :disabled="!!(feoImport.dryResult?.errors?.length)"
+          :disabled="!!(feoImport.dryResult?.errors?.length) || feoImport.resultStale"
           @click="doFeoMappedImport(false)">{{ feoStep4MainLabel }}</v-btn>
         <v-btn v-if="feoImport.step === 5" color="primary" variant="flat"
           @click="closeFeoImport">Готово</v-btn>
@@ -602,7 +623,7 @@ const {
   feoUnmatchedNeedsMapping, feoHasSuggestions, feoAcceptAllSuggestions,
   feoStep4MainLabel, feoLoadSummary, feoPluralRu, feoMappingValid,
   feoWarnKindLabel, feoWarnSubtitle, feoWarnKindIsAlert, feoWarnKinds,
-  doFeoImport, doFeoMappedImport, closeFeoImport,
+  doFeoImport, doFeoMappedImport, closeFeoImport, feoRecomputeNow,
 } = useFeoImport(useSubsidyDetailCtx())
 </script>
 
@@ -638,5 +659,12 @@ const {
 }
 .dialog-card :deep(.v-list-item) {
   min-height: unset;
+}
+/* Баг владельца 23.09: счётчики создано/обновлено/пропущено и предупреждения
+   визуально приглушаются, пока прогноз устарел (см. feoImport.resultStale) —
+   человек не должен принять их за актуальные, пока идёт автопересчёт. */
+.feo-stale-block {
+  opacity: .5;
+  transition: opacity .15s ease;
 }
 </style>

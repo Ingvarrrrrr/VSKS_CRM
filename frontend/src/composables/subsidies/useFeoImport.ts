@@ -96,7 +96,57 @@ const feoImport = reactive({
   // держим string вместо перечисления, полный список допустимых значений
   // проверяет только backend (feo_import_core.py).
   duplicateResolutions: {} as Record<string, 'merge' | 'keep' | 'own' | 'items' | 'file' | 'catalog' | string>,
+  // Баг владельца 23.09: смена радио-кнопки на шаге 3 меняла только
+  // duplicateResolutions — текст предупреждений и счётчики создано/обновлено/
+  // пропущено оставались от ПЕРВОГО dry-run (до решения человека, сервер
+  // применял дефолт 'last'). recomputing/resultStale/recomputeError — см.
+  // feoScheduleRecompute/feoRecomputeNow ниже, единственный канал пересчёта
+  // (Правило №6, тот же doFeoMappedImport(true, true), что и «Пересчитать» на шаге 4).
+  recomputing: false,
+  resultStale: false,
+  recomputeError: null as string | null,
 })
+
+// Небольшой дебаунс-планировщик пересчёта прогноза после решения человека —
+// module-level (не реактивный), переживает пересоздание компонентов мастера,
+// как и сам feoImport выше. _recomputeRunner привязывается к doFeoMappedImport
+// внутри useFeoImport(ctx) (там же, где живут ctx/toast) при каждом вызове
+// useFeoImport() — то же самое ctx-замыкание, каким уже пользуются
+// doFeoImport/doFeoMappedImport/closeFeoImport.
+let _recomputeRunner: (() => Promise<void>) | null = null
+let _recomputeTimer: ReturnType<typeof setTimeout> | null = null
+let _recomputeInFlight = false
+let _recomputeQueued = false
+
+function _runRecompute() {
+  if (!_recomputeRunner) return
+  if (_recomputeInFlight) { _recomputeQueued = true; return }
+  _recomputeInFlight = true
+  feoImport.recomputing = true
+  _recomputeRunner().finally(() => {
+    _recomputeInFlight = false
+    feoImport.recomputing = false
+    // Пока шёл запрос, решение поменялось ещё раз — досчитываем финальное
+    // состояние одним следующим запросом, не наслаивая параллельные вызовы.
+    if (_recomputeQueued) { _recomputeQueued = false; _runRecompute() }
+  })
+}
+// Дебаунс ~800мс: серия быстрых кликов по радио-кнопкам не порождает серию
+// запросов — таймер переставляется каждым новым изменением.
+export function feoScheduleRecompute() {
+  if (!feoImport.dryResult) return // первого предпросмотра ещё не было — нечего пересчитывать
+  feoImport.resultStale = true
+  feoImport.recomputeError = null
+  if (_recomputeTimer) clearTimeout(_recomputeTimer)
+  _recomputeTimer = setTimeout(() => { _recomputeTimer = null; _runRecompute() }, 800)
+}
+// Ручное «Пересчитать» (шаг 4) — тот же путь, без ожидания дебаунса.
+export function feoRecomputeNow() {
+  if (_recomputeTimer) { clearTimeout(_recomputeTimer); _recomputeTimer = null }
+  feoImport.resultStale = true
+  feoImport.recomputeError = null
+  _runRecompute()
+}
 
 const feoImportTargetSubsidy = ref<number | null>(null)
 
@@ -187,6 +237,7 @@ function feoResolutionFor(key: string): 'merge' | 'keep' {
 }
 function feoSetResolution(key: string, value: 'merge' | 'keep') {
   feoImport.duplicateResolutions[key] = value
+  feoScheduleRecompute()
 }
 
 // Владелец (2026-09-15, опрос): группы конфликтов Суммы по ФЭО — читаются из
@@ -212,6 +263,7 @@ function feoBudgetResolutionFor(g: FeoBudgetConflictGroup): string {
 }
 function feoSetBudgetResolution(key: string, value: string) {
   feoImport.duplicateResolutions[key] = value
+  feoScheduleRecompute()
 }
 
 // Владелец (2026-09-16, дословно): категория, у которой в файле заполнены И
@@ -225,6 +277,7 @@ function feoCatSumResolutionFor(key: string): 'own' | 'items' {
 }
 function feoSetCatSumResolution(key: string, value: 'own' | 'items') {
   feoImport.duplicateResolutions[key] = value
+  feoScheduleRecompute()
 }
 
 // Задача 2026-09-22: строки, где товар/услуга/работа из файла отличается от
@@ -249,6 +302,7 @@ function feoSetItemTypeResolution(row: number, value: 'file' | 'catalog' | null 
   // активной кнопке (снятие выбора) — «решения нет» здесь означает ОТСУТСТВИЕ
   // ключа в канале (см. комментарий у duplicateResolutions), не значение.
   else delete feoImport.duplicateResolutions[key]
+  feoScheduleRecompute()
 }
 // Кнопки «Все из файла» / «Все из каталога» — применяют один выбор ко ВСЕМ
 // текущим конфликтам разом (тот же канал, точечный выбор по строке остаётся
@@ -518,9 +572,15 @@ export function useFeoImport(ctx?: FeoImportCtx) {
     return value === 'keep'
   }
 
-  async function doFeoMappedImport(dryRun = false, keepStep = false) {
+  // opts.silent — вызов из автоматического пересчёта после смены решения
+  // человека (feoScheduleRecompute/feoRecomputeNow): не трогает feoImport.loading
+  // (иначе Отмена/Назад и т.п. мигали бы спиннером на КАЖДЫЙ клик по радио),
+  // ошибки идут в feoImport.recomputeError (инлайн в мастере, п.6 задачи),
+  // а не в общий toast, и прежний feoImport.dryResult не перетирается.
+  async function doFeoMappedImport(dryRun = false, keepStep = false, opts?: { silent?: boolean }) {
     if (!feoImport.file) return
-    feoImport.loading = true
+    const silent = !!opts?.silent
+    if (!silent) feoImport.loading = true
     try {
       const m = feoDragMapping.value
       const sheet = feoCurrentSheet.value
@@ -632,7 +692,14 @@ export function useFeoImport(ctx?: FeoImportCtx) {
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
         const msg = uploadHttpErrorMessage(res.status) || err.detail || err.message || `Ошибка импорта (HTTP ${res.status})`
-        showSnack(msg, 'error')
+        if (silent) {
+          // п.6: не глотать generic-снэкбаром — причина видна инлайн в
+          // мастере (FeoImportWizard.vue), прежний dryResult НЕ трогаем —
+          // resultStale уже true (выставлено в feoScheduleRecompute/feoRecomputeNow).
+          feoImport.recomputeError = msg
+        } else {
+          showSnack(msg, 'error')
+        }
         console.error('FEO import error:', err)
         return
       }
@@ -640,6 +707,8 @@ export function useFeoImport(ctx?: FeoImportCtx) {
       if (dryRun) {
         // Dry-run: show preview on step 3 (или остаёмся на шаге 4 при «Пересчитать»), no DB write, no snackbar, no tree reload
         feoImport.dryResult = data
+        feoImport.resultStale = false
+        feoImport.recomputeError = null
         ;(data.unmatched || []).forEach(u => {
           if (u.kind === 'needs_mapping' && !(u.id in feoImport.remap)) feoImport.remap[u.id] = null
         })
@@ -674,12 +743,18 @@ export function useFeoImport(ctx?: FeoImportCtx) {
         showSnack(msg)
         if (ctx?.selectedId.value) { await ctx.loadFeo(ctx.selectedId.value); ctx.syncFeoFilled() }
       }
-    } catch {
-      showSnack('Ошибка импорта', 'error')
+    } catch (e: any) {
+      const msg = e?.message ? `Ошибка импорта: ${e.message}` : 'Ошибка импорта'
+      if (silent) feoImport.recomputeError = msg
+      else showSnack(msg, 'error')
     } finally {
-      feoImport.loading = false
+      if (!silent) feoImport.loading = false
     }
   }
+  // Привязка пересчёта (feoScheduleRecompute/feoRecomputeNow, module-level
+  // выше) к doFeoMappedImport этого ctx-замыкания — тот же приём переиспользования,
+  // что и весь остальной канал решений (Правило №6, второй путь не заводим).
+  _recomputeRunner = () => doFeoMappedImport(true, true, { silent: true })
 
   function closeFeoImport() {
     const wasCreated = (feoImport.result?.created ?? 0) > 0
@@ -688,6 +763,9 @@ export function useFeoImport(ctx?: FeoImportCtx) {
     feoImport.previewData = null; feoImport.selectedSheet = ''
     feoDragMapping.value = {}; feoIgnoredCols.value = []; feoImport.remap = {}
     feoImport.duplicateResolutions = {}
+    feoImport.recomputing = false; feoImport.resultStale = false; feoImport.recomputeError = null
+    if (_recomputeTimer) { clearTimeout(_recomputeTimer); _recomputeTimer = null }
+    _recomputeQueued = false
     if (wasCreated && ctx?.selectedId.value) { ctx.loadFeo(ctx.selectedId.value); ctx.syncFeoFilled() }
   }
 
@@ -703,7 +781,7 @@ export function useFeoImport(ctx?: FeoImportCtx) {
     feoIsMapped, feoIsIgnored, feoIsTargetFilled, feoGetColumnLabel, feoGetSamples,
     feoOnDragStart, feoOnDropToTarget, feoOnDropToUnresolved, feoUnmapTarget, feoIgnoreColumn, feoAutoMap,
     feoWarnKindLabel, feoWarnSubtitle, feoWarnKindIsAlert, feoWarnKinds,
-    doFeoImport, doFeoMappedImport, closeFeoImport,
+    doFeoImport, doFeoMappedImport, closeFeoImport, feoRecomputeNow,
     // allSubsidies — источник для выбора «Субсидия назначения» на шаге 2 (только чтение)
     allSubsidies: ctx?.allSubsidies,
   }

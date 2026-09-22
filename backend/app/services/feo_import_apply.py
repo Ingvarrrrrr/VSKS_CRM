@@ -19,8 +19,9 @@ from decimal import Decimal
 
 from app.models.feo_category import FeoCategory
 from app.services.feo_import_common import (
-    QUANT, ZERO, build_level_name_index, find_uniformly_empty_levels, format_rows, get_cell, level_label,
-    resolve_origin_flags, resolve_target_subsidy_id, row_feo_money, row_plan_money, to_bool, to_dec,
+    QUANT, ZERO, build_level_name_index, find_or_create_category, find_uniformly_empty_levels, format_rows,
+    get_cell, level_label, resolve_origin_flags, resolve_target_subsidy_id, row_feo_money, row_plan_money,
+    to_bool, to_dec,
 )
 from app.services.feo_import_common import fmt as _fmt
 from app.services.feo_import_common import norm as _norm
@@ -32,6 +33,38 @@ from app.services.feo_import_budget_conflicts import (
     register_budget_write,
 )
 from app.routers.feo_planned_items import normalize_item_type
+
+
+async def create_version_snapshot(state) -> None:
+    """N2б: снимок предыдущей редакции плана — ВСЕГДА и ДО обработки строк.
+    `_create_plan_graph_version` заново селектит FeoCategory, поэтому её нужно
+    звать ДО того, как дерево изменится (создание/обновление/удаление) — иначе
+    снимок перестал бы быть "предыдущей" редакцией.
+
+    Вынесено из `apply_rows` в отдельную функцию (Правило №6, 22.09) — теперь
+    вызывается РОВНО ОДИН раз из feo_import_core.py, ДО ветвления на обычный
+    `apply_rows` или `apply_rows_numbered` (feo_import_numbering.py, когда
+    файл замаплен по нумерации A–D) — иначе версия создавалась бы дважды или
+    не создавалась бы вовсе при нумерации."""
+    db = state.db
+    user = state.user
+    state.version_created = False
+    if user is None:
+        return
+    _remap_note_suffix = ""
+    if state.remap_list:
+        _pairs = []
+        for _rm in state.remap_list[:5]:
+            _pairs.append(f"«{full_path(state.existing_by_id, _rm['old_id'])}» → «{_rm['new_path']}»")
+        _remap_note_suffix = "; перенос узлов: " + "; ".join(_pairs)
+        if len(state.remap_list) > 5:
+            _remap_note_suffix += f" и ещё {len(state.remap_list) - 5}"
+    _note = "Загрузка новой редакции разбивки ФЭО" + _remap_note_suffix
+    from app.routers.purchases import _create_plan_graph_version
+    for _sid in state.touched_subsidies:
+        _v_created = await _create_plan_graph_version(subsidy_id=_sid, db=db, user=user, note=_note)
+        if _v_created:
+            state.version_created = True
 
 
 async def apply_rows(state) -> None:
@@ -126,6 +159,21 @@ async def apply_rows(state) -> None:
 
     _new_paths_seen: set[str] = set()
 
+    # Задача владельца 22.09 (без нумерации A–D): узел ближайшей ВЫШЕ успешно
+    # обработанной строки — цель для строки без единого уровня (см. блок
+    # «Позиция без уровней» ниже) вместо ложного нового корня.
+    # `_row_root_cats`/`_row_leaf_by_num` — пост-проход «self-declared сумма =
+    # сумма следующих строк того же уровня» (item_name_equals_category ниже)
+    # и «сумма позиции без уровней = сумма остальных позиций узла»
+    # (group_total_row) — оба выполняются ПОСЛЕ цикла по всем строкам, когда
+    # уже видно, что было дальше по файлу.
+    _prev_leaf_cat = None
+    _prev_cats_in_row: list = []
+    _row_root_cats: list[tuple[int, FeoCategory]] = []
+    _row_leaf_by_num: dict[int, FeoCategory] = {}
+    _orphan_regs: list[dict] = []
+    _self_declared_regs: list[dict] = []
+
     def _row_feo_money(row):
         """Обёртка над общим `feo_import_common.row_feo_money` с уже
         известными индексами колонок ЭТОГО импорта (Правило №6 — один
@@ -211,40 +259,10 @@ async def apply_rows(state) -> None:
         return recovered
 
     async def find_or_create(subsidy_id: int, parent_id, name: str, level: int):
-        key = (subsidy_id, parent_id, name.lower().strip())
-        if key in cat_cache:
-            return cat_cache[key], False
-        cat = FeoCategory(
-            name=name, subsidy_id=subsidy_id, parent_id=parent_id, level=level,
-            is_active=True,
-        )
-        db.add(cat)
-        await db.flush()
-        cat_cache[key] = cat
-        return cat, True
-
-    # --- N2б: снимок предыдущей редакции — ВСЕГДА и ДО основного цикла.
-    # _create_plan_graph_version заново селектит FeoCategory, поэтому вызывать
-    # её нужно именно здесь: после основного цикла дерево уже было бы изменено
-    # (создание/обновление/удаление), и снимок перестал бы быть "предыдущей"
-    # редакцией. Снимок самодостаточен (дерево пишется в JSON инлайном), так
-    # что последующее удаление узлов не портит уже сохранённую версию.
-    state.version_created = False
-    if user is not None:
-        _remap_note_suffix = ""
-        if remap_list:
-            _pairs = []
-            for _rm in remap_list[:5]:
-                _pairs.append(f"«{full_path(existing_by_id, _rm['old_id'])}» → «{_rm['new_path']}»")
-            _remap_note_suffix = "; перенос узлов: " + "; ".join(_pairs)
-            if len(remap_list) > 5:
-                _remap_note_suffix += f" и ещё {len(remap_list) - 5}"
-        _note = "Загрузка новой редакции разбивки ФЭО" + _remap_note_suffix
-        from app.routers.purchases import _create_plan_graph_version
-        for _sid in touched_subsidies:
-            _v_created = await _create_plan_graph_version(subsidy_id=_sid, db=db, user=user, note=_note)
-            if _v_created:
-                state.version_created = True
+        # Единственная реализация — feo_import_common.find_or_create_category
+        # (Правило №6; общая с feo_import_numbering.py). Тонкая обёртка здесь
+        # оставлена, чтобы не переписывать ~десяток вызовов ниже по сигнатуре.
+        return await find_or_create_category(db, cat_cache, subsidy_id, parent_id, name, level)
 
     # Пред-проход по ВСЕМ строкам файла (задача владельца 2026-09-09, вторая
     # часть правила «Плановая позиция становится узлом уровня») — ДО основного
@@ -500,6 +518,16 @@ async def apply_rows(state) -> None:
                             f"если это разные вещи, переименуйте одно из них"
                         ),
                     })
+                    # Задача владельца 22.09: если эта сумма на самом деле —
+                    # итог СЛЕДУЮЩИХ строк того же уровня (боевой случай
+                    # «Расходы закупка товаров…» = Проезд+МТО+Доп комплектация),
+                    # пост-проход после цикла по всем строкам (ниже) заменит
+                    # это предупреждение на group_total_row и уберёт авто-
+                    # позицию категории (collected_plan) — см. warning_ref.
+                    _self_declared_regs.append({
+                        "row": row_num, "amount": _self_decl_amt, "name": lvl5_name,
+                        "warning_ref": warnings[-1],
+                    })
                     lvl5_name = None
 
         # --- Предупреждение: «Плановая позиция» остаётся ПОЗИЦИЕЙ, но её имя
@@ -587,6 +615,63 @@ async def apply_rows(state) -> None:
         # памяти между строками не заводим, к предыдущей строке ничего не цепляем.
         if (not lvl2_name) and (not lvl3_name or lvl3_name.startswith("←")) and (not lvl4_name or lvl4_name.startswith("←")):
             if lvl5_name and not lvl5_name.startswith("←"):
+                if _prev_leaf_cat is not None:
+                    # Задача владельца 22.09: строка без единого уровня — НЕ
+                    # новое направление (старое поведение плодило ложные корни —
+                    # боевой случай ДНР_2026, строка 16 «Коммунальные расходы»
+                    # без Уровня 2/3/4 стала корнем с бюджетом 760 000 вместо
+                    # позиции внутри уже открытого узла). Привязывается
+                    # позицией к БЛИЖАЙШЕМУ узлу выше (последняя успешно
+                    # обработанная строка с заполненными уровнями) — тем же
+                    # каналом pending_lvl5_items/register_pending_item, что и
+                    # обычная «Плановая позиция» (Правило №6, не заводить
+                    # второй механизм создания FeoPlannedItem). Пост-проход
+                    # после цикла по всем строкам может ОТМЕНИТЬ эту позицию,
+                    # если её сумма окажется группой-итогом остальных позиций
+                    # того же узла (warning group_total_row).
+                    _orphan_amount = _row_feo_money(row)
+                    if _orphan_amount is None:
+                        _orphan_amount = row_plan_money(
+                            row, c_row_plan_sum, c_plan_sum_lvl2, c_plan_sum_lvl3, c_plan_sum_lvl4
+                        )
+                    _orphan_qty = to_dec(get_cell(row, c_qty)) or Decimal("1")
+                    _orphan_unit = get_cell(row, c_unit)
+                    warnings.append({
+                        "kind": "item_attached_to_previous_node",
+                        "row": row_num,
+                        "name": lvl5_name,
+                        "message": (
+                            f"Плановая позиция «{lvl5_name}» — в строке нет ни одного уровня, "
+                            f"привязана к «{_prev_leaf_cat.name}» (ближайший узел выше)"
+                        ),
+                    })
+                    _orphan_is_feo, _orphan_is_plan = resolve_origin_flags(_orphan_amount, None)
+                    _orphan_key = group_key(
+                        _prev_leaf_cat.subsidy_id, [c.name for c in _prev_cats_in_row], lvl5_name
+                    )
+                    register_pending_item(state, _orphan_key, _prev_leaf_cat, {
+                        "row": row_num, "name": lvl5_name,
+                        "qty": _orphan_qty, "unit": _orphan_unit, "amount": _orphan_amount,
+                        "unit_price": (
+                            (_orphan_amount / _orphan_qty).quantize(QUANT)
+                            if _orphan_amount and _orphan_qty else None
+                        ),
+                        "feo_qty": None, "feo_unit": None, "feo_unit_price": None, "feo_amount": None,
+                        "item_type": None, "is_active": True,
+                        "is_feo_breakdown": _orphan_is_feo, "is_internal_plan": _orphan_is_plan,
+                        "path": [c.name for c in _prev_cats_in_row],
+                    })
+                    lvl5_leaves.add(_prev_leaf_cat.id)
+                    lvl5_sum_by_cat[_prev_leaf_cat.id] = (
+                        lvl5_sum_by_cat.get(_prev_leaf_cat.id, ZERO) + (_orphan_amount or ZERO)
+                    )
+                    lvl5_item_rows.setdefault(_prev_leaf_cat.id, []).append(row_num)
+                    _orphan_regs.append({
+                        "key": _orphan_key, "leaf": _prev_leaf_cat, "row": row_num,
+                        "amount": _orphan_amount, "name": lvl5_name,
+                        "ref": state.pending_lvl5_items[_orphan_key][-1],
+                    })
+                    continue
                 warnings.append({
                     "kind": "item_promoted_to_level2",
                     "row": row_num,
@@ -1127,6 +1212,10 @@ async def apply_rows(state) -> None:
                 prev_cat = cat
 
             leaf = cats_in_row[-1]
+            _prev_leaf_cat = leaf
+            _prev_cats_in_row = cats_in_row
+            _row_root_cats.append((row_num, cats_in_row[0]))
+            _row_leaf_by_num[row_num] = leaf
 
             # --- Учёт для отчёта "несопоставленные узлы" (только анализ) ---
             root_c = cats_in_row[0]
@@ -1257,6 +1346,73 @@ async def apply_rows(state) -> None:
 
         except Exception as e:
             errors.append({"row": row_num, "name": lvl2_name, "message": str(e)})
+
+    # --- Задача владельца 22.09 (группа-итог без нумерации A–D): строка без
+    # единого уровня, привязанная к предыдущему узлу выше (_orphan_regs), или
+    # строка item_name_equals_category (_self_declared_regs) — если её сумма
+    # совпадает с суммой ОСТАЛЬНЫХ позиций того же узла/следующих строк того
+    # же уровня, это строка-ИТОГ, а не отдельная позиция: отменяем её и
+    # предупреждаем kind=group_total_row — тот же термин, что и у одноимённого
+    # предупреждения в feo_import_numbering.py (Правило №6, одно явление —
+    # одно имя предупреждения, а не два механизма).
+    for _o in _orphan_regs:
+        _leaf = _o["leaf"]
+        if _o["amount"] is None:
+            continue
+        _others = ZERO
+        for _rows2 in state.pending_lvl5_items.values():
+            for _rd in _rows2:
+                if _rd.get("leaf") is _leaf and _rd is not _o["ref"]:
+                    _others += _rd.get("amount") or ZERO
+        if _others and abs(_o["amount"] - _others) <= Decimal("0.01"):
+            _bucket = state.pending_lvl5_items.get(_o["key"])
+            if _bucket and _o["ref"] in _bucket:
+                _bucket.remove(_o["ref"])
+                if not _bucket:
+                    state.pending_lvl5_items.pop(_o["key"], None)
+            lvl5_sum_by_cat[_leaf.id] = lvl5_sum_by_cat.get(_leaf.id, ZERO) - _o["amount"]
+            if _leaf.id in lvl5_item_rows and _o["row"] in lvl5_item_rows[_leaf.id]:
+                lvl5_item_rows[_leaf.id].remove(_o["row"])
+            warnings.append({
+                "kind": "group_total_row",
+                "row": _o["row"],
+                "name": _o["name"],
+                "message": (
+                    f"Строка {_o['row']}: «{_o['name']}» = {_fmt(_o['amount'])} совпадает с суммой "
+                    f"остальных позиций «{_leaf.name}» — это итог группы, позиция не создана"
+                ),
+            })
+
+    for _s in _self_declared_regs:
+        _leaf = _row_leaf_by_num.get(_s["row"])
+        if _leaf is None or _s["amount"] is None:
+            continue
+        _siblings_sum = ZERO
+        _found_any = False
+        for _rn, _root_cat in _row_root_cats:
+            if _rn <= _s["row"]:
+                continue
+            if _root_cat.parent_id != _leaf.parent_id:
+                if _found_any:
+                    break
+                continue
+            _found_any = True
+            _siblings_sum += _root_cat.budget or ZERO
+        if _found_any and abs(_s["amount"] - _siblings_sum) <= Decimal("0.01"):
+            if _leaf.id in collected_plan:
+                del collected_plan[_leaf.id]
+            _wref = _s.get("warning_ref")
+            if _wref in warnings:
+                warnings.remove(_wref)
+            warnings.append({
+                "kind": "group_total_row",
+                "row": _s["row"],
+                "name": _s["name"],
+                "message": (
+                    f"Строка {_s['row']}: «{_s['name']}» = {_fmt(_s['amount'])} совпадает с суммой "
+                    f"следующих строк того же уровня — это итог группы, позиция не создана"
+                ),
+            })
 
     # Один файл-уровневый сигнал вместо N одинаковых построчных (боевой
     # инцидент 2026-09-15, файл «Абхазия ЦЭМАК (1).xlsx»): колонка уровня,

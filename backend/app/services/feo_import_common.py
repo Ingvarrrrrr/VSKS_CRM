@@ -7,10 +7,28 @@ app/services/feo_import_engine.py до разрезания на этапы, П�
 """
 from decimal import Decimal
 
+from app.models.feo_category import FeoCategory
 from app.utils.text import normalize_feo_name
 
 ZERO = Decimal("0")
 QUANT = Decimal("0.01")
+
+
+async def find_or_create_category(db, cat_cache: dict, subsidy_id: int, parent_id, name: str, level: int):
+    """Единственная реализация upsert категории по (subsidy_id, parent_id,
+    имя) — Правило №6 (QA, 22.09): раньше был байт-в-байт дублирован как
+    вложенный `find_or_create` в feo_import_apply.py и feo_import_numbering.py
+    (построчный путь и путь по нумерации A–D создают/находят категории ровно
+    той же логикой). `cat_cache` — общий кэш вызывающей стороны (ключ —
+    тот же кортеж), мутируется на месте."""
+    key = (subsidy_id, parent_id, name.lower().strip())
+    if key in cat_cache:
+        return cat_cache[key], False
+    cat = FeoCategory(name=name, subsidy_id=subsidy_id, parent_id=parent_id, level=level, is_active=True)
+    db.add(cat)
+    await db.flush()
+    cat_cache[key] = cat
+    return cat, True
 
 
 def get_cell(row, col: int | None) -> str | None:

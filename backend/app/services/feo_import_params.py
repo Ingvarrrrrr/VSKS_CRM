@@ -31,6 +31,7 @@ _COL_INT_FIELDS = frozenset({
     "col_row_feo_qty", "col_row_feo_unit", "col_row_feo_price", "col_row_feo_sum",
     "col_row_plan_qty", "col_row_plan_unit", "col_row_plan_price", "col_row_plan_sum",
     "col_item_type",
+    "col_num1", "col_num2", "col_num3", "col_num4",
 })
 
 INT_FIELDS = _COL_INT_FIELDS | {"header_row_offset", "default_subsidy_id"}

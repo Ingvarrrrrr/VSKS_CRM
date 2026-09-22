@@ -165,13 +165,24 @@ async def align_budget_to_plan(
     итогов.
 
     Обязана уважать жёсткий потолок субсидии (задача владельца п.3, см.
-    app.services.feo_plan.assert_no_unapproved_excess) — если ПОСЛЕ приравнивания
-    суммарный план по субсидии окажется больше суммарного финансирования по ФЭО
-    (calculate_budget_from_categories), budget откатывается и действие отклоняется
-    с цифрами. Это тот же потолок, что не согласуется НИ ПРИ КАКИХ обстоятельствах —
-    у align-budget-to-plan для него тоже нет обхода.
+    app.services.feo_plan.assert_no_unapproved_excess) — НО не тупиковым образом.
+    Боевой случай (субсидия ДНР_2026, 22.09): у субсидии план УЖЕ выше потолка
+    ФЭО (одна категория с ручным ФЭО ниже своего плана, другая — вовсе без ФЭО).
+    Владелец жмёт «Приравнять» на категории без ФЭО — превышение субсидии
+    ПАДАЕТ (действие подтягивает финансирование туда, где его не хватало), но
+    старая проверка «план после > потолок после» всё равно отказывала 409,
+    потому что сравнивала с абсолютным нулём, а не с тем, что было ДО. На такой
+    субсидии ни одну категорию без ФЭО было не приравнять — тупик.
+    Фикс: считаем превышение субсидии ДО (total_plan_before − ceiling_before, по
+    тому же дереву/потолку, ДО изменения budget) и ПОСЛЕ — отказываем 409 ТОЛЬКО
+    если превышение ПОСЛЕ больше превышения ДО (действие ухудшает субсидию, а
+    не просто существует остаточное превышение). Тот же calculate_budget_from_
+    categories/compute_feo_plan_tree, вызванные дважды (до/после) — не второй
+    расчёт, тот же самый.
 
-    Response: {id, name, subsidy_id, old_budget, new_budget}. В проекте нет
+    Response (200): {id, name, subsidy_id, old_budget, new_budget,
+    subsidy_over_before, subsidy_over_after} — последние два поля дают фронту
+    показать «превышение по субсидии уменьшилось с … до …». В проекте нет
     отдельного механизма истории/audit-лога для feo_categories (проверено —
     BudgetHistory существует, но её entity_type жёстко "subsidy"/"purchase", для
     категорий ФЭО не заводился и заводить его тут не стали, чтобы не путать
@@ -194,6 +205,19 @@ async def align_budget_to_plan(
     old_budget = float(cat.budget) if cat.budget is not None else None
     new_budget = Decimal(str(node["plan"] + node["over"])).quantize(Decimal("0.01"))
 
+    # Превышение по субсидии ДО изменения budget — тем же деревом/потолком, что
+    # и "после" ниже, просто вызванным ДО правки cat.budget (см. докстринг выше
+    # — без этого "до" любое приравнивание на субсидии, где потолок уже пробит,
+    # отказывалось независимо от того, улучшает оно ситуацию или ухудшает).
+    total_plan_before = sum(n["display"] for n in tree.values() if n["parent_id"] is None)
+    ceiling_before = await calculate_budget_from_categories(db, cat.subsidy_id)
+    total_plan_before_d = Decimal(str(total_plan_before))
+    ceiling_before_d = Decimal(str(ceiling_before)) if ceiling_before else Decimal("0")
+    over_before_d = (
+        max(total_plan_before_d - ceiling_before_d, Decimal("0"))
+        if ceiling_before_d > 0 else Decimal("0")
+    )
+
     cat.budget = new_budget
     await db.flush()
 
@@ -203,38 +227,73 @@ async def align_budget_to_plan(
     tree_after = await compute_feo_plan_tree(db, [cat.subsidy_id])
     total_plan_after = sum(n["display"] for n in tree_after.values() if n["parent_id"] is None)
     ceiling_after = await calculate_budget_from_categories(db, cat.subsidy_id)
+    total_plan_after_d = Decimal(str(total_plan_after))
+    ceiling_after_d = Decimal(str(ceiling_after)) if ceiling_after else Decimal("0")
+    over_after_d = (
+        max(total_plan_after_d - ceiling_after_d, Decimal("0"))
+        if ceiling_after_d > 0 else Decimal("0")
+    )
 
-    if ceiling_after and ceiling_after > 0:
-        total_plan_after_d = Decimal(str(total_plan_after))
-        ceiling_after_d = Decimal(str(ceiling_after))
-        if total_plan_after_d - ceiling_after_d > Decimal("0.005"):
-            over_d = total_plan_after_d - ceiling_after_d
-            # Читаем subsidy_id ДО rollback — после db.rollback() объект `cat`
-            # expired, и синхронное обращение к его атрибуту внутри f-строки/dict
-            # ниже пытается лениво подгрузить его из БД вне async-контекста
-            # (greenlet), что валит sqlalchemy.exc.MissingGreenlet вместо
-            # честного 409 — ровно это ловил владелец на ДНР_2026
-            # (INTERNAL_ERROR, correlation_id e188c17c-...): у субсидии план уже
-            # превышал потолок ФЭО, любое «Приравнять» уходило в эту ветку и
-            # падало здесь, а не отдавало понятный отказ.
-            subsidy_id_for_error = cat.subsidy_id
-            await db.rollback()
-            raise HTTPException(
-                409,
-                {
-                    "code": "PLAN_OVER_SUBSIDY_CEILING",
-                    "message": (
-                        f"Приравнять ФЭО к плану нельзя: после этого суммарный план по субсидии "
-                        f"составит {total_plan_after_d:,.2f} ₽, а общий потолок финансирования по "
-                        f"ФЭО — {ceiling_after_d:,.2f} ₽ (превышение {over_d:,.2f} ₽). Уменьшите "
-                        f"финансирование или план по другим категориям субсидии."
-                    ),
-                    "subsidy_id": subsidy_id_for_error,
-                    "total_plan": float(total_plan_after_d),
-                    "ceiling": float(ceiling_after_d),
-                    "over_amount": float(over_d),
-                },
-            )
+    if ceiling_after_d > 0 and (over_after_d - over_before_d) > Decimal("0.005"):
+        # Отказываем ТОЛЬКО когда действие УХУДШАЕТ субсидию (срезает ФЭО
+        # категории ниже её плана и поднимает превышение выше, чем было) — не
+        # когда превышение просто остаётся (пусть и меньшим) после действия.
+        #
+        # Перечень корневых категорий, где план выше ФЭО — из ТОГО ЖЕ tree_after
+        # (node["display"] против node["budget"] по корням), второй расчёт не
+        # заводим (ПРАВИЛО №6); имена корней — отдельным лёгким запросом (сам
+        # дерево/потолок не пересчитывается).
+        root_ids = [cid for cid, n in tree_after.items() if n["parent_id"] is None]
+        name_rows = (await db.execute(
+            select(FeoCategory.id, FeoCategory.name).where(FeoCategory.id.in_(root_ids))
+        )).all()
+        name_by_id = {r.id: r.name for r in name_rows}
+        over_root_lines = []
+        for rid in root_ids:
+            rn = tree_after[rid]
+            disp_d = Decimal(str(rn["display"]))
+            rb = rn["budget"]
+            rname = name_by_id.get(rid, str(rid))
+            if rb is None:
+                if disp_d > Decimal("0.005"):
+                    over_root_lines.append(f"{rname}: план {disp_d:,.2f} ₽ / ФЭО не задано")
+            else:
+                rb_d = Decimal(str(rb))
+                if disp_d - rb_d > Decimal("0.005"):
+                    over_root_lines.append(f"{rname}: план {disp_d:,.2f} ₽ / ФЭО {rb_d:,.2f} ₽")
+
+        # Читаем subsidy_id ДО rollback — после db.rollback() объект `cat`
+        # expired, и синхронное обращение к его атрибуту внутри f-строки/dict
+        # ниже пытается лениво подгрузить его из БД вне async-контекста
+        # (greenlet), что валит sqlalchemy.exc.MissingGreenlet вместо
+        # честного 409 — ровно это ловил владелец на ДНР_2026
+        # (INTERNAL_ERROR, correlation_id e188c17c-...): у субсидии план уже
+        # превышал потолок ФЭО, любое «Приравнять» уходило в эту ветку и
+        # падало здесь, а не отдавало понятный отказ.
+        subsidy_id_for_error = cat.subsidy_id
+        await db.rollback()
+        over_d = over_after_d - over_before_d
+        _lines_suffix = ("; " + "; ".join(over_root_lines)) if over_root_lines else ""
+        raise HTTPException(
+            409,
+            {
+                "code": "PLAN_OVER_SUBSIDY_CEILING",
+                "message": (
+                    f"Приравнять ФЭО к плану нельзя: после этого превышение плана над потолком "
+                    f"финансирования по субсидии вырастет с {over_before_d:,.2f} ₽ до "
+                    f"{over_after_d:,.2f} ₽ (суммарный план составит {total_plan_after_d:,.2f} ₽, "
+                    f"потолок ФЭО — {ceiling_after_d:,.2f} ₽). Уменьшите финансирование или план "
+                    f"по другим категориям субсидии{_lines_suffix}."
+                ),
+                "subsidy_id": subsidy_id_for_error,
+                "total_plan": float(total_plan_after_d),
+                "ceiling": float(ceiling_after_d),
+                "over_amount": float(over_d),
+                "over_before": float(over_before_d),
+                "over_after": float(over_after_d),
+                "over_root_categories": over_root_lines,
+            },
+        )
 
     await db.commit()
     await db.refresh(cat)
@@ -245,6 +304,8 @@ async def align_budget_to_plan(
         "subsidy_id": cat.subsidy_id,
         "old_budget": old_budget,
         "new_budget": float(cat.budget),
+        "subsidy_over_before": float(over_before_d),
+        "subsidy_over_after": float(over_after_d),
     }
 
 

@@ -49,7 +49,8 @@ from app.models.feo_category import FeoCategory
 from app.utils.text import normalize_feo_name
 from app.routers import feo_categories as fc
 
-from app.services.feo_import_apply import apply_rows
+from app.services.feo_import_apply import apply_rows, create_version_snapshot
+from app.services.feo_import_numbering import apply_rows_numbered
 from app.services.feo_import_budget_conflicts import CATSUM_KEY_PREFIX
 from app.services.feo_import_budget_conflicts import KEY_PREFIX as BUDGET_KEY_PREFIX
 from app.services.feo_import_duplicates import finalize_lvl5_items
@@ -91,6 +92,12 @@ class FeoImportState:
     c_appendix: int | None = None
     c_budget: int | None = None
     c_active: int | None = None
+    # --- Нумерация строк A–D (22.09, боевой случай ДНР_2026) — главный
+    # источник иерархии, когда замаплена (см. feo_import_numbering.py). ---
+    c_num1: int | None = None
+    c_num2: int | None = None
+    c_num3: int | None = None
+    c_num4: int | None = None
     c_qty_lvl2: int | None = None
     c_qty_lvl3: int | None = None
     c_qty_lvl4: int | None = None
@@ -251,6 +258,12 @@ async def _do_feo_import(
     c_budget: int | None,
     c_active: int | None,
     db: AsyncSession,
+    # Нумерация строк A–D (22.09) — см. FeoImportState выше.
+    c_num1: int | None = None,
+    c_num2: int | None = None,
+    c_num3: int | None = None,
+    c_num4: int | None = None,
+    # (следом идут уже существующие c_qty_lvl2 и т.д. со своими defaults)
     c_qty_lvl2: int | None = None,
     c_qty_lvl3: int | None = None,
     c_qty_lvl4: int | None = None,
@@ -411,7 +424,18 @@ async def _do_feo_import(
 
     snapshot_tree_before(state)
     await assert_write_gate(state)
-    await apply_rows(state)
+    await create_version_snapshot(state)
+    # Нумерация A–D (22.09) — главный источник иерархии, когда замаплена как
+    # минимум двумя ведущими колонками (см. routers/feo_import.py::
+    # _detect_numbering_columns): apply_rows_numbered строит дерево по путям
+    # A–D вместо построчной эвристики "самый глубокий заполненный уровень" —
+    # см. докстринг feo_import_numbering.py. Оба пути пишут в ОДНИ И ТЕ ЖЕ
+    # поля state (collected_plan/pending_lvl5_items/...), поэтому дальнейшие
+    # этапы (finalize_lvl5_items/apply_collected_plan/...) общие для обоих.
+    if state.c_num1 is not None and state.c_num2 is not None:
+        await apply_rows_numbered(state)
+    else:
+        await apply_rows(state)
     await finalize_lvl5_items(state)
     await apply_collected_plan(state)
     await build_unmatched_report(state)

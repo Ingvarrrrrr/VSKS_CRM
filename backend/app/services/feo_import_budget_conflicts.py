@@ -8,6 +8,16 @@
 строка 10 (1 400 000) и строка 50 (1 500 000). Варианты: «взять первую»,
 «взять последнюю» (было раньше — молча, без выбора), «сложить».
 
+Владелец 2026-09-22 (дословно): «Там 4 суммы — должно предлагать 4 суммы на
+выбор. Было бы 3 — три. Это динамическое поле» — фронт больше не показывает
+фиксированные «первая/последняя» отдельно от списка строк: одна РАДИО-группа
+по `options.rows` (по одной кнопке на КАЖДУЮ строку файла, задающую сумму
+этой категории — значение `row:<номер строки>`) плюс кнопка «Сложить»
+(значение `sum`). 'first'/'last' в `options` и как допустимые значения
+`duplicate_resolutions` СОХРАНЕНЫ (уже существующие вызовы/тесты на них
+завязаны) — просто фронт больше не рисует под них отдельные радио-кнопки,
+т.к. `row:<N>` первой/последней строки покрывает то же самое.
+
 НЕ конфликт (без группы, без предупреждения) — несколько строк ЗАДАЮТ ТО ЖЕ
 САМОЕ число этой категории (обычное дело для «строк-подытогов» без Уровня 3,
 см. комментарий у budget_writes в feo_import_apply.py) — там реально нечего
@@ -130,7 +140,25 @@ def apply_budget_conflict_resolutions(state) -> None:
         total = sum((v for _, v, _ in writes), ZERO)
 
         resolution = state.duplicate_resolutions.get(key, "last")
-        if resolution == "first":
+        row_val = None
+        if isinstance(resolution, str) and resolution.startswith("row:"):
+            try:
+                _row_choice = int(resolution[len("row:"):])
+            except ValueError:
+                _row_choice = None
+            if _row_choice is not None:
+                # Строк с этим номером может быть несколько (та же категория
+                # упомянута дважды с одним row_num?) — берём ПОСЛЕДНЮЮ такую
+                # (тот же принцип, что и «last» ниже: позже в файле — важнее).
+                for r, v, _ in writes:
+                    if r == _row_choice:
+                        row_val = v
+        if row_val is not None:
+            chosen = row_val
+            _tail = f"по вашему выбору взята сумма строки {_row_choice} ({_fmt(row_val)})"
+            # resolution уже 'row:<N>' — отдаём как есть (Правило №6: предпросмотр
+            # и боевой вызов должны видеть одно и то же значение).
+        elif resolution == "first":
             chosen = first_val
             _tail = f"по вашему выбору взята первая (строка {first_row}, {_fmt(first_val)})"
         elif resolution == "sum":
@@ -153,6 +181,7 @@ def apply_budget_conflict_resolutions(state) -> None:
                 "first": {"row": first_row, "amount": _num(first_val)},
                 "last": {"row": last_row, "amount": _num(last_val)},
                 "sum": {"amount": _num(total)},
+                "rows": [{"value": f"row:{r}", "row": r, "amount": _num(v)} for r, v, _ in writes],
             },
             "resolution": resolution,
         })

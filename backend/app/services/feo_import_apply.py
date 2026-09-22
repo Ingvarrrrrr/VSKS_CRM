@@ -33,6 +33,7 @@ from app.services.feo_import_budget_conflicts import (
     register_budget_write,
 )
 from app.services.feo_import_item_types import resolve_item_type_for_row
+from app.services.feo_import_comments import register_category_comment_intent, register_item_comment_intent
 from app.routers.feo_planned_items import normalize_item_type
 
 
@@ -135,6 +136,7 @@ async def apply_rows(state) -> None:
     c_row_plan_price = state.c_row_plan_price
     c_row_plan_sum = state.c_row_plan_sum
     c_item_type = state.c_item_type
+    c_comment = state.c_comment
 
     errors = state.errors
     warnings = state.warnings
@@ -292,6 +294,12 @@ async def apply_rows(state) -> None:
         lvl3_name = get_cell(row, c_lvl3)
         lvl4_name = get_cell(row, c_lvl4)
         lvl5_name = get_cell(row, c_lvl5)
+        # Владелец, 22.09: «Комментарий» строки — читается один раз здесь (до
+        # любых веток продвижения/пропуска ниже), т.к. и orphan-ветка (строка
+        # без уровней), и обычная ветка позиции/категории регистрируют
+        # намерение через один и тот же state (см. app/services/
+        # feo_import_comments.py, Правило №5 — не дублируем разбор ячейки).
+        raw_comment = get_cell(row, c_comment) if c_comment is not None else None
 
         # Защита от сдвига колонок (боевой файл «Субсидия ДНР 2.xlsx»): название
         # уровня N+1, случайно набранное в числовой колонке уровня N, — вернуть
@@ -675,6 +683,7 @@ async def apply_rows(state) -> None:
                         "is_feo_breakdown": _orphan_is_feo, "is_internal_plan": _orphan_is_plan,
                         "path": [c.name for c in _prev_cats_in_row],
                     })
+                    register_item_comment_intent(state, row_num, raw_comment)
                     lvl5_leaves.add(_prev_leaf_cat.id)
                     lvl5_sum_by_cat[_prev_leaf_cat.id] = (
                         lvl5_sum_by_cat.get(_prev_leaf_cat.id, ZERO) + (_orphan_amount or ZERO)
@@ -809,7 +818,7 @@ async def apply_rows(state) -> None:
                 "kind": "item_type_unknown",
                 "row": row_num,
                 "name": lvl5_name or lvl2_name,
-                "message": f"Тип позиции «{raw_item_type}» не распознан (ожидались: товар/услуга/работа) — не заполнен",
+                "message": f"Значение «{raw_item_type}» не распознано (ожидались: товар/услуга/работа) — не заполнено",
             })
 
         # Считать все данные по уровням (raw, без приоритизации)
@@ -1360,6 +1369,12 @@ async def apply_rows(state) -> None:
                     "is_internal_plan": _row_is_internal_plan,
                     "path": [c.name for c in cats_in_row],
                 })
+                register_item_comment_intent(state, row_num, raw_comment)
+            else:
+                # Владелец, 22.09: строка НЕ задала «Плановую позицию» — её
+                # «Комментарий» относится к КАТЕГОРИИ этой строки (leaf уже
+                # имеет реальный id, см. докстринг feo_import_comments.py).
+                register_category_comment_intent(state, leaf, row_num, raw_comment)
 
         except Exception as e:
             errors.append({"row": row_num, "name": lvl2_name, "message": str(e)})

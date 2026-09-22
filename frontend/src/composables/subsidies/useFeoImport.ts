@@ -20,7 +20,7 @@ export function feoWarnKindLabel(kind: string): string {
     parent_sum_mismatch: 'Бюджет родителя ≠ сумма дочерних',
     level_name_in_number_column: 'Название уровня стояло в числовой колонке',
     item_promoted_to_level2: 'Плановая позиция без уровней — создана направлением',
-    item_type_unknown: 'Не распознан тип товар/услуга',
+    item_type_unknown: 'Не распознано значение «товар/услуга/работа»',
     column_shift: 'Похоже, колонки сдвинуты — число попало не в ту колонку',
     group_plan_ignored: 'План строки не записан — у категории есть подкатегории',
     plan_vs_items_mismatch: 'План строки не совпадает с суммой плановых позиций',
@@ -30,8 +30,8 @@ export function feoWarnKindLabel(kind: string): string {
     duplicate_group_merged: 'Дублирующиеся позиции объединены по вашему выбору',
     budget_overwritten_by_row: 'Сумма по ФЭО узла задана несколькими строками — учтена последняя',
     category_sum_replaced_by_items: 'Взята сумма позиций вместо собственной суммы категории — по вашему выбору',
-    item_type_from_catalog: 'Тип позиции отличается от каталога',
-    item_type_conflict_unresolved: 'Тип позиции отличается от каталога — решение не выбрано, взят тип из файла',
+    item_type_from_catalog: 'Товар/услуга взяты из каталога',
+    item_type_conflict_unresolved: 'Товар/услуга расходятся с каталогом — решение не выбрано, взято из файла',
     item_promoted_needs_review: 'Разберите вручную: позиция ниже используется как подраздел',
     item_name_used_as_level: 'Разберите вручную: позиция лежит под чужим подразделом',
     item_promoted_to_level: 'Плановая позиция стала подразделом',
@@ -91,7 +91,11 @@ const feoImport = reactive({
   // ключ появляется здесь, только когда человек реально нажал переключатель
   // или кнопку «Все из файла/каталога» (dry-run НЕ проставляет дефолт сам,
   // см. doFeoMappedImport ниже) — пустой канал = решений нет вовсе.
-  duplicateResolutions: {} as Record<string, 'merge' | 'keep' | 'first' | 'last' | 'sum' | 'own' | 'items' | 'file' | 'catalog'>,
+  // budget:: значения — 'first'|'last'|'sum'|`row:<номер строки>` (задача
+  // 2026-09-22, динамический выбор строки, см. feoBudgetResolutionFor ниже) —
+  // держим string вместо перечисления, полный список допустимых значений
+  // проверяет только backend (feo_import_core.py).
+  duplicateResolutions: {} as Record<string, 'merge' | 'keep' | 'own' | 'items' | 'file' | 'catalog' | string>,
 })
 
 const feoImportTargetSubsidy = ref<number | null>(null)
@@ -146,6 +150,11 @@ const FEO_TARGET_FIELDS = [
   { value: 'appendix', title: 'Номер приложения (Ур.2–4: Прил. 1, Прил. 2...)', required: false },
   { value: 'budget',   title: 'Финансирование по ФЭО (Ур.2–4)', required: false },
   { value: 'active',   title: 'Активна (да / нет)',                          required: false },
+  // Владелец, 22.09: уходит в ленту комментариев плановой позиции строки
+  // (или категории строки, если позиции нет) — см. c_comment в
+  // app/routers/feo_import.py, register_*_comment_intent в
+  // app/services/feo_import_comments.py.
+  { value: 'comment',  title: 'Комментарий',                                 required: false },
 ]
 const feoDragMapping = ref<Record<string, number | null>>({})
 const feoIgnoredCols = ref<number[]>([])
@@ -185,11 +194,23 @@ function feoSetResolution(key: string, value: 'merge' | 'keep') {
 // выше; решение живёт в ТОМ ЖЕ feoImport.duplicateResolutions (ключи различаются
 // префиксом `budget::`, Правило №6 — один канал, не два).
 const feoBudgetConflictGroups = computed<FeoBudgetConflictGroup[]>(() => feoImport.dryResult?.budget_conflict_groups || [])
-function feoBudgetResolutionFor(key: string): 'first' | 'last' | 'sum' {
-  const v = feoImport.duplicateResolutions[key]
-  return v === 'first' || v === 'sum' ? v : 'last'
+// Задача 2026-09-22: значение — 'sum' (кнопка «Сложить») или `row:<номер
+// строки>` (выбор конкретной строки, столько пунктов, сколько строк реально
+// задают сумму этой категории — динамически, options.rows). 'first'/'last'
+// как отдельные ярлыки больше не показываются в UI (см. FeoImportWizard.vue) —
+// принимает группу целиком (не просто key), чтобы транслировать дефолт 'last'
+// (серверный дефолт, хранится в duplicateResolutions буквально как 'last' —
+// _isDefaultFeoResolution ниже завязана на это буквальное значение, Правило
+// №6, второй способ пометить «решение не менялось» не заводим) в конкретную
+// `row:<N>` кнопку для визуального выделения; сам канал решений не трогает.
+function feoBudgetResolutionFor(g: FeoBudgetConflictGroup): string {
+  const v = feoImport.duplicateResolutions[g.key]
+  const resolved = typeof v === 'string' ? v : 'last'
+  if (resolved === 'last') return `row:${g.options.last.row}`
+  if (resolved === 'first') return `row:${g.options.first.row}`
+  return resolved
 }
-function feoSetBudgetResolution(key: string, value: 'first' | 'last' | 'sum') {
+function feoSetBudgetResolution(key: string, value: string) {
   feoImport.duplicateResolutions[key] = value
 }
 
@@ -206,8 +227,8 @@ function feoSetCatSumResolution(key: string, value: 'own' | 'items') {
   feoImport.duplicateResolutions[key] = value
 }
 
-// Задача 2026-09-22: строки, где тип позиции (товар/услуга/работа) из файла
-// отличается от типа уже сопоставленного товара в каталоге — читаются из
+// Задача 2026-09-22: строки, где товар/услуга/работа из файла отличается от
+// значения уже сопоставленного товара в каталоге — читаются из
 // того же ответа предпросмотра, тем же приёмом, что и группы выше; решение
 // живёт в ТОМ ЖЕ feoImport.duplicateResolutions (ключи с префиксом
 // `itemtype::${row}`, Правило №6 — один канал, не четыре). В отличие от
@@ -398,6 +419,9 @@ function feoAutoMap(headers: string[]) {
     item_amt:   ['сумма по позиции (ур.5)', 'сумма плановая', 'сумма (ур.5)', 'плановая стоимость за ед. (ур.5)', 'плановая стоимость (ур.5)', 'стоимость за ед. (ур.5)', 'стоимость ур.5', 'сумма ур'],
     item_price: ['цена за ед. (ур.5)', 'стоимость за ед. (ур.5)'],
     active:   ['активна', 'активен'],
+    // Слово в слово те же ключи, что и c_comment в app/routers/feo_import.py
+    // (find_col) — рассинхрон мастера и бэкенда уже ломал импорт 14.08.
+    comment:  ['комментарий', 'примечание'],
   }
   // Каждая колонка достаётся ровно одному полю: без этого generic-ключи
   // («ед. изм») утаскивали колонку Ур.2 в поле Ур.5
@@ -567,6 +591,7 @@ export function useFeoImport(ctx?: FeoImportCtx) {
       fd.append('col_row_plan_price', String(m['row_plan_price'] ?? -1))
       fd.append('col_row_plan_sum',   String(m['row_plan_sum']   ?? -1))
       fd.append('col_item_type',      String(m['item_type']      ?? -1))
+      fd.append('col_comment',        String(m['comment']        ?? -1))
       if (remapEntries.length) fd.append('remap', JSON.stringify(remapEntries))
       // Волна 4, п.23 + не слать то, что ничего не меняет (см.
       // _isDefaultFeoResolution выше): решения человека по группам дублей
@@ -645,6 +670,7 @@ export function useFeoImport(ctx?: FeoImportCtx) {
         let msg = `Импорт завершён: создано ${data.created}`
         if (data.relinked_count) msg += `, перенесено ссылок ${data.relinked_count}`
         if (data.deleted_count) msg += `, удалено узлов ${data.deleted_count}`
+        if (data.comments_created) msg += `, комментариев ${data.comments_created}`
         showSnack(msg)
         if (ctx?.selectedId.value) { await ctx.loadFeo(ctx.selectedId.value); ctx.syncFeoFilled() }
       }

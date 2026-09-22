@@ -50,6 +50,7 @@ from app.utils.text import normalize_feo_name
 from app.routers import feo_categories as fc
 
 from app.services.feo_import_apply import apply_rows, create_version_snapshot
+from app.services.feo_import_comments import apply_feo_comments
 from app.services.feo_import_budget_conflicts import CATSUM_KEY_PREFIX
 from app.services.feo_import_budget_conflicts import KEY_PREFIX as BUDGET_KEY_PREFIX
 from app.services.feo_import_duplicates import finalize_lvl5_items
@@ -126,6 +127,7 @@ class FeoImportState:
     c_row_plan_price: int | None = None
     c_row_plan_sum: int | None = None
     c_item_type: int | None = None
+    c_comment: int | None = None
 
     # --- справочники, посчитанные один раз до цикла (feo_import_core.py) ---
     sub_rows: list = field(default_factory=list)
@@ -244,6 +246,29 @@ class FeoImportState:
     # каталога по точному имени на весь импорт (feo_import_item_types.py).
     item_type_product_cache: dict = field(default_factory=dict)
 
+    # --- Задача владельца 22.09: колонка «Комментарий» шаблона — уходит в
+    # ленту комментариев (feo_comments), не в notes (см. app/services/
+    # feo_import_comments.py — единственное место, пишущее FeoComment из
+    # импорта). Намерения собирает feo_import_apply.py по ходу основного
+    # цикла (register_item_comment_intent/register_category_comment_intent),
+    # применяет apply_feo_comments ПОСЛЕ finalize_lvl5_items, когда у всех
+    # категорий/позиций уже есть реальный id. ---
+    # row_num -> текст комментария строки (строка задала «Плановую позицию» —
+    # обычную или без-уровневую/orphan).
+    comment_item_texts: dict = field(default_factory=dict)
+    # row_num -> id итоговой FeoPlannedItem этой строки — заполняется
+    # feo_import_duplicates.py сразу после того, как позиция получила
+    # реальный id (см. record_item_id) — группировка дублей меняет
+    # кардинальность строка↔позиция, второй раз эту логику не пересчитываем.
+    comment_item_ids: dict = field(default_factory=dict)
+    # [(feo_category_id, row_num, текст), ...] — строка НЕ задала «Плановую
+    # позицию»: комментарий относится к категории (leaf уже имеет id —
+    # find_or_create_category всегда flush'ит).
+    comment_category_intents: list = field(default_factory=list)
+    # Для отчёта/предпросмотра мастера — сколько комментариев реально было бы
+    # создано (dry_run их не пишет, но считает).
+    comments_created: int = 0
+
     # --- переезд/удаление (feo_import_remap.py) ---
     relinked_count: int = 0
     deleted_count: int = 0
@@ -304,6 +329,9 @@ async def _do_feo_import(
     c_row_plan_price: int | None = None,
     c_row_plan_sum: int | None = None,
     c_item_type: int | None = None,
+    # Владелец, 22.09: колонка «Комментарий» — см. докстринг c_comment в
+    # FeoImportState выше и app/services/feo_import_comments.py.
+    c_comment: int | None = None,
     default_subsidy_id: int | None = None,
     dry_run: bool = False,
     user=None,
@@ -382,7 +410,18 @@ async def _do_feo_import(
                 # sum_conflicts), остальное — дубли имени Ур.5
                 # (feo_import_duplicates.py). Значения не перепутать.
                 if _k.startswith(BUDGET_KEY_PREFIX):
-                    _allowed = ("first", "last", "sum")
+                    # Владелец 2026-09-22: сумм в группе столько же, сколько
+                    # строк файла её задают (динамически) — выбор конкретной
+                    # строки идёт значением `row:<N>` (N — номер строки,
+                    # см. options.rows в feo_import_budget_conflicts.py),
+                    # 'first'/'last'/'sum' остаются как отдельные ярлыки.
+                    _valid_budget = _v in ("first", "last", "sum") or (
+                        isinstance(_v, str) and _v.startswith("row:") and _v[len("row:"):].isdigit()
+                    )
+                    if not _valid_budget:
+                        raise ValueError(f"недопустимое решение для группы {_k!r}: {_v!r}")
+                    _dup_resolutions[_k] = _v
+                    continue
                 elif _k.startswith(CATSUM_KEY_PREFIX):
                     _allowed = ("own", "items")
                 else:
@@ -452,6 +491,12 @@ async def _do_feo_import(
     await create_version_snapshot(state)
     await apply_rows(state)
     await finalize_lvl5_items(state)
+    # Владелец, 22.09: комментарии из файла — ПОСЛЕ finalize_lvl5_items (там
+    # плановые позиции получают реальный id, record_item_id заполняет
+    # state.comment_item_ids) и ДО apply_collected_plan (комментарии
+    # категорий не зависят от collected_plan, порядок между ними не важен —
+    # но раньше означает, что счётчик comments_created уже готов к отчёту).
+    await apply_feo_comments(state)
     await apply_collected_plan(state)
     await build_unmatched_report(state)
     await remap_and_prune(state)
@@ -488,6 +533,7 @@ async def _do_feo_import(
         "budget_conflict_groups": state.budget_conflict_groups,
         "category_sum_conflict_groups": state.category_sum_conflict_groups,
         "item_type_conflicts": state.item_type_conflicts,
+        "comments_created": state.comments_created,
         "dry_run": dry_run,
         "unmatched": state.unmatched,
         "new_paths": state.new_paths,

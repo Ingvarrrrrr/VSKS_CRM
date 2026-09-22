@@ -50,6 +50,7 @@ from sqlalchemy import select
 from app.models.feo_planned_item import FeoPlannedItem
 from app.services.feo_import_common import QUANT, ZERO, format_rows, level_label, norm
 from app.services.feo_import_common import fmt as _fmt
+from app.services.feo_import_comments import record_item_id
 
 def _sum_qty(rows: list) -> Decimal | None:
     """Единственное место суммирования количества группы дублей (Правило №6
@@ -195,12 +196,17 @@ async def _matching_items(db, leaf_id: int, name: str) -> list:
     return sorted((it for it in rows if norm(it.name or "") == target), key=lambda it: it.id)
 
 
-async def _upsert_one(state, leaf, item_data: dict, *, extra_reason: str | None, matches: list) -> None:
+async def _upsert_one(state, leaf, item_data: dict, *, extra_reason: str | None, matches: list) -> FeoPlannedItem:
     """Создаёт/обновляет ОДНУ FeoPlannedItem — общий хвост и для обычной
     (не-дублирующейся) позиции, и для объединённой группы. `matches` — уже
     посчитанный список существующих позиций с этим именем в категории
     (`_matching_items`), чтобы при объединении вызывающий код мог сам решить
-    судьбу «лишних» существующих позиций (см. `_upsert_merge`)."""
+    судьбу «лишних» существующих позиций (см. `_upsert_merge`).
+
+    Возвращает итоговую FeoPlannedItem (созданную или найденную) — владелец,
+    22.09: вызывающий код (feo_import_comments.record_item_id) привязывает
+    к ней комментарий строки файла по её реальному id (Правило №6 — второй
+    механизм разрешения строка→позиция здесь не заводим)."""
     db = state.db
     name = item_data["name"]
     row_num = item_data["row"]
@@ -238,7 +244,7 @@ async def _upsert_one(state, leaf, item_data: dict, *, extra_reason: str | None,
         state.created += 1
         reason = extra_reason or f"плановая позиция ({level_label(5)})"
         state.created_details.append({"row": row_num, "name": name, "reason": reason})
-        return
+        return pi
 
     ch2 = False
     if item_data["qty"] is not None and existing_item.quantity != item_data["qty"]:
@@ -268,6 +274,7 @@ async def _upsert_one(state, leaf, item_data: dict, *, extra_reason: str | None,
     else:
         state.skipped += 1
         state.skipped_details.append({"row": row_num, "name": name, "reason": "без изменений"})
+    return existing_item
 
 
 async def _upsert_merge(state, leaf, rows: list, key: str) -> None:
@@ -275,7 +282,11 @@ async def _upsert_merge(state, leaf, rows: list, key: str) -> None:
     matches = await _matching_items(state.db, leaf.id, merged["name"])
     _rows_str = format_rows([r["row"] for r in rows])
     _reason = f"объединено из {len(rows)} строк файла ({_rows_str}) — суммы сложены, цена усреднена делением"
-    await _upsert_one(state, leaf, merged, extra_reason=_reason, matches=matches)
+    item = await _upsert_one(state, leaf, merged, extra_reason=_reason, matches=matches)
+    # Владелец, 22.09: ВСЕ исходные строки группы указывают на ОДНУ объединённую
+    # позицию — комментарий любой из них должен резолвиться к её id.
+    for _r in rows:
+        record_item_id(state, _r["row"], item.id)
     # «Лишние» существующие позиции того же имени (например, файл раньше
     # импортировался с выбором «оставить как есть», и теперь при повторном
     # импорте с тем же именем пользователь выбрал «объединить») — деактивируем,
@@ -318,7 +329,8 @@ async def _upsert_keep_separate(state, leaf, rows: list) -> None:
     matches = await _matching_items(state.db, leaf.id, name)
     for i, row_data in enumerate(rows):
         m = matches[i:i + 1]
-        await _upsert_one(state, leaf, row_data, extra_reason=None, matches=m)
+        item = await _upsert_one(state, leaf, row_data, extra_reason=None, matches=m)
+        record_item_id(state, row_data["row"], item.id)
 
 
 async def finalize_lvl5_items(state) -> None:
@@ -335,7 +347,8 @@ async def finalize_lvl5_items(state) -> None:
 
         if len(rows) == 1:
             matches = await _matching_items(state.db, leaf.id, name)
-            await _upsert_one(state, leaf, rows[0], extra_reason=None, matches=matches)
+            item = await _upsert_one(state, leaf, rows[0], extra_reason=None, matches=matches)
+            record_item_id(state, rows[0]["row"], item.id)
             continue
 
         resolution = state.duplicate_resolutions.get(key, "keep")

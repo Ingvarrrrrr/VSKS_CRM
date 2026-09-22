@@ -124,7 +124,7 @@ async def resolve_item_type_for_row(
             "kind": "item_type_from_catalog",
             "row": row_num,
             "name": item_name,
-            "message": f"Тип «{catalog_type}» для «{item_name}» взят из каталога (товар «{product.name}»)",
+            "message": f"Для «{item_name}» товар/услуга взяты из каталога: {catalog_type} (товар «{product.name}»)",
         })
         return catalog_type
 
@@ -163,8 +163,8 @@ async def resolve_item_type_for_row(
             "row": row_num,
             "name": item_name,
             "message": (
-                f"Тип «{item_name}»: в файле «{file_item_type}», в каталоге (товар «{product.name}») "
-                f"«{catalog_type}» — решение не получено, применён тип из файла, каталог не изменён"
+                f"«{item_name}»: в файле «{file_item_type}», в каталоге (товар «{product.name}») "
+                f"«{catalog_type}» — решение не получено, применено значение из файла, каталог не изменён"
             ),
         })
     return file_item_type

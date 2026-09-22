@@ -1,6 +1,6 @@
 <template>
-  <!-- Задача 2026-09-22: строка файла называет тип позиции (товар/услуга/
-       работа), отличный от типа уже сопоставленного товара в каталоге —
+  <!-- Задача 2026-09-22: строка файла называет товар/услугу/работу,
+       отличную от значения уже сопоставленного товара в каталоге —
        решение по КАЖДОЙ строке принимает человек, тот же стиль блока, что и
        у FeoBudgetConflictGroup/FeoCategorySumConflictGroup в
        FeoImportWizard.vue (шаг 3, предпросмотр). Вынесено отдельным
@@ -10,7 +10,7 @@
   <v-alert v-if="feoItemTypeConflicts.length" type="warning" variant="tonal" density="compact"
     class="mb-3" icon="mdi-swap-horizontal-bold">
     <div class="text-body-2 mb-2">
-      Тип позиции отличается от каталога ({{ feoItemTypeConflicts.length }}) — решите по каждой строке
+      Товар/услуга расходятся с каталогом ({{ feoItemTypeConflicts.length }}) — решите по каждой строке
       или для всех сразу.
     </div>
     <div class="d-flex flex-wrap gap-2 mb-2">
@@ -46,7 +46,7 @@
       </tbody>
     </v-table>
     <div class="text-caption text-medium-emphasis mt-2">
-      Без выбора возьмём тип из файла, каталог не изменится.
+      Без выбора возьмём значение из файла, каталог не изменится.
     </div>
   </v-alert>
 </template>

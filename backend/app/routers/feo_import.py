@@ -152,14 +152,21 @@ async def import_feo_from_excel(
     c_row_plan_unit  = find_col(["ед. изм. плана"])
     c_row_plan_price = find_col(["плановая цена за единицу", "плановая цена за ед."])
     c_row_plan_sum   = find_col(["сумма плана"])
-    # Заголовок колонки переименован в «Тип (товар/услуга/работа)» (владелец,
-    # 21.09, раздел W2 плана corrections-21-09.md) — старые файлы с «Товар/
-    # услуга»/«Тип позиции» продолжают импортироваться (обратная совместимость).
-    # Точные/специфичные варианты — ПЕРВЫМИ, generic «тип» — ПОСЛЕДНИМ: к этому
-    # моменту c_lvl3 (find_col выше, «уровень 3»/«тип расходов») уже забрал
-    # свою колонку в _used_cols, единственный другой заголовок в шаблоне,
-    # содержащий «тип» — так что generic-фолбэк не перехватывает чужую колонку.
-    c_item_type      = find_col(["тип (товар/услуга/работа)", "товар/услуга", "тип позиции", "тип"])
+    # Заголовок колонки — «Товар/услуга/работа» (владелец, 22.09: слово «тип»
+    # убрано из импорта совсем — в проекте «тип» это категория товара в
+    # каталоге, а колонка файла про другое: товар/услуга/работа). Старые
+    # заголовки шаблона («Тип (товар/услуга/работа)», «Товар/услуга», «Тип
+    # позиции») продолжают импортироваться (обратная совместимость). Голый
+    # алиас «тип» УБРАН (был здесь до 22.09) — он перехватывал чужие колонки
+    # пользовательских файлов (любую колонку со словом «тип» внутри), это и
+    # была причина «неправильно подтягивает название».
+    c_item_type      = find_col(["товар/услуга/работа", "тип (товар/услуга/работа)", "товар/услуга", "тип позиции"])
+    # Владелец, 22.09: колонка «Комментарий» шаблона — уходит в ленту
+    # комментариев (feo_comments), НЕ в notes. Объявлена ПОСЛЕ специфичных
+    # find_col выше (и ДО generic-фолбэков ниже) — «примечание» иначе рискует
+    # перехватить чужую колонку пользовательского файла раньше своей очереди.
+    # Разбор ячейки и запись — app/services/feo_import_comments.py.
+    c_comment        = find_col(["комментарий", "примечание"])
     # Fallback: generic qty column if no specific level columns present
     if c_qty is None and c_qty_lvl2 is None and c_qty_lvl3 is None and c_qty_lvl4 is None and c_feo_qty_lvl2 is None and c_feo_qty_lvl3 is None and c_feo_qty_lvl4 is None:
         c_qty = find_col(["количество", "кол-во", "qty"])
@@ -190,6 +197,7 @@ async def import_feo_from_excel(
         c_row_plan_qty=c_row_plan_qty, c_row_plan_unit=c_row_plan_unit,
         c_row_plan_price=c_row_plan_price, c_row_plan_sum=c_row_plan_sum,
         c_item_type=c_item_type,
+        c_comment=c_comment,
         db=db, dry_run=dry_run,
         user=current_user, remap=remap, apply_remap=apply_remap,
         duplicate_resolutions=duplicate_resolutions,
@@ -252,6 +260,9 @@ async def import_feo_mapped(
     col_row_plan_price: int = Query(-1),
     col_row_plan_sum: int = Query(-1),
     col_item_type: int = Query(-1),
+    # Владелец, 22.09: колонка «Комментарий» — уходит в ленту комментариев
+    # (feo_comments), см. пояснение у c_comment в /import выше.
+    col_comment: int = Query(-1),
     default_subsidy_id: int = Query(-1),
     dry_run: bool = Query(False),
     remap: str = Query(""),
@@ -298,6 +309,7 @@ async def import_feo_mapped(
         col_row_plan_qty=col_row_plan_qty, col_row_plan_unit=col_row_plan_unit,
         col_row_plan_price=col_row_plan_price, col_row_plan_sum=col_row_plan_sum,
         col_item_type=col_item_type,
+        col_comment=col_comment,
         default_subsidy_id=default_subsidy_id,
         dry_run=dry_run, remap=remap, apply_remap=apply_remap,
         duplicate_resolutions=duplicate_resolutions,
@@ -445,6 +457,7 @@ async def import_feo_mapped(
         c_row_plan_price=_c("col_row_plan_price"),
         c_row_plan_sum=_c("col_row_plan_sum"),
         c_item_type=_c("col_item_type"),
+        c_comment=_c("col_comment"),
         default_subsidy_id=default_subsidy_id if default_subsidy_id > 0 else None,
         db=db, dry_run=dry_run,
         user=current_user, remap=remap, apply_remap=apply_remap,

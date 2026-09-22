@@ -122,25 +122,19 @@
               <div class="text-subtitle-2">
                 «{{ g.name }}» <span class="text-medium-emphasis">— {{ g.category_path }}</span>
               </div>
-              <v-list density="compact" class="my-1">
-                <v-list-item v-for="r in g.rows" :key="r.row" :lines="false" class="px-0">
-                  <template #title>
-                    <span class="feo-wrap-text">Стр. {{ r.row }} — {{ formatCurrency(r.amount ?? 0) }}</span>
-                  </template>
-                </v-list-item>
-              </v-list>
+              <!-- Владелец 2026-09-22 (дословно): «Там 4 суммы — должно
+                   предлагать 4 суммы на выбор. Было бы 3 — три. Это
+                   динамическое поле» — ОДИН список радио-кнопок по
+                   g.options.rows (по строке файла на кнопку, а не фиксированные
+                   «первая/последняя» рядом со списком строк — Правило №6,
+                   тот список и три радио были дублем одного и того же). -->
               <v-radio-group
-                :model-value="feoBudgetResolutionFor(g.key)"
-                @update:model-value="(v: 'first' | 'last' | 'sum' | null) => feoSetBudgetResolution(g.key, v ?? 'last')"
+                :model-value="feoBudgetResolutionFor(g)"
+                @update:model-value="(v: string | null) => feoSetBudgetResolution(g.key, v ?? 'last')"
                 hide-details density="compact" class="mt-1">
-                <v-radio value="first">
+                <v-radio v-for="r in g.options.rows" :key="r.value" :value="r.value">
                   <template #label>
-                    <span>Взять первую (стр. {{ g.options.first.row }} — {{ formatCurrency(g.options.first.amount ?? 0) }})</span>
-                  </template>
-                </v-radio>
-                <v-radio value="last">
-                  <template #label>
-                    <span>Взять последнюю (стр. {{ g.options.last.row }} — {{ formatCurrency(g.options.last.amount ?? 0) }})</span>
+                    <span class="feo-wrap-text">Стр. {{ r.row }} — {{ formatCurrency(r.amount ?? 0) }}</span>
                   </template>
                 </v-radio>
                 <v-radio value="sum">
@@ -186,10 +180,9 @@
               </v-radio-group>
             </v-card>
           </v-alert>
-          <!-- Задача 2026-09-22: тип позиции (товар/услуга/работа) из файла
-               отличается от типа уже сопоставленного товара в каталоге —
-               отдельный компонент (Правило №5), тот же singleton
-               useFeoImport.ts. -->
+          <!-- Задача 2026-09-22: товар/услуга/работа из файла расходится со
+               значением уже сопоставленного товара в каталоге — отдельный
+               компонент (Правило №5), тот же singleton useFeoImport.ts. -->
           <FeoImportItemTypeConflicts />
           <div v-if="feoImport.dryResult" class="d-flex flex-wrap gap-2 mb-3">
             <v-chip color="success" variant="flat"
@@ -212,6 +205,9 @@
               <v-icon icon="mdi-debug-step-over" start size="16" />Будет пропущено: {{ feoImport.dryResult.skipped }}
               <v-icon v-if="feoImport.dryResult.skipped_details?.length" end size="16"
                 :icon="feoResultPanels.includes('dry_skipped') ? 'mdi-chevron-up' : 'mdi-chevron-down'" />
+            </v-chip>
+            <v-chip v-if="feoImport.dryResult.comments_created" color="info" variant="flat">
+              <v-icon icon="mdi-comment-text-outline" start size="16" />Будет создано комментариев: {{ feoImport.dryResult.comments_created }}
             </v-chip>
           </div>
           <!-- Предупреждения dry-run -->
@@ -462,9 +458,11 @@
             </v-expansion-panel>
           </v-expansion-panels>
           <!-- Итоги переезда/удаления узлов -->
-          <div v-if="feoImport.result?.relinked_count || feoImport.result?.deleted_count" class="text-body-2 mb-2">
+          <div v-if="feoImport.result?.relinked_count || feoImport.result?.deleted_count || feoImport.result?.comments_created"
+            class="text-body-2 mb-2">
             <div v-if="feoImport.result?.relinked_count">Перенесено ссылок: {{ feoImport.result.relinked_count }}</div>
             <div v-if="feoImport.result?.deleted_count">Удалено узлов: {{ feoImport.result.deleted_count }}</div>
+            <div v-if="feoImport.result?.comments_created">Создано комментариев: {{ feoImport.result.comments_created }}</div>
           </div>
           <v-alert v-if="feoImport.result?.version_created" type="info" variant="tonal" density="compact"
             icon="mdi-history" class="mb-3">

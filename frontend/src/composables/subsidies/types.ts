@@ -544,22 +544,22 @@ export interface FeoWarning {
     // резолюция группы 'items' (см. apply_category_sum_conflicts); выбор
     // 'own' (по умолчанию) предупреждения не создаёт — прежнее поведение.
     | 'category_sum_replaced_by_items'
-    // Задача 2026-09-22: строка файла называет тип позиции (товар/услуга/
-    // работа), который отличается от типа уже существующего товара в
-    // каталоге (см. FeoItemTypeConflict ниже) — 'item_type_from_catalog'
-    // информационное (решение принято автоматически или человеком),
-    // 'item_type_conflict_unresolved' — конфликт есть, а решения человека
-    // нет (импорт возьмёт тип из файла по умолчанию, каталог не изменится).
+    // Задача 2026-09-22: строка файла называет товар/услугу/работу, которая
+    // отличается от значения уже существующего товара в каталоге (см.
+    // FeoItemTypeConflict ниже) — 'item_type_from_catalog' информационное
+    // (значение пусто в файле, взято из каталога), 'item_type_conflict_
+    // unresolved' — конфликт есть, а решения человека нет (импорт возьмёт
+    // значение из файла по умолчанию, каталог не изменится).
     | 'item_type_from_catalog' | 'item_type_conflict_unresolved'
   row: number | null
   name: string | null
   message: string
 }
 
-// Задача 2026-09-22: тип позиции (товар/услуга/работа) в файле импорта
-// отличается от типа уже сопоставленного товара в каталоге — решение по
-// каждой строке принимает человек (см. блок «Тип позиции отличается от
-// каталога» в FeoImportItemTypeConflicts.vue). Бэкенд отдаёт этот список и в
+// Задача 2026-09-22: товар/услуга/работа в файле импорта отличается от
+// значения уже сопоставленного товара в каталоге — решение по каждой строке
+// принимает человек (см. блок «Товар/услуга расходятся с каталогом» в
+// FeoImportItemTypeConflicts.vue). Бэкенд отдаёт этот список и в
 // предпросмотре (dry_run), и в результате боевого импорта — единственный
 // источник построения списка и применения решения (Правило №6).
 export interface FeoItemTypeConflict {
@@ -612,6 +612,16 @@ export interface FeoBudgetConflictRow {
   row: number
   amount: number | null
 }
+// Владелец 2026-09-22 (дословно): «Там 4 суммы — должно предлагать 4 суммы
+// на выбор. Было бы 3 — три. Это динамическое поле» — один пункт радио-группы
+// на КАЖДУЮ строку файла (options.rows), value = `row:<номер строки>`
+// (backend/app/services/feo_import_budget_conflicts.py, тот же формат, что и
+// принимает duplicate_resolutions для ключей budget::).
+export interface FeoBudgetConflictRowOption {
+  value: string // `row:<row>`
+  row: number
+  amount: number | null
+}
 export interface FeoBudgetConflictGroup {
   key: string
   name: string
@@ -621,13 +631,16 @@ export interface FeoBudgetConflictGroup {
     first: { row: number; amount: number | null }
     last: { row: number; amount: number | null }
     sum: { amount: number | null }
+    rows: FeoBudgetConflictRowOption[]
   }
   // Присутствует только в ОТВЕТЕ (решение уже применено сервером) — на
   // предпросмотре (dry-run) до выбора человека равно 'last' (серверный
   // дефолт — прежнее поведение «последняя побеждает»); фронт держит
   // собственный выбор в feoImport.duplicateResolutions[key] (тот же канал,
   // что и у FeoDuplicateGroup, ключи различаются префиксом `budget::`).
-  resolution?: 'first' | 'last' | 'sum'
+  // Строка (row:<N>) — тоже допустимое значение (Правило №6 — не заводить
+  // отдельного строкового типа под то же поле).
+  resolution?: string
 }
 
 // Владелец (2026-09-16, дословно): сумма категории «по ФЭО» — либо её
@@ -687,6 +700,7 @@ export interface FeoImportResult {
   budget_conflict_groups?: FeoBudgetConflictGroup[]
   category_sum_conflict_groups?: FeoCategorySumConflictGroup[]
   item_type_conflicts?: FeoItemTypeConflict[]
+  comments_created?: number
   unmatched?: FeoUnmatchedNode[]
   new_paths?: string[]
   deleted_count?: number

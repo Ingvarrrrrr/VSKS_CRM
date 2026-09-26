@@ -227,63 +227,63 @@ const router = createRouter({
     {
       path: '/register',
       name: 'register',
-      component: RegisterView,
+      component: () => import('../views/RegisterView.vue'),
       meta: { requiresAuth: false, public: true, title: 'Регистрация' }
     },
     {
       path: '/verify-email',
       name: 'verify-email',
-      component: VerifyEmailView,
+      component: () => import('../views/VerifyEmailView.vue'),
       meta: { requiresAuth: false, public: true, title: 'Подтверждение email' }
     },
     {
       path: '/reset-password',
       name: 'reset-password',
-      component: ResetPasswordView,
+      component: () => import('../views/ResetPasswordView.vue'),
       meta: { requiresAuth: false, public: true, title: 'Сброс пароля' }
     },
     {
       path: '/organizations',
       name: 'organizations',
-      component: OrganizationsView,
+      component: () => import('../views/OrganizationsView.vue'),
       meta: { requiresAuth: true, title: 'Организации', tab_key: 'admin.organizations' }
     },
     // Service notes
     {
       path: '/service-notes',
       name: 'service-notes',
-      component: ServiceNotesView,
+      component: () => import('../views/ServiceNotesView.vue'),
       meta: { requiresAuth: true, title: 'Служебные записки', tab_key: 'service_notes' }
     },
     {
       path: '/service-notes/create',
       name: 'create-service-note',
-      component: CreateOrderView,
+      component: () => import('../views/CreateOrderView.vue'),
       meta: { requiresAuth: true, title: 'Новая служебная записка', formMode: 'service_note_delivery', tab_key: 'service_notes' }
     },
     {
       path: '/service-notes/:id/edit',
       name: 'edit-service-note',
-      component: CreateOrderView,
+      component: () => import('../views/CreateOrderView.vue'),
       meta: { requiresAuth: true, title: 'Служебная записка', formMode: 'service_note_delivery', tab_key: 'service_notes' }
     },
     // Advance reports
     {
       path: '/advance-reports',
       name: 'advance-reports',
-      component: AdvanceReportsView,
+      component: () => import('../views/AdvanceReportsView.vue'),
       meta: { requiresAuth: true, title: 'Реестр авансовых отчётов', tab_key: 'advance_reports' }
     },
     {
       path: '/advance-reports/create',
       name: 'create-advance-report',
-      component: CreateOrderView,
+      component: () => import('../views/CreateOrderView.vue'),
       meta: { requiresAuth: true, title: 'Новый авансовый отчёт', formMode: 'advance_report', tab_key: 'advance_reports.create' }
     },
     {
       path: '/advance-reports/:id/edit',
       name: 'edit-advance-report',
-      component: CreateOrderView,
+      component: () => import('../views/CreateOrderView.vue'),
       meta: { requiresAuth: true, title: 'Авансовый отчёт', formMode: 'advance_report', tab_key: 'advance_reports' }
     },
     // Billing

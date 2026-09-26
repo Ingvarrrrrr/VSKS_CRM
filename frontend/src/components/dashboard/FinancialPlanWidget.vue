@@ -60,6 +60,12 @@
 </template>
 
 <script setup lang="ts">
+import { defineAsyncComponent } from 'vue'
+
+// vue3-apexcharts больше не регистрируется глобально (main.ts) — тяжёлая
+// библиотека тянется динамически только там, где реально есть <apexchart>.
+const apexchart = defineAsyncComponent(() => import('vue3-apexcharts').then(m => m.default))
+
 defineProps<{
   finplanNoDeadlineCount: number
   finplanCurrentMonthKpi: { period: string; plan: number; overdue: number } | null

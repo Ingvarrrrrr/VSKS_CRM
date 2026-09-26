@@ -28,6 +28,32 @@ from app.auth.permissions import has_org_key
 
 router = APIRouter(prefix="/api/purchases", tags=["purchases"])
 
+# ---------------------------------------------------------------------------
+# НДС по выгрузке платежей (владелец, 2026-09-26): «если в платежах НДС
+# указан другой, то об этом надо сообщать, давать ссылки на закупки, где не
+# соответствует НДС, и предлагать приравнять НДС тому, что в выгрузках
+# платежей». Вся логика сверки — app/services/purchase_vat_check.py (ПРАВИЛО
+# №6, единственное место). Роутер здесь только потому, что этот файл уже
+# зарегистрирован в routes.py ДО catch-all purchases.router (см. докстринг
+# файла) — не заводим третий payments-роутер.
+#
+# "/vat-payment-mismatches" — статический одно-сегментный путь, коллизии с
+# "/{pid}/payment-candidates" (двухсегментным) в этом же роутере нет; ставим
+# его раньше "/{pid}/..." путей на всякий случай (порядок регистрации внутри
+# одного APIRouter имеет значение при совпадении числа сегментов, здесь не
+# совпадает, но так нагляднее).
+# ---------------------------------------------------------------------------
+
+
+@router.get("/vat-payment-mismatches")
+async def list_vat_payment_mismatches(
+    subsidy_id: Optional[int] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    from app.services.purchase_vat_check import find_vat_mismatches
+    return await find_vat_mismatches(db, current_user, subsidy_id=subsidy_id)
+
 
 async def _get_subsidy_for_payments(sid: int, db: AsyncSession, current_user) -> Subsidy:
     s = await db.get(Subsidy, sid)
@@ -302,3 +328,93 @@ async def match_payments_endpoint(
         await db.commit()
 
     return report
+
+
+@router.get("/{pid}/vat-payment-check")
+async def get_purchase_vat_payment_check(
+    pid: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    from app.routers.purchases import load_purchase_for_out
+    from app.services.purchase_vat_check import check_purchase_vat, _purchase_payment_sources
+
+    p = await load_purchase_for_out(db, pid)
+    if not p:
+        raise HTTPException(404, "Закупка не найдена")
+    payments = await _purchase_payment_sources(db, pid)
+    return check_purchase_vat(p, payments)
+
+
+class _AlignVatBody(BaseModel):
+    # Явное подтверждение с фронта — что именно приравниваем (защита от гонки,
+    # если платежи изменились между GET vat-payment-check и этим POST).
+    vat_applicable: bool
+    vat_rate: Optional[float] = None
+
+
+@router.post("/{pid}/align-vat-to-payments")
+async def align_purchase_vat_to_payments(
+    pid: int,
+    body: _AlignVatBody,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Приравнять НДС закупки к тому, что распознано в её подтверждённых платежах.
+
+    Гейт прав — тот же, что у PATCH/PUT закупки (_has_purchase_write_access,
+    app/routers/purchases.py) — не заводим отдельную проверку прав. Меняет
+    ТОЛЬКО шапку закупки (vat_mode='uniform', vat_applicable, vat_rate):
+    при vat_mode='uniform' построчная PurchaseItem.vat_rate генератором
+    документов не читается (см. app/services/documents/stages_amounts.py::
+    compute_amounts_and_vat, ветка vat_mode != 'per_item') — трогать позиции
+    не нужно и рискованно (они могут нести реальные построчные ставки другого
+    смысла, если закупку потом вернут в per_item).
+    """
+    from app.routers.purchases import load_purchase_for_out, _has_purchase_write_access
+    from app.services.purchase_vat_check import check_purchase_vat, _purchase_payment_sources
+
+    p = await load_purchase_for_out(db, pid)
+    if not p:
+        raise HTTPException(404, "Закупка не найдена")
+    if not await _has_purchase_write_access(current_user, db):
+        raise HTTPException(403, "Нет прав на редактирование этой закупки. Обратитесь к администратору организации.")
+
+    payments = await _purchase_payment_sources(db, pid)
+    check = check_purchase_vat(p, payments)
+    if check["status"] not in ("mismatch", "unknown_purchase_vat") or not check["suggested"]:
+        raise HTTPException(409, "Нет подтверждённого расхождения НДС с платежами для этой закупки — приравнивать нечего")
+
+    old_vals = {
+        "vat_mode": p.vat_mode, "vat_applicable": p.vat_applicable, "vat_rate": p.vat_rate,
+    }
+    p.vat_mode = "uniform"
+    p.vat_applicable = body.vat_applicable
+    p.vat_rate = int(body.vat_rate) if body.vat_rate is not None else None
+    await db.commit()
+    await db.refresh(p)
+
+    try:
+        from app.models.entity_change import EntityChange
+        changes = []
+        for field in ("vat_mode", "vat_applicable", "vat_rate"):
+            old_s = str(old_vals[field]) if old_vals[field] is not None else None
+            new_s = str(getattr(p, field)) if getattr(p, field) is not None else None
+            if old_s != new_s:
+                changes.append(EntityChange(
+                    entity_type="purchase", entity_id=p.id, field_name=field,
+                    old_value=old_s, new_value=new_s,
+                    changed_by_id=current_user.id,
+                    changed_by_name=getattr(current_user, "full_name", None) or current_user.username,
+                ))
+        if changes:
+            for c in changes:
+                db.add(c)
+            await db.commit()
+    except Exception as _exc:
+        import logging as _log
+        _log.getLogger(__name__).warning("entity_change record failed (align-vat-to-payments): %s", _exc)
+
+    return {
+        "id": p.id, "vat_mode": p.vat_mode, "vat_applicable": p.vat_applicable, "vat_rate": p.vat_rate,
+    }

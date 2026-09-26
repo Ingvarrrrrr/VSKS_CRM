@@ -218,7 +218,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTheme, useDisplay } from 'vuetify'
 import { apiFetch } from '../api'
@@ -227,6 +227,10 @@ import { useDashboardMode } from '../composables/useDashboardMode'
 import { useToast } from '../composables/useToast'
 import RiskMetricCard from '../components/RiskMetricCard.vue'
 import AlertsTicker from '../components/AlertsTicker.vue'
+
+// vue3-apexcharts больше не регистрируется глобально (main.ts) — тяжёлая
+// библиотека тянется динамически только там, где реально есть <apexchart>.
+const apexchart = defineAsyncComponent(() => import('vue3-apexcharts').then(m => m.default))
 
 const { mobile } = useDisplay()
 

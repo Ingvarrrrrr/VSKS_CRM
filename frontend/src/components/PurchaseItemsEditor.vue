@@ -543,6 +543,7 @@
         :items="localItems"
         :readonly="props.readonly"
         :allowed-item-types="props.allowedItemTypes"
+        :feo-nodes="feoNodes"
         :contractors="contractors"
         :selected-item-idxs="selectedItemIdxs"
         :all-items-selected="allItemsSelected"

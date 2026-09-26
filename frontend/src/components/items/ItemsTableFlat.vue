@@ -90,6 +90,21 @@
                 </template>
               </v-tooltip>
             </div>
+            <!-- Владелец (26.09, закупка PEE-2026-00957 и 27.09, закупка РЕЕ-2026-00912):
+                 «в каждом товаре должна быть указана привязка» к категории ФЭО —
+                 ПОКАЗЫВАТЬ У КАЖДОЙ позиции с feo_category_id независимо от feoPerItem
+                 (в т.ч. когда категория совпадает с шапкой — тогда компактно). Read-only
+                 чип (тот же ItemFeoCategoryChip/feoNodes, что и в
+                 ItemsTableWish.vue/ItemsTableStages.vue — второе дерево не заводим). При
+                 feoPerItem=true категория дополнительно редактируется в feo-attrs-row —
+                 дублирования редактирования нет, чип здесь read-only. -->
+            <ItemFeoCategoryChip
+              v-if="item.feo_category_id != null"
+              :category-id="item.feo_category_id"
+              :nodes="feoNodes || []"
+              :locked="isItemFeoCategoryLocked(item)"
+              class="mt-1"
+            />
             <!-- Phase 27.1.2: inline contractor убран для не-advance из flat layout. Per-item contractor только в advance_report mode (колонка showContractorColumn справа). -->
           </td>
           <td>
@@ -411,6 +426,7 @@ import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT } f
 // «Перевозки автобусом») колонки Кол-во/Ед./Цена заменяются полями формы —
 // ItemFormFields.vue, единственный рендерер (Правило №6).
 import ItemFormFields from '@/components/items/ItemFormFields.vue'
+import ItemFeoCategoryChip from '@/components/purchase/ItemFeoCategoryChip.vue'
 import type { ItemFormCode, ItemFormField } from '@/utils/itemAmounts'
 
 // EditorItem is structurally identical to the parent's; kept loose here since the

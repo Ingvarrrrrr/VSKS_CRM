@@ -100,6 +100,14 @@
                 </v-list-item>
               </template>
             </v-autocomplete>
+            <!-- Владелец (26.09, PEE-2026-00957): категория ФЭО позиции — только
+                 чтение, видно без раскрытия строки (см. ItemFeoCategoryChip.vue). -->
+            <ItemFeoCategoryChip
+              v-if="item.feo_category_id != null"
+              :category-id="item.feo_category_id"
+              :nodes="feoNodes || []"
+              :locked="isItemFeoCategoryLocked(item)"
+            />
           </td>
           <td>
             <!-- food-menu-editor.md: спец-форма принудительно ставит
@@ -180,6 +188,9 @@ import type { Contractor } from '@/components/items/types'
 // сигнатуры 4 таблиц (Правило №6, один рендерер спец-полей — ItemFormFields.vue).
 import ItemFormFields from '@/components/items/ItemFormFields.vue'
 import type { ItemFormCode, ItemFormField } from '@/utils/itemAmounts'
+import ItemFeoCategoryChip from '@/components/purchase/ItemFeoCategoryChip.vue'
+import { isItemFeoCategoryLocked } from '@/utils/feoItemLock'
+import type { FeoNode } from '@/composables/useFeoLeaves'
 
 type EditorItem = any
 
@@ -202,6 +213,9 @@ const props = defineProps<{
   formatNumber: (v: number | null | undefined) => string
   parseNumber: (v: string) => number | null
   contractorFilter: (value: string, query: string, item?: any) => boolean
+  // Только для read-only ItemFeoCategoryChip (резолв имени/пути категории) — сама
+  // таблица per-item категорию не редактирует, дерево сюда не заводим.
+  feoNodes?: FeoNode[]
 }>()
 
 const virtualize = computed(() => props.items.length > VIRT_THRESHOLD)

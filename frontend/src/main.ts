@@ -4,7 +4,6 @@ import vuetify from './plugins/vuetify'
 import './styles/gala.css'
 import { createPinia } from 'pinia'
 import router from './router'
-import VueApexCharts from 'vue3-apexcharts'
 import { vResizableColumns } from './directives/resizable-columns'
 import { initSwUpdate, initChunkLoadRecovery } from './composables/useSwUpdate'
 
@@ -14,7 +13,11 @@ const pinia = createPinia()
 app.use(pinia)      // MUST be before app.use(router) so router guards can use the store
 app.use(vuetify)
 app.use(router)
-app.use(VueApexCharts)
+// vue3-apexcharts больше не регистрируется глобально (весило в главном чанке
+// для всех страниц, включая те без графиков) — компонент <apexchart> теперь
+// подключается локально через defineAsyncComponent в каждом виджете, где
+// используется (BudgetDrillDownDialog, dashboard/*Widget, WidgetRenderer,
+// PlanView, RiskRadarView).
 
 app.directive('resizable-columns', vResizableColumns)
 

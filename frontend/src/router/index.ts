@@ -1,26 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import LoginView from '../views/LoginView.vue'
 import LandingView from '../views/LandingView.vue'
-import DashboardView from '../views/DashboardView.vue'
-import SubsidiesView from '../views/SubsidiesView.vue'
-import OrdersView from '../views/OrdersView.vue'
-import CreateOrderView from '../views/CreateOrderView.vue'
-import ContractorsView from '../views/ContractorsView.vue'
-import FeoCategoriesView from '../views/FeoCategoriesView.vue'
-import ProductsView from '../views/ProductsView.vue'
-import PlanView from '../views/PlanView.vue'
-import CommercialRequestsView from '../views/CommercialRequestsView.vue'
-import MyTasksView from '../views/MyTasksView.vue'
-import ReportsView from '../views/ReportsView.vue'
-import SuppliersView from '../views/SuppliersView.vue'
-import SystemIncidentsView from '../views/SystemIncidentsView.vue'
-import RegisterView from '../views/RegisterView.vue'
-import VerifyEmailView from '../views/VerifyEmailView.vue'
-import ResetPasswordView from '../views/ResetPasswordView.vue'
-import OrganizationsView from '../views/OrganizationsView.vue'
-import ServiceNotesView from '../views/ServiceNotesView.vue'
-import AdvanceReportsView from '../views/AdvanceReportsView.vue'
-import OrgSettingsView from '../views/OrgSettingsView.vue'
 import { useAuthStore } from '../stores/auth'
 import { useToast } from '../composables/useToast'
 
@@ -42,7 +22,7 @@ const router = createRouter({
     {
       path: '/dashboard',
       name: 'dashboard',
-      component: DashboardView,
+      component: () => import('../views/DashboardView.vue'),
       meta: { requiresAuth: true, title: 'Дашборд', tab_key: 'dashboard' }
     },
     {
@@ -54,13 +34,13 @@ const router = createRouter({
     {
       path: '/subsidies',
       name: 'subsidies',
-      component: SubsidiesView,
+      component: () => import('../views/SubsidiesView.vue'),
       meta: { requiresAuth: true, title: 'Субсидии', tab_key: 'subsidies' }
     },
     {
       path: '/orders',
       name: 'orders',
-      component: OrdersView,
+      component: () => import('../views/OrdersView.vue'),
       meta: { requiresAuth: true, title: 'Закупки', tab_key: 'purchases' }
     },
     {
@@ -71,19 +51,19 @@ const router = createRouter({
     {
       path: '/orders/:id/edit',
       name: 'edit-order',
-      component: CreateOrderView,
+      component: () => import('../views/CreateOrderView.vue'),
       meta: { requiresAuth: true, title: 'Редактировать закупку', tab_key: 'purchases' }
     },
     {
       path: '/orders/:id',
       name: 'view-order',
-      component: CreateOrderView,
+      component: () => import('../views/CreateOrderView.vue'),
       meta: { requiresAuth: true, title: 'Закупка', tab_key: 'purchases' }
     },
     {
       path: '/contractors',
       name: 'contractors',
-      component: ContractorsView,
+      component: () => import('../views/ContractorsView.vue'),
       meta: { requiresAuth: true, title: 'Контрагенты', tab_key: 'contractors' }
     },
     {
@@ -95,13 +75,13 @@ const router = createRouter({
     {
       path: '/feo-categories',
       name: 'feo-categories',
-      component: FeoCategoriesView,
+      component: () => import('../views/FeoCategoriesView.vue'),
       meta: { requiresAuth: true, title: 'Категории ФЭО', tab_key: 'feo_categories' }
     },
     {
       path: '/products',
       name: 'products',
-      component: ProductsView,
+      component: () => import('../views/ProductsView.vue'),
       meta: { requiresAuth: true, title: 'Каталог товаров', tab_key: 'products' }
     },
     {
@@ -113,13 +93,13 @@ const router = createRouter({
     {
       path: '/plan',
       name: 'plan',
-      component: PlanView,
+      component: () => import('../views/PlanView.vue'),
       meta: { requiresAuth: true, title: 'План закупок', tab_key: 'plan' }
     },
     {
       path: '/commercial-requests',
       name: 'commercial-requests',
-      component: CommercialRequestsView,
+      component: () => import('../views/CommercialRequestsView.vue'),
       meta: { requiresAuth: true, title: 'Запросы КП', tab_key: 'commercial_requests' }
     },
     {
@@ -129,13 +109,13 @@ const router = createRouter({
     {
       path: '/my-tasks',
       name: 'my-tasks',
-      component: MyTasksView,
+      component: () => import('../views/MyTasksView.vue'),
       meta: { requiresAuth: true, title: 'Мои задачи и закупки', tab_key: 'my_tasks' }
     },
     {
       path: '/reports',
       name: 'reports',
-      component: ReportsView,
+      component: () => import('../views/ReportsView.vue'),
       meta: { requiresAuth: true, title: 'Отчёты', tab_key: 'reports' }
     },
     {
@@ -230,14 +210,14 @@ const router = createRouter({
     {
       path: '/suppliers',
       name: 'suppliers',
-      component: SuppliersView,
+      component: () => import('../views/SuppliersView.vue'),
       // Sub-view of /contractors — shares tab_key
       meta: { requiresAuth: true, title: 'Поставщики', tab_key: 'contractors' }
     },
     {
       path: '/system-incidents',
       name: 'system-incidents',
-      component: SystemIncidentsView,
+      component: () => import('../views/SystemIncidentsView.vue'),
       meta: { requiresAuth: true, title: 'Системные инциденты', tab_key: 'system_incidents' }
     },
     {
@@ -317,7 +297,7 @@ const router = createRouter({
     {
       path: '/org-settings',
       name: 'org-settings',
-      component: OrgSettingsView,
+      component: () => import('../views/OrgSettingsView.vue'),
       meta: { requiresAuth: true, title: 'Настройки организации', tab_key: 'admin.settings' }
     },
     {

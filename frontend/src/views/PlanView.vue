@@ -405,14 +405,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiFetch } from '@/api'
-import * as XLSX from 'xlsx'
 import { PURCHASE_STATUS_ORDER, purchaseStatusLabel, purchaseStatusColor, purchaseMethodLabel as sharedMethodLabel } from '@/constants/purchaseStatus'
 import { useToast, type ToastType } from '@/composables/useToast'
 import type { PurchaseAmounts } from '@/types/purchaseAmounts'
 import { toAmount } from '@/types/purchaseAmounts'
+
+// vue3-apexcharts больше не регистрируется глобально (main.ts) — тяжёлая
+// библиотека тянется динамически только там, где реально есть <apexchart>.
+const apexchart = defineAsyncComponent(() => import('vue3-apexcharts').then(m => m.default))
 
 const router = useRouter()
 
@@ -876,9 +879,10 @@ const methodLabel = (m?: string | null) =>
   m === 'single' || m === 'competitive' ? sharedMethodLabel(m) : ''
 
 // ─── Excel export ──────────────────────────────────────────────────────────────
-const exportExcel = () => {
+const exportExcel = async () => {
   exporting.value = true
   try {
+    const XLSX = await import('xlsx')
     const headers = [
       '№ п/п', 'Реестровый №', 'Предмет закупки', 'Категория ФЭО', 'Субсидия',
       'НМЦД (руб.)', 'Сумма (план, руб.)', 'Сумма (расчёт, руб.)', 'Способ закупки',

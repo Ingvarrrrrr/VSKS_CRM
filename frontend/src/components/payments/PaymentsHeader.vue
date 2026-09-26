@@ -11,6 +11,12 @@
       <v-btn prepend-icon="mdi-table-check" variant="outlined" color="warning" @click="emit('open-reconciliation')">
         Сверка платежей
       </v-btn>
+      <!-- Владелец (2026-09-26): расхождения НДС закупка↔платежи, см.
+           VatPaymentMismatchesDialog.vue -->
+      <v-btn prepend-icon="mdi-alert-decagram-outline" variant="outlined" color="warning" @click="emit('open-vat-mismatches')">
+        НДС
+        <v-badge v-if="vatMismatchesCount" :content="vatMismatchesCount" color="error" inline />
+      </v-btn>
       <v-btn prepend-icon="mdi-view-column" variant="outlined" color="primary" @click="showColumnPicker = true">
         Колонки
       </v-btn>
@@ -49,10 +55,12 @@ defineProps<{
   getColumns: () => any[]
   getRows: () => any[]
   getCaptureEl: () => HTMLElement | null
+  vatMismatchesCount?: number
 }>()
 
 const emit = defineEmits<{
   'open-reconciliation': []
+  'open-vat-mismatches': []
   error: [msg: string]
 }>()
 </script>

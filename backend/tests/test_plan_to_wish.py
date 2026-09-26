@@ -541,6 +541,11 @@ async def test_create_wish_multi_category_sets_feo_per_item(db_session, test_use
     wish = (await db_session.execute(select(Wish).where(Wish.id == result["wish_id"]))).scalar_one()
     assert wish.feo_per_item is True
     assert wish.feo_category_id is None
+    # Владелец (26.09, закупка PEE-2026-00957): «с чего ты поставил 22%?» — план
+    # закупок не хранит ставки НДС, заявка «из плана» не должна выглядеть так,
+    # будто есть единая известная ставка (см. plan_to_wish.py::create_wish_from_plan).
+    assert wish.vat_mode == "per_item"
+    assert wish.vat_applicable is None
 
     wish_items = (await db_session.execute(select(WishItem).where(WishItem.wish_id == wish.id))).scalars().all()
     assert len(wish_items) == 2
@@ -548,6 +553,8 @@ async def test_create_wish_multi_category_sets_feo_per_item(db_session, test_use
     item_b = next(wi for wi in wish_items if wi.feo_planned_item_id == planned_b.id)
     assert item_a.feo_category_id == cat_a.id
     assert item_b.feo_category_id == cat_b.id
+    assert item_a.vat_rate is None
+    assert item_b.vat_rate is None
 
 
 @pytest.mark.asyncio
@@ -569,6 +576,10 @@ async def test_create_wish_single_category_no_feo_per_item(db_session, test_user
     wish = (await db_session.execute(select(Wish).where(Wish.id == result["wish_id"]))).scalar_one()
     assert wish.feo_category_id == cat.id
     assert wish.feo_per_item is False
+    # НДС всё равно 'per_item'/None — план не хранит ставок независимо от того,
+    # совпадают категории или нет (см. test_create_wish_multi_category_sets_feo_per_item).
+    assert wish.vat_mode == "per_item"
+    assert wish.vat_applicable is None
 
 
 @pytest.mark.asyncio

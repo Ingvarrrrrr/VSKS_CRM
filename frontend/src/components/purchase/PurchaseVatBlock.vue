@@ -69,6 +69,11 @@
 // НЕ через целиком проброшенный `form` (как у PurchaseContractParamsSection.vue),
 // чтобы не завести два способа достучаться до одних и тех же полей.
 import { computed } from 'vue'
+// ПРАВИЛО №6: список процентных ставок — ОДИН источник (useVatCalc.ts), тот же,
+// что у построчных таблиц позиций (ItemsTableFlat/ItemsTableStages/ItemsCardsView/
+// ItemsTableWish). Раньше здесь была своя копия [0,5,7,10,20,22] — сама ставок
+// не путала, но по Правилу №6 обязана переиспользовать, не дублировать.
+import { VAT_RATE_OPTIONS } from '@/composables/useVatCalc'
 
 const props = defineProps<{
   mobile: boolean
@@ -102,25 +107,37 @@ const emit = defineEmits<{
 }>()
 
 // Сентинелы: 0% — валидная облагаемая ставка и не может делить одно значение
-// null/undefined с «не облагается» (vat_applicable=false) или с «ещё не
-// знаю» (vat_applicable=null) — три РАЗНЫХ состояния нужны три РАЗНЫХ ключа.
+// null/undefined с «не облагается» (vat_applicable=false), с «ещё не знаю»
+// (vat_applicable=null) или с «ставка не указана» (vat_applicable=true,
+// vat_rate=null) — четыре РАЗНЫХ состояния, четыре РАЗНЫХ ключа.
 const EXEMPT = 'exempt'
 const UNKNOWN = 'unknown'
+// Владелец (26.09, закупка PEE-2026-00957): «с чего ты поставил 22%?» — раньше
+// vat_applicable=true + vat_rate=null (закупка из плана/заявки, где ставка ещё
+// не известна) отображались как выбранная ставка 22% (`vatRate ?? 22`) —
+// ВЫДУМАННЫЙ фолбэк поверх отсутствующего значения. Теперь это отдельное
+// состояние с собственным пунктом списка, ничего не подставляем.
+const RATE_UNSET = 'rate_unset'
 
+// Процентные пункты — из общего useVatCalc.VAT_RATE_OPTIONS (Правило №6, та же
+// ставка НДС, что и в построчных таблицах позиций), но без её null-пункта
+// («Не облагается» там означает то же самое, что EXEMPT здесь — не дублируем
+// пункт, просто не берём null из общего списка и добавляем сентинелы блока
+// поверх процентных значений.
 const rateOptions = [
   { title: 'Ещё не знаю', value: UNKNOWN },
   { title: 'Не облагается', value: EXEMPT },
-  { title: '0%', value: 0 },
-  { title: '5%', value: 5 },
-  { title: '7%', value: 7 },
-  { title: '10%', value: 10 },
-  { title: '20%', value: 20 },
-  { title: '22%', value: 22 },
+  { title: 'Ставка не указана', value: RATE_UNSET },
+  ...VAT_RATE_OPTIONS
+    .filter(o => o.value !== null)
+    .map(o => ({ title: o.title, value: Number(String(o.value).replace('%', '')) })),
 ]
 
 const selectedRate = computed<string | number>(() => {
   if (props.vatApplicable === null) return UNKNOWN
-  return props.vatApplicable ? (props.vatRate ?? 22) : EXEMPT
+  if (props.vatApplicable === false) return EXEMPT
+  // vatApplicable === true
+  return props.vatRate ?? RATE_UNSET
 })
 
 function onRateSelect(v: string | number) {
@@ -131,6 +148,11 @@ function onRateSelect(v: string | number) {
   }
   if (v === EXEMPT) {
     emit('update:vatApplicable', false)
+    return
+  }
+  if (v === RATE_UNSET) {
+    emit('update:vatApplicable', true)
+    emit('update:vatRate', null)
     return
   }
   emit('update:vatApplicable', true)

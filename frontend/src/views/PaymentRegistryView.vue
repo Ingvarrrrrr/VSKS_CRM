@@ -9,8 +9,15 @@
       :get-columns="getExportColumns"
       :get-rows="getExportRows"
       :get-capture-el="getExportCaptureEl"
+      :vat-mismatches-count="vatMismatchesCount"
       @open-reconciliation="openReconciliation"
+      @open-vat-mismatches="vatMismatchesDialog = true"
       @error="(msg) => error(msg)"
+    />
+
+    <VatPaymentMismatchesDialog
+      v-model="vatMismatchesDialog"
+      @loaded="(count) => (vatMismatchesCount = count)"
     />
 
     <PaymentReconciliationDialog
@@ -119,6 +126,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { apiFetch } from '@/api'
 import { useToast } from '@/composables/useToast'
 import ColumnConfigDialog from '@/components/ColumnConfigDialog.vue'
 import PaymentMatchDialog from '@/components/PaymentMatchDialog.vue'
@@ -127,6 +135,7 @@ import PaymentsFilterBar from '@/components/payments/PaymentsFilterBar.vue'
 import PaymentsTable from '@/components/payments/PaymentsTable.vue'
 import PaymentsCards from '@/components/payments/PaymentsCards.vue'
 import PaymentReconciliationDialog from '@/components/payments/PaymentReconciliationDialog.vue'
+import VatPaymentMismatchesDialog from '@/components/bank/VatPaymentMismatchesDialog.vue'
 import PaymentsUnbindDialog from '@/components/payments/PaymentsUnbindDialog.vue'
 import { useCardView } from '@/composables/useCardView'
 import { useDisplay } from 'vuetify'
@@ -188,6 +197,20 @@ const {
   filteredReconciliationRows, openReconciliation,
   reconciliationRowClass, reconciliationStatusColor, reconciliationStatusLabel,
 } = usePaymentsReconciliation({ importId, error })
+
+// Владелец (2026-09-26): расхождения НДС закупка↔платежи — счётчик на кнопке
+// подгружается лениво один раз при входе на страницу (не блокирует основной
+// loadPayments), диалог сам перезагружает список при открытии.
+const vatMismatchesDialog = ref(false)
+const vatMismatchesCount = ref(0)
+async function loadVatMismatchesCount() {
+  try {
+    const rows = await apiFetch<any[]>('/purchases/vat-payment-mismatches')
+    vatMismatchesCount.value = rows.length
+  } catch {
+    // Не критично для основной страницы — тихо игнорируем.
+  }
+}
 
 const {
   matchDialog, selectedPaymentId, openMatch, openConfirm, openMatchById, onMatchUpdated,
@@ -264,5 +287,6 @@ onMounted(() => {
   migrateFrom({ visible: 'payment_registry_columns', widths: 'payment_registry_col_widths' })
   loadPayments()
   loadSubsidies()
+  loadVatMismatchesCount()
 })
 </script>

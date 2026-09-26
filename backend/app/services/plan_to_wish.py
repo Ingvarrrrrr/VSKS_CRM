@@ -519,6 +519,22 @@ async def create_wish_from_plan(
         subsidy_id=subsidy_id,
         feo_category_id=feo_category_id,
         feo_per_item=feo_per_item,
+        # Владелец (26.09, закупка PEE-2026-00957): «с чего ты поставил 22%?»
+        # — план закупок не хранит ставки НДС вообще (FeoPlannedItem не имеет
+        # поля НДС), поэтому заявка «из плана» НЕ должна выглядеть так, будто
+        # у неё есть единая известная ставка. Раньше vat_mode здесь не
+        # задавался вовсе — create_wish() подставлял дефолт 'uniform' (см. её
+        # `body.vat_mode or 'uniform'), и форма закупки после конвертации
+        # показывала переключатель «Одинаковый на всю закупку» с полем ставки
+        # — а PurchaseVatBlock.vue поверх пустой ставки (vat_rate=None)
+        # подставлял ФОЛЬКЛОРНЫЙ фолбэк 22% (см. фикс там же). vat_mode=
+        # 'per_item' переключает форму в режим «ставка — в каждой позиции»,
+        # где ничего не выдумывается; vat_applicable=None ("ещё не знаю") —
+        # осознанный дефолт по той же причине. Позиции (item_dicts выше)
+        # vat_rate вообще не передают — WishItem.vat_rate остаётся None
+        # (см. app/routers/wishes.py::item_data.get('vat_rate')).
+        vat_mode="per_item",
+        vat_applicable=None,
         items=item_dicts,
     )
     wish_out = await create_wish(body=wish_body, db=db, current_user=current_user)

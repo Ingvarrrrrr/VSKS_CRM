@@ -464,7 +464,7 @@
             </v-col>
             <!-- Дерево категорий ФЭО (замена трёхуровневого каскада) — один узел любой глубины,
                  промежуточные уровни заполняются автоматически при клике на лист. -->
-            <v-col v-if="form.subsidy_id && feoTreeNodes.length" cols="12" md="4">
+            <v-col v-if="form.subsidy_id && feoTreeNodes.length && !feoHeaderCategoriesDiffer" cols="12" md="4">
               <FeoTreeSelect
                 v-model="form.feo_category_id"
                 :nodes="feoTreeNodes"
@@ -481,6 +481,19 @@
                    условие, что и в per-item пикерах (utils/feoItemLock.ts,
                    ПРАВИЛО №6), бэкенд отклоняет попытку 422
                    FEO_CATEGORY_LOCKED_FROM_WISH (см. purchases.py). -->
+              <div v-if="purchaseData?.wish_id" class="text-caption text-medium-emphasis mt-1">
+                {{ FEO_CATEGORY_LOCKED_HINT }}
+              </div>
+            </v-col>
+            <!-- Владелец (26.09, закупка PEE-2026-00957): «категория ФЭО... не
+                 отображается в закупке» — у позиций закупки из заявки/плана могут
+                 быть РАЗНЫЕ категории (feo_per_item), тогда шапочная feo_category_id
+                 осознанно null (см. plan_to_wish.py). Раньше здесь оставалось пустое
+                 обязательное дерево ФЭО без объяснения — выглядело как потерянные
+                 данные. Не обязательное, не красное — категории уже видны в каждой
+                 позиции ниже (ItemsTableFlat/ItemsTableStages, feo-attrs-row). -->
+            <v-col v-if="form.subsidy_id && feoHeaderCategoriesDiffer" cols="12" md="4">
+              <div class="text-body-2">Разные категории — указаны в каждой позиции</div>
               <div v-if="purchaseData?.wish_id" class="text-caption text-medium-emphasis mt-1">
                 {{ FEO_CATEGORY_LOCKED_HINT }}
               </div>
@@ -829,6 +842,11 @@
             @planned-item-created="reloadPurchasePlanned"
             @planned-item-deleted="reloadPurchasePlanned"
           />
+          <!-- Владелец (2026-09-26): сверка НДС закупки с НДС из выгрузки платежей —
+               только для уже сохранённой закупки (есть id), см. PurchaseVatPaymentsBanner.vue -->
+          <div v-if="isEdit && purchaseId" class="px-4 pb-2">
+            <PurchaseVatPaymentsBanner :purchase-id="purchaseId" @aligned="loadPurchase" />
+          </div>
           <!-- 12-02: FEO auto-match suggestion chips -->
           <div v-if="feoMatchSuggestions.length" class="px-4 pb-2">
             <div class="text-caption text-medium-emphasis mb-1">Похожие позиции ФЭО плана:</div>
@@ -1966,6 +1984,7 @@ import PurchaseEventFeed from '@/components/PurchaseEventFeed.vue'
 import ApprovalPanel from '@/components/purchase/ApprovalPanel.vue'
 import PurchaseHeader from '@/components/purchase/PurchaseHeader.vue'
 import AdvanceReimbursementCard from '@/components/purchase/AdvanceReimbursementCard.vue'
+import PurchaseVatPaymentsBanner from '@/components/purchase/PurchaseVatPaymentsBanner.vue'
 import PurchaseDatesSection from '@/components/purchase/PurchaseDatesSection.vue'
 import PurchaseAcceptanceSection from '@/components/purchase/PurchaseAcceptanceSection.vue'
 import PurchasePaymentSection from '@/components/purchase/PurchasePaymentSection.vue'
@@ -3652,6 +3671,18 @@ const feoCategoryMissing = computed(() =>
   && !allFeoCategories.value.some(c => c.id === form.feo_category_id)
 )
 
+// Владелец (26.09, закупка PEE-2026-00957): «категория... не отображается».
+// Категории позиций реально различаются — источник ТОЛЬКО фактические
+// item.feo_category_id (не form.feo_per_item: этот флаг читается из БД и мог
+// быть выставлен широким историческим бэкфиллом даже когда позиции по факту
+// делят одну категорию, см. миграцию w1x2y3z4a5b6_wish_purchase_feo_per_item_vat.py
+// — второго источника «различаются ли категории» не заводим, Правило №6).
+const feoHeaderCategoriesDiffer = computed(() => {
+  if (form.feo_category_id != null) return false
+  const cats = new Set(items.value.map(i => i.feo_category_id).filter((v: any): v is number => v != null))
+  return cats.size > 1
+})
+
 // «Остатки» по узлу для подписи под деревом — переиспользуем уже загруженные feoResiduals
 // (см. loadFeoResiduals выше), а не отдельный composable: они и так грузятся под текущий
 // выбор ФЭО и содержат budget/residual, только под другими именами полей.
@@ -3675,7 +3706,12 @@ const feoValidationError = computed((): string | null => {
   // Авансовый отчёт: ФЭО необязательна — чеки грузятся сразу, категория назначается позже
   if (formMode.value === 'advance_report') return null
   if (!form.subsidy_id || !feoTreeNodes.value.length) return null
-  if (!form.feo_category_id) return 'Выберите категорию ФЭО'
+  if (!form.feo_category_id) {
+    // Категории позиций реально различаются (см. feoHeaderCategoriesDiffer) —
+    // шапочная категория осознанно пуста, требовать её здесь нечего выбирать.
+    if (feoHeaderCategoriesDiffer.value) return null
+    return 'Выберите категорию ФЭО'
+  }
   if (feoSkipLast.value) return null
   // В режиме per-item конечный уровень выбирается per-row — не требуем общий
   if (!form.feo_per_item && !feoSelectedIsLeaf.value) return 'Выберите конечную категорию ФЭО (самый глубокий уровень)'
@@ -4266,6 +4302,19 @@ const loadPurchase = async () => {
     })
     // Режим читаем из БД; фолбэк — только для записей, созданных до появления колонки.
     form.feo_per_item = data.feo_per_item ?? data.items.some((i: any) => i.feo_category_id != null)
+    // Владелец (26.09, закупка PEE-2026-00957): шапочная feo_category_id пришла null,
+    // хотя ВСЕ позиции на деле привязаны к одной и той же категории (типично для
+    // закупок из заявки/плана — см. app/services/plan_to_wish.py, где feo_category_id
+    // шапки не всегда совпадает с per-item категориями позиций). Подставляем
+    // единственное общее значение, чтобы дерево ФЭО в шапке показывало категорию,
+    // а не пустоту — feoHeaderCategoriesDiffer ниже отличит этот случай от реально
+    // разных категорий (там подстановки нет, показывается поясняющий текст).
+    if (!data.feo_category_id) {
+      const distinctItemCats = new Set(data.items.map((i: any) => i.feo_category_id).filter((v: any) => v != null))
+      if (distinctItemCats.size === 1) {
+        form.feo_category_id = [...distinctItemCats][0] as number
+      }
+    }
     // Владелец (сессия 2026-08-21): «каждому товару надо присваивать свою плановую» —
     // шапочного значения feo_planned_item_id больше нет ни в одном режиме, построчные
     // значения читаются как есть выше (feo_planned_item_id: i.feo_planned_item_id).

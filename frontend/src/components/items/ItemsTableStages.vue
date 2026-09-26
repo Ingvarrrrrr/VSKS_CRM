@@ -59,6 +59,21 @@
                 <v-icon v-else size="20" class="flex-shrink-0 text-medium-emphasis">mdi-package-variant</v-icon>
                 <span class="text-body-2" style="white-space:normal;line-height:1.3;word-break:break-word">{{ summaryName(idx) || '—' }}</span>
               </div>
+              <!-- Владелец (26.09, закупка PEE-2026-00957 и 27.09, закупка РЕЕ-2026-00912):
+                   «в каждом товаре должна быть указана привязка» к категории ФЭО —
+                   ПОКАЗЫВАТЬ У КАЖДОЙ позиции с feo_category_id, в свёрнутой строке,
+                   независимо от feoPerItem (в т.ч. когда категория совпадает с шапкой —
+                   тогда компактно). При feoPerItem=true категория дополнительно
+                   редактируется в развёрнутой строке — чип здесь read-only, дублирования
+                   редактирования нет (см. ItemsTableWish.vue — тот же ItemFeoCategoryChip,
+                   то же feoNodes, второе дерево не заводим). -->
+              <ItemFeoCategoryChip
+                v-if="item.feo_category_id != null"
+                :category-id="item.feo_category_id"
+                :nodes="feoNodes || []"
+                :locked="isItemFeoCategoryLocked(item)"
+                class="mt-1"
+              />
             </td>
             <td v-if="itemForm" colspan="2" @click.stop class="text-caption text-medium-emphasis" style="max-width:220px">
               {{ specSummary(item) || 'Разверните строку, чтобы заполнить' }}
@@ -629,6 +644,7 @@ import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT } f
 // рендерер спец-полей); свёрнутая сводная строка показывает только компактную
 // расшифровку (formatExtraAttrsSummary), редактирование — после разворота строки.
 import ItemFormFields from '@/components/items/ItemFormFields.vue'
+import ItemFeoCategoryChip from '@/components/purchase/ItemFeoCategoryChip.vue'
 import type { ItemFormCode, ItemFormField } from '@/utils/itemAmounts'
 import { formatExtraAttrsSummary } from '@/utils/itemAmounts'
 

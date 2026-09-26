@@ -138,6 +138,21 @@
                 :label="feoPerItem ? 'Тип / ФЭО *' : 'Тип'"
                 hide-details :disabled="readonly || !!itemForm"
                 @update:model-value="(v: string) => emit('item-type-change', idx, v)" />
+              <!-- Владелец (26.09, закупка PEE-2026-00957 и 27.09, закупка РЕЕ-2026-00912):
+                   «в каждом товаре должна быть указана привязка» к категории ФЭО —
+                   ПОКАЗЫВАТЬ У КАЖДОЙ позиции с feo_category_id независимо от feoPerItem
+                   (в т.ч. когда категория совпадает с шапкой — тогда компактно). Read-only
+                   чип (тот же ItemFeoCategoryChip/feoNodes, что и
+                   ItemsTableWish.vue/ItemsTableStages.vue/ItemsTableFlat.vue — второе
+                   дерево не заводим). При feoPerItem=true ниже уже редактируемый
+                   FeoTreeSelect — дублирования редактирования нет, чип здесь read-only. -->
+              <ItemFeoCategoryChip
+                v-if="item.feo_category_id != null"
+                :category-id="item.feo_category_id"
+                :nodes="feoNodes || []"
+                :locked="isItemFeoCategoryLocked(item)"
+                class="mt-1"
+              />
               <template v-if="feoPerItem">
                 <v-tooltip :text="itemFeoLockTooltip(item) || ''" :disabled="!itemFeoLockTooltip(item)" location="top">
                   <template #activator="{ props: lockTip }">
@@ -383,6 +398,7 @@ import { formatPlanResidual } from '@/utils/numberFormat'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
 import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT } from '@/utils/feoItemLock'
 import ItemFormFields from '@/components/items/ItemFormFields.vue'
+import ItemFeoCategoryChip from '@/components/purchase/ItemFeoCategoryChip.vue'
 import type { ItemFormCode, ItemFormField } from '@/utils/itemAmounts'
 
 // EditorItem is structurally identical to the parent's; kept loose here since the

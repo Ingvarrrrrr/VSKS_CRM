@@ -387,7 +387,6 @@ import FeoItemHistory from '@/components/subsidies/FeoItemHistory.vue'
 // тот же приём, что и editPlannedBeforeSnapshot в useFeoPlannedItemEditDialog.ts:
 // между открытием диалога и сохранением всегда ровно одна активная правка.
 let feoEditBeforeSnapshot: Record<string, unknown> | null = null
-let feoEditBeforeParentId: number | null = null
 
 const addOpen = defineModel<boolean>('addOpen', { default: false })
 const editOpen = defineModel<boolean>('editOpen', { default: false })
@@ -479,7 +478,6 @@ function openEdit(node: FeoNode) {
   // Снимок «до» для стека отмены (см. коммент у feoEditBeforeSnapshot выше) —
   // ДО того, как форма ниже начнёт собирать свои auto-режимы/пустые строки.
   feoEditBeforeSnapshot = buildCategoryFullPayload(node)
-  feoEditBeforeParentId = node.parent_id ?? null
   const autoMode = node.hasChildren && node.budget === null
   const qtyAutoMode = node.hasChildren && node.planned_quantity === null
   const amtAutoMode = node.hasChildren && node.planned_amount === null

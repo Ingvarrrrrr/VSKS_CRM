@@ -45,6 +45,7 @@ from app.auth.jwt import get_current_user, get_org_filter
 from app.auth.permissions import require_tab
 from app.auth.visibility import get_visible_subsidy_ids
 from app.utils.http import content_disposition
+from app.services import feo_history
 from typing import List, Optional
 
 router = APIRouter(prefix="/api/feo-categories", tags=["feo_categories"])
@@ -569,6 +570,11 @@ async def get_or_create_unallocated(
         is_active=True,
     )
     db.add(new_cat)
+    await db.flush()
+    await feo_history.record_created(
+        db, feo_history.ENTITY_FEO_CATEGORY, new_cat.id, current_user,
+        source=feo_history.SOURCE_MANUAL, commit=False,
+    )
     await db.commit()
     await db.refresh(new_cat)
     return {
@@ -622,6 +628,11 @@ async def create_category(
         manual_plan_amount=category_data.manual_plan_amount,
     )
     db.add(new_category)
+    await db.flush()
+    await feo_history.record_created(
+        db, feo_history.ENTITY_FEO_CATEGORY, new_category.id, current_user,
+        source=feo_history.SOURCE_MANUAL, commit=False,
+    )
     await db.commit()
     await db.refresh(new_category)
     return new_category
@@ -651,6 +662,14 @@ async def update_category(
         cat.budget, cat.feo_quantity, cat.feo_amount, cat.planned_quantity, cat.planned_amount,
         cat.plan_source, cat.manual_plan_amount,
     )
+    # Журнал ФЭО (волна 2) — снимок всех правимых полей ДО присваивания,
+    # приём как в contracts.py.
+    _tracked_fields = (
+        "name", "code", "appendix", "is_active", "description", "budget",
+        "feo_quantity", "feo_unit", "feo_amount", "planned_quantity",
+        "planned_amount", "unit", "plan_source", "manual_plan_amount",
+    )
+    _old_values = {f: getattr(cat, f) for f in _tracked_fields}
     cat.name = category_data.name
     cat.code = category_data.code
     cat.appendix = category_data.appendix
@@ -719,6 +738,12 @@ async def update_category(
     if _new_plan != _old_plan and cat.subsidy_id:
         from app.routers.purchases import _create_plan_graph_version
         await _create_plan_graph_version(subsidy_id=cat.subsidy_id, db=db, user=current_user, note=f"Авто-версия: изменение плановых показателей ФЭО «{cat.name}»")
+    _new_values = {f: getattr(cat, f) for f in _tracked_fields}
+    await feo_history.record_updated(
+        db, feo_history.ENTITY_FEO_CATEGORY, cat.id, current_user,
+        _old_values, _new_values,
+        source=feo_history.SOURCE_MANUAL, commit=False,
+    )
     await db.commit()
     await db.refresh(cat)
     if warning:
@@ -775,9 +800,28 @@ async def _collect_blocking_purchases(ids: list[int], db: AsyncSession) -> list:
     return list(seen.values())
 
 
-async def _purge_feo_categories(ids: list[int], db: AsyncSession):
+async def _purge_feo_categories(
+    ids: list[int], db: AsyncSession, user=None,
+    source: str = feo_history.SOURCE_MANUAL, source_ref: int | None = None,
+    record_history: bool = True,
+):
     """Отвязать все ссылки на переданные категории и удалить их. Не коммитит —
-    коммитит вызывающий."""
+    коммитит вызывающий.
+
+    Журнал ФЭО (волна 2) — записи __deleted__ на каждую категорию и каждую
+    плановую позицию поддерева, ДО табличного DELETE (после него entity_id
+    ещё валиден для entity_changes — это отдельная таблица, ссылку на
+    FeoCategory/FeoPlannedItem не держит). `user` опционален (совместимость
+    с любым будущим системным вызовом без current_user). `source`/`source_ref`
+    — по умолчанию 'manual' (удаление категории человеком через DELETE
+    /{cat_id}), но feo_import_remap.py зовёт эту же функцию для удаления
+    опустевших узлов при переезде (N2б) с source='import' + source_ref=id
+    прогона (Правило №6 — один механизм удаления категории, а не второй).
+    `record_history=False` — feo_import_remap.py передаёт при dry_run: сама
+    очистка ссылок и DELETE всё равно должны отработать (иначе dry_run не
+    показал бы реальный итог переезда), но откатятся вместе со всей
+    транзакцией; история пишется ТОЛЬКО для боевого прогона (см. задание
+    волны 2 — предпросмотр не пишет ни прогон, ни историю)."""
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem
     from app.models.product import Product
@@ -807,10 +851,24 @@ async def _purge_feo_categories(ids: list[int], db: AsyncSession):
             ).values(feo_planned_item_id=None)
         )
 
+    if record_history:
+        for _pi_id in planned_item_ids:
+            await feo_history.record_deleted(
+                db, feo_history.ENTITY_FEO_ITEM, _pi_id, user,
+                source=source, source_ref=source_ref, commit=False,
+            )
+
     # Delete planned items explicitly (in case DB lacks CASCADE)
     await db.execute(
         FeoPlannedItem.__table__.delete().where(FeoPlannedItem.feo_category_id.in_(ids))
     )
+
+    if record_history:
+        for _cat_id in ids:
+            await feo_history.record_deleted(
+                db, feo_history.ENTITY_FEO_CATEGORY, _cat_id, user,
+                source=source, source_ref=source_ref, commit=False,
+            )
 
     # Delete categories in one statement — feo_categories.parent_id is
     # ON DELETE CASCADE in the DB, so order doesn't matter. Doing it via
@@ -881,7 +939,7 @@ async def delete_category(
             }
         )
 
-    await _purge_feo_categories(all_ids, db)
+    await _purge_feo_categories(all_ids, db, user=current_user)
     await db.commit()
     deleted_count = len(all_ids)
     return {"ok": True, "deleted_count": deleted_count}
@@ -926,3 +984,9 @@ def __getattr__(name):
 # /{cat_id}/collapse-to-item, POST /collapse-bulk.
 from app.routers.feo_categories_collapse import router as _collapse_router  # noqa: E402
 router.include_router(_collapse_router)
+
+# Журнал прогонов импорта ФЭО (волна 3, 26.09) — app/routers/feo_import_runs.py,
+# см. её докстринг про то же самое ограничение (routes.py трогать нельзя).
+# GET /api/feo-categories/import-runs, GET /api/feo-categories/import-runs/{id}/changes.
+from app.routers.feo_import_runs import router as _import_runs_router  # noqa: E402
+router.include_router(_import_runs_router)

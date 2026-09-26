@@ -19,11 +19,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.feo_category import FeoCategory
 from app.routers import feo_categories as fc
+from app.services import feo_history
 
 
-async def _relink_feo_category(old_id: int, new_id: int, db: AsyncSession) -> dict:
+async def _relink_feo_category(
+    old_id: int, new_id: int, db: AsyncSession, *,
+    user=None, source: str = feo_history.SOURCE_MANUAL, source_ref: int | None = None,
+    record_history: bool = True,
+) -> dict:
     """Перевести все ссылки со старой категории на новую. Не коммитит.
-    Возвращает счётчик переехавших строк по каждой таблице."""
+    Возвращает счётчик переехавших строк по каждой таблице.
+
+    Журнал ФЭО (волна 2) — плановые позиции старого узла либо ПЕРЕЕЗЖАЮТ
+    (feo_category_id меняется — __updated__) либо СЛИВАЮТСЯ с одноимённой
+    позицией нового узла и удаляются (__deleted__). `record_history=False`
+    (feo_import_remap.py передаёт при dry_run) — сама операция всё равно
+    отрабатывает и откатится вместе с транзакцией, но истории не оставляет
+    (предпросмотр не пишет историю, см. задание волны 2)."""
     from app.models.purchase import Purchase
     from app.models.purchase_item import PurchaseItem
     from app.models.product import Product
@@ -84,6 +96,11 @@ async def _relink_feo_category(old_id: int, new_id: int, db: AsyncSession) -> di
             await db.execute(
                 FeoPlannedItem.__table__.delete().where(FeoPlannedItem.id == item.id)
             )
+            if record_history:
+                await feo_history.record_deleted(
+                    db, feo_history.ENTITY_FEO_ITEM, item.id, user,
+                    source=source, source_ref=source_ref, commit=False,
+                )
         else:
             await db.execute(
                 FeoPlannedItem.__table__.update()
@@ -91,6 +108,12 @@ async def _relink_feo_category(old_id: int, new_id: int, db: AsyncSession) -> di
                 .values(feo_category_id=new_id)
             )
             new_by_name[key] = item
+            if record_history:
+                await feo_history.record_updated(
+                    db, feo_history.ENTITY_FEO_ITEM, item.id, user,
+                    {"feo_category_id": old_id}, {"feo_category_id": new_id},
+                    source=source, source_ref=source_ref, commit=False,
+                )
         planned_items_moved += 1
     counts["feo_planned_items"] = planned_items_moved
 

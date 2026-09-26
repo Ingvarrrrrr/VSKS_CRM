@@ -40,6 +40,11 @@ from app.routers import feo_categories as fc
 from app.services.feo_import_engine import _do_feo_import
 from app.services.feo_import_links import _relink_feo_category, _feo_category_load  # noqa: F401 (re-export)
 from app.services.feo_import_params import resolve_feo_import_mapped_params
+# Регистрация FeoImportRun в Base.metadata (журнал истории ФЭО, волна 1, 22.09)
+# — НЕ в app/models/__init__.py, см. докстринг app/models/feo_import_run.py
+# (файл занят параллельной сессией 152-ФЗ). Таблицу создаёт явная миграция
+# t6v8x1z3b5d7, этот импорт нужен только для Base.metadata/ORM-маппинга.
+from app.models.feo_import_run import FeoImportRun  # noqa: F401
 
 router = APIRouter(prefix="/api/feo-categories", tags=["feo_categories"])
 
@@ -202,6 +207,7 @@ async def import_feo_from_excel(
         user=current_user, remap=remap, apply_remap=apply_remap,
         duplicate_resolutions=duplicate_resolutions,
         item_type_decisions=item_type_decisions,
+        filename=file.filename, sheet_name=None,
     )
 
 
@@ -463,4 +469,5 @@ async def import_feo_mapped(
         user=current_user, remap=remap, apply_remap=apply_remap,
         duplicate_resolutions=duplicate_resolutions,
         item_type_decisions=item_type_decisions,
+        filename=file.filename, sheet_name=target_sheet,
     )

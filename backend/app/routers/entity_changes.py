@@ -30,7 +30,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/entity-changes", tags=["entity-changes"])
 
 # Allowed entity types (validation guard — ASVS V4 T-31-01-01)
-_VALID_ENTITY_TYPES = {"purchase", "wish", "task"}
+# feo_item/feo_category добавлены волной 1 журнала истории ФЭО (22.09,
+# app/services/feo_history.py — единственная точка записи для них).
+_VALID_ENTITY_TYPES = {"purchase", "wish", "task", "feo_item", "feo_category"}
 
 
 class DismissFieldBody(BaseModel):
@@ -47,6 +49,8 @@ class EntityChangeOut(BaseModel):
     changed_by_id: Optional[int] = None
     changed_by_name: Optional[str] = None
     changed_at: Optional[datetime] = None
+    source: Optional[str] = None
+    source_ref: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -62,15 +66,32 @@ async def record_entity_changes(
     changed_by_name: Optional[str],
     old_values: dict,
     new_values: dict,
+    source: Optional[str] = None,
+    source_ref: Optional[int] = None,
+    commit: bool = True,
 ) -> None:
     """Record EntityChange rows for each field that actually changed.
 
     Compares str(old) vs str(new) to handle Decimal/Date/int uniformly.
     One call per save event (D-06: one save = one change, not per-keystroke).
-    Exported for reuse by plan 31-04 (contracts cascade) and any future callers.
+    Exported for reuse by plan 31-04 (contracts cascade) and by
+    app/services/feo_history.py (журнал изменений ФЭО, волна 1, 22.09) — ОДНА
+    функция сравнения old/new на весь проект (Правило №6), не копировать.
+
+    source/source_ref — см. app/models/entity_change.py (докстринг колонок) и
+    app/services/feo_history.py::SOURCES (единственный список допустимых
+    значений source). Опциональны для обратной совместимости — существующие
+    вызовы (contracts.py) продолжают писать NULL/NULL как раньше.
+
+    commit=True (умолчание, поведение всех вызовов ДО этой правки не
+    меняется) — коммитит сразу отдельной короткой транзакцией. commit=False
+    — только db.add()/flush(), КОММИТ И ОТКАТ остаются за вызывающим кодом.
+    Нужно для импорта ФЭО (feo_history.record_*, вызывается из
+    feo_import_engine._do_feo_import): импорт — одна транзакция, и в режиме
+    dry_run обязан откатываться целиком, включая уже написанные строки
+    entity_changes — commit=True закоммитил бы их до отката остального.
 
     Only inserts rows where values differ — no-op if nothing changed.
-    Commits changes in a separate short transaction.
     """
     if entity_type not in _VALID_ENTITY_TYPES:
         raise ValueError(f"Invalid entity_type: {entity_type!r}. Must be one of {_VALID_ENTITY_TYPES}")
@@ -90,11 +111,16 @@ async def record_entity_changes(
                 new_value=new_s,
                 changed_by_id=changed_by_id,
                 changed_by_name=changed_by_name,
+                source=source,
+                source_ref=source_ref,
             ))
     if changes:
         for c in changes:
             db.add(c)
-        await db.commit()
+        if commit:
+            await db.commit()
+        else:
+            await db.flush()
 
 
 # ── Batch unseen helpers ─────────────────────────────────────────────────────
@@ -210,6 +236,53 @@ async def dismiss_field(
     return {"ok": True, "entity_type": entity_type, "entity_id": entity_id, "field_name": field_name}
 
 
+async def _check_feo_history_read_access(
+    entity_type: str, entity_id: int, current_user: User, db: AsyncSession,
+) -> None:
+    """Право ЧИТАТЬ историю feo_item/feo_category (журнал ФЭО, волна 1, 22.09).
+
+    Добавлено специально для этих двух типов — старое обоснование
+    "security-by-obscurity" в get_entity_changes ниже для purchase/wish/task
+    не менялось (там свои роутеры уже проверяют доступ при чтении самой
+    сущности), но у ФЭО отдельного per-item эндпоинта чтения нет, а данные
+    субсидийно-чувствительны.
+
+    Переиспользует get_visible_subsidy_ids(tab_key='feo_categories')
+    (app/auth/visibility.py) — ТОТ ЖЕ хелпер двухуровневой видимости субсидий,
+    что и на остальных ФЭО-эндпоинтах (Правило №6, новых прав не заводим).
+    Это ЧТЕНИЕ — сознательно не используется _check_planned_item_write_access
+    (feo_planned_items.py), та матрица про право ПИСАТЬ.
+    """
+    from app.auth.visibility import get_visible_subsidy_ids
+    from app.models.feo_category import FeoCategory
+    from app.models.feo_planned_item import FeoPlannedItem
+
+    if entity_type == "feo_category":
+        cat = (await db.execute(
+            select(FeoCategory).where(FeoCategory.id == entity_id)
+        )).scalar_one_or_none()
+        subsidy_id = cat.subsidy_id if cat else None
+    elif entity_type == "feo_item":
+        row = (await db.execute(
+            select(FeoCategory.subsidy_id)
+            .select_from(FeoPlannedItem)
+            .join(FeoCategory, FeoCategory.id == FeoPlannedItem.feo_category_id)
+            .where(FeoPlannedItem.id == entity_id)
+        )).first()
+        subsidy_id = row[0] if row else None
+    else:
+        return
+
+    if subsidy_id is None:
+        # Сущность не найдена или без субсидии — не палим существование 404-ом,
+        # просто отдаём пустую историю (см. вызывающий код: пустой список).
+        raise HTTPException(status_code=404, detail="Сущность не найдена")
+
+    visible = await get_visible_subsidy_ids(current_user, db, "feo_categories")
+    if visible is not None and subsidy_id not in visible:
+        raise HTTPException(status_code=403, detail="Нет доступа к ФЭО этой субсидии")
+
+
 @router.get("/{entity_type}/{entity_id}", response_model=List[EntityChangeOut])
 async def get_entity_changes(
     entity_type: str,
@@ -226,12 +299,19 @@ async def get_entity_changes(
     relying on the fact that the caller must know the entity_id (security-by-obscurity
     is acceptable here since entity_ids are sequential integers without additional
     secret tokens — the entity router's GET /{id} already checks access).
+
+    Исключение — feo_item/feo_category (волна 1 журнала ФЭО, 22.09): у них нет
+    отдельного per-item роутера, который бы уже проверил доступ, поэтому здесь
+    добавлена явная проверка _check_feo_history_read_access (см. её докстринг).
     """
     if entity_type not in _VALID_ENTITY_TYPES:
         raise HTTPException(
             status_code=400,
             detail=f"Недопустимый тип сущности '{entity_type}'. Допустимые: {sorted(_VALID_ENTITY_TYPES)}",
         )
+
+    if entity_type in ("feo_item", "feo_category"):
+        await _check_feo_history_read_access(entity_type, entity_id, current_user, db)
 
     q = select(EntityChange).where(
         EntityChange.entity_type == entity_type,

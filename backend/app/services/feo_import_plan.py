@@ -16,10 +16,12 @@ from sqlalchemy import select
 from app.models.feo_category import FeoCategory
 from app.services.feo_import_common import ZERO, format_rows, level_label, fmt as _fmt
 from app.services.subsidy_budget import compute_budget_map
+from app.services import feo_history
 
 
 async def apply_collected_plan(state) -> None:
     db = state.db
+    user = state.user
     cat_cache = state.cat_cache
     collected_plan = state.collected_plan
     lvl5_leaves = state.lvl5_leaves
@@ -140,6 +142,8 @@ async def apply_collected_plan(state) -> None:
             )
             if _match_item is not None:
                 _ch = False
+                _tracked = ("quantity", "unit", "amount", "item_type", "is_feo_breakdown", "is_internal_plan")
+                _old_vals = {f: getattr(_match_item, f, None) for f in _tracked}
                 if _pdata["qty"] is not None and _match_item.quantity != _pdata["qty"]:
                     _match_item.quantity = _pdata["qty"]; _ch = True
                 if _pdata["unit"] is not None and _match_item.unit != _pdata["unit"]:
@@ -162,6 +166,13 @@ async def apply_collected_plan(state) -> None:
                 if _ch:
                     updated += 1
                     updated_details.append({"row": _plan_row, "name": _plan_name, "reason": "плановая позиция из плана строки"})
+                    if state.import_run_id is not None:
+                        _new_vals = {f: getattr(_match_item, f, None) for f in _tracked}
+                        await feo_history.record_updated(
+                            db, feo_history.ENTITY_FEO_ITEM, _match_item.id, user,
+                            _old_vals, _new_vals,
+                            source=feo_history.SOURCE_IMPORT, source_ref=state.import_run_id, commit=False,
+                        )
             else:
                 _other_active = [it for it in _existing_items if (it.amount or ZERO) != ZERO]
                 if _other_active:
@@ -203,6 +214,11 @@ async def apply_collected_plan(state) -> None:
                     await db.flush()
                     created += 1
                     created_details.append({"row": _plan_row, "name": _plan_name, "reason": "плановая позиция из плана строки"})
+                    if state.import_run_id is not None:
+                        await feo_history.record_created(
+                            db, feo_history.ENTITY_FEO_ITEM, _pi.id, user,
+                            source=feo_history.SOURCE_IMPORT, source_ref=state.import_run_id, commit=False,
+                        )
 
             if _cat_obj.planned_quantity is not None:
                 _cat_obj.planned_quantity = None

@@ -33,6 +33,7 @@ from app.services.item_types import (  # noqa: F401 (normalize_item_type — р�
     normalize_item_type, apply_item_type_to_product, resolve_product_for_planned_item,
 )
 from app.models.product import Product
+from app.services import feo_history
 
 
 def _apply_payment_fields(item: FeoPlannedItem, data: FeoPlannedItemCreate) -> None:
@@ -316,10 +317,18 @@ async def create_planned_item(
     # хранит, поле транзитное.
     if data.sync_product_kind:
         await apply_item_type_to_product(db, data.product_id, item.item_type)
+    await db.flush()
+    # Журнал ФЭО (волна 2, feo_history.py) — создание позиции человеком через
+    # API. source='manual': эндпоинт доступен и без вкладки feo_categories
+    # (см. _check_planned_item_write_access), но происхождение всё равно
+    # «человек нажал кнопку», а не автоматика.
+    await feo_history.record_created(
+        db, feo_history.ENTITY_FEO_ITEM, item.id, current_user,
+        source=feo_history.SOURCE_MANUAL, commit=False,
+    )
     _sid = cat.subsidy_id
     if _sid is not None:
         from app.routers.purchases import _create_plan_graph_version
-        await db.flush()
         await _create_plan_graph_version(subsidy_id=_sid, db=db, user=current_user, note="Авто-версия: изменение плановых позиций")
     await db.commit()
     await db.refresh(item)
@@ -385,6 +394,7 @@ async def create_planned_items_bulk(
         max_sort_by_cat[cid] = max(vals) if vals else 0
 
     created: list[FeoPlannedItem] = []
+    new_items: list[FeoPlannedItem] = []
     dedup_seen: dict[tuple[int, str], FeoPlannedItem] = {}
     touched_subsidies: set[int] = set()
 
@@ -438,6 +448,7 @@ async def create_planned_items_bulk(
         _apply_payment_fields(item, data)
         db.add(item)
         created.append(item)
+        new_items.append(item)
         if norm_name:
             dedup_seen[dedup_key] = item
         if cat.subsidy_id is not None:
@@ -449,6 +460,16 @@ async def create_planned_items_bulk(
             await apply_item_type_to_product(db, data.product_id, item.item_type)
 
     await db.flush()
+
+    # Журнал ФЭО (волна 2) — по одной записи __created__ на КАЖДУЮ реально
+    # новую позицию (new_items — те, что реально db.add()'ились в цикле выше;
+    # дедуп-совпадения из existing_by_cat/dedup_seen в created попали как
+    # есть, без создания новой строки, историю по ним тут не пишем).
+    for it in new_items:
+        await feo_history.record_created(
+            db, feo_history.ENTITY_FEO_ITEM, it.id, current_user,
+            source=feo_history.SOURCE_MANUAL, commit=False,
+        )
 
     if touched_subsidies:
         from app.routers.purchases import _create_plan_graph_version
@@ -478,6 +499,17 @@ async def update_planned_item(
     if not item:
         raise HTTPException(404, "Плановая позиция не найдена")
     _feo_cat_id = item.feo_category_id
+    # Журнал ФЭО (волна 2) — снимок ДО присваивания, приём как в
+    # contracts.py (собрать словарь старых значений перед PUT).
+    _tracked_fields = (
+        "name", "quantity", "unit", "unit_price", "feo_quantity",
+        "feo_unit_price", "feo_amount", "notes", "is_active", "sort_order",
+        "item_type", "is_feo_breakdown", "is_internal_plan",
+        "feo_category_id", "payment_mode", "planned_date",
+        "monthly_start_date", "monthly_end_date", "monthly_amount",
+        "months_count", "amount",
+    )
+    _old_values = {f: getattr(item, f) for f in _tracked_fields}
     item.name = data.name
     item.quantity = data.quantity
     item.unit = data.unit
@@ -577,7 +609,17 @@ async def update_planned_item(
         # используется автопереносом вслед за сменой категории у самой позиции
         # заявки/закупки) — см. app/services/plan_autoassign.py::move_planned_item_to_category.
         from app.services.plan_autoassign import move_planned_item_to_category
-        await move_planned_item_to_category(db, item, data.feo_category_id)
+        # record_history=False — этот PUT уже пишет ОДИН общий дифф ниже
+        # (feo_history.record_updated с _old_values/_new_values, включая
+        # feo_category_id), см. докстринг move_planned_item_to_category.
+        await move_planned_item_to_category(db, item, data.feo_category_id, record_history=False)
+
+    _new_values = {f: getattr(item, f) for f in _tracked_fields}
+    await feo_history.record_updated(
+        db, feo_history.ENTITY_FEO_ITEM, item.id, current_user,
+        _old_values, _new_values,
+        source=feo_history.SOURCE_MANUAL, commit=False,
+    )
 
     _sid = (await db.execute(
         select(FeoCategory.subsidy_id).where(FeoCategory.id == item.feo_category_id)
@@ -727,10 +769,15 @@ async def delete_planned_item(
         .where(WishItem.feo_planned_item_id == item_id)
         .values(feo_planned_item_id=None)
     )
+    _item_id_for_history = item.id
     await db.delete(item)
+    await db.flush()
+    await feo_history.record_deleted(
+        db, feo_history.ENTITY_FEO_ITEM, _item_id_for_history, current_user,
+        source=feo_history.SOURCE_MANUAL, commit=False,
+    )
     if _sid is not None:
         from app.routers.purchases import _create_plan_graph_version
-        await db.flush()
         await _create_plan_graph_version(subsidy_id=_sid, db=db, user=current_user, note="Авто-версия: изменение плановых позиций")
     await db.commit()
     return {"ok": True}

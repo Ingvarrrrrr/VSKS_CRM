@@ -62,6 +62,10 @@
             <FeoTreeTable />
           </div>
 
+          <!-- Журнал загрузок ФЭО (волна 3, 26.09) — «кто загрузил файл
+               импорта и что он перезаписал», рядом с деревом ФЭО. -->
+          <FeoImportRunsPanel :subsidy-id="selectedId" />
+
           <SubsidyEventsPanel ref="eventsPanelRef" :subsidy-id="selectedId" />
         </div>
 
@@ -123,6 +127,7 @@ import SubsidySummaryBar from '@/components/subsidies/SubsidySummaryBar.vue'
 import SubsidyKpiCards from '@/components/subsidies/SubsidyKpiCards.vue'
 import FeoTreeToolbar from '@/components/subsidies/FeoTreeToolbar.vue'
 import FeoTreeTable from '@/components/subsidies/FeoTreeTable.vue'
+import FeoImportRunsPanel from '@/components/subsidies/FeoImportRunsPanel.vue'
 import { useSubsidyList } from '@/composables/subsidies/useSubsidyList'
 import { useKpiDrilldown } from '@/composables/subsidies/useKpiDrilldown'
 import SubsidyEventsPanel from '@/components/subsidies/SubsidyEventsPanel.vue'

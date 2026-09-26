@@ -46,6 +46,7 @@ from app.services.feo_category_collapse import (
     transfer_feo_money,
 )
 from app.services.text_match import normalize as _norm_name
+from app.services import feo_history
 
 router = APIRouter(tags=["feo_categories_collapse"])
 
@@ -149,6 +150,11 @@ async def _perform_collapse(db: AsyncSession, cat_id: int, current_user) -> dict
     item = await check_collapse_conflict(db, cat)
     parent_id = cat.parent_id  # родитель гарантирован check_collapse_conflict
 
+    # Журнал ФЭО (волна 2) — снимок ДО transfer_feo_money/переноса, чтобы
+    # записать одним дифом «до/после» на итоговую позицию свёртки.
+    _tracked = ("feo_amount", "feo_quantity", "feo_unit_price", "is_feo_breakdown", "feo_category_id")
+    _old_item_vals = {f: getattr(item, f, None) for f in _tracked}
+
     # (а) деньги ФЭО категории → на позицию, если у позиции своих нет
     transfer_feo_money(cat, item)
 
@@ -162,7 +168,16 @@ async def _perform_collapse(db: AsyncSession, cat_id: int, current_user) -> dict
     # feo_planned_item_id, которые bulk-релинк по feo_category_id мог не
     # захватить, если их feo_category_id почему-то уже разошёлся).
     from app.services.plan_autoassign import move_planned_item_to_category
-    await move_planned_item_to_category(db, item, parent_id)
+    # record_history=False — свой общий дифф (feo_category_id + перенесённые
+    # ФЭО-числа из transfer_feo_money) пишется ниже ОДНИМ record_updated,
+    # вместо двух разных вызовов на одно и то же действие свёртки.
+    await move_planned_item_to_category(db, item, parent_id, record_history=False)
+    _new_item_vals = {f: getattr(item, f, None) for f in _tracked}
+    await feo_history.record_updated(
+        db, feo_history.ENTITY_FEO_ITEM, item.id, current_user,
+        _old_item_vals, _new_item_vals,
+        source=feo_history.SOURCE_COLLAPSE, commit=False,
+    )
 
     # Подчистить архивные (неактивные) плановые позиции, если остались под
     # категорией — иначе ON DELETE CASCADE feo_planned_items.feo_category_id
@@ -181,6 +196,10 @@ async def _perform_collapse(db: AsyncSession, cat_id: int, current_user) -> dict
     # _purge_feo_categories здесь не нужен (тот ОБНУЛЯЕТ ссылки и УДАЛЯЕТ
     # позиции — прямо противоположно тому, что нужно при свёртке).
     await db.flush()
+    await feo_history.record_deleted(
+        db, feo_history.ENTITY_FEO_CATEGORY, cat.id, current_user,
+        source=feo_history.SOURCE_COLLAPSE, commit=False,
+    )
     await db.execute(FeoCategory.__table__.delete().where(FeoCategory.id == cat.id))
     await db.commit()
 

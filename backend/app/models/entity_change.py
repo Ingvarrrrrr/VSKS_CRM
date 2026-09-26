@@ -24,6 +24,21 @@ class EntityChange(Base):
     changed_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     changed_by_name = Column(String(200), nullable=True)
     changed_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    # Журнал изменений ФЭО (волна 1, 22.09) — откуда пришло изменение и на что
+    # оно ссылается. NULL у всех строк, заведённых до этой правки (легаси —
+    # 'purchase'/'wish'/'task' через record_entity_changes без source).
+    # Единственный источник допустимых значений source — app/services/
+    # feo_history.py::SOURCES (Правило №6, не заводить второй список строк):
+    #   'manual'     — человек поправил поле руками (source_ref=NULL).
+    #   'import'     — импорт Excel ФЭО (source_ref=feo_import_runs.id).
+    #   'wish'       — позиция появилась/изменилась из заявки (source_ref=wishes.id).
+    #   'purchase'   — из закупки (source_ref=purchases.id).
+    #   'autoassign' — автоматическая привязка закупки/заявки к плану (source_ref=NULL
+    #                  либо id закупки/заявки, см. вызывающий код волны 2).
+    #   'collapse'   — сворачивание категорий-дублей (source_ref=NULL либо id
+    #                  категории-источника, см. вызывающий код волны 2).
+    source = Column(String(20), nullable=True)
+    source_ref = Column(Integer, nullable=True)
 
 
 class EntityFieldSeen(Base):

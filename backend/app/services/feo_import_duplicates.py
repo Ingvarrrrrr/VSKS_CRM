@@ -51,6 +51,7 @@ from app.models.feo_planned_item import FeoPlannedItem
 from app.services.feo_import_common import QUANT, ZERO, format_rows, level_label, norm
 from app.services.feo_import_common import fmt as _fmt
 from app.services.feo_import_comments import record_item_id
+from app.services import feo_history
 
 def _sum_qty(rows: list) -> Decimal | None:
     """Единственное место суммирования количества группы дублей (Правило №6
@@ -244,8 +245,18 @@ async def _upsert_one(state, leaf, item_data: dict, *, extra_reason: str | None,
         state.created += 1
         reason = extra_reason or f"плановая позиция ({level_label(5)})"
         state.created_details.append({"row": row_num, "name": name, "reason": reason})
+        if state.import_run_id is not None:
+            await feo_history.record_created(
+                db, feo_history.ENTITY_FEO_ITEM, pi.id, state.user,
+                source=feo_history.SOURCE_IMPORT, source_ref=state.import_run_id, commit=False,
+            )
         return pi
 
+    _tracked = (
+        "quantity", "unit", "amount", "item_type", "is_feo_breakdown", "is_internal_plan",
+        "unit_price", "feo_quantity", "feo_unit_price", "feo_amount",
+    )
+    _old_vals = {f: getattr(existing_item, f, None) for f in _tracked}
     ch2 = False
     if item_data["qty"] is not None and existing_item.quantity != item_data["qty"]:
         existing_item.quantity = item_data["qty"]; ch2 = True
@@ -271,6 +282,13 @@ async def _upsert_one(state, leaf, item_data: dict, *, extra_reason: str | None,
         state.updated += 1
         reason = extra_reason or "обновлена позиция — значения перезаписаны из файла"
         state.updated_details.append({"row": row_num, "name": name, "reason": reason})
+        if state.import_run_id is not None:
+            _new_vals = {f: getattr(existing_item, f, None) for f in _tracked}
+            await feo_history.record_updated(
+                db, feo_history.ENTITY_FEO_ITEM, existing_item.id, state.user,
+                _old_vals, _new_vals,
+                source=feo_history.SOURCE_IMPORT, source_ref=state.import_run_id, commit=False,
+            )
     else:
         state.skipped += 1
         state.skipped_details.append({"row": row_num, "name": name, "reason": "без изменений"})
@@ -300,6 +318,12 @@ async def _upsert_merge(state, leaf, rows: list, key: str) -> None:
                 "row": None, "name": extra.name,
                 "reason": f"деактивирована как лишний дубль после объединения группы ({_rows_str})",
             })
+            if state.import_run_id is not None:
+                await feo_history.record_updated(
+                    state.db, feo_history.ENTITY_FEO_ITEM, extra.id, state.user,
+                    {"is_active": True}, {"is_active": False},
+                    source=feo_history.SOURCE_IMPORT, source_ref=state.import_run_id, commit=False,
+                )
     total_before = sum((r["amount"] or ZERO) for r in rows)
     _qty_str = _fmt(merged["qty"]) if merged["qty"] is not None else "не задано"
     state.warnings.append({

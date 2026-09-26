@@ -276,6 +276,19 @@ class FeoImportState:
     deleted_details: list = field(default_factory=list)
     remap_aborted_reason: str | None = None
 
+    # --- Журнал ФЭО (волна 2, 26.09): один FeoImportRun на боевой прогон —
+    # см. app/models/feo_import_run.py и app/services/feo_history.py.
+    # filename/sheet_name — из вызывающего роутера (app/routers/feo_import.py).
+    # import_run_id заполняется feo_import_core.py ДО apply_rows (None при
+    # dry_run — предпросмотр не пишет ни прогон, ни историю, см. докстринг
+    # feo_history.py и задание волны 2). Все feo_history.record_* по ходу
+    # импорта (feo_import_apply.py/feo_import_plan.py/feo_import_duplicates.py/
+    # feo_import_remap.py) обязаны проверять `state.import_run_id is not None`
+    # перед вызовом — единственный признак «это боевой прогон, не dry_run».
+    filename: str | None = None
+    sheet_name: str | None = None
+    import_run_id: int | None = None
+
 
 async def _do_feo_import(
     rows: list,
@@ -357,6 +370,11 @@ async def _do_feo_import(
     # feo_import_item_types.py). Строка, не упомянутая в этом словаре, —
     # на боевом импорте применяется тип из файла без изменения каталога.
     item_type_decisions: str = "",
+    # Журнал ФЭО (волна 2, 26.09) — прокидывается из app/routers/feo_import.py
+    # (file.filename / sheet_name запроса), только для FeoImportRun.filename/
+    # sheet_name — самому парсингу не нужны, влияют ТОЛЬКО на журнал.
+    filename: str | None = None,
+    sheet_name: str | None = None,
 ) -> dict:
     """Core import logic shared by /import и /import-mapped endpoints.
 
@@ -459,8 +477,30 @@ async def _do_feo_import(
         default_subsidy_id=default_subsidy_id, rows=rows, remap_list=remap_list,
         duplicate_resolutions=_dup_resolutions,
         item_type_decisions=_item_type_decisions,
+        filename=filename, sheet_name=sheet_name,
         **column_kwargs,
     )
+
+    # Журнал ФЭО (волна 2) — один FeoImportRun на боевой прогон, СОЗДАЁТСЯ
+    # здесь (ДО apply_rows), чтобы record_created/record_updated внутри
+    # apply_rows/apply_collected_plan/finalize_lvl5_items/remap_and_prune уже
+    # могли сослаться на его id через source_ref. dry_run НЕ создаёт прогон
+    # (state.import_run_id остаётся None) — предпросмотр не пишет историю
+    # (см. докстринг feo_history.py и задание волны 2). Не коммитим отдельно —
+    # живёт в той же транзакции, что и весь импорт (dry_run откатит вместе со
+    # всем остальным).
+    if not dry_run:
+        from app.models.feo_import_run import FeoImportRun
+        _run = FeoImportRun(
+            subsidy_id=default_subsidy_id,
+            user_id=getattr(user, "id", None),
+            user_name=getattr(user, "full_name", None),
+            filename=filename,
+            sheet_name=sheet_name,
+        )
+        db.add(_run)
+        await db.flush()
+        state.import_run_id = _run.id
 
     from app.models.subsidy import Subsidy
     state.sub_rows = (await db.execute(select(Subsidy))).scalars().all()
@@ -500,6 +540,21 @@ async def _do_feo_import(
     await apply_collected_plan(state)
     await build_unmatched_report(state)
     await remap_and_prune(state)
+
+    # Журнал ФЭО (волна 2) — счётчики прогона. Правило №6: те же числа, что
+    # уже посчитал импорт и отдаёт в ответе ниже (state.created/updated/
+    # skipped/comments_created/len(state.warnings)), НЕ пересчитываем заново.
+    if state.import_run_id is not None:
+        from datetime import datetime, timezone
+        from app.models.feo_import_run import FeoImportRun
+        _run = await db.get(FeoImportRun, state.import_run_id)
+        if _run is not None:
+            _run.finished_at = datetime.now(timezone.utc)
+            _run.created_count = state.created
+            _run.updated_count = state.updated
+            _run.skipped_count = state.skipped
+            _run.comments_created = state.comments_created
+            _run.warnings_count = len(state.warnings)
 
     if dry_run:
         await db.rollback()

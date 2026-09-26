@@ -19,6 +19,7 @@ from app.models.feo_category import FeoCategory
 from app.routers import feo_categories as fc
 from app.services.feo_import_snapshot import full_path
 from app.services.feo_import_snapshot import subtree_ids as _subtree_ids_of
+from app.services import feo_history
 
 
 async def remap_and_prune(state) -> None:
@@ -77,7 +78,11 @@ async def remap_and_prune(state) -> None:
             # Шаг A — применить переезды. Пути берём СЕЙЧАС (пока объекты живы).
             for _old_id, _new_cat, _new_path in _resolved_remap:
                 _old_path = full_path(existing_by_id, _old_id)
-                _counts = await _relink_feo_category(_old_id, _new_cat.id, db)
+                _counts = await _relink_feo_category(
+                    _old_id, _new_cat.id, db, user=state.user,
+                    source=feo_history.SOURCE_IMPORT, source_ref=state.import_run_id,
+                    record_history=state.import_run_id is not None,
+                )
                 relinked_count += sum(_counts.values())
                 remap_applied.append({
                     "old_path": _old_path,
@@ -127,7 +132,11 @@ async def remap_and_prune(state) -> None:
                         deleted_details.append({"path": _cand["path"], "reason": "нет в новом файле, ссылок нет"})
                     else:
                         deleted_details.append({"path": full_path(existing_by_id, _sid), "reason": f"внутри удаляемого «{_cand['path']}»"})
-                await fc._purge_feo_categories(subtree, db)
+                await fc._purge_feo_categories(
+                    subtree, db, user=state.user,
+                    source=feo_history.SOURCE_IMPORT, source_ref=state.import_run_id,
+                    record_history=state.import_run_id is not None,
+                )
                 deleted_count += len(subtree)
                 already_deleted.update(subtree)
 

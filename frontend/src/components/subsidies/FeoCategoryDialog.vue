@@ -334,6 +334,21 @@
           </template>
         </div>
         <v-checkbox v-model="feoEditForm.is_active" label="Активна" density="compact" hide-details class="mt-2" />
+
+        <!-- История изменений (волна 3, 26.09) — тот же FeoItemHistory.vue,
+             что и у плановой позиции (PlannedItemEditDialog.vue), только с
+             entity-type="feo_category" (Правило №6 — один компонент ленты). -->
+        <v-divider class="my-3" />
+        <v-expansion-panels variant="accordion">
+          <v-expansion-panel>
+            <v-expansion-panel-title class="text-body-2">
+              <v-icon icon="mdi-history" size="16" class="mr-2" />История изменений
+            </v-expansion-panel-title>
+            <v-expansion-panel-text>
+              <FeoItemHistory entity-type="feo_category" :entity-id="feoEditTarget?.id" />
+            </v-expansion-panel-text>
+          </v-expansion-panel>
+        </v-expansion-panels>
       </v-card-text>
       <v-card-actions class="px-4 pb-4">
         <v-spacer />
@@ -364,6 +379,7 @@ import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { pushFeoUndo } from '@/composables/subsidies/useFeoUndoStack'
 import { createCategoryRaw, deleteCategoryRaw, putCategoryFull, buildCategoryFullPayload, moveCategoryRaw } from '@/composables/subsidies/useFeoTreeDnd'
 import type { FeoCategory, FeoNode } from '@/composables/subsidies/types'
+import FeoItemHistory from '@/components/subsidies/FeoItemHistory.vue'
 
 // Снимок «до» правки — payload из ИСХОДНОЙ категории в момент открытия диалога
 // (openEdit ниже), нужен только стеку отмены (доп. волна 2026-09-14: «отмена

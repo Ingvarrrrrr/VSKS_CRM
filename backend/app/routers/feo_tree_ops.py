@@ -25,6 +25,7 @@ from app.models.feo_category import FeoCategory
 from app.auth.jwt import require_role, ADMIN_ROLES
 from app.auth.permissions import require_tab
 from app.routers import feo_categories as fc
+from app.services import feo_history
 
 router = APIRouter(prefix="/api/feo-categories", tags=["feo_categories"])
 
@@ -83,12 +84,21 @@ async def move_category(
         warning = f"Создан новый уровень вложенности: {new_max_level}"
 
     # Update category
+    _old_parent_id, _old_level = cat.parent_id, cat.level
     cat.parent_id = new_parent_id
     cat.level = new_level
 
     # Recursively update children levels
     if level_delta != 0:
         await _update_subtree_levels(cat_id, level_delta, db)
+
+    if _old_parent_id != new_parent_id:
+        await feo_history.record_updated(
+            db, feo_history.ENTITY_FEO_CATEGORY, cat.id, current_user,
+            {"parent_id": _old_parent_id, "level": _old_level},
+            {"parent_id": new_parent_id, "level": new_level},
+            source=feo_history.SOURCE_MANUAL, commit=False,
+        )
 
     await db.commit()
     result = {"ok": True, "new_level": new_level}
@@ -295,6 +305,11 @@ async def align_budget_to_plan(
             },
         )
 
+    await feo_history.record_updated(
+        db, feo_history.ENTITY_FEO_CATEGORY, cat.id, current_user,
+        {"budget": old_budget}, {"budget": float(new_budget)},
+        source=feo_history.SOURCE_MANUAL, commit=False,
+    )
     await db.commit()
     await db.refresh(cat)
 

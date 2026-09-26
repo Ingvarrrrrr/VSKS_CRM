@@ -21,6 +21,8 @@ from fastapi import HTTPException
 from sqlalchemy import select, func, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services import feo_history
+
 
 async def auto_assign_planned_items(
     items, fallback_category_id: Optional[int], db: AsyncSession, *, note: str = "автозаведением плана",
@@ -90,6 +92,7 @@ async def auto_assign_planned_items(
     from app.models.feo_category import FeoCategory
     from app.services.feo_import_common import resolve_origin_flags
     from app.services.text_match import normalize
+    from app.services import feo_history
 
     # cat_id -> {normalize(name): fpi_id}; загружается лениво, один раз на категорию.
     _cat_index: dict[int, dict[str, int]] = {}
@@ -179,6 +182,31 @@ async def auto_assign_planned_items(
             )
             db.add(new_fpi)
             await db.flush()
+            # Журнал ФЭО (волна 2) — «если плановая появилась из заявки/закупки,
+            # пишется, на основании какой» (владелец, дословно, задание волны 2).
+            # `items` — WishItem или PurchaseItem (см. докстринг функции): у
+            # WishItem source_ref — сама заявка (wish_id), у PurchaseItem — сама
+            # закупка (purchase_id). `user`/changed_by остаётся NULL здесь
+            # намеренно — по source_ref уже видно происхождение (заявка/закупка),
+            # а КТО её завёл/отредактировал — читается из истории самой заявки/
+            # закупки, не дублируем это дважды (Правило №6).
+            _wish_id = getattr(it, "wish_id", None)
+            _purchase_id = getattr(it, "purchase_id", None)
+            if _wish_id is not None:
+                await feo_history.record_created(
+                    db, feo_history.ENTITY_FEO_ITEM, new_fpi.id, None,
+                    source=feo_history.SOURCE_WISH, source_ref=_wish_id, commit=False,
+                )
+            elif _purchase_id is not None:
+                await feo_history.record_created(
+                    db, feo_history.ENTITY_FEO_ITEM, new_fpi.id, None,
+                    source=feo_history.SOURCE_PURCHASE, source_ref=_purchase_id, commit=False,
+                )
+            else:
+                await feo_history.record_created(
+                    db, feo_history.ENTITY_FEO_ITEM, new_fpi.id, None,
+                    source=feo_history.SOURCE_AUTOASSIGN, commit=False,
+                )
             entry = (new_fpi.id, new_fpi.item_type)
             index[norm_name] = entry  # следующая позиция этого же вызова с тем же
             # нормализованным именем (напр. «Бумага А4,» после «Бумага А4») найдёт
@@ -248,7 +276,10 @@ async def backfill_item_type_from_plan(items, db: AsyncSession) -> None:
 # только привязку переезжающей позиции, отдаём предупреждение вызывающему.
 # ---------------------------------------------------------------------------
 
-async def move_planned_item_to_category(db: AsyncSession, fpi, new_category_id: int) -> None:
+async def move_planned_item_to_category(
+    db: AsyncSession, fpi, new_category_id: int, *, record_history: bool = True,
+    source: str = feo_history.SOURCE_AUTOASSIGN, source_ref: Optional[int] = None,
+) -> None:
     """Единая логика «переезда» FeoPlannedItem в другую категорию ФЭО вместе со
     ВСЕМИ позициями закупок/заявок, которые на неё ссылаются (feo_planned_item_id).
 
@@ -263,10 +294,19 @@ async def move_planned_item_to_category(db: AsyncSession, fpi, new_category_id: 
     позицию была ещё жива ссылка WishItem несконвертированной заявки, она
     расходилась с новой категорией; тот же класс бага, что и с PurchaseItem).
     Commit — на вызывающем.
+
+    `record_history=False` — feo_planned_items.py::update_planned_item
+    передаёт: тот эндпоинт уже пишет ОДИН общий дифф всей позиции (включая
+    feo_category_id) сам, вызывая эту функцию как часть своей обработки —
+    вторая запись здесь задвоила бы историю одного и того же PUT (Правило
+    проекта: одно сохранение — одна запись). Автоматический перенос вслед за
+    сменой категории позиции закупки/заявки (move_or_detach_planned_item ниже)
+    — единственный путь БЕЗ своего диффа выше по стеку, там остаётся True.
     """
     from app.models.purchase_item import PurchaseItem
     from app.models.wish_item import WishItem
 
+    _old_cat_id = fpi.feo_category_id
     fpi.feo_category_id = new_category_id
     await db.execute(
         sql_update(PurchaseItem)
@@ -278,6 +318,23 @@ async def move_planned_item_to_category(db: AsyncSession, fpi, new_category_id: 
         .where(WishItem.feo_planned_item_id == fpi.id)
         .values(feo_category_id=new_category_id)
     )
+    # Журнал ФЭО (волна 2) — переезд плановой позиции вслед за сменой категории
+    # позиции закупки/заявки (см. move_or_detach_planned_item ниже). Вызов из
+    # PUT /feo-planned-items/{id} (feo_planned_items.py) уже пишет свой
+    # record_updated с полным диффом позиции ДО/ПОСЛЕ — здесь source='manual'
+    # тоже подходит (перенос инициирован человеком: либо через PUT напрямую,
+    # либо через смену категории у позиции закупки/заявки), поэтому пишем
+    # безусловно; при двойном вызове (PUT уже залогировал feo_category_id в
+    # своём общем дифф-снимке) это просто вторая строка с тем же изменением —
+    # entity_changes не дедуплицирует построчные записи, это уже так для
+    # остальных полей (Правило проекта: одно сохранение — одна запись, здесь
+    # тот редкий случай двух разных вызывающих путей на одно и то же поле).
+    if record_history and _old_cat_id != new_category_id:
+        await feo_history.record_updated(
+            db, feo_history.ENTITY_FEO_ITEM, fpi.id, None,
+            {"feo_category_id": _old_cat_id}, {"feo_category_id": new_category_id},
+            source=source, source_ref=source_ref, commit=False,
+        )
 
 
 async def _fpi_reference_keys(db: AsyncSession, fpi_id: int) -> set:
@@ -334,6 +391,12 @@ async def deactivate_if_orphaned(db: AsyncSession, fpi) -> None:
     if keys:
         return
     fpi.is_active = False
+    from app.services import feo_history
+    await feo_history.record_updated(
+        db, feo_history.ENTITY_FEO_ITEM, fpi.id, None,
+        {"is_active": True}, {"is_active": False},
+        source=feo_history.SOURCE_AUTOASSIGN, commit=False,
+    )
 
 
 async def move_or_detach_planned_item(db: AsyncSession, item, new_category_id: int) -> Optional[str]:

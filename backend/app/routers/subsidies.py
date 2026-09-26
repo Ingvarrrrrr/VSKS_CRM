@@ -764,8 +764,29 @@ async def delete_subsidy(
     # is NOT NULL, and ORM-level cascade would try to NULL it on parent delete -> IntegrityError.
     # Direct DELETE relies on the DB and avoids the autoflush nullify path entirely.
     from app.models.feo_planned_item import FeoPlannedItem
+    from app.services import feo_history
     try:
         cat_ids_subq = select(FeoCategory.id).where(FeoCategory.subsidy_id == subsidy_id)
+        cat_ids = (await db.execute(cat_ids_subq)).scalars().all()
+        # Журнал ФЭО (волна 2) — субсидия удаляется целиком вместе со всем
+        # деревом ФЭО и плановыми позициями; записи __deleted__ пишутся ДО
+        # bulk DELETE (entity_changes — отдельная таблица, ссылку на
+        # FeoCategory/FeoPlannedItem не держит, entity_id остаётся валидным
+        # значением после удаления строки).
+        if cat_ids:
+            item_ids = (await db.execute(
+                select(FeoPlannedItem.id).where(FeoPlannedItem.feo_category_id.in_(cat_ids))
+            )).scalars().all()
+            for _iid in item_ids:
+                await feo_history.record_deleted(
+                    db, feo_history.ENTITY_FEO_ITEM, _iid, current_user,
+                    source=feo_history.SOURCE_MANUAL, commit=False,
+                )
+            for _cid in cat_ids:
+                await feo_history.record_deleted(
+                    db, feo_history.ENTITY_FEO_CATEGORY, _cid, current_user,
+                    source=feo_history.SOURCE_MANUAL, commit=False,
+                )
         await db.execute(
             delete(FeoPlannedItem).where(FeoPlannedItem.feo_category_id.in_(cat_ids_subq))
         )

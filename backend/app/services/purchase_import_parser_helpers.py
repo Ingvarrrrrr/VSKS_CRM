@@ -121,6 +121,18 @@ async def _resolve_feo_levels(
                 )
                 db.add(new_node)
                 await db.flush()
+                # Журнал ФЭО (волна 2) — узел дерева, автосозданный импортом
+                # закупок (файл закупки называет путь ФЭО, которого ещё нет).
+                # user=None: этот слой (_resolve_feo_levels) не видит
+                # current_user — вызывающая цепочка (purchase_import_parser*)
+                # его тоже не прокидывает по всем уровням; source='manual'
+                # (человек запустил импорт закупок) без source_ref — минимум,
+                # достаточный, чтобы факт автосоздания узла попал в журнал.
+                from app.services import feo_history
+                await feo_history.record_created(
+                    db, feo_history.ENTITY_FEO_CATEGORY, new_node.id, None,
+                    source=feo_history.SOURCE_MANUAL, commit=False,
+                )
                 # Добавляем в индекс и в общий список
                 feo_index[new_node.id] = new_node
                 if feo_rows_all is not None:

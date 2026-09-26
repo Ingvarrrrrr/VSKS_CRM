@@ -35,6 +35,7 @@ from app.services.feo_import_budget_conflicts import (
 from app.services.feo_import_item_types import resolve_item_type_for_row
 from app.services.feo_import_comments import register_category_comment_intent, register_item_comment_intent
 from app.routers.feo_planned_items import normalize_item_type
+from app.services import feo_history
 
 
 async def create_version_snapshot(state) -> None:
@@ -263,7 +264,16 @@ async def apply_rows(state) -> None:
         # Единственная реализация — feo_import_common.find_or_create_category
         # (Правило №6). Тонкая обёртка здесь оставлена, чтобы не переписывать
         # ~десяток вызовов ниже по сигнатуре.
-        return await find_or_create_category(db, cat_cache, subsidy_id, parent_id, name, level)
+        cat, was_created = await find_or_create_category(db, cat_cache, subsidy_id, parent_id, name, level)
+        # Журнал ФЭО (волна 2) — новая категория дерева, заведённая импортом.
+        # state.import_run_id is None при dry_run (предпросмотр истории не
+        # пишет, см. докстринг FeoImportState.import_run_id).
+        if was_created and state.import_run_id is not None:
+            await feo_history.record_created(
+                db, feo_history.ENTITY_FEO_CATEGORY, cat.id, user,
+                source=feo_history.SOURCE_IMPORT, source_ref=state.import_run_id, commit=False,
+            )
+        return cat, was_created
 
     # Пред-проход по ВСЕМ строкам файла (задача владельца 2026-09-09, вторая
     # часть правила «Плановая позиция становится узлом уровня») — ДО основного

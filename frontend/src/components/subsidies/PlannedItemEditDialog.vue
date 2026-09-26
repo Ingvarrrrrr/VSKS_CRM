@@ -185,6 +185,21 @@
             {{ p.editLegacyMonthsLabel.value }} — укажите период выше, чтобы пересчитать точно.
           </div>
         </template>
+        <!-- История изменений (волна 3, 26.09) — «кто менял плановые позиции
+             или вносил новые, независимо от способа внесения». Единственный
+             компонент FeoItemHistory.vue переиспользуется и для категорий
+             (FeoCategoryDialog.vue) — Правило №6, второй ленты не заводим. -->
+        <v-divider class="my-3" />
+        <v-expansion-panels variant="accordion">
+          <v-expansion-panel>
+            <v-expansion-panel-title class="text-body-2">
+              <v-icon icon="mdi-history" size="16" class="mr-2" />История изменений
+            </v-expansion-panel-title>
+            <v-expansion-panel-text>
+              <FeoItemHistory entity-type="feo_item" :entity-id="p.editPlannedDialog.value.id" />
+            </v-expansion-panel-text>
+          </v-expansion-panel>
+        </v-expansion-panels>
       </v-card-text>
       <v-card-actions class="px-4 pb-3">
         <v-spacer />
@@ -205,6 +220,7 @@ import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
 import { ITEM_TYPE_OPTIONS } from '@/utils/itemTypeKind'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { usePlannedItems } from '@/composables/subsidies/usePlannedItems'
+import FeoItemHistory from '@/components/subsidies/FeoItemHistory.vue'
 
 const { mobile } = useDisplay()
 const p = usePlannedItems(useSubsidyDetailCtx())

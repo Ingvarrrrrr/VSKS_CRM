@@ -43,39 +43,62 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
   const { props, localItems, selectedItemIdxs, emitUpdate, emit, showSnack, applyMatchCandidate, clearMatchBinding, clearItem } = deps
 
   const products = ref<Product[]>([])
+  // Перф (владелец, 27.09.2026, «закупка грузится 10 сек»): GET /api/products/
+  // без ids отдаёт ВЕСЬ каталог (≈4,4 МБ JSON, ~800 КБ gzip) — на карточке
+  // закупки открытие грузило его дважды (см. лог nginx). fullCatalogLoaded
+  // гейтит ленивую ОДНОКРАТНУю догрузку полного каталога (ensureFullCatalog)
+  // — только когда реально нужен (пикер товара / диалог «новый товар из
+  // каталога»), не на каждое открытие карточки.
+  const fullCatalogLoaded = ref(false)
+  let _fullCatalogPromise: Promise<void> | null = null
 
   async function loadProducts() {
     try {
       // Перф (координатор, сессия 2026-09-20, находка «каталог грузится
-      // ДВАЖДЫ при открытии заявки»): PurchaseItemsEditor.vue::onMounted зовёт
-      // loadProducts() БЕЗУСЛОВНО, ДО того как useWishForm.ts::openEditDialog
-      // успевает наполнить localItems — это был ПЕРВЫЙ полный фетч каталога
-      // (`/products/`, без ids, весь каталог ~4 МБ), сразу за GET /wishes/{id}
-      // и ВТОРЫМ таким же полным фетчем (`/products/?limit=10000`, убран в эту
-      // же сессию в useWishForm.ts). В заявке (isWishStage) каталог целиком не
-      // нужен: основной подбор товара идёт через InlineProductMatch.vue (свой
-      // POST /products/match, эту ref не читает), а строки уже несут product_id
-      // (сервер дозаполняет его по имени, см. wish_serializers.py). Грузим
-      // только уже привязанные товары — по id, тем же контрактом
-      // (`/products/?ids=`), что и useWishActions.ts/usePurchaseSplit.ts.
-      // Вторичные фичи каталога (группировка по категории/типу для ещё НЕ
-      // привязанных строк, подсказки имени/категории/типа в диалоге «Новый
-      // товар из каталога», productPickerDialog fallback-список) в заявке при
-      // этом видят суженный products — деградация осознанная, обычные закупки
-      // (isWishStage=false) не затронуты вовсе.
-      if (props.isWishStage) {
-        const ids = [...new Set(
-          (localItems.value as any[])
-            .map((it) => it?.product_id)
-            .filter((id): id is number => id != null)
-        )]
-        products.value = ids.length ? await apiFetch<Product[]>(`/products/?ids=${ids.join(',')}`) : []
-        return
-      }
-      products.value = await apiFetch<Product[]>('/products/')
+      // ДВАЖДЫ при открытии заявки», расширено 27.09.2026 на закупку —
+      // владелец: «закупки грузятся долго... GET /api/products/ ДВАЖДЫ подряд,
+      // ≈4,4 МБ»): PurchaseItemsEditor.vue::onMounted зовёт loadProducts()
+      // БЕЗУСЛОВНО при открытии ЛЮБОЙ карточки (заявка И закупка) — грузить
+      // ВЕСЬ каталог тут незачем: подбор товара идёт через InlineProductMatch.vue
+      // (свой POST /products/match, эту ref не читает), а строки уже несут
+      // product_id. Грузим только уже привязанные товары — по id, тем же
+      // контрактом (`/products/?ids=`), что и useWishActions.ts/
+      // usePurchaseSplit.ts. Вторичные фичи каталога (группировка по
+      // категории/типу для ещё НЕ привязанных строк, подсказки в диалоге
+      // «Новый товар из каталога», productPickerDialog fallback-список) при
+      // этом видят суженный products ДО первого обращения — см.
+      // ensureFullCatalog(), которую они дозывают сами (openProductPicker/
+      // openFullProduct) при реальной необходимости.
+      const ids = [...new Set(
+        (localItems.value as any[])
+          .map((it) => it?.product_id)
+          .filter((id): id is number => id != null)
+      )]
+      products.value = ids.length ? await apiFetch<Product[]>(`/products/?ids=${ids.join(',')}`) : []
     } catch (e) {
       console.warn('[PurchaseItemsEditor] Could not load products:', e)
     }
+  }
+
+  // Догружает ПОЛНЫЙ каталог ОДИН раз за время жизни компонента (не на каждый
+  // вызов пикера/диалога) — общий промис не даёт двум одновременным вызовам
+  // (например, клик по строке во время ещё не отрисованного диалога) уйти в
+  // две параллельные загрузки одного и того же (тот же паттерн дедупа, что и
+  // в api.ts для инфлайт-запросов, но здесь нужен персистентный флаг, а не
+  // разовый).
+  function ensureFullCatalog(): Promise<void> {
+    if (fullCatalogLoaded.value) return Promise.resolve()
+    if (_fullCatalogPromise) return _fullCatalogPromise
+    _fullCatalogPromise = apiFetch<Product[]>('/products/')
+      .then(list => {
+        products.value = list
+        fullCatalogLoaded.value = true
+      })
+      .catch(e => {
+        console.warn('[PurchaseItemsEditor] Could not load full catalog:', e)
+      })
+      .finally(() => { _fullCatalogPromise = null })
+    return _fullCatalogPromise
   }
 
   // ── Группировка/фильтр позиций по категории и виду товара из каталога ────────
@@ -296,6 +319,9 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
     productPickerIdx.value = idx
     productPickerSearch.value = localItems.value[idx]?.item_name || ''
     productPickerDialog.value = true
+    // Пикер ищет по ВСЕМУ каталогу (productItemsFor фильтрует products.value
+    // целиком) — догружаем его тут, не на mount карточки.
+    void ensureFullCatalog()
   }
 
   function selectFromPicker(prod: Product) {
@@ -395,6 +421,10 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
   }
 
   function openFullProduct(idx: number, prefill?: string, productId?: number | null, prefillPrice?: number) {
+    // Диалог проверяет дубликаты по имени и подсказывает категорию/тип/имя
+    // (fullProductNameSuggestions/isFullProductDuplicate/fullProductTypeOptions/
+    // fullProductCategoryOptions) — все читают products.value целиком.
+    void ensureFullCatalog()
     fullProductIdx.value = idx
     fullProductEditingId.value = null
     resetFullProductForm(prefill)
@@ -525,7 +555,7 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
   }
 
   return {
-    products, loadProducts,
+    products, loadProducts, ensureFullCatalog, fullCatalogLoaded,
     itemsGroupBy, itemsFilterCats, itemsFilterTypes, productById, itemCategoryOf, itemTypeOf,
     itemCategoryOptions, itemTypeOptions, itemsFilterActive, itemsDisplayRows, visibleItemsCount,
     hasUncatalogedSelected, uncatalogedSelectedCount, bulkAddCatalogLoading, bulkAddToCatalog,

@@ -3953,15 +3953,25 @@ const vatExemptionAutoBasis = computed<string | null>(() => {
 const loadRefs = async () => {
   // Phase 26-ZZ: контрагенты через server-search (см. onContractorSearch).
   // Локальный contractors.value наполняется по мере поиска и ad-hoc fetch'ей.
-  const [subs, feos, prods, evts] = await Promise.all([
+  // Перф (владелец, 27.09.2026, «закупка грузится 10 сек» — прод-лог: GET
+  // /api/products/ отдавал ВЕСЬ каталог, ≈4,4 МБ JSON, ДВАЖДЫ подряд на
+  // открытие карточки): здесь раньше грузился ВЕСЬ каталог товаров ДО
+  // loadPurchase() (await loadRefs() строго перед await loadPurchase() в
+  // onMounted ниже — то есть на пути открытия карточки существующей закупки
+  // это было В КРИТИЧЕСКОМ ПУТИ, ВТОРОЙ такой же полный фетч дублировал
+  // useItemsCatalog.ts::loadProducts на самой PurchaseItemsEditor). products
+  // здесь нужен только чтобы подставить фото/описание УЖЕ привязанных товаров
+  // при разборе data.items (см. loadPurchase ниже) — грузим их точечно по id
+  // ТАМ, где известны id (`/products/?ids=`, тот же контракт, что и в
+  // useItemsCatalog.ts/useWishActions.ts). Для новой закупки (items пустые)
+  // каталог тут вовсе не нужен.
+  const [subs, feos, evts] = await Promise.all([
     apiFetch<Subsidy[]>('/subsidies/'),
     apiFetch<FeoCategory[]>('/feo-categories/'),
-    apiFetch<Product[]>('/products/'),
     apiFetch<EventItem[]>('/events/'),
   ])
   subsidies.value = subs
   allFeoCategories.value = feos
-  products.value = prods
   allEvents.value = evts
   loadOrgUsers()
   loadInitialContractors()
@@ -4261,6 +4271,17 @@ const loadPurchase = async () => {
 
   // Load items
   if (data.items && data.items.length) {
+    // Перф: точечная догрузка ТОЛЬКО товаров, привязанных к позициям этой
+    // закупки (не весь каталог, см. docstring loadRefs выше) — для фото/
+    // описания/штампа цены (_photo_url/_description/_price_meta ниже).
+    const _itemProductIds = [...new Set(
+      data.items.map((i: any) => i.product_id).filter((id: any): id is number => id != null)
+    )]
+    if (_itemProductIds.length) {
+      const _itemProducts = await apiFetch<Product[]>(`/products/?ids=${_itemProductIds.join(',')}`)
+      const _known = new Set(products.value.map(p => p.id))
+      for (const p of _itemProducts) if (!_known.has(p.id)) { products.value.push(p); _known.add(p.id) }
+    }
     items.value = data.items.map((i: any) => {
       const prod = i.product_id ? products.value.find(p => p.id === i.product_id) : null
       return {

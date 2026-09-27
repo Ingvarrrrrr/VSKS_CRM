@@ -19,7 +19,7 @@ from app.models.feo_category import FeoCategory
 from app.services.feo_plan import compute_feo_plan_tree
 
 
-async def _compute_purchase_feo_excess(db: AsyncSession, purchases: list) -> dict:
+async def _compute_purchase_feo_excess(db: AsyncSession, purchases: list, tree: dict | None = None) -> dict:
     """Владелец (2026-08-12, дополнено планом crystalline-soaring-heron.md, п.4):
     «превышение плана ФЭО» по закупке(ам) — по категории, к которой отнесена сама
     закупка или хотя бы одна её позиция. Единый код для GET /api/purchases
@@ -60,7 +60,14 @@ async def _compute_purchase_feo_excess(db: AsyncSession, purchases: list) -> dic
     if not subsidy_ids:
         return result
 
-    tree = await compute_feo_plan_tree(db, subsidy_ids)
+    # Перф (2026-09-27, жалоба «закупка грузится 10 сек»): GET /purchases/{id}
+    # уже считает compute_feo_plan_tree отдельно для _item_plan_map (остаток
+    # плановой позиции) — тот же dict на ту же subsidy_ids, вызывающий код
+    # передаёт готовое дерево через `tree=`, чтобы не гонять тяжёлый агрегат по
+    # ВСЕЙ субсидии дважды за один запрос. Список (?with_feo_excess=true)
+    # по-прежнему считает сам (tree=None) — там он единственный потребитель.
+    if tree is None:
+        tree = await compute_feo_plan_tree(db, subsidy_ids)
     bad_cats = {
         cid: node for cid, node in (tree or {}).items()
         if (node.get("excess_over_feo") or node.get("excess_amount") or 0.0) > 0.005

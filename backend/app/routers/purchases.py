@@ -359,10 +359,29 @@ async def list_purchases(
     result = await db.execute(q)
     purchases = result.scalars().all()
 
-    contractors_r = await db.execute(select(Contractor))
-    contractors_list = contractors_r.scalars().all()
-    contractors = {c.id: c.name for c in contractors_list}
-    contractor_inns = {c.id: c.inn for c in contractors_list}
+    # Перф (владелец, 27.09.2026, «закупки грузятся долго»): справочник
+    # контрагентов — 51к строк локально — раньше грузился ЦЕЛИКОМ на каждый
+    # вызов реестра. Сужаем до id, реально встречающихся на этой странице
+    # (шапка + контрагент договора + контрагенты позиций), тот же приём, что
+    # и в items_out_with_contractor_map (ПРАВИЛО №6, не заводим вторую формулу).
+    _cids: set[int] = set()
+    for _p in purchases:
+        if _p.contractor_id:
+            _cids.add(_p.contractor_id)
+        if _p.contract_id and _p.contract and _p.contract.contractor_id:
+            _cids.add(_p.contract.contractor_id)
+        for _it in (_p.items or []):
+            if _it.contractor_id:
+                _cids.add(_it.contractor_id)
+    contractors: dict = {}
+    contractor_inns: dict = {}
+    if _cids:
+        contractors_r = await db.execute(
+            select(Contractor.id, Contractor.name, Contractor.inn).where(Contractor.id.in_(_cids))
+        )
+        for _cid, _cname, _cinn in contractors_r.all():
+            contractors[_cid] = _cname
+            contractor_inns[_cid] = _cinn
     subsidies_r = await db.execute(select(Subsidy))
     subsidies = {s.id: s.name for s in subsidies_r.scalars().all()}
 
@@ -586,15 +605,30 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
 
     subsidies_r = await db.execute(select(Subsidy))
     subsidies = {s.id: s.name for s in subsidies_r.scalars().all()}
-    contractors_r = await db.execute(select(Contractor))
-    contractors_list_single = contractors_r.scalars().all()
-    contractors = {c.id: c.name for c in contractors_list_single}
-    # ПРАВИЛО №6 (группа D5): та же карта, что list_purchases уже строит для
-    # шапки закупки (contractor_inns) — теперь нужна и для контрагента КАЖДОЙ
-    # позиции (item_contractor.item_contractor), иначе при заданном FK и
-    # очищенном (после миграции b4d6f8h0j2l4) тексте карточка теряла бы ИНН
-    # позиции. Один и тот же SELECT выше, второго не заводим.
-    contractor_inns_single = {c.id: c.inn for c in contractors_list_single}
+    # Перф (владелец, 27.09.2026, «закупка грузится 10 сек»): раньше здесь был
+    # select(Contractor) БЕЗ фильтра — весь справочник контрагентов (51к строк
+    # локально, десятки колонок каждая) ради ОДНОЙ карточки, которой нужны
+    # имя/ИНН по паре конкретных id (шапка + контрагент договора + контрагенты
+    # позиций). Тот же приём точечной выборки уже применяется в
+    # items_out_with_contractor_map (purchase_serializers.py, POST/PUT-путь) —
+    # переиспользуем его здесь, второй формулы не заводим (ПРАВИЛО №6).
+    _cids_single: set[int] = set()
+    if p.contractor_id:
+        _cids_single.add(p.contractor_id)
+    if p.contract_id and p.contract and p.contract.contractor_id:
+        _cids_single.add(p.contract.contractor_id)
+    for _it in (p.items or []):
+        if _it.contractor_id:
+            _cids_single.add(_it.contractor_id)
+    contractors: dict = {}
+    contractor_inns_single: dict = {}
+    if _cids_single:
+        contractors_r = await db.execute(
+            select(Contractor.id, Contractor.name, Contractor.inn).where(Contractor.id.in_(_cids_single))
+        )
+        for _cid, _cname, _cinn in contractors_r.all():
+            contractors[_cid] = _cname
+            contractor_inns_single[_cid] = _cinn
     alloc_r = await db.execute(
         select(PurchaseSubsidyAllocation)
         .options(selectinload(PurchaseSubsidyAllocation.subsidy))
@@ -608,10 +642,20 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
     if p.stopped_by and p.stopped_by_user:
         single_su_map = {p.stopped_by: (p.stopped_by_user.full_name or p.stopped_by_user.username)}
 
+    # Перф (2026-09-27, жалоба «закупка грузится 10 сек», rt=2.2с на
+    # GET /purchases/{id}): compute_feo_plan_tree — тяжёлый агрегат по ВСЕЙ
+    # субсидии (план/факт/превышение каждой категории дерева ФЭО), а не по
+    # одной закупке. Раньше карточка считала его ДВАЖДЫ за один запрос —
+    # внутри _compute_purchase_feo_excess и ещё раз ниже для _item_plan_map.
+    # Считаем один раз здесь и передаём готовое дерево в оба места (ПРАВИЛО
+    # №6 — одна и та же формула, один вызов на запрос; список
+    # ?with_feo_excess=true не трогаем, там свой единственный вызов на batch).
+    _plan_tree_single: dict = await compute_feo_plan_tree(db, [p.subsidy_id]) if p.subsidy_id else {}
+
     # Превышение плана ФЭО (план crystalline-soaring-heron.md, п.4) — раньше
     # считалось только в списке (?with_feo_excess=true), карточка отдавала пусто.
     # Общий код с list_purchases — см. _compute_purchase_feo_excess.
-    _single_feo_excess_map = await _compute_purchase_feo_excess(db, [p])
+    _single_feo_excess_map = await _compute_purchase_feo_excess(db, [p], tree=_plan_tree_single)
 
     # Расхождение категории ФЭО между шапкой/позицией/плановой позицией
     # (владелец, 2026-09-02) — см. _compute_purchase_feo_mismatch, тот же код
@@ -644,8 +688,10 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
                 _amt = _fpi_amounts.get(_fid, 0.0)
                 _used = (_fpi_cons.get(_fid) or {}).get("used", 0.0)
                 _fpi_residual[_fid] = (_amt - _used, _amt)
-        _need_tree = any(not it.feo_planned_item_id and (it.feo_category_id or p.feo_category_id) for it in p.items)
-        _tree = await compute_feo_plan_tree(db, [p.subsidy_id]) if _need_tree else {}
+        # Перф: дерево уже посчитано один раз выше (_plan_tree_single) для
+        # _compute_purchase_feo_excess — второй вызов compute_feo_plan_tree
+        # тут не нужен, переиспользуем тот же dict (ПРАВИЛО №6).
+        _tree = _plan_tree_single
         for it in p.items:
             if it.feo_planned_item_id and it.feo_planned_item_id in _fpi_residual:
                 _item_plan_map[it.id] = _fpi_residual[it.feo_planned_item_id]

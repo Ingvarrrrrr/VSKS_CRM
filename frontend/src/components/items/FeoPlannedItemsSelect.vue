@@ -57,6 +57,8 @@
           :same-category-candidates="match.sameCategoryCandidates.value"
           :other-category-candidates="match.otherCategoryCandidates.value"
           :score-color="match.scoreColor"
+          :items="props.items"
+          :amount="props.amount"
           @bind="match.bindCandidate"
           @reject="match.rejectSuggestions"
         />

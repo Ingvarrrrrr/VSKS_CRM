@@ -453,7 +453,7 @@ async def get_plan_positions(
                 cat = cat_by_id.get(it.feo_category_id)
                 planned_total = float(it.amount or 0)
                 qty = float(it.quantity or 0)
-                c_cons = fpi_cons.get(it.id, {"used": 0.0, "used_qty": 0.0})
+                c_cons = fpi_cons.get(it.id, {"used": 0.0, "used_qty": 0.0, "linked_purchases": []})
                 consumed = c_cons["used"]
                 consumed_qty = c_cons["used_qty"]
                 result.append({
@@ -484,6 +484,11 @@ async def get_plan_positions(
                     # этот случай — контрольный пример владельца, категория без собственных
                     # planned_quantity/planned_amount, план только в FeoPlannedItem).
                     "unlinked_actual_amount": unlinked_actual.get(it.feo_category_id, 0.0),
+                    # Владелец (2026-09-27): «дубль занял план молча» — закупки,
+                    # уже привязанные к ЭТОЙ плановой позиции (кроме редактируемой,
+                    # см. exclude_purchase_id/exclude_wish_id выше), чтобы UI мог
+                    # предупредить ДО привязки, а не после (см. planned_item_consumption).
+                    "linked_purchases": c_cons.get("linked_purchases", []),
                 })
 
     result.sort(key=lambda x: x["path"])

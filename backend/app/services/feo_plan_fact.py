@@ -614,7 +614,7 @@ async def planned_item_consumption(
     exclude_purchase_id: Optional[int] = None,
     exclude_wish_id: Optional[int] = None,
 ) -> dict[int, dict]:
-    """{feo_planned_item_id: {used, used_qty, wish_used, linked_purchase_ids}}
+    """{feo_planned_item_id: {used, used_qty, wish_used, linked_purchase_ids, linked_purchases}}
 
     Расход конкретной плановой позиции (FeoPlannedItem, Ур.5) через
     PurchaseItem.feo_planned_item_id. Общая часть GET /api/feo-planned-items/residuals
@@ -625,6 +625,12 @@ async def planned_item_consumption(
     item_ids через feo_planned_item_id.
     linked_purchase_ids — уникальные id закупок, чьи позиции привязаны к
     плановой позиции (тоже только PLANNED_STATUSES).
+    linked_purchases (владелец, сессия 2026-09-27, «дубль занял план молча») —
+    та же выборка закупок, но с registry_number и суммой (Σ PurchaseItem.total_price
+    ЭТОЙ закупки по данной плановой позиции), чтобы UI мог показать «уже занято
+    закупкой РЕЕ-2026-00913 — 169 000 ₽» до того, как пользователь нажмёт
+    «Привязать» и получит превышение постфактум. ПРАВИЛО №6: считается ровно в
+    ТОМ ЖЕ links_q, вторую выборку не заводим.
 
     Остановленные закупки (Purchase.stopped_at IS NOT NULL) исключены —
     «остановленные позиции убираются из плана закупок и не считаются»
@@ -639,7 +645,10 @@ async def planned_item_consumption(
     обратной совместимости вызывающего кода, который его читает.
     """
     result: dict[int, dict] = {
-        iid: {"used": 0.0, "used_qty": 0.0, "wish_used": 0.0, "linked_purchase_ids": []}
+        iid: {
+            "used": 0.0, "used_qty": 0.0, "wish_used": 0.0,
+            "linked_purchase_ids": [], "linked_purchases": [],
+        }
         for iid in item_ids
     }
     if not item_ids:
@@ -667,7 +676,12 @@ async def planned_item_consumption(
         result[r.feo_planned_item_id]["used_qty"] = float(r.used_qty)
 
     links_q = (
-        select(PurchaseItem.feo_planned_item_id, PurchaseItem.purchase_id)
+        select(
+            PurchaseItem.feo_planned_item_id,
+            PurchaseItem.purchase_id,
+            Purchase.registry_number,
+            func.coalesce(func.sum(PurchaseItem.total_price), 0).label("amount"),
+        )
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
         .where(PurchaseItem.feo_planned_item_id.in_(item_ids))
         .where(Purchase.status.in_(list(PLANNED_STATUSES)))
@@ -676,10 +690,18 @@ async def planned_item_consumption(
     if exclude_purchase_id is not None:
         links_q = links_q.where(PurchaseItem.purchase_id != exclude_purchase_id)
     links_q = apply_wish_item_exclusion(links_q, exclude_wish_id)
+    links_q = links_q.group_by(
+        PurchaseItem.feo_planned_item_id, PurchaseItem.purchase_id, Purchase.registry_number,
+    )
     for lr in (await db.execute(links_q)).all():
-        lst = result[lr.feo_planned_item_id]["linked_purchase_ids"]
-        if lr.purchase_id not in lst:
-            lst.append(lr.purchase_id)
+        d = result[lr.feo_planned_item_id]
+        if lr.purchase_id not in d["linked_purchase_ids"]:
+            d["linked_purchase_ids"].append(lr.purchase_id)
+        d["linked_purchases"].append({
+            "id": lr.purchase_id,
+            "registry_number": lr.registry_number,
+            "amount": float(lr.amount),
+        })
 
     return result
 

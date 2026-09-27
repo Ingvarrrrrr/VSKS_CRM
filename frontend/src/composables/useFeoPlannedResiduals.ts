@@ -67,6 +67,11 @@ export interface FeoPlanPosition {
    *  суммировать по нескольким строкам одной категории, брать с любой одной (см.
    *  PurchaseItemsEditor.vue categoryResidualFor). */
   unlinked_actual_amount?: number
+  /** Владелец (2026-09-27, «дубль занял план молча»): закупки, УЖЕ привязанные к
+   *  этой плановой позиции (см. backend planned_item_consumption.linked_purchases).
+   *  Присутствует только на строках kind='planned_item'. Пусто/undefined — план
+   *  свободен. */
+  linked_purchases?: { id: number; registry_number: string | null; amount: number }[]
 }
 
 /** @deprecated старое имя интерфейса (было завязано на /feo-planned-items/residuals) —

@@ -425,7 +425,10 @@ const resetImport = () => {
   state.feoAck = false
 }
 
-const downloadTemplate = async () => {
+const downloadTemplate = async (subsidyId?: number | null) => {
+  if (!state.subsidyId && subsidyId) {
+    state.subsidyId = subsidyId
+  }
   if (state.format === 'standard' && !state.subsidyId) {
     props.showSnack('Сначала выберите субсидию: без неё в шаблоне не будет связанных списков направлений расходов (ФЭО)', 'error')
     return
@@ -519,7 +522,12 @@ const doImport = async () => {
   }
 }
 
-function open() { state.show = true }
+function open(subsidyId?: number | null) {
+  if (!state.subsidyId && subsidyId) {
+    state.subsidyId = subsidyId
+  }
+  state.show = true
+}
 defineExpose({ open, downloadTemplate })
 </script>
 

@@ -3,8 +3,8 @@
     <OrdersToolbar
       :orders-count="orders.length"
       :can-add-wish="authStore.hasTab('wishes')"
-      @download-template="importDialogRef?.downloadTemplate()"
-      @open-import="importDialogRef?.open()"
+      @download-template="importDialogRef?.downloadTemplate(filters.subsidyId)"
+      @open-import="importDialogRef?.open(filters.subsidyId)"
       @open-scans="scansDialogRef?.open()"
       @open-payment-match="paymentMatchDialogRef?.open(filters.subsidyId)"
       @open-export="exportDialogRef?.open()"

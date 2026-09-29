@@ -29,6 +29,14 @@
         <span v-if="shortfall != null && shortfall > 0" class="feo-taken-by-note feo-taken-by-note--error">
           — не хватает {{ fmt(shortfall) }}. Если это та же покупка — это дубль, сначала разберитесь с той закупкой
         </span>
+        <!-- Владелец (30.09.2026): остатка ХВАТАЕТ на новую позицию (shortfall
+             известен и <= 0) — тревожное «это дубль, разберитесь» неуместно,
+             спокойная нейтральная подпись вместо него. Не путать с shortfall
+             == null (сумма новой позиции ещё неизвестна) — там достаточность
+             не проверена, оставляем прежнее предупреждение (ветка else ниже). -->
+        <span v-else-if="shortfall != null" class="feo-taken-by-note feo-taken-by-note--ok">
+          — остаток хватает
+        </span>
         <span v-else class="feo-taken-by-note feo-taken-by-note--warning">
           — если это та же покупка, это дубль, сначала разберитесь с той закупкой
         </span>
@@ -94,5 +102,8 @@ function fmt(v: number | null | undefined): string {
 }
 .feo-taken-by-note--warning {
   color: rgb(var(--v-theme-warning));
+}
+.feo-taken-by-note--ok {
+  color: rgb(var(--v-theme-success));
 }
 </style>

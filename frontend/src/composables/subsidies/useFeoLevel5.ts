@@ -15,6 +15,7 @@ import { filterFundedNodes, type FeoLeaf as FeoPickerLeaf, type FeoNode as FeoPi
 import { PURCHASE_STATUS_ORDER, purchaseStatusColor, purchaseStatusLabel } from '@/constants/purchaseStatus'
 import { pushFeoUndo } from './useFeoUndoStack'
 import { createPlannedItemRaw } from './useFeoPlannedItemAddDialog'
+import { notifyFeoPlanChanged } from './feoPlanChangeBus'
 import { makeCtxSingleton } from './ctxSingleton'
 import type {
   DiffActual, FeoActualItem, FeoCategory, FeoNode, FeoPlannedItem, FeoStage, FeoStageRow,
@@ -252,6 +253,11 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
     )
     comparisonData.value[categoryId] = res
     applyDefaultPlannedExpansion(categoryId)
+    // Плановая позиция могла измениться (количество/сумма/удаление/перенос) —
+    // остатки «закуплено полностью» в usePlanToRequest.ts кэшированы отдельно
+    // (feoResiduals, GET /feo-categories/plan-positions), сами не узнают об
+    // этом без сигнала (см. докстринг feoPlanChangeBus.ts, Правило №6).
+    notifyFeoPlanChanged()
   }
 
   async function ensureComparison(catId: number) {

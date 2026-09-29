@@ -266,12 +266,21 @@ export function useFeoPlannedItemEditDialog(ctx?: EditDialogCtx) {
         // sort_order.nulls_last(), id в feo_planned_items_reports.py).
         sort_order: d.sort_order,
       }
+      // Владелец, 30.09.2026 («Багажник» 2→4, цена не зафиксирована) — до
+      // отправки запоминаем, что unit_price был пуст: единственное место
+      // автопересчёта — backend backfill_unit_price_on_quantity_change
+      // (app/services/feo_planned_item_amount.py), здесь только показываем
+      // подсказку по тому, что реально вернул сервер (Правило №6, второй
+      // расчёт цены на фронте не заводим).
+      const unitPriceWasEmpty = d.unitPrice === '' || d.unitPrice == null
       const saved = await apiFetch<FeoPlannedItem>(`/feo-planned-items/${d.id}`, { method: 'PUT', body: JSON.stringify(body) })
       editPlannedDialog.value.show = false
       registerEditUndo(d.id, d.feo_category_id, d.name, editPlannedBeforeSnapshot, body)
       editPlannedBeforeSnapshot = null
       if (saved.product_kind_synced && saved.product_name) {
         showSnack(`Тип «${d.item_type}» записан в товар каталога «${saved.product_name}»`)
+      } else if (unitPriceWasEmpty && saved.unit_price != null) {
+        showSnack(`Сумма пересчитана по цене за единицу ${Number(saved.unit_price).toLocaleString('ru-RU')} ₽`, 'info')
       }
       // См. комментарий у deletePlannedItem (SubsidiesView.vue) — refreshComparison
       // один не обновляет planTreeByCat, от которого зависят числа узла/родителей и

@@ -901,6 +901,30 @@
   ) !important;
 }
 
+/* ── «Закуплено частично» — фон «кружочками» (владелец, 30.09.2026, уточнение) ──
+   0 < куплено < план: ВСЯ строка (не мини-индикатор) заполнена мягким янтарным
+   polka-dot — radial-gradient точки, отличимые от диагональных зелёных полосок
+   «полностью» выше. Тот же приём с «> .feo-td, > td» для обоих деревьев
+   (основное + панель Ур.5), см. докстринг .feo-fully-purchased-row (Правило №6,
+   второй паттерн фона не заводим — только другой цвет/форма). !important по
+   той же причине — перебивает собственный фон ячеек. */
+.subsidies-page .feo-partially-purchased-row > .feo-td,
+.subsidies-page .feo-partially-purchased-row > td {
+  background-image: radial-gradient(
+    rgba(217, 119, 6, 0.14) 1.6px,
+    transparent 1.6px
+  ) !important;
+  background-size: 11px 11px !important;
+}
+.v-theme--dark .subsidies-page .feo-partially-purchased-row > .feo-td,
+.v-theme--dark .subsidies-page .feo-partially-purchased-row > td {
+  background-image: radial-gradient(
+    rgba(251, 191, 36, 0.16) 1.6px,
+    transparent 1.6px
+  ) !important;
+  background-size: 11px 11px !important;
+}
+
 /* Легенда над деревом/панелью (владелец, п.5) — одна строка, единый источник
    текста легенды (см. FeoTreeToolbar.vue). */
 .subsidies-page .feo-fully-purchased-legend {
@@ -924,6 +948,16 @@
     transparent 4px,
     transparent 8px
   );
+}
+.subsidies-page .feo-fully-purchased-legend .feo-partially-purchased-legend-swatch {
+  display: inline-block;
+  width: 22px;
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid rgba(217, 119, 6, 0.4);
+  background-image: radial-gradient(rgba(217, 119, 6, 0.5) 1.6px, transparent 1.6px);
+  background-size: 6px 6px;
+  background-color: rgba(217, 119, 6, 0.04);
 }
 
 /* Бейдж «Всё закуплено» строки категории (владелец, 30.09.2026, п.2) — тот же

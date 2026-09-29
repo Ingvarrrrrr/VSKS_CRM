@@ -34,6 +34,7 @@ from app.services.item_types import (  # noqa: F401 (normalize_item_type — р�
 )
 from app.models.product import Product
 from app.services import feo_history
+from app.services.feo_planned_item_amount import backfill_unit_price_on_quantity_change
 
 
 def _apply_payment_fields(item: FeoPlannedItem, data: FeoPlannedItemCreate) -> None:
@@ -610,6 +611,16 @@ async def update_planned_item(
         item.is_feo_breakdown = data.is_feo_breakdown
     if "is_internal_plan" in data.model_fields_set:
         item.is_internal_plan = data.is_internal_plan
+    # Правка количества без явной цены за единицу (владелец, 30.09.2026,
+    # «Багажник» 2→4, сумма плана не изменилась) — единственное место
+    # (Правило №6), см. докстринг backfill_unit_price_on_quantity_change.
+    if data.payment_mode != "monthly":
+        data.amount, data.unit_price = backfill_unit_price_on_quantity_change(
+            old_quantity=_old_values.get("quantity"), old_amount=_old_values.get("amount"),
+            old_unit_price=_old_values.get("unit_price"),
+            new_quantity=data.quantity, new_amount=data.amount, new_unit_price=data.unit_price,
+        )
+        item.unit_price = data.unit_price
     _apply_payment_fields(item, data)
 
     # БАГ (владелец, 2026-08-13): «нажал на кнопку переноса, выбрал категорию,

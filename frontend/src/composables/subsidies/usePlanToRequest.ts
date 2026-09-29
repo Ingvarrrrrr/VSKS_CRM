@@ -16,6 +16,7 @@ import { useToast } from '@/composables/useToast'
 import { describeApiError } from '@/utils/apiErrorMessage'
 import { useFeoPlannedResiduals, type FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import { useFeoLevel5Api } from './useFeoLevel5'
+import { onFeoPlanChanged } from './feoPlanChangeBus'
 import { materializeManualPlanAsItem } from './useFeoManualPlanMaterialize'
 import { collectSubtreeIds } from './feoCategoryUtils'
 import type { FeoCategory, FeoNode } from './types'
@@ -203,6 +204,19 @@ const candidatesProgress = ref<{ done: number; total: number } | null>(null)
 const residualsSubsidyId = ref<number | null>(null)
 const feoResiduals = useFeoPlannedResiduals({ subsidyId: residualsSubsidyId })
 
+// Владелец, 30.09.2026: правка планового количества («2 на 4») не обновляла
+// штриховку «закуплено полностью» и «в закупках k из N» — feoResiduals грузится
+// ОДИН раз при входе в субсидию (ensureResidualsLoaded — no-op при том же
+// subsidyId), а после PUT/POST/DELETE плановой позиции никто её не перегружал.
+// Подписка module-level (регистрируется один раз при загрузке модуля, не при
+// каждом вызове usePlanToRequest() из разных компонентов) — на сигнал
+// notifyFeoPlanChanged() из useFeoLevel5.ts::refreshComparison (см.
+// feoPlanChangeBus.ts, Правило №6: тот же источник остатка, второй расчёт не
+// заводим, только принудительный форс-релоад ровно тех же данных).
+onFeoPlanChanged(() => {
+  if (residualsSubsidyId.value != null) void feoResiduals.reloadPlanned()
+})
+
 // ⚠️ Поля запроса задания ссылались на устаревший эндпоинт
 // /feo-planned-items/residuals (feo_item_id/quantity) — он заменён на
 // /feo-categories/plan-positions (см. докстринг FeoPlanPosition), тут
@@ -354,14 +368,44 @@ export function usePlanToRequest() {
   // planned_item_consumption). Единственная формула (Правило №6) — вынесена в
   // rowFullyTaken ниже, isPlannedItemFullyTaken/isCategoryPlanFullyTaken/
   // isCategoryFullyPurchased читают её же, второй копии условия не заводим.
-  function rowFullyTaken(row: Pick<FeoPlanPosition, 'residual_quantity' | 'linked_purchases'>): boolean {
-    return Number(row.residual_quantity) <= 0 && (row.linked_purchases?.length ?? 0) > 0
+  //
+  // Владелец (30.09.2026, «Багажник экспедиционный», план 4 шт., закуплено
+  // 2 — чип «Закуплено полностью» горел ошибочно): когда у позиции ЗАДАНО
+  // плановое количество, «занята» определяется ТОЛЬКО по количеству
+  // (planned_quantity > 0 И остаток количества <= 0) — деньги здесь не
+  // участвуют (сумма плана может отставать от факта умножения, см. backend
+  // backfill_unit_price_on_quantity_change). Когда планового количества нет
+  // (0/не задано) — старая семантика: остаток СУММЫ <= 0, иначе формула
+  // qty-remainder (0 - consumed_qty) была бы отрицательной ВСЕГДА при любом
+  // расходе, ложно помечая позицию занятой без единого заданного количества.
+  function rowFullyTaken(row: Pick<FeoPlanPosition, 'planned_quantity' | 'residual_quantity' | 'residual' | 'linked_purchases'>): boolean {
+    if (!((row.linked_purchases?.length ?? 0) > 0)) return false
+    if (row.planned_quantity != null && Number(row.planned_quantity) > 0) {
+      return Number(row.residual_quantity) <= 0
+    }
+    return Number(row.residual) <= 0
+  }
+
+  // Частично закупленная позиция (владелец, 30.09.2026) — задано плановое
+  // количество, часть уже закуплена, но не вся (0 < куплено < план). Та же
+  // формула источника (planned_quantity/consumed_quantity), что и у
+  // rowFullyTaken/plannedItemProgress выше, второй расчёт не заводим.
+  function rowPartiallyTaken(row: Pick<FeoPlanPosition, 'planned_quantity' | 'consumed_quantity'>): boolean {
+    if (row.planned_quantity == null || !(Number(row.planned_quantity) > 0)) return false
+    const consumed = Number(row.consumed_quantity) || 0
+    return consumed > 0 && consumed < Number(row.planned_quantity)
   }
 
   function isPlannedItemFullyTaken(plannedItemId: number): boolean {
     const row = residualRowFor(plannedItemId)
     if (!row) return false
     return rowFullyTaken(row)
+  }
+
+  function isPlannedItemPartiallyTaken(plannedItemId: number): boolean {
+    const row = residualRowFor(plannedItemId)
+    if (!row) return false
+    return rowPartiallyTaken(row)
   }
 
   function linkedPurchasesForPlannedItem(plannedItemId: number) {
@@ -448,6 +492,31 @@ export function usePlanToRequest() {
     const rows = categoryRowsWithPlan(categoryId)
     if (!rows.length) return false
     return rows.every(rowFullyTaken)
+  }
+
+  // Частично закупленная категория (владелец, 30.09.2026: «фон кружочками» на
+  // всю строку категории) — общий процент по количеству, посчитанный ПРОСТО
+  // суммой уже имеющихся consumed_quantity/planned_quantity её строк плана
+  // (categoryRowsWithPlan — тот же набор, что и у isCategoryFullyPurchased
+  // выше, второй обход не заводим). Не «полностью» (иначе была бы зелёная
+  // штриховка) и суммарно куплено больше нуля — категория частично занята.
+  function categoryPurchaseProgress(categoryId: number): { consumed: number; total: number } | null {
+    const rows = categoryRowsWithPlan(categoryId)
+    if (!rows.length) return null
+    let consumed = 0
+    let total = 0
+    for (const r of rows) {
+      total += Number(r.planned_quantity) || 0
+      consumed += Math.min(Number(r.consumed_quantity) || 0, Number(r.planned_quantity) || 0)
+    }
+    if (!(total > 0)) return null
+    return { consumed, total }
+  }
+
+  function isCategoryPartiallyPurchased(categoryId: number): boolean {
+    if (isCategoryFullyPurchased(categoryId)) return false
+    const p = categoryPurchaseProgress(categoryId)
+    return !!p && p.consumed > 0
   }
 
   // feoCategories в сигнатуре сохранён ради единообразия вызова с
@@ -724,5 +793,8 @@ export function usePlanToRequest() {
     // Штриховка «закуплено полностью» ВНЕ режима подбора + прогресс частично
     // закупленных строк (владелец, 30.09.2026) — FeoLevel5Panel.vue/FeoTreeRow.vue.
     ensureResidualsLoaded, plannedItemProgress, categoryPlanProgress, isCategoryFullyPurchased,
+    // Частично закупленные (0 < куплено < план) — фон «кружочками» на строке/
+    // категории, отдельно от зелёной штриховки «полностью» (владелец, 30.09.2026).
+    isPlannedItemPartiallyTaken, isCategoryPartiallyPurchased, categoryPurchaseProgress,
   }
 }

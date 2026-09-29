@@ -14,6 +14,7 @@ import type { FeoPlanPosition, FeoPlanSelection, FeoPlanKind } from '@/composabl
 import { formatPlanResidual, type PlanResidualDisplay } from '@/utils/numberFormat'
 import { formatMoney } from '@/utils/formatMoney'
 import type { ToastType } from '@/composables/useToast'
+import { feoPlanRowSummary, feoPlanRowQtyLabel } from './feoPlanRowSummary'
 
 /** Готовый набор подписей строки для FeoPlannedItemRow.vue — построен ОДИН раз
  *  (rowDisplayProps ниже), чтобы разметка dense-меню и развёрнутого списка не
@@ -119,10 +120,10 @@ export function useFeoPlannedRows(deps: UseFeoPlannedRowsDeps) {
     return v.toLocaleString('ru-RU')
   }
 
-  function fmtQty(row: FeoPlanPosition): string {
-    const qty = row.planned_quantity != null ? row.planned_quantity.toLocaleString('ru-RU') : '—'
-    return `${qty} ${row.unit || ''}`.trim()
-  }
+  // Вынесено в feoPlanRowSummary.ts (Правило №6, теперь общее с
+  // FeoPlannedMatchSuggestions.vue) — реэкспорт под старым именем, второй
+  // формулы тут не пишем.
+  const fmtQty = feoPlanRowQtyLabel
 
   // «Занято прямо сейчас в этой форме» поверх серверных consumed/residual — см. проп
   // pendingByPlannedItem выше. Только planned_item (row.id живёт в пространстве id
@@ -184,13 +185,10 @@ export function useFeoPlannedRows(deps: UseFeoPlannedRowsDeps) {
   /** Строит набор подписей для одной строки — единая точка для dense-меню и
    *  развёрнутого списка (оба рендерят FeoPlannedItemRow.vue с этими пропами). */
   function rowDisplayProps(row: FeoPlanPosition): FeoPlannedRowDisplay {
-    return {
-      qtyLabel: fmtQty(row),
-      plannedLabel: fmt(row.planned_amount),
-      consumedLabel: fmt(consumedFor(row)),
-      residualDisplay: planResidualDisplay(row),
-      shortfallLabel: isShort(row) ? fmt(Math.abs(shortfall(row))) : null,
-    }
+    return feoPlanRowSummary(
+      row, consumedFor(row), residualFor(row),
+      props.amount != null ? shortfall(row) : null,
+    )
   }
 
   // Разбито на структурированный computed (было — готовая строка denseSummaryLabel)

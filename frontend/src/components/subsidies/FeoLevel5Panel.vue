@@ -83,7 +83,7 @@
                    data-feo-node-id у строки категории (FeoTreeRow.vue). -->
               <tr v-if="!(hideFullyPurchased.hideFullyPurchased.value && isRowFullyPurchased(planned))"
                 style="border-bottom:1px solid #E5E7EB" :data-feo-planned-item-id="planned.id"
-                :class="{ 'feo-fully-purchased-row': isRowFullyPurchased(planned) }"
+                :class="{ 'feo-fully-purchased-row': isRowFullyPurchased(planned), 'feo-partially-purchased-row': isRowPartiallyPurchased(planned) }"
               >
                 <td :style="[nameColStyle, { paddingLeft: `${ctx.plannedItemIndentPx(node)}px` }]" style="padding-top:4px;padding-right:8px;padding-bottom:4px;color:#0c4a6e">
                   <div class="d-flex align-center" style="gap:2px">
@@ -227,7 +227,10 @@
                   <div v-if="isRowFullyPurchased(planned)" class="mt-1">
                     <v-chip size="x-small" color="success" variant="flat" prepend-icon="mdi-check-all" style="font-size:9px;height:16px">Закуплено полностью</v-chip>
                   </div>
-                  <div v-else-if="rowProgress(planned) && rowProgress(planned)!.consumed > 0" class="text-medium-emphasis" style="font-size:10px;line-height:1.3">
+                  <div v-else-if="rowProgress(planned) && rowProgress(planned)!.consumed > 0" class="text-medium-emphasis"
+                    style="font-size:10px;line-height:1.3"
+                    :title="`Куплено ${rowProgress(planned)!.consumed} из ${rowProgress(planned)!.total}${planned.unit ? ' ' + planned.unit : ''} — осталось докупить ${rowProgress(planned)!.total - rowProgress(planned)!.consumed}${planned.unit ? ' ' + planned.unit : ''}`"
+                  >
                     куплено {{ rowProgress(planned)!.consumed }} из {{ rowProgress(planned)!.total }}{{ planned.unit ? ` ${planned.unit}` : '' }}
                   </div>
                   <div v-if="planned.amount != null" class="text-medium-emphasis" style="font-size:10px;line-height:1.3;white-space:normal">
@@ -779,6 +782,15 @@ function rowProgress(planned: FeoPlannedItem & { isManual?: boolean }): { consum
   return planned.isManual
     ? planToRequest.categoryPlanProgress(node.id)
     : planToRequest.plannedItemProgress(planned.id)
+}
+// Частично закуплена (владелец, 30.09.2026, п.3) — фон «кружочками» на всю
+// строку (feo-partially-purchased-row, styles/subsidies.css), отдельно от
+// зелёной штриховки «полностью» выше — та же пара источников, второй расчёт
+// не заводим. Ручной план категории (isManual) частичным не бывает — у него
+// нет своего FeoPlannedItem-остатка по количеству (isCategoryPlanFullyTaken
+// уже единственная проверка для этой строки, см. её докстринг).
+function isRowPartiallyPurchased(planned: FeoPlannedItem & { isManual?: boolean }): boolean {
+  return planned.isManual ? false : planToRequest.isPlannedItemPartiallyTaken(planned.id)
 }
 const hideFullyPurchased = useFeoHideFullyPurchased()
 

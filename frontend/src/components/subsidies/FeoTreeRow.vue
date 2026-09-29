@@ -31,6 +31,7 @@
       ctx.dragNodeId.value === node.id ? 'feo-dragging' : '',
       kpi.kpiNodeClass(node),
       isCategoryFullyPurchased ? 'feo-fully-purchased-row' : '',
+      isCategoryPartiallyPurchased ? 'feo-partially-purchased-row' : '',
     ]"
     :draggable="ctx.canEditFeo.value"
     @dragstart="ctx.canEditFeo.value && ctx.onDragStart($event, node)"
@@ -883,6 +884,11 @@ const subtreeSelection = computed(() => planToRequest.subtreeSelectionState(node
 // один раз для всей субсидии в FeoTreeToolbar.vue, Правило №6 — второй запрос
 // не шлём).
 const isCategoryFullyPurchased = computed(() => !node.value.hasChildren && planToRequest.isCategoryFullyPurchased(node.value.id))
+// Частично закуплена (владелец, 30.09.2026, уточнение) — тот же принцип, что и
+// у isCategoryFullyPurchased выше (только листовые категории), другой источник
+// формулы (usePlanToRequest.ts::isCategoryPartiallyPurchased), второй обход
+// плана категории не заводим.
+const isCategoryPartiallyPurchased = computed(() => !node.value.hasChildren && planToRequest.isCategoryPartiallyPurchased(node.value.id))
 const hideFullyPurchased = useFeoHideFullyPurchased()
 const hiddenByFullyPurchasedFilter = computed(() => hideFullyPurchased.hideFullyPurchased.value && isCategoryFullyPurchased.value)
 // Подпись чекбокса категории (правка 2026-09-21, СЖАТО после приёмки: полный

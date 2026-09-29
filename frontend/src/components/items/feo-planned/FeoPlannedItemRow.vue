@@ -39,24 +39,18 @@
         @click.stop="emit('select')"
       >{{ suggestReason || 'Похоже совпадает' }}</v-chip>
     </span>
-    <span class="feo-tree-residual">
-      план {{ plannedLabel }} ·
-      <span
-        v-if="row.kind === 'planned_item'"
-        class="feo-planned-consumed-link"
-        role="button"
-        tabindex="0"
-        title="Кто расходует план — показать построчно"
-        @click.stop="emit('open-consumers')"
-        @keydown.enter.stop.prevent="emit('open-consumers')"
-      >выбрано {{ consumedLabel }}<v-icon size="12" icon="mdi-magnify" class="ml-1" /></span>
-      <span v-else>выбрано {{ consumedLabel }}</span> ·
-      <span :class="residualDisplay.cssClass">{{ residualDisplay.text }}</span>
-      <span v-if="shortfallLabel" class="feo-planned-shortfall-note"> — не хватает {{ shortfallLabel }}</span>
-      <template v-if="row.linked_purchases?.length || row.linked_wishes?.length">
-        · <FeoPlannedTakenBy :linked-purchases="row.linked_purchases" :linked-wishes="row.linked_wishes" short />
-      </template>
-    </span>
+    <FeoPlanResidualSummary
+      :row="row"
+      :planned-label="plannedLabel"
+      :consumed-label="consumedLabel"
+      :residual-display="residualDisplay"
+      :shortfall-label="shortfallLabel"
+      show-consumers-link
+      @open-consumers="emit('open-consumers')"
+    />
+    <template v-if="row.linked_purchases?.length || row.linked_wishes?.length">
+      · <FeoPlannedTakenBy :linked-purchases="row.linked_purchases" :linked-wishes="row.linked_wishes" short />
+    </template>
     <!-- Владелец (сессия 2026-08-19): «где эта корзиночка?» — удаление плановой
          позиции прямо из строки списка, только у kind='planned_item'. @click.stop —
          клик по кнопке НЕ должен сработать как выбор строки. -->
@@ -77,6 +71,7 @@
 import type { FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import type { PlanResidualDisplay } from '@/utils/numberFormat'
 import FeoPlannedTakenBy from './FeoPlannedTakenBy.vue'
+import FeoPlanResidualSummary from './FeoPlanResidualSummary.vue'
 
 defineProps<{
   row: FeoPlanPosition

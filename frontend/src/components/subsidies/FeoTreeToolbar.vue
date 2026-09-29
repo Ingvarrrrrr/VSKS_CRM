@@ -211,6 +211,8 @@
   <div class="feo-fully-purchased-legend">
     <span class="feo-fully-purchased-legend-swatch" />
     <span>— закуплено полностью (остаток по согласованным закупкам = 0)</span>
+    <span class="feo-partially-purchased-legend-swatch ml-2" />
+    <span>— закуплено частично</span>
     <v-switch
       v-model="hideFullyPurchased.hideFullyPurchased.value"
       density="compact" hide-details color="success" class="ml-4" style="flex:0 0 auto"

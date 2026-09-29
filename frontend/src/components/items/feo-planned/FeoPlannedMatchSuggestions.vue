@@ -20,6 +20,15 @@
       </v-chip>
       <span class="feo-match-name">{{ c.name }}</span>
       <v-btn size="small" color="primary" variant="flat" @click="$emit('bind', c)">Привязать</v-btn>
+      <FeoPlanResidualSummary
+        v-if="itemsByKey.get(c.key) && summaryFor(c)"
+        class="feo-match-summary"
+        :row="itemsByKey.get(c.key)!"
+        :planned-label="summaryFor(c)!.plannedLabel"
+        :consumed-label="summaryFor(c)!.consumedLabel"
+        :residual-display="summaryFor(c)!.residualDisplay"
+        :shortfall-label="summaryFor(c)!.shortfallLabel"
+      />
       <FeoPlannedTakenBy
         v-if="itemsByKey.get(c.key)?.linked_purchases?.length || itemsByKey.get(c.key)?.linked_wishes?.length"
         class="feo-match-taken-by"
@@ -46,6 +55,15 @@
           :title="`Привязать и перенести позицию в категорию: ${c.path}`"
           @click="$emit('bind', c)"
         >Привязать</v-btn>
+        <FeoPlanResidualSummary
+          v-if="itemsByKey.get(c.key) && summaryFor(c)"
+          class="feo-match-summary"
+          :row="itemsByKey.get(c.key)!"
+          :planned-label="summaryFor(c)!.plannedLabel"
+          :consumed-label="summaryFor(c)!.consumedLabel"
+          :residual-display="summaryFor(c)!.residualDisplay"
+          :shortfall-label="summaryFor(c)!.shortfallLabel"
+        />
         <FeoPlannedTakenBy
           v-if="itemsByKey.get(c.key)?.linked_purchases?.length"
           class="feo-match-taken-by"
@@ -83,6 +101,8 @@ import { computed } from 'vue'
 import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
 import type { FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import FeoPlannedTakenBy from './FeoPlannedTakenBy.vue'
+import FeoPlanResidualSummary from './FeoPlanResidualSummary.vue'
+import { feoPlanRowSummary } from '@/composables/items/feoPlanned/feoPlanRowSummary'
 
 const props = defineProps<{
   candidates?: FeoMatchCandidate[]
@@ -115,15 +135,35 @@ const itemsByKey = computed(() => {
   return map
 })
 
-/** Не хватает ли остатка кандидата на сумму текущей позиции — null, если сумма
- *  неизвестна или остатка хватает (тогда FeoPlannedTakenBy покажет оранжевое
- *  предупреждение вместо красного, см. её проп shortfall). */
+/** Разница «сумма новой позиции минус остаток кандидата» (сумма-residual):
+ *  > 0 — не хватает (FeoPlannedTakenBy покажет красное «не хватает N»); <= 0 —
+ *  остатка достаточно (спокойное «остаток хватает»); null — сумма новой позиции
+ *  ЕЩЁ неизвестна, достаточность не проверить (тогда FeoPlannedTakenBy покажет
+ *  прежнее нейтрально-тревожное «если это дубль» — владелец, 30.09.2026:
+ *  «в остатка хватает — не пугать неуместным предупреждением»). ВАЖНО: раньше
+ *  и «хватает», и «неизвестно» схлопывались в один null — из-за этого «дубль,
+ *  разберитесь» показывался даже при достаточном остатке (тот самый баг).
+ *  Единственное место этого расчёта (Правило №6) — та же row.residual, что и
+ *  FeoPlanResidualSummary.vue ниже. */
 function shortfallFor(c: FeoMatchCandidate): number | null {
   if (props.amount == null) return null
   const row = itemsByKey.value.get(c.key)
   if (!row) return null
-  const residual = row.residual ?? 0
-  const gap = props.amount - residual
-  return gap > 0 ? gap : null
+  return props.amount - (row.residual ?? 0)
+}
+
+// «План · выбрано · остаток · не хватает» сводка кандидата (владелец,
+// 30.09.2026: «в подходящих не видно, сколько запланировано и сколько
+// выбрано») — тот же feoPlanRowSummary.ts, что и FeoPlannedItemRow.vue
+// (useFeoPlannedRows.ts::rowDisplayProps), второй расчёт не заводим. Здесь нет
+// контекста «уже занято в этой форме» (pendingByPlannedItem) — consumed/residual
+// берутся прямо с сервера (row.consumed/row.residual), shortfall — тот же
+// shortfallFor выше, но в знаке feoPlanRowSummary (остаток минус сумма,
+// отрицательный = не хватает) — обратный знак к shortfallFor, поэтому минус.
+function summaryFor(c: FeoMatchCandidate) {
+  const row = itemsByKey.value.get(c.key)
+  if (!row) return null
+  const gap = shortfallFor(c)
+  return feoPlanRowSummary(row, row.consumed, row.residual, gap != null ? -gap : null)
 }
 </script>

@@ -68,8 +68,13 @@ async def test_build_chain_creates_pending_approval_for_org_head(
     """Автор без отдела и без явного руководителя (superior_user_id) — цепочка
     состоит из одного звена: руководителя организации. Это минимальный, но
     валидный случай (build_ascending_chain отдаёт warning, но НЕ пустую цепочку)."""
-    org_head = await make_user(role="manager", org_id=test_org.id)
-    test_org.head_user_id = org_head.id
+    org_head = await make_user(
+        role="manager", org_id=test_org.id,
+        last_name="Головин", first_name="Глеб", middle_name="Глебович",
+    )
+    test_org.director_last_name = "Головин"
+    test_org.director_first_name = "Глеб"
+    test_org.director_middle_name = "Глебович"
     await db_session.commit()
 
     subsidy = Subsidy(name="Test subsidy", year=2026, budget=1_000_000.0, org_id=test_org.id)
@@ -112,8 +117,13 @@ async def test_build_chain_multi_level_via_superior_chain(
 ):
     """Автор -> непосредственный руководитель (User.superior_user_id) -> руководитель
     организации: две ступени, order_num 0 и 1 по возрастанию (снизу вверх)."""
-    org_head = await make_user(role="manager", org_id=test_org.id)
-    test_org.head_user_id = org_head.id
+    org_head = await make_user(
+        role="manager", org_id=test_org.id,
+        last_name="Головин", first_name="Глеб", middle_name="Глебович",
+    )
+    test_org.director_last_name = "Головин"
+    test_org.director_first_name = "Глеб"
+    test_org.director_middle_name = "Глебович"
     await db_session.commit()
 
     middle_boss = await make_user(role="manager", org_id=test_org.id, superior_user_id=org_head.id)
@@ -147,9 +157,10 @@ async def test_build_chain_multi_level_via_superior_chain(
 
 @pytest.mark.asyncio
 async def test_build_chain_noop_without_org_head(db_session, test_org, make_purchase, make_user):
-    """У организации не задан head_user_id — цепочку строить не из чего;
-    approval_status остаётся None, PurchaseApproval не создаётся."""
-    assert test_org.head_user_id is None
+    """У организации не задан руководитель по ЕГРЮЛ (director_*) и нет ИНН — цепочку
+    строить не из чего; approval_status остаётся None, PurchaseApproval не создаётся."""
+    assert test_org.director_last_name is None
+    assert not (test_org.inn or "").strip()
     author = await make_user(role="employee", org_id=test_org.id)
     p = await make_purchase(
         assigned_user_id=author.id,
@@ -172,8 +183,13 @@ async def test_build_chain_noop_without_org_head(db_session, test_org, make_purc
 @pytest.mark.asyncio
 async def test_build_chain_noop_for_non_framework_purchase(db_session, test_org, make_purchase, make_user):
     """Обычная (не рамочная) закупка не должна получать эту цепочку вообще."""
-    org_head = await make_user(role="manager", org_id=test_org.id)
-    test_org.head_user_id = org_head.id
+    org_head = await make_user(
+        role="manager", org_id=test_org.id,
+        last_name="Головин", first_name="Глеб", middle_name="Глебович",
+    )
+    test_org.director_last_name = "Головин"
+    test_org.director_first_name = "Глеб"
+    test_org.director_middle_name = "Глебович"
     await db_session.commit()
 
     author = await make_user(role="employee", org_id=test_org.id)
@@ -193,8 +209,13 @@ async def test_build_chain_noop_for_non_framework_purchase(db_session, test_org,
 async def test_cascade_endpoint_builds_chain(
     client, db_session, test_org, make_purchase, make_user, superadmin_headers,
 ):
-    org_head = await make_user(role="manager", org_id=test_org.id)
-    test_org.head_user_id = org_head.id
+    org_head = await make_user(
+        role="manager", org_id=test_org.id,
+        last_name="Головин", first_name="Глеб", middle_name="Глебович",
+    )
+    test_org.director_last_name = "Головин"
+    test_org.director_first_name = "Глеб"
+    test_org.director_middle_name = "Глебович"
     await db_session.commit()
 
     subsidy = Subsidy(name="Test subsidy 3", year=2026, budget=1_000_000.0, org_id=test_org.id)
@@ -245,8 +266,13 @@ async def test_approval_purchase_endpoint_does_not_start_chain_automatically(
     и test_cascade_endpoint_builds_chain выше)."""
     from app.models.contract import Contract
 
-    org_head = await make_user(role="manager", org_id=test_org.id)
-    test_org.head_user_id = org_head.id
+    org_head = await make_user(
+        role="manager", org_id=test_org.id,
+        last_name="Головин", first_name="Глеб", middle_name="Глебович",
+    )
+    test_org.director_last_name = "Головин"
+    test_org.director_first_name = "Глеб"
+    test_org.director_middle_name = "Глебович"
     await db_session.commit()
 
     subsidy = Subsidy(name="Test subsidy 4", year=2026, budget=1_000_000.0, org_id=test_org.id)
@@ -357,8 +383,13 @@ async def test_list_contracts_reports_approval_state(
 ):
     from app.models.contract import Contract
 
-    org_head = await make_user(role="manager", org_id=test_org.id)
-    test_org.head_user_id = org_head.id
+    org_head = await make_user(
+        role="manager", org_id=test_org.id,
+        last_name="Головин", first_name="Глеб", middle_name="Глебович",
+    )
+    test_org.director_last_name = "Головин"
+    test_org.director_first_name = "Глеб"
+    test_org.director_middle_name = "Глебович"
     await db_session.commit()
 
     subsidy = Subsidy(name="Test subsidy 5", year=2026, budget=1_000_000.0, org_id=test_org.id)
@@ -420,8 +451,13 @@ async def test_approval_sheet_prints_framework_head_approvers(
     from io import BytesIO
     from app.models.contract import Contract
 
-    org_head = await make_user(role="manager", org_id=test_org.id, full_name="Головин Глеб Глебович")
-    test_org.head_user_id = org_head.id
+    org_head = await make_user(
+        role="manager", org_id=test_org.id,
+        last_name="Головин", first_name="Глеб", middle_name="Глебович",
+    )
+    test_org.director_last_name = "Головин"
+    test_org.director_first_name = "Глеб"
+    test_org.director_middle_name = "Глебович"
     await db_session.commit()
 
     subsidy = Subsidy(name="Test subsidy 6", year=2026, budget=1_000_000.0, org_id=test_org.id)

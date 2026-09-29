@@ -44,11 +44,14 @@ async def _build_framework_chain_approvals(
     автор добавляет согласующих вручную по одному (POST /purchases/{pid}/
     approvals/add, см. purchase_approvals.py::add_approver — как и у заявки).
 
-    Верхом цепочки берём руководителя организации (Organization.head_user_id)
-    автоматически — у рамочной головы нет отдельного экрана выбора «верхнего
-    согласующего», как у заявки. Если он не задан — цепочку строить не из
-    чего, согласование не запускается (approval_status остаётся NULL), чтобы
-    не создать пустую/бессмысленную цепочку.
+    Верхом цепочки берём руководителя организации — руководителя по ЕГРЮЛ
+    (app/services/org_head.py::resolve_org_head_user_id; ни
+    Organization.head_user_id, ни signatory_* больше НЕ источник, владелец
+    2026-09-29) — автоматически: у рамочной головы нет отдельного
+    экрана выбора «верхнего согласующего», как у заявки. Если руководитель
+    не определился — цепочку строить не из чего, согласование не
+    запускается (approval_status остаётся NULL), чтобы не создать
+    пустую/бессмысленную цепочку.
 
     mode — 'sequential' (по умолчанию) или 'parallel'; передаётся явно, когда
     вызывающий (cascade-эндпоинт) уже знает выбор пользователя. Не путать с
@@ -69,12 +72,13 @@ async def _build_framework_chain_approvals(
     from app.routers.purchase_approvals import _resolve_purchase_org_id
     from app.models.organization import Organization
     from app.models.purchase_approval import PurchaseApproval
+    from app.services.org_head import resolve_org_head_user_id
 
     org_id = await _resolve_purchase_org_id(db, p, current_user)
     if not org_id:
         return None
     org = await db.get(Organization, org_id)
-    top_user_id = getattr(org, "head_user_id", None) if org else None
+    top_user_id = await resolve_org_head_user_id(db, org) if org else None
     if not top_user_id:
         return None
 

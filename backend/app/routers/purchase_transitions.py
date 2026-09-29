@@ -145,6 +145,31 @@ async def transition_status(
     if not p:
         raise HTTPException(404, "Закупка не найдена")
 
+    # Владелец (2026-09-29): «авансовый не должен уходить в план закупок без
+    # согласования возмещения — иначе все сотрудники наделают авансовых и
+    # оставят их в плане закупок». Для обычной закупки из заявки закупка
+    # вообще появляется только ПОСЛЕ согласования (app/routers/wish_convert.py
+    # ::convert_wish требует wish.status in ('approved','converted')) — здесь
+    # тот же принцип для авансового: компаньон (Purchase.wish_id,
+    # source='advance_report') обязан быть 'approved' до первого выхода из
+    # 'wishes'. Проверка ДО SaaS-bypass — правило действует без исключений
+    # по ролям, ровно так, как просил владелец.
+    if getattr(p, 'purchase_method', None) == 'advance' and p.status == 'wishes' and target_status != 'wishes':
+        from app.models.wish import Wish
+        # Реальные статусы (см. app/routers/wish_approvals.py::decide): когда
+        # последний согласующий цепочки одобряет заявку с items (companion
+        # авансового ВСЕГДА имеет WishItem-и — зеркало позиций закупки),
+        # decide() в ОДНОЙ транзакции ставит status='approved', а затем
+        # (т.к. wish.items непусто) сразу 'converted' — 'approved' как
+        # устойчивое конечное состояние для такой заявки не наблюдается.
+        # Принимаем оба, чтобы не зависеть от промежуточной летучей стадии.
+        _companion = await db.get(Wish, p.wish_id) if p.wish_id else None
+        if _companion is None or _companion.status not in ('approved', 'converted'):
+            raise HTTPException(
+                409,
+                "Сначала отправьте возмещение на согласование и дождитесь согласования"
+            )
+
     # SaaS-bypass: superadmin/account_owner — force-set статус минуя любые guard'ы.
     if current_user.role in OWNER_ROLES:
         p.status = target_status

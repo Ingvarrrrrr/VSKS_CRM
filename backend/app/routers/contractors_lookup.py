@@ -203,6 +203,19 @@ async def lookup_inn(
                 "signatory_last_name": _eg_last,
                 "signatory_first_name": _eg_first,
                 "signatory_middle_name": _eg_middle,
+                # Руководитель по ЕГРЮЛ (владелец 2026-09-29: подписант может
+                # быть доверенным лицом — это НЕ обязательно руководитель).
+                # ЕГРЮЛ отдаёт только руководителя (row "g"), поэтому значения
+                # совпадают с signatory_* ЗДЕСЬ, но это разные по смыслу поля:
+                # организация может вручную переопределить подписанта, а
+                # director_* всегда остаётся тем, что вернула налоговая.
+                # Используется app/services/org_head.py::resolve_org_head_user_id
+                # для организаций — не путать с contractors.signatory (для
+                # документов/договоров).
+                "director_last_name": _eg_last,
+                "director_first_name": _eg_first,
+                "director_middle_name": _eg_middle,
+                "director_position": _signatory_position,
                 "status": row.get("s"),  # status text
                 "registration_date": row.get("r"),
             }

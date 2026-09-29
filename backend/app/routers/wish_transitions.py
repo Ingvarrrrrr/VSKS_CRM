@@ -159,13 +159,18 @@ async def submit_wish(
     # автоматически). Строим ТУ ЖЕ восходящую цепочку, что и ручной
     # POST /approvers/cascade — тем же сервисом build_ascending_chain
     # (ПРАВИЛО №6: не заводить второй механизм подбора согласующих), только
-    # автоматически и до руководителя организации (Organization.head_user_id)
-    # как top_user_id по умолчанию.
+    # автоматически и до руководителя организации — руководителя по ЕГРЮЛ
+    # (Organization.director_*, при необходимости дозапрошенного по ИНН),
+    # сопоставленного с сотрудником (app/services/org_head.py::
+    # resolve_org_head_user_id; ни head_user_id, ни signatory_* больше НЕ
+    # источник, владелец 2026-09-29) — как top_user_id по умолчанию.
+    _org_submit = None
     if _approver_count == 0 and getattr(wish, 'source', None) == 'advance_report':
-        from app.models.organization import Organization as _Org_submit
+        from app.models.organization import Organization as _Org_submit_cls
         from app.services.approval_chain import build_ascending_chain as _build_chain_submit
-        _org_submit = await db.get(_Org_submit, wish.org_id)
-        _top_uid_submit = getattr(_org_submit, 'head_user_id', None)
+        from app.services.org_head import resolve_org_head_user_id as _resolve_head_submit
+        _org_submit = await db.get(_Org_submit_cls, wish.org_id)
+        _top_uid_submit = await _resolve_head_submit(db, _org_submit) if _org_submit else None
         if _top_uid_submit:
             _chain_submit, _ = await _build_chain_submit(
                 db, wish.created_by or current_user.id, _top_uid_submit, wish.org_id
@@ -190,10 +195,13 @@ async def submit_wish(
             "Добавьте хотя бы одного согласующего в разделе «Согласующие»."
         )
         if getattr(wish, 'source', None) == 'advance_report':
+            from app.services.org_head import describe_org_head_missing_reason as _describe_head_missing
+            if _org_submit is None:
+                from app.models.organization import Organization as _Org_submit_cls2
+                _org_submit = await db.get(_Org_submit_cls2, wish.org_id)
             _detail = (
-                "Нельзя отправить возмещение на согласование: у организации не "
-                "назначен руководитель (для авто-подбора согласующих). "
-                "Обратитесь к администратору, чтобы указать руководителя организации."
+                "Нельзя отправить возмещение на согласование: "
+                f"{await _describe_head_missing(db, _org_submit)}."
             )
         raise HTTPException(status_code=409, detail=_detail)
 

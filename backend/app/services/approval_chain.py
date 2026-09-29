@@ -2,7 +2,11 @@
 
 Источник иерархии — ЯВНЫЕ настраиваемые поля, НЕ UserHierarchy.manager_id:
   • Department.deputy_head_user_id / head_user_id / curator_user_id / parent_id
-  • Organization.head_user_id
+  • Руководитель организации — руководитель по ЕГРЮЛ (Organization.
+    director_*, НЕ signatory_* — подписант может быть доверенным лицом),
+    сопоставленный с сотрудником (app/services/org_head.py::
+    resolve_org_head_user_id); Organization.head_user_id больше НЕ
+    используется (владелец 2026-09-29)
   • User.superior_user_id (ручной override реального подчинения)
 
 Цепочка строится СНИЗУ ВВЕРХ от отдела автора заявки и обрезается на явно
@@ -112,10 +116,15 @@ async def build_ascending_chain(
     # Если отделы были, но ни один не дал звеньев — соберём предупреждение позже
     dept_gave_no_links = author_has_dept and not chosen_dept_found
 
-    # 2. Руководитель организации
+    # 2. Руководитель организации — руководитель по ЕГРЮЛ (см.
+    #    app/services/org_head.py::resolve_org_head_user_id; ни
+    #    Organization.head_user_id, ни signatory_* больше НЕ источник,
+    #    владелец 2026-09-29).
+    from app.services.org_head import resolve_org_head_user_id
     org = await db.get(Organization, org_id)
     if org is not None:
-        add(org.head_user_id, "Руководитель организации")
+        _head_uid = await resolve_org_head_user_id(db, org)
+        add(_head_uid, "Руководитель организации")
 
     # 3. Override: явный вышестоящий начальник автора имеет приоритет —
     #    ставим его цепочку в начало (реальное подчинение перебивает оргструктуру).

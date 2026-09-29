@@ -45,6 +45,17 @@ class Organization(Base):
     head_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     # Fabrikant: город заключения договора
     contract_city = Column(String(200), nullable=True)
+    # Руководитель организации по ЕГРЮЛ (владелец 2026-09-29: «подписант может
+    # быть по доверенности — руководитель организации это руководитель
+    # организации, из налоговой по ИНН»). ОТДЕЛЬНО от signatory_* (может
+    # отличаться, если документы подписывает доверенное лицо) и от
+    # head_user_id (не источник для определения руководителя — см.
+    # app/services/org_head.py::resolve_org_head_user_id, единственное место,
+    # которое читает эти поля для цепочки согласования).
+    director_last_name = Column(String(100), nullable=True)
+    director_first_name = Column(String(100), nullable=True)
+    director_middle_name = Column(String(100), nullable=True)
+    director_position = Column(String(255), nullable=True)
 
     users      = relationship("User", back_populates="organization", foreign_keys="User.org_id")
     child_orgs = relationship("Organization", foreign_keys="Organization.root_org_id", lazy="selectin")

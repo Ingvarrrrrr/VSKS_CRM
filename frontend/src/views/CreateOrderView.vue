@@ -1718,9 +1718,14 @@
           title="Повторить (Ctrl+Y)"
           @click="_undoRedo?.redo()"
         />
-        <v-btn v-if="isEdit && nextStatusTarget" :color="STATUS_COLOR[nextStatusTarget]" size="large"
+        <v-btn v-if="isEdit && nextStatusTarget && !advanceApprovalPending" :color="STATUS_COLOR[nextStatusTarget]" size="large"
           variant="tonal" :loading="transitioning" prepend-icon="mdi-arrow-right-circle" @click="onTransitionClick">
           → {{ nextStatusTarget === 'work_in_progress' ? 'Направлено в закупку' : STATUS_LABEL[nextStatusTarget] }}
+        </v-btn>
+        <v-btn v-else-if="isEdit && nextStatusTarget && advanceApprovalPending" disabled size="large" variant="tonal"
+          prepend-icon="mdi-arrow-right-circle"
+          title="Сначала отправьте возмещение на согласование и дождитесь согласования">
+          → {{ STATUS_LABEL[nextStatusTarget] }}
         </v-btn>
         <v-select v-if="isEdit && form.status === 'work_in_progress'" v-model="form.substatus"
           :items="SUBSTATUS_OPTIONS" item-title="title" item-value="value"
@@ -3935,6 +3940,20 @@ const nextStatusTarget = computed(() => {
   if (form.status === 'work_in_progress' && isFramework.value) return 'delivered'
   const idx = STATUS_ORDER.indexOf(form.status)
   return idx >= 0 && idx < STATUS_ORDER.length - 1 ? STATUS_ORDER[idx + 1] : null
+})
+
+// Владелец (2026-09-29): «авансовый не должен уходить в план закупок без
+// согласования возмещения — иначе все сотрудники наделают авансовых и
+// оставят их в плане». Тот же гейт, что и на бэкенде
+// (backend/app/routers/purchase_transitions.py::transition_status —
+// companion wish должен быть 'approved'); здесь только скрываем/блокируем
+// кнопку перехода и объясняем причину — второй проверки не заводим, 409
+// backend всё равно останется последним словом.
+const advanceApprovalPending = computed(() => {
+  if (form.purchase_method !== 'advance') return false
+  if (form.status !== 'wishes') return false
+  const ws = purchaseData.value?.wish_status
+  return ws !== 'approved' && ws !== 'converted'
 })
 
 const needsContract = computed(() => form.status === 'work_in_progress')

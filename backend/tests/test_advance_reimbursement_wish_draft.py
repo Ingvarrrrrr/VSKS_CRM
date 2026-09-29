@@ -9,7 +9,7 @@ app/routers/wish_transitions.py::submit_wish).
      status='draft'.
   2. POST /api/wishes/{id}/submit (существующий эндпоинт, не новый механизм) →
      'submitted', авто-построена цепочка согласующих (build_ascending_chain до
-     Organization.head_user_id).
+     руководителя организации по ЕГРЮЛ, см. app/services/org_head.py).
   3. Повторная отправка уже отправленной заявки → понятная ошибка (не 200).
   4. PUT /api/purchases/{id} авансового в статусе draft по-прежнему
      синхронизирует позиции компаньона (WishItem пересобираются).
@@ -58,11 +58,17 @@ async def test_advance_companion_wish_created_as_draft(client, auth_headers, db_
 async def test_submit_advance_companion_wish_via_existing_endpoint(
     client, auth_headers, db_session, test_user, test_org, make_user,
 ):
-    # Автосборка цепочки согласующих (submit_wish) идёт до Organization.head_user_id —
-    # без него у сотрудника без отдела цепочка пуста. Ставим отдельного
-    # руководителя (не автора), чтобы цепочка реально построилась.
-    manager = await make_user(role="manager")
-    test_org.head_user_id = manager.id
+    # Автосборка цепочки согласующих (submit_wish) идёт до руководителя
+    # организации по ЕГРЮЛ (Organization.director_* — владелец 2026-09-29,
+    # см. app/services/org_head.py::resolve_org_head_user_id), сопоставленного
+    # с сотрудником по ФИО. Ставим отдельного руководителя (не автора), чтобы
+    # цепочка реально построилась.
+    manager = await make_user(
+        role="manager", last_name="Козеев", first_name="Евгений", middle_name="Викторович",
+    )
+    test_org.director_last_name = "Козеев"
+    test_org.director_first_name = "Евгений"
+    test_org.director_middle_name = "Викторович"
     db_session.add(test_org)
     await db_session.commit()
 
@@ -85,8 +91,12 @@ async def test_submit_advance_companion_wish_via_existing_endpoint(
 async def test_resubmit_already_submitted_wish_fails_clearly(
     client, auth_headers, db_session, test_org, make_user,
 ):
-    manager = await make_user(role="manager")
-    test_org.head_user_id = manager.id
+    manager = await make_user(
+        role="manager", last_name="Козеев", first_name="Евгений", middle_name="Викторович",
+    )
+    test_org.director_last_name = "Козеев"
+    test_org.director_first_name = "Евгений"
+    test_org.director_middle_name = "Викторович"
     db_session.add(test_org)
     await db_session.commit()
 
@@ -105,8 +115,8 @@ async def test_resubmit_already_submitted_wish_fails_clearly(
 
 @pytest.mark.asyncio
 async def test_submit_without_org_head_gives_clear_error(client, auth_headers):
-    """Без Organization.head_user_id автосборка цепочки невозможна — 409 с
-    понятным текстом, не generic-«ошибка»."""
+    """Без ИНН и без Organization.director_* руководителя определить нельзя
+    (см. app/services/org_head.py) — 409 с понятным текстом, не generic-«ошибка»."""
     data = await _create_advance_purchase(client, auth_headers)
     wish_id = data["wish_id"]
 

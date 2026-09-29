@@ -24,15 +24,27 @@ from app.services.purchase_amounts import contract_amount as _contract_amount_fn
 
 
 def _parse_vat_rate_percent(rate) -> float:
-    """Числовой процент из строки ставки НДС позиции ('5%', '20', None).
+    """Числовой процент из строки ставки НДС позиции ('5%', '20', '22/122', None).
 
     Тот же принцип, что и во фронтовом composables/useVatCalc.ts::
     parseVatRatePercent — единственное на бэке место, где нужна эта же
     математика (см. compute_amounts_and_vat ниже, ветка vat_mode='per_item').
+
+    '22/122' и подобные «расчётные» ФНС-обозначения (X/(100+X)) — легаси:
+    с 2026-09-30 receipts_parsing.py::NDS_CODE_TO_RATE_STR больше не пишет
+    такие строки (сразу "22%"), но старые чеки/позиции на проде их уже
+    сохранили (миграция backend/alembic/versions переносит основной массив,
+    но не гарантирует 100% покрытия ручного ввода/будущих источников) —
+    понимаем X/1XX как X%, а не как «ставка не распознана» (0.0, что раньше
+    тихо превращало НДС в позиции в 0,00 руб.).
     """
     if not rate:
         return 0.0
-    m = re.match(r'^(\d+(?:\.\d+)?)\s*%?$', str(rate).strip())
+    s = str(rate).strip()
+    m = re.match(r'^(\d+(?:\.\d+)?)\s*%?$', s)
+    if m:
+        return float(m.group(1))
+    m = re.match(r'^(\d+(?:\.\d+)?)\s*/\s*\d+(?:\.\d+)?$', s)
     return float(m.group(1)) if m else 0.0
 
 

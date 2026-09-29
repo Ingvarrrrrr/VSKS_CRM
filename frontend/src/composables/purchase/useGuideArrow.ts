@@ -186,8 +186,16 @@ export function useGuideArrow(
 
     _guideRafId = requestAnimationFrame(tick)
 
-    // Safety: убираем через 3 минуты
-    _guideSafetyTimer = setTimeout(() => clearGuideArrow(), 3 * 60 * 1000)
+    // Владелец (30.09): «какая-то пунктирная строка постоянно зависла на
+    // экране» — линия-след и стрелка держались до 3 МИНУТ даже когда никто
+    // на экране не мог понять, что это и откуда. Вызывающая сторона
+    // (CreateOrderView.vue::watch(guidePointerResolved)) гасит стрелку раньше,
+    // как только поле реально заполнено, но не все цели (item:<uid> — строки
+    // позиций, см. itemUid выше) через этот watch отслеживаются — им нужна
+    // своя страховка. Единый потолок в 20 с — тот же POINTER_AUTO_HIDE_MS,
+    // что и у glow/pointerTarget ниже, чтобы не плодить вторую константу
+    // «сколько висит подсказка» (Правило №6).
+    _guideSafetyTimer = setTimeout(() => clearGuideArrow(), POINTER_AUTO_HIDE_MS)
   }
 
   return {

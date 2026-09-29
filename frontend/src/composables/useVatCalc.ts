@@ -24,11 +24,17 @@ export const VAT_RATE_OPTIONS = [
   { title: '22%', value: '22%' },
 ]
 
-/** Parse a rate like "22%" / "22" / "Без НДС" / null → numeric percent (0 when none). */
+/** Parse a rate like "22%" / "22" / "22/122" (легаси расчётная ставка ФНС) /
+ * "Без НДС" / null → numeric percent (0 when none). См. комментарий у
+ * backend/app/services/documents/stages_amounts.py::_parse_vat_rate_percent —
+ * тот же принцип, единственные два места этой математики (Правило №6). */
 export function parseVatRatePercent(rate: string | null | undefined): number {
   if (!rate || rate === 'Без НДС') return 0
-  const m = String(rate).match(/^(\d+(?:\.\d+)?)\s*%?$/)
-  return m?.[1] ? parseFloat(m[1]) : 0
+  const s = String(rate)
+  const m = s.match(/^(\d+(?:\.\d+)?)\s*%?$/)
+  if (m?.[1]) return parseFloat(m[1])
+  const m2 = s.match(/^(\d+(?:\.\d+)?)\s*\/\s*\d+(?:\.\d+)?$/)
+  return m2?.[1] ? parseFloat(m2[1]) : 0
 }
 
 /** VAT portion extracted from a gross (VAT-inclusive) total. */

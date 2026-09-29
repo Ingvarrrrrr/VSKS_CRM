@@ -116,6 +116,21 @@ async def test_generate_document_409_when_duplicates_unresolved(client, db_sessi
 
 @_SKIP_NO_TEMPLATE
 @pytest.mark.asyncio
+async def test_generate_document_advance_skips_duplicates_gate(client, db_session, auth_headers):
+    """Владелец (30.09, ФАДМ_2026, много чеков): «я уже решил» — для
+    purchase_method='advance' одинаковые позиции из разных чеков — факт
+    покупки, не дубль ТЗ; документ формируется БЕЗ 409 TZ_DUPLICATES_UNRESOLVED
+    и без единого решения merge/keep."""
+    p = await _make_purchase_with_duplicates(db_session)
+    p.purchase_method = "advance"
+    await db_session.commit()
+
+    resp = await client.get(f"/api/purchases/{p.id}/documents/tech_spec", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+
+
+@_SKIP_NO_TEMPLATE
+@pytest.mark.asyncio
 async def test_generate_document_after_merge_has_one_summed_row(client, db_session, auth_headers):
     p = await _make_purchase_with_duplicates(db_session)
     get_resp = await client.get(f"/api/purchases/{p.id}/tz-rows", headers=auth_headers)

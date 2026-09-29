@@ -473,6 +473,18 @@ def _require_tz_duplicates_resolved_for_doc(p) -> None:
     группе дублей не принято решение merge/keep — см.
     app.services.tz_items.find_duplicate_groups/build_tz_rows.
     """
+    if getattr(p, "purchase_method", None) == "advance":
+        # Владелец (30.09, авансовый ФАДМ_2026, много чеков): «я уже решил» —
+        # одинаковые позиции из РАЗНЫХ чеков («19Л ВОДА ARO», купленная
+        # дважды в разные дни) — факт покупки, а не дубль ТЗ, требующий
+        # осмысленного merge/keep. У авансового отчёта нет единого «ТЗ»,
+        # которое пишется один раз и печатается в договор/приёмку (вся идея
+        # merge/keep — про это, см. докстринг модуля выше); печатается
+        # построчно ровно то, что куплено. Не второй механизм разрешения
+        # (вроде decision='keep' по умолчанию) — просто отсутствие самого
+        # вопроса для этого способа закупки.
+        return
+
     from app.services.tz_items import find_duplicate_groups
 
     dup_groups = find_duplicate_groups(getattr(p, "items", None) or [])

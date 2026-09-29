@@ -22,6 +22,28 @@
         <v-alert v-if="info.hint" type="info" variant="tonal" density="compact" class="mb-3">
           <div class="text-body-2" style="white-space: pre-line">{{ info.hint }}</div>
         </v-alert>
+        <!-- Владелец (30.09, ФАДМ_2026): «ставки указаны с чеков, что меня
+             просят заполнить? нет стрелочки» — общая кнопка «Показать блок
+             НДС» уводила к шапке, а не к конкретной строке. Когда бэкенд
+             прислал info.missing_items (см. templates.py::
+             _require_per_item_vat_rate_for_doc) — список конкретных позиций,
+             каждая со своей стрелкой прямо к её строке (guideArrowTo умеет
+             target вида 'item:<uid>' — переиспользуем существующий механизм,
+             не заводим второй). -->
+        <v-list v-if="info.missing_items?.length" density="compact" class="mb-3 bg-transparent">
+          <v-list-item v-for="mi in info.missing_items" :key="mi.id"
+            class="px-2" style="border:1px solid rgba(0,0,0,0.08);border-radius:6px" :class="{ 'mb-1': true }">
+            <v-list-item-title class="text-body-2">
+              №{{ mi.num }} {{ mi.name }} <span v-if="mi.stage" class="text-medium-emphasis">— стадия {{ mi.stage }}</span>
+            </v-list-item-title>
+            <template #append>
+              <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-arrow-down-bold"
+                @click="open = false; $emit('reveal-field', `item:${mi.id}`)">
+                Показать
+              </v-btn>
+            </template>
+          </v-list-item>
+        </v-list>
         <v-expansion-panels v-if="info.error_raw || info.error_class" variant="accordion" :model-value="[]" class="mt-2">
           <v-expansion-panel>
             <v-expansion-panel-title class="text-caption">
@@ -54,9 +76,14 @@
              теперь ведёт прямо к единому блоку НДС (id="pub-target-vat" внутри
              панели позиций, см. PurchaseVatBlock.vue). VAT_RATE_REQUIRED покрывает и
              шапочный, и построчный (missing_fields=['items.vat_rate']) варианты. -->
+        <!-- Владелец (30.09): построчная ошибка (missing_items заполнен) уже
+             показывает СВОИ стрелки на конкретные строки выше — общая кнопка
+             «Показать блок НДС» тут лишняя и уводит не туда (к шапке, у
+             которой в режиме «НДС для каждой позиции» вообще нет поля
+             ставки). Оставляем кнопку только для шапочных вариантов ошибки. -->
         <v-btn variant="tonal" color="primary" prepend-icon="mdi-percent-outline"
           @click="open = false; $emit('reveal-field', 'vat')"
-          v-if="info?.code === 'VAT_RATE_REQUIRED' || info?.code === 'VAT_EXEMPTION_ARTICLE_REQUIRED'">
+          v-if="(info?.code === 'VAT_RATE_REQUIRED' || info?.code === 'VAT_EXEMPTION_ARTICLE_REQUIRED') && !info?.missing_items?.length">
           Показать блок НДС
         </v-btn>
         <v-spacer />

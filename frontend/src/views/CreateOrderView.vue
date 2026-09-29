@@ -3313,7 +3313,18 @@ const guidePointerResolved = computed(() => {
   if (!t) return false
   return GUIDE_TARGET_RESOLVED[t]?.() ?? false
 })
-watch(guidePointerResolved, (resolved) => { if (resolved) clearPointer() })
+// Владелец (30.09): «какая-то пунктирная строка постоянно зависла на экране»
+// — красная пунктирная линия-след (guideTrail) и стрелка-иконка оставались
+// на экране даже после того, как поле, к которому они вели, было заполнено:
+// этот watch раньше гасил ТОЛЬКО pointerTarget/glow (clearPointer), а
+// guideArrowVisible/guideTrail (сама пролетевшая стрелка со следом,
+// см. Teleport-оверлей выше) продолжали висеть до 3-минутного safety-таймера
+// в useGuideArrow.ts. Теперь решённая проблема гасит и стрелку целиком.
+watch(guidePointerResolved, (resolved) => { if (resolved) { clearPointer(); clearGuideArrow() } })
+// Закрытие диалога ошибки генерации документа — тоже сигнал «стрелка больше
+// не нужна» (владелец: «... при закрытии окна ошибки»), даже если поле ещё
+// не заполнено.
+watch(docErrorDialog, (open) => { if (!open) clearGuideArrow() })
 // ── end guide arrow ────────────────────────────────────────────────────────────
 
 async function revealField(target: string) {
@@ -3337,6 +3348,20 @@ async function revealField(target: string) {
     // ещё не вставленного узла.
     await nextTick()
     await nextTick()
+  }
+  // DocErrorDialog.vue шлёт 'item:<id>' с backend PurchaseItem.id (то, что
+  // реально вернул сервер в detail.missing_items — см. templates.py::
+  // _require_per_item_vat_rate_for_doc) — а id="item-row-*" в таблицах
+  // (ItemsTableFlat/ItemsCardsView/ItemsTableStages) собирается из
+  // item._uid — СИНТЕТИЧЕСКОГО фронтового идентификатора (useItemsTable.ts::
+  // nextUid, вида 'it-<ts>-<n>'), который с backend id не совпадает никогда.
+  // Резолвим id → _uid по текущему items.value перед тем, как звать
+  // guideArrowTo — тот же приём, что уже применяется чуть ниже по файлу для
+  // firstUid при валидации item_type.
+  if (target.startsWith('item:')) {
+    const raw = target.slice(5)
+    const found = items.value.find((it: any) => String(it.id) === raw || String(it._uid) === raw)
+    if (found) target = 'item:' + (found._uid ?? found.id)
   }
   guideArrowTo(target)
 }

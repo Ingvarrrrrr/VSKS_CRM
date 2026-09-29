@@ -274,11 +274,32 @@ def _require_per_item_vat_rate_for_doc(p, doc_type: str) -> None:
     сейчас не хранит, заводить его — второй механизм, чего владелец просил
     избегать). Пустых позиций (без названия) в расчёт не берём — им ставка
     не нужна.
+
+    Владелец (30.09, авансовый ФАДМ_2026, много чеков): «ставки указаны с
+    чеков, что меня просят заполнить? нет стрелочки» — позиция с нулевой
+    ценой (напр. «SIM МТС» 0 ₽ — бонусная строка в чеке) попадала в missing
+    наравне с обычными, хотя облагать НДС там физически нечего (тот же
+    принцип, что у _item_vat_amount: pct<=0 → 0 НДС, price<=0 — аналогично
+    «взять процент не с чего»). Требовать от человека выбрать ставку для
+    такой строки — работа без смысла и без поля, на которое можно было бы
+    показать стрелку. Позиции с price<=0 из missing исключаем; они всё равно
+    не участвуют в _item_vat_amount/vat_amount_val ниже.
+
+    detail["missing_items"] — конкретные позиции без ставки (id/num/name), а
+    не только счётчик: чтобы фронт мог навести стрелку-указатель на КАЖДУЮ
+    конкретную строку (см. DocErrorDialog.vue), а не на общий блок НДС.
     """
-    named_items = [it for it in (getattr(p, "items", None) or []) if (getattr(it, "item_name", None) or "").strip()]
+    all_items = list(getattr(p, "items", None) or [])
+    named_items = [
+        (idx, it) for idx, it in enumerate(all_items, start=1)
+        if (getattr(it, "item_name", None) or "").strip()
+    ]
     if not named_items:
         return
-    missing = [it for it in named_items if not getattr(it, "vat_rate", None)]
+    missing = [
+        (num, it) for num, it in named_items
+        if not getattr(it, "vat_rate", None) and float(getattr(it, "total_price", None) or 0) > 0
+    ]
     if not missing:
         return
     n = len(missing)
@@ -297,6 +318,15 @@ def _require_per_item_vat_rate_for_doc(p, doc_type: str) -> None:
                 "освобождения подставляется само."
             ),
             "missing_fields": ["items.vat_rate"],
+            "missing_items": [
+                {
+                    "id": getattr(it, "id", None),
+                    "num": num,
+                    "name": getattr(it, "item_name", None) or "",
+                    "stage": "ТЗ",
+                }
+                for num, it in missing
+            ],
             "doc_type": doc_type,
         },
     )

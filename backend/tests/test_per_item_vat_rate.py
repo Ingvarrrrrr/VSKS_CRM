@@ -19,8 +19,8 @@ from app.services.documents.templates import _require_vat_rate_for_doc
 from app.services.documents.stages_amounts import compute_amounts_and_vat
 
 
-def _mk_item(name="Товар", vat_rate=None, total_price=1000):
-    return SimpleNamespace(item_name=name, vat_rate=vat_rate, total_price=total_price)
+def _mk_item(name="Товар", vat_rate=None, total_price=1000, id=None):
+    return SimpleNamespace(item_name=name, vat_rate=vat_rate, total_price=total_price, id=id)
 
 
 def _mk_purchase(**overrides):
@@ -111,6 +111,35 @@ def test_uniform_mode_unaffected_by_items_vat_rate():
 def test_doc_type_not_printing_vat_skips_check_entirely():
     p = _mk_purchase(items=[_mk_item(name="A", vat_rate=None)])
     _require_vat_rate_for_doc(p, "tech_spec_request")  # не в VAT_RATE_PRINTED_DOC_TYPES
+
+
+def test_per_item_zero_price_named_item_does_not_require_rate():
+    """Владелец (30.09, авансовый ФАДМ_2026): бонусная строка чека («SIM МТС»
+    0 ₽) не должна требовать выбора ставки — облагать НДС нечего, и в UI нет
+    осмысленного поля, на которое можно было бы указать стрелкой."""
+    p = _mk_purchase(items=[
+        _mk_item(name="Товар", vat_rate="20%", total_price=1000),
+        _mk_item(name="SIM МТС", vat_rate=None, total_price=0),
+    ])
+    _require_vat_rate_for_doc(p, "approval_sheet")  # не должно бросать
+
+
+def test_per_item_missing_rate_includes_missing_items_detail():
+    """detail['missing_items'] содержит конкретные позиции (id/num/name/stage)
+    — фронт наводит стрелку на КАЖДУЮ, не на общий блок НДС."""
+    p = _mk_purchase(items=[
+        _mk_item(name="A", vat_rate="5%", total_price=100, id=11),
+        _mk_item(name="B", vat_rate=None, total_price=200, id=22),
+    ])
+    with pytest.raises(HTTPException) as exc_info:
+        _require_vat_rate_for_doc(p, "approval_sheet")
+    detail = exc_info.value.detail
+    items = detail["missing_items"]
+    assert len(items) == 1
+    assert items[0]["id"] == 22
+    assert items[0]["num"] == 2
+    assert items[0]["name"] == "B"
+    assert items[0]["stage"] == "ТЗ"
 
 
 # ---------------------------------------------------------------------------

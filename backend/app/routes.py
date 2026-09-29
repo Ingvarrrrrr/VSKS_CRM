@@ -25,6 +25,7 @@ from app.routers import (
 # catch-all "/{pid}" purchases.router — порядок регистрации относительно него
 # и друг друга не важен, регистрируются рядом с purchase_items_import.router.
 from app.routers import purchase_items_import_mapped
+from app.routers import organization_director
 from app.routers import purchase_items_import_smart
 from app.routers import purchase_items_import_feo
 # Разрезание departments.py (Правило №5, сессия 2026-09-08): departments_members,
@@ -385,6 +386,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(user_hierarchy.router)
     app.include_router(system_incidents.router)
     app.include_router(organizations.router)
+app.include_router(organization_director.router)
     app.include_router(reports.router)
     app.include_router(events.router)
     app.include_router(purchase_approvals.router)

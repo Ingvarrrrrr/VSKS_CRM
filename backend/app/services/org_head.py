@@ -76,33 +76,66 @@ async def _fetch_org_inn(db: AsyncSession, org: Organization) -> Optional[str]:
     return inn.strip() if inn and inn.strip() else None
 
 
-async def _ensure_director_from_egrul(db: AsyncSession, org: Organization) -> None:
-    """Если Organization.director_* пусты, а ИНН есть — запросить ЕГРЮЛ ОДИН
-    РАЗ (тем же сервисом lookup_inn, что и карточка контрагента) и сохранить
-    director_* на организацию. Не коммитит — вызывающий отвечает за commit/
-    flush в своей транзакции (submit_wish/build_ascending_chain уже делают
-    flush перед возвратом)."""
-    if org.director_last_name or org.director_first_name or org.director_middle_name:
-        return
+async def refresh_director_from_egrul(db: AsyncSession, org: Organization, *, force: bool = False) -> bool:
+    """Запросить ЕГРЮЛ (тем же сервисом lookup_inn, что и карточка
+    контрагента — второй механизм похода в ЕГРЮЛ не заводим) и сохранить
+    director_* на организацию.
+
+    force=False (путь по умолчанию, вызывается из resolve_org_head_user_id/
+    describe_org_head_missing_reason): если director_* уже заполнены —
+    ничего не делает, запрос ОДИН РАЗ.
+    force=True (кнопка «Обновить по ИНН» на карточке организации,
+    routers/organization_director.py): запрашивает ЕГРЮЛ заново независимо
+    от того, что уже сохранено.
+
+    Не коммитит — вызывающий отвечает за commit/flush в своей транзакции
+    (submit_wish/build_ascending_chain уже делают flush перед возвратом).
+    Возвращает True, если director_* были обновлены.
+
+    Бросает HTTPException, если force=True и ИНН не найден в ЕГРЮЛ/налоговая
+    недоступна — вызывающий эндпоинт (POST /director/refresh) должен вернуть
+    эту ошибку пользователю, а не проглатывать её молча (в отличие от
+    ленивого force=False пути, где отсутствие ответа только логируется).
+    """
+    if not force and (org.director_last_name or org.director_first_name or org.director_middle_name):
+        return False
     inn = await _fetch_org_inn(db, org)
     if not inn:
-        return
+        if force:
+            from fastapi import HTTPException
+            raise HTTPException(400, "У организации не заполнен ИНН — заполните реквизиты")
+        return False
     try:
         from app.routers.contractors_lookup import lookup_inn
         data = await lookup_inn(inn, force_egrul=True, db=db)
     except Exception as exc:  # HTTPException (не найден в ЕГРЮЛ) и сетевые сбои
-        logger.warning("resolve_org_head_user_id: lookup_inn(%s) failed for org %s: %s", inn, org.id, exc)
-        return
+        logger.warning("refresh_director_from_egrul: lookup_inn(%s) failed for org %s: %s", inn, org.id, exc)
+        if force:
+            from fastapi import HTTPException
+            if isinstance(exc, HTTPException):
+                raise HTTPException(exc.status_code, f"ЕГРЮЛ по ИНН {inn}: {exc.detail}")
+            raise HTTPException(502, f"Налоговая (ЕГРЮЛ) недоступна для ИНН {inn} — попробуйте позже")
+        return False
     d_last = data.get("director_last_name")
     d_first = data.get("director_first_name")
     d_middle = data.get("director_middle_name")
     if not (d_last or d_first or d_middle):
-        return
+        if force:
+            from fastapi import HTTPException
+            raise HTTPException(404, f"ЕГРЮЛ по ИНН {inn} не вернул данные о руководителе")
+        return False
     org.director_last_name = d_last
     org.director_first_name = d_first
     org.director_middle_name = d_middle
     org.director_position = data.get("director_position")
     db.add(org)
+    return True
+
+
+async def _ensure_director_from_egrul(db: AsyncSession, org: Organization) -> None:
+    """Обёртка для внутренних вызовов (resolve_org_head_user_id/
+    describe_org_head_missing_reason) — ленивый путь, см. refresh_director_from_egrul."""
+    await refresh_director_from_egrul(db, org, force=False)
 
 
 async def resolve_org_head_user_id(db: AsyncSession, org: Optional[Organization]) -> Optional[int]:

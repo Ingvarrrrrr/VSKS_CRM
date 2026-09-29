@@ -100,10 +100,14 @@
             variant="outlined" density="compact" class="mb-2"
             :readonly="!!form.contractor_id"
           />
+          <OrgDirectorBlock :org-id="form.id || null" />
+
           <v-text-field
             v-model="form.signatory_position" label="Должность подписанта"
             variant="outlined" density="compact" class="mb-2"
             :readonly="!!form.contractor_id"
+            hint="Подписант может действовать по доверенности и отличаться от руководителя (см. блок выше)"
+            persistent-hint
           />
           <v-row dense class="mb-2">
             <v-col cols="4">
@@ -129,9 +133,11 @@
 
 <script setup lang="ts">
 import { useDisplay } from 'vuetify'
+import OrgDirectorBlock from '@/components/organizations/OrgDirectorBlock.vue'
 
 defineProps<{
   form: {
+    id?: number
     contractor_id: number | null
     name: string; full_name: string; inn: string; kpp: string; ogrn: string; address: string
     signatory_last_name: string; signatory_first_name: string; signatory_middle_name: string; signatory_position: string

@@ -396,7 +396,10 @@ async def patch_product(
 @router.delete("/{product_id}")
 async def delete_product(
     product_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    # 29.09: эндпоинт был доступен БЕЗ входа (любой из интернета мог удалить товар,
+    # а после добавления 409 — увидеть номера закупок). Та же авторизация, что у PUT/PATCH.
+    current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(select(Product).where(Product.id == product_id))
     db_product = result.scalar_one_or_none()

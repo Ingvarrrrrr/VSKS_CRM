@@ -163,9 +163,11 @@ async def _download_and_save_photo(product_id: int, url: str, db: AsyncSession) 
 @router.post("/download-photos")
 async def download_all_photos(
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Скачать фото для всех активных товаров с внешней ссылкой, ещё не
-    закэшированных в БД.
+    закэшированных в БД. Аудит безопасности 2026-09-29: требуем вход, как у
+    соседних мутирующих эндпоинтов products.py (update_product и др.).
 
     Phase 17.1-08: cached copies live in `products.photo_data`. The correct
     guard is therefore "no photo_data yet" — NOT "no local filesystem URL"
@@ -200,8 +202,10 @@ async def download_all_photos(
 async def download_single_photo(
     product_id: int,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """Скачать фото одного товара по его внешней URL-ссылке в БД."""
+    """Скачать фото одного товара по его внешней URL-ссылке в БД.
+    Аудит безопасности 2026-09-29: требуем вход (как у update_product)."""
     result = await db.execute(select(Product).where(Product.id == product_id))
     product = result.scalar_one_or_none()
     if not product:
@@ -221,9 +225,11 @@ async def upload_product_photo(
     product_id: int,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Загрузка фото товара пользователем. Phase 17.1-08 — сохраняем в БД
-    (bytea), не в файловую систему."""
+    (bytea), не в файловую систему.
+    Аудит безопасности 2026-09-29: требуем вход (как у update_product)."""
     result = await db.execute(select(Product).where(Product.id == product_id))
     product = result.scalar_one_or_none()
     if not product:

@@ -96,12 +96,10 @@
             <td>
               <v-btn size="x-small" variant="text" color="primary"
                 icon="mdi-file-pdf-box"
-                :href="`/api/purchases/${purchaseId}/receipts/${r.id}/pdf`"
-                target="_blank" rel="noopener" />
+                @click="openReceiptFile(purchaseId, r.id, 'pdf')" />
               <v-btn size="x-small" variant="text" color="primary"
                 icon="mdi-file-image"
-                :href="`/api/purchases/${purchaseId}/receipts/${r.id}/png`"
-                target="_blank" rel="noopener" />
+                @click="openReceiptFile(purchaseId, r.id, 'png')" />
               <v-btn size="x-small" variant="text" color="error"
                 icon="mdi-delete" @click="onDeleteReceipt(r.id)" />
             </td>
@@ -204,12 +202,10 @@
               <td>
                 <v-btn size="x-small" variant="text" color="primary"
                   icon="mdi-file-pdf-box"
-                  :href="`/api/purchases/${purchaseId}/receipts/${r.id}/pdf`"
-                  target="_blank" rel="noopener" />
+                  @click="openReceiptFile(purchaseId, r.id, 'pdf')" />
                 <v-btn size="x-small" variant="text" color="primary"
                   icon="mdi-file-image"
-                  :href="`/api/purchases/${purchaseId}/receipts/${r.id}/png`"
-                  target="_blank" rel="noopener" />
+                  @click="openReceiptFile(purchaseId, r.id, 'png')" />
                 <v-btn size="x-small" variant="text" color="error"
                   icon="mdi-delete" @click="onDeleteReceipt(r.id)" />
               </td>
@@ -299,12 +295,10 @@
           <td>
             <v-btn size="x-small" variant="text" color="primary"
               icon="mdi-file-pdf-box"
-              :href="`/api/purchases/${purchaseId}/receipts/${r.id}/pdf`"
-              target="_blank" rel="noopener" />
+              @click="openReceiptFile(purchaseId, r.id, 'pdf')" />
             <v-btn size="x-small" variant="text" color="primary"
               icon="mdi-file-image"
-              :href="`/api/purchases/${purchaseId}/receipts/${r.id}/png`"
-              target="_blank" rel="noopener" />
+              @click="openReceiptFile(purchaseId, r.id, 'png')" />
             <v-btn size="x-small" variant="text" color="error"
               icon="mdi-delete" @click="onDeleteReceipt(r.id)" />
           </td>
@@ -390,4 +384,27 @@ defineProps<{
 // variant="tab" открывает свою drop-zone напрямую (было $refs.jsonReceiptInput.click()
 // в CreateOrderView.vue) — тот же эффект, локальный ref вместо родительского $refs.
 const tabDropZone = ref<InstanceType<typeof FileDropZone> | null>(null)
+
+// Аудит безопасности 2026-09-29: /api/purchases/{pid}/receipts/{id}/pdf|png
+// теперь требуют вход (были доступны без токена) — прямые <a href target=_blank>
+// перестали бы работать (браузерная навигация не шлёт Authorization). Скачиваем
+// blob'ом через fetch с тем же токеном, что и остальной apiFetch (паттерн из
+// useVehiclePhotos.ts/loadHeroPhoto), и открываем через createObjectURL.
+async function openReceiptFile(purchaseId: number | null, receiptId: number, kind: 'pdf' | 'png') {
+  if (!purchaseId) return
+  try {
+    const token = localStorage.getItem('auth_token')
+    const res = await fetch(`/api/purchases/${purchaseId}/receipts/${receiptId}/${kind}`, {
+      credentials: 'include',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) return
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    window.open(url, '_blank', 'noopener')
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
+  } catch {
+    // тихо — кнопка просто не откроет файл
+  }
+}
 </script>

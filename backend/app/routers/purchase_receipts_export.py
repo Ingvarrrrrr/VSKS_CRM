@@ -8,7 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.auth.jwt import get_current_user
 from app.models.purchase_receipt import PurchaseReceipt
+from app.models.user import User
 from app.services.receipts_render import _render_fallback_pdf, _render_receipt_pdf, _render_receipt_png
 
 router = APIRouter(prefix="/api/purchases", tags=["receipts"])
@@ -19,10 +21,13 @@ async def receipt_pdf(
     purchase_id: int,
     receipt_id: int,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
 ):
-    """Generate PDF on-the-fly from receipt raw_json. No auth — fiscal receipts
-    are not sensitive (already public on ФНС side via the QR code). Stable URL
-    allows embedding as hyperlinks in Excel exports."""
+    """Generate PDF on-the-fly from receipt raw_json.
+    Аудит безопасности 2026-09-29: требуем вход, как у соседних эндпоинтов
+    чеков (list/create/delete в purchase_receipts.py) — ссылки в Excel-экспорте
+    теперь открываются только авторизованным пользователем через blob-скачивание
+    на фронте (см. PurchaseReceiptsBlock.vue)."""
     r = await db.get(PurchaseReceipt, receipt_id)
     if not r or r.purchase_id != purchase_id:
         raise HTTPException(404, "Чек не найден")
@@ -46,8 +51,10 @@ async def receipt_png(
     purchase_id: int,
     receipt_id: int,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
 ):
-    """PNG render of a receipt — for inline <img> embedding."""
+    """PNG render of a receipt — for inline <img> embedding.
+    Аудит безопасности 2026-09-29: требуем вход (см. receipt_pdf выше)."""
     r = await db.get(PurchaseReceipt, receipt_id)
     if not r or r.purchase_id != purchase_id:
         raise HTTPException(404, "Чек не найден")

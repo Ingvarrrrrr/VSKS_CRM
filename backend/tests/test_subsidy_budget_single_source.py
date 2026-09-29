@@ -273,7 +273,12 @@ def test_get_subsidy_detail_does_not_commit(monkeypatch):
     sub = _mk_subsidy_obj()
     db = _CommitCountingFakeDB(results=[_FakeResult(sub)])
 
-    out = asyncio.run(subsidies.get_subsidy(1, db))
+    # Аудит безопасности 2026-09-29: get_subsidy теперь требует current_user
+    # (read-access гейт как у budget-check). superadmin -> get_visible_subsidy_ids
+    # возвращает None сразу, без обращения к db (см. app/auth/visibility.py),
+    # так что офлайн-фейковый db здесь не нужно расширять под этот путь.
+    fake_user = SimpleNamespace(id=1, role="superadmin", org_id=1)
+    out = asyncio.run(subsidies.get_subsidy(1, db, fake_user))
 
     assert db.commit_calls == 0, "GET не обязан писать calculated_budget в БД (Правило №6)"
     assert out["calculated_budget"] == 1_000_000.0  # фолбэк на ручной budget сработал

@@ -39,8 +39,14 @@ from app.routers.subsidy_templates import _normalize_docx_template
 router = APIRouter(prefix="/api/subsidies", tags=["subsidies"])
 
 @router.get("/diag/columns")
-async def diag_columns(db: AsyncSession = Depends(get_db)):
-    """Diagnostic endpoint — возвращает реальные колонки таблицы subsidies из information_schema."""
+async def diag_columns(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Diagnostic endpoint — возвращает реальные колонки таблицы subsidies из information_schema.
+    Отладочный эндпоинт, раскрывающий схему БД — только superadmin (аудит безопасности 2026-09-29)."""
+    if current_user.role != "superadmin":
+        raise HTTPException(status_code=403, detail="Доступно только superadmin")
     result = await db.execute(text(
         "SELECT column_name, data_type, is_nullable "
         "FROM information_schema.columns "
@@ -333,8 +339,27 @@ async def list_subsidies(
 @router.get("/{subsidy_id}", response_model=SubsidyOut)
 async def get_subsidy(
     subsidy_id: int,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    # Аудит безопасности 2026-09-29: тот же canonical read-access гейт, что и
+    # /{subsidy_id}/budget-check (T-31-05-01) — видимые субсидии + фолбэк по
+    # видимой закупке этой субсидии (исполнитель без вкладки «Субсидии»).
+    from app.auth.visibility import get_visible_subsidy_ids, build_visibility_clause
+    visible = await get_visible_subsidy_ids(current_user, db)
+    if visible is not None and subsidy_id not in visible:
+        clause = await build_visibility_clause(current_user, db, "purchase")
+        allowed = clause is None
+        if clause is not None:
+            cnt = (await db.execute(
+                select(func.count()).select_from(Purchase).where(
+                    Purchase.subsidy_id == subsidy_id, clause
+                )
+            )).scalar() or 0
+            allowed = cnt > 0
+        if not allowed:
+            raise HTTPException(status_code=404, detail="Subsidy not found")
+
     result = await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))
     subsidy = result.scalar_one_or_none()
     if not subsidy:
@@ -815,8 +840,25 @@ async def delete_subsidy(
 async def get_contractor_override(
     subsidy_id: int,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Get contractor detail overrides for a subsidy."""
+    # Аудит безопасности 2026-09-29: тот же read-access гейт, что у GET /{subsidy_id}.
+    from app.auth.visibility import get_visible_subsidy_ids, build_visibility_clause
+    visible = await get_visible_subsidy_ids(current_user, db)
+    if visible is not None and subsidy_id not in visible:
+        clause = await build_visibility_clause(current_user, db, "purchase")
+        allowed = clause is None
+        if clause is not None:
+            cnt = (await db.execute(
+                select(func.count()).select_from(Purchase).where(
+                    Purchase.subsidy_id == subsidy_id, clause
+                )
+            )).scalar() or 0
+            allowed = cnt > 0
+        if not allowed:
+            raise HTTPException(status_code=404, detail="Субсидия или контрагент не найден")
+
     subsidy = (await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))).scalar_one_or_none()
     if not subsidy or not subsidy.contractor_id:
         raise HTTPException(404, "Субсидия или контрагент не найден")
@@ -862,11 +904,21 @@ async def upsert_contractor_override(
     subsidy_id: int,
     data: SubsidyContractorOverrideCreate,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Create or update contractor detail overrides for a subsidy."""
     subsidy = (await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))).scalar_one_or_none()
     if not subsidy or not subsidy.contractor_id:
         raise HTTPException(404, "Субсидия или контрагент не найден")
+
+    # Аудит безопасности 2026-09-29: та же проверка права записи, что у PUT
+    # /{subsidy_id} (update_subsidy) — subsidy.edit в орге ИМЕННО этой субсидии.
+    from app.auth.permissions import has_org_key
+    if not await has_org_key(current_user, db, subsidy.org_id, 'subsidy.edit', subsidy_id=subsidy_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Нет права редактировать субсидии этой организации: право «Редактирование субсидий» не выдано для организации-грантополучателя",
+        )
 
     override = (await db.execute(
         select(SubsidyContractorOverride).where(

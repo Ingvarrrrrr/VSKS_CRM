@@ -213,8 +213,10 @@ async def update_publication_status(
     pub_id: int,
     body: PublicationStatusUpdate,
     db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
 ):
-    """Обновляет статус публикации (используется для ручного сброса и обратной совместимости)."""
+    """Обновляет статус публикации (используется для ручного сброса и обратной совместимости).
+    Аудит безопасности 2026-09-29: требуем вход, как у соседнего refresh_publication_status."""
     res = await db.execute(select(PlatformPublication).where(PlatformPublication.id == pub_id))
     pub = res.scalar_one_or_none()
     if not pub:

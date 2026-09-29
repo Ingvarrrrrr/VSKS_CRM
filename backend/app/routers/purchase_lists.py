@@ -28,6 +28,7 @@ router = APIRouter(prefix="/api/purchases", tags=["purchases"])
 async def list_responsible_persons(
     subsidy_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Уникальные ответственные исполнители из закупок (для выпадающего списка)."""
     q = select(Purchase.responsible_person).where(Purchase.responsible_person.isnot(None))
@@ -131,7 +132,7 @@ async def kanban_all(
 
 
 @router.get("/{pid}/kp-items")
-async def get_purchase_kp_items(pid: int, db: AsyncSession = Depends(get_db)):
+async def get_purchase_kp_items(pid: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Items in a purchase with product category info for КП smart sending."""
     from app.models.purchase_item import PurchaseItem
     from app.models.product import Product

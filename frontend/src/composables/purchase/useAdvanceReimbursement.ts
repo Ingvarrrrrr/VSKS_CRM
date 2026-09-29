@@ -142,12 +142,13 @@ export function useAdvanceReimbursement(
     setTimeout(() => topApproverEl?.classList.remove('wish-date-missing-pulse'), 3000)
   }
 
-  // Владелец (прод, заявка №85, 2026-09-29): выбрал верхнего согласующего, НЕ
-  // нажал «Построить цепочку», нажал «Отправить на согласование» → бэк отклонил
-  // 409 «не выбраны согласующие». «Автоматическое сохранение почему не
-  // происходит?» — значит «Отправить» само строит ту же цепочку (общий код
-  // useApproverCascade.ts, ПРАВИЛО №6 — то же самое зовёт useWishApprovers.ts
-  // для обычной заявки), если согласующих ещё нет, а верхний выбран.
+  // Владелец (прод, заявка №85, 2026-09-29, окончательно): выбрал верхнего
+  // согласующего, НЕ нажал «Построить цепочку», нажал «Отправить на
+  // согласование» → бэк отклонял 409 «не выбраны согласующие». Отправка
+  // добавляет ЕГО ОДНОГО единственным согласующим (тот же POST, что и «Добавить
+  // согласующего», НЕ cascade) — общий код useApproverCascade.ts (ПРАВИЛО №6 —
+  // то же самое зовёт useWishApprovers.ts для обычной заявки). Цепочка строится
+  // только явным нажатием «Построить цепочку».
   async function submit() {
     if (!wishId.value || submitting.value) return
     submitting.value = true
@@ -158,7 +159,6 @@ export function useAdvanceReimbursement(
         wishId: wishId.value,
         currentApproversCount: approvers.value.length,
         topUserId: approverTopUser.value,
-        mode: approvalMode.value,
         onApprovers: (list) => { approvers.value = list },
       })
       if (!ensured.ok) {
@@ -166,7 +166,7 @@ export function useAdvanceReimbursement(
           showSnack('Выберите верхнего согласующего', 'error')
           highlightMissingTopApprover()
         } else {
-          // Ошибка построения цепочки (например «верхним может быть только
+          // Ошибка добавления согласующего (например «верхним может быть только
           // сотрудник с правом корректировать субсидию») — показываем как есть,
           // на согласование НЕ отправляем.
           showSnack(ensured.message, 'error')
@@ -175,7 +175,7 @@ export function useAdvanceReimbursement(
       }
       if (!hadApproversAlready) {
         approverTopUser.value = null
-        if (ensured.warning) showSnack(`Цепочка построена. Внимание: ${ensured.warning}`, 'warning')
+        showSnack('Согласующий добавлен')
       }
       await apiFetch<AdvanceWishDetail>(`/wishes/${wishId.value}/submit`, { method: 'POST' })
       // POST /submit возвращает WishOut без approver_names (см. submit_wish —

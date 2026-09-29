@@ -80,8 +80,8 @@ async def test_submit_advance_companion_without_approvers_returns_409_no_auto_ch
     resp = await client.post(f"/api/wishes/{wish_id}/submit", headers=auth_headers)
     assert resp.status_code == 409, resp.text
     message = resp.json().get("message", "")
-    assert "не выбраны согласующие" in message
-    assert "Построить цепочку" in message
+    assert "не выбран согласующий" in message
+    assert "не выбран согласующий" in message
 
     approvals = (await db_session.execute(
         select(WishApproval).where(WishApproval.wish_id == wish_id)
@@ -175,7 +175,7 @@ async def test_submit_without_org_head_gives_clear_error(client, auth_headers):
     resp = await client.post(f"/api/wishes/{wish_id}/submit", headers=auth_headers)
     assert resp.status_code == 409, resp.text
     message = resp.json().get("message", "")
-    assert "руководител" in message.lower()
+    assert "не выбран согласующий" in message.lower()  # 30.09: руководитель не подбирается сам — нужен выбранный согласующий
 
 
 @pytest.mark.asyncio

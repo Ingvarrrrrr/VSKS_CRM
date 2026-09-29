@@ -713,7 +713,7 @@
               <!-- Список согласующих -->
               <div v-if="wishApprovers.length === 0" class="text-caption text-medium-emphasis">
                 Согласующие ещё не назначены.
-                <div v-if="approverTopUser">Нажмите «Построить цепочку» — или просто отправьте заявку, цепочка построится автоматически.</div>
+                <div v-if="approverTopUser">Выбранный сотрудник станет согласующим при отправке. Чтобы добавить промежуточных начальников — нажмите «Построить цепочку».</div>
               </div>
               <div v-else class="d-flex flex-column" style="gap:10px">
                 <v-sheet

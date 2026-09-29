@@ -855,7 +855,7 @@ export function useWishForm(deps: {
             // (например «верхним может быть только сотрудник с правом…»); здесь
             // не дублируем сообщение, только не отправляем.
             if (approversOutcome.reason === 'no-top') {
-              showSnack('Не выбраны согласующие. Выберите «Верхнего согласующего» в разделе «Согласующие» — цепочка построится автоматически.', 'error')
+              showSnack('Не выбраны согласующие. Выберите «Верхнего согласующего» в разделе «Согласующие» — он станет согласующим.', 'error')
             }
             await nextTick()
             highlightMissingApprovers()
@@ -878,7 +878,7 @@ export function useWishForm(deps: {
           const approversOutcome = await ensureApprovers(created.id)
           if (!approversOutcome.ok) {
             if (approversOutcome.reason === 'no-top') {
-              showSnack('Черновик сохранён. Не выбраны согласующие. Выберите «Верхнего согласующего» в разделе «Согласующие» — цепочка построится автоматически.', 'error')
+              showSnack('Черновик сохранён. Не выбраны согласующие. Выберите «Верхнего согласующего» в разделе «Согласующие» — он станет согласующим.', 'error')
             } else {
               showSnack('Черновик сохранён.', 'warning')
             }

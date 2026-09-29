@@ -1,18 +1,25 @@
-// useApproverCascade.ts — ОДИН источник истины для вызова POST /wishes/{id}/
-// approvers/cascade и для правила «нет согласующих, но выбран верхний —
-// перед отправкой построить цепочку автоматически» (ПРАВИЛО №6: раньше этот
-// POST-вызов и решение "что делать, если approvers пуст" были продублированы
-// в useWishApprovers.ts (обычная заявка) и useAdvanceReimbursement.ts
-// (заявка-компаньон авансового отчёта) — теперь оба зовут отсюда).
+// useApproverCascade.ts — ОДИН источник истины для двух РАЗНЫХ действий с
+// согласующими (ПРАВИЛО №6: раньше обвязка над ними была продублирована в
+// useWishApprovers.ts (обычная заявка) и useAdvanceReimbursement.ts (заявка-
+// компаньон авансового отчёта) — теперь оба зовут отсюда):
+//   1) callApproverCascade — POST /wishes/{id}/approvers/cascade, строит
+//      ВОСХОДЯЩУЮ цепочку начальников. Вызывается ТОЛЬКО кнопкой «Построить
+//      цепочку» — по явному желанию пользователя, см. runCascade в обоих
+//      композаблах.
+//   2) ensureApproversBeforeSubmit — на «Отправить на согласование»: если
+//      согласующих ещё нет, а поле «Верхний согласующий» заполнено, добавляет
+//      ЭТОГО ОДНОГО человека единственным согласующим (тот же POST
+//      /wishes/{id}/approvers, что и кнопка «Добавить согласующего»). Цепочку
+//      САМА НЕ строит.
 //
-// Владелец (прод, заявка №85, 2026-09-29): выбрал верхнего согласующего, НЕ
-// нажал «Построить цепочку», нажал «Отправить на согласование» → бэк отклонил
-// (approvers пуст). Вопрос владельца: «автоматическое сохранение почему не
-// происходит?» — значит на «Отправить» нужно САМИМ вызвать ту же цепочку
-// (эндпоинт и режим те же, что у кнопки «Построить цепочку»), а не только
-// добавлять одного человека (это и было прежним, более слабым поведением
-// useWishApprovers.ensureApprovers — оно ставило верхнего единственным
-// согласующим без восходящей цепочки).
+// Владелец (прод, заявка №85, 2026-09-29, первая правка): «автоматическое
+// сохранение почему не происходит?» — но следующая правка коммита 534676a0
+// (в тот же день) заставила ensureApproversBeforeSubmit звать cascade, и
+// владелец это ОТМЕНИЛ: «Цепочка строится только по желанию — кнопкой
+// «Построить цепочку». Если выбран один согласующий — он и остаётся
+// единственным. Выбран Цыганов — всё, больше никого не надо». Отправка добавляет
+// ровно выбранного человека, восходящую цепочку он получает только явным
+// нажатием «Построить цепочку».
 export interface CascadeApprover {
   id: number
   wish_id: number
@@ -48,31 +55,36 @@ export async function callApproverCascade<A extends CascadeApprover = CascadeApp
 }
 
 export type EnsureApproversResult =
-  | { ok: true; warning?: string | null }
+  | { ok: true }
   | { ok: false; reason: 'no-top' }
   | { ok: false; reason: 'error'; message: string }
 
 // Перед отправкой: если согласующие уже есть — ничего не делаем (пользователь
-// мог добавить их вручную кнопкой «Добавить согласующего», без цепочки).
-// Если согласующих нет, но верхний выбран — строим цепочку тем же вызовом,
-// что и кнопка «Построить цепочку». Если нет ни того, ни другого — вызывающая
-// сторона подсвечивает поле «Верхний согласующий» (reason: 'no-top').
+// мог добавить их вручную кнопкой «Добавить согласующего», или построить
+// цепочку кнопкой «Построить цепочку» — оба пути уже прошли через backend).
+// Если согласующих нет, но верхний выбран — добавляем ЕГО ОДНОГО единственным
+// согласующим (POST /wishes/{id}/approvers, тот же эндпоинт, что и кнопка
+// «Добавить согласующего»; НЕ /approvers/cascade). Если нет ни того, ни
+// другого — вызывающая сторона подсвечивает поле «Верхний согласующий»
+// (reason: 'no-top').
 export async function ensureApproversBeforeSubmit<A extends CascadeApprover = CascadeApprover>(opts: {
   apiFetch: typeof import('@/api').apiFetch
   wishId: number
   currentApproversCount: number
   topUserId: number | null
-  mode: 'sequential' | 'parallel'
   onApprovers: (approvers: A[]) => void
 }): Promise<EnsureApproversResult> {
-  const { apiFetch, wishId, currentApproversCount, topUserId, mode, onApprovers } = opts
+  const { apiFetch, wishId, currentApproversCount, topUserId, onApprovers } = opts
   if (currentApproversCount > 0) return { ok: true }
   if (!topUserId) return { ok: false, reason: 'no-top' }
   try {
-    const res = await callApproverCascade<A>(apiFetch, wishId, topUserId, mode)
-    onApprovers(res.approvers)
-    return { ok: true, warning: res.warning }
+    await apiFetch(`/wishes/${wishId}/approvers`, {
+      method: 'POST', body: JSON.stringify({ user_id: topUserId }),
+    })
+    const approvers = await apiFetch<A[]>(`/wishes/${wishId}/approvers`)
+    onApprovers(approvers)
+    return { ok: true }
   } catch (e: any) {
-    return { ok: false, reason: 'error', message: e?.payload?.message || e?.message || 'Не удалось построить цепочку согласующих' }
+    return { ok: false, reason: 'error', message: e?.payload?.message || e?.message || 'Не удалось добавить согласующего' }
   }
 }

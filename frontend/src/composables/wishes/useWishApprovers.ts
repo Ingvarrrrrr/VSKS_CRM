@@ -142,13 +142,13 @@ export function useWishApprovers(deps: {
       cascadeLoading.value = false
     }
   }
-  // Владелец (прод, заявка №85, 2026-09-29): «цепочка автоматически не
-  // выстраивается, только по кнопке» — но если кнопку не нажали, а верхнего
-  // согласующего выбрали, «Отправить» не должно падать с «не выбраны
-  // согласующие». Строим ТУ ЖЕ цепочку (эндпоинт+режим), что и кнопка
-  // «Построить цепочку» — общий код в useApproverCascade.ts (ПРАВИЛО №6,
-  // второй механизм подбора не заводим; то же самое зовёт
-  // useAdvanceReimbursement.ts для карточки компаньона авансового отчёта).
+  // Владелец (прод, заявка №85, 2026-09-29, окончательно): цепочка строится
+  // ТОЛЬКО по кнопке «Построить цепочку». Если кнопку не нажали, а верхнего
+  // согласующего выбрали — «Отправить» добавляет ЕГО ОДНОГО единственным
+  // согласующим (тот же POST, что и кнопка «Добавить согласующего», НЕ
+  // cascade) — общий код в useApproverCascade.ts (ПРАВИЛО №6, второй механизм
+  // подбора не заводим; то же самое зовёт useAdvanceReimbursement.ts для
+  // карточки компаньона авансового отчёта).
   async function ensureApprovers(wishId: number): Promise<EnsureApproversOutcome> {
     const hadApproversAlready = wishApprovers.value.length > 0
     const res = await ensureApproversBeforeSubmit<WishApprover>({
@@ -156,17 +156,16 @@ export function useWishApprovers(deps: {
       wishId,
       currentApproversCount: wishApprovers.value.length,
       topUserId: approverTopUser.value,
-      mode: approvalMode.value,
       onApprovers: (approvers) => { wishApprovers.value = approvers },
     })
     if (res.ok) {
       if (!hadApproversAlready) {
-        // Цепочка только что построена этим вызовом (approverTopUser был
-        // выбран, но кнопку «Построить цепочку» не нажимали).
+        // Согласующий только что добавлен этим вызовом (approverTopUser был
+        // выбран, но кнопку «Добавить согласующего»/«Построить цепочку» не
+        // нажимали).
         syncIsChainApprover()
         approverTopUser.value = null
-        if (res.warning) showSnack(`Цепочка построена. Внимание: ${res.warning}`, 'warning')
-        else showSnack('Цепочка построена автоматически перед отправкой')
+        showSnack('Согласующий добавлен')
       }
       return { ok: true }
     }

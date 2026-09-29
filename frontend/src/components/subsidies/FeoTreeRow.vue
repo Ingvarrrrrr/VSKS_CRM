@@ -22,7 +22,7 @@
   </tr>
 
   <tr
-    v-if="ctx.isNodeVisible(node) && !(ctx.plannedBase.value === 'requests' && ctx.isManualPosLeaf(node))"
+    v-if="ctx.isNodeVisible(node) && !(ctx.plannedBase.value === 'requests' && ctx.isManualPosLeaf(node)) && !hiddenByFullyPurchasedFilter"
     class="feo-tr"
     :data-feo-node-id="node.id"
     :class="[
@@ -30,6 +30,7 @@
       ctx.dragOverId.value === node.id ? 'feo-drop-target' : '',
       ctx.dragNodeId.value === node.id ? 'feo-dragging' : '',
       kpi.kpiNodeClass(node),
+      isCategoryFullyPurchased ? 'feo-fully-purchased-row' : '',
     ]"
     :draggable="ctx.canEditFeo.value"
     @dragstart="ctx.canEditFeo.value && ctx.onDragStart($event, node)"
@@ -126,6 +127,16 @@
            суммой отжимал у .feo-name всю ширину до нуля и валил колонку в
            800+px переносом по одному символу (найдено живой проверкой на
            стенде, категория 4792 — ИСПРАВЛЕНО переносом бейджа сюда). -->
+      <!-- «Всё закуплено» (владелец, 30.09.2026, п.2) — категория без
+           подразделов, у которой ВСЕ плановые позиции с планом закуплены
+           полностью (см. isCategoryFullyPurchased выше). Своя строка бейджей,
+           тот же приём, что и feoOwnItemsBadgeText ниже (плотная строка
+           flex-not-wrap ломается на длинном тексте, см. её докстринг). -->
+      <div v-if="isCategoryFullyPurchased" class="feo-name-badge-row">
+        <span class="feo-fully-purchased-badge" title="Все плановые позиции этой категории закуплены полностью — остаток по согласованным закупкам равен нулю">
+          <v-icon size="12" icon="mdi-check-all" class="mr-1" />Всё закуплено
+        </span>
+      </div>
       <div v-if="feoOwnItemsBadgeText" class="feo-name-badge-row">
         <span class="feo-own-badge"
           :class="{ 'feo-own-badge--active': ctx.expandedItemPanels.value.has(node.id) }"
@@ -830,6 +841,7 @@ import FeoCommentThread from './FeoCommentThread.vue'
 import { useKpiPrefs } from '@/composables/useKpiPrefs'
 import { useFeoTreeExcess } from '@/composables/subsidies/useFeoTreeExcess'
 import { useFeoTreeAmounts } from '@/composables/subsidies/useFeoTreeAmounts'
+import { useFeoHideFullyPurchased } from '@/composables/subsidies/useFeoHideFullyPurchased'
 
 const props = defineProps<{ node: FeoNode }>()
 // ФИКС (найден QA стека отмены, доп. волна 2026-09-14): `const node = props.node`
@@ -861,6 +873,18 @@ const feoTreeAmounts2 = useFeoTreeAmounts()
 // источник, тот же Set выбора, что и построчные чекбоксы FeoLevel5Panel.vue).
 const planToRequest = usePlanToRequest()
 const subtreeSelection = computed(() => planToRequest.subtreeSelectionState(node.value, ctx.feoCategories.value))
+
+// «Закуплено полностью» (владелец, 30.09.2026, п.2) — ТОЛЬКО у листовых
+// категорий (без подкатегорий): у направления с подразделами нет собственного
+// «плана категории» как единой сущности, суммарная закупленность считается
+// по конечным категориям внутри (см. FeoLevel5Panel.vue). Источник —
+// usePlanToRequest.ts::isCategoryFullyPurchased (та же feoResiduals, что и
+// режим «Создать закупку на основе плана», ensureResidualsLoaded грузит её
+// один раз для всей субсидии в FeoTreeToolbar.vue, Правило №6 — второй запрос
+// не шлём).
+const isCategoryFullyPurchased = computed(() => !node.value.hasChildren && planToRequest.isCategoryFullyPurchased(node.value.id))
+const hideFullyPurchased = useFeoHideFullyPurchased()
+const hiddenByFullyPurchasedFilter = computed(() => hideFullyPurchased.hideFullyPurchased.value && isCategoryFullyPurchased.value)
 // Подпись чекбокса категории (правка 2026-09-21, СЖАТО после приёмки: полный
 // текст «Выбрано k из N незакупленных» рвал колонку «Наименование» по буквам —
 // теперь компактный чип «k из N» (N=0 → просто «0»), полный текст ушёл в

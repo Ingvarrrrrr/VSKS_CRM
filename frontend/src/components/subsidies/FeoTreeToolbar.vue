@@ -200,6 +200,24 @@
     </div>
   </div>
 
+  <!-- «Закуплено полностью» — легенда + переключатель «Скрыть закупленные
+       полностью» (владелец, 30.09.2026, п.4-5): один флажок на всё дерево ФЭО
+       и панель Ур.5 (useFeoHideFullyPurchased.ts, module-level singleton,
+       Правило №6 — второй Set не заводим), запоминается в localStorage,
+       по умолчанию выключен. Штриховка/чип читают
+       usePlanToRequest.ts::isPlannedItemFullyTaken/isCategoryPlanFullyTaken/
+       isCategoryFullyPurchased — те же формулы, что уже использует режим
+       «Создать закупку на основе плана», второй расчёт остатка не заводим. -->
+  <div class="feo-fully-purchased-legend">
+    <span class="feo-fully-purchased-legend-swatch" />
+    <span>— закуплено полностью (остаток по согласованным закупкам = 0)</span>
+    <v-switch
+      v-model="hideFullyPurchased.hideFullyPurchased.value"
+      density="compact" hide-details color="success" class="ml-4" style="flex:0 0 auto"
+      :label="hideFullyPurchased.hideFullyPurchased.value ? 'скрыты' : 'скрыть закупленные полностью'"
+    />
+  </div>
+
   <!-- Подсказка режима выбора (владелец, лист 2 №7) — одной строкой под тулбаром,
        пока активен режим создания заявки из плана. -->
   <div v-if="planToRequest.active.value" class="plan-to-request-hint">
@@ -227,11 +245,22 @@ import FeoCollapseCandidatesDialog from '@/components/subsidies/FeoCollapseCandi
 import FeoCollapseConfirmDialog from '@/components/subsidies/FeoCollapseConfirmDialog.vue'
 // Раздел C — см. докстринг у переключателя «Суммы» в шаблоне выше.
 import { useKpiPrefs } from '@/composables/useKpiPrefs'
+// «Закуплено полностью» (владелец, 30.09.2026) — см. докстринг у легенды/
+// переключателя в шаблоне выше.
+import { useFeoHideFullyPurchased } from '@/composables/subsidies/useFeoHideFullyPurchased'
 
 const ctx = useSubsidyDetailCtx()
 const planToRequest = usePlanToRequest()
 const feoCollapse = useFeoCategoryCollapse()
 const kpiPrefs = useKpiPrefs()
+const hideFullyPurchased = useFeoHideFullyPurchased()
+
+// Остатки плановых позиций (planned_item_consumption/category_plan_links) —
+// нужны ВСЕГДА, не только в режиме «Создать закупку на основе плана»
+// (usePlanToRequest.ts::ensureResidualsLoaded, Правило №6 — второй GET не
+// заводим): штриховка «закуплено полностью» в FeoTreeRow.vue/
+// FeoLevel5Panel.vue читает тот же feoResiduals.
+watch(() => ctx.selectedId.value, (id) => { planToRequest.ensureResidualsLoaded(id) }, { immediate: true })
 
 // N кандидатов на сворачивание — считается лениво при открытии субсидии
 // (задача 3), не на каждый рендер тулбара.

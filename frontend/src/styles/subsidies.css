@@ -864,3 +864,75 @@
 }
 .v-theme--dark .subsidies-page .feo-kpi-dim > .feo-td,
 .v-theme--dark .subsidies-page .feo-kpi-dim > td { opacity: .22; }
+
+/* ── «Закуплено полностью» — штриховка (владелец, 30.09.2026) ──
+   Диагональные зелёные полоски поверх строки плановой позиции/категории,
+   остаток количества по согласованным закупкам = 0. Работает и в строках
+   основного дерева ФЭО (FeoTreeRow.vue — <tr class="feo-tr">, ячейки .feo-td),
+   и в панели Ур.5 (FeoLevel5Panel.vue — обычный <tr><td>...</td></tr>), поэтому
+   фон вешается и на «> .feo-td», и на «> td» разом, как и у .feo-kpi-hl выше
+   (единственный источник цвета/паттерна — эти два блока, второй копии
+   repeating-linear-gradient не заводим, Правило №6). !important — тот же
+   приём, что и у .feo-kpi-hl: перебивает собственный background ячеек
+   (feo-amount-cell, чётные/нечётные строки и т.п.). */
+.subsidies-page .feo-fully-purchased-row > .feo-td,
+.subsidies-page .feo-fully-purchased-row > td {
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(34, 197, 94, 0.12) 0px,
+    rgba(34, 197, 94, 0.12) 6px,
+    transparent 6px,
+    transparent 12px
+  ) !important;
+}
+.subsidies-page .feo-fully-purchased-row .feo-name,
+.subsidies-page .feo-fully-purchased-row .feo-amount,
+.subsidies-page .feo-fully-purchased-row td {
+  color: var(--crm-text-muted);
+}
+.v-theme--dark .subsidies-page .feo-fully-purchased-row > .feo-td,
+.v-theme--dark .subsidies-page .feo-fully-purchased-row > td {
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(74, 222, 128, 0.10) 0px,
+    rgba(74, 222, 128, 0.10) 6px,
+    transparent 6px,
+    transparent 12px
+  ) !important;
+}
+
+/* Легенда над деревом/панелью (владелец, п.5) — одна строка, единый источник
+   текста легенды (см. FeoTreeToolbar.vue). */
+.subsidies-page .feo-fully-purchased-legend {
+  font-size: 11px;
+  color: var(--crm-text-faint);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 8px;
+}
+.subsidies-page .feo-fully-purchased-legend .feo-fully-purchased-legend-swatch {
+  display: inline-block;
+  width: 22px;
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid rgba(34, 197, 94, 0.4);
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(34, 197, 94, 0.25) 0px,
+    rgba(34, 197, 94, 0.25) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+}
+
+/* Бейдж «Всё закуплено» строки категории (владелец, 30.09.2026, п.2) — тот же
+   визуальный стиль карточки-пилюли, что и .feo-own-badge выше, зелёная тема
+   success вместо teal (единственный источник признака — isCategoryFullyPurchased
+   в usePlanToRequest.ts, здесь только оформление). */
+.subsidies-page .feo-fully-purchased-badge {
+  display: inline-flex; align-items: center; max-width: 100%;
+  font-size: 10px; font-weight: 600; line-height: 1.4; white-space: normal; text-align: left;
+  color: #15803d; background: rgba(34,197,94,0.14); border: 1px solid rgba(34,197,94,0.4);
+  border-radius: 10px; padding: 1px 7px;
+}

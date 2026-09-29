@@ -351,11 +351,17 @@ export function usePlanToRequest() {
   // feo_plan_reads_tree.py: qty=0 по умолчанию, когда quantity не задан), а
   // ИМЕННО остаток <= 0 ПРИ наличии хотя бы одной привязанной СОГЛАСОВАННОЙ
   // закупки (linked_purchases — тот же PLANNED_STATUSES-фильтр, что и в
-  // planned_item_consumption).
+  // planned_item_consumption). Единственная формула (Правило №6) — вынесена в
+  // rowFullyTaken ниже, isPlannedItemFullyTaken/isCategoryPlanFullyTaken/
+  // isCategoryFullyPurchased читают её же, второй копии условия не заводим.
+  function rowFullyTaken(row: Pick<FeoPlanPosition, 'residual_quantity' | 'linked_purchases'>): boolean {
+    return Number(row.residual_quantity) <= 0 && (row.linked_purchases?.length ?? 0) > 0
+  }
+
   function isPlannedItemFullyTaken(plannedItemId: number): boolean {
     const row = residualRowFor(plannedItemId)
     if (!row) return false
-    return Number(row.residual_quantity) <= 0 && (row.linked_purchases?.length ?? 0) > 0
+    return rowFullyTaken(row)
   }
 
   function linkedPurchasesForPlannedItem(plannedItemId: number) {
@@ -384,7 +390,7 @@ export function usePlanToRequest() {
   function isCategoryPlanFullyTaken(categoryId: number): boolean {
     const row = residualRowForCategory(categoryId)
     if (!row) return false
-    return Number(row.residual_quantity) <= 0 && (row.linked_purchases?.length ?? 0) > 0
+    return rowFullyTaken(row)
   }
 
   function linkedPurchasesForCategory(categoryId: number) {
@@ -393,6 +399,55 @@ export function usePlanToRequest() {
 
   function linkedWishesForCategory(categoryId: number) {
     return residualRowForCategory(categoryId)?.linked_wishes || []
+  }
+
+  // ── Индикатор «закуплено полностью» ВНЕ режима подбора (владелец,
+  // 30.09.2026: «чтобы было видно плановые позиции, которые полностью
+  // выбраны — заштрихованы»). Та же feoResiduals/residualsSubsidyId, что и
+  // режим «Создать закупку на основе плана» выше (Правило №6, второй расчёт
+  // остатка не заводим) — но грузится НЕЗАВИСИМО от режима выбора: вызывающий
+  // компонент (FeoLevel5Panel.vue, FeoTreeRow.vue) сам решает, когда позиции
+  // субсидии нужны на экране, режим «создать закупку» тут ни при чём.
+  // Повторный вызов с тем же subsidyId — no-op (watch внутри
+  // useFeoPlannedResiduals уже держит актуальные данные, второй запрос не шлём).
+  function ensureResidualsLoaded(subsidyId: number | null | undefined) {
+    if (subsidyId == null) return
+    if (residualsSubsidyId.value !== subsidyId) residualsSubsidyId.value = subsidyId
+  }
+
+  // Мини-индикатор «куплено k из N» для частично закупленных строк (владелец,
+  // 30.09.2026) — те же planned_quantity/consumed_quantity, что уже есть в
+  // FeoPlanPosition (GET /feo-categories/plan-positions), второе поле не заводим.
+  function plannedItemProgress(plannedItemId: number): { consumed: number; total: number } | null {
+    const row = residualRowFor(plannedItemId)
+    if (!row || row.planned_quantity == null || !(row.planned_quantity > 0)) return null
+    return { consumed: Math.min(Number(row.consumed_quantity) || 0, row.planned_quantity), total: row.planned_quantity }
+  }
+
+  function categoryPlanProgress(categoryId: number): { consumed: number; total: number } | null {
+    const row = residualRowForCategory(categoryId)
+    if (!row || row.planned_quantity == null || !(row.planned_quantity > 0)) return null
+    return { consumed: Math.min(Number(row.consumed_quantity) || 0, row.planned_quantity), total: row.planned_quantity }
+  }
+
+  // ── Строка КАТЕГОРИИ дерева ФЭО целиком закуплена (владелец, п.2: «если все
+  // плановые позиции категории закуплены полностью») — в отличие от
+  // isCategoryPlanFullyTaken выше (проверяет ОДНУ строку — ручной план листа
+  // для материализации), здесь агрегируются ВСЕ строки плана этой категории:
+  // и настоящие FeoPlannedItem (kind='planned_item'), и ручной план
+  // (kind!=='planned_item') — у всех у них одно и то же поле category_id в
+  // FeoPlanPosition (см. её докстринг). Второй источник остатка не заводим —
+  // читает тот же feoResiduals.plannedResiduals, что и всё выше.
+  function categoryRowsWithPlan(categoryId: number): FeoPlanPosition[] {
+    return feoResiduals.plannedResiduals.value.filter(
+      r => r.category_id === categoryId && r.planned_quantity != null && r.planned_quantity > 0,
+    )
+  }
+
+  function isCategoryFullyPurchased(categoryId: number): boolean {
+    const rows = categoryRowsWithPlan(categoryId)
+    if (!rows.length) return false
+    return rows.every(rowFullyTaken)
   }
 
   // feoCategories в сигнатуре сохранён ради единообразия вызова с
@@ -666,5 +721,8 @@ export function usePlanToRequest() {
     isPlannedItemFullyTaken, linkedPurchasesForPlannedItem, linkedWishesForPlannedItem,
     // То же для плана листовой категории целиком (isManual-строка, без FeoPlannedItem).
     isCategoryPlanFullyTaken, linkedPurchasesForCategory, linkedWishesForCategory,
+    // Штриховка «закуплено полностью» ВНЕ режима подбора + прогресс частично
+    // закупленных строк (владелец, 30.09.2026) — FeoLevel5Panel.vue/FeoTreeRow.vue.
+    ensureResidualsLoaded, plannedItemProgress, categoryPlanProgress, isCategoryFullyPurchased,
   }
 }

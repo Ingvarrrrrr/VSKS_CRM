@@ -81,7 +81,10 @@
               <!-- data-feo-planned-item-id — цель прокрутки+подсветки поиска по субсидии
                    (useFeoTreeSearch.ts::scrollAndHighlight), тот же приём, что и
                    data-feo-node-id у строки категории (FeoTreeRow.vue). -->
-              <tr style="border-bottom:1px solid #E5E7EB" :data-feo-planned-item-id="planned.id">
+              <tr v-if="!(hideFullyPurchased.hideFullyPurchased.value && isRowFullyPurchased(planned))"
+                style="border-bottom:1px solid #E5E7EB" :data-feo-planned-item-id="planned.id"
+                :class="{ 'feo-fully-purchased-row': isRowFullyPurchased(planned) }"
+              >
                 <td :style="[nameColStyle, { paddingLeft: `${ctx.plannedItemIndentPx(node)}px` }]" style="padding-top:4px;padding-right:8px;padding-bottom:4px;color:#0c4a6e">
                   <div class="d-flex align-center" style="gap:2px">
                     <!-- Задача владельца, п.12 волны 3: чекбокс массового выбора — только у
@@ -214,6 +217,18 @@
                       :linked-wishes="planToRequest.linkedWishesForCategory(node.id)"
                       short
                     />
+                  </div>
+                  <!-- «Закуплено полностью»/«куплено k из N» (владелец, 30.09.2026, п.1) —
+                       ВСЕГДА видно, не только в режиме подбора «Создать закупку на основе
+                       плана» (в отличие от FeoPlannedTakenBy выше). Чип — зелёный, рядом со
+                       строкой «занято: РЕЕ-...» (если она тоже показана, в active-режиме);
+                       частично закупленные — без штриховки строки, только мини-подпись,
+                       второй такой индикатор в проекте не заводим (Правило №6). -->
+                  <div v-if="isRowFullyPurchased(planned)" class="mt-1">
+                    <v-chip size="x-small" color="success" variant="flat" prepend-icon="mdi-check-all" style="font-size:9px;height:16px">Закуплено полностью</v-chip>
+                  </div>
+                  <div v-else-if="rowProgress(planned) && rowProgress(planned)!.consumed > 0" class="text-medium-emphasis" style="font-size:10px;line-height:1.3">
+                    куплено {{ rowProgress(planned)!.consumed }} из {{ rowProgress(planned)!.total }}{{ planned.unit ? ` ${planned.unit}` : '' }}
                   </div>
                   <div v-if="planned.amount != null" class="text-medium-emphasis" style="font-size:10px;line-height:1.3;white-space:normal">
                     {{ ctx.planBreakdownText(node.id, planned) }}
@@ -707,6 +722,7 @@ import FeoPlannedTakenBy from '@/components/items/feo-planned/FeoPlannedTakenBy.
 // согласованному пути; npx vue-tsc --noEmit перепроверить, когда появится.
 import { kindOf, ITEM_TYPE_OPTIONS } from '@/utils/itemTypeKind'
 import { useFeoLevel5ItemType } from '@/composables/subsidies/useFeoLevel5ItemType'
+import { useFeoHideFullyPurchased } from '@/composables/subsidies/useFeoHideFullyPurchased'
 
 const props = defineProps<{ node: FeoNode }>()
 const node = props.node
@@ -746,6 +762,25 @@ function focusItemTypeSelect(plannedId: number) {
 // «Создать закупку на основе плана» (задача 2) — только для видимости чекбокса
 // у ручных планов (isManual), см. докстринг в шаблоне выше.
 const planToRequest = usePlanToRequest()
+
+// «Закуплено полностью» ВНЕ режима подбора (владелец, 30.09.2026, п.1) —
+// остаток плановой позиции/ручного плана категории по согласованным закупкам
+// равен нулю. Источник — usePlanToRequest.ts::isPlannedItemFullyTaken/
+// isCategoryPlanFullyTaken/plannedItemProgress/categoryPlanProgress — ТА ЖЕ
+// feoResiduals, что и режим «Создать закупку на основе плана» (Правило №6,
+// второй расчёт остатка не заводим); ensureResidualsLoaded уже вызван один
+// раз на всю субсидию в FeoTreeToolbar.vue, здесь только читаем.
+function isRowFullyPurchased(planned: FeoPlannedItem & { isManual?: boolean }): boolean {
+  return planned.isManual
+    ? planToRequest.isCategoryPlanFullyTaken(node.id)
+    : planToRequest.isPlannedItemFullyTaken(planned.id)
+}
+function rowProgress(planned: FeoPlannedItem & { isManual?: boolean }): { consumed: number; total: number } | null {
+  return planned.isManual
+    ? planToRequest.categoryPlanProgress(node.id)
+    : planToRequest.plannedItemProgress(planned.id)
+}
+const hideFullyPurchased = useFeoHideFullyPurchased()
 
 // Комментарии к плановым позициям (владелец, Волна 4, п.16) — переиспользуем
 // ОДИН FeoCommentThread.vue (та же копия, что и у категории в FeoTreeRow.vue,

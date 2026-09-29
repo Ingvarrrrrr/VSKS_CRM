@@ -664,7 +664,7 @@
                   <v-col cols="12" md="6" data-field="approvers">
                     <v-autocomplete
                       v-model="approverTopUser"
-                      :items="orgUsers"
+                      :items="topApproverCandidates"
                       item-title="full_name"
                       item-value="id"
                       label="Верхний согласующий"
@@ -672,6 +672,7 @@
                       density="compact"
                       clearable
                       hide-details
+                      no-data-text="Нет сотрудников с правом корректировать субсидию — обратитесь к администратору"
                     >
                       <template #item="{ item, props: itemProps }">
                         <v-list-item v-bind="itemProps">
@@ -1402,6 +1403,7 @@ const {
   wishMembers, participantToAdd, addWishMember, removeWishMember,
   wishApprovers, approverTopUser, approverToAdd, approvalMode, cascadeLoading,
   decideComment, decideLoading, approvalStatusColor, approvalStatusLabel,
+  topApproverCandidates,
   runCascade, addApprover, reorderLoading, moveApprover, removeApprover, decideApprover,
   canDecideApprover, isDecidingOnBehalf, approverDecisionLine,
 } = approvers

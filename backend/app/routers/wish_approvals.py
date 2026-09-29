@@ -16,10 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.auth.jwt import get_current_user, get_org_filter, MANAGER_ROLES, OWNER_ROLES
+from app.auth.permissions import has_org_key
 from app.models.user import User
 from app.models.wish import Wish
 from app.models.wish_approval import WishApproval
+from app.models.purchase import Purchase
+from app.models.subsidy import Subsidy
 from app.services.approval_chain import build_ascending_chain
+from app.services.authorized_approvers import list_users_with_org_key
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +92,54 @@ async def _load_approvals(wid: int, db: AsyncSession) -> list[WishApproval]:
     )).scalars().all()
 
 
+# ── Верхний согласующий обязан иметь право корректировать субсидию ─────────────
+# Владелец: «Верхним согласующим необходимости закупки можно ставить только
+# того, кто имеет право корректировать субсидию. Иначе каждый сотрудник будет
+# сам себя ставить и сам себе согласовывать». Право «корректировать субсидию» —
+# ТА ЖЕ проверка, что у PUT/DELETE субсидии (has_org_key(..., 'subsidy.edit',
+# subsidy_id=...), см. subsidies.py) — второй расчёт прав не заводим (ПРАВИЛО №6).
+
+async def _effective_subsidy_id_for_wish(wish: Wish, db: AsyncSession) -> int | None:
+    """Субсидия, по которой проверяется право 'subsidy.edit' для верхнего
+    согласующего этой заявки: своя subsidy_id, иначе — субсидия закупки-
+    компаньона (авансовый отчёт, Purchase.wish_id == wish.id), иначе None
+    (в этом случае проверяем право просто по организации)."""
+    if wish.subsidy_id:
+        return wish.subsidy_id
+    purchase_subsidy_id = (await db.execute(
+        select(Purchase.subsidy_id)
+        .where(Purchase.wish_id == wish.id, Purchase.subsidy_id.isnot(None))
+        .limit(1)
+    )).scalar_one_or_none()
+    return purchase_subsidy_id
+
+
+async def _validate_top_approver(
+    wish: Wish, top_user_id: int, db: AsyncSession,
+) -> None:
+    """400, если top_user_id не может быть верхним согласующим этой заявки —
+    у него нет права 'subsidy.edit' по субсидии заявки/закупки-компаньона (по
+    организации, если субсидии нет). Владелец (2026-09-29, уточнение): если
+    сам автор заявки имеет это право — он МОЖЕТ быть верхним согласующим и
+    провести всю заявку в одиночку; отдельного запрета «автор == согласующий»
+    НЕТ — единственный критерий это subsidy.edit."""
+    subsidy_id = await _effective_subsidy_id_for_wish(wish, db)
+    top_user = await db.get(User, top_user_id)
+    if top_user is None:
+        raise HTTPException(404, "Пользователь не найден")
+    if not await has_org_key(top_user, db, wish.org_id, "subsidy.edit", subsidy_id=subsidy_id):
+        subsidy_name = None
+        if subsidy_id:
+            subsidy_name = (await db.execute(
+                select(Subsidy.name).where(Subsidy.id == subsidy_id)
+            )).scalar_one_or_none()
+        raise HTTPException(
+            400,
+            "Верхним согласующим может быть только сотрудник с правом корректировать "
+            f"субсидию {subsidy_name or 'этой организации'}",
+        )
+
+
 # ── GET list ──────────────────────────────────────────────────────────────────
 
 @router.get("/{wid}/approvers")
@@ -99,6 +151,32 @@ async def list_wish_approvers(
     await _get_wish_or_403(wid, current_user, db)
     rows = await _load_approvals(wid, db)
     return await _approval_dicts(rows, db)
+
+
+# ── GET candidates для «Верхний согласующий» ───────────────────────────────────
+
+@router.get("/{wid}/approvers/candidates")
+async def list_top_approver_candidates(
+    wid: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Кандидаты в «верхний согласующий» — пользователи, у которых есть право
+    'subsidy.edit' по субсидии заявки/закупки-компаньона (или по организации,
+    если субсидии нет). Тот же расчёт кандидатов, что и у согласующих
+    превышения ФЭО (app.services.authorized_approvers.list_users_with_org_key,
+    ПРАВИЛО №6 — второй расчёт не заводим). Автор заявки НЕ исключается —
+    владелец (2026-09-29): если у автора есть subsidy.edit, он вправе сам
+    быть верхним согласующим собственной заявки."""
+    wish = await _get_wish_or_403(wid, current_user, db)
+    subsidy_id = await _effective_subsidy_id_for_wish(wish, db)
+    users = await list_users_with_org_key(
+        db, wish.org_id, "subsidy.edit", subsidy_id=subsidy_id,
+    )
+    return [
+        {"id": u.id, "full_name": u.full_name or u.username, "role": u.role}
+        for u in users
+    ]
 
 
 # ── POST cascade ──────────────────────────────────────────────────────────────
@@ -121,6 +199,8 @@ async def cascade_wish_approvers(
 
     if not _is_saas(current_user) and wish.status not in ("draft", "rejected"):
         raise HTTPException(400, "Цепочку можно менять только у черновика или отклонённой заявки")
+
+    await _validate_top_approver(wish, top_user_id, db)
 
     author_id = wish.created_by or current_user.id
     chain, chain_warning = await build_ascending_chain(db, author_id, top_user_id, wish.org_id)
@@ -214,6 +294,15 @@ async def add_wish_approver(
     )).scalar()
     next_order = (max_order + 1) if max_order is not None else 0
 
+    # Ручное назначение ЕДИНСТВЕННОГО (= одновременно верхнего) согласующего —
+    # без цепочки это прямой аналог top_user_id в cascade (см. UI:
+    # useWishApprovers.ensureApprovers — «не нажал кнопку, согласующим
+    # становится ровно тот, кто выбран»). Та же проверка, что и в cascade:
+    # 400, если у него нет права 'subsidy.edit' по субсидии заявки (автор
+    # заявки с этим правом — легитимный кандидат, см. _validate_top_approver).
+    if max_order is None:
+        await _validate_top_approver(wish, user_id, db)
+
     a = WishApproval(
         wish_id=wid,
         user_id=user_id,
@@ -302,6 +391,12 @@ async def decide_wish_approval(
 
     if not _is_saas(current_user) and wish.status != "submitted":
         raise HTTPException(400, "Заявка ещё не отправлена на согласование (статус должен быть 'submitted')")
+
+    # Владелец (2026-09-29, уточнение): отдельного запрета «автор заявки не
+    # согласовывает свою же заявку» НЕТ — единственный критерий для верхнего
+    # согласующего это subsidy.edit (см. _validate_top_approver). Если автор
+    # сам обладает этим правом, он законно оказывается в цепочке (top_user_id
+    # == created_by пройдёт cascade) и вправе решить свой же шаг.
 
     # Права: решать может сам назначенный согласующий или менеджер+/SaaS
     if not _is_saas(current_user) and current_user.role not in MANAGER_ROLES and a.user_id != current_user.id:

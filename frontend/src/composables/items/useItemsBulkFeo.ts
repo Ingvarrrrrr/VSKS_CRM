@@ -40,6 +40,14 @@ export interface PlanCreateRow {
   // чисто информационное — честно предупредить в предпросмотре, что в этой категории
   // уже есть плановая позиция с таким же именем, НЕ блокирует и НЕ меняет создание.
   duplicateOf: { id: number; name: string } | null
+  // Жалоба владельца (29.09, п.3): нет колонки «Тип» в этом диалоге — тип
+  // предзаполняется из каталога товара позиции, иначе из собственного типа
+  // позиции закупки/заявки, иначе пусто (см. defaultItemTypeFor ниже). Строка
+  // без типа блокирует кнопку «Создать» целиком (см. missingTypeRows/
+  // createPlannedBulkDisabled) — то же требование, что и в диалоге «Новая
+  // плановая позиция» (useFeoPlannedCreate.ts), только per-row.
+  itemType: string | null
+  productId: number | null
 }
 
 export interface UseItemsBulkFeoDeps {
@@ -57,10 +65,16 @@ export interface UseItemsBulkFeoDeps {
   emitUpdate: () => void
   emit: { (event: 'planned-item-created'): void }
   showSnack: (text: string, color?: ToastType, opts?: { actionText?: string; onAction?: () => void; duration?: number }) => void
+  /** Каталог товаров (useItemsCatalog.ts::productById) — источник item_kind по
+   *  product_id позиции (жалоба владельца, 29.09, п.3: предзаполнение типа
+   *  «Тип из каталога, иначе тип позиции, иначе пусто»). ПРАВИЛО №6 — второй
+   *  лукап каталога не заводим, читаем ту же карту, что и остальные места
+   *  (itemCategoryOf/itemTypeOf в useItemsCatalog.ts). */
+  productById?: Ref<Map<number, any>>
 }
 
 export function useItemsBulkFeo(deps: UseItemsBulkFeoDeps) {
-  const { props, localItems, selectedItemIdxs, feoNodes, injectUnallocatedNode, emitUpdate, emit, showSnack } = deps
+  const { props, localItems, selectedItemIdxs, feoNodes, injectUnallocatedNode, emitUpdate, emit, showSnack, productById } = deps
 
   // ── ISSUE-3 PART B: bulk-assign FEO level to selected items ─────────────────
   const bulkFeoDialog = ref(false)
@@ -224,6 +238,33 @@ export function useItemsBulkFeo(deps: UseItemsBulkFeoDeps) {
     return shown.join(', ') + (restCount > 0 ? ` и ещё ${restCount}` : '')
   })
 
+  // Тип по умолчанию для строки диалога «Создать в плане закупок (N)» (владелец,
+  // 29.09, п.3) — каталог товара (product.item_kind, если у товара он реально
+  // задан — Product.item_kind в БД по умолчанию "товар" на КАЖДОЙ записи, но это
+  // Python-side default колонки, не «пользователь выбрал», поэтому ненадёжен как
+  // сигнал; переносим только когда явно не совпадает с дефолтом ИЛИ когда своего
+  // типа у позиции нет вовсе), иначе собственный item_type позиции закупки/заявки
+  // (тот же v-select, что в ItemsTableFlat.vue), иначе пусто — человек выбирает
+  // сам. НЕ дублирует apply_item_type_to_product/normalize_item_type (бэкенд,
+  // ПРАВИЛО №6) — здесь только предзаполнение поля на фронте до отправки.
+  function defaultItemTypeFor(it: EditorItem): string | null {
+    const product = it.product_id != null ? productById?.value?.get(it.product_id) : undefined
+    if (product?.item_kind) return product.item_kind
+    return it.item_type || null
+  }
+
+  // Ручной выбор/правка типа по строке (per-row select + «Всем: …» сверху) —
+  // хранится по idx позиции ПОВЕРХ дефолта из defaultItemTypeFor, переживает
+  // пересчёт needPlanRows (тот — computed, пересоздаёт объекты строк при каждом
+  // изменении localItems).
+  const rowItemTypeOverrides = reactive<Record<number, string | null>>({})
+  function setRowItemType(idx: number, value: string | null) {
+    rowItemTypeOverrides[idx] = value
+  }
+  function setAllItemType(value: string | null) {
+    for (const { idx } of _unlinkedCandidates.value) rowItemTypeOverrides[idx] = value
+  }
+
   const needPlanRows = computed((): PlanCreateRow[] =>
     _unlinkedCandidates.value
       .map(({ it, idx }) => {
@@ -240,6 +281,7 @@ export function useItemsBulkFeo(deps: UseItemsBulkFeoDeps) {
           && p.category_id === categoryId
           && _normalizePlanName(p.name) === _normalizePlanName(name)
         )
+        const itemType = idx in rowItemTypeOverrides ? rowItemTypeOverrides[idx] : defaultItemTypeFor(it)
         return {
           idx,
           uid: it._uid ?? idx,
@@ -250,12 +292,20 @@ export function useItemsBulkFeo(deps: UseItemsBulkFeoDeps) {
           categoryId,
           categoryName,
           duplicateOf: dup ? { id: dup.id, name: dup.name } : null,
+          itemType,
+          productId: it.product_id ?? null,
         } as PlanCreateRow
       })
       .filter((r): r is PlanCreateRow => r != null)
   )
 
   const needPlanCount = computed(() => needPlanRows.value.length)
+
+  // Жалоба владельца (29.09, п.3): кнопка «Создать» недоступна, пока у КАЖДОЙ
+  // строки не выбран тип — missingTypeRows одновременно и гейт кнопки
+  // (createPlannedBulkDisabled), и текст «Не указан тип: N · показать».
+  const missingTypeRows = computed(() => needPlanRows.value.filter(r => !r.itemType))
+  const createPlannedBulkDisabled = computed(() => needPlanRows.value.length === 0 || missingTypeRows.value.length > 0)
 
   const noCategoryCount = computed(() =>
     _unlinkedCandidates.value.filter(({ it }) => _effectiveFeoCategoryId(it) == null).length
@@ -305,6 +355,21 @@ export function useItemsBulkFeo(deps: UseItemsBulkFeoDeps) {
     setTimeout(() => el.classList.remove('plan-bulk-row-pulse'), 3000)
   }
 
+  // Жалоба владельца (29.09, п.3): «Не указан тип: N · показать» рядом с
+  // кнопкой «Создать» в CreatePlannedBulkDialog.vue — тот же приём подсветки,
+  // что и highlightMissingCategoryForPlan выше, но id строк — внутри самого
+  // диалога (`plan-bulk-type-row-*`, проставлен в CreatePlannedBulkDialog.vue),
+  // а не на карточках/строках таблицы позиций под диалогом.
+  function highlightMissingTypeRow() {
+    const first = missingTypeRows.value[0]
+    if (!first) return
+    const el = document.getElementById(`plan-bulk-type-row-${first.uid}`)
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el.classList.add('plan-bulk-row-pulse')
+    setTimeout(() => el.classList.remove('plan-bulk-row-pulse'), 3000)
+  }
+
   // Дедуп — строго точное совпадение имени после нормализации (trim + схлопывание
   // пробелов + lower), НИКАКОГО fuzzy (правило проекта — fuzzy ложно сливал разные
   // SKU, см. Lessons: feedback_dedup_exact_only).
@@ -324,6 +389,10 @@ export function useItemsBulkFeo(deps: UseItemsBulkFeoDeps) {
   async function runCreatePlannedBulk() {
     const rows = needPlanRows.value
     if (!rows.length) return
+    // Жалоба владельца (29.09, п.3): защита от прямого вызова в обход
+    // disabled-кнопки (см. createPlannedBulkDisabled) — не отправляем ни одного
+    // запроса, пока хоть у одной строки нет типа.
+    if (missingTypeRows.value.length > 0) return
     createPlannedBulkLoading.value = true
     createPlannedBulkFailures.value = []
     createPlannedBulkProgress.done = 0
@@ -342,6 +411,14 @@ export function useItemsBulkFeo(deps: UseItemsBulkFeoDeps) {
             unit: row.unit || null,
             amount: row.amount,
             allow_duplicate_name: true,
+            // Тип (владелец, 29.09, п.3) — записывается и в плановую позицию
+            // (FeoPlannedItem.item_type), и, «как в К5», в товар каталога, если
+            // у него тип пуст (sync_product_kind=true → apply_item_type_to_product
+            // на бэке, тот же путь, что и у диалога «Новая плановая позиция» —
+            // ПРАВИЛО №6, второй механизм записи типа не заводим).
+            item_type: row.itemType,
+            product_id: row.productId,
+            sync_product_kind: true,
           }),
         })
         item.feo_planned_item_id = created.id
@@ -383,6 +460,8 @@ export function useItemsBulkFeo(deps: UseItemsBulkFeoDeps) {
     createPlannedBulkDialog, createPlannedBulkLoading, createPlannedBulkProgress, createPlannedBulkFailures,
     openCreatePlannedBulkDialog, closeCreatePlannedBulkDialog,
     highlightMissingCategoryForPlan, runCreatePlannedBulk,
+    // Жалоба владельца (29.09, п.3) — колонка «Тип» в CreatePlannedBulkDialog.vue.
+    missingTypeRows, createPlannedBulkDisabled, setRowItemType, setAllItemType, highlightMissingTypeRow,
     // Экспортируется (владелец, 2026-09-16) для useItemsPlanSuggest.ts/
     // useFeoPlannedBulkMatch.ts — ПРАВИЛО №6, то же правило «feoPerItem выключен →
     // категория шапки, включён → своя категория позиции», что и выше в этом файле

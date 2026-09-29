@@ -368,6 +368,34 @@ async def create_planned_items_bulk(
     if len(body.items) > 500:
         raise HTTPException(400, "Слишком много позиций за один раз (максимум 500)")
 
+    # Владелец (29.09, жалоба 3): диалог «Создать в плане закупок (N)» требует тип
+    # (товар/услуга/работа) у каждой строки, до отправки запроса кнопка там уже
+    # недоступна (см. CreatePlannedBulkDialog.vue) — эта проверка вторая, серверная
+    # страховка на случай прямого вызова API. Только при require_item_type=True
+    # (см. докстринг поля в schemas/feo.py) — остальные потребители (диалог выбора
+    # способа per_item/single/manual) тип не собирают и не должны получить 400.
+    if body.require_item_type:
+        missing_names = [
+            (it.name or "").strip() or f"позиция #{i + 1}"
+            for i, it in enumerate(body.items)
+            if normalize_item_type(it.item_type) is None
+        ]
+        if missing_names:
+            shown = missing_names[:5]
+            more = len(missing_names) - len(shown)
+            names_text = ", ".join(shown) + (f" и ещё {more}" if more > 0 else "")
+            raise HTTPException(
+                400,
+                detail={
+                    "message": (
+                        f"Не указан тип (товар/услуга/работа) у {len(missing_names)} "
+                        f"{'позиции' if len(missing_names) == 1 else 'позиций'}: {names_text}"
+                    ),
+                    "error_code": "planned_item_bulk_missing_type",
+                    "names": missing_names,
+                },
+            )
+
     cat_ids = {it.feo_category_id for it in body.items}
     cats = (await db.execute(
         select(FeoCategory).where(FeoCategory.id.in_(cat_ids))
@@ -412,7 +440,14 @@ async def create_planned_items_bulk(
                      if _norm_text(it.name or "") == norm_name),
                     None,
                 )
-        if existing_item is not None:
+        # Владелец (2026-08-20, решение для needPlanRows/runCreatePlannedBulk —
+        # см. докстринг useItemsBulkFeo.ts): «каждой строке своя отдельная
+        # плановая позиция, одноимённые НЕ объединяются». allow_duplicate_name=True
+        # (тот же флаг, что снимает интерактивный 409 у одиночного
+        # create_planned_item) пропускает дедуп для ЭТОЙ строки — остальные
+        # потребители /bulk (FeoPlannedBulkChooserDialog.vue) флаг не шлют,
+        # дефолт False сохраняет прежнее слияние по имени.
+        if existing_item is not None and not data.allow_duplicate_name:
             created.append(existing_item)
             dedup_seen[dedup_key] = existing_item
             continue

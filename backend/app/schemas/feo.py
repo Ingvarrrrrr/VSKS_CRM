@@ -133,6 +133,16 @@ class FeoPlannedItemBulkCreate(BaseModel):
     позиции на каждый товар). Каждая позиция списка может относиться к своей
     категории ФЭО (per-item режим) либо все — к одной (общий режим)."""
     items: List[FeoPlannedItemCreate]
+    # Владелец (29.09, жалоба 3): диалог «Создать в плане закупок (N)» на карточке
+    # закупки/заявки (useItemsBulkFeo.ts::runCreatePlannedBulk, CreatePlannedBulkDialog.vue)
+    # обязан требовать тип (товар/услуга/работа) у КАЖДОЙ строки — иначе кнопка
+    # создания там же недоступна. Флаг, а не безусловное требование в этом
+    # эндпоинте: FeoPlannedBulkChooserDialog.vue (диалог «выбора способа»
+    # per_item/single/manual внутри FeoPlannedItemsSelect.vue, useFeoPlannedBulk.ts)
+    # тоже шлёт запросы сюда же и НЕ собирает тип по строкам — старое поведение
+    # (тип необязателен) для него не должно меняться без явного запроса. См.
+    # проверку missing_type ниже в create_planned_items_bulk.
+    require_item_type: bool = False
 
 
 class FeoPlannedItemBulkCreateResult(BaseModel):

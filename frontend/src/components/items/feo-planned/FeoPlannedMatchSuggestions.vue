@@ -54,6 +54,24 @@
         />
       </div>
     </div>
+    <!-- Жалоба владельца (сессия 29.09): когда показаны подсказки, кнопка «Создать
+         новую плановую позицию» пропадала из виду — оставался только выбор из
+         предложенных, даже если ни один кандидат не подходит (например, уже занят
+         целиком другой закупкой). Кнопка — тот же путь, что и «Создать в плане
+         закупок» внизу дерева (openCreateEntry в FeoPlannedItemsSelect.vue,
+         ПРАВИЛО №6 — второй диалог создания не заводим), просто продублирована
+         рядом с подсказками, чтобы её было видно сразу. -->
+    <v-btn
+      v-if="!readonly"
+      size="x-small"
+      variant="text"
+      color="primary"
+      prepend-icon="mdi-plus"
+      class="mt-1"
+      @click="$emit('create-entry')"
+    >
+      Создать новую плановую позицию
+    </v-btn>
     <v-btn size="x-small" variant="text" class="feo-match-reject mt-1" @click="$emit('reject')">
       Больше подходящих категорий я найти не смог — попробуйте выбрать сами, может лучше получится
     </v-btn>
@@ -85,6 +103,10 @@ const props = defineProps<{
 defineEmits<{
   bind: [candidate: FeoMatchCandidate]
   reject: []
+  /** Жалоба владельца (29.09): «Создать новую плановую позицию» рядом с
+   *  подсказками — родитель (FeoPlannedItemsSelect.vue) открывает ТОТ ЖЕ диалог,
+   *  что и кнопка «Создать в плане закупок» (openCreateEntry). */
+  'create-entry': []
 }>()
 
 const itemsByKey = computed(() => {

@@ -379,7 +379,7 @@
                 :wish-id="wishId"
                 :candidates="itemCandidates ? itemCandidates(item) : undefined"
                 style="flex:1 1 320px;min-width:260px"
-                :prefill="{ name: item.item_name, quantity: item.quantity, unit: item.unit, amount: item.total_price }"
+                :prefill="{ name: item.item_name, quantity: item.quantity, unit: item.unit, amount: item.total_price, unitPrice: item.unit_price, itemType: item.item_type, productId: item.product_id }"
                 @update:model-value="(v) => emit('item-planned-change', idx, v)"
                 @planned-item-created="emit('planned-item-created')"
                 @planned-item-deleted="emit('planned-item-deleted')" />

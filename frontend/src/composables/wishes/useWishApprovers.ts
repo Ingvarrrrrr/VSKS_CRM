@@ -73,6 +73,20 @@ export function useWishApprovers(deps: {
   const decideComment = ref<Record<number, string>>({})
   const decideLoading = ref<number | null>(null)
 
+  // Владелец: верхним согласующим можно ставить только сотрудника с правом
+  // корректировать субсидию заявки — список кандидатов приходит с бэка
+  // (GET /wishes/{id}/approvers/candidates), не весь orgUsers (иначе каждый
+  // сам себя ставил бы согласующим).
+  const topApproverCandidates = ref<{ id: number; full_name: string | null; role: string }[]>([])
+  async function loadTopApproverCandidates() {
+    if (!editingWishId.value) { topApproverCandidates.value = []; return }
+    try {
+      topApproverCandidates.value = await apiFetch<{ id: number; full_name: string | null; role: string }[]>(
+        `/wishes/${editingWishId.value}/approvers/candidates`,
+      )
+    } catch { topApproverCandidates.value = [] }
+  }
+
   const approvalStatusColor: Record<string, string> = {
     pending: 'orange',
     approved: 'green',
@@ -99,6 +113,7 @@ export function useWishApprovers(deps: {
       wishApprovers.value = await apiFetch<WishApprover[]>(`/wishes/${editingWishId.value}/approvers`)
     } catch { wishApprovers.value = [] }
     syncIsChainApprover()
+    await loadTopApproverCandidates()
   }
   async function callCascadeApi(wishId: number, topUserId: number) {
     return apiFetch<{ approval_mode: string; approvers: WishApprover[]; warning?: string | null }>(
@@ -279,6 +294,7 @@ export function useWishApprovers(deps: {
     wishMembers, participantToAdd, loadWishMembers, addWishMember, removeWishMember,
     wishApprovers, approverTopUser, approverToAdd, approvalMode, cascadeLoading,
     decideComment, decideLoading, approvalStatusColor, approvalStatusLabel,
+    topApproverCandidates, loadTopApproverCandidates,
     isChainApprover, loadWishApprovers, callCascadeApi, runCascade, ensureApprovers,
     addApprover, reorderLoading, moveApprover, removeApprover, decideApprover, loadWishOnce,
     canDecideApprover, isDecidingOnBehalf, approverDecisionLine, requiresConsent,

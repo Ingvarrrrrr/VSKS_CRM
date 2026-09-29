@@ -20,6 +20,21 @@
         <div v-if="rows.some(r => r.duplicateOf)" class="text-caption mb-2" style="color:#B45309">
           У части позиций (отмечены ниже) в этой категории уже есть плановая позиция с таким же названием — будет создана ОТДЕЛЬНАЯ, не объединяются.
         </div>
+        <!-- Жалоба владельца (29.09, п.3): «Тип» отсутствовал в этом диалоге —
+             каждая плановая позиция обязана нести признак товар/услуга/работа.
+             «Всем: …» сверху — быстрый групповой выбор, per-row select — точечная
+             правка (setRowItemType/setAllItemType в useItemsBulkFeo.ts). -->
+        <div class="d-flex align-center ga-2 mb-2 flex-wrap">
+          <span class="text-caption text-medium-emphasis">Всем:</span>
+          <v-btn
+            v-for="opt in ITEM_TYPE_OPTIONS"
+            :key="opt.value"
+            size="x-small"
+            variant="tonal"
+            color="primary"
+            @click="emit('set-all-type', opt.value)"
+          >{{ opt.title }}</v-btn>
+        </div>
         <v-table density="compact">
           <thead>
             <tr>
@@ -27,10 +42,11 @@
               <th>Кол-во</th>
               <th>Сумма</th>
               <th>Категория ФЭО</th>
+              <th>Тип</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in rows" :key="row.uid">
+            <tr v-for="row in rows" :key="row.uid" :id="`plan-bulk-type-row-${row.uid}`">
               <td>
                 {{ row.name }}
                 <v-tooltip v-if="row.duplicateOf" location="top" :text="`Уже есть: «${row.duplicateOf.name}» — будет создана отдельная позиция`">
@@ -42,9 +58,25 @@
               <td>{{ row.quantity ?? '—' }} {{ row.unit }}</td>
               <td>{{ fmtRub(row.amount) }}</td>
               <td>{{ row.categoryName }}</td>
+              <td style="min-width:130px">
+                <v-select
+                  :model-value="row.itemType"
+                  :items="ITEM_TYPE_OPTIONS"
+                  density="compact"
+                  variant="outlined"
+                  hide-details
+                  :error="!row.itemType"
+                  placeholder="Не указан"
+                  @update:model-value="(v: string | null) => emit('set-row-type', row.idx, v)"
+                />
+              </td>
             </tr>
           </tbody>
         </v-table>
+        <div v-if="missingTypeCount > 0" class="text-caption mt-1" style="color:#EF4444">
+          Не указан тип: {{ missingTypeCount }}
+          <a href="#" class="ml-1" @click.prevent="emit('show-missing-type')">показать</a>
+        </div>
         <div v-if="loading || progress.total > 0" class="mt-3 d-flex align-center ga-2">
           <v-progress-circular v-if="loading" indeterminate size="18" width="2" color="primary" />
           <span class="text-caption">Создано {{ progress.done }} из {{ progress.total }}</span>
@@ -57,7 +89,7 @@
       <v-card-actions>
         <v-spacer />
         <v-btn variant="text" :disabled="loading" @click="emit('cancel')">Отмена</v-btn>
-        <v-btn color="primary" variant="flat" :loading="loading" :disabled="rows.length === 0" @click="emit('confirm')">
+        <v-btn color="primary" variant="flat" :loading="loading" :disabled="rows.length === 0 || missingTypeCount > 0" @click="emit('confirm')">
           Создать
         </v-btn>
       </v-card-actions>
@@ -66,9 +98,12 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { fmtRub } from '@/utils/numberFormat'
+import { ITEM_TYPE_OPTIONS } from '@/composables/items/feoPlanned/useFeoPlannedCreate'
 
 interface PlanCreateRow {
+  idx: number
   uid: string | number
   name: string
   quantity: number | null
@@ -76,11 +111,12 @@ interface PlanCreateRow {
   amount: number | null
   categoryName: string
   duplicateOf: { id: number; name: string } | null
+  itemType: string | null
 }
 
 const open = defineModel<boolean>({ default: false })
 
-defineProps<{
+const props = defineProps<{
   loading?: boolean
   rows: PlanCreateRow[]
   noCategoryCount: number
@@ -88,8 +124,17 @@ defineProps<{
   failures: string[]
 }>()
 
+// Жалоба владельца (29.09, п.3) — кнопка «Создать» недоступна, пока хоть у одной
+// строки нет типа (тот же гейт, что и createPlannedBulkDisabled в
+// useItemsBulkFeo.ts — дублируется здесь только для локального disabled на
+// кнопке/подсветки строк, источник данных общий — props.rows).
+const missingTypeCount = computed(() => props.rows.filter(r => !r.itemType).length)
+
 const emit = defineEmits<{
   confirm: []
   cancel: []
+  'set-row-type': [idx: number, value: string | null]
+  'set-all-type': [value: string | null]
+  'show-missing-type': []
 }>()
 </script>

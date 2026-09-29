@@ -147,6 +147,7 @@ const planPrefill = computed(() => ({
   quantity: state.form.quantity,
   unit: state.form.unit,
   amount: planAmount.value,
+  unitPrice: state.form.unit_price,
 }))
 
 // Принцип владельца (2026-08-18): «после того как заявка попала в План закупок, дальше

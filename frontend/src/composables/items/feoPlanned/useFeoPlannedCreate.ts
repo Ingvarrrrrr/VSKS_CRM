@@ -62,7 +62,7 @@ export interface UseFeoPlannedCreateDeps {
     categoryId: number | null
     items: FeoPlanPosition[]
     readonly?: boolean
-    prefill?: { name?: string | null; quantity?: number | null; unit?: string | null; amount?: number | null }
+    prefill?: { name?: string | null; quantity?: number | null; unit?: string | null; amount?: number | null; unitPrice?: number | null; itemType?: string | null; productId?: number | null }
   }
   emit: {
     (event: 'update:modelValue', val: FeoPlanSelection | null): void
@@ -115,17 +115,52 @@ export function useFeoPlannedCreate(deps: UseFeoPlannedCreateDeps) {
   )
   const createSaving = ref(false)
 
-  function openCreateDialog() {
+  // Жалоба владельца (29.09, пример «95Г КОФЕ», кол-во 1, цена 369): диалог
+  // предзаполнял только «Сумму плана» — «Цена за единицу» и «Тип» оставались
+  // пустыми, хотя оба значения уже известны из самой позиции закупки/заявки.
+  // Цена за единицу — prefill.unitPrice, если пришла (unit_price позиции), иначе
+  // amount/quantity (когда оба известны и количество > 0) — то же деление, что
+  // владелец явно запрещал делать НАД сохранённым amount (см. коммент
+  // createAmountIsComputed выше), но здесь это только предзаполнение поля ДО
+  // сохранения, а не пересчёт уже введённой суммы. Тип — сперва из каталога
+  // товара (GET /feo-planned-items/product-hint по prefill.productId, тот же
+  // эндпоинт, что и PlannedItemAddDialog.vue/useFeoPlannedItemAddDialog.ts,
+  // ПРАВИЛО №6 — второй лукап типа по товару не заводим), иначе из
+  // prefill.itemType (собственный тип позиции закупки/заявки), иначе пусто.
+  async function openCreateDialog() {
     if (props.readonly || props.categoryId == null) return
+    const pf = props.prefill
     // Предзаполнение из уже введённой позиции закупки (см. prefill в defineProps),
     // с фолбэком на пустые значения — как было раньше без пропа.
-    createForm.name = props.prefill?.name ?? ''
-    createForm.quantity = props.prefill?.quantity ?? null
-    createForm.unit = props.prefill?.unit ?? ''
-    createForm.unitPrice = null
-    createForm.amount = props.prefill?.amount ?? null
-    createForm.item_type = null
+    createForm.name = pf?.name ?? ''
+    createForm.quantity = pf?.quantity ?? null
+    createForm.unit = pf?.unit ?? ''
+    createForm.amount = pf?.amount ?? null
+    const qty = pf?.quantity != null && Number(pf.quantity) > 0 ? Number(pf.quantity) : null
+    const amt = pf?.amount != null ? Number(pf.amount) : null
+    createForm.unitPrice = pf?.unitPrice != null
+      ? Number(pf.unitPrice)
+      : (qty != null && amt != null ? Math.round((amt / qty) * 100) / 100 : null)
+    createForm.item_type = normalizeItemTypeGuess(pf?.itemType ?? null)
     createDialog.value = true
+    if (pf?.productId != null) {
+      try {
+        const res = await apiFetch<{ item_kind: string | null }>(`/feo-planned-items/product-hint?product_id=${pf.productId}`)
+        // Гвард: пока запрос летал, диалог могли уже закрыть/пересоздать заново.
+        if (!createDialog.value) return
+        if (res?.item_kind) createForm.item_type = res.item_kind
+      } catch {
+        // Запрос не удался — остаётся тип из prefill.itemType (см. выше), поле
+        // по-прежнему редактируемое.
+      }
+    }
+  }
+
+  // Тип из prefill приходит уже нормализованным значением бэкенда (item_type
+  // позиции закупки/заявки хранится тем же набором ITEM_TYPE_OPTIONS ниже) —
+  // подстраховка на случай пустой строки вместо null.
+  function normalizeItemTypeGuess(v: string | null): string | null {
+    return v && v.trim() ? v : null
   }
 
   // Жалоба владельца (добор сессии 2026-08-19): диалог показывал только «план»

@@ -44,7 +44,7 @@
           <v-col cols="12" md="6">
             <v-autocomplete
               v-model="approverTopUser"
-              :items="orgUsers"
+              :items="topApproverCandidates"
               item-title="full_name"
               item-value="id"
               label="Верхний согласующий"
@@ -52,6 +52,7 @@
               density="compact"
               clearable
               hide-details
+              no-data-text="Нет сотрудников с правом корректировать субсидию — обратитесь к администратору"
             />
           </v-col>
           <v-col cols="12" md="3">
@@ -187,6 +188,7 @@ const {
   wish, submitting, statusLabel, statusColor, hasReceipts, canSubmit, submit,
   approvers, approverTopUser, approvalMode, cascadeLoading, approverToAdd,
   decideComment, decideLoading, approvalStatusColor, approvalStatusLabel,
+  topApproverCandidates,
   isEditable, runCascade, addApprover, removeApprover, decideApprover,
   canDecideApprover, isDecidingOnBehalf, approverDecisionLine,
 } = useAdvanceReimbursement(

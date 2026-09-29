@@ -61,6 +61,7 @@
           :amount="props.amount"
           @bind="match.bindCandidate"
           @reject="match.rejectSuggestions"
+          @create-entry="openCreateEntry"
         />
 
         <FeoPlannedDenseSelect
@@ -212,7 +213,15 @@ const props = defineProps<{
    *  заполняет ими форму диалога вместо пустых полей (владелец: «пусть берёт
    *  данные уже введённой позиции»). Опционально — без пропа диалог открывается
    *  пустым, как раньше. */
-  prefill?: { name?: string | null; quantity?: number | null; unit?: string | null; amount?: number | null }
+  /** unitPrice/itemType/productId (жалоба владельца, 29.09) — необязательные
+   *  добавки: без них диалог «Новая плановая позиция» ведёт себя как раньше
+   *  (цена за единицу пуста, тип пуст). С ними — см. openCreateDialog в
+   *  useFeoPlannedCreate.ts: цена за единицу берётся из позиции закупки/заявки
+   *  напрямую (не делится и не гадается), тип — сперва из каталога товара
+   *  (GET /feo-planned-items/product-hint по productId, тот же эндпоинт, что и
+   *  PlannedItemAddDialog.vue, ПРАВИЛО №6), иначе из itemType (собственный тип
+   *  позиции закупки/заявки), иначе пусто. */
+  prefill?: { name?: string | null; quantity?: number | null; unit?: string | null; amount?: number | null; unitPrice?: number | null; itemType?: string | null; productId?: number | null }
   /** Позиции заявки/закупки — доступны ТОЛЬКО у «шапочного» экземпляра компонента
    *  (CreateOrderView.vue/WishesView.vue, один на всю заявку/закупку), НЕ у построчных
    *  (dense-режим внутри PurchaseItemsEditor — там prefill уже про ОДНУ строку и старый

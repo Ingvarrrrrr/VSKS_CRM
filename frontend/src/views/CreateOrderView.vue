@@ -1321,7 +1321,7 @@
       <!-- Владелец (2026-09-15): закупочная комиссия/протокол и приказ о закупке —
            отдельные сущности, вынесены из «Основной информации» в свой блок. -->
       <PurchaseCommissionSection
-        v-if="form.contract_form"
+        v-if="form.contract_form && isSectionVisible('commission')"
         :form="form"
         :flush-autosave-on-blur="flushAutosaveOnBlur"
       />
@@ -2317,8 +2317,11 @@ const formModeHidden = computed((): Set<string> => {
                     'contract', 'contract_params', 'acceptance', 'payment',
                     'platform_publication', 'commercial_requests'])
   if (formMode.value === 'advance_report')
+    // Владелец (29.09): «Закупочная комиссия»/«Приказ о закупке» (commission),
+    // как и протокол/площадка/КП, бессмысленны для авансового — нет ни комиссии,
+    // ни закупочной процедуры, только чеки и возмещение сотруднику.
     return new Set(['contractor', 'contract_type', 'contract', 'contract_params',
-                    'platform_publication', 'commercial_requests'])
+                    'platform_publication', 'commercial_requests', 'commission'])
   // Авансовая закупка (редактирование существующей через /orders/:id/edit)
   if ((form as any).purchase_method === 'advance')
     return new Set(['contract_type'])
@@ -4371,6 +4374,18 @@ const loadPurchase = async () => {
     // Владелец (сессия 2026-08-21): «каждому товару надо присваивать свою плановую» —
     // шапочного значения feo_planned_item_id больше нет ни в одном режиме, построчные
     // значения читаются как есть выше (feo_planned_item_id: i.feo_planned_item_id).
+    // Владелец (29.09): авансовый копит чеки разных организаций — если позиции
+    // (обычно из только что загруженного чека) разошлись по ставке НДС, а режим
+    // всё ещё «одинаковый на всю закупку», переключаем на «для каждой позиции»
+    // сами — иначе шапочная ставка молча перекроет реально разные ставки чеков.
+    // Существующие авансовые с уже сохранённым vat_mode='uniform' не трогаем,
+    // если ставки позиций совпадают — переключение только когда они РЕАЛЬНО разные.
+    if (data.purchase_method === 'advance' && form.vat_mode === 'uniform') {
+      const distinctRates = new Set(
+        items.value.map(it => it.vat_rate).filter((v: any) => v != null),
+      )
+      if (distinctRates.size > 1) form.vat_mode = 'per_item'
+    }
   } else if (data.item_name) {
     // Migrate old single-item purchase
     items.value = [{
@@ -4714,6 +4729,11 @@ onMounted(async () => {
       form.purchase_method = 'single'
     } else if (formMode.value === 'advance_report') {
       form.purchase_method = 'advance'
+      // Владелец (29.09): авансовый обычно собирает чеки НЕСКОЛЬКИХ организаций
+      // с разными ставками НДС — «одинаковый 22% на всю закупку» по умолчанию
+      // почти всегда неверен для него. Только дефолт для НОВОГО отчёта (ещё не
+      // сохранён, ещё не выбран вручную) — существующие авансовые не трогаем.
+      if (form.vat_mode === 'uniform') form.vat_mode = 'per_item'
     }
     // По умолчанию «Кому возмещать» = текущий пользователь (для новых авансовых).
     // Можно поменять вручную в форме.

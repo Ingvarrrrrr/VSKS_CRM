@@ -729,6 +729,9 @@
       :failures="createPlannedBulkFailures"
       @confirm="runCreatePlannedBulk"
       @cancel="closeCreatePlannedBulkDialog"
+      @set-row-type="(idx, value) => setRowItemType(idx, value)"
+      @set-all-type="(value) => setAllItemType(value)"
+      @show-missing-type="highlightMissingTypeRow"
     />
 
     <!-- Дефект 2 (владелец, 2026-09-16): «Привязать к плану» — общий диалог для
@@ -1828,7 +1831,7 @@ const { applyCandidate: applyMatchCandidate, clearBinding: clearMatchBinding } =
 // product dialog), category/type grouping, bulk-add-to-catalog — composable,
 // see composables/items/useItemsCatalog.ts.
 const {
-  loadProducts,
+  loadProducts, productById,
   itemsGroupBy, itemsFilterCats, itemsFilterTypes,
   itemCategoryOptions, itemTypeOptions, itemsFilterActive, itemsDisplayRows, visibleItemsCount,
   hasUncatalogedSelected, uncatalogedSelectedCount, bulkAddCatalogLoading, bulkAddToCatalog,
@@ -2021,10 +2024,12 @@ const {
   openCreatePlannedBulkDialog, closeCreatePlannedBulkDialog,
   highlightMissingCategoryForPlan, runCreatePlannedBulk,
   effectiveFeoCategoryId,
+  setRowItemType, setAllItemType, highlightMissingTypeRow,
 } = useItemsBulkFeo({
   props, localItems, selectedItemIdxs, feoNodes,
   injectUnallocatedNode: _injectUnallocatedNode,
   emitUpdate, emit, showSnack,
+  productById,
 })
 
 // Дефект 2/4 (владелец, 2026-09-16): «похожие плановые позиции под каждой строкой»

@@ -42,12 +42,8 @@ from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.auth.jwt import get_current_user, get_single_org_id, OWNER_ROLES
-from app.auth.permissions import require_tab, has_org_key, _has_key_in_any_org, _ROLE_PRIORITY
+from app.auth.permissions import require_tab, has_org_key, _has_key_in_any_org
 from app.models.user import User
-from app.models.user_organization import UserOrganization
-from app.models.user_org_access import UserOrgAccess
-from app.models.user_subsidy_access import UserSubsidyAccess
-from app.models.organization import Organization
 from app.models.feo_category import FeoCategory
 from app.models.subsidy import Subsidy
 from app.models.plan_excess_approval import PlanExcessApproval, PlanExcessApprovalStep
@@ -101,39 +97,16 @@ async def _authorized_plan_excess_approvers(
 
     Порядок результата — «по-человечески»: сначала более высокая роль, затем
     ФИО по алфавиту.
+
+    Реализация (правка ПРАВИЛО №6): вынесена в app.services.authorized_approvers.
+    list_users_with_org_key под ключ 'plan_excess.decide' — тот же расчёт
+    кандидатов переиспользует top_user_id заявок (wish_approvers.py, ключ
+    'subsidy.edit'), второй движок не заводим.
     """
-    candidate_ids: set[int] = set()
-    for stmt in (
-        select(UserOrganization.user_id).where(UserOrganization.org_id == org_id),
-        select(UserOrgAccess.user_id).where(UserOrgAccess.org_id == org_id),
-        select(UserSubsidyAccess.user_id).where(UserSubsidyAccess.subsidy_id == subsidy_id),
-    ):
-        candidate_ids.update((await db.execute(stmt)).scalars().all())
-
-    owner_id = (await db.execute(
-        select(Organization.owner_user_id).where(Organization.id == org_id)
-    )).scalar_one_or_none()
-    if owner_id is not None:
-        candidate_ids.add(owner_id)
-
-    if exclude_user_id is not None:
-        candidate_ids.discard(exclude_user_id)
-    if not candidate_ids:
-        return []
-
-    users = (await db.execute(select(User).where(User.id.in_(candidate_ids)))).scalars().all()
-    authorized: list[User] = []
-    for u in users:
-        if await has_org_key(u, db, org_id, "plan_excess.decide", subsidy_id=subsidy_id):
-            authorized.append(u)
-
-    def _sort_key(u: User):
-        prio = _ROLE_PRIORITY.get(u.role or "", 0)
-        name = (u.full_name or u.username or "").lower()
-        return (-prio, name)
-
-    authorized.sort(key=_sort_key)
-    return authorized
+    from app.services.authorized_approvers import list_users_with_org_key
+    return await list_users_with_org_key(
+        db, org_id, "plan_excess.decide", subsidy_id=subsidy_id, exclude_user_id=exclude_user_id,
+    )
 
 
 def _step_dict(s: PlanExcessApprovalStep) -> dict:

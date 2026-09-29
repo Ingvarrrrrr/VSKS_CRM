@@ -318,3 +318,99 @@ async def test_product_hint_item_kind_none_when_product_missing(db_session, test
 
     result = await get_product_hint(product_id=999_999_999, feo_category_id=None, db=db_session, _=test_user)
     assert result["item_kind"] is None
+
+
+# ---------------------------------------------------------------------------
+# 5) POST /feo-planned-items/bulk — require_item_type (владелец, 29.09, жалоба 3:
+#    диалог «Создать в плане закупок (N)» обязан требовать тип у каждой строки).
+#    Прямой вызов роутера (минуя FastAPI DI, тот же приём, что и выше в этом
+#    модуле/test_planned_item_link_rules.py) — require_tab('feo_categories') в
+#    сигнатуре create_planned_items_bulk просто не срабатывает.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_bulk_create_requires_item_type_when_flagged(db_session, test_user):
+    from app.routers.feo_planned_items import create_planned_items_bulk
+    from app.schemas.feo import FeoPlannedItemBulkCreate, FeoPlannedItemCreate
+    from fastapi import HTTPException
+
+    _subsidy, cat = await _make_subsidy_category(db_session)
+    body = FeoPlannedItemBulkCreate(
+        items=[
+            FeoPlannedItemCreate(feo_category_id=cat.id, name=f"Товар А {uuid.uuid4().hex[:6]}", item_type="товар"),
+            FeoPlannedItemCreate(feo_category_id=cat.id, name=f"Товар Б {uuid.uuid4().hex[:6]}", item_type=None),
+        ],
+        require_item_type=True,
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        await create_planned_items_bulk(body=body, db=db_session, current_user=test_user)
+    assert exc_info.value.status_code == 400
+    detail = exc_info.value.detail
+    assert detail["error_code"] == "planned_item_bulk_missing_type"
+    assert any("Товар Б" in n for n in detail["names"])
+
+
+@pytest.mark.asyncio
+async def test_bulk_create_with_item_type_creates_items_and_sets_item_type(db_session, test_user):
+    from app.routers.feo_planned_items import create_planned_items_bulk
+    from app.schemas.feo import FeoPlannedItemBulkCreate, FeoPlannedItemCreate
+
+    _subsidy, cat = await _make_subsidy_category(db_session)
+    name = f"Товар-{uuid.uuid4().hex[:8]}"
+    body = FeoPlannedItemBulkCreate(
+        items=[
+            FeoPlannedItemCreate(
+                feo_category_id=cat.id, name=name, item_type="Услуга",
+                quantity=Decimal("1"), amount=Decimal("100"),
+            ),
+        ],
+        require_item_type=True,
+    )
+    result = await create_planned_items_bulk(body=body, db=db_session, current_user=test_user)
+    assert len(result.items) == 1
+    assert result.items[0].item_type == "услуга"
+
+
+@pytest.mark.asyncio
+async def test_bulk_create_without_flag_still_allows_missing_type(db_session, test_user):
+    """require_item_type=False (дефолт) — старое поведение других потребителей
+    /bulk (FeoPlannedBulkChooserDialog.vue) не должно измениться."""
+    from app.routers.feo_planned_items import create_planned_items_bulk
+    from app.schemas.feo import FeoPlannedItemBulkCreate, FeoPlannedItemCreate
+
+    _subsidy, cat = await _make_subsidy_category(db_session)
+    body = FeoPlannedItemBulkCreate(
+        items=[FeoPlannedItemCreate(feo_category_id=cat.id, name=f"Товар-{uuid.uuid4().hex[:8]}")],
+    )
+    result = await create_planned_items_bulk(body=body, db=db_session, current_user=test_user)
+    assert len(result.items) == 1
+    assert result.items[0].item_type is None
+
+
+@pytest.mark.asyncio
+async def test_bulk_create_allow_duplicate_name_creates_separate_items(db_session, test_user):
+    """Владелец (2026-08-20): каждой строке своя ОТДЕЛЬНАЯ плановая позиция,
+    одноимённые не объединяются — allow_duplicate_name=True на КАЖДОЙ строке
+    (как шлёт runCreatePlannedBulk в useItemsBulkFeo.ts) обязан пропускать дедуп
+    внутри одного вызова /bulk, а не только против уже существующих строк БД."""
+    from app.routers.feo_planned_items import create_planned_items_bulk
+    from app.schemas.feo import FeoPlannedItemBulkCreate, FeoPlannedItemCreate
+
+    _subsidy, cat = await _make_subsidy_category(db_session)
+    name = f"Футболка поло {uuid.uuid4().hex[:8]}"
+    body = FeoPlannedItemBulkCreate(
+        items=[
+            FeoPlannedItemCreate(
+                feo_category_id=cat.id, name=name, item_type="товар",
+                allow_duplicate_name=True, quantity=Decimal("10"), amount=Decimal("1000"),
+            ),
+            FeoPlannedItemCreate(
+                feo_category_id=cat.id, name=name, item_type="товар",
+                allow_duplicate_name=True, quantity=Decimal("15"), amount=Decimal("1500"),
+            ),
+        ],
+        require_item_type=True,
+    )
+    result = await create_planned_items_bulk(body=body, db=db_session, current_user=test_user)
+    assert len(result.items) == 2
+    assert result.items[0].id != result.items[1].id

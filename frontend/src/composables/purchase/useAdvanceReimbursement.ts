@@ -68,6 +68,14 @@ export function useAdvanceReimbursement(
   const wish = ref<AdvanceWishDetail | null>(null)
   const loading = ref(false)
   const submitting = ref(false)
+  // TDZ-фикс (прод, 2026-09-29): approvers нужен уже здесь — watch(wishId, ...,
+  // {immediate:true}) ниже вызывает loadApprovers() СИНХРОННО во время setup,
+  // а loadApprovers (несмотря на function-hoisting) читает approvers.value; если
+  // approvers объявлен как const НИЖЕ watch, движок кидает
+  // "Cannot access 'approvers' before initialization" (минификатор переименовал
+  // переменную в 'y') прямо при открытии авансового — карточка не рендерилась.
+  // Объявление вынесено сюда, выше watch; секция «Согласующие» ниже больше
+  // свою копию не заводит (ПРАВИЛО №6 — один const, не два).
   const approvers = ref<AdvanceApprover[]>([])
 
   async function loadWish() {
@@ -139,6 +147,7 @@ export function useAdvanceReimbursement(
 
   // ── Согласующие (ПРАВИЛО №6: те же эндпоинты /wishes/{id}/approvers*, что и
   // у обычной заявки — composables/wishes/useWishApprovers.ts) ──────────────
+  // (approvers объявлен выше, перед watch(wishId, ...) — см. комментарий там)
   const approverTopUser = ref<number | null>(null)
   const approvalMode = ref<'sequential' | 'parallel'>('sequential')
   const cascadeLoading = ref(false)
@@ -160,11 +169,25 @@ export function useAdvanceReimbursement(
     wish.value?.status === 'draft' || wish.value?.status === 'rejected',
   )
 
+  // Владелец: верхним согласующим можно ставить только сотрудника с правом
+  // корректировать субсидию заявки — кандидаты приходят с бэка (тот же
+  // эндпоинт, что и у обычной заявки — ПРАВИЛО №6, второй расчёт не заводим).
+  const topApproverCandidates = ref<{ id: number; full_name: string | null; role: string }[]>([])
+  async function loadTopApproverCandidates() {
+    if (!wishId.value) { topApproverCandidates.value = []; return }
+    try {
+      topApproverCandidates.value = await apiFetch<{ id: number; full_name: string | null; role: string }[]>(
+        `/wishes/${wishId.value}/approvers/candidates`,
+      )
+    } catch { topApproverCandidates.value = [] }
+  }
+
   async function loadApprovers() {
     if (!wishId.value) { approvers.value = []; return }
     try {
       approvers.value = await apiFetch<AdvanceApprover[]>(`/wishes/${wishId.value}/approvers`)
     } catch { approvers.value = [] }
+    await loadTopApproverCandidates()
   }
 
   async function runCascade() {
@@ -284,6 +307,7 @@ export function useAdvanceReimbursement(
     wish, loading, submitting, statusLabel, statusColor, hasReceipts, canSubmit, submit, loadWish,
     approvers, approverTopUser, approvalMode, cascadeLoading, approverToAdd,
     decideComment, decideLoading, reorderLoading, approvalStatusColor, approvalStatusLabel,
+    topApproverCandidates, loadTopApproverCandidates,
     isEditable, loadApprovers, runCascade, addApprover, removeApprover, decideApprover,
     canDecideApprover, isDecidingOnBehalf, approverDecisionLine,
   }

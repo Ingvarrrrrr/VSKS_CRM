@@ -94,9 +94,14 @@ async def test_submit_advance_companion_after_manual_cascade_succeeds(
     client, auth_headers, db_session, test_org, make_user,
 ):
     """После явного нажатия «Построить цепочку» (POST /approvers/cascade) —
-    submit проходит нормально, как и у обычной заявки."""
+    submit проходит нормально, как и у обычной заявки.
+
+    Верхний согласующий обязан иметь право subsidy.edit (владелец, 2026-09-29:
+    «верхним согласующим можно ставить только того, кто имеет право
+    корректировать субсидию») — role="org_admin" даёт его по умолчанию
+    (см. perm_seed_hotfix.sql), как и в test_wish_top_approver_subsidy_edit_gate.py."""
     manager = await make_user(
-        role="manager", last_name="Козеев", first_name="Евгений", middle_name="Викторович",
+        role="org_admin", last_name="Козеев", first_name="Евгений", middle_name="Викторович",
     )
     test_org.director_last_name = "Козеев"
     test_org.director_first_name = "Евгений"
@@ -129,8 +134,10 @@ async def test_submit_advance_companion_after_manual_cascade_succeeds(
 async def test_resubmit_already_submitted_wish_fails_clearly(
     client, auth_headers, db_session, test_org, make_user,
 ):
+    # org_admin — имеет subsidy.edit по умолчанию, обязателен для верхнего
+    # согласующего (см. test_wish_top_approver_subsidy_edit_gate.py).
     manager = await make_user(
-        role="manager", last_name="Козеев", first_name="Евгений", middle_name="Викторович",
+        role="org_admin", last_name="Козеев", first_name="Евгений", middle_name="Викторович",
     )
     test_org.director_last_name = "Козеев"
     test_org.director_first_name = "Евгений"

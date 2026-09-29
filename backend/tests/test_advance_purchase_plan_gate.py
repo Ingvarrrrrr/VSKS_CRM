@@ -108,7 +108,9 @@ async def test_final_decide_moves_advance_purchase_to_plan_automatically(
     согласующий в цепочке) само переводит закупку 'wishes' -> 'plan_schedule'
     через то же ядро перехода (app/services/purchase_transition_core.py), без
     ручного клика по кнопке «→ План закупок»."""
-    manager = await make_user(role="manager", last_name="Иванов")
+    # org_admin — имеет subsidy.edit по умолчанию, обязателен для верхнего
+    # согласующего (владелец, 2026-09-29; см. test_wish_top_approver_subsidy_edit_gate.py).
+    manager = await make_user(role="org_admin", last_name="Иванов")
 
     data = await _create_advance_purchase(client, auth_headers)
     purchase_id = data["id"]

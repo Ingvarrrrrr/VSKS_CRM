@@ -1164,21 +1164,21 @@ async def apply_rows(state) -> None:
                         "name": lv["name"],
                         "reason": "нет ни плановой позиции, ни товара/услуги, суммы нулевые — строка пропущена",
                     })
-                elif plan_sum is not None and plan_sum == ZERO and (plan_qty is None or plan_qty == ZERO):
-                    # Сумма плана прямо равна нулю (не пуста!) и кол-во не задано —
-                    # раньше здесь всё равно подставлялось qty=1, что превращало
-                    # "плана нет" в "план = 0 шт. по цене 0" (видимую, но ложную
-                    # плановую позицию). Ноль — это значение, а не "поле не
-                    # заполнено": плановая позиция по строке не создаётся вовсе,
-                    # категория при этом продолжает создаваться/читаться как обычно
-                    # (см. дальше по циклу — этот блок только про collected_plan).
-                    warnings.append({
-                        "kind": "zero_plan_skipped",
-                        "row": row_num,
-                        "name": lv["name"],
-                        "message": "Сумма плана 0 — плановая позиция не создана",
-                    })
                 elif plan_sum is not None:
+                    # Владелец, 29.09: раньше сумма плана = 0 (не пусто!) с
+                    # незаданным/нулевым количеством вообще НЕ создавала
+                    # плановую позицию (см. warning zero_plan_skipped, старая
+                    # ветка ниже в истории — тест test_zero_plan_sum_without_
+                    # qty_skips_planned_item). Владелец явно попросил обратное:
+                    # «пусть там 0, но человеку удобнее сверять так, как есть —
+                    # что всё, что он предоставил, есть и в итоге, с теми
+                    # суммами, которые он дал» — 0 в файле такая же РЕАЛЬНАЯ
+                    # сумма, как и любая другая (Правило №6, тот же принцип
+                    # «0 задано ≠ поле пусто», что и в displayBudget/
+                    # isBudgetUndefined на фронте) — строка с суммой 0 теперь
+                    # идёт по ОБЩЕЙ ветке ниже наравне с любой другой суммой,
+                    # второй механизм для неё не заводим.
+                    #
                     # Проверяем расхождение
                     if plan_qty is not None and plan_amt is not None and plan_qty != ZERO:
                         calc_ps = (plan_qty * plan_amt).quantize(QUANT)
@@ -1189,7 +1189,12 @@ async def apply_rows(state) -> None:
                                 "name": lv["name"],
                                 "message": f"Сумма плана {_fmt(plan_sum)} ≠ кол-во × цена = {_fmt(calc_ps)}; взята сумма из файла",
                             })
-                    if plan_qty is None:
+                    # «Сумма плана 0 без количества» — не аномалия, а обычная
+                    # нулевая позиция (услуга, за которую в этом периоде не
+                    # платили); предупреждение sum_without_qty оставлено только
+                    # для НЕНУЛЕВОЙ суммы без количества — там оно реально
+                    # сигнализирует о неполных данных файла.
+                    if plan_qty is None and plan_sum != ZERO:
                         warnings.append({
                             "kind": "sum_without_qty",
                             "row": row_num,
@@ -1316,15 +1321,31 @@ async def apply_rows(state) -> None:
                 # «когда введено 0, это значит, что не задана сумма»).
                 # test_row188_style_item_amount_does_not_overwrite_parent_budget
                 # (2026-09-09) — «плановые колонки строки — нулевые заглушки»
-                # (кол-во 15 «дней», цена/сумма плана — 0): такую строку
-                # владелец САМ описал как «плана по сути нет», ФЭО (142 500)
-                # обязана остаться суммой позиции. qty/unit одни, без ненулевой
-                # цены/суммы, «настоящим планом» не считаются.
+                # (кол-во 15 «дней», цена/сумма плана — 0), но у строки ЕСТЬ
+                # свои реальные деньги «по ФЭО» (142 500) — такую строку
+                # владелец сам описал как «плана по сути нет», ФЭО обязана
+                # остаться суммой позиции.
+                #
+                # Доработка (владелец, 29.09): если плановая цена/сумма — ЯВНЫЙ
+                # 0 (ячейка содержит 0, а не пуста), а чисел «по ФЭО» у строки
+                # вообще НЕТ (fallback'у взять неоткуда) — 0 из файла такая же
+                # реальная сумма позиции, как и любая другая (тот же принцип,
+                # что и у категорий, см. правку zero_plan_skipped выше по
+                # файлу): amount становится 0, а не None («не задано»,
+                # пустая ячейка). Ветка выше (test_row188) не затронута — там
+                # ФЭО-данные есть, условие «feo пуст» не выполняется.
                 _item_has_plan_numbers = (
                     (item_plan_price is not None and item_plan_price != ZERO)
                     or (item_plan_amount is not None and item_plan_amount != ZERO)
                 )
-                if _item_has_plan_numbers:
+                _item_plan_is_explicit_zero = (
+                    (item_plan_price is not None and item_plan_price == ZERO)
+                    or (item_plan_amount is not None and item_plan_amount == ZERO)
+                )
+                _item_feo_is_empty = (
+                    item_feo_qty is None and item_feo_price is None and item_feo_amount is None
+                )
+                if _item_has_plan_numbers or (_item_plan_is_explicit_zero and _item_feo_is_empty):
                     final_qty, final_unit, final_price, final_amount = (
                         item_plan_qty, item_plan_unit, item_plan_price, eff_item_plan_amount
                     )

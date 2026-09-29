@@ -8,6 +8,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { uploadHttpErrorMessage } from '@/constants/uploadLimits'
+import { fetchWithNetworkRetry } from '@/api'
 import type { SubsidyDetailContext } from './useSubsidyDetail'
 import type { FeoBudgetConflictGroup, FeoCategorySumConflictGroup, FeoDuplicateGroup, FeoImportResult, FeoItemTypeConflict, FeoUnmatchedNode, FeoWarning } from './types'
 
@@ -529,11 +530,14 @@ export function useFeoImport(ctx?: FeoImportCtx) {
       const fd = new FormData()
       fd.append('file', feoImport.file)
       const token = localStorage.getItem('auth_token')
-      const res = await fetch('/api/feo-categories/import-preview', {
+      // Чтение файла ничего не пишет в БД (см. докстринг эндпоинта) — можно
+      // один раз тихо повторить при обрыве сети (Правило №6: тот же хелпер
+      // и то же сообщение «Нет связи с сервером», что у apiFetch, см. api.ts).
+      const res = await fetchWithNetworkRetry(() => fetch('/api/feo-categories/import-preview', {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: fd,
-      })
+      }), { retryable: true, suppressErrorDialog: true })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
         showSnack(uploadHttpErrorMessage(res.status) || err.detail || 'Ошибка чтения файла', 'error'); return
@@ -545,8 +549,11 @@ export function useFeoImport(ctx?: FeoImportCtx) {
       feoAutoMap(data.sheets[0]?.headers || [])
       feoImportTargetSubsidy.value = ctx?.selectedId.value ?? null
       feoImport.step = 2
-    } catch {
-      showSnack('Ошибка чтения файла', 'error')
+    } catch (e: any) {
+      // fetchWithNetworkRetry уже перевела сетевую ошибку в человекочитаемый
+      // payload.message («Нет связи с сервером — повторите действие») —
+      // читаем его, а не голый e.message (см. владелец, 29.09).
+      showSnack(e?.payload?.message || 'Ошибка чтения файла', 'error')
     } finally {
       feoImport.loading = false
     }
@@ -684,11 +691,15 @@ export function useFeoImport(ctx?: FeoImportCtx) {
         fd.append('item_type_decisions', JSON.stringify(_itemTypeDecisions))
       }
       const token = localStorage.getItem('auth_token')
-      const res = await fetch('/api/feo-categories/import-mapped', {
+      // dryRun (предпросмотр/«Пересчитать») ничего не пишет в БД — безопасен
+      // для одного тихого повтора при обрыве сети; настоящий импорт (dryRun
+      // false) — без повтора, чтобы не задвоить запись (Правило №6, тот же
+      // хелпер/сообщение, что у apiFetch, см. api.ts).
+      const res = await fetchWithNetworkRetry(() => fetch('/api/feo-categories/import-mapped', {
         method: 'POST',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: fd,
-      })
+      }), { retryable: dryRun, suppressErrorDialog: true })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
         const msg = uploadHttpErrorMessage(res.status) || err.detail || err.message || `Ошибка импорта (HTTP ${res.status})`
@@ -744,7 +755,12 @@ export function useFeoImport(ctx?: FeoImportCtx) {
         if (ctx?.selectedId.value) { await ctx.loadFeo(ctx.selectedId.value); ctx.syncFeoFilled() }
       }
     } catch (e: any) {
-      const msg = e?.message ? `Ошибка импорта: ${e.message}` : 'Ошибка импорта'
+      // fetchWithNetworkRetry переводит сетевую ошибку в e.payload.message
+      // («Нет связи с сервером — повторите действие») — читаем его в
+      // приоритете, иначе голый e.message показывал буквальный текст
+      // браузера «Failed to fetch» (владелец, 29.09).
+      const reason = e?.payload?.message || e?.message
+      const msg = reason ? `Ошибка импорта: ${reason}` : 'Ошибка импорта'
       if (silent) feoImport.recomputeError = msg
       else showSnack(msg, 'error')
     } finally {

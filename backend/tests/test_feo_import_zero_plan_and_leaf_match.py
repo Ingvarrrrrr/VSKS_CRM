@@ -2,9 +2,17 @@
 
 Дефект A (`feo_import_apply.py`, блок «Плановые поля»): сумма плана = 0 без
 кол-во раньше всё равно создавала плановую позицию с qty=1 — ноль превращался
-в фиктивную позицию «0 шт. по цене 0». Теперь такая строка плановую позицию
-не создаёт (в collected_plan не попадает), даётся warning kind
-`zero_plan_skipped`; сумма > 0 без кол-во ведёт себя как раньше (qty=1).
+в фиктивную позицию «0 шт. по цене 0». Промежуточное исправление (2026-09-07)
+перестало создавать позицию вообще для суммы = 0 (warning `zero_plan_skipped`) —
+но владелец, 29.09, потребовал обратное: «Будет пропущено: 5» для строк вида
+«Телекоммуникационные услуги (интернет)» с суммой 0 — их «надо ставить, пусть
+там 0, но человеку удобнее сверять так, как есть». Теперь сумма плана = 0 —
+ТАКАЯ ЖЕ реальная сумма, как и любая другая (Правило №6, тот же принцип, что
+у displayBudget/isBudgetUndefined на фронте): плановая позиция создаётся с
+amount=0, БЕЗ qty=1 (количество не выдумывается) и без warning
+`zero_plan_skipped` (удалён вместе с веткой — больше не пропуск, а обычная
+позиция). Сумма > 0 без кол-во ведёт себя как раньше (qty не выдумывается,
+warning `sum_without_qty` сохранён).
 
 Дефект B (`feo_import_report.py`, блок подсказок отчёта «несопоставленные
 узлы»): существующий узел «A / Лист» (2 уровня в БД) не сопоставлялся с новым
@@ -38,12 +46,14 @@ from tests.test_feo_import_tree import (
 )
 
 
-# --- 1. Сумма плана = 0 без кол-во → плановая позиция не создаётся ----------
+# --- 1. Сумма плана = 0 без кол-во → плановая позиция СОЗДАЁТСЯ с amount=0 --
 
 @pytest.mark.asyncio
-async def test_zero_plan_sum_without_qty_skips_planned_item(db_session):
-    """plan_sum=0, plan_qty пуст → категория есть, FeoPlannedItem НЕТ, warning
-    kind zero_plan_skipped."""
+async def test_zero_plan_sum_without_qty_creates_planned_item_with_zero_amount(db_session):
+    """plan_sum=0, plan_qty пуст → категория есть, FeoPlannedItem создаётся с
+    amount=0 и quantity=None (количество не выдумывается), БЕЗ warning
+    zero_plan_skipped (владелец, 29.09: «0 надо ставить», см. докстринг
+    модуля)."""
     subsidy = await _make_subsidy(db_session)
     try:
         rows = [mk_row(
@@ -52,11 +62,11 @@ async def test_zero_plan_sum_without_qty_skips_planned_item(db_session):
         )]
         result = await _import(db_session, subsidy.id, rows)
         assert result["errors"] == []
-        assert any(w["kind"] == "zero_plan_skipped" for w in result["warnings"]), (
-            "должно быть предупреждение zero_plan_skipped"
+        assert not any(w["kind"] == "zero_plan_skipped" for w in result["warnings"]), (
+            "zero_plan_skipped удалён — сумма 0 больше не пропускается"
         )
         assert not any(w["kind"] == "sum_without_qty" for w in result["warnings"]), (
-            "старое предупреждение sum_without_qty (qty=1) не должно выдаваться для нулевой суммы"
+            "sum_without_qty — только для НЕнулевой суммы без кол-ва (см. тест 2)"
         )
 
         cats = await _get_categories(db_session, subsidy.id)
@@ -65,7 +75,10 @@ async def test_zero_plan_sum_without_qty_skips_planned_item(db_session):
         leaf = by_name["Категория Z1"]
 
         items = await _get_items(db_session, leaf.id)
-        assert items == [], "плановая позиция НЕ должна быть создана для суммы плана = 0"
+        assert len(items) == 1, "плановая позиция должна быть создана для суммы плана = 0"
+        item = items[0]
+        assert item.amount == Decimal("0"), "сумма 0 — реальное значение, не «не задано»"
+        assert item.quantity is None, "количество не задано в файле — не должно стать 1"
     finally:
         await _cleanup_subsidy(db_session, subsidy.id)
 

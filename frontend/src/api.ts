@@ -37,6 +37,83 @@ export async function forceClearCacheAndReload(): Promise<void> {
 export interface ApiFetchOptions extends RequestInit {
   /** Не показывать глобальный ApiErrorDialog — вызывающий обрабатывает ошибку сам (имеет fallback). */
   suppressErrorDialog?: boolean
+  /**
+   * Владелец, 29.09: разрешить ОДНУ автоматическую повторную попытку при
+   * сетевой ошибке (`TypeError: Failed to fetch` — сервер/DNS/обрыв
+   * соединения, НЕ HTTP-ошибка с телом ответа), для не-GET запроса.
+   * GET-запросы ретраятся всегда без этой пометки (чтение идемпотентно по
+   * природе) — ставить её нужно только на явно безопасные для повтора
+   * POST/PUT-запросы вроде предпросмотра импорта (запрос ничего не создаёт
+   * в БД, dry-run). Обычный создающий POST (например, создание товара) эту
+   * пометку не ставит — повтор при неопределённом исходе первой попытки мог
+   * бы задвоить запись.
+   */
+  retryOnNetworkError?: boolean
+}
+
+// Сетевая ошибка (сервер недоступен/DNS/CORS/обрыв соединения — браузерный
+// `TypeError: Failed to fetch`, НЕ HTTP-ответ с кодом) — владелец, 29.09:
+// «Заявка из плана» после «Товар добавлен» и импорт ФЭО после «Оставить из
+// файла (обновит каталог)» показывали пользователю голый текст браузера
+// «Failed to fetch» (describeApiError/аналоги читают err.message, когда нет
+// err.payload/err.detail — см. frontend/src/utils/apiErrorMessage.ts).
+// Раньше эта ветка просто пробрасывала fetchErr как есть — единственная
+// обработка ошибки fetch() была на AbortError (таймаут) ниже. Основная
+// причина обрывов — внешний nginx на проде пересоздаётся раз в минуту
+// (инфраструктура, чинится не здесь), но фронт обязан объяснить это
+// по-человечески.
+//
+// Экспортированы (владелец, 29.09, доработка): несколько мест в проекте
+// (useFeoImport.ts, useItemsImport.ts и т.п.) шлют FormData через СЫРОЙ
+// fetch() напрямую, в обход apiFetch (нужен свой разбор ответа/прогресс) —
+// они ловили ту же голую «Failed to fetch» в своих catch-блоках. Правило №6:
+// одно сообщение об ошибке сети — здесь, вызывающий код переиспользует эти
+// же функции вместо копии текста.
+export function buildFetchError(code: string, message: string, details = '', suppressErrorDialog = false): any {
+  const payload = { code, message, details, correlation_id: '' }
+  if (!suppressErrorDialog) {
+    window.dispatchEvent(new CustomEvent('api-error', { detail: payload }))
+  }
+  const err: any = new Error(payload.message)
+  err.status = 0
+  err.detail = payload.message
+  err.payload = payload
+  return err
+}
+export function translateFetchThrow(fetchErr: any, suppressErrorDialog = false): any {
+  if (fetchErr?.name === 'AbortError') {
+    return buildFetchError('REQUEST_TIMEOUT', 'Сервер не ответил за 60 секунд — повторите попытку', '', suppressErrorDialog)
+  }
+  return buildFetchError('NETWORK_ERROR', 'Нет связи с сервером — повторите действие', fetchErr?.message || '', suppressErrorDialog)
+}
+
+/**
+ * Один тихий повтор сырого fetch() при сетевой ошибке (не HTTP-ответе) —
+ * та же логика, что canRetryNetworkError/doRawFetch внутри apiFetch, для
+ * вызывающих, которым apiFetch не подходит (FormData + свой разбор Response).
+ * Бросает translateFetchThrow() — тот же формат ошибки, что и apiFetch,
+ * так что общий err.payload.message/describeApiError() читают его одинаково.
+ * `retryable=false` (обычно — операция НЕ dry-run, реально пишет в БД) —
+ * повтора нет, ошибка транслируется сразу же.
+ */
+export async function fetchWithNetworkRetry(
+  doFetch: () => Promise<Response>,
+  opts?: { retryable?: boolean; suppressErrorDialog?: boolean },
+): Promise<Response> {
+  const retryable = opts?.retryable !== false
+  try {
+    return await doFetch()
+  } catch (fetchErr: any) {
+    if (fetchErr?.name !== 'AbortError' && retryable) {
+      await new Promise(r => setTimeout(r, 1500))
+      try {
+        return await doFetch()
+      } catch (retryErr: any) {
+        throw translateFetchThrow(retryErr, opts?.suppressErrorDialog)
+      }
+    }
+    throw translateFetchThrow(fetchErr, opts?.suppressErrorDialog)
+  }
 }
 
 // Прод, 2026-09-20: apiFetch не имел таймаута вовсе — если бэкенд/сеть зависли
@@ -60,37 +137,39 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
     if (options.signal.aborted) timeoutController.abort()
     else options.signal.addEventListener('abort', () => timeoutController.abort(), { once: true })
   }
+  const method = (options.method || 'GET').toUpperCase()
+  // GET (и HEAD) — идемпотентны по природе, ретраим всегда; для остальных
+  // методов повтор только по явной пометке retryOnNetworkError (см. её
+  // докстринг выше).
+  const canRetryNetworkError = method === 'GET' || method === 'HEAD' || options.retryOnNetworkError === true
+  const doRawFetch = () => fetch(BASE + path, {
+    ...options,
+    body,
+    signal: timeoutController.signal,
+    headers: {
+      ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+      ...authHeaders(),
+      ...(options.headers || {}),
+    },
+  })
   try {
   let res: Response
   try {
-    res = await fetch(BASE + path, {
-      ...options,
-      body,
-      signal: timeoutController.signal,
-      headers: {
-        ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
-        ...authHeaders(),
-        ...(options.headers || {}),
-      },
-    })
+    res = await doRawFetch()
   } catch (fetchErr: any) {
-    if (fetchErr?.name === 'AbortError') {
-      const payload = {
-        code: 'REQUEST_TIMEOUT',
-        message: 'Сервер не ответил за 60 секунд — повторите попытку',
-        details: '',
-        correlation_id: '',
+    // Сетевая ошибка (не таймаут) на идемпотентном/явно безопасном запросе —
+    // один тихий повтор перед тем, как показать человеку что-либо (владелец,
+    // 29.09, см. докстринг canRetryNetworkError выше).
+    if (fetchErr?.name !== 'AbortError' && canRetryNetworkError) {
+      await new Promise(r => setTimeout(r, 1500))
+      try {
+        res = await doRawFetch()
+      } catch (retryErr: any) {
+        throw translateFetchThrow(retryErr, options.suppressErrorDialog)
       }
-      if (!options.suppressErrorDialog) {
-        window.dispatchEvent(new CustomEvent('api-error', { detail: payload }))
-      }
-      const err: any = new Error(payload.message)
-      err.status = 0
-      err.detail = payload.message
-      err.payload = payload
-      throw err
+    } else {
+      throw translateFetchThrow(fetchErr, options.suppressErrorDialog)
     }
-    throw fetchErr
   }
   // 27.4-24: успешный ответ → сбрасываем счётчик 5xx
   if (res.ok) _consecutive5xx = 0

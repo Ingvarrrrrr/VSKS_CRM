@@ -253,6 +253,62 @@ async def test_row188_style_item_amount_does_not_overwrite_parent_budget(db_sess
         await _cleanup_subsidy(db_session, subsidy.id)
 
 
+# --- Доработка владельца 29.09: явный 0 в плане позиции Ур.5 без своих чисел
+# --- «по ФЭО» → amount=0 (не None); пустая сумма — по-прежнему None ---------
+
+@pytest.mark.asyncio
+async def test_level5_item_explicit_zero_plan_without_feo_becomes_zero_amount(db_session):
+    """Строка-позиция («Телекоммуникационные услуги (интернет)») с ЯВНЫМ 0 в
+    Сумме плана и Цене плана, и БЕЗ каких-либо своих чисел «по ФЭО» (fallback'у
+    взять неоткуда) — владелец, 29.09: «всё, что он дал, с теми суммами,
+    которые он дал» — 0 из файла должен остаться суммой позиции (amount=0),
+    а не тихо стать None («не задано»). test_row188 выше не затронут — там у
+    строки ЕСТЬ свои деньги по ФЭО (142 500), fallback берёт их, а не 0."""
+    subsidy = await _make_subsidy(db_session)
+    try:
+        rows = [mk_row(
+            lvl2="Направление ZP1", lvl3="Категория ZP1",
+            item_name="Телекоммуникационные услуги (интернет)",
+            plan_price="0", plan_sum="0",
+        )]
+        result = await _import17(db_session, subsidy.id, rows)
+        assert result["errors"] == []
+
+        cats = await _get_categories(db_session, subsidy.id)
+        leaf = next(c for c in cats if c.name == "Категория ZP1")
+        items = await _get_items(db_session, leaf.id)
+        assert len(items) == 1
+        item = items[0]
+        assert item.amount == Decimal("0"), "явный 0 из файла — реальная сумма, не «не задано»"
+        assert item.unit_price == Decimal("0") if hasattr(item, "unit_price") else True
+    finally:
+        await _cleanup_subsidy(db_session, subsidy.id)
+
+
+@pytest.mark.asyncio
+async def test_level5_item_empty_plan_without_feo_stays_none(db_session):
+    """Та же строка, но Сумма/Цена плана ПУСТЫ (не заданы вовсе, не 0) и чисел
+    «по ФЭО» тоже нет — amount должен остаться None («не задано»): пустая
+    ячейка — не то же самое, что явный 0 (памятка проекта)."""
+    subsidy = await _make_subsidy(db_session)
+    try:
+        rows = [mk_row(
+            lvl2="Направление ZP2", lvl3="Категория ZP2",
+            item_name="Телекоммуникационные услуги (интернет)",
+        )]
+        result = await _import17(db_session, subsidy.id, rows)
+        assert result["errors"] == []
+
+        cats = await _get_categories(db_session, subsidy.id)
+        leaf = next(c for c in cats if c.name == "Категория ZP2")
+        items = await _get_items(db_session, leaf.id)
+        assert len(items) == 1
+        item = items[0]
+        assert item.amount is None, "пустая ячейка суммы — «не задано», не 0"
+    finally:
+        await _cleanup_subsidy(db_session, subsidy.id)
+
+
 # --- Ур.2 пуст, Ур.3 заполнен, денег на строке нет вовсе — структура строится
 # --- по названиям уровней, а не по наличию денег (правка 2026-09-15) --------
 

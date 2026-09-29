@@ -130,11 +130,14 @@ import { useSubsidyApprovers } from '@/composables/subsidies/useSubsidyApprovers
 import { useSubsidyTemplates } from '@/composables/subsidies/useSubsidyTemplates'
 
 const ctx = useSubsidyDetailCtx()
+// useSubsidyList() без ctx — переиспользует singleton SubsidiesView.vue, см.
+// докстринг в SubsidyListHeader.vue (владелец, 29.09: переключатель вид не
+// работал до F5, т.к. этот вызов с другим ctx пересобирал отдельный API).
 const {
   subPaged, subTotalPages, subPage, cardDragIdx, cardDragOverIdx,
   onCardDragStart, onCardDragOver, onCardDrop, pct, progressColor, cardDelta,
   displayBudget, isBudgetUndefined,
-} = useSubsidyList(ctx)
+} = useSubsidyList()
 const { openApproversDialog } = useSubsidyApprovers()
 const { openTemplateDialog, contractTemplates } = useSubsidyTemplates()
 

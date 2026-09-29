@@ -6,7 +6,7 @@
 // this composable owns all the state and business logic that drives it, so the
 // parent stays a thin caller (props/emits/expose + composable wiring).
 import { ref, computed, reactive, watch } from 'vue'
-import { apiFetch } from '@/api'
+import { apiFetch, fetchWithNetworkRetry } from '@/api'
 import type { ContractItem } from '@/types/contractItem'
 import type { MatchCandidate } from '@/composables/useItemMatching'
 import type { DupGroup, ResolvedGroup } from '@/components/DuplicateMergeDialog.vue'
@@ -282,11 +282,14 @@ export function useItemsImport(deps: UseItemsImportDeps) {
       const token = localStorage.getItem('auth_token')
       const fd = new FormData()
       fd.append('file', itemsImportFile.value)
-      const resp = await fetch('/api/purchases/items/import-preview', {
+      // Чтение файла ничего не пишет в БД — безопасно для одного тихого
+      // повтора при обрыве сети (Правило №6: тот же хелпер/сообщение, что у
+      // apiFetch, владелец 29.09, см. api.ts).
+      const resp = await fetchWithNetworkRetry(() => fetch('/api/purchases/items/import-preview', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` } as HeadersInit,
         body: fd,
-      })
+      }), { retryable: true, suppressErrorDialog: true })
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}))
         throw new Error(err.detail || `Ошибка ${resp.status}`)
@@ -298,7 +301,10 @@ export function useItemsImport(deps: UseItemsImportDeps) {
       ignoredColumns.value = []
       importStep.value = 2
     } catch (e: any) {
-      showSnack(e.message || 'Ошибка чтения файла', 'error')
+      // fetchWithNetworkRetry кладёт человекочитаемое сообщение сети в
+      // e.payload.message — читаем его в приоритете, иначе e.message
+      // показывал бы голый «Failed to fetch».
+      showSnack(e?.payload?.message || e?.message || 'Ошибка чтения файла', 'error')
     } finally {
       itemsImportLoading.value = false
     }
@@ -384,11 +390,15 @@ export function useItemsImport(deps: UseItemsImportDeps) {
     params.set('confirm', String(confirm))
     if (resolutions) params.set('resolutions', JSON.stringify(resolutions))
     for (const [k, v] of params.entries()) fd.append(k, v)
-    const resp = await fetch(`/api/purchases/${props.purchaseId}/items/import-mapped`, {
+    // confirm=false — предпросмотр расхождений сумм, ничего не пишет,
+    // безопасен для одного тихого повтора при обрыве сети; confirm=true —
+    // настоящая запись, без повтора (Правило №6, тот же хелпер/сообщение,
+    // что у apiFetch, владелец 29.09, см. api.ts).
+    const resp = await fetchWithNetworkRetry(() => fetch(`/api/purchases/${props.purchaseId}/items/import-mapped`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` } as HeadersInit,
       body: fd,
-    })
+    }), { retryable: !confirm, suppressErrorDialog: true })
     if (!resp.ok) {
       const uploadMsg = uploadHttpErrorMessage(resp.status)
       if (uploadMsg) throw new Error(uploadMsg)
@@ -462,11 +472,13 @@ export function useItemsImport(deps: UseItemsImportDeps) {
         fdNoPid.append('file', itemsImportFile.value as File)
         const paramsNoPid = _mappedColParams()
         const token = localStorage.getItem('auth_token') || ''
-        const respNoPid = await fetch(`/api/purchases/items/import-mapped-nopid?${paramsNoPid}`, {
+        // Реальная запись (без confirm-фазы) — без повтора, но сетевая
+        // ошибка всё равно переводится в человеческое сообщение (Правило №6).
+        const respNoPid = await fetchWithNetworkRetry(() => fetch(`/api/purchases/items/import-mapped-nopid?${paramsNoPid}`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}` } as HeadersInit,
           body: fdNoPid,
-        })
+        }), { retryable: false, suppressErrorDialog: true })
         if (!respNoPid.ok) {
           const errText = await respNoPid.text().catch(() => '')
           let detail = `Ошибка ${respNoPid.status}`

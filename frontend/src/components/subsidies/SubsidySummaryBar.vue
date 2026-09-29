@@ -60,5 +60,8 @@ import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { useSubsidyList } from '@/composables/subsidies/useSubsidyList'
 
 const ctx = useSubsidyDetailCtx()
-const { filteredSubsidies, totals } = useSubsidyList(ctx)
+// useSubsidyList() без ctx — переиспользует singleton SubsidiesView.vue, см.
+// докстринг в SubsidyListHeader.vue (владелец, 29.09: переключатель вид не
+// работал до F5, т.к. этот вызов с другим ctx пересобирал отдельный API).
+const { filteredSubsidies, totals } = useSubsidyList()
 </script>

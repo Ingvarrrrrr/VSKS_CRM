@@ -63,7 +63,17 @@ const registryArea = computed(() => props.registryArea)
 const addOpen = defineModel<boolean>('addOpen', { default: false })
 
 const ctx = useSubsidyDetailCtx()
-const { selectedYear, availableYears, mobile, viewMode, getSubsidyExportColumns, getSubsidyExportRows } = useSubsidyList(ctx)
+// useSubsidyList() БЕЗ ctx — переиспользует singleton, уже построенный
+// SubsidiesView.vue (build(ctx) там вызывается первым, до монтирования этого
+// дочернего компонента). Раньше здесь передавался `ctx` (= useSubsidyDetailCtx(),
+// другая ссылка, чем `{ allSubsidies }` в SubsidiesView.vue) — makeCtxSingleton
+// видел новый ctx и ПЕРЕСОБИРАЛ API с новым viewMode/effectiveView, не связанным
+// с тем effectiveView, который SubsidiesView.vue уже держит в v-if для
+// переключения таблица/карточки. Клик по переключателю менял viewMode второй,
+// «осиротевшей» копии — экран не реагировал до полной перезагрузки (F5), когда
+// SubsidiesView.vue пересобирала singleton заново и читала последнее значение
+// из localStorage. Владелец, 29.09.
+const { selectedYear, availableYears, mobile, viewMode, getSubsidyExportColumns, getSubsidyExportRows } = useSubsidyList()
 
 const toast = useToast()
 function showSnack(text: string, color: ToastType = 'success') {

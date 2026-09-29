@@ -386,7 +386,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(user_hierarchy.router)
     app.include_router(system_incidents.router)
     app.include_router(organizations.router)
-app.include_router(organization_director.router)
+    app.include_router(organization_director.router)
     app.include_router(reports.router)
     app.include_router(events.router)
     app.include_router(purchase_approvals.router)

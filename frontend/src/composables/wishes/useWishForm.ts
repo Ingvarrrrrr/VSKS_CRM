@@ -19,6 +19,7 @@ import { numOrNull } from '@/utils/numberFormat'
 import { productPhotoSrc } from '@/utils/productPhoto'
 import type { WishesContext } from './useWishesContext'
 import type { Wish } from './wishTypes'
+import type { EnsureApproversOutcome } from './useWishApprovers'
 
 export interface OpenEditHooks {
   // Вызывается ПОСЛЕ заполнения формы/позиций, но ДО завершения try/finally
@@ -31,7 +32,7 @@ export function useWishForm(deps: {
   ctx: WishesContext
   apiFetch: typeof import('@/api').apiFetch
   reloadActiveTab: () => Promise<void>
-  ensureApprovers: (wishId: number) => Promise<boolean>
+  ensureApprovers: (wishId: number) => Promise<EnsureApproversOutcome>
   // Участники, добавленные ДО первого сохранения новой заявки («совместное
   // создание») — живут в useWishApprovers.ts (wishMembers), но должны быть
   // прикреплены к заявке сразу после её создания здесь же, в saveWish (см.
@@ -848,9 +849,14 @@ export function useWishForm(deps: {
         const newStatus = putResp?.status || currentStatus
         wishFormSavedSnapshot.value = JSON.stringify(payload)
         if (andSubmit && ['draft', 'rejected'].includes(currentStatus)) {
-          const hasApprovers = await ensureApprovers(editingWishId.value)
-          if (!hasApprovers) {
-            showSnack('Не выбраны согласующие. Выберите «Верхнего согласующего» в разделе «Согласующие» — цепочка построится автоматически.', 'error')
+          const approversOutcome = await ensureApprovers(editingWishId.value)
+          if (!approversOutcome.ok) {
+            // 'error' — showSnack с текстом бэка уже показан внутри ensureApprovers
+            // (например «верхним может быть только сотрудник с правом…»); здесь
+            // не дублируем сообщение, только не отправляем.
+            if (approversOutcome.reason === 'no-top') {
+              showSnack('Не выбраны согласующие. Выберите «Верхнего согласующего» в разделе «Согласующие» — цепочка построится автоматически.', 'error')
+            }
             await nextTick()
             highlightMissingApprovers()
             return false
@@ -869,9 +875,13 @@ export function useWishForm(deps: {
         wishFormSavedSnapshot.value = JSON.stringify(payload)
         if (andSubmit && created?.id) {
           editingWishId.value = created.id
-          const hasApprovers = await ensureApprovers(created.id)
-          if (!hasApprovers) {
-            showSnack('Черновик сохранён. Не выбраны согласующие. Выберите «Верхнего согласующего» в разделе «Согласующие» — цепочка построится автоматически.', 'error')
+          const approversOutcome = await ensureApprovers(created.id)
+          if (!approversOutcome.ok) {
+            if (approversOutcome.reason === 'no-top') {
+              showSnack('Черновик сохранён. Не выбраны согласующие. Выберите «Верхнего согласующего» в разделе «Согласующие» — цепочка построится автоматически.', 'error')
+            } else {
+              showSnack('Черновик сохранён.', 'warning')
+            }
             await reloadStagedMembers()
             await reloadApprovers()
             await reloadActiveTab()

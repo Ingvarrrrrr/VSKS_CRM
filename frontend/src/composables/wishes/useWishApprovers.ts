@@ -3,9 +3,12 @@
 // Дословный перенос из WishesView.vue при разбиении файла на компоненты/композаблы.
 import { computed, ref } from 'vue'
 import { refreshMyPendingApprovals } from '@/composables/useApprovalsBadge'
+import { callApproverCascade, ensureApproversBeforeSubmit } from './useApproverCascade'
 import type { WishesContext } from './useWishesContext'
 import type { Wish, WishApprover, WishMember } from './wishTypes'
 import type { UseWishFormReturn } from './useWishForm'
+
+export type EnsureApproversOutcome = { ok: true } | { ok: false; reason: 'no-top' | 'error' }
 
 export function useWishApprovers(deps: {
   ctx: WishesContext
@@ -116,10 +119,7 @@ export function useWishApprovers(deps: {
     await loadTopApproverCandidates()
   }
   async function callCascadeApi(wishId: number, topUserId: number) {
-    return apiFetch<{ approval_mode: string; approvers: WishApprover[]; warning?: string | null }>(
-      `/wishes/${wishId}/approvers/cascade`,
-      { method: 'POST', body: JSON.stringify({ top_user_id: topUserId, mode: approvalMode.value }) },
-    )
+    return callApproverCascade<WishApprover>(apiFetch, wishId, topUserId, approvalMode.value)
   }
   async function runCascade() {
     if (!editingWishId.value) { showSnack('Сначала сохраните заявку', 'warning'); return }
@@ -142,23 +142,36 @@ export function useWishApprovers(deps: {
       cascadeLoading.value = false
     }
   }
-  // Владелец (2026-09-03): не нажал кнопку — цепочка НЕ строится вообще, согласующим
-  // становится РОВНО тот человек, что выбран в поле «Верхний согласующий».
-  async function ensureApprovers(wishId: number): Promise<boolean> {
-    if (wishApprovers.value.length > 0) return true
-    if (!approverTopUser.value) return false
-    try {
-      await apiFetch(`/wishes/${wishId}/approvers`, {
-        method: 'POST', body: JSON.stringify({ user_id: approverTopUser.value }),
-      })
-      await loadWishApprovers()
-      approverTopUser.value = null
-      showSnack('Согласующий добавлен')
-      return wishApprovers.value.length > 0
-    } catch (e: any) {
-      showSnack(e?.payload?.message || e?.message || 'Не удалось добавить согласующего', 'error')
-      return false
+  // Владелец (прод, заявка №85, 2026-09-29): «цепочка автоматически не
+  // выстраивается, только по кнопке» — но если кнопку не нажали, а верхнего
+  // согласующего выбрали, «Отправить» не должно падать с «не выбраны
+  // согласующие». Строим ТУ ЖЕ цепочку (эндпоинт+режим), что и кнопка
+  // «Построить цепочку» — общий код в useApproverCascade.ts (ПРАВИЛО №6,
+  // второй механизм подбора не заводим; то же самое зовёт
+  // useAdvanceReimbursement.ts для карточки компаньона авансового отчёта).
+  async function ensureApprovers(wishId: number): Promise<EnsureApproversOutcome> {
+    const hadApproversAlready = wishApprovers.value.length > 0
+    const res = await ensureApproversBeforeSubmit<WishApprover>({
+      apiFetch,
+      wishId,
+      currentApproversCount: wishApprovers.value.length,
+      topUserId: approverTopUser.value,
+      mode: approvalMode.value,
+      onApprovers: (approvers) => { wishApprovers.value = approvers },
+    })
+    if (res.ok) {
+      if (!hadApproversAlready) {
+        // Цепочка только что построена этим вызовом (approverTopUser был
+        // выбран, но кнопку «Построить цепочку» не нажимали).
+        syncIsChainApprover()
+        approverTopUser.value = null
+        if (res.warning) showSnack(`Цепочка построена. Внимание: ${res.warning}`, 'warning')
+        else showSnack('Цепочка построена автоматически перед отправкой')
+      }
+      return { ok: true }
     }
+    if (res.reason === 'error') { showSnack(res.message, 'error'); return { ok: false, reason: 'error' } }
+    return { ok: false, reason: 'no-top' }
   }
   async function addApprover(userId: number | null) {
     approverToAdd.value = null

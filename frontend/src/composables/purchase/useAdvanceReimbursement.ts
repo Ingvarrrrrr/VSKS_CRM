@@ -29,6 +29,7 @@ import { ref, computed, watch, type Ref } from 'vue'
 import { apiFetch } from '@/api'
 import type { ToastType } from '@/composables/useToast'
 import type { Receipt, ReceiptFile } from '@/composables/purchase/usePurchaseReceipts'
+import { callApproverCascade, ensureApproversBeforeSubmit } from '@/composables/wishes/useApproverCascade'
 
 export interface AdvanceWishDetail {
   id: number
@@ -127,10 +128,55 @@ export function useAdvanceReimbursement(
     && (wish.value?.status === 'draft' || wish.value?.status === 'rejected'),
   )
 
+  // Подсветка поля «Верхний согласующий» — тот же приём («заполните поле» +
+  // scrollIntoView + CSS-пульс .wish-date-missing-pulse), что и в обычной
+  // заявке (useWishForm.ts::highlightMissingApprovers, стили глобальные,
+  // объявлены в WishesView.vue). Компонент передаёт сюда свой DOM-элемент
+  // через registerTopApproverEl, второй способ подсветки не заводим.
+  let topApproverEl: HTMLElement | null = null
+  function registerTopApproverEl(el: HTMLElement | null) { topApproverEl = el }
+  function highlightMissingTopApprover() {
+    if (!topApproverEl) return
+    topApproverEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    topApproverEl.classList.add('wish-date-missing-pulse')
+    setTimeout(() => topApproverEl?.classList.remove('wish-date-missing-pulse'), 3000)
+  }
+
+  // Владелец (прод, заявка №85, 2026-09-29): выбрал верхнего согласующего, НЕ
+  // нажал «Построить цепочку», нажал «Отправить на согласование» → бэк отклонил
+  // 409 «не выбраны согласующие». «Автоматическое сохранение почему не
+  // происходит?» — значит «Отправить» само строит ту же цепочку (общий код
+  // useApproverCascade.ts, ПРАВИЛО №6 — то же самое зовёт useWishApprovers.ts
+  // для обычной заявки), если согласующих ещё нет, а верхний выбран.
   async function submit() {
     if (!wishId.value || submitting.value) return
     submitting.value = true
     try {
+      const hadApproversAlready = approvers.value.length > 0
+      const ensured = await ensureApproversBeforeSubmit<AdvanceApprover>({
+        apiFetch,
+        wishId: wishId.value,
+        currentApproversCount: approvers.value.length,
+        topUserId: approverTopUser.value,
+        mode: approvalMode.value,
+        onApprovers: (list) => { approvers.value = list },
+      })
+      if (!ensured.ok) {
+        if (ensured.reason === 'no-top') {
+          showSnack('Выберите верхнего согласующего', 'error')
+          highlightMissingTopApprover()
+        } else {
+          // Ошибка построения цепочки (например «верхним может быть только
+          // сотрудник с правом корректировать субсидию») — показываем как есть,
+          // на согласование НЕ отправляем.
+          showSnack(ensured.message, 'error')
+        }
+        return
+      }
+      if (!hadApproversAlready) {
+        approverTopUser.value = null
+        if (ensured.warning) showSnack(`Цепочка построена. Внимание: ${ensured.warning}`, 'warning')
+      }
       await apiFetch<AdvanceWishDetail>(`/wishes/${wishId.value}/submit`, { method: 'POST' })
       // POST /submit возвращает WishOut без approver_names (см. submit_wish —
       // он не делает доп. запрос за именами согласующих, в отличие от
@@ -195,10 +241,7 @@ export function useAdvanceReimbursement(
     if (!approverTopUser.value) { showSnack('Выберите верхнего согласующего', 'warning'); return }
     cascadeLoading.value = true
     try {
-      const res = await apiFetch<{ approval_mode: string; approvers: AdvanceApprover[]; warning?: string | null }>(
-        `/wishes/${wishId.value}/approvers/cascade`,
-        { method: 'POST', body: JSON.stringify({ top_user_id: approverTopUser.value, mode: approvalMode.value }) },
-      )
+      const res = await callApproverCascade<AdvanceApprover>(apiFetch, wishId.value, approverTopUser.value, approvalMode.value)
       approvers.value = res.approvers
       approverTopUser.value = null
       if (res.warning) showSnack(`Цепочка построена. Внимание: ${res.warning}`, 'warning')
@@ -308,7 +351,7 @@ export function useAdvanceReimbursement(
     approvers, approverTopUser, approvalMode, cascadeLoading, approverToAdd,
     decideComment, decideLoading, reorderLoading, approvalStatusColor, approvalStatusLabel,
     topApproverCandidates, loadTopApproverCandidates,
-    isEditable, loadApprovers, runCascade, addApprover, removeApprover, decideApprover,
+    isEditable, loadApprovers, runCascade, registerTopApproverEl, addApprover, removeApprover, decideApprover,
     canDecideApprover, isDecidingOnBehalf, approverDecisionLine,
   }
 }

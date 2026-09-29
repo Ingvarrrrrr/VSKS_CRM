@@ -41,7 +41,7 @@
           Построение цепочки НЕ отправляет заявку: на согласование она уйдёт только по кнопке «Отправить на согласование».
         </div>
         <v-row dense align="center">
-          <v-col cols="12" md="6">
+          <v-col cols="12" md="6" :ref="(el: any) => registerTopApproverEl(el?.$el ?? el ?? null)">
             <v-autocomplete
               v-model="approverTopUser"
               :items="topApproverCandidates"
@@ -189,7 +189,7 @@ const {
   approvers, approverTopUser, approvalMode, cascadeLoading, approverToAdd,
   decideComment, decideLoading, approvalStatusColor, approvalStatusLabel,
   topApproverCandidates,
-  isEditable, runCascade, addApprover, removeApprover, decideApprover,
+  isEditable, runCascade, registerTopApproverEl, addApprover, removeApprover, decideApprover,
   canDecideApprover, isDecidingOnBehalf, approverDecisionLine,
 } = useAdvanceReimbursement(
   toRef(props, 'wishId'),

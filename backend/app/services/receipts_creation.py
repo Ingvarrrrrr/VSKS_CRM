@@ -25,7 +25,7 @@ from app.product_matcher import find_matching_product
 from app.services import acceptance_docs as _acc_docs
 from app.services.item_amounts import line_total
 from app.services.item_contractor import set_item_contractor
-from app.services.receipts_parsing import _items_match_score
+from app.services.receipts_parsing import _items_match_score, _merge_duplicate_receipt_items
 from app.services.receipts_render import _render_receipt_png
 
 
@@ -111,6 +111,13 @@ async def _create_receipt_with_items(
             await _raise_receipt_duplicate_detail(dup.purchase_id, purchase_id, dup.id, db)
 
     items_data = data.pop('items', None) or []
+    # Прод-инцидент РЕЕ-2026-00962: схлопнуть строки-дубли ВНУТРИ ЭТОГО чека
+    # (то же имя+цена, обычно quantity=1 из-за повторного скана штрихкода) в
+    # одну позицию с суммарным количеством — ДО создания PurchaseItem. Ключ
+    # агрегации ограничен items_data одного чека, поэтому одинаковый товар из
+    # РАЗНЫХ чеков (разные receipt_id) никогда не схлопывается — каждый чек
+    # обрабатывается этой функцией отдельным вызовом.
+    items_data = _merge_duplicate_receipt_items(items_data)
 
     # Auto-create/find contractor по ИНН продавца из чека
     seller_inn = data.get('seller_inn')

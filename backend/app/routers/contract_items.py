@@ -122,6 +122,53 @@ async def replace_all_contract_items(pid: int, items: List[ContractItemCreate],
         raise HTTPException(404, detail={"code": "PURCHASE_NOT_FOUND",
                                           "message": f"Закупка #{pid} не найдена"})
 
+    # Прод-инцидент РЕЕ-2026-00962: несколько строк договора с ОДНИМ и тем же
+    # source_item_id в ОДНОМ payload (фронт присылал их так при повторных
+    # автосохранениях стадии «Договор» после загрузки чеков) — бэкенд принимал
+    # весь список как есть, поэтому 6, затем ещё 4 строки на одну и ту же
+    # плановую позицию оседали в БД. Легальное разбиение позиции (D-05, см.
+    # app/services/contract_item_link.py) здесь не теряется: пользователь
+    # делит позицию РАЗНЫМИ quantity/unit_price, тогда как повтор ОДНОГО и
+    # того же source_item_id с одинаковыми name/quantity/unit_price — это не
+    # разбиение, а буквальный дубль. Правило: одна строка на позицию —
+    # оставляем ПОСЛЕДНЮЮ по порядку в payload (актуальное состояние формы),
+    # если дубли различаются ТОЛЬКО служебными полями; если у дублей РАЗНЫЕ
+    # quantity/unit_price (похоже на намеренное разбиение, отправленное как
+    # повтор id по ошибке фронта) — отклоняем 409 с понятной причиной, не
+    # гадаем, что оставить.
+    _seen_source_ids: dict = {}
+    for _idx, _it in enumerate(items):
+        _sid = getattr(_it, 'source_item_id', None)
+        if not _sid:
+            continue
+        _seen_source_ids.setdefault(_sid, []).append(_idx)
+    _ambiguous_dupes = []
+    for _sid, _idxs in _seen_source_ids.items():
+        if len(_idxs) < 2:
+            continue
+        _variants = {
+            (str(items[i].quantity), str(items[i].unit_price))
+            for i in _idxs
+        }
+        if len(_variants) > 1:
+            _ambiguous_dupes.append(_sid)
+    if _ambiguous_dupes:
+        raise HTTPException(409, detail={
+            "code": "CONTRACT_ITEM_DUPLICATE_SOURCE_AMBIGUOUS",
+            "message": (
+                "В сохраняемом списке несколько строк договора ссылаются на одну "
+                "и ту же позицию заявки с РАЗНЫМ количеством/ценой — похоже на "
+                "разбиение позиции, отправленное некорректно. Обновите страницу "
+                "и повторите разбиение через интерфейс."
+            ),
+            "source_item_ids": _ambiguous_dupes,
+        })
+    if any(len(_idxs) > 1 for _idxs in _seen_source_ids.values()):
+        _drop_indices = {
+            i for _idxs in _seen_source_ids.values() if len(_idxs) > 1 for i in _idxs[:-1]
+        }
+        items = [it for _i, it in enumerate(items) if _i not in _drop_indices]
+
     # phase26-dd: validate source_item_id existence — фронт может слать ID
     # старых purchase_items, которые уже удалены в update_purchase bulk replace.
     # ВАЖНО: фильтр по purchase_id == pid обязателен — без него id чужой

@@ -387,6 +387,73 @@ def _parse_proverkacheka_html_receipt(html: str) -> dict:
     }
 
 
+def _merge_duplicate_receipt_items(items: list) -> list:
+    """Схлопнуть строки одного чека, различающиеся ТОЛЬКО тем, что касса
+    напечатала один и тот же товар несколькими подряд строками с quantity=1
+    вместо одной строки с quantity>1 (частая практика при повторном
+    сканировании штрихкода — например, несколько одинаковых бутылок воды).
+
+    Прод-инцидент (авансовый РЕЕ-2026-00962, чек с 20 строками: 4× товар A по
+    489 ₽ и 16× товар B по 499 ₽, все с quantity=1): без схлопывания на этом
+    шаге строки доходили до _dedup_purchase_items_core как «точные дубли» по
+    (name, total, receipt_id) и просто УДАЛЯЛИСЬ до одной штуки — количество
+    терялось (4 шт → 1 шт), а не суммировалось. Схлопывание нужно сделать
+    здесь, на входе, чтобы каждый уникальный товар чека попадал в БД уже ОДНОЙ
+    строкой с правильным количеством, и downstream-дедуп точных дублей их
+    больше не видел вовсе.
+
+    Группировка — по (нормализованное name, price, nds/vat_rate): одинаковое
+    название но РАЗНАЯ цена или ставка НДС — разные позиции (напр. акционная
+    и обычная цена одного товара), не схлопываются. quantity и sum
+    суммируются; sum, если отсутствует, считается как price*quantity.
+
+    Чистая функция без DB — общая для receipts_creation.py (импорт чека) и
+    receipts_recompute.py (backfill из raw_json), ПРАВИЛО №6: один алгоритм
+    агрегации, а не по копии в каждом вызывающем.
+    """
+    if not items:
+        return []
+    groups: dict = {}
+    order: list = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        name = str(it.get('name') or '').strip()
+        name_norm = name.lower()
+        price = to_decimal(it.get('price'))
+        price_key = str(price.quantize(Decimal('0.01'))) if price is not None else None
+        key = (name_norm, price_key, it.get('nds'), it.get('vat_rate'))
+
+        qty = to_decimal(it.get('quantity') if it.get('quantity') is not None else it.get('qty'))
+        if qty is None:
+            qty = Decimal('1')
+        raw_sum = it.get('sum') if it.get('sum') is not None else it.get('total')
+        line_sum = to_decimal(raw_sum)
+        if line_sum is None and price is not None:
+            line_sum = (price * qty).quantize(Decimal('0.01'))
+        if line_sum is None:
+            line_sum = Decimal('0')
+
+        if key not in groups:
+            merged = dict(it)
+            merged['name'] = name
+            merged['quantity'] = qty
+            merged['qty'] = qty
+            merged['sum'] = line_sum
+            if 'total' in merged:
+                merged['total'] = line_sum
+            groups[key] = merged
+            order.append(key)
+        else:
+            merged = groups[key]
+            merged['quantity'] = (merged.get('quantity') or Decimal('0')) + qty
+            merged['qty'] = merged['quantity']
+            merged['sum'] = (merged.get('sum') or Decimal('0')) + line_sum
+            if 'total' in merged:
+                merged['total'] = merged['sum']
+    return [groups[k] for k in order]
+
+
 def _extract_items(raw) -> list:
     """Pull items out of the raw_json regardless of FNS shape variant."""
     if not isinstance(raw, dict):

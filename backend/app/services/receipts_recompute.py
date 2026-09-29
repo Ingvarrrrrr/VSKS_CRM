@@ -16,7 +16,12 @@ from app.services import acceptance_docs as _acc_docs
 from app.services.item_contractor import set_item_contractor
 from app.services.item_amounts import line_total
 from app.services.receipts_creation import _create_or_enrich_contractor_from_receipt
-from app.services.receipts_parsing import _extract_items, _items_match_score, _nds_code_to_rate_str
+from app.services.receipts_parsing import (
+    _extract_items,
+    _items_match_score,
+    _merge_duplicate_receipt_items,
+    _nds_code_to_rate_str,
+)
 from app.services.receipts_render import _render_receipt_png
 
 
@@ -165,6 +170,12 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
             raw_items = _extract_items(r.raw_json or {})
             if not raw_items:
                 continue
+            # Прод-инцидент РЕЕ-2026-00962: схлопнуть дубли-строки ВНУТРИ этого
+            # чека (r.raw_json одного receipt) ДО создания PurchaseItem — тот
+            # же алгоритм, что и в receipts_creation.py (ПРАВИЛО №6). Вызов
+            # per-receipt (внутри цикла `for r in receipts`) — одинаковый товар
+            # из ДРУГОГО чека сюда не попадает и остаётся отдельной позицией.
+            raw_items = _merge_duplicate_receipt_items(raw_items)
             pack = receipt_to_contractor.get(r.id)
             cid, c_inn, c_name = pack if pack else (None, r.seller_inn, r.seller_name)
             for idx, ri in enumerate(raw_items, start=1):
@@ -528,6 +539,32 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
         import logging as _lg
         _lg.getLogger(__name__).warning(f"recompute inline ci relink skipped: {_relink_e}")
 
+    # Прод-инцидент РЕЕ-2026-00962, вторая половина: relink Pass 1/2 ВЫШЕ
+    # намеренно разрешает нескольким ContractItem с ОДИНАКОВЫМ именем занимать
+    # одну и ту же PurchaseItem — это легальный сценарий «разбиение позиции»
+    # (D-05, см. app/services/contract_item_link.py). Но пока Ошибка 1 не была
+    # исправлена, автосоздание ContractItem на каждый чек (receipts_creation.py)
+    # плодило РОВНО такие «одноимённые» ContractItem-дубли из раздутых
+    # PurchaseItem, которые затем _dedup_purchase_items_core схлопывал в одну
+    # PurchaseItem — и relink выше честно, но ошибочно, притягивал все осиротевшие
+    # ContractItem-дубли к этой одной PurchaseItem как «разбиение».
+    # Настоящее разбиение отличается от артефакта именно тем, что у частей
+    # разные quantity/unit_price (иначе зачем делить); поэтому здесь удаляем
+    # ТОЛЬКО ContractItem-строки с одним source_item_id, которые ТОЧНО
+    # совпадают по (name, quantity, unit_price) — то есть не разбиение, а
+    # буквальный дубль, оставляя min(id).
+    try:
+        _ci_dedup_res = await _dedup_contract_items_exact(purchase_id, db)
+        if _ci_dedup_res.get("deduplicated"):
+            import logging as _lg
+            _lg.getLogger(__name__).info(
+                "recompute: удалено %d дублей ContractItem (одинаковые name+qty+price на одну позицию) для закупки #%s",
+                _ci_dedup_res["deduplicated"], purchase_id,
+            )
+    except Exception as _ci_dedup_e:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(f"recompute contract_items exact-dedup skipped: {_ci_dedup_e}")
+
     # Phase 26-YY: сохранить новый snapshot hash чтобы следующий GET без изменений
     # данных skip'нул всю эту работу.
     try:
@@ -592,5 +629,49 @@ async def _dedup_purchase_items_core(purchase_id: int, db: AsyncSession) -> dict
     except Exception:
         pass
     await db.execute(_sa_del(_PI).where(_PI.id.in_(ids_to_delete)))
+    await db.flush()
+    return {"ok": True, "deduplicated": len(ids_to_delete), "kept": len(seen)}
+
+
+# ── dedup helper (прод-инцидент РЕЕ-2026-00962) ──────────────────────────────
+
+async def _dedup_contract_items_exact(purchase_id: int, db: AsyncSession) -> dict:
+    """Удаляет ContractItem-строки, которые указывают на ОДНУ и ту же
+    PurchaseItem (тот же ``source_item_id``, не NULL) и при этом ТОЧНО
+    совпадают по (name, quantity, unit_price) — оставляет min(id).
+
+    Легальное разбиение позиции (D-05, см. app/services/contract_item_link.py)
+    этим НЕ затрагивается: у разбитых строк quantity и/или unit_price как раз
+    РАЗНЫЕ (иначе разбиение не имело бы смысла) — совпадать может только имя,
+    а этого для удаления недостаточно.
+
+    Идемпотентна. НЕ commit — вызывающий (``_recompute_from_receipts_core``)
+    отвечает за commit."""
+    from sqlalchemy import select as _sel, delete as _sa_del
+    from app.models.contract_item import ContractItem as _CI
+
+    def _norm(v):
+        try:
+            return round(float(v or 0), 2)
+        except Exception:
+            return 0.0
+
+    rows = (await db.execute(
+        _sel(_CI.id, _CI.source_item_id, _CI.name, _CI.quantity, _CI.unit_price)
+        .where(_CI.purchase_id == purchase_id, _CI.source_item_id.is_not(None))
+        .order_by(_CI.id.asc())
+    )).all()
+    seen: dict = {}
+    ids_to_delete = []
+    for row in rows:
+        cid, source_item_id, name, quantity, unit_price = row
+        key = (source_item_id, str(name or '').strip().lower(), _norm(quantity), _norm(unit_price))
+        if key in seen:
+            ids_to_delete.append(cid)
+        else:
+            seen[key] = cid
+    if not ids_to_delete:
+        return {"ok": True, "deduplicated": 0, "kept": len(seen)}
+    await db.execute(_sa_del(_CI).where(_CI.id.in_(ids_to_delete)))
     await db.flush()
     return {"ok": True, "deduplicated": len(ids_to_delete), "kept": len(seen)}

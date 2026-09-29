@@ -4,11 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Передача оборудования ВСКС — карта процессов</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<!-- 29.09: шрифт и библиотеки — только со своего сервера (не Google Fonts / cdnjs:
+     запрос к ним передаёт IP пользователя за рубеж). Шрифт — тот же Inter Tight, что в приложении. -->
+<script src="/vendor/html2canvas-1.4.1.min.js"></script>
+<script src="/vendor/jspdf.umd.min.js"></script>
 <style>
+  @font-face { font-family: 'Inter Tight'; font-weight: 400; font-display: swap; src: url('/fonts/inter-tight-v9-latin-regular.ttf') format('truetype'); }
+  @font-face { font-family: 'Inter Tight'; font-weight: 500; font-display: swap; src: url('/fonts/inter-tight-v9-latin-500.ttf') format('truetype'); }
+  @font-face { font-family: 'Inter Tight'; font-weight: 600; font-display: swap; src: url('/fonts/inter-tight-v9-latin-600.ttf') format('truetype'); }
+  @font-face { font-family: 'Inter Tight'; font-weight: 700; font-display: swap; src: url('/fonts/inter-tight-v9-latin-700.ttf') format('truetype'); }
+
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
@@ -62,7 +67,7 @@
   html, body { height: 100%; overflow: hidden; }
 
   body {
-    font-family: 'Inter', sans-serif;
+    font-family: 'Inter Tight', system-ui, -apple-system, 'Segoe UI', sans-serif;
     background: var(--bg);
     color: var(--text);
     display: flex;
@@ -2206,7 +2211,7 @@ function hidePdfOverlay() {
 
 async function exportTabToPdf(tabId) {
   if (typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined') {
-    alert('Для экспорта в PDF нужен интернет (загрузка html2canvas/jsPDF)');
+    alert('Не загрузились библиотеки экспорта в PDF — обновите страницу');
     return;
   }
 

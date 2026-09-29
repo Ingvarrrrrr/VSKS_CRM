@@ -68,6 +68,7 @@ export function useAdvanceReimbursement(
   const wish = ref<AdvanceWishDetail | null>(null)
   const loading = ref(false)
   const submitting = ref(false)
+  const approvers = ref<AdvanceApprover[]>([])
 
   async function loadWish() {
     if (!wishId.value) {
@@ -138,7 +139,6 @@ export function useAdvanceReimbursement(
 
   // ── Согласующие (ПРАВИЛО №6: те же эндпоинты /wishes/{id}/approvers*, что и
   // у обычной заявки — composables/wishes/useWishApprovers.ts) ──────────────
-  const approvers = ref<AdvanceApprover[]>([])
   const approverTopUser = ref<number | null>(null)
   const approvalMode = ref<'sequential' | 'parallel'>('sequential')
   const cascadeLoading = ref(false)

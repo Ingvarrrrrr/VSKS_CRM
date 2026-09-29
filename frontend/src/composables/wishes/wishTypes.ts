@@ -189,12 +189,20 @@ export interface WishApprover {
 
 export interface ExcessWarningItem { name: string; amount: number }
 export interface ExcessWarning {
-  category_id: number
-  category_name: string
-  budget: number | null
-  plan_after: number
-  excess_amount: number
-  items: ExcessWarningItem[]
+  /** Владелец (2026-09-29): «дубль занял план молча» — плановая позиция заявки
+   *  уже занята ЧУЖОЙ закупкой (см. backend app.services.plan_duplicate_warning).
+   *  Тот же канал excess_warnings, другая форма записи: только type/item_name/
+   *  message заполнены, остальные поля (category_id и т.д.) отсутствуют —
+   *  showExcessWarnings в useWishesContext.ts ветвится по type. */
+  type?: 'duplicate'
+  item_name?: string
+  message?: string
+  category_id?: number
+  category_name?: string
+  budget?: number | null
+  plan_after?: number
+  excess_amount?: number
+  items?: ExcessWarningItem[]
 }
 
 export interface PurchaseSyncItem { name: string; quantity?: number | null; amount?: number | null }

@@ -72,6 +72,8 @@ from app.services.feo_plan_fact import (
     ordered_consumption_by_category,
     fact_consumption_by_category,
     planned_item_consumption,
+    category_plan_links,
+    OPEN_WISH_STATUSES,
 )
 
 from app.services.feo_plan_tree import compute_feo_plan_tree
@@ -113,6 +115,8 @@ __all__ = [
     "ordered_consumption_by_category",
     "fact_consumption_by_category",
     "planned_item_consumption",
+    "category_plan_links",
+    "OPEN_WISH_STATUSES",
     "compute_feo_plan_tree",
     "find_excess_culprit",
     "assert_no_unapproved_excess",

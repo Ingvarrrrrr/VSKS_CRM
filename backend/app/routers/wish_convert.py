@@ -417,6 +417,13 @@ async def convert_wish(
     wish.approved_by = current_user.id
 
     _excess_warnings = await wishes_core._collect_excess_warnings(db, wish.subsidy_id, _conv_cat_items)
+    # Владелец (2026-09-29, «про то, что это дубликат, ничего не написано»): та же
+    # заявка могла уже быть один раз перенесена в план кем-то другим — предупреждаем
+    # о дубле в ТОМ ЖЕ канале (excess_warnings), второй не заводим. exclude_wish_id
+    # отфильтровывает закупку, только что созданную ЭТИМ же вызовом (см.
+    # app.services.plan_duplicate_warning).
+    from app.services.plan_duplicate_warning import collect_plan_duplicate_warnings
+    _excess_warnings = await collect_plan_duplicate_warnings(db, items_full, exclude_wish_id=wish.id) + _excess_warnings
     # Владелец (2026-09-02): регистрируем запрос(ы) на согласование превышения ТЗ
     # над плановой позицией ПОСЛЕ создания закупки (см. _tz_violations выше).
     _tz_excess_approvals = await register_tz_excess_approvals(

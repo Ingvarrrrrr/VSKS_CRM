@@ -51,7 +51,11 @@ from app.models.purchase_item import PurchaseItem
 from app.models.subsidy import Subsidy
 from app.models.user import User
 from app.services.dictionaries import STATUS_LABELS
-from app.services.feo_plan_fact import planned_item_consumption
+from app.services.feo_plan_fact import (
+    planned_item_consumption,
+    plan_consumption_by_category,
+    category_plan_links,
+)
 from app.services.item_amounts import line_total
 from app.services.price_freshness import load_context as load_freshness_context, evaluate as evaluate_freshness
 from app.services.product_snapshot import resolve_photo_url
@@ -408,6 +412,36 @@ async def create_wish_from_plan(
 
     consumption = await planned_item_consumption(db, planned_ids)
 
+    # Владелец (29.09.2026): план листовой категории ФЭО (kind='plan_position'/
+    # 'feo_article' — БЕЗ отдельной FeoPlannedItem, «ручной план») на проде часто
+    # уже целиком занят согласованной закупкой напрямую по feo_category_id
+    # («Брендвол», «Наградная продукция»). Фронт (usePlanToRequest.ts::
+    # materializeSelectedManualPlans) СНАЧАЛА материализует такой лист в новую
+    # FeoPlannedItem — но эта новая запись стартует с НУЛЕВЫМ потреблением
+    # (planned_item_consumption не видит PurchaseItem.feo_category_id-привязки,
+    # только feo_planned_item_id), и без проверки ниже целиком занятый план
+    # выглядел бы как полностью свободный. Применяем её ТОЛЬКО когда позиция —
+    # ЕДИНСТВЕННАЯ активная FeoPlannedItem своей категории (типичный случай
+    # только что материализованного листа целиком, а не одна из нескольких
+    # детализированных Ур.5-позиций общей категории) — иначе общий пул
+    # «непривязанных» закупок категории вычитался бы из каждой из НЕСКОЛЬКИХ
+    # позиций независимо, что задвоило бы вычет (Правило №6 — используем
+    # ГОТОВЫЕ plan_consumption_by_category/category_plan_links, тот же
+    # источник, что у /plan-tree и /feo-categories/plan-positions для строк
+    # kind='plan_position'/'feo_article', второй расчёт остатка не заводим).
+    all_category_ids = {cat.id for _pi, cat in planned_by_id.values()}
+    fpi_count_rows = (await db.execute(
+        select(FeoPlannedItem.feo_category_id, func.count(FeoPlannedItem.id))
+        .where(FeoPlannedItem.feo_category_id.in_(all_category_ids))
+        .where(FeoPlannedItem.is_active.is_(True))
+        .group_by(FeoPlannedItem.feo_category_id)
+    )).all()
+    fpi_count_by_category = {r[0]: r[1] for r in fpi_count_rows}
+    category_unlinked_consumption = await plan_consumption_by_category(
+        db, [subsidy_id], exclude_planned_item_linked=True,
+    )
+    category_links = await category_plan_links(db, list(all_category_ids))
+
     product_ids = [it.product_id for it in items if it.product_id is not None]
     products_by_id: dict[int, Product] = {}
     if product_ids:
@@ -483,6 +517,16 @@ async def create_wish_from_plan(
         if price_fallback:
             warnings.append(f"«{item_name}»: цена каталога не задана — использована плановая цена")
 
+        # Владелец (29.09.2026): позиция, уже целиком (или частично) занятая
+        # СОГЛАСОВАННЫМИ закупками (planned_item_consumption — Правило №6, тот
+        # же источник, что у residual_quantity в build_plan_to_wish_candidates
+        # выше и у /feo-categories/plan-positions), — раньше это было мягким
+        # предупреждением (warnings.append), заявка всё равно создавалась.
+        # Теперь ЖЁСТКИЙ отказ 409 без обхода: запросить больше остатка нельзя,
+        # ни на UI (галочка/лимит поля — FeoLevel5Panel.vue/PlanToRequestRow.vue),
+        # ни через API напрямую. Черновики/на согласовании заявок в
+        # planned_item_consumption НЕ участвуют (решение владельца 2026-08-17) —
+        # эта проверка их не блокирует.
         cons = consumption.get(planned.id, {"used_qty": 0.0, "linked_purchase_ids": []})
         plan_quantity = planned.quantity
         if plan_quantity is not None:
@@ -490,13 +534,45 @@ async def create_wish_from_plan(
             if it.quantity > residual_quantity:
                 linked_ids = cons.get("linked_purchase_ids") or []
                 descr = ", ".join(
-                    f"№{purchases_by_id[pid].purchase_number}"
+                    (purchases_by_id[pid].registry_number or f"№{purchases_by_id[pid].purchase_number}")
                     for pid in linked_ids
-                    if pid in purchases_by_id and purchases_by_id[pid].purchase_number is not None
+                    if pid in purchases_by_id and (
+                        purchases_by_id[pid].registry_number or purchases_by_id[pid].purchase_number is not None
+                    )
                 ) or "уже действующей закупке"
-                warnings.append(
-                    f"«{item_name}»: запрошено {it.quantity}, остаток {residual_quantity} "
-                    f"— уже привязано в закупке {descr}"
+                if residual_quantity <= 0:
+                    raise HTTPException(
+                        409,
+                        f"Позиция «{item_name}» уже целиком в {descr} — остаток 0 {unit}",
+                    )
+                raise HTTPException(
+                    409,
+                    f"Позиция «{item_name}»: запрошено {it.quantity}, остаток {residual_quantity} {unit} "
+                    f"— остальное уже в {descr}",
+                )
+
+        # Занятость на уровне ЛИСТОВОЙ КАТЕГОРИИ (см. докстринг выше, batch перед
+        # циклом) — только для единственной активной FeoPlannedItem своей
+        # категории, чтобы не задвоить вычет с несколькими Ур.5-позициями.
+        if fpi_count_by_category.get(cat.id) == 1 and cat.planned_quantity is not None:
+            cat_qty = Decimal(str(cat.planned_quantity))
+            cat_cons = category_unlinked_consumption.get(cat.id, {"consumed_quantity": 0.0})
+            cat_residual = max(cat_qty - Decimal(str(cat_cons.get("consumed_quantity") or 0)), Decimal("0"))
+            if it.quantity > cat_residual:
+                cat_link = category_links.get(cat.id, {"linked_purchases": []})
+                linked_purchases = cat_link.get("linked_purchases") or []
+                descr = ", ".join(
+                    (lp["registry_number"] or f"№{lp['id']}") for lp in linked_purchases
+                ) or "уже действующей закупке"
+                if cat_residual <= 0:
+                    raise HTTPException(
+                        409,
+                        f"Позиция «{item_name}» уже целиком в {descr} — остаток 0 {unit}",
+                    )
+                raise HTTPException(
+                    409,
+                    f"Позиция «{item_name}»: запрошено {it.quantity}, остаток {cat_residual} {unit} "
+                    f"— остальное уже в {descr}",
                 )
 
     feo_category_id = next(iter(categories_used)) if len(categories_used) == 1 else None

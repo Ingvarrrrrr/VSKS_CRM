@@ -333,6 +333,68 @@ export function usePlanToRequest() {
     return computeSelectionState(eligibleResidualIds(rowsInSubtree), feoLevel5.selectedPlannedItemIds.value)
   }
 
+  // ── Позиция целиком занята согласованной закупкой (владелец, 29.09.2026) ──
+  // Единственный источник остатка (Правило №6) — та же feoResiduals
+  // (GET /feo-categories/plan-positions, в итоге planned_item_consumption),
+  // что уже используют selectCategorySubtree/selectWholeSmeta выше; второй
+  // расчёт остатка здесь не заводим. Строка ищется по составному смыслу
+  // kind==='planned_item' (см. предупреждение о коллизии id в
+  // useFeoPlannedResiduals.ts) — ручные планы категорий (id<0 в общем Set
+  // выбора) этой функцией не проверяются (у них нет отдельной FeoPlannedItem).
+  function residualRowFor(plannedItemId: number): FeoPlanPosition | null {
+    if (plannedItemId < 0) return null
+    return feoResiduals.plannedResiduals.value.find(r => r.kind === 'planned_item' && r.id === plannedItemId) || null
+  }
+
+  // «Занята» — не просто остаток <= 0 (может быть просто не заполнено
+  // количество плана — тогда это «ещё не запланировано», а не «занято», см.
+  // feo_plan_reads_tree.py: qty=0 по умолчанию, когда quantity не задан), а
+  // ИМЕННО остаток <= 0 ПРИ наличии хотя бы одной привязанной СОГЛАСОВАННОЙ
+  // закупки (linked_purchases — тот же PLANNED_STATUSES-фильтр, что и в
+  // planned_item_consumption).
+  function isPlannedItemFullyTaken(plannedItemId: number): boolean {
+    const row = residualRowFor(plannedItemId)
+    if (!row) return false
+    return Number(row.residual_quantity) <= 0 && (row.linked_purchases?.length ?? 0) > 0
+  }
+
+  function linkedPurchasesForPlannedItem(plannedItemId: number) {
+    return residualRowFor(plannedItemId)?.linked_purchases || []
+  }
+
+  function linkedWishesForPlannedItem(plannedItemId: number) {
+    return residualRowFor(plannedItemId)?.linked_wishes || []
+  }
+
+  // ── То же самое, но для плана, заведённого ПРЯМО НА ЛИСТОВОЙ КАТЕГОРИИ
+  // (kind='plan_position'/'feo_article', БЕЗ отдельной FeoPlannedItem —
+  // «ручной план», isManual-строка FeoLevel5Panel.vue, id=−node.id в общем Set
+  // выбора). На проде таких много («Брендвол», «Наградная продукция») — без
+  // этой проверки чекбокс материализует уже целиком занятый план в НОВУЮ
+  // FeoPlannedItem с нулевой историей потребления, обходя занятость (см.
+  // backend/app/services/plan_to_wish.py::create_wish_from_plan — тот же
+  // источник residual_quantity/linked_purchases/linked_wishes, что и у
+  // FeoPlannedTakenBy на самой строке; расширение plan-positions на эти kind
+  // сделано соседним агентом, category_plan_links — Правило №6, второй расчёт
+  // не заводим). Ищем по category_id (=id для этих kind), не по −id.
+  function residualRowForCategory(categoryId: number): FeoPlanPosition | null {
+    return feoResiduals.plannedResiduals.value.find(r => r.kind !== 'planned_item' && r.id === categoryId) || null
+  }
+
+  function isCategoryPlanFullyTaken(categoryId: number): boolean {
+    const row = residualRowForCategory(categoryId)
+    if (!row) return false
+    return Number(row.residual_quantity) <= 0 && (row.linked_purchases?.length ?? 0) > 0
+  }
+
+  function linkedPurchasesForCategory(categoryId: number) {
+    return residualRowForCategory(categoryId)?.linked_purchases || []
+  }
+
+  function linkedWishesForCategory(categoryId: number) {
+    return residualRowForCategory(categoryId)?.linked_wishes || []
+  }
+
   // feoCategories в сигнатуре сохранён ради единообразия вызова с
   // selectWholeSmeta/subtreeSelectionState (FeoTreeToolbar.vue передаёт
   // ctx.feoCategories.value во все четыре без разбора) — сам eligibleResidualIds
@@ -599,5 +661,10 @@ export function usePlanToRequest() {
     residualsLoading, selectCategorySubtree, selectWholeSmeta,
     subtreeSelectionState, wholeSmetaSelection,
     materializingManualPlans, candidatesProgress,
+    // Позиция целиком занята согласованной закупкой (владелец, 29.09.2026) —
+    // FeoLevel5Panel.vue дизейблит построчную галочку и показывает «занято».
+    isPlannedItemFullyTaken, linkedPurchasesForPlannedItem, linkedWishesForPlannedItem,
+    // То же для плана листовой категории целиком (isManual-строка, без FeoPlannedItem).
+    isCategoryPlanFullyTaken, linkedPurchasesForCategory, linkedWishesForCategory,
   }
 }

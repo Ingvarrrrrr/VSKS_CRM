@@ -493,11 +493,14 @@ async def test_create_wish_price_fallback_when_catalog_price_missing(db_session,
 
 
 @pytest.mark.asyncio
-async def test_create_wish_warns_when_over_residual(db_session, test_user):
+async def test_create_wish_409_when_over_residual_partial(db_session, test_user):
+    """Владелец (29.09.2026): позиция ЧАСТИЧНО занята согласованной закупкой —
+    остаток > 0, но запрошено больше остатка → жёсткий 409 (раньше было мягким
+    предупреждением, заявка всё равно создавалась — dedicated блокер)."""
     _subsidy, cat = await _make_subsidy_with_leaf(db_session, "Subsidy-overresidual")
     planned = await _make_planned_item(db_session, cat, "Тонер для принтера", quantity=Decimal("5"), unit_price=Decimal("2000"), amount=Decimal("10000"))
 
-    purchase = Purchase(status="plan_schedule", item_type="товар", item_name="Тонер", purchase_number=777)
+    purchase = Purchase(status="plan_schedule", item_type="товар", item_name="Тонер", purchase_number=777, registry_number="РЕЕ-2026-00961")
     db_session.add(purchase)
     await db_session.flush()
     db_session.add(PurchaseItem(
@@ -506,13 +509,147 @@ async def test_create_wish_warns_when_over_residual(db_session, test_user):
     ))
     await db_session.commit()
 
-    # residual = 5 - 4 = 1; запрашиваем 3 → предупреждение
+    # residual = 5 - 4 = 1; запрашиваем 3 → 409, заявка НЕ создаётся
     items = [PlanToWishItemInput(feo_planned_item_id=planned.id, quantity=Decimal("3"), item_name="Тонер для принтера", price_source="plan")]
-    result = await create_wish_from_plan(db_session, test_user, _subsidy.id, "Тест превышения", items)
+
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc_info:
+        await create_wish_from_plan(db_session, test_user, _subsidy.id, "Тест превышения", items)
+
+    assert exc_info.value.status_code == 409
+    assert "остаток 1" in exc_info.value.detail and "запрошено 3" in exc_info.value.detail
+    assert "РЕЕ-2026-00961" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_create_wish_409_when_fully_taken_by_approved_purchase(db_session, test_user):
+    """Владелец (29.09.2026, задача основная): позиция ЦЕЛИКОМ занята
+    согласованной закупкой (остаток 0) — 409 с явным указанием, в какой
+    закупке (registry_number), без обхода."""
+    _subsidy, cat = await _make_subsidy_with_leaf(db_session, "Subsidy-fullytaken")
+    planned = await _make_planned_item(db_session, cat, "Бум регулируемый", quantity=Decimal("2"), unit_price=Decimal("1000"), amount=Decimal("2000"))
+
+    purchase = Purchase(status="plan_schedule", item_type="товар", item_name="Бум", registry_number="РЕЕ-2026-00961")
+    db_session.add(purchase)
+    await db_session.flush()
+    db_session.add(PurchaseItem(
+        purchase_id=purchase.id, item_name="Бум регулируемый", quantity=Decimal("2"), unit="шт",
+        unit_price=Decimal("1000"), total_price=Decimal("2000"), feo_planned_item_id=planned.id,
+    ))
+    await db_session.commit()
+
+    items = [PlanToWishItemInput(feo_planned_item_id=planned.id, quantity=Decimal("1"), item_name="Бум регулируемый", price_source="plan")]
+
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc_info:
+        await create_wish_from_plan(db_session, test_user, _subsidy.id, "Тест целиком занято", items)
+
+    assert exc_info.value.status_code == 409
+    assert "Бум регулируемый" in exc_info.value.detail
+    assert "РЕЕ-2026-00961" in exc_info.value.detail
+    assert "остаток 0" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_create_wish_200_when_only_in_unapproved_wish(db_session, test_user, test_org):
+    """Позиция лежит только в НЕсогласованной заявке (draft) — план не
+    резервируется (решение владельца 2026-08-17), выбор/создание разрешены,
+    200 (никакого 409)."""
+    _subsidy, cat = await _make_subsidy_with_leaf(db_session, "Subsidy-draftonly")
+    planned = await _make_planned_item(db_session, cat, "Стол офисный", quantity=Decimal("2"), unit_price=Decimal("3000"), amount=Decimal("6000"))
+
+    other_wish = Wish(org_id=test_org.id, title="Другая заявка", status="submitted", created_by=test_user.id)
+    db_session.add(other_wish)
+    await db_session.flush()
+    db_session.add(WishItem(
+        wish_id=other_wish.id, item_name="Стол офисный", quantity=Decimal("2"), unit="шт",
+        unit_price=Decimal("3000"), total_price=Decimal("6000"), feo_planned_item_id=planned.id,
+    ))
+    await db_session.commit()
+
+    items = [PlanToWishItemInput(feo_planned_item_id=planned.id, quantity=Decimal("2"), item_name="Стол офисный", price_source="plan")]
+    result = await create_wish_from_plan(db_session, test_user, _subsidy.id, "Тест черновик не резервирует", items)
 
     assert result["items_count"] == 1
-    assert any("остаток 1" in w and "запрошено 3" in w for w in result["warnings"]), result["warnings"]
-    assert any("777" in w for w in result["warnings"]), result["warnings"]
+    assert result["warnings"] == []
+
+
+@pytest.mark.asyncio
+async def test_create_wish_200_within_partial_residual(db_session, test_user):
+    """Частичный остаток — запрос В ПРЕДЕЛАХ остатка проходит без 409."""
+    _subsidy, cat = await _make_subsidy_with_leaf(db_session, "Subsidy-withinresidual")
+    planned = await _make_planned_item(db_session, cat, "Тонер для принтера 2", quantity=Decimal("5"), unit_price=Decimal("2000"), amount=Decimal("10000"))
+
+    purchase = Purchase(status="plan_schedule", item_type="товар", item_name="Тонер", registry_number="РЕЕ-2026-00970")
+    db_session.add(purchase)
+    await db_session.flush()
+    db_session.add(PurchaseItem(
+        purchase_id=purchase.id, item_name="Тонер для принтера 2", quantity=Decimal("4"), unit="шт",
+        unit_price=Decimal("2000"), total_price=Decimal("8000"), feo_planned_item_id=planned.id,
+    ))
+    await db_session.commit()
+
+    # residual = 5 - 4 = 1; запрашиваем ровно 1 → 200
+    items = [PlanToWishItemInput(feo_planned_item_id=planned.id, quantity=Decimal("1"), item_name="Тонер для принтера 2", price_source="plan")]
+    result = await create_wish_from_plan(db_session, test_user, _subsidy.id, "Тест в пределах остатка", items)
+
+    assert result["items_count"] == 1
+    assert result["warnings"] == []
+
+
+@pytest.mark.asyncio
+async def test_create_wish_409_when_leaf_category_plan_fully_taken(db_session, test_user):
+    """Владелец (29.09.2026, находка коллеги-агента): план, заведённый ПРЯМО НА
+    ЛИСТОВОЙ КАТЕГОРИИ (kind='plan_position'/'feo_article' — БЕЗ отдельной
+    FeoPlannedItem изначально, как «Брендвол»/«Наградная продукция» на проде),
+    уже целиком занят согласованной закупкой, привязанной по feo_category_id
+    (НЕ feo_planned_item_id — так привязывались закупки ДО материализации).
+
+    Фронт (usePlanToRequest.ts::materializeSelectedManualPlans) при выборе
+    такого «ручного плана» СНАЧАЛА создаёт НОВУЮ FeoPlannedItem с тем же
+    количеством, что и план листа (материализация) — эта запись имитирует
+    именно такую, только что материализованную, позицию: количество совпадает
+    с планом категории, но planned_item_consumption для НЕЁ самой видит 0
+    (закупка привязана к категории напрямую, а не к этой новой FeoPlannedItem).
+    Без category-level проверки (plan_consumption_by_category/
+    category_plan_links в create_wish_from_plan) запрос прошёл бы, полностью
+    игнорируя уже занятую закупку — это ровно баг, который просил проверить
+    координатор."""
+    _subsidy, cat = await _make_subsidy_with_leaf(db_session, "Subsidy-leafcategory")
+    cat.planned_quantity = Decimal("2")
+    cat.planned_amount = Decimal("1000")  # цена ЗА ЕДИНИЦУ (см. FeoCategory.planned_amount)
+    cat.unit = "шт"
+    db_session.add(cat)
+    await db_session.commit()
+
+    # Закупка, привязанная напрямую к категории (feo_category_id), БЕЗ
+    # feo_planned_item_id — так и лежат такие позиции на проде ДО материализации.
+    purchase = Purchase(
+        status="plan_schedule", item_type="товар", item_name="Брендвол",
+        subsidy_id=_subsidy.id, feo_category_id=cat.id, registry_number="РЕЕ-2026-00970",
+    )
+    db_session.add(purchase)
+    await db_session.flush()
+    db_session.add(PurchaseItem(
+        purchase_id=purchase.id, item_name="Брендвол", quantity=Decimal("2"), unit="шт",
+        unit_price=Decimal("1000"), total_price=Decimal("2000"), feo_category_id=cat.id,
+    ))
+    await db_session.commit()
+
+    # Материализованная позиция (как их создаёт materializeManualPlanAsItem) —
+    # то же количество, что и план листа, но БЕЗ собственной истории потребления.
+    materialized = await _make_planned_item(db_session, cat, "Брендвол", quantity=Decimal("2"), unit_price=Decimal("1000"), amount=Decimal("2000"))
+
+    items = [PlanToWishItemInput(feo_planned_item_id=materialized.id, quantity=Decimal("1"), item_name="Брендвол", price_source="plan")]
+
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as exc_info:
+        await create_wish_from_plan(db_session, test_user, _subsidy.id, "Тест лист целиком занят", items)
+
+    assert exc_info.value.status_code == 409
+    assert "Брендвол" in exc_info.value.detail
+    assert "РЕЕ-2026-00970" in exc_info.value.detail
+    assert "остаток 0" in exc_info.value.detail
 
 
 @pytest.mark.asyncio

@@ -53,8 +53,8 @@
       <span v-else>выбрано {{ consumedLabel }}</span> ·
       <span :class="residualDisplay.cssClass">{{ residualDisplay.text }}</span>
       <span v-if="shortfallLabel" class="feo-planned-shortfall-note"> — не хватает {{ shortfallLabel }}</span>
-      <template v-if="row.kind === 'planned_item' && row.linked_purchases?.length">
-        · <FeoPlannedTakenBy :linked-purchases="row.linked_purchases" short />
+      <template v-if="row.linked_purchases?.length || row.linked_wishes?.length">
+        · <FeoPlannedTakenBy :linked-purchases="row.linked_purchases" :linked-wishes="row.linked_wishes" short />
       </template>
     </span>
     <!-- Владелец (сессия 2026-08-19): «где эта корзиночка?» — удаление плановой

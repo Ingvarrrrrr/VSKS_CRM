@@ -408,6 +408,64 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
                     note=f"авансовым отчётом (заявка №{wish.id})",
                 )
                 await db.flush()
+            # Владелец (2026-09-29): «авансовый должен идти дальше сам, как
+            # обычная заявка» — обычная заявка при финальном согласовании сразу
+            # даёт закупку В ПЛАНЕ (создаётся уже 'plan_schedule'); авансовая
+            # закупка создаётся РАНЬШЕ заявки в 'wishes' (purchases.py, ветка
+            # is_advance) и раньше застревала там навсегда — дальше двигал
+            # только ручной клик по кнопке «→ План закупок». Эта ветка
+            # выполняется РОВНО в момент финального решения по компаньону (все
+            # три вызывающих — decide()/approve_wish()/force_wish_status —
+            # зовут _distribute_wish_to_purchases именно в момент полного
+            # согласования/конвертации, не раньше), поэтому здесь безопасно
+            # попытаться продвинуть закупку сразу на один шаг вперёд.
+            # Гейты (обязательные поля, превышение ФЭО/ТЗ/типа) — ТЕ ЖЕ, что и
+            # у ручной кнопки, через apply_purchase_status_transition
+            # (app/services/purchase_transition_core.py, вынесено из
+            # app/routers/purchase_transitions.py::transition_status —
+            # ПРАВИЛО №6, второй копии гейтов не заводим). Если гейт отказал —
+            # НЕ роняем согласование компаньона: закупка остаётся в 'wishes',
+            # причина фиксируется PurchaseEvent, кнопка «→ План закупок»
+            # в карточке закупки остаётся для ручного повтора (см. её
+            # существующий гейт в purchase_transitions.py:148-171 — компаньон
+            # уже approved/converted, значит он его пропустит).
+            from app.routers.purchases import STATUS_ORDER as _adv_status_order
+            wish._advance_purchase_transition_warning = None
+            for _adv_p in existing:
+                if _adv_p.status != 'wishes':
+                    continue
+                _cur_idx = _adv_status_order.index(_adv_p.status)
+                _target_idx = _cur_idx + 1
+                if _target_idx >= len(_adv_status_order):
+                    continue
+                _target_status = _adv_status_order[_target_idx]
+                try:
+                    from app.services.purchase_transition_core import apply_purchase_status_transition
+                    await apply_purchase_status_transition(
+                        _adv_p, _adv_p.id, _target_status, current_user, db, _cur_idx, _target_idx,
+                    )
+                except HTTPException as _adv_exc:
+                    _detail = _adv_exc.detail
+                    _reason = _detail if isinstance(_detail, str) else (
+                        (_detail or {}).get('message') if isinstance(_detail, dict) else str(_detail)
+                    )
+                    wish._advance_purchase_transition_warning = (
+                        f"Возмещение согласовано, но закупка "
+                        f"{_adv_p.registry_number or f'№{_adv_p.id}'} не переведена в план "
+                        f"автоматически: {_reason} Нажмите «→ План закупок» в карточке закупки "
+                        "после устранения причины."
+                    )
+                    try:
+                        from app.models.purchase_event import PurchaseEvent
+                        db.add(PurchaseEvent(
+                            purchase_id=_adv_p.id,
+                            user_id=getattr(current_user, "id", None),
+                            event_type="status_change_blocked",
+                            data={"target": _target_status, "reason": _reason},
+                        ))
+                        await db.flush()
+                    except Exception:
+                        pass
             return [p.id for p in existing]
         # W2-гейт: проверяем даты и категорию ФЭО ПЕРЕД продвижением скрытых закупок
         # в целевой статус — это тоже момент «попадания в План закупок» (владелец,

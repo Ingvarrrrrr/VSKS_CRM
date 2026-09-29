@@ -67,11 +67,17 @@ export interface FeoPlanPosition {
    *  суммировать по нескольким строкам одной категории, брать с любой одной (см.
    *  PurchaseItemsEditor.vue categoryResidualFor). */
   unlinked_actual_amount?: number
-  /** Владелец (2026-09-27, «дубль занял план молча»): закупки, УЖЕ привязанные к
-   *  этой плановой позиции (см. backend planned_item_consumption.linked_purchases).
-   *  Присутствует только на строках kind='planned_item'. Пусто/undefined — план
-   *  свободен. */
-  linked_purchases?: { id: number; registry_number: string | null; amount: number }[]
+  /** Владелец (2026-09-27, «дубль занял план молча», расширено 2026-09-29 на
+   *  kind='plan_position'/'feo_article'): закупки, УЖЕ привязанные к этой
+   *  плановой позиции (см. backend planned_item_consumption.linked_purchases /
+   *  category_plan_links.linked_purchases). Пусто/undefined — план свободен. */
+  linked_purchases?: { id: number; registry_number: string | null; amount: number; status?: string; status_label?: string; wish_id?: number | null }[]
+  /** Владелец (2026-09-29, «про то, что это дубликат, ничего не написано»):
+   *  другие НЕзакрытые заявки (draft/submitted/approved), у которых WishItem
+   *  ссылается на ту же плановую позицию — план не резервируют, но повод
+   *  проверить дубль ДО согласования (см. backend OPEN_WISH_STATUSES /
+   *  planned_item_consumption.linked_wishes / category_plan_links.linked_wishes). */
+  linked_wishes?: { id: number; status: string; status_label?: string; quantity: number | null }[]
 }
 
 /** @deprecated старое имя интерфейса (было завязано на /feo-planned-items/residuals) —

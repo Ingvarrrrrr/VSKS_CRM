@@ -608,13 +608,23 @@ async def fact_consumption_by_category(
     return result
 
 
+#: Статусы заявки, которые НЕ являются «конечными» — заявка ещё может
+#: превратиться в закупку (draft/submitted/approved) либо уже занимает план
+#: (converted — но та считается через linked_purchases, не отсюда), rejected —
+#: закрыта и план не резервирует. См. _WISH_STATUS_LABELS в
+#: app.routers.feo_planned_items_reports (человекочитаемые подписи тех же
+#: статусов — единственный словарь, не дублируем).
+OPEN_WISH_STATUSES: tuple = ("draft", "submitted", "approved")
+
+
 async def planned_item_consumption(
     db: AsyncSession,
     item_ids: list[int],
     exclude_purchase_id: Optional[int] = None,
     exclude_wish_id: Optional[int] = None,
 ) -> dict[int, dict]:
-    """{feo_planned_item_id: {used, used_qty, wish_used, linked_purchase_ids, linked_purchases}}
+    """{feo_planned_item_id: {used, used_qty, wish_used, linked_purchase_ids,
+    linked_purchases, linked_wishes}}
 
     Расход конкретной плановой позиции (FeoPlannedItem, Ур.5) через
     PurchaseItem.feo_planned_item_id. Общая часть GET /api/feo-planned-items/residuals
@@ -632,6 +642,15 @@ async def planned_item_consumption(
     «Привязать» и получит превышение постфактум. ПРАВИЛО №6: считается ровно в
     ТОМ ЖЕ links_q, вторую выборку не заводим.
 
+    linked_wishes (владелец, 2026-09-29, «в карточке заявки ничего не написано
+    про дубликат») — другие НЕзакрытые заявки (status IN OPEN_WISH_STATUSES —
+    draft/submitted/approved; rejected закрыта, converted уже посчитана через
+    linked_purchases выше), у которых WishItem ссылается на ту же плановую
+    позицию, КРОМЕ exclude_wish_id (та самая заявка, для которой сейчас
+    показываем список — сама себе не «дубликат»). Список [{id, status,
+    status_label, quantity}] — id заявки одновременно её отображаемый номер
+    (Wish.id, у заявки нет отдельного поля номера, см. фронт `Заявка №${id}`).
+
     Остановленные закупки (Purchase.stopped_at IS NOT NULL) исключены —
     «остановленные позиции убираются из плана закупок и не считаются»
     (владелец, 2026-08-13).
@@ -647,7 +666,7 @@ async def planned_item_consumption(
     result: dict[int, dict] = {
         iid: {
             "used": 0.0, "used_qty": 0.0, "wish_used": 0.0,
-            "linked_purchase_ids": [], "linked_purchases": [],
+            "linked_purchase_ids": [], "linked_purchases": [], "linked_wishes": [],
         }
         for iid in item_ids
     }
@@ -675,11 +694,15 @@ async def planned_item_consumption(
         result[r.feo_planned_item_id]["used"] = float(r.used)
         result[r.feo_planned_item_id]["used_qty"] = float(r.used_qty)
 
+    from app.routers.purchase_export import _STATUS_LABELS as _PURCHASE_STATUS_LABELS  # единственный словарь подписей, не дублируем
+
     links_q = (
         select(
             PurchaseItem.feo_planned_item_id,
             PurchaseItem.purchase_id,
             Purchase.registry_number,
+            Purchase.status,
+            Purchase.wish_id,
             func.coalesce(func.sum(PurchaseItem.total_price), 0).label("amount"),
         )
         .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
@@ -692,6 +715,7 @@ async def planned_item_consumption(
     links_q = apply_wish_item_exclusion(links_q, exclude_wish_id)
     links_q = links_q.group_by(
         PurchaseItem.feo_planned_item_id, PurchaseItem.purchase_id, Purchase.registry_number,
+        Purchase.status, Purchase.wish_id,
     )
     for lr in (await db.execute(links_q)).all():
         d = result[lr.feo_planned_item_id]
@@ -701,9 +725,113 @@ async def planned_item_consumption(
             "id": lr.purchase_id,
             "registry_number": lr.registry_number,
             "amount": float(lr.amount),
+            # Владелец (2026-09-29): «занято закупкой РЕЕ-... (в работе, из заявки №83)» —
+            # status/wish_id нужны фронту, чтобы подпись объясняла дубль, а не только факт занятости.
+            "status": lr.status,
+            "status_label": _PURCHASE_STATUS_LABELS.get(lr.status, lr.status),
+            "wish_id": lr.wish_id,
+        })
+
+    from app.models.wish import Wish
+    from app.models.wish_item import WishItem
+    from app.routers.feo_planned_items_reports import _WISH_STATUS_LABELS  # единственный словарь подписей, не дублируем
+
+    wq = (
+        select(WishItem.feo_planned_item_id, Wish.id, Wish.status, WishItem.quantity)
+        .join(Wish, WishItem.wish_id == Wish.id)
+        .where(WishItem.feo_planned_item_id.in_(item_ids))
+        .where(Wish.status.in_(OPEN_WISH_STATUSES))
+    )
+    if exclude_wish_id is not None:
+        wq = wq.where(Wish.id != exclude_wish_id)
+    for fpi_id, wid, wstatus, wqty in (await db.execute(wq)).all():
+        result[fpi_id]["linked_wishes"].append({
+            "id": wid,
+            "status": wstatus,
+            "status_label": _WISH_STATUS_LABELS.get(wstatus, wstatus),
+            "quantity": float(wqty) if wqty is not None else None,
         })
 
     return result
 
+
+async def category_plan_links(
+    db: AsyncSession,
+    category_ids: list[int],
+    exclude_purchase_id: Optional[int] = None,
+    exclude_wish_id: Optional[int] = None,
+) -> dict[int, dict]:
+    """{feo_category_id: {linked_purchases, linked_wishes}} — тот же смысл, что
+    linked_purchases/linked_wishes из planned_item_consumption выше («дубль занял
+    план молча», владелец 2026-09-27/2026-09-29), но для плановых позиций уровня
+    самого ЛИСТА дерева ФЭО (kind='plan_position'/'feo_article' — план введён
+    прямо на FeoCategory, без отдельной детализации FeoPlannedItem/Ур.5).
+
+    Ключ матчинга здесь — COALESCE(PurchaseItem.feo_category_id,
+    Purchase.feo_category_id) / WishItem.feo_category_id (та же колонка, что и в
+    plan_consumption_by_category), а НЕ feo_planned_item_id — у такой плановой
+    позиции нет отдельной строки FeoPlannedItem, id в /plan-positions для неё —
+    id самой FeoCategory. ПРАВИЛО №6: фильтры (PLANNED_STATUSES, stopped_at,
+    exclude_purchase_id/exclude_wish_id, OPEN_WISH_STATUSES) — ТЕ ЖЕ, что уже
+    определены выше в этом файле, второй раз не придумываем.
+    """
+    result: dict[int, dict] = {cid: {"linked_purchases": [], "linked_wishes": []} for cid in category_ids}
+    if not category_ids:
+        return result
+
+    from app.routers.purchase_budget import PLANNED_STATUSES  # local: avoid router import cycle
+    from app.models.wish import Wish
+    from app.models.wish_item import WishItem
+    from app.routers.feo_planned_items_reports import _WISH_STATUS_LABELS
+    from app.routers.purchase_export import _STATUS_LABELS as _PURCHASE_STATUS_LABELS
+
+    cat_col = func.coalesce(PurchaseItem.feo_category_id, Purchase.feo_category_id)
+    links_q = (
+        select(
+            cat_col.label("cat_id"),
+            PurchaseItem.purchase_id,
+            Purchase.registry_number,
+            Purchase.status,
+            Purchase.wish_id,
+            func.coalesce(func.sum(PurchaseItem.total_price), 0).label("amount"),
+        )
+        .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
+        .where(cat_col.in_(category_ids))
+        .where(Purchase.status.in_(list(PLANNED_STATUSES)))
+        .where(Purchase.stopped_at.is_(None))
+    )
+    if exclude_purchase_id is not None:
+        links_q = links_q.where(PurchaseItem.purchase_id != exclude_purchase_id)
+    links_q = apply_wish_item_exclusion(links_q, exclude_wish_id)
+    links_q = links_q.group_by(
+        cat_col, PurchaseItem.purchase_id, Purchase.registry_number, Purchase.status, Purchase.wish_id,
+    )
+    for lr in (await db.execute(links_q)).all():
+        result[lr.cat_id]["linked_purchases"].append({
+            "id": lr.purchase_id,
+            "registry_number": lr.registry_number,
+            "amount": float(lr.amount),
+            "status": lr.status,
+            "status_label": _PURCHASE_STATUS_LABELS.get(lr.status, lr.status),
+            "wish_id": lr.wish_id,
+        })
+
+    wq = (
+        select(WishItem.feo_category_id, Wish.id, Wish.status, WishItem.quantity)
+        .join(Wish, WishItem.wish_id == Wish.id)
+        .where(WishItem.feo_category_id.in_(category_ids))
+        .where(Wish.status.in_(OPEN_WISH_STATUSES))
+    )
+    if exclude_wish_id is not None:
+        wq = wq.where(Wish.id != exclude_wish_id)
+    for cid, wid, wstatus, wqty in (await db.execute(wq)).all():
+        result[cid]["linked_wishes"].append({
+            "id": wid,
+            "status": wstatus,
+            "status_label": _WISH_STATUS_LABELS.get(wstatus, wstatus),
+            "quantity": float(wqty) if wqty is not None else None,
+        })
+
+    return result
 
 

@@ -282,10 +282,23 @@ export function provideWishesContext(): WishesContext {
   // пока превышения нет.
   function showExcessWarnings(warnings: ExcessWarning[] | null | undefined, actionPrefix: string) {
     if (!warnings || !warnings.length) return
-    const parts = warnings.map(w => {
+    // Владелец (2026-09-29): «дубль занял план молча» — отдельная форма записи
+    // в том же канале (type==='duplicate', см. wishTypes.ts) — готовый текст
+    // message, без category_name/excess_amount (их там нет).
+    const duplicateWarnings = warnings.filter(w => w.type === 'duplicate')
+    const categoryWarnings = warnings.filter(w => w.type !== 'duplicate')
+    const parts = categoryWarnings.map(w => {
       const itemsText = (w.items || []).map(i => `${i.name} — ${formatPrice(i.amount)}`).join(', ')
-      return `Категория «${w.category_name}»: план превышает ФЭО на ${formatPrice(w.excess_amount)}${itemsText ? ` (позиции: ${itemsText})` : ''}`
+      return `Категория «${w.category_name}»: план превышает ФЭО на ${formatPrice(w.excess_amount ?? 0)}${itemsText ? ` (позиции: ${itemsText})` : ''}`
     })
+    if (duplicateWarnings.length) {
+      showSnack(
+        duplicateWarnings.map(w => w.message).filter(Boolean).join(' '),
+        'warning',
+        { duration: 0 },
+      )
+    }
+    if (!parts.length) return
     // Владелец (2026-09-03): «перебор в ветке не блокирует, но виден как пометка» —
     // раньше здесь текст утверждал, что закупка «не пойдёт дальше "Ведётся работа"»
     // (это было правдой ДО правки assert_no_unapproved_excess). Теперь перекос

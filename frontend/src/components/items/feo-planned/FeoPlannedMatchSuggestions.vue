@@ -21,9 +21,10 @@
       <span class="feo-match-name">{{ c.name }}</span>
       <v-btn size="small" color="primary" variant="flat" @click="$emit('bind', c)">Привязать</v-btn>
       <FeoPlannedTakenBy
-        v-if="itemsByKey.get(c.key)?.linked_purchases?.length"
+        v-if="itemsByKey.get(c.key)?.linked_purchases?.length || itemsByKey.get(c.key)?.linked_wishes?.length"
         class="feo-match-taken-by"
         :linked-purchases="itemsByKey.get(c.key)?.linked_purchases"
+        :linked-wishes="itemsByKey.get(c.key)?.linked_wishes"
         :shortfall="shortfallFor(c)"
       />
     </div>

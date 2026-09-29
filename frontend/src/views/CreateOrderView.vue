@@ -168,7 +168,7 @@
         Заявка на возмещение создаётся <strong>черновиком</strong>. Когда всё заполнено — нажмите «Отправить на согласование».
       </v-alert>
 
-      <AdvanceReimbursementCard v-if="formMode === 'advance_report'" :purchase-id="purchaseId" :wish-id="purchaseData?.wish_id" :items-count="items.length" :receipts="receipts" :receipt-files="receiptFiles" :show-snack="showSnack" />
+      <AdvanceReimbursementCard v-if="formMode === 'advance_report'" :purchase-id="purchaseId" :wish-id="purchaseData?.wish_id" :items-count="items.length" :receipts="receipts" :receipt-files="receiptFiles" :show-snack="showSnack" :org-users="orgUsersList" :current-user-id="currentUserId" :is-admin="isAdmin" />
 
       <!-- 1. Основная информация -->
       <v-card variant="outlined" class="mb-4">

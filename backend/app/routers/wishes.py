@@ -418,17 +418,34 @@ async def update_wish(
     # отклоняется явно; несущественные поля заявки (приоритет, срок и т.п.)
     # по-прежнему редактируемы — блокируются только `items`.
     if not _is_saas(current_user) and wish.status == "converted" and body.items is not None:
-        _linked_purchases = await _wish_linked_purchases(wish_id, db)
+        # Баг с прода (заявка №85, покупка №960, 2026-09-29): текст называл
+        # «закупку №636» — на самом деле не та закупка. Две причины были
+        # сложены в одной строке:
+        #  1) `p.purchase_number or p.id` — purchase_number почти всегда NULL
+        #     (легаси-поле), поэтому текст ВСЕГДА показывал голый p.id вместо
+        #     настоящего реестрового номера (РЕЕ-2026-00960) — сейчас берём
+        #     registry_number, единственный актуальный номер закупки.
+        #  2) `_wish_linked_purchases` не фильтрует по статусу — отменённая
+        #     («cancelled») закупка от более раннего переоформления заявки
+        #     (см. app/services/wish_advance_conversion.py) могла остаться
+        #     привязанной к той же заявке и попасть в список первой. Реальная,
+        #     действующая закупка заявки — единственная НЕ cancelled.
+        _linked_purchases = [
+            p for p in (await _wish_linked_purchases(wish_id, db)) if p.status != "cancelled"
+        ]
         _purchase_nums = ", ".join(
-            f"№{p.purchase_number or p.id}" for p in _linked_purchases
+            f"№{p.registry_number or p.purchase_number or p.id}" for p in _linked_purchases
         ) or "не найдена"
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Заявка уже в плане закупок — изменения вносятся в закупке "
-                f"({_purchase_nums})"
-            ),
+        _detail = (
+            "Заявка уже в плане закупок — изменения вносятся в закупке "
+            f"({_purchase_nums})"
         )
+        if getattr(wish, 'source', None) == 'advance_report':
+            _detail = (
+                "Заявка уже согласована как возмещение по авансовому отчёту — состав "
+                f"правится в самой закупке-авансовом отчёте ({_purchase_nums}), не в заявке."
+            )
+        raise HTTPException(status_code=409, detail=_detail)
 
     # Capture old status BEFORE mutation
     old_status = wish.status

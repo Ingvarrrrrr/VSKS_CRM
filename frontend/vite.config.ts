@@ -8,7 +8,22 @@ import { fileURLToPath, URL } from 'node:url'
 export default defineConfig({
   plugins: [
     vue(),
-    vuetify({ autoImport: true }),
+    // autoImport.ignore: ['VDialog'] — иначе vite-plugin-vuetify превращает
+    // каждый <v-dialog> в СТАТИЧЕСКИЙ импорт настоящего VDialog из vuetify
+    // прямо в скомпилированном render() (см. node_modules/@vuetify/loader-shared —
+    // parseTemplate вырезает _resolveComponent("v-dialog") и подставляет прямой
+    // import). Из-за этого глобальная подмена `app.component('VDialog', ...)`
+    // в main.ts (крестик закрытия, components/global/VDialogWithClose.vue)
+    // не работала НИ В ОДНОМ файле — только в компонентах, где резолвинг
+    // почему-то оставался рантаймовым (проверено на AppBar org-picker дважды:
+    // сначала ложно приняли отсутствие крестика на persistent-диалоге за
+    // работу подмены, реальная причина — обычный VDialog и без нашей обёртки
+    // не рисует крестик). С `ignore: ['VDialog']` резолвинг `<v-dialog>`
+    // остаётся рантаймовым (`_resolveComponent`), и app.component-подмена
+    // реально перехватывает ВСЕ v-dialog в проекте. Бандл не растёт: VDialog
+    // и так уже целиком зарегистрирован глобально через `components` в
+    // plugins/vuetify.ts (import * as components from 'vuetify/components').
+    vuetify({ autoImport: { ignore: ['VDialog'] } }),
     VitePWA({
       registerType: 'autoUpdate',
       injectRegister: false,

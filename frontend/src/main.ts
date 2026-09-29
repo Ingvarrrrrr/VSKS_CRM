@@ -6,6 +6,7 @@ import { createPinia } from 'pinia'
 import router from './router'
 import { vResizableColumns } from './directives/resizable-columns'
 import { initSwUpdate, initChunkLoadRecovery } from './composables/useSwUpdate'
+import VDialogWithClose from './components/global/VDialogWithClose.vue'
 
 const app = createApp(App)
 const pinia = createPinia()
@@ -20,6 +21,13 @@ app.use(router)
 // PlanView, RiskRadarView).
 
 app.directive('resizable-columns', vResizableColumns)
+
+// Глобально подменяем VDialog обёрткой с крестиком закрытия (см. комментарий
+// в components/global/VDialogWithClose.vue — почему обёрткой компонента, а не
+// MutationObserver + внутренним __vueParentComponent, который в prod-сборке
+// отсутствует). Регистрация ПОСЛЕ app.use(vuetify), чтобы перекрыть штатный
+// VDialog, который Vuetify зарегистрировал первым.
+app.component('VDialog', VDialogWithClose)
 
 app.mount('#app')
 

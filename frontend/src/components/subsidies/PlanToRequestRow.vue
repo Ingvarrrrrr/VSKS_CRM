@@ -14,19 +14,27 @@
 
     <!-- Количество для заявки -->
     <td class="ptr-td">
+      <!-- Владелец (29.09.2026): ввести больше остатка НЕЛЬЗЯ (раньше было
+           предупреждением постфактум, число всё равно уходило на сервер, где
+           create_wish_from_plan теперь отвечает 409 — но лучше не давать
+           дойти до отказа сервера). max — та же residualQuantity, что и в
+           подписи «Остаток» выше (Правило №6, второй расчёт не заводим);
+           clampQuantity ниже — единственное место, где значение поля реально
+           ограничивается (v-model.number сам по себе HTML max не проверяет). -->
       <v-text-field
-        v-model.number="row.quantity"
+        :model-value="row.quantity"
         type="number" density="compact" variant="outlined" hide-details
         style="max-width:110px"
+        :max="row.residualQuantity ?? undefined"
+        @update:model-value="onQuantityInput"
       />
-      <div v-if="isOverResidual" class="ptr-warning mt-2">
-        <v-icon icon="mdi-alert-outline" size="14" class="mr-1" />
-        Запланировано {{ row.planQuantity ?? '—' }} {{ row.unit || '' }}, уже в закупках {{ row.usedQuantity }} {{ row.unit || '' }}
-        <template v-if="primaryPurchase">
-          ({{ primaryPurchaseLabel }} — инициатор {{ primaryPurchase.initiator_name || '—' }})
-        </template>
+      <div v-if="row.residualQuantity != null && row.linkedPurchases.length" class="ptr-warning mt-2">
+        <v-icon icon="mdi-information-outline" size="14" class="mr-1" />
+        Остаток {{ row.residualQuantity }} {{ row.unit || '' }}
+        <template v-if="row.planQuantity != null">из {{ row.planQuantity }} {{ row.unit || '' }}</template>
+        — остальное уже в
+        <template v-if="primaryPurchase">{{ primaryPurchaseLabel }}</template>
         <template v-if="row.linkedPurchases.length > 1">, и ещё {{ row.linkedPurchases.length - 1 }}</template>.
-        Свяжитесь с инициатором для уточнения потребности.
         <div class="mt-1">
           <v-btn size="x-small" variant="tonal" color="warning" prepend-icon="mdi-email-fast-outline"
             :loading="row.creatingTask" :disabled="!primaryPurchase || primaryPurchase.initiator_user_id == null"
@@ -229,6 +237,19 @@ function disabledReason(mode: PriceMode): string | null {
 }
 
 const isOverResidual = computed(() => row.residualQuantity != null && Number(row.quantity) > Number(row.residualQuantity))
+
+// Клэмп количества по остатку (владелец, 29.09.2026) — единственное место,
+// где значение реально правится (v-text-field type=number с :max не мешает
+// напечатать больше вручную). Пусто/не число — не трогаем строку, пусть
+// v-model покажет как есть, пока пользователь не закончил ввод.
+function onQuantityInput(v: string | number) {
+  const num = typeof v === 'number' ? v : parseFloat(v)
+  if (Number.isNaN(num)) {
+    row.quantity = num
+    return
+  }
+  row.quantity = row.residualQuantity != null ? Math.min(num, Number(row.residualQuantity)) : num
+}
 const primaryPurchase = computed(() => row.linkedPurchases[0] || null)
 const primaryPurchaseLabel = computed(() => {
   const p = primaryPurchase.value

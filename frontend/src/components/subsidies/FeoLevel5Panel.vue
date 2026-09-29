@@ -86,15 +86,34 @@
                   <div class="d-flex align-center" style="gap:2px">
                     <!-- Задача владельца, п.12 волны 3: чекбокс массового выбора — только у
                          настоящих записей (ручная псевдо-строка isManual не может переноситься
-                         пачкой, у неё нет отдельной FeoPlannedItem-записи в базе). -->
-                    <v-checkbox-btn
+                         пачкой, у неё нет отдельной FeoPlannedItem-записи в базе).
+                         Владелец (29.09.2026): в режиме «Создать закупку на основе плана»
+                         позиция, целиком занятая СОГЛАСОВАННОЙ закупкой (остаток
+                         planned_item_consumption <= 0 при наличии привязанной закупки, см.
+                         usePlanToRequest.ts::isPlannedItemFullyTaken — Правило №6, второй
+                         расчёт остатка не заводим), — некликабельна. Вне режима подбора
+                         (обычный массовый перенос категорий) поведение не меняется. Обёртка
+                         span нужна для tooltip — Vuetify не шлёт события наведения с
+                         disabled-элемента напрямую. -->
+                    <v-tooltip
                       v-if="!planned.isManual"
-                      density="compact" color="orange-darken-1"
-                      :model-value="feoLevel5.isPlannedItemSelected(planned.id)"
-                      style="flex:0 0 auto"
-                      @click.stop
-                      @update:model-value="feoLevel5.togglePlannedItemSelected(planned.id)"
-                    />
+                      location="top"
+                      :disabled="!(planToRequest.active.value && planToRequest.isPlannedItemFullyTaken(planned.id))"
+                    >
+                      <template #activator="{ props: takenTooltipProps }">
+                        <span v-bind="takenTooltipProps" style="display:inline-flex">
+                          <v-checkbox-btn
+                            density="compact" color="orange-darken-1"
+                            :model-value="feoLevel5.isPlannedItemSelected(planned.id)"
+                            :disabled="planToRequest.active.value && planToRequest.isPlannedItemFullyTaken(planned.id)"
+                            style="flex:0 0 auto"
+                            @click.stop
+                            @update:model-value="feoLevel5.togglePlannedItemSelected(planned.id)"
+                          />
+                        </span>
+                      </template>
+                      <span>Позиция целиком в согласованной закупке — выбрать нельзя</span>
+                    </v-tooltip>
                     <!-- Задача 2 (владелец, «Создать закупку на основе плана»): ручной план
                          категории (isManual, id = −node.id — уже уникален в общем Set выбора,
                          Правило №6) выбирается ТОЙ ЖЕ галочкой/функцией, что и настоящие записи
@@ -104,16 +123,35 @@
                          этот чекбокс (массовый перенос категорий его не поддерживает — см. условие
                          выше, selectableRowsFor тоже исключает isManual). При подтверждении выбора
                          usePlanToRequest.ts::materializeSelectedManualPlans заменяет −node.id на id
-                         только что созданной настоящей FeoPlannedItem (задача 2). -->
-                    <v-checkbox-btn
+                         только что созданной настоящей FeoPlannedItem (задача 2).
+                         Владелец (29.09.2026, находка коллеги-агента): план листовой категории
+                         (без отдельной FeoPlannedItem) на проде часто уже целиком занят
+                         согласованной закупкой напрямую по feo_category_id («Брендвол»,
+                         «Наградная продукция») — без блокировки здесь материализация создала бы
+                         НОВУЮ FeoPlannedItem с нулевой историей потребления и обошла бы занятость
+                         (см. usePlanToRequest.ts::isCategoryPlanFullyTaken — тот же
+                         residual_quantity/linked_purchases категории, что и для настоящих
+                         записей выше, Правило №6). -->
+                    <v-tooltip
                       v-else-if="planToRequest.active.value"
-                      density="compact" color="orange-darken-1"
-                      :model-value="feoLevel5.isPlannedItemSelected(planned.id)"
-                      style="flex:0 0 auto"
-                      title="Выбрать ручной план категории — при подтверждении выбора он станет настоящей плановой позицией"
-                      @click.stop
-                      @update:model-value="feoLevel5.togglePlannedItemSelected(planned.id)"
-                    />
+                      location="top"
+                      :disabled="!planToRequest.isCategoryPlanFullyTaken(node.id)"
+                    >
+                      <template #activator="{ props: catTakenTooltipProps }">
+                        <span v-bind="catTakenTooltipProps" style="display:inline-flex">
+                          <v-checkbox-btn
+                            density="compact" color="orange-darken-1"
+                            :model-value="feoLevel5.isPlannedItemSelected(planned.id)"
+                            :disabled="planToRequest.isCategoryPlanFullyTaken(node.id)"
+                            style="flex:0 0 auto"
+                            title="Выбрать ручной план категории — при подтверждении выбора он станет настоящей плановой позицией"
+                            @click.stop
+                            @update:model-value="feoLevel5.togglePlannedItemSelected(planned.id)"
+                          />
+                        </span>
+                      </template>
+                      <span>Позиция целиком в согласованной закупке — выбрать нельзя</span>
+                    </v-tooltip>
                     <!-- Задача владельца, п.11 волны 3 (2026-09-13): «нужна нумерация, иначе
                          неудобно искать, где что находится и после чего, когда запланировано
                          несколько сотен позиций». Номер — позиция в ТЕКУЩЕМ видимом порядке
@@ -156,6 +194,26 @@
                   </div>
                   <div v-if="planned.isManual" class="feo-plan-note text-medium-emphasis">
                     <v-icon icon="mdi-pencil-ruler" size="11" class="mr-1" />ручной план ФЭО — подробного деления в ФЭО не было
+                  </div>
+                  <!-- Владелец (29.09.2026): в режиме «Создать закупку на основе плана»
+                       видно, ГДЕ уже занята позиция — переиспользуем FeoPlannedTakenBy.vue
+                       (Правило №6, тот же компонент, что и в подсказках товара плановой
+                       позиции), short-вид одной строкой. Для ручного плана категории
+                       (isManual) — та же занятость, но на уровне листа (category_id),
+                       см. usePlanToRequest.ts::linkedPurchasesForCategory. -->
+                  <div v-if="!planned.isManual && planToRequest.active.value" class="mt-1">
+                    <FeoPlannedTakenBy
+                      :linked-purchases="planToRequest.linkedPurchasesForPlannedItem(planned.id)"
+                      :linked-wishes="planToRequest.linkedWishesForPlannedItem(planned.id)"
+                      short
+                    />
+                  </div>
+                  <div v-else-if="planned.isManual && planToRequest.active.value" class="mt-1">
+                    <FeoPlannedTakenBy
+                      :linked-purchases="planToRequest.linkedPurchasesForCategory(node.id)"
+                      :linked-wishes="planToRequest.linkedWishesForCategory(node.id)"
+                      short
+                    />
                   </div>
                   <div v-if="planned.amount != null" class="text-medium-emphasis" style="font-size:10px;line-height:1.3;white-space:normal">
                     {{ ctx.planBreakdownText(node.id, planned) }}
@@ -640,6 +698,7 @@ import FeoTreeSelect from '@/components/items/FeoTreeSelect.vue'
 import { computed, reactive, watch } from 'vue'
 import { useFeoComments } from '@/composables/subsidies/useFeoComments'
 import FeoCommentThread from './FeoCommentThread.vue'
+import FeoPlannedTakenBy from '@/components/items/feo-planned/FeoPlannedTakenBy.vue'
 // Раздел C0 (план ancient-prancing-music.md, 2026-09-21) — единственный
 // источник правила «тип позиции → товары/услуги» на фронте (зеркалит
 // backend/app/services/item_type_split.py::kind_of, ПРАВИЛО №6, второй

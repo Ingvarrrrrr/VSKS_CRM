@@ -97,3 +97,44 @@ async def test_advance_transition_to_plan_allowed_once_companion_converted(
         headers=admin_headers,
     )
     assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.asyncio
+async def test_final_decide_moves_advance_purchase_to_plan_automatically(
+    client, auth_headers, admin_headers, db_session, test_org, make_user,
+):
+    """Владелец (2026-09-29): «авансовый должен идти дальше сам, как обычная
+    заявка» — финальное согласование компаньона (последний/единственный
+    согласующий в цепочке) само переводит закупку 'wishes' -> 'plan_schedule'
+    через то же ядро перехода (app/services/purchase_transition_core.py), без
+    ручного клика по кнопке «→ План закупок»."""
+    manager = await make_user(role="manager", last_name="Иванов")
+
+    data = await _create_advance_purchase(client, auth_headers)
+    purchase_id = data["id"]
+    wish_id = data["wish_id"]
+
+    cascade_resp = await client.post(
+        f"/api/wishes/{wish_id}/approvers/cascade",
+        json={"top_user_id": manager.id, "mode": "sequential"},
+        headers=auth_headers,
+    )
+    assert cascade_resp.status_code == 200, cascade_resp.text
+    approval_id = cascade_resp.json()["approvers"][0]["id"]
+
+    submit_resp = await client.post(f"/api/wishes/{wish_id}/submit", headers=auth_headers)
+    assert submit_resp.status_code == 200, submit_resp.text
+
+    decide_resp = await client.post(
+        f"/api/wishes/{wish_id}/approvers/{approval_id}/decide",
+        json={"decision": "approved", "comment": "решаю за менеджера в тесте"},
+        headers=admin_headers,
+    )
+    assert decide_resp.status_code == 200, decide_resp.text
+    body = decide_resp.json()
+    assert body["status"] == "converted"
+    assert body.get("advance_purchase_transition_warning") is None, body
+
+    purchase_get = await client.get(f"/api/purchases/{purchase_id}", headers=auth_headers)
+    assert purchase_get.status_code == 200, purchase_get.text
+    assert purchase_get.json()["status"] == "plan_schedule"

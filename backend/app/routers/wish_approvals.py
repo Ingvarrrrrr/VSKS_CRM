@@ -298,6 +298,7 @@ async def decide_wish_approval(
     _created_purchases: list[dict] = []
     _plan_warning: list[str] = []
     _purchase_sync: dict | None = None
+    _duplicate_warnings: list[dict] = []
 
     if not _is_saas(current_user) and wish.status != "submitted":
         raise HTTPException(400, "Заявка ещё не отправлена на согласование (статус должен быть 'submitted')")
@@ -391,6 +392,17 @@ async def decide_wish_approval(
                 WishApproval.status == "pending",
             )
         )).scalar() or 0
+        # Владелец (2026-09-29, «про то, что это дубликат, ничего не написано»):
+        # ДО создания закупки — проверить, не заняты ли плановые позиции этой
+        # заявки уже ЧУЖОЙ закупкой (другая заявка того же плана уже сконвертирована
+        # раньше). ДО, а не после (в отличие от _excess_warnings ниже, которая
+        # намеренно считает ПОСЛЕ создания закупки) — иначе свежесозданная закупка
+        # ЭТОЙ заявки попала бы в свой же список «дублей». См. app.services.
+        # plan_duplicate_warning — переиспользует те же linked_purchases, что и
+        # GET /feo-categories/plan-positions (ПРАВИЛО №6, второй расчёт не заводим).
+        if wish.items:
+            from app.services.plan_duplicate_warning import collect_plan_duplicate_warnings
+            _duplicate_warnings = await collect_plan_duplicate_warnings(db, list(wish.items), exclude_wish_id=wish.id)
         if remaining == 0:
             wish.status = "approved"
             wish.approved_by = current_user.id
@@ -510,6 +522,14 @@ async def decide_wish_approval(
         # путь — согласование ЦЕПОЧКОЙ — обязан доносить его до согласующего так же,
         # как прямой /wishes/{id}/approve. Иначе последний согласующий создаёт закупку
         # с перерасходом и не видит об этом ни слова.
-        "excess_warnings": getattr(wish, "_excess_warnings", []),
+        # Владелец (2026-09-29): дубли (см. _duplicate_warnings выше) в ТОМ ЖЕ
+        # канале, что и превышение ФЭО — фронт уже умеет показывать excess_warnings
+        # согласующему (useWishesContext.showExcessWarnings), второй канал не заводим.
+        "excess_warnings": _duplicate_warnings + getattr(wish, "_excess_warnings", []),
         "purchase_sync": _purchase_sync,
+        # Владелец (2026-09-29): авансовая закупка после финального согласования
+        # компаньона пробует уйти дальше 'wishes' сама (см. wish_distribution.py) —
+        # если гейт (обязательные поля/превышение) отказал, тут причина, чтобы
+        # согласующий не терялся в догадках, почему закупка осталась на месте.
+        "advance_purchase_transition_warning": getattr(wish, "_advance_purchase_transition_warning", None),
     }

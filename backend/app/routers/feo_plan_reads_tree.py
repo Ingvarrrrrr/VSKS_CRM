@@ -356,6 +356,7 @@ async def get_plan_positions(
     from app.services.feo_plan import (
         plan_consumption_by_category, planned_item_consumption, build_category_path,
         build_ancestor_ids, compute_feo_plan_tree, unlinked_actual_by_category,
+        category_plan_links,
     )
 
     all_cats = (await db.execute(
@@ -381,6 +382,14 @@ async def get_plan_positions(
     # что и в consumption выше: редактируемый документ не должен считать сам себя.
     unlinked_actual = await unlinked_actual_by_category(
         db, [subsidy_id], exclude_purchase_id=exclude_purchase_id, exclude_wish_id=exclude_wish_id
+    )
+    # Владелец (2026-09-29, «дубль занял план молча» — теперь и на строках БЕЗ
+    # отдельной FeoPlannedItem): та же расшифровка «кто занял план», что уже
+    # была только на kind='planned_item' ниже (см. planned_item_consumption),
+    # но для листьев дерева ФЭО, у которых план введён прямо на FeoCategory
+    # (kind='plan_position'/'feo_article') — см. category_plan_links.
+    leaf_links = await category_plan_links(
+        db, [c.id for c in leaves], exclude_purchase_id=exclude_purchase_id, exclude_wish_id=exclude_wish_id
     )
 
     result = []
@@ -426,6 +435,10 @@ async def get_plan_positions(
             # прибавляет это число к «уже запланировано» и показывает отдельной
             # строкой «в том числе не привязано к плану».
             "unlinked_actual_amount": unlinked_actual.get(c.id, 0.0),
+            # См. комментарий у leaf_links выше — «дубль занял план молча» для
+            # плановых позиций уровня листа (без отдельной FeoPlannedItem).
+            "linked_purchases": leaf_links.get(c.id, {}).get("linked_purchases", []),
+            "linked_wishes": leaf_links.get(c.id, {}).get("linked_wishes", []),
         })
 
     # + FeoPlannedItem (Ур.5) — детализация внутри элементов. Владелец 2026-08-18:
@@ -489,6 +502,9 @@ async def get_plan_positions(
                     # см. exclude_purchase_id/exclude_wish_id выше), чтобы UI мог
                     # предупредить ДО привязки, а не после (см. planned_item_consumption).
                     "linked_purchases": c_cons.get("linked_purchases", []),
+                    # Владелец (2026-09-29): та же «дубль занял план молча», но заявками —
+                    # см. planned_item_consumption.linked_wishes.
+                    "linked_wishes": c_cons.get("linked_wishes", []),
                 })
 
     result.sort(key=lambda x: x["path"])

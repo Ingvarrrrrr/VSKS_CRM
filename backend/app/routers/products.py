@@ -22,6 +22,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query, HTTPException, Body
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import defer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,6 +35,11 @@ from app.schemas.schemas import ProductCreate, ProductOut
 from app.services.price_freshness import load_context as load_freshness_context, evaluate as evaluate_freshness
 from app.services.price_actualization import actualize_product_price
 from app.services.product_price_stats import compute_price_stats_bulk
+from app.services.product_delete_impact import (
+    get_product_delete_impact,
+    has_blocking_dependents,
+    format_delete_block_message,
+)
 
 router = APIRouter(prefix="/api/products", tags=["products"])
 
@@ -396,8 +402,41 @@ async def delete_product(
     db_product = result.scalar_one_or_none()
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
-    await db.delete(db_product)
-    await db.commit()
+
+    # Pre-check FK references to avoid 500 ForeignKeyViolationError (боевой
+    # инцидент 2026-09-29: DELETE /api/products/4280 падал 500, товар стоял в
+    # позиции закупки РЕЕ-2026-00921 — purchase_items.product_id не имеет
+    # ON DELETE и реально блокирует на уровне БД; contract_items/wish_items/
+    # commercial_request_offers формально ON DELETE SET NULL, но это бизнес-
+    # документы — тихо терять привязку товара нельзя, блокируем и их на
+    # уровне приложения (см. app/services/product_delete_impact.py).
+    impact = await get_product_delete_impact(db, product_id)
+    if has_blocking_dependents(impact):
+        message = format_delete_block_message(db_product.name, impact)
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "PRODUCT_HAS_DEPENDENTS", "message": message, "impact": impact},
+        )
+
+    try:
+        await db.delete(db_product)
+        await db.commit()
+    except IntegrityError:
+        # Запасной путь — на случай FK, не учтённого в product_delete_impact.py
+        # (не глушим generic-500, отдаём понятный 409, память проекта
+        # «Объяснять причину блокировки»).
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "PRODUCT_HAS_DEPENDENTS",
+                "message": (
+                    f"Товар «{db_product.name}» нельзя удалить: на него ссылаются другие записи. "
+                    f"Уберите товар из связанных документов, затем удалите."
+                ),
+                "impact": impact,
+            },
+        )
     return {"message": "Product deleted"}
 
 

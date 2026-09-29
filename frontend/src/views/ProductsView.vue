@@ -104,6 +104,8 @@
       v-model="deleteDialog"
       :target="deleteTarget"
       :deleting="deleting"
+      :block-message="deleteBlockMessage"
+      :block-impact="deleteBlockImpact"
       @confirm="doDelete"
     />
 
@@ -112,6 +114,7 @@
       v-model="bulkDeleteDialog"
       :count="selectedIds.length"
       :deleting="bulkDeleting"
+      :blocked="bulkDeleteBlocked"
       @confirm="doBulkDelete"
     />
 
@@ -248,7 +251,8 @@ const {
 const {
   selectedIds,
   deleting, deleteDialog, deleteTarget, confirmDelete, doDelete,
-  bulkDeleting, bulkDeleteDialog, doBulkDelete,
+  deleteBlockMessage, deleteBlockImpact,
+  bulkDeleting, bulkDeleteDialog, doBulkDelete, bulkDeleteBlocked,
   deletingAll, deleteAllDialog, deleteAllConfirm, doDeleteAll,
   bulkToggleActive,
 } = useProductsDelete({ products, load, showSnack })

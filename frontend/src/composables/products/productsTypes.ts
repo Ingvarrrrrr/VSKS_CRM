@@ -42,6 +42,25 @@ export interface Product {
   avg_price_stale?: boolean
 }
 
+// Форма 409 при удалении товара (backend/app/services/product_delete_impact.py,
+// Правило №6 — фронт не пересчитывает и не дублирует формулировку, только
+// раскладывает готовые данные из ответа по строкам со ссылками на карточки).
+export interface ProductDeleteImpactItem {
+  id: number
+  number: number | string | null
+  name: string | null
+  status: string | null
+  item_count: number
+  route: string
+}
+export interface ProductDeleteImpactGroup { count: number; items: ProductDeleteImpactItem[] }
+export interface ProductDeleteImpact {
+  purchases: ProductDeleteImpactGroup
+  wishes: ProductDeleteImpactGroup
+  contracts: ProductDeleteImpactGroup
+  commercial_requests: ProductDeleteImpactGroup
+}
+
 export interface PriceHistoryEntry {
   id: number; price: number; source: string; source_ref?: string | null
   contractor_id?: number | null; contractor_name?: string | null

@@ -3,7 +3,7 @@
     <v-card>
       <v-card-title class="d-flex align-center">
         <v-icon icon="mdi-alert-circle" color="error" class="mr-2" />
-        Ошибка
+        {{ error?.title || 'Ошибка' }}
         <v-spacer />
         <v-btn icon="mdi-close" variant="text" size="small" @click="show = false" />
       </v-card-title>
@@ -51,6 +51,24 @@ interface ErrorPayload {
   message: string
   details?: string
   correlation_id?: string
+  title?: string
+}
+
+// Русский текст для истинно JS-ошибок выполнения фронта (ReferenceError/TypeError/
+// необработанное исключение) — владелец 29.09: не показывать англоязычный текст
+// исключения в основном тексте окна, только «Код: ошибка страницы» + фиксированная
+// русская фраза. Оригинальные name/message/stack уходят в свёрнутые «Технические
+// детали» — для копирования и присылки разработчику, не для прочтения пользователем.
+const CLIENT_ERROR_TITLE = 'Ошибка на странице'
+const CLIENT_ERROR_CODE = 'ошибка страницы'
+const CLIENT_ERROR_MESSAGE = 'Не удалось отобразить часть страницы. Обновите страницу (Ctrl+Shift+R). Если повторяется — нажмите «Скопировать» и пришлите нам.'
+
+function buildClientErrorDetails(err: any): string {
+  const parts = [
+    `${err?.name || 'Error'}: ${err?.message || String(err)}`,
+    err?.stack || '',
+  ].filter(Boolean)
+  return parts.join('\n')
 }
 
 const show = ref(false)
@@ -72,9 +90,10 @@ function handleJsError(e: ErrorEvent) {
   if (!err) return
   if (show.value) return  // не перебиваем уже открытый диалог
   error.value = {
-    code: err.name || 'JS_ERROR',
-    message: err.message || String(err),
-    details: err.stack || '',
+    title: CLIENT_ERROR_TITLE,
+    code: CLIENT_ERROR_CODE,
+    message: CLIENT_ERROR_MESSAGE,
+    details: buildClientErrorDetails(err),
     correlation_id: '',
   }
   show.value = true
@@ -89,9 +108,10 @@ function handleUnhandledRejection(e: PromiseRejectionEvent) {
   // Если это apiFetch error с payload — он уже сработал через api-error event
   if (reason.payload) return
   error.value = {
-    code: reason.name || 'UNHANDLED_REJECTION',
-    message: reason.message || String(reason),
-    details: reason.stack || '',
+    title: CLIENT_ERROR_TITLE,
+    code: CLIENT_ERROR_CODE,
+    message: CLIENT_ERROR_MESSAGE,
+    details: buildClientErrorDetails(reason),
     correlation_id: '',
   }
   show.value = true

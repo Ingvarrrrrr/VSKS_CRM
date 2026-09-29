@@ -4357,6 +4357,16 @@ const loadPurchase = async () => {
         final_total: i.final_total ? Number(i.final_total) : null,
         country_origin: i.country_origin || '',
         match_confirmed: i.match_confirmed !== false,
+        // Прод-инцидент РЕЕ-2026-00962 (30.09): receipt_id вообще не копировался
+        // сюда из ответа GET — payload PUT (validItems ниже, `...rest`) слал
+        // receipt_id=undefined для КАЖДОЙ позиции при любом сохранении формы.
+        // Сервер терял привязку к чеку → auto-recompute на следующем GET
+        // (_recompute_from_receipts_core) переопределял её заново: дедуп по
+        // (name,total,receipt_id=NULL) схлопывал одинаковые строки РАЗНЫХ
+        // чеков в одну, а fuzzy-match (шаг B) мог привязать позицию не к тому
+        // чеку. Сохраняем receipt_id как есть — единственный источник истины
+        // для привязки позиции к чеку.
+        receipt_id: i.receipt_id ?? null,
         // Phase 26-V: contractor fields from receipt autofill
         contractor_id: i.contractor_id ?? null,
         contractor_inn: i.contractor_inn || null,

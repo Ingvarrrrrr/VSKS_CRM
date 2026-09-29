@@ -131,6 +131,81 @@ async def test_same_item_in_two_different_receipts_stays_two_positions(
 
 
 @pytest.mark.asyncio
+async def test_put_purchase_preserves_receipt_id_for_cross_receipt_duplicates(
+    client, auth_headers, db_session, make_purchase,
+):
+    """Прод-инцидент РЕЕ-2026-00962 (30.09): PUT /purchases/{id} (форма
+    закупки, автосохранение) заменяет ВСЕ позиции целиком из payload — если
+    payload не несёт receipt_id (раньше PurchaseItemCreate его вообще не
+    принимал — pydantic молча отбрасывал поле, а фронт его и не собирал),
+    привязка к чеку терялась, и следующий GET (auto-recompute) мог склеить
+    одинаковые (имя, цена) позиции РАЗНЫХ чеков в одну или перепривязать не к
+    тому чеку.
+
+    Эта проверка — по правилу владельца «одинаковые строки склеиваются ТОЛЬКО
+    внутри одного чека»: две позиции с одинаковым именем+ценой, но из разных
+    чеков, отправленные в PUT С их receipt_id, обязаны остаться отдельными
+    позициями со СВОИМИ receipt_id — ни дедуп, ни последующий GET (recompute)
+    не должны их тронуть."""
+    from app.models.purchase_receipt import PurchaseReceipt
+
+    p = await make_purchase(purchase_method="advance")
+
+    receipt_a = PurchaseReceipt(purchase_id=p.id, fiscal_document_number=301, source="manual")
+    receipt_b = PurchaseReceipt(purchase_id=p.id, fiscal_document_number=302, source="manual")
+    db_session.add_all([receipt_a, receipt_b])
+    await db_session.commit()
+    await db_session.refresh(receipt_a)
+    await db_session.refresh(receipt_b)
+
+    payload = {
+        "subject": "Test cross-receipt duplicates",
+        "purchase_method": "advance",
+        "items": [
+            {
+                "item_name": "Тариф МТС «Для ноутбука» Услуга/РФ",
+                "quantity": "1",
+                "unit": "шт",
+                "unit_price": "800",
+                "total_price": "800",
+                "receipt_id": receipt_a.id,
+            },
+            {
+                "item_name": "Тариф МТС «Для ноутбука» Услуга/РФ",
+                "quantity": "1",
+                "unit": "шт",
+                "unit_price": "800",
+                "total_price": "800",
+                "receipt_id": receipt_b.id,
+            },
+        ],
+    }
+    resp = await client.put(f"/api/purchases/{p.id}", json=payload, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body["items"]) == 2, f"обе позиции обязаны остаться, получено {len(body['items'])}"
+    receipt_ids_in_response = sorted(i["receipt_id"] for i in body["items"])
+    assert receipt_ids_in_response == sorted([receipt_a.id, receipt_b.id]), (
+        f"receipt_id не сохранены из payload: {receipt_ids_in_response}"
+    )
+
+    rows = (await db_session.execute(
+        select(PurchaseItem).where(PurchaseItem.purchase_id == p.id)
+    )).scalars().all()
+    assert len(rows) == 2
+    assert {r.receipt_id for r in rows} == {receipt_a.id, receipt_b.id}
+
+    # Следующий GET (auto-recompute на этой же закупке) не должен их склеить
+    # или перепривязать заново — receipt_id уже верный и полный (нет NULL,
+    # который раньше запускал dedup/fuzzy-match шаги на этих строках).
+    get_resp = await client.get(f"/api/purchases/{p.id}", headers=auth_headers)
+    assert get_resp.status_code == 200
+    get_body = get_resp.json()
+    assert len(get_body["items"]) == 2
+    assert sorted(i["receipt_id"] for i in get_body["items"]) == sorted([receipt_a.id, receipt_b.id])
+
+
+@pytest.mark.asyncio
 async def test_repeated_put_contract_items_does_not_duplicate_rows(
     client, admin_headers, make_purchase_with_items,
 ):

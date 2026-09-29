@@ -34,6 +34,13 @@ class PurchaseItemCreate(BaseModel):
     contractor_id: Optional[int] = None
     contractor_inn: Optional[str] = None
     contractor_name: Optional[str] = None
+    # Прод-инцидент РЕЕ-2026-00962 (30.09): поля вообще НЕ было на входной схеме —
+    # PurchaseItemCreate (не только PurchaseItemOut) обязан принимать receipt_id,
+    # иначе pydantic молча отбрасывает его из ЛЮБОГО PUT/POST payload (в т.ч. когда
+    # фронт его честно шлёт), и привязка позиции к чеку теряется при каждом
+    # сохранении — единственный источник истины для этой привязки, не пересчитывать
+    # заново эвристикой там, где он уже известен клиенту.
+    receipt_id: Optional[int] = None  # Phase 26-BB
     vat_rate: Optional[str] = None  # Phase 26-U-3: per-item НДС ставка
     vat_amount: Optional[float] = None       # import-vat-cols: сумма НДС по позиции
     total_with_vat: Optional[float] = None   # import-vat-cols: стоимость с НДС
@@ -62,7 +69,8 @@ class PurchaseItemOut(PurchaseItemCreate):
     product_photo_url: Optional[str] = None
     product_description: Optional[str] = None
     product_description_44fz: Optional[str] = None
-    receipt_id: Optional[int] = None  # Phase 26-BB
+    # receipt_id теперь объявлен один раз на PurchaseItemCreate (ПРАВИЛО №6,
+    # прод-инцидент РЕЕ-2026-00962) — здесь наследуется, вторая копия убрана.
     # Владелец (план crystalline-soaring-heron.md, п.4): остаток плановой позиции
     # этой строки закупки, с учётом ВСЕХ расходов (включая саму эту строку) —
     # отрицательное значение = превышение. Источник — FeoPlannedItem (Ур.5), если

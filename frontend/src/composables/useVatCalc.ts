@@ -14,8 +14,17 @@ export interface VatLike {
 // ставок НДС, используется всеми 4 таблицами позиций (ItemsTableFlat/
 // ItemsTableStages/ItemsCardsView/ItemsTableWish) через vatRateOptions prop —
 // не плодить копии (ПРАВИЛО №6).
+//
+// Владелец (2026-09-30): value=null у «Не облагается» было неоднозначно с
+// «ставка ещё не выбрана» (документный гейт VAT_RATE_REQUIRED в
+// documents/templates.py читал оба случая одинаково — «не заполнено»).
+// value теперь 'Без НДС' — тот же литерал, что уже пишут чеки без НДС
+// (backend/app/services/receipts_parsing.py::NDS_CODE_TO_RATE_STR код 6 и
+// отсутствие тега nds) и что уже был в комментарии models/contract_item.py::
+// vat_rate ('22%', '10%', 'Без НДС', custom). null остаётся ТОЛЬКО за «не
+// выбрано» — не показывается как отдельный пункт списка.
 export const VAT_RATE_OPTIONS = [
-  { title: 'Не облагается', value: null as string | null },
+  { title: 'Не облагается', value: 'Без НДС' as string | null },
   { title: '0%', value: '0%' },
   { title: '5%', value: '5%' },
   { title: '7%', value: '7%' },
@@ -52,10 +61,14 @@ export function totalWithVat(item: VatLike): number {
 
 /**
  * Normalize a user-entered VAT rate value into the stored canonical form.
- * null / '' / 'Без НДС' → null. A bare number → "<n>%". Anything else as-is.
+ * null / '' → null ("не выбрано"). 'Без НДС' stays 'Без НДС' — distinct from
+ * null (владелец, 2026-09-30: "не выбрано" и "явно без НДС" — разные вещи,
+ * см. комментарий у VAT_RATE_OPTIONS). A bare number → "<n>%". Anything else
+ * as-is.
  */
 export function normalizeVatRate(v: any): string | null {
-  if (v == null || v === '' || v === 'Без НДС') return null
+  if (v == null || v === '') return null
+  if (v === 'Без НДС') return 'Без НДС'
   const s = String(v)
   return /^\d+(?:\.\d+)?$/.test(s.trim()) ? s.trim() + '%' : s
 }

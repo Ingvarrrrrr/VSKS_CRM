@@ -19,8 +19,11 @@ from app.services.documents.templates import _require_vat_rate_for_doc
 from app.services.documents.stages_amounts import compute_amounts_and_vat
 
 
-def _mk_item(name="Товар", vat_rate=None, total_price=1000, id=None):
-    return SimpleNamespace(item_name=name, vat_rate=vat_rate, total_price=total_price, id=id)
+def _mk_item(name="Товар", vat_rate=None, total_price=1000, id=None, receipt_id=None):
+    return SimpleNamespace(
+        item_name=name, vat_rate=vat_rate, total_price=total_price, id=id,
+        receipt_id=receipt_id,
+    )
 
 
 def _mk_purchase(**overrides):
@@ -140,6 +143,37 @@ def test_per_item_missing_rate_includes_missing_items_detail():
     assert items[0]["num"] == 2
     assert items[0]["name"] == "B"
     assert items[0]["stage"] == "ТЗ"
+
+
+def test_per_item_receipt_item_with_empty_rate_does_not_require_rate():
+    """Владелец (30.09): позиция из чека с пустой ставкой (старые данные, до
+    фикса receipts_parsing.py) — не 'без ставки', а 'Без НДС' — документ
+    формируется, стрелку показывать не на что."""
+    p = _mk_purchase(items=[
+        _mk_item(name="Товар из чека", vat_rate=None, total_price=500, receipt_id=7),
+        _mk_item(name="Обычный товар", vat_rate="20%", total_price=1000),
+    ])
+    _require_vat_rate_for_doc(p, "approval_sheet")  # не должно бросать
+
+
+def test_per_item_manual_item_with_empty_rate_still_requires_rate():
+    """Позиция БЕЗ чека (receipt_id=None) с пустой ставкой — по-прежнему
+    требует явного выбора (в т.ч. «Не облагается»)."""
+    p = _mk_purchase(items=[
+        _mk_item(name="Ручная позиция", vat_rate=None, total_price=500, receipt_id=None),
+    ])
+    with pytest.raises(HTTPException) as exc_info:
+        _require_vat_rate_for_doc(p, "approval_sheet")
+    assert exc_info.value.detail["code"] == "VAT_RATE_REQUIRED"
+
+
+def test_per_item_receipt_item_explicit_no_vat_does_not_require_rate():
+    """Позиция из чека с уже проставленным явным 'Без НДС' (новый парсинг) —
+    тоже не в missing (regression guard на сам литерал)."""
+    p = _mk_purchase(items=[
+        _mk_item(name="Товар из чека", vat_rate="Без НДС", total_price=500, receipt_id=7),
+    ])
+    _require_vat_rate_for_doc(p, "approval_sheet")  # не должно бросать
 
 
 # ---------------------------------------------------------------------------

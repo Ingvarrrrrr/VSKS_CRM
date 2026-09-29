@@ -48,3 +48,30 @@ def test_item_vat_amount_nonzero_for_legacy_fraction_rate():
     amount = _item_vat_amount(item)
     assert amount > 0
     assert amount == round(1220 * 22 / 122, 2)
+
+
+# ---------------------------------------------------------------------------
+# Владелец (30.09, авансовый ФАДМ_2026): «если из чека получены данные, что
+# НДС нет — это не ошибка, это данные: ставка «без НДС»» — код ФФД 6 и
+# отсутствие тега 'nds' в строке чека раньше маппились в None, неотличимое от
+# «ставка не выбрана».
+# ---------------------------------------------------------------------------
+
+def test_nds_code_6_maps_to_no_vat_not_none():
+    assert NDS_CODE_TO_RATE_STR[6] == "Без НДС"
+    assert _nds_code_to_rate_str(6) == "Без НДС"
+
+
+def test_nds_tag_absent_maps_to_no_vat_not_none():
+    """Строка чека без тега 'nds' вовсе (code=None) — тоже 'Без НДС', не None."""
+    assert _nds_code_to_rate_str(None) == "Без НДС"
+
+
+def test_nds_unknown_code_still_maps_to_none():
+    """Нераспознанный числовой код — реальная ошибка парсинга, остаётся None."""
+    assert _nds_code_to_rate_str(999) is None
+
+
+def test_item_vat_amount_zero_for_no_vat_rate():
+    item = SimpleNamespace(total_price=1000, vat_rate="Без НДС")
+    assert _item_vat_amount(item) == 0.0

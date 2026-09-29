@@ -846,6 +846,7 @@ import {
   VAT_RATE_OPTIONS,
   vatAmount,
   totalWithVat,
+  normalizeVatRate,
 } from '@/composables/useVatCalc'
 
 // ── Interfaces ───────────────────────────────────────────────────────────────
@@ -1558,10 +1559,7 @@ function updateAcceptedField(
 // updateContractField (ПРАВИЛО №6 — одна точка создания строки «Договор»).
 function onContractVatRateChange(idx: number, v: any) {
   const ci = ensureContractItemFor(idx)
-  let rate: string | null
-  if (v == null || v === '' || v === 'Без НДС') { rate = null }
-  else { const s = String(v); rate = /^\d+(?:\.\d+)?$/.test(s.trim()) ? s.trim() + '%' : s }
-  ;(ci as any).vat_rate = rate
+  ;(ci as any).vat_rate = normalizeVatRate(v)
   emitContractItemsUpdate()
 }
 

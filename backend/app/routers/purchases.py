@@ -1769,7 +1769,16 @@ async def _guard_feo_category_change_after_approval(
     # getattr(..., None) — а не p.wish_id напрямую — ради обратной совместимости
     # с офлайн-тестами (test_feo_change_after_approval.py), где `p` — SimpleNamespace
     # без атрибута wish_id вовсе; на реальном Purchase (ORM) атрибут есть всегда.
-    if getattr(p, "wish_id", None) is not None:
+    #
+    # Баг 2026-09-29 (авансовый отчёт РЕЕ-2026-00960, purchase.id=960): у
+    # АВАНСОВОГО отчёта wish_id ВСЕГДА проставлен — это заявка-компаньон «на
+    # возмещение», заводится ПОСЛЕ закупки только для маршрута согласования
+    # (см. create_purchase ниже, ветка is_advance, и
+    # app/services/wish_advance_conversion.py) — категория закупки НЕ рождена
+    # из этой заявки/плана, наоборот. Исключаем purchase_method == 'advance'
+    # из замка — тот же предикат, что и на фронте
+    # (utils/feoItemLock.ts::isPurchaseFeoHeaderLocked, ПРАВИЛО №6).
+    if getattr(p, "wish_id", None) is not None and getattr(p, "purchase_method", None) != "advance":
         raise HTTPException(
             422,
             detail={

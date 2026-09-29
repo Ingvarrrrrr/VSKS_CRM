@@ -17,6 +17,7 @@ from app.models.contractor import Contractor
 from app.schemas.schemas import PurchaseFileOut
 from app.auth.jwt import get_current_user
 from app.auth.permissions import _has_key_in_any_org
+from app.utils.http import content_disposition as _content_disposition
 from typing import List, Optional, Dict, Any
 
 router = APIRouter(prefix="/api/purchases", tags=["purchase-files"])
@@ -701,8 +702,14 @@ async def download_file(
             await _try_regen_receipt_png(db, pid, fid, pf)
         if not os.path.exists(pf.filepath):
             raise HTTPException(404, "Файл не найден на диске")
-    return FileResponse(pf.filepath, filename=pf.filename,
-                        media_type=pf.mime_type or "application/octet-stream")
+    # Баг 2026-09-29 (РЕЕ-2026-00960, файл 54): FileResponse(..., filename=...)
+    # заставляет Starlette САМ собрать Content-Disposition — для кириллицы в
+    # имени это падает UnicodeEncodeError при кодировании заголовка в latin-1
+    # (см. view_file ниже — та же причина, тот же общий RFC5987-хелпер
+    # content_disposition, ПРАВИЛО №6, не второй способ). filename= в
+    # FileResponse больше не передаём — заголовок собираем сами.
+    return FileResponse(pf.filepath, media_type=pf.mime_type or "application/octet-stream",
+                        headers={"Content-Disposition": _content_disposition(pf.filename)})
 
 
 @router.get("/{pid}/files/{fid}/view")
@@ -724,8 +731,15 @@ async def view_file(
             await _try_regen_receipt_png(db, pid, fid, pf)
         if not os.path.exists(pf.filepath):
             raise HTTPException(404, "Файл не найден на диске")
+    # Баг 2026-09-29 (РЕЕ-2026-00960, purchase.id=960, файл id=54, "Gmail -
+    # Чек + (1) подарок. 6 510,00 ₽.pdf"): голый f'inline; filename="{pf.
+    # filename}"' с кириллицей/эмодзи в имени валил 500 UnicodeEncodeError —
+    # Starlette кодирует значения заголовков в latin-1, кириллица туда не
+    # влезает. RFC 5987 (filename= ASCII-fallback + filename*=UTF-8'') — тот
+    # же общий хелпер, что уже используют документы/экспорт (ПРАВИЛО №6, см.
+    # app/utils/http.py::content_disposition), второй механизм не заводим.
     return FileResponse(pf.filepath, media_type=pf.mime_type or "application/octet-stream",
-                        headers={"Content-Disposition": f"inline; filename=\"{pf.filename}\""})
+                        headers={"Content-Disposition": _content_disposition(pf.filename, "inline")})
 
 
 @router.delete("/{pid}/files/{fid}")

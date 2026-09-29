@@ -54,7 +54,10 @@ export const POST_SAVE_ACTION_KEY = 'advance_report_post_save_action'
 // (см. onJsonBtnClick / consumePostSaveAction ниже) для клика по input,
 // который рендерит FileDropZone.
 export const RECEIPT_FILE_ACCEPT = '.json,.pdf,.html,.htm,.png,.jpg,.jpeg,.webp,.tif,.tiff,.heic'
-export const RECEIPT_FILE_HINT = 'PDF, HTML (proverkacheka), PNG/JPG с QR, JSON ФНС'
+// Владелец (уточнение 2026-09-29): PDF/TIFF/HEIC теперь ТОЖЕ проверяются на
+// QR (на бэкенде — canvas в браузере эти форматы не декодирует), подсказка
+// больше не должна звучать так, будто для PDF распознавание не пробуется.
+export const RECEIPT_FILE_HINT = 'PDF/фото/TIFF/HEIC с QR, HTML (proverkacheka), JSON ФНС'
 
 // Файлы, перетащенные в блок «Чеки» ДО того, как черновик авансового/закупки
 // сохранён. save() при создании делает router.push('/…/{id}/edit') — вид
@@ -356,8 +359,13 @@ export function usePurchaseReceipts(
   //                        не теряется, прикрепляется как файл чека (п.3)
   //   .html/.htm         → import-html (proverkacheka) → не разобран → тоже
   //                        прикрепляется как файл чека
-  //   pdf/tif/tiff/heic/прочее → сразу прикрепляется как файл чека —
-  //                        распознавание из них не обещаем (ТЗ)
+  //   pdf/tif/tiff/heic  → from-file-qr (декодирование на бэкенде — браузер
+  //                        сам эти форматы не читает, см. isServerQrFile
+  //                        ниже) → QR не найден (422 FILE_QR_NOT_FOUND) →
+  //                        файл не теряется, прикрепляется как файл чека
+  //                        (баг 2026-09-29, РЕЕ-2026-00960)
+  //   прочее             → сразу прикрепляется как файл чека — распознавание
+  //                        из него не обещаем (ТЗ)
   async function onJsonReceiptUpload(files: File[]) {
     if (!files.length) return
     if (!purchaseId.value) {
@@ -408,6 +416,15 @@ export function usePurchaseReceipts(
       const isImage = !isJson && !isHtml &&
         ((f.type || '').startsWith('image/') || /\.(png|jpe?g|webp)$/i.test(lower)) &&
         !/\.(tiff?|heic|heif)$/i.test(lower)
+      // Баг 2026-09-29 (РЕЕ-2026-00960): PDF/TIFF/HEIC раньше сразу уходили в
+      // fallback-прикрепление файлом — canvas/createImageBitmap в браузере не
+      // умеет их декодировать (см. utils/qrDecode.ts), поэтому клиентский
+      // jsQR-путь (ветка isImage выше) для них никогда не срабатывал. Теперь
+      // распознаём на бэкенде (poppler для PDF-рендера + тот же pyzbar/cv2
+      // декодер, что и для фото — app/services/receipt_pdf_qr.py), а не
+      // молчим, как раньше (владелец: «чек был с QR-кодом, но позиции не
+      // загрузились»).
+      const isServerQrFile = !isJson && !isHtml && !isImage && /\.(pdf|tiff?|heic|heif)$/i.test(lower)
 
       try {
         if (isJson) {
@@ -479,8 +496,32 @@ export function usePurchaseReceipts(
             if (outcome === 'attached') filesAttached++
             else if (outcome === 'duplicate') filesDup++
           }
+        } else if (isServerQrFile) {
+          try {
+            const fd = new FormData()
+            fd.append('file', f)
+            const r = await apiFetch<Receipt>(
+              `/purchases/${purchaseId.value}/receipts/from-file-qr`,
+              { method: 'POST', body: fd as any },
+            )
+            if (r?.id != null) {
+              if (existingIds.has(r.id)) dups++
+              else { added++; existingIds.add(r.id) }
+            }
+          } catch (fileQrErr: any) {
+            if (!handleDuplicate(fileQrErr?.payload)) {
+              // Код FILE_QR_NOT_FOUND (422) — QR не найден/файл без QR вовсе —
+              // тот же fallback, что и для нераспознанного фото/HTML: файл не
+              // теряется, прикрепляется как обычный чек-файл (п.3 ТЗ).
+              qrFails++
+              const outcome = await attachReceiptFile(f)
+              if (outcome === 'attached') filesAttached++
+              else if (outcome === 'duplicate') filesDup++
+            }
+          }
         } else {
-          // PDF / TIF / TIFF / HEIC / прочее — распознавание не обещаем
+          // Прочие форматы (кроме pdf/tiff/heic/png/jpg/webp/json/html) —
+          // распознавание не обещаем.
           const outcome = await attachReceiptFile(f)
           if (outcome === 'attached') filesAttached++
           else if (outcome === 'duplicate') filesDup++

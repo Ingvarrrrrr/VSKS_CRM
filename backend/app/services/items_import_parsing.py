@@ -301,7 +301,23 @@ def _try_decode_qr(image_bytes: bytes) -> str | None:
 
     Сначала pyzbar, потом cv2.QRCodeDetector. Возвращает строку QR или None.
     Все импорты в try/except — если библиотек нет, вернуть None без ошибок.
+
+    Владелец (уточнение 2026-09-29): «TIF/HEIC — тоже попробовать распознать».
+    TIFF Pillow открывает нативно без доп. библиотек. HEIC/HEIF — только если
+    зарегистрирован pillow-heif opener (пакет уже в requirements.txt,
+    используется покадрово в purchase_items_import_smart.py/wish_export.py —
+    здесь регистрируем тем же вызовом ЦЕНТРАЛЬНО, чтобы каждый вызывающий
+    _try_decode_qr (в т.ч. новый receipt_pdf_qr.py) получил HEIC бесплатно,
+    вместо копирования register_heif_opener() в каждое место (ПРАВИЛО №6).
+    Best-effort — если пакета вдруг нет, PIL.Image.open ниже просто не
+    распознает HEIC и упадёт в except, как и раньше.
     """
+    try:
+        import pillow_heif as _pillow_heif
+        _pillow_heif.register_heif_opener()
+    except Exception:
+        pass
+
     # pyzbar
     try:
         from pyzbar.pyzbar import decode as _pyzbar_decode

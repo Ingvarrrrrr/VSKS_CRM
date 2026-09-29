@@ -150,22 +150,17 @@ async def import_receipt_qr(
     )
 
 
-@router.post("/{purchase_id}/receipts/from-qr-fetch", response_model=ReceiptOut)
-async def import_receipt_qr_fetch(
+async def _fetch_and_create_receipt_from_qr(
     purchase_id: int,
-    qr: str = Body(..., embed=True),
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
-):
-    """Fetch full receipt (with items) from proverkacheka.com API by QR string.
-
-    Requires PROVERKACHEKA_TOKEN in env. Returns the same shape as JSON-import:
-    fiscal data + items auto-matched against the catalog (match_confirmed=False).
-    """
-    purchase = await db.get(Purchase, purchase_id)
-    if not purchase:
-        raise HTTPException(404, "Закупка не найдена")
-
+    qr: str,
+    db: AsyncSession,
+) -> PurchaseReceipt:
+    """Общее тело for from-qr-fetch (сессия 2026-09-08) — вынесено в отдельную
+    функцию 2026-09-29, чтобы новый /receipts/from-file-qr (PDF/TIFF/HEIC —
+    QR найден при рендере/декодировании файла на бэкенде) звал РОВНО ТОТ ЖЕ
+    путь дедупликации + запроса в proverkacheka.com + создания чека, а не
+    копию тела эндпоинта (ПРАВИЛО №6). Поднимает HTTPException как раньше —
+    вызывающие эндпоинты её не перехватывают, отдают как есть."""
     qr = (qr or '').strip()
     if not qr:
         raise HTTPException(400, "Пустая QR-строка")
@@ -312,3 +307,69 @@ async def import_receipt_qr_fetch(
     return await _create_receipt_with_items(
         purchase_id, data, 'qr_scan', {"qr": qr, "proverkacheka": payload}, db,
     )
+
+
+@router.post("/{purchase_id}/receipts/from-qr-fetch", response_model=ReceiptOut)
+async def import_receipt_qr_fetch(
+    purchase_id: int,
+    qr: str = Body(..., embed=True),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Fetch full receipt (with items) from proverkacheka.com API by QR string.
+
+    Requires PROVERKACHEKA_TOKEN in env. Returns the same shape as JSON-import:
+    fiscal data + items auto-matched against the catalog (match_confirmed=False).
+    """
+    purchase = await db.get(Purchase, purchase_id)
+    if not purchase:
+        raise HTTPException(404, "Закупка не найдена")
+    return await _fetch_and_create_receipt_from_qr(purchase_id, qr, db)
+
+
+@router.post("/{purchase_id}/receipts/from-file-qr", response_model=ReceiptOut)
+async def import_receipt_from_file_qr(
+    purchase_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Найти QR фискального чека в файле, который браузер не может прочитать
+    сам (canvas/createImageBitmap не открывают PDF/TIFF/HEIC — см.
+    utils/qrDecode.ts на фронте) — PDF, HEIC/HEIF, TIFF.
+
+    Баг 2026-09-29 (авансовый отчёт РЕЕ-2026-00960): PDF-чек (распечатка
+    письма с QR внутри) раньше сразу уходил в обычное прикрепление файла —
+    ни один код-путь даже не пытался найти в нём QR (владелец: «чек был с
+    QR-кодом, но позиции не загрузились»). PDF рендерится постранично
+    (app/services/receipt_pdf_qr.py::extract_qr_from_pdf_bytes, до 20 страниц,
+    poppler-utils уже в образе — новых системных зависимостей нет); TIFF/HEIC
+    декодируются напрямую тем же _try_decode_qr, что и обычные фото
+    (ПРАВИЛО №6 — один декодер на все форматы, не второй).
+
+    QR не найден → 422 FILE_QR_NOT_FOUND с понятным текстом — фронт
+    (usePurchaseReceipts.ts) в этом случае откатывается на attachReceiptFile,
+    как и раньше для нераспознанных чеков."""
+    purchase = await db.get(Purchase, purchase_id)
+    if not purchase:
+        raise HTTPException(404, "Закупка не найдена")
+
+    filename = file.filename or ""
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "Пустой файл")
+
+    from app.services.receipt_pdf_qr import extract_qr_from_receipt_upload
+    qr = extract_qr_from_receipt_upload(filename, content)
+    if not qr:
+        is_pdf = filename.lower().endswith(".pdf")
+        raise HTTPException(422, detail={
+            "code": "FILE_QR_NOT_FOUND",
+            "message": (
+                "QR-код в PDF не найден — позиции введите вручную или загрузите фото чека."
+                if is_pdf else
+                "QR-код в файле не найден — позиции введите вручную или загрузите фото чека."
+            ),
+        })
+
+    return await _fetch_and_create_receipt_from_qr(purchase_id, qr, db)

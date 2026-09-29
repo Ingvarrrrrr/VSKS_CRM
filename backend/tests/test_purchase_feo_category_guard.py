@@ -47,11 +47,11 @@ from app.models.purchase import Purchase
 # ---------------------------------------------------------------------------
 
 def _mk_purchase(wish_id=None, feo_category_id=1, approval_status="approved",
-                  assigned_user_id=None, purchase_number=42, id_=99):
+                  assigned_user_id=None, purchase_number=42, id_=99, purchase_method=None):
     return SimpleNamespace(
         id=id_, purchase_number=purchase_number, wish_id=wish_id,
         feo_category_id=feo_category_id, approval_status=approval_status,
-        assigned_user_id=assigned_user_id,
+        assigned_user_id=assigned_user_id, purchase_method=purchase_method,
     )
 
 
@@ -110,6 +110,46 @@ def test_purchase_from_wish_same_category_is_idempotent_noop():
     db = _FakeDB()
 
     asyncio.run(pr._guard_feo_category_change_after_approval(p, 1, user, db))  # не бросает
+
+
+def test_advance_purchase_with_companion_wish_changes_category_freely():
+    """Баг 2026-09-29 (РЕЕ-2026-00960): авансовый отчёт (purchase_method='advance')
+    ВСЕГДА имеет wish_id (заявка-компаньон на возмещение, заводится ПОСЛЕ
+    закупки — см. create_purchase/is_advance), но категория закупки не
+    рождена из этой заявки/плана — wish_id-замок НЕ должен срабатывать.
+    approval_status='approved' не берём в этот тест — там уже действует
+    отдельный, ожидаемый FEO_CATEGORY_LOCKED_AFTER_APPROVAL (см. следующий тест)."""
+    for status in (None, "in_progress", "rejected"):
+        p = _mk_purchase(wish_id=555, feo_category_id=1, approval_status=status, purchase_method="advance")
+        user = _mk_user(role="employee")
+
+        class _FakeDBNoOp:
+            async def get(self, model, id_):
+                return None
+
+            async def execute(self, stmt):
+                raise AssertionError("авансовая закупка не должна упираться в wish_id-гейт")
+
+        asyncio.run(pr._guard_feo_category_change_after_approval(p, 2, user, _FakeDBNoOp()))  # не бросает
+
+
+def test_advance_purchase_approved_still_hits_ordinary_approval_lock():
+    """Авансовая закупка обходит ТОЛЬКО wish_id-замок — обычный
+    approval-гейт (FEO_CATEGORY_LOCKED_AFTER_APPROVAL, с суперадмин-обходом)
+    продолжает действовать как для любой другой согласованной закупки."""
+    p = _mk_purchase(wish_id=555, feo_category_id=1, approval_status="approved", purchase_method="advance")
+    user = _mk_user(role="employee")
+
+    class _FakeDBNoOp:
+        async def get(self, model, id_):
+            return None
+
+        async def execute(self, stmt):
+            raise AssertionError("approval-гейт не должен трогать БД")
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(pr._guard_feo_category_change_after_approval(p, 2, user, _FakeDBNoOp()))
+    assert exc_info.value.detail["code"] == "FEO_CATEGORY_LOCKED_AFTER_APPROVAL"
 
 
 def test_purchase_without_wish_id_keeps_old_approval_behavior():

@@ -473,15 +473,18 @@
                 :allow-unallocated="!!form.subsidy_id"
                 :required="formMode !== 'service_note_delivery' && formMode !== 'advance_report'"
                 :root-label="selectedSubsidyName"
-                :readonly="!!purchaseData?.wish_id"
+                :readonly="isFeoHeaderLocked"
                 @pick-unallocated="onFeoPickUnallocated"
               />
               <!-- Замок категории (владелец, 2026-09-20): «категория закупки из
                    заявки не меняется, менять — в плане» — тот же текст и то же
                    условие, что и в per-item пикерах (utils/feoItemLock.ts,
                    ПРАВИЛО №6), бэкенд отклоняет попытку 422
-                   FEO_CATEGORY_LOCKED_FROM_WISH (см. purchases.py). -->
-              <div v-if="purchaseData?.wish_id" class="text-caption text-medium-emphasis mt-1">
+                   FEO_CATEGORY_LOCKED_FROM_WISH (см. purchases.py). НЕ
+                   применяется к авансовым отчётам (isFeoHeaderLocked
+                   исключает purchase_method==='advance' — см. баг 2026-09-29,
+                   РЕЕ-2026-00960, докстринг isPurchaseFeoHeaderLocked). -->
+              <div v-if="isFeoHeaderLocked" class="text-caption text-medium-emphasis mt-1">
                 {{ FEO_CATEGORY_LOCKED_HINT }}
               </div>
             </v-col>
@@ -494,7 +497,7 @@
                  позиции ниже (ItemsTableFlat/ItemsTableStages, feo-attrs-row). -->
             <v-col v-if="form.subsidy_id && feoHeaderCategoriesDiffer" cols="12" md="4">
               <div class="text-body-2">Разные категории — указаны в каждой позиции</div>
-              <div v-if="purchaseData?.wish_id" class="text-caption text-medium-emphasis mt-1">
+              <div v-if="isFeoHeaderLocked" class="text-caption text-medium-emphasis mt-1">
                 {{ FEO_CATEGORY_LOCKED_HINT }}
               </div>
             </v-col>
@@ -1979,7 +1982,7 @@ import type { ContractItem } from '@/types/contractItem'
 import { useOrgConfig } from '@/composables/useOrgConfig'
 import { productPhotoSrc } from '@/utils/productPhoto'
 import { describeApiError } from '@/utils/apiErrorMessage'
-import { FEO_CATEGORY_LOCKED_HINT } from '@/utils/feoItemLock'
+import { FEO_CATEGORY_LOCKED_HINT, isPurchaseFeoHeaderLocked } from '@/utils/feoItemLock'
 import PurchaseEventFeed from '@/components/PurchaseEventFeed.vue'
 import ApprovalPanel from '@/components/purchase/ApprovalPanel.vue'
 import PurchaseHeader from '@/components/purchase/PurchaseHeader.vue'
@@ -3677,6 +3680,16 @@ const feoCategoryMissing = computed(() =>
 // быть выставлен широким историческим бэкфиллом даже когда позиции по факту
 // делят одну категорию, см. миграцию w1x2y3z4a5b6_wish_purchase_feo_per_item_vat.py
 // — второго источника «различаются ли категории» не заводим, Правило №6).
+// Баг 2026-09-29 (авансовый отчёт РЕЕ-2026-00960): см. докстринг
+// isPurchaseFeoHeaderLocked в utils/feoItemLock.ts — авансовые отчёты всегда
+// получают wish_id (заявка-компаньон на возмещение), но это не значит, что
+// категория пришла из плана; замок должен зависеть от purchase_method, а не
+// от голого факта wish_id (тот же предикат, что и на бэке — ПРАВИЛО №6).
+const isFeoHeaderLocked = computed(() => isPurchaseFeoHeaderLocked({
+  wish_id: purchaseData.value?.wish_id,
+  purchase_method: form.purchase_method,
+}))
+
 const feoHeaderCategoriesDiffer = computed(() => {
   if (form.feo_category_id != null) return false
   const cats = new Set(items.value.map(i => i.feo_category_id).filter((v: any): v is number => v != null))

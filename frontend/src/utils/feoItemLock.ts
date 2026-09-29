@@ -36,3 +36,26 @@ export function feoLockChipLabel(item: FeoLockableItem | null | undefined): stri
   if (item.feo_planned_item_id != null) return 'из плана'
   return null
 }
+
+// Шапочный замок категории ФЭО закупки (CreateOrderView.vue::FeoTreeSelect).
+// Баг 2026-09-29 (авансовый отчёт РЕЕ-2026-00960): purchase.wish_id ставится
+// ДЛЯ ЛЮБОГО авансового отчёта — у него всегда есть заявка-компаньон
+// «на возмещение» (см. backend/app/routers/purchases.py::create_purchase,
+// ветка is_advance, и app/services/wish_advance_conversion.py), но эта заявка
+// НЕ источник плана — она создаётся ПОСЛЕ закупки, только чтобы завести
+// маршрут согласования возмещения. Прежнее условие `!!purchaseData?.wish_id`
+// принимало любую такую закупку за «рождённую из заявки/плана» и намертво
+// блокировало выбор категории — ровно симметрично backend-гейду
+// _guard_feo_category_change_after_approval в purchases.py (тот же баг был и
+// там: проверял голый wish_id, а не purchase_method). Один и тот же предикат
+// на фронте и бэке (ПРАВИЛО №6): замок только если закупка НЕ авансовая.
+export interface FeoHeaderLockableItem {
+  wish_id?: number | null
+  purchase_method?: string | null
+}
+
+export function isPurchaseFeoHeaderLocked(p: FeoHeaderLockableItem | null | undefined): boolean {
+  if (!p) return false
+  if (p.wish_id == null) return false
+  return p.purchase_method !== 'advance'
+}

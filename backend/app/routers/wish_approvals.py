@@ -331,6 +331,10 @@ async def reorder_wish_approvers(
     wish = await _get_wish_or_403(wid, current_user, db)
     if not _is_saas(current_user) and wish.status not in ("draft", "rejected"):
         raise HTTPException(400, "Порядок можно менять только у черновика или отклонённой заявки")
+    # Владелец: «Согласующих можно менять местами только при последовательном
+    # согласовании» — при parallel все решают одновременно, порядок не значим.
+    if wish.approval_mode == "parallel":
+        raise HTTPException(409, "Порядок согласующих меняется только при последовательном согласовании")
     ids = body.get("ids") or []
     rows = await _load_approvals(wid, db)
     by_id = {a.id: a for a in rows}

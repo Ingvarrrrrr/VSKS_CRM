@@ -29,7 +29,7 @@ import { ref, computed, watch, type Ref } from 'vue'
 import { apiFetch } from '@/api'
 import type { ToastType } from '@/composables/useToast'
 import type { Receipt, ReceiptFile } from '@/composables/purchase/usePurchaseReceipts'
-import { callApproverCascade, ensureApproversBeforeSubmit } from '@/composables/wishes/useApproverCascade'
+import { callApproverCascade, ensureApproversBeforeSubmit, moveApprover as moveApproverShared } from '@/composables/wishes/useApproverCascade'
 
 export interface AdvanceWishDetail {
   id: number
@@ -278,6 +278,23 @@ export function useAdvanceReimbursement(
     }
   }
 
+  // Перестановка местами (стрелки вверх/вниз) — только при последовательном
+  // согласовании (владелец), общая логика в useApproverCascade.ts::moveApprover
+  // (ПРАВИЛО №6, та же функция зовётся из useWishApprovers.ts для обычной заявки).
+  async function moveApprover(idx: number, dir: number) {
+    if (!wishId.value) return
+    reorderLoading.value = true
+    try {
+      await moveApproverShared<AdvanceApprover>({
+        apiFetch, wishId: wishId.value, approvers: approvers.value, idx, dir,
+        onApprovers: (list) => { approvers.value = list },
+        onError: (msg) => showSnack(msg, 'error'),
+      })
+    } finally {
+      reorderLoading.value = false
+    }
+  }
+
   async function decideApprover(approvalId: number, decision: 'approved' | 'rejected') {
     if (!wishId.value) return
     decideLoading.value = approvalId
@@ -351,7 +368,7 @@ export function useAdvanceReimbursement(
     approvers, approverTopUser, approvalMode, cascadeLoading, approverToAdd,
     decideComment, decideLoading, reorderLoading, approvalStatusColor, approvalStatusLabel,
     topApproverCandidates, loadTopApproverCandidates,
-    isEditable, loadApprovers, runCascade, registerTopApproverEl, addApprover, removeApprover, decideApprover,
+    isEditable, loadApprovers, runCascade, registerTopApproverEl, addApprover, removeApprover, moveApprover, decideApprover,
     canDecideApprover, isDecidingOnBehalf, approverDecisionLine,
   }
 }

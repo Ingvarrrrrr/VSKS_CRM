@@ -3,7 +3,7 @@
 // Дословный перенос из WishesView.vue при разбиении файла на компоненты/композаблы.
 import { computed, ref } from 'vue'
 import { refreshMyPendingApprovals } from '@/composables/useApprovalsBadge'
-import { callApproverCascade, ensureApproversBeforeSubmit } from './useApproverCascade'
+import { callApproverCascade, ensureApproversBeforeSubmit, moveApprover as moveApproverShared } from './useApproverCascade'
 import type { WishesContext } from './useWishesContext'
 import type { Wish, WishApprover, WishMember } from './wishTypes'
 import type { UseWishFormReturn } from './useWishForm'
@@ -189,21 +189,13 @@ export function useWishApprovers(deps: {
   const reorderLoading = ref(false)
   async function moveApprover(idx: number, dir: number) {
     if (!editingWishId.value) return
-    const j = idx + dir
-    if (j < 0 || j >= wishApprovers.value.length) return
-    const arr: WishApprover[] = [...wishApprovers.value]
-    const tmp: WishApprover = arr[idx]!
-    arr[idx] = arr[j]!
-    arr[j] = tmp
     reorderLoading.value = true
     try {
-      wishApprovers.value = await apiFetch<WishApprover[]>(
-        `/wishes/${editingWishId.value}/approvers/reorder`,
-        { method: 'POST', body: JSON.stringify({ ids: arr.map(a => a.id) }) },
-      )
-      syncIsChainApprover()
-    } catch (e: any) {
-      showSnack(e?.payload?.message || e?.message || 'Не удалось изменить порядок согласующих', 'error')
+      await moveApproverShared<WishApprover>({
+        apiFetch, wishId: editingWishId.value, approvers: wishApprovers.value, idx, dir,
+        onApprovers: (list) => { wishApprovers.value = list; syncIsChainApprover() },
+        onError: (msg) => showSnack(msg, 'error'),
+      })
     } finally {
       reorderLoading.value = false
     }

@@ -54,6 +54,40 @@ export async function callApproverCascade<A extends CascadeApprover = CascadeApp
   )
 }
 
+// Перестановка согласующих местами (стрелки вверх/вниз) — владелец: «Согласующих
+// можно менять местами только при последовательном согласовании» (parallel — все
+// решают одновременно, порядок не имеет смысла). Общая логика для обычной заявки
+// (useWishApprovers.ts) и карточки-компаньона авансового отчёта
+// (useAdvanceReimbursement.ts) — ПРАВИЛО №6, второй расчёт перестановки не заводим.
+// Видимость стрелок (approvalMode === 'sequential') — на вызывающей стороне
+// (шаблон), backend дополнительно отбивает reorder при parallel 409-м.
+export async function moveApprover<A extends CascadeApprover = CascadeApprover>(opts: {
+  apiFetch: typeof import('@/api').apiFetch
+  wishId: number
+  approvers: A[]
+  idx: number
+  dir: number
+  onApprovers: (approvers: A[]) => void
+  onError: (message: string) => void
+}): Promise<void> {
+  const { apiFetch, wishId, approvers, idx, dir, onApprovers, onError } = opts
+  const j = idx + dir
+  if (j < 0 || j >= approvers.length) return
+  const arr: A[] = [...approvers]
+  const tmp = arr[idx]!
+  arr[idx] = arr[j]!
+  arr[j] = tmp
+  try {
+    const res = await apiFetch<A[]>(
+      `/wishes/${wishId}/approvers/reorder`,
+      { method: 'POST', body: JSON.stringify({ ids: arr.map(a => a.id) }) },
+    )
+    onApprovers(res)
+  } catch (e: any) {
+    onError(e?.payload?.message || e?.message || 'Не удалось изменить порядок согласующих')
+  }
+}
+
 export type EnsureApproversResult =
   | { ok: true }
   | { ok: false; reason: 'no-top' }

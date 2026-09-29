@@ -96,6 +96,24 @@
             <v-chip size="small" :color="approvalStatusColor[a.status]" variant="tonal">
               {{ approvalStatusLabel[a.status] || a.status }}
             </v-chip>
+            <template v-if="isEditable && approvalMode === 'sequential' && approvers.length > 1">
+              <v-btn
+                icon="mdi-arrow-up"
+                size="x-small"
+                variant="text"
+                :disabled="ai === 0 || reorderLoading"
+                title="Поднять в очереди согласования"
+                @click="moveApprover(ai, -1)"
+              />
+              <v-btn
+                icon="mdi-arrow-down"
+                size="x-small"
+                variant="text"
+                :disabled="ai === approvers.length - 1 || reorderLoading"
+                title="Опустить в очереди согласования"
+                @click="moveApprover(ai, 1)"
+              />
+            </template>
             <v-btn v-if="a.status === 'pending' && isEditable" icon="mdi-close" size="x-small" variant="text"
               @click="removeApprover(a.id)" />
           </div>
@@ -186,9 +204,9 @@ const props = defineProps<{
 const {
   wish, submitting, statusLabel, statusColor, hasReceipts, canSubmit, submit,
   approvers, approverTopUser, approvalMode, cascadeLoading, approverToAdd,
-  decideComment, decideLoading, approvalStatusColor, approvalStatusLabel,
+  decideComment, decideLoading, reorderLoading, approvalStatusColor, approvalStatusLabel,
   topApproverCandidates,
-  isEditable, runCascade, registerTopApproverEl, addApprover, removeApprover, decideApprover,
+  isEditable, runCascade, registerTopApproverEl, addApprover, removeApprover, moveApprover, decideApprover,
   canDecideApprover, isDecidingOnBehalf, approverDecisionLine,
 } = useAdvanceReimbursement(
   toRef(props, 'wishId'),

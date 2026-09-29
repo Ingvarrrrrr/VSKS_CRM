@@ -737,7 +737,7 @@
                     <v-chip size="small" :color="approvalStatusColor[a.status]" variant="tonal">
                       {{ approvalStatusLabel[a.status] || a.status }}
                     </v-chip>
-                    <template v-if="isWishEditable && wishApprovers.length > 1">
+                    <template v-if="isWishEditable && approvalMode === 'sequential' && wishApprovers.length > 1">
                       <v-btn
                         icon="mdi-arrow-up"
                         size="x-small"

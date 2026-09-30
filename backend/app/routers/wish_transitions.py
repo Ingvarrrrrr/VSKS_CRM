@@ -380,7 +380,7 @@ async def patch_wish_execution(
     # (например, случайный юрист) мог сам перетыкивать позиции. Остальные поля
     # этого эндпоинта (executor_id/execution_deadline/event_id/assigned_to) это
     # право не трогает — их разрешают проверки выше (цепочка/assignee/менеджер+).
-    _feo_fields_touched = body.feo_category_id is not None or body.items is not None
+    _feo_fields_touched = body.feo_category_id is not None or body.items is not None or body.subsidy_id is not None
     if _feo_fields_touched and current_user.role != "superadmin":
         if not await has_org_key(current_user, db, wish.org_id, "wish.edit_feo", subsidy_id=wish.subsidy_id):
             raise HTTPException(
@@ -394,11 +394,38 @@ async def patch_wish_execution(
         wish.execution_deadline = body.execution_deadline
     if body.event_id is not None:
         wish.event_id = body.event_id
+    # Владелец (2026-09-30, инцидент РЕЕ-2026-00973/заявка №95): согласующий
+    # (wish.edit_feo) пересматривает субсидию заявки-компаньона авансового —
+    # та же проверка «субсидия не черновик», что и в update_wish/create_purchase
+    # (ПРАВИЛО №6, не вторая копия).
+    if body.subsidy_id is not None:
+        from app.services.subsidy_draft_guard import assert_subsidy_approved_for_binding
+        await assert_subsidy_approved_for_binding(db, body.subsidy_id)
+        wish.subsidy_id = body.subsidy_id
     if body.feo_category_id is not None:
         wish.feo_category_id = body.feo_category_id
     # W2: assigned_to меняется без сброса цепочки согласования
     if body.assigned_to is not None:
         wish.assigned_to = body.assigned_to
+
+    # W2 (2026-09-30): шапка (subsidy_id/feo_category_id/event_id), которую
+    # согласующий только что поправил выше, — для компаньона авансового
+    # отчёта зеркалится в связанную закупку тем же принципом «заявка ЗЕРКАЛО
+    # закупки», применённым в обратную сторону (см. advance_wish_sync.py::
+    # apply_wish_header_to_purchase). Построчная привязка ФЭО уже зеркалится
+    # ниже (apply_wish_item_feo_link_to_purchase_item) — здесь только шапка.
+    if getattr(wish, "source", None) == "advance_report" and (
+        body.subsidy_id is not None or body.feo_category_id is not None or body.event_id is not None
+    ):
+        from app.models.purchase import Purchase as _PurchaseHdr
+        from app.services.advance_wish_sync import apply_wish_header_to_purchase
+        _companion_purchase = (await db.execute(
+            select(_PurchaseHdr).where(
+                _PurchaseHdr.wish_id == wish.id, _PurchaseHdr.purchase_method == "advance",
+            ).limit(1)
+        )).scalar_one_or_none()
+        if _companion_purchase:
+            apply_wish_header_to_purchase(_companion_purchase, wish)
 
     # Владелец (2026-08-19): построчные ФЭО-правки согласующего (см.
     # WishItemFeoPatch) — состав заявки для него заблокирован на фронте

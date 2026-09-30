@@ -234,11 +234,31 @@ export function useWishItemsFeoAutosave(deps: {
     }
   }
 
+  // Владелец (2026-09-30, инцидент РЕЕ-2026-00973/заявка №95): согласующий
+  // (право wish.edit_feo) может пересмотреть субсидию заявки-компаньона
+  // авансового отчёта — тот же точечный PATCH /execution, что и у
+  // saveEventId/saveAssignedTo, без лишних полей (см. wish_transitions.py::
+  // patch_wish_execution, WishExecutionPatch.subsidy_id).
+  async function saveSubsidyId(val: number | null) {
+    if (!editingWishId.value) return
+    try {
+      await apiFetch(`/wishes/${editingWishId.value}/execution`, {
+        method: 'PATCH',
+        body: JSON.stringify({ subsidy_id: val }),
+      })
+      if (editingWish.value) (editingWish.value as any).subsidy_id = val
+      showSnack('Субсидия обновлена')
+      await reloadActiveTab()
+    } catch (e: any) {
+      showSnack(`Ошибка: ${e?.payload?.message || e?.message || 'не удалось сохранить'}`, 'error')
+    }
+  }
+
   return {
     wishItemsFeoSnapshot, snapshotWishItemsFeo, wishItemsFeoDirtyList, wishItemsFeoDirty,
     feoAutosavePending, feoAutosaveSaving, feoAutosaveApplicable, wishFeoHeaderDirty,
     scheduleFeoAutosave, runFeoAutosave, flushFeoAutosave,
-    savingExecution, saveExecution, saveAssignedTo, saveEventId,
+    savingExecution, saveExecution, saveAssignedTo, saveEventId, saveSubsidyId,
   }
 }
 

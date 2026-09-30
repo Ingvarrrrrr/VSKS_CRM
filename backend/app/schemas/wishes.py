@@ -305,6 +305,12 @@ class WishExecutionPatch(BaseModel):
     execution_deadline: Optional[date] = None
     event_id: Optional[int] = None
     feo_category_id: Optional[int] = None
+    # Владелец (2026-09-30, инцидент РЕЕ-2026-00973/заявка №95): согласующий
+    # с правом wish.edit_feo может пересмотреть не только категорию ФЭО, но и
+    # субсидию заявки-компаньона авансового отчёта целиком (WishFormDialog.vue,
+    # поле «Субсидия» — см. patch_wish_execution, тот же гейт, что и у
+    # feo_category_id/items).
+    subsidy_id: Optional[int] = None
     assigned_to: Optional[int] = None
     # Построчные ФЭО-правки согласующего (см. WishItemFeoPatch) — отдельно от
     # WishUpdate.items (тот меняет состав, доступен только автору/участнику).

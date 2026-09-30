@@ -9,7 +9,7 @@
         </div>
       </v-overlay>
       <v-card-title class="pa-4 pb-2 d-flex align-center justify-space-between">
-        <span>{{ editingWishId ? `Заявка №${editingWishId} — редактирование` : 'Новая заявка' }}</span>
+        <span>{{ editingWishId ? `Заявка №${editingWishId}${wishDialogTitleSuffix}` : 'Новая заявка' }}</span>
         <!-- Phase 31-07: Undo/Redo кнопки -->
         <div class="d-flex ga-1 align-center">
           <v-btn
@@ -183,9 +183,11 @@
                     density="compact"
                     :rules="[v => !!v || 'Выберите субсидию']"
                     clearable
-                    :readonly="!isWishEditable"
+                    :readonly="!isWishEditable && !canEditWishFeo"
+                    :hint="!isWishEditable && canEditWishFeo ? 'Вы согласующий — можете изменить субсидию, если не согласны с выбором автора' : undefined"
+                    :persistent-hint="!isWishEditable && canEditWishFeo"
                     data-field="subsidy_id"
-                    @update:model-value="onSubsidyChange"
+                    @update:model-value="(val: number | null) => { onSubsidyChange(); if (!isWishEditable && canEditWishFeo) saveSubsidyId(val) }"
                   />
                 </v-col>
                 <v-col cols="12" md="6">
@@ -1289,6 +1291,7 @@
 // wishApprovers/feoAutosaveSaving/feoAutosavePending и функции открытия/действий)
 // через defineExpose — единственное официально разрешённое место для него по
 // заданию, здесь расширенное на этот один непреодолимый случай.
+import { computed } from 'vue'
 import { useWishLive } from '@/composables/useWishLive'
 import { refreshMyPendingApprovals } from '@/composables/useApprovalsBadge'
 import PurchaseItemsEditor from '@/components/PurchaseItemsEditor.vue'
@@ -1469,7 +1472,20 @@ const {
   canDecideApprover, isDecidingOnBehalf, approverDecisionLine,
 } = approvers
 
-const { feoAutosavePending, feoAutosaveSaving, wishItemsFeoDirty, savingExecution, saveExecution, saveAssignedTo, saveEventId } = autosave
+const { feoAutosavePending, feoAutosaveSaving, wishItemsFeoDirty, savingExecution, saveExecution, saveAssignedTo, saveEventId, saveSubsidyId } = autosave
+
+// Владелец (2026-09-30): заголовок диалога — суффикс по статусу заявки, а не
+// всегда «редактирование» (диалог открывался тем же заголовком и для
+// заявки на согласовании, и для уже согласованной — вводило в заблуждение
+// согласующего/автора о том, что он вообще видит).
+const wishDialogTitleSuffix = computed(() => {
+  const status = (wishForm.value as any)?.status
+  if (!editingWishId.value || !status) return ''
+  if (status === 'draft' || status === 'rejected') return ' — редактирование'
+  if (status === 'submitted') return canDecideWish.value ? ' — согласование' : ' — на согласовании'
+  if (status === 'approved' || status === 'converted') return ' — согласована'
+  return ''
+})
 
 // useWishLive нужен родителю (WishesView.vue) для бейджа/подгрузки списков после
 // внешних изменений — здесь достаточно, что composable сам запускается/

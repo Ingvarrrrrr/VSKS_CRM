@@ -1918,6 +1918,29 @@ async def _guard_feo_category_change_after_approval(
 
 
 
+# Владелец (2026-09-30, инцидент РЕЕ-2026-00973/заявка №95): subsidy_id —
+# намеренно НЕ в PATCHABLE_FIELDS ниже, хотя фронт (CreateOrderView.vue,
+# v-select #pub-target-subsidy) шлёт его именно через автосейв (PATCH),
+# особенно для авансовых отчётов. Раньше поле молча отбрасывалось (не было в
+# наборе вовсе) — субсидия, выбранная на форме, никогда не сохранялась.
+# Обрабатывается ОТДЕЛЬНЫМ блоком перед общим циклом ниже (тот же приём, что
+# и feo_category_id/_guard_feo_category_change_after_approval): нужны свои
+# проверки (assert_subsidy_approved_for_binding + согласованность с
+# feo_category_id) и свой статус-гейт, которых нет у остальных полей набора.
+# Разрешена ТОЛЬКО на стадиях до договора — после него смена финансирования
+# задним числом ломает уже подписанный договор.
+SUBSIDY_PATCHABLE_STATUSES = {"draft", "wishes", "plan_schedule"}
+
+# Владелец (2026-09-30): поля, которые PATCH тихо отбрасывает по замыслу
+# (не баг, а задокументированное решение — см. комментарий у "acceptance_docs"
+# ниже, ПРАВИЛО №6 D4) — не включаются в ignored_fields ответа, чтобы не пугать
+# автосейв предупреждением на каждый чих. Любое ДРУГОЕ поле тела запроса, не
+# входящее в PATCHABLE_FIELDS, теперь ПЕРЕЧИСЛЯЕТСЯ в ответе (ignored_fields) —
+# раньше пропадало без следа (ровно так потерялся subsidy_id).
+_PATCH_SILENTLY_IGNORED_LEGACY_FIELDS = {
+    "acceptance_doc_name", "acceptance_doc_date", "acceptance_doc_number", "acceptance_doc_amount",
+}
+
 # Phase 26: автосохранение полей карточки закупки.
 # Принимает произвольный частичный JSON; обновляет только переданные поля.
 # Не пересчитывает items/НМЦК/contract_price (этим занимается PUT при явном Save).
@@ -2051,6 +2074,47 @@ async def patch_purchase(
     _contract_fields_ignored_patch: list[str] = []
 
     changed: list[str] = []
+
+    # Владелец (2026-09-30, инцидент РЕЕ-2026-00973/заявка №95): субсидия —
+    # см. докстринг у SUBSIDY_PATCHABLE_STATUSES выше. Обрабатывается здесь
+    # (до generic-цикла), а не через PATCHABLE_FIELDS, потому что нужны
+    # проверки, которых у остальных полей набора нет: субсидия не черновик
+    # (та же assert_subsidy_approved_for_binding, что и в PUT/create) и
+    # согласованность с уже выбранной (или приходящей этим же PATCH)
+    # категорией ФЭО — FeoCategory.subsidy_id NOT NULL/FK, категория
+    # принадлежит ровно одной субсидии (см. models/feo_category.py).
+    _subsidy_id_ignored_patch = False
+    if "subsidy_id" in (body or {}):
+        _new_subsidy_id_patch = _coerce_patch_value("subsidy_id", body["subsidy_id"])
+        if p.status not in SUBSIDY_PATCHABLE_STATUSES:
+            # После договора смена финансирования задним числом ломает уже
+            # подписанный договор — как и раньше, значение отбрасывается, но
+            # теперь ЯВНО (см. ignored_fields в ответе), не молча.
+            _subsidy_id_ignored_patch = True
+        elif _new_subsidy_id_patch != p.subsidy_id:
+            from app.services.subsidy_draft_guard import assert_subsidy_approved_for_binding
+            await assert_subsidy_approved_for_binding(db, _new_subsidy_id_patch)
+            _effective_feo_cat_for_subsidy_check = (
+                _coerce_patch_value("feo_category_id", body["feo_category_id"])
+                if "feo_category_id" in (body or {}) else p.feo_category_id
+            )
+            if _new_subsidy_id_patch and _effective_feo_cat_for_subsidy_check:
+                _cat_row_for_subsidy_check = await db.get(FeoCategory, _effective_feo_cat_for_subsidy_check)
+                if _cat_row_for_subsidy_check and _cat_row_for_subsidy_check.subsidy_id != _new_subsidy_id_patch:
+                    raise HTTPException(
+                        422,
+                        detail={
+                            "code": "FEO_CATEGORY_SUBSIDY_MISMATCH",
+                            "message": (
+                                f"Категория ФЭО «{_cat_row_for_subsidy_check.name}» относится к другой "
+                                "субсидии — сначала снимите категорию ФЭО или выберите категорию из "
+                                "новой субсидии."
+                            ),
+                        },
+                    )
+            p.subsidy_id = _new_subsidy_id_patch
+            changed.append("subsidy_id")
+
     for k, v in (body or {}).items():
         if k not in PATCHABLE_FIELDS:
             continue
@@ -2104,12 +2168,50 @@ async def patch_purchase(
             bool(p.feo_per_item), db,
         )
 
+    # Владелец (2026-09-30, инцидент РЕЕ-2026-00973/заявка №95): авансовый —
+    # заявка-компаньон ЗЕРКАЛО закупки при ЛЮБОМ статусе (тот же принцип, что
+    # уже применён в update_purchase к содержимому позиций/цене/названию, см.
+    # комментарий там). PUT пересобирает WishItems при каждом сохранении, но
+    # шапку (subsidy_id/feo_category_id/event_id) там никто не зеркалил, а
+    # именно этот PATCH — единственный канал, которым фронт вообще шлёт
+    # subsidy_id (см. CreateOrderView.vue::serializeFormForAutosave) — был
+    # реальным путём расхождения. ПРАВИЛО №6: общий хелпер в
+    # app/services/advance_wish_sync.py, не вторая копия.
+    _wish_header_synced: list[str] = []
+    if p.purchase_method == "advance" and p.wish_id and any(
+        f in changed for f in ("subsidy_id", "feo_category_id", "event_id")
+    ):
+        from app.models.wish import Wish as _WishHdrPatch
+        from app.services.advance_wish_sync import sync_wish_header_from_purchase
+        _wish_hdr_patch = await db.get(_WishHdrPatch, p.wish_id)
+        if _wish_hdr_patch and getattr(_wish_hdr_patch, "source", None) == "advance_report":
+            _wish_header_synced = sync_wish_header_from_purchase(_wish_hdr_patch, p)
+
+    # Владелец (2026-09-30): PATCH больше не отбрасывает непатчабельные поля
+    # молча — раньше subsidy_id пропадал без следа именно так. Всё, что
+    # пришло в теле запроса, но не входит в PATCHABLE_FIELDS и не входит в
+    # заведомо-игнорируемый legacy-набор (см. _PATCH_SILENTLY_IGNORED_LEGACY_FIELDS,
+    # ПРАВИЛО №6 D4 — это осознанное решение, не баг), перечисляется в ответе,
+    # чтобы фронт мог предупредить пользователя (см. usePurchaseAutosave/
+    # performAutosave в CreateOrderView.vue).
+    _ignored_fields_patch = [
+        k for k in (body or {}).keys()
+        if k not in PATCHABLE_FIELDS
+        and k != "subsidy_id"
+        and k not in _PATCH_SILENTLY_IGNORED_LEGACY_FIELDS
+    ]
+    if _subsidy_id_ignored_patch:
+        _ignored_fields_patch.append("subsidy_id")
+    _ignored_fields_patch.sort()
+
     if changed:
         await db.commit()
         await db.refresh(p)
     return {
         "id": p.id, "changed": changed, "feo_links_reset": _feo_links_reset,
         "contract_fields_ignored": _contract_fields_ignored_patch,
+        "ignored_fields": _ignored_fields_patch,
+        "wish_header_synced": _wish_header_synced,
     }
 
 

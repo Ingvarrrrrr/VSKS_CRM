@@ -2619,6 +2619,12 @@ function serializeFormForAutosave() {
     subject: f.subject,
     description: f.description,
     contractor_id: f.contractor_id,
+    // Владелец (2026-09-30, инцидент РЕЕ-2026-00973/заявка №95): subsidy_id
+    // раньше не входил в автосейв вовсе — выбор субсидии на форме (v-select
+    // #pub-target-subsidy) молча терялся, особенно у авансовых отчётов, где
+    // это единственная форма сохранения. Бэкенд теперь тоже принимает поле
+    // (PATCH /api/purchases/{id}, см. routers/purchases.py::patch_purchase).
+    subsidy_id: f.subsidy_id ?? null,
     feo_category_id: f.feo_category_id,
     purchase_method: f.purchase_method,
     competitive_form: f.competitive_form,
@@ -2738,6 +2744,21 @@ function showExcessWarnings(warnings: PurchaseExcessWarning[] | null | undefined
   showSnack(warnings.map(w => w.message).join(' '), 'warning')
 }
 
+// Владелец (2026-09-30, инцидент РЕЕ-2026-00973/заявка №95): бэкенд больше
+// не отбрасывает непатчабельные поля автосейва молча — перечисляет их в
+// ignored_fields (см. routers/purchases.py::patch_purchase). subsidy_id из
+// этого списка исключён СОЗНАТЕЛЬНО (лейбл ниже) — он либо применяется, либо
+// отклоняется с понятной причиной через 422 (см. FEO_CATEGORY_SUBSIDY_MISMATCH),
+// либо намеренно не патчится на поздних стадиях (SUBSIDY_PATCHABLE_STATUSES).
+const IGNORED_FIELD_LABELS: Record<string, string> = {
+  subsidy_id: 'Субсидия (закупка уже на стадии договора)',
+}
+function describeIgnoredFields(fields: string[] | null | undefined) {
+  if (!fields || !fields.length) return
+  const names = fields.map(f => IGNORED_FIELD_LABELS[f] || f).join(', ')
+  showSnack(`Не сохранено автосохранением: ${names}. Проверьте эти поля.`, 'warning')
+}
+
 async function performAutosave() {
   if (!isEdit.value || !purchaseId.value) return
   const current = serializeFormForAutosave()
@@ -2752,6 +2773,7 @@ async function performAutosave() {
       if (autosaveState.value === 'saved') autosaveState.value = 'idle'
     }, 2000)
     if (resp?.feo_links_reset) await handleFeoLinksReset(resp.feo_links_reset)
+    describeIgnoredFields(resp?.ignored_fields)
   } catch (e: any) {
     autosaveState.value = 'error'
     autosaveError.value = e?.message || 'Не удалось сохранить'

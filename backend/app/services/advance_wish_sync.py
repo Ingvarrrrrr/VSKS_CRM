@@ -85,6 +85,52 @@ def apply_wish_item_feo_link_to_purchase_item(pi, wi) -> None:
     pi.over_plan = bool(getattr(wi, 'over_plan', False))
 
 
+def sync_wish_header_from_purchase(wish, purchase) -> list[str]:
+    """subsidy_id/feo_category_id/event_id заявки-компаньона ← закупка,
+    БЕЗУСЛОВНО (не только пустые поля — заявка ЗЕРКАЛО закупки при любом
+    статусе, тот же принцип, что и для содержимого/цены/названия в
+    routers/purchases.py::update_purchase, см. докстринг там).
+
+    Вызывается из patch_purchase (автосейв карточки закупки) — единственный
+    канал, которым фронт вообще шлёт subsidy_id (CreateOrderView.vue::
+    serializeFormForAutosave), поэтому именно PATCH был реальным путём
+    расхождения (прод, 2026-09-30: закупка РЕЕ-2026-00973/заявка №95,
+    subsidy_id закупки менялся, заявка оставалась со старым/пустым значением).
+
+    Возвращает список реально изменённых полей заявки (для ответа/лога,
+    см. "wish_header_synced" в PATCH-ответе purchases.py).
+    """
+    changed: list[str] = []
+    for f in ("subsidy_id", "feo_category_id", "event_id"):
+        pv = getattr(purchase, f)
+        if getattr(wish, f) != pv:
+            setattr(wish, f, pv)
+            changed.append(f)
+    return changed
+
+
+def apply_wish_header_to_purchase(purchase, wish) -> list[str]:
+    """Обратное направление относительно sync_wish_header_from_purchase:
+    subsidy_id/feo_category_id/event_id заявки-компаньона → закупка.
+
+    Вызывается из wish_transitions.py::patch_wish_execution, когда
+    согласующий (право wish.edit_feo) меняет субсидию/категорию ФЭО/
+    мероприятие в карточке заявки-компаньона авансового отчёта
+    (WishFormDialog.vue — поле «Субсидия» редактируемо для такого
+    согласующего). Построчная привязка ФЭО уже зеркалится отдельно
+    (apply_wish_item_feo_link_to_purchase_item выше) — здесь только шапка.
+
+    Возвращает список реально изменённых полей закупки.
+    """
+    changed: list[str] = []
+    for f in ("subsidy_id", "feo_category_id", "event_id"):
+        wv = getattr(wish, f)
+        if getattr(purchase, f) != wv:
+            setattr(purchase, f, wv)
+            changed.append(f)
+    return changed
+
+
 def sync_wish_contract_and_contractor(wish, purchase, creator) -> None:
     """contract_form/контрагент компаньона ← закупка (с фолбэками).
 

@@ -875,9 +875,7 @@
    repeating-linear-gradient не заводим, Правило №6). !important — тот же
    приём, что и у .feo-kpi-hl: перебивает собственный background ячеек
    (feo-amount-cell, чётные/нечётные строки и т.п.). */
-.subsidies-page .feo-fully-purchased-row,
-.subsidies-page .feo-fully-purchased-row > .feo-td,
-.subsidies-page .feo-fully-purchased-row > td {
+.subsidies-page .feo-fully-purchased-row {
   background-image: repeating-linear-gradient(
     45deg,
     rgba(34, 197, 94, 0.18) 0px,
@@ -886,27 +884,31 @@
     transparent 12px
   ) !important;
 }
-/* Вложенные обёртки внутри ячеек (v-sheet/v-card/иные непрозрачные подложки)
-   красят свой собственный белый/поверхностный фон ПОВЕРХ фона td и полностью
-   скрывают штриховку/точки — владелец, 30.09.2026, уточнение: «видно всю
-   строку, не только в наведении». Явно прозрачный фон только у контейнеров
-   БЕЗ собственного смыслового цвета (не трогаем v-chip/бейджи/красные
-   предупреждения — у них цвет несёт значение). */
+/* Ячейки строки — узор задаётся ОДИН раз на самой строке (tr/контейнер) выше;
+   у ячеек и их подложек background полностью прозрачный, иначе узор в каждой
+   ячейке стартует заново и накладывается (владелец, 30.09.2026, уточнение:
+   «узор должен идти сплошным ровным полотном по всей строке»). Вложенные
+   обёртки внутри ячеек (v-sheet/v-card/иные непрозрачные подложки) красят
+   свой собственный белый/поверхностный фон ПОВЕРХ фона td и полностью скрывают
+   штриховку — явно прозрачный фон только у контейнеров БЕЗ собственного
+   смыслового цвета (не трогаем v-chip/бейджи/красные предупреждения — у них
+   цвет несёт значение). */
+.subsidies-page .feo-fully-purchased-row > .feo-td,
+.subsidies-page .feo-fully-purchased-row > td,
 .subsidies-page .feo-fully-purchased-row .v-sheet,
 .subsidies-page .feo-fully-purchased-row .v-card,
 .subsidies-page .feo-fully-purchased-row .feo-amount-cell,
 .subsidies-page .feo-fully-purchased-row .feo-name-inner,
 .subsidies-page .feo-fully-purchased-row .feo-td > div:not(.feo-excess-culprit) {
   background-color: transparent !important;
+  background-image: none !important;
 }
 .subsidies-page .feo-fully-purchased-row .feo-name,
 .subsidies-page .feo-fully-purchased-row .feo-amount,
 .subsidies-page .feo-fully-purchased-row td {
   color: var(--crm-text-muted);
 }
-.v-theme--dark .subsidies-page .feo-fully-purchased-row,
-.v-theme--dark .subsidies-page .feo-fully-purchased-row > .feo-td,
-.v-theme--dark .subsidies-page .feo-fully-purchased-row > td {
+.v-theme--dark .subsidies-page .feo-fully-purchased-row {
   background-image: repeating-linear-gradient(
     45deg,
     rgba(74, 222, 128, 0.20) 0px,
@@ -916,49 +918,35 @@
   ) !important;
 }
 
-/* ── «Закуплено частично» — фон «кружочками» (владелец, 30.09.2026, уточнение) ──
-   0 < куплено < план: ВСЯ строка (не мини-индикатор) заполнена мягким янтарным
-   polka-dot — radial-gradient точки, отличимые от диагональных зелёных полосок
-   «полностью» выше. Тот же приём с «> .feo-td, > td» для обоих деревьев
-   (основное + панель Ур.5), см. докстринг .feo-fully-purchased-row (Правило №6,
-   второй паттерн фона не заводим — только другой цвет/форма). !important по
-   той же причине — перебивает собственный фон ячеек. */
-.subsidies-page .feo-partially-purchased-row,
-.subsidies-page .feo-partially-purchased-row > .feo-td,
-.subsidies-page .feo-partially-purchased-row > td {
-  background-color: rgba(251, 191, 36, 0.07) !important;
-  background-image: radial-gradient(
-    rgba(217, 119, 6, 0.32) 2.4px,
-    transparent 2.4px
-  ) !important;
-  background-size: 10px 10px !important;
-  /* Vuetify/базовый стиль td задаёт background-repeat: no-repeat шорткодом —
-     без явного repeat radial-gradient (в отличие от repeating-linear-gradient
-     у «полностью закуплено», который повторяется сам по себе) рисуется ОДИН
-     раз в 0% 0% — отсюда «точки видно только полоской у верхнего края»
-     (владелец, 30.09.2026). */
+/* ── «Закуплено частично» — фон «пузырьками» (владелец, 30.09.2026, второе
+   уточнение) ── 0 < куплено < план: ВСЯ строка (не мини-индикатор) залита
+   SVG-тайлом с крупными мягкими кругами разного размера (r ~10–40px),
+   частично перекрывающимися — по образцу фото владельца, взамен мелких
+   polka-dot точек и оранжевой подложки. Узор — ОДИН источник, единственный
+   background у контейнера строки (см. докстринг .feo-fully-purchased-row —
+   тот же приём: паттерн на строке, дети прозрачные, Правило №6 — второй
+   копии тайла не заводим, только другой цвет для тёмной темы). */
+.subsidies-page .feo-partially-purchased-row {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='100'%3E%3Ccircle cx='20' cy='22' r='18' fill='%2360a5fa' fill-opacity='0.10' stroke='%2360a5fa' stroke-opacity='0.3' stroke-width='1'/%3E%3Ccircle cx='58' cy='48' r='28' fill='%2393c5fd' fill-opacity='0.08' stroke='%2393c5fd' stroke-opacity='0.28' stroke-width='1'/%3E%3Ccircle cx='112' cy='24' r='13' fill='%2360a5fa' fill-opacity='0.12' stroke='%2360a5fa' stroke-opacity='0.32' stroke-width='1'/%3E%3Ccircle cx='138' cy='72' r='34' fill='%2393c5fd' fill-opacity='0.07' stroke='%2393c5fd' stroke-opacity='0.25' stroke-width='1'/%3E%3Ccircle cx='38' cy='82' r='22' fill='%2360a5fa' fill-opacity='0.09' stroke='%2360a5fa' stroke-opacity='0.3' stroke-width='1'/%3E%3Ccircle cx='92' cy='86' r='16' fill='%2393c5fd' fill-opacity='0.11' stroke='%2393c5fd' stroke-opacity='0.35' stroke-width='1'/%3E%3C/svg%3E") !important;
   background-repeat: repeat !important;
+  background-size: 160px 100px !important;
 }
-/* Те же непрозрачные вложенные подложки, что и у «полностью закуплено» выше —
-   единственное отличие частично/полностью закупленных строк — паттерн и цвет,
-   правило видимости общее (Правило №6, второй копии не заводим). */
+/* Ячейки строки и их вложенные подложки — прозрачный background (узор только
+   на строке, см. докстринг выше и .feo-fully-purchased-row). */
+.subsidies-page .feo-partially-purchased-row > .feo-td,
+.subsidies-page .feo-partially-purchased-row > td,
 .subsidies-page .feo-partially-purchased-row .v-sheet,
 .subsidies-page .feo-partially-purchased-row .v-card,
 .subsidies-page .feo-partially-purchased-row .feo-amount-cell,
 .subsidies-page .feo-partially-purchased-row .feo-name-inner,
 .subsidies-page .feo-partially-purchased-row .feo-td > div:not(.feo-excess-culprit) {
   background-color: transparent !important;
+  background-image: none !important;
 }
-.v-theme--dark .subsidies-page .feo-partially-purchased-row,
-.v-theme--dark .subsidies-page .feo-partially-purchased-row > .feo-td,
-.v-theme--dark .subsidies-page .feo-partially-purchased-row > td {
-  background-color: rgba(251, 191, 36, 0.06) !important;
-  background-image: radial-gradient(
-    rgba(251, 191, 36, 0.35) 2.4px,
-    transparent 2.4px
-  ) !important;
-  background-size: 10px 10px !important;
+.v-theme--dark .subsidies-page .feo-partially-purchased-row {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='100'%3E%3Ccircle cx='20' cy='22' r='18' fill='%2393c5fd' fill-opacity='0.14' stroke='%2393c5fd' stroke-opacity='0.3' stroke-width='1'/%3E%3Ccircle cx='58' cy='48' r='28' fill='%2393c5fd' fill-opacity='0.11' stroke='%2393c5fd' stroke-opacity='0.3' stroke-width='1'/%3E%3Ccircle cx='112' cy='24' r='13' fill='%2393c5fd' fill-opacity='0.16' stroke='%2393c5fd' stroke-opacity='0.32' stroke-width='1'/%3E%3Ccircle cx='138' cy='72' r='34' fill='%2393c5fd' fill-opacity='0.09' stroke='%2393c5fd' stroke-opacity='0.3' stroke-width='1'/%3E%3Ccircle cx='38' cy='82' r='22' fill='%2393c5fd' fill-opacity='0.12' stroke='%2393c5fd' stroke-opacity='0.3' stroke-width='1'/%3E%3Ccircle cx='92' cy='86' r='16' fill='%2393c5fd' fill-opacity='0.15' stroke='%2393c5fd' stroke-opacity='0.35' stroke-width='1'/%3E%3C/svg%3E") !important;
   background-repeat: repeat !important;
+  background-size: 160px 100px !important;
 }
 
 /* Легенда над деревом/панелью (владелец, п.5) — одна строка, единый источник
@@ -990,10 +978,10 @@
   width: 22px;
   height: 12px;
   border-radius: 2px;
-  border: 1px solid rgba(217, 119, 6, 0.4);
-  background-image: radial-gradient(rgba(217, 119, 6, 0.55) 1.6px, transparent 1.6px);
-  background-size: 6px 6px;
-  background-color: rgba(251, 191, 36, 0.07);
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='100'%3E%3Ccircle cx='20' cy='22' r='18' fill='%2360a5fa' fill-opacity='0.10' stroke='%2360a5fa' stroke-opacity='0.3' stroke-width='1'/%3E%3Ccircle cx='58' cy='48' r='28' fill='%2393c5fd' fill-opacity='0.08' stroke='%2393c5fd' stroke-opacity='0.28' stroke-width='1'/%3E%3Ccircle cx='112' cy='24' r='13' fill='%2360a5fa' fill-opacity='0.12' stroke='%2360a5fa' stroke-opacity='0.32' stroke-width='1'/%3E%3Ccircle cx='138' cy='72' r='34' fill='%2393c5fd' fill-opacity='0.07' stroke='%2393c5fd' stroke-opacity='0.25' stroke-width='1'/%3E%3Ccircle cx='38' cy='82' r='22' fill='%2360a5fa' fill-opacity='0.09' stroke='%2360a5fa' stroke-opacity='0.3' stroke-width='1'/%3E%3Ccircle cx='92' cy='86' r='16' fill='%2393c5fd' fill-opacity='0.11' stroke='%2393c5fd' stroke-opacity='0.35' stroke-width='1'/%3E%3C/svg%3E");
+  background-size: 32px 20px;
+  background-repeat: repeat;
 }
 
 /* Бейдж «Всё закуплено» строки категории (владелец, 30.09.2026, п.2) — тот же

@@ -64,6 +64,16 @@ async def leaf_used_totals(
     PLANNED_STATUSES. exclude_purchase_id — исключить позиции этой закупки
     (форма редактирования закупки не должна учитывать свои же старые суммы).
     Пустой leaf_ids -> {} без обращения к БД.
+
+    Категория позиции — COALESCE(PurchaseItem.feo_category_id,
+    Purchase.feo_category_id), та же привязка «позиция или шапка», что и везде
+    в проекте (см. app.services.feo_plan_fact, app.services.purchase_feo_checks,
+    app.services.plan_graph_export_data — ПРАВИЛО №6). До фикса (баг владельца
+    2026-09-30, закупка РЕЕ-2026-00913) группировка шла по «голому»
+    PurchaseItem.feo_category_id — закупки, у которых категория проставлена
+    только в шапке (Purchase.feo_category_id), а не на позициях, вообще не
+    попадали в used_map → «Ост.» на форме закупки показывал весь бюджет листа,
+    игнорируя чужие закупки той же категории.
     """
     if not leaf_ids:
         return {}
@@ -73,9 +83,10 @@ async def leaf_used_totals(
     from app.models.purchase import Purchase as _Purchase
     from app.routers.purchase_budget import CONTRACTED_STATUSES, PLANNED_STATUSES
 
+    cat_col = sqlfunc.coalesce(PurchaseItem.feo_category_id, _Purchase.feo_category_id)
     used_q = (
         select(
-            PurchaseItem.feo_category_id,
+            cat_col.label("cat_id"),
             sqlfunc.coalesce(
                 sqlfunc.sum(case((_Purchase.status.in_(list(CONTRACTED_STATUSES)), PurchaseItem.total_price), else_=0)),
                 0,
@@ -86,15 +97,15 @@ async def leaf_used_totals(
             ).label("planned_used"),
         )
         .join(_Purchase, PurchaseItem.purchase_id == _Purchase.id)
-        .where(PurchaseItem.feo_category_id.in_(leaf_ids))
+        .where(cat_col.in_(leaf_ids))
     )
     if exclude_purchase_id is not None:
         used_q = used_q.where(PurchaseItem.purchase_id != exclude_purchase_id)
-    used_q = used_q.group_by(PurchaseItem.feo_category_id)
+    used_q = used_q.group_by(cat_col)
 
     result: dict[int, tuple[float, float]] = {}
     for r in (await db.execute(used_q)).all():
-        result[r.feo_category_id] = (float(r.contracted_used), float(r.planned_used))
+        result[r.cat_id] = (float(r.contracted_used), float(r.planned_used))
     return result
 
 

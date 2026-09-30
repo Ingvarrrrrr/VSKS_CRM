@@ -72,6 +72,76 @@ async def test_leaves_and_budget_residuals_agree_on_leaf_used(client, db_session
 
 
 @pytest.mark.asyncio
+async def test_leaves_residual_counts_header_category_and_excludes_current_purchase(
+    client, db_session, auth_headers, test_user
+):
+    """Баг владельца 2026-09-30 (закупка РЕЕ-2026-00913, категория «Ремонт
+    техники»): GET /leaves.residual обязан вычитать ВСЕ закупки листа —
+    и те, где feo_category_id стоит на позиции, и те, где только в шапке
+    закупки (Purchase.feo_category_id, PurchaseItem.feo_category_id IS NULL),
+    см. COALESCE в leaf_used_totals (app/services/feo_plan_totals.py). До
+    фикса группировка шла по «голому» PurchaseItem.feo_category_id — закупка
+    с категорией только в шапке вообще не попадала в used_map, и residual
+    показывал budget целиком.
+
+    Плюс exclude_purchase_id: редактируемая закупка не должна вычитать саму
+    себя из своего же остатка.
+    """
+    subsidy = Subsidy(name="Test subsidy header category", year=2026, budget=0, org_id=test_user.org_id)
+    db_session.add(subsidy)
+    await db_session.flush()
+
+    leaf = FeoCategory(subsidy_id=subsidy.id, level=1, name="Ремонт техники", budget=Decimal("2700000"))
+    db_session.add(leaf)
+    await db_session.flush()
+
+    # Закупка №1: категория проставлена на позиции (как раньше уже работало).
+    purchase_on_item = Purchase(status="contracted", item_type="goods", item_name="На позиции")
+    db_session.add(purchase_on_item)
+    await db_session.flush()
+    item_on_item = PurchaseItem(
+        purchase_id=purchase_on_item.id, item_name="Товар1", quantity=Decimal("1"), unit="шт",
+        unit_price=Decimal("78100"), total_price=Decimal("78100"), feo_category_id=leaf.id,
+    )
+    db_session.add(item_on_item)
+
+    # Закупка №2 (текущая редактируемая): категория ТОЛЬКО в шапке, позиция без
+    # своей feo_category_id — раньше пропадала из used_map целиком.
+    purchase_header = Purchase(
+        status="contracted", item_type="goods", item_name="Только в шапке", feo_category_id=leaf.id,
+    )
+    db_session.add(purchase_header)
+    await db_session.flush()
+    item_header = PurchaseItem(
+        purchase_id=purchase_header.id, item_name="Товар2", quantity=Decimal("1"), unit="шт",
+        unit_price=Decimal("169000"), total_price=Decimal("169000"), feo_category_id=None,
+    )
+    db_session.add(item_header)
+    await db_session.commit()
+
+    # Без exclude_purchase_id обе закупки учитываются: budget - (78100+169000).
+    r_all = await client.get(
+        "/api/feo-categories/leaves", params={"subsidy_id": subsidy.id}, headers=auth_headers
+    )
+    assert r_all.status_code == 200, r_all.text
+    leaf_all = r_all.json()[0]
+    assert leaf_all["contracted_used"] == 78100.0 + 169000.0
+    assert leaf_all["residual"] == 2700000.0 - (78100.0 + 169000.0)
+
+    # exclude_purchase_id=purchase_header.id (редактируем закупку "в шапке") —
+    # она не должна вычитать саму себя: остаётся только 78100 от соседней закупки.
+    r_excl = await client.get(
+        "/api/feo-categories/leaves",
+        params={"subsidy_id": subsidy.id, "exclude_purchase_id": purchase_header.id},
+        headers=auth_headers,
+    )
+    assert r_excl.status_code == 200, r_excl.text
+    leaf_excl = r_excl.json()[0]
+    assert leaf_excl["contracted_used"] == 78100.0
+    assert leaf_excl["residual"] == 2700000.0 - 78100.0
+
+
+@pytest.mark.asyncio
 async def test_leaves_empty_subsidy_returns_empty_list(client, db_session, auth_headers, test_user):
     """Субсидия без FeoCategory — оба эндпоинта отдают пустой ответ (не 500)."""
     subsidy = Subsidy(name="Empty subsidy", year=2026, budget=0, org_id=test_user.org_id)

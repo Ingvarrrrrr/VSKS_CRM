@@ -221,7 +221,7 @@
       <!-- Подпись бюджета выбранного листа — как в каскаде -->
       <div v-if="selectedLeafForNote" class="feo-tree-note text-caption text-medium-emphasis mt-1 px-1">
         План: {{ fmt(selectedLeafForNote.budget) }} •
-        <span :class="residualDisplay(selectedLeafForNote.residual, 'Ост.:').cssClass">{{ residualDisplay(selectedLeafForNote.residual, 'Ост.:').text }}</span>
+        <span :class="residualDisplay(selectedLeafForNote.residual, 'Ост. (без этой закупки):').cssClass">{{ residualDisplay(selectedLeafForNote.residual, 'Ост. (без этой закупки):').text }}</span>
       </div>
       <div v-if="error && !isLeafSelected" class="feo-tree-note text-caption text-error mt-1 px-1">
         Обязательно

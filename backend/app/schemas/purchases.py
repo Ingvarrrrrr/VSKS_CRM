@@ -502,6 +502,14 @@ class PurchaseOut(PurchaseCreate):
     # (считается заново на КАЖДОМ GET независимо от того, кто и когда создал
     # превышение).
     excess_warnings: List[dict] = []
+    # Владелец (30.09): «Без ТЗ» — то же послабление, что у авансовых, но
+    # проставленное согласующим вручную для мелких закупок (см.
+    # app.services.tz_items.tz_required, Wish.tz_not_required). tz_waived_by_name
+    # резолвится сериализатором (см. su_map-подобная карта в purchases.py) —
+    # ФИО не хранится на закупке, только user_id.
+    tz_not_required: bool = False
+    tz_waived_by_user_id: Optional[int] = None
+    tz_waived_by_name: Optional[str] = None
     model_config = {"from_attributes": True}
 
     @model_validator(mode='after')

@@ -213,11 +213,32 @@ export function useWishItemsFeoAutosave(deps: {
     }
   }
 
+  // Жалоба владельца (30.09): согласующий в submitted-заявке менял «Мероприятие»
+  // в поле карточки «Дополнительно», но там нет иного механизма сохранения —
+  // главная кнопка «Сохранить» скрыта (isWishEditable=false), а полный
+  // saveExecution() заодно шлёт feo_category_id, из-за чего бэкенд требует право
+  // wish.edit_feo даже у того, кто просто ставит мероприятие. Точечный PATCH,
+  // тот же канал/эндпоинт, что и saveAssignedTo — без лишнего поля.
+  async function saveEventId(val: number | null) {
+    if (!editingWishId.value) return
+    try {
+      await apiFetch(`/wishes/${editingWishId.value}/execution`, {
+        method: 'PATCH',
+        body: JSON.stringify({ event_id: val }),
+      })
+      if (editingWish.value) (editingWish.value as any).event_id = val
+      showSnack('Мероприятие обновлено')
+      await reloadActiveTab()
+    } catch (e: any) {
+      showSnack(`Ошибка: ${e?.payload?.message || e?.message || 'не удалось сохранить'}`, 'error')
+    }
+  }
+
   return {
     wishItemsFeoSnapshot, snapshotWishItemsFeo, wishItemsFeoDirtyList, wishItemsFeoDirty,
     feoAutosavePending, feoAutosaveSaving, feoAutosaveApplicable, wishFeoHeaderDirty,
     scheduleFeoAutosave, runFeoAutosave, flushFeoAutosave,
-    savingExecution, saveExecution, saveAssignedTo,
+    savingExecution, saveExecution, saveAssignedTo, saveEventId,
   }
 }
 

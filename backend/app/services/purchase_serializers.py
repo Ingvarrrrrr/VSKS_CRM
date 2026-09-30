@@ -103,7 +103,7 @@ def _purchase_to_full(
     su_map: dict | None = None, feo_excess_map: dict | None = None, item_plan_map: dict | None = None,
     wish_title_map: dict | None = None, wish_status_map: dict | None = None,
     feo_mismatch_map: dict | None = None, amounts_map: dict | None = None,
-    contract=None,
+    contract=None, tz_waived_by_map: dict | None = None,
 ) -> PurchaseOutFull:
     # Ленивый импорт — избежать цикла на уровне модуля: purchases.py (ядро)
     # импортирует _purchase_to_full ОТСЮДА, поэтому этот модуль не может
@@ -203,6 +203,9 @@ def _purchase_to_full(
         # Остановка закупки (владелец, 2026-08-13) — имя того, кто остановил
         # (см. Wish._enrich stopped_by_name: тот же приём — full_name или username).
         stopped_by_name=(su_map or {}).get(p.stopped_by),
+        # «Без ТЗ» (владелец, 30.09) — ФИО согласующего, разрешившего закупку
+        # без технического задания (см. Purchase.tz_waived_by_user_id).
+        tz_waived_by_name=(tz_waived_by_map or {}).get(p.tz_waived_by_user_id),
         # Превышение плана ФЭО (план crystalline-soaring-heron.md, п.4) — см.
         # _compute_purchase_feo_excess; пусто (feo_excess=False), если карта не
         # передана (вызывающий не просил ?with_feo_excess) или превышения нет.

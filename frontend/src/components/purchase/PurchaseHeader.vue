@@ -29,6 +29,19 @@
         <v-chip v-if="form.substatus" size="x-small" variant="outlined" color="teal">
           {{ substatusOptions.find(o => o.value === form.substatus)?.title || form.substatus }}
         </v-chip>
+        <!-- Владелец (30.09): «Без ТЗ» — согласующий заявки разрешил закупке
+             уйти без технического задания (то же послабление, что у
+             purchase_method='advance', см. Wish.tz_not_required). Плашка
+             видна независимо от способа закупки — и на авансовых тоже можно
+             увидеть, что решение явное, если оно есть. -->
+        <v-tooltip v-if="isEdit && purchaseData?.tz_not_required" location="top"
+          :text="purchaseData?.tz_waived_by_name ? `Решение согласующего: ${purchaseData.tz_waived_by_name}` : 'Решение согласующего заявки'">
+          <template #activator="{ props: tzProps }">
+            <v-chip v-bind="tzProps" size="x-small" variant="tonal" color="deep-purple" prepend-icon="mdi-file-document-remove-outline">
+              Без ТЗ{{ purchaseData?.tz_waived_by_name ? ` — ${purchaseData.tz_waived_by_name}` : '' }}
+            </v-chip>
+          </template>
+        </v-tooltip>
         <!-- Владелец, 2026-09-15: «поставить кнопку Остановить закупку», в т.ч. на
              карточке — обратная операция (возобновить) для уже остановленной. -->
         <v-btn v-if="isEdit && purchaseData?.stopped_at" size="x-small" variant="tonal" color="success"

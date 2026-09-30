@@ -42,6 +42,14 @@
         <div v-if="editingWish.executor_name"><b>Исполнитель:</b> {{ editingWish.executor_name }}</div>
         <div v-if="editingWish.execution_deadline"><b>Срок исполнения:</b> {{ ctx.formatDate(editingWish.execution_deadline) }}</div>
       </v-card-subtitle>
+      <!-- Владелец (30.09): «Без ТЗ» — видно и на самой заявке, не только на
+           созданной из неё закупке (см. PurchaseHeader.vue). -->
+      <div v-if="editingWish && editingWish.tz_not_required" class="px-4 pb-3">
+        <v-alert type="info" variant="tonal" density="compact" icon="mdi-file-document-remove-outline">
+          Без ТЗ — решение согласующего{{ editingWish.tz_waived_by_name ? `: ${editingWish.tz_waived_by_name}` : '' }}.
+          Позиции уйдут в закупку без технического задания.
+        </v-alert>
+      </div>
       <!-- Владелец, 2026-08-19: «нужно, чтобы было видно, кто отклонил» -->
       <div v-if="editingWish && editingWish.status === 'rejected'" class="px-4 pb-3">
         <v-alert type="error" variant="tonal" density="compact" icon="mdi-close-circle-outline">
@@ -527,9 +535,10 @@
                     density="compact"
                     clearable
                     :disabled="!wishForm.subsidy_id"
-                    :readonly="!isWishEditable && !canAssigneeAct"
+                    :readonly="!isWishEditable && !canAssigneeAct && !canEditWishFeo"
                     hint="Связать заявку с конкретным мероприятием субсидии"
                     persistent-hint
+                    @update:model-value="(val: number | null) => { if (!isWishEditable && !canAssigneeAct && canEditWishFeo) saveEventId(val) }"
                   />
                 </v-col>
                 <v-col cols="12">
@@ -799,6 +808,29 @@
                       Укажите причину — например, что согласующий в отпуске или поручил вам решение.
                     </div>
                     <div v-else class="mb-2" />
+                    <!-- Владелец (30.09, заявка №92): «в закупках все товары должны быть
+                         только с ТЗ, но по решению согласующего (кому это можно) можно ТЗ
+                         не вписывать в договор». Отдельное право purchase.tz_waive (не то
+                         же самое, что право решать по заявке) — видно только тем, кому
+                         владелец его выдал. Явный выбор «Без ТЗ»/«С ТЗ», не немой чекбокс.
+                         editingWish.tz_not_required уже true → показываем как факт
+                         (сохраняется на заявке, снять отсюда нельзя). -->
+                    <div v-if="form.canWaiveTz.value && !editingWish?.tz_not_required" class="mb-2">
+                      <div class="text-caption text-medium-emphasis mb-1">Техническое задание</div>
+                      <v-btn-toggle
+                        :model-value="!!tzNotRequiredChecked[a.id]"
+                        mandatory
+                        density="compact"
+                        color="deep-purple"
+                        @update:model-value="(v: boolean) => { tzNotRequiredChecked[a.id] = v }"
+                      >
+                        <v-btn :value="false" size="small">С ТЗ</v-btn>
+                        <v-btn :value="true" size="small">Без ТЗ</v-btn>
+                      </v-btn-toggle>
+                    </div>
+                    <div v-if="tzNotRequiredChecked[a.id] || editingWish?.tz_not_required" class="text-caption text-medium-emphasis mb-2">
+                      Позиции уйдут в закупку без технического задания — как у авансовых.
+                    </div>
                     <div class="d-flex" style="gap:8px">
                       <v-btn
                         color="green"
@@ -807,7 +839,7 @@
                         :loading="decideLoading === a.id"
                         :disabled="isDecidingOnBehalf(a) && !(decideComment[a.id] || '').trim()"
                         prepend-icon="mdi-check"
-                        @click="decideApprover(a.id, 'approved')"
+                        @click="decideApprover(a.id, 'approved', !!tzNotRequiredChecked[a.id])"
                       >Согласовать</v-btn>
                       <v-btn
                         color="red"
@@ -1110,6 +1142,25 @@
           </v-btn>
         </template>
         <template v-else-if="canAssigneeAct && editingWish">
+          <!-- Владелец (30.09, заявка №92): «Это должно быть ОТДЕЛЬНОЕ разрешение
+               в ролях» — видно только с правом purchase.tz_waive, доступно при быстром
+               одобрении так же, как в цепочке согласования выше. -->
+          <div v-if="form.canWaiveTz.value && !editingWish.tz_not_required" class="d-flex flex-column mr-2" style="min-width:0">
+            <div class="text-caption text-medium-emphasis mb-1">Техническое задание</div>
+            <v-btn-toggle
+              :model-value="actions.quickApproveTzNotRequired.value"
+              mandatory
+              density="compact"
+              color="deep-purple"
+              @update:model-value="(v: boolean) => { actions.quickApproveTzNotRequired.value = v }"
+            >
+              <v-btn :value="false" size="small">С ТЗ</v-btn>
+              <v-btn :value="true" size="small">Без ТЗ</v-btn>
+            </v-btn-toggle>
+            <span v-if="actions.quickApproveTzNotRequired.value" class="text-caption text-medium-emphasis mt-1">
+              Позиции уйдут в закупку без технического задания — как у авансовых.
+            </span>
+          </div>
           <v-btn color="error" variant="tonal" prepend-icon="mdi-close" @click="actions.openRejectDialog(editingWish); wishDialog = false">
             Отклонить
           </v-btn>
@@ -1118,7 +1169,7 @@
               <span v-bind="tipProps">
                 <v-btn color="success" variant="tonal" prepend-icon="mdi-check" :loading="actions.approvingId.value === editingWish.id"
                        :class="{ 'wish-btn-blocked': wishFeoCategoryMissing }"
-                       @click="wishFeoCategoryMissing ? highlightMissingFeoCategory() : actions.approveWish(editingWish).then(() => wishDialog = false)">
+                       @click="wishFeoCategoryMissing ? highlightMissingFeoCategory() : actions.approveWish(editingWish, actions.quickApproveTzNotRequired.value).then(() => wishDialog = false)">
                   Одобрить без согласования остальных
                 </v-btn>
               </span>
@@ -1412,13 +1463,13 @@ void wishSubmitBtnRef
 const {
   wishMembers, participantToAdd, addWishMember, removeWishMember,
   wishApprovers, approverTopUser, approverToAdd, approvalMode, cascadeLoading,
-  decideComment, decideLoading, approvalStatusColor, approvalStatusLabel,
+  decideComment, decideLoading, tzNotRequiredChecked, approvalStatusColor, approvalStatusLabel,
   topApproverCandidates,
   runCascade, addApprover, reorderLoading, moveApprover, removeApprover, decideApprover,
   canDecideApprover, isDecidingOnBehalf, approverDecisionLine,
 } = approvers
 
-const { feoAutosavePending, feoAutosaveSaving, wishItemsFeoDirty, savingExecution, saveExecution, saveAssignedTo } = autosave
+const { feoAutosavePending, feoAutosaveSaving, wishItemsFeoDirty, savingExecution, saveExecution, saveAssignedTo, saveEventId } = autosave
 
 // useWishLive нужен родителю (WishesView.vue) для бейджа/подгрузки списков после
 // внешних изменений — здесь достаточно, что composable сам запускается/

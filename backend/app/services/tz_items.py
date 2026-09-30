@@ -26,6 +26,30 @@ from app.services.text_match import normalize as _normalize_name
 Decision = Literal["merge", "keep"]
 
 
+def tz_required(purchase: Any) -> bool:
+    """Единый источник: нужно ли для этой закупки решать дубли строк ТЗ перед
+    генерацией документов (см. contexts.py::_require_tz_duplicates_resolved_for_doc,
+    единственный вызывающий этого гейта).
+
+    Владелец (30.09): «ТЗ нужно для всех товаров, но исключение работает для
+    авансовых, и у согласующего должна быть такая возможность» — до этой
+    правки освобождение было ЗАШИТО в самом гейте как
+    `purchase_method == 'advance'` (единственное место во всём проекте, где
+    оно проверялось для целей ТЗ — см. отчёт исследования). Теперь тот же
+    гейт освобождает ЛЮБУЮ закупку с tz_not_required=True — согласующий
+    ставит этот флаг при решении по заявке (Wish.tz_not_required, переносится
+    на закупку в wish_distribution.py) точно так же, как у авансовых это
+    исторически стоит по умолчанию. ПРАВИЛО №6: единый хелпер вместо второй
+    ветки `if purchase_method == 'advance'` — если понадобится ещё одно
+    условие освобождения, оно добавляется СЮДА, а не рядом с местом вызова.
+    """
+    if getattr(purchase, "purchase_method", None) == "advance":
+        return False
+    if getattr(purchase, "tz_not_required", False):
+        return False
+    return True
+
+
 def group_key(item: Any) -> str:
     """Стабильный ключ группировки дублей одной строки ТЗ.
 

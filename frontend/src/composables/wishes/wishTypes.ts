@@ -97,6 +97,11 @@ export interface Wish {
   stopped_by_name?: string | null
   stopped_reason?: string | null
   stopped_partial?: boolean
+  // Владелец (30.09): «Без ТЗ (мелкие закупки)» — галочка согласующего при
+  // решении по заявке, переезжает на создаваемую закупку (Purchase.tz_not_required).
+  tz_not_required?: boolean
+  tz_waived_by_user_id?: number | null
+  tz_waived_by_name?: string | null
   // Task 2 (сессия 2026-08-17): контрагент заявки — необязателен. contractor_id — из
   // справочника; contractor_name — ручной ввод, если контрагента в справочнике ещё нет;
   // contractor_display_name — готовое имя для показа, считает backend (только чтение).

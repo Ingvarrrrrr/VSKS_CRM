@@ -500,6 +500,15 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
             subsidy_id=wish.subsidy_id, current_user=current_user,
             context_label=f"повторное согласование заявки №{wish.id}",
         )
+        # Владелец (30.09): «Без ТЗ» — повторное согласование (заявку вернули
+        # в черновик, отметили галочку, согласовали заново) обязано перенести
+        # флаг на УЖЕ существующую закупку, не только на свежесозданную (см.
+        # ветку создания ниже). Только включаем — уже стоящий флаг не снимаем.
+        if getattr(wish, 'tz_not_required', False):
+            for p in existing:
+                if not p.tz_not_required:
+                    p.tz_not_required = True
+                    p.tz_waived_by_user_id = wish.tz_waived_by_user_id
         return [p.id for p in existing]
 
     # Preload wish items with products for category resolution
@@ -702,6 +711,18 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
             # что и у контрагента выше. Purchase свежесозданный — «не перетирать
             # уже заданное» выполняется автоматически.
             contract_form=getattr(wish, 'contract_form', None),
+            # Владелец (30.09): «Без ТЗ» — решение согласующего заявки
+            # (Wish.tz_not_required/tz_waived_by_user_id, проставляется в
+            # wish_transitions.py::approve_wish и wish_approvals.py::decide)
+            # переезжает на КАЖДУЮ создаваемую закупку этой заявки — тот же
+            # принцип «переносится, если задано», что и у contractor_id/
+            # contract_form выше. См. app.services.tz_items.tz_required —
+            # единственный гейт, который на это смотрит (ПРАВИЛО №6).
+            tz_not_required=bool(getattr(wish, 'tz_not_required', False)),
+            tz_waived_by_user_id=(
+                getattr(wish, 'tz_waived_by_user_id', None)
+                if getattr(wish, 'tz_not_required', False) else None
+            ),
         )
         db.add(p)
         await db.flush()  # get p.id

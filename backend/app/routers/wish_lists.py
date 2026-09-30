@@ -246,6 +246,7 @@ async def list_wishes(
         selectinload(Wish.stopped_by_user),
         selectinload(Wish.contractor),
         selectinload(Wish.rejected_by_user),
+        selectinload(Wish.tz_waived_by_user),
     )
     q = await _build_wishes_query(
         q, current_user, db,

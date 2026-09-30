@@ -107,6 +107,17 @@ class Purchase(Base):
     # документа блокируется 409 TZ_DUPLICATES_UNRESOLVED (contexts.py).
     tz_duplicate_decisions = Column(JSONB, nullable=True)
 
+    # Владелец (30.09): «ТЗ нужно для всех товаров, но согласующий должен иметь
+    # возможность пропускать его для мелких закупок» — то же послабление, что
+    # исторически есть у purchase_method='advance' (см. tz_items.tz_required,
+    # _require_tz_duplicates_resolved_for_doc в services/documents/contexts.py,
+    # ПРАВИЛО №6 — единый хелпер, а не вторая ветка if purchase_method==...).
+    # Проставляется при согласовании заявки (Wish.tz_not_required) и копируется
+    # на закупку в _distribute_wish_to_purchases (wish_distribution.py); также
+    # может быть выставлено напрямую на самой закупке (карточка).
+    tz_not_required = Column(Boolean, nullable=False, default=False, server_default="false")
+    tz_waived_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
     # Approval
     approval_status = Column(String(30), nullable=True)  # None / in_progress / approved / rejected
     approval_mode = Column(String(20), nullable=True, default="sequential")  # sequential / parallel
@@ -253,6 +264,7 @@ class Purchase(Base):
     assigned_user = relationship("User", foreign_keys=[assigned_user_id])
     service_note_author = relationship("User", foreign_keys=[service_note_by])
     stopped_by_user = relationship("User", foreign_keys=[stopped_by])
+    tz_waived_by_user = relationship("User", foreign_keys=[tz_waived_by_user_id])
     reimbursement_user = relationship("User", foreign_keys=[reimbursement_user_id])
     service_note_to_user = relationship("User", foreign_keys=[service_note_to_user_id])
     event = relationship("Event")

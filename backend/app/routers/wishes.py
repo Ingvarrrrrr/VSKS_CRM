@@ -117,6 +117,7 @@ async def _load_wish(wish_id: int, db: AsyncSession) -> Wish:
             selectinload(Wish.stopped_by_user),
             selectinload(Wish.contractor),
             selectinload(Wish.rejected_by_user),
+            selectinload(Wish.tz_waived_by_user),
         )
         .where(Wish.id == wish_id)
     )

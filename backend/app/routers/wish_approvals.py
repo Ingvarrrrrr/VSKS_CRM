@@ -439,6 +439,25 @@ async def decide_wish_approval(
             "согласующий в отпуске или поручил вам.",
         )
 
+    # Владелец (30.09): галочка «Без ТЗ (мелкие закупки)» — согласующий этого
+    # конкретного шага (тот же круг лиц, что прошёл проверку прав выше) может
+    # выдать заявке то же послабление гейта ТЗ, что исторически есть у
+    # авансовых (см. app.services.tz_items.tz_required). Ставится ПРИ ЛЮБОМ
+    # approved-решении в цепочке (не только последнем) и остаётся включённой
+    # до конвертации — сброшенной галочкой на другом шаге её не снять.
+    if decision == "approved" and body.get("tz_not_required") and not wish.tz_not_required:
+        # Владелец (30.09, уточнение): «Это должно быть ОТДЕЛЬНОЕ разрешение
+        # в ролях — кому можно отменять необходимость ТЗ, а кому нет» —
+        # отдельное от права решать по заявке (проверка a.user_id/MANAGER_ROLES
+        # выше). См. permission_seeds.py::_purchase_tz_waive_action.
+        if not await has_org_key(current_user, db, wish.org_id, 'purchase.tz_waive', subsidy_id=wish.subsidy_id):
+            raise HTTPException(
+                403,
+                "Нет права «Отмена необходимости ТЗ» — обратитесь к администратору за разрешением purchase.tz_waive",
+            )
+        wish.tz_not_required = True
+        wish.tz_waived_by_user_id = current_user.id
+
     a.status = decision
     a.comment = raw_comment
     a.decided_at = datetime.now(timezone.utc)

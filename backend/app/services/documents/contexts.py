@@ -473,7 +473,9 @@ def _require_tz_duplicates_resolved_for_doc(p) -> None:
     группе дублей не принято решение merge/keep — см.
     app.services.tz_items.find_duplicate_groups/build_tz_rows.
     """
-    if getattr(p, "purchase_method", None) == "advance":
+    from app.services.tz_items import find_duplicate_groups, tz_required
+
+    if not tz_required(p):
         # Владелец (30.09, авансовый ФАДМ_2026, много чеков): «я уже решил» —
         # одинаковые позиции из РАЗНЫХ чеков («19Л ВОДА ARO», купленная
         # дважды в разные дни) — факт покупки, а не дубль ТЗ, требующий
@@ -483,9 +485,12 @@ def _require_tz_duplicates_resolved_for_doc(p) -> None:
         # построчно ровно то, что куплено. Не второй механизм разрешения
         # (вроде decision='keep' по умолчанию) — просто отсутствие самого
         # вопроса для этого способа закупки.
+        #
+        # Владелец (30.09, расширение): то же самое послабление теперь может
+        # выдать согласующий заявки обычной (не авансовой) закупке — галочка
+        # «Без ТЗ» при согласовании (Purchase.tz_not_required, единый хелпер
+        # tz_required — см. его докстринг, ПРАВИЛО №6).
         return
-
-    from app.services.tz_items import find_duplicate_groups
 
     dup_groups = find_duplicate_groups(getattr(p, "items", None) or [])
     if not dup_groups:

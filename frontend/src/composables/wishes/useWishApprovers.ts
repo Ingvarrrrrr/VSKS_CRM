@@ -75,6 +75,11 @@ export function useWishApprovers(deps: {
   const cascadeLoading = ref(false)
   const decideComment = ref<Record<number, string>>({})
   const decideLoading = ref<number | null>(null)
+  // Владелец (30.09): «Без ТЗ (мелкие закупки)» — галочка согласующего рядом
+  // с решением по конкретному шагу цепочки (WishFormDialog.vue), передаётся
+  // в decideApprover как tzNotRequired. Ключ — id согласующего (WishApproval.id),
+  // тот же приём, что decideComment выше.
+  const tzNotRequiredChecked = ref<Record<number, boolean>>({})
 
   // Владелец: верхним согласующим можно ставить только сотрудника с правом
   // корректировать субсидию заявки — список кандидатов приходит с бэка
@@ -209,7 +214,7 @@ export function useWishApprovers(deps: {
       showSnack(e?.payload?.message || e?.message || 'Не удалось удалить согласующего', 'error')
     }
   }
-  async function decideApprover(approvalId: number, decision: 'approved' | 'rejected') {
+  async function decideApprover(approvalId: number, decision: 'approved' | 'rejected', tzNotRequired = false) {
     if (!editingWishId.value) return
     const flushedFeo = await flushFeoAutosave()
     if (!flushedFeo) return
@@ -231,7 +236,14 @@ export function useWishApprovers(deps: {
         purchase_sync?: import('./wishTypes').PurchaseSync | null
       }>(
         `/wishes/${editingWishId.value}/approvers/${approvalId}/decide`,
-        { method: 'POST', body: JSON.stringify({ decision, comment: decideComment.value[approvalId] || null }) },
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            decision,
+            comment: decideComment.value[approvalId] || null,
+            ...(decision === 'approved' && tzNotRequired ? { tz_not_required: true } : {}),
+          }),
+        },
       )
       wishApprovers.value = res.approvers
       syncIsChainApprover()
@@ -297,7 +309,7 @@ export function useWishApprovers(deps: {
   return {
     wishMembers, participantToAdd, loadWishMembers, addWishMember, removeWishMember,
     wishApprovers, approverTopUser, approverToAdd, approvalMode, cascadeLoading,
-    decideComment, decideLoading, approvalStatusColor, approvalStatusLabel,
+    decideComment, decideLoading, tzNotRequiredChecked, approvalStatusColor, approvalStatusLabel,
     topApproverCandidates, loadTopApproverCandidates,
     isChainApprover, loadWishApprovers, callCascadeApi, runCascade, ensureApprovers,
     addApprover, reorderLoading, moveApprover, removeApprover, decideApprover, loadWishOnce,

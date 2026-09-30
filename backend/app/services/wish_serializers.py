@@ -48,6 +48,8 @@ def _enrich(w: Wish) -> WishOut:
         d.stopped_by_name = w.stopped_by_user.full_name or w.stopped_by_user.username
     if getattr(w, 'rejected_by_user', None):
         d.rejected_by_name = w.rejected_by_user.full_name or w.rejected_by_user.username
+    if getattr(w, 'tz_waived_by_user', None):
+        d.tz_waived_by_name = w.tz_waived_by_user.full_name or w.tz_waived_by_user.username
     # Контрагент — ПРАВИЛО №6 (группа D5): единственный читатель —
     # item_contractor.item_contractor (FK, когда задан, иначе свободный текст).
     # w.contractor — relationship lazy="selectin" (см. models/wish.py), уже

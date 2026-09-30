@@ -89,7 +89,12 @@ export function useWishActions(deps: {
 
   // Approve
   const approvingId = ref<number | null>(null)
-  async function approveWish(wish: Wish) {
+  // Владелец (30.09): «Без ТЗ (мелкие закупки)» — та же галочка, что у решения
+  // по конкретному шагу цепочки (useWishApprovers.tzNotRequiredChecked), но
+  // для быстрого одобрения «без согласования остальных» (POST /wishes/{id}/approve),
+  // у которого нет отдельного WishApproval.id для ключа карты.
+  const quickApproveTzNotRequired = ref(false)
+  async function approveWish(wish: Wish, tzNotRequired = false) {
     if (wishDialog.value && editingWishId.value === wish.id) {
       const flushedFeo = await flushFeoAutosave()
       if (!flushedFeo) return
@@ -110,7 +115,7 @@ export function useWishActions(deps: {
         excess_warnings?: import('./wishTypes').ExcessWarning[]
         purchases?: { id: number; registry_number?: string | null }[]
         purchase_sync?: import('./wishTypes').PurchaseSync | null
-      }>(`/wishes/${wish.id}/approve`, { method: 'POST' })
+      }>(`/wishes/${wish.id}/approve${tzNotRequired ? '?tz_not_required=true' : ''}`, { method: 'POST' })
       const _convertedPurchase = res?.status === 'converted' ? (res.purchases || [])[0] : null
       if (res?.convert_warning) showSnack(res.convert_warning, 'warning')
       else if (_convertedPurchase)
@@ -457,7 +462,7 @@ export function useWishActions(deps: {
   return {
     submittingId, submitWish,
     deletingId, deleteWish,
-    approvingId, approveWish,
+    approvingId, approveWish, quickApproveTzNotRequired,
     rejectDialog, rejectingWish, rejectionReason, rejectingWishItem, openRejectDialog, rejectWish,
     kanbanDialog, kanbanWish, kanbanItems, openKanbanDialog, onKanbanApproved,
     downloadingServiceNoteId, downloadingExcelId, downloadServiceNote, downloadWishExcel,

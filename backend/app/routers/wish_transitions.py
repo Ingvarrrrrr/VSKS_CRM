@@ -226,10 +226,19 @@ async def submit_wish(
 @router.post("/{wish_id}/approve", response_model=WishOut)
 async def approve_wish(
     wish_id: int,
+    tz_not_required: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Approve a submitted wish (manager+ roles OR assigned approver, submitted -> approved)."""
+    """Approve a submitted wish (manager+ roles OR assigned approver, submitted -> approved).
+
+    tz_not_required (владелец, 30.09) — галочка «Без ТЗ (мелкие закупки)»
+    согласующего: тот же круг лиц, что уже проходит проверку ниже (менеджер+/
+    назначенный согласующий/SaaS), может пометить заявку так, чтобы созданная
+    закупка получила то же послабление гейта ТЗ, что и авансовые (см.
+    app.services.tz_items.tz_required). Только включает флаг — снятой галочкой
+    ранее выставленный флаг не сбросить отсюда.
+    """
     wish = await wishes_core._load_wish(wish_id, db)
 
     if not wishes_core._is_saas(current_user) and wish.status != "submitted":
@@ -245,6 +254,19 @@ async def approve_wish(
 
     # W3: менеджер/SaaS может одобрить чужие pending без блокировки (allow_override=True)
     await wishes_core._ensure_no_pending_approvals(wish, db, current_user, allow_override=True)
+
+    if tz_not_required and not wish.tz_not_required:
+        # Владелец (30.09, уточнение): «Это должно быть ОТДЕЛЬНОЕ разрешение
+        # в ролях — кому можно отменять необходимость ТЗ, а кому нет» —
+        # отдельное от права решать по заявке вообще (проверка выше). См.
+        # permission_seeds.py::_purchase_tz_waive_action.
+        if not await has_org_key(current_user, db, wish.org_id, 'purchase.tz_waive', subsidy_id=wish.subsidy_id):
+            raise HTTPException(
+                status_code=403,
+                detail="Нет права «Отмена необходимости ТЗ» — обратитесь к администратору за разрешением purchase.tz_waive",
+            )
+        wish.tz_not_required = True
+        wish.tz_waived_by_user_id = current_user.id
 
     wish.status = "approved"
     wish.approved_by = current_user.id

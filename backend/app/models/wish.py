@@ -83,12 +83,23 @@ class Wish(Base):
     # договора/заказано для рамочных — см. Purchase.stopped_at).
     stopped_partial = Column(Boolean, nullable=False, default=False, server_default="false")
 
+    # Владелец (30.09): «ТЗ нужно для всех товаров, но у согласующего должна
+    # быть возможность пропускать его для мелких закупок» — то же послабление,
+    # что уже есть у авансовых (см. Purchase.tz_not_required и
+    # app.services.tz_items.tz_required, ПРАВИЛО №6 — не второй механизм).
+    # Ставится согласующим при решении по заявке (POST /wishes/{id}/approve,
+    # POST /wishes/{id}/approvers/{approval_id}/decide) и переносится на
+    # создаваемую закупку в _distribute_wish_to_purchases (wish_distribution.py).
+    tz_not_required = Column(Boolean, nullable=False, default=False, server_default="false")
+    tz_waived_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
     creator = relationship("User", foreign_keys=[created_by], lazy="joined")
     approver = relationship("User", foreign_keys=[approved_by], lazy="joined")
     assignee = relationship("User", foreign_keys=[assigned_to], lazy="selectin")
     executor = relationship("User", foreign_keys=[executor_id], lazy="selectin")
     stopped_by_user = relationship("User", foreign_keys=[stopped_by], lazy="selectin")
     rejected_by_user = relationship("User", foreign_keys=[rejected_by], lazy="selectin")
+    tz_waived_by_user = relationship("User", foreign_keys=[tz_waived_by_user_id], lazy="selectin")
     purchase = relationship("Purchase", foreign_keys=[purchase_id])
     contractor = relationship("Contractor", foreign_keys=[contractor_id], lazy="selectin")
     subsidy = relationship("Subsidy", lazy="selectin")

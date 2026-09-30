@@ -59,6 +59,7 @@ from app.services.documents.stages_receipts import build_contract_items_and_rece
 from app.services.documents.stages_render import render_template
 from app.services.documents.stages_postprocess import build_final_buffer
 from app.services.documents.stages_contract_tz import append_tz_table_for_contract
+from app.services.tz_items import tz_required
 from app.services.documents.stages_methodology import attach_methodology
 from app.services.documents.stages_merge import merge_secondary_doc
 from app.services.documents.stages_finalize import finalize_response
@@ -153,7 +154,15 @@ async def generate_document_bytes(
     buf = build_final_buffer(tpl, doc_type, approvers_list, receipt_png_paths, pid, template_path)
 
     # Contract ТЗ table append, methodology attach, secondary-doc merge.
-    buf = append_tz_table_for_contract(buf, doc_type, items_list, p)
+    # Владелец (30.09, заявка №92): «можно провести без ТЗ» — закупка с
+    # tz_not_required=True (или purchase_method='advance') печатается БЕЗ
+    # отдельного приложения «ТЕХНИЧЕСКОЕ ЗАДАНИЕ» после разрыва страницы;
+    # простой перечень позиций внутри самого договора (context["items"],
+    # см. build_base_context_part1 выше) никуда не девается — это ДРУГОЙ,
+    # более лёгкий список, не формальное приложение ТЗ. Единый источник —
+    # app.services.tz_items.tz_required (ПРАВИЛО №6).
+    if tz_required(p):
+        buf = append_tz_table_for_contract(buf, doc_type, items_list, p)
     buf = attach_methodology(buf, doc_type, p, pid)
     buf, filename_base = merge_secondary_doc(buf, merge, doc_type, context, p, filename_base)
 

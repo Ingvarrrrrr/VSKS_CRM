@@ -430,6 +430,12 @@ class WishOut(BaseModel):
     stopped_by_name: Optional[str] = None
     stopped_reason: Optional[str] = None
     stopped_partial: bool = False
+    # Владелец (30.09): «Без ТЗ (мелкие закупки)» — галочка согласующего при
+    # решении по заявке (см. Wish.tz_not_required докстринг в models/wish.py,
+    # app.services.tz_items.tz_required). Переезжает на создаваемую закупку.
+    tz_not_required: bool = False
+    tz_waived_by_user_id: Optional[int] = None
+    tz_waived_by_name: Optional[str] = None
     # Владелец: столбец «сумма заявки» на листе /wishes — Σ total_price её
     # позиций (WishItem), НЕ то же самое, что estimated_price (единая ручная
     # оценка на уровне заявки, не сумма по позициям). Список считает батчем

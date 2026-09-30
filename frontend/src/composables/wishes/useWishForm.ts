@@ -610,6 +610,13 @@ export function useWishForm(deps: {
     can(ACTIONS.WISH_EDIT_FEO!)
     && (canAssigneeAct.value || canDecideWish.value)
   )
+  // Владелец (30.09, уточнение к заявке №92): «Это должно быть ОТДЕЛЬНОЕ
+  // разрешение в ролях — кому можно отменять необходимость ТЗ» — отдельное
+  // от права решать по заявке вообще (canDecideWish/canAssigneeAct). Галочка
+  // «Без ТЗ» видна, только если оба условия верны; бэкенд проверяет то же
+  // самое право (purchase.tz_waive) в wish_transitions.py::approve_wish и
+  // wish_approvals.py::decide_wish_approval — see permission_seeds.py.
+  const canWaiveTz = computed(() => can(ACTIONS.PURCHASE_TZ_WAIVE!))
   const canEditAssignee = computed(() =>
     !!editingWish.value
     && ['submitted', 'approved'].includes(editingWish.value.status)
@@ -1135,7 +1142,7 @@ export function useWishForm(deps: {
     highlightMissingFeoCategory, highlightMissingApprovers, focusApproversField, onAddApproversClick,
     undoRedoWish, totalNmck, onSubsidyChange,
     isWishEditable, isDialogAssignee, isDialogCreator, canAssigneeAct, isChainApprover, setIsChainApprover,
-    canEditWishFeo, canEditAssignee, canDecideWish,
+    canEditWishFeo, canEditAssignee, canDecideWish, canWaiveTz,
     resetForm, openCreateDialog, openEditDialog,
     wishFormSavedSnapshot, buildWishPayload, wishPayloadSnapshotJson, saveWish,
     handleMissingDatesError, handleMissingFeoCategoryError,

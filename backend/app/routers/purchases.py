@@ -401,6 +401,15 @@ async def list_purchases(
         res = await db.execute(select(User.id, User.full_name, User.username).where(User.id.in_(su_ids)))
         su_map = {uid: (fn or un) for uid, fn, un in res.all()}
 
+    # «Без ТЗ» (владелец, 30.09) — batch-fetch имени согласующего, разрешившего
+    # закупку без технического задания (Purchase.tz_waived_by_user_id), тот же
+    # приём, что и su_map выше.
+    tzw_ids = [p.tz_waived_by_user_id for p in purchases if p.tz_waived_by_user_id]
+    tz_waived_by_map: dict = {}
+    if tzw_ids:
+        res = await db.execute(select(User.id, User.full_name, User.username).where(User.id.in_(tzw_ids)))
+        tz_waived_by_map = {uid: (fn or un) for uid, fn, un in res.all()}
+
     # Batch-fetch last receipt date for advance purchases
     from app.models.purchase_receipt import PurchaseReceipt
     adv_ids = [p.id for p in purchases if p.purchase_method == 'advance']
@@ -484,6 +493,7 @@ async def list_purchases(
             p, contractors, subsidies, contractor_inns=contractor_inns, receipt_map=receipt_map,
             ru_map=ru_map, su_map=su_map, feo_excess_map=_feo_excess_map,
             feo_mismatch_map=_feo_mismatch_map, amounts_map=_amounts_map, contract=p.contract,
+            tz_waived_by_map=tz_waived_by_map,
         )
         if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):
             out.framework_contract_total = display_total_by_contract.get(p.contract_id)
@@ -524,6 +534,7 @@ async def load_purchase_for_out(db: AsyncSession, pid: int) -> Purchase | None:
             selectinload(Purchase.event),
             selectinload(Purchase.reimbursement_user),
             selectinload(Purchase.stopped_by_user),
+            selectinload(Purchase.tz_waived_by_user),
             # ПРАВИЛО №6 (группа D7): см. list_purchases выше — тот же источник
             # шапки договора.
             selectinload(Purchase.contract),
@@ -641,6 +652,11 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
     single_su_map: dict = {}
     if p.stopped_by and p.stopped_by_user:
         single_su_map = {p.stopped_by: (p.stopped_by_user.full_name or p.stopped_by_user.username)}
+    single_tz_waived_by_map: dict = {}
+    if p.tz_waived_by_user_id and p.tz_waived_by_user:
+        single_tz_waived_by_map = {
+            p.tz_waived_by_user_id: (p.tz_waived_by_user.full_name or p.tz_waived_by_user.username)
+        }
 
     # Перф (2026-09-27, жалоба «закупка грузится 10 сек», rt=2.2с на
     # GET /purchases/{id}): compute_feo_plan_tree — тяжёлый агрегат по ВСЕЙ
@@ -722,6 +738,7 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
         feo_excess_map=_single_feo_excess_map, item_plan_map=_item_plan_map, wish_title_map=_wish_title_map,
         wish_status_map=_wish_status_map, feo_mismatch_map=_single_feo_mismatch_map,
         amounts_map=_single_amounts_map, contract=p.contract,
+        tz_waived_by_map=single_tz_waived_by_map,
     )
     # phase26-m: populate framework_contract_total for single purchase view
     if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):

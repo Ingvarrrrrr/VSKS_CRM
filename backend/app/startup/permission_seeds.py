@@ -510,6 +510,45 @@ async def _staff_location_view_action():
         logging.getLogger(__name__).warning(f"staff.location.view action seed skipped (non-fatal): {e}")
 
 
+async def _purchase_tz_waive_action():
+    # Владелец (30.09, заявка №92): «Это должно быть ОТДЕЛЬНОЕ разрешение в
+    # ролях — кому можно отменять необходимость ТЗ, а кому нет» — отдельное
+    # от общего права решать по заявке (canDecideWish/approve). Управляет
+    # видимостью галочки «Без ТЗ» в WishFormDialog.vue и проверяется на бэке
+    # в wish_transitions.py::approve_wish и wish_approvals.py::decide_wish_approval
+    # (has_org_key(..., 'purchase.tz_waive', subsidy_id=...)) ДО того, как флаг
+    # tz_not_required вообще ставится — см. app.services.tz_items.tz_required.
+    # Дефолт: superadmin/account_owner/admin=TRUE; org_admin/manager/employee=FALSE
+    # (владелец раздаст org_admin/manager сам, где нужно).
+    try:
+        from sqlalchemy import select as _sel
+        from app.models.permission import PermissionAction, RolePermission
+        async with async_session() as db:
+            ACTION_KEY = 'purchase.tz_waive'
+            ex = await db.execute(_sel(PermissionAction).where(PermissionAction.action_key == ACTION_KEY))
+            if not ex.scalar_one_or_none():
+                db.add(PermissionAction(
+                    action_key=ACTION_KEY,
+                    description='Отмена необходимости ТЗ по решению согласующего',
+                ))
+                await db.commit()
+            ROLE_DEFAULTS = [
+                ('superadmin', True), ('account_owner', True),
+                ('admin', True), ('org_admin', False),
+                ('manager', False), ('employee', False),
+            ]
+            for role_name, granted in ROLE_DEFAULTS:
+                ex = await db.execute(_sel(RolePermission).where(
+                    RolePermission.role_name == role_name,
+                    RolePermission.key == ACTION_KEY,
+                ))
+                if not ex.scalar_one_or_none():
+                    db.add(RolePermission(role_name=role_name, key=ACTION_KEY, granted=granted))
+            await db.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"purchase.tz_waive action seed skipped (non-fatal): {e}")
+
+
 async def run():
     """Вызывает все idempotent сиды прав в исходном порядке (см. app/__init__.py.lifespan до разрезания)."""
     await _payment_registry_tab_and_actions()
@@ -525,3 +564,4 @@ async def run():
     await _plan_excess_decide_action()
     await _staff_directory_tab()
     await _staff_location_view_action()
+    await _purchase_tz_waive_action()

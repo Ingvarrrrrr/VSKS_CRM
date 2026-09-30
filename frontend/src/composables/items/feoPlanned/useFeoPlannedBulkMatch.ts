@@ -29,6 +29,12 @@ export interface BulkMatchRow {
   quantity: number | null
   unit: string
   amount: number | null
+  /** Товар/услуга/работа позиции закупки/заявки (it.item_type) — уже загруженное
+   *  поле localItems, владелец (29.09, п.1): «Тип» не влезал/обрезался в этом
+   *  диалоге. У кандидата (плановой позиции) такого поля нет ни в BulkMatchRow, ни
+   *  в GET /feo-categories/plan-positions (backend вне зоны этого агента) — второй
+   *  тип не добавляем без нового запроса, показываем только тип позиции. */
+  itemType: string | null
   /** Лучший кандидат — id/kind плановой позиции (или конечной категории с планом,
    *  если своей FeoPlannedItem нет), путь, остаток; null — похожих не нашлось. */
   candidate: {
@@ -105,6 +111,7 @@ export function useFeoPlannedBulkMatch(deps: UseFeoPlannedBulkMatchDeps) {
           quantity: it.quantity ?? null,
           unit: it.unit || '',
           amount: it.total_price ?? null,
+          itemType: it.item_type || null,
           candidate,
           isExact: !!candidate && isExact,
           checked: !!candidate && isExact,

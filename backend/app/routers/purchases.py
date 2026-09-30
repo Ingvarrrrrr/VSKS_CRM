@@ -970,6 +970,10 @@ async def create_purchase(
     if is_advance and not data.wish_id:
         from app.models.wish import Wish
         from app.models.wish_item import WishItem as WishItemModel
+        from app.services.advance_wish_sync import (
+            sync_wish_contract_and_contractor,
+            wish_item_kwargs_from_purchase_item,
+        )
         wish_title = f"Возмещение по авансовому отчёту {p.registry_number or f'#{p.id}'}"
         auto_wish = Wish(
             source='advance_report',
@@ -983,6 +987,11 @@ async def create_purchase(
             justification=p.service_note_text,
             estimated_price=total_nmck,
         )
+        # Владелец (жалоба по заявке №88, РЕЕ-2026-00962, 2026-09-30): «Форма
+        # договора» и контрагент пустые на авто-заявке компаньоне — копируем с
+        # закупки (см. app/services/advance_wish_sync.py, ПРАВИЛО №6 — общий
+        # хелпер, переиспользуется и при последующей правке авансового ниже).
+        sync_wish_contract_and_contractor(auto_wish, p, current_user)
         db.add(auto_wish)
         await db.flush()  # get auto_wish.id
         p.wish_id = auto_wish.id
@@ -991,16 +1000,7 @@ async def create_purchase(
             d = item_d.model_dump()
             db.add(WishItemModel(
                 wish_id=auto_wish.id,
-                item_name=d.get('item_name', ''),
-                item_type=d.get('item_type'),
-                quantity=d.get('quantity'),
-                unit=d.get('unit'),
-                unit_price=d.get('unit_price'),
-                total_price=d.get('total_price'),
-                country_origin=d.get('country_origin'),
-                product_id=d.get('product_id'),
-                feo_category_id=d.get('feo_category_id'),
-                extra_attrs=d.get('extra_attrs') or {},
+                **wish_item_kwargs_from_purchase_item(d),
             ))
 
     # Save subsidy allocations
@@ -1563,27 +1563,30 @@ async def update_purchase(
     if p.purchase_method == 'advance' and p.wish_id:
         from app.models.wish import Wish
         from app.models.wish_item import WishItem as WishItemModel
+        from app.services.advance_wish_sync import (
+            sync_wish_contract_and_contractor,
+            wish_item_kwargs_from_purchase_item,
+        )
         _wish = await db.get(Wish, p.wish_id)
         if _wish and getattr(_wish, 'source', None) == 'advance_report' and _wish.status in ('draft', 'submitted', 'rejected'):
             _wish.estimated_price = items_sum or p.planned_total_price
             _wish.justification = p.service_note_text
             _wish.title = f"Возмещение по авансовому отчёту {p.registry_number or f'#{p.id}'}"[:499]
+            # Владелец (жалоба по заявке №88, РЕЕ-2026-00962, 2026-09-30): та же
+            # синхронизация contract_form/контрагента, что при создании
+            # компаньона (см. app/services/advance_wish_sync.py, ПРАВИЛО №6) —
+            # иначе правка формы договора/контрагента на закупке не доезжает
+            # до уже существующей заявки-компаньона.
+            from app.models.user import User as _User
+            _creator = await db.get(_User, _wish.created_by) if _wish.created_by else None
+            sync_wish_contract_and_contractor(_wish, p, _creator)
             # Пересобрать WishItems из позиций закупки
             await db.execute(delete(WishItemModel).where(WishItemModel.wish_id == _wish.id))
             for item_d in items_data:
                 d = item_d.model_dump()
                 db.add(WishItemModel(
                     wish_id=_wish.id,
-                    item_name=d.get('item_name', ''),
-                    item_type=d.get('item_type'),
-                    quantity=d.get('quantity'),
-                    unit=d.get('unit'),
-                    unit_price=d.get('unit_price'),
-                    total_price=d.get('total_price'),
-                    country_origin=d.get('country_origin'),
-                    product_id=d.get('product_id'),
-                    feo_category_id=d.get('feo_category_id'),
-                    extra_attrs=d.get('extra_attrs') or {},
+                    **wish_item_kwargs_from_purchase_item(d),
                 ))
 
     # 12-03: Auto-create plan-graph version on status→fact or FEO-linked items

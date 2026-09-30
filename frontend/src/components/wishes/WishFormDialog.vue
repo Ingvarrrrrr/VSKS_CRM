@@ -255,15 +255,25 @@
                       />
                     </v-col>
                     <v-col cols="12" md="6">
-                      <v-text-field
-                        v-model="wishForm.contractor_name"
-                        label="Или впишите имя вручную"
+                      <v-combobox
+                        :model-value="wishForm.contractor_name"
+                        @update:model-value="onContractorNameInput"
+                        :items="orgUsers"
+                        item-title="full_name"
+                        label="Сотрудник или имя вручную"
                         variant="outlined"
                         density="compact"
                         clearable
-                        hint="Если контрагента ещё нет в справочнике"
+                        hint="Для авансового — обычно сотрудник, который потратил деньги"
                         persistent-hint
-                      />
+                      >
+                        <template #item="{ item, props: itemProps }">
+                          <v-list-item v-bind="itemProps">
+                            <template #title>{{ item.raw.full_name }}</template>
+                            <template #subtitle v-if="resolveUserPosition(item.raw)">{{ resolveUserPosition(item.raw) }}</template>
+                          </v-list-item>
+                        </template>
+                      </v-combobox>
                     </v-col>
                   </v-row>
                   <div v-else class="text-body-2">
@@ -1382,7 +1392,7 @@ const {
   highlightMissingFeoCategory, saving, serverFieldErrors, wishForm, selectedSubsidyName, eventsForSubsidy,
   wishFeoSelected, wishFeoPerItemDisableDialog, wishFeoPerItemDisableCount,
   onWishFeoPerItemChange, cancelWishFeoPerItemDisable, confirmWishFeoPerItemDisable,
-  orgUsers, resolveUserPosition, wishContractorInitial, onWishContractorSelect,
+  orgUsers, resolveUserPosition, wishContractorInitial, onWishContractorSelect, onContractorNameInput,
   wishFeoLeaves, wishFeoTreeNodes, wishNodeAmounts, pickWishUnallocated,
   wishPlannedResiduals, onWishPlannedItemCreated,
   wishFeoStale, wishItemsMissingFeoCategory, wishFeoCategoryMissing, wishFeoCategoryMissingTooltip,

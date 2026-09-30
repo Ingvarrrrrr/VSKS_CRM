@@ -4,7 +4,10 @@
        ФЭО, но нет привязки к плановой позиции, каждую в своей категории. Presentational —
        parent owns needPlanRows/progress/failures and the actual create loop.
        Extracted from PurchaseItemsEditor.vue. -->
-  <v-dialog v-model="open" max-width="640" :persistent="loading">
+  <!-- Владелец (29.09, п.2, экран 2560px): max-width 640 узкий, наименования и
+       заголовки обрезались/не переносились, колонка «Тип» не влезала целиком —
+       ширина теперь от экрана (95vw/1600, fullscreen на mobile), текст переносится. -->
+  <v-dialog v-model="open" width="95vw" max-width="1600" :fullscreen="mobile" :persistent="loading">
     <v-card>
       <v-card-title class="text-subtitle-1">
         Создать в плане закупок ({{ rows.length }})
@@ -35,44 +38,46 @@
             @click="emit('set-all-type', opt.value)"
           >{{ opt.title }}</v-btn>
         </div>
-        <v-table density="compact">
-          <thead>
-            <tr>
-              <th>Наименование</th>
-              <th>Кол-во</th>
-              <th>Сумма</th>
-              <th>Категория ФЭО</th>
-              <th>Тип</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in rows" :key="row.uid" :id="`plan-bulk-type-row-${row.uid}`">
-              <td>
-                {{ row.name }}
-                <v-tooltip v-if="row.duplicateOf" location="top" :text="`Уже есть: «${row.duplicateOf.name}» — будет создана отдельная позиция`">
-                  <template #activator="{ props: tip }">
-                    <v-icon v-bind="tip" icon="mdi-alert-outline" size="16" color="warning" class="ml-1" />
-                  </template>
-                </v-tooltip>
-              </td>
-              <td>{{ row.quantity ?? '—' }} {{ row.unit }}</td>
-              <td>{{ fmtRub(row.amount) }}</td>
-              <td>{{ row.categoryName }}</td>
-              <td style="min-width:130px">
-                <v-select
-                  :model-value="row.itemType"
-                  :items="ITEM_TYPE_OPTIONS"
-                  density="compact"
-                  variant="outlined"
-                  hide-details
-                  :error="!row.itemType"
-                  placeholder="Не указан"
-                  @update:model-value="(v: string | null) => emit('set-row-type', row.idx, v)"
-                />
-              </td>
-            </tr>
-          </tbody>
-        </v-table>
+        <div class="bulk-create-table-wrap">
+          <v-table density="compact" class="bulk-create-table">
+            <thead>
+              <tr>
+                <th>Наименование</th>
+                <th>Кол-во</th>
+                <th>Сумма</th>
+                <th>Категория ФЭО</th>
+                <th style="width:160px">Тип</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in rows" :key="row.uid" :id="`plan-bulk-type-row-${row.uid}`">
+                <td class="wrap-cell">
+                  {{ row.name }}
+                  <v-tooltip v-if="row.duplicateOf" location="top" :text="`Уже есть: «${row.duplicateOf.name}» — будет создана отдельная позиция`">
+                    <template #activator="{ props: tip }">
+                      <v-icon v-bind="tip" icon="mdi-alert-outline" size="16" color="warning" class="ml-1" />
+                    </template>
+                  </v-tooltip>
+                </td>
+                <td class="wrap-cell">{{ row.quantity ?? '—' }} {{ row.unit }}</td>
+                <td class="wrap-cell">{{ fmtRub(row.amount) }}</td>
+                <td class="wrap-cell">{{ row.categoryName }}</td>
+                <td style="min-width:150px">
+                  <v-select
+                    :model-value="row.itemType"
+                    :items="ITEM_TYPE_OPTIONS"
+                    density="compact"
+                    variant="outlined"
+                    hide-details
+                    :error="!row.itemType"
+                    placeholder="Не указан"
+                    @update:model-value="(v: string | null) => emit('set-row-type', row.idx, v)"
+                  />
+                </td>
+              </tr>
+            </tbody>
+          </v-table>
+        </div>
         <div v-if="missingTypeCount > 0" class="text-caption mt-1" style="color:#EF4444">
           Не указан тип: {{ missingTypeCount }}
           <a href="#" class="ml-1" @click.prevent="emit('show-missing-type')">показать</a>
@@ -99,8 +104,11 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useDisplay } from 'vuetify'
 import { fmtRub } from '@/utils/numberFormat'
 import { ITEM_TYPE_OPTIONS } from '@/composables/items/feoPlanned/useFeoPlannedCreate'
+
+const { mobile } = useDisplay()
 
 interface PlanCreateRow {
   idx: number
@@ -138,3 +146,18 @@ const emit = defineEmits<{
   'show-missing-type': []
 }>()
 </script>
+
+<style scoped>
+.bulk-create-table-wrap {
+  overflow-x: auto;
+}
+.bulk-create-table :deep(th),
+.bulk-create-table :deep(td) {
+  white-space: normal;
+  word-break: break-word;
+  vertical-align: top;
+}
+.wrap-cell {
+  min-width: 160px;
+}
+</style>

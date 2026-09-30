@@ -275,6 +275,22 @@ export function useWishForm(deps: {
     if (c) wishForm.value.contractor_name = ''
   }
 
+  // Владелец, 2026-09-30: правое поле контрагента — v-combobox с подсказками
+  // из orgUsers (для авансовых отчётов контрагент чаще всего сотрудник, а
+  // выбрать его было нельзя). При выборе сотрудника из списка v-combobox
+  // отдаёт весь объект User (item-value не задан — своего "value" у User нет);
+  // в contractor_name пишем его ПОЛНОЕ full_name (не короткое имя для
+  // документов и не объект). Свободный текст остаётся строкой как раньше —
+  // contractor_name был и остаётся простой строкой (payload/автосейв/PATCH
+  // не трогаем, ПРАВИЛО №6 — второй источник для contractor_name не заводим).
+  function onContractorNameInput(val: unknown) {
+    if (val && typeof val === 'object') {
+      wishForm.value.contractor_name = (val as any).full_name || ''
+    } else {
+      wishForm.value.contractor_name = (val as string) || ''
+    }
+  }
+
   // ФЭО-дерево субсидии (узлы + листья с бюджетами) — объявлено ПОСЛЕ wishForm (TDZ)
   const { feoLeaves: wishFeoLeaves, feoNodes: wishFeoNodes } = useFeoLeaves({
     subsidyId: computed(() => wishForm.value.subsidy_id),
@@ -1110,7 +1126,7 @@ export function useWishForm(deps: {
     wishFeoSelected, wishFeoPerItemDisableDialog, wishFeoPerItemDisableCount,
     onWishFeoPerItemChange, cancelWishFeoPerItemDisable, confirmWishFeoPerItemDisable,
     orgMembers, loadOrgMembers, orgUsers, resolveUserPosition,
-    wishContractorInitial, onWishContractorSelect,
+    wishContractorInitial, onWishContractorSelect, onContractorNameInput,
     wishFeoLeaves, wishFeoNodes, wishFeoTreeNodes, wishFeoTreeRawNodes, wishNodeAmounts,
     collectFeoDescendantIds, wishFeoBranchHasPlannedItems,
     wishPlannedResiduals, wishPlannedByCategory, reloadWishPlanned, onWishPlannedItemCreated,

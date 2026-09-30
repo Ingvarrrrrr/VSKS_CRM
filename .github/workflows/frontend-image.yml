@@ -1,0 +1,89 @@
+name: Frontend image (GHCR)
+
+# Прод-сервер (3.9 ГБ RAM) раньше собирал фронт (`docker compose build`)
+# прямо в autodeploy.sh на каждый push — node/vite съедали ~40% памяти,
+# load average улетал за 200, сайт тормозил 10-15 минут на каждый деплой.
+# Теперь сборка фронта уезжает сюда, на раннер GitHub Actions; сервер только
+# скачивает готовый образ (см. autodeploy.sh, try_pull_frontend_from_ghcr).
+#
+# Репо приватное → лимит Actions-минут (2000/мес), а пушей 10-20/день,
+# большинство фронт не трогают. Поэтому ДВЕ защиты от лишних прогонов:
+#   1. paths-фильтр — job вообще не стартует, если push не тронул frontend/**
+#      (или сам этот workflow-файл).
+#   2. Тег образа — хеш ДЕРЕВА каталога frontend/ (`git rev-parse HEAD:frontend`),
+#      а не хеш коммита. Один и тот же тег переиспользуется, если содержимое
+#      frontend/ не поменялось между коммитами (backend-only правки, мердж
+#      без конфликтов и т.п.) — autodeploy.sh сверяет именно это дерево со
+#      своей файл-меткой и, если оно то же самое, вообще не трогает фронт.
+# build-arg GIT_SHA остаётся хешем КОММИТА (не дерева) — это просто метка
+# версии внутри собранного бандла (frontend/Dockerfile пишет её в
+# /app/.git-sha и использует как cache-buster для COPY . . / npm run build),
+# коммит может измениться, даже когда дерево frontend/ — нет.
+
+on:
+  push:
+    branches: [claude]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend-image.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  # Имя владельца репозитория ОБЯЗАНО быть в нижнем регистре для GHCR —
+  # `github.repository_owner` в теге образа этого не гарантирует сам по себе.
+  IMAGE_NAME: vsks-crm-frontend
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 1 достаточно — `git rev-parse HEAD:frontend` берёт tree
+      # объект ИЗ ТЕКУЩЕГО коммита (он есть в дереве, скачанном с глубиной 1),
+      # история предыдущих коммитов для этого не нужна.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Compute image name and frontend tree hash
+        id: image
+        run: |
+          owner_lc=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "full=${{ env.REGISTRY }}/${owner_lc}/${{ env.IMAGE_NAME }}" >> "$GITHUB_OUTPUT"
+          tree=$(git rev-parse HEAD:frontend)
+          echo "tree=${tree}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          # GIT_SHA — метка версии внутри бандла (см. Dockerfile), НЕ тег
+          # образа: тег образа — хеш дерева frontend/, см. tags ниже.
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+          # frontend.tree — та же метка, что autodeploy.sh хранит в файле
+          # /var/lib/vsks-deploy/frontend_tree на сервере; на образе она нужна
+          # только для ручной сверки (`docker image inspect`), сам скрипт
+          # деплоя сверяется по файлу-метке, не по LABEL образа.
+          labels: |
+            frontend.tree=${{ steps.image.outputs.tree }}
+          push: true
+          tags: |
+            ${{ steps.image.outputs.full }}:${{ steps.image.outputs.tree }}
+            ${{ steps.image.outputs.full }}:claude
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

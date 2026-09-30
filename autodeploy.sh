@@ -64,6 +64,43 @@ WEBHOOK_HASH_AFTER=$(sha256sum webhook.py 2>/dev/null | cut -d' ' -f1)
 # коммит, но не трогал кеш `npm ci` (см. frontend/Dockerfile).
 GIT_SHA=$(git rev-parse HEAD 2>/dev/null || echo unknown)
 
+# Фронт теперь собирается в GitHub Actions (.github/workflows/frontend-image.yml)
+# и публикуется в GHCR — сервер (3.9 ГБ RAM) больше не должен гонять node/vite
+# сам (`docker compose build` фронта грузил load average под 200 и держал
+# сайт тормозящим 10-15 минут на каждый деплой). См. try_pull_frontend_from_ghcr()
+# и блок сборки ниже.
+#
+# Тег образа — хеш ДЕРЕВА каталога frontend/, а не хеш коммита. Репо приватное
+# (лимит Actions 2000 мин/мес), пушей 10-20/день, большинство фронт не трогают
+# — workflow триггерится path-фильтром `frontend/**` и переиспользует тот же
+# тег/образ, если содержимое frontend/ не менялось между коммитами. По той же
+# причине сервер тоже не должен пересобирать/перекатывать фронт, если дерево
+# то же самое, что уже собрано и работает — см. FRONTEND_TREE_MARKER ниже.
+FRONTEND_TREE=$(git rev-parse HEAD:frontend 2>/dev/null || echo unknown)
+GHCR_FRONTEND_IMAGE="ghcr.io/ingvarrrrrr/vsks-crm-frontend:${FRONTEND_TREE}"
+# Имя, под которым фронт-образ ждёт `image:` в docker-compose.yml
+# (x-frontend-common) — frontend_a/frontend_b запускаются от НЕГО, не от
+# GHCR-тега напрямую, поэтому успешный pull ещё нужно `docker tag` в это имя.
+FRONTEND_LOCAL_IMAGE="vsks-crm-frontend:latest"
+# Файл-метка ВНЕ git-дерева (тот же принцип, что LOCKFILE выше — переживает
+# `git clean -fd`), храним в ней дерево frontend/, из которого РЕАЛЬНО собран
+# текущий $FRONTEND_LOCAL_IMAGE. `docker compose build` не даёт простого
+# способа проставить произвольный LABEL без правки docker-compose.yml (build:
+# секция сервиса) — трогать docker-compose.yml запрещено, файл-метка работает
+# одинаково что для локальной сборки, что для образа, скачанного из GHCR (тот
+# несёт LABEL frontend.tree сам по себе, см. workflow, но autodeploy.sh
+# сверяется именно по этому файлу — один источник истины для обоих путей).
+FRONTEND_TREE_MARKER=/var/lib/vsks-deploy/frontend_tree
+mkdir -p "$(dirname "$FRONTEND_TREE_MARKER")" 2>/dev/null
+
+FRONTEND_UNCHANGED=0
+if [ "$FRONTEND_TREE" != "unknown" ] \
+   && [ "$(cat "$FRONTEND_TREE_MARKER" 2>/dev/null)" = "$FRONTEND_TREE" ] \
+   && [ -n "$(docker images -q "$FRONTEND_LOCAL_IMAGE" 2>/dev/null)" ]; then
+    FRONTEND_UNCHANGED=1
+    echo "[$(ts)] frontend: дерево frontend/ не изменилось ($FRONTEND_TREE) — сборка и перекат реплик пропущены" >> "$LOG"
+fi
+
 # ── Бесшовный деплой (2026-09-04, доработано после ревью транзитного
 #    сценария; разрез edge/project nginx ОТЛОЖЕН — nginx пока держит 80/443
 #    и все домены сервера, как раньше, см. комментарий выше) ─────────────
@@ -282,6 +319,39 @@ nginx_reload_if_valid() {
     fi
 }
 
+try_pull_frontend_from_ghcr() {
+    # Ждёт появления образа $GHCR_FRONTEND_IMAGE в GHCR (CI обычно укладывается
+    # в 3-5 минут) и скачивает его. Опрос каждые 20с, общий таймаут 15 минут —
+    # с большим запасом над обычным временем сборки CI. Возвращает 0, если
+    # образ скачан (он ляжет в локальный docker под ИМЕНЕМ ИЗ GHCR — вызывающий
+    # код сам делает `docker tag` в $FRONTEND_LOCAL_IMAGE, которое ждёт
+    # docker-compose.yml), 1 — если недоступен (сборка на сервере остаётся
+    # фолбэком, ничего не меняется относительно старого поведения).
+    #
+    # Ошибку авторизации (пакет приватный, сервер не сделал `docker login
+    # ghcr.io`) отличаем от "тега ещё нет" (CI ещё собирает) — при auth-ошибке
+    # ждать 15 минут бессмысленно: следующий pull даст тот же 401/403, а не
+    # docker login никто на сервере за это время не выполнит. Выходим сразу.
+    local max_wait=900 interval=20 waited=0 pull_out pull_status
+    echo "[$(ts)] frontend: жду образ $GHCR_FRONTEND_IMAGE в GHCR (до $((max_wait / 60)) мин, опрос каждые ${interval}с)" >> "$LOG"
+    while [ "$waited" -lt "$max_wait" ]; do
+        pull_out=$(docker pull "$GHCR_FRONTEND_IMAGE" 2>&1)
+        pull_status=$?
+        if [ "$pull_status" -eq 0 ]; then
+            echo "[$(ts)] frontend: образ из GHCR скачан (после ${waited}с ожидания)" >> "$LOG"
+            return 0
+        fi
+        if echo "$pull_out" | grep -qiE 'unauthorized|denied|forbidden|(^| )401( |$)|(^| )403( |$)'; then
+            echo "[$(ts)] frontend: образ из GHCR недоступен (401/403 — пакет приватный, на сервере нет \`docker login ghcr.io\` либо токену не хватает read:packages), собираю локально. Вывод docker pull: $pull_out" >> "$LOG"
+            return 1
+        fi
+        sleep "$interval"
+        waited=$((waited + interval))
+    done
+    echo "[$(ts)] frontend: образ из GHCR недоступен (таймаут ${max_wait}с ожидания тега $FRONTEND_TREE — либо CI ещё не собрал/не запускался paths-фильтром, либо сеть/GHCR недоступны), собираю локально. Последний вывод docker pull: $pull_out" >> "$LOG"
+    return 1
+}
+
 roll_replica() {
     # Пересоздаёт ОДНУ реплику сервиса $1 (ждёт до $2 секунд её healthcheck).
     # Если она ожила — на всякий случай подстраховывает существование
@@ -322,9 +392,32 @@ roll_replica() {
 docker compose build backend_a >> "$LOG" 2>&1
 BACKEND_BUILD_OK=$?
 FRONTEND_BUILD_OK=1
-if [ "$BACKEND_BUILD_OK" -eq 0 ]; then
-    docker compose build --build-arg GIT_SHA="$GIT_SHA" frontend_a >> "$LOG" 2>&1
-    FRONTEND_BUILD_OK=$?
+if [ "$FRONTEND_UNCHANGED" -eq 1 ]; then
+    # Дерево frontend/ то же самое, что уже собрано и обслуживает трафик
+    # ($FRONTEND_LOCAL_IMAGE уже существует и помечен тем же деревом в
+    # $FRONTEND_TREE_MARKER) — ни сборка (локальная или pull), ни перекат
+    # реплик ниже НЕ нужны вовсе. FRONTEND_BUILD_OK=0 просто пускает общий
+    # гейт ниже дальше, к миграциям/раскатке backend.
+    FRONTEND_BUILD_OK=0
+elif [ "$BACKEND_BUILD_OK" -eq 0 ]; then
+    if try_pull_frontend_from_ghcr; then
+        # Переименовываем скачанный образ в тег, который ждёт docker-compose.yml
+        # (x-frontend-common: image: vsks-crm-frontend:latest) — roll_replica
+        # ниже просто `docker compose up -d --no-deps frontend_a/_b`, это НЕ
+        # триггерит сборку, пока локальный образ под этим именем уже есть.
+        docker tag "$GHCR_FRONTEND_IMAGE" "$FRONTEND_LOCAL_IMAGE" >> "$LOG" 2>&1
+        FRONTEND_BUILD_OK=$?
+        if [ "$FRONTEND_BUILD_OK" -eq 0 ]; then
+            echo "[$(ts)] frontend: используется образ из GHCR, локальная сборка (npm/vite) пропущена" >> "$LOG"
+            echo "$FRONTEND_TREE" > "$FRONTEND_TREE_MARKER" 2>/dev/null
+        fi
+    else
+        docker compose build --build-arg GIT_SHA="$GIT_SHA" frontend_a >> "$LOG" 2>&1
+        FRONTEND_BUILD_OK=$?
+        if [ "$FRONTEND_BUILD_OK" -eq 0 ]; then
+            echo "$FRONTEND_TREE" > "$FRONTEND_TREE_MARKER" 2>/dev/null
+        fi
+    fi
 fi
 BACKEND_OK=1
 FRONTEND_OK=1
@@ -364,7 +457,13 @@ else
         # выше и комментарий про ловушку переходного деплоя).
         if roll_replica backend_a 120 && roll_replica backend_b 120; then
             BACKEND_OK=0
-            if roll_replica frontend_a 60 && roll_replica frontend_b 60; then
+            if [ "$FRONTEND_UNCHANGED" -eq 1 ]; then
+                # Ни пересборки, ни пересоздания контейнеров — реплики
+                # frontend_a/_b уже обслуживают трафик тем же образом,
+                # трогать их незачем (см. FRONTEND_UNCHANGED выше).
+                echo "[$(ts)] frontend: перекат реплик пропущен (дерево не менялось)" >> "$LOG"
+                FRONTEND_OK=0
+            elif roll_replica frontend_a 60 && roll_replica frontend_b 60; then
                 FRONTEND_OK=0
             fi
         fi

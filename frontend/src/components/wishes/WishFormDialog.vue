@@ -1070,6 +1070,32 @@
             </v-btn>
           </template>
         </v-tooltip>
+        <!-- Владелец, 30.09: «Перейти в закупку» — видна, если у заявки есть
+             связанные закупки (см. useWishPurchaseNav.ts). Одна — сразу переход,
+             несколько — меню со списком «РЕЕ-… — статус». -->
+        <v-btn
+          v-if="editingWishId && editingWish && purchaseNav.relatedPurchases.value.length === 1"
+          variant="tonal" color="primary" prepend-icon="mdi-cart-arrow-right"
+          :loading="purchaseNav.loading.value"
+          @click="purchaseNav.goToSinglePurchase(editingWish)"
+        >
+          Перейти в закупку
+        </v-btn>
+        <v-menu v-else-if="editingWishId && editingWish && purchaseNav.relatedPurchases.value.length > 1">
+          <template #activator="{ props: purchaseMenuProps }">
+            <v-btn v-bind="purchaseMenuProps" variant="tonal" color="primary" prepend-icon="mdi-cart-arrow-right"
+                   :loading="purchaseNav.loading.value">
+              Перейти в закупку
+            </v-btn>
+          </template>
+          <v-list density="compact">
+            <v-list-item
+              v-for="p in purchaseNav.relatedPurchases.value" :key="p.id"
+              :title="`${p.registry_number || p.purchase_number || ('#' + p.id)} — ${p.status_label}`"
+              @click="purchaseNav.goToPurchase(p.id, editingWish)"
+            />
+          </v-list>
+        </v-menu>
         <!-- Владелец, 2026-08-13: «останавливать могут все» -->
         <v-btn v-if="editingWishId && editingWish && !editingWish.stopped_at" variant="tonal" color="error"
                prepend-icon="mdi-stop-circle-outline" @click="actions.openStopDialog(editingWish)">
@@ -1312,6 +1338,7 @@ import { useWishApprovers } from '@/composables/wishes/useWishApprovers'
 import { useWishItemsFeoAutosave } from '@/composables/wishes/useWishItemsFeoAutosave'
 import { useWishActions, canDistributeWish } from '@/composables/wishes/useWishActions'
 import { useWishDistributionReset } from '@/composables/wishes/useWishDistributionReset'
+import { useWishPurchaseNav } from '@/composables/wishes/useWishPurchaseNav'
 import type { Wish } from '@/composables/wishes/wishTypes'
 // item-forms-accommodation-transport.md (владелец, 2026-09-15): «договора на
 // перевозку и питание могут быть не только рамочные, но и разовые» — заявка
@@ -1386,6 +1413,12 @@ const distReset = useWishDistributionReset({
   reloadActiveTab: props.reloadActiveTab,
 })
 
+// «Перейти в закупку» (владелец, 30.09) — см. useWishPurchaseNav.ts.
+const purchaseNav = useWishPurchaseNav({
+  apiFetch,
+  router: ctx.router,
+})
+
 // Полностью оркестрованное открытие карточки — форма + участники + согласующие +
 // снимки автосейва ФЭО, ровно как единая функция openEditDialog в исходном файле.
 async function openEdit(wish: Wish) {
@@ -1404,6 +1437,10 @@ async function openEdit(wish: Wish) {
   // открытие ТОЙ ЖЕ заявки после внешнего изменения не показало устаревший счёт.
   distReset.forgetHiddenPurchasesCheck()
   if (form.editingWish.value) await distReset.checkHiddenPurchases(form.editingWish.value)
+  // «Перейти в закупку» (владелец, 30.09) — тот же приём, что и проверка
+  // скрытых закупок выше: лениво, только при реальном открытии карточки.
+  purchaseNav.forgetRelatedPurchases()
+  if (form.editingWish.value) await purchaseNav.loadRelatedPurchases(form.editingWish.value)
 }
 // Кнопка «Вернуть на доработку» в WishConvertedEditGate.vue (лист 2 №4) —
 // переиспользует существующий диалог «Отклонить» (Правило №6, см. обоснование

@@ -410,6 +410,16 @@ async def list_purchases(
         res = await db.execute(select(User.id, User.full_name, User.username).where(User.id.in_(tzw_ids)))
         tz_waived_by_map = {uid: (fn or un) for uid, fn, un in res.all()}
 
+    # Владелец (30.09): фолбэк «Контрагент» авансового отчёта, когда получатель
+    # возмещения ещё не выбран — автор/инициатор (Purchase.service_note_by), см.
+    # app.services.purchase_contractor_display.display_contractor_name. Тот же
+    # batch-приём, что и su_map/tz_waived_by_map выше, без N+1.
+    sn_ids = [p.service_note_by for p in purchases if p.service_note_by]
+    sn_map: dict = {}
+    if sn_ids:
+        res = await db.execute(select(User.id, User.full_name, User.username).where(User.id.in_(sn_ids)))
+        sn_map = {uid: (fn or un) for uid, fn, un in res.all()}
+
     # Batch-fetch last receipt date for advance purchases
     from app.models.purchase_receipt import PurchaseReceipt
     adv_ids = [p.id for p in purchases if p.purchase_method == 'advance']
@@ -493,7 +503,7 @@ async def list_purchases(
             p, contractors, subsidies, contractor_inns=contractor_inns, receipt_map=receipt_map,
             ru_map=ru_map, su_map=su_map, feo_excess_map=_feo_excess_map,
             feo_mismatch_map=_feo_mismatch_map, amounts_map=_amounts_map, contract=p.contract,
-            tz_waived_by_map=tz_waived_by_map,
+            tz_waived_by_map=tz_waived_by_map, sn_map=sn_map,
         )
         if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):
             out.framework_contract_total = display_total_by_contract.get(p.contract_id)
@@ -535,6 +545,7 @@ async def load_purchase_for_out(db: AsyncSession, pid: int) -> Purchase | None:
             selectinload(Purchase.reimbursement_user),
             selectinload(Purchase.stopped_by_user),
             selectinload(Purchase.tz_waived_by_user),
+            selectinload(Purchase.service_note_author),
             # ПРАВИЛО №6 (группа D7): см. list_purchases выше — тот же источник
             # шапки договора.
             selectinload(Purchase.contract),
@@ -657,6 +668,13 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
         single_tz_waived_by_map = {
             p.tz_waived_by_user_id: (p.tz_waived_by_user.full_name or p.tz_waived_by_user.username)
         }
+    # Владелец (30.09): фолбэк «Контрагент» авансового — см. sn_map в
+    # list_purchases выше, тот же источник (Purchase.service_note_by).
+    single_sn_map: dict = {}
+    if p.service_note_by and p.service_note_author:
+        single_sn_map = {
+            p.service_note_by: (p.service_note_author.full_name or p.service_note_author.username)
+        }
 
     # Перф (2026-09-27, жалоба «закупка грузится 10 сек», rt=2.2с на
     # GET /purchases/{id}): compute_feo_plan_tree — тяжёлый агрегат по ВСЕЙ
@@ -738,7 +756,7 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
         feo_excess_map=_single_feo_excess_map, item_plan_map=_item_plan_map, wish_title_map=_wish_title_map,
         wish_status_map=_wish_status_map, feo_mismatch_map=_single_feo_mismatch_map,
         amounts_map=_single_amounts_map, contract=p.contract,
-        tz_waived_by_map=single_tz_waived_by_map,
+        tz_waived_by_map=single_tz_waived_by_map, sn_map=single_sn_map,
     )
     # phase26-m: populate framework_contract_total for single purchase view
     if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):

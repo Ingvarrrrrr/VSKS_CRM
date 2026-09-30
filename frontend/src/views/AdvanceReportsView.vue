@@ -321,17 +321,29 @@
           <span>{{ item.displayName }}</span>
         </template>
 
+        <!-- Владелец, 30.09: «Контрагент» авансового = получатель возмещения
+             (или автор/инициатор, если возмещение ещё не назначено) — бэк уже
+             считает это в contractor_name (см. purchase_contractor_display.
+             display_contractor_name), второй расчёт здесь не заводим. Продавцы
+             из чеков — отдельная колонка «Продавцы (из чеков)» ниже (было тут,
+             под тем же ключом contractor_name, см. комментарий U-1 — исторический). -->
         <template #item.contractor_name="{ item }">
-          <!-- U-1: Контрагент = продавец из items чека, а не получатель возмещения -->
+          <v-chip v-if="item.contractor_name" size="x-small" color="purple" variant="tonal" prepend-icon="mdi-account-cash">
+            {{ item.contractor_name }}
+          </v-chip>
+          <span v-else class="text-medium-emphasis">—</span>
+        </template>
+
+        <!-- Продавцы (из чеков) — бывшее содержимое колонки «Контрагент» (U-1),
+             вынесено сюда отдельной колонкой (владелец, 30.09). -->
+        <template #item._unique_item_contractor_name="{ item }">
           <div>
-            <!-- Единственный контрагент из items -->
             <v-chip
               v-if="(item as any)._unique_item_contractor_count === 1"
               size="x-small" color="indigo" variant="tonal" prepend-icon="mdi-store"
             >
               {{ (item as any)._unique_item_contractor_name }}
             </v-chip>
-            <!-- Несколько контрагентов из items -->
             <v-tooltip v-else-if="(item as any)._unique_item_contractor_count > 1" location="top">
               <template #activator="{ props: tip }">
                 <v-chip v-bind="tip" size="x-small" color="orange" variant="tonal" prepend-icon="mdi-domain-switch">
@@ -340,15 +352,7 @@
               </template>
               <span>{{ (item as any)._all_item_contractor_names }}</span>
             </v-tooltip>
-            <!-- Fallback: legacy contractor_name -->
-            <span v-else class="text-caption">
-              {{ (item as any).multi_contractor_label || item.contractor_name || '—' }}
-            </span>
-            <!-- Получатель возмещения — дополняет, не подменяет -->
-            <div v-if="(item as any).reimbursement_user_name" class="text-caption text-medium-emphasis mt-0" style="font-size:11px">
-              <v-icon size="12" color="purple">mdi-account</v-icon>
-              возмещ.: {{ (item as any).reimbursement_user_name }}
-            </div>
+            <span v-else class="text-caption text-medium-emphasis">—</span>
           </div>
         </template>
 
@@ -449,19 +453,18 @@
               <div v-if="item.displayName && item.displayName !== '—'" class="text-caption text-medium-emphasis mb-1" style="overflow-wrap:anywhere">
                 {{ item.displayName.length > 80 ? item.displayName.slice(0, 80) + '...' : item.displayName }}
               </div>
+              <!-- Владелец, 30.09: Контрагент = получатель возмещения (см. комментарий
+                   у #item.contractor_name выше); продавцы из чеков — строкой ниже. -->
               <div class="text-caption text-medium-emphasis">Контрагент</div>
               <div class="text-body-2 mb-1" style="overflow-wrap:anywhere">
-                <span v-if="(item as any)._unique_item_contractor_count >= 1">
-                  {{ (item as any)._unique_item_contractor_name }}
-                  <span v-if="(item as any)._unique_item_contractor_count > 1" class="text-caption text-medium-emphasis">
-                    +{{ (item as any)._unique_item_contractor_count - 1 }} ещё
-                  </span>
-                </span>
-                <span v-else>{{ item.contractor_name || '—' }}</span>
+                {{ item.contractor_name || '—' }}
               </div>
-              <div v-if="(item as any).reimbursement_user_name" class="text-caption text-medium-emphasis mb-1">
-                <v-icon size="12" color="purple">mdi-account</v-icon>
-                возмещ.: {{ (item as any).reimbursement_user_name }}
+              <div v-if="(item as any)._unique_item_contractor_count >= 1" class="text-caption text-medium-emphasis mb-1">
+                Продавцы (из чеков):
+                {{ (item as any)._unique_item_contractor_name }}
+                <span v-if="(item as any)._unique_item_contractor_count > 1">
+                  +{{ (item as any)._unique_item_contractor_count - 1 }} ещё
+                </span>
               </div>
               <div class="text-caption text-medium-emphasis">Субсидия</div>
               <div class="mb-1">
@@ -615,6 +618,10 @@ const allColumns: ColumnDef[] = [
   { title: 'Наименование', key: 'displayName', group: 'core' },
   { title: 'Контрагент', key: 'contractor_name', width: 220, group: 'core' },
   { title: 'Кому возмещать', key: 'reimbursement_user_name', group: 'core' },
+  // Владелец, 30.09: бывшее содержимое колонки «Контрагент» (продавцы из
+  // чеков позиций, см. комментарий U-1 у шаблона ниже) — своей колонкой,
+  // «Контрагент» теперь = получатель возмещения.
+  { title: 'Продавцы (из чеков)', key: '_unique_item_contractor_name', width: 220, group: 'all' },
   { title: 'Субсидия', key: 'subsidy_name', width: 160, group: 'core' },
   { title: 'Сумма', key: 'nmck', width: 130, align: 'end', group: 'core' },
   { title: 'Дата исполнения', key: 'executionDate', width: 140, group: 'core' },
@@ -687,18 +694,27 @@ const tableHeaders = computed(() => [
 ])
 const showColumnPicker = ref(false)
 
-// Дедуп по имени контрагента — у авансовых contractor_id часто пуст, есть только contractor_name.
+// Владелец, 30.09: фильтр «Контрагент» в шапке — исторически фильтровал ПО
+// ПРОДАВЦУ (см. комментарий U-1 у колонки «Продавцы (из чеков)» — раньше это
+// была та же колонка «Контрагент»). Purchase.contractor_name теперь = получатель
+// возмещения (display_contractor_name на бэке), для него уже есть отдельный
+// фильтр «Кому возмещать» (usedReimbursementUsers) — второй бы дублировал его.
+// Дедуп по имени продавца идёт по items[].contractor_name (тот же источник,
+// что и колонка «Продавцы (из чеков)» — _unique_item_contractor_name в
+// enrichedItems ниже, ПРАВИЛО №6, вторая формула не заводится).
 const usedContractors = computed(() => {
   const byName = new Map<string, any>()
   for (const p of items.value) {
-    const name = p.contractor_name
-    if (!name || byName.has(name)) continue
-    const real = contractors.value.find(c =>
-      (p.contractor_id && c.id === p.contractor_id) ||
-      (p.contractor_inn && c.inn === p.contractor_inn) ||
-      c.name === name
-    )
-    byName.set(name, real || { id: -byName.size - 1, name, inn: p.contractor_inn || '' })
+    for (const it of (p.items || []) as any[]) {
+      const name = it.contractor_name
+      if (!name || byName.has(name)) continue
+      const real = contractors.value.find(c =>
+        (it.contractor_id && c.id === it.contractor_id) ||
+        (it.contractor_inn && c.inn === it.contractor_inn) ||
+        c.name === name
+      )
+      byName.set(name, real || { id: -byName.size - 1, name, inn: it.contractor_inn || '' })
+    }
   }
   return Array.from(byName.values())
 })
@@ -752,7 +768,8 @@ const filteredItems = computed(() => {
         .filter((c: any) => filterContractorIds.value.includes(c.id))
         .map((c: any) => c.name)
     )
-    r = r.filter(p => !!p.contractor_name && allowedNames.has(p.contractor_name))
+    // Фильтр «Контрагент» — по продавцу из чеков позиций (см. usedContractors выше).
+    r = r.filter(p => (p.items || []).some((it: any) => it.contractor_name && allowedNames.has(it.contractor_name)))
   }
   if (filterReimbursementUsers.value.length) {
     const allowed = new Set(filterReimbursementUsers.value)

@@ -35,9 +35,11 @@ from app.models.subsidy import Subsidy
 from app.models.contractor import Contractor
 from app.models.feo_category import FeoCategory
 from app.models.payment import Payment
+from app.models.user import User
 from app.utils.text import normalize_feo_name
 from app.utils.numbers import to_decimal
 from app.auth.jwt import get_current_user
+from app.services.purchase_contractor_display import display_contractor_name as _display_contractor_name
 from app.services.dictionaries import (
     PURCHASE_METHOD_LABELS as _PURCHASE_METHOD_LABELS,
     PURCHASE_BASIS_LABELS as _PURCHASE_BASIS_LABELS,
@@ -168,7 +170,18 @@ def _get_cell_value(key: str, p: Purchase, ctx: dict):
     if key == "execution_term":          return str(p.execution_term) if p.execution_term else ""
     if key == "execution_term_changed":  return str(p.execution_term_changed) if p.execution_term_changed else ""
     if key == "delivery_date":           return str(p.delivery_date) if p.delivery_date else ""
-    if key == "contractor":              return ctx["contractors"].get(p.contractor_id, "")
+    # Владелец (30.09): авансовый отчёт — контрагент строки = получатель
+    # возмещения (или автор/инициатор, если получатель ещё не выбран), а не
+    # продавец из чеков. Единственная точка развилки — display_contractor_name
+    # (app.services.purchase_contractor_display), переиспользуется и списком
+    # закупок (см. purchase_serializers._purchase_to_full) — ПРАВИЛО №6.
+    if key == "contractor":
+        return _display_contractor_name(
+            p,
+            contractor_name=ctx["contractors"].get(p.contractor_id),
+            reimbursement_user_name=ctx["ru_map"].get(p.reimbursement_user_id),
+            service_note_by_name=ctx["sn_map"].get(p.service_note_by),
+        ) or ""
     if key == "contractor_inn":          return ctx["contractor_inns"].get(p.contractor_id, "")
     if key == "responsible_person":      return p.responsible_person or ""
     # ПРАВИЛО №6 (2026-09-07, группа D4): закрывающий документ — из JSONB
@@ -342,12 +355,28 @@ async def export_purchases_to_excel(
                 _pp_map[pay.purchase_id].append(pay.payment_purpose.strip())
         payment_purposes = {pid: "; ".join(purposes) for pid, purposes in _pp_map.items()}
 
+    # Владелец (30.09): те же две карты, что и список закупок (см. purchases.py
+    # ru_map/sn_map) — получатель возмещения и фолбэк на автора/инициатора
+    # авансового, для колонки "contractor" (display_contractor_name выше).
+    ru_ids = [p.reimbursement_user_id for p in purchases if p.reimbursement_user_id]
+    ru_map: dict = {}
+    if ru_ids:
+        res = await db.execute(select(User.id, User.full_name).where(User.id.in_(ru_ids)))
+        ru_map = {uid: name for uid, name in res.all()}
+    sn_ids = [p.service_note_by for p in purchases if p.service_note_by]
+    sn_map: dict = {}
+    if sn_ids:
+        res = await db.execute(select(User.id, User.full_name, User.username).where(User.id.in_(sn_ids)))
+        sn_map = {uid: (fn or un) for uid, fn, un in res.all()}
+
     ctx = {
         "contractors": contractors,
         "contractor_inns": contractor_inns,
         "subsidies": subsidies_map,
         "feo_categories": feo_map,
         "payment_purposes": payment_purposes,
+        "ru_map": ru_map,
+        "sn_map": sn_map,
     }
 
     # item-forms-accommodation-transport.md, шаг 4: доп. колонки только если

@@ -10,6 +10,7 @@ from app.models.purchase_item import PurchaseItem
 from app.schemas.schemas import PurchaseItemOut, PurchaseOutFull, PurchaseFileOut, SubsidyAllocationOut, PurchaseAmountsOut
 from app.services.purchase_contract_header import contract_header as _contract_header
 from app.services.item_contractor import item_contractor as _item_contractor
+from app.services.purchase_contractor_display import display_contractor_name as _display_contractor_name
 
 
 async def items_out_with_contractor_map(db, items) -> list:
@@ -103,7 +104,7 @@ def _purchase_to_full(
     su_map: dict | None = None, feo_excess_map: dict | None = None, item_plan_map: dict | None = None,
     wish_title_map: dict | None = None, wish_status_map: dict | None = None,
     feo_mismatch_map: dict | None = None, amounts_map: dict | None = None,
-    contract=None, tz_waived_by_map: dict | None = None,
+    contract=None, tz_waived_by_map: dict | None = None, sn_map: dict | None = None,
 ) -> PurchaseOutFull:
     # Ленивый импорт — избежать цикла на уровне модуля: purchases.py (ядро)
     # импортирует _purchase_to_full ОТСЮДА, поэтому этот модуль не может
@@ -191,7 +192,18 @@ def _purchase_to_full(
         items=items,
         files=files,
         files_count=len(files),
-        contractor_name=contractors.get(_hdr.contractor_id),
+        # Владелец (30.09): контрагент авансового отчёта в шапке закупки —
+        # получатель возмещения, а не продавец из чеков (см. docstring
+        # display_contractor_name — единственная развилка, переиспользуется
+        # и в Excel-экспорте, purchase_export.py). Продавцы позиций видны
+        # отдельно — items[].contractor_name выше (_item_to_out), их эта
+        # подмена не трогает.
+        contractor_name=_display_contractor_name(
+            p,
+            contractor_name=contractors.get(_hdr.contractor_id),
+            reimbursement_user_name=(ru_map or {}).get(p.reimbursement_user_id),
+            service_note_by_name=(sn_map or {}).get(p.service_note_by),
+        ),
         contractor_inn=(contractor_inns or {}).get(_hdr.contractor_id),
         feo_category_name=p.feo_category.name if p.feo_category else None,
         subsidy_name=subsidies.get(p.subsidy_id),

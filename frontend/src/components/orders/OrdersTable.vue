@@ -281,15 +281,18 @@
         <span v-else class="text-medium-emphasis">—</span>
       </template>
 
-      <!-- Контрагент (продавец) — отдельно от «кому возмещать» (см. выше). -->
+      <!-- Контрагент — владелец, 30.09: у авансового отчёта это получатель
+           возмещения (contractor_name уже приходит с бэка посчитанным именно
+           так, см. app.services.purchase_contractor_display), а не продавцы
+           из чеков позиций — те видны отдельно в карточке/разворотах, и в
+           реестре есть своя колонка «Мн. контрагент» (multi_contractor_label,
+           group 'all'); у обычных закупок пометка «Множественный контрагент» остаётся. -->
       <template #item.contractor_name="{ item }">
-        <span v-if="(item as any).multi_contractor_label === 'Множественный контрагент'"
+        <span v-if="(item as any).purchase_method !== 'advance' && (item as any).multi_contractor_label === 'Множественный контрагент'"
               class="text-body-2" style="color: var(--v-theme-warning, #f57c00)">
           {{ (item as any).multi_contractor_label }}
         </span>
-        <span v-else class="text-body-2">
-          {{ item.contractor_name || '—' }}
-        </span>
+        <span v-else class="text-body-2">{{ item.contractor_name || '—' }}</span>
       </template>
 
       <template #item.status="{ item }">

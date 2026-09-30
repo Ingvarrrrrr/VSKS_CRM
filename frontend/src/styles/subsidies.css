@@ -875,27 +875,42 @@
    repeating-linear-gradient не заводим, Правило №6). !important — тот же
    приём, что и у .feo-kpi-hl: перебивает собственный background ячеек
    (feo-amount-cell, чётные/нечётные строки и т.п.). */
+.subsidies-page .feo-fully-purchased-row,
 .subsidies-page .feo-fully-purchased-row > .feo-td,
 .subsidies-page .feo-fully-purchased-row > td {
   background-image: repeating-linear-gradient(
     45deg,
-    rgba(34, 197, 94, 0.12) 0px,
-    rgba(34, 197, 94, 0.12) 6px,
+    rgba(34, 197, 94, 0.18) 0px,
+    rgba(34, 197, 94, 0.18) 6px,
     transparent 6px,
     transparent 12px
   ) !important;
+}
+/* Вложенные обёртки внутри ячеек (v-sheet/v-card/иные непрозрачные подложки)
+   красят свой собственный белый/поверхностный фон ПОВЕРХ фона td и полностью
+   скрывают штриховку/точки — владелец, 30.09.2026, уточнение: «видно всю
+   строку, не только в наведении». Явно прозрачный фон только у контейнеров
+   БЕЗ собственного смыслового цвета (не трогаем v-chip/бейджи/красные
+   предупреждения — у них цвет несёт значение). */
+.subsidies-page .feo-fully-purchased-row .v-sheet,
+.subsidies-page .feo-fully-purchased-row .v-card,
+.subsidies-page .feo-fully-purchased-row .feo-amount-cell,
+.subsidies-page .feo-fully-purchased-row .feo-name-inner,
+.subsidies-page .feo-fully-purchased-row .feo-td > div:not(.feo-excess-culprit) {
+  background-color: transparent !important;
 }
 .subsidies-page .feo-fully-purchased-row .feo-name,
 .subsidies-page .feo-fully-purchased-row .feo-amount,
 .subsidies-page .feo-fully-purchased-row td {
   color: var(--crm-text-muted);
 }
+.v-theme--dark .subsidies-page .feo-fully-purchased-row,
 .v-theme--dark .subsidies-page .feo-fully-purchased-row > .feo-td,
 .v-theme--dark .subsidies-page .feo-fully-purchased-row > td {
   background-image: repeating-linear-gradient(
     45deg,
-    rgba(74, 222, 128, 0.10) 0px,
-    rgba(74, 222, 128, 0.10) 6px,
+    rgba(74, 222, 128, 0.20) 0px,
+    rgba(74, 222, 128, 0.20) 6px,
     transparent 6px,
     transparent 12px
   ) !important;
@@ -908,21 +923,42 @@
    (основное + панель Ур.5), см. докстринг .feo-fully-purchased-row (Правило №6,
    второй паттерн фона не заводим — только другой цвет/форма). !important по
    той же причине — перебивает собственный фон ячеек. */
+.subsidies-page .feo-partially-purchased-row,
 .subsidies-page .feo-partially-purchased-row > .feo-td,
 .subsidies-page .feo-partially-purchased-row > td {
+  background-color: rgba(251, 191, 36, 0.07) !important;
   background-image: radial-gradient(
-    rgba(217, 119, 6, 0.14) 1.6px,
-    transparent 1.6px
+    rgba(217, 119, 6, 0.32) 2.4px,
+    transparent 2.4px
   ) !important;
-  background-size: 11px 11px !important;
+  background-size: 10px 10px !important;
+  /* Vuetify/базовый стиль td задаёт background-repeat: no-repeat шорткодом —
+     без явного repeat radial-gradient (в отличие от repeating-linear-gradient
+     у «полностью закуплено», который повторяется сам по себе) рисуется ОДИН
+     раз в 0% 0% — отсюда «точки видно только полоской у верхнего края»
+     (владелец, 30.09.2026). */
+  background-repeat: repeat !important;
 }
+/* Те же непрозрачные вложенные подложки, что и у «полностью закуплено» выше —
+   единственное отличие частично/полностью закупленных строк — паттерн и цвет,
+   правило видимости общее (Правило №6, второй копии не заводим). */
+.subsidies-page .feo-partially-purchased-row .v-sheet,
+.subsidies-page .feo-partially-purchased-row .v-card,
+.subsidies-page .feo-partially-purchased-row .feo-amount-cell,
+.subsidies-page .feo-partially-purchased-row .feo-name-inner,
+.subsidies-page .feo-partially-purchased-row .feo-td > div:not(.feo-excess-culprit) {
+  background-color: transparent !important;
+}
+.v-theme--dark .subsidies-page .feo-partially-purchased-row,
 .v-theme--dark .subsidies-page .feo-partially-purchased-row > .feo-td,
 .v-theme--dark .subsidies-page .feo-partially-purchased-row > td {
+  background-color: rgba(251, 191, 36, 0.06) !important;
   background-image: radial-gradient(
-    rgba(251, 191, 36, 0.16) 1.6px,
-    transparent 1.6px
+    rgba(251, 191, 36, 0.35) 2.4px,
+    transparent 2.4px
   ) !important;
-  background-size: 11px 11px !important;
+  background-size: 10px 10px !important;
+  background-repeat: repeat !important;
 }
 
 /* Легенда над деревом/панелью (владелец, п.5) — одна строка, единый источник
@@ -943,8 +979,8 @@
   border: 1px solid rgba(34, 197, 94, 0.4);
   background-image: repeating-linear-gradient(
     45deg,
-    rgba(34, 197, 94, 0.25) 0px,
-    rgba(34, 197, 94, 0.25) 4px,
+    rgba(34, 197, 94, 0.32) 0px,
+    rgba(34, 197, 94, 0.32) 4px,
     transparent 4px,
     transparent 8px
   );
@@ -955,9 +991,9 @@
   height: 12px;
   border-radius: 2px;
   border: 1px solid rgba(217, 119, 6, 0.4);
-  background-image: radial-gradient(rgba(217, 119, 6, 0.5) 1.6px, transparent 1.6px);
+  background-image: radial-gradient(rgba(217, 119, 6, 0.55) 1.6px, transparent 1.6px);
   background-size: 6px 6px;
-  background-color: rgba(217, 119, 6, 0.04);
+  background-color: rgba(251, 191, 36, 0.07);
 }
 
 /* Бейдж «Всё закуплено» строки категории (владелец, 30.09.2026, п.2) — тот же

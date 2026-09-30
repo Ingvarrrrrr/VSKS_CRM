@@ -11,7 +11,7 @@ class PurchaseItem(Base):
     purchase_id = Column(Integer, ForeignKey("purchases.id", ondelete="CASCADE"), nullable=False)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=True)
     item_name = Column(Text, nullable=False)
-    item_type = Column(String(20))
+    item_type = Column(String(200))  # как у WishItem.item_type — вид товара («Клей-карандаш…»), не только товар/услуга
     quantity = Column(Numeric(15, 4))
     unit = Column(String(50))
     unit_price = Column(Numeric(15, 2))

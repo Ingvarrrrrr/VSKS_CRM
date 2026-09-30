@@ -49,6 +49,7 @@ async def reset_wish_distribution(
     from app.routers.wishes import _load_wish
     from app.services.wish_access import _wish_linked_purchases
     from app.services.dictionaries import STATUS_LABELS as _STATUS_LABELS
+    from app.services.purchase_label import purchase_label
     from app.routers.purchases import delete_purchase_core
 
     wish = await _load_wish(wish_id, db)
@@ -61,7 +62,7 @@ async def reset_wish_distribution(
     for p in purchases:
         if p.status != "wishes":
             label = _STATUS_LABELS.get(p.status, p.status)
-            blockers.append(f"№{p.purchase_number or p.id} «{p.item_name or ''}» на стадии «{label}»")
+            blockers.append(f"{purchase_label(p)} «{p.item_name or ''}» на стадии «{label}»")
     if blockers:
         raise HTTPException(
             status_code=409,

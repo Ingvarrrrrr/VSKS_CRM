@@ -55,6 +55,36 @@ def wish_item_kwargs_from_purchase_item(d: dict) -> dict[str, Any]:
     )
 
 
+def apply_wish_item_feo_link_to_purchase_item(pi, wi) -> None:
+    """Зеркалит привязку к ФЭО ОДНОЙ позиции заявки (feo_category_id/
+    feo_planned_item_id/over_plan) в связанную строку закупки `pi`.
+
+    Сопоставление строк WishItem↔PurchaseItem — существующий hard link
+    `purchase_items.wish_item_id` (миграция g1h2i3j4k5l6, колонка `wish_item_id`
+    на модели PurchaseItem), тот же, которым уже пользуются
+    app/services/wish_distribution.py и app/services/wish_multi_sync.py для
+    обычных заявок. Отдельная колонка под эту связь НЕ заводится (ПРАВИЛО №6 —
+    один механизм сопоставления на весь проект, а не второй для авансовых).
+
+    До 2026-09-30 компаньон авансового отчёта этот link никогда не
+    проставлял — create_purchase/update_purchase просто удаляли и пересоздавали
+    WishItems при каждом сохранении закупки (см. вызовы ниже по коду этого
+    модуля из purchases.py), поэтому обратной ссылки не было и построчная
+    правка ФЭО согласующим в карточке заявки-компаньона (patch_wish_execution,
+    WishItemFeoPatch) не долетала до purchase_items связанной закупки — а
+    следующий PUT закупки эту рассинхронизацию заодно и закреплял бы (заявка
+    №88 / закупка РЕЕ-2026-00962, прод, инцидент 2026-09-30: wish_item 4536/4529
+    привязаны к новым плановым позициям 13116/13117, а purchase_item 3724/3726
+    остались на старых 13091/13078). Теперь purchases.py проставляет
+    wish_item_id при каждой пересборке WishItems, а patch_wish_execution вызывает
+    эту функцию для каждой затронутой пары — единственное место, которое пишет
+    три поля ниже со стороны заявки (ПРАВИЛО №6, не плодить вторую формулу).
+    """
+    pi.feo_category_id = wi.feo_category_id
+    pi.feo_planned_item_id = wi.feo_planned_item_id
+    pi.over_plan = bool(getattr(wi, 'over_plan', False))
+
+
 def sync_wish_contract_and_contractor(wish, purchase, creator) -> None:
     """contract_form/контрагент компаньона ← закупка (с фолбэками).
 

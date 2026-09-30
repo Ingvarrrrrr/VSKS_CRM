@@ -3,6 +3,7 @@ import os
 import re
 import logging
 import httpx
+from app.services.purchase_label import purchase_label
 
 logger = logging.getLogger(__name__)
 
@@ -277,7 +278,7 @@ async def notify_purchase_status_changed(purchase, changed_by_name: str, new_sta
         "delivered": "Доставлено", "paid": "Оплачено",
     }
     label = status_labels.get(new_status, new_status)
-    subject = _esc(purchase.subject or f"Закупка №{purchase.purchase_number}")
+    subject = _esc(purchase.subject or f"Закупка {purchase_label(purchase)}")
     text = (
         f"📦 <b>Статус закупки изменён</b>\n\n"
         f"📌 <b>{subject}</b>\n"
@@ -293,7 +294,7 @@ async def notify_purchase_status_changed(purchase, changed_by_name: str, new_sta
 # ── Approval notifications ────────────────────────────────────────────────────
 
 async def notify_approval_started(purchase, approver_users=None) -> None:
-    subject = _esc(purchase.subject or f"Закупка №{purchase.purchase_number}")
+    subject = _esc(purchase.subject or f"Закупка {purchase_label(purchase)}")
     text = (
         f"✅ <b>Согласование запущено</b>\n\n"
         f"📌 <b>{subject}</b>"
@@ -305,7 +306,7 @@ async def notify_approval_started(purchase, approver_users=None) -> None:
 
 
 async def notify_approval_decided(purchase, approver_name: str, action: str, comment: str = "", notify_users=None) -> None:
-    subject = _esc(purchase.subject or f"Закупка №{purchase.purchase_number}")
+    subject = _esc(purchase.subject or f"Закупка {purchase_label(purchase)}")
     icon = "✅" if action == "approved" else "❌"
     action_label = "Согласовано" if action == "approved" else "Отклонено"
     comment_line = f"\n💬 {_esc(comment)}" if comment else ""
@@ -321,7 +322,7 @@ async def notify_approval_decided(purchase, approver_name: str, action: str, com
 
 
 async def notify_approval_your_turn(purchase, approver_user) -> None:
-    subject = _esc(purchase.subject or f"Закупка №{purchase.purchase_number}")
+    subject = _esc(purchase.subject or f"Закупка {purchase_label(purchase)}")
     text = (
         f"🔔 <b>Ваша очередь согласовать</b>\n\n"
         f"📌 <b>{subject}</b>"
@@ -331,7 +332,7 @@ async def notify_approval_your_turn(purchase, approver_user) -> None:
 
 
 async def notify_approval_completed(purchase, notify_users=None) -> None:
-    subject = _esc(purchase.subject or f"Закупка №{purchase.purchase_number}")
+    subject = _esc(purchase.subject or f"Закупка {purchase_label(purchase)}")
     text = (
         f"🎉 <b>Согласование завершено</b>\n\n"
         f"📌 <b>{subject}</b>\n"
@@ -346,7 +347,7 @@ async def notify_approval_completed(purchase, notify_users=None) -> None:
 # ── Purchase deadline notifications ──────────────────────────────────────────
 
 async def notify_purchase_consent_required(purchase, added_user, added_by_name: str) -> None:
-    subject = _esc(purchase.subject or f"Закупка №{purchase.purchase_number}")
+    subject = _esc(purchase.subject or f"Закупка {purchase_label(purchase)}")
     text = (
         f"🤝 <b>Вас добавляют в обсуждение закупки</b>\n\n"
         f"📌 <b>{subject}</b>\n"
@@ -363,7 +364,7 @@ async def notify_purchase_consent_required(purchase, added_user, added_by_name: 
 
 
 async def notify_purchase_member_added(purchase, added_user, added_by_name: str) -> None:
-    subject = _esc(purchase.subject or f"Закупка №{purchase.purchase_number}")
+    subject = _esc(purchase.subject or f"Закупка {purchase_label(purchase)}")
     text = (
         f"👥 <b>Вас добавили в обсуждение закупки</b>\n\n"
         f"📌 <b>{subject}</b>\n"
@@ -552,7 +553,7 @@ async def notify_plan_excess_decided(approval, requester_user, decision: str, de
 
 async def notify_purchase_deadline(purchase, user, days_left: int, deadline_type: str) -> None:
     """Notify about approaching purchase deadline."""
-    subject = _esc(purchase.subject or f"Закупка №{purchase.purchase_number}")
+    subject = _esc(purchase.subject or f"Закупка {purchase_label(purchase)}")
 
     if deadline_type == "payment_overdue":
         text = (

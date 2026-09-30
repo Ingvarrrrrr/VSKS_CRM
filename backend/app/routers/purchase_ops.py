@@ -221,7 +221,8 @@ async def broadcast_from_purchase(
     users = (await db.execute(q)).scalars().all()
 
     sender_name = current_user.full_name or current_user.username
-    subject = _esc(p.subject or f"Закупка №{p.purchase_number}")
+    from app.services.purchase_label import purchase_label as _purchase_label_fmt
+    subject = _esc(p.subject or f"Закупка {_purchase_label_fmt(p)}")
     msg = (
         f"📢 <b>Рассылка</b>\n\n"
         f"📌 <b>{subject}</b>\n"

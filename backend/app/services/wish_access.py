@@ -319,15 +319,22 @@ async def _wish_locked_descr(wish_id: int, db: AsyncSession) -> Optional[str]:
     «Договор» (contracted/ordered/delivered/paid), а текст называл только его.
     Единый хелпер вместо копипасты формата в двух местах (409 при PUT и при
     удалении позиций) — чтобы формулировка не расходилась. Формат каждой
-    закупки: `№{purchase_number or id} «{item_name}» — стадия «{label}»`.
+    закупки: `{purchase_label(p)} «{item_name}» — стадия «{label}»`.
+
+    Номер закупки — через purchase_label (app/services/purchase_label.py,
+    ПРАВИЛО №6, 2026-09-30): раньше здесь стоял `p.purchase_number or p.id` —
+    purchase_number почти всегда NULL (легаси-поле), владелец не мог найти
+    закупку по показанному числу (заявка №68 → «закупка 631», которой нет в
+    реестре). purchase_label отдаёт registry_number первым приоритетом.
     """
     from app.routers.purchase_export import _STATUS_LABELS
+    from app.services.purchase_label import purchase_label
     purchases = await _wish_linked_purchases(wish_id, db)
     locked = [p for p in purchases if p.status in CONTRACTED_STATUSES]
     if not locked:
         return None
     return "; ".join(
-        f"№{p.purchase_number or p.id} «{p.item_name or ''}» — стадия «{_STATUS_LABELS.get(p.status, p.status)}»"
+        f"{purchase_label(p)} «{p.item_name or ''}» — стадия «{_STATUS_LABELS.get(p.status, p.status)}»"
         for p in locked
     )
 

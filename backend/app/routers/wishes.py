@@ -403,10 +403,22 @@ async def update_wish(
     if not _is_saas(current_user):
         _locked_descr = await _wish_locked_descr(wish.id, db)
         if _locked_descr:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Заявка привязана к закупке — {_locked_descr}. Редактирование запрещено",
+            # Владелец (30.09, заявка №68): компаньон авансового отчёта
+            # (source='advance_report') согласовывает ВОЗМЕЩЕНИЕ сотруднику —
+            # это согласование нужно независимо от того, до какой стадии
+            # (договор/оплата) дошла сама закупка расходов. Блокировка
+            # «привязана к закупке на стадии договора» остаётся только для
+            # правки СОСТАВА/цен заявки (body.items) — расхождение позиций с
+            # уже задокументированной закупкой действительно опасно; правка
+            # прочих полей (комментарий, согласующие и т.п.) — нет.
+            _advance_locked_exempt = (
+                getattr(wish, 'source', None) == 'advance_report' and body.items is None
             )
+            if not _advance_locked_exempt:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Заявка привязана к закупке — {_locked_descr}. Редактирование запрещено",
+                )
         # SaaS is always allowed; for others allow draft/rejected AND submitted/approved/converted
 
     # Владелец (2026-08-13): «После согласования заявку править нельзя, только в

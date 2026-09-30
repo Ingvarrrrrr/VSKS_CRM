@@ -97,9 +97,11 @@ async def convert_wish_to_advance_report(wish, db: AsyncSession, current_user):
     # отменяем и отвязываем, чтобы _distribute_wish_to_purchases ниже не нашёл
     # их через «защита от дублей» и создал новую, правильно типизированную
     # авансовую закупку, а не просто продвинул статус старой.
+    from app.services.purchase_label import purchase_label as _purchase_label
+
     old_purchases = await _wish_linked_purchases(wish.id, db)
     cancelled_purchase_labels: list[str] = [
-        f"№{p.purchase_number or p.id}" for p in old_purchases if p.status != "cancelled"
+        _purchase_label(p) for p in old_purchases if p.status != "cancelled"
     ]
     for p in old_purchases:
         p.status = "cancelled"

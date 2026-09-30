@@ -407,6 +407,13 @@ async def patch_wish_execution(
     # ТОЛЬКО эти два поля, никогда item_name/quantity/unit_price/total_price/
     # unit/country_origin и без добавления/удаления строк.
     _plan_transfer_warnings: list[str] = []
+    # W1 (прод, заявка №88 / закупка РЕЕ-2026-00962, 2026-09-30): позиции,
+    # чью привязку к ФЭО меняем в этом цикле, — если они компаньон авансового
+    # отчёта, у них есть связанная строка закупки (purchase_items.wish_item_id,
+    # см. app/services/advance_wish_sync.py) — без явного зеркалирования правка
+    # согласующего здесь молча не доезжала до purchase_items, а следующий PUT
+    # закупки эту рассинхронизацию только закреплял бы.
+    _touched_wish_item_ids: set[int] = set()
     if body.items is not None:
         _items_by_id = {wi.id: wi for wi in (wish.items or [])}
         # Валидация ВСЕГО набора до мутации — либо применяем целиком, либо
@@ -419,6 +426,7 @@ async def patch_wish_execution(
                 )
         for item_patch in body.items:
             wi = _items_by_id[item_patch.id]
+            _touched_wish_item_ids.add(wi.id)
             _fields_set = item_patch.model_fields_set
             _cat_changing = (
                 'feo_category_id' in _fields_set
@@ -480,6 +488,22 @@ async def patch_wish_execution(
                     wi.feo_planned_item_id = None
                     wi.over_plan = False
                     await _deactivate_if_orphaned(db, _old_fpi2)
+
+    # W1: зеркалим привязку к ФЭО из затронутых позиций заявки в связанные
+    # строки закупки (см. комментарий у _touched_wish_item_ids выше) — сейчас
+    # это даёт эффект только для компаньона авансового отчёта (единственный
+    # источник purchase_items.wish_item_id на сегодня, см.
+    # app/services/advance_wish_sync.py); для обычной заявки на этой стадии
+    # (submitted/approved, ещё не converted) привязанных purchase_items нет —
+    # запрос просто ничего не найдёт.
+    if _touched_wish_item_ids:
+        from app.models.purchase_item import PurchaseItem
+        from app.services.advance_wish_sync import apply_wish_item_feo_link_to_purchase_item
+        _linked_pis = (await db.execute(
+            select(PurchaseItem).where(PurchaseItem.wish_item_id.in_(_touched_wish_item_ids))
+        )).scalars().all()
+        for _pi in _linked_pis:
+            apply_wish_item_feo_link_to_purchase_item(_pi, _items_by_id[_pi.wish_item_id])
 
     await db.commit()
     wish = await wishes_core._load_wish(wish_id, db)

@@ -68,7 +68,8 @@ async def add_purchase_comment(
             clean_text = _re.sub(r'@[A-Za-zА-Яа-яёЁ\s]{2,40}', '', text).strip()
             clean_text = _re.sub(r'\s{2,}', ' ', clean_text) or text
             preview = _esc(clean_text[:150])
-            subject = _esc(p.subject or f"Закупка №{p.purchase_number}")
+            from app.services.purchase_label import purchase_label as _purchase_label_fmt
+            subject = _esc(p.subject or f"Закупка {_purchase_label_fmt(p)}")
             sender = _esc(current_user.full_name or current_user.username)
             msg = (
                 f"💬 <b>Вас упомянули в закупке</b>\n\n"

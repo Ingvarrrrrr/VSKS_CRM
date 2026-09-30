@@ -557,13 +557,14 @@ async def check_planned_item_category_link(
     from app.models.purchase_approval import PurchaseApproval
     from app.models.user import User
 
+    from app.services.purchase_label import purchase_label as _purchase_label_fmt
+
     actor_name = current_user.full_name or current_user.username
     when = datetime.now().strftime("%d.%m.%Y %H:%M")
     item_name = getattr(item, "item_name", None) or "Без названия"
-    purchase_label = getattr(purchase, "purchase_number", None) or getattr(purchase, "id", None)
     text = (
         f"⚠️ <b>Плановая позиция чужой категории привязана к закупке</b>\n\n"
-        f"📌 Закупка №{purchase_label}\n"
+        f"📌 Закупка {_purchase_label_fmt(purchase)}\n"
         f"👤 {_esc(actor_name)} привязал(а) {when} позицию «{_esc(item_name)}» "
         f"к плановой позиции «{_esc(planned_item_name)}» категории «{_esc(planned_cat_name)}», "
         f"хотя категория самой позиции закупки — «{_esc(item_cat_name)}»."

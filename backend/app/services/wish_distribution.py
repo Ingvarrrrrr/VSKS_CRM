@@ -148,6 +148,7 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
         return await sync_multi_purchase_from_wish(wish, purchases, db)
     from app.routers.purchases import TZ_FROZEN_STATUSES
     from app.routers.purchase_export import _STATUS_LABELS
+    from app.services.purchase_label import purchase_label
     # Ленивый импорт (во избежание цикла роутер↔сервис, см. докстринг модуля):
     # _is_meaningful_item/_ensure_feo_categories_assigned/_ensure_needed_dates/
     # _eff_date живут в ядре app/routers/wishes.py.
@@ -173,7 +174,7 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
             "items_conflicted": [],
             "items_kept_manual": [],
             "blocked_reason": (
-                f"Закупка №{p.purchase_number or p.id} «{p.subject or p.item_name or ''}» "
+                f"Закупка {purchase_label(p)} «{p.subject or p.item_name or ''}» "
                 f"уже на стадии «{label}» — обновить предмет и состав из заявки нельзя. "
                 "Дальнейшие изменения вносите прямо в закупке."
             ),
@@ -1020,6 +1021,7 @@ async def _withdraw_wish_from_plan(wish_id: int, db: AsyncSession, *, action_tex
     """
     from app.routers.purchase_budget import PLANNED_STATUSES
     from app.routers.purchase_export import _STATUS_LABELS
+    from app.services.purchase_label import purchase_label
     # Ленивый импорт (во избежание цикла роутер↔сервис, см. докстринг модуля).
     from app.routers.wishes import _wish_linked_purchases
 
@@ -1030,7 +1032,7 @@ async def _withdraw_wish_from_plan(wish_id: int, db: AsyncSession, *, action_tex
             # work_in_progress/contracted/ordered/delivered/paid — стадия ушла дальше
             # «Плана закупок», откат запрещён.
             label = _STATUS_LABELS.get(p.status, p.status)
-            blockers.append(f"№{p.purchase_number or p.id} «{p.item_name or ''}» на стадии «{label}»")
+            blockers.append(f"{purchase_label(p)} «{p.item_name or ''}» на стадии «{label}»")
     if blockers:
         raise HTTPException(
             status_code=409,

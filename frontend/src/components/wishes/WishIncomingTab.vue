@@ -87,7 +87,11 @@
         <span class="wish-stopped-banner__meta">{{ stoppedByLine(item) }}</span>
       </div>
       <div class="d-flex align-center flex-wrap" style="gap:6px">
-        <span class="font-weight-medium">{{ item.title }}</span>
+        <!-- Владелец (30.09): в столбце «Заявка» выводился предмет заявки
+             (item.title), а не номер — разные сущности, предмет не помогает
+             найти заявку в списке. Номер — крупным текстом, предмет — подписью
+             мелким текстом ниже (строка кликабельна целиком, см. @click:row). -->
+        <span class="font-weight-medium">№{{ item.id }}</span>
         <!-- Phase 31-06: badge for unseen changes -->
         <v-chip
           v-if="(item.unseen_changes_count ?? 0) > 0"
@@ -97,6 +101,7 @@
           :title="`${item.unseen_changes_count} чужих правок с последнего просмотра`"
         >+{{ item.unseen_changes_count }}</v-chip>
       </div>
+      <div class="text-caption text-medium-emphasis wish-subject-line">{{ item.title || '—' }}</div>
       <div class="text-caption text-medium-emphasis">
         <span v-if="item.items_count">Позиций: <b>{{ item.items_count }}</b></span>
       </div>

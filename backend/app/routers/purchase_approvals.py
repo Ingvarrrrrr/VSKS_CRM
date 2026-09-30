@@ -184,7 +184,8 @@ async def start_approval(
     ))
 
     # Create Task + ChatRoom for each approver with user_id (best-effort, same transaction)
-    purchase_label = f"Согласование закупки № {p.purchase_number or p.id}"
+    from app.services.purchase_label import purchase_label as _purchase_label_fmt
+    approval_task_title = f"Согласование закупки {_purchase_label_fmt(p)}"
     org_id = await _resolve_purchase_org_id(db, p, current_user)
     for pa in created:
         if not pa.user_id:
@@ -195,7 +196,7 @@ async def start_approval(
             if approval_deadline is not None:
                 task_due = datetime.combine(approval_deadline, time(23, 59, 59), tzinfo=timezone.utc)
             task = Task(
-                title=purchase_label,
+                title=approval_task_title,
                 description=f"Роль: {pa.role_name}. Принять решение по закупке.",
                 status=TaskStatus.todo,
                 priority=TaskPriority.medium,
@@ -213,7 +214,7 @@ async def start_approval(
             # ChatRoom (skip if approver is current user)
             if pa.user_id != current_user.id:
                 room_id = await _create_assignment_chat_room(
-                    db, current_user.id, pa.user_id, org_id, purchase_label,
+                    db, current_user.id, pa.user_id, org_id, approval_task_title,
                 )
                 db.add(ChatMessage(
                     room_id=room_id,
@@ -529,10 +530,11 @@ async def _collect_my_pending(db: AsyncSession, current_user: User) -> list[dict
             if any(p.status not in ("approved", "skipped") for p in prior):
                 continue  # ещё не очередь этого согласующего
 
+        from app.services.purchase_label import purchase_label as _purchase_label_fmt
         out.append({
             "kind": "purchase",
             "approval_id": ap.id,
-            "title": f"Закупка № {purchase.purchase_number or purchase.id}",
+            "title": f"Закупка {_purchase_label_fmt(purchase)}",
             "subtitle": f"{ap.role_name}: {ap.approver_full_name}",
             "amount": float(purchase.contract_price) if purchase.contract_price else None,
             "requested_at": ap.created_at.isoformat() if ap.created_at else None,

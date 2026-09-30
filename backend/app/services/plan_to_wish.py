@@ -543,13 +543,12 @@ async def build_items_from_plan(
         if plan_quantity is not None:
             residual_quantity = max(plan_quantity - Decimal(str(cons["used_qty"] or 0)), Decimal("0"))
             if it.quantity > residual_quantity:
+                from app.services.purchase_label import purchase_label as _purchase_label_fmt
                 linked_ids = cons.get("linked_purchase_ids") or []
                 descr = ", ".join(
-                    (purchases_by_id[pid].registry_number or f"№{purchases_by_id[pid].purchase_number}")
+                    _purchase_label_fmt(purchases_by_id[pid])
                     for pid in linked_ids
-                    if pid in purchases_by_id and (
-                        purchases_by_id[pid].registry_number or purchases_by_id[pid].purchase_number is not None
-                    )
+                    if pid in purchases_by_id
                 ) or "уже действующей закупке"
                 if residual_quantity <= 0:
                     raise HTTPException(

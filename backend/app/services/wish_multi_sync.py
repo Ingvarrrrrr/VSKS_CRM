@@ -123,9 +123,10 @@ async def sync_multi_purchase_from_wish(wish, purchases: list, db: AsyncSession)
     active_purchases = [p for p in purchases_sorted if p.status not in TZ_FROZEN_STATUSES]
 
     def _blocked_reason(p) -> str:
+        from app.services.purchase_label import purchase_label
         label = _STATUS_LABELS.get(p.status, p.status)
         return (
-            f"Закупка №{p.purchase_number or p.id} «{p.subject or p.item_name or ''}» "
+            f"Закупка {purchase_label(p)} «{p.subject or p.item_name or ''}» "
             f"уже на стадии «{label}» — обновить предмет и состав из заявки нельзя. "
             "Дальнейшие изменения вносите прямо в закупке."
         )

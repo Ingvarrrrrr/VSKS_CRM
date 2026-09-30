@@ -939,6 +939,12 @@ async def create_purchase(
         _ic_rows = (await db.execute(select(Contractor).where(Contractor.id.in_(_item_contractor_ids)))).scalars().all()
         _item_contractors_map = {c.id: c for c in _ic_rows}
 
+    # W1 (прод, заявка №88, 2026-09-30): позиции этой закупки в порядке
+    # _item_dumps/items_data — тот же порядок, в котором ниже (is_advance)
+    # копируются WishItems компаньона, что позволяет проставить hard link
+    # purchase_items.wish_item_id по позиции без угадывания сопоставления —
+    # см. app/services/advance_wish_sync.py::apply_wish_item_feo_link_to_purchase_item.
+    _created_items: list[PurchaseItem] = []
     for d in _item_dumps:
         if not d.get("product_id") and d.get("item_name"):
             org_id_for_match = get_single_org_id(current_user) or current_user.org_id
@@ -959,6 +965,7 @@ async def create_purchase(
         _d_contractor_inn = d.pop("contractor_inn", None)
         _d_contractor_name = d.pop("contractor_name", None)
         item = PurchaseItem(purchase_id=p.id, **d)
+        _created_items.append(item)
         if _item_form_create:
             apply_item_amounts(item, _item_form_create)
         # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
@@ -1013,12 +1020,22 @@ async def create_purchase(
         await db.flush()  # get auto_wish.id
         p.wish_id = auto_wish.id
         # Копируем позиции закупки → WishItem
+        _new_wish_items: list[WishItemModel] = []
         for item_d in items_data:
             d = item_d.model_dump()
-            db.add(WishItemModel(
+            wi = WishItemModel(
                 wish_id=auto_wish.id,
                 **wish_item_kwargs_from_purchase_item(d),
-            ))
+            )
+            db.add(wi)
+            _new_wish_items.append(wi)
+        # W1: проставить hard link purchase_item → wish_item (см. комментарий у
+        # _created_items выше и app/services/advance_wish_sync.py) — без него
+        # построчная правка ФЭО согласующим в заявке-компаньоне не находит
+        # строку закупки (прод, заявка №88, 2026-09-30).
+        await db.flush()  # получить WishItem.id
+        for _pi, _wi in zip(_created_items, _new_wish_items):
+            _pi.wish_item_id = _wi.id
 
     # Save subsidy allocations
     if data.subsidy_allocations:
@@ -1440,6 +1457,13 @@ async def update_purchase(
         _ic_rows_put = (await db.execute(select(Contractor).where(Contractor.id.in_(_item_contractor_ids_put)))).scalars().all()
         _item_contractors_map_put = {c.id: c for c in _ic_rows_put}
 
+    # W1 (прод, заявка №88, 2026-09-30): позиции этой закупки в порядке
+    # _item_dumps_put/items_data — тот же порядок, в котором ниже (авансовый
+    # блок) пересобираются WishItems компаньона, что позволяет восстановить
+    # hard link purchase_items.wish_item_id на АКТУАЛЬНЫЕ id обеих сторон (PUT
+    # пересоздаёт и purchase_items, и wish_items целиком) — см.
+    # app/services/advance_wish_sync.py::apply_wish_item_feo_link_to_purchase_item.
+    _created_items_put: list[PurchaseItem] = []
     for d in _item_dumps_put:
         if not d.get("product_id") and d.get("item_name"):
             org_id_for_match = get_single_org_id(current_user) or current_user.org_id
@@ -1460,6 +1484,7 @@ async def update_purchase(
         _d_contractor_inn_put = d.pop("contractor_inn", None)
         _d_contractor_name_put = d.pop("contractor_name", None)
         item = PurchaseItem(purchase_id=pid, **d)
+        _created_items_put.append(item)
         if _item_form_put:
             apply_item_amounts(item, _item_form_put)
         # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
@@ -1616,12 +1641,24 @@ async def update_purchase(
             sync_wish_contract_and_contractor(_wish, p, _creator)
             # Пересобрать WishItems из позиций закупки
             await db.execute(delete(WishItemModel).where(WishItemModel.wish_id == _wish.id))
+            _new_wish_items_put: list[WishItemModel] = []
             for item_d in items_data:
                 d = item_d.model_dump()
-                db.add(WishItemModel(
+                wi = WishItemModel(
                     wish_id=_wish.id,
                     **wish_item_kwargs_from_purchase_item(d),
-                ))
+                )
+                db.add(wi)
+                _new_wish_items_put.append(wi)
+            # W1: восстановить hard link purchase_item → wish_item на АКТУАЛЬНЫЕ id
+            # (см. комментарий у _created_items_put выше и
+            # app/services/advance_wish_sync.py) — без него построчная правка ФЭО
+            # согласующим в заявке-компаньоне не находит строку закупки (прод,
+            # заявка №88, 2026-09-30), а следующий PUT закупки эту рассинхронизацию
+            # только закрепил бы.
+            await db.flush()  # получить WishItem.id
+            for _pi, _wi in zip(_created_items_put, _new_wish_items_put):
+                _pi.wish_item_id = _wi.id
 
     # 12-03: Auto-create plan-graph version on status→fact or FEO-linked items
     _old_status = _old_purchase_values.get("status")
@@ -1852,9 +1889,10 @@ async def _guard_feo_category_change_after_approval(
     new_name = new_cat.name if new_cat else "—"
     actor_name = current_user.full_name or current_user.username
     when = datetime.now().strftime("%d.%m.%Y %H:%M")
+    from app.services.purchase_label import purchase_label as _purchase_label_fmt
     text = (
         f"⚠️ <b>Категория ФЭО изменена после согласования</b>\n\n"
-        f"📌 Закупка №{p.purchase_number or p.id}\n"
+        f"📌 Закупка {_purchase_label_fmt(p)}\n"
         f"👤 {_esc(actor_name)} изменил(а) {when}:\n"
         f"«{_esc(old_name)}» → «{_esc(new_name)}»"
     )

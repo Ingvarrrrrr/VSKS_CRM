@@ -89,10 +89,12 @@ async def move_purchase_item(
         source.parent_purchase_id is not None
         and source.parent_purchase_id == target.parent_purchase_id
     )
+    from app.services.purchase_label import purchase_label as _purchase_label_fmt
+
     if not same_wish and not same_parent:
         raise HTTPException(
             409,
-            f"Закупки №{source.purchase_number or source.id} и №{target.purchase_number or target.id} "
+            f"Закупки {_purchase_label_fmt(source)} и {_purchase_label_fmt(target)} "
             "не связаны одной заявкой или одним родителем разбивки — перенос позиции между ними запрещён",
         )
 
@@ -103,7 +105,7 @@ async def move_purchase_item(
             label = _STATUS_LABELS.get(p.status, p.status)
             raise HTTPException(
                 409,
-                f"Закупка №{p.purchase_number or p.id} уже на стадии «{label}» — перенос позиций запрещён",
+                f"Закупка {_purchase_label_fmt(p)} уже на стадии «{label}» — перенос позиций запрещён",
             )
 
     has_contract_item = await db.scalar(

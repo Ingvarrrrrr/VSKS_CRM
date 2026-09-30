@@ -213,10 +213,11 @@ async def patch_purchase_item(
             _old_qty, _old_price = it.quantity, it.unit_price
         else:
             from app.routers.purchase_export import _STATUS_LABELS
+            from app.services.purchase_label import purchase_label as _purchase_label_fmt
             stage = _STATUS_LABELS.get(p.status, p.status)
             raise HTTPException(
                 409,
-                f"Закупка №{p.purchase_number or p.id} объявлена (стадия «{stage}») — ТЗ зафиксировано. "
+                f"Закупка {_purchase_label_fmt(p)} объявлена (стадия «{stage}») — ТЗ зафиксировано. "
                 "Цену по итогам закупки внесите в подстроке «Договор» позиции.",
             )
     # Владелец (2026-08-12, «закупка сама становится планом»): категорию ФЭО

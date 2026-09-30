@@ -1,12 +1,14 @@
 """«Из плана — в заявку» (plan-to-wish) — тонкий роутер (Правило №5): парсит
-запрос, делегирует в app/services/plan_to_wish.py, возвращает результат.
-Подключается под-роутером в app/routers/feo_planned_items_matching.py
+запрос, делегирует в app/services/plan_to_wish.py (и app/services/
+plan_to_purchase.py для авансового пути), возвращает результат. Подключается
+под-роутером в app/routers/feo_planned_items_matching.py
 (`router.include_router(plan_to_wish_router)`) — routes.py уже регистрирует
 тот родительский router, отдельного include_router в routes.py не требуется.
 
 Итоговые пути (префикс родителя "/api/feo-planned-items" + "/plan-to-wish" здесь):
   POST /api/feo-planned-items/plan-to-wish/candidates
   POST /api/feo-planned-items/plan-to-wish/create
+  POST /api/feo-planned-items/plan-to-wish/create-advance
 """
 from decimal import Decimal
 from typing import List, Optional
@@ -17,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.jwt import get_current_user
 from app.database import get_db
+from app.services.plan_to_purchase import create_purchase_from_plan
 from app.services.plan_to_wish import (
     PlanToWishItemInput,
     build_plan_to_wish_candidates,
@@ -74,3 +77,26 @@ async def post_create_wish_from_plan(
         for it in body.items
     ]
     return await create_wish_from_plan(db, current_user, body.subsidy_id, body.title, items)
+
+
+@router.post("/create-advance")
+async def post_create_purchase_from_plan(
+    body: _CreateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """«Создать закупку на основе плана» → авансовый отчёт СРАЗУ (владелец,
+    30.09.2026) — тот же payload-контракт, что и /create (заявка), товар из
+    каталога необязателен (см. app/services/plan_to_purchase.py)."""
+    items = [
+        PlanToWishItemInput(
+            feo_planned_item_id=it.feo_planned_item_id,
+            quantity=it.quantity,
+            product_id=it.product_id,
+            item_name=it.item_name,
+            unit_price=it.unit_price,
+            price_source=it.price_source,
+        )
+        for it in body.items
+    ]
+    return await create_purchase_from_plan(db, current_user, body.subsidy_id, body.title, items)

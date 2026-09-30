@@ -51,7 +51,12 @@
     <td class="ptr-td" :data-planned-item-id="row.plannedItemId">
       <v-menu location="bottom start">
         <template #activator="{ props: menuProps }">
-          <div v-bind="menuProps" class="ptr-product-box" :class="{ 'ptr-product-box--missing': !row.selectedCandidate }" style="cursor:pointer">
+          <!-- Рамка/фон предупреждения — ТОЛЬКО для заявки (владелец, задача
+               2: «на основании чего появится ТЗ в закупке?»). Для авансового
+               отчёта (координатор, 30.09.2026) товар из каталога
+               необязателен — строка без товара не ошибка, поэтому без
+               предупреждающей стилизации. -->
+          <div v-bind="menuProps" class="ptr-product-box" :class="{ 'ptr-product-box--missing': !row.selectedCandidate && props.target === 'wish' }" style="cursor:pointer">
             <template v-if="row.selectedCandidate">
               <v-avatar size="32" rounded="sm" class="mr-2">
                 <img v-if="row.selectedCandidate.photo_url" :src="row.selectedCandidate.photo_url" style="width:32px;height:32px;object-fit:cover" />
@@ -65,9 +70,13 @@
                 <PriceFreshnessStamp :price-meta="row.selectedCandidate" />
               </div>
             </template>
-            <template v-else>
+            <template v-else-if="props.target === 'wish'">
               <v-icon icon="mdi-alert-outline" size="16" class="mr-1" color="warning" />
               <span class="ptr-missing-text">Выберите товар из каталога или добавьте новый</span>
+            </template>
+            <template v-else>
+              <v-icon icon="mdi-package-variant-closed" size="16" class="mr-1" color="grey" />
+              <span class="text-caption text-medium-emphasis">Без товара из каталога (необязательно)</span>
             </template>
             <v-spacer />
             <v-icon icon="mdi-chevron-down" size="16" />
@@ -215,9 +224,17 @@ import { usePlanToRequestProductCreate } from '@/composables/subsidies/usePlanTo
 import {
   PRICE_MODE_LABELS, PRICE_MODE_ORDER, priceModeDisabledReason,
   type PlanToRequestRow as PlanToRequestRowState, type PlanToWishCandidate, type PriceMode,
+  type PlanToRequestTarget,
 } from '@/composables/subsidies/usePlanToRequest'
 
-const props = defineProps<{ row: PlanToRequestRowState }>()
+// target — «Что создать» (владелец, 30.09.2026): убирает предупреждающую
+// стилизацию отсутствующего товара для авансового отчёта (товар там
+// необязателен), см. usePlanToRequest.ts::PlanToRequestTarget. Читается в
+// шаблоне как props.target (НЕ деструктурировано) — деструктуризация props в
+// <script setup> убила бы реактивность на переключении режима «Что создать»
+// уже открытых строк (usePlanToRequest.ts::setTarget меняет module-level
+// target.value, PlanToRequestDialog.vue прокидывает его сюда пропом).
+const props = defineProps<{ row: PlanToRequestRowState; target: PlanToRequestTarget }>()
 const emit = defineEmits<{
   // «Без товара из каталога» убрано (владелец, задача 2) — pick теперь всегда
   // с реальным товаром, null-варианта больше нет.

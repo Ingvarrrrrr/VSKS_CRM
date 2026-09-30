@@ -225,13 +225,24 @@
            закупкой» (Y = X − сумма позиций ТЕКУЩЕЙ закупки в этой категории,
            currentPurchaseAmount — пропс, посчитанный в месте использования из
            позиций НА ЭКРАНЕ, без лишнего запроса). Y может уйти в минус —
-           тот же formatPlanResidual (серый минус), что и у X. -->
-      <div v-if="selectedLeafForNote" class="feo-tree-note text-caption text-medium-emphasis mt-1 px-1">
-        План: {{ fmt(selectedLeafForNote.budget) }} •
-        <span :class="residualDisplay(selectedLeafForNote.residual, 'Ост. без этой закупки:').cssClass">{{ residualDisplay(selectedLeafForNote.residual, 'Ост. без этой закупки:').text }}</span>
+           тот же formatPlanResidual (серый минус), что и у X.
+
+           Владелец не понял, что означает число рядом с подписью «План:»
+           (видел 7 103 ₽ — это план КАТЕГОРИИ, т.е. Σ её плановых позиций,
+           а не сумма самой закупки/позиции — их легко перепутать, если
+           категория называется похоже на предмет закупки). Подпись сделана
+           явной («План категории:»/«Остаток категории…») + title-тултип с
+           полным путём категории и пояснением, что именно считается. -->
+      <div
+        v-if="selectedLeafForNote"
+        class="feo-tree-note text-caption text-medium-emphasis mt-1 px-1"
+        :title="`«${selectedPath}» — считается только по плановым позициям этой категории ФЭО. Закупки на стадии заявки в остатке не учитываются.`"
+      >
+        План категории: {{ fmt(selectedLeafForNote.budget) }} •
+        <span :class="residualDisplay(selectedLeafForNote.residual, 'Остаток категории без этой закупки:').cssClass">{{ residualDisplay(selectedLeafForNote.residual, 'Остаток категории без этой закупки:').text }}</span>
         <template v-if="currentPurchaseAmount != null">
           •
-          <span :class="residualDisplay(withThisPurchaseResidual, 'с этой закупкой:').cssClass">{{ residualDisplay(withThisPurchaseResidual, 'с этой закупкой:').text }}</span>
+          <span :class="residualDisplay(withThisPurchaseResidual, 'после этой закупки:').cssClass">{{ residualDisplay(withThisPurchaseResidual, 'после этой закупки:').text }}</span>
         </template>
       </div>
       <div v-if="error && !isLeafSelected" class="feo-tree-note text-caption text-error mt-1 px-1">

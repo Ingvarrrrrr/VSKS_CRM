@@ -22,7 +22,17 @@
         <div v-if="!results.length" class="text-center text-medium-emphasis py-8">
           <v-icon icon="mdi-package-variant-closed" size="40" class="mb-2" />
           <div>Ничего не найдено</div>
-          <v-btn class="mt-3" variant="tonal" color="primary" prepend-icon="mdi-plus"
+          <!-- Баг 30.09 (авансовый РЕЕ-2026-00963): этот no-results блок раньше
+               ВСЕГДА рисовал кнопку создания, даже когда вызывающий диалог явно
+               says supportsFullProductDialog=false (PlanToRequestDialog.vue —
+               там создание нового товара сознательно идёт только через
+               «Добавить товар» в меню строки, второй экземпляр механизма не
+               заводим, Правило №6). Кнопка была кликабельна, но обработчик
+               вызывающей стороны просто отвечал тостом «здесь недоступно» —
+               то есть кнопка обещала действие, которого не будет. Прячем её
+               там, где create-new реально не поддерживается, вместо
+               show-then-refuse. -->
+          <v-btn v-if="supportsFullProductDialog" class="mt-3" variant="tonal" color="primary" prepend-icon="mdi-plus"
             @click="emit('create-new')">
             Добавить в каталог{{ search.length <= 30 ? ': «' + search + '»' : '' }}
           </v-btn>

@@ -1559,7 +1559,24 @@ async def update_purchase(
                 reason=None,
             ))
 
-    # Авансовый: синхронизировать связанную авто-заявку если она ещё не одобрена
+    # Авансовый: заявка-компаньон — ЗЕРКАЛО закупки, при ЛЮБОМ её статусе
+    # (владелец, 30.09, закупка РЕЕ-2026-00963 / заявка №93 status='converted'):
+    # правка цены/состава позиций авансового ПОСЛЕ финального согласования
+    # компаньона раньше не долетала до wish_items — компаньон молча хранил
+    # старую копию (700 ₽ «Бур по бетону», позиция на 400 000 ₽, которую
+    # владелец уже удалил в самой закупке). Источник истины для содержимого —
+    # ВСЕГДА purchase_items этой закупки (ПРАВИЛО №6); wish_items компаньона —
+    # производная копия, которая обязана пересобираться при каждом сохранении
+    # закупки, а не только пока заявка формально не одобрена. Статус-фильтр
+    # был унаследован от обычных (не авансовых) заявок, где wish и purchase —
+    # разные сущности с раздельным жизненным циклом, и там он оправдан; для
+    # авансового компаньона это разные записи ОДНОЙ и той же покупки, и
+    # человек эту заявку никогда не правит руками напрямую (её редактирование
+    # в UI заблокировано на converted, см. update_wish) — значит затирать
+    # тут нечего.
+    # contract_form/контрагент по-прежнему только ДОЗАПОЛНЯЮТСЯ (см.
+    # sync_wish_contract_and_contractor — трогает лишь пустые поля), так что
+    # ручной выбор контрагента/формы договора в заявке всё так же не перетирается.
     if p.purchase_method == 'advance' and p.wish_id:
         from app.models.wish import Wish
         from app.models.wish_item import WishItem as WishItemModel
@@ -1568,7 +1585,7 @@ async def update_purchase(
             wish_item_kwargs_from_purchase_item,
         )
         _wish = await db.get(Wish, p.wish_id)
-        if _wish and getattr(_wish, 'source', None) == 'advance_report' and _wish.status in ('draft', 'submitted', 'rejected'):
+        if _wish and getattr(_wish, 'source', None) == 'advance_report':
             _wish.estimated_price = items_sum or p.planned_total_price
             _wish.justification = p.service_note_text
             _wish.title = f"Возмещение по авансовому отчёту {p.registry_number or f'#{p.id}'}"[:499]

@@ -370,20 +370,31 @@ class PlanToWishItemInput:
     price_source: Optional[str] = None  # 'catalog' | 'plan'
 
 
-async def create_wish_from_plan(
+async def build_items_from_plan(
     db: AsyncSession,
-    current_user,
     subsidy_id: int,
-    title: Optional[str],
     items: list[PlanToWishItemInput],
-) -> dict:
-    """POST /feo-planned-items/plan-to-wish/create — заводит заявку (Wish) на
-    остаток плановых позиций. Создание САМОЙ заявки идёт через
-    app.routers.wishes.create_wish (та же функция, что у POST /wishes/, вызвана
-    напрямую с готовыми db/current_user/WishCreate) — не копия её тела."""
-    from app.routers.wishes import create_wish
-    from app.schemas.wishes import WishCreate
+) -> tuple[list[dict], list[str], set[int], Subsidy]:
+    """Общая валидация/сборка позиций из плановых позиций ФЭО (Ур.5 ФЭО) —
+    единственное место (Правило №6), которое ЧИТАЕТ create_wish_from_plan
+    («из плана — в заявку») И app.services.plan_to_purchase.create_purchase_from_plan
+    («из плана — сразу в авансовый», владелец 30.09.2026): принадлежность
+    плановых позиций субсидии, остаток плана (жёсткий 409 при превышении — И
+    на уровне самой FeoPlannedItem, И на уровне листовой категории целиком,
+    см. комментарии внутри), сборка item_name/unit/unit_price/total_price/
+    item_type. Второй расчёт остатка для авансового пути не заводим.
 
+    item_name: если product выбран — берётся ИЗ ТОВАРА (product.name), иначе
+    ИЗ it.item_name как есть (caller обязан прислать что-то осмысленное — для
+    заявки фронт всегда даёт выбрать товар (задача 2 plan_to_wish, product_id
+    обязателен), для авансового фронт шлёт имя плановой позиции — так товар
+    остаётся необязательным без отдельной ветки здесь).
+
+    Возвращает (item_dicts, warnings, categories_used, subsidy). item_dicts —
+    словари с ключами product_id/item_name/item_type/quantity/unit/unit_price/
+    total_price/feo_category_id/feo_planned_item_id — одинаковые имена полей
+    что у WishItem (создание заявки), что у PurchaseItemCreate (создание
+    закупки), поэтому caller может передать их как есть в любую из схем."""
     if not items:
         raise HTTPException(422, "Список позиций пуст")
 
@@ -574,6 +585,27 @@ async def create_wish_from_plan(
                     f"Позиция «{item_name}»: запрошено {it.quantity}, остаток {cat_residual} {unit} "
                     f"— остальное уже в {descr}",
                 )
+
+    return item_dicts, warnings, categories_used, subsidy
+
+
+async def create_wish_from_plan(
+    db: AsyncSession,
+    current_user,
+    subsidy_id: int,
+    title: Optional[str],
+    items: list[PlanToWishItemInput],
+) -> dict:
+    """POST /feo-planned-items/plan-to-wish/create — заводит заявку (Wish) на
+    остаток плановых позиций. Валидация/сборка позиций — build_items_from_plan
+    выше (Правило №6, тот же источник, что у авансового пути). Создание САМОЙ
+    заявки идёт через app.routers.wishes.create_wish (та же функция, что у
+    POST /wishes/, вызвана напрямую с готовыми db/current_user/WishCreate) —
+    не копия её тела."""
+    from app.routers.wishes import create_wish
+    from app.schemas.wishes import WishCreate
+
+    item_dicts, warnings, categories_used, subsidy = await build_items_from_plan(db, subsidy_id, items)
 
     feo_category_id = next(iter(categories_used)) if len(categories_used) == 1 else None
     # Владелец (2026-09-20, блокер): позиции из НЕСКОЛЬКИХ категорий ФЭО —

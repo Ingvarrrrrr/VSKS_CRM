@@ -93,6 +93,22 @@ export const PRICE_MODE_LABELS: Record<PriceMode, string> = {
 }
 export const PRICE_MODE_ORDER: PriceMode[] = ['manual', 'catalog', 'plan']
 
+// «Что создать» (владелец, 30.09.2026): «подгоняю уже свершившиеся закупки —
+// это всё авансовые, чеков пока нет, но я знаю, что они были» — переключатель
+// в шапке диалога PlanToRequestDialog.vue. 'wish' — как раньше (заявка на
+// закупку, товар из каталога обязателен); 'advance' — Purchase(purchase_method
+// ='advance') заводится СРАЗУ (POST plan-to-wish/create-advance →
+// app/services/plan_to_purchase.py), товар из каталога НЕ обязателен. Единый
+// источник подписи/порядка (Правило №6) — читают и дилог, и, при необходимости,
+// строка (PlanToRequestRow.vue — только чтобы убрать предупреждение «нет
+// товара», см. её докстринг).
+export type PlanToRequestTarget = 'wish' | 'advance'
+export const PLAN_TO_REQUEST_TARGET_LABELS: Record<PlanToRequestTarget, string> = {
+  wish: 'Заявку на закупку',
+  advance: 'Авансовый отчёт (уже куплено)',
+}
+export const PLAN_TO_REQUEST_TARGET_ORDER: PlanToRequestTarget[] = ['wish', 'advance']
+
 // Строка диалога подбора — кандидат из бэкенда + редактируемое состояние
 // (количество/выбранный товар/цена). reactive — удобнее точечных ref-ов, поля
 // правятся напрямую из PlanToRequestRow.vue через v-model.
@@ -130,7 +146,18 @@ export interface PlanToRequestRow {
 // позиции задана цена за единицу; иначе «Ввести самостоятельно». Единственное
 // место этого решения — вызывается и при создании строки (emptyRowFrom), и
 // при смене товара (pickCandidateForRow), второй копии условия не заводим.
+//
+// Координатор (30.09.2026, авансовый режим): «цена по умолчанию — из
+// ПЛАНОВОЙ позиции, не из каталога» — даже если строке подобрался кандидат
+// с ценой (exact-match может проставиться сам, см. emptyRowFrom). Читает
+// module-level `target` напрямую (единственный источник режима «что
+// создать», см. его докстринг) — второй параметр не заводим.
 function defaultPriceModeFor(row: Pick<PlanToRequestRow, 'selectedCandidate' | 'planUnitPrice'>): PriceMode {
+  if (target.value === 'advance') {
+    if (row.planUnitPrice != null) return 'plan'
+    if (row.selectedCandidate?.price != null) return 'catalog'
+    return 'manual'
+  }
   if (row.selectedCandidate?.price != null) return 'catalog'
   if (row.planUnitPrice != null) return 'plan'
   return 'manual'
@@ -184,6 +211,11 @@ const title = ref('')
 // подсветка последней нажатой кнопки в шапке диалога; сами строки всегда несут
 // свой priceMode независимо.
 const globalPriceSource = ref<PriceMode>('catalog')
+// «Что создать» (владелец, 30.09.2026) — module-level singleton, как и
+// остальное состояние этого файла (см. докстринг вверху файла); сбрасывается
+// на 'wish' при каждом openConfirmDialog (см. ниже), чтобы новый вызов не
+// наследовал режим прошлого запуска.
+const target = ref<PlanToRequestTarget>('wish')
 const rows = ref<PlanToRequestRow[]>([])
 const currentSubsidyId = ref<number | null>(null)
 // Прогресс материализации ручных планов категорий (перед сбором planned_item_ids)
@@ -570,6 +602,21 @@ export function usePlanToRequest() {
     recomputeRowPrice(row)
   }
 
+  // «Что создать» (владелец, 30.09.2026) — переключает target и пересчитывает
+  // дефолтный режим цены УЖЕ загруженных строк (defaultPriceModeFor читает
+  // target напрямую, см. её докстринг) так же, как это уже делает
+  // setGlobalPriceSource для собственного переключателя — второй паттерн
+  // пересчёта не заводим. Токен переключается обычно ДО того, как пользователь
+  // начал точечно править цену строки, поэтому массовый пересчёт здесь — не
+  // потеря его правок, а ожидаемое поведение (как и у общего price-toggle).
+  function setTarget(mode: PlanToRequestTarget) {
+    target.value = mode
+    for (const row of rows.value) {
+      row.priceMode = defaultPriceModeFor(row)
+      recomputeRowPrice(row)
+    }
+  }
+
   function pickCandidateForRow(row: PlanToRequestRow, cand: PlanToWishCandidate) {
     row.selectedCandidate = cand
     // «При смене товара пересчитать цену по режиму» (задача 3) — текущий
@@ -662,6 +709,7 @@ export function usePlanToRequest() {
     currentSubsidyId.value = subsidyId
     title.value = ''
     globalPriceSource.value = 'catalog'
+    target.value = 'wish'
     rows.value = []
     candidatesProgress.value = null
     dialogOpen.value = true
@@ -693,12 +741,17 @@ export function usePlanToRequest() {
 
   const totalRowsCount = computed(() => rows.value.length)
   const totalAmount = computed(() => rows.value.reduce((s, r) => s + (Number(r.unitPrice) || 0) * (Number(r.quantity) || 0), 0))
-  // «Без товара из каталога» недопустимо (владелец, задача 2: «на основании
-  // чего появится ТЗ в закупке?») — единственный источник списка проблемных
-  // строк для disabled-кнопки «Создать заявку», подписи «Без товара: N» и
-  // прокрутки к первой такой строке (PlanToRequestDialog.vue), второй подсчёт
-  // не заводим.
+  // «Без товара из каталога» недопустимо ДЛЯ ЗАЯВКИ (владелец, задача 2: «на
+  // основании чего появится ТЗ в закупке?») — единственный источник списка
+  // проблемных строк для PlanToRequestDialog.vue, второй подсчёт не заводим.
   const rowsMissingProduct = computed(() => rows.value.filter(r => !r.selectedCandidate))
+  // Гейт отправки (владелец, 30.09.2026): «Авансовый отчёт» — товар из
+  // каталога НЕ обязателен (build_items_from_plan на бэке уже умеет брать
+  // item_name из имени плановой позиции без product_id, см. plan_to_purchase.py)
+  // — блокировка по rowsMissingProduct применяется ТОЛЬКО в режиме 'wish'.
+  // Единственное место этого условия — disabled-кнопка/чип «Без товара»/
+  // прокрутка в PlanToRequestDialog.vue и submitCreate ниже читают отсюда.
+  const blockingMissingProductRows = computed(() => target.value === 'wish' ? rowsMissingProduct.value : [])
 
   async function writeToInitiator(row: PlanToRequestRow) {
     const target = row.linkedPurchases[0]
@@ -730,25 +783,30 @@ export function usePlanToRequest() {
 
   async function submitCreate() {
     if (!currentSubsidyId.value || rows.value.length === 0) return
-    // Защита в коде, не только в UI (владелец, задача 2) — кнопка «Создать
-    // заявку» дизейблится в PlanToRequestDialog.vue при rowsMissingProduct,
-    // но submitCreate — единственная точка отправки на сервер, поэтому
-    // повторяет ту же проверку здесь (второй источник условия не заводим,
-    // читает тот же rowsMissingProduct).
-    if (rowsMissingProduct.value.length) {
-      showSnack(`Выберите товар из каталога для всех строк — без товара: ${rowsMissingProduct.value.length}`, 'error')
+    // Защита в коде, не только в UI (владелец, задача 2) — кнопка «Создать»
+    // дизейблится в PlanToRequestDialog.vue при blockingMissingProductRows
+    // (только для target='wish'), но submitCreate — единственная точка
+    // отправки на сервер, поэтому повторяет ту же проверку здесь (второй
+    // источник условия не заводим, читает тот же blockingMissingProductRows).
+    if (blockingMissingProductRows.value.length) {
+      showSnack(`Выберите товар из каталога для всех строк — без товара: ${blockingMissingProductRows.value.length}`, 'error')
       return
     }
     submitting.value = true
     try {
+      // item_name — единственное место, где решается, что уйдёт на сервер как
+      // имя позиции (Правило №6): товар выбран → null (бэк берёт имя с
+      // товара); товар НЕ выбран → имя плановой позиции (r.name) — заявке это
+      // не грозит (для неё товар обязателен выше), авансовому отчёту это и
+      // нужно (владелец, 30.09.2026: «item_name = имя плановой позиции»).
       const payload = {
         subsidy_id: currentSubsidyId.value,
         title: title.value.trim() || null,
         items: rows.value.map(r => ({
           feo_planned_item_id: r.plannedItemId,
           quantity: r.quantity,
-          product_id: r.selectedCandidate!.product_id,
-          item_name: null,
+          product_id: r.selectedCandidate?.product_id ?? null,
+          item_name: r.selectedCandidate ? null : r.name,
           // 'manual' — явная цена побеждает price_source на бэке, поэтому
           // отправляем unit_price; 'catalog'/'plan' — цену не передаём вовсе,
           // сервер берёт её сам из каталога/плана (см. backendPriceSourceFor).
@@ -756,19 +814,37 @@ export function usePlanToRequest() {
           price_source: backendPriceSourceFor(r),
         })),
       }
-      const resp = await apiFetch<{ wish_id: number; title: string; items_count: number; warnings: string[] }>(
-        '/feo-planned-items/plan-to-wish/create',
-        { method: 'POST', body: JSON.stringify(payload) },
-      )
-      if (resp.warnings && resp.warnings.length) {
-        showSnack(`Заявка «${resp.title}» создана (${resp.items_count} поз.). ${resp.warnings.join(' ')}`, 'warning')
+      if (target.value === 'advance') {
+        const resp = await apiFetch<{ purchase_id: number; registry_number: string | null; items_count: number; warnings: string[] }>(
+          '/feo-planned-items/plan-to-wish/create-advance',
+          { method: 'POST', body: JSON.stringify(payload) },
+        )
+        const label = resp.registry_number ? `Авансовый отчёт ${resp.registry_number}` : `Авансовый отчёт #${resp.purchase_id}`
+        if (resp.warnings && resp.warnings.length) {
+          showSnack(`${label} создан (${resp.items_count} поз.). ${resp.warnings.join(' ')}`, 'warning')
+        } else {
+          showSnack(`${label} создан (${resp.items_count} поз.)`)
+        }
+        cancelSelectMode()
+        // Тот же маршрут, которым открываются авансовые отчёты из
+        // AdvanceReportsView.vue/usePurchaseReceipts.ts — второй способ
+        // открыть закупку не заводим (Правило №6).
+        await router.push(`/advance-reports/${resp.purchase_id}/edit`)
       } else {
-        showSnack(`Заявка «${resp.title}» создана (${resp.items_count} поз.)`)
+        const resp = await apiFetch<{ wish_id: number; title: string; items_count: number; warnings: string[] }>(
+          '/feo-planned-items/plan-to-wish/create',
+          { method: 'POST', body: JSON.stringify(payload) },
+        )
+        if (resp.warnings && resp.warnings.length) {
+          showSnack(`Заявка «${resp.title}» создана (${resp.items_count} поз.). ${resp.warnings.join(' ')}`, 'warning')
+        } else {
+          showSnack(`Заявка «${resp.title}» создана (${resp.items_count} поз.)`)
+        }
+        cancelSelectMode()
+        await router.push(`/wishes?open=${resp.wish_id}`)
       }
-      cancelSelectMode()
-      await router.push(`/wishes?open=${resp.wish_id}`)
     } catch (e: any) {
-      showSnack(describeApiError(e, { fallback: 'Не удалось создать заявку', prefix: 'Ошибка' }), 'error')
+      showSnack(describeApiError(e, { fallback: target.value === 'advance' ? 'Не удалось создать авансовый отчёт' : 'Не удалось создать заявку', prefix: 'Ошибка' }), 'error')
     } finally {
       submitting.value = false
     }
@@ -777,7 +853,9 @@ export function usePlanToRequest() {
   return {
     active, dialogOpen, loadingCandidates, submitting,
     title, globalPriceSource, rows, selectedCount,
-    totalRowsCount, totalAmount, rowsMissingProduct,
+    // «Что создать» — заявка/авансовый отчёт (владелец, 30.09.2026).
+    target, setTarget,
+    totalRowsCount, totalAmount, rowsMissingProduct, blockingMissingProductRows,
     startSelectMode, cancelSelectMode, clearSelection, openConfirmDialog, closeDialog,
     setGlobalPriceSource, setRowPriceMode, pickCandidateForRow,
     recomputeRowPrice, writeToInitiator, submitCreate,

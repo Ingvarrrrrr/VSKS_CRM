@@ -286,13 +286,9 @@
            так, см. app.services.purchase_contractor_display), а не продавцы
            из чеков позиций — те видны отдельно в карточке/разворотах, и в
            реестре есть своя колонка «Мн. контрагент» (multi_contractor_label,
-           group 'all'); у обычных закупок пометка «Множественный контрагент» остаётся. -->
+           group 'all'). У закупки контрагент один; несколько продавцов бывает только у авансового (чеки). -->
       <template #item.contractor_name="{ item }">
-        <span v-if="(item as any).purchase_method !== 'advance' && (item as any).multi_contractor_label === 'Множественный контрагент'"
-              class="text-body-2" style="color: var(--v-theme-warning, #f57c00)">
-          {{ (item as any).multi_contractor_label }}
-        </span>
-        <span v-else class="text-body-2">{{ item.contractor_name || '—' }}</span>
+        <span class="text-body-2">{{ item.contractor_name || '—' }}</span>
       </template>
 
       <template #item.status="{ item }">

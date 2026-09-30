@@ -29,11 +29,8 @@ export interface BulkMatchRow {
   quantity: number | null
   unit: string
   amount: number | null
-  /** Товар/услуга/работа позиции закупки/заявки (it.item_type) — уже загруженное
-   *  поле localItems, владелец (29.09, п.1): «Тип» не влезал/обрезался в этом
-   *  диалоге. У кандидата (плановой позиции) такого поля нет ни в BulkMatchRow, ни
-   *  в GET /feo-categories/plan-positions (backend вне зоны этого агента) — второй
-   *  тип не добавляем без нового запроса, показываем только тип позиции. */
+  /** Товар/услуга/работа позиции закупки/заявки (it.item_type). Тип плановой
+   *  позиции — candidate.itemType (из GET /feo-categories/plan-positions). */
   itemType: string | null
   /** Лучший кандидат — id/kind плановой позиции (или конечной категории с планом,
    *  если своей FeoPlannedItem нет), путь, остаток; null — похожих не нашлось. */
@@ -45,6 +42,8 @@ export interface BulkMatchRow {
     score: number
     residual: number | null
     plannedAmount: number | null
+    /** Тип плановой позиции; null у категории-плана целиком (своего типа нет). */
+    itemType: string | null
   } | null
   isExact: boolean
   checked: boolean
@@ -79,9 +78,9 @@ export function useFeoPlannedBulkMatch(deps: UseFeoPlannedBulkMatchDeps) {
 
   const canOpenBulkMatch = computed(() => unlinkedForMatch.value.length > 0 && !!subsidyId.value)
 
-  function residualOf(kind: string, id: number): { residual: number | null; plannedAmount: number | null } {
+  function residualOf(kind: string, id: number): { residual: number | null; plannedAmount: number | null; itemType: string | null } {
     const row = plannedItems.value.find(p => p.kind === kind && p.id === id)
-    return { residual: row?.residual ?? null, plannedAmount: row?.planned_amount ?? null }
+    return { residual: row?.residual ?? null, plannedAmount: row?.planned_amount ?? null, itemType: row?.item_type ?? null }
   }
 
   async function openBulkMatchDialog() {

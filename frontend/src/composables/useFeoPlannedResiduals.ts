@@ -28,6 +28,8 @@ export interface FeoPlanPosition {
   name: string
   /** Путь по дереву ФЭО, напр. "Транспорт › Внедорожники › Great Wall POER". */
   path: string
+  /** Товар/услуга/работа — только у kind='planned_item' (у категории целиком типа нет). */
+  item_type?: string | null
   /** id FeoCategory, к которой относится строка (для planned_item — id родительского листа). */
   category_id: number
   /** id всех предков category_id, от корня до непосредственного родителя (см. backend

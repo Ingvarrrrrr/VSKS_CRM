@@ -476,6 +476,9 @@ async def get_plan_positions(
                     "category_id": it.feo_category_id,
                     "ancestor_ids": build_ancestor_ids(cat, cat_by_id) if cat else [],
                     "kind": "planned_item",
+                    # Товар/услуга/работа плановой позиции — показывается рядом с типом
+                    # позиции закупки в «Привязать к плану» (владелец, 2026-09-30).
+                    "item_type": it.item_type,
                     "planned_quantity": qty,
                     "unit": it.unit,
                     "planned_amount": planned_total,

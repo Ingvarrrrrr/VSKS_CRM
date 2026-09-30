@@ -50,8 +50,11 @@
                     <div class="text-body-2 font-weight-medium">{{ row.name }}</div>
                   </td>
                   <td class="wrap-cell">
-                    <span v-if="row.itemType" class="text-body-2">{{ row.itemType }}</span>
-                    <span v-else class="text-caption text-medium-emphasis">—</span>
+                    <div class="text-body-2">{{ row.itemType || '—' }}</div>
+                    <div v-if="row.candidate" class="text-caption"
+                      :class="row.candidate.itemType && row.itemType && row.candidate.itemType !== row.itemType ? 'text-error' : 'text-medium-emphasis'">
+                      в плане: {{ row.candidate.itemType || (row.candidate.kind === 'planned_item' ? 'не указан' : 'категория целиком') }}
+                    </div>
                   </td>
                   <td class="wrap-cell">
                     <template v-if="row.candidate">

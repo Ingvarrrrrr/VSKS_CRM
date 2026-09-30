@@ -402,6 +402,7 @@
                   :purchase-id="null"
                   :wish-id="editingWishId"
                   :is-wish-stage="true"
+                  :form-mode="editingWish?.source === 'advance_report' ? 'advance_report' : 'default'"
                   :contract-form="wishForm.contract_form"
                   :default-unit="'шт.'"
                   :default-country="'РФ'"

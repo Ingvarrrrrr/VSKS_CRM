@@ -199,6 +199,7 @@
                 :wish-id="wishId"
                 :candidates="itemCandidates ? itemCandidates(item) : undefined"
                 :prefill="{ name: item.item_name, quantity: item.quantity, unit: item.unit, amount: item.total_price, unitPrice: item.unit_price, itemType: item.item_type, productId: item.product_id }"
+                :is-advance="isAdvance"
                 @update:model-value="(v) => emit('item-planned-change', idx, v)"
                 @planned-item-created="emit('planned-item-created')"
                 @planned-item-deleted="emit('planned-item-deleted')" />
@@ -438,6 +439,9 @@ const props = defineProps<{
   plannedSelectionFor?: (item: EditorItem) => FeoPlanSelection | null
   // Дефект 2/4 (владелец, 2026-09-16) — см. одноимённый проп в ItemsTableFlat.vue.
   itemCandidates?: (item: EditorItem) => FeoMatchCandidate[]
+  // Авансовый отчёт (владелец, 30.09.2026) — см. одноимённый проп в
+  // FeoPlannedItemsSelect.vue/PurchaseItemsEditor.vue.
+  isAdvance?: boolean
   // Шаг 5 «ТЗ не дороже и не больше плана» (владелец, 2026-08-07) + задача владельца
   // (сессия 2026-08-21: «на мобильном подсветки "ТЗ дороже плана" нет вовсе») —
   // те же function-props, что уже прокинуты в ItemsTableFlat.vue/ItemsTableStages.vue

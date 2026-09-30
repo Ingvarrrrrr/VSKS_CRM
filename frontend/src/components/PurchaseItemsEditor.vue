@@ -59,7 +59,13 @@
              readonly ИЛИ feoAttrsEditable — тот же режим, что уже разрешён построчным
              FeoTreeSelect/FeoPlannedItemsSelect (см. комментарий у feoAttrsEditable в
              defineProps ниже). -->
-        <v-tooltip :disabled="itemsMissingCategoryForPlan.length === 0" location="top" max-width="360">
+        <!-- Авансовый отчёт (владелец, 30.09.2026, решение повторное и жёсткое): «не
+             сопоставляем» — обе кнопки ниже предполагают ЛИБО ручной поиск существующей
+             плановой позиции (Привязать к плану), ЛИБО ручное решение завести новую
+             (Создать в плане закупок). Для авансового позиция получает свою плановую
+             позицию сама при сохранении (app/services/advance_auto_plan.py) — обе кнопки
+             скрыты целиком, не просто заблокированы. -->
+        <v-tooltip v-if="!isAdvance" :disabled="itemsMissingCategoryForPlan.length === 0" location="top" max-width="360">
           <template #activator="{ props: tip }">
             <span v-bind="tip">
               <v-btn v-if="(!props.readonly || props.feoAttrsEditable) && (props.feoPlannedPerItem || props.allowPerItemPlan) && (needPlanCount > 0 || itemsMissingCategoryForPlan.length > 0)"
@@ -82,7 +88,7 @@
              доступа, что и «Создать в плане закупок», плюс нужна субсидия (матчер ищет
              по её плановым позициям) и хоть одна непривязанная строка. -->
         <v-btn
-          v-if="(!props.readonly || props.feoAttrsEditable) && props.subsidyId && bulkMatch.canOpenBulkMatch.value"
+          v-if="!isAdvance && (!props.readonly || props.feoAttrsEditable) && props.subsidyId && bulkMatch.canOpenBulkMatch.value"
           variant="tonal" prepend-icon="mdi-link-variant" size="small" color="primary"
           @click="bulkMatch.openBulkMatchDialog()">
           Привязать к плану ({{ bulkMatch.unlinkedForMatch.value.length }})
@@ -195,11 +201,20 @@
          одинаково. Здесь речь именно про позиции ЭТОГО документа: человек ещё в процессе
          привязки. Про непривязанные строки самого плана говорит отдельный блок «Не привязаны
          к плану — требуется действие» на экране субсидии (SubsidiesView.vue). -->
-    <v-alert v-if="itemsMissingPlan.length > 0" type="warning" variant="tonal" density="compact" class="mb-2">
+    <v-alert v-if="!isAdvance && itemsMissingPlan.length > 0" type="warning" variant="tonal" density="compact" class="mb-2">
       {{ itemsMissingPlanWord === 'позиция' ? 'Позиция' : 'Позиции' }} этой закупки пока не
       {{ itemsMissingPlanWord === 'позиция' ? 'привязана' : 'привязаны' }} к плановой позиции:
       {{ itemsMissingPlanSummary }}. Пока привязки нет, {{ itemsMissingPlanWord === 'позиция' ? 'она не расходует' : 'они не расходуют' }}
       план и не {{ itemsMissingPlanWord === 'позиция' ? 'видна' : 'видны' }} в плане закупок — выберите плановую позицию в строке или создайте новую.
+    </v-alert>
+
+    <!-- Авансовый отчёт (владелец, 30.09.2026): вместо плашки «не привязаны к плану»
+         выше (там нет смысла — позиция получает план сама, см. app/services/
+         advance_auto_plan.py) — только напоминание про КОНЕЧНУЮ категорию ФЭО, без
+         которой авто-плану просто не в какой категории родиться. -->
+    <v-alert v-if="isAdvance && itemsMissingCategoryForPlan.length > 0" type="info" variant="tonal" density="compact" class="mb-2">
+      Выберите конечную категорию ФЭО — плановая позиция создастся автоматически:
+      {{ itemsMissingCategoryForPlan.slice(0, 5).map(r => `№${r.idx + 1} «${r.name}»`).join(', ') }}{{ itemsMissingCategoryForPlan.length > 5 ? `, …и ещё ${itemsMissingCategoryForPlan.length - 5}` : '' }}
     </v-alert>
 
     <!-- food-menu-editor.md (владелец, 2026-09-15, «даже мне не читаемо»): форма
@@ -350,6 +365,7 @@
           :item-form-label="itemFormLabel"
           :feo-attrs-editable="props.feoAttrsEditable"
           :supports-split="true"
+          :is-advance="isAdvance"
           :allowed-item-types="props.allowedItemTypes"
           :vat-mode="props.vatMode || 'uniform'"
           :feo-per-item="props.feoPerItem"
@@ -425,6 +441,7 @@
           :item-form-label="itemFormLabel"
           :feo-attrs-editable="props.feoAttrsEditable"
           :tz-frozen="tzFrozen"
+          :is-advance="isAdvance"
           :allowed-item-types="props.allowedItemTypes"
           :vat-mode="props.vatMode || 'uniform'"
           :feo-per-item="props.feoPerItem"
@@ -2040,6 +2057,10 @@ const planSuggest = useItemsPlanSuggest({
   subsidyId: computed(() => props.subsidyId),
   plannedItems: effectivePlannedItems,
   effectiveCategoryId: effectiveFeoCategoryId,
+  // Авансовый отчёт (владелец, 30.09.2026) — см. докстринг disabled в
+  // useItemsPlanSuggest.ts: подсказки похожих плановых позиций никогда не
+  // показываются для авансового.
+  disabled: isAdvance,
 })
 const bulkMatch = useFeoPlannedBulkMatch({
   localItems,

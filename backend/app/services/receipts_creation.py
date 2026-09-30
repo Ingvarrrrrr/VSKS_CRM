@@ -282,7 +282,8 @@ async def _create_receipt_with_items(
                     PurchaseItem.receipt_id == receipt.id,
                 )
             )
-            for pi in new_items_q.scalars().all():
+            _new_items_list = new_items_q.scalars().all()
+            for pi in _new_items_list:
                 exists_ci = (await db.execute(
                     select(_CI).where(
                         _CI.purchase_id == purchase_id,
@@ -302,6 +303,17 @@ async def _create_receipt_with_items(
                     extra_attrs=getattr(pi, 'extra_attrs', None) or {},
                     match_confirmed=True,
                 ))
+            # Владелец (30.09.2026): новые позиции чека — уже готовые кандидаты
+            # на СВОЮ авто-плановую позицию, если у закупки уже есть шапочная
+            # категория ФЭО (per-item feo_category_id у чек-позиции ещё нет —
+            # выбирается позже вручную, тогда сработает patch_purchase_item).
+            # См. app/services/advance_auto_plan.py — без матчинга по имени.
+            if p_check.feo_category_id:
+                from app.services.advance_auto_plan import sync_advance_auto_plan_items
+                await sync_advance_auto_plan_items(
+                    _new_items_list, p_check.feo_category_id, db,
+                    note="авансовым отчётом (загрузка чека)",
+                )
             await db.commit()
     except Exception as _ci_exc:
         import logging as _logging

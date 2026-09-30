@@ -278,7 +278,22 @@ async def patch_purchase_item(
     # явного выбора и будет им тут же перезаписан — вычислять его вообще незачем.
     _explicit_planned_item_chosen = "feo_planned_item_id" in body.model_fields_set
     _plan_transfer_warning: Optional[str] = None
-    if not _explicit_planned_item_chosen:
+    # Авансовый (владелец, 30.09.2026): позиции авансового отчёта НИКОГДА не
+    # матчатся/не переезжают по общей логике move_or_detach_planned_item/
+    # auto_assign_planned_items (та ищет существующую плановую по имени) — у
+    # них своя, БЕЗ поиска, синхронизация (app/services/advance_auto_plan.py),
+    # вызывается ниже, ПОСЛЕ применения name/quantity/unit_price к `it` (та
+    # синхронизация обязана видеть уже АКТУАЛЬНЫЕ числа — задача, п.1: иначе
+    # правка количества/цены не долетит до авто-плановой позиции).
+    _is_advance_item = (getattr(p, 'purchase_method', None) == 'advance')
+    if _is_advance_item and not _explicit_planned_item_chosen:
+        # Авансовый, без явного выбора плановой позиции — вся обработка ниже,
+        # после мутации name/quantity/unit_price (см. блок sync_advance_auto_plan_items
+        # дальше по коду). Ни move_or_detach_planned_item, ни auto_assign_planned_items
+        # (обе ищут/переносят по общей логике совместного плана) здесь не нужны —
+        # у авансовой позиции план всегда СВОЙ.
+        pass
+    elif not _explicit_planned_item_chosen:
         if _category_changing and it.feo_planned_item_id is not None:
             if it.feo_category_id is not None:
                 _plan_transfer_warning = await move_or_detach_planned_item(db, it, it.feo_category_id)
@@ -351,13 +366,34 @@ async def patch_purchase_item(
         if _old_fpi_id_explicit is not None and _old_fpi_id_explicit != it.feo_planned_item_id:
             _old_fpi_explicit = await db.get(_FPIExplicit, _old_fpi_id_explicit)
             await deactivate_if_orphaned(db, _old_fpi_explicit)
+    # Авансовый (владелец, 30.09.2026, задача п.1): «если меняются кол-во/цена —
+    # авто-плановая обновляется так же, иначе будет ложное превышение». Гейт
+    # «ТЗ не выше плана» ниже сравнивает НОВЫЕ прогнозные qty/price со СТАРЫМ
+    # планом — sync_advance_auto_plan_items выше по коду ещё не отработала (она
+    # ЗАПУСКАЕТСЯ после мутации it.quantity/it.unit_price, см. блок ниже), а
+    # значит для позиции с СОБСТВЕННОЙ auto_created плановой (которая через
+    # секунду будет приведена в соответствие с этими же новыми числами) гейт
+    # обязан промолчать — иначе рост цены/кол-ва авансовой позиции всегда бы
+    # 409'ил сам на себя. Позиции, привязанные к ЧУЖОЙ (не auto_created —
+    # заведённой человеком) плановой, продолжают проверяться как обычно.
+    _skip_tz_gate_for_advance_auto_plan = False
+    if _is_advance_item and not _explicit_planned_item_chosen:
+        if it.feo_planned_item_id is None:
+            _skip_tz_gate_for_advance_auto_plan = True
+        else:
+            from app.models.feo_planned_item import FeoPlannedItem as _FPIGate
+            _fpi_for_gate = await db.get(_FPIGate, it.feo_planned_item_id)
+            _skip_tz_gate_for_advance_auto_plan = bool(_fpi_for_gate and _fpi_for_gate.auto_created)
     # Шаг 5 «цена ТЗ не выше плановой» (владелец, 2026-08-07): проверяем ДО записи
     # цены/кол-ва — прогнозные значения (patch частичный, недостающие берём из
     # текущей строки). admin_override (та же роль/флаг, что и для заморозки ТЗ
     # выше) — осознанный обход, как и у остальных гейтов превышения плана.
     # feo_planned_item_id/feo_category_id берём УЖЕ ФИНАЛЬНЫМИ с it (категория и
     # автозаведение применены выше).
-    if _wants_tz_change and not (body.admin_override and current_user.role in ADMIN_ROLES):
+    if (
+        _wants_tz_change and not _skip_tz_gate_for_advance_auto_plan
+        and not (body.admin_override and current_user.role in ADMIN_ROLES)
+    ):
         _prospective_qty = body.quantity if _qty_set else it.quantity
         _prospective_price = body.unit_price if _price_set else it.unit_price
         # Гейт «ТЗ не выше плана» — приближение по обычной формуле (qty × price);
@@ -478,6 +514,24 @@ async def patch_purchase_item(
             it.planned_quantity = it.quantity
             it.planned_unit_price = it.unit_price
             it.planned_total = it.total_price
+    # Авансовый (владелец, 30.09.2026): создание/обновление авто-плановой
+    # позиции — ЗДЕСЬ, ПОСЛЕ применения name/quantity/unit_price к `it` выше
+    # (см. _is_advance_item и пропуск общей ветки auto_assign_planned_items/
+    # move_or_detach_planned_item в начале функции) — синхронизация обязана
+    # видеть уже АКТУАЛЬНЫЕ числа, иначе правка количества/цены не долетела бы
+    # до плана (задача, п.1). Не запускается при явном выборе плановой позиции
+    # (ручной выбор не перебивается) и не запускается при admin_override-обходе
+    # заморозки ТЗ — тот же принцип, что и у planned_quantity/unit_price/total
+    # чуть выше: план не должен молча подрасти следом за осознанным обходом.
+    if (
+        _is_advance_item and not _explicit_planned_item_chosen
+        and not (body.admin_override and current_user.role in ADMIN_ROLES)
+    ):
+        from app.services.advance_auto_plan import sync_advance_auto_plan_items
+        await sync_advance_auto_plan_items(
+            [it], it.feo_category_id, db,
+            note=f"авансовым отчётом №{p.purchase_number or p.id} (правка позиции)",
+        )
     # Зеркалим правку обратно в позицию заявки (принцип владельца, 2026-08-18):
     # раз W3 выше больше не запрещает править позицию прямо в закупке для
     # закупок, ушедших в план (см. комментарий у W3), позиция закупки и
@@ -496,7 +550,12 @@ async def patch_purchase_item(
         # обязан зеркалиться в WishItem — иначе он мирроится только при СМЕНЕ
         # категории, а «выбрал другую плановую позицию внутри той же категории»
         # (типичный случай диалога «Редактировать позицию») расходится с заявкой.
-        if _patch_keys & {"item_name", "quantity", "unit", "unit_price"} or _category_changing or _explicit_planned_item_chosen:
+        # Авансовый (владелец, 30.09.2026): sync_advance_auto_plan_items выше
+        # может проставить/обновить feo_planned_item_id даже когда ни категория
+        # не менялась, ни плановая не выбиралась явно (типичный случай — просто
+        # появилась категория, или позиция впервые получила свою авто-плановую)
+        # — компаньон обязан увидеть это зеркалирование тоже.
+        if _patch_keys & {"item_name", "quantity", "unit", "unit_price"} or _category_changing or _explicit_planned_item_chosen or _is_advance_item:
             from app.models.wish_item import WishItem as _WishItem
             wi = await db.get(_WishItem, it.wish_item_id)
             if wi is not None:
@@ -510,7 +569,7 @@ async def patch_purchase_item(
                     wi.unit_price = it.unit_price
                 if _qty_or_price_changed:
                     wi.total_price = it.total_price
-                if _category_changing or _explicit_planned_item_chosen:
+                if _category_changing or _explicit_planned_item_chosen or _is_advance_item:
                     wi.feo_category_id = it.feo_category_id
                     wi.feo_planned_item_id = it.feo_planned_item_id
     await db.flush()

@@ -380,6 +380,7 @@
                 :candidates="itemCandidates ? itemCandidates(item) : undefined"
                 style="flex:1 1 320px;min-width:260px"
                 :prefill="{ name: item.item_name, quantity: item.quantity, unit: item.unit, amount: item.total_price, unitPrice: item.unit_price, itemType: item.item_type, productId: item.product_id }"
+                :is-advance="isAdvance"
                 @update:model-value="(v) => emit('item-planned-change', idx, v)"
                 @planned-item-created="emit('planned-item-created')"
                 @planned-item-deleted="emit('planned-item-deleted')" />
@@ -480,6 +481,10 @@ const props = defineProps<{
   // PurchaseItemsEditor.vue). Функция-проп по тому же паттерну, что и
   // plannedSelectionFor выше — без пропа блок просто не рендерится (back-compat).
   itemCandidates?: (item: EditorItem) => FeoMatchCandidate[]
+  // Авансовый отчёт (владелец, 30.09.2026) — см. одноимённый проп в
+  // FeoPlannedItemsSelect.vue/PurchaseItemsEditor.vue: пикер плановой позиции
+  // заменяется коротким статусом «План: авто (из чека)».
+  isAdvance?: boolean
   // Жалоба владельца (сессия 2026-08-19): «выбрано»/«остаток» не учитывали переключатели,
   // включённые ПРЯМО СЕЙЧАС в этой форме — только серверные числа. Карта
   // feo_planned_item_id → сумма позиций ЭТОЙ формы (см. pendingByPlannedItem в

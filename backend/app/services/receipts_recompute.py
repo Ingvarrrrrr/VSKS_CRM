@@ -471,6 +471,17 @@ async def _recompute_from_receipts_core(purchase_id: int, db: AsyncSession, forc
                         match_confirmed=True,
                     ))
                     contract_items_created += 1
+            # Владелец (30.09.2026): каждый пересчёт из чеков — тоже «сохранение»
+            # авансового отчёта (тот же хук, что create/update/patch позиции) —
+            # позиции с уже проставленной шапочной категорией ФЭО, но без
+            # привязки к плану, получают СВОЮ авто-плановую позицию, БЕЗ
+            # матчинга по имени (см. app/services/advance_auto_plan.py).
+            if p.feo_category_id:
+                from app.services.advance_auto_plan import sync_advance_auto_plan_items
+                await sync_advance_auto_plan_items(
+                    all_items, p.feo_category_id, db,
+                    note="авансовым отчётом (пересчёт из чеков)",
+                )
     except Exception as _ci_exc:
         import logging as _logging
         _logging.getLogger(__name__).warning(f"recompute contract_items autocreate skipped: {_ci_exc}")

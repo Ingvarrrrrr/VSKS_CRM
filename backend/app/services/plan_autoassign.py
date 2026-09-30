@@ -136,77 +136,7 @@ async def auto_assign_planned_items(
                 # дублирующую FeoPlannedItem, оставляем позицию непривязанной —
                 # assert_tz_not_over_plan и дерево ФЭО прочитают план с листа.
                 continue
-            # amount=it.total_price — снимок плана (Шаг 1 «план ≠ факт»): фиксируется
-            # как план категории в момент постановки в план закупок.
-            _origin_is_feo_breakdown, _origin_is_internal_plan = resolve_origin_flags(
-                None, getattr(it, "total_price", None),
-            )
-            new_fpi = FeoPlannedItem(
-                feo_category_id=eff_cat_id,
-                name=getattr(it, "item_name", None),
-                quantity=getattr(it, "quantity", None),
-                unit=getattr(it, "unit", None),
-                amount=getattr(it, "total_price", None),
-                # Цена за единицу (владелец, 2026-09-02) — снимок реальной цены
-                # строки, из которой рождается план (см. FeoPlannedItem.unit_price
-                # и assert_tz_not_over_plan в feo_plan.py). Заполняем, ЧТОБЫ НЕ
-                # РЕГРЕССИРОВАТЬ прежний контроль превышения: у автозаведённой
-                # позиции цена известна точно (это цена самой закупаемой строки),
-                # поэтому она не должна молча попадать в «мягкий» режим (сумма без
-                # ограничения количества/цены), уготованный для позиций, где
-                # человек сознательно указал только общую сумму.
-                unit_price=getattr(it, "unit_price", None),
-                is_active=True,
-                notes=f"Создано {note}",
-                # Владелец (2026-08-18): «в позиции точно прописано, товар это или
-                # услуга/работа... почему не подтягивается?» — тип известен у
-                # исходной позиции заявки/закупки, незачем рождать плановую позицию
-                # пустой. Уже заполненный item_type у существующих строк здесь не
-                # трогаем (эта ветка — только создание НОВОЙ FeoPlannedItem).
-                item_type=(getattr(it, "item_type", None) or None),
-                # Задача владельца «закупка сама становится планом» (2026-08-12):
-                # позиция заведена автоматически (не человеком) — фронт помечает
-                # такие строки отдельно (см. auto_created в схеме FeoPlannedItemOut).
-                auto_created=True,
-                # Происхождение (владелец, 2026-09-01): автозаведённая позиция
-                # родилась из реального расхода заявки/закупки, не из файла ФЭО —
-                # раздела «Сумма по ФЭО» у неё нет по построению (это не строка
-                # Excel-импорта), поэтому feo_money=None. Флаги считает та же
-                # resolve_origin_flags, что и импорт ФЭО (Правило №6, единственный
-                # источник в feo_import_common.py) — при feo_money=None она
-                # детерминированно отдаёт (False, True), то же самое, что было
-                # здесь захардкожено раньше, без второй копии правила «денег в
-                # ФЭО нет — значит внутренний план».
-                is_feo_breakdown=_origin_is_feo_breakdown,
-                is_internal_plan=_origin_is_internal_plan,
-            )
-            db.add(new_fpi)
-            await db.flush()
-            # Журнал ФЭО (волна 2) — «если плановая появилась из заявки/закупки,
-            # пишется, на основании какой» (владелец, дословно, задание волны 2).
-            # `items` — WishItem или PurchaseItem (см. докстринг функции): у
-            # WishItem source_ref — сама заявка (wish_id), у PurchaseItem — сама
-            # закупка (purchase_id). `user`/changed_by остаётся NULL здесь
-            # намеренно — по source_ref уже видно происхождение (заявка/закупка),
-            # а КТО её завёл/отредактировал — читается из истории самой заявки/
-            # закупки, не дублируем это дважды (Правило №6).
-            _wish_id = getattr(it, "wish_id", None)
-            _purchase_id = getattr(it, "purchase_id", None)
-            if _wish_id is not None:
-                await feo_history.record_created(
-                    db, feo_history.ENTITY_FEO_ITEM, new_fpi.id, None,
-                    source=feo_history.SOURCE_WISH, source_ref=_wish_id, commit=False,
-                )
-            elif _purchase_id is not None:
-                await feo_history.record_created(
-                    db, feo_history.ENTITY_FEO_ITEM, new_fpi.id, None,
-                    source=feo_history.SOURCE_PURCHASE, source_ref=_purchase_id, commit=False,
-                )
-            else:
-                await feo_history.record_created(
-                    db, feo_history.ENTITY_FEO_ITEM, new_fpi.id, None,
-                    source=feo_history.SOURCE_AUTOASSIGN, commit=False,
-                )
+            new_fpi = await create_auto_planned_item(db, it, eff_cat_id, note)
             entry = (new_fpi.id, new_fpi.item_type)
             index[norm_name] = entry  # следующая позиция этого же вызова с тем же
             # нормализованным именем (напр. «Бумага А4,» после «Бумага А4») найдёт
@@ -225,6 +155,100 @@ async def auto_assign_planned_items(
     # выбор пользователя/матчинг) — их сам цикл выше пропускает (см. continue в
     # начале), но проброс типа от плановой позиции им всё равно причитается.
     await backfill_item_type_from_plan(items, db)
+
+
+async def create_auto_planned_item(db: AsyncSession, it, eff_cat_id: int, note: str):
+    """Строит, сохраняет и журналирует НОВУЮ auto_created=True FeoPlannedItem
+    из позиции заявки/закупки (`it` — WishItem/PurchaseItem, тот же набор
+    атрибутов item_name/quantity/unit/total_price/unit_price/item_type/
+    wish_id/purchase_id, что и в auto_assign_planned_items выше).
+
+    Вынесено из тела auto_assign_planned_items (Правило №6, 30.09.2026) —
+    ЕДИНСТВЕННОЕ место, конструирующее авто-плановую позицию: используется и
+    здесь (дедуп по точному совпадению имени внутри категории — см. вызов
+    выше), и app.services.advance_auto_plan.sync_advance_auto_plan_items
+    (авансовые отчёты — владелец, 30.09.2026, «не сопоставляем»: КАЖДАЯ
+    позиция получает свою собственную плановую БЕЗ поиска существующей по
+    имени, но сама плановая строится совершенно так же).
+
+    db.flush() делает сама (нужен id для истории/присвоения). Commit — на
+    вызывающем.
+    """
+    from app.models.feo_planned_item import FeoPlannedItem
+    from app.services.feo_import_common import resolve_origin_flags
+
+    # amount=it.total_price — снимок плана (Шаг 1 «план ≠ факт»): фиксируется
+    # как план категории в момент постановки в план закупок.
+    _origin_is_feo_breakdown, _origin_is_internal_plan = resolve_origin_flags(
+        None, getattr(it, "total_price", None),
+    )
+    new_fpi = FeoPlannedItem(
+        feo_category_id=eff_cat_id,
+        name=getattr(it, "item_name", None),
+        quantity=getattr(it, "quantity", None),
+        unit=getattr(it, "unit", None),
+        amount=getattr(it, "total_price", None),
+        # Цена за единицу (владелец, 2026-09-02) — снимок реальной цены
+        # строки, из которой рождается план (см. FeoPlannedItem.unit_price
+        # и assert_tz_not_over_plan в feo_plan.py). Заполняем, ЧТОБЫ НЕ
+        # РЕГРЕССИРОВАТЬ прежний контроль превышения: у автозаведённой
+        # позиции цена известна точно (это цена самой закупаемой строки),
+        # поэтому она не должна молча попадать в «мягкий» режим (сумма без
+        # ограничения количества/цены), уготованный для позиций, где
+        # человек сознательно указал только общую сумму.
+        unit_price=getattr(it, "unit_price", None),
+        is_active=True,
+        notes=f"Создано {note}",
+        # Владелец (2026-08-18): «в позиции точно прописано, товар это или
+        # услуга/работа... почему не подтягивается?» — тип известен у
+        # исходной позиции заявки/закупки, незачем рождать плановую позицию
+        # пустой. Уже заполненный item_type у существующих строк здесь не
+        # трогаем (эта ветка — только создание НОВОЙ FeoPlannedItem).
+        item_type=(getattr(it, "item_type", None) or None),
+        # Задача владельца «закупка сама становится планом» (2026-08-12):
+        # позиция заведена автоматически (не человеком) — фронт помечает
+        # такие строки отдельно (см. auto_created в схеме FeoPlannedItemOut).
+        auto_created=True,
+        # Происхождение (владелец, 2026-09-01): автозаведённая позиция
+        # родилась из реального расхода заявки/закупки, не из файла ФЭО —
+        # раздела «Сумма по ФЭО» у неё нет по построению (это не строка
+        # Excel-импорта), поэтому feo_money=None. Флаги считает та же
+        # resolve_origin_flags, что и импорт ФЭО (Правило №6, единственный
+        # источник в feo_import_common.py) — при feo_money=None она
+        # детерминированно отдаёт (False, True), то же самое, что было
+        # здесь захардкожено раньше, без второй копии правила «денег в
+        # ФЭО нет — значит внутренний план».
+        is_feo_breakdown=_origin_is_feo_breakdown,
+        is_internal_plan=_origin_is_internal_plan,
+    )
+    db.add(new_fpi)
+    await db.flush()
+    # Журнал ФЭО (волна 2) — «если плановая появилась из заявки/закупки,
+    # пишется, на основании какой» (владелец, дословно, задание волны 2).
+    # `items` — WishItem или PurchaseItem (см. докстринг функции): у
+    # WishItem source_ref — сама заявка (wish_id), у PurchaseItem — сама
+    # закупка (purchase_id). `user`/changed_by остаётся NULL здесь
+    # намеренно — по source_ref уже видно происхождение (заявка/закупка),
+    # а КТО её завёл/отредактировал — читается из истории самой заявки/
+    # закупки, не дублируем это дважды (Правило №6).
+    _wish_id = getattr(it, "wish_id", None)
+    _purchase_id = getattr(it, "purchase_id", None)
+    if _wish_id is not None:
+        await feo_history.record_created(
+            db, feo_history.ENTITY_FEO_ITEM, new_fpi.id, None,
+            source=feo_history.SOURCE_WISH, source_ref=_wish_id, commit=False,
+        )
+    elif _purchase_id is not None:
+        await feo_history.record_created(
+            db, feo_history.ENTITY_FEO_ITEM, new_fpi.id, None,
+            source=feo_history.SOURCE_PURCHASE, source_ref=_purchase_id, commit=False,
+        )
+    else:
+        await feo_history.record_created(
+            db, feo_history.ENTITY_FEO_ITEM, new_fpi.id, None,
+            source=feo_history.SOURCE_AUTOASSIGN, commit=False,
+        )
+    return new_fpi
 
 
 async def backfill_item_type_from_plan(items, db: AsyncSession) -> None:

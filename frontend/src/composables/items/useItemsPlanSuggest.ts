@@ -34,13 +34,19 @@ export interface UseItemsPlanSuggestDeps {
    *  категории конкретной позиции (бэк считает same_category по ОДНОЙ переданной
    *  на весь батч feo_category_id, здесь категории у позиций разные). */
   effectiveCategoryId: (item: EditorItem) => number | null
+  /** Авансовый отчёт (владелец, 30.09.2026, решение повторное и жёсткое): «не
+   *  сопоставляем» — подсказки похожих плановых позиций для авансового отчёта
+   *  никогда не показываются (каждая позиция получает свою плановую сама, см.
+   *  бэкенд app/services/advance_auto_plan.py). Ref, а не bool — PurchaseItemsEditor.vue
+   *  передаёт computed isAdvance, значение может стать известно позже первого рендера. */
+  disabled?: Ref<boolean>
 }
 
 const DEBOUNCE_MS = 600
 const CANDIDATES_PER_ITEM = 3
 
 export function useItemsPlanSuggest(deps: UseItemsPlanSuggestDeps) {
-  const { localItems, subsidyId, plannedItems, effectiveCategoryId } = deps
+  const { localItems, subsidyId, plannedItems, effectiveCategoryId, disabled } = deps
   const { matchQueries } = useFeoPlanMatching()
 
   // Ключ — стабильный _uid позиции (не idx: индекс сдвигается при удалении строк
@@ -48,16 +54,22 @@ export function useItemsPlanSuggest(deps: UseItemsPlanSuggestDeps) {
   const candidatesByUid = ref<Map<string | number, FeoMatchCandidate[]>>(new Map())
 
   const unlinkedSignature = computed(() =>
-    localItems.value
-      .filter(it => !it.feo_planned_item_id && (it.item_name || '').trim())
-      .map(it => `${it._uid}:${(it.item_name || '').trim()}`)
-      .join('|')
+    disabled?.value
+      ? ''
+      : localItems.value
+        .filter(it => !it.feo_planned_item_id && (it.item_name || '').trim())
+        .map(it => `${it._uid}:${(it.item_name || '').trim()}`)
+        .join('|')
   )
 
   let timer: ReturnType<typeof setTimeout> | null = null
   let requestToken = 0
 
   async function runMatch() {
+    if (disabled?.value) {
+      candidatesByUid.value = new Map()
+      return
+    }
     const rows = localItems.value.filter(it => !it.feo_planned_item_id && (it.item_name || '').trim())
     if (!rows.length || !subsidyId.value) {
       candidatesByUid.value = new Map()
@@ -98,12 +110,13 @@ export function useItemsPlanSuggest(deps: UseItemsPlanSuggestDeps) {
     candidatesByUid.value = map
   }
 
-  watch([unlinkedSignature, subsidyId], () => {
+  watch([unlinkedSignature, subsidyId, () => disabled?.value], () => {
     if (timer) clearTimeout(timer)
     timer = setTimeout(() => { timer = null; void runMatch() }, DEBOUNCE_MS)
   }, { immediate: true })
 
   function candidatesFor(item: EditorItem): FeoMatchCandidate[] {
+    if (disabled?.value) return []
     if (!item || item.feo_planned_item_id) return []
     return candidatesByUid.value.get(item._uid) || []
   }

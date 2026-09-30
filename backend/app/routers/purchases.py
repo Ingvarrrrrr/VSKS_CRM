@@ -801,6 +801,21 @@ async def create_purchase(
         await assert_subsidy_approved_for_binding(db, _alloc.subsidy_id)
 
     items_data = data.items or []
+
+    # Авансовый (владелец, 30.09.2026, решение повторное и жёсткое): каждая
+    # позиция без явной привязки к плану получает СОБСТВЕННУЮ auto-plan
+    # позицию, БЕЗ матчинга по имени (см. app/services/advance_auto_plan.py —
+    # «эта закупка не была в плане, не сопоставляем»). Мутирует items_data
+    # (ещё pydantic) ДО пересчёта сумм/проверок ниже — те уже обязаны видеть
+    # актуальный feo_planned_item_id, тот же порядок, что и в update_purchase
+    # (см. вызов auto_assign_planned_items там).
+    if is_advance:
+        from app.services.advance_auto_plan import sync_advance_auto_plan_items
+        await sync_advance_auto_plan_items(
+            items_data, data.feo_category_id, db,
+            note="авансовым отчётом (создание)",
+        )
+
     # Compute total_nmck from items.
     # ПРАВИЛО №6 (волна 4b-2d): было `sum(...) or data.nmck` — до вставки в БД
     # это единственный расчёт «плановой суммы» (recalc_purchase_money ниже,
@@ -1135,6 +1150,16 @@ async def update_purchase(
         _ocid = _oi.feo_category_id or p.feo_category_id
         if _ocid:
             old_item_cat_amounts[_ocid] = old_item_cat_amounts.get(_ocid, Decimal("0")) + Decimal(str(_oi.total_price or 0))
+    # Авансовый (владелец, 30.09.2026): PUT удаляет и пересоздаёт ВСЕ
+    # PurchaseItem (см. delete(PurchaseItem) ниже) — снимок плановых позиций,
+    # на которые ссылались СТАРЫЕ строки, нужен ДО удаления, чтобы после
+    # пересоздания деактивировать (см. plan_autoassign.deactivate_if_orphaned)
+    # те, что больше никем не используются — позиция ушла из авансового
+    # отчёта, её собственная авто-плановая позиция не должна оставаться в
+    # плане призраком (см. app/services/advance_auto_plan.py).
+    _old_advance_fpi_ids: set[int] = set()
+    if data.purchase_method == 'advance':
+        _old_advance_fpi_ids = {i.feo_planned_item_id for i in p.items if i.feo_planned_item_id is not None}
     # Phase 31: capture old values for diff-tracking BEFORE any mutation
     _old_purchase_values = {f: getattr(p, f, None) for f in PURCHASE_TRACKED_FIELDS}
     # Employees/managers can save any purchase they have access to (org-level access checked at list level)
@@ -1309,10 +1334,23 @@ async def update_purchase(
     # over_plan, которые есть у обеих сторон; итоговый feo_planned_item_id/
     # over_plan, проставленные функцией на items_data, попадают в PurchaseItem
     # ниже через item_d.model_dump().
-    await auto_assign_planned_items(
-        items_data, p.feo_category_id, db,
-        note=f"закупкой №{p.purchase_number or p.id} (правка вне заявки)",
-    )
+    #
+    # Авансовый (владелец, 30.09.2026, решение повторное и жёсткое): «не
+    # сопоставляем» — здесь НЕ дедуп по имени auto_assign_planned_items, а
+    # sync_advance_auto_plan_items (app/services/advance_auto_plan.py): каждая
+    # позиция без своей плановой получает СОБСТВЕННУЮ новую, а уже привязанная
+    # к СВОЕЙ авто-плановой синхронизирует туда изменившиеся кол-во/цену.
+    if _is_advance_update:
+        from app.services.advance_auto_plan import sync_advance_auto_plan_items
+        await sync_advance_auto_plan_items(
+            items_data, p.feo_category_id, db,
+            note=f"авансовым отчётом №{p.purchase_number or p.id} (правка)",
+        )
+    else:
+        await auto_assign_planned_items(
+            items_data, p.feo_category_id, db,
+            note=f"закупкой №{p.purchase_number or p.id} (правка вне заявки)",
+        )
 
     # Задача владельца (2026-08-05) «блокировать пока не согласовано превышение плана
     # ФЭО», расширено 2026-08-10 (план zany-fluttering-mountain.md п.4) на ПЕР-ITEM
@@ -1659,6 +1697,24 @@ async def update_purchase(
             await db.flush()  # получить WishItem.id
             for _pi, _wi in zip(_created_items_put, _new_wish_items_put):
                 _pi.wish_item_id = _wi.id
+
+    # Авансовый (владелец, 30.09.2026): позиции, удалённые этим PUT'ом (не
+    # попавшие в новый items_data), больше не ссылаются на свои старые
+    # авто-плановые позиции (_old_advance_fpi_ids, снят ДО delete(PurchaseItem)
+    # выше) — деактивируем осиротевшие (deactivate_if_orphaned сама проверяет
+    # auto_created и отсутствие ЛЮБЫХ ссылок, включая только что пересобранные
+    # WishItems компаньона выше), иначе они остаются в плане призраками.
+    if _is_advance_update and _old_advance_fpi_ids:
+        _new_advance_fpi_ids = {i.feo_planned_item_id for i in _flushed_items if i.feo_planned_item_id is not None}
+        _removed_advance_fpi_ids = _old_advance_fpi_ids - _new_advance_fpi_ids
+        if _removed_advance_fpi_ids:
+            from app.models.feo_planned_item import FeoPlannedItem as _FPICleanup
+            from app.services.plan_autoassign import deactivate_if_orphaned
+            _cleanup_rows = (await db.execute(
+                select(_FPICleanup).where(_FPICleanup.id.in_(_removed_advance_fpi_ids))
+            )).scalars().all()
+            for _fpi_cleanup in _cleanup_rows:
+                await deactivate_if_orphaned(db, _fpi_cleanup)
 
     # 12-03: Auto-create plan-graph version on status→fact or FEO-linked items
     _old_status = _old_purchase_values.get("status")

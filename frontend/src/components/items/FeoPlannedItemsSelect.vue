@@ -11,8 +11,18 @@
        Псевдо-вариант «Вне плана (новая позиция)» убран (сессия 2026-08-05) — владелец:
        позицию, которой нет в плане, заводят кнопкой «Создать в плане закупок» ниже. -->
   <div v-if="categoryId != null" class="feo-planned-select" :class="{ 'feo-planned-select--dense': dense }">
+    <!-- Авансовый отчёт (владелец, 30.09.2026) — см. докстринг isAdvance выше:
+         ни поиск, ни ручной выбор, ни «Создать в плане закупок» здесь не
+         нужны, позиция получает свою плановую позицию сама при сохранении. -->
+    <template v-if="isAdvance">
+      <div class="feo-tree-row feo-tree-row--pseudo feo-planned-disabled">
+        <v-icon size="16" :icon="modelValue ? 'mdi-robot-outline' : 'mdi-clipboard-list-outline'" class="mr-1" />
+        <span class="feo-tree-name">{{ modelValue ? 'План: авто (из чека)' : 'План появится автоматически после сохранения' }}</span>
+      </div>
+    </template>
+
     <!-- skipLast: заявка привязана к промежуточному уровню — плановые позиции недоступны -->
-    <template v-if="skipLast">
+    <template v-else-if="skipLast">
       <div class="feo-tree-row feo-tree-row--pseudo feo-planned-disabled">
         <v-icon size="16" icon="mdi-clipboard-list-outline" class="mr-1" />
         <span class="feo-tree-name">Заявка привязана к промежуточному уровню ФЭО — плановые позиции недоступны</span>
@@ -283,6 +293,14 @@ const props = defineProps<{
    *  Без пропа (легаси-места, которые ещё не прокинули) поле поиска просто не
    *  рендерится (v-if="subsidyId" в шаблоне) — остальной пикер работает как раньше. */
   subsidyId?: number | null
+  /** Авансовый отчёт (владелец, 30.09.2026, решение повторное и жёсткое): «Из
+   *  авансового все позиции АВТОМАТИЧЕСКИ привязываются к плану... не
+   *  сопоставляем». Ручной поиск/выбор/создание плановой позиции здесь
+   *  бессмысленны — позиция получает СВОЮ плановую позицию сама (см. бэкенд
+   *  app/services/advance_auto_plan.py) — вместо всего пикера показываем
+   *  короткую строку статуса. См. одноимённый isAdvance в
+   *  PurchaseItemsEditor.vue (formMode === 'advance_report'). */
+  isAdvance?: boolean
 }>()
 
 const emit = defineEmits<{

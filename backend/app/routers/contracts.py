@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from app.database import get_db
@@ -120,6 +120,16 @@ router = APIRouter(prefix="/api/contracts", tags=["contracts"])
 @router.get("/", response_model=List[ContractOut])
 async def list_contracts(
     subsidy_id: Optional[int] = Query(None),
+    # Владелец (2026-09-30): окно выбора рамочного договора в закупке не должно
+    # быть заперто на субсидию ЗАКУПКИ — нужные договоры контрагента часто
+    # заведены на другую субсидию той же организации (или другую орг того же
+    # аккаунта). prefer_subsidy_id заменяет жёсткий subsidy_id-фильтр на
+    # ранжирование: видны ВСЕ договоры аккаунта (тот же контур видимости, что
+    # и всегда — get_visible_subsidy_ids/build_visibility_clause ниже), но
+    # каждому проставляется contract_group (1/2/3) и сортировка ставит
+    # релевантные договоры первыми. Если передан subsidy_id — он игнорируется
+    # (не сужает выборку), сам subsidy_id остаётся для старых вызовов реестра.
+    prefer_subsidy_id: Optional[int] = Query(None),
     contract_type: Optional[str] = Query(None),
     purchase_method: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
@@ -132,7 +142,7 @@ async def list_contracts(
         selectinload(Contract.subsidy),
         selectinload(Contract.extra_subsidies).selectinload(ContractSubsidy.subsidy),
     ).order_by(Contract.id.desc())
-    if subsidy_id is not None:
+    if subsidy_id is not None and prefer_subsidy_id is None:
         q = q.where(Contract.subsidy_id == subsidy_id)
     if contract_type is not None:
         q = q.where(Contract.contract_type == contract_type)
@@ -144,7 +154,19 @@ async def list_contracts(
         q = q.where(Contract.contractor_id == contractor_id)
     vis = await get_visible_subsidy_ids(current_user, db, "contracts")
     if vis is not None:
-        q = q.where(Contract.subsidy_id.in_(vis))
+        # Владелец (2026-09-30): доп. привязка contract_subsidies раньше
+        # полностью игнорировалась здесь — договор, чей СОБСТВЕННЫЙ subsidy_id
+        # лежит вне видимости пользователя, но который явно довязан (extra
+        # ContractSubsidy) к видимой субсидии, пропадал из выдачи целиком.
+        # Только расширяет видимость (or_), никогда не сужает.
+        q = q.where(
+            or_(
+                Contract.subsidy_id.in_(vis),
+                Contract.id.in_(
+                    select(ContractSubsidy.contract_id).where(ContractSubsidy.subsidy_id.in_(vis))
+                ),
+            )
+        )
     # Phase 28 Bundle 3: user-level visibility filter (was missing — data leak fix).
     clause = await build_visibility_clause(current_user, db, 'contract')
     if clause is not None:
@@ -240,6 +262,48 @@ async def list_contracts(
             )).scalar_one_or_none()
             d.approval_state = _framework_approval_state(head_status)
         out.append(d)
+
+    # Владелец (2026-09-30): окно выбора рамочного договора в закупке —
+    # ранжирование относительно субсидии закупки (prefer_subsidy_id). Считается
+    # здесь (не в SQL) — нужны уже загруженные c.subsidy/c.extra_subsidies.
+    # 1 — субсидия закупки (свой subsidy_id ИЛИ доп. привязка contract_subsidies),
+    # 2 — другая субсидия ТОЙ ЖЕ организации, 3 — остальные договоры аккаунта.
+    if prefer_subsidy_id is not None:
+        from app.models.subsidy import Subsidy as _Subsidy
+        from app.models.organization import Organization as _Org
+
+        prefer_subsidy = await db.get(_Subsidy, prefer_subsidy_id)
+        prefer_org_id = prefer_subsidy.org_id if prefer_subsidy else None
+
+        extra_linked_contract_ids = set((await db.execute(
+            select(ContractSubsidy.contract_id).where(ContractSubsidy.subsidy_id == prefer_subsidy_id)
+        )).scalars().all())
+
+        # org_name — только чтобы подписать группу 3 («субсидия X, организация Y»);
+        # батч одним запросом вместо N+1 на каждый договор.
+        org_ids_needed = {c.subsidy.org_id for c in contracts if c.subsidy and c.subsidy.org_id}
+        org_names: dict[int, str] = {}
+        if org_ids_needed:
+            org_names = dict((await db.execute(
+                select(_Org.id, _Org.name).where(_Org.id.in_(org_ids_needed))
+            )).all())
+
+        for c, d in zip(contracts, out):
+            if c.subsidy_id == prefer_subsidy_id or c.id in extra_linked_contract_ids:
+                d.contract_group = 1
+            elif prefer_org_id is not None and c.subsidy and c.subsidy.org_id == prefer_org_id:
+                d.contract_group = 2
+            else:
+                d.contract_group = 3
+            if c.subsidy and c.subsidy.org_id:
+                d.org_name = org_names.get(c.subsidy.org_id)
+
+        out.sort(key=lambda d: (
+            d.contract_group or 3,
+            0 if d.date else 1,
+            -(d.date.toordinal() if d.date else 0),
+        ))
+
     return out
 
 @router.post("/", response_model=ContractOut)

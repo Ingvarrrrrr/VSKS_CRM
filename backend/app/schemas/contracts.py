@@ -114,6 +114,15 @@ class ContractOut(ContractCreate):
     contractor_inn: Optional[str] = None
     subsidy_name: Optional[str] = None
     extra_subsidies: List[ContractSubsidyOut] = []
+    # Владелец (2026-09-30): окно выбора рамочного договора в закупке — ранг
+    # релевантности относительно субсидии закупки (?prefer_subsidy_id=X на
+    # GET /contracts/, см. contracts.py::list_contracts). Заполняется только
+    # когда prefer_subsidy_id передан; иначе остаётся None (обычный реестр
+    # договоров сортировку не использует). 1 — субсидия закупки (свой subsidy_id
+    # ИЛИ доп. привязка contract_subsidies), 2 — другая субсидия той же
+    # организации, 3 — остальные договоры аккаунта.
+    contract_group: Optional[int] = None
+    org_name: Optional[str] = None  # заполняется для contract_group 2/3 — какой организации принадлежит субсидия договора
     # Владелец (2026-09-02): состояние согласования рамочной ГОЛОВЫ договора —
     # вычисляется из Purchase.approval_status привязанной рамочной головы, не
     # хранится отдельной колонкой (см. contracts.py::list_contracts).

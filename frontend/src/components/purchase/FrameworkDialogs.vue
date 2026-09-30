@@ -15,7 +15,7 @@
           variant="outlined" density="compact" clearable hide-details class="mb-4" />
         <v-progress-linear v-if="frameworkLoading" indeterminate color="primary" class="mb-3" />
         <div v-if="!frameworkLoading && !filteredFrameworkContracts.length" class="text-center text-medium-emphasis py-6">
-          Рамочных договоров по данной субсидии не найдено
+          Рамочных договоров не найдено
         </div>
         <v-table v-else density="compact">
           <thead>
@@ -30,25 +30,37 @@
               <th></th>
             </tr>
           </thead>
-          <tbody>
-            <tr v-for="c in filteredFrameworkContracts" :key="c.id"
-              :class="{ 'bg-blue-lighten-5': selectedFrameworkContract?.id === c.id }"
-              style="cursor:pointer" @click="$emit('select', c)">
-              <td class="font-weight-medium">{{ c.number }}</td>
-              <td>{{ c.date || '—' }}</td>
-              <td>{{ c.contractor_name || '—' }}</td>
-              <td class="text-caption">{{ c.contractor_inn || '—' }}</td>
-              <td style="max-width:220px;white-space:normal;font-size:12px">{{ c.subject || '—' }}</td>
-              <td class="text-right">{{ c.max_amount ? Number(c.max_amount).toLocaleString('ru-RU') + ' ₽' : '—' }}</td>
-              <td class="text-right" :class="c.remaining_ordered != null && c.remaining_ordered < 0 ? 'text-error' : 'text-success'">
-                {{ c.remaining_ordered != null ? Number(c.remaining_ordered).toLocaleString('ru-RU') + ' ₽' : '—' }}
-              </td>
-              <td>
-                <v-btn variant="tonal" color="primary" size="x-small"
-                  @click.stop="$emit('select', c)">Выбрать</v-btn>
-              </td>
-            </tr>
-          </tbody>
+          <template v-for="group in groupedContracts" :key="group.key">
+            <tbody>
+              <tr v-if="group.label">
+                <td colspan="8" class="text-caption font-weight-medium text-medium-emphasis bg-grey-lighten-4 py-1">
+                  {{ group.label }}
+                </td>
+              </tr>
+              <tr v-for="c in group.items" :key="c.id"
+                :class="{ 'bg-blue-lighten-5': selectedFrameworkContract?.id === c.id }"
+                style="cursor:pointer" @click="$emit('select', c)">
+                <td class="font-weight-medium">
+                  {{ c.number }}
+                  <div v-if="c.contract_group && c.contract_group !== 1" class="text-caption text-medium-emphasis" style="font-weight:normal">
+                    субсидия {{ c.subsidy_name || '—' }}<span v-if="c.contract_group === 3 && c.org_name"> · {{ c.org_name }}</span>
+                  </div>
+                </td>
+                <td>{{ c.date || '—' }}</td>
+                <td>{{ c.contractor_name || '—' }}</td>
+                <td class="text-caption">{{ c.contractor_inn || '—' }}</td>
+                <td style="max-width:220px;white-space:normal;font-size:12px">{{ c.subject || '—' }}</td>
+                <td class="text-right">{{ c.max_amount ? Number(c.max_amount).toLocaleString('ru-RU') + ' ₽' : '—' }}</td>
+                <td class="text-right" :class="c.remaining_ordered != null && c.remaining_ordered < 0 ? 'text-error' : 'text-success'">
+                  {{ c.remaining_ordered != null ? Number(c.remaining_ordered).toLocaleString('ru-RU') + ' ₽' : '—' }}
+                </td>
+                <td>
+                  <v-btn variant="tonal" color="primary" size="x-small"
+                    @click.stop="$emit('select', c)">Выбрать</v-btn>
+                </td>
+              </tr>
+            </tbody>
+          </template>
         </v-table>
       </v-card-text>
       <v-card-actions class="px-6 pb-4">
@@ -94,14 +106,14 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 
 const frameworkOpen = defineModel<boolean>('frameworkOpen', { default: false })
 const newFrameworkOpen = defineModel<boolean>('newFrameworkOpen', { default: false })
 const frameworkSearch = defineModel<string>('frameworkSearch', { default: '' })
 
-defineProps<{
+const props = defineProps<{
   frameworkLoading: boolean
   filteredFrameworkContracts: any[]
   selectedFrameworkContract: { id: number } | null
@@ -118,6 +130,31 @@ defineEmits<{
 }>()
 
 const { mobile } = useDisplay()
+
+// Владелец (30.09): бэкенд (GET /contracts/?prefer_subsidy_id=) уже отдаёт
+// contract_group 1/2/3 и сортирует по нему — здесь только раскладываем
+// отфильтрованный (поиском) плоский список на подписанные группы, сохраняя
+// порядок backend'а внутри каждой. contract_group отсутствует (0) для старых
+// вызовов без prefer_subsidy_id (например «Счёт по РД» в useFrameworkSiblings) —
+// тогда рендерим одной группой без подзаголовка, как раньше.
+const GROUP_LABELS: Record<number, string> = {
+  1: 'Договоры этой субсидии',
+  2: 'Другие субсидии организации',
+  3: 'Остальные договоры аккаунта',
+}
+
+const groupedContracts = computed(() => {
+  const order = [1, 2, 3, 0]
+  const buckets = new Map<number, any[]>(order.map(key => [key, [] as any[]]))
+  for (const c of props.filteredFrameworkContracts) {
+    const key = c.contract_group && [1, 2, 3].includes(c.contract_group) ? c.contract_group : 0
+    buckets.get(key)!.push(c)
+  }
+  return order
+    .map(key => ({ key, label: GROUP_LABELS[key] || '', items: buckets.get(key) || [] }))
+    .filter(g => g.items.length)
+})
+
 
 const newContractNumberRef = ref<any>(null)
 function focusNewContractNumber() {

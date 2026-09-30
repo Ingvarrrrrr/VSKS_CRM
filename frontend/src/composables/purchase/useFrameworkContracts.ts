@@ -11,6 +11,11 @@ export interface FrameworkContractLike {
   id: number; number: string; date?: string; contract_type: string
   contractor_id?: number; contractor_name?: string; contractor_inn?: string
   subject?: string; max_amount?: number
+  // Владелец (30.09): ранг релевантности относительно субсидии закупки, см.
+  // GET /contracts/?prefer_subsidy_id= в contracts.py::list_contracts.
+  // 1 — субсидия закупки, 2 — другая субсидия той же организации,
+  // 3 — остальные договоры аккаунта. subsidy_name/org_name — подпись для 2/3.
+  contract_group?: number; subsidy_name?: string; org_name?: string
   [key: string]: any
 }
 
@@ -38,7 +43,11 @@ export function useFrameworkContracts<FrameworkContract extends FrameworkContrac
     try {
       const types = [form.purchase_contract_type]
       const params = new URLSearchParams()
-      if (form.subsidy_id) params.set('subsidy_id', String(form.subsidy_id))
+      // Владелец (30.09): «сначала договоры субсидии закупки, потом остальные
+      // договоры аккаунта» — subsidy_id больше не сужает выборку до одной
+      // субсидии, prefer_subsidy_id просит бэкенд только отранжировать её
+      // выше (contract_group 1/2/3, см. contracts.py::list_contracts).
+      if (form.subsidy_id) params.set('prefer_subsidy_id', String(form.subsidy_id))
       types.forEach(t => params.append('contract_type', t))
       frameworkContracts.value = await apiFetch<FrameworkContract[]>(`/contracts/?${params}`)
     } catch {

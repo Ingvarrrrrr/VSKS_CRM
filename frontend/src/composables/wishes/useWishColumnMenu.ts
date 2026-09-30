@@ -9,13 +9,19 @@ import type { Wish } from './wishTypes'
 // Table headers
 const allWishColumns: ColumnDef[] = [
   { title: 'Статус', key: 'status', width: 110, sortable: true },
-  // Явный width (не только «резиновая» колонка без width): «Заявка» — единственная
-  // колонка без фикс. width, при добавлении «Суммы» ниже сумма фикс. width колонок
-  // превысила типичную ширину экрана и она схлопывалась почти до нуля — текст рвался
-  // по буквам в вертикальный столбик (Vuetify 3.11 minWidth в headers не действует
+  // Владелец (30.09): номер и предмет заявки — разные сущности, раньше жили в одной
+  // колонке «Заявка» (номер крупным текстом + предмет подписью). Номер — программный,
+  // нередактируемый technical id, узкая колонка первой среди данных. group: 'core' —
+  // чтобы колонка появилась и у пользователей с уже сохранённой раскладкой localStorage
+  // (см. useColumnConfig.loadState: newCoreVisible).
+  { title: 'Номер заявки', key: 'number_col', width: 90, sortable: true, group: 'core' },
+  // Явный width (не только «резиновая» колонка без width): «Предмет заявки» —
+  // единственная колонка без фикс. width, при добавлении «Суммы» ниже сумма фикс. width
+  // колонок превысила типичную ширину экрана и она схлопывалась почти до нуля — текст
+  // рвался по буквам в вертикальный столбик (Vuetify 3.11 minWidth в headers не действует
   // на раскладку th — проверено). Таблица уходит в горизонтальный скролл, как и
   // остальные широкие реестры проекта.
-  { title: 'Заявка', key: 'title_col', width: 260, sortable: false },
+  { title: 'Предмет заявки', key: 'title_col', width: 260, sortable: false },
   { title: 'От кого', key: 'creator_name', width: 180, sortable: true },
   // «Кому» = назначенный (assigned_to) или цепочка согласующих — одно понятие
   { title: 'Кому', key: 'approver_names', width: 180, sortable: false },
@@ -62,12 +68,19 @@ export function useWishColumnMenu(options: {
   const wishHeaders = computed(() => wishVisibleHeaders.value)
   const wishHeadersAll = wishHeaders
 
+  // Ключи колонок для UI (фильтр/сортировка) не всегда совпадают с реальными полями
+  // Wish, которые уходит в тело экспорта (backend/app/services/report_excel.py делает
+  // общий row.get(key)) — «number_col»/«title_col» виртуальные, реальные поля 'id'/'title'.
+  const EXPORT_KEY_MAP: Record<string, string> = {
+    number_col: 'id',
+    title_col: 'title',
+  }
   function getWishExportColumns() {
     // Экспорт не зависит от того, что пользователь скрыл в редакторе колонок —
     // как и раньше, выгружаем полный набор.
     return allWishColumns
       .filter(h => !EXCLUDED_WISH_KEYS.has(h.key) && h.title)
-      .map(h => ({ key: h.key, title: h.title, align: (h as any).align }))
+      .map(h => ({ key: EXPORT_KEY_MAP[h.key] ?? h.key, title: h.title, align: (h as any).align }))
   }
   function getWishExportRows() {
     if (activeTab.value === 'my') return myWishesFiltered.value
@@ -78,6 +91,7 @@ export function useWishColumnMenu(options: {
   // ── B7: ColumnHeaderMenu — per-column filter + sort ────────────────────
   const colFilters = ref<Record<string, any>>({
     status: null,
+    number_col: null,
     title_col: null,
     creator_name: null,
     approver_names: null,
@@ -91,6 +105,7 @@ export function useWishColumnMenu(options: {
   })
   const colSort = ref<Record<string, 'asc' | 'desc' | null>>({
     status: null,
+    number_col: null,
     title_col: null,
     creator_name: null,
     approver_names: null,
@@ -113,6 +128,8 @@ export function useWishColumnMenu(options: {
   function applyColFilters(rows: Wish[]): Wish[] {
     let result = [...rows]
     // text filters
+    if (colFilters.value.number_col?.type === 'text' && colFilters.value.number_col.q)
+      result = result.filter(r => String(r.id ?? '').includes(colFilters.value.number_col.q.trim()))
     if (colFilters.value.title_col?.type === 'text' && colFilters.value.title_col.q)
       result = result.filter(r => (r.title || '').toLowerCase().includes(colFilters.value.title_col.q.toLowerCase()))
     if (colFilters.value.creator_name?.type === 'text' && colFilters.value.creator_name.q)
@@ -149,6 +166,14 @@ export function useWishColumnMenu(options: {
         result.sort((a, b) => {
           const va = wishItemsTotal(a) ?? -Infinity
           const vb = wishItemsTotal(b) ?? -Infinity
+          return dir === 'asc' ? va - vb : vb - va
+        })
+      } else if (k === 'number_col') {
+        // Номер заявки = Wish.id — сортировка числом, не строкой (localeCompare с
+        // numeric:true ниже тоже справился бы, но id всегда целое число проще сравнить напрямую).
+        result.sort((a: any, b: any) => {
+          const va = a.id ?? -Infinity
+          const vb = b.id ?? -Infinity
           return dir === 'asc' ? va - vb : vb - va
         })
       } else {

@@ -38,6 +38,13 @@
           @update:model-value="v => colFilters.status = v"
           @sort="dir => colSort.status = dir" />
       </template>
+      <template #header.number_col="{ column }">
+        <ColumnHeaderMenu col-key="number_col" :title="column.title || ''" col-type="text"
+          :model-value="colFilters.number_col"
+          :sort-by="colSort.number_col"
+          @update:model-value="v => colFilters.number_col = v"
+          @sort="dir => colSort.number_col = dir" />
+      </template>
       <template #header.title_col="{ column }">
         <ColumnHeaderMenu col-key="title_col" :title="column.title || ''" col-type="text"
           :model-value="colFilters.title_col"
@@ -97,18 +104,10 @@
           {{ statusLabel[item.status] }}
         </v-chip>
       </template>
-      <template #item.title_col="{ item }">
-        <!-- Владелец, 2026-08-13: остановка заявки — крупный алерт на всю строку -->
-        <div v-if="item.stopped_at" class="wish-stopped-banner">
-          <v-icon icon="mdi-alert-octagon" size="18" class="mr-1" />
-          <span class="wish-stopped-banner__title">{{ item.stopped_partial ? 'ОСТАНОВЛЕНА ЧАСТИЧНО' : 'ЗАЯВКА ОСТАНОВЛЕНА' }}</span>
-          <span class="wish-stopped-banner__meta">{{ stoppedByLine(item) }}</span>
-        </div>
+      <template #item.number_col="{ item }">
+        <!-- Владелец (30.09): номер заявки — отдельная колонка, программный id,
+             не редактируется. Предмет заявки вынесен в колонку title_col. -->
         <div class="d-flex align-center flex-wrap" style="gap:6px">
-          <!-- Владелец (30.09): в столбце «Заявка» выводился предмет заявки
-               (item.title), а не номер — разные сущности, предмет не помогает
-               найти заявку в списке. Номер — крупным текстом, предмет — подписью
-               мелким текстом ниже (строка кликабельна целиком, см. @click:row). -->
           <span class="font-weight-medium">№{{ item.id }}</span>
           <!-- Phase 31-06: badge for unseen changes -->
           <v-chip
@@ -119,7 +118,15 @@
             :title="`${item.unseen_changes_count} чужих правок с последнего просмотра`"
           >+{{ item.unseen_changes_count }}</v-chip>
         </div>
-        <div class="text-caption text-medium-emphasis wish-subject-line">{{ item.title || '—' }}</div>
+      </template>
+      <template #item.title_col="{ item }">
+        <!-- Владелец, 2026-08-13: остановка заявки — крупный алерт на всю строку -->
+        <div v-if="item.stopped_at" class="wish-stopped-banner">
+          <v-icon icon="mdi-alert-octagon" size="18" class="mr-1" />
+          <span class="wish-stopped-banner__title">{{ item.stopped_partial ? 'ОСТАНОВЛЕНА ЧАСТИЧНО' : 'ЗАЯВКА ОСТАНОВЛЕНА' }}</span>
+          <span class="wish-stopped-banner__meta">{{ stoppedByLine(item) }}</span>
+        </div>
+        <div class="text-body-2 wish-subject-line">{{ item.title || '—' }}</div>
         <div class="text-caption text-medium-emphasis">
           <span v-if="item.items_count">Позиций: <b>{{ item.items_count }}</b></span>
         </div>

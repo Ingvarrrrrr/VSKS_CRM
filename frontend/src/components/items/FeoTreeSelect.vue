@@ -218,10 +218,21 @@
         </v-card>
       </v-menu>
 
-      <!-- Подпись бюджета выбранного листа — как в каскаде -->
+      <!-- Подпись бюджета выбранного листа — как в каскаде.
+           Задача владельца (доработка 2026-09-30): показывать ОБА остатка —
+           «без этой закупки» (X, как приходит с сервера — exclude_purchase_id
+           уже вычтен на бэке, см. GET /feo-categories/leaves) и «с этой
+           закупкой» (Y = X − сумма позиций ТЕКУЩЕЙ закупки в этой категории,
+           currentPurchaseAmount — пропс, посчитанный в месте использования из
+           позиций НА ЭКРАНЕ, без лишнего запроса). Y может уйти в минус —
+           тот же formatPlanResidual (серый минус), что и у X. -->
       <div v-if="selectedLeafForNote" class="feo-tree-note text-caption text-medium-emphasis mt-1 px-1">
         План: {{ fmt(selectedLeafForNote.budget) }} •
-        <span :class="residualDisplay(selectedLeafForNote.residual, 'Ост. (без этой закупки):').cssClass">{{ residualDisplay(selectedLeafForNote.residual, 'Ост. (без этой закупки):').text }}</span>
+        <span :class="residualDisplay(selectedLeafForNote.residual, 'Ост. без этой закупки:').cssClass">{{ residualDisplay(selectedLeafForNote.residual, 'Ост. без этой закупки:').text }}</span>
+        <template v-if="currentPurchaseAmount != null">
+          •
+          <span :class="residualDisplay(withThisPurchaseResidual, 'с этой закупкой:').cssClass">{{ residualDisplay(withThisPurchaseResidual, 'с этой закупкой:').text }}</span>
+        </template>
       </div>
       <div v-if="error && !isLeafSelected" class="feo-tree-note text-caption text-error mt-1 px-1">
         Обязательно
@@ -268,6 +279,12 @@ const props = defineProps<{
    *  инстансов), пересчитывать роллап тут нельзя (перф). null/undefined — прежнее
    *  поведение (компонент используется в нескольких местах без этого пропа). */
   nodeAmounts?: Record<number, { budget: number; free: number }> | null
+  /** Доработка владельца 2026-09-30: Σ позиций ТЕКУЩЕЙ (редактируемой на экране,
+   *  ещё не обязательно сохранённой) закупки, отнесённых к выбранному листу —
+   *  считается местом использования (CreateOrderView) из items на экране, не
+   *  вторым запросом к серверу. null/undefined — второй остаток «с этой
+   *  закупкой» не показывается (прежнее поведение, обратная совместимость). */
+  currentPurchaseAmount?: number | null
 }>()
 
 const emit = defineEmits<{
@@ -476,6 +493,17 @@ function nodeAmountDisplayFor(nodeId: number): { budget: number; free: number } 
 const selectedLeafForNote = computed((): { budget: number | null; residual: number | null } | null => {
   if (!isLeafSelected.value || props.modelValue == null) return null
   return planNoteFor(props.modelValue)
+})
+
+// «Ост. с этой закупкой» (доработка 2026-09-30): X (residual без этой закупки,
+// уже пришёл с сервера через exclude_purchase_id) минус сумма позиций текущей
+// закупки в этой категории (currentPurchaseAmount, посчитана в месте
+// использования из items на экране). Y=null если X ещё неизвестен (residual
+// сам null — «нет данных», второй остаток тоже неизвестен).
+const withThisPurchaseResidual = computed((): number | null => {
+  const residual = selectedLeafForNote.value?.residual
+  if (residual == null || props.currentPurchaseAmount == null) return null
+  return residual - props.currentPurchaseAmount
 })
 
 // Дефект «план округлён до целых» (владелец, 2026-09-17): та же копия

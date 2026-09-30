@@ -474,6 +474,7 @@
                 :required="formMode !== 'service_note_delivery' && formMode !== 'advance_report'"
                 :root-label="selectedSubsidyName"
                 :readonly="isFeoHeaderLocked"
+                :current-purchase-amount="feoCurrentCategoryOwnAmount"
                 @pick-unallocated="onFeoPickUnallocated"
               />
               <!-- Замок категории (владелец, 2026-09-20): «категория закупки из
@@ -3744,6 +3745,23 @@ const feoTreeLeavesForNote = computed(() =>
     path: r.path,
   }))
 )
+
+// Доработка владельца 2026-09-30: «Ост. с этой закупкой» под полем «Категория
+// ФЭО» — сумма позиций ТЕКУЩЕЙ закупки (на экране, необязательно сохранённой),
+// отнесённых к выбранной категории. Эффективная категория позиции — её
+// собственная item.feo_category_id, а если не задана — категория шапки
+// (form.feo_category_id), та же привязка «позиция или шапка» (COALESCE), что
+// и на бэке (leaf_used_totals). Передаётся FeoTreeSelect ПРОПОМ (не вторым
+// запросом к серверу) — feoResiduals уже посчитан с exclude_purchase_id, этот
+// прибавок вычитается на фронте из готового X.
+const feoCurrentCategoryOwnAmount = computed(() => {
+  if (form.feo_category_id == null) return 0
+  return items.value.reduce((sum: number, i: any) => {
+    const effectiveCat = i.feo_category_id ?? form.feo_category_id
+    if (effectiveCat !== form.feo_category_id) return sum
+    return sum + (Number(i.total_price) || 0)
+  }, 0)
+})
 
 // Ошибка выбора ФЭО: нужно выбрать самый глубокий доступный уровень
 const feoValidationError = computed((): string | null => {

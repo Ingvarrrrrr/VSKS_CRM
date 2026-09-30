@@ -61,9 +61,9 @@ async def leaf_used_totals(
 
     contracted_used = SUM(PurchaseItem.total_price) по позициям листа, чья
     закупка в CONTRACTED_STATUSES; planned_used — та же сумма по
-    PLANNED_STATUSES. exclude_purchase_id — исключить позиции этой закупки
-    (форма редактирования закупки не должна учитывать свои же старые суммы).
-    Пустой leaf_ids -> {} без обращения к БД.
+    FACT_ELIGIBLE_STATUSES. exclude_purchase_id — исключить позиции этой
+    закупки (форма редактирования закупки не должна учитывать свои же старые
+    суммы). Пустой leaf_ids -> {} без обращения к БД.
 
     Категория позиции — COALESCE(PurchaseItem.feo_category_id,
     Purchase.feo_category_id), та же привязка «позиция или шапка», что и везде
@@ -74,6 +74,17 @@ async def leaf_used_totals(
     только в шапке (Purchase.feo_category_id), а не на позициях, вообще не
     попадали в used_map → «Ост.» на форме закупки показывал весь бюджет листа,
     игнорируя чужие закупки той же категории.
+
+    planned_used (→ residual/spendable_remaining, то, что показывает «Ост.» на
+    форме закупки) обязан считать РОВНО те же статусы, что и поле `fact` в
+    каноничном дереве ФЭО (app.services.feo_plan_tree.compute_feo_plan_tree →
+    app.services.feo_plan_fact.fact_consumption_by_category) — Правило №6,
+    импортируем FACT_ELIGIBLE_STATUSES оттуда, не копируем набор. До этой
+    правки (доработка владельца 2026-09-30) здесь стоял PLANNED_STATUSES
+    (app.routers.purchase_budget) — он ШИРЕ: включает статус 'wishes' не
+    входит, но НЕ совпадает с fact по составу (были расхождения на категории
+    124 «Ремонт техники»: закупка №841 в статусе 'wishes' 4 000 ₽ попадала в
+    planned_used, хотя compute_feo_plan_tree.fact её не считает).
     """
     if not leaf_ids:
         return {}
@@ -81,7 +92,8 @@ async def leaf_used_totals(
     from sqlalchemy import select, func as sqlfunc, case
     from app.models.purchase_item import PurchaseItem
     from app.models.purchase import Purchase as _Purchase
-    from app.routers.purchase_budget import CONTRACTED_STATUSES, PLANNED_STATUSES
+    from app.routers.purchase_budget import CONTRACTED_STATUSES
+    from app.services.feo_plan_fact import FACT_ELIGIBLE_STATUSES
 
     cat_col = sqlfunc.coalesce(PurchaseItem.feo_category_id, _Purchase.feo_category_id)
     used_q = (
@@ -92,7 +104,7 @@ async def leaf_used_totals(
                 0,
             ).label("contracted_used"),
             sqlfunc.coalesce(
-                sqlfunc.sum(case((_Purchase.status.in_(list(PLANNED_STATUSES)), PurchaseItem.total_price), else_=0)),
+                sqlfunc.sum(case((_Purchase.status.in_(list(FACT_ELIGIBLE_STATUSES)), PurchaseItem.total_price), else_=0)),
                 0,
             ).label("planned_used"),
         )

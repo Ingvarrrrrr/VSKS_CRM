@@ -86,6 +86,12 @@ async def test_leaves_residual_counts_header_category_and_excludes_current_purch
 
     Плюс exclude_purchase_id: редактируемая закупка не должна вычитать саму
     себя из своего же остатка.
+
+    Доработка владельца 2026-09-30 (сверка на проде, категория 124): закупка в
+    статусе 'wishes' (черновик заявки, ещё не поданной) НЕ должна попадать в
+    planned_used/residual — leaf_used_totals обязан считать РОВНО те же
+    статусы, что и `fact` в compute_feo_plan_tree (FACT_ELIGIBLE_STATUSES из
+    app.services.feo_plan_fact, импортом, не копией).
     """
     subsidy = Subsidy(name="Test subsidy header category", year=2026, budget=0, org_id=test_user.org_id)
     db_session.add(subsidy)
@@ -117,9 +123,21 @@ async def test_leaves_residual_counts_header_category_and_excludes_current_purch
         unit_price=Decimal("169000"), total_price=Decimal("169000"), feo_category_id=None,
     )
     db_session.add(item_header)
+
+    # Закупка №3: статус 'wishes' (черновик заявки) — не входит в
+    # FACT_ELIGIBLE_STATUSES, обязана быть проигнорирована planned_used/residual.
+    purchase_wish = Purchase(status="wishes", item_type="goods", item_name="Черновик заявки")
+    db_session.add(purchase_wish)
+    await db_session.flush()
+    item_wish = PurchaseItem(
+        purchase_id=purchase_wish.id, item_name="Товар3", quantity=Decimal("1"), unit="шт",
+        unit_price=Decimal("4000"), total_price=Decimal("4000"), feo_category_id=leaf.id,
+    )
+    db_session.add(item_wish)
     await db_session.commit()
 
-    # Без exclude_purchase_id обе закупки учитываются: budget - (78100+169000).
+    # Без exclude_purchase_id: contracted+header считаются, 'wishes' — нет.
+    # budget - (78100+169000).
     r_all = await client.get(
         "/api/feo-categories/leaves", params={"subsidy_id": subsidy.id}, headers=auth_headers
     )

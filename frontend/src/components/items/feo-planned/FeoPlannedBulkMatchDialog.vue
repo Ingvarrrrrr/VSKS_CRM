@@ -61,11 +61,27 @@
                       <div class="text-body-2">{{ row.candidate.name }}</div>
                       <div v-if="row.candidate.path" class="text-caption text-medium-emphasis">{{ row.candidate.path }}</div>
                       <div v-if="row.candidate.residual != null" class="text-caption text-medium-emphasis">остаток {{ fmt(row.candidate.residual) }}</div>
+                      <!-- Владелец (30.09.2026): «Доставка» из чека была отмечена «точное
+                           совпадение» и привязана к плановой позиции, уже занятой другой
+                           закупкой (остаток −113,60 ₽) — занятого кандидата ВИДНО, но не
+                           тихо. Переиспользуем FeoPlannedTakenBy (Правило №6, тот же
+                           компонент, что и в FeoPlannedMatchSuggestions.vue/FeoLevel5Panel.vue),
+                           не пишем второй текст «занято». -->
+                      <FeoPlannedTakenBy
+                        v-if="row.occupied && (row.linkedPurchases?.length || row.linkedWishes?.length)"
+                        class="mt-1"
+                        short
+                        :linked-purchases="row.linkedPurchases || undefined"
+                        :linked-wishes="row.linkedWishes || undefined"
+                        :shortfall="row.shortfall"
+                      />
+                      <div v-else-if="row.occupied" class="text-caption text-warning mt-1">Остатка не хватает на эту позицию</div>
                     </template>
                     <span v-else class="text-caption text-medium-emphasis">Похожих плановых позиций не найдено</span>
                   </td>
                   <td>
-                    <v-chip v-if="row.isExact" size="small" color="success" variant="tonal" class="match-chip">точное совпадение</v-chip>
+                    <v-chip v-if="row.candidate && row.occupied" size="small" color="warning" variant="tonal" class="match-chip">совпадает имя, но занято</v-chip>
+                    <v-chip v-else-if="row.isExact" size="small" color="success" variant="tonal" class="match-chip">точное совпадение</v-chip>
                     <v-chip v-else-if="row.candidate" size="small" color="amber" variant="tonal" class="match-chip">
                       предложено, {{ Math.round(row.candidate.score * 100) }}%
                     </v-chip>
@@ -94,6 +110,7 @@
 <script setup lang="ts">
 import { useDisplay } from 'vuetify'
 import type { BulkMatchRow } from '@/composables/items/feoPlanned/useFeoPlannedBulkMatch'
+import FeoPlannedTakenBy from './FeoPlannedTakenBy.vue'
 
 const { mobile } = useDisplay()
 

@@ -19,6 +19,7 @@ import { useFeoPlanMatching } from '@/composables/useFeoPlanMatching'
 import type { FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
 import type { ToastType } from '@/composables/useToast'
 import { PLAN_MATCH_SCORE_EXACT, PLAN_MATCH_SCORE_SUGGEST } from '@/constants/planMatchThresholds'
+import { checkPlanOccupancy } from '@/composables/items/feoPlanned/feoPlanOccupancy'
 
 type EditorItem = any
 
@@ -46,6 +47,20 @@ export interface BulkMatchRow {
     itemType: string | null
   } | null
   isExact: boolean
+  /** Владелец (30.09.2026): «Доставка» из чека была отмечена «точное совпадение»
+   *  и привязана к плановой позиции, которую уже израсходовала ДРУГАЯ закупка
+   *  (остаток −113,60 ₽) — occupied=true запрещает АВТОМАТИЧЕСКУЮ галочку (см.
+   *  checkPlanOccupancy), ручную галочку не блокирует. Пока candidate==null
+   *  occupied всегда false (нечему быть занятым). */
+  occupied: boolean
+  /** Другая закупка/заявка уже занимает кандидата — см. FeoPlanPosition.linked_purchases/
+   *  linked_wishes (уже исключают ТЕКУЩУЮ закупку/заявку, exclude_purchase_id/
+   *  exclude_wish_id на бэке). Для показа FeoPlannedTakenBy в диалоге. */
+  linkedPurchases: FeoPlanPosition['linked_purchases'] | null
+  linkedWishes: FeoPlanPosition['linked_wishes'] | null
+  /** Сумма позиции минус остаток кандидата (> 0 — не хватает); null — кандидата
+   *  нет. Тот же знак, что и FeoPlannedTakenBy::shortfall в FeoPlannedMatchSuggestions.vue. */
+  shortfall: number | null
   checked: boolean
 }
 
@@ -78,8 +93,11 @@ export function useFeoPlannedBulkMatch(deps: UseFeoPlannedBulkMatchDeps) {
 
   const canOpenBulkMatch = computed(() => unlinkedForMatch.value.length > 0 && !!subsidyId.value)
 
-  function residualOf(kind: string, id: number): { residual: number | null; plannedAmount: number | null; itemType: string | null } {
-    const row = plannedItems.value.find(p => p.kind === kind && p.id === id)
+  function planRowOf(kind: string, id: number): FeoPlanPosition | null {
+    return plannedItems.value.find(p => p.kind === kind && p.id === id) ?? null
+  }
+
+  function residualOf(row: FeoPlanPosition | null): { residual: number | null; plannedAmount: number | null; itemType: string | null } {
     return { residual: row?.residual ?? null, plannedAmount: row?.planned_amount ?? null, itemType: row?.item_type ?? null }
   }
 
@@ -100,20 +118,37 @@ export function useFeoPlannedBulkMatch(deps: UseFeoPlannedBulkMatchDeps) {
       bulkMatchRows.value = targets.map(({ it, idx }, i) => {
         const top = results[i]?.candidates?.[0] || null
         const isExact = !!top && top.score >= PLAN_MATCH_SCORE_EXACT
+        const topRow = top ? planRowOf(top.kind, top.id) : null
         const candidate = top && top.score >= PLAN_MATCH_SCORE_SUGGEST
-          ? { kind: top.kind, id: top.id, name: top.name, path: top.path, score: top.score, ...residualOf(top.kind, top.id) }
+          ? { kind: top.kind, id: top.id, name: top.name, path: top.path, score: top.score, ...residualOf(topRow) }
           : null
+        const amount: number | null = it.total_price ?? null
+        // Владелец (30.09.2026, «Доставка из чека должна быть создана отдельно,
+        // она не должна объединяться ни с чем») — позиции из чека авансового
+        // (receipt_id задан) по сути уникальные покупки: occupancy-проверка ниже
+        // уже запрещает авто-галочку у ЛЮБОГО кандидата, занятого другой
+        // закупкой/заявкой (checkPlanOccupancy::linkedByOther), receipt_id
+        // отдельной веткой не нужен — правило одно (ПРАВИЛО №6).
+        const occupancy = candidate ? checkPlanOccupancy(topRow, { amount, quantity: it.quantity ?? null }) : null
         return {
           idx,
           uid: it._uid ?? idx,
           name: (it.item_name || '').trim(),
           quantity: it.quantity ?? null,
           unit: it.unit || '',
-          amount: it.total_price ?? null,
+          amount,
           itemType: it.item_type || null,
           candidate,
           isExact: !!candidate && isExact,
-          checked: !!candidate && isExact,
+          occupied: !!occupancy?.occupied,
+          linkedPurchases: topRow?.linked_purchases ?? null,
+          linkedWishes: topRow?.linked_wishes ?? null,
+          shortfall: candidate && amount != null && candidate.residual != null ? amount - candidate.residual : null,
+          // Автоматическая галочка — только точное совпадение имени И кандидат
+          // свободен (не занят другой закупкой/заявкой, остатка достаточно).
+          // Занятый кандидат остаётся ВИДЕН (isExact/имя не меняются), но
+          // требует осознанного ручного клика — см. toggleBulkMatchRow.
+          checked: !!candidate && isExact && !occupancy?.occupied,
         } as BulkMatchRow
       })
     } catch (e: any) {

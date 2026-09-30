@@ -15,11 +15,17 @@
       :key="'cand-' + c.key"
       class="feo-match-candidate-row"
     >
-      <v-chip size="small" :color="scoreColor(c.score)" variant="flat" class="feo-match-score">
+      <v-chip size="small" :color="c.occupied ? 'warning' : scoreColor(c.score)" variant="flat" class="feo-match-score">
         {{ Math.round(c.score * 100) }}%
       </v-chip>
       <span class="feo-match-name">{{ c.name }}</span>
-      <v-btn size="small" color="primary" variant="flat" @click="$emit('bind', c)">Привязать</v-btn>
+      <!-- Владелец (30.09.2026, «Доставка из чека должна быть создана отдельно,
+           она не должна объединяться ни с чем») — occupied=true (checkPlanOccupancy,
+           тот же расчёт, что и в useFeoPlannedBulkMatch.ts) не блокирует ручную
+           кнопку (человек может осознанно решить иначе), но подпись честно
+           предупреждает, а не молчит как при чистом совпадении. -->
+      <span v-if="c.occupied" class="text-caption text-warning feo-match-occupied-label">занято</span>
+      <v-btn size="small" :color="c.occupied ? 'warning' : 'primary'" variant="flat" @click="$emit('bind', c)">Привязать</v-btn>
       <FeoPlanResidualSummary
         v-if="itemsByKey.get(c.key) && summaryFor(c)"
         class="feo-match-summary"
@@ -36,6 +42,7 @@
         :linked-wishes="itemsByKey.get(c.key)?.linked_wishes"
         :shortfall="shortfallFor(c)"
       />
+      <div v-else-if="c.occupied" class="feo-match-taken-by text-caption text-warning">Остатка не хватает на эту позицию</div>
     </div>
     <div v-if="otherCategoryCandidates.length" class="mt-1">
       <div class="text-caption text-medium-emphasis">Похожие есть и в других категориях — привязка перенесёт позицию в категорию плановой позиции:</div>
@@ -48,6 +55,7 @@
           {{ Math.round(c.score * 100) }}%
         </v-chip>
         <span class="feo-match-name">{{ c.name }} <span class="text-caption text-medium-emphasis">— {{ c.path }}</span></span>
+        <span v-if="c.occupied" class="text-caption text-warning feo-match-occupied-label">занято</span>
         <v-btn
           size="small"
           color="warning"
@@ -70,6 +78,7 @@
           :linked-purchases="itemsByKey.get(c.key)?.linked_purchases"
           :shortfall="shortfallFor(c)"
         />
+        <div v-else-if="c.occupied" class="feo-match-taken-by text-caption text-warning">Остатка не хватает на эту позицию</div>
       </div>
     </div>
     <!-- Жалоба владельца (сессия 29.09): когда показаны подсказки, кнопка «Создать

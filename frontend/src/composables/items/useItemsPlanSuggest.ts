@@ -20,6 +20,7 @@
 import { computed, ref, watch, type Ref } from 'vue'
 import { useFeoPlanMatching, type FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
 import type { FeoPlanPosition } from '@/composables/useFeoPlannedResiduals'
+import { checkPlanOccupancy } from '@/composables/items/feoPlanned/feoPlanOccupancy'
 
 type EditorItem = any
 
@@ -74,13 +75,24 @@ export function useItemsPlanSuggest(deps: UseItemsPlanSuggestDeps) {
     const map = new Map<string | number, FeoMatchCandidate[]>()
     rows.forEach((it, i) => {
       const ownCategoryId = effectiveCategoryId(it)
-      const cands = (results[i]?.candidates || []).map(c => ({
-        ...c,
-        same_category: ownCategoryId == null
-          ? c.same_category
-          : (c.category_id === ownCategoryId
-              || (plannedItems.value.find(p => p.key === c.key)?.ancestor_ids || []).includes(ownCategoryId)),
-      }))
+      const cands = (results[i]?.candidates || []).map(c => {
+        const row = plannedItems.value.find(p => p.key === c.key) ?? null
+        // Владелец (30.09.2026, «Доставка из чека должна быть создана отдельно,
+        // она не должна объединяться ни с чем») — то же правило «занято», что и
+        // в bulk-match (useFeoPlannedBulkMatch.ts), один расчёт (ПРАВИЛО №6):
+        // подсказка под строкой не должна выглядеть чистым совпадением, если
+        // кандидата уже держит другая закупка/заявка или остатка не хватает на
+        // сумму/количество ЭТОЙ позиции.
+        const occ = checkPlanOccupancy(row, { amount: it.total_price ?? null, quantity: it.quantity ?? null })
+        return {
+          ...c,
+          same_category: ownCategoryId == null
+            ? c.same_category
+            : (c.category_id === ownCategoryId
+                || (row?.ancestor_ids || []).includes(ownCategoryId)),
+          occupied: occ.occupied,
+        }
+      })
       if (cands.length) map.set(it._uid, cands)
     })
     candidatesByUid.value = map

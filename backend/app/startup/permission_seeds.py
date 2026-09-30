@@ -10,7 +10,11 @@ from app.database import async_session
 
 
 async def _payment_registry_tab_and_actions():
-    # Phase 22: idempotent seed для tab payment_registry + 3 actions
+    # Phase 22: idempotent seed для tab payment_registry + 3 actions.
+    # account_owner добавлен 2026-09-30: сид предшествовал роли и не выдавал
+    # эти ключи вообще (ни строки) — на проде исторический z3a4b5c6d7e8_phase22_permissions.sql
+    # уже выдал account_owner все 4 ключа (тот же набор, что и admin), здесь
+    # зеркалим это в идемпотентном сиде для свежих БД/dev-окружений.
     try:
         from sqlalchemy import select as _sel
         from app.models.permission import PermissionTab, PermissionAction, RolePermission
@@ -35,13 +39,17 @@ async def _payment_registry_tab_and_actions():
             # action payment.confirm — admin, manager, org_admin, superadmin
             # action payment.unbind — admin, superadmin
             ROLE_PERMS = [
-                ('superadmin', 'payment_registry'), ('admin', 'payment_registry'),
+                ('superadmin', 'payment_registry'), ('account_owner', 'payment_registry'),
+                ('admin', 'payment_registry'),
                 ('org_admin', 'payment_registry'), ('manager', 'payment_registry'),
                 ('employee', 'payment_registry'),
-                ('superadmin', 'payment.import'), ('admin', 'payment.import'), ('manager', 'payment.import'),
-                ('superadmin', 'payment.confirm'), ('admin', 'payment.confirm'),
+                ('superadmin', 'payment.import'), ('account_owner', 'payment.import'),
+                ('admin', 'payment.import'), ('manager', 'payment.import'),
+                ('superadmin', 'payment.confirm'), ('account_owner', 'payment.confirm'),
+                ('admin', 'payment.confirm'),
                 ('manager', 'payment.confirm'), ('org_admin', 'payment.confirm'),
-                ('superadmin', 'payment.unbind'), ('admin', 'payment.unbind'),
+                ('superadmin', 'payment.unbind'), ('account_owner', 'payment.unbind'),
+                ('admin', 'payment.unbind'),
             ]
             for role_name, key in ROLE_PERMS:
                 ex = await db.execute(_sel(RolePermission).where(
@@ -313,8 +321,10 @@ async def _wish_edit_feo_action():
     # правку категории ФЭО/плановой позиции построчно (коммит 80dfe9c) мог делать
     # любой согласующий из цепочки, включая случайного участника (например,
     # юриста). Отдельное action-право wish.edit_feo сужает это до менеджеров+.
-    # Дефолт: superadmin/admin/org_admin/manager=TRUE; employee=FALSE (сознательно,
-    # это и есть защита).
+    # Дефолт: superadmin/account_owner/admin/org_admin/manager=TRUE; employee=FALSE
+    # (сознательно, это и есть защита). account_owner добавлен 2026-09-30 — сид
+    # предшествовал появлению роли и оставлял владельца аккаунта без права
+    # (баг: скрытая кнопка «Создать в плане закупок» и правка ФЭО у владельца).
     try:
         from sqlalchemy import select as _sel
         from app.models.permission import PermissionAction, RolePermission
@@ -328,7 +338,7 @@ async def _wish_edit_feo_action():
                 ))
                 await db.commit()
             ROLE_DEFAULTS = [
-                ('superadmin', True), ('admin', True),
+                ('superadmin', True), ('account_owner', True), ('admin', True),
                 ('org_admin', True), ('manager', True),
                 ('employee', False),
             ]

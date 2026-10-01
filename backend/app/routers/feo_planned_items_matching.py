@@ -242,69 +242,9 @@ async def map_purchase_item_to_planned(
 # алгоритм нормализации+токенов+стемминга+прогрессивного сужения).
 # ---------------------------------------------------------------------------
 
-async def _load_plan_catalog(db: AsyncSession, subsidy_id: int) -> list[dict]:
-    """Каталог кандидатов для матчинга — тот же состав, что и в
-    GET /feo-categories/plan-positions (единый источник «плановых позиций»,
-    см. её докстринг): конечные категории ФЭО (лист дерева) с заполненным
-    planned_quantity×planned_amount > 0 (kind='plan_position'|'feo_article'),
-    плюс активные FeoPlannedItem этих листьев (kind='planned_item') — «может
-    быть запланирована в ФЭО, а может только планово» (формулировка владельца).
-
-    Не вызывает сам эндпоинт /plan-positions (тот считает ещё consumption/tree —
-    не нужно для матчинга по имени), а строит облегчённую версию тех же строк:
-    id/name/path/category_id/ancestor_ids/kind. path/ancestor_ids — те же
-    хелперы app.services.feo_plan.build_category_path/build_ancestor_ids
-    (read-only импорт, не дублируем).
-    """
-    from app.services.feo_plan import build_category_path, build_ancestor_ids
-
-    all_cats = (await db.execute(
-        select(FeoCategory).where(FeoCategory.subsidy_id == subsidy_id)
-    )).scalars().all()
-    if not all_cats:
-        return []
-
-    cat_by_id = {c.id: c for c in all_cats}
-    children_count: dict[int, int] = {}
-    for c in all_cats:
-        if c.parent_id is not None:
-            children_count[c.parent_id] = children_count.get(c.parent_id, 0) + 1
-    leaves = [c for c in all_cats if children_count.get(c.id, 0) == 0]
-
-    catalog: list[dict] = []
-    for c in leaves:
-        qty = float(c.planned_quantity) if c.planned_quantity is not None else 0.0
-        unit_price = float(c.planned_amount) if c.planned_amount is not None else 0.0
-        if qty * unit_price <= 0:
-            continue
-        kind = "plan_position" if (c.budget is None and c.feo_amount is None) else "feo_article"
-        catalog.append({
-            "id": c.id,
-            "name": c.name or "",
-            "path": build_category_path(c, cat_by_id),
-            "category_id": c.id,
-            "ancestor_ids": build_ancestor_ids(c, cat_by_id),
-            "kind": kind,
-        })
-
-    if leaves:
-        fpi_rows = (await db.execute(
-            select(FeoPlannedItem)
-            .where(FeoPlannedItem.feo_category_id.in_([c.id for c in leaves]))
-            .where(FeoPlannedItem.is_active == True)
-        )).scalars().all()
-        for it in fpi_rows:
-            cat = cat_by_id.get(it.feo_category_id)
-            catalog.append({
-                "id": it.id,
-                "name": it.name or "",
-                "path": build_category_path(cat, cat_by_id) if cat else "",
-                "category_id": it.feo_category_id,
-                "ancestor_ids": build_ancestor_ids(cat, cat_by_id) if cat else [],
-                "kind": "planned_item",
-            })
-
-    return catalog
+# Вынесено в app/services/plan_catalog.py (ПРАВИЛО №5, рефакторинг
+# 02.10.2026) — ре-экспорт под старым именем, тело не дублируется.
+from app.services.plan_catalog import load_plan_catalog as _load_plan_catalog
 
 
 class _FeoMatchCandidate(BaseModel):

@@ -913,120 +913,17 @@ async def create_purchase(
             db, items_data, fallback_category_id=data.feo_category_id,
         )
 
-    if not data.purchase_number:
-        max_result = await db.execute(select(func.coalesce(func.max(Purchase.purchase_number), 0)))
-        data.purchase_number = max_result.scalar() + 1
-
-    dump = data.model_dump(exclude={"items", "subsidy_allocations"})
-    dump["total_nmck"] = total_nmck
-    # Phase 28 B4: validate provided assigned_user_id
-    if data.assigned_user_id is not None and data.assigned_user_id != 0:
-        target = await db.get(User, data.assigned_user_id)
-        if target is None:
-            raise HTTPException(422, f"Пользователь {data.assigned_user_id} не найден")
-    # Auto-assign current user as owner when frontend did not specify one.
-    # Без этого закупка с assigned_user_id=NULL становится невидимой для рядового
-    # автора (list_purchases фильтрует по visible_user_ids; NULL IN (...) = false).
-    if not dump.get("assigned_user_id"):
-        dump["assigned_user_id"] = current_user.id
-    # SN-UX: для СЗ авто-заполнить автора (текущий) и дату (сейчас) если фронт не прислал
-    if dump.get("purchase_basis") == "service_note":
-        if not dump.get("service_note_by"):
-            dump["service_note_by"] = current_user.id
-        if not dump.get("service_note_at"):
-            from datetime import datetime, timezone
-            dump["service_note_at"] = datetime.now(timezone.utc)
-    p = Purchase(**dump)
-    db.add(p)
-    await db.flush()  # get p.id before commit
-
-    year = date.today().year
-    if not p.registry_number:
-        p.registry_number = f"РЕЕ-{year}-{p.id:05d}"
-    # removed in phase26-j-1: only set when single contract без FK на existing contracts row
-    # auto-generate мусорит номером вида "2026/42" для рамочных закупок с реальным contract_id.
-    if not p.contract_number and not p.contract_id:
-        p.contract_number = f"{year}/{p.id}"
-
-    # phase26-j-1: sync number/date/type из связанного контракта, если contract_id задан
-    await _sync_purchase_from_contract(p, db)
-
-    await _assign_framework_seq(p, db)
-
-    # item-forms-accommodation-transport.md: форма позиций выводится из
-    # p.contract_form (item_form_for_purchase_item, по КАЖДОЙ строке — см.
-    # цикл ниже) — для спец-форм apply_item_amounts пересчитывает
-    # quantity/unit_price/total_price из extra_attrs и ПОБЕЖДАЕТ то, что
-    # прислал клиент; для обычных позиций (item_form=None) поведение не
-    # меняется — total_price по-прежнему берётся из payload как есть.
-
-    # ПРАВИЛО №6 (группа D5, QA-находка): фронт (PurchaseItemsEditor.vue) кладёт
-    # contractor_id/contractor_inn/contractor_name прямо в объект позиции —
-    # PurchaseItem(**d) писал их МИМО set_item_contractor, снова заводя текст
-    # рядом с FK при обычном сохранении из UI. Карта контрагентов — один SELECT
-    # на ВСЕ позиции запроса (без N+1), как в wish_distribution.py.
-    _item_dumps = [item_d.model_dump() for item_d in items_data]
-    _item_contractor_ids = {d.get("contractor_id") for d in _item_dumps if d.get("contractor_id")}
-    _item_contractors_map: dict = {}
-    if _item_contractor_ids:
-        _ic_rows = (await db.execute(select(Contractor).where(Contractor.id.in_(_item_contractor_ids)))).scalars().all()
-        _item_contractors_map = {c.id: c for c in _ic_rows}
-
-    # W1 (прод, заявка №88, 2026-09-30): позиции этой закупки в порядке
-    # _item_dumps/items_data — тот же порядок, в котором ниже (is_advance)
-    # копируются WishItems компаньона, что позволяет проставить hard link
-    # purchase_items.wish_item_id по позиции без угадывания сопоставления —
-    # см. app/services/advance_wish_sync.py::apply_wish_item_feo_link_to_purchase_item.
-    _created_items: list[PurchaseItem] = []
-    for d in _item_dumps:
-        if not d.get("product_id") and d.get("item_name"):
-            org_id_for_match = get_single_org_id(current_user) or current_user.org_id
-            existing = await find_matching_product(db, d["item_name"], org_id=org_id_for_match)
-            if existing:
-                d["product_id"] = existing.id
-            else:
-                new_prod = Product(
-                    name=d["item_name"].strip(),
-                    # Баг 2026-10-01 (ПРАВИЛО №6): item_type строки позиции —
-                    # это Product.item_kind («товар»/«услуга»/«работа»), а не
-                    # product_type («Вид» — свободный текст). Запись в
-                    # product_type создавала второй источник типа, из-за
-                    # которого /products/match затем отдавал его обратно как
-                    # item_type (см. app/routers/products_match.py).
-                    item_kind=normalize_item_type(d.get("item_type")) or "товар",
-                    price=d.get("unit_price"),
-                    org_id=org_id_for_match,
-                )
-                db.add(new_prod)
-                await db.flush()
-                d["product_id"] = new_prod.id
-        _d_contractor_id = d.pop("contractor_id", None)
-        _d_contractor_inn = d.pop("contractor_inn", None)
-        _d_contractor_name = d.pop("contractor_name", None)
-        item = PurchaseItem(purchase_id=p.id, **d)
-        _created_items.append(item)
-        # «Проживание и питание»: форма берётся ПО СТРОКЕ (item.item_form),
-        # не одна _item_form_create на всю закупку — item_form_for_purchase_item
-        # зеркалит item_form_for_purchase для contract_form без выбора на строке.
-        _row_item_form_create = item_form_for_purchase_item(p, item)
-        if _row_item_form_create:
-            apply_item_amounts(item, _row_item_form_create)
-        # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
-        _d_contractor_obj = _item_contractors_map.get(_d_contractor_id) if _d_contractor_id else None
-        if _d_contractor_obj is not None:
-            set_item_contractor(item, contractor=_d_contractor_obj, inn=_d_contractor_inn, name=_d_contractor_name)
-        elif _d_contractor_id:
-            set_item_contractor(item, contractor_id=_d_contractor_id)
-        else:
-            set_item_contractor(item, inn=_d_contractor_inn, name=_d_contractor_name)
-        # Снимок плана (Шаг 1 «план ≠ факт»): позиция создаётся напрямую (не из
-        # заявки) — план фиксируется как введённые сейчас значения, если снимок
-        # не передан явно клиентом.
-        if item.planned_quantity is None and item.planned_unit_price is None and item.planned_total is None:
-            item.planned_quantity = item.quantity
-            item.planned_unit_price = item.unit_price
-            item.planned_total = item.total_price
-        db.add(item)
+    # Ядро вставки (генерация номера/реестра, Purchase(**dump), позиции с
+    # матчингом товара/контрагента/формы строки, снимок плана, субсидийные
+    # аллокации, пересчёт денег, BudgetHistory) вынесено в
+    # app/services/purchase_create_core.py::insert_purchase_with_items —
+    # ПРАВИЛО №5/№6, рефакторинг 02.10.2026 без изменения поведения. Авто-заявка
+    # авансового и регистрация согласований превышения (ниже) — HTTP-специфичные
+    # после-эффекты, остаются здесь.
+    from app.services.purchase_create_core import insert_purchase_with_items
+    p, _created_items = await insert_purchase_with_items(
+        db, data, current_user, items_data=items_data, total_nmck=total_nmck,
+    )
 
     # Авансовый без wish_id → авто-заявка на возмещение (source='advance_report', status='draft').
     # Решение владельца (опрос 2026-09-15): раньше уходила status='submitted' сразу
@@ -1080,40 +977,8 @@ async def create_purchase(
         for _pi, _wi in zip(_created_items, _new_wish_items):
             _pi.wish_item_id = _wi.id
 
-    # Save subsidy allocations
-    if data.subsidy_allocations:
-        for alloc in data.subsidy_allocations:
-            db.add(PurchaseSubsidyAllocation(
-                purchase_id=p.id,
-                subsidy_id=alloc.subsidy_id,
-                amount=alloc.amount,
-            ))
-
-    # ПРАВИЛО №6 (2026-09-05): единственный писатель денежных колонок — раньше
-    # здесь была вторая копия «contract_price = Σ items» БЕЗ проверки статуса
-    # (писала цену договора даже для закупки на стадии `wishes`, до всякого
-    # договора — то самое «второе перо», конкурирующее с
-    # _recalc_contract_price_from_contract_items). recalc_purchase_money сам
-    # решает, писать ли contract_price, по стадии (см. purchase_money_writer.py).
-    from app.services.purchase_money_writer import recalc_purchase_money
-    _items_total_create = (
-        sum((i.total_price or Decimal("0")) for i in items_data) if items_data else None
-    )
-    await recalc_purchase_money(db, p, items_total=_items_total_create, contract_items_total=None)
-
-    # Budget history write hook — record initial planned_total_price
-    if p.subsidy_id and p.planned_total_price:
-        from app.models.budget_history import BudgetHistory as _BH
-        db.add(_BH(
-            subsidy_id=p.subsidy_id,
-            purchase_id=p.id,
-            entity_type="purchase",
-            old_value=None,
-            new_value=float(p.planned_total_price),
-            changed_by_id=current_user.id,
-            changed_by_name=getattr(current_user, 'full_name', None) or current_user.username,
-            reason=None,
-        ))
+    # Save subsidy allocations / пересчёт денег / BudgetHistory — внутри
+    # insert_purchase_with_items (см. вызов выше), не дублируем.
 
     # Владелец (2026-09-02): регистрируем запрос(ы) на согласование превышения ТЗ
     # над плановой позицией ПОСЛЕ создания закупки/позиций (собраны выше, до
@@ -1854,32 +1719,11 @@ async def update_purchase(
     return base
 
 
-async def _generate_temp_contract_number(p: Purchase, db: AsyncSession) -> str:
-    """Технический номер договора для рамочной головы, у которой на момент
-    формирования документа ещё не известны реальные номер/дата (владелец,
-    2026-08-31): «Надо присваивать какой-то технический номер на данный
-    момент времени и ставить примечание, что надо актуализировать номер».
-
-    Формат: «ВРЕМ-{№закупки}», если у закупки есть purchase_number, иначе
-    «ВРЕМ-{id закупки}». При коллизии с уже занятым contract_number другой
-    закупки — добавляется числовой суффикс «-2», «-3», ... до первого
-    свободного варианта.
-    """
-    base_num = p.purchase_number or p.id
-    base = f"ВРЕМ-{base_num}"
-    candidate = base
-    suffix = 1
-    while True:
-        taken = (await db.execute(
-            select(Purchase.id).where(
-                Purchase.contract_number == candidate,
-                Purchase.id != p.id,
-            )
-        )).scalar_one_or_none()
-        if taken is None:
-            return candidate
-        suffix += 1
-        candidate = f"{base}-{suffix}"
+# Вынесено в app/services/temp_contract_number.py (ПРАВИЛО №5, рефакторинг
+# 02.10.2026) — ре-экспорт под старым именем, т.к. app/services/documents/
+# stages_load.py импортирует его отсюда (`from app.routers.purchases import
+# is_framework_head, _generate_temp_contract_number`); второй копии тела нет.
+from app.services.temp_contract_number import generate_temp_contract_number as _generate_temp_contract_number
 
 
 # Phase 27.1 D-07: helper — авто-пересчёт purchase.contract_price = SUM(contract_items.total)

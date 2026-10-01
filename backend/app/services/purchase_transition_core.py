@@ -39,6 +39,7 @@ from app.services.type_excess_approval import (
     collect_type_excess_violations, register_type_excess_approvals,
 )
 from app.services.price_actualization import actualize_product_price
+from app.services.contract_items_materialize import copy_items_to_contract
 
 
 async def _autofill_accepted_fields(purchase: Purchase, db: AsyncSession) -> None:
@@ -190,33 +191,7 @@ async def apply_purchase_status_transition(
                             "status_label": "Заключён договор",
                         },
                     )
-                pi_q = await db.execute(
-                    select(PurchaseItem).where(PurchaseItem.purchase_id == pid)
-                )
-                for pi in pi_q.scalars().all():
-                    exists_ci = (await db.execute(
-                        select(ContractItem).where(
-                            ContractItem.purchase_id == pid,
-                            ContractItem.source_item_id == pi.id,
-                        ).limit(1)
-                    )).scalar_one_or_none()
-                    if exists_ci:
-                        continue
-                    db.add(ContractItem(
-                        purchase_id=pid,
-                        source_item_id=pi.id,
-                        name=pi.item_name or "Позиция",
-                        quantity=pi.quantity,
-                        unit=pi.unit or 'шт.',
-                        unit_price=pi.unit_price,
-                        total=pi.total_price,
-                        match_confirmed=True,
-                    ))
-                await db.flush()
-                ci_count_res2 = await db.execute(
-                    select(func.count()).select_from(ContractItem).where(ContractItem.purchase_id == pid)
-                )
-                ci_count = ci_count_res2.scalar() or 0
+                ci_count = await copy_items_to_contract(db, pid)
             elif not tz_required(p):
                 # Владелец (30.09, заявка №92): «после того как согласующий
                 # разрешит или запретит — можно двигать дальше» — закупка с
@@ -225,36 +200,11 @@ async def apply_purchase_status_transition(
                 # значит и «Скопировать из заявки» вручную требовать не за чем:
                 # позиции договора копируются из позиций закупки автоматически,
                 # без требования чека/receipts (это не авансовый — просто
-                # мелкая закупка без ТЗ). ПРАВИЛО №6: тот же цикл копирования
-                # PurchaseItem → ContractItem, что и в ветке advance выше — не
-                # вторая копия, просто без её receipts-гейта.
-                pi_q = await db.execute(
-                    select(PurchaseItem).where(PurchaseItem.purchase_id == pid)
-                )
-                for pi in pi_q.scalars().all():
-                    exists_ci = (await db.execute(
-                        select(ContractItem).where(
-                            ContractItem.purchase_id == pid,
-                            ContractItem.source_item_id == pi.id,
-                        ).limit(1)
-                    )).scalar_one_or_none()
-                    if exists_ci:
-                        continue
-                    db.add(ContractItem(
-                        purchase_id=pid,
-                        source_item_id=pi.id,
-                        name=pi.item_name or "Позиция",
-                        quantity=pi.quantity,
-                        unit=pi.unit or 'шт.',
-                        unit_price=pi.unit_price,
-                        total=pi.total_price,
-                        match_confirmed=True,
-                    ))
-                await db.flush()
-                ci_count_res3 = await db.execute(
-                    select(func.count()).select_from(ContractItem).where(ContractItem.purchase_id == pid)
-                )
-                ci_count = ci_count_res3.scalar() or 0
+                # мелкая закупка без ТЗ). ПРАВИЛО №6: та же функция копирования
+                # PurchaseItem → ContractItem, что и в ветке advance выше (см.
+                # app/services/contract_items_materialize.py) — не вторая копия,
+                # просто без её receipts-гейта.
+                ci_count = await copy_items_to_contract(db, pid)
             if ci_count == 0:
                 raise HTTPException(
                     422,

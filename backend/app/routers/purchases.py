@@ -46,8 +46,9 @@ from app.services import acceptance_docs as _acc_docs
 # в app/services/contract_item_link.py — там же полный диагноз.
 from app.services.contract_item_link import relink_contract_items, build_purchase_item_id_map
 from app.product_matcher import find_matching_product
-from app.services.item_forms import item_form_for_purchase
+from app.services.item_forms import item_form_for_purchase_item
 from app.services.item_amounts import apply_item_amounts
+from app.services.item_types import normalize_item_type
 from typing import List, Optional
 from pydantic import BaseModel
 from decimal import Decimal
@@ -953,12 +954,11 @@ async def create_purchase(
     await _assign_framework_seq(p, db)
 
     # item-forms-accommodation-transport.md: форма позиций выводится из
-    # p.contract_form (один источник, item_form_for_purchase) — для спец-форм
-    # (accommodation/transport) apply_item_amounts ниже пересчитывает
+    # p.contract_form (item_form_for_purchase_item, по КАЖДОЙ строке — см.
+    # цикл ниже) — для спец-форм apply_item_amounts пересчитывает
     # quantity/unit_price/total_price из extra_attrs и ПОБЕЖДАЕТ то, что
     # прислал клиент; для обычных позиций (item_form=None) поведение не
     # меняется — total_price по-прежнему берётся из payload как есть.
-    _item_form_create = item_form_for_purchase(p)
 
     # ПРАВИЛО №6 (группа D5, QA-находка): фронт (PurchaseItemsEditor.vue) кладёт
     # contractor_id/contractor_inn/contractor_name прямо в объект позиции —
@@ -987,7 +987,13 @@ async def create_purchase(
             else:
                 new_prod = Product(
                     name=d["item_name"].strip(),
-                    product_type=d.get("item_type"),
+                    # Баг 2026-10-01 (ПРАВИЛО №6): item_type строки позиции —
+                    # это Product.item_kind («товар»/«услуга»/«работа»), а не
+                    # product_type («Вид» — свободный текст). Запись в
+                    # product_type создавала второй источник типа, из-за
+                    # которого /products/match затем отдавал его обратно как
+                    # item_type (см. app/routers/products_match.py).
+                    item_kind=normalize_item_type(d.get("item_type")) or "товар",
                     price=d.get("unit_price"),
                     org_id=org_id_for_match,
                 )
@@ -999,8 +1005,12 @@ async def create_purchase(
         _d_contractor_name = d.pop("contractor_name", None)
         item = PurchaseItem(purchase_id=p.id, **d)
         _created_items.append(item)
-        if _item_form_create:
-            apply_item_amounts(item, _item_form_create)
+        # «Проживание и питание»: форма берётся ПО СТРОКЕ (item.item_form),
+        # не одна _item_form_create на всю закупку — item_form_for_purchase_item
+        # зеркалит item_form_for_purchase для contract_form без выбора на строке.
+        _row_item_form_create = item_form_for_purchase_item(p, item)
+        if _row_item_form_create:
+            apply_item_amounts(item, _row_item_form_create)
         # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
         _d_contractor_obj = _item_contractors_map.get(_d_contractor_id) if _d_contractor_id else None
         if _d_contractor_obj is not None:
@@ -1497,9 +1507,8 @@ async def update_purchase(
     ]
 
     # item-forms-accommodation-transport.md: p.contract_form уже обновлён setattr-
-    # циклом выше (payload_dict), значит item_form_for_purchase(p) здесь видит
-    # НОВУЮ форму — см. комментарий у create_purchase.
-    _item_form_put = item_form_for_purchase(p)
+    # циклом выше (payload_dict), значит item_form_for_purchase_item(p, item)
+    # ниже (по КАЖДОЙ строке) видит НОВУЮ форму — см. комментарий у create_purchase.
 
     # Replace items (auto-link to catalog via fuzzy match if product_id missing)
     await db.execute(delete(PurchaseItem).where(PurchaseItem.purchase_id == pid))
@@ -1529,7 +1538,13 @@ async def update_purchase(
             else:
                 new_prod = Product(
                     name=d["item_name"].strip(),
-                    product_type=d.get("item_type"),
+                    # Баг 2026-10-01 (ПРАВИЛО №6): item_type строки позиции —
+                    # это Product.item_kind («товар»/«услуга»/«работа»), а не
+                    # product_type («Вид» — свободный текст). Запись в
+                    # product_type создавала второй источник типа, из-за
+                    # которого /products/match затем отдавал его обратно как
+                    # item_type (см. app/routers/products_match.py).
+                    item_kind=normalize_item_type(d.get("item_type")) or "товар",
                     price=d.get("unit_price"),
                     org_id=org_id_for_match,
                 )
@@ -1541,8 +1556,11 @@ async def update_purchase(
         _d_contractor_name_put = d.pop("contractor_name", None)
         item = PurchaseItem(purchase_id=pid, **d)
         _created_items_put.append(item)
-        if _item_form_put:
-            apply_item_amounts(item, _item_form_put)
+        # «Проживание и питание»: форма по строке (item.item_form), см.
+        # комментарий в create_purchase выше.
+        _row_item_form_put = item_form_for_purchase_item(p, item)
+        if _row_item_form_put:
+            apply_item_amounts(item, _row_item_form_put)
         # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
         _d_contractor_obj_put = _item_contractors_map_put.get(_d_contractor_id_put) if _d_contractor_id_put else None
         if _d_contractor_obj_put is not None:

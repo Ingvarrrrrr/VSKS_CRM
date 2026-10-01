@@ -370,9 +370,32 @@ export function useItemsFeo(deps: UseItemsFeoDeps) {
     if (item.over_plan) return null
     const plan = planForItem(item)
     if (!plan) return null
-    const qty = Number(item.quantity) || 0
-    const price = Number(item.unit_price) || 0
+    let qty = Number(item.quantity) || 0
+    let price = Number(item.unit_price) || 0
     const total = item.total_price != null ? Number(item.total_price) : qty * price
+    // Составная плановая позиция (задача «Составная плановая позиция») — см.
+    // докстринг FeoPlannedItem.is_composite и composite_group_metrics
+    // (backend/app/services/feo_plan_common.py, ПРАВИЛО №6 — тот же приём,
+    // что и на бэкенде: количество группы строк ЭТОЙ закупки на ту же
+    // плановую позицию = MAX (не сумма), цена за единицу группы = СУММА (не
+    // максимум), чтобы фронт не подсвечивал ложное превышение на каждой
+    // строке группы по отдельности (133 чел. проживания + 133 чел. питания —
+    // не 266, цена 1265+735 сравнивается с планом 2000).
+    if (plan.kind === 'planned_item' && plan.is_composite && item.feo_planned_item_id != null) {
+      const siblings = (localItems.value || []).filter(
+        it => it !== item && it.feo_planned_item_id === item.feo_planned_item_id && !it.over_plan,
+      )
+      let groupQty = qty
+      let groupPrice = price
+      for (const s of siblings) {
+        const sQty = Number(s.quantity) || 0
+        const sPrice = Number(s.unit_price) || 0
+        if (sQty > groupQty) groupQty = sQty
+        groupPrice += sPrice
+      }
+      qty = groupQty
+      price = groupPrice
+    }
     // Владелец (2026-09-02, «Логистические услуги»): для kind='planned_item' без
     // unit_price количество ОРИЕНТИРОВОЧНОЕ и НЕ ограничивает закупку (см.
     // assert_tz_not_over_plan / feo_plan.py — planned_qty там сознательно остаётся

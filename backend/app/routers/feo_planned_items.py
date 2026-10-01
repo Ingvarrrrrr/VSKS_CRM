@@ -306,6 +306,10 @@ async def create_planned_item(
         is_active=data.is_active,
         sort_order=data.sort_order,
         item_type=normalize_item_type(data.item_type),
+        # Составная позиция (см. докстринг FeoPlannedItem.is_composite) — не
+        # гейтится _can_edit_feo_origin, как и feo_quantity/feo_unit_price/
+        # feo_amount выше: просто флаг формулы агрегации, не происхождение.
+        is_composite=data.is_composite,
         # auto_created — НЕ принимается на вход (это точечное создание человеком
         # через UI), остаётся дефолтным False колонки.
         **_origin_kwargs,
@@ -480,6 +484,7 @@ async def create_planned_items_bulk(
             # отдельно не нужно (см. _can_edit_feo_origin).
             is_feo_breakdown=data.is_feo_breakdown,
             is_internal_plan=data.is_internal_plan,
+            is_composite=data.is_composite,
         )
         _apply_payment_fields(item, data)
         db.add(item)
@@ -540,7 +545,7 @@ async def update_planned_item(
     _tracked_fields = (
         "name", "quantity", "unit", "unit_price", "feo_quantity",
         "feo_unit_price", "feo_amount", "notes", "is_active", "sort_order",
-        "item_type", "is_feo_breakdown", "is_internal_plan",
+        "item_type", "is_feo_breakdown", "is_internal_plan", "is_composite",
         "feo_category_id", "payment_mode", "planned_date",
         "monthly_start_date", "monthly_end_date", "monthly_amount",
         "months_count", "amount",
@@ -611,6 +616,12 @@ async def update_planned_item(
         item.is_feo_breakdown = data.is_feo_breakdown
     if "is_internal_plan" in data.model_fields_set:
         item.is_internal_plan = data.is_internal_plan
+    # Составная позиция (см. докстринг FeoPlannedItem.is_composite) — тот же
+    # model_fields_set-guard, что и у is_feo_breakdown/is_internal_plan выше:
+    # у PUT много вызывающих (перенос в категорию, сортировка и т.д.), не
+    # приславших это поле, — без guard они бы молча сбросили флаг в False.
+    if "is_composite" in data.model_fields_set:
+        item.is_composite = data.is_composite
     # Правка количества без явной цены за единицу (владелец, 30.09.2026,
     # «Багажник» 2→4, сумма плана не изменилась) — единственное место
     # (Правило №6), см. докстринг backfill_unit_price_on_quantity_change.

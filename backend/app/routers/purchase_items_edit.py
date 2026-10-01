@@ -20,10 +20,11 @@ from app.models.feo_category import FeoCategory
 from app.models.user import User
 from app.auth.jwt import get_current_user, ADMIN_ROLES
 from app.services.feo_plan import assert_no_unapproved_excess, assert_tz_not_over_plan, assert_tz_batch_not_over_plan
+from app.services.feo_plan_common import composite_group_metrics
 from app.services.plan_autoassign import auto_assign_planned_items, move_or_detach_planned_item, deactivate_if_orphaned
 from app.services.plan_graph_versions import _create_plan_graph_version
 from app.services.item_contractor import set_item_contractor
-from app.services.item_forms import item_form_for_purchase
+from app.services.item_forms import item_form_for_purchase_item
 from app.services.item_amounts import apply_item_amounts, line_total
 from app.routers.purchases import _has_purchase_write_access, _recalc_purchase_totals, TZ_FROZEN_STATUSES
 
@@ -153,6 +154,9 @@ class _ItemPatchBody(BaseModel):
     # «Перевозки», см. app/services/item_forms.py) — None здесь значит «не прислали»
     # (см. model_fields_set ниже), не «очистить».
     extra_attrs: Optional[dict] = None
+    # «Проживание и питание» — выбор формы ЭТОЙ строки ('accommodation'/'food'),
+    # см. app/services/item_forms.py::item_form_for_row. None значит «не прислали».
+    item_form: Optional[str] = None
 
 
 @router.patch("/{pid}/items/{item_id}")
@@ -409,6 +413,7 @@ async def patch_purchase_item(
         # уже превышен (см. assert_tz_batch_not_over_plan в feo_plan.py).
         _sib_qty = Decimal("0")
         _sib_total = Decimal("0")
+        _fpi_is_composite = False
         if it.feo_planned_item_id is not None:
             _sib_row = (
                 await db.execute(
@@ -425,17 +430,54 @@ async def patch_purchase_item(
             ).one()
             _sib_qty = Decimal(str(_sib_row[0] or 0))
             _sib_total = Decimal(str(_sib_row[1] or 0))
-        await assert_tz_not_over_plan(
-            db,
-            feo_planned_item_id=it.feo_planned_item_id,
-            feo_category_id=it.feo_category_id,
-            quantity=_prospective_qty,
-            unit_price=_prospective_price,
-            total_price=_prospective_total,
-            item_name=body.item_name if body.item_name is not None else it.item_name,
-            sibling_quantity=_sib_qty,
-            sibling_total=_sib_total,
-        )
+            from app.models.feo_planned_item import FeoPlannedItem as _FPIComposite
+            _fpi_composite_row = await db.get(_FPIComposite, it.feo_planned_item_id)
+            _fpi_is_composite = bool(_fpi_composite_row and _fpi_composite_row.is_composite)
+
+        if _fpi_is_composite:
+            # Составная позиция (владелец, задача «Составная плановая
+            # позиция») — та же формула, что и assert_tz_batch_not_over_plan
+            # (feo_plan_tz_checks.py, ПРАВИЛО №6): количество группы = MAX,
+            # цена за единицу группы = СУММА. Нужны сами значения строк-
+            # «братьев», а не их сумма/максимум — отдельный запрос (composite
+            # редкий случай, лишний запрос только когда is_composite=True).
+            _sib_rows = (
+                await db.execute(
+                    select(PurchaseItem.quantity, PurchaseItem.unit_price).where(
+                        PurchaseItem.purchase_id == pid,
+                        PurchaseItem.feo_planned_item_id == it.feo_planned_item_id,
+                        PurchaseItem.id != it.id,
+                        func.coalesce(PurchaseItem.over_plan, False).is_(False),
+                    )
+                )
+            ).all()
+            _group_qty, _group_price = composite_group_metrics(
+                [_prospective_qty] + [r[0] for r in _sib_rows],
+                [_prospective_price] + [r[1] for r in _sib_rows],
+            )
+            await assert_tz_not_over_plan(
+                db,
+                feo_planned_item_id=it.feo_planned_item_id,
+                feo_category_id=it.feo_category_id,
+                quantity=_group_qty,
+                unit_price=_group_price,
+                total_price=_prospective_total,
+                item_name=body.item_name if body.item_name is not None else it.item_name,
+                sibling_quantity=Decimal("0"),
+                sibling_total=_sib_total,
+            )
+        else:
+            await assert_tz_not_over_plan(
+                db,
+                feo_planned_item_id=it.feo_planned_item_id,
+                feo_category_id=it.feo_category_id,
+                quantity=_prospective_qty,
+                unit_price=_prospective_price,
+                total_price=_prospective_total,
+                item_name=body.item_name if body.item_name is not None else it.item_name,
+                sibling_quantity=_sib_qty,
+                sibling_total=_sib_total,
+            )
     # Задача владельца, план zany-fluttering-mountain.md п.4 (2026-08-10): точечная
     # правка позиции — тоже «добавление позиции в категорию» (рост суммы позиции
     # ИЛИ смена её категории ФЭО на другую) — увеличивающее план действие. Раньше
@@ -489,6 +531,7 @@ async def patch_purchase_item(
             raise HTTPException(422, "Название позиции не может быть пустым")
         it.item_name = name
     _extra_attrs_set = "extra_attrs" in body.model_fields_set
+    _item_form_set = "item_form" in body.model_fields_set
     if _qty_set:
         it.quantity = body.quantity
     if _unit_set:
@@ -497,13 +540,15 @@ async def patch_purchase_item(
         it.unit_price = body.unit_price
     if _extra_attrs_set:
         it.extra_attrs = body.extra_attrs or {}
-    if _qty_set or _price_set or _extra_attrs_set:
+    if _item_form_set:
+        it.item_form = body.item_form
+    if _qty_set or _price_set or _extra_attrs_set or _item_form_set:
         # ПРАВИЛО №6: compute_item_total/apply_item_amounts — единственный
         # писатель total_price (item-forms-accommodation-transport.md). Для
         # спец-форм (accommodation/transport) quantity/unit_price ниже
         # ПЕРЕЗАПИСЫВАЮТСЯ производными от extra_attrs — прямой ввод body.quantity/
         # unit_price для этих форм не участвует (см. план, раздел «Модель»).
-        apply_item_amounts(it, item_form_for_purchase(p))
+        apply_item_amounts(it, item_form_for_purchase_item(p, it))
         # Снимок плана (Шаг 1 «план ≠ факт»): пока закупка в статусе «План закупок» —
         # правка кол-ва/цены двигает и снимок плана вместе с ТЗ (план ещё формируется).
         # С «Ведётся работа» и далее сюда попасть можно только через admin_override
@@ -603,6 +648,7 @@ async def patch_purchase_item(
         "ok": True, "item_id": it.id, "item_name": it.item_name,
         "quantity": float(it.quantity or 0), "unit": it.unit,
         "unit_price": float(it.unit_price or 0), "total_price": float(it.total_price or 0),
+        "item_form": it.item_form,
         "feo_category_id": it.feo_category_id,
         "feo_planned_item_id": it.feo_planned_item_id,
         "planned_quantity": float(it.planned_quantity) if it.planned_quantity is not None else None,
@@ -924,6 +970,7 @@ async def split_purchase_item(
     _src_final_unit_price = it.final_unit_price
     _src_planned_unit_price = it.planned_unit_price
     _src_extra_attrs = it.extra_attrs or {}
+    _src_item_form = it.item_form
 
     # Часть 1 — мутируем исходную строку: id, история (EntityChange), wish_item_id
     # и прочие ссылки сохраняются (правило: «исходная строка сохраняется»).
@@ -952,6 +999,7 @@ async def split_purchase_item(
             unit_price=unit_price,
             total_price=part_totals[i],
             extra_attrs=_src_extra_attrs,
+            item_form=_src_item_form,
             final_unit_price=_src_final_unit_price,
             final_total=final_totals[i],
             planned_quantity=planned_quantities[i],

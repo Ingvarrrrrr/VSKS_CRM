@@ -12,7 +12,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.feo_category import FeoCategory
-from app.services.feo_plan_common import _leaf_plan_manual
+from app.services.feo_plan_common import _leaf_plan_manual, composite_group_metrics
 
 
 def _fmt_qty(d: Decimal) -> str:
@@ -370,6 +370,20 @@ async def assert_tz_batch_not_over_plan(
             item_name=row.item_name,
         )
 
+    # Составные плановые позиции (владелец, задача «Составная плановая
+    # позиция», is_composite=True) — см. докстринг composite_group_metrics
+    # (app/services/feo_plan_common.py). Один запрос за ВСЕ fpi_id группы
+    # сразу, не по одному в цикле.
+    _composite_ids: set = set()
+    if groups:
+        from app.models.feo_planned_item import FeoPlannedItem as _FPI
+        _comp_rows = (
+            await db.execute(
+                select(_FPI.id).where(_FPI.id.in_(list(groups.keys())), _FPI.is_composite.is_(True))
+            )
+        ).scalars().all()
+        _composite_ids = set(_comp_rows)
+
     for fpi_id, group_rows in groups.items():
         first = group_rows[0]
         siblings = group_rows[1:]
@@ -396,6 +410,30 @@ async def assert_tz_batch_not_over_plan(
         name = (first.item_name or "").strip() or "позиция"
         if len(group_rows) > 1:
             name = f"{name} и ещё {len(group_rows) - 1} поз."
+
+        if fpi_id in _composite_ids:
+            # Составная позиция — MAX количества/СУММА цен за единицу по всей
+            # группе (включая первую строку); количество не удваивается
+            # через sibling_quantity (уже учтено в group_qty), сумма/признак
+            # «учтены другие строки» в сообщении — как обычно (total/
+            # sibling_total не меняются, см. докстринг composite_group_metrics).
+            group_qty, group_price = composite_group_metrics(
+                [r.quantity for r in group_rows],
+                [r.unit_price for r in group_rows],
+            )
+            await assert_tz_not_over_plan(
+                db,
+                feo_planned_item_id=fpi_id,
+                feo_category_id=(getattr(first, "feo_category_id", None) or fallback_category_id),
+                quantity=group_qty,
+                unit_price=group_price,
+                total_price=own_total,
+                item_name=name,
+                sibling_quantity=Decimal("0"),
+                sibling_total=sib_total,
+            )
+            continue
+
         await assert_tz_not_over_plan(
             db,
             feo_planned_item_id=fpi_id,

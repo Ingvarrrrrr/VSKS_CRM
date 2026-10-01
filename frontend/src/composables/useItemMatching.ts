@@ -97,7 +97,16 @@ export function useItemMatching() {
    * Apply a chosen catalog candidate to a row in place. Mirrors the historical
    * onItemProductSelect / onRepickPick behaviour:
    *  - sets product_id, item_name, _selectedProduct, _photo_url, _description
-   *  - sets item_type only if the row has none yet
+   *  - sets item_type from the catalog candidate whenever the catalog has one
+   *    (owner, 2026-10-01: an explicit product pick is the single source of
+   *    truth for item_type here — a row defaults to 'товар' via
+   *    useItemsTable.addItem, so "only if row has none yet" never actually
+   *    applied the catalog's "услуга"/"работа"). All callers of this function
+   *    are explicit user picks (dialog select, inline match, repick) — never
+   *    silent/automatic matching, so overriding is safe. Item-form rows
+   *    (accommodation/food/transport) still end up 'услуга' regardless, via
+   *    the separate applyItemAmounts()/computeItemTotal() recompute keyed on
+   *    itemForm (utils/itemAmounts.ts) — not duplicated here (ПРАВИЛО №6).
    *  - sets unit_price (contract_price ?? price) only if the row has none yet,
    *    then recomputes total_price = qty × unit_price
    *  - marks match_confirmed = true
@@ -116,7 +125,7 @@ export function useItemMatching() {
       price_source_ref: cand.price_source_ref ?? null,
       price_freshness: cand.price_freshness ?? null,
     }
-    if (cand.item_type && !row.item_type) row.item_type = cand.item_type
+    if (cand.item_type) row.item_type = cand.item_type
     if (row.unit_price == null) {
       const best = cand.contract_price ?? cand.price
       if (best != null) {

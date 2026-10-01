@@ -13,8 +13,14 @@ export function useWishItemsFeoAutosave(deps: {
   apiFetch: typeof import('@/api').apiFetch
   form: UseWishFormReturn
   reloadActiveTab: () => Promise<void>
+  // Кандидаты «верхнего согласующего» зависят от субсидии заявки (бэк):
+  // после смены субсидии список кандидатов на бэке меняется, список во
+  // WishFormDialog.vue нужно обновить — без этого вызова старый список
+  // держится до переоткрытия диалога (тот же класс бага, что и в
+  // useWishForm.ts::saveWish при создании черновика).
+  reloadApproverCandidates?: () => Promise<void>
 }) {
-  const { ctx, apiFetch, form, reloadActiveTab } = deps
+  const { ctx, apiFetch, form, reloadActiveTab, reloadApproverCandidates } = deps
   const { showSnack } = ctx
   const { wishForm, editingWishId, editingWish, wishFeoSelected, wishFormSavedSnapshot, wishPayloadSnapshotJson } = form
 
@@ -248,6 +254,7 @@ export function useWishItemsFeoAutosave(deps: {
       })
       if (editingWish.value) (editingWish.value as any).subsidy_id = val
       showSnack('Субсидия обновлена')
+      await reloadApproverCandidates?.()
       await reloadActiveTab()
     } catch (e: any) {
       showSnack(`Ошибка: ${e?.payload?.message || e?.message || 'не удалось сохранить'}`, 'error')

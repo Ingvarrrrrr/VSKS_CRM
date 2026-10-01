@@ -275,7 +275,10 @@ export function useItemsCatalog(deps: UseItemsCatalogDeps) {
       score: 1,
       description: val.description ?? null,
       photo_url: productPhotoSrc(val) ?? null,
-      item_type: val.product_type ?? null,
+      // ПРАВИЛО №6 / баг 2026-10-01: тип позиции — ЕДИНСТВЕННО из Product.item_kind
+      // (бэк — app.services.item_types), не из product_type («Вид» — свободный
+      // текст, к типу товар/услуга/работа отношения не имеет).
+      item_type: val.item_kind ?? null,
       contract_price: val.contract_price ?? null,
       price_updated_at: val.price_updated_at ?? null,
       price_source: val.price_source ?? null,

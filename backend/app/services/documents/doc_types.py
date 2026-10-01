@@ -57,6 +57,10 @@ DOC_TYPES = {
     # загружены, DOC_TYPE_FALLBACK_FILES ниже откатывает на contract_services.docx
     # до тех пор, пока владелец не пришлёт образцы (см. CONTRACT_TYPED_FORM_DOC_TYPES).
     "contract_services_accommodation": ("contract_services_accommodation.docx", "Договор_услуги_проживание"),
+    # «Проживание и питание» (владелец, решение по задаче) — свой .docx тоже
+    # не загружен, тот же фолбэк на contract_services.docx, что у accommodation
+    # (см. DOC_TYPE_FALLBACK_FILES ниже).
+    "contract_services_accommodation_food": ("contract_services_accommodation_food.docx", "Договор_услуги_проживание_питание"),
     "contract_services_transport":     ("contract_services_transport.docx",     "Договор_услуги_перевозки"),
     "methodology_large":             ("methodology_large.docx",            "Методические_рекомендации_большие"),
     "methodology_small":             ("methodology_small.docx",            "Методические_рекомендации_малые"),
@@ -95,6 +99,7 @@ CONTRACT_FAMILY_DOC_TYPES = {
     "contract_services_small",
     "contract_services_food",
     "contract_services_accommodation",
+    "contract_services_accommodation_food",
     "contract_services_transport",
     "contract_goods_single",
     "contract_gph_individual",
@@ -119,6 +124,7 @@ CONTRACT_TYPED_FORM_DOC_TYPES = {
     "contract_services_small",
     "contract_services_food",
     "contract_services_accommodation",
+    "contract_services_accommodation_food",
     "contract_services_transport",
     "contract_goods_single",
     "contract_gph_individual",
@@ -148,6 +154,7 @@ DOC_TYPE_FALLBACK_FILES = {
     # откатываемся именно на contract_services.docx, а не на универсальный
     # contract.docx, как остальные формы этого блока.
     "contract_services_accommodation": "contract_services.docx",
+    "contract_services_accommodation_food": "contract_services.docx",
     "contract_services_transport":     "contract_services.docx",
     "contract_goods_single":       "contract.docx",
     "contract_gph_individual":     "contract.docx",
@@ -206,6 +213,7 @@ VAT_RATE_PRINTED_DOC_TYPES = {
     "contract_services_small",
     "contract_services_food",
     "contract_services_accommodation",
+    "contract_services_accommodation_food",
     "contract_services_transport",
     "contract_goods_single",
     "contract_repair_framework",

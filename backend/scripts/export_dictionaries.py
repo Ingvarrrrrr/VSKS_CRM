@@ -273,6 +273,13 @@ def build_item_forms() -> dict:
     contract_form_to_item_form = _extract_module_dicts(
         item_forms_tree, ["CONTRACT_FORM_TO_ITEM_FORM"]
     )["CONTRACT_FORM_TO_ITEM_FORM"]
+    # «Проживание и питание»: contract_form, допускающие ВЫБОР формы на строке
+    # (CONTRACT_FORM_ROW_CHOICES) — фронт (useItemForm.ts) читает отсюда, какие
+    # contract_form показывают переключатель на строке, вместо второй копии
+    # этого списка (Правило №6).
+    contract_form_row_choices = _extract_module_dicts(
+        item_forms_tree, ["CONTRACT_FORM_ROW_CHOICES"]
+    )["CONTRACT_FORM_ROW_CHOICES"]
     contract_form_labels = _extract_module_dicts(
         _parse(DICTIONARIES_SRC), [CONTRACT_FORM_DICT_NAME]
     )[CONTRACT_FORM_DICT_NAME]
@@ -283,6 +290,7 @@ def build_item_forms() -> dict:
             for i, k in enumerate(contract_form_labels)
         ],
         "contract_form_to_item_form": contract_form_to_item_form,
+        "contract_form_row_choices": contract_form_row_choices,
     }
 
 

@@ -30,6 +30,7 @@ from app.schemas.schemas import PriceFreshnessOut
 from app.services.product_matcher import bulk_match
 from app.services.price_freshness import load_context as load_freshness_context, evaluate as evaluate_freshness
 from app.services.product_snapshot import resolve_photo_url
+from app.services.item_types import normalize_item_type
 
 _log = logging.getLogger(__name__)
 
@@ -56,10 +57,13 @@ class _MatchCandidate(BaseModel):
     price_freshness: Optional[PriceFreshnessOut] = None
     # plan-to-wish (2026-09-20): product_type/unit добавлены для переиспользования
     # этой ЖЕ candidate-формы в POST /feo-planned-items/plan-to-wish/candidates
-    # (app/services/plan_to_wish.py) — item_type выше исторически уже несёт
-    # значение Product.product_type (см. _score_product_candidates ниже), эти
-    # два поля — те же данные под их настоящими именами, плюс unit, которого
-    # раньше в кандидате не было вовсе.
+    # (app/services/plan_to_wish.py) — unit, которого раньше в кандидате не было
+    # вовсе. item_type НИЖЕ — единственный источник Product.item_kind (ПРАВИЛО
+    # №6, app.services.item_types), нормализованный через normalize_item_type;
+    # product_type — отдельное поле «Вид» (свободный текст), к типу позиции
+    # («товар»/«услуга»/«работа») отношения не имеет (баг 2026-10-01: дублировал
+    # item_type значением Product.product_type, из-за чего «Услуга по
+    # организации проживания/питания» приходила в строку закупки типом «товар»).
     product_type: Optional[str] = None
     unit: Optional[str] = None
 
@@ -116,7 +120,7 @@ async def _score_product_candidates(
         Product.description,
         Product.photo_url,
         (Product.photo_data.isnot(None)).label('has_bytea_photo'),
-        Product.product_type,
+        Product.item_kind,
         Product.category,
     )
     if org_id:
@@ -131,7 +135,7 @@ async def _score_product_candidates(
             float(r.price) if r.price is not None else None,
             r.description,
             resolve_photo_url(r.photo_url, r.has_bytea_photo, r.id),
-            r.product_type,
+            normalize_item_type(r.item_kind) or r.item_kind,
             r.category,
         )
         for r in rows

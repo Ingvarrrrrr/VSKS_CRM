@@ -138,6 +138,9 @@ class WishItemOut(BaseModel):
     # item-forms-accommodation-transport.md: поля спец-формы (mirrors PurchaseItem.extra_attrs) —
     # заявка может завести их до конвертации, форма выводится из закупки, не из заявки.
     extra_attrs: dict = {}
+    # «Проживание и питание» (mirrors PurchaseItem.item_form, миграция
+    # w7x8y9z0a1b2) — выбор формы ЭТОЙ строки, см. комментарий там.
+    item_form: Optional[str] = None
     # W-diff (2026-08-13): «двойник» позиции в закупке — заполняется ТОЛЬКО в карточке
     # заявки (GET /{wish_id}), в списке (GET /) отсутствует (лишний вес). См. WishItemPurchaseMatch.
     purchase_match: Optional[WishItemPurchaseMatch] = None

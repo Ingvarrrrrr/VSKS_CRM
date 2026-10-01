@@ -193,39 +193,50 @@
       "order": 2
     },
     {
+      "key": "services_accommodation_food",
+      "label": "Проживание и питание",
+      "order": 3
+    },
+    {
       "key": "services_transport",
       "label": "Перевозки автобусом",
-      "order": 3
+      "order": 4
     },
     {
       "key": "goods_single",
       "label": "Поставка — разовый договор",
-      "order": 4
+      "order": 5
     },
     {
       "key": "gph_individual",
       "label": "ГПХ с физ.лицом",
-      "order": 5
+      "order": 6
     },
     {
       "key": "gph_individual_rid",
       "label": "ГПХ с физ.лицом, передача прав на РИД",
-      "order": 6
+      "order": 7
     },
     {
       "key": "repair_vehicle",
       "label": "Договор на ремонт ТС",
-      "order": 7
+      "order": 8
     },
     {
       "key": "repair_framework",
       "label": "Рамочный договор на ремонт ТС",
-      "order": 8
+      "order": 9
     }
   ],
   "contract_form_to_item_form": {
     "services_food": "food",
     "services_accommodation": "accommodation",
     "services_transport": "transport"
+  },
+  "contract_form_row_choices": {
+    "services_accommodation_food": [
+      "accommodation",
+      "food"
+    ]
   }
 }

@@ -3458,6 +3458,7 @@ const contractDocTypeMap: Record<string, string> = {
   services:                   'contract_services',
   services_food:              'contract_services_food',
   services_accommodation:     'contract_services_accommodation',
+  services_accommodation_food: 'contract_services_accommodation_food',
   services_transport:         'contract_services_transport',
   goods_single:               'contract_goods_single',
   gph_individual:             'contract_gph_individual',

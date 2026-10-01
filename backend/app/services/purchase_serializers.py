@@ -94,6 +94,11 @@ def _item_to_out(
         plan_residual=plan_residual,
         plan_planned_amount=plan_planned_amount,
         extra_attrs=getattr(item, 'extra_attrs', None) or {},
+        # «Проживание и питание» (миграция w7x8y9z0a1b2): без явной передачи
+        # здесь PurchaseItemOut(item_form=...) молча брал бы pydantic-дефолт
+        # None, даже когда на самой строке item_form реально выставлен —
+        # этот конструктор НЕ from_attributes, каждое поле отдельным kwarg.
+        item_form=getattr(item, 'item_form', None),
         split_column_key=getattr(item, 'split_column_key', None),
     )
 

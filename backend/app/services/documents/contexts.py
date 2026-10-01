@@ -16,7 +16,7 @@ from app.services.acceptance_docs import (
     derived_scalars as _acceptance_derived_scalars,
     total_amount as _acceptance_total_amount,
 )
-from app.services.item_forms import item_form_for_purchase
+from app.services.item_forms import item_form_for_purchase_item
 from app.services.item_form_summary import item_form_summary, item_menu_lines
 
 from .doc_types import CONTRACT_FAMILY_DOC_TYPES, FEO_PATH_UNRESOLVED_LABEL
@@ -306,9 +306,11 @@ def _build_items_list_from_contract_items(p, resolve_photo=None) -> list[dict]:
     «Плановые не равно Договор» (требование владельца).
     """
     items_list: list[dict] = []
-    item_form = item_form_for_purchase(p)
     for idx, ci in enumerate(getattr(p, "contract_items", None) or [], start=1):
         product = getattr(ci, "product", None)
+        # «Проживание и питание»: форма по строке (ci.item_form), не одна
+        # item_form на весь договор — см. item_forms.py::item_form_for_row.
+        item_form = item_form_for_purchase_item(p, ci)
         items_list.append({
             "num": idx,
             "name": ci.name or "",
@@ -351,11 +353,13 @@ def _build_items_list_from_purchase_items(p, tz_override_mode=None, resolve_phot
     """
     description_mode = tz_override_mode or getattr(p, "description_mode", None) or "exact"
     items_list: list[dict] = []
-    item_form = item_form_for_purchase(p)
     _tz = build_tz_rows(getattr(p, "items", None) or [], getattr(p, "tz_duplicate_decisions", None))
     for idx, row in enumerate(_tz["rows"], start=1):
         item = row["item"]
         total = row["total_price"]
+        # «Проживание и питание»: форма по строке (item.item_form) — см.
+        # комментарий у _build_items_list_from_contract_items выше.
+        item_form = item_form_for_purchase_item(p, item)
         items_list.append({
             "num": idx,
             "name": item.item_name or "",

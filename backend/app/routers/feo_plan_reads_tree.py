@@ -489,6 +489,11 @@ async def get_plan_positions(
                     # ошибочно ограничивало закупку). Отдаём None — фронт обязан не
                     # подставлять его как факт (см. PurchaseItemsEditor.vue).
                     "unit_price": float(it.unit_price) if it.unit_price is not None else None,
+                    # Составная позиция (задача «Составная плановая позиция») —
+                    # фронт (useItemsFeo.ts, FeoPlannedItemRow.vue) не подсвечивает
+                    # количество/цену отдельной строки группы как превышение по
+                    # отдельности, см. composite_group_metrics.
+                    "is_composite": bool(it.is_composite),
                     "consumed": consumed,
                     "consumed_quantity": consumed_qty,
                     "residual": planned_total - consumed,

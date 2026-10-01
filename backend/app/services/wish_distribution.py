@@ -27,7 +27,7 @@ from app.models.wish_item import WishItem
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.services.item_contractor import set_item_contractor
-from app.services.item_forms import item_form_for_purchase
+from app.services.item_forms import item_form_for_purchase_item
 from app.services.item_amounts import apply_item_amounts, line_total
 from app.models.purchase_event import PurchaseMember
 from app.models.feo_category import FeoCategory
@@ -275,6 +275,7 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
                 unit_price=wi.unit_price,
                 total_price=wi.total_price,
                 extra_attrs=getattr(wi, 'extra_attrs', None) or {},  # item-forms-accommodation-transport.md
+                item_form=getattr(wi, 'item_form', None),  # «Проживание и питание»
                 planned_quantity=wi.quantity,
                 planned_unit_price=wi.unit_price,
                 planned_total=wi.total_price,
@@ -740,6 +741,7 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
                 unit_price=wi.unit_price,
                 total_price=wi.total_price,
                 extra_attrs=getattr(wi, 'extra_attrs', None) or {},  # item-forms-accommodation-transport.md
+                item_form=getattr(wi, 'item_form', None),  # «Проживание и питание»
                 # Снимок плана (Шаг 1 «план ≠ факт»): зафиксировать ТЗ заявки как план
                 # позиции ОТДЕЛЬНО от unit_price/total_price (которые дальше могут
                 # мутировать при правке цены по итогам закупки) — дерево ФЭО обязано
@@ -934,13 +936,15 @@ async def _sync_wish_items_to_purchases(wish, db: AsyncSession) -> None:
         pitems = pitems_res.scalars().all()
         changed = False
         # item-forms-accommodation-transport.md: форма выводится из ЦЕЛЕВОЙ
-        # закупки (p), не из заявки — ОДИН раз на закупку, не на каждую позицию.
-        _item_form_sync = item_form_for_purchase(p)
+        # закупки (p), не из заявки — ПО СТРОКЕ (item_form_for_purchase_item),
+        # не одна форма на всю закупку («Проживание и питание»).
         for pi in pitems:
             wi = wish_item_map.get(pi.wish_item_id)
             if wi is None:
                 continue
             pi.extra_attrs = getattr(wi, 'extra_attrs', None) or {}
+            pi.item_form = getattr(wi, 'item_form', None)
+            _item_form_sync = item_form_for_purchase_item(p, pi)
             # ПРАВИЛО №6: compute_item_total/apply_item_amounts — единственный
             # писатель total_price (было `(wi.unit_price or 0) * (wi.quantity or 0)`
             # инлайн — тот же дубль формулы, что и в purchase_items_edit.py/wishes.py,

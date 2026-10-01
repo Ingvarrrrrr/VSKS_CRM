@@ -192,10 +192,14 @@ class Purchase(Base):
     recompute_snapshot_hash = Column(String(64), nullable=True)
 
     # Phase 28: форма договора для выбора нужного шаблона при генерации документа.
-    # Значения: 'services' | 'services_food' | 'goods_single' | 'gph_individual'
-    # | 'gph_individual_rid' | 'repair_vehicle' | 'repair_framework'
-    # ('services_large' / 'services_small' объединены в 'services' —
-    # см. миграцию q4r5s6t7u8v9_purchase_methodology.py)
+    # Значения: 'services' | 'services_food' | 'services_accommodation' |
+    # 'services_accommodation_food' | 'services_transport' | 'goods_single' |
+    # 'gph_individual' | 'gph_individual_rid' | 'repair_vehicle' |
+    # 'repair_framework' ('services_large' / 'services_small' объединены в
+    # 'services' — см. миграцию q4r5s6t7u8v9_purchase_methodology.py).
+    # 'services_accommodation_food' («Проживание и питание») — единственная
+    # форма, где item_form не один на весь договор, а хранится на СТРОКЕ
+    # позиции (см. app/services/item_forms.py::CONTRACT_FORM_ROW_CHOICES).
     contract_form = Column(String(50), nullable=True)
 
     # Методичка, приклеиваемая к договору при генерации (docxcompose) — раньше

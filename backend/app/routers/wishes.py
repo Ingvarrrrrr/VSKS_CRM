@@ -18,7 +18,7 @@ from app.models.purchase_item import PurchaseItem
 from app.services.feo_plan import assert_tz_not_over_plan
 from app.services.item_contractor import set_item_contractor
 from app.services.item_amounts import line_total, apply_item_amounts
-from app.services.item_forms import item_form_for_wish
+from app.services.item_forms import item_form_for_wish_item
 # _move_or_detach_planned_item/_deactivate_if_orphaned нужны только update_wish
 # (ниже) — остальные хелперы автозаведения плана (_auto_assign_planned_items/
 # _backfill_item_type_from_plan) переехали в app/services/wish_distribution.py
@@ -331,9 +331,9 @@ async def create_wish(
 
     if body.items:
         # item-forms-accommodation-transport.md: форма позиций заявки выводится
-        # из wish.contract_form (один источник, item_form_for_wish) — считается
-        # ОДИН раз на заявку, не на каждую позицию (mirrors purchases.py create_purchase).
-        _item_form_wish_create = item_form_for_wish(wish)
+        # из wish.contract_form — по КАЖДОЙ позиции (item_form_for_wish_item),
+        # «Проживание и питание» допускает разные формы строк одной заявки
+        # (mirrors purchases.py create_purchase).
         for item_data in body.items:
             if not _is_meaningful_item(item_data):
                 continue  # пустая строка-заготовка — в БД не пишем
@@ -347,6 +347,7 @@ async def create_wish(
                 unit_price=item_data.get('unit_price', 0),
                 total_price=item_data.get('total_price', 0),
                 extra_attrs=item_data.get('extra_attrs') or {},  # item-forms-accommodation-transport.md
+                item_form=item_data.get('item_form'),  # «Проживание и питание»
                 country_origin=item_data.get('country_origin', 'РФ'),
                 feo_category_id=item_data.get('feo_category_id'),  # B9
                 feo_planned_item_id=item_data.get('feo_planned_item_id'),  # привязка к плановой позиции плана закупок
@@ -354,8 +355,9 @@ async def create_wish(
                 needed_date=_as_date(item_data.get('needed_date')),  # W2
                 vat_rate=item_data.get('vat_rate'),
             )
-            if _item_form_wish_create:
-                apply_item_amounts(wi, _item_form_wish_create)
+            _row_item_form_wish_create = item_form_for_wish_item(wish, wi)
+            if _row_item_form_wish_create:
+                apply_item_amounts(wi, _row_item_form_wish_create)
             db.add(wi)
         await db.flush()
 
@@ -561,6 +563,32 @@ async def update_wish(
     if 'vat_applicable' in body.model_fields_set:
         wish.vat_applicable = body.vat_applicable
 
+    # Владелец (01.10, прод: закупка РЕЕ-2026-00975/заявка №98, инцидент см.
+    # ПРАВИЛО №6): шапка (subsidy_id/feo_category_id/event_id) заявки-компаньона
+    # авансового отчёта зеркалится в связанную закупку и здесь — ПОЛНОЕ сохранение
+    # заявки (PUT, автор/участник правит форму), не только PATCH /execution
+    # согласующего (wish_transitions.py::patch_wish_execution, строки 417-428).
+    # Автор поставила subsidy_id=7 в карточке заявки и сохранила PUT — закупка
+    # осталась с subsidy_id=NULL, пропала из реестров (фильтры по субсидии).
+    # Переиспользуем apply_wish_header_to_purchase (advance_wish_sync.py:112) —
+    # тот же источник истины, что и в PATCH-ветке, не вторая копия формулы.
+    # model_fields_set (а не "is not None"): мирроим только то, что реально
+    # пришло ключом в payload — чтобы частичный PUT не затёр поле закупки тем,
+    # чего в запросе не было вовсе. Явный null (снятие субсидии) мирроим тоже —
+    # buildWishPayload на фронте всегда шлёт subsidy_id ключом (спред
+    # `...wishForm.value`), так что для формы заявки это не риск.
+    if getattr(wish, "source", None) == "advance_report" and (
+        body.model_fields_set & {"subsidy_id", "feo_category_id", "event_id"}
+    ):
+        from app.services.advance_wish_sync import apply_wish_header_to_purchase
+        _companion_purchase_put = (await db.execute(
+            select(Purchase).where(
+                Purchase.wish_id == wish.id, Purchase.purchase_method == "advance",
+            ).limit(1)
+        )).scalar_one_or_none()
+        if _companion_purchase_put:
+            apply_wish_header_to_purchase(_companion_purchase_put, wish)
+
     # Плановые позиции следуют за сменой категории (владелец, 2026-08-17):
     # предупреждения, когда привязку пришлось снять вместо переезда (см. ветку
     # non-draft ниже) — возвращаются в ответе, не проглатываются молча.
@@ -571,9 +599,8 @@ async def update_wish(
             # Draft: delete+recreate (original behaviour)
             await db.execute(delete(WishItem).where(WishItem.wish_id == wish.id))
             # item-forms-accommodation-transport.md: wish.contract_form уже
-            # обновлён setattr-циклом выше (update_data), значит item_form_for_wish(wish)
-            # здесь видит НОВУЮ форму — см. аналогичный комментарий в purchases.py PUT.
-            _item_form_wish_put_draft = item_form_for_wish(wish)
+            # обновлён setattr-циклом выше (update_data) — item_form_for_wish_item
+            # по КАЖДОЙ строке видит и новую форму, и выбор строки (item_form).
             for item_data in body.items:
                 if not _is_meaningful_item(item_data):
                     continue  # пустая строка-заготовка — в БД не пишем
@@ -587,6 +614,7 @@ async def update_wish(
                     unit_price=item_data.get('unit_price', 0),
                     total_price=item_data.get('total_price', 0),
                     extra_attrs=item_data.get('extra_attrs') or {},  # item-forms-accommodation-transport.md
+                    item_form=item_data.get('item_form'),  # «Проживание и питание»
                     country_origin=item_data.get('country_origin', 'РФ'),
                     feo_category_id=item_data.get('feo_category_id'),  # B9
                     feo_planned_item_id=item_data.get('feo_planned_item_id'),  # план закупок ФЭО
@@ -601,8 +629,9 @@ async def update_wish(
                 # wi.feo_planned_item_id уже выставлен конструктором выше, проверяем
                 # ДО db.add(wi), чтобы вся операция не сохранила ничего частично.
                 await assert_wish_item_category_from_plan(db, wi, item_data.get('feo_category_id'))
-                if _item_form_wish_put_draft:
-                    apply_item_amounts(wi, _item_form_wish_put_draft)
+                _row_item_form_wish_put_draft = item_form_for_wish_item(wish, wi)
+                if _row_item_form_wish_put_draft:
+                    apply_item_amounts(wi, _row_item_form_wish_put_draft)
                 db.add(wi)
             await db.flush()
         else:
@@ -613,10 +642,9 @@ async def update_wish(
             # matching id are silently skipped).
             existing_items = {wi.id: wi for wi in wish.items}
             payload_ids: set[int] = set()
-            # item-forms-accommodation-transport.md: та же форма для всех строк
-            # этого PUT (один источник — wish.contract_form, уже обновлён
-            # setattr-циклом выше, если пришёл в этом же запросе).
-            _item_form_wish_put_live = item_form_for_wish(wish)
+            # item-forms-accommodation-transport.md: форма берётся ПО СТРОКЕ
+            # (item_form_for_wish_item) ниже, не один источник на весь PUT —
+            # «Проживание и питание» допускает разные формы строк.
             for item_data in body.items:
                 item_id = item_data.get('id') if isinstance(item_data, dict) else getattr(item_data, 'id', None)
                 if item_id:
@@ -627,6 +655,7 @@ async def update_wish(
                 _qty_set = 'quantity' in item_data
                 _price_set = 'unit_price' in item_data
                 _extra_set = 'extra_attrs' in item_data
+                _item_form_row_set = 'item_form' in item_data
                 if 'item_name' in item_data:
                     wi.item_name = item_data['item_name']
                 if _price_set:
@@ -637,12 +666,15 @@ async def update_wish(
                     wi.unit = item_data['unit']
                 if _extra_set:
                     wi.extra_attrs = item_data['extra_attrs'] or {}
-                if _item_form_wish_put_live and (_qty_set or _price_set or _extra_set):
+                if _item_form_row_set:
+                    wi.item_form = item_data['item_form']
+                _row_item_form_wish_put_live = item_form_for_wish_item(wish, wi)
+                if _row_item_form_wish_put_live and (_qty_set or _price_set or _extra_set or _item_form_row_set):
                     # ПРАВИЛО №6: compute_item_total/apply_item_amounts — единственный
                     # писатель total_price для спец-форм (accommodation/transport/food).
                     # quantity/unit_price ниже могут быть ПЕРЕЗАПИСАНЫ производными от
                     # extra_attrs (см. apply_item_amounts) — прямой ввод не участвует.
-                    apply_item_amounts(wi, _item_form_wish_put_live)
+                    apply_item_amounts(wi, _row_item_form_wish_put_live)
                 elif 'total_price' in item_data:
                     wi.total_price = item_data['total_price']
                 elif _qty_set or _price_set:

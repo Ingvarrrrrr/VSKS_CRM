@@ -136,7 +136,7 @@
                 :items="allowedItemTypes.map(t => ({ value: t, title: t.charAt(0).toUpperCase() + t.slice(1) }))"
                 item-title="title" item-value="value" density="compact" variant="outlined"
                 :label="feoPerItem ? 'Тип / ФЭО *' : 'Тип'"
-                hide-details :disabled="readonly || !!itemForm"
+                hide-details :disabled="readonly || !!itemForm || !!(rowItemFormChoices && rowItemFormChoices.length)"
                 @update:model-value="(v: string) => emit('item-type-change', idx, v)" />
               <!-- Владелец (26.09, закупка PEE-2026-00957 и 27.09, закупка РЕЕ-2026-00912):
                    «в каждом товаре должна быть указана привязка» к категории ФЭО —
@@ -205,16 +205,20 @@
                 @planned-item-deleted="emit('planned-item-deleted')" />
             </v-col>
 
-            <!-- item-forms-accommodation-transport.md: спец-форма позиции — поля формы
-                 вместо Кол-во/Ед./Цена ед. (Правило №6, ItemFormFields.vue). -->
-            <v-col v-if="itemForm" cols="12">
-              <div class="text-caption text-medium-emphasis mb-1">{{ itemFormLabel }}</div>
-              <ItemFormFields
+            <!-- item-forms-accommodation-transport.md: спец-форма позиции — переключатель
+                 формы строки + поля формы вместо Кол-во/Ед./Цена ед. (Правило №5/№6,
+                 ItemRowFormSwitch.vue, общий для Flat/Stages/Wish/ItemsCardsView). -->
+            <v-col v-if="itemForm || (rowItemFormChoices && rowItemFormChoices.length)" cols="12">
+              <div v-if="itemFormLabel" class="text-caption text-medium-emphasis mb-1">{{ itemFormLabel }}</div>
+              <ItemRowFormSwitch
+                :row-item-form-choices="rowItemFormChoices"
                 :item-form="itemForm"
-                :fields="itemFormFields || []"
+                :row-form="item.item_form"
+                :fields="itemFormFields"
                 :model-value="item.extra_attrs"
                 :unit-price="item.unit_price"
                 :disabled="readonly"
+                @update:row-form="(v) => { item.item_form = v; emit('calc-item-total', idx) }"
                 @update:model-value="(v) => { item.extra_attrs = v; emit('calc-item-total', idx) }"
                 @update:unit-price="(v) => { item.unit_price = v; emit('calc-item-total', idx) }"
               />
@@ -398,7 +402,7 @@ import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
 import { formatPlanResidual } from '@/utils/numberFormat'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
 import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT } from '@/utils/feoItemLock'
-import ItemFormFields from '@/components/items/ItemFormFields.vue'
+import ItemRowFormSwitch from '@/components/items/ItemRowFormSwitch.vue'
 import ItemFeoCategoryChip from '@/components/purchase/ItemFeoCategoryChip.vue'
 import type { ItemFormCode, ItemFormField } from '@/utils/itemAmounts'
 
@@ -418,6 +422,8 @@ const props = defineProps<{
   itemForm?: ItemFormCode | null
   itemFormFields?: ItemFormField[]
   itemFormLabel?: string
+  // «Проживание и питание» — см. ItemRowFormSwitch.vue.
+  rowItemFormChoices?: ItemFormCode[] | null
   // Владелец (2026-08-19): согласующий заявки — состав заблокирован, но построчная
   // категория/плановая позиция ФЭО остаётся редактируемой. См. одноимённый проп в
   // PurchaseItemsEditor.vue и feoReadonly ниже.

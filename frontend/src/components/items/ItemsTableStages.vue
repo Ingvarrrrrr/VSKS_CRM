@@ -19,12 +19,12 @@
           </th>
           <th style="width:36px;text-align:center;color:#888;font-size:12px">№</th>
           <th>Наименование</th>
-          <th v-if="itemForm" colspan="2">{{ itemFormLabel }}</th>
+          <th v-if="itemForm || (rowItemFormChoices && rowItemFormChoices.length)" colspan="2">{{ itemFormLabel || 'Форма позиции' }}</th>
           <template v-else>
             <th style="width:90px">Кол-во</th>
             <th style="width:110px">Цена, ₽</th>
           </template>
-          <th style="width:120px">{{ itemForm ? 'Итого, ₽' : 'Сумма, ₽' }}</th>
+          <th style="width:120px">{{ (itemForm || (rowItemFormChoices && rowItemFormChoices.length)) ? 'Итого, ₽' : 'Сумма, ₽' }}</th>
           <th style="min-width:220px">Суммы стадий</th>
           <th style="width:48px">Матч</th>
           <th style="width:80px"></th>
@@ -75,7 +75,17 @@
                 class="mt-1"
               />
             </td>
-            <td v-if="itemForm" colspan="2" @click.stop class="text-caption text-medium-emphasis" style="max-width:220px">
+            <!-- Баг 2026-10-01 (QA): эта ячейка — ЧИСТО текстовая (никаких интерактивных
+                 детей, в отличие от соседних @click.stop колонок с v-text-field/чекбоксом),
+                 но раньше несла @click.stop и тем самым «глотала» клик по строке — клик
+                 именно по этой (широкой, colspan=2, визуально центральной) колонке НЕ
+                 переключал expanded[idx], а остальная строка переключала. Пользователь,
+                 кликая по этой колонке, чтобы свернуть строку перед переходом к следующей,
+                 получал молчаливый no-op: строка оставалась развёрнутой, и следующий клик
+                 по строке №2 ошибочно читался как клик «внутри всё ещё открытой» строки №1
+                 — оттуда и баг «данные Питания попали в обе строки, Проживание пропало».
+                 Клик здесь должен вести себя как клик по остальной части summary-row. -->
+            <td v-if="itemForm || (rowItemFormChoices && rowItemFormChoices.length)" colspan="2" class="text-caption text-medium-emphasis" style="max-width:220px">
               {{ specSummary(item) || 'Разверните строку, чтобы заполнить' }}
             </td>
             <template v-else>
@@ -236,13 +246,16 @@
                       </div>
                       <!-- Phase 27.1.1 fix: per-item contractor только для авансовых (advance_report). Inline contractor для обычных закупок убран — 1 контрагент на закупку. -->
                     </td>
-                    <td v-if="itemForm" colspan="3">
-                      <ItemFormFields
+                    <td v-if="itemForm || (rowItemFormChoices && rowItemFormChoices.length)" colspan="3">
+                      <ItemRowFormSwitch
+                        :row-item-form-choices="rowItemFormChoices"
                         :item-form="itemForm"
-                        :fields="itemFormFields || []"
+                        :row-form="item.item_form"
+                        :fields="itemFormFields"
                         :model-value="item.extra_attrs"
                         :unit-price="item.unit_price"
                         :disabled="tzDisabled"
+                        @update:row-form="(v) => { item.item_form = v; emit('calc-item-total', idx) }"
                         @update:model-value="(v) => { item.extra_attrs = v; emit('calc-item-total', idx) }"
                         @update:unit-price="(v) => { item.unit_price = v; emit('calc-item-total', idx) }"
                       />
@@ -434,7 +447,7 @@
                         <v-select v-model="item.item_type"
                           :items="allowedItemTypes.map(t => ({ value: t, title: t.charAt(0).toUpperCase() + t.slice(1) }))"
                           item-title="title" item-value="value" density="compact" variant="outlined"
-                          label="Тип" hide-details style="min-width:140px;max-width:180px" class="my-1" :disabled="readonly || !!itemForm"
+                          label="Тип" hide-details style="min-width:140px;max-width:180px" class="my-1" :disabled="readonly || !!itemForm || !!(rowItemFormChoices && rowItemFormChoices.length)"
                           @update:model-value="(v: string) => emit('item-type-change', idx, v)" />
                         <!-- Страна -->
                         <v-text-field v-model="item.country_origin" density="compact"
@@ -640,14 +653,17 @@ import type { FeoMatchCandidate } from '@/composables/useFeoPlanMatching'
 import { formatPlanResidual } from '@/utils/numberFormat'
 import { UNIT_PRICE_NOT_FIXED_HINT } from '@/constants/planPriceLabels'
 import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT } from '@/utils/feoItemLock'
-// item-forms-accommodation-transport.md: спец-форма позиции — ItemFormFields.vue
-// заменяет колонки Кол-во/Ед./Цена в развёрнутой ТЗ-подстроке (Правило №6, единый
-// рендерер спец-полей); свёрнутая сводная строка показывает только компактную
-// расшифровку (formatExtraAttrsSummary), редактирование — после разворота строки.
-import ItemFormFields from '@/components/items/ItemFormFields.vue'
+// item-forms-accommodation-transport.md: спец-форма позиции — ItemRowFormSwitch.vue
+// (переключатель формы строки + ItemFormFields внутри) заменяет колонки Кол-во/
+// Ед./Цена в развёрнутой ТЗ-подстроке (Правило №5/№6, единый рендерер,
+// общий для Flat/Stages/Wish/ItemsCardsView); свёрнутая сводная строка показывает
+// только компактную расшифровку (formatExtraAttrsSummary), редактирование —
+// после разворота строки.
+import ItemRowFormSwitch from '@/components/items/ItemRowFormSwitch.vue'
 import ItemFeoCategoryChip from '@/components/purchase/ItemFeoCategoryChip.vue'
 import type { ItemFormCode, ItemFormField } from '@/utils/itemAmounts'
 import { formatExtraAttrsSummary } from '@/utils/itemAmounts'
+import { itemFormDescriptor } from '@/composables/items/useItemForm'
 
 type EditorItem = any
 type StageTotals = { tz: number; dog: number; delivery: number }
@@ -658,6 +674,8 @@ const props = defineProps<{
   itemForm?: ItemFormCode | null
   itemFormFields?: ItemFormField[]
   itemFormLabel?: string
+  // «Проживание и питание» — см. ItemRowFormSwitch.vue.
+  rowItemFormChoices?: ItemFormCode[] | null
   // Владелец (2026-08-19): согласующий заявки — состав заблокирован, построчная
   // категория/плановая позиция ФЭО остаётся редактируемой. См. PurchaseItemsEditor.vue
   // и feoReadonly ниже.
@@ -776,9 +794,17 @@ const tzFrozenTooltip = 'Закупка объявлена — кол-во и ц
 
 // item-forms-accommodation-transport.md: компактная расшифровка extra_attrs для
 // свёрнутой сводной строки (полное редактирование — в развёрнутой ТЗ-подстроке,
-// см. ItemFormFields ниже). formatExtraAttrsSummary — utils/itemAmounts.ts, тот
-// же helper, никакой второй копии форматирования.
+// см. ItemRowFormSwitch выше). formatExtraAttrsSummary — utils/itemAmounts.ts, тот
+// же helper, никакой второй копии форматирования. «Проживание и питание»:
+// fields берутся по ЭФФЕКТИВНОЙ форме этой строки (item.item_form), не по
+// единому props.itemFormFields — иначе свёрнутая строка «Питание» показала бы
+// подписи полей «Проживания» и наоборот.
 function specSummary(item: EditorItem): string {
+  const choices = props.rowItemFormChoices
+  if (choices && choices.length) {
+    const form = (item?.item_form && (choices as string[]).includes(item.item_form)) ? item.item_form : choices[0]
+    return formatExtraAttrsSummary(item.extra_attrs, itemFormDescriptor(form)?.fields ?? [])
+  }
   return formatExtraAttrsSummary(item.extra_attrs, props.itemFormFields)
 }
 // См. feoAttrsEditable в defineProps выше — построчные ФЭО-контролы остаются

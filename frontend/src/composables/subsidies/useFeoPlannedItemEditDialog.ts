@@ -56,6 +56,11 @@ const editPlannedDialog = ref({
   // это и есть штатное место правки признака (задача владельца, п.5).
   is_feo_breakdown: false as boolean,
   is_internal_plan: false as boolean,
+  // Составная позиция (задача «Составная плановая позиция») — см. докстринг
+  // FeoPlannedItem.is_composite (backend/app/models/feo_planned_item.py).
+  // Всегда шлётся явно в PUT-payload, как и is_feo_breakdown/is_internal_plan
+  // выше — тот же model_fields_set-guard на backend.
+  is_composite: false as boolean,
   // Раздельные числа по ФЭО (владелец, 2026-09-14) — второй, независимый
   // комплект, показывается в форме только когда ОБЕ галочки происхождения
   // стоят разом (см. editShowBothOriginFields ниже) — тот же смысл, что и в
@@ -193,6 +198,7 @@ export function useFeoPlannedItemEditDialog(ctx?: EditDialogCtx) {
     editPlannedDialog.value.monthly_amount = item.monthly_amount ?? null
     editPlannedDialog.value.is_feo_breakdown = item.is_feo_breakdown ?? false
     editPlannedDialog.value.is_internal_plan = item.is_internal_plan ?? false
+    editPlannedDialog.value.is_composite = item.is_composite ?? false
     editPlannedDialog.value.feoQuantity = item.feo_quantity != null ? parseFloat(String(item.feo_quantity)) : ''
     editPlannedDialog.value.feoUnitPrice = item.feo_unit_price != null ? parseFloat(String(item.feo_unit_price)) : ''
     editPlannedDialog.value.feoAmount = item.feo_amount != null ? parseFloat(String(item.feo_amount)) : ''
@@ -255,6 +261,7 @@ export function useFeoPlannedItemEditDialog(ctx?: EditDialogCtx) {
         sync_product_kind: true,
         is_feo_breakdown: d.is_feo_breakdown,
         is_internal_plan: d.is_internal_plan,
+        is_composite: d.is_composite,
         // Раздельные числа по ФЭО (владелец, 2026-09-14) — ПОЛНАЯ замена, как
         // и у unit_price выше: без явной отправки уже введённые feo_quantity/
         // feo_unit_price/feo_amount молча обнулятся.

@@ -81,6 +81,10 @@ CONTRACT_FORM_LABELS = {
     "services":               "Услуги",
     "services_food":          "Услуги — питание",
     "services_accommodation": "Проживание",
+    # Владелец (решение по задаче): договор, где номера и питание арендуются/
+    # оплачиваются отдельными строками — каждая строка переключателем
+    # «Проживание»/«Питание» (см. CONTRACT_FORM_ROW_CHOICES в item_forms.py).
+    "services_accommodation_food": "Проживание и питание",
     "services_transport":     "Перевозки автобусом",
     "goods_single":           "Поставка — разовый договор",
     "gph_individual":         "ГПХ с физ.лицом",

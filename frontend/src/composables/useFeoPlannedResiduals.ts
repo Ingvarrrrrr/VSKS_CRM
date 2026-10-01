@@ -80,6 +80,13 @@ export interface FeoPlanPosition {
    *  проверить дубль ДО согласования (см. backend OPEN_WISH_STATUSES /
    *  planned_item_consumption.linked_wishes / category_plan_links.linked_wishes). */
   linked_wishes?: { id: number; status: string; status_label?: string; quantity: number | null }[]
+  /** Составная плановая позиция (задача «Составная плановая позиция») — ТОЛЬКО
+   *  у kind='planned_item' (см. backend FeoPlannedItem.is_composite,
+   *  app/models/feo_planned_item.py). Строки закупки, привязанные к этой
+   *  позиции, не складывают количество между собой (MAX, не сумма) — см.
+   *  composite_group_metrics (backend/app/services/feo_plan_common.py) и
+   *  planExcessFor (useItemsFeo.ts), FeoPlannedItemRow.vue (чип «составная»). */
+  is_composite?: boolean
 }
 
 /** @deprecated старое имя интерфейса (было завязано на /feo-planned-items/residuals) —

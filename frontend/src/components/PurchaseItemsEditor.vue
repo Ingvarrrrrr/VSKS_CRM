@@ -261,6 +261,7 @@
           :item-form="itemForm"
           :item-form-fields="itemFormFields"
           :item-form-label="itemFormLabel"
+          :row-item-form-choices="itemFormRowChoices"
           :feo-attrs-editable="props.feoAttrsEditable"
           :tz-frozen="tzFrozen"
           :allowed-item-types="props.allowedItemTypes"
@@ -363,6 +364,7 @@
           :item-form="itemForm"
           :item-form-fields="itemFormFields"
           :item-form-label="itemFormLabel"
+          :row-item-form-choices="itemFormRowChoices"
           :feo-attrs-editable="props.feoAttrsEditable"
           :supports-split="true"
           :is-advance="isAdvance"
@@ -439,6 +441,7 @@
           :item-form="itemForm"
           :item-form-fields="itemFormFields"
           :item-form-label="itemFormLabel"
+          :row-item-form-choices="itemFormRowChoices"
           :feo-attrs-editable="props.feoAttrsEditable"
           :tz-frozen="tzFrozen"
           :is-advance="isAdvance"
@@ -559,6 +562,10 @@
         v-else
         :items="localItems"
         :readonly="props.readonly"
+        :item-form="itemForm"
+        :item-form-fields="itemFormFields"
+        :item-form-label="itemFormLabel"
+        :row-item-form-choices="itemFormRowChoices"
         :allowed-item-types="props.allowedItemTypes"
         :feo-nodes="feoNodes"
         :contractors="contractors"
@@ -1283,8 +1290,18 @@ const effectiveView = computed<'table' | 'cards'>(() => mobile.value ? 'cards' :
 // itemFormFields прокидывается в 4 таблицы (Flat/Stages/Wish/ItemsCardsView) — они сами
 // список полей не хранят (Правило №6). Поднято выше useItemsTable/useItemsImport
 // (было объявлено ниже) — обеим нужен itemForm для forced item_type, см. ниже.
-const { itemForm, fields: itemFormFields, descriptor: itemFormDescriptor } = useItemForm(computed(() => props.contractForm))
+const { itemForm, fields: itemFormFields, descriptor: itemFormDescriptor, rowChoices: itemFormRowChoices, itemFormForItem } = useItemForm(computed(() => props.contractForm))
 const itemFormLabel = computed(() => itemFormDescriptor.value?.label ?? '')
+
+// «Проживание и питание» (решение владельца): contract_form, где форма НЕ одна
+// на весь договор — каждая строка переключателем «Проживание»/«Питание»
+// (item.item_form, см. item_forms.py::CONTRACT_FORM_ROW_CHOICES). itemForm
+// выше остаётся null для такого contract_form (он не из CONTRACT_FORM_TO_
+// ITEM_FORM) — isFoodForm/обычная ветка шаблона не трогается, таблицы
+// получают rowItemFormChoices и сами решают форму КАЖДОЙ строки.
+function resolveRowItemForm(item: { item_form?: string | null } | null | undefined) {
+  return itemFormForItem(item)
+}
 
 // food-menu-editor.md (владелец, 2026-09-15): форма «Питание» рендерится
 // отдельной веткой шаблона (широкая панель на позицию вместо таблицы Flat/
@@ -1308,7 +1325,7 @@ const FOOD_DEFAULT_ITEM_NAME = 'Организация питания'
 // item_amounts.py::apply_item_amounts / utils/itemAmounts.ts::applyItemAmounts,
 // которые дополнительно форсируют item_type и на уже существующих строках при
 // каждом пересчёте (эта подмена покрывает МОМЕНТ СОЗДАНИЯ строки).
-const effectiveDefaultItemType = computed(() => itemForm.value ? 'услуга' : props.defaultItemType)
+const effectiveDefaultItemType = computed(() => (itemForm.value || itemFormRowChoices.value) ? 'услуга' : props.defaultItemType)
 const propsForItemDefaults = new Proxy(props, {
   get(target, key, receiver) {
     if (key === 'defaultItemType') return effectiveDefaultItemType.value
@@ -1320,10 +1337,26 @@ const propsForItemDefaults = new Proxy(props, {
 // — see composables/items/useItemsTable.ts.
 const {
   nextUid, ensureUid, normalizeItems, localItems, emitUpdate,
-  addItem, removeItem, clearItem, confirmMatch,
+  addItem: _addItemRaw, removeItem, clearItem, confirmMatch,
   selectedItemIdxs, allItemsSelected, toggleSelectAll, toggleItemSelect, removeSelectedItems,
 } = useItemsTable({ props: propsForItemDefaults, emit })
 void ensureUid; void normalizeItems
+
+// «Проживание и питание»: новая строка такого договора сразу получает
+// item_form='accommodation' (первая форма из CONTRACT_FORM_ROW_CHOICES —
+// см. item_forms.py::item_form_for_row, «выбранное на предыдущем этапе не
+// меняется само» — Lessons.md, здесь ставим СРАЗУ колонкой, не угадываем
+// эвристикой позже). useItemsTable.ts ничего не знает про item_forms
+// (Правило №5/№6 — не плодим второй источник форм там), поэтому дефолт
+// проставляется тут же, сразу после создания строки.
+function addItem(atStart = false) {
+  _addItemRaw(atStart)
+  if (itemFormRowChoices.value && itemFormRowChoices.value.length) {
+    const idx = atStart ? 0 : localItems.value.length - 1
+    const row = localItems.value[idx]
+    if (row && !row.item_form) row.item_form = itemFormRowChoices.value[0]
+  }
+}
 
 // food-menu-editor.md: item_name автозаполняется для формы «Питание» — панель
 // (см. `v-if="isFoodForm"` в шаблоне выше) не показывает поле «Наименование»
@@ -1331,13 +1364,30 @@ void ensureUid; void normalizeItems
 // Трогаем ТОЛЬКО пустые значения — тот же guard-паттерн, что у
 // fillEmptyItemsWithDefaultFeo ниже (не перезаписываем то, что пользователь
 // мог ввести руками до переключения формы договора).
+//
+// Баг 2026-10-01 (QA, «Проживание и питание»): раньше условие было
+// `if (!isFoodForm.value) return` — isFoodForm смотрит только на ЕДИНЫЙ
+// itemForm (contract_form с одной формой на весь договор), а для contract_form
+// из CONTRACT_FORM_ROW_CHOICES («Проживание и питание») itemForm всегда null
+// (форма выбирается ПО СТРОКЕ, см. resolveRowItemForm/item_forms.py). Значит
+// автозаполнение НИКОГДА не срабатывало для строки с row-form='food' под
+// row-choice договором — item_name оставался пустым, а CreateOrderView.vue
+// при сохранении отфильтровывает позиции с пустым item_name
+// (`.filter(i => i.item_name?.trim())`) — строка «Питание» молча пропадала
+// из PUT-запроса целиком. Теперь проверяем ЭФФЕКТИВНУЮ форму каждой строки
+// (resolveRowItemForm, тот же источник, что и рендер строки) — единственное
+// место с этой логикой (Правило №6), не дублируем список форм.
+// row.item_form меняется кликом по переключателю ПОСЛЕ создания строки (длина
+// localItems и itemFormRowChoices при этом не меняются) — без явной зависимости
+// от каждого item_form строка watch не перезапускался бы на переключение
+// «Проживание» → «Питание» на уже существующей строке.
 watch(
-  () => [isFoodForm.value, localItems.value.length] as const,
+  () => [isFoodForm.value, itemFormRowChoices.value, localItems.value.length, localItems.value.map(it => it.item_form).join('|')] as const,
   () => {
-    if (!isFoodForm.value) return
     let changed = false
     for (const it of localItems.value) {
-      if (!it.item_name || !String(it.item_name).trim()) {
+      const effectiveForm = isFoodForm.value ? 'food' : resolveRowItemForm(it)
+      if (effectiveForm === 'food' && (!it.item_name || !String(it.item_name).trim())) {
         it.item_name = FOOD_DEFAULT_ITEM_NAME
         changed = true
       }
@@ -1912,7 +1962,7 @@ const {
   effectiveVatRate, vatAmountForStage, totalWithVatForStage, onVatRateChange, calcItemTotal,
   internalTotalNmck, contractItemsTotal, purchasePlannedTotal, contractSavings, contractSavingsPercent,
   showVatColumnsInExpandRow,
-} = useItemsTotals({ localItems, localContractItems, getContractItemFor, isAdvance, emitUpdate, itemForm })
+} = useItemsTotals({ localItems, localContractItems, getContractItemFor, isAdvance, emitUpdate, itemForm, resolveItemForm: resolveRowItemForm })
 
 // Phase 26-V: resizable columns
 // Phase 26-V-fix (superseded below): «Тип» держал максимум «Услуга»+стрелка

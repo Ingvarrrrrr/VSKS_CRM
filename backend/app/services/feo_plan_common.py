@@ -79,3 +79,38 @@ def _leaf_plan_manual(
     if excess > 0.005 and excess_approved:
         plan_manual = items_total
     return manual_amt, plan_manual, excess
+
+
+def composite_group_metrics(quantities: list, unit_prices: list) -> tuple:
+    """Единая формула агрегации ГРУППЫ строк закупки, привязанных к ОДНОЙ
+    плановой позиции (FeoPlannedItem.is_composite=True) — задача «Составная
+    плановая позиция» (сессия 2026-10-01). Используется И контролем «ТЗ не
+    выше плана» (assert_tz_batch_not_over_plan/patch-гейт одной строки,
+    app/services/feo_plan_tz_checks.py, app/routers/purchase_items_edit.py), И
+    расходом плановой позиции (planned_item_consumption,
+    app/services/feo_plan_fact.py) — ПРАВИЛО №6, формула не дублируется.
+
+    Пример владельца: плановая «Проживание и питание участников» на 133 чел.,
+    закупка — ДВЕ строки: «проживание» 133×1265 и «питание» 133×735, обе
+    привязаны к одной плановой позиции. Без составного режима количество
+    строк сложилось бы (266 > 133 план) и цена за единицу взялась бы
+    максимумом (1265 < план OK, хотя по факту на человека уходит 2000 ₽
+    совокупно). is_composite переключает ОБЕ формулы:
+      - quantities (количества строк группы, включая саму строку) → берётся
+        MAX, а не сумма: 133 и 133 → 133, совпадает с планом;
+      - unit_prices (цены за единицу строк группы) → берётся СУММА, а не
+        максимум: 1265 + 735 = 2000, сравнивается с unit_price плана.
+    Сумма группы (total_price) этой функцией НЕ считается — она остаётся
+    суммой сумм строк, как и в обычном (не составном) режиме, формула не
+    меняется.
+
+    Пустые списки → (Decimal('0'), Decimal('0')) — вызывающий код не должен
+    звать эту функцию для группы без строк, но ноль безопаснее исключения.
+    """
+    from decimal import Decimal
+
+    qtys = [Decimal(str(q)) if q is not None else Decimal("0") for q in quantities]
+    prices = [Decimal(str(p)) if p is not None else Decimal("0") for p in unit_prices]
+    qty = max(qtys) if qtys else Decimal("0")
+    price = sum(prices, Decimal("0"))
+    return qty, price

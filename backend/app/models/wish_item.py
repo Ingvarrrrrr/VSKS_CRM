@@ -43,6 +43,9 @@ class WishItem(Base):
     # копируются в PurchaseItem при конвертации/распределении (wish_convert.py,
     # wish_distribution.py); сама форма выводится из закупки, не из заявки.
     extra_attrs = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    # «Проживание и питание» (mirrors purchase_items.item_form, миграция
+    # w7x8y9z0a1b2) — выбор формы ЭТОЙ строки, см. комментарий там.
+    item_form = Column(String(30), nullable=True)
 
     wish = relationship("Wish", back_populates="items")
     product = relationship("Product", foreign_keys=[product_id])

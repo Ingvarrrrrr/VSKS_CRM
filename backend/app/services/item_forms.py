@@ -155,10 +155,47 @@ CONTRACT_FORM_TO_ITEM_FORM = {
 }
 
 
+# «Проживание и питание» (владелец, решение по задаче): договор, где КАЖДАЯ
+# строка — либо проживание, либо питание, выбор переключателем на строке, а
+# не один item_form на всю закупку/заявку (как у остальных CONTRACT_FORM_TO_
+# ITEM_FORM выше). Хранится PurchaseItem/WishItem/ContractItem.item_form
+# (миграция w7x8y9z0a1b2) — «выбранное на предыдущем этапе не меняется само»
+# (Lessons.md), поэтому колонка, а не эвристика по названию/содержимому.
+# Значение — допустимые формы строки, первая — дефолт для новой строки.
+CONTRACT_FORM_ROW_CHOICES = {
+    "services_accommodation_food": ["accommodation", "food"],
+}
+
+
+def item_form_for_row(contract_form: str | None, row_item_form: str | None = None) -> str | None:
+    """Эффективная форма ОДНОЙ строки позиции — ЕДИНСТВЕННЫЙ источник (Правило
+    №6), которым обязаны пользоваться все расчёты/документы по строке.
+
+    - contract_form без спец-формы (обычные «Услуги», «Поставка» и т.д.) —
+      None, row_item_form не важен.
+    - contract_form с ОДНОЙ формой на весь договор (CONTRACT_FORM_TO_ITEM_FORM:
+      food/accommodation/transport) — эта форма, row_item_form не важен
+      (строка своего item_form не хранит — как и раньше).
+    - contract_form, допускающий ВЫБОР форм на строке (CONTRACT_FORM_ROW_CHOICES,
+      сейчас только «Проживание и питание») — row_item_form, если он входит в
+      допустимые для этого contract_form; иначе первая форма списка — дефолт
+      для новой строки, ещё не выбравшей форму."""
+    if not contract_form:
+        return None
+    choices = CONTRACT_FORM_ROW_CHOICES.get(contract_form)
+    if choices:
+        if row_item_form in choices:
+            return row_item_form
+        return choices[0]
+    return CONTRACT_FORM_TO_ITEM_FORM.get(contract_form)
+
+
 def item_form_for_purchase(purchase) -> str | None:
-    """Форма позиций закупки — ЕДИНСТВЕННЫЙ источник (contract_form самой
-    закупки), позиция/заявка своего item_form не хранит (см. докстринг модуля
-    и план item-forms-accommodation-transport.md, раздел «Модель»)."""
+    """Форма позиций закупки — ЕДИНЫЙ источник на весь договор (contract_form
+    самой закупки). Для contract_form из CONTRACT_FORM_ROW_CHOICES (несколько
+    форм на строку) НЕ годится — здесь нет конкретной строки, чтобы разрешить
+    выбор; такие вызовы должны использовать item_form_for_purchase_item
+    (строка берётся по позиции) ниже."""
     if purchase is None:
         return None
     contract_form = getattr(purchase, "contract_form", None)
@@ -173,10 +210,31 @@ def item_form_for_wish(wish) -> str | None:
     могут быть не только рамочные, но и разовые» — заявка обязана заводить
     спец-форму ДО конвертации в закупку, не только после). Логика намеренно
     зеркалит item_form_for_purchase выше — единственная разница источник
-    (Wish вместо Purchase), формулы/реестр ITEM_FORMS общие и не дублируются."""
+    (Wish вместо Purchase), формулы/реестр ITEM_FORMS общие и не дублируются.
+    Как и item_form_for_purchase — не годится для CONTRACT_FORM_ROW_CHOICES,
+    см. item_form_for_wish_item ниже."""
     if wish is None:
         return None
     contract_form = getattr(wish, "contract_form", None)
     if not contract_form:
         return None
     return CONTRACT_FORM_TO_ITEM_FORM.get(contract_form)
+
+
+def item_form_for_purchase_item(purchase, item) -> str | None:
+    """Эффективная форма ОДНОЙ позиции закупки — читает purchase.contract_form
+    и item.item_form через item_form_for_row (см. выше). Единственное место,
+    которое обязаны звать расчёты/документы ПО СТРОКЕ (apply_item_amounts/
+    compute_item_total/item_form_summary) — замена «одна форма на всю закупку»
+    там, где contract_form допускает выбор на строке."""
+    contract_form = getattr(purchase, "contract_form", None) if purchase is not None else None
+    row_item_form = getattr(item, "item_form", None) if item is not None else None
+    return item_form_for_row(contract_form, row_item_form)
+
+
+def item_form_for_wish_item(wish, item) -> str | None:
+    """Зеркало item_form_for_purchase_item для заявки (см. его докстринг) —
+    wish.contract_form + item.item_form строки."""
+    contract_form = getattr(wish, "contract_form", None) if wish is not None else None
+    row_item_form = getattr(item, "item_form", None) if item is not None else None
+    return item_form_for_row(contract_form, row_item_form)

@@ -29,6 +29,17 @@
       {{ row.name }}
       <span class="feo-planned-qty text-caption text-medium-emphasis">{{ qtyLabel }}</span>
       <v-chip size="x-small" :color="kindColor" variant="tonal" class="ml-1">{{ kindLabel }}</v-chip>
+      <!-- Составная позиция (задача «Составная плановая позиция») — см.
+           докстринг FeoPlannedItem.is_composite: несколько строк закупки на
+           эту позицию не складывают количество между собой. -->
+      <v-chip
+        v-if="row.is_composite"
+        size="x-small"
+        color="indigo"
+        variant="tonal"
+        class="ml-1"
+        title="Несколько услуг на одно количество — строки закупки не складывают количество между собой"
+      >составная</v-chip>
       <v-chip
         v-if="suggestKey === row.key"
         size="x-small"

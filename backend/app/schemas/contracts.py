@@ -160,6 +160,9 @@ class ContractItemBase(BaseModel):
     # item-forms-accommodation-transport.md: копия extra_attrs исходной
     # purchase_items (см. app/models/contract_item.py).
     extra_attrs: dict = {}
+    # «Проживание и питание» (mirrors purchase_items.item_form, миграция
+    # w7x8y9z0a1b2) — копия item_form исходной строки.
+    item_form: Optional[str] = None
 
 
 class ContractItemCreate(ContractItemBase):
@@ -178,6 +181,7 @@ class ContractItemUpdate(BaseModel):
     vat_rate: Optional[str] = None  # Phase 27.1.17
     match_confirmed: Optional[bool] = None
     extra_attrs: Optional[dict] = None
+    item_form: Optional[str] = None
 
 
 class ContractItemOut(ContractItemBase):

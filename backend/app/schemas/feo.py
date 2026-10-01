@@ -96,6 +96,12 @@ class FeoPlannedItemCreate(BaseModel):
     # позиция не трогает каталог) не меняется без явного согласия пользователя.
     product_id: Optional[int] = None
     sync_product_kind: bool = False
+    # Составная плановая позиция (см. докстринг FeoPlannedItem.is_composite и
+    # composite_group_metrics, app/services/feo_plan_common.py) — строки
+    # закупки, привязанные к этой позиции, не складывают количество между
+    # собой (MAX, не сумма), цена за единицу группы сравнивается с планом как
+    # сумма цен строк. Дефолт False — старое поведение.
+    is_composite: bool = False
 
 class FeoPlannedItemOut(FeoPlannedItemCreate):
     id: int

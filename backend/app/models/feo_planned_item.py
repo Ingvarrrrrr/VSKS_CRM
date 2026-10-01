@@ -115,6 +115,20 @@ class FeoPlannedItem(Base):
     feo_unit_price = Column(Numeric(15, 2), nullable=True)
     feo_amount = Column(Numeric(15, 2), nullable=True)
 
+    # Составная плановая позиция (владелец, задача «Составная плановая
+    # позиция»): одна позиция покрывается НЕСКОЛЬКИМИ строками закупки на то
+    # же количество (напр. «проживание» 133 чел. + «питание» 133 чел. — не
+    # 266). См. composite_group_metrics (app/services/feo_plan_common.py,
+    # ПРАВИЛО №6 — единственная формула, используется и контролем «ТЗ не
+    # выше плана» (feo_plan_tz_checks.py), и расходом плановой позиции
+    # (feo_plan_fact.py.planned_item_consumption)): количество группы строк
+    # одной закупки на эту позицию = MAX (не сумма), цена за единицу группы =
+    # СУММА цен за единицу строк (не максимум), сумма группы — без изменений
+    # (сумма сумм). Дефолт False — старая формула (сумма количеств, максимум
+    # цены) не меняется ни для одной существующей позиции. См. миграцию
+    # u1v2w3x4y5z6_feo_planned_item_is_composite.py.
+    is_composite = Column(Boolean, nullable=False, default=False, server_default=text("FALSE"))
+
     feo_category = relationship(
         "FeoCategory",
         backref=backref("planned_items", cascade="all, delete-orphan", passive_deletes=True),

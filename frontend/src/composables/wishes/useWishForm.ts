@@ -742,6 +742,10 @@ export function useWishForm(deps: {
           // заявки стирала бы уже введённые значения (mirrors CreateOrderView.vue
           // items-loading map, extra_attrs: i.extra_attrs || {}).
           extra_attrs: i.extra_attrs || {},
+          // «Проживание и питание»: выбор формы ЭТОЙ строки (mirrors
+          // extra_attrs выше) — без него перезагрузка заявки теряла бы, какую
+          // форму (проживание/питание) выбрал пользователь для строки.
+          item_form: i.item_form ?? null,
           purchase_match: i.purchase_match ?? null,
           // productPhotoSrc (ПРАВИЛО №6) — прямо из полей позиции, отданных
           // GET /wishes/{id} (has_photo/photo_url/photo_link), без похода за
@@ -932,6 +936,11 @@ export function useWishForm(deps: {
             ? 'Черновик сохранён, участники добавлены'
             : 'Черновик сохранён — добавьте участников для совместной работы')
           await reloadStagedMembers()
+          // Баг (прод, заявка №96): без этого вызова кандидаты на «Верхнего
+          // согласующего» (GET /wishes/{id}/approvers/candidates, зависят от
+          // субсидии заявки) не подгружались до переоткрытия диалога —
+          // loadWishApprovers() внутри сам зовёт loadTopApproverCandidates().
+          await reloadApprovers()
           await reloadActiveTab()
           return true
         }

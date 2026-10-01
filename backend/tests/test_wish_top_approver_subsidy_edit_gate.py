@@ -219,3 +219,55 @@ async def test_candidates_endpoint_includes_author_when_authorized(
     ids = {row["id"] for row in resp.json()}
     assert author.id in ids, "Автор с subsidy.edit обязан быть в списке кандидатов"
     assert plain_employee.id not in ids
+
+
+@pytest.mark.asyncio
+async def test_candidates_include_account_owner_and_admin_of_root_org(
+    client, db_session, test_org, make_user, superadmin_headers,
+):
+    """Баг 2026-10-01: дочерняя орга (root_org_id=корневая, owner_user_id=NULL
+    — так заводятся org_dedup.py-дубли из контрагента субсидии) не показывала
+    в кандидатах ни владельца аккаунта (account_owner корневой орги), ни
+    admin, состоящего только в корневой. Оба обязаны быть видны в дочерней —
+    через app.auth.visibility.compute_account_contour_org_ids."""
+    from app.models.organization import Organization
+
+    owner = await make_user(role="account_owner", org_id=test_org.id, full_name="Цыганов")
+    test_org.owner_user_id = owner.id
+    db_session.add(test_org)
+    await db_session.commit()
+
+    child_org = Organization(name="Дочерняя орга (контрагент субсидии)", root_org_id=test_org.id)
+    db_session.add(child_org)
+    await db_session.commit()
+    await db_session.refresh(child_org)
+    assert child_org.owner_user_id is None
+
+    admin = await make_user(role="admin", org_id=test_org.id, full_name="Маркадеева")
+
+    # Другой, полностью несвязанный аккаунт — его account_owner НЕ должен
+    # попасть в кандидаты дочерней орги test_org.
+    other_org = Organization(name="Чужой аккаунт")
+    db_session.add(other_org)
+    await db_session.commit()
+    await db_session.refresh(other_org)
+    other_owner = await make_user(role="account_owner", org_id=other_org.id, full_name="Чужой Владелец")
+    other_org.owner_user_id = other_owner.id
+    db_session.add(other_org)
+    await db_session.commit()
+
+    author = await make_user(role="employee", org_id=child_org.id)
+    from app.models.user_organization import UserOrganization
+    db_session.add(UserOrganization(user_id=author.id, org_id=child_org.id))
+    await db_session.commit()
+
+    w = await _mk_wish(db_session, child_org, author, subsidy=None)
+
+    resp = await client.get(
+        f"/api/wishes/{w.id}/approvers/candidates", headers=superadmin_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    ids = {row["id"] for row in resp.json()}
+    assert owner.id in ids, "account_owner корневой орги обязан быть кандидатом в дочерней"
+    assert admin.id in ids, "admin корневой орги обязан быть кандидатом в дочерней"
+    assert other_owner.id not in ids, "account_owner ДРУГОГО аккаунта не должен попадать в кандидаты"

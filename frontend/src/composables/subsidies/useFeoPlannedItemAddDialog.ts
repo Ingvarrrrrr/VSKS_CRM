@@ -110,6 +110,11 @@ const plannedItemForm = ref({
   // пользователь не тронул поле вручную (addPlannedItemTypeTouched) —
   // выбранное на предыдущем этапе не смеет меняться само.
   item_type: null as string | null,
+  // Составная позиция (задача «Составная плановая позиция») — см. докстринг
+  // FeoPlannedItem.is_composite (backend/app/models/feo_planned_item.py) и
+  // чекбокс «Составная позиция» в PlannedItemAddDialog.vue. Дефолт false —
+  // старое поведение контроля «ТЗ не выше плана» не меняется.
+  is_composite: false,
 })
 
 // Диалог показывает раздельные поля «По ФЭО»/«Внутренний план» ТОЛЬКО когда
@@ -347,7 +352,7 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
       monthly_end_date: '', months_count: null, monthly_amount: null,
       is_feo_breakdown: false, is_internal_plan: true,
       feoQuantity: null, feoUnitPrice: null, feoAmount: null,
-      item_type: null,
+      item_type: null, is_composite: false,
     }
     addPlannedProductId.value = null
     addPlannedProductPhoto.value = null
@@ -398,7 +403,7 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
       // подписана «подробного деления в ФЭО не было» (см. шаблон выше).
       is_feo_breakdown: false, is_internal_plan: true,
       feoQuantity: null, feoUnitPrice: null, feoAmount: null,
-      item_type: null,
+      item_type: null, is_composite: false,
     }
     addPlannedProductId.value = null
     addPlannedProductPhoto.value = null
@@ -435,7 +440,7 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
       // auto_created в plan_autoassign.py (см. is_internal_plan там).
       is_feo_breakdown: false, is_internal_plan: true,
       feoQuantity: null, feoUnitPrice: null, feoAmount: null,
-      item_type: null,
+      item_type: null, is_composite: false,
     }
     addPlannedProductId.value = null
     addPlannedProductPhoto.value = null
@@ -622,6 +627,7 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
       monthly_amount: isMonthly ? numOrNull(f.monthly_amount) : null,
       is_feo_breakdown: f.is_feo_breakdown,
       is_internal_plan: f.is_internal_plan,
+      is_composite: f.is_composite,
       allow_duplicate_name: allowDuplicateName,
       // Тип + синхронизация с каталогом (владелец, 21.09, раздел W2) — product_id
       // транзитный (FeoPlannedItem его не хранит, см. докстринг

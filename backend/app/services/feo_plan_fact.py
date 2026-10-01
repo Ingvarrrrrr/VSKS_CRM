@@ -694,6 +694,46 @@ async def planned_item_consumption(
         result[r.feo_planned_item_id]["used"] = float(r.used)
         result[r.feo_planned_item_id]["used_qty"] = float(r.used_qty)
 
+    # Составные плановые позиции (владелец, задача «Составная плановая
+    # позиция», FeoPlannedItem.is_composite=True) — used_qty выше суммирует
+    # количество ВСЕХ строк (266 для 133+133 «проживание+питание»), что ломает
+    # residual_quantity (см. composite_group_metrics, app/services/
+    # feo_plan_common.py — та же формула, что и в контроле «ТЗ не выше
+    # плана», ПРАВИЛО №6). Для составных позиций used_qty пересчитывается как
+    # Σ_закупок( MAX(quantity) строк ЭТОЙ закупки на данную позицию ) — две
+    # строки одной закупки по 133 чел. дают 133, а не 266; НЕСколько закупок
+    # на одну составную позицию (межзакупочный расход) по-прежнему
+    # складываются между собой, как и used/сумма.
+    from app.models.feo_planned_item import FeoPlannedItem
+    _composite_ids = set((
+        await db.execute(
+            select(FeoPlannedItem.id).where(
+                FeoPlannedItem.id.in_(item_ids), FeoPlannedItem.is_composite.is_(True),
+            )
+        )
+    ).scalars().all())
+    if _composite_ids:
+        _comp_qty_q = (
+            select(
+                PurchaseItem.feo_planned_item_id,
+                PurchaseItem.purchase_id,
+                func.coalesce(func.max(PurchaseItem.quantity), 0).label("max_qty"),
+            )
+            .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
+            .where(PurchaseItem.feo_planned_item_id.in_(list(_composite_ids)))
+            .where(Purchase.status.in_(list(PLANNED_STATUSES)))
+            .where(Purchase.stopped_at.is_(None))
+        )
+        if exclude_purchase_id is not None:
+            _comp_qty_q = _comp_qty_q.where(PurchaseItem.purchase_id != exclude_purchase_id)
+        _comp_qty_q = apply_wish_item_exclusion(_comp_qty_q, exclude_wish_id)
+        _comp_qty_q = _comp_qty_q.group_by(PurchaseItem.feo_planned_item_id, PurchaseItem.purchase_id)
+        _comp_used_qty: dict[int, float] = {iid: 0.0 for iid in _composite_ids}
+        for r in (await db.execute(_comp_qty_q)).all():
+            _comp_used_qty[r.feo_planned_item_id] = _comp_used_qty.get(r.feo_planned_item_id, 0.0) + float(r.max_qty)
+        for iid in _composite_ids:
+            result[iid]["used_qty"] = _comp_used_qty.get(iid, 0.0)
+
     from app.routers.purchase_export import _STATUS_LABELS as _PURCHASE_STATUS_LABELS  # единственный словарь подписей, не дублируем
 
     links_q = (

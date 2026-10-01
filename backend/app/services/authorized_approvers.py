@@ -12,11 +12,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.permissions import has_org_key, _ROLE_PRIORITY
+from app.auth.visibility import compute_account_contour_org_ids
 from app.models.user import User
 from app.models.user_organization import UserOrganization
 from app.models.user_org_access import UserOrgAccess
 from app.models.user_subsidy_access import UserSubsidyAccess
 from app.models.organization import Organization
+
+_ACCOUNT_LEVEL_ROLES = ("admin", "account_owner")
 
 
 async def list_users_with_org_key(
@@ -42,11 +45,20 @@ async def list_users_with_org_key(
     Сознательно НЕ добавляет: всех account_owner огулом (раскрыло бы владельцев
     ЧУЖИХ SaaS-аккаунтов как кандидатов в чужой организации) и superadmin
     (техническая роль поддержки, не сотрудник клиента).
+
+    Дочерние орги (созданные из контрагента субсидии, org_dedup.py) имеют
+    root_org_id на корневую, но owner_user_id=NULL — владелец записан только
+    у корневой орги. Поэтому владельца и admin/account_owner аккаунта ищем не
+    только по org_id, а по всему контуру аккаунта
+    (app.auth.visibility.compute_account_contour_org_ids — тот же канонический
+    расчёт, что в jwt.get_current_user), иначе владелец/админ дочерней
+    организации не попадает в кандидаты (баг Цыганов/Маркадеева, 2026-10-01).
     """
     candidate_ids: set[int] = set()
     stmts = [
         select(UserOrganization.user_id).where(UserOrganization.org_id == org_id),
         select(UserOrgAccess.user_id).where(UserOrgAccess.org_id == org_id),
+        select(User.id).where(User.org_id == org_id),
     ]
     if subsidy_id is not None:
         stmts.append(
@@ -60,6 +72,32 @@ async def list_users_with_org_key(
     )).scalar_one_or_none()
     if owner_id is not None:
         candidate_ids.add(owner_id)
+
+    contour_org_ids = await compute_account_contour_org_ids(db, org_id)
+    if contour_org_ids:
+        owner_ids_in_contour = (await db.execute(
+            select(Organization.owner_user_id).where(
+                Organization.id.in_(contour_org_ids),
+                Organization.owner_user_id.isnot(None),
+            )
+        )).scalars().all()
+        candidate_ids.update(owner_ids_in_contour)
+
+        account_level_ids = (await db.execute(
+            select(User.id).where(
+                User.org_id.in_(contour_org_ids),
+                User.role.in_(_ACCOUNT_LEVEL_ROLES),
+            )
+        )).scalars().all()
+        candidate_ids.update(account_level_ids)
+
+        account_level_uoa_ids = (await db.execute(
+            select(UserOrgAccess.user_id).where(
+                UserOrgAccess.org_id.in_(contour_org_ids),
+                UserOrgAccess.role.in_(_ACCOUNT_LEVEL_ROLES),
+            )
+        )).scalars().all()
+        candidate_ids.update(account_level_uoa_ids)
 
     if exclude_user_id is not None:
         candidate_ids.discard(exclude_user_id)

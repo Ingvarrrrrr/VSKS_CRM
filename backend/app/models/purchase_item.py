@@ -54,6 +54,13 @@ class PurchaseItem(Base):
     # purchase.contract_form (один источник, см. item_form_for_purchase), сама
     # позиция item_form не хранит, только эти атрибуты.
     extra_attrs = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    # «Проживание и питание» (миграция w7x8y9z0a1b2): выбор формы ЭТОЙ строки
+    # ('accommodation'/'food') — только для contract_form из CONTRACT_FORM_
+    # ROW_CHOICES (app/services/item_forms.py); для остальных contract_form
+    # форма по-прежнему одна на всю закупку и это поле не используется.
+    # Хранится колонкой, не эвристикой (выбранное не меняется само) — см.
+    # item_form_for_row/item_form_for_purchase_item в item_forms.py.
+    item_form = Column(String(30), nullable=True)
     # Черновая раскладка канбана «Разбить на несколько» (2026-09-16, владелец:
     # «перекидывал по категориям, вышел из окна — всё слетело»). null — колонка
     # берётся из product.category (как раньше); непустая строка — ручной

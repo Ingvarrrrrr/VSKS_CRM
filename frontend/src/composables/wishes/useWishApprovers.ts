@@ -86,13 +86,26 @@ export function useWishApprovers(deps: {
   // (GET /wishes/{id}/approvers/candidates), не весь orgUsers (иначе каждый
   // сам себя ставил бы согласующим).
   const topApproverCandidates = ref<{ id: number; full_name: string | null; role: string }[]>([])
+  const topApproverCandidatesLoading = ref(false)
+  // Баг (прод, заявка №96): catch {} глотал ошибку загрузки — пустой список
+  // при реальной ошибке сети/бэка выглядел как «нет сотрудников с правом»,
+  // хотя причина была в упавшем запросе. Текст ошибки — в no-data-text
+  // автокомплита (WishFormDialog.vue), не прячем (правило проекта).
+  const topApproverCandidatesError = ref<string | null>(null)
   async function loadTopApproverCandidates() {
-    if (!editingWishId.value) { topApproverCandidates.value = []; return }
+    if (!editingWishId.value) { topApproverCandidates.value = []; topApproverCandidatesError.value = null; return }
+    topApproverCandidatesLoading.value = true
+    topApproverCandidatesError.value = null
     try {
       topApproverCandidates.value = await apiFetch<{ id: number; full_name: string | null; role: string }[]>(
         `/wishes/${editingWishId.value}/approvers/candidates`,
       )
-    } catch { topApproverCandidates.value = [] }
+    } catch (e: any) {
+      topApproverCandidates.value = []
+      topApproverCandidatesError.value = e?.payload?.message || e?.message || `Не удалось загрузить список (${e?.status ?? 'ошибка сети'})`
+    } finally {
+      topApproverCandidatesLoading.value = false
+    }
   }
 
   const approvalStatusColor: Record<string, string> = {
@@ -310,7 +323,7 @@ export function useWishApprovers(deps: {
     wishMembers, participantToAdd, loadWishMembers, addWishMember, removeWishMember,
     wishApprovers, approverTopUser, approverToAdd, approvalMode, cascadeLoading,
     decideComment, decideLoading, tzNotRequiredChecked, approvalStatusColor, approvalStatusLabel,
-    topApproverCandidates, loadTopApproverCandidates,
+    topApproverCandidates, loadTopApproverCandidates, topApproverCandidatesLoading, topApproverCandidatesError,
     isChainApprover, loadWishApprovers, callCascadeApi, runCascade, ensureApprovers,
     addApprover, reorderLoading, moveApprover, removeApprover, decideApprover, loadWishOnce,
     canDecideApprover, isDecidingOnBehalf, approverDecisionLine, requiresConsent,

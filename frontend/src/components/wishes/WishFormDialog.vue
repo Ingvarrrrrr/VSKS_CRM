@@ -687,6 +687,7 @@
                     <v-autocomplete
                       v-model="approverTopUser"
                       :items="topApproverCandidates"
+                      :loading="topApproverCandidatesLoading"
                       item-title="full_name"
                       item-value="id"
                       label="Верхний согласующий"
@@ -694,7 +695,7 @@
                       density="compact"
                       clearable
                       hide-details
-                      no-data-text="Нет сотрудников с правом корректировать субсидию — обратитесь к администратору"
+                      :no-data-text="topApproverCandidatesNoDataText"
                     >
                       <template #item="{ item, props: itemProps }">
                         <v-list-item v-bind="itemProps">
@@ -1373,6 +1374,9 @@ const autosave = useWishItemsFeoAutosave({
   apiFetch,
   form,
   reloadActiveTab: props.reloadActiveTab,
+  // forward-ref на approvers (объявлен ниже, см. комментарий у wishLive) —
+  // лямбда не читает переменную до реальной смены субсидии согласующим.
+  reloadApproverCandidates: () => approvers.loadTopApproverCandidates(),
 })
 
 // Владелец: forward-reference на wishLive (объявлен ниже approvers, approvers
@@ -1505,10 +1509,18 @@ const {
   wishMembers, participantToAdd, addWishMember, removeWishMember,
   wishApprovers, approverTopUser, approverToAdd, approvalMode, cascadeLoading,
   decideComment, decideLoading, tzNotRequiredChecked, approvalStatusColor, approvalStatusLabel,
-  topApproverCandidates,
+  topApproverCandidates, topApproverCandidatesLoading, topApproverCandidatesError,
   runCascade, addApprover, reorderLoading, moveApprover, removeApprover, decideApprover,
   canDecideApprover, isDecidingOnBehalf, approverDecisionLine,
 } = approvers
+
+// Текст, когда список кандидатов на «Верхнего согласующего» пуст — три разных
+// причины, не одна общая (баг прод, заявка №96: ошибка загрузки выглядела
+// как «нет прав»). Сама загрузка — :loading у v-autocomplete ниже.
+const topApproverCandidatesNoDataText = computed(() => {
+  if (topApproverCandidatesError.value) return `Ошибка загрузки списка: ${topApproverCandidatesError.value}`
+  return 'Нет сотрудников с правом корректировать субсидию — обратитесь к администратору'
+})
 
 const { feoAutosavePending, feoAutosaveSaving, wishItemsFeoDirty, savingExecution, saveExecution, saveAssignedTo, saveEventId, saveSubsidyId } = autosave
 

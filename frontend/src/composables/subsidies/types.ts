@@ -188,6 +188,12 @@ export interface FeoPlannedItem {
   feo_quantity?: number | null
   feo_unit_price?: number | null
   feo_amount?: number | null
+  // Составная плановая позиция (задача «Составная плановая позиция») — см.
+  // докстринг FeoPlannedItem.is_composite (backend/app/models/feo_planned_item.py):
+  // несколько строк закупки на эту позицию не складывают количество между
+  // собой (MAX, не сумма), цена за единицу группы сравнивается с планом как
+  // сумма цен строк. Дефолт false — старое поведение не меняется.
+  is_composite?: boolean
   // Ответ PUT /feo-planned-items/{id} (владелец, 21.09, раздел W2) — true,
   // когда sync_product_kind=true в этом запросе реально записал item_type в
   // Product.item_kind (см. backend/app/schemas/feo.py::FeoPlannedItemOut,

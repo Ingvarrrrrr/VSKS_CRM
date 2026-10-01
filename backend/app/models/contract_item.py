@@ -47,6 +47,9 @@ class ContractItem(Base):
     # purchase_items (mirrors purchase_items.extra_attrs) — «скопировать из
     # заявки» переносит и её, иначе договор теряет поля спец-формы позиции.
     extra_attrs = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    # «Проживание и питание» (mirrors purchase_items.item_form, миграция
+    # w7x8y9z0a1b2) — копируется вместе с extra_attrs «скопировать из заявки».
+    item_form = Column(String(30), nullable=True)
 
     purchase = relationship("Purchase", back_populates="contract_items")
     source_item = relationship("PurchaseItem", foreign_keys=[source_item_id])

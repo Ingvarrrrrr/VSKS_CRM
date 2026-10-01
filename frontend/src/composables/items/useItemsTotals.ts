@@ -24,10 +24,17 @@ export interface UseItemsTotalsDeps {
   // (выводится из Purchase.contract_form, см. composables/items/useItemForm.ts) —
   // null для обычных закупок/заявок, тогда calcItemTotal считает как раньше.
   itemForm?: ComputedRef<ItemFormCode | null>
+  // «Проживание и питание»: форма ПО СТРОКЕ (item.item_form), когда
+  // contract_form допускает выбор — зеркало backend item_form_for_row. Если
+  // передан, побеждает itemForm выше для этой позиции (useItemForm.ts::
+  // itemFormForItem уже учитывает обычный случай «форма одна на весь
+  // договор» сам, так что при наличии resolveItemForm itemForm можно не
+  // передавать вовсе).
+  resolveItemForm?: (item: EditorItem) => ItemFormCode | null
 }
 
 export function useItemsTotals(deps: UseItemsTotalsDeps) {
-  const { localItems, localContractItems, getContractItemFor, isAdvance, emitUpdate, itemForm } = deps
+  const { localItems, localContractItems, getContractItemFor, isAdvance, emitUpdate, itemForm, resolveItemForm } = deps
 
   // Phase 27.1.17: per-stage helpers с fallback vat_rate на PurchaseItem
   function effectiveVatRate(idx: number, stage: 'contract' | 'delivery'): string | null {
@@ -70,7 +77,7 @@ export function useItemsTotals(deps: UseItemsTotalsDeps) {
 
   function calcItemTotal(idx: number) {
     const item = localItems.value[idx]
-    const form = itemForm?.value ?? null
+    const form = resolveItemForm ? resolveItemForm(item) : (itemForm?.value ?? null)
     if (form) {
       // Спец-форма позиции («Проживание»/«Перевозки автобусом»): quantity/unit_price
       // (для transport) — производные от extra_attrs, total_price — по формуле формы.

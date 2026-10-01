@@ -57,6 +57,11 @@ class PurchaseItemCreate(BaseModel):
     # «Перевозки», см. app/services/item_forms.py) — форма выводится из
     # purchase.contract_form, не хранится на позиции отдельно.
     extra_attrs: dict = {}
+    # «Проживание и питание» (миграция w7x8y9z0a1b2): выбор формы ЭТОЙ строки
+    # ('accommodation'/'food') — только для contract_form из CONTRACT_FORM_
+    # ROW_CHOICES; для остальных contract_form не используется (форма одна на
+    # всю закупку, как и раньше). См. item_forms.py::item_form_for_row.
+    item_form: Optional[str] = None
 
 class PurchaseItemOut(PurchaseItemCreate):
     id: int

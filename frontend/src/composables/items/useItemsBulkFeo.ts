@@ -57,6 +57,16 @@ export interface UseItemsBulkFeoDeps {
     feoPerItem?: boolean
     defaultFeoCategoryId?: number | null
     itemShape: 'purchase' | 'wish'
+    // Корректировка утверждённой субсидии через проверку (02.10.2026, backend
+    // app/routers/feo_planned_items.py::create_planned_item) — контекст
+    // заявки/закупки, из формы которой жмут «Создать в плане закупок»
+    // (runCreatePlannedBulk ниже). PurchaseItemsEditor.vue уже объявляет все
+    // три поля как реальные пропсы (purchaseId/purchaseWishId — закупка и
+    // заявка, её породившая; wishId — ещё не сохранённая заявка в itemShape
+    // 'wish') и передаёт сюда ВЕСЬ `props` целиком, второй источник не заводим.
+    purchaseId?: number | null
+    purchaseWishId?: number | null
+    wishId?: number | null
   }
   localItems: Ref<EditorItem[]>
   selectedItemIdxs: Ref<number[]>
@@ -398,11 +408,22 @@ export function useItemsBulkFeo(deps: UseItemsBulkFeoDeps) {
     createPlannedBulkProgress.done = 0
     createPlannedBulkProgress.total = rows.length
     let anyChanged = false
+    // Контекст заявки/закупки (владелец, корректировка утверждённой субсидии через
+    // проверку, 02.10.2026) — обходит гейт assert_direct_edit на бэкенде, т.к. это
+    // не прямая правка субсидии, а добор недостающего плана под заявку/закупку.
+    // Для itemShape='purchase' своя закупка + заявка, её породившая; для 'wish' —
+    // ещё не сохранённая заявка формы (см. докстринг полей в интерфейсе выше).
+    const _ctxPurchaseId = props.itemShape === 'purchase' ? props.purchaseId : null
+    const _ctxWishId = props.itemShape === 'purchase' ? props.purchaseWishId : props.wishId
+    const _ctxQs = new URLSearchParams()
+    if (_ctxPurchaseId) _ctxQs.set('purchase_id', String(_ctxPurchaseId))
+    if (_ctxWishId) _ctxQs.set('wish_id', String(_ctxWishId))
+    const _ctxUrl = '/feo-planned-items/' + (_ctxQs.toString() ? `?${_ctxQs.toString()}` : '')
     for (const row of rows) {
       const item = localItems.value[row.idx]
       if (!item) { createPlannedBulkProgress.done += 1; continue }
       try {
-        const created = await apiFetch<{ id: number }>('/feo-planned-items/', {
+        const created = await apiFetch<{ id: number }>(_ctxUrl, {
           method: 'POST',
           body: JSON.stringify({
             feo_category_id: row.categoryId,

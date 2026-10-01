@@ -46,6 +46,12 @@ from app.auth.permissions import require_tab
 from app.auth.visibility import get_visible_subsidy_ids
 from app.utils.http import content_disposition
 from app.services import feo_history
+from app.services import feo_category_write
+from app.services.feo_category_write import (
+    BLOCKING_STATUSES,
+    _collect_blocking_purchases,
+    _purge_feo_categories,
+)
 from typing import List, Optional
 
 router = APIRouter(prefix="/api/feo-categories", tags=["feo_categories"])
@@ -54,67 +60,14 @@ router = APIRouter(prefix="/api/feo-categories", tags=["feo_categories"])
 _content_disposition = content_disposition
 
 
-def _validate_plan_pair(planned_quantity: Optional[float], planned_amount: Optional[float]) -> None:
-    """Правило владельца (2026-08-09): плановое количество и плановая цена за
-    единицу — ПАРА. Если задана цена за единицу, обязано быть задано и
-    количество (тогда сумма = кол-во × цена считается автоматически). Если
-    задано количество без цены — то же самое наоборот. Пусто-пусто — план по
-    этому листу просто не задан руками (допустимо, план может считаться из
-    детей/факта). Оба заполнены — допустимо.
-
-    «Заполнено» = число > 0 (не просто not None) — совпадает с порогом
-    app.services.feo_plan.compute_feo_plan_tree._visit (qty > 0 and amt > 0),
-    иначе planned_quantity=0 с ценой прошло бы валидацию, но провалилось бы в
-    формуле плана (фолбэк на сумму активных FeoPlannedItem, как и «пусто-пусто» —
-    молчаливый и неожиданный для пользователя результат).
-
-    Альтернатива для плана ОБЩЕЙ суммой без разбивки на кол-во/цену (напр.
-    «Канцтовары» на 1 000 000 без детализации) — не эта пара полей категории, а
-    плановая позиция (FeoPlannedItem, кнопка «Добавить плановую» в панели) с
-    суммой amount и БЕЗ quantity.
-    """
-    qty_filled = planned_quantity is not None and float(planned_quantity) > 0
-    amt_filled = planned_amount is not None and float(planned_amount) > 0
-    if qty_filled == amt_filled:
-        return
-    if qty_filled:
-        detail = (
-            "Задано плановое количество, но не задана плановая стоимость за единицу. "
-            "Заполните оба поля («Плановое количество» и «Плановая стоимость за ед.») — "
-            "тогда сумма посчитается автоматически, — либо очистите количество и задайте "
-            "план общей суммой отдельной плановой позицией (кнопка «Добавить плановую» "
-            "в панели) без указания количества."
-        )
-    else:
-        detail = (
-            "Задана плановая стоимость за единицу, но не задано плановое количество. "
-            "Заполните оба поля («Плановое количество» и «Плановая стоимость за ед.») — "
-            "тогда сумма посчитается автоматически, — либо очистите цену и задайте план "
-            "общей суммой отдельной плановой позицией (кнопка «Добавить плановую» в "
-            "панели) без указания количества."
-        )
-    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
-
-
-def _plan_pair_unchanged(
-    old_quantity: Optional[float], old_amount: Optional[float],
-    new_quantity: Optional[float], new_amount: Optional[float],
-) -> bool:
-    """Дефект 2026-08-31 (владелец, «Редактировать направление ФЭО», тупик 409):
-    диалог редактирования категории НЕ даёт править planned_quantity/planned_amount
-    напрямую (см. комментарий у кнопки «Сохранить» в SubsidiesView.vue) — он молча
-    ретранслирует то, что пришло с GET. Если у категории УЖЕ есть унаследованный
-    из БД мисматч пары (старые данные/импорт), PUT с ЛЮБЫМ другим изменением
-    (например, только суммы финансирования) раньше падал 409 из _validate_plan_pair
-    навсегда, без способа сохраниться — комментарий в PUT-обработчике это допускал,
-    но сама проверка была безусловной. Правило владельца «пара обязана биться»
-    остаётся в силе ТОЛЬКО когда пользователь реально ЗАДАЁТ/МЕНЯЕТ одно из двух
-    полей этим запросом — если оба значения пришли ровно такими же, как в БД,
-    мисматч не новый, блокировать нечего.
-    """
-    def norm(v):
-        return None if v is None else float(v)
-    return norm(old_quantity) == norm(new_quantity) and norm(old_amount) == norm(new_amount)
+# Правило владельца (2026-08-09): плановое количество и плановая цена за
+# единицу — ПАРА (см. полный докстринг в feo_category_write.validate_plan_pair,
+# куда эта проверка переехала при разрезании — Правило №5/№6, один источник).
+# Алиасы оставлены под прежними именами: тела create/update используют их
+# через сервис, но имя ОСТАЁТСЯ доступным как `fc._validate_plan_pair`/
+# `fc._plan_pair_unchanged` на случай внешних ссылок/монкипатча.
+_validate_plan_pair = feo_category_write.validate_plan_pair
+_plan_pair_unchanged = feo_category_write.plan_pair_unchanged
 
 
 async def _has_feo_action(current_user, db: AsyncSession, action_key: str) -> bool:
@@ -247,6 +200,11 @@ async def _require_feo_import_write(
                     ).strip(),
                 },
             )
+        # Корректировка утверждённой субсидии: импорт по КАЖДОЙ реально
+        # затронутой субсидии проходит тот же гейт, что и правка одной статьи
+        # (у /import единого subsidy_id нет — субсидия построчная).
+        from app.services.subsidy_revision_guard import assert_direct_edit
+        await assert_direct_edit(db, current_user, sid)
 
 
 @router.get("/", response_model=List[FeoCategoryOut])
@@ -595,44 +553,10 @@ async def create_category(
     # B2: создание новой категории — субсидия ещё не существует как объект, законно
     # берём subsidy_id из тела (это и есть целевая субсидия операции).
     await _require_feo_category_write(current_user, db, category_data.subsidy_id)
-    _validate_plan_pair(category_data.planned_quantity, category_data.planned_amount)
+    from app.services.subsidy_revision_guard import assert_direct_edit
+    await assert_direct_edit(db, current_user, category_data.subsidy_id)
 
-    if category_data.parent_id:
-        parent_result = await db.execute(
-            select(FeoCategory).where(FeoCategory.id == category_data.parent_id)
-        )
-        parent = parent_result.scalar_one_or_none()
-        if not parent:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Родительская категория не найдена")
-        level = parent.level + 1
-    else:
-        level = 1
-
-    new_category = FeoCategory(
-        parent_id=category_data.parent_id,
-        subsidy_id=category_data.subsidy_id,
-        level=level,
-        name=category_data.name,
-        code=category_data.code,
-        appendix=category_data.appendix,
-        is_active=category_data.is_active,
-        description=category_data.description,
-        budget=category_data.budget,
-        feo_quantity=category_data.feo_quantity,
-        feo_unit=category_data.feo_unit,
-        feo_amount=category_data.feo_amount,
-        planned_quantity=category_data.planned_quantity,
-        planned_amount=category_data.planned_amount,
-        unit=category_data.unit,
-        plan_source=category_data.plan_source or "planned_items",
-        manual_plan_amount=category_data.manual_plan_amount,
-    )
-    db.add(new_category)
-    await db.flush()
-    await feo_history.record_created(
-        db, feo_history.ENTITY_FEO_CATEGORY, new_category.id, current_user,
-        source=feo_history.SOURCE_MANUAL, commit=False,
-    )
+    new_category = await feo_category_write.create_category(db, current_user, category_data)
     await db.commit()
     await db.refresh(new_category)
     return new_category
@@ -653,97 +577,11 @@ async def update_category(
     # тела запроса (category_data.subsidy_id) — иначе право можно обойти подменой
     # поля в запросе, отправив subsidy_id чужой субсидии, где есть право.
     await _require_feo_category_write(current_user, db, cat.subsidy_id)
-    if not _plan_pair_unchanged(
-        cat.planned_quantity, cat.planned_amount,
-        category_data.planned_quantity, category_data.planned_amount,
-    ):
-        _validate_plan_pair(category_data.planned_quantity, category_data.planned_amount)
-    _old_plan = (
-        cat.budget, cat.feo_quantity, cat.feo_amount, cat.planned_quantity, cat.planned_amount,
-        cat.plan_source, cat.manual_plan_amount,
-    )
-    # Журнал ФЭО (волна 2) — снимок всех правимых полей ДО присваивания,
-    # приём как в contracts.py.
-    _tracked_fields = (
-        "name", "code", "appendix", "is_active", "description", "budget",
-        "feo_quantity", "feo_unit", "feo_amount", "planned_quantity",
-        "planned_amount", "unit", "plan_source", "manual_plan_amount",
-    )
-    _old_values = {f: getattr(cat, f) for f in _tracked_fields}
-    cat.name = category_data.name
-    cat.code = category_data.code
-    cat.appendix = category_data.appendix
-    cat.is_active = category_data.is_active
-    cat.description = category_data.description
-    cat.budget = category_data.budget
-    cat.feo_quantity = category_data.feo_quantity
-    cat.feo_unit = category_data.feo_unit
-    cat.feo_amount = category_data.feo_amount
-    cat.planned_quantity = category_data.planned_quantity
-    cat.planned_amount = category_data.planned_amount
-    cat.unit = category_data.unit
-    cat.plan_source = category_data.plan_source or "planned_items"
-    cat.manual_plan_amount = category_data.manual_plan_amount
+    from app.services.subsidy_revision_guard import assert_direct_edit
+    await assert_direct_edit(db, current_user, cat.subsidy_id)
 
-    # Задача владельца «план ≠ факт» (шаг D, сессия 2026-08-06): защита от повторения
-    # К1 (боевые 16 760 000 — сумма записана в поле «цена за единицу»). НЕ блокируем
-    # (владелец мог ввести именно это осознанно), только предупреждаем в ответе, если
-    # planned_quantity × planned_amount более чем вдвое больше финансирования ФЭО —
-    # похоже на «сумму вместо цены за единицу» при quantity > 1.
-    warning: Optional[str] = None
-    if (
-        cat.planned_quantity is not None and float(cat.planned_quantity) > 1
-        and cat.planned_amount is not None
-        and cat.budget is not None and float(cat.budget) > 0
-    ):
-        _qty = float(cat.planned_quantity)
-        _amt = float(cat.planned_amount)
-        _budget = float(cat.budget)
-        _total = _qty * _amt
-        if _total > _budget * 2:
-            warning = (
-                f"Похоже, в поле «Цена за единицу» введена сумма: "
-                f"{_qty:g} × {_amt:,.2f} = {_total:,.2f} ₽ при финансировании {_budget:,.2f} ₽."
-            )
-
-    # Владелец, план zany-fluttering-mountain.md (2026-08-13): предупреждение о
-    # смене режима расчёта плана, если в категории уже есть плановые позиции —
-    # переключение на 'manual_sum' не удаляет их (они продолжают участвовать в
-    # excess_plan_over_manual/qty_plan), но раньше именно их сумма БЫЛА планом,
-    # теперь плановой суммой становится manual_plan_amount, введённая руками.
-    if _old_plan[5] != cat.plan_source:
-        from app.models.feo_planned_item import FeoPlannedItem as _FeoPlannedItem
-        _items_cnt = (await db.execute(
-            select(func.count(_FeoPlannedItem.id))
-            .where(_FeoPlannedItem.feo_category_id == cat_id)
-            .where(_FeoPlannedItem.is_active.is_(True))
-        )).scalar_one()
-        if _items_cnt:
-            _mode_warning = (
-                f"Смена способа расчёта плана: у категории уже есть {_items_cnt} "
-                f"плановых позиций. "
-                + (
-                    "Планом теперь становится введённая сумма, а не их Σ — если сумма "
-                    "меньше, появится превышение."
-                    if cat.plan_source == "manual_sum"
-                    else "Планом снова становится Σ плановых позиций."
-                )
-            )
-            warning = f"{warning} {_mode_warning}" if warning else _mode_warning
-
-    _new_plan = (
-        cat.budget, cat.feo_quantity, cat.feo_amount, cat.planned_quantity, cat.planned_amount,
-        cat.plan_source, cat.manual_plan_amount,
-    )
-    if _new_plan != _old_plan and cat.subsidy_id:
-        from app.routers.purchases import _create_plan_graph_version
-        await _create_plan_graph_version(subsidy_id=cat.subsidy_id, db=db, user=current_user, note=f"Авто-версия: изменение плановых показателей ФЭО «{cat.name}»")
-    _new_values = {f: getattr(cat, f) for f in _tracked_fields}
-    await feo_history.record_updated(
-        db, feo_history.ENTITY_FEO_CATEGORY, cat.id, current_user,
-        _old_values, _new_values,
-        source=feo_history.SOURCE_MANUAL, commit=False,
-    )
+    result = await feo_category_write.update_category(db, current_user, cat, category_data)
+    warning = result["warning"]
     await db.commit()
     await db.refresh(cat)
     if warning:
@@ -764,119 +602,11 @@ async def _collect_subtree_ids(cat_id: int, db: AsyncSession) -> list[int]:
     return ids
 
 
-# Удаление блокируют только закупки, по которым работа реально идёт
-# (стадия «Ведётся работа» и далее). Желания/план закупок/подтверждено —
-# работа не начата, категория удаляется, привязка обнуляется (FK SET NULL).
-BLOCKING_STATUSES = ("work_in_progress", "contracted", "ordered", "delivered", "paid")
-
-
-async def _collect_blocking_purchases(ids: list[int], db: AsyncSession) -> list:
-    """Закупки в блокирующих статусах, привязанные к переданным категориям
-    напрямую (Purchase.feo_category_id) либо через позиции (PurchaseItem.feo_category_id).
-    Уникальные по id, поля: id, purchase_number, subject, status."""
-    from app.models.purchase import Purchase
-    from app.models.purchase_item import PurchaseItem
-
-    direct = (await db.execute(
-        select(Purchase.id, Purchase.purchase_number, Purchase.subject, Purchase.status).where(
-            Purchase.feo_category_id.in_(ids),
-            Purchase.status.in_(BLOCKING_STATUSES),
-        )
-    )).all()
-    via_items = (await db.execute(
-        select(Purchase.id, Purchase.purchase_number, Purchase.subject, Purchase.status)
-        .join(PurchaseItem, PurchaseItem.purchase_id == Purchase.id)
-        .where(
-            PurchaseItem.feo_category_id.in_(ids),
-            Purchase.status.in_(BLOCKING_STATUSES),
-        )
-    )).all()
-
-    seen: dict[int, object] = {}
-    for row in direct:
-        seen[row.id] = row
-    for row in via_items:
-        seen.setdefault(row.id, row)
-    return list(seen.values())
-
-
-async def _purge_feo_categories(
-    ids: list[int], db: AsyncSession, user=None,
-    source: str = feo_history.SOURCE_MANUAL, source_ref: int | None = None,
-    record_history: bool = True,
-):
-    """Отвязать все ссылки на переданные категории и удалить их. Не коммитит —
-    коммитит вызывающий.
-
-    Журнал ФЭО (волна 2) — записи __deleted__ на каждую категорию и каждую
-    плановую позицию поддерева, ДО табличного DELETE (после него entity_id
-    ещё валиден для entity_changes — это отдельная таблица, ссылку на
-    FeoCategory/FeoPlannedItem не держит). `user` опционален (совместимость
-    с любым будущим системным вызовом без current_user). `source`/`source_ref`
-    — по умолчанию 'manual' (удаление категории человеком через DELETE
-    /{cat_id}), но feo_import_remap.py зовёт эту же функцию для удаления
-    опустевших узлов при переезде (N2б) с source='import' + source_ref=id
-    прогона (Правило №6 — один механизм удаления категории, а не второй).
-    `record_history=False` — feo_import_remap.py передаёт при dry_run: сама
-    очистка ссылок и DELETE всё равно должны отработать (иначе dry_run не
-    показал бы реальный итог переезда), но откатятся вместе со всей
-    транзакцией; история пишется ТОЛЬКО для боевого прогона (см. задание
-    волны 2 — предпросмотр не пишет ни прогон, ни историю)."""
-    from app.models.purchase import Purchase
-    from app.models.purchase_item import PurchaseItem
-    from app.models.product import Product
-    from app.models.feo_planned_item import FeoPlannedItem
-
-    # Отвязать закупки ранних стадий и их позиции от удаляемого поддерева
-    await db.execute(
-        Purchase.__table__.update().where(Purchase.feo_category_id.in_(ids)).values(feo_category_id=None)
-    )
-    await db.execute(
-        PurchaseItem.__table__.update().where(PurchaseItem.feo_category_id.in_(ids)).values(feo_category_id=None)
-    )
-
-    # Nullify FK references in products before deleting
-    await db.execute(
-        Product.__table__.update().where(Product.feo_category_id.in_(ids)).values(feo_category_id=None)
-    )
-
-    # Nullify FK in purchase_items referencing planned_items of these categories
-    planned_item_ids = (await db.execute(
-        select(FeoPlannedItem.id).where(FeoPlannedItem.feo_category_id.in_(ids))
-    )).scalars().all()
-    if planned_item_ids:
-        await db.execute(
-            PurchaseItem.__table__.update().where(
-                PurchaseItem.feo_planned_item_id.in_(planned_item_ids)
-            ).values(feo_planned_item_id=None)
-        )
-
-    if record_history:
-        for _pi_id in planned_item_ids:
-            await feo_history.record_deleted(
-                db, feo_history.ENTITY_FEO_ITEM, _pi_id, user,
-                source=source, source_ref=source_ref, commit=False,
-            )
-
-    # Delete planned items explicitly (in case DB lacks CASCADE)
-    await db.execute(
-        FeoPlannedItem.__table__.delete().where(FeoPlannedItem.feo_category_id.in_(ids))
-    )
-
-    if record_history:
-        for _cat_id in ids:
-            await feo_history.record_deleted(
-                db, feo_history.ENTITY_FEO_CATEGORY, _cat_id, user,
-                source=source, source_ref=source_ref, commit=False,
-            )
-
-    # Delete categories in one statement — feo_categories.parent_id is
-    # ON DELETE CASCADE in the DB, so order doesn't matter. Doing it via
-    # a table-level DELETE (instead of ORM db.delete per object) avoids
-    # lazy-loading the `children` backref (FeoCategory.parent relationship).
-    await db.execute(
-        FeoCategory.__table__.delete().where(FeoCategory.id.in_(ids))
-    )
+# BLOCKING_STATUSES / _collect_blocking_purchases / _purge_feo_categories —
+# перенесены в app.services.feo_category_write (Правило №5/№6), импортированы
+# в шапке этого файла; имена-алиасы оставлены прежними, т.к. feo_import_remap.py
+# и feo_import_links.py обращаются к ним через `fc._purge_feo_categories`/
+# `fc._collect_blocking_purchases`.
 
 
 @router.get("/{cat_id}/subtree")
@@ -919,30 +649,12 @@ async def delete_category(
     # B2: субсидия удаляемой категории — из объекта, загруженного из БД, тело
     # запроса у DELETE вообще отсутствует, подменить нечем, но источник тот же.
     await _require_feo_category_write(current_user, db, cat.subsidy_id)
+    from app.services.subsidy_revision_guard import assert_direct_edit
+    await assert_direct_edit(db, current_user, cat.subsidy_id)
 
-    # Collect entire subtree
-    all_ids = await _collect_subtree_ids(cat_id, db)
-
-    linked_purchases = await _collect_blocking_purchases(all_ids, db)
-    if linked_purchases:
-        purchase_ids = [p.id for p in linked_purchases]
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "message": (
-                    f"Нельзя удалить: {len(linked_purchases)} закупок со стадией "
-                    f"«Ведётся работа» и далее привязано к этой категории. "
-                    f"Закупки на ранних стадиях (желания, план закупок) удалению не мешают."
-                ),
-                "purchase_ids": purchase_ids,
-                "feo_category_ids": all_ids,
-            }
-        )
-
-    await _purge_feo_categories(all_ids, db, user=current_user)
+    result = await feo_category_write.delete_category(db, current_user, cat)
     await db.commit()
-    deleted_count = len(all_ids)
-    return {"ok": True, "deleted_count": deleted_count}
+    return {"ok": True, "deleted_count": result["deleted_count"]}
 
 
 # Ленивый ре-экспорт (PEP 562 module __getattr__) символов, которые уехали в

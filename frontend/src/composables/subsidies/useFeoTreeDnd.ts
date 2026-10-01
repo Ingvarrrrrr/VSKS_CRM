@@ -262,11 +262,16 @@ function buildFeoTreeDnd(ctx: FeoTreeDndCtx) {
     // здесь, а не размазываем проверку по вызывающим местам.
     const val = (parsedBudget === null || Number.isNaN(parsedBudget) || parsedBudget === 0) ? null : parsedBudget
     try {
+      // Дефект 2026-10-02 (прод): раньше сюда шёл ПОЛНЫЙ набор полей
+      // FeoCategoryCreate, но без description/feo_quantity/feo_unit/feo_amount/
+      // manual_plan_amount/plan_source — PUT присваивал их как None/дефолт и
+      // стирал у категории описание, ФЭО-количество/сумму, ручной план и режим
+      // расчёта. Бэкенд (update_category, app/routers/feo_categories.py) теперь
+      // правит ТОЛЬКО присланные поля (exclude_unset) — инлайн-правка одного
+      // поля шлёт только его, остальное остаётся как было в БД.
       await apiFetch(`/feo-categories/${nodeId}`, {
         method: 'PUT',
-        body: JSON.stringify({ name: savedNode.name, code: savedNode.code ?? null, appendix: savedNode.appendix ?? null,
-          is_active: savedNode.is_active, budget: val, planned_quantity: savedNode.planned_quantity ?? null,
-          planned_amount: savedNode.planned_amount ?? null, unit: savedNode.unit ?? null, subsidy_id: savedNode.subsidy_id }),
+        body: JSON.stringify({ name: savedNode.name, subsidy_id: savedNode.subsidy_id, budget: val }),
       })
       const cat = feoCategories.value.find(c => c.id === nodeId)
       if (cat) cat.budget = val
@@ -306,11 +311,11 @@ function buildFeoTreeDnd(ctx: FeoTreeDndCtx) {
     const raw = String(inlineQtyVal.value ?? '').trim()
     const val = raw === '' ? null : parseFloat(raw)
     try {
+      // См. комментарий в saveInlineBudget выше — шлём только изменённое поле,
+      // не весь набор FeoCategoryCreate (бэкенд правит через exclude_unset).
       await apiFetch(`/feo-categories/${nodeId}`, {
         method: 'PUT',
-        body: JSON.stringify({ name: savedNode.name, code: savedNode.code ?? null, appendix: savedNode.appendix ?? null,
-          is_active: savedNode.is_active, budget: savedNode.budget ?? null, planned_quantity: val,
-          planned_amount: savedNode.planned_amount ?? null, unit: savedNode.unit ?? null, subsidy_id: savedNode.subsidy_id }),
+        body: JSON.stringify({ name: savedNode.name, subsidy_id: savedNode.subsidy_id, planned_quantity: val }),
       })
       const cat = feoCategories.value.find(c => c.id === nodeId)
       if (cat) cat.planned_quantity = val
@@ -342,11 +347,11 @@ function buildFeoTreeDnd(ctx: FeoTreeDndCtx) {
     const raw = String(inlineAmtVal.value ?? '').trim()
     const val = raw === '' ? null : parseFloat(raw)
     try {
+      // См. комментарий в saveInlineBudget выше — шлём только изменённое поле,
+      // не весь набор FeoCategoryCreate (бэкенд правит через exclude_unset).
       await apiFetch(`/feo-categories/${nodeId}`, {
         method: 'PUT',
-        body: JSON.stringify({ name: savedNode.name, code: savedNode.code ?? null, appendix: savedNode.appendix ?? null,
-          is_active: savedNode.is_active, budget: savedNode.budget ?? null, planned_quantity: savedNode.planned_quantity ?? null,
-          planned_amount: val ?? null, unit: savedNode.unit ?? null, subsidy_id: savedNode.subsidy_id }),
+        body: JSON.stringify({ name: savedNode.name, subsidy_id: savedNode.subsidy_id, planned_amount: val ?? null }),
       })
       const cat = feoCategories.value.find(c => c.id === nodeId)
       if (cat) cat.planned_amount = val ?? null

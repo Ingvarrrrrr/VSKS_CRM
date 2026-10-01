@@ -63,6 +63,14 @@ export interface UseFeoPlannedCreateDeps {
     items: FeoPlanPosition[]
     readonly?: boolean
     prefill?: { name?: string | null; quantity?: number | null; unit?: string | null; amount?: number | null; unitPrice?: number | null; itemType?: string | null; productId?: number | null }
+    // Корректировка утверждённой субсидии через проверку (02.10.2026, backend
+    // app/routers/feo_planned_items.py::create_planned_item) — контекст
+    // заявки/закупки, из формы которой открыт этот диалог, передаётся на
+    // бэкенд, чтобы создание плановой позиции из заявки/закупки не считалось
+    // прямой правкой субсидии (assert_direct_edit). Тот же приём, что уже
+    // применён в useFeoPlannedBulk.ts (ПРАВИЛО №6 — второй источник не заводим).
+    purchaseId?: number | null
+    wishId?: number | null
   }
   emit: {
     (event: 'update:modelValue', val: FeoPlanSelection | null): void
@@ -209,6 +217,15 @@ export function useFeoPlannedCreate(deps: UseFeoPlannedCreateDeps) {
   // не NaN/null) — quantity/unitPrice/amount без явного приведения уходили на сервер
   // как есть. numOrNull — общий хелпер (см. @/utils/numberFormat.ts): '' → null,
   // 0 сохраняется как число.
+  // Та же query-строка, что и в useFeoPlannedBulk.ts::runBulkCreate — контекст
+  // заявки/закупки обходит гейт assert_direct_edit на бэкенде.
+  function buildCreateUrl(): string {
+    const qs = new URLSearchParams()
+    if (props.purchaseId) qs.set('purchase_id', String(props.purchaseId))
+    if (props.wishId) qs.set('wish_id', String(props.wishId))
+    return '/feo-planned-items/' + (qs.toString() ? `?${qs.toString()}` : '')
+  }
+
   function buildCreatePayload(allowDuplicate: boolean) {
     return {
       feo_category_id: props.categoryId,
@@ -230,7 +247,7 @@ export function useFeoPlannedCreate(deps: UseFeoPlannedCreateDeps) {
     }
     createSaving.value = true
     try {
-      const created = await apiFetch<{ id: number }>('/feo-planned-items/', {
+      const created = await apiFetch<{ id: number }>(buildCreateUrl(), {
         method: 'POST',
         body: JSON.stringify(buildCreatePayload(false)),
       })
@@ -266,7 +283,7 @@ export function useFeoPlannedCreate(deps: UseFeoPlannedCreateDeps) {
     if (props.categoryId == null) return
     createSaving.value = true
     try {
-      const created = await apiFetch<{ id: number }>('/feo-planned-items/', {
+      const created = await apiFetch<{ id: number }>(buildCreateUrl(), {
         method: 'POST',
         body: JSON.stringify(buildCreatePayload(true)),
       })

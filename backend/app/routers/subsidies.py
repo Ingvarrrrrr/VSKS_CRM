@@ -35,6 +35,11 @@ from typing import List, Optional
 # сами функции теперь живут в отдельных файлах-соседях (см. их докстринги).
 from app.services.org_dedup import _materialize_org_from_contractor, _merge_duplicate_orgs_by_inn
 from app.routers.subsidy_templates import _normalize_docx_template
+# Волна «Корректировка утверждённой субсидии через проверку» (02.10.2026,
+# план breezy-mixing-lovelace.md): тело PUT вынесено в сервис (Правило №6) —
+# применение накопленных правок корректировки позже обязано пройти ТУ ЖЕ
+# дубль-проверку имени и ТУ ЖЕ запись BudgetHistory, что и прямая правка.
+from app.services import subsidy_write
 
 router = APIRouter(prefix="/api/subsidies", tags=["subsidies"])
 
@@ -604,7 +609,12 @@ async def update_subsidy(
                 detail="Нет права редактировать субсидии этой организации: право «Редактирование субсидий» не выдано для организации-грантополучателя",
             )
 
-    old_budget = db_subsidy.budget  # capture BEFORE setattr loop
+        # Корректировка утверждённой субсидии через проверку (02.10.2026): правка
+        # УТВЕРЖДЁННОЙ субсидии обязана пройти assert_direct_edit (черновик выше
+        # по-прежнему правится автором/участниками без этого гейта — у него
+        # ещё нет «утверждённого» состояния, которое корректировка защищает).
+        from app.services.subsidy_revision_guard import assert_direct_edit
+        await assert_direct_edit(db, current_user, subsidy_id)
 
     # Step 1: log incoming payload
     payload = subsidy.model_dump() if hasattr(subsidy, 'model_dump') else subsidy.dict()
@@ -612,35 +622,9 @@ async def update_subsidy(
 
     calc = await calculate_budget_from_categories(db, subsidy_id)
 
-    # Step 2: try normal setattr → commit
-    _upd_name = (payload.get('name') or '').strip()
-    if _upd_name:
-        _dup = (await db.execute(
-            select(Subsidy.id).where(
-                func.lower(func.trim(Subsidy.name)) == _upd_name.lower(),
-                Subsidy.id != subsidy_id,
-            )
-        )).first()
-        if _dup:
-            raise HTTPException(status_code=409, detail=f"Субсидия с названием «{_upd_name}» уже существует")
-    for key, value in payload.items():
-        setattr(db_subsidy, key, value)
-    # calculated_budget — deprecated колонка (Правило №6), БОЛЬШЕ НЕ пишется —
-    # см. app.services.subsidy_budget, считается на чтении.
-
-    # Budget history write hook — track subsidy limit changes only (NOT calculated_budget)
-    if old_budget != db_subsidy.budget:
-        from app.models.budget_history import BudgetHistory as _BH
-        db.add(_BH(
-            subsidy_id=subsidy_id,
-            purchase_id=None,
-            entity_type="subsidy",
-            old_value=float(old_budget) if old_budget is not None else None,
-            new_value=float(db_subsidy.budget) if db_subsidy.budget is not None else None,
-            changed_by_id=current_user.id,
-            changed_by_name=getattr(current_user, 'full_name', None) or current_user.username,
-            reason=None,
-        ))
+    # Step 2: дубль-проверка имени + setattr + BudgetHistory — app.services.subsidy_write
+    # (Правило №6, применение корректировки позже вызовет ту же функцию).
+    await subsidy_write.apply_subsidy_update(db, current_user, db_subsidy, payload)
 
     logger.info(
         "update_subsidy id=%s db_subsidy state before commit: name=%r year=%r budget=%r "
@@ -665,29 +649,18 @@ async def update_subsidy(
         from app.database import ensure_phase22_columns as _ensure_p22
         await _ensure_p22()
 
-        # Перезагружаем объект и повторяем setattr
+        # Перезагружаем объект и повторяем правку — тот же сервис, что и Step 2
+        # выше (app.services.subsidy_write.apply_subsidy_update, Правило №6):
+        # old_budget пересчитывается внутри функции заново из свежезагруженного
+        # db_subsidy.budget — после отката первой попытки это то же исходное
+        # значение, что и раньше, расхождения с оригинальным поведением нет.
         result2 = await db.execute(select(Subsidy).where(Subsidy.id == subsidy_id))
         db_subsidy = result2.scalar_one_or_none()
         if not db_subsidy:
             raise HTTPException(status_code=404, detail="Subsidy not found after ALTER fallback")
         db.expire_all()
 
-        for key, value in payload.items():
-            setattr(db_subsidy, key, value)
-        # calculated_budget — deprecated, не пишется (см. выше).
-
-        if old_budget != db_subsidy.budget:
-            from app.models.budget_history import BudgetHistory as _BH2
-            db.add(_BH2(
-                subsidy_id=subsidy_id,
-                purchase_id=None,
-                entity_type="subsidy",
-                old_value=float(old_budget) if old_budget is not None else None,
-                new_value=float(db_subsidy.budget) if db_subsidy.budget is not None else None,
-                changed_by_id=current_user.id,
-                changed_by_name=getattr(current_user, 'full_name', None) or current_user.username,
-                reason=None,
-            ))
+        await subsidy_write.apply_subsidy_update(db, current_user, db_subsidy, payload)
 
         await db.commit()
         await db.refresh(db_subsidy)

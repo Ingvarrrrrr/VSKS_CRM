@@ -74,6 +74,9 @@ SOURCE_WISH = "wish"
 SOURCE_PURCHASE = "purchase"
 SOURCE_AUTOASSIGN = "autoassign"
 SOURCE_COLLAPSE = "collapse"
+# Корректировка утверждённой субсидии через проверку, волна 1 (2026-10-02) —
+# изменение, применённое из SubsidyRevisionOp после прохождения проверки.
+SOURCE_REVISION = "revision"
 SOURCES = (
     SOURCE_MANUAL,
     SOURCE_IMPORT,
@@ -81,6 +84,7 @@ SOURCES = (
     SOURCE_PURCHASE,
     SOURCE_AUTOASSIGN,
     SOURCE_COLLAPSE,
+    SOURCE_REVISION,
 )
 
 FIELD_CREATED_MARKER = "__created__"

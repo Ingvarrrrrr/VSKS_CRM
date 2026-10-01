@@ -549,6 +549,54 @@ async def _purchase_tz_waive_action():
         logging.getLogger(__name__).warning(f"purchase.tz_waive action seed skipped (non-fatal): {e}")
 
 
+async def _subsidy_correct_action():
+    # Корректировка утверждённой субсидии через проверку, волна 1 (2026-10-02,
+    # владелец). Новое action-право subsidy.correct: обладатель БЕЗ
+    # subsidy.edit может предложить правку утверждённой (status='approved')
+    # субсидии, но она идёт в «корректировку» и ждёт проверки обладателем
+    # subsidy.edit (см. app.services.subsidy_revision_guard). Дефолты — False
+    # для всех шести ролей: это отдельная галочка, которую включают точечно
+    # (персональным оверрайдом/грантом на субсидию), а не массово ролью —
+    # superadmin и так имеет все права в обход этой матрицы.
+    try:
+        from sqlalchemy import select as _sel
+        from app.models.permission import PermissionAction, RolePermission
+        async with async_session() as db:
+            ACTION_KEY = 'subsidy.correct'
+            ex = await db.execute(_sel(PermissionAction).where(PermissionAction.action_key == ACTION_KEY))
+            if not ex.scalar_one_or_none():
+                db.add(PermissionAction(
+                    action_key=ACTION_KEY,
+                    description='Корректировать субсидию (правки через проверку)',
+                ))
+                await db.commit()
+            ROLE_DEFAULTS = [
+                ('superadmin', False), ('account_owner', False), ('admin', False),
+                ('org_admin', False), ('manager', False), ('employee', False),
+            ]
+            for role_name, granted in ROLE_DEFAULTS:
+                ex = await db.execute(_sel(RolePermission).where(
+                    RolePermission.role_name == role_name,
+                    RolePermission.key == ACTION_KEY,
+                ))
+                if not ex.scalar_one_or_none():
+                    db.add(RolePermission(role_name=role_name, key=ACTION_KEY, granted=granted))
+            await db.commit()
+
+            # Правило №6: описание subsidy.edit — один источник истины, обновляем
+            # идемпотентно здесь же (ключ заведён исторически в perm_seed_hotfix.sql
+            # с другим текстом описания — не второй механизм, тот же PermissionAction).
+            edit_action = (await db.execute(
+                _sel(PermissionAction).where(PermissionAction.action_key == 'subsidy.edit')
+            )).scalar_one_or_none()
+            new_desc = 'Править/удалять субсидию напрямую и утверждать корректировки'
+            if edit_action is not None and edit_action.description != new_desc:
+                edit_action.description = new_desc
+                await db.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"subsidy.correct action seed skipped (non-fatal): {e}")
+
+
 async def run():
     """Вызывает все idempotent сиды прав в исходном порядке (см. app/__init__.py.lifespan до разрезания)."""
     await _payment_registry_tab_and_actions()
@@ -565,3 +613,4 @@ async def run():
     await _staff_directory_tab()
     await _staff_location_view_action()
     await _purchase_tz_waive_action()
+    await _subsidy_correct_action()

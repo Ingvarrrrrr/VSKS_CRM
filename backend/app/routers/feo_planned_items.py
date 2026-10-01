@@ -35,6 +35,14 @@ from app.services.item_types import (  # noqa: F401 (normalize_item_type — р�
 from app.models.product import Product
 from app.services import feo_history
 from app.services.feo_planned_item_amount import backfill_unit_price_on_quantity_change
+# Волна «Корректировка утверждённой субсидии через проверку» (02.10.2026,
+# план breezy-mixing-lovelace.md): тела create/bulk/update/delete вынесены в
+# сервис (Правило №6 — одна точка записи, применение корректировки позже
+# будет звать её же). _apply_payment_fields/_check_planned_item_write_access/
+# _can_edit_feo_origin ОСТАЮТСЯ здесь (их по модулю импортируют
+# feo_comments.py и test_planned_item_monthly_period.py) — feo_item_write.py
+# импортирует их лениво (внутри функций), во избежание цикл. импорта.
+from app.services import feo_item_write
 
 
 def _apply_payment_fields(item: FeoPlannedItem, data: FeoPlannedItemCreate) -> None:
@@ -197,6 +205,21 @@ async def list_planned_items(
 @router.post("/", response_model=FeoPlannedItemOut)
 async def create_planned_item(
     data: FeoPlannedItemCreate,
+    # Заявка/закупка, из формы/конвертации которой создаётся плановая позиция
+    # (FeoPlannedItemsSelect.vue в форме заявки/закупки). Создание ПОД заявку/
+    # закупку — это НЕ корректировка субсидии (см.
+    # app.services.subsidy_revision_guard.assert_direct_edit), гейт прямой
+    # правки здесь не вызывается, но контекст обязан реально относиться к той
+    # же субсидии, что и категория — иначе 422 (см. ниже).
+    #
+    # ⚠️ БЕЗ Query(...) (простой default=None) НАМЕРЕННО: тесты этого роутера
+    # (test_feo_history_wave2.py и соседи) зовут create_planned_item напрямую
+    # как обычную Python-функцию, минуя FastAPI DI — Query(None) вместо
+    # обёртки был бы передан внутрь как объект fastapi.Query, а не None.
+    # FastAPI одинаково резолвит безымянный скаляр с дефолтом как query-параметр
+    # и через реальный HTTP-запрос, так что поведение API не меняется.
+    wish_id: Optional[int] = None,
+    purchase_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -216,125 +239,22 @@ async def create_planned_item(
     # 2026-08-19 расширение доступа к удалению) теперь использует ту же матрицу.
     await _check_planned_item_write_access(current_user, db, cat)
 
-    # Задача владельца «план ≠ факт» (шаг D, сессия 2026-08-06): защита от повторения
-    # К2 (боевые 16 760 000 — две активные плановые позиции с одинаковым именем под
-    # одной категорией). Дедуп по (категория, нормализованное имя) — точное совпадение,
-    # НИКАКОГО fuzzy (правило проекта, шаг 4 плана zany-fluttering-mountain.md: нечёткое
-    # сравнение допустимо только для предложения, которое подтверждает человек; дедуп при
-    # создании — строго точное совпадение). Нормализация — общий app.services.text_match
-    # .normalize (единственный источник, не дублируем ad-hoc trim+lower — Python-side
-    # сравнение вместо SQL lower(trim(...)), т.к. normalize() дополнительно убирает
-    # пунктуацию/двойные пробелы, что SQL-выражение не делает — расхождение исказило бы
-    # дедуп). wishes.py._auto_assign_planned_items использует свой trim+lower (тот файл
-    # не трогаем — параллельная задача другого исполнителя), но эта функция теперь общая.
-    _norm_name = _norm_text(data.name or "")
-    if _norm_name:
-        _candidates = (await db.execute(
-            select(FeoPlannedItem).where(
-                FeoPlannedItem.feo_category_id == data.feo_category_id,
-                FeoPlannedItem.is_active == True,
-            )
-        )).scalars().all()
-        existing_item = next((it for it in _candidates if _norm_text(it.name or "") == _norm_name), None)
-        # Жалоба владельца (сессия 2026-08-19): раньше здесь молча делали
-        # `return existing_item` — введённые пользователем количество/сумма
-        # выбрасывались, новая строка тихо привязывалась к чужой позиции без
-        # единого сигнала (боевой пример: футболки 14 шт/15 793,40 ₽ против
-        # новых 10 шт/11 281 ₽ — разное нанесение, разные позиции). Дедуп
-        # остаётся (защита от повторного клика/двойного сабмита и от боевого
-        # случая К2 — см. докстринг выше), но теперь это осознанный выбор
-        # человека: 409 с данными обеих позиций, allow_duplicate_name=True
-        # пропускает дедуп и создаёт вторую позицию с тем же именем.
-        if existing_item is not None and not data.allow_duplicate_name:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    # Текст сокращён (Правило проекта «меньше лишних слов», сессия
-                    # 2026-09-15): числа (кол-во/сумма — старая и новая) дублировались
-                    # в этом же сообщении И в таблице диалога дубля
-                    # (FeoPlannedDuplicateDialog.vue), который читает их из структурных
-                    # полей detail ниже (existing_item_quantity/new_quantity и т.д.) —
-                    # само сообщение теперь только называет позицию и предлагает выбор,
-                    # числа человек видит один раз, в таблице.
-                    "message": (
-                        f"Плановая позиция «{existing_item.name}» уже есть в этой категории. "
-                        f"Привязать к существующей или создать отдельную?"
-                    ),
-                    "error_code": "planned_item_duplicate_name",
-                    "existing_item_id": existing_item.id,
-                    "existing_item_name": existing_item.name,
-                    "existing_item_quantity": str(existing_item.quantity) if existing_item.quantity is not None else None,
-                    "existing_item_unit": existing_item.unit,
-                    "existing_item_amount": str(existing_item.amount) if existing_item.amount is not None else None,
-                    "new_quantity": str(data.quantity) if data.quantity is not None else None,
-                    "new_unit": data.unit,
-                    "new_amount": str(data.amount) if data.amount is not None else None,
-                },
-            )
-        # existing_item is not None здесь означает allow_duplicate_name=True —
-        # дедуп осознанно пропущен, ниже создаётся вторая позиция с тем же именем.
+    # Корректировка утверждённой субсидии через проверку (02.10.2026): прямое
+    # создание плановой позиции из дерева ФЭО субсидии — это правка субсидии,
+    # обязана пройти assert_direct_edit. Создание ИЗ заявки/закупки (контекст
+    # wish_id/purchase_id выше) — другой путь: заявка/закупка добирает себе
+    # недостающий план, это не правка справочника ФЭО субсидии, гейт не
+    # вызывается — но контекст обязан реально относиться к той же субсидии.
+    if wish_id is not None or purchase_id is not None:
+        await feo_item_write.validate_wish_or_purchase_context(db, cat.subsidy_id, wish_id, purchase_id)
+    else:
+        from app.services.subsidy_revision_guard import assert_direct_edit
+        await assert_direct_edit(db, current_user, cat.subsidy_id)
 
-    # Происхождение (is_feo_breakdown/is_internal_plan) — см. _can_edit_feo_origin:
-    # тот, кто заводит позицию без вкладки feo_categories (только через
-    # wish.edit_feo/wishes/purchases), не может проставить признак — поля
-    # тихо остаются дефолтным False/False колонки, а не 403 на весь запрос.
-    _origin_kwargs = {}
-    if await _can_edit_feo_origin(current_user, db):
-        _origin_kwargs = {
-            "is_feo_breakdown": data.is_feo_breakdown,
-            "is_internal_plan": data.is_internal_plan,
-        }
-
-    item = FeoPlannedItem(
-        feo_category_id=data.feo_category_id,
-        name=data.name,
-        quantity=data.quantity,
-        unit=data.unit,
-        # Цена за единицу (владелец, 2026-09-02) — см. докстринг
-        # FeoPlannedItem.unit_price / assert_tz_not_over_plan. NULL = не задана,
-        # amount тогда сам по себе итоговая сумма (не делим на quantity).
-        unit_price=data.unit_price,
-        # Раздельные числа по ФЭО (владелец, 2026-09-14) — см. докстринг
-        # FeoPlannedItem.feo_quantity/feo_unit_price/feo_amount. Не гейтятся
-        # _can_edit_feo_origin: сами по себе это просто числа для сверки, без
-        # доступа к правке is_feo_breakdown они нигде на фронте не показываются
-        # (FeoLevel5Panel.vue рисует их только рядом с выставленной галочкой).
-        feo_quantity=data.feo_quantity,
-        feo_unit_price=data.feo_unit_price,
-        feo_amount=data.feo_amount,
-        notes=data.notes,
-        is_active=data.is_active,
-        sort_order=data.sort_order,
-        item_type=normalize_item_type(data.item_type),
-        # Составная позиция (см. докстринг FeoPlannedItem.is_composite) — не
-        # гейтится _can_edit_feo_origin, как и feo_quantity/feo_unit_price/
-        # feo_amount выше: просто флаг формулы агрегации, не происхождение.
-        is_composite=data.is_composite,
-        # auto_created — НЕ принимается на вход (это точечное создание человеком
-        # через UI), остаётся дефолтным False колонки.
-        **_origin_kwargs,
-    )
-    _apply_payment_fields(item, data)
-    db.add(item)
-    # Синхронизация типа с товаром каталога (владелец, 21.09, раздел W2) — см.
-    # докстринг apply_item_type_to_product/FeoPlannedItemCreate.sync_product_kind.
-    # Единственная точка вызова для этого эндпоинта; сама позиция product_id не
-    # хранит, поле транзитное.
-    if data.sync_product_kind:
-        await apply_item_type_to_product(db, data.product_id, item.item_type)
-    await db.flush()
-    # Журнал ФЭО (волна 2, feo_history.py) — создание позиции человеком через
-    # API. source='manual': эндпоинт доступен и без вкладки feo_categories
-    # (см. _check_planned_item_write_access), но происхождение всё равно
-    # «человек нажал кнопку», а не автоматика.
-    await feo_history.record_created(
-        db, feo_history.ENTITY_FEO_ITEM, item.id, current_user,
-        source=feo_history.SOURCE_MANUAL, commit=False,
-    )
-    _sid = cat.subsidy_id
-    if _sid is not None:
-        from app.routers.purchases import _create_plan_graph_version
-        await _create_plan_graph_version(subsidy_id=_sid, db=db, user=current_user, note="Авто-версия: изменение плановых позиций")
+    # Тело создания (дедуп по имени, происхождение, синхронизация каталога,
+    # журнал ФЭО, авто-версия плана) — app.services.feo_item_write (Правило №6,
+    # применение корректировки позже вызовет ту же функцию).
+    item = await feo_item_write.create_planned_item(db, current_user, cat, data)
     await db.commit()
     await db.refresh(item)
     return item
@@ -343,6 +263,10 @@ async def create_planned_item(
 @router.post("/bulk", response_model=FeoPlannedItemBulkCreateResult)
 async def create_planned_items_bulk(
     body: FeoPlannedItemBulkCreate,
+    # См. wish_id/purchase_id у POST / — та же роль и та же причина плоского
+    # default=None без Query(...) (прямые вызовы в тестах, минуя FastAPI DI).
+    wish_id: Optional[int] = None,
+    purchase_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_tab('feo_categories')),
 ):
@@ -367,159 +291,31 @@ async def create_planned_items_bulk(
     auto_created НЕ проставляется (остаётся False колонки по умолчанию) — все
     позиции этого эндпоинта заведены человеком через диалог выбора способа
     создания, а не автоматически из закупки без участия человека.
+
+    wish_id/purchase_id (02.10.2026, «Корректировка утверждённой субсидии через
+    проверку») — тот же контекст и то же освобождение от assert_direct_edit,
+    что и у POST / (см. его докстринг), проверяется по КАЖДОЙ затронутой
+    субсидии затрагиваемых категорий.
     """
-    if not body.items:
-        raise HTTPException(400, "Список позиций пуст")
-    if len(body.items) > 500:
-        raise HTTPException(400, "Слишком много позиций за один раз (максимум 500)")
-
-    # Владелец (29.09, жалоба 3): диалог «Создать в плане закупок (N)» требует тип
-    # (товар/услуга/работа) у каждой строки, до отправки запроса кнопка там уже
-    # недоступна (см. CreatePlannedBulkDialog.vue) — эта проверка вторая, серверная
-    # страховка на случай прямого вызова API. Только при require_item_type=True
-    # (см. докстринг поля в schemas/feo.py) — остальные потребители (диалог выбора
-    # способа per_item/single/manual) тип не собирают и не должны получить 400.
-    if body.require_item_type:
-        missing_names = [
-            (it.name or "").strip() or f"позиция #{i + 1}"
-            for i, it in enumerate(body.items)
-            if normalize_item_type(it.item_type) is None
-        ]
-        if missing_names:
-            shown = missing_names[:5]
-            more = len(missing_names) - len(shown)
-            names_text = ", ".join(shown) + (f" и ещё {more}" if more > 0 else "")
-            raise HTTPException(
-                400,
-                detail={
-                    "message": (
-                        f"Не указан тип (товар/услуга/работа) у {len(missing_names)} "
-                        f"{'позиции' if len(missing_names) == 1 else 'позиций'}: {names_text}"
-                    ),
-                    "error_code": "planned_item_bulk_missing_type",
-                    "names": missing_names,
-                },
-            )
-
-    cat_ids = {it.feo_category_id for it in body.items}
-    cats = (await db.execute(
-        select(FeoCategory).where(FeoCategory.id.in_(cat_ids))
-    )).scalars().all()
-    cat_by_id = {c.id: c for c in cats}
-    missing = cat_ids - set(cat_by_id)
-    if missing:
-        raise HTTPException(404, f"Категория ФЭО не найдена: {', '.join(str(m) for m in sorted(missing))}")
-
-    existing_by_cat: dict[int, list[FeoPlannedItem]] = {}
-    if cat_ids:
-        existing_rows = (await db.execute(
-            select(FeoPlannedItem).where(
-                FeoPlannedItem.feo_category_id.in_(cat_ids),
-                FeoPlannedItem.is_active == True,
-            )
-        )).scalars().all()
-        for r in existing_rows:
-            existing_by_cat.setdefault(r.feo_category_id, []).append(r)
-
-    max_sort_by_cat: dict[int, int] = {}
-    for cid, rows in existing_by_cat.items():
-        vals = [r.sort_order for r in rows if r.sort_order is not None]
-        max_sort_by_cat[cid] = max(vals) if vals else 0
-
-    created: list[FeoPlannedItem] = []
-    new_items: list[FeoPlannedItem] = []
-    dedup_seen: dict[tuple[int, str], FeoPlannedItem] = {}
-    touched_subsidies: set[int] = set()
-
-    for data in body.items:
-        cat = cat_by_id[data.feo_category_id]
-        norm_name = _norm_text(data.name or "")
-        dedup_key = (data.feo_category_id, norm_name)
-        existing_item = None
-        if norm_name:
-            if dedup_key in dedup_seen:
-                existing_item = dedup_seen[dedup_key]
-            else:
-                existing_item = next(
-                    (it for it in existing_by_cat.get(data.feo_category_id, [])
-                     if _norm_text(it.name or "") == norm_name),
-                    None,
-                )
-        # Владелец (2026-08-20, решение для needPlanRows/runCreatePlannedBulk —
-        # см. докстринг useItemsBulkFeo.ts): «каждой строке своя отдельная
-        # плановая позиция, одноимённые НЕ объединяются». allow_duplicate_name=True
-        # (тот же флаг, что снимает интерактивный 409 у одиночного
-        # create_planned_item) пропускает дедуп для ЭТОЙ строки — остальные
-        # потребители /bulk (FeoPlannedBulkChooserDialog.vue) флаг не шлют,
-        # дефолт False сохраняет прежнее слияние по имени.
-        if existing_item is not None and not data.allow_duplicate_name:
-            created.append(existing_item)
-            dedup_seen[dedup_key] = existing_item
-            continue
-
-        sort_order = data.sort_order
-        if sort_order is None:
-            max_sort_by_cat[data.feo_category_id] = max_sort_by_cat.get(data.feo_category_id, 0) + 1
-            sort_order = max_sort_by_cat[data.feo_category_id]
-
-        item = FeoPlannedItem(
-            feo_category_id=data.feo_category_id,
-            name=data.name,
-            quantity=data.quantity,
-            unit=data.unit,
-            unit_price=data.unit_price,
-            # Раздельные числа по ФЭО (владелец, 2026-09-14) — см. коммент в
-            # create_planned_item / докстринг модели.
-            feo_quantity=data.feo_quantity,
-            feo_unit_price=data.feo_unit_price,
-            feo_amount=data.feo_amount,
-            notes=data.notes,
-            is_active=data.is_active,
-            sort_order=sort_order,
-            item_type=normalize_item_type(data.item_type),
-            # auto_created — НЕ принимается на вход, см. докстринг эндпоинта.
-            # is_feo_breakdown/is_internal_plan — этот эндпоинт целиком за
-            # require_tab('feo_categories') (см. декоратор функции), поэтому,
-            # в отличие от одиночного create_planned_item, права проверять
-            # отдельно не нужно (см. _can_edit_feo_origin).
-            is_feo_breakdown=data.is_feo_breakdown,
-            is_internal_plan=data.is_internal_plan,
-            is_composite=data.is_composite,
+    # Тело (дедуп/валидация/запись/журнал/авто-версия) — app.services.feo_item_write
+    # (Правило №6). Здесь — только гейт: лёгкий запрос subsidy_id категорий ДО
+    # полного тела сервиса (который сам ещё раз грузит категории целиком —
+    # приемлемая цена одного лишнего узкого SELECT ради единой точки проверки).
+    subsidy_ids = set((await db.execute(
+        select(FeoCategory.subsidy_id).where(
+            FeoCategory.id.in_({it.feo_category_id for it in body.items})
         )
-        _apply_payment_fields(item, data)
-        db.add(item)
-        created.append(item)
-        new_items.append(item)
-        if norm_name:
-            dedup_seen[dedup_key] = item
-        if cat.subsidy_id is not None:
-            touched_subsidies.add(cat.subsidy_id)
-        # Синхронизация типа с товаром каталога — тот же вызов, что и в
-        # одиночном create_planned_item (см. его докстринг про
-        # apply_item_type_to_product), по одному на позицию с sync_product_kind=true.
-        if data.sync_product_kind:
-            await apply_item_type_to_product(db, data.product_id, item.item_type)
+    )).scalars().all())
+    subsidy_ids.discard(None)
+    if wish_id is not None or purchase_id is not None:
+        for sid in subsidy_ids:
+            await feo_item_write.validate_wish_or_purchase_context(db, sid, wish_id, purchase_id)
+    else:
+        from app.services.subsidy_revision_guard import assert_direct_edit
+        for sid in subsidy_ids:
+            await assert_direct_edit(db, current_user, sid)
 
-    await db.flush()
-
-    # Журнал ФЭО (волна 2) — по одной записи __created__ на КАЖДУЮ реально
-    # новую позицию (new_items — те, что реально db.add()'ились в цикле выше;
-    # дедуп-совпадения из existing_by_cat/dedup_seen в created попали как
-    # есть, без создания новой строки, историю по ним тут не пишем).
-    for it in new_items:
-        await feo_history.record_created(
-            db, feo_history.ENTITY_FEO_ITEM, it.id, current_user,
-            source=feo_history.SOURCE_MANUAL, commit=False,
-        )
-
-    if touched_subsidies:
-        from app.routers.purchases import _create_plan_graph_version
-        for sid in touched_subsidies:
-            await _create_plan_graph_version(
-                subsidy_id=sid, db=db, user=current_user,
-                note="Авто-версия: массовое создание плановых позиций",
-            )
-
+    created = await feo_item_write.create_planned_items_bulk(db, current_user, body)
     await db.commit()
     for it in created:
         await db.refresh(it)
@@ -539,151 +335,20 @@ async def update_planned_item(
     )).scalar_one_or_none()
     if not item:
         raise HTTPException(404, "Плановая позиция не найдена")
-    _feo_cat_id = item.feo_category_id
-    # Журнал ФЭО (волна 2) — снимок ДО присваивания, приём как в
-    # contracts.py (собрать словарь старых значений перед PUT).
-    _tracked_fields = (
-        "name", "quantity", "unit", "unit_price", "feo_quantity",
-        "feo_unit_price", "feo_amount", "notes", "is_active", "sort_order",
-        "item_type", "is_feo_breakdown", "is_internal_plan", "is_composite",
-        "feo_category_id", "payment_mode", "planned_date",
-        "monthly_start_date", "monthly_end_date", "monthly_amount",
-        "months_count", "amount",
-    )
-    _old_values = {f: getattr(item, f) for f in _tracked_fields}
-    item.name = data.name
-    item.quantity = data.quantity
-    item.unit = data.unit
-    # PUT здесь — ПОЛНАЯ замена, как и у quantity/amount/unit выше (см. докстринг
-    # PATCHABLE-паттерна ниже у item_type/is_feo_breakdown) — любой вызывающий код
-    # (movePlannedItemToCategory/savePlannedItemSortOrder/saveEditPlannedItem в
-    # SubsidiesView.vue) обязан слать unit_price существующей позиции явно, иначе
-    # он молча обнулится. Все три места фронта обновлены вместе с этим полем.
-    item.unit_price = data.unit_price
-    # Раздельные числа по ФЭО (владелец, 2026-09-14) — тот же режим ПОЛНОЙ
-    # замены, что и у quantity/unit_price/amount выше (НЕ через
-    # model_fields_set, в отличие от is_feo_breakdown/item_type): диалог правки
-    # (PlannedItemEditDialog.vue) всегда шлёт актуальный снимок этих трёх
-    # полей явно, как и остальной числовой блок. См. докстринг
-    # FeoPlannedItem.feo_quantity/feo_unit_price/feo_amount.
-    item.feo_quantity = data.feo_quantity
-    item.feo_unit_price = data.feo_unit_price
-    item.feo_amount = data.feo_amount
-    item.notes = data.notes
-    item.is_active = data.is_active
-    item.sort_order = data.sort_order
-    # Тип позиции — единственное поле, которое НЕ обнуляется молчанием клиента.
-    # PUT здесь полная замена, а вызовов у него много (перенос в другую категорию,
-    # смена порядка, правка из карточки, внешние клиенты) — любой из них, не
-    # приславший item_type, стирал бы выбранный человеком тип. Правило проекта:
-    # выбранное на предыдущем этапе не меняется само. Явный item_type: null в теле
-    # запроса по-прежнему очищает поле — это осознанное действие.
-    if "item_type" in data.model_fields_set:
-        item.item_type = normalize_item_type(data.item_type)
-        # Синхронизация типа с товаром каталога (владелец, 21.09, раздел W2) —
-        # только когда клиент реально прислал item_type в этом PUT (иначе
-        # sync_product_kind=true без нового типа нечего синхронизировать) и
-        # явно попросил sync_product_kind=true. См. apply_item_type_to_product.
-        #
-        # product_id — транзитное поле запроса (см. докстринг
-        # FeoPlannedItemCreate.product_id); диалог правки/инлайн-селект типа
-        # (PlannedItemEditDialog.vue, useFeoLevel5ItemType.ts) его не знают —
-        # позиция сама по себе product_id не хранит. Раньше это молча
-        # выключало синхронизацию; теперь при sync_product_kind=true БЕЗ
-        # product_id в теле запроса товар подбирается по ТОЧНОМУ совпадению
-        # имени (app.services.item_types.resolve_product_for_planned_item —
-        # 0 или 2+ совпадений → None, не гадаем).
-        _sync_product_id = data.product_id
-        if data.sync_product_kind and _sync_product_id is None:
-            _sync_product_id = await resolve_product_for_planned_item(db, item)
-        if data.sync_product_kind:
-            _synced = await apply_item_type_to_product(db, _sync_product_id, item.item_type)
-            if _synced:
-                item.product_kind_synced = True
-                _synced_product = (
-                    await db.execute(select(Product.id, Product.name).where(Product.id == _sync_product_id))
-                ).first()
-                item.product_name = _synced_product.name if _synced_product else None
-    # Происхождение (владелец, 2026-09-01) — тот же паттерн, что и у item_type
-    # чуть выше: PUT здесь полная замена, у роутера много вызывающих
-    # (movePlannedItemToCategory/savePlannedItemSortOrder/clearCategoryManualPlan
-    # в SubsidiesView.vue шлют существующие поля позиции, но про НОВЫЕ два поля
-    # ничего не знают) — без model_fields_set-guard любой такой вызов молча
-    # сбросил бы уже выставленный признак в False. Доступ уже ограничен целиком
-    # require_tab('feo_categories') у этого эндпоинта — отдельной проверки, как
-    # в create_planned_item (_can_edit_feo_origin), здесь не нужно.
-    if "is_feo_breakdown" in data.model_fields_set:
-        item.is_feo_breakdown = data.is_feo_breakdown
-    if "is_internal_plan" in data.model_fields_set:
-        item.is_internal_plan = data.is_internal_plan
-    # Составная позиция (см. докстринг FeoPlannedItem.is_composite) — тот же
-    # model_fields_set-guard, что и у is_feo_breakdown/is_internal_plan выше:
-    # у PUT много вызывающих (перенос в категорию, сортировка и т.д.), не
-    # приславших это поле, — без guard они бы молча сбросили флаг в False.
-    if "is_composite" in data.model_fields_set:
-        item.is_composite = data.is_composite
-    # Правка количества без явной цены за единицу (владелец, 30.09.2026,
-    # «Багажник» 2→4, сумма плана не изменилась) — единственное место
-    # (Правило №6), см. докстринг backfill_unit_price_on_quantity_change.
-    if data.payment_mode != "monthly":
-        data.amount, data.unit_price = backfill_unit_price_on_quantity_change(
-            old_quantity=_old_values.get("quantity"), old_amount=_old_values.get("amount"),
-            old_unit_price=_old_values.get("unit_price"),
-            new_quantity=data.quantity, new_amount=data.amount, new_unit_price=data.unit_price,
-        )
-        item.unit_price = data.unit_price
-    _apply_payment_fields(item, data)
 
-    # БАГ (владелец, 2026-08-13): «нажал на кнопку переноса, выбрал категорию,
-    # написало "Позиция перенесена", но на самом деле ничего не перенеслось» —
-    # feo_category_id здесь раньше вообще не присваивался, хотя старая категория
-    # читалась выше в _feo_cat_id. Ответ 200 рапортовал об успехе вхолостую.
-    if data.feo_category_id != _feo_cat_id:
-        old_cat = (
-            await db.execute(select(FeoCategory).where(FeoCategory.id == _feo_cat_id))
-        ).scalar_one_or_none() if _feo_cat_id is not None else None
-        new_cat = (
-            await db.execute(select(FeoCategory).where(FeoCategory.id == data.feo_category_id))
-        ).scalar_one_or_none()
-        if not new_cat:
-            raise HTTPException(404, "Категория ФЭО назначения не найдена")
-        if old_cat is not None and old_cat.subsidy_id != new_cat.subsidy_id:
-            raise HTTPException(
-                409,
-                f"Категория «{old_cat.name}» относится к другой субсидии, чем «{new_cat.name}» — "
-                "перенос плановой позиции между субсидиями невозможен.",
-            )
-        # Перенос — ПЕРЕКЛАДЫВАНИЕ, а не новая трата: сумма позиции не растёт, она
-        # просто уезжает в другую категорию той же субсидии. Намеренно НЕ гоняем
-        # здесь assert_no_unapproved_excess — то же послабление, что и в
-        # purchases.py::patch_purchase_item для смены feo_category_id позиции
-        # закупки (см. её докстринг про боевой случай 3710→3691): блокировать
-        # нужно только реальный ПРИРОСТ суммы, а не сам факт переноса.
-        # Позиции закупок И заявок, уже привязанные к этой плановой позиции,
-        # обязаны переехать вместе с ней — иначе план уедет в новую категорию, а
-        # расход (purchase_items/wish_items) останется числиться в старой, и
-        # план≠факт разъедется ровно там, где его чинили. Общая логика (тоже
-        # используется автопереносом вслед за сменой категории у самой позиции
-        # заявки/закупки) — см. app/services/plan_autoassign.py::move_planned_item_to_category.
-        from app.services.plan_autoassign import move_planned_item_to_category
-        # record_history=False — этот PUT уже пишет ОДИН общий дифф ниже
-        # (feo_history.record_updated с _old_values/_new_values, включая
-        # feo_category_id), см. докстринг move_planned_item_to_category.
-        await move_planned_item_to_category(db, item, data.feo_category_id, record_history=False)
-
-    _new_values = {f: getattr(item, f) for f in _tracked_fields}
-    await feo_history.record_updated(
-        db, feo_history.ENTITY_FEO_ITEM, item.id, current_user,
-        _old_values, _new_values,
-        source=feo_history.SOURCE_MANUAL, commit=False,
-    )
-
-    _sid = (await db.execute(
+    # Корректировка утверждённой субсидии через проверку (02.10.2026): правка
+    # плановой позиции — ВСЕГДА правка субсидии (в отличие от create/bulk/delete,
+    # у PUT нет «контекста заявки/закупки» — это единственная точка изменения
+    # уже существующей строки дерева ФЭО), гейт вызывается безусловно.
+    _gate_subsidy_id = (await db.execute(
         select(FeoCategory.subsidy_id).where(FeoCategory.id == item.feo_category_id)
     )).scalar_one_or_none()
-    if _sid is not None:
-        from app.routers.purchases import _create_plan_graph_version
-        await _create_plan_graph_version(subsidy_id=_sid, db=db, user=current_user, note="Авто-версия: изменение плановых позиций")
+    from app.services.subsidy_revision_guard import assert_direct_edit
+    await assert_direct_edit(db, current_user, _gate_subsidy_id)
+
+    # Тело правки (дифф полей, перенос категории, синхронизация каталога,
+    # журнал ФЭО, авто-версия плана) — app.services.feo_item_write (Правило №6).
+    item = await feo_item_write.update_planned_item(db, current_user, item, data)
     await db.commit()
     await db.refresh(item)
     return item
@@ -771,71 +436,21 @@ async def delete_planned_item(
     if cat is None:
         raise HTTPException(404, "Категория ФЭО не найдена")
     await _check_planned_item_write_access(current_user, db, cat)
-    _sid = cat.subsidy_id
 
-    own_purchase_id = purchase_id
-    # Держатели-«свои»: заявка, чью закупку удаляют (Purchase.wish_id), И/ИЛИ
-    # заявка, из формы которой жмут «удалить» напрямую (wish_id параметр) —
-    # объединяем в множество, обе ситуации не исключают друг друга.
-    own_wish_ids: set[int] = set()
-    if purchase_id is not None:
-        _wish_from_purchase = (await db.execute(
-            select(Purchase.wish_id).where(Purchase.id == purchase_id)
-        )).scalar_one_or_none()
-        if _wish_from_purchase is not None:
-            own_wish_ids.add(_wish_from_purchase)
-    if wish_id is not None:
-        own_wish_ids.add(wish_id)
+    # Корректировка утверждённой субсидии через проверку (02.10.2026): удаление
+    # БЕЗ контекста заявки/закупки — прямая правка субсидии, гейт обязателен.
+    # purchase_id/wish_id — «свои» держатели (см. докстринг эндпоинта выше) —
+    # уже сами по себе доказывают, что удаление идёт из формы заявки/закупки,
+    # а не из справочника ФЭО субсидии напрямую, поэтому гейт не дублируется.
+    if purchase_id is None and wish_id is None:
+        from app.services.subsidy_revision_guard import assert_direct_edit
+        await assert_direct_edit(db, current_user, cat.subsidy_id)
 
-    pi_holder_rows = (await db.execute(
-        select(Purchase.id, Purchase.registry_number)
-        .join(PurchaseItem, PurchaseItem.purchase_id == Purchase.id)
-        .where(PurchaseItem.feo_planned_item_id == item_id)
-        .distinct()
-    )).all()
-    wi_holder_rows = (await db.execute(
-        select(Wish.id, Wish.title)
-        .join(WishItem, WishItem.wish_id == Wish.id)
-        .where(WishItem.feo_planned_item_id == item_id)
-        .distinct()
-    )).all()
-
-    foreign_purchases = [(pid, reg) for pid, reg in pi_holder_rows if pid != own_purchase_id]
-    foreign_wishes = [(wid, title) for wid, title in wi_holder_rows if wid not in own_wish_ids]
-
-    if foreign_purchases or foreign_wishes:
-        holders = [f"закупка {reg or ('№' + str(pid))}" for pid, reg in foreign_purchases]
-        holders += [f"заявка №{wid}" for wid, _title in foreign_wishes]
-        shown = holders[:3]
-        more = len(holders) - len(shown)
-        holders_text = ", ".join(shown) + (f" и ещё {more}" if more > 0 else "")
-        raise HTTPException(
-            409,
-            f"Плановую позицию «{item.name}» использует не только эта закупка: "
-            f"{holders_text}. Сначала снимите привязку там — из этой карточки "
-            "удалять нельзя.",
-        )
-
-    await db.execute(
-        sql_update(PurchaseItem)
-        .where(PurchaseItem.feo_planned_item_id == item_id)
-        .values(feo_planned_item_id=None)
+    # Тело удаления (проверка чужих держателей, снятие ссылок, журнал ФЭО,
+    # авто-версия плана) — app.services.feo_item_write (Правило №6).
+    await feo_item_write.delete_planned_item(
+        db, current_user, item, cat, purchase_id=purchase_id, wish_id=wish_id,
     )
-    await db.execute(
-        sql_update(WishItem)
-        .where(WishItem.feo_planned_item_id == item_id)
-        .values(feo_planned_item_id=None)
-    )
-    _item_id_for_history = item.id
-    await db.delete(item)
-    await db.flush()
-    await feo_history.record_deleted(
-        db, feo_history.ENTITY_FEO_ITEM, _item_id_for_history, current_user,
-        source=feo_history.SOURCE_MANUAL, commit=False,
-    )
-    if _sid is not None:
-        from app.routers.purchases import _create_plan_graph_version
-        await _create_plan_graph_version(subsidy_id=_sid, db=db, user=current_user, note="Авто-версия: изменение плановых позиций")
     await db.commit()
     return {"ok": True}
 

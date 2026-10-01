@@ -79,6 +79,18 @@ async def import_feo_from_excel(
     # происходит внутри _do_feo_import (_require_feo_import_write, ДО первой
     # записи в БД); дыра импорта была именно в отсутствии этой второй проверки.
     await fc._require_feo_category_write(current_user, db, None)
+    # Корректировка утверждённой субсидии через проверку (02.10.2026, план
+    # breezy-mixing-lovelace.md, второй этап — пока просто 409): импорт файла
+    # ЗАТРАГИВАЕТ субсидию построчно (колонка «Субсидия»), единого subsidy_id
+    # запроса здесь нет (см. B2 выше) — поэтому, в отличие от /import-mapped
+    # (где при единой субсидии назначения subsidy_id известен заранее), здесь
+    # передаём None: assert_direct_edit с subsidy_id=None не блокирует импорт
+    # по неизвестной ещё субсидии. Построчная авторитетная проверка ПРЯМОЙ
+    # ПРАВКИ по каждой реально резолвящейся субсидии файла — задача следующего
+    # этапа (внутри _do_feo_import/feo_import_engine.py, вне периметра этой
+    # волны), пока этим гейтом не перекрыта.
+    from app.services.subsidy_revision_guard import assert_direct_edit
+    await assert_direct_edit(db, current_user, None)
     if load_workbook is None:
         raise HTTPException(500, "openpyxl не установлен")
     if not (file.filename or "").lower().endswith((".xlsx", ".xls")):
@@ -352,6 +364,14 @@ async def import_feo_mapped(
     # ДО первой записи в БД.
     _gate_subsidy_id = default_subsidy_id if (col_subsidy < 0 and default_subsidy_id > 0) else None
     await fc._require_feo_category_write(current_user, db, _gate_subsidy_id)
+    # Корректировка утверждённой субсидии через проверку (02.10.2026) — см.
+    # докстринг-комментарий у того же вызова в /import выше. Здесь субсидия
+    # назначения известна заранее, КОГДА она одна на весь файл (_gate_subsidy_id
+    # не None) — тогда гейт реально блокирует импорт в утверждённую субсидию с
+    # включённым флагом корректировки; построчная (col_subsidy задан) проверка —
+    # задача следующего этапа внутри _do_feo_import, вне периметра этой волны.
+    from app.services.subsidy_revision_guard import assert_direct_edit
+    await assert_direct_edit(db, current_user, _gate_subsidy_id)
 
     fname = (file.filename or "").lower()
     content = await file.read()

@@ -32,7 +32,7 @@ router = APIRouter(prefix="/api/entity-changes", tags=["entity-changes"])
 # Allowed entity types (validation guard — ASVS V4 T-31-01-01)
 # feo_item/feo_category добавлены волной 1 журнала истории ФЭО (22.09,
 # app/services/feo_history.py — единственная точка записи для них).
-_VALID_ENTITY_TYPES = {"purchase", "wish", "task", "feo_item", "feo_category"}
+_VALID_ENTITY_TYPES = {"purchase", "wish", "task", "feo_item", "feo_category", "subsidy"}
 
 
 class DismissFieldBody(BaseModel):

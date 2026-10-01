@@ -146,6 +146,8 @@ async def _perform_collapse(db: AsyncSession, cat_id: int, current_user) -> dict
     # Гейт записи — субсидия ИЗ ЗАГРУЖЕННОЙ категории (та же защита от
     # обхода подменой поля, что и у DELETE/PUT в feo_categories.py).
     await fc._require_feo_category_write(current_user, db, cat.subsidy_id)
+    from app.services.subsidy_revision_guard import assert_direct_edit
+    await assert_direct_edit(db, current_user, cat.subsidy_id)
 
     item = await check_collapse_conflict(db, cat)
     parent_id = cat.parent_id  # родитель гарантирован check_collapse_conflict

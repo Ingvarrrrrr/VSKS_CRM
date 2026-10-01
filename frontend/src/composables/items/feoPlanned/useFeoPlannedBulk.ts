@@ -29,6 +29,16 @@ export interface UseFeoPlannedBulkDeps {
     categoryId: number | null
     bulkItems?: BulkItem[]
     bulkTitle?: string | null
+    // Корректировка утверждённой субсидии через проверку (02.10.2026, backend
+    // app/routers/feo_planned_items.py::create_planned_items_bulk) — контекст
+    // заявки/закупки, из формы которой открыт этот диалог (FeoPlannedItemsSelect.vue
+    // уже получает оба прямыми пропсами, см. его purchaseId/wishId), передаётся
+    // на бэкенд, чтобы создание плановой позиции из заявки/закупки не считалось
+    // прямой правкой субсидии (assert_direct_edit). ПРАВИЛО №6 — тот же контекст,
+    // что уже используют purchaseId/wishId в этом же компоненте, второй источник
+    // не заводим.
+    purchaseId?: number | null
+    wishId?: number | null
   }
   emit: {
     (event: 'update:modelValue', val: FeoPlanSelection | null): void
@@ -98,7 +108,13 @@ export function useFeoPlannedBulk(deps: UseFeoPlannedBulkDeps) {
     if (!rows.length) return
     bulkCreating.value = true
     try {
-      const resp = await apiFetch<{ items: { id: number }[] }>('/feo-planned-items/bulk', {
+      // Контекст заявки/закупки (см. докстринг purchaseId/wishId в интерфейсе выше) —
+      // обходит гейт assert_direct_edit на бэкенде (это не прямая правка субсидии).
+      const qs = new URLSearchParams()
+      if (props.purchaseId) qs.set('purchase_id', String(props.purchaseId))
+      if (props.wishId) qs.set('wish_id', String(props.wishId))
+      const url = '/feo-planned-items/bulk' + (qs.toString() ? `?${qs.toString()}` : '')
+      const resp = await apiFetch<{ items: { id: number }[] }>(url, {
         method: 'POST',
         body: JSON.stringify({
           items: rows.map(r => ({

@@ -133,6 +133,22 @@ async def _check_upload_permission(purchase_id: int, current_user, db: AsyncSess
     if approver:
         return
 
+    # 4. видимость закупки через общий контур (ПРАВИЛО №6: не плодить свой
+    # список ролей/условий — переиспользуем build_visibility_clause).
+    # Закрывает прод-баг 01.10: авансовые отчёты (create_purchase не создаёт
+    # PurchaseMember) — assigned_user_id/reimbursement_user_id/service_note_by
+    # делают закупку видимой автору, но без явного member/approver запись
+    # раньше 403-ила на загрузку, хотя пользователь свободно редактирует закупку.
+    from app.auth.visibility import build_visibility_clause
+
+    clause = await build_visibility_clause(current_user, db, 'purchase')
+    query = select(Purchase.id).where(Purchase.id == purchase_id)
+    if clause is not None:
+        query = query.where(clause)
+    visible = (await db.execute(query)).scalar_one_or_none()
+    if visible:
+        return
+
     raise HTTPException(
         status_code=403,
         detail='Загрузка документов доступна участникам закупки, согласующим или по праву "Документы закупки — загрузка"',

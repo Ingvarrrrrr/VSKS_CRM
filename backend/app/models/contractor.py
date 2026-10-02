@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Integer, String, Text, ForeignKey, Date
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import validates
 from app.database import Base
 
 class Contractor(Base):
@@ -48,3 +49,16 @@ class Contractor(Base):
     signatory_first_name = Column(String(100), nullable=True)
     signatory_middle_name = Column(String(100), nullable=True)
     personal_account = Column(String(50), nullable=True)  # лицевой счёт Заказчика
+
+    # ПРАВИЛО №6: один источник нормализации — любой путь записи (API, импорт,
+    # чеки, обогащение из ЕГРЮЛ) проходит через validates(), а не через
+    # отдельный .strip() в каждом роутере/сервисе. Баг на проде (2026-10-02):
+    # ИНН '7723543065 ' (с хвостовым пробелом) не совпадал по равенству со
+    # строкой без пробела в create_contractor, уникальный индекс по
+    # TRIM(inn) при этом отклонял вставку дубля → 500.
+    @validates('inn', 'kpp', 'ogrn')
+    def _normalize_reg_numbers(self, key, value):
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None

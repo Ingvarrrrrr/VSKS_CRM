@@ -22,7 +22,7 @@ app/routers/organizations.py, импортирует его по прежнем�
 менялся, потребитель не переписывался.
 """
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
-from sqlalchemy import select, case, or_
+from sqlalchemy import select, case, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.contractor import Contractor
@@ -227,9 +227,13 @@ async def create_contractor(
     # контрагент уже есть в БД (race condition или забытый lookup). Возвращаем
     # существующего вместо создания дубля.
     inn = (d.get('inn') or '').strip()
+    d['inn'] = inn or None
     if inn:
+        # func.trim защищает от старых строк с пробелами по краям, сохранённых
+        # до normalize_reg_numbers в модели (см. Contractor._normalize_reg_numbers);
+        # сам инд TRIM(inn) в БД от дублей не спасал ровно из-за таких строк.
         existing_q = await db.execute(
-            select(Contractor).where(Contractor.inn == inn)
+            select(Contractor).where(func.trim(Contractor.inn) == inn)
         )
         existing = existing_q.scalars().first()
         if existing:

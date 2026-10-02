@@ -46,6 +46,18 @@ async def _items_view(db: AsyncSession, subsidy_id: int) -> dict:
             "unit": it.unit, "amount": float(it.amount) if it.amount is not None else None,
             "unit_price": float(it.unit_price) if it.unit_price is not None else None,
             "item_type": it.item_type,
+            # Разбивка «по ФЭО» (владелец, 02.10.2026, доработка пар «было →
+            # станет»): без этих полей правка суммы «по ФЭО» у позиции с
+            # обеими галочками была не видна проверяющему вовсе — он видел
+            # только обычные quantity/unit_price/amount (внутренний план).
+            # Тот же набор полей, что и у FeoPlannedItem (ПРАВИЛО №6 — второй
+            # формат узла позиции не заводим), приведение к float такое же,
+            # как у amount/unit_price/quantity выше.
+            "feo_quantity": float(it.feo_quantity) if it.feo_quantity is not None else None,
+            "feo_unit_price": float(it.feo_unit_price) if it.feo_unit_price is not None else None,
+            "feo_amount": float(it.feo_amount) if it.feo_amount is not None else None,
+            "is_feo_breakdown": bool(it.is_feo_breakdown),
+            "is_internal_plan": bool(it.is_internal_plan),
         }
         for it in rows
     }

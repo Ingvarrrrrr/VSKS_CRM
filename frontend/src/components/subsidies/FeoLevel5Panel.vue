@@ -269,11 +269,13 @@
                       <span v-if="feoUnitPriceFor(planned) != null">{{ formatCurrency(Number(feoUnitPriceFor(planned))) }}</span>
                       <span v-else class="text-medium-emphasis" style="font-size:10px;line-height:1.3">{{ UNIT_PRICE_NOT_FIXED_HINT }}</span>
                       <div class="feo-origin-split__label feo-origin-split__label--feo">по ФЭО</div>
+                      <RevisionCellBadge v-if="revisionOverlay?.active.value" v-bind="revPairFeo('feo_unit_price', planned.id, feoUnitPriceFor(planned))" />
                     </div>
                     <div v-if="planned.is_internal_plan" class="feo-origin-split feo-origin-split--internal" :class="planned.is_feo_breakdown ? 'mt-1' : ''">
                       <span v-if="planned.unit_price != null">{{ formatCurrency(Number(planned.unit_price)) }}</span>
                       <span v-else class="text-medium-emphasis" style="font-size:10px;line-height:1.3">{{ UNIT_PRICE_NOT_FIXED_HINT }}</span>
                       <div class="feo-origin-split__label feo-origin-split__label--internal">внутренний план</div>
+                      <RevisionCellBadge v-if="revisionOverlay?.active.value" v-bind="revPairItem('unit_price', planned.id, planned.unit_price != null ? Number(planned.unit_price) : null)" />
                     </div>
                   </template>
                   <template v-else>
@@ -291,10 +293,12 @@
                     <div v-if="planned.is_feo_breakdown" class="feo-origin-split feo-origin-split--feo">
                       <span v-if="feoQuantityFor(planned) != null">{{ parseFloat(String(feoQuantityFor(planned))) }} {{ planned.unit || '' }}</span>
                       <div class="feo-origin-split__label feo-origin-split__label--feo">по ФЭО</div>
+                      <RevisionCellBadge v-if="revisionOverlay?.active.value" v-bind="revPairFeo('feo_quantity', planned.id, feoQuantityFor(planned))" />
                     </div>
                     <div v-if="planned.is_internal_plan" class="feo-origin-split feo-origin-split--internal" :class="planned.is_feo_breakdown ? 'mt-1' : ''">
                       <span v-if="planned.quantity">{{ parseFloat(String(planned.quantity)) }} {{ planned.unit || '' }}</span>
                       <div class="feo-origin-split__label feo-origin-split__label--internal">внутренний план</div>
+                      <RevisionCellBadge v-if="revisionOverlay?.active.value" v-bind="revPairItem('quantity', planned.id, planned.quantity != null ? Number(planned.quantity) : null)" />
                     </div>
                   </template>
                   <template v-else>
@@ -307,10 +311,12 @@
                     <div v-if="planned.is_feo_breakdown" class="feo-origin-split feo-origin-split--feo">
                       <span v-if="feoAmountFor(planned) != null">{{ formatCurrency(Number(feoAmountFor(planned))) }}</span>
                       <div class="feo-origin-split__label feo-origin-split__label--feo">по ФЭО</div>
+                      <RevisionCellBadge v-if="revisionOverlay?.active.value" v-bind="revPairFeo('feo_amount', planned.id, feoAmountFor(planned))" />
                     </div>
                     <div v-if="planned.is_internal_plan" class="feo-origin-split feo-origin-split--internal" :class="planned.is_feo_breakdown ? 'mt-1' : ''">
                       <span v-if="planned.amount">{{ formatCurrency(planned.amount) }}</span>
                       <div class="feo-origin-split__label feo-origin-split__label--internal">внутренний план</div>
+                      <RevisionCellBadge v-if="revisionOverlay?.active.value" v-bind="revPairItem('amount', planned.id, planned.amount != null ? Number(planned.amount) : null)" />
                     </div>
                   </template>
                   <template v-else>
@@ -763,6 +769,22 @@ function revPairItem(field: string, itemId: number, liveValue: number | null): {
   if (!revisionOverlay?.active.value) return { before: live, after: live }
   const b = revisionOverlay.beforeFieldFor('item', itemId, field)
   const a = revisionOverlay.afterFieldFor('item', itemId, field)
+  return { before: b != null ? b : live, after: a != null ? a : live }
+}
+// Пара «Было|Станет» для подблока «по ФЭО» (feo_unit_price/feo_quantity/
+// feo_amount) — доработка 02.10.2026. Тот же фолбэк на внутренний план, что и
+// у feoUnitPriceFor/feoQuantityFor/feoAmountFor ниже (поле feo_* пустое — это
+// то же число, что и «план»), применённый ОТДЕЛЬНО к before и к after
+// (значения до/после правки корректировки могут иметь разный набор пустых
+// полей) — ОДНА вспомогательная функция на все три колонки, не три копии
+// (ПРАВИЛО №6). liveValue передаётся готовым (уже через feoXxxFor) — для
+// режима без overlay достаточно его одного.
+function revPairFeo(feoField: string, itemId: number, liveValue: number | null): { before: number; after: number } {
+  const live = liveValue ?? 0
+  if (!revisionOverlay?.active.value) return { before: live, after: live }
+  const fallbackField = feoField.replace(/^feo_/, '')
+  const b = revisionOverlay.beforeFieldFor('item', itemId, feoField) ?? revisionOverlay.beforeFieldFor('item', itemId, fallbackField)
+  const a = revisionOverlay.afterFieldFor('item', itemId, feoField) ?? revisionOverlay.afterFieldFor('item', itemId, fallbackField)
   return { before: b != null ? b : live, after: a != null ? a : live }
 }
 // useResizableColumns() НЕ singleton — создаёт новый colWidths при каждом вызове

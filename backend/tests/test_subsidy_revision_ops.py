@@ -563,3 +563,53 @@ async def test_create_with_parent_id_from_other_subsidy_is_404(db_session, test_
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail["code"] == "entity_not_in_subsidy"
     assert len(await ops_svc.load_ops(db_session, revision_a.id)) == 0
+
+
+# ── Доработка 02.10.2026 (пары «было → станет» по ФЭО-разбивке) ─────────────
+
+@pytest.mark.asyncio
+async def test_preview_items_view_exposes_feo_breakdown_fields(db_session, test_org, revision_user):
+    """subsidy_revision_preview.py::_items_view (через preview()) обязан
+    отдавать feo_quantity/feo_unit_price/feo_amount позиции — иначе правка
+    суммы «по ФЭО» у позиции с обеими галочками невидима проверяющему (он
+    видит только amount/unit_price/quantity внутреннего плана). before —
+    снимок на момент открытия, after — после применения строки
+    корректировки с полем 'feo_amount'."""
+    from app.services.subsidy_revision_preview import preview
+
+    subsidy = await _make_subsidy(db_session, test_org.id)
+    cat = await _make_category(db_session, subsidy.id)
+    item = FeoPlannedItem(
+        feo_category_id=cat.id, name="Позиция с разбивкой по ФЭО",
+        amount=1000, quantity=1, unit_price=1000, unit="шт", is_active=True,
+        is_feo_breakdown=True, is_internal_plan=True,
+        feo_amount=800, feo_quantity=1, feo_unit_price=800,
+    )
+    db_session.add(item)
+    await db_session.commit()
+    await db_session.refresh(item)
+    item_id = item.id  # preview() откатывает SAVEPOINT -> item истекает, id берём заранее
+
+    revision = await ops_svc.get_or_create_draft(db_session, revision_user, subsidy.id)
+    # feo_amount/feo_quantity/feo_unit_price у FeoPlannedItem живут в группе
+    # 'meta' (см. subsidy_revision_fields.py::FIELD_GROUPS[ENTITY_ITEM]), не
+    # в 'qty_price' (та — обычные quantity/unit_price/amount внутреннего
+    # плана) — группы качественно разные и не склеиваются (докстринг файла).
+    await ops_svc.add_op(db_session, revision, revision_user, {
+        "entity_type": "feo_item", "op_type": "update", "target_id": item_id,
+        "field_group": "meta", "after": {"feo_amount": 650},
+    })
+    await db_session.commit()
+
+    result = await preview(db_session, revision)
+
+    before_item = result["before"]["items"][item_id]
+    after_item = result["after"]["items"][item_id]
+
+    assert before_item["feo_amount"] == 800
+    assert before_item["is_feo_breakdown"] is True
+    assert before_item["is_internal_plan"] is True
+    assert after_item["feo_amount"] == 650
+    # Поля правки не затронуты — остались снимком "было" (внутренний план не
+    # менялся этой строкой корректировки).
+    assert after_item["amount"] == before_item["amount"]

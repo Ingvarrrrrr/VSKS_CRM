@@ -48,6 +48,16 @@
         <RevisionCellBadge :before="m.before" :after="m.after" />
       </span>
     </span>
+    <!-- Разбивка «по ФЭО» (доработка 02.10.2026, п.3) — вторая пара под
+         обычным кол-во/сумма, ТОЛЬКО когда у позиции стоит галочка
+         is_feo_breakdown (до или после правки) — иначе у подавляющего
+         большинства позиций без разбивки она не нужна вовсе. -->
+    <span v-if="feoMetrics.length" class="rtr-metrics rtr-metrics--feo">
+      <span v-for="m in feoMetrics" :key="m.label" class="rtr-metric">
+        <span class="rtr-metric-label">{{ m.label }}</span>
+        <RevisionCellBadge :before="m.before" :after="m.after" />
+      </span>
+    </span>
   </div>
 </template>
 
@@ -107,6 +117,38 @@ const metrics = computed(() => {
   }))
 })
 
+// Доработка 02.10.2026, п.3 — вторая пара «по ФЭО: кол-во / сумма» у позиции
+// с разбивкой (feo_quantity/feo_amount, независимый комплект чисел — см.
+// докстринг FeoPlannedItem.feo_amount/FeoLevel5Panel.vue::feoAmountFor).
+// is_feo_breakdown — булево поле того же узла preview.before/after.items, что
+// и числа (subsidy_revision_preview.py::_items_view); beforeFieldFor /
+// afterFieldFor кастуют его в Number (true -> 1), сравнение с 1 — тот же
+// разбор, без нового метода в useRevisionOverlay.ts (Правило №6).
+const hasFeoBreakdown = computed(() => {
+  if (props.kind !== 'item') return false
+  return review.overlay.beforeFieldFor('item', props.id, 'is_feo_breakdown') === 1
+    || review.overlay.afterFieldFor('item', props.id, 'is_feo_breakdown') === 1
+})
+// feo_* поле пустое (не вводили отдельно) -> тот же фолбэк на обычное поле
+// внутреннего плана, что и в FeoLevel5Panel.vue::revPairFeo — одна и та же
+// формула фолбэка, вычисленная здесь на данных before/after отдельно (второй
+// независимый экран со своим набором пропсов — общий composable-хелпер под
+// оба места не заводим, см. список файлов задачи).
+const FEO_ITEM_METRICS: Array<{ field: string; fallback: string; label: string }> = [
+  { field: 'feo_quantity', fallback: 'quantity', label: 'Кол-во по ФЭО' },
+  { field: 'feo_amount', fallback: 'amount', label: 'Сумма по ФЭО' },
+]
+const feoMetrics = computed(() => {
+  if (!hasFeoBreakdown.value) return []
+  return FEO_ITEM_METRICS.map((m) => {
+    const before = review.overlay.beforeFieldFor('item', props.id, m.field)
+      ?? review.overlay.beforeFieldFor('item', props.id, m.fallback) ?? 0
+    const after = review.overlay.afterFieldFor('item', props.id, m.field)
+      ?? review.overlay.afterFieldFor('item', props.id, m.fallback) ?? 0
+    return { label: m.label, before, after }
+  })
+})
+
 function onRowClick() {
   if (!op.value) return
   document.querySelector<HTMLElement>(`[data-rev-op-id="${op.value.id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -129,6 +171,7 @@ function onRowClick() {
 .rtr-name--deleted { color: #dc2626; text-decoration: line-through; }
 .rtr-hint { font-size: 11px; color: var(--crm-text-muted); margin-left: 4px; }
 .rtr-metrics { display: flex; flex-wrap: wrap; gap: 10px; margin-left: auto; }
+.rtr-metrics--feo { margin-left: 0; width: 100%; justify-content: flex-end; opacity: 0.85; }
 .rtr-metric { display: flex; align-items: center; gap: 4px; font-size: 11px; }
 .rtr-metric-label { color: var(--crm-text-muted); }
 </style>

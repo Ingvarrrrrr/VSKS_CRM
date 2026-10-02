@@ -10,7 +10,10 @@ from app.models.purchase_item import PurchaseItem
 from app.schemas.schemas import PurchaseItemOut, PurchaseOutFull, PurchaseFileOut, SubsidyAllocationOut, PurchaseAmountsOut
 from app.services.purchase_contract_header import contract_header as _contract_header
 from app.services.item_contractor import item_contractor as _item_contractor
-from app.services.purchase_contractor_display import display_contractor_name as _display_contractor_name
+from app.services.purchase_contractor_display import (
+    display_contractor_name as _display_contractor_name,
+    seller_display_for_advance as _seller_display_for_advance,
+)
 
 
 async def items_out_with_contractor_map(db, items) -> list:
@@ -178,18 +181,22 @@ def _purchase_to_full(
             )
             for a in allocations
         ]
-    # Multi-contractor label for advance reports
+    # Продавец(ы) авансового — для реестра авансовых (колонка "Контрагент",
+    # AdvanceReportsView.vue) и для «Мн. контрагент» в общем реестре/договорах
+    # (OrdersTable.vue, ContractsTable.vue). ЕДИНСТВЕННЫЙ расчёт —
+    # seller_display_for_advance (ПРАВИЛО №6, see его докстринг в
+    # purchase_contractor_display.py); второй копии формулы здесь не держим.
     multi_contractor_label: str | None = None
-    if p.purchase_method == 'advance' and p.items:
-        unique_names = {
+    if p.purchase_method == 'advance':
+        _item_contractor_names = [
             _item_contractor(item, name_map=contractors, inn_map=contractor_inns)["contractor_name"]
-            for item in p.items
-        }
-        unique_names.discard(None)
-        if len(unique_names) > 1:
-            multi_contractor_label = "Множественный контрагент"
-        elif len(unique_names) == 1:
-            multi_contractor_label = next(iter(unique_names))
+            for item in (p.items or [])
+        ]
+        multi_contractor_label = _seller_display_for_advance(
+            p,
+            item_contractor_names=_item_contractor_names,
+            header_contractor_name=contractors.get(_hdr.contractor_id),
+        )
 
     _excess = (feo_excess_map or {}).get(p.id) or {}
     _mismatch = (feo_mismatch_map or {}).get(p.id) or {}

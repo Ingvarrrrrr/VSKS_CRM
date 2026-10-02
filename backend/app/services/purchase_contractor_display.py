@@ -26,6 +26,27 @@ app.routers.purchase_export._get_cell_value). Второй копии этой �
 Для остальных способов закупки — как и раньше: контрагент шапки закупки
 (contractor_id, при наличии contract_id — из Contract, см.
 app.services.purchase_contract_header).
+
+---
+
+seller_display_for_advance — ВТОРАЯ, НО ЯВНО ОТДЕЛЬНАЯ развилка (владелец,
+02.10): в реестре АВАНСОВЫХ (frontend/src/views/AdvanceReportsView.vue)
+колонка "Контрагент" обязана показывать не то же самое, что
+display_contractor_name — там показан продавец из чеков/позиций закупки, а
+не «кому возмещать». Общий реестр закупок и его Excel-экспорт (purchase_export.
+_get_cell_value) продолжают звать display_contractor_name — эта функция НЕ
+подменяет её и не вызывается из тех путей, только из сборки реестра
+авансовых (app.services.purchase_serializers._purchase_to_full →
+multi_contractor_label — тот же единственный расчёт, второй копии формулы
+«один продавец → имя, несколько разных → ярлык» не заводится: раньше это
+дублировалось инлайном в _purchase_to_full, теперь вынесено сюда).
+
+Правило: продавцы = различные контрагенты по позициям/чекам закупки
+(PurchaseItem.contractor, см. app.services.item_contractor.item_contractor —
+FK на Contractor либо текст). Если ни у одной позиции продавец не задан —
+фолбэк на Purchase.contractor_id (шапка закупки). Один продавец → его
+название; несколько различных → "Множественный контрагент" (полный список —
+на вызывающей стороне, из тех же item_contractor_names, без второго расчёта).
 """
 from app.models.purchase import Purchase
 
@@ -40,3 +61,27 @@ def display_contractor_name(
     if getattr(p, "purchase_method", None) == "advance":
         return reimbursement_user_name or service_note_by_name or None
     return contractor_name
+
+
+def seller_display_for_advance(
+    p: Purchase,
+    *,
+    item_contractor_names: list | None = None,
+    header_contractor_name: str | None = None,
+) -> str | None:
+    """Продавец(ы) авансового отчёта — для колонки "Контрагент" РЕЕСТРА
+    АВАНСОВЫХ (не общего реестра закупок, см. докстринг модуля выше).
+
+    item_contractor_names — имена продавцов по позициям/чекам закупки (может
+    содержать None/дубли — вызывающий не обязан дедуплицировать заранее).
+    header_contractor_name — Contractor шапки закупки (Purchase.contractor_id),
+    фолбэк, когда ни у одной позиции продавец не задан.
+    """
+    if getattr(p, "purchase_method", None) != "advance":
+        return None
+    unique_names = {n for n in (item_contractor_names or []) if n}
+    if not unique_names:
+        return header_contractor_name
+    if len(unique_names) > 1:
+        return "Множественный контрагент"
+    return next(iter(unique_names))

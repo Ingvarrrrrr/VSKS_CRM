@@ -153,17 +153,17 @@
             @hide="toggleVisible('displayName', false)"
           />
         </template>
-        <template #header.contractor_name="{ column }">
+        <template #header._seller_display="{ column }">
           <ColumnHeaderMenu
-            col-key="contractor_name"
+            col-key="_seller_display"
             :title="column.title"
             col-type="enum"
-            :items="uniqValues(enrichedItems, 'contractor_name')"
-            :model-value="cfg.state.value.filters['contractor_name'] ?? null"
-            :sort-by="getSortBy('contractor_name')"
-            @update:model-value="(v: FilterValue | null) => setFilter('contractor_name', v)"
-            @sort="(dir: 'asc' | 'desc' | null) => applySort('contractor_name', dir)"
-            @hide="toggleVisible('contractor_name', false)"
+            :items="uniqValues(enrichedItems, '_seller_display')"
+            :model-value="cfg.state.value.filters['_seller_display'] ?? null"
+            :sort-by="getSortBy('_seller_display')"
+            @update:model-value="(v: FilterValue | null) => setFilter('_seller_display', v)"
+            @sort="(dir: 'asc' | 'desc' | null) => applySort('_seller_display', dir)"
+            @hide="toggleVisible('_seller_display', false)"
           />
         </template>
         <template #header.reimbursement_user_name="{ column }">
@@ -321,39 +321,26 @@
           <span>{{ item.displayName }}</span>
         </template>
 
-        <!-- Владелец, 30.09: «Контрагент» авансового = получатель возмещения
-             (или автор/инициатор, если возмещение ещё не назначено) — бэк уже
-             считает это в contractor_name (см. purchase_contractor_display.
-             display_contractor_name), второй расчёт здесь не заводим. Продавцы
-             из чеков — отдельная колонка «Продавцы (из чеков)» ниже (было тут,
-             под тем же ключом contractor_name, см. комментарий U-1 — исторический). -->
-        <template #item.contractor_name="{ item }">
-          <v-chip v-if="item.contractor_name" size="x-small" color="purple" variant="tonal" prepend-icon="mdi-account-cash">
-            {{ item.contractor_name }}
+        <!-- Владелец, 02.10 (РЕЕ-2026-00975): «Контрагент» реестра авансовых =
+             продавец(ы) из чеков/позиций закупки, а не «кому возмещать» (та
+             колонка — отдельно, «Кому возмещать» ниже). Значение —
+             _seller_display (бэк, multi_contractor_label, см. enrichedItems);
+             при нескольких разных продавцах бэк отдаёт "Множественный
+             контрагент" — полный список показываем подсказкой из
+             _seller_names_hint (те же items[].contractor_name). -->
+        <template #item._seller_display="{ item }">
+          <v-tooltip v-if="(item as any)._seller_count > 1" location="top">
+            <template #activator="{ props: tip }">
+              <v-chip v-bind="tip" size="x-small" color="orange" variant="tonal" prepend-icon="mdi-domain-switch">
+                {{ (item as any)._seller_display }}
+              </v-chip>
+            </template>
+            <span>{{ (item as any)._seller_names_hint }}</span>
+          </v-tooltip>
+          <v-chip v-else-if="(item as any)._seller_display" size="x-small" color="indigo" variant="tonal" prepend-icon="mdi-store">
+            {{ (item as any)._seller_display }}
           </v-chip>
           <span v-else class="text-medium-emphasis">—</span>
-        </template>
-
-        <!-- Продавцы (из чеков) — бывшее содержимое колонки «Контрагент» (U-1),
-             вынесено сюда отдельной колонкой (владелец, 30.09). -->
-        <template #item._unique_item_contractor_name="{ item }">
-          <div>
-            <v-chip
-              v-if="(item as any)._unique_item_contractor_count === 1"
-              size="x-small" color="indigo" variant="tonal" prepend-icon="mdi-store"
-            >
-              {{ (item as any)._unique_item_contractor_name }}
-            </v-chip>
-            <v-tooltip v-else-if="(item as any)._unique_item_contractor_count > 1" location="top">
-              <template #activator="{ props: tip }">
-                <v-chip v-bind="tip" size="x-small" color="orange" variant="tonal" prepend-icon="mdi-domain-switch">
-                  {{ (item as any)._unique_item_contractor_name }} +{{ (item as any)._unique_item_contractor_count - 1 }} ещё
-                </v-chip>
-              </template>
-              <span>{{ (item as any)._all_item_contractor_names }}</span>
-            </v-tooltip>
-            <span v-else class="text-caption text-medium-emphasis">—</span>
-          </div>
         </template>
 
         <template #item.reimbursement_user_name="{ item }">
@@ -453,18 +440,11 @@
               <div v-if="item.displayName && item.displayName !== '—'" class="text-caption text-medium-emphasis mb-1" style="overflow-wrap:anywhere">
                 {{ item.displayName.length > 80 ? item.displayName.slice(0, 80) + '...' : item.displayName }}
               </div>
-              <!-- Владелец, 30.09: Контрагент = получатель возмещения (см. комментарий
-                   у #item.contractor_name выше); продавцы из чеков — строкой ниже. -->
+              <!-- Владелец, 02.10: Контрагент карточки = продавец из чеков (см.
+                   комментарий у #item._seller_display выше), не «кому возмещать». -->
               <div class="text-caption text-medium-emphasis">Контрагент</div>
               <div class="text-body-2 mb-1" style="overflow-wrap:anywhere">
-                {{ item.contractor_name || '—' }}
-              </div>
-              <div v-if="(item as any)._unique_item_contractor_count >= 1" class="text-caption text-medium-emphasis mb-1">
-                Продавцы (из чеков):
-                {{ (item as any)._unique_item_contractor_name }}
-                <span v-if="(item as any)._unique_item_contractor_count > 1">
-                  +{{ (item as any)._unique_item_contractor_count - 1 }} ещё
-                </span>
+                {{ (item as any)._seller_display || '—' }}
               </div>
               <div class="text-caption text-medium-emphasis">Субсидия</div>
               <div class="mb-1">
@@ -616,12 +596,16 @@ const allColumns: ColumnDef[] = [
   { title: '', key: 'data-table-expand', width: 40, group: 'core' },
   { title: '№', key: 'index', width: 140, sortable: false, group: 'core' },
   { title: 'Наименование', key: 'displayName', group: 'core' },
-  { title: 'Контрагент', key: 'contractor_name', width: 220, group: 'core' },
+  // Владелец, 02.10 (решение по РЕЕ-2026-00975): в РЕЕСТРЕ АВАНСОВЫХ
+  // "Контрагент" = продавец из чеков/позиций (бэк — multi_contractor_label,
+  // app.services.purchase_contractor_display.seller_display_for_advance),
+  // а не "кому возмещать" — то наоборот, в общем реестре/договорах
+  // (OrdersTable.vue/ContractsTable.vue) и в Excel общего реестра
+  // (purchase_export.py) остаётся как раньше (решение 30.09, не трогать).
+  // Раньше здесь был contractor_name (= "кому возмещать") + отдельная
+  // дублирующая колонка «Продавцы (из чеков)» — одна величина, одна колонка.
+  { title: 'Контрагент', key: '_seller_display', width: 220, group: 'core' },
   { title: 'Кому возмещать', key: 'reimbursement_user_name', group: 'core' },
-  // Владелец, 30.09: бывшее содержимое колонки «Контрагент» (продавцы из
-  // чеков позиций, см. комментарий U-1 у шаблона ниже) — своей колонкой,
-  // «Контрагент» теперь = получатель возмещения.
-  { title: 'Продавцы (из чеков)', key: '_unique_item_contractor_name', width: 220, group: 'all' },
   { title: 'Субсидия', key: 'subsidy_name', width: 160, group: 'core' },
   { title: 'Сумма', key: 'nmck', width: 130, align: 'end', group: 'core' },
   { title: 'Дата исполнения', key: 'executionDate', width: 140, group: 'core' },
@@ -694,14 +678,10 @@ const tableHeaders = computed(() => [
 ])
 const showColumnPicker = ref(false)
 
-// Владелец, 30.09: фильтр «Контрагент» в шапке — исторически фильтровал ПО
-// ПРОДАВЦУ (см. комментарий U-1 у колонки «Продавцы (из чеков)» — раньше это
-// была та же колонка «Контрагент»). Purchase.contractor_name теперь = получатель
-// возмещения (display_contractor_name на бэке), для него уже есть отдельный
-// фильтр «Кому возмещать» (usedReimbursementUsers) — второй бы дублировал его.
-// Дедуп по имени продавца идёт по items[].contractor_name (тот же источник,
-// что и колонка «Продавцы (из чеков)» — _unique_item_contractor_name в
-// enrichedItems ниже, ПРАВИЛО №6, вторая формула не заводится).
+// Владелец, 02.10: фильтр «Контрагент» в шапке — по продавцу из чеков
+// позиций, тот же источник, что и колонка «Контрагент» (_seller_display,
+// enrichedItems ниже) — «Кому возмещать» (usedReimbursementUsers) остаётся
+// отдельным фильтром, второй бы его дублировал.
 const usedContractors = computed(() => {
   const byName = new Map<string, any>()
   for (const p of items.value) {
@@ -742,19 +722,22 @@ const usedReimbursementUsers = computed(() => {
 })
 
 const enrichedItems = computed(() => items.value.map(p => {
-  // U-1: вычислить уникальных контрагентов из purchase items
+  // Владелец, 02.10: "Контрагент" реестра авансовых = продавец(ы) из чеков —
+  // ЕДИНСТВЕННЫЙ расчёт этого значения — бэк (multi_contractor_label, см.
+  // seller_display_for_advance), здесь не пересчитываем. uniqueContractors
+  // ниже — только вспомогательный список для подсказки/разворота (те же
+  // items[].contractor_name, что уже видел бэк), не вторая формула.
   const itemContractors = (p.items || [])
     .map((it: any) => it.contractor_name)
     .filter((n: any): n is string => !!n)
   const uniqueContractors = [...new Set(itemContractors)]
-  const uniqueCount = uniqueContractors.length
   return {
     ...p,
     displayName: p.subject || p.item_name || '—',
     executionDate: pickDate(p.last_receipt_date, p.acceptance_doc_date, p.delivery_date),
-    _unique_item_contractor_count: uniqueCount,
-    _unique_item_contractor_name: uniqueCount > 0 ? uniqueContractors[0] : null,
-    _all_item_contractor_names: uniqueContractors.join(', '),
+    _seller_display: (p as any).multi_contractor_label ?? null,
+    _seller_count: uniqueContractors.length,
+    _seller_names_hint: uniqueContractors.join(', '),
   }
 }))
 
@@ -889,12 +872,11 @@ const {
   searchFields: (item) => [
     item.registry_number,
     item.displayName,
-    item.contractor_name,
     item.subsidy_name,
     item.reimbursement_user_name,
     item.subject,
     item.item_name,
-    (item as any)._unique_item_contractor_name,
+    (item as any)._seller_display,
   ],
 })
 

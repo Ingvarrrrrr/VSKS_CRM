@@ -444,62 +444,56 @@ async def _create_receipt_with_items(
 async def _create_or_enrich_contractor_from_receipt(seller_inn: str, seller_name: str, db: AsyncSession):
     """Phase 26-CCC: создаёт новый Contractor из данных чека.
 
-    Сначала пытается обогатить через ЕГРЮЛ (короткое name из поля c +
-    full_name из поля n + ОГРН/КПП/адрес/форма/подписант).
-    При ошибке/timeout — fallback на seller_name из чека.
+    Сначала пытается обогатить через ЕГРЮЛ/ЕГРИП — наименование, КПП, ОГРН,
+    адрес, руководитель. При ошибке/таймауте (сеть недоступна, ФНС не
+    ответила) либо если записи нет (12-значный ИНН без ЕГРИП — вероятно
+    самозанятый, их ЕГРЮЛ/ЕГРИП не содержит, см. _check_npd_status) —
+    fallback на имя продавца из чека, загрузка чека не блокируется и не
+    падает (владелец, 02.10).
+
+    ЕГРЮЛ-запрос — app.services.contractor_lookup.fetch_egrul_row, ТОТ ЖЕ
+    HTTP-клиент, что и у GET /api/contractors/lookup-inn/{inn}
+    (app.routers.contractors_lookup.lookup_inn) — ПРАВИЛО №6, второй клиент
+    сюда не заводим (раньше был инлайн-дубль с укороченным таймаутом, из-за
+    которого часть продавцов из чеков на проде осталась без ОГРН/адреса).
+    Общий бюджет на весь lookup — ~5 с (asyncio.wait_for), чтобы не
+    замедлять загрузку чека сильнее.
 
     Возвращает Contractor (НЕ flushed — вызывающий делает db.add + flush).
-    Никогда не raise: ЕГРЮЛ-вызов завёрнут в try/except.
+    Никогда не raise.
     """
     from app.models.contractor import Contractor as _Ctr
+    from app.services.contractor_lookup import fetch_egrul_row, _split_signatory
+    import asyncio as _asyncio_egrul
     import logging as _lg_egrul
     _log = _lg_egrul.getLogger(__name__)
 
-    egrul_data = None
+    row = None
     try:
-        import httpx as _httpx_egrul
-        import asyncio as _asyncio_egrul
-        async with _httpx_egrul.AsyncClient(timeout=8, verify=False) as client:
-            resp1 = await client.post(
-                "https://egrul.nalog.ru/",
-                json={"query": seller_inn, "region": "", "page": ""},
-            )
-            token = resp1.json().get("t")
-            if token:
-                for _ in range(3):
-                    await _asyncio_egrul.sleep(0.8)
-                    resp2 = await client.get(f"https://egrul.nalog.ru/search-result/{token}")
-                    rows = resp2.json().get("rows", [])
-                    if rows:
-                        row = rows[0]
-                        egrul_data = {
-                            "name": row.get("c") or row.get("n"),
-                            "full_name": row.get("n"),
-                            "ogrn": row.get("o"),
-                            "kpp": row.get("p"),
-                            "address": row.get("a"),
-                            "org_type": (
-                                "ИП" if len(seller_inn) == 12
-                                else ("Юр.лицо" if row.get("o") else None)
-                            ),
-                            "signatory": row.get("g"),
-                        }
-                        break
+        row = await _asyncio_egrul.wait_for(
+            fetch_egrul_row(seller_inn, timeout=3, max_attempts=3, poll_delay=0.8),
+            timeout=5,
+        )
     except Exception as e:
         _log.warning(
             f"ЕГРЮЛ lookup для ИНН {seller_inn} не удался ({e}); "
             f"fallback на seller_name из чека"
         )
 
-    if egrul_data and egrul_data.get("name"):
+    if row:
+        _signatory, _signatory_position = _split_signatory(row.get("g"))
         return _Ctr(
             inn=seller_inn,
-            name=egrul_data["name"],
-            full_name=egrul_data.get("full_name"),
-            ogrn=egrul_data.get("ogrn"),
-            kpp=egrul_data.get("kpp"),
-            address=egrul_data.get("address"),
-            org_type=egrul_data.get("org_type"),
-            signatory=egrul_data.get("signatory"),
+            name=row.get("c") or row.get("n") or seller_name or f"ИНН {seller_inn}",
+            full_name=row.get("n"),
+            ogrn=row.get("o"),
+            kpp=row.get("p"),
+            address=row.get("a"),
+            org_type=(
+                "ИП" if len(seller_inn) == 12
+                else ("Юр.лицо" if row.get("o") else None)
+            ),
+            signatory=_signatory,
+            signatory_position=_signatory_position,
         )
     return _Ctr(inn=seller_inn, name=seller_name or f"ИНН {seller_inn}")

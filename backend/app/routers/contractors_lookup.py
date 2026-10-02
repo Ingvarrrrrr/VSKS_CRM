@@ -20,7 +20,7 @@ from app.models.contractor import Contractor
 from app.auth.jwt import get_current_user
 from app.auth.permissions import require_tab
 from app.schemas.schemas import ContractorOut
-from app.services.contractor_lookup import _split_signatory, _check_npd_status
+from app.services.contractor_lookup import _split_signatory, _check_npd_status, fetch_egrul_row
 from app.services.fio import split_fio
 
 router = APIRouter(prefix="/api/contractors", tags=["contractors"])
@@ -34,7 +34,6 @@ async def lookup_inn(
     db: AsyncSession = Depends(get_db),
 ):
     """Lookup company data by INN: first local DB (unless force_egrul=1), then FNS EGRUL/EGRIP API."""
-    import httpx
     import logging
     import re as _re_lookup
     logger = logging.getLogger(__name__)
@@ -93,133 +92,117 @@ async def lookup_inn(
             "_source": "local",
         }
 
-    # FNS public API (no auth required)
-    url = f"https://egrul.nalog.ru/search-result/{inn}"
-    search_url = "https://egrul.nalog.ru/"
-
+    # FNS public API (no auth required) — единственный HTTP-клиент к ЕГРЮЛ,
+    # см. app.services.contractor_lookup.fetch_egrul_row (ПРАВИЛО №6; та же
+    # функция теперь зовётся и при создании контрагента-продавца из нового
+    # чека, см. app.services.receipts_creation._create_or_enrich_contractor_from_receipt).
     try:
-        async with httpx.AsyncClient(timeout=15, verify=False) as client:
-            # Step 1: initiate search
-            resp1 = await client.post(search_url, json={"query": inn, "region": "", "page": ""})
-            token = resp1.json().get("t")
-            if not token:
-                raise HTTPException(502, "ФНС не вернула токен поиска")
+        row = await fetch_egrul_row(inn, timeout=15, max_attempts=5, poll_delay=1)
 
-            # Step 2: get results (may need retry)
-            import asyncio
-            for attempt in range(5):
-                await asyncio.sleep(1)
-                resp2 = await client.get(f"https://egrul.nalog.ru/search-result/{token}")
-                data = resp2.json()
-                rows = data.get("rows", [])
-                if rows:
-                    break
-
-            if not rows:
-                # Самозанятых (плательщиков НПД) в ЕГРЮЛ/ЕГРИП нет вообще —
-                # прежде чем сказать «не найден», спрашиваем реестр НПД.
-                npd = await _check_npd_status(inn) if len(inn) == 12 else {"state": "no", "message": ""}
-                if npd["state"] == "yes":
-                    return {
-                        "inn": inn,
-                        "org_type": "Самозанятый",
-                        "status": npd["message"],
-                        "_source": "npd",
-                        "_notice": (
-                            f"ИНН {inn} — самозанятый (плательщик налога на профессиональный доход). "
-                            "В ЕГРЮЛ/ЕГРИП таких записей нет, поэтому ФИО, адрес и банковские "
-                            "реквизиты придётся заполнить вручную."
-                        ),
-                    }
-                if npd["state"] == "invalid":
-                    raise HTTPException(
-                        status_code=404,
-                        detail={
-                            "code": "INN_NOT_FOUND",
-                            "message": (
-                                f"ИНН {inn} некорректен — не проходит проверку контрольной цифры ФНС. "
-                                "Скорее всего, в номере опечатка."
-                            ),
-                            "hint": "Сверьте ИНН с документом контрагента.",
-                        },
-                    )
-                if npd["state"] == "unknown":
-                    raise HTTPException(
-                        status_code=404,
-                        detail={
-                            "code": "INN_NOT_FOUND",
-                            "message": (
-                                f"ИНН {inn} не найден в ЕГРЮЛ/ЕГРИП. Проверить, не самозанятый ли это, "
-                                f"сейчас не получилось: {npd['message']}."
-                            ),
-                            "hint": "Повторите попытку через минуту либо заполните карточку вручную.",
-                        },
-                    )
+        if not row:
+            # Самозанятых (плательщиков НПД) в ЕГРЮЛ/ЕГРИП нет вообще —
+            # прежде чем сказать «не найден», спрашиваем реестр НПД.
+            npd = await _check_npd_status(inn) if len(inn) == 12 else {"state": "no", "message": ""}
+            if npd["state"] == "yes":
+                return {
+                    "inn": inn,
+                    "org_type": "Самозанятый",
+                    "status": npd["message"],
+                    "_source": "npd",
+                    "_notice": (
+                        f"ИНН {inn} — самозанятый (плательщик налога на профессиональный доход). "
+                        "В ЕГРЮЛ/ЕГРИП таких записей нет, поэтому ФИО, адрес и банковские "
+                        "реквизиты придётся заполнить вручную."
+                    ),
+                }
+            if npd["state"] == "invalid":
                 raise HTTPException(
                     status_code=404,
                     detail={
                         "code": "INN_NOT_FOUND",
                         "message": (
-                            f"ИНН {inn} не найден: его нет ни в ЕГРЮЛ/ЕГРИП, ни в реестре самозанятых. "
-                            "Проверьте правильность ввода."
+                            f"ИНН {inn} некорректен — не проходит проверку контрольной цифры ФНС. "
+                            "Скорее всего, в номере опечатка."
                         ),
-                        "hint": "Если организация существует, попробуйте найти её по названию или КПП.",
+                        "hint": "Сверьте ИНН с документом контрагента.",
                     },
                 )
+            if npd["state"] == "unknown":
+                raise HTTPException(
+                    status_code=404,
+                    detail={
+                        "code": "INN_NOT_FOUND",
+                        "message": (
+                            f"ИНН {inn} не найден в ЕГРЮЛ/ЕГРИП. Проверить, не самозанятый ли это, "
+                            f"сейчас не получилось: {npd['message']}."
+                        ),
+                        "hint": "Повторите попытку через минуту либо заполните карточку вручную.",
+                    },
+                )
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "INN_NOT_FOUND",
+                    "message": (
+                        f"ИНН {inn} не найден: его нет ни в ЕГРЮЛ/ЕГРИП, ни в реестре самозанятых. "
+                        "Проверьте правильность ввода."
+                    ),
+                    "hint": "Если организация существует, попробуйте найти её по названию или КПП.",
+                },
+            )
 
-            row = rows[0]  # first match
-            # ЕГРЮЛ возвращает руководителя как "ДОЛЖНОСТЬ: ФИО"
-            # (например "ПРЕДСЕДАТЕЛЬ: Девлишева Максим Махмович").
-            # Дефект (2026-09-14): второй вызов ниже раньше звал split_position_and_fio
-            # ПОВТОРНО на исходной "ДОЛЖНОСТЬ: ФИО" строке, но уже с передан-
-            # ной должностью — та ветка функции доверяла вызывающему и считала
-            # raw чистым ФИО, разнося "ГЕНЕРАЛЬНЫЙ ДИРЕКТОР: Широков Владимир
-            # Константинович" как фамилию "ГЕНЕРАЛЬНЫЙ". _signatory уже содержит
-            # ФИО-часть (без должности, см. _split_signatory/compose_fio) —
-            # разбираем на last/first/middle именно её, split_position_and_fio
-            # второй раз не зовём.
-            _signatory, _signatory_position = _split_signatory(row.get("g"))
-            _eg_last, _eg_first, _eg_middle = split_fio(_signatory)
-            result = {
-                "name": row.get("c") or row.get("n"),  # c=short name, n=full name
-                "full_name": row.get("n"),              # n=full legal name
-                "inn": row.get("i"),
-                "ogrn": row.get("o"),
-                "kpp": row.get("p"),
-                "address": row.get("a"),
-                # Доработка 5 мая: НЕ выставляем "Юр.лицо" по умолчанию.
-                # ФНС возвращает запись и для ИП (12 цифр ИНН) и для ЮЛ (10 цифр).
-                # Для 10-значного ИНН однозначно подразумевается ЮЛ → "Юр.лицо";
-                # для 12-значного определяем по статусу/типу выгрузки. Если в выгрузке
-                # FNS поля o/p отсутствуют (для физлиц) → не выставляем тип, пусть
-                # пользователь сам выберет «Самозанятый/Физ.лицо/ИП».
-                "org_type": (
-                    "ИП" if len(inn) == 12 else (
-                        "Юр.лицо" if row.get("o") else None
-                    )
-                ),
-                "signatory": _signatory,  # director/head ФИО (без должности)
-                "signatory_position": _signatory_position,  # должность подписанта
-                "signatory_last_name": _eg_last,
-                "signatory_first_name": _eg_first,
-                "signatory_middle_name": _eg_middle,
-                # Руководитель по ЕГРЮЛ (владелец 2026-09-29: подписант может
-                # быть доверенным лицом — это НЕ обязательно руководитель).
-                # ЕГРЮЛ отдаёт только руководителя (row "g"), поэтому значения
-                # совпадают с signatory_* ЗДЕСЬ, но это разные по смыслу поля:
-                # организация может вручную переопределить подписанта, а
-                # director_* всегда остаётся тем, что вернула налоговая.
-                # Используется app/services/org_head.py::resolve_org_head_user_id
-                # для организаций — не путать с contractors.signatory (для
-                # документов/договоров).
-                "director_last_name": _eg_last,
-                "director_first_name": _eg_first,
-                "director_middle_name": _eg_middle,
-                "director_position": _signatory_position,
-                "status": row.get("s"),  # status text
-                "registration_date": row.get("r"),
-            }
-            return result
+        # ЕГРЮЛ возвращает руководителя как "ДОЛЖНОСТЬ: ФИО"
+        # (например "ПРЕДСЕДАТЕЛЬ: Девлишева Максим Махмович").
+        # Дефект (2026-09-14): второй вызов ниже раньше звал split_position_and_fio
+        # ПОВТОРНО на исходной "ДОЛЖНОСТЬ: ФИО" строке, но уже с передан-
+        # ной должностью — та ветка функции доверяла вызывающему и считала
+        # raw чистым ФИО, разнося "ГЕНЕРАЛЬНЫЙ ДИРЕКТОР: Широков Владимир
+        # Константинович" как фамилию "ГЕНЕРАЛЬНЫЙ". _signatory уже содержит
+        # ФИО-часть (без должности, см. _split_signatory/compose_fio) —
+        # разбираем на last/first/middle именно её, split_position_and_fio
+        # второй раз не зовём.
+        _signatory, _signatory_position = _split_signatory(row.get("g"))
+        _eg_last, _eg_first, _eg_middle = split_fio(_signatory)
+        result = {
+            "name": row.get("c") or row.get("n"),  # c=short name, n=full name
+            "full_name": row.get("n"),              # n=full legal name
+            "inn": row.get("i"),
+            "ogrn": row.get("o"),
+            "kpp": row.get("p"),
+            "address": row.get("a"),
+            # Доработка 5 мая: НЕ выставляем "Юр.лицо" по умолчанию.
+            # ФНС возвращает запись и для ИП (12 цифр ИНН) и для ЮЛ (10 цифр).
+            # Для 10-значного ИНН однозначно подразумевается ЮЛ → "Юр.лицо";
+            # для 12-значного определяем по статусу/типу выгрузки. Если в выгрузке
+            # FNS поля o/p отсутствуют (для физлиц) → не выставляем тип, пусть
+            # пользователь сам выберет «Самозанятый/Физ.лицо/ИП».
+            "org_type": (
+                "ИП" if len(inn) == 12 else (
+                    "Юр.лицо" if row.get("o") else None
+                )
+            ),
+            "signatory": _signatory,  # director/head ФИО (без должности)
+            "signatory_position": _signatory_position,  # должность подписанта
+            "signatory_last_name": _eg_last,
+            "signatory_first_name": _eg_first,
+            "signatory_middle_name": _eg_middle,
+            # Руководитель по ЕГРЮЛ (владелец 2026-09-29: подписант может
+            # быть доверенным лицом — это НЕ обязательно руководитель).
+            # ЕГРЮЛ отдаёт только руководителя (row "g"), поэтому значения
+            # совпадают с signatory_* ЗДЕСЬ, но это разные по смыслу поля:
+            # организация может вручную переопределить подписанта, а
+            # director_* всегда остаётся тем, что вернула налоговая.
+            # Используется app/services/org_head.py::resolve_org_head_user_id
+            # для организаций — не путать с contractors.signatory (для
+            # документов/договоров).
+            "director_last_name": _eg_last,
+            "director_first_name": _eg_first,
+            "director_middle_name": _eg_middle,
+            "director_position": _signatory_position,
+            "status": row.get("s"),  # status text
+            "registration_date": row.get("r"),
+        }
+        return result
     except HTTPException:
         raise
     except Exception as e:

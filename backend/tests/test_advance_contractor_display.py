@@ -21,7 +21,8 @@ import pytest
 from openpyxl import load_workbook
 
 from app.models.purchase import Purchase
-from app.services.purchase_contractor_display import display_contractor_name
+from app.models.purchase_item import PurchaseItem
+from app.services.purchase_contractor_display import display_contractor_name, seller_display_for_advance
 
 
 async def _make_subsidy(db_session, test_org):
@@ -171,3 +172,109 @@ async def test_excel_export_uses_reimbursement_user_name(client, db_session, tes
         for row in ws.iter_rows(min_row=2, values_only=True)
     }
     assert values_by_item_name.get("Аванс для экспорта") == "Волкова В.В."
+
+
+# ---------------------------------------------------------------------------
+# seller_display_for_advance (owner, 02.10): реестр АВАНСОВЫХ
+# (AdvanceReportsView.vue) обязан показывать в "Контрагент" продавца из
+# чеков/позиций, а не "кому возмещать" — в отличие от общего реестра закупок
+# и его Excel, которые продолжают звать display_contractor_name выше
+# (не трогаем, см. тесты test_excel_export_uses_reimbursement_user_name и
+# test_purchases_list_uses_reimbursement_user_name).
+# ---------------------------------------------------------------------------
+
+async def _make_contractor(db_session, name, inn=None):
+    from app.models.contractor import Contractor
+    c = Contractor(name=name, inn=inn)
+    db_session.add(c)
+    await db_session.commit()
+    await db_session.refresh(c)
+    return c
+
+
+def test_seller_helper_single_seller_wins():
+    advance = Purchase(purchase_method="advance", item_name="Аванс")
+    assert seller_display_for_advance(
+        advance, item_contractor_names=["ООО БЭСТ ПРАЙС"], header_contractor_name="Скурская Анна",
+    ) == "ООО БЭСТ ПРАЙС"
+
+
+def test_seller_helper_multiple_sellers_label():
+    advance = Purchase(purchase_method="advance", item_name="Аванс")
+    assert seller_display_for_advance(
+        advance, item_contractor_names=["ООО А", "ООО Б", "ООО А"], header_contractor_name=None,
+    ) == "Множественный контрагент"
+
+
+def test_seller_helper_falls_back_to_header_contractor_when_no_item_sellers():
+    advance = Purchase(purchase_method="advance", item_name="Аванс")
+    assert seller_display_for_advance(
+        advance, item_contractor_names=[None, None], header_contractor_name="Скурская Анна",
+    ) == "Скурская Анна"
+
+
+def test_seller_helper_not_advance_returns_none():
+    single = Purchase(purchase_method="single", item_name="Обычная")
+    assert seller_display_for_advance(
+        single, item_contractor_names=["ООО А"], header_contractor_name="Иванов",
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_advance_registry_single_seller_shown_as_contractor(client, db_session, test_org, auth_headers):
+    """Воспроизводит РЕЕ-2026-00975: продавец из чеков (ООО «БЭСТ ПРАЙС»),
+    а не получатель возмещения (Скурская Анна), должен попасть в
+    multi_contractor_label — то, что AdvanceReportsView.vue показывает в
+    колонке "Контрагент" реестра авансовых."""
+    recipient = await _make_user(db_session, test_org, "Скурская Анна")
+    seller = await _make_contractor(db_session, "ООО «БЭСТ ПРАЙС»", inn="7700000001")
+    p = Purchase(
+        item_name="Аванс РЕЕ-2026-00975",
+        purchase_method="advance",
+        status="planned",
+        reimbursement_user_id=recipient.id,
+        contractor_id=seller.id,
+    )
+    db_session.add(p)
+    await db_session.commit()
+    # ВАЖНО: НЕ делать db_session.refresh(p) здесь — session (эта же, см.
+    # conftest.client) identity-map кэширует Purchase.items как «уже
+    # загруженную» (пустую) коллекцию при первом касании релейшена, и
+    # дальнейший selectinload через GET /api/purchases/{id} её не обновит
+    # (p.id уже доступен сразу после commit() без refresh, asyncpg
+    # RETURNING). items ниже создаются ДО первого обращения к p.items.
+    item = PurchaseItem(purchase_id=p.id, item_name="Товар", contractor_id=seller.id)
+    db_session.add(item)
+    await db_session.commit()
+
+    resp = await client.get(f"/api/purchases/{p.id}", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    # Общий реестр закупок — contractor_name всё ещё "кому возмещать" (не трогаем).
+    assert data["contractor_name"] == "Скурская Анна"
+    # Реестр авансовых берёт seller из multi_contractor_label.
+    assert data["multi_contractor_label"] == "ООО «БЭСТ ПРАЙС»"
+
+
+@pytest.mark.asyncio
+async def test_advance_registry_multiple_sellers_label(client, db_session, test_org, auth_headers):
+    seller_a = await _make_contractor(db_session, "ООО А", inn="7700000002")
+    seller_b = await _make_contractor(db_session, "ООО Б", inn="7700000003")
+    p = Purchase(
+        item_name="Аванс с двумя продавцами",
+        purchase_method="advance",
+        status="planned",
+    )
+    db_session.add(p)
+    await db_session.commit()
+    # (см. комментарий выше — без refresh(p) до создания items)
+    db_session.add_all([
+        PurchaseItem(purchase_id=p.id, item_name="Товар 1", contractor_id=seller_a.id),
+        PurchaseItem(purchase_id=p.id, item_name="Товар 2", contractor_id=seller_b.id),
+    ])
+    await db_session.commit()
+
+    resp = await client.get(f"/api/purchases/{p.id}", headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["multi_contractor_label"] == "Множественный контрагент"

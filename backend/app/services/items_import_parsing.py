@@ -10,6 +10,7 @@ tables extraction so that "Таблица N" numbering matches between the previ
 endpoint and the mapped-import endpoint (see its docstring below).
 """
 import logging
+import re
 from io import BytesIO
 from decimal import Decimal
 from fastapi import HTTPException
@@ -197,6 +198,13 @@ def _detect_upd_layout(row: list[str]) -> dict | None:
 
     Returns column mapping dict or None if row doesn't match УПД pattern.
     Match rule: ≥4 of {'1а','1б','2','2а','3','4','5','9'} present.
+
+    2026-10-02 (owner-verified against 3 real УПД: nf110.xls/cb97.pdf/
+    u1643.pdf, см. backend/tests/test_upd_import_real_layout.py): в файлах
+    владельца колонка «Наименование товара» печатается ПОД сублейблом '1а',
+    не '1б' (textbook-раскладка 1137 называет их наоборот, но этот модуль
+    доверяет реальным файлам, не учебнику) — '1б' остаётся fallback-ом для
+    документов, где всё же встречается обратный порядок.
     """
     LABELS = {'1а', '1б', '2', '2а', '3', '4', '5', '9'}
     found = {}
@@ -207,12 +215,19 @@ def _detect_upd_layout(row: list[str]) -> dict | None:
     if len(LABELS & set(found.keys())) < 4:
         return None
     col: dict = {}
-    if '1б' in found:
+    if '1а' in found:
+        col['item_name'] = found['1а']
+    elif '1б' in found:
         col['item_name'] = found['1б']
     if '3' in found:
         col['quantity'] = found['3']
     if '4' in found:
         col['unit_price'] = found['4']
+    # Стоимость БЕЗ налога (col 5) — храним отдельно от total_price (который
+    # предпочитает «с налогом», col 9): нужна для определения режима «НДС
+    # сверху» и как fallback, когда колонки 9 в документе нет вовсе.
+    if '5' in found:
+        col['total_wo_tax'] = found['5']
     # Prefer total WITH tax (col 9), fallback to without-tax (col 5)
     if '9' in found:
         col['total_price'] = found['9']
@@ -220,15 +235,211 @@ def _detect_upd_layout(row: list[str]) -> dict | None:
         col['total_price'] = found['5']
     if '2а' in found:
         col['unit'] = found['2а']
-    elif '2' in found:
-        col['unit'] = found['2']
+    if '2' in found:
+        col['unit_code'] = found['2']  # цифровой код ОКЕИ (напр. 796 → шт)
+        col.setdefault('unit', found['2'])
     # Задача «НДС сверху» (02.10.2026): колонка 7 — налоговая ставка. col '4'
     # (цена за единицу) в УПД — БЕЗ налога, col '9' (стоимость с налогом) —
     # с налогом: ровно «цена без НДС + сумма с НДС» — единственный признак,
     # что эта таблица распознана как УПД (см. is_upd в _legacy_detect_best_table).
     if '7' in found:
         col['vat_rate'] = found['7']
+    if '8' in found:
+        col['vat_amount'] = found['8']
     return col if 'item_name' in col else None
+
+
+# ---------------------------------------------------------------------------
+# УПД — единый детектор раскладки (Правило №6, задача import-upd-detector,
+# 2026-10-02): раньше колонки УПД разбирались дважды — здесь позиционно по
+# кодам (_detect_upd_layout выше) и ОТДЕЛЬНО во фронте
+# (useItemsImport.ts::autoDetectMapping, тот же набор меток). Теперь это
+# единственное место, которое и находит строку кодов, и разбирает позиции —
+# find_upd_code_row/parse_upd_table/build_upd_sheet_extra ниже используются
+# и xlsx-путём (_smart_import_xlsx_direct), и /items/import-preview
+# (PDF/DOCX/HTML/Excel), и markitdown-фоллбэком smart-импорта
+# (_legacy_detect_best_table выше). Фронт применяет готовый auto_mapping,
+# второй копии детектора там больше нет.
+UPD_OKEI_UNITS = {
+    '796': 'шт', '006': 'м', '868': 'компл.', '112': 'л', '166': 'кг',
+    '055': 'м2', '113': 'м3', '245': 'усл.ед.', '876': 'усл.ед.',
+    '704': 'компл.', '163': 'г', '350': 'упак.', '778': 'компл.',
+}
+
+
+def _okei_to_unit(code: str | None) -> str | None:
+    """Код ОКЕИ (напр. '796') → условное обозначение ('шт'). None, если код
+    не распознан или пуст — не выдумываем единицу, которой нет в справочнике."""
+    if not code:
+        return None
+    c = str(code).strip()
+    if not c or c in ('--', '-', '—'):
+        return None
+    c_norm = c.lstrip('0') or '0'
+    return UPD_OKEI_UNITS.get(c) or UPD_OKEI_UNITS.get(c_norm) or UPD_OKEI_UNITS.get(c_norm.zfill(3))
+
+
+# Эвристика «повреждённая при извлечении ячейка»: цифра впритык к кириллической
+# букве внутри одного значения (напр. «1 640,0б0е» вместо «1 640,00» — соседняя
+# колонка «без акциза» наехала на цифры при разборе PDF-таблицы). to_decimal
+# на таком значении может случайно дать правильное число (регэксп-фоллбэк
+# берёт только первую цифру после разделителя), но полагаться на удачу нельзя —
+# помечаем предупреждением и пересчитываем по кол-во×цена×(1+ставка).
+_UPD_CORRUPTED_CELL_RE = re.compile(r'[0-9][а-яА-Я]|[а-яА-Я][0-9]')
+
+
+def find_upd_code_row(rows: list[list], search_limit: int = 30) -> tuple[int, dict] | None:
+    """Ищет строку кодов УПД (А|1|1а|1б|2|2а|3|4|5|6|7|8|9|10|10а|11) в первых
+    `search_limit` строках таблицы — шире, чем _legacy_detect_best_table
+    (8 строк): в xls строка кодов отделена от текстовой шапки двумя строками,
+    в pdf обычно одной, плюс в начале документа могут быть служебные строки
+    (ссылка на постановление, «Исправление №» и т.п.). Возвращает
+    (индекс строки, маппинг колонок) с НАИБОЛЬШИМ числом распознанных меток,
+    либо None, если ни одна строка не похожа на строку кодов."""
+    best_idx = -1
+    best_col: dict = {}
+    for r_idx, row in enumerate(rows[:search_limit]):
+        row_str = [str(c) if c is not None else "" for c in row]
+        col = _detect_upd_layout(row_str)
+        if col and len(col) > len(best_col):
+            best_col = col
+            best_idx = r_idx
+    if best_idx < 0:
+        return None
+    return best_idx, best_col
+
+
+def parse_upd_table(rows: list[list], code_row_idx: int, col: dict) -> dict:
+    """Разбирает позиции УПД из строк ПОСЛЕ строки кодов до строки
+    «Всего к оплате» (включительно — останавливается на ней).
+
+    unit_price = колонка 4 (БЕЗ налога); total_price = колонка 9 (С НАЛОГОМ),
+    либо колонка 5 (без налога), если колонки 9 в документе нет вовсе —
+    задача «НДС сверху» (02.10.2026): при col 9 отдельно от col 5 позиция
+    помечена как УПД-схема (contract_vat_on_top) выше по стеку (вызывающий
+    роутер читает 'total_wo_tax' in col). Единица — col 2а, либо перевод кода
+    ОКЕИ (col 2) через _okei_to_unit.
+
+    Возвращает {"items": [...], "warnings": [...], "columns_found": [...]}.
+    """
+    items: list[dict] = []
+    warnings: list[dict] = []
+    _to_dec = to_decimal
+
+    def _cell(row: list[str], field: str) -> str | None:
+        idx = col.get(field)
+        if idx is None or idx >= len(row):
+            return None
+        v = row[idx]
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s if s and s not in ('--', '-', '—') else None
+
+    total_row_value: Decimal | None = None
+    computed_sum = Decimal('0')
+    row_num = code_row_idx + 1
+    for raw_row in rows[code_row_idx + 1:]:
+        row_num += 1
+        row = [str(c) if c is not None else "" for c in raw_row]
+        joined = " ".join(row).lower()
+        if 'всего к оплате' in joined or 'итого к оплате' in joined:
+            total_cell = _cell(row, 'total_price')
+            total_row_value = _to_dec(total_cell) if total_cell else None
+            break
+        # Ячейка УПД из PDF приходит с переносами строк — в позицию одной строкой.
+        name = " ".join((_cell(row, 'item_name') or "").split())
+        if not name:
+            continue
+        quantity = _to_dec(_cell(row, 'quantity'))
+        unit_price = _to_dec(_cell(row, 'unit_price'))
+        vat_rate_raw = _cell(row, 'vat_rate')
+        unit_val = _cell(row, 'unit')
+        if not unit_val:
+            unit_val = _okei_to_unit(_cell(row, 'unit_code'))
+        unit = unit_val or 'шт'
+
+        total_cell_raw = _cell(row, 'total_price')
+        corrupted = bool(total_cell_raw and _UPD_CORRUPTED_CELL_RE.search(total_cell_raw))
+        total_price = None if corrupted else _to_dec(total_cell_raw)
+        if total_price is None and unit_price is not None and quantity is not None:
+            total_price = line_total(quantity, unit_price, rate=vat_rate_raw, on_top=True)
+            if corrupted:
+                warnings.append({
+                    "row": row_num, "item_name": name,
+                    "code": "upd_corrupted_cell",
+                    "message": (
+                        f"Строка {row_num} «{name}»: ячейка суммы повреждена при извлечении "
+                        f"(«{total_cell_raw}») — сумма пересчитана как кол-во × цена × (1 + ставка)."
+                    ),
+                })
+        if total_price is not None:
+            computed_sum += total_price
+
+        items.append({
+            "row": row_num,
+            "item_name": name,
+            "item_type": "товар",
+            "quantity": float(quantity) if quantity is not None else None,
+            "unit": unit,
+            "unit_raw": unit_val,
+            "unit_price": float(unit_price) if unit_price is not None else None,
+            "total_price": float(total_price) if total_price is not None else None,
+            "vat_rate": vat_rate_raw,
+        })
+
+    if total_row_value is not None and items:
+        diff = abs(computed_sum - total_row_value)
+        if diff > Decimal('0.05'):
+            warnings.append({
+                "row": None, "item_name": None,
+                "code": "upd_total_mismatch",
+                "message": (
+                    f"Сумма по строкам ({computed_sum}) не совпадает со строкой "
+                    f"«Всего к оплате» в документе ({total_row_value}), расхождение {diff}."
+                ),
+            })
+
+    return {
+        "items": items,
+        "warnings": warnings,
+        "columns_found": list(col.keys()),
+    }
+
+
+def build_upd_sheet_extra(all_rows: list[list]) -> dict | None:
+    """Если `all_rows` распознаются как таблица УПД — вернуть overrides для
+    sheet-словаря /items/import-preview (header_row_offset/auto_mapping/
+    is_upd/preview/warnings), иначе None. auto_mapping — то же сопоставление
+    полей → индекс колонки, которое раньше заново вычислял фронт
+    (useItemsImport.ts::autoDetectMapping) — единственный источник теперь
+    здесь, фронт только применяет."""
+    found = find_upd_code_row(all_rows)
+    if not found:
+        return None
+    code_row_idx, col = found
+    parsed = parse_upd_table(all_rows, code_row_idx, col)
+    if not parsed["items"]:
+        return None
+    field_map = {
+        "item_name": col.get("item_name"),
+        "quantity": col.get("quantity"),
+        "unit_price": col.get("unit_price"),
+        "unit": col.get("unit"),
+        "total_price": col.get("total_price"),
+        "vat_rate": col.get("vat_rate"),
+    }
+    auto_mapping = {k: v for k, v in field_map.items() if v is not None}
+    data_rows = all_rows[code_row_idx + 1:code_row_idx + 6]
+    sample = [[str(c) if c is not None else "" for c in r] for r in data_rows]
+    return {
+        "is_upd": True,
+        "header_row_offset": code_row_idx,
+        "auto_mapping": auto_mapping,
+        "preview": parsed["items"],
+        "warnings": parsed["warnings"],
+        "sample": sample,
+    }
 
 
 def _legacy_detect_best_table(raw_tables: list[list[list[str]]]) -> tuple:
@@ -551,6 +762,20 @@ def _smart_import_xlsx_direct(content: bytes, fname: str = '') -> tuple[list[dic
     except Exception:
         return [], [], []
     all_rows: list[list] = [r for sh in sheets for r in sh]
+
+    # УПД (Правило №6, задача import-upd-detector 2026-10-02): пробуем ЕДИНЫЙ
+    # детектор раскладки ДО общего keyword-парсера ниже. Для УПД общий
+    # заголовочный эвристик (HEADER_PATTERNS) ошибочно матчит «Код товара/
+    # работ, услуг» на item_name (подстрока «товар» матчит раньше настоящей
+    # колонки «Наименование товара») — живой пример: nf110.xls владельца,
+    # где «наименование» получалось равным «НФ-00000340» (код товара), а
+    # количество/сумма оставались пустыми.
+    _upd = find_upd_code_row(all_rows)
+    if _upd:
+        _code_row_idx, _col = _upd
+        _res = parse_upd_table(all_rows, _code_row_idx, _col)
+        if _res["items"]:
+            return _res["items"], _res["columns_found"], _res["warnings"]
 
     def _classify_header(row: list) -> dict:
         """Return dict {col_idx -> field_key} для cells матчащихся к HEADER_PATTERNS."""

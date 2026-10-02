@@ -173,36 +173,32 @@ export function useItemsImport(deps: UseItemsImportDeps) {
     if (!ignoredColumns.value.includes(idx)) ignoredColumns.value.push(idx)
   }
 
+  /** УПД-колонки больше НЕ определяются здесь (Правило №6, задача
+   * import-upd-detector 2026-10-02): единственный детектор раскладки УПД —
+   * backend/app/services/items_import_parsing.py::build_upd_sheet_extra —
+   * он находит строку кодов (А|1|1а|1б|2|2а|...), сам разбирает позиции и
+   * отдаёт готовый auto_mapping в ответе /items/import-preview
+   * (sheet.is_upd/sheet.auto_mapping/sheet.preview). applyServerAutoMapping
+   * ниже просто ПРИМЕНЯЕТ этот маппинг — второй копии детектора тут нет. */
+  function applyServerAutoMapping(autoMapping: Record<string, number>): Record<string, number | null> {
+    const mapping: Record<string, number | null> = {}
+    TARGET_FIELDS.forEach(f => { mapping[f.value] = null })
+    for (const [field, idx] of Object.entries(autoMapping)) {
+      if (field in mapping) mapping[field] = idx
+    }
+    // 2026-10-02: УПД-строка — цена (col 4) БЕЗ налога, total_price (col 9) —
+    // С налогом → классический «НДС сверху» для стадии Договор. Предлагаем
+    // включить переключатель, не трогая его молча (см. CreateOrderView.vue).
+    suggestContractVatOnTop?.()
+    return mapping
+  }
+
   function autoDetectMapping(headers: string[]): Record<string, number | null> {
     const mapping: Record<string, number | null> = {}
     TARGET_FIELDS.forEach(f => { mapping[f.value] = null })
 
-    // УПД numeric-label detection (Постановление Правительства РФ № 1137):
-    // Если хедеры — это сабметки УПД '1а','1б','2','2а','3','4','5','9' — мапим позиционно.
-    const normalizedHeaders = headers.map(h => h.trim().toLowerCase().replace(/\s/g, ''))
-    const UPD_LABELS = ['1а', '1б', '2', '2а', '3', '4', '5', '9']
-    const updMatches = UPD_LABELS.filter(l => normalizedHeaders.includes(l)).length
-    if (updMatches >= 4) {
-      const idx = (label: string) => normalizedHeaders.indexOf(label)
-      if (idx('1б') >= 0) mapping.item_name = idx('1б')
-      if (idx('3')  >= 0) mapping.quantity  = idx('3')
-      if (idx('4')  >= 0) mapping.unit_price = idx('4')
-      // Prefer "с налогом — всего" (col 9), fallback на "без налога" (col 5)
-      if (idx('9') >= 0) {
-        mapping.total_price = idx('9')
-        // 2026-10-02: колонка 4 (цена за единицу) в УПД — БЕЗ налога, колонка 9
-        // (итог строки) — С налогом → классический «НДС сверху» для стадии
-        // Договор. Предлагаем включить переключатель, не трогая его молча.
-        suggestContractVatOnTop?.()
-      } else if (idx('5') >= 0) {
-        mapping.total_price = idx('5')
-      }
-      if      (idx('2а') >= 0) mapping.unit = idx('2а')
-      else if (idx('2')  >= 0) mapping.unit = idx('2')
-      return mapping
-    }
-
-    // Keyword fallback. Учитываем УПД headers ("Наименование товара (описание выполненных работ...)",
+    // Keyword fallback (для документов, которые сервер не распознал как УПД).
+    // Учитываем УПД headers ("Наименование товара (описание выполненных работ...)",
     // "Цена (тариф) за единицу", "Стоимость... с налогом - всего") + общие случаи.
     const used = new Set<number>()
 
@@ -245,7 +241,9 @@ export function useItemsImport(deps: UseItemsImportDeps) {
     if (!importPreviewData.value) return
     const sheet = importPreviewData.value.sheets.find((s: any) => s.name === newSheet)
     if (sheet) {
-      dragMapping.value = autoDetectMapping(sheet.headers)
+      dragMapping.value = sheet.is_upd && sheet.auto_mapping
+        ? applyServerAutoMapping(sheet.auto_mapping)
+        : autoDetectMapping(sheet.headers)
       ignoredColumns.value = []
     }
   })
@@ -313,7 +311,10 @@ export function useItemsImport(deps: UseItemsImportDeps) {
       const data = await resp.json()
       importPreviewData.value = data
       importSelectedSheet.value = data.sheets[0]?.name || ''
-      dragMapping.value = autoDetectMapping(data.sheets[0]?.headers || [])
+      const firstSheet = data.sheets[0]
+      dragMapping.value = firstSheet?.is_upd && firstSheet?.auto_mapping
+        ? applyServerAutoMapping(firstSheet.auto_mapping)
+        : autoDetectMapping(firstSheet?.headers || [])
       ignoredColumns.value = []
       importStep.value = 2
     } catch (e: any) {
@@ -817,7 +818,9 @@ export function useItemsImport(deps: UseItemsImportDeps) {
           // legacy path для PDF/DOCX/HTML — sample 5 строк
           const firstSheet = data.sheets?.[0]
           if (!firstSheet) { showSnack('Позиции не распознаны', 'warning'); return }
-          const detectedMapping = autoDetectMapping(firstSheet.headers || [])
+          const detectedMapping = firstSheet.is_upd && firstSheet.auto_mapping
+            ? applyServerAutoMapping(firstSheet.auto_mapping)
+            : autoDetectMapping(firstSheet.headers || [])
           const headerOffset = firstSheet.header_row_offset ?? 0
           const dataRows = (firstSheet.sample as any[][]).slice(headerOffset + 1)
           const preview = dataRows

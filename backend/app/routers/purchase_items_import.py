@@ -45,6 +45,7 @@ from app.services.items_import_parsing import (
     _extract_html_tables,
     _read_excel_rows,
     _ocrmypdf_then_extract_tables,
+    build_upd_sheet_extra,
 )
 from app.utils.numbers import to_decimal
 from app.services.qty_price_check import check_qty_price_sum
@@ -523,7 +524,15 @@ async def import_items_preview(
             headers = [str(h).strip() if h else f"Столбец {j+1}" for j, h in enumerate(all_rows[hdr_idx])]
             data = all_rows[hdr_idx + 1:]
             sample = [[str(c) if c else "" for c in r] for r in data[:5]]
-            return {"sheets": [{"name": "PDF", "headers": headers, "sample": sample, "total_rows": len(data), "header_row_offset": hdr_idx}]}
+            sheet = {"name": "PDF", "headers": headers, "sample": sample, "total_rows": len(data), "header_row_offset": hdr_idx}
+            # УПД (Правило №6, единый детектор — см. build_upd_sheet_extra):
+            # если документ — УПД, подменяем header_row_offset/sample на
+            # найденную строку кодов и отдаём готовый auto_mapping + preview,
+            # вместо того чтобы фронт заново искал колонки по ключевым словам.
+            _upd_extra = build_upd_sheet_extra(all_rows)
+            if _upd_extra:
+                sheet.update(_upd_extra)
+            return {"sheets": [sheet]}
 
         # ── DOCX ──
         if fname.endswith(('.docx', '.doc')):
@@ -547,7 +556,11 @@ async def import_items_preview(
             headers = [str(h).strip() if h else f"Столбец {j+1}" for j, h in enumerate(all_rows[hdr_idx])]
             data = all_rows[hdr_idx + 1:]
             sample = [[str(c) if c else "" for c in r] for r in data[:5]]
-            return {"sheets": [{"name": "Document", "headers": headers, "sample": sample, "total_rows": len(data), "header_row_offset": hdr_idx}]}
+            sheet = {"name": "Document", "headers": headers, "sample": sample, "total_rows": len(data), "header_row_offset": hdr_idx}
+            _upd_extra = build_upd_sheet_extra(all_rows)
+            if _upd_extra:
+                sheet.update(_upd_extra)
+            return {"sheets": [sheet]}
 
         # ── HTML ──
         if fname.endswith(('.html', '.htm')):
@@ -565,13 +578,17 @@ async def import_items_preview(
                 headers = [str(h).strip() if h else f"Столбец {j+1}" for j, h in enumerate(tbl_rows[hdr_idx])]
                 data = tbl_rows[hdr_idx + 1:]
                 sample = [[str(c) if c else "" for c in r] for r in data[:5]]
-                sheets_html.append({
+                sheet_html = {
                     "name": f"Таблица {ti}",
                     "headers": headers,
                     "sample": sample,
                     "total_rows": len(data),
                     "header_row_offset": hdr_idx,
-                })
+                }
+                _upd_extra = build_upd_sheet_extra(tbl_rows)
+                if _upd_extra:
+                    sheet_html.update(_upd_extra)
+                sheets_html.append(sheet_html)
             if not sheets_html:
                 raise HTTPException(400, "В HTML-файле не найдено таблиц с достаточным количеством строк.")
             return {"sheets": sheets_html}
@@ -590,8 +607,12 @@ async def import_items_preview(
                 continue
             headers = [str(c).strip() if c else f"Столбец {j+1}" for j, c in enumerate(hdr_rows[0])]
             sample = [[str(c).strip() if c is not None else "" for c in row] for row in hdr_rows[1:min(6, len(hdr_rows))]]
-            sheets.append({"name": sheet_name, "headers": headers, "sample": sample,
-                           "total_rows": len(all_rows) - hdr_idx - 1, "header_row_offset": hdr_idx})
+            sheet_xl = {"name": sheet_name, "headers": headers, "sample": sample,
+                        "total_rows": len(all_rows) - hdr_idx - 1, "header_row_offset": hdr_idx}
+            _upd_extra = build_upd_sheet_extra(all_rows)
+            if _upd_extra:
+                sheet_xl.update(_upd_extra)
+            sheets.append(sheet_xl)
     except HTTPException:
         raise
     except Exception as e:

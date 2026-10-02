@@ -13,6 +13,14 @@
 STATUS_ORDER; рамочная (Purchase.purchase_contract_type в FRAMEWORK_TYPES) —
 пока раньше 'ordered' (у рамочного договора отдельная граница: сам договор —
 отдельная сущность, не по каждой закупке внутри него).
+
+Авансовый отчёт (purchase_method='advance', квик-план 2026-10-02, шаг 6,
+вариант Б): граница — СТРОГО раньше 'paid'. Авансовый прыгает из 'wishes'
+сразу в 'delivered' (минует contracted/ordered — см. app/services/
+wish_distribution.py), и «Отказать в оплате» директора на стадии delivered —
+это ЭТА ЖЕ остановка (app/routers/purchase_stop.py), только позже по
+STATUS_ORDER, чем у обычной закупки. Второй механизм отказа НЕ заводим
+(ПРАВИЛО №6) — расширяем порог здесь, единственном месте границы.
 """
 from __future__ import annotations
 
@@ -34,8 +42,9 @@ def can_stop_purchase(p) -> tuple[bool, Optional[str]]:
     if getattr(p, "stopped_at", None) is not None:
         return False, "Закупка уже остановлена"
 
+    is_advance = getattr(p, "purchase_method", None) == "advance"
     is_framework = getattr(p, "purchase_contract_type", None) in FRAMEWORK_TYPES
-    threshold_status = "ordered" if is_framework else "contracted"
+    threshold_status = "paid" if is_advance else ("ordered" if is_framework else "contracted")
     cur_idx = STATUS_ORDER.index(p.status) if p.status in STATUS_ORDER else 0
     threshold_idx = STATUS_ORDER.index(threshold_status)
     if cur_idx >= threshold_idx:

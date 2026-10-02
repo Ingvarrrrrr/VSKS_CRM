@@ -109,7 +109,15 @@ export function transitionRequired(item: Purchase): Record<string, { field: keyo
   ],
 }}
 
-export const nextStatus = (current: string): string | null => {
+// Квик-план 2026-10-02 (деньги субсидии, шаг 6, авансовый вариант Б): общая
+// функция «следующий статус вперёд» — ОДИН источник для CreateOrderView.vue
+// (nextStatusTarget) И списка «Закупки» (useOrdersData.ts::doTransition/
+// doForceStatus), ПРАВИЛО №6. isAdvance=true (purchase_method==='advance') +
+// current==='wishes' прыгает сразу в 'delivered', минуя plan_schedule/
+// work_in_progress/contracted/ordered — см. backend/app/services/
+// wish_distribution.py (тот же прыжок на бэкенде, где создаётся закупка).
+export const nextStatus = (current: string, isAdvance = false): string | null => {
+  if (isAdvance && current === 'wishes') return 'delivered'
   const idx = STATUS_ORDER.indexOf(current)
   return idx >= 0 && idx < STATUS_ORDER.length - 1 ? (STATUS_ORDER[idx + 1] ?? null) : null
 }
@@ -149,15 +157,45 @@ export function stoppedPurchaseLine(p: { stopped_by_name?: string | null; stoppe
 // ПРАВИЛО №6): обычная закупка — пока статус строго раньше 'contracted',
 // рамочная — пока раньше 'ordered'. Формулировка причины отказа дословно
 // совпадает с backend-текстом (тултип кнопки в списке/на карточке).
+//
+// Квик-план 2026-10-02 (шаг 6, авансовый вариант Б): авансовый
+// (purchase_method='advance') прыгает из 'wishes' сразу в 'delivered»
+// (минует contracted/ordered) — порог для него сдвинут до 'paid': на
+// стадии delivered «Отказать в оплате» (см. CreateOrderView.vue —
+// advancePaymentButtons) физически и есть эта остановка.
 export function canStopPurchase(item: Purchase): { allowed: boolean; reason: string | null } {
   if (item.stopped_at) return { allowed: false, reason: 'Закупка уже остановлена' }
-  const threshold = isItemFramework(item) ? 'ordered' : 'contracted'
+  const threshold = item.purchase_method === 'advance' ? 'paid' : (isItemFramework(item) ? 'ordered' : 'contracted')
   const curIdx = STATUS_ORDER.indexOf(item.status)
   const thresholdIdx = STATUS_ORDER.indexOf(threshold)
   if (curIdx >= 0 && curIdx >= thresholdIdx) {
     return { allowed: false, reason: `Закупка уже на стадии «${STATUS_LABEL[item.status] || item.status}» — остановить нельзя` }
   }
   return { allowed: true, reason: null }
+}
+
+// Квик-план 2026-10-02 (шаг 6/7, авансовый вариант Б): авансовый на статусе
+// delivered — остановка ЭТО решение «Отказать в оплате» (директор на бумаге),
+// не обычная остановка закупки. Единственный источник подписи/иконки кнопки
+// остановки — раньше была только в PurchaseHeader.vue, продублирована бы в
+// OrdersTable.vue/OrdersCards.vue (Правило №6 запрещает второй расчёт того же
+// текста) — все три места читают отсюда.
+export function isAdvancePaymentRefusal(item: Purchase): boolean {
+  return item.purchase_method === 'advance' && item.status === 'delivered'
+}
+export function stopButtonLabelFor(item: Purchase): string {
+  return isAdvancePaymentRefusal(item) ? 'Отказать в оплате' : 'Остановить'
+}
+export function stopButtonIconFor(item: Purchase): string {
+  return isAdvancePaymentRefusal(item) ? 'mdi-cash-remove' : 'mdi-stop-circle-outline'
+}
+export function stopButtonTooltipFor(item: Purchase, canDecideAdvancePayment = true): string {
+  const check = canStopPurchase(item)
+  if (!check.allowed) return check.reason || ''
+  if (isAdvancePaymentRefusal(item) && !canDecideAdvancePayment) {
+    return 'Нет разрешения «Решение по оплате авансового отчёта» — обратитесь к администратору'
+  }
+  return isAdvancePaymentRefusal(item) ? 'Отказать в оплате авансового отчёта (причина обязательна)' : 'Остановить закупку'
 }
 
 export const itemDisplayName = (p: Purchase) => {

@@ -163,12 +163,28 @@ async def transition_status(
                 "Сначала отправьте возмещение на согласование и дождитесь согласования"
             )
 
+    # Quick-план 2026-10-02 (деньги субсидии, шаг 6, авансовый вариант Б):
+    # финальное решение директора «Оплачено» на авансовом (delivered → paid) —
+    # ОТДЕЛЬНАЯ галочка-право 'advance_payment_decision', а не общее
+    # 'purchase.status_change'/is_advance_owner-бай-пас ниже (владелец:
+    # директор — не автор отчёта и не согласующий цепочки, это третье лицо).
+    # Запись решения — PurchaseEvent, см. app/services/advance_payment_decision.py.
+    _is_advance_paid_decision = (
+        getattr(p, 'purchase_method', None) == 'advance'
+        and p.status == 'delivered' and target_status == 'paid'
+    )
+
     # SaaS-bypass: superadmin/account_owner — force-set статус минуя любые guard'ы.
     if current_user.role in OWNER_ROLES:
         p.status = target_status
         if target_status == "delivered":
             await _autofill_accepted_fields(p, db)
         await db.commit()
+        if _is_advance_paid_decision:
+            from app.services.advance_payment_decision import (
+                record_advance_payment_decision, DECISION_PAID,
+            )
+            await record_advance_payment_decision(db, p, current_user, DECISION_PAID)
         await db.refresh(p)
         return p
 
@@ -185,7 +201,14 @@ async def transition_status(
     is_manager_plus = current_user.role in MANAGER_ROLES
     WORK_IN_PROGRESS_IDX = STATUS_ORDER.index("work_in_progress")
 
-    if is_advance_owner and not is_manager_plus:
+    if _is_advance_paid_decision:
+        # Ни владелец-авансового, ни generic purchase.status_change здесь не
+        # проверяем — ТОЛЬКО новое право (см. докстринг _is_advance_paid_decision
+        # выше). superadmin/account_owner уже вышли бы через OWNER_ROLES-bypass
+        # выше, сюда доходят остальные роли, включая manager+.
+        from app.services.advance_payment_decision import assert_can_decide_advance_payment
+        await assert_can_decide_advance_payment(current_user, db)
+    elif is_advance_owner and not is_manager_plus:
         if current_idx < WORK_IN_PROGRESS_IDX:
             raise HTTPException(
                 403,
@@ -238,6 +261,12 @@ async def transition_status(
     _excess_warnings = await apply_purchase_status_transition(
         p, pid, target_status, current_user, db, current_idx, target_idx,
     )
+
+    if _is_advance_paid_decision:
+        from app.services.advance_payment_decision import (
+            record_advance_payment_decision, DECISION_PAID,
+        )
+        await record_advance_payment_decision(db, p, current_user, DECISION_PAID)
 
     # Re-fetch with eager loads after commit
     result2 = await db.execute(

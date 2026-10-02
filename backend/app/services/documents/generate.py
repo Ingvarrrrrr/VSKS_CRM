@@ -46,6 +46,7 @@ from app.services.documents.stages_approvers_list import (
     build_approvers_list,
 )
 from app.services.documents.stages_amounts import contract_date_parts, compute_amounts_and_vat
+from app.services.purchase_economy import purchase_economy_one
 from app.services.documents.contexts_build import build_base_context_part1, build_base_context_part2
 from app.services.documents.contexts_extra import (
     add_phase28_context,
@@ -123,6 +124,11 @@ async def generate_document_bytes(
 
     # Amounts / VAT (preserved UnboundLocalError('art') bug — see module docstring).
     amounts = compute_amounts_and_vat(p, doc_type)
+    # ПРАВИЛО №6 (02.10.2026, шаг 3 плана «Деньги субсидии»): Purchase.economy
+    # больше не заполняется — контекст документа читает расчёт
+    # (app.services.purchase_economy, planned_total − факт законтрактованных
+    # позиций), см. build_base_context_part1 (contexts_build.py).
+    amounts["economy_val"] = await purchase_economy_one(db, p.id)
 
     # Main docxtpl context.
     context = build_base_context_part1(

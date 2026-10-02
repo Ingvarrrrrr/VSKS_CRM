@@ -5,6 +5,7 @@ import { apiFetch } from '@/api'
 import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 import { pct, truncate } from './dashboardFormat'
 import { useKpiPrefs } from '@/composables/useKpiPrefs'
+import { formatEconomyUnmeasuredText, type EconomyUnmeasuredByReason } from '@/utils/economyUnmeasured'
 
 export interface TypeSplitAmounts { goods: number; services: number; unspecified: number }
 
@@ -24,6 +25,8 @@ export interface WidgetsData {
   contracts: WidgetMetric
 }
 
+export interface TypeSplitByKind { goods: number; services: number; unspecified: number }
+
 export interface SubsidyRow {
   id: number; name: string; shortName: string; description: string; year: number
   budget: number; contracted: number; paid: number; planned: number
@@ -34,6 +37,18 @@ export interface SubsidyRow {
   planned_amount?: number | null
   budget_discrepancy?: number | null
   widget?: WidgetsData | null
+  // Квик-план 2026-10-02 («Деньги субсидии», PLAN.md п.4/5) — то же, что и
+  // SubsidyRow в composables/subsidies/types.ts (другой модуль, тот же смысл
+  // и тот же источник — subsidy_stats[] из /dashboard/charts, Правило №6: не
+  // пересчитываем на фронте, только суммируем по выбранным субсидиям).
+  committed?: number | null
+  planned_not_committed?: number | null
+  redistributable?: number | null
+  redistributable_by_kind?: TypeSplitByKind | null
+  economy_total?: number | null
+  economy_no_planned_price_items?: number | null
+  economy_unmeasured_by_reason?: { unlinked: number; no_plan_price: number; monthly: number; no_fact: number } | null
+  committed_missing_fact_items?: number | null
 }
 
 // Владелец (2026-08-30): «субсидии у потолка» — сумма заказанного (включая
@@ -184,6 +199,60 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
   const totalRemaining    = computed(() => totalBudget.value - totalPaid.value)
   const totalUsagePct   = computed(() => pct(totalPaid.value, totalBudget.value))
 
+  // ── Квик-план 2026-10-02 («Деньги субсидии», PLAN.md п.4/5) — Σ по выбранным
+  // субсидиям, то же агрегирование, что у totalFeoPlanned выше (не пересчёт
+  // формулы, значения уже готовые с бэкенда — Правило №6).
+  const totalRedistributable = computed(() =>
+    filteredSubsidies.value.reduce((s, x) => s + (x.redistributable ?? 0), 0)
+  )
+  // ИСПРАВЛЕНО 02.10.2026 (приёмка — «экономия без данных = 0 ₽, должно быть
+  // «—»): если НИ У ОДНОЙ выбранной субсидии нет поля economy_total (не
+  // пришло/явный null с бэкенда) — агрегат null, а не ложный 0. Если хотя
+  // бы у одной есть — считаем Σ как обычно (отсутствующие трактуются как 0
+  // внутри суммы, это не то же самое, что «данных нет вообще»).
+  const totalEconomy = computed<number | null>(() => {
+    const list = filteredSubsidies.value
+    const hasAny = list.some(x => x.economy_total !== null && x.economy_total !== undefined)
+    if (!hasAny) return null
+    return list.reduce((s, x) => s + (x.economy_total ?? 0), 0)
+  })
+  const totalEconomyNoPlannedPriceItems = computed(() =>
+    filteredSubsidies.value.reduce((s, x) => s + (x.economy_no_planned_price_items ?? 0), 0)
+  )
+  // ИСПРАВЛЕНО 02.10.2026 (приёмка — текст «42 позиций без плановой цены не
+  // учтены» был фиксированным и не показывал причину): разбивка по причине —
+  // Σ готовых счётчиков economy_unmeasured_by_reason по выбранным субсидиям
+  // (Правило №6 — суммирование готовых полей, не формула), текст строит
+  // общий форматтер economyUnmeasured.ts (та же функция, что в карточке
+  // субсидии и таблице по способам).
+  const totalEconomyUnmeasuredByReason = computed<EconomyUnmeasuredByReason>(() => {
+    const acc: EconomyUnmeasuredByReason = { unlinked: 0, no_plan_price: 0, monthly: 0, no_fact: 0 }
+    for (const x of filteredSubsidies.value) {
+      const by = x.economy_unmeasured_by_reason
+      if (!by) continue
+      acc.unlinked += by.unlinked || 0
+      acc.no_plan_price += by.no_plan_price || 0
+      acc.monthly += by.monthly || 0
+      acc.no_fact += by.no_fact || 0
+    }
+    return acc
+  })
+  const totalCommittedMissingFactItems = computed(() =>
+    filteredSubsidies.value.reduce((s, x) => s + (x.committed_missing_fact_items ?? 0), 0)
+  )
+  const totalPlannedNotCommitted = computed(() =>
+    filteredSubsidies.value.reduce((s, x) => s + (x.planned_not_committed ?? 0), 0)
+  )
+  const totalRedistributableByKind = computed<TypeSplitByKind>(() => {
+    const acc: TypeSplitByKind = { goods: 0, services: 0, unspecified: 0 }
+    for (const x of filteredSubsidies.value) {
+      const k = x.redistributable_by_kind
+      if (!k) continue
+      acc.goods += k.goods || 0; acc.services += k.services || 0; acc.unspecified += k.unspecified || 0
+    }
+    return acc
+  })
+
   const overrunSubsidies = computed(() =>
     filteredSubsidies.value.filter(s => s.planned > s.budget || s.contracted > s.budget)
   )
@@ -221,6 +290,8 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
   const kpiTarget_delivered_unpaid = computed(() => effectiveWidgets.value?.delivered_unpaid.amount ?? 0)
   const kpiTarget_paid             = computed(() => effectiveWidgets.value?.paid.amount             ?? totalPaid.value)
   const kpiTarget_free             = computed(() => totalBudget.value - totalPlanSchedule.value)
+  const kpiTarget_redistributable  = computed(() => totalRedistributable.value)
+  const kpiTarget_economy          = computed(() => totalEconomy.value ?? 0)  // useAnimatedNumber требует number; «—» для null решается в карточке ниже
 
   const kpiAnim_budget           = useAnimatedNumber(kpiTarget_budget,           800)
   const kpiAnim_plan_schedule    = useAnimatedNumber(kpiTarget_plan_schedule,    800)
@@ -231,6 +302,8 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
   const kpiAnim_delivered_unpaid = useAnimatedNumber(kpiTarget_delivered_unpaid, 800)
   const kpiAnim_paid             = useAnimatedNumber(kpiTarget_paid,             800)
   const kpiAnim_free             = useAnimatedNumber(kpiTarget_free,             800)
+  const kpiAnim_redistributable  = useAnimatedNumber(kpiTarget_redistributable,  800)
+  const kpiAnim_economy          = useAnimatedNumber(kpiTarget_economy,          800)
 
   // ── KPI Cards (widgets — накопительная логика) ────
   const kpiCards = computed(() => {
@@ -347,6 +420,45 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         over: freeRaw < 0,
         split: freeTypeSplit.value,
       },
+      // Квик-план 2026-10-02 («Деньги субсидии», PLAN.md п.5): «Можно
+      // перераспределить» = Бюджет − Законтрактовано = Свободно + В плане без
+      // договоров (см. SubsidyKpiCards.vue для той же карточки на вкладке
+      // «Субсидии» — тот же смысл, тот же набор полей с бэкенда).
+      {
+        key: 'redistributable',
+        label: 'Можно перераспределить',
+        icon: 'mdi-swap-horizontal',
+        amount: kpiAnim_redistributable.value,
+        count: 0,
+        countLabel: '',
+        tooltip: 'бюджет минус законтрактовано: деньги, ещё не связанные договором. Разовый договор занимает деньги с момента заключения, рамочный — только суммой заказов',
+        monthly: null,
+        over: undefined as boolean | undefined,
+        split: totalRedistributableByKind.value,
+        note: totalCommittedMissingFactItems.value > 0
+          ? `${totalCommittedMissingFactItems.value} позиций в договоре без суммы договора — учтены по плановой цене`
+          : null,
+      },
+      {
+        key: 'economy',
+        label: (totalEconomy.value ?? 0) < 0 ? 'Переплата по закупкам' : 'Экономия по закупкам',
+        icon: (totalEconomy.value ?? 0) < 0 ? 'mdi-cash-minus' : 'mdi-cash-plus',
+        // null (ни у одной субсидии нет данных) — карточка показывает «—»
+        // (см. KpiCardsWidget.vue: card.amount == null -> '—'), не 0 ₽.
+        amount: totalEconomy.value == null ? null : Math.abs(kpiAnim_economy.value),
+        count: 0,
+        countLabel: '',
+        tooltip: 'план позиций минус договор по законтрактованным закупкам; переплата — согласованное превышение',
+        monthly: null,
+        over: (totalEconomy.value ?? 0) < 0,
+        // ИСПРАВЛЕНО 02.10.2026 (приёмка — карточка была зелёной даже когда
+        // ничего не измерено): нейтральный цвет вместо «экономия» (зелёный)
+        // или «переплата» (красный), см. KpiCardsWidget.vue/DashboardView.vue
+        // .kpi-unmeasured.
+        unmeasured: totalEconomy.value == null,
+        split: undefined,
+        note: formatEconomyUnmeasuredText(totalEconomyNoPlannedPriceItems.value, totalEconomyUnmeasuredByReason.value) || null,
+      },
     ]
   })
 
@@ -383,6 +495,14 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
         planned_amount: s.planned_amount ?? null,
         budget_discrepancy: s.budget_discrepancy ?? null,
         widget: s.widget ?? null,
+        committed: s.committed ?? null,
+        planned_not_committed: s.planned_not_committed ?? null,
+        redistributable: s.redistributable ?? null,
+        redistributable_by_kind: s.redistributable_by_kind ?? null,
+        economy_total: s.economy_total ?? null,
+        economy_no_planned_price_items: s.economy_no_planned_price_items ?? null,
+        economy_unmeasured_by_reason: s.economy_unmeasured_by_reason ?? null,
+        committed_missing_fact_items: s.committed_missing_fact_items ?? null,
       }))
 
       statusCounts.value = chartsData.status_counts
@@ -415,6 +535,8 @@ export function useDashboardData(selectedYear: Ref<number>, selectedSubsidyIds: 
     availableYears, yearSubsidies, filteredSubsidies, recentPurchases,
     totalBudget, totalContracted, totalPaid, totalPlanned, totalPlanSchedule, totalOrdered,
     totalFeoPlanned, totalRemaining, totalUsagePct,
+    totalRedistributable, totalEconomy, totalEconomyNoPlannedPriceItems,
+    totalCommittedMissingFactItems, totalPlannedNotCommitted, totalRedistributableByKind,
     overrunSubsidies, effectiveWidgets, kpiCards,
     loadAll,
   }

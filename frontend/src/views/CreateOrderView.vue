@@ -29,6 +29,7 @@
       :go-to-wish="(wishId: number) => router.push({ path: '/wishes', query: { open: String(wishId) } })"
       :on-stop-purchase="onStopPurchase"
       :on-resume-purchase="onResumePurchase"
+      :can-decide-advance-payment="canDecideAdvancePayment"
     />
 
     <PurchaseStopDialog
@@ -961,7 +962,9 @@
         :nmck-warning-level="nmckWarningLevel"
         :nmck-excess-pct="nmckExcessPct"
         :format-money="formatMoney"
-        :calc-economy="calcEconomy"
+        :economy="purchaseEconomy"
+        :economy-no-planned-price-items="purchaseEconomyNoPlannedPriceItems"
+        :economy-unmeasured-by-reason="purchaseEconomyUnmeasuredByReason"
         :pointer-target="pointerTarget"
         :is-section-visible="isSectionVisible"
         :framework-siblings="frameworkSiblings"
@@ -1719,7 +1722,8 @@
           title="Повторить (Ctrl+Y)"
           @click="_undoRedo?.redo()"
         />
-        <v-btn v-if="isEdit && nextStatusTarget && !advanceApprovalPending" :color="STATUS_COLOR[nextStatusTarget]" size="large"
+        <v-btn v-if="isEdit && nextStatusTarget && !advanceApprovalPending && !(isAdvancePaidDecision && !canDecideAdvancePayment)"
+          :color="STATUS_COLOR[nextStatusTarget]" size="large"
           variant="tonal" :loading="transitioning" prepend-icon="mdi-arrow-right-circle" @click="onTransitionClick">
           → {{ nextStatusTarget === 'work_in_progress' ? 'Направлено в закупку' : STATUS_LABEL[nextStatusTarget] }}
         </v-btn>
@@ -1727,6 +1731,15 @@
           prepend-icon="mdi-arrow-right-circle"
           title="Сначала отправьте возмещение на согласование и дождитесь согласования">
           → {{ STATUS_LABEL[nextStatusTarget] }}
+        </v-btn>
+        <!-- Квик-план 2026-10-02 (шаг 6): «Оплачено» авансового — решение
+             директора, отдельное право 'advance_payment_decision'. Без права
+             кнопка видна, но задизейблена с подсказкой (бэкенд всё равно
+             вернёт 403 — здесь просто не даём нажать впустую). -->
+        <v-btn v-else-if="isEdit && isAdvancePaidDecision && !canDecideAdvancePayment" disabled size="large" variant="tonal"
+          prepend-icon="mdi-arrow-right-circle"
+          title="Нет разрешения «Решение по оплате авансового отчёта» — обратитесь к администратору">
+          → Оплачено
         </v-btn>
         <v-select v-if="isEdit && form.status === 'work_in_progress'" v-model="form.substatus"
           :items="SUBSTATUS_OPTIONS" item-title="title" item-value="value"
@@ -2435,7 +2448,6 @@ const form = reactive({
   feo_category_id: null as number | null,
   subject: '',
   contract_price: null as number | null,
-  economy: null as number | null,
   price_increase: null as number | null,
   contract_number: '',
   contract_date: '',
@@ -3618,9 +3630,10 @@ function onContractTypeChange() {
 }
 
 // ── НМЦД/итоги закупки — вынесено в composables/purchase/usePurchaseNmck.ts
-// (только чистые computed/refs, зависящие от form/items). syncContractPriceIfSingle/
-// calcEconomy и их watcher'ы остаются во view — они пишут в form, а form читается
-// напрямую в save() (ПРАВИЛО №6, один источник истины). ──
+// (только чистые computed/refs, зависящие от form/items). syncContractPriceIfSingle
+// и его watcher'ы остаются во view — пишет в form, а form читается напрямую в
+// save() (ПРАВИЛО №6, один источник истины). economy больше НЕ считается и не
+// пишется фронтом здесь — см. purchaseEconomy ниже (read-only расчёт бэкенда). ──
 const {
   nmckMode, nmckManualValue, contractPriceMode, savedNmck,
   totalNmck, isSinglePurchase, isContracted, displayNmck,
@@ -3673,7 +3686,6 @@ function syncContractPriceIfSingle() {
   if (contractPriceMode.value === 'manual') return
   if (isSinglePurchase.value && displayNmck.value > 0) {
     form.contract_price = displayNmck.value
-    calcEconomy()
   }
 }
 
@@ -3957,13 +3969,18 @@ const onSubsidyChange = async () => {
   }
 }
 
-const calcEconomy = () => {
-  // Экономия = НМЦД (зафиксированная) - Цена договора
-  const nmck = displayNmck.value
-  form.economy = (nmck > 0 && form.contract_price != null)
-    ? Math.round((nmck - form.contract_price) * 100) / 100
-    : null
-}
+// Квик-план 2026-10-02 («Деньги субсидии», PLAN.md п.3/5): «Экономия» больше
+// НЕ считается и не пишется фронтом (старая формула «НМЦД минус Цена
+// договора» заменена бэкендом на «план позиций минус договор по
+// законтрактованным закупкам», см. PLAN.md раздел «Термины») — только чтение
+// готового purchaseData.value.economy (Правило №6, один источник — бэкенд).
+const purchaseEconomy = computed<number | null>(() =>
+  purchaseData.value?.economy != null ? Number(purchaseData.value.economy) : null
+)
+const purchaseEconomyNoPlannedPriceItems = computed<number>(() =>
+  Number(purchaseData.value?.economy_no_planned_price_items ?? 0)
+)
+const purchaseEconomyUnmeasuredByReason = computed(() => purchaseData.value?.economy_unmeasured_by_reason ?? null)
 
 // Phase 31-05: server-side remaining (D-17); replaces client-side calcBudget.
 // exclude_purchase_id excludes current purchase from spent on UPDATE (D-16 correct remaining).
@@ -3986,9 +4003,9 @@ const fetchRemaining = async () => {
   } catch {}
 }
 
-watch(totalNmck, () => { calcEconomy(); fetchRemaining() })
-watch(nmckMode, () => { syncContractPriceIfSingle(); calcEconomy(); fetchRemaining() })
-watch(nmckManualValue, () => { syncContractPriceIfSingle(); calcEconomy() })
+watch(totalNmck, () => { fetchRemaining() })
+watch(nmckMode, () => { syncContractPriceIfSingle(); fetchRemaining() })
+watch(nmckManualValue, () => { syncContractPriceIfSingle() })
 watch(contractPriceMode, () => { syncContractPriceIfSingle() })
 
 const hasProducts = computed(() => items.value.some(i => i.item_name?.trim()))
@@ -4005,11 +4022,36 @@ const executionTermRules = computed(() => [
 
 const nextStatusTarget = computed(() => {
   if (!isEdit.value || !form.status) return null
+  // Квик-план 2026-10-02 (деньги субсидии, шаг 6, авансовый вариант Б):
+  // авансовый после согласования уходит из 'wishes' СРАЗУ в 'delivered'
+  // («Поставлено, не оплачено»), минуя plan_schedule/work_in_progress/
+  // contracted/ordered — см. app/services/wish_distribution.py (бэкенд,
+  // тот же STATUS_ORDER). Эта кнопка — ручной повтор того же перехода, если
+  // авто-переход после согласования отказал по гейту (advance_purchase_transition_warning
+  // в useAdvanceReimbursement.ts), поэтому должна бить в ТУ ЖЕ цель, не в
+  // промежуточную стадию. С 'delivered' дальше авансовый идёт как обычная
+  // закупка (→ 'paid' по generic STATUS_ORDER ниже) — это и есть кнопка
+  // «Оплачено» решения директора (см. app/services/advance_payment_decision.py);
+  // «Отказать в оплате» — не эта кнопка, а существующая «Остановить» в
+  // PurchaseHeader.vue (relabel для этой же стадии, см. advanceStopButtonLabel).
+  if (form.purchase_method === 'advance' && form.status === 'wishes') return 'delivered'
   // Рамочные закупки: из work_in_progress сразу в delivered (contracted недоступен)
   if (form.status === 'work_in_progress' && isFramework.value) return 'delivered'
   const idx = STATUS_ORDER.indexOf(form.status)
   return idx >= 0 && idx < STATUS_ORDER.length - 1 ? STATUS_ORDER[idx + 1] : null
 })
+
+// Квик-план 2026-10-02 (шаг 6): «Оплачено» на авансовом (delivered → paid) —
+// решение директора, отдельное право 'advance_payment_decision' (НЕ
+// 'purchase.status_change' — см. backend/app/routers/purchase_transitions.py,
+// _is_advance_paid_decision). Кнопка — ТА ЖЕ генерик-кнопка перехода статуса
+// (nextStatusTarget === 'paid' для авансового на delivered), здесь только
+// решаем, показывать ли её активной/с подсказкой об отсутствии права —
+// второй кнопки не заводим (ПРАВИЛО №6). Бэкенд — последнее слово (403).
+const isAdvancePaidDecision = computed(() =>
+  form.purchase_method === 'advance' && form.status === 'delivered' && nextStatusTarget.value === 'paid',
+)
+const canDecideAdvancePayment = computed(() => authStore.hasAction(ACTIONS.ADVANCE_PAYMENT_DECISION))
 
 // Владелец (2026-09-29): «авансовый не должен уходить в план закупок без
 // согласования возмещения — иначе все сотрудники наделают авансовых и
@@ -4221,7 +4263,6 @@ const loadPurchase = async () => {
     feo_category_id: data.feo_category_id ?? null,
     subject: data.subject || '',
     contract_price: data.contract_price ? Number(data.contract_price) : null,
-    economy: data.economy ? Number(data.economy) : null,
     price_increase: data.price_increase ? Number(data.price_increase) : null,
     contract_number: data.contract_number || '',
     contract_date: data.contract_date || '',

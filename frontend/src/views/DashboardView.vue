@@ -56,13 +56,15 @@
     >
       <!-- ── KPI Cards ── -->
       <GridItem v-bind="effectiveLayout.find(l => l.i === 'kpi')" key="kpi">
-        <DashboardGridWidget :editing="isEditing" label="KPI">
-          <KpiCardsWidget
-            :loading="loading" :mobile="mobile" :kpi-cards="kpiCards"
-            :format-currency="formatCurrency" :format-currency-short="formatCurrencyShort"
-            @kpi-click="handleKpiClick" @type-row-click="onKpiTypeRowClick"
-          />
-        </DashboardGridWidget>
+        <div ref="kpiWidgetEl" class="kpi-widget-measure">
+          <DashboardGridWidget :editing="isEditing" label="KPI">
+            <KpiCardsWidget
+              :loading="loading" :mobile="mobile" :kpi-cards="kpiCards"
+              :format-currency="formatCurrency" :format-currency-short="formatCurrencyShort"
+              @kpi-click="handleKpiClick" @type-row-click="onKpiTypeRowClick"
+            />
+          </DashboardGridWidget>
+        </div>
       </GridItem>
 
       <!-- ── Donut Chart ── -->
@@ -143,6 +145,7 @@
             :total-budget="totalBudget" :total-plan-schedule="totalPlanSchedule"
             :total-feo-planned="totalFeoPlanned" :total-ordered="totalOrdered"
             :total-paid="totalPaid" :total-remaining="totalRemaining" :total-usage-pct="totalUsagePct"
+            :total-redistributable="totalRedistributable"
             :format-currency="formatCurrency" :pct="pct" :progress-color="progressColor"
             @open-breakdown="openBreakdown"
           />
@@ -270,6 +273,7 @@ import { useDashboardChartTheme } from '@/composables/dashboard/useDashboardChar
 import { useDashboardFilters } from '@/composables/dashboard/useDashboardFilters'
 import { useDashboardData } from '@/composables/dashboard/useDashboardData'
 import { useDashboardGridLayout } from '@/composables/dashboard/useDashboardGridLayout'
+import { useKpiAutoHeight } from '@/composables/dashboard/useKpiAutoHeight'
 import { useBudgetDrilldown } from '@/composables/dashboard/useBudgetDrilldown'
 import { useDonutWidget, SEGMENT_LABELS } from '@/composables/dashboard/useDonutWidget'
 import { usePipelineWidget } from '@/composables/dashboard/usePipelineWidget'
@@ -292,6 +296,7 @@ const {
   availableYears, yearSubsidies, filteredSubsidies, recentPurchases,
   totalBudget, totalContracted, totalPaid, totalPlanned, totalPlanSchedule, totalOrdered,
   totalFeoPlanned, totalRemaining, totalUsagePct,
+  totalRedistributable,
   overrunSubsidies, effectiveWidgets, kpiCards,
   loadAll,
 } = useDashboardData(selectedYear, selectedSubsidyIds)
@@ -392,7 +397,7 @@ const { monthlyContractsRemaining, totalMonthlyRemaining } = useMonthlyContracts
 // ── Раскладка сетки виджетов ──────────────────────────
 const dashboardToggleMode = ref<'classic' | 'radar'>('classic')
 const {
-  isEditing, toggleEditing, resetLayout, effectiveLayout, handleLayoutUpdated, setMode,
+  layout, isEditing, toggleEditing, resetLayout, effectiveLayout, handleLayoutUpdated, setMode,
 } = useDashboardGridLayout(
   mobile,
   computed(() => kpiCards.value.length),
@@ -400,6 +405,10 @@ const {
   computed(() => pipelineByType.value.some(s => s.total > 0)),
   dashboardToggleMode,
 )
+// Фикс: виджет KPI-карточек подстраивает высоту под фактическое содержимое
+// (растущее число карточек + перенос на 2-3 ряда на нешироких экранах), а не
+// держит старую фиксированную h из localStorage — см. useKpiAutoHeight.ts.
+const { kpiWidgetEl } = useKpiAutoHeight(layout, handleLayoutUpdated, isEditing, mobile)
 
 // ── Вкладка «Аналитика» (ленивая загрузка) ────────────
 const {
@@ -596,6 +605,14 @@ onMounted(() => {
 .kpi-delivered_unpaid::before  { box-shadow: 0 0 30px rgba(239,68,68,0.15); }
 .kpi-paid::before              { box-shadow: 0 0 30px rgba(34,197,94,0.15); }
 .kpi-free::before              { box-shadow: 0 0 30px rgba(148,163,184,0.15); }
+/* Квик-план 2026-10-02 (PLAN.md п.4/5, фикс приёмки — карточки без
+   оформления): «Можно перераспределить» (teal, нейтральный — переходное
+   состояние денег, не «хорошо»/«плохо») и «Экономия по закупкам» (зелёный по
+   умолчанию — положительная экономия; .kpi-over выше по файлу перебивает
+   цвет на красный при переплате, т.к. у него выше специфичность, см. строки
+   627-638). */
+.kpi-redistributable::before   { box-shadow: 0 0 30px rgba(20,184,166,0.15); }
+.kpi-economy::before           { box-shadow: 0 0 30px rgba(34,197,94,0.15); }
 
 .kpi-icon-box {
   width: 48px;
@@ -621,6 +638,8 @@ onMounted(() => {
 .kpi-contracted .kpi-icon-box         { background: var(--crm-kpi-bg-sky); color: #0284C7; }
 .kpi-paid .kpi-icon-box               { background: var(--crm-kpi-bg-green); color: #22C55E; }
 .kpi-free .kpi-icon-box               { background: rgba(148,163,184,0.12); color: #94A3B8; }
+.kpi-redistributable .kpi-icon-box    { background: rgba(20,184,166,0.12); color: #14B8A6; }
+.kpi-economy .kpi-icon-box            { background: rgba(34,197,94,0.12); color: #22C55E; }
 
 .kpi-budget           { border-top: 3px solid #3B82F6; }
 .kpi-plan_schedule    { border-top: 3px solid #F59E0B; }
@@ -632,8 +651,18 @@ onMounted(() => {
 .kpi-contracted       { border-top: 3px solid #0284C7; }
 .kpi-paid             { border-top: 3px solid #22C55E; }
 .kpi-free             { border-top: 3px solid #94A3B8; }
+.kpi-redistributable  { border-top: 3px solid #14B8A6; }
+.kpi-economy          { border-top: 3px solid #22C55E; }
 .kpi-card.kpi-over    { border-top-color: #EF4444; }
 .kpi-over .kpi-icon-box { background: rgba(239,68,68,0.12); color: #EF4444; }
+/* ИСПРАВЛЕНО 02.10.2026 (приёмка ФАДМ_2026 — карточка «Экономия по закупкам»
+   оставалась зелёной, читалась как «экономии нет», хотя ничего не измерено):
+   нейтральный серый вместо зелёного/красного, пока amount==null. Две-класса
+   селектор (как .kpi-card.kpi-over выше) бьёт однокласс .kpi-economy по
+   специфичности. */
+.kpi-card.kpi-unmeasured          { border-top-color: #94A3B8; }
+.kpi-unmeasured .kpi-icon-box     { background: rgba(148,163,184,0.12); color: #94A3B8; }
+.kpi-economy.kpi-unmeasured::before { box-shadow: 0 0 30px rgba(148,163,184,0.15); }
 
 .kpi-body { flex: 1; min-width: 0; }
 .kpi-value {
@@ -1008,7 +1037,17 @@ onMounted(() => {
   overflow: hidden;
   transition: box-shadow 0.2s ease;
 }
-/* KPI-виджет: при нехватке высоты (старый сохранённый layout) — скролл, не обрезание */
+/* Обёртка виджета KPI для измерения реальной высоты содержимого (useKpiAutoHeight.ts):
+   высота НЕ фиксируется (auto), чтобы её мог считать ResizeObserver и синхронизировать
+   с layout 'kpi'.h — без этого на любом переносе карточек на 2-3 ряда следующий виджет
+   рисуется поверх (position:absolute в grid-layout-plus). */
+.kpi-widget-measure {
+  width: 100%;
+}
+.kpi-widget-measure .grid-widget {
+  height: auto;
+}
+/* Safety-net на время до первой синхронизации высоты — скролл, а не наезд соседнего виджета */
 .grid-widget:has(.kpi-row) {
   overflow-y: auto;
 }

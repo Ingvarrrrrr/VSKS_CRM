@@ -26,6 +26,10 @@ from app.routers.subsidies import calculate_budgets_bulk, _calculate_spent_bulk,
 from app.services.feo_plan import calculate_ceiling_forecasts_bulk
 # Правило №6: та же формула фолбэка, что subsidies.py list/detail/create/approve/update.
 from app.services.subsidy_budget import effective_subsidy_budget
+# ИСПРАВЛЕНИЕ пункта E (ревью 02.10.2026, PLAN.md шаг 1): рамочный договор
+# занимает деньги только с РАЗМЕЩЁННОГО заказа (ordered/delivered/paid), не с
+# самого факта заключения (contracted) — единая точка committed_amounts.py.
+from app.services.committed_amounts import FRAMEWORK_COMMITTED_STATUSES, SINGLE_COMMITTED_STATUSES
 # ПРАВИЛО №6 (2026-09-05): единый расчёт «суммы закупки» по стадии — см. dashboard.py
 # для полного пояснения; effective_amount_expr/aggregate_scope_expr уже применены
 # во всех местах ниже, где раньше были точечные COALESCE(...).
@@ -260,7 +264,7 @@ async def dashboard_charts(
     _contracted_purchase_exists = (
         select(literal(1))
         .where(Purchase.contract_id == Contract.id)
-        .where(Purchase.status.in_(["contracted", "ordered", "delivered", "paid"]))
+        .where(Purchase.status.in_(list(SINGLE_COMMITTED_STATUSES)))
     )
     contract_single_q = (
         select(
@@ -299,7 +303,11 @@ async def dashboard_charts(
         .join(Contract, Purchase.contract_id == Contract.id)
         .where(Contract.status == "active")
         .where(Contract.contract_type == "framework_cumulative")
-        .where(Purchase.status.in_(["contracted", "ordered", "delivered", "paid"]))
+        # ИСПРАВЛЕНИЕ пункта E (ревью 02.10.2026): рамочный — деньги заняты
+        # только с «Заказано» (committed_amounts.FRAMEWORK_COMMITTED_STATUSES),
+        # не с 'contracted' (сама рамочная ГОЛОВА денег не отнимает, см.
+        # committed_amounts.py docstring).
+        .where(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)))
         .group_by(Purchase.subsidy_id)
     )
     if use_sids:
@@ -365,18 +373,38 @@ async def dashboard_charts(
             db, lambda q: _apply_purchase_org_filter(q, current_user, org_ids)
         )
 
+    # Контракт API (PLAN.md шаг 1-2/5, п. A, ревью 02.10.2026): «Свободно»/
+    # «законтрактовано»/«В плане без договоров»/«Можно перераспределить» —
+    # ОДНА функция (app.services.subsidy_money_summary, ПРАВИЛО №6 — она сама
+    # не считает НИЧЕГО заново, только собирает effective_subsidy_budget/
+    # planned_tree/committed_amounts.subsidy_committed_totals воедино).
+    # «Экономия» — отдельная точка (purchase_economy.py), не входит в сводку
+    # денег субсидии (разные экраны/формулы).
+    from app.services.subsidy_money_summary import subsidy_money_summary as _money_summary_fn
+    from app.services.purchase_economy import purchase_economy_by_subsidy as _economy_by_subsidy_fn
+    money_summary_map = await _money_summary_fn(db, sid_list)
+    economy_by_subsidy_map = await _economy_by_subsidy_fn(db, sid_list)
+
     subsidy_stats = []
     for row in subsidy_rows:
         calc = budgets.get(row.id, 0.0)
-        effective_budget = effective_subsidy_budget(calc, row.budget)
+        _money = money_summary_map.get(row.id) or {}
+        # effective_budget/planned_tree/remaining — ТЕ ЖЕ числа, что раньше
+        # считались прямо здесь (effective_subsidy_budget + budget−planned_tree),
+        # теперь читаются из subsidy_money_summary (ПРАВИЛО №6, одна точка —
+        # см. докстринг модуля). Байт-в-байт то же значение: _money["budget"]/
+        # ["planned"] построены ИЗ ТЕХ ЖЕ calculate_budgets_bulk/
+        # _calculate_feo_planned_tree_bulk, что и planned_tree_map/budgets ниже.
+        effective_budget = _money.get("budget", effective_subsidy_budget(calc, row.budget))
         spent = spent_map.get(row.id, 0.0)
         planned_amt = planned_amounts_map.get(row.id, 0.0)
         # planned_tree = правильное «Запланировано» = план дерева ФЭО (= «Свободно» = budget − planned_tree)
         planned_tree = planned_tree_map.get(row.id, 0.0)
         # «Свободно» = budget − planned_tree (совпадает с панелью ФЭО вкладки «Субсидии»)
-        remaining = effective_budget - planned_tree
+        remaining = _money.get("free", effective_budget - planned_tree)
         # discrepancy-чип показывается только при превышении (planned_tree > budget)
         discrepancy = (effective_budget - planned_tree) if planned_tree > effective_budget else None
+        _economy = economy_by_subsidy_map.get(row.id) or {}
         sub_obj = sub_objs.get(row.id)
         contractor_name = None
         contractor_inn = None
@@ -418,6 +446,34 @@ async def dashboard_charts(
             "remaining": remaining,  # = «Свободно» = budget − planned_tree
             "planned_amount": planned_amt,
             "budget_discrepancy": discrepancy,
+            # Контракт API (PLAN.md шаг 1-2/5, п. A, ревью 02.10.2026): «законтрактовано»,
+            # «В плане без договоров», «Можно перераспределить» — ОДНА точка
+            # расчёта (app.services.subsidy_money_summary, см. импорт выше);
+            # «Экономия по закупкам» — отдельно, purchase_economy.py.
+            # Инвариант: remaining + planned_not_committed == redistributable
+            # (покрыт test_dashboard_analytics.py / test_money_committed.py).
+            "committed": _money.get("committed", 0.0),
+            "committed_by_kind": _money.get("committed_by_kind") or {"goods": 0.0, "services": 0.0, "unspecified": 0.0},
+            "planned_not_committed": _money.get("planned_not_committed", planned_tree - _money.get("committed", 0.0)),
+            "planned_not_committed_by_kind": _money.get("planned_not_committed_by_kind") or {"goods": 0.0, "services": 0.0, "unspecified": 0.0},
+            "redistributable": _money.get("redistributable", effective_budget - _money.get("committed", 0.0)),
+            # Оставлено None — байт-в-байт прежнее поведение этого эндпоинта
+            # (subsidy_money_summary УМЕЕТ посчитать redistributable_by_kind
+            # через subsidy_type_totals, но раньше это поле здесь всегда было
+            # None, и контракт API п. A менять его тут не просит — см. PLAN.md
+            # шаг 5 отчёта: «поля ответа и их значения не меняются»).
+            "redistributable_by_kind": None,
+            # ИСПРАВЛЕНО 02.10.2026: economy_total=None (ни одна позиция субсидии
+            # не измерена) пропускается как null, не форсится в 0.0 — см.
+            # purchase_economy.py docstring.
+            "economy_total": (
+                float(_economy["economy_total"])
+                if _economy.get("economy_total") is not None
+                else None
+            ),
+            "economy_no_planned_price_items": _economy.get("economy_no_planned_price_items", 0),
+            "economy_unmeasured_by_reason": _economy.get("economy_unmeasured_by_reason"),
+            "committed_missing_fact_items": _money.get("committed_missing_fact_items", 0),
             # Per-subsidy work/delivery baskets (зеркала глобальных widgets)
             "total_work": float(row.total_plan_schedule) + float(row.w_ordered) + float(row.w_delivered) + float(row.w_paid),
             "total_contracts": contracts_map.get(row.id, 0.0),

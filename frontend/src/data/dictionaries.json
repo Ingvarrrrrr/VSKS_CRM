@@ -101,6 +101,10 @@
   ],
   "permission_actions": [
     {
+      "key": "advance_payment_decision",
+      "description": "Решение по оплате авансового отчёта (Оплачено / Отказать в оплате)"
+    },
+    {
       "key": "documents.view_all_in_org",
       "description": "Видеть все документы организации без фильтра по ответственному исполнителю"
     },

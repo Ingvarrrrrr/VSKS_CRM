@@ -107,6 +107,18 @@ FIELDS: dict[str, FieldDef] = {
     'final_total_amount': FieldDef('final_total_amount', 'Итоговая сумма', 'currency', 'purchase', 'purchases.final_total_amount', 'Цены', format='rub', is_measure=True, agg_default='sum'),
     'contract_price': FieldDef('contract_price', 'Сумма по договору', 'currency', 'purchase', 'purchases.contract_price', 'Цены', format='rub', is_measure=True, agg_default='sum'),
     'nmck': FieldDef('nmck', 'НМЦК', 'currency', 'purchase', 'purchases.nmck', 'Цены', format='rub', is_measure=True, agg_default='sum'),
+    # ⚠️ ИЗВЕСТНЫЙ ПРОБЕЛ (02.10.2026, шаг 3 плана «Деньги субсидии», НЕ
+    # исправлен в этой волне, см. предупреждение у acceptance_doc_* выше за
+    # 2026-09-07 — тот же класс проблемы): Purchase.economy БОЛЬШЕ НЕ
+    # заполняется (расчёт — app.services.purchase_economy, база — плановая
+    # позиция FeoPlannedItem, НЕ planned_total, см. её docstring), но конструктор отчётов
+    # (pivot_engine.py) умеет только «простая колонка» или CASE WHEN —
+    # произвольный подзапрос (агрегат по purchase_items с проверкой статуса/
+    # over_plan каждой позиции) он не выразит без отдельного спецкейса (по
+    # аналогии с _extract_feo_planned). Это поле в отчётах будет ПУСТЫМ/
+    # УСТАРЕВШИМ (колонка больше не пишется) до отдельной задачи на явный
+    # спецкейс в pivot_engine — здесь намеренно НЕ трогаем sql_expr, чтобы не
+    # сломать движок попыткой подставить несовместимое выражение.
     'economy': FieldDef('economy', 'Экономия', 'currency', 'purchase', 'purchases.economy', 'Цены', format='rub', is_measure=True, agg_default='sum'),
     'delivery_payment_amount': FieldDef('delivery_payment_amount', 'Сумма к оплате по поставке', 'currency', 'purchase', 'purchases.delivery_payment_amount', 'Цены', format='rub', is_measure=True, agg_default='sum'),
     'acceptance_doc_amount': FieldDef('acceptance_doc_amount', 'Сумма по акту', 'currency', 'purchase', 'purchases.acceptance_doc_amount', 'Цены', format='rub', is_measure=True, agg_default='sum'),

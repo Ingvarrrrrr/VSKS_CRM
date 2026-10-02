@@ -54,6 +54,33 @@ export interface SubsidyRow {
   created_by?: number | null
   approved_by?: number | null
   approved_at?: string | null
+  // Квик-план 2026-10-02 («Деньги субсидии»): «Законтрактовано» — единый
+  // предикат статусов/сумма (backend/app/services/*committed*), остальные
+  // поля — производные от него (Правило №6, один источник — committed).
+  // redistributable/redistributable_by_kind — null, если у субсидии не задан
+  // бюджет (budget − committed не посчитать); planned_not_committed = Запланировано
+  // − Законтрактовано, не null (Запланировано всегда известно).
+  committed?: number | null
+  committed_by_kind?: { goods: number; services: number; unspecified: number } | null
+  planned_not_committed?: number | null
+  planned_not_committed_by_kind?: { goods: number; services: number; unspecified: number } | null
+  redistributable?: number | null
+  redistributable_by_kind?: { goods: number; services: number; unspecified: number } | null
+  economy_total?: number | null
+  economy_no_planned_price_items?: number | null
+  // ИСПРАВЛЕНО 02.10.2026 (база экономии — плановая позиция FeoPlannedItem,
+  // не planned_total): разбивка economy_no_planned_price_items по причине —
+  // показывать только ненулевые (см. SubsidyMoneyCards.vue).
+  economy_unmeasured_by_reason?: {
+    unlinked: number
+    no_plan_price: number
+    monthly: number
+    no_fact: number
+  } | null
+  // Число позиций закупок, у которых есть договор, но сумма договора не
+  // заполнена — такие позиции учтены в committed по плановой цене (см.
+  // подсказку карточки «Можно перераспределить»).
+  committed_missing_fact_items?: number | null
 }
 
 // C4: участник (соредактор) черновой субсидии — калька wish_member без
@@ -201,6 +228,19 @@ export interface FeoPlannedItem {
   // Только для чтения ответа PUT — GET .../comparison эти поля не отдаёт.
   product_kind_synced?: boolean
   product_name?: string | null
+  // Квик-план 2026-10-02 («Деньги субсидии», плановые позиции, PLAN.md п.5):
+  // committed/committed_quantity — та же формула «Законтрактовано», что и у
+  // категории/субсидии (Правило №6). not_committed — null у закрытой позиции
+  // (closed=true), иначе план минус законтрактовано. savings — ТОЛЬКО у
+  // закрытой позиции (план минус факт по договору), иначе null; отрицательная
+  // savings = согласованная переплата. closed = «количество набрано — план
+  // гарантированно расходован» (см. GET /api/feo-planned-items/residuals и
+  // /api/feo-categories/plan-positions).
+  committed?: number | null
+  committed_quantity?: number | null
+  not_committed?: number | null
+  savings?: number | null
+  closed?: boolean
 }
 
 // Стадия уточнения позиции (ФЭО → План → Что выставили на закупку → Номенклатура
@@ -382,6 +422,11 @@ export interface PlanTreeEntry {
   plan_goods?: number; plan_services?: number; plan_unspecified?: number
   feo_goods?: number; feo_services?: number; feo_unspecified?: number
   fact_goods?: number; fact_services?: number; fact_unspecified?: number
+  // Решение владельца (02.10.2026): «Оплачено (по отметке)» — Σ(payment_amount +
+  // payment_amount_declared), «Подтверждено выпиской» — Σ payment_amount — см.
+  // backend/app/services/feo_plan_payments.py.
+  paid_marked?: number
+  paid_confirmed?: number
   // Раздел E2 — 4 НЕЗАВИСИМЫХ контроля превышения по типу (kind — см.
   // TypeExcessKind ниже), каждый со своим amount/pending/approved. НЕ имеют
   // legacy-фолбэка (backend/app/services/feo_plan_tree.py::_exact_kind_appr) —
@@ -399,6 +444,19 @@ export interface PlanTreeEntry {
   excess_fact_over_plan_services?: number
   excess_fact_over_plan_services_pending?: boolean
   excess_fact_over_plan_services_approved?: boolean
+  // Квик-план 2026-10-02 («Деньги субсидии», узел дерева ФЭО, см.
+  // PLAN.md п.5): committed/planned_not_committed — та же формула, что и на
+  // уровне субсидии (SubsidyRow выше), redistributable — null, если у узла
+  // не задан бюджет (используется fallback на planned_not_committed, см.
+  // useFeoTreeAmounts.ts::feoResidualNoteFor/feoPlanConsumedNoteFor).
+  committed?: number
+  planned_not_committed?: number
+  redistributable?: number | null
+  // Решение владельца (02.10.2026, PLAN.md money-redistribution шаг 3): сколько ₽
+  // договоров БЕЗ плановой позиции включено в plan/display узла (own + Σ детей) —
+  // см. backend/app/services/feo_plan_common.py::plan_floor_addition. Нужно
+  // фронту, чтобы объяснить расхождение «Запланировано» с Σ плановых позиций.
+  plan_floor_added?: number | null
 }
 export interface PlanExcessStep {
   id: number; approval_id: number; user_id: number | null; order_num: number

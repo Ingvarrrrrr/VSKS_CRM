@@ -22,8 +22,7 @@
             v-model.number="nmckManualValue"
             label="НМЦД (итого, вручную)" variant="outlined" density="compact"
             type="number" suffix="₽"
-            hint="Введено вручную. Цена за единицу в ТЗ скрыта." persistent-hint
-            @update:model-value="calcEconomy" />
+            hint="Введено вручную. Цена за единицу в ТЗ скрыта." persistent-hint />
           </div><!-- /pub-glow -->
           </div><!-- /pub-target-nmck -->
         </v-col>
@@ -49,8 +48,7 @@
             :bg-color="(contractPriceMode === 'auto' || (isFramework && !!selectedFrameworkContract)) ? 'grey-lighten-4' : undefined"
             :hint="isFramework && selectedFrameworkContract ? 'Подтянуто из рамочного договора' : contractPriceMode === 'manual' ? 'Введено вручную' : contractPriceHint"
             persistent-hint
-            :color="nmckWarningLevel === 'error' ? 'error' : nmckWarningLevel === 'warning' ? 'warning' : undefined"
-            @update:model-value="calcEconomy">
+            :color="nmckWarningLevel === 'error' ? 'error' : nmckWarningLevel === 'warning' ? 'warning' : undefined">
             <template v-slot:append-inner>
               <v-icon v-if="nmckWarningLevel === 'error'" icon="mdi-alert" color="error" size="18" :title="`Превышение НМЦД на ${nmckExcessPct}%`" />
               <v-icon v-else-if="nmckWarningLevel === 'warning'" icon="mdi-alert-outline" color="warning" size="18" :title="`Близко к НМЦД (+${nmckExcessPct}%)`" />
@@ -76,9 +74,13 @@
             density="compact" suffix="₽" readonly
             :bg-color="(selectedFrameworkContract.remaining_ordered ?? 0) < 0 ? 'red-lighten-5' : 'grey-lighten-4'"
             :hint="(selectedFrameworkContract.remaining_ordered ?? 0) < 0 ? 'Превышен лимит договора' : 'Предельная сумма минус сумма заказанного'" persistent-hint />
-          <v-text-field v-else :model-value="form.economy ?? ''" label="Экономия (авто)" variant="outlined"
-            density="compact" suffix="₽" readonly bg-color="grey-lighten-4"
-            hint="НМЦД минус Цена договора. Считается автоматически." persistent-hint />
+          <v-text-field v-else
+            :model-value="economy != null ? formatMoney(Math.abs(economy)) : '—'"
+            :label="economy != null && economy < 0 ? 'Переплата (расчёт)' : 'Экономия (расчёт)'"
+            variant="outlined" density="compact" suffix="₽" readonly
+            :bg-color="economy != null && economy < 0 ? 'red-lighten-5' : 'grey-lighten-4'"
+            :hint="economyHint"
+            persistent-hint />
         </v-col>
         <v-col cols="12" md="3" class="pt-8">
           <v-text-field v-model.number="form.price_increase" label="Удорожание (доп. соглашения)"
@@ -142,7 +144,10 @@
 // composables/purchase/usePurchaseNmck.ts, композабл вызывается ОДИН раз в
 // родителе (ПРАВИЛО №6) — сюда приходят через v-model/defineModel, чтобы
 // запись из этого компонента отражалась в том же состоянии родителя.
-// calcEconomy пишет в form и остаётся во view (используется в save()).
+// Квик-план 2026-10-02 («Деньги субсидии»): «Экономия» больше не считается и
+// не пишется этим компонентом/формой — только read-only чтение готового
+// расчёта (economy/economyNoPlannedPriceItems, пропсы ниже), см. докстринг
+// purchaseEconomy в CreateOrderView.vue (Правило №6, один источник — бэкенд).
 //
 // Внутри есть блок `v-if="false"` («сиблинги по рамочному договору») —
 // это уже неактивный (недостижимый) код в исходном файле, перенесён
@@ -150,9 +155,11 @@
 // purchaseStatusLabel там были необъявленными идентификаторами (statusColor/
 // statusLabel) — исправлено на импорт из constants/purchaseStatus, как и
 // в CreateOrderView.vue, на случай если блок когда-нибудь снова включат.
+import { computed } from 'vue'
 import { purchaseStatusColor, purchaseStatusLabel } from '@/constants/purchaseStatus'
+import { formatEconomyUnmeasuredText, type EconomyUnmeasuredByReason } from '@/utils/economyUnmeasured'
 
-defineProps<{
+const props = defineProps<{
   form: any
   isFramework: boolean
   isFrameworkCumulative: boolean
@@ -163,7 +170,13 @@ defineProps<{
   nmckWarningLevel: 'error' | 'warning' | null
   nmckExcessPct: number
   formatMoney: (v: number) => string
-  calcEconomy: () => void
+  economy: number | null
+  economyNoPlannedPriceItems: number
+  // ИСПРАВЛЕНО 02.10.2026 (база экономии — плановая позиция FeoPlannedItem,
+  // не planned_total): разбивка economyNoPlannedPriceItems по причине —
+  // необязательна (родитель может ещё не передавать её), подсказка тогда
+  // падает на общий текст без разбивки (см. formatEconomyUnmeasuredText).
+  economyUnmeasuredByReason?: EconomyUnmeasuredByReason | null
   pointerTarget: string | null
   isSectionVisible: (key: string) => boolean
   frameworkSiblings: any[]
@@ -174,4 +187,13 @@ defineProps<{
 const nmckMode = defineModel<'auto' | 'manual'>('nmckMode', { required: true })
 const nmckManualValue = defineModel<number | null>('nmckManualValue', { required: true })
 const contractPriceMode = defineModel<'auto' | 'manual'>('contractPriceMode', { required: true })
+
+// Владелец (02.10.2026, ревью шага 3): подсказка к экономии — «плановая
+// позиция минус договор по законтрактованным закупкам; минус — согласованная
+// переплата», плюс разбивка неизмеренных позиций по причине (только ненулевые).
+const economyHint = computed(() => {
+  const base = 'Плановая позиция минус договор по законтрактованным закупкам; минус — согласованная переплата.'
+  const unmeasured = formatEconomyUnmeasuredText(props.economyNoPlannedPriceItems, props.economyUnmeasuredByReason)
+  return unmeasured ? `${base} ${unmeasured.charAt(0).toUpperCase()}${unmeasured.slice(1)}.` : base
+})
 </script>

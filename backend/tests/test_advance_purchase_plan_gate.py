@@ -100,14 +100,20 @@ async def test_advance_transition_to_plan_allowed_once_companion_converted(
 
 
 @pytest.mark.asyncio
-async def test_final_decide_moves_advance_purchase_to_plan_automatically(
+async def test_final_decide_moves_advance_purchase_to_delivered_automatically(
     client, auth_headers, admin_headers, db_session, test_org, make_user,
 ):
-    """Владелец (2026-09-29): «авансовый должен идти дальше сам, как обычная
-    заявка» — финальное согласование компаньона (последний/единственный
-    согласующий в цепочке) само переводит закупку 'wishes' -> 'plan_schedule'
-    через то же ядро перехода (app/services/purchase_transition_core.py), без
-    ручного клика по кнопке «→ План закупок»."""
+    """Владелец (02.10.2026, quick-план «Деньги субсидии», шаг 6, вариант Б):
+    «после ПОСЛЕДНЕГО согласования закупка авансового сразу попадает в статус
+    "Поставлено, не оплачено", минуя plan_schedule/work_in_progress/
+    contracted/ordered» — финальное согласование компаньона (последний/
+    единственный согласующий в цепочке) само переводит закупку
+    'wishes' -> 'delivered' ОДНИМ прыжком через то же ядро перехода
+    (app/services/purchase_transition_core.py), без ручного клика и без
+    промежуточных стадий. Чек загружен заранее — иначе гейт обязательных
+    полей 'delivered' (acceptance_doc_*) отказал бы (см. следующий тест)."""
+    from app.models.purchase_receipt import PurchaseReceipt
+
     # org_admin — имеет subsidy.edit по умолчанию, обязателен для верхнего
     # согласующего (владелец, 2026-09-29; см. test_wish_top_approver_subsidy_edit_gate.py).
     manager = await make_user(role="org_admin", last_name="Иванов")
@@ -115,6 +121,9 @@ async def test_final_decide_moves_advance_purchase_to_plan_automatically(
     data = await _create_advance_purchase(client, auth_headers)
     purchase_id = data["id"]
     wish_id = data["wish_id"]
+
+    db_session.add(PurchaseReceipt(purchase_id=purchase_id, fiscal_document_number=901, source="manual"))
+    await db_session.commit()
 
     cascade_resp = await client.post(
         f"/api/wishes/{wish_id}/approvers/cascade",
@@ -139,4 +148,44 @@ async def test_final_decide_moves_advance_purchase_to_plan_automatically(
 
     purchase_get = await client.get(f"/api/purchases/{purchase_id}", headers=auth_headers)
     assert purchase_get.status_code == 200, purchase_get.text
-    assert purchase_get.json()["status"] == "plan_schedule"
+    assert purchase_get.json()["status"] == "delivered"
+
+
+@pytest.mark.asyncio
+async def test_final_decide_without_receipt_leaves_advance_in_wishes_with_warning(
+    client, auth_headers, admin_headers, db_session, test_org, make_user,
+):
+    """Без чека/акта приёмки гейт обязательных полей 'delivered' отказывает —
+    согласование компаньона НЕ должно падать (владелец: «не роняем согласование,
+    закупка остаётся в wishes, причина — в предупреждении»), кнопка
+    «→ План закупок»/повторный ручной прыжок остаётся доступна в карточке."""
+    manager = await make_user(role="org_admin", last_name="Петров")
+
+    data = await _create_advance_purchase(client, auth_headers)
+    purchase_id = data["id"]
+    wish_id = data["wish_id"]
+
+    cascade_resp = await client.post(
+        f"/api/wishes/{wish_id}/approvers/cascade",
+        json={"top_user_id": manager.id, "mode": "sequential"},
+        headers=auth_headers,
+    )
+    assert cascade_resp.status_code == 200, cascade_resp.text
+    approval_id = cascade_resp.json()["approvers"][0]["id"]
+
+    submit_resp = await client.post(f"/api/wishes/{wish_id}/submit", headers=auth_headers)
+    assert submit_resp.status_code == 200, submit_resp.text
+
+    decide_resp = await client.post(
+        f"/api/wishes/{wish_id}/approvers/{approval_id}/decide",
+        json={"decision": "approved", "comment": "решаю за менеджера в тесте"},
+        headers=admin_headers,
+    )
+    assert decide_resp.status_code == 200, decide_resp.text
+    body = decide_resp.json()
+    assert body["status"] == "converted"
+    assert body.get("advance_purchase_transition_warning"), body
+
+    purchase_get = await client.get(f"/api/purchases/{purchase_id}", headers=auth_headers)
+    assert purchase_get.status_code == 200, purchase_get.text
+    assert purchase_get.json()["status"] == "wishes"

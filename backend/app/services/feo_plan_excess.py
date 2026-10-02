@@ -24,7 +24,7 @@ from sqlalchemy.orm import aliased
 from app.models.feo_category import FeoCategory
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
-from app.services.feo_plan_common import _leaf_plan_manual, _order_substituted_plan
+from app.services.feo_plan_common import _leaf_plan_manual, _order_substituted_plan, plan_floor_addition
 from app.services.feo_plan_tree import compute_feo_plan_tree
 
 
@@ -95,13 +95,26 @@ async def find_excess_culprit(
          (_auto_assign_planned_items, wishes.py); если ни одна закупка ещё не
          привязана — виновник этой строки безымянный (purchase_id=None,
          названа сама плановая позиция).
-      1а) для узлов, ЗАМЕЩЁННЫХ заказом «целиком» (_order_substituted_plan
-         вернула `ordered`, а не `plan_manual`) — сами позиции закупок,
-         реально составляющие `ordered` (ORDERED_STATUSES, over_plan=false, БЕЗ
-         валидной привязки к FeoPlannedItem — та же выборка, что и
-         ordered_consumption_by_category), по возрастанию Purchase.id/id
+      1а) для узлов, ЗАМЕЩЁННЫХ заказом/договором «целиком» (_order_substituted_plan
+         вернула `committed`, а не `plan_manual`) — сами позиции закупок,
+         реально составляющие `committed` (committed_status_predicate,
+         committed_amounts.py, ПРАВИЛО №6 — шаг 2 плана «Деньги субсидии»,
+         02.10.2026, порог «законтрактовано», БЫЛО ORDERED_STATUSES; over_plan=false,
+         БЕЗ валидной привязки к FeoPlannedItem — та же выборка, что и
+         committed_consumption_by_category), по возрастанию Purchase.id/id
          позиции. Плановые FeoPlannedItem такого узла в контрибьюторы НЕ идут
          — они больше не формируют его вклад в план (см. docstring выше).
+      1б) «пол» узла (шаг 3 плана «Деньги субсидии», 02.10.2026, решение
+         владельца «договор входит в план») — синтетический контрибьютор на
+         разницу между ИТОГОВЫМ законтрактованным узла (committed, ВСЕ
+         позиции — линкованные и нет, включая over_plan) и его вкладом в план
+         по источникам 1/1а+over (plan_floor_addition, feo_plan_common.py,
+         ПРАВИЛО №6 — та же добавка, что compute_feo_plan_tree.
+         node['plan_floor_added']): категория БЕЗ плановых позиций (или с
+         планом меньше факта договора) больше не «теряет» законтрактованные
+         деньги из Σ контрибьюторов. Без purchase_id (пояснение — сама
+         категория, не конкретная строка закупки, см. докстринг
+         plan_floor_addition про то, почему разбивка на позиции не делается).
       2) позиции закупок (PurchaseItem) с over_plan=true в PLANNED_STATUSES,
          по возрастанию Purchase.id (у Purchase НЕТ created_at — id это PK
          IDENTITY/serial, монотонно растёт при INSERT, надёжный прокси
@@ -174,9 +187,11 @@ async def find_excess_culprit(
     from app.models.feo_planned_item import FeoPlannedItem
     from app.models.plan_excess_approval import PlanExcessApproval
     from app.routers.purchase_budget import PLANNED_STATUSES  # local: avoid router import cycle
+    from app.services.committed_amounts import (  # local: avoid import cycle, ПРАВИЛО №6, шаг 1-2 плана 02.10.2026
+        committed_status_predicate, committed_consumption_by_category, planned_item_contributions,
+    )
     from app.services.feo_plan_fact import (  # local: avoid import cycle, ПРАВИЛО №6 — переиспользуем формулу факта
-        ORDERED_STATUSES, _contract_item_totals, _purchase_item_totals,
-        ordered_consumption_by_category, purchase_item_fact_amount,
+        _contract_item_totals, _purchase_item_totals, plan_consumption_by_category, purchase_item_fact_amount,
     )
 
     contributors: list[dict] = []
@@ -222,12 +237,44 @@ async def find_excess_culprit(
         _appr = await latest_plan_excess_approval(db, nid, _pek.PLAN_OVER_MANUAL)
         node_approved[nid] = bool(_appr is not None and _appr.status == "approved")
 
-    # Собственные (БЕЗ рекурсии по детям) ordered/ordered_quantity каждого узла —
-    # та же величина, что own_ordered/own_ordered_qty в compute_feo_plan_tree._visit,
-    # нужна для _order_substituted_plan НЕЗАВИСИМО на каждом узле, как и там.
-    ordered_by_node = await ordered_consumption_by_category(
+    # Собственные (БЕЗ рекурсии по детям) committed/committed_quantity каждого
+    # узла — та же величина, что own_committed/own_committed_qty в
+    # compute_feo_plan_tree._visit (ШАГ 2 плана «Деньги субсидии», 02.10.2026:
+    # порог замещения — предикат «законтрактовано», НЕ ORDERED_STATUSES — см.
+    # committed_amounts.py), нужна для _order_substituted_plan НЕЗАВИСИМО на
+    # каждом узле, как и там (ПРАВИЛО №6 — одна и та же точка подстановки).
+    committed_by_node = await committed_consumption_by_category(
         db, [cat.subsidy_id], exclude_planned_item_linked=True
     )
+    # Шаг 3 плана «Деньги субсидии» (02.10.2026, «договор входит в план») —
+    # БАЗА «пола» (ТА ЖЕ committed_unlinked_all_for_floor, что в
+    # compute_feo_plan_tree.py._own_plan_floor, ПРАВИЛО №6): ТОЛЬКО
+    # НЕпривязанные позиции, но включая over_plan. ⚠️ НЕ committed_by_purchase/
+    # committed_consumption_by_category с include_over_plan=True БЕЗ
+    # exclude_planned_item_linked — привязанная над-плановая позиция уже
+    # учтена own-планом/Источником №2 своим путём, иначе задвоение (см.
+    # докстринг _own_plan_floor в feo_plan_tree.py и test_8 в
+    # test_money_committed.py). own_over_by_node — собственный over_plan=true
+    # расход узла (ТА ЖЕ own-сумма, что over_consumption в дереве,
+    # plan_consumption_by_category.over).
+    committed_unlinked_all_by_node = await committed_consumption_by_category(
+        db, [cat.subsidy_id], exclude_planned_item_linked=True, include_over_plan=True
+    )
+    own_over_by_node = await plan_consumption_by_category(
+        db, [cat.subsidy_id], exclude_planned_item_linked=True
+    )
+    # Построчный вклад плановых позиций с учётом замещения savings (та же
+    # ЕДИНАЯ точка, что использует compute_feo_plan_tree.leaf_item_committed_amt,
+    # см. committed_amounts.planned_item_contributions, ПРАВИЛО №6) — нужен и
+    # для items_total (агрегат ниже), и построчно для контрибьюторов-позиций
+    # (Источник №1, см. ниже — amt берётся из этого словаря, не из голого
+    # FeoPlannedItem.amount).
+    per_item_contribution = await planned_item_contributions(db, node_ids)
+    committed_items_total: dict[int, float] = {}
+    for _info in per_item_contribution.values():
+        committed_items_total[_info["feo_category_id"]] = (
+            committed_items_total.get(_info["feo_category_id"], 0.0) + _info["amount"]
+        )
 
     # Узел попадает в itemized_node_ids, когда его план_manual == items_total
     # (режим 'planned_items' — всегда; режим 'manual_sum' — только когда
@@ -241,7 +288,16 @@ async def find_excess_culprit(
     substituted_node_ids: list[int] = []
     for nid in node_ids:
         r = by_id[nid]
-        items_total = items_total_by_node.get(nid, 0.0)
+        items_total_raw = items_total_by_node.get(nid, 0.0)
+        # Шаг 2 плана (02.10.2026): режим 'planned_items' читает Σ С УЧЁТОМ
+        # замещения savings (committed_items_total — зеркалит
+        # compute_feo_plan_tree.leaf_item_committed_amt); режим 'manual_sum'
+        # продолжает читать СЫРУЮ Σ amount (items_total_raw) — владелец явно
+        # просил его не трогать (см. _manual_plan_for в feo_plan_tree.py).
+        if (r.plan_source or "planned_items") != "manual_sum":
+            items_total = committed_items_total.get(nid, items_total_raw)
+        else:
+            items_total = items_total_raw
         _, plan_manual, _ = _leaf_plan_manual(
             r.plan_source, r.manual_plan_amount, items_total, node_approved.get(nid, False),
         )
@@ -260,23 +316,50 @@ async def find_excess_culprit(
             qty = float(r.planned_quantity) if r.planned_quantity is not None else 0.0
             if qty == 0.0:
                 qty = items_qty_by_node.get(nid, 0.0)
-        own_ord = ordered_by_node.get(nid) or {}
-        ordered = own_ord.get("ordered", 0.0)
-        ordered_qty = own_ord.get("ordered_quantity", 0.0)
+        own_committed = committed_by_node.get(nid) or {}
+        committed = own_committed.get("committed", 0.0)
+        committed_qty = own_committed.get("committed_quantity", 0.0)
         # Единая точка (feo_plan_common.py, ПРАВИЛО №6) — та же функция, что
         # использует compute_feo_plan_tree._own_plan_and_forecast. `substituted`
         # — узнаём, КАКУЮ ветку она выбрала (по определению contribution ==
-        # ordered ⟺ узел заказан целиком), чтобы решить, КАКИМ способом
-        # раскладывать вклад узла на контрибьюторов — построчно по
+        # committed ⟺ узел законтрактован целиком — порог «законтрактовано»,
+        # шаг 2 плана 02.10.2026, НЕ ORDERED_STATUSES), чтобы решить, КАКИМ
+        # способом раскладывать вклад узла на контрибьюторов — построчно по
         # FeoPlannedItem (Источник №1) или построчно по реальным закупленным
         # позициям (Источник №1а).
-        contribution = _order_substituted_plan(qty, ordered, ordered_qty, plan_manual)
-        substituted = qty > 0 and ordered_qty >= qty
+        contribution = _order_substituted_plan(qty, committed, committed_qty, plan_manual)
+        substituted = qty > 0 and committed_qty >= qty
+
+        # Шаг 3 плана «Деньги субсидии» (02.10.2026, решение владельца «договор
+        # входит в план») — ЕДИНАЯ точка с compute_feo_plan_tree._own_plan_floor
+        # (plan_floor_addition, feo_plan_common.py, ПРАВИЛО №6): узел, чьё
+        # законтрактованное НЕпривязанных позиций узла (committed_unlinked_all_
+        # by_node, включая over_plan — см. комментарий у неё выше) больше его
+        # вклада в план (contribution) + его собственного over_plan-расхода
+        # (own_over_by_node) — добавляет синтетического
+        # контрибьютора на разницу. Считается ДО ветки substituted/itemized
+        # ниже (независимо от неё — тот же общий приём, что и в дереве, где
+        # пол применяется к own-части узла вне зависимости от того, замещён
+        # ли он заказом/договором целиком).
+        _own_committed_all = (committed_unlinked_all_by_node.get(nid) or {}).get("committed", 0.0)
+        _own_over_for_floor = (own_over_by_node.get(nid) or {}).get("over", 0.0)
+        _floor_added = plan_floor_addition(contribution, _own_over_for_floor, _own_committed_all)
+        if _floor_added > 0.005:
+            cat_row_floor = await db.get(FeoCategory, nid)
+            _floor_name = cat_row_floor.name if cat_row_floor else f"#{nid}"
+            contributors.append({
+                "amount": Decimal(str(_floor_added)), "purchase_id": None, "purchase_number": None,
+                "item_name": (
+                    f"пол «договор входит в план»: законтрактовано без/сверх плановой "
+                    f"позиции по категории «{_floor_name}»"
+                ),
+                "created_at": None, "sort_key": (1.2, nid),
+            })
 
         if substituted:
-            # Замещено заказом целиком — контрибьюторы этого узла ниже (Источник
+            # Законтрактовано целиком — контрибьюторы этого узла ниже (Источник
             # №1а), а не его FeoPlannedItem (см. docstring выше).
-            if ordered > 0:
+            if committed > 0:
                 substituted_node_ids.append(nid)
             continue
         if abs(contribution - items_total) <= 0.005:
@@ -310,7 +393,12 @@ async def find_excess_culprit(
                     linked_purchase_by_fpi[_fpi_id] = (_pur_id, _pur_num)
         for i, r in enumerate(fpi_rows):
             pur_id, pur_num = linked_purchase_by_fpi.get(r.id, (None, None))
-            amt = Decimal(str(r.amount or 0))
+            # Шаг 2 плана (02.10.2026): сумма позиции — её КОНТРИБЬЮЦИЯ с учётом
+            # замещения savings (per_item_contribution, ТА ЖЕ точка, что и у
+            # compute_feo_plan_tree), а не голое FeoPlannedItem.amount — иначе
+            # Σ контрибьюторов расходится с items_total/plan для закрытых позиций.
+            _contrib = per_item_contribution.get(r.id)
+            amt = Decimal(str(_contrib["amount"])) if _contrib is not None else Decimal(str(r.amount or 0))
             if amt <= 0:
                 continue
             contributors.append({
@@ -330,7 +418,7 @@ async def find_excess_culprit(
             .join(Purchase, PurchaseItem.purchase_id == Purchase.id)
             .outerjoin(_fpi_ord, _fpi_ord.id == PurchaseItem.feo_planned_item_id)
             .where(cat_col_ord.in_(substituted_node_ids))
-            .where(Purchase.status.in_(list(ORDERED_STATUSES)))
+            .where(committed_status_predicate(Purchase))
             .where(Purchase.stopped_at.is_(None))
             .where(PurchaseItem.over_plan.is_(False))
             .where(Purchase.subsidy_id == cat.subsidy_id)

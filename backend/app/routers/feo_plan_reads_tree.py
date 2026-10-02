@@ -186,6 +186,10 @@ async def get_feo_plan_tree(
             "fact_goods": node["fact_goods"],
             "fact_services": node["fact_services"],
             "fact_unspecified": node["fact_unspecified"],
+            # Решение владельца (02.10.2026): «Оплачено (по отметке)» / «Подтверждено
+            # выпиской» — см. compute_feo_plan_tree/feo_plan_payments.py.
+            "paid_marked": node["paid_marked"],
+            "paid_confirmed": node["paid_confirmed"],
             "excess_plan_over_feo_goods": node["excess_plan_over_feo_goods"],
             "excess_plan_over_feo_goods_approved": node["excess_plan_over_feo_goods_approved"],
             "excess_plan_over_feo_goods_pending": node["excess_plan_over_feo_goods_pending"],
@@ -198,6 +202,12 @@ async def get_feo_plan_tree(
             "excess_fact_over_plan_services": node["excess_fact_over_plan_services"],
             "excess_fact_over_plan_services_approved": node["excess_fact_over_plan_services_approved"],
             "excess_fact_over_plan_services_pending": node["excess_fact_over_plan_services_pending"],
+            # Решение владельца (02.10.2026, PLAN.md money-redistribution): сколько ₽
+            # договоров БЕЗ плановой позиции включено в "plan"/"display" узла (own +
+            # Σ детей) — см. compute_feo_plan_tree docstring за формулой. Нужно фронту,
+            # чтобы объяснить пользователю, почему «Запланировано» больше суммы его
+            # плановых позиций («Свободно» не завышено умышленно).
+            "plan_floor_added": node["plan_floor_added"],
         }
         for cat_id, node in tree.items()
     }
@@ -256,6 +266,8 @@ async def get_feo_plan_tree(
             "fact_goods", "fact_services", "fact_unspecified",
             "excess_plan_over_feo_goods", "excess_plan_over_feo_services",
             "excess_fact_over_plan_goods", "excess_fact_over_plan_services",
+            # Решение владельца (02.10.2026) — деньги, та же гейтовка.
+            "paid_marked", "paid_confirmed", "plan_floor_added",
         )
         for cat_id, node in result.items():
             if cat_id in ("unassigned", "subsidy_type_totals", "subsidy_type_excess"):
@@ -391,6 +403,15 @@ async def get_plan_positions(
     leaf_links = await category_plan_links(
         db, [c.id for c in leaves], exclude_purchase_id=exclude_purchase_id, exclude_wish_id=exclude_wish_id
     )
+    # Контракт API (PLAN.md шаг 1-2, п. C, ревью 02.10.2026): committed/
+    # committed_quantity/not_committed/savings/closed на строках плана —
+    # ЕДИНАЯ точка committed_amounts.committed_consumption_by_category
+    # (include_over_plan=True — та же трактовка, что node['committed'] из
+    # compute_feo_plan_tree выше, ПРАВИЛО №6: не вторая формула).
+    from app.services.committed_amounts import (
+        committed_consumption_by_category, committed_by_planned_item,
+    )
+    committed_by_cat = await committed_consumption_by_category(db, [subsidy_id], include_over_plan=True)
 
     result = []
     for c in leaves:
@@ -404,6 +425,12 @@ async def get_plan_positions(
         consumed_qty = cons["consumed_quantity"]
         kind = "plan_position" if (c.budget is None and c.feo_amount is None) else "feo_article"
         node = tree.get(c.id, {})
+        _committed_c = committed_by_cat.get(c.id) or {
+            "committed": 0.0, "committed_quantity": 0.0, "committed_missing_fact_items": 0,
+        }
+        _committed_amt_c = _committed_c["committed"]
+        _committed_qty_c = _committed_c["committed_quantity"]
+        _closed_c = qty > 0 and _committed_qty_c >= qty
         result.append({
             "id": c.id,
             "name": c.name,
@@ -439,6 +466,12 @@ async def get_plan_positions(
             # плановых позиций уровня листа (без отдельной FeoPlannedItem).
             "linked_purchases": leaf_links.get(c.id, {}).get("linked_purchases", []),
             "linked_wishes": leaf_links.get(c.id, {}).get("linked_wishes", []),
+            "committed": _committed_amt_c,
+            "committed_quantity": _committed_qty_c,
+            "not_committed": (planned_total - _committed_amt_c) if not _closed_c else None,
+            "savings": (planned_total - _committed_amt_c) if _closed_c else None,
+            "closed": _closed_c,
+            "committed_missing_fact_items": _committed_c["committed_missing_fact_items"],
         })
 
     # + FeoPlannedItem (Ур.5) — детализация внутри элементов. Владелец 2026-08-18:
@@ -462,6 +495,7 @@ async def get_plan_positions(
         if fpi_rows:
             fpi_ids = [it.id for it in fpi_rows]
             fpi_cons = await planned_item_consumption(db, fpi_ids, exclude_purchase_id, exclude_wish_id)
+            fpi_committed = await committed_by_planned_item(db, fpi_ids)
             for it in fpi_rows:
                 cat = cat_by_id.get(it.feo_category_id)
                 planned_total = float(it.amount or 0)
@@ -469,6 +503,12 @@ async def get_plan_positions(
                 c_cons = fpi_cons.get(it.id, {"used": 0.0, "used_qty": 0.0, "linked_purchases": []})
                 consumed = c_cons["used"]
                 consumed_qty = c_cons["used_qty"]
+                _committed_i = fpi_committed.get(it.id) or {"amount": 0.0, "quantity": 0.0, "missing_fact_items": 0}
+                _closed_i = (
+                    (it.payment_mode or "one_time") == "one_time"
+                    and qty > 0
+                    and _committed_i["quantity"] >= qty
+                )
                 result.append({
                     "id": it.id,
                     "name": it.name,
@@ -513,6 +553,12 @@ async def get_plan_positions(
                     # Владелец (2026-09-29): та же «дубль занял план молча», но заявками —
                     # см. planned_item_consumption.linked_wishes.
                     "linked_wishes": c_cons.get("linked_wishes", []),
+                    "committed": _committed_i["amount"],
+                    "committed_quantity": _committed_i["quantity"],
+                    "not_committed": (planned_total - _committed_i["amount"]) if not _closed_i else None,
+                    "savings": (planned_total - _committed_i["amount"]) if _closed_i else None,
+                    "closed": _closed_i,
+                    "committed_missing_fact_items": _committed_i["missing_fact_items"],
                 })
 
     result.sort(key=lambda x: x["path"])

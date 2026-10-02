@@ -81,6 +81,52 @@ def _leaf_plan_manual(
     return manual_amt, plan_manual, excess
 
 
+def plan_floor_addition(own_plan_before_floor: float, own_over: float, own_committed_all: float) -> float:
+    """Третья единая точка (владелец, решение 02.10.2026, «договор входит в
+    план» — план .planning/quick/2026-10-02-money-redistribution/PLAN.md,
+    шаг 3): «пол» на СОБСТВЕННОЙ (без рекурсии по детям) части узла —
+    own_committed_all не может быть больше «Запланировано» этой же собственной
+    части (own_plan_before_floor — own-часть ДО пола, та же величина, что
+    возвращает _order_substituted_plan/_own_plan_and_forecast own-веткой;
+    own_over — собственный over_plan=true расход узла, plan_consumption_by_
+    category.over).
+
+    ⚠️ own_committed_all — committed ТОЛЬКО НЕпривязанных к FeoPlannedItem
+    позиций (committed_amounts.committed_consumption_by_category с
+    exclude_planned_item_linked=True), НО включая over_plan
+    (include_over_plan=True) — НЕ node['committed'] целиком (который включает
+    ещё и ПРИВЯЗАННЫЕ/над-плановые позиции): те уже учтены own-планом
+    (leaf_item_committed_amt/committed_by_planned_item, своим путём, ЕСЛИ
+    привязаны и не over_plan) и own_over (over_consumption, тоже
+    exclude_planned_item_linked=True) своим — подставлять сюда ВСЕ позиции
+    задвоило бы привязанную над-плановую сумму и ложно поднимало бы план
+    (боевой регрессионный тест test_8_over_plan_included_in_committed_total_
+    and_economy в test_money_committed.py — привязанная над-плановая позиция
+    НЕ должна расширять plan узла). Вызывающий код (compute_feo_plan_tree.
+    _own_plan_floor, find_excess_culprit) обязан передавать именно эту
+    «НЕпривязанную+over» сумму, а не committed_consumption_all/node['committed'].
+
+    Повод (владелец, 02.10.2026): категории без единой плановой позиции
+    (0 позиций — импорт их никогда не заводил) или с суммой плановых позиций
+    меньше факта договора — реальные законтрактованные деньги «терялись» из
+    «Запланировано» (МИНПРОС_2026 — категория «Услуги по изготовлению
+    брендированного комбинезона…», 0 плановых позиций, договор РЕЕ-2026-00850
+    на 1 935 000 ₽ — «Свободно» считало их свободными, хотя они заняты).
+
+    ОБЩАЯ точка для compute_feo_plan_tree (feo_plan_tree.py, scalar `plan` и
+    типовой `_plan_by_kind` own-часть — через `_own_plan_floor`) И
+    find_excess_culprit (feo_plan_excess.py, контрибьютор «пол: договор без
+    плановой позиции») — ПРАВИЛО №6: дерево и контроль превышения обязаны
+    читать ОДНУ И ТУ ЖЕ добавку, иначе Σ контрибьюторов разойдётся с
+    node['display'] узла (test_feo_excess_culprit_matches_control.py), точно
+    как раньше для _order_substituted_plan (см. докстринг модуля выше).
+
+    Возвращает ТОЛЬКО добавку (≥0) — вызывающий код сам прибавляет её к своей
+    own-плановой сумме и публикует отдельно (node['plan_floor_added']) для
+    объяснения на экране «включено N ₽ договоров без плановой позиции»."""
+    return max(0.0, own_committed_all - (own_plan_before_floor + own_over))
+
+
 def composite_group_metrics(quantities: list, unit_prices: list) -> tuple:
     """Единая формула агрегации ГРУППЫ строк закупки, привязанных к ОДНОЙ
     плановой позиции (FeoPlannedItem.is_composite=True) — задача «Составная

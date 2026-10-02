@@ -91,6 +91,12 @@
             </div>
             <span class="col-resize-handle" @mousedown="ctx.feoResize.onResizeStart($event, 'residual')"></span>
           </th>
+          <th class="feo-th feo-th-num" :style="ctx.feoResize.resizeStyle('paid')"
+            title="Отметил человек (поставил платёж, перевёл закупку в «Оплачено») / найдено в выписке и сопоставлено"
+          >
+            <div>ОПЛАЧЕНО</div>
+            <span class="col-resize-handle" @mousedown="ctx.feoResize.onResizeStart($event, 'paid')"></span>
+          </th>
           <th class="feo-th feo-th-actions"></th>
         </tr>
       </thead>
@@ -175,6 +181,14 @@
           <td class="feo-td feo-td-num font-weight-bold">{{ formatCurrency(ctx.totalFeoInPlanSchedule.value) }}</td>
           <td class="feo-td feo-td-num font-weight-bold">
             {{ formatCurrency(ctx.feoTree.value.reduce((acc, r) => acc + ctx.feoResidualBaseFor(r), 0) - ctx.totalFeoInPlanSchedule.value) }}
+          </td>
+          <!-- Оплачено (по отметке) / подтверждено выпиской — решение владельца
+               02.10.2026, см. докстринг useFeoTreeAmounts.ts::selectedPaidMarkedTotal. -->
+          <td class="feo-td feo-td-num font-weight-bold">
+            {{ ctx.selectedPaidMarkedTotal.value > 0.005 ? formatCurrency(ctx.selectedPaidMarkedTotal.value) : '—' }}
+            <div v-if="ctx.selectedPaidConfirmedTotal.value > 0.005" class="feo-plan-note text-medium-emphasis font-weight-regular">
+              из них подтверждено выпиской: {{ formatCurrency(ctx.selectedPaidConfirmedTotal.value) }}
+            </div>
           </td>
         </tr>
       </tbody>

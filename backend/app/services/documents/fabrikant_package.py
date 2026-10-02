@@ -46,6 +46,7 @@ from .morphology import _to_gen_fio, _inflect_phrase_genitive
 from .docx_post import _strip_tech_spec_legend
 from app.services.acceptance_docs import derived_scalars as _acceptance_derived_scalars
 from app.services.purchase_amounts import contract_amount as _contract_amount_fn, purchase_amounts as _purchase_amounts_fn
+from app.services.purchase_economy import purchase_economy_one as _purchase_economy_one_fn
 
 import logging
 
@@ -320,6 +321,11 @@ async def render_fabrikant_package_files(
 
     ci_ctx_z = await _build_contract_items_context(p, db)
 
+    # ПРАВИЛО №6 (02.10.2026, шаг 3 плана «Деньги субсидии»): Purchase.economy
+    # больше не заполняется — расчёт (planned_total − факт законтрактованных
+    # позиций), app.services.purchase_economy.
+    _economy_val = await _purchase_economy_one_fn(db, p.id)
+
     # ПРАВИЛО №6 (2026-09-07, группа D4): закрывающий документ — из JSONB
     # acceptance_docs (первый документ), не напрямую из legacy-скаляров.
     _acc = _acceptance_derived_scalars(p)
@@ -369,7 +375,7 @@ async def render_fabrikant_package_files(
         "total_nmck": _fmt_money(_fab_plan_amount_val),
         "nmck": _fmt_money(_fab_plan_amount_val),
         "contract_price": _fmt_money(p.contract_price),
-        "economy": _fmt_money(p.economy),
+        "economy": _fmt_money(_economy_val),
         "contract_number": p.contract_number or "",
         "contract_date": _fmt_date(p.contract_date) or "__.__._____ г.",
         "contract_date_day": cd_day,

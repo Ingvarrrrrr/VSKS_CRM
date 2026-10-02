@@ -14,22 +14,25 @@
     <v-col cols="6" sm="4" lg="3" xl="auto" style="flex:1" v-for="card in kpiCards" :key="card.key">
       <v-tooltip :text="card.tooltip ?? undefined" location="bottom" :disabled="!card.tooltip">
         <template #activator="{ props: tip }">
-          <div v-bind="tip" class="kpi-card" :class="['kpi-' + card.key, { 'kpi-over': card.over }]" @click="$emit('kpi-click', card.key)">
+          <div v-bind="tip" class="kpi-card" :class="['kpi-' + card.key, { 'kpi-over': card.over, 'kpi-unmeasured': card.unmeasured }]" @click="$emit('kpi-click', card.key)">
             <div class="kpi-icon-box">
               <v-icon :icon="card.icon" size="26" />
             </div>
             <div class="kpi-body">
-              <div class="kpi-value">{{ mobile ? formatCurrencyShort(card.amount) : formatCurrency(card.amount) }}</div>
+              <!-- card.amount == null -> «нет данных» (напр. ни у одной субсидии нет
+                   economy_total) — «—», НЕ 0 ₽ (см. useDashboardData.ts totalEconomy). -->
+              <div class="kpi-value">{{ card.amount == null ? '—' : (mobile ? formatCurrencyShort(card.amount) : formatCurrency(card.amount)) }}</div>
               <div class="kpi-label">{{ card.label }}</div>
               <div class="kpi-count" v-if="card.count > 0">{{ card.count }} {{ card.countLabel }}</div>
               <div class="kpi-monthly" v-if="card.monthly !== null">
                 в т.ч. ежемесячные платежи: {{ formatCurrencyShort(card.monthly!) }} /мес
               </div>
+              <div class="kpi-monthly" v-if="card.note">{{ card.note }}</div>
               <!-- Раздел C (план ancient-prancing-music.md, 21.09): две строки товары/
                    услуги (+ «без типа», если не ноль) при включённом переключателе —
                    card.split приходит готовым из useDashboardData.ts (единственный
                    источник расчёта), здесь только отрисовка и клик-фильтр. -->
-              <div v-if="isSplit" class="kpi-split-rows" @click.stop>
+              <div v-if="isSplit && card.split !== undefined" class="kpi-split-rows" @click.stop>
                 <template v-if="card.split">
                   <div
                     v-for="row in splitRows(card.split)"

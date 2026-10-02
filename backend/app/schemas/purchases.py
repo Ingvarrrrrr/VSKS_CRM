@@ -507,6 +507,18 @@ class PurchaseOut(PurchaseCreate):
     # (считается заново на КАЖДОМ GET независимо от того, кто и когда создал
     # превышение).
     excess_warnings: List[dict] = []
+    # Контракт API (PLAN.md шаг 3, п. D, ревью 02.10.2026): `economy` здесь
+    # ПЕРЕОПРЕДЕЛЯЕТ одноимённое поле PurchaseCreate (бывшую голую колонку БД)
+    # расчётом app.services.purchase_economy (planned_total позиций − факт,
+    # только законтрактованные) — null, если закупка не законтрактована или
+    # нет ни одной позиции с плановой ценой. Заполняется вызывающим кодом
+    # (purchases.py, batch purchase_economy_bulk — без N+1), НЕ здесь.
+    economy_no_planned_price_items: int = 0
+    # Шаг 3 плана, ИСПРАВЛЕНО 02.10.2026 (база экономии — плановая позиция, не
+    # planned_total) — разбивка economy_no_planned_price_items по причине
+    # (unlinked/no_plan_price/monthly/no_fact), см. app.services.purchase_economy
+    # docstring. None, если вызывающий код ещё не передал economy_map.
+    economy_unmeasured_by_reason: Optional[dict] = None
     # Владелец (30.09): «Без ТЗ» — то же послабление, что у авансовых, но
     # проставленное согласующим вручную для мелких закупок (см.
     # app.services.tz_items.tz_required, Wish.tz_not_required). tz_waived_by_name

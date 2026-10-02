@@ -48,13 +48,12 @@
           prepend-icon="mdi-play-circle-outline" @click="onResumePurchase">
           Возобновить
         </v-btn>
-        <v-tooltip v-else-if="isEdit && purchaseId" location="top"
-          :text="stopCheck.allowed ? 'Остановить закупку' : (stopCheck.reason || '')">
+        <v-tooltip v-else-if="isEdit && purchaseId" location="top" :text="stopButtonTooltip">
           <template #activator="{ props: stopProps }">
             <span v-bind="stopProps">
-              <v-btn size="x-small" variant="tonal" color="error" prepend-icon="mdi-stop-circle-outline"
-                :disabled="!stopCheck.allowed" @click="onStopPurchase">
-                Остановить
+              <v-btn size="x-small" variant="tonal" color="error" :prepend-icon="stopButtonIcon"
+                :disabled="stopButtonDisabled" @click="onStopPurchase">
+                {{ stopButtonLabel }}
               </v-btn>
             </span>
           </template>
@@ -153,7 +152,11 @@
 // showSnack/fixFeoMismatchOwnCategories/переход к заявке) — тоже пропами-колбэками.
 import { computed } from 'vue'
 import PurchaseStoppedBanner from '@/components/orders/PurchaseStoppedBanner.vue'
-import { canStopPurchase } from '@/composables/orders/ordersLabels'
+import {
+  canStopPurchase,
+  isAdvancePaymentRefusal as isAdvancePaymentRefusalFor,
+  stopButtonLabelFor, stopButtonIconFor, stopButtonTooltipFor,
+} from '@/composables/orders/ordersLabels'
 
 interface Props {
   form: any
@@ -187,12 +190,41 @@ interface Props {
   // здесь только вызов колбэка (тот же приём, что forceOrderStatus/clearDraft выше).
   onStopPurchase: () => void
   onResumePurchase: () => void
+  // Квик-план 2026-10-02 (деньги субсидии, шаг 6, авансовый вариант Б): на
+  // стадии 'delivered' у авансового кнопка «Остановить» ниже физически и есть
+  // «Отказать в оплате» директора (can_stop_purchase расширил порог до 'paid'
+  // именно для purchase_method='advance', см. app/services/purchase_stop.py) —
+  // переиспользуем ТУ ЖЕ кнопку/диалог (ПРАВИЛО №6, второй механизм не заводим),
+  // только перелейблиаем и гейтим тем же правом 'advance_payment_decision', что
+  // и «Оплачено» (CreateOrderView.vue::canDecideAdvancePayment). Опционален —
+  // по умолчанию true, чтобы не ломать остальные вызовы этого компонента.
+  canDecideAdvancePayment?: boolean
 }
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), { canDecideAdvancePayment: true })
 
 // Та же граница «можно ли остановить», что и в списке «Закупки»
 // (composables/orders/ordersLabels.ts::canStopPurchase, ПРАВИЛО №6).
 const stopCheck = computed(() => props.purchaseData ? canStopPurchase(props.purchaseData) : { allowed: false, reason: null })
+
+// Квик-план 2026-10-02 (шаг 6/7): стадия delivered у авансового — это решение
+// директора «Оплачено»/«Отказать в оплате», не ранняя произвольная остановка.
+// Подпись/иконка/подсказка — единственный источник ordersLabels.ts (тот же,
+// что теперь читают OrdersTable.vue/OrdersCards.vue, Правило №6, не дублируем
+// текст кнопки в третьем месте). form.status — ЖИВОЙ статус формы (может
+// отличаться от purchaseData.status до сохранения), поэтому собираем
+// «эффективный» объект для этих трёх хелперов; stopCheck (можно ли вообще
+// остановить) остаётся на purchaseData как раньше.
+const effectiveStopItem = computed(() => ({
+  ...(props.purchaseData || {}),
+  status: props.form?.status ?? props.purchaseData?.status,
+}))
+const isAdvancePaymentRefusal = computed(() => isAdvancePaymentRefusalFor(effectiveStopItem.value))
+const stopButtonLabel = computed(() => stopButtonLabelFor(effectiveStopItem.value))
+const stopButtonIcon = computed(() => stopButtonIconFor(effectiveStopItem.value))
+const stopButtonTooltip = computed(() => stopButtonTooltipFor(effectiveStopItem.value, props.canDecideAdvancePayment))
+const stopButtonDisabled = computed(() =>
+  !stopCheck.value.allowed || (isAdvancePaymentRefusal.value && !props.canDecideAdvancePayment),
+)
 </script>
 
 <style scoped>

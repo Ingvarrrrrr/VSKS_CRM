@@ -71,7 +71,17 @@ async def stop_purchase(
 ):
     """Остановить закупку напрямую (не через заявку). Не удаляет данные —
     только stopped_at/stopped_by/stopped_reason (stopped_wish_id НЕ трогаем —
-    это поле только для остановки каскадом от заявки, см. модель)."""
+    это поле только для остановки каскадом от заявки, см. модель).
+
+    Quick-план 2026-10-02 (деньги субсидии, шаг 6, авансовый вариант Б): на
+    стадии 'delivered' у авансового остановка закупки — это физически кнопка
+    «Отказать в оплате» директора (can_stop_purchase расширен для
+    purchase_method='advance' — порог теперь 'paid', не 'contracted', см.
+    app/services/purchase_stop.py). Для ЭТОГО конкретного случая — отдельное
+    право 'advance_payment_decision' (то же, что и у «Оплачено», см.
+    app/routers/purchase_transitions.py) и ОБЯЗАТЕЛЬНАЯ причина (директору
+    нужно объяснить отказ исполнителю) — обычная ранняя остановка закупки
+    (до 'delivered') причину по-прежнему не требует."""
     p = await load_purchase_for_out(db, pid)
     if not p:
         raise HTTPException(status_code=404, detail="Закупка не найдена")
@@ -79,14 +89,33 @@ async def stop_purchase(
     if not await _has_purchase_write_access(current_user, db):
         raise HTTPException(status_code=403, detail="Нет доступа к этой закупке")
 
+    _is_advance_payment_refusal = (
+        getattr(p, 'purchase_method', None) == 'advance' and p.status == 'delivered'
+    )
+    _reason = (body.reason if body else None) or None
+    if _is_advance_payment_refusal:
+        from app.services.advance_payment_decision import assert_can_decide_advance_payment
+        await assert_can_decide_advance_payment(current_user, db)
+        if not _reason or not _reason.strip():
+            raise HTTPException(
+                status_code=422,
+                detail="Укажите причину отказа в оплате авансового отчёта",
+            )
+
     can_stop, reason = can_stop_purchase(p)
     if not can_stop:
         raise HTTPException(status_code=409, detail=reason)
 
     p.stopped_at = datetime.now(timezone.utc)
     p.stopped_by = current_user.id
-    p.stopped_reason = (body.reason if body else None) or None
+    p.stopped_reason = _reason
     await db.commit()
+
+    if _is_advance_payment_refusal:
+        from app.services.advance_payment_decision import (
+            record_advance_payment_decision, DECISION_REFUSED,
+        )
+        await record_advance_payment_decision(db, p, current_user, DECISION_REFUSED, _reason)
 
     return await _load_full_purchase_out(pid, db)
 

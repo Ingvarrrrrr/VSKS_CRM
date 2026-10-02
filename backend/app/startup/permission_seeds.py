@@ -549,6 +549,46 @@ async def _purchase_tz_waive_action():
         logging.getLogger(__name__).warning(f"purchase.tz_waive action seed skipped (non-fatal): {e}")
 
 
+async def _advance_payment_decision_action():
+    # Quick-план 2026-10-02 (деньги субсидии, шаг 6, авансовый вариант Б):
+    # отдельная галочка-право на финальное решение директора по авансовому
+    # отчёту («Оплачено» / «Отказать в оплате») на стадии «Поставлено, не
+    # оплачено» (delivered) — НЕ хардкод ролей, см. app/services/
+    # advance_payment_decision.py::assert_can_decide_advance_payment.
+    # Дефолт зеркалит роли, которые и так могут переводить закупку в 'paid'
+    # (см. _purchase_status_change_action выше, тот же набор): admin/org_admin/
+    # manager/account_owner/superadmin=TRUE, employee=FALSE. Сознательно НЕ
+    # даём бай-пас владельцу авансового (reimbursement_user_id) — директор не
+    # может быть автором своего же отчёта по смыслу задачи.
+    try:
+        from sqlalchemy import select as _sel
+        from app.models.permission import PermissionAction, RolePermission
+        async with async_session() as db:
+            ACTION_KEY = 'advance_payment_decision'
+            ex = await db.execute(_sel(PermissionAction).where(PermissionAction.action_key == ACTION_KEY))
+            if not ex.scalar_one_or_none():
+                db.add(PermissionAction(
+                    action_key=ACTION_KEY,
+                    description='Решение по оплате авансового отчёта (Оплачено / Отказать в оплате)',
+                ))
+                await db.commit()
+            ROLE_DEFAULTS = [
+                ('superadmin', True), ('account_owner', True),
+                ('admin', True), ('org_admin', True),
+                ('manager', True), ('employee', False),
+            ]
+            for role_name, granted in ROLE_DEFAULTS:
+                ex = await db.execute(_sel(RolePermission).where(
+                    RolePermission.role_name == role_name,
+                    RolePermission.key == ACTION_KEY,
+                ))
+                if not ex.scalar_one_or_none():
+                    db.add(RolePermission(role_name=role_name, key=ACTION_KEY, granted=granted))
+            await db.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"advance_payment_decision action seed skipped (non-fatal): {e}")
+
+
 async def _subsidy_correct_action():
     # Корректировка утверждённой субсидии через проверку, волна 1 (2026-10-02,
     # владелец). Новое action-право subsidy.correct: обладатель БЕЗ
@@ -613,4 +653,5 @@ async def run():
     await _staff_directory_tab()
     await _staff_location_view_action()
     await _purchase_tz_waive_action()
+    await _advance_payment_decision_action()
     await _subsidy_correct_action()

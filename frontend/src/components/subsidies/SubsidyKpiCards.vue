@@ -220,6 +220,10 @@
         </div>
       </template>
     </v-tooltip>
+    <!-- 10-11. «Можно перераспределить» / «Экономия по закупкам» — квик-план
+         2026-10-02, вынесены в отдельный компонент (Правило №5 — этот файл уже
+         > 500 строк). -->
+    <SubsidyMoneyCards :subsidy="ctx.selectedSubsidy.value" :free="ctx.selectedBudget.value - ctx.selectedPlannedTotal.value" :is-split="isSplit" />
   </div>
 
   <!-- Раздел E1 (план ancient-prancing-music.md, 21.09): два новых контроля
@@ -296,6 +300,11 @@
     — это {{ ctx.selectedSubsidy.value?.ceiling_committed_percent }}%
     (порог предупреждения {{ ctx.selectedSubsidy.value?.ceiling_warn_percent }}%).
   </v-alert>
+  <!-- Квик-план 2026-10-02 («Деньги субсидии», PLAN.md п.4): статистика по
+       способу закупки для ТЕКУЩЕЙ субсидии — тот же компонент/composable,
+       что и на дашборде (Правило №6), с subsidy_id вместо «без фильтра». -->
+  <EconomyByMethodTable v-if="ctx.selectedId.value" class="mb-4"
+    :rows="economyByMethod.rows.value" :loading="economyByMethod.loading.value" :format-currency="formatCurrencyRound" />
   <!-- Подсказка активной KPI-метрики -->
   <div v-if="kpi.activeKpi.value" class="feo-kpi-banner">
     <v-icon icon="mdi-filter-variant" size="16" color="#fb923c" />
@@ -350,6 +359,9 @@ import {
 import { STATUS_LABELS, STATUS_COLORS } from '@/composables/dashboard/dashboardStatusMaps'
 import { purchaseEffectivePrice } from '@/composables/dashboard/dashboardFormat'
 import StageFeoDrillDialog from '@/components/StageFeoDrillDialog.vue'
+import SubsidyMoneyCards from '@/components/subsidies/SubsidyMoneyCards.vue'
+import EconomyByMethodTable from '@/components/dashboard/EconomyByMethodTable.vue'
+import { useEconomyByMethod } from '@/composables/dashboard/useEconomyByMethod'
 import type { SubsidyTypeTotals } from '@/composables/subsidies/types'
 
 const ctx = useSubsidyDetailCtx()
@@ -357,6 +369,11 @@ const kpi = useKpiDrilldown(ctx)
 const feoTreeExcess = useFeoTreeExcess()
 const kpiPrefs = useKpiPrefs()
 const isSplit = computed(() => kpiPrefs.kpiTypeSplit.value === 'split')
+
+// Квик-план 2026-10-02: «Экономия по способу закупки» для текущей субсидии —
+// тот же composable, что и дашборд (Правило №6), с её id.
+const economyByMethod = useEconomyByMethod({ subsidyId: ctx.selectedId })
+watch(() => ctx.selectedId.value, (id) => { if (id) economyByMethod.load() }, { immediate: true })
 
 interface SplitRow { kind: ItemTypeKind; label: string; amount: number }
 

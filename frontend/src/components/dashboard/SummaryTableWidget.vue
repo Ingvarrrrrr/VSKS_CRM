@@ -39,6 +39,7 @@
           <th class="text-right">Заказано</th>
           <th class="text-right">Оплачено</th>
           <th class="text-right">Остаток</th>
+          <th class="text-right" title="Бюджет минус законтрактовано — Свободно + В плане без договоров">Перераспределить</th>
           <th style="width: 160px;" class="text-center">% освоения</th>
           <th style="width: 60px;"></th>
         </tr>
@@ -71,6 +72,9 @@
               :title="'Расхождение суммы ФЭО-разбивки и плановой суммы субсидии'"
             >Δ {{ Math.abs(s.budget_discrepancy).toLocaleString('ru-RU', {maximumFractionDigits:0}) }} ₽</v-chip>
           </td>
+          <td class="text-right">
+            {{ s.redistributable != null ? formatCurrency(s.redistributable) : '—' }}
+          </td>
           <td>
             <v-progress-linear
               :model-value="pct(s.paid, s.budget)" height="18"
@@ -97,6 +101,7 @@
           <td class="text-right" :class="totalRemaining >= 0 ? 'text-success' : 'text-error'">
             <strong>{{ formatCurrency(totalRemaining) }}</strong>
           </td>
+          <td class="text-right"><strong>{{ formatCurrency(totalRedistributable) }}</strong></td>
           <td>
             <v-progress-linear
               :model-value="totalUsagePct" height="18"
@@ -128,6 +133,7 @@ defineProps<{
   totalPaid: number
   totalRemaining: number
   totalUsagePct: number
+  totalRedistributable: number
   formatCurrency: (v: number) => string
   pct: (part: number, total: number) => number
   progressColor: (p: number) => string

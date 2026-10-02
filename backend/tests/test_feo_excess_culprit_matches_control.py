@@ -179,3 +179,68 @@ async def test_c_warning_text_carries_both_numbers(db_session, test_org):
     assert "4,008,560.00" in text, text
     assert "первая позиция" in text.lower(), text
     assert "не единственная причина" in text.lower() or "не причина всего" in text.lower(), text
+
+
+@pytest.mark.asyncio
+async def test_d_plan_floor_committed_without_plan_item_matches_control(db_session, test_org):
+    """Шаг 3 плана «Деньги субсидии» (владелец, 02.10.2026, «договор входит в
+    план», .planning/quick/2026-10-02-money-redistribution/PLAN.md) — категория
+    БЕЗ плановых позиций с договором дороже бюджета: план узла поднимается
+    «полом» (app.services.feo_plan_common.plan_floor_addition) до
+    законтрактованной суммы — ТА ЖЕ добавка обязана читаться и деревом
+    (node['plan']/['excess_amount']), и find_excess_culprit (ПРАВИЛО №6),
+    иначе плашка «требуется согласование» и справка о виновнике разойдутся
+    точно так же, как в боевом примере владельца п.13 (см. тест (а) выше), но
+    теперь из-за НОВОЙ добавки, а не старого замещения заказом."""
+    from app.models.purchase import Purchase
+    from app.models.purchase_item import PurchaseItem
+
+    subsidy = await _make_subsidy(db_session, test_org.id)
+    await _make_category(db_session, subsidy.id, name="Ветка с запасом", budget=Decimal("10000000"))
+    leaf = await _make_category(
+        db_session, subsidy.id, name="Услуги без плановой позиции", budget=Decimal("2000000"),
+    )
+
+    p = Purchase(
+        subsidy_id=subsidy.id,
+        feo_category_id=leaf.id,
+        item_name="Договор без плановой позиции",
+        status="contracted",
+        contract_price=Decimal("2100000"),
+        total_nmck=Decimal("2100000"),
+        nmck=Decimal("2100000"),
+    )
+    db_session.add(p)
+    await db_session.flush()
+    pi = PurchaseItem(
+        purchase_id=p.id,
+        item_name="Договор без плановой позиции",
+        quantity=Decimal("1"),
+        unit="шт",
+        unit_price=Decimal("2100000"),
+        total_price=Decimal("2100000"),
+        feo_category_id=leaf.id,
+        feo_planned_item_id=None,
+        over_plan=False,
+    )
+    db_session.add(pi)
+    await db_session.commit()
+
+    tree = await compute_feo_plan_tree(db_session, [subsidy.id])
+    node = tree[leaf.id]
+    assert node["plan_floor_added"] == pytest.approx(2_100_000.0)
+    assert node["plan"] == pytest.approx(2_100_000.0)
+    assert node["excess_amount"] == pytest.approx(100_000.0)
+
+    culprit = await find_excess_culprit(db_session, leaf.id, node["budget"])
+    assert culprit is not None
+    assert culprit["total_excess"] == pytest.approx(node["excess_amount"]), (
+        "пол обязан читаться ОДНОЙ точкой (plan_floor_addition) и деревом, и "
+        "справкой — иначе они снова разойдутся, как в примере владельца п.13"
+    )
+    assert culprit["total_plan_amount"] == pytest.approx(node["plan"] + node["over"])
+    # Контрибьютор пола — синтетический (без purchase_id, см. докстринг
+    # plan_floor_addition про то, почему разбивка на позиции не делается) —
+    # называет категорию, а не конкретную строку закупки.
+    assert culprit["purchase_id"] is None
+    assert "пол" in culprit["item_name"].lower()

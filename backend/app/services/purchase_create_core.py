@@ -77,6 +77,11 @@ async def insert_purchase_with_items(
 
     dump = data.model_dump(exclude={"items", "subsidy_allocations"})
     dump["total_nmck"] = total_nmck
+    # Контракт API (PLAN.md шаг 3, п. D, ревью 02.10.2026): Purchase.economy
+    # больше не пишется из payload — экономия теперь РАСЧЁТ
+    # (app.services.purchase_economy, ПРАВИЛО №6). Поле оставлено в схеме для
+    # обратной совместимости старых клиентов, значение молча игнорируется.
+    dump.pop("economy", None)
     # Phase 28 B4: validate provided assigned_user_id
     if data.assigned_user_id is not None and data.assigned_user_id != 0:
         target = await db.get(User, data.assigned_user_id)

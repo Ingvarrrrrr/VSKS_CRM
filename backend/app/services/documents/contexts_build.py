@@ -106,7 +106,10 @@ def build_base_context_part1(
         # contract_amount_val = contract_amount(), тот же расчёт, что и
         # _resolve_doc_amount() для CONTRACT_FAMILY_DOC_TYPES.
         "contract_price": _fmt_money(contract_amount_val),
-        "economy": _fmt_money(p.economy),
+        # ПРАВИЛО №6 (02.10.2026) — расчёт (purchase_economy_one), не Purchase.economy;
+        # предзаполнено в amounts["economy_val"] вызывающим кодом (generate.py), т.к.
+        # эта функция синхронная и не может сама сходить в БД.
+        "economy": _fmt_money(amounts.get("economy_val")),
         "price_increase": _fmt_money(p.price_increase),
         # Договор
         "contract_number": p.contract_number or "",

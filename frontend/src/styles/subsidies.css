@@ -225,6 +225,10 @@
 .subsidies-page .kpi-delivered_unpaid::before  { box-shadow: 0 0 30px rgba(239,68,68,0.15); }
 .subsidies-page .kpi-paid::before              { box-shadow: 0 0 30px rgba(34,197,94,0.15); }
 .subsidies-page .kpi-free::before              { box-shadow: 0 0 30px rgba(148,163,184,0.15); }
+/* Квик-план 2026-10-02 (PLAN.md п.4/5, фикс приёмки — карточки без
+   оформления, см. ту же пару правил в views/DashboardView.vue). */
+.subsidies-page .kpi-redistributable::before   { box-shadow: 0 0 30px rgba(20,184,166,0.15); }
+.subsidies-page .kpi-economy::before           { box-shadow: 0 0 30px rgba(34,197,94,0.15); }
 
 .subsidies-page .kpi-icon-box {
   width: 48px;
@@ -247,6 +251,8 @@
 .subsidies-page .kpi-delivered_unpaid .kpi-icon-box  { background: rgba(239,68,68,0.12);   color: #EF4444; }
 .subsidies-page .kpi-paid .kpi-icon-box              { background: rgba(34,197,94,0.12);   color: #22C55E; }
 .subsidies-page .kpi-free .kpi-icon-box              { background: rgba(148,163,184,0.12); color: #94A3B8; }
+.subsidies-page .kpi-redistributable .kpi-icon-box   { background: rgba(20,184,166,0.12);  color: #14B8A6; }
+.subsidies-page .kpi-economy .kpi-icon-box           { background: rgba(34,197,94,0.12);   color: #22C55E; }
 
 .subsidies-page .kpi-budget           { border-top: 3px solid #3B82F6; }
 .subsidies-page .kpi-plan_schedule    { border-top: 3px solid #F59E0B; }
@@ -257,8 +263,16 @@
 .subsidies-page .kpi-delivered_unpaid { border-top: 3px solid #EF4444; }
 .subsidies-page .kpi-paid             { border-top: 3px solid #22C55E; }
 .subsidies-page .kpi-free             { border-top: 3px solid #94A3B8; }
+.subsidies-page .kpi-redistributable  { border-top: 3px solid #14B8A6; }
+.subsidies-page .kpi-economy          { border-top: 3px solid #22C55E; }
 .subsidies-page .kpi-card.kpi-over { border-top-color: #EF4444; }
 .subsidies-page .kpi-over .kpi-icon-box { background: rgba(239,68,68,0.12); color: #EF4444; }
+/* ИСПРАВЛЕНО 02.10.2026 (приёмка ФАДМ_2026 — карточка «Экономия по закупкам»
+   на вкладке «Субсидии» оставалась зелёной при economy_total=null): см.
+   views/DashboardView.vue .kpi-unmeasured — тот же приём здесь. */
+.subsidies-page .kpi-card.kpi-unmeasured      { border-top-color: #94A3B8; }
+.subsidies-page .kpi-unmeasured .kpi-icon-box { background: rgba(148,163,184,0.12); color: #94A3B8; }
+.subsidies-page .kpi-economy.kpi-unmeasured::before { box-shadow: 0 0 30px rgba(148,163,184,0.15); }
 
 .subsidies-page .kpi-body  { flex: 1; min-width: 0; }
 .subsidies-page .kpi-value {

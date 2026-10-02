@@ -102,6 +102,18 @@ async def stop_wish(
     for p in purchases:
         if p.stopped_at is not None:
             continue  # уже остановлена ранее (другой заявкой/повторный вызов)
+        # Квик-план 2026-10-02 (шаг 6, авансовый вариант Б): can_stop_purchase
+        # расширил порог для purchase_method='advance' до 'paid' — это
+        # СОЗНАТЕЛЬНО только для прямой остановки закупки директором
+        # (POST /purchases/{id}/stop, права 'advance_payment_decision' +
+        # обязательная причина, см. app/routers/purchase_stop.py). Здесь же —
+        # «останавливать заявку могут все» (любой, кто её видит, без права и
+        # без причины) — каскад НЕ должен тем же движением тихо решать вопрос
+        # оплаты за директора. Авансовые на стадии 'delivered'/'paid'
+        # пропускаем — решение по ним принимается ТОЛЬКО через карточку
+        # закупки («Оплачено» / «Отказать в оплате»).
+        if getattr(p, 'purchase_method', None) == 'advance' and p.status in ('delivered', 'paid'):
+            continue
         can_stop, _reason = can_stop_purchase(p)
         if can_stop:
             p.stopped_at = now

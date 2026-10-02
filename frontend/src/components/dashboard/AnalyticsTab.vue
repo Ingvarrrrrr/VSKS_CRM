@@ -176,14 +176,27 @@
         </v-card>
       </v-col>
     </v-row>
+
+    <!-- Квик-план 2026-10-02 («Деньги субсидии», PLAN.md п.4): статистика по
+         способу закупки — единственный источник GET /dashboard/economy-by-
+         method (useEconomyByMethod.ts), грузится лениво при первом показе
+         вкладки (та же схема, что и остальная аналитика, см. watch ниже). -->
+    <v-row class="mt-4">
+      <v-col cols="12">
+        <EconomyByMethodTable :rows="economyByMethod.rows.value" :loading="economyByMethod.loading.value" :format-currency="formatCurrencyShort" />
+      </v-col>
+    </v-row>
   </template>
 </template>
 
 <script setup lang="ts">
+import { watch } from 'vue'
 import { useRouter } from 'vue-router'
 import type { AnalyticsData } from '@/composables/dashboard/useAnalyticsTab'
+import { useEconomyByMethod } from '@/composables/dashboard/useEconomyByMethod'
+import EconomyByMethodTable from '@/components/dashboard/EconomyByMethodTable.vue'
 
-defineProps<{
+const props = defineProps<{
   analyticsLoading: boolean
   analyticsData: AnalyticsData | null
   analyticsTotalPurchases: number
@@ -202,4 +215,13 @@ defineProps<{
 }>()
 
 const router = useRouter()
+
+// Дашборд целиком (без subsidy_id/year — тот же срез, что и остальная
+// аналитика этой вкладки, фильтр по субсидиям сюда не прокидывается: бэкенд
+// у /dashboard/economy-by-method принимает только ОДНУ субсидию, Σ по
+// нескольким выбранным здесь не поддержана — см. PLAN.md контракт F).
+const economyByMethod = useEconomyByMethod()
+watch(() => props.analyticsData, (v) => {
+  if (v && !economyByMethod.loaded.value && !economyByMethod.loading.value) economyByMethod.load()
+})
 </script>

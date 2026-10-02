@@ -6,7 +6,7 @@
        в самой первой видимой строке дерева (см. isFirstVisibleRow ниже), а не
        в каждой строке. Строка ВСЕГДА видима независимо от текущего значения. -->
   <tr v-if="isFirstVisibleRow" class="feo-comments-visibility-bar">
-    <td colspan="7" style="padding:4px 8px">
+    <td colspan="8" style="padding:4px 8px">
       <div class="d-flex align-center" style="gap:6px">
         <v-icon icon="mdi-comment-text-multiple-outline" size="14" color="grey-darken-1" />
         <span class="text-caption text-medium-emphasis">Комментарии к плану ФЭО:</span>
@@ -318,6 +318,15 @@
       >
         товары {{ formatCurrency(feoTreeAmounts2.planTypeSplitFor(node)!.goods) }} · услуги {{ formatCurrency(feoTreeAmounts2.planTypeSplitFor(node)!.services) }}<span v-if="feoTreeAmounts2.planTypeSplitFor(node)!.unspecified > 0.005"> · без типа {{ formatCurrency(feoTreeAmounts2.planTypeSplitFor(node)!.unspecified) }}</span>
       </div>
+      <!-- Решение владельца (02.10.2026, PLAN.md money-redistribution шаг 3): «пол»
+           плана — договоры без плановой позиции, включённые в «Запланировано»,
+           чтобы «Свободно» не было завышено (backend node.plan_floor_added). -->
+      <div v-if="Number(node.plan_floor_added) > 0.5"
+        class="feo-plan-note text-medium-emphasis"
+        title="Договор заключён, а плановой позиции под него нет — сумма договора включена в «Запланировано», чтобы «Свободно» не было завышено (решение владельца 02.10.2026)"
+      >
+        вкл. {{ formatCurrency(Number(node.plan_floor_added)) }} договоров без плановой позиции
+      </div>
       <!-- Состав суммы направления: сколько заложено по подкатегориям и сколько —
            прямо на самом направлении (жалоба владельца 2026-09-14 — число 831 972
            не читалось как сложение). Показывается ТОЛЬКО когда есть обе части
@@ -361,11 +370,12 @@
       <!-- Разбор «план · в закупках · свободно» -->
       <div v-if="ctx.feoResidualNoteFor(node)"
         class="feo-plan-note text-medium-emphasis"
-        title="План: сумма плановых позиций этой категории. В закупках: сколько из них уже набрано заявками (привязанными к этим позициям). Свободно: план минус то, что в закупках — если в закупках больше плана, показано превышение"
+        title="План: сумма плановых позиций этой категории. В закупках: сколько из них уже набрано заявками (привязанными к этим позициям). Свободно: план минус то, что в закупках — если в закупках больше плана, показано превышение. Перераспределить: бюджет минус законтрактовано (готовое к перераспределению в другую категорию); если у категории не задан бюджет — показана часть плана без договоров"
       >
         план {{ formatCurrency(ctx.feoResidualNoteFor(node)!.planned) }} · в закупках {{ formatCurrency(ctx.feoResidualNoteFor(node)!.consumed) }} ·
         <span v-if="ctx.feoResidualNoteFor(node)!.residual < -0.005" style="color:#EF4444;font-weight:700">больше плана на {{ formatCurrency(-ctx.feoResidualNoteFor(node)!.residual) }}</span>
         <span v-else>свободно {{ formatCurrency(ctx.feoResidualNoteFor(node)!.residual) }}</span>
+        · перераспределить {{ formatCurrency(ctx.feoResidualNoteFor(node)!.redistributable) }}<span v-if="ctx.feoResidualNoteFor(node)!.redistributableFallback"> (из плана без договоров)</span>
         <div v-if="ctx.feoResidualNoteFor(node)!.residual < -0.005" style="font-size:11px;white-space:normal;margin-top:2px">
           <v-btn v-if="!ctx.comparisonData.value[node.id]"
             size="x-small" variant="text" color="orange-darken-3"
@@ -406,11 +416,12 @@
       </div>
       <div v-else-if="ctx.plannedSumBase.value === 'all' && ctx.feoPlanConsumedNoteFor(node)"
         class="feo-plan-note text-medium-emphasis"
-        title="План: та же сумма, что и в плановой сумме строки выше. В закупках: сколько из плана уже занято заявками — своими и заявками подкатегорий. Свободно: план минус то, что в закупках — если в закупках больше плана, показано превышение"
+        title="План: та же сумма, что и в плановой сумме строки выше. В закупках: сколько из плана уже занято заявками — своими и заявками подкатегорий. Свободно: план минус то, что в закупках — если в закупках больше плана, показано превышение. Перераспределить: бюджет минус законтрактовано; если у категории не задан бюджет — показана часть плана без договоров"
       >
         план {{ formatCurrency(ctx.feoPlanConsumedNoteFor(node)!.planned) }} · в закупках {{ formatCurrency(ctx.feoPlanConsumedNoteFor(node)!.consumed) }} ·
         <span v-if="ctx.feoPlanConsumedNoteFor(node)!.residual < -0.005" style="color:#EF4444;font-weight:700">больше плана на {{ formatCurrency(-ctx.feoPlanConsumedNoteFor(node)!.residual) }}</span>
         <span v-else>свободно {{ formatCurrency(ctx.feoPlanConsumedNoteFor(node)!.residual) }}</span>
+        · перераспределить {{ formatCurrency(ctx.feoPlanConsumedNoteFor(node)!.redistributable) }}<span v-if="ctx.feoPlanConsumedNoteFor(node)!.redistributableFallback"> (из плана без договоров)</span>
       </div>
       <!-- Прогноз «цена выше плановой» — ТОЛЬКО у конечной категории. -->
       <div v-if="!node.hasChildren && ctx.feoForecastWarningFor(node)"
@@ -692,6 +703,25 @@
       </div>
     </td>
 
+    <!-- Оплачено = по отметке закупщика (payment_amount + payment_amount_declared),
+         из них подтверждено выпиской — payment_amount, см. PaymentsBlock.vue /
+         app.services.feo_plan_payments (решение владельца 02.10.2026). -->
+    <td class="feo-td feo-td-num" style="vertical-align:top">
+      <span v-if="feoTreeAmounts2.paidMarkedFor(node) > 0.005"
+        class="feo-amount"
+        title="Отметил человек — поставил платёж, перевёл закупку в «Оплачено»"
+      >
+        {{ formatCurrency(feoTreeAmounts2.paidMarkedFor(node)) }}
+      </span>
+      <span v-else class="feo-amount-empty">—</span>
+      <div v-if="feoTreeAmounts2.paidConfirmedFor(node) > 0.005"
+        class="feo-plan-note text-medium-emphasis"
+        title="Найдено в выписке и сопоставлено с закупкой"
+      >
+        из них подтверждено выпиской: {{ formatCurrency(feoTreeAmounts2.paidConfirmedFor(node)) }}
+      </div>
+    </td>
+
     <!-- Действия -->
     <td class="feo-td feo-td-actions">
       <div class="feo-actions-wrap">
@@ -794,7 +824,7 @@
        именами и увеличенным отступом сразу после панели, вторая подпись
        перед ними не нужна: они и так самоочевидно другие строки. -->
   <tr v-if="node.hasChildren && ctx.expandedItemPanels.value.has(node.id)">
-    <td colspan="7" :style="{ padding: `2px 8px 0 ${node.depth * 20 + 32}px` }">
+    <td colspan="8" :style="{ padding: `2px 8px 0 ${node.depth * 20 + 32}px` }">
       <span class="feo-own-items-caption">
         <v-icon size="12" icon="mdi-clipboard-text-outline" class="mr-1" />Плановые позиции самого направления «{{ node.name }}» — не входят в подкатегории ниже
       </span>
@@ -807,7 +837,7 @@
        (тот теперь управляет только начальным раскрытием, см. commentsExpanded
        ниже) — только собственным состоянием раскрытия этой ветки. -->
   <tr v-if="commentsExpanded">
-    <td colspan="7" style="padding:0">
+    <td colspan="8" style="padding:0">
       <div style="margin:6px 8px 10px 32px;padding:8px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:6px">
         <FeoCommentThread :feo-category-id="node.id" :subsidy-id="subsidyId" />
       </div>

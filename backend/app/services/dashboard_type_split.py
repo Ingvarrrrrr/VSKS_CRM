@@ -51,6 +51,12 @@ from app.models.contract import Contract
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.models.subsidy import Subsidy
+# ПРАВИЛО №6 (02.10.2026): единственный источник статусов «законтрактовано» —
+# committed_amounts.py. Рамочный (framework_cumulative) — FRAMEWORK_COMMITTED_STATUSES
+# (ordered/delivered/paid, не contracted — см. докстринг модуля); «реально привязанная
+# закупка» у single-договора (тот же смысл, что single/без-типа-договора) —
+# SINGLE_COMMITTED_STATUSES (contracted/ordered/delivered/paid).
+from app.services.committed_amounts import FRAMEWORK_COMMITTED_STATUSES, SINGLE_COMMITTED_STATUSES
 from app.services.item_type_split import (
     KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED,
     TypeShares, kind_of, purchase_type_shares, split_amount_by_shares,
@@ -261,14 +267,14 @@ async def compute_type_split_raw(
     purchase_rows = (await db.execute(base_q)).all()
 
     # ── «Заключено договоров», framework_cumulative — те же покупки, что
-    # contract_fc_q, доля по СВОИМ позициям (могут пересекаться с base_q —
-    # статусы contracted/ordered/delivered/paid уже входят в base_q). ──
+    # contract_fc_q (committed_amounts.FRAMEWORK_COMMITTED_STATUSES — заказ
+    # занимает деньги с «Заказано», сама рамочная ГОЛОВА нет, см. ПРАВИЛО №6). ──
     fc_q = (
         select(Purchase.id, Purchase.subsidy_id, effective_amount_expr().label("effective"))
         .join(Contract, Purchase.contract_id == Contract.id)
         .where(Contract.status == "active")
         .where(Contract.contract_type == "framework_cumulative")
-        .where(Purchase.status.in_(["contracted", "ordered", "delivered", "paid"]))
+        .where(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)))
     )
     if use_sids:
         if visible_subsidy_ids is not None:
@@ -295,7 +301,8 @@ async def compute_type_split_raw(
         ))
     all_contracts = (await db.execute(contract_q)).all()
     # 'single' требует хотя бы одну реально привязанную закупку в нужных статусах
-    # (см. _contracted_purchase_exists в dashboard_charts.py::contract_single_q);
+    # (см. _contracted_purchase_exists в dashboard_charts.py::contract_single_q,
+    # committed_amounts.SINGLE_COMMITTED_STATUSES — ПРАВИЛО №6);
     # 'framework_with_amount' входит безусловно. Один запрос на ВСЕ single-контракты
     # сразу — не по одному (избегаем N+1/await внутри comprehension).
     _single_ids = [c.id for c in all_contracts if c.contract_type == "single"]
@@ -304,7 +311,7 @@ async def compute_type_split_raw(
         _rows = (await db.execute(
             select(Purchase.contract_id)
             .where(Purchase.contract_id.in_(_single_ids))
-            .where(Purchase.status.in_(["contracted", "ordered", "delivered", "paid"]))
+            .where(Purchase.status.in_(list(SINGLE_COMMITTED_STATUSES)))
             .distinct()
         )).all()
         _existing_purchase_contract_ids = {r[0] for r in _rows}
@@ -411,7 +418,7 @@ async def compute_type_split_detail(
             .join(Contract, Purchase.contract_id == Contract.id)
             .where(Contract.status == "active")
             .where(Contract.contract_type == "framework_cumulative")
-            .where(Purchase.status.in_(["contracted", "ordered", "delivered", "paid"]))
+            .where(Purchase.status.in_(list(FRAMEWORK_COMMITTED_STATUSES)))
         )
         if use_sids:
             if visible_subsidy_ids is not None:
@@ -440,7 +447,7 @@ async def compute_type_split_detail(
             _rows = (await db.execute(
                 select(Purchase.contract_id)
                 .where(Purchase.contract_id.in_(_single_ids))
-                .where(Purchase.status.in_(["contracted", "ordered", "delivered", "paid"]))
+                .where(Purchase.status.in_(list(SINGLE_COMMITTED_STATUSES)))
                 .distinct()
             )).all()
             _existing_purchase_contract_ids = {r[0] for r in _rows}

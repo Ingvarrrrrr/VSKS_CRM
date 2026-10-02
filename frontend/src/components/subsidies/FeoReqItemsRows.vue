@@ -80,7 +80,7 @@
 
     <!-- Панель источников: план vs факт по каждой позиции заявки -->
     <tr v-if="row.group && ctx.expandedReqItemPanels.value.has(ctx.reqPanelKey(owner, row.group))">
-      <td colspan="7" style="padding:0;background:rgba(20,184,166,0.08)">
+      <td colspan="8" style="padding:0;background:rgba(20,184,166,0.08)">
         <div :style="{ padding: '8px 12px 10px', marginLeft: ctx.reqRowIndent(owner, row) }">
           <div class="d-flex align-center mb-1" style="gap:6px">
             <v-icon icon="mdi-compare-horizontal" size="14" color="teal" />

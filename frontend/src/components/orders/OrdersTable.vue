@@ -394,15 +394,15 @@
       <template #item.actions="{ item }">
         <div class="d-flex align-center gap-1 w-100" @click.stop>
           <v-btn
-            v-if="!isAdmin && nextStatus(item.status)"
+            v-if="!isAdmin && nextStatus(item.status, item.purchase_method === 'advance')"
             size="x-small"
-            :color="STATUS_COLOR[nextStatus(item.status)!]"
+            :color="STATUS_COLOR[nextStatus(item.status, item.purchase_method === 'advance')!]"
             variant="tonal"
             :loading="transitioning === item.id"
             style="min-width: 130px"
             @click.stop="emit('transition', item)"
           >
-            → {{ statusLabelFor(item, nextStatus(item.status)!) }}
+            → {{ statusLabelFor(item, nextStatus(item.status, item.purchase_method === 'advance')!) }}
           </v-btn>
           <v-menu v-if="isAdmin">
             <template #activator="{ props: menuProps }">
@@ -427,10 +427,13 @@
                списке — обратная операция (возобновить) для уже остановленной. -->
           <v-btn v-if="item.stopped_at" icon="mdi-play-circle-outline" variant="text" size="small" color="success"
             title="Возобновить закупку" @click.stop="emit('resume-purchase', item)" />
-          <v-tooltip v-else location="top" :text="canStopPurchase(item).allowed ? 'Остановить закупку' : (canStopPurchase(item).reason || '')">
+          <!-- Квик-план 2026-10-02 (шаг 7): авансовый на delivered — подпись/иконка
+               «Отказать в оплате», та же, что и в карточке закупки (PurchaseHeader.vue),
+               единственный источник — ordersLabels.ts (Правило №6). -->
+          <v-tooltip v-else location="top" :text="stopButtonTooltipFor(item)">
             <template #activator="{ props: stopProps }">
               <span v-bind="stopProps">
-                <v-btn icon="mdi-stop-circle-outline" variant="text" size="small" color="error"
+                <v-btn :icon="stopButtonIconFor(item)" variant="text" size="small" color="error"
                   :disabled="!canStopPurchase(item).allowed" @click.stop="emit('stop-purchase', item)" />
               </span>
             </template>
@@ -515,6 +518,7 @@ import {
   STATUS_ORDER, STATUS_LABEL, STATUS_COLOR, APPROVAL_STATUS_COLOR, APPROVAL_STATUS_LABEL,
   effectivePrice, formatDate, statusLabelFor, purchaseTypeLabel, purchaseTypeColor,
   purchaseMethodLabel, feoExcessChip, itemDisplayName, nextStatus, canStopPurchase,
+  stopButtonIconFor, stopButtonTooltipFor,
 } from '@/composables/orders/ordersLabels'
 import type { Purchase } from '@/composables/orders/ordersTypes'
 import type { FilterValue } from '@/composables/useColumnConfig'

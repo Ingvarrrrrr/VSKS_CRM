@@ -48,6 +48,7 @@ from app.services.dictionaries import (
     SUBSTATUS_LABELS as _SUBSTATUS_LABELS,
 )
 from app.services.acceptance_docs import derived_scalars as _acceptance_derived_scalars
+from app.services.purchase_economy import purchase_economy_bulk
 from app.services.item_forms import ITEM_FORMS, item_form_for_purchase
 from app.services.item_form_summary import item_form_summary, _fmt_datetime
 
@@ -159,7 +160,10 @@ def _get_cell_value(key: str, p: Purchase, ctx: dict):
     # своя третья формула вместо одного из двух полей.
     if key == "nmck":                    return float(p.total_nmck) if p.total_nmck else ""
     if key == "contract_price":          return float(p.contract_price) if p.contract_price else ""
-    if key == "economy":                 return float(p.economy) if p.economy else ""
+    if key == "economy":
+        # ПРАВИЛО №6 (02.10.2026) — расчёт, не колонка БД (см. ctx["economy"] выше).
+        _econ = ctx["economy"].get(p.id)
+        return float(_econ) if _econ is not None else ""
     if key == "price_increase":          return float(p.price_increase) if p.price_increase else ""
     if key == "purchase_method":         return _PURCHASE_METHOD_LABELS.get(p.purchase_method, p.purchase_method or "")
     if key == "purchase_basis":          return _PURCHASE_BASIS_LABELS.get(p.purchase_basis, p.purchase_basis or "")
@@ -340,6 +344,14 @@ async def export_purchases_to_excel(
     feo_map = {f.id: f.name for f in (await db.execute(select(FeoCategory))).scalars().all()}
 
     purchase_ids = [p.id for p in purchases]
+    # ПРАВИЛО №6 (02.10.2026, шаг 3 плана «Деньги субсидии»): Purchase.economy
+    # больше не заполняется — колонка «Экономия» в выгрузке считается через
+    # purchase_economy_bulk (app.services.purchase_economy), ЕДИНУЮ точку
+    # расчёта (planned_total − факт законтрактованных позиций).
+    economy_map = {
+        pid: bucket["economy"]
+        for pid, bucket in (await purchase_economy_bulk(db, purchase_ids)).items()
+    }
     payment_purposes: dict[int, str] = {}
     if purchase_ids:
         pay_rows = (
@@ -377,6 +389,7 @@ async def export_purchases_to_excel(
         "payment_purposes": payment_purposes,
         "ru_map": ru_map,
         "sn_map": sn_map,
+        "economy": economy_map,
     }
 
     # item-forms-accommodation-transport.md, шаг 4: доп. колонки только если

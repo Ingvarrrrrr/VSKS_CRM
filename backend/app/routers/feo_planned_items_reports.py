@@ -629,6 +629,14 @@ async def get_feo_residuals(
     # чтобы оба эндпоинта считали одинаково (см. app/services/feo_plan.py).
     cons_map = await planned_item_consumption(db, item_ids, exclude_purchase_id, exclude_wish_id)
 
+    # Контракт API (PLAN.md шаг 1-2, п. C, ревью 02.10.2026): committed/
+    # committed_quantity/not_committed/savings/closed — ЕДИНАЯ точка
+    # committed_amounts.committed_by_planned_item (ПРАВИЛО №6, та же функция,
+    # что leaf_items_committed_contribution/compute_feo_plan_tree используют
+    # для замещения плана — closed здесь обязана зеркалить тот же порог).
+    from app.services.committed_amounts import committed_by_planned_item
+    committed_map = await committed_by_planned_item(db, item_ids)
+
     result = []
     for r in rows:
         item = r.FeoPlannedItem
@@ -638,6 +646,17 @@ async def get_feo_residuals(
         used = c["used"]
         used_qty = c["used_qty"]
         wish_used = c["wish_used"]
+        committed_info = committed_map.get(item.id) or {"amount": 0.0, "quantity": 0.0, "missing_fact_items": 0}
+        committed_amt = committed_info["amount"]
+        committed_qty = committed_info["quantity"]
+        # Та же развилка, что committed_amounts.planned_item_contributions
+        # (ПРАВИЛО №6 — не вторая формула): позиция «закрыта» только
+        # one_time + quantity>0 + committed_quantity >= quantity.
+        closed = (
+            (item.payment_mode or "one_time") == "one_time"
+            and planned_qty > 0
+            and committed_qty >= planned_qty
+        )
         result.append({
             "feo_item_id": item.id,
             "name": item.name,
@@ -652,6 +671,12 @@ async def get_feo_residuals(
             "unit": item.unit,
             "used_quantity": used_qty,
             "residual_quantity": planned_qty - used_qty,
+            "committed": committed_amt,
+            "committed_quantity": committed_qty,
+            "not_committed": (planned - committed_amt) if not closed else None,
+            "savings": (planned - committed_amt) if closed else None,
+            "closed": closed,
+            "committed_missing_fact_items": committed_info["missing_fact_items"],
         })
 
     return result

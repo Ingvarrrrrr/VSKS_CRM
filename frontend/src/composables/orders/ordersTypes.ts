@@ -106,6 +106,21 @@ export interface Purchase {
   // backend/app/services/purchase_amounts.py. Optional/null — защита на
   // случай, если конкретный ответ бэкенда его не проставил.
   amounts?: PurchaseAmounts | null
+  // Квик-план 2026-10-02 («Деньги субсидии», PLAN.md п.3/5): economy — ТОЛЬКО
+  // расчёт бэкенда (план позиций минус договор по законтрактованным закупкам),
+  // фронт больше не пишет это поле. null — закупка не законтрактована или нет
+  // плановой цены ни у одной позиции. economy_no_planned_price_items — сколько
+  // позиций пропущено из суммы из-за отсутствия плановой цены.
+  economy?: number | null
+  economy_no_planned_price_items?: number | null
+  // ИСПРАВЛЕНО 02.10.2026 (база экономии — плановая позиция FeoPlannedItem,
+  // не planned_total): разбивка economy_no_planned_price_items по причине.
+  economy_unmeasured_by_reason?: {
+    unlinked: number
+    no_plan_price: number
+    monthly: number
+    no_fact: number
+  } | null
 }
 
 export interface FilterPreset {

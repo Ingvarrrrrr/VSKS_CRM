@@ -497,6 +497,10 @@ async def list_purchases(
     # на закупку.
     from app.services.purchase_amounts import load_purchase_amounts as _load_purchase_amounts
     _amounts_map = await _load_purchase_amounts(db, purchase_ids) if purchase_ids else {}
+    # Контракт API (PLAN.md шаг 3, п. D, ревью 02.10.2026): `economy` — расчёт
+    # (app.services.purchase_economy, batch на всю страницу, без N+1).
+    from app.services.purchase_economy import purchase_economy_bulk as _purchase_economy_bulk_list
+    _economy_map_list = await _purchase_economy_bulk_list(db, purchase_ids) if purchase_ids else {}
 
     result_rows = []
     for p in purchases:
@@ -505,6 +509,7 @@ async def list_purchases(
             ru_map=ru_map, su_map=su_map, feo_excess_map=_feo_excess_map,
             feo_mismatch_map=_feo_mismatch_map, amounts_map=_amounts_map, contract=p.contract,
             tz_waived_by_map=tz_waived_by_map, sn_map=sn_map,
+            economy_map=_economy_map_list,
         )
         if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):
             out.framework_contract_total = display_total_by_contract.get(p.contract_id)
@@ -750,6 +755,10 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
     # и список (без второй формулы для detail-view).
     from app.services.purchase_amounts import load_purchase_amounts as _load_purchase_amounts_single
     _single_amounts_map = await _load_purchase_amounts_single(db, [p.id])
+    # Контракт API (PLAN.md шаг 3, п. D, ревью 02.10.2026): `economy` —
+    # расчёт, не колонка БД (app.services.purchase_economy, ПРАВИЛО №6).
+    from app.services.purchase_economy import purchase_economy_bulk as _purchase_economy_bulk_single
+    _single_economy_map = await _purchase_economy_bulk_single(db, [p.id])
 
     out = _purchase_to_full(
         p, contractors, subsidies, allocations=allocations, contractor_inns=contractor_inns_single,
@@ -758,6 +767,7 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
         wish_status_map=_wish_status_map, feo_mismatch_map=_single_feo_mismatch_map,
         amounts_map=_single_amounts_map, contract=p.contract,
         tz_waived_by_map=single_tz_waived_by_map, sn_map=single_sn_map,
+        economy_map=_single_economy_map,
     )
     # phase26-m: populate framework_contract_total for single purchase view
     if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):
@@ -1015,6 +1025,13 @@ async def create_purchase(
     base["items"] = [io.model_dump() for io in await items_out_with_contractor_map(db, p.items)]
     if _excess_warnings:
         base["excess_warnings"] = _excess_warnings
+    # Контракт API (PLAN.md шаг 3, п. D, ревью 02.10.2026): `economy` — расчёт
+    # (app.services.purchase_economy), не голая колонка БД (та больше не пишется).
+    from app.services.purchase_economy import purchase_economy_bulk as _economy_bulk_create
+    _econ_bucket_create = (await _economy_bulk_create(db, [p.id])).get(p.id)
+    base["economy"] = _econ_bucket_create["economy"] if _econ_bucket_create else None
+    base["economy_no_planned_price_items"] = _econ_bucket_create["unmeasured_total"] if _econ_bucket_create else 0
+    base["economy_unmeasured_by_reason"] = dict(_econ_bucket_create["unmeasured_by_reason"]) if _econ_bucket_create else None
     return base
 
 
@@ -1165,6 +1182,11 @@ async def update_purchase(
     # совместимости старых клиентов/скриптов).
     for _legacy_key in ("acceptance_doc_name", "acceptance_doc_date", "acceptance_doc_number", "acceptance_doc_amount"):
         payload_dict.pop(_legacy_key, None)
+    # Контракт API (PLAN.md шаг 3, п. D, ревью 02.10.2026): Purchase.economy
+    # больше не пишется из payload — экономия теперь РАСЧЁТ
+    # (app.services.purchase_economy, ПРАВИЛО №6). Поле оставлено в схеме для
+    # обратной совместимости старых клиентов, значение молча игнорируется.
+    payload_dict.pop("economy", None)
 
     # ПРАВИЛО №6 (2026-09-07, группа D7): при заданном contract_id (текущем
     # ИЛИ устанавливаемом этим же PUT) шапка договора — contract_number/
@@ -1716,6 +1738,13 @@ async def update_purchase(
         base["excess_warnings"] = _excess_warnings
     if _contract_fields_ignored:
         base["contract_fields_ignored"] = _contract_fields_ignored
+    # Контракт API (PLAN.md шаг 3, п. D, ревью 02.10.2026): `economy` — расчёт
+    # (app.services.purchase_economy), не голая колонка БД (та больше не пишется).
+    from app.services.purchase_economy import purchase_economy_bulk as _economy_bulk_update
+    _econ_bucket_update = (await _economy_bulk_update(db, [p.id])).get(p.id)
+    base["economy"] = _econ_bucket_update["economy"] if _econ_bucket_update else None
+    base["economy_no_planned_price_items"] = _econ_bucket_update["unmeasured_total"] if _econ_bucket_update else 0
+    base["economy_unmeasured_by_reason"] = dict(_econ_bucket_update["unmeasured_by_reason"]) if _econ_bucket_update else None
     return base
 
 

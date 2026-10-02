@@ -782,7 +782,12 @@ async def _parse_and_group(
             delivery_region=first.get("delivery_region"),
             delivery_location=first.get("delivery_location"),
             delivery_address=first.get("delivery_address"),
-            economy=first.get("economy"),
+            # ПРАВИЛО №6 (02.10.2026, шаг 3 плана «Деньги субсидии»): колонка
+            # «Экономия» больше НЕ записывается в Purchase.economy — теперь это
+            # расчёт (app.services.purchase_economy). Колонка импорта
+            # распознаётся (см. parsed_item["economy"] выше/_COLUMN_MAP), но
+            # значение сознательно не передаётся в конструктор Purchase, чтобы
+            # файл со старой колонкой не считался ошибкой импорта.
             contract_end_date=first.get("contract_end_date"),
             commitment_quarter=first.get("commitment_quarter"),
             planned_payment_month=first.get("planned_payment_month"),

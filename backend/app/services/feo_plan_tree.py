@@ -15,13 +15,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.feo_category import FeoCategory
 from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
-from app.services.feo_plan_common import _order_substituted_plan
+from app.services.committed_amounts import (
+    committed_consumption_by_category,
+    leaf_items_committed_contribution,
+)
+from app.services.feo_plan_common import _order_substituted_plan, plan_floor_addition
 from app.services.feo_plan_fact import (
     fact_consumption_by_category,
     ordered_consumption_by_category,
     plan_consumption_by_category,
     planned_item_consumption,
 )
+# Решение владельца (02.10.2026) — «оплата по отметке»/«подтверждена выпиской»
+# узла дерева ФЭО, см. docstring модуля (ПРАВИЛО №6 — читает готовые Purchase.
+# payment_amount/payment_amount_declared, не вторая формула платежа).
+from app.services.feo_plan_payments import paid_consumption_by_category
 # ⚠️ НЕ импортировать app.services.item_type_split на уровне модуля (тот же
 # найденный цикл, что и в feo_plan_fact.py — см. её докстринг наверху файла:
 # item_type_split → app.routers.feo_planned_items → ... → plan_to_wish →
@@ -488,6 +496,69 @@ async def compute_feo_plan_tree(
     over_consumption = await plan_consumption_by_category(db, subsidy_ids, exclude_planned_item_linked=True)
     ordered_consumption = await ordered_consumption_by_category(db, subsidy_ids, exclude_planned_item_linked=True)
     fact_consumption = await fact_consumption_by_category(db, subsidy_ids)
+    # Решение владельца (02.10.2026) — «Оплачено (по отметке)»/«Подтверждено
+    # выпиской» узла: ТА ЖЕ изоляция exclude_planned_item_linked=True, что и у
+    # own_consumed/own_over выше (своя часть узла+рекурсия по детям ниже).
+    # ИСПРАВЛЕНИЕ (приёмка «Импорт факта», 02.10.2026): у плановых позиций нет
+    # собственной «оплаты» (в отличие от committed/leaf_items_committed_
+    # contribution) — ветки exclude_planned_item_linked=True здесь просто
+    # отбрасывали оплату позиций, привязанных к плановым позициям, без какого
+    #-либо довеска, поэтому «Оплачено» уходило в 0 для любой закупки с
+    # привязкой. Берём ВСЕ позиции (exclude_planned_item_linked=False) — без
+    # двойного счёта: paid_consumption_by_category возвращает суммы только по
+    # ЛИСТОВОЙ категории (cat_id), rollup (own_paid_* + children_paid_* ниже)
+    # просто агрегирует те же листовые суммы по дереву, второго источника
+    # оплаты для привязанных позиций не существует.
+    paid_consumption = await paid_consumption_by_category(db, subsidy_ids, exclude_planned_item_linked=False)
+    # Шаг 2 плана «Деньги субсидии» (владелец, 02.10.2026): порог замещения
+    # «заказ/договор вместо плана» для НЕпривязанных закупок переведён с
+    # ORDERED_STATUSES на единый предикат «законтрактовано» (committed_amounts.py,
+    # ПРАВИЛО №6) — для разовых закупок замещение срабатывает уже на «Договор»
+    # (contracted), не дожидаясь «Заказано». exclude_planned_item_linked=True —
+    # ТА ЖЕ изоляция, что и у ordered_consumption выше (own_ordered/own_committed
+    # читаются по ОДНОЙ и той же выборке строк, см. _visit/_own_qty_and_ordered).
+    committed_consumption_unlinked = await committed_consumption_by_category(
+        db, subsidy_ids, exclude_planned_item_linked=True
+    )
+    # Итоговое поле узла «законтрактовано» (committed/committed_goods/...,
+    # «Можно перераспределить»/«В плане без договоров», PLAN.md шаг 1-2) — ВСЕ
+    # законтрактованные позиции узла, линкованные и нет (в отличие от варианты
+    # выше, который служит только порогу замещения непривязанных закупок).
+    # ИСПРАВЛЕНИЕ #2 (ревью 02.10.2026): include_over_plan=True — над-плановые
+    # позиции реальны по договору и должны входить в ИТОГОВОЕ «законтрактовано»
+    # узла/субсидии (committed/committed_goods/...), в отличие от
+    # committed_consumption_unlinked выше (порог ЗАМЕЩЕНИЯ плана — там
+    # over_plan по-прежнему исключён, committed_consumption_by_category
+    # умолчание include_over_plan=False).
+    committed_consumption_all = await committed_consumption_by_category(
+        db, subsidy_ids, include_over_plan=True
+    )
+    # Шаг 3 плана «Деньги субсидии» (02.10.2026, решение владельца «договор
+    # входит в план») — БАЗА «пола» (_own_plan_floor ниже): committed ТОЛЬКО
+    # НЕпривязанных позиций (как committed_consumption_unlinked выше), но
+    # ВКЛЮЧАЯ over_plan (в отличие от committed_consumption_unlinked, который
+    # over_plan по-прежнему исключает — он служит ТОЛЬКО порогу ЗАМЕЩЕНИЯ
+    # плана). ⚠️ Намеренно НЕ committed_consumption_all (ВСЕ позиции, включая
+    # привязанные) — привязанная над-плановая позиция УЖЕ исключена из
+    # own_over (over_consumption выше тоже exclude_planned_item_linked=True) и
+    # из own-плана (leaf_item_committed_amt/committed_by_planned_item считают
+    # её отдельно, over_plan=False), поэтому «committed_consumption_all −
+    # (own_plan + own_over)» для такой позиции ложно давал бы положительный
+    # пол и задваивал её (боевой тест test_8_over_plan_included_in_committed_
+    # total_and_economy в test_money_committed.py — над-плановая ПРИВЯЗАННАЯ
+    # позиция НЕ должна расширять plan узла, см. plan_floor_addition докстринг).
+    committed_unlinked_all_for_floor = await committed_consumption_by_category(
+        db, subsidy_ids, exclude_planned_item_linked=True, include_over_plan=True
+    )
+    # Σ «вклада в план» активных плановых позиций С УЧЁТОМ замещения savings
+    # (шаг 2 плана) — ЕДИНАЯ точка (ПРАВИЛО №6, см. её докстринг), также
+    # читает find_excess_culprit (feo_plan_excess.py). Используется ТОЛЬКО для
+    # режима plan_source='planned_items' (см. _manual_plan_for ниже) — режим
+    # 'manual_sum' продолжает читать СЫРУЮ Σ amount (leaf_item_amt), владелец
+    # явно просил его не трогать.
+    leaf_item_committed_amt, committed_plan_by_kind = await leaf_items_committed_contribution(
+        db, list(by_id.keys())
+    )
 
     # Задача владельца «план ≠ факт, шаг 2» (сессия 2026-08-12): FeoPlannedItem.auto_created
     # («плановая позиция заведена автоматически из закупки/заявки, а не человеком») — нужен
@@ -673,13 +744,23 @@ async def compute_feo_plan_tree(
             )).all()
             finalizer_names = {u.id: (u.full_name or u.username) for u in user_rows}
 
-    def _own_plan_and_forecast(qty: float, amt: float, plan_manual: float, ordered: float, ordered_qty: float):
+    def _own_plan_and_forecast(
+        qty: float, amt: float, plan_manual: float, ordered: float, ordered_qty: float,
+        committed: float = 0.0, committed_qty: float = 0.0,
+    ):
         """Формула замещения плана заказом для ОДНОГО узла (без учёта детей) —
         общая для листа и «собственной» части группы. qty/amt — planned_quantity/
         planned_amount именно этого узла (для группы — всегда 0, см. вызывающий код).
         Замещение «заказ вместо плана» — общая точка _order_substituted_plan
-        (feo_plan_common.py, ПРАВИЛО №6, зовёт её же find_excess_culprit)."""
-        plan = _order_substituted_plan(qty, ordered, ordered_qty, plan_manual)
+        (feo_plan_common.py, ПРАВИЛО №6, зовёт её же find_excess_culprit).
+
+        Шаг 2 плана «Деньги субсидии» (02.10.2026): САМО замещение (аргумент
+        `plan`) теперь решается по committed/committed_qty (committed_amounts.py
+        — предикат «законтрактовано», сработавший уже на «Договор» для разовых
+        закупок, не дожидаясь «Заказано»), а НЕ по ordered/ordered_qty — те
+        остаются ТОЛЬКО для прогноза (forecast/forecast_over ниже, отдельная,
+        не затронутая этой задачей метрика «средняя цена уже заказанного»)."""
+        plan = _order_substituted_plan(qty, committed, committed_qty, plan_manual)
         if ordered_qty > 0:
             avg_price = ordered / ordered_qty
             remaining_qty = max(0.0, qty - ordered_qty) if qty > 0 else 0.0
@@ -722,7 +803,17 @@ async def compute_feo_plan_tree(
         items_total = leaf_item_amt.get(cid, 0.0)
         _own_kind = own_plan_by_kind.get(cid) or {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: 0.0}
         if (r.plan_source or "planned_items") != "manual_sum":
-            return 0.0, items_total, 0.0, [], dict(_own_kind)
+            # Шаг 2 плана «Деньги субсидии» (02.10.2026): режим 'planned_items' —
+            # план узла теперь Σ КОНТРИБЬЮЦИЙ позиций (committed_amounts.
+            # leaf_items_committed_contribution), а не голая Σ amount — закрытая
+            # количеством позиция замещается её законтрактованной суммой
+            # (экономия высвобождается в «Свободно»), см. докстринг функции выше
+            # по файлу и её общую точку в committed_amounts.py. Фолбэк на
+            # items_total — категория без собственных плановых позиций вообще
+            # (leaf_item_committed_amt тогда не содержит ключа).
+            _committed_total = leaf_item_committed_amt.get(cid, items_total)
+            _committed_kind = committed_plan_by_kind.get(cid) or dict(_own_kind)
+            return 0.0, _committed_total, 0.0, [], _committed_kind
         manual_amt = float(r.manual_plan_amount) if r.manual_plan_amount is not None else 0.0
         excess = own_manual_excess.get(cid, 0.0)
         items = own_excess_items.get(cid, [])
@@ -791,14 +882,15 @@ async def compute_feo_plan_tree(
     # напрямую (см. _visit).
 
     def _own_qty_and_ordered(cid: int) -> tuple:
-        """(qty, ordered, ordered_quantity, ordered_by_kind) — «собственные»
-        (без рекурсии) qty/заказ узла, ТЕМ ЖЕ способом, что и _visit
+        """(qty, ordered, ordered_quantity, ordered_by_kind, committed,
+        committed_quantity, committed_by_kind) — «собственные» (без рекурсии)
+        qty/заказ/законтрактовано узла, ТЕМ ЖЕ способом, что и _visit
         определяет qty/ordered/ordered_qty для листа (r.planned_quantity с
         фолбэком на leaf_item_qty) и для «собственной» части группы
         (leaf_item_qty напрямую, БЕЗ r.planned_quantity — см. _visit,
-        комментарий у own_qty). ordered_by_kind — та же own-сумма
-        ordered_consumption_by_category, разложенная по типу позиции закупки
-        (ordered_goods/services/unspecified, см. её докстринг)."""
+        комментарий у own_qty). ordered_by_kind/committed_by_kind — те же
+        own-суммы ordered_consumption_by_category/committed_consumption_unlinked,
+        разложенные по типу позиции закупки (см. их докстринги)."""
         r = by_id[cid]
         if cid in has_children:
             qty = leaf_item_qty.get(cid, 0.0)
@@ -812,7 +904,85 @@ async def compute_feo_plan_tree(
         ordered_by_kind = {
             k: _ord.get(f"ordered_{k}", 0.0) for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)
         }
-        return qty, ordered, ordered_qty, ordered_by_kind
+        _committed = committed_consumption_unlinked.get(cid) or {}
+        committed = _committed.get("committed", 0.0)
+        committed_qty = _committed.get("committed_quantity", 0.0)
+        committed_by_kind = {
+            k: _committed.get(f"committed_{k}", 0.0) for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)
+        }
+        return qty, ordered, ordered_qty, ordered_by_kind, committed, committed_qty, committed_by_kind
+
+    _own_plan_floor_memo: dict[int, tuple] = {}
+
+    def _own_plan_floor(cid: int) -> tuple:
+        """Шаг 3 плана «Деньги субсидии» (владелец, 02.10.2026, «договор входит
+        в план») — ЕДИНАЯ точка «пола» на СОБСТВЕННОЙ (без рекурсии) части
+        узла: законтрактованное узла (committed_unlinked_all_for_floor — ТОЛЬКО
+        НЕпривязанные позиции, но включая over_plan, см. комментарий у неё
+        выше — НЕ committed_consumption_all, который включает ещё и
+        привязанные/над-плановые позиции, УЖЕ учтённые own-планом/own_over
+        своим путём, иначе задвоение, см. test_8 в test_money_committed.py) не
+        может быть больше «Запланировано» этой же собственной части (own-plan
+        ДО пола + own over_plan=true). Формула — plan_floor_addition
+        (feo_plan_common.py, ПРАВИЛО №6, ТА ЖЕ точка, что использует
+        find_excess_culprit).
+
+        own-plan ДО пола воспроизводится ТЕМ ЖЕ способом, что и
+        _own_plan_and_forecast/_plan_by_kind (own_kind ветка: committed_by_kind
+        целиком, когда узел замещён «законтрактовано целиком», иначе
+        plan_manual_by_kind) — единственная причина не звать
+        _own_plan_and_forecast напрямую в том, что здесь нужна ЕЩЁ и
+        разбивка по типу (own_before_kind), которой функция не возвращает.
+
+        Возвращает (own_after_total, own_after_kind, floor_total, floor_kind):
+          own_after_* — own-плановая сумма/разбивка ПОСЛЕ пола (= own ДО пола
+            + добавка) — читает _plan_by_kind (own-часть типового накопителя);
+          floor_total/floor_kind — САМА добавка (≥0), публикуется в
+            node['plan_floor_added'] (scalar, rollup — см. _visit)."""
+        if cid in _own_plan_floor_memo:
+            return _own_plan_floor_memo[cid]
+        qty, _ord, _ord_qty, _ord_kind, committed, committed_qty, committed_by_kind = _own_qty_and_ordered(cid)
+        r = by_id[cid]
+        _, plan_manual_scalar, _, _, own_plan_manual_kind = _manual_plan_for(cid, r)
+        substituted = qty > 0 and committed_qty >= qty
+        own_before_total = committed if substituted else plan_manual_scalar
+        own_before_kind = dict(committed_by_kind) if substituted else dict(own_plan_manual_kind)
+
+        _c_all = committed_unlinked_all_for_floor.get(cid) or {}
+        committed_all_total = _c_all.get("committed", 0.0)
+        committed_all_kind = {
+            k: _c_all.get(f"committed_{k}", 0.0) for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)
+        }
+        _own_over_cons = over_consumption.get(cid) or {}
+        own_over_total = _own_over_cons.get("over", 0.0)
+        own_over_kind = {
+            k: _own_over_cons.get(f"over_{k}", 0.0) for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)
+        }
+
+        floor_total = plan_floor_addition(own_before_total, own_over_total, committed_all_total)
+        floor_kind = {
+            k: plan_floor_addition(own_before_kind.get(k, 0.0), own_over_kind.get(k, 0.0), committed_all_kind.get(k, 0.0))
+            for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)
+        }
+        # По типу клэмп на КАЖДЫЙ тип независимо может дать Σ, не совпадающую
+        # со скалярной добавкой (один тип уже "с избытком" компенсирует
+        # нехватку другого на уровне скаляра, а по типу компенсации нет) —
+        # нормализуем, чтобы Σ floor_kind БАЙТ-В-БАЙТ совпадала с floor_total
+        # (инвариант test_feo_plan_tree_type_split.py).
+        _sum_kind = sum(floor_kind.values())
+        if _sum_kind > 0.005 and abs(_sum_kind - floor_total) > 0.005:
+            _scale = floor_total / _sum_kind
+            floor_kind = {k: v * _scale for k, v in floor_kind.items()}
+        elif _sum_kind <= 0.005 and floor_total > 0.005:
+            floor_kind = {KIND_GOODS: 0.0, KIND_SERVICES: 0.0, KIND_UNSPECIFIED: floor_total}
+
+        own_after_total = own_before_total + floor_total
+        own_after_kind = {
+            k: own_before_kind.get(k, 0.0) + floor_kind.get(k, 0.0) for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)
+        }
+        _result = (own_after_total, own_after_kind, floor_total, floor_kind)
+        _own_plan_floor_memo[cid] = _result
+        return _result
 
     _plan_manual_by_kind_memo: dict[int, dict] = {}
 
@@ -838,20 +1008,22 @@ async def compute_feo_plan_tree(
     _plan_by_kind_memo: dict[int, dict] = {}
 
     def _plan_by_kind(cat_id: int) -> dict:
-        """Рекурсивная Σ «заказ замещает план», по типу — зеркалит scalar
-        `plan` (_visit: лист — _order_substituted_plan(qty, ordered,
-        ordered_qty, plan_manual); группа — own_plan + children_plan, где
-        own_plan — та же формула по «собственным» qty/ordered узла). own-часть
-        заменяется на ordered_by_kind ЦЕЛИКОМ (не пропорционально), когда
-        заказ полностью набрал plan (та же булева развилка, что и у
-        scalar'а) — иначе own-часть = plan_manual_by_kind узла (без
-        рекурсии — рекурсия добавляется ниже, отдельно от own)."""
+        """Рекурсивная Σ «заказ/договор замещает план», по типу — зеркалит
+        scalar `plan` (_visit: лист — _order_substituted_plan(qty, committed,
+        committed_qty, plan_manual); группа — own_plan + children_plan, где
+        own_plan — та же формула по «собственным» qty/committed узла). own-часть
+        заменяется на committed_by_kind ЦЕЛИКОМ (не пропорционально), когда
+        законтрактовано полностью набрало plan (та же булева развилка, что и у
+        scalar'а, шаг 2 плана «Деньги субсидии» 02.10.2026 — порог committed,
+        не ordered) — иначе own-часть = plan_manual_by_kind узла (без
+        рекурсии — рекурсия добавляется ниже, отдельно от own). Шаг 3 плана
+        (02.10.2026, «договор входит в план») — own-часть читается ПОСЛЕ пола
+        (_own_plan_floor, ЕДИНАЯ точка с scalar `plan` own-частью в _visit,
+        см. её докстринг) — иначе типовой split разошёлся бы со scalar'ом на
+        категориях без плановых позиций (ровно инвариант этого докстринга)."""
         if cat_id in _plan_by_kind_memo:
             return _plan_by_kind_memo[cat_id]
-        qty, ordered, ordered_qty, ordered_by_kind = _own_qty_and_ordered(cat_id)
-        own_plan_manual_kind = _manual_plan_for(cat_id, by_id[cat_id])[4]
-        substituted = qty > 0 and ordered_qty >= qty
-        own_kind = dict(ordered_by_kind) if substituted else dict(own_plan_manual_kind)
+        _, own_kind, _, _ = _own_plan_floor(cat_id)
         val = dict(own_kind)
         for _kid in children_map.get(cat_id, []):
             _kv = _plan_by_kind(_kid)
@@ -880,6 +1052,27 @@ async def compute_feo_plan_tree(
         _over_by_kind_memo[cat_id] = val
         return val
 
+    _committed_total_by_kind_memo: dict[int, dict] = {}
+
+    def _committed_total_by_kind(cat_id: int) -> dict:
+        """Рекурсивная Σ «законтрактовано» (ВСЕ позиции — линкованные и нет,
+        committed_consumption_all), по типу, узла+поддерева — ИТОГОВОЕ поле
+        узла (committed/committed_goods/.../committed_unspecified, PLAN.md
+        шаг 1-2 — «Можно перераспределить»/«В плане без договоров»), в отличие
+        от _own_qty_and_ordered.committed (та же committed_amounts.py, но
+        ТОЛЬКО непривязанные — служит исключительно порогу замещения плана,
+        см. её докстринг)."""
+        if cat_id in _committed_total_by_kind_memo:
+            return _committed_total_by_kind_memo[cat_id]
+        _own = committed_consumption_all.get(cat_id) or {}
+        val = {k: _own.get(f"committed_{k}", 0.0) for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED)}
+        for _kid in children_map.get(cat_id, []):
+            _kv = _committed_total_by_kind(_kid)
+            for k in (KIND_GOODS, KIND_SERVICES, KIND_UNSPECIFIED):
+                val[k] += _kv[k]
+        _committed_total_by_kind_memo[cat_id] = val
+        return val
+
     def _visit(cat_id: int) -> dict:
         cached = result.get(cat_id)
         if cached is not None:
@@ -893,6 +1086,12 @@ async def compute_feo_plan_tree(
         ord_cons = ordered_consumption.get(cat_id) or {}
         own_ordered = ord_cons.get("ordered", 0.0)
         own_ordered_qty = ord_cons.get("ordered_quantity", 0.0)
+        # Шаг 2 плана «Деньги субсидии» (02.10.2026) — own-«законтрактовано»
+        # НЕпривязанных закупок узла (порог замещения плана, см.
+        # _own_plan_and_forecast/_plan_by_kind docstring выше).
+        committed_cons = committed_consumption_unlinked.get(cat_id) or {}
+        own_committed = committed_cons.get("committed", 0.0)
+        own_committed_qty = committed_cons.get("committed_quantity", 0.0)
         fact_cons = fact_consumption.get(cat_id) or {}
         own_fact = fact_cons.get("fact", 0.0)
         own_fact_qty = fact_cons.get("fact_quantity", 0.0)
@@ -902,6 +1101,12 @@ async def compute_feo_plan_tree(
         own_fact_goods = fact_cons.get("fact_goods", 0.0)
         own_fact_services = fact_cons.get("fact_services", 0.0)
         own_fact_unspecified = fact_cons.get("fact_unspecified", 0.0)
+        # Решение владельца (02.10.2026): own-часть «Оплачено (по отметке)»/
+        # «Подтверждено выпиской» узла (без рекурсии по детям — рекурсия ниже,
+        # тем же приёмом, что и own_consumed/own_over).
+        paid_cons = paid_consumption.get(cat_id) or {}
+        own_paid_marked = paid_cons.get("paid_marked", 0.0)
+        own_paid_confirmed = paid_cons.get("paid_confirmed", 0.0)
 
         leaf_all_auto = False
         manual_plan_entered = 0.0
@@ -930,11 +1135,24 @@ async def compute_feo_plan_tree(
             fact_goods = own_fact_goods
             fact_services = own_fact_services
             fact_unspecified = own_fact_unspecified
-            plan, forecast, forecast_over = _own_plan_and_forecast(qty, amt, plan_manual, ordered, ordered_qty)
+            paid_marked = own_paid_marked
+            paid_confirmed = own_paid_confirmed
+            plan, forecast, forecast_over = _own_plan_and_forecast(
+                qty, amt, plan_manual, ordered, ordered_qty, own_committed, own_committed_qty
+            )
+            # Шаг 3 плана «Деньги субсидии» (02.10.2026, «договор входит в
+            # план») — пол на собственной части листа: committed (ВСЕ позиции
+            # узла, включая over_plan, см. _own_plan_floor) не может быть
+            # больше display собственной части. Добавляем ТОЛЬКО добавку
+            # (floor_total) — own_before_total внутри _own_plan_floor уже
+            # воспроизводит именно это `plan`, см. её докстринг.
+            plan_floor_added = _own_plan_floor(cat_id)[2]
+            plan += plan_floor_added
             # qty_plan — тот же принцип замещения, что и plan (money), но для
-            # количества: заказанное количество замещает плановое, когда оно набрано
-            # полностью, иначе показывается всё плановое количество листа.
-            qty_plan = ordered_qty if (qty > 0 and ordered_qty >= qty) else qty
+            # количества: законтрактованное количество замещает плановое, когда
+            # оно набрано полностью (шаг 2 плана, 02.10.2026 — порог committed,
+            # не ordered), иначе показывается всё плановое количество листа.
+            qty_plan = own_committed_qty if (qty > 0 and own_committed_qty >= qty) else qty
 
             # Задача владельца п.1 (2026-08-12): leaf_all_auto — истинно, если у листа
             # ЕСТЬ хотя бы одна активная плановая позиция и ВСЕ они auto_created —
@@ -958,6 +1176,8 @@ async def compute_feo_plan_tree(
             children_fact_goods = sum(c["fact_goods"] for c in child_nodes)
             children_fact_services = sum(c["fact_services"] for c in child_nodes)
             children_fact_unspecified = sum(c["fact_unspecified"] for c in child_nodes)
+            children_paid_marked = sum(c["paid_marked"] for c in child_nodes)
+            children_paid_confirmed = sum(c["paid_confirmed"] for c in child_nodes)
 
             # Задача владельца «направление со временем может наполниться,
             # соответственно должно считаться и оно» (сессия 2026-08-12, повод —
@@ -983,9 +1203,19 @@ async def compute_feo_plan_tree(
             own_amt = leaf_item_amt.get(cat_id, 0.0)
             own_manual_entered, own_plan_manual_for_calc, own_excess, own_excess_items_, _ = _manual_plan_for(cat_id, r)
             own_plan, _own_forecast, _own_forecast_over = _own_plan_and_forecast(
-                own_qty, own_amt, own_plan_manual_for_calc, own_ordered, own_ordered_qty
+                own_qty, own_amt, own_plan_manual_for_calc, own_ordered, own_ordered_qty,
+                own_committed, own_committed_qty,
             )
-            own_qty_plan = own_ordered_qty if (own_qty > 0 and own_ordered_qty >= own_qty) else own_qty
+            # Шаг 2 плана (02.10.2026) — порог committed, не ordered (см. ветку листа выше).
+            own_qty_plan = own_committed_qty if (own_qty > 0 and own_committed_qty >= own_qty) else own_qty
+
+            # Шаг 3 плана «Деньги субсидии» (02.10.2026, «договор входит в
+            # план») — пол на собственной части группы (см. комментарий у
+            # листа выше, ТА ЖЕ единая точка _own_plan_floor).
+            own_plan_floor_added = _own_plan_floor(cat_id)[2]
+            own_plan += own_plan_floor_added
+            children_plan_floor_added = sum(c["plan_floor_added"] for c in child_nodes)
+            plan_floor_added = own_plan_floor_added + children_plan_floor_added
 
             plan_manual = children_plan_manual + own_plan_manual_for_calc
             ordered = own_ordered + children_ordered
@@ -999,6 +1229,8 @@ async def compute_feo_plan_tree(
             fact_goods = own_fact_goods + children_fact_goods
             fact_services = own_fact_services + children_fact_services
             fact_unspecified = own_fact_unspecified + children_fact_unspecified
+            paid_marked = own_paid_marked + children_paid_marked
+            paid_confirmed = own_paid_confirmed + children_paid_confirmed
             plan = own_plan + children_plan
             forecast_over = children_forecast_over
             forecast = plan_manual + forecast_over
@@ -1138,6 +1370,17 @@ async def compute_feo_plan_tree(
         # корневым узлам этого поля == planned_tree (feo_plan_subsidy_totals,
         # Σ node['display'] корней) БАЙТ-В-БАЙТ — инвариант проверяется
         # test_feo_plan_tree_type_split.py.
+        # Шаг 1-2 плана «Деньги субсидии» (02.10.2026): итоговое «законтрактовано»
+        # узла+поддерева (ВСЕ позиции — линкованные и нет) — см. committed_amounts.py
+        # и _committed_total_by_kind выше. Используется вызывающим кодом для
+        # «Можно перераспределить» (budget − committed) и «В плане без договоров»
+        # (plan − committed), см. PLAN.md.
+        _committed_kind_total = _committed_total_by_kind(cat_id)
+        committed_goods = _committed_kind_total[KIND_GOODS]
+        committed_services = _committed_kind_total[KIND_SERVICES]
+        committed_unspecified = _committed_kind_total[KIND_UNSPECIFIED]
+        committed_total = committed_goods + committed_services + committed_unspecified
+
         _clamped = bool(budget is not None and full_display - budget > 0.005 and not excess_approved)
         _plan_kind = _plan_by_kind(cat_id)
         _over_kind = _over_by_kind(cat_id)
@@ -1233,6 +1476,30 @@ async def compute_feo_plan_tree(
             "fact_goods": fact_goods,
             "fact_services": fact_services,
             "fact_unspecified": fact_unspecified,
+            # Решение владельца (02.10.2026): «Оплачено (по отметке)» —
+            # Σ(payment_amount + payment_amount_declared), «Подтверждено
+            # выпиской» — Σ payment_amount, см. feo_plan_payments.py.
+            "paid_marked": paid_marked,
+            "paid_confirmed": paid_confirmed,
+            # Шаг 1-2 плана «Деньги субсидии» (02.10.2026) — «законтрактовано»
+            # узла+поддерева, см. комментарий у _committed_kind_total выше.
+            "committed": committed_total,
+            "committed_goods": committed_goods,
+            "committed_services": committed_services,
+            "committed_unspecified": committed_unspecified,
+            # Контракт API (02.10.2026, PLAN.md шаг 1-2, п. B): «В плане без
+            # договоров» узла = plan − committed (узел+поддерево). Бюджет узла
+            # не всегда задан (NULL/0 — наследуется от родителя/субсидии в
+            # целом) — redistributable тогда null, а не 0 (нечем перераспределять
+            # НА УРОВНЕ ЭТОГО узла, см. normalize_feo_category_budget выше).
+            "planned_not_committed": plan - committed_total,
+            "redistributable": (budget - committed_total) if (budget is not None and budget > 0) else None,
+            # Шаг 3 плана «Деньги субсидии» (02.10.2026, решение владельца
+            # «договор входит в план») — Σ добавок «пола» (узел+поддерево, см.
+            # _own_plan_floor): законтрактованное без/сверх плановой позиции,
+            # поднятое до committed на собственной части каждого узла. Для UI —
+            # «включено N ₽ договоров без плановой позиции».
+            "plan_floor_added": plan_floor_added,
             # Раздел E2: 4 НЕЗАВИСИМЫХ контроля превышения по типу (kind — см.
             # app.services.plan_excess_kinds.PLAN_OVER_FEO_GOODS/SERVICES,
             # FACT_OVER_PLAN_GOODS/SERVICES) — своё согласование/pending/approved

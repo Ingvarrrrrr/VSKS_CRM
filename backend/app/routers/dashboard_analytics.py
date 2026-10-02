@@ -4,6 +4,7 @@
 и производные метрики для дашборда.
 """
 from datetime import date, timedelta
+from decimal import Decimal
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func, case, extract
@@ -16,8 +17,44 @@ from app.models.user import User
 from app.auth.jwt import get_current_user, get_org_filter
 from app.auth.visibility import get_visible_subsidy_ids
 from app.routers.dashboard import _UNSET
+from app.services.purchase_economy import purchase_economy_bulk, purchase_economy_by_method
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+
+
+@router.get("/economy-by-method")
+async def economy_by_method(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    subsidy_id: Optional[int] = Query(None),
+    year: Optional[int] = Query(None),
+    scope: Optional[str] = Query(None),
+):
+    """Контракт API (PLAN.md шаг 4, п. F, ревью 02.10.2026): статистика
+    экономии по способу закупки — ед. поставщик / конкурентная (с разбивкой
+    по форме + итог) / авансовый / не указано. ПРАВИЛО №5 — новый роутер не
+    заводится (routes.py — чужой файл в этой задаче), эндпоинт добавлен в уже
+    зарегистрированный dashboard_analytics.py. ПРАВИЛО №6 — сам расчёт ЦЕЛИКОМ
+    в app.services.purchase_economy.purchase_economy_by_method, здесь только
+    видимость (та же логика dash_sids/org_ids, что и analytics() выше в этом
+    файле, и /dashboard/charts — scope="dashboard" => get_visible_subsidy_ids)."""
+    org_ids = get_org_filter(current_user)
+    dash_sids = _UNSET
+    if scope == "dashboard":
+        dash_sids = await get_visible_subsidy_ids(current_user, db, "dashboard")
+
+    visible_subsidy_ids = None
+    if dash_sids is not _UNSET:
+        visible_subsidy_ids = dash_sids  # может быть None — «без ограничения владением»
+    elif org_ids is not None:
+        visible_subsidy_ids = (await db.execute(
+            select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
+        )).scalars().all()
+
+    groups = await purchase_economy_by_method(
+        db, subsidy_id=subsidy_id, year=year, visible_subsidy_ids=visible_subsidy_ids,
+    )
+    return groups
 
 
 @router.get("/analytics")
@@ -104,16 +141,18 @@ async def analytics(
     upcoming = upcoming_result.one()
 
     # 5. Plan vs contract delta — Σ(план − договор) aggregate for the dashboard.
-    # NOT the same metric as the manual per-purchase Purchase.economy field
-    # ("Экономия"): this is a computed sum across purchases, that one is a
-    # user-entered value. Keeping distinct names (plan_contract_delta vs
-    # economy) per ПРАВИЛО №6 — one indicator, one name, one source.
-    plan_contract_delta_result = await db.execute(_pf(
-        select(func.coalesce(func.sum(Purchase.planned_total_price - Purchase.contract_price), 0))
-        .where(Purchase.contract_price != None)
-        .where(Purchase.contract_price > 0)
+    # ПРАВИЛО №6 (02.10.2026, шаг 3 плана «Деньги субсидии»): раньше это была
+    # ВТОРАЯ, собственная формула экономии (planned_total_price − contract_price
+    # на уровне ЗАКУПКИ) — расходится с item-level формулой purchase_economy.py
+    # (плановая позиция FeoPlannedItem − факт, только законтрактованные позиции). Теперь
+    # читает ТУ ЖЕ точку, что и остальные места (purchase_export.py и т.д.):
+    # Σ economy по закупкам, прошедшим фильтр _pf. Ключ в ответе оставлен
+    # прежним (фронт его не выводит, см. PLAN.md шаг 3).
+    _pcd_ids = (await db.execute(_pf(select(Purchase.id)))).scalars().all()
+    _pcd_econ = await purchase_economy_bulk(db, _pcd_ids)
+    plan_contract_delta = float(sum(
+        (b["economy"] for b in _pcd_econ.values() if b["economy"] is not None), Decimal("0")
     ))
-    plan_contract_delta = float(plan_contract_delta_result.scalar() or 0)
 
     # 6. Overdue purchases (execution_term past, not paid/delivered)
     overdue_result = await db.execute(_pf(

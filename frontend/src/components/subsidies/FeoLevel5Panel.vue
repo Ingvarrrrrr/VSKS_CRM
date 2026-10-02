@@ -6,7 +6,7 @@
        без собственных позиций — пустая, с кнопкой «Добавить плановую»), иначе
        первую позицию на направление добавить неоткуда. -->
   <tr v-if="ctx.expandedItemPanels.value.has(node.id)" :data-feo-panel-for="node.id">
-    <td colspan="7" style="padding:0">
+    <td colspan="8" style="padding:0">
       <div style="padding:10px 0 12px 0">
         <div class="d-flex align-center mb-2" style="gap:8px">
           <v-btn v-if="ctx.displayPlannedRowsFor(node).length > 1" size="x-small" variant="text" color="teal"
@@ -232,6 +232,24 @@
                     :title="`Куплено ${rowProgress(planned)!.consumed} из ${rowProgress(planned)!.total}${planned.unit ? ' ' + planned.unit : ''} — осталось докупить ${rowProgress(planned)!.total - rowProgress(planned)!.consumed}${planned.unit ? ' ' + planned.unit : ''}`"
                   >
                     куплено {{ rowProgress(planned)!.consumed }} из {{ rowProgress(planned)!.total }}{{ planned.unit ? ` ${planned.unit}` : '' }}
+                  </div>
+                  <!-- Квик-план 2026-10-02 («Деньги субсидии», PLAN.md п.5):
+                       «экономия»/«переплата» — ТОЛЬКО у закрытой позиции
+                       (closed=true, количество набрано — план гарантированно
+                       расходован, см. useFeoTreeAmounts.ts/PLAN.md п.2),
+                       «не законтрактовано» — у частично законтрактованной.
+                       Оба поля готовые с бэкенда (Правило №6, не считаем сами). -->
+                  <div v-if="planned.closed && planned.savings != null && Math.abs(planned.savings) > 0.005"
+                    class="text-caption" :style="{ color: planned.savings < 0 ? '#DC2626' : '#16A34A', lineHeight: '1.3' }"
+                    :title="planned.savings < 0 ? 'Позиция закрыта: факт по договору выше плана (согласованная переплата)' : 'Позиция закрыта: план минус факт по договору'"
+                  >
+                    {{ planned.savings < 0 ? 'переплата' : 'экономия' }} {{ formatCurrency(Math.abs(planned.savings)) }}
+                  </div>
+                  <div v-else-if="!planned.closed && planned.not_committed != null && planned.not_committed > 0.005"
+                    class="text-caption text-medium-emphasis" style="line-height:1.3"
+                    title="План минус законтрактовано (договор ещё не на всю сумму плана)"
+                  >
+                    не законтрактовано {{ formatCurrency(planned.not_committed) }}
                   </div>
                   <div v-if="planned.amount != null" class="text-medium-emphasis" style="font-size:10px;line-height:1.3;white-space:normal">
                     {{ ctx.planBreakdownText(node.id, planned) }}

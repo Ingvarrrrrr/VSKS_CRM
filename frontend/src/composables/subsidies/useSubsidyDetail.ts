@@ -114,6 +114,10 @@ export interface SubsidyDetailContext {
   // волны) — здесь только ссылки на те же реактивные значения (Правило №6).
   selectedBudget: ComputedRef<number>
   selectedPlannedTotal: ComputedRef<number>
+  // Решение владельца (02.10.2026) — ИТОГО дерева: «Оплачено (по отметке)»/
+  // «Подтверждено выпиской», см. useFeoTreeAmounts.ts.
+  selectedPaidMarkedTotal: ComputedRef<number>
+  selectedPaidConfirmedTotal: ComputedRef<number>
   plannedItemsByCat: Ref<Record<number, FeoReqItem[]>>
   plannedItemsLoaded: Ref<boolean>
   mergedReqByCat: ComputedRef<{

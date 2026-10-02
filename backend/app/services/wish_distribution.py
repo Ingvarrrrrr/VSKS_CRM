@@ -410,41 +410,59 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
                     note=f"авансовым отчётом (заявка №{wish.id})",
                 )
                 await db.flush()
-            # Владелец (2026-09-29): «авансовый должен идти дальше сам, как
-            # обычная заявка» — обычная заявка при финальном согласовании сразу
-            # даёт закупку В ПЛАНЕ (создаётся уже 'plan_schedule'); авансовая
-            # закупка создаётся РАНЬШЕ заявки в 'wishes' (purchases.py, ветка
-            # is_advance) и раньше застревала там навсегда — дальше двигал
-            # только ручной клик по кнопке «→ План закупок». Эта ветка
-            # выполняется РОВНО в момент финального решения по компаньону (все
-            # три вызывающих — decide()/approve_wish()/force_wish_status —
-            # зовут _distribute_wish_to_purchases именно в момент полного
-            # согласования/конвертации, не раньше), поэтому здесь безопасно
-            # попытаться продвинуть закупку сразу на один шаг вперёд.
-            # Гейты (обязательные поля, превышение ФЭО/ТЗ/типа) — ТЕ ЖЕ, что и
-            # у ручной кнопки, через apply_purchase_status_transition
+            # Владелец (02.10.2026, quick-план «Деньги субсидии», шаг 6,
+            # авансовый вариант Б): «после ПОСЛЕДНЕГО согласования закупка
+            # авансового сразу попадает в статус "Поставлено, не оплачено",
+            # минуя plan_schedule/work_in_progress/contracted/ordered» —
+            # ОДИН прыжок прямо на 'delivered' (раньше здесь двигали ровно на
+            # один шаг вперёд, 2026-09-29: «идёт дальше сам, как обычная
+            # заявка» — теперь явно жёстче, директор решает «Оплачено»/
+            # «Отказать в оплате» уже САМ на стадии delivered, см.
+            # app/services/advance_payment_decision.py и
+            # app/routers/purchase_transitions.py /
+            # app/routers/purchase_stop.py). Эта ветка выполняется РОВНО в
+            # момент финального решения по компаньону (все три вызывающих —
+            # decide()/approve_wish()/force_wish_status — зовут
+            # _distribute_wish_to_purchases именно в момент полного
+            # согласования/конвертации, не раньше).
+            #
+            # Гейты (обязательные поля, превышение ФЭО/ТЗ/типа) — ТЕ ЖЕ, что
+            # и у ручной кнопки, через apply_purchase_status_transition
             # (app/services/purchase_transition_core.py, вынесено из
             # app/routers/purchase_transitions.py::transition_status —
-            # ПРАВИЛО №6, второй копии гейтов не заводим). Если гейт отказал —
-            # НЕ роняем согласование компаньона: закупка остаётся в 'wishes',
-            # причина фиксируется PurchaseEvent, кнопка «→ План закупок»
-            # в карточке закупки остаётся для ручного повтора (см. её
-            # существующий гейт в purchase_transitions.py:148-171 — компаньон
-            # уже approved/converted, значит он его пропустит).
+            # ПРАВИЛО №6, второй копии гейтов не заводим): контроль
+            # превышения ФЭО/ТЗ/типа срабатывает на ЛЮБОМ forward-переходе
+            # (target_idx > current_idx), не завязан на конкретную
+            # промежуточную стадию — прыжок через несколько стадий сразу его
+            # не обходит. Привязка к плану по каждой позиции чека
+            # (advance_auto_plan.py) и зеркалирование субсидии
+            # (advance_wish_sync.py::sync_wish_header_from_purchase) тоже не
+            # завязаны на стадию — отрабатывают при каждом сохранении
+            # закупки/заявки независимо от статуса, см. их докстринги.
+            # ContractItem/привязка цены контракта к товару — побочный эффект
+            # ИМЕННО стадии 'contracted', которую авансовый теперь не проходит
+            # физически; формула факта (feo_plan_fact.py::purchase_item_fact_amount)
+            # для статусов 'delivered'/'paid' и так не требует ContractItem —
+            # берёт final_total/acceptance_docs/total_price, поэтому пропуск
+            # не ломает расчёт (см. FACT_CONFIRMED_STATUSES там).
+            #
+            # Если гейт отказал — НЕ роняем согласование компаньона: закупка
+            # остаётся в 'wishes', причина фиксируется PurchaseEvent, кнопка
+            # «→ План закупок» в карточке закупки остаётся для ручного повтора
+            # (см. её существующий гейт в purchase_transitions.py:148-171 —
+            # компаньон уже approved/converted, значит он его пропустит).
             from app.routers.purchases import STATUS_ORDER as _adv_status_order
             wish._advance_purchase_transition_warning = None
+            _adv_delivered_idx = _adv_status_order.index('delivered')
             for _adv_p in existing:
                 if _adv_p.status != 'wishes':
                     continue
                 _cur_idx = _adv_status_order.index(_adv_p.status)
-                _target_idx = _cur_idx + 1
-                if _target_idx >= len(_adv_status_order):
-                    continue
-                _target_status = _adv_status_order[_target_idx]
+                _target_status = 'delivered'
                 try:
                     from app.services.purchase_transition_core import apply_purchase_status_transition
                     await apply_purchase_status_transition(
-                        _adv_p, _adv_p.id, _target_status, current_user, db, _cur_idx, _target_idx,
+                        _adv_p, _adv_p.id, _target_status, current_user, db, _cur_idx, _adv_delivered_idx,
                     )
                 except HTTPException as _adv_exc:
                     _detail = _adv_exc.detail
@@ -453,9 +471,9 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
                     )
                     wish._advance_purchase_transition_warning = (
                         f"Возмещение согласовано, но закупка "
-                        f"{_adv_p.registry_number or f'№{_adv_p.id}'} не переведена в план "
-                        f"автоматически: {_reason} Нажмите «→ План закупок» в карточке закупки "
-                        "после устранения причины."
+                        f"{_adv_p.registry_number or f'№{_adv_p.id}'} не переведена в «Поставлено, "
+                        f"не оплачено» автоматически: {_reason} Нажмите кнопку перехода в карточке "
+                        "закупки после устранения причины."
                     )
                     try:
                         from app.models.purchase_event import PurchaseEvent

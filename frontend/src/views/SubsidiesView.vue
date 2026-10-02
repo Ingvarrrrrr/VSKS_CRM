@@ -186,7 +186,7 @@ const { globalSubsidyId } = useGlobalSubsidy()
 // НЕ singleton, поэтому создаётся здесь ОДИН раз и прокидывается в FeoTreeTable.vue/
 // FeoLevel5Panel.vue через ctx.feoResize (см. их докстринги и useSubsidyDetail.ts).
 const feoResize = useResizableColumns('feo-table', {
-  name: 0, budget: 180, qty: 0, planned: 0, spent: 180, residual: 0,
+  name: 0, budget: 180, qty: 0, planned: 0, spent: 180, residual: 0, paid: 150,
 })
 
 const router = useRouter()
@@ -433,6 +433,21 @@ async function loadAll() {
       remaining: s.remaining ?? null,
       planned_amount: s.planned_amount ?? null,
       budget_discrepancy: s.budget_discrepancy ?? null,
+      // Квик-план 2026-10-02 (PLAN.md п.1, фикс приёмки): карточки «Можно
+      // перераспределить»/«Экономия по закупкам» показывали «—»/0 — поля
+      // приходят с /dashboard/charts (committed_amounts.py/purchase_economy.py),
+      // но раскладка их теряла. Единый источник (Правило №6) — ничего не
+      // считаем здесь, только переносим готовые значения.
+      committed: s.committed ?? null,
+      committed_by_kind: s.committed_by_kind ?? null,
+      planned_not_committed: s.planned_not_committed ?? null,
+      planned_not_committed_by_kind: s.planned_not_committed_by_kind ?? null,
+      redistributable: s.redistributable ?? null,
+      redistributable_by_kind: s.redistributable_by_kind ?? null,
+      economy_total: s.economy_total ?? null,
+      economy_no_planned_price_items: s.economy_no_planned_price_items ?? null,
+      economy_unmeasured_by_reason: s.economy_unmeasured_by_reason ?? null,
+      committed_missing_fact_items: s.committed_missing_fact_items ?? null,
       work: s.total_work ?? 0,
       contracts: s.total_contracts ?? 0,
       delivered: s.total_delivered ?? 0,
@@ -532,6 +547,21 @@ async function silentRefreshSubsidies() {
         remaining: s.remaining ?? null,
         planned_amount: s.planned_amount ?? null,
         budget_discrepancy: s.budget_discrepancy ?? null,
+      // Квик-план 2026-10-02 (PLAN.md п.1, фикс приёмки): карточки «Можно
+      // перераспределить»/«Экономия по закупкам» показывали «—»/0 — поля
+      // приходят с /dashboard/charts (committed_amounts.py/purchase_economy.py),
+      // но раскладка их теряла. Единый источник (Правило №6) — ничего не
+      // считаем здесь, только переносим готовые значения.
+      committed: s.committed ?? null,
+      committed_by_kind: s.committed_by_kind ?? null,
+      planned_not_committed: s.planned_not_committed ?? null,
+      planned_not_committed_by_kind: s.planned_not_committed_by_kind ?? null,
+      redistributable: s.redistributable ?? null,
+      redistributable_by_kind: s.redistributable_by_kind ?? null,
+      economy_total: s.economy_total ?? null,
+      economy_no_planned_price_items: s.economy_no_planned_price_items ?? null,
+      economy_unmeasured_by_reason: s.economy_unmeasured_by_reason ?? null,
+      committed_missing_fact_items: s.committed_missing_fact_items ?? null,
         work: s.total_work ?? 0,
         contracts: s.total_contracts ?? 0,
         delivered: s.total_delivered ?? 0,
@@ -941,6 +971,8 @@ const subsidyDetailCtx = {
   goToFeoSearchResult: feoTreeSearch.goToFeoSearchResult,
   selectedBudget: feoTreeAmounts.selectedBudget,
   selectedPlannedTotal: feoTreeAmounts.selectedPlannedTotal,
+  selectedPaidMarkedTotal: feoTreeAmounts.selectedPaidMarkedTotal,
+  selectedPaidConfirmedTotal: feoTreeAmounts.selectedPaidConfirmedTotal,
   plannedItemsByCat: feoTreeState.plannedItemsByCat,
   plannedItemsLoaded: feoTreeState.plannedItemsLoaded,
   mergedReqByCat: feoReqItems.mergedReqByCat,

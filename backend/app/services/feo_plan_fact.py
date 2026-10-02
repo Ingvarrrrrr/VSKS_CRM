@@ -202,6 +202,57 @@ async def _purchase_item_totals(db: AsyncSession, purchase_ids) -> dict:
     return {r[0]: (r[1], Decimal(str(r[2] or 0))) for r in rows}
 
 
+async def fact_amounts_for_rows(db: AsyncSession, rows) -> dict:
+    """Пакетный расчёт purchase_item_fact_amount для уже выбранного набора строк
+    (PurchaseItem, Purchase) — общий загрузчик (ПРАВИЛО №6, владелец 02.10.2026,
+    задача «законтрактовано»), вынесенный из повторяющегося цикла
+    ordered_consumption_by_category/fact_consumption_by_category НИЖЕ (та же
+    пропорция ratio, те же предзапросы _purchase_item_totals/_contract_item_totals,
+    тот же приоритет источников факта purchase_item_fact_amount), чтобы
+    app.services.committed_amounts не заводил ТРЕТЬЮ копию этого цикла — только
+    ПЕРЕИСПОЛЬЗУЕТ её наравне с двумя существующими. Сами ordered_consumption_by_
+    category/fact_consumption_by_category НЕ переведены на эту функцию в рамках
+    этой задачи (минимизация риска регресса на уже протестированном коде) —
+    воспроизводят идентичный цикл инлайн, как и раньше.
+
+    rows — итерируемое: либо Row из select(PurchaseItem, Purchase, ...) (с
+    атрибутами .PurchaseItem/.Purchase), либо голые кортежи (PurchaseItem, Purchase).
+
+    Возвращает {purchase_item_id: Decimal fact_amount}, пропуская позиции, для
+    которых purchase_item_fact_amount вернула None (факта ещё нет)."""
+    rows = list(rows)
+    if not rows:
+        return {}
+
+    def _unpack(row):
+        if hasattr(row, "PurchaseItem"):
+            return row.PurchaseItem, row.Purchase
+        return row
+
+    pairs = [_unpack(r) for r in rows]
+    purchase_ids = {p.id for _pi, p in pairs}
+    purchase_totals = await _purchase_item_totals(db, purchase_ids)
+    contract_totals = await _contract_item_totals(db, (pi.id for pi, _p in pairs))
+
+    result: dict = {}
+    for pi, p in pairs:
+        items_count, items_sum = purchase_totals.get(p.id, (1, Decimal(str(pi.total_price or 0))))
+        item_total = Decimal(str(pi.total_price or 0))
+        if items_count > 1 and items_sum > 0:
+            ratio = item_total / items_sum
+        elif items_count > 1:
+            ratio = Decimal(1) / Decimal(items_count)
+        else:
+            ratio = Decimal(1)
+        fact_amount, _allocated = purchase_item_fact_amount(
+            pi, p, ratio, items_count, contract_item_total=contract_totals.get(pi.id)
+        )
+        if fact_amount is None:
+            continue
+        result[pi.id] = fact_amount
+    return result
+
+
 async def plan_consumption_by_category(
     db: AsyncSession,
     subsidy_ids: list[int],

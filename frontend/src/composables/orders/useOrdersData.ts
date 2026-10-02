@@ -272,7 +272,7 @@ export function useOrdersData(options: {
   watch(() => filters.subsidyId, () => { loadDuplicateGroups() })
 
   const doTransition = async (item: Purchase) => {
-    const target = nextStatus(item.status)
+    const target = nextStatus(item.status, item.purchase_method === 'advance')
     if (!target) return
     const required = transitionRequired(item)[target]
     if (required) {

@@ -72,7 +72,10 @@ async def _build_fixture_subsidy(db_session):
         items=[("товар", 100), ("услуга", 100)],
     )
     # p6: contracted, linked to an active framework_cumulative Contract — тестирует
-    # и widget "contracts", и обычные бакеты (plan_schedule/work).
+    # обычные бакеты (plan_schedule/work), но по решению владельца 02.10.2026
+    # (committed_amounts.py, PLAN.md money-redistribution шаг 1) рамочная ГОЛОВА
+    # сама по себе денег НЕ занимает — в widget "contracts" эта закупка больше
+    # НЕ входит, пока по ней нет размещённого заказа (ordered/delivered/paid).
     contract = Contract(
         number=f"C-{uuid.uuid4().hex[:6]}", contract_type="framework_cumulative",
         subsidy_id=subsidy.id, status="active",
@@ -84,15 +87,27 @@ async def _build_fixture_subsidy(db_session):
         contract_price=Decimal("1000"), contract_id=contract.id,
         items=[("товар", 1000)],
     )
+    # p7: ordered под тем же рамочным договором — ЭТА закупка и есть
+    # «размещённый заказ», который по новому правилу занимает деньги и
+    # единственная формирует widget "contracts" (400, goods) для этого договора.
+    await _make_purchase(
+        db_session, subsidy.id, status="ordered",
+        contract_price=Decimal("400"), contract_id=contract.id,
+        items=[("товар", 400)],
+    )
 
     return subsidy
 
 
 EXPECTED = {
-    "plan_schedule": {"amount": 3800.0, "goods": 2500.0, "services": 1000.0, "unspecified": 300.0},
-    "work": {"amount": 2800.0, "goods": 1900.0, "services": 600.0, "unspecified": 300.0},
-    "ordered": {"amount": 1300.0, "goods": 900.0, "services": 100.0, "unspecified": 300.0},
-    "contracts": {"amount": 1000.0, "goods": 1000.0, "services": 0.0, "unspecified": 0.0},
+    # +400 (p7, ordered/товар) во всех бакетах, куда входит статус "ordered":
+    # plan_schedule/work/ordered — см. _stage_contributions (dashboard_type_split.py).
+    "plan_schedule": {"amount": 4200.0, "goods": 2900.0, "services": 1000.0, "unspecified": 300.0},
+    "work": {"amount": 3200.0, "goods": 2300.0, "services": 600.0, "unspecified": 300.0},
+    "ordered": {"amount": 1700.0, "goods": 1300.0, "services": 100.0, "unspecified": 300.0},
+    # "contracts" (владелец 02.10.2026): рамочная ГОЛОВА (p6, contracted) НЕ
+    # занимает деньги — только размещённый заказ (p7, ordered, 400, goods).
+    "contracts": {"amount": 400.0, "goods": 400.0, "services": 0.0, "unspecified": 0.0},
     "delivered": {"amount": 500.0, "goods": 100.0, "services": 100.0, "unspecified": 300.0},
     "delivered_unpaid": {"amount": 300.0, "goods": 0.0, "services": 0.0, "unspecified": 300.0},
     "paid": {"amount": 200.0, "goods": 100.0, "services": 100.0, "unspecified": 0.0},

@@ -48,7 +48,7 @@
           </v-card-text>
           <v-divider />
           <v-card-actions class="py-1" @click.stop>
-            <v-btn v-if="nextStatus(item.status)" size="x-small" :color="STATUS_COLOR[nextStatus(item.status)!]" variant="tonal" :loading="transitioning === item.id" @click.stop="emit('transition', item)">→ {{ statusLabelFor(item, nextStatus(item.status)!) }}</v-btn>
+            <v-btn v-if="nextStatus(item.status, item.purchase_method === 'advance')" size="x-small" :color="STATUS_COLOR[nextStatus(item.status, item.purchase_method === 'advance')!]" variant="tonal" :loading="transitioning === item.id" @click.stop="emit('transition', item)">→ {{ statusLabelFor(item, nextStatus(item.status, item.purchase_method === 'advance')!) }}</v-btn>
             <v-spacer />
             <!-- Phase 32: file badge -->
             <v-chip
@@ -61,10 +61,13 @@
             <!-- Владелец, 2026-09-15: та же кнопка остановки/возобновления, что и в списке. -->
             <v-btn v-if="item.stopped_at" icon="mdi-play-circle-outline" variant="text" size="small" color="success"
               title="Возобновить закупку" @click.stop="emit('resume-purchase', item)" />
-            <v-tooltip v-else location="top" :text="canStopPurchase(item).allowed ? 'Остановить закупку' : (canStopPurchase(item).reason || '')">
+            <!-- Квик-план 2026-10-02 (шаг 7): та же подпись/иконка «Отказать в
+                 оплате» для авансового на delivered, что и в карточке закупки
+                 и в таблице — единый источник ordersLabels.ts (Правило №6). -->
+            <v-tooltip v-else location="top" :text="stopButtonTooltipFor(item)">
               <template #activator="{ props: stopProps }">
                 <span v-bind="stopProps">
-                  <v-btn icon="mdi-stop-circle-outline" variant="text" size="small" color="error"
+                  <v-btn :icon="stopButtonIconFor(item)" variant="text" size="small" color="error"
                     :disabled="!canStopPurchase(item).allowed" @click.stop="emit('stop-purchase', item)" />
                 </span>
               </template>
@@ -91,6 +94,7 @@ import {
   STATUS_COLOR, APPROVAL_STATUS_COLOR, APPROVAL_STATUS_LABEL,
   effectivePrice, formatDate, statusLabelFor, purchaseTypeLabel, purchaseTypeColor,
   feoExcessChip, nextStatus, canStopPurchase,
+  stopButtonIconFor, stopButtonTooltipFor,
 } from '@/composables/orders/ordersLabels'
 import type { Purchase } from '@/composables/orders/ordersTypes'
 import PurchaseStoppedBanner from '@/components/orders/PurchaseStoppedBanner.vue'

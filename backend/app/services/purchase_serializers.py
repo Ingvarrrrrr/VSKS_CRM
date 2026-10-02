@@ -110,6 +110,7 @@ def _purchase_to_full(
     wish_title_map: dict | None = None, wish_status_map: dict | None = None,
     feo_mismatch_map: dict | None = None, amounts_map: dict | None = None,
     contract=None, tz_waived_by_map: dict | None = None, sn_map: dict | None = None,
+    economy_map: dict | None = None,
 ) -> PurchaseOutFull:
     # Ленивый импорт — избежать цикла на уровне модуля: purchases.py (ядро)
     # импортирует _purchase_to_full ОТСЮДА, поэтому этот модуль не может
@@ -129,6 +130,19 @@ def _purchase_to_full(
     data["contract_date"] = _hdr.contract_date
     data["purchase_contract_type"] = _hdr.purchase_contract_type
     data["contractor_id"] = _hdr.contractor_id
+    # Контракт API (PLAN.md шаг 3, п. D, ревью 02.10.2026): `economy` —
+    # РАСЧЁТ (app.services.purchase_economy.purchase_economy_bulk, batch,
+    # передан вызывающим через economy_map, БЕЗ N+1), не голая колонка БД
+    # (та больше не пишется). economy_map=None (путь ещё не переведён на
+    # batch-расчёт) → fallback на старую колонку (postепенная миграция всех
+    # вызывающих, см. _purchase_to_full callers).
+    _econ_bucket = (economy_map or {}).get(p.id)
+    economy_no_planned_price_items = 0
+    economy_unmeasured_by_reason = None
+    if _econ_bucket is not None:
+        data["economy"] = _econ_bucket["economy"]
+        economy_no_planned_price_items = _econ_bucket["unmeasured_total"]
+        economy_unmeasured_by_reason = dict(_econ_bucket["unmeasured_by_reason"])
     _ipm = item_plan_map or {}
     # ПРАВИЛО №6 (группа D5): те же bulk-карты contractors/contractor_inns,
     # что уже собраны вызывающим для шапки закупки (один SELECT на страницу) —
@@ -193,6 +207,8 @@ def _purchase_to_full(
     )
     return PurchaseOutFull(
         **data,
+        economy_no_planned_price_items=economy_no_planned_price_items,
+        economy_unmeasured_by_reason=economy_unmeasured_by_reason,
         amounts=amounts_out,
         items=items,
         files=files,

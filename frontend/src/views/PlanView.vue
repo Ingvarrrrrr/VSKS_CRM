@@ -436,6 +436,7 @@ interface Purchase {
   contract_price?: number | null
   payment_amount?: number | null
   economy?: number | null
+  economy_no_planned_price_items?: number | null
   purchase_method?: string | null
   execution_term?: string | null
   contract_number?: string | null

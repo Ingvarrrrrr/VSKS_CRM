@@ -75,7 +75,49 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
     return node.budget != null ? Number(node.budget) : 0
   }
 
+  // ИСПРАВЛЕНИЕ (ПРАВИЛО №6, расследование «бюджет ФЭО 15 664 000 vs 15 712 442»,
+  // субсидия МИНПРОС_2026, 2026-10-02): раньше feoEffectiveFor для узла с детьми
+  // считал ТОЛЬКО Σ feoEffectiveFor(дети) — собственные активные плановые позиции
+  // узла (FeoPlannedItem.feo_amount), заведённые прямо на направлении без
+  // собственного FeoCategory.budget, терялись (узел «Окружные», строка «Бинт
+  // марлевый…» 48 441,80 ₽). Сервер (app.services.subsidy_budget.compute_budget_map
+  // — ЕДИНСТВЕННЫЙ источник scalar'ов calculated_budget/feo_budget_total) эту
+  // сумму учитывает: budget узла = собственный FeoCategory.budget, если задан,
+  // иначе Σ feo_amount собственных активных позиций + Σ budget прямых детей.
+  // ВТОРУЮ формулу не пишем — GET /api/feo-categories/plan-tree
+  // (compute_feo_plan_tree) уже считает ТУ ЖЕ рекурсию через _feo_by_kind
+  // (её докстринг прямо ссылается на compute_budget_map, «Правило №6: та же
+  // формула») и отдаёт её по частям в полях узла feo_goods/feo_services/
+  // feo_unspecified — их сумма по узлу равна scalar'у compute_budget_map для
+  // этого узла.
+  function feoEffectiveFromTree(node: FeoNode): number | null {
+    const t = planTreeByCat.value[node.id] as any
+    if (!t) return null
+    const g = t.feo_goods, s = t.feo_services, u = t.feo_unspecified
+    if (g == null && s == null && u == null) return null
+    return Number(g || 0) + Number(s || 0) + Number(u || 0)
+  }
+
+  // ПРАВКА (координатор, 2026-10-02, та же сессия): у узла БЕЗ финансирования
+  // по ФЭО (ни своего FeoCategory.budget, ни строк ФЭО у него самого/в
+  // поддереве) серверного «бюджета» попросту нет — это НЕ его значение, а
+  // 0. Читать 0 как «эффективный бюджет» для таких узлов — не исправление
+  // тихого фолбэка, а его подмена другим тихим фолбэком: 130 листьев в 6
+  // субсидиях (ЦентрПоиск_2026/ЛНР/ХО/ЦП_2026_2/ФАДМ_2026/Diag) без
+  // собственного budget и без строк ФЭО, но с планом/фактом закупок, стали
+  // бы «внезапно превышать лимит 0». Строка дерева для НИХ как раньше
+  // показывает РАСЧЁТНУЮ оценку (факт закупок, иначе план) — это другая
+  // величина («сколько по факту потратили/планируем» при отсутствии
+  // официального лимита), а не второй источник бюджета ФЭО: как только у
+  // узла (сам он или кто-то из поддерева) появляется реальное финансирование
+  // по ФЭО, именно оно становится единственным источником (ветка выше).
   function feoEffectiveFor(node: FeoNode): number {
+    const fromTree = feoEffectiveFromTree(node)
+    const ownBudget = feoBudgetFor(node)
+    const hasServerBudget = (fromTree != null && fromTree > 0.005) || ownBudget > 0.005
+    if (hasServerBudget) return fromTree != null ? fromTree : ownBudget
+    // Нет серверного бюджета (ни своего, ни по дереву feo_goods/services/
+    // unspecified) — прежняя оценочная формула, без изменений.
     if (feoBudgetIsSet(node)) return Number(node.budget)
     if (!node.hasChildren) {
       const fact = purchaseTotals.value[node.id] || 0
@@ -355,7 +397,12 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
     return feoPlannedDisplayRaw(node)
   }
 
-  function feoResidualNoteFor(node: FeoNode): { planned: number; consumed: number; residual: number } | null {
+  // Квик-план 2026-10-02 («Деньги субсидии», PLAN.md п.5): redistributable —
+  // ГОТОВОЕ поле узла (compute_feo_plan_tree), null у категорий без заданного
+  // бюджета — fallback на planned_not_committed («в плане без договоров»),
+  // redistributableFallback=true различает эти два случая для подписи в
+  // FeoTreeRow.vue (Правило №6 — не пересчитываем, только читаем/подставляем).
+  function feoResidualNoteFor(node: FeoNode): { planned: number; consumed: number; residual: number; redistributable: number; redistributableFallback: boolean } | null {
     if (node.hasChildren) return null
     const t = planTreeByCat.value[node.id]
     if (!t) return null
@@ -363,15 +410,19 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
     const consumed = feoInPlanScheduleFor(node)
     const residual = planned - consumed
     if (planned <= 0 && consumed <= 0) return null
-    return { planned, consumed, residual }
+    const hasRedistributable = (t as any).redistributable != null
+    const redistributable = hasRedistributable ? Number((t as any).redistributable) : Number((t as any).planned_not_committed ?? 0)
+    return { planned, consumed, residual, redistributable, redistributableFallback: !hasRedistributable }
   }
 
-  function feoPlanConsumedNoteFor(node: FeoNode): { planned: number; consumed: number; residual: number } | null {
+  function feoPlanConsumedNoteFor(node: FeoNode): { planned: number; consumed: number; residual: number; redistributable: number; redistributableFallback: boolean } | null {
     const t = planTreeByCat.value[node.id]
     const planned = (t && t.plan_manual != null) ? Number(t.plan_manual) : feoPlannedTotalFor(node)
     const consumed = feoInPlanScheduleFor(node)
     if (planned <= 0 && consumed <= 0) return null
-    return { planned, consumed, residual: planned - consumed }
+    const hasRedistributable = t && (t as any).redistributable != null
+    const redistributable = hasRedistributable ? Number((t as any).redistributable) : Number((t as any)?.planned_not_committed ?? 0)
+    return { planned, consumed, residual: planned - consumed, redistributable, redistributableFallback: !hasRedistributable }
   }
 
   function feoForecastWarningFor(node: FeoNode): { forecast: number; forecastOver: number; planManual: number } | null {
@@ -467,8 +518,22 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
   const totalFeoPurchased = computed(() => feoTree.value.reduce((a, r) => a + feoPurchasedFor(r), 0))
   const totalFeoInPlanSchedule = computed(() => feoTree.value.reduce((a, r) => a + feoInPlanScheduleFor(r), 0))
 
+  // ПРАВКА (координатор, 2026-10-02): «Бюджет (ФЭО)» субсидии (карточки
+  // «Бюджет»/«Свободно»/расшифровка «Можно перераспределить») — читаем ГОТОВОЕ
+  // calculated_budget строки субсидии (приходит из /dashboard/charts, та же
+  // compute_budget_map/calculate_budgets_bulk, см. докстринг feoEffectiveFromTree
+  // выше), а не Σ feoEffectiveFor(корни) — feoEffectiveFor на листьях БЕЗ
+  // собственного ФЭО-финансирования намеренно показывает расчётную оценку
+  // (факт/план), а не официальный бюджет, и для строки дерева это правильно,
+  // но Σ по дереву тогда расходится с calculated_budget субсидии на величину
+  // этих оценок. У субсидии один источник этой величины — calculated_budget;
+  // totalFeoEffective (Σ дерева) остаётся для случаев, когда его ещё нет
+  // (черновик без расчёта) или дерево вообще не загружено.
   const selectedBudget = computed(() => {
     if (!selectedSubsidy.value) return 0
+    if (selectedSubsidy.value.calculated_budget != null && selectedSubsidy.value.calculated_budget > 0) {
+      return selectedSubsidy.value.calculated_budget
+    }
     if (feoTree.value.length) return totalFeoEffective.value
     return selectedSubsidy.value.feo_budget_total || selectedSubsidy.value.budget || 0
   })
@@ -490,6 +555,23 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
     }
     return selectedSubsidy.value?.planned || 0
   })
+
+  // Решение владельца (02.10.2026): «Оплачено (по отметке)»/«Подтверждено
+  // выпиской» узла — ГОТОВЫЕ поля узла plan_tree (compute_feo_plan_tree,
+  // backend/app/services/feo_plan_tree.py), ничего не пересчитываем (Правило
+  // №6 — та же схема, что и nodeTypeSplit ниже). paidMarkedFor — «Оплачено»
+  // (включает неподтверждённые ручные отметки), paidConfirmedFor — только
+  // подтверждённое выпиской (подмножество paidMarkedFor).
+  function paidMarkedFor(node: FeoNode): number {
+    return Number((planTreeByCat.value[node.id] as any)?.paid_marked || 0)
+  }
+  function paidConfirmedFor(node: FeoNode): number {
+    return Number((planTreeByCat.value[node.id] as any)?.paid_confirmed || 0)
+  }
+  // Σ по корневым узлам — для строки «ИТОГО» дерева (та же схема, что
+  // totalFeoEffective/totalFeoInPlanSchedule выше).
+  const selectedPaidMarkedTotal = computed(() => feoTree.value.reduce((a, r) => a + paidMarkedFor(r), 0))
+  const selectedPaidConfirmedTotal = computed(() => feoTree.value.reduce((a, r) => a + paidConfirmedFor(r), 0))
 
   // Обновляет справочный расчёт (feo_filled/feo_budget_total/calculated_budget) карточки
   // субсидии в списке после любой правки дерева ФЭО.
@@ -560,6 +642,7 @@ function buildFeoTreeAmounts(ctx: FeoTreeAmountsCtx) {
     setMatchedReqFns,
     totalFeoBudget, totalFeoEffective, totalFeoDiff, totalFeoPurchased, totalFeoInPlanSchedule,
     selectedBudget, selectedPlannedTotal, syncFeoFilled, getFeoPlanManual,
+    paidMarkedFor, paidConfirmedFor, selectedPaidMarkedTotal, selectedPaidConfirmedTotal,
     // Раздел C0 — «товары/услуги» по узлу (см. докстринги функций выше).
     planTypeSplitFor, feoTypeSplitFor, remainingTypeSplitFor,
   }

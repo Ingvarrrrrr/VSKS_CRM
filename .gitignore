@@ -162,3 +162,5 @@ backups/
 .codex/
 frontend/.tmp_test/
 e2e/_tmp_*
+
+backend/tests/_fact_import_samples/

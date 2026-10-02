@@ -62,6 +62,33 @@ async def find_manual_match(
             continue
         return c
 
+    # Фолбэк на заглушку «Импорта факта» (задача 02.10.2026, план
+    # breezy-mixing-lovelace.md часть 3, п.2): импорт заводит платёж «оплачено
+    # по отметке» без номера и даты документа (их в исходной таблице просто
+    # нет) — точного совпадения номер+дата у такой записи никогда не будет.
+    # Подтверждаем её по сумме, чтобы выписка не задвоила оплату второй
+    # записью. Частичное совпадение (сумма выписки МЕНЬШЕ заглушки) — тоже
+    # матч; вызывающий код (create_payments_from_bank) уменьшает остаток
+    # заглушки вместо того чтобы считать её целиком подтверждённой.
+    import_candidates = (await db.execute(
+        select(Payment).where(
+            Payment.purchase_id == purchase_id,
+            Payment.payment_source == "manual",
+            Payment.confirmed_by_statement == False,  # noqa: E712
+            Payment.import_run_id.isnot(None),
+            Payment.document_number.is_(None),
+            Payment.payment_date.is_(None),
+        )
+    )).scalars().all()
+    for c in import_candidates:
+        if c.amount is None:
+            continue
+        stub_amount = Decimal(str(c.amount))
+        if stub_amount <= 0:
+            continue
+        if amount_dec <= stub_amount + tolerance:
+            return c
+
     return None
 
 
@@ -134,6 +161,8 @@ async def create_payments_from_bank(
     if not bp:
         raise ValueError(f"BankPayment {bank_payment_id} not found")
 
+    tolerance_default = Decimal("0.02")
+
     n = len(purchase_ids)
     if n == 0:
         return []
@@ -149,6 +178,36 @@ async def create_payments_from_bank(
         # сумма закупки после загрузки выписки удвоится.
         existing_manual = await find_manual_match(db, pid, bp.payment_number, bp.payment_date, share)
         if existing_manual is not None:
+            # Заглушка «Импорта факта» (import_run_id задан, номер и дата
+            # пустые — см. find_manual_match) с суммой БОЛЬШЕ, чем покрывает
+            # эта выписка: подтверждаем только пришедшую часть НОВОЙ записью,
+            # а заглушку уменьшаем на неё — остаток ждёт следующей выписки,
+            # не задваивается (владелец, план breezy-mixing-lovelace.md
+            # часть 3, п.2: «частичное совпадение — уменьшаем заглушку»).
+            _is_import_stub = (
+                existing_manual.import_run_id is not None
+                and existing_manual.document_number is None
+            )
+            _stub_amount = Decimal(str(existing_manual.amount)) if existing_manual.amount is not None else Decimal(0)
+            if _is_import_stub and share < _stub_amount - tolerance_default:
+                existing_manual.amount = _stub_amount - share
+                pay = Payment(
+                    contract_id=bp.matched_contract_id,
+                    purchase_id=pid,
+                    document_number=bp.payment_number,
+                    payment_purpose=(bp.purpose_text or "")[:500],
+                    payment_date=bp.payment_date,
+                    amount=share,
+                    bank_payment_id=bp.id,
+                    matched_confirmed=True,
+                    payment_source="statement",
+                    confirmed_by_statement=True,
+                    import_run_id=existing_manual.import_run_id,
+                )
+                db.add(pay)
+                created.append(pay)
+                continue
+
             existing_manual.bank_payment_id = bp.id
             existing_manual.payment_source = "statement"
             existing_manual.confirmed_by_statement = True

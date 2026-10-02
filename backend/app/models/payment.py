@@ -1,6 +1,10 @@
 from sqlalchemy import Column, Integer, String, Date, Numeric, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from app.database import Base
+# Задача 02.10.2026 («Импорт факта»): payments.import_run_id (ниже) ссылается
+# на fact_import_runs по имени таблицы — см. то же примечание в
+# app/models/purchase.py (FactImportRun не зарегистрирован в __init__.py).
+from app.models import fact_import_run as _fact_import_run_model  # noqa: F401
 
 
 class Payment(Base):
@@ -13,6 +17,13 @@ class Payment(Base):
     payment_purpose = Column(String(500))
     payment_date = Column(Date)
     amount = Column(Numeric(15, 2))
+
+    # Задача 02.10.2026 («Импорт факта»): платёж «по отметке» заведён прогоном
+    # импорта исторических закупок (document_number/payment_date пустые —
+    # найти его потом по сумме при подтверждении выпиской, см.
+    # services/purchase_payments.py::find_manual_match). NULL — обычный
+    # платёж, заведён не импортом факта.
+    import_run_id = Column(Integer, ForeignKey("fact_import_runs.id", ondelete="SET NULL"), nullable=True)
 
     # Phase 22: источник платежа из банковской выписки
     bank_payment_id = Column(

@@ -151,6 +151,26 @@
       <template v-if="ctx.canEditFeo.value">
         <v-btn size="small" variant="outlined" prepend-icon="mdi-download-outline" @click="ctx.downloadFeoTemplate(ctx.selectedSubsidy.value?.id, ctx.selectedSubsidy.value?.name)">Шаблон</v-btn>
         <v-btn size="small" variant="outlined" color="secondary" prepend-icon="mdi-upload-outline" @click="feoImport.show = true">Импорт</v-btn>
+        <!-- «Импорт факта» (план breezy-mixing-lovelace.md, Часть 2) — уже
+             совершённые закупки из таблиц ведения субсидии. Та же видимость,
+             что у «Импорт» выше (ctx.canEditFeo). Журнал прогонов — пункт
+             меню рядом с запуском нового импорта, не отдельная кнопка. -->
+        <v-menu>
+          <template #activator="{ props: factImportMenuProps }">
+            <v-btn size="small" variant="outlined" color="deep-orange" prepend-icon="mdi-file-swap-outline"
+              append-icon="mdi-chevron-down" v-bind="factImportMenuProps">
+              Импорт факта
+            </v-btn>
+          </template>
+          <v-list density="compact">
+            <v-list-item prepend-icon="mdi-upload-outline" @click="openFactImport">
+              <v-list-item-title>Новый импорт факта</v-list-item-title>
+            </v-list-item>
+            <v-list-item prepend-icon="mdi-history" @click="openFactImportRuns">
+              <v-list-item-title>Журнал импорта факта</v-list-item-title>
+            </v-list-item>
+          </v-list>
+        </v-menu>
       </template>
       <!-- 12-04: Version history -->
       <v-btn size="small" variant="text" color="blue-grey" prepend-icon="mdi-history" @click="openVersionHistory">
@@ -231,6 +251,8 @@
   <PlanToRequestDialog />
   <FeoCollapseCandidatesDialog />
   <FeoCollapseConfirmDialog />
+  <FactImportWizard />
+  <FactImportRunsPanel />
 </template>
 
 <script setup lang="ts">
@@ -250,6 +272,11 @@ import { useKpiPrefs } from '@/composables/useKpiPrefs'
 // «Закуплено полностью» (владелец, 30.09.2026) — см. докстринг у легенды/
 // переключателя в шаблоне выше.
 import { useFeoHideFullyPurchased } from '@/composables/subsidies/useFeoHideFullyPurchased'
+// «Импорт факта» (план breezy-mixing-lovelace.md, Часть 2) — см. докстринг у
+// кнопки-меню в шаблоне выше.
+import { useFactImport } from '@/composables/subsidies/useFactImport'
+import FactImportWizard from '@/components/subsidies/fact-import/FactImportWizard.vue'
+import FactImportRunsPanel from '@/components/subsidies/fact-import/FactImportRunsPanel.vue'
 
 const ctx = useSubsidyDetailCtx()
 const planToRequest = usePlanToRequest()
@@ -306,6 +333,16 @@ const canSaveVersion = computed(() => ['superadmin', 'org_admin', 'admin', 'acco
 
 const { openVersionHistory, openExportVersionsDialog, openSaveVersionDialog } = usePlanGraphVersions(ctx)
 const { feoImport } = useFeoImport(ctx)
+const { openWizard: openFactImportWizard, loadRuns: loadFactImportRuns, factImport: factImportState } = useFactImport()
+
+function openFactImport() {
+  if (ctx.selectedId.value != null) openFactImportWizard(ctx.selectedId.value)
+}
+function openFactImportRuns() {
+  factImportState.subsidyId = ctx.selectedId.value ?? null
+  factImportState.runsPanelShow = true
+  void loadFactImportRuns()
+}
 
 const { exportScreenshotPdf: _exportFeoScreenshotPdf } = useRegistryExport()
 

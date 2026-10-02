@@ -965,3 +965,11 @@ async def get_budget_history(
             for r in rows
         ],
     }
+
+
+# «Импорт факта» (задача 02.10.2026, план breezy-mixing-lovelace.md часть 2):
+# под-роутер подключён здесь, а не в app/routes.py (его параллельно правит
+# другая сессия) — router.include_router наследует prefix "/api/subsidies" от
+# этого модуля, fact_import.router добавляет свой "/{subsidy_id}/fact-import".
+from app.routers.fact_import import router as _fact_import_router  # noqa: E402
+router.include_router(_fact_import_router)

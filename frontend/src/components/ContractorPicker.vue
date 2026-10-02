@@ -51,12 +51,24 @@ import { useToast, type ToastType } from '@/composables/useToast'
 
 interface Contractor { id: number; name: string; inn?: string }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: number | null
   label?: string
   hint?: string
   initialContractor?: Contractor | null
-}>()
+  // Дефект приёмки «Импорт факта» (02.10.2026): шаг 4 мастера рендерит до
+  // ~46 карточек группы, КАЖДАЯ со своим ContractorPicker — все разом грузили
+  // первую страницу на mount (ниже) → 45+ одновременных GET /contractors/,
+  // общий store._searchAbort (один на весь Pinia-store, singleton) обрывал
+  // большинство из них в процессе, пачка висящих запросов роняла страницу в
+  // REQUEST_TIMEOUT. eagerLoad=false откладывает первую загрузку до фокуса
+  // (loadInitialContractors уже вызывается в onFocused — просто не дублируем
+  // её на mount). Остальные 8 мест использования ContractorPicker — по одному
+  // пикеру на диалог, default true сохраняет их прежнее поведение.
+  eagerLoad?: boolean
+}>(), {
+  eagerLoad: true,
+})
 const emit = defineEmits<{
   (e: 'update:modelValue', v: number | null): void
   (e: 'select', c: Contractor | null): void
@@ -100,7 +112,7 @@ async function loadInitialContractors() {
     initialLoaded.value = true
   }
 }
-onMounted(loadInitialContractors)
+onMounted(() => { if (props.eagerLoad) loadInitialContractors() })
 function onFocused(focused: boolean) {
   if (focused) loadInitialContractors()
 }

@@ -4,6 +4,12 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship, Session
 from sqlalchemy.orm.attributes import set_committed_value
 from app.database import Base
+# Задача 02.10.2026 («Импорт факта»): purchases.import_run_id (ниже) ссылается
+# на fact_import_runs по имени таблицы — SQLAlchemy должен увидеть эту таблицу
+# в Base.metadata ДО конфигурации мапперов. FactImportRun не зарегистрирован
+# в app/models/__init__.py (тот файл правит параллельная сессия, см. задачу),
+# поэтому регистрируем его тут же, рядом с FK, который на него ссылается.
+from app.models import fact_import_run as _fact_import_run_model  # noqa: F401
 
 class Purchase(Base):
     __tablename__ = "purchases"
@@ -25,6 +31,14 @@ class Purchase(Base):
     delivery_payment_amount = Column(Numeric(15, 2))
     contract_id = Column(Integer, ForeignKey("contracts.id"))
     subsidy_id = Column(Integer, ForeignKey("subsidies.id", ondelete="SET NULL"))
+    # Задача 02.10.2026 («Импорт факта»): какой прогон мастера создал эту
+    # закупку — rollback.py находит по этой колонке ВСЕ закупки прогона без
+    # побочных признаков (временный № договора сам по себе не уникален для
+    # прогона). NULL — закупка создана не импортом факта (обычный путь).
+    # Без relationship() на FactImportRun — модель не зарегистрирована в
+    # app/models/__init__.py (см. её докстринг), а строковый relationship()
+    # потребовал бы этого для configure_mappers().
+    import_run_id = Column(Integer, ForeignKey("fact_import_runs.id", ondelete="SET NULL"), nullable=True)
     status = Column(String(30), default="wishes")
     substatus = Column(String(30), nullable=True)          # tz_forming / kp_collecting / on_platform
     is_monthly_payment = Column(Boolean, default=False)    # ежемесячный платёж

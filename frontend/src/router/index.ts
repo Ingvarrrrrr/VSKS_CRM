@@ -38,6 +38,15 @@ const router = createRouter({
       meta: { requiresAuth: true, title: 'Субсидии', tab_key: 'subsidies' }
     },
     {
+      // Волна 3C: экран проверяющего для «Корректировки утверждённой субсидии
+      // через проверку» — ведут «Мои задачи» (kind=subsidy_revision) и плашка
+      // «Есть корректировки на проверке» в SubsidiesView.vue.
+      path: '/subsidies/:subsidyId/revisions/:revisionId',
+      name: 'subsidy-revision-review',
+      component: () => import('../views/SubsidyRevisionReviewView.vue'),
+      meta: { requiresAuth: true, title: 'Корректировка субсидии', tab_key: 'subsidies' }
+    },
+    {
       path: '/orders',
       name: 'orders',
       component: () => import('../views/OrdersView.vue'),

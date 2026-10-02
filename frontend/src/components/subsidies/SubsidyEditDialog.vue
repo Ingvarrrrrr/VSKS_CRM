@@ -192,6 +192,7 @@ import { useToast, type ToastType } from '@/composables/useToast'
 import { numOrNull } from '@/utils/numberFormat'
 import ContractorPicker from '@/components/ContractorPicker.vue'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
+import { updateSubsidyFields, isRevisionMode } from '@/composables/subsidies/feoWriteAdapter'
 import { useSubsidyList } from '@/composables/subsidies/useSubsidyList'
 import type { SubsidyRow } from '@/composables/subsidies/types'
 
@@ -235,6 +236,13 @@ const saving = ref(false)
 // при сборке payload ниже (тот же паттерн, что ceiling_warn_percent).
 const form = ref({ name: '', year: new Date().getFullYear(), budget: null as number | null, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string })
 const editForm = ref({ id: 0, name: '', year: new Date().getFullYear(), budget: null as number | null, description: '', contractor_id: null as number | null, agreement_text: '' as string, basis_doc_number: '' as string, basis_doc_date: '' as string, grantor_name: '' as string, ministry_name: '' as string, extra_contract_clause_1: null as string | null, extra_contract_clause_2: null as string | null, require_planned_dates: true as boolean, ceiling_warn_percent: 90 as number | null })
+// Снимок «до» (волна 3B, корректировка субсидии через проверку) — ПОЛНЫЙ, не
+// только бюджет: координатор, доп. пробел «SubsidyEditDialog теряет правки» —
+// в корректировку по решению владельца входят И бюджет, И реквизиты, одним
+// сохранением, ничего не теряя молча. budget — отдельная ops-строка
+// (field_group 'budget', та же, что показывается парой «было/станет» в
+// итогах дерева), остальные изменённые поля — вторая ops-строка ('meta').
+let editFullBefore: Record<string, unknown> | null = null
 
 const contractors = ref<{ id: number; name: string; inn?: string }[]>([])
 const editInitialContractor = computed(() => {
@@ -268,6 +276,7 @@ async function startEdit(s: SubsidyRow) {
     require_planned_dates: full.require_planned_dates ?? true,
     ceiling_warn_percent: full.ceiling_warn_percent ?? 90,
   }
+  editFullBefore = { ...editForm.value }
   editOpen.value = true
 }
 
@@ -302,10 +311,40 @@ async function addSubsidy() {
 async function updateSubsidy() {
   saving.value = true
   try {
-    const res = await apiFetch<any>(`/subsidies/${editForm.value.id}`, {
-      method: 'PUT',
-      body: JSON.stringify({ name: editForm.value.name, year: editForm.value.year, budget: numOrNull(editForm.value.budget), description: editForm.value.description || null, contractor_id: editForm.value.contractor_id, agreement_text: editForm.value.agreement_text || null, basis_doc_number: editForm.value.basis_doc_number || null, basis_doc_date: editForm.value.basis_doc_date || null, grantor_name: editForm.value.grantor_name || null, ministry_name: editForm.value.ministry_name || null, extra_contract_clause_1: editForm.value.extra_contract_clause_1 || null, extra_contract_clause_2: editForm.value.extra_contract_clause_2 || null, require_planned_dates: editForm.value.require_planned_dates, ceiling_warn_percent: numOrNull(editForm.value.ceiling_warn_percent) })
-    })
+    const newBudget = numOrNull(editForm.value.budget)
+    const fullBody = { name: editForm.value.name, year: editForm.value.year, budget: newBudget, description: editForm.value.description || null, contractor_id: editForm.value.contractor_id, agreement_text: editForm.value.agreement_text || null, basis_doc_number: editForm.value.basis_doc_number || null, basis_doc_date: editForm.value.basis_doc_date || null, grantor_name: editForm.value.grantor_name || null, ministry_name: editForm.value.ministry_name || null, extra_contract_clause_1: editForm.value.extra_contract_clause_1 || null, extra_contract_clause_2: editForm.value.extra_contract_clause_2 || null, require_planned_dates: editForm.value.require_planned_dates, ceiling_warn_percent: numOrNull(editForm.value.ceiling_warn_percent) }
+    const putDirect = () => apiFetch<any>(`/subsidies/${editForm.value.id}`, { method: 'PUT', body: JSON.stringify(fullBody) })
+
+    if (isRevisionMode(editForm.value.id)) {
+      // Доп. пробел (координатор): «ВСЕ изменённые поля одним вызовом [Save] —
+      // бюджет и реквизиты, ничего не теряя молча». Бюджет — отдельная
+      // ops-строка field_group 'budget' (та же пара «было/станет», что видна в
+      // итогах дерева), остальные изменённые поля — вторая строка 'meta'.
+      // direct() в обеих НЕ вызовется (mode уже 'revision') — putDirect передан
+      // только на случай гонки состояния, для единообразия с direct-режимом.
+      const before = editFullBefore || {}
+      const metaKeys = Object.keys(fullBody).filter(k => k !== 'budget') as (keyof typeof fullBody)[]
+      const metaFields: Record<string, unknown> = {}
+      for (const k of metaKeys) {
+        if (JSON.stringify((fullBody as any)[k]) !== JSON.stringify((before as any)[k])) metaFields[k] = (fullBody as any)[k]
+      }
+      const budgetChanged = JSON.stringify(newBudget) !== JSON.stringify((before as any).budget ?? null)
+      const ops: Array<Promise<any>> = []
+      if (budgetChanged) ops.push(updateSubsidyFields(editForm.value.id, { budget: newBudget }, putDirect))
+      if (Object.keys(metaFields).length) ops.push(updateSubsidyFields(editForm.value.id, metaFields, putDirect))
+      if (!ops.length) { editOpen.value = false; saving.value = false; return }
+      const results = await Promise.all(ops)
+      const failed = results.find(r => !r.ok)
+      if (failed) { showSnack(failed.error, 'error'); saving.value = false; return }
+      showSnack(budgetChanged && Object.keys(metaFields).length ? 'Бюджет и реквизиты добавлены в корректировку' : budgetChanged ? 'Изменение бюджета добавлено в корректировку' : 'Реквизиты добавлены в корректировку')
+      editOpen.value = false
+      saving.value = false
+      return
+    }
+
+    // Direct-режим — поведение ДО волны 3B без изменений: один прямой PUT
+    // независимо от того, что именно поменялось.
+    const res = await putDirect()
     // Владелец (2026-09-16, дословно): «Удаление и добавление субсидий должно
     // происходить без перезагрузки экрана и без его моргания» — раньше здесь
     // был `await ctx.loadAll()` (полный /dashboard/charts + loading=true),

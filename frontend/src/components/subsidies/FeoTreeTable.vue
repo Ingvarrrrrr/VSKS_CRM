@@ -1,4 +1,21 @@
 <template>
+  <RevisionTotalsHeader />
+
+  <!-- Волна 3B, п.3: «Только изменённые / Всё дерево» — у исполнителя выключен
+       по умолчанию (defaultOn=false в useRevisionChangedFilter ниже). -->
+  <div v-if="revisionOverlay?.active.value" class="rev-filter-bar">
+    <v-switch
+      v-model="changedFilter.onlyChanged.value"
+      density="compact" hide-details color="deep-purple"
+      :label="changedFilter.onlyChanged.value ? 'Только изменённые' : 'Всё дерево'"
+    />
+    <template v-if="changedFilter.onlyChanged.value && changedFilter.changedCount.value">
+      <span class="text-caption text-medium-emphasis">изменено {{ changedFilter.changedCount.value }}</span>
+      <v-btn icon="mdi-chevron-up" size="x-small" variant="text" title="Предыдущее изменение" @click="changedFilter.prev()" />
+      <v-btn icon="mdi-chevron-down" size="x-small" variant="text" title="Следующее изменение" @click="changedFilter.next()" />
+    </template>
+  </div>
+
   <div v-if="ctx.feoCategories.value.length === 0" class="feo-empty">
     <v-icon icon="mdi-folder-off" size="40" color="grey-lighten-2" />
     <div class="text-caption text-medium-emphasis mt-2">Нет категорий ФЭО</div>
@@ -102,11 +119,13 @@
       </thead>
       <tbody>
         <template v-for="node in ctx.visibleFeoNodes.value" :key="node.id">
-          <FeoTreeRow :node="node" />
-          <FeoLevel5Panel :node="node" />
-          <template v-for="owner in (ctx.reqOwnersAfter.value[node.id] || [])" :key="`reqblk-${owner.id}`">
-            <FeoReqItemsRows v-if="ctx.plannedBase.value !== 'purchases'" :owner="owner" />
-            <FeoByPurchasesRows v-else :owner="owner" />
+          <template v-if="isNodeVisibleUnderRevisionFilter(node.id)">
+            <FeoTreeRow :node="node" />
+            <FeoLevel5Panel :node="node" />
+            <template v-for="owner in (ctx.reqOwnersAfter.value[node.id] || [])" :key="`reqblk-${owner.id}`">
+              <FeoReqItemsRows v-if="ctx.plannedBase.value !== 'purchases'" :owner="owner" />
+              <FeoByPurchasesRows v-else :owner="owner" />
+            </template>
           </template>
         </template>
 
@@ -213,8 +232,32 @@ import FeoTreeRow from './FeoTreeRow.vue'
 import FeoLevel5Panel from './FeoLevel5Panel.vue'
 import FeoReqItemsRows from './FeoReqItemsRows.vue'
 import FeoByPurchasesRows from './FeoByPurchasesRows.vue'
+import RevisionTotalsHeader from './RevisionTotalsHeader.vue'
+import { useRevisionOverlay } from '@/composables/subsidies/useRevisionOverlay'
+import { useRevisionChangedFilter } from '@/composables/subsidies/useRevisionChangedFilter'
 
 const ctx = useSubsidyDetailCtx()
+
+// Волна 3B: оверлей «было/станет» — inject из SubsidiesView.vue
+// (provideRevisionOverlay); null, когда фича выключена/субсидия ещё не
+// выбрана. defaultOn=false — у исполнителя дерево открыто целиком по
+// умолчанию (владелец, п.3); тот же composable с defaultOn=true используется
+// на экране проверяющего (другая волна).
+const revisionOverlay = useRevisionOverlay()
+const changedFilter = useRevisionChangedFilter(
+  false,
+  () => revisionOverlay,
+  () => ctx.feoCategories.value.map(c => c.id),
+  // Волна 3C-доп.: категория изменённой позиции тоже обязана попасть в
+  // «только изменённые» вместе с предками (см. докстринг параметра в
+  // useRevisionChangedFilter.ts) — categoryParentMap уже существует в ctx,
+  // второй индекс не строим.
+  (catId: number) => ctx.feoCategories.value.find(c => c.id === catId)?.parent_id ?? null,
+)
+function isNodeVisibleUnderRevisionFilter(nodeId: number): boolean {
+  const visible = changedFilter.visibleCategoryIds.value
+  return !visible || visible.has(nodeId)
+}
 // Подсветка «режим выбора» для «Создать закупку на основе плана» (владелец,
 // лист 2 №7) — тот же синглтон, что и кнопка в FeoTreeToolbar.vue (Правило №6).
 const planToRequest = usePlanToRequest()
@@ -246,6 +289,14 @@ watchEffect(() => {
    шаблона SubsidiesView.vue, где scoped прекрасно работал. Классы с префиксом
    feo- специфичны для этой фичи (риск конфликта с другими экранами минимален),
    перенесены сюда единым блоком вместе с разметкой, которую они стилизуют. */
+/* Волна 3B: подсветка новая/удалённая строка под корректировкой — глобальный
+   стиль (не scoped), та же причина, что у остального блока выше: FeoTreeRow.vue
+   отдельный компонент. */
+.rev-name--deleted { text-decoration: line-through; color: #dc2626; }
+.rev-name--new { color: #16a34a; font-weight: 700; }
+.rev-filter-bar {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+}
 .feo-empty {
   display: flex; flex-direction: column; align-items: center;
   padding: 32px 0; color: var(--crm-text-faint);

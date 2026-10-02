@@ -158,6 +158,9 @@ from app.routers import feo_planned_items
 # с одним catch-all соседних роутеров, порядок регистрации не важен.
 from app.routers import feo_comments
 from app.routers import plan_excess as plan_excess_router
+# Корректировка утверждённой субсидии через проверку (волна 3A, 02.10.2026) —
+# собственный префикс /api/subsidy-revisions, без catch-all, порядок не важен.
+from app.routers import subsidy_revisions as subsidy_revisions_router
 from app.routers import telegram_webhook
 # Отслеживание местоположения сотрудников (владелец, 2026-09): смены/точки +
 # разовый запрос местоположения через мессенджер. Второй роутер тоже висит на
@@ -336,6 +339,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(feo_planned_items.router)
     app.include_router(feo_comments.router)
     app.include_router(plan_excess_router.router)
+    app.include_router(subsidy_revisions_router.router)
     app.include_router(settings_router.router)
     app.include_router(dashboard.router)
     # Соседи dashboard.router после резки монолита 1641→core (Правило №5, 2026-09-08):

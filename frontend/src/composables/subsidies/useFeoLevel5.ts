@@ -17,6 +17,7 @@ import { pushFeoUndo } from './useFeoUndoStack'
 import { createPlannedItemRaw } from './useFeoPlannedItemAddDialog'
 import { notifyFeoPlanChanged } from './feoPlanChangeBus'
 import { makeCtxSingleton } from './ctxSingleton'
+import { updateFeoItem, deleteFeoItem, isRevisionMode } from './feoWriteAdapter'
 import type {
   DiffActual, FeoActualItem, FeoCategory, FeoNode, FeoPlannedItem, FeoStage, FeoStageRow,
 } from './types'
@@ -28,22 +29,30 @@ import type {
 // есть та единственная точка входа в POST/PUT/DELETE /feo-planned-items (Правило
 // №6), обычный путь (deletePlannedItem) их тоже вызывает, второго набора
 // запросов нет.
-export async function deletePlannedItemRaw(itemId: number): Promise<{ ok: true } | { ok: false; error: string }> {
-  try {
+// subsidyId опционален (волна 3B, корректировка через проверку) — не передан
+// → прежнее поведение (прямой DELETE/PUT всегда). FeoPlannedItem сам не несёт
+// subsidy_id (только feo_category_id) — вызывающие места внутри ctx находят
+// его через feoCategories (см. useFeoLevel5Api() ниже); внешние вызовы
+// (диалоги, импортирующие эти функции напрямую) без subsidyId остаются в
+// прежнем прямом режиме.
+export async function deletePlannedItemRaw(itemId: number, subsidyId?: number): Promise<{ ok: true } | { ok: false; error: string }> {
+  const res = await deleteFeoItem(subsidyId, itemId, async () => {
     await apiFetch(`/feo-planned-items/${itemId}`, { method: 'DELETE' })
-    return { ok: true }
-  } catch (e: any) {
-    return { ok: false, error: e?.payload?.message || e?.detail || e?.message || 'Не удалось удалить плановую позицию' }
-  }
+  })
+  return res.ok ? { ok: true } : { ok: false, error: res.error }
 }
 
-export async function putPlannedItemFull(itemId: number, payload: Record<string, unknown>): Promise<{ ok: true; item: FeoPlannedItem } | { ok: false; error: string }> {
-  try {
-    const item = await apiFetch<FeoPlannedItem>(`/feo-planned-items/${itemId}`, { method: 'PUT', body: JSON.stringify(payload) })
-    return { ok: true, item }
-  } catch (e: any) {
-    return { ok: false, error: e?.payload?.message || e?.detail || e?.message || 'Ошибка сохранения' }
-  }
+// revisionFields — опциональный под-набор payload, который реально летит в
+// ops-эндпоинт корректировки (владелец: «отправлять ТОЛЬКО изменённые поля»);
+// payload сам ПОЛНЫЙ (нужен direct-режиму, PUT там всегда полная замена, как и
+// раньше). Не передан — ops получит payload целиком (прежнее поведение для
+// вызывающих, которым диффить нечем, например useFeoLevel5ItemType.ts).
+export async function putPlannedItemFull(itemId: number, payload: Record<string, unknown>, subsidyId?: number, revisionFields?: Record<string, unknown>): Promise<{ ok: true; mode: 'direct' | 'revision'; item: FeoPlannedItem } | { ok: false; error: string }> {
+  const res = await updateFeoItem(subsidyId, itemId, revisionFields ?? payload, async () => {
+    return apiFetch<FeoPlannedItem>(`/feo-planned-items/${itemId}`, { method: 'PUT', body: JSON.stringify(payload) })
+  })
+  if (!res.ok) return { ok: false, error: res.error }
+  return { ok: true, mode: res.mode, item: res.mode === 'direct' ? (res.item as FeoPlannedItem) : ({ ...(payload as any), id: itemId } as FeoPlannedItem) }
 }
 
 // Полный payload FeoPlannedItemCreate по снимку позиции. POST и PUT на бэкенде
@@ -94,33 +103,31 @@ export function buildPlannedItemFullPayload(
 // плановой позиции (Правило №6) — одиночный перенос (movePlannedItemToCategory),
 // массовый (bulkMove*) и стек отмены (undo/redo переноса, registerMoveUndo ниже)
 // вызывают РОВНО эту функцию.
-async function moveOnePlannedItem(item: FeoPlannedItem, targetCategoryId: number): Promise<{ ok: true } | { ok: false; error: string }> {
-  try {
-    await apiFetch(`/feo-planned-items/${item.id}`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        feo_category_id: targetCategoryId,
-        name: item.name,
-        quantity: item.quantity,
-        unit: item.unit,
-        amount: item.amount,
-        unit_price: item.unit_price ?? null,
-        notes: item.notes,
-        is_active: item.is_active,
-        payment_mode: item.payment_mode ?? 'one_time',
-        planned_date: item.planned_date ?? null,
-        monthly_start_date: item.monthly_start_date ?? null,
-        monthly_end_date: item.monthly_end_date ?? null,
-        months_count: item.months_count ?? null,
-        monthly_amount: item.monthly_amount ?? null,
-        sort_order: item.sort_order ?? null,
-        item_type: item.item_type ?? null,
-      }),
-    })
-    return { ok: true }
-  } catch (e: any) {
-    return { ok: false, error: e?.payload?.message || e?.detail || e?.message || 'Ошибка переноса' }
+async function moveOnePlannedItem(item: FeoPlannedItem, targetCategoryId: number, subsidyId?: number): Promise<{ ok: true } | { ok: false; error: string }> {
+  const fullPayload = {
+    feo_category_id: targetCategoryId,
+    name: item.name,
+    quantity: item.quantity,
+    unit: item.unit,
+    amount: item.amount,
+    unit_price: item.unit_price ?? null,
+    notes: item.notes,
+    is_active: item.is_active,
+    payment_mode: item.payment_mode ?? 'one_time',
+    planned_date: item.planned_date ?? null,
+    monthly_start_date: item.monthly_start_date ?? null,
+    monthly_end_date: item.monthly_end_date ?? null,
+    months_count: item.months_count ?? null,
+    monthly_amount: item.monthly_amount ?? null,
+    sort_order: item.sort_order ?? null,
+    item_type: item.item_type ?? null,
   }
+  // Волна 3B: в revision-режиме летит только {feo_category_id} (поле
+  // «перенос»), не весь снимок — остальные поля этой позиции не менялись.
+  const res = await updateFeoItem(subsidyId, item.id, { feo_category_id: targetCategoryId }, async () => {
+    return apiFetch(`/feo-planned-items/${item.id}`, { method: 'PUT', body: JSON.stringify(fullPayload) })
+  })
+  return res.ok ? { ok: true } : { ok: false, error: res.error }
 }
 
 export interface StageBreakdownSegment { key: string; label: string; color: string; count: number; pct: number }
@@ -617,10 +624,10 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
     if (!confirm(`Удалить плановую позицию «${item.name}»?`)) return
     deletingPlannedItemId.value = item.id
     try {
-      const res = await deletePlannedItemRaw(item.id)
+      const res = await deletePlannedItemRaw(item.id, selectedId.value ?? undefined)
       if (!res.ok) throw new Error(res.error)
       await Promise.all([refreshComparison(item.feo_category_id), refreshReqData()])
-      registerDeleteUndo(item)
+      if (!isRevisionMode(selectedId.value ?? undefined)) registerDeleteUndo(item)
     } catch (e: any) {
       showSnack(e?.payload?.message || e?.detail || e?.message || 'Не удалось удалить плановую позицию', 'error')
     } finally {
@@ -674,12 +681,14 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
     const sourceCategoryId = item.feo_category_id
     movingPlannedItemId.value = item.id
     try {
-      const result = await moveOnePlannedItem(item, targetCategoryId)
+      const result = await moveOnePlannedItem(item, targetCategoryId, selectedId.value ?? undefined)
       if (!result.ok) throw new Error(result.error)
       await Promise.all([refreshComparison(sourceCategoryId), refreshComparison(targetCategoryId)])
       await refreshReqData()
-      showSnack('Позиция перенесена')
-      registerMoveUndo(item, sourceCategoryId, targetCategoryId)
+      showSnack(isRevisionMode(selectedId.value ?? undefined) ? 'Перенос позиции добавлен в корректировку' : 'Позиция перенесена')
+      // См. комментарий у registerCategoryMoveUndo в useFeoTreeDnd.ts — та же
+      // причина не заводить undo поверх операции корректировки.
+      if (!isRevisionMode(selectedId.value ?? undefined)) registerMoveUndo(item, sourceCategoryId, targetCategoryId)
     } catch (e: any) {
       showSnack(e?.message || 'Ошибка переноса', 'error')
     } finally {
@@ -699,12 +708,12 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
     pushFeoUndo({
       label: `перенос позиции «${item.name}» из «${fromName}» в «${toName}»`,
       undo: async () => {
-        const res = await moveOnePlannedItem(snapshot, fromCategoryId)
+        const res = await moveOnePlannedItem(snapshot, fromCategoryId, selectedId.value ?? undefined)
         if (res.ok) await Promise.all([refreshComparison(fromCategoryId), refreshComparison(toCategoryId), refreshReqData()])
         return res
       },
       redo: async () => {
-        const res = await moveOnePlannedItem(snapshot, toCategoryId)
+        const res = await moveOnePlannedItem(snapshot, toCategoryId, selectedId.value ?? undefined)
         if (res.ok) await Promise.all([refreshComparison(fromCategoryId), refreshComparison(toCategoryId), refreshReqData()])
         return res
       },
@@ -834,7 +843,7 @@ function buildFeoLevel5(ctx: FeoLevel5Ctx) {
         continue
       }
       touchedCategoryIds.add(item.feo_category_id)
-      const result = await moveOnePlannedItem(item, targetId)
+      const result = await moveOnePlannedItem(item, targetId, selectedId.value ?? undefined)
       if (result.ok) {
         successCount++
         movedIds.push(id)

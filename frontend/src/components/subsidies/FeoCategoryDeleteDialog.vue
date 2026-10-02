@@ -131,7 +131,7 @@ async function deleteFeoCategory() {
     // категории в FeoCategoryDialog.vue, только когда категория ещё пуста) —
     // второй DELETE-запрос не заводим (Правило №6). Само это удаление в стек
     // НЕ кладётся (см. предупреждение в шаблоне выше) — необратимый каскад.
-    const res = await deleteCategoryRaw(feoDeleteTarget.value.id)
+    const res = await deleteCategoryRaw(feoDeleteTarget.value.id, feoDeleteTarget.value.subsidy_id)
     if (!res.ok) {
       const detail = res.detail
       if (detail && typeof detail === 'object' && detail.message) {

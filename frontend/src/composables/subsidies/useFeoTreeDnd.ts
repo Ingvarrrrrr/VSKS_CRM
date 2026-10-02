@@ -11,6 +11,7 @@ import { useToast, type ToastType } from '@/composables/useToast'
 import { collectSubtreeIds } from './feoCategoryUtils'
 import { pushFeoUndo } from './useFeoUndoStack'
 import { makeCtxSingleton } from './ctxSingleton'
+import { moveFeoCategory, createFeoCategory, updateFeoCategory, deleteFeoCategory, isRevisionMode, getFakeIdForRef } from './feoWriteAdapter'
 import type { FeoCategory, FeoNode } from './types'
 
 // Сырой перенос категории (смена родителя) — выделен из onDrop/onDropToRoot
@@ -21,15 +22,20 @@ import type { FeoCategory, FeoNode } from './types'
 // категорий по всем четырём действиям») — FeoCategoryDialog.vue переиспользует
 // её же для смены родителя внутри диалога «Редактировать направление» вместо
 // собственного PATCH (там раньше был третий похожий вызов того же PATCH).
-export async function moveCategoryRaw(nodeId: number, parentId: number | null): Promise<{ ok: true; warning?: string } | { ok: false; error: string }> {
-  try {
-    const res = await apiFetch<any>(`/feo-categories/${nodeId}/move`, {
+// subsidyId — опциональный (волна 3B, корректировка через проверку): не
+// передан → поведение ДО волны 3B без изменений (всегда прямой PATCH).
+// Передан И режим субсидии 'revision' → вместо PATCH летит ops-запись через
+// feoWriteAdapter.ts (Правило №6, второй механизм не заводим), дерево
+// перегружать (loadFeo) НЕ нужно — его «станет» считает useRevisionOverlay.ts.
+export async function moveCategoryRaw(nodeId: number, parentId: number | null, subsidyId?: number): Promise<{ ok: true; warning?: string } | { ok: false; error: string }> {
+  const res = await moveFeoCategory(subsidyId, nodeId, parentId, async () => {
+    const r = await apiFetch<any>(`/feo-categories/${nodeId}/move`, {
       method: 'PATCH', body: JSON.stringify({ parent_id: parentId }),
     })
-    return { ok: true, warning: res?.warning }
-  } catch (e: any) {
-    return { ok: false, error: e?.detail || e?.payload?.message || e?.message || 'Ошибка перемещения' }
-  }
+    return r
+  })
+  if (!res.ok) return { ok: false, error: res.error }
+  return { ok: true, warning: res.mode === 'direct' ? res.item?.warning : undefined }
 }
 
 // ── Сырые create/put/delete категории — доп. волна 2026-09-14 ───────────────
@@ -39,17 +45,29 @@ export async function moveCategoryRaw(nodeId: number, parentId: number | null): 
 // deletePlannedItemRaw/putPlannedItemFull/buildPlannedItemFullPayload в
 // useFeoLevel5.ts: один источник запроса, используется и обычным путём
 // (диалоги), и стеком отмены (Правило №6, второй набор запросов не заводим).
-export async function createCategoryRaw(payload: Record<string, unknown>): Promise<FeoCategory> {
-  return apiFetch<FeoCategory>('/feo-categories/', { method: 'POST', body: JSON.stringify(payload) })
+// subsidyId опционален по той же причине, что и у moveCategoryRaw выше —
+// не передан (существующие вызовы из FeoCategoryDialog.vue до их перевода на
+// корректировку) → прежнее поведение, всегда прямой POST. В revision-режиме
+// результат — НЕ настоящая FeoCategory из БД (её ещё нет), а временная заглушка
+// с отрицательным fake-id (см. feoWriteAdapter.ts::nextFakeId) — вызывающий
+// код получает объект нужной формы, но дальше с ним можно только читать поля
+// из payload, не ждать живых calculated_*-полей.
+export async function createCategoryRaw(payload: Record<string, unknown>, subsidyId?: number, parentId?: number | null): Promise<FeoCategory> {
+  const res = await createFeoCategory(subsidyId, parentId ?? (payload.parent_id as number | null) ?? null, payload, async () => {
+    return apiFetch<FeoCategory>('/feo-categories/', { method: 'POST', body: JSON.stringify(payload) })
+  })
+  if (!res.ok) throw new Error(res.error)
+  if (res.mode === 'direct') return res.item as FeoCategory
+  const fakeId = res.targetRef ? (getFakeIdForRef(res.targetRef) ?? 0) : 0
+  return { ...(payload as any), id: fakeId, level: 0, hasChildren: false } as unknown as FeoCategory
 }
 
-export async function putCategoryFull(id: number, payload: Record<string, unknown>): Promise<{ ok: true; item: FeoCategory } | { ok: false; error: string }> {
-  try {
-    const item = await apiFetch<FeoCategory>(`/feo-categories/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
-    return { ok: true, item }
-  } catch (e: any) {
-    return { ok: false, error: e?.payload?.message || e?.detail || e?.message || 'Ошибка сохранения' }
-  }
+export async function putCategoryFull(id: number, payload: Record<string, unknown>, subsidyId?: number): Promise<{ ok: true; item: FeoCategory } | { ok: false; error: string }> {
+  const res = await updateFeoCategory(subsidyId, id, payload, async () => {
+    return apiFetch<FeoCategory>(`/feo-categories/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
+  })
+  if (!res.ok) return { ok: false, error: res.error }
+  return { ok: true, item: res.mode === 'direct' ? (res.item as FeoCategory) : ({ ...(payload as any), id } as FeoCategory) }
 }
 
 // detail — сырой e.detail при 409 (объект {message, feo_category_ids} у
@@ -57,16 +75,27 @@ export async function putCategoryFull(id: number, payload: Record<string, unknow
 // app/routers/feo_categories.py) — FeoCategoryDeleteDialog.vue строит из него
 // кнопку «Перейти к закупкам этой категории», простой строки error для этого
 // недостаточно.
-export async function deleteCategoryRaw(id: number): Promise<{ ok: true } | { ok: false; error: string; detail?: any }> {
-  try {
-    await apiFetch(`/feo-categories/${id}`, { method: 'DELETE' })
-    return { ok: true }
-  } catch (e: any) {
-    const detail = e?.detail
-    const msg = (detail && typeof detail === 'object' && detail.message) ? detail.message
-      : (typeof detail === 'string' ? detail : null)
-    return { ok: false, error: e?.payload?.message || msg || e?.message || 'Не удалось удалить направление', detail }
+export async function deleteCategoryRaw(id: number, subsidyId?: number): Promise<{ ok: true } | { ok: false; error: string; detail?: any }> {
+  // Прямой запрос ловим здесь ЖЕ (не через generic-обёртку adapter'а) — нужен
+  // «сырой» e.detail (409 с feo_category_ids закупок-держателей, см. докстринг
+  // выше) для кнопки «Перейти к закупкам этой категории» в
+  // FeoCategoryDeleteDialog.vue; adapter.describeError схлопнул бы его в строку.
+  if (!isRevisionMode(subsidyId)) {
+    try {
+      await apiFetch(`/feo-categories/${id}`, { method: 'DELETE' })
+      return { ok: true }
+    } catch (e: any) {
+      const detail = e?.detail
+      const msg = (detail && typeof detail === 'object' && detail.message) ? detail.message
+        : (typeof detail === 'string' ? detail : null)
+      return { ok: false, error: e?.payload?.message || msg || e?.message || 'Не удалось удалить направление', detail }
+    }
   }
+  const res = await deleteFeoCategory(subsidyId, id, async () => {
+    await apiFetch(`/feo-categories/${id}`, { method: 'DELETE' })
+  })
+  if (res.ok) return { ok: true }
+  return { ok: false, error: res.error }
 }
 
 // Полный payload FeoCategoryCreate по снимку категории — POST и PUT на бэкенде
@@ -148,13 +177,17 @@ function buildFeoTreeDnd(ctx: FeoTreeDndCtx) {
     if (subtree.includes(targetNode.id)) { showSnack('Нельзя переместить в собственное поддерево', 'error'); return }
     if (srcNode.parent_id === targetNode.id) return
     const fromParentId = srcNode.parent_id
-    const res = await moveCategoryRaw(srcId, targetNode.id)
+    const res = await moveCategoryRaw(srcId, targetNode.id, srcNode.subsidy_id)
     if (!res.ok) { showSnack(res.error, 'error'); return }
-    showSnack('Категория перемещена')
+    showSnack(isRevisionMode(srcNode.subsidy_id) ? 'Перенос добавлен в корректировку' : 'Категория перемещена')
     if (res.warning) showSnack(res.warning, 'warning')
     if (selectedId.value) await loadFeo(selectedId.value)
     syncFeoFilled()
-    registerCategoryMoveUndo(srcId, srcNode.name, fromParentId, targetNode.id)
+    // Undo-стек реплеит ту же moveCategoryRaw в обратную сторону поверх ЖИВОЙ
+    // таблицы — в режиме корректировки правка не в живой таблице, а в
+    // черновике, так что обычный undo здесь не годится (не заводим вторую,
+    // кривую реализацию — проще не регистрировать запись).
+    if (!isRevisionMode(srcNode.subsidy_id)) registerCategoryMoveUndo(srcId, srcNode.name, fromParentId, targetNode.id)
   }
   async function onDropToRoot(e: DragEvent) {
     e.preventDefault()
@@ -164,13 +197,13 @@ function buildFeoTreeDnd(ctx: FeoTreeDndCtx) {
     dragOverId.value = null; dragNodeId.value = null
     if (!srcNode || !srcNode.parent_id) return
     const fromParentId = srcNode.parent_id
-    const res = await moveCategoryRaw(srcId, null)
+    const res = await moveCategoryRaw(srcId, null, srcNode.subsidy_id)
     if (!res.ok) { showSnack(res.error, 'error'); return }
-    showSnack('Категория перемещена на верхний уровень')
+    showSnack(isRevisionMode(srcNode.subsidy_id) ? 'Перенос добавлен в корректировку' : 'Категория перемещена на верхний уровень')
     if (res.warning) showSnack(res.warning, 'warning')
     if (selectedId.value) await loadFeo(selectedId.value)
     syncFeoFilled()
-    registerCategoryMoveUndo(srcId, srcNode.name, fromParentId, null)
+    if (!isRevisionMode(srcNode.subsidy_id)) registerCategoryMoveUndo(srcId, srcNode.name, fromParentId, null)
   }
   function onDragEnd() { dragNodeId.value = null; dragOverId.value = null }
 
@@ -261,24 +294,31 @@ function buildFeoTreeDnd(ctx: FeoTreeDndCtx) {
     // место, где инлайн-ввод превращается в значение для PUT — держим правило
     // здесь, а не размазываем проверку по вызывающим местам.
     const val = (parsedBudget === null || Number.isNaN(parsedBudget) || parsedBudget === 0) ? null : parsedBudget
-    try {
-      // Дефект 2026-10-02 (прод): раньше сюда шёл ПОЛНЫЙ набор полей
-      // FeoCategoryCreate, но без description/feo_quantity/feo_unit/feo_amount/
-      // manual_plan_amount/plan_source — PUT присваивал их как None/дефолт и
-      // стирал у категории описание, ФЭО-количество/сумму, ручной план и режим
-      // расчёта. Бэкенд (update_category, app/routers/feo_categories.py) теперь
-      // правит ТОЛЬКО присланные поля (exclude_unset) — инлайн-правка одного
-      // поля шлёт только его, остальное остаётся как было в БД.
-      await apiFetch(`/feo-categories/${nodeId}`, {
+    // Дефект 2026-10-02 (прод): раньше сюда шёл ПОЛНЫЙ набор полей
+    // FeoCategoryCreate, но без description/feo_quantity/feo_unit/feo_amount/
+    // manual_plan_amount/plan_source — PUT присваивал их как None/дефолт и
+    // стирал у категории описание, ФЭО-количество/сумму, ручной план и режим
+    // расчёта. Бэкенд (update_category, app/routers/feo_categories.py) теперь
+    // правит ТОЛЬКО присланные поля (exclude_unset) — инлайн-правка одного
+    // поля шлёт только его, остальное остаётся как было в БД.
+    // Волна 3B: feoWriteAdapter.ts решает direct/revision — в revision шлётся
+    // ТОЛЬКО {budget: val} (без name/subsidy_id, не нужны ops-эндпоинту).
+    const res = await updateFeoCategory(savedNode.subsidy_id, nodeId, { budget: val }, async () => {
+      return apiFetch(`/feo-categories/${nodeId}`, {
         method: 'PUT',
         body: JSON.stringify({ name: savedNode.name, subsidy_id: savedNode.subsidy_id, budget: val }),
       })
+    })
+    if (!res.ok) { showSnack(res.error, 'error'); return }
+    if (res.mode === 'direct') {
+      // «Было» остаётся живым деревом в revision-режиме (владелец, п.1) — живую
+      // мутацию делаем ТОЛЬКО когда правка реально ушла в БД напрямую.
       const cat = feoCategories.value.find(c => c.id === nodeId)
       if (cat) cat.budget = val
       savedNode.budget = val
       feoCategories.value = [...feoCategories.value]
       syncFeoFilled()
-    } catch (e: any) { showSnack(e.detail || 'Ошибка сохранения', 'error') }
+    }
   }
 
   // ── Inline planned_quantity edit ──────────────────
@@ -310,18 +350,21 @@ function buildFeoTreeDnd(ctx: FeoTreeDndCtx) {
     inlineQtyId.value = null
     const raw = String(inlineQtyVal.value ?? '').trim()
     const val = raw === '' ? null : parseFloat(raw)
-    try {
-      // См. комментарий в saveInlineBudget выше — шлём только изменённое поле,
-      // не весь набор FeoCategoryCreate (бэкенд правит через exclude_unset).
-      await apiFetch(`/feo-categories/${nodeId}`, {
+    // См. комментарий в saveInlineBudget выше — шлём только изменённое поле,
+    // и живую мутацию делаем только в direct-режиме.
+    const res = await updateFeoCategory(savedNode.subsidy_id, nodeId, { planned_quantity: val }, async () => {
+      return apiFetch(`/feo-categories/${nodeId}`, {
         method: 'PUT',
         body: JSON.stringify({ name: savedNode.name, subsidy_id: savedNode.subsidy_id, planned_quantity: val }),
       })
+    })
+    if (!res.ok) { showSnack(res.error, 'error'); return }
+    if (res.mode === 'direct') {
       const cat = feoCategories.value.find(c => c.id === nodeId)
       if (cat) cat.planned_quantity = val
       savedNode.planned_quantity = val
       feoCategories.value = [...feoCategories.value]
-    } catch (e: any) { showSnack(e.detail || 'Ошибка сохранения', 'error') }
+    }
   }
 
   // ── Inline planned_amount edit ────────────────────
@@ -346,18 +389,20 @@ function buildFeoTreeDnd(ctx: FeoTreeDndCtx) {
     inlineAmtId.value = null
     const raw = String(inlineAmtVal.value ?? '').trim()
     const val = raw === '' ? null : parseFloat(raw)
-    try {
-      // См. комментарий в saveInlineBudget выше — шлём только изменённое поле,
-      // не весь набор FeoCategoryCreate (бэкенд правит через exclude_unset).
-      await apiFetch(`/feo-categories/${nodeId}`, {
+    // См. комментарий в saveInlineBudget выше.
+    const res = await updateFeoCategory(savedNode.subsidy_id, nodeId, { planned_amount: val ?? null }, async () => {
+      return apiFetch(`/feo-categories/${nodeId}`, {
         method: 'PUT',
         body: JSON.stringify({ name: savedNode.name, subsidy_id: savedNode.subsidy_id, planned_amount: val ?? null }),
       })
+    })
+    if (!res.ok) { showSnack(res.error, 'error'); return }
+    if (res.mode === 'direct') {
       const cat = feoCategories.value.find(c => c.id === nodeId)
       if (cat) cat.planned_amount = val ?? null
       savedNode.planned_amount = val ?? null
       feoCategories.value = [...feoCategories.value]
-    } catch (e: any) { showSnack(e.detail || 'Ошибка сохранения', 'error') }
+    }
   }
 
   return {

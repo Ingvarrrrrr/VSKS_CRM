@@ -48,6 +48,20 @@
             <v-btn icon="mdi-close" size="x-small" variant="text" class="ml-auto" @click="selectedId = null" />
           </div>
 
+          <!-- Волна 3C, п.12: плашка «есть корректировки на проверке» — видна
+               только тому, у кого can_approve (право «Утверждать субсидию»);
+               source — тот же /subsidy-revisions/context, что и RevisionDraftBar
+               (Правило №6, второй запрос не заводим). -->
+          <div v-if="subsidyRevision?.state.context?.pending_review?.length" class="rev-pending-banner">
+            <v-icon icon="mdi-file-document-alert-outline" size="16" color="#7c3aed" class="mr-1" />
+            <span v-for="pr in subsidyRevision.state.context.pending_review" :key="pr.id" class="rev-pending-item">
+              Корректировка №{{ pr.number }} от {{ pr.author_name }} ждёт проверки
+              <v-btn size="x-small" variant="tonal" color="deep-purple" class="ml-1"
+                @click="router.push(`/subsidies/${selectedId}/revisions/${pr.id}`)"
+              >Открыть</v-btn>
+            </span>
+          </div>
+
           <!-- KPI mini-cards for selected subsidy -->
           <SubsidyKpiCards />
 
@@ -60,6 +74,11 @@
             <FeoTreeToolbar />
 
             <FeoTreeTable />
+
+            <!-- Волна 3B: плашка корректировки — только когда субсидия сейчас
+                 правится через проверку (RevisionDraftBar сама прячется при
+                 mode !== 'revision'). -->
+            <RevisionDraftBar v-if="subsidyRevision" :revision="subsidyRevision" :overlay="revisionOverlay" />
           </div>
 
           <!-- Журнал загрузок ФЭО (волна 3, 26.09) — «кто загрузил файл
@@ -167,6 +186,9 @@ import { useFeoTreeAmounts } from '@/composables/subsidies/useFeoTreeAmounts'
 import { useFeoTreeExcess } from '@/composables/subsidies/useFeoTreeExcess'
 import { useFeoTreeDnd } from '@/composables/subsidies/useFeoTreeDnd'
 import { useFeoLevel5 } from '@/composables/subsidies/useFeoLevel5'
+import { useSubsidyRevision } from '@/composables/subsidies/useSubsidyRevision'
+import { provideRevisionOverlay } from '@/composables/subsidies/useRevisionOverlay'
+import RevisionDraftBar from '@/components/subsidies/RevisionDraftBar.vue'
 import { useFeoUndoStack, handleFeoUndoKeydown } from '@/composables/subsidies/useFeoUndoStack'
 import { useFeoReqItems } from '@/composables/subsidies/useFeoReqItems'
 import { useFeoTreeSearch } from '@/composables/subsidies/useFeoTreeSearch'
@@ -247,7 +269,33 @@ const residualsLoading = ref(false)
 
 // B5 (2026-09-01): право на запись в дерево категорий ФЭО.
 const authStore = useAuthStore()
-const canEditFeo = computed(() => authStore.hasAction('feo_category.edit'))
+
+// ── Волна 3B: «Корректировка утверждённой субсидии через проверку» ──────────
+// Module-singleton по subsidy_id (useSubsidyRevision.ts) — грузим /context при
+// каждой смене выбранной субсидии, тем же watch'ом, что уже триггерит loadFeo
+// (см. ниже по файлу). subsidyRevision — computed-обёртка (не сам singleton
+// напрямую), чтобы шаблон/дочерние компоненты реагировали на смену selectedId.
+const subsidyRevision = computed(() => (selectedId.value ? useSubsidyRevision(selectedId.value) : null))
+watch(selectedId, (id) => { if (id) void useSubsidyRevision(id).loadContext() }, { immediate: true })
+
+// Оверлей «было/станет» (useRevisionOverlay.ts) — provide здесь один раз,
+// FeoTreeTable.vue/FeoTreeRow.vue читают его через inject (useRevisionOverlay()).
+const revisionOverlay = provideRevisionOverlay(
+  () => subsidyRevision.value?.state.context?.draft?.id ?? null,
+  () => subsidyRevision.value?.state.detail?.ops ?? [],
+  computed(() => subsidyRevision.value?.state.opsVersion ?? 0),
+)
+
+// canEditFeo — ЕДИНЫЙ гейт на запись в дерево ФЭО (Правило №6, не заводим
+// второй флаг «можно ли корректировать» рядом): true и для прямого
+// редактора (feo_category.edit), и для обладателя subsidy.correct, пока режим
+// субсидии 'revision' — дальше feoWriteAdapter.ts сам решит, идёт правка в БД
+// напрямую или в черновик корректировки. mode:'forbidden' (ни одного из двух
+// прав, см. /subsidy-revisions/context) — поля остаются только для чтения.
+const canEditFeo = computed(() => {
+  if (authStore.hasAction('feo_category.edit')) return true
+  return subsidyRevision.value?.state.context?.mode === 'revision'
+})
 // SaaS-роли и id пользователя для согласования превышения — см. useFeoTreeExcess.ts.
 
 const toast = useToast()

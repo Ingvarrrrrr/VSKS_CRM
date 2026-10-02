@@ -5,7 +5,6 @@
 // Правило №5, модульность кода). Module-level singleton state.
 import { computed, ref, watch } from 'vue'
 import { debounce } from 'lodash-es'
-import { apiFetch } from '@/api'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { numOrNull } from '@/utils/numberFormat'
 import { pushFeoUndo } from './useFeoUndoStack'
@@ -173,7 +172,11 @@ const editPlannedItemDisabled = computed(() => {
   return !d.monthly_start_date || !d.monthly_end_date
 })
 
-type EditDialogCtx = Pick<SubsidyDetailContext, 'refreshComparison' | 'refreshReqData'>
+// selectedId добавлен волной 3B (корректировка субсидии через проверку) —
+// нужен putPlannedItemFull ниже, чтобы решить direct/revision через
+// feoWriteAdapter.ts; usePlannedItems.ts (единственный вызывающий) уже
+// прокидывает selectedId в своём PlannedItemsCtx.
+type EditDialogCtx = Pick<SubsidyDetailContext, 'refreshComparison' | 'refreshReqData' | 'selectedId'>
 
 export function useFeoPlannedItemEditDialog(ctx?: EditDialogCtx) {
   const toast = useToast()
@@ -280,13 +283,32 @@ export function useFeoPlannedItemEditDialog(ctx?: EditDialogCtx) {
       // подсказку по тому, что реально вернул сервер (Правило №6, второй
       // расчёт цены на фронте не заводим).
       const unitPriceWasEmpty = d.unitPrice === '' || d.unitPrice == null
-      const saved = await apiFetch<FeoPlannedItem>(`/feo-planned-items/${d.id}`, { method: 'PUT', body: JSON.stringify(body) })
+      const subsidyId = ctx?.selectedId?.value ?? undefined
+      // Волна 3B: в revision-режиме ops-эндпоинт получает ТОЛЬКО реально
+      // изменённые поля (diff против editPlannedBeforeSnapshot), не весь body —
+      // direct-режим (как и раньше) шлёт body целиком через PUT.
+      const revisionFields: Record<string, unknown> = {}
+      if (editPlannedBeforeSnapshot) {
+        for (const key of Object.keys(body)) {
+          // sync_product_kind — служебный флаг запроса (велит backend
+          // подставить товар каталога), не поле сущности FeoPlannedItem — в
+          // снимке "до" его нет вовсе, поэтому JSON.stringify(true) !== JSON.stringify(undefined)
+          // всегда true, и он утекал в КАЖДУЮ revision-правку (приёмка 02.10, п.1).
+          if (key === 'sync_product_kind') continue
+          if (JSON.stringify((body as any)[key]) !== JSON.stringify((editPlannedBeforeSnapshot as any)[key])) {
+            revisionFields[key] = (body as any)[key]
+          }
+        }
+      }
+      const res = await putPlannedItemFull(d.id, body, subsidyId, Object.keys(revisionFields).length ? revisionFields : body)
+      if (!res.ok) throw new Error(res.error)
+      const saved = res.item
       editPlannedDialog.value.show = false
-      registerEditUndo(d.id, d.feo_category_id, d.name, editPlannedBeforeSnapshot, body)
+      if (res.mode === 'direct') registerEditUndo(d.id, d.feo_category_id, d.name, editPlannedBeforeSnapshot, body)
       editPlannedBeforeSnapshot = null
-      if (saved.product_kind_synced && saved.product_name) {
+      if (res.mode === 'direct' && saved.product_kind_synced && saved.product_name) {
         showSnack(`Тип «${d.item_type}» записан в товар каталога «${saved.product_name}»`)
-      } else if (unitPriceWasEmpty && saved.unit_price != null) {
+      } else if (res.mode === 'direct' && unitPriceWasEmpty && saved.unit_price != null) {
         showSnack(`Сумма пересчитана по цене за единицу ${Number(saved.unit_price).toLocaleString('ru-RU')} ₽`, 'info')
       }
       // См. комментарий у deletePlannedItem (SubsidiesView.vue) — refreshComparison

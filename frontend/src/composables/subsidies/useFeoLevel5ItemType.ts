@@ -25,6 +25,7 @@ import { ref } from 'vue'
 import { useToast, type ToastType } from '@/composables/useToast'
 import { buildPlannedItemFullPayload, putPlannedItemFull } from './useFeoLevel5'
 import type { FeoPlannedItem } from './types'
+import type { Ref } from 'vue'
 
 // Module-level — id позиции, чья строка сейчас сохраняется (одновременно
 // возможна только одна активная inline-правка, как и у reorderingPlannedItemId/
@@ -34,6 +35,11 @@ const savingItemTypeId = ref<number | null>(null)
 export interface FeoLevel5ItemTypeCtx {
   refreshComparison: (categoryId: number) => Promise<void>
   refreshReqData: (catId?: number) => Promise<void>
+  // selectedId добавлен волной 3B (доп. пробел «инлайн „Тип“ шлёт запрос
+  // напрямую под флагом») — нужен putPlannedItemFull, чтобы решить
+  // direct/revision через feoWriteAdapter.ts. FeoLevel5Panel.vue зовёт
+  // useFeoLevel5ItemType(ctx) полным SubsidyDetailContext — selectedId уже есть.
+  selectedId: Ref<number | null>
 }
 
 export function useFeoLevel5ItemType(ctx: FeoLevel5ItemTypeCtx) {
@@ -48,9 +54,19 @@ export function useFeoLevel5ItemType(ctx: FeoLevel5ItemTypeCtx) {
     savingItemTypeId.value = item.id
     try {
       const payload = buildPlannedItemFullPayload(item, { item_type: normalized, sync_product_kind: true })
-      const res = await putPlannedItemFull(item.id, payload)
+      // Волна 3B: в revision только {item_type} уходит в черновик (не весь
+      // снимок) — см. аналогичный приём у moveOnePlannedItem в useFeoLevel5.ts.
+      // sync_product_kind НЕ включаем (приёмка 02.10, п.1) — служебный флаг
+      // запроса, указывающий backend подставить товар каталога, не поле
+      // сущности FeoPlannedItem; direct-режим получает его как раньше — только
+      // в полном payload выше, не в revisionFields.
+      const res = await putPlannedItemFull(item.id, payload, ctx.selectedId.value ?? undefined, { item_type: normalized })
       if (!res.ok) {
         showSnack(res.error, 'error')
+        return
+      }
+      if (res.mode === 'revision') {
+        showSnack('Смена типа добавлена в корректировку')
         return
       }
       item.item_type = normalized

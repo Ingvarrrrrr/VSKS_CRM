@@ -551,6 +551,48 @@ async def notify_plan_excess_decided(approval, requester_user, decision: str, de
                        reply_markup_override=_plan_excess_keyboard(approval.subsidy_id))
 
 
+def _subsidy_revision_url(subsidy_id: int, revision_id: int) -> str:
+    return f"{BASE_URL}/subsidies/{subsidy_id}/revisions/{revision_id}"
+
+
+def _subsidy_revision_keyboard(subsidy_id: int, revision_id: int) -> dict:
+    return {
+        "inline_keyboard": [[
+            {"text": "➡️ Открыть", "url": _subsidy_revision_url(subsidy_id, revision_id)},
+        ]]
+    }
+
+
+async def notify_subsidy_revision_submitted(revision, subsidy, approver_user, author_name: str) -> None:
+    """Корректировка утверждённой субсидии отправлена на проверку — уведомить
+    обладателя subsidy.edit (волна «Корректировка через проверку», 02.10.2026,
+    по образцу notify_plan_excess_approval_step)."""
+    subsidy_name = _esc(subsidy.name) if subsidy is not None else "—"
+    text = (
+        f"📝 <b>Корректировка №{revision.number} ждёт проверки</b>\n\n"
+        f"💰 Субсидия: <b>{subsidy_name}</b>\n"
+        f"👤 Автор: <i>{_esc(author_name)}</i>\n\n"
+        f"Откройте, чтобы принять, отклонить или дополнить правки."
+    )
+    await notify_user(approver_user, text,
+                       reply_markup_override=_subsidy_revision_keyboard(revision.subsidy_id, revision.id))
+
+
+async def notify_subsidy_revision_decided(revision, subsidy, author_user, decided_by_name: str) -> None:
+    """Решение по корректировке (целиком или частично) — уведомить автора
+    (по образцу notify_plan_excess_decided)."""
+    subsidy_name = _esc(subsidy.name) if subsidy is not None else "—"
+    icon = "✅" if revision.status == "closed" else "🔶"
+    label = "Корректировка решена" if revision.status == "closed" else "Корректировка решена частично"
+    text = (
+        f"{icon} <b>{label} (№{revision.number})</b>\n\n"
+        f"💰 Субсидия: <b>{subsidy_name}</b>\n"
+        f"👤 Решение принял: <i>{_esc(decided_by_name)}</i>"
+    )
+    await notify_user(author_user, text,
+                       reply_markup_override=_subsidy_revision_keyboard(revision.subsidy_id, revision.id))
+
+
 async def notify_purchase_deadline(purchase, user, days_left: int, deadline_type: str) -> None:
     """Notify about approaching purchase deadline."""
     subject = _esc(purchase.subject or f"Закупка {purchase_label(purchase)}")

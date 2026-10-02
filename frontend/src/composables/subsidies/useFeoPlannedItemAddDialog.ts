@@ -18,17 +18,31 @@ import { fetchMonthlySchedulePreview } from './feoMonthlySchedulePreview'
 import type { SubsidyDetailContext } from './useSubsidyDetail'
 import type { FeoActualItem, FeoNode, FeoPlannedItem } from './types'
 import { clearCategoryManualPlanRaw } from './useFeoManualPlanMaterialize'
+import { createFeoItem, isRevisionMode, getFakeIdForRef } from './feoWriteAdapter'
 
 // Сырое создание плановой позиции по готовому payload — без диалога/формы/
 // тостов. Используется обычным путём (savePlannedItem/confirmCreateDuplicate
 // ниже, после сборки payload из формы) И стеком отмены (useFeoUndoStack.ts):
 // «повторить создание» при redo зовёт ЭТУ ЖЕ функцию (Правило №6 — второй POST
 // не заводим). Единственное место, которое шлёт POST /feo-planned-items/.
-export async function createPlannedItemRaw(payload: Record<string, unknown>): Promise<FeoPlannedItem> {
-  return apiFetch<FeoPlannedItem>('/feo-planned-items/', {
-    method: 'POST',
-    body: JSON.stringify(payload),
+// subsidyId/parentCategoryId — опциональны (волна 3B, доп. пробел «создание
+// позиции шлёт запрос напрямую под флагом»): не переданы → прежнее поведение,
+// всегда прямой POST. В revision-режиме идёт через feoWriteAdapter.ts
+// (entity_type 'feo_item', op_type 'create') — parentCategoryId резолвится в
+// parent_ref САМИМ адаптером, когда категория-родитель сама ещё только
+// создана в этом же черновике (fake-id, см. dispatchFeoWrite::resolveTarget).
+// Результат в revision — НЕ настоящая FeoPlannedItem из БД (создание ещё не
+// применено), а заглушка с отрицательным fake-id: вызывающий код (довязки
+// покупки/undo ниже) обязан проверять isRevisionMode и не полагаться на то,
+// что id — реальная строка.
+export async function createPlannedItemRaw(payload: Record<string, unknown>, subsidyId?: number, parentCategoryId?: number | null): Promise<FeoPlannedItem> {
+  const res = await createFeoItem(subsidyId, parentCategoryId ?? (payload.feo_category_id as number | null) ?? null, payload, async () => {
+    return apiFetch<FeoPlannedItem>('/feo-planned-items/', { method: 'POST', body: JSON.stringify(payload) })
   })
+  if (!res.ok) throw new Error(res.error)
+  if (res.mode === 'direct') return res.item as FeoPlannedItem
+  const fakeId = res.targetRef ? (getFakeIdForRef(res.targetRef) ?? 0) : 0
+  return { ...(payload as any), id: fakeId } as unknown as FeoPlannedItem
 }
 
 // clearCategoryManualPlanRaw/materializeManualPlanAsItem — вынесены в
@@ -682,6 +696,14 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
   // (confirmCreateDuplicate), поэтому вынесена отдельно, а не продублирована.
   async function afterPlannedItemCreated(created: FeoPlannedItem) {
     if (!ctx || !addPlannedCategoryId.value) return
+    // Волна 3B, доп. пробел: в revision-режиме у created.id нет настоящей
+    // строки в БД (см. докстринг createPlannedItemRaw выше) — привязка закупки
+    // через /map и очистка ручного плана категории ниже требуют ЖИВЫХ id по
+    // обе стороны, в черновике корректировки их представить нечем. Честно
+    // пропускаем оба побочных эффекта и говорим об этом пользователю, вместо
+    // того чтобы тихо потерять их или отправить запрос на несуществующую
+    // позицию (и получить непонятный 404/409).
+    const revisionWrite = isRevisionMode(ctx.selectedId.value ?? undefined)
     // Признак «обычное создание, без побочных эффектов» — фиксируем ДО того, как
     // код ниже обнулит оба флага (см. комментарий у registerCreateUndo выше).
     const isPlainCreate = createPlannedFromActualId.value == null && convertFromCategoryPlanId.value == null
@@ -693,12 +715,16 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
     // e.payload.message (правило проекта), позиция при этом уже создана, поэтому диалог
     // не блокируем повторной попыткой, просто честно сообщаем, что довязать не вышло.
     if (createPlannedFromActualId.value != null) {
-      try {
-        await apiFetch(`/feo-planned-items/map?purchase_item_id=${createPlannedFromActualId.value}&planned_item_id=${created.id}`, {
-          method: 'POST',
-        })
-      } catch (e: any) {
-        showSnack(e?.payload?.message || e?.detail || e?.message || 'Плановая позиция создана, но не удалось привязать к ней закупку — сопоставьте вручную кнопкой «Сопоставить с плановой»', 'error')
+      if (revisionWrite) {
+        showSnack('Позиция добавлена в корректировку — привязку закупки доделайте после утверждения (в режиме корректировки недоступна)', 'warning')
+      } else {
+        try {
+          await apiFetch(`/feo-planned-items/map?purchase_item_id=${createPlannedFromActualId.value}&planned_item_id=${created.id}`, {
+            method: 'POST',
+          })
+        } catch (e: any) {
+          showSnack(e?.payload?.message || e?.detail || e?.message || 'Плановая позиция создана, но не удалось привязать к ней закупку — сопоставьте вручную кнопкой «Сопоставить с плановой»', 'error')
+        }
       }
       createPlannedFromActualId.value = null
     }
@@ -723,15 +749,25 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
     // и уже работающий movePlannedItemToCategory). Без него новая плановая позиция
     // не давала вклад в «Плановую сумму» до перезагрузки страницы.
     await Promise.all([ctx.refreshComparison(addPlannedCategoryId.value), ctx.refreshReqData()])
-    if (convertCategoryId) await clearCategoryManualPlan(convertCategoryId)
-    if (isPlainCreate) registerCreateUndo(created)
+    if (convertCategoryId) {
+      if (revisionWrite) {
+        showSnack('Позиция добавлена в корректировку — ручной план категории доделайте после утверждения', 'warning')
+      } else {
+        await clearCategoryManualPlan(convertCategoryId)
+      }
+    }
+    // Undo-стек реплеит createPlannedItemRaw/deletePlannedItemRaw поверх ЖИВОЙ
+    // таблицы — в revision-режиме правка лежит в черновике, не в живых строках
+    // (тот же довод, что у registerCategoryMoveUndo в useFeoTreeDnd.ts).
+    if (isPlainCreate && !revisionWrite) registerCreateUndo(created)
+    if (revisionWrite) showSnack('Позиция добавлена в корректировку')
   }
 
   async function savePlannedItem() {
     if (!addPlannedCategoryId.value || !plannedItemForm.value.name.trim() || !ctx) return
     savingPlannedItem.value = true
     try {
-      const created = await createPlannedItemRaw(buildPlannedItemPayload(false))
+      const created = await createPlannedItemRaw(buildPlannedItemPayload(false), ctx.selectedId.value ?? undefined, addPlannedCategoryId.value)
       await afterPlannedItemCreated(created)
     } catch (e: any) {
       // Жалоба владельца (Волна 2, п.2): «предлагает Привязать или Создать отдельную,
@@ -760,7 +796,7 @@ export function useFeoPlannedItemAddDialog(ctx?: AddDialogCtx) {
     if (!addPlannedCategoryId.value || !ctx) return
     savingPlannedItem.value = true
     try {
-      const created = await createPlannedItemRaw(buildPlannedItemPayload(true))
+      const created = await createPlannedItemRaw(buildPlannedItemPayload(true), ctx.selectedId.value ?? undefined, addPlannedCategoryId.value)
       showSnack('Плановая позиция создана')
       await afterPlannedItemCreated(created)
     } catch (e: any) {

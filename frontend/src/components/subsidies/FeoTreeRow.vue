@@ -114,7 +114,7 @@
             :color="node.level === 1 ? '#3B82F6' : node.level === 2 ? '#F59E0B' : '#22C55E'"
           />
         </span>
-        <span class="feo-name" :class="`feo-name--l${node.level}`">{{ node.name }}</span>
+        <span class="feo-name" :class="[`feo-name--l${node.level}`, revIsDeleted ? 'rev-name--deleted' : '', revIsNew ? 'rev-name--new' : '']">{{ node.name }}</span>
         <span v-if="node.code" class="feo-code ml-2">{{ node.code }}</span>
         <span v-if="node.appendix" class="feo-appendix ml-1">{{ node.appendix }}</span>
       </div>
@@ -208,6 +208,15 @@
         >{{ formatCurrency(ctx.feoBudgetFor(node)) }}</span>
         <span v-else class="feo-set-hint">Не задано</span>
       </div>
+      <!-- Волна 3B: пара «Было | Станет» под редактируемой суммой — editable-
+           клик выше по-прежнему рабочий (правка просто уйдёт в корректировку
+           через feoWriteAdapter.ts), badge только показывает актуальный расчёт. -->
+      <RevisionCellBadge v-if="revisionOverlay?.active.value" v-bind="revPair('budget', ctx.feoBudgetFor(node))" />
+      <div v-if="revIsNew" class="feo-plan-note" style="color:#16a34a;font-weight:600">новая строка</div>
+      <div v-if="revIsDeleted" class="feo-plan-note" style="color:#dc2626;font-weight:600">
+        <span style="text-decoration:line-through">будет удалена</span>
+        <span v-if="revisionOverlay?.deleteReason('category', node.id)"> — {{ revisionOverlay.deleteReason('category', node.id) }}</span>
+      </div>
       <template v-if="node.hasChildren && node.budget != null && node.budget > 0">
         <!-- Задача владельца, п.17: старый текст «Подробное деление в ФЭО
              отсутствовало» стоял вплотную к сумме выше и читался как отрицание
@@ -280,6 +289,7 @@
           <span v-if="ctx.feoQtyDisplayFor(node) > 0" class="feo-amount">{{ ctx.feoQtyDisplayFor(node) }}{{ node.unit ? ` ${node.unit}` : '' }}</span>
           <span v-else class="feo-set-hint">—</span>
         </div>
+        <RevisionCellBadge v-if="revisionOverlay?.active.value" v-bind="revPair('planned_quantity', ctx.feoQtyDisplayFor(node))" />
         <div v-if="ctx.plannedQtyBase.value === 'all' && ctx.feoQtyRequestsFor(node) > 0"
           class="feo-plan-note text-medium-emphasis"
           :title="`Количество из позиций заявок в статусе «План закупок» и дальше: ${ctx.feoQtyRequestsFor(node)}`"
@@ -310,6 +320,7 @@
         :title="ctx.plannedSumBase.value === 'all' ? `Ручные ${formatCurrency(ctx.feoPlannedTotalFor(node))} + из заявок ${formatCurrency(ctx.feoPlannedRequestsFor(node))}` : ''"
       >{{ formatCurrency(ctx.feoPlannedDisplayFor(node)) }}</span>
       <span v-else class="feo-amount-empty">—</span>
+      <RevisionCellBadge v-if="revisionOverlay?.active.value" v-bind="revPair('planned_amount', ctx.feoPlannedDisplayFor(node))" />
       <!-- Раздел C0: «товары/услуги» плановой суммы — та же схема, что и у
            колонки «Количество и финансирование по ФЭО» выше (feoTreeAmounts2.
            planTypeSplitFor, поля plan_goods/plan_services/plan_unspecified узла). -->
@@ -676,6 +687,12 @@
       >
         {{ ctx.feoInPlanScheduleFor(node) > 0 ? formatCurrency(ctx.feoInPlanScheduleFor(node)) : '—' }}
       </span>
+      <!-- Корректировка закупок не меняет (before===after всегда) — badge
+           здесь просто показывает бледное число единым способом со всеми
+           остальными числовыми колонками (владелец, доп. пробел «у ВСЕХ
+           колонок»), см. revPair() ниже: без записи в preview.after.nodes
+           falls back на то же живое значение. -->
+      <RevisionCellBadge v-if="revisionOverlay?.active.value" v-bind="revPair('in_plan_schedule', ctx.feoInPlanScheduleFor(node))" />
       <div v-if="ctx.feoFactFor(node) > 0 && Math.abs(ctx.feoInPlanScheduleFor(node) - ctx.feoFactFor(node)) > 0.005"
         class="feo-plan-note text-medium-emphasis"
         :title="`Из них уже есть договорная цена (договор/акт). Остальное — закупки, которые ещё в статусе «План закупок»`"
@@ -694,6 +711,7 @@
         {{ ctx.feoResidualFor(node) < 0 ? '−' : '' }}{{ formatCurrency(Math.abs(ctx.feoResidualFor(node))) }}
       </span>
       <span v-else class="feo-amount-empty">—</span>
+      <RevisionCellBadge v-if="revisionOverlay?.active.value" v-bind="revPair('residual', ctx.feoResidualFor(node))" />
       <!-- Раздел C0: остаток по типам = ФЭО по типу − план по типу (формула
            фиксирована — не следует переключателю «от плановой/от ФЭО»
            residualBase у общей колонки, см. докстринг remainingTypeSplitFor). -->
@@ -714,6 +732,7 @@
         {{ formatCurrency(feoTreeAmounts2.paidMarkedFor(node)) }}
       </span>
       <span v-else class="feo-amount-empty">—</span>
+      <RevisionCellBadge v-if="revisionOverlay?.active.value" v-bind="revPair('paid_marked', feoTreeAmounts2.paidMarkedFor(node))" />
       <div v-if="feoTreeAmounts2.paidConfirmedFor(node) > 0.005"
         class="feo-plan-note text-medium-emphasis"
         title="Найдено в выписке и сопоставлено с закупкой"
@@ -860,6 +879,8 @@ import { useFeoCategoryCollapse } from '@/composables/subsidies/useFeoCategoryCo
 import { useToast } from '@/composables/useToast'
 import type { FeoNode } from '@/composables/subsidies/types'
 import FeoCommentThread from './FeoCommentThread.vue'
+import RevisionCellBadge from './RevisionCellBadge.vue'
+import { useRevisionOverlay } from '@/composables/subsidies/useRevisionOverlay'
 // Раздел C0/E (план ancient-prancing-music.md, 2026-09-21): переключатель
 // «целиком / товары-услуги» (useKpiPrefs.ts — пишет параллельный агент, см.
 // задание волны: карточки KPI и второй экземпляр переключателя в
@@ -891,6 +912,31 @@ const props = defineProps<{ node: FeoNode }>()
 const node = toRef(props, 'node')
 
 const ctx = useSubsidyDetailCtx()
+// Волна 3B: оверлей «было/станет» корректировки — null, когда фича выключена
+// (RevisionCellBadge сам ничего не рисует без before/after, см. его компонент).
+const revisionOverlay = useRevisionOverlay()
+function revBefore(field: string): number | null { return revisionOverlay ? revisionOverlay.beforeFieldFor('category', node.value.id, field) : null }
+function revAfter(field: string): number | null { return revisionOverlay ? revisionOverlay.afterFieldFor('category', node.value.id, field) : null }
+const revIsNew = computed(() => !!revisionOverlay?.isNewRow('category', node.value.id))
+const revIsDeleted = computed(() => !!revisionOverlay?.isDeletedRow('category', node.value.id))
+
+// Доп. пробел (координатор): пара «было/станет» должна стоять у ВСЕХ числовых
+// колонок дерева единообразно, не только у двух инлайн-редактируемых — ОДИН
+// хелпер для всех <RevisionCellBadge> в этом файле, разметку/расчёт не
+// копируем. `field` — ключ в preview.before/after.nodes[id] (budget/
+// planned_quantity/planned_amount — реальные поля категории, которые меняют
+// ops; in_plan_schedule/residual/paid_marked — производные от закупок, их
+// корректировка никогда не трогает, preview их не несёт вовсе — тогда badge
+// просто показывает ОДНО бледное число обеими сторонами, тот же компонент,
+// без спецкейса на вызывающей стороне). liveValue — то, что уже считает
+// существующая формула узла (ctx.feoXxxFor(node)) — источник чисел остаётся
+// ровно тот же (Правило №6), badge только оборачивает его парой.
+function revPair(field: string, liveValue: number): { before: number; after: number } {
+  if (!revisionOverlay?.active.value) return { before: liveValue, after: liveValue }
+  const b = revBefore(field)
+  const a = revAfter(field)
+  return { before: b != null ? b : liveValue, after: a != null ? a : liveValue }
+}
 const kpi = useKpiDrilldown(ctx)
 // Раздел C0/E — см. докстринг у импортов выше. Оба уже построены как singleton
 // (SubsidiesView.vue вызывает их с ctx при монтировании дерева раньше первой

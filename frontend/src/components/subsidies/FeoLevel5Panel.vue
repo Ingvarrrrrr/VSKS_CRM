@@ -279,6 +279,7 @@
                   <template v-else>
                     <span v-if="planned.unit_price != null">{{ formatCurrency(Number(planned.unit_price)) }}</span>
                     <span v-else-if="planned.amount != null" class="text-medium-emphasis" style="font-size:10px;line-height:1.3">{{ UNIT_PRICE_NOT_FIXED_HINT }}</span>
+                    <RevisionCellBadge v-if="revisionOverlay?.active.value" v-bind="revPairItem('unit_price', planned.id, planned.unit_price != null ? Number(planned.unit_price) : null)" />
                   </template>
                 </td>
                 <td :style="feoResize.resizeStyle('qty')" style="padding:4px 8px;text-align:right;color:#64748b">
@@ -298,6 +299,7 @@
                   </template>
                   <template v-else>
                     <span v-if="planned.quantity">{{ parseFloat(String(planned.quantity)) }} {{ planned.unit || '' }}</span>
+                    <RevisionCellBadge v-if="revisionOverlay?.active.value" v-bind="revPairItem('quantity', planned.id, planned.quantity != null ? Number(planned.quantity) : null)" />
                   </template>
                 </td>
                 <td :style="feoResize.resizeStyle('planned')" style="padding:4px 8px;text-align:right;color:#64748b">
@@ -313,6 +315,7 @@
                   </template>
                   <template v-else>
                     <span v-if="planned.amount">{{ formatCurrency(planned.amount) }}</span>
+                    <RevisionCellBadge v-if="revisionOverlay?.active.value" v-bind="revPairItem('amount', planned.id, planned.amount != null ? Number(planned.amount) : null)" />
                   </template>
                 </td>
                 <td style="width:86px;min-width:86px;padding:2px 4px;text-align:center;color:#64748b">
@@ -744,11 +747,24 @@ import FeoPlannedTakenBy from '@/components/items/feo-planned/FeoPlannedTakenBy.
 import { kindOf, ITEM_TYPE_OPTIONS } from '@/utils/itemTypeKind'
 import { useFeoLevel5ItemType } from '@/composables/subsidies/useFeoLevel5ItemType'
 import { useFeoHideFullyPurchased } from '@/composables/subsidies/useFeoHideFullyPurchased'
+import { useRevisionOverlay } from '@/composables/subsidies/useRevisionOverlay'
+import RevisionCellBadge from './RevisionCellBadge.vue'
 
 const props = defineProps<{ node: FeoNode }>()
 const node = props.node
 
 const ctx = useSubsidyDetailCtx()
+// Волна 3B, доп. пробел: «Было | Станет» у строк плановых позиций (кол-во/
+// цена/сумма) — тот же приём, что и в FeoTreeRow.vue (revPair ниже), только
+// kind='item' и liveValue берутся из полей planned.* (а не из ctx.feoXxxFor).
+const revisionOverlay = useRevisionOverlay()
+function revPairItem(field: string, itemId: number, liveValue: number | null): { before: number; after: number } {
+  const live = liveValue ?? 0
+  if (!revisionOverlay?.active.value) return { before: live, after: live }
+  const b = revisionOverlay.beforeFieldFor('item', itemId, field)
+  const a = revisionOverlay.afterFieldFor('item', itemId, field)
+  return { before: b != null ? b : live, after: a != null ? a : live }
+}
 // useResizableColumns() НЕ singleton — создаёт новый colWidths при каждом вызове
 // (см. её докстринг). Единственный экземпляр 'feo-table' живёт в SubsidiesView.vue
 // и приходит через ctx.feoResize — иначе у каждого узла была бы своя, не связанная

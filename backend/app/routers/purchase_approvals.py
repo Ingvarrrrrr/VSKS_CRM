@@ -645,6 +645,13 @@ async def _collect_my_pending(db: AsyncSession, current_user: User) -> list[dict
             "link": f"/subsidies?sid={approval.subsidy_id}",
         })
 
+    # ── корректировки утверждённых субсидий (SubsidyRevision) — см.
+    # app.services.subsidy_revision_pending.collect_my_pending_subsidy_revisions
+    # (ПРАВИЛО №6 — отбор решателей там же, has_org_key('subsidy.edit'), второй
+    # расчёт здесь не заводим; функция сама отдаёт [] при выключенном флаге).
+    from app.services.subsidy_revision_pending import collect_my_pending_subsidy_revisions
+    out.extend(await collect_my_pending_subsidy_revisions(db, current_user))
+
     return out
 
 

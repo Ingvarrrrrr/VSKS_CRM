@@ -279,7 +279,17 @@ def test_import_write_gate_org_a_right_subsidy_in_org_b_denied(monkeypatch):
 
 def test_import_write_gate_right_on_both_subsidies_passes(monkeypatch):
     """Право есть по КАЖДОЙ из двух субсидий файла (111 в орге A, 222 в орге B) →
-    гейт пропускает молча, обе субсидии реально проверены."""
+    гейт пропускает молча, обе субсидии реально проверены.
+
+    Флаг корректировки ЯВНО выключен (приёмка 02.10.2026, see Lessons —
+    тесты не должны зависеть от окружения): при SUBSIDY_REVISION_ENABLED=1
+    _require_feo_import_write после каждого прохода зовёт assert_direct_edit,
+    который делает ДОПОЛНИТЕЛЬНЫЙ db.execute(select(Subsidy)) — на этих
+    подставных _QueueDB/_mk_subsidy_row (без status) он вытащит из очереди
+    объект, предназначенный для СЛЕДУЮЩЕЙ субсидии, и упадёт AttributeError.
+    Этот тест проверяет саму матрицу прав импорта, а не гейт корректировки
+    (тот покрыт test_subsidy_revision_guard.py) — поэтому флаг фиксируется."""
+    monkeypatch.setenv("SUBSIDY_REVISION_ENABLED", "0")
     checked_subsidy_ids = []
 
     async def _fake_has_org_key(user, db, org_id, key, subsidy_id=None):
@@ -299,7 +309,13 @@ def test_import_write_gate_right_on_both_subsidies_passes(monkeypatch):
 
 def test_import_write_gate_right_on_only_one_of_two_denied_names_it(monkeypatch):
     """Право есть только по субсидии 111 (орг. A), но НЕ по 222 (орг. B) →
-    отказ с явным указанием, какая именно субсидия недоступна (222, орг. B)."""
+    отказ с явным указанием, какая именно субсидия недоступна (222, орг. B).
+
+    Флаг корректировки ЯВНО выключен — см. комментарий у
+    test_import_write_gate_right_on_both_subsidies_passes выше (та же причина:
+    assert_direct_edit под флагом=1 лезет в ту же _QueueDB лишним запросом)."""
+    monkeypatch.setenv("SUBSIDY_REVISION_ENABLED", "0")
+
     async def _fake_has_org_key(user, db, org_id, key, subsidy_id=None):
         return key == "feo_category.edit" and org_id == 10  # только орга A (субсидия 111)
 

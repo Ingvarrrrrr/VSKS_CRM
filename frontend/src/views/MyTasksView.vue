@@ -306,6 +306,11 @@ const APPROVAL_KIND_META: Record<string, { icon: string; label: string; color: s
   purchase: { icon: 'mdi-file-sign', label: 'Закупка', color: 'blue' },
   wish: { icon: 'mdi-hand-heart-outline', label: 'Заявка', color: 'teal' },
   plan_excess: { icon: 'mdi-scale-unbalanced', label: 'Превышение плана ФЭО', color: 'deep-orange' },
+  // Волна 3C: «Мои задачи» — элемент приходит готовый с бэкенда
+  // (subsidy_revision_pending.py::collect_my_pending_subsidy_revisions, уже
+  // подключён в _collect_my_pending), здесь только подпись/иконка — :to="pa.link"
+  // в шаблоне ниже уже общий для всех kind, второй переход не пишем.
+  subsidy_revision: { icon: 'mdi-file-document-edit-outline', label: 'Корректировка субсидии', color: 'deep-purple' },
 }
 function approvalKindIcon(kind: string) { return APPROVAL_KIND_META[kind]?.icon || 'mdi-check-decagram' }
 function approvalKindLabel(kind: string) { return APPROVAL_KIND_META[kind]?.label || kind }

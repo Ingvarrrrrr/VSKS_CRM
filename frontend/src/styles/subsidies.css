@@ -1008,3 +1008,15 @@
   color: #15803d; background: rgba(34,197,94,0.14); border: 1px solid rgba(34,197,94,0.4);
   border-radius: 10px; padding: 1px 7px;
 }
+
+/* Волна 3C: плашка «корректировка на проверке» (SubsidyRevisionReviewView.vue
+   маршрут) в детальной панели субсидии — глобальный файл стилей субсидий, тот
+   же приём, что и .rev-filter-bar в FeoTreeTable.vue (scoped CSS родителя не
+   достаёт сюда ничего нового, но проще держать все .rev-* стили субсидий в
+   одном месте вместе с остальными). */
+.rev-pending-banner {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  font-size: 12px; background: rgba(124,58,237,0.07); border: 1px solid rgba(124,58,237,0.3);
+  border-radius: 8px; padding: 6px 12px; margin-bottom: 10px;
+}
+.rev-pending-item { display: inline-flex; align-items: center; }

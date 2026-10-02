@@ -378,6 +378,7 @@ import { collectSubtreeIds } from '@/composables/subsidies/feoCategoryUtils'
 import { useSubsidyDetailCtx } from '@/composables/subsidies/useSubsidyDetail'
 import { pushFeoUndo } from '@/composables/subsidies/useFeoUndoStack'
 import { createCategoryRaw, deleteCategoryRaw, putCategoryFull, buildCategoryFullPayload, moveCategoryRaw } from '@/composables/subsidies/useFeoTreeDnd'
+import { isRevisionMode } from '@/composables/subsidies/feoWriteAdapter'
 import type { FeoCategory, FeoNode } from '@/composables/subsidies/types'
 import FeoItemHistory from '@/components/subsidies/FeoItemHistory.vue'
 
@@ -645,8 +646,8 @@ async function addFeoCategory() {
       // уходит введённая сумма, при 'planned_items' поле обнуляется (истина в позициях).
       plan_source: feoForm.value.planSource,
       manual_plan_amount: feoForm.value.planSource === 'manual_sum' ? numOrNull(feoForm.value.manual_plan_amount) : null,
-    })
-    ctx.feoCategories.value.push(res)
+    }, ctx.selectedSubsidy.value.id, feoForm.value.parentId || null)
+    if (!isRevisionMode(ctx.selectedSubsidy.value.id)) ctx.feoCategories.value.push(res)
     addOpen.value = false
     feoForm.value = { parentId: null, name: '', code: '', appendix: '', budget: null, budgetAuto: false, planned_quantity: null, qtyAuto: false, planned_amount: null, amtAuto: false, unit: '', feo_quantity: null, feo_unit: '', description: '', feo_amount: '', planSource: 'planned_items', manual_plan_amount: null }
     showSnack('Направление добавлено')
@@ -660,8 +661,10 @@ async function addFeoCategory() {
       if (parentWasLeaf) ctx.expandedItemPanels.value.delete(parentId)
     }
     emit('saved')
-    scrollToNewFeoNode(res.id)
-    registerCategoryCreateUndo(res)
+    if (!isRevisionMode(ctx.selectedSubsidy.value.id)) {
+      scrollToNewFeoNode(res.id)
+      registerCategoryCreateUndo(res)
+    }
   } catch (e: any) {
     showSnack(e?.payload?.message || e?.detail || e?.message || 'Ошибка добавления направления', 'error')
   } finally {
@@ -706,7 +709,7 @@ async function updateFeoCategory() {
     const newParentId = feoEditForm.value.parent_id ?? null
     const parentChanged = oldParentId !== newParentId
     if (parentChanged) {
-      const moveRes = await moveCategoryRaw(targetId, newParentId)
+      const moveRes = await moveCategoryRaw(targetId, newParentId, feoEditTarget.value.subsidy_id)
       if (!moveRes.ok) throw new Error(moveRes.error)
       if (moveRes.warning) showSnack(moveRes.warning, 'warning')
     }
@@ -732,7 +735,7 @@ async function updateFeoCategory() {
       plan_source: feoEditForm.value.planSource,
       manual_plan_amount: feoEditForm.value.planSource === 'manual_sum' ? numOrNull(feoEditForm.value.manual_plan_amount) : null,
     }
-    const putRes = await putCategoryFull(targetId, afterPayload)
+    const putRes = await putCategoryFull(targetId, afterPayload, feoEditTarget.value.subsidy_id)
     if (!putRes.ok) throw new Error(putRes.error)
     // Дефект, найденный QA стека отмены (доп. волна 2026-09-14): ctx.loadFeo()
     // ниже честно перезапрашивает /feo-categories/ (проверено сетевым логом —
@@ -747,22 +750,29 @@ async function updateFeoCategory() {
     // правка направления тоже не обновляла имя без ручной перезагрузки
     // страницы) — чиним заодно, иначе собственный undo/redo этой волны показывал
     // бы «не подействовало» ровно из-за него.
-    const idx = ctx.feoCategories.value.findIndex((c: FeoCategory) => c.id === targetId)
-    if (idx !== -1) {
-      const next = [...ctx.feoCategories.value]
-      next[idx] = { ...next[idx], ...putRes.item }
-      ctx.feoCategories.value = next
+    const revisionWrite = isRevisionMode(feoEditTarget.value.subsidy_id)
+    if (!revisionWrite) {
+      const idx = ctx.feoCategories.value.findIndex((c: FeoCategory) => c.id === targetId)
+      if (idx !== -1) {
+        const next = [...ctx.feoCategories.value]
+        next[idx] = { ...next[idx], ...putRes.item }
+        ctx.feoCategories.value = next
+      }
     }
     editOpen.value = false
-    showSnack('Направление обновлено')
+    showSnack(revisionWrite ? 'Правка добавлена в корректировку' : 'Направление обновлено')
     if (ctx.selectedId.value) await ctx.loadFeo(ctx.selectedId.value)
     ctx.syncFeoFilled()
     emit('saved')
     // Стек отмены: перенос и правка полей — РАЗНЫЕ шаги (та же гранулярность,
     // что и у остального дерева — «одно действие = одна запись»), поэтому один
-    // клик «Сохранить» может положить на стек ДО ДВУХ записей.
-    if (parentChanged) ctx.registerCategoryMoveUndo(targetId, targetName, oldParentId, newParentId)
-    registerCategoryEditUndo(targetId, targetName, feoEditBeforeSnapshot, afterPayload)
+    // клик «Сохранить» может положить на стек ДО ДВУХ записей. В revision-режиме
+    // undo не регистрируем вовсе — см. аналогичный комментарий у
+    // registerCategoryMoveUndo в useFeoTreeDnd.ts.
+    if (!revisionWrite) {
+      if (parentChanged) ctx.registerCategoryMoveUndo(targetId, targetName, oldParentId, newParentId)
+      registerCategoryEditUndo(targetId, targetName, feoEditBeforeSnapshot, afterPayload)
+    }
     feoEditBeforeSnapshot = null
   } catch (e: any) {
     showSnack(e?.payload?.message || e?.detail || e?.message || 'Ошибка обновления', 'error')

@@ -35,6 +35,9 @@ class WishItem(Base):
     feo_planned_item_match_confirmed = Column(Boolean, nullable=False, default=False, server_default=text("FALSE"))
     needed_date = Column(Date, nullable=True)   # дата потребности per-item
     vat_rate = Column(String(20), nullable=True)  # per-item НДС ставка (mirrors purchase_items.vat_rate)
+    # «НДС сверху» этой строки (02.10.2026, mirrors purchase_items.vat_on_top) —
+    # bool|null, null = «как у заявки» (Wish.tz_vat_on_top).
+    vat_on_top = Column(Boolean, nullable=True)
     # false — позиция расходует план своего конечного элемента ФЭО; true — «сверх плана»,
     # прибавляется к плановой сумме (mirrors purchase_items.over_plan)
     over_plan = Column(Boolean, nullable=False, default=False, server_default=text("FALSE"))

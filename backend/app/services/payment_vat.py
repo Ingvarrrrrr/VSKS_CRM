@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 
+from app.services.item_amounts import vat_included_amount as _vat_included_amount
+
 # Единственный источник допустимых ставок НДС для сверки платежей (не путать
 # со списком frontend/src/composables/useVatCalc.ts::VAT_RATE_OPTIONS — тот
 # описывает, что можно ВЫБРАТЬ в форме закупки, 0/5/7/10/20/22; этот —
@@ -106,7 +108,7 @@ def parse_payment_vat(purpose_text: Optional[str], amount: Optional[Decimal]) ->
         if m_amt:
             vat_amount = _to_decimal(m_amt.group(1))
         elif amount_dec is not None and rate_declared is not None:
-            vat_amount = (amount_dec * rate_declared / (Decimal(100) + rate_declared)).quantize(Decimal("0.01"))
+            vat_amount = _vat_included_amount(amount_dec, rate_declared)
         if rate_declared is not None:
             if rate_declared == 0:
                 return ParsedPaymentVat(vat_amount if vat_amount is not None else Decimal("0"), Decimal("0"), "no_vat").as_dict()

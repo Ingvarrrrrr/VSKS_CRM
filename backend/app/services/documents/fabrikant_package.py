@@ -38,6 +38,7 @@ from .formatting import (
 # build_tz_rows/_require_tz_duplicates_resolved_for_doc — единственный источник
 # группировки дублей строк ТЗ (Правило №6), см. app.services.tz_items.
 from app.services.tz_items import build_tz_rows
+from app.services.item_amounts import vat_included_amount as _vat_included_amount, effective_vat_on_top as _effective_vat_on_top
 # Правило №6 — единственный резолвер пути к шаблону (субсидийный override →
 # глобальный → DOC_TYPE_FALLBACK_FILES). Раньше здесь жили две копии-дубли
 # той же логики приоритета (ниже — tech_spec_request и цикл рендера пакета).
@@ -176,18 +177,31 @@ async def render_fabrikant_package_files(
     items_list = []
     items_products = []
     _tz = build_tz_rows(p.items or [], getattr(p, "tz_duplicate_decisions", None))
+    _tz_vat_mode = getattr(p, "vat_mode", None) or "uniform"
+    _tz_header_on_top = bool(getattr(p, "tz_vat_on_top", False))
     for idx, row in enumerate(_tz["rows"], start=1):
         item = row["item"]
         total = row["total_price"]
+        qty = row["quantity"]
+        unit_price_display = row["unit_price"]
+        # Задача 5 (НДС сверху, 02.10.2026): когда флаг включён, цена за
+        # единицу В ДОКУМЕНТЕ — сумма/кол-во (с НДС), а не "голая" unit_price
+        # (которая у "НДС сверху" хранится БЕЗ налога). Сумма и "в т.ч. НДС"
+        # не меняются — см. compute_amounts_and_vat/_item_vat_amount.
+        if _effective_vat_on_top(getattr(item, "vat_on_top", None), _tz_header_on_top, _tz_vat_mode) and qty:
+            try:
+                unit_price_display = Decimal(str(total)) / Decimal(str(qty))
+            except Exception:
+                pass
         items_list.append({
             "num": idx,
             "name": item.item_name or "",
             "description": "",
             "type": item.item_type or "",
             "item_kind": (item.product.item_kind if item.product else None) or "товар",
-            "quantity": _fmt_quantity(row["quantity"]),
+            "quantity": _fmt_quantity(qty),
             "unit": item.unit or "",
-            "unit_price": _fmt_money(row["unit_price"]),
+            "unit_price": _fmt_money(unit_price_display),
             "total_price": _fmt_money(total),
             "total": _fmt_money(total),
             "photo": "",
@@ -219,7 +233,7 @@ async def render_fabrikant_package_files(
     _contract_amount_z = _contract_amount_fn(p, contract_items_total=_ci_total_for_vat_z)
     price_val = float(_contract_amount_z) if _contract_amount_z is not None else 0.0
     vat_amount_val = (
-        price_val * vat_rate_val / (100 + vat_rate_val)
+        float(_vat_included_amount(price_val, vat_rate_val))
         if (vat_app and price_val and vat_rate_val is not None) else 0.0
     )
     if vat_app:

@@ -37,6 +37,10 @@ class PurchaseItem(Base):
     vat_rate = Column(String(20), nullable=True)  # Phase 26-U-3: per-item НДС ставка
     vat_amount = Column(Numeric(15, 2), nullable=True)      # import-vat-cols: сумма НДС по позиции
     total_with_vat = Column(Numeric(15, 2), nullable=True)  # import-vat-cols: стоимость с НДС
+    # «НДС сверху» этой СТРОКИ (02.10.2026) — bool|null. Действует только в
+    # Purchase.vat_mode='per_item'; null означает «как у закупки» (см.
+    # item_amounts.effective_vat_on_top — единственное место разрешения).
+    vat_on_top = Column(Boolean, nullable=True)
     receipt_id = Column(Integer, ForeignKey('purchase_receipts.id', ondelete='SET NULL'), nullable=True, index=True)  # Phase 26-BB
     needed_date = Column(Date, nullable=True)   # дата потребности per-item
     wish_item_id = Column(Integer, ForeignKey("wish_items.id", ondelete="SET NULL"), nullable=True)  # W1: hard link to source WishItem

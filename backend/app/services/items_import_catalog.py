@@ -162,6 +162,7 @@ async def _save_smart_preview_to_purchase(
     current_user,
     skip_catalog: bool = False,
     resolutions: dict | None = None,
+    vat_on_top: bool = False,
 ) -> dict:
     """Сохраняет preview-строки в БД как PurchaseItem'ы.
     Переиспользуется как из xlsx-ветки, так и (потенциально) из markitdown-ветки.
@@ -171,7 +172,13 @@ async def _save_smart_preview_to_purchase(
     пользователя по строкам, где кол-во × цена ≠ сумма из файла (Дефект 2,
     владелец, 2026-09-14; см. app/services/qty_price_check.py). row_num —
     значение row_data['row'], выставленное парсером (номер строки файла), не
-    порядковый индекс превью."""
+    порядковый индекс превью.
+
+    vat_on_top (задача «НДС сверху», 02.10.2026) — True, когда импорт
+    распознал файл как УПД (_legacy_detect_best_table::is_upd, цена без
+    налога + сумма с налогом). Проставляет purchase.contract_vat_on_top и
+    row_data['vat_rate'] на каждую созданную позицию — единственное место
+    применения результата УПД-детекции к сохранённым данным."""
     org_id = get_single_org_id(current_user)
     prod_q = select(Product)
     if org_id:
@@ -181,6 +188,8 @@ async def _save_smart_preview_to_purchase(
 
     added = matched_catalog = new_in_catalog = 0
     errors_list: list[str] = []
+    if vat_on_top and preview and not getattr(purchase, "contract_vat_on_top", False):
+        purchase.contract_vat_on_top = True
     for row_idx, row_data in enumerate(preview, start=1):
         item_name = (row_data["item_name"] or "")[:500]
         qty = Decimal(str(row_data["quantity"])) if row_data["quantity"] else Decimal("1")
@@ -258,6 +267,7 @@ async def _save_smart_preview_to_purchase(
             item_name=item_name, item_type=row_data["item_type"],
             quantity=qty, unit=row_data["unit"],
             unit_price=unit_price, total_price=total_price,
+            vat_rate=row_data.get("vat_rate") if vat_on_top else None,
         ))
         added += 1
     await db.commit()

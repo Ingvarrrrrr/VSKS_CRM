@@ -35,16 +35,21 @@ def _dec(v) -> Optional[Decimal]:
         return None
 
 
-def check_qty_price_sum(row_num, name: str, quantity, unit_price, total_price) -> Optional[dict]:
+def check_qty_price_sum(row_num, name: str, quantity, unit_price, total_price, vat_rate=None, vat_on_top=False) -> Optional[dict]:
     """Если в строке заданы ВСЕ ТРИ значения (количество, цена, сумма) и
     кол-во × цена расходится с суммой из файла больше, чем на копейку —
     вернуть warning-словарь {kind, row, name, message, file_total,
     calc_total}. Если хоть одного значения нет — тишина (это не дефект
-    строки, а просто «сумма»/«цена» не заполнена файлом)."""
+    строки, а просто «сумма»/«цена» не заполнена файлом).
+
+    vat_rate/vat_on_top (задача «НДС сверху», 02.10.2026) — передаются в
+    line_total(), чтобы сравнение видело ту же надбавку, что и реальное
+    сохранение суммы (иначе УПД-импорт с ценой без налога получал бы
+    ложное расхождение «сумма ≠ кол-во × цена»)."""
     q, p, t = _dec(quantity), _dec(unit_price), _dec(total_price)
     if q is None or p is None or t is None:
         return None
-    calc = line_total(q, p)
+    calc = line_total(q, p, rate=vat_rate, on_top=vat_on_top)
     if abs(calc - t) <= TOLERANCE:
         return None
     return {

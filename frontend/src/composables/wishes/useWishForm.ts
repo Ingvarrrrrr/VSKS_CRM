@@ -165,6 +165,9 @@ export function useWishForm(deps: {
     vat_applicable: null as boolean | null,
     vat_rate: null as number | null,
     vat_exemption_article: '' as string,
+    // 2026-10-02 (.planning/quick/2026-10-02-vat-on-top): цена ТЗ заявки введена
+    // без НДС — переносится в закупку при конвертации (plan_to_wish/wish_to_purchase).
+    tz_vat_on_top: false as boolean,
     contractor_id: null as number | null,
     contractor_name: '' as string,
     feo_per_item: false as boolean,
@@ -642,6 +645,7 @@ export function useWishForm(deps: {
       vat_applicable: null,
       vat_rate: null,
       vat_exemption_article: '',
+      tz_vat_on_top: false,
       contractor_id: null,
       contractor_name: '',
       feo_per_item: false,
@@ -682,6 +686,7 @@ export function useWishForm(deps: {
     wishForm.value.vat_applicable = (wish as any).vat_applicable === undefined ? null : (wish as any).vat_applicable
     wishForm.value.vat_rate = (wish as any).vat_rate ?? null
     wishForm.value.vat_exemption_article = (wish as any).vat_exemption_article || ''
+    wishForm.value.tz_vat_on_top = (wish as any).tz_vat_on_top ?? false
     wishForm.value.contractor_id = (wish as any).contractor_id ?? null
     wishForm.value.contractor_name = (wish as any).contractor_name || ''
     wishForm.value.feo_per_item = (wish as any).feo_per_item ?? false
@@ -736,6 +741,7 @@ export function useWishForm(deps: {
           feo_planned_item_id: i.feo_planned_item_id ?? null,
           over_plan: i.over_plan ?? false,
           vat_rate: i.vat_rate ?? null,
+          vat_on_top: i.vat_on_top ?? null,
           needed_date: i.needed_date ?? null,
           // item-forms-accommodation-transport.md: спец-поля формы («Проживание»/
           // «Перевозки автобусом»/«Питание») — без этого поля перезагрузка карточки

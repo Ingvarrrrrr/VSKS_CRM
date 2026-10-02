@@ -25,7 +25,7 @@ from app.services.plan_autoassign import auto_assign_planned_items, move_or_deta
 from app.services.plan_graph_versions import _create_plan_graph_version
 from app.services.item_contractor import set_item_contractor
 from app.services.item_forms import item_form_for_purchase_item
-from app.services.item_amounts import apply_item_amounts, line_total
+from app.services.item_amounts import apply_item_amounts, line_total, effective_vat_on_top, effective_vat_rate
 from app.routers.purchases import _has_purchase_write_access, _recalc_purchase_totals, TZ_FROZEN_STATUSES
 
 router = APIRouter(prefix="/api/purchases", tags=["purchases"])
@@ -157,6 +157,10 @@ class _ItemPatchBody(BaseModel):
     # «Проживание и питание» — выбор формы ЭТОЙ строки ('accommodation'/'food'),
     # см. app/services/item_forms.py::item_form_for_row. None значит «не прислали».
     item_form: Optional[str] = None
+    # «НДС сверху» этой строки (02.10.2026) — действует только в vat_mode=
+    # 'per_item'; None здесь значит «не прислали» (см. model_fields_set ниже),
+    # не «сбросить на null» — явный null тоже различим через model_fields_set.
+    vat_on_top: Optional[bool] = None
 
 
 @router.patch("/{pid}/items/{item_id}")
@@ -211,7 +215,8 @@ async def patch_purchase_item(
     _qty_set = "quantity" in body.model_fields_set
     _price_set = "unit_price" in body.model_fields_set
     _unit_set = "unit" in body.model_fields_set
-    _wants_tz_change = _qty_set or _price_set
+    _vat_on_top_set = "vat_on_top" in body.model_fields_set
+    _wants_tz_change = _qty_set or _price_set or _vat_on_top_set
     if _wants_tz_change and p.status in TZ_FROZEN_STATUSES:
         if body.admin_override and current_user.role in ADMIN_ROLES:
             _old_qty, _old_price = it.quantity, it.unit_price
@@ -400,11 +405,16 @@ async def patch_purchase_item(
     ):
         _prospective_qty = body.quantity if _qty_set else it.quantity
         _prospective_price = body.unit_price if _price_set else it.unit_price
+        _prospective_vat_on_top = effective_vat_on_top(
+            body.vat_on_top if _vat_on_top_set else it.vat_on_top,
+            p.tz_vat_on_top, p.vat_mode,
+        )
         # Гейт «ТЗ не выше плана» — приближение по обычной формуле (qty × price);
         # спец-формы (item-forms-accommodation-transport.md) производят
         # quantity/unit_price из extra_attrs только в apply_item_amounts ниже,
         # до неё точных значений ещё нет — известное ограничение, см. отчёт.
-        _prospective_total = line_total(_prospective_qty, _prospective_price)
+        _prospective_rate = effective_vat_rate(it.vat_rate, p.vat_mode, p.vat_applicable, p.vat_rate)
+        _prospective_total = line_total(_prospective_qty, _prospective_price, rate=_prospective_rate, on_top=_prospective_vat_on_top)
         # Владелец (2026-08-17, прод-инцидент РЕЕ-2026-00887): PATCH правит ОДНУ
         # позицию — «братья» (другие строки ЭТОЙ ЖЕ закупки на ту же плановую
         # позицию) лежат в БД, а не в памяти, как у create/PUT. Считаем их сумму
@@ -496,10 +506,15 @@ async def patch_purchase_item(
         _old_item_cat_id = _cat_id_before_patch
         _old_item_total = Decimal(str(it.total_price or 0))
         _new_item_cat_id = it.feo_category_id
-        if _qty_set or _price_set:
+        if _qty_set or _price_set or _vat_on_top_set:
             _new_qty_g = body.quantity if _qty_set else it.quantity
             _new_price_g = body.unit_price if _price_set else it.unit_price
-            _new_item_total = line_total(_new_qty_g, _new_price_g)
+            _new_vat_on_top_g = effective_vat_on_top(
+                body.vat_on_top if _vat_on_top_set else it.vat_on_top,
+                p.tz_vat_on_top, p.vat_mode,
+            )
+            _new_rate_g = effective_vat_rate(it.vat_rate, p.vat_mode, p.vat_applicable, p.vat_rate)
+            _new_item_total = line_total(_new_qty_g, _new_price_g, rate=_new_rate_g, on_top=_new_vat_on_top_g)
         else:
             _new_item_total = _old_item_total
         if _new_item_cat_id:
@@ -538,17 +553,23 @@ async def patch_purchase_item(
         it.unit = (body.unit.strip() or None) if body.unit is not None else None
     if _price_set:
         it.unit_price = body.unit_price
+    if _vat_on_top_set:
+        it.vat_on_top = body.vat_on_top
     if _extra_attrs_set:
         it.extra_attrs = body.extra_attrs or {}
     if _item_form_set:
         it.item_form = body.item_form
-    if _qty_set or _price_set or _extra_attrs_set or _item_form_set:
+    if _qty_set or _price_set or _vat_on_top_set or _extra_attrs_set or _item_form_set:
         # ПРАВИЛО №6: compute_item_total/apply_item_amounts — единственный
         # писатель total_price (item-forms-accommodation-transport.md). Для
         # спец-форм (accommodation/transport) quantity/unit_price ниже
         # ПЕРЕЗАПИСЫВАЮТСЯ производными от extra_attrs — прямой ввод body.quantity/
         # unit_price для этих форм не участвует (см. план, раздел «Модель»).
-        apply_item_amounts(it, item_form_for_purchase_item(p, it))
+        apply_item_amounts(
+            it, item_form_for_purchase_item(p, it),
+            vat_on_top=effective_vat_on_top(it.vat_on_top, p.tz_vat_on_top, p.vat_mode),
+            vat_rate=effective_vat_rate(it.vat_rate, p.vat_mode, p.vat_applicable, p.vat_rate),
+        )
         # Снимок плана (Шаг 1 «план ≠ факт»): пока закупка в статусе «План закупок» —
         # правка кол-ва/цены двигает и снимок плана вместе с ТЗ (план ещё формируется).
         # С «Ведётся работа» и далее сюда попасть можно только через admin_override
@@ -600,7 +621,7 @@ async def patch_purchase_item(
         # не менялась, ни плановая не выбиралась явно (типичный случай — просто
         # появилась категория, или позиция впервые получила свою авто-плановую)
         # — компаньон обязан увидеть это зеркалирование тоже.
-        if _patch_keys & {"item_name", "quantity", "unit", "unit_price"} or _category_changing or _explicit_planned_item_chosen or _is_advance_item:
+        if _patch_keys & {"item_name", "quantity", "unit", "unit_price", "vat_on_top"} or _category_changing or _explicit_planned_item_chosen or _is_advance_item:
             from app.models.wish_item import WishItem as _WishItem
             wi = await db.get(_WishItem, it.wish_item_id)
             if wi is not None:
@@ -612,7 +633,9 @@ async def patch_purchase_item(
                     wi.unit = it.unit
                 if "unit_price" in _patch_keys:
                     wi.unit_price = it.unit_price
-                if _qty_or_price_changed:
+                if "vat_on_top" in _patch_keys:
+                    wi.vat_on_top = it.vat_on_top
+                if _qty_or_price_changed or "vat_on_top" in _patch_keys:
                     wi.total_price = it.total_price
                 if _category_changing or _explicit_planned_item_chosen or _is_advance_item:
                     wi.feo_category_id = it.feo_category_id
@@ -648,6 +671,7 @@ async def patch_purchase_item(
         "ok": True, "item_id": it.id, "item_name": it.item_name,
         "quantity": float(it.quantity or 0), "unit": it.unit,
         "unit_price": float(it.unit_price or 0), "total_price": float(it.total_price or 0),
+        "vat_on_top": it.vat_on_top,
         "item_form": it.item_form,
         "feo_category_id": it.feo_category_id,
         "feo_planned_item_id": it.feo_planned_item_id,
@@ -1010,6 +1034,7 @@ async def split_purchase_item(
             feo_category_id=parts[i].feo_category_id,
             match_confirmed=_src_match_confirmed,
             vat_rate=_src_vat_rate,
+            vat_on_top=it.vat_on_top,
             vat_amount=vat_amounts[i],
             total_with_vat=total_with_vats[i],
             receipt_id=_src_receipt_id,
@@ -1053,6 +1078,7 @@ async def split_purchase_item(
                 unit_price=cr.unit_price,
                 total=cr_totals[i],
                 vat_rate=cr.vat_rate,
+                vat_on_top=cr.vat_on_top,
                 match_confirmed=cr.match_confirmed,
             )
             db.add(new_cr)

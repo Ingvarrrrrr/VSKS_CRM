@@ -28,7 +28,7 @@ from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.services.item_contractor import set_item_contractor
 from app.services.item_forms import item_form_for_purchase_item
-from app.services.item_amounts import apply_item_amounts, line_total
+from app.services.item_amounts import apply_item_amounts, line_total, effective_vat_on_top, effective_vat_rate
 from app.models.purchase_event import PurchaseMember
 from app.models.feo_category import FeoCategory
 from app.routers.purchase_members import _create_assignment_chat_room
@@ -286,6 +286,7 @@ async def _sync_purchase_from_wish(wish, purchases: list, db: AsyncSession) -> O
                 needed_date=_eff_date(wish, wi),
                 wish_item_id=wi.id,
                 vat_rate=getattr(wi, 'vat_rate', None),
+                vat_on_top=getattr(wi, 'vat_on_top', None),
             )
             # ПРАВИЛО №6 (группа D5): единственный писатель — item_contractor.set_item_contractor.
             set_item_contractor(new_pi, contractor=_wish_contractor_obj, name=getattr(wish, 'contractor_name', None))
@@ -723,6 +724,7 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
             payment_basis_type=_payment_basis_type,
             feo_per_item=bool(getattr(wish, 'feo_per_item', False)),
             vat_mode=(getattr(wish, 'vat_mode', None) or 'uniform'),
+            tz_vat_on_top=bool(getattr(wish, 'tz_vat_on_top', False)),  # «НДС сверху» (02.10.2026)
             # Контрагент заявки (владелец, 2026-08-17) — переезжает в закупку,
             # если указан. Purchase свежесозданный (contractor_id ещё пуст) —
             # «не перетирать уже заданное» тут выполняется автоматически.
@@ -774,6 +776,7 @@ async def _distribute_wish_to_purchases(wish, db, current_user, purchase_status:
                 needed_date=_eff_date(wish, wi),  # W2: наследование эффективной даты
                 wish_item_id=wi.id,  # W1: hard link to source WishItem
                 vat_rate=getattr(wi, 'vat_rate', None),
+                vat_on_top=getattr(wi, 'vat_on_top', None),
             )
             # Контрагент заявки — на каждую позицию (см. резолв _wish_contractor_obj
             # выше). ПРАВИЛО №6 (группа D5): единственный писатель —
@@ -969,9 +972,19 @@ async def _sync_wish_items_to_purchases(wish, db: AsyncSession) -> None:
             # см. app/services/item_amounts.py). Для accommodation/transport quantity/
             # unit_price — производные extra_attrs, wi.quantity/unit_price ниже
             # используются ТОЛЬКО для обычной формы и для гейта (приближённо).
+            # «НДС сверху» (02.10.2026, тот же дефект, что в purchase_items_edit.py/
+            # wishes.py): флаг и ставка строки ЗАКУПКИ (pi), шапка — закупка p
+            # (не заявка wi) — позиция синхронизируется В закупку, её же режим
+            # (vat_mode/tz_vat_on_top/vat_applicable/vat_rate) и действует.
+            _on_top_sync = effective_vat_on_top(pi.vat_on_top, p.tz_vat_on_top, p.vat_mode)
+            _rate_sync = effective_vat_rate(pi.vat_rate, p.vat_mode, p.vat_applicable, p.vat_rate)
             _new_qty = wi.quantity
             _new_price = wi.unit_price
-            _new_total = apply_item_amounts(pi, _item_form_sync) if _item_form_sync else line_total(_new_qty, _new_price)
+            _new_total = (
+                apply_item_amounts(pi, _item_form_sync, vat_on_top=_on_top_sync, vat_rate=_rate_sync)
+                if _item_form_sync
+                else line_total(_new_qty, _new_price, rate=_rate_sync, on_top=_on_top_sync)
+            )
             if _item_form_sync:
                 _new_qty = pi.quantity
                 _new_price = pi.unit_price

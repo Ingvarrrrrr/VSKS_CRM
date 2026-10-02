@@ -58,6 +58,45 @@
           Ставка выбирается в строке каждой позиции ниже
         </span>
       </div>
+
+      <!-- 2026-10-02 (.planning/quick/2026-10-02-vat-on-top/PLAN.md): два отдельных
+           переключателя «НДС в цене / сверху» — один для цены ТЗ (каталог/КП), один
+           для цены договора (договор/УПД). Выбор на всю закупку; в режиме per_item
+           это фолбэк для строк без своего флага (useVatCalc.ts::effectiveVatOnTop). -->
+      <div class="d-flex ga-4 mt-1 flex-wrap">
+        <div>
+          <v-btn-toggle
+            :model-value="tzVatOnTop ? 'on_top' : 'included'"
+            density="compact" rounded="lg" color="primary" border mandatory
+            :class="{ 'mobile-toggle-wrap': mobile }"
+            @update:model-value="(v: string) => emit('update:tzVatOnTop', v === 'on_top')"
+          >
+            <v-btn value="included" size="x-small">Цена ТЗ: с НДС</v-btn>
+            <v-btn value="on_top" size="x-small">без НДС, НДС сверху</v-btn>
+          </v-btn-toggle>
+          <div class="text-caption text-medium-emphasis mt-1" style="max-width:280px">
+            <template v-if="!tzVatOnTop">Цена ТЗ уже с НДС — сумма строки не меняется.</template>
+            <template v-else-if="tzRateKnown">Сумма строки будет с НДС: цена × кол-во + {{ tzRatePercent }}%.</template>
+            <template v-else>Ставка не указана — НДС не добавлен.</template>
+          </div>
+        </div>
+        <div v-if="showContractToggle !== false">
+          <v-btn-toggle
+            :model-value="contractVatOnTop ? 'on_top' : 'included'"
+            density="compact" rounded="lg" color="primary" border mandatory
+            :class="{ 'mobile-toggle-wrap': mobile }"
+            @update:model-value="(v: string) => emit('update:contractVatOnTop', v === 'on_top')"
+          >
+            <v-btn value="included" size="x-small">Цена договора: с НДС</v-btn>
+            <v-btn value="on_top" size="x-small">без НДС, НДС сверху</v-btn>
+          </v-btn-toggle>
+          <div class="text-caption text-medium-emphasis mt-1" style="max-width:280px">
+            <template v-if="!contractVatOnTop">Цена договора уже с НДС — сумма строки не меняется.</template>
+            <template v-else-if="tzRateKnown">Сумма строки будет с НДС: цена × кол-во + {{ tzRatePercent }}%.</template>
+            <template v-else>Ставка не указана — НДС не добавлен.</template>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -87,6 +126,15 @@ const props = defineProps<{
   vatRate: number | null
   vatExemptionArticle: string | null
   vatExemptionAutoBasis: string | null
+  // 2026-10-02: заголовочные флаги закупки «цена введена без НДС, добавить сверху»
+  // — отдельно для цены ТЗ и цены договора (решение владельца, см. PLAN.md). Источник
+  // — purchases.tz_vat_on_top/contract_vat_on_top, мутируются только через emit.
+  tzVatOnTop?: boolean
+  contractVatOnTop?: boolean
+  // На этапе заявки договора ещё нет — скрываем переключатель цены договора
+  // (владелец: «выбор отдельный для цены ТЗ и для цены договора», но договора
+  // у заявки просто не существует). true по умолчанию — обычная закупка.
+  showContractToggle?: boolean
   pointerTarget?: string | null
   // Владелец (2026-09-17): на этапе заявки подрядчик и, соответственно, реальное
   // основание освобождения от НДС ещё не известны — блокировать заявку из-за
@@ -104,7 +152,16 @@ const emit = defineEmits<{
   'update:vatApplicable': [value: boolean | null]
   'update:vatRate': [value: number | null]
   'update:vatExemptionArticle': [value: string | null]
+  'update:tzVatOnTop': [value: boolean]
+  'update:contractVatOnTop': [value: boolean]
 }>()
+
+// 2026-10-02: подсказка под переключателями «сверху» — ставка известна только
+// когда vatApplicable===true и vatRate задан (в uniform-режиме; per_item ставку
+// решает строка). «Не облагается»/«ещё не знаю» намеренно НЕ добавляют НДС —
+// effectiveVatOnTop/lineTotalWithVat в useVatCalc.ts читают ставку=0 так же.
+const tzRateKnown = computed(() => props.vatApplicable === true && props.vatRate != null)
+const tzRatePercent = computed(() => props.vatRate ?? '')
 
 // Сентинелы: 0% — валидная облагаемая ставка и не может делить одно значение
 // null/undefined с «не облагается» (vat_applicable=false), с «ещё не знаю»

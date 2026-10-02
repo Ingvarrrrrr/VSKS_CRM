@@ -37,12 +37,101 @@ def _q2(value: Decimal) -> Decimal:
     return value.quantize(_CENTS, rounding=ROUND_HALF_UP)
 
 
-def line_total(quantity: Any, unit_price: Any) -> Decimal:
+import re as _re
+
+# Единственное место разбора ставки НДС строки в число (вида '22%', '20',
+# '22/122' — легаси расчётное обозначение ФНС, см. ниже) — ПРАВИЛО №6.
+# Раньше была продублирована в services/documents/stages_amounts.py
+# (_parse_vat_rate_percent) — та функция теперь зовёт эту же.
+def parse_vat_rate_percent(rate: Any) -> float:
+    """Числовой процент из строки ставки НДС позиции ('5%', '20', '22/122',
+    None/'Без НДС'/'ещё не знаю'). Нераспознанное или отсутствующее → 0.0."""
+    if not rate:
+        return 0.0
+    s = str(rate).strip()
+    m = _re.match(r'^(\d+(?:\.\d+)?)\s*%?$', s)
+    if m:
+        return float(m.group(1))
+    m = _re.match(r'^(\d+(?:\.\d+)?)\s*/\s*\d+(?:\.\d+)?$', s)
+    return float(m.group(1)) if m else 0.0
+
+
+# ПРАВИЛО №6: единственное место формулы «НДС, выделенный ИЗ суммы, которая
+# уже включает НДС» (total × p / (100 + p)). Раньше была продублирована в
+# services/documents/stages_amounts.py (дважды), fabrikant_package.py,
+# payment_vat.py — все четыре теперь зовут эту функцию.
+def vat_included_amount(total: Any, rate: Any) -> Decimal:
+    pct = parse_vat_rate_percent(rate)
+    if pct <= 0:
+        return Decimal("0")
+    total_d = _dec(total)
+    return _q2(total_d * Decimal(str(pct)) / (Decimal("100") + Decimal(str(pct))))
+
+
+# ПРАВИЛО №6: единственное место, решающее «действует ли у ЭТОЙ строки флаг
+# „НДС сверху"» — per_item берёт флаг строки, а null наследует флаг шапки;
+# uniform всегда берёт флаг шапки. Второго места с этим if/else не заводить —
+# и бэк (line_total ниже, документы), и перевод заявки в закупку обязаны
+# звать эту функцию, а не читать item.vat_on_top напрямую.
+def effective_vat_on_top(item_flag: Optional[bool], header_flag: Optional[bool], vat_mode: Optional[str]) -> bool:
+    if (vat_mode or "uniform") == "per_item" and item_flag is not None:
+        return bool(item_flag)
+    return bool(header_flag)
+
+
+# ПРАВИЛО №6: единственное место, решающее, КАКАЯ ставка НДС действует у
+# строки — зеркало фронтового effectiveVatRateForItem (useVatCalc.ts:149-156).
+# В режиме uniform у строки нет своего поля ввода ставки (vat_rate строки
+# всегда None) — ставка берётся из шапки (purchase.vat_rate/wish.vat_rate),
+# но только если шапка вообще применяет НДС (vat_applicable=True); иначе
+# ставки нет вовсе (None), а не 0 — line_total/parse_vat_rate_percent сами
+# трактуют пусто как «без НДС». В режиме per_item — всегда ставка строки,
+# шапка не подмешивается. Второго парсера ставки не заводить — возврат идёт
+# в том же виде (int/str/None), что понимает parse_vat_rate_percent.
+def effective_vat_rate(
+    item_rate: Any,
+    vat_mode: Optional[str],
+    header_applicable: Optional[bool],
+    header_rate: Any,
+) -> Any:
+    if (vat_mode or "uniform") == "per_item":
+        return item_rate
+    if item_rate not in (None, ""):
+        return item_rate
+    return header_rate if header_applicable else None
+
+
+# ПРАВИЛО №6: единственное место, считающее цену за единицу ДЛЯ ПЕЧАТИ В
+# ДОКУМЕНТЕ (ТЗ/договор) — задача владельца (02.10.2026): при «НДС сверху»
+# unit_price хранится БЕЗ налога, а в документе печатается цена ВКЛЮЧАЯ НДС
+# (сумма/кол-во), сумма и «в т.ч. НДС» не меняются. Без надбавки — обычная
+# unit_price как есть. Нулевое/пустое количество → unit_price как есть (без
+# деления на ноль).
+def document_unit_price(unit_price: Any, total: Any, quantity: Any, on_top: bool) -> Decimal:
+    if on_top:
+        qty = _dec(quantity)
+        if qty != 0:
+            return _q2(_dec(total) / qty)
+    return _dec(unit_price)
+
+
+def line_total(quantity: Any, unit_price: Any, rate: Any = None, on_top: bool = False) -> Decimal:
     """Обычная позиция (item_form=None): итог = количество × цена за единицу,
     округление до копеек. Единственное место с этим умножением — все места
     импорта/копирования, которые раньше писали `quantity * unit_price` инлайн,
-    теперь вызывают эту функцию (см. докстринг модуля)."""
-    return _q2(_dec(quantity) * _dec(unit_price))
+    теперь вызывают эту функцию (см. докстринг модуля).
+
+    on_top=True и ставка > 0 (см. parse_vat_rate_percent — «Без НДС»/«ещё не
+    знаю»/пустая ставка дают 0.0, то есть БЕЗ надбавки) → НДС сверху: итог =
+    количество × цена × (1 + p/100), округление до копеек в конце. Иначе —
+    прежняя формула (цена уже включает НДС, если он есть)."""
+    qty = _dec(quantity)
+    price = _dec(unit_price)
+    if on_top:
+        pct = parse_vat_rate_percent(rate)
+        if pct > 0:
+            return _q2(qty * price * (Decimal("1") + Decimal(str(pct)) / Decimal("100")))
+    return _q2(qty * price)
 
 
 def _extra(item: Any) -> dict:
@@ -127,9 +216,24 @@ def _transport_quantity_and_rate(item: Any, extra: dict) -> tuple[Decimal, Decim
     return work_hours + supply_hours, _dec(extra.get("hourly_rate"))
 
 
-def compute_item_total(item: Any, item_form: Optional[str]) -> Decimal:
+def compute_item_total(
+    item: Any, item_form: Optional[str], vat_on_top: bool = False, vat_rate: Any = "__unset__",
+) -> Decimal:
     """Считает `total_price`, НЕ мутируя `item` — используй для превью/проверок
-    (гейты «ТЗ не выше плана» и т.п.). Для реальной записи позиции — apply_item_amounts."""
+    (гейты «ТЗ не выше плана» и т.п.). Для реальной записи позиции — apply_item_amounts.
+
+    vat_on_top (задача «НДС сверху», 02.10.2026) — только для обычной позиции
+    (item_form=None, ветка line_total ниже); спец-формы (accommodation/
+    transport/food) НДС-надбавку не считают (владелец не просил — у них
+    unit_price вводится/выводится отдельными правилами формы).
+
+    vat_rate (дефект «НДС сверху» в uniform, 02.10.2026) — ставка для ветки
+    line_total; по умолчанию (сентинел "__unset__") читается item.vat_rate как
+    раньше. Передавай сюда ТОЛЬКО результат effective_vat_rate() — при
+    vat_mode='uniform' у строки нет своего поля ввода ставки, item.vat_rate
+    всегда None, и без явного override формула резолвила ставку в 0% (см.
+    effective_vat_rate в этом же модуле, зеркалит фронтовый
+    effectiveVatRateForItem)."""
     extra = _extra(item)
     if item_form == "accommodation":
         qty = _accommodation_quantity(extra)
@@ -147,10 +251,16 @@ def compute_item_total(item: Any, item_form: Optional[str]) -> Decimal:
         qty = _food_quantity(extra)
         unit_price = _dec(getattr(item, "unit_price", None))
         return _q2(unit_price * qty)
-    return line_total(getattr(item, "quantity", None), getattr(item, "unit_price", None))
+    _rate = getattr(item, "vat_rate", None) if vat_rate == "__unset__" else vat_rate
+    return line_total(
+        getattr(item, "quantity", None), getattr(item, "unit_price", None),
+        rate=_rate, on_top=vat_on_top,
+    )
 
 
-def apply_item_amounts(item: Any, item_form: Optional[str]) -> Decimal:
+def apply_item_amounts(
+    item: Any, item_form: Optional[str], vat_on_top: bool = False, vat_rate: Any = "__unset__",
+) -> Decimal:
     """Выставляет quantity/unit_price/total_price на `item` по правилам формы
     и возвращает итоговую сумму. Для accommodation/transport quantity (и для
     transport ещё и unit_price) — ПРОИЗВОДНЫЕ от extra_attrs, не принимаются
@@ -183,6 +293,6 @@ def apply_item_amounts(item: Any, item_form: Optional[str]) -> Decimal:
         else:
             item.quantity = _food_quantity(extra)
             # unit_price — цена за приём пищи, вводится пользователем напрямую.
-    total = compute_item_total(item, item_form)
+    total = compute_item_total(item, item_form, vat_on_top=vat_on_top, vat_rate=vat_rate)
     item.total_price = total
     return total

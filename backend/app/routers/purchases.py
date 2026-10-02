@@ -1922,6 +1922,7 @@ PATCHABLE_FIELDS = {
     "service_end_date", "service_term_days", "service_term_type",
     "service_deadline_date", "third_party_involved",
     "vat_applicable", "vat_rate", "vat_exemption_article", "vat_mode", "feo_per_item",
+    "tz_vat_on_top", "contract_vat_on_top",
     # ПРАВИЛО №6 (2026-09-07, группа D4): acceptance_doc_name/date/number/amount
     # убраны из PATCHABLE_FIELDS — это производный кэш JSONB acceptance_docs
     # (app.services.acceptance_docs.sync_scalars, вызывается из replace_docs()

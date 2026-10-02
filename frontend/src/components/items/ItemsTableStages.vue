@@ -301,6 +301,22 @@
                         {{ UNIT_PRICE_NOT_FIXED_HINT }}
                       </div>
                       <PriceFreshnessStamp :price-meta="item._price_meta" />
+                      <!-- 2026-10-02: построчный флаг «НДС сверху» — только в режиме
+                           per_item (в uniform цену целиком решает шапка PurchaseVatBlock).
+                           3 состояния (не checkbox) — владелец, после приёмки: нужен путь
+                           НАЗАД в «как у закупки» (null) из явно выставленных true/false. -->
+                      <v-btn-toggle
+                        v-if="(vatMode || 'uniform') === 'per_item'"
+                        :model-value="vatOnTopToTriState(item.vat_on_top)"
+                        density="compact" rounded="lg" mandatory class="mt-1"
+                        style="transform:scale(0.8);transform-origin:left"
+                        :disabled="tzDisabled"
+                        @update:model-value="(v: string) => emit('vat-on-top-change', idx, triStateToVatOnTop(v as any))"
+                      >
+                        <v-btn value="default" size="x-small">как у закупки</v-btn>
+                        <v-btn value="included" size="x-small">с НДС</v-btn>
+                        <v-btn value="on_top" size="x-small">сверху</v-btn>
+                      </v-btn-toggle>
                     </td>
                     </template>
                     <!-- Fix 4/5: НДС % column. v-select, не v-combobox: см. комментарий
@@ -491,6 +507,22 @@
                         :disabled="readonly"
                         @update:model-value="(v: string) => emit('update-contract-field', idx, 'unit_price', Number(v))"
                       />
+                      <!-- 2026-10-02: построчный флаг «НДС сверху» для стадии «Договор»/УПД —
+                           только в режиме per_item, тот же generic update-contract-field,
+                           что и остальные поля строки Договор (ПРАВИЛО №6). 3 состояния —
+                           см. комментарий у аналогичного контрола строки ТЗ выше. -->
+                      <v-btn-toggle
+                        v-if="(vatMode || 'uniform') === 'per_item'"
+                        :model-value="vatOnTopToTriState(getContractItemFor(idx)?.vat_on_top)"
+                        density="compact" rounded="lg" mandatory class="mt-1"
+                        style="transform:scale(0.8);transform-origin:left"
+                        :disabled="readonly"
+                        @update:model-value="(v: string) => emit('update-contract-field', idx, 'vat_on_top', triStateToVatOnTop(v as any))"
+                      >
+                        <v-btn value="default" size="x-small">как у закупки</v-btn>
+                        <v-btn value="included" size="x-small">с НДС</v-btn>
+                        <v-btn value="on_top" size="x-small">сверху</v-btn>
+                      </v-btn-toggle>
                     </td>
                     <!-- Fix 4/5: НДС % column (Договор). v-select для единообразия
                          со строкой ТЗ выше (тот же фиксированный список ставок). -->
@@ -663,6 +695,7 @@ import ItemRowFormSwitch from '@/components/items/ItemRowFormSwitch.vue'
 import ItemFeoCategoryChip from '@/components/purchase/ItemFeoCategoryChip.vue'
 import type { ItemFormCode, ItemFormField } from '@/utils/itemAmounts'
 import { formatExtraAttrsSummary } from '@/utils/itemAmounts'
+import { vatOnTopToTriState, triStateToVatOnTop } from '@/composables/useVatCalc'
 import { itemFormDescriptor } from '@/composables/items/useItemForm'
 
 type EditorItem = any
@@ -754,6 +787,13 @@ const props = defineProps<{
   // mode flags (computed in parent)
   showVatColumnsInExpandRow: boolean
   showContractorColumn: boolean
+  // 2026-10-02 (НДС «в цене»/«сверху»): режим + заголовочные флаги закупки, нужны
+  // только чтобы показать построчный переключатель в per_item и подпись «как у
+  // закупки» — сама логика эффективного флага (effectiveVatOnTop) живёт в
+  // useVatCalc.ts, здесь только отображение. См. PLAN.md 2026-10-02-vat-on-top.
+  vatMode?: string | null
+  tzVatOnTop?: boolean
+  contractVatOnTop?: boolean
   isAdvance: boolean
   // expand state (parent-owned)
   expanded: Record<number, boolean>
@@ -887,6 +927,7 @@ const emit = defineEmits<{
   'open-quick-product-edit': [item: EditorItem]
   'calc-item-total': [idx: number]
   'vat-rate-change': [idx: number, val: any]
+  'vat-on-top-change': [idx: number, val: boolean | null]
   'item-feo-change': [idx: number, val: number | null]
   'item-planned-change': [idx: number, val: FeoPlanSelection | null]
   'item-pick-unallocated': [idx: number, parentId: number | null]

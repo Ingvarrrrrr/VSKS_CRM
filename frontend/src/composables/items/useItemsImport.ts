@@ -54,12 +54,21 @@ export interface UseItemsImportDeps {
   nextUid: () => string
   /** From useItemMatching().applyCandidate — shared with inline/bulk matching. */
   applyMatchCandidate: (row: EditorItem, cand: MatchCandidate) => void
+  // 2026-10-02 (.planning/quick/2026-10-02-vat-on-top): УПД-колонки «цена без
+  // налога» (4) + «стоимость с налогом — всего» (9) — цена в импортируемых
+  // строках БЕЗ НДС, сумма с НДС. Вызывается autoDetectMapping, когда она
+  // распознала именно эту пару колонок — родитель (PurchaseItemsEditor.vue)
+  // предлагает включить contract_vat_on_top (через showSnack action ниже),
+  // сам флаг не трогает (одна точка правды — PurchaseVatBlock/form в
+  // CreateOrderView.vue, Правило №6).
+  suggestContractVatOnTop?: () => void
 }
 
 export function useItemsImport(deps: UseItemsImportDeps) {
   const {
     props, localItems, localContractItems, contractItemImportMode,
     emitUpdate, emitContractItemsUpdate, emit, showSnack, nextUid, applyMatchCandidate,
+    suggestContractVatOnTop,
   } = deps
 
   // ── Excel import (legacy 2-step column mapping) ──────────────────────────────
@@ -179,8 +188,15 @@ export function useItemsImport(deps: UseItemsImportDeps) {
       if (idx('3')  >= 0) mapping.quantity  = idx('3')
       if (idx('4')  >= 0) mapping.unit_price = idx('4')
       // Prefer "с налогом — всего" (col 9), fallback на "без налога" (col 5)
-      if      (idx('9') >= 0) mapping.total_price = idx('9')
-      else if (idx('5') >= 0) mapping.total_price = idx('5')
+      if (idx('9') >= 0) {
+        mapping.total_price = idx('9')
+        // 2026-10-02: колонка 4 (цена за единицу) в УПД — БЕЗ налога, колонка 9
+        // (итог строки) — С налогом → классический «НДС сверху» для стадии
+        // Договор. Предлагаем включить переключатель, не трогая его молча.
+        suggestContractVatOnTop?.()
+      } else if (idx('5') >= 0) {
+        mapping.total_price = idx('5')
+      }
       if      (idx('2а') >= 0) mapping.unit = idx('2а')
       else if (idx('2')  >= 0) mapping.unit = idx('2')
       return mapping

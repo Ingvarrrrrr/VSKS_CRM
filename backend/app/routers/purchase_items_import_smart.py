@@ -274,9 +274,10 @@ async def import_items_smart(
 
     # --- Stage 3: Detect columns ---
     result = pick_best_table(raw_tables)
+    _is_upd = False
     if result is None:
         # Fallback: manual column detection on raw tables
-        best_table, best_col, best_header_row = _legacy_detect_best_table(raw_tables)
+        best_table, best_col, best_header_row, _is_upd = _legacy_detect_best_table(raw_tables)
     else:
         best_table, best_header_row = result
         best_col = detect_columns(best_table[best_header_row])
@@ -310,9 +311,17 @@ async def import_items_smart(
         unit = unit_raw or "шт"
         unit_price = _to_dec(_get("unit_price"))
         total_price = _to_dec(_get("total_price"))
+        # УПД (задача «НДС сверху», 02.10.2026): колонка 7 — ставка налога;
+        # присутствует только когда _is_upd=True (_detect_upd_layout).
+        vat_rate_raw = _get("vat_rate") or None
         # Дефект 2 (владелец, 2026-09-14): кол-во × цена ≠ сумма из файла —
-        # по ИСХОДНЫМ значениям, до автозаполнения недостающего ниже.
-        _mismatch = check_qty_price_sum(row_num, item_name, quantity, unit_price, total_price)
+        # по ИСХОДНЫМ значениям, до автозаполнения недостающего ниже. УПД:
+        # цена (col 4) БЕЗ налога, сумма (col 9) С налогом — сравнение обязано
+        # учитывать надбавку (vat_on_top=True), иначе ложное расхождение.
+        _mismatch = check_qty_price_sum(
+            row_num, item_name, quantity, unit_price, total_price,
+            vat_rate=vat_rate_raw, vat_on_top=_is_upd,
+        )
         if _mismatch:
             md_warnings.append(_mismatch)
         if unit_price is None and total_price is not None and quantity:
@@ -321,7 +330,7 @@ async def import_items_smart(
             except Exception:
                 pass
         if total_price is None and unit_price is not None and quantity:
-            total_price = line_total(quantity or Decimal("1"), unit_price)
+            total_price = line_total(quantity or Decimal("1"), unit_price, rate=vat_rate_raw, on_top=_is_upd)
         return {
             "row": row_num,
             "item_name": item_name,
@@ -331,6 +340,7 @@ async def import_items_smart(
             "unit_raw": unit_raw,
             "unit_price": float(unit_price) if unit_price else None,
             "total_price": float(total_price) if total_price else None,
+            "vat_rate": vat_rate_raw,
         }
 
     data_rows = best_table[best_header_row + 1:]
@@ -354,6 +364,7 @@ async def import_items_smart(
     return await _save_smart_preview_to_purchase(
         pid, preview, purchase, db, current_user,
         skip_catalog=skip_catalog, resolutions=resolutions_map,
+        vat_on_top=_is_upd,
     )
 
 # ---------------------------------------------------------------------------

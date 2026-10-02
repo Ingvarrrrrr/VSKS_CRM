@@ -18,6 +18,7 @@ from app.services.acceptance_docs import (
 )
 from app.services.item_forms import item_form_for_purchase_item
 from app.services.item_form_summary import item_form_summary, item_menu_lines
+from app.services.item_amounts import effective_vat_on_top as _effective_vat_on_top, document_unit_price as _document_unit_price
 
 from .doc_types import CONTRACT_FAMILY_DOC_TYPES, FEO_PATH_UNRESOLVED_LABEL
 from .formatting import (
@@ -197,16 +198,20 @@ async def _build_contract_items_context(p, db) -> dict:
 
     result_list = []
     total_numeric = 0.0
+    _vat_mode = getattr(p, "vat_mode", None) or "uniform"
     if contract_items_db:
         # Primary path: contract_items exist — use them
+        _contract_header_on_top = bool(getattr(p, "contract_vat_on_top", False))
         for idx, ci in enumerate(contract_items_db, start=1):
             tot = float(ci.total) if ci.total else 0.0
+            _on_top = _effective_vat_on_top(getattr(ci, "vat_on_top", None), _contract_header_on_top, _vat_mode)
+            unit_price_display = _document_unit_price(ci.unit_price, ci.total, ci.quantity, _on_top)
             result_list.append({
                 "num": idx,
                 "name": ci.name or "",
                 "quantity": _fmt_quantity(ci.quantity),
                 "unit": ci.unit or "",
-                "unit_price": _fmt_money(ci.unit_price),
+                "unit_price": _fmt_money(unit_price_display),
                 "total": _fmt_money(ci.total),
                 "total_numeric": tot,
             })
@@ -214,16 +219,19 @@ async def _build_contract_items_context(p, db) -> dict:
     else:
         # D-08 fallback: contract_items empty — use purchase_items as deprecated alias
         _tz = build_tz_rows(getattr(p, "items", None) or [], getattr(p, "tz_duplicate_decisions", None))
+        _tz_header_on_top = bool(getattr(p, "tz_vat_on_top", False))
         for idx, row in enumerate(_tz["rows"], start=1):
             item = row["item"]
             total = row["total_price"]
             tot = float(total) if total else 0.0
+            _on_top = _effective_vat_on_top(getattr(item, "vat_on_top", None), _tz_header_on_top, _vat_mode)
+            unit_price_display = _document_unit_price(row["unit_price"], total, row["quantity"], _on_top)
             result_list.append({
                 "num": idx,
                 "name": item.item_name or "",
                 "quantity": _fmt_quantity(row["quantity"]),
                 "unit": item.unit or "",
-                "unit_price": _fmt_money(row["unit_price"]),
+                "unit_price": _fmt_money(unit_price_display),
                 "total": _fmt_money(total),
                 "total_numeric": tot,
             })
@@ -306,11 +314,15 @@ def _build_items_list_from_contract_items(p, resolve_photo=None) -> list[dict]:
     «Плановые не равно Договор» (требование владельца).
     """
     items_list: list[dict] = []
+    _contract_vat_mode = getattr(p, "vat_mode", None) or "uniform"
+    _contract_header_on_top = bool(getattr(p, "contract_vat_on_top", False))
     for idx, ci in enumerate(getattr(p, "contract_items", None) or [], start=1):
         product = getattr(ci, "product", None)
         # «Проживание и питание»: форма по строке (ci.item_form), не одна
         # item_form на весь договор — см. item_forms.py::item_form_for_row.
         item_form = item_form_for_purchase_item(p, ci)
+        _on_top = _effective_vat_on_top(getattr(ci, "vat_on_top", None), _contract_header_on_top, _contract_vat_mode)
+        unit_price_display = _document_unit_price(ci.unit_price, ci.total, ci.quantity, _on_top)
         items_list.append({
             "num": idx,
             "name": ci.name or "",
@@ -319,7 +331,7 @@ def _build_items_list_from_contract_items(p, resolve_photo=None) -> list[dict]:
             "item_kind": (getattr(product, "item_kind", None) if product else None) or "товар",
             "quantity": _fmt_quantity(ci.quantity),
             "unit": ci.unit or "",
-            "unit_price": _fmt_money(ci.unit_price),
+            "unit_price": _fmt_money(unit_price_display),
             "total_price": _fmt_money(ci.total),
             "total": _fmt_money(ci.total),
             "photo": resolve_photo(product) if resolve_photo else "",
@@ -354,12 +366,16 @@ def _build_items_list_from_purchase_items(p, tz_override_mode=None, resolve_phot
     description_mode = tz_override_mode or getattr(p, "description_mode", None) or "exact"
     items_list: list[dict] = []
     _tz = build_tz_rows(getattr(p, "items", None) or [], getattr(p, "tz_duplicate_decisions", None))
+    _tz_vat_mode = getattr(p, "vat_mode", None) or "uniform"
+    _tz_header_on_top = bool(getattr(p, "tz_vat_on_top", False))
     for idx, row in enumerate(_tz["rows"], start=1):
         item = row["item"]
         total = row["total_price"]
         # «Проживание и питание»: форма по строке (item.item_form) — см.
         # комментарий у _build_items_list_from_contract_items выше.
         item_form = item_form_for_purchase_item(p, item)
+        _on_top = _effective_vat_on_top(getattr(item, "vat_on_top", None), _tz_header_on_top, _tz_vat_mode)
+        unit_price_display = _document_unit_price(row["unit_price"], total, row["quantity"], _on_top)
         items_list.append({
             "num": idx,
             "name": item.item_name or "",
@@ -371,7 +387,7 @@ def _build_items_list_from_purchase_items(p, tz_override_mode=None, resolve_phot
             "item_kind": (item.product.item_kind if item.product else None) or "товар",
             "quantity": _fmt_quantity(row["quantity"]),
             "unit": item.unit or "",
-            "unit_price": _fmt_money(row["unit_price"]),
+            "unit_price": _fmt_money(unit_price_display),
             "total_price": _fmt_money(total),
             "total": _fmt_money(total),
             "photo": resolve_photo(item.product) if resolve_photo else "",

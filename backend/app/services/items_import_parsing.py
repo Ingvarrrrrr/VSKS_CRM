@@ -222,11 +222,23 @@ def _detect_upd_layout(row: list[str]) -> dict | None:
         col['unit'] = found['2а']
     elif '2' in found:
         col['unit'] = found['2']
+    # Задача «НДС сверху» (02.10.2026): колонка 7 — налоговая ставка. col '4'
+    # (цена за единицу) в УПД — БЕЗ налога, col '9' (стоимость с налогом) —
+    # с налогом: ровно «цена без НДС + сумма с НДС» — единственный признак,
+    # что эта таблица распознана как УПД (см. is_upd в _legacy_detect_best_table).
+    if '7' in found:
+        col['vat_rate'] = found['7']
     return col if 'item_name' in col else None
 
 
 def _legacy_detect_best_table(raw_tables: list[list[list[str]]]) -> tuple:
-    """Fallback column detection on raw tables."""
+    """Fallback column detection on raw tables.
+
+    Возвращает (best_table, best_col, best_header_row, is_upd) — is_upd=True,
+    когда таблица распознана по числовым меткам УПД (_detect_upd_layout) —
+    единственный признак «цена колонки 4 без налога, колонка 9 с налогом»,
+    задача «НДС сверху» (02.10.2026) читает его, чтобы проставить
+    contract_vat_on_top/vat_on_top автоматически (см. покупатели ниже)."""
     def _detect_columns_legacy(header_row: list[str]) -> dict:
         col: dict = {}
         for i, h in enumerate(header_row):
@@ -279,7 +291,7 @@ def _legacy_detect_best_table(raw_tables: list[list[list[str]]]) -> tuple:
                 best_table = table
                 best_header_row = r_idx
     if best_col:
-        return best_table, best_col, best_header_row
+        return best_table, best_col, best_header_row, True
     # Second pass: keyword-based detection (legacy)
     for table in raw_tables:
         for r_idx, row in enumerate(table[:6]):
@@ -288,7 +300,7 @@ def _legacy_detect_best_table(raw_tables: list[list[list[str]]]) -> tuple:
                 best_col = col
                 best_table = table
                 best_header_row = r_idx
-    return best_table, best_col, best_header_row
+    return best_table, best_col, best_header_row, False
 
 
 

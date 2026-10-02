@@ -134,6 +134,7 @@ class WishItemOut(BaseModel):
     feo_planned_item_match_confirmed: bool = False  # человек подтвердил похожую-по-имени привязку (см. WishItem model)
     needed_date: Optional[date] = None  # W2: дата потребности per-item
     vat_rate: Optional[str] = None  # per-item НДС ставка (mirrors PurchaseItem.vat_rate)
+    vat_on_top: Optional[bool] = None  # «НДС сверху» этой строки (mirrors PurchaseItem.vat_on_top)
     over_plan: bool = False  # false — расходует план элемента ФЭО; true — сверх плана (mirrors PurchaseItem.over_plan)
     # item-forms-accommodation-transport.md: поля спец-формы (mirrors PurchaseItem.extra_attrs) —
     # заявка может завести их до конвертации, форма выводится из закупки, не из заявки.
@@ -202,6 +203,7 @@ class WishCreate(BaseModel):
     vat_applicable: Optional[bool] = None
     vat_rate: Optional[int] = None
     vat_exemption_article: Optional[str] = None
+    tz_vat_on_top: bool = False  # «НДС в цене или сверху» для цены ТЗ (02.10.2026)
     # Контрагент — необязательное поле (владелец, 2026-08-17): либо ссылка на
     # справочник (contractor_id), либо просто имя от руки, если контрагента
     # там ещё нет (contractor_name). Ни то, ни другое не обязательно и не
@@ -252,6 +254,7 @@ class WishUpdate(BaseModel):
     vat_applicable: Optional[bool] = None
     vat_rate: Optional[int] = None
     vat_exemption_article: Optional[str] = None
+    tz_vat_on_top: Optional[bool] = None
     # Контрагент — см. WishCreate.contractor_id/contractor_name. Optional[...] = None,
     # как и у остальных полей формы заявки (feo_category_id/subsidy_id выше) —
     # общий model_dump(exclude_none=True) в update_wish по-прежнему трактует
@@ -366,6 +369,7 @@ class WishOut(BaseModel):
     vat_applicable: Optional[bool] = None
     vat_rate: Optional[int] = None
     vat_exemption_article: Optional[str] = None
+    tz_vat_on_top: bool = False
     # Контрагент заявки — необязательный (владелец, 2026-08-17). contractor_id —
     # ссылка на справочник, contractor_name — свободный ввод, когда контрагента
     # там ещё нет. contractor_display_name — готовое имя для показа: из

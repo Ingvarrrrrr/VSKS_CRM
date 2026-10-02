@@ -12,7 +12,6 @@ which never had this bug (`art` is NOT put in compute_amounts_and_vat()'s
 returned dict for the same reason as before — the vat_app=True case never
 needs it; see that function's comment).
 """
-import re
 from datetime import date
 from decimal import Decimal
 
@@ -21,42 +20,14 @@ from app.services.documents.contexts import _resolve_doc_amount
 from app.services.documents.templates import _resolve_vat_exemption_basis
 from app.services.documents.formatting import _fmt_money_plain
 from app.services.purchase_amounts import contract_amount as _contract_amount_fn, purchase_amounts as _purchase_amounts_fn
-
-
-def _parse_vat_rate_percent(rate) -> float:
-    """Числовой процент из строки ставки НДС позиции ('5%', '20', '22/122', None).
-
-    Тот же принцип, что и во фронтовом composables/useVatCalc.ts::
-    parseVatRatePercent — единственное на бэке место, где нужна эта же
-    математика (см. compute_amounts_and_vat ниже, ветка vat_mode='per_item').
-
-    '22/122' и подобные «расчётные» ФНС-обозначения (X/(100+X)) — легаси:
-    с 2026-09-30 receipts_parsing.py::NDS_CODE_TO_RATE_STR больше не пишет
-    такие строки (сразу "22%"), но старые чеки/позиции на проде их уже
-    сохранили (миграция backend/alembic/versions переносит основной массив,
-    но не гарантирует 100% покрытия ручного ввода/будущих источников) —
-    понимаем X/1XX как X%, а не как «ставка не распознана» (0.0, что раньше
-    тихо превращало НДС в позиции в 0,00 руб.).
-    """
-    if not rate:
-        return 0.0
-    s = str(rate).strip()
-    m = re.match(r'^(\d+(?:\.\d+)?)\s*%?$', s)
-    if m:
-        return float(m.group(1))
-    m = re.match(r'^(\d+(?:\.\d+)?)\s*/\s*\d+(?:\.\d+)?$', s)
-    return float(m.group(1)) if m else 0.0
+from app.services.item_amounts import parse_vat_rate_percent as _parse_vat_rate_percent, vat_included_amount as _vat_included_amount
 
 
 def _item_vat_amount(item) -> float:
-    """НДС, выделенный из ВКЛЮЧАЮЩЕЙ НДС суммы позиции (total_price) — та же
-    формула и то же допущение («total_price уже с НДС»), что и у
-    composables/useVatCalc.ts::vatAmount на фронте."""
-    total = float(getattr(item, "total_price", None) or 0)
-    pct = _parse_vat_rate_percent(getattr(item, "vat_rate", None))
-    if pct <= 0:
-        return 0.0
-    return round(total * pct / (100 + pct), 2)
+    """НДС, выделенный из ВКЛЮЧАЮЩЕЙ НДС суммы позиции (total_price) — ПРАВИЛО
+    №6: единственная формула в item_amounts.vat_included_amount (та же, что
+    используется и у composables/useVatCalc.ts::vatAmount на фронте)."""
+    return float(_vat_included_amount(getattr(item, "total_price", None), getattr(item, "vat_rate", None)))
 
 
 def contract_date_parts(p: Purchase):
@@ -174,7 +145,7 @@ def compute_amounts_and_vat(p: Purchase, doc_type: str) -> dict:
         vat_rate_val = p.vat_rate
         price_val = doc_amount_val
         if vat_app and price_val and vat_rate_val is not None:
-            vat_amount_val = price_val * vat_rate_val / (100 + vat_rate_val)
+            vat_amount_val = float(_vat_included_amount(price_val, vat_rate_val))
         else:
             vat_amount_val = 0.0
 

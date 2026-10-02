@@ -355,6 +355,9 @@ async def convert_wish(
         vat_applicable=getattr(wish, 'vat_applicable', None),
         vat_rate=getattr(wish, 'vat_rate', None),
         vat_exemption_article=getattr(wish, 'vat_exemption_article', None),
+        # «НДС сверху» (02.10.2026) — tz_vat_on_top заявки переезжает в закупку
+        # тем же принципом, что и остальные НДС-поля выше (Purchase свежесозданный).
+        tz_vat_on_top=bool(getattr(wish, 'tz_vat_on_top', False)),
         # Контрагент заявки (владелец, 2026-08-17) — переезжает в закупку, если
         # указан. Purchase свежесозданный, поэтому «не перетирать уже заданное»
         # выполняется автоматически.
@@ -395,6 +398,7 @@ async def convert_wish(
             needed_date=wishes_core._eff_date(wish, wi),  # W2: наследование эффективной даты
             wish_item_id=wi.id,  # W1: hard link to source WishItem
             vat_rate=getattr(wi, 'vat_rate', None),
+            vat_on_top=getattr(wi, 'vat_on_top', None),  # «НДС сверху» строки (02.10.2026)
         )
         # ПРАВИЛО №6 (группа D5, долг): единственный писатель контрагента
         # позиции — item_contractor.set_item_contractor (не голые contractor_id/

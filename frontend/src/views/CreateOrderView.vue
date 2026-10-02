@@ -822,6 +822,8 @@
             :vat-rate="form.vat_rate"
             :vat-exemption-article="form.vat_exemption_article"
             :vat-exemption-auto-basis="vatExemptionAutoBasis"
+            :tz-vat-on-top="form.tz_vat_on_top"
+            :contract-vat-on-top="form.contract_vat_on_top"
             :pointer-target="pointerTarget"
             :form-mode="formMode"
             :contractors="contractors"
@@ -841,6 +843,8 @@
             @update:vat-applicable="(v: boolean | null) => { form.vat_applicable = v }"
             @update:vat-rate="(v: number | null) => { form.vat_rate = v }"
             @update:vat-exemption-article="(v: string | null) => { form.vat_exemption_article = v ?? '' }"
+            @update:tz-vat-on-top="(v: boolean) => { form.tz_vat_on_top = v }"
+            @update:contract-vat-on-top="(v: boolean) => { form.contract_vat_on_top = v }"
             @items-changed="syncContractPriceIfSingle"
             @reload-requested="loadPurchase"
             @product-created="onProductCreatedFromEditor"
@@ -2485,6 +2489,12 @@ const form = reactive({
   vat_applicable: true as boolean | null,
   vat_rate: 22 as number | null,
   vat_exemption_article: '' as string,
+  // 2026-10-02 (.planning/quick/2026-10-02-vat-on-top): цена ТЗ/договора введена
+  // БЕЗ НДС, сумма строки считается с НДС «сверху» — по умолчанию false (как
+  // раньше: цена уже с НДС, см. PLAN.md). Отдельные флаги для ТЗ и договора
+  // (владелец: «выбор отдельный для цены ТЗ и для цены договора»).
+  tz_vat_on_top: false as boolean,
+  contract_vat_on_top: false as boolean,
   third_party_involved: false as boolean,
   service_period_type: 'date' as string,
   service_start_date: '' as string,
@@ -2666,6 +2676,8 @@ function serializeFormForAutosave() {
     vat_rate: numOrNull(f.vat_rate),
     vat_mode: f.vat_mode,
     vat_exemption_article: f.vat_exemption_article,
+    tz_vat_on_top: f.tz_vat_on_top,
+    contract_vat_on_top: f.contract_vat_on_top,
     acceptance_doc_name: f.acceptance_doc_name,
     acceptance_doc_date: f.acceptance_doc_date,
     acceptance_doc_number: f.acceptance_doc_number,
@@ -4304,6 +4316,11 @@ const loadPurchase = async () => {
     vat_applicable: data.vat_applicable === undefined ? null : data.vat_applicable,
     vat_rate: data.vat_rate ?? null,
     vat_exemption_article: data.vat_exemption_article || '',
+    // 2026-10-02: «выбранное на предыдущем этапе не смеет меняться само» — ?? а
+    // не ||, иначе явный false («цена с НДС», обычный случай) не отличался бы
+    // от undefined при первом открытии карточки до появления этих колонок.
+    tz_vat_on_top: data.tz_vat_on_top ?? false,
+    contract_vat_on_top: data.contract_vat_on_top ?? false,
     third_party_involved: !!data.third_party_involved,
     service_period_type: data.service_period_type || 'date',
     service_start_date: data.service_start_date || '',
@@ -4454,6 +4471,7 @@ const loadPurchase = async () => {
         contractor_inn: i.contractor_inn || null,
         contractor_name: i.contractor_name || null,
         vat_rate: i.vat_rate ?? null,  // Phase 27.1.15: НДС % per-item из чека ФФД 1.2 (Phase 26-AAA парсил → не подтягивался во фронт)
+        vat_on_top: i.vat_on_top ?? null,  // 2026-10-02: построчный «НДС сверху» (per_item), null = «как у закупки»
         feo_planned_item_id: i.feo_planned_item_id ?? null,  // F-PIF1: per-item FEO (legacy)
         feo_category_id: i.feo_category_id ?? null,  // FCAT-F1: per-item leaf FeoCategory
         // item-forms-accommodation-transport.md: без этого поля здесь «сохранить →
@@ -5135,6 +5153,11 @@ const doSave = async (adminOverride: boolean): Promise<boolean> => {
           unit: ci.unit ?? null,
           unit_price: ci.unit_price ?? null,
           total: ci.total ?? null,
+          // 2026-10-02: ci.vat_rate/vat_on_top раньше НЕ входили в drafts вовсе —
+          // ставка и флаг «НДС сверху» строки «Договор» терялись при каждом PUT
+          // (replaceAllContractItems пересоздаёт строки), см. types/contractItem.ts.
+          vat_rate: ci.vat_rate ?? null,
+          vat_on_top: (ci as any).vat_on_top ?? null,
           match_confirmed: ci.match_confirmed,
         }))
         try {

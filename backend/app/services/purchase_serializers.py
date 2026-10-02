@@ -83,6 +83,12 @@ def _item_to_out(
         vat_rate=getattr(item, 'vat_rate', None),
         vat_amount=getattr(item, 'vat_amount', None),
         total_with_vat=getattr(item, 'total_with_vat', None),
+        # 02.10.2026 (дефект приёмки): поле было в модели/схеме, но этот
+        # kwargs-конструктор (НЕ from_attributes) его не передавал — GET
+        # /api/purchases/{id} отдавал vat_on_top=None ВСЕГДА, хотя в БД было
+        # true/false. Тумблер строки после перезагрузки карточки показывал
+        # «как у закупки» независимо от сохранённого значения.
+        vat_on_top=getattr(item, 'vat_on_top', None),
         feo_planned_item_id=getattr(item, 'feo_planned_item_id', None),
         feo_category_id=getattr(item, 'feo_category_id', None),
         over_plan=getattr(item, 'over_plan', False) or False,

@@ -156,6 +156,8 @@ class ContractItemBase(BaseModel):
     unit_price: Optional[Decimal] = None
     total: Optional[Decimal] = None
     vat_rate: Optional[str] = None  # Phase 27.1.17
+    # «НДС сверху» этой строки (02.10.2026) — null = «как у закупки» (contract_vat_on_top).
+    vat_on_top: Optional[bool] = None
     match_confirmed: bool = True
     # item-forms-accommodation-transport.md: копия extra_attrs исходной
     # purchase_items (см. app/models/contract_item.py).
@@ -179,6 +181,7 @@ class ContractItemUpdate(BaseModel):
     unit_price: Optional[Decimal] = None
     total: Optional[Decimal] = None
     vat_rate: Optional[str] = None  # Phase 27.1.17
+    vat_on_top: Optional[bool] = None
     match_confirmed: Optional[bool] = None
     extra_attrs: Optional[dict] = None
     item_form: Optional[str] = None

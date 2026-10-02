@@ -46,12 +46,61 @@ export function parseVatRatePercent(rate: string | null | undefined): number {
   return m2?.[1] ? parseFloat(m2[1]) : 0
 }
 
+/** VAT «в т.ч.» извлечённый из суммы, которая ВСЕГДА хранится с НДС (плейн
+ * (total, rate) сигнатура — ЕДИНСТВЕННОЕ место этой формулы на фронте,
+ * ПРАВИЛО №6, см. .planning/quick/2026-10-02-vat-on-top/PLAN.md). vatAmount()
+ * ниже — обёртка над ней для вызывающих с объектом позиции. */
+export function vatIncludedAmount(total: unknown, rate: string | null | undefined): number {
+  const t = Number(total ?? 0)
+  const pct = parseVatRatePercent(rate)
+  if (pct <= 0 || !t) return 0
+  return Number((t * pct / (100 + pct)).toFixed(2))
+}
+
 /** VAT portion extracted from a gross (VAT-inclusive) total. */
 export function vatAmount(item: VatLike): number {
-  const total = Number(item.total_price ?? item.total ?? 0)
-  const pct = parseVatRatePercent(item.vat_rate)
-  if (pct <= 0) return 0
-  return Number((total * pct / (100 + pct)).toFixed(2))
+  const total = item.total_price ?? item.total ?? 0
+  return vatIncludedAmount(total, item.vat_rate)
+}
+
+/**
+ * Разрешает действующий флаг «НДС сверху» для строки: в режиме per_item
+ * построчный флаг побеждает (null у строки = «как у закупки» — фолбэк на
+ * заголовок), в режиме uniform всегда действует заголовок. ЕДИНСТВЕННОЕ место
+ * этой логики на фронте (ПРАВИЛО №6) — вызывают useItemsTotals.calcItemTotal,
+ * PurchaseItemsEditor.vue::recalcContractTotal и построчные таблицы позиций.
+ */
+export function effectiveVatOnTop(
+  itemFlag: boolean | null | undefined,
+  headerFlag: boolean | null | undefined,
+  vatMode: string | null | undefined,
+): boolean {
+  if ((vatMode || 'uniform') === 'per_item' && itemFlag != null) return !!itemFlag
+  return !!headerFlag
+}
+
+/**
+ * Сумма строки: цена введена «как есть» (с НДС или без — решает onTop).
+ * onTop и ставка > 0 → qty×price×(1+p/100) (цена без НДС, сумма — с), иначе
+ * (включая ставку «не облагается»/«ещё не знаю»/пустую) — qty×price как есть.
+ * Округление до копеек. ЕДИНСТВЕННАЯ формула суммы строки с учётом «НДС
+ * сверху» на фронте (ПРАВИЛО №6) — зеркало backend item_amounts.py::
+ * line_total. Для позиций со спец-формой (Проживание/Перевозки/Питание)
+ * формулу считает applyItemAmounts/computeItemTotal в utils/itemAmounts.ts —
+ * «НДС сверху» на них не распространяется (цена там не разделяется на тип
+ * позиции и ставку в этом релизе).
+ */
+export function lineTotalWithVat(
+  qty: unknown,
+  price: unknown,
+  rate: string | null | undefined,
+  onTop: boolean,
+): number {
+  const base = Number(qty ?? 0) * Number(price ?? 0)
+  if (!onTop) return Math.round(base * 100) / 100
+  const pct = parseVatRatePercent(rate)
+  if (pct <= 0) return Math.round(base * 100) / 100
+  return Math.round(base * (1 + pct / 100) * 100) / 100
 }
 
 /** Total WITH VAT — total_price is already gross, so return it as-is. */
@@ -73,12 +122,60 @@ export function normalizeVatRate(v: any): string | null {
   return /^\d+(?:\.\d+)?$/.test(s.trim()) ? s.trim() + '%' : s
 }
 
+// 2026-10-02 (владелец, после приёмки): построчный флаг «НДС сверху» в
+// per_item — три состояния (null/false/true), нужен способ вернуться в null
+// («как у закупки») из явно выставленных true/false. Единственное место этой
+// туда-обратно-мэппинга строка↔boolean|null (ПРАВИЛО №6) — используют
+// ItemsTableStages/ItemsTableFlat/ItemsCardsView.vue для v-btn-toggle с 3
+// кнопками вместо checkbox (у checkbox нет пути назад в indeterminate).
+// 2026-10-02 (дефект приёмки — заявка, уже после правки toggle'а): в
+// uniform-режиме у строки НЕТ своего поля ввода ставки (v-select ставки
+// рендерится только при vatMode==='per_item' — ItemsTableFlat/Stages/
+// CardsView), поэтому item.vat_rate там всегда null. Формула «НДС сверху»
+// читала ИМЕННО item.vat_rate → ставка всегда резолвилась в 0%, и сумма
+// 10×100 оставалась 1000 даже при включённом тумблере. headerVatRateString +
+// effectiveVatRateForItem — единственное место, где ставка строки получает
+// фолбэк на заголовочную (vat_applicable/vat_rate закупки/заявки), в uniform-
+// режиме. per_item со своей (непустой) ставкой строки эту пару не трогает.
+export function headerVatRateString(
+  vatApplicable: boolean | null | undefined,
+  vatRate: number | null | undefined,
+): string | null {
+  if (vatApplicable === false) return 'Без НДС'
+  if (vatApplicable === true && vatRate != null) return `${vatRate}%`
+  return null
+}
+
+export function effectiveVatRateForItem(
+  itemRate: string | null | undefined,
+  vatMode: string | null | undefined,
+  headerRate: string | null | undefined,
+): string | null {
+  if (itemRate) return itemRate
+  return (vatMode || 'uniform') === 'uniform' ? (headerRate ?? null) : null
+}
+
+export type VatOnTopTriState = 'default' | 'included' | 'on_top'
+export function vatOnTopToTriState(v: boolean | null | undefined): VatOnTopTriState {
+  return v === true ? 'on_top' : v === false ? 'included' : 'default'
+}
+export function triStateToVatOnTop(s: VatOnTopTriState): boolean | null {
+  return s === 'default' ? null : s === 'on_top'
+}
+
 export function useVatCalc() {
   return {
     VAT_RATE_OPTIONS,
     parseVatRatePercent,
     vatAmount,
+    vatIncludedAmount,
     totalWithVat,
     normalizeVatRate,
+    effectiveVatOnTop,
+    lineTotalWithVat,
+    vatOnTopToTriState,
+    triStateToVatOnTop,
+    headerVatRateString,
+    effectiveVatRateForItem,
   }
 }

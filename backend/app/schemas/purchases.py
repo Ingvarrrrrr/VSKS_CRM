@@ -44,6 +44,9 @@ class PurchaseItemCreate(BaseModel):
     vat_rate: Optional[str] = None  # Phase 26-U-3: per-item НДС ставка
     vat_amount: Optional[float] = None       # import-vat-cols: сумма НДС по позиции
     total_with_vat: Optional[float] = None   # import-vat-cols: стоимость с НДС
+    # «НДС сверху» этой строки (02.10.2026) — bool|null, действует только в
+    # vat_mode='per_item'; null = «как у закупки», см. item_amounts.effective_vat_on_top.
+    vat_on_top: Optional[bool] = None
     feo_planned_item_id: Optional[int] = None  # 27.4-15: FEO link для plan-graph version
     feo_category_id: Optional[int] = None  # FCAT-B1: per-item привязка к leaf FeoCategory
     needed_date: Optional[_Date] = None  # W2: дата потребности per-item
@@ -206,6 +209,9 @@ class PurchaseCreate(BaseModel):
     vat_applicable: Optional[bool] = False
     vat_rate: Optional[int] = None
     vat_exemption_article: Optional[str] = None
+    # «НДС в цене или сверху» (02.10.2026) — раздельно для цены ТЗ и цены договора.
+    tz_vat_on_top: bool = False
+    contract_vat_on_top: bool = False
     third_party_involved: Optional[bool] = False
     contract_end_date: Optional[date] = None
     commitment_quarter: Optional[int] = None
@@ -351,6 +357,8 @@ class PurchaseUpdate(BaseModel):
     vat_applicable: Optional[bool] = None
     vat_rate: Optional[int] = None
     vat_exemption_article: Optional[str] = None
+    tz_vat_on_top: Optional[bool] = None
+    contract_vat_on_top: Optional[bool] = None
     third_party_involved: Optional[bool] = None
     contract_end_date: Optional[date] = None
     commitment_quarter: Optional[int] = None

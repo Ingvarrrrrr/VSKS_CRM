@@ -335,6 +335,20 @@
                 label="НДС" placeholder="НДС %" :disabled="readonly"
                 @update:model-value="emit('vat-rate-change', idx, $event)" />
             </v-col>
+            <!-- 2026-10-02: построчный флаг «НДС сверху» (per_item), см. ItemsTableFlat.vue.
+                 3 состояния — путь назад в «как у закупки» (null). -->
+            <v-col v-if="vatMode === 'per_item'" cols="12" sm="4" class="d-flex align-center">
+              <v-btn-toggle
+                :model-value="vatOnTopToTriState(item.vat_on_top)"
+                density="compact" rounded="lg" mandatory
+                :disabled="readonly"
+                @update:model-value="(v: string) => emit('vat-on-top-change', idx, triStateToVatOnTop(v as any))"
+              >
+                <v-btn value="default" size="x-small">как у закупки</v-btn>
+                <v-btn value="included" size="x-small">с НДС</v-btn>
+                <v-btn value="on_top" size="x-small">сверху</v-btn>
+              </v-btn-toggle>
+            </v-col>
 
             <!-- Контрагент (advance_report mode only) -->
             <v-col v-if="showContractorColumn" cols="12">
@@ -405,6 +419,7 @@ import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT } f
 import ItemRowFormSwitch from '@/components/items/ItemRowFormSwitch.vue'
 import ItemFeoCategoryChip from '@/components/purchase/ItemFeoCategoryChip.vue'
 import type { ItemFormCode, ItemFormField } from '@/utils/itemAmounts'
+import { vatOnTopToTriState, triStateToVatOnTop } from '@/composables/useVatCalc'
 
 // EditorItem is structurally identical to the parent's; kept loose here since the
 // parent owns the canonical definition and passes its own objects through.
@@ -599,6 +614,7 @@ const emit = defineEmits<{
   'confirm-match': [idx: number]
   'calc-item-total': [idx: number]
   'vat-rate-change': [idx: number, v: any]
+  'vat-on-top-change': [idx: number, v: boolean | null]
   'remove-item': [idx: number]
   'split-item': [idx: number]
   'open-move-menu': []

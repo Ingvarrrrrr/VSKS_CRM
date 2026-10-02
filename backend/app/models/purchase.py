@@ -106,6 +106,13 @@ class Purchase(Base):
     vat_applicable = Column(Boolean, nullable=True, default=False)       # НДС применяется
     vat_rate = Column(Integer, nullable=True)                             # Ставка НДС (20, 10)
     vat_exemption_article = Column(String(200), nullable=True)           # Статья НК РФ
+    # «НДС в цене или сверху» (владелец, 02.10.2026, план 2026-10-02-vat-on-top):
+    # False (по умолчанию, как раньше) — unit_price/total_price уже включают
+    # НДС. True — unit_price введена БЕЗ налога, сумма строки всё равно
+    # хранится С НДС (item_amounts.line_total), см. docstring item_amounts.py.
+    # Раздельно для цены ТЗ (каталог/КП) и цены договора (договор/УПД).
+    tz_vat_on_top = Column(Boolean, nullable=False, default=False, server_default='false')
+    contract_vat_on_top = Column(Boolean, nullable=False, default=False, server_default='false')
     third_party_involved = Column(Boolean, nullable=True, default=False)  # Привлечение третьих лиц
     contract_end_date = Column(Date, nullable=True)                      # срок действия договора
     service_period_type = Column(String(10), nullable=True)              # 'period' | 'date'

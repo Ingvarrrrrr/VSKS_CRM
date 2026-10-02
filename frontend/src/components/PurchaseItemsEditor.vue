@@ -161,6 +161,9 @@
       :vat-rate="props.vatRate"
       :vat-exemption-article="props.vatExemptionArticle"
       :vat-exemption-auto-basis="props.vatExemptionAutoBasis"
+      :tz-vat-on-top="!!props.tzVatOnTop"
+      :contract-vat-on-top="!!props.contractVatOnTop"
+      :show-contract-toggle="!props.isWishStage"
       :pointer-target="props.pointerTarget"
       :require-article="!props.isWishStage"
       class="mb-2"
@@ -168,6 +171,8 @@
       @update:vat-applicable="(v: boolean | null) => emit('update:vatApplicable', v)"
       @update:vat-rate="(v: number | null) => emit('update:vatRate', v)"
       @update:vat-exemption-article="(v: string | null) => emit('update:vatExemptionArticle', v)"
+      @update:tz-vat-on-top="onTzVatOnTopToggle"
+      @update:contract-vat-on-top="onContractVatOnTopToggle"
     />
 
     <!-- Группировка и фильтр позиций по категориям/видам товаров из каталога -->
@@ -296,6 +301,9 @@
           :subsidy-name="props.subsidyName"
           :show-vat-columns-in-expand-row="showVatColumnsInExpandRow"
           :show-contractor-column="showContractorColumn"
+          :vat-mode="props.vatMode || 'uniform'"
+          :tz-vat-on-top="!!props.tzVatOnTop"
+          :contract-vat-on-top="!!props.contractVatOnTop"
           :is-advance="isAdvance"
           :expanded="expanded"
           :contract-items-total="contractItemsTotal"
@@ -336,6 +344,7 @@
           @open-quick-product-edit="openQuickProductEdit"
           @calc-item-total="calcItemTotal"
           @vat-rate-change="onVatRateChange"
+          @vat-on-top-change="onVatOnTopChange"
           @items-changed="emit('items-changed')"
           @contractor-search-input="onContractorSearchInput"
           @item-contractor-select="onItemContractorSelect"
@@ -418,6 +427,7 @@
           @confirm-match="confirmMatch"
           @calc-item-total="calcItemTotal"
           @vat-rate-change="onVatRateChange"
+          @vat-on-top-change="onVatOnTopChange"
           @remove-item="removeItem"
           @split-item="openSplitDialog"
           @open-move-menu="ensureSiblingPurchasesLoaded"
@@ -497,6 +507,7 @@
           @confirm-match="confirmMatch"
           @calc-item-total="calcItemTotal"
           @vat-rate-change="onVatRateChange"
+          @vat-on-top-change="onVatOnTopChange"
           @remove-item="removeItem"
           @split-item="openSplitDialog"
           @open-move-menu="ensureSiblingPurchasesLoaded"
@@ -871,6 +882,9 @@ import {
   vatAmount,
   totalWithVat,
   normalizeVatRate,
+  effectiveVatOnTop,
+  lineTotalWithVat,
+  headerVatRateString,
 } from '@/composables/useVatCalc'
 
 // ── Interfaces ───────────────────────────────────────────────────────────────
@@ -894,6 +908,9 @@ interface EditorItem {
   total_price: number | null
   country_origin: string
   vat_rate?: string | null       // Fix 3/4/5: НДС ставка per-item
+  // 2026-10-02: «НДС сверху» построчно (per_item-режим); null = «как у закупки»
+  // (props.tzVatOnTop) — см. effectiveVatOnTop в useVatCalc.ts.
+  vat_on_top?: boolean | null
   match_confirmed?: boolean
   contractor_id?: number | null
   contractor_inn?: string | null
@@ -1038,6 +1055,13 @@ const props = withDefaults(defineProps<{
   // вычисляется один раз в CreateOrderView.vue (см. vatExemptionAutoBasis computed
   // там), только для отображения подсказки в PurchaseVatBlock.
   vatExemptionAutoBasis?: string | null
+  // 2026-10-02 (НДС «в цене»/«сверху», .planning/quick/2026-10-02-vat-on-top):
+  // заголовочные флаги закупки — цена ТЗ/договора введена БЕЗ НДС, сумма строки
+  // считается НДС «сверху» (lineTotalWithVat в useVatCalc.ts). В режиме per_item
+  // это только фолбэк для строк с vat_on_top=null (effectiveVatOnTop).
+  // Единственный источник — form.tz_vat_on_top/contract_vat_on_top родителя.
+  tzVatOnTop?: boolean
+  contractVatOnTop?: boolean
   // Цель летящей стрелки-гида (composables/purchase/useGuideArrow.ts) — 'vat', когда
   // стрелка ведёт к этому блоку (missing_fields vat_rate/vat_exemption_article/
   // items.vat_rate, см. CreateOrderView.vue). Прокидывается в PurchaseVatBlock для
@@ -1260,6 +1284,8 @@ const emit = defineEmits<{
   'update:vatApplicable': [value: boolean | null]  // PurchaseVatBlock — единый блок НДС (null = «ещё не знаю»)
   'update:vatRate': [value: number | null]
   'update:vatExemptionArticle': [value: string | null]
+  'update:tzVatOnTop': [value: boolean]
+  'update:contractVatOnTop': [value: boolean]
   'item-added': [item: EditorItem]
   'item-removed': [idx: number]
   'product-created': [product: Product]
@@ -1559,7 +1585,15 @@ function getContractItemFor(rowIdx: number): ContractItem | undefined {
 // (ПРАВИЛО №6): применяется что при создании строки, что при любой правке
 // количества/цены, что раньше жило в двух копиях (одна вообще не пересчитывала).
 function recalcContractTotal(ci: ContractItem) {
-  ci.total = Math.round(Number(ci.quantity || 0) * Number(ci.unit_price || 0) * 100) / 100
+  // «НДС сверху» для стадии «Договор» (2026-10-02): цена договора/УПД может быть
+  // введена без НДС — сумма строки всегда с НДС, формула ЕДИНСТВЕННАЯ в
+  // useVatCalc.ts (lineTotalWithVat), effectiveVatOnTop разрешает построчный
+  // флаг ci.vat_on_top с фолбэком на заголовочный props.contractVatOnTop.
+  const onTop = effectiveVatOnTop((ci as any).vat_on_top, !!props.contractVatOnTop, props.vatMode)
+  // 2026-10-02 (дефект приёмки): в uniform-режиме у строки Договор тоже нет
+  // своего селектора ставки — resolvedVatRate подставляет шапочную (та же
+  // функция, что у ТЗ-строки, см. useItemsTotals.ts, Правило №6).
+  ci.total = lineTotalWithVat(ci.quantity, ci.unit_price, resolvedVatRate(ci.vat_rate), onTop)
 }
 
 // Заводит ContractItem для строки, если его ещё нет — сиды количества/ед./
@@ -1588,6 +1622,7 @@ function ensureContractItemFor(rowIdx: number): ContractItem {
     unit_price: pi?.unit_price ?? null,
     total: null,
     vat_rate: pi?.vat_rate ?? null,
+    vat_on_top: pi?.vat_on_top ?? null,
     match_confirmed: true,
   } as ContractItem
   recalcContractTotal(newCi)
@@ -1598,7 +1633,9 @@ function ensureContractItemFor(rowIdx: number): ContractItem {
 function updateContractField(rowIdx: number, field: keyof ContractItem, value: unknown) {
   const ci = ensureContractItemFor(rowIdx)
   ;(ci as any)[field] = value
-  if (field === 'quantity' || field === 'unit_price') {
+  // vat_on_top/vat_rate тоже влияют на сумму строки (lineTotalWithVat) — не только
+  // quantity/unit_price, как было до «НДС сверху» (2026-10-02).
+  if (field === 'quantity' || field === 'unit_price' || field === 'vat_on_top' || field === 'vat_rate') {
     recalcContractTotal(ci)
   }
   emitContractItemsUpdate()
@@ -1627,8 +1664,15 @@ function updateAcceptedField(
 function onContractVatRateChange(idx: number, v: any) {
   const ci = ensureContractItemFor(idx)
   ;(ci as any).vat_rate = normalizeVatRate(v)
+  // 2026-10-02: смена ставки меняет сумму строки, когда действует «НДС сверху» —
+  // раньше recalc здесь не требовался (total всегда был qty×price независимо от
+  // ставки), теперь ставка — один из аргументов lineTotalWithVat.
+  recalcContractTotal(ci)
   emitContractItemsUpdate()
 }
+// 2026-10-02: построчный флаг «НДС сверху» для строки «Договор» идёт через
+// generic updateContractField('vat_on_top', v) выше (та же точка входа, что у
+// остальных полей Договор) — отдельного обработчика не заводим (ПРАВИЛО №6).
 
 const contractItemCopying = ref(false)
 
@@ -1936,6 +1980,16 @@ const {
 } = useItemsImport({
   props: propsForItemDefaults, localItems, localContractItems, contractItemImportMode,
   emitUpdate, emitContractItemsUpdate, emit, showSnack, nextUid, applyMatchCandidate,
+  // 2026-10-02: импорт распознал УПД-колонки «цена без налога»/«сумма с налогом» —
+  // предлагаем включить «НДС сверху» для стадии Договор, не переключаем молча.
+  suggestContractVatOnTop: () => {
+    if (props.contractVatOnTop) return
+    showSnack(
+      'Похоже на УПД: цена без НДС, сумма строки — с НДС. Включить «НДС сверху» для цены договора?',
+      'info',
+      { actionText: 'Включить', onAction: () => emit('update:contractVatOnTop', true) },
+    )
+  },
 })
 
 // ── Contractors catalogue — composables/items/useItemsContractors.ts ────────
@@ -1959,10 +2013,44 @@ const isAdvance = computed(() => props.formMode === 'advance_report')
 // composables/items/useItemsTotals.ts. Phase 26-NN: showVatColumnsInExpandRow
 // hides НДС columns in expand-row for advance reports with no vat_rate at all.
 const {
-  effectiveVatRate, vatAmountForStage, totalWithVatForStage, onVatRateChange, calcItemTotal,
+  effectiveVatRate, vatAmountForStage, totalWithVatForStage, onVatRateChange, onVatOnTopChange, calcItemTotal,
   internalTotalNmck, contractItemsTotal, purchasePlannedTotal, contractSavings, contractSavingsPercent,
-  showVatColumnsInExpandRow,
-} = useItemsTotals({ localItems, localContractItems, getContractItemFor, isAdvance, emitUpdate, itemForm, resolveItemForm: resolveRowItemForm })
+  showVatColumnsInExpandRow, recalcItemsForHeaderVatOnTop, resolvedVatRate,
+} = useItemsTotals({
+  localItems, localContractItems, getContractItemFor, isAdvance, emitUpdate, itemForm,
+  resolveItemForm: resolveRowItemForm,
+  tzVatOnTop: computed(() => !!props.tzVatOnTop),
+  vatMode: computed(() => props.vatMode),
+  headerVatRate: computed(() => headerVatRateString(props.vatApplicable, props.vatRate)),
+})
+
+// 2026-10-02 (защита ручных/файловых сумм, правка после приёмки владельцем):
+// НИКАКОГО watch на props.tzVatOnTop/contractVatOnTop/vatRate/vatMode — он
+// пересчитывал бы ВСЕ строки при каждом открытии карточки/автосейве/смене
+// ставки или режима, включая те, где сумма введена вручную или «оставить как
+// в файле» (qty×price ей не равно) — такая строка молча переписывалась бы.
+// Пересчёт идёт ТОЛЬКО из explicit-обработчиков клика по переключателю шапки
+// (onTzVatOnTopToggle/onContractVatOnTopToggle ниже) — им передаётся НОВОЕ
+// значение напрямую, не через эхо props (эхо приходит позже, тем же путём,
+// что и при загрузке). Построчные vat-rate-change/vat-on-top-change уже и так
+// трогают ТОЛЬКО свою строку (onVatRateChange/onVatOnTopChange/
+// onContractVatRateChange/updateContractField выше) — здесь ничего менять не нужно.
+function onTzVatOnTopToggle(v: boolean) {
+  emit('update:tzVatOnTop', v)
+  recalcItemsForHeaderVatOnTop(v)
+}
+function onContractVatOnTopToggle(v: boolean) {
+  emit('update:contractVatOnTop', v)
+  // Строки с собственным флагом (per_item, vat_on_top !== null) не трогаем —
+  // заголовок на них не действует (effectiveVatOnTop), как и в TZ-варианте выше.
+  const mode = props.vatMode || 'uniform'
+  localContractItems.value.forEach((ci: any) => {
+    if (mode === 'per_item' && ci.vat_on_top != null) return
+    if (ci.quantity == null || ci.unit_price == null) return
+    ci.total = lineTotalWithVat(ci.quantity, ci.unit_price, resolvedVatRate(ci.vat_rate), v)
+  })
+  emitContractItemsUpdate()
+}
 
 // Phase 26-V: resizable columns
 // Phase 26-V-fix (superseded below): «Тип» держал максимум «Услуга»+стрелка

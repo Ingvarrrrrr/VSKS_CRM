@@ -57,6 +57,10 @@ class Wish(Base):
     vat_applicable = Column(Boolean, nullable=True)
     vat_rate = Column(Integer, nullable=True)
     vat_exemption_article = Column(String(200), nullable=True)
+    # «НДС в цене или сверху» (02.10.2026) — зеркалирует Purchase.tz_vat_on_top;
+    # у заявки есть только цена ТЗ (ещё нет договора), см. wish_convert.py для
+    # переноса в Purchase.tz_vat_on_top при конвертации.
+    tz_vat_on_top = Column(Boolean, nullable=False, default=False, server_default='false')
     event_id = Column(Integer, ForeignKey("events.id", ondelete="SET NULL"), nullable=True)
     assigned_to = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     executor_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # Кто исполняет (ставит approver)

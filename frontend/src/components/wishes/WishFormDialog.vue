@@ -426,10 +426,12 @@
                   :vat-rate="wishForm.vat_rate"
                   :vat-exemption-article="wishForm.vat_exemption_article"
                   :vat-exemption-auto-basis="null"
+                  :tz-vat-on-top="wishForm.tz_vat_on_top"
                   @update:vat-mode="(v: string) => { wishForm.vat_mode = v }"
                   @update:vat-applicable="(v: boolean | null) => { wishForm.vat_applicable = v }"
                   @update:vat-rate="(v: number | null) => { wishForm.vat_rate = v }"
                   @update:vat-exemption-article="(v: string | null) => { wishForm.vat_exemption_article = v ?? '' }"
+                  @update:tz-vat-on-top="(v: boolean) => { wishForm.tz_vat_on_top = v }"
                   @planned-item-created="onWishPlannedItemCreated"
                   @planned-item-deleted="onWishPlannedItemCreated"
                 />

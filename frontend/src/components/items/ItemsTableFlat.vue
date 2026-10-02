@@ -238,6 +238,20 @@
               style="min-width:100px" :disabled="readonly"
               placeholder="НДС %"
               @update:model-value="emit('vat-rate-change', idx, $event)" />
+            <!-- 2026-10-02: построчный флаг «НДС сверху» (per_item) — effectiveVatOnTop
+                 в useVatCalc.ts решает, какая цена перед qty×price: с НДС или без.
+                 3 состояния (не checkbox) — путь назад в «как у закупки» (null). -->
+            <v-btn-toggle
+              :model-value="vatOnTopToTriState(item.vat_on_top)"
+              density="compact" rounded="lg" mandatory class="mt-1"
+              style="transform:scale(0.8);transform-origin:left"
+              :disabled="readonly"
+              @update:model-value="(v: string) => emit('vat-on-top-change', idx, triStateToVatOnTop(v as any))"
+            >
+              <v-btn value="default" size="x-small">как у закупки</v-btn>
+              <v-btn value="included" size="x-small">с НДС</v-btn>
+              <v-btn value="on_top" size="x-small">сверху</v-btn>
+            </v-btn-toggle>
           </td>
           <td v-if="showNeededDate">
             <v-text-field
@@ -436,6 +450,7 @@ import { isItemFeoCategoryLocked, feoLockChipLabel, FEO_CATEGORY_LOCKED_HINT } f
 import ItemRowFormSwitch from '@/components/items/ItemRowFormSwitch.vue'
 import ItemFeoCategoryChip from '@/components/purchase/ItemFeoCategoryChip.vue'
 import type { ItemFormCode, ItemFormField } from '@/utils/itemAmounts'
+import { vatOnTopToTriState, triStateToVatOnTop } from '@/composables/useVatCalc'
 
 // EditorItem is structurally identical to the parent's; kept loose here since the
 // parent owns the canonical definition and passes its own objects through.
@@ -671,6 +686,7 @@ const emit = defineEmits<{
   'confirm-match': [idx: number]
   'calc-item-total': [idx: number]
   'vat-rate-change': [idx: number, v: any]
+  'vat-on-top-change': [idx: number, v: boolean | null]
   'remove-item': [idx: number]
   'split-item': [idx: number]
   'open-move-menu': []

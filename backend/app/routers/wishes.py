@@ -17,7 +17,7 @@ from app.models.purchase import Purchase
 from app.models.purchase_item import PurchaseItem
 from app.services.feo_plan import assert_tz_not_over_plan
 from app.services.item_contractor import set_item_contractor
-from app.services.item_amounts import line_total, apply_item_amounts
+from app.services.item_amounts import line_total, apply_item_amounts, effective_vat_on_top, effective_vat_rate
 from app.services.item_forms import item_form_for_wish_item
 # _move_or_detach_planned_item/_deactivate_if_orphaned нужны только update_wish
 # (ниже) — остальные хелперы автозаведения плана (_auto_assign_planned_items/
@@ -310,6 +310,7 @@ async def create_wish(
         vat_applicable=body.vat_applicable,
         vat_rate=body.vat_rate,
         vat_exemption_article=body.vat_exemption_article,
+        tz_vat_on_top=body.tz_vat_on_top,
         # item-forms-accommodation-transport.md: заявка получает собственный
         # contract_form (владелец, 2026-09-15) — источник item_form_for_wish
         # ниже, тот же принцип, что и у Purchase.contract_form.
@@ -354,6 +355,7 @@ async def create_wish(
                 over_plan=item_data.get('over_plan', False),
                 needed_date=_as_date(item_data.get('needed_date')),  # W2
                 vat_rate=item_data.get('vat_rate'),
+                vat_on_top=item_data.get('vat_on_top'),
             )
             _row_item_form_wish_create = item_form_for_wish_item(wish, wi)
             if _row_item_form_wish_create:
@@ -621,6 +623,7 @@ async def update_wish(
                     over_plan=item_data.get('over_plan', False),
                     needed_date=_as_date(item_data.get('needed_date')),  # W2
                     vat_rate=item_data.get('vat_rate'),
+                    vat_on_top=item_data.get('vat_on_top'),
                 )
                 # Задача 3 (владелец, 2026-09-20): при пересборе черновика payload
                 # может прислать РАССОГЛАСОВАННУЮ пару feo_planned_item_id/
@@ -656,6 +659,7 @@ async def update_wish(
                 _price_set = 'unit_price' in item_data
                 _extra_set = 'extra_attrs' in item_data
                 _item_form_row_set = 'item_form' in item_data
+                _vat_on_top_row_set = 'vat_on_top' in item_data
                 if 'item_name' in item_data:
                     wi.item_name = item_data['item_name']
                 if _price_set:
@@ -668,6 +672,8 @@ async def update_wish(
                     wi.extra_attrs = item_data['extra_attrs'] or {}
                 if _item_form_row_set:
                     wi.item_form = item_data['item_form']
+                if _vat_on_top_row_set:
+                    wi.vat_on_top = item_data['vat_on_top']
                 _row_item_form_wish_put_live = item_form_for_wish_item(wish, wi)
                 if _row_item_form_wish_put_live and (_qty_set or _price_set or _extra_set or _item_form_row_set):
                     # ПРАВИЛО №6: compute_item_total/apply_item_amounts — единственный
@@ -677,11 +683,15 @@ async def update_wish(
                     apply_item_amounts(wi, _row_item_form_wish_put_live)
                 elif 'total_price' in item_data:
                     wi.total_price = item_data['total_price']
-                elif _qty_set or _price_set:
+                elif _qty_set or _price_set or _vat_on_top_row_set:
                     # ПРАВИЛО №6: то же умножение, что и в purchase_items_edit.py/
                     # wish_distribution.py — единственный писатель line_total().
                     # Обычная позиция (item_form=None) — формула не меняется.
-                    wi.total_price = line_total(wi.quantity, wi.unit_price)
+                    # НДС сверху (02.10.2026): эффективный флаг строки (null = «как
+                    # у заявки») — item_amounts.effective_vat_on_top, не второй if/else.
+                    _on_top_wish_live = effective_vat_on_top(wi.vat_on_top, wish.tz_vat_on_top, wish.vat_mode)
+                    _rate_wish_live = effective_vat_rate(wi.vat_rate, wish.vat_mode, wish.vat_applicable, wish.vat_rate)
+                    wi.total_price = line_total(wi.quantity, wi.unit_price, rate=_rate_wish_live, on_top=_on_top_wish_live)
                 _wi_cat_changing = (
                     'feo_category_id' in item_data
                     and item_data['feo_category_id'] != wi.feo_category_id

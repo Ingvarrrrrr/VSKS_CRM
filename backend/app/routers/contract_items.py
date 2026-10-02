@@ -364,6 +364,8 @@ async def copy_from_purchase_items(pid: int, db: AsyncSession = Depends(get_db))
             unit=pi.unit,
             unit_price=pi.unit_price,
             total=pi.total_price,
+            vat_rate=pi.vat_rate,
+            vat_on_top=pi.vat_on_top,
             extra_attrs=getattr(pi, 'extra_attrs', None) or {},
             match_confirmed=True,
         )

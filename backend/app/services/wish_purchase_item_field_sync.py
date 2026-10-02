@@ -84,6 +84,7 @@ def sync_purchase_item_fields_from_wish_item(pi: PurchaseItem, wi: WishItem, wis
     pi.feo_planned_item_id = wi.feo_planned_item_id
     pi.over_plan = getattr(wi, 'over_plan', False)
     pi.vat_rate = getattr(wi, 'vat_rate', None)
+    pi.vat_on_top = getattr(wi, 'vat_on_top', None)  # «НДС сверху» строки (02.10.2026)
     pi.needed_date = _eff_date(wish, wi)
     # Ре-линковка (см. докстринг вызывающего кода): правка в 'draft' пересоздаёт
     # WishItem с новым id — восстанавливаем hard link на АКТУАЛЬНЫЙ id.

@@ -47,6 +47,10 @@ x-backend-common: &backend-common
     FABRIKANT_LOGIN: ${FABRIKANT_LOGIN:-}
     FABRIKANT_PASSWORD: ${FABRIKANT_PASSWORD:-}
     PLATFORM_CRED_KEY: ${PLATFORM_CRED_KEY:-}
+    # Корректировка утверждённой субсидии через проверку (02.10.2026): правки
+    # без права «Править субсидию напрямую» идут на проверку. Выключить без
+    # правки кода: SUBSIDY_REVISION_ENABLED=0 в .env на сервере.
+    SUBSIDY_REVISION_ENABLED: ${SUBSIDY_REVISION_ENABLED:-1}
   # backend доступен через nginx по http://localhost/api/ — наружу не открываем
   volumes:
     - uploads:/app/uploads

@@ -12,13 +12,21 @@ from app.database import async_session
 
 async def _deadline_reminder_loop():
     """Ежедневно в 09:00 UTC шлёт напоминания о задачах и закупках."""
-    from sqlalchemy import select
+    from sqlalchemy import select, or_
     from app.models.task import Task, TaskAssignee, TaskStatus
     from app.models.user import User
     from app.models.purchase import Purchase
     from app.models.purchase_event import PurchaseMember
     from app.models.purchase_approval import PurchaseApproval
+    from app.models.subsidy import Subsidy
     from app.notifications import notify_deadline_soon, notify_purchase_deadline
+
+    # «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б):
+    # закупки песочницы не напоминают о дедлайнах. ПРАВИЛО №6 — то же подвыражение
+    # в обоих запросах закупок ниже, одна формула (app.services.sandbox_guard
+    # для одиночных проверок апелляций); .not_().scalar_subquery() тут вместо
+    # него, т.к. это bulk-фильтр списка, а не одна закупка.
+    _not_sandbox_subsidy = select(Subsidy.id).where(Subsidy.is_sandbox == False)
 
     log = logging.getLogger(__name__)
     while True:
@@ -62,6 +70,7 @@ async def _deadline_reminder_loop():
                     select(Purchase).where(
                         Purchase.status.in_(active_statuses),
                         Purchase.execution_term.isnot(None),
+                        or_(Purchase.subsidy_id.is_(None), Purchase.subsidy_id.in_(_not_sandbox_subsidy)),
                     )
                 )
                 for p in purch_result.scalars().all():
@@ -89,6 +98,7 @@ async def _deadline_reminder_loop():
                     select(Purchase).where(
                         Purchase.status == "delivered",
                         Purchase.delivery_date.isnot(None),
+                        or_(Purchase.subsidy_id.is_(None), Purchase.subsidy_id.in_(_not_sandbox_subsidy)),
                     )
                 )
                 for p in delivered_result.scalars().all():
@@ -126,7 +136,9 @@ async def _deadline_reminder_loop():
                         u = await db.get(User, appr.user_id)
                         p = await db.get(Purchase, appr.purchase_id)
                         if u and p:
-                            await notify_purchase_deadline(p, u, days_overdue, "approval_overdue")
+                            from app.services.sandbox_guard import purchase_is_sandbox
+                            if not await purchase_is_sandbox(db, p):
+                                await notify_purchase_deadline(p, u, days_overdue, "approval_overdue")
 
         except asyncio.CancelledError:
             break

@@ -229,23 +229,26 @@ async def start_approval(
     for pa in created:
         await db.refresh(pa)
 
-    # Notify approvers
+    # Notify approvers — копия-песочница молчит (план breezy-mixing-lovelace.md,
+    # Часть Б; ПРАВИЛО №6 — единый предикат app.services.sandbox_guard).
     try:
-        from app.notifications import notify_approval_started, notify_approval_your_turn
-        approver_users = []
-        for pa in created:
-            if pa.user_id:
-                u = await db.get(User, pa.user_id)
-                if u:
-                    approver_users.append(u)
-        await notify_approval_started(p, approver_users)
-        # In sequential mode, notify first approver it's their turn
-        if approval_mode != "parallel" and created:
-            first = created[0]
-            if first.user_id:
-                first_user = await db.get(User, first.user_id)
-                if first_user:
-                    await notify_approval_your_turn(p, first_user)
+        from app.services.sandbox_guard import purchase_is_sandbox
+        if not await purchase_is_sandbox(db, p):
+            from app.notifications import notify_approval_started, notify_approval_your_turn
+            approver_users = []
+            for pa in created:
+                if pa.user_id:
+                    u = await db.get(User, pa.user_id)
+                    if u:
+                        approver_users.append(u)
+            await notify_approval_started(p, approver_users)
+            # In sequential mode, notify first approver it's their turn
+            if approval_mode != "parallel" and created:
+                first = created[0]
+                if first.user_id:
+                    first_user = await db.get(User, first.user_id)
+                    if first_user:
+                        await notify_approval_your_turn(p, first_user)
     except Exception:
         pass  # notifications are best-effort
 
@@ -413,44 +416,47 @@ async def decide_approval(
     await db.commit()
     await db.refresh(approval)
 
-    # Notifications
+    # Notifications — копия-песочница молчит (план breezy-mixing-lovelace.md,
+    # Часть Б; ПРАВИЛО №6 — единый предикат app.services.sandbox_guard).
     try:
-        from app.notifications import notify_approval_decided, notify_approval_your_turn, notify_approval_completed
-        approver_name = approval.approver_full_name or current_user.full_name
+        from app.services.sandbox_guard import purchase_is_sandbox
+        if not await purchase_is_sandbox(db, purchase):
+            from app.notifications import notify_approval_decided, notify_approval_your_turn, notify_approval_completed
+            approver_name = approval.approver_full_name or current_user.full_name
 
-        # Collect purchase members/creator to notify.
-        # Purchase has no created_by_id column (that's a Task field — same mine
-        # as p.org_id above); reuse the "responsible person" resolution already
-        # established for this purchase in start_approval() above.
-        notify_users = []
-        responsible_uid = purchase.assigned_user_id or purchase.service_note_by
-        if responsible_uid:
-            creator = await db.get(User, responsible_uid)
-            if creator:
-                notify_users.append(creator)
+            # Collect purchase members/creator to notify.
+            # Purchase has no created_by_id column (that's a Task field — same mine
+            # as p.org_id above); reuse the "responsible person" resolution already
+            # established for this purchase in start_approval() above.
+            notify_users = []
+            responsible_uid = purchase.assigned_user_id or purchase.service_note_by
+            if responsible_uid:
+                creator = await db.get(User, responsible_uid)
+                if creator:
+                    notify_users.append(creator)
 
-        await notify_approval_decided(
-            purchase, approver_name, approval.status,
-            comment=body.comment or "", notify_users=notify_users
-        )
+            await notify_approval_decided(
+                purchase, approver_name, approval.status,
+                comment=body.comment or "", notify_users=notify_users
+            )
 
-        if approval.status == "approved":
-            # If all done — notify completion
-            if purchase.approval_status == "approved":
-                await notify_approval_completed(purchase, notify_users)
-            else:
-                # Notify next approver in sequential mode
-                if purchase.approval_mode != "parallel":
-                    all_res = await db.execute(
-                        select(PurchaseApproval)
-                        .where(PurchaseApproval.purchase_id == pid, PurchaseApproval.status == "pending")
-                        .order_by(PurchaseApproval.order_num)
-                    )
-                    next_pa = all_res.scalars().first()
-                    if next_pa and next_pa.user_id:
-                        next_user = await db.get(User, next_pa.user_id)
-                        if next_user:
-                            await notify_approval_your_turn(purchase, next_user)
+            if approval.status == "approved":
+                # If all done — notify completion
+                if purchase.approval_status == "approved":
+                    await notify_approval_completed(purchase, notify_users)
+                else:
+                    # Notify next approver in sequential mode
+                    if purchase.approval_mode != "parallel":
+                        all_res = await db.execute(
+                            select(PurchaseApproval)
+                            .where(PurchaseApproval.purchase_id == pid, PurchaseApproval.status == "pending")
+                            .order_by(PurchaseApproval.order_num)
+                        )
+                        next_pa = all_res.scalars().first()
+                        if next_pa and next_pa.user_id:
+                            next_user = await db.get(User, next_pa.user_id)
+                            if next_user:
+                                await notify_approval_your_turn(purchase, next_user)
     except Exception:
         pass  # best-effort
 

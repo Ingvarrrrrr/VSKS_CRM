@@ -576,6 +576,9 @@ class PurchaseOutFull(PurchaseOut):
     contractor_inn: Optional[str] = None
     feo_category_name: Optional[str] = None
     subsidy_name: Optional[str] = None
+    # «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б):
+    # чип «копия» в реестре закупок.
+    subsidy_is_sandbox: Optional[bool] = None
     event_name: Optional[str] = None
     last_receipt_date: Optional[datetime] = None
     reimbursement_user_name: Optional[str] = None

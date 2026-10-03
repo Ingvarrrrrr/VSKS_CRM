@@ -256,6 +256,8 @@
     <template #item.subsidy_name="{ item }">
       <div class="d-flex flex-wrap gap-1">
         <v-chip v-if="item.subsidy_name" size="x-small" color="primary" variant="tonal">{{ item.subsidy_name }}</v-chip>
+        <!-- «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б) -->
+        <v-chip v-if="item.subsidy_is_sandbox" size="x-small" color="deep-purple" variant="flat">копия</v-chip>
         <v-chip v-for="es in (item.extra_subsidies || [])" :key="es.subsidy_id" size="x-small" color="secondary" variant="tonal">{{ es.subsidy_name }}</v-chip>
         <span v-if="!item.subsidy_name && !(item.extra_subsidies?.length)" class="text-medium-emphasis">—</span>
       </div>

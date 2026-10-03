@@ -165,6 +165,9 @@ class SubsidyOut(BaseModel):
     created_by: Optional[int] = None
     approved_by: Optional[int] = None
     approved_at: Optional[datetime] = None
+    # «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б)
+    is_sandbox: bool = False
+    copied_from_id: Optional[int] = None
     model_config = {"from_attributes": True}
 
 

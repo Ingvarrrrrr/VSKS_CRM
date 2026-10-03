@@ -371,6 +371,8 @@
       <template #item.subsidy_name="{ item }">
         <span class="text-body-2">
           {{ item.subsidy_name || '—' }}
+          <!-- «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б) -->
+          <v-chip v-if="item.subsidy_is_sandbox" size="x-small" color="deep-purple" variant="flat" class="ml-1">копия</v-chip>
         </span>
       </template>
 

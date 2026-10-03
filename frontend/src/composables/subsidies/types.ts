@@ -81,6 +81,11 @@ export interface SubsidyRow {
   // заполнена — такие позиции учтены в committed по плановой цене (см.
   // подсказку карточки «Можно перераспределить»).
   committed_missing_fact_items?: number | null
+  // «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б):
+  // is_sandbox=true — копия, не входит в итоги дашборда/аккаунта, свои цифры
+  // считаются как обычно. copied_from_id — исходная субсидия (если это копия).
+  is_sandbox?: boolean
+  copied_from_id?: number | null
 }
 
 // C4: участник (соредактор) черновой субсидии — калька wish_member без

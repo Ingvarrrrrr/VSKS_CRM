@@ -44,7 +44,12 @@ async def get_financial_plan(
     if scope in ("dashboard", "plan"):
         dash_sids = await get_visible_subsidy_ids(current_user, db, scope)
     q = select(Purchase)
-    q = _apply_purchase_org_filter(q, current_user, org_ids, subsidy_ids=dash_sids)
+    # «Копия для экспериментов»: явный subsidy_id (карточка самой субсидии,
+    # в т.ч. копии) — её закупки учитываются даже если is_sandbox=true.
+    q = _apply_purchase_org_filter(
+        q, current_user, org_ids, subsidy_ids=dash_sids,
+        explicit_subsidy_ids={subsidy_id} if subsidy_id else None,
+    )
     if subsidy_id:
         q = q.where(Purchase.subsidy_id == subsidy_id)
     rows = (await db.execute(q)).scalars().all()
@@ -248,7 +253,10 @@ async def get_financial_plan_details(
         q = select(Purchase).where(Purchase.status != "paid")
         if subsidy_id:
             q = q.where(Purchase.subsidy_id == subsidy_id)
-        q = _apply_purchase_org_filter(q, current_user, org_ids, subsidy_ids=dash_sids)
+        q = _apply_purchase_org_filter(
+            q, current_user, org_ids, subsidy_ids=dash_sids,
+            explicit_subsidy_ids={subsidy_id} if subsidy_id else None,
+        )
         q = q.options(selectinload(Purchase.contractor))
         rows = (await db.execute(q)).scalars().all()
 
@@ -287,7 +295,10 @@ async def get_financial_plan_details(
         q = select(Purchase).where(Purchase.status != "paid")
         if subsidy_id:
             q = q.where(Purchase.subsidy_id == subsidy_id)
-        q = _apply_purchase_org_filter(q, current_user, org_ids, subsidy_ids=dash_sids)
+        q = _apply_purchase_org_filter(
+            q, current_user, org_ids, subsidy_ids=dash_sids,
+            explicit_subsidy_ids={subsidy_id} if subsidy_id else None,
+        )
         q = q.options(selectinload(Purchase.contractor))
         rows = (await db.execute(q)).scalars().all()
 
@@ -348,7 +359,10 @@ async def get_financial_plan_details(
         q = select(Purchase).where(Purchase.status.in_(target_statuses))
         if subsidy_id:
             q = q.where(Purchase.subsidy_id == subsidy_id)
-        q = _apply_purchase_org_filter(q, current_user, org_ids, subsidy_ids=dash_sids)
+        q = _apply_purchase_org_filter(
+            q, current_user, org_ids, subsidy_ids=dash_sids,
+            explicit_subsidy_ids={subsidy_id} if subsidy_id else None,
+        )
         q = q.options(selectinload(Purchase.contractor))
         rows = (await db.execute(q)).scalars().all()
 

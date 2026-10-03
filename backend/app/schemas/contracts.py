@@ -113,6 +113,9 @@ class ContractOut(ContractCreate):
     contractor_name: Optional[str] = None
     contractor_inn: Optional[str] = None
     subsidy_name: Optional[str] = None
+    # «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б):
+    # чип «копия» в реестре договоров.
+    subsidy_is_sandbox: Optional[bool] = None
     extra_subsidies: List[ContractSubsidyOut] = []
     # Владелец (2026-09-30): окно выбора рамочного договора в закупке — ранг
     # релевантности относительно субсидии закупки (?prefer_subsidy_id=X на

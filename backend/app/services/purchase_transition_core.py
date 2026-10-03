@@ -301,8 +301,13 @@ async def apply_purchase_status_transition(
     except Exception:
         pass
 
-    # Notify purchase members + linked task assignees about status change
+    # Notify purchase members + linked task assignees about status change —
+    # копия-песочница молчит (план breezy-mixing-lovelace.md, Часть Б; ПРАВИЛО
+    # №6 — единый предикат app.services.sandbox_guard).
     try:
+        from app.services.sandbox_guard import purchase_is_sandbox
+        if await purchase_is_sandbox(db, p):
+            raise RuntimeError("sandbox purchase — notifications silenced")
         from app.notifications import notify_purchase_status_changed
         from app.models.purchase_event import PurchaseMember
         from app.models.task import Task, TaskAssignee

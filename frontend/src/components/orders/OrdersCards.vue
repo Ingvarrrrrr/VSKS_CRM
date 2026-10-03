@@ -34,7 +34,11 @@
             <div class="text-caption text-medium-emphasis">Контрагент</div>
             <div class="text-body-2 mb-1" style="overflow-wrap:anywhere">{{ item.contractor_name || '—' }}</div>
             <div class="text-caption text-medium-emphasis">Субсидия</div>
-            <div class="text-body-2 mb-1">{{ item.subsidy_name || '—' }}</div>
+            <div class="text-body-2 mb-1">
+              {{ item.subsidy_name || '—' }}
+              <!-- «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б) -->
+              <v-chip v-if="item.subsidy_is_sandbox" size="x-small" color="deep-purple" variant="flat" class="ml-1">копия</v-chip>
+            </div>
             <div class="d-flex justify-space-between mt-2">
               <div>
                 <div class="text-caption text-medium-emphasis">Сумма</div>

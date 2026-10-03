@@ -45,12 +45,32 @@ async def ensure_contract_linked(p: Purchase, db: AsyncSession) -> None:
         )
         inn = inn_row.scalar_one_or_none()
 
-    # Build lookup query with all 4 uniqueness parameters
+    # Build lookup query with all 4 uniqueness parameters.
+    # РЕГРЕССИЯ (исправлена): рамочные договоры в этом проекте общие на
+    # несколько субсидий (П15 — договор «51802 ОП/КОР» используется закупками
+    # разных субсидий, см. окно выбора рамочного в закупке: «эта субсидия /
+    # другие субсидии организации / остальные аккаунта»). Сужение лукапа до
+    # Contract.subsidy_id == p.subsidy_id здесь было НЕВЕРНЫМ — ломало этот
+    # реальный кейс. Глобальный лукап восстановлен для настоящих закупок;
+    # «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б)
+    # изолируется ТОЛЬКО по признаку песочницы (ПРАВИЛО №6 — единый предикат
+    # app.services.sandbox_guard): закупка песочницы видит только договоры
+    # своей же песочницы, настоящая закупка не видит договоры, принадлежащие
+    # ЧЬЕЙ-ЛИБО песочнице.
+    from app.services.sandbox_guard import (
+        purchase_is_sandbox, sandbox_contract_clause, sandbox_own_contract_clause,
+    )
+    p_is_sandbox = await purchase_is_sandbox(db, p)
+
     q = (
         select(Contract)
         .outerjoin(Contractor, Contract.contractor_id == Contractor.id)
         .where(Contract.number == num)
     )
+    if p_is_sandbox:
+        q = q.where(sandbox_own_contract_clause(p.subsidy_id))
+    else:
+        q = q.where(~sandbox_contract_clause())
     if p.contractor_id:
         q = q.where(Contract.contractor_id == p.contractor_id)
     if p.contract_date:

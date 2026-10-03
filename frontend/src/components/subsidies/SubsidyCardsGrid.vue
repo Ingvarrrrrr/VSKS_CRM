@@ -15,6 +15,12 @@
       <div class="sc-title-band">
         <div v-fit-text class="sc-name" :title="s.name">{{ s.name }}</div>
         <v-chip v-if="s.status === 'draft'" size="x-small" color="warning" variant="flat" class="ml-2">Черновик</v-chip>
+        <!-- «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б) -->
+        <v-chip
+          v-if="s.is_sandbox" size="x-small" color="deep-purple" variant="flat" class="ml-2"
+          prepend-icon="mdi-flask-outline"
+          title="Копия для эксперимента — не входит в итоги дашборда/аккаунта, не шлёт уведомления"
+        >Копия для эксперимента</v-chip>
         <div class="sc-actions">
           <v-btn
             v-if="ctx.canApproveSubsidy(s)"
@@ -34,7 +40,14 @@
           <v-btn icon="mdi-account-multiple" size="x-small" variant="text" color="teal" title="Согласующие" @click.stop="openApproversDialog(s)" />
           <v-btn icon="mdi-history" size="x-small" variant="text" color="blue-grey" title="История бюджета" @click.stop="ctx.openHistoryDialog(s)" />
           <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click.stop="ctx.startEdit(s)" />
-          <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click.stop="ctx.confirmDelete(s)" />
+          <template v-if="s.is_sandbox">
+            <v-btn icon="mdi-swap-horizontal-bold" size="x-small" variant="text" color="warning" title="Сделать настоящей" @click.stop="ctx.openSandboxPromote(s)" />
+            <v-btn icon="mdi-delete-sweep" size="x-small" variant="text" color="error" title="Удалить копию целиком" @click.stop="ctx.openSandboxDelete(s)" />
+          </template>
+          <template v-else>
+            <v-btn icon="mdi-content-copy" size="x-small" variant="text" color="deep-purple" title="Скопировать для эксперимента" @click.stop="ctx.openSandboxCopy(s)" />
+            <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click.stop="ctx.confirmDelete(s)" />
+          </template>
         </div>
       </div>
 

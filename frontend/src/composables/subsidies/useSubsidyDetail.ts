@@ -71,6 +71,11 @@ export interface SubsidyDetailContext {
   approvingSubsidyId: Ref<number | null>
   startEdit: (s: SubsidyRow) => Promise<void>
   confirmDelete: (s: SubsidyRow) => Promise<void>
+  // «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б) —
+  // тонкие прокси в SubsidySandboxDialog.vue, тот же приём, что confirmDelete выше.
+  openSandboxCopy: (s: SubsidyRow) => Promise<void>
+  openSandboxDelete: (s: SubsidyRow) => Promise<void>
+  openSandboxPromote: (s: SubsidyRow) => Promise<void>
   openMembersDialog: (s: SubsidyRow) => Promise<void>
   openHistoryDialog: (s: SubsidyRow) => void
 

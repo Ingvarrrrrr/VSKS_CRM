@@ -47,6 +47,12 @@
     <template #item.name="{ item }">
       <span class="font-weight-medium cursor-pointer" @click="ctx.toggleSelect(item.id)">{{ item.name }}</span>
       <v-chip v-if="item.status === 'draft'" size="x-small" color="warning" variant="flat" class="ml-2">Черновик</v-chip>
+      <!-- «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б) -->
+      <v-chip
+        v-if="item.is_sandbox" size="x-small" color="deep-purple" variant="flat" class="ml-2"
+        prepend-icon="mdi-flask-outline"
+        title="Копия для эксперимента — не входит в итоги дашборда/аккаунта, не шлёт уведомления"
+      >копия</v-chip>
     </template>
     <template #item.actions="{ item }">
       <div class="d-flex align-center justify-end" style="gap:2px">
@@ -68,7 +74,14 @@
         <v-btn icon="mdi-account-multiple" size="x-small" variant="text" color="teal" title="Согласующие" @click.stop="openApproversDialog(item)" />
         <v-btn icon="mdi-history" size="x-small" variant="text" color="blue-grey" title="История бюджета" @click.stop="ctx.openHistoryDialog(item)" />
         <v-btn icon="mdi-pencil" size="x-small" variant="text" color="primary" @click.stop="ctx.startEdit(item)" />
-        <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click.stop="ctx.confirmDelete(item)" />
+        <template v-if="item.is_sandbox">
+          <v-btn icon="mdi-swap-horizontal-bold" size="x-small" variant="text" color="warning" title="Сделать настоящей" @click.stop="ctx.openSandboxPromote(item)" />
+          <v-btn icon="mdi-delete-sweep" size="x-small" variant="text" color="error" title="Удалить копию целиком" @click.stop="ctx.openSandboxDelete(item)" />
+        </template>
+        <template v-else>
+          <v-btn icon="mdi-content-copy" size="x-small" variant="text" color="deep-purple" title="Скопировать для эксперимента" @click.stop="ctx.openSandboxCopy(item)" />
+          <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click.stop="ctx.confirmDelete(item)" />
+        </template>
       </div>
     </template>
   </v-data-table>

@@ -7,7 +7,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, func, case, extract
+from sqlalchemy import select, func, case, extract, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.purchase import Purchase
@@ -43,13 +43,40 @@ async def economy_by_method(
     if scope == "dashboard":
         dash_sids = await get_visible_subsidy_ids(current_user, db, "dashboard")
 
+    # «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б):
+    # этот эндпоинт — дашборд-виджет, единый предикат (ПРАВИЛО №6) —
+    # app.services.sandbox_guard.not_sandbox_subsidy_ids(). Явный subsidy_id
+    # (карточка самой субсидии, в т.ч. копии) — её закупки учитываются, даже
+    # is_sandbox: правило владельца «в самой копии все цифры считаются как
+    # обычно» — explicit_ids передаётся ниже во все вызовы.
+    from app.services.sandbox_guard import not_sandbox_subsidy_ids
+    _explicit = {subsidy_id} if subsidy_id else None
+    _not_sandbox_ids = not_sandbox_subsidy_ids(_explicit)
+
     visible_subsidy_ids = None
     if dash_sids is not _UNSET:
         visible_subsidy_ids = dash_sids  # может быть None — «без ограничения владением»
+        if visible_subsidy_ids is not None:
+            visible_subsidy_ids = (await db.execute(
+                select(Subsidy.id).where(
+                    Subsidy.id.in_(visible_subsidy_ids),
+                    or_(Subsidy.is_sandbox == False, Subsidy.id.in_(_explicit)) if _explicit else (Subsidy.is_sandbox == False),
+                )
+            )).scalars().all()
+        else:
+            visible_subsidy_ids = (await db.execute(_not_sandbox_ids)).scalars().all()
     elif org_ids is not None:
         visible_subsidy_ids = (await db.execute(
-            select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
+            select(Subsidy.id).where(
+                Subsidy.org_id.in_(org_ids),
+                or_(Subsidy.is_sandbox == False, Subsidy.id.in_(_explicit)) if _explicit else (Subsidy.is_sandbox == False),
+            )
         )).scalars().all()
+    else:
+        # Ни scope=dashboard, ни org-фильтра (superadmin/account_owner) — дашборд
+        # всё равно не подмешивает песочницу в «без ограничения владением»
+        # (кроме явного subsidy_id выше).
+        visible_subsidy_ids = (await db.execute(_not_sandbox_ids)).scalars().all()
 
     groups = await purchase_economy_by_method(
         db, subsidy_id=subsidy_id, year=year, visible_subsidy_ids=visible_subsidy_ids,
@@ -71,15 +98,36 @@ async def analytics(
         dash_sids = await get_visible_subsidy_ids(current_user, db, "dashboard")
     sid_filter = [int(x) for x in subsidy_ids.split(",") if x.strip()] if subsidy_ids else None
 
+    # «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б):
+    # /analytics — дашборд-виджеты, единый предикат (ПРАВИЛО №6). sid_filter
+    # (?subsidy_ids=...) — субсидии, явно запрошенные ЭТИМ вызовом (напр.
+    # карточка копии дёргает свою аналитику) — их закупки учитываются, даже
+    # is_sandbox; правило владельца «в самой копии все цифры считаются как
+    # обычно».
+    from app.services.sandbox_guard import not_sandbox_subsidy_ids
+    _not_sandbox_ids = not_sandbox_subsidy_ids(sid_filter)
+
     def _pf(q):
         """Apply purchase org/dashboard + subsidy filter inline."""
         if dash_sids is not _UNSET:
             if dash_sids is not None:
-                q = q.where(Purchase.subsidy_id.in_(dash_sids))
+                q = q.where(Purchase.subsidy_id.in_(
+                    select(Subsidy.id).where(
+                        Subsidy.id.in_(dash_sids),
+                        or_(Subsidy.is_sandbox == False, Subsidy.id.in_(sid_filter)) if sid_filter else (Subsidy.is_sandbox == False),
+                    )
+                ))
+            else:
+                q = q.where(Purchase.subsidy_id.in_(_not_sandbox_ids))
         elif org_ids is not None:
             q = q.where(Purchase.subsidy_id.in_(
-                select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
+                select(Subsidy.id).where(
+                    Subsidy.org_id.in_(org_ids),
+                    or_(Subsidy.is_sandbox == False, Subsidy.id.in_(sid_filter)) if sid_filter else (Subsidy.is_sandbox == False),
+                )
             ))
+        else:
+            q = q.where(Purchase.subsidy_id.in_(_not_sandbox_ids))
         if sid_filter:
             q = q.where(Purchase.subsidy_id.in_(sid_filter))
         return q
@@ -206,6 +254,9 @@ async def analytics(
             pf_q = pf_q.where(Subsidy.id.in_(dash_sids))
     elif org_ids is not None:
         pf_q = pf_q.where(Subsidy.org_id.in_(org_ids))
+    # «Копия субсидии для экспериментов»: виджет «план/факт по субсидии» —
+    # единый предикат (ПРАВИЛО №6), всегда (вне зависимости от ветки выше).
+    pf_q = pf_q.where(Subsidy.id.in_(_not_sandbox_ids))
     if sid_filter:
         pf_q = pf_q.where(Subsidy.id.in_(sid_filter))
     pf_result = await db.execute(pf_q)

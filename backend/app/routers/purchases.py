@@ -384,7 +384,11 @@ async def list_purchases(
             contractors[_cid] = _cname
             contractor_inns[_cid] = _cinn
     subsidies_r = await db.execute(select(Subsidy))
-    subsidies = {s.id: s.name for s in subsidies_r.scalars().all()}
+    _all_subsidies_list = subsidies_r.scalars().all()
+    subsidies = {s.id: s.name for s in _all_subsidies_list}
+    # «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б):
+    # чип «копия» в реестре закупок.
+    subsidy_sandbox_map = {s.id: bool(s.is_sandbox) for s in _all_subsidies_list}
 
     # Batch-fetch reimbursement user names
     ru_ids = [p.reimbursement_user_id for p in purchases if p.reimbursement_user_id]
@@ -509,7 +513,7 @@ async def list_purchases(
             ru_map=ru_map, su_map=su_map, feo_excess_map=_feo_excess_map,
             feo_mismatch_map=_feo_mismatch_map, amounts_map=_amounts_map, contract=p.contract,
             tz_waived_by_map=tz_waived_by_map, sn_map=sn_map,
-            economy_map=_economy_map_list,
+            economy_map=_economy_map_list, subsidy_sandbox_map=subsidy_sandbox_map,
         )
         if p.contract_id and p.purchase_contract_type in ('framework_cumulative', 'framework_with_amount'):
             out.framework_contract_total = display_total_by_contract.get(p.contract_id)
@@ -632,7 +636,9 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
             _lg.getLogger(__name__).warning(f"auto-recompute on GET /purchases/{pid} skipped: {_re}")
 
     subsidies_r = await db.execute(select(Subsidy))
-    subsidies = {s.id: s.name for s in subsidies_r.scalars().all()}
+    _all_subsidies_list_single = subsidies_r.scalars().all()
+    subsidies = {s.id: s.name for s in _all_subsidies_list_single}
+    subsidy_sandbox_map_single = {s.id: bool(s.is_sandbox) for s in _all_subsidies_list_single}
     # Перф (владелец, 27.09.2026, «закупка грузится 10 сек»): раньше здесь был
     # select(Contractor) БЕЗ фильтра — весь справочник контрагентов (51к строк
     # локально, десятки колонок каждая) ради ОДНОЙ карточки, которой нужны
@@ -767,6 +773,7 @@ async def get_purchase(pid: int, db: AsyncSession = Depends(get_db), current_use
         wish_status_map=_wish_status_map, feo_mismatch_map=_single_feo_mismatch_map,
         amounts_map=_single_amounts_map, contract=p.contract,
         tz_waived_by_map=single_tz_waived_by_map, sn_map=single_sn_map,
+        subsidy_sandbox_map=subsidy_sandbox_map_single,
         economy_map=_single_economy_map,
     )
     # phase26-m: populate framework_contract_total for single purchase view

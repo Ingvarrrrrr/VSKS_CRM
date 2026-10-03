@@ -18,6 +18,8 @@ export interface Contract {
   multi_contractor_label?: string | null
   subsidy_id?: number
   subsidy_name?: string
+  // «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б)
+  subsidy_is_sandbox?: boolean | null
   extra_subsidies?: ContractSubsidyItem[]
   subject?: string
   max_amount?: number

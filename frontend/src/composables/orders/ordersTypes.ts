@@ -30,6 +30,8 @@ export interface Purchase {
   feo_category_name?: string
   feo_category_id?: number
   subsidy_name?: string
+  // «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б)
+  subsidy_is_sandbox?: boolean | null
   subsidy_id?: number
   subject?: string
   planned_total_price?: number

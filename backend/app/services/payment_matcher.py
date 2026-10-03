@@ -42,11 +42,16 @@ async def resolve_subsidy(
     org_id (Этап 1), где привязка НЕ должна зависеть от того, опознан ли контрагент
     (платежи физлицам/авансовые тоже относятся к субсидии по тому же basis_doc_number).
     """
+    # «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б):
+    # банковская выписка — реальные деньги, никогда не матчится на is_sandbox=true
+    # (копия сознательно не копирует basis_doc_number/basis_doc_date — см.
+    # services/subsidy_copy — но фильтр здесь на случай ручного совпадения).
     if basis_doc_number and basis_doc_date:
         q = await db.execute(
             select(Subsidy).where(
                 Subsidy.basis_doc_number == basis_doc_number,
                 Subsidy.basis_doc_date == basis_doc_date,
+                Subsidy.is_sandbox == False,
             ).limit(1)
         )
         s = q.scalar_one_or_none()
@@ -55,7 +60,10 @@ async def resolve_subsidy(
 
     if basis_doc_number:
         q = await db.execute(
-            select(Subsidy).where(Subsidy.basis_doc_number == basis_doc_number).limit(1)
+            select(Subsidy).where(
+                Subsidy.basis_doc_number == basis_doc_number,
+                Subsidy.is_sandbox == False,
+            ).limit(1)
         )
         s = q.scalar_one_or_none()
         if s:
@@ -78,6 +86,7 @@ async def resolve_subsidy(
                         select(Subsidy).where(
                             Subsidy.basis_doc_number == num,
                             Subsidy.basis_doc_date == d,
+                            Subsidy.is_sandbox == False,
                         ).limit(1)
                     )
                     s = q.scalar_one_or_none()
@@ -87,7 +96,9 @@ async def resolve_subsidy(
                     pass
             # без даты — только по номеру
             q = await db.execute(
-                select(Subsidy).where(Subsidy.basis_doc_number == num).limit(1)
+                select(Subsidy).where(
+                    Subsidy.basis_doc_number == num, Subsidy.is_sandbox == False,
+                ).limit(1)
             )
             s = q.scalar_one_or_none()
             if s:
@@ -136,8 +147,15 @@ async def auto_match(bp: BankPayment, db: AsyncSession) -> None:
     }
 
     if contracts_list:
+        # «Копия субсидии для экспериментов»: банковская выписка — реальные
+        # деньги, не матчится на договоры, принадлежащие песочнице (план
+        # breezy-mixing-lovelace.md, Часть Б; единый предикат — ПРАВИЛО №6).
+        from app.services.sandbox_guard import sandbox_contract_clause
         q = await db.execute(
-            select(Contract).where(Contract.contractor_id == bp.matched_contractor_id)
+            select(Contract).where(
+                Contract.contractor_id == bp.matched_contractor_id,
+                ~sandbox_contract_clause(),
+            )
         )
         all_contracts = q.scalars().all()
 
@@ -163,8 +181,12 @@ async def auto_match(bp: BankPayment, db: AsyncSession) -> None:
 
     # Fallback: если contracts[] не нашёл — ищем по contractor_id (ровно 1 договор → берём его)
     if not bp.matched_contract_id and bp.matched_contractor_id:
+        from app.services.sandbox_guard import sandbox_contract_clause
         q2 = await db.execute(
-            select(Contract).where(Contract.contractor_id == bp.matched_contractor_id)
+            select(Contract).where(
+                Contract.contractor_id == bp.matched_contractor_id,
+                ~sandbox_contract_clause(),
+            )
         )
         fallback_contracts = q2.scalars().all()
         if len(fallback_contracts) == 1:

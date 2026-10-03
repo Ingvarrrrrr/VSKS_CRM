@@ -83,7 +83,12 @@ async def dashboard_type_drill(
         )
 
     def _purchase_filter(q):
-        return _apply_purchase_org_filter(q, current_user, subsidy_ids=visible_subsidy_ids)
+        # «Копия для экспериментов»: narrow_ids — субсидии, явно запрошенные
+        # ЭТИМ вызовом (?subsidy_ids=... — напр. карточка копии дёргает свою
+        # разбивку товары/услуги) — её закупки учитываются, даже is_sandbox.
+        return _apply_purchase_org_filter(
+            q, current_user, subsidy_ids=visible_subsidy_ids, explicit_subsidy_ids=narrow_ids,
+        )
 
     detail = await compute_type_split_detail(
         db, apply_filter=_purchase_filter, use_sids=True,

@@ -119,7 +119,7 @@ def _purchase_to_full(
     wish_title_map: dict | None = None, wish_status_map: dict | None = None,
     feo_mismatch_map: dict | None = None, amounts_map: dict | None = None,
     contract=None, tz_waived_by_map: dict | None = None, sn_map: dict | None = None,
-    economy_map: dict | None = None,
+    economy_map: dict | None = None, subsidy_sandbox_map: dict | None = None,
 ) -> PurchaseOutFull:
     # Ленивый импорт — избежать цикла на уровне модуля: purchases.py (ядро)
     # импортирует _purchase_to_full ОТСЮДА, поэтому этот модуль не может
@@ -241,6 +241,7 @@ def _purchase_to_full(
         contractor_inn=(contractor_inns or {}).get(_hdr.contractor_id),
         feo_category_name=p.feo_category.name if p.feo_category else None,
         subsidy_name=subsidies.get(p.subsidy_id),
+        subsidy_is_sandbox=(subsidy_sandbox_map or {}).get(p.subsidy_id),
         event_name=p.event.name if p.event else None,
         subsidy_allocations=alloc_out,
         last_receipt_date=(receipt_map or {}).get(p.id),

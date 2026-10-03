@@ -217,6 +217,7 @@ async def list_contracts(
         d.total_delivered = total_delivered
         d.total_paid = total_paid
         d.total_payment = total_delivered  # legacy compat
+        d.subsidy_is_sandbox = bool(c.subsidy.is_sandbox) if c.subsidy else None
         # framework_cumulative — без предельной суммы: остаток не считается (нет лимита)
         if c.contract_type == 'framework_cumulative' and not c.max_amount:
             d.remaining_ordered = None   # нет лимита — нет отрицательного остатка

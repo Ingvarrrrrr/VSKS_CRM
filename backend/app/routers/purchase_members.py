@@ -443,10 +443,14 @@ async def add_purchase_member(
     await db.commit()
     await db.refresh(m)
 
-    # Notify added user
+    # Notify added user — копия-песочница молчит (план breezy-mixing-lovelace.md,
+    # Часть Б; ПРАВИЛО №6 — единый предикат app.services.sandbox_guard).
     if u and u.id != current_user.id and is_new:
         try:
             purchase = await db.get(Purchase, pid)
+            from app.services.sandbox_guard import purchase_is_sandbox
+            if purchase and await purchase_is_sandbox(db, purchase):
+                purchase = None
             if purchase:
                 if m.consent_pending:
                     from app.notifications import notify_purchase_consent_required

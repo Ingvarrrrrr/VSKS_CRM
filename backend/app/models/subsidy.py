@@ -52,6 +52,13 @@ class Subsidy(Base):
     approved_at = Column(DateTime(timezone=True), nullable=True)
     org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True)
     contractor_id = Column(Integer, ForeignKey("contractors.id", ondelete="SET NULL"), nullable=True)
+    # «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б,
+    # 03.10.2026): is_sandbox=true — копия, исключается из итогов дашборда/аккаунта
+    # (routers/dashboard.py, routers/subsidies.py list), не шлёт уведомления/задачи
+    # по своим закупкам (services/sandbox_guard.py). copied_from_id — исходная
+    # субсидия, из которой сделана копия (services/subsidy_copy/).
+    is_sandbox = Column(Boolean, nullable=False, default=False, server_default='false')
+    copied_from_id = Column(Integer, ForeignKey("subsidies.id", ondelete="SET NULL"), nullable=True)
     contractor = relationship("Contractor", foreign_keys=[contractor_id])
     feo_categories = relationship("FeoCategory", back_populates="subsidy")
     approvers = relationship("SubsidyApprover", back_populates="subsidy", order_by="SubsidyApprover.order_num", cascade="all, delete-orphan")

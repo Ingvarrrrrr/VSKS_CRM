@@ -71,22 +71,46 @@ def obligation_date(p: Purchase) -> Optional[date]:
 _UNSET = object()
 
 
-def _apply_purchase_org_filter(query, user: User, org_ids=_UNSET, subsidy_ids=_UNSET):
+def _apply_purchase_org_filter(query, user: User, org_ids=_UNSET, subsidy_ids=_UNSET, explicit_subsidy_ids=None):
     """Filter purchases via subsidy.org_id — или напрямую по subsidy_ids (приоритет).
 
     subsidy_ids для scope=dashboard: None → не фильтровать, set →
     Purchase.subsidy_id.in_(set). Иначе org_ids (или get_org_filter при _UNSET).
+
+    «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б):
+    итоги ДАШБОРДА (этот файл) исключают is_sandbox — КРОМЕ случая, когда
+    запрос явно ограничен конкретной субсидией/субсидиями (explicit_subsidy_ids —
+    id из query-параметра subsidy_id/subsidy_ids конкретного эндпоинта, НЕ
+    видимость). Правило владельца: «в самой субсидии-копии все цифры считаются
+    как обычно» — карточка копии дёргает те же дашборд-виджеты с явным
+    ?subsidy_id=<копия>, и ему нужны реальные числа, не нули. Единый предикат
+    (ПРАВИЛО №6) — app.services.sandbox_guard.not_sandbox_subsidy_ids(explicit_ids),
+    переиспользуется dashboard_charts.py/dashboard_analytics.py напрямую, и
+    dashboard_type_drill.py/dashboard_financial_plan*.py — транзитивно через
+    эту функцию (каждый передаёт СВОЙ explicit_subsidy_ids).
     """
+    from app.services.sandbox_guard import not_sandbox_subsidy_ids
+    _not_sandbox = not_sandbox_subsidy_ids(explicit_subsidy_ids)
     if subsidy_ids is not _UNSET:
         if subsidy_ids is not None:
-            query = query.where(Purchase.subsidy_id.in_(subsidy_ids))
+            query = query.where(Purchase.subsidy_id.in_(
+                _not_sandbox.where(Subsidy.id.in_(subsidy_ids))
+            ))
+        else:
+            # None = «видимость не сужена» (напр. superadmin) — но дашборд
+            # всё равно не должен подмешивать песочницу в общие итоги.
+            query = query.where(Purchase.subsidy_id.in_(_not_sandbox))
         return query
     if org_ids is _UNSET:
         org_ids = get_org_filter(user)
     if org_ids is not None:
         query = query.where(Purchase.subsidy_id.in_(
-            select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
+            _not_sandbox.where(Subsidy.org_id.in_(org_ids))
         ))
+    else:
+        # Без org-фильтра (superadmin/account_owner) итоги дашборда всё равно
+        # не включают песочницу (кроме explicit_subsidy_ids выше).
+        query = query.where(Purchase.subsidy_id.in_(_not_sandbox))
     return query
 
 
@@ -107,10 +131,20 @@ async def dashboard(
     cat_q = select(FeoCategory).order_by(FeoCategory.level, FeoCategory.id)
     if dash_sids is not _UNSET:
         if dash_sids is not None:
-            cat_q = cat_q.where(FeoCategory.subsidy_id.in_(dash_sids))
+            cat_q = cat_q.where(FeoCategory.subsidy_id.in_(
+                select(Subsidy.id).where(Subsidy.id.in_(dash_sids), Subsidy.is_sandbox == False)
+            ))
+        else:
+            cat_q = cat_q.where(FeoCategory.subsidy_id.in_(
+                select(Subsidy.id).where(Subsidy.is_sandbox == False)
+            ))
     elif org_ids is not None:
         cat_q = cat_q.where(FeoCategory.subsidy_id.in_(
-            select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
+            select(Subsidy.id).where(Subsidy.org_id.in_(org_ids), Subsidy.is_sandbox == False)
+        ))
+    else:
+        cat_q = cat_q.where(FeoCategory.subsidy_id.in_(
+            select(Subsidy.id).where(Subsidy.is_sandbox == False)
         ))
     cat_result = await db.execute(cat_q)
     cats = cat_result.scalars().all()

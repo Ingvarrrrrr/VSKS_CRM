@@ -973,3 +973,8 @@ async def get_budget_history(
 # этого модуля, fact_import.router добавляет свой "/{subsidy_id}/fact-import".
 from app.routers.fact_import import router as _fact_import_router  # noqa: E402
 router.include_router(_fact_import_router)
+
+# «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б,
+# 03.10.2026) — тот же приём под-роутера, что и fact_import выше.
+from app.routers.subsidy_copy import router as _subsidy_copy_router  # noqa: E402
+router.include_router(_subsidy_copy_router)

@@ -73,6 +73,12 @@ async def dashboard_charts(
     elif dashboard:
         visible_subsidy_ids = await get_visible_subsidy_ids(current_user, db, scope)
     use_sids = managed or dashboard
+    # «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б):
+    # единый предикат — app.services.sandbox_guard.not_sandbox_subsidy_ids();
+    # применяется только для scope=dashboard/radar/plan, НЕ для managed (страница
+    # «Субсидии» обязана продолжать показывать копию, иначе ею нечем управлять).
+    from app.services.sandbox_guard import not_sandbox_subsidy_ids
+    _not_sandbox_ids = not_sandbox_subsidy_ids()
 
     # Status counts for pie chart (filtered)
     status_q = select(Purchase.status, func.count(Purchase.id).label("cnt")).group_by(Purchase.status)
@@ -195,6 +201,10 @@ async def dashboard_charts(
             subsidy_q = subsidy_q.where(Subsidy.id.in_(visible_subsidy_ids))
     elif org_ids is not None:
         subsidy_q = subsidy_q.where(Subsidy.org_id.in_(org_ids))
+    if dashboard:
+        # На странице «Субсидии» (scope=managed) копия ОСТАЁТСЯ в списке —
+        # иначе ею нечем было бы управлять.
+        subsidy_q = subsidy_q.where(Subsidy.id.in_(_not_sandbox_ids))
     subsidy_result = await db.execute(subsidy_q)
 
     # FEO planned sum per subsidy
@@ -214,6 +224,8 @@ async def dashboard_charts(
         feo_planned_q = feo_planned_q.where(FeoCategory.subsidy_id.in_(
             select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
         ))
+    if dashboard:
+        feo_planned_q = feo_planned_q.where(FeoCategory.subsidy_id.in_(_not_sandbox_ids))
     feo_planned_result = await db.execute(feo_planned_q)
     feo_planned_map: dict[int, float] = {
         row.subsidy_id: float(row.feo_planned_sum)
@@ -288,6 +300,10 @@ async def dashboard_charts(
         contract_single_q = contract_single_q.where(Contract.subsidy_id.in_(
             select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
         ))
+    if dashboard:
+        # «Копия субсидии для экспериментов» (план breezy-mixing-lovelace.md, Часть Б):
+        # единый предикат — app.services.sandbox_guard.not_sandbox_subsidy_ids().
+        contract_single_q = contract_single_q.where(Contract.subsidy_id.in_(_not_sandbox_ids))
     cs_rows = (await db.execute(contract_single_q)).all()
 
     # framework_cumulative: aggr по закупкам привязанным к таким договорам
@@ -317,6 +333,8 @@ async def dashboard_charts(
         contract_fc_q = contract_fc_q.where(Purchase.subsidy_id.in_(
             select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
         ))
+    if dashboard:
+        contract_fc_q = contract_fc_q.where(Purchase.subsidy_id.in_(_not_sandbox_ids))
     cfc_rows = (await db.execute(contract_fc_q)).all()
 
     # Собрать contracts_map: subsidy_id → float (сумма по обеим частям)
@@ -352,6 +370,8 @@ async def dashboard_charts(
         mp_q = mp_q.where(Contract.subsidy_id.in_(
             select(Subsidy.id).where(Subsidy.org_id.in_(org_ids))
         ))
+    if dashboard:
+        mp_q = mp_q.where(Contract.subsidy_id.in_(_not_sandbox_ids))
     mp_map: dict = {}
     for r in (await db.execute(mp_q)).all():
         mp_map[r.subsidy_id] = mp_map.get(r.subsidy_id, 0.0) + float(r.amt)

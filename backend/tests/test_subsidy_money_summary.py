@@ -77,3 +77,40 @@ async def test_subsidy_money_summary_no_purchases_redistributable_eq_budget(
     assert row["planned_not_committed"] == pytest.approx(100_000.0)
     assert row["redistributable"] == pytest.approx(500_000.0)
     assert row["free"] + row["planned_not_committed"] == pytest.approx(row["redistributable"])
+
+
+@pytest.mark.asyncio
+async def test_subsidy_money_summary_no_budget_redistributable_eq_planned(
+    client, superadmin_headers, db_session, test_org,
+):
+    """Баг владельца (субсидия id 75 «ХО», 04.10.2026): официального бюджета
+    нет вовсе (ни ручной Subsidy.budget, ни сумма «по ФЭО» дерева) — budget
+    после effective_subsidy_budget == 0. «Можно перераспределить» не смеет
+    быть budget − committed (= −committed, отрицательное число без смысла):
+    фолбэк на planned_not_committed, та же логика, что у узлов дерева без
+    бюджета (feo_plan_tree.py) и у фронта (useFeoTreeAmounts.ts)."""
+    subsidy = await _make_subsidy(db_session, test_org.id, budget=None)
+    # leaf без budget= — calculate_budgets_bulk не находит сумм «по ФЭО», calc=0.
+    leaf = await _make_category(db_session, subsidy.id, name="Без бюджета")
+    fpi = await _make_planned_item(db_session, leaf.id, "Станок", 2, 200_000)
+
+    summary = await subsidy_money_summary(db_session, [subsidy.id])
+    row = summary[subsidy.id]
+
+    assert row["budget"] == pytest.approx(0.0)
+    assert row["planned"] == pytest.approx(200_000.0)
+    assert row["committed"] == pytest.approx(0.0)
+    # Без договоров: перераспределить можно весь план.
+    assert row["redistributable"] == pytest.approx(row["planned"])
+    assert row["redistributable_by_kind"] is not None
+    assert row["redistributable_by_kind"] == row["planned_not_committed_by_kind"]
+
+    # Частично законтрактовано — redistributable = planned − committed, не budget − committed.
+    await _make_linked_purchase(db_session, subsidy.id, leaf.id, fpi.id, 1, 150_000)
+    summary2 = await subsidy_money_summary(db_session, [subsidy.id])
+    row2 = summary2[subsidy.id]
+
+    assert row2["committed"] == pytest.approx(150_000.0)
+    assert row2["redistributable"] == pytest.approx(row2["planned"] - row2["committed"])
+    assert row2["redistributable"] == pytest.approx(row2["planned_not_committed"])
+    assert row2["redistributable_by_kind"] == row2["planned_not_committed_by_kind"]

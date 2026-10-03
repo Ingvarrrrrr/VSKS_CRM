@@ -35,24 +35,41 @@ app.routers.dashboard_charts.dashboard_charts — три отдельных вы
   redistributable_by_kind       — subsidy_type_totals (app.services.type_totals,
                                    feo_goods/feo_services/feo_unspecified —
                                    «бюджет ФЭО по типу») минус committed_by_kind,
-                                   ТОЛЬКО когда у субсидии есть разбивка дерева
+                                   когда у субсидии есть разбивка дерева
                                    по типам (feo_filled, та же проверка, что
                                    dashboard_charts.py budget_* ветка type_split);
-                                   иначе None — в проекте нет отдельного
-                                   «бюджета по типу» для субсидий без дерева
-                                   ФЭО (fallback budget — просто число, тип не
-                                   определён, см. dashboard_charts.py docstring
-                                   про feo_filled/budget_unspecified).
+                                   без бюджета (budget <= 0) — тот же фолбэк,
+                                   что у redistributable: берём уже готовый
+                                   planned_not_committed_by_kind (см. выше);
+                                   когда ни бюджета, ни плана по типам нет —
+                                   None (в проекте нет отдельного «бюджета по
+                                   типу» без дерева ФЭО и без плана, см.
+                                   dashboard_charts.py docstring про
+                                   feo_filled/budget_unspecified).
 
 Производные (считаются один раз здесь, НЕ читаются ниоткуда — это и есть их
 единственная точка):
   free                   = budget − planned
   planned_not_committed  = planned − committed
-  redistributable        = budget − committed
+  redistributable        = budget − committed, ПОКА задан официальный бюджет
+                            (budget > 0 после effective_subsidy_budget). Без
+                            бюджета «перераспределять» нечего ОТ бюджета — та
+                            же логика, что уже применена к узлам дерева
+                            (app.services.feo_plan_tree ~стр.1493-1496:
+                            redistributable=None без бюджета) и к фронту
+                            (frontend/src/composables/subsidies/
+                            useFeoTreeAmounts.ts ~стр.400-425: без бюджета
+                            показывается planned_not_committed «из плана без
+                            договоров»). Здесь — тот же фолбэк, не вторая
+                            формула: redistributable = planned_not_committed,
+                            redistributable_by_kind = planned_not_committed_by_kind.
 
 Инвариант (проверен test_subsidy_money_summary.py и совпадением с subsidy_stats
-/api/dashboard/charts): free + planned_not_committed == redistributable ==
-budget − committed (с точностью до копейки)."""
+/api/dashboard/charts): при заданном бюджете free + planned_not_committed ==
+redistributable == budget − committed (с точностью до копейки). Без бюджета
+(budget <= 0) инвариант иной: redistributable == planned_not_committed (budget
+в формулу не входит, free всё равно считается как budget − planned, т.е.
+может быть отрицательным/нулевым — это отдельное поле, не трогается)."""
 from typing import Optional
 
 from sqlalchemy import select
@@ -151,6 +168,20 @@ async def subsidy_money_summary(db: AsyncSession, subsidy_ids: list[int]) -> dic
                 "unspecified": tt.get("feo_unspecified", 0.0) - committed_by_kind["unspecified"],
             }
 
+        # Без официального бюджета budget − committed не несёт смысла
+        # («перераспределить от бюджета», которого нет) — та же логика фолбэка,
+        # что в feo_plan_tree.py (redistributable=None без бюджета, фронт
+        # подставляет planned_not_committed). Здесь всегда отдаём число (не
+        # None — это НЕ узел дерева, а готовая карточка), поэтому фолбэк сразу
+        # на planned_not_committed/planned_not_committed_by_kind (см. докстринг
+        # модуля).
+        if budget > 0:
+            redistributable = budget - committed
+        else:
+            redistributable = planned - committed
+            if redistributable_by_kind is None:
+                redistributable_by_kind = dict(planned_not_committed_by_kind)
+
         result[sid] = {
             "budget": budget,
             "planned": planned,
@@ -159,7 +190,7 @@ async def subsidy_money_summary(db: AsyncSession, subsidy_ids: list[int]) -> dic
             "free": budget - planned,
             "planned_not_committed": planned - committed,
             "planned_not_committed_by_kind": planned_not_committed_by_kind,
-            "redistributable": budget - committed,
+            "redistributable": redistributable,
             "redistributable_by_kind": redistributable_by_kind,
             "committed_missing_fact_items": _committed.get("committed_missing_fact_items", 0),
             "plan_floor_added": plan_floor_map.get(sid, 0.0),

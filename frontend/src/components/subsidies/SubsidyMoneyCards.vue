@@ -25,7 +25,7 @@
           </div>
           <div v-if="isSplit" class="kpi-split-rows" @click.stop>
             <template v-if="splitRows.length">
-              <div v-for="row in splitRows" :key="row.kind" class="kpi-split-row">
+              <div v-for="row in splitRows" :key="row.kind" class="kpi-split-row" :class="{ 'kpi-split-row-neg': row.amount < -0.5 }">
                 <span class="kpi-split-dot" :class="'kpi-split-dot-' + row.kind" />
                 <span class="kpi-split-text">{{ row.label }} {{ formatCurrencyRound(Math.abs(row.amount)) }}</span>
               </div>
@@ -101,5 +101,11 @@ const splitRows = computed<SplitRow[]>(() => {
 .kpi-sub-note {
   margin-top: 4px;
   line-height: 1.3;
+}
+/* scoped-стиль родителя (SubsidyKpiCards.vue:534) до дочернего компонента не
+   доходит (урок feedback_split_view_css_before_after_screenshots.md) —
+   повторяем здесь тот же класс/цвет для минусовых строк разбивки по типам. */
+.kpi-split-row-neg {
+  color: #EF4444;
 }
 </style>

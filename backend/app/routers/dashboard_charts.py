@@ -497,12 +497,15 @@ async def dashboard_charts(
             "planned_not_committed": _money.get("planned_not_committed", planned_tree - _money.get("committed", 0.0)),
             "planned_not_committed_by_kind": _money.get("planned_not_committed_by_kind") or {"goods": 0.0, "services": 0.0, "unspecified": 0.0},
             "redistributable": _money.get("redistributable", effective_budget - _money.get("committed", 0.0)),
-            # Оставлено None — байт-в-байт прежнее поведение этого эндпоинта
-            # (subsidy_money_summary УМЕЕТ посчитать redistributable_by_kind
-            # через subsidy_type_totals, но раньше это поле здесь всегда было
-            # None, и контракт API п. A менять его тут не просит — см. PLAN.md
-            # шаг 5 отчёта: «поля ответа и их значения не меняются»).
-            "redistributable_by_kind": None,
+            # ИСПРАВЛЕНО 04.10.2026: раньше здесь жёстко стояло None (комментарий
+            # «байт-в-байт прежнее поведение») — из-за этого «Можно
+            # перераспределить по типам» выглядело пустым для ЛЮБОЙ субсидии,
+            # хотя subsidy_money_summary уже умеет его считать (через
+            # subsidy_type_totals при заполненном дереве, фолбэком на
+            # planned_not_committed_by_kind без официального бюджета — см.
+            # докстринг subsidy_money_summary.py). Читаем как остальные поля
+            # этого блока — ОДНА точка расчёта, без второго механизма здесь.
+            "redistributable_by_kind": _money.get("redistributable_by_kind"),
             # ИСПРАВЛЕНО 02.10.2026: economy_total=None (ни одна позиция субсидии
             # не измерена) пропускается как null, не форсится в 0.0 — см.
             # purchase_economy.py docstring.

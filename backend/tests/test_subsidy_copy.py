@@ -19,6 +19,7 @@ from app.models.purchase_item import PurchaseItem
 from app.models.contract import Contract
 from app.models.contract_item import ContractItem
 from app.models.payment import Payment
+from app.models.purchase_receipt import PurchaseReceipt
 from app.services.subsidy_copy import create_sandbox_copy, delete_sandbox_copy, dry_run_delete
 
 
@@ -215,6 +216,93 @@ async def test_delete_sandbox_copy_does_not_touch_original(db_session):
     assert orig_contract is not None
     orig_payment = await db_session.get(Payment, ids["payment_id"])
     assert orig_payment is not None
+
+
+async def test_copy_with_fiscal_receipt_does_not_violate_unique_fiscal_constraint(db_session):
+    """Блокер приёмки: uq_receipt_fiscal (fiscal_drive_number,
+    fiscal_document_number, fiscal_sign) — ГЛОБАЛЬНОЕ ограничение на всю
+    таблицу purchase_receipts, не per-subsidy. Копия чека обязана обнулять
+    фискальную тройку (остальные поля — продавец/ИНН/суммы/raw_json — как
+    есть), иначе второй чек с той же тройкой ловит UniqueViolationError."""
+    source, ids = await _build_full_subsidy(db_session)
+    receipt = PurchaseReceipt(
+        purchase_id=ids["purchase_id"],
+        fiscal_drive_number=f"ФН-{uuid.uuid4().hex[:12]}",
+        fiscal_document_number=12345,
+        fiscal_sign=f"ФП-{uuid.uuid4().hex[:8]}",
+        kkt_reg_id="0000000000012345",
+        total_sum=Decimal("500.00"),
+        seller_name="ООО Тестовый продавец",
+        seller_inn="7701234567",
+        source="qr_scan",
+        raw_json={"items": [{"name": "Товар", "sum": 50000}]},
+    )
+    db_session.add(receipt)
+    await db_session.commit()
+    await db_session.refresh(receipt)
+
+    copy = await create_sandbox_copy(db_session, source)
+    await db_session.commit()  # не должно упасть UniqueViolationError
+
+    new_purchase = (await db_session.execute(
+        select(Purchase).where(Purchase.subsidy_id == copy.id)
+    )).scalars().first()
+    new_receipt = (await db_session.execute(
+        select(PurchaseReceipt).where(PurchaseReceipt.purchase_id == new_purchase.id)
+    )).scalars().first()
+    assert new_receipt is not None
+    assert new_receipt.id != receipt.id
+    # Фискальная тройка НЕ скопирована — оригинал остаётся единственным
+    # носителем этих реквизитов (проверка «чек уже загружен в другой
+    # авансовый» продолжает работать по оригиналу).
+    assert new_receipt.fiscal_drive_number is None
+    assert new_receipt.fiscal_document_number is None
+    assert new_receipt.fiscal_sign is None
+    # Остальное — скопировано как есть.
+    assert new_receipt.seller_name == "ООО Тестовый продавец"
+    assert new_receipt.seller_inn == "7701234567"
+    assert new_receipt.total_sum == Decimal("500.00")
+    assert new_receipt.raw_json == {"items": [{"name": "Товар", "sum": 50000}]}
+    # Оригинал не тронут.
+    orig_receipt = await db_session.get(PurchaseReceipt, receipt.id)
+    assert orig_receipt.fiscal_drive_number == receipt.fiscal_drive_number
+
+
+async def test_copy_preserves_framework_contract_seq_pairs(db_session):
+    """uq_purchase_framework_seq (contract_id, framework_seq) WHERE оба NOT
+    NULL — копия создаёт НОВЫЙ contract_id для рамочного договора, поэтому
+    пара (новый contract_id, framework_seq) обязана остаться уникальной в
+    рамках копии (framework_seq копируется как есть, но contract_id другой —
+    коллизии с оригиналом/друг с другом внутри копии быть не должно)."""
+    subsidy = await _make_subsidy(db_session)
+    contract = Contract(
+        number="РАМ-1", contract_type="framework_cumulative", subsidy_id=subsidy.id,
+        subject="Рамочный договор",
+    )
+    db_session.add(contract)
+    await db_session.flush()
+    p1 = Purchase(
+        subsidy_id=subsidy.id, item_name="Партия 1", status="paid",
+        contract_id=contract.id, framework_seq=1,
+    )
+    p2 = Purchase(
+        subsidy_id=subsidy.id, item_name="Партия 2", status="paid",
+        contract_id=contract.id, framework_seq=2,
+    )
+    db_session.add_all([p1, p2])
+    await db_session.commit()
+
+    copy = await create_sandbox_copy(db_session, subsidy)
+    await db_session.commit()  # не должно упасть UniqueViolationError
+
+    new_purchases = (await db_session.execute(
+        select(Purchase).where(Purchase.subsidy_id == copy.id).order_by(Purchase.framework_seq)
+    )).scalars().all()
+    assert len(new_purchases) == 2
+    assert {p.framework_seq for p in new_purchases} == {1, 2}
+    # Обе ссылаются на НОВЫЙ (общий единственный) договор копии, не на оригинал.
+    assert new_purchases[0].contract_id == new_purchases[1].contract_id
+    assert new_purchases[0].contract_id != contract.id
 
 
 async def test_copying_a_sandbox_copy_is_rejected_by_router():

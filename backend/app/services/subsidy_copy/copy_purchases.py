@@ -51,9 +51,20 @@ async def copy_purchases(
     if not purchases:
         return result
 
-    # 1. Договоры — один раз на contract_id, даже если на него ссылаются
-    # несколько закупок (рамочный договор + его дочерние закупки).
+    # 1. Договоры — ВСЕ договоры субсидии (Contract.subsidy_id == source_sid),
+    # не только те, что напрямую referenced покупками через purchase.contract_id:
+    # на живых данных (ФАДМ_2026) нашлись договоры без единой закупки/позиции
+    # договора, ссылающейся на них (framework-головы без заказов, авансовые
+    # контракты AVANS-* и т.п.) — если копировать только referenced-договоры,
+    # число договоров копии расходится с оригиналом (46 vs 36 на живых данных).
+    # Объединяем с contract_id'ами purchases (на случай расхождения данных —
+    # purchase.contract_id почти никогда не указывает на ЧУЖУЮ субсидию, см.
+    # services/contracts_linking.py, но дублей тут не повредит set).
     source_contract_ids = {p.contract_id for p in purchases if p.contract_id}
+    own_contracts_result = await db.execute(
+        select(Contract.id).where(Contract.subsidy_id == source_sid)
+    )
+    source_contract_ids |= set(own_contracts_result.scalars().all())
     contract_id_map: dict[int, int] = {}
     if source_contract_ids:
         contracts = (await db.execute(
@@ -102,7 +113,19 @@ async def copy_purchases(
         )).scalars().all()
         receipt_id_map: dict[int, int] = {}
         for rcpt in receipts:
-            new_r = clone_row(rcpt, PurchaseReceipt, purchase_id=new_p.id)
+            # uq_receipt_fiscal (fiscal_drive_number, fiscal_document_number,
+            # fiscal_sign) — ГЛОБАЛЬНОЕ ограничение на всю таблицу purchase_
+            # receipts, не per-subsidy (models/purchase_receipt.py). Копия чека
+            # с той же фискальной тройкой ловит UniqueViolationError. Владелец:
+            # «фискальную тройку не копировать (NULL — ограничение их
+            # пропускает), остальное — продавец/ИНН/суммы/позиции/raw_json —
+            # копировать» — реальный чек остаётся ЕДИНСТВЕННЫМ носителем этих
+            # реквизитов, проверка «чек уже загружен в другой авансовый»
+            # продолжает работать по оригиналу, не по копии.
+            new_r = clone_row(
+                rcpt, PurchaseReceipt, purchase_id=new_p.id,
+                fiscal_drive_number=None, fiscal_document_number=None, fiscal_sign=None,
+            )
             db.add(new_r)
             await db.flush()
             receipt_id_map[rcpt.id] = new_r.id

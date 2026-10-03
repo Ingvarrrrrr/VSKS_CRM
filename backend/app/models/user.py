@@ -38,6 +38,16 @@ class User(Base):
     # См. app/auth/jwt.py::get_current_user/get_org_filter.
     all_orgs_access = Column(Boolean, default=False, nullable=False, server_default="false")
 
+    # Защита входа от подбора пароля (app/auth/account_lockout.py) — общий
+    # счётчик в БД, а не in-memory (как IP-лимит в auth/rate_limit.py), чтобы
+    # работало одинаково на обеих репликах backend_a/backend_b.
+    failed_login_count = Column(Integer, nullable=False, default=0, server_default="0")
+    failed_login_first_at = Column(DateTime(timezone=True), nullable=True)
+    locked_until = Column(DateTime(timezone=True), nullable=True)
+    # Версия токена (app/auth/token_version.py) — инкремент при смене пароля
+    # аннулирует все ранее выданные JWT (claim "tv" в app/auth/jwt.py).
+    token_version = Column(Integer, nullable=False, default=0, server_default="0")
+
     # Phase 29 D-04: водительские данные (раскрываются при can_drive=True)
     can_drive = Column(Boolean, default=False, nullable=False, server_default="false")  # Может водить ТС
     license_series = Column(String(10), nullable=True)           # Серия ВУ

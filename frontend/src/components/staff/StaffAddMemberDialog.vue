@@ -41,7 +41,7 @@
             hint="Формат: 8-999-999-99-99" persistent-hint
           />
           <v-text-field v-model="newMemberForm.password" label="Пароль *" type="password" variant="outlined" density="compact" class="mb-2"
-            :rules="[v => !!v || 'Обязательное поле', v => v.length >= 6 || 'Минимум 6 символов']" />
+            :rules="[v => !!v || 'Обязательное поле', v => v.length >= 8 || 'Минимум 8 символов']" />
           <v-text-field v-model="newMemberForm.password_confirm" label="Подтвердите пароль *" type="password" variant="outlined" density="compact" class="mb-2"
             :error="!!newMemberForm.password_confirm && newMemberForm.password !== newMemberForm.password_confirm"
             :error-messages="newMemberForm.password_confirm && newMemberForm.password !== newMemberForm.password_confirm ? 'Пароли не совпадают' : ''" />
@@ -57,7 +57,7 @@
         <v-btn variant="text" @click="show = false">Отмена</v-btn>
         <v-btn v-if="addMemberMode === 'existing'" color="primary" :disabled="!memberForm.user_id" @click="$emit('add')">Добавить</v-btn>
         <v-btn v-else color="primary"
-          :disabled="!newMemberForm.email || !newMemberForm.password || !newMemberForm.last_name || !newMemberForm.first_name || newMemberForm.password.length < 6 || newMemberForm.password !== newMemberForm.password_confirm || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newMemberForm.email)"
+          :disabled="!newMemberForm.email || !newMemberForm.password || !newMemberForm.last_name || !newMemberForm.first_name || newMemberForm.password.length < 8 || newMemberForm.password !== newMemberForm.password_confirm || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newMemberForm.email)"
           :loading="newMemberSaving" @click="$emit('create-and-add')">Создать и добавить</v-btn>
       </v-card-actions>
     </v-card>

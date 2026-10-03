@@ -40,6 +40,8 @@ from app.database import get_db
 from app.models.user import User
 from app.services.fio import resolve_user_name_input
 from app.auth.jwt import hash_password, get_current_user, get_org_filter
+from app.services.password_policy import validate_new_password
+from app.auth.token_version import bump_token_version
 from app.schemas.schemas import UserCreate, UserUpdate, UserOut
 from app.auth.permissions import (
     require_action, ensure_user_org_access,
@@ -248,6 +250,8 @@ async def create_user(
     if not last_name or not first_name:
         raise HTTPException(400, "Укажите фамилию и имя сотрудника")
 
+    validate_new_password(data.password, identifiers=[data.email, username])
+
     norm_dept = data.department.strip().title() if data.department else data.department
     user = User(
         username=username,
@@ -333,7 +337,9 @@ async def update_user(
         if pwd:
             if current_user.role not in ("superadmin", "account_owner"):
                 raise HTTPException(403, "Изменение пароля доступно только владельцу аккаунта и выше")
+            validate_new_password(pwd, identifiers=[user.email, user.username])
             user.password_hash = hash_password(pwd)
+            await bump_token_version(db, user.id)  # аннулирует все ранее выданные токены этого пользователя
 
     # ФИО: last_name/first_name/middle_name — источник истины, full_name всегда
     # пересобирается (см. app/services/fio.py:resolve_user_name_input). PATCH

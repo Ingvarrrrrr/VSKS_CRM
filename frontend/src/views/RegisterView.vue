@@ -120,7 +120,7 @@ async function register() {
   if (!form.org_name) { validationErrors.value.org_name = 'Обязательное поле'; return }
   if (!form.email) { validationErrors.value.email = 'Обязательное поле'; return }
   if (!form.password) { validationErrors.value.password = 'Обязательное поле'; return }
-  if (form.password.length < 6) { validationErrors.value.password = 'Минимум 6 символов'; return }
+  if (form.password.length < 8) { validationErrors.value.password = 'Минимум 8 символов'; return }
   if (form.password !== passwordConfirm.value) { return }
   if (!consentAccepted.value) { error.value = 'Нужно дать согласие на обработку персональных данных'; return }
 

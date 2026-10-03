@@ -19,6 +19,7 @@ from app.utils.email import send_verification_email
 from app.services.fio import compose_fio, resolve_user_name_input
 from app.services.org_requisites import org_requisites
 from app.services.legal_constants import REGISTRATION_CONSENT_DOCUMENTS
+from app.services.password_policy import validate_new_password
 from app.routers.contractors import apply_requisite_fields
 
 router = APIRouter(tags=["organizations"])
@@ -134,6 +135,7 @@ async def register(data: RegisterRequest, request: Request, db: AsyncSession = D
         )
     if not data.consent_version or not data.consent_version.strip():
         raise HTTPException(400, CONSENT_VERSION_MISSING_MESSAGE)
+    validate_new_password(data.password, identifiers=[data.email, data.username])
 
     # Check email uniqueness (email = login)
     existing_email = (await db.execute(select(User).where(User.email == data.email))).scalar_one_or_none()

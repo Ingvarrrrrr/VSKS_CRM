@@ -19,6 +19,7 @@ from app.models.user import User
 from app.services.fio import resolve_user_name_input
 from app.auth.jwt import hash_password, get_single_org_id
 from app.auth.permissions import require_action
+from app.services.password_policy import validate_new_password
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -170,6 +171,15 @@ async def import_users_excel(
             username = email.split('@')[0]
         if not password:
             errors_list.append({"row": row_idx, "error": f"Нет пароля для «{full_name}»"})
+            continue
+        # Пароль берётся из файла (не генерируется системой) — политика
+        # (app/services/password_policy.py) та же, что при регистрации/сбросе;
+        # ошибка — по строке, не роняет весь импорт.
+        try:
+            validate_new_password(str(password), identifiers=[email, username])
+        except HTTPException as _pwd_exc:
+            detail = _pwd_exc.detail if isinstance(_pwd_exc.detail, str) else "Пароль не проходит политику безопасности"
+            errors_list.append({"row": row_idx, "error": f"{detail} («{full_name}»)"})
             continue
 
         # Validate role

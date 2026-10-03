@@ -78,3 +78,38 @@ async def send_password_reset_email(to_email: str, token: str) -> None:
             server.sendmail(settings.SMTP_FROM, to_email, msg.as_string())
     except Exception as e:
         logger.error(f"Failed to send password reset email to {to_email}: {e}")
+
+
+async def send_account_locked_email(to_email: str) -> None:
+    """Предупреждение о подборе пароля (app/auth/account_lockout.py) — шлётся
+    ОДИН раз, когда счётчик неверных попыток для аккаунта доходит до лимита.
+    Ошибка отправки не должна ронять логин — весь try/except ниже не
+    пробрасывается наружу, по образцу остальных отправщиков в этом модуле."""
+    if not settings.SMTP_USER:
+        logger.info(f"[DEV] Account lockout warning for {to_email}")
+        print(f"\n[DEV] Account lockout warning email for {to_email}\n")
+        return
+
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = "Подбор пароля к вашей учётной записи — GALA"
+        msg["From"] = settings.SMTP_FROM
+        msg["To"] = to_email
+
+        html = f"""
+        <html><body>
+        <h2>Подозрительная активность</h2>
+        <p>Кто-то подбирает пароль к вашей учётной записи <strong>{to_email}</strong> в GALA.</p>
+        <p>Вход в эту учётную запись временно заблокирован на 15 минут.</p>
+        <p style="color:#c62828;"><strong>Если это были не вы — смените пароль после разблокировки.</strong></p>
+        <p style="color:#666;font-size:12px;">Если это были вы и вы просто забыли пароль — воспользуйтесь формой «Забыли пароль?» после окончания блокировки.</p>
+        </body></html>
+        """
+        msg.attach(MIMEText(html, "html"))
+
+        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
+            server.starttls()
+            server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+            server.sendmail(settings.SMTP_FROM, to_email, msg.as_string())
+    except Exception as e:
+        logger.error(f"Failed to send account lockout email to {to_email}: {e}")

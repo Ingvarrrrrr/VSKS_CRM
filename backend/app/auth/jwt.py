@@ -45,6 +45,18 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
     user = result.scalar_one_or_none()
     if user is None:
         raise cred_exc
+    # token_version (app/auth/token_version.py): смена пароля инкрементирует
+    # users.token_version — все токены, выпущенные ДО смены (claim "tv" меньше
+    # текущего значения), перестают проходить. Claim отсутствует (токен
+    # выпущен до этой задачи, или старый токен без "tv") — считаем его 0,
+    # совместимо со свежими пользователями (token_version стартует с 0).
+    token_tv = payload.get("tv")
+    token_tv = int(token_tv) if token_tv is not None else 0
+    if token_tv != (user.token_version or 0):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Сессия завершена: пароль был изменён. Войдите заново",
+        )
     # Multi-org: read org_ids list from JWT (superadmin multi-select)
     jwt_org_ids = payload.get("org_ids")
     if jwt_org_ids is not None:

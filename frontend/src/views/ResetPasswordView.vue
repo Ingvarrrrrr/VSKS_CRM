@@ -53,7 +53,7 @@ async function resetPassword() {
   error.value = ''
   passwordError.value = ''
   if (!password.value) { passwordError.value = 'Обязательное поле'; return }
-  if (password.value.length < 6) { passwordError.value = 'Минимум 6 символов'; return }
+  if (password.value.length < 8) { passwordError.value = 'Минимум 8 символов'; return }
   if (password.value !== passwordConfirm.value) return
   if (!token) { error.value = 'Ссылка повреждена — нет токена'; return }
 

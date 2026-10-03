@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,12 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models.user import User
 from app.models.organization import Organization
+from fastapi.responses import JSONResponse
+
 from app.auth.jwt import verify_password, create_access_token, get_current_user, hash_password
 from app.auth.rate_limit import (
     rate_limit_response, record_failed_login, reset_login_rate_limit, resolve_client_ip,
 )
+from app.auth.account_lockout import lock_remaining_minutes, record_failed_password, reset_login_lockout
+from app.auth.token_version import bump_token_version
 from app.schemas.schemas import LoginRequest, Token, UserOut
 from app.utils.email import send_password_reset_email
+from app.services.password_policy import validate_new_password
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -37,9 +42,31 @@ async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(
     if not user:
         result = await db.execute(select(User).where(func.lower(User.username) == login_lower))
         user = result.scalar_one_or_none()
+
+    # Блокировка аккаунта (app/auth/account_lockout.py) — независимо от
+    # IP-лимита выше. Проверяем ДО verify_password: пока учётка заблокирована,
+    # пароль не проверяем вовсе (не даёт даже узнать, подошёл бы он).
+    if user:
+        remaining = lock_remaining_minutes(user)
+        if remaining is not None:
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={
+                    "detail": f"Слишком много неверных паролей для этой учётной записи. "
+                              f"Вход временно заблокирован, повторите через {remaining} мин.",
+                },
+                headers={"Retry-After": str(remaining * 60)},
+            )
+
     if not user or not verify_password(req.password, user.password_hash):
+        if user:
+            await record_failed_password(db, user)
         record_failed_login(ip)
         raise HTTPException(status_code=401, detail="Неверный email или пароль")
+
+    # Пароль верный — сбрасываем счётчик неверных попыток для этого аккаунта.
+    await reset_login_lockout(db, user)
+
     if not user.is_email_confirmed:
         record_failed_login(ip)
         raise HTTPException(status_code=403, detail="Подтвердите email перед входом")
@@ -67,7 +94,10 @@ async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(
                 .order_by(UserOrgAccess.id)
                 .limit(1)
             )).scalar_one_or_none()
-    jwt_payload: dict = {"sub": user.username, "role": user.role, "org_id": effective_org_id}
+    jwt_payload: dict = {
+        "sub": user.username, "role": user.role, "org_id": effective_org_id,
+        "tv": user.token_version or 0,
+    }
     if effective_org_id:
         org = await db.get(Organization, effective_org_id)
         if org:
@@ -113,11 +143,21 @@ async def forgot_password(req: ForgotPasswordRequest, db: AsyncSession = Depends
     """Send password reset link. Always returns success (no user enumeration)."""
     user = (await db.execute(select(User).where(User.email == req.email))).scalar_one_or_none()
     if user:
-        token = str(uuid.uuid4())
-        user.password_reset_token = token
-        user.password_reset_expires = datetime.utcnow() + timedelta(hours=1)
-        await db.commit()
-        await send_password_reset_email(req.email, token)
+        # Лимит 1 письмо/20 мин на аккаунт — без новой колонки: момент выдачи
+        # прошлого письма восстанавливаем из password_reset_expires (−1 час,
+        # см. ниже expires = now + 1 час). Ответ ВСЕГДА одинаковый (не
+        # раскрываем, было письмо отправлено повторно или нет).
+        already_sent_recently = False
+        if user.password_reset_token and user.password_reset_expires:
+            issued_at = user.password_reset_expires - timedelta(hours=1)
+            if datetime.utcnow() - issued_at < timedelta(minutes=20):
+                already_sent_recently = True
+        if not already_sent_recently:
+            token = str(uuid.uuid4())
+            user.password_reset_token = token
+            user.password_reset_expires = datetime.utcnow() + timedelta(hours=1)
+            await db.commit()
+            await send_password_reset_email(req.email, token)
     # Always return success to prevent user enumeration
     return {"message": "Если аккаунт с таким email существует, ссылка для сброса отправлена"}
 
@@ -132,9 +172,11 @@ async def reset_password(req: ResetPasswordRequest, db: AsyncSession = Depends(g
         raise HTTPException(400, "Ссылка недействительна или уже использована")
     if user.password_reset_expires and user.password_reset_expires < datetime.utcnow():
         raise HTTPException(400, "Ссылка истекла. Запросите сброс пароля заново")
+    validate_new_password(req.password, identifiers=[user.email, user.username])
     user.password_hash = hash_password(req.password)
     user.password_reset_token = None
     user.password_reset_expires = None
+    await bump_token_version(db, user.id)  # все ранее выданные токены этого пользователя перестают работать
     await db.commit()
     return {"message": "Пароль успешно изменён"}
 
@@ -237,6 +279,7 @@ async def switch_org(
     token = create_access_token({
         "sub": user.username, "role": user.role,
         "org_id": target_org_id, "org_ids": [target_org_id],
+        "tv": user.token_version or 0,
     })
     return {
         "access_token": token,
@@ -271,6 +314,7 @@ async def select_orgs(
     token = create_access_token({
         "sub": user.username, "role": user.role,
         "org_ids": req.org_ids,
+        "tv": user.token_version or 0,
     })
     return {
         "access_token": token,
